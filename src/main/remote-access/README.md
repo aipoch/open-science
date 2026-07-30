@@ -13,12 +13,14 @@ Web port:
 - `System Service` is the Browser service. Its Persistent Public URL is enabled automatically, and
   every new browser completes six-digit two-step verification before it can see Open Science.
 
-The first App or Browser setup prepares both services together and persists their IDs independently.
-On macOS, all required Device registration and service create/repair commands are submitted through
-one administrator approval. Later mode switches reuse those exact services instead of touching
-unrelated Remote.It services or asking for another privileged mutation. Turning remote access Off
-is a local soft-disable, so the provider configuration remains available without repair on the next
-launch.
+The user adds this Mac once through Remote.It's **This system** flow. Open Science deliberately does
+not automate Device registration because the desktop-app session cannot authorize the separate CLI
+account. After that one-time step, the first App or Browser setup prepares both services together,
+persists their IDs independently, and submits all required service create/repair commands through
+one macOS administrator approval. Later mode switches reuse those exact services instead of
+touching unrelated Remote.It services or asking for another privileged mutation. Turning remote
+access Off is a local soft-disable, so the provider configuration remains available without repair
+on the next launch.
 
 The integration deliberately touches the rest of the app through a few narrow seams:
 
