@@ -275,6 +275,18 @@ class AcpRuntimeCoordinator {
       await this.waitForSessionDrain(owner, request.sessionId)
     }
 
+    if (
+      transfersOwnership &&
+      (this.pendingSessionAdoptions.get(request.sessionId) !== runtime ||
+        !this.runtimes.has(runtime) ||
+        this.retiredRuntimes.has(runtime))
+    ) {
+      if (this.pendingSessionAdoptions.get(request.sessionId) === runtime) {
+        this.pendingSessionAdoptions.delete(request.sessionId)
+      }
+      throw new Error('ACP session adoption was superseded before ownership could commit')
+    }
+
     if (transfersOwnership && this.pendingSessionAdoptions.get(request.sessionId) === runtime) {
       this.pendingSessionAdoptions.delete(request.sessionId)
     }

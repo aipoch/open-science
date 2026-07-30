@@ -62,6 +62,7 @@ const createFakeRuntime = (options: {
   emitPermission: (request: AcpPermissionRequest) => void
   emitState: (overrides: Partial<AcpStateSnapshot>) => void
   setStateSilently: (overrides: Partial<AcpStateSnapshot>) => void
+  emitRetired: () => void
 } => {
   let snapshot = emptySnapshot()
   let sessionIndex = 0
@@ -222,7 +223,8 @@ const createFakeRuntime = (options: {
     },
     setStateSilently: (overrides) => {
       snapshot = { ...snapshot, ...overrides }
-    }
+    },
+    emitRetired: () => options.callbacks.onRetired?.()
   }
 }
 
@@ -856,6 +858,50 @@ describe('AcpRuntimeCoordinator', () => {
     expect(forwardedEvents.map((event) => event.id)).toEqual([
       expect.stringMatching(runtimeEventId(1, 'post-resume-old-stop'))
     ])
+
+    retirement.resolve()
+    await switchRequest
+  })
+
+  it('rejects adoption when the incoming runtime retires while the prior turn drains', async () => {
+    const retirement = createDeferred<void>()
+    const created: ReturnType<typeof createFakeRuntime>[] = []
+    const coordinator = new AcpRuntimeCoordinator((callbacks) => {
+      const fake = createFakeRuntime({
+        frameworkId: created.length === 0 ? 'codex' : 'claude-code',
+        sessionIds: [`agent-session-${created.length + 1}`],
+        callbacks
+      })
+      created.push(fake)
+      return fake.runtime
+    })
+
+    const session = await coordinator.createSession()
+    created[0].emitState({
+      promptInFlight: true,
+      promptInFlightSessionIds: [session.sessionId]
+    })
+    created[0].requestRetirement.mockReturnValue(retirement.promise)
+    const switchRequest = coordinator.requestAgentFrameworkSwitch()
+    await coordinator.connect()
+
+    const resumeRequest = coordinator.resumeSession({
+      sessionId: session.sessionId,
+      cwd: '/workspace',
+      previousFrameworkId: 'codex'
+    })
+    await vi.waitFor(() => expect(created[1].resumeSession).toHaveBeenCalledOnce())
+    await expect(created[1].resumeSession.mock.results[0]?.value).resolves.toMatchObject({
+      sessionId: session.sessionId
+    })
+
+    created[1].emitRetired()
+    created[0].emitState({ promptInFlight: false, promptInFlightSessionIds: [] })
+
+    await expect(resumeRequest).rejects.toThrow('superseded')
+    await expect(
+      coordinator.sendPrompt({ sessionId: session.sessionId, text: 'must resume again' })
+    ).rejects.toThrow('must resume')
 
     retirement.resolve()
     await switchRequest
