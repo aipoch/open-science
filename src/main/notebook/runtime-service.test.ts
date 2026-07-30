@@ -3011,11 +3011,14 @@ describe('notebook runtime service', () => {
 
     it('reports failure when the post-install inventory refresh throws', async () => {
       const root = await createStorageRoot()
+      const info = vi.fn()
+      const warn = vi.fn()
       const service = new NotebookRuntimeService({
         configRoot: root,
         dataRoot: root,
         projectName: 'default-project',
         repository: new NotebookRunRepository(root),
+        logger: { info, warn, error: vi.fn() },
         environmentStateTracker: {
           prepareRun: vi.fn(),
           captureCompletedRun: vi.fn(),
@@ -3041,6 +3044,14 @@ describe('notebook runtime service', () => {
 
       expect(result).toMatchObject({ ok: false, needsRestart: false, method: 'conda' })
       expect(result.error).toMatch(/inventory refresh failed/i)
+      expect(info).not.toHaveBeenCalledWith('package installer completed', expect.anything())
+      expect(warn).toHaveBeenCalledWith(
+        'package installer completed',
+        expect.objectContaining({
+          ok: false,
+          error: expect.stringMatching(/inventory refresh failed/i)
+        })
+      )
     })
 
     it('writes bounded redacted installer diagnostics to the main-process logger', async () => {

@@ -2900,6 +2900,7 @@ class NotebookRuntimeService {
         let installResult: InstallResult | undefined
         let deferredQuarantineError: Error | undefined
         const installerStartedAt = Date.now()
+        let installerDurationMs = 0
         try {
           try {
             installResult = await this.installPackagesImpl(pinnedRequest, {
@@ -2932,16 +2933,7 @@ class NotebookRuntimeService {
                   .catch(() => undefined)
               }
             })
-            this.logPackageInstallerResult(
-              operationId,
-              mutation.operation,
-              request.language,
-              envName,
-              environmentTarget.runtimeSource,
-              request.packages,
-              installResult,
-              Date.now() - installerStartedAt
-            )
+            installerDurationMs = Date.now() - installerStartedAt
           } catch (error) {
             this.logPackageInstallerFailure(
               operationId,
@@ -3038,6 +3030,18 @@ class NotebookRuntimeService {
           }
         }
         if (deferredQuarantineError) throw deferredQuarantineError
+        if (installResult) {
+          this.logPackageInstallerResult(
+            operationId,
+            mutation.operation,
+            request.language,
+            envName,
+            environmentTarget.runtimeSource,
+            request.packages,
+            installResult,
+            installerDurationMs
+          )
+        }
         return installResult
       })
     } catch (error) {
