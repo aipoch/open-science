@@ -81,15 +81,18 @@ describe('logger: diagnosticErrorFields', () => {
 
   it('does not copy arbitrary error names or codes into the category', () => {
     const secret = 'custom-secret-category'
-    const fields = diagnosticErrorFields({
-      name: secret,
-      code: secret,
-      message: secret,
-      data: { credential: secret }
-    })
+    for (const name of [secret, 'toString', 'constructor', '__proto__']) {
+      const fields = diagnosticErrorFields({
+        name,
+        code: secret,
+        message: secret,
+        data: { credential: secret }
+      })
 
-    expect(fields).toEqual({ errorCategory: 'object' })
-    expect(JSON.stringify(fields)).not.toContain(secret)
+      expect(fields).toEqual({ errorCategory: 'object' })
+      expect(typeof fields.errorCategory).toBe('string')
+      expect(JSON.stringify(fields)).not.toContain(secret)
+    }
   })
 })
 

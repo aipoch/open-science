@@ -421,7 +421,7 @@ const diagnosticErrorFields = (error: unknown): { errorCategory: string } => {
       TypeError: 'type',
       URIError: 'uri'
     }
-    if (typeof name === 'string' && categoriesByName[name]) {
+    if (typeof name === 'string' && Object.hasOwn(categoriesByName, name)) {
       return { errorCategory: categoriesByName[name] }
     }
 
