@@ -1,6 +1,6 @@
 import type { ChildProcessWithoutNullStreams } from 'node:child_process'
 import { existsSync, realpathSync } from 'node:fs'
-import { mkdir, mkdtemp, rm, symlink, writeFile } from 'node:fs/promises'
+import { mkdir, mkdtemp, readFile, rm, symlink, writeFile } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { dirname, join, resolve, win32 } from 'node:path'
 import { afterEach, describe, expect, it, vi } from 'vitest'
@@ -658,6 +658,8 @@ posixGate('NotebookKernelExecutor (real Python loop mutation policy)', () => {
     const request = baseRequest(cwdDir)
     await stubEnvPython(request.runtimeRoot, DEFAULT_PY_ENV)
     await symlink(request.runtimeRoot, join(cwdDir, 'runtime-link'))
+    const truncatePath = join(request.runtimeRoot, 'truncate-target.txt')
+    await writeFile(truncatePath, 'unchanged', 'utf8')
     const executor = new NotebookKernelExecutor({
       pythonLoopPath: join(__dirname, '../../../resources/notebook/python_loop.py'),
       platform: 'linux'
@@ -741,6 +743,15 @@ posixGate('NotebookKernelExecutor (real Python loop mutation policy)', () => {
       expect(symlinkWriteResult.status).toBe('failed')
       expect(symlinkWriteResult.traceback).toMatch(/manage_packages/)
       expect(existsSync(join(request.runtimeRoot, 'blocked-from-link.txt'))).toBe(false)
+
+      const truncateResult = await executor.execute({
+        ...request,
+        code: `import os\n` + `getattr(os, "trun" + "cate")(${JSON.stringify(truncatePath)}, 0)`,
+        language: 'python'
+      })
+      expect(truncateResult.status).toBe('failed')
+      expect(truncateResult.traceback).toMatch(/manage_packages/)
+      expect(await readFile(truncatePath, 'utf8')).toBe('unchanged')
 
       const posixSpawnPath = join(request.runtimeRoot, 'blocked-from-posix-spawn.txt')
       const posixSpawnResult = await executor.execute({
@@ -906,6 +917,13 @@ describe.skipIf(!rExecutable || !rScriptExecutable)('NotebookKernelExecutor (rea
           code:
             'target <- file.path(Sys.getenv("OPEN_SCIENCE_RUNTIME_DIR"), "blocked-file-append.txt"); ' +
             `file.append(target, ${JSON.stringify(sourcePath)})`
+        },
+        {
+          name: 'file.copy',
+          path: join(request.runtimeRoot, 'blocked-file-copy.txt'),
+          code:
+            'target <- file.path(Sys.getenv("OPEN_SCIENCE_RUNTIME_DIR"), "blocked-file-copy.txt"); ' +
+            `file.copy(${JSON.stringify(sourcePath)}, target, overwrite=TRUE)`
         },
         {
           name: 'download.file',

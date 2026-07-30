@@ -213,7 +213,7 @@ runtime_text_has_write_primitive <- function(text) {
       "\\b(open|write_text|write_bytes|writeFile|writeFileSync|mkdtemp|mkdtempSync)\\s*\\(|",
       "\\b(os|shutil)\\.(remove|unlink|rename|replace|mkdir|makedirs|rmdir|removedirs|",
       "chmod|chown|copy|copy2|copytree|move|rmtree)\\s*\\(|",
-      "\\b(unlink|file\\.(append|remove|rename|link|symlink|create)|",
+      "\\b(unlink|file\\.(append|copy|remove|rename|link|symlink|create)|",
       "dir\\.create|download\\.file|fifo|pipe|writeLines|writeBin|save|saveRDS)\\s*\\(|",
       "\\b(New-Item|Remove-Item|Set-Content|Add-Content|Clear-Content|Out-File)\\b"
     ),
@@ -347,6 +347,7 @@ make_runtime_write_guard <- function(binding_name, binding_env = baseenv()) {
       ),
       file.create = args,
       file.append = list(runtime_argument(args, "file1", 1L)),
+      file.copy = list(runtime_argument(args, "to", 2L)),
       dir.create = list(runtime_argument(args, "path", 1L)),
       download.file = list(runtime_argument(args, "destfile", 2L)),
       saveRDS = list(runtime_argument(args, "file", 2L)),
@@ -454,7 +455,8 @@ if (nzchar(runtime_value)) {
   runtime_write_policy_env$managed_runtime_source <- chartr("\\", "/", source_root)
 }
 runtime_write_bindings <- c(
-  "writeLines", "writeBin", "unlink", "file.append", "file.remove", "file.rename", "file.link",
+  "writeLines", "writeBin", "unlink", "file.append", "file.copy", "file.remove", "file.rename",
+  "file.link",
   "file.symlink", "file.create",
   "dir.create", "saveRDS", "save", "cat", "file", "gzfile", "bzfile", "xzfile",
   "fifo", "open", "sink", "system", "system2", "pipe"

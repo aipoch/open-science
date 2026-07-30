@@ -38,6 +38,10 @@ describe('detectManagedRuntimeMutation', () => {
     ['python', 'Path("/tmp/open-science/runtime-backup.txt").write_text("ok")'],
     ['r', 'pipe("cat /tmp/open-science/runtime/conda-meta/history")'],
     [
+      'r',
+      'file.copy(file.path(Sys.getenv("OPEN_SCIENCE_RUNTIME_DIR"), "source.txt"), "report.txt")'
+    ],
+    [
       'python',
       'shutil.copy(os.path.join(os.environ["OPEN_SCIENCE_RUNTIME_DIR"], "x"), "report.txt")'
     ],
@@ -139,6 +143,11 @@ describe('detectManagedRuntimeMutation', () => {
     ],
     ['r', 'fifo(file.path(Sys.getenv("OPEN_SCIENCE_RUNTIME_DIR"), "x"), open="w")'],
     ['r', 'pipe("touch /tmp/open-science/runtime/x")'],
+    [
+      'python',
+      'os.truncate(os.path.join(os.environ["OPEN_SCIENCE_RUNTIME_DIR"], "conda-meta", "history"), 0)'
+    ],
+    ['r', 'file.copy("report.txt", file.path(Sys.getenv("OPEN_SCIENCE_RUNTIME_DIR"), "x"))'],
     [
       'bash',
       `python -c 'import os; open(os.path.join(os.environ["OPEN_SCIENCE_RUNTIME_DIR"], "x"), "w")'`

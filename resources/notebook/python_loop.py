@@ -45,7 +45,7 @@ _runtime_write_command = re.compile(
     r"(?:\b(?:rm|mv|cp|install|mkdir|touch|truncate|chmod|chown|ln|tee|sed|perl|dd)\b|"
     r"\b(?:open|write_text|write_bytes|writeFile|writeFileSync|mkdtemp|mkdtempSync)\s*\(|"
     r"\b(?:os|shutil)\.(?:remove|unlink|rename|replace|mkdir|makedirs|rmdir|removedirs|"
-    r"chmod|chown|copy|copy2|copytree|move|rmtree)\s*\(|"
+    r"chmod|chown|truncate|copy|copy2|copytree|move|rmtree)\s*\(|"
     r"\b(?:unlink|file\.remove|file\.rename|file\.create|dir\.create|writeLines|writeBin|"
     r"save|saveRDS)\s*\(|"
     r"\b(?:New-Item|Remove-Item|Set-Content|Add-Content|Clear-Content|Out-File)\b|"
@@ -190,7 +190,9 @@ def _protected_paths_audit(event, args):
         if _command_writes_managed_runtime(command):
             _blocked_environment_mutation()
         return
-    if event in ("os.remove", "os.rmdir", "os.mkdir", "os.chmod", "os.chown") and args:
+    if event in (
+        "os.remove", "os.rmdir", "os.mkdir", "os.chmod", "os.chown", "os.truncate"
+    ) and args:
         targets = [args[0]]
     elif event in ("os.rename", "os.link", "os.symlink") and len(args) > 1:
         targets = [args[0], args[1]]
