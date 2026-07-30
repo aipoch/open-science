@@ -251,6 +251,17 @@ const WorkspacePage = ({
     >
   >({})
   const previousDraftKeyRef = useRef<string>(selectedSessionId ?? NEW_CONVERSATION_DRAFT_KEY)
+  // Tracks user-authored mutations separately from optimistic send clearing and conversation switches.
+  // A failed prepared send may restore its captured draft only if this version has not advanced.
+  const composerDraftVersionsRef = useRef<Record<string, number>>({})
+  const markComposerDraftChanged = (draftKey = previousDraftKeyRef.current): void => {
+    composerDraftVersionsRef.current[draftKey] =
+      (composerDraftVersionsRef.current[draftKey] ?? 0) + 1
+  }
+  const changeComposerDraftDoc = (doc: ComposerDoc): void => {
+    markComposerDraftChanged()
+    setDraftDoc(doc)
+  }
   const [attachments, setAttachments] = useState<UploadedAttachment[]>([])
   const [attachmentTransfers, setAttachmentTransfers] = useState<ComposerUploadTransfer[]>([])
   const attachmentTransfersRef = useRef<ComposerUploadTransfer[]>([])
@@ -795,6 +806,7 @@ const WorkspacePage = ({
     if (accepted.length === 0) return
 
     const draftKey = previousDraftKeyRef.current
+    markComposerDraftChanged(draftKey)
     const pending = accepted.map(
       (file, index): { file: File; transfer: ComposerUploadTransfer } => {
         const name = getUploadFilename(file, index)
@@ -888,6 +900,7 @@ const WorkspacePage = ({
 
   const cancelAttachmentTransfer = (transfer: ComposerUploadTransfer): void => {
     const draftKey = previousDraftKeyRef.current
+    markComposerDraftChanged(draftKey)
     cancelledAttachmentTransfersRef.current.add(transfer.transferId)
     attachmentTransferControllersRef.current[transfer.transferId]?.abort()
     updateDraftTransfers(draftKey, (transfers) =>
@@ -909,6 +922,7 @@ const WorkspacePage = ({
 
   // Removes one staged attachment from both local UI state and managed upload storage.
   const removeComposerAttachment = (attachment: UploadedAttachment): void => {
+    markComposerDraftChanged()
     setAttachments((currentAttachments) =>
       currentAttachments.filter((item) => item.id !== attachment.id)
     )
@@ -983,6 +997,7 @@ const WorkspacePage = ({
     const sendRequestKey = activeSession?.id ?? NEW_CONVERSATION_DRAFT_KEY
     if (sendRequestsInFlightRef.current.has(sendRequestKey)) return
     sendRequestsInFlightRef.current.add(sendRequestKey)
+    const sendDraftVersion = composerDraftVersionsRef.current[sendRequestKey] ?? 0
 
     const doc = draftDoc
     const attachmentsForSend = attachments
@@ -1020,18 +1035,24 @@ const WorkspacePage = ({
       })
         .then((result) => {
           if (!result) {
-            if (previousDraftKeyRef.current === sendRequestKey) {
-              setDraftDoc(doc)
-              setAttachments(attachmentsForSend)
-            } else {
-              // Preparation can fail after the user selects another conversation. Restore the captured
-              // draft to its original key without replacing the newly selected composer's live state.
-              composerDraftsRef.current[sendRequestKey] = {
-                doc,
-                attachments: attachmentsForSend,
-                attachmentTransfers:
-                  composerDraftsRef.current[sendRequestKey]?.attachmentTransfers ?? []
+            // A newer edit on the same draft key wins over this failed request. Otherwise restore the
+            // captured draft either to the active composer or to its inactive conversation slot.
+            if ((composerDraftVersionsRef.current[sendRequestKey] ?? 0) === sendDraftVersion) {
+              if (previousDraftKeyRef.current === sendRequestKey) {
+                setDraftDoc(doc)
+                setAttachments(attachmentsForSend)
+              } else {
+                composerDraftsRef.current[sendRequestKey] = {
+                  doc,
+                  attachments: attachmentsForSend,
+                  attachmentTransfers:
+                    composerDraftsRef.current[sendRequestKey]?.attachmentTransfers ?? []
+                }
               }
+            } else {
+              // The user replaced this draft while preparation was pending. Keep that newer intent and
+              // discard staged files that now belong only to the superseded failed request.
+              deleteAttachmentFiles(attachmentsForSend)
             }
             return
           }
@@ -1461,7 +1482,7 @@ const WorkspacePage = ({
             onCompactContext={compactActiveContext}
             canChangePermissionProfile={canChangePermissionProfile}
             autoReviewEnabled={activeAutoReviewEnabled}
-            onDraftDocChange={setDraftDoc}
+            onDraftDocChange={changeComposerDraftDoc}
             onSendMessage={sendCurrentMessage}
             onStageAttachmentFiles={stageAttachmentFiles}
             onRemoveAttachment={removeComposerAttachment}

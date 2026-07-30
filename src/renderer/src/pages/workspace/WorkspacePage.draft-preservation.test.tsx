@@ -446,6 +446,37 @@ describe('WorkspacePage draft preservation', () => {
     expect(conversationProps.attachments).toEqual([attachment])
   })
 
+  it('preserves a newer same-conversation draft when prepared send restoration finishes', async () => {
+    const failedSend = createDeferred<{ sessionId: string; messageId: string } | undefined>()
+    const firstAttachment = createAttachment('failed-send-first')
+    const newerAttachment = createAttachment('failed-send-newer')
+    runtime.sendMessage.mockReturnValueOnce(failedSend.promise)
+    await renderPage()
+
+    await act(async () => {
+      conversationProps.onDraftDocChange(textDoc('first prompt'))
+    })
+    await stageAttachment(firstAttachment)
+    await act(async () => {
+      conversationProps.onSendMessage([])
+    })
+
+    await act(async () => {
+      conversationProps.onDraftDocChange(textDoc('keep this newer prompt'))
+    })
+    await stageAttachment(newerAttachment)
+
+    await act(async () => {
+      failedSend.resolve(undefined)
+      await failedSend.promise
+    })
+
+    expect(conversationProps.draftDoc).toEqual(textDoc('keep this newer prompt'))
+    expect(conversationProps.attachments).toEqual([newerAttachment])
+    expect(deleteUpload).toHaveBeenCalledWith({ path: firstAttachment.path })
+    expect(deleteUpload).not.toHaveBeenCalledWith({ path: newerAttachment.path })
+  })
+
   it('drops a stored draft and deletes its staged files when the session is deleted', async () => {
     await renderPage()
 
