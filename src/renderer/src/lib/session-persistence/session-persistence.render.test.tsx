@@ -41,6 +41,7 @@ describe('session persistence startup', () => {
   let loadAll: ReturnType<typeof vi.fn>
   let saveSession: ReturnType<typeof vi.fn>
   let saveManifest: ReturnType<typeof vi.fn>
+  let reconcilePendingArtifactsApi: ReturnType<typeof vi.fn>
 
   beforeEach(() => {
     container = document.createElement('div')
@@ -53,6 +54,7 @@ describe('session persistence startup', () => {
       )
     saveSession = vi.fn(async (session) => session)
     saveManifest = vi.fn().mockResolvedValue(undefined)
+    reconcilePendingArtifactsApi = vi.fn().mockResolvedValue([])
     window.api = {
       sessions: {
         loadAll,
@@ -61,7 +63,7 @@ describe('session persistence startup', () => {
         saveManifest
       },
       artifacts: {
-        reconcilePendingArtifacts: vi.fn().mockResolvedValue([])
+        reconcilePendingArtifacts: reconcilePendingArtifactsApi
       }
     } as unknown as Window['api']
     useSessionStore.setState(createInitialSessionState())
@@ -387,6 +389,79 @@ describe('session persistence startup', () => {
       lastProjectId: undefined,
       lastSessionId: undefined
     })
+  })
+
+  it('keeps persistence blocked until a failed retry manifest write succeeds', async () => {
+    const pendingArtifactPath =
+      '/data/artifacts/project-a/manifest-session/.pending/run-1/chart.png'
+    const manifestSession = createPersistedSession({
+      id: 'manifest-session',
+      messages: [
+        {
+          id: 'message-1',
+          role: 'agent',
+          content: 'Recovered output',
+          status: 'complete',
+          eventIds: [],
+          artifactIds: ['artifact-session:run-1:chart.png'],
+          createdAt: 1,
+          updatedAt: 1
+        }
+      ],
+      artifacts: [
+        {
+          id: 'artifact-session:run-1:chart.png',
+          kind: 'managed-file',
+          path: pendingArtifactPath,
+          name: 'chart.png',
+          mimeType: 'image/png'
+        }
+      ]
+    })
+    const result = {
+      sessions: [manifestSession],
+      manifest: {
+        version: SESSION_MANIFEST_VERSION,
+        lastProjectId: manifestSession.projectId,
+        lastSessionId: manifestSession.id
+      }
+    }
+    loadAll
+      .mockReset()
+      .mockResolvedValueOnce({
+        ...result,
+        diagnostics: { isComplete: false, warnings: [] }
+      })
+      .mockResolvedValueOnce(result)
+    saveManifest
+      .mockRejectedValueOnce(new Error('manifest disk full'))
+      .mockResolvedValueOnce(undefined)
+
+    await act(async () => root.render(<Probe />))
+
+    act(() => useSessionStore.getState().clearSelection())
+    await act(async () =>
+      container.querySelector<HTMLButtonElement>('[data-testid="retry-load"]')?.click()
+    )
+
+    expect(saveManifest).toHaveBeenCalledOnce()
+    expect(container.querySelector('div')?.dataset.ready).toBe('false')
+    expect(container.querySelector('div')?.dataset.loading).toBe('false')
+    expect(container.querySelector('[data-testid="write-error"]')?.textContent).toContain(
+      'manifest disk full'
+    )
+    expect(reconcilePendingArtifactsApi).not.toHaveBeenCalled()
+
+    await act(async () =>
+      container.querySelector<HTMLButtonElement>('[data-testid="retry-writes"]')?.click()
+    )
+
+    expect(saveManifest).toHaveBeenCalledTimes(2)
+    expect(container.querySelector('div')?.dataset.ready).toBe('true')
+    expect(container.querySelector('[data-testid="write-error"]')?.textContent).toContain(
+      'changes saved'
+    )
+    expect(reconcilePendingArtifactsApi).toHaveBeenCalledOnce()
   })
 
   it('keeps persistence blocked when startup storage recovery is incomplete', async () => {

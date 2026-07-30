@@ -325,7 +325,9 @@ const HomePage = ({
                       ) : null}
                     </button>
                     <span className="shrink-0 text-xs text-text-100">
-                      {sessionCount} {sessionCount === 1 ? 'session' : 'sessions'}
+                      {hasCompleteSessionCatalog
+                        ? `${sessionCount} ${sessionCount === 1 ? 'session' : 'sessions'}`
+                        : 'Session count unavailable'}
                     </span>
                     <span className="w-8 shrink-0 text-right text-xs text-text-300">
                       {formatRelativeTime(lastActivityAt)}

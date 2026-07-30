@@ -272,7 +272,7 @@ const App = (): React.JSX.Element | null => {
       return (
         <main
           role="alert"
-          className="flex h-screen items-center justify-center bg-background p-6 text-muted-foreground"
+          className="flex min-h-svh items-center justify-center bg-background p-6 text-foreground"
         >
           <div className="w-full max-w-md rounded-xl border border-border bg-card p-5 text-card-foreground shadow-sm">
             <h1 className="text-base font-semibold text-foreground">
@@ -298,9 +298,9 @@ const App = (): React.JSX.Element | null => {
       <main
         data-testid="settings-startup-loading"
         role="status"
-        className="flex h-screen items-center justify-center bg-background text-sm text-muted-foreground"
+        className="flex min-h-svh items-center justify-center bg-background text-foreground"
       >
-        Loading settings…
+        <span className="text-sm text-muted-foreground">Loading settings…</span>
       </main>
     )
   }
@@ -314,9 +314,9 @@ const App = (): React.JSX.Element | null => {
       <main
         data-testid="session-persistence-startup-loading"
         role="status"
-        className="flex h-screen items-center justify-center bg-background text-sm text-muted-foreground"
+        className="flex min-h-svh items-center justify-center bg-background text-foreground"
       >
-        Loading saved conversations…
+        <span className="text-sm text-muted-foreground">Loading saved conversations…</span>
       </main>
     )
   }
@@ -327,7 +327,7 @@ const App = (): React.JSX.Element | null => {
     return (
       <main
         data-testid="session-persistence-startup-error"
-        className="flex h-screen items-center justify-center bg-background p-6 text-muted-foreground"
+        className="flex min-h-svh items-center justify-center bg-background p-6 text-foreground"
       >
         <SessionPersistenceAlert
           title="Saved conversations could not be loaded"

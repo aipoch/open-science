@@ -776,14 +776,20 @@ describe('settings store: startup loading', () => {
   })
 
   it('keeps startup blocked after an IPC failure and recovers on retry', async () => {
-    api.getPreflight.mockRejectedValueOnce(new Error('settings IPC unavailable'))
+    const rawError = new Error(
+      'EACCES: /Users/private/.open-science/settings.json could not be read'
+    )
+    const warn = vi.spyOn(console, 'warn').mockImplementation(() => undefined)
+    api.getPreflight.mockRejectedValueOnce(rawError)
 
     await expect(useSettingsStore.getState().load()).resolves.toBe(false)
     expect(useSettingsStore.getState()).toMatchObject({
       isLoaded: false,
       isLoading: false,
-      loadError: 'settings IPC unavailable'
+      loadError: 'Open Science could not load settings. Retry to continue.'
     })
+    expect(useSettingsStore.getState().loadError).not.toContain('/Users/private')
+    expect(warn).toHaveBeenCalledWith('Settings startup loading failed', rawError)
 
     await expect(useSettingsStore.getState().load()).resolves.toBe(true)
     expect(useSettingsStore.getState()).toMatchObject({

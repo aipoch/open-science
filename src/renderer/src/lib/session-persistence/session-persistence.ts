@@ -263,6 +263,7 @@ const useSessionPersistence = (): SessionPersistenceState => {
   const [loadAttempt, setLoadAttempt] = useState(0)
   const retrySelection = useRef<SessionHydrationSelection | undefined>(undefined)
   const failedWriteTargets = useRef(new Set<string>())
+  const retryManifestWritePending = useRef(false)
   const saverRef = useRef<StoreSaver | undefined>(undefined)
   const retryLoad = useCallback(() => {
     // A partial snapshot remains interactive. Keep the session the user chose from that snapshot so
@@ -278,6 +279,7 @@ const useSessionPersistence = (): SessionPersistenceState => {
     setLoadError(undefined)
     setLoadWarning(undefined)
     setWriteError(undefined)
+    retryManifestWritePending.current = false
     setLoadAttempt((attempt) => attempt + 1)
   }, [isHydrated])
   const retryWrites = useCallback(() => {
@@ -373,6 +375,15 @@ const useSessionPersistence = (): SessionPersistenceState => {
         return
       }
 
+      let hasStartedPendingArtifactReconciliation = false
+      const startPendingArtifactReconciliation = (): void => {
+        if (hasStartedPendingArtifactReconciliation) return
+        hasStartedPendingArtifactReconciliation = true
+        // Runs after the saver subscribes so finalized references are persisted. A failed startup
+        // manifest write defers this until that retry succeeds and persistence becomes ready.
+        void reconcilePendingArtifacts(window.api.artifacts)
+      }
+
       // Snapshot the hydrated state as the diff baseline so hydration itself is not re-saved.
       const save = createStoreSaver(window.api.sessions, useSessionStore.getState(), {
         onFailure: (target, error) => {
@@ -395,6 +406,11 @@ const useSessionPersistence = (): SessionPersistenceState => {
         onSuccess: (target) => {
           if (!isMounted) return
           failedWriteTargets.current.delete(target)
+          if (target === 'manifest' && retryManifestWritePending.current) {
+            retryManifestWritePending.current = false
+            setIsReady(true)
+            startPendingArtifactReconciliation()
+          }
           if (failedWriteTargets.current.size === 0) setWriteError(undefined)
         }
       })
@@ -411,20 +427,22 @@ const useSessionPersistence = (): SessionPersistenceState => {
       // on retry. Force that tri-state selection (including an explicit empty selection) back to
       // disk before declaring persistence ready, because the saver baseline already contains it.
       if (preferredSelection !== undefined) {
-        await save(useSessionStore.getState(), {
-          forceTargets: new Set(['manifest'])
-        }).catch(reportPersistenceError)
+        try {
+          await save(useSessionStore.getState(), {
+            forceTargets: new Set(['manifest'])
+          })
+        } catch (error) {
+          retryManifestWritePending.current = true
+          reportPersistenceError(error)
+        }
         if (!isMounted) return
       }
 
       retrySelection.current = undefined
-      setIsReady(true)
       setIsLoading(false)
-
-      // Recover any artifacts a prior crash left in `.pending`; runs after the saver subscribes so the
-      // finalized references are persisted. Fire-and-forget: it must not delay the workspace becoming
-      // interactive, and failures are already reported per message.
-      void reconcilePendingArtifacts(window.api.artifacts)
+      if (retryManifestWritePending.current) return
+      setIsReady(true)
+      startPendingArtifactReconciliation()
     }
 
     void startPersistence()

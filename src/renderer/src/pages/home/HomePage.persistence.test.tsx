@@ -117,6 +117,22 @@ describe('HomePage persistence recovery', () => {
     ).toBe('false')
   })
 
+  it('does not present partial project Session counts as authoritative', async () => {
+    useSessionStore.getState().appendUserMessage({
+      sessionId: 'session-1',
+      projectId: project.id,
+      cwd: '/workspace/project-1',
+      content: 'Recovered conversation'
+    })
+
+    await act(async () =>
+      root.render(<HomePage canDeleteProjects hasCompleteSessionCatalog={false} />)
+    )
+
+    expect(container.textContent).toContain('Session count unavailable')
+    expect(container.textContent).not.toContain('1 session')
+  })
+
   it('guards confirmation when persistence becomes unavailable after the dialog opens', async () => {
     await act(async () => root.render(<HomePage canDeleteProjects hasCompleteSessionCatalog />))
 

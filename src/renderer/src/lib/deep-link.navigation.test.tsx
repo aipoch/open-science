@@ -169,6 +169,32 @@ describe('deep-link navigation', () => {
     expect(window.location.search).toBe('?project=project-1&session=session-1')
   })
 
+  it('retains an unresolved target until a Project load with an empty error is retried', async () => {
+    window.history.replaceState({}, '', '/?project=project-1&session=session-1')
+    useProjectStore.setState({
+      projects: [],
+      isLoaded: true,
+      loadError: ''
+    })
+    useSessionStore.setState({ sessions: [session] })
+
+    await renderHook({ isHydrated: true, isReady: true })
+
+    expect(useNavigationStore.getState().view).toBe('home')
+    expect(window.location.search).toBe('?project=project-1&session=session-1')
+
+    await act(async () =>
+      useProjectStore.setState({ projects: [project], isLoaded: true, loadError: undefined })
+    )
+
+    expect(useNavigationStore.getState()).toMatchObject({
+      view: 'workspace',
+      activeProjectId: project.id
+    })
+    expect(useSessionStore.getState().selectedSessionId).toBe(session.id)
+    expect(window.location.search).toBe('?project=project-1&session=session-1')
+  })
+
   it('does not replay an unresolved target after the user navigates elsewhere', async () => {
     const otherProject: Project = { ...project, id: 'project-2', name: 'Other research' }
     const otherSession: ChatSession = {

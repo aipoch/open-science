@@ -581,6 +581,12 @@ const resolveUpsertedProviderId = (
 }
 
 let settingsLoadPromise: Promise<boolean> | undefined
+const SAFE_SETTINGS_LOAD_ERROR = 'Open Science could not load settings. Retry to continue.'
+
+// Keep raw IPC diagnostics in the developer channel while renderer state remains path-safe.
+const reportSettingsLoadError = (error: unknown): void => {
+  console.warn('Settings startup loading failed', error)
+}
 
 // Renderer cache of the main-process settings service. The main process stays the source of truth
 // for secrets; this store only ever holds masked provider views.
@@ -621,9 +627,10 @@ export const useSettingsStore = create<SettingsStore>((set, get) => ({
       } catch (error) {
         if (get().settingsLoadGeneration !== generation) return false
 
+        reportSettingsLoadError(error)
         set({
           isLoading: false,
-          loadError: error instanceof Error ? error.message : 'Settings could not be loaded.'
+          loadError: SAFE_SETTINGS_LOAD_ERROR
         })
         return false
       }

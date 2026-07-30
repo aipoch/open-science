@@ -50,6 +50,7 @@ const replaceNavigationParams = (
 // complete Session scan can distinguish a missing target from one that was temporarily omitted.
 const useDeepLinkNavigation = ({ isHydrated, isReady }: DeepLinkNavigationReadiness): void => {
   const isProjectsLoaded = useProjectStore((state) => state.isLoaded)
+  const projectLoadError = useProjectStore((state) => state.loadError)
   const initialParams = useRef<DeepLinkParams | undefined>(
     isWebLocation() ? readDeepLinkParams() : undefined
   )
@@ -77,7 +78,9 @@ const useDeepLinkNavigation = ({ isHydrated, isReady }: DeepLinkNavigationReadin
   }, [isInitialized])
 
   useEffect(() => {
-    if (initialized.current || !isProjectsLoaded || !isHydrated) return
+    if (initialized.current || !isProjectsLoaded || projectLoadError !== undefined || !isHydrated) {
+      return
+    }
 
     const { projectId, sessionId } = initialParams.current ?? {}
 
@@ -110,7 +113,7 @@ const useDeepLinkNavigation = ({ isHydrated, isReady }: DeepLinkNavigationReadin
     }
 
     setIsInitialized(true)
-  }, [isHydrated, isProjectsLoaded, isReady])
+  }, [isHydrated, isProjectsLoaded, isReady, projectLoadError])
 
   useEffect(() => {
     if (!isInitialized) return

@@ -289,7 +289,13 @@ describe('App startup routing', () => {
   it('shows startup progress until settings have loaded', async () => {
     await render()
 
-    expect(container.querySelector('[data-testid="settings-startup-loading"]')).not.toBeNull()
+    const shell = container.querySelector('[data-testid="settings-startup-loading"]')
+    expect(shell).not.toBeNull()
+    expect(shell?.classList.contains('min-h-svh')).toBe(true)
+    expect(shell?.classList.contains('h-screen')).toBe(false)
+    expect(shell?.classList.contains('bg-background')).toBe(true)
+    expect(shell?.classList.contains('text-foreground')).toBe(true)
+    expect(shell?.classList.contains('text-muted-foreground')).toBe(false)
     expect(container.textContent).toContain('Loading settings')
     expect(mocks.syncWindowFindAppearance).toHaveBeenCalledTimes(1)
   })
@@ -300,9 +306,12 @@ describe('App startup routing', () => {
 
     await render()
 
-    expect(container.querySelector('[role="alert"]')?.textContent).toContain(
-      'settings IPC unavailable'
-    )
+    const shell = container.querySelector('[role="alert"]')
+    expect(shell?.textContent).toContain('settings IPC unavailable')
+    expect(shell?.classList.contains('min-h-svh')).toBe(true)
+    expect(shell?.classList.contains('h-screen')).toBe(false)
+    expect(shell?.classList.contains('text-foreground')).toBe(true)
+    expect(shell?.classList.contains('text-muted-foreground')).toBe(false)
     expect(mocks.settings.checkEnvironment).not.toHaveBeenCalled()
 
     const retry = container.querySelector<HTMLButtonElement>(
@@ -468,9 +477,12 @@ describe('App startup routing', () => {
 
     await render()
 
-    expect(
-      container.querySelector('[data-testid="session-persistence-startup-loading"]')
-    ).not.toBeNull()
+    const shell = container.querySelector('[data-testid="session-persistence-startup-loading"]')
+    expect(shell).not.toBeNull()
+    expect(shell?.classList.contains('min-h-svh')).toBe(true)
+    expect(shell?.classList.contains('h-screen')).toBe(false)
+    expect(shell?.classList.contains('text-foreground')).toBe(true)
+    expect(shell?.classList.contains('text-muted-foreground')).toBe(false)
     expect(container.querySelector('[data-testid="home-page"]')).toBeNull()
   })
 
@@ -501,6 +513,11 @@ describe('App startup routing', () => {
     const alert = container.querySelector('[data-testid="session-persistence-alert"]')
     expect(alert?.textContent).toContain('sessions directory unavailable')
     expect(container.querySelector('[data-testid="home-page"]')).toBeNull()
+    const shell = container.querySelector('[data-testid="session-persistence-startup-error"]')
+    expect(shell?.classList.contains('min-h-svh')).toBe(true)
+    expect(shell?.classList.contains('h-screen')).toBe(false)
+    expect(shell?.classList.contains('text-foreground')).toBe(true)
+    expect(shell?.classList.contains('text-muted-foreground')).toBe(false)
 
     const retry = container.querySelector<HTMLButtonElement>(
       '[data-testid="session-persistence-retry"]'
