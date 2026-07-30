@@ -7,7 +7,10 @@ const runPowerShell = (command: string): ReturnType<typeof runShellCommand> =>
     command,
     cwd: process.cwd(),
     handoffDir: process.cwd(),
-    timeoutMs: 10_000
+    // Windows PowerShell 5.1 on hosted runners can spend just over 10 seconds shutting down after
+    // a first cmdlet, while native-only and parser-error paths finish in under a second. Production's
+    // default is 120 seconds; this tighter integration budget still detects a genuinely stuck shell.
+    timeoutMs: 15_000
   })
 
 describe.runIf(process.platform === 'win32')('Windows notebook shell integration', () => {
