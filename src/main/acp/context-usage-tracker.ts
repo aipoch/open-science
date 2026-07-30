@@ -499,8 +499,7 @@ class ContextUsageTracker {
     const nativeSkill = isNativeSkillToolUpdate(update)
     const skillLoad = nativeSkill || Boolean(effectiveObservation.skillFilePath)
     const skillLoadCompleted = skillLoad && update.status === 'completed'
-    const skillLoadFailed =
-      skillLoad && (update.status === 'failed' || update.status === 'cancelled')
+    const skillLoadFailed = skillLoad && update.status === 'failed'
     const category: EstimatedCategoryKey = skillLoadFailed
       ? 'tools'
       : nativeSkill
@@ -519,9 +518,10 @@ class ContextUsageTracker {
         boundedJsonText(update.rawInput, budget)
       )
     }
-    // Only a successful terminal update proves that the payload is a Skill document. Partial,
-    // failed, and cancelled payloads remain ordinary tool output so they cannot replace an already
-    // loaded document with an error message. A later success replaces this provisional output.
+    // Only a successful terminal update proves that the payload is a Skill document. Partial
+    // payloads remain provisional, while failed payloads become ordinary tool output so neither can
+    // replace an already loaded document with an error message. A later success replaces the
+    // provisional output.
     const outputSectionId = `${prefix}:output`
     if (skillLoadCompleted) {
       this.deleteSection(state, outputSectionId)
