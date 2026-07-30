@@ -1450,7 +1450,13 @@ const ProjectFilesViewContent = ({
 
   return (
     <div data-testid="files-view" className="flex h-full min-h-0 w-full flex-col bg-bg-10">
-      <div className="flex shrink-0 items-center justify-between gap-3 px-4 pb-2 pt-1">
+      <div
+        className={cn(
+          'flex shrink-0 items-center justify-between gap-3 px-4 pb-2',
+          // In the expanded modal the toolbar's top gap matches its distance to the search row.
+          isFilesExpanded ? 'pt-2' : 'pt-1'
+        )}
+      >
         <ProjectFilesFilterMenu
           label={isAllFilter ? 'Artifacts' : selectedFilterOption.label}
           options={filterOptions}
