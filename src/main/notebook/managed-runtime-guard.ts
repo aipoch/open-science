@@ -79,7 +79,7 @@ const RUNTIME_WRITE_RULES: Record<NotebookExecutionSurface, RegExp> = {
     /\b(?:New-Item|Remove-Item|Set-Content|Add-Content|Clear-Content|Out-File|Copy-Item|Move-Item|Rename-Item)\b/iu,
   python:
     /\b(?:open|Path\s*\([^)]*\)\s*\.(?:write_[A-Za-z0-9_]+|touch|mkdir|rename|replace|unlink)|os\.(?:remove|unlink|rename|replace|mkdir|makedirs|rmdir|removedirs|chmod|chown)|shutil\.(?:copy|copy2|copytree|move|rmtree))\s*\(/iu,
-  r: /\b(?:unlink|file\.remove|file\.rename|file\.link|file\.symlink|file\.create|dir\.create|writeLines|writeBin|save|saveRDS)\s*\(/iu,
+  r: /\b(?:unlink|file\.(?:append|remove|rename|link|symlink|create)|dir\.create|download\.file|fifo|pipe|writeLines|writeBin|save|saveRDS)\s*\(/iu,
   repl: /\b(?:writeFile|writeFileSync|appendFile|appendFileSync|rm|rmSync|unlink|unlinkSync|rename|renameSync|mkdir|mkdirSync|mkdtemp|mkdtempSync|copyFile|copyFileSync)\s*\(/iu
 }
 
@@ -307,7 +307,7 @@ const EXECUTION_BRIDGES: Record<NotebookExecutionSurface, RegExp> = {
   powershell: /\b(?:powershell|pwsh)(?:\.exe)?\b[^\n]{0,80}\s(?:-Command|-EncodedCommand)\b/iu,
   python:
     /\b(?:subprocess\.(?:run|call|Popen|check_call|check_output)|os\.system|os\.popen|pip(?:\._internal(?:\.cli\.main)?)?\.main|exec|eval)\s*\(/iu,
-  r: /\b(?:system|system2|do\.call|get|match\.fun|eval|parse)\s*\(/iu,
+  r: /\b(?:system|system2|pipe|do\.call|get|match\.fun|eval|parse)\s*\(/iu,
   repl: /\b(?:exec|execSync|execFile|execFileSync|spawn|spawnSync|fork|eval)\s*\(|\bchild_process\s*\.\s*(?:exec|execSync|execFile|execFileSync|spawn|spawnSync|fork)\s*\(/iu
 }
 
@@ -409,6 +409,22 @@ const runtimeWriteTargets = (
 
   if (surface === 'r') {
     if (/\bfile\.(?:rename|link|symlink)\b/u.test(op)) return args.slice(0, 2)
+    if (/\bdownload\.file\b/u.test(op)) {
+      const target = namedOrPositionalArgument(args, 'destfile', 1)
+      return target ? [target] : []
+    }
+    if (/\bfifo\b/u.test(op)) {
+      const mode = namedOrPositionalArgument(args, 'open', 1)
+      if (!mode || !/[wax+]/iu.test(mode)) return []
+      const target = namedOrPositionalArgument(args, 'description', 0)
+      return target ? [target] : []
+    }
+    if (/\bpipe\b/u.test(op)) {
+      const command = namedOrPositionalArgument(args, 'description', 0)?.trim()
+      const quote = command?.[0]
+      if (!command || (quote !== "'" && quote !== '"') || command.at(-1) !== quote) return []
+      return shellRuntimeWriteTargets(command.slice(1, -1))
+    }
     if (/\b(?:writelines|writebin)\b/u.test(op)) {
       const target = namedOrPositionalArgument(args, 'con', 1)
       return target ? [target] : []
@@ -842,7 +858,7 @@ const bridgeUsesShellCommandString = (call: string, surface: NotebookExecutionSu
     }
     return false
   }
-  if (surface === 'r') return /\bsystem\s*\(/u.test(call)
+  if (surface === 'r') return /\b(?:system|pipe)\s*\(/u.test(call)
   if (surface === 'repl') return /\b(?:exec|execSync)\s*\(/u.test(call)
   return false
 }

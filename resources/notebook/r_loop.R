@@ -213,8 +213,8 @@ runtime_text_has_write_primitive <- function(text) {
       "\\b(open|write_text|write_bytes|writeFile|writeFileSync|mkdtemp|mkdtempSync)\\s*\\(|",
       "\\b(os|shutil)\\.(remove|unlink|rename|replace|mkdir|makedirs|rmdir|removedirs|",
       "chmod|chown|copy|copy2|copytree|move|rmtree)\\s*\\(|",
-      "\\b(unlink|file\\.remove|file\\.rename|file\\.link|file\\.symlink|file\\.create|",
-      "dir\\.create|writeLines|writeBin|save|saveRDS)\\s*\\(|",
+      "\\b(unlink|file\\.(append|remove|rename|link|symlink|create)|",
+      "dir\\.create|download\\.file|fifo|pipe|writeLines|writeBin|save|saveRDS)\\s*\\(|",
       "\\b(New-Item|Remove-Item|Set-Content|Add-Content|Clear-Content|Out-File)\\b"
     ),
     text,
@@ -318,8 +318,8 @@ runtime_symlink_source <- function(source, destination) {
   source
 }
 
-make_runtime_write_guard <- function(binding_name) {
-  original <- get(binding_name, envir = baseenv(), inherits = FALSE)
+make_runtime_write_guard <- function(binding_name, binding_env = baseenv()) {
+  original <- get(binding_name, envir = binding_env, inherits = FALSE)
   force(original)
   force(binding_name)
   function(...) {
@@ -346,7 +346,9 @@ make_runtime_write_guard <- function(binding_name) {
         runtime_argument(args, "to", 2L)
       ),
       file.create = args,
+      file.append = list(runtime_argument(args, "file1", 1L)),
       dir.create = list(runtime_argument(args, "path", 1L)),
+      download.file = list(runtime_argument(args, "destfile", 2L)),
       saveRDS = list(runtime_argument(args, "file", 2L)),
       save = list(runtime_argument(args, "file", .Machine$integer.max)),
       cat = list(runtime_argument(args, "file", .Machine$integer.max)),
@@ -382,6 +384,14 @@ make_runtime_write_guard <- function(binding_name) {
           list()
         }
       },
+      fifo = {
+        open_mode <- runtime_argument(args, "open", 2L)
+        if (is.character(open_mode) && grepl("[wax+]", open_mode)) {
+          list(runtime_argument(args, "description", 1L))
+        } else {
+          list()
+        }
+      },
       open = {
         open_mode <- runtime_argument(args, "open", 2L)
         if (is.character(open_mode) && grepl("[wax+]", open_mode)) {
@@ -400,6 +410,10 @@ make_runtime_write_guard <- function(binding_name) {
           runtime_argument(args, "command", 1L),
           runtime_argument(args, "args", 2L)
         )
+        list()
+      },
+      pipe = {
+        assert_runtime_process_allowed(runtime_argument(args, "description", 1L))
         list()
       },
       list()
@@ -440,10 +454,10 @@ if (nzchar(runtime_value)) {
   runtime_write_policy_env$managed_runtime_source <- chartr("\\", "/", source_root)
 }
 runtime_write_bindings <- c(
-  "writeLines", "writeBin", "unlink", "file.remove", "file.rename", "file.link",
+  "writeLines", "writeBin", "unlink", "file.append", "file.remove", "file.rename", "file.link",
   "file.symlink", "file.create",
   "dir.create", "saveRDS", "save", "cat", "file", "gzfile", "bzfile", "xzfile",
-  "open", "sink", "system", "system2"
+  "fifo", "open", "sink", "system", "system2", "pipe"
 )
 runtime_write_wrappers <- lapply(
   runtime_write_bindings,
@@ -455,6 +469,16 @@ for (binding_name in runtime_write_bindings) {
   if (bindingIsLocked(binding_name, baseenv())) unlockBinding(binding_name, baseenv())
   assign(binding_name, runtime_write_wrappers[[binding_name]], envir = baseenv())
   lockBinding(binding_name, baseenv())
+}
+download_file_wrapper <- runtime_write_policy_env$make_runtime_write_guard(
+  "download.file",
+  asNamespace("utils")
+)
+for (binding_env in list(asNamespace("utils"), as.environment("package:utils"))) {
+  if (!exists("download.file", envir = binding_env, inherits = FALSE)) next
+  if (bindingIsLocked("download.file", binding_env)) unlockBinding("download.file", binding_env)
+  assign("download.file", download_file_wrapper, envir = binding_env)
+  lockBinding("download.file", binding_env)
 }
 rm(
   canonical_runtime_path,
@@ -475,7 +499,9 @@ rm(
   runtime_value,
   source_root,
   runtime_write_bindings,
-  runtime_write_wrappers
+  runtime_write_wrappers,
+  download_file_wrapper,
+  binding_env
 )
 
 figures_dir <- Sys.getenv("OPEN_SCIENCE_KERNEL_FIGURES_DIR", "")

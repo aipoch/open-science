@@ -886,6 +886,60 @@ describe.skipIf(!rExecutable || !rScriptExecutable)('NotebookKernelExecutor (rea
       await executor.shutdown()
     }
   })
+
+  it('blocks additional base R write and process APIs from reaching the managed runtime', async () => {
+    cwdDir = await mkdtemp(join(tmpdir(), 'os-r-loop-runtime-apis-'))
+    const request = baseRequest(cwdDir)
+    await stubEnvR(request.runtimeRoot, DEFAULT_R_ENV)
+    const sourcePath = join(cwdDir, 'source.txt')
+    await writeFile(sourcePath, 'source', 'utf8')
+    const executor = new NotebookKernelExecutor({
+      rLoopPath: join(__dirname, '../../../resources/notebook/r_loop.R'),
+      platform: 'linux'
+    })
+
+    try {
+      const cases = [
+        {
+          name: 'file.append',
+          path: join(request.runtimeRoot, 'blocked-file-append.txt'),
+          code:
+            'target <- file.path(Sys.getenv("OPEN_SCIENCE_RUNTIME_DIR"), "blocked-file-append.txt"); ' +
+            `file.append(target, ${JSON.stringify(sourcePath)})`
+        },
+        {
+          name: 'download.file',
+          path: join(request.runtimeRoot, 'blocked-download.txt'),
+          code:
+            'target <- file.path(Sys.getenv("OPEN_SCIENCE_RUNTIME_DIR"), "blocked-download.txt"); ' +
+            'download.file("https://example.invalid/report", target)'
+        },
+        {
+          name: 'fifo',
+          path: join(request.runtimeRoot, 'blocked-fifo'),
+          code:
+            'target <- file.path(Sys.getenv("OPEN_SCIENCE_RUNTIME_DIR"), "blocked-fifo"); ' +
+            'fifo(target, open="w", blocking=FALSE)'
+        },
+        {
+          name: 'pipe',
+          path: join(request.runtimeRoot, 'blocked-pipe.txt'),
+          code:
+            'target <- file.path(Sys.getenv("OPEN_SCIENCE_RUNTIME_DIR"), "blocked-pipe.txt"); ' +
+            'pipe(paste("touch", shQuote(target)), open="r")'
+        }
+      ]
+
+      for (const testCase of cases) {
+        const result = await executor.execute({ ...request, code: testCase.code, language: 'r' })
+        expect(result.status, testCase.name).toBe('failed')
+        expect(result.traceback, testCase.name).toMatch(/manage_packages/)
+        expect(existsSync(testCase.path), testCase.name).toBe(false)
+      }
+    } finally {
+      await executor.shutdown()
+    }
+  })
 })
 
 gate('NotebookKernelExecutor idle-timeout shutdown', () => {

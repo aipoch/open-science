@@ -36,6 +36,7 @@ describe('detectManagedRuntimeMutation', () => {
     ['python', 'print(os.environ["OPEN_SCIENCE_RUNTIME_DIR"]); open("report.txt", "w")'],
     ['python', 'open("/tmp/open-science/runtime-backup.txt", "w")'],
     ['python', 'Path("/tmp/open-science/runtime-backup.txt").write_text("ok")'],
+    ['r', 'pipe("cat /tmp/open-science/runtime/conda-meta/history")'],
     [
       'python',
       'shutil.copy(os.path.join(os.environ["OPEN_SCIENCE_RUNTIME_DIR"], "x"), "report.txt")'
@@ -131,6 +132,13 @@ describe('detectManagedRuntimeMutation', () => {
     ],
     ['powershell', '& "pip" install pandas'],
     ['r', 'writeLines("x", file.path(Sys.getenv("OPEN_SCIENCE_RUNTIME_DIR"), "x"))'],
+    ['r', 'file.append(file.path(Sys.getenv("OPEN_SCIENCE_RUNTIME_DIR"), "x"), "report.txt")'],
+    [
+      'r',
+      'download.file("https://example.invalid/report", file.path(Sys.getenv("OPEN_SCIENCE_RUNTIME_DIR"), "x"))'
+    ],
+    ['r', 'fifo(file.path(Sys.getenv("OPEN_SCIENCE_RUNTIME_DIR"), "x"), open="w")'],
+    ['r', 'pipe("touch /tmp/open-science/runtime/x")'],
     [
       'bash',
       `python -c 'import os; open(os.path.join(os.environ["OPEN_SCIENCE_RUNTIME_DIR"], "x"), "w")'`
