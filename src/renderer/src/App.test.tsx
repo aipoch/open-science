@@ -382,6 +382,35 @@ describe('App startup routing', () => {
     })
   })
 
+  it('reports retained session content as hidden during retry loading and hard failure', async () => {
+    mocks.settings.isLoaded = true
+    mocks.navigation.view = 'workspace'
+    mocks.sessions = [{ id: 'session-retained' }]
+
+    await render()
+
+    expect(mocks.syncUnreadTaskView).toHaveBeenLastCalledWith({
+      isSessionContentVisible: true
+    })
+
+    mocks.sessionPersistence.isHydrated = false
+    mocks.sessionPersistence.isLoading = true
+    mocks.sessionPersistence.isReady = false
+    await act(async () => root.render(<App />))
+
+    expect(mocks.syncUnreadTaskView).toHaveBeenLastCalledWith({
+      isSessionContentVisible: false
+    })
+
+    mocks.sessionPersistence.isLoading = false
+    mocks.sessionPersistence.loadError = 'saved conversations unavailable'
+    await act(async () => root.render(<App />))
+
+    expect(mocks.syncUnreadTaskView).toHaveBeenLastCalledWith({
+      isSessionContentVisible: false
+    })
+  })
+
   it('routes first-run users to onboarding after settings hydration', async () => {
     mocks.settings.isLoaded = true
     mocks.startupView = 'onboarding'

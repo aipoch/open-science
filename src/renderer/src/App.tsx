@@ -91,6 +91,8 @@ const App = (): React.JSX.Element | null => {
   // Only acknowledge a conversation when no app-level gate covers the workspace. The hook performs
   // the remaining navigation/session/DOM checks before main is allowed to clear its unread marker.
   const isSessionContentVisible =
+    isSessionPersistenceHydrated &&
+    !isSessionPersistenceLoading &&
     startupView === 'app' &&
     view === 'workspace' &&
     !isSettingsOpen &&
