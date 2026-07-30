@@ -110,12 +110,24 @@ const reportPersistenceError = (error: unknown): void => {
 // Hydrates the in-memory session store from the per-session files loaded by the main process.
 const loadPersistedSessions = async (
   api: SessionPersistenceApi,
-  shouldHydrate: () => boolean = () => true
+  shouldHydrate: () => boolean = () => true,
+  preferredSessionId?: string
 ): Promise<LoadAllSessionsResult | undefined> => {
   const result = await api.loadAll()
   if (!shouldHydrate()) return undefined
 
-  useSessionStore.getState().hydrateSessions(result.sessions, result.manifest)
+  const preferredSession = preferredSessionId
+    ? result.sessions.find((session) => session.id === preferredSessionId)
+    : undefined
+  const manifest = preferredSession
+    ? {
+        ...result.manifest,
+        lastProjectId: preferredSession.projectId,
+        lastSessionId: preferredSession.id
+      }
+    : result.manifest
+
+  useSessionStore.getState().hydrateSessions(result.sessions, manifest)
   return result
 }
 
@@ -239,9 +251,13 @@ const useSessionPersistence = (): SessionPersistenceState => {
   const [loadWarning, setLoadWarning] = useState<string | undefined>(undefined)
   const [writeError, setWriteError] = useState<string | undefined>(undefined)
   const [loadAttempt, setLoadAttempt] = useState(0)
+  const retrySelection = useRef<string | undefined>(undefined)
   const failedWriteTargets = useRef(new Set<string>())
   const saverRef = useRef<StoreSaver | undefined>(undefined)
   const retryLoad = useCallback(() => {
+    // A partial snapshot remains interactive. Keep the session the user chose from that snapshot so
+    // a successful retry cannot replay the older on-disk manifest over their live navigation.
+    if (isHydrated) retrySelection.current = useSessionStore.getState().selectedSessionId
     setIsHydrated(false)
     setIsLoading(true)
     setIsReady(false)
@@ -249,7 +265,7 @@ const useSessionPersistence = (): SessionPersistenceState => {
     setLoadWarning(undefined)
     setWriteError(undefined)
     setLoadAttempt((attempt) => attempt + 1)
-  }, [])
+  }, [isHydrated])
   const retryWrites = useCallback(() => {
     const saver = saverRef.current
     if (!saver || failedWriteTargets.current.size === 0) return
@@ -281,7 +297,11 @@ const useSessionPersistence = (): SessionPersistenceState => {
     // Loads before subscribing so the initial empty store cannot overwrite disk state.
     const startPersistence = async (): Promise<void> => {
       try {
-        const result = await loadPersistedSessions(window.api.sessions, () => isMounted)
+        const result = await loadPersistedSessions(
+          window.api.sessions,
+          () => isMounted,
+          retrySelection.current
+        )
         if (!result || !isMounted) return
         setIsHydrated(true)
 
@@ -338,6 +358,7 @@ const useSessionPersistence = (): SessionPersistenceState => {
         return
       }
 
+      retrySelection.current = undefined
       setIsReady(true)
       setIsLoading(false)
       // Snapshot the hydrated state as the diff baseline so hydration itself is not re-saved.

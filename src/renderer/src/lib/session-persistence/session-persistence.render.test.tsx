@@ -5,7 +5,8 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 
 import {
   SESSION_MANIFEST_VERSION,
-  type LoadAllSessionsResult
+  type LoadAllSessionsResult,
+  type PersistedChatSession
 } from '../../../../shared/session-persistence'
 import { createInitialSessionState, useSessionStore } from '../../stores/session-store'
 import { useSessionPersistence, type SessionPersistenceState } from './session-persistence'
@@ -13,6 +14,20 @@ import { useSessionPersistence, type SessionPersistenceState } from './session-p
 const emptyLoadResult = (): LoadAllSessionsResult => ({
   sessions: [],
   manifest: { version: SESSION_MANIFEST_VERSION }
+})
+
+const createPersistedSession = (
+  overrides: Partial<PersistedChatSession> = {}
+): PersistedChatSession => ({
+  id: 'session-1',
+  projectId: 'project-a',
+  title: 'Restored',
+  cwd: '/workspace/project-a',
+  status: 'idle',
+  messages: [],
+  createdAt: 1,
+  updatedAt: 1,
+  ...overrides
 })
 
 describe('session persistence startup', () => {
@@ -231,6 +246,42 @@ describe('session persistence startup', () => {
       await Promise.resolve()
     })
     expect(saveSession).not.toHaveBeenCalled()
+  })
+
+  it('preserves a live session selection when retrying a partial recovery', async () => {
+    const manifestSession = createPersistedSession({ id: 'manifest-session' })
+    const selectedSession = createPersistedSession({
+      id: 'selected-session',
+      projectId: 'project-b',
+      cwd: '/workspace/project-b',
+      updatedAt: 2
+    })
+    const sessions = [manifestSession, selectedSession]
+    const manifest = {
+      version: SESSION_MANIFEST_VERSION,
+      lastProjectId: manifestSession.projectId,
+      lastSessionId: manifestSession.id
+    }
+    loadAll
+      .mockReset()
+      .mockResolvedValueOnce({
+        sessions,
+        manifest,
+        diagnostics: { isComplete: false, warnings: [] }
+      })
+      .mockResolvedValueOnce({ sessions, manifest })
+
+    await act(async () => root.render(<Probe />))
+
+    expect(useSessionStore.getState().selectedSessionId).toBe(manifestSession.id)
+    act(() => useSessionStore.getState().selectSession(selectedSession.id))
+
+    await act(async () =>
+      container.querySelector<HTMLButtonElement>('[data-testid="retry-load"]')?.click()
+    )
+
+    expect(container.querySelector('div')?.dataset.ready).toBe('true')
+    expect(useSessionStore.getState().selectedSessionId).toBe(selectedSession.id)
   })
 
   it('keeps persistence blocked when startup storage recovery is incomplete', async () => {
