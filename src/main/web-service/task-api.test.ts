@@ -454,7 +454,7 @@ describe('HeadlessTaskApi', () => {
     ])
   })
 
-  it('retries an ownership persistence race and preserves artifacts when a prompt fails', async () => {
+  it('preserves finalized artifacts when a later claim fails after an ownership retry', async () => {
     let emitEvent: ((event: AcpRuntimeEvent) => void) | undefined
     let finalizeAttempts = 0
     const savedSessions: PersistedChatSession[] = []
@@ -479,8 +479,17 @@ describe('HeadlessTaskApi', () => {
           artifacts: []
         })
         emitEvent?.({
-          id: 'error-event',
+          id: 'artifact-event-later',
           timestamp: 11,
+          kind: 'artifact',
+          level: 'info',
+          sessionId: 'session-failed',
+          artifactClaimId: 'claim-2',
+          artifacts: []
+        })
+        emitEvent?.({
+          id: 'error-event',
+          timestamp: 12,
           kind: 'error',
           level: 'error',
           sessionId: 'session-failed',
@@ -490,12 +499,16 @@ describe('HeadlessTaskApi', () => {
       }
       if (channel === 'artifacts:finalize-run') {
         finalizeAttempts += 1
-        if (finalizeAttempts === 1) {
+        const request = args[0] as { claimId: string }
+        if (request.claimId === 'claim-1' && finalizeAttempts === 1) {
           return {
             ok: false,
             code: ARTIFACT_OWNERSHIP_PERSISTENCE_RACE,
             message: 'The durable projection has not caught up yet.'
           }
+        }
+        if (request.claimId === 'claim-2') {
+          throw new Error('compatibility publication failed')
         }
         return {
           ok: true,
@@ -539,7 +552,7 @@ describe('HeadlessTaskApi', () => {
       error: 'Provider rejected the request.',
       artifacts: [{ id: 'artifact-1', name: 'partial-report.md' }]
     })
-    expect(finalizeAttempts).toBe(2)
+    expect(finalizeAttempts).toBe(3)
     expect(
       invoke.mock.calls
         .map(([channel]) => channel)
@@ -548,6 +561,7 @@ describe('HeadlessTaskApi', () => {
       'sessions:save-session',
       'artifacts:finalize-run',
       'sessions:save-session',
+      'artifacts:finalize-run',
       'artifacts:finalize-run',
       'sessions:save-session'
     ])

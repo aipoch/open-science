@@ -47,6 +47,22 @@ type MutableTaskRun = TaskRun & {
   completion: Promise<void>
 }
 
+type CompletedTaskSession = {
+  session: PersistedChatSession
+  output: string
+  artifacts: ArtifactFile[]
+}
+
+class PartialTaskCompletionError extends Error {
+  constructor(
+    readonly completion: CompletedTaskSession,
+    readonly failure: unknown
+  ) {
+    super(failure instanceof Error ? failure.message : String(failure))
+    this.name = 'PartialTaskCompletionError'
+  }
+}
+
 class TaskApiError extends Error {
   constructor(
     readonly code: TaskApiErrorCode,
@@ -413,7 +429,12 @@ class HeadlessTaskApi {
     try {
       completed = await this.completeSession(session, run.events)
     } catch (error) {
-      completionError = error
+      if (error instanceof PartialTaskCompletionError) {
+        completed = error.completion
+        completionError = error.failure
+      } else {
+        completionError = error
+      }
     }
 
     const failure = completionError ?? promptError
@@ -466,7 +487,7 @@ class HeadlessTaskApi {
   private async completeSession(
     session: PersistedChatSession,
     events: AcpRuntimeEvent[]
-  ): Promise<{ session: PersistedChatSession; output: string; artifacts: ArtifactFile[] }> {
+  ): Promise<CompletedTaskSession> {
     const now = this.dependencies.now()
     const assistantEvents = events.filter(
       (event) => event.kind === 'message' && event.role === 'assistant'
@@ -492,69 +513,78 @@ class HeadlessTaskApi {
     }
     const activities = this.createActivities(events, now)
     const finalizedArtifacts: ArtifactFile[] = []
+    const buildCompletion = (): CompletedTaskSession => {
+      const uniqueArtifacts = [
+        ...new Map(finalizedArtifacts.map((artifact) => [artifact.id, artifact])).values()
+      ]
+      const persistedArtifacts = uniqueArtifacts.map(toPersistedArtifact)
+      const linkedAssistantMessage: PersistedChatMessage = {
+        ...assistantMessage,
+        artifactIds: uniqueArtifacts.length
+          ? uniqueArtifacts.map((artifact) => artifact.id)
+          : undefined
+      }
+      const hasAssistantMessage = Boolean(output || images.length || persistedArtifacts.length)
+
+      return {
+        output,
+        artifacts: uniqueArtifacts,
+        session: {
+          ...session,
+          status: 'idle',
+          activeRun: undefined,
+          messages: hasAssistantMessage
+            ? [...session.messages, linkedAssistantMessage]
+            : session.messages,
+          activities: [...(session.activities ?? []), ...activities],
+          artifacts: [...(session.artifacts ?? []), ...persistedArtifacts],
+          filesRevision:
+            persistedArtifacts.length > 0
+              ? (session.filesRevision ?? 0) + 1
+              : session.filesRevision,
+          updatedAt: now
+        }
+      }
+    }
     let ownershipSessionPersisted = false
     for (const event of events) {
       if (event.kind !== 'artifact' || !event.artifactClaimId) continue
-      const request = {
-        claimId: event.artifactClaimId,
-        messageId: assistantMessageId
-      }
-      let result = (await this.invoke(
-        'artifacts:finalize-run',
-        request
-      )) as FinalizeRunArtifactsResult
-      if (!result.ok) {
-        if (result.code !== ARTIFACT_OWNERSHIP_PERSISTENCE_RACE) {
-          throw new Error(result.message)
+      try {
+        const request = {
+          claimId: event.artifactClaimId,
+          messageId: assistantMessageId
         }
-        if (!ownershipSessionPersisted) {
-          await this.invoke('sessions:save-session', {
-            ...session,
-            messages: [...session.messages, assistantMessage],
-            activities: [...(session.activities ?? []), ...activities],
-            updatedAt: now
-          })
-          ownershipSessionPersisted = true
-        }
-        result = (await this.invoke(
+        let result = (await this.invoke(
           'artifacts:finalize-run',
           request
         )) as FinalizeRunArtifactsResult
         if (!result.ok) {
-          throw new Error(result.message)
+          if (result.code !== ARTIFACT_OWNERSHIP_PERSISTENCE_RACE) {
+            throw new Error(result.message)
+          }
+          if (!ownershipSessionPersisted) {
+            await this.invoke('sessions:save-session', {
+              ...session,
+              messages: [...session.messages, assistantMessage],
+              activities: [...(session.activities ?? []), ...activities],
+              updatedAt: now
+            })
+            ownershipSessionPersisted = true
+          }
+          result = (await this.invoke(
+            'artifacts:finalize-run',
+            request
+          )) as FinalizeRunArtifactsResult
+          if (!result.ok) {
+            throw new Error(result.message)
+          }
         }
-      }
-      finalizedArtifacts.push(...result.artifacts)
-    }
-    const linkedAssistantMessage: PersistedChatMessage = {
-      ...assistantMessage,
-      artifactIds: finalizedArtifacts.length
-        ? finalizedArtifacts.map((artifact) => artifact.id)
-        : undefined
-    }
-    const uniqueArtifacts = [
-      ...new Map(finalizedArtifacts.map((artifact) => [artifact.id, artifact])).values()
-    ]
-    const persistedArtifacts = uniqueArtifacts.map(toPersistedArtifact)
-    const hasAssistantMessage = Boolean(output || images.length || persistedArtifacts.length)
-
-    return {
-      output,
-      artifacts: uniqueArtifacts,
-      session: {
-        ...session,
-        status: 'idle',
-        activeRun: undefined,
-        messages: hasAssistantMessage
-          ? [...session.messages, linkedAssistantMessage]
-          : session.messages,
-        activities: [...(session.activities ?? []), ...activities],
-        artifacts: [...(session.artifacts ?? []), ...persistedArtifacts],
-        filesRevision:
-          persistedArtifacts.length > 0 ? (session.filesRevision ?? 0) + 1 : session.filesRevision,
-        updatedAt: now
+        finalizedArtifacts.push(...result.artifacts)
+      } catch (error) {
+        throw new PartialTaskCompletionError(buildCompletion(), error)
       }
     }
+    return buildCompletion()
   }
 
   private createActivities(events: AcpRuntimeEvent[], now: number): PersistedToolActivity[] {
