@@ -71,6 +71,9 @@ type SendWorkspaceMessageInput = {
   // Internal overflow-recovery handoff: that flow owns the compacting state and replaces it with the
   // retried run synchronously. Ordinary composer sends must never bypass the local compaction gate.
   allowCompactionRecovery?: boolean
+  // Internal retry seam: unlike a normal missing-at-start send, this request belongs to a captured
+  // durable session and must abort if that conversation was deleted during an earlier control turn.
+  requireExistingSession?: boolean
   // Immutable Specialist UUID from the new-conversation draft picker. Only used when creating a new
   // ACP session (sessionId === undefined). The renderer sends only the UUID; the main process reads
   // the latest Profile. Never passed for existing sessions (specialist binding is immutable).
@@ -507,6 +510,7 @@ const sendWorkspaceMessage = async (
     supportsImageInput,
     truncateFromMessageId,
     allowCompactionRecovery,
+    requireExistingSession,
     specialistId
   }: SendWorkspaceMessageInput,
   onSendPreparationStateChange?: SendPreparationStateChange,
@@ -524,6 +528,8 @@ const sendWorkspaceMessage = async (
     const currentSession = useSessionStore
       .getState()
       .sessions.find((session) => session.id === targetSessionId)
+
+    if (requireExistingSession && !currentSession) return undefined
 
     // Runtime ownership is authoritative while native compaction or another control turn is active.
     if (
@@ -693,6 +699,9 @@ const sendWorkspaceMessage = async (
     const preparedSession = useSessionStore
       .getState()
       .sessions.find((session) => session.id === targetSessionId)
+    // Preparation crosses async runtime and notebook boundaries. Deletion or hydration may remove the
+    // target meanwhile; never let the generic append seam recreate that stale existing-session id.
+    if ((currentSession || requireExistingSession) && !preparedSession) return undefined
 
     // An edited resend replays only the retained Branch prefix.
     const historyCutMessageId = truncateFromMessageId
@@ -987,6 +996,7 @@ const resumeInterruptedWorkspaceSession = async (
       permissionProfile: session.permissionProfile ?? DEFAULT_PERMISSION_PROFILE,
       // Replay the prior conversation when this resume adopted a fresh agent session.
       forceHistoryReplay: contextReset,
+      requireExistingSession: true,
       supportsImageInput,
       agentModel
     },

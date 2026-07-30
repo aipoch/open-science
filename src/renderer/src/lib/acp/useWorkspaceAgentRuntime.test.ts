@@ -602,6 +602,58 @@ describe('workspace agent message sending', () => {
     })
   })
 
+  it('does not recreate a session deleted while runtime adoption is in flight', async () => {
+    useSessionStore.getState().appendUserMessage({
+      sessionId: 'transport-session-1',
+      content: 'Original prompt',
+      cwd: '/workspace/project',
+      projectId: 'project-1',
+      agentFrameworkId: 'claude-code',
+      agentBackendId: 'claude-code:anthropic'
+    })
+    useSessionStore.getState().finishRun('transport-session-1')
+
+    const resumeGate = createDeferred<{
+      sessionId: string
+      cwd: string
+      contextReset: boolean
+      frameworkId: 'codex'
+      backendId: string
+    }>()
+    const runtime = {
+      state: createSnapshot(),
+      createSession: vi.fn(),
+      resumeSession: vi.fn(() => resumeGate.promise),
+      resetSessionContext: vi.fn(),
+      sendPrompt: vi.fn()
+    }
+
+    const sendRequest = sendWorkspaceMessage(runtime, {
+      sessionId: 'transport-session-1',
+      text: 'Do not resurrect this conversation',
+      cwd: '/workspace/project',
+      projectId: 'project-1',
+      agentFrameworkId: 'codex',
+      agentBackendId: 'codex:builtin-codex-subscription'
+    })
+    await vi.waitFor(() => expect(runtime.resumeSession).toHaveBeenCalledOnce())
+
+    useSessionStore.getState().deleteSession('transport-session-1')
+    resumeGate.resolve({
+      sessionId: 'transport-session-1',
+      cwd: '/workspace/project',
+      contextReset: true,
+      frameworkId: 'codex',
+      backendId: 'codex:builtin-codex-subscription'
+    })
+
+    await expect(sendRequest).resolves.toBeUndefined()
+    expect(
+      useSessionStore.getState().sessions.some((session) => session.id === 'transport-session-1')
+    ).toBe(false)
+    expect(runtime.sendPrompt).not.toHaveBeenCalled()
+  })
+
   it('keeps Branch replay required when the reset prompt is rejected', async () => {
     useSessionStore.getState().appendUserMessage({
       sessionId: 'transport-session-1',
@@ -1977,6 +2029,38 @@ describe('resuming an interrupted session on demand', () => {
     expect(userMessages).toHaveLength(1)
     expect(userMessages[0].content).toBe('Continue the analysis')
     expect(session.interrupted).toBeUndefined()
+  })
+
+  it('does not recreate an interrupted session deleted while reconnecting', async () => {
+    useSessionStore.getState().appendUserMessage({
+      sessionId: 'session-1',
+      content: 'Do not resurrect this interrupted prompt',
+      cwd: '/workspace/project',
+      projectId: 'default-project',
+      permissionProfile: 'ask'
+    })
+    useSessionStore.getState().markDisconnected('session-1')
+
+    const resumeGate = createDeferred<{ sessionId: string; cwd: string }>()
+    const runtime = {
+      state: createSnapshot(),
+      createSession: vi.fn(),
+      resumeSession: vi.fn(() => resumeGate.promise),
+      resetSessionContext: vi.fn(),
+      sendPrompt: vi.fn().mockResolvedValue(createSnapshot(['session-1']))
+    }
+
+    const resumeRequest = resumeInterruptedWorkspaceSession(runtime, 'session-1')
+    await vi.waitFor(() => expect(runtime.resumeSession).toHaveBeenCalledOnce())
+
+    useSessionStore.getState().deleteSession('session-1')
+    resumeGate.resolve({ sessionId: 'session-1', cwd: '/workspace/project' })
+
+    await resumeRequest
+
+    expect(useSessionStore.getState().sessions).toEqual([])
+    expect(runtime.resumeSession).toHaveBeenCalledOnce()
+    expect(runtime.sendPrompt).not.toHaveBeenCalled()
   })
 
   it('restores the interrupted user turn when re-send preparation fails', async () => {
