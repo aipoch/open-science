@@ -61,6 +61,216 @@ describe('ComposerContextUsage', () => {
     )
   })
 
+  it('shows locally estimated categories reconciled against the Agent total', async () => {
+    act(() =>
+      root.render(
+        <ComposerContextUsage
+          contextUsage={{
+            used: 29_500,
+            size: 168_000,
+            breakdown: {
+              source: 'estimated',
+              tokenizer: 'o200k_base',
+              model: 'gpt-5.6-sol',
+              estimatedTokens: 29_405,
+              difference: 95,
+              status: 'reconciled',
+              categories: [
+                { key: 'system', tokens: 7_200, estimated: true },
+                { key: 'tools', tokens: 19_000, estimated: true },
+                { key: 'messages', tokens: 2_105, estimated: true },
+                { key: 'skills', tokens: 1_100, estimated: true },
+                { key: 'other', tokens: 95, estimated: false }
+              ]
+            }
+          }}
+        />
+      )
+    )
+
+    const trigger = container.querySelector<HTMLButtonElement>('[aria-label="Context used: 18%"]')
+    await act(async () => {
+      trigger?.click()
+      await Promise.resolve()
+    })
+
+    expect(document.body.textContent).toContain('17.6%')
+    expect(document.body.textContent).toContain('System prompt')
+    expect(document.body.textContent).toContain('Tools and agents')
+    expect(document.body.textContent).toContain('Messages')
+    expect(document.body.textContent).toContain('Skills')
+    expect(document.body.textContent).toContain('Agent/framework overhead')
+    expect(document.body.textContent).toContain('Local 29.4k · Agent 29.5k · Δ +95')
+    expect(document.body.textContent).toContain('Reconciled · o200k_base · gpt-5.6-sol')
+    expect(document.body.textContent).not.toContain(
+      'Agent total is authoritative; category values are local estimates.'
+    )
+
+    const popoverId = trigger?.getAttribute('aria-controls')
+    const popover = popoverId ? document.getElementById(popoverId) : null
+    expect(popover?.className).toContain('rounded-lg')
+    expect(popover?.className).toContain('border-border')
+    expect(popover?.className).toContain('bg-popover')
+    expect(popover?.className).toContain('shadow-menu')
+    expect(popover?.className).toContain('w-72')
+    expect(popover?.getAttribute('data-align')).toBe('center')
+    expect(popover?.querySelector('[data-slot="context-usage-summary"]')?.className).toContain(
+      'whitespace-nowrap'
+    )
+    expect(
+      popover?.querySelector('[data-slot="context-usage-diagnostics"]')?.textContent
+    ).toContain('Reconciled · o200k_base · gpt-5.6-sol')
+    expect(
+      document.body.querySelector('[aria-label^="Estimated category occupancy"]')
+    ).not.toBeNull()
+  })
+
+  it('labels a generating snapshot as a local estimate without an Agent delta', async () => {
+    act(() =>
+      root.render(
+        <ComposerContextUsage
+          contextUsage={{
+            used: 20_600,
+            size: 1_000_000,
+            breakdown: {
+              source: 'estimated',
+              tokenizer: 'cl100k_base',
+              model: 'deepseek-v4-flash',
+              estimatedTokens: 20_600,
+              difference: 0,
+              status: 'preflight',
+              categories: [
+                { key: 'system', tokens: 2_400, estimated: true },
+                { key: 'messages', tokens: 100, estimated: true },
+                { key: 'mcp', tokens: 18_100, estimated: true }
+              ]
+            }
+          }}
+        />
+      )
+    )
+
+    const trigger = container.querySelector<HTMLButtonElement>(
+      '[aria-label="Estimated context: 2%"]'
+    )
+    await act(async () => {
+      trigger?.click()
+      await Promise.resolve()
+    })
+
+    expect(document.body.textContent).toContain('Local estimate 20.6k / 1M')
+    expect(document.body.textContent).toContain('Estimating · cl100k_base · deepseek-v4-flash')
+    expect(document.body.textContent).not.toContain('Agent 20.6k')
+    expect(document.body.textContent).not.toContain('Δ')
+  })
+
+  it('shows a token-only local estimate before the model window is known', async () => {
+    act(() =>
+      root.render(
+        <ComposerContextUsage
+          contextUsage={{
+            used: 20_600,
+            breakdown: {
+              source: 'estimated',
+              tokenizer: 'o200k_base',
+              estimatedTokens: 20_600,
+              difference: 0,
+              status: 'preflight',
+              categories: [{ key: 'messages', tokens: 20_600, estimated: true }]
+            }
+          }}
+        />
+      )
+    )
+
+    const trigger = container.querySelector<HTMLButtonElement>(
+      '[aria-label="Estimated context: 21k"]'
+    )
+    await act(async () => {
+      trigger?.click()
+      await Promise.resolve()
+    })
+
+    expect(document.body.textContent).toContain('Context window21kLocal estimate')
+    expect(document.body.textContent).not.toContain('/ undefined')
+    expect(
+      document.body.querySelector('[aria-label="Estimated category distribution: 20.6k tokens"]')
+    ).not.toBeNull()
+  })
+
+  it('keeps the latest Agent total visible while preflight categories update', async () => {
+    act(() =>
+      root.render(
+        <ComposerContextUsage
+          contextUsage={{
+            used: 96_000,
+            agentUsed: 96_000,
+            size: 128_000,
+            breakdown: {
+              source: 'estimated',
+              tokenizer: 'anthropic',
+              model: 'claude-sonnet-4-5',
+              estimatedTokens: 38_300,
+              difference: 0,
+              status: 'preflight',
+              categories: [
+                { key: 'system', tokens: 2_400, estimated: true },
+                { key: 'messages', tokens: 17_800, estimated: true },
+                { key: 'mcp', tokens: 18_100, estimated: true }
+              ]
+            }
+          }}
+        />
+      )
+    )
+
+    const trigger = container.querySelector<HTMLButtonElement>('[aria-label="Context used: 75%"]')
+    await act(async () => {
+      trigger?.click()
+      await Promise.resolve()
+    })
+
+    expect(document.body.textContent).toContain('Agent used 96k / 128k')
+    expect(document.body.textContent).toContain('Local 38.3k · Latest Agent 96k')
+    expect(document.body.textContent).toContain(
+      'Estimating · Anthropic approx. · claude-sonnet-4-5'
+    )
+    expect(document.body.textContent).not.toContain('Δ')
+  })
+
+  it('does not offer compaction from a high local estimate before Agent reconciliation', async () => {
+    act(() =>
+      root.render(
+        <ComposerContextUsage
+          contextUsage={{
+            used: 400_000,
+            size: 1_000_000,
+            breakdown: {
+              source: 'estimated',
+              tokenizer: 'cl100k_base',
+              estimatedTokens: 400_000,
+              difference: 0,
+              status: 'preflight',
+              categories: [{ key: 'messages', tokens: 400_000, estimated: true }]
+            }
+          }}
+          canCompact
+          onCompact={vi.fn()}
+        />
+      )
+    )
+
+    const trigger = container.querySelector<HTMLButtonElement>(
+      '[aria-label="Estimated context: 40%"]'
+    )
+    await act(async () => {
+      trigger?.click()
+      await Promise.resolve()
+    })
+
+    expect(document.body.querySelector('[aria-label="Compact context"]')).toBeNull()
+  })
+
   it('keeps the compact action hidden until context usage reaches thirty percent', async () => {
     act(() =>
       root.render(

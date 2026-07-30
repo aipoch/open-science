@@ -95,6 +95,21 @@ describe('RuntimeOperationJournal', () => {
     expect((await journal.pending())[0].phase).toBe('downloading')
   })
 
+  it('update() fails closed when an in-flight journal becomes corrupt', async () => {
+    const path = await journalPath()
+    const journal = new RuntimeOperationJournal(path)
+    await journal.begin(
+      record({ kind: 'install', repairReason: 'interrupted-install', runtimeId: 'default-r' })
+    )
+
+    await writeFile(path, '{ not json', 'utf8')
+
+    await expect(
+      journal.update('op-1', { repairReason: 'protected-identity-change' })
+    ).rejects.toThrow(/RUNTIME_JOURNAL_CORRUPT/)
+    expect(await readFile(path, 'utf8')).toBe('{ not json')
+  })
+
   it('hasRuntimeOperation() guards against a second op on the same runtime', async () => {
     const journal = new RuntimeOperationJournal(await journalPath())
     await journal.begin(record({ operationId: 'a', runtimeId: 'default-python' }))
@@ -161,6 +176,26 @@ describe('RuntimeOperationJournal', () => {
     await expect(journal.begin(record({ operationId: 'op-1' }))).rejects.toThrow(
       /RUNTIME_JOURNAL_CORRUPT/
     )
+  })
+
+  it('accepts only known durable repair reasons', async () => {
+    const path = await journalPath()
+    const journal = new RuntimeOperationJournal(path)
+    await mkdir(dirname(path), { recursive: true })
+
+    await writeFile(
+      path,
+      JSON.stringify([record({ kind: 'install', repairReason: 'protected-identity-change' })]),
+      'utf8'
+    )
+    expect(await journal.readState()).not.toBe('corrupt')
+
+    await writeFile(
+      path,
+      JSON.stringify([{ ...record({ kind: 'install' }), repairReason: 'ignore-quarantine' }]),
+      'utf8'
+    )
+    expect(await journal.readState()).toBe('corrupt')
   })
 
   it('treats a record with a PRESENT-but-malformed childStartToken as corrupt (fail-closed)', async () => {

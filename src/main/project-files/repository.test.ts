@@ -1448,6 +1448,225 @@ describe('ManagedFileIndexRepository', () => {
     )
   })
 
+  it('loads all search overview counts with one database query', async () => {
+    const queryRaw = vi.spyOn(client, '$queryRaw')
+
+    await expect(
+      repository.getOverview({
+        projectId: PROJECT_ID,
+        search: { filenameContains: 'impact' }
+      })
+    ).resolves.toEqual({
+      totalCount: 0,
+      uploadCount: 0,
+      artifactCount: 0,
+      artifactGroupCount: 0,
+      isIndexComplete: true
+    })
+    expect(queryRaw).toHaveBeenCalledTimes(1)
+  })
+
+  it('searches filenames across independent collections and binds cursors to the query', async () => {
+    const uploadPath = join(
+      storageRoot,
+      'uploads',
+      'default-project',
+      SESSION_ID,
+      'impact-input.csv'
+    )
+    const sessionAFiles = [
+      ['impact-a', 'Impact_Timeline.csv'],
+      ['impact-b', 'impact_notes.txt'],
+      ['literal', '%_literal.txt'],
+      ['unicode', 'École.txt'],
+      ['other', 'summary.txt']
+    ] as const
+    const sessionBPath = join(
+      storageRoot,
+      'artifacts',
+      'default-project',
+      'session-b',
+      'message-1',
+      'IMPACT_chart.png'
+    )
+    await Promise.all([
+      writeManagedFile(uploadPath, 'a,b'),
+      writeManagedFile(sessionBPath, 'chart'),
+      ...sessionAFiles.map(([id, name]) =>
+        writeManagedFile(
+          join(
+            storageRoot,
+            'artifacts',
+            'default-project',
+            SESSION_ID,
+            'message-1',
+            `${id}-${name}`
+          ),
+          id
+        )
+      )
+    ])
+    await repository.syncSession(
+      createSession({
+        messages: [
+          {
+            id: 'message-user',
+            role: 'user',
+            content: 'Analyze',
+            status: 'complete',
+            eventIds: [],
+            uploads: [
+              {
+                id: 'upload-impact',
+                sessionId: SESSION_ID,
+                name: 'impact-input.csv',
+                originalName: 'Impact_Input.csv',
+                path: uploadPath,
+                size: 3
+              }
+            ],
+            createdAt: 100,
+            updatedAt: 200
+          }
+        ],
+        artifacts: sessionAFiles.map(([id, name]) => ({
+          id,
+          kind: 'managed-file' as const,
+          path: join(
+            storageRoot,
+            'artifacts',
+            'default-project',
+            SESSION_ID,
+            'message-1',
+            `${id}-${name}`
+          ),
+          name,
+          mtimeMs: 100
+        }))
+      })
+    )
+    await repository.syncSession(
+      createSession({
+        id: 'session-b',
+        artifacts: [
+          {
+            id: 'impact-chart',
+            kind: 'managed-file',
+            path: sessionBPath,
+            name: 'IMPACT_chart.png',
+            mtimeMs: 100
+          }
+        ]
+      })
+    )
+
+    const search = { filenameContains: '  ImPaCt  ' }
+    await expect(repository.getOverview({ projectId: PROJECT_ID, search })).resolves.toEqual({
+      totalCount: 4,
+      uploadCount: 1,
+      artifactCount: 3,
+      artifactGroupCount: 2,
+      isIndexComplete: true
+    })
+    const allMatches = await repository.listFiles({
+      projectId: PROJECT_ID,
+      collection: { kind: 'all' },
+      search,
+      limit: 10
+    })
+    expect(allMatches.totalCount).toBe(4)
+    expect(new Set(allMatches.items.map((file) => file.source))).toEqual(
+      new Set(['artifact', 'upload'])
+    )
+    await expect(
+      repository.listFiles({
+        projectId: PROJECT_ID,
+        collection: { kind: 'uploads' },
+        search,
+        limit: 10
+      })
+    ).resolves.toMatchObject({
+      items: [expect.objectContaining({ name: 'Impact_Input.csv' })],
+      totalCount: 1
+    })
+    const groups = await repository.listArtifactGroups({
+      projectId: PROJECT_ID,
+      search,
+      limit: 10
+    })
+    expect(groups.totalCount).toBe(2)
+    expect(new Map(groups.items.map((group) => [group.sessionId, group.artifactCount]))).toEqual(
+      new Map([
+        ['session-a', 2],
+        ['session-b', 1]
+      ])
+    )
+
+    const first = await repository.listFiles({
+      projectId: PROJECT_ID,
+      collection: { kind: 'sessionArtifacts', sessionId: SESSION_ID },
+      search,
+      limit: 1
+    })
+    expect(first.totalCount).toBe(2)
+    expect(first.nextCursor).toBeDefined()
+    await expect(
+      repository.listFiles({
+        projectId: PROJECT_ID,
+        collection: { kind: 'sessionArtifacts', sessionId: SESSION_ID },
+        search: { filenameContains: 'summary' },
+        cursor: first.nextCursor,
+        limit: 1
+      })
+    ).rejects.toThrow(/cursor.*search/i)
+
+    await expect(
+      repository.listFiles({
+        projectId: PROJECT_ID,
+        collection: { kind: 'sessionArtifacts', sessionId: SESSION_ID },
+        search: { filenameContains: '%_' },
+        limit: 10
+      })
+    ).resolves.toMatchObject({
+      items: [expect.objectContaining({ name: '%_literal.txt' })],
+      totalCount: 1
+    })
+
+    await expect(
+      repository.listFiles({
+        projectId: PROJECT_ID,
+        collection: { kind: 'sessionArtifacts', sessionId: SESSION_ID },
+        search: { filenameContains: 'école' },
+        limit: 10
+      })
+    ).resolves.toMatchObject({ items: [], totalCount: 0 })
+    await expect(
+      repository.listFiles({
+        projectId: PROJECT_ID,
+        collection: { kind: 'sessionArtifacts', sessionId: SESSION_ID },
+        search: { filenameContains: 'ÉCOLE' },
+        limit: 10
+      })
+    ).resolves.toMatchObject({
+      items: [expect.objectContaining({ name: 'École.txt' })],
+      totalCount: 1
+    })
+
+    const groupFirst = await repository.listArtifactGroups({
+      projectId: PROJECT_ID,
+      search,
+      limit: 1
+    })
+    await expect(
+      repository.listArtifactGroups({
+        projectId: PROJECT_ID,
+        search: { filenameContains: 'summary' },
+        cursor: groupFirst.nextCursor,
+        limit: 1
+      })
+    ).rejects.toThrow(/cursor.*search/i)
+  })
+
   it('indexes readable files while retrying an unreadable file from the same session', async () => {
     const uploadPath = join(storageRoot, 'uploads', 'default-project', SESSION_ID, 'input.csv')
     const missingArtifactPath = join(

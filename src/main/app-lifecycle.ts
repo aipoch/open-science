@@ -48,14 +48,19 @@ export type AppLifecycleDeps = {
 // Installs the tray, the first window, and the quit/activate/window-all-closed handlers. Returns
 // showMainWindow so the single-instance second-instance hook can surface the window (creating one when
 // none exists — e.g. macOS after the last window was closed but the app stayed resident). The returned
-// window reference lets callers (e.g. notification activation) target it without re-deriving it by
-// focus or window order.
+// window reference and explicit hidden state let callers target or inspect it without re-deriving
+// either value from focus, window order, or minimized visibility semantics.
 export const installAppLifecycle = (
   deps: AppLifecycleDeps
-): { showMainWindow: () => BrowserWindow } => {
+): {
+  showMainWindow: () => BrowserWindow
+  getMainWindow: () => BrowserWindow | undefined
+  isMainWindowHidden: () => boolean
+} => {
   const platform = deps.platform ?? process.platform
 
   let mainWindow: BrowserWindow | undefined
+  const hiddenWindows = new WeakSet<BrowserWindow>()
   // Held in a box (not a plain `let`) so the close classification defined below can read it before
   // it is assigned — the tray, window, and predicate reference each other cyclically.
   const trayBox: { current: Tray | undefined } = { current: undefined }
@@ -93,8 +98,8 @@ export const installAppLifecycle = (
     }
   }
 
-  const openWindow = (): BrowserWindow =>
-    deps.createMainWindow({
+  const openWindow = (): BrowserWindow => {
+    const window = deps.createMainWindow({
       classifyClose,
       resolveCloseAction,
       requestQuit: () => {
@@ -102,6 +107,13 @@ export const installAppLifecycle = (
         deps.quit()
       }
     })
+
+    // isVisible() is also false for minimized Windows windows. Track explicit hide/show events so
+    // taskbar attention can distinguish a legitimate minimized window from one hidden to the tray.
+    window.on('hide', () => hiddenWindows.add(window))
+    window.on('show', () => hiddenWindows.delete(window))
+    return window
+  }
 
   // Surfaces the main window, creating a fresh one when none exists or the last was closed (macOS keeps
   // the app alive with no window; the tray Show item and a second launch must be able to bring it back).
@@ -113,6 +125,9 @@ export const installAppLifecycle = (
     }
     if (mainWindow.isMinimized()) mainWindow.restore()
     if (!mainWindow.isVisible()) mainWindow.show()
+    // Some native restore paths become visible without emitting show; the explicit show command is
+    // authoritative, so clear a stale tray-hidden marker before attention checks can observe it.
+    hiddenWindows.delete(mainWindow)
     mainWindow.focus()
     return mainWindow
   }
@@ -204,5 +219,10 @@ export const installAppLifecycle = (
 
   if (deps.createInitialWindow !== false) mainWindow = openWindow()
 
-  return { showMainWindow }
+  return {
+    showMainWindow,
+    // Attention effects may inspect the current window, but must never surface it as a side effect.
+    getMainWindow: () => mainWindow,
+    isMainWindowHidden: () => Boolean(mainWindow && hiddenWindows.has(mainWindow))
+  }
 }

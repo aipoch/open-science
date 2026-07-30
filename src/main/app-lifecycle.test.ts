@@ -53,36 +53,46 @@ type FakeWindow = {
   show: () => void
   hide: () => void
   focus: () => void
+  on: (event: 'hide' | 'show', handler: () => void) => void
 }
 
 // A fake BrowserWindow tracking visibility/focus/destroyed state.
-const makeFakeWindow = (): FakeWindow => ({
-  destroyed: false,
-  minimized: false,
-  visible: true,
-  focused: false,
-  isDestroyed(): boolean {
-    return this.destroyed
-  },
-  isMinimized(): boolean {
-    return this.minimized
-  },
-  isVisible(): boolean {
-    return this.visible
-  },
-  restore(): void {
-    this.minimized = false
-  },
-  show(): void {
-    this.visible = true
-  },
-  hide(): void {
-    this.visible = false
-  },
-  focus(): void {
-    this.focused = true
+const makeFakeWindow = (): FakeWindow => {
+  const handlers = new Map<'hide' | 'show', Array<() => void>>()
+
+  return {
+    destroyed: false,
+    minimized: false,
+    visible: true,
+    focused: false,
+    isDestroyed(): boolean {
+      return this.destroyed
+    },
+    isMinimized(): boolean {
+      return this.minimized
+    },
+    isVisible(): boolean {
+      return this.visible
+    },
+    restore(): void {
+      this.minimized = false
+    },
+    show(): void {
+      this.visible = true
+      for (const handler of handlers.get('show') ?? []) handler()
+    },
+    hide(): void {
+      this.visible = false
+      for (const handler of handlers.get('hide') ?? []) handler()
+    },
+    focus(): void {
+      this.focused = true
+    },
+    on(event, handler): void {
+      handlers.set(event, [...(handlers.get(event) ?? []), handler])
+    }
   }
-})
+}
 
 const flush = (): Promise<void> => new Promise((resolve) => setTimeout(resolve, 0))
 
@@ -103,6 +113,8 @@ type Harness = {
   shutdownBackends: () => Promise<void>
   quit: ReturnType<typeof vi.fn>
   showMainWindow: () => void
+  getMainWindow: () => import('electron').BrowserWindow | undefined
+  isMainWindowHidden: () => boolean
   closeOpts: CapturedCloseOpts[]
   confirmClose: ReturnType<typeof vi.fn>
 }
@@ -135,7 +147,7 @@ const setup = (
   )
   const detectActiveSessions = overrides.detectActiveSessions ?? ((): ActiveSessionInfo[] => [])
 
-  const { showMainWindow } = installAppLifecycle({
+  const { showMainWindow, getMainWindow, isMainWindowHidden } = installAppLifecycle({
     app: app as unknown as AppLifecycleDeps['app'],
     createMainWindow: (opts) => {
       closeOpts.push(opts)
@@ -156,7 +168,6 @@ const setup = (
     detectActiveSessions,
     createConfirmClose: () => confirmClose
   })
-
   return {
     app,
     windows,
@@ -165,6 +176,8 @@ const setup = (
     shutdownBackends,
     quit,
     showMainWindow,
+    getMainWindow,
+    isMainWindowHidden,
     closeOpts,
     confirmClose
   }
@@ -191,6 +204,50 @@ describe('installAppLifecycle', () => {
     expect(windows).toHaveLength(0)
     trayHandlers?.onShow()
     expect(windows).toHaveLength(1)
+  })
+
+  it('exposes the current main window without showing or focusing it', () => {
+    const { app, windows, getMainWindow } = setup({ platform: 'darwin' })
+    const original = windows[0]
+    original.visible = false
+
+    expect(getMainWindow()).toBe(original)
+    expect(original.visible).toBe(false)
+    expect(original.focused).toBe(false)
+
+    original.destroyed = true
+    app.emit('activate')
+
+    expect(getMainWindow()).toBe(windows[1])
+  })
+
+  it('distinguishes a hidden-to-tray window from a minimized window', () => {
+    const { windows, trayHandlers, isMainWindowHidden } = setup({ platform: 'win32' })
+    windows[0].minimized = true
+
+    expect(isMainWindowHidden()).toBe(false)
+
+    trayHandlers?.onHide()
+    expect(isMainWindowHidden()).toBe(true)
+
+    trayHandlers?.onShow()
+    expect(isMainWindowHidden()).toBe(false)
+  })
+
+  it('clears hidden state when restore makes the window visible without a show event', () => {
+    const { windows, trayHandlers, isMainWindowHidden } = setup({ platform: 'win32' })
+    const window = windows[0]
+    window.minimized = true
+    window.restore = (): void => {
+      window.minimized = false
+      window.visible = true
+    }
+
+    trayHandlers?.onHide()
+    expect(isMainWindowHidden()).toBe(true)
+
+    trayHandlers?.onShow()
+    expect(isMainWindowHidden()).toBe(false)
   })
 
   it('runs an awaited backend teardown then exits on a normal quit', async () => {

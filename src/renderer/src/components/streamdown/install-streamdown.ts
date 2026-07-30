@@ -6,14 +6,19 @@ import {
   tableDataToTSV
 } from 'streamdown'
 
+import {
+  STREAMDOWN_FULLSCREEN_SELECTOR,
+  STREAMDOWN_MERMAID_FULLSCREEN_SELECTOR,
+  STREAMDOWN_TABLE_FULLSCREEN_SELECTOR
+} from './dom-selectors'
+
 const saveBlobFile = (request: SaveBlobFileRequest): Promise<SaveBlobFileResult> =>
   window.api.saveBlobFile(request)
 
 const AGENT_MARKDOWN_ROOT_SELECTOR = '.agent-markdown-root'
-const TABLE_FULLSCREEN_SELECTOR = '[data-streamdown="table-fullscreen"]'
-const MERMAID_FULLSCREEN_SELECTOR =
-  'body > div.fixed.inset-0.z-50.flex.items-center.justify-center[role="button"]:not([data-streamdown])'
-const FULLSCREEN_SELECTOR = `${MERMAID_FULLSCREEN_SELECTOR}, ${TABLE_FULLSCREEN_SELECTOR}`
+const TABLE_FULLSCREEN_SELECTOR = STREAMDOWN_TABLE_FULLSCREEN_SELECTOR
+const MERMAID_FULLSCREEN_SELECTOR = STREAMDOWN_MERMAID_FULLSCREEN_SELECTOR
+const FULLSCREEN_SELECTOR = STREAMDOWN_FULLSCREEN_SELECTOR
 const FULLSCREEN_EXIT_MS = 150
 const FULLSCREEN_FOCUSABLE_SELECTOR =
   'button:not([disabled]), a[href], input:not([disabled]), select:not([disabled]), textarea:not([disabled]), [tabindex]:not([tabindex="-1"])'

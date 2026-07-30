@@ -35,6 +35,13 @@ const PREVIEW_STATE_TABLE_DDL = `CREATE TABLE IF NOT EXISTS "ProjectPreviewState
     "updatedAt" DATETIME NOT NULL
 );`
 
+// Unread terminal-task metadata is a small ordered projection; Session JSON remains authoritative.
+const UNREAD_TASK_SESSION_TABLE_DDL = `CREATE TABLE IF NOT EXISTS "UnreadTaskSession" (
+    "id" INTEGER NOT NULL PRIMARY KEY AUTOINCREMENT,
+    "sessionId" TEXT NOT NULL
+);`
+const UNREAD_TASK_SESSION_SESSION_ID_INDEX_DDL = `CREATE UNIQUE INDEX IF NOT EXISTS "UnreadTaskSession_sessionId_key" ON "UnreadTaskSession"("sessionId");`
+
 // Reviewer results: one Review per audited turn, plus its child checks (stored in Finding table).
 // v2 (issue 12): Review no longer has summary/checks JSON columns; all checks are Finding rows.
 // v3 (issue 13): reasoning replaced by reviewerLog (captured action stream JSON array).
@@ -541,6 +548,8 @@ const addColumnIfMissing = async (
 const ensureProjectSchema = async (client: PrismaClient): Promise<void> => {
   await client.$executeRawUnsafe(PROJECT_TABLE_DDL)
   await client.$executeRawUnsafe(PREVIEW_STATE_TABLE_DDL)
+  await client.$executeRawUnsafe(UNREAD_TASK_SESSION_TABLE_DDL)
+  await client.$executeRawUnsafe(UNREAD_TASK_SESSION_SESSION_ID_INDEX_DDL)
   await client.$executeRawUnsafe(REVIEW_TABLE_DDL)
   await client.$executeRawUnsafe(FINDING_TABLE_DDL)
 

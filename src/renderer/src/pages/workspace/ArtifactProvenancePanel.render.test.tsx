@@ -721,7 +721,9 @@ describe('ArtifactProvenancePanel', () => {
     expect(container.textContent).toContain('Live Kernel package state unavailable.')
     expect(container.textContent).toContain('create')
     expect(container.textContent).toContain('numpy 2.4.6')
-    expect(container.textContent).toContain('Other observed changes')
+    expect(container.textContent).toContain(
+      'Observed since the previous snapshot (not attributed to this operation)'
+    )
     expect(container.textContent).toContain('packaging 25.0 → 26.0')
     const operationTimeHeader = [...container.querySelectorAll('th')].find(
       (header) => header.textContent === 'Time'

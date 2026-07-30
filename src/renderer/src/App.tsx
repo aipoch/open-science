@@ -22,6 +22,7 @@ import { EnvStatusBanner } from '@/pages/workspace/EnvStatusBanner'
 import { WorkspacePage } from '@/pages/workspace/WorkspacePage'
 import { useCloseActivePaneShortcut } from '@/hooks/useCloseActivePaneShortcut'
 import { useLifecycleSync } from '@/hooks/useLifecycleSync'
+import { useUnreadTaskViewSync } from '@/hooks/useUnreadTaskViewSync'
 import { useWindowFindAppearanceSync } from '@/hooks/useWindowFindAppearanceSync'
 import { useNavigationStore } from '@/stores/navigation-store'
 import { useNotebookEnvStore } from '@/stores/notebook-env-store'
@@ -56,13 +57,17 @@ const App = (): React.JSX.Element | null => {
   const loadSettings = useSettingsStore((state) => state.load)
   const checkEnvironment = useSettingsStore((state) => state.checkEnvironment)
   const isSettingsOpen = useSettingsStore((state) => state.isSettingsOpen)
+  const hasConnectorApproval = useSettingsStore((state) => state.pendingApprovals.length > 0)
   const closeSettings = useSettingsStore((state) => state.closeSettings)
   const enqueueApproval = useSettingsStore((state) => state.enqueueApproval)
   const enqueueComputeApproval = useComputeStore((state) => state.enqueueApproval)
+  const hasComputeApproval = useComputeStore((state) => state.pendingApprovals.length > 0)
   const enqueueSkillImport = useSkillImportStore((state) => state.enqueue)
   const dismissSkillImport = useSkillImportStore((state) => state.dismiss)
+  const hasSkillImportApproval = useSkillImportStore((state) => state.pending.length > 0)
   const applyJobUpdate = useSessionJobStore((state) => state.applyUpdate)
   const initUpdates = useUpdateStore((state) => state.init)
+  const isUpdateDialogOpen = useUpdateStore((state) => state.isDialogOpen)
   const initEnv = useNotebookEnvStore((state) => state.init)
   const envUi = useNotebookEnvStore((state) => state.ui)
   const retryEnv = useNotebookEnvStore((state) => state.retry)
@@ -74,10 +79,30 @@ const App = (): React.JSX.Element | null => {
     { currentDataRoot: string; defaultParent: string } | undefined
   >(undefined)
   const deferredNotification = useRef<OpenSessionFromNotificationRequest | undefined>(undefined)
+  const [isCloseConfirmOpen, setIsCloseConfirmOpen] = useState(false)
+  const startupView = isSettingsLoaded
+    ? resolveStartupView({ onboardingDone: onboardingCompletedAt !== undefined })
+    : undefined
 
   const retrySettingsInitialization = useCallback(async (): Promise<void> => {
     if (await loadSettings({ force: true })) await checkEnvironment()
   }, [checkEnvironment, loadSettings])
+
+  // Only acknowledge a conversation when no app-level gate covers the workspace. The hook performs
+  // the remaining navigation/session/DOM checks before main is allowed to clear its unread marker.
+  const isSessionContentVisible =
+    startupView === 'app' &&
+    view === 'workspace' &&
+    !isSettingsOpen &&
+    !hasConnectorApproval &&
+    !hasComputeApproval &&
+    !hasSkillImportApproval &&
+    !isUpdateDialogOpen &&
+    !isCloseConfirmOpen &&
+    missingDataRoot === undefined &&
+    legacyMove === undefined
+
+  useUnreadTaskViewSync({ isSessionContentVisible })
 
   // Load app info and subscribe to update-status broadcasts once at startup.
   useEffect(() => {
@@ -278,11 +303,7 @@ const App = (): React.JSX.Element | null => {
     )
   }
 
-  if (
-    resolveStartupView({
-      onboardingDone: onboardingCompletedAt !== undefined
-    }) === 'onboarding'
-  ) {
+  if (startupView === 'onboarding') {
     return <OnboardingWizard />
   }
 
@@ -356,7 +377,7 @@ const App = (): React.JSX.Element | null => {
       />
       <ComputeApprovalDialog />
       <UpdateDialog />
-      <CloseConfirmModal />
+      <CloseConfirmModal onOpenChange={setIsCloseConfirmOpen} />
       <DataRootMissingDialog
         open={missingDataRoot !== undefined}
         dataRoot={missingDataRoot ?? ''}

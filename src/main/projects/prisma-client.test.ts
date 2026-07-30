@@ -53,6 +53,29 @@ describe('project prisma client (integration)', () => {
     }
   })
 
+  it('creates an unread-task table that rejects duplicate session IDs', async () => {
+    storageRoot = await mkdtemp(join(tmpdir(), 'open-science-unread-task-schema-'))
+
+    const client = createProjectDbClient(storageRoot)
+    disconnect = () => client.$disconnect()
+
+    await ensureProjectSchema(client)
+
+    const columns = await client.$queryRawUnsafe<Array<{ name: string }>>(
+      'PRAGMA table_info("UnreadTaskSession")'
+    )
+    expect(columns.map((column) => column.name)).toEqual(['id', 'sessionId'])
+
+    await client.$executeRawUnsafe(
+      'INSERT INTO "UnreadTaskSession" ("sessionId") VALUES (\'session-1\')'
+    )
+    await expect(
+      client.$executeRawUnsafe(
+        'INSERT INTO "UnreadTaskSession" ("sessionId") VALUES (\'session-1\')'
+      )
+    ).rejects.toThrow()
+  })
+
   it('rejects unsupported File Origin lifecycle states in a fresh database', async () => {
     storageRoot = await mkdtemp(join(tmpdir(), 'open-science-origin-state-constraint-'))
 

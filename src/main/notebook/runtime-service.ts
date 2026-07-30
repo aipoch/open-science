@@ -2,7 +2,7 @@ import { spawn, type ChildProcess } from 'node:child_process'
 import { randomUUID } from 'node:crypto'
 import { existsSync, realpathSync } from 'node:fs'
 import { readFile, realpath, rm, writeFile } from 'node:fs/promises'
-import { isAbsolute, join, relative, resolve, sep } from 'node:path'
+import { isAbsolute, join, relative, resolve, sep, win32 } from 'node:path'
 
 import type {
   NotebookCell,
@@ -59,6 +59,7 @@ import {
   type InstallRequest,
   type InstallResult
 } from './package-manager'
+import { detectManagedRuntimeMutation, protectManagedRuntimeWrites } from './managed-runtime-guard'
 import { NotebookRunRepository, getNotebookRunJsonPath, getRuntimeRoot } from './repository'
 import {
   addRepairRequired,
@@ -69,10 +70,12 @@ import {
   DEFAULT_R_ENV,
   envPrefix,
   isRepairRequired,
+  managedRepairRegistryKey,
   pythonBin,
   pythonReady,
   rBin,
   rScriptBin,
+  readRepairRequiredReason,
   rReady,
   resolveEnvName
 } from './runtime-paths'
@@ -126,12 +129,28 @@ const DEFAULT_LOCALE = 'en-US'
 const DEFAULT_SHELL_TIMEOUT_MS = 120_000
 // Grace period between SIGTERM and SIGKILL when a timed-out shell command ignores the polite signal.
 const SHELL_KILL_GRACE_MS = 2_000
+const REPAIR_QUARANTINE_FAILED = 'REPAIR_QUARANTINE_FAILED'
+
+const isRepairQuarantineError = (error: unknown): boolean =>
+  error instanceof Error && error.message.includes(REPAIR_QUARANTINE_FAILED)
 
 // Composite routing key for a data run, matching the executor's resolveProcessKey: `${kind}:${env}`
 // where kind is the language and env is the resolved env name. python:default-python and
 // python:my-analysis are independent processes/queues; runs on the same key serialize.
 const dataProcessKey = (language: NotebookLanguage, environment?: string): string =>
   `${language === 'r' ? 'r' : 'python'}:${resolveEnvName(language, environment)}`
+
+const externalRepairBlockKey = (language: NotebookLanguage, runtimeId: string): string =>
+  `external:${language}:${runtimeId}`
+
+const repairBlockKey = (
+  language: NotebookLanguage,
+  environment: string,
+  binding: NotebookRuntimeBinding | undefined
+): string =>
+  binding?.source === 'external'
+    ? externalRepairBlockKey(language, binding.runtimeId)
+    : dataProcessKey(language, environment)
 
 // The process key the executor reports through onIdleShutdown/onTerminated(kind, env): `${kind}:${env}`
 // for python/r, bare 'repl' for the env-agnostic control kernel. A missing kind/env (direct callers /
@@ -634,6 +653,28 @@ const buildShellEnv = (
     const value = sourceEnv[key]
     if (value !== undefined) env[key] = value
   }
+  if (platform === 'win32') {
+    const modulePaths: string[] = []
+    const programFiles = sourceEnv.ProgramFiles
+    if (programFiles) {
+      modulePaths.push(win32.join(programFiles, 'WindowsPowerShell', 'Modules'))
+    }
+    const windowsRoot = sourceEnv.SystemRoot ?? sourceEnv.WINDIR
+    if (windowsRoot) {
+      // PowerShell's built-in cmdlets are module-backed. Supplying no PSModulePath makes Windows
+      // PowerShell perform extremely slow first-use discovery on hosted machines, while inheriting
+      // the host value would expose arbitrary user/third-party modules. Preserve only the standard
+      // AllUsers and in-box module locations, excluding CurrentUser and host-specific additions.
+      modulePaths.push(win32.join(windowsRoot, 'System32', 'WindowsPowerShell', 'v1.0', 'Modules'))
+    }
+    if (modulePaths.length > 0) {
+      const controlledModulePath = modulePaths.join(win32.delimiter)
+      env.PSModulePath = controlledModulePath
+      // Windows PowerShell reconstructs PSModulePath at startup and can reinsert CurrentUser paths.
+      // Carry the controlled value through startup so the wrapper can restore it before user code.
+      env.OPEN_SCIENCE_PSMODULEPATH = controlledModulePath
+    }
+  }
   env.OPEN_SCIENCE_HANDOFF_DIR = handoffDir
   return env
 }
@@ -699,6 +740,15 @@ type ShellInvocation = {
 const encodePowerShellCommand = (command: string): string => {
   const encodedCommand = Buffer.from(command, 'utf8').toString('base64')
   const script = [
+    'if ($env:OPEN_SCIENCE_PSMODULEPATH) {',
+    '  $env:PSModulePath = $env:OPEN_SCIENCE_PSMODULEPATH',
+    // Import the common in-box command modules by absolute path so their first use does not scan
+    // the larger AllUsers tree. Keep AllUsers first in PSModulePath so updated or additional
+    // machine modules retain Windows PowerShell's standard precedence for every other command.
+    '  Import-Module "$PSHOME\\Modules\\Microsoft.PowerShell.Management\\Microsoft.PowerShell.Management.psd1" -ErrorAction Stop',
+    '  Import-Module "$PSHOME\\Modules\\Microsoft.PowerShell.Utility\\Microsoft.PowerShell.Utility.psd1" -ErrorAction Stop',
+    "  [System.Environment]::SetEnvironmentVariable('OPEN_SCIENCE_PSMODULEPATH', $null, [System.EnvironmentVariableTarget]::Process)",
+    '}',
     '$openScienceUtf8 = [System.Text.UTF8Encoding]::new($false)',
     '[Console]::OutputEncoding = $openScienceUtf8',
     '$OutputEncoding = $openScienceUtf8',
@@ -742,15 +792,20 @@ const resolveShellInvocation = (
       }
     : { executable: 'sh', args: ['-c', command] }
 
-// Returns true when it delegated the tree teardown to the Windows-specific terminator. The dependency
-// is injectable to keep this platform boundary covered without needing a Windows host in unit tests.
-const terminateShellOnTimeout = (
+// Returns true after the Windows-specific tree terminator settles. Waiting prevents the service from
+// reporting completion while taskkill still holds workspace files open. The dependency is injectable
+// to keep this platform boundary covered without needing a Windows host in unit tests.
+const terminateShellOnTimeout = async (
   child: ChildProcess,
   platform: NodeJS.Platform = process.platform,
   terminateTree: (process: ChildProcess) => Promise<unknown> = terminateProcessTree
-): boolean => {
+): Promise<boolean> => {
   if (platform !== 'win32') return false
-  void terminateTree(child)
+  try {
+    await terminateTree(child)
+  } catch {
+    // Preserve runShellCommand's never-reject contract even when the best-effort terminator fails.
+  }
   return true
 }
 
@@ -764,11 +819,18 @@ const runShellCommand = (options: {
   command: string
   cwd: string
   handoffDir: string
+  runtimeRoot: string
+  platform?: NodeJS.Platform
   timeoutMs?: number
 }): Promise<NotebookShellResult> =>
   new Promise((resolve) => {
     const timeoutMs = options.timeoutMs ?? DEFAULT_SHELL_TIMEOUT_MS
-    const invocation = resolveShellInvocation(options.command)
+    const platform = options.platform ?? process.platform
+    const invocation = protectManagedRuntimeWrites(
+      resolveShellInvocation(options.command, platform),
+      options.runtimeRoot,
+      platform
+    )
     const child = spawn(invocation.executable, invocation.args, {
       cwd: options.cwd,
       env: buildShellEnv(options.handoffDir)
@@ -782,6 +844,10 @@ const runShellCommand = (options: {
     // running (e.g. SIGTERM-ignoring) process from a killed one — gate the SIGKILL escalation below
     // on this instead.
     let exited = false
+    // Once the timer fires, the timeout result owns settlement. In particular, taskkill causes an
+    // exit event before its promise resolves on Windows; that event must not be persisted as a normal
+    // failed exit instead of the timeout that initiated termination.
+    let timedOut = false
 
     const finish = (result: NotebookShellResult): void => {
       if (settled) return
@@ -791,33 +857,32 @@ const runShellCommand = (options: {
     }
 
     const timeoutTimer = setTimeout(() => {
-      if (terminateShellOnTimeout(child)) {
-        // child.kill() only reaches the PowerShell parent on Windows; a command it launched may
-        // survive. taskkill /T /F reaps the full tree while this promise still settles immediately.
-        finish({
-          stdout,
-          stderr:
-            stderr +
-            `${stderr && !stderr.endsWith('\n') ? '\n' : ''}Shell command timed out after ${timeoutMs}ms and was killed.`,
-          exitCode: null
-        })
-        return
-      }
-
-      // Escalate SIGTERM -> SIGKILL if the process ignores the polite signal; the promise itself
-      // settles immediately so a wedged process can never hang the caller past the timeout.
-      child.kill('SIGTERM')
-      const killTimer = setTimeout(() => {
-        if (!exited) child.kill('SIGKILL')
-      }, SHELL_KILL_GRACE_MS)
-      child.once('exit', () => clearTimeout(killTimer))
-
-      finish({
+      timedOut = true
+      const timeoutResult: NotebookShellResult = {
         stdout,
         stderr:
           stderr +
           `${stderr && !stderr.endsWith('\n') ? '\n' : ''}Shell command timed out after ${timeoutMs}ms and was killed.`,
         exitCode: null
+      }
+
+      void terminateShellOnTimeout(child).then((usedWindowsTerminator) => {
+        if (usedWindowsTerminator) {
+          // child.kill() only reaches the PowerShell parent on Windows; taskkill /T /F reaps the
+          // full tree. Settle only after it completes so callers can safely inspect or remove cwd.
+          finish(timeoutResult)
+          return
+        }
+
+        // Escalate SIGTERM -> SIGKILL if the process ignores the polite signal; the promise itself
+        // settles immediately so a wedged process can never hang the caller past the timeout.
+        child.kill('SIGTERM')
+        const killTimer = setTimeout(() => {
+          if (!exited) child.kill('SIGKILL')
+        }, SHELL_KILL_GRACE_MS)
+        child.once('exit', () => clearTimeout(killTimer))
+
+        finish(timeoutResult)
       })
     }, timeoutMs)
 
@@ -830,11 +895,11 @@ const runShellCommand = (options: {
       stderr += chunk
     })
     child.once('error', (error) => {
-      finish({ stdout, stderr: stderr || error.message, exitCode: null })
+      if (!timedOut) finish({ stdout, stderr: stderr || error.message, exitCode: null })
     })
     child.once('exit', (code) => {
       exited = true
-      finish({ stdout, stderr, exitCode: code })
+      if (!timedOut) finish({ stdout, stderr, exitCode: code })
     })
   })
 
@@ -1016,6 +1081,9 @@ class NotebookRuntimeService {
   // remove/startup maintenance keep refusing by real prefix (blockedPrefixes). Cleared the same way:
   // a later restart re-runs recovery and, once the pid is gone/verifiable, reconciles the journal entry.
   private readonly blockedRuntimeIds = new Set<string>()
+  // Immediate in-process gate for a protected-identity failure. It is armed before kernel termination
+  // and before the durable registry write, so disk-full/permission errors cannot reopen the damaged env.
+  private readonly repairBlockedEnvs = new Set<string>()
   // Subsets populated specifically by startup recovery. Unlike same-process live-unconfirmed blocks,
   // these are refreshable: during a data-root relaunch the prior app can finish and durably remove its
   // journal record after this process first observed it. A later recovery pass rebuilds these sets from
@@ -1180,6 +1248,29 @@ class NotebookRuntimeService {
     return this.defaultEnvNameFor(language)
   }
 
+  // Protected managed repair state is keyed by env name, while repairable interrupted installs are
+  // scoped to (env, language). Releases before that migration used the discovered interpreter id, so
+  // include raw/canonical paths to keep legacy quarantine fail-closed.
+  private repairRegistryKeys(
+    language: NotebookLanguage,
+    env: string,
+    binding: InternalRuntimeBinding | undefined,
+    runtimeRootDir: string
+  ): string[] {
+    if (binding?.source === 'external') return [binding.runtimeId]
+    const keys = new Set<string>([env, managedRepairRegistryKey(env, language)])
+    if (binding?.source === 'managed') keys.add(binding.runtimeId)
+    const prefix = envPrefix(runtimeRootDir, env)
+    const interpreter = language === 'r' ? rBin(prefix) : pythonBin(prefix)
+    keys.add(interpreter)
+    try {
+      keys.add(realpathSync(interpreter))
+    } catch {
+      // The runtime may not be materialized yet; the raw interpreter path still covers old markers.
+    }
+    return [...keys]
+  }
+
   private environmentCaptureTarget(
     language: NotebookLanguage,
     environmentName: string,
@@ -1286,7 +1377,17 @@ class NotebookRuntimeService {
     // An interrupted install left this runtime possibly half-applied (crash recovery flagged it): mark
     // the binding repair-required so execution refuses rather than silently trusting it. A completed
     // re-install of this runtime clears the flag (see managePackages).
-    if (isRepairRequired(getRuntimeRoot(this.options.dataRoot), runtimeId)) {
+    const repairKey =
+      binding.source === 'external'
+        ? binding.runtimeId
+        : (binding.envName ?? this.defaultEnvNameFor(language))
+    const runtimeRoot = getRuntimeRoot(this.options.dataRoot)
+    const repairRequired =
+      isRepairRequired(runtimeRoot, repairKey) ||
+      (binding.source === 'managed' &&
+        isRepairRequired(runtimeRoot, managedRepairRegistryKey(repairKey, language))) ||
+      (binding.source === 'managed' && isRepairRequired(runtimeRoot, binding.runtimeId))
+    if (repairRequired) {
       return { ...binding, status: 'unavailable', reason: 'repair-required' }
     }
     return binding
@@ -1719,6 +1820,14 @@ class NotebookRuntimeService {
     const prefixBlocked =
       !isExternal &&
       this.isPrefixRecoveryBlocked(envPrefix(getRuntimeRoot(this.options.dataRoot), env))
+    // Managed repair state is keyed by the canonical conda env name, so an explicit binding and an
+    // unbound/default session cannot refer to the same prefix under two different registry keys.
+    // External runtimes have no app-owned prefix and remain keyed by their discovered runtime id.
+    const repairRegistryRoot = getRuntimeRoot(this.options.dataRoot)
+    const repairKeys = this.repairRegistryKeys(cell.language, env, binding, repairRegistryRoot)
+    const repairRequired =
+      this.repairBlockedEnvs.has(repairBlockKey(cell.language, env, binding)) ||
+      repairKeys.some((key) => isRepairRequired(repairRegistryRoot, key))
     if (
       (binding?.runtimeId && this.blockedRuntimeIds.has(binding.runtimeId)) ||
       prefixBlocked ||
@@ -1733,6 +1842,11 @@ class NotebookRuntimeService {
         `RUNTIME_RECOVERY_BLOCKED: the bound ${cell.language} runtime is recovering from an interrupted ` +
           'operation whose worker process could not be confirmed stopped, so running it now could ' +
           'corrupt it. Restart the app to re-check and recover it before running cells.'
+      )
+    } else if (repairRequired) {
+      interpreterResolveError = new Error(
+        `RUNTIME_REPAIR_REQUIRED: the bound ${cell.language} runtime failed a protected-package ` +
+          'integrity check. Run the runtime Repair workflow before executing another cell.'
       )
     } else if (binding && (binding.status ?? 'active') !== 'active') {
       // No silent fallback: a disabled/unavailable bound runtime FAILS the run with an actionable
@@ -1782,6 +1896,18 @@ class NotebookRuntimeService {
       }
     }
 
+    const blockedMutation = detectManagedRuntimeMutation({
+      source: cell.code,
+      surface: cell.language,
+      runtimeRoot: session.runtimeRoot,
+      cwd: session.cwd
+    })
+    if (blockedMutation && interpreterResolveError === undefined) {
+      interpreterResolveError = new Error(
+        `MANAGED_RUNTIME_MUTATION_BLOCKED: ${blockedMutation.message}`
+      )
+    }
+
     // Mark the cell as running before execution so the preview can show immediate progress.
     session.activeRunId = runId
     cell.status = 'running'
@@ -1820,11 +1946,15 @@ class NotebookRuntimeService {
       )
     }
 
-    // Kernel-level 'running' status for the live run (§4 [running]); clear any stale terminated flag
-    // for this process key so a completing run of it can settle back to 'idle'. No notify: the run
+    // A policy/binding/interpreter rejection never reaches the kernel, so preserve its current
+    // lifecycle status instead of briefly publishing a false 'running'. For a viable dispatch, clear
+    // any stale terminated flag so a completing run can settle back to 'idle'. No notify: the run
     // record's own appendRun notify (in persistRun below) surfaces the fresh status to the renderer.
-    session.terminatedKernels.delete(processKey)
-    await this.persistKernelStatus(session, 'running', processKey)
+    const kernelMarkedRunning = interpreterResolveError === undefined
+    if (kernelMarkedRunning) {
+      session.terminatedKernels.delete(processKey)
+      await this.persistKernelStatus(session, 'running', processKey)
+    }
 
     // Every execution result, including errors, is normalized into data for agent analysis. The
     // connector RPC connection is NOT threaded here: data kernels (python/r) have no host.mcp and no
@@ -1832,11 +1962,28 @@ class NotebookRuntimeService {
     // hand data to python/r through the ./handoff channel. The execute runs as a shared reader of the
     // per-ENV lock, so it can never overlap an install into that same env (§5, G2/D5).
     let executedOnLiveKernel = true
+    let reachedExecutor = false
     const { run } = await this.persistRun(
       session,
       runningRun,
       () =>
         this.envLock.withRun(env, async () => {
+          // The run may have waited behind an installer after computing interpreterResolveError above.
+          // Re-read the repair gate only after the shared run lease is acquired so a transaction that
+          // quarantined this env while we waited cannot release the lock and let a stale decision spawn it.
+          const repairRequiredAfterLock =
+            this.repairBlockedEnvs.has(repairBlockKey(cell.language, env, binding)) ||
+            repairKeys.some((key) => isRepairRequired(repairRegistryRoot, key))
+          if (repairRequiredAfterLock) {
+            executedOnLiveKernel = false
+            return errorToExecutionResult(
+              new Error(
+                `RUNTIME_REPAIR_REQUIRED: the bound ${cell.language} runtime failed a protected-package ` +
+                  'integrity check. Run the runtime Repair workflow before executing another cell.'
+              ),
+              cwdBefore
+            )
+          }
           // A failed interpreter resolve (external overlay build) never reached a live kernel; surface
           // it through the same normalization the executor uses so it becomes a failed run, not a throw.
           if (interpreterResolveError !== undefined) {
@@ -1860,6 +2007,7 @@ class NotebookRuntimeService {
             executedOnLiveKernel = false
             return errorToExecutionResult(error, cwdBefore)
           }
+          reachedExecutor = true
           const result = await session.executor
             .execute({
               code: cell.code,
@@ -1926,12 +2074,13 @@ class NotebookRuntimeService {
       }
     )
 
-    // A run that actually reached the executor (rather than failing to even start) proves the kernel
-    // is alive — settle back to 'idle', clearing a stale 'terminated'/'restarting' left by an idle
-    // shutdown or unrelated restart, the same way restart() itself settles back to 'idle'. Skip it
-    // when this run's kernel was lost mid-flight (crash/hard-timeout): its 'terminated' status must
-    // survive until the next clean run of that process key.
-    if (executedOnLiveKernel && !session.terminatedKernels.has(processKey)) {
+    // A run that completed through the executor proves the kernel is alive. A dispatch that was
+    // marked running but failed during a post-lock preflight never touched the kernel and must also
+    // settle back to idle. Preserve a mid-flight crash/hard-timeout's explicit terminated status.
+    if (
+      !session.terminatedKernels.has(processKey) &&
+      (executedOnLiveKernel || (kernelMarkedRunning && !reachedExecutor))
+    ) {
       await this.markKernelStatusIdle(session, processKey)
     }
 
@@ -2012,35 +2161,50 @@ class NotebookRuntimeService {
     // token} the repl kernel captured at its own spawn time.
     const mcpRpc = await this.resolveMcpRpcConnection()
 
-    // Kernel-level 'running' status for the live control run (§4 [running]); same rationale as
-    // runCellExclusive. The repl kernel takes no env lock — installs only ever target python/r envs.
-    session.terminatedKernels.delete('repl')
-    await this.persistKernelStatus(session, 'running', 'repl')
+    const blockedMutation = detectManagedRuntimeMutation({
+      source: request.code,
+      surface: 'repl',
+      runtimeRoot: session.runtimeRoot,
+      cwd: session.cwd
+    })
+    // Only a request that reaches the live control process may transition its kernel to `running`.
+    // A source-policy rejection still records a failed run below, but must leave the live kernel state
+    // untouched (including a prior `terminated` status).
+    if (!blockedMutation) {
+      session.terminatedKernels.delete('repl')
+      await this.persistKernelStatus(session, 'running', 'repl')
+    }
 
-    let executedOnLiveKernel = true
+    let executedOnLiveKernel = !blockedMutation
     const { result } = await this.persistRun(session, runningRun, () =>
-      session.executor
-        .execute({
-          code: request.code,
-          kind: 'repl',
-          cwd: session.cwd,
-          notebookSessionRoot: session.notebookSessionRoot,
-          dataRoot: session.dataRoot,
-          runtimeRoot: session.runtimeRoot,
-          protectedDirs: [getAppClaudeConfigDir(this.options.configRoot)],
-          timeoutMs: request.timeoutMs,
-          mcpRpcEndpoint: mcpRpc?.endpoint,
-          mcpRpcToken: mcpRpc?.token,
-          // Grant-scope identity for host.compute (This conversation / This project). The executor
-          // forwards these into the repl kernel's spawn env; only the control path carries them.
-          sessionId: session.sessionId,
-          projectName: session.projectName,
-          inputRunLeaseId: request.inputRunLeaseId
-        })
-        .catch((error: unknown) => {
-          executedOnLiveKernel = false
-          return errorToExecutionResult(error, session.cwd)
-        })
+      (blockedMutation
+        ? Promise.resolve(
+            errorToExecutionResult(
+              new Error(`MANAGED_RUNTIME_MUTATION_BLOCKED: ${blockedMutation.message}`),
+              session.cwd
+            )
+          )
+        : session.executor.execute({
+            code: request.code,
+            kind: 'repl',
+            cwd: session.cwd,
+            notebookSessionRoot: session.notebookSessionRoot,
+            dataRoot: session.dataRoot,
+            runtimeRoot: session.runtimeRoot,
+            protectedDirs: [getAppClaudeConfigDir(this.options.configRoot)],
+            timeoutMs: request.timeoutMs,
+            mcpRpcEndpoint: mcpRpc?.endpoint,
+            mcpRpcToken: mcpRpc?.token,
+            // Grant-scope identity for host.compute (This conversation / This project). The executor
+            // forwards these into the repl kernel's spawn env; only the control path carries them.
+            sessionId: session.sessionId,
+            projectName: session.projectName,
+            inputRunLeaseId: request.inputRunLeaseId
+          })
+      ).catch((error: unknown) => {
+        executedOnLiveKernel = false
+        return errorToExecutionResult(error, session.cwd)
+      })
     )
 
     // Same live-kernel signal as runCellExclusive: a control run that reached the executor settles the
@@ -2097,12 +2261,28 @@ class NotebookRuntimeService {
     const { result } = await this.persistRun(session, runningRun, async () => {
       const workingFileObservation = await startWorkingFileObservation(session)
       let workingFiles: NotebookWorkingFile[] = []
-      const shellResult = await runShellCommand({
-        command: request.command,
-        cwd: session.cwd,
-        handoffDir: join(session.notebookSessionRoot, 'handoff'),
-        timeoutMs: request.timeoutMs
-      }).finally(async () => {
+      const blockedMutation = detectManagedRuntimeMutation({
+        source: request.command,
+        surface: this.options.platform === 'win32' ? 'powershell' : 'bash',
+        runtimeRoot: session.runtimeRoot,
+        cwd: session.cwd
+      })
+      const shellResult = await (
+        blockedMutation
+          ? Promise.resolve<NotebookShellResult>({
+              stdout: '',
+              stderr: `MANAGED_RUNTIME_MUTATION_BLOCKED: ${blockedMutation.message}`,
+              exitCode: 1
+            })
+          : runShellCommand({
+              command: request.command,
+              cwd: session.cwd,
+              handoffDir: join(session.notebookSessionRoot, 'handoff'),
+              runtimeRoot: session.runtimeRoot,
+              platform: this.options.platform,
+              timeoutMs: request.timeoutMs
+            })
+      ).finally(async () => {
         workingFiles = await workingFileObservation.finish()
       })
       // No status/traceback classification for the caller-facing NotebookShellResult (the shell is
@@ -2482,6 +2662,32 @@ class NotebookRuntimeService {
       : resolveEnvName(request.language, undefined)
     const runtimeRoot = getRuntimeRoot(this.options.dataRoot)
 
+    // A protected interpreter identity change is not repairable by installing another ordinary
+    // package. Doing so would let the package manager capture the already-replaced r-base as its new
+    // baseline and then clear quarantine after an unrelated successful install. Only the explicit UI
+    // Runtime Reset rebuilds and verifies the environment before clearing this stronger marker.
+    const protectedRepairRequired =
+      this.repairBlockedEnvs.has(repairBlockKey(request.language, envName, binding)) ||
+      this.repairRegistryKeys(request.language, envName, binding, runtimeRoot).some((key) => {
+        const reason = readRepairRequiredReason(runtimeRoot, key)
+        return (
+          reason === 'protected-identity-change' ||
+          (reason === 'legacy-unknown' && binding?.source !== 'external')
+        )
+      })
+    if (protectedRepairRequired) {
+      return {
+        ok: false,
+        needsRestart: false,
+        repairRequired: true,
+        log: '',
+        error:
+          `RUNTIME_REPAIR_REQUIRED: the ${request.language} runtime's protected interpreter identity ` +
+          'changed. Use Repair/Reset in Settings → Runtimes to rebuild and verify it before installing ' +
+          'packages.'
+      }
+    }
+
     // Gate the install on that binding. An EXTERNAL binding is read-only unless the user turned on
     // "Allow package install" for THAT runtime in Settings (per-env installAuthorized) — then pip
     // installs into the user's OWN interpreter (installs land in the user's env, not app storage), and
@@ -2489,8 +2695,8 @@ class NotebookRuntimeService {
     // prefix. This replaces the removed pre-v4 RuntimeSelection gate.
     let interpreter: { command: string; args?: string[] } | undefined
     if (binding?.source === 'external') {
-      // repair-required is installable: re-running the install to completion is exactly how the user
-      // clears it. Only a genuinely disabled/missing binding refuses the install.
+      // An interrupted-install repair marker remains installable: re-running the authorized install
+      // to completion clears it. The stronger protected-identity marker was refused above.
       const blocked =
         (binding.status ?? 'active') !== 'active' && binding.reason !== 'repair-required'
       if (blocked) {
@@ -2544,9 +2750,10 @@ class NotebookRuntimeService {
     } else if (binding) {
       // A MANAGED binding (app-managed default or an agent-created named env). Same no-silent-fallback
       // guarantee as execute() and the external path: a disabled/unavailable managed binding refuses the
-      // install rather than quietly installing into a different env. repair-required stays installable —
-      // completing the install is how the user clears it. Without this, disabling a managed runtime
-      // blocked execution but still let manage_packages install into it (the gate was external-only).
+      // install rather than quietly installing into a different env. An interrupted-install marker
+      // stays installable; the stronger protected-identity marker was refused above. Without this,
+      // disabling a managed runtime blocked execution but still let manage_packages install into it
+      // (the gate was external-only).
       const blocked =
         (binding.status ?? 'active') !== 'active' && binding.reason !== 'repair-required'
       if (blocked) {
@@ -2608,9 +2815,14 @@ class NotebookRuntimeService {
 
     // Journal the install so a process death mid-install (killed conda/pip, half-applied packages) is
     // reconciled at next startup by flagging this runtime repair-required — an interrupted install is
-    // never silently assumed to have succeeded. runtimeId is the bound runtime's identity (its envId)
-    // so recovery flags exactly this env. Best-effort journal I/O; cleared in the finally on completion.
-    const repairRuntimeId = binding?.runtimeId ?? envName
+    // never silently assumed to have succeeded. External runtimes use their runtime identity; managed
+    // interrupted installs use an (env, language) key so repairing Python cannot release R in a shared
+    // prefix. Best-effort journal I/O; cleared in the finally on completion.
+    const repairRuntimeId = binding?.source === 'external' ? binding.runtimeId : envName
+    const repairMarkerKey =
+      binding?.source === 'external'
+        ? repairRuntimeId
+        : managedRepairRegistryKey(envName, request.language)
     // targetPath is the app-managed prefix ONLY for a managed/default install — an EXTERNAL install
     // writes the user's own env (outside runtimeRoot), so recording the default prefix here would make
     // recovery wrongly clean/block the unrelated managed default. Recovery then blocks an external
@@ -2648,10 +2860,11 @@ class NotebookRuntimeService {
         await journal.begin({
           operationId,
           kind: 'install',
-          runtimeId: repairRuntimeId,
+          runtimeId: repairMarkerKey,
           phase: `install-${request.language}`,
           startedAt: Date.now(),
-          targetPath: journalTarget
+          targetPath: journalTarget,
+          repairReason: 'interrupted-install'
         })
         begun = true
         const mutation = {
@@ -2664,6 +2877,7 @@ class NotebookRuntimeService {
         // looking clean even though package state may have changed.
         await this.environmentStateTracker.markPackageMutationDirty(environmentTarget, mutation)
         let installResult: InstallResult | undefined
+        let deferredQuarantineError: Error | undefined
         try {
           installResult = await this.installPackagesImpl(pinnedRequest, {
             storageRoot: this.options.dataRoot,
@@ -2733,7 +2947,51 @@ class NotebookRuntimeService {
                   'The installer exited successfully, but the refreshed environment inventory does not show the requested package(s).'
             }
           }
+          // Publish and enforce the repair gate before releasing the environment install lock. A
+          // failed conda transaction may already have replaced r-base; no queued work may observe the
+          // damaged prefix between the transaction finishing and quarantine becoming durable.
+          if (installResult?.repairRequired) {
+            // Upgrade the retained operation evidence BEFORE publishing the registry marker. If the
+            // registry write fails, startup recovery must replay this exact stronger reason instead of
+            // treating the changed interpreter as a repairable interrupted install. Keep the record on
+            // either failure; only a fully durable quarantine lets the normal finally clear it.
+            retainForRecovery = true
+            let journalUpdateError: unknown
+            try {
+              await journal.update(operationId, {
+                runtimeId: repairRuntimeId,
+                repairReason: 'protected-identity-change'
+              })
+            } catch (error) {
+              journalUpdateError = error
+            }
+            // Even when the journal cannot be upgraded (ENOSPC/EACCES/I/O), publish the in-process
+            // gate, terminate live kernels, and attempt the independent repair registry marker before
+            // the install lock is released. The registry then remains the durable strong reason; the
+            // retained journal is additional recovery evidence rather than the only active guard.
+            await this.quarantineRuntimeForRepair(
+              repairRuntimeId,
+              request.language,
+              envName,
+              runtimeRoot,
+              binding?.source !== 'external'
+            )
+            if (journalUpdateError) {
+              deferredQuarantineError = new Error(
+                `${REPAIR_QUARANTINE_FAILED}: the runtime was quarantined, but its operation journal ` +
+                  `could not be upgraded to the protected-identity reason. ${
+                    journalUpdateError instanceof Error
+                      ? journalUpdateError.message
+                      : String(journalUpdateError)
+                  }`,
+                { cause: journalUpdateError }
+              )
+            } else {
+              retainForRecovery = false
+            }
+          }
         }
+        if (deferredQuarantineError) throw deferredQuarantineError
         return installResult
       })
     } catch (error) {
@@ -2752,6 +3010,7 @@ class NotebookRuntimeService {
       }
       // A recording failure whose installer couldn't be confirmed stopped: keep the sidecar + journal
       // record so recovery blocks (a worker may still be writing) instead of clearing the evidence.
+      if (isRepairQuarantineError(error)) retainForRecovery = true
       if (isChildUnconfirmedError(error)) {
         retainForRecovery = true
         // Block IN THIS PROCESS now, not just via the retained journal entry (which only guards the next
@@ -2771,15 +3030,44 @@ class NotebookRuntimeService {
         await journal.complete(operationId).catch(() => undefined)
       }
     }
-    // A completed install of this runtime clears any prior repair-required flag: re-running the install
-    // to completion IS the repair, so the runtime returns to a known-good state. Clearing the disk flag
-    // alone isn't enough — bindings that were resolved while repair-required (in THIS and OTHER sessions)
-    // are still held in memory as unavailable/repair-required and would keep refusing execution until a
-    // rebind/reload. Restore every matching binding to active and refresh its UI so the repaired runtime
-    // is usable immediately, everywhere.
+    // A completed install clears an interrupted-install repair flag (a protected-identity flag was
+    // refused before any installer ran). Clearing the disk flag alone isn't enough — bindings that were
+    // resolved while repair-required (in THIS and OTHER sessions) are still held in memory as
+    // unavailable/repair-required and would keep refusing execution until a rebind/reload. Restore every
+    // matching binding to active and refresh its UI so the repaired runtime is usable immediately.
     if (result.ok) {
-      clearRepairRequired(runtimeRoot, repairRuntimeId)
-      this.restoreRepairedBindings(repairRuntimeId)
+      const managedRepair = binding?.source !== 'external'
+      clearRepairRequired(runtimeRoot, repairMarkerKey)
+      // A pre-canonicalization registry may still key this same managed prefix by an interpreter path.
+      // Clear aliases only for the repaired language. A successful Python install must not release an R
+      // interrupted-install marker (or vice versa) merely because both bindings share one Conda prefix.
+      if (managedRepair) {
+        const legacyAliases = new Set(
+          this.repairRegistryKeys(request.language, envName, binding, runtimeRoot)
+        )
+        legacyAliases.delete(envName)
+        legacyAliases.delete(repairMarkerKey)
+        for (const session of this.sessions.values()) {
+          for (const [language, candidate] of session.runtimeBindings) {
+            if (
+              language === request.language &&
+              candidate.source === 'managed' &&
+              this.resolveRunEnv(session, language) === envName
+            ) {
+              legacyAliases.add(candidate.runtimeId)
+            }
+          }
+        }
+        for (const alias of legacyAliases) {
+          if (readRepairRequiredReason(runtimeRoot, alias) === 'interrupted-install') {
+            clearRepairRequired(runtimeRoot, alias)
+          }
+        }
+      }
+      if (!managedRepair) {
+        this.repairBlockedEnvs.delete(externalRepairBlockKey(request.language, repairRuntimeId))
+      }
+      await this.restoreRepairedBindings(repairRuntimeId, request.language, envName, managedRepair)
     }
 
     // R installs/uninstalls don't take effect in a live R session (attached namespaces, held DLLs), so
@@ -2853,9 +3141,11 @@ class NotebookRuntimeService {
         // is still writing. Mirrors the 'create' guard; keyed by the same real prefix.
         this.assertPrefixRecoverable(envPrefix(getRuntimeRoot(this.options.dataRoot), name))
         // Serialize the rm -rf against a concurrent install into the same env (design D4 / review A).
-        return this.envLock.withInstall(name, async () => ({
-          environments: manager.removeEnvironment(name)
-        }))
+        return this.envLock.withInstall(name, async () => {
+          const environments = manager.removeEnvironment(name)
+          this.clearRemovedManagedEnvironmentRepair(name)
+          return { environments }
+        })
       }
     }
   }
@@ -2872,6 +3162,28 @@ class NotebookRuntimeService {
       }
     }
     return false
+  }
+
+  // Removing an agent-created prefix is the recovery path for a protected named environment. Release
+  // its durable/process-local quarantine only AFTER removeEnvironment succeeds; clearing it earlier
+  // would make a failed deletion look repaired. A later create of the same name then starts from a new
+  // prefix and can be rebound normally.
+  private clearRemovedManagedEnvironmentRepair(envName: string): void {
+    const runtimeRoot = getRuntimeRoot(this.options.dataRoot)
+    clearRepairRequired(runtimeRoot, envName)
+    for (const language of ['python', 'r'] as const) {
+      clearRepairRequired(runtimeRoot, managedRepairRegistryKey(envName, language))
+      this.repairBlockedEnvs.delete(dataProcessKey(language, envName))
+    }
+    // Releases before env-name canonicalization could persist an interpreter path instead. Once the
+    // owning prefix has been deleted, those aliases are stale and safe to discard as well.
+    for (const session of this.sessions.values()) {
+      for (const [language, binding] of session.runtimeBindings) {
+        if (binding.source === 'managed' && this.resolveRunEnv(session, language) === envName) {
+          clearRepairRequired(runtimeRoot, binding.runtimeId)
+        }
+      }
+    }
   }
 
   // Shuts down one session executor and removes its in-memory routing state.
@@ -2986,6 +3298,48 @@ class NotebookRuntimeService {
   clearRuntimeRecoveryBlock(runtimeId: string): void {
     this.blockedRuntimeIds.delete(runtimeId)
     this.startupBlockedRuntimeIds.delete(runtimeId)
+  }
+
+  // Called only after the explicit UI Runtime Reset has rebuilt and verified the managed default env.
+  // This is deliberately separate from managePackages(): an ordinary install may clear an
+  // interrupted-install marker, but it must never release a protected-identity quarantine.
+  async completeRuntimeRepair(language: NotebookLanguage): Promise<void> {
+    const runtimeRoot = getRuntimeRoot(this.options.dataRoot)
+    const envName = this.defaultEnvNameFor(language)
+    const registryKeys = new Set<string>()
+
+    for (const affectedLanguage of ['python', 'r'] as const) {
+      for (const key of this.repairRegistryKeys(
+        affectedLanguage,
+        envName,
+        undefined,
+        runtimeRoot
+      )) {
+        registryKeys.add(key)
+      }
+    }
+
+    // Older registries and loaded sessions may key this prefix by a discovered interpreter runtimeId.
+    // Clear those aliases too before restoring and persisting every affected binding. Keep the
+    // canonical env-name marker until LAST: if clearing an alias fails, the durable primary gate remains
+    // armed across restart and the process-local gate below is not released.
+    for (const session of this.sessions.values()) {
+      for (const [boundLanguage, binding] of session.runtimeBindings) {
+        if (
+          binding.source === 'managed' &&
+          this.resolveRunEnv(session, boundLanguage) === envName
+        ) {
+          registryKeys.add(binding.runtimeId)
+        }
+      }
+    }
+    registryKeys.delete(envName)
+    for (const key of registryKeys) clearRepairRequired(runtimeRoot, key)
+    clearRepairRequired(runtimeRoot, envName)
+    for (const affectedLanguage of ['python', 'r'] as const) {
+      this.repairBlockedEnvs.delete(dataProcessKey(affectedLanguage, envName))
+    }
+    await this.restoreRepairedBindings(envName, language, envName, true, true)
   }
 
   // Releases ONE prefix from the global corrupt-journal write barrier. Called by a force Reset (via the
@@ -3104,8 +3458,20 @@ class NotebookRuntimeService {
       // so a bound session refuses it (no silent success). The flag is cleared when a fresh install of
       // that runtime completes (managePackages), which is how the user repairs it.
       markRepairRequired: async (record) => {
-        if (record.runtimeId)
-          addRepairRequired(getRuntimeRoot(this.options.dataRoot), record.runtimeId)
+        if (!record.runtimeId) return
+        const reason = record.repairReason ?? 'interrupted-install'
+        const language =
+          record.phase === 'install-r'
+            ? 'r'
+            : record.phase === 'install-python'
+              ? 'python'
+              : undefined
+        const alreadyScoped = /^managed:(?:python|r):/u.test(record.runtimeId)
+        const repairKey =
+          reason === 'protected-identity-change' || !record.targetPath || !language || alreadyScoped
+            ? record.runtimeId
+            : managedRepairRegistryKey(record.runtimeId, language)
+        addRepairRequired(getRuntimeRoot(this.options.dataRoot), repairKey, reason)
       },
       // liveness 'unknown' (couldn't confirm the child died — e.g. Windows with a recorded start time):
       // a possibly-live orphan may still be writing this operation's env prefix. Block that PREFIX while
@@ -3257,6 +3623,7 @@ class NotebookRuntimeService {
 
     return new NotebookKernelExecutor({
       ...resolveDefaultExecutorOptions(),
+      platform: this.options.platform,
       onIdleShutdown: (kind, env) => {
         void this.handleKernelIdleShutdown(sessionId, projectName, kind, env)
       },
@@ -3492,14 +3859,26 @@ class NotebookRuntimeService {
   // After a repair install clears the repair-required flag, bring every in-memory binding for that
   // runtime (across ALL sessions) back to active — they were held unavailable/repair-required from when
   // they were resolved, and clearing only the disk flag would leave them refusing execution until a
-  // rebind. Persisted state needs no rewrite: it stores the binding without the transient repair status
-  // (that status is recomputed from the disk flag on reload, which is now cleared). Notifies each
-  // touched session's UI so the runtime shows usable again immediately.
-  private restoreRepairedBindings(runtimeId: string): void {
+  // rebind. Persist every restored binding before notifying its session, so both the live UI and a later
+  // reload observe the active state after the durable marker is cleared.
+  private async restoreRepairedBindings(
+    runtimeId: string,
+    repairedLanguage: NotebookLanguage,
+    envName: string,
+    managedRepair: boolean,
+    crossLanguageRepair = false
+  ): Promise<void> {
+    const changedSessions: RuntimeSession[] = []
     for (const session of this.sessions.values()) {
       let changed = false
       for (const [language, binding] of session.runtimeBindings) {
-        if (binding.runtimeId === runtimeId && binding.reason === 'repair-required') {
+        const targetMatches =
+          binding.source === 'external'
+            ? !managedRepair && language === repairedLanguage && binding.runtimeId === runtimeId
+            : managedRepair &&
+              (crossLanguageRepair || language === repairedLanguage) &&
+              this.resolveRunEnv(session, language) === envName
+        if (targetMatches && binding.reason === 'repair-required') {
           session.runtimeBindings.set(language, {
             ...binding,
             status: 'active',
@@ -3508,7 +3887,69 @@ class NotebookRuntimeService {
           changed = true
         }
       }
-      if (changed) this.notifyNotebookChanged(session)
+      if (changed) changedSessions.push(session)
+    }
+    for (const session of changedSessions) {
+      await this.persistRuntimeBindings(session)
+      this.notifyNotebookChanged(session)
+    }
+  }
+
+  // A protected interpreter identity changed after an installer transaction despite the approved
+  // dry-run. Persist the repair gate before returning, stop every live process using that env, and
+  // mark matching bindings unavailable so neither the current session nor another open session can
+  // execute the compromised runtime before Repair rebuilds it.
+  private async quarantineRuntimeForRepair(
+    runtimeId: string,
+    language: NotebookLanguage,
+    envName: string,
+    runtimeRoot: string,
+    managedRuntime: boolean
+  ): Promise<void> {
+    const affectedBindings = new Set<RuntimeSession>()
+    const affectedLanguages: readonly NotebookLanguage[] = managedRuntime
+      ? ['python', 'r']
+      : [language]
+    if (managedRuntime) {
+      for (const affectedLanguage of affectedLanguages) {
+        this.repairBlockedEnvs.add(dataProcessKey(affectedLanguage, envName))
+      }
+    } else {
+      this.repairBlockedEnvs.add(externalRepairBlockKey(language, runtimeId))
+    }
+    try {
+      for (const session of this.sessions.values()) {
+        for (const affectedLanguage of affectedLanguages) {
+          const binding = session.runtimeBindings.get(affectedLanguage)
+          const sessionEnv = this.resolveRunEnv(session, affectedLanguage)
+          const targetMatches = managedRuntime
+            ? binding?.source !== 'external' && sessionEnv === envName
+            : binding?.source === 'external' && binding.runtimeId === runtimeId
+          if (!targetMatches) continue
+
+          if (binding) {
+            binding.status = 'unavailable'
+            binding.reason = 'repair-required'
+            affectedBindings.add(session)
+          }
+          const kind = affectedLanguage === 'r' ? 'r' : 'python'
+          await session.executor.terminate?.(kind, sessionEnv)
+          this.tearDownLanguageBinding(session, affectedLanguage, sessionEnv)
+          this.notifyNotebookChanged(session)
+        }
+      }
+
+      // The operation journal stays live until both the durable repair registry and the binding state
+      // are committed. A tagged failure makes the caller retain journal + sidecar evidence for startup
+      // recovery, while the process-local gate above continues blocking execution immediately.
+      addRepairRequired(runtimeRoot, runtimeId, 'protected-identity-change')
+      for (const session of affectedBindings) await this.persistRuntimeBindings(session)
+    } catch (error) {
+      throw new Error(
+        `${REPAIR_QUARANTINE_FAILED}: could not durably quarantine the runtime after its protected ` +
+          `interpreter changed. ${error instanceof Error ? error.message : String(error)}`,
+        { cause: error }
+      )
     }
   }
 
@@ -3550,6 +3991,7 @@ export {
   resolveDefaultExecutorOptions,
   resolveLoopScriptPaths,
   resolveShellInvocation,
+  runShellCommand,
   terminateShellOnTimeout
 }
 export type {

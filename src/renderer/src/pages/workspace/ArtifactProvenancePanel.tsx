@@ -1156,7 +1156,8 @@ const ArtifactProvenancePanel = ({
                                       {unattributedChanges.length > 0 ? (
                                         <div className={dependencyChanges.length > 0 ? 'mt-2' : ''}>
                                           <span className="font-medium text-text-200">
-                                            Other observed changes
+                                            Observed since the previous snapshot (not attributed to
+                                            this operation)
                                           </span>
                                           <div className="mt-1 flex flex-wrap gap-1.5">
                                             {unattributedChanges.map((change, changeIndex) => (

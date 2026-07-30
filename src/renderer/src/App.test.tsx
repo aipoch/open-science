@@ -19,12 +19,14 @@ const mocks = vi.hoisted(() => {
       onboardingCompletedAt: undefined as number | undefined,
       isSettingsOpen: false,
       isSettingsLoaded: true,
+      pendingApprovals: [] as unknown[],
       enqueueApproval: vi.fn(),
       load: vi.fn().mockResolvedValue(true),
       checkEnvironment: vi.fn().mockResolvedValue(undefined),
       closeSettings: vi.fn()
     },
-    skillImport: { enqueue: vi.fn(), dismiss: vi.fn() },
+    skillImport: { enqueue: vi.fn(), dismiss: vi.fn(), pending: [] as unknown[] },
+    compute: { enqueueApproval: vi.fn(), pendingApprovals: [] as unknown[] },
     navigation: { view: 'home' as 'home' | 'workspace', userNavigationRevision: 0 },
     sessions: [] as Array<{ id: string }>,
     environment: {
@@ -61,9 +63,10 @@ const mocks = vi.hoisted(() => {
       retryLoad: vi.fn(),
       retryWrites: vi.fn()
     },
-    startupView: 'home' as 'home' | 'onboarding',
+    startupView: 'app' as 'app' | 'onboarding',
     getInfo: vi.fn(),
-    syncWindowFindAppearance: vi.fn()
+    syncWindowFindAppearance: vi.fn(),
+    syncUnreadTaskView: vi.fn()
   }
 })
 
@@ -81,6 +84,9 @@ vi.mock('@/hooks/useLifecycleSync', () => ({
 }))
 vi.mock('@/hooks/useWindowFindAppearanceSync', () => ({
   useWindowFindAppearanceSync: mocks.syncWindowFindAppearance
+}))
+vi.mock('@/hooks/useUnreadTaskViewSync', () => ({
+  useUnreadTaskViewSync: mocks.syncUnreadTaskView
 }))
 vi.mock('@/stores/navigation-store', () => ({
   useNavigationStore: Object.assign(
@@ -104,6 +110,9 @@ vi.mock('@/stores/notebook-env-store', () => ({
   useNotebookEnvStore: <T,>(selector: (state: typeof mocks.environment) => T): T =>
     selector(mocks.environment)
 }))
+vi.mock('@/stores/compute-store', () => ({
+  useComputeStore: <T,>(selector: (state: typeof mocks.compute) => T): T => selector(mocks.compute)
+}))
 vi.mock('@/stores/project-store', () => ({
   useProjectStore: <T,>(selector: (state: { loadProjects: typeof mocks.loadProjects }) => T): T =>
     selector({ loadProjects: mocks.loadProjects })
@@ -117,8 +126,9 @@ vi.mock('@/stores/skill-import-store', () => ({
     selector(mocks.skillImport)
 }))
 vi.mock('@/stores/update-store', () => ({
-  useUpdateStore: <T,>(selector: (state: { init: typeof mocks.initUpdates }) => T): T =>
-    selector({ init: mocks.initUpdates })
+  useUpdateStore: <T,>(
+    selector: (state: { init: typeof mocks.initUpdates; isDialogOpen: boolean }) => T
+  ): T => selector({ init: mocks.initUpdates, isDialogOpen: false })
 }))
 vi.mock('@/pages/onboarding/startup-gate', () => ({
   resolveStartupView: vi.fn(() => mocks.startupView)
@@ -198,7 +208,7 @@ describe('App startup routing', () => {
     mocks.skillImport.enqueue.mockClear()
     mocks.skillImport.dismiss.mockClear()
     mocks.navigation.view = 'home'
-    mocks.startupView = 'home'
+    mocks.startupView = 'app'
     mocks.sessionPersistence.isReady = true
     mocks.sessionPersistence.isHydrated = true
     mocks.sessionPersistence.isLoading = false
@@ -207,9 +217,13 @@ describe('App startup routing', () => {
     mocks.sessionPersistence.writeError = undefined
     mocks.sessionPersistence.retryLoad.mockClear()
     mocks.sessionPersistence.retryWrites.mockClear()
+    mocks.settings.pendingApprovals = []
+    mocks.compute.pendingApprovals = []
+    mocks.skillImport.pending = []
     mocks.deepLinkNavigation.mockClear()
     mocks.lifecycleSync.mockClear()
     mocks.syncWindowFindAppearance.mockClear()
+    mocks.syncUnreadTaskView.mockClear()
     mocks.getInfo.mockResolvedValue({
       dataRoot: '/workspace/OpenScience',
       dataRootMissing: false,
@@ -354,6 +368,18 @@ describe('App startup routing', () => {
     await act(async () => root.render(<App />))
 
     expect(mocks.loadProjects).toHaveBeenCalledTimes(2)
+  })
+
+  it('reports that the conversation is hidden while Settings covers the workspace', async () => {
+    mocks.settings.isLoaded = true
+    mocks.settings.isSettingsOpen = true
+    mocks.navigation.view = 'workspace'
+
+    await render()
+
+    expect(mocks.syncUnreadTaskView).toHaveBeenLastCalledWith({
+      isSessionContentVisible: false
+    })
   })
 
   it('routes first-run users to onboarding after settings hydration', async () => {

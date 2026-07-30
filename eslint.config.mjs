@@ -17,8 +17,9 @@ export default defineConfig(
       'resources/notebook/*.js',
       // Whole-window find overlay: an ES-module page shipped as a raw resource (not part of the TS source tree).
       'resources/find-overlay/*.js',
-      // Git worktrees live under .claude/worktrees and hold full source copies; don't lint duplicates.
+      // Git worktrees hold full source copies; don't lint duplicate source from either supported root.
       '**/.claude/**',
+      '**/.worktree/**',
       // Local subagent scratch (ledgers, briefs, ad-hoc demo scripts) — never shipped.
       '**/.superpowers/**',
       // Keep official shadcn registry output unmodified; local adaptations live in wrappers.

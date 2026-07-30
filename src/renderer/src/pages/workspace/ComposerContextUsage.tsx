@@ -1,15 +1,14 @@
 // Composer context-usage indicator: a compact "% of context window" pill with a hover breakdown,
-// mirroring Claude Code's /context. The numerator (tokens in context) comes from the ACP usage_update
-// the runtime records per session; the denominator is already bound to the same agent-context generation
-// by the main process. Renders nothing until the active framework emits its first usage_update rather
-// than showing a fabricated zero.
+// mirroring Claude Code's /context. During generation the local request estimate updates independently;
+// once an Agent total exists it remains the numerator until a fresher usage_update arrives. The
+// denominator is bound to the selected model and agent-context generation when that window is known.
 
 import { Gauge, Minimize2 } from 'lucide-react'
 import { useEffect, useId, useRef, useState, type FocusEvent } from 'react'
 
 import { Popover, PopoverAnchor, PopoverContent } from '@/components/ui/popover'
 import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from '@/components/ui/tooltip'
-import type { AcpContextUsage } from '../../../../shared/acp'
+import type { AcpContextUsage, AcpContextUsageCategoryKey } from '../../../../shared/acp'
 
 type ComposerContextUsageProps = {
   // Latest usage for the active session, or undefined when the framework never reported any.
@@ -22,6 +21,22 @@ type ComposerContextUsageProps = {
 
 const COMPACT_ACTION_THRESHOLD_PERCENT = 30
 
+const CATEGORY_PRESENTATION: Record<AcpContextUsageCategoryKey, { label: string; color: string }> =
+  {
+    system: { label: 'System prompt', color: 'bg-emerald-500' },
+    tools: { label: 'Tools and agents', color: 'bg-amber-400' },
+    messages: { label: 'Messages', color: 'bg-violet-500' },
+    mcp: { label: 'Connectors and MCP', color: 'bg-cyan-400' },
+    skills: { label: 'Skills', color: 'bg-blue-500' },
+    other: { label: 'Agent/framework overhead', color: 'bg-slate-400' }
+  }
+
+const TOKENIZER_LABELS = {
+  anthropic: 'Anthropic approx.',
+  o200k_base: 'o200k_base',
+  cl100k_base: 'cl100k_base'
+} as const
+
 // Compact token count: 1_000_000 -> "1M", 24_890 -> "25k", 512 -> "512".
 const formatTokens = (tokens: number): string => {
   if (tokens >= 1_000_000) {
@@ -30,6 +45,15 @@ const formatTokens = (tokens: number): string => {
   }
   if (tokens >= 1_000) return `${Math.round(tokens / 1_000)}k`
   return String(Math.round(tokens))
+}
+
+const formatDetailedTokens = (tokens: number): string => {
+  const absolute = Math.abs(tokens)
+  if (absolute < 1_000) return String(Math.round(tokens))
+  const divisor = absolute >= 1_000_000 ? 1_000_000 : 1_000
+  const suffix = divisor === 1_000_000 ? 'M' : 'k'
+  const value = tokens / divisor
+  return `${Math.abs(value) >= 100 || Number.isInteger(value) ? value.toFixed(0) : value.toFixed(1)}${suffix}`
 }
 
 const ComposerContextUsage = ({
@@ -77,14 +101,25 @@ const ComposerContextUsage = ({
 
   const size = contextUsage.size
   const used = contextUsage.used
-  const usagePercent = size && size > 0 ? Math.min(100, (used / size) * 100) : undefined
+  const hasKnownSize = size !== undefined && size > 0
+  const usagePercent = hasKnownSize ? Math.min(100, (used / size) * 100) : undefined
   const percent = usagePercent !== undefined ? Math.round(usagePercent) : undefined
 
   const label = percent !== undefined ? `${percent}%` : formatTokens(used)
+  const breakdown = contextUsage.breakdown
+  const estimating = breakdown?.status === 'preflight'
+  const hasAgentTotal = !estimating || contextUsage.agentUsed !== undefined
   const showCompactAction =
-    compacting || (usagePercent !== undefined && usagePercent >= COMPACT_ACTION_THRESHOLD_PERCENT)
+    compacting ||
+    (!estimating && usagePercent !== undefined && usagePercent >= COMPACT_ACTION_THRESHOLD_PERCENT)
   const compactUnavailable = !canCompact || !onCompact
   const compactHint = !compacting && compactUnavailable ? compactDisabledReason : undefined
+  const categories = breakdown?.categories.filter((category) => category.tokens > 0) ?? []
+  const categoryTotal = categories.reduce((sum, category) => sum + category.tokens, 0)
+  const visualUsed = estimating
+    ? (breakdown?.estimatedTokens ?? categoryTotal)
+    : Math.max(used, categoryTotal)
+  const visualPercent = hasKnownSize ? Math.min(100, (visualUsed / size) * 100) : 100
 
   const compactButton = (
     <button
@@ -93,7 +128,7 @@ const ComposerContextUsage = ({
       aria-disabled={compactUnavailable ? true : undefined}
       disabled={compacting || (compactUnavailable && !compactHint)}
       onClick={compacting || compactUnavailable ? undefined : onCompact}
-      className={`inline-flex h-6 w-full items-center justify-center gap-1 rounded bg-bg-000 px-2 text-[11px] text-text-000 transition-colors hover:bg-bg-100 disabled:cursor-not-allowed disabled:opacity-50 ${compactHint ? 'cursor-not-allowed opacity-50 hover:bg-bg-000' : ''}`}
+      className={`inline-flex h-6 w-full items-center justify-center gap-1 rounded-lg bg-bg-200 px-2 text-[11px] text-text-000 outline-none transition-colors duration-150 motion-reduce:transition-none hover:bg-bg-300 focus-visible:ring-3 focus-visible:ring-ring/50 active:bg-bg-400 disabled:cursor-not-allowed disabled:opacity-50 ${compactHint ? 'cursor-not-allowed opacity-50 hover:bg-bg-200' : ''}`}
     >
       <Minimize2 className="size-3" aria-hidden="true" />
       {compacting ? 'Compacting…' : 'Compact'}
@@ -106,8 +141,8 @@ const ComposerContextUsage = ({
         <button
           ref={triggerRef}
           type="button"
-          className="flex h-8 min-w-0 items-center gap-1.5 rounded-md px-2 text-[12px] text-text-000 transition-colors duration-200 ease-out hover:bg-bg-200"
-          aria-label={`Context used: ${label}`}
+          className="flex h-8 min-w-0 items-center gap-1.5 rounded-md px-2 text-[12px] text-text-000 outline-none transition-colors duration-150 motion-reduce:transition-none hover:bg-bg-200 focus-visible:ring-3 focus-visible:ring-ring/50 active:bg-bg-300"
+          aria-label={`${hasAgentTotal ? 'Context used' : 'Estimated context'}: ${label}`}
           aria-haspopup="dialog"
           aria-expanded={open}
           aria-controls={open ? contentId : undefined}
@@ -137,7 +172,9 @@ const ComposerContextUsage = ({
         ref={contentRef}
         id={contentId}
         side="top"
-        className="max-w-64"
+        align="center"
+        sideOffset={8}
+        className="w-72 max-w-[calc(100vw-2rem)] overflow-hidden rounded-lg border border-border bg-popover p-3 text-popover-foreground shadow-menu"
         onPointerEnter={keepOpen}
         onPointerLeave={scheduleClose}
         onFocusCapture={keepOpen}
@@ -146,12 +183,104 @@ const ComposerContextUsage = ({
           if (openedFromPointerRef.current) event.preventDefault()
         }}
       >
-        <div className="space-y-1 text-[12px]">
-          <div className="font-medium">Context window</div>
+        <div className="space-y-2.5 text-[12px]">
           <div>
-            {formatTokens(used)} / {formatTokens(size)} tokens
-            {percent !== undefined ? ` (${percent}%)` : ''}
+            <div className="text-[13px] font-medium">Context window</div>
+            <div
+              data-slot="context-usage-summary"
+              className="mt-1 flex min-w-0 items-baseline gap-2 whitespace-nowrap"
+            >
+              <span className="shrink-0 text-xl font-semibold tabular-nums">
+                {usagePercent !== undefined ? `${usagePercent.toFixed(1)}%` : formatTokens(used)}
+              </span>
+              <span className="min-w-0 truncate text-muted-foreground tabular-nums">
+                {hasAgentTotal ? 'Agent used' : 'Local estimate'}
+                {hasKnownSize
+                  ? ` ${formatDetailedTokens(used)} / ${formatDetailedTokens(size)}`
+                  : null}
+              </span>
+            </div>
           </div>
+          {breakdown ? (
+            <>
+              <div
+                className="flex h-2 overflow-hidden rounded-full bg-bg-200"
+                aria-label={
+                  hasKnownSize
+                    ? `Estimated category occupancy: ${formatDetailedTokens(visualUsed)} of ${formatDetailedTokens(size)} tokens`
+                    : `Estimated category distribution: ${formatDetailedTokens(visualUsed)} tokens`
+                }
+              >
+                {categories.map((category) => {
+                  const presentation = CATEGORY_PRESENTATION[category.key]
+                  const width =
+                    categoryTotal > 0 ? (category.tokens / categoryTotal) * visualPercent : 0
+                  return (
+                    <span
+                      key={category.key}
+                      className={`${presentation.color} h-full border-r border-bg-000/80 last:border-r-0`}
+                      style={{ width: `${width}%` }}
+                      title={`${presentation.label}: ${formatDetailedTokens(category.tokens)}`}
+                    />
+                  )
+                })}
+              </div>
+              <div className="space-y-1">
+                {categories.map((category) => {
+                  const presentation = CATEGORY_PRESENTATION[category.key]
+                  return (
+                    <div
+                      key={category.key}
+                      className="flex items-center justify-between gap-3 whitespace-nowrap"
+                    >
+                      <span className="flex min-w-0 items-center gap-2">
+                        <span className={`${presentation.color} size-2 shrink-0 rounded-full`} />
+                        <span className="truncate">{presentation.label}</span>
+                      </span>
+                      <span className="shrink-0 tabular-nums text-muted-foreground">
+                        {category.estimated ? '~' : ''}
+                        {formatDetailedTokens(category.tokens)}
+                      </span>
+                    </div>
+                  )
+                })}
+              </div>
+              <div
+                data-slot="context-usage-diagnostics"
+                className="space-y-0.5 border-t border-border pt-2 text-[11px] leading-4 text-muted-foreground"
+                title={
+                  estimating
+                    ? contextUsage.agentUsed === undefined
+                      ? 'Local estimate updates while the Agent is generating.'
+                      : 'The latest Agent total remains authoritative while local categories update.'
+                    : 'Agent total is authoritative; category values are local estimates.'
+                }
+              >
+                {estimating && contextUsage.agentUsed !== undefined ? (
+                  <div className="whitespace-nowrap tabular-nums">
+                    Local {formatDetailedTokens(breakdown.estimatedTokens)} · Latest Agent{' '}
+                    {formatDetailedTokens(contextUsage.agentUsed)}
+                  </div>
+                ) : estimating ? null : (
+                  <div className="whitespace-nowrap tabular-nums">
+                    Local {formatDetailedTokens(breakdown.estimatedTokens)} · Agent{' '}
+                    {formatDetailedTokens(used)} · Δ {breakdown.difference > 0 ? '+' : ''}
+                    {formatDetailedTokens(breakdown.difference)}
+                  </div>
+                )}
+                <div className="truncate whitespace-nowrap">
+                  {estimating ? 'Estimating' : 'Reconciled'}
+                  {breakdown.tokenizer ? ` · ${TOKENIZER_LABELS[breakdown.tokenizer]}` : ''}
+                  {breakdown.model ? ` · ${breakdown.model}` : ''}
+                </div>
+              </div>
+            </>
+          ) : (
+            <div className="whitespace-nowrap text-muted-foreground tabular-nums">
+              {hasKnownSize ? `${formatTokens(used)} / ${formatTokens(size)}` : formatTokens(used)}{' '}
+              tokens{percent !== undefined ? ` (${percent}%)` : ''}
+            </div>
+          )}
           {showCompactAction ? (
             <div className="flex pt-1">
               {compactHint ? (

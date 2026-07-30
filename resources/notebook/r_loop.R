@@ -4,10 +4,573 @@
 # jsonlite line per response. Not IRkernel / Jupyter.
 suppressWarnings(suppressMessages(library(jsonlite)))
 
-# A non-interactive R session has no default CRAN mirror, so a bare install.packages() in a cell
-# fails with "trying to use CRAN without setting a mirror". Set the app's configured mirror (or the
-# public default) so inline installs work; manage_packages remains the sanctioned install path.
-options(repos = c(CRAN = Sys.getenv("OPEN_SCIENCE_CRAN_MIRROR", "https://cloud.r-project.org")))
+# Package/environment changes are owned by manage_packages in the trusted main process. The main
+# process rejects the common forms before they reach this loop; this syntax-tree check is a second
+# layer so namespace-qualified and indirect calls cannot install from inside the persistent kernel.
+package_mutation_call_name <- function(expr) {
+  if (!is.call(expr) || length(expr) == 0L) return(NULL)
+  head <- expr[[1L]]
+  if (is.symbol(head) && as.character(head) %in% c("::", ":::") && length(expr) >= 3L) {
+    return(paste(as.character(expr[[2L]]), as.character(expr[[3L]]), sep = "::"))
+  }
+  if (is.symbol(head)) return(as.character(head))
+  if (is.call(head) && length(head) >= 3L &&
+      as.character(head[[1L]]) %in% c("::", ":::")) {
+    return(paste(as.character(head[[2L]]), as.character(head[[3L]]), sep = "::"))
+  }
+  NULL
+}
+
+is_package_mutation_name <- function(name) {
+  if (is.null(name)) return(FALSE)
+  name %in% c("install.packages", "remove.packages", "update.packages") ||
+    grepl(
+      paste0(
+        "^(utils::(install|remove|update)\\.packages|",
+        "BiocManager::install|",
+        "renv::(install|restore|update|hydrate)|",
+        "pak::(pkg_install|pkg_remove|lockfile_install)|",
+        "(remotes|devtools)::install_[A-Za-z0-9_.]+)$"
+      ),
+      name
+    )
+}
+
+assert_no_package_mutation <- function(expr) {
+  if (is.symbol(expr) && is_package_mutation_name(as.character(expr))) {
+    stop(
+      "Package/environment mutation is not allowed in an R cell; use manage_packages.",
+      call. = FALSE
+    )
+  }
+  call_name <- package_mutation_call_name(expr)
+  if (identical(call_name, ".Internal") && length(expr) >= 2L &&
+      identical(package_mutation_call_name(expr[[2L]]), "system")) {
+    stop(
+      "Package/environment mutation is not allowed in an R cell; use manage_packages.",
+      call. = FALSE
+    )
+  }
+  if (is_package_mutation_name(call_name)) {
+    stop(
+      "Package/environment mutation is not allowed in an R cell; use manage_packages.",
+      call. = FALSE
+    )
+  }
+  if (is.call(expr) && call_name %in% c("get", "match.fun", "do.call")) {
+    strings <- unlist(lapply(as.list(expr)[-1L], function(value) {
+      if (is.character(value)) value else character()
+    }), use.names = FALSE)
+    if (any(vapply(strings, is_package_mutation_name, logical(1)))) {
+      stop(
+        "Package/environment mutation is not allowed in an R cell; use manage_packages.",
+        call. = FALSE
+      )
+    }
+  }
+  if (is.call(expr) || is.expression(expr) || is.pairlist(expr)) {
+    lapply(as.list(expr), assert_no_package_mutation)
+  }
+  invisible(NULL)
+}
+
+blocked_package_mutation <- function(...) {
+  stop(
+    "Package/environment mutation is not allowed in an R cell; use manage_packages.",
+    call. = FALSE
+  )
+}
+
+# Keep the policy closure and all of its dependencies outside .GlobalEnv. User cells may assign names
+# such as package_mutation_call_name, but the locked evaluator continues resolving the original helpers.
+package_mutation_policy_env <- new.env(parent = baseenv())
+environment(package_mutation_call_name) <- package_mutation_policy_env
+environment(is_package_mutation_name) <- package_mutation_policy_env
+environment(assert_no_package_mutation) <- package_mutation_policy_env
+environment(blocked_package_mutation) <- package_mutation_policy_env
+assign("package_mutation_call_name", package_mutation_call_name, package_mutation_policy_env)
+assign("is_package_mutation_name", is_package_mutation_name, package_mutation_policy_env)
+assign("assert_no_package_mutation", assert_no_package_mutation, package_mutation_policy_env)
+assign("blocked_package_mutation", blocked_package_mutation, package_mutation_policy_env)
+lockEnvironment(package_mutation_policy_env, bindings = TRUE)
+
+# Replace the canonical utils entry points before any user request runs. This is the runtime backstop for
+# dynamically assembled lookups that cannot be identified from syntax alone, e.g.
+# get(paste0("install", ".packages"), asNamespace("utils")). The trusted manage_packages fallback runs
+# in a separate Rscript process, so it does not inherit these kernel-only bindings.
+for (binding_name in c("install.packages", "remove.packages", "update.packages")) {
+  for (binding_env in list(asNamespace("utils"), as.environment("package:utils"))) {
+    if (!exists(binding_name, envir = binding_env, inherits = FALSE)) next
+    if (bindingIsLocked(binding_name, binding_env)) unlockBinding(binding_name, binding_env)
+    assign(binding_name, package_mutation_policy_env$blocked_package_mutation, envir = binding_env)
+    lockBinding(binding_name, binding_env)
+  }
+}
+
+# Enforce the managed-runtime read-only boundary inside the persistent R process. The main-process
+# syntax check provides an early error, while these guarded base bindings catch paths assembled in
+# local variables on platforms without a native filesystem sandbox.
+runtime_write_policy_env <- new.env(parent = baseenv())
+runtime_write_policy_env$managed_runtime_dir <- NULL
+runtime_write_policy_env$managed_runtime_source <- NULL
+
+canonical_runtime_path <- function(value) {
+  if (inherits(value, "connection")) {
+    value <- try(summary(value)$description, silent = TRUE)
+    if (inherits(value, "try-error")) return(NULL)
+  }
+  if (!is.character(value) || length(value) != 1L || !nzchar(value)) return(NULL)
+  cursor <- path.expand(value)
+  suffix <- character()
+  while (!file.exists(cursor)) {
+    parent <- dirname(cursor)
+    if (identical(parent, cursor)) break
+    suffix <- c(basename(cursor), suffix)
+    cursor <- parent
+  }
+  resolved <- normalizePath(cursor, winslash = "/", mustWork = FALSE)
+  if (length(suffix) > 0L) resolved <- do.call(file.path, as.list(c(resolved, suffix)))
+  if (.Platform$OS.type == "windows") resolved <- tolower(resolved)
+  resolved
+}
+
+assert_runtime_write_allowed <- function(targets) {
+  root <- managed_runtime_dir
+  if (is.null(root)) return(invisible(NULL))
+  for (target in targets) {
+    resolved <- canonical_runtime_path(target)
+    if (is.null(resolved)) next
+    if (identical(resolved, root) || startsWith(resolved, paste0(root, "/"))) {
+      stop(
+        "Managed runtime files are read-only in an R cell; use manage_packages for changes.",
+        call. = FALSE
+      )
+    }
+  }
+  invisible(NULL)
+}
+
+runtime_command_name <- function(value) {
+  name <- basename(gsub("^[\"']|[\"']$", "", as.character(value)[[1L]]))
+  tolower(sub("\\.exe$", "", name, ignore.case = TRUE))
+}
+
+runtime_text_references_managed <- function(text) {
+  comparable <- if (.Platform$OS.type == "windows") tolower(text) else text
+  comparable <- chartr("\\", "/", comparable)
+  roots <- c(managed_runtime_dir, managed_runtime_source)
+  grepl("OPEN_SCIENCE_RUNTIME_DIR", text, fixed = TRUE) ||
+    any(vapply(roots, function(candidate) {
+      !is.null(candidate) && nzchar(candidate) && grepl(candidate, comparable, fixed = TRUE)
+    }, logical(1)))
+}
+
+runtime_target_is_managed <- function(value) {
+  if (!is.character(value) || length(value) != 1L || !nzchar(value)) return(FALSE)
+  text <- gsub("^[\"']|[\"']$", "", trimws(value))
+  if (runtime_text_references_managed(text)) return(TRUE)
+  resolved <- canonical_runtime_path(text)
+  root <- managed_runtime_dir
+  !is.null(root) && !is.null(resolved) &&
+    (identical(resolved, root) || startsWith(resolved, paste0(root, "/")))
+}
+
+runtime_write_targets <- function(words, redirections = character()) {
+  if (length(words) == 0L) return(NULL)
+  executable <- runtime_command_name(words[[1L]])
+  supported <- c(
+    "rm", "mv", "cp", "install", "mkdir", "touch", "truncate", "chmod", "chown",
+    "ln", "tee", "sed", "perl", "dd"
+  )
+  if (!executable %in% supported) return(NULL)
+  args <- as.character(words[-1L])
+  target_directory <- grep("^--target-directory=", args, value = TRUE)
+  if (length(target_directory) > 0L) {
+    return(c(redirections, sub("^[^=]*=", "", target_directory[[1L]])))
+  }
+  short_target <- match("-t", args)
+  if (!is.na(short_target) && short_target < length(args)) {
+    return(c(redirections, args[[short_target + 1L]]))
+  }
+  if (identical(executable, "dd")) {
+    return(c(redirections, sub("^of=", "", grep("^of=", args, value = TRUE))))
+  }
+  positional <- args[!startsWith(args, "-")]
+  if (identical(executable, "ln")) return(c(redirections, positional))
+  if (executable %in% c("cp", "install")) {
+    destination <- if (length(positional) > 0L) positional[[length(positional)]] else character()
+    return(c(redirections, destination))
+  }
+  if (identical(executable, "mv")) return(c(redirections, positional))
+  if (executable %in% c("chmod", "chown")) {
+    return(c(redirections, if (length(positional) > 1L) positional[-1L] else character()))
+  }
+  if (executable %in% c("sed", "perl")) {
+    inplace <- any(grepl("^-.*i", args))
+    target <- if (length(positional) > 0L) positional[[length(positional)]] else character()
+    return(if (inplace) c(redirections, target) else redirections)
+  }
+  c(redirections, positional)
+}
+
+runtime_text_has_write_primitive <- function(text) {
+  grepl(
+    paste0(
+      "\\b(rm|mv|cp|install|mkdir|touch|truncate|chmod|chown|ln|tee|sed|perl|dd)\\b|",
+      "\\b(open|write_text|write_bytes|writeFile|writeFileSync|mkdtemp|mkdtempSync)\\s*\\(|",
+      "\\b(os|shutil)\\.(remove|unlink|rename|replace|mkdir|makedirs|rmdir|removedirs|",
+      "chmod|chown|copy|copy2|copytree|move|rmtree)\\s*\\(|",
+      "\\b(unlink|file\\.(append|copy|remove|rename|link|symlink|create)|",
+      "dir\\.create|download\\.file|fifo|pipe|writeLines|writeBin|save|saveRDS)\\s*\\(|",
+      "\\b(New-Item|Remove-Item|Set-Content|Add-Content|Clear-Content|Out-File)\\b"
+    ),
+    text,
+    ignore.case = TRUE,
+    perl = TRUE
+  )
+}
+
+runtime_shell_words <- function(command) {
+  pattern <- "\"(?:\\\\.|[^\"\\\\])*\"|'(?:\\\\.|[^'\\\\])*'|[^[:space:]]+"
+  matches <- gregexpr(pattern, command, perl = TRUE)[[1L]]
+  if (identical(matches[[1L]], -1L)) return(character())
+  words <- regmatches(command, list(matches))[[1L]]
+  gsub("^([\"'])(.*)\\1$", "\\2", words, perl = TRUE)
+}
+
+runtime_shell_redirections <- function(command) {
+  pattern <- ">{1,2}[[:space:]]*(\"(?:\\\\.|[^\"\\\\])*\"|'(?:\\\\.|[^'\\\\])*'|[^[:space:];&|]+)"
+  matches <- gregexpr(pattern, command, perl = TRUE)[[1L]]
+  if (identical(matches[[1L]], -1L)) return(character())
+  values <- regmatches(command, list(matches))[[1L]]
+  values <- sub("^>{1,2}[[:space:]]*", "", values)
+  gsub("^([\"'])(.*)\\1$", "\\2", values, perl = TRUE)
+}
+
+runtime_shell_writes_managed <- function(source) {
+  segments <- strsplit(source, "(?:&&|\\|\\||[;\\r\\n])", perl = TRUE)[[1L]]
+  for (segment in segments) {
+    words <- runtime_shell_words(segment)
+    targets <- runtime_write_targets(words, runtime_shell_redirections(segment))
+    if (!is.null(targets)) {
+      if (any(vapply(targets, runtime_target_is_managed, logical(1)))) return(TRUE)
+      next
+    }
+    if (runtime_text_references_managed(segment) && runtime_text_has_write_primitive(segment)) {
+      return(TRUE)
+    }
+  }
+  FALSE
+}
+
+runtime_process_writes_managed <- function(command, args = character()) {
+  if (length(args) == 0L) return(runtime_shell_writes_managed(as.character(command)[[1L]]))
+  words <- c(as.character(command)[[1L]], as.character(args))
+  executable <- runtime_command_name(words[[1L]])
+  shell_flag <- match("-c", words)
+  if (executable %in% c("sh", "bash", "zsh") && !is.na(shell_flag)) {
+    payload <- if (shell_flag < length(words)) words[[shell_flag + 1L]] else ""
+    payload <- gsub("^([\"'])(.*)\\1$", "\\2", payload, perl = TRUE)
+    return(runtime_shell_writes_managed(payload))
+  }
+  targets <- runtime_write_targets(words)
+  if (!is.null(targets)) return(any(vapply(targets, runtime_target_is_managed, logical(1))))
+  text <- paste(words, collapse = " ")
+  runtime_text_references_managed(text) && runtime_text_has_write_primitive(text)
+}
+
+runtime_text_has_package_mutation <- function(text) {
+  grepl(
+    paste0(
+      "\\b(micromamba|mamba|conda|pip|pip3|pipx|uv|poetry)(\\.exe)?\\b.{0,160}",
+      "\\b(install|uninstall|update|upgrade|remove|create|sync|add|venv)\\b|",
+      "\\b(python|python3|py)(\\.[0-9]+)?(\\.exe)?\\b.{0,80}\\s-m\\s+",
+      "((venv|virtualenv|ensurepip)\\b|pip\\b.{0,100}\\b(install|uninstall|wheel)\\b)|",
+      "\\bR(script)?(\\.exe)?\\b.{0,120}(\\bCMD\\s+INSTALL\\b|",
+      "(install|remove|update)\\.packages\\b)"
+    ),
+    text,
+    ignore.case = TRUE,
+    perl = TRUE
+  )
+}
+
+runtime_package_words_mutate <- function(words) {
+  if (length(words) == 0L) return(FALSE)
+  words <- as.character(words)
+  command_index <- 1L
+  while (command_index <= length(words)) {
+    name <- runtime_command_name(words[[command_index]])
+    if (!name %in% c("sudo", "env", "command", "exec")) break
+    command_index <- command_index + 1L
+    while (
+      command_index <= length(words) &&
+        (startsWith(words[[command_index]], "-") || grepl("^[A-Za-z_][A-Za-z0-9_]*=", words[[command_index]]))
+    ) {
+      command_index <- command_index + 1L
+    }
+  }
+  if (command_index > length(words)) return(FALSE)
+  executable <- runtime_command_name(words[[command_index]])
+  argv <- words[command_index:length(words)]
+  shell_flag <- match("-c", argv)
+  if (executable %in% c("sh", "bash", "zsh") && !is.na(shell_flag)) {
+    payload <- if (shell_flag < length(argv)) argv[[shell_flag + 1L]] else ""
+    return(runtime_command_mutates_packages(payload))
+  }
+  powershell_flag <- match(TRUE, tolower(argv) %in% c("-command", "-c"))
+  if (executable %in% c("powershell", "pwsh") && !is.na(powershell_flag)) {
+    payload <- if (powershell_flag < length(argv)) {
+      paste(argv[(powershell_flag + 1L):length(argv)], collapse = " ")
+    } else {
+      ""
+    }
+    return(runtime_command_mutates_packages(payload))
+  }
+  installers <- c(
+    "micromamba", "mamba", "conda", "pip", "pip3", "pipx", "uv", "poetry",
+    "python", "python3", "py", "r", "rscript", "node", "nodejs"
+  )
+  is_installer <- executable %in% installers || grepl("^python[0-9]+(\\.[0-9]+)*$", executable)
+  is_installer && runtime_text_has_package_mutation(paste(argv, collapse = " "))
+}
+
+runtime_command_mutates_packages <- function(command, args = character()) {
+  if (length(args) > 0L) {
+    return(runtime_package_words_mutate(c(as.character(command)[[1L]], as.character(args))))
+  }
+  segments <- strsplit(as.character(command)[[1L]], "(?:&&|\\|\\||[;\\r\\n])", perl = TRUE)[[1L]]
+  any(vapply(segments, function(segment) {
+    runtime_package_words_mutate(runtime_shell_words(segment))
+  }, logical(1)))
+}
+
+assert_runtime_process_allowed <- function(command, args = character()) {
+  if (runtime_command_mutates_packages(command, args)) {
+    stop(
+      "Package/environment mutation is not allowed in an R child process; use manage_packages.",
+      call. = FALSE
+    )
+  }
+  if (!is.null(managed_runtime_dir) && runtime_process_writes_managed(command, args)) {
+    stop(
+      "Managed runtime files are read-only in an R child process; use manage_packages for changes.",
+      call. = FALSE
+    )
+  }
+  invisible(NULL)
+}
+
+runtime_argument <- function(args, name, position) {
+  if (!is.null(names(args)) && name %in% names(args)) return(args[[name]])
+  if (length(args) >= position) args[[position]] else NULL
+}
+
+runtime_symlink_source <- function(source, destination) {
+  if (
+    is.character(source) && length(source) == 1L && nzchar(source) &&
+      is.character(destination) && length(destination) == 1L && nzchar(destination) &&
+      !grepl("^(?:[/\\\\]|[A-Za-z]:[/\\\\])", source, perl = TRUE)
+  ) {
+    return(file.path(dirname(destination), source))
+  }
+  source
+}
+
+make_runtime_write_guard <- function(binding_name, binding_env = baseenv()) {
+  original <- get(binding_name, envir = binding_env, inherits = FALSE)
+  force(original)
+  force(binding_name)
+  function(...) {
+    args <- list(...)
+    targets <- switch(
+      binding_name,
+      writeLines = list(runtime_argument(args, "con", 2L)),
+      writeBin = list(runtime_argument(args, "con", 2L)),
+      unlink = list(runtime_argument(args, "x", 1L)),
+      file.remove = args,
+      file.rename = list(
+        runtime_argument(args, "from", 1L),
+        runtime_argument(args, "to", 2L)
+      ),
+      file.link = list(
+        runtime_argument(args, "from", 1L),
+        runtime_argument(args, "to", 2L)
+      ),
+      file.symlink = list(
+        runtime_symlink_source(
+          runtime_argument(args, "from", 1L),
+          runtime_argument(args, "to", 2L)
+        ),
+        runtime_argument(args, "to", 2L)
+      ),
+      file.create = args,
+      file.append = list(runtime_argument(args, "file1", 1L)),
+      file.copy = list(runtime_argument(args, "to", 2L)),
+      dir.create = list(runtime_argument(args, "path", 1L)),
+      download.file = list(runtime_argument(args, "destfile", 2L)),
+      saveRDS = list(runtime_argument(args, "file", 2L)),
+      save = list(runtime_argument(args, "file", .Machine$integer.max)),
+      cat = list(runtime_argument(args, "file", .Machine$integer.max)),
+      file = {
+        open_mode <- runtime_argument(args, "open", 2L)
+        if (is.character(open_mode) && grepl("[wax+]", open_mode)) {
+          list(runtime_argument(args, "description", 1L))
+        } else {
+          list()
+        }
+      },
+      gzfile = {
+        open_mode <- runtime_argument(args, "open", 2L)
+        if (is.character(open_mode) && grepl("[wax+]", open_mode)) {
+          list(runtime_argument(args, "description", 1L))
+        } else {
+          list()
+        }
+      },
+      bzfile = {
+        open_mode <- runtime_argument(args, "open", 2L)
+        if (is.character(open_mode) && grepl("[wax+]", open_mode)) {
+          list(runtime_argument(args, "description", 1L))
+        } else {
+          list()
+        }
+      },
+      xzfile = {
+        open_mode <- runtime_argument(args, "open", 2L)
+        if (is.character(open_mode) && grepl("[wax+]", open_mode)) {
+          list(runtime_argument(args, "description", 1L))
+        } else {
+          list()
+        }
+      },
+      fifo = {
+        open_mode <- runtime_argument(args, "open", 2L)
+        if (is.character(open_mode) && grepl("[wax+]", open_mode)) {
+          list(runtime_argument(args, "description", 1L))
+        } else {
+          list()
+        }
+      },
+      open = {
+        open_mode <- runtime_argument(args, "open", 2L)
+        if (is.character(open_mode) && grepl("[wax+]", open_mode)) {
+          list(runtime_argument(args, "con", 1L))
+        } else {
+          list()
+        }
+      },
+      sink = list(runtime_argument(args, "file", 1L)),
+      Sys.chmod = list(runtime_argument(args, "paths", 1L)),
+      system = {
+        assert_runtime_process_allowed(runtime_argument(args, "command", 1L))
+        list()
+      },
+      system2 = {
+        assert_runtime_process_allowed(
+          runtime_argument(args, "command", 1L),
+          runtime_argument(args, "args", 2L)
+        )
+        list()
+      },
+      pipe = {
+        assert_runtime_process_allowed(runtime_argument(args, "description", 1L))
+        list()
+      },
+      list()
+    )
+    assert_runtime_write_allowed(targets)
+    do.call(original, args, envir = parent.frame())
+  }
+}
+
+for (helper in c(
+  "canonical_runtime_path",
+  "assert_runtime_write_allowed",
+  "runtime_command_name",
+  "runtime_text_references_managed",
+  "runtime_target_is_managed",
+  "runtime_write_targets",
+  "runtime_text_has_write_primitive",
+  "runtime_shell_words",
+  "runtime_shell_redirections",
+  "runtime_shell_writes_managed",
+  "runtime_process_writes_managed",
+  "runtime_text_has_package_mutation",
+  "runtime_package_words_mutate",
+  "runtime_command_mutates_packages",
+  "assert_runtime_process_allowed",
+  "runtime_argument",
+  "runtime_symlink_source",
+  "make_runtime_write_guard"
+)) {
+  helper_fn <- get(helper, envir = .GlobalEnv, inherits = FALSE)
+  environment(helper_fn) <- runtime_write_policy_env
+  assign(helper, helper_fn, envir = runtime_write_policy_env)
+}
+runtime_value <- Sys.getenv("OPEN_SCIENCE_RUNTIME_DIR", "")
+source_root <- NULL
+if (nzchar(runtime_value)) {
+  runtime_write_policy_env$managed_runtime_dir <-
+    runtime_write_policy_env$canonical_runtime_path(runtime_value)
+  source_root <- path.expand(runtime_value)
+  if (.Platform$OS.type == "windows") source_root <- tolower(source_root)
+  runtime_write_policy_env$managed_runtime_source <- chartr("\\", "/", source_root)
+}
+runtime_write_bindings <- c(
+  "writeLines", "writeBin", "unlink", "file.append", "file.copy", "file.remove", "file.rename",
+  "file.link",
+  "file.symlink", "file.create",
+  "dir.create", "saveRDS", "save", "cat", "file", "gzfile", "bzfile", "xzfile",
+  "fifo", "open", "sink", "Sys.chmod", "system", "system2", "pipe"
+)
+runtime_write_wrappers <- lapply(
+  runtime_write_bindings,
+  runtime_write_policy_env$make_runtime_write_guard
+)
+names(runtime_write_wrappers) <- runtime_write_bindings
+lockEnvironment(runtime_write_policy_env, bindings = TRUE)
+for (binding_name in runtime_write_bindings) {
+  if (bindingIsLocked(binding_name, baseenv())) unlockBinding(binding_name, baseenv())
+  assign(binding_name, runtime_write_wrappers[[binding_name]], envir = baseenv())
+  lockBinding(binding_name, baseenv())
+}
+download_file_wrapper <- runtime_write_policy_env$make_runtime_write_guard(
+  "download.file",
+  asNamespace("utils")
+)
+for (binding_env in list(asNamespace("utils"), as.environment("package:utils"))) {
+  if (!exists("download.file", envir = binding_env, inherits = FALSE)) next
+  if (bindingIsLocked("download.file", binding_env)) unlockBinding("download.file", binding_env)
+  assign("download.file", download_file_wrapper, envir = binding_env)
+  lockBinding("download.file", binding_env)
+}
+rm(
+  canonical_runtime_path,
+  assert_runtime_write_allowed,
+  runtime_command_name,
+  runtime_text_references_managed,
+  runtime_target_is_managed,
+  runtime_write_targets,
+  runtime_text_has_write_primitive,
+  runtime_shell_words,
+  runtime_shell_redirections,
+  runtime_shell_writes_managed,
+  runtime_process_writes_managed,
+  runtime_text_has_package_mutation,
+  runtime_package_words_mutate,
+  runtime_command_mutates_packages,
+  assert_runtime_process_allowed,
+  runtime_argument,
+  runtime_symlink_source,
+  make_runtime_write_guard,
+  runtime_value,
+  source_root,
+  runtime_write_bindings,
+  runtime_write_wrappers,
+  download_file_wrapper,
+  binding_env
+)
 
 figures_dir <- Sys.getenv("OPEN_SCIENCE_KERNEL_FIGURES_DIR", "")
 con <- file("stdin", "rb")
@@ -428,22 +991,30 @@ run <- base::local({
       if (inherits(exprs, "condition")) {
         error <<- conditionMessage(exprs)
       } else {
-        refs <- attr(exprs, "srcref")
-        idx <- 0L
-        tryCatch({
-          for (idx in seq_along(exprs)) {
-            res <- withVisible(eval(exprs[[idx]], envir = globalenv()))
-            if (isTRUE(res$visible)) print(res$value)
-            mark_recorded_plot()
-          }
-        },
-        error = function(cnd) {
-          error <<- conditionMessage(cnd)
-          if (!is.null(refs) && idx >= 1L && idx <= length(refs)) {
-            error_line <<- as.integer(refs[[idx]][1])
-          }
-        },
-        interrupt = function(cnd) error <<- "interrupted")
+        policy_error <- tryCatch({
+          lapply(exprs, assert_no_package_mutation)
+          NULL
+        }, error = function(cnd) cnd)
+        if (inherits(policy_error, "condition")) {
+          error <- conditionMessage(policy_error)
+        } else {
+          refs <- attr(exprs, "srcref")
+          idx <- 0L
+          tryCatch({
+            for (idx in seq_along(exprs)) {
+              res <- withVisible(eval(exprs[[idx]], envir = globalenv()))
+              if (isTRUE(res$visible)) print(res$value)
+              mark_recorded_plot()
+            }
+          },
+          error = function(cnd) {
+            error <<- conditionMessage(cnd)
+            if (!is.null(refs) && idx >= 1L && idx <= length(refs)) {
+              error_line <<- as.integer(refs[[idx]][1])
+            }
+          },
+          interrupt = function(cnd) error <<- "interrupted")
+        }
       }
     }), collapse = "\n")
     capture_device_open <- isTRUE(capture_state$active) &&
@@ -471,7 +1042,11 @@ run <- base::local({
          environment = capture_environment())
   }
 }, envir = base::list2env(
-  base::list(figures_dir = figures_dir, capture_environment = capture_environment),
+  base::list(
+    figures_dir = figures_dir,
+    capture_environment = capture_environment,
+    assert_no_package_mutation = assert_no_package_mutation
+  ),
   parent = base::baseenv()
 ))
 lockEnvironment(environment(run), bindings = TRUE)

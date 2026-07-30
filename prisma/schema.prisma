@@ -1,9 +1,9 @@
 // Prisma schema for the project data layer.
 //
 // Sessions and messages stay on disk (see src/shared/session-persistence.ts). SQLite stores projects,
-// preview state, reviewer results, and a query projection of app-managed files; file bytes remain on
-// disk. At runtime the datasource url is supplied programmatically (see prisma-client.ts), so DATABASE_URL
-// is CLI-only.
+// preview state, unread desktop task state, reviewer results, and a query projection of app-managed
+// files; file bytes remain on disk. At runtime the datasource url is supplied programmatically (see
+// prisma-client.ts), so DATABASE_URL is CLI-only.
 
 generator client {
   provider      = "prisma-client-js"
@@ -36,6 +36,13 @@ model ProjectPreviewState {
   activeItemId String?
   items        String   @default("[]")
   updatedAt    DateTime @updatedAt
+}
+
+// One row per terminal agent task that the user has not viewed yet. The auto-increment key retains
+// insertion order for oldest-first eviction without making Session JSON subordinate to SQLite.
+model UnreadTaskSession {
+  id        Int    @id @default(autoincrement())
+  sessionId String @unique
 }
 
 // One reviewer pass over a single completed turn. See src/main/reviewer/repository.ts. Checks live in

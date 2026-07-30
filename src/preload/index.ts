@@ -20,6 +20,7 @@ import type {
   ArtifactFile,
   ArtifactPreviewResult,
   FinalizeRunArtifactsRequest,
+  FinalizeRunArtifactsResult,
   ListProjectArtifactsRequest,
   OpenArtifactFileRequest,
   ReadArtifactPreviewRequest,
@@ -52,7 +53,10 @@ import type {
 } from '../shared/compute'
 import type { DirListing, DownloadDest, LocalFile } from '../shared/remote-fs'
 import type { OpenLogFileResult, RevealLogFileResult } from '../shared/logs'
-import type { OpenSessionFromNotificationRequest } from '../shared/notifications'
+import type {
+  OpenSessionFromNotificationRequest,
+  UnreadTaskViewState
+} from '../shared/notifications'
 import type {
   ProjectDeletedEvent,
   SessionDeletedEvent,
@@ -118,6 +122,7 @@ import type {
 } from '../shared/projects'
 import type {
   ArtifactGroupPage,
+  GetProjectFilesOverviewRequest,
   ListArtifactGroupsRequest,
   ListProjectFilesRequest,
   ProjectFilesChangedEvent,
@@ -396,6 +401,10 @@ type OpenScienceAPI = {
     takePendingOpenSession: (
       expectedToken: number
     ) => Promise<OpenSessionFromNotificationRequest | null>
+    // Projects hydrated navigation state to main; unread ownership never enters the renderer.
+    syncViewState: (state: UnreadTaskViewState) => void
+    // Main requests a fresh DOM/navigation projection before suppressing a terminal unread marker.
+    onViewProbe: (listener: AcpListener<number>) => RemoveListener
   }
   github: {
     getStars: () => Promise<number | null>
@@ -428,7 +437,7 @@ type OpenScienceAPI = {
     onDeleted: (listener: AcpListener<ProjectDeletedEvent>) => RemoveListener
   }
   projectFiles: {
-    getOverview: (request: { projectId: string }) => Promise<ProjectFilesOverview>
+    getOverview: (request: GetProjectFilesOverviewRequest) => Promise<ProjectFilesOverview>
     listFiles: (request: ListProjectFilesRequest) => Promise<ProjectFilesPage>
     listArtifactGroups: (request: ListArtifactGroupsRequest) => Promise<ArtifactGroupPage>
     repairIndex: (request: { projectId: string }) => Promise<void>
@@ -503,7 +512,9 @@ type OpenScienceAPI = {
   }
   artifacts: {
     // Finalizes files produced during one runtime event after the renderer has selected a message.
-    finalizeRunArtifacts: (request: FinalizeRunArtifactsRequest) => Promise<ArtifactFile[]>
+    finalizeRunArtifacts: (
+      request: FinalizeRunArtifactsRequest
+    ) => Promise<FinalizeRunArtifactsResult>
     // Lists every on-disk artifact for a project so orphaned files (owning session deleted) still show.
     listProjectFiles: (request: ListProjectArtifactsRequest) => Promise<ArtifactFile[]>
     // Re-finalizes pending artifacts left behind by a crash, returning the message's finalized files.
@@ -940,7 +951,9 @@ const api: OpenScienceAPI = {
       ipcRenderer.invoke(
         'notifications:take-pending-open-session',
         expectedToken
-      ) as Promise<OpenSessionFromNotificationRequest | null>
+      ) as Promise<OpenSessionFromNotificationRequest | null>,
+    syncViewState: (state) => ipcRenderer.send('notifications:sync-unread-view', state),
+    onViewProbe: (listener) => onIpcMessage('notifications:probe-unread-view', listener)
   },
   github: {
     getStars: () => ipcRenderer.invoke('github:get-stars') as Promise<number | null>
@@ -1080,7 +1093,7 @@ const api: OpenScienceAPI = {
   artifacts: {
     // Keep generated file movement in the main process where filesystem trust checks live.
     finalizeRunArtifacts: (request) =>
-      ipcRenderer.invoke('artifacts:finalize-run', request) as Promise<ArtifactFile[]>,
+      ipcRenderer.invoke('artifacts:finalize-run', request) as Promise<FinalizeRunArtifactsResult>,
     // Lists every on-disk artifact for a project so orphaned files (owning session deleted) still show.
     listProjectFiles: (request) =>
       ipcRenderer.invoke('artifacts:list-project-files', request) as Promise<ArtifactFile[]>,

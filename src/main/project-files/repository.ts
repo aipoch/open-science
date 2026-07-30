@@ -2,10 +2,11 @@ import { randomUUID } from 'node:crypto'
 import { realpath, stat } from 'node:fs/promises'
 import { basename, isAbsolute, join, relative, resolve, sep } from 'node:path'
 
-import type { FileOriginSession, ManagedFile, Prisma, PrismaClient } from '@prisma/client'
+import { Prisma, type FileOriginSession, type ManagedFile, type PrismaClient } from '@prisma/client'
 
 import type {
   ArtifactGroupPage,
+  GetProjectFilesOverviewRequest,
   ListArtifactGroupsRequest,
   ListProjectFilesRequest,
   ProjectFileItem,
@@ -38,6 +39,7 @@ type ProjectFilesClient = Pick<
   | 'fileOriginSession'
   | 'artifactLineage'
   | 'uploadFile'
+  | '$queryRaw'
   | '$transaction'
 >
 type ProjectFilesClientProvider = () => Promise<ProjectFilesClient>
@@ -64,20 +66,40 @@ type IndexedFileCandidate = Omit<IndexedFileInput, 'storageKey' | 'sizeBytes' | 
 }
 
 type FileCursor = {
-  version: 1
+  version: 2
   kind: 'all' | 'uploads' | 'sessionArtifacts'
   projectId: string
   sessionId?: string
+  queryKey: string
   sortAtMs: string
   seq: number
 }
 
 type GroupCursor = {
-  version: 1
+  version: 2
   kind: 'artifactGroups'
   projectId: string
+  queryKey: string
   groupSortAtMs: string
   sessionId: string
+}
+
+type NormalizedSearch = {
+  filenameContains: string
+  queryKey: string
+}
+
+type SearchArtifactGroupRow = {
+  sessionId: string
+  groupSortAtMs: bigint
+  artifactCount: bigint
+}
+
+type SearchOverviewRow = {
+  totalCount: bigint
+  uploadCount: bigint
+  artifactCount: bigint
+  artifactGroupCount: bigint
 }
 
 type ManagedFileSoftDeleteToken = string
@@ -581,17 +603,24 @@ class ManagedFileIndexRepository {
 
   // Counts are always queryable, but isIndexComplete distinguishes an authoritative result from a
   // usable partial projection after scan, sync, or reconciliation failure.
-  async getOverview(projectId: string): Promise<ProjectFilesOverview> {
+  async getOverview(
+    request: string | GetProjectFilesOverviewRequest
+  ): Promise<ProjectFilesOverview> {
+    const { projectId, search: rawSearch } =
+      typeof request === 'string' ? { projectId: request, search: undefined } : request
     requireIdentifier(projectId, 'projectId')
+    const search = normalizeSearch(rawSearch)
     const client = await this.getClient()
-    const [totalCount, uploadCount, artifactCount, artifactGroupCount] = await Promise.all([
-      client.managedFile.count({ where: { projectId, deletedAt: null } }),
-      client.managedFile.count({ where: { projectId, source: 'upload', deletedAt: null } }),
-      client.managedFile.count({ where: { projectId, source: 'artifact', deletedAt: null } }),
-      client.managedFileSessionSync.count({
-        where: { projectId, deletedAt: null, artifactCount: { gt: 0 } }
-      })
-    ])
+    const [totalCount, uploadCount, artifactCount, artifactGroupCount] = search
+      ? await getMatchingOverviewCounts(client, projectId, search)
+      : await Promise.all([
+          client.managedFile.count({ where: { projectId, deletedAt: null } }),
+          client.managedFile.count({ where: { projectId, source: 'upload', deletedAt: null } }),
+          client.managedFile.count({ where: { projectId, source: 'artifact', deletedAt: null } }),
+          client.managedFileSessionSync.count({
+            where: { projectId, deletedAt: null, artifactCount: { gt: 0 } }
+          })
+        ])
 
     return {
       totalCount,
@@ -627,6 +656,7 @@ class ManagedFileIndexRepository {
     const normalizedRequest = { ...request, collection: normalizedCollection }
     const client = await this.getClient()
     const limit = normalizeLimit(request.limit)
+    const search = normalizeSearch(request.search)
     const source =
       normalizedCollection.kind === 'all'
         ? undefined
@@ -650,21 +680,31 @@ class ManagedFileIndexRepository {
           }
         : {})
     }
-    const [rows, totalCount] = await Promise.all([
-      client.managedFile.findMany({
-        where,
-        orderBy: [{ sortAtMs: 'desc' }, { seq: 'desc' }],
-        take: limit + 1
-      }),
-      client.managedFile.count({
-        where: {
-          projectId: request.projectId,
-          ...(source ? { source } : {}),
-          deletedAt: null,
-          ...(sessionId !== undefined ? { sessionId } : {})
-        }
-      })
-    ])
+    const [rows, totalCount] = search
+      ? await this.listMatchingFiles(
+          client,
+          request.projectId,
+          source,
+          sessionId,
+          search,
+          cursor,
+          limit
+        )
+      : await Promise.all([
+          client.managedFile.findMany({
+            where,
+            orderBy: [{ sortAtMs: 'desc' }, { seq: 'desc' }],
+            take: limit + 1
+          }),
+          client.managedFile.count({
+            where: {
+              projectId: request.projectId,
+              ...(source ? { source } : {}),
+              deletedAt: null,
+              ...(sessionId !== undefined ? { sessionId } : {})
+            }
+          })
+        ])
     const pageRows = rows.slice(0, limit)
     const lastRow = pageRows.at(-1)
     const origins = await client.fileOriginSession.findMany({
@@ -683,10 +723,11 @@ class ManagedFileIndexRepository {
       nextCursor:
         rows.length > limit && lastRow
           ? encodeCursor({
-              version: 1,
+              version: 2,
               kind: normalizedCollection.kind,
               projectId: request.projectId,
               sessionId,
+              queryKey: search?.queryKey ?? '',
               sortAtMs: lastRow.sortAtMs.toString(),
               seq: lastRow.seq
             })
@@ -700,6 +741,7 @@ class ManagedFileIndexRepository {
     requireIdentifier(request.projectId, 'projectId')
     const client = await this.getClient()
     const limit = normalizeLimit(request.limit)
+    const search = normalizeSearch(request.search)
     const cursor = request.cursor ? decodeGroupCursor(request.cursor, request) : undefined
     const where: Prisma.ManagedFileSessionSyncWhereInput = {
       projectId: request.projectId,
@@ -717,16 +759,18 @@ class ManagedFileIndexRepository {
           }
         : {})
     }
-    const [rows, totalCount] = await Promise.all([
-      client.managedFileSessionSync.findMany({
-        where,
-        orderBy: [{ groupSortAtMs: 'desc' }, { sessionId: 'desc' }],
-        take: limit + 1
-      }),
-      client.managedFileSessionSync.count({
-        where: { projectId: request.projectId, deletedAt: null, artifactCount: { gt: 0 } }
-      })
-    ])
+    const [rows, totalCount] = search
+      ? await listMatchingArtifactGroups(client, request.projectId, search, cursor, limit)
+      : await Promise.all([
+          client.managedFileSessionSync.findMany({
+            where,
+            orderBy: [{ groupSortAtMs: 'desc' }, { sessionId: 'desc' }],
+            take: limit + 1
+          }),
+          client.managedFileSessionSync.count({
+            where: { projectId: request.projectId, deletedAt: null, artifactCount: { gt: 0 } }
+          })
+        ])
     const pageRows = rows.slice(0, limit)
     const lastRow = pageRows.at(-1)
     const origins = await client.fileOriginSession.findMany({
@@ -740,21 +784,62 @@ class ManagedFileIndexRepository {
     return {
       items: pageRows.map((row) => ({
         sessionId: row.sessionId,
-        artifactCount: row.artifactCount,
+        artifactCount: toSafeCount(row.artifactCount, 'artifact group count'),
         ...toOriginProjection(originsBySession.get(row.sessionId))
       })),
       totalCount,
       nextCursor:
         rows.length > limit && lastRow
           ? encodeCursor({
-              version: 1,
+              version: 2,
               kind: 'artifactGroups',
               projectId: request.projectId,
+              queryKey: search?.queryKey ?? '',
               groupSortAtMs: lastRow.groupSortAtMs.toString(),
               sessionId: lastRow.sessionId
             })
           : undefined
     }
+  }
+
+  // Search keeps the same collection predicates and keyset ordering as the unfiltered path. The
+  // paired count query intentionally omits only the cursor so totalCount describes every match.
+  private async listMatchingFiles(
+    client: ProjectFilesClient,
+    projectId: string,
+    source: ProjectFileSource | undefined,
+    sessionId: string | undefined,
+    search: NormalizedSearch,
+    cursor: FileCursor | undefined,
+    limit: number
+  ): Promise<[ManagedFile[], number]> {
+    const sourcePredicate =
+      source === undefined ? Prisma.empty : Prisma.sql`AND "source" = ${source}`
+    const sessionPredicate =
+      sessionId === undefined ? Prisma.empty : Prisma.sql`AND "sessionId" = ${sessionId}`
+    const cursorPredicate = cursor
+      ? Prisma.sql`AND ("sortAtMs" < ${BigInt(cursor.sortAtMs)} OR ("sortAtMs" = ${BigInt(cursor.sortAtMs)} AND "seq" < ${cursor.seq}))`
+      : Prisma.empty
+    const [rows, totalCount] = await Promise.all([
+      client.$queryRaw<ManagedFile[]>(Prisma.sql`
+        SELECT
+          "seq", "source", "sourceFileId", "sourceVersionId", "checksum",
+          "projectId", "sessionId", "messageId",
+          "displayName", "storageKey", "mimeType", "sizeBytes", "mtimeMs", "sortAtMs",
+          "createdAt", "updatedAt", "deletedAt", "deleteOperationId"
+        FROM "ManagedFile"
+        WHERE "projectId" = ${projectId}
+          ${sourcePredicate}
+          AND "deletedAt" IS NULL
+          ${sessionPredicate}
+          AND ${filenameContainsPredicate(Prisma.sql`"displayName"`, search)}
+          ${cursorPredicate}
+        ORDER BY "sortAtMs" DESC, "seq" DESC
+        LIMIT ${limit + 1}
+      `),
+      countMatchingFiles(client, projectId, search, source, sessionId)
+    ])
+    return [rows, totalCount]
   }
 
   // Extracts finalized uploads and managed artifacts from authoritative session JSON. Identity is
@@ -1099,8 +1184,149 @@ const normalizeLimit = (limit: number): number => {
   return limit
 }
 
+// Normalizes untrusted IPC input once so SQL predicates and cursor identity share the same bounded,
+// trimmed query. Blank input deliberately falls back to the indexed non-search path.
+const normalizeSearch = (search: unknown): NormalizedSearch | undefined => {
+  if (search === undefined) return undefined
+  if (!isRecord(search) || typeof search.filenameContains !== 'string') {
+    throw new Error('Project files search is invalid.')
+  }
+  const filenameContains = search.filenameContains.trim()
+  if (!filenameContains) return undefined
+  if (filenameContains.length > 256) {
+    throw new Error('Project files search must be at most 256 characters.')
+  }
+  return { filenameContains, queryKey: foldAsciiCase(filenameContains) }
+}
+
+// SQLite's built-in lower() folds ASCII only. Bind cursors with the same transformation so query
+// identity never promises broader Unicode case-insensitivity than the SQL predicate provides.
+const foldAsciiCase = (value: string): string =>
+  value.replace(/[A-Z]/g, (character) => character.toLowerCase())
+
+// Every search query shares the same SQLite ASCII-folding behavior while selecting its own column
+// alias. Keeping the predicate in one fragment prevents counts and pages from drifting apart.
+const filenameContainsPredicate = (
+  displayNameColumn: Prisma.Sql,
+  search: NormalizedSearch
+): Prisma.Sql =>
+  Prisma.sql`instr(lower(${displayNameColumn}), lower(${search.filenameContains})) > 0`
+
 const requireIdentifier = (value: string, field: string): void => {
   if (!value.trim()) throw new Error(`Project files ${field} is required.`)
+}
+
+// One conditional aggregate keeps the debounced all-source search from scanning the same project
+// four times merely to populate the toolbar count and overview state.
+const getMatchingOverviewCounts = async (
+  client: ProjectFilesClient,
+  projectId: string,
+  search: NormalizedSearch
+): Promise<[number, number, number, number]> => {
+  const rows = await client.$queryRaw<SearchOverviewRow[]>(Prisma.sql`
+    SELECT
+      COUNT(file."seq") AS "totalCount",
+      COALESCE(SUM(CASE WHEN file."source" = 'upload' THEN 1 ELSE 0 END), 0) AS "uploadCount",
+      COALESCE(SUM(CASE WHEN file."source" = 'artifact' THEN 1 ELSE 0 END), 0) AS "artifactCount",
+      COUNT(DISTINCT CASE
+        WHEN file."source" = 'artifact' AND sync."sessionId" IS NOT NULL THEN file."sessionId"
+      END) AS "artifactGroupCount"
+    FROM "ManagedFile" AS file
+    LEFT JOIN "ManagedFileSessionSync" AS sync
+      ON sync."projectId" = file."projectId"
+      AND sync."sessionId" = file."sessionId"
+      AND sync."deletedAt" IS NULL
+    WHERE file."projectId" = ${projectId}
+      AND file."deletedAt" IS NULL
+      AND ${filenameContainsPredicate(Prisma.sql`file."displayName"`, search)}
+  `)
+  const counts = rows[0]
+
+  return [
+    toSafeCount(counts?.totalCount ?? 0n, 'search result count'),
+    toSafeCount(counts?.uploadCount ?? 0n, 'upload search result count'),
+    toSafeCount(counts?.artifactCount ?? 0n, 'artifact search result count'),
+    toSafeCount(counts?.artifactGroupCount ?? 0n, 'artifact group count')
+  ]
+}
+
+// Mirrors the optional source and session constraints used by listMatchingFiles so each collection
+// reports its own complete match count rather than the current page size.
+const countMatchingFiles = async (
+  client: ProjectFilesClient,
+  projectId: string,
+  search: NormalizedSearch,
+  source?: ProjectFileSource,
+  sessionId?: string
+): Promise<number> => {
+  const sourcePredicate = source === undefined ? Prisma.empty : Prisma.sql`AND "source" = ${source}`
+  const sessionPredicate =
+    sessionId === undefined ? Prisma.empty : Prisma.sql`AND "sessionId" = ${sessionId}`
+  const rows = await client.$queryRaw<Array<{ count: bigint }>>(Prisma.sql`
+    SELECT COUNT(*) AS "count"
+    FROM "ManagedFile"
+    WHERE "projectId" = ${projectId}
+      AND "deletedAt" IS NULL
+      ${sourcePredicate}
+      ${sessionPredicate}
+      AND ${filenameContainsPredicate(Prisma.sql`"displayName"`, search)}
+  `)
+  return toSafeCount(rows[0]?.count ?? 0n, 'search result count')
+}
+
+// Counts only session groups that still own at least one active artifact matching the search.
+const countMatchingArtifactGroups = async (
+  client: ProjectFilesClient,
+  projectId: string,
+  search: NormalizedSearch
+): Promise<number> => {
+  const rows = await client.$queryRaw<Array<{ count: bigint }>>(Prisma.sql`
+    SELECT COUNT(DISTINCT sync."sessionId") AS "count"
+    FROM "ManagedFileSessionSync" AS sync
+    INNER JOIN "ManagedFile" AS file
+      ON file."projectId" = sync."projectId" AND file."sessionId" = sync."sessionId"
+    WHERE sync."projectId" = ${projectId}
+      AND sync."deletedAt" IS NULL
+      AND file."source" = 'artifact'
+      AND file."deletedAt" IS NULL
+      AND ${filenameContainsPredicate(Prisma.sql`file."displayName"`, search)}
+  `)
+  return toSafeCount(rows[0]?.count ?? 0n, 'artifact group count')
+}
+
+// Applies the group-header keyset after filtering artifacts, preserving independent pagination for
+// session headers while returning per-group match counts instead of catalog artifact counts.
+const listMatchingArtifactGroups = async (
+  client: ProjectFilesClient,
+  projectId: string,
+  search: NormalizedSearch,
+  cursor: GroupCursor | undefined,
+  limit: number
+): Promise<[SearchArtifactGroupRow[], number]> => {
+  const cursorPredicate = cursor
+    ? Prisma.sql`AND (sync."groupSortAtMs" < ${BigInt(cursor.groupSortAtMs)} OR (sync."groupSortAtMs" = ${BigInt(cursor.groupSortAtMs)} AND sync."sessionId" < ${cursor.sessionId}))`
+    : Prisma.empty
+  return Promise.all([
+    client.$queryRaw<SearchArtifactGroupRow[]>(Prisma.sql`
+      SELECT
+        sync."sessionId" AS "sessionId",
+        sync."groupSortAtMs" AS "groupSortAtMs",
+        COUNT(file."seq") AS "artifactCount"
+      FROM "ManagedFileSessionSync" AS sync
+      INNER JOIN "ManagedFile" AS file
+        ON file."projectId" = sync."projectId" AND file."sessionId" = sync."sessionId"
+      WHERE sync."projectId" = ${projectId}
+        AND sync."deletedAt" IS NULL
+        AND file."source" = 'artifact'
+        AND file."deletedAt" IS NULL
+        AND ${filenameContainsPredicate(Prisma.sql`file."displayName"`, search)}
+        ${cursorPredicate}
+      GROUP BY sync."sessionId", sync."groupSortAtMs"
+      ORDER BY sync."groupSortAtMs" DESC, sync."sessionId" DESC
+      LIMIT ${limit + 1}
+    `),
+    countMatchingArtifactGroups(client, projectId, search)
+  ])
 }
 
 const sessionKey = (projectId: string, sessionId: string): string => `${projectId}:${sessionId}`
@@ -1207,13 +1433,15 @@ const decodeFileCursor = (cursor: string, request: ListProjectFilesRequest): Fil
   const value = parseCursor(cursor)
   const expectedSessionId =
     request.collection.kind === 'sessionArtifacts' ? request.collection.sessionId : undefined
+  const expectedQueryKey = normalizeSearch(request.search)?.queryKey ?? ''
 
   if (
     !isRecord(value) ||
-    value.version !== 1 ||
+    value.version !== 2 ||
     value.kind !== request.collection.kind ||
     value.projectId !== request.projectId ||
     value.sessionId !== expectedSessionId ||
+    typeof value.queryKey !== 'string' ||
     typeof value.sortAtMs !== 'string' ||
     !/^-?\d+$/.test(value.sortAtMs) ||
     typeof value.seq !== 'number' ||
@@ -1221,23 +1449,31 @@ const decodeFileCursor = (cursor: string, request: ListProjectFilesRequest): Fil
   ) {
     throw new Error('Project files cursor does not match the requested collection.')
   }
+  if (value.queryKey !== expectedQueryKey) {
+    throw new Error('Project files cursor does not match the requested search.')
+  }
 
   return value as FileCursor
 }
 
 const decodeGroupCursor = (cursor: string, request: ListArtifactGroupsRequest): GroupCursor => {
   const value = parseCursor(cursor)
+  const expectedQueryKey = normalizeSearch(request.search)?.queryKey ?? ''
 
   if (
     !isRecord(value) ||
-    value.version !== 1 ||
+    value.version !== 2 ||
     value.kind !== 'artifactGroups' ||
     value.projectId !== request.projectId ||
+    typeof value.queryKey !== 'string' ||
     typeof value.groupSortAtMs !== 'string' ||
     !/^-?\d+$/.test(value.groupSortAtMs) ||
     typeof value.sessionId !== 'string'
   ) {
     throw new Error('Project files cursor does not match the requested collection.')
+  }
+  if (value.queryKey !== expectedQueryKey) {
+    throw new Error('Project files cursor does not match the requested search.')
   }
 
   return value as GroupCursor
@@ -1252,8 +1488,11 @@ const toSafeNumber = (value: bigint, field: string): number => {
   return number
 }
 
-// Reconstructs an absolute managed path only after a storageKey has been produced by trusted indexing.
-// Bigint fields are range-checked before crossing Electron IPC, which serializes the numeric DTO.
+// Raw SQL aggregates may be bigint or number depending on the SQLite expression and test adapter.
+const toSafeCount = (value: bigint | number, field: string): number =>
+  typeof value === 'number' ? value : toSafeNumber(value, field)
+
+// Carries durable source-session metadata independently from the live renderer session store.
 const toOriginProjection = (
   origin: FileOriginSession | undefined
 ): { originSession?: ProjectFileOriginSession } =>
@@ -1267,6 +1506,8 @@ const toOriginProjection = (
       }
     : {}
 
+// Reconstructs an absolute managed path only after trusted indexing produced the storageKey. Bigint
+// fields are range-checked here before the renderer-visible DTO crosses Electron IPC.
 const toProjectFileItem = (
   row: ManagedFile,
   dataRoot: string,

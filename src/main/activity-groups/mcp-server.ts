@@ -21,6 +21,14 @@ const beginActivityGroupToolSchema = {
     .describe('A concise user-facing title describing the purpose of the upcoming tool group.')
 }
 
+const beginActivityGroupToolDefinition = {
+  title: 'Begin activity group',
+  description:
+    'Declare the concise purpose of the next coherent group of tool calls. Call once before the first tool in that group, not once per step.',
+  inputSchema: beginActivityGroupToolSchema,
+  annotations: { readOnlyHint: true, destructiveHint: false, idempotentHint: true }
+}
+
 const createActivityGroupMcpServer = (): ModelContextProtocolServer => {
   const server = new ModelContextProtocolServer({
     name: ACTIVITY_GROUP_MCP_SERVER_NAME,
@@ -29,13 +37,7 @@ const createActivityGroupMcpServer = (): ModelContextProtocolServer => {
 
   server.registerTool(
     BEGIN_ACTIVITY_GROUP_TOOL_NAME,
-    {
-      title: 'Begin activity group',
-      description:
-        'Declare the concise purpose of the next coherent group of tool calls. Call once before the first tool in that group, not once per step.',
-      inputSchema: beginActivityGroupToolSchema,
-      annotations: { readOnlyHint: true, destructiveHint: false, idempotentHint: true }
-    },
+    beginActivityGroupToolDefinition,
     async ({ title }) => ({
       content: [
         {
@@ -71,6 +73,7 @@ export {
   ACTIVITY_GROUP_MCP_SERVER_ARG,
   ACTIVITY_GROUP_MCP_SERVER_NAME,
   BEGIN_ACTIVITY_GROUP_TOOL_NAME,
+  beginActivityGroupToolDefinition,
   beginActivityGroupToolSchema,
   createActivityGroupMcpServer,
   createActivityGroupMcpServerConfig,

@@ -224,6 +224,14 @@ jobs:
             npx electron-builder ${{ matrix.eb_args }} "${eb_ver[@]}" --publish never
           fi
 
+      # Run the actual NSIS artifact, not the source tree: silent install into an isolated directory,
+      # start the packaged app in headless web mode, verify its authenticated bootstrap and bundled
+      # Windows runtime resources, request a clean shutdown, then silently uninstall it.
+      - name: Smoke test Windows installer
+        if: matrix.platform == 'win'
+        timeout-minutes: 10
+        run: node scripts/windows-installer-smoke.mjs --installer-dir dist
+
       # Upload only the distributables + electron-updater metadata for the caller's publish job.
       - name: Upload build artifacts
         uses: actions/upload-artifact@v7

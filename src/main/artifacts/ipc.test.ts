@@ -4,11 +4,19 @@ import { tmpdir } from 'node:os'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 
 import { createArtifactVersionLocator } from '../../shared/artifact-provenance'
-import type { ArtifactFile, ArtifactWriteSource } from '../../shared/artifacts'
+import {
+  ARTIFACT_OWNERSHIP_PERSISTENCE_RACE,
+  type ArtifactFile,
+  type ArtifactWriteSource
+} from '../../shared/artifacts'
 import { createLinearConversationGraph } from '../../shared/conversation-graph'
 import type { PersistedChatSession } from '../../shared/session-persistence'
 import { createPngBytes, createPngInlineSource } from './artifact-test-fixtures'
-import { ArtifactProvenanceRepository } from './provenance-repository'
+import {
+  ArtifactFinalizationProofError,
+  ArtifactOwnershipPersistenceRaceError,
+  ArtifactProvenanceRepository
+} from './provenance-repository'
 import { ArtifactRepository } from './repository'
 import {
   createArtifactHandlers,
@@ -225,8 +233,15 @@ describe('artifact IPC handlers', () => {
     const repository = {
       finalizeRunArtifacts: vi.fn()
     } as unknown as ArtifactRepository
+    const diagnosticLogger = { error: vi.fn() }
     const provenance = {
-      finalizeRun: vi.fn().mockRejectedValue(new Error('corrupt Artifact Version proof'))
+      finalizeRun: vi
+        .fn()
+        .mockRejectedValue(
+          new ArtifactFinalizationProofError(
+            'corrupt Artifact Version proof for /Users/private/result.txt: secret artifact contents'
+          )
+        )
     }
     const registry = new ArtifactRunRegistry()
     const claimId = registry.register({
@@ -242,7 +257,8 @@ describe('artifact IPC handlers', () => {
       artifactVersionIds: ['version-1']
     })
     const handlers = createArtifactHandlers(repository, registry, {
-      provenance: provenance as never
+      provenance: provenance as never,
+      logger: diagnosticLogger
     })
 
     await expect(
@@ -251,6 +267,24 @@ describe('artifact IPC handlers', () => {
     expect(repository.finalizeRunArtifacts).not.toHaveBeenCalled()
     expect(provenance.finalizeRun).toHaveBeenCalledOnce()
     expect(registry.resolve(claimId).finalizedMessageId).toBeUndefined()
+    expect(diagnosticLogger.error).toHaveBeenCalledOnce()
+    expect(diagnosticLogger.error).toHaveBeenCalledWith(
+      'artifact finalization attempt failed',
+      expect.objectContaining({
+        stage: 'durable-finalization',
+        failureKind: 'invalid-proof',
+        durableFinalizationCompleted: false,
+        compatibilityPublicationCompleted: false,
+        claimId,
+        artifactRunId: 'run-1',
+        artifactVersionIds: ['version-1'],
+        messageId: 'message-forged',
+        messageBranchId: 'branch-1'
+      })
+    )
+    const diagnostic = JSON.stringify(diagnosticLogger.error.mock.calls[0])
+    expect(diagnostic).not.toContain('secret artifact contents')
+    expect(diagnostic).not.toContain('/Users/private')
   })
 
   it('does not bypass provenance when a claim is missing part of its durable context', async () => {
@@ -406,10 +440,15 @@ describe('artifact IPC handlers', () => {
 
   it('retries compatibility publication after provenance finalized but the first move failed', async () => {
     const finalizedArtifact = createFinalizedArtifact()
+    const diagnosticLogger = { error: vi.fn() }
     const repository = {
       finalizeRunArtifacts: vi
         .fn()
-        .mockRejectedValueOnce(new Error('compatibility storage unavailable'))
+        .mockRejectedValueOnce(
+          new Error(
+            'compatibility storage unavailable at /Users/private/result.txt: secret artifact contents'
+          )
+        )
         .mockResolvedValue([finalizedArtifact])
     } as unknown as ArtifactRepository
     const provenance = {
@@ -429,7 +468,8 @@ describe('artifact IPC handlers', () => {
       artifactVersionIds: ['version-1']
     })
     const handlers = createArtifactHandlers(repository, registry, {
-      provenance: provenance as never
+      provenance: provenance as never,
+      logger: diagnosticLogger
     })
 
     await expect(
@@ -438,6 +478,23 @@ describe('artifact IPC handlers', () => {
     expect(repository.finalizeRunArtifacts).toHaveBeenCalledOnce()
     expect(provenance.finalizeRun).toHaveBeenCalledOnce()
     expect(registry.resolve(claimId).finalizedMessageId).toBeUndefined()
+    expect(diagnosticLogger.error).toHaveBeenCalledWith(
+      'artifact finalization attempt failed',
+      expect.objectContaining({
+        stage: 'compatibility-publication',
+        failureKind: 'operational-failure',
+        durableFinalizationCompleted: true,
+        compatibilityPublicationCompleted: false,
+        claimId,
+        artifactRunId: 'run-1',
+        artifactVersionIds: ['version-1'],
+        messageId: 'message-1',
+        messageBranchId: 'branch-1'
+      })
+    )
+    const diagnostic = JSON.stringify(diagnosticLogger.error.mock.calls[0])
+    expect(diagnostic).not.toContain('secret artifact contents')
+    expect(diagnostic).not.toContain('/Users/private')
 
     await expect(
       handlers.finalizeRunArtifacts({ claimId, messageId: 'message-1' })
@@ -445,6 +502,7 @@ describe('artifact IPC handlers', () => {
     expect(repository.finalizeRunArtifacts).toHaveBeenCalledTimes(2)
     expect(provenance.finalizeRun).toHaveBeenCalledTimes(2)
     expect(registry.resolve(claimId).finalizedMessageId).toBe('message-1')
+    expect(diagnosticLogger.error).toHaveBeenCalledOnce()
   })
 
   it('keeps migration drain pending until an artifact finalization already in progress finishes', async () => {
@@ -726,13 +784,14 @@ describe('artifact IPC handler registration', () => {
     })
     registerArtifactIpcHandlers(repository, runRegistry)
 
-    await ipcHandlers.get('artifacts:finalize-run')?.(
+    const finalizeResult = await ipcHandlers.get('artifacts:finalize-run')?.(
       {},
       {
         claimId,
         messageId: 'message-1'
       }
     )
+    expect(finalizeResult).toEqual({ ok: true, artifacts: [] })
     expect(finalizeRunArtifacts).toHaveBeenCalledWith({
       projectName: 'default-project',
       sourceSessionId: 'artifact-session-1',
@@ -779,6 +838,43 @@ describe('artifact IPC handler registration', () => {
       path: '/managed/inside.txt',
       maxBytes: 16
     })
+  })
+
+  it('returns only the ownership persistence race as a stable IPC failure result', async () => {
+    const repository = { finalizeRunArtifacts: vi.fn() } as unknown as ArtifactRepository
+    const provenance = {
+      finalizeRun: vi
+        .fn()
+        .mockRejectedValue(
+          new ArtifactOwnershipPersistenceRaceError(
+            'The durable graph projection has not caught up with the selected owner.'
+          )
+        )
+    }
+    const runRegistry = new ArtifactRunRegistry()
+    const claimId = runRegistry.register({
+      projectName: 'default-project',
+      artifactSessionId: 'artifact-session-1',
+      sessionId: 'session-1',
+      runId: 'run-1',
+      rootFrameId: 'root-frame-1',
+      agentFrameId: 'agent-frame-1',
+      messageBranchId: 'branch-1',
+      runtimeSegmentId: 'runtime-1',
+      promptMessageId: 'prompt-1',
+      artifactVersionIds: ['version-1']
+    })
+    registerArtifactIpcHandlers(repository, runRegistry, undefined, provenance as never)
+
+    await expect(
+      ipcHandlers.get('artifacts:finalize-run')?.({}, { claimId, messageId: 'message-1' })
+    ).resolves.toEqual({
+      ok: false,
+      code: ARTIFACT_OWNERSHIP_PERSISTENCE_RACE,
+      message: 'The durable graph projection has not caught up with the selected owner.'
+    })
+    expect(repository.finalizeRunArtifacts).not.toHaveBeenCalled()
+    expect(runRegistry.resolve(claimId).finalizedMessageId).toBeUndefined()
   })
 
   it('resolves native Version preview locators through Provenance instead of filesystem paths', async () => {

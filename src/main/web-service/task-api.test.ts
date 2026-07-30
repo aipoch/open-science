@@ -1,6 +1,7 @@
 import { describe, expect, it, vi } from 'vitest'
 
 import type { AcpRuntimeEvent } from '../../shared/acp'
+import { ARTIFACT_OWNERSHIP_PERSISTENCE_RACE } from '../../shared/artifacts'
 import type { PersistedChatSession } from '../../shared/session-persistence'
 import { HeadlessTaskApi } from './task-api'
 
@@ -453,8 +454,9 @@ describe('HeadlessTaskApi', () => {
     ])
   })
 
-  it('finalizes artifacts and persists the session when a prompt fails', async () => {
+  it('preserves finalized artifacts when a later claim fails after an ownership retry', async () => {
     let emitEvent: ((event: AcpRuntimeEvent) => void) | undefined
+    let finalizeAttempts = 0
     const savedSessions: PersistedChatSession[] = []
     const invoke = vi.fn(async (channel: string, _clientId: string, args: unknown[]) => {
       if (channel === 'projects:list') return [project]
@@ -477,8 +479,17 @@ describe('HeadlessTaskApi', () => {
           artifacts: []
         })
         emitEvent?.({
-          id: 'error-event',
+          id: 'artifact-event-later',
           timestamp: 11,
+          kind: 'artifact',
+          level: 'info',
+          sessionId: 'session-failed',
+          artifactClaimId: 'claim-2',
+          artifacts: []
+        })
+        emitEvent?.({
+          id: 'error-event',
+          timestamp: 12,
           kind: 'error',
           level: 'error',
           sessionId: 'session-failed',
@@ -487,20 +498,35 @@ describe('HeadlessTaskApi', () => {
         throw new Error('raw provider failure')
       }
       if (channel === 'artifacts:finalize-run') {
-        return [
-          {
-            id: 'artifact-1',
-            projectName: project.id,
-            sessionId: 'session-failed',
-            messageId: 'agent-message',
-            name: 'partial-report.md',
-            path: '/artifacts/partial-report.md',
-            fileUrl: 'open-science-preview://artifact-1/partial-report.md',
-            mimeType: 'text/markdown',
-            size: 10,
-            mtimeMs: 12
+        finalizeAttempts += 1
+        const request = args[0] as { claimId: string }
+        if (request.claimId === 'claim-1' && finalizeAttempts === 1) {
+          return {
+            ok: false,
+            code: ARTIFACT_OWNERSHIP_PERSISTENCE_RACE,
+            message: 'The durable projection has not caught up yet.'
           }
-        ]
+        }
+        if (request.claimId === 'claim-2') {
+          throw new Error('compatibility publication failed')
+        }
+        return {
+          ok: true,
+          artifacts: [
+            {
+              id: 'artifact-1',
+              projectName: project.id,
+              sessionId: 'session-failed',
+              messageId: 'agent-message',
+              name: 'partial-report.md',
+              path: '/artifacts/partial-report.md',
+              fileUrl: 'open-science-preview://artifact-1/partial-report.md',
+              mimeType: 'text/markdown',
+              size: 10,
+              mtimeMs: 12
+            }
+          ]
+        }
       }
       throw new Error(`Unexpected RPC channel: ${channel}`)
     })
@@ -526,9 +552,27 @@ describe('HeadlessTaskApi', () => {
       error: 'Provider rejected the request.',
       artifacts: [{ id: 'artifact-1', name: 'partial-report.md' }]
     })
-    expect(invoke).toHaveBeenCalledWith('artifacts:finalize-run', expect.any(String), [
-      { claimId: 'claim-1', messageId: 'agent-message' }
+    expect(finalizeAttempts).toBe(3)
+    expect(
+      invoke.mock.calls
+        .map(([channel]) => channel)
+        .filter((channel) => ['sessions:save-session', 'artifacts:finalize-run'].includes(channel))
+    ).toEqual([
+      'sessions:save-session',
+      'artifacts:finalize-run',
+      'sessions:save-session',
+      'artifacts:finalize-run',
+      'artifacts:finalize-run',
+      'sessions:save-session'
     ])
+    expect(savedSessions[1]).toMatchObject({
+      status: 'running',
+      messages: [
+        { id: 'user-message', role: 'user' },
+        { id: 'agent-message', role: 'agent', status: 'complete' }
+      ]
+    })
+    expect(savedSessions[1].messages.at(-1)?.artifactIds).toBeUndefined()
     expect(savedSessions.at(-1)).toMatchObject({
       status: 'error',
       error: 'Provider rejected the request.',

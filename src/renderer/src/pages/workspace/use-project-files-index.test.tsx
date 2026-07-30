@@ -3,7 +3,11 @@ import { act } from 'react'
 import { createRoot, type Root } from 'react-dom/client'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 
-import type { ProjectFilesChangedEvent, ProjectFileItem } from '../../../../shared/project-files'
+import type {
+  ProjectFilesChangedEvent,
+  ProjectFileItem,
+  ProjectFilesSearch
+} from '../../../../shared/project-files'
 import { useProjectFilesIndex, type ProjectFilesIndexState } from './use-project-files-index'
 
 const upload = (id: string): ProjectFileItem => ({
@@ -78,9 +82,12 @@ describe('useProjectFilesIndex', () => {
     container.remove()
   })
 
-  const renderHook = async (): Promise<void> => {
+  const renderHook = async (
+    search?: ProjectFilesSearch,
+    scope?: { kind: 'all' } | { kind: 'uploads' } | { kind: 'sessionArtifacts'; sessionId: string }
+  ): Promise<void> => {
     const Harness = (): null => {
-      current = useProjectFilesIndex('project-1')
+      current = useProjectFilesIndex('project-1', undefined, search, scope)
       return null
     }
 
@@ -99,6 +106,64 @@ describe('useProjectFilesIndex', () => {
     expect(current.groups.items).toEqual([{ sessionId: 'session-1', artifactCount: 2 }])
     expect(listFiles).toHaveBeenCalledTimes(1)
     expect(listFiles).toHaveBeenCalledWith(expect.objectContaining({ limit: 20 }))
+  })
+
+  it('applies one filename search to every independent cursor layer', async () => {
+    const search = { filenameContains: 'timeline' }
+    await renderHook(search)
+
+    expect(window.api.projectFiles.getOverview).toHaveBeenCalledWith({
+      projectId: 'project-1',
+      search
+    })
+    expect(listFiles).toHaveBeenCalledWith(
+      expect.objectContaining({ collection: { kind: 'uploads' }, search })
+    )
+    expect(window.api.projectFiles.listArtifactGroups).toHaveBeenCalledWith(
+      expect.objectContaining({ search })
+    )
+
+    await act(async () => current.loadMoreArtifacts('session-1'))
+
+    expect(listFiles).toHaveBeenCalledWith(
+      expect.objectContaining({
+        collection: { kind: 'sessionArtifacts', sessionId: 'session-1' },
+        search
+      })
+    )
+  })
+
+  it('loads only uploads for an uploads-scoped search', async () => {
+    const search = { filenameContains: 'timeline' }
+    await renderHook(search, { kind: 'uploads' })
+
+    expect(window.api.projectFiles.getOverview).not.toHaveBeenCalled()
+    expect(window.api.projectFiles.listArtifactGroups).not.toHaveBeenCalled()
+    expect(listFiles).toHaveBeenCalledOnce()
+    expect(listFiles).toHaveBeenCalledWith(
+      expect.objectContaining({ collection: { kind: 'uploads' }, search })
+    )
+    expect(current.uploads.totalCount).toBe(2)
+    expect(current.overview.totalCount).toBe(0)
+    expect(current.isOverviewLoaded).toBe(false)
+  })
+
+  it('loads the selected session even when presentation may be collapsed', async () => {
+    const search = { filenameContains: 'timeline' }
+    await renderHook(search, { kind: 'sessionArtifacts', sessionId: 'session-1' })
+
+    expect(window.api.projectFiles.getOverview).not.toHaveBeenCalled()
+    expect(window.api.projectFiles.listArtifactGroups).not.toHaveBeenCalled()
+    expect(listFiles).toHaveBeenCalledOnce()
+    expect(listFiles).toHaveBeenCalledWith(
+      expect.objectContaining({
+        collection: { kind: 'sessionArtifacts', sessionId: 'session-1' },
+        search
+      })
+    )
+    expect(current.artifactsBySession['session-1']?.totalCount).toBe(2)
+    expect(current.overview.totalCount).toBe(0)
+    expect(current.isOverviewLoaded).toBe(false)
   })
 
   it('advances upload and per-session artifact cursors independently', async () => {

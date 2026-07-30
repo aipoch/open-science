@@ -3607,7 +3607,8 @@ class SettingsService {
         env: envOverrides,
         sessionOptions,
         sessionEffort,
-        contextWindow
+        contextWindow,
+        contextUsageModel: effectiveModel
       }
     }
 
@@ -3706,6 +3707,7 @@ class SettingsService {
           : {}),
         sessionEffort,
         contextWindow: provider.contextWindow,
+        contextUsageModel: provider.model,
         authentication: modelConfig.authentication,
         providerConfiguration: modelConfig.providerConfiguration,
         responsesBridgeLease: responsesBridge?.lease

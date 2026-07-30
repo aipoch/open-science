@@ -21,7 +21,7 @@ describe('CodexSkillActivityProjector', () => {
     const skillPath = join(codexHome, 'skills', 'mcp-pubmed', 'SKILL.md')
     const projector = new CodexSkillActivityProjector(join(codexHome, 'skills'))
 
-    const loading = projector.project(
+    const loadingProjection = projector.projectWithContext(
       toolEvent({
         toolKind: 'read',
         title: `Read file '${skillPath}'`,
@@ -32,7 +32,7 @@ describe('CodexSkillActivityProjector', () => {
         raw: { private: true }
       })
     )
-    const loaded = projector.project(
+    const loadedProjection = projector.projectWithContext(
       toolEvent({
         id: 'event-2',
         status: 'completed',
@@ -41,6 +41,11 @@ describe('CodexSkillActivityProjector', () => {
         toolContent: [{ type: 'content', content: { type: 'text', text: 'FULL SKILL BODY' } }]
       })
     )
+    const loading = loadingProjection.event
+    const loaded = loadedProjection.event
+
+    expect(loadingProjection.skillFile).toEqual({ name: 'mcp-pubmed', path: skillPath })
+    expect(loadedProjection.skillFile).toEqual({ name: 'mcp-pubmed', path: skillPath })
 
     expect(loading).toMatchObject({
       kind: 'tool',

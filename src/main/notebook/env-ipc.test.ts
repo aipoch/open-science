@@ -97,6 +97,28 @@ describe('createNotebookEnvHandlers', () => {
     expect(provisioner.repair).toHaveBeenCalledWith('r', expect.any(Function), { force: true })
   })
 
+  it('publishes a successful verified repair back to the runtime service', async () => {
+    const provisioner = fakeProvisioner()
+    const onRepairCompleted = vi.fn().mockResolvedValue(undefined)
+    const handlers = createNotebookEnvHandlers(provisioner, undefined, undefined, onRepairCompleted)
+
+    await handlers.repair('r', () => {})
+
+    expect(onRepairCompleted).toHaveBeenCalledOnce()
+    expect(onRepairCompleted).toHaveBeenCalledWith('r')
+  })
+
+  it('does not release runtime-service quarantine when the rebuild fails', async () => {
+    const provisioner = fakeProvisioner({
+      repair: vi.fn().mockRejectedValue(new Error('verification failed'))
+    })
+    const onRepairCompleted = vi.fn().mockResolvedValue(undefined)
+    const handlers = createNotebookEnvHandlers(provisioner, undefined, undefined, onRepairCompleted)
+
+    await expect(handlers.repair('r', () => {})).rejects.toThrow('verification failed')
+    expect(onRepairCompleted).not.toHaveBeenCalled()
+  })
+
   it('blocks new Environment mutations while a data-root migration is pending', async () => {
     const provisioner = fakeProvisioner()
     const handlers = createNotebookEnvHandlers(provisioner)

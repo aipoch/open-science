@@ -99,6 +99,20 @@ describe('CloseConfirmModal', () => {
     expect(dialog?.className).toContain('data-[state=closed]:fill-mode-forwards')
   })
 
+  it('reports whether the modal is obscuring the active conversation', async () => {
+    const onOpenChange = vi.fn()
+    act(() => root.render(<CloseConfirmModal onOpenChange={onOpenChange} />))
+    act(() => {
+      emit({ requestId: 'r-visibility', variant: 'close-to-tray', sessions: [] })
+    })
+
+    expect(onOpenChange).toHaveBeenCalledWith(true)
+
+    const minimize = await findButtonByName(/Minimize to tray/)
+    act(() => minimize.click())
+    expect(onOpenChange).toHaveBeenLastCalledWith(false)
+  })
+
   it('acks and shows the resolved project NAME (not the id main sent) plus the title', async () => {
     useProjectStore.setState({
       projects: [{ id: 'p1', name: 'My Analysis' } as never],

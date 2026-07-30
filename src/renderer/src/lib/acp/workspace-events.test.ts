@@ -1,5 +1,8 @@
 import type { AcpRuntimeEvent, AcpPermissionRequest } from '../../../../shared/acp'
-import type { ArtifactFile } from '../../../../shared/artifacts'
+import {
+  ARTIFACT_OWNERSHIP_PERSISTENCE_RACE,
+  type ArtifactFile
+} from '../../../../shared/artifacts'
 import { beforeEach, describe, expect, it, vi } from 'vitest'
 
 import {
@@ -895,6 +898,77 @@ describe('workspace runtime events', () => {
     })
   })
 
+  it('binds a restarted runtime Artifact event to the current response in a historical Session', async () => {
+    const finalizeRunArtifacts = vi.fn(async ({ messageId }: { messageId: string }) => [
+      createArtifactFile({
+        id: `transport-session-1:${messageId}:result.txt`,
+        sessionId: 'transport-session-1',
+        messageId,
+        runId: undefined
+      })
+    ])
+    const saveSession = vi.fn().mockResolvedValue(undefined)
+    const historicalPromptMessageId =
+      useSessionStore.getState().sessions[0].activeRun?.promptMessageId
+
+    await applyWorkspaceRuntimeEvent(
+      createEvent({
+        id: 'runtime-1:acp-event-1',
+        role: 'assistant',
+        messageId: 'historical-assistant-stream',
+        text: 'Historical response'
+      })
+    )
+    const historicalResponseMessageId = useSessionStore.getState().sessions[0].messages.at(-1)?.id
+    await applyWorkspaceRuntimeEvent(
+      createEvent({
+        id: 'runtime-1:acp-event-2',
+        kind: 'artifact',
+        runId: 'historical-artifact-run',
+        promptMessageId: historicalPromptMessageId,
+        artifactClaimId: 'historical-claim',
+        artifacts: [
+          createArtifactFile({ id: 'historical-version', runId: 'historical-artifact-run' })
+        ]
+      }),
+      { finalizeRunArtifacts, saveSession }
+    )
+    await applyWorkspaceRuntimeEvent(createEvent({ id: 'historical-stop', kind: 'stop' }))
+
+    const currentPrompt = useSessionStore.getState().appendUserMessage({
+      sessionId: 'transport-session-1',
+      content: 'Create a new result after restart'
+    })
+    await applyWorkspaceRuntimeEvent(
+      createEvent({
+        // Historical Sessions may already contain ids from the legacy restarting namespace.
+        id: 'runtime-1:acp-event-1',
+        role: 'assistant',
+        messageId: 'current-assistant-stream',
+        text: 'Current response'
+      })
+    )
+    const currentResponseMessageId = useSessionStore.getState().sessions[0].messages.at(-1)?.id
+    await applyWorkspaceRuntimeEvent(
+      createEvent({
+        id: 'runtime-1:acp-event-2',
+        kind: 'artifact',
+        runId: 'current-artifact-run',
+        promptMessageId: currentPrompt?.messageId,
+        artifactClaimId: 'current-claim',
+        artifacts: [createArtifactFile({ id: 'current-version', runId: 'current-artifact-run' })]
+      }),
+      { finalizeRunArtifacts, saveSession }
+    )
+    await applyWorkspaceRuntimeEvent(createEvent({ id: 'current-stop', kind: 'stop' }))
+
+    expect(currentResponseMessageId).not.toBe(historicalResponseMessageId)
+    expect(finalizeRunArtifacts).toHaveBeenLastCalledWith({
+      claimId: 'current-claim',
+      messageId: currentResponseMessageId
+    })
+  })
+
   it('finalizes every artifact claim deferred before the same stop event', async () => {
     const promptMessageId = useSessionStore.getState().sessions[0].activeRun?.promptMessageId
     await applyWorkspaceRuntimeEvent(
@@ -1180,7 +1254,10 @@ describe('workspace runtime events', () => {
       .fn()
       .mockImplementationOnce(async () => {
         operationOrder.push('finalize')
-        throw new Error('Artifact finalization message is not a Branch descendant of its prompt.')
+        throw Object.assign(
+          new Error('The durable projection has not caught up with the selected message yet.'),
+          { code: ARTIFACT_OWNERSHIP_PERSISTENCE_RACE }
+        )
       })
       .mockImplementationOnce(async () => {
         operationOrder.push('finalize')
@@ -1205,6 +1282,79 @@ describe('workspace runtime events', () => {
     expect(operationOrder).toEqual(['save', 'finalize', 'save', 'finalize', 'save'])
     expect(finalizeRunArtifacts).toHaveBeenCalledTimes(2)
     expect(useSessionStore.getState().sessions[0].error).toBeUndefined()
+  })
+
+  it('keeps a proof failure terminal when only its human message resembles the old race text', async () => {
+    await applyWorkspaceRuntimeEvent(
+      createEvent({
+        id: 'assistant-event-terminal-proof',
+        role: 'assistant',
+        messageId: 'assistant-message-terminal-proof',
+        text: 'Saved the plot.'
+      })
+    )
+    const operationOrder: string[] = []
+    const saveSession = vi.fn().mockImplementation(async () => {
+      operationOrder.push('save')
+    })
+    const finalizeRunArtifacts = vi.fn().mockImplementation(async () => {
+      operationOrder.push('finalize')
+      throw new Error('Artifact finalization message is not a Branch descendant of its prompt.')
+    })
+
+    await applyWorkspaceRuntimeEvent(
+      createEvent({ id: 'stop-before-terminal-proof', kind: 'stop' })
+    )
+
+    await expect(
+      applyWorkspaceRuntimeEvent(
+        createEvent({
+          id: 'artifact-event-terminal-proof',
+          kind: 'artifact',
+          runId: 'artifact-run-terminal-proof',
+          artifactClaimId: 'claim-terminal-proof',
+          artifacts: [createArtifactFile({ runId: 'artifact-run-terminal-proof' })]
+        }),
+        { finalizeRunArtifacts, saveSession }
+      )
+    ).rejects.toThrow(/Branch descendant/)
+
+    expect(operationOrder).toEqual(['save', 'finalize'])
+    expect(finalizeRunArtifacts).toHaveBeenCalledOnce()
+  })
+
+  it('attempts the recoverable ownership persistence race at most twice', async () => {
+    await applyWorkspaceRuntimeEvent(
+      createEvent({
+        id: 'assistant-event-repeated-race',
+        role: 'assistant',
+        messageId: 'assistant-message-repeated-race',
+        text: 'Saved the plot.'
+      })
+    )
+    const race = Object.assign(new Error('Durable ownership is still unavailable.'), {
+      code: ARTIFACT_OWNERSHIP_PERSISTENCE_RACE
+    })
+    const finalizeRunArtifacts = vi.fn().mockRejectedValue(race)
+    const saveSession = vi.fn().mockResolvedValue(undefined)
+
+    await applyWorkspaceRuntimeEvent(createEvent({ id: 'stop-before-repeated-race', kind: 'stop' }))
+
+    await expect(
+      applyWorkspaceRuntimeEvent(
+        createEvent({
+          id: 'artifact-event-repeated-race',
+          kind: 'artifact',
+          runId: 'artifact-run-repeated-race',
+          artifactClaimId: 'claim-repeated-race',
+          artifacts: [createArtifactFile({ runId: 'artifact-run-repeated-race' })]
+        }),
+        { finalizeRunArtifacts, saveSession }
+      )
+    ).rejects.toThrow('Durable ownership is still unavailable.')
+
+    expect(finalizeRunArtifacts).toHaveBeenCalledTimes(2)
+    expect(saveSession).toHaveBeenCalledTimes(2)
   })
 
   it('auto-opens a generated molecule artifact in the preview panel', async () => {
@@ -1677,6 +1827,8 @@ describe('workspace runtime events', () => {
     await expect(
       applyWorkspaceRuntimeEvent(artifactEvent, { finalizeRunArtifacts, saveSession })
     ).rejects.toThrow('move failed')
+
+    expect(finalizeRunArtifacts).toHaveBeenCalledOnce()
 
     expect(useSessionStore.getState().sessions[0]).toMatchObject({
       status: 'error',

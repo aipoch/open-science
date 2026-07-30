@@ -342,48 +342,147 @@ const isFile = (path: string): boolean => {
   }
 }
 
-// Registry of runtimes flagged "repair-required" by crash recovery: an env whose package install was
-// interrupted (killed mid-conda/pip) may be half-applied, so it must NOT be silently trusted. Keyed by
-// runtimeId (envId = the interpreter's real path or a managed env prefix), it is consulted when a
-// binding resolves so the runtime surfaces as unavailable/repair-required, and cleared once a fresh
-// install of that runtime completes (re-installing IS the repair). A single JSON file under the runtime
-// root covers managed AND external runtimes without writing into a user's own environment.
+// Registry of runtimes flagged "repair-required". An interrupted install may be repaired by completing
+// a fresh install, while a protected interpreter identity change is stronger: another package install
+// must never adopt the changed interpreter as a new baseline, so only a verified Runtime Reset clears it.
+// Keyed by canonical mutation target: managed runtimes use their conda env name (so bound and unbound
+// sessions share one key for the same prefix), while external runtimes use their discovered runtimeId.
+// A single JSON file under the runtime root covers managed AND external runtimes without writing into a
+// user's own environment.
 export const repairRegistryPath = (root: string): string => join(root, '.repair-required.json')
 
-export const readRepairRequired = (root: string): string[] => {
+export type RepairRequiredReason = 'interrupted-install' | 'protected-identity-change'
+
+// Interrupted installs are repairable one interpreter at a time even when a named Conda prefix exposes
+// both Python and R. Protected-identity markers remain keyed by the bare env name because replacing an
+// interpreter compromises the shared prefix and must quarantine every language until Reset/removal.
+export const managedRepairRegistryKey = (envName: string, language: NotebookLanguage): string =>
+  `managed:${language}:${envName}`
+
+type RepairRequiredRegistry = {
+  runtimeIds: string[]
+  reasons: Record<string, RepairRequiredReason>
+}
+
+const emptyRepairRequiredRegistry = (): RepairRequiredRegistry => ({
+  runtimeIds: [],
+  reasons: Object.create(null) as Record<string, RepairRequiredReason>
+})
+
+const repairRegistryCorruptError = (): Error =>
+  new Error(
+    'RUNTIME_REPAIR_REGISTRY_CORRUPT: the repair-required registry is unreadable; refusing to trust or overwrite it'
+  )
+
+const readRepairRequiredRegistry = (root: string): RepairRequiredRegistry | 'corrupt' => {
   try {
     const parsed: unknown = JSON.parse(readFileSync(repairRegistryPath(root), 'utf8'))
-    const ids = (parsed as { runtimeIds?: unknown })?.runtimeIds
-    return Array.isArray(ids) ? ids.filter((id): id is string => typeof id === 'string') : []
-  } catch {
-    return []
+    if (!parsed || typeof parsed !== 'object' || Array.isArray(parsed)) return 'corrupt'
+    const ids = (parsed as { runtimeIds?: unknown }).runtimeIds
+    if (!Array.isArray(ids) || !ids.every((id): id is string => typeof id === 'string')) {
+      return 'corrupt'
+    }
+    const runtimeIds = [...new Set(ids)]
+    const rawReasons = (parsed as { reasons?: unknown })?.reasons
+    const reasons = Object.create(null) as Record<string, RepairRequiredReason>
+    const runtimeIdSet = new Set(runtimeIds)
+    if (rawReasons !== undefined) {
+      if (!rawReasons || typeof rawReasons !== 'object' || Array.isArray(rawReasons))
+        return 'corrupt'
+      for (const [runtimeId, reason] of Object.entries(rawReasons)) {
+        if (
+          !runtimeIdSet.has(runtimeId) ||
+          (reason !== 'interrupted-install' && reason !== 'protected-identity-change')
+        ) {
+          return 'corrupt'
+        }
+        reasons[runtimeId] = reason
+      }
+    }
+    return { runtimeIds, reasons }
+  } catch (error) {
+    return (error as { code?: string }).code === 'ENOENT'
+      ? emptyRepairRequiredRegistry()
+      : 'corrupt'
   }
 }
 
-export const isRepairRequired = (root: string, runtimeId: string): boolean =>
-  readRepairRequired(root).includes(runtimeId)
-
-const writeRepairRequired = (root: string, ids: string[]): void => {
-  mkdirSync(dirname(repairRegistryPath(root)), { recursive: true })
-  writeFileSync(
-    repairRegistryPath(root),
-    `${JSON.stringify({ runtimeIds: [...new Set(ids)] }, null, 2)}\n`,
-    'utf8'
-  )
+export const readRepairRequired = (root: string): string[] => {
+  const registry = readRepairRequiredRegistry(root)
+  if (registry === 'corrupt') throw repairRegistryCorruptError()
+  return registry.runtimeIds
 }
 
-export const addRepairRequired = (root: string, runtimeId: string): void => {
-  const ids = readRepairRequired(root)
-  if (!ids.includes(runtimeId)) writeRepairRequired(root, [...ids, runtimeId])
+export const isRepairRequired = (root: string, runtimeId: string): boolean => {
+  const registry = readRepairRequiredRegistry(root)
+  return registry === 'corrupt' || registry.runtimeIds.includes(runtimeId)
+}
+
+export type RepairRequiredRegistryReason = RepairRequiredReason | 'legacy-unknown'
+
+export const readRepairRequiredReason = (
+  root: string,
+  runtimeId: string
+): RepairRequiredRegistryReason | undefined => {
+  const registry = readRepairRequiredRegistry(root)
+  if (registry === 'corrupt') return 'legacy-unknown'
+  if (!registry.runtimeIds.includes(runtimeId)) return undefined
+  return registry.reasons[runtimeId] ?? 'legacy-unknown'
+}
+
+// A marker written before repair reasons were introduced is ambiguous. Treat it as protected rather
+// than letting a normal install clear a potentially changed interpreter after an app upgrade.
+export const isProtectedIdentityRepairRequired = (root: string, runtimeId: string): boolean =>
+  ['protected-identity-change', 'legacy-unknown'].includes(
+    readRepairRequiredReason(root, runtimeId) ?? ''
+  )
+
+const writeRepairRequired = (root: string, registry: RepairRequiredRegistry): void => {
+  const path = repairRegistryPath(root)
+  mkdirSync(dirname(path), { recursive: true })
+  const temp = `${path}.${process.pid}-${randomUUID()}.tmp`
+  writeFileSync(
+    temp,
+    `${JSON.stringify(
+      { runtimeIds: [...new Set(registry.runtimeIds)], reasons: registry.reasons },
+      null,
+      2
+    )}\n`,
+    'utf8'
+  )
+  renameSync(temp, path)
+}
+
+export const addRepairRequired = (
+  root: string,
+  runtimeId: string,
+  reason: RepairRequiredReason = 'interrupted-install'
+): void => {
+  const registry = readRepairRequiredRegistry(root)
+  if (registry === 'corrupt') throw repairRegistryCorruptError()
+  const alreadyMarked = registry.runtimeIds.includes(runtimeId)
+  const currentReason = registry.reasons[runtimeId]
+  const effectiveCurrentReason =
+    currentReason ?? (alreadyMarked ? 'protected-identity-change' : undefined)
+  // Never downgrade a protected-identity quarantine if crash recovery later observes an interrupted
+  // operation for the same runtime.
+  const nextReason =
+    effectiveCurrentReason === 'protected-identity-change' || reason === 'protected-identity-change'
+      ? 'protected-identity-change'
+      : reason
+  if (!alreadyMarked) registry.runtimeIds.push(runtimeId)
+  if (alreadyMarked && currentReason === nextReason) return
+  registry.reasons[runtimeId] = nextReason
+  writeRepairRequired(root, registry)
 }
 
 export const clearRepairRequired = (root: string, runtimeId: string): void => {
-  const ids = readRepairRequired(root)
-  if (ids.includes(runtimeId))
-    writeRepairRequired(
-      root,
-      ids.filter((id) => id !== runtimeId)
-    )
+  const registry = readRepairRequiredRegistry(root)
+  if (registry === 'corrupt') throw repairRegistryCorruptError()
+  if (!registry.runtimeIds.includes(runtimeId)) return
+  registry.runtimeIds = registry.runtimeIds.filter((id) => id !== runtimeId)
+  delete registry.reasons[runtimeId]
+  writeRepairRequired(root, registry)
 }
 
 // Python gate: marker present, version >= expected, and default-python interpreter on disk. This is

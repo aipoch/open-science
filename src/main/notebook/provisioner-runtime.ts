@@ -1,6 +1,7 @@
 import { execFile, spawn, type ChildProcess } from 'node:child_process'
 import { createHash } from 'node:crypto'
-import { createReadStream } from 'node:fs'
+import { createReadStream, realpathSync } from 'node:fs'
+import { basename, resolve, sep, win32 } from 'node:path'
 import { promisify } from 'node:util'
 
 import { condaActivatedPath } from './runtime-paths'
@@ -104,6 +105,67 @@ const executableEnv = ({
   return { ...merged, PATH: condaActivatedPath(prefix, merged.PATH, platform) }
 }
 
+const R_RUNTIME_PATH_PROBE = [
+  'normalize <- function(path) normalizePath(path, winslash="/", mustWork=FALSE)',
+  'cat("OPEN_SCIENCE_R_HOME=", normalize(R.home()), "\\n", sep="")',
+  'cat("OPEN_SCIENCE_R_BASE_LIBRARY=", normalize(R.home("library")), "\\n", sep="")',
+  'for (path in .libPaths()) cat("OPEN_SCIENCE_R_LIBRARY=", normalize(path), "\\n", sep="")'
+].join('; ')
+
+const canonicalPath = (path: string): string => {
+  try {
+    return realpathSync(path)
+  } catch {
+    return resolve(path)
+  }
+}
+
+const pathIsWithin = (
+  candidate: string,
+  root: string,
+  platform: NodeJS.Platform = process.platform
+): boolean => {
+  const normalizeCase = (value: string): string =>
+    platform === 'win32' ? value.toLowerCase() : value
+  const normalizePath = (value: string): string =>
+    platform === 'win32' ? win32.resolve(value) : canonicalPath(value)
+  const normalizedCandidate = normalizeCase(normalizePath(candidate))
+  const normalizedRoot = normalizeCase(normalizePath(root))
+  const separator = platform === 'win32' ? win32.sep : sep
+  return (
+    normalizedCandidate === normalizedRoot ||
+    normalizedCandidate.startsWith(`${normalizedRoot}${separator}`)
+  )
+}
+
+const assertRRuntimePaths = (
+  stdout: string,
+  prefix: string,
+  platform: NodeJS.Platform = process.platform
+): void => {
+  const values = (marker: string): string[] =>
+    stdout
+      .split(/\r?\n/u)
+      .filter((line) => line.startsWith(marker))
+      .map((line) => line.slice(marker.length).trim())
+      .filter(Boolean)
+  const homes = values('OPEN_SCIENCE_R_HOME=')
+  const baseLibraries = values('OPEN_SCIENCE_R_BASE_LIBRARY=')
+  const libraries = values('OPEN_SCIENCE_R_LIBRARY=')
+  if (
+    homes.length !== 1 ||
+    baseLibraries.length !== 1 ||
+    !pathIsWithin(homes[0], prefix, platform) ||
+    !pathIsWithin(baseLibraries[0], prefix, platform) ||
+    !libraries.some((library) => pathIsWithin(library, prefix, platform))
+  ) {
+    throw new Error(
+      `R runtime paths resolve outside the expected prefix ${prefix}; the environment may have been ` +
+        'copied or relocated without being rebuilt.'
+    )
+  }
+}
+
 // Verifies a materialized interpreter actually runs `<bin> --version` (spec §5 step 4 — the arm64 /
 // ad-hoc signature verification point). Rejects with the captured stderr on failure.
 export const verifyExecutable = async (
@@ -111,11 +173,21 @@ export const verifyExecutable = async (
   options: VerifyExecutableOptions = {}
 ): Promise<void> => {
   try {
-    await execFileAsync(bin, ['--version'], {
-      timeout: 15_000,
-      windowsHide: true,
-      env: executableEnv(options)
-    })
+    const isR = ['r', 'r.exe'].includes(basename(bin).toLowerCase())
+    const { stdout } = await execFileAsync(
+      bin,
+      isR ? ['--vanilla', '--slave', '-e', R_RUNTIME_PATH_PROBE] : ['--version'],
+      {
+        timeout: 15_000,
+        windowsHide: true,
+        env: executableEnv(options),
+        encoding: 'utf8'
+      }
+    )
+    if (isR) {
+      if (!options.prefix) throw new Error('an expected prefix is required to verify R')
+      assertRRuntimePaths(stdout, options.prefix, options.platform)
+    }
   } catch (error) {
     throw new Error(`interpreter not executable: ${bin} (${(error as Error).message})`)
   }

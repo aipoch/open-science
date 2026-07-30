@@ -16,6 +16,7 @@ import {
   type KernelLoopResponse
 } from './kernel-protocol'
 import { mapLoopOutputs, type MappedFigure } from './loop-output-mapper'
+import { protectManagedRuntimeWrites } from './managed-runtime-guard'
 import {
   condaActivatedPath,
   DEFAULT_PY_ENV,
@@ -502,7 +503,16 @@ class NotebookKernelExecutor implements NotebookExecutor {
       args = [...(request.resolvedInterpreter?.args ?? []), loopPath]
     }
 
-    const child = spawn(command, args, { cwd: spawnCwd, env: spawnEnv })
+    // The semantic guard rejects known installers before dispatch. This native layer makes the
+    // app-owned runtime read-only to the complete persistent-kernel process tree as well, covering
+    // dynamically constructed R/Python/REPL calls. manage_packages runs in the main process outside
+    // this wrapper and remains the only package writer.
+    const invocation = protectManagedRuntimeWrites(
+      { executable: command, args },
+      request.runtimeRoot,
+      this.platform
+    )
+    const child = spawn(invocation.executable, invocation.args, { cwd: spawnCwd, env: spawnEnv })
     await new Promise<void>((resolve, reject) => {
       child.once('spawn', resolve)
       child.once('error', reject)

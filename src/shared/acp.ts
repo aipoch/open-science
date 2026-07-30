@@ -97,13 +97,43 @@ export const ACP_PROMPT_FAILED_EVENT_TITLE = 'Prompt failed'
 // compaction first, then falls back to a fresh context plus text replay. Absent on ordinary events.
 export type AcpRecoverableFailure = 'context-overflow'
 
-// Current agent-context usage projected onto its logical app session. `used` is model input tokens plus
-// cache-read tokens; output/completion and cache-write tokens are excluded. `size` is the ACP-required
-// window bound to that same agent-context generation. Both expire when that context disconnects or is
-// replaced. Monetary cost is deliberately excluded: context tracking does not calculate billing.
+export type AcpContextUsageCategoryKey =
+  'system' | 'tools' | 'messages' | 'mcp' | 'skills' | 'other'
+
+export type AcpContextUsageCategory = {
+  key: AcpContextUsageCategoryKey
+  tokens: number
+  // `estimated` distinguishes locally tokenized content from the residual needed to reconcile the
+  // category sum with the authoritative Agent total.
+  estimated: boolean
+}
+
+export type AcpContextUsageBreakdown = {
+  source: 'estimated' | 'native'
+  // Stable tokenizer/profile id for diagnostics. Native framework reports have no local tokenizer.
+  tokenizer?: 'anthropic' | 'o200k_base' | 'cl100k_base'
+  model?: string
+  // Sum of locally attributable categories before the Agent total is applied.
+  estimatedTokens: number
+  // Zero while preflight has no Agent comparison. Once reconciled, signed Agent total minus local
+  // estimate: positive values become `other`; negative drift stays visible rather than being scaled.
+  difference: number
+  status: 'preflight' | 'reconciled'
+  categories: AcpContextUsageCategory[]
+}
+
+// Current agent-context usage projected onto its logical app session. `used` remains the latest Agent
+// model-input total once one exists; before the first Agent report it is the local preflight estimate.
+// During later preflight updates, `agentUsed` preserves that latest authoritative reading while the
+// independent breakdown keeps changing. Output/completion and cache-write tokens are excluded. `size`
+// is omitted until the selected model window is known, then remains bound to that same agent-context
+// generation. Both expire when that context disconnects or is replaced. Monetary cost is deliberately
+// excluded.
 export type AcpContextUsage = {
   used: number
-  size: number
+  agentUsed?: number
+  size?: number
+  breakdown?: AcpContextUsageBreakdown
 }
 
 export type AcpRuntimeEvent = {

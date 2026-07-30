@@ -1,7 +1,10 @@
 import { describe, it, expect, beforeAll, afterAll } from 'vitest'
 import { spawn, type ChildProcessWithoutNullStreams } from 'node:child_process'
+import { existsSync } from 'node:fs'
+import { mkdir, mkdtemp, readFile, readdir, rm, writeFile } from 'node:fs/promises'
 import { createInterface } from 'node:readline'
-import { join } from 'node:path'
+import { join, relative } from 'node:path'
+import { tmpdir } from 'node:os'
 import { randomUUID } from 'node:crypto'
 import type { Server } from 'node:http'
 import { framePythonRequest, parseLoopResponse, type KernelLoopResponse } from './kernel-protocol'
@@ -73,6 +76,304 @@ gate('repl_loop.js', () => {
       child.kill()
     }
   }, 60_000)
+
+  it('blocks dynamically assembled child_process package commands at runtime', async () => {
+    const { child, send } = startLoop({})
+    try {
+      const result = await send(
+        `const cp = require('node:child_process'); ` +
+          `cp['ex' + 'ec']('p' + 'ip in' + 'stall pandas')`
+      )
+      expect(result.error).toMatch(/manage_packages/)
+
+      const encoded = Buffer.from('pip install pandas', 'utf16le').toString('base64')
+      const encodedResult = await send(
+        `require('node:child_process').execFileSync('powershell.exe', ` +
+          `${JSON.stringify(['-NoProfile', '-ec', encoded])})`
+      )
+      expect(encodedResult.error).toMatch(/manage_packages/)
+    } finally {
+      child.kill()
+    }
+  }, 60_000)
+
+  it('allows dynamically assembled pip inspection commands at runtime', async () => {
+    const { child, send } = startLoop({})
+    try {
+      const result = await send(
+        `require('node:child_process')['spa' + 'wnSync'](` +
+          `'python3', ['-m', 'p' + 'ip', 'li' + 'st', '--help']); 'allowed'`
+      )
+      expect(result.error).toBeNull()
+      expect(result.result).toBe('allowed')
+    } finally {
+      child.kill()
+    }
+  }, 60_000)
+
+  it('blocks child_process.fork from escaping the runtime guard', async () => {
+    const { child, send } = startLoop({})
+    try {
+      const result = await send(
+        `const cp = require('node:child_process'); cp['fo' + 'rk']('untrusted-helper.js')`
+      )
+      expect(result.error).toMatch(/child_process\.fork is not allowed/)
+    } finally {
+      child.kill()
+    }
+  }, 60_000)
+
+  it('blocks Worker isolates that would reload unguarded built-in modules', async () => {
+    const { child, send } = startLoop({})
+    try {
+      const result = await send(
+        `const { Worker } = require('node:worker_threads'); ` +
+          `new Worker('require("node:fs").writeFileSync("escape.txt", "x")', { eval: true })`
+      )
+      expect(result.error).toMatch(/Worker is not allowed/)
+    } finally {
+      child.kill()
+    }
+  }, 60_000)
+
+  it('blocks child process payloads that write into the managed runtime', async () => {
+    const runtimeRoot = await mkdtemp(join(tmpdir(), 'os-repl-child-guard-'))
+    const blockedPath = join(runtimeRoot, 'child-blocked.txt')
+    const { child, send } = startLoop({ OPEN_SCIENCE_RUNTIME_DIR: runtimeRoot })
+    try {
+      const result = await send(
+        `require('node:child_process').execFileSync('/bin/sh', ` +
+          `['-c', 'touch "$OPEN_SCIENCE_RUNTIME_DIR/child-blocked.txt"'])`
+      )
+      expect(result.error).toMatch(/manage_packages/)
+      expect(existsSync(blockedPath)).toBe(false)
+    } finally {
+      child.kill()
+      await rm(runtimeRoot, { recursive: true, force: true })
+    }
+  }, 60_000)
+
+  it.each([
+    [
+      'shell',
+      '/bin/sh',
+      ['-c', 'cd "$OPEN_SCIENCE_RUNTIME_DIR"; touch relative-shell.txt'],
+      'relative-shell.txt'
+    ],
+    [
+      'PowerShell',
+      'powershell.exe',
+      [
+        '-NoProfile',
+        '-c',
+        'Set-Location $env:OPEN_SCIENCE_RUNTIME_DIR; Set-Content relative-powershell.txt x'
+      ],
+      'relative-powershell.txt'
+    ],
+    [
+      'shell from a runtime subdirectory',
+      '/bin/sh',
+      ['-c', 'cd "$OPEN_SCIENCE_RUNTIME_DIR/subdir"; cd ..; touch relative-shell-subdir.txt'],
+      'relative-shell-subdir.txt'
+    ],
+    [
+      'PowerShell from a runtime subdirectory',
+      'powershell.exe',
+      [
+        '-NoProfile',
+        '-c',
+        'Set-Location $env:OPEN_SCIENCE_RUNTIME_DIR\\subdir; Set-Location ..; Set-Content relative-powershell-subdir.txt x'
+      ],
+      'relative-powershell-subdir.txt'
+    ]
+  ] as const)(
+    'blocks %s child-process writes after entering the managed runtime',
+    async (_name, command, args, relativeTarget) => {
+      const runtimeRoot = await mkdtemp(join(tmpdir(), 'os-repl-child-cwd-'))
+      await mkdir(join(runtimeRoot, 'subdir'))
+      const { child, send } = startLoop({ OPEN_SCIENCE_RUNTIME_DIR: runtimeRoot })
+      try {
+        const result = await send(
+          `require('node:child_process').execFileSync(${JSON.stringify(command)}, ` +
+            `${JSON.stringify(args)})`
+        )
+        expect(result.error).toMatch(/manage_packages/)
+        expect(existsSync(join(runtimeRoot, relativeTarget))).toBe(false)
+      } finally {
+        child.kill()
+        await rm(runtimeRoot, { recursive: true, force: true })
+      }
+    },
+    60_000
+  )
+
+  it('allows child process payloads that only read the runtime and write elsewhere', async () => {
+    const runtimeRoot = await mkdtemp(join(tmpdir(), 'os-repl-child-read-'))
+    const workspace = await mkdtemp(join(tmpdir(), 'os-repl-child-output-'))
+    const source = join(runtimeRoot, 'source.txt')
+    const copied = join(workspace, 'copied.txt')
+    const report = join(workspace, 'report.txt')
+    await writeFile(source, 'runtime input')
+    const { child, send } = startLoop({ OPEN_SCIENCE_RUNTIME_DIR: runtimeRoot })
+    try {
+      const payload = [
+        `const fs = require('node:fs')`,
+        `console.log(process.env.OPEN_SCIENCE_RUNTIME_DIR)`,
+        `fs.copyFileSync(${JSON.stringify(source)}, ${JSON.stringify(copied)})`,
+        `fs.writeFileSync(${JSON.stringify(report)}, 'workspace output')`
+      ].join('; ')
+      const result = await send(
+        `require('node:child_process').execFileSync(process.execPath, ['-e', ${JSON.stringify(payload)}])`
+      )
+
+      expect(result.error).toBeNull()
+      expect(await readFile(copied, 'utf8')).toBe('runtime input')
+      expect(await readFile(report, 'utf8')).toBe('workspace output')
+
+      if (process.platform !== 'win32') {
+        const shellCopy = join(workspace, 'shell-copy.txt')
+        const shellReport = join(workspace, 'shell-report.txt')
+        const shellPayload =
+          `cp "$OPEN_SCIENCE_RUNTIME_DIR/source.txt" ${JSON.stringify(shellCopy)}; ` +
+          `printf '%s' "$OPEN_SCIENCE_RUNTIME_DIR" > /dev/null; ` +
+          `cd "$OPEN_SCIENCE_RUNTIME_DIR"; ` +
+          `touch ${JSON.stringify(shellReport)}`
+        const shellResult = await send(
+          `require('node:child_process').execFileSync('/bin/sh', ['-c', ${JSON.stringify(shellPayload)}])`
+        )
+        expect(shellResult.error).toBeNull()
+        expect(await readFile(shellCopy, 'utf8')).toBe('runtime input')
+        expect(existsSync(shellReport)).toBe(true)
+      }
+    } finally {
+      child.kill()
+      await rm(runtimeRoot, { recursive: true, force: true })
+      await rm(workspace, { recursive: true, force: true })
+    }
+  }, 60_000)
+
+  it('uses PowerShell write targets instead of blocking every runtime-path mention', async () => {
+    const runtimeRoot = await mkdtemp(join(tmpdir(), 'os-repl-powershell-targets-'))
+    const workspace = await mkdtemp(join(tmpdir(), 'os-repl-powershell-output-'))
+    const { child, send } = startLoop({ OPEN_SCIENCE_RUNTIME_DIR: runtimeRoot })
+    try {
+      const allowedPayload =
+        `Copy-Item "$env:OPEN_SCIENCE_RUNTIME_DIR\\source.txt" ${JSON.stringify(join(workspace, 'report.txt'))}; ` +
+        `Write-Output $env:OPEN_SCIENCE_RUNTIME_DIR; ` +
+        `Set-Location $env:OPEN_SCIENCE_RUNTIME_DIR; ` +
+        `New-Item ${JSON.stringify(join(workspace, 'report-created.txt'))}`
+      const allowed = await send(
+        `try { require('node:child_process').execFileSync('powershell.exe', ` +
+          `['-NoProfile', '-Command', ${JSON.stringify(allowedPayload)}]) } ` +
+          `catch (error) { if (String(error).includes('manage_packages')) throw error }; 'allowed'`
+      )
+      expect(allowed.error).toBeNull()
+      expect(allowed.result).toBe('allowed')
+
+      const blocked = await send(
+        `require('node:child_process').execFileSync('powershell.exe', ` +
+          `['-NoProfile', '-Command', ` +
+          `${JSON.stringify(`Set-Content "$env:OPEN_SCIENCE_RUNTIME_DIR\\blocked.txt" x`)}])`
+      )
+      expect(blocked.error).toMatch(/manage_packages/)
+    } finally {
+      child.kill()
+      await rm(runtimeRoot, { recursive: true, force: true })
+      await rm(workspace, { recursive: true, force: true })
+    }
+  }, 60_000)
+
+  it.each(['sync', 'promise'] as const)(
+    'blocks %s hard-link aliases sourced from the managed runtime',
+    async (variant) => {
+      const runtimeRoot = await mkdtemp(join(tmpdir(), 'os-repl-hard-link-runtime-'))
+      const workspace = await mkdtemp(join(tmpdir(), 'os-repl-hard-link-output-'))
+      const source = join(runtimeRoot, 'protected.txt')
+      const alias = join(workspace, 'alias.txt')
+      await writeFile(source, 'protected')
+      const { child, send } = startLoop({ OPEN_SCIENCE_RUNTIME_DIR: runtimeRoot })
+      try {
+        const operation =
+          variant === 'sync'
+            ? `fs.linkSync(${JSON.stringify(source)}, ${JSON.stringify(alias)}); fs.writeFileSync(${JSON.stringify(alias)}, 'changed')`
+            : `await fs.promises.link(${JSON.stringify(source)}, ${JSON.stringify(alias)}); await fs.promises.writeFile(${JSON.stringify(alias)}, 'changed')`
+        const result = await send(`const fs = require('node:fs'); ${operation}`)
+
+        expect(result.error).toMatch(/manage_packages/)
+        expect(await readFile(source, 'utf8')).toBe('protected')
+        expect(existsSync(alias)).toBe(false)
+      } finally {
+        child.kill()
+        await rm(runtimeRoot, { recursive: true, force: true })
+        await rm(workspace, { recursive: true, force: true })
+      }
+    },
+    60_000
+  )
+
+  it('blocks symlink aliases sourced from the managed runtime', async () => {
+    const parent = await mkdtemp(join(tmpdir(), 'os-repl-symlink-'))
+    const runtimeRoot = join(parent, 'runtime')
+    const workspace = join(parent, 'workspace')
+    await mkdir(runtimeRoot)
+    await mkdir(workspace)
+    const source = join(runtimeRoot, 'protected.txt')
+    const alias = join(workspace, 'alias.txt')
+    const relativeSource = relative(workspace, source)
+    await writeFile(source, 'protected')
+    const { child, send } = startLoop({ OPEN_SCIENCE_RUNTIME_DIR: runtimeRoot })
+    try {
+      const result = await send(
+        `require('node:fs').symlinkSync(${JSON.stringify(relativeSource)}, ${JSON.stringify(alias)})`
+      )
+
+      expect(result.error).toMatch(/manage_packages/)
+      expect(existsSync(alias)).toBe(false)
+    } finally {
+      child.kill()
+      await rm(parent, { recursive: true, force: true })
+    }
+  }, 60_000)
+
+  it('blocks managed-runtime writes routed through a temporary variable', async () => {
+    const runtimeRoot = await mkdtemp(join(tmpdir(), 'os-repl-runtime-guard-'))
+    const blockedPath = join(runtimeRoot, 'blocked.txt')
+    const { child, send } = startLoop({ OPEN_SCIENCE_RUNTIME_DIR: runtimeRoot })
+    try {
+      const result = await send(
+        `const target = process.env.OPEN_SCIENCE_RUNTIME_DIR + '/blocked.txt'; ` +
+          `require('node:fs').writeFileSync(target, 'changed')`
+      )
+      expect(result.error).toMatch(/manage_packages/)
+      expect(existsSync(blockedPath)).toBe(false)
+    } finally {
+      child.kill()
+      await rm(runtimeRoot, { recursive: true, force: true })
+    }
+  }, 60_000)
+
+  it.each([
+    `require('node:fs').mkdtempSync(process.env.OPEN_SCIENCE_RUNTIME_DIR + '/sync-')`,
+    `await require('node:fs').promises.mkdtemp(process.env.OPEN_SCIENCE_RUNTIME_DIR + '/promise-')`,
+    `await new Promise((resolve, reject) => require('node:fs').mkdtemp(` +
+      `process.env.OPEN_SCIENCE_RUNTIME_DIR + '/callback-', ` +
+      `(error, value) => error ? reject(error) : resolve(value)))`
+  ])(
+    'blocks managed-runtime temporary directory creation at runtime',
+    async (source) => {
+      const runtimeRoot = await mkdtemp(join(tmpdir(), 'os-repl-mkdtemp-guard-'))
+      const { child, send } = startLoop({ OPEN_SCIENCE_RUNTIME_DIR: runtimeRoot })
+      try {
+        const result = await send(source)
+        expect(result.error).toMatch(/manage_packages/)
+        expect(await readdir(runtimeRoot)).toEqual([])
+      } finally {
+        child.kill()
+        await rm(runtimeRoot, { recursive: true, force: true })
+      }
+    },
+    60_000
+  )
 })
 
 gate('repl_loop.js host.compute', () => {

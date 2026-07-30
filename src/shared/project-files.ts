@@ -26,6 +26,16 @@ export type ProjectFileItem = {
   originSession?: ProjectFileOriginSession
 }
 
+export type ProjectFilesSearch = {
+  // Filename substring search is ASCII case-insensitive; non-ASCII characters match literally.
+  filenameContains: string
+}
+
+export type GetProjectFilesOverviewRequest = {
+  projectId: string
+  search?: ProjectFilesSearch
+}
+
 export type ListProjectFilesRequest = {
   projectId: string
   // Uploads and each session's artifacts are deliberately separate collections with independent
@@ -33,6 +43,7 @@ export type ListProjectFilesRequest = {
   // that need one canonical Project Files read model rather than reconstructing Session metadata.
   collection:
     { kind: 'all' } | { kind: 'uploads' } | { kind: 'sessionArtifacts'; sessionId: string }
+  search?: ProjectFilesSearch
   cursor?: string
   limit: number
 }
@@ -45,6 +56,7 @@ export type ProjectFilesPage = {
 
 export type ListArtifactGroupsRequest = {
   projectId: string
+  search?: ProjectFilesSearch
   cursor?: string
   limit: number
 }

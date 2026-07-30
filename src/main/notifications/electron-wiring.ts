@@ -1,8 +1,17 @@
 import type { Notification } from 'electron'
 
-import type { ConnectorApprovalRequest } from '../../shared/settings'
+import type { ComputeApprovalRequest } from '../../shared/compute'
+import type {
+  ConnectorApprovalRequest,
+  ConversationSkillImportApprovalRequest
+} from '../../shared/settings'
+import type { ComputeApprovalContext } from '../compute/compute-approval-broker'
 import type { Logger } from '../logger'
-import type { TaskNotificationRequest, TaskNotificationService } from './task-notifications'
+import {
+  runTaskNotificationInBackground,
+  type TaskNotificationRequest,
+  type TaskNotificationService
+} from './task-notifications'
 
 // Builds the `show` callback the task-notification service hands notifications to. Extracted from
 // registerIpcHandlers so the headless and Notification.isSupported gates have a unit-level home —
@@ -49,11 +58,51 @@ export const buildTaskNotificationShow =
 export type BuildConnectorApprovalBroadcastDeps = {
   broadcastToRenderers: (channel: string, payload: ConnectorApprovalRequest) => void
   taskNotifications: Pick<TaskNotificationService, 'handleConnectorApproval'>
+  onNotificationError?: (error: unknown) => void
 }
 
 export const buildConnectorApprovalBroadcast =
   (deps: BuildConnectorApprovalBroadcastDeps) =>
   (request: ConnectorApprovalRequest): void => {
     deps.broadcastToRenderers('connectors:approval-request', request)
-    void deps.taskNotifications.handleConnectorApproval(request, request.sessionId)
+    runTaskNotificationInBackground(
+      () => deps.taskNotifications.handleConnectorApproval(request, request.sessionId),
+      deps.onNotificationError
+    )
+  }
+
+export type BuildComputeApprovalBroadcastDeps = {
+  broadcastToRenderers: (channel: string, payload: ComputeApprovalRequest) => void
+  taskNotifications: Pick<TaskNotificationService, 'handleComputeApproval'>
+  onNotificationError?: (error: unknown) => void
+}
+
+// Compute's grant check owns the session context, so preserve it through the broker broadcast while
+// keeping the renderer payload unchanged.
+export const buildComputeApprovalBroadcast =
+  (deps: BuildComputeApprovalBroadcastDeps) =>
+  (request: ComputeApprovalRequest, context?: ComputeApprovalContext): void => {
+    deps.broadcastToRenderers('compute:approval-request', request)
+    runTaskNotificationInBackground(
+      () => deps.taskNotifications.handleComputeApproval(request, context?.sessionId),
+      deps.onNotificationError
+    )
+  }
+
+export type BuildSkillImportApprovalBroadcastDeps = {
+  broadcastToRenderers: (channel: string, payload: ConversationSkillImportApprovalRequest) => void
+  taskNotifications: Pick<TaskNotificationService, 'handleSkillImportApproval'>
+  onNotificationError?: (error: unknown) => void
+}
+
+// A Skill import already carries its session id, so one callback can deliver both the renderer card
+// and the background desktop signal.
+export const buildSkillImportApprovalBroadcast =
+  (deps: BuildSkillImportApprovalBroadcastDeps) =>
+  (request: ConversationSkillImportApprovalRequest): void => {
+    deps.broadcastToRenderers('skills:conversation-import-request', request)
+    runTaskNotificationInBackground(
+      () => deps.taskNotifications.handleSkillImportApproval(request),
+      deps.onNotificationError
+    )
   }

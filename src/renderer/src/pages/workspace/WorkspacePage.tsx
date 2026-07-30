@@ -1171,10 +1171,10 @@ const WorkspacePage = ({
           onOpenSettings={openSettings}
         />
 
-        {/* Resizable panels follow the existing workspace layout; main content owns chat state. */}
+        {/* Cancel the workspace's vertical and trailing padding so panel dividers meet the app edges. */}
         <ResizablePanelGroup
           orientation="horizontal"
-          className="-my-[10px] h-[calc(100%+20px)] min-w-0 flex-1"
+          className="-my-[10px] -mr-[10px] h-[calc(100%+20px)] min-w-0 flex-1"
         >
           <ConversationPanel
             activeSession={activeSession}

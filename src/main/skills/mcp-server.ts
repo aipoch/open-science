@@ -21,6 +21,11 @@ const requestSkillImportToolSchema = {
     .uuid()
     .describe('Exact skillImportTurnToken from the same eligible attachment reference.')
 }
+const requestSkillImportToolDefinition = {
+  title: 'Request Skill import',
+  description: REQUEST_SKILL_IMPORT_TOOL_DESCRIPTION,
+  inputSchema: requestSkillImportToolSchema
+}
 const SKILL_IMPORT_SYSTEM_PROMPT_APPEND = [
   '<open_science_skill_import_instructions>',
   'When the user explicitly asks to install or import an attachment wrapped in <attached_skill_package> and marked skillImportEligible, call request_skill_import with its exact URI as attachment_uri and skillImportTurnToken as turn_token.',
@@ -64,11 +69,7 @@ const createSkillImportMcpServer = (handler: SkillImportMcpHandler): ModelContex
 
   server.registerTool(
     REQUEST_SKILL_IMPORT_TOOL_NAME,
-    {
-      title: 'Request Skill import',
-      description: REQUEST_SKILL_IMPORT_TOOL_DESCRIPTION,
-      inputSchema: requestSkillImportToolSchema
-    },
+    requestSkillImportToolDefinition,
     async ({ attachment_uri, turn_token }) => ({
       content: [
         {
@@ -158,6 +159,7 @@ export {
   createSkillImportMcpEnvironmentFromProcess,
   createSkillImportMcpServer,
   createSkillImportMcpServerConfig,
+  requestSkillImportToolDefinition,
   requestSkillImportToolSchema,
   runSkillImportMcpServer
 }

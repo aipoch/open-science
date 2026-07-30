@@ -239,6 +239,7 @@ beforeEach(async () => {
 
 afterEach(async () => {
   vi.unstubAllGlobals()
+  vi.unstubAllEnvs()
   await rm(storageRoot, { recursive: true, force: true })
 })
 
@@ -3123,6 +3124,25 @@ describe('SettingsService: official vendors', () => {
     expect(config.contextWindow).toBe(1_000_000)
   })
 
+  it('carries the upstream model through the Claude backend for context tokenization', async () => {
+    const service = createService()
+    await repository.setClaudeInfo({ resolvedPath: execPath, version: '2.1.0' })
+    await repository.setAgentFramework('claude-code')
+    const provider = (
+      await service.upsertProvider({
+        type: 'official',
+        name: 'DeepSeek',
+        vendorId: 'deepseek',
+        key: 'sk-ds'
+      })
+    ).providers[0]
+    await service.setActiveProvider(provider.id, 'deepseek-v4-flash')
+
+    const backend = await service.resolveActiveAgentBackend()
+
+    expect(backend.contextUsageModel).toBe('deepseek-v4-flash')
+  })
+
   it('refreshes models from the vendor and persists them over the bundled catalog', async () => {
     const service = createService()
     vi.stubGlobal(
@@ -4471,6 +4491,7 @@ describe('SettingsService: reasoning effort', () => {
       managedCodexAdapterPath: adapterPath,
       managedCodexNativePath: execPath
     })
+    await repository.setAgentFramework('codex')
     await repository.setCodexInfo({
       resolvedPath: adapterPath,
       version: '1.1.4',

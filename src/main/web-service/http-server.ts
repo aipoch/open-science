@@ -63,6 +63,7 @@ type WebServerOptions = {
   bootstrap: {
     appName: string
     appVersion: string
+    configRoot: string
     platform: string
     versions: { electron: string; chrome: string; node: string }
   }

@@ -14,7 +14,7 @@ project for everyone.
 
 ### Prerequisites
 
-- [Node.js](https://nodejs.org/) (LTS recommended) and npm
+- [Node.js](https://nodejs.org/) 22 (see [`.nvmrc`](.nvmrc)) and npm
 - Git
 
 ### Setup
@@ -33,6 +33,34 @@ installs native Electron app dependencies.
 ```bash
 npm run dev
 ```
+
+## Coding-agent navigation
+
+Run installation, development, and validation commands from the repository root:
+
+| Intent      | Root command                                             |
+| ----------- | -------------------------------------------------------- |
+| Install     | `npm install`                                            |
+| Run         | `npm run dev`                                            |
+| Validate    | `npm run typecheck`, `npm run lint`, and `npm test`      |
+| Target test | `npm test -- <affected-test-path> [-t '<test pattern>']` |
+
+Create Git worktrees only under the repository's `.worktree/<name>` directory, with each change
+branch based on the default branch. Do not remove or move another worktree.
+
+Get explicit approval before destructive Git or filesystem operations, dependency installation that
+downloads or executes new code, publishing packages or releases, handling credentials outside the
+project's existing flows, or external writes (such as pushes, pull requests, issues, and messages) that
+the task did not already request.
+
+Read the existing owner document before changing one of these areas, then run its focused checks:
+
+| Area     | Owner document                                                                          | Focused checks                                                                                        |
+| -------- | --------------------------------------------------------------------------------------- | ----------------------------------------------------------------------------------------------------- |
+| Renderer | [Design specification](docs/design.md)                                                  | `npm run typecheck:web`; targeted tests under `src/renderer/`                                         |
+| Notebook | [Current architecture](docs/PRD.md#8-current-architecture-what-is-actually-implemented) | `npm run typecheck:node`; targeted tests under `src/main/notebook/`                                   |
+| Settings | [Settings design](docs/design.md#settings)                                              | `npm run typecheck`; targeted tests under `src/main/settings/` and `src/renderer/src/pages/settings/` |
+| ACP      | [Current architecture](docs/PRD.md#8-current-architecture-what-is-actually-implemented) | `npm run typecheck:node`; targeted tests under `src/main/acp/`                                        |
 
 ## Project Structure
 
@@ -99,6 +127,16 @@ npm run test        # Vitest unit tests
 Pull requests are expected to keep type checking, linting, and the test suite
 green. New behavior should come with tests.
 
+These repository gates are not automatically evidence for every changed behavior. Pair each behavior
+with the smallest project-owned check that exercises it, and run that check after the last material
+edit. If the implementation changes afterward, rerun every affected check instead of reusing an older
+result.
+
+The final handoff must list the material changes, map each affected behavior to its project-owned check
+and final result (`behavior -> command -> result`), and identify any risk those checks did not cover.
+Only mark the change verified after an independent review confirms that this mapping covers the final
+state.
+
 ## Commit Messages
 
 Every commit subject must follow Conventional Commits with a scope:
@@ -148,11 +186,14 @@ ci(review): unify automated AI reviews
 
   ## Review focus
   ```
+
 - For architectural changes, data flows, state transitions, or interactions
   across multiple components, consider adding a Mermaid diagram when it makes
   the design easier to understand and review.
 - Small documentation, maintenance, and narrowly scoped fixes may use a concise
   summary, but should still state the expected behavior and validation.
+- Include the final evidence mapping from [Required Checks](#required-checks), state that the listed
+  checks ran after the last material edit, and call out uncovered risks.
 - Keep PRs reasonably small and scoped so they are easy to review.
 - Ensure the required checks above pass.
 - Merge pull requests using **squash merge only**. The squash commit subject must

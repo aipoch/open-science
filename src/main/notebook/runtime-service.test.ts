@@ -44,7 +44,11 @@ import {
   DEFAULT_PY_ENV,
   DEFAULT_R_ENV,
   envPrefix,
+  isProtectedIdentityRepairRequired,
+  isRepairRequired,
   pythonBin,
+  rBin,
+  repairRegistryPath,
   writeReadyMarker,
   writeRReadyMarker
 } from './runtime-paths'
@@ -117,6 +121,16 @@ describe('resolveShellInvocation', () => {
     const script = Buffer.from(invocation.args.at(-1) ?? '', 'base64').toString('utf16le')
     expect(script).toContain('[Console]::OutputEncoding = $openScienceUtf8')
     expect(script).toContain('$OutputEncoding = $openScienceUtf8')
+    expect(script).toContain('$env:PSModulePath = $env:OPEN_SCIENCE_PSMODULEPATH')
+    expect(script).toContain(
+      'Import-Module "$PSHOME\\Modules\\Microsoft.PowerShell.Management\\Microsoft.PowerShell.Management.psd1" -ErrorAction Stop'
+    )
+    expect(script).toContain(
+      'Import-Module "$PSHOME\\Modules\\Microsoft.PowerShell.Utility\\Microsoft.PowerShell.Utility.psd1" -ErrorAction Stop'
+    )
+    expect(script).toContain(
+      "[System.Environment]::SetEnvironmentVariable('OPEN_SCIENCE_PSMODULEPATH', $null, [System.EnvironmentVariableTarget]::Process)"
+    )
     expect(script).toContain("$ProgressPreference = 'SilentlyContinue'")
     expect(script).toContain("$ErrorActionPreference = 'Stop'")
     expect(script).toContain('catch {')
@@ -182,14 +196,17 @@ describe('Windows shell support', () => {
     expect(normalizePowerShellStderr(errorClixml, 'win32')).toBe(errorClixml)
   })
 
-  it('keeps Windows shell location variables while excluding host secrets', () => {
+  it('keeps Windows shell runtime variables while excluding host secrets', () => {
     const env = buildShellEnv('/notebook/handoff', 'win32', {
       PATH: 'C:\\Windows\\System32',
+      ProgramFiles: 'C:\\Program Files',
       SystemRoot: 'C:\\Windows',
       WINDIR: 'C:\\Windows',
       ComSpec: 'C:\\Windows\\System32\\cmd.exe',
       PATHEXT: '.COM;.EXE;.BAT;.CMD',
       USERPROFILE: 'C:\\Users\\Ada',
+      PSModulePath: 'C:\\host\\third-party-modules',
+      OPEN_SCIENCE_PSMODULEPATH: 'C:\\host\\controlled-modules',
       OPEN_SCIENCE_TEST_SECRET: 'must-not-leak'
     })
 
@@ -200,17 +217,32 @@ describe('Windows shell support', () => {
       ComSpec: 'C:\\Windows\\System32\\cmd.exe',
       PATHEXT: '.COM;.EXE;.BAT;.CMD',
       USERPROFILE: 'C:\\Users\\Ada',
+      PSModulePath:
+        'C:\\Program Files\\WindowsPowerShell\\Modules;C:\\Windows\\System32\\WindowsPowerShell\\v1.0\\Modules',
+      OPEN_SCIENCE_PSMODULEPATH:
+        'C:\\Program Files\\WindowsPowerShell\\Modules;C:\\Windows\\System32\\WindowsPowerShell\\v1.0\\Modules',
       OPEN_SCIENCE_HANDOFF_DIR: '/notebook/handoff'
     })
+    expect(env.ProgramFiles).toBeUndefined()
     expect(env.OPEN_SCIENCE_TEST_SECRET).toBeUndefined()
   })
 
   it('uses the Windows process-tree terminator for a timed-out shell command', () => {
     const child = {} as Parameters<typeof terminateShellOnTimeout>[0]
-    const terminateTree = vi.fn().mockResolvedValue({ reaped: true })
+    let finishTermination: ((result: { reaped: boolean }) => void) | undefined
+    const terminateTree = vi.fn(
+      () =>
+        new Promise<{ reaped: boolean }>((resolve) => {
+          finishTermination = resolve
+        })
+    )
 
-    expect(terminateShellOnTimeout(child, 'win32', terminateTree)).toBe(true)
+    const termination = terminateShellOnTimeout(child, 'win32', terminateTree)
+
+    expect(termination).toBeInstanceOf(Promise)
     expect(terminateTree).toHaveBeenCalledWith(child)
+    finishTermination?.({ reaped: true })
+    return expect(termination).resolves.toBe(true)
   })
 })
 
@@ -446,6 +478,72 @@ describe('notebook runtime service', () => {
       },
       runtimeRoot: join(root, 'runtime')
     })
+  })
+
+  it('rejects install.packages in an R cell before the managed kernel executes it', async () => {
+    const root = await createStorageRoot()
+    const execute = vi.fn(async () => ({
+      status: 'completed' as const,
+      stdout: '',
+      stderr: '',
+      traceback: '',
+      cwdAfter: root,
+      outputs: []
+    }))
+    const service = new NotebookRuntimeService({
+      configRoot: root,
+      dataRoot: root,
+      projectName: 'default-project',
+      repository: new NotebookRunRepository(root),
+      executorFactory: () => ({
+        execute,
+        shutdown: async () => ({ reaped: true })
+      })
+    })
+
+    const summary = await service.execute({
+      sessionId: 'session-1',
+      workspaceCwd: root,
+      language: 'r',
+      code: 'install.packages("dplyr")'
+    })
+
+    expect(execute).not.toHaveBeenCalled()
+    expect(summary).toMatchObject({ status: 'failed' })
+    expect(summary.text.traceback).toMatch(/manage_packages/)
+  })
+
+  it('rejects Python venv creation in a data cell before the managed kernel executes it', async () => {
+    const root = await createStorageRoot()
+    const execute = vi.fn(async () => ({
+      status: 'completed' as const,
+      stdout: '',
+      stderr: '',
+      traceback: '',
+      cwdAfter: root,
+      outputs: []
+    }))
+    const service = new NotebookRuntimeService({
+      configRoot: root,
+      dataRoot: root,
+      projectName: 'default-project',
+      repository: new NotebookRunRepository(root),
+      executorFactory: () => ({
+        execute,
+        shutdown: async () => ({ reaped: true })
+      })
+    })
+
+    const summary = await service.execute({
+      sessionId: 'session-1',
+      workspaceCwd: root,
+      language: 'python',
+      code: 'import venv\nvenv.create("analysis-env")'
+    })
+
+    expect(execute).not.toHaveBeenCalled()
+    expect(summary).toMatchObject({ status: 'failed' })
+    expect(summary.text.traceback).toMatch(/manage_packages/)
   })
 
   it('retains the exact Environment manifest publication failure reason', async () => {
@@ -718,6 +816,34 @@ describe('notebook runtime service', () => {
     })
   })
 
+  it('rejects a dynamically executed package installer in the control REPL before dispatch', async () => {
+    const root = await createStorageRoot()
+    const execute = vi.fn()
+    const service = new NotebookRuntimeService({
+      configRoot: root,
+      dataRoot: root,
+      projectName: 'default-project',
+      repository: new NotebookRunRepository(root),
+      executorFactory: () => ({
+        execute,
+        shutdown: async () => ({ reaped: true })
+      })
+    })
+
+    const result = await service.executeControl({
+      sessionId: 'session-1',
+      workspaceCwd: root,
+      code: `require('node:child_process').exec('pip install pandas')`
+    })
+
+    expect(result.status).toBe('failed')
+    expect(result.traceback).toMatch(/manage_packages/)
+    expect(execute).not.toHaveBeenCalled()
+    const state = await service.state({ sessionId: 'session-1', workspaceCwd: root })
+    expect(state.runs.at(-1)).toMatchObject({ kernelKind: 'repl', status: 'failed' })
+    expect(state.kernelStatus).toBe('idle')
+  })
+
   it('threads the session id and project name into the repl execute request for host.compute grants', async () => {
     const root = await createStorageRoot()
     const executions: NotebookExecutionRequest[] = []
@@ -827,14 +953,20 @@ describe('notebook runtime service', () => {
   })
 
   describe('executeShell', () => {
-    it('runs a command in a fresh sh process and captures stdout/exitCode', async () => {
-      const root = await createStorageRoot()
-      const service = new NotebookRuntimeService({
+    const createShellService = (root: string): NotebookRuntimeService =>
+      new NotebookRuntimeService({
         configRoot: root,
         dataRoot: root,
         projectName: 'default-project',
-        repository: new NotebookRunRepository(root)
+        repository: new NotebookRunRepository(root),
+        // Unit tests already run inside the host's process sandbox on macOS. Select the portable
+        // semantic-policy path here; managed-runtime-guard.test.ts verifies the Seatbelt wrapper.
+        platform: process.platform === 'darwin' ? 'linux' : process.platform
       })
+
+    it('runs a command in a fresh sh process and captures stdout/exitCode', async () => {
+      const root = await createStorageRoot()
+      const service = createShellService(root)
 
       const result = await service.executeShell({
         sessionId: 'session-1',
@@ -856,16 +988,89 @@ describe('notebook runtime service', () => {
       expect(state.runs[0].text.stdout).toContain('hi')
     })
 
+    it('rejects a direct micromamba install before spawning the shell command', async () => {
+      const root = await createStorageRoot()
+      const service = createShellService(root)
+
+      const result = await service.executeShell({
+        sessionId: 'session-1',
+        workspaceCwd: root,
+        command: 'micromamba install --help'
+      })
+
+      expect(result).toMatchObject({ stdout: '', exitCode: 1 })
+      expect(result.stderr).toMatch(/manage_packages/)
+      const state = await service.state({ sessionId: 'session-1', workspaceCwd: root })
+      expect(state.runs[0]).toMatchObject({ status: 'failed', script: 'micromamba install --help' })
+    })
+
+    it.each([
+      ['R install.packages', `Rscript -e 'install.packages()'`],
+      ['Python pip', 'python -m pip install --help'],
+      ['Python venv', 'python -m venv --help'],
+      [
+        'dynamic Python venv',
+        'tool=python3; mode=-m; action=venv; "$tool" "$mode" "$action" analysis-env'
+      ],
+      ['uv', 'uv venv --help'],
+      ['Poetry', 'poetry add --help']
+    ])('rejects %s package/environment mutation through bash_execute', async (_label, command) => {
+      const root = await createStorageRoot()
+      const service = createShellService(root)
+
+      const result = await service.executeShell({
+        sessionId: 'session-1',
+        workspaceCwd: root,
+        command
+      })
+
+      expect(result).toMatchObject({ stdout: '', exitCode: 1 })
+      expect(result.stderr).toMatch(/manage_packages/)
+    })
+
+    it('rejects direct file mutation under the managed runtime', async () => {
+      const root = await createStorageRoot()
+      const service = createShellService(root)
+      const target = join(root, 'runtime', 'envs', 'default-r', 'conda-meta', 'missing.json')
+
+      const result = await service.executeShell({
+        sessionId: 'session-1',
+        workspaceCwd: root,
+        command: `rm -f ${JSON.stringify(target)}`
+      })
+
+      expect(result).toMatchObject({ stdout: '', exitCode: 1 })
+      expect(result.stderr).toMatch(/managed runtime is read-only/i)
+    })
+
+    it.each([
+      'Set-Location $env:OPEN_SCIENCE_RUNTIME_DIR; New-Item conda-meta\\pwn.json',
+      'Remove-Item "$env:OPEN_SCIENCE_RUNTIME_DIR\\conda-meta\\history"'
+    ])('uses the PowerShell runtime-write policy on Windows: %s', async (command) => {
+      const root = await createStorageRoot()
+      const service = new NotebookRuntimeService({
+        configRoot: root,
+        dataRoot: root,
+        projectName: 'default-project',
+        repository: new NotebookRunRepository(root),
+        platform: 'win32'
+      })
+
+      const result = await service.executeShell({
+        sessionId: 'session-1',
+        workspaceCwd: root,
+        command
+      })
+
+      expect(result).toMatchObject({ stdout: '', exitCode: 1 })
+      expect(result.stderr).toMatch(/managed runtime is read-only/i)
+    })
+
     it.skipIf(process.platform === 'win32')(
       'records a shell-created file as a working file for provenance',
       async () => {
         const root = await createStorageRoot()
-        const service = new NotebookRuntimeService({
-          configRoot: root,
-          dataRoot: root,
-          projectName: 'default-project',
-          repository: new NotebookRunRepository(root)
-        })
+        const service = createShellService(root)
 
         await service.executeShell({
           sessionId: 'session-1',
@@ -885,47 +1090,6 @@ describe('notebook runtime service', () => {
       }
     )
 
-    it.skipIf(process.platform !== 'win32')(
-      'isolates commands, propagates PowerShell failures, and preserves UTF-8 output on Windows',
-      async () => {
-        const root = await createStorageRoot()
-        const service = new NotebookRuntimeService({
-          configRoot: root,
-          dataRoot: root,
-          projectName: 'default-project',
-          repository: new NotebookRunRepository(root)
-        })
-
-        const cmdletFailure = await service.executeShell({
-          sessionId: 'session-1',
-          workspaceCwd: root,
-          command: 'Get-Item "missing-open-science-file"; Write-Output "continued"'
-        })
-        const nativeFailure = await service.executeShell({
-          sessionId: 'session-1',
-          workspaceCwd: root,
-          command: 'cmd.exe /d /c exit 7 | Out-Null'
-        })
-        const unicodeOutput = await service.executeShell({
-          sessionId: 'session-1',
-          workspaceCwd: root,
-          command: 'Write-Output "分析完成"'
-        })
-        const trailingContinuation = await service.executeShell({
-          sessionId: 'session-1',
-          workspaceCwd: root,
-          command: 'Write-Output "isolated" `'
-        })
-
-        expect(cmdletFailure.exitCode).toBe(1)
-        expect(cmdletFailure.stdout).not.toContain('continued')
-        expect(nativeFailure.exitCode).toBe(7)
-        expect(unicodeOutput).toMatchObject({ exitCode: 0 })
-        expect(unicodeOutput.stdout).toContain('分析完成')
-        expect(trailingContinuation.exitCode).toBe(1)
-      }
-    )
-
     // POSIX-only: reads env via the shell. bash must NOT inherit arbitrary host env (secrets), only an
     // allowlist + the handoff channel — so a leaked connector token / API key can't reach the shell.
     it.skipIf(process.platform === 'win32')(
@@ -938,7 +1102,8 @@ describe('notebook runtime service', () => {
             configRoot: root,
             dataRoot: root,
             projectName: 'default-project',
-            repository: new NotebookRunRepository(root)
+            repository: new NotebookRunRepository(root),
+            platform: 'linux'
           })
 
           const result = await service.executeShell({
@@ -959,12 +1124,7 @@ describe('notebook runtime service', () => {
 
     it('returns the process non-zero exit code instead of throwing', async () => {
       const root = await createStorageRoot()
-      const service = new NotebookRuntimeService({
-        configRoot: root,
-        dataRoot: root,
-        projectName: 'default-project',
-        repository: new NotebookRunRepository(root)
-      })
+      const service = createShellService(root)
 
       const result = await service.executeShell({
         sessionId: 'session-1',
@@ -984,12 +1144,7 @@ describe('notebook runtime service', () => {
 
     it('kills a command that outlasts the timeout and returns a non-normal result', async () => {
       const root = await createStorageRoot()
-      const service = new NotebookRuntimeService({
-        configRoot: root,
-        dataRoot: root,
-        projectName: 'default-project',
-        repository: new NotebookRunRepository(root)
-      })
+      const service = createShellService(root)
 
       const startedAt = Date.now()
       const result = await service.executeShell({
@@ -1014,12 +1169,7 @@ describe('notebook runtime service', () => {
 
     it('spawns a fresh process per call instead of reusing a persistent shell', async () => {
       const root = await createStorageRoot()
-      const service = new NotebookRuntimeService({
-        configRoot: root,
-        dataRoot: root,
-        projectName: 'default-project',
-        repository: new NotebookRunRepository(root)
-      })
+      const service = createShellService(root)
 
       await service.executeShell({
         sessionId: 'session-1',
@@ -1048,12 +1198,7 @@ describe('notebook runtime service', () => {
       'SIGKILLs a timed-out command that ignores SIGTERM instead of leaving it running',
       async () => {
         const root = await createStorageRoot()
-        const service = new NotebookRuntimeService({
-          configRoot: root,
-          dataRoot: root,
-          projectName: 'default-project',
-          repository: new NotebookRunRepository(root)
-        })
+        const service = createShellService(root)
         // A marker unique to this test run, embedded as a harmless shell comment so it shows up in the
         // spawned process's command line (visible to pgrep -f) without affecting what the shell runs.
         const marker = `os-notebook-shell-test-${randomUUID()}`
@@ -1098,12 +1243,7 @@ describe('notebook runtime service', () => {
 
     it('records two distinct runs for overlapping calls instead of colliding (no serialization queue)', async () => {
       const root = await createStorageRoot()
-      const service = new NotebookRuntimeService({
-        configRoot: root,
-        dataRoot: root,
-        projectName: 'default-project',
-        repository: new NotebookRunRepository(root)
-      })
+      const service = createShellService(root)
 
       // Two calls fired without awaiting between them: executeShell has no per-session serialization
       // queue, so both spawn immediately, relying on the repository's own write-serialization to keep
@@ -1787,6 +1927,26 @@ describe('notebook runtime service', () => {
       await run
       const settled = await service.state({ sessionId: 'session-1', workspaceCwd: root })
       expect(settled.kernelStatus).toBe('idle')
+    })
+
+    it('keeps the kernel idle when the runtime mutation policy rejects before execution', async () => {
+      const root = await createStorageRoot()
+      let executorStarted = false
+      const service = holdingService(root, () => {
+        executorStarted = true
+      })
+
+      const run = await service.execute({
+        sessionId: 'session-1',
+        workspaceCwd: root,
+        code: `open(os.path.join(os.environ["OPEN_SCIENCE_RUNTIME_DIR"], "blocked"), "w")`
+      })
+
+      expect(run.status).toBe('failed')
+      expect(run.text.traceback).toMatch(/MANAGED_RUNTIME_MUTATION_BLOCKED/)
+      expect(executorStarted).toBe(false)
+      const state = await service.state({ sessionId: 'session-1', workspaceCwd: root })
+      expect(state.kernelStatus).toBe('idle')
     })
 
     it('runs python and r concurrently while serializing same-language runs (G5)', async () => {
@@ -2489,6 +2649,289 @@ describe('notebook runtime service', () => {
       ])
     })
 
+    it('quarantines and stops an R runtime after a protected r-base identity violation', async () => {
+      const root = await createStorageRoot()
+      const execute = vi.fn(async (): Promise<NotebookExecutionResult> => {
+        throw new Error('a quarantined kernel must not execute')
+      })
+      const terminate = vi.fn(async () => undefined)
+      const service = new NotebookRuntimeService({
+        configRoot: root,
+        dataRoot: root,
+        projectName: 'default-project',
+        repository: new NotebookRunRepository(root),
+        environmentStateTracker: {
+          prepareRun: vi.fn(),
+          captureCompletedRun: vi.fn(),
+          inspectPackages: vi.fn(),
+          markPackageMutationDirty: vi.fn().mockResolvedValue(undefined),
+          refreshAfterPackageMutation: vi.fn().mockResolvedValue({ result: 'failure' })
+        },
+        executorFactory: () => ({
+          execute,
+          terminate,
+          shutdown: async () => ({ reaped: true })
+        }),
+        installPackagesImpl: vi.fn().mockResolvedValue({
+          ok: false,
+          needsRestart: false,
+          log: 'r-base build changed',
+          method: 'conda',
+          repairRequired: true,
+          error: 'Protected r-base changed unexpectedly. Run Repair.'
+        })
+      })
+
+      await service.state({ sessionId: 'session-1', workspaceCwd: root })
+      const result = await service.managePackages({
+        sessionId: 'session-1',
+        workspaceCwd: root,
+        language: 'r',
+        packages: ['dplyr']
+      })
+
+      // Quarantine runs while manage_packages still holds the environment install lock.
+      expect(isRepairRequired(getRuntimeRoot(root), DEFAULT_R_ENV)).toBe(true)
+      expect(terminate).toHaveBeenCalledWith('r', DEFAULT_R_ENV)
+
+      const run = await service.execute({
+        sessionId: 'session-1',
+        workspaceCwd: root,
+        code: 'R.version.string',
+        language: 'r'
+      })
+      expect(run.status).toBe('failed')
+      expect(run.text.traceback).toMatch(/RUNTIME_REPAIR_REQUIRED/)
+      expect(execute).not.toHaveBeenCalled()
+      expect(result.repairRequired).toBe(true)
+    })
+
+    it('keeps the in-process repair gate when the protected-identity journal update fails', async () => {
+      const root = await createStorageRoot()
+      const execute = vi.fn(async (): Promise<NotebookExecutionResult> => {
+        throw new Error('a repair-blocked kernel must not execute')
+      })
+      const terminate = vi.fn(async () => undefined)
+      const update = vi
+        .spyOn(RuntimeOperationJournal.prototype, 'update')
+        .mockRejectedValueOnce(new Error('journal update denied'))
+      const service = new NotebookRuntimeService({
+        configRoot: root,
+        dataRoot: root,
+        projectName: 'default-project',
+        repository: new NotebookRunRepository(root),
+        environmentStateTracker: verifiedPackageMutationTracker(),
+        executorFactory: () => ({
+          execute,
+          terminate,
+          shutdown: async () => ({ reaped: true })
+        }),
+        installPackagesImpl: vi.fn().mockResolvedValue({
+          ok: false,
+          needsRestart: false,
+          log: 'r-base changed',
+          repairRequired: true,
+          error: 'Protected r-base changed unexpectedly. Run Repair.'
+        })
+      })
+
+      try {
+        await service.state({ sessionId: 'session-1', workspaceCwd: root })
+        await expect(
+          service.managePackages({
+            sessionId: 'session-1',
+            workspaceCwd: root,
+            language: 'r',
+            packages: ['dplyr']
+          })
+        ).rejects.toThrow(/journal update denied/)
+
+        const run = await service.execute({
+          sessionId: 'session-1',
+          workspaceCwd: root,
+          code: 'R.version.string',
+          language: 'r'
+        })
+        expect(run.status).toBe('failed')
+        expect(run.text.traceback).toMatch(/RUNTIME_REPAIR_REQUIRED/)
+        expect(terminate).toHaveBeenCalledWith('r', DEFAULT_R_ENV)
+        expect(execute).not.toHaveBeenCalled()
+      } finally {
+        update.mockRestore()
+      }
+    })
+
+    it('retains recovery evidence and blocks execution when the repair registry is unwritable', async () => {
+      const root = await createStorageRoot()
+      const runtimeRoot = getRuntimeRoot(root)
+      const execute = vi.fn(async (): Promise<NotebookExecutionResult> => {
+        throw new Error('a repair-blocked kernel must not execute')
+      })
+      const terminate = vi.fn(async () => undefined)
+      const service = new NotebookRuntimeService({
+        configRoot: root,
+        dataRoot: root,
+        projectName: 'default-project',
+        repository: new NotebookRunRepository(root),
+        environmentStateTracker: {
+          prepareRun: vi.fn(),
+          captureCompletedRun: vi.fn(),
+          inspectPackages: vi.fn(),
+          markPackageMutationDirty: vi.fn().mockResolvedValue(undefined),
+          refreshAfterPackageMutation: vi.fn().mockResolvedValue({ result: 'failure' })
+        },
+        executorFactory: () => ({
+          execute,
+          terminate,
+          shutdown: async () => ({ reaped: true })
+        }),
+        installPackagesImpl: vi.fn().mockImplementation(async () => {
+          // The pre-install gate must see a healthy, missing registry. Make the target unwritable only
+          // after the simulated installer reports an identity change, so this test reaches quarantine.
+          await mkdir(repairRegistryPath(runtimeRoot), { recursive: true })
+          return {
+            ok: false,
+            needsRestart: false,
+            log: 'r-base changed',
+            repairRequired: true,
+            error: 'Protected r-base changed unexpectedly. Run Repair.'
+          }
+        })
+      })
+
+      await service.state({ sessionId: 'session-1', workspaceCwd: root })
+      await expect(
+        service.managePackages({
+          sessionId: 'session-1',
+          workspaceCwd: root,
+          language: 'r',
+          packages: ['dplyr']
+        })
+      ).rejects.toThrow(/REPAIR_QUARANTINE_FAILED/)
+
+      expect(terminate).toHaveBeenCalledWith('r', DEFAULT_R_ENV)
+      expect(
+        await RuntimeOperationJournal.forPath(operationJournalPath(runtimeRoot)).pending()
+      ).toHaveLength(1)
+      const run = await service.execute({
+        sessionId: 'session-1',
+        workspaceCwd: root,
+        language: 'r',
+        code: 'R.version.string'
+      })
+      expect(run.status).toBe('failed')
+      expect(run.text.traceback).toMatch(/RUNTIME_REPAIR_REQUIRED/)
+      expect(execute).not.toHaveBeenCalled()
+
+      // The registry failure is transient, but the retained journal is the only durable evidence that
+      // this was a protected identity change. Recovery must replay the stronger reason rather than
+      // downgrading it to an interrupted install that an ordinary package install could clear.
+      await rm(repairRegistryPath(runtimeRoot), { recursive: true, force: true })
+      const restartedInstall = vi
+        .fn()
+        .mockResolvedValue({ ok: true, needsRestart: false, log: 'ordinary install' })
+      const restarted = new NotebookRuntimeService({
+        configRoot: root,
+        dataRoot: root,
+        projectName: 'default-project',
+        repository: new NotebookRunRepository(root),
+        environmentStateTracker: verifiedPackageMutationTracker(),
+        executorFactory: () => ({
+          execute,
+          terminate,
+          shutdown: async () => ({ reaped: true })
+        }),
+        installPackagesImpl: restartedInstall
+      })
+
+      await restarted.recoverInterruptedOperations()
+      expect(isProtectedIdentityRepairRequired(runtimeRoot, DEFAULT_R_ENV)).toBe(true)
+      const retry = await restarted.managePackages({ language: 'r', packages: ['ggplot2'] })
+      expect(retry.ok).toBe(false)
+      expect(retry.repairRequired).toBe(true)
+      expect(restartedInstall).not.toHaveBeenCalled()
+    })
+
+    it('blocks both language bindings that share a managed prefix when quarantine persistence fails', async () => {
+      const root = await createStorageRoot()
+      const runtimeRoot = getRuntimeRoot(root)
+      const envName = 'shared-analysis'
+      const prefix = envPrefix(runtimeRoot, envName)
+      const namedPython = join(prefix, 'bin', 'python')
+      const namedR = join(prefix, 'bin', 'R')
+      const terminate = vi.fn(async () => undefined)
+      const execute = vi.fn(async (): Promise<NotebookExecutionResult> => {
+        throw new Error('a repair-blocked shared prefix must not execute')
+      })
+      const service = new NotebookRuntimeService({
+        configRoot: root,
+        dataRoot: root,
+        projectName: 'default-project',
+        repository: new NotebookRunRepository(root),
+        environmentStateTracker: verifiedPackageMutationTracker(),
+        discoverRuntimes: async (language) => [
+          {
+            language,
+            provenance: 'agent-created',
+            envId: language === 'python' ? namedPython : namedR,
+            interpreterPath: language === 'python' ? namedPython : namedR,
+            label: envName,
+            condaEnv: envName,
+            version: language === 'python' ? '3.12' : '4.4.3',
+            runnable: true
+          }
+        ],
+        executorFactory: () => ({
+          execute,
+          terminate,
+          shutdown: async () => ({ reaped: true })
+        }),
+        installPackagesImpl: vi.fn().mockImplementation(async () => {
+          await mkdir(repairRegistryPath(runtimeRoot), { recursive: true })
+          return {
+            ok: false,
+            needsRestart: false,
+            log: 'r-base changed',
+            repairRequired: true,
+            error: 'Protected r-base changed unexpectedly. Run Repair.'
+          }
+        })
+      })
+
+      await service.bindRuntime({
+        sessionId: 'shared',
+        workspaceCwd: root,
+        language: 'python',
+        runtimeId: namedPython
+      })
+      await service.bindRuntime({
+        sessionId: 'shared',
+        workspaceCwd: root,
+        language: 'r',
+        runtimeId: namedR
+      })
+      await expect(
+        service.managePackages({
+          sessionId: 'shared',
+          workspaceCwd: root,
+          language: 'r',
+          packages: ['dplyr']
+        })
+      ).rejects.toThrow(/REPAIR_QUARANTINE_FAILED/)
+
+      expect(terminate).toHaveBeenCalledWith('r', envName)
+      expect(terminate).toHaveBeenCalledWith('python', envName)
+      const run = await service.execute({
+        sessionId: 'shared',
+        workspaceCwd: root,
+        language: 'python',
+        code: '1'
+      })
+      expect(run.status).toBe('failed')
+      expect(run.text.traceback).toMatch(/RUNTIME_REPAIR_REQUIRED/)
+      expect(execute).not.toHaveBeenCalled()
+    })
+
     it('does not start an installer when the durable Environment dirty marker cannot be written', async () => {
       const root = await createStorageRoot()
       const installPackagesImpl = vi.fn().mockResolvedValue({
@@ -2945,6 +3388,59 @@ describe('notebook runtime service', () => {
       releaseInstall?.()
       await Promise.all([install, run])
       expect(events).toEqual(['install:start', 'install:end', 'run:run'])
+    })
+
+    it('rechecks the repair gate after a queued run acquires the environment lock', async () => {
+      const root = await createStorageRoot()
+      let releaseInstall: (() => void) | undefined
+      const execute = vi.fn(async (request): Promise<NotebookExecutionResult> => ({
+        status: 'completed',
+        stdout: '',
+        stderr: '',
+        traceback: '',
+        cwdAfter: request.cwd,
+        outputs: []
+      }))
+      const service = new NotebookRuntimeService({
+        configRoot: root,
+        dataRoot: root,
+        projectName: 'default-project',
+        repository: new NotebookRunRepository(root),
+        environmentStateTracker: verifiedPackageMutationTracker(),
+        executorFactory: () => ({
+          execute,
+          terminate: async () => undefined,
+          shutdown: async () => ({ reaped: true })
+        }),
+        installPackagesImpl: async () => {
+          await new Promise<void>((resolve) => {
+            releaseInstall = resolve
+          })
+          return {
+            ok: false,
+            needsRestart: false,
+            log: 'protected interpreter changed',
+            repairRequired: true,
+            error: 'Run Repair.'
+          }
+        }
+      })
+
+      const install = service.managePackages({ language: 'python', packages: ['numpy'] })
+      await vi.waitFor(() => expect(releaseInstall).toBeDefined())
+      const run = service.execute({
+        sessionId: 's',
+        workspaceCwd: root,
+        code: '1',
+        language: 'python'
+      })
+      await new Promise((resolve) => setTimeout(resolve, 20))
+
+      releaseInstall?.()
+      const [, completedRun] = await Promise.all([install, run])
+      expect(completedRun.status).toBe('failed')
+      expect(completedRun.text.traceback).toMatch(/RUNTIME_REPAIR_REQUIRED/)
+      expect(execute).not.toHaveBeenCalled()
     })
 
     it('does not block a run in a different env behind an install (D5)', async () => {
@@ -4270,34 +4766,41 @@ describe('v4 runtime bindings & agent tools', () => {
     expect(service.isPrefixRecoveryBlocked(prefix)).toBe(true)
   })
 
-  it('refuses an install when the journal cannot record it (begin fails closed, no spawn)', async () => {
-    // If the install can't be journaled for crash recovery, spawning the installer could strand a
-    // worker. managePackages must refuse with a structured error instead of installing.
-    const root = await createStorageRoot()
-    const runtimeRoot = getRuntimeRoot(root)
-    // Make the journal path unwritable: a FILE where the journal file's directory must be, so begin()'s
-    // mkdir/rename fails. operationJournalPath = <runtimeRoot>/operation-journal.json; block its parent.
-    await rm(runtimeRoot, { recursive: true, force: true })
-    // Replace the runtime root with a file so mkdir(dirname(journalPath)) fails on begin().
-    await writeFile(runtimeRoot, 'not-a-dir')
+  it.skipIf(process.platform === 'win32')(
+    'refuses an install when the journal cannot record it (begin fails closed, no spawn)',
+    async () => {
+      // If the install can't be journaled for crash recovery, spawning the installer could strand a
+      // worker. managePackages must refuse with a structured error instead of installing.
+      const root = await createStorageRoot()
+      const runtimeRoot = getRuntimeRoot(root)
+      await mkdir(runtimeRoot, { recursive: true })
 
-    let installRan = false
-    const service = bindingService(root, {
-      installPackagesImpl: async () => {
-        installRan = true
-        return { ok: true, needsRestart: false, log: '' }
+      let installRan = false
+      const service = bindingService(root, {
+        installPackagesImpl: async () => {
+          installRan = true
+          return { ok: true, needsRestart: false, log: '' }
+        }
+      })
+      await service.ensureRecovered()
+      // Keep the runtime readable so the repair-registry gate remains healthy, but deny the journal's
+      // atomic temp-file write. chmod semantics are not portable to Windows, hence the explicit skip.
+      await chmod(runtimeRoot, 0o555)
+      try {
+        const result = await service.managePackages({
+          sessionId: 's',
+          workspaceCwd: root,
+          language: 'python',
+          packages: ['numpy']
+        })
+        expect(result.ok).toBe(false)
+        expect(result.error).toMatch(/RUNTIME_JOURNAL_UNWRITABLE/)
+        expect(installRan).toBe(false)
+      } finally {
+        await chmod(runtimeRoot, 0o755)
       }
-    })
-    const result = await service.managePackages({
-      sessionId: 's',
-      workspaceCwd: root,
-      language: 'python',
-      packages: ['numpy']
-    })
-    expect(result.ok).toBe(false)
-    expect(result.error).toMatch(/RUNTIME_JOURNAL_UNWRITABLE/)
-    expect(installRan).toBe(false)
-  })
+    }
+  )
 
   it('blocks a named-env REMOVE on a prefix an unknown-liveness orphan may still hold', async () => {
     // After a restart there is no in-memory kernel state, so isEnvironmentLive() can't see a surviving
@@ -4623,6 +5126,492 @@ describe('v4 runtime bindings & agent tools', () => {
     const retry = await service.managePackages({ language: 'python', packages: ['numpy'] })
     expect(retry.error).toMatch(/RUNTIME_RECOVERY_BLOCKED/)
     expect(installAttempts).toBe(1)
+  })
+
+  it('uses one repair key for bound and unbound sessions sharing a managed R prefix', async () => {
+    const root = await createStorageRoot()
+    const runtimeRoot = getRuntimeRoot(root)
+    const terminations: string[] = []
+    const executions: NotebookExecutionRequest[] = []
+    const service = bindingService(root, {
+      discovered: [managedR],
+      executions,
+      terminations,
+      installPackagesImpl: async () => ({
+        ok: false,
+        needsRestart: false,
+        log: 'r-base changed',
+        repairRequired: true,
+        error: 'Protected r-base changed unexpectedly. Run Repair.'
+      })
+    })
+
+    await service.bindRuntime({
+      sessionId: 'bound',
+      workspaceCwd: root,
+      language: 'r',
+      runtimeId: managedR.envId
+    })
+    await service.state({ sessionId: 'unbound', workspaceCwd: root })
+
+    const result = await service.managePackages({
+      sessionId: 'bound',
+      workspaceCwd: root,
+      language: 'r',
+      packages: ['dplyr']
+    })
+
+    expect(result.repairRequired).toBe(true)
+    expect(isRepairRequired(runtimeRoot, DEFAULT_R_ENV)).toBe(true)
+    expect(isRepairRequired(runtimeRoot, managedR.envId)).toBe(false)
+    expect(terminations.filter((entry) => entry === `r:${DEFAULT_R_ENV}`)).toHaveLength(2)
+
+    for (const sessionId of ['bound', 'unbound']) {
+      const run = await service.execute({
+        sessionId,
+        workspaceCwd: root,
+        language: 'r',
+        code: 'R.version.string'
+      })
+      expect(run.status).toBe('failed')
+      expect(run.text.traceback).toMatch(/RUNTIME_REPAIR_REQUIRED/)
+    }
+    expect(executions).toHaveLength(0)
+  })
+
+  it('keeps an interrupted install scoped to its language in a shared managed env', async () => {
+    const root = await createStorageRoot()
+    const runtimeRoot = getRuntimeRoot(root)
+    const envName = 'shared-analysis'
+    const prefix = envPrefix(runtimeRoot, envName)
+    const namedPython: DiscoveredInterpreter = {
+      language: 'python',
+      provenance: 'agent-created',
+      envId: join(prefix, 'bin', 'python'),
+      interpreterPath: join(prefix, 'bin', 'python'),
+      label: envName,
+      condaEnv: envName,
+      version: '3.12',
+      runnable: true
+    }
+    const namedR: DiscoveredInterpreter = {
+      language: 'r',
+      provenance: 'agent-created',
+      envId: join(prefix, 'bin', 'R'),
+      interpreterPath: join(prefix, 'bin', 'R'),
+      label: envName,
+      condaEnv: envName,
+      version: '4.4.3',
+      runnable: true
+    }
+    const executions: NotebookExecutionRequest[] = []
+    const installPackagesImpl = vi
+      .fn()
+      .mockResolvedValue({ ok: true, needsRestart: false, log: 'installed' })
+    const service = bindingService(root, {
+      discovered: [namedPython, namedR],
+      executions,
+      installPackagesImpl
+    })
+
+    for (const [language, runtimeId] of [
+      ['python', namedPython.envId],
+      ['r', namedR.envId]
+    ] as const) {
+      await service.bindRuntime({
+        sessionId: 'shared',
+        workspaceCwd: root,
+        language,
+        runtimeId
+      })
+    }
+    await RuntimeOperationJournal.forPath(operationJournalPath(runtimeRoot)).begin({
+      operationId: 'interrupted-r-install',
+      kind: 'install',
+      runtimeId: envName,
+      phase: 'install-r',
+      startedAt: 100,
+      targetPath: prefix
+    })
+    await service.recoverInterruptedOperations()
+
+    const pythonBeforeRepair = await service.execute({
+      sessionId: 'shared',
+      workspaceCwd: root,
+      language: 'python',
+      code: '1'
+    })
+    expect(pythonBeforeRepair.status).toBe('completed')
+    const rBeforeRepair = await service.execute({
+      sessionId: 'shared',
+      workspaceCwd: root,
+      language: 'r',
+      code: '1'
+    })
+    expect(rBeforeRepair.status).toBe('failed')
+    expect(rBeforeRepair.text.traceback).toMatch(/RUNTIME_REPAIR_REQUIRED/)
+
+    const pythonInstall = await service.managePackages({
+      sessionId: 'shared',
+      workspaceCwd: root,
+      language: 'python',
+      packages: ['numpy']
+    })
+    expect(pythonInstall.ok).toBe(true)
+    const rAfterPythonInstall = await service.execute({
+      sessionId: 'shared',
+      workspaceCwd: root,
+      language: 'r',
+      code: '1'
+    })
+    expect(rAfterPythonInstall.status).toBe('failed')
+    expect(rAfterPythonInstall.text.traceback).toMatch(/RUNTIME_REPAIR_REQUIRED/)
+
+    const rInstall = await service.managePackages({
+      sessionId: 'shared',
+      workspaceCwd: root,
+      language: 'r',
+      packages: ['dplyr']
+    })
+    expect(rInstall.ok).toBe(true)
+    const rAfterRepair = await service.execute({
+      sessionId: 'shared',
+      workspaceCwd: root,
+      language: 'r',
+      code: '1'
+    })
+    expect(rAfterRepair.status).toBe('completed')
+  })
+
+  it('does not let an ordinary package install clear a protected R identity quarantine', async () => {
+    const root = await createStorageRoot()
+    const runtimeRoot = getRuntimeRoot(root)
+    let installAttempts = 0
+    const serviceOptions = {
+      discovered: [managedR],
+      installPackagesImpl: async () => {
+        installAttempts += 1
+        if (installAttempts === 1) {
+          return {
+            ok: false,
+            needsRestart: false,
+            log: 'r-base changed',
+            repairRequired: true,
+            error: 'Protected r-base changed unexpectedly. Run Repair.'
+          }
+        }
+        return { ok: true, needsRestart: false, log: 'ordinary install completed' }
+      }
+    }
+    const service = bindingService(root, serviceOptions)
+
+    await service.bindRuntime({
+      sessionId: 's',
+      workspaceCwd: root,
+      language: 'r',
+      runtimeId: managedR.envId
+    })
+    const quarantined = await service.managePackages({
+      sessionId: 's',
+      workspaceCwd: root,
+      language: 'r',
+      packages: ['dplyr']
+    })
+    expect(quarantined.repairRequired).toBe(true)
+    expect(isRepairRequired(runtimeRoot, DEFAULT_R_ENV)).toBe(true)
+    expect(isProtectedIdentityRepairRequired(runtimeRoot, DEFAULT_R_ENV)).toBe(true)
+
+    // A fresh service proves the durable reason survives an app restart; the process-local gate from
+    // the first service cannot be what refuses this retry.
+    const restarted = bindingService(root, serviceOptions)
+
+    const retry = await restarted.managePackages({
+      sessionId: 's',
+      workspaceCwd: root,
+      language: 'r',
+      packages: ['ggplot2']
+    })
+
+    expect(retry.ok).toBe(false)
+    expect(retry.repairRequired).toBe(true)
+    expect(retry.error).toMatch(/RUNTIME_REPAIR_REQUIRED/)
+    expect(installAttempts).toBe(1)
+    expect(isRepairRequired(runtimeRoot, DEFAULT_R_ENV)).toBe(true)
+    const state = await restarted.state({ sessionId: 's', workspaceCwd: root })
+    expect(state.runtimeBindings.r?.reason).toBe('repair-required')
+
+    // This callback represents a successful provisioner Reset: only that verified rebuild releases
+    // the durable marker, in-memory gate, and persisted binding state.
+    await restarted.completeRuntimeRepair('r')
+    expect(isRepairRequired(runtimeRoot, DEFAULT_R_ENV)).toBe(false)
+    const repairedState = await restarted.state({ sessionId: 's', workspaceCwd: root })
+    expect(repairedState.runtimeBindings.r?.status).toBe('active')
+    expect(repairedState.runtimeBindings.r?.reason).toBeUndefined()
+
+    const run = await restarted.execute({
+      sessionId: 's',
+      workspaceCwd: root,
+      language: 'r',
+      code: 'R.version.string'
+    })
+    expect(run.status).toBe('completed')
+
+    const reloaded = bindingService(root, serviceOptions)
+    const reloadedState = await reloaded.state({ sessionId: 's', workspaceCwd: root })
+    expect(reloadedState.runtimeBindings.r?.status).toBe('active')
+    expect(reloadedState.runtimeBindings.r?.reason).toBeUndefined()
+  })
+
+  it('releases a named managed quarantine only after the environment is removed', async () => {
+    const root = await createStorageRoot()
+    const runtimeRoot = getRuntimeRoot(root)
+    const envName = 'named-r-analysis'
+    const prefix = envPrefix(runtimeRoot, envName)
+    const namedR: DiscoveredInterpreter = {
+      language: 'r',
+      provenance: 'agent-created',
+      envId: join(prefix, 'bin', 'R'),
+      interpreterPath: join(prefix, 'bin', 'R'),
+      label: envName,
+      condaEnv: envName,
+      version: '4.4.3',
+      runnable: true
+    }
+    const executions: NotebookExecutionRequest[] = []
+    let present = true
+    const service = new NotebookRuntimeService({
+      configRoot: root,
+      dataRoot: root,
+      projectName: 'default-project',
+      repository: new NotebookRunRepository(root),
+      discoverRuntimes: async (language) => (language === 'r' ? [namedR] : []),
+      environmentManager: {
+        createNamedEnvironment: async (name, language) => {
+          present = true
+          return { name, language, ready: true, isDefault: false }
+        },
+        listEnvironments: () =>
+          present ? [{ name: envName, language: 'r', ready: true, isDefault: false }] : [],
+        removeEnvironment: () => {
+          present = false
+          return []
+        }
+      },
+      environmentStateTracker: verifiedPackageMutationTracker(),
+      executorFactory: () => ({
+        execute: async (request): Promise<NotebookExecutionResult> => {
+          executions.push(request)
+          return {
+            status: 'completed',
+            stdout: '',
+            stderr: '',
+            traceback: '',
+            cwdAfter: request.cwd,
+            outputs: []
+          }
+        },
+        terminate: async () => undefined,
+        shutdown: async () => ({ reaped: true })
+      }),
+      installPackagesImpl: async () => ({
+        ok: false,
+        needsRestart: false,
+        log: 'r-base changed',
+        repairRequired: true,
+        error: 'Protected r-base changed unexpectedly. Run Repair.'
+      })
+    })
+
+    await service.bindRuntime({
+      sessionId: 'named',
+      workspaceCwd: root,
+      language: 'r',
+      runtimeId: namedR.envId
+    })
+    const quarantined = await service.managePackages({
+      sessionId: 'named',
+      workspaceCwd: root,
+      language: 'r',
+      packages: ['dplyr']
+    })
+    expect(quarantined.repairRequired).toBe(true)
+    expect(isProtectedIdentityRepairRequired(runtimeRoot, envName)).toBe(true)
+
+    await service.manageEnvironments({ action: 'remove', name: envName })
+    expect(isRepairRequired(runtimeRoot, envName)).toBe(false)
+    await service.manageEnvironments({ action: 'create', name: envName, language: 'r' })
+    const rebound = await service.bindRuntime({
+      sessionId: 'named',
+      workspaceCwd: root,
+      language: 'r',
+      runtimeId: namedR.envId
+    })
+    expect(rebound.bound.status).toBe('active')
+    const run = await service.execute({
+      sessionId: 'named',
+      workspaceCwd: root,
+      language: 'r',
+      code: '1'
+    })
+    expect(run.status).toBe('completed')
+    expect(executions).toHaveLength(1)
+  })
+
+  it('keeps an untyped legacy external install marker repairable by an authorized reinstall', async () => {
+    const root = await createStorageRoot()
+    const runtimeRoot = getRuntimeRoot(root)
+    await mkdir(runtimeRoot, { recursive: true })
+    await writeFile(
+      repairRegistryPath(runtimeRoot),
+      `${JSON.stringify({ runtimeIds: [userPyA.envId] })}\n`,
+      'utf8'
+    )
+    const installPackagesImpl = vi
+      .fn()
+      .mockResolvedValue({ ok: true, needsRestart: false, log: 'repaired' })
+    const service = bindingService(root, {
+      discovered: [managedPy, userPyA],
+      enablement: {
+        enabled: { [userPyA.envId]: true },
+        installAuthorized: { [userPyA.envId]: true }
+      },
+      installPackagesImpl
+    })
+
+    await service.bindRuntime({
+      sessionId: 's',
+      workspaceCwd: root,
+      language: 'python',
+      runtimeId: userPyA.envId
+    })
+    const result = await service.managePackages({
+      sessionId: 's',
+      workspaceCwd: root,
+      language: 'python',
+      packages: ['numpy']
+    })
+
+    expect(result.ok).toBe(true)
+    expect(installPackagesImpl).toHaveBeenCalledOnce()
+    expect(isRepairRequired(runtimeRoot, userPyA.envId)).toBe(false)
+  })
+
+  it('does not quarantine an external binding that shares the managed default env key', async () => {
+    const root = await createStorageRoot()
+    const terminations: string[] = []
+    const executions: NotebookExecutionRequest[] = []
+    const service = bindingService(root, {
+      discovered: [managedR, userR],
+      enablement: { enabled: { [userR.envId]: true }, installAuthorized: {} },
+      executions,
+      terminations,
+      installPackagesImpl: async () => ({
+        ok: false,
+        needsRestart: false,
+        log: 'managed r-base changed',
+        repairRequired: true,
+        error: 'Protected r-base changed unexpectedly. Run Repair.'
+      })
+    })
+
+    await service.bindRuntime({
+      sessionId: 'external',
+      workspaceCwd: root,
+      language: 'r',
+      runtimeId: userR.envId
+    })
+    await service.state({ sessionId: 'managed', workspaceCwd: root })
+
+    const result = await service.managePackages({
+      sessionId: 'managed',
+      workspaceCwd: root,
+      language: 'r',
+      packages: ['dplyr']
+    })
+
+    expect(result.repairRequired).toBe(true)
+    expect(terminations.filter((entry) => entry === `r:${DEFAULT_R_ENV}`)).toHaveLength(1)
+    const state = await service.state({ sessionId: 'external', workspaceCwd: root })
+    expect(state.runtimeBindings.r?.status).toBe('active')
+    expect(state.runtimeBindings.r?.reason).toBeUndefined()
+
+    const run = await service.execute({
+      sessionId: 'external',
+      workspaceCwd: root,
+      language: 'r',
+      code: 'R.version.string'
+    })
+    expect(run.status).toBe('completed')
+    expect(executions.at(-1)?.resolvedInterpreter?.command).toBe('/usr/local/bin/Rscript')
+  })
+
+  it('honors and clears a legacy managed runtimeId marker for an unbound default session', async () => {
+    const root = await createStorageRoot()
+    const runtimeRoot = getRuntimeRoot(root)
+    const interpreterPath = rBin(envPrefix(runtimeRoot, DEFAULT_R_ENV))
+    const discovered: DiscoveredInterpreter = {
+      ...managedR,
+      envId: interpreterPath,
+      interpreterPath
+    }
+    const executions: NotebookExecutionRequest[] = []
+    addRepairRequired(runtimeRoot, interpreterPath)
+    const service = bindingService(root, {
+      discovered: [discovered],
+      executions,
+      installPackagesImpl: async () => ({ ok: true, needsRestart: false, log: 'repaired' })
+    })
+
+    await service.state({ sessionId: 'unbound', workspaceCwd: root })
+    const run = await service.execute({
+      sessionId: 'unbound',
+      workspaceCwd: root,
+      language: 'r',
+      code: 'R.version.string'
+    })
+
+    expect(run.status).toBe('failed')
+    expect(run.text.traceback).toMatch(/RUNTIME_REPAIR_REQUIRED/)
+    expect(executions).toHaveLength(0)
+
+    const repaired = await service.managePackages({ language: 'r', packages: ['dplyr'] })
+    expect(repaired.ok).toBe(true)
+    expect(isRepairRequired(runtimeRoot, interpreterPath)).toBe(false)
+
+    const afterRepair = await service.execute({
+      sessionId: 'unbound',
+      workspaceCwd: root,
+      language: 'r',
+      code: 'R.version.string'
+    })
+    expect(afterRepair.status).toBe('completed')
+    expect(executions).toHaveLength(1)
+  })
+
+  it('clears a legacy managed runtimeId marker when an unbound session repairs the env', async () => {
+    const root = await createStorageRoot()
+    const runtimeRoot = getRuntimeRoot(root)
+    addRepairRequired(runtimeRoot, managedR.envId)
+    const service = bindingService(root, {
+      discovered: [managedR],
+      installPackagesImpl: async () => ({ ok: true, needsRestart: false, log: 'repaired' })
+    })
+
+    const bound = await service.bindRuntime({
+      sessionId: 'bound',
+      workspaceCwd: root,
+      language: 'r',
+      runtimeId: managedR.envId
+    })
+    expect(bound.bound.reason).toBe('repair-required')
+
+    const result = await service.managePackages({ language: 'r', packages: ['dplyr'] })
+    expect(result.ok).toBe(true)
+    expect(isRepairRequired(runtimeRoot, managedR.envId)).toBe(false)
+    expect(isRepairRequired(runtimeRoot, DEFAULT_R_ENV)).toBe(false)
+    const state = await service.state({ sessionId: 'bound', workspaceCwd: root })
+    expect(state.runtimeBindings.r?.status).toBe('active')
+    expect(state.runtimeBindings.r?.reason).toBeUndefined()
   })
 
   it('restores a repaired binding to active in EVERY bound session after a successful repair install', async () => {

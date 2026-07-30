@@ -3,6 +3,7 @@ import { useCallback, useEffect, useRef, useState } from 'react'
 import { Dialog } from 'radix-ui'
 
 import { dialogOverlayClassName, dialogPanelClassName } from '@/components/ui/dialog-chrome'
+import { STREAMDOWN_FULLSCREEN_SELECTOR } from '@/components/streamdown/dom-selectors'
 import { useRetainedDialogValue } from '@/components/ui/use-retained-dialog-value'
 import type { PreviewFileItem } from '@/stores/preview-workbench-store'
 
@@ -12,9 +13,6 @@ type FilePreviewDialogProps = {
   item: PreviewFileItem | undefined
   onClose: () => void
 }
-
-const STREAMDOWN_FULLSCREEN_SELECTOR =
-  '[data-streamdown="table-fullscreen"], body > div.fixed.inset-0.z-50.flex.items-center.justify-center[role="button"]:not([data-streamdown])'
 
 const hasStreamdownFullscreen = (): boolean =>
   Boolean(document.querySelector(STREAMDOWN_FULLSCREEN_SELECTOR))

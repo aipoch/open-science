@@ -93,9 +93,12 @@ export type SessionSetupContext = {
 // Framework-specific session configuration returned to the runtime. `meta` becomes the ACP `_meta`
 // on session/new and session/resume. `promptPrefix` is prepended to prompt content when the framework
 // cannot carry appends in session meta, or when a session-level append needs a per-turn reminder.
+// `persistentSystemPrompt` exposes the exact transformed text delivered through framework-specific
+// metadata so context accounting never has to inspect that opaque transport shape.
 export type SessionSetup = {
   meta?: Record<string, unknown>
   promptPrefix?: string
+  persistentSystemPrompt?: string
 }
 
 export type ProxyEnvironmentMode = 'inherit' | 'replace'
@@ -200,6 +203,10 @@ export type ResolvedAgentBackend = {
   // Exact context-window limit for the selected upstream provider model. Framework adapters may
   // report a fallback or bridge transport model instead, so the runtime treats this as authoritative.
   contextWindow?: number
+  // Upstream provider model used for local context tokenization. This is deliberately separate from
+  // `sessionModel`: a framework may select its model through env rather than ACP, or use a bridge
+  // transport model whose id differs from the provider model that ultimately tokenizes the request.
+  contextUsageModel?: string
   authentication?: AgentAuthentication
   providerConfiguration?: AgentProviderConfiguration
   // A bridged backend owns one reference to its local loopback bridge. Runtime teardown releases it;

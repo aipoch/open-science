@@ -371,6 +371,66 @@ const bestEffortMessage = (error: unknown): string => {
   }
 }
 
+// Returns a coarse, fixed-vocabulary category for boundary diagnostics that must not retain provider
+// messages, request data, credentials, research content, stacks, or local paths. Raw numeric RPC codes
+// and identifier-shaped system codes are classified rather than copied, so a hostile `code` or `name`
+// property cannot smuggle arbitrary text into the log. Callers that explicitly own richer diagnostics
+// can continue to use errorLogFields instead.
+const diagnosticErrorFields = (error: unknown): { errorCategory: string } => {
+  try {
+    if (error === null) return { errorCategory: 'null' }
+
+    const type = typeof error
+    if (type !== 'object' && type !== 'function') return { errorCategory: type }
+
+    const code = safeRead(error as object, 'code')
+    if (typeof code === 'number' && Number.isFinite(code)) {
+      return { errorCategory: 'request' }
+    }
+    if (typeof code === 'string') {
+      if (code === 'ENOENT' || code === 'ENOTDIR') return { errorCategory: 'not-found' }
+      if (code === 'EACCES' || code === 'EPERM') return { errorCategory: 'permission' }
+      if (code === 'ETIMEDOUT' || code === 'ESOCKETTIMEDOUT') {
+        return { errorCategory: 'timeout' }
+      }
+      if (
+        code === 'ECONNREFUSED' ||
+        code === 'ECONNRESET' ||
+        code === 'ENETUNREACH' ||
+        code === 'EHOSTUNREACH' ||
+        code === 'EAI_AGAIN'
+      ) {
+        return { errorCategory: 'network' }
+      }
+      if (code.length <= 64 && /^(?:E[A-Z0-9_]+|ERR_[A-Z0-9_]+)$/.test(code)) {
+        return { errorCategory: 'system' }
+      }
+    }
+
+    const name = safeRead(error as object, 'name')
+    const categoriesByName: Record<string, string> = {
+      AbortError: 'aborted',
+      AggregateError: 'aggregate',
+      Error: 'error',
+      RangeError: 'range',
+      ReferenceError: 'reference',
+      RequestError: 'request',
+      SyntaxError: 'syntax',
+      SystemError: 'system',
+      TimeoutError: 'timeout',
+      TypeError: 'type',
+      URIError: 'uri'
+    }
+    if (typeof name === 'string' && Object.hasOwn(categoriesByName, name)) {
+      return { errorCategory: categoriesByName[name] }
+    }
+
+    return { errorCategory: 'object' }
+  } catch {
+    return { errorCategory: 'unknown' }
+  }
+}
+
 // Expands an unknown thrown value into a log-safe record for nesting inside a larger context object.
 // toSerializable only unwraps a *top-level* Error; an Error nested inside `{ error, ...ctx }` serializes
 // to `{}` because its fields are non-enumerable — losing the message, stack, and (worse) the code/data
@@ -610,4 +670,12 @@ const createLogger = (scope: string): Logger => ({
   error: (message, data) => emit('error', scope, message, data)
 })
 
-export { createLogger, errorLogFields, flushLogs, formatLine, getLogFilePath, initLogger }
+export {
+  createLogger,
+  diagnosticErrorFields,
+  errorLogFields,
+  flushLogs,
+  formatLine,
+  getLogFilePath,
+  initLogger
+}

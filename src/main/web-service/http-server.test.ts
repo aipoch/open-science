@@ -49,6 +49,7 @@ describe('startWebHttpServer', () => {
       bootstrap: {
         appName: 'Open Science',
         appVersion: '0.0.0',
+        configRoot: '/fake/root',
         platform: 'test',
         versions: { electron: '1', chrome: '1', node: '1' }
       }
@@ -67,6 +68,7 @@ describe('startWebHttpServer', () => {
     const bootstrap = await fetch(`${base}/api/bootstrap`, { headers: { cookie } })
     expect(await bootstrap.json()).toMatchObject({
       appName: 'Open Science',
+      configRoot: '/fake/root',
       rpcChannels: ['test:echo']
     })
 
@@ -166,6 +168,7 @@ describe('startWebHttpServer', () => {
       bootstrap: {
         appName: 'Open Science',
         appVersion: '0.0.0',
+        configRoot: '/fake/root',
         platform: 'test',
         versions: { electron: '1', chrome: '1', node: '1' }
       }
@@ -232,6 +235,7 @@ describe('startWebHttpServer', () => {
       bootstrap: {
         appName: 'Open Science',
         appVersion: '0.0.0',
+        configRoot: '/fake/root',
         platform: 'test',
         versions: { electron: '1', chrome: '1', node: '1' }
       }
@@ -317,6 +321,7 @@ describe('startWebHttpServer', () => {
       bootstrap: {
         appName: 'Open Science',
         appVersion: '0.0.0',
+        configRoot: '/fake/root',
         platform: 'test',
         versions: { electron: '1', chrome: '1', node: '1' }
       }
@@ -381,6 +386,7 @@ describe('startWebHttpServer', () => {
       bootstrap: {
         appName: 'Open Science',
         appVersion: '0.0.0',
+        configRoot: '/fake/root',
         platform: 'test',
         versions: { electron: '1', chrome: '1', node: '1' }
       }

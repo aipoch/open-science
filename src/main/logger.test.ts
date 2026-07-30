@@ -4,7 +4,14 @@ import { join } from 'node:path'
 
 import { afterEach, describe, expect, it } from 'vitest'
 
-import { createLogger, errorLogFields, flushLogs, formatLine, initLogger } from './logger'
+import {
+  createLogger,
+  diagnosticErrorFields,
+  errorLogFields,
+  flushLogs,
+  formatLine,
+  initLogger
+} from './logger'
 
 let logDir: string | undefined
 
@@ -53,6 +60,39 @@ describe('logger: formatLine', () => {
 
     expect(() => JSON.parse(line)).not.toThrow()
     expect((JSON.parse(line) as { data: unknown }).data).toBe('[unserializable]')
+  })
+})
+
+describe('logger: diagnosticErrorFields', () => {
+  it('classifies a provider request error without retaining its payload', () => {
+    const secret = 'provider-secret-value'
+    const fields = diagnosticErrorFields(
+      Object.assign(new Error(`provider rejected ${secret}`), {
+        name: 'RequestError',
+        code: -32603,
+        data: { credential: secret },
+        path: `/private/${secret}`
+      })
+    )
+
+    expect(fields).toEqual({ errorCategory: 'request' })
+    expect(JSON.stringify(fields)).not.toContain(secret)
+  })
+
+  it('does not copy arbitrary error names or codes into the category', () => {
+    const secret = 'custom-secret-category'
+    for (const name of [secret, 'toString', 'constructor', '__proto__']) {
+      const fields = diagnosticErrorFields({
+        name,
+        code: secret,
+        message: secret,
+        data: { credential: secret }
+      })
+
+      expect(fields).toEqual({ errorCategory: 'object' })
+      expect(typeof fields.errorCategory).toBe('string')
+      expect(JSON.stringify(fields)).not.toContain(secret)
+    }
   })
 })
 

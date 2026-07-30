@@ -33,9 +33,9 @@ jobs:
       matrix:
         # macOS is the release/verification target and the only platform with the project's
         # arm64-only darwin native dependency present, so it runs the FULL gate (test + coverage +
-        # build). Linux/Windows validate the platform-independent code paths (lint + typecheck are
-        # hard-gated everywhere); their test leg is advisory (continue-on-error) because the missing
-        # darwin native package can trip suites that reach the ACP/native layer — see the test steps.
+        # build). Ubuntu provides the advisory cross-platform full-suite signal. Windows hard-gates
+        # the platform-independent checks plus a focused native-filesystem/PowerShell test suite;
+        # see the test steps for why the noisy full suite is intentionally omitted there.
         os: [macos-14, ubuntu-latest, windows-latest]
 
     steps:
@@ -62,23 +62,49 @@ jobs:
 
       # Guards against src/preload drifting from the generated web API map. Pure Node and
       # platform-independent, so hard-gate it on all three OSes rather than relying on the
-      # macOS-only vitest leg (the Linux/Windows test run is advisory).
+      # macOS coverage leg, Ubuntu advisory suite, or focused Windows suite.
       - name: Check web API map
         run: npm run check:web-api-map
 
-      # The general suite discovers these tests, but Linux/Windows tests are advisory. Keep the
-      # zero-dependency CLI/SDK contract and publishable tarball hard-gated on every platform.
+      # The general suite discovers these tests, but Ubuntu's run is advisory and Windows runs only
+      # a focused platform suite. Keep the zero-dependency CLI/SDK contract and publishable tarball
+      # hard-gated on every platform.
       - name: Test CLI and SDK
         run: npm run test:cli
 
       - name: Check CLI package
         run: npm run check:cli-package
 
-      # This exercises the production DACL writer and verifier on a real Windows filesystem. Keep
-      # it hard-gated even while the general Windows suite remains advisory.
-      - name: Test Windows micromamba cache ACL
+      # Keep the Windows signal focused and actionable. The full suite currently has many known
+      # POSIX-only failures and repeatedly builds fresh Prisma/SQLite schemas; on Windows that turns
+      # into more than ten minutes of advisory noise. Ubuntu still runs the cross-platform full suite,
+      # while this hard gate exercises the real Windows filesystem, DACL, icon, and PowerShell paths.
+      - name: Test Windows-specific behavior
         if: matrix.os == 'windows-latest'
-        run: npx vitest run src/main/notebook/micromamba-cache-acl.integration.test.ts
+        run: >-
+          npx vitest run
+          src/main/windows.test.ts
+          src/main/windows-icon-assets.test.ts
+          src/main/windows-powershell.test.ts
+          src/main/notebook/micromamba-cache-powershell.test.ts
+          src/main/notebook/micromamba-cache-acl.integration.test.ts
+
+      # Exercise the production Windows shell runner directly. The broader runtime-service suite
+      # takes about 70 seconds and has unrelated Windows failures, so its former combined shell case
+      # could time out without identifying which PowerShell contract regressed.
+      - name: Test Windows notebook shell behavior
+        if: matrix.os == 'windows-latest'
+        run: npx vitest run src/main/notebook/windows-shell.integration.test.ts
+
+      # Keep the public service boundary covered without running the rest of the heavy runtime-service
+      # suite. This verifies that Windows tree termination is persisted as a timed-out notebook run.
+      - name: Test Windows notebook shell service timeout
+        if: matrix.os == 'windows-latest'
+        run: >-
+          npx vitest run
+          src/main/notebook/runtime-service.test.ts
+          --testNamePattern
+          "kills a command that outlasts the timeout and returns a non-normal result"
 
       # Full test suite + coverage gate on macOS (thresholds live in vitest.config.ts).
       - name: Test (with coverage)
@@ -86,10 +112,10 @@ jobs:
         run: npm run test:coverage
 
       # Cross-platform test signal, advisory only: a failure here is surfaced in the PR but does not
-      # block merge, because the darwin-only native dependency is absent on Linux/Windows and can fail
-      # suites that touch it. Promote to a hard gate once those suites are made platform-independent.
+      # block merge, because the darwin-only native dependency is absent on Linux and can fail suites
+      # that touch it. Promote to a hard gate once those suites are made platform-independent.
       - name: Test (advisory)
-        if: matrix.os != 'macos-14'
+        if: matrix.os == 'ubuntu-latest'
         continue-on-error: true
         run: npm run test
 

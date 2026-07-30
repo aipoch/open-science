@@ -28,7 +28,10 @@ import { AgentMcpHttpHost } from './mcp-http-host'
 import { ArtifactRepository } from '../artifacts/repository'
 import type { ArtifactProvenanceRepository } from '../artifacts/provenance-repository'
 import type { ArtifactRunRegistry } from '../artifacts/run-registry'
-import type { TaskNotificationService } from '../notifications/task-notifications'
+import {
+  runTaskNotificationInBackground,
+  type TaskNotificationService
+} from '../notifications/task-notifications'
 import { NotebookLocalRpcServer } from '../notebook/local-rpc-server'
 import { NotebookRunRepository } from '../notebook/repository'
 import { NotebookRuntimeService } from '../notebook/runtime-service'
@@ -120,12 +123,22 @@ const createRuntime = ({
     onEvent: (event: AcpRuntimeEvent) => {
       broadcast('acp:event', event)
       // Fire-and-forget: a notification hiccup must never stall the renderer event stream.
-      void taskNotifications?.handleRuntimeEvent(event)
+      if (taskNotifications) {
+        runTaskNotificationInBackground(
+          () => taskNotifications.handleRuntimeEvent(event),
+          (error) => log.warn('task notification event failed', errorLogFields(error))
+        )
+      }
     },
     onPermissionRequest: (request: AcpPermissionRequest) => {
       broadcast('acp:permission-request', request)
       // A pending approval parks the turn; an unfocused user gets a desktop nudge.
-      void taskNotifications?.handlePermissionRequest(request)
+      if (taskNotifications) {
+        runTaskNotificationInBackground(
+          () => taskNotifications.handlePermissionRequest(request),
+          (error) => log.warn('permission notification failed', errorLogFields(error))
+        )
+      }
     }
   }
 

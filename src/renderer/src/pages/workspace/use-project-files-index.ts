@@ -4,7 +4,8 @@ import type {
   ArtifactGroupItem,
   ProjectFileItem,
   ProjectFilesChangedEvent,
-  ProjectFilesOverview
+  ProjectFilesOverview,
+  ProjectFilesSearch
 } from '../../../../shared/project-files'
 
 const FILE_PAGE_SIZE = 20
@@ -25,6 +26,7 @@ type PageState<Item> = {
 type ProjectFilesIndexState = {
   overview: ProjectFilesOverview
   overviewError?: string
+  isOverviewLoaded: boolean
   isRepairing: boolean
   repairError?: string
   uploads: PageState<ProjectFileItem>
@@ -36,6 +38,12 @@ type ProjectFilesIndexState = {
   repairIndex(): Promise<void>
   reload(): void
 }
+
+type ProjectFilesIndexScope =
+  | { kind: 'all' }
+  | { kind: 'uploads' }
+  | { kind: 'artifactGroups' }
+  | { kind: 'sessionArtifacts'; sessionId: string }
 
 type IndexRepairState = {
   projectId?: string
@@ -60,6 +68,11 @@ const emptyPage = <Item>(): PageState<Item> => ({
 
 const getErrorMessage = (error: unknown): string =>
   error instanceof Error ? error.message : 'Could not load project files.'
+
+// Omits blank search state entirely so the repository can retain its faster indexed catalog path.
+const withFilenameSearch = (
+  filenameContains: string | undefined
+): { search?: ProjectFilesSearch } => (filenameContains ? { search: { filenameContains } } : {})
 
 type RequestLimiter = <Result>(task: () => Promise<Result>) => Promise<Result>
 
@@ -103,12 +116,14 @@ const appendUnique = <Item>(
 
 type InitialProjectFilesLoad = {
   projectId: string
+  filenameContains?: string
   requestLimiter: RequestLimiter
   isOverviewCurrent: () => boolean
   isUploadsCurrent: () => boolean
   isGroupsCurrent: () => boolean
   setOverview: Dispatch<SetStateAction<ProjectFilesOverview>>
   setOverviewError: Dispatch<SetStateAction<string | undefined>>
+  setIsOverviewLoaded: Dispatch<SetStateAction<boolean>>
   setUploads: Dispatch<SetStateAction<PageState<ProjectFileItem>>>
   setGroups: Dispatch<SetStateAction<PageState<ArtifactGroupItem>>>
 }
@@ -117,22 +132,30 @@ type InitialProjectFilesLoad = {
 // supplied by the owning hook so a project switch can discard each response without cancelable IPC.
 const startInitialProjectFilesLoad = ({
   projectId,
+  filenameContains,
   requestLimiter,
   isOverviewCurrent,
   isUploadsCurrent,
   isGroupsCurrent,
   setOverview,
   setOverviewError,
+  setIsOverviewLoaded,
   setUploads,
   setGroups
 }: InitialProjectFilesLoad): void => {
   void window.api.projectFiles
-    .getOverview({ projectId })
+    .getOverview({ projectId, ...withFilenameSearch(filenameContains) })
     .then((nextOverview) => {
-      if (isOverviewCurrent()) setOverview(nextOverview)
+      if (isOverviewCurrent()) {
+        setOverview(nextOverview)
+        setIsOverviewLoaded(true)
+      }
     })
     .catch((error: unknown) => {
-      if (isOverviewCurrent()) setOverviewError(getErrorMessage(error))
+      if (isOverviewCurrent()) {
+        setOverviewError(getErrorMessage(error))
+        setIsOverviewLoaded(true)
+      }
     })
 
   void requestLimiter(() =>
@@ -140,6 +163,7 @@ const startInitialProjectFilesLoad = ({
       ? window.api.projectFiles.listFiles({
           projectId,
           collection: { kind: 'uploads' },
+          ...withFilenameSearch(filenameContains),
           limit: FILE_PAGE_SIZE
         })
       : Promise.reject(new Error('Stale project files request.'))
@@ -155,7 +179,11 @@ const startInitialProjectFilesLoad = ({
 
   void requestLimiter(() =>
     isGroupsCurrent()
-      ? window.api.projectFiles.listArtifactGroups({ projectId, limit: GROUP_PAGE_SIZE })
+      ? window.api.projectFiles.listArtifactGroups({
+          projectId,
+          ...withFilenameSearch(filenameContains),
+          limit: GROUP_PAGE_SIZE
+        })
       : Promise.reject(new Error('Stale project files request.'))
   )
     .then((page) => {
@@ -178,10 +206,16 @@ const startInitialProjectFilesLoad = ({
  */
 const useProjectFilesIndex = (
   projectId: string | undefined,
-  onChanged?: (event: ProjectFilesChangedEvent) => void
+  onChanged?: (event: ProjectFilesChangedEvent) => void,
+  search?: ProjectFilesSearch,
+  scope?: ProjectFilesIndexScope
 ): ProjectFilesIndexState => {
+  const filenameContains = search?.filenameContains
+  const scopeKind = scope?.kind ?? 'all'
+  const scopeSessionId = scope?.kind === 'sessionArtifacts' ? scope.sessionId : undefined
   const [overview, setOverview] = useState(EMPTY_OVERVIEW)
   const [overviewError, setOverviewError] = useState<string>()
+  const [isOverviewLoaded, setIsOverviewLoaded] = useState(false)
   const [repairState, setRepairState] = useState<IndexRepairState>({ isRepairing: false })
   const [uploads, setUploads] = useState<PageState<ProjectFileItem>>(emptyPage)
   const [groups, setGroups] = useState<PageState<ArtifactGroupItem>>(emptyPage)
@@ -216,27 +250,142 @@ const useProjectFilesIndex = (
     loadingGroupsRef.current = undefined
     setOverview(EMPTY_OVERVIEW)
     setOverviewError(undefined)
-    setUploads({ ...emptyPage(), isLoading: Boolean(projectId) })
-    setGroups({ ...emptyPage(), isLoading: Boolean(projectId) })
-    setArtifactsBySession({})
+    setIsOverviewLoaded(!projectId)
+    setUploads({
+      ...emptyPage(),
+      isLoading: Boolean(projectId) && (scopeKind === 'all' || scopeKind === 'uploads')
+    })
+    setGroups({
+      ...emptyPage(),
+      isLoading: Boolean(projectId) && (scopeKind === 'all' || scopeKind === 'artifactGroups')
+    })
+    setArtifactsBySession(
+      projectId && scopeKind === 'sessionArtifacts' && scopeSessionId
+        ? { [scopeSessionId]: { ...emptyPage(), isLoading: true } }
+        : {}
+    )
 
     if (!projectId) return
 
-    startInitialProjectFilesLoad({
-      projectId,
-      requestLimiter: requestLimiterRef.current,
-      isOverviewCurrent: () =>
-        generation === generationRef.current && overviewRequest === overviewRequestRef.current,
-      isUploadsCurrent: () =>
-        generation === generationRef.current && uploadsRequest === uploadsRequestRef.current,
-      isGroupsCurrent: () =>
-        generation === generationRef.current && groupsRequest === groupsRequestRef.current,
-      setOverview,
-      setOverviewError,
-      setUploads,
-      setGroups
-    })
-  }, [projectId, refreshVersion])
+    if (scopeKind === 'all') {
+      startInitialProjectFilesLoad({
+        projectId,
+        filenameContains,
+        requestLimiter: requestLimiterRef.current,
+        isOverviewCurrent: () =>
+          generation === generationRef.current && overviewRequest === overviewRequestRef.current,
+        isUploadsCurrent: () =>
+          generation === generationRef.current && uploadsRequest === uploadsRequestRef.current,
+        isGroupsCurrent: () =>
+          generation === generationRef.current && groupsRequest === groupsRequestRef.current,
+        setOverview,
+        setOverviewError,
+        setIsOverviewLoaded,
+        setUploads,
+        setGroups
+      })
+      return
+    }
+
+    if (scopeKind === 'artifactGroups') {
+      // The filter menu owns this cursor independently so expanding it never advances the content
+      // view or causes newly discovered sessions to load their file pages and thumbnails.
+      void requestLimiterRef
+        .current(() =>
+          generation === generationRef.current && groupsRequest === groupsRequestRef.current
+            ? window.api.projectFiles.listArtifactGroups({
+                projectId,
+                ...withFilenameSearch(filenameContains),
+                limit: GROUP_PAGE_SIZE
+              })
+            : Promise.reject(new Error('Stale project files request.'))
+        )
+        .then((page) => {
+          if (generation !== generationRef.current || groupsRequest !== groupsRequestRef.current) {
+            return
+          }
+          setGroups({ ...page, isLoading: false, isLoaded: true, failedCursor: undefined })
+        })
+        .catch((error: unknown) => {
+          if (generation !== generationRef.current || groupsRequest !== groupsRequestRef.current) {
+            return
+          }
+          setGroups({ ...emptyPage(), isLoaded: true, error: getErrorMessage(error) })
+        })
+      return
+    }
+
+    if (scopeKind === 'uploads') {
+      void requestLimiterRef
+        .current(() =>
+          generation === generationRef.current && uploadsRequest === uploadsRequestRef.current
+            ? window.api.projectFiles.listFiles({
+                projectId,
+                collection: { kind: 'uploads' },
+                ...withFilenameSearch(filenameContains),
+                limit: FILE_PAGE_SIZE
+              })
+            : Promise.reject(new Error('Stale project files request.'))
+        )
+        .then((page) => {
+          if (
+            generation !== generationRef.current ||
+            uploadsRequest !== uploadsRequestRef.current
+          ) {
+            return
+          }
+          setUploads({ ...page, isLoading: false, isLoaded: true })
+        })
+        .catch((error: unknown) => {
+          if (
+            generation !== generationRef.current ||
+            uploadsRequest !== uploadsRequestRef.current
+          ) {
+            return
+          }
+          setUploads({ ...emptyPage(), isLoaded: true, error: getErrorMessage(error) })
+        })
+      return
+    }
+
+    if (!scopeSessionId) return
+    const artifactRequest = 1
+    artifactRequestVersionsRef.current.set(scopeSessionId, artifactRequest)
+    void requestLimiterRef
+      .current(() =>
+        generation === generationRef.current &&
+        artifactRequest === artifactRequestVersionsRef.current.get(scopeSessionId)
+          ? window.api.projectFiles.listFiles({
+              projectId,
+              collection: { kind: 'sessionArtifacts', sessionId: scopeSessionId },
+              ...withFilenameSearch(filenameContains),
+              limit: FILE_PAGE_SIZE
+            })
+          : Promise.reject(new Error('Stale project files request.'))
+      )
+      .then((page) => {
+        if (
+          generation !== generationRef.current ||
+          artifactRequest !== artifactRequestVersionsRef.current.get(scopeSessionId)
+        ) {
+          return
+        }
+        setArtifactsBySession({
+          [scopeSessionId]: { ...page, isLoading: false, isLoaded: true }
+        })
+      })
+      .catch((error: unknown) => {
+        if (
+          generation !== generationRef.current ||
+          artifactRequest !== artifactRequestVersionsRef.current.get(scopeSessionId)
+        ) {
+          return
+        }
+        setArtifactsBySession({
+          [scopeSessionId]: { ...emptyPage(), isLoaded: true, error: getErrorMessage(error) }
+        })
+      })
+  }, [filenameContains, projectId, refreshVersion, scopeKind, scopeSessionId])
 
   const handleIndexChanged = useCallback(
     (event: ProjectFilesChangedEvent): void => {
@@ -251,35 +400,38 @@ const useProjectFilesIndex = (
       }
 
       const generation = generationRef.current
-      // Overview is cheap and authoritative for counts/completeness, so every scoped mutation refreshes
-      // it even when only one collection page needs to be rebuilt.
-      const overviewRequest = ++overviewRequestRef.current
-      setOverviewError(undefined)
-      void window.api.projectFiles
-        .getOverview({ projectId })
-        .then((nextOverview) => {
-          if (
-            generation !== generationRef.current ||
-            overviewRequest !== overviewRequestRef.current
-          ) {
-            return
-          }
-          setOverview(nextOverview)
-          setGroups((current) => ({
-            ...current,
-            totalCount: nextOverview.artifactGroupCount
-          }))
-        })
-        .catch((error: unknown) => {
-          if (
-            generation === generationRef.current &&
-            overviewRequest === overviewRequestRef.current
-          ) {
-            setOverviewError(getErrorMessage(error))
-          }
-        })
+      if (scopeKind === 'all') {
+        const overviewRequest = ++overviewRequestRef.current
+        setOverviewError(undefined)
+        setIsOverviewLoaded(false)
+        void window.api.projectFiles
+          .getOverview({ projectId, ...withFilenameSearch(filenameContains) })
+          .then((nextOverview) => {
+            if (
+              generation !== generationRef.current ||
+              overviewRequest !== overviewRequestRef.current
+            ) {
+              return
+            }
+            setOverview(nextOverview)
+            setGroups((current) => ({
+              ...current,
+              totalCount: nextOverview.artifactGroupCount
+            }))
+            setIsOverviewLoaded(true)
+          })
+          .catch((error: unknown) => {
+            if (
+              generation === generationRef.current &&
+              overviewRequest === overviewRequestRef.current
+            ) {
+              setOverviewError(getErrorMessage(error))
+              setIsOverviewLoaded(true)
+            }
+          })
+      }
 
-      if (event.sources.includes('upload')) {
+      if (event.sources.includes('upload') && (scopeKind === 'all' || scopeKind === 'uploads')) {
         // Upload mutations replace the first page and cursor. Appending here would retain deleted rows
         // or preserve an order captured before the mutation.
         const uploadsRequest = ++uploadsRequestRef.current
@@ -292,6 +444,7 @@ const useProjectFilesIndex = (
               ? window.api.projectFiles.listFiles({
                   projectId,
                   collection: { kind: 'uploads' },
+                  ...withFilenameSearch(filenameContains),
                   limit: FILE_PAGE_SIZE
                 })
               : Promise.reject(new Error('Stale project files request.'))
@@ -322,61 +475,71 @@ const useProjectFilesIndex = (
       if (event.sources.includes('artifact') && event.sessionId) {
         // The group list shares the same DB projection. Invalidate any page captured before this
         // session mutation, then rebuild its first page and cursor from the updated projection.
-        const groupsRequest = ++groupsRequestRef.current
-        const groupsRequestKey = `${generation}:${groupsRequest}:first`
-        loadingGroupsRef.current = groupsRequestKey
-        setGroups((current) => ({
-          ...current,
-          nextCursor: undefined,
-          isLoading: true,
-          error: undefined,
-          failedCursor: undefined
-        }))
-        void requestLimiterRef
-          .current(() =>
-            generation === generationRef.current && groupsRequest === groupsRequestRef.current
-              ? window.api.projectFiles.listArtifactGroups({
-                  projectId,
-                  limit: GROUP_PAGE_SIZE
-                })
-              : Promise.reject(new Error('Stale project files request.'))
-          )
-          .then((page) => {
-            if (
-              generation !== generationRef.current ||
-              groupsRequest !== groupsRequestRef.current
-            ) {
-              return
-            }
-            setGroups({
-              ...page,
-              isLoading: false,
-              isLoaded: true,
-              failedCursor: undefined
+        if (scopeKind === 'all' || scopeKind === 'artifactGroups') {
+          const groupsRequest = ++groupsRequestRef.current
+          const groupsRequestKey = `${generation}:${groupsRequest}:first`
+          loadingGroupsRef.current = groupsRequestKey
+          setGroups((current) => ({
+            ...current,
+            nextCursor: undefined,
+            isLoading: true,
+            error: undefined,
+            failedCursor: undefined
+          }))
+          void requestLimiterRef
+            .current(() =>
+              generation === generationRef.current && groupsRequest === groupsRequestRef.current
+                ? window.api.projectFiles.listArtifactGroups({
+                    projectId,
+                    ...withFilenameSearch(filenameContains),
+                    limit: GROUP_PAGE_SIZE
+                  })
+                : Promise.reject(new Error('Stale project files request.'))
+            )
+            .then((page) => {
+              if (
+                generation !== generationRef.current ||
+                groupsRequest !== groupsRequestRef.current
+              ) {
+                return
+              }
+              setGroups({
+                ...page,
+                isLoading: false,
+                isLoaded: true,
+                failedCursor: undefined
+              })
             })
-          })
-          .catch((error: unknown) => {
-            if (
-              generation !== generationRef.current ||
-              groupsRequest !== groupsRequestRef.current
-            ) {
-              return
-            }
-            setGroups((current) => ({
-              ...current,
-              isLoading: false,
-              isLoaded: true,
-              error: getErrorMessage(error),
-              failedCursor: undefined
-            }))
-          })
-          .finally(() => {
-            if (loadingGroupsRef.current === groupsRequestKey) {
-              loadingGroupsRef.current = undefined
-            }
-          })
+            .catch((error: unknown) => {
+              if (
+                generation !== generationRef.current ||
+                groupsRequest !== groupsRequestRef.current
+              ) {
+                return
+              }
+              setGroups((current) => ({
+                ...current,
+                isLoading: false,
+                isLoaded: true,
+                error: getErrorMessage(error),
+                failedCursor: undefined
+              }))
+            })
+            .finally(() => {
+              if (loadingGroupsRef.current === groupsRequestKey) {
+                loadingGroupsRef.current = undefined
+              }
+            })
+        }
 
         const sessionId = event.sessionId
+        if (
+          scopeKind === 'uploads' ||
+          scopeKind === 'artifactGroups' ||
+          (scopeKind === 'sessionArtifacts' && scopeSessionId !== sessionId)
+        ) {
+          return
+        }
         // Session files refresh independently from the group list. Their response never edits group
         // ordering; only listArtifactGroups owns groupSortAtMs ordering and its continuation cursor.
         const artifactRequest = (artifactRequestVersionsRef.current.get(sessionId) ?? 0) + 1
@@ -394,6 +557,7 @@ const useProjectFilesIndex = (
               ? window.api.projectFiles.listFiles({
                   projectId,
                   collection: { kind: 'sessionArtifacts', sessionId },
+                  ...withFilenameSearch(filenameContains),
                   limit: FILE_PAGE_SIZE
                 })
               : Promise.reject(new Error('Stale project files request.'))
@@ -438,7 +602,7 @@ const useProjectFilesIndex = (
           })
       }
     },
-    [onChanged, projectId]
+    [filenameContains, onChanged, projectId, scopeKind, scopeSessionId]
   )
 
   useEffect(() => {
@@ -492,6 +656,7 @@ const useProjectFilesIndex = (
           ? window.api.projectFiles.listFiles({
               projectId,
               collection: { kind: 'uploads' },
+              ...withFilenameSearch(filenameContains),
               cursor,
               limit: FILE_PAGE_SIZE
             })
@@ -521,7 +686,7 @@ const useProjectFilesIndex = (
     } finally {
       if (loadingUploadsRef.current === requestKey) loadingUploadsRef.current = undefined
     }
-  }, [projectId, uploads])
+  }, [filenameContains, projectId, uploads])
 
   const loadMoreGroups = useCallback(async (): Promise<void> => {
     if (
@@ -545,6 +710,7 @@ const useProjectFilesIndex = (
         generation === generationRef.current
           ? window.api.projectFiles.listArtifactGroups({
               projectId,
+              ...withFilenameSearch(filenameContains),
               cursor,
               limit: GROUP_PAGE_SIZE
             })
@@ -574,7 +740,7 @@ const useProjectFilesIndex = (
     } finally {
       if (loadingGroupsRef.current === requestKey) loadingGroupsRef.current = undefined
     }
-  }, [groups, projectId])
+  }, [filenameContains, groups, projectId])
 
   const loadMoreArtifacts = useCallback(
     async (sessionId: string): Promise<void> => {
@@ -604,6 +770,7 @@ const useProjectFilesIndex = (
             ? window.api.projectFiles.listFiles({
                 projectId,
                 collection: { kind: 'sessionArtifacts', sessionId },
+                ...withFilenameSearch(filenameContains),
                 cursor,
                 limit: FILE_PAGE_SIZE
               })
@@ -649,12 +816,13 @@ const useProjectFilesIndex = (
         }
       }
     },
-    [artifactsBySession, projectId]
+    [artifactsBySession, filenameContains, projectId]
   )
 
   return {
     overview,
     overviewError,
+    isOverviewLoaded,
     isRepairing,
     repairError,
     uploads,
@@ -669,4 +837,4 @@ const useProjectFilesIndex = (
 }
 
 export { FILE_PAGE_SIZE, GROUP_PAGE_SIZE, useProjectFilesIndex }
-export type { PageState, ProjectFilesIndexState }
+export type { PageState, ProjectFilesIndexScope, ProjectFilesIndexState }

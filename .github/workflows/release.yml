@@ -35,11 +35,63 @@ jobs:
     uses: ./.github/workflows/notarize-mac.yml
     secrets: inherit
 
+  # The reusable build already hard-gates a fresh NSIS install/start/uninstall. On stable tags, also
+  # install the latest published stable version and run the new installer over it. This runs beside
+  # macOS notarization, so its few minutes normally do not extend the release critical path.
+  windows-upgrade-smoke:
+    needs: build
+    if: startsWith(github.ref, 'refs/tags/')
+    runs-on: windows-latest
+    timeout-minutes: 20
+    permissions:
+      contents: read
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v7
+
+      - name: Setup Node
+        uses: actions/setup-node@v7
+        with:
+          node-version: 22
+
+      - name: Download current Windows installer
+        uses: actions/download-artifact@v8
+        with:
+          name: windows-x64
+          path: current
+
+      - name: Download previous stable Windows installer
+        id: previous
+        shell: pwsh
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          CURRENT_TAG: ${{ github.ref_name }}
+        run: |
+          New-Item -ItemType Directory -Force previous | Out-Null
+          $releases = gh release list --exclude-drafts --exclude-pre-releases --limit 20 --json tagName
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          $tag = ($releases | ConvertFrom-Json | Where-Object { $_.tagName -like 'v*' -and $_.tagName -ne $env:CURRENT_TAG } | Select-Object -First 1).tagName
+          if ([string]::IsNullOrWhiteSpace($tag)) {
+            "available=false" >> $env:GITHUB_OUTPUT
+            Write-Host "No previous stable release is available; fresh-install smoke already passed."
+            exit 0
+          }
+          gh release download $tag --pattern '*-win-x64-setup.exe' --dir previous
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          "available=true" >> $env:GITHUB_OUTPUT
+
+      - name: Smoke test Windows upgrade
+        if: steps.previous.outputs.available == 'true'
+        run: >-
+          node scripts/windows-installer-smoke.mjs
+          --installer-dir current
+          --previous-installer-dir previous
+
   # Collect every platform's artifacts and publish them to the tag's Release in one shot (a single
   # publish job avoids the race of multiple build jobs writing the same Release). Depends on
   # notarize-mac so the mac dmg/zip it downloads are the stapled versions.
   publish:
-    needs: [build, notarize-mac]
+    needs: [build, notarize-mac, windows-upgrade-smoke]
     if: startsWith(github.ref, 'refs/tags/')
     runs-on: ubuntu-latest
     # Job-level permissions fully override the workflow-level block, so contents:write is restated

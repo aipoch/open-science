@@ -18,6 +18,7 @@ import type {
   ArtifactFile,
   ArtifactPreviewResult,
   FinalizeRunArtifactsRequest,
+  FinalizeRunArtifactsResult,
   ListProjectArtifactsRequest,
   OpenArtifactFileRequest,
   ReadArtifactPreviewRequest,
@@ -50,7 +51,10 @@ import type {
 } from '../shared/compute'
 import type { DirListing, DownloadDest, LocalFile } from '../shared/remote-fs'
 import type { OpenLogFileResult, RevealLogFileResult } from '../shared/logs'
-import type { OpenSessionFromNotificationRequest } from '../shared/notifications'
+import type {
+  OpenSessionFromNotificationRequest,
+  UnreadTaskViewState
+} from '../shared/notifications'
 import type {
   ProjectDeletedEvent,
   SessionDeletedEvent,
@@ -109,6 +113,7 @@ import type {
 } from '../shared/projects'
 import type {
   ArtifactGroupPage,
+  GetProjectFilesOverviewRequest,
   ListArtifactGroupsRequest,
   ListProjectFilesRequest,
   ProjectFilesChangedEvent,
@@ -355,6 +360,9 @@ interface OpenScienceAPI {
     takePendingOpenSession(
       expectedToken: number
     ): Promise<OpenSessionFromNotificationRequest | null>
+    // Electron-only. The Web bridge intentionally omits native unread acknowledgement.
+    syncViewState?(state: UnreadTaskViewState): void
+    onViewProbe?(listener: AcpListener<number>): RemoveListener
   }
   github: {
     getStars(): Promise<number | null>
@@ -385,7 +393,7 @@ interface OpenScienceAPI {
     onDeleted(listener: AcpListener<ProjectDeletedEvent>): RemoveListener
   }
   projectFiles: {
-    getOverview(request: { projectId: string }): Promise<ProjectFilesOverview>
+    getOverview(request: GetProjectFilesOverviewRequest): Promise<ProjectFilesOverview>
     listFiles(request: ListProjectFilesRequest): Promise<ProjectFilesPage>
     listArtifactGroups(request: ListArtifactGroupsRequest): Promise<ArtifactGroupPage>
     repairIndex(request: { projectId: string }): Promise<void>
@@ -457,7 +465,7 @@ interface OpenScienceAPI {
     onState(listener: (state: OfficePreviewRuntimeState) => void): RemoveListener
   }
   artifacts: {
-    finalizeRunArtifacts(request: FinalizeRunArtifactsRequest): Promise<ArtifactFile[]>
+    finalizeRunArtifacts(request: FinalizeRunArtifactsRequest): Promise<FinalizeRunArtifactsResult>
     listProjectFiles(request: ListProjectArtifactsRequest): Promise<ArtifactFile[]>
     reconcilePendingArtifacts(request: ReconcilePendingArtifactsRequest): Promise<ArtifactFile[]>
     openFile(request: OpenArtifactFileRequest): Promise<void>

@@ -110,6 +110,7 @@ const createWebServiceController = (
       bootstrap: {
         appName: info.appName,
         appVersion: info.appVersion,
+        configRoot,
         platform: process.platform,
         versions: info.versions
       }

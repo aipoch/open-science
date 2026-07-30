@@ -36,6 +36,7 @@ import { registerWindowIpcHandlers } from './window-ipc'
 import { registerWindowFindIpcHandlers } from './window-find-ipc'
 import { TaskNotificationService } from './notifications/task-notifications'
 import {
+  buildSkillImportApprovalBroadcast,
   buildConnectorApprovalBroadcast,
   buildTaskNotificationShow
 } from './notifications/electron-wiring'
@@ -180,6 +181,7 @@ const registerIpcHandlers = async ({
   shutdownCoordinator: BackendShutdownCoordinator
   taskNotifications: TaskNotificationService
   settingsService: SettingsService
+  sessionPersistenceCoordinator: SessionPersistenceCoordinator
 }> => {
   // One settings service backs both the settings IPC and the ACP spawn config (single source of truth).
   const settingsService = createDefaultSettingsService()
@@ -349,7 +351,11 @@ const registerIpcHandlers = async ({
       headless
     }),
     onDeliveryError: (error) =>
-      notificationsLog.warn('task notification delivery failed', errorLogFields(error))
+      notificationsLog.warn('task notification delivery failed', errorLogFields(error)),
+    onAttentionError: (error) =>
+      notificationsLog.warn('desktop attention handler failed', errorLogFields(error)),
+    onUnreadError: (error) =>
+      notificationsLog.warn('unread task handler failed', errorLogFields(error))
   })
   // The renderer peeks once sessions are hydrated, then conditionally consumes the same target.
   // This lets partial recovery open an already-loaded conversation while retaining an omitted one
@@ -372,7 +378,9 @@ const registerIpcHandlers = async ({
     generateId: () => randomUUID(),
     broadcast: buildConnectorApprovalBroadcast({
       broadcastToRenderers,
-      taskNotifications
+      taskNotifications,
+      onNotificationError: (error) =>
+        notificationsLog.warn('connector approval notification failed', errorLogFields(error))
     })
   })
   // Late-bound app runtime for connector tools that attach a generated file to the current turn. The
@@ -382,7 +390,12 @@ const registerIpcHandlers = async ({
   }
   const skillImportApprovalBroker = new SkillImportApprovalBroker({
     generateId: () => randomUUID(),
-    broadcast: (request) => broadcastToRenderers('skills:conversation-import-request', request),
+    broadcast: buildSkillImportApprovalBroadcast({
+      broadcastToRenderers,
+      taskNotifications,
+      onNotificationError: (error) =>
+        notificationsLog.warn('skill import approval notification failed', errorLogFields(error))
+    }),
     onSettled: (id) => broadcastToRenderers('skills:conversation-import-settled', id)
   })
   const conversationSkillImporter = new ConversationSkillImporter({
@@ -429,7 +442,13 @@ const registerIpcHandlers = async ({
     jobRepository,
     hostRepository,
     enabledComputeHostsRegistry: hostsRegistry
-  } = registerComputeIpcHandlers(undefined, undefined, computeArtifactResolver)
+  } = registerComputeIpcHandlers(
+    undefined,
+    undefined,
+    computeArtifactResolver,
+    undefined,
+    taskNotifications
+  )
   const dataRoot = resolveDataRoot()
   // Start the JobPoller wired to the shared broadcaster so every state/tail change is pushed to all
   // renderer windows via 'compute:job-updated' (Phase 3d, design.md §9 + §15.3). The dispatcher
@@ -754,7 +773,8 @@ const registerIpcHandlers = async ({
     serialized,
     provisioningRoot,
     waitForRecovery,
-    assertProvisionAllowed
+    assertProvisionAllowed,
+    (language) => notebookService.completeRuntimeRepair(language)
   )
   if (provisioner && serialized) {
     // Back the notebook service's manage_environments tool with the same provisioner that owns the env
@@ -817,7 +837,8 @@ const registerIpcHandlers = async ({
     notebook: notebookService,
     shutdownCoordinator,
     taskNotifications,
-    settingsService
+    settingsService,
+    sessionPersistenceCoordinator
   }
 }
 
