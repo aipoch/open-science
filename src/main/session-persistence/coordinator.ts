@@ -183,7 +183,7 @@ const rebaseSafeSessionFields = (
         break
     }
   }
-  rebased.updatedAt = Math.max(authoritative.updatedAt, submitted.updatedAt)
+  rebased.updatedAt = Math.max(authoritative.updatedAt, submitted.updatedAt) + 1
   return rebased
 }
 

@@ -354,7 +354,9 @@ describe('SessionPersistenceCoordinator', () => {
       conflictRebaseFields: ['title', 'pinned']
     })
 
-    expect(result).toMatchObject({ title: 'Local rename', pinned: true, updatedAt: 4 })
+    expect(result).toMatchObject({ title: 'Local rename', pinned: true, updatedAt: 5 })
+    expect(result.updatedAt).toBeGreaterThan(authoritativeSession.updatedAt)
+    expect(result.updatedAt).toBeGreaterThan(submittedSession.updatedAt)
     expect(result.messages).toEqual(authoritativeSession.messages)
     expect(repository.saveSession).toHaveBeenCalledWith(result)
     expect(provenance.validateFinalizedMessageBindings).toHaveBeenCalledTimes(2)
