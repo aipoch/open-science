@@ -4,7 +4,7 @@ import { join } from 'node:path'
 
 import { afterEach, describe, expect, it, vi } from 'vitest'
 
-import { EnvironmentStateTracker } from './environment-state-tracker'
+import { environmentCaptureProcessEnv, EnvironmentStateTracker } from './environment-state-tracker'
 
 let dataRoot: string | undefined
 
@@ -38,6 +38,121 @@ const readBinding = async (
 }
 
 describe('EnvironmentStateTracker', () => {
+  it('activates the complete Windows Conda DLL path for managed R probes', () => {
+    const inherited = { PATH: 'C:\\Windows\\System32', KEEP_ME: 'yes' }
+    const prefix = 'C:\\Users\\Helix\\OpenScience\\runtime\\envs\\.r'
+
+    expect(
+      environmentCaptureProcessEnv(
+        {
+          language: 'r',
+          environmentName: 'default-r',
+          runtimeSource: 'managed',
+          command: `${prefix}\\Lib\\R\\bin\\Rscript.exe`,
+          args: [],
+          condaPrefix: prefix
+        },
+        inherited,
+        'win32'
+      )
+    ).toEqual({
+      KEEP_ME: 'yes',
+      PATH: [
+        prefix,
+        `${prefix}\\Library\\mingw-w64\\bin`,
+        `${prefix}\\Library\\usr\\bin`,
+        `${prefix}\\Library\\bin`,
+        `${prefix}\\Scripts`,
+        `${prefix}\\bin`,
+        'C:\\Windows\\System32'
+      ].join(';')
+    })
+  })
+
+  it('passes the activated Windows Conda DLL path to default R inventory and fingerprint spawns', async () => {
+    dataRoot = await mkdtemp(join(tmpdir(), 'open-science-env-r-spawn-'))
+    const prefix = 'C:\\Users\\Helix\\OpenScience\\runtime\\envs\\.r'
+    const execute = vi.fn(
+      async (
+        _command: string,
+        _args: string[],
+        options: { timeout: number; maxBuffer: number; env: NodeJS.ProcessEnv }
+      ) => ({
+        stdout:
+          options.maxBuffer === 8 * 1024 * 1024
+            ? 'FILE\tconda-meta/history\t1\t1\n'
+            : 'RUNTIME\t4.5.1\twin32\tx86_64\n' +
+              'PACKAGE\tbase\t4.5.1\tbase\t4.5.1\t1\tenvironment\n',
+        stderr: ''
+      })
+    )
+    const tracker = new EnvironmentStateTracker({
+      dataRoot,
+      platform: 'win32',
+      execFile: execute
+    })
+
+    await expect(
+      tracker.prepareRun({
+        language: 'r',
+        environmentName: 'default-r',
+        runtimeSource: 'managed',
+        command: `${prefix}\\Lib\\R\\bin\\Rscript.exe`,
+        args: [],
+        condaPrefix: prefix
+      })
+    ).resolves.toMatchObject({ inventoryRefreshed: true })
+
+    expect(execute).toHaveBeenCalledTimes(3)
+    expect(execute.mock.calls.map(([, , options]) => options.maxBuffer)).toEqual([
+      8 * 1024 * 1024,
+      16 * 1024 * 1024,
+      8 * 1024 * 1024
+    ])
+    for (const [command, , options] of execute.mock.calls) {
+      expect(command).toBe(`${prefix}\\Lib\\R\\bin\\Rscript.exe`)
+      expect(options.env.PATH).toContain(`${prefix}\\Library\\bin`)
+    }
+  })
+
+  it('logs bounded child-process diagnostics when an inventory probe fails', async () => {
+    dataRoot = await mkdtemp(join(tmpdir(), 'open-science-env-probe-log-'))
+    const warn = vi.fn()
+    const tracker = new EnvironmentStateTracker({
+      dataRoot,
+      logger: { warn, error: vi.fn() },
+      inspectInstalled: vi.fn().mockRejectedValue(
+        Object.assign(new Error('Rscript failed'), {
+          code: 3221225781,
+          stderr: 'token=super-secret libgcc_s_seh-1.dll missing',
+          stdout: 'probe output'
+        })
+      ),
+      captureFingerprint: vi.fn().mockResolvedValue('stable-r')
+    })
+
+    await expect(
+      tracker.prepareRun({
+        language: 'r',
+        environmentName: 'default-r',
+        runtimeSource: 'managed',
+        command: 'C:\\runtime\\envs\\.r\\Lib\\R\\bin\\Rscript.exe',
+        args: [],
+        condaPrefix: 'C:\\runtime\\envs\\.r'
+      })
+    ).resolves.toMatchObject({ inventoryRefreshed: false })
+
+    expect(warn).toHaveBeenCalledWith(
+      'environment inventory probe failed',
+      expect.objectContaining({
+        language: 'r',
+        environmentName: 'default-r',
+        code: 3221225781,
+        stderr: expect.objectContaining({ text: expect.stringContaining('token=[redacted]') })
+      })
+    )
+  })
+
   it('inspects requested packages from the current installed inventory without importing them', async () => {
     dataRoot = await mkdtemp(join(tmpdir(), 'open-science-env-inspect-'))
     const inspectInstalled = vi.fn().mockResolvedValue({
@@ -872,5 +987,39 @@ describe('EnvironmentStateTracker', () => {
         loadedState: 'installed-only'
       })
     ])
+  })
+
+  it('keeps pre-activation R recovery state visible after adding a Conda prefix', async () => {
+    dataRoot = await mkdtemp(join(tmpdir(), 'open-science-env-r-upgrade-recovery-'))
+    const legacyTarget = {
+      language: 'r' as const,
+      environmentName: 'default-r',
+      runtimeSource: 'managed' as const,
+      command: 'C:\\runtime\\envs\\.r\\Lib\\R\\bin\\Rscript.exe',
+      args: []
+    }
+    const initial = new EnvironmentStateTracker({
+      dataRoot,
+      inspectInstalled: vi.fn().mockResolvedValue({ runtimeVersion: '4.5.1', packages: [] }),
+      captureFingerprint: vi.fn().mockResolvedValue('before-install')
+    })
+    await initial.markPackageMutationDirty(legacyTarget, {
+      operationId: 'operation-from-older-nightly',
+      operation: 'install',
+      packages: ['ggplot2']
+    })
+
+    const upgraded = new EnvironmentStateTracker({
+      dataRoot,
+      inspectInstalled: vi.fn().mockRejectedValue(new Error('environment still locked')),
+      captureFingerprint: vi.fn().mockResolvedValue('unknown')
+    })
+
+    await expect(
+      upgraded.prepareRun({
+        ...legacyTarget,
+        condaPrefix: 'C:\\runtime\\envs\\.r'
+      })
+    ).rejects.toThrow(/recovery failed before Notebook/)
   })
 })

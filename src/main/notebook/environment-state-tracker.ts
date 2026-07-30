@@ -16,8 +16,16 @@ import {
   type NotebookLanguage,
   type NotebookPackageInstallerAttempt
 } from '../../shared/notebook'
+import { condaActivatedPath } from './runtime-paths'
+import { runtimeChildProcessErrorFields, type RuntimeDiagnosticLogger } from './runtime-diagnostics'
 
-const execFileAsync = promisify(execFile)
+type EnvironmentExecFile = (
+  command: string,
+  args: string[],
+  options: { timeout: number; maxBuffer: number; env: NodeJS.ProcessEnv }
+) => Promise<{ stdout: string; stderr?: string }>
+
+const execFileAsync = promisify(execFile) as EnvironmentExecFile
 const INSPECTION_TIMEOUT_MS = 30_000
 const MAX_INVENTORY_CACHE_AGE_MS = 24 * 60 * 60 * 1_000
 // The mutable binding cache is read on every run, so keep completed operation history bounded by
@@ -31,6 +39,9 @@ type EnvironmentCaptureTarget = {
   runtimeSource: 'managed' | 'external'
   command: string
   args?: string[]
+  // Conda prefix whose native DLL search path must be activated before spawning the interpreter.
+  // Required for Windows R; omitted for non-Conda external runtimes.
+  condaPrefix?: string
 }
 
 type InstalledEnvironmentInventory = {
@@ -125,10 +136,25 @@ type EnvironmentStateTrackerOptions = {
   dataRoot: string
   inspectInstalled?: (target: EnvironmentCaptureTarget) => Promise<InstalledEnvironmentInventory>
   captureFingerprint?: (target: EnvironmentCaptureTarget) => Promise<string | undefined>
+  execFile?: EnvironmentExecFile
   now?: () => Date
+  platform?: NodeJS.Platform
+  logger?: Pick<RuntimeDiagnosticLogger, 'warn' | 'error'>
   operationLogLimits?: {
     maxEntries: number
     maxBytes: number
+  }
+}
+
+const environmentCaptureProcessEnv = (
+  target: EnvironmentCaptureTarget,
+  inheritedEnv: NodeJS.ProcessEnv = process.env,
+  platform: NodeJS.Platform = process.platform
+): NodeJS.ProcessEnv => {
+  if (target.language !== 'r' || !target.condaPrefix) return inheritedEnv
+  return {
+    ...inheritedEnv,
+    PATH: condaActivatedPath(target.condaPrefix, inheritedEnv.PATH, platform)
   }
 }
 
@@ -538,7 +564,9 @@ const parseInventory = (
 }
 
 const inspectInstalledDefault = async (
-  target: EnvironmentCaptureTarget
+  target: EnvironmentCaptureTarget,
+  platform: NodeJS.Platform = process.platform,
+  execute: EnvironmentExecFile = execFileAsync
 ): Promise<InstalledEnvironmentInventory> => {
   const args = [
     ...(target.args ?? []),
@@ -546,16 +574,18 @@ const inspectInstalledDefault = async (
       ? ['-c', PYTHON_INVENTORY_SCRIPT]
       : ['--vanilla', '--slave', '-e', R_INVENTORY_SCRIPT])
   ]
-  const { stdout } = await execFileAsync(target.command, args, {
+  const { stdout } = await execute(target.command, args, {
     timeout: INSPECTION_TIMEOUT_MS,
     maxBuffer: 16 * 1024 * 1024,
-    env: process.env
+    env: environmentCaptureProcessEnv(target, process.env, platform)
   })
   return parseInventory(target.language, stdout)
 }
 
 const captureFingerprintDefault = async (
-  target: EnvironmentCaptureTarget
+  target: EnvironmentCaptureTarget,
+  platform: NodeJS.Platform = process.platform,
+  execute: EnvironmentExecFile = execFileAsync
 ): Promise<string | undefined> => {
   const args = [
     ...(target.args ?? []),
@@ -563,10 +593,10 @@ const captureFingerprintDefault = async (
       ? ['-c', PYTHON_FINGERPRINT_SCRIPT]
       : ['--vanilla', '--slave', '-e', R_FINGERPRINT_SCRIPT])
   ]
-  const { stdout } = await execFileAsync(target.command, args, {
+  const { stdout } = await execute(target.command, args, {
     timeout: INSPECTION_TIMEOUT_MS,
     maxBuffer: 8 * 1024 * 1024,
-    env: process.env
+    env: environmentCaptureProcessEnv(target, process.env, platform)
   })
   if (stdout.includes('UNWATCHABLE\t')) return undefined
   return sha256(`${target.language}\n${stdout}`)
@@ -580,12 +610,21 @@ class EnvironmentStateTracker {
     target: EnvironmentCaptureTarget
   ) => Promise<string | undefined>
   private readonly now: () => Date
+  private readonly platform: NodeJS.Platform
+  private readonly logger?: Pick<RuntimeDiagnosticLogger, 'warn' | 'error'>
   private readonly operationLogLimits: { maxEntries: number; maxBytes: number }
   private readonly targetQueues = new Map<string, Promise<void>>()
 
   constructor(private readonly options: EnvironmentStateTrackerOptions) {
-    this.inspectInstalled = options.inspectInstalled ?? inspectInstalledDefault
-    this.captureFingerprint = options.captureFingerprint ?? captureFingerprintDefault
+    this.platform = options.platform ?? process.platform
+    this.logger = options.logger
+    const execute = options.execFile ?? execFileAsync
+    this.inspectInstalled =
+      options.inspectInstalled ??
+      ((target) => inspectInstalledDefault(target, this.platform, execute))
+    this.captureFingerprint =
+      options.captureFingerprint ??
+      ((target) => captureFingerprintDefault(target, this.platform, execute))
     this.now = options.now ?? (() => new Date())
     this.operationLogLimits = options.operationLogLimits ?? {
       maxEntries: MAX_OPERATION_LOG_ENTRIES,
@@ -665,6 +704,12 @@ class EnvironmentStateTracker {
           cache.dirtyOperationId = undefined
           await this.writeBinding(target, cache)
         } catch (error) {
+          this.logProbeFailure(
+            requiresMutationRecovery ? 'error' : 'warn',
+            'environment inventory probe failed',
+            target,
+            error
+          )
           cache.state = 'dirty'
           cache.dirtyReason = requiresMutationRecovery ? 'recovery' : undefined
           await this.writeBinding(target, cache)
@@ -732,6 +777,7 @@ class EnvironmentStateTracker {
           cache.dirtyReason = undefined
           await this.writeBinding(target, cache)
         } catch (error) {
+          this.logProbeFailure('warn', 'environment inventory probe failed', target, error)
           warnings.push(`Installed package inventory unavailable: ${describeError(error)}`)
         }
       }
@@ -815,7 +861,13 @@ class EnvironmentStateTracker {
           cache.inventoryChecksum = beforeInventoryChecksum
           cache.stateFingerprint = await this.tryCaptureFingerprint(target)
           cache.verifiedAt = this.now().toISOString()
-        } catch {
+        } catch (error) {
+          this.logProbeFailure(
+            'warn',
+            'pre-install environment inventory probe failed',
+            target,
+            error
+          )
           beforeInventoryChecksum = undefined
         }
       }
@@ -909,6 +961,12 @@ class EnvironmentStateTracker {
         ]
         if (operation) await this.removeOperation(target, operation.operationId)
       } catch (error) {
+        this.logProbeFailure(
+          'error',
+          'post-install environment inventory probe failed',
+          target,
+          error
+        )
         verification = { result: 'failure', reason: 'inventory-refresh-failed' }
         const failedAttempt: NotebookInventoryRefreshAttempt = {
           attempt: baseLogEntry.inventoryRefreshAttempts.length + 1,
@@ -1009,7 +1067,30 @@ class EnvironmentStateTracker {
   private async tryCaptureFingerprint(
     target: EnvironmentCaptureTarget
   ): Promise<string | undefined> {
-    return this.captureFingerprint(target).catch(() => undefined)
+    return this.captureFingerprint(target).catch((error) => {
+      this.logProbeFailure('warn', 'environment fingerprint probe failed', target, error)
+      return undefined
+    })
+  }
+
+  private logProbeFailure(
+    level: 'warn' | 'error',
+    message: string,
+    target: EnvironmentCaptureTarget,
+    error: unknown
+  ): void {
+    try {
+      this.logger?.[level](message, {
+        ...runtimeChildProcessErrorFields(error),
+        language: target.language,
+        environmentName: target.environmentName,
+        runtimeSource: target.runtimeSource,
+        command: target.command,
+        ...(target.condaPrefix ? { condaPrefix: target.condaPrefix } : {})
+      })
+    } catch {
+      // Diagnostics are best-effort and must never replace the environment capture outcome.
+    }
   }
 
   private async publishOperationManifest(
@@ -1257,7 +1338,11 @@ class EnvironmentStateTracker {
   }
 }
 
-export { EnvironmentManifestPublicationError, EnvironmentStateTracker }
+export {
+  environmentCaptureProcessEnv,
+  EnvironmentManifestPublicationError,
+  EnvironmentStateTracker
+}
 export type {
   EnvironmentCaptureResult,
   EnvironmentRunCaptureStart,

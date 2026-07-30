@@ -111,6 +111,7 @@ import {
 import { isChildUnconfirmedError } from './provisioner-runtime'
 import { getAppClaudeConfigDir } from '../settings/provider-env'
 import { terminateProcessTree } from '../process-tree'
+import { createLogger, getLogFilePath } from '../logger'
 import { resolveWindowsPowerShellExecutable } from '../windows-powershell'
 import {
   EnvironmentManifestPublicationError,
@@ -120,6 +121,12 @@ import {
   type PackageMutationVerification
 } from './environment-state-tracker'
 import { startWorkingFileObservation } from './working-file-observer'
+import {
+  boundedRuntimeDiagnostic,
+  redactRuntimeDiagnosticValue,
+  runtimeChildProcessErrorFields,
+  type RuntimeDiagnosticLogger
+} from './runtime-diagnostics'
 
 // Locale fallback when no explicit locale is injected (see shared/mirror.ts: non-CN locales resolve
 // to public hosts, so this default never silently forces a CN mirror).
@@ -366,6 +373,9 @@ type NotebookRuntimeServiceOptions = {
     request: InstallRequest,
     deps?: Partial<InstallDeps>
   ) => Promise<InstallResult>
+  // Structured main-process diagnostics for package operations and interpreter probes. Injectable so
+  // tests assert logging without initializing the rotating file sink.
+  logger?: RuntimeDiagnosticLogger
   // Provisioner-backed named-environment manager for manageEnvironments. Injectable so tests use a
   // fake; the production instance (the DefaultRuntimeProvisioner) is wired after construction in
   // main/ipc.ts via setEnvironmentManager, mirroring the mcp/mirror resolvers.
@@ -1118,6 +1128,7 @@ class NotebookRuntimeService {
     request: InstallRequest,
     deps?: Partial<InstallDeps>
   ) => Promise<InstallResult>
+  private readonly runtimeLogger?: RuntimeDiagnosticLogger
   private readonly environmentStateTracker: Pick<
     EnvironmentStateTracker,
     | 'prepareRun'
@@ -1149,8 +1160,15 @@ class NotebookRuntimeService {
         )
       })
     this.installPackagesImpl = options.installPackagesImpl ?? installPackagesDefault
+    this.runtimeLogger =
+      options.logger ?? (getLogFilePath() ? createLogger('notebook:runtime') : undefined)
     this.environmentStateTracker =
-      options.environmentStateTracker ?? new EnvironmentStateTracker({ dataRoot: options.dataRoot })
+      options.environmentStateTracker ??
+      new EnvironmentStateTracker({
+        dataRoot: options.dataRoot,
+        platform: options.platform,
+        logger: this.runtimeLogger
+      })
     this.environmentManager = options.environmentManager
   }
 
@@ -1285,7 +1303,10 @@ class NotebookRuntimeService {
       runtimeSource: binding?.source === 'external' ? 'external' : 'managed',
       command:
         resolvedInterpreter?.command ?? (language === 'r' ? rScriptBin(prefix) : pythonBin(prefix)),
-      args: resolvedInterpreter?.args
+      args: resolvedInterpreter?.args,
+      ...(language === 'r' && (resolvedInterpreter?.condaPrefix || binding?.source !== 'external')
+        ? { condaPrefix: resolvedInterpreter?.condaPrefix ?? prefix }
+        : {})
     }
   }
 
@@ -2878,37 +2899,62 @@ class NotebookRuntimeService {
         await this.environmentStateTracker.markPackageMutationDirty(environmentTarget, mutation)
         let installResult: InstallResult | undefined
         let deferredQuarantineError: Error | undefined
+        const installerStartedAt = Date.now()
         try {
-          installResult = await this.installPackagesImpl(pinnedRequest, {
-            storageRoot: this.options.dataRoot,
-            condaChannel: mirror.condaChannel,
-            pypiIndex: mirror.pypiIndex,
-            cranMirror: mirror.cranMirror,
-            caBundle: mirror.caBundle,
-            interpreter,
-            // Re-arm the per-spawn intent immediately before EACH installer spawn (conda then CRAN), so a
-            // second spawn whose PID isn't recorded yet blocks rather than trusting the first's PID.
-            onBeforeSpawn: () => recordSpawnIntentSync(runtimeRoot, operationId),
-            // Record each installer child's PID so startup recovery can block on a surviving conda/pip/R
-            // install (never reconcile the env under it) until it is provably gone. Recovery never signals
-            // the child. Persisted SYNCHRONOUSLY (crash-safe) so a spawned child is always probeable; the
-            // async journal update is the normal read path.
-            onChild: (childPid) => {
-              const childStartedAt = Date.now()
-              // Kernel-native identity token captured while the child is alive, so recovery can FALSIFY
-              // pid reuse (a changed token proves the pid is no longer ours); undefined off Linux — see
-              // readProcessStartToken. Never used to authorize a signal.
-              const childStartToken = readProcessStartToken(childPid)
-              recordOperationChildSync(runtimeRoot, operationId, {
-                childPid,
-                childStartedAt,
-                childStartToken
-              })
-              void journal
-                .update(operationId, { childPid, childStartedAt, childStartToken })
-                .catch(() => undefined)
-            }
-          })
+          try {
+            installResult = await this.installPackagesImpl(pinnedRequest, {
+              storageRoot: this.options.dataRoot,
+              condaChannel: mirror.condaChannel,
+              pypiIndex: mirror.pypiIndex,
+              cranMirror: mirror.cranMirror,
+              caBundle: mirror.caBundle,
+              interpreter,
+              // Re-arm the per-spawn intent immediately before EACH installer spawn (conda then CRAN), so a
+              // second spawn whose PID isn't recorded yet blocks rather than trusting the first's PID.
+              onBeforeSpawn: () => recordSpawnIntentSync(runtimeRoot, operationId),
+              // Record each installer child's PID so startup recovery can block on a surviving conda/pip/R
+              // install (never reconcile the env under it) until it is provably gone. Recovery never signals
+              // the child. Persisted SYNCHRONOUSLY (crash-safe) so a spawned child is always probeable; the
+              // async journal update is the normal read path.
+              onChild: (childPid) => {
+                const childStartedAt = Date.now()
+                // Kernel-native identity token captured while the child is alive, so recovery can FALSIFY
+                // pid reuse (a changed token proves the pid is no longer ours); undefined off Linux — see
+                // readProcessStartToken. Never used to authorize a signal.
+                const childStartToken = readProcessStartToken(childPid)
+                recordOperationChildSync(runtimeRoot, operationId, {
+                  childPid,
+                  childStartedAt,
+                  childStartToken
+                })
+                void journal
+                  .update(operationId, { childPid, childStartedAt, childStartToken })
+                  .catch(() => undefined)
+              }
+            })
+            this.logPackageInstallerResult(
+              operationId,
+              mutation.operation,
+              request.language,
+              envName,
+              environmentTarget.runtimeSource,
+              request.packages,
+              installResult,
+              Date.now() - installerStartedAt
+            )
+          } catch (error) {
+            this.logPackageInstallerFailure(
+              operationId,
+              mutation.operation,
+              request.language,
+              envName,
+              environmentTarget.runtimeSource,
+              request.packages,
+              error,
+              Date.now() - installerStartedAt
+            )
+            throw error
+          }
         } finally {
           let inventoryRefreshError: unknown
           const verification: PackageMutationVerification | undefined =
@@ -3080,6 +3126,66 @@ class NotebookRuntimeService {
     }
 
     return result
+  }
+
+  private logPackageInstallerResult(
+    operationId: string,
+    operation: 'create' | 'install' | 'uninstall' | 'update',
+    language: NotebookLanguage,
+    environmentName: string,
+    runtimeSource: 'managed' | 'external',
+    packages: string[],
+    result: InstallResult,
+    durationMs: number
+  ): void {
+    try {
+      const fields = redactRuntimeDiagnosticValue({
+        operationId,
+        operation,
+        language,
+        environmentName,
+        runtimeSource,
+        packages,
+        ok: result.ok,
+        needsRestart: result.needsRestart,
+        method: result.method,
+        fallbackUsed: result.fallbackUsed,
+        repairRequired: result.repairRequired,
+        prefix: result.prefix,
+        error: result.error,
+        durationMs,
+        installerLog: boundedRuntimeDiagnostic(result.log)
+      })
+      this.runtimeLogger?.[result.ok ? 'info' : 'warn']('package installer completed', fields)
+    } catch {
+      // Diagnostics are best-effort and must never replace the installer result.
+    }
+  }
+
+  private logPackageInstallerFailure(
+    operationId: string,
+    operation: 'create' | 'install' | 'uninstall' | 'update',
+    language: NotebookLanguage,
+    environmentName: string,
+    runtimeSource: 'managed' | 'external',
+    packages: string[],
+    error: unknown,
+    durationMs: number
+  ): void {
+    try {
+      this.runtimeLogger?.error('package installer threw', {
+        ...runtimeChildProcessErrorFields(error),
+        operationId,
+        operation,
+        language,
+        environmentName,
+        runtimeSource,
+        packages: redactRuntimeDiagnosticValue(packages),
+        durationMs
+      })
+    } catch {
+      // Diagnostics are best-effort and must never replace the installer failure.
+    }
   }
 
   // Named-environment management (design D2), delegating to the injected provisioner-backed manager.
