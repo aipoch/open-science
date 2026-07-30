@@ -10,15 +10,23 @@ import {
   readWindowsCacheAcl
 } from './micromamba-cache'
 
-describe.runIf(process.platform === 'win32')('Windows micromamba cache ACL integration', () => {
-  it('applies an ACL accepted by the production trust verifier', () => {
-    const directory = mkdtempSync(join(tmpdir(), 'os-cache-acl-'))
-    try {
-      hardenWindowsCacheAcl(directory)
+// Each ACL call spawns a real PowerShell process; two cold-start module-discovery
+// round-trips on a scrubbed CI runner can exceed Vitest's 15-second default.
+const ACL_INTEGRATION_TIMEOUT_MS = 30_000
 
-      expect(isTrustedWindowsCacheAcl(readWindowsCacheAcl(directory))).toBe(true)
-    } finally {
-      rmSync(directory, { recursive: true, force: true })
-    }
-  })
+describe.runIf(process.platform === 'win32')('Windows micromamba cache ACL integration', () => {
+  it(
+    'applies an ACL accepted by the production trust verifier',
+    () => {
+      const directory = mkdtempSync(join(tmpdir(), 'os-cache-acl-'))
+      try {
+        hardenWindowsCacheAcl(directory)
+
+        expect(isTrustedWindowsCacheAcl(readWindowsCacheAcl(directory))).toBe(true)
+      } finally {
+        rmSync(directory, { recursive: true, force: true })
+      }
+    },
+    ACL_INTEGRATION_TIMEOUT_MS
+  )
 })
