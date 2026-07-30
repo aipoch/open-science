@@ -255,6 +255,7 @@ describe('App startup routing', () => {
     await act(async () => retry?.dispatchEvent(new MouseEvent('click', { bubbles: true })))
 
     expect(mocks.settings.load).toHaveBeenCalledTimes(2)
+    expect(mocks.settings.load).toHaveBeenLastCalledWith({ force: true })
     expect(mocks.settings.checkEnvironment).toHaveBeenCalledOnce()
   })
 

@@ -71,7 +71,7 @@ const App = (): React.JSX.Element | null => {
   >(undefined)
 
   const retrySettingsInitialization = useCallback(async (): Promise<void> => {
-    if (await loadSettings()) await checkEnvironment()
+    if (await loadSettings({ force: true })) await checkEnvironment()
   }, [checkEnvironment, loadSettings])
 
   // Load app info and subscribe to update-status broadcasts once at startup.

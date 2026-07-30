@@ -746,6 +746,35 @@ describe('settings store: onboarding completion', () => {
 })
 
 describe('settings store: startup loading', () => {
+  it('deduplicates concurrent StrictMode startup loads', async () => {
+    let resolveSettings: ((value: SettingsSnapshot) => void) | undefined
+    api.getSettings.mockReturnValue(
+      new Promise<SettingsSnapshot>((resolve) => {
+        resolveSettings = resolve
+      })
+    )
+
+    const first = useSettingsStore.getState().load()
+    const duplicate = useSettingsStore.getState().load()
+
+    expect(duplicate).toBe(first)
+    expect(api.getSettings).toHaveBeenCalledOnce()
+    expect(api.getPreflight).toHaveBeenCalledOnce()
+    expect(api.isEncryptionAvailable).toHaveBeenCalledOnce()
+    expect(api.isNpmAvailable).toHaveBeenCalledOnce()
+
+    resolveSettings?.({ ...snapshot([]), onboardingCompletedAt: 111 })
+
+    await expect(first).resolves.toBe(true)
+    await expect(duplicate).resolves.toBe(true)
+    expect(useSettingsStore.getState()).toMatchObject({
+      onboardingCompletedAt: 111,
+      isLoaded: true,
+      isLoading: false,
+      loadError: undefined
+    })
+  })
+
   it('keeps startup blocked after an IPC failure and recovers on retry', async () => {
     api.getPreflight.mockRejectedValueOnce(new Error('settings IPC unavailable'))
 
@@ -780,7 +809,7 @@ describe('settings store: startup loading', () => {
       )
 
     const first = useSettingsStore.getState().load()
-    const second = useSettingsStore.getState().load()
+    const second = useSettingsStore.getState().load({ force: true })
 
     resolveSecond?.({ ...snapshot([]), onboardingCompletedAt: 222 })
     await second
