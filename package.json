@@ -53,6 +53,7 @@
     "electron-updater": "^6.3.9",
     "js-tiktoken": "^1.0.21",
     "js-yaml": "^4.1.0",
+    "marked": "^17.0.6",
     "openchemlib": "^9.24.0",
     "pdfjs-dist": "5.4.624",
     "tar": "^7.5.20",

@@ -29,6 +29,7 @@ import {
   clearSuppressNextAutoReview
 } from '@/lib/acp/workspace-events'
 import type { UploadedAttachment } from '../../../../shared/uploads'
+import type { ConversationExportFormat } from '../../../../shared/conversation-export'
 
 import { planComposerAttachmentIntake } from './composer-attachment-intake'
 import { stageComposerFile, type ComposerUploadTransfer } from './composer-upload-transfer'
@@ -253,6 +254,7 @@ const WorkspacePage = ({
   const attachmentTransferControllersRef = useRef<Record<string, AbortController>>({})
   const cancelledAttachmentTransfersRef = useRef(new Set<string>())
   const [attachmentError, setAttachmentError] = useState<string | null>(null)
+  const [exportError, setExportError] = useState<string | null>(null)
   const [notebookReferences, setNotebookReferences] = useState<
     Record<string, NotebookSessionReference>
   >({})
@@ -425,7 +427,7 @@ const WorkspacePage = ({
     : activeSession?.status === 'error'
       ? 'Resolve the current session error before compacting.'
       : 'Wait for the current agent activity to finish.'
-  const visibleActionError = attachmentError ?? (activeSession ? null : actionError)
+  const visibleActionError = attachmentError ?? exportError ?? (activeSession ? null : actionError)
 
   const compactActiveContext = useCallback((): void => {
     if (!activeSession || !canCompactContext) return
@@ -1127,6 +1129,23 @@ const WorkspacePage = ({
     setRenameDraft(session.title)
   }
 
+  // Main reloads the durable session and owns both normalization and the native Save As operation.
+  const exportConversation = (session: ChatSession, format: ConversationExportFormat): void => {
+    setExportError(null)
+    void window.api.sessions
+      .exportConversation({
+        projectId: session.projectId,
+        sessionId: session.id,
+        format
+      })
+      .catch((error: unknown) => setExportError(getErrorMessage(error)))
+  }
+
+  const openSessionWithoutExportError = (sessionId: string): void => {
+    setExportError(null)
+    openSession(sessionId)
+  }
+
   // Resets rename state from either cancel action or Radix open state changes.
   const closeRenameDialog = (): void => {
     setSessionToRename(undefined)
@@ -1399,9 +1418,14 @@ const WorkspacePage = ({
           onNewConversation={openNewConversation}
           isFilesOpen={activePreviewItemId === PROJECT_FILES_PREVIEW_ID}
           onOpenFiles={openFilesPreview}
-          onOpenSession={openSession}
+          onOpenSession={openSessionWithoutExportError}
           onRenameSession={openRenameDialog}
           onViewNotebook={setSessionToViewNotebook}
+          onExportSession={
+            typeof window.api.sessions?.exportConversation === 'function'
+              ? exportConversation
+              : undefined
+          }
           onTogglePin={(session) => {
             if (isSessionPersistenceReady) togglePinned(session.id)
           }}

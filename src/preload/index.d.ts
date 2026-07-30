@@ -127,6 +127,10 @@ import type {
   SaveSessionManifestRequest
 } from '../shared/session-persistence'
 import type {
+  ExportConversationRequest,
+  ExportConversationResult
+} from '../shared/conversation-export'
+import type {
   ClaudeDetectResult,
   ClaudeInstallEvent,
   ClaudeInstallResult,
@@ -277,6 +281,7 @@ interface OpenScienceAPI {
     saveSession(session: PersistedChatSession): Promise<PersistedChatSession>
     deleteSession(request: DeleteSessionRequest): Promise<void>
     saveManifest(request: SaveSessionManifestRequest): Promise<void>
+    exportConversation(request: ExportConversationRequest): Promise<ExportConversationResult>
     onCreated(listener: AcpListener<SessionUpsertEvent>): RemoveListener
     onUpdated(listener: AcpListener<SessionUpsertEvent>): RemoveListener
     onDeleted(listener: AcpListener<SessionDeletedEvent>): RemoveListener

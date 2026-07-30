@@ -19,6 +19,16 @@ const createSession = (overrides: Partial<ChatSession>): ChatSession => ({
   ...overrides
 })
 
+const createMessage = (): ChatSession['messages'][number] => ({
+  id: 'message-1',
+  role: 'user',
+  content: 'Ready',
+  status: 'complete',
+  eventIds: [],
+  createdAt: 1,
+  updatedAt: 1
+})
+
 const renderSidebar = async (sessions: ChatSession[]): Promise<string> => {
   const { WorkspaceSidebar } = await import('./WorkspaceSidebar')
 
@@ -37,6 +47,7 @@ const renderSidebar = async (sessions: ChatSession[]): Promise<string> => {
       onOpenSession={vi.fn()}
       onRenameSession={vi.fn()}
       onViewNotebook={vi.fn()}
+      onExportSession={vi.fn()}
       onTogglePin={vi.fn()}
       onDeleteSession={vi.fn()}
       onOpenSettings={vi.fn()}
@@ -106,6 +117,7 @@ describe('WorkspaceSidebar accessible render', () => {
     const onOpenSession = vi.fn()
     const onRenameSession = vi.fn()
     const onDeleteSession = vi.fn()
+    const onExportSession = vi.fn()
     const tree = WorkspaceSidebar({
       projectName: 'Example project',
       sessions,
@@ -120,6 +132,7 @@ describe('WorkspaceSidebar accessible render', () => {
       onOpenSession,
       onRenameSession,
       onViewNotebook: vi.fn(),
+      onExportSession,
       onTogglePin: vi.fn(),
       onDeleteSession,
       onOpenSettings: vi.fn()
@@ -133,6 +146,10 @@ describe('WorkspaceSidebar accessible render', () => {
     )
     const renameItems = elements.filter((element) => getTextContent(element).trim() === 'Rename…')
     const deleteItems = elements.filter((element) => getTextContent(element).trim() === 'Delete')
+    const markdownItems = elements.filter(
+      (element) => getTextContent(element).trim() === 'Markdown'
+    )
+    const pdfItems = elements.filter((element) => getTextContent(element).trim() === 'PDF')
 
     expect(notebookButton?.props.onClick).toBeTypeOf('function')
     ;(notebookButton?.props.onClick as () => void)()
@@ -141,6 +158,14 @@ describe('WorkspaceSidebar accessible render', () => {
     expect(renameItems[1]?.props.onSelect).toBeTypeOf('function')
     ;(renameItems[1]?.props.onSelect as () => void)()
     expect(onRenameSession).toHaveBeenCalledWith(sessions[1])
+
+    expect(markdownItems[0]?.props.onSelect).toBeTypeOf('function')
+    ;(markdownItems[0]?.props.onSelect as () => void)()
+    expect(onExportSession).toHaveBeenCalledWith(sessions[0], 'markdown')
+
+    expect(pdfItems[1]?.props.onSelect).toBeTypeOf('function')
+    ;(pdfItems[1]?.props.onSelect as () => void)()
+    expect(onExportSession).toHaveBeenCalledWith(sessions[1], 'pdf')
 
     expect(deleteItems[0]?.props.onSelect).toBeTypeOf('function')
     ;(deleteItems[0]?.props.onSelect as () => void)()
@@ -164,6 +189,7 @@ describe('WorkspaceSidebar accessible render', () => {
       onOpenSession: vi.fn(),
       onRenameSession: vi.fn(),
       onViewNotebook: vi.fn(),
+      onExportSession: vi.fn(),
       onTogglePin: vi.fn(),
       onDeleteSession: vi.fn(),
       onOpenSettings: vi.fn()
@@ -205,6 +231,7 @@ describe('WorkspaceSidebar accessible render', () => {
       onTogglePin: vi.fn(),
       onDeleteSession: vi.fn(),
       onViewNotebook,
+      onExportSession: vi.fn(),
       onOpenSettings: vi.fn()
     })
     const viewNotebookItems = collectElements(tree).filter(
@@ -251,6 +278,7 @@ describe('WorkspaceSidebar accessible render', () => {
       onOpenSession: vi.fn(),
       onRenameSession: vi.fn(),
       onViewNotebook: vi.fn(),
+      onExportSession: vi.fn(),
       onTogglePin,
       onDeleteSession: vi.fn(),
       onOpenSettings: vi.fn()
@@ -299,5 +327,72 @@ describe('WorkspaceSidebar accessible render', () => {
     expect(pinItem?.props.disabled).toBe(true)
     expect(renameItem?.props.disabled).toBe(true)
     expect(deleteItem?.props.disabled).toBe(false)
+  })
+
+  it('disables conversation export for running, waiting-permission, or empty sessions', async () => {
+    const { WorkspaceSidebar } = await import('./WorkspaceSidebar')
+    const tree = WorkspaceSidebar({
+      projectName: 'Example project',
+      sessions: [
+        createSession({ id: 'running', status: 'running', messages: [createMessage()] }),
+        createSession({
+          id: 'waiting',
+          status: 'waiting-permission',
+          messages: [createMessage()]
+        }),
+        createSession({ id: 'empty', status: 'idle', messages: [] }),
+        createSession({ id: 'ready', status: 'idle', messages: [createMessage()] })
+      ],
+      activeSessionId: 'ready',
+      canCreateConversation: true,
+      canMutateConversations: true,
+      canDeleteConversations: true,
+      onGoHome: vi.fn(),
+      onNewConversation: vi.fn(),
+      isFilesOpen: false,
+      onOpenFiles: vi.fn(),
+      onOpenSession: vi.fn(),
+      onRenameSession: vi.fn(),
+      onViewNotebook: vi.fn(),
+      onExportSession: vi.fn(),
+      onTogglePin: vi.fn(),
+      onDeleteSession: vi.fn(),
+      onOpenSettings: vi.fn()
+    })
+    const exportTriggers = collectElements(tree).filter(
+      (element) =>
+        getTextContent(element).trim() === 'Export conversation' &&
+        typeof element.props.disabled === 'boolean'
+    )
+
+    expect(exportTriggers).toHaveLength(4)
+    expect(exportTriggers[0]?.props.disabled).toBe(true)
+    expect(exportTriggers[1]?.props.disabled).toBe(true)
+    expect(exportTriggers[2]?.props.disabled).toBe(true)
+    expect(exportTriggers[3]?.props.disabled).toBe(false)
+  })
+
+  it('hides conversation export when the runtime does not expose that capability', async () => {
+    const { WorkspaceSidebar } = await import('./WorkspaceSidebar')
+    const tree = WorkspaceSidebar({
+      projectName: 'Example project',
+      sessions: [createSession({ status: 'idle', messages: [createMessage()] })],
+      activeSessionId: 'session-1',
+      canCreateConversation: true,
+      canMutateConversations: true,
+      canDeleteConversations: true,
+      onGoHome: vi.fn(),
+      onNewConversation: vi.fn(),
+      isFilesOpen: false,
+      onOpenFiles: vi.fn(),
+      onOpenSession: vi.fn(),
+      onRenameSession: vi.fn(),
+      onViewNotebook: vi.fn(),
+      onTogglePin: vi.fn(),
+      onDeleteSession: vi.fn(),
+      onOpenSettings: vi.fn()
+    })
+
+    expect(getTextContent(tree)).not.toContain('Export conversation')
   })
 })

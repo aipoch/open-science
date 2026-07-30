@@ -136,6 +136,10 @@ import type {
   SaveSessionManifestRequest
 } from '../shared/session-persistence'
 import type {
+  ExportConversationRequest,
+  ExportConversationResult
+} from '../shared/conversation-export'
+import type {
   ClaudeDetectResult,
   ClaudeInstallEvent,
   ClaudeInstallResult,
@@ -313,6 +317,7 @@ type OpenScienceAPI = {
     saveSession: (session: PersistedChatSession) => Promise<PersistedChatSession>
     deleteSession: (request: DeleteSessionRequest) => Promise<void>
     saveManifest: (request: SaveSessionManifestRequest) => Promise<void>
+    exportConversation: (request: ExportConversationRequest) => Promise<ExportConversationResult>
     onCreated: (listener: AcpListener<SessionUpsertEvent>) => RemoveListener
     onUpdated: (listener: AcpListener<SessionUpsertEvent>) => RemoveListener
     onDeleted: (listener: AcpListener<SessionDeletedEvent>) => RemoveListener
@@ -786,6 +791,12 @@ const api: OpenScienceAPI = {
     // Persists the last-open project/session pointer.
     saveManifest: (request) =>
       ipcRenderer.invoke('sessions:save-manifest', request) as Promise<void>,
+    // Exports the authoritative persisted active branch through a main-owned Save As flow.
+    exportConversation: (request) =>
+      ipcRenderer.invoke(
+        'sessions:export-conversation',
+        request
+      ) as Promise<ExportConversationResult>,
     onCreated: (listener) => onIpcMessage('session:created', listener),
     onUpdated: (listener) => onIpcMessage('session:updated', listener),
     onDeleted: (listener) => onIpcMessage('session:deleted', listener)

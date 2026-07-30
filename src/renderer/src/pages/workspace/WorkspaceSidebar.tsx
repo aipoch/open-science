@@ -1,6 +1,9 @@
 import {
   BookOpen,
   ChevronLeft,
+  Download,
+  FileText,
+  FileType2,
   Files,
   MoreVertical,
   Pencil,
@@ -14,6 +17,9 @@ import {
   DropdownMenu,
   DropdownMenuContent,
   DropdownMenuItem,
+  DropdownMenuSub,
+  DropdownMenuSubContent,
+  DropdownMenuSubTrigger,
   DropdownMenuTrigger
 } from '@/components/ui/dropdown-menu'
 
@@ -21,6 +27,7 @@ import { cn } from '@/lib/utils'
 import { GitHubStarBadge } from '@/components/GitHubStarBadge'
 import { UpdateCapsule } from '@/components/UpdateCapsule'
 import type { ChatSession, SessionStatus } from '@/stores/session-store'
+import type { ConversationExportFormat } from '../../../../shared/conversation-export'
 
 type WorkspaceSidebarProps = {
   projectName: string
@@ -36,6 +43,7 @@ type WorkspaceSidebarProps = {
   onOpenSession: (sessionId: string) => void
   onRenameSession: (session: ChatSession) => void
   onViewNotebook: (session: ChatSession) => void
+  onExportSession?: (session: ChatSession, format: ConversationExportFormat) => void
   onTogglePin: (session: ChatSession) => void
   onDeleteSession: (session: ChatSession) => void
   onOpenSettings: () => void
@@ -84,6 +92,7 @@ const WorkspaceSidebar = ({
   onOpenSession,
   onRenameSession,
   onViewNotebook,
+  onExportSession,
   onTogglePin,
   onDeleteSession,
   onOpenSettings
@@ -175,6 +184,10 @@ const WorkspaceSidebar = ({
                 </div>
                 {section.items.map((session) => {
                   const isActive = session.id === activeSessionId
+                  const isExportDisabled =
+                    session.messages.length === 0 ||
+                    session.status === 'running' ||
+                    session.status === 'waiting-permission'
 
                   return (
                     <div
@@ -263,6 +276,51 @@ const WorkspaceSidebar = ({
                               </span>
                               View notebook
                             </DropdownMenuItem>
+                            {onExportSession ? (
+                              <DropdownMenuSub>
+                                <DropdownMenuSubTrigger
+                                  className="gap-2"
+                                  disabled={isExportDisabled}
+                                >
+                                  <span className={sessionMenuIconClassName}>
+                                    <Download
+                                      className="size-4"
+                                      strokeWidth={2}
+                                      aria-hidden="true"
+                                    />
+                                  </span>
+                                  <span className="flex-1">Export conversation</span>
+                                </DropdownMenuSubTrigger>
+                                <DropdownMenuSubContent aria-label="Export conversation formats">
+                                  <DropdownMenuItem
+                                    className="gap-2"
+                                    onSelect={() => onExportSession(session, 'markdown')}
+                                  >
+                                    <span className={sessionMenuIconClassName}>
+                                      <FileText
+                                        className="size-4"
+                                        strokeWidth={2}
+                                        aria-hidden="true"
+                                      />
+                                    </span>
+                                    Markdown
+                                  </DropdownMenuItem>
+                                  <DropdownMenuItem
+                                    className="gap-2"
+                                    onSelect={() => onExportSession(session, 'pdf')}
+                                  >
+                                    <span className={sessionMenuIconClassName}>
+                                      <FileType2
+                                        className="size-4"
+                                        strokeWidth={2}
+                                        aria-hidden="true"
+                                      />
+                                    </span>
+                                    PDF
+                                  </DropdownMenuItem>
+                                </DropdownMenuSubContent>
+                              </DropdownMenuSub>
+                            ) : null}
                             {/* Delete uses the project's danger token pair for light surfaces. */}
                             <DropdownMenuItem
                               className="gap-2 text-danger-000 data-[highlighted]:bg-danger-900 data-[highlighted]:text-danger-000"

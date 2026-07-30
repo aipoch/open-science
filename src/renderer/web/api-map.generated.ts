@@ -101,6 +101,7 @@ export const WEB_INVOKE_CHANNELS = {
   saveBlobFile: 'file:save-blob',
   saveManagedFile: 'file:save-managed',
   'sessions.deleteSession': 'sessions:delete-session',
+  'sessions.exportConversation': 'sessions:export-conversation',
   'sessions.loadAll': 'sessions:load-all',
   'sessions.saveManifest': 'sessions:save-manifest',
   'sessions.saveSession': 'sessions:save-session',

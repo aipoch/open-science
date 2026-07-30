@@ -40,6 +40,7 @@ type PreloadApi = {
     saveSession: (session: unknown) => unknown
     deleteSession: (request: unknown) => unknown
     saveManifest: (request: unknown) => unknown
+    exportConversation: (request: unknown) => unknown
   }
   settings: {
     detectOpencode: () => unknown
@@ -194,6 +195,11 @@ type ForwardingCase = {
 const sampleSession = { id: 's-1', projectId: 'p-1', title: 't' }
 const sampleDeleteSession = { projectId: 'p-1', sessionId: 's-1' }
 const sampleManifest = { projectId: 'p-1', sessionId: 's-1' }
+const sampleConversationExport = {
+  projectId: 'p-1',
+  sessionId: 's-1',
+  format: 'markdown'
+}
 const sampleInstall = { executablePath: '/usr/local/bin/opencode' }
 const sampleFramework = { framework: 'opencode' }
 const sampleResumeRequest = { sessionId: 's-1', cwd: '/workspace/project' }
@@ -231,6 +237,12 @@ const cases: ForwardingCase[] = [
     invoke: (a) => a.sessions.saveManifest(sampleManifest),
     channel: 'sessions:save-manifest',
     args: [sampleManifest]
+  },
+  {
+    name: 'sessions.exportConversation → sessions:export-conversation',
+    invoke: (a) => a.sessions.exportConversation(sampleConversationExport),
+    channel: 'sessions:export-conversation',
+    args: [sampleConversationExport]
   },
   // agent-framework / opencode settings additions
   {
