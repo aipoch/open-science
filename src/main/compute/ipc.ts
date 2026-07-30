@@ -1,6 +1,6 @@
 import { randomUUID } from 'node:crypto'
 import { readdir } from 'node:fs/promises'
-import { join, relative } from 'node:path'
+import { join } from 'node:path'
 
 import { BrowserWindow, ipcMain, shell } from 'electron'
 
@@ -40,6 +40,7 @@ import { SystemScpRunner } from './scp-runner'
 import { dispatchJob } from './job-dispatcher'
 import { EnabledComputeHostsRegistry, enabledComputeHostsRegistry } from './enabled-hosts-registry'
 import { getJobHarvestDir } from './harvest-engine'
+import { workspaceRelativePath } from './workspace-path'
 
 // IPC channel names for the renderer job feed (Phase 3d, issue 05).
 export const COMPUTE_JOBS_LIST_CHANNEL = 'compute:jobs:list'
@@ -89,7 +90,7 @@ export const toJobSummary = async (
   let featuredFiles: string[] = []
   try {
     const entries = await readdirRecursive(featuredDir)
-    featuredFiles = entries.map((abs) => relative(workspaceCwd, abs))
+    featuredFiles = entries.map((abs) => workspaceRelativePath(workspaceCwd, abs))
   } catch {
     // Directory does not exist or is unreadable — emit empty list (execution-error / harvest_failed).
   }

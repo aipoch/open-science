@@ -582,13 +582,15 @@ describe('toJobSummary — harvest features and left_on_remote parsing', () => {
     const summary = await toJobSummary(sampleJob(), 'Biowulf HPC', storageRoot)
 
     // Relative to <storageRoot>/notebooks/proj-1/sess-1 (workspaceCwd = harvestDir/../..).
-    // path.relative() yields the platform-native separator, so build the expected paths with
-    // join() rather than hard-coding '/' — otherwise the test fails on Windows.
+    // IPC paths are logical workspace paths and must stay POSIX-shaped on Windows.
     const expected = [
-      join('hpc', 'job-harvest', 'featured', 'result.csv'),
-      join('hpc', 'job-harvest', 'featured', 'sub', 'nested.txt')
+      'hpc/job-harvest/featured/result.csv',
+      'hpc/job-harvest/featured/sub/nested.txt'
     ].sort()
     expect((summary.featured_files ?? []).sort()).toEqual(expected)
+    expect(summary.featured_files).not.toEqual(
+      expect.arrayContaining([expect.stringContaining('\\')])
+    )
     expect(summary.featured_file_count).toBe(2)
   })
 
@@ -620,12 +622,8 @@ describe('toJobSummary — harvest features and left_on_remote parsing', () => {
 
     try {
       const summary = await toJobSummary(sampleJob(), 'Biowulf HPC', dataRoot)
-      expect(summary.featured_files).toEqual([
-        join('hpc', 'job-harvest', 'featured', 'data-root.csv')
-      ])
-      expect(summary.featured_files).not.toContain(
-        join('hpc', 'job-harvest', 'featured', 'stale-config.csv')
-      )
+      expect(summary.featured_files).toEqual(['hpc/job-harvest/featured/data-root.csv'])
+      expect(summary.featured_files).not.toContain('hpc/job-harvest/featured/stale-config.csv')
     } finally {
       await rm(configRoot, { recursive: true, force: true })
       await rm(dataRoot, { recursive: true, force: true })
