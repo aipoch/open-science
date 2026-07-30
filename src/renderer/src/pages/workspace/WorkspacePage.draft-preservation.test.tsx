@@ -412,6 +412,40 @@ describe('WorkspacePage draft preservation', () => {
     expect(conversationProps.draftDoc).toEqual(textDoc('keep this second prompt'))
   })
 
+  it('restores a failed prepared send only to its original conversation draft', async () => {
+    const failedSend = createDeferred<{ sessionId: string; messageId: string } | undefined>()
+    const attachment = createAttachment('failed-send-a')
+    runtime.sendMessage.mockReturnValueOnce(failedSend.promise)
+    await renderPage()
+
+    await act(async () => {
+      conversationProps.onDraftDocChange(textDoc('restore to session A'))
+    })
+    await stageAttachment(attachment)
+    await act(async () => {
+      conversationProps.onSendMessage([])
+    })
+    expect(runtime.sendMessage).toHaveBeenCalledOnce()
+    expect(runtime.sendMessage).toHaveBeenCalledWith(
+      expect.objectContaining({ attachments: [attachment] })
+    )
+    await openSession('sess-b')
+    await act(async () => {
+      conversationProps.onDraftDocChange(textDoc('keep session B draft'))
+    })
+
+    await act(async () => {
+      failedSend.resolve(undefined)
+      await failedSend.promise
+    })
+
+    expect(conversationProps.draftDoc).toEqual(textDoc('keep session B draft'))
+    expect(conversationProps.attachments).toEqual([])
+    await openSession('sess-a')
+    expect(conversationProps.draftDoc).toEqual(textDoc('restore to session A'))
+    expect(conversationProps.attachments).toEqual([attachment])
+  })
+
   it('drops a stored draft and deletes its staged files when the session is deleted', async () => {
     await renderPage()
 

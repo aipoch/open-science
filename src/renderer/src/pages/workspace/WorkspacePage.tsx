@@ -1020,8 +1020,19 @@ const WorkspacePage = ({
       })
         .then((result) => {
           if (!result) {
-            setDraftDoc(doc)
-            setAttachments(attachmentsForSend)
+            if (previousDraftKeyRef.current === sendRequestKey) {
+              setDraftDoc(doc)
+              setAttachments(attachmentsForSend)
+            } else {
+              // Preparation can fail after the user selects another conversation. Restore the captured
+              // draft to its original key without replacing the newly selected composer's live state.
+              composerDraftsRef.current[sendRequestKey] = {
+                doc,
+                attachments: attachmentsForSend,
+                attachmentTransfers:
+                  composerDraftsRef.current[sendRequestKey]?.attachmentTransfers ?? []
+              }
+            }
             return
           }
 
