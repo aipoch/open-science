@@ -57,6 +57,7 @@ const mocks = vi.hoisted(() => {
       isHydrated: true,
       isLoading: false,
       isReady: true,
+      hasCompleteSessionCatalog: true,
       loadError: undefined as string | undefined,
       loadWarning: undefined as string | undefined,
       writeError: undefined as string | undefined,
@@ -158,8 +159,18 @@ vi.mock('@/components/UpdateDialog', () => ({
   UpdateDialog: (): React.JSX.Element => <div data-testid="update-dialog" />
 }))
 vi.mock('@/pages/home/HomePage', () => ({
-  HomePage: ({ canDeleteProjects }: { canDeleteProjects: boolean }): React.JSX.Element => (
-    <div data-testid="home-page" data-can-delete-projects={String(canDeleteProjects)} />
+  HomePage: ({
+    canDeleteProjects,
+    hasCompleteSessionCatalog
+  }: {
+    canDeleteProjects: boolean
+    hasCompleteSessionCatalog: boolean
+  }): React.JSX.Element => (
+    <div
+      data-testid="home-page"
+      data-can-delete-projects={String(canDeleteProjects)}
+      data-has-complete-session-catalog={String(hasCompleteSessionCatalog)}
+    />
   )
 }))
 vi.mock('@/pages/onboarding/OnboardingWizard', () => ({
@@ -212,6 +223,7 @@ describe('App startup routing', () => {
     mocks.sessionPersistence.isReady = true
     mocks.sessionPersistence.isHydrated = true
     mocks.sessionPersistence.isLoading = false
+    mocks.sessionPersistence.hasCompleteSessionCatalog = true
     mocks.sessionPersistence.loadError = undefined
     mocks.sessionPersistence.loadWarning = undefined
     mocks.sessionPersistence.writeError = undefined
@@ -315,6 +327,7 @@ describe('App startup routing', () => {
     mocks.settings.isLoaded = true
     mocks.sessionPersistence.isHydrated = true
     mocks.sessionPersistence.isReady = false
+    mocks.sessionPersistence.hasCompleteSessionCatalog = false
 
     await render()
 
@@ -328,6 +341,10 @@ describe('App startup routing', () => {
     expect(
       container.querySelector<HTMLElement>('[data-testid="home-page"]')?.dataset.canDeleteProjects
     ).toBe('true')
+    expect(
+      container.querySelector<HTMLElement>('[data-testid="home-page"]')?.dataset
+        .hasCompleteSessionCatalog
+    ).toBe('false')
   })
 
   it('renders the partial session recovery alert on an opaque semantic surface', async () => {
@@ -488,6 +505,7 @@ describe('App startup routing', () => {
 
   it('reports quarantined corrupt conversation files without blocking healthy sessions', async () => {
     mocks.settings.isLoaded = true
+    mocks.sessionPersistence.hasCompleteSessionCatalog = false
     mocks.sessionPersistence.loadWarning =
       '1 saved conversation file was damaged and moved aside. The remaining conversations were loaded.'
 
@@ -498,6 +516,10 @@ describe('App startup routing', () => {
     expect(alert?.textContent).toContain('damaged and moved aside')
     expect(container.querySelector('[data-testid="session-persistence-retry"]')).toBeNull()
     expect(container.querySelector('[data-testid="home-page"]')).not.toBeNull()
+    expect(
+      container.querySelector<HTMLElement>('[data-testid="home-page"]')?.dataset
+        .hasCompleteSessionCatalog
+    ).toBe('false')
   })
 
   it('recovers pending Skill import approvals after the renderer starts', async () => {

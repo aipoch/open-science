@@ -84,6 +84,7 @@ type SessionPersistenceState = {
   isHydrated: boolean
   isLoading: boolean
   isReady: boolean
+  hasCompleteSessionCatalog: boolean
   loadError: string | undefined
   loadWarning: string | undefined
   writeError: string | undefined
@@ -253,6 +254,7 @@ const useSessionPersistence = (): SessionPersistenceState => {
   const [isHydrated, setIsHydrated] = useState(false)
   const [isLoading, setIsLoading] = useState(true)
   const [isReady, setIsReady] = useState(false)
+  const [hasCompleteSessionCatalog, setHasCompleteSessionCatalog] = useState(false)
   const [loadError, setLoadError] = useState<string | undefined>(undefined)
   const [loadWarning, setLoadWarning] = useState<string | undefined>(undefined)
   const [writeError, setWriteError] = useState<string | undefined>(undefined)
@@ -269,6 +271,7 @@ const useSessionPersistence = (): SessionPersistenceState => {
     setIsHydrated(false)
     setIsLoading(true)
     setIsReady(false)
+    setHasCompleteSessionCatalog(false)
     setLoadError(undefined)
     setLoadWarning(undefined)
     setWriteError(undefined)
@@ -307,6 +310,13 @@ const useSessionPersistence = (): SessionPersistenceState => {
         )
         if (!result || !isMounted) return
         setIsHydrated(true)
+        const loadWarnings = result.diagnostics?.warnings ?? []
+        const sessionWarningCount = loadWarnings.filter(
+          (warning) => warning.kind !== 'manifest-corrupt' && warning.kind !== 'manifest-unreadable'
+        ).length
+        setHasCompleteSessionCatalog(
+          result.diagnostics?.isComplete !== false && sessionWarningCount === 0
+        )
 
         if (result.diagnostics?.isComplete === false) {
           setLoadError(
@@ -318,7 +328,6 @@ const useSessionPersistence = (): SessionPersistenceState => {
           return
         }
 
-        const loadWarnings = result.diagnostics?.warnings ?? []
         if (loadWarnings.length > 0) {
           const manifestWasRecovered = loadWarnings.some(
             (warning) => warning.kind === 'manifest-corrupt' && warning.recovered
@@ -329,10 +338,6 @@ const useSessionPersistence = (): SessionPersistenceState => {
           const manifestWasUnreadable = loadWarnings.some(
             (warning) => warning.kind === 'manifest-unreadable'
           )
-          const sessionWarningCount = loadWarnings.filter(
-            (warning) =>
-              warning.kind !== 'manifest-corrupt' && warning.kind !== 'manifest-unreadable'
-          ).length
           const warningMessages = [
             manifestWasRecovered
               ? 'Conversation selection data was damaged and moved aside.'
@@ -353,6 +358,7 @@ const useSessionPersistence = (): SessionPersistenceState => {
       } catch (error) {
         reportPersistenceError(error)
         if (isMounted) {
+          setHasCompleteSessionCatalog(false)
           setLoadError(SAFE_SESSION_LOAD_ERROR)
           setIsLoading(false)
         }
@@ -415,6 +421,7 @@ const useSessionPersistence = (): SessionPersistenceState => {
     isHydrated,
     isLoading,
     isReady,
+    hasCompleteSessionCatalog,
     loadError,
     loadWarning,
     writeError,

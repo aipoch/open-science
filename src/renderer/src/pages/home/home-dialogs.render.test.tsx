@@ -121,6 +121,7 @@ describe('home dialogs shared chrome', () => {
     const tree = DeleteProjectDialog({
       project: createProject(),
       sessionCount: 2,
+      hasCompleteSessionCatalog: true,
       canDelete: true,
       onCancel,
       onConfirmDelete
@@ -134,5 +135,24 @@ describe('home dialogs shared chrome', () => {
       interceptsOutsideClick: false
     })
     expect(deleteButton?.props.className).toContain('bg-danger-000')
+  })
+
+  it('warns about unreadable conversations without showing an incomplete session count', async () => {
+    const { DeleteProjectDialog } = await import('./DeleteProjectDialog')
+
+    const tree = DeleteProjectDialog({
+      project: createProject(),
+      sessionCount: 1,
+      hasCompleteSessionCatalog: false,
+      canDelete: true,
+      onCancel: vi.fn(),
+      onConfirmDelete: vi.fn()
+    })
+    const text = getTextContent(tree)
+
+    expect(text).toContain(
+      'all of its saved conversations, including any that could not be loaded during recovery'
+    )
+    expect(text).not.toContain('its 1 session')
   })
 })

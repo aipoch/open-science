@@ -73,6 +73,7 @@ describe('session persistence startup', () => {
         data-hydrated={String(persistence.isHydrated)}
         data-loading={String(persistence.isLoading)}
         data-ready={String(persistence.isReady)}
+        data-catalog-complete={String(persistence.hasCompleteSessionCatalog)}
       >
         <span data-testid="load-error">{persistence.loadError ?? 'sessions available'}</span>
         <span data-testid="load-warning">{persistence.loadWarning ?? 'no load warnings'}</span>
@@ -107,6 +108,7 @@ describe('session persistence startup', () => {
 
     expect(loadAll).toHaveBeenCalledTimes(2)
     expect(container.querySelector('div')?.dataset.ready).toBe('true')
+    expect(container.querySelector('div')?.dataset.catalogComplete).toBe('true')
     expect(container.querySelector('div')?.dataset.hydrated).toBe('true')
     expect(container.querySelector('div')?.dataset.loading).toBe('false')
     expect(container.querySelector('[data-testid="load-error"]')?.textContent).toContain(
@@ -388,6 +390,7 @@ describe('session persistence startup', () => {
     await act(async () => root.render(<Probe />))
 
     expect(container.querySelector('div')?.dataset.ready).toBe('true')
+    expect(container.querySelector('div')?.dataset.catalogComplete).toBe('false')
     expect(container.querySelector('[data-testid="load-warning"]')?.textContent).toContain(
       'damaged and moved aside'
     )
@@ -434,6 +437,7 @@ describe('session persistence startup', () => {
     await act(async () => root.render(<Probe />))
 
     expect(container.querySelector('div')?.dataset.ready).toBe('true')
+    expect(container.querySelector('div')?.dataset.catalogComplete).toBe('true')
     expect(container.querySelector('[data-testid="load-warning"]')?.textContent).toContain(
       'Conversation selection data could not be read, so no conversation was selected'
     )

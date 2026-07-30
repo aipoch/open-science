@@ -18,10 +18,12 @@ vi.mock('./DeleteProjectDialog', () => ({
   DeleteProjectDialog: ({
     project,
     canDelete,
+    hasCompleteSessionCatalog,
     onConfirmDelete
   }: {
     project: Project | undefined
     canDelete: boolean
+    hasCompleteSessionCatalog: boolean
     onConfirmDelete: () => void
   }) => (
     <button
@@ -29,6 +31,7 @@ vi.mock('./DeleteProjectDialog', () => ({
       data-testid="confirm-project-delete"
       data-can-delete={String(canDelete)}
       data-has-project={String(Boolean(project))}
+      data-has-complete-session-catalog={String(hasCompleteSessionCatalog)}
       onClick={onConfirmDelete}
     >
       Confirm delete
@@ -99,7 +102,9 @@ describe('HomePage persistence recovery', () => {
   })
 
   it('disables project deletion while session persistence is recovering', async () => {
-    await act(async () => root.render(<HomePage canDeleteProjects={false} />))
+    await act(async () =>
+      root.render(<HomePage canDeleteProjects={false} hasCompleteSessionCatalog={false} />)
+    )
 
     const deleteAction = [...container.querySelectorAll<HTMLButtonElement>('button')].find(
       (button) => button.textContent?.trim() === 'Delete'
@@ -113,7 +118,7 @@ describe('HomePage persistence recovery', () => {
   })
 
   it('guards confirmation when persistence becomes unavailable after the dialog opens', async () => {
-    await act(async () => root.render(<HomePage canDeleteProjects />))
+    await act(async () => root.render(<HomePage canDeleteProjects hasCompleteSessionCatalog />))
 
     const deleteAction = [...container.querySelectorAll<HTMLButtonElement>('button')].find(
       (button) => button.textContent?.trim() === 'Delete'
@@ -125,7 +130,9 @@ describe('HomePage persistence recovery', () => {
     )
     expect(confirm?.dataset.hasProject).toBe('true')
 
-    await act(async () => root.render(<HomePage canDeleteProjects={false} />))
+    await act(async () =>
+      root.render(<HomePage canDeleteProjects={false} hasCompleteSessionCatalog={false} />)
+    )
     expect(confirm?.dataset.canDelete).toBe('false')
     await act(async () => confirm?.click())
 
@@ -133,7 +140,9 @@ describe('HomePage persistence recovery', () => {
   })
 
   it('records explicit user takeover before starting Project deletion', async () => {
-    await act(async () => root.render(<HomePage canDeleteProjects />))
+    await act(async () =>
+      root.render(<HomePage canDeleteProjects hasCompleteSessionCatalog={false} />)
+    )
 
     const deleteAction = [...container.querySelectorAll<HTMLButtonElement>('button')].find(
       (button) => button.textContent?.trim() === 'Delete'
@@ -145,5 +154,9 @@ describe('HomePage persistence recovery', () => {
 
     expect(useNavigationStore.getState().userNavigationRevision).toBe(1)
     expect(deleteProject).toHaveBeenCalledWith(project.id)
+    expect(
+      container.querySelector<HTMLButtonElement>('[data-testid="confirm-project-delete"]')?.dataset
+        .hasCompleteSessionCatalog
+    ).toBe('false')
   })
 })

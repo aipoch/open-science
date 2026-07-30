@@ -42,6 +42,7 @@ type ProjectFormState = { mode: 'create' } | { mode: 'edit'; projectId: string }
 
 type HomePageProps = {
   canDeleteProjects: boolean
+  hasCompleteSessionCatalog: boolean
 }
 
 // Optional warnings (currently Python and reduced key protection) never create a Home alert. Only a
@@ -78,7 +79,10 @@ const menuDangerItemClassName =
   'flex w-full cursor-pointer items-center gap-2 rounded-lg px-2 py-1.5 text-left text-sm text-danger-000 transition-colors duration-150 ease-out outline-none data-[highlighted]:bg-danger-900 data-[disabled]:pointer-events-none data-[disabled]:opacity-50'
 
 // Landing screen: pick a project or jump back into a recent session.
-const HomePage = ({ canDeleteProjects }: HomePageProps): React.JSX.Element => {
+const HomePage = ({
+  canDeleteProjects,
+  hasCompleteSessionCatalog
+}: HomePageProps): React.JSX.Element => {
   const projects = useProjectStore((state) => state.projects)
   const loadError = useProjectStore((state) => state.loadError)
   const createProject = useProjectStore((state) => state.createProject)
@@ -434,6 +438,7 @@ const HomePage = ({ canDeleteProjects }: HomePageProps): React.JSX.Element => {
       <DeleteProjectDialog
         project={projectToDelete}
         sessionCount={deleteTargetSessionCount}
+        hasCompleteSessionCatalog={hasCompleteSessionCatalog}
         canDelete={canDeleteProjects}
         onCancel={() => setProjectToDelete(undefined)}
         onConfirmDelete={confirmDeleteProject}

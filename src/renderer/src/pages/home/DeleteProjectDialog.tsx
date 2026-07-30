@@ -17,6 +17,7 @@ import type { Project } from '../../../../shared/projects'
 type DeleteProjectDialogProps = {
   project: Project | undefined
   sessionCount: number
+  hasCompleteSessionCatalog: boolean
   canDelete: boolean
   onCancel: () => void
   onConfirmDelete: () => void
@@ -29,6 +30,7 @@ const deleteDialogConfirmButtonClassName =
 const DeleteProjectDialog = ({
   project,
   sessionCount,
+  hasCompleteSessionCatalog,
   canDelete,
   onCancel,
   onConfirmDelete
@@ -36,6 +38,9 @@ const DeleteProjectDialog = ({
   const dialogProject = useRetainedDialogValue(project)
   const dialogSessionCount =
     useRetainedDialogValue(project ? sessionCount : undefined) ?? sessionCount
+  const dialogHasCompleteSessionCatalog =
+    useRetainedDialogValue(project ? hasCompleteSessionCatalog : undefined) ??
+    hasCompleteSessionCatalog
 
   return (
     <AlertDialog.Root
@@ -54,9 +59,11 @@ const DeleteProjectDialog = ({
               </AlertDialog.Title>
               <AlertDialog.Description className={dialogDescriptionClassName}>
                 This will permanently delete &quot;{dialogProject?.name}&quot;
-                {dialogSessionCount > 0
-                  ? ` and its ${dialogSessionCount} ${dialogSessionCount === 1 ? 'session' : 'sessions'}`
-                  : ''}
+                {dialogHasCompleteSessionCatalog
+                  ? dialogSessionCount > 0
+                    ? ` and its ${dialogSessionCount} ${dialogSessionCount === 1 ? 'session' : 'sessions'}`
+                    : ''
+                  : ' and all of its saved conversations, including any that could not be loaded during recovery'}
                 . Generated artifacts remain on disk. This action cannot be undone.
               </AlertDialog.Description>
             </div>

@@ -362,7 +362,10 @@ const App = (): React.JSX.Element | null => {
         />
       ) : null}
       {view === 'home' ? (
-        <HomePage canDeleteProjects={isSessionPersistenceHydrated} />
+        <HomePage
+          canDeleteProjects={isSessionPersistenceHydrated}
+          hasCompleteSessionCatalog={sessionPersistence.hasCompleteSessionCatalog}
+        />
       ) : (
         <WorkspacePage
           isSessionPersistenceHydrated={isSessionPersistenceHydrated}
