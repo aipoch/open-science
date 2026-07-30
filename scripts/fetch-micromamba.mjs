@@ -7,11 +7,12 @@
 //   subdir   one of: osx-arm64 | osx-64 | linux-64 | linux-aarch64 | win-64
 //   destPath full path to write the binary to (e.g. resources/bin/mac/arm64/micromamba)
 //
-// Source is the public micro.mamba.pm API (the same one the documented installer uses), NOT our CDN,
-// so the shipped-binary requirement never depends on our own infrastructure. The API returns a
-// .tar.bz2 whose binary lives at bin/micromamba (POSIX) or Library/bin/micromamba.exe (Windows); we
-// extract to a temp dir with the system `tar` (present on every CI runner — GNU tar on Linux, bsdtar
-// on macOS/Windows, all bzip2-capable) and copy the located binary to destPath (chmod +x on POSIX).
+// Source is the pinned release in mamba-org/micromamba-releases, the official mirror of conda-forge
+// micromamba executables. Fetching the release asset directly avoids micro.mamba.pm re-packaging the
+// same version URL with different archive bytes. The .tar.bz2 binary lives at bin/micromamba (POSIX)
+// or Library/bin/micromamba.exe (Windows); we extract to a temp dir with the system `tar` (present on
+// every CI runner — GNU tar on Linux, bsdtar on macOS/Windows, all bzip2-capable) and copy the located
+// binary to destPath (chmod +x on POSIX).
 //
 // The version and the per-subdir SHA256 come from scripts/micromamba-versions.json (MICROMAMBA_VERSION
 // may override the version for dev). This binary is signed/notarized with the app, so we PIN the
@@ -70,6 +71,16 @@ const resolveVersion = (env = process.env) => {
   return PINNED.version
 }
 
+const resolveDownloadUrl = (subdir) => {
+  if (!PINNED.releaseTag) {
+    throw new Error('no pinned releaseTag in micromamba-versions.json')
+  }
+  return (
+    `https://github.com/mamba-org/micromamba-releases/releases/download/${PINNED.releaseTag}/` +
+    `micromamba-${subdir}.tar.bz2`
+  )
+}
+
 // Throws unless `buffer` (the downloaded .tar.bz2) matches the pinned SHA256 for `subdir`. A missing
 // pinned digest is treated as fatal, so an unverifiable subdir can never ship.
 const verifyArchiveDigest = (buffer, subdir) => {
@@ -97,7 +108,7 @@ const main = async () => {
   }
   const binName = subdir === 'win-64' ? 'micromamba.exe' : 'micromamba'
   const version = resolveVersion()
-  const url = `https://micro.mamba.pm/api/micromamba/${subdir}/${version}`
+  const url = resolveDownloadUrl(subdir)
 
   console.log(`[fetch-micromamba] ${subdir} ${version} -> ${destPath}`)
   const res = await fetch(url)
@@ -125,7 +136,7 @@ const main = async () => {
   console.log(`[fetch-micromamba] wrote ${destPath}`)
 }
 
-export { PINNED, SUBDIRS, resolveVersion, verifyArchiveDigest }
+export { PINNED, SUBDIRS, resolveDownloadUrl, resolveVersion, verifyArchiveDigest }
 
 // Run as a CLI only when invoked directly (importing for tests must not trigger a download).
 if (process.argv[1] && fileURLToPath(import.meta.url) === process.argv[1]) {

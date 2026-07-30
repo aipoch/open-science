@@ -72,9 +72,9 @@ jobs:
       - name: Install dependencies
         run: npm ci --ignore-scripts
 
-      # micromamba comes from the public micro.mamba.pm API (see fetch-micromamba.mjs), not our CDN, so
-      # staging never depends on a chicken-and-egg CDN state. Fetch the RUNNER's native micromamba
-      # (runner_subdir) to execute; the target platform to solve for is passed separately below.
+      # micromamba comes from the pinned official GitHub release asset (see fetch-micromamba.mjs), not
+      # our CDN, so staging never depends on a chicken-and-egg CDN state. Fetch the RUNNER's native
+      # micromamba (runner_subdir) to execute; the target platform to solve for is passed separately.
       - name: Fetch micromamba
         shell: bash
         run: |

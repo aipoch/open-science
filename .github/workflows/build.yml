@@ -157,7 +157,7 @@ jobs:
       # Stage the notebook runtime resources electron-builder.yml ships as extraResources, BEFORE the
       # package+sign step so the mach-O micromamba is signed/notarized along with the app: the
       # micromamba binary -> resources/bin/<os>/<arch>/ (REQUIRED — electron-builder's extraResources
-      # `from` would fail without it; fetched from the public micro.mamba.pm).
+      # `from` would fail without it; fetched from the pinned official GitHub release asset).
       #
       # NOTE: the installer does not bake in the runtime packs. Default envs are fetched on demand
       # from the immutable runtime bundle published by stage-runtime-bundle.yml; a developer can
