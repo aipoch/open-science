@@ -2,6 +2,8 @@ import { describe, expect, it, vi } from 'vitest'
 
 import type { AcpPermissionRequest, AcpRuntimeEvent } from '../../shared/acp'
 import { ACP_PROMPT_FAILED_EVENT_TITLE } from '../../shared/acp'
+import type { ComputeApprovalRequest } from '../../shared/compute'
+import type { ConversationSkillImportApprovalRequest } from '../../shared/settings'
 import {
   describeConnectorApprovalNotification,
   describePermissionNotification,
@@ -48,14 +50,16 @@ describe('describePermissionNotification', () => {
       describePermissionNotification(permissionRequest('Run command'), 'Plot the curve')
     ).toEqual({
       title: 'Approval needed',
-      body: '"Plot the curve" needs your approval: Run command'
+      body: '"Plot the curve" needs your approval: Run command',
+      attention: true
     })
   })
 
   it('falls back to a generic body when no prompt was tracked', () => {
     expect(describePermissionNotification(permissionRequest('Edit results.csv'))).toEqual({
       title: 'Approval needed',
-      body: 'The agent needs your approval: Edit results.csv'
+      body: 'The agent needs your approval: Edit results.csv',
+      attention: true
     })
   })
 
@@ -79,14 +83,16 @@ describe('describeConnectorApprovalNotification', () => {
       )
     ).toEqual({
       title: 'Approval needed',
-      body: '"Plot the curve" needs your approval: pubchem search compound'
+      body: '"Plot the curve" needs your approval: pubchem search compound',
+      attention: true
     })
   })
 
   it('falls back to a generic body without a tracked prompt', () => {
     expect(describeConnectorApprovalNotification({ connector: 'zinc', method: 'search' })).toEqual({
       title: 'Approval needed',
-      body: 'The agent needs your approval: zinc search'
+      body: 'The agent needs your approval: zinc search',
+      attention: true
     })
   })
 })
@@ -236,26 +242,59 @@ const createService = (overrides: {
   isAppFocused?: () => boolean
   show?: (request: TaskNotificationRequest) => void
   onDeliveryError?: (error: unknown) => void
+  requestAttention?: () => void
+  clearAttention?: () => void
+  onAttentionError?: (error: unknown) => void
+  markUnread?: (sessionId: string) => Promise<void>
+  onUnreadError?: (error: unknown) => void
 }): {
   service: TaskNotificationService
   shown: TaskNotificationRequest[]
   deliveryErrors: unknown[]
+  attentionRequests: number[]
+  attentionErrors: unknown[]
+  unreadSessionIds: string[]
+  unreadErrors: unknown[]
 } => {
   const shown: TaskNotificationRequest[] = []
   const deliveryErrors: unknown[] = []
+  const attentionRequests: number[] = []
+  const attentionErrors: unknown[] = []
+  const unreadSessionIds: string[] = []
+  const unreadErrors: unknown[] = []
   const service = new TaskNotificationService({
     isEnabled: overrides.isEnabled ?? (() => Promise.resolve(true)),
     isAppFocused: overrides.isAppFocused ?? (() => false),
     show: overrides.show ?? ((request) => shown.push(request)),
-    onDeliveryError: overrides.onDeliveryError ?? ((error) => deliveryErrors.push(error))
+    onDeliveryError: overrides.onDeliveryError ?? ((error) => deliveryErrors.push(error)),
+    onAttentionError: overrides.onAttentionError ?? ((error) => attentionErrors.push(error)),
+    onUnreadError: overrides.onUnreadError ?? ((error) => unreadErrors.push(error))
   })
+  service.setAttentionHandlers({
+    request: overrides.requestAttention ?? (() => attentionRequests.push(1)),
+    clear: overrides.clearAttention ?? (() => undefined)
+  })
+  service.setUnreadHandler(
+    overrides.markUnread ??
+      (async (sessionId) => {
+        unreadSessionIds.push(sessionId)
+      })
+  )
 
-  return { service, shown, deliveryErrors }
+  return {
+    service,
+    shown,
+    deliveryErrors,
+    attentionRequests,
+    attentionErrors,
+    unreadSessionIds,
+    unreadErrors
+  }
 }
 
 describe('TaskNotificationService', () => {
   it('notifies on completion using the tracked prompt as the task name', async () => {
-    const { service, shown } = createService({})
+    const { service, shown, attentionRequests, unreadSessionIds } = createService({})
 
     service.trackPrompt({ sessionId: 'session-1', text: '\nPlot the curve\nand fit a model' })
     await service.handleRuntimeEvent(stopEvent('end_turn'))
@@ -265,6 +304,8 @@ describe('TaskNotificationService', () => {
       title: 'Task completed',
       body: 'The agent finished responding to "Plot the curve".'
     })
+    expect(attentionRequests).toEqual([])
+    expect(unreadSessionIds).toEqual(['session-1'])
   })
 
   it('collapses multiline prompts to their first line', async () => {
@@ -276,22 +317,45 @@ describe('TaskNotificationService', () => {
     expect(shown[0]?.body).toBe('The agent finished responding to "First line".')
   })
 
+  it('tracks an attachment-only user turn and uses a generic completion body', async () => {
+    const { service, shown, unreadSessionIds } = createService({})
+
+    expect(service.trackPrompt({ sessionId: 'session-1', text: '' })).toEqual({
+      token: 1
+    })
+    await service.handleRuntimeEvent(stopEvent('end_turn'))
+
+    expect(shown[0]).toMatchObject({
+      title: 'Task completed',
+      body: 'The agent finished responding.'
+    })
+    expect(unreadSessionIds).toEqual(['session-1'])
+  })
+
   it('does not notify while the app is focused', async () => {
-    const { service, shown } = createService({ isAppFocused: () => true })
+    const { service, shown, attentionRequests, unreadSessionIds } = createService({
+      isAppFocused: () => true
+    })
 
     service.trackPrompt({ sessionId: 'session-1', text: 'Plot the curve' })
     await service.handleRuntimeEvent(stopEvent('end_turn'))
 
     expect(shown).toHaveLength(0)
+    expect(attentionRequests).toHaveLength(0)
+    expect(unreadSessionIds).toEqual(['session-1'])
   })
 
   it('does not notify when the preference is disabled', async () => {
-    const { service, shown } = createService({ isEnabled: () => Promise.resolve(false) })
+    const { service, shown, attentionRequests, unreadSessionIds } = createService({
+      isEnabled: () => Promise.resolve(false)
+    })
 
     service.trackPrompt({ sessionId: 'session-1', text: 'Plot the curve' })
     await service.handleRuntimeEvent(stopEvent('end_turn'))
 
     expect(shown).toHaveLength(0)
+    expect(attentionRequests).toHaveLength(0)
+    expect(unreadSessionIds).toEqual(['session-1'])
   })
 
   it('fails closed when the preference read throws', async () => {
@@ -306,13 +370,14 @@ describe('TaskNotificationService', () => {
   })
 
   it('stays silent for internal turns that never tracked a prompt (reviewer correction)', async () => {
-    const { service, shown } = createService({})
+    const { service, shown, unreadSessionIds } = createService({})
 
     // The reviewer's auditor-correction calls runtime.sendPrompt directly (no IPC, no trackPrompt).
     await service.handleRuntimeEvent(stopEvent('end_turn', 'main-session'))
     await service.handleRuntimeEvent(errorEvent('boom', { sessionId: 'main-session' }))
 
     expect(shown).toHaveLength(0)
+    expect(unreadSessionIds).toHaveLength(0)
   })
 
   it('ignores terminal events without a session id', async () => {
@@ -351,8 +416,11 @@ describe('TaskNotificationService', () => {
   })
 
   it('routes clicks to the activation handler with the session id', async () => {
-    const { service, shown } = createService({})
-    const onActivate = vi.fn()
+    const order: string[] = []
+    const { service, shown } = createService({
+      clearAttention: () => order.push('clear')
+    })
+    const onActivate = vi.fn(() => order.push('activate'))
 
     service.setActivationHandler(onActivate)
     service.trackPrompt({ sessionId: 'session-1', text: 'Plot the curve' })
@@ -360,6 +428,39 @@ describe('TaskNotificationService', () => {
     shown[0]?.onClick()
 
     expect(onActivate).toHaveBeenCalledWith('session-1')
+    expect(order).toEqual(['clear', 'activate'])
+  })
+
+  it('reports a click-clear error and still activates the notification target', async () => {
+    const error = new Error('attention clear failed')
+    const { service, shown, attentionErrors } = createService({
+      clearAttention: () => {
+        throw error
+      }
+    })
+    const onActivate = vi.fn()
+
+    service.setActivationHandler(onActivate)
+    service.trackPrompt({ sessionId: 'session-1', text: 'Plot the curve' })
+    await service.handleRuntimeEvent(stopEvent('end_turn'))
+
+    expect(() => shown[0]?.onClick()).not.toThrow()
+    expect(attentionErrors).toEqual([error])
+    expect(onActivate).toHaveBeenCalledWith('session-1')
+  })
+
+  it('reports activation errors without throwing from the notification click', async () => {
+    const error = new Error('window was destroyed')
+    const { service, shown, deliveryErrors } = createService({})
+
+    service.setActivationHandler(() => {
+      throw error
+    })
+    service.trackPrompt({ sessionId: 'session-1', text: 'Plot the curve' })
+    await service.handleRuntimeEvent(stopEvent('end_turn'))
+
+    expect(() => shown[0]?.onClick()).not.toThrow()
+    expect(deliveryErrors).toEqual([error])
   })
 
   it('keeps the tracked prompt when an ancillary error precedes the turn failure', async () => {
@@ -378,7 +479,7 @@ describe('TaskNotificationService', () => {
 
   it('swallows delivery errors and reports them instead of rejecting', async () => {
     const boom = new Error('Notification unavailable')
-    const { service, deliveryErrors } = createService({
+    const { service, deliveryErrors, attentionRequests } = createService({
       show: () => {
         throw boom
       }
@@ -389,6 +490,115 @@ describe('TaskNotificationService', () => {
     await service.handleRuntimeEvent(stopEvent('end_turn'))
 
     expect(deliveryErrors).toEqual([boom])
+    expect(attentionRequests).toEqual([])
+  })
+
+  it('fails closed when the focus probe throws and reports the delivery error', async () => {
+    const error = new Error('window was destroyed')
+    const { service, shown, deliveryErrors, unreadSessionIds } = createService({
+      isAppFocused: () => {
+        throw error
+      }
+    })
+
+    service.trackPrompt({ sessionId: 'session-1', text: 'Plot the curve' })
+
+    await expect(service.handleRuntimeEvent(stopEvent('end_turn'))).resolves.toBeUndefined()
+    expect(shown).toHaveLength(0)
+    expect(deliveryErrors).toEqual([error])
+    expect(unreadSessionIds).toEqual(['session-1'])
+  })
+
+  it('reports approval attention errors without blocking the system notification', async () => {
+    const boom = new Error('taskbar unavailable')
+    const { service, shown, attentionErrors } = createService({
+      requestAttention: () => {
+        throw boom
+      }
+    })
+
+    service.trackPrompt({ sessionId: 'session-1', text: 'Plot the curve' })
+    await service.handlePermissionRequest(permissionRequest('Run command'))
+
+    expect(shown).toHaveLength(1)
+    expect(attentionErrors).toEqual([boom])
+  })
+
+  it.each([
+    ['clean completion', stopEvent('end_turn')],
+    ['abnormal stop', stopEvent('max_tokens')],
+    ['task failure', errorEvent('Rate limit reached')]
+  ])('records unread for a tracked %s', async (_label, event) => {
+    const { service, unreadSessionIds } = createService({})
+
+    service.trackPrompt({ sessionId: 'session-1', text: 'Plot the curve' })
+    await service.handleRuntimeEvent(event)
+
+    expect(unreadSessionIds).toEqual(['session-1'])
+  })
+
+  it.each([
+    ['abnormal stop', stopEvent('max_tokens')],
+    ['task failure', errorEvent('Rate limit reached')]
+  ])('does not request native attention for a tracked %s', async (_label, event) => {
+    const { service, attentionRequests } = createService({})
+
+    service.trackPrompt({ sessionId: 'session-1', text: 'Plot the curve' })
+    await service.handleRuntimeEvent(event)
+
+    expect(attentionRequests).toEqual([])
+  })
+
+  it('does not record unread for cancellation, recoverable retries, or approvals', async () => {
+    const { service, unreadSessionIds } = createService({})
+
+    service.trackPrompt({ sessionId: 'cancelled', text: 'Cancel me' })
+    await service.handleRuntimeEvent(stopEvent('cancelled', 'cancelled'))
+
+    service.trackPrompt({ sessionId: 'retrying', text: 'Retry me' })
+    await service.handleRuntimeEvent(
+      errorEvent('Prompt is too long', {
+        sessionId: 'retrying',
+        recoverable: 'context-overflow'
+      })
+    )
+
+    service.trackPrompt({ sessionId: 'approval', text: 'Approve me' })
+    await service.handlePermissionRequest(permissionRequest('Run command', 'approval'))
+
+    expect(unreadSessionIds).toEqual([])
+  })
+
+  it('isolates unread persistence errors and still delivers the system notification', async () => {
+    const error = new Error('unread persistence failed')
+    const { service, shown, unreadErrors } = createService({
+      markUnread: () => Promise.reject(error)
+    })
+
+    service.trackPrompt({ sessionId: 'session-1', text: 'Plot the curve' })
+    await expect(service.handleRuntimeEvent(stopEvent('end_turn'))).resolves.toBeUndefined()
+
+    expect(unreadErrors).toEqual([error])
+    expect(shown).toHaveLength(1)
+  })
+
+  it('does not delay the system notification while unread persistence is pending', async () => {
+    let finishUnread: (() => void) | undefined
+    const { service, shown } = createService({
+      markUnread: () =>
+        new Promise<void>((resolve) => {
+          finishUnread = resolve
+        })
+    })
+
+    service.trackPrompt({ sessionId: 'session-1', text: 'Plot the curve' })
+    const handling = service.handleRuntimeEvent(stopEvent('end_turn'))
+    await Promise.resolve()
+
+    expect(shown).toHaveLength(1)
+
+    finishUnread?.()
+    await handling
   })
 
   it('holds the notification click target until the renderer takes it (consume-once)', () => {
@@ -416,7 +626,7 @@ describe('TaskNotificationService', () => {
   })
 
   it('notifies when a task parks on a permission request', async () => {
-    const { service, shown } = createService({})
+    const { service, shown, attentionRequests } = createService({})
     const onActivate = vi.fn()
 
     service.setActivationHandler(onActivate)
@@ -428,10 +638,64 @@ describe('TaskNotificationService', () => {
       title: 'Approval needed',
       body: '"Plot the curve" needs your approval: Run command'
     })
+    expect(attentionRequests).toEqual([1])
 
     // Clicking surfaces the same conversation as a terminal notification.
     shown[0]?.onClick()
     expect(onActivate).toHaveBeenCalledWith('session-1')
+  })
+
+  it('notifies when an attachment-only user turn parks on a permission request', async () => {
+    const { service, shown, attentionRequests } = createService({})
+
+    service.trackPrompt({ sessionId: 'session-1', text: '' })
+    await service.handlePermissionRequest(permissionRequest('Read attachment'))
+
+    expect(shown[0]).toMatchObject({
+      title: 'Approval needed',
+      body: 'The agent needs your approval: Read attachment'
+    })
+    expect(attentionRequests).toEqual([1])
+  })
+
+  it('notifies for a tracked Compute approval and targets its conversation', async () => {
+    const { service, shown, attentionRequests } = createService({})
+    const request: ComputeApprovalRequest = {
+      id: 'compute-1',
+      provider_id: 'ssh:cluster',
+      provider_name: 'Research Cluster',
+      shape: 'scheduler_cluster',
+      intent: 'Run molecular dynamics'
+    }
+
+    service.trackPrompt({ sessionId: 'session-1', text: 'Simulate the protein' })
+    await service.handleComputeApproval(request, 'session-1')
+
+    expect(shown[0]).toMatchObject({
+      title: 'Approval needed',
+      body: '"Simulate the protein" needs your approval: Research Cluster — Run molecular dynamics'
+    })
+    expect(attentionRequests).toEqual([1])
+  })
+
+  it('notifies for a tracked conversation Skill import approval', async () => {
+    const { service, shown, attentionRequests } = createService({})
+    const request: ConversationSkillImportApprovalRequest = {
+      id: 'skill-1',
+      sessionId: 'session-1',
+      attachmentName: 'analysis-tools.skill',
+      previews: [],
+      skipped: []
+    }
+
+    service.trackPrompt({ sessionId: 'session-1', text: 'Import these tools' })
+    await service.handleSkillImportApproval(request)
+
+    expect(shown[0]).toMatchObject({
+      title: 'Approval needed',
+      body: '"Import these tools" needs your approval: Import analysis-tools.skill'
+    })
+    expect(attentionRequests).toEqual([1])
   })
 
   it('stays silent for permission requests on internal turns', async () => {
@@ -474,6 +738,18 @@ describe('TaskNotificationService', () => {
     })
   })
 
+  it('stays silent for connector approvals from an internal turn', async () => {
+    const { service, shown, attentionRequests } = createService({})
+
+    await service.handleConnectorApproval(
+      { connector: 'pubchem', method: 'search_compound' },
+      'internal-session'
+    )
+
+    expect(shown).toHaveLength(0)
+    expect(attentionRequests).toHaveLength(0)
+  })
+
   it('targets the triggering turn for a connector approval click', async () => {
     const { service, shown } = createService({})
     const onActivate = vi.fn()
@@ -506,8 +782,8 @@ describe('TaskNotificationService', () => {
     const trackedA = service.trackPrompt({ sessionId: 'session-1', text: 'Prompt A' })
     const trackedB = service.trackPrompt({ sessionId: 'session-1', text: 'Prompt B' })
 
-    expect(trackedA).toEqual({ token: 1, previousToken: undefined })
-    expect(trackedB).toEqual({ token: 2, previousToken: 1 })
+    expect(trackedA).toEqual({ token: 1 })
+    expect(trackedB).toEqual({ token: 2 })
 
     service.untrackPrompt('session-1', trackedB as NonNullable<typeof trackedB>)
     await service.handleRuntimeEvent(stopEvent('end_turn'))
@@ -544,12 +820,6 @@ describe('TaskNotificationService', () => {
     expect(shown).toHaveLength(1)
   })
 
-  it('tracks nothing for a blank prompt', () => {
-    const { service } = createService({})
-
-    expect(service.trackPrompt({ sessionId: 'session-1', text: '  \n ' })).toBeUndefined()
-  })
-
   it('does not deliver if the user switches back during the settings read', async () => {
     // The focus check passes before the async settings read, but the user returns mid-read.
     const focusState = { focused: false }
@@ -580,6 +850,20 @@ describe('TaskNotificationService', () => {
     // Access the private set via a cast to verify it's empty.
     const deadTokens = (service as unknown as { deadTokens: Set<number> }).deadTokens
     expect(deadTokens.has(tracked!.token)).toBe(false)
+    expect(deadTokens.size).toBe(0)
+  })
+
+  it('cleans dead tokens when their tracked session is evicted', () => {
+    const { service } = createService({})
+    const rejected = service.trackPrompt({ sessionId: 'oldest-session', text: 'Prompt B' })
+    service.trackPrompt({ sessionId: 'oldest-session', text: 'Prompt C' })
+    service.untrackPrompt('oldest-session', rejected as NonNullable<typeof rejected>)
+
+    for (let index = 0; index < 100; index += 1) {
+      service.trackPrompt({ sessionId: `new-session-${index}`, text: 'Keep tracking' })
+    }
+
+    const deadTokens = (service as unknown as { deadTokens: Set<number> }).deadTokens
     expect(deadTokens.size).toBe(0)
   })
 })

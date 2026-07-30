@@ -520,7 +520,7 @@ describe('session persistence repository (per-session files)', () => {
       'session-3'
     ])
 
-    await repository.deleteProjectSessions('project-a')
+    await expect(repository.deleteProjectSessions('project-a')).resolves.toBeUndefined()
     expect((await repository.loadAll()).sessions.map((session) => session.id)).toEqual([
       'session-3'
     ])

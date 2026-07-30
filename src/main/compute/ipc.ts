@@ -23,9 +23,12 @@ import type {
 } from '../../shared/remote-fs'
 import { encodeRemoteFsError } from '../../shared/remote-fs'
 import { getProjectDbClient } from '../projects/prisma-client'
+import { createLogger, errorLogFields } from '../logger'
 import { resolveDataRoot, resolveStorageRoot } from '../storage-root'
 import { SettingsRepository } from '../settings/repository'
 import { broadcastToRenderers } from '../renderer-broadcast'
+import type { TaskNotificationService } from '../notifications/task-notifications'
+import { buildComputeApprovalBroadcast } from '../notifications/electron-wiring'
 import { ComputeApprovalBroker } from './compute-approval-broker'
 import { ComputeService, type ArtifactResolver } from './compute-service'
 import { ConcurrencyManager } from './concurrency-manager'
@@ -41,6 +44,8 @@ import { getJobHarvestDir } from './harvest-engine'
 // IPC channel names for the renderer job feed (Phase 3d, issue 05).
 export const COMPUTE_JOBS_LIST_CHANNEL = 'compute:jobs:list'
 export const COMPUTE_JOB_UPDATED_CHANNEL = 'compute:job-updated'
+
+const log = createLogger('compute')
 
 // Recursive readdir helper (returns absolute paths of all files).
 const readdirRecursive = async (dir: string): Promise<string[]> => {
@@ -182,7 +187,8 @@ const createComputeHandlers = (
   jobRepository?: ComputeJobRepository,
   onJobUpdated?: (job: ComputeJob) => void,
   artifactResolver?: ArtifactResolver,
-  storageRoot?: string
+  storageRoot?: string,
+  taskNotifications?: Pick<TaskNotificationService, 'handleComputeApproval'>
 ): ComputeHandlers => {
   // The broadcast function sends approval requests to all renderer windows. In tests, callers
   // inject a fake broker so this function is never called directly.
@@ -190,12 +196,19 @@ const createComputeHandlers = (
     injectedBroker ??
     new ComputeApprovalBroker({
       generateId: () => randomUUID(),
-      broadcast: (request: ComputeApprovalRequest) => {
-        // Push the approval card to every focused BrowserWindow.
-        for (const win of BrowserWindow.getAllWindows()) {
-          win.webContents.send('compute:approval-request', request)
-        }
-      },
+      broadcast: taskNotifications
+        ? buildComputeApprovalBroadcast({
+            broadcastToRenderers,
+            taskNotifications,
+            onNotificationError: (error) =>
+              log.warn('compute approval notification failed', errorLogFields(error))
+          })
+        : (request: ComputeApprovalRequest) => {
+            // Tests and isolated registrations without the notification service still receive cards.
+            for (const win of BrowserWindow.getAllWindows()) {
+              win.webContents.send('compute:approval-request', request)
+            }
+          },
       // Wire project-scope grant persistence through the settings repository (issue 05).
       checkProjectGrant: settingsRepository
         ? (grant) => settingsRepository.hasComputeGrant(grant)
@@ -370,7 +383,8 @@ const registerComputeIpcHandlers = (
   // Test seam: when supplied, the IPC handlers are wired to this service instead of the production
   // one constructed by createComputeHandlers. Lets the renderer-callable error wrapper around
   // `compute:list-dir` / `compute:download` be exercised end-to-end against a fake service.
-  injectedService?: ComputeService
+  injectedService?: ComputeService,
+  taskNotifications?: Pick<TaskNotificationService, 'handleComputeApproval'>
 ): {
   computeService: ComputeService
   jobRepository: ComputeJobRepository
@@ -395,7 +409,8 @@ const registerComputeIpcHandlers = (
     jobRepository,
     onJobUpdated,
     artifactResolver,
-    dataRoot
+    dataRoot,
+    taskNotifications
   )
 
   ipcMain.handle('compute:list', () => handlers.list())

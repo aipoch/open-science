@@ -16,11 +16,12 @@ import { afterEach, describe, expect, it, vi } from 'vitest'
 
 import { AcpRuntime } from './runtime'
 import { ContextUsageTracker, type TokenCounter } from './context-usage-tracker'
-import type {
-  AcpContextUsage,
-  AcpPermissionRequest,
-  AcpRuntimeEvent,
-  AcpStateSnapshot
+import {
+  ACP_PROMPT_FAILED_EVENT_TITLE,
+  type AcpContextUsage,
+  type AcpPermissionRequest,
+  type AcpRuntimeEvent,
+  type AcpStateSnapshot
 } from '../../shared/acp'
 import type { ModelReasoningEffort } from '../../shared/reasoning-effort'
 import { terminateProcessTree } from '../process-tree'
@@ -1179,6 +1180,38 @@ describe('ACP runtime session management', () => {
     await vi.waitFor(() => expect(runtime.getSnapshot().status).toBe('closed'))
     await vi.waitFor(() => expect(process.killed).toBe(true))
     expect(runtime.getSnapshot().sessionIds).toEqual([])
+  })
+
+  it('emits a terminal failure for every in-flight prompt before an unexpected close clears state', async () => {
+    const process = new FakeAgentProcess()
+    const promptGate = createDeferred()
+    const fakeAgent = startFakeAgent(process, ['unexpected-close-session'], {
+      onPrompt: () => promptGate.promise
+    })
+    const events: AcpRuntimeEvent[] = []
+    const runtime = new AcpRuntime({
+      appVersion: '0.2.0',
+      defaultCwd: '/workspace',
+      spawnAgent: () => asAgentProcess(process),
+      callbacks: { onEvent: (event) => events.push(event) }
+    })
+    const session = await runtime.createSession({ cwd: '/workspace' })
+    const prompt = runtime.sendPrompt({ sessionId: session.sessionId, text: 'stay pending' })
+    void prompt.catch(() => undefined)
+    await vi.waitFor(() => expect(fakeAgent.prompts).toHaveLength(1))
+
+    process.stdout.end()
+
+    await vi.waitFor(() => expect(runtime.getSnapshot().status).toBe('closed'))
+    expect(events).toContainEqual(
+      expect.objectContaining({
+        kind: 'error',
+        sessionId: session.sessionId,
+        title: ACP_PROMPT_FAILED_EVENT_TITLE,
+        text: 'ACP connection closed'
+      })
+    )
+    promptGate.resolve()
   })
 
   it('shutdownForQuit latches shutting-down so a later connect is refused', async () => {

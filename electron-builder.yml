@@ -122,6 +122,9 @@ mac:
 dmg:
   artifactName: aipoch-${name}-${version}-mac-${arch}.${ext}
 linux:
+  # Keep the installed launcher filename aligned with Electron's Linux app_id/WM_CLASS so desktop
+  # environments associate urgency requests with the existing dock/taskbar entry.
+  syncDesktopName: true
   # snap is intentionally omitted: building it on a stock GitHub runner needs snapcraft + LXD and
   # is flaky in CI. AppImage (portable, runs anywhere) + deb (Debian/Ubuntu) cover the common cases.
   target:

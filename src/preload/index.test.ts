@@ -75,6 +75,8 @@ type PreloadApi = {
   }
   notifications: {
     takePendingOpenSession: () => unknown
+    syncViewState: (state: unknown) => void
+    onViewProbe: (listener: (challengeId: number) => void) => () => void
   }
   cli: {
     getStatus: () => unknown
@@ -428,6 +430,27 @@ const cases: ForwardingCase[] = [
 ]
 
 describe('preload bridge — sessions + agent-framework IPC channels', () => {
+  it('sends desktop-only unread visibility without adding a Web invoke route', () => {
+    const state = { visibleSessionId: 's-1' }
+
+    api.notifications.syncViewState(state)
+
+    expect(sendMock).toHaveBeenCalledWith('notifications:sync-unread-view', state)
+    expect(invokeMock).not.toHaveBeenCalled()
+  })
+
+  it('exposes the unread visibility probe as a narrow renderer event', () => {
+    const listener = vi.fn()
+
+    api.notifications.onViewProbe(listener)
+
+    expect(onMock).toHaveBeenCalledWith('notifications:probe-unread-view', expect.any(Function))
+    const wrappedListener = onMock.mock.calls.at(-1)?.[1] as
+      ((_event: unknown, challengeId: number) => void) | undefined
+    wrappedListener?.({}, 41)
+    expect(listener).toHaveBeenCalledWith(41)
+  })
+
   it('does not expose the legacy half-delete project-session command', () => {
     expect(api.sessions).not.toHaveProperty('deleteProjectSessions')
   })

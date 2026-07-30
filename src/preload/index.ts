@@ -53,7 +53,10 @@ import type {
 } from '../shared/compute'
 import type { DirListing, DownloadDest, LocalFile } from '../shared/remote-fs'
 import type { OpenLogFileResult, RevealLogFileResult } from '../shared/logs'
-import type { OpenSessionFromNotificationRequest } from '../shared/notifications'
+import type {
+  OpenSessionFromNotificationRequest,
+  UnreadTaskViewState
+} from '../shared/notifications'
 import type {
   ProjectDeletedEvent,
   SessionDeletedEvent,
@@ -394,6 +397,10 @@ type OpenScienceAPI = {
     onOpenSession: (listener: () => void) => RemoveListener
     // Returns and clears the conversation a notification click should open, once sessions load.
     takePendingOpenSession: () => Promise<OpenSessionFromNotificationRequest | null>
+    // Projects hydrated navigation state to main; unread ownership never enters the renderer.
+    syncViewState: (state: UnreadTaskViewState) => void
+    // Main requests a fresh DOM/navigation projection before suppressing a terminal unread marker.
+    onViewProbe: (listener: AcpListener<number>) => RemoveListener
   }
   github: {
     getStars: () => Promise<number | null>
@@ -935,7 +942,9 @@ const api: OpenScienceAPI = {
     takePendingOpenSession: () =>
       ipcRenderer.invoke(
         'notifications:take-pending-open-session'
-      ) as Promise<OpenSessionFromNotificationRequest | null>
+      ) as Promise<OpenSessionFromNotificationRequest | null>,
+    syncViewState: (state) => ipcRenderer.send('notifications:sync-unread-view', state),
+    onViewProbe: (listener) => onIpcMessage('notifications:probe-unread-view', listener)
   },
   github: {
     getStars: () => ipcRenderer.invoke('github:get-stars') as Promise<number | null>

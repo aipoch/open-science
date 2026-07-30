@@ -115,7 +115,15 @@ async function startElectronApp(mainEntryPath: string): Promise<void> {
         { detectActiveSessions: computeActiveSessions },
         { createElectronCloseConfirm },
         { installWindowShortcuts },
-        { createAppIconController, buildAppIconPreviews }
+        { createAppIconController, buildAppIconPreviews },
+        { createDesktopAttentionController, wireDesktopAttention },
+        { createDesktopBadgeAdapter, createWindowsBadgeBitmap },
+        { UnreadTaskDbRepository },
+        { createUnreadTaskController, wireUnreadTaskController },
+        { bindUnreadTaskDeletionRuntime },
+        { registerUnreadTaskIpc },
+        { getProjectDbClient },
+        { resolveStorageRoot }
       ] = await Promise.all([
         import('./ipc'),
         import('./windows'),
@@ -130,7 +138,15 @@ async function startElectronApp(mainEntryPath: string): Promise<void> {
         import('./storage/detect-active'),
         import('./window-close-confirm'),
         import('./window-shortcuts'),
-        import('./app-icon')
+        import('./app-icon'),
+        import('./notifications/desktop-attention'),
+        import('./notifications/desktop-badge'),
+        import('./notifications/unread-task-repository'),
+        import('./notifications/unread-task-controller'),
+        import('./notifications/task-notification-runtime'),
+        import('./notifications/unread-task-ipc'),
+        import('./projects/prisma-client'),
+        import('./storage-root')
       ])
 
       // Dev runs get a "(DEV)" suffix so the app name, macOS menu, and per-app paths (logs, userData)
@@ -181,6 +197,11 @@ async function startElectronApp(mainEntryPath: string): Promise<void> {
       const appIconControllerBox: {
         current: ReturnType<typeof createAppIconController> | undefined
       } = { current: undefined }
+      // Unread state restores before the main-window lifecycle is installed. Late-bind its getter so
+      // restoration remains window-independent while later badge/probe calls always target the live window.
+      const mainWindowGetterBox: {
+        current: (() => InstanceType<typeof BrowserWindow> | undefined) | undefined
+      } = { current: undefined }
 
       const webMode = parseWebModeOptions(process.argv)
       // Always install the capture layer BEFORE handlers register: it records ipcMain.handle handlers as
@@ -188,14 +209,65 @@ async function startElectronApp(mainEntryPath: string): Promise<void> {
       // can reach them. It only wraps ipcMain.handle — no server, no cost until something serves.
       const rpcCapture = installRpcCapture(ipcMain)
       // Pass the concrete main entry path so ACP can launch the artifact MCP server from the same bundle.
-      const { runtime, notebook, shutdownCoordinator, taskNotifications, settingsService } =
-        await registerIpcHandlers({
-          mainEntryPath,
-          headless: webMode.headless,
-          onAppIconVariantChanged: (variant) => appIconControllerBox.current?.setVariant(variant),
-          listAppIconPreviews: () => buildAppIconPreviews(nativeImage, iconVariantPaths)
-        })
+      const {
+        runtime,
+        notebook,
+        shutdownCoordinator,
+        taskNotifications,
+        settingsService,
+        sessionPersistenceCoordinator
+      } = await registerIpcHandlers({
+        mainEntryPath,
+        headless: webMode.headless,
+        onAppIconVariantChanged: (variant) => appIconControllerBox.current?.setVariant(variant),
+        listAppIconPreviews: () => buildAppIconPreviews(nativeImage, iconVariantPaths)
+      })
 
+      // The controller must exist before its IPC responder, while the responder calls back into the
+      // controller. This box breaks that startup cycle without exposing unread ownership to renderer.
+      const visibilityProbeBox: {
+        current: ReturnType<typeof registerUnreadTaskIpc> | undefined
+      } = { current: undefined }
+      const unreadTaskRepository = new UnreadTaskDbRepository(() =>
+        getProjectDbClient(resolveStorageRoot())
+      )
+      const unreadTaskController = createUnreadTaskController({
+        headless: webMode.headless,
+        // Only the main conversation window can acknowledge a visible session. A focused preview
+        // window must not clear unread state for the conversation underneath it.
+        isAppFocused: () => mainWindowGetterBox.current?.()?.isFocused() ?? false,
+        repository: unreadTaskRepository,
+        confirmSessionVisible: (sessionId) =>
+          visibilityProbeBox.current?.confirmSessionVisible(sessionId) ?? Promise.resolve(false),
+        badge: createDesktopBadgeAdapter({
+          platform: process.platform,
+          setBadgeCount: (count) => app.setBadgeCount(count),
+          isUnityRunning: () => app.isUnityRunning(),
+          getMainWindow: () => mainWindowGetterBox.current?.(),
+          createWindowsOverlay: (label) =>
+            nativeImage.createFromBitmap(createWindowsBadgeBitmap(label), {
+              width: 16,
+              height: 16,
+              scaleFactor: 1
+            }),
+          onError: (error) => log.warn('desktop unread badge failed', error)
+        }),
+        onError: (error) => log.warn('unread task state failed', error)
+      })
+      await unreadTaskController.restore()
+      // Bind deletion recovery before a window can load Sessions. A complete main-process scan is
+      // the sole authority for pruning unread rows; renderer hydration never projects its catalog.
+      bindUnreadTaskDeletionRuntime({
+        headless: webMode.headless,
+        unreadController: unreadTaskController,
+        unreadTaskRepository,
+        sessionPersistenceCoordinator
+      })
+      visibilityProbeBox.current = registerUnreadTaskIpc({
+        getMainWindow: () => mainWindowGetterBox.current?.(),
+        controller: unreadTaskController,
+        onError: (error) => log.warn('unread task IPC failed', error)
+      })
       // Apply the persisted icon variant now and keep it in sync as windows come and go. Created
       // unconditionally — even a headless launch can later surface a desktop window on a plain second
       // launch (routeSecondInstance -> showMainWindow), and that window plus any live icon-setting
@@ -225,6 +297,8 @@ async function startElectronApp(mainEntryPath: string): Promise<void> {
         routeSecondInstance,
         shutdownCoordinator,
         taskNotifications,
+        unreadTaskController,
+        mainWindowGetterBox,
         settingsService,
         // Running-work snapshot + confirm coordinator, bound here where runtime/notebook are in scope.
         detectActiveSessions: () => computeActiveSessions({ runtime, notebook }),
@@ -236,6 +310,9 @@ async function startElectronApp(mainEntryPath: string): Promise<void> {
             }
           }),
         installAppLifecycle,
+        createDesktopAttentionController,
+        wireDesktopAttention,
+        wireUnreadTaskController,
         log,
         webMode,
         webController,
@@ -250,7 +327,7 @@ async function startElectronApp(mainEntryPath: string): Promise<void> {
     // is bound with the live backend handles; the agent teardown latches shutting-down and awaits the
     // process tree so a Windows taskkill /T completes before app.exit.
     installAppLifecycle: (ctx) => {
-      const { showMainWindow } = ctx.installAppLifecycle({
+      const { showMainWindow, getMainWindow, isMainWindowHidden } = ctx.installAppLifecycle({
         app,
         createMainWindow: ctx.createMainWindow,
         createTray: (handlers) => {
@@ -292,6 +369,31 @@ async function startElectronApp(mainEntryPath: string): Promise<void> {
         createInitialWindow: !ctx.webMode.headless,
         detectActiveSessions: ctx.detectActiveSessions,
         createConfirmClose: ctx.createConfirmClose
+      })
+
+      // Window lifecycle now exists: expose it to the restored controller, reapply any Windows
+      // overlay to the first window, then attach completion/focus/window-recreation events.
+      ctx.mainWindowGetterBox.current = getMainWindow
+      ctx.unreadTaskController.refreshBadge()
+
+      const desktopAttention = ctx.createDesktopAttentionController({
+        platform: process.platform,
+        headless: ctx.webMode.headless,
+        isAppFocused: () => BrowserWindow.getAllWindows().some((window) => window.isFocused()),
+        isMainWindowHidden,
+        getMainWindow,
+        ...(process.platform === 'darwin' ? { dock: app.dock } : {}),
+        onError: (error) => ctx.log.warn('desktop attention failed', error)
+      })
+      ctx.wireUnreadTaskController({
+        app,
+        taskNotifications: ctx.taskNotifications,
+        controller: ctx.unreadTaskController
+      })
+      ctx.wireDesktopAttention({
+        app,
+        taskNotifications: ctx.taskNotifications,
+        controller: desktopAttention
       })
 
       // Clicking a task notification surfaces the app and records which conversation to open. The

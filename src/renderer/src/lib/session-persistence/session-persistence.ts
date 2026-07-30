@@ -188,7 +188,6 @@ const createStoreSaver = (
   }
 }
 
-// Starts session persistence and returns readiness so the workspace can gate early input.
 const useSessionPersistence = (): boolean => {
   const [isReady, setIsReady] = useState(false)
 

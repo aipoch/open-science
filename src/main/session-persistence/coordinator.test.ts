@@ -17,6 +17,7 @@ import {
 } from '../uploads/repository'
 import {
   SessionPersistenceCoordinator,
+  type SessionDeletionHandlers,
   type SessionFileIndex,
   type SessionMutationRepository,
   type SessionProvenancePersistence
@@ -447,8 +448,13 @@ describe('SessionPersistenceCoordinator', () => {
       undefined,
       artifactStorage
     )
+    const reconcile = vi.fn(async () => undefined)
+    coordinator.setSessionDeletionHandlers(createSessionDeletionHandlers({ reconcile }))
 
-    await expect(coordinator.loadAll()).resolves.toBe(result)
+    const loaded = await coordinator.loadAll()
+
+    expect(loaded).toBe(result)
+    expect(reconcile).toHaveBeenCalledWith(['session-1'])
     expect(artifactStorage.reconcileSession).toHaveBeenCalledWith(
       'project-1',
       'session-1',
@@ -1323,10 +1329,15 @@ describe('SessionPersistenceCoordinator', () => {
     const markReconciliationIncomplete = vi.fn()
     const fileIndex = createFileIndex({ markReconciliationIncomplete })
     const coordinator = new SessionPersistenceCoordinator(repository, fileIndex)
+    const reconcile = vi.fn(async () => undefined)
+    coordinator.setSessionDeletionHandlers(createSessionDeletionHandlers({ reconcile }))
 
-    await expect(coordinator.loadAll()).resolves.toBe(result)
+    const loaded = await coordinator.loadAll()
+
+    expect(loaded).toBe(result)
     expect(markReconciliationIncomplete).toHaveBeenCalledOnce()
     expect(fileIndex.reconcileActiveSessions).not.toHaveBeenCalled()
+    expect(reconcile).not.toHaveBeenCalled()
   })
 
   it('marks reconciliation incomplete when startup Provenance recovery fails', async () => {
@@ -1813,6 +1824,133 @@ describe('SessionPersistenceCoordinator', () => {
     await expect(coordinator.saveSession(createSession())).rejects.toThrow(/deleted/)
   })
 
+  it('persists an unread deletion intent before removing one session and commits it afterwards', async () => {
+    const order: string[] = []
+    const repository = createSessionRepository({
+      deleteSession: vi.fn(async () => {
+        order.push('delete-json')
+      })
+    })
+    const coordinator = new SessionPersistenceCoordinator(repository, createFileIndex())
+    coordinator.setSessionDeletionHandlers(
+      createSessionDeletionHandlers({
+        prepare: vi.fn(async (sessionIds) => {
+          order.push(`prepare:${sessionIds.join(',')}`)
+        }),
+        commit: vi.fn(async (sessionIds) => {
+          order.push(`commit:${sessionIds.join(',')}`)
+        })
+      })
+    )
+
+    await coordinator.deleteSession('project-1', 'session-1')
+
+    expect(order).toEqual(['prepare:session-1', 'delete-json', 'commit:session-1'])
+  })
+
+  it('aborts a prepared unread deletion when the authoritative session delete fails', async () => {
+    const repository = createSessionRepository({
+      deleteSession: vi.fn().mockRejectedValue(new Error('disk locked'))
+    })
+    const abort = vi.fn(async () => undefined)
+    const commit = vi.fn(async () => undefined)
+    const coordinator = new SessionPersistenceCoordinator(repository, createFileIndex())
+    coordinator.setSessionDeletionHandlers(createSessionDeletionHandlers({ abort, commit }))
+
+    await expect(coordinator.deleteSession('project-1', 'session-1')).rejects.toThrow('disk locked')
+
+    expect(abort).toHaveBeenCalledWith(['session-1'])
+    expect(commit).not.toHaveBeenCalled()
+  })
+
+  it('prepares every live project session before removing project authority', async () => {
+    const order: string[] = []
+    const repository = createSessionRepository({
+      getProjectSessionDeletionState: vi.fn().mockResolvedValue('live'),
+      loadProjectWithDiagnostics: vi.fn().mockResolvedValue({
+        sessions: [createSession(), createSession({ id: 'session-2' })],
+        isComplete: true
+      }),
+      deleteProjectSessions: vi.fn(async () => {
+        order.push('delete-project-json')
+      })
+    })
+    const coordinator = new SessionPersistenceCoordinator(repository, createFileIndex())
+    coordinator.setSessionDeletionHandlers(
+      createSessionDeletionHandlers({
+        prepare: vi.fn(async (sessionIds) => {
+          order.push(`prepare:${sessionIds.join(',')}`)
+        }),
+        commit: vi.fn(async (sessionIds) => {
+          order.push(`commit:${sessionIds.join(',')}`)
+        })
+      })
+    )
+
+    await coordinator.deleteProjectSessions('project-1')
+
+    expect(order).toEqual([
+      'prepare:session-1,session-2',
+      'delete-project-json',
+      'commit:session-1,session-2'
+    ])
+  })
+
+  it('aborts prepared unread deletion when live project authority remains after failure', async () => {
+    const repository = createSessionRepository({
+      getProjectSessionDeletionState: vi.fn().mockResolvedValue('live'),
+      loadProjectWithDiagnostics: vi.fn().mockResolvedValue({
+        sessions: [createSession()],
+        isComplete: true
+      }),
+      deleteProjectSessions: vi.fn().mockRejectedValue(new Error('directory busy'))
+    })
+    const abort = vi.fn(async () => undefined)
+    const commit = vi.fn(async () => undefined)
+    const coordinator = new SessionPersistenceCoordinator(repository, createFileIndex())
+    coordinator.setSessionDeletionHandlers(createSessionDeletionHandlers({ abort, commit }))
+
+    await expect(coordinator.deleteProjectSessions('project-1')).rejects.toThrow('directory busy')
+
+    expect(abort).toHaveBeenCalledWith(['session-1'])
+    expect(commit).not.toHaveBeenCalled()
+    await expect(coordinator.saveSession(createSession())).resolves.toMatchObject({
+      id: 'session-1'
+    })
+  })
+
+  it('commits unread cleanup without preparing again when replaying a project tombstone', async () => {
+    const repository = createSessionRepository({
+      getProjectSessionDeletionState: vi.fn().mockResolvedValue('prepared'),
+      loadCommittedProjectWithDiagnostics: vi.fn().mockResolvedValue({
+        sessions: [createSession()],
+        isComplete: true
+      })
+    })
+    const prepare = vi.fn(async () => undefined)
+    const commit = vi.fn(async () => undefined)
+    const coordinator = new SessionPersistenceCoordinator(repository, createFileIndex())
+    coordinator.setSessionDeletionHandlers(createSessionDeletionHandlers({ prepare, commit }))
+
+    await coordinator.deleteProjectSessions('project-1')
+
+    expect(prepare).not.toHaveBeenCalled()
+    expect(commit).toHaveBeenCalledWith(['session-1'])
+  })
+
+  it('keeps committed session deletion successful when unread cleanup rejects', async () => {
+    const repository = createSessionRepository()
+    const coordinator = new SessionPersistenceCoordinator(repository, createFileIndex())
+    coordinator.setSessionDeletionHandlers(
+      createSessionDeletionHandlers({
+        commit: vi.fn().mockRejectedValue(new Error('badge database locked'))
+      })
+    )
+
+    await expect(coordinator.deleteSession('project-1', 'session-1')).resolves.toBeUndefined()
+    expect(repository.deleteSession).toHaveBeenCalledWith('project-1', 'session-1')
+  })
+
   it('reconciles surviving sessions after a successful session deletion', async () => {
     const survivor = createSession({ id: 'session-2' })
     const repository = createSessionRepository({
@@ -2000,6 +2138,16 @@ const createFileIndex = (overrides: Partial<SessionFileIndex> = {}): SessionFile
   softDeleteProject: vi.fn().mockResolvedValue('delete-project-operation'),
   reconcileActiveSessions: vi.fn().mockResolvedValue(undefined),
   markReconciliationIncomplete: vi.fn(),
+  ...overrides
+})
+
+const createSessionDeletionHandlers = (
+  overrides: Partial<SessionDeletionHandlers> = {}
+): SessionDeletionHandlers => ({
+  prepare: vi.fn().mockResolvedValue(undefined),
+  commit: vi.fn().mockResolvedValue(undefined),
+  abort: vi.fn().mockResolvedValue(undefined),
+  reconcile: vi.fn().mockResolvedValue(undefined),
   ...overrides
 })
 

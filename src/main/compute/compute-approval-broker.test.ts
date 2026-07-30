@@ -147,6 +147,31 @@ describe('ComputeApprovalBroker', () => {
     expect(broadcastCount).toBe(1) // still only 1 broadcast
   })
 
+  it('forwards approval context only when a card is actually broadcast', async () => {
+    const timer = makeTimer()
+    const broadcasts: unknown[] = []
+    const broker = new ComputeApprovalBroker({
+      generateId: () => 'id-1',
+      broadcast: (request, context) => broadcasts.push({ request, context }),
+      setTimer: timer.set,
+      clearTimer: timer.clear,
+      checkProjectGrant: () => Promise.resolve(false)
+    })
+    const context = {
+      sessionId: 'session-A',
+      projectId: 'project-1',
+      operation: 'call_command'
+    }
+    const request = makeRequest()
+
+    const decision = broker.requestWithContext(request, context)
+    await Promise.resolve()
+
+    expect(broadcasts).toEqual([{ request: { id: 'id-1', ...request }, context }])
+    broker.respond('id-1', 'once')
+    await decision
+  })
+
   it('does NOT persist conversation grants across broker instances (session boundary)', async () => {
     // A new ComputeApprovalBroker has no in-memory grants → must show card again.
     const timer = makeTimer()

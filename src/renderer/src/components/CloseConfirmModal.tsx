@@ -23,8 +23,13 @@ type ActiveRequest = {
 // Subscribes to main's close/quit confirmation requests, lists running work (enriching each
 // session's title from the session store), and replies with the user's choice. Mounted once at
 // the app root. The web build omits the close-confirm bridge entirely (close-to-tray is desktop
-// only), so every call into window.api.window here must tolerate that absence.
-export const CloseConfirmModal = (): React.JSX.Element | null => {
+// only), so every call into window.api.window here must tolerate that absence. onOpenChange also
+// feeds unread visibility projection, preventing a covered conversation from being acknowledged.
+export const CloseConfirmModal = ({
+  onOpenChange
+}: {
+  onOpenChange?: (open: boolean) => void
+}): React.JSX.Element | null => {
   const [request, setRequest] = useState<ActiveRequest | undefined>(undefined)
   const [remember, setRemember] = useState(true)
 
@@ -35,8 +40,9 @@ export const CloseConfirmModal = (): React.JSX.Element | null => {
       windowApi.sendCloseConfirmResponse?.({ requestId: payload.requestId, ack: true })
       setRemember(true)
       setRequest(payload)
+      onOpenChange?.(true)
     })
-  }, [])
+  }, [onOpenChange])
 
   const reply = (choice: CloseConfirmChoice): void => {
     if (request) {
@@ -47,6 +53,7 @@ export const CloseConfirmModal = (): React.JSX.Element | null => {
       })
     }
     setRequest(undefined)
+    onOpenChange?.(false)
   }
 
   const dialogRequest = useRetainedDialogValue(request)

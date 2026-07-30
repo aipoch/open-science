@@ -1,6 +1,7 @@
 import { readFileSync } from 'node:fs'
 import { join } from 'node:path'
 
+import { load } from 'js-yaml'
 import { describe, expect, it } from 'vitest'
 
 import { WINDOWS_CACHE_DANGEROUS_RIGHT_NAMES } from '../src/main/notebook/micromamba-cache'
@@ -40,5 +41,22 @@ describe('electron-builder Windows targets', () => {
       expect(cleanup).toContain(`[System.Security.AccessControl.FileSystemRights]::${right}`)
     }
     expect(cleanup).toContain('Remove-Item -LiteralPath $candidate')
+  })
+})
+
+describe('electron-builder Linux desktop identity', () => {
+  it('keeps Electron and the installed launcher on the same desktop name', () => {
+    const packageJson = JSON.parse(readFileSync(join(process.cwd(), 'package.json'), 'utf8')) as {
+      name: string
+      desktopName: string
+    }
+    const config = load(readFileSync(join(process.cwd(), 'electron-builder.yml'), 'utf8')) as {
+      linux?: { executableName?: string; syncDesktopName?: boolean }
+    }
+    const desktopBaseName = packageJson.desktopName.replace(/\.desktop$/, '')
+    const executableName = config.linux?.executableName ?? packageJson.name
+
+    expect(config.linux?.syncDesktopName).toBe(true)
+    expect(desktopBaseName).toBe(executableName)
   })
 })

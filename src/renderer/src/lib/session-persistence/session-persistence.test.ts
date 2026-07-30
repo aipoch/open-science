@@ -125,7 +125,7 @@ describe('renderer session persistence bridge', () => {
   it('hydrates the store from the per-session load result', async () => {
     const api = createApi()
 
-    await loadPersistedSessions(api)
+    await expect(loadPersistedSessions(api)).resolves.toBeUndefined()
 
     expect(api.loadAll).toHaveBeenCalledOnce()
     expect(useSessionStore.getState().sessions).toHaveLength(1)

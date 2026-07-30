@@ -4,3 +4,9 @@
 export type OpenSessionFromNotificationRequest = {
   sessionId: string
 }
+
+// Renderer-owned visibility evidence. Durable session existence comes from main's complete scan.
+export type UnreadTaskViewState = {
+  challengeId?: number
+  visibleSessionId?: string
+}

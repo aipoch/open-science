@@ -489,7 +489,7 @@ describe('registerAcpIpcHandlers — create-session failure logging', () => {
 // gap that let a connector-sessionId regression slip through green.
 describe('registerAcpIpcHandlers — acp:send-prompt notification tracking', () => {
   it('reverts the tracked prompt when the runtime rejects the send', async () => {
-    const trackPrompt = vi.fn().mockReturnValue({ token: 1, previousToken: undefined })
+    const trackPrompt = vi.fn().mockReturnValue({ token: 1 })
     const untrackPrompt = vi.fn()
     registerWithFakes({ taskNotifications: { trackPrompt, untrackPrompt } })
 
@@ -508,11 +508,11 @@ describe('registerAcpIpcHandlers — acp:send-prompt notification tracking', () 
     // The token the handler got back is the one it reverts, so a terminal event later cannot
     // overwrite the still-running turn's snippet.
     expect(untrackPrompt).toHaveBeenCalledTimes(1)
-    expect(untrackPrompt).toHaveBeenCalledWith('session-1', { token: 1, previousToken: undefined })
+    expect(untrackPrompt).toHaveBeenCalledWith('session-1', { token: 1 })
   })
 
   it('does not revert when the send succeeds (a terminal event will clean up)', async () => {
-    const trackPrompt = vi.fn().mockReturnValue({ token: 1, previousToken: undefined })
+    const trackPrompt = vi.fn().mockReturnValue({ token: 1 })
     const untrackPrompt = vi.fn()
     registerWithFakes({ taskNotifications: { trackPrompt, untrackPrompt } })
 

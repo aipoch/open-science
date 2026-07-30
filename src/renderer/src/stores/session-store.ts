@@ -1011,7 +1011,10 @@ export const useSessionStore = create<SessionStore>((set, get) => ({
       ? requestedSelection
       : hydrated[0]?.id
 
-    set({ sessions: hydrated, selectedSessionId })
+    set({
+      sessions: hydrated,
+      selectedSessionId
+    })
   },
 
   // Applies a durable lifecycle event without letting this client's own save echo replace newer
@@ -2224,10 +2227,15 @@ export const useSessionStore = create<SessionStore>((set, get) => ({
   deleteSession: (sessionId) => {
     set((state) => {
       const deletedSession = state.sessions.find((session) => session.id === sessionId)
+      if (!deletedSession) return state
+
       const sessions = state.sessions.filter((session) => session.id !== sessionId)
 
       if (state.selectedSessionId !== sessionId) {
-        return { sessions, selectedSessionId: state.selectedSessionId }
+        return {
+          sessions,
+          selectedSessionId: state.selectedSessionId
+        }
       }
 
       // Fall back within the deleted session's own project. `sessions` is newest-first, so this picks the
@@ -2237,7 +2245,10 @@ export const useSessionStore = create<SessionStore>((set, get) => ({
         ? sessions.find((session) => session.projectId === deletedSession.projectId)
         : undefined
 
-      return { sessions, selectedSessionId: fallbackSession?.id }
+      return {
+        sessions,
+        selectedSessionId: fallbackSession?.id
+      }
     })
   },
 
@@ -2245,6 +2256,8 @@ export const useSessionStore = create<SessionStore>((set, get) => ({
   removeSessionsForProject: (projectId) => {
     set((state) => {
       const sessions = state.sessions.filter((session) => session.projectId !== projectId)
+      if (sessions.length === state.sessions.length) return state
+
       const selectedRemoved = !sessions.some((session) => session.id === state.selectedSessionId)
 
       return {

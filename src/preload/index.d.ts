@@ -51,7 +51,10 @@ import type {
 } from '../shared/compute'
 import type { DirListing, DownloadDest, LocalFile } from '../shared/remote-fs'
 import type { OpenLogFileResult, RevealLogFileResult } from '../shared/logs'
-import type { OpenSessionFromNotificationRequest } from '../shared/notifications'
+import type {
+  OpenSessionFromNotificationRequest,
+  UnreadTaskViewState
+} from '../shared/notifications'
 import type {
   ProjectDeletedEvent,
   SessionDeletedEvent,
@@ -354,6 +357,9 @@ interface OpenScienceAPI {
   notifications: {
     onOpenSession(listener: () => void): RemoveListener
     takePendingOpenSession(): Promise<OpenSessionFromNotificationRequest | null>
+    // Electron-only. The Web bridge intentionally omits native unread acknowledgement.
+    syncViewState?(state: UnreadTaskViewState): void
+    onViewProbe?(listener: AcpListener<number>): RemoveListener
   }
   github: {
     getStars(): Promise<number | null>

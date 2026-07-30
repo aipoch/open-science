@@ -16,7 +16,7 @@ export type ComputeApprovalContext = {
 
 type ComputeApprovalBrokerDeps = {
   // Pushes a pending approval request to the renderer.
-  broadcast: (request: ComputeApprovalRequest) => void
+  broadcast: (request: ComputeApprovalRequest, context?: ComputeApprovalContext) => void
   // Injectable for deterministic tests; defaults to crypto.randomUUID.
   generateId: () => string
   // How long to wait before auto-denying (default: 5 minutes).
@@ -75,13 +75,16 @@ export class ComputeApprovalBroker {
 
   // Broadcasts an approval request and resolves once the renderer responds (or the timeout denies).
   // Does NOT check grants — use requestWithContext for that.
-  request(info: Omit<ComputeApprovalRequest, 'id'>): Promise<ComputeApprovalDecision> {
+  request(
+    info: Omit<ComputeApprovalRequest, 'id'>,
+    context?: ComputeApprovalContext
+  ): Promise<ComputeApprovalDecision> {
     const id = this.deps.generateId()
 
     return new Promise<ComputeApprovalDecision>((resolve) => {
       const timer = this.setTimer(() => this.settle(id, 'deny'), this.timeoutMs)
       this.pending.set(id, { resolve, timer })
-      this.deps.broadcast({ id, ...info })
+      this.deps.broadcast({ id, ...info }, context)
     })
   }
 
@@ -105,7 +108,7 @@ export class ComputeApprovalBroker {
     if (this.conversationGrants.has(convKey)) return 'conversation'
 
     // ── no grant — show approval card ─────────────────────────────────────────────
-    const decision = await this.request(info)
+    const decision = await this.request(info, ctx)
 
     // Record grant if applicable.
     if (decision === 'conversation') {

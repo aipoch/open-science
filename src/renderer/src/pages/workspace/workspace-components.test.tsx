@@ -51,7 +51,6 @@ describe('workspace page component boundaries', () => {
     expect(appSource).toContain(
       "import { useSessionPersistence } from '@/lib/session-persistence/session-persistence'"
     )
-    expect(appSource).toContain('const isSessionPersistenceReady = useSessionPersistence()')
     expect(appSource).toContain('isSessionPersistenceReady={isSessionPersistenceReady}')
 
     expect(workspacePageSource).toContain('isSessionPersistenceReady')

@@ -134,7 +134,8 @@ class SessionRepository {
 
   // Loads every per-session file plus the manifest.
   async loadAll(): Promise<LoadAllSessionsResult> {
-    return (await this.loadAllWithDiagnostics()).result
+    const scan = await this.loadAllWithDiagnostics()
+    return scan.result
   }
 
   // Loads one durable session directly instead of scanning every project/session file. Reviewer fix

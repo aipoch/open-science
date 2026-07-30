@@ -211,6 +211,7 @@ export const WEB_EVENT_CHANNELS = {
   'notebook.onChanged': 'notebook:changed',
   'notebookEnv.onProgress': 'notebook-env:progress',
   'notifications.onOpenSession': 'notifications:open-session',
+  'notifications.onViewProbe': 'notifications:probe-unread-view',
   'projectFiles.onChanged': 'project-files:changed',
   'projects.onCreated': 'project:created',
   'projects.onDeleted': 'project:deleted',

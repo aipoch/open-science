@@ -103,6 +103,13 @@ type ArtifactStorageReconciler = {
   >
 }
 
+type SessionDeletionHandlers = {
+  prepare(sessionIds: string[]): Promise<void>
+  commit(sessionIds: string[]): Promise<void>
+  abort(sessionIds: string[]): Promise<void>
+  reconcile(existingSessionIds: string[]): Promise<void>
+}
+
 const hasLegacySessionUpload = (session: PersistedChatSession): boolean =>
   [...session.messages, ...(session.conversationGraph?.messages ?? [])].some((message) =>
     message.uploads?.some((upload) => !upload.versionId)
@@ -220,6 +227,7 @@ class SessionPersistenceCoordinator {
   private readonly deletedSessions = new Set<string>()
   private readonly deletedProjects = new Set<string>()
   private destructiveStartupWindowOpen = true
+  private sessionDeletionHandlers: SessionDeletionHandlers | undefined
 
   constructor(
     private readonly repository: SessionMutationRepository,
@@ -229,6 +237,12 @@ class SessionPersistenceCoordinator {
     private readonly uploads?: SessionUploadPersistence,
     private readonly artifactStorage?: ArtifactStorageReconciler
   ) {}
+
+  // Binds unread deletion recovery to the authoritative Session mutation queue. Reconciliation is
+  // called only with a complete live Session catalog.
+  setSessionDeletionHandlers(handlers: SessionDeletionHandlers): void {
+    this.sessionDeletionHandlers = handlers
+  }
 
   /**
    * Loads durable sessions, reconciles Upload storage, and backfills the file projection only after a
@@ -250,6 +264,13 @@ class SessionPersistenceCoordinator {
         // a soft-deleted owner whose JSON was merely unreadable during this scan.
         this.fileIndex.markReconciliationIncomplete()
         return result
+      }
+
+      try {
+        await this.sessionDeletionHandlers?.reconcile(sessions.map((session) => session.id))
+      } catch (error) {
+        // Unread metadata is a recoverable projection and must not block Session hydration.
+        console.error('[session-persistence] unread deletion reconciliation failed', error)
       }
 
       try {
@@ -471,19 +492,26 @@ class SessionPersistenceCoordinator {
   ): Promise<ProjectSessionDeletionResult> {
     return this.enqueue(async () => {
       this.deletedProjects.add(projectId)
+      let deletedSessionIds: string[] = []
+      let deletionPrepared = false
 
       try {
         if (options.requireExistingUploadAuthority && !this.uploads) {
           throw new Error('Upload recovery is unavailable for an orphaned Project tombstone.')
         }
         const deletionState = await this.repository.getProjectSessionDeletionState(projectId)
+        // Read the same live or committed authority used by Project deletion before its atomic
+        // transition. Partial scans still contribute safe IDs; a later complete global scan removes
+        // any unread rows that could not be named here.
+        const scan =
+          deletionState === 'legacy-committed' || deletionState === 'prepared'
+            ? await this.repository.loadCommittedProjectWithDiagnostics(projectId)
+            : await this.repository.loadProjectWithDiagnostics(projectId)
+        deletedSessionIds = [...new Set(scan.sessions.map((session) => session.id))]
+
         if (this.uploads && deletionState !== 'prepared') {
           // Terminal deletion is the final point at which Session JSON and Upload SQLite authority
           // coexist. Reconcile retained live-save copies before either authority is removed.
-          const scan =
-            deletionState === 'legacy-committed'
-              ? await this.repository.loadCommittedProjectWithDiagnostics(projectId)
-              : await this.repository.loadProjectWithDiagnostics(projectId)
           if (!scan.isComplete) {
             if (options.requireExistingUploadAuthority) {
               throw new Error(
@@ -516,6 +544,7 @@ class SessionPersistenceCoordinator {
                 // derived index deletion now so a recovered Version cannot remain visible for a
                 // logically deleted Project whose legacy tombstone must be retained.
                 await this.fileIndex.softDeleteProject(projectId)
+                await this.notifySessionsDeleted(deletedSessionIds)
                 return { status: 'orphan-retained', reason: 'missing-upload-authority' }
               }
               throw error
@@ -530,6 +559,12 @@ class SessionPersistenceCoordinator {
         if (deletionState === 'legacy-committed') {
           await this.repository.markCommittedProjectSessionsPrepared(projectId)
         }
+        // Only live authority needs a pre-commit intent. Replayed committed tombstones are already
+        // absent from the live catalog and can be cleaned directly after their retry succeeds.
+        if (deletionState === 'live' || deletionState === 'absent') {
+          await this.sessionDeletionHandlers?.prepare(deletedSessionIds)
+          deletionPrepared = true
+        }
         // The marked directory rename is the sole authoritative commit. Derived index deletion runs
         // afterward so any failure is replayable from the durable Project intent and tombstone.
         await this.repository.deleteProjectSessions(projectId)
@@ -538,6 +573,9 @@ class SessionPersistenceCoordinator {
         try {
           const state = await this.repository.getProjectSessionDeletionState(projectId)
           if (state === 'live' || state === 'absent') {
+            if (deletionPrepared) {
+              await this.sessionDeletionHandlers?.abort(deletedSessionIds).catch(() => undefined)
+            }
             this.deletedProjects.delete(projectId)
           }
         } catch {
@@ -552,6 +590,7 @@ class SessionPersistenceCoordinator {
         sources: ['artifact', 'upload'],
         kind: 'reset'
       })
+      await this.notifySessionsDeleted(deletedSessionIds)
       return { status: 'completed' }
     })
   }
@@ -655,6 +694,7 @@ class SessionPersistenceCoordinator {
       let token: ManagedFileSoftDeleteToken | undefined
       let receipt: SessionDeletionReceipt = { kind: 'ordinary', projectId, sessionId }
       let jsonDeleted = false
+      let deletionPrepared = false
 
       try {
         const loadedSession = await this.repository.loadSessionWithDiagnostics(projectId, sessionId)
@@ -671,12 +711,17 @@ class SessionPersistenceCoordinator {
         if (receipt.kind === 'ordinary') {
           token = await this.fileIndex.softDeleteSession(projectId, sessionId)
         }
+        await this.sessionDeletionHandlers?.prepare([sessionId])
+        deletionPrepared = true
         await this.repository.deleteSession(projectId, sessionId)
         jsonDeleted = true
         await this.provenance?.completeSessionDeletion(receipt)
       } catch (error) {
         try {
           if (!jsonDeleted) {
+            if (deletionPrepared) {
+              await this.sessionDeletionHandlers?.abort([sessionId]).catch(() => undefined)
+            }
             if (receipt.kind === 'retained') {
               await this.provenance?.abortSessionDeletion(receipt)
             }
@@ -736,6 +781,7 @@ class SessionPersistenceCoordinator {
         sources: ['artifact', 'upload'],
         kind: receipt.kind === 'retained' ? 'upsert' : 'delete'
       })
+      await this.notifySessionsDeleted([sessionId])
     })
   }
 
@@ -759,6 +805,16 @@ class SessionPersistenceCoordinator {
       // A closed window or test sink may reject synchronously after the durable mutation succeeds.
     }
   }
+
+  // Runs only after authoritative Session deletion commits. Cleanup failures retain durable intent
+  // for the next complete catalog reconciliation and never roll back the user-visible deletion.
+  private async notifySessionsDeleted(sessionIds: string[]): Promise<void> {
+    try {
+      await this.sessionDeletionHandlers?.commit(sessionIds)
+    } catch {
+      // The intent remains durable and a later complete Session scan retries the projection cleanup.
+    }
+  }
 }
 
 const sessionKey = (projectId: string, sessionId: string): string => `${projectId}:${sessionId}`
@@ -766,6 +822,7 @@ const sessionKey = (projectId: string, sessionId: string): string => `${projectI
 export { SessionPersistenceCoordinator }
 export type {
   ProjectSessionDeletionResult,
+  SessionDeletionHandlers,
   SessionFileIndex,
   SessionMutationRepository,
   SessionProvenancePersistence
