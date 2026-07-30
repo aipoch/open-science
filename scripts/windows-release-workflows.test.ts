@@ -70,6 +70,10 @@ describe('post-merge Windows validation', () => {
 
     expect(upgrade['runs-on']).toBe('windows-latest')
     expect(upgrade.needs).toBe('build')
+    expect(findStep(upgrade, 'Setup Node')).toMatchObject({
+      uses: 'actions/setup-node@v7',
+      with: { 'node-version': 22 }
+    })
     expect(findStep(upgrade, 'Download current Windows installer').uses).toBe(
       'actions/download-artifact@v8'
     )

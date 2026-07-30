@@ -48,6 +48,11 @@ jobs:
       - name: Checkout
         uses: actions/checkout@v7
 
+      - name: Setup Node
+        uses: actions/setup-node@v7
+        with:
+          node-version: 22
+
       - name: Download current Windows installer
         uses: actions/download-artifact@v8
         with:
