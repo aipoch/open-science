@@ -22,6 +22,20 @@ import os, re, shlex, sys, warnings
 warnings.filterwarnings("ignore", message=".*is non-interactive, and thus cannot be shown")
 
 def _guard_path(value):
+    if isinstance(value, int):
+        if sys.platform == "darwin":
+            try:
+                import fcntl
+                descriptor_path = fcntl.fcntl(value, 50, bytes(1024)).split(bytes([0]), 1)[0]
+                if descriptor_path:
+                    return os.path.normcase(os.path.realpath(os.fsdecode(descriptor_path)))
+            except (ImportError, OSError):
+                pass
+        for directory in ("/proc/self/fd", "/dev/fd"):
+            descriptor_path = os.path.join(directory, str(value))
+            if os.path.exists(descriptor_path):
+                return os.path.normcase(os.path.realpath(descriptor_path))
+        raise TypeError("the file descriptor cannot be resolved to a path")
     return os.path.normcase(os.path.realpath(os.path.abspath(os.fspath(value))))
 
 _protected_dirs = [
@@ -67,6 +81,58 @@ def _blocked_environment_mutation(*_args, **_kwargs):
 
 def _command_name(value):
     return os.path.basename(str(value).strip("\"'")).casefold()
+
+def _package_words_mutate(words):
+    if not words:
+        return False
+    normalized = [part.decode(errors="replace") if isinstance(part, bytes) else str(part) for part in words]
+    command_index = 0
+    while command_index < len(normalized):
+        name = _command_name(normalized[command_index]).removesuffix(".exe")
+        if name not in ("sudo", "env", "command", "exec"):
+            break
+        command_index += 1
+        while command_index < len(normalized) and (
+            normalized[command_index].startswith("-") or "=" in normalized[command_index]
+        ):
+            command_index += 1
+    if command_index >= len(normalized):
+        return False
+    executable = _command_name(normalized[command_index]).removesuffix(".exe")
+    argv = normalized[command_index:]
+    if executable in ("sh", "bash", "zsh") and "-c" in argv:
+        index = argv.index("-c")
+        return _command_mutates_packages(argv[index + 1] if index + 1 < len(argv) else "")
+    if executable in ("cmd",) and any(part.casefold() == "/c" for part in argv):
+        index = next(i for i, part in enumerate(argv) if part.casefold() == "/c")
+        return _command_mutates_packages(" ".join(argv[index + 1:]))
+    if executable in ("powershell", "pwsh"):
+        flags = [part.casefold() for part in argv]
+        if "-command" in flags or "-c" in flags:
+            index = flags.index("-command") if "-command" in flags else flags.index("-c")
+            return _command_mutates_packages(" ".join(argv[index + 1:]))
+    installers = {
+        "micromamba", "mamba", "conda", "pip", "pip3", "pipx", "uv", "poetry",
+        "python", "python3", "py", "r", "rscript", "node", "nodejs",
+    }
+    is_installer = executable in installers or bool(re.fullmatch(r"python\d+(?:\.\d+)*", executable))
+    return is_installer and bool(_package_mutation_command.search(" ".join(argv)))
+
+def _command_mutates_packages(command):
+    if isinstance(command, (list, tuple)):
+        return _package_words_mutate(command)
+    lexer = shlex.shlex(_command_text(command), posix=True, punctuation_chars=";&|")
+    lexer.whitespace_split = True
+    lexer.commenters = ""
+    current = []
+    for token in lexer:
+        if token in (";", "&&", "||", "|"):
+            if _package_words_mutate(current):
+                return True
+            current = []
+        else:
+            current.append(token)
+    return _package_words_mutate(current)
 
 def _text_references_managed_runtime(text):
     comparable = os.path.normcase(str(text)).replace("\\", "/")
@@ -185,7 +251,7 @@ def _command_writes_managed_runtime(command):
 def _protected_paths_audit(event, args):
     if event in ("subprocess.Popen", "os.system", "os.posix_spawn", "os.exec") and args:
         command = args[1] if event in ("subprocess.Popen", "os.posix_spawn", "os.exec") and len(args) > 1 else args[0]
-        if _package_mutation_command.search(_command_text(command)):
+        if _command_mutates_packages(command):
             _blocked_environment_mutation()
         if _command_writes_managed_runtime(command):
             _blocked_environment_mutation()

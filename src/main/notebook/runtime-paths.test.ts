@@ -363,12 +363,16 @@ describe('repair-required registry', () => {
     expect(readRepairRequired(root)).toEqual(['default-r'])
   })
 
-  it('returns an empty list for a missing or malformed registry file', () => {
+  it('treats a missing registry as empty but a malformed registry as a global protected block', () => {
     const root = makeRoot()
     expect(readRepairRequired(root)).toEqual([])
     writeFileSync(join(root, '.repair-required.json'), 'not json', 'utf8')
-    expect(readRepairRequired(root)).toEqual([])
-    expect(isRepairRequired(root, 'anything')).toBe(false)
+    expect(() => readRepairRequired(root)).toThrow(/RUNTIME_REPAIR_REGISTRY_CORRUPT/)
+    expect(isRepairRequired(root, 'anything')).toBe(true)
+    expect(isProtectedIdentityRepairRequired(root, 'anything')).toBe(true)
+    expect(() => addRepairRequired(root, 'default-r')).toThrow(/RUNTIME_REPAIR_REGISTRY_CORRUPT/)
+    expect(() => clearRepairRequired(root, 'default-r')).toThrow(/RUNTIME_REPAIR_REGISTRY_CORRUPT/)
+    expect(readFileSync(join(root, '.repair-required.json'), 'utf8')).toBe('not json')
   })
 
   it('keeps protected identity changes stronger than interrupted-install markers', () => {

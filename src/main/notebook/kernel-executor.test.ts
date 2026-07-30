@@ -1,6 +1,6 @@
 import type { ChildProcessWithoutNullStreams } from 'node:child_process'
 import { existsSync, realpathSync } from 'node:fs'
-import { mkdir, mkdtemp, readFile, rm, symlink, writeFile } from 'node:fs/promises'
+import { chmod, mkdir, mkdtemp, readFile, rm, stat, symlink, writeFile } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { dirname, join, resolve, win32 } from 'node:path'
 import { afterEach, describe, expect, it, vi } from 'vitest'
@@ -666,6 +666,17 @@ posixGate('NotebookKernelExecutor (real Python loop mutation policy)', () => {
     })
 
     try {
+      const echoResult = await executor.execute({
+        ...request,
+        code:
+          `import subprocess\n` +
+          `completed = subprocess.run(["echo", "pip install pandas"], stdout=subprocess.PIPE, text=True, check=True)\n` +
+          `print(completed.stdout.strip())`,
+        language: 'python'
+      })
+      expect(echoResult.status).toBe('completed')
+      expect(echoResult.stdout).toContain('pip install pandas')
+
       const venvResult = await executor.execute({
         ...request,
         code: `getattr(__import__("ve" + "nv"), "create")("blocked-env")`,
@@ -753,6 +764,24 @@ posixGate('NotebookKernelExecutor (real Python loop mutation policy)', () => {
       expect(truncateResult.traceback).toMatch(/manage_packages/)
       expect(await readFile(truncatePath, 'utf8')).toBe('unchanged')
 
+      const descriptorPath = join(request.runtimeRoot, 'descriptor-mode-python.txt')
+      await writeFile(descriptorPath, 'unchanged', 'utf8')
+      await chmod(descriptorPath, 0o700)
+      const descriptorResult = await executor.execute({
+        ...request,
+        code:
+          `import os\n` +
+          `descriptor = os.open(${JSON.stringify(descriptorPath)}, os.O_RDONLY)\n` +
+          `try:\n` +
+          `    os.fchmod(descriptor, 0o600)\n` +
+          `finally:\n` +
+          `    os.close(descriptor)`,
+        language: 'python'
+      })
+      expect(descriptorResult.status).toBe('failed')
+      expect(descriptorResult.traceback).toMatch(/manage_packages/)
+      expect((await stat(descriptorPath)).mode & 0o777).toBe(0o700)
+
       const posixSpawnPath = join(request.runtimeRoot, 'blocked-from-posix-spawn.txt')
       const posixSpawnResult = await executor.execute({
         ...request,
@@ -782,6 +811,14 @@ describe.skipIf(!rExecutable || !rScriptExecutable)('NotebookKernelExecutor (rea
     })
 
     try {
+      const echoResult = await executor.execute({
+        ...request,
+        code: 'output <- system2("echo", "pip install pandas", stdout=TRUE); cat(output)',
+        language: 'r'
+      })
+      expect(echoResult.status).toBe('completed')
+      expect(echoResult.stdout).toContain('pip install pandas')
+
       const result = await executor.execute({
         ...request,
         code: 'utils::install.packages("dplyr")',
@@ -873,6 +910,18 @@ describe.skipIf(!rExecutable || !rScriptExecutable)('NotebookKernelExecutor (rea
       expect(result.status).toBe('failed')
       expect(result.traceback).toMatch(/manage_packages/)
       expect(existsSync(blockedPath)).toBe(false)
+
+      const descriptorPath = join(request.runtimeRoot, 'descriptor-mode-r.txt')
+      await writeFile(descriptorPath, 'unchanged', 'utf8')
+      await chmod(descriptorPath, 0o700)
+      const descriptorResult = await executor.execute({
+        ...request,
+        code: `Sys.chmod(${JSON.stringify(descriptorPath)}, mode="0600")`,
+        language: 'r'
+      })
+      expect(descriptorResult.status).toBe('failed')
+      expect(descriptorResult.traceback).toMatch(/manage_packages/)
+      expect((await stat(descriptorPath)).mode & 0o777).toBe(0o700)
     } finally {
       await executor.shutdown()
     }
@@ -1412,6 +1461,47 @@ describe('NotebookKernelExecutor repl kind (real repl_loop.js)', () => {
       await executor.shutdown()
     }
   })
+
+  it.skipIf(process.platform === 'win32')(
+    'allows read-only child argv but blocks descriptor permission changes in the managed runtime',
+    async () => {
+      cwdDir = await mkdtemp(join(tmpdir(), 'os-kernel-repl-runtime-guard-'))
+      const request = baseRequest(cwdDir)
+      const descriptorPath = join(request.runtimeRoot, 'descriptor-mode-node.txt')
+      await mkdir(request.runtimeRoot, { recursive: true })
+      await writeFile(descriptorPath, 'unchanged', 'utf8')
+      await chmod(descriptorPath, 0o700)
+      const executor = new NotebookKernelExecutor({ replLoopPath: REPL_LOOP, platform: 'linux' })
+      try {
+        const echoResult = await executor.execute({
+          ...request,
+          code:
+            `const { execFileSync } = require('node:child_process'); ` +
+            `return execFileSync('echo', ['pip install pandas'], { encoding: 'utf8' }).trim()`,
+          kind: 'repl'
+        })
+        expect(echoResult.status, echoResult.traceback).toBe('completed')
+        expect(echoResult.outputs).toContainEqual({
+          type: 'display',
+          data: { 'text/plain': 'pip install pandas' }
+        })
+
+        const descriptorResult = await executor.execute({
+          ...request,
+          code:
+            `const fs = require('node:fs'); ` +
+            `const fd = fs.openSync(${JSON.stringify(descriptorPath)}, 'r'); ` +
+            `try { fs.fchmodSync(fd, 0o600) } finally { fs.closeSync(fd) }`,
+          kind: 'repl'
+        })
+        expect(descriptorResult.status).toBe('failed')
+        expect(descriptorResult.traceback).toMatch(/manage_packages/)
+        expect((await stat(descriptorPath)).mode & 0o777).toBe(0o700)
+      } finally {
+        await executor.shutdown()
+      }
+    }
+  )
 })
 
 // -- Readiness gate: no spawn, no python3 required. -------------------------------------------------

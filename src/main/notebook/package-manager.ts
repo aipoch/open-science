@@ -816,7 +816,11 @@ export async function installPackages(
     const mm = deps.micromamba ?? resolveMicromamba()
     if (!mm) return { ok: false, needsRestart: false, log: '', error: 'micromamba not found.' }
     const readIdentity = deps.readCondaPackageIdentity ?? readCondaPackageIdentity
-    const installedRBaseIdentity = isDefaultEnv ? undefined : readIdentity(prefix, 'r-base')
+    // A Python binding may legitimately target default-r when that prefix also exposes Python. Only
+    // default-python is known not to need r-base protection; every other Python Conda prefix must be
+    // inspected so the request language cannot bypass the shared interpreter invariant.
+    const installedRBaseIdentity =
+      envName === DEFAULT_PY_ENV ? undefined : readIdentity(prefix, 'r-base')
     if (installedRBaseIdentity && !hasVerifiableCondaBuild(installedRBaseIdentity)) {
       return {
         ok: false,

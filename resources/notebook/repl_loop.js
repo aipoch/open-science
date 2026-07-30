@@ -73,19 +73,82 @@ const powerShellEncodedSource = (words, commandIndex = 0) => {
     : undefined
 }
 
-const assertPackageCommandAllowed = (command, args) => {
-  const argv = Array.isArray(args) ? args.map(String) : []
-  const executable = path
-    .basename(String(command ?? ''))
-    .replace(/^['"]|['"]$/gu, '')
-    .toLowerCase()
-  const encodedSource = /^(?:powershell|pwsh)(?:\.exe)?$/u.test(executable)
-    ? powerShellEncodedSource([command, ...argv])
-    : undefined
-  if (
-    packageMutationCommand.test(commandText(command, args)) ||
-    (encodedSource !== undefined && packageMutationCommand.test(encodedSource))
-  ) {
+const packageInstallerExecutables = new Set([
+  'micromamba',
+  'mamba',
+  'conda',
+  'pip',
+  'pip3',
+  'pipx',
+  'uv',
+  'poetry',
+  'python',
+  'python3',
+  'py',
+  'r',
+  'rscript'
+])
+
+const packageWordsMutate = (rawWords) => {
+  const words = rawWords
+    .filter((word) => word !== undefined && word !== null)
+    .map((word) => String(word))
+  let commandIndex = 0
+  while (commandIndex < words.length) {
+    const executable = commandName(words[commandIndex]).replace(/\.exe$/u, '')
+    if (executable === 'sudo') {
+      commandIndex += 1
+      while (commandIndex < words.length && words[commandIndex].startsWith('-')) commandIndex += 1
+      continue
+    }
+    if (executable === 'env') {
+      commandIndex += 1
+      while (
+        commandIndex < words.length &&
+        (words[commandIndex].startsWith('-') ||
+          /^[A-Za-z_][A-Za-z0-9_]*=/u.test(words[commandIndex]))
+      ) {
+        commandIndex += 1
+      }
+      continue
+    }
+    if (executable === 'command' || executable === 'exec') {
+      commandIndex += 1
+      while (commandIndex < words.length && words[commandIndex].startsWith('-')) commandIndex += 1
+      continue
+    }
+    break
+  }
+  if (commandIndex >= words.length) return false
+
+  const executable = commandName(words[commandIndex]).replace(/\.exe$/u, '')
+  const argv = words.slice(commandIndex + 1)
+  const shellFlag = argv.findIndex((word) => /^-c$/u.test(word))
+  if (/^(?:bash|sh|zsh)$/u.test(executable) && shellFlag >= 0) {
+    return packageShellMutates(argv[shellFlag + 1] ?? '')
+  }
+  const cmdFlag = argv.findIndex((word) => /^\/c$/iu.test(word))
+  if (executable === 'cmd' && cmdFlag >= 0) {
+    return packageShellMutates(argv.slice(cmdFlag + 1).join(' '))
+  }
+  if (/^(?:powershell|pwsh)$/u.test(executable)) {
+    const payload = powerShellInvocationSource(words, commandIndex)
+    return payload !== undefined && packageShellMutates(payload)
+  }
+  return (
+    (packageInstallerExecutables.has(executable) || /^python\d+(?:\.\d+)*$/u.test(executable)) &&
+    packageMutationCommand.test([words[commandIndex], ...argv].join(' '))
+  )
+}
+
+const packageShellMutates = (source) =>
+  shellCommandSegments(String(source)).some((segment) => packageWordsMutate(shellWords(segment)))
+
+const assertPackageCommandAllowed = (command, args, shellCommand = false) => {
+  const mutates = shellCommand
+    ? packageShellMutates(command)
+    : packageWordsMutate([command, ...(Array.isArray(args) ? args : [])])
+  if (mutates) {
     throw new Error(
       'Package/environment mutation is not allowed in the control REPL; use manage_packages.'
     )
@@ -96,7 +159,7 @@ const childProcess = require('node:child_process')
 for (const method of ['exec', 'execSync']) {
   const original = childProcess[method]
   childProcess[method] = function guardedExec(command, ...args) {
-    assertPackageCommandAllowed(command)
+    assertPackageCommandAllowed(command, [], true)
     assertRuntimeProcessCommandAllowed(command, [], true)
     return original.call(this, command, ...args)
   }
@@ -134,9 +197,24 @@ workerThreads.Worker = class GuardedWorker {
 // process source policy. This catches paths assembled dynamically inside the persistent REPL and is
 // the hard backstop on platforms without sandbox-exec.
 const runtimeRootValue = process.env.OPEN_SCIENCE_RUNTIME_DIR
+const descriptorGuardPaths = new Map()
 const canonicalGuardPath = (value, cwd = process.cwd()) => {
-  if (typeof value === 'number' || value === undefined || value === null) return undefined
+  if (value === undefined || value === null) return undefined
   let raw = value
+  if (typeof raw === 'number') {
+    const trackedPath = descriptorGuardPaths.get(raw)
+    if (trackedPath) {
+      raw = trackedPath
+    } else {
+      const descriptorPath =
+        process.platform === 'linux' ? `/proc/self/fd/${raw}` : `/dev/fd/${raw}`
+      try {
+        raw = fs.realpathSync.native(descriptorPath)
+      } catch {
+        return undefined
+      }
+    }
+  }
   if (raw instanceof URL) raw = fileURLToPath(raw)
   if (Buffer.isBuffer(raw)) raw = raw.toString()
   if (typeof raw !== 'string') return undefined
@@ -683,6 +761,8 @@ for (const method of [
   'truncateSync',
   'chmod',
   'chmodSync',
+  'fchmod',
+  'fchmodSync',
   'chown',
   'chownSync'
 ]) {
@@ -729,12 +809,43 @@ for (const method of ['symlink', 'symlinkSync']) {
     return original.call(this, source, destination, ...args)
   }
 }
-for (const method of ['open', 'openSync']) {
-  const original = fs[method]
-  fs[method] = function guardedFsOpen(target, flags, ...args) {
-    if (writeOpenFlags(flags)) assertRuntimeWriteAllowed(target)
-    return original.call(this, target, flags, ...args)
+const originalOpenSync = fs.openSync
+fs.openSync = function guardedOpenSync(target, flags, ...args) {
+  if (writeOpenFlags(flags)) assertRuntimeWriteAllowed(target)
+  const descriptor = originalOpenSync.call(this, target, flags, ...args)
+  descriptorGuardPaths.set(descriptor, canonicalGuardPath(target))
+  return descriptor
+}
+const originalOpen = fs.open
+fs.open = function guardedOpen(target, flags, ...args) {
+  if (writeOpenFlags(flags)) assertRuntimeWriteAllowed(target)
+  const callbackIndex = args.findLastIndex((value) => typeof value === 'function')
+  if (callbackIndex >= 0) {
+    const callback = args[callbackIndex]
+    args[callbackIndex] = function trackedOpenCallback(error, descriptor, ...callbackArgs) {
+      if (!error && typeof descriptor === 'number') {
+        descriptorGuardPaths.set(descriptor, canonicalGuardPath(target))
+      }
+      return callback.call(this, error, descriptor, ...callbackArgs)
+    }
   }
+  return originalOpen.call(this, target, flags, ...args)
+}
+const originalCloseSync = fs.closeSync
+fs.closeSync = function trackedCloseSync(descriptor, ...args) {
+  try {
+    return originalCloseSync.call(this, descriptor, ...args)
+  } finally {
+    descriptorGuardPaths.delete(descriptor)
+  }
+}
+const originalClose = fs.close
+fs.close = function trackedClose(descriptor, callback) {
+  if (typeof callback !== 'function') return originalClose.call(this, descriptor, callback)
+  return originalClose.call(this, descriptor, function trackedCloseCallback(error) {
+    descriptorGuardPaths.delete(descriptor)
+    return callback.call(this, error)
+  })
 }
 const originalCreateWriteStream = fs.createWriteStream
 fs.createWriteStream = function guardedCreateWriteStream(target, ...args) {

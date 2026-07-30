@@ -871,6 +871,33 @@ describe('installPackages', () => {
     expect(result.error).toMatch(/proposed changing protected r-base/i)
   })
 
+  it('rejects a Python conda plan that would replace r-base in default-r', async () => {
+    const protectedPlan: SpawnResult = {
+      code: 0,
+      stdout: JSON.stringify({
+        success: true,
+        actions: {
+          UNLINK: [{ name: 'r-base', version: '4.4.3' }],
+          LINK: [{ name: 'r-base', version: '4.5.3' }]
+        }
+      }),
+      stderr: ''
+    }
+    const { spawn, calls } = scriptedSpawn([protectedPlan, ok])
+
+    const result = await installPackages(
+      { language: 'python', packages: ['numpy'], environment: DEFAULT_R_ENV },
+      { spawn, ...base, pathExists: () => true }
+    )
+
+    expect(calls).toHaveLength(1)
+    expect(calls[0][1]).toContain('--dry-run')
+    expect(calls[0][1]).toContain('--json')
+    expect(calls[0][1]).toContain('r-base=4.4.3=h123_0')
+    expect(result).toMatchObject({ ok: false, fallbackUsed: false, needsRestart: false })
+    expect(result.error).toMatch(/proposed changing protected r-base/i)
+  })
+
   it('quarantines a shared named environment when a Python conda install changes r-base', async () => {
     const identities = [
       { name: 'r-base', version: '4.4.3', build: 'h123_0', buildNumber: 0 },

@@ -252,7 +252,7 @@ describe('detectManagedRuntimeMutation', () => {
   })
 
   it('handles an unterminated shell command substitution without exponential backtracking', () => {
-    const source = ` assignment=$(value${String.raw`\(`.repeat(26)} `
+    const source = `A=$( ${String.raw`\(`.repeat(256)} `
     const startedAt = performance.now()
 
     expect(detectManagedRuntimeMutation({ source, surface: 'bash', runtimeRoot })).toBeUndefined()

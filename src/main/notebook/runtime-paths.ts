@@ -364,40 +364,59 @@ type RepairRequiredRegistry = {
   reasons: Record<string, RepairRequiredReason>
 }
 
-const readRepairRequiredRegistry = (root: string): RepairRequiredRegistry => {
+const emptyRepairRequiredRegistry = (): RepairRequiredRegistry => ({
+  runtimeIds: [],
+  reasons: Object.create(null) as Record<string, RepairRequiredReason>
+})
+
+const repairRegistryCorruptError = (): Error =>
+  new Error(
+    'RUNTIME_REPAIR_REGISTRY_CORRUPT: the repair-required registry is unreadable; refusing to trust or overwrite it'
+  )
+
+const readRepairRequiredRegistry = (root: string): RepairRequiredRegistry | 'corrupt' => {
   try {
     const parsed: unknown = JSON.parse(readFileSync(repairRegistryPath(root), 'utf8'))
-    const ids = (parsed as { runtimeIds?: unknown })?.runtimeIds
-    const runtimeIds = Array.isArray(ids)
-      ? ids.filter((id): id is string => typeof id === 'string')
-      : []
+    if (!parsed || typeof parsed !== 'object' || Array.isArray(parsed)) return 'corrupt'
+    const ids = (parsed as { runtimeIds?: unknown }).runtimeIds
+    if (!Array.isArray(ids) || !ids.every((id): id is string => typeof id === 'string')) {
+      return 'corrupt'
+    }
+    const runtimeIds = [...new Set(ids)]
     const rawReasons = (parsed as { reasons?: unknown })?.reasons
     const reasons = Object.create(null) as Record<string, RepairRequiredReason>
     const runtimeIdSet = new Set(runtimeIds)
-    if (rawReasons && typeof rawReasons === 'object' && !Array.isArray(rawReasons)) {
+    if (rawReasons !== undefined) {
+      if (!rawReasons || typeof rawReasons !== 'object' || Array.isArray(rawReasons))
+        return 'corrupt'
       for (const [runtimeId, reason] of Object.entries(rawReasons)) {
         if (
-          runtimeIdSet.has(runtimeId) &&
-          (reason === 'interrupted-install' || reason === 'protected-identity-change')
+          !runtimeIdSet.has(runtimeId) ||
+          (reason !== 'interrupted-install' && reason !== 'protected-identity-change')
         ) {
-          reasons[runtimeId] = reason
+          return 'corrupt'
         }
+        reasons[runtimeId] = reason
       }
     }
     return { runtimeIds, reasons }
-  } catch {
-    return {
-      runtimeIds: [],
-      reasons: Object.create(null) as Record<string, RepairRequiredReason>
-    }
+  } catch (error) {
+    return (error as { code?: string }).code === 'ENOENT'
+      ? emptyRepairRequiredRegistry()
+      : 'corrupt'
   }
 }
 
-export const readRepairRequired = (root: string): string[] =>
-  readRepairRequiredRegistry(root).runtimeIds
+export const readRepairRequired = (root: string): string[] => {
+  const registry = readRepairRequiredRegistry(root)
+  if (registry === 'corrupt') throw repairRegistryCorruptError()
+  return registry.runtimeIds
+}
 
-export const isRepairRequired = (root: string, runtimeId: string): boolean =>
-  readRepairRequired(root).includes(runtimeId)
+export const isRepairRequired = (root: string, runtimeId: string): boolean => {
+  const registry = readRepairRequiredRegistry(root)
+  return registry === 'corrupt' || registry.runtimeIds.includes(runtimeId)
+}
 
 export type RepairRequiredRegistryReason = RepairRequiredReason | 'legacy-unknown'
 
@@ -406,6 +425,7 @@ export const readRepairRequiredReason = (
   runtimeId: string
 ): RepairRequiredRegistryReason | undefined => {
   const registry = readRepairRequiredRegistry(root)
+  if (registry === 'corrupt') return 'legacy-unknown'
   if (!registry.runtimeIds.includes(runtimeId)) return undefined
   return registry.reasons[runtimeId] ?? 'legacy-unknown'
 }
@@ -439,6 +459,7 @@ export const addRepairRequired = (
   reason: RepairRequiredReason = 'interrupted-install'
 ): void => {
   const registry = readRepairRequiredRegistry(root)
+  if (registry === 'corrupt') throw repairRegistryCorruptError()
   const alreadyMarked = registry.runtimeIds.includes(runtimeId)
   const currentReason = registry.reasons[runtimeId]
   const effectiveCurrentReason =
@@ -457,6 +478,7 @@ export const addRepairRequired = (
 
 export const clearRepairRequired = (root: string, runtimeId: string): void => {
   const registry = readRepairRequiredRegistry(root)
+  if (registry === 'corrupt') throw repairRegistryCorruptError()
   if (!registry.runtimeIds.includes(runtimeId)) return
   registry.runtimeIds = registry.runtimeIds.filter((id) => id !== runtimeId)
   delete registry.reasons[runtimeId]

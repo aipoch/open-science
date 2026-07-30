@@ -279,9 +279,8 @@ runtime_process_writes_managed <- function(command, args = character()) {
   runtime_text_references_managed(text) && runtime_text_has_write_primitive(text)
 }
 
-assert_runtime_process_allowed <- function(command, args = character()) {
-  text <- paste(c(command, args), collapse = " ")
-  package_mutation <- grepl(
+runtime_text_has_package_mutation <- function(text) {
+  grepl(
     paste0(
       "\\b(micromamba|mamba|conda|pip|pip3|pipx|uv|poetry)(\\.exe)?\\b.{0,160}",
       "\\b(install|uninstall|update|upgrade|remove|create|sync|add|venv)\\b|",
@@ -294,7 +293,60 @@ assert_runtime_process_allowed <- function(command, args = character()) {
     ignore.case = TRUE,
     perl = TRUE
   )
-  if (package_mutation) {
+}
+
+runtime_package_words_mutate <- function(words) {
+  if (length(words) == 0L) return(FALSE)
+  words <- as.character(words)
+  command_index <- 1L
+  while (command_index <= length(words)) {
+    name <- runtime_command_name(words[[command_index]])
+    if (!name %in% c("sudo", "env", "command", "exec")) break
+    command_index <- command_index + 1L
+    while (
+      command_index <= length(words) &&
+        (startsWith(words[[command_index]], "-") || grepl("^[A-Za-z_][A-Za-z0-9_]*=", words[[command_index]]))
+    ) {
+      command_index <- command_index + 1L
+    }
+  }
+  if (command_index > length(words)) return(FALSE)
+  executable <- runtime_command_name(words[[command_index]])
+  argv <- words[command_index:length(words)]
+  shell_flag <- match("-c", argv)
+  if (executable %in% c("sh", "bash", "zsh") && !is.na(shell_flag)) {
+    payload <- if (shell_flag < length(argv)) argv[[shell_flag + 1L]] else ""
+    return(runtime_command_mutates_packages(payload))
+  }
+  powershell_flag <- match(TRUE, tolower(argv) %in% c("-command", "-c"))
+  if (executable %in% c("powershell", "pwsh") && !is.na(powershell_flag)) {
+    payload <- if (powershell_flag < length(argv)) {
+      paste(argv[(powershell_flag + 1L):length(argv)], collapse = " ")
+    } else {
+      ""
+    }
+    return(runtime_command_mutates_packages(payload))
+  }
+  installers <- c(
+    "micromamba", "mamba", "conda", "pip", "pip3", "pipx", "uv", "poetry",
+    "python", "python3", "py", "r", "rscript", "node", "nodejs"
+  )
+  is_installer <- executable %in% installers || grepl("^python[0-9]+(\\.[0-9]+)*$", executable)
+  is_installer && runtime_text_has_package_mutation(paste(argv, collapse = " "))
+}
+
+runtime_command_mutates_packages <- function(command, args = character()) {
+  if (length(args) > 0L) {
+    return(runtime_package_words_mutate(c(as.character(command)[[1L]], as.character(args))))
+  }
+  segments <- strsplit(as.character(command)[[1L]], "(?:&&|\\|\\||[;\\r\\n])", perl = TRUE)[[1L]]
+  any(vapply(segments, function(segment) {
+    runtime_package_words_mutate(runtime_shell_words(segment))
+  }, logical(1)))
+}
+
+assert_runtime_process_allowed <- function(command, args = character()) {
+  if (runtime_command_mutates_packages(command, args)) {
     stop(
       "Package/environment mutation is not allowed in an R child process; use manage_packages.",
       call. = FALSE
@@ -409,6 +461,7 @@ make_runtime_write_guard <- function(binding_name, binding_env = baseenv()) {
         }
       },
       sink = list(runtime_argument(args, "file", 1L)),
+      Sys.chmod = list(runtime_argument(args, "paths", 1L)),
       system = {
         assert_runtime_process_allowed(runtime_argument(args, "command", 1L))
         list()
@@ -443,6 +496,9 @@ for (helper in c(
   "runtime_shell_redirections",
   "runtime_shell_writes_managed",
   "runtime_process_writes_managed",
+  "runtime_text_has_package_mutation",
+  "runtime_package_words_mutate",
+  "runtime_command_mutates_packages",
   "assert_runtime_process_allowed",
   "runtime_argument",
   "runtime_symlink_source",
@@ -466,7 +522,7 @@ runtime_write_bindings <- c(
   "file.link",
   "file.symlink", "file.create",
   "dir.create", "saveRDS", "save", "cat", "file", "gzfile", "bzfile", "xzfile",
-  "fifo", "open", "sink", "system", "system2", "pipe"
+  "fifo", "open", "sink", "Sys.chmod", "system", "system2", "pipe"
 )
 runtime_write_wrappers <- lapply(
   runtime_write_bindings,
@@ -501,6 +557,9 @@ rm(
   runtime_shell_redirections,
   runtime_shell_writes_managed,
   runtime_process_writes_managed,
+  runtime_text_has_package_mutation,
+  runtime_package_words_mutate,
+  runtime_command_mutates_packages,
   assert_runtime_process_allowed,
   runtime_argument,
   runtime_symlink_source,
