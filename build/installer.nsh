@@ -119,6 +119,41 @@ FunctionEnd
   ${endif}
 !macroend
 
+# Run only after installMode is final. Interactive assisted installers reach this from the
+# instfiles-page preflight; silent installs have no page callbacks, so customInit calls it after
+# initMultiUser has resolved the command-line/previous-install mode. A distinct HKLM tree must not
+# be touched for a current-user install merely because the process already has admin rights.
+!macro protectMachineDataRootForSelectedMode
+  ${if} $dataProtectionFailed == "0"
+  ${andIf} $installMode == "all"
+    ${if} $perMachineInstallDirCache == $perUserInstallDirCache
+      StrCpy $perMachineDataBackup $perUserDataBackup
+    ${elseif} ${UAC_IsAdmin}
+      !insertmacro preserveNestedDataRoot $perMachineInstallDirCache $perMachineDataBackup machine
+    ${elseif} $perMachineInstallDirCache != ""
+      # The unelevated assisted outer process stops on the install-mode page while its elevated
+      # inner process completes the install. The inner process runs this same protection path.
+      DetailPrint `Deferring machine data-folder protection to the elevated installer.`
+    ${endif}
+  ${endif}
+  ${if} $dataProtectionFailed != "0"
+    # Undo any earlier successful move before refusing to start either old uninstaller.
+    !insertmacro restoreAllNestedDataRoots
+    SetErrorLevel 2
+    Quit
+  ${endif}
+!macroend
+
+# electron-builder already installs an instfiles PRE callback that sanitizes the selected install
+# directory. Preserve that callback and chain the final-mode data preflight after it.
+!macro customPageAfterChangeDir
+  !ifdef MUI_PAGE_CUSTOMFUNCTION_PRE
+    !define openScienceOriginalInstFilesPre ${MUI_PAGE_CUSTOMFUNCTION_PRE}
+    !undef MUI_PAGE_CUSTOMFUNCTION_PRE
+  !endif
+  !define MUI_PAGE_CUSTOMFUNCTION_PRE protectNestedDataRootsForInstall
+!macroend
+
 !macro customInit
   # Cache both registered locations before either uninstall pass can delete their registry data.
   # More importantly, move any nested OpenScience data root OUTSIDE the install directory before
@@ -172,30 +207,28 @@ FunctionEnd
     !insertmacro preserveNestedDataRoot $perUserInstallDirCache $perUserDataBackup per-user
   ${endif}
 
-  # An assisted per-machine install elevates into a second installer process. An unelevated outer
-  # process must not fail merely because it cannot rename a machine installation; the inner/admin
-  # .onInit protects HKLM regardless of the mode it initially inherits. If both registry entries
-  # point to one tree, the HKCU backup already protects it through both uninstall passes.
-  ${if} $dataProtectionFailed == "0"
-    ${if} $perMachineInstallDirCache == $perUserInstallDirCache
-      StrCpy $perMachineDataBackup $perUserDataBackup
-    ${elseif} ${UAC_IsAdmin}
-      !insertmacro preserveNestedDataRoot $perMachineInstallDirCache $perMachineDataBackup machine
-    ${elseif} $perMachineInstallDirCache != ""
-      DetailPrint `Deferring machine data-folder protection to the elevated installer.`
-    ${endif}
-  ${endif}
   ${if} $dataProtectionFailed != "0"
-    # Undo any earlier successful move before refusing to start either old uninstaller.
     !insertmacro restoreAllNestedDataRoots
     SetErrorLevel 2
     Quit
+  ${endif}
+  # Page callbacks do not run in silent mode. There is no later user choice in that mode, so the
+  # installMode selected by initMultiUser is already final and machine protection can run now.
+  ${if} ${Silent}
+    !insertmacro protectMachineDataRootForSelectedMode
   ${endif}
 !macroend
 
 # These callbacks cover cancellation or an installer failure before the post-uninstall hooks run.
 # The normal path restores each directory immediately after its matching old-uninstaller pass.
 !macro customHeader
+  Function protectNestedDataRootsForInstall
+    !ifdef openScienceOriginalInstFilesPre
+      Call ${openScienceOriginalInstFilesPre}
+    !endif
+    !insertmacro protectMachineDataRootForSelectedMode
+  FunctionEnd
+
   Function restorePreservedOnAbort
     !insertmacro restoreAllNestedDataRoots
   FunctionEnd

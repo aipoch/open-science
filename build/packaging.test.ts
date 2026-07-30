@@ -160,6 +160,8 @@ describe('NSIS installer include (build/installer.nsh)', () => {
     // section, so it must move registered data roots out first; each post-uninstall hook restores
     // its root even when the first attempt returns zero.
     const init = include.match(/!macro customInit([\s\S]*?)!macroend/)?.[1] ?? ''
+    const machineProtection =
+      include.match(/!macro protectMachineDataRootForSelectedMode([\s\S]*?)!macroend/)?.[1] ?? ''
     const shellCheck = include.match(/!macro customUnInstallCheck([\s\S]*?)!macroend/)?.[1] ?? ''
     const userCheck =
       include.match(/!macro customUnInstallCheckCurrentUser([\s\S]*?)!macroend/)?.[1] ?? ''
@@ -167,8 +169,8 @@ describe('NSIS installer include (build/installer.nsh)', () => {
     expect(init).toContain('ReadRegStr $perMachineInstallDirCache HKEY_LOCAL_MACHINE')
     expect(init).toContain('ReadRegStr $perUserInstallDirCache HKEY_CURRENT_USER')
     expect(init).not.toContain('ReadRegStr $shellInstallDirCache SHELL_CONTEXT')
-    expect(init.match(/!insertmacro preserveNestedDataRoot/g) ?? []).toHaveLength(2)
-    expect(init).toContain(
+    expect(init.match(/!insertmacro preserveNestedDataRoot/g) ?? []).toHaveLength(1)
+    expect(machineProtection).toContain(
       '!insertmacro preserveNestedDataRoot $perMachineInstallDirCache $perMachineDataBackup machine'
     )
     expect(init).toContain(
@@ -189,6 +191,39 @@ describe('NSIS installer include (build/installer.nsh)', () => {
     // race the inner installer's later HKCU uninstall pass; interrupted backups are deterministic
     // and are adopted by the next installer instead.
     expect(include).not.toContain('Function .onGUIEnd')
+  })
+
+  it('waits for the final all-users mode before touching a distinct machine data root', () => {
+    // customInit runs before an elevated assisted user makes the final install-mode choice. A
+    // current-user install must not fail because an unrelated HKLM data folder is busy. Keep the
+    // silent path protected in customInit, but otherwise chain protection into the instfiles-page
+    // preflight, after the mode page has committed the final selection and before the section runs.
+    const init = include.match(/!macro customInit([\s\S]*?)!macroend/)?.[1] ?? ''
+    const machineProtection =
+      include.match(/!macro protectMachineDataRootForSelectedMode([\s\S]*?)!macroend/)?.[1] ?? ''
+    const pageHook = include.match(/!macro customPageAfterChangeDir([\s\S]*?)!macroend/)?.[1] ?? ''
+    const header = include.match(/!macro customHeader([\s\S]*?)!macroend/)?.[1] ?? ''
+    const selectedModeAt = machineProtection.indexOf('$installMode == "all"')
+    const preserveMachineAt = machineProtection.indexOf(
+      '!insertmacro preserveNestedDataRoot $perMachineInstallDirCache $perMachineDataBackup machine'
+    )
+
+    expect(init).not.toContain(
+      '!insertmacro preserveNestedDataRoot $perMachineInstallDirCache $perMachineDataBackup machine'
+    )
+    expect(init).toMatch(
+      /\$\{if\} \$\{Silent\}[\s\S]*!insertmacro protectMachineDataRootForSelectedMode/
+    )
+    expect(selectedModeAt).toBeGreaterThan(-1)
+    expect(selectedModeAt).toBeLessThan(preserveMachineAt)
+    expect(pageHook).toContain(
+      '!define openScienceOriginalInstFilesPre ${MUI_PAGE_CUSTOMFUNCTION_PRE}'
+    )
+    expect(pageHook).toContain(
+      '!define MUI_PAGE_CUSTOMFUNCTION_PRE protectNestedDataRootsForInstall'
+    )
+    expect(header).toContain('Call ${openScienceOriginalInstFilesPre}')
+    expect(header).toContain('!insertmacro protectMachineDataRootForSelectedMode')
   })
 
   it('defers a shared machine-owned data root to the elevated inner installer', () => {
