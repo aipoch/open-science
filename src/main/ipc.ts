@@ -358,9 +358,9 @@ const registerIpcHandlers = async ({
   ipcMain.handle('notifications:peek-pending-open-session', () =>
     taskNotifications.peekPendingOpenSession()
   )
-  ipcMain.handle('notifications:take-pending-open-session', (_event, expectedSessionId: unknown) =>
-    typeof expectedSessionId === 'string'
-      ? taskNotifications.takePendingOpenSession(expectedSessionId)
+  ipcMain.handle('notifications:take-pending-open-session', (_event, expectedToken: unknown) =>
+    typeof expectedToken === 'number' && Number.isSafeInteger(expectedToken) && expectedToken > 0
+      ? taskNotifications.takePendingOpenSession(expectedToken)
       : null
   )
   // One MCP client manager backs both dispatch (ConnectorService.call → custom server) and skill-doc

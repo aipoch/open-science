@@ -500,8 +500,8 @@ describe('App startup routing', () => {
     mocks.sessionPersistence.isHydrated = false
     mocks.sessionPersistence.isLoading = true
     mocks.sessionPersistence.isReady = false
-    mocks.notifications.peekPendingOpenSession.mockResolvedValue({ sessionId: 's-9' })
-    mocks.notifications.takePendingOpenSession.mockResolvedValue({ sessionId: 's-9' })
+    mocks.notifications.peekPendingOpenSession.mockResolvedValue({ sessionId: 's-9', token: 9 })
+    mocks.notifications.takePendingOpenSession.mockResolvedValue({ sessionId: 's-9', token: 9 })
 
     await render()
 
@@ -534,7 +534,7 @@ describe('App startup routing', () => {
       await new Promise((resolve) => setTimeout(resolve, 0))
     })
 
-    expect(mocks.notifications.takePendingOpenSession).toHaveBeenCalledWith('s-9')
+    expect(mocks.notifications.takePendingOpenSession).toHaveBeenCalledWith(9)
     expect(mocks.openSessionById).toHaveBeenCalledWith('s-9', 'notification')
   })
 
@@ -548,8 +548,8 @@ describe('App startup routing', () => {
       await new Promise((resolve) => setTimeout(resolve, 0))
     })
 
-    mocks.notifications.peekPendingOpenSession.mockResolvedValue({ sessionId: 's-3' })
-    mocks.notifications.takePendingOpenSession.mockResolvedValue({ sessionId: 's-3' })
+    mocks.notifications.peekPendingOpenSession.mockResolvedValue({ sessionId: 's-3', token: 3 })
+    mocks.notifications.takePendingOpenSession.mockResolvedValue({ sessionId: 's-3', token: 3 })
     const nudge = mocks.notificationNudgeBox.current
     expect(nudge).toBeDefined()
 
@@ -558,17 +558,17 @@ describe('App startup routing', () => {
       await new Promise((resolve) => setTimeout(resolve, 0))
     })
 
-    expect(mocks.notifications.takePendingOpenSession).toHaveBeenCalledWith('s-3')
+    expect(mocks.notifications.takePendingOpenSession).toHaveBeenCalledWith(3)
     expect(mocks.openSessionById).toHaveBeenCalledWith('s-3', 'notification')
   })
 
   it('discards a deferred notification when the user navigates elsewhere', async () => {
-    let pending: { sessionId: string } | null = { sessionId: 's-3' }
+    let pending: { sessionId: string; token: number } | null = { sessionId: 's-3', token: 3 }
     mocks.settings.isLoaded = true
     mocks.sessionPersistence.isReady = false
     mocks.notifications.peekPendingOpenSession.mockImplementation(async () => pending)
-    mocks.notifications.takePendingOpenSession.mockImplementation(async (sessionId: string) => {
-      if (pending?.sessionId !== sessionId) return null
+    mocks.notifications.takePendingOpenSession.mockImplementation(async (token: number) => {
+      if (pending?.token !== token) return null
       const consumed = pending
       pending = null
       return consumed
@@ -590,7 +590,7 @@ describe('App startup routing', () => {
       await new Promise((resolve) => setTimeout(resolve, 0))
     })
 
-    expect(mocks.notifications.takePendingOpenSession).toHaveBeenCalledWith('s-3')
+    expect(mocks.notifications.takePendingOpenSession).toHaveBeenCalledWith(3)
 
     mocks.sessions = [{ id: 's-3' }]
     mocks.sessionPersistence.isReady = true
@@ -602,11 +602,45 @@ describe('App startup routing', () => {
     expect(mocks.openSessionById).not.toHaveBeenCalled()
   })
 
+  it('does not consume a newer same-session click while clearing a deferred target', async () => {
+    let pending: { sessionId: string; token: number } | null = { sessionId: 's-3', token: 1 }
+    mocks.settings.isLoaded = true
+    mocks.sessionPersistence.isReady = false
+    mocks.notifications.peekPendingOpenSession.mockImplementation(async () =>
+      pending ? { ...pending } : null
+    )
+    mocks.notifications.takePendingOpenSession.mockImplementation(async (token: number) => {
+      if (pending?.token !== token) return null
+      const consumed = pending
+      pending = null
+      return consumed
+    })
+
+    await render()
+    await act(async () => {
+      await new Promise((resolve) => setTimeout(resolve, 0))
+    })
+
+    pending = { sessionId: 's-3', token: 2 }
+
+    await act(async () => {
+      const previousNavigation = { ...mocks.navigation }
+      mocks.navigation.userNavigationRevision += 1
+      for (const listener of mocks.navigationListeners) {
+        listener(mocks.navigation, previousNavigation)
+      }
+      await new Promise((resolve) => setTimeout(resolve, 0))
+    })
+
+    expect(mocks.notifications.takePendingOpenSession).toHaveBeenCalledWith(1)
+    expect(pending).toEqual({ sessionId: 's-3', token: 2 })
+  })
+
   it('retains a deferred notification across automatic navigation redirects', async () => {
     mocks.settings.isLoaded = true
     mocks.sessionPersistence.isReady = false
-    mocks.notifications.peekPendingOpenSession.mockResolvedValue({ sessionId: 's-4' })
-    mocks.notifications.takePendingOpenSession.mockResolvedValue({ sessionId: 's-4' })
+    mocks.notifications.peekPendingOpenSession.mockResolvedValue({ sessionId: 's-4', token: 4 })
+    mocks.notifications.takePendingOpenSession.mockResolvedValue({ sessionId: 's-4', token: 4 })
 
     await render()
     await act(async () => {
@@ -631,7 +665,7 @@ describe('App startup routing', () => {
       await new Promise((resolve) => setTimeout(resolve, 0))
     })
 
-    expect(mocks.notifications.takePendingOpenSession).toHaveBeenCalledWith('s-4')
+    expect(mocks.notifications.takePendingOpenSession).toHaveBeenCalledWith(4)
     expect(mocks.openSessionById).toHaveBeenCalledWith('s-4', 'notification')
   })
 })

@@ -210,6 +210,7 @@ export class TaskNotificationService {
   // (window just recreated, React not mounted yet) is lost, so the payload lives here until the
   // renderer — once its sessions are hydrated — takes it. Consume-once.
   private pendingOpenSession: OpenSessionFromNotificationRequest | undefined
+  private pendingOpenSessionToken = 0
 
   // Active snippet for a session, or undefined when there is none.
   private snippetFor(sessionId: string): string | undefined {
@@ -230,7 +231,7 @@ export class TaskNotificationService {
   // Records the conversation a notification click should open, so a renderer that misses the push
   // nudge (still loading, sessions not yet hydrated) can pull it when ready.
   setPendingOpenSession(sessionId: string): void {
-    this.pendingOpenSession = { sessionId }
+    this.pendingOpenSession = { sessionId, token: ++this.pendingOpenSessionToken }
   }
 
   // Lets the renderer check whether the target already exists in a partially hydrated store without
@@ -242,10 +243,10 @@ export class TaskNotificationService {
   // Clears the pending click target only when it is still the one the renderer inspected. A newer
   // notification may replace it while the renderer awaits IPC, and must not be consumed by the
   // older attempt.
-  takePendingOpenSession(expectedSessionId: string): OpenSessionFromNotificationRequest | null {
+  takePendingOpenSession(expectedToken: number): OpenSessionFromNotificationRequest | null {
     const pending = this.pendingOpenSession
 
-    if (!pending || pending.sessionId !== expectedSessionId) return null
+    if (!pending || pending.token !== expectedToken) return null
 
     this.pendingOpenSession = undefined
 

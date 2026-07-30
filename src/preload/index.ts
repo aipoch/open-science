@@ -392,9 +392,9 @@ type OpenScienceAPI = {
     onOpenSession: (listener: () => void) => RemoveListener
     // Returns the retained conversation without consuming it, so partial hydration can defer it.
     peekPendingOpenSession: () => Promise<OpenSessionFromNotificationRequest | null>
-    // Clears the target only if it still matches the conversation the renderer inspected.
+    // Clears the target only if it still matches the click the renderer inspected.
     takePendingOpenSession: (
-      expectedSessionId: string
+      expectedToken: number
     ) => Promise<OpenSessionFromNotificationRequest | null>
   }
   github: {
@@ -936,10 +936,10 @@ const api: OpenScienceAPI = {
       ipcRenderer.invoke(
         'notifications:peek-pending-open-session'
       ) as Promise<OpenSessionFromNotificationRequest | null>,
-    takePendingOpenSession: (expectedSessionId) =>
+    takePendingOpenSession: (expectedToken) =>
       ipcRenderer.invoke(
         'notifications:take-pending-open-session',
-        expectedSessionId
+        expectedToken
       ) as Promise<OpenSessionFromNotificationRequest | null>
   },
   github: {

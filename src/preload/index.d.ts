@@ -353,7 +353,7 @@ interface OpenScienceAPI {
     onOpenSession(listener: () => void): RemoveListener
     peekPendingOpenSession(): Promise<OpenSessionFromNotificationRequest | null>
     takePendingOpenSession(
-      expectedSessionId: string
+      expectedToken: number
     ): Promise<OpenSessionFromNotificationRequest | null>
   }
   github: {

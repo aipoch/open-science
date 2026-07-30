@@ -75,7 +75,7 @@ type PreloadApi = {
   }
   notifications: {
     peekPendingOpenSession: () => unknown
-    takePendingOpenSession: (expectedSessionId: string) => unknown
+    takePendingOpenSession: (expectedToken: number) => unknown
   }
   cli: {
     getStatus: () => unknown
@@ -428,9 +428,9 @@ const cases: ForwardingCase[] = [
   },
   {
     name: 'notifications.takePendingOpenSession → notifications:take-pending-open-session',
-    invoke: (a) => a.notifications.takePendingOpenSession('s-1'),
+    invoke: (a) => a.notifications.takePendingOpenSession(7),
     channel: 'notifications:take-pending-open-session',
-    args: ['s-1']
+    args: [7]
   }
 ]
 

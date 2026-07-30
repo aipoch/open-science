@@ -1,5 +1,7 @@
 import { useCallback, useEffect, useRef, useState } from 'react'
 
+import type { OpenSessionFromNotificationRequest } from '../../shared/notifications'
+
 import { useDeepLinkNavigation } from '@/lib/deep-link'
 import { useSessionPersistence } from '@/lib/session-persistence/session-persistence'
 import { CloseConfirmModal } from '@/components/CloseConfirmModal'
@@ -70,7 +72,7 @@ const App = (): React.JSX.Element | null => {
   const [legacyMove, setLegacyMove] = useState<
     { currentDataRoot: string; defaultParent: string } | undefined
   >(undefined)
-  const deferredNotificationSessionId = useRef<string | undefined>(undefined)
+  const deferredNotification = useRef<OpenSessionFromNotificationRequest | undefined>(undefined)
 
   const retrySettingsInitialization = useCallback(async (): Promise<void> => {
     if (await loadSettings({ force: true })) await checkEnvironment()
@@ -131,10 +133,7 @@ const App = (): React.JSX.Element | null => {
     const userNavigationRevision = useNavigationStore.getState().userNavigationRevision
     const pending = await window.api.notifications.peekPendingOpenSession()
 
-    if (!pending) {
-      deferredNotificationSessionId.current = undefined
-      return
-    }
+    if (!pending) return
 
     const sessionExists =
       isSessionPersistenceHydrated &&
@@ -142,20 +141,23 @@ const App = (): React.JSX.Element | null => {
 
     if (!sessionExists && !isSessionPersistenceReady) {
       if (useNavigationStore.getState().userNavigationRevision === userNavigationRevision) {
-        deferredNotificationSessionId.current = pending.sessionId
+        const deferred = deferredNotification.current
+        if (!deferred || pending.token > deferred.token) deferredNotification.current = pending
       } else {
         // The user navigated while the peek was in flight. Drop only the stale target we saw; a
         // newer notification that replaced it remains pending in main.
-        await window.api.notifications.takePendingOpenSession(pending.sessionId)
+        await window.api.notifications.takePendingOpenSession(pending.token)
       }
       return
     }
 
-    const consumed = await window.api.notifications.takePendingOpenSession(pending.sessionId)
+    const consumed = await window.api.notifications.takePendingOpenSession(pending.token)
 
     if (!consumed) return
 
-    deferredNotificationSessionId.current = undefined
+    if (deferredNotification.current?.token === consumed.token) {
+      deferredNotification.current = undefined
+    }
 
     // A navigation after this attempt began takes precedence over the older notification click.
     if (
@@ -175,12 +177,12 @@ const App = (): React.JSX.Element | null => {
       useNavigationStore.subscribe((state, previousState) => {
         if (state.userNavigationRevision === previousState.userNavigationRevision) return
 
-        const deferredSessionId = deferredNotificationSessionId.current
+        const deferred = deferredNotification.current
 
-        if (!deferredSessionId) return
+        if (!deferred) return
 
-        deferredNotificationSessionId.current = undefined
-        void window.api.notifications.takePendingOpenSession(deferredSessionId)
+        deferredNotification.current = undefined
+        void window.api.notifications.takePendingOpenSession(deferred.token)
       }),
     []
   )
