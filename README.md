@@ -119,9 +119,9 @@ Edit a completed user message to resend a revised prompt from that point. Open S
 
 ### Scientific skills and data connectors
 
-Open Science includes a growing catalog of featured, file-based research skills. You can create personal skills, upload `SKILL.md`/ZIP/`.skill` packages, preview and import compatible skills from GitHub, or import skills already installed in your global agent directories. The agent can also request a package import from a session attachment, with an app-owned preview and confirmation step before anything is written. Enabled skills can be selected directly in the composer with `/`.
+Open Science includes a growing catalog of **18 featured**, file-based research skills: AlphaFold2, Boltz, Borzoi, Chai-1, DiffDock, Environment & Packages, ESM-2, ESMFold2, Evo 2, Indication Dossier, LigandMPNN, Literature Review, OpenFold3, ProteinMPNN, scGPT, scvi-tools, SolubleMPNN, and **Remote Compute (SSH)** for submitting and harvesting long-running jobs on remote HPC clusters. You can create personal skills, upload `SKILL.md`/ZIP/`.skill` packages, preview and import compatible skills from GitHub, or import skills already installed in your global agent directories. The agent can also request a package import from a session attachment, with an app-owned preview and confirmation step before anything is written. Enabled skills can be selected directly in the composer with `/`.
 
-It also includes life-science connectors across literature, genes and proteins, genomics, variants, structures, clinical research, expression, chemistry, drug regulation, and related resources. Built-in and custom connectors remain behind the permission system, with per-tool `Always allow`, `Ask each time`, and `Block` controls. The installed app shows the current skill, connector, and tool catalogs.
+It also includes **24 built-in** research connectors across literature, genes and proteins, genomics, variants, structures, clinical research, expression, chemistry, drug regulation, and related resources. Built-in and custom connectors remain behind the permission system, with per-tool `Always allow`, `Ask each time`, and `Block` controls. The installed app shows the current skill, connector, and tool catalogs.
 
 <table>
   <tr>
@@ -185,8 +185,8 @@ This section describes durable product capabilities rather than a version-specif
 | **Artifacts and provenance** | Immutable, session-scoped artifact versions with checksummed content and available producer code, execution history, exact input references, environment inventory, producing message-branch context, and version-scoped reviewer evidence, with version navigation and direct links between related evidence.                                                                                                                            |
 | **Preview formats**          | Responsive multi-tab previews for common scientific data, Office documents (DOCX, XLSX, PPTX), images (with zoom and pan), source code, molecular structures and reactions, and Notebook history, viewable inline or full-screen.                                                                                                                                                                                                         |
 | **Local data management**    | Local project and application data, configurable storage location, and guided migration.                                                                                                                                                                                                                                                                                                                                                  |
-| **Skills**                   | Featured and personal skills, package upload, GitHub preview/import, import of installed global skills with candidate preview, agent-requested package imports in a session, enable/disable controls, and explicit `/` selection in a session.                                                                                                                                                                                            |
-| **Connectors**               | Built-in life-science connectors, custom local/remote MCP connectors, contact metadata, and connector/tool-level permissions.                                                                                                                                                                                                                                                                                                             |
+| **Skills**                   | **18 featured** built-in skills; personal skills, package upload, GitHub preview/import, import of installed global skills with candidate preview, agent-requested package imports in a session, enable/disable controls, and explicit `/` selection in a session.                                                                                                                                                                                            |
+| **Connectors**               | **24 built-in** research connectors, custom local/remote MCP connectors, contact metadata, and connector/tool-level permissions.                                                                                                                                                                                                                                                                                                             |
 | **Safety controls**          | `Ask for approval`, `Auto-approve edits`, and `Full access` conversation profiles, an approval dialog with a code preview and per-grant scope (this call vs. this conversation), plus per-connector and per-tool policies.                                                                                                                                                                                                                |
 | **Review and verification**  | An opt-in reviewer that audits a completed turn against its own transcript, execution log, and artifacts, reports pass/warn/fail findings, and can run a bounded fix loop to correct them.                                                                                                                                                                                                                                                |
 | **Distribution and support** | Installers for macOS, Windows, and Linux, plus update guidance, local diagnostics, and community links.                                                                                                                                                                                                                                                                                                                                   |
@@ -388,6 +388,33 @@ A: At least one required environment check has not passed. Fix the row marked `A
 ### **Q: Setup is complete. How do I start a research task?**
 
 A: Create or open a project, start a session, attach any source files, and describe the goal, constraints, expected output, and validation criteria. Use `@` to reference a project file and `/` to select an enabled skill.
+
+### **Q: How do I run jobs on a remote HPC cluster?**
+
+A: Enable the **Remote Compute (SSH)** skill under **Settings → Skills**, register your cluster under **Settings → Compute**, then start a session and select the skill with `/remote-compute-ssh`. The skill handles host registration, short commands via SSH, and fully async job submission — the app automatically starts an analysis turn when the job finishes, so you never write a polling loop.
+
+### **Q: Is there a command-line interface?**
+
+A: Yes. Install it in one click from **Settings → General → Command line tool → Install command** (adds `open-science` to your PATH; no separate Node.js needed). The CLI controls the local service and submits research tasks without opening a browser:
+
+```bash
+# Start the service in the background
+open-science start --no-open
+
+# Create a project and run a task, wait for completion
+open-science project create "Systematic review"
+open-science run --project "Systematic review" \
+  --prompt-file ./task.md \
+  --approval-profile auto \
+  --skill literature-review \
+  --wait --json
+
+# Download a generated artifact
+open-science artifacts list <session-id> --json
+open-science artifacts download <artifact-id> --output ./report.md
+```
+
+See the [CLI guide](packages/open-science/CLI.md) for the full command reference, JSON/JSONL output formats, exit codes, and headless service options.
 
 ### **Q: How do I inspect where a generated result came from?**
 
