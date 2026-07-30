@@ -115,6 +115,11 @@ type WorkspaceRuntimeEventProcessor = {
   process: (events: AcpRuntimeEvent[]) => Promise<void>
 }
 
+// Adoption intentionally completes before appendUserMessage creates the next run. Keep duplicate
+// sends closed during that idle-looking interval without exposing a premature activeRun that a
+// draining runtime's terminal event could settle.
+const sessionSendAdoptionsInFlight = new Set<string>()
+
 // Strips the Electron IPC wrapper ("Error invoking remote method '…': Error: <cause>") and any
 // leading "Error:" so the underlying agent message can be shown to the user on its own. Used by both
 // the resume and createSession failure paths, since either crosses IPC and arrives wrapped.
@@ -621,27 +626,6 @@ const sendWorkspaceMessage = async (
       resumeCwd = effectiveCwd
     }
 
-    const appended = preAppendedMessageId
-      ? { sessionId: targetSessionId, messageId: preAppendedMessageId }
-      : useSessionStore.getState().appendUserMessage({
-          sessionId: targetSessionId,
-          content,
-          attachments,
-          parts,
-          cwd: targetCwd,
-          projectId: projectId ?? currentSession?.projectId,
-          // Bind the optimistic prompt to the selected Runtime Segment only when this send will adopt
-          // that runtime. A local Branch reset otherwise continues on the current owner.
-          agentFrameworkId: shouldResumeSession
-            ? agentFrameworkId
-            : currentSession?.agentFrameworkId,
-          agentBackendId: shouldResumeSession ? agentBackendId : currentSession?.agentBackendId,
-          agentModel
-        })
-
-    // appendUserMessage can reject stale session ids after local deletion or hydration changes.
-    if (!appended) return undefined
-
     // A pre-appended prompt replays only the turns that precede it, so the resent turn is not
     // duplicated into its own preamble.
     const preAppendedCutIndex =
@@ -653,15 +637,17 @@ const sendWorkspaceMessage = async (
         ? currentSession.messages.slice(0, preAppendedCutIndex)
         : currentSession?.messages
 
-    // Persisted sessions are marked running locally before async resume closes duplicate submits.
-    // A resume that lands on a freshly-adopted session (framework switch, or an unresumable restart)
-    // lost the agent's context, so replay the prior turns as a preamble on this first prompt.
+    // Resume before creating the optimistic run. A draining runtime can emit its terminal event while
+    // adoption is in flight; keeping the old Runtime Segment active until resume succeeds lets that
+    // event settle the prior turn instead of accidentally finishing the incoming prompt.
     let historyPreamble: string | undefined
     let historyAttachments: UploadedAttachment[] | undefined
     let historyImages: AcpMessageImage[] | undefined
     let contextResetFromResume = false
 
     if (resumeCwd) {
+      if (sessionSendAdoptionsInFlight.has(targetSessionId)) return undefined
+      sessionSendAdoptionsInFlight.add(targetSessionId)
       try {
         const resumeResult = await runtime.resumeSession(
           targetSessionId,
@@ -679,9 +665,32 @@ const sendWorkspaceMessage = async (
           .markResumed(targetSessionId, resumeResult?.frameworkId, resumeResult?.backendId)
       } catch (error) {
         useSessionStore.getState().failRun(targetSessionId, getResumeFailureMessage(error))
-        return appended
+        return undefined
+      } finally {
+        sessionSendAdoptionsInFlight.delete(targetSessionId)
       }
     }
+
+    const appended = preAppendedMessageId
+      ? { sessionId: targetSessionId, messageId: preAppendedMessageId }
+      : useSessionStore.getState().appendUserMessage({
+          sessionId: targetSessionId,
+          content,
+          attachments,
+          parts,
+          cwd: targetCwd,
+          projectId: projectId ?? currentSession?.projectId,
+          // Bind the optimistic prompt to the selected Runtime Segment only when this send adopted
+          // that runtime. A local Branch reset otherwise continues on the current owner.
+          agentFrameworkId: shouldResumeSession
+            ? agentFrameworkId
+            : currentSession?.agentFrameworkId,
+          agentBackendId: shouldResumeSession ? agentBackendId : currentSession?.agentBackendId,
+          agentModel
+        })
+
+    // appendUserMessage can reject stale session ids after local deletion or hydration changes.
+    if (!appended) return undefined
 
     // Replay prior turns when this resume reset the agent's context, or the caller already knows a reset
     // happened (interrupted-resume path — its internal re-resume above hits an already-attached session

@@ -67,6 +67,7 @@ class AcpRuntimeCoordinator {
   private promptAttemptSequence = 0
   private readonly sessionCancellationGenerations = new Map<string, number>()
   private readonly pendingPromptStarts = new Map<string, PendingPromptStart[]>()
+  private readonly pendingSessionAdoptions = new Map<string, AcpRuntime>()
   private activeRuntime: AcpRuntime | undefined
   private lastRuntime: AcpRuntime | undefined
 
@@ -244,38 +245,34 @@ class AcpRuntimeCoordinator {
     const runtime = owner && !this.retiredRuntimes.has(owner) ? owner : this.getActiveRuntime()
     const transfersOwnership = runtime !== owner
 
-    // An optimistic prompt may already point at the incoming Runtime Segment while resume is still in
-    // flight. Transfer routing ownership before awaiting the provider so events from a draining
-    // generation cannot settle or mutate that new turn during the adoption window.
-    if (transfersOwnership) this.sessionRuntimes.set(request.sessionId, runtime)
+    // Keep the prior owner authoritative until adoption finishes. The renderer does not create the
+    // incoming optimistic run until this promise resolves, so terminal events emitted while the old
+    // generation drains can still settle its own Runtime Segment without touching the next one.
+    if (transfersOwnership) this.pendingSessionAdoptions.set(request.sessionId, runtime)
 
     let response: AcpCreateSessionResponse
     try {
       response = await runtime.resumeSession(request)
     } catch (error) {
-      // A runtime may report its attached session before a later resume step fails. Keep that runtime
-      // as owner when attachment really happened; otherwise roll routing back to the prior generation
-      // and republish its snapshot so events suppressed during the failed adoption remain observable.
-      if (
-        transfersOwnership &&
-        this.sessionRuntimes.get(request.sessionId) === runtime &&
-        !runtime.getSnapshot().sessionIds.includes(request.sessionId)
-      ) {
-        if (owner) this.sessionRuntimes.set(request.sessionId, owner)
-        else this.sessionRuntimes.delete(request.sessionId)
-        this.callbacks.onStateChanged?.(this.getSnapshot())
+      if (transfersOwnership && this.pendingSessionAdoptions.get(request.sessionId) === runtime) {
+        this.pendingSessionAdoptions.delete(request.sessionId)
       }
       throw error
     }
 
+    if (transfersOwnership && this.pendingSessionAdoptions.get(request.sessionId) === runtime) {
+      this.pendingSessionAdoptions.delete(request.sessionId)
+    }
+
     if (
       response.sessionId !== request.sessionId &&
-      this.sessionRuntimes.get(request.sessionId) === runtime
+      this.sessionRuntimes.get(request.sessionId) === owner
     ) {
       this.sessionRuntimes.delete(request.sessionId)
     }
     this.sessionRuntimes.set(response.sessionId, runtime)
     this.lastRuntime = runtime
+    if (transfersOwnership) this.callbacks.onStateChanged?.(this.getSnapshot())
     return response
   }
 
@@ -630,6 +627,11 @@ class AcpRuntimeCoordinator {
   private handleRuntimeState(runtime: AcpRuntime, snapshot: AcpStateSnapshot): void {
     const attached = this.releaseMissingRuntimeSessions(runtime, snapshot)
     for (const sessionId of attached) {
+      // resumeSession owns the handoff commit. AcpRuntime emits its attached snapshot just before the
+      // resume promise resolves; treating that intermediate state as ownership would again suppress
+      // terminal events from the draining generation during the adoption window.
+      if (this.pendingSessionAdoptions.get(sessionId) === runtime) continue
+
       const owner = this.sessionRuntimes.get(sessionId)
       // A late state emission from a retiring runtime must not steal back a session already adopted by
       // the current generation.
@@ -678,6 +680,9 @@ class AcpRuntimeCoordinator {
         this.sessionConnectionStatuses.delete(sessionId)
       }
       this.onSessionUnavailable?.(sessionId)
+    }
+    for (const [sessionId, incoming] of this.pendingSessionAdoptions) {
+      if (incoming === runtime) this.pendingSessionAdoptions.delete(sessionId)
     }
     for (const [requestId, owner] of this.permissionRuntimes) {
       if (owner === runtime) this.permissionRuntimes.delete(requestId)
@@ -757,6 +762,7 @@ class AcpRuntimeCoordinator {
     this.runtimes.clear()
     this.retiredRuntimes.clear()
     this.sessionRuntimes.clear()
+    this.pendingSessionAdoptions.clear()
     this.sessionConnectionStatuses.clear()
     this.permissionRuntimes.clear()
     this.pendingPromptStarts.clear()

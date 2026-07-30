@@ -368,13 +368,21 @@ describe('workspace agent message sending', () => {
       status: 'shutdown'
     })
     vi.stubGlobal('window', { api: { notebook: { shutdown } } })
-    const resumeSession = vi.fn().mockResolvedValue({
+    const resumeCanFinish = createDeferred<{
+      sessionId: string
+      cwd: string
+      contextReset: boolean
+      frameworkId: string
+      backendId: string
+    }>()
+    const resumeSession = vi.fn().mockReturnValue(resumeCanFinish.promise)
+    const resumeResult = {
       sessionId: 'transport-session-1',
       cwd: '/workspace/project',
       contextReset: true,
       frameworkId: 'codex',
       backendId: 'codex:builtin-codex-subscription'
-    })
+    }
     const sendPrompt = vi.fn().mockResolvedValue(createSnapshot(['transport-session-1']))
     const runtime = {
       // A draining runtime may still expose the logical session while the selected runtime takes over.
@@ -385,7 +393,7 @@ describe('workspace agent message sending', () => {
       sendPrompt
     }
 
-    await sendWorkspaceMessage(runtime, {
+    const sendRequest = sendWorkspaceMessage(runtime, {
       sessionId: 'transport-session-1',
       text: 'Continue this branch with Codex',
       cwd: '/workspace/project',
@@ -393,6 +401,18 @@ describe('workspace agent message sending', () => {
       agentFrameworkId: 'codex',
       agentBackendId: 'codex:builtin-codex-subscription'
     })
+    await vi.waitFor(() => expect(resumeSession).toHaveBeenCalledOnce())
+
+    // Keep the prior Runtime Segment active until adoption succeeds. A draining stop/error can then
+    // settle the prior turn without accidentally finishing the optimistic Codex run.
+    expect(useSessionStore.getState().sessions[0]).toMatchObject({
+      status: 'idle',
+      activeRun: undefined,
+      messages: [expect.objectContaining({ content: 'Original Claude branch turn' })]
+    })
+
+    resumeCanFinish.resolve(resumeResult)
+    await sendRequest
     await flushRuntimeTasks()
 
     expect(runtime.resetSessionContext).not.toHaveBeenCalled()
@@ -1284,7 +1304,7 @@ describe('workspace agent message sending', () => {
     expect(session.error).toBe('Agent run failed')
   })
 
-  it('marks restored sessions running before resume finishes to block duplicate submits', async () => {
+  it('blocks duplicate submits while adoption finishes before opening the restored run', async () => {
     const resumeCanFinish = createDeferred<{ sessionId: string; cwd?: string }>()
     const runtime = {
       state: createSnapshot(),
@@ -1313,7 +1333,11 @@ describe('workspace agent message sending', () => {
     })
 
     await expect(second).resolves.toBeUndefined()
-    expect(useSessionStore.getState().sessions[0]).toMatchObject({ status: 'running' })
+    expect(useSessionStore.getState().sessions[0]).toMatchObject({
+      status: 'idle',
+      activeRun: undefined,
+      messages: [expect.objectContaining({ content: 'Previous prompt' })]
+    })
     expect(runtime.resumeSession).toHaveBeenCalledTimes(1)
 
     resumeCanFinish.resolve({ sessionId: 'session-1', cwd: '/workspace/project' })

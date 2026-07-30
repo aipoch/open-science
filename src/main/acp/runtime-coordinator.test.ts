@@ -39,6 +39,7 @@ const createFakeRuntime = (options: {
   permissionGrantStore?: ConversationPermissionGrantStore
   beforePromptStart?: () => Promise<void>
   beforeResume?: () => Promise<void>
+  afterResumeAttached?: () => Promise<void>
   eligibleAttachmentUri?: string
   prompt?: (sessionId: string) => Promise<unknown>
 }): {
@@ -83,6 +84,7 @@ const createFakeRuntime = (options: {
         : [...snapshot.sessionIds, sessionId]
     }
     options.callbacks.onStateChanged?.(snapshot)
+    await options.afterResumeAttached?.()
     return { sessionId, cwd: '/workspace', frameworkId: options.frameworkId, contextReset: true }
   })
   const resetSessionContext = vi.fn(async ({ sessionId }: { sessionId: string }) => ({
@@ -631,7 +633,7 @@ describe('AcpRuntimeCoordinator', () => {
     await reloadRequest
   })
 
-  it('isolates late Codex events while preserving Artifact finalization during adoption', async () => {
+  it('keeps draining events on the prior owner until adoption commits', async () => {
     const retirement = createDeferred<void>()
     const adoption = createDeferred<void>()
     const created: ReturnType<typeof createFakeRuntime>[] = []
@@ -642,7 +644,7 @@ describe('AcpRuntimeCoordinator', () => {
           frameworkId: created.length === 0 ? 'codex' : 'claude-code',
           sessionIds: [`agent-session-${created.length + 1}`],
           callbacks,
-          ...(created.length === 0 ? {} : { beforeResume: () => adoption.promise })
+          ...(created.length === 0 ? {} : { afterResumeAttached: () => adoption.promise })
         })
         created.push(fake)
         return fake.runtime
@@ -688,8 +690,22 @@ describe('AcpRuntimeCoordinator', () => {
       toolEvent('late-codex-tool', 'mcp.open-science-artifacts.write_artifact_file')
     )
     created[0].emitEvent({
-      id: 'late-codex-artifact',
+      id: 'late-codex-stop',
       timestamp: 2,
+      kind: 'stop',
+      level: 'info',
+      sessionId: session.sessionId,
+      title: 'Prompt stopped',
+      text: 'end_turn'
+    })
+    expect(forwardedEvents.map((event) => event.id)).toEqual([
+      expect.stringMatching(runtimeEventId(1, 'owner-tool')),
+      expect.stringMatching(runtimeEventId(1, 'late-codex-tool')),
+      expect.stringMatching(runtimeEventId(1, 'late-codex-stop'))
+    ])
+    created[0].emitEvent({
+      id: 'late-codex-artifact',
+      timestamp: 3,
       kind: 'artifact',
       level: 'info',
       sessionId: session.sessionId,
@@ -711,20 +727,28 @@ describe('AcpRuntimeCoordinator', () => {
     })
     expect(forwardedEvents.map((event) => event.id)).toEqual([
       expect.stringMatching(runtimeEventId(1, 'owner-tool')),
+      expect.stringMatching(runtimeEventId(1, 'late-codex-tool')),
+      expect.stringMatching(runtimeEventId(1, 'late-codex-stop')),
       expect.stringMatching(runtimeEventId(1, 'late-codex-artifact'))
     ])
     expect(coordinator.getSnapshot().events.map((event) => event.id)).toEqual([
+      expect.stringMatching(runtimeEventId(1, 'owner-tool')),
+      expect.stringMatching(runtimeEventId(1, 'late-codex-tool')),
+      expect.stringMatching(runtimeEventId(1, 'late-codex-stop')),
       expect.stringMatching(runtimeEventId(1, 'late-codex-artifact'))
     ])
 
     adoption.resolve()
     await resumeRequest
 
+    created[0].emitEvent(toolEvent('post-adoption-codex-tool', 'shell'))
     created[1].emitEvent(
       toolEvent('fresh-claude-tool', 'mcp__open-science-artifacts__write_artifact_file')
     )
     expect(forwardedEvents.map((event) => event.id)).toEqual([
       expect.stringMatching(runtimeEventId(1, 'owner-tool')),
+      expect.stringMatching(runtimeEventId(1, 'late-codex-tool')),
+      expect.stringMatching(runtimeEventId(1, 'late-codex-stop')),
       expect.stringMatching(runtimeEventId(1, 'late-codex-artifact')),
       expect.stringMatching(runtimeEventId(2, 'fresh-claude-tool'))
     ])
