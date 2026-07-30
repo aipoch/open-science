@@ -63,6 +63,19 @@ const fetchWithTimeout = (
   fetchImpl = fetch
 ) => fetchImpl(input, { ...init, signal: AbortSignal.timeout(timeoutMs) })
 
+const requestPackagedAppShutdown = async (endpoint, auth, fetchImpl = fetchWithTimeout) => {
+  const response = await fetchImpl(`${endpoint}/api/shutdown?${auth}`, { method: 'POST' })
+  // Drain the response before waiting for Electron to exit. Leaving an Undici response body unread
+  // keeps its HTTP connection active, while the app's quit path waits for the web server to close.
+  // Waiting for exit first would therefore deadlock the smoke harness against the app under test.
+  const body = await response.text()
+  if (response.status !== 202) {
+    throw new Error(
+      `Installed app shutdown returned HTTP ${response.status}.${body ? ` ${body}` : ''}`
+    )
+  }
+}
+
 const terminateProcessTree = async (child) => {
   if (!child.pid) return
   await new Promise((resolveTermination) => {
@@ -267,10 +280,7 @@ const launchAndProbe = async ({ installDirectory, profileDirectory, expectedVers
       throw new Error(`Unexpected installed app bootstrap: ${JSON.stringify(bootstrap)}`)
     }
 
-    const shutdown = await fetchWithTimeout(`${endpoint}/api/shutdown?${auth}`, { method: 'POST' })
-    if (shutdown.status !== 202) {
-      throw new Error(`Installed app shutdown returned HTTP ${shutdown.status}.`)
-    }
+    await requestPackagedAppShutdown(endpoint, auth)
     const exitCode = await exit
     if (exitCode !== 0) throw new Error(`Installed app exited with ${exitCode}.\n${output()}`)
   } catch (error) {
@@ -414,6 +424,7 @@ export {
   findSetupInstaller,
   installerVersion,
   packagedResourcePaths,
+  requestPackagedAppShutdown,
   windowsProfileEnvironment,
   writeUpgradeSentinel
 }

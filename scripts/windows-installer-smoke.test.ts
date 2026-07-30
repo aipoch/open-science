@@ -13,6 +13,7 @@ import {
   findSetupInstaller,
   installerVersion,
   packagedResourcePaths,
+  requestPackagedAppShutdown,
   windowsProfileEnvironment,
   writeUpgradeSentinel
 } from './windows-installer-smoke.mjs'
@@ -65,6 +66,20 @@ describe('Windows installer smoke plan', () => {
     await expect(
       fetchWithTimeout('http://127.0.0.1/health', {}, 5, fetchImpl)
     ).rejects.toMatchObject({ name: 'TimeoutError' })
+  })
+
+  it('drains the shutdown response before waiting for the packaged app to exit', async () => {
+    const text = vi.fn().mockResolvedValue('{"ok":true}')
+    const fetchImpl = vi.fn().mockResolvedValue({ status: 202, text })
+
+    await expect(
+      requestPackagedAppShutdown('http://127.0.0.1:44100', 'token=test', fetchImpl)
+    ).resolves.toBeUndefined()
+
+    expect(fetchImpl).toHaveBeenCalledWith('http://127.0.0.1:44100/api/shutdown?token=test', {
+      method: 'POST'
+    })
+    expect(text).toHaveBeenCalledOnce()
   })
 
   it('detects when an upgrade removes the previous profile', async () => {
