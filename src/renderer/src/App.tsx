@@ -158,10 +158,14 @@ const App = (): React.JSX.Element | null => {
   // inline job rows. Updates are applied globally — the store filters by sessionId at query time.
   useEffect(() => window.api.compute.onJobUpdated(applyJobUpdate), [applyJobUpdate])
 
-  // Load the project list once on startup so Home can render immediately after hydration.
+  // Load projects after each completed startup hydration pass. A retry temporarily clears Session
+  // hydration, so its successful completion re-runs this effect and clears any project-list error
+  // left by the same transient storage outage.
   useEffect(() => {
+    if (!isSettingsLoaded || !isSessionPersistenceHydrated || isSessionPersistenceLoading) return
+
     void loadProjects()
-  }, [loadProjects])
+  }, [isSessionPersistenceHydrated, isSessionPersistenceLoading, isSettingsLoaded, loadProjects])
 
   // Hydrate the persisted framework before checking it. Running these concurrently can make a
   // Codex/OpenCode result look stale against the renderer's initial Claude selection and discard the

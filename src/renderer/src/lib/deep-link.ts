@@ -56,6 +56,22 @@ const useDeepLinkNavigation = ({ isHydrated, isReady }: DeepLinkNavigationReadin
   const initialized = useRef(!isWebLocation())
   const [isInitialized, setIsInitialized] = useState(() => !isWebLocation())
 
+  // While an initial target is deferred by partial recovery, any explicit navigation means the user
+  // has taken control. Drop the stale target so a later storage retry cannot override their choice.
+  // Session hydration itself does not touch this store, so background recovery is not mistaken for
+  // user navigation.
+  useEffect(() => {
+    if (isInitialized) return
+
+    return useNavigationStore.subscribe(() => {
+      if (initialized.current) return
+
+      initialized.current = true
+      initialParams.current = undefined
+      setIsInitialized(true)
+    })
+  }, [isInitialized])
+
   useEffect(() => {
     if (initialized.current || !isProjectsLoaded || !isHydrated) return
 
@@ -71,14 +87,15 @@ const useDeepLinkNavigation = ({ isHydrated, isReady }: DeepLinkNavigationReadin
         .sessions.some((session) => session.id === sessionId && session.projectId === projectId)
 
     if (projectId && sessionId && sessionExists) {
+      initialized.current = true
       useNavigationStore.getState().openSession(projectId, sessionId)
     } else if (projectId && sessionId && projectExists && !isReady) {
       return
     } else {
+      initialized.current = true
       useNavigationStore.getState().goHome()
     }
 
-    initialized.current = true
     setIsInitialized(true)
   }, [isHydrated, isProjectsLoaded, isReady])
 

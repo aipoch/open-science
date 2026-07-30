@@ -305,6 +305,30 @@ describe('App startup routing', () => {
     expect(container.querySelector('[data-testid="home-page"]')).not.toBeNull()
   })
 
+  it('reloads projects after a partial session load is retried successfully', async () => {
+    mocks.settings.isLoaded = true
+    mocks.sessionPersistence.isHydrated = true
+    mocks.sessionPersistence.isReady = false
+    mocks.loadProjects.mockClear()
+
+    await render()
+
+    expect(mocks.loadProjects).toHaveBeenCalledOnce()
+
+    mocks.sessionPersistence.isHydrated = false
+    mocks.sessionPersistence.isLoading = true
+    await act(async () => root.render(<App />))
+
+    expect(mocks.loadProjects).toHaveBeenCalledOnce()
+
+    mocks.sessionPersistence.isHydrated = true
+    mocks.sessionPersistence.isLoading = false
+    mocks.sessionPersistence.isReady = true
+    await act(async () => root.render(<App />))
+
+    expect(mocks.loadProjects).toHaveBeenCalledTimes(2)
+  })
+
   it('routes first-run users to onboarding after settings hydration', async () => {
     mocks.settings.isLoaded = true
     mocks.startupView = 'onboarding'

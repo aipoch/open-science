@@ -114,6 +114,39 @@ describe('deep-link navigation', () => {
     expect(window.location.search).toBe('?project=project-1&session=session-1')
   })
 
+  it('does not replay an unresolved target after the user navigates elsewhere', async () => {
+    const otherProject: Project = { ...project, id: 'project-2', name: 'Other research' }
+    const otherSession: ChatSession = {
+      ...session,
+      id: 'session-2',
+      projectId: otherProject.id,
+      title: 'Other session'
+    }
+    window.history.replaceState({}, '', '/?project=project-1&session=session-1')
+    useProjectStore.setState({ projects: [project, otherProject], isLoaded: true })
+    useSessionStore.setState({ sessions: [otherSession] })
+
+    const hook = await renderHook({ isHydrated: true, isReady: false })
+
+    expect(window.location.search).toBe('?project=project-1&session=session-1')
+
+    act(() => useNavigationStore.getState().openSession(otherProject.id, otherSession.id))
+    expect(useNavigationStore.getState()).toMatchObject({
+      view: 'workspace',
+      activeProjectId: otherProject.id
+    })
+
+    act(() => useSessionStore.setState({ sessions: [session, otherSession] }))
+    await hook.rerender({ isHydrated: true, isReady: true })
+
+    expect(useNavigationStore.getState()).toMatchObject({
+      view: 'workspace',
+      activeProjectId: otherProject.id
+    })
+    expect(useSessionStore.getState().selectedSessionId).toBe(otherSession.id)
+    expect(window.location.search).toBe('?project=project-2&session=session-2')
+  })
+
   it('returns Home when the session parameter is missing', async () => {
     window.history.replaceState({}, '', '/?project=project-1')
     useProjectStore.setState({ projects: [project], isLoaded: true })
