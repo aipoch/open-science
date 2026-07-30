@@ -13,7 +13,7 @@ import {
   toPersistedSession,
   useSessionStore
 } from '../../stores/session-store'
-import type { ChatSession } from '../../stores/session-store'
+import type { ChatSession, SessionHydrationSelection } from '../../stores/session-store'
 
 type SessionPersistenceApi = {
   loadAll: () => Promise<LoadAllSessionsResult>
@@ -102,10 +102,6 @@ type StoreSaverObserver = {
 
 type StoreSaver = (state: SessionStoreSnapshot, options?: StoreSaverOptions) => Promise<unknown>
 
-type RetrySessionSelection = {
-  sessionId: string | undefined
-}
-
 const pruneRemovedSessionWriteTargets = (
   targets: Set<string>,
   sessions: readonly Pick<ChatSession, 'id'>[]
@@ -128,27 +124,16 @@ const SAFE_SESSION_LOAD_ERROR =
 const loadPersistedSessions = async (
   api: SessionPersistenceApi,
   shouldHydrate: () => boolean = () => true,
-  preferredSelection?: RetrySessionSelection
+  preferredSelection?: SessionHydrationSelection
 ): Promise<LoadAllSessionsResult | undefined> => {
   const result = await api.loadAll()
   if (!shouldHydrate()) return undefined
 
-  const preferredSession = preferredSelection?.sessionId
-    ? result.sessions.find((session) => session.id === preferredSelection.sessionId)
-    : undefined
-  const manifest = preferredSession
-    ? {
-        ...result.manifest,
-        lastProjectId: preferredSession.projectId,
-        lastSessionId: preferredSession.id
-      }
-    : result.manifest
-
-  useSessionStore.getState().hydrateSessions(result.sessions, manifest)
   // Retry captures live navigation as an explicit tri-state. If the user had no selection, or the
   // selected Session disappeared before recovery completed, do not replay a stale disk manifest or
-  // fall through to the globally newest Session from another Project.
-  if (preferredSelection && !preferredSession) useSessionStore.getState().clearSelection()
+  // fall through to the globally newest Session from another Project. Passing the selection into
+  // hydration applies the sessions and selection atomically for all Zustand subscribers.
+  useSessionStore.getState().hydrateSessions(result.sessions, result.manifest, preferredSelection)
   return result
 }
 
@@ -272,7 +257,7 @@ const useSessionPersistence = (): SessionPersistenceState => {
   const [loadWarning, setLoadWarning] = useState<string | undefined>(undefined)
   const [writeError, setWriteError] = useState<string | undefined>(undefined)
   const [loadAttempt, setLoadAttempt] = useState(0)
-  const retrySelection = useRef<RetrySessionSelection | undefined>(undefined)
+  const retrySelection = useRef<SessionHydrationSelection | undefined>(undefined)
   const failedWriteTargets = useRef(new Set<string>())
   const saverRef = useRef<StoreSaver | undefined>(undefined)
   const retryLoad = useCallback(() => {

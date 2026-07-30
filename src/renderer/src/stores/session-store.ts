@@ -203,6 +203,10 @@ type AppendMessageResult = {
   messageId: string
 }
 
+export type SessionHydrationSelection = {
+  sessionId: string | undefined
+}
+
 type SessionStore = SessionStoreData & {
   selectSession: (sessionId: string) => void
   clearSelection: () => void
@@ -217,7 +221,11 @@ type SessionStore = SessionStoreData & {
   replaceMessageUploads: (input: ReplaceMessageUploadsInput) => void
   recordArtifactError: (sessionId: string, error: string) => void
   clearArtifactError: (sessionId: string) => void
-  hydrateSessions: (sessions: PersistedChatSession[], manifest?: PersistedSessionManifest) => void
+  hydrateSessions: (
+    sessions: PersistedChatSession[],
+    manifest?: PersistedSessionManifest,
+    selection?: SessionHydrationSelection
+  ) => void
   upsertPersistedSession: (session: PersistedChatSession) => void
   applyDurableSessionProjection: (input: ApplyDurableSessionProjectionInput) => void
   finishRun: (sessionId: string) => void
@@ -1002,14 +1010,17 @@ export const useSessionStore = create<SessionStore>((set, get) => ({
 
   // Replaces renderer state with the per-session files loaded by the main process. Sessions arrive in
   // filesystem order, so sort newest-first; selection is restored from the manifest when still present.
-  hydrateSessions: (sessions, manifest) => {
+  hydrateSessions: (sessions, manifest, selection) => {
     const hydrated = [...sessions]
       .sort((left, right) => right.updatedAt - left.updatedAt)
       .map(hydrateSession)
-    const requestedSelection = manifest?.lastSessionId
+    const hasExplicitSelection = selection !== undefined
+    const requestedSelection = hasExplicitSelection ? selection.sessionId : manifest?.lastSessionId
     const selectedSessionId = hydrated.some((session) => session.id === requestedSelection)
       ? requestedSelection
-      : hydrated[0]?.id
+      : hasExplicitSelection
+        ? undefined
+        : hydrated[0]?.id
 
     set({ sessions: hydrated, selectedSessionId })
   },
