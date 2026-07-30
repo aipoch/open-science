@@ -5,10 +5,7 @@ import type { UnreadTaskDbRepository } from './unread-task-repository'
 type UnreadTaskDeletionRuntimeDeps = {
   headless: boolean
   unreadController: Pick<UnreadTaskController, 'removeUnreadSessions'>
-  unreadTaskRepository: Pick<
-    UnreadTaskDbRepository,
-    'prepareDeletion' | 'commitDeletion' | 'abortDeletion' | 'reconcileSessionCatalog'
-  >
+  unreadTaskRepository: Pick<UnreadTaskDbRepository, 'reconcileSessionCatalog'>
   sessionPersistenceCoordinator: {
     setSessionDeletionHandlers(handlers: SessionDeletionHandlers): void
   }
@@ -19,16 +16,10 @@ export const bindUnreadTaskDeletionRuntime = (deps: UnreadTaskDeletionRuntimeDep
   // Headless web service has no local desktop user and must not read or mutate desktop unread state.
   if (deps.headless) return
 
-  // Persist intent before Session JSON deletion, then clear both unread metadata and intent only
-  // after the authoritative delete commits. A complete desktop scan also repairs interrupted or
-  // headless deletions against the Session JSON catalog.
+  // Clear live unread state only after authoritative Session deletion commits. A complete desktop
+  // scan repairs interrupted or headless cleanup against the Session JSON catalog.
   deps.sessionPersistenceCoordinator.setSessionDeletionHandlers({
-    prepare: (sessionIds) => deps.unreadTaskRepository.prepareDeletion(sessionIds),
-    commit: async (sessionIds) => {
-      await deps.unreadController.removeUnreadSessions(sessionIds)
-      await deps.unreadTaskRepository.commitDeletion(sessionIds)
-    },
-    abort: (sessionIds) => deps.unreadTaskRepository.abortDeletion(sessionIds),
+    commit: (sessionIds) => deps.unreadController.removeUnreadSessions(sessionIds),
     reconcile: async (existingSessionIds) => {
       const deletedSessionIds =
         await deps.unreadTaskRepository.reconcileSessionCatalog(existingSessionIds)

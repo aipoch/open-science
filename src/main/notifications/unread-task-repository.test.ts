@@ -146,41 +146,7 @@ describe('UnreadTaskDbRepository', () => {
     await expect(repository.load()).resolves.toEqual([])
   })
 
-  it('prepares and commits unread deletion without losing the crash-recovery intent', async () => {
-    const repository = await createRepository()
-    await repository.save(['session-1', 'session-2'])
-
-    await repository.prepareDeletion(['session-1', 'session-2'])
-
-    await expect(repository.load()).resolves.toEqual(['session-1', 'session-2'])
-    await expect(client!.unreadTaskDeletionIntent.count()).resolves.toBe(2)
-
-    await repository.commitDeletion(['session-1'])
-
-    await expect(repository.load()).resolves.toEqual(['session-2'])
-    await expect(
-      client!.unreadTaskDeletionIntent.findMany({ orderBy: { sessionId: 'asc' } })
-    ).resolves.toMatchObject([{ sessionId: 'session-2' }])
-
-    await repository.abortDeletion(['session-2'])
-    await expect(client!.unreadTaskDeletionIntent.count()).resolves.toBe(0)
-    await expect(repository.load()).resolves.toEqual(['session-2'])
-  })
-
-  it('recovers deletion intents against the authoritative active-session set', async () => {
-    const repository = await createRepository()
-    await repository.save(['deleted-session', 'active-session'])
-    await repository.prepareDeletion(['deleted-session', 'active-session'])
-
-    await expect(repository.reconcileSessionCatalog(['active-session'])).resolves.toEqual([
-      'deleted-session'
-    ])
-
-    await expect(repository.load()).resolves.toEqual(['active-session'])
-    await expect(client!.unreadTaskDeletionIntent.count()).resolves.toBe(0)
-  })
-
-  it('removes unread rows whose sessions disappeared without a deletion intent', async () => {
+  it('removes unread rows whose sessions disappeared from the authoritative catalog', async () => {
     const repository = await createRepository()
     await repository.save(['deleted-headless-session', 'active-session'])
 

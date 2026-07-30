@@ -45,13 +45,11 @@ export const createDesktopAttentionController = (
   let bounceId: number | undefined
   let flashingWindow: DesktopAttentionWindow | undefined
   let clearTimer: ReturnType<typeof setTimeout> | undefined
-  let generation = 0
 
   const reportError = (error: unknown): void => deps.onError?.(error)
 
   // Stops whichever native mechanism was started without assuming its window still exists.
   const clear = (): void => {
-    generation += 1
     if (clearTimer !== undefined) {
       clearTimeout(clearTimer)
       clearTimer = undefined
@@ -113,10 +111,7 @@ export const createDesktopAttentionController = (
       return
     }
 
-    const requestGeneration = generation
-    clearTimer = setTimeout(() => {
-      if (generation === requestGeneration) clear()
-    }, ATTENTION_DURATION_MS)
+    clearTimer = setTimeout(clear, ATTENTION_DURATION_MS)
   }
 
   return { request, clear }

@@ -3,10 +3,7 @@ import type { Prisma, PrismaClient } from '@prisma/client'
 export const MAX_UNREAD_TASK_SESSIONS = 1000
 const SQLITE_MUTATION_CHUNK_SIZE = 400
 
-type UnreadTaskClient = Pick<
-  PrismaClient,
-  '$transaction' | 'unreadTaskSession' | 'unreadTaskDeletionIntent'
->
+type UnreadTaskClient = Pick<PrismaClient, '$transaction' | 'unreadTaskSession'>
 type UnreadTaskClientProvider = () => Promise<UnreadTaskClient>
 
 // Preserves insertion order while deduplicating; snapshots additionally bound database growth.
@@ -60,65 +57,8 @@ export class UnreadTaskDbRepository {
     return this.enqueue(() => this.reconcile(snapshot))
   }
 
-  // Records deletion evidence before any authoritative Session JSON is removed. The unread row is
-  // intentionally left intact until commit, so an ordinary failed delete cannot lose user state.
-  prepareDeletion(sessionIds: string[]): Promise<void> {
-    const snapshot = normalizeSessionIds(sessionIds)
-
-    return this.enqueue(async () => {
-      if (snapshot.length === 0) return
-      const client = await this.getClient()
-
-      await client.$transaction(async (transaction) => {
-        for (const ids of chunkValues(snapshot)) {
-          // SQLite's Prisma connector has no createMany(skipDuplicates). Replacing the same keyed
-          // intents inside this transaction keeps retries idempotent without exposing a missing row.
-          await transaction.unreadTaskDeletionIntent.deleteMany({
-            where: { sessionId: { in: ids } }
-          })
-          await transaction.unreadTaskDeletionIntent.createMany({
-            data: ids.map((sessionId) => ({ sessionId }))
-          })
-        }
-      })
-    })
-  }
-
-  // Deletes unread rows and their crash-recovery evidence atomically after Session JSON commits.
-  commitDeletion(sessionIds: string[]): Promise<void> {
-    const snapshot = normalizeSessionIds(sessionIds)
-
-    return this.enqueue(async () => {
-      if (snapshot.length === 0) return
-      const client = await this.getClient()
-
-      await client.$transaction(async (transaction) => {
-        for (const ids of chunkValues(snapshot)) {
-          await transaction.unreadTaskSession.deleteMany({ where: { sessionId: { in: ids } } })
-          await transaction.unreadTaskDeletionIntent.deleteMany({
-            where: { sessionId: { in: ids } }
-          })
-        }
-      })
-    })
-  }
-
-  // A failed authoritative delete leaves the Session JSON readable, so only its intent is removed.
-  abortDeletion(sessionIds: string[]): Promise<void> {
-    const snapshot = normalizeSessionIds(sessionIds)
-
-    return this.enqueue(async () => {
-      if (snapshot.length === 0) return
-      const client = await this.getClient()
-
-      for (const ids of chunkValues(snapshot)) {
-        await client.unreadTaskDeletionIntent.deleteMany({ where: { sessionId: { in: ids } } })
-      }
-    })
-  }
-
-  // Reconciles unread metadata only after a complete authoritative Session JSON scan. This also
-  // removes rows deleted by a headless process, which deliberately does not write desktop state.
+  // Reconciles unread metadata only after a complete authoritative Session JSON scan. This repairs
+  // interrupted and headless deletions without introducing a second durable deletion protocol.
   // Returns every absent id so the live controller can drop markers and tombstone racing events.
   reconcileSessionCatalog(existingSessionIds: string[]): Promise<string[]> {
     const existing = new Set(normalizeSessionIds(existingSessionIds))
@@ -131,24 +71,12 @@ export class UnreadTaskDbRepository {
           orderBy: { id: 'asc' },
           select: { sessionId: true }
         })
-        const intents = await transaction.unreadTaskDeletionIntent.findMany({
-          orderBy: { createdAt: 'asc' },
-          select: { sessionId: true }
-        })
-        const deletedSessionIds = normalizeSessionIds([
-          ...unreadRows.map((row) => row.sessionId).filter((sessionId) => !existing.has(sessionId)),
-          ...intents
-            .map((intent) => intent.sessionId)
-            .filter((sessionId) => !existing.has(sessionId))
-        ])
+        const deletedSessionIds = unreadRows
+          .map((row) => row.sessionId)
+          .filter((sessionId) => !existing.has(sessionId))
 
         for (const ids of chunkValues(deletedSessionIds)) {
           await transaction.unreadTaskSession.deleteMany({ where: { sessionId: { in: ids } } })
-        }
-        for (const ids of chunkValues(intents.map((intent) => intent.sessionId))) {
-          await transaction.unreadTaskDeletionIntent.deleteMany({
-            where: { sessionId: { in: ids } }
-          })
         }
 
         return deletedSessionIds
@@ -181,8 +109,8 @@ export class UnreadTaskDbRepository {
     })
   }
 
-  // All snapshot and intent operations share one queue so an older full-state save cannot recreate
-  // a row after a newer deletion commit.
+  // Snapshot and catalog operations share one queue so stale full-state writes cannot overtake a
+  // newer authoritative catalog reconciliation.
   private enqueue<Result>(operation: () => Promise<Result>): Promise<Result> {
     const run = this.operationTail.then(operation, operation)
     this.operationTail = run.then(

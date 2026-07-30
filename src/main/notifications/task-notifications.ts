@@ -236,9 +236,6 @@ type ChainEntry = { token: number; snippet?: string }
 // unit-testable; wiring lives in main/ipc.ts.
 export class TaskNotificationService {
   private readonly tracks = new Map<string, ChainEntry[]>()
-  // Tracks that have been reverted via untrackPrompt; consult these when popping the chain so a
-  // superseded predecessor never resurrects as the active head.
-  private readonly deadTokens = new Set<number>()
   private trackCounter = 0
   private activationHandler: ((sessionId?: string) => void) | undefined
   private attentionHandlers: TaskNotificationAttentionHandlers | undefined
@@ -306,7 +303,7 @@ export class TaskNotificationService {
 
   // Records every renderer-originated prompt, including attachment-only turns. A first-line snippet
   // is retained only when available; the token lets a rejected pre-turn send restore its predecessor.
-  trackPrompt(request: Pick<AcpPromptRequest, 'sessionId' | 'text'>): TrackedPrompt | undefined {
+  trackPrompt(request: Pick<AcpPromptRequest, 'sessionId' | 'text'>): TrackedPrompt {
     const snippet = toPromptSnippet(request.text)
     const token = ++this.trackCounter
     const previousChain = this.tracks.get(request.sessionId) ?? []
@@ -320,40 +317,19 @@ export class TaskNotificationService {
     if (this.tracks.size > MAX_TRACKED_PROMPTS) {
       const oldest = this.tracks.keys().next().value
 
-      if (oldest !== undefined) {
-        const evicted = this.tracks.get(oldest)
-
-        if (evicted) for (const entry of evicted) this.deadTokens.delete(entry.token)
-        this.tracks.delete(oldest)
-      }
+      if (oldest !== undefined) this.tracks.delete(oldest)
     }
 
     return { token }
   }
 
-  // Reverts a trackPrompt whose send never became a turn (the runtime rejected it before the turn
-  // started). Marks the token dead, then pops every dead tail entry until it finds a live one. A
-  // rejection below a newer live entry remains marked until that newer entry settles, preventing
-  // out-of-order rejections from resurrecting a stale task name.
+  // Reverts exactly the prompt whose send never became a turn. Removing by token preserves every
+  // older or newer live entry regardless of rejection order.
   untrackPrompt(sessionId: string, tracked: TrackedPrompt): void {
-    this.deadTokens.add(tracked.token)
-
     const chain = this.tracks.get(sessionId)
 
-    // A terminal event already cleared the chain for this session; the token is stale, so remove
-    // it from the dead set too — otherwise it leaks forever.
-    if (!chain || chain.length === 0) {
-      this.deadTokens.delete(tracked.token)
-      return
-    }
-
-    let updated = chain
-
-    while (updated.length > 0 && this.deadTokens.has(updated[updated.length - 1].token)) {
-      const popped = updated[updated.length - 1]
-      this.deadTokens.delete(popped.token)
-      updated = updated.slice(0, -1)
-    }
+    if (!chain) return
+    const updated = chain.filter((entry) => entry.token !== tracked.token)
 
     if (updated.length === 0) {
       this.tracks.delete(sessionId)
@@ -376,12 +352,8 @@ export class TaskNotificationService {
 
     // Only genuinely turn-terminal events settle the prompt tracking: a stop (any reason) or a
     // prompt failure. Ancillary session-scoped errors (artifact cleanup, cancel timeout) leave the
-    // snippet in place for the turn's own terminal event. Clearing the chain also reaps the dead
-    // tokens those entries carried so the set can't grow unbounded.
+    // snippet in place for the turn's own terminal event.
     if (event.kind === 'stop' || event.title === ACP_PROMPT_FAILED_EVENT_TITLE) {
-      const chain = this.tracks.get(sessionId)
-
-      if (chain) for (const entry of chain) this.deadTokens.delete(entry.token)
       this.tracks.delete(sessionId)
     }
 

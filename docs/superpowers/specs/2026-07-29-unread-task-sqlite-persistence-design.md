@@ -2,7 +2,7 @@
 
 - **Status:** Approved
 - **Date:** 2026-07-30
-- **Scope:** Replace the unread-task JSON file introduced by this pull request with the existing SQLite data layer, make unread cleanup recoverable across interrupted session deletion, and keep Session-catalog reconciliation entirely in the main process. This design does not expand the notification product behavior.
+- **Scope:** Replace the unread-task JSON file introduced by this pull request with the existing SQLite data layer, recover unread cleanup from the authoritative Session catalog, and keep reconciliation entirely in the main process. This design does not expand the notification product behavior.
 
 ## Context
 
@@ -10,7 +10,7 @@ The desktop notification work keeps a set of session IDs whose terminal agent ta
 
 The first implementation of this pull request stored that set in `unread-task-sessions.json` under Electron's `userData` directory. Open Science already has a shared Prisma/SQLite metadata store at `open-science.db`, rooted through `resolveStorageRoot()`. Keeping this new metadata in a separate JSON file would create a second persistence mechanism and bypass development or test storage-root isolation supplied through `OPEN_SCIENCE_STORAGE_ROOT`.
 
-The unread session set and an interrupted-deletion intent need durable storage. Native handles, live event correlation, renderer projections, and live deletion race tombstones are valid only inside the current process and must remain in memory.
+Only the unread session set needs durable storage. Session JSON remains authoritative for existence, while native handles, live event correlation, renderer projections, and deletion race tombstones are valid only inside the current process and remain in memory.
 
 ## Goals
 
@@ -19,7 +19,7 @@ The unread session set and an interrupted-deletion intent need durable storage. 
 - Keep the notification controller independent of Prisma and SQLite details.
 - Preserve insertion order so the existing oldest-first 1,000-entry bound remains stable across restarts.
 - Make every database update atomic and serialize competing snapshots.
-- Preserve a deletion intent before Session JSON removal so startup can finish or abort unread cleanup after a crash.
+- Repair interrupted and headless unread cleanup from a complete authoritative Session scan.
 - Use the repository's packaged-app runtime DDL convention for fresh and existing databases.
 
 ## Non-goals
@@ -35,9 +35,8 @@ The unread session set and an interrupted-deletion intent need durable storage. 
 | State | Lifetime | Decision | Reason |
 | --- | --- | --- | --- |
 | Unread session IDs | Across restarts | SQLite | Required to restore the badge and unread ownership |
-| Unread deletion intents | Until deletion commits or a complete startup scan | SQLite | Distinguishes interrupted deletion from an ordinary unread row |
 | Notification-enabled setting | Across restarts | Existing Settings repository | Predates this pull request and already has an authority |
-| Task tracks, dead tokens, track counter | Current agent event stream | Memory | Correlates live prompt and terminal events |
+| Task tracks and track counter | Current agent event stream | Memory | Correlates live prompt and terminal events |
 | Pending open-session handoff | Current renderer startup | Memory | Consume-once window handoff is stale after restart |
 | Visible session ID and renderer acknowledgement | Current UI | Memory | Depends on the mounted renderer and focus state |
 | Deleted-session tombstones | Current process | Memory | Prevents a live terminal-event/deletion race only |
@@ -80,18 +79,7 @@ CREATE UNIQUE INDEX IF NOT EXISTS
   ON "UnreadTaskSession"("sessionId");
 ```
 
-Both statements are additive and idempotent. `ensureProjectSchema()` must run them before a generated Prisma client accesses the model.
-
-Deletion recovery uses one keyed intent per session:
-
-```prisma
-model UnreadTaskDeletionIntent {
-  sessionId String   @id
-  createdAt DateTime @default(now())
-}
-```
-
-The intent does not make SQLite authoritative for sessions. It only records that authoritative Session JSON deletion entered its commit window. `createdAt` supports deterministic inspection; cleanup does not depend on its value.
+Both statements are additive and idempotent. `ensureProjectSchema()` must run them before a generated Prisma client accesses the model. No second deletion table is required: after a crash, an unread row whose Session JSON is absent is sufficient evidence for cleanup; a deleted session without an unread row has no durable notification state to repair.
 
 ## Module Boundary
 
@@ -110,9 +98,9 @@ type UnreadTaskRepository = {
 - input normalization and the 1,000-entry bound;
 - ordered reads;
 - snapshot reconciliation transactions;
-- chunked mutations; and
+- chunked mutations;
 - write serialization and queue recovery; and
-- deletion-intent prepare, commit, abort, and complete-scan reconciliation.
+- complete-scan reconciliation against authoritative Session JSON.
 
 The controller owns:
 
@@ -167,12 +155,11 @@ Full-snapshot reconciliation is intentional. If one write fails, the next succes
 Session JSON remains authoritative. Deletion uses this ordered protocol:
 
 1. List every target session ID before removing a project directory.
-2. Persist `UnreadTaskDeletionIntent` rows before deleting Session JSON.
-3. If Session JSON deletion fails, abort the intents and retain unread rows.
-4. If Session JSON deletion commits, delete matching unread rows and intents in one SQLite transaction.
-5. After the next complete authoritative session scan, abort intents whose Session JSON still exists, commit cleanup for intents whose session is absent, and remove any unread row whose Session JSON was deleted by a headless process.
+2. Delete authoritative Session JSON without changing unread state first.
+3. After deletion commits, remove matching live unread markers and persist the controller snapshot.
+4. After the next complete authoritative session scan, remove every unread row whose Session JSON is absent, including interrupted and headless deletions.
 
-All snapshot and intent operations share one repository queue. This prevents an older full-state save from recreating an unread row after a newer deletion commit. Reconciliation is skipped after a partial session scan because absence is not authoritative in that case. Headless deletion continues to avoid all desktop-state writes; a later desktop launch repairs the projection from the complete Session JSON catalog.
+Snapshot and catalog operations share one repository queue so an older full-state save cannot overtake newer reconciliation. Reconciliation is skipped after a partial session scan because absence is not authoritative in that case. Headless deletion continues to avoid all desktop-state writes; a later desktop launch repairs the projection from the complete Session JSON catalog.
 
 ## Failure Boundaries
 
@@ -181,8 +168,8 @@ All snapshot and intent operations share one repository queue. This prevents an 
 - A save failure does not roll back the in-memory unread set or native badge.
 - A save failure does not poison the repository queue.
 - No persistent retry timer is added. A later state change naturally retries with a complete snapshot.
-- Durable session deletion remains authoritative. An unread intent is written before it, while cleanup failures after commit remain retryable and cannot turn a committed deletion into a failure.
-- Only a complete main-process Session scan authorizes unread-row and deletion-intent reconciliation; renderer state never authorizes deletion.
+- Durable session deletion remains authoritative. Cleanup failures after commit remain retryable from the next complete catalog scan and cannot turn a committed deletion into a failure.
+- Only a complete main-process Session scan authorizes unread-row reconciliation; renderer state never authorizes deletion.
 - Native badge, bounce, flashing, and overlay failures remain isolated from unread persistence.
 
 ## Code Changes
@@ -190,7 +177,6 @@ All snapshot and intent operations share one repository queue. This prevents an 
 ### `prisma/schema.prisma`
 
 - Add `UnreadTaskSession`.
-- Add `UnreadTaskDeletionIntent` for crash recovery at the Session JSON deletion boundary.
 - Update the schema overview comment to include unread desktop task state.
 
 ### `src/main/projects/prisma-client.ts`
@@ -204,7 +190,7 @@ All snapshot and intent operations share one repository queue. This prevents an 
 - Remove file parsing, corrupt-file backup, temp-file rename, and `userData` path handling.
 - Retain the normalization helper, entry limit, snapshot copy, and serialized queue semantics.
 - Accept a narrow lazy Prisma client provider, following existing project repositories.
-- Serialize deletion-intent operations on the same queue as full unread snapshots.
+- Serialize catalog reconciliation on the same queue as full unread snapshots.
 
 ### `src/main/notifications/unread-task-controller.ts`
 
@@ -221,9 +207,8 @@ All snapshot and intent operations share one repository queue. This prevents an 
 
 ### `src/main/session-persistence/coordinator.ts`
 
-- Prepare unread deletion intent before authoritative JSON removal.
-- Abort the intent when JSON deletion fails and commit it only after JSON deletion succeeds.
-- Reconcile interrupted intents and unread rows absent from the catalog only after a complete desktop session scan.
+- Notify unread state only after authoritative JSON removal succeeds.
+- Reconcile unread rows absent from the catalog only after a complete desktop session scan.
 
 ### Renderer and Shared Session Changes
 
@@ -256,8 +241,8 @@ Use a real temporary SQLite database where schema compatibility matters, plus a 
 - Concurrent `save()` calls settle in call order and leave the last snapshot.
 - A failed transaction leaves the previous snapshot intact.
 - A failed queued write does not prevent the next write from succeeding.
-- Prepare retains unread rows while recording intents; commit clears both atomically; abort keeps unread state.
-- Complete-scan reconciliation resolves intents and removes unread rows absent from the authoritative catalog, including sessions deleted headlessly.
+- Failed authoritative deletion retains unread state; successful deletion removes it afterwards.
+- Complete-scan reconciliation removes unread rows absent from the authoritative catalog, including interrupted and headless deletions.
 
 ### Controller Tests
 
@@ -294,7 +279,7 @@ The user will perform virtual-machine and physical-platform validation. Since th
 - Unread task state survives restart through `open-science.db` on supported desktop platforms.
 - The database contains at most one row per session and the controller retains at most 1,000 unread sessions.
 - Viewing or deleting a session removes its durable unread row through the existing policy paths.
-- A crash between deletion prepare and cleanup, or a session deletion performed headlessly, converges from the next complete desktop Session JSON scan without retaining stale unread state or deleting unread state for a session whose JSON still exists.
+- A crash between authoritative deletion and unread cleanup, or a session deletion performed headlessly, converges from the next complete desktop Session JSON scan without retaining stale unread state or deleting unread state for a session whose JSON still exists.
 - Database failures never block agent completion, committed session deletion, application startup, or current-process native feedback.
 - A failed initial read cannot erase previously stored unread rows.
 - Headless mode performs no unread database or native badge work.

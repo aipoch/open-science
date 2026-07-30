@@ -45,13 +45,6 @@ model UnreadTaskSession {
   sessionId String @unique
 }
 
-// Durable evidence bridging filesystem session deletion and unread projection cleanup. A complete
-// session scan resolves each row after a crash: active sessions abort, absent sessions commit.
-model UnreadTaskDeletionIntent {
-  sessionId String   @id
-  createdAt DateTime @default(now())
-}
-
 // One reviewer pass over a single completed turn. See src/main/reviewer/repository.ts. Checks live in
 // a child table (Finding); the review carries the turn scope (JSON), the task lifecycle, and the outcome.
 // Created at runtime via CREATE TABLE IF NOT EXISTS (see src/main/projects/prisma-client.ts), not migrate.

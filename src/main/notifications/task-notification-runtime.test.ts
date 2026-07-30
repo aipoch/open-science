@@ -61,12 +61,9 @@ describe('bindUnreadTaskDeletionRuntime', () => {
     await expect(repository.load()).resolves.toEqual(['session-1'])
     expect(badgeCounts.at(-1)).toBe(1)
 
-    await deletionHandlers?.prepare(['session-1'])
-    await expect(client.unreadTaskDeletionIntent.count()).resolves.toBe(1)
     await deletionHandlers?.commit(['session-1'])
 
     await expect(repository.load()).resolves.toEqual([])
-    await expect(client.unreadTaskDeletionIntent.count()).resolves.toBe(0)
     expect(badgeCounts.at(-1)).toBe(0)
   })
 
@@ -80,9 +77,6 @@ describe('bindUnreadTaskDeletionRuntime', () => {
         removeUnreadSessions: noOp
       },
       unreadTaskRepository: {
-        prepareDeletion: noOp,
-        commitDeletion: noOp,
-        abortDeletion: noOp,
         reconcileSessionCatalog: vi.fn(async () => [])
       },
       sessionPersistenceCoordinator: { setSessionDeletionHandlers }

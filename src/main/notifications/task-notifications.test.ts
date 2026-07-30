@@ -785,7 +785,7 @@ describe('TaskNotificationService', () => {
     expect(trackedA).toEqual({ token: 1 })
     expect(trackedB).toEqual({ token: 2 })
 
-    service.untrackPrompt('session-1', trackedB as NonNullable<typeof trackedB>)
+    service.untrackPrompt('session-1', trackedB)
     await service.handleRuntimeEvent(stopEvent('end_turn'))
 
     expect(shown[0]?.body).toBe('The agent finished responding to "Prompt A".')
@@ -801,8 +801,8 @@ describe('TaskNotificationService', () => {
     const trackedC = service.trackPrompt({ sessionId: 'session-1', text: 'Prompt C' })
 
     void trackedA
-    service.untrackPrompt('session-1', trackedB as NonNullable<typeof trackedB>)
-    service.untrackPrompt('session-1', trackedC as NonNullable<typeof trackedC>)
+    service.untrackPrompt('session-1', trackedB)
+    service.untrackPrompt('session-1', trackedC)
     await service.handleRuntimeEvent(stopEvent('end_turn'))
 
     expect(shown[0]?.body).toBe('The agent finished responding to "Prompt A".')
@@ -813,7 +813,7 @@ describe('TaskNotificationService', () => {
 
     const tracked = service.trackPrompt({ sessionId: 'session-1', text: 'Plot the curve' })
     await service.handleRuntimeEvent(stopEvent('end_turn'))
-    service.untrackPrompt('session-1', tracked as NonNullable<typeof tracked>)
+    service.untrackPrompt('session-1', tracked)
 
     // The snippet was consumed by the stop event; a late untrack must not resurrect it.
     await service.handleRuntimeEvent(stopEvent('end_turn'))
@@ -836,34 +836,5 @@ describe('TaskNotificationService', () => {
     await service.handleRuntimeEvent(stopEvent('end_turn'))
 
     expect(shown).toHaveLength(0)
-  })
-
-  it('cleans up a stale token from deadTokens when untrack follows a terminal event', async () => {
-    const { service } = createService({})
-
-    const tracked = service.trackPrompt({ sessionId: 'session-1', text: 'Plot the curve' })
-    await service.handleRuntimeEvent(stopEvent('end_turn'))
-
-    // The terminal event cleared the chain; the late untrack must also clean the deadToken set.
-    service.untrackPrompt('session-1', tracked as NonNullable<typeof tracked>)
-
-    // Access the private set via a cast to verify it's empty.
-    const deadTokens = (service as unknown as { deadTokens: Set<number> }).deadTokens
-    expect(deadTokens.has(tracked!.token)).toBe(false)
-    expect(deadTokens.size).toBe(0)
-  })
-
-  it('cleans dead tokens when their tracked session is evicted', () => {
-    const { service } = createService({})
-    const rejected = service.trackPrompt({ sessionId: 'oldest-session', text: 'Prompt B' })
-    service.trackPrompt({ sessionId: 'oldest-session', text: 'Prompt C' })
-    service.untrackPrompt('oldest-session', rejected as NonNullable<typeof rejected>)
-
-    for (let index = 0; index < 100; index += 1) {
-      service.trackPrompt({ sessionId: `new-session-${index}`, text: 'Keep tracking' })
-    }
-
-    const deadTokens = (service as unknown as { deadTokens: Set<number> }).deadTokens
-    expect(deadTokens.size).toBe(0)
   })
 })

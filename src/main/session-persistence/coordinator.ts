@@ -104,9 +104,7 @@ type ArtifactStorageReconciler = {
 }
 
 type SessionDeletionHandlers = {
-  prepare(sessionIds: string[]): Promise<void>
   commit(sessionIds: string[]): Promise<void>
-  abort(sessionIds: string[]): Promise<void>
   reconcile(existingSessionIds: string[]): Promise<void>
 }
 
@@ -238,8 +236,8 @@ class SessionPersistenceCoordinator {
     private readonly artifactStorage?: ArtifactStorageReconciler
   ) {}
 
-  // Binds unread deletion recovery to the authoritative Session mutation queue. Reconciliation is
-  // called only with a complete live Session catalog.
+  // Binds unread cleanup to authoritative Session mutations. Reconciliation is called only with a
+  // complete live Session catalog, while commit runs only after deletion succeeds.
   setSessionDeletionHandlers(handlers: SessionDeletionHandlers): void {
     this.sessionDeletionHandlers = handlers
   }
@@ -493,7 +491,6 @@ class SessionPersistenceCoordinator {
     return this.enqueue(async () => {
       this.deletedProjects.add(projectId)
       let deletedSessionIds: string[] = []
-      let deletionPrepared = false
 
       try {
         if (options.requireExistingUploadAuthority && !this.uploads) {
@@ -559,12 +556,6 @@ class SessionPersistenceCoordinator {
         if (deletionState === 'legacy-committed') {
           await this.repository.markCommittedProjectSessionsPrepared(projectId)
         }
-        // Only live authority needs a pre-commit intent. Replayed committed tombstones are already
-        // absent from the live catalog and can be cleaned directly after their retry succeeds.
-        if (deletionState === 'live' || deletionState === 'absent') {
-          await this.sessionDeletionHandlers?.prepare(deletedSessionIds)
-          deletionPrepared = true
-        }
         // The marked directory rename is the sole authoritative commit. Derived index deletion runs
         // afterward so any failure is replayable from the durable Project intent and tombstone.
         await this.repository.deleteProjectSessions(projectId)
@@ -573,9 +564,6 @@ class SessionPersistenceCoordinator {
         try {
           const state = await this.repository.getProjectSessionDeletionState(projectId)
           if (state === 'live' || state === 'absent') {
-            if (deletionPrepared) {
-              await this.sessionDeletionHandlers?.abort(deletedSessionIds).catch(() => undefined)
-            }
             this.deletedProjects.delete(projectId)
           }
         } catch {
@@ -694,7 +682,6 @@ class SessionPersistenceCoordinator {
       let token: ManagedFileSoftDeleteToken | undefined
       let receipt: SessionDeletionReceipt = { kind: 'ordinary', projectId, sessionId }
       let jsonDeleted = false
-      let deletionPrepared = false
 
       try {
         const loadedSession = await this.repository.loadSessionWithDiagnostics(projectId, sessionId)
@@ -711,17 +698,12 @@ class SessionPersistenceCoordinator {
         if (receipt.kind === 'ordinary') {
           token = await this.fileIndex.softDeleteSession(projectId, sessionId)
         }
-        await this.sessionDeletionHandlers?.prepare([sessionId])
-        deletionPrepared = true
         await this.repository.deleteSession(projectId, sessionId)
         jsonDeleted = true
         await this.provenance?.completeSessionDeletion(receipt)
       } catch (error) {
         try {
           if (!jsonDeleted) {
-            if (deletionPrepared) {
-              await this.sessionDeletionHandlers?.abort([sessionId]).catch(() => undefined)
-            }
             if (receipt.kind === 'retained') {
               await this.provenance?.abortSessionDeletion(receipt)
             }
@@ -806,13 +788,13 @@ class SessionPersistenceCoordinator {
     }
   }
 
-  // Runs only after authoritative Session deletion commits. Cleanup failures retain durable intent
-  // for the next complete catalog reconciliation and never roll back the user-visible deletion.
+  // Runs only after authoritative Session deletion commits. Cleanup failures are repaired by the next
+  // complete catalog reconciliation and never roll back the user-visible deletion.
   private async notifySessionsDeleted(sessionIds: string[]): Promise<void> {
     try {
       await this.sessionDeletionHandlers?.commit(sessionIds)
     } catch {
-      // The intent remains durable and a later complete Session scan retries the projection cleanup.
+      // A later complete Session scan retries the projection cleanup from authoritative JSON state.
     }
   }
 }
