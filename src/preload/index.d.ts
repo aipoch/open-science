@@ -351,7 +351,10 @@ interface OpenScienceAPI {
   }
   notifications: {
     onOpenSession(listener: () => void): RemoveListener
-    takePendingOpenSession(): Promise<OpenSessionFromNotificationRequest | null>
+    peekPendingOpenSession(): Promise<OpenSessionFromNotificationRequest | null>
+    takePendingOpenSession(
+      expectedSessionId: string
+    ): Promise<OpenSessionFromNotificationRequest | null>
   }
   github: {
     getStars(): Promise<number | null>

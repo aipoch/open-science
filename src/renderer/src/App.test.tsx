@@ -6,6 +6,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 const mocks = vi.hoisted(() => {
   // Captures the onOpenSession listener so tests can fire the notification nudge directly.
   const notificationNudgeBox: { current: (() => void) | undefined } = { current: undefined }
+  const navigationListeners = new Set<() => void>()
 
   return {
     settings: {
@@ -22,6 +23,7 @@ const mocks = vi.hoisted(() => {
     },
     skillImport: { enqueue: vi.fn(), dismiss: vi.fn() },
     navigation: { view: 'home' as 'home' | 'workspace' },
+    sessions: [] as Array<{ id: string }>,
     environment: {
       ui: { state: 'idle' },
       init: vi.fn().mockResolvedValue(undefined),
@@ -42,8 +44,10 @@ const mocks = vi.hoisted(() => {
         notificationNudgeBox.current = listener
         return () => undefined
       }),
+      peekPendingOpenSession: vi.fn().mockResolvedValue(null),
       takePendingOpenSession: vi.fn().mockResolvedValue(null)
     },
+    navigationListeners,
     sessionPersistence: {
       isHydrated: true,
       isLoading: false,
@@ -79,8 +83,17 @@ vi.mock('@/stores/navigation-store', () => ({
   useNavigationStore: Object.assign(
     <T,>(selector: (state: typeof mocks.navigation) => T): T => selector(mocks.navigation),
     // Notification navigation reaches the store imperatively (outside React) via getState().
-    { getState: () => ({ openSessionById: mocks.openSessionById }) }
+    {
+      getState: () => ({ openSessionById: mocks.openSessionById }),
+      subscribe: (listener: () => void) => {
+        mocks.navigationListeners.add(listener)
+        return () => mocks.navigationListeners.delete(listener)
+      }
+    }
   )
+}))
+vi.mock('@/stores/session-store', () => ({
+  useSessionStore: { getState: () => ({ sessions: mocks.sessions }) }
 }))
 vi.mock('@/stores/notebook-env-store', () => ({
   useNotebookEnvStore: <T,>(selector: (state: typeof mocks.environment) => T): T =>
@@ -214,7 +227,10 @@ describe('App startup routing', () => {
       }
     } as unknown as Window['api']
     mocks.openSessionById.mockClear()
+    mocks.sessions = []
+    mocks.navigationListeners.clear()
     mocks.notifications.onOpenSession.mockClear()
+    mocks.notifications.peekPendingOpenSession.mockReset().mockResolvedValue(null)
     mocks.notifications.takePendingOpenSession.mockReset().mockResolvedValue(null)
     mocks.notificationNudgeBox.current = undefined
   })
@@ -477,6 +493,7 @@ describe('App startup routing', () => {
     mocks.sessionPersistence.isHydrated = false
     mocks.sessionPersistence.isLoading = true
     mocks.sessionPersistence.isReady = false
+    mocks.notifications.peekPendingOpenSession.mockResolvedValue({ sessionId: 's-9' })
     mocks.notifications.takePendingOpenSession.mockResolvedValue({ sessionId: 's-9' })
 
     await render()
@@ -484,8 +501,8 @@ describe('App startup routing', () => {
     // Sessions still hydrating: the pending click target must not be consumed or dropped.
     expect(mocks.openSessionById).not.toHaveBeenCalled()
 
-    // Partial hydration cannot prove an absent target was deleted, so the destructive take stays
-    // pending in main until a complete retry.
+    // Partial hydration cannot prove an absent target was deleted, so only the non-destructive peek
+    // runs and the target stays pending in main until a complete retry.
     mocks.sessionPersistence.isHydrated = true
     mocks.sessionPersistence.isLoading = false
     await act(async () => root.render(<App />))
@@ -493,40 +510,84 @@ describe('App startup routing', () => {
       await new Promise((resolve) => setTimeout(resolve, 0))
     })
 
+    expect(mocks.notifications.peekPendingOpenSession).toHaveBeenCalled()
     expect(mocks.notifications.takePendingOpenSession).not.toHaveBeenCalled()
     expect(mocks.openSessionById).not.toHaveBeenCalled()
 
+    mocks.sessionPersistence.isHydrated = false
+    mocks.sessionPersistence.isLoading = true
+    await act(async () => root.render(<App />))
+
+    mocks.sessions = [{ id: 's-9' }]
+    mocks.sessionPersistence.isHydrated = true
+    mocks.sessionPersistence.isLoading = false
     mocks.sessionPersistence.isReady = true
     await act(async () => root.render(<App />))
     await act(async () => {
       await new Promise((resolve) => setTimeout(resolve, 0))
     })
 
+    expect(mocks.notifications.takePendingOpenSession).toHaveBeenCalledWith('s-9')
     expect(mocks.openSessionById).toHaveBeenCalledWith('s-9')
   })
 
-  it('does not consume a notification nudge during partial recovery', async () => {
+  it('opens an already-hydrated notification target during partial recovery', async () => {
     mocks.settings.isLoaded = true
     mocks.sessionPersistence.isReady = false
-    mocks.notifications.takePendingOpenSession.mockResolvedValue({ sessionId: 's-3' })
+    mocks.sessions = [{ id: 's-3' }]
 
     await render()
+    await act(async () => {
+      await new Promise((resolve) => setTimeout(resolve, 0))
+    })
 
+    mocks.notifications.peekPendingOpenSession.mockResolvedValue({ sessionId: 's-3' })
+    mocks.notifications.takePendingOpenSession.mockResolvedValue({ sessionId: 's-3' })
     const nudge = mocks.notificationNudgeBox.current
     expect(nudge).toBeDefined()
+
     await act(async () => {
       nudge?.()
+      await new Promise((resolve) => setTimeout(resolve, 0))
+    })
+
+    expect(mocks.notifications.takePendingOpenSession).toHaveBeenCalledWith('s-3')
+    expect(mocks.openSessionById).toHaveBeenCalledWith('s-3')
+  })
+
+  it('discards a deferred notification when the user navigates elsewhere', async () => {
+    let pending: { sessionId: string } | null = { sessionId: 's-3' }
+    mocks.settings.isLoaded = true
+    mocks.sessionPersistence.isReady = false
+    mocks.notifications.peekPendingOpenSession.mockImplementation(async () => pending)
+    mocks.notifications.takePendingOpenSession.mockImplementation(async (sessionId: string) => {
+      if (pending?.sessionId !== sessionId) return null
+      const consumed = pending
+      pending = null
+      return consumed
+    })
+
+    await render()
+    await act(async () => {
+      await new Promise((resolve) => setTimeout(resolve, 0))
     })
 
     expect(mocks.notifications.takePendingOpenSession).not.toHaveBeenCalled()
-    expect(mocks.openSessionById).not.toHaveBeenCalled()
 
+    await act(async () => {
+      for (const listener of mocks.navigationListeners) listener()
+      await new Promise((resolve) => setTimeout(resolve, 0))
+    })
+
+    expect(mocks.notifications.takePendingOpenSession).toHaveBeenCalledWith('s-3')
+
+    mocks.sessions = [{ id: 's-3' }]
     mocks.sessionPersistence.isReady = true
     await act(async () => root.render(<App />))
     await act(async () => {
       await new Promise((resolve) => setTimeout(resolve, 0))
     })
 
-    expect(mocks.openSessionById).toHaveBeenCalledWith('s-3')
+    expect(mocks.openSessionById).not.toHaveBeenCalled()
   })
 })

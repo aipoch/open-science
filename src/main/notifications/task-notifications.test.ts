@@ -391,15 +391,19 @@ describe('TaskNotificationService', () => {
     expect(deliveryErrors).toEqual([boom])
   })
 
-  it('holds the notification click target until the renderer takes it (consume-once)', () => {
+  it('peeks without consuming and only takes the expected notification target', () => {
     const { service } = createService({})
 
-    expect(service.takePendingOpenSession()).toBeNull()
+    expect(service.peekPendingOpenSession()).toBeNull()
 
     service.setPendingOpenSession('session-7')
 
-    expect(service.takePendingOpenSession()).toEqual({ sessionId: 'session-7' })
-    expect(service.takePendingOpenSession()).toBeNull()
+    expect(service.peekPendingOpenSession()).toEqual({ sessionId: 'session-7' })
+    expect(service.peekPendingOpenSession()).toEqual({ sessionId: 'session-7' })
+    expect(service.takePendingOpenSession('newer-session')).toBeNull()
+    expect(service.peekPendingOpenSession()).toEqual({ sessionId: 'session-7' })
+    expect(service.takePendingOpenSession('session-7')).toEqual({ sessionId: 'session-7' })
+    expect(service.peekPendingOpenSession()).toBeNull()
   })
 
   it('surfaces the window on click even without a session (degraded connector approval)', async () => {

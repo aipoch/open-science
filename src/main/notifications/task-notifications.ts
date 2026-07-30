@@ -233,14 +233,23 @@ export class TaskNotificationService {
     this.pendingOpenSession = { sessionId }
   }
 
-  // Returns and clears the pending click target; the renderer calls this once its session store is
-  // hydrated (and on every push nudge). Null when there is nothing to open.
-  takePendingOpenSession(): OpenSessionFromNotificationRequest | null {
+  // Lets the renderer check whether the target already exists in a partially hydrated store without
+  // losing it when the remaining persistence scan still needs to be retried.
+  peekPendingOpenSession(): OpenSessionFromNotificationRequest | null {
+    return this.pendingOpenSession ?? null
+  }
+
+  // Clears the pending click target only when it is still the one the renderer inspected. A newer
+  // notification may replace it while the renderer awaits IPC, and must not be consumed by the
+  // older attempt.
+  takePendingOpenSession(expectedSessionId: string): OpenSessionFromNotificationRequest | null {
     const pending = this.pendingOpenSession
+
+    if (!pending || pending.sessionId !== expectedSessionId) return null
 
     this.pendingOpenSession = undefined
 
-    return pending ?? null
+    return pending
   }
 
   // Remembers the prompt's first line so the terminal event can name the task. Called when a

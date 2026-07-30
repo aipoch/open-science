@@ -68,6 +68,7 @@ export const WEB_INVOKE_CHANNELS = {
   'notebookEnv.getStatus': 'notebook-env:status',
   'notebookEnv.provision': 'notebook-env:provision',
   'notebookEnv.repair': 'notebook-env:repair',
+  'notifications.peekPendingOpenSession': 'notifications:peek-pending-open-session',
   'notifications.takePendingOpenSession': 'notifications:take-pending-open-session',
   'preview.delete': 'preview:delete',
   'preview.load': 'preview:load',

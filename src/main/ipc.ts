@@ -352,10 +352,16 @@ const registerIpcHandlers = async ({
     onDeliveryError: (error) =>
       notificationsLog.warn('task notification delivery failed', errorLogFields(error))
   })
-  // The renderer pulls the notification click target once its sessions are hydrated (a push sent
-  // before the listener exists would be lost); consume-once semantics live in the service.
-  ipcMain.handle('notifications:take-pending-open-session', () =>
-    taskNotifications.takePendingOpenSession()
+  // The renderer peeks once sessions are hydrated, then conditionally consumes the same target.
+  // This lets partial recovery open an already-loaded conversation while retaining an omitted one
+  // for retry, without an older IPC round trip clearing a newer click target.
+  ipcMain.handle('notifications:peek-pending-open-session', () =>
+    taskNotifications.peekPendingOpenSession()
+  )
+  ipcMain.handle('notifications:take-pending-open-session', (_event, expectedSessionId: unknown) =>
+    typeof expectedSessionId === 'string'
+      ? taskNotifications.takePendingOpenSession(expectedSessionId)
+      : null
   )
   // One MCP client manager backs both dispatch (ConnectorService.call → custom server) and skill-doc
   // generation (listTools) for user-added custom MCP servers (stdio + remote). It lazily connects per

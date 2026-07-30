@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useState } from 'react'
+import { useCallback, useEffect, useRef, useState } from 'react'
 
 import { useDeepLinkNavigation } from '@/lib/deep-link'
 import { useSessionPersistence } from '@/lib/session-persistence/session-persistence'
@@ -24,6 +24,7 @@ import { useNavigationStore } from '@/stores/navigation-store'
 import { useNotebookEnvStore } from '@/stores/notebook-env-store'
 import { useProjectStore } from '@/stores/project-store'
 import { useSettingsStore } from '@/stores/settings-store'
+import { useSessionStore } from '@/stores/session-store'
 import { useComputeStore } from '@/stores/compute-store'
 import { useSessionJobStore } from '@/stores/session-job-store'
 import { useSkillImportStore } from '@/stores/skill-import-store'
@@ -69,6 +70,9 @@ const App = (): React.JSX.Element | null => {
   const [legacyMove, setLegacyMove] = useState<
     { currentDataRoot: string; defaultParent: string } | undefined
   >(undefined)
+  const deferredNotificationSessionId = useRef<string | undefined>(undefined)
+  const notificationNavigationGeneration = useRef(0)
+  const isOpeningNotificationSession = useRef(false)
 
   const retrySettingsInitialization = useCallback(async (): Promise<void> => {
     if (await loadSettings({ force: true })) await checkEnvironment()
@@ -123,30 +127,85 @@ const App = (): React.JSX.Element | null => {
   }, [])
 
   // Clicking a desktop notification opens the conversation the finished/failed task belongs to.
-  // Main holds the target until it is pulled here, so a click that recreates the window (listener
-  // not yet registered, sessions not yet hydrated) cannot lose the navigation.
+  // Main retains the target until this renderer confirms that the inspected session can be opened,
+  // so a click that recreates the window or lands during partial recovery is not lost.
   const openPendingNotificationSession = useCallback(async (): Promise<void> => {
-    const pending = await window.api.notifications.takePendingOpenSession()
+    const navigationGeneration = notificationNavigationGeneration.current
+    const pending = await window.api.notifications.peekPendingOpenSession()
 
-    if (pending) useNavigationStore.getState().openSessionById(pending.sessionId)
-  }, [])
+    if (!pending) {
+      deferredNotificationSessionId.current = undefined
+      return
+    }
 
-  // Fast path: a click while this renderer is alive arrives as a nudge; pull the target. A click
-  // mid-recovery is left pending and consumed by the effect below once the full scan can distinguish
-  // an omitted target from one that no longer exists.
+    const sessionExists =
+      isSessionPersistenceHydrated &&
+      useSessionStore.getState().sessions.some((session) => session.id === pending.sessionId)
+
+    if (!sessionExists && !isSessionPersistenceReady) {
+      if (notificationNavigationGeneration.current === navigationGeneration) {
+        deferredNotificationSessionId.current = pending.sessionId
+      } else {
+        // The user navigated while the peek was in flight. Drop only the stale target we saw; a
+        // newer notification that replaced it remains pending in main.
+        await window.api.notifications.takePendingOpenSession(pending.sessionId)
+      }
+      return
+    }
+
+    const consumed = await window.api.notifications.takePendingOpenSession(pending.sessionId)
+
+    if (!consumed) return
+
+    deferredNotificationSessionId.current = undefined
+
+    // A navigation after this attempt began takes precedence over the older notification click.
+    if (!sessionExists || notificationNavigationGeneration.current !== navigationGeneration) {
+      return
+    }
+
+    isOpeningNotificationSession.current = true
+    try {
+      useNavigationStore.getState().openSessionById(consumed.sessionId)
+    } finally {
+      isOpeningNotificationSession.current = false
+    }
+  }, [isSessionPersistenceHydrated, isSessionPersistenceReady])
+
+  // If a missing target is waiting for a persistence retry, explicit navigation transfers control
+  // to the user. Conditionally consume that old target so recovery cannot yank them back later.
+  useEffect(
+    () =>
+      useNavigationStore.subscribe(() => {
+        if (isOpeningNotificationSession.current) return
+
+        notificationNavigationGeneration.current += 1
+        const deferredSessionId = deferredNotificationSessionId.current
+
+        if (!deferredSessionId) return
+
+        deferredNotificationSessionId.current = undefined
+        void window.api.notifications.takePendingOpenSession(deferredSessionId)
+      }),
+    []
+  )
+
+  // Fast path: a click while this renderer is alive arrives as a nudge. Already-hydrated targets
+  // open during partial recovery; unresolved ones remain pending for the retry path below.
   useEffect(
     () =>
       window.api.notifications.onOpenSession(() => {
-        if (isSessionPersistenceReady) void openPendingNotificationSession()
+        void openPendingNotificationSession()
       }),
-    [isSessionPersistenceReady, openPendingNotificationSession]
+    [openPendingNotificationSession]
   )
 
-  // Slow path: the click recreated the window before this listener existed. Consume the pending
-  // target only after session persistence has a complete store snapshot.
+  // Slow path: the click recreated the window before this listener existed. Peek immediately so
+  // navigation during initial loading can dismiss it, then recheck after every hydration pass; a
+  // partial snapshot may still open targets that it did load.
   useEffect(() => {
-    if (isSessionPersistenceReady) void openPendingNotificationSession()
-  }, [isSessionPersistenceReady, openPendingNotificationSession])
+    void openPendingNotificationSession()
+  }, [openPendingNotificationSession])
 
   // Subscribe once to compute approval requests. The card must be answered before the SSH call runs.
   useEffect(
