@@ -274,7 +274,11 @@ const createStoreSaver = (
             )
             useSessionStore.getState().applyDurableSessionProjection({
               source: session,
-              session: durableSession
+              session: durableSession,
+              mode:
+                conflictRebaseFields.length > 0
+                  ? 'replace-persisted-if-current'
+                  : 'merge-upload-identities'
             })
           }
         })

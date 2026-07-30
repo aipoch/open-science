@@ -1,6 +1,7 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest'
 
 import {
+  materializeSessionConversationGraph,
   SESSION_MANIFEST_VERSION,
   type LoadAllSessionsResult,
   type PersistedChatSession
@@ -197,13 +198,45 @@ describe('renderer session persistence bridge', () => {
   })
 
   it('reports only changed safe fields for stale-graph conflict rebasing', async () => {
-    const persisted = createPersistedSession({
-      projectId: 'project-a',
-      title: 'Original',
-      pinned: false
-    })
+    const persisted = materializeSessionConversationGraph(
+      createPersistedSession({
+        projectId: 'project-a',
+        title: 'Original',
+        pinned: false,
+        messages: [
+          {
+            id: 'stale-message',
+            role: 'user',
+            content: 'Stale graph',
+            status: 'complete',
+            eventIds: [],
+            createdAt: 1,
+            updatedAt: 1
+          }
+        ]
+      })
+    )
+    const durable = materializeSessionConversationGraph(
+      createPersistedSession({
+        projectId: 'project-a',
+        title: 'Local rename',
+        pinned: true,
+        messages: [
+          {
+            id: 'durable-message',
+            role: 'agent',
+            content: 'Artifact finalized',
+            status: 'complete',
+            eventIds: [],
+            createdAt: 2,
+            updatedAt: 2
+          }
+        ],
+        updatedAt: 2
+      })
+    )
     useSessionStore.getState().hydrateSessions([persisted])
-    const api = createApi()
+    const api = createApi({ saveSession: vi.fn().mockResolvedValue(durable) })
     const save = createStoreSaver(api, useSessionStore.getState())
 
     useSessionStore.getState().renameSession('session-1', 'Local rename')
@@ -213,6 +246,10 @@ describe('renderer session persistence bridge', () => {
     expect(api.saveSession).toHaveBeenCalledWith(
       expect.objectContaining({ title: 'Local rename', pinned: true }),
       { conflictRebaseFields: ['title', 'pinned'] }
+    )
+    expect(useSessionStore.getState().sessions[0].messages).toEqual(durable.messages)
+    expect(useSessionStore.getState().sessions[0].conversationGraph).toEqual(
+      durable.conversationGraph
     )
   })
 
@@ -459,7 +496,11 @@ describe('renderer session persistence bridge', () => {
       content: 'Newer live message',
       projectId: 'project-a'
     })
-    useSessionStore.getState().applyDurableSessionProjection({ source, session: durable })
+    useSessionStore.getState().applyDurableSessionProjection({
+      source,
+      session: durable,
+      mode: 'replace-persisted-if-current'
+    })
 
     const projected = useSessionStore.getState().sessions[0]
     expect(projected.messages.map((message) => message.content)).toEqual([
