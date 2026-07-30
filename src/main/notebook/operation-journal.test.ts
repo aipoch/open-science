@@ -163,6 +163,26 @@ describe('RuntimeOperationJournal', () => {
     )
   })
 
+  it('accepts only known durable repair reasons', async () => {
+    const path = await journalPath()
+    const journal = new RuntimeOperationJournal(path)
+    await mkdir(dirname(path), { recursive: true })
+
+    await writeFile(
+      path,
+      JSON.stringify([record({ kind: 'install', repairReason: 'protected-identity-change' })]),
+      'utf8'
+    )
+    expect(await journal.readState()).not.toBe('corrupt')
+
+    await writeFile(
+      path,
+      JSON.stringify([{ ...record({ kind: 'install' }), repairReason: 'ignore-quarantine' }]),
+      'utf8'
+    )
+    expect(await journal.readState()).toBe('corrupt')
+  })
+
   it('treats a record with a PRESENT-but-malformed childStartToken as corrupt (fail-closed)', async () => {
     const path = await journalPath()
     const journal = new RuntimeOperationJournal(path)

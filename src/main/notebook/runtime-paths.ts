@@ -353,6 +353,12 @@ export const repairRegistryPath = (root: string): string => join(root, '.repair-
 
 export type RepairRequiredReason = 'interrupted-install' | 'protected-identity-change'
 
+// Interrupted installs are repairable one interpreter at a time even when a named Conda prefix exposes
+// both Python and R. Protected-identity markers remain keyed by the bare env name because replacing an
+// interpreter compromises the shared prefix and must quarantine every language until Reset/removal.
+export const managedRepairRegistryKey = (envName: string, language: NotebookLanguage): string =>
+  `managed:${language}:${envName}`
+
 type RepairRequiredRegistry = {
   runtimeIds: string[]
   reasons: Record<string, RepairRequiredReason>

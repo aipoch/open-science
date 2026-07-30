@@ -246,6 +246,10 @@ export type RuntimeOperationRecord = {
   sessionId?: string
   phase: string
   startedAt: number
+  // Install recovery normally produces a repairable interrupted-install marker. A protected
+  // interpreter identity failure upgrades this before quarantine is persisted, so registry-write
+  // failure cannot downgrade the retained evidence on the next startup.
+  repairReason?: 'interrupted-install' | 'protected-identity-change'
   // Staging/prefix the op writes into, so recovery can clean a partial ".incoming-*" or verify a prefix.
   targetPath?: string
   // The OS pid of the child (micromamba/pip/R) doing the work + when it started, so recovery can
@@ -462,6 +466,9 @@ const isOperationRecord = (value: unknown): value is RuntimeOperationRecord => {
     typeof record.runtimeId === 'string' &&
     typeof record.phase === 'string' &&
     typeof record.startedAt === 'number' &&
+    (record.repairReason === undefined ||
+      record.repairReason === 'interrupted-install' ||
+      record.repairReason === 'protected-identity-change') &&
     // Child fields are validated as a lifecycle GROUP (parity with the sidecar's exact-shape rule):
     // all-absent or a complete {childPid + childStartedAt (+ token?)}, never a partial subset.
     hasValidChildGroup(record)
