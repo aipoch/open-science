@@ -206,6 +206,10 @@ const HomePage = ({ canDeleteProjects }: HomePageProps): React.JSX.Element => {
 
     const projectId = projectToDelete.id
 
+    // Deletion is an explicit user takeover even though it does not immediately navigate. Advance
+    // the navigation revision before the async mutation so deferred startup intents cannot reopen a
+    // conversation after the post-delete view has settled.
+    useNavigationStore.getState().recordUserNavigation()
     setProjectToDelete(undefined)
 
     void deleteProject(projectId)

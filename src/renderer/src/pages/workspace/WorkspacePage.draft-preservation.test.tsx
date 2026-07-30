@@ -135,7 +135,12 @@ describe('WorkspacePage draft preservation', () => {
   beforeEach(() => {
     usePreviewWorkbenchStore.setState(createInitialPreviewWorkbenchState())
     useProjectStore.setState({ projects: [] })
-    useNavigationStore.setState({ view: 'workspace', activeProjectId: 'proj-1' })
+    useNavigationStore.setState({
+      view: 'workspace',
+      activeProjectId: 'proj-1',
+      userNavigationRevision: 0,
+      explicitNavigationRevision: 0
+    })
     useSessionStore.setState({
       ...createInitialSessionState(),
       sessions: [createSession('sess-a', 'proj-1'), createSession('sess-b', 'proj-1')],
@@ -392,6 +397,21 @@ describe('WorkspacePage draft preservation', () => {
     expect(useSessionStore.getState().sessions).not.toContainEqual(
       expect.objectContaining({ id: 'sess-b' })
     )
+  })
+
+  it('records explicit user takeover before starting Session deletion', async () => {
+    await renderPage(false)
+
+    const sessionB = useSessionStore.getState().sessions.find((session) => session.id === 'sess-b')!
+    await act(async () => {
+      sidebarProps.onDeleteSession(sessionB)
+    })
+    await act(async () => {
+      deleteDialogProps.onConfirmDelete()
+    })
+
+    expect(useNavigationStore.getState().userNavigationRevision).toBe(1)
+    expect(runtime.deleteRuntimeSession).toHaveBeenCalledWith('sess-b')
   })
 
   it('cancels in-flight and queued transfers before deleting their session draft', async () => {

@@ -4,6 +4,7 @@ import { createRoot, type Root } from 'react-dom/client'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 
 import type { Project } from '../../../../shared/projects'
+import { useNavigationStore } from '@/stores/navigation-store'
 import { createInitialProjectState, useProjectStore } from '@/stores/project-store'
 import { createInitialSessionState, useSessionStore } from '@/stores/session-store'
 import { createInitialSettingsState, useSettingsStore } from '@/stores/settings-store'
@@ -83,6 +84,12 @@ describe('HomePage persistence recovery', () => {
       deleteProject
     } as never)
     useSessionStore.setState(createInitialSessionState())
+    useNavigationStore.setState({
+      view: 'home',
+      activeProjectId: undefined,
+      userNavigationRevision: 0,
+      explicitNavigationRevision: 0
+    })
     useSettingsStore.setState(createInitialSettingsState())
   })
 
@@ -123,5 +130,20 @@ describe('HomePage persistence recovery', () => {
     await act(async () => confirm?.click())
 
     expect(deleteProject).not.toHaveBeenCalled()
+  })
+
+  it('records explicit user takeover before starting Project deletion', async () => {
+    await act(async () => root.render(<HomePage canDeleteProjects />))
+
+    const deleteAction = [...container.querySelectorAll<HTMLButtonElement>('button')].find(
+      (button) => button.textContent?.trim() === 'Delete'
+    )
+    await act(async () => deleteAction?.click())
+    await act(async () =>
+      container.querySelector<HTMLButtonElement>('[data-testid="confirm-project-delete"]')?.click()
+    )
+
+    expect(useNavigationStore.getState().userNavigationRevision).toBe(1)
+    expect(deleteProject).toHaveBeenCalledWith(project.id)
   })
 })

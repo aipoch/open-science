@@ -978,6 +978,9 @@ const WorkspacePage = ({
   const confirmDeleteSession = (): void => {
     if (!isSessionPersistenceHydrated || !sessionToDelete) return
 
+    // Cancel deferred notification/deep-link navigation before the asynchronous authoritative
+    // deletion begins. The user's destructive action owns the view even if the target is unrelated.
+    useNavigationStore.getState().recordUserNavigation()
     const deletedSessionId = sessionToDelete.id
     const isActiveSession = deletedSessionId === selectedSessionId
     if (sessionDeletionCleanupRef.current[deletedSessionId]) {
