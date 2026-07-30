@@ -1,4 +1,5 @@
 import type { ActiveSession } from '@agentclientprotocol/sdk'
+import { randomUUID } from 'node:crypto'
 
 import type {
   AcpCancelPromptRequest,
@@ -57,6 +58,9 @@ class AcpRuntimeCoordinator {
   private readonly reviewerRuntimes = new WeakMap<ActiveSession, AcpRuntime>()
   private readonly runtimeIds = new WeakMap<AcpRuntime, string>()
   private readonly permissionGrantStore = new ConversationPermissionGrantStore()
+  // Runtime events are persisted on Message nodes. A process-local sequence alone restarts at one
+  // after every app launch and can collide with a historical Session's event ids.
+  private readonly eventNamespace = randomUUID()
   private runtimeSequence = 0
   private initializationGeneration = 0
   private globalCancellationGeneration = 0
@@ -576,7 +580,7 @@ class AcpRuntimeCoordinator {
       this.permissionGrantStore
     )
     this.runtimeSequence += 1
-    this.runtimeIds.set(runtime, `runtime-${this.runtimeSequence}`)
+    this.runtimeIds.set(runtime, `runtime-${this.runtimeSequence}-${this.eventNamespace}`)
     this.runtimes.add(runtime)
     return runtime
   }

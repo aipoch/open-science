@@ -29,6 +29,9 @@ const emptySnapshot = (): AcpStateSnapshot => ({
   promptInFlightSessionIds: []
 })
 
+const runtimeEventId = (runtimeSequence: number, eventId: string): RegExp =>
+  new RegExp(`^runtime-${runtimeSequence}-[0-9a-f-]{36}:${eventId}$`, 'u')
+
 const createFakeRuntime = (options: {
   frameworkId: 'claude-code' | 'codex'
   sessionIds: string[]
@@ -639,7 +642,9 @@ describe('AcpRuntimeCoordinator', () => {
 
     // The draining runtime still owns the session until a fresh generation adopts it.
     created[0].emitEvent(overflowEvent('owner-overflow'))
-    expect(forwardedEvents.map((event) => event.id)).toEqual(['runtime-1:owner-overflow'])
+    expect(forwardedEvents.map((event) => event.id)).toEqual([
+      expect.stringMatching(runtimeEventId(1, 'owner-overflow'))
+    ])
 
     await coordinator.resumeSession({
       sessionId: session.sessionId,
@@ -648,16 +653,18 @@ describe('AcpRuntimeCoordinator', () => {
     })
 
     created[0].emitEvent(overflowEvent('late-retired-overflow'))
-    expect(forwardedEvents.map((event) => event.id)).toEqual(['runtime-1:owner-overflow'])
+    expect(forwardedEvents.map((event) => event.id)).toEqual([
+      expect.stringMatching(runtimeEventId(1, 'owner-overflow'))
+    ])
     expect(coordinator.getSnapshot().events.map((event) => event.id)).toEqual([])
 
     created[1].emitEvent(overflowEvent('fresh-owner-overflow'))
     expect(forwardedEvents.map((event) => event.id)).toEqual([
-      'runtime-1:owner-overflow',
-      'runtime-2:fresh-owner-overflow'
+      expect.stringMatching(runtimeEventId(1, 'owner-overflow')),
+      expect.stringMatching(runtimeEventId(2, 'fresh-owner-overflow'))
     ])
     expect(coordinator.getSnapshot().events.map((event) => event.id)).toEqual([
-      'runtime-2:fresh-owner-overflow'
+      expect.stringMatching(runtimeEventId(2, 'fresh-owner-overflow'))
     ])
 
     retirement.resolve()
@@ -699,7 +706,9 @@ describe('AcpRuntimeCoordinator', () => {
     })
 
     created[0].emitEvent(compactionEvent('owner-compaction', 'in_progress'))
-    expect(forwardedEvents.map((event) => event.id)).toEqual(['runtime-1:owner-compaction'])
+    expect(forwardedEvents.map((event) => event.id)).toEqual([
+      expect.stringMatching(runtimeEventId(1, 'owner-compaction'))
+    ])
 
     await coordinator.resumeSession({
       sessionId: session.sessionId,
@@ -708,16 +717,18 @@ describe('AcpRuntimeCoordinator', () => {
     })
 
     created[0].emitEvent(compactionEvent('late-retired-compaction', 'failed'))
-    expect(forwardedEvents.map((event) => event.id)).toEqual(['runtime-1:owner-compaction'])
+    expect(forwardedEvents.map((event) => event.id)).toEqual([
+      expect.stringMatching(runtimeEventId(1, 'owner-compaction'))
+    ])
     expect(coordinator.getSnapshot().events.map((event) => event.id)).toEqual([])
 
     created[1].emitEvent(compactionEvent('fresh-owner-compaction', 'completed'))
     expect(forwardedEvents.map((event) => event.id)).toEqual([
-      'runtime-1:owner-compaction',
-      'runtime-2:fresh-owner-compaction'
+      expect.stringMatching(runtimeEventId(1, 'owner-compaction')),
+      expect.stringMatching(runtimeEventId(2, 'fresh-owner-compaction'))
     ])
     expect(coordinator.getSnapshot().events.map((event) => event.id)).toEqual([
-      'runtime-2:fresh-owner-compaction'
+      expect.stringMatching(runtimeEventId(2, 'fresh-owner-compaction'))
     ])
 
     retirement.resolve()
@@ -1203,12 +1214,12 @@ describe('AcpRuntimeCoordinator', () => {
     created[1].emitEvent(event('session-2'))
 
     expect(forwardedEvents.map((item) => item.id)).toEqual([
-      'runtime-1:acp-event-1',
-      'runtime-2:acp-event-1'
+      expect.stringMatching(runtimeEventId(1, 'acp-event-1')),
+      expect.stringMatching(runtimeEventId(2, 'acp-event-1'))
     ])
     expect(coordinator.getSnapshot().events.map((item) => item.id)).toEqual([
-      'runtime-1:acp-event-1',
-      'runtime-2:acp-event-1'
+      expect.stringMatching(runtimeEventId(1, 'acp-event-1')),
+      expect.stringMatching(runtimeEventId(2, 'acp-event-1'))
     ])
 
     const permission: AcpPermissionRequest = {
@@ -1227,6 +1238,48 @@ describe('AcpRuntimeCoordinator', () => {
       cancelled: true
     })
     expect(created[1].respondToPermission).not.toHaveBeenCalled()
+  })
+
+  it('does not reuse persisted event namespaces across coordinator lifetimes', async () => {
+    const createCoordinator = (): {
+      coordinator: AcpRuntimeCoordinator
+      created: ReturnType<typeof createFakeRuntime>[]
+      forwardedEvents: AcpRuntimeEvent[]
+    } => {
+      const created: ReturnType<typeof createFakeRuntime>[] = []
+      const forwardedEvents: AcpRuntimeEvent[] = []
+      const coordinator = new AcpRuntimeCoordinator(
+        (callbacks) => {
+          const fake = createFakeRuntime({
+            frameworkId: 'codex',
+            sessionIds: ['session-1'],
+            callbacks
+          })
+          created.push(fake)
+          return fake.runtime
+        },
+        { onEvent: (event) => forwardedEvents.push(event) }
+      )
+
+      return { coordinator, created, forwardedEvents }
+    }
+    const event: AcpRuntimeEvent = {
+      id: 'acp-event-1',
+      timestamp: 1,
+      kind: 'system',
+      level: 'info',
+      sessionId: 'session-1',
+      title: 'event'
+    }
+    const first = createCoordinator()
+    const second = createCoordinator()
+
+    await first.coordinator.createSession()
+    await second.coordinator.createSession()
+    first.created[0].emitEvent(event)
+    second.created[0].emitEvent(event)
+
+    expect(first.forwardedEvents[0].id).not.toBe(second.forwardedEvents[0].id)
   })
 
   it('pins each activity workflow to the runtime generation active when it starts', async () => {

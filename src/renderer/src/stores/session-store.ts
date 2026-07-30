@@ -1234,9 +1234,15 @@ export const useSessionStore = create<SessionStore>((set, get) => ({
       sessions: state.sessions.map((session) => {
         if (session.id !== sessionId) return session
 
+        // Legacy runtime namespaces restarted from `runtime-1` after every app launch, so a historical
+        // Message may carry the same event id as this run. Prompt ownership distinguishes a true replay
+        // from that collision while artifact events without prompt identity retain the old fallback.
+        const ownsArtifactPrompt = (message: ChatMessage): boolean =>
+          !promptMessageId || message.responseToMessageId === promptMessageId
+
         // Runtime event processing can replay visible events; event ids make the mutation idempotent.
-        const alreadyAppliedMessage = session.messages.find((message) =>
-          message.eventIds.includes(eventId)
+        const alreadyAppliedMessage = session.messages.find(
+          (message) => message.eventIds.includes(eventId) && ownsArtifactPrompt(message)
         )
 
         if (alreadyAppliedMessage) {
@@ -1253,8 +1259,8 @@ export const useSessionStore = create<SessionStore>((set, get) => ({
         // already-finalized Artifact whose owning Message is currently inactive. Resolve that event
         // against the full graph so the main-process claim is replayed with its original Message id;
         // rebinding it to the active response would correctly fail the provenance ownership check.
-        const alreadyAppliedGraphMessage = session.conversationGraph?.messages.find((message) =>
-          message.eventIds.includes(eventId)
+        const alreadyAppliedGraphMessage = session.conversationGraph?.messages.find(
+          (message) => message.eventIds.includes(eventId) && ownsArtifactPrompt(message)
         )
 
         if (alreadyAppliedGraphMessage) {

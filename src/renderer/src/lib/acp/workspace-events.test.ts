@@ -898,6 +898,77 @@ describe('workspace runtime events', () => {
     })
   })
 
+  it('binds a restarted runtime Artifact event to the current response in a historical Session', async () => {
+    const finalizeRunArtifacts = vi.fn(async ({ messageId }: { messageId: string }) => [
+      createArtifactFile({
+        id: `transport-session-1:${messageId}:result.txt`,
+        sessionId: 'transport-session-1',
+        messageId,
+        runId: undefined
+      })
+    ])
+    const saveSession = vi.fn().mockResolvedValue(undefined)
+    const historicalPromptMessageId =
+      useSessionStore.getState().sessions[0].activeRun?.promptMessageId
+
+    await applyWorkspaceRuntimeEvent(
+      createEvent({
+        id: 'runtime-1:acp-event-1',
+        role: 'assistant',
+        messageId: 'historical-assistant-stream',
+        text: 'Historical response'
+      })
+    )
+    const historicalResponseMessageId = useSessionStore.getState().sessions[0].messages.at(-1)?.id
+    await applyWorkspaceRuntimeEvent(
+      createEvent({
+        id: 'runtime-1:acp-event-2',
+        kind: 'artifact',
+        runId: 'historical-artifact-run',
+        promptMessageId: historicalPromptMessageId,
+        artifactClaimId: 'historical-claim',
+        artifacts: [
+          createArtifactFile({ id: 'historical-version', runId: 'historical-artifact-run' })
+        ]
+      }),
+      { finalizeRunArtifacts, saveSession }
+    )
+    await applyWorkspaceRuntimeEvent(createEvent({ id: 'historical-stop', kind: 'stop' }))
+
+    const currentPrompt = useSessionStore.getState().appendUserMessage({
+      sessionId: 'transport-session-1',
+      content: 'Create a new result after restart'
+    })
+    await applyWorkspaceRuntimeEvent(
+      createEvent({
+        // Historical Sessions may already contain ids from the legacy restarting namespace.
+        id: 'runtime-1:acp-event-1',
+        role: 'assistant',
+        messageId: 'current-assistant-stream',
+        text: 'Current response'
+      })
+    )
+    const currentResponseMessageId = useSessionStore.getState().sessions[0].messages.at(-1)?.id
+    await applyWorkspaceRuntimeEvent(
+      createEvent({
+        id: 'runtime-1:acp-event-2',
+        kind: 'artifact',
+        runId: 'current-artifact-run',
+        promptMessageId: currentPrompt?.messageId,
+        artifactClaimId: 'current-claim',
+        artifacts: [createArtifactFile({ id: 'current-version', runId: 'current-artifact-run' })]
+      }),
+      { finalizeRunArtifacts, saveSession }
+    )
+    await applyWorkspaceRuntimeEvent(createEvent({ id: 'current-stop', kind: 'stop' }))
+
+    expect(currentResponseMessageId).not.toBe(historicalResponseMessageId)
+    expect(finalizeRunArtifacts).toHaveBeenLastCalledWith({
+      claimId: 'current-claim',
+      messageId: currentResponseMessageId
+    })
+  })
+
   it('finalizes every artifact claim deferred before the same stop event', async () => {
     const promptMessageId = useSessionStore.getState().sessions[0].activeRun?.promptMessageId
     await applyWorkspaceRuntimeEvent(
