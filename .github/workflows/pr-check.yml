@@ -89,16 +89,12 @@ jobs:
           src/main/notebook/micromamba-cache-powershell.test.ts
           src/main/notebook/micromamba-cache-acl.integration.test.ts
 
-      # runtime-service.test.ts takes about 70 seconds and has unrelated POSIX assumptions on
-      # Windows. Run its one Windows-only shell integration case by name so this behavior remains a
-      # hard gate without restoring the noisy full-file cost.
+      # Exercise the production Windows shell runner directly. The broader runtime-service suite
+      # takes about 70 seconds and has unrelated Windows failures, so its former combined shell case
+      # could time out without identifying which PowerShell contract regressed.
       - name: Test Windows notebook shell behavior
         if: matrix.os == 'windows-latest'
-        run: >-
-          npx vitest run
-          src/main/notebook/runtime-service.test.ts
-          --testNamePattern
-          "isolates commands, propagates PowerShell failures, and preserves UTF-8 output on Windows"
+        run: npx vitest run src/main/notebook/windows-shell.integration.test.ts
 
       # Full test suite + coverage gate on macOS (thresholds live in vitest.config.ts).
       - name: Test (with coverage)

@@ -3952,6 +3952,7 @@ export {
   resolveDefaultExecutorOptions,
   resolveLoopScriptPaths,
   resolveShellInvocation,
+  runShellCommand,
   terminateShellOnTimeout
 }
 export type {

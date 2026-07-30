@@ -1062,44 +1062,6 @@ describe('notebook runtime service', () => {
       }
     )
 
-    it.skipIf(process.platform !== 'win32')(
-      'isolates commands, propagates PowerShell failures, and preserves UTF-8 output on Windows',
-      async () => {
-        const root = await createStorageRoot()
-        const service = createShellService(root)
-
-        const cmdletFailure = await service.executeShell({
-          sessionId: 'session-1',
-          workspaceCwd: root,
-          command: 'Get-Item "missing-open-science-file"; Write-Output "continued"'
-        })
-        const nativeFailure = await service.executeShell({
-          sessionId: 'session-1',
-          workspaceCwd: root,
-          command: 'cmd.exe /d /c exit 7 | Out-Null'
-        })
-        const unicodeOutput = await service.executeShell({
-          sessionId: 'session-1',
-          workspaceCwd: root,
-          command: 'Write-Output "分析完成"'
-        })
-        const trailingContinuation = await service.executeShell({
-          sessionId: 'session-1',
-          workspaceCwd: root,
-          command: 'Write-Output "isolated" `'
-        })
-
-        expect(cmdletFailure.exitCode).toBe(1)
-        expect(cmdletFailure.stdout).not.toContain('continued')
-        expect(nativeFailure.exitCode).toBe(7)
-        expect(unicodeOutput).toMatchObject({ exitCode: 0 })
-        expect(unicodeOutput.stdout).toContain('分析完成')
-        expect(trailingContinuation.exitCode).toBe(1)
-      },
-      // Four fresh PowerShell processes can exceed the shared 15s budget on a loaded Windows runner.
-      30_000
-    )
-
     // POSIX-only: reads env via the shell. bash must NOT inherit arbitrary host env (secrets), only an
     // allowlist + the handoff channel — so a leaked connector token / API key can't reach the shell.
     it.skipIf(process.platform === 'win32')(
