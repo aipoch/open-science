@@ -63,8 +63,13 @@ const useDeepLinkNavigation = ({ isHydrated, isReady }: DeepLinkNavigationReadin
   useEffect(() => {
     if (isInitialized) return
 
-    return useNavigationStore.subscribe(() => {
-      if (initialized.current) return
+    return useNavigationStore.subscribe((state, previousState) => {
+      if (
+        initialized.current ||
+        state.userNavigationRevision === previousState.userNavigationRevision
+      ) {
+        return
+      }
 
       initialized.current = true
       initialParams.current = undefined
@@ -88,12 +93,12 @@ const useDeepLinkNavigation = ({ isHydrated, isReady }: DeepLinkNavigationReadin
 
     if (projectId && sessionId && sessionExists) {
       initialized.current = true
-      useNavigationStore.getState().openSession(projectId, sessionId)
+      useNavigationStore.getState().openSession(projectId, sessionId, 'automatic')
     } else if (projectId && sessionId && projectExists && !isReady) {
       return
     } else {
       initialized.current = true
-      useNavigationStore.getState().goHome()
+      useNavigationStore.getState().goHome('automatic')
     }
 
     setIsInitialized(true)

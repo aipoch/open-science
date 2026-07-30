@@ -83,7 +83,9 @@ export const CloseConfirmModal = (): React.JSX.Element | null => {
                 // it. Only navigable when we resolved its project (openSession needs the project id).
                 const openThisSession = (): void => {
                   if (!row.projectId) return
-                  useNavigationStore.getState().openSession(row.projectId, session.sessionId)
+                  useNavigationStore
+                    .getState()
+                    .openSession(row.projectId, session.sessionId, 'user')
                   reply('cancel')
                 }
                 return (

@@ -6,7 +6,10 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 const mocks = vi.hoisted(() => {
   // Captures the onOpenSession listener so tests can fire the notification nudge directly.
   const notificationNudgeBox: { current: (() => void) | undefined } = { current: undefined }
-  const navigationListeners = new Set<() => void>()
+  type NavigationState = { view: 'home' | 'workspace'; userNavigationRevision: number }
+  const navigationListeners = new Set<
+    (state: NavigationState, previousState: NavigationState) => void
+  >()
 
   return {
     settings: {
@@ -22,7 +25,7 @@ const mocks = vi.hoisted(() => {
       closeSettings: vi.fn()
     },
     skillImport: { enqueue: vi.fn(), dismiss: vi.fn() },
-    navigation: { view: 'home' as 'home' | 'workspace' },
+    navigation: { view: 'home' as 'home' | 'workspace', userNavigationRevision: 0 },
     sessions: [] as Array<{ id: string }>,
     environment: {
       ui: { state: 'idle' },
@@ -84,8 +87,10 @@ vi.mock('@/stores/navigation-store', () => ({
     <T,>(selector: (state: typeof mocks.navigation) => T): T => selector(mocks.navigation),
     // Notification navigation reaches the store imperatively (outside React) via getState().
     {
-      getState: () => ({ openSessionById: mocks.openSessionById }),
-      subscribe: (listener: () => void) => {
+      getState: () => ({ ...mocks.navigation, openSessionById: mocks.openSessionById }),
+      subscribe: (
+        listener: (state: typeof mocks.navigation, previousState: typeof mocks.navigation) => void
+      ) => {
         mocks.navigationListeners.add(listener)
         return () => mocks.navigationListeners.delete(listener)
       }
@@ -228,6 +233,8 @@ describe('App startup routing', () => {
     } as unknown as Window['api']
     mocks.openSessionById.mockClear()
     mocks.sessions = []
+    mocks.navigation.view = 'home'
+    mocks.navigation.userNavigationRevision = 0
     mocks.navigationListeners.clear()
     mocks.notifications.onOpenSession.mockClear()
     mocks.notifications.peekPendingOpenSession.mockReset().mockResolvedValue(null)
@@ -528,7 +535,7 @@ describe('App startup routing', () => {
     })
 
     expect(mocks.notifications.takePendingOpenSession).toHaveBeenCalledWith('s-9')
-    expect(mocks.openSessionById).toHaveBeenCalledWith('s-9')
+    expect(mocks.openSessionById).toHaveBeenCalledWith('s-9', 'automatic')
   })
 
   it('opens an already-hydrated notification target during partial recovery', async () => {
@@ -552,7 +559,7 @@ describe('App startup routing', () => {
     })
 
     expect(mocks.notifications.takePendingOpenSession).toHaveBeenCalledWith('s-3')
-    expect(mocks.openSessionById).toHaveBeenCalledWith('s-3')
+    expect(mocks.openSessionById).toHaveBeenCalledWith('s-3', 'automatic')
   })
 
   it('discards a deferred notification when the user navigates elsewhere', async () => {
@@ -575,7 +582,11 @@ describe('App startup routing', () => {
     expect(mocks.notifications.takePendingOpenSession).not.toHaveBeenCalled()
 
     await act(async () => {
-      for (const listener of mocks.navigationListeners) listener()
+      const previousNavigation = { ...mocks.navigation }
+      mocks.navigation.userNavigationRevision += 1
+      for (const listener of mocks.navigationListeners) {
+        listener(mocks.navigation, previousNavigation)
+      }
       await new Promise((resolve) => setTimeout(resolve, 0))
     })
 
@@ -589,5 +600,38 @@ describe('App startup routing', () => {
     })
 
     expect(mocks.openSessionById).not.toHaveBeenCalled()
+  })
+
+  it('retains a deferred notification across automatic navigation redirects', async () => {
+    mocks.settings.isLoaded = true
+    mocks.sessionPersistence.isReady = false
+    mocks.notifications.peekPendingOpenSession.mockResolvedValue({ sessionId: 's-4' })
+    mocks.notifications.takePendingOpenSession.mockResolvedValue({ sessionId: 's-4' })
+
+    await render()
+    await act(async () => {
+      await new Promise((resolve) => setTimeout(resolve, 0))
+    })
+
+    await act(async () => {
+      const previousNavigation = { ...mocks.navigation }
+      mocks.navigation.view = 'workspace'
+      for (const listener of mocks.navigationListeners) {
+        listener(mocks.navigation, previousNavigation)
+      }
+      await new Promise((resolve) => setTimeout(resolve, 0))
+    })
+
+    expect(mocks.notifications.takePendingOpenSession).not.toHaveBeenCalled()
+
+    mocks.sessions = [{ id: 's-4' }]
+    mocks.sessionPersistence.isReady = true
+    await act(async () => root.render(<App />))
+    await act(async () => {
+      await new Promise((resolve) => setTimeout(resolve, 0))
+    })
+
+    expect(mocks.notifications.takePendingOpenSession).toHaveBeenCalledWith('s-4')
+    expect(mocks.openSessionById).toHaveBeenCalledWith('s-4', 'automatic')
   })
 })

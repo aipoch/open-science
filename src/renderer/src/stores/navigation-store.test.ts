@@ -21,7 +21,11 @@ const createSession = (overrides: Partial<PersistedChatSession>): PersistedChatS
 
 beforeEach(() => {
   useSessionStore.setState(createInitialSessionState())
-  useNavigationStore.setState({ view: 'home', activeProjectId: undefined })
+  useNavigationStore.setState({
+    view: 'home',
+    activeProjectId: undefined,
+    userNavigationRevision: 0
+  })
 })
 
 describe('navigation store', () => {
@@ -37,7 +41,7 @@ describe('navigation store', () => {
         { version: SESSION_MANIFEST_VERSION }
       )
 
-    useNavigationStore.getState().openProject('project-a')
+    useNavigationStore.getState().openProject('project-a', 'user')
 
     expect(useNavigationStore.getState().view).toBe('workspace')
     expect(useNavigationStore.getState().activeProjectId).toBe('project-a')
@@ -52,7 +56,7 @@ describe('navigation store', () => {
         version: SESSION_MANIFEST_VERSION
       })
 
-    useNavigationStore.getState().openProject('project-empty')
+    useNavigationStore.getState().openProject('project-empty', 'user')
 
     expect(useNavigationStore.getState().activeProjectId).toBe('project-empty')
     expect(useSessionStore.getState().selectedSessionId).toBeUndefined()
@@ -69,7 +73,7 @@ describe('navigation store', () => {
         { version: SESSION_MANIFEST_VERSION }
       )
 
-    useNavigationStore.getState().openSession('project-b', 'b')
+    useNavigationStore.getState().openSession('project-b', 'b', 'user')
 
     expect(useNavigationStore.getState().view).toBe('workspace')
     expect(useNavigationStore.getState().activeProjectId).toBe('project-b')
@@ -83,7 +87,7 @@ describe('navigation store', () => {
         version: SESSION_MANIFEST_VERSION
       })
 
-    useNavigationStore.getState().openSessionById('a')
+    useNavigationStore.getState().openSessionById('a', 'automatic')
 
     expect(useNavigationStore.getState().view).toBe('workspace')
     expect(useNavigationStore.getState().activeProjectId).toBe('project-a')
@@ -91,7 +95,7 @@ describe('navigation store', () => {
   })
 
   it('stays put when a notification names a session that no longer exists', () => {
-    useNavigationStore.getState().openSessionById('gone')
+    useNavigationStore.getState().openSessionById('gone', 'automatic')
 
     expect(useNavigationStore.getState().view).toBe('home')
     expect(useNavigationStore.getState().activeProjectId).toBeUndefined()
@@ -99,9 +103,20 @@ describe('navigation store', () => {
   })
 
   it('returns to the home screen without losing session state', () => {
-    useNavigationStore.getState().openSession('project-a', 'session-1')
-    useNavigationStore.getState().goHome()
+    useNavigationStore.getState().openSession('project-a', 'session-1', 'user')
+    useNavigationStore.getState().goHome('user')
 
     expect(useNavigationStore.getState().view).toBe('home')
+  })
+
+  it('advances user navigation revision only for explicit user actions', () => {
+    useNavigationStore.getState().goHome('automatic')
+    expect(useNavigationStore.getState().userNavigationRevision).toBe(0)
+
+    useNavigationStore.getState().goHome('user')
+    expect(useNavigationStore.getState().userNavigationRevision).toBe(1)
+
+    useNavigationStore.getState().recordUserNavigation()
+    expect(useNavigationStore.getState().userNavigationRevision).toBe(2)
   })
 })

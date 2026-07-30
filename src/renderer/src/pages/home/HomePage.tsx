@@ -190,7 +190,7 @@ const HomePage = ({ canDeleteProjects }: HomePageProps): React.JSX.Element => {
 
         setFormState(null)
 
-        if (isCreate) openProject(project.id)
+        if (isCreate) openProject(project.id, 'user')
       })
       .catch((error: unknown) => {
         setFormError(error instanceof Error ? error.message : 'Could not save project.')
@@ -307,7 +307,7 @@ const HomePage = ({ canDeleteProjects }: HomePageProps): React.JSX.Element => {
                     <button
                       type="button"
                       className="flex min-w-0 flex-1 cursor-pointer items-center gap-2 text-left"
-                      onClick={() => openProject(project.id)}
+                      onClick={() => openProject(project.id, 'user')}
                     >
                       <span className="truncate font-semibold text-text-000">{project.name}</span>
                       {project.isExample ? (
@@ -383,7 +383,7 @@ const HomePage = ({ canDeleteProjects }: HomePageProps): React.JSX.Element => {
                       key={session.id}
                       type="button"
                       className={cn(rowClassName, 'cursor-pointer items-start')}
-                      onClick={() => openSession(session.projectId, session.id)}
+                      onClick={() => openSession(session.projectId, session.id, 'user')}
                       title={session.title}
                     >
                       <span

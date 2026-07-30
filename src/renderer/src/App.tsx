@@ -71,8 +71,6 @@ const App = (): React.JSX.Element | null => {
     { currentDataRoot: string; defaultParent: string } | undefined
   >(undefined)
   const deferredNotificationSessionId = useRef<string | undefined>(undefined)
-  const notificationNavigationGeneration = useRef(0)
-  const isOpeningNotificationSession = useRef(false)
 
   const retrySettingsInitialization = useCallback(async (): Promise<void> => {
     if (await loadSettings({ force: true })) await checkEnvironment()
@@ -130,7 +128,7 @@ const App = (): React.JSX.Element | null => {
   // Main retains the target until this renderer confirms that the inspected session can be opened,
   // so a click that recreates the window or lands during partial recovery is not lost.
   const openPendingNotificationSession = useCallback(async (): Promise<void> => {
-    const navigationGeneration = notificationNavigationGeneration.current
+    const userNavigationRevision = useNavigationStore.getState().userNavigationRevision
     const pending = await window.api.notifications.peekPendingOpenSession()
 
     if (!pending) {
@@ -143,7 +141,7 @@ const App = (): React.JSX.Element | null => {
       useSessionStore.getState().sessions.some((session) => session.id === pending.sessionId)
 
     if (!sessionExists && !isSessionPersistenceReady) {
-      if (notificationNavigationGeneration.current === navigationGeneration) {
+      if (useNavigationStore.getState().userNavigationRevision === userNavigationRevision) {
         deferredNotificationSessionId.current = pending.sessionId
       } else {
         // The user navigated while the peek was in flight. Drop only the stale target we saw; a
@@ -160,26 +158,23 @@ const App = (): React.JSX.Element | null => {
     deferredNotificationSessionId.current = undefined
 
     // A navigation after this attempt began takes precedence over the older notification click.
-    if (!sessionExists || notificationNavigationGeneration.current !== navigationGeneration) {
+    if (
+      !sessionExists ||
+      useNavigationStore.getState().userNavigationRevision !== userNavigationRevision
+    ) {
       return
     }
 
-    isOpeningNotificationSession.current = true
-    try {
-      useNavigationStore.getState().openSessionById(consumed.sessionId)
-    } finally {
-      isOpeningNotificationSession.current = false
-    }
+    useNavigationStore.getState().openSessionById(consumed.sessionId, 'automatic')
   }, [isSessionPersistenceHydrated, isSessionPersistenceReady])
 
   // If a missing target is waiting for a persistence retry, explicit navigation transfers control
   // to the user. Conditionally consume that old target so recovery cannot yank them back later.
   useEffect(
     () =>
-      useNavigationStore.subscribe(() => {
-        if (isOpeningNotificationSession.current) return
+      useNavigationStore.subscribe((state, previousState) => {
+        if (state.userNavigationRevision === previousState.userNavigationRevision) return
 
-        notificationNavigationGeneration.current += 1
         const deferredSessionId = deferredNotificationSessionId.current
 
         if (!deferredSessionId) return

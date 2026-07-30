@@ -145,7 +145,7 @@ describe('CloseConfirmModal', () => {
     })
     const row = await findButtonByName(/My Analysis — Fix data loader/)
     act(() => row.click())
-    expect(openSession).toHaveBeenCalledWith('p1', 's1')
+    expect(openSession).toHaveBeenCalledWith('p1', 's1', 'user')
     expect(sendResponse).toHaveBeenCalledWith({ requestId: 'r4', choice: 'cancel' })
   })
 

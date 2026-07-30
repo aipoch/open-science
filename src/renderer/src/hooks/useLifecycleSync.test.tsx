@@ -69,7 +69,11 @@ describe('useLifecycleSync', () => {
     document.body.appendChild(container)
     useProjectStore.setState({ ...createInitialProjectState(), isLoaded: true })
     useSessionStore.setState(createInitialSessionState())
-    useNavigationStore.setState({ view: 'home', activeProjectId: undefined })
+    useNavigationStore.setState({
+      view: 'home',
+      activeProjectId: undefined,
+      userNavigationRevision: 0
+    })
 
     const subscribe =
       <Payload,>(key: keyof typeof listeners) =>

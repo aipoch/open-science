@@ -50,7 +50,11 @@ let root: Root | undefined
 
 beforeEach(() => {
   window.history.replaceState({}, '', '/')
-  useNavigationStore.setState({ view: 'home', activeProjectId: undefined })
+  useNavigationStore.setState({
+    view: 'home',
+    activeProjectId: undefined,
+    userNavigationRevision: 0
+  })
   useProjectStore.setState(createInitialProjectState())
   useSessionStore.setState(createInitialSessionState())
 })
@@ -130,7 +134,7 @@ describe('deep-link navigation', () => {
 
     expect(window.location.search).toBe('?project=project-1&session=session-1')
 
-    act(() => useNavigationStore.getState().openSession(otherProject.id, otherSession.id))
+    act(() => useNavigationStore.getState().openSession(otherProject.id, otherSession.id, 'user'))
     expect(useNavigationStore.getState()).toMatchObject({
       view: 'workspace',
       activeProjectId: otherProject.id
@@ -190,7 +194,7 @@ describe('deep-link navigation', () => {
     useSessionStore.setState({ sessions: [session, nextSession] })
 
     await renderHook({ isHydrated: true, isReady: true })
-    act(() => useNavigationStore.getState().openSession(project.id, nextSession.id))
+    act(() => useNavigationStore.getState().openSession(project.id, nextSession.id, 'user'))
 
     expect(window.location.search).toBe('?project=project-1&session=session-2')
   })

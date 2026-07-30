@@ -3,17 +3,33 @@ import { create } from 'zustand'
 import { useSessionStore } from './session-store'
 
 export type NavigationView = 'home' | 'workspace'
+export type NavigationOrigin = 'user' | 'automatic'
 
 type NavigationStore = {
   view: NavigationView
   activeProjectId: string | undefined
-  goHome: () => void
-  openProject: (projectId: string) => void
-  openSession: (projectId: string, sessionId: string) => void
+  // Advances only for explicit user navigation. Deferred startup intents observe this instead of
+  // treating lifecycle/deep-link redirects as user choices.
+  userNavigationRevision: number
+  recordUserNavigation: () => void
+  goHome: (origin: NavigationOrigin) => void
+  openProject: (projectId: string, origin: NavigationOrigin) => void
+  openSession: (projectId: string, sessionId: string, origin: NavigationOrigin) => void
   // Opens a session knowing only its id (e.g. a desktop-notification click); a no-op when the
   // session no longer exists or hasn't loaded yet.
-  openSessionById: (sessionId: string) => void
+  openSessionById: (sessionId: string, origin: NavigationOrigin) => void
 }
+
+const navigationState = (
+  state: NavigationStore,
+  origin: NavigationOrigin,
+  next: Pick<NavigationStore, 'view'> & Partial<Pick<NavigationStore, 'activeProjectId'>>
+): Pick<NavigationStore, 'view' | 'activeProjectId' | 'userNavigationRevision'> => ({
+  activeProjectId: state.activeProjectId,
+  userNavigationRevision:
+    origin === 'user' ? state.userNavigationRevision + 1 : state.userNavigationRevision,
+  ...next
+})
 
 // Picks the most recently updated non-pending session in a project so opening a project lands on its
 // latest conversation instead of a blank workspace.
@@ -28,12 +44,18 @@ const findMostRecentSessionId = (projectId: string): string | undefined =>
 export const useNavigationStore = create<NavigationStore>((set) => ({
   view: 'home',
   activeProjectId: undefined,
+  userNavigationRevision: 0,
+
+  // Records user-owned navigation that changes another store (for example, opening the local New
+  // Conversation draft clears Session selection without changing the top-level view).
+  recordUserNavigation: () =>
+    set((state) => ({ userNavigationRevision: state.userNavigationRevision + 1 })),
 
   // Returns to the home screen without discarding session state.
-  goHome: () => set({ view: 'home' }),
+  goHome: (origin) => set((state) => navigationState(state, origin, { view: 'home' })),
 
   // Enters a project's workspace, selecting its most recent session when one exists.
-  openProject: (projectId) => {
+  openProject: (projectId, origin) => {
     const mostRecentSessionId = findMostRecentSessionId(projectId)
 
     if (mostRecentSessionId) {
@@ -42,20 +64,24 @@ export const useNavigationStore = create<NavigationStore>((set) => ({
       useSessionStore.getState().clearSelection()
     }
 
-    set({ view: 'workspace', activeProjectId: projectId })
+    set((state) =>
+      navigationState(state, origin, { view: 'workspace', activeProjectId: projectId })
+    )
   },
 
   // Opens a specific session inside its project's workspace.
-  openSession: (projectId, sessionId) => {
+  openSession: (projectId, sessionId, origin) => {
     useSessionStore.getState().selectSession(sessionId)
 
-    set({ view: 'workspace', activeProjectId: projectId })
+    set((state) =>
+      navigationState(state, origin, { view: 'workspace', activeProjectId: projectId })
+    )
   },
 
   // Resolves the session's project from the session store, then navigates exactly like
   // openSession. Unknown ids stay put: a notification for a deleted conversation must not
   // yank the user to a blank workspace.
-  openSessionById: (sessionId) => {
+  openSessionById: (sessionId, origin) => {
     const session = useSessionStore
       .getState()
       .sessions.find((candidate) => candidate.id === sessionId)
@@ -64,6 +90,11 @@ export const useNavigationStore = create<NavigationStore>((set) => ({
 
     useSessionStore.getState().selectSession(sessionId)
 
-    set({ view: 'workspace', activeProjectId: session.projectId })
+    set((state) =>
+      navigationState(state, origin, {
+        view: 'workspace',
+        activeProjectId: session.projectId
+      })
+    )
   }
 }))

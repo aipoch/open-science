@@ -118,7 +118,6 @@ const WorkspacePage = ({
   // Session data lives in zustand while draft/new-conversation state stays local to the chat surface.
   const allSessions = useSessionStore((state) => state.sessions)
   const selectedSessionId = useSessionStore((state) => state.selectedSessionId)
-  const selectSession = useSessionStore((state) => state.selectSession)
   const clearSelection = useSessionStore((state) => state.clearSelection)
   const renameSession = useSessionStore((state) => state.renameSession)
   const togglePinned = useSessionStore((state) => state.togglePinned)
@@ -446,7 +445,7 @@ const WorkspacePage = ({
 
   // The workspace requires an active project; if none is set (e.g. after a project delete), go home.
   useEffect(() => {
-    if (!activeProjectId) goHome()
+    if (!activeProjectId) goHome('automatic')
   }, [activeProjectId, goHome])
 
   // Switches the preview panel to the active project's own tabs (never another project's stale
@@ -702,6 +701,7 @@ const WorkspacePage = ({
     setNewConversationPermissionProfile(DEFAULT_PERMISSION_PROFILE)
     setNewConversationAutoReviewEnabled(false)
     setNewConversationEnabledComputeHosts([])
+    useNavigationStore.getState().recordUserNavigation()
     clearSelection()
   }
 
@@ -709,7 +709,7 @@ const WorkspacePage = ({
   const openSession = (sessionId: string): void => {
     // The draft effect saves the outgoing doc/attachments and restores the target session's state.
     setAttachmentError(null)
-    selectSession(sessionId)
+    useNavigationStore.getState().openSession(scopedProjectId, sessionId, 'user')
   }
 
   // Converts selected or pasted files into app-managed uploads before they appear in the composer.
@@ -1154,7 +1154,7 @@ const WorkspacePage = ({
           canCreateConversation={isSessionPersistenceReady}
           canMutateConversations={isSessionPersistenceReady}
           canDeleteConversations={isSessionPersistenceHydrated}
-          onGoHome={goHome}
+          onGoHome={() => goHome('user')}
           onNewConversation={openNewConversation}
           isFilesOpen={activePreviewItemId === PROJECT_FILES_PREVIEW_ID}
           onOpenFiles={openFilesPreview}

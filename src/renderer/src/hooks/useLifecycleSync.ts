@@ -73,7 +73,7 @@ const useLifecycleSync = ({
         useProjectStore.getState().removeProject(projectId)
         useSessionStore.getState().removeSessionsForProject(projectId)
         if (useNavigationStore.getState().activeProjectId === projectId) {
-          useNavigationStore.getState().goHome()
+          useNavigationStore.getState().goHome('automatic')
         }
         setNotice((current) => (current?.projectId === projectId ? undefined : current))
       })
@@ -118,7 +118,7 @@ const useLifecycleSync = ({
   const dismissNotice = useCallback(() => setNotice(undefined), [])
   const viewNotice = useCallback(() => {
     if (!notice) return
-    useNavigationStore.getState().openSession(notice.projectId, notice.sessionId)
+    useNavigationStore.getState().openSession(notice.projectId, notice.sessionId, 'user')
     setNotice(undefined)
   }, [notice])
 
