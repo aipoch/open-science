@@ -144,6 +144,18 @@ describe('renderer session persistence bridge', () => {
     expect(useSessionStore.getState().sessions).toEqual([])
   })
 
+  it('keeps selection empty when a retry target no longer exists', async () => {
+    const manifestSession = createPersistedSession({ id: 'manifest-session' })
+    const api = createApi({
+      loadAll: vi.fn().mockResolvedValue(createLoadResult([manifestSession], manifestSession.id))
+    })
+
+    await loadPersistedSessions(api, () => true, { sessionId: 'deleted-session' })
+
+    expect(useSessionStore.getState().sessions).toHaveLength(1)
+    expect(useSessionStore.getState().selectedSessionId).toBeUndefined()
+  })
+
   it('does not echo an externally hydrated session back to persistence', async () => {
     const api = createApi()
     const save = createStoreSaver(api)

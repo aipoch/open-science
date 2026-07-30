@@ -462,6 +462,57 @@ describe('SessionPersistenceCoordinator', () => {
     expect(fileIndex.reconcileActiveSessions).toHaveBeenCalledWith([session])
   })
 
+  it('hydrates a read-only snapshot without running startup reconciliation', async () => {
+    const session = createSession()
+    const result = { sessions: [session], manifest: { version: 1 as const } }
+    const repository = createSessionRepository({
+      loadAllWithDiagnostics: vi.fn().mockResolvedValue({
+        result,
+        isComplete: true,
+        warnings: []
+      })
+    })
+    const fileIndex = createFileIndex()
+    const provenance = {
+      captureFinalizedMessages: vi.fn().mockResolvedValue(undefined),
+      reconcileSessionDeletions: vi.fn().mockResolvedValue(undefined),
+      prepareSessionDeletion: vi.fn(),
+      completeSessionDeletion: vi.fn(),
+      abortSessionDeletion: vi.fn()
+    }
+    const uploads = { upgradeLegacySessionUploads: vi.fn() }
+    const artifactStorage = {
+      prepareProjectReconciliation: vi.fn(),
+      reconcileSession: vi.fn()
+    }
+    const coordinator = new SessionPersistenceCoordinator(
+      repository,
+      fileIndex,
+      undefined,
+      provenance,
+      uploads,
+      artifactStorage
+    )
+
+    await expect(coordinator.loadAllReadOnly()).resolves.toEqual({
+      ...result,
+      diagnostics: {
+        isComplete: false,
+        warnings: [],
+        failure: 'startup-reconciliation-failed'
+      }
+    })
+
+    expect(fileIndex.markReconciliationIncomplete).toHaveBeenCalledOnce()
+    expect(fileIndex.reconcileActiveSessions).not.toHaveBeenCalled()
+    expect(fileIndex.syncSession).not.toHaveBeenCalled()
+    expect(repository.saveSession).not.toHaveBeenCalled()
+    expect(provenance.reconcileSessionDeletions).not.toHaveBeenCalled()
+    expect(uploads.upgradeLegacySessionUploads).not.toHaveBeenCalled()
+    expect(artifactStorage.prepareProjectReconciliation).not.toHaveBeenCalled()
+    expect(artifactStorage.reconcileSession).not.toHaveBeenCalled()
+  })
+
   it('reconciles path-free Upload copies only on the first complete load from multiple clients', async () => {
     const root = await mkdtemp(join(tmpdir(), 'open-science-upload-startup-reconcile-'))
     const client = createProjectDbClient(root)

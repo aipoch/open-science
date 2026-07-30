@@ -22,6 +22,7 @@ vi.mock('../lifecycle-broadcast', () => ({
 
 import {
   createSessionPersistenceHandlers,
+  loadSessionsAfterProjectRecovery,
   registerSessionPersistenceIpcHandlers,
   type SessionPersistenceBackend
 } from './ipc'
@@ -52,6 +53,58 @@ const createMockReviewRepository = (): ReviewRepository =>
   }) as unknown as ReviewRepository
 
 describe('session persistence IPC handlers', () => {
+  it('hydrates a read-only Session snapshot when Project deletion recovery fails', async () => {
+    const failure = new Error('Project deletion journal is locked')
+    const consoleError = vi.spyOn(console, 'error').mockImplementation(() => undefined)
+    const degraded = {
+      sessions: [createSession()],
+      manifest: { version: 1 as const },
+      diagnostics: {
+        isComplete: false,
+        warnings: [],
+        failure: 'startup-reconciliation-failed' as const
+      }
+    }
+    const projectRecovery = {
+      recoverPendingDeletions: vi.fn().mockRejectedValue(failure)
+    }
+    const sessionLoader = {
+      loadAll: vi.fn(),
+      loadAllReadOnly: vi.fn().mockResolvedValue(degraded)
+    }
+
+    await expect(loadSessionsAfterProjectRecovery(projectRecovery, sessionLoader)).resolves.toBe(
+      degraded
+    )
+
+    expect(sessionLoader.loadAll).not.toHaveBeenCalled()
+    expect(sessionLoader.loadAllReadOnly).toHaveBeenCalledOnce()
+    expect(consoleError).toHaveBeenCalledWith(
+      '[session-persistence] Project deletion recovery failed',
+      failure
+    )
+    consoleError.mockRestore()
+  })
+
+  it('runs ordinary startup loading after Project deletion recovery succeeds', async () => {
+    const loaded = { sessions: [createSession()], manifest: { version: 1 as const } }
+    const projectRecovery = {
+      recoverPendingDeletions: vi.fn().mockResolvedValue(undefined)
+    }
+    const sessionLoader = {
+      loadAll: vi.fn().mockResolvedValue(loaded),
+      loadAllReadOnly: vi.fn()
+    }
+
+    await expect(loadSessionsAfterProjectRecovery(projectRecovery, sessionLoader)).resolves.toBe(
+      loaded
+    )
+
+    expect(projectRecovery.recoverPendingDeletions).toHaveBeenCalledOnce()
+    expect(sessionLoader.loadAll).toHaveBeenCalledOnce()
+    expect(sessionLoader.loadAllReadOnly).not.toHaveBeenCalled()
+  })
+
   it('does not accept a physical managed-file cleanup hook', () => {
     // Session persistence owns authoritative JSON and index visibility only. Keeping the factory at
     // two parameters prevents deletion flows from acquiring a dependency that can remove file bytes.

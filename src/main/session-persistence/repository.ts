@@ -43,8 +43,15 @@ type ProjectSessionLoadDiagnostics = {
 
 type ProjectSessionDeletionState = 'live' | 'legacy-committed' | 'prepared' | 'absent'
 
+type SessionDirectoryEntry = {
+  name: string
+  isDirectory(): boolean
+  isFile(): boolean
+}
+
 type SessionRepositoryDependencies = {
   remove(path: string, options: { force: boolean; recursive: boolean }): Promise<void>
+  readDirectoryEntries(path: string): Promise<SessionDirectoryEntry[]>
   readManifestFile(path: string): Promise<string>
   readSessionFile(path: string): Promise<string>
   renameFile(source: string, destination: string): Promise<void>
@@ -53,6 +60,7 @@ type SessionRepositoryDependencies = {
 
 const DEFAULT_DEPENDENCIES: SessionRepositoryDependencies = {
   remove: (path, options) => rm(path, options),
+  readDirectoryEntries: (path) => readdir(path, { withFileTypes: true }),
   readManifestFile: (path) => readFile(path, 'utf8'),
   readSessionFile: (path) => readFile(path, 'utf8'),
   renameFile: (source, destination) => rename(source, destination),
@@ -108,6 +116,8 @@ class SessionRepository {
   ) {
     this.dependencies = {
       remove: dependencies.remove ?? DEFAULT_DEPENDENCIES.remove,
+      readDirectoryEntries:
+        dependencies.readDirectoryEntries ?? DEFAULT_DEPENDENCIES.readDirectoryEntries,
       readManifestFile: dependencies.readManifestFile ?? DEFAULT_DEPENDENCIES.readManifestFile,
       readSessionFile: dependencies.readSessionFile ?? DEFAULT_DEPENDENCIES.readSessionFile,
       renameFile: dependencies.renameFile ?? DEFAULT_DEPENDENCIES.renameFile,
@@ -506,7 +516,10 @@ class SessionRepository {
     let isComplete = projectDirectories.isComplete
 
     for (const projectId of projectDirectories.names) {
-      const project = await this.readProjectSessions(projectId, { warnings })
+      const project = await this.readProjectSessions(projectId, {
+        missingDirectoryIsIncomplete: true,
+        warnings
+      })
       sessions.push(...project.sessions)
       isComplete &&= project.isComplete
     }
@@ -517,6 +530,7 @@ class SessionRepository {
   private async readProjectSessions(
     projectIdValue: string,
     options: {
+      missingDirectoryIsIncomplete?: boolean
       quarantinedIsIncomplete?: boolean
       warnings?: SessionLoadWarning[]
     } = {}
@@ -533,11 +547,14 @@ class SessionRepository {
     projectId: string,
     projectDir: string,
     options: {
+      missingDirectoryIsIncomplete?: boolean
       quarantinedIsIncomplete?: boolean
       warnings?: SessionLoadWarning[]
     } = {}
   ): Promise<ProjectSessionLoadDiagnostics> {
-    const sessionFiles = await this.listSessionFileNames(projectDir)
+    const sessionFiles = await this.listSessionFileNames(projectDir, {
+      missingIsIncomplete: options.missingDirectoryIsIncomplete
+    })
     const sessions: PersistedChatSession[] = []
     const activeQuarantines = new Set(sessionFiles.quarantinedPrimaryFileNames)
     const warnedFiles = new Set<string>()
@@ -639,7 +656,7 @@ class SessionRepository {
   // ENOENT is an authoritative empty directory; any other readdir failure is a partial scan.
   private async listDirectoryNames(dir: string): Promise<{ names: string[]; isComplete: boolean }> {
     try {
-      const entries = await readdir(dir, { withFileTypes: true })
+      const entries = await this.dependencies.readDirectoryEntries(dir)
 
       return {
         names: entries.filter((entry) => entry.isDirectory()).map((entry) => entry.name),
@@ -653,13 +670,16 @@ class SessionRepository {
   // Lists only committed session JSON files. Quarantines are associated with their former primary so
   // terminal scans can distinguish orphan authority from a backup superseded by valid current JSON.
   // In-progress temp writes stay excluded and non-ENOENT directory failures disable reconciliation.
-  private async listSessionFileNames(dir: string): Promise<{
+  private async listSessionFileNames(
+    dir: string,
+    options: { missingIsIncomplete?: boolean } = {}
+  ): Promise<{
     names: string[]
     isComplete: boolean
     quarantinedPrimaryFileNames: string[]
   }> {
     try {
-      const entries = await readdir(dir, { withFileTypes: true })
+      const entries = await this.dependencies.readDirectoryEntries(dir)
 
       return {
         names: entries
@@ -680,7 +700,7 @@ class SessionRepository {
     } catch (error) {
       return {
         names: [],
-        isComplete: isMissingFileError(error),
+        isComplete: isMissingFileError(error) && !options.missingIsIncomplete,
         quarantinedPrimaryFileNames: []
       }
     }

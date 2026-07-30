@@ -1156,6 +1156,13 @@ export const normalizeSessionFile = (
 
   const rawSession = isRecord(value.session) ? value.session : value
 
+  // A persisted Session needs one authoritative conversation representation. The compatibility
+  // message list may be absent or malformed only when a canonical graph can replace it; otherwise
+  // accepting the file would turn deterministic structural corruption into a valid empty Session.
+  if (rawSession.conversationGraph === undefined && !Array.isArray(rawSession.messages)) {
+    return undefined
+  }
+
   return sanitizeSession(rawSession, options)
 }
 

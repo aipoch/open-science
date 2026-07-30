@@ -80,6 +80,7 @@ import { registerReviewerIpcHandlers } from './reviewer/ipc'
 import {
   createDefaultReviewRepository,
   createDefaultSessionRepository,
+  loadSessionsAfterProjectRecovery,
   registerSessionPersistenceIpcHandlers
 } from './session-persistence/ipc'
 import { registerProjectFilesIpcHandlers } from './project-files/ipc'
@@ -304,10 +305,8 @@ const registerIpcHandlers = async ({
     artifactProvenanceRepository
   )
   const sessionPersistenceBackend: SessionPersistenceBackend = {
-    loadAll: async () => {
-      await projectDeletionCoordinator.recoverPendingDeletions()
-      return sessionPersistenceCoordinator.loadAll()
-    },
+    loadAll: () =>
+      loadSessionsAfterProjectRecovery(projectDeletionCoordinator, sessionPersistenceCoordinator),
     saveSession: async (session) => {
       await projectDeletionCoordinator.recoverPendingDeletions()
       const created =

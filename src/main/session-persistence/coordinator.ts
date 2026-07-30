@@ -235,6 +235,30 @@ class SessionPersistenceCoordinator {
   ) {}
 
   /**
+   * Reads the Session authority without running recovery or derived-state reconciliation. This is
+   * the degraded path used when an earlier startup prerequisite failed: healthy transcripts remain
+   * navigable, while the incomplete marker keeps writes blocked until a full retry succeeds.
+   */
+  loadAllReadOnly(): Promise<LoadAllSessionsResult> {
+    return this.enqueue(async () => {
+      // Once any renderer has observed a degraded snapshot, later loads are no longer allowed to
+      // treat the process as an untouched startup boundary for destructive cleanup.
+      this.destructiveStartupWindowOpen = false
+      this.fileIndex.markReconciliationIncomplete()
+      const scan = await this.repository.loadAllWithDiagnostics()
+
+      return {
+        ...scan.result,
+        diagnostics: {
+          isComplete: false,
+          warnings: scan.warnings ?? [],
+          failure: 'startup-reconciliation-failed'
+        }
+      }
+    })
+  }
+
+  /**
    * Loads durable sessions, reconciles Upload storage, and backfills the file projection only after a
    * complete scan has restored active ownership. Chat hydration remains available on any failure.
    */

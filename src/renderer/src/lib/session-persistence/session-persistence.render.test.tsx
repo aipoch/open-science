@@ -40,7 +40,11 @@ describe('session persistence startup', () => {
     container = document.createElement('div')
     document.body.appendChild(container)
     root = createRoot(container)
-    loadAll = vi.fn().mockRejectedValueOnce(new Error('sessions directory unavailable'))
+    loadAll = vi
+      .fn()
+      .mockRejectedValueOnce(
+        new Error('EACCES: /Users/private/.open-science/sessions could not be read')
+      )
     saveSession = vi.fn(async (session) => session)
     window.api = {
       sessions: {
@@ -89,8 +93,11 @@ describe('session persistence startup', () => {
     expect(container.querySelector('div')?.dataset.ready).toBe('false')
     expect(container.querySelector('div')?.dataset.hydrated).toBe('false')
     expect(container.querySelector('div')?.dataset.loading).toBe('false')
-    expect(container.querySelector('[data-testid="load-error"]')?.textContent).toContain(
-      'sessions directory unavailable'
+    expect(container.querySelector('[data-testid="load-error"]')?.textContent).toBe(
+      'Open Science could not read saved conversation data. Retry to continue.'
+    )
+    expect(container.querySelector('[data-testid="load-error"]')?.textContent).not.toContain(
+      '/Users/private'
     )
 
     loadAll.mockResolvedValueOnce(emptyLoadResult())
@@ -209,6 +216,40 @@ describe('session persistence startup', () => {
     )
   })
 
+  it('ignores a save failure that arrives after its Session was deleted', async () => {
+    let rejectSave: ((reason: Error) => void) | undefined
+    loadAll.mockReset().mockResolvedValue(emptyLoadResult())
+    saveSession.mockImplementation(
+      () =>
+        new Promise<PersistedChatSession>((_resolve, reject) => {
+          rejectSave = reject
+        })
+    )
+
+    await act(async () => root.render(<Probe />))
+
+    await act(async () => {
+      useSessionStore.getState().appendUserMessage({
+        sessionId: 'session-1',
+        content: 'Delete me while the save is pending',
+        cwd: '/workspace/project',
+        projectId: 'project-a'
+      })
+      await Promise.resolve()
+    })
+    expect(saveSession).toHaveBeenCalledOnce()
+
+    await act(async () => {
+      useSessionStore.getState().deleteSession('session-1')
+      rejectSave?.(new Error('Session was deleted'))
+      await Promise.resolve()
+    })
+
+    expect(container.querySelector('[data-testid="write-error"]')?.textContent).toContain(
+      'changes saved'
+    )
+  })
+
   it('keeps persistence blocked when the durable Session scan is incomplete', async () => {
     loadAll.mockReset().mockResolvedValue({
       ...emptyLoadResult(),
@@ -279,6 +320,35 @@ describe('session persistence startup', () => {
 
     expect(container.querySelector('div')?.dataset.ready).toBe('true')
     expect(useSessionStore.getState().selectedSessionId).toBe(selectedSession.id)
+  })
+
+  it('preserves an explicitly empty selection when retrying a partial recovery', async () => {
+    const manifestSession = createPersistedSession({ id: 'manifest-session' })
+    const result = {
+      sessions: [manifestSession],
+      manifest: {
+        version: SESSION_MANIFEST_VERSION,
+        lastProjectId: manifestSession.projectId,
+        lastSessionId: manifestSession.id
+      }
+    }
+    loadAll
+      .mockReset()
+      .mockResolvedValueOnce({
+        ...result,
+        diagnostics: { isComplete: false, warnings: [] }
+      })
+      .mockResolvedValueOnce(result)
+
+    await act(async () => root.render(<Probe />))
+
+    act(() => useSessionStore.getState().clearSelection())
+    await act(async () =>
+      container.querySelector<HTMLButtonElement>('[data-testid="retry-load"]')?.click()
+    )
+
+    expect(container.querySelector('div')?.dataset.ready).toBe('true')
+    expect(useSessionStore.getState().selectedSessionId).toBeUndefined()
   })
 
   it('keeps persistence blocked when startup storage recovery is incomplete', async () => {

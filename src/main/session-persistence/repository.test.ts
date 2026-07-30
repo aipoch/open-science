@@ -331,6 +331,55 @@ describe('session persistence repository (per-session files)', () => {
     expect(nextScan.warnings).toEqual(scan.warnings)
   })
 
+  it('quarantines a structurally corrupt Session instead of normalizing it to empty', async () => {
+    const repository = new SessionRepository(await createStorageRoot())
+    const projectDir = join(storageRoot!, 'sessions', 'project-a')
+    await mkdir(projectDir, { recursive: true })
+    await writeFile(
+      join(projectDir, 'damaged.json'),
+      JSON.stringify({ version: 2, session: { id: 'damaged', messages: 'not-an-array' } }),
+      'utf8'
+    )
+
+    const scan = await repository.loadAllWithDiagnostics()
+
+    expect(scan.result.sessions).toEqual([])
+    expect(scan.isComplete).toBe(true)
+    expect(scan.warnings).toEqual([
+      {
+        kind: 'corrupt',
+        projectId: 'project-a',
+        fileName: 'damaged.json',
+        recovered: true
+      }
+    ])
+    await expect(readdir(projectDir)).resolves.toContainEqual(
+      expect.stringMatching(/^damaged\.json\.invalid-/)
+    )
+  })
+
+  it('uses a valid conversation graph when the compatibility message list is malformed', async () => {
+    const repository = new SessionRepository(await createStorageRoot())
+    const session = createSession()
+    await repository.saveSession(session)
+    const filePath = join(storageRoot!, 'sessions', session.projectId, `${session.id}.json`)
+    const stored = JSON.parse(await readFile(filePath, 'utf8')) as {
+      session: { messages: unknown }
+    }
+    stored.session.messages = 'damaged compatibility projection'
+    await writeFile(filePath, JSON.stringify(stored), 'utf8')
+
+    const scan = await repository.loadAllWithDiagnostics()
+
+    expect(scan.result.sessions).toEqual([
+      expect.objectContaining({
+        id: session.id,
+        messages: [expect.objectContaining({ id: 'message-1', content: 'Summarize this file' })]
+      })
+    ])
+    expect(scan.warnings).toEqual([])
+  })
+
   it('keeps a terminal Project scan incomplete while a quarantined Session preserves authority', async () => {
     const repository = new SessionRepository(await createStorageRoot())
     const projectDir = join(storageRoot!, 'sessions', 'project-a')
@@ -434,6 +483,26 @@ describe('session persistence repository (per-session files)', () => {
     ])
   })
 
+  it('keeps the scan incomplete when an enumerated Project directory disappears', async () => {
+    const root = await createStorageRoot()
+    const session = createSession()
+    await new SessionRepository(root).saveSession(session)
+    const sessionsDir = join(root, 'sessions')
+    const projectDir = join(sessionsDir, session.projectId)
+    const readDirectoryEntries = vi.fn(async (path: string) => {
+      const entries = await readdir(path, { withFileTypes: true })
+      if (path === sessionsDir) await rm(projectDir, { recursive: true, force: true })
+      return entries
+    })
+    const repository = new SessionRepository(root, { readDirectoryEntries })
+
+    const scan = await repository.loadAllWithDiagnostics()
+
+    expect(scan.result.sessions).toEqual([])
+    expect(scan.isComplete).toBe(false)
+    expect(readDirectoryEntries).toHaveBeenCalledWith(projectDir)
+  })
+
   it('distinguishes an unreadable Session from an absent Session for terminal mutations', async () => {
     const root = await createStorageRoot()
     const session = createSession()
@@ -461,6 +530,15 @@ describe('session persistence repository (per-session files)', () => {
     })
     await expect(repository.loadSessionWithDiagnostics('project-a', 'session-1')).resolves.toEqual({
       status: 'unreadable'
+    })
+  })
+
+  it('treats a directly loaded absent Project as an authoritative empty Project', async () => {
+    const repository = new SessionRepository(await createStorageRoot())
+
+    await expect(repository.loadProjectWithDiagnostics('missing-project')).resolves.toEqual({
+      sessions: [],
+      isComplete: true
     })
   })
 

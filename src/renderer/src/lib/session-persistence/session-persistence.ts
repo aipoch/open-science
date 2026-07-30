@@ -102,6 +102,10 @@ type StoreSaverObserver = {
 
 type StoreSaver = (state: SessionStoreSnapshot, options?: StoreSaverOptions) => Promise<unknown>
 
+type RetrySessionSelection = {
+  sessionId: string | undefined
+}
+
 const pruneRemovedSessionWriteTargets = (
   targets: Set<string>,
   sessions: readonly Pick<ChatSession, 'id'>[]
@@ -117,17 +121,20 @@ const reportPersistenceError = (error: unknown): void => {
   console.warn('Session persistence failed', error)
 }
 
+const SAFE_SESSION_LOAD_ERROR =
+  'Open Science could not read saved conversation data. Retry to continue.'
+
 // Hydrates the in-memory session store from the per-session files loaded by the main process.
 const loadPersistedSessions = async (
   api: SessionPersistenceApi,
   shouldHydrate: () => boolean = () => true,
-  preferredSessionId?: string
+  preferredSelection?: RetrySessionSelection
 ): Promise<LoadAllSessionsResult | undefined> => {
   const result = await api.loadAll()
   if (!shouldHydrate()) return undefined
 
-  const preferredSession = preferredSessionId
-    ? result.sessions.find((session) => session.id === preferredSessionId)
+  const preferredSession = preferredSelection?.sessionId
+    ? result.sessions.find((session) => session.id === preferredSelection.sessionId)
     : undefined
   const manifest = preferredSession
     ? {
@@ -138,6 +145,10 @@ const loadPersistedSessions = async (
     : result.manifest
 
   useSessionStore.getState().hydrateSessions(result.sessions, manifest)
+  // Retry captures live navigation as an explicit tri-state. If the user had no selection, or the
+  // selected Session disappeared before recovery completed, do not replay a stale disk manifest or
+  // fall through to the globally newest Session from another Project.
+  if (preferredSelection && !preferredSession) useSessionStore.getState().clearSelection()
   return result
 }
 
@@ -261,13 +272,15 @@ const useSessionPersistence = (): SessionPersistenceState => {
   const [loadWarning, setLoadWarning] = useState<string | undefined>(undefined)
   const [writeError, setWriteError] = useState<string | undefined>(undefined)
   const [loadAttempt, setLoadAttempt] = useState(0)
-  const retrySelection = useRef<string | undefined>(undefined)
+  const retrySelection = useRef<RetrySessionSelection | undefined>(undefined)
   const failedWriteTargets = useRef(new Set<string>())
   const saverRef = useRef<StoreSaver | undefined>(undefined)
   const retryLoad = useCallback(() => {
     // A partial snapshot remains interactive. Keep the session the user chose from that snapshot so
     // a successful retry cannot replay the older on-disk manifest over their live navigation.
-    if (isHydrated) retrySelection.current = useSessionStore.getState().selectedSessionId
+    if (isHydrated) {
+      retrySelection.current = { sessionId: useSessionStore.getState().selectedSessionId }
+    }
     setIsHydrated(false)
     setIsLoading(true)
     setIsReady(false)
@@ -355,9 +368,7 @@ const useSessionPersistence = (): SessionPersistenceState => {
       } catch (error) {
         reportPersistenceError(error)
         if (isMounted) {
-          setLoadError(
-            error instanceof Error ? error.message : 'Saved conversations could not be loaded.'
-          )
+          setLoadError(SAFE_SESSION_LOAD_ERROR)
           setIsLoading(false)
         }
         return
@@ -371,6 +382,16 @@ const useSessionPersistence = (): SessionPersistenceState => {
         onFailure: (target, error) => {
           if (!isMounted) return
           failedWriteTargets.current.add(target)
+          pruneRemovedSessionWriteTargets(
+            failedWriteTargets.current,
+            useSessionStore.getState().sessions
+          )
+          // A queued save can lose a race with an authoritative deletion. Its tombstone rejection
+          // must not resurrect a retry target for a Session that no longer exists in the store.
+          if (!failedWriteTargets.current.has(target)) {
+            if (failedWriteTargets.current.size === 0) setWriteError(undefined)
+            return
+          }
           setWriteError(
             error instanceof Error ? error.message : 'Conversation changes could not be saved.'
           )
