@@ -76,6 +76,10 @@ type SendWorkspaceMessageInput = {
   // common send path still owns replay completion and clears the durable retry marker only after the
   // provider accepts the prompt.
   branchContextAlreadyReset?: boolean
+  // Immutable Specialist UUID from the new-conversation draft picker. Only used when creating a new
+  // ACP session (sessionId === undefined). The renderer sends only the UUID; the main process reads
+  // the latest Profile. Never passed for existing sessions (specialist binding is immutable).
+  specialistId?: string
 }
 
 type SendWorkspaceMessageResult = {
@@ -376,13 +380,19 @@ const startPendingSessionPrompt = (
   projectName: string | undefined,
   permissionProfile: PermissionProfileId,
   forcedSkillIds: string[] | undefined,
-  referencedArtifacts: FileReference[] | undefined
+  referencedArtifacts: FileReference[] | undefined,
+  specialistId: string | undefined
 ): void => {
   void (async () => {
     let createdSession
 
     try {
-      createdSession = await runtime.createSession(cwd, projectName, permissionProfile)
+      createdSession = await runtime.createSession(
+        cwd,
+        projectName,
+        permissionProfile,
+        specialistId
+      )
     } catch (error) {
       // Unwrap the IPC wrapper so an app-authored setup failure (model-incompat / no provider / Codex
       // bridge / missing executable) is recognized by the classifier and hides the report button.
@@ -478,7 +488,8 @@ const sendWorkspaceMessage = async (
     preAppendedMessageId,
     supportsImageInput,
     allowCompactionRecovery,
-    branchContextAlreadyReset
+    branchContextAlreadyReset,
+    specialistId
   }: SendWorkspaceMessageInput
 ): Promise<SendWorkspaceMessageResult | undefined> => {
   const content = text.trim()
@@ -533,7 +544,8 @@ const sendWorkspaceMessage = async (
         sessionProjectName,
         currentSession.permissionProfile ?? DEFAULT_PERMISSION_PROFILE,
         forcedSkillIds,
-        referencedArtifacts
+        referencedArtifacts,
+        undefined // existing pending sessions do not re-apply specialistId
       )
       return appended
     }
@@ -564,6 +576,14 @@ const sendWorkspaceMessage = async (
         useSessionStore.getState().failRun(targetSessionId, getResumeFailureMessage(error))
         return undefined
       }
+    }
+
+    // A specialist switch on Claude replaced the agent session on the main side (identity is baked
+    // into session _meta at creation). The runtime already adopted a fresh session, so here we only
+    // need to replay prior turns as a history preamble — no resetSessionContext, no notebook shutdown.
+    const specialistSwitchReplay = Boolean(currentSession?.specialistSwitchResetRequired)
+    if (specialistSwitchReplay) {
+      useSessionStore.getState().clearSpecialistSwitchResetRequired(targetSessionId)
     }
 
     // A framework switch applies at the next turn boundary. The retiring runtime may still expose the
@@ -632,7 +652,8 @@ const sendWorkspaceMessage = async (
           sessionProjectName,
           currentSession?.permissionProfile ?? permissionProfile,
           currentSession?.agentFrameworkId,
-          currentSession?.agentBackendId
+          currentSession?.agentBackendId,
+          currentSession?.specialistId
         )
 
         contextResetFromResume = Boolean(resumeResult?.contextReset)
@@ -650,7 +671,10 @@ const sendWorkspaceMessage = async (
     // and can't report the reset again). historyMessages ends before the newly appended user message,
     // so this is the prior conversation only — the turn being sent is not duplicated in.
     if (
-      (branchContextResetPerformed || contextResetFromResume || forceHistoryReplay) &&
+      (branchContextResetPerformed ||
+        contextResetFromResume ||
+        forceHistoryReplay ||
+        specialistSwitchReplay) &&
       historyMessages
     ) {
       historyPreamble = buildHistoryPreamble(historyMessages)
@@ -739,7 +763,8 @@ const sendWorkspaceMessage = async (
     permissionProfile,
     agentFrameworkId,
     agentBackendId,
-    agentModel
+    agentModel,
+    specialistId
   })
 
   if (!pending) return undefined
@@ -754,7 +779,8 @@ const sendWorkspaceMessage = async (
     projectName,
     permissionProfile ?? DEFAULT_PERMISSION_PROFILE,
     forcedSkillIds,
-    referencedArtifacts
+    referencedArtifacts,
+    specialistId
   )
 
   return pending
@@ -815,7 +841,8 @@ const resumeInterruptedWorkspaceSession = async (
       session.projectId,
       session.permissionProfile ?? DEFAULT_PERMISSION_PROFILE,
       session.agentFrameworkId,
-      session.agentBackendId
+      session.agentBackendId,
+      session.specialistId
     )
     // Adopting a fresh agent session (framework switch, or an unresumable restart) wipes the agent's
     // context; capture that so the re-sent turn below replays the transcript. The shared send path's

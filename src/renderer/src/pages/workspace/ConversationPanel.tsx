@@ -15,6 +15,7 @@ import {
 } from '../../../../shared/uploads'
 import { isReportableRunFailure } from '../../../../shared/run-error-classification'
 import {
+  AlertTriangle,
   ArrowUp,
   BookOpen,
   FileText,
@@ -28,6 +29,7 @@ import {
   X
 } from 'lucide-react'
 import { useRef, useState } from 'react'
+import { resolveEffectiveSpecialistSkills } from '../../../../shared/specialist'
 
 import { FileDropOverlay } from '@/components/FileDropOverlay'
 import { RemoteJobBadge } from '@/components/RemoteJobBadge'
@@ -43,6 +45,8 @@ import { useFileDropZone } from '@/hooks/useFileDropZone'
 import { cn } from '@/lib/utils'
 import type { ChatSession } from '@/stores/session-store'
 import { useSessionJobStore } from '@/stores/session-job-store'
+import { useSettingsStore } from '@/stores/settings-store'
+import { useSpecialistStore } from '@/stores/specialist-store'
 
 import { ComposerEditor } from './composer/ComposerEditor'
 import type { ComposerUploadTransfer } from './composer-upload-transfer'
@@ -146,6 +150,17 @@ type ConversationPanelProps = {
   onSendEditedMessage: (messageId: string, doc: ComposerDoc) => void
   // Open job list modal for a specific session.
   onOpenJobList?: (sessionId: string) => void
+  // Specialist picker. For new conversations: undefined = None. For existing sessions: always shown.
+  specialistId?: string
+  specialistUnavailable?: boolean
+  // True when the user has selected a different specialist while the current turn is still running.
+  specialistHasPendingSwitch?: boolean
+  onSpecialistChange?: (specialistId: string | undefined) => void
+  // Reconfigure failure recovery callbacks.
+  reconfigureError?: { sessionId: string; specialistName: string; message: string } | null
+  onReconfigureRetry?: () => void
+  onReconfigureChooseOther?: () => void
+  onReconfigureUseNone?: () => void
 }
 
 // Middle chat surface owns the visible conversation and local message composer UI.
@@ -191,8 +206,18 @@ const ConversationPanel = ({
   isRequestReviewDisabled,
   canEditMessage,
   onSendEditedMessage,
-  onOpenJobList
+  onOpenJobList,
+  specialistId,
+  specialistUnavailable = false,
+  specialistHasPendingSwitch = false,
+  onSpecialistChange,
+  reconfigureError,
+  onReconfigureRetry,
+  onReconfigureChooseOther,
+  onReconfigureUseNone
 }: ConversationPanelProps): React.JSX.Element => {
+  const specialistItems = useSpecialistStore((state) => state.items)
+  const catalogSkills = useSettingsStore((state) => state.skills)
   const fileInputRef = useRef<HTMLInputElement | null>(null)
   // Local so the interrupted banner can show a spinner and block a double-resume until the request settles.
   const [isResuming, setIsResuming] = useState(false)
@@ -215,6 +240,24 @@ const ConversationPanel = ({
   // Fall back to classifying the raw error for sessions persisted before the flag existed (undefined).
   const isRunErrorReportable =
     activeSession?.errorReportable ?? isReportableRunFailure(activeSession?.error)
+
+  const activeSpecialist = specialistId
+    ? specialistItems.find((item) => item.kind === 'custom' && item.id === specialistId)
+    : undefined
+  const effectiveSpecialistSkills = resolveEffectiveSpecialistSkills(
+    activeSpecialist?.kind === 'custom' ? activeSpecialist : undefined,
+    catalogSkills.map((skill) => ({
+      id: skill.id,
+      frameworkName: skill.source === 'featured' ? skill.id : skill.name,
+      displayName: skill.name
+    }))
+  )
+  const allowedSkillIds =
+    effectiveSpecialistSkills.kind === 'specialist'
+      ? effectiveSpecialistSkills.skillIds
+      : specialistId
+        ? []
+        : undefined
 
   // Re-attaches the interrupted session; on success the banner unmounts, so guard the state update.
   const handleResume = async (): Promise<void> => {
@@ -406,6 +449,54 @@ const ConversationPanel = ({
                 <div className="relative">
                   <div aria-hidden="true" className="relative -mb-8 rounded-2xl bg-bg-200 pb-8" />
 
+                  {/* Reconfigure failure banner: shown directly above the composer when a pre-send
+                      specialist reconfigure failed. Draft is preserved; three recovery actions. */}
+                  {reconfigureError ? (
+                    <div
+                      className="relative z-10 mb-2 flex items-start gap-2.5 rounded-xl border border-red-500/25 bg-red-500/[0.08] px-3 py-2.5"
+                      role="alert"
+                      data-testid="reconfigure-error-banner"
+                    >
+                      <AlertTriangle
+                        className="mt-0.5 size-3.5 shrink-0 text-red-400"
+                        strokeWidth={2}
+                        aria-hidden="true"
+                      />
+                      <div className="min-w-0 flex-1">
+                        <div className="text-[12px] font-medium leading-5 text-red-300">
+                          Could not switch to {reconfigureError.specialistName}
+                        </div>
+                        <div className="text-[11px] leading-4 text-red-400/80">
+                          The agent session could not be reconfigured. Your draft has been
+                          preserved.
+                        </div>
+                        <div className="mt-2 flex flex-wrap gap-1.5">
+                          <button
+                            type="button"
+                            onClick={onReconfigureRetry}
+                            className="flex h-6 items-center rounded px-2 text-[11px] font-medium text-red-300 hover:bg-red-500/15 border border-red-500/30"
+                          >
+                            Retry
+                          </button>
+                          <button
+                            type="button"
+                            onClick={onReconfigureChooseOther}
+                            className="flex h-6 items-center rounded px-2 text-[11px] text-red-400/80 hover:bg-red-500/10 border border-red-500/20"
+                          >
+                            Choose another specialist
+                          </button>
+                          <button
+                            type="button"
+                            onClick={onReconfigureUseNone}
+                            className="flex h-6 items-center rounded px-2 text-[11px] text-red-400/80 hover:bg-red-500/10 border border-red-500/20"
+                          >
+                            Use None (Main Agent)
+                          </button>
+                        </div>
+                      </div>
+                    </div>
+                  ) : null}
+
                   {/* Composer keeps draft input local until submit delegates to the session store.
                       Enter-to-send is owned by ComposerEditor; the form only guards native submit. */}
                   <form
@@ -541,6 +632,7 @@ const ConversationPanel = ({
                           disabled={!canEditDraft}
                           placeholder="Ask anything — / for skills, @ for files"
                           ariaLabel="Ask anything"
+                          allowedSkillIds={allowedSkillIds}
                         />
                       </div>
 
@@ -610,7 +702,30 @@ const ConversationPanel = ({
                           onAutoReviewChange={onAutoReviewToggle}
                           onRevokeGrant={onRevokePermissionGrant}
                           onClearGrants={onClearPermissionGrants}
+                          showSpecialist={
+                            // Show for new conversations when a change handler is provided,
+                            // or for any existing session (so the user can always switch).
+                            (!activeSession && onSpecialistChange !== undefined) ||
+                            activeSession !== undefined
+                          }
+                          specialistId={specialistId}
+                          specialistUnavailable={specialistUnavailable}
+                          onSpecialistChange={onSpecialistChange}
                         />
+
+                        {/* Pending-switch chip: appears to the right of the specialist badge when
+                            the user picked a different specialist during a running turn. The badge
+                            still shows the currently-effective specialist; this chip signals the
+                            next message will use the newly selected one. */}
+                        {specialistHasPendingSwitch ? (
+                          <span
+                            className="flex shrink-0 items-center gap-1.5 whitespace-nowrap rounded-full border border-blue-500/25 bg-blue-500/10 px-2 py-0.5 text-[11px] italic text-blue-400"
+                            data-testid="specialist-pending-switch-chip"
+                            aria-label="Specialist switch pending"
+                          >
+                            Switches after this response
+                          </span>
+                        ) : null}
 
                         <div className="flex-1" />
 

@@ -3492,6 +3492,18 @@ describe('SettingsService: skills', () => {
     expect(detail.body).toContain('demo body')
   })
 
+  it('keeps a Main-disabled installed Skill in the Specialist catalog', async () => {
+    const service = await createSkillService()
+    await service.setSkillEnabled({ id: 'demo', enabled: false })
+
+    expect(await service.listSkills()).toEqual([
+      expect.objectContaining({ id: 'demo', enabled: false })
+    ])
+    expect(await service.listSpecialistSkillCatalog()).toEqual([
+      expect.objectContaining({ id: 'demo', frameworkName: 'demo' })
+    ])
+  })
+
   it('creates, edits, and deletes a personal skill alongside featured skills', async () => {
     const service = await createSkillService()
 

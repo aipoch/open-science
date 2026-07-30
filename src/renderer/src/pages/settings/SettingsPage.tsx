@@ -9,6 +9,7 @@ import {
   Settings2,
   SlidersHorizontal,
   TerminalSquare,
+  Users,
   X,
   Zap
 } from 'lucide-react'
@@ -20,12 +21,14 @@ import {
   type ProviderView,
   type UpsertProviderRequest
 } from '../../../../shared/settings'
+import type { SpecialistListItem } from '../../../../shared/specialist'
 import { Button } from '@/components/ui/button'
 import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from '@/components/ui/tooltip'
 import { cn } from '@/lib/utils'
 import { selectFrameworkApiEndpoints, useSettingsStore } from '@/stores/settings-store'
 import type { SettingsPanelId } from './settings-navigation'
 import { useComputeStore } from '@/stores/compute-store'
+import { useSpecialistStore } from '@/stores/specialist-store'
 import { AgentPanel } from './AgentPanel'
 import { ProvidersPanel } from './ProvidersPanel'
 import { GeneralPanel } from './GeneralPanel'
@@ -34,6 +37,7 @@ import { StoragePanel } from './StoragePanel'
 import { RuntimesPanel } from './RuntimesPanel'
 import { SkillsPanel, type SkillsView } from './SkillsPanel'
 import { ConnectorsPanel, type ConnectorsView } from './ConnectorsPanel'
+import { SpecialistsPanel, type SpecialistsView } from './SpecialistsPanel'
 import { ConnectorDetailView } from './ConnectorDetailView'
 import { ConnectorAddForm } from './ConnectorAddForm'
 import { ConnectorsNavIcon } from './connector-icons'
@@ -120,6 +124,7 @@ const SETTINGS_GROUPS: ReadonlyArray<{ label: string; panels: ReadonlyArray<Sett
     panels: [
       { id: 'skills', label: 'Skills', Icon: ScrollText },
       { id: 'connectors', label: 'Connectors', Icon: ConnectorsNavIcon },
+      { id: 'specialists', label: 'Specialists', Icon: Users },
       { id: 'compute', label: 'Compute', Icon: Zap },
       { id: 'network', label: 'Network', Icon: Globe }
     ]
@@ -154,6 +159,7 @@ type NavLocation = {
   connectors?: ConnectorsView
   network?: NetworkView
   compute?: ComputeView
+  specialists?: SpecialistsView
 }
 
 const INITIAL_LOCATION: NavLocation = {
@@ -162,7 +168,8 @@ const INITIAL_LOCATION: NavLocation = {
   model: { kind: 'list' },
   connectors: { kind: 'list' },
   network: { kind: 'list' },
-  compute: { kind: 'list' }
+  compute: { kind: 'list' },
+  specialists: { kind: 'list' }
 }
 
 // App-level model settings surface. Reuses the onboarding cards/form; manages providers (CRUD +
@@ -201,6 +208,7 @@ const SettingsPage = ({ open, onClose }: SettingsPageProps): React.JSX.Element =
   const connectors = useSettingsStore((state) => state.connectors)
   const customServers = useSettingsStore((state) => state.customServers)
   const computeHosts = useComputeStore((state) => state.hosts)
+  const specialistItems = useSpecialistStore((state) => state.items)
   const [formValue, setFormValue] = useState<ProviderFormValue>(() =>
     createEmptyProviderFormValue()
   )
@@ -295,6 +303,7 @@ const SettingsPage = ({ open, onClose }: SettingsPageProps): React.JSX.Element =
   const connectorsView: ConnectorsView = currentLocation.connectors ?? { kind: 'list' }
   const networkView: NetworkView = currentLocation.network ?? { kind: 'list' }
   const computeView: ComputeView = currentLocation.compute ?? { kind: 'list' }
+  const specialistsView: SpecialistsView = currentLocation.specialists ?? { kind: 'list' }
   const canGoBack = historyIndex > 0
   const canGoForward = historyIndex < history.length - 1
 
@@ -303,6 +312,7 @@ const SettingsPage = ({ open, onClose }: SettingsPageProps): React.JSX.Element =
     const nextConnectors = location.connectors ?? { kind: 'list' }
     const nextNetwork = location.network ?? { kind: 'list' }
     const nextCompute = location.compute ?? { kind: 'list' }
+    const nextSpecialists = location.specialists ?? { kind: 'list' }
     if (
       location.panel === activePanel &&
       location.skills.kind === skillsView.kind &&
@@ -317,7 +327,10 @@ const SettingsPage = ({ open, onClose }: SettingsPageProps): React.JSX.Element =
       nextNetwork.kind === networkView.kind &&
       nextCompute.kind === computeView.kind &&
       ('providerId' in nextCompute ? nextCompute.providerId : undefined) ===
-        ('providerId' in computeView ? computeView.providerId : undefined)
+        ('providerId' in computeView ? computeView.providerId : undefined) &&
+      nextSpecialists.kind === specialistsView.kind &&
+      ('id' in nextSpecialists ? nextSpecialists.id : undefined) ===
+        ('id' in specialistsView ? specialistsView.id : undefined)
     ) {
       return
     }
@@ -336,6 +349,10 @@ const SettingsPage = ({ open, onClose }: SettingsPageProps): React.JSX.Element =
   // Navigates within the connectors panel (list/detail/add/edit) as a history entry.
   const navigateConnectors = (connectors: ConnectorsView): void =>
     navigate({ panel: 'connectors', skills: skillsView, model: modelView, connectors })
+
+  // Navigates within the specialists panel (list/create) as a history entry.
+  const navigateSpecialists = (specialists: SpecialistsView): void =>
+    navigate({ panel: 'specialists', skills: skillsView, model: modelView, specialists })
 
   // Navigates within the network panel (package-mirror list vs. configure) as a history entry, so the
   // configure form gets a proper "Network / Package mirror" breadcrumb + back/forward.
@@ -440,6 +457,29 @@ const SettingsPage = ({ open, onClose }: SettingsPageProps): React.JSX.Element =
           model: currentLocation.model,
           connectors: currentLocation.connectors,
           compute: { kind: 'list' }
+        },
+        leaf
+      }
+    }
+    if (activePanel === 'specialists' && specialistsView.kind !== 'list') {
+      const editingSpecialist =
+        specialistsView.kind === 'edit'
+          ? specialistItems.find(
+              (item): item is Extract<SpecialistListItem, { kind: 'custom' }> =>
+                item.kind === 'custom' && item.id === specialistsView.id
+            )
+          : undefined
+      const leaf =
+        specialistsView.kind === 'create'
+          ? 'New specialist'
+          : (editingSpecialist?.name ?? 'Edit specialist')
+      return {
+        rootLabel: 'Specialists',
+        rootTo: {
+          panel: 'specialists',
+          skills: currentLocation.skills,
+          model: currentLocation.model,
+          specialists: { kind: 'list' }
         },
         leaf
       }
@@ -751,6 +791,8 @@ const SettingsPage = ({ open, onClose }: SettingsPageProps): React.JSX.Element =
                     onNavigate={navigateSkills}
                     canImportInstalledSkills={canImportInstalledSkills}
                   />
+                ) : activePanel === 'specialists' ? (
+                  <SpecialistsPanel view={specialistsView} onNavigate={navigateSpecialists} />
                 ) : activePanel === 'connectors' ? (
                   connectorsView.kind === 'detail' ? (
                     <ConnectorDetailView id={connectorsView.id} />

@@ -62,6 +62,25 @@ const pressKey = (key: string): void => {
 }
 
 describe('SkillMentionPopup', () => {
+  it('hides Skills outside a bound Specialist scope but leaves Main unfiltered', () => {
+    act(() => {
+      root.render(
+        <SkillMentionPopup
+          query=""
+          allowedSkillIds={['lit']}
+          onSelect={vi.fn()}
+          onClose={vi.fn()}
+        />
+      )
+    })
+    expect(options()).toHaveLength(1)
+    expect(options()[0]?.textContent).toContain('Literature Review')
+    act(() => {
+      root.render(<SkillMentionPopup query="" onSelect={vi.fn()} onClose={vi.fn()} />)
+    })
+    expect(options()).toHaveLength(3)
+  })
+
   it('filters by name or description and renders name, badge, and description', () => {
     act(() => {
       root.render(<SkillMentionPopup query="lit" onSelect={vi.fn()} onClose={vi.fn()} />)

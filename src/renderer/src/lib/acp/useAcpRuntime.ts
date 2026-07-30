@@ -45,7 +45,8 @@ const useAcpRuntime = (): {
   createSession: (
     cwd?: string,
     projectName?: string,
-    permissionProfile?: PermissionProfileId
+    permissionProfile?: PermissionProfileId,
+    specialistId?: string
   ) => Promise<AcpCreateSessionResponse>
   resumeSession: (
     sessionId: AcpResumeSessionRequest['sessionId'],
@@ -53,7 +54,8 @@ const useAcpRuntime = (): {
     projectName?: string,
     permissionProfile?: PermissionProfileId,
     previousFrameworkId?: AcpResumeSessionRequest['previousFrameworkId'],
-    previousBackendId?: AcpResumeSessionRequest['previousBackendId']
+    previousBackendId?: AcpResumeSessionRequest['previousBackendId'],
+    specialistId?: AcpResumeSessionRequest['specialistId']
   ) => Promise<AcpCreateSessionResponse>
   resetSessionContext: (
     sessionId: AcpResumeSessionRequest['sessionId'],
@@ -209,9 +211,14 @@ const useAcpRuntime = (): {
 
   // Creates a protocol session and returns the runtime-provided id.
   const createSession = useCallback(
-    (cwd?: string, projectName?: string, permissionProfile?: PermissionProfileId) =>
+    (
+      cwd?: string,
+      projectName?: string,
+      permissionProfile?: PermissionProfileId,
+      specialistId?: string
+    ) =>
       runValueAction(setIsConnecting, () =>
-        window.api.acp.createSession({ cwd, projectName, permissionProfile })
+        window.api.acp.createSession({ cwd, projectName, permissionProfile, specialistId })
       ),
     [runValueAction]
   )
@@ -224,7 +231,8 @@ const useAcpRuntime = (): {
       projectName?: string,
       permissionProfile?: PermissionProfileId,
       previousFrameworkId?: AcpResumeSessionRequest['previousFrameworkId'],
-      previousBackendId?: AcpResumeSessionRequest['previousBackendId']
+      previousBackendId?: AcpResumeSessionRequest['previousBackendId'],
+      specialistId?: AcpResumeSessionRequest['specialistId']
     ) =>
       runValueAction(setIsConnecting, () =>
         window.api.acp.resumeSession({
@@ -233,7 +241,8 @@ const useAcpRuntime = (): {
           projectName,
           permissionProfile,
           previousFrameworkId,
-          previousBackendId
+          previousBackendId,
+          specialistId
         })
       ),
     [runValueAction]

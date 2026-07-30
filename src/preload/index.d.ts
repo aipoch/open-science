@@ -218,6 +218,19 @@ import type {
   ReviewUpdateEvent
 } from '../shared/reviewer'
 import type {
+  CreateSpecialistRequest,
+  UpdateSpecialistRequest,
+  SetSpecialistEnabledRequest,
+  DeleteSpecialistRequest,
+  DuplicateSpecialistRequest,
+  SpecialistListItem,
+  SpecialistProfileView,
+  SetSessionSpecialistRequest,
+  SetSessionSpecialistResponse,
+  ResolveSessionSpecialistRequest,
+  SessionSpecialistResolution
+} from '../shared/specialist'
+import type {
   CloseConfirmRequest,
   CloseConfirmResponse,
   WindowFindAppearance,
@@ -348,6 +361,22 @@ interface OpenScienceAPI {
     respondSkillImportApproval(response: ConversationSkillImportApprovalResponse): Promise<void>
     respondConnectorApproval(request: RespondApprovalRequest): Promise<void>
     onInstallLog(listener: AcpListener<ClaudeInstallEvent>): RemoveListener
+  }
+  specialist: {
+    list(): Promise<SpecialistListItem[]>
+    create(request: CreateSpecialistRequest): Promise<SpecialistProfileView>
+    update(request: UpdateSpecialistRequest): Promise<SpecialistProfileView>
+    setEnabled(request: SetSpecialistEnabledRequest): Promise<SpecialistProfileView>
+    delete(request: DeleteSpecialistRequest): Promise<void>
+    duplicate(request: DuplicateSpecialistRequest): Promise<CreateSpecialistRequest>
+    onCatalogChanged(listener: () => void): RemoveListener
+    // Session switching (issue 07).
+    setSessionSpecialist(
+      request: SetSessionSpecialistRequest
+    ): Promise<SetSessionSpecialistResponse>
+    resolveSessionSpecialist(
+      request: ResolveSessionSpecialistRequest
+    ): Promise<SessionSpecialistResolution>
   }
   logs: {
     getPath(): Promise<string | null>

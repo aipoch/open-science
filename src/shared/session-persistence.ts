@@ -163,6 +163,10 @@ export type PersistedChatSession = {
   // Pins the conversation to a dedicated section at the top of the sidebar. Absent (older files) or
   // non-true restores as unpinned; only an explicit true keeps it pinned across restarts.
   pinned?: boolean
+  // Immutable Specialist UUID bound at session creation. Absent means no specialist binding (Main
+  // Agent). Written once when the session is created and never changed; the Profile is resolved
+  // fresh from ProfileService before every turn via the UUID.
+  specialistId?: string
   messages: PersistedChatMessage[]
   // Session JSON v2 authority. Flat messages/activities remain an active-Branch compatibility view.
   conversationGraph?: PersistedConversationGraph
@@ -1101,6 +1105,10 @@ const sanitizeSession = (
   if (activities.length > 0) sanitized.activities = activities
   if (activityGroups.length > 0) sanitized.activityGroups = activityGroups
   if (enabledComputeHosts.length > 0) sanitized.enabledComputeHosts = enabledComputeHosts
+  // Specialist UUID: accept any non-empty string. The main process validates it against ProfileService
+  // at send time; the sanitizer only ensures the value is safe to re-persist.
+  const specialistId = asString(session.specialistId)
+  if (specialistId) sanitized.specialistId = specialistId
 
   // Normalize interrupted runtime state before constructing a graph for legacy sessions. Otherwise
   // the compatibility message list becomes an error while the newly-created canonical graph retains

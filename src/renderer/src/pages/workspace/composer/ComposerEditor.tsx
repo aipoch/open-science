@@ -35,6 +35,8 @@ type ComposerEditorProps = {
   placeholder: string
   className?: string
   ariaLabel: string
+  // Undefined preserves Main Agent behavior; an empty array intentionally hides every Skill.
+  allowedSkillIds?: readonly string[]
 }
 
 // Structural equality over doc nodes; used to decide whether the incoming prop diverges from what
@@ -121,7 +123,8 @@ export const ComposerEditor = ({
   disabled = false,
   placeholder,
   className,
-  ariaLabel
+  ariaLabel,
+  allowedSkillIds
 }: ComposerEditorProps): React.JSX.Element => {
   const editorRef = useRef<HTMLDivElement>(null)
   // Tracks IME composition so Enter never submits mid-composition.
@@ -247,6 +250,7 @@ export const ComposerEditor = ({
       {mention.active ? (
         <SkillMentionPopup
           query={mention.query}
+          allowedSkillIds={allowedSkillIds}
           onSelect={handleSelectSkill}
           onClose={mention.cancel}
         />

@@ -88,6 +88,9 @@ export type SessionSetupContext = {
   // Framework-native options resolved with the active backend and applied to every session created
   // on that connection. Claude uses this to inject app-owned settings/plugins into shared auth mode.
   sessionOptions?: Record<string, unknown>
+  // undefined is the Main Agent and must omit the native field; [] is an explicit Specialist
+  // zero-skill whitelist and must be preserved verbatim by supporting frameworks.
+  skillWhitelist?: string[]
 }
 
 // Framework-specific session configuration returned to the runtime. `meta` becomes the ACP `_meta`

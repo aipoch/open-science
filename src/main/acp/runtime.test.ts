@@ -11690,3 +11690,115 @@ describe('prompt streaming after a context reset', () => {
     })
   })
 })
+
+describe('Specialist Skill scoping', () => {
+  const specialistSkillResolver = (
+    specialistId: string
+  ): Promise<{
+    kind: 'specialist'
+    skillIds: string[]
+    frameworkNames: string[]
+    missingSkillIds: string[]
+  }> =>
+    Promise.resolve(
+      specialistId === 'zero'
+        ? { kind: 'specialist' as const, skillIds: [], frameworkNames: [], missingSkillIds: [] }
+        : {
+            kind: 'specialist' as const,
+            skillIds: ['allowed'],
+            frameworkNames: ['Allowed Skill'],
+            missingSkillIds: []
+          }
+    )
+
+  it('sends Claude an exact whitelist and rejects an out-of-scope forced chip', async () => {
+    const process = new FakeAgentProcess()
+    const agent = startFakeAgent(process, ['specialist-session'])
+    const runtime = new AcpRuntime({
+      appVersion: '0.1.0',
+      defaultCwd: '/workspace',
+      spawnAgent: () => asAgentProcess(process),
+      framework: claudeCodeFramework,
+      resolveSpecialistIdentity: async () => ({ append: 'Specialist identity', prefix: '' }),
+      resolveSpecialistSkills: async () => ({
+        kind: 'specialist',
+        skillIds: ['allowed'],
+        frameworkNames: ['Allowed Skill'],
+        missingSkillIds: []
+      })
+    })
+
+    const session = await runtime.createSession({ cwd: '/workspace', specialistId: 'sp-1' })
+    expect(agent.newSessions[0]?._meta).toMatchObject({
+      claudeCode: { options: { skills: ['Allowed Skill'] } }
+    })
+    await expect(
+      runtime.sendPrompt({
+        sessionId: session.sessionId,
+        text: 'bypass',
+        forcedSkillIds: ['blocked']
+      })
+    ).rejects.toThrow('not available to the active specialist')
+    expect(agent.prompts).toHaveLength(0)
+  })
+
+  it.each([codexFramework, opencodeFramework])(
+    'adds allowed-Skill guidance on every %s turn',
+    async (framework) => {
+      const process = new FakeAgentProcess()
+      const agent = startFakeAgent(process, ['guided-session'], {
+        modes: createModes(['read-only', 'agent', 'agent-full-access'], 'agent')
+      })
+      const runtime = new AcpRuntime({
+        appVersion: '0.1.0',
+        defaultCwd: '/workspace',
+        spawnAgent: () => asAgentProcess(process),
+        framework,
+        resolveSpecialistIdentity: async () => ({ append: '', prefix: 'Specialist identity' }),
+        resolveSpecialistSkills: specialistSkillResolver
+      })
+
+      const session = await runtime.createSession({ cwd: '/workspace', specialistId: 'sp-1' })
+      await runtime.sendPrompt({ sessionId: session.sessionId, text: 'work' })
+      await runtime.sendPrompt({ sessionId: session.sessionId, text: 'continue' })
+      expect(agent.prompts[0]?.text).toContain('Allowed Specialist Skills for this session')
+      expect(agent.prompts[0]?.text).toContain('Allowed Skill')
+      expect(agent.prompts[1]?.text).toContain('Allowed Specialist Skills for this session')
+    }
+  )
+
+  it('sends the current whitelist on ACP resume, with empty Specialist distinct from Main', async () => {
+    const process = new FakeAgentProcess()
+    const agent = startFakeAgent(process, ['unused'])
+    const runtime = new AcpRuntime({
+      appVersion: '0.1.0',
+      defaultCwd: '/workspace',
+      spawnAgent: () => asAgentProcess(process),
+      framework: claudeCodeFramework,
+      resolveSpecialistSkills: specialistSkillResolver
+    })
+    await runtime.resumeSession({ sessionId: 'restored', cwd: '/workspace', specialistId: 'zero' })
+    expect(agent.resumedSessions[0]?._meta).toMatchObject({
+      claudeCode: { options: { skills: [] } }
+    })
+  })
+
+  it('omits Claude skills only for unbound Main while a zero-Skill Specialist sends []', async () => {
+    const process = new FakeAgentProcess()
+    const agent = startFakeAgent(process, ['zero-session', 'main-session'])
+    const runtime = new AcpRuntime({
+      appVersion: '0.1.0',
+      defaultCwd: '/workspace',
+      spawnAgent: () => asAgentProcess(process),
+      framework: claudeCodeFramework,
+      resolveSpecialistIdentity: async () => ({ append: '', prefix: '' }),
+      resolveSpecialistSkills: specialistSkillResolver
+    })
+    await runtime.createSession({ cwd: '/workspace', specialistId: 'zero' })
+    await runtime.createSession({ cwd: '/workspace' })
+    expect(agent.newSessions[0]?._meta).toMatchObject({ claudeCode: { options: { skills: [] } } })
+    expect(agent.newSessions[1]?._meta).not.toMatchObject({
+      claudeCode: { options: { skills: expect.anything() } }
+    })
+  })
+})

@@ -2058,4 +2058,15 @@ describe('truncateSessionFromMessage', () => {
       status: 'error'
     })
   })
+
+  it('marks and clears the specialist switch reset flag', () => {
+    seedSession()
+    expect(useSessionStore.getState().sessions[0].specialistSwitchResetRequired).toBeUndefined()
+
+    useSessionStore.getState().markSpecialistSwitchResetRequired('session-1')
+    expect(useSessionStore.getState().sessions[0].specialistSwitchResetRequired).toBe(true)
+
+    useSessionStore.getState().clearSpecialistSwitchResetRequired('session-1')
+    expect(useSessionStore.getState().sessions[0].specialistSwitchResetRequired).toBeUndefined()
+  })
 })

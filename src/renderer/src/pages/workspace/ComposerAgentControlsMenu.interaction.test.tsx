@@ -103,6 +103,23 @@ vi.mock('radix-ui', () => ({
   }
 }))
 
+// Stub the specialist submenu so its store/catalog wiring stays out of this menu-level suite.
+// The marker surfaces whether the menu included it and forwards key props as data attributes.
+vi.mock('./SpecialistSubmenu', () => ({
+  SpecialistSubmenu: (props: {
+    selectedId?: string
+    unavailable?: boolean
+    readOnly?: boolean
+  }): React.JSX.Element => (
+    <div
+      data-testid="specialist-submenu-stub"
+      data-selected-id={props.selectedId ?? ''}
+      data-unavailable={String(props.unavailable ?? false)}
+      data-read-only={String(props.readOnly ?? false)}
+    />
+  )
+}))
+
 const createHost = (overrides: Partial<ComputeHost> = {}): ComputeHost => ({
   id: 'host-1',
   providerId: 'ssh:cluster-1',
@@ -675,5 +692,83 @@ describe('ComposerAgentControlsMenu', () => {
     })
 
     expect(findButton('cluster-1').disabled).toBe(true)
+  })
+
+  it('renders a Compute submenu trigger above the SSH hosts', () => {
+    act(() => {
+      root.render(
+        <ComposerAgentControlsMenu
+          profile="ask"
+          autoReviewEnabled={false}
+          enabledComputeHosts={[]}
+          onProfileChange={vi.fn()}
+          onAutoReviewChange={vi.fn()}
+          onComputeHostToggle={vi.fn()}
+        />
+      )
+    })
+
+    expect(container.textContent).toContain('Compute')
+    // SSH hosts + Manage compute stay nested under that single Compute submenu.
+    expect(container.textContent).toContain('SSH')
+    expect(container.textContent).toContain('Manage compute...')
+  })
+
+  it('does not render the specialist submenu when showSpecialist is false', () => {
+    act(() => {
+      root.render(
+        <ComposerAgentControlsMenu
+          profile="ask"
+          autoReviewEnabled={false}
+          onProfileChange={vi.fn()}
+          onAutoReviewChange={vi.fn()}
+        />
+      )
+    })
+
+    expect(container.querySelector('[data-testid="specialist-submenu-stub"]')).toBeNull()
+  })
+
+  it('renders the specialist submenu and forwards its props when showSpecialist is true', () => {
+    const onSpecialistChange = vi.fn()
+    act(() => {
+      root.render(
+        <ComposerAgentControlsMenu
+          profile="ask"
+          autoReviewEnabled={false}
+          showSpecialist
+          specialistId="uuid-1"
+          specialistUnavailable={false}
+          specialistReadOnly={false}
+          onSpecialistChange={onSpecialistChange}
+          onProfileChange={vi.fn()}
+          onAutoReviewChange={vi.fn()}
+        />
+      )
+    })
+
+    const stub = container.querySelector('[data-testid="specialist-submenu-stub"]')
+    expect(stub).not.toBeNull()
+    expect(stub?.getAttribute('data-selected-id')).toBe('uuid-1')
+  })
+
+  it('locks the specialist submenu down while a session is running', () => {
+    act(() => {
+      root.render(
+        <ComposerAgentControlsMenu
+          profile="ask"
+          autoReviewEnabled={false}
+          readOnly // session running -> mutating controls frozen
+          showSpecialist
+          specialistId="uuid-1"
+          onSpecialistChange={vi.fn()}
+          onProfileChange={vi.fn()}
+          onAutoReviewChange={vi.fn()}
+        />
+      )
+    })
+
+    const stub = container.querySelector('[data-testid="specialist-submenu-stub"]')
+    expect(stub?.getAttribute('data-read-only')).toBe('true')
   })
 })

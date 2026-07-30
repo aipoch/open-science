@@ -54,7 +54,48 @@ describe('mcpCall RPC', () => {
         params: { server: 'molecule', method: 'preview_molecule', args: {}, sessionId: 's-42' }
       })
     })
-    expect(seenContext).toEqual({ sessionId: 's-42' })
+    expect(seenContext).toEqual({ sessionId: 's-42', origin: 'agent' })
+  })
+
+  it('uses the registered Specialist scope rather than RPC-supplied identity data', async () => {
+    let seenContext:
+      { sessionId?: string; origin?: 'agent' | 'internal'; specialistId?: string } | undefined
+    const capturing = {
+      call: async (
+        _s: string,
+        _m: string,
+        _a: Record<string, unknown>,
+        context?: { sessionId?: string; origin?: 'agent' | 'internal'; specialistId?: string }
+      ) => {
+        seenContext = context
+        return { ok: true }
+      }
+    }
+    server = new NotebookLocalRpcServer({ execute: async () => ({}) } as never, {
+      connectorService: capturing
+    })
+    server.registerSessionSpecialist('real-session', 'specialist-1')
+    server.registerSessionAlias('notebook-session', 'real-session')
+    const { endpoint, token } = await server.ensureStarted()
+    await fetch(endpoint, {
+      method: 'POST',
+      headers: { authorization: `Bearer ${token}`, 'content-type': 'application/json' },
+      body: JSON.stringify({
+        method: 'mcpCall',
+        params: {
+          server: 'molecule',
+          method: 'preview_molecule',
+          args: {},
+          sessionId: 'notebook-session',
+          specialistId: 'forged-specialist'
+        }
+      })
+    })
+    expect(seenContext).toEqual({
+      sessionId: 'real-session',
+      origin: 'agent',
+      specialistId: 'specialist-1'
+    })
   })
 })
 

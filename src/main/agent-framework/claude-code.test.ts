@@ -40,6 +40,17 @@ describe('claudeCodeFramework', () => {
     })
   })
 
+  it('preserves an explicit empty Specialist whitelist while Main omits it', () => {
+    expect(
+      claudeCodeFramework.buildSessionSetup({ systemPromptAppends: [], skillWhitelist: [] }).meta
+    ).toMatchObject({ claudeCode: { options: { skills: [] } } })
+    expect(
+      claudeCodeFramework.buildSessionSetup({ systemPromptAppends: [] }).meta
+    ).not.toMatchObject({
+      claudeCode: { options: { skills: expect.anything() } }
+    })
+  })
+
   it('renders Open Science MCP tool references as Claude callable names', () => {
     const setup = claudeCodeFramework.buildSessionSetup({
       systemPromptAppends: [

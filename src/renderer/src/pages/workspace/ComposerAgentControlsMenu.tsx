@@ -1,11 +1,13 @@
 // Unified composer menu: per-session agent controls (permission profile + auto-review) and
-// compute host selection, behind a single icon trigger. Replaces the earlier split into
-// ComposerPermissionProfilePicker, ComposerAutoReviewToggle, and ComputeHostSelector.
-// A primary-color dot on the trigger marks any deviation from the defaults (profile 'ask',
-// auto-review off); session grants keep their own count pill. The first-level menu shows the
-// current permission level as a borderless colored capsule (ask = neutral, auto = blue,
-// full = warning amber); picking a level lives in a submenu. SSH hosts are appended below
-// auto-review, reading from the global compute store like ComposerModelPicker.
+// resource selection (specialist + compute), behind a single icon trigger. Replaces the
+// earlier split into ComposerPermissionProfilePicker, ComposerAutoReviewToggle, the
+// standalone SpecialistPicker, and ComputeHostSelector. A primary-color dot on the trigger
+// marks any deviation from the defaults (profile 'ask', auto-review off); session grants
+// keep their own count pill. The first-level menu shows the current permission level as a
+// borderless colored capsule (ask = neutral, auto = blue, full = warning amber); picking a
+// level lives in a submenu. Specialist and Compute are hover-expanded submenus below
+// auto-review: Specialist offers None / personal specialists / Create new…; Compute folds
+// the SSH host list and "Manage compute…" together. Both read from global stores.
 
 import {
   DEFAULT_PERMISSION_PROFILE,
@@ -18,6 +20,7 @@ import {
   Check,
   ChevronRight,
   ScanEye,
+  Server,
   Settings,
   Shield,
   ShieldAlert,
@@ -27,6 +30,8 @@ import {
 } from 'lucide-react'
 import { useState } from 'react'
 import { AlertDialog } from 'radix-ui'
+
+import { SpecialistSubmenu } from './SpecialistSubmenu'
 
 import { Button } from '@/components/ui/button'
 import {
@@ -78,6 +83,14 @@ type ComposerAgentControlsMenuProps = {
   // renders without a compute binding (e.g. in isolation tests); the composer passes both.
   enabledComputeHosts?: string[]
   onComputeHostToggle?: (providerId: string, enabled: boolean) => void
+  // Specialist submenu: shown when showSpecialist is true (the composer decides, mirroring the
+  // old standalone picker's visibility rule). specialistReadOnly marks a bound session whose
+  // identity is fixed; the menu's readOnly (session running) also locks it down.
+  showSpecialist?: boolean
+  specialistId?: string
+  specialistUnavailable?: boolean
+  specialistReadOnly?: boolean
+  onSpecialistChange?: (specialistId: string | undefined) => void
 }
 
 const permissionProfiles: Array<{
@@ -132,7 +145,12 @@ const ComposerAgentControlsMenu = ({
   onRevokeGrant,
   onClearGrants,
   enabledComputeHosts,
-  onComputeHostToggle
+  onComputeHostToggle,
+  showSpecialist = false,
+  specialistId,
+  specialistUnavailable = false,
+  specialistReadOnly = false,
+  onSpecialistChange
 }: ComposerAgentControlsMenuProps): React.JSX.Element => {
   const [confirmFullAccess, setConfirmFullAccess] = useState(false)
   const selectedProfile = permissionProfiles.find((candidate) => candidate.id === profile)!
@@ -376,62 +394,95 @@ const ComposerAgentControlsMenu = ({
             </div>
           ) : null}
 
-          {/* Compute hosts: appended below the agent controls so a single trigger covers
-              both. SSH hosts are single-select; Manage compute opens the settings panel. */}
+          {/* Specialist + Compute live in hover-expanded submenus below the agent controls.
+              Specialist shows the personal-specialist picker (was a standalone toolbar button);
+              Compute folds the old inline SSH host list and "Manage compute…" into one submenu. */}
           <DropdownMenuSeparator />
-          {sshHosts.length > 0 ? (
-            <>
-              <DropdownMenuLabel className="text-[10.5px] uppercase tracking-wide text-text-300 font-normal">
-                SSH
-              </DropdownMenuLabel>
-              <DropdownMenuGroup>
-                {sshHosts.map((host) => {
-                  const isEnabled = enabledComputeHosts?.includes(host.providerId) ?? false
-                  return (
-                    <DropdownMenuItem
-                      key={host.providerId}
-                      disabled={readOnly}
-                      onSelect={(event) => {
-                        event.preventDefault()
-                        handleHostToggle(host.providerId, isEnabled)
-                      }}
-                      className="items-center gap-2 px-2 py-1.5"
-                    >
-                      <span
-                        className={cn(
-                          'min-w-0 flex-1 truncate text-[13px] leading-5',
-                          isEnabled ? 'font-medium text-text-100' : 'font-normal text-text-200'
-                        )}
-                      >
-                        {host.displayName}
-                      </span>
-                      {/* pointer-events-none: the Switch is a visual indicator only;
-                          the row's onSelect is the single toggle entry point. */}
-                      <Switch
-                        size="sm"
-                        checked={isEnabled}
-                        aria-hidden="true"
-                        tabIndex={-1}
-                        className="pointer-events-none"
-                      />
-                    </DropdownMenuItem>
-                  )
-                })}
-              </DropdownMenuGroup>
-            </>
-          ) : (
-            <DropdownMenuItem disabled className="px-2 py-1.5 text-[13px] text-text-300">
-              {isLoaded ? 'No SSH hosts registered' : 'Loading…'}
-            </DropdownMenuItem>
-          )}
-          <DropdownMenuSeparator />
-          <DropdownMenuItem
-            onSelect={() => openSettingsToCompute()}
-            className="items-center gap-2 px-2 py-1.5 text-[13px] text-text-200"
-          >
-            <Settings className="size-4 shrink-0" aria-hidden="true" />
-            Manage compute...
-          </DropdownMenuItem>
+          {showSpecialist ? (
+            <SpecialistSubmenu
+              selectedId={specialistId}
+              onChange={onSpecialistChange ?? (() => undefined)}
+              unavailable={specialistUnavailable}
+              readOnly={specialistReadOnly || readOnly}
+            />
+          ) : null}
+
+          <DropdownMenuSub>
+            <DropdownMenuSubTrigger className="items-center gap-2 px-2 py-1.5">
+              <Server
+                className="size-4 shrink-0 text-text-200"
+                strokeWidth={2}
+                aria-hidden="true"
+              />
+              <span className="min-w-0 flex-1">
+                <span className="block text-[13px] font-medium leading-5">Compute</span>
+                <span className="block text-[11px] leading-4 text-text-300">
+                  Run jobs on a remote SSH host, or manage hosts.
+                </span>
+              </span>
+              <ChevronRight
+                className="size-4 shrink-0 opacity-60"
+                strokeWidth={2}
+                aria-hidden="true"
+              />
+            </DropdownMenuSubTrigger>
+            <DropdownMenuSubContent className="w-72 p-1">
+              {/* SSH hosts are single-select; Manage compute opens the settings panel. */}
+              {sshHosts.length > 0 ? (
+                <>
+                  <DropdownMenuLabel className="text-[10.5px] uppercase tracking-wide text-text-300 font-normal">
+                    SSH
+                  </DropdownMenuLabel>
+                  <DropdownMenuGroup>
+                    {sshHosts.map((host) => {
+                      const isEnabled = enabledComputeHosts?.includes(host.providerId) ?? false
+                      return (
+                        <DropdownMenuItem
+                          key={host.providerId}
+                          disabled={readOnly}
+                          onSelect={(event) => {
+                            event.preventDefault()
+                            handleHostToggle(host.providerId, isEnabled)
+                          }}
+                          className="items-center gap-2 px-2 py-1.5"
+                        >
+                          <span
+                            className={cn(
+                              'min-w-0 flex-1 truncate text-[13px] leading-5',
+                              isEnabled ? 'font-medium text-text-100' : 'font-normal text-text-200'
+                            )}
+                          >
+                            {host.displayName}
+                          </span>
+                          {/* pointer-events-none: the Switch is a visual indicator only;
+                              the row's onSelect is the single toggle entry point. */}
+                          <Switch
+                            size="sm"
+                            checked={isEnabled}
+                            aria-hidden="true"
+                            tabIndex={-1}
+                            className="pointer-events-none"
+                          />
+                        </DropdownMenuItem>
+                      )
+                    })}
+                  </DropdownMenuGroup>
+                </>
+              ) : (
+                <DropdownMenuItem disabled className="px-2 py-1.5 text-[13px] text-text-300">
+                  {isLoaded ? 'No SSH hosts registered' : 'Loading…'}
+                </DropdownMenuItem>
+              )}
+              <DropdownMenuSeparator />
+              <DropdownMenuItem
+                onSelect={() => openSettingsToCompute()}
+                className="items-center gap-2 px-2 py-1.5 text-[13px] text-text-200"
+              >
+                <Settings className="size-4 shrink-0" aria-hidden="true" />
+                Manage compute...
+              </DropdownMenuItem>
+            </DropdownMenuSubContent>
+          </DropdownMenuSub>
         </DropdownMenuContent>
       </DropdownMenu>
 

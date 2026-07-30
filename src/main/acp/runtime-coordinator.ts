@@ -257,6 +257,17 @@ class AcpRuntimeCoordinator {
     return response
   }
 
+  // Hot-switches the specialist on a live session. Delegates to the owning runtime so a framework
+  // generation switch cannot strand a binding on a retired runtime.
+  async switchSpecialist(
+    sessionId: string,
+    specialistId: string | undefined
+  ): Promise<{ contextReset: boolean }> {
+    await this.waitForInitialization()
+    const runtime = this.runtimeForSession(sessionId)
+    return runtime.switchSpecialist(sessionId, specialistId)
+  }
+
   async compactSession(request: AcpCompactSessionRequest): Promise<AcpStateSnapshot> {
     await this.waitForInitialization()
     await this.runtimeForSession(request.sessionId).compactSession(request)

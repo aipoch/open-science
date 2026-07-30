@@ -1086,6 +1086,9 @@ export type CustomServerView = {
   description?: string
   transport: CustomServerTransport
   enabled: boolean
+  // Physical availability is independent of Main's enabled toggle. An invalid persisted server may
+  // remain visible to a Specialist but can never be selected or dispatched.
+  availability?: 'unavailable' | 'unauthenticated'
   // Display-only config summary (the command that runs, its args, or the remote URL). env/headers
   // are intentionally omitted — they may hold secrets and stay write-only from the UI.
   command?: string

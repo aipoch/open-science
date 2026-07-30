@@ -227,6 +227,20 @@ import type {
   ReviewUpdateEvent
 } from '../shared/reviewer'
 import { REVIEWER_IPC } from '../shared/reviewer'
+import type {
+  CreateSpecialistRequest,
+  UpdateSpecialistRequest,
+  SetSpecialistEnabledRequest,
+  DeleteSpecialistRequest,
+  DuplicateSpecialistRequest,
+  SpecialistListItem,
+  SpecialistProfileView,
+  SetSessionSpecialistRequest,
+  SetSessionSpecialistResponse,
+  ResolveSessionSpecialistRequest,
+  SessionSpecialistResolution
+} from '../shared/specialist'
+import { SPECIALIST_IPC } from '../shared/specialist'
 import {
   announceWindowFindReady,
   subscribeCloseActivePane,
@@ -385,6 +399,22 @@ type OpenScienceAPI = {
     respondSkillImportApproval: (response: ConversationSkillImportApprovalResponse) => Promise<void>
     respondConnectorApproval: (request: RespondApprovalRequest) => Promise<void>
     onInstallLog: (listener: AcpListener<ClaudeInstallEvent>) => RemoveListener
+  }
+  specialist: {
+    list: () => Promise<SpecialistListItem[]>
+    create: (request: CreateSpecialistRequest) => Promise<SpecialistProfileView>
+    update: (request: UpdateSpecialistRequest) => Promise<SpecialistProfileView>
+    setEnabled: (request: SetSpecialistEnabledRequest) => Promise<SpecialistProfileView>
+    delete(request: DeleteSpecialistRequest): Promise<void>
+    duplicate(request: DuplicateSpecialistRequest): Promise<CreateSpecialistRequest>
+    onCatalogChanged: (listener: () => void) => RemoveListener
+    // Session switching (issue 07).
+    setSessionSpecialist: (
+      request: SetSessionSpecialistRequest
+    ) => Promise<SetSessionSpecialistResponse>
+    resolveSessionSpecialist: (
+      request: ResolveSessionSpecialistRequest
+    ) => Promise<SessionSpecialistResolution>
   }
   logs: {
     getPath: () => Promise<string | null>
@@ -933,6 +963,32 @@ const api: OpenScienceAPI = {
       ipcRenderer.invoke('connectors:approval-respond', request) as Promise<void>,
     // Streams live installer output while a one-click install runs.
     onInstallLog: (listener) => onIpcMessage('settings:install-log', listener)
+  },
+  specialist: {
+    list: () => ipcRenderer.invoke(SPECIALIST_IPC.LIST) as Promise<SpecialistListItem[]>,
+    create: (request: CreateSpecialistRequest) =>
+      ipcRenderer.invoke(SPECIALIST_IPC.CREATE, request) as Promise<SpecialistProfileView>,
+    update: (request: UpdateSpecialistRequest) =>
+      ipcRenderer.invoke(SPECIALIST_IPC.UPDATE, request) as Promise<SpecialistProfileView>,
+    setEnabled: (request: SetSpecialistEnabledRequest) =>
+      ipcRenderer.invoke(SPECIALIST_IPC.SET_ENABLED, request) as Promise<SpecialistProfileView>,
+    delete: (request: DeleteSpecialistRequest) =>
+      ipcRenderer.invoke(SPECIALIST_IPC.DELETE, request) as Promise<void>,
+    duplicate: (request: DuplicateSpecialistRequest) =>
+      ipcRenderer.invoke(SPECIALIST_IPC.DUPLICATE, request) as Promise<CreateSpecialistRequest>,
+    onCatalogChanged: (listener: () => void) =>
+      onIpcMessage(SPECIALIST_IPC.CATALOG_CHANGED, listener),
+    // Session switching (issue 07).
+    setSessionSpecialist: (request: SetSessionSpecialistRequest) =>
+      ipcRenderer.invoke(
+        SPECIALIST_IPC.SET_SESSION_SPECIALIST,
+        request
+      ) as Promise<SetSessionSpecialistResponse>,
+    resolveSessionSpecialist: (request: ResolveSessionSpecialistRequest) =>
+      ipcRenderer.invoke(
+        SPECIALIST_IPC.RESOLVE_SESSION_SPECIALIST,
+        request
+      ) as Promise<SessionSpecialistResolution>
   },
   logs: {
     getPath: () => ipcRenderer.invoke('logs:get-path') as Promise<string | null>,

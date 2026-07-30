@@ -37,7 +37,11 @@ type NotebookLocalRpcServerOptions = {
       server: string,
       method: string,
       args: Record<string, unknown>,
-      context?: { sessionId?: string }
+      context?: {
+        sessionId?: string
+        origin?: 'agent' | 'internal'
+        specialistId?: string
+      }
     ): Promise<unknown>
   }
   computeService?: {
@@ -173,6 +177,10 @@ class NotebookLocalRpcServer {
   private server: Server | undefined
   private startPromise: Promise<NotebookRpcConnection> | undefined
   private readonly sessionAliases = new Map<string, string>()
+  // The session → Specialist relationship is established by the ACP runtime, not supplied by the
+  // notebook process. Keeping it here prevents an agent from selecting another Specialist's scope
+  // by forging an RPC parameter.
+  private readonly sessionSpecialists = new Map<string, string>()
   private readonly artifactProvenanceContexts = new Map<string, NotebookRunProvenanceContext>()
   private readonly activeTurnProjectIds = new Map<string, string>()
   private readonly activeInputRunLeases = new Map<string, Set<NotebookInputRunLease>>()
@@ -289,6 +297,11 @@ class NotebookLocalRpcServer {
   // Remembers the final ACP session id for notebook aliases created before session start.
   registerSessionAlias(aliasSessionId: string, sessionId: string): void {
     this.sessionAliases.set(aliasSessionId, sessionId)
+  }
+
+  registerSessionSpecialist(sessionId: string, specialistId: string | undefined): void {
+    if (specialistId) this.sessionSpecialists.set(sessionId, specialistId)
+    else this.sessionSpecialists.delete(sessionId)
   }
 
   // Pins Notebook executions to the app-owned active turn. The MCP caller cannot submit or override
@@ -520,7 +533,13 @@ class NotebookLocalRpcServer {
       const toolMethod = typeof params.method === 'string' ? params.method : ''
       const args = isRecord(params.args) ? params.args : {}
       const sessionId = typeof params.sessionId === 'string' ? params.sessionId : undefined
-      return this.connectorService.call(server, toolMethod, args, { sessionId })
+      return this.connectorService.call(server, toolMethod, args, {
+        sessionId,
+        origin: 'agent',
+        ...(sessionId && this.sessionSpecialists.get(sessionId)
+          ? { specialistId: this.sessionSpecialists.get(sessionId) }
+          : {})
+      })
     }
 
     // computeCall routes compute API operations to ComputeService (design.md §2). The `op` field

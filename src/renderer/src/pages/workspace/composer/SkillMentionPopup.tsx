@@ -18,6 +18,7 @@ const TIER_DESCRIPTION = 0
 // editor, so this listens for navigation keys on document while mounted rather than owning focus.
 type SkillMentionPopupProps = {
   query: string
+  allowedSkillIds?: readonly string[]
   onSelect: (skill: SkillView) => void
   onClose: () => void
 }
@@ -31,6 +32,7 @@ const SOURCE_LABELS: Record<SkillSource, string> = {
 
 export const SkillMentionPopup = ({
   query,
+  allowedSkillIds,
   onSelect,
   onClose
 }: SkillMentionPopupProps): React.JSX.Element | null => {
@@ -50,11 +52,13 @@ export const SkillMentionPopup = ({
   // Empty query shows every skill in its original order.
   const matches = useMemo<SkillMatch[]>(() => {
     const needle = query.trim()
-    if (needle.length === 0) return skills.map((skill) => ({ skill, positions: [] }))
+    const allowed = allowedSkillIds ? new Set(allowedSkillIds) : undefined
+    const visibleSkills = allowed ? skills.filter((skill) => allowed.has(skill.id)) : skills
+    if (needle.length === 0) return visibleSkills.map((skill) => ({ skill, positions: [] }))
 
     const descNeedle = needle.toLowerCase()
     return (
-      skills
+      visibleSkills
         .map((skill) => {
           const nameMatch = fuzzyScore(needle, skill.name)
           if (nameMatch) {
@@ -75,7 +79,7 @@ export const SkillMentionPopup = ({
         .sort((a, b) => b.tier - a.tier || b.score - a.score)
         .map(({ skill, positions }) => ({ skill, positions }))
     )
-  }, [skills, query])
+  }, [skills, query, allowedSkillIds])
 
   const [activeIndex, setActiveIndex] = useState(0)
 

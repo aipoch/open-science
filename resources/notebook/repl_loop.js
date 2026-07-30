@@ -919,7 +919,12 @@ async function hostMcp(server, method, args = undefined, kwargs = undefined) {
   const res = await capturedFetch(RPC_ENDPOINT, {
     method: 'POST',
     headers: { 'content-type': 'application/json', authorization: 'Bearer ' + (RPC_TOKEN || '') },
-    body: JSON.stringify({ method: 'mcpCall', params: { server, method, args: callArgs } })
+    // Forward the notebook session id so the RPC server resolves the ACP session + specialist scope.
+    // Without it the ConnectorService gate rejects the call with missing_session.
+    body: JSON.stringify({
+      method: 'mcpCall',
+      params: { server, method, args: callArgs, sessionId: COMPUTE_SESSION_ID }
+    })
   })
   const body = await res.json().catch(() => ({}))
   if (!res.ok) throw new Error(body.error || 'host.mcp HTTP ' + res.status)

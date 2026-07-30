@@ -275,6 +275,10 @@ export type AcpCreateSessionRequest = {
   // Scopes generated artifacts / notebooks to a project's storage subtree. Defaults per runtime.
   projectName?: string
   permissionProfile?: PermissionProfileId
+  // Immutable Specialist UUID to bind on first turn. Main process resolves the latest Profile at
+  // session-creation time — the renderer MUST NOT send systemPrompt or capability data, only the
+  // stable UUID. Absent or undefined means no specialist; use Main Agent.
+  specialistId?: string
 }
 
 export type AcpCreateSessionResponse = {
@@ -295,6 +299,8 @@ export type AcpResumeSessionRequest = {
   permissionProfile?: PermissionProfileId
   previousFrameworkId?: AgentFrameworkId
   previousBackendId?: string
+  // Durable session binding, supplied on restore so session/resume reissues the Specialist whitelist.
+  specialistId?: string
 }
 
 export type AcpCompactSessionRequest = {

@@ -94,6 +94,9 @@ import { tryDecryptKey } from './settings/crypto'
 import { registerSettingsIpcHandlers } from './settings/ipc'
 import { getAppClaudeConfigDir } from './settings/provider-env'
 import { createDefaultSettingsService, type SettingsService } from './settings/service'
+import { createProfileService } from './specialist/service'
+import { registerSpecialistIpcHandlers } from './specialist/ipc'
+import { SessionBindingService } from './specialist/session-binding'
 import type { StoredConnectors } from './settings/types'
 import type { AppIconPreview, AppIconVariant } from '../shared/settings'
 import { registerStorageIpcHandlers } from './storage/ipc'
@@ -330,6 +333,11 @@ const registerIpcHandlers = async ({
   // Read fresh on every call so a future connectors-settings mutation (Plan 2 UI) only needs to call
   // refreshConnectorSkillDocs again to take effect, without reconstructing the connector service.
   let connectorsSnapshot: StoredConnectors | undefined
+  // Resolved lazily per connector call so dispatch always sees the latest persisted Specialist profile.
+  const profileService = createProfileService(resolveStorageRoot())
+  // Per-session specialist binding store. Shared between the SET_SESSION_SPECIALIST barrier
+  // (validate + record) and the runtime switch so a hot-switch lands on the same source of truth.
+  const sessionBindingService = new SessionBindingService(profileService)
   // Desktop notifications for finished/failed agent tasks and approval waits. Delivery is
   // Electron's Notification (Notification Center on macOS, toasts on Windows, libnotify on Linux);
   // the service itself stays Electron-free so its filtering rules are unit-testable. The click
@@ -427,6 +435,13 @@ const registerIpcHandlers = async ({
         argsPreview: previewArgs(args),
         ...(sessionId ? { sessionId } : {})
       }),
+    resolveSpecialistProfile: async (specialistId) => {
+      try {
+        return await profileService.getById(specialistId)
+      } catch {
+        return undefined
+      }
+    },
     localToolHandlers: { 'molecule/preview_molecule': moleculePreviewHandler }
   })
   // Register compute IPC handlers early so computeService can be wired into the notebook RPC server.
@@ -572,6 +587,8 @@ const registerIpcHandlers = async ({
   registerWindowFindIpcHandlers()
   const updateService = registerUpdateIpcHandlers()
   startUpdateScheduler(updateService)
+  // ACP identity resolution and the Specialist settings IPC must use the same service instance.
+  // Creating it only for settings leaves create-session unable to resolve a selected UUID.
   const runtime = registerAcpIpcHandlers({
     mcpEntryPath: mainEntryPath,
     repository: artifactRepository,
@@ -593,7 +610,8 @@ const registerIpcHandlers = async ({
       skillImportApprovalBroker.cancelSession(sessionId),
     onSessionUnavailable: (sessionId) => skillImportApprovalBroker.cancelSession(sessionId),
     onAllSessionsCancellationRequested: () => skillImportApprovalBroker.cancelAll(),
-    initializationBarrier: initialConnectorSkillsReady
+    initializationBarrier: initialConnectorSkillsReady,
+    profileService
   })
   runtimeRef.current = runtime
   // Single shared teardown owner for both the before-quit handler (index.ts) and the pre-update-install
@@ -639,6 +657,51 @@ const registerIpcHandlers = async ({
     listAppIconPreviews
   })
   registerNotebookIpcHandlers(notebookService)
+  // Wire session deletion to the binding store so stale in-memory bindings do not accumulate.
+  // The renderer calls sessions:delete-session (via sessionPersistenceBackend) and acp:delete-session
+  // separately; both paths should clear the binding. Override the backend deleteSession callback here
+  // so all durable-path deletions — regardless of whether the ACP session was attached — clear the
+  // binding in one place.
+  const originalDeleteSession =
+    sessionPersistenceBackend.deleteSession.bind(sessionPersistenceBackend)
+  sessionPersistenceBackend.deleteSession = async (projectId, sessionId) => {
+    await originalDeleteSession(projectId, sessionId)
+    sessionBindingService.clearSession(sessionId)
+  }
+  const specialistPersistLog = createLogger('specialist:persist')
+  registerSpecialistIpcHandlers(
+    profileService,
+    sessionBindingService,
+    // Persist only the specialist UUID to the durable session file — never a profile snapshot.
+    // Read the current session file, patch specialistId, and save so the binding survives restarts.
+    // Reading all sessions to locate the target is intentional: sessionId alone is not sufficient to
+    // open the file (it lives under sessions/<projectId>/<sessionId>.json), and this operation is
+    // infrequent enough that the scan cost is acceptable.
+    async (sessionId, specialistId) => {
+      const allSessions = await sessionRepository.loadAll()
+      const session = allSessions.sessions.find((s) => s.id === sessionId)
+      if (!session) {
+        // The session has not yet been persisted (created but not saved). The specialistId will be
+        // written when the renderer calls sessions:save-session for the first time.
+        specialistPersistLog.debug(
+          'session not yet durable; specialistId will be written on first save',
+          {
+            sessionId,
+            specialistId
+          }
+        )
+        return
+      }
+      await sessionPersistenceCoordinator.saveSession({ ...session, specialistId })
+    },
+    // Apply the switch to the live agent runtime. `runtime` is assigned above (registerAcpIpcHandlers),
+    // but the closure is invoked per-request so a late-bound reference is unnecessary.
+    (sessionId, specialistId) => runtime.switchSpecialist(sessionId, specialistId),
+    // A specialist capability edit (skills/connectors/enabled) must reach live sessions on the next
+    // turn: reconnect so the agent respawns (re-provisioning skills) and resumes with the updated
+    // specialist whitelist in the session _meta.
+    () => void runtime.requestSkillsReload()
+  )
   // Runtime selection UI (Settings/Onboarding): survey managed+external per language, persist the
   // choice, and pick an interpreter file. The runtime root MUST match the executor/service's
   // (getRuntimeRoot(<dataRoot>)); read lazily so a data-root switch is reflected without re-register.

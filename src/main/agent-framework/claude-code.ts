@@ -69,7 +69,8 @@ export const claudeCodeFramework: AgentFramework = {
         options: {
           tools: CLAUDE_CODE_BUILTIN_TOOLS,
           ...ctx.sessionOptions,
-          settingSources: ['user']
+          settingSources: ['user'],
+          ...(ctx.skillWhitelist !== undefined ? { skills: ctx.skillWhitelist } : {})
         }
       }
     }

@@ -101,6 +101,10 @@ export type ChatSession = Omit<
   // Transient: the durable active Branch changed while the Agent/Notebook still hold the previous
   // Branch's volatile state. The next continuation must rebuild both contexts before prompting.
   branchContextResetRequired?: boolean
+  // Transient: a specialist switch replaced the live agent session (Claude bakes identity into the
+  // session at creation). The next continuation must replay conversation history so the new
+  // specialist retains continuity, without resetting the notebook kernel (unlike a Branch switch).
+  specialistSwitchResetRequired?: boolean
   // Transient aggregate of Reviewer, Notebook, Upload-finalization, and deletion activity that lives
   // outside this store. The workspace projects those operation gates here so direct store callers
   // cannot bypass disabled revision controls.
@@ -127,6 +131,8 @@ type AppendUserMessageInput = {
   agentBackendId?: PersistedChatSession['agentBackendId']
   agentModel?: string
   isPending?: boolean
+  // Immutable Specialist UUID; written once on session creation and never changed after.
+  specialistId?: string
 }
 
 type AppendPendingUserMessageInput = {
@@ -139,6 +145,8 @@ type AppendPendingUserMessageInput = {
   agentFrameworkId?: PersistedChatSession['agentFrameworkId']
   agentBackendId?: PersistedChatSession['agentBackendId']
   agentModel?: string
+  // Immutable Specialist UUID forwarded from the new-conversation draft picker.
+  specialistId?: string
 }
 
 type BindPendingSessionInput = {
@@ -253,6 +261,8 @@ type SessionStore = SessionStoreData & {
   activateMessageBranch: (sessionId: string, branchId: string) => void
   setBranchSwitchBlocked: (sessionId: string, blocked: boolean) => void
   clearBranchContextReset: (sessionId: string) => void
+  markSpecialistSwitchResetRequired: (sessionId: string) => void
+  clearSpecialistSwitchResetRequired: (sessionId: string) => void
   upsertToolActivity: (input: UpsertToolActivityInput) => void
   beginActivityGroup: (sessionId: string, groupId: string, title: string) => void
   completeActivityGroup: (sessionId: string) => void
@@ -263,6 +273,9 @@ type SessionStore = SessionStoreData & {
   setAutoReviewEnabled: (sessionId: string, enabled: boolean) => void
   // Sets the per-session enabled compute hosts (single-select, stored as array for extensibility).
   setEnabledComputeHosts: (sessionId: string, providerIds: string[]) => void
+  // Updates the persisted specialist UUID for an existing session after reconfigure succeeds.
+  // Passing undefined clears the binding (Main Agent). Persistence only stores the UUID.
+  setSessionSpecialistId: (sessionId: string, specialistId: string | undefined) => void
   // Toggles whether a conversation is pinned to the top section of the sidebar.
   togglePinned: (sessionId: string) => void
   // Sets or clears the per-session fix loop active flag. When true, the composer send button is
@@ -314,6 +327,7 @@ const stripTransientSessionState = (session: ChatSession): PersistedChatSession 
     compacting,
     agentStatus,
     branchContextResetRequired,
+    specialistSwitchResetRequired,
     branchSwitchBlocked,
     conversationGraphSyncBlocked,
     messages,
@@ -326,6 +340,7 @@ const stripTransientSessionState = (session: ChatSession): PersistedChatSession 
   void compacting
   void agentStatus
   void branchContextResetRequired
+  void specialistSwitchResetRequired
   void branchSwitchBlocked
   void conversationGraphSyncBlocked
 
@@ -385,6 +400,7 @@ const withTransientSessionState = (
     compacting: source.compacting,
     agentStatus: source.agentStatus,
     branchContextResetRequired: source.branchContextResetRequired,
+    specialistSwitchResetRequired: source.specialistSwitchResetRequired,
     branchSwitchBlocked: source.branchSwitchBlocked,
     conversationGraphSyncBlocked: source.conversationGraphSyncBlocked
   }
@@ -844,7 +860,8 @@ export const useSessionStore = create<SessionStore>((set, get) => ({
     agentFrameworkId,
     agentBackendId,
     agentModel,
-    isPending
+    isPending,
+    specialistId
   }) => {
     const trimmedContent = content.trim()
     const normalizedAgentBackendId = agentBackendId?.trim() || undefined
@@ -921,6 +938,8 @@ export const useSessionStore = create<SessionStore>((set, get) => ({
         agentFrameworkId,
         agentBackendId: normalizedAgentBackendId,
         agentModel: normalizedAgentModel,
+        // Specialist UUID written once at creation; never changed after bind.
+        ...(specialistId ? { specialistId } : {}),
         messages: [userMessage],
         activeRun,
         createdAt: now,
@@ -954,7 +973,8 @@ export const useSessionStore = create<SessionStore>((set, get) => ({
     permissionProfile,
     agentFrameworkId,
     agentBackendId,
-    agentModel
+    agentModel,
+    specialistId
   }) => {
     return get().appendUserMessage({
       sessionId: createPendingSessionId(),
@@ -967,6 +987,7 @@ export const useSessionStore = create<SessionStore>((set, get) => ({
       agentFrameworkId,
       agentBackendId,
       agentModel,
+      specialistId,
       isPending: true
     })
   },
@@ -2120,6 +2141,27 @@ export const useSessionStore = create<SessionStore>((set, get) => ({
     }))
   },
 
+  // Marks that a specialist switch replaced the live agent session; the next send replays history
+  // into the fresh session so the new specialist keeps conversation continuity. Distinct from
+  // branchContextResetRequired because it must NOT shut down the notebook kernel.
+  markSpecialistSwitchResetRequired: (sessionId) => {
+    set((state) => ({
+      sessions: state.sessions.map((session) =>
+        session.id === sessionId ? { ...session, specialistSwitchResetRequired: true } : session
+      )
+    }))
+  },
+
+  clearSpecialistSwitchResetRequired: (sessionId) => {
+    set((state) => ({
+      sessions: state.sessions.map((session) =>
+        session.id === sessionId
+          ? { ...session, specialistSwitchResetRequired: undefined }
+          : session
+      )
+    }))
+  },
+
   // Marks a session as blocked on a user permission decision.
   setPermissionPending: (sessionId) => {
     set((state) => ({
@@ -2187,6 +2229,22 @@ export const useSessionStore = create<SessionStore>((set, get) => ({
           ? {
               ...session,
               enabledComputeHosts: providerIds.length > 0 ? providerIds : undefined,
+              updatedAt: Date.now()
+            }
+          : session
+      )
+    }))
+  },
+
+  // Updates the persisted specialist UUID for an existing session (called after reconfigure succeeds).
+  // Passing undefined clears the binding (Main Agent). Session persistence stores only the UUID.
+  setSessionSpecialistId: (sessionId, specialistId) => {
+    set((state) => ({
+      sessions: state.sessions.map((session) =>
+        session.id === sessionId
+          ? {
+              ...session,
+              specialistId: specialistId ?? undefined,
               updatedAt: Date.now()
             }
           : session

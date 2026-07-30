@@ -5,6 +5,7 @@ export type SettingsPanelId =
   | 'agent'
   | 'skills'
   | 'connectors'
+  | 'specialists'
   | 'compute'
   | 'general'
   | 'storage'

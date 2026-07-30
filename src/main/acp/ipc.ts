@@ -41,6 +41,15 @@ import type { UploadRepository } from '../uploads/repository'
 import { broadcastToRenderers } from '../renderer-broadcast'
 import { withDataRootWrite } from '../storage/migration-state'
 import { createLogger, errorLogFields } from '../logger'
+import type { ProfileService } from '../specialist/service'
+import {
+  buildSpecialistIdentityAppend,
+  buildSpecialistIdentityPrefix
+} from '../specialist/identity'
+import {
+  resolveEffectiveSpecialistSkills,
+  filterSpecialistConnectorSkills
+} from '../../shared/specialist'
 
 const log = createLogger('acp')
 
@@ -79,6 +88,9 @@ type AcpIpcOptions = AcpIpcArtifacts & {
   onSessionCancellationRequested?: (sessionId: string) => void
   onSessionUnavailable?: (sessionId: string) => void
   onAllSessionsCancellationRequested?: () => void
+  // Provides fresh Specialist Profiles for first-turn identity injection. Optional so existing
+  // tests and headless setups that construct the runtime without specialist support are unaffected.
+  profileService?: ProfileService
 }
 
 // Sends one runtime payload to every currently open renderer window.
@@ -113,7 +125,8 @@ const createRuntime = ({
   onSkillImportAttachmentEligible,
   onSessionCancellationRequested,
   onSessionUnavailable,
-  onAllSessionsCancellationRequested
+  onAllSessionsCancellationRequested,
+  profileService
 }: AcpIpcOptions): AcpRuntimeCoordinator => {
   const configRoot = resolveConfigRoot()
   const dataRoot = resolveDataRoot()
@@ -182,6 +195,8 @@ const createRuntime = ({
           getRpcConnection: () => notebookRpcServer.ensureStarted(),
           registerSessionAlias: (aliasSessionId, sessionId) =>
             notebookRpcServer.registerSessionAlias(aliasSessionId, sessionId),
+          registerSessionSpecialist: (sessionId, specialistId) =>
+            notebookRpcServer.registerSessionSpecialist(sessionId, specialistId),
           setArtifactProvenanceContext: (sessionId, context) =>
             notebookRpcServer.setArtifactProvenanceContext(sessionId, context),
           registerTurnInputs: (request) => notebookRpcServer.registerNotebookTurnInputs(request)
@@ -196,7 +211,60 @@ const createRuntime = ({
         },
         activityGroups: { mcpEntryPath },
         callbacks: runtimeCallbacks,
-        permissionGrantStore
+        permissionGrantStore,
+        // Main process resolves the latest Profile so the renderer never needs to send systemPrompt.
+        resolveSpecialistIdentity: profileService
+          ? async (specialistId: string, frameworkId: string) => {
+              let profile
+              try {
+                profile = await profileService.getById(specialistId)
+              } catch {
+                // Profile not found or corrupt
+                return undefined
+              }
+              if (!profile.enabled) return undefined
+              const append = buildSpecialistIdentityAppend(profile)
+              const prefix = buildSpecialistIdentityPrefix(profile)
+              // For Claude, only the append matters (session-level meta).
+              // For Codex/OpenCode, only the prefix matters (per-turn).
+              // Return both so the runtime can choose by framework.
+              if (frameworkId === 'claude-code') return { append, prefix: '' }
+              return { append: '', prefix }
+            }
+          : undefined,
+        resolveSpecialistSkills: profileService
+          ? async (specialistId) => {
+              try {
+                const profile = await profileService.getById(specialistId)
+                if (!profile.enabled) {
+                  return { kind: 'unavailable', reason: 'The bound specialist is disabled.' }
+                }
+                const effective = resolveEffectiveSpecialistSkills(
+                  profile,
+                  await settingsService.listSpecialistSkillCatalog()
+                )
+                if (effective.kind === 'specialist') {
+                  // Connector tools are delivered as mcp-<id> skills on disk. Claude's options.skills
+                  // whitelist is restrictive, so without these names the agent cannot load the connector
+                  // skill docs and never discovers the tools. Include only the connectors this specialist
+                  // is allowed to use (selectedCapabilities.connectorIds, or all minus full-access
+                  // exclusions) so discovery matches the capability scope; the per-call ConnectorService
+                  // gate still enforces the same config at call time.
+                  const provisioned = await settingsService.provisionedConnectorSkillNames()
+                  const connectorSkills = filterSpecialistConnectorSkills(provisioned, profile)
+                  if (connectorSkills.length > 0) {
+                    return {
+                      ...effective,
+                      frameworkNames: [...effective.frameworkNames, ...connectorSkills]
+                    }
+                  }
+                }
+                return effective
+              } catch {
+                return { kind: 'unavailable', reason: 'The bound specialist is unavailable.' }
+              }
+            }
+          : undefined
       })
     },
     callbacks,

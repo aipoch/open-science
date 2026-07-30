@@ -1006,6 +1006,32 @@ class SettingsService {
     return skills.map((skill) => this.toSkillView(skill, disabled))
   }
 
+  // Specialist scopes intentionally see the installed catalog irrespective of Main Agent toggles.
+  // The result is rebuilt for every caller so future imports and removals take effect on the next turn.
+  async listSpecialistSkillCatalog(): Promise<
+    Array<{ id: string; frameworkName: string; displayName: string }>
+  > {
+    const skills = await this.skillCatalog()
+    return skills.map((skill) => ({
+      id: skill.id,
+      frameworkName: skill.source === 'featured' ? skill.id : skill.name,
+      displayName: skill.name
+    }))
+  }
+
+  // Returns the mcp-<id> skill names for connectors provisioned at the Main Agent level (enabled
+  // bundled connectors + enabled custom MCP servers). Specialist sessions merge these into their
+  // skill whitelist so the agent can discover connector tools; the per-call ConnectorService gate
+  // still enforces the specialist's own connector access config.
+  async provisionedConnectorSkillNames(): Promise<string[]> {
+    const connectors = await this.getConnectors()
+    const bundled = this.enabledConnectorIds(connectors)
+    const custom = (connectors?.customMcpServers ?? [])
+      .filter((server) => server.enabled)
+      .map((server) => server.id)
+    return Array.from(new Set([...bundled, ...custom].map((id) => `mcp-${id}`)))
+  }
+
   // Returns the subset of forced ids that are currently disabled in settings — i.e. the picks that need
   // a respawn to materialize. Enabled picks are already present and need no reconnect.
   async skillsNeedingForceLoad(forcedIds: string[]): Promise<string[]> {
@@ -3220,16 +3246,21 @@ class SettingsService {
   // Projects stored custom MCP servers into renderer views (no secret env/header values).
   private toCustomServerViews(connectors: StoredConnectors | undefined): CustomServerView[] {
     return (connectors?.customMcpServers ?? [])
-      .map((s) => ({
-        id: s.id,
-        name: s.name,
-        description: s.description,
-        transport: s.transport,
-        enabled: s.enabled,
-        command: s.command,
-        args: s.args,
-        url: s.url
-      }))
+      .map((s) => {
+        const unavailable =
+          (s.transport === 'stdio' && !s.command) || (s.transport !== 'stdio' && !s.url)
+        return {
+          id: s.id,
+          name: s.name,
+          description: s.description,
+          transport: s.transport,
+          enabled: s.enabled,
+          command: s.command,
+          args: s.args,
+          url: s.url,
+          ...(unavailable ? { availability: 'unavailable' as const } : {})
+        }
+      })
       .sort((a, b) => a.name.localeCompare(b.name))
   }
 
