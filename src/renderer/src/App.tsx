@@ -79,6 +79,7 @@ const App = (): React.JSX.Element | null => {
     { currentDataRoot: string; defaultParent: string } | undefined
   >(undefined)
   const deferredNotification = useRef<OpenSessionFromNotificationRequest | undefined>(undefined)
+  const pendingNotificationOpenQueue = useRef<Promise<void>>(Promise.resolve())
   const [isCloseConfirmOpen, setIsCloseConfirmOpen] = useState(false)
   const startupView = isSettingsLoaded
     ? resolveStartupView({ onboardingDone: onboardingCompletedAt !== undefined })
@@ -157,45 +158,56 @@ const App = (): React.JSX.Element | null => {
   // Clicking a desktop notification opens the conversation the finished/failed task belongs to.
   // Main retains the target until this renderer confirms that the inspected session can be opened,
   // so a click that recreates the window or lands during partial recovery is not lost.
-  const openPendingNotificationSession = useCallback(async (): Promise<void> => {
+  const openPendingNotificationSession = useCallback((): Promise<void> => {
     const userNavigationRevision = useNavigationStore.getState().userNavigationRevision
-    const pending = await window.api.notifications.peekPendingOpenSession()
+    const attempt = async (): Promise<void> => {
+      const pending = await window.api.notifications.peekPendingOpenSession()
 
-    if (!pending) return
+      if (!pending) return
 
-    const sessionExists =
-      isSessionPersistenceHydrated &&
-      useSessionStore.getState().sessions.some((session) => session.id === pending.sessionId)
+      const sessionExists =
+        isSessionPersistenceHydrated &&
+        useSessionStore.getState().sessions.some((session) => session.id === pending.sessionId)
 
-    if (!sessionExists && !isSessionPersistenceReady) {
-      if (useNavigationStore.getState().userNavigationRevision === userNavigationRevision) {
-        const deferred = deferredNotification.current
-        if (!deferred || pending.token > deferred.token) deferredNotification.current = pending
-      } else {
-        // The user navigated while the peek was in flight. Drop only the stale target we saw; a
-        // newer notification that replaced it remains pending in main.
-        await window.api.notifications.takePendingOpenSession(pending.token)
+      if (!sessionExists && !isSessionPersistenceReady) {
+        if (useNavigationStore.getState().userNavigationRevision === userNavigationRevision) {
+          const deferred = deferredNotification.current
+          if (!deferred || pending.token > deferred.token) deferredNotification.current = pending
+        } else {
+          // The user navigated while the peek was in flight. Drop only the stale target we saw; a
+          // newer notification that replaced it remains pending in main.
+          await window.api.notifications.takePendingOpenSession(pending.token)
+        }
+        return
       }
-      return
+
+      const consumed = await window.api.notifications.takePendingOpenSession(pending.token)
+
+      if (!consumed) return
+
+      if (deferredNotification.current?.token === consumed.token) {
+        deferredNotification.current = undefined
+      }
+
+      // A navigation after this attempt began takes precedence over the older notification click.
+      if (
+        !sessionExists ||
+        useNavigationStore.getState().userNavigationRevision !== userNavigationRevision
+      ) {
+        return
+      }
+
+      useNavigationStore.getState().openSessionById(consumed.sessionId, 'notification')
     }
 
-    const consumed = await window.api.notifications.takePendingOpenSession(pending.token)
-
-    if (!consumed) return
-
-    if (deferredNotification.current?.token === consumed.token) {
-      deferredNotification.current = undefined
-    }
-
-    // A navigation after this attempt began takes precedence over the older notification click.
-    if (
-      !sessionExists ||
-      useNavigationStore.getState().userNavigationRevision !== userNavigationRevision
-    ) {
-      return
-    }
-
-    useNavigationStore.getState().openSessionById(consumed.sessionId, 'notification')
+    // Dependency changes and push nudges can request the same pending target concurrently. Serialize
+    // peeks so the earliest attempt's navigation revision decides whether that token is still valid;
+    // a later attempt then observes the consume-once result instead of reviving stale intent.
+    pendingNotificationOpenQueue.current = pendingNotificationOpenQueue.current.then(
+      attempt,
+      attempt
+    )
+    return pendingNotificationOpenQueue.current
   }, [isSessionPersistenceHydrated, isSessionPersistenceReady])
 
   // If a missing target is waiting for a persistence retry, explicit navigation transfers control

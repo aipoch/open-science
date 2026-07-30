@@ -693,6 +693,106 @@ describe('App startup routing', () => {
     expect(mocks.openSessionById).toHaveBeenCalledWith('s-3', 'notification')
   })
 
+  it('does not let a later notification peek override navigation while an earlier peek is pending', async () => {
+    const target = { sessionId: 's-3', token: 3 }
+    let pending: typeof target | null = target
+    let resolveFirstPeek: ((value: typeof target | null) => void) | undefined
+    let peekCount = 0
+    mocks.settings.isLoaded = true
+    mocks.sessionPersistence.isHydrated = false
+    mocks.sessionPersistence.isLoading = true
+    mocks.sessionPersistence.isReady = false
+    mocks.notifications.peekPendingOpenSession.mockImplementation(() => {
+      peekCount += 1
+      if (peekCount === 1) {
+        return new Promise((resolve) => {
+          resolveFirstPeek = resolve
+        })
+      }
+      return Promise.resolve(pending ? { ...pending } : null)
+    })
+    mocks.notifications.takePendingOpenSession.mockImplementation(async (token: number) => {
+      if (pending?.token !== token) return null
+      const consumed = pending
+      pending = null
+      return consumed
+    })
+
+    await render()
+    expect(mocks.notifications.peekPendingOpenSession).toHaveBeenCalledOnce()
+
+    await act(async () => {
+      const previousNavigation = { ...mocks.navigation }
+      mocks.navigation.userNavigationRevision += 1
+      for (const listener of mocks.navigationListeners) {
+        listener(mocks.navigation, previousNavigation)
+      }
+    })
+
+    mocks.sessions = [{ id: target.sessionId }]
+    mocks.sessionPersistence.isHydrated = true
+    mocks.sessionPersistence.isLoading = false
+    mocks.sessionPersistence.isReady = true
+    await act(async () => {
+      root.render(<App />)
+      await Promise.resolve()
+    })
+
+    expect(mocks.openSessionById).not.toHaveBeenCalled()
+
+    await act(async () => resolveFirstPeek?.(target))
+    expect(mocks.openSessionById).not.toHaveBeenCalled()
+  })
+
+  it('runs a queued notification peek after persistence becomes ready', async () => {
+    const target = { sessionId: 's-3', token: 3 }
+    let pending: typeof target | null = target
+    let resolveFirstPeek: ((value: typeof target | null) => void) | undefined
+    let peekCount = 0
+    mocks.settings.isLoaded = true
+    mocks.sessionPersistence.isHydrated = false
+    mocks.sessionPersistence.isLoading = true
+    mocks.sessionPersistence.isReady = false
+    mocks.notifications.peekPendingOpenSession.mockImplementation(() => {
+      peekCount += 1
+      if (peekCount === 1) {
+        return new Promise((resolve) => {
+          resolveFirstPeek = resolve
+        })
+      }
+      return Promise.resolve(pending ? { ...pending } : null)
+    })
+    mocks.notifications.takePendingOpenSession.mockImplementation(async (token: number) => {
+      if (pending?.token !== token) return null
+      const consumed = pending
+      pending = null
+      return consumed
+    })
+
+    await render()
+
+    mocks.sessions = [{ id: target.sessionId }]
+    mocks.sessionPersistence.isHydrated = true
+    mocks.sessionPersistence.isLoading = false
+    mocks.sessionPersistence.isReady = true
+    await act(async () => {
+      root.render(<App />)
+      await Promise.resolve()
+    })
+
+    expect(mocks.notifications.peekPendingOpenSession).toHaveBeenCalledOnce()
+
+    await act(async () => {
+      resolveFirstPeek?.(target)
+      await Promise.resolve()
+      await Promise.resolve()
+    })
+
+    expect(mocks.notifications.peekPendingOpenSession).toHaveBeenCalledTimes(2)
+    expect(mocks.notifications.takePendingOpenSession).toHaveBeenCalledWith(target.token)
+    expect(mocks.openSessionById).toHaveBeenCalledWith(target.sessionId, 'notification')
+  })
+
   it('discards a deferred notification when the user navigates elsewhere', async () => {
     let pending: { sessionId: string; token: number } | null = { sessionId: 's-3', token: 3 }
     mocks.settings.isLoaded = true
