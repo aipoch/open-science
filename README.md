@@ -14,7 +14,7 @@
 
 > ⭐ **Star the repo:** If this project has been helpful, we'd greatly appreciate a star on GitHub. Starring the repository encourages continued development. It only takes a second, but it has a meaningful impact on the project.
 
-> 💡 **[Open Science v0.8.1 released](https://github.com/aipoch/open-science/releases/latest)** _(last updated July 2026)_. This patch keeps you oriented during long-running work: the context-usage indicator now breaks the window down by category, completed tasks leave a durable unread badge with native attention on blocking approvals, and the project file library gains scoped search, grid/list views, and a large expand modal. It also hardens artifact finalization and provenance recovery, prevents R package installs from upgrading the live kernel, and keeps Claude Code's built-in web tools available in every session. See the [latest release notes](https://github.com/aipoch/open-science/releases/latest) for full details.
+> 💡 **[Open Science v0.9.0 released](https://github.com/aipoch/open-science/releases/latest)** _(last updated July 2026)_. This release adds personal specialist agents with scoped capabilities, scoped permission management with revocable grants, Markdown and PDF conversation export, selective session-artifact downloads, TIFF image previews, collapsible side panels, and per-turn token usage in the transcript. It also adds native Responses API support for DeepSeek, hardens conversation export, Windows upgrades, framework switching, and RPC contract enforcement. See the [latest release notes](https://github.com/aipoch/open-science/releases/latest) for full details.
 
 <p align="center">
  <img width="1920" height="1140" alt="Open Science open-source AI research workbench desktop app workspace showing an agent session with generated artifacts" src="https://github.com/user-attachments/assets/df59db19-98d7-4071-81f2-c682fbecdf86" />
@@ -239,7 +239,7 @@ Review connector parameters and tool activity before approving them. Never inclu
 
 ## Project Status
 
-Open Science is available as a released desktop application and is actively developed. v0.8.0 established immutable artifact versioning and inspectable provenance as shipped foundations, and v0.8.1 hardens provenance recovery, sharpens context and file-library awareness, and stabilizes R package management, while keeping deterministic reconstruction, portable environment restoration, and full-fidelity session replay on the roadmap.
+Open Science is available as a released desktop application and is actively developed. v0.8.0 established immutable artifact versioning and inspectable provenance as shipped foundations, and v0.9.0 adds personal specialist agents with scoped capabilities, scoped permission management, conversation and artifact export, TIFF previews, collapsible side panels, and per-turn token usage, while keeping deterministic reconstruction, portable environment restoration, and full-fidelity session replay on the roadmap.
 
 For version-specific features, provider and catalog changes, platform packaging, and recent fixes, use the [latest release notes](https://github.com/aipoch/open-science/releases/latest) and the installed app. For a maintained shipped/partial/planned breakdown, see the [Capability Map](ROADMAP.md#capability-map).
 
