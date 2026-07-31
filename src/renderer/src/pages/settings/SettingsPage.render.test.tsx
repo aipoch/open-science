@@ -249,6 +249,8 @@ describe('SettingsPage layout', () => {
     const nav = document.body.querySelector('nav[aria-label="Settings"]')
     expect(nav).not.toBeNull()
     expect(nav?.className).toContain('bg-background')
+    expect(nav?.className).toContain('md:w-48')
+    expect(nav?.className).toContain('w-[min(86vw,320px)]')
     expect(nav?.nextElementSibling?.className).toContain('bg-card')
     expect(nav?.textContent).toContain('Capabilities')
     expect(nav?.textContent).toContain('Workspace')

@@ -646,7 +646,7 @@ const SettingsPage = ({ open, onClose, onOpenSession }: SettingsPageProps): Reac
             aria-hidden={isMobile && !isMobileNavOpen ? true : undefined}
             inert={isMobile && !isMobileNavOpen ? true : undefined}
             className={cn(
-              'fixed inset-y-0 left-0 z-[70] flex w-[min(86vw,320px)] shrink-0 flex-col gap-4 border-r border-border bg-background p-3 transition-transform duration-200 ease-out md:static md:z-auto md:w-52 md:translate-x-0',
+              'fixed inset-y-0 left-0 z-[70] flex w-[min(86vw,320px)] shrink-0 flex-col gap-4 border-r border-border bg-background p-3 transition-transform duration-200 ease-out md:static md:z-auto md:w-48 md:translate-x-0',
               isMobileNavOpen ? 'translate-x-0' : '-translate-x-full'
             )}
           >

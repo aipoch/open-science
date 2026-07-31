@@ -424,7 +424,7 @@ Workspace-only tokens without a shadcn counterpart, plus shadow tokens. For shar
 ### Sidebar
 
 - Sidebar root: `bg-sidebar text-sidebar-foreground`.
-- Expanded width should follow content density; the settings dialog left navigation is approximately `208px`.
+- Expanded width should follow content density; the settings dialog left navigation is approximately `192px`.
 - Collapsed state keeps a `size-8` icon rail and provides `Tooltip` for every icon item.
 - Item: `h-8 rounded-lg px-2 text-sm text-muted-foreground hover:bg-sidebar-accent hover:text-sidebar-accent-foreground`.
 - Active item: `bg-sidebar-accent text-sidebar-accent-foreground font-medium`.
@@ -552,7 +552,7 @@ Workspace-only tokens without a shadcn counterpart, plus shadow tokens. For shar
 
 - Use a large `Dialog`; the restored panel is `h-[min(688px,calc(100vh-2rem))] w-[min(960px,calc(100vw-2rem))] rounded-xl border border-border bg-card shadow-dialog`. Maximize uses `inset-4`, filling the viewport with a stable 16px margin and never shrinking the restored panel.
 - Settings consumes the global semantic palette: background `#FAFAF8`, card/popover `#FFFFFF`, muted/secondary `#ECECEA`, border/input `#DEDEDA`, foreground `#202321`, and muted foreground `#646762`. Do not scope token overrides to the dialog or use `body:has(...)`; Radix portals inherit these root tokens directly.
-- Left navigation: `w-52 shrink-0 border-r border-border bg-background p-3`, organized into labeled groups (for example Capabilities and Workspace). Each group has a `text-xs font-medium text-muted-foreground` heading over its rows.
+- Left navigation: `w-48 shrink-0 border-r border-border bg-background p-3`, organized into labeled groups (for example Capabilities and Workspace). Each group has a `text-xs font-medium text-muted-foreground` heading over its rows.
 - Nav item: `h-8 w-full rounded-lg px-2 text-sm gap-2 hover:bg-muted`, with a `size-4` leading icon (`text-muted-foreground`) and a truncating label.
 - Active: `bg-muted text-foreground font-medium`; the neutral selection keeps deep green reserved for primary actions, focus, links, enabled switches, and success.
 - Content header: `h-12 border-b border-border px-3`, a space-between row. Left cluster: back / forward `size-7` icon buttons (`ArrowLeft` / `ArrowRight`, `disabled:opacity-40`), a `h-4 w-px bg-border` divider, then either a breadcrumb or a plain `h2 text-sm font-semibold` title. Right cluster: a maximize / restore `size-7` toggle (`Maximize2` / `Minimize2`) and a `size-7` close (`X`); both use `hover:bg-muted hover:text-foreground`.
