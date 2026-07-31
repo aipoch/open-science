@@ -45,6 +45,7 @@ const session: PersistedChatSession = {
 
 describe('conversation export service', () => {
   const loadSession = vi.fn()
+  const isSessionActive = vi.fn()
   const showSaveDialog = vi.fn()
   const writeExportFile = vi.fn()
   const createTempDirectory = vi.fn()
@@ -62,6 +63,7 @@ describe('conversation export service', () => {
   beforeEach(() => {
     vi.clearAllMocks()
     loadSession.mockResolvedValue(session)
+    isSessionActive.mockReturnValue(false)
     showSaveDialog.mockResolvedValue({ canceled: false, filePath: '/downloads/export.md' })
     writeExportFile.mockResolvedValue(undefined)
     createTempDirectory.mockResolvedValue('/tmp/open-science-conversation-export-test')
@@ -74,6 +76,7 @@ describe('conversation export service', () => {
   const createService = (): ReturnType<typeof createConversationExportService> =>
     createConversationExportService({
       loadSession,
+      isSessionActive,
       showSaveDialog,
       writeFile: writeExportFile,
       createTempDirectory,
@@ -177,6 +180,22 @@ describe('conversation export service', () => {
     ).resolves.toEqual({ saved: false })
     expect(createPrintWindow).not.toHaveBeenCalled()
     expect(writeExportFile).not.toHaveBeenCalled()
+  })
+
+  it('rejects a live prompt after its durable status was normalized on load', async () => {
+    loadSession.mockResolvedValue({ ...session, status: 'error' })
+    isSessionActive.mockReturnValue(true)
+
+    await expect(
+      createService().exportConversation({
+        projectId: 'project-1',
+        sessionId: 'session-1',
+        format: 'markdown'
+      })
+    ).rejects.toThrow('finish before exporting')
+
+    expect(isSessionActive).toHaveBeenCalledWith('project-1', 'session-1')
+    expect(showSaveDialog).not.toHaveBeenCalled()
   })
 
   it('rejects missing, empty, active and malformed conversations', async () => {

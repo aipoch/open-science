@@ -888,7 +888,14 @@ const registerIpcHandlers = async ({
   registerSessionPersistenceIpcHandlers(sessionPersistenceBackend, reviewRepository)
   registerConversationExportIpcHandler(
     createConversationExportService({
-      loadSession: (projectId, sessionId) => sessionRepository.loadSession(projectId, sessionId)
+      loadSession: (projectId, sessionId) => sessionRepository.loadSession(projectId, sessionId),
+      isSessionActive: (projectId, sessionId) =>
+        runtime
+          .getActivePromptSessions()
+          .some(
+            (activeSession) =>
+              activeSession.projectName === projectId && activeSession.sessionId === sessionId
+          )
     })
   )
   registerProjectFilesIpcHandlers(

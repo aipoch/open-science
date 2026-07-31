@@ -44,10 +44,9 @@ export type ConversationExportDocument = {
   messages: ConversationExportMessage[]
 }
 
-const THINK_BLOCK_PATTERN = /<think\b[^>]*>[\s\S]*?<\/think\s*>/gi
+const THINK_BLOCK_PATTERN = /<think\b[^>]*>[\s\S]*?(?:<\/think\s*>|$)/gi
 const UNSAFE_FILENAME_CHARACTERS = /[<>:"/\\|?*]+/g
 const LEGACY_AUTO_TITLE_MAX_LENGTH = 48
-const EXPORT_TITLE_MAX_LENGTH = 240
 const EXPORT_FILENAME_MAX_BYTES = 240
 
 const escapeHtml = (value: string): string =>
@@ -60,12 +59,6 @@ const escapeHtml = (value: string): string =>
 
 const normalizeInlineText = (value: string): string => value.replace(/\s+/g, ' ').trim()
 
-const truncateText = (value: string, maxLength: number): string => {
-  const characters = Array.from(value)
-  if (characters.length <= maxLength) return value
-  return `${characters.slice(0, maxLength).join('').trimEnd()}...`
-}
-
 const createLegacyAutoTitle = (content: string): string => {
   const normalizedTitle = normalizeInlineText(content)
   return normalizedTitle.length > LEGACY_AUTO_TITLE_MAX_LENGTH
@@ -74,15 +67,9 @@ const createLegacyAutoTitle = (content: string): string => {
 }
 
 const deriveTitleFromPrompt = (content: string): string => {
-  const firstLine =
-    content
-      .split(/\r?\n/)
-      .map((line) => line.trim())
-      .find(Boolean) ?? ''
-  const normalizedLine = normalizeInlineText(firstLine).replace(/^#{1,6}\s+/, '')
-  const sentence = normalizedLine.match(/^(.+?[.!?。！？])(?:\s|$)/)?.[1] ?? normalizedLine
+  const normalizedPrompt = normalizeInlineText(content).replace(/^#{1,6}\s+/, '')
 
-  return truncateText(sentence, EXPORT_TITLE_MAX_LENGTH).trim()
+  return normalizedPrompt.trim()
 }
 
 const resolveConversationExportTitle = (session: PersistedChatSession): string => {
