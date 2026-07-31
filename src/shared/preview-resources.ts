@@ -8,6 +8,7 @@ export type AcquireManagedPreviewRequest = {
   projectId?: string
   sessionId?: string
   mimeType?: string
+  maxBytes?: number
 }
 
 export type ManagedPreviewResource = {

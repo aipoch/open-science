@@ -13,6 +13,7 @@ import {
   isImageArtifact
 } from './artifact-preview-utils'
 import { PdfThumbnail } from './previews/renderers/PdfThumbnail'
+import { TiffThumbnail } from './previews/renderers/TiffThumbnail'
 import { createPreviewResourceKey } from './previews/preview-resource-key'
 import { useManagedPreviewResource } from './previews/useManagedPreviewResource'
 
@@ -361,6 +362,23 @@ export const ArtifactPreview = ({
         projectId={projectId}
         sessionId={sessionId}
         enabled={isVisible}
+      />
+    )
+  }
+
+  if (format === 'tiff') {
+    return (
+      <TiffThumbnail
+        path={artifact.path}
+        name={artifactName}
+        source={source}
+        projectId={projectId}
+        sessionId={sessionId}
+        mimeType={artifact.mimeType}
+        size={artifact.size}
+        mtimeMs={artifact.mtimeMs}
+        enabled={isVisible}
+        fallback={<FileTypePreview artifact={artifact} />}
       />
     )
   }

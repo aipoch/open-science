@@ -37,7 +37,9 @@ import type {
   SaveBlobFileRequest,
   SaveBlobFileResult,
   SaveManagedFileRequest,
-  SaveManagedFileResult
+  SaveManagedFileResult,
+  SaveSessionArtifactsRequest,
+  SaveSessionArtifactsResult
 } from '../shared/file-save'
 import type {
   ComputeApprovalDecision,
@@ -124,6 +126,7 @@ import type {
   DeleteSessionRequest,
   LoadAllSessionsResult,
   PersistedChatSession,
+  SaveSessionOptions,
   SaveSessionManifestRequest
 } from '../shared/session-persistence'
 import type {
@@ -248,6 +251,7 @@ type AcpListener<Payload> = (payload: Payload) => void
 interface OpenScienceAPI {
   saveBlobFile(request: SaveBlobFileRequest): Promise<SaveBlobFileResult>
   saveManagedFile(request: SaveManagedFileRequest): Promise<SaveManagedFileResult>
+  saveSessionArtifacts(request: SaveSessionArtifactsRequest): Promise<SaveSessionArtifactsResult>
   // Host platform (process.platform), e.g. 'win32' | 'darwin' | 'linux'.
   platform: string
   getRuntimeVersions(): {
@@ -278,7 +282,10 @@ interface OpenScienceAPI {
   }
   sessions: {
     loadAll(): Promise<LoadAllSessionsResult>
-    saveSession(session: PersistedChatSession): Promise<PersistedChatSession>
+    saveSession(
+      session: PersistedChatSession,
+      options?: SaveSessionOptions
+    ): Promise<PersistedChatSession>
     deleteSession(request: DeleteSessionRequest): Promise<void>
     saveManifest(request: SaveSessionManifestRequest): Promise<void>
     exportConversation(request: ExportConversationRequest): Promise<ExportConversationResult>

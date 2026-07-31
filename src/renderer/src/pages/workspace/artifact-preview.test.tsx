@@ -4,7 +4,11 @@ import { describe, expect, it } from 'vitest'
 import type { ArtifactPreviewResult } from '../../../../shared/artifacts'
 
 import { ArtifactPreview } from './artifact-preview'
-import { getArtifactExtension, shouldReadArtifactPreview } from './artifact-preview-utils'
+import {
+  getArtifactExtension,
+  isImageArtifact,
+  shouldReadArtifactPreview
+} from './artifact-preview-utils'
 
 type PreviewArtifact = React.ComponentProps<typeof ArtifactPreview>['artifact']
 
@@ -67,6 +71,21 @@ describe('artifact preview rendering', () => {
     expect(html).not.toContain('file:///Users/example/private-image.png')
     expect(html).not.toContain('<img')
     expect(html).toContain('PNG')
+  })
+
+  it('keeps TIFF artifacts in the image category without passing TIFF bytes to a native img', () => {
+    const artifact = createArtifact({
+      fileUrl: 'file:///Users/example/chart.tiff',
+      name: 'chart.tiff',
+      mimeType: 'image/tiff'
+    })
+
+    const html = renderToStaticMarkup(<ArtifactPreview artifact={artifact} />)
+
+    expect(isImageArtifact(artifact)).toBe(true)
+    expect(shouldReadArtifactPreview(artifact)).toBe(false)
+    expect(html).not.toContain('<img')
+    expect(html).toContain('TIFF')
   })
 
   it('renders fasta previews as a compact colored sequence grid', () => {

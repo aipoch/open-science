@@ -111,7 +111,6 @@ const renderPanel = (props: Partial<Parameters<typeof ConversationPanel>[0]> = {
         canEditDraft
         canResumeSession
         actionError={null}
-        isPreviewPanelCollapsed={false}
         attachments={[]}
         attachmentTransfers={[]}
         isUploadingAttachments={false}
@@ -130,7 +129,6 @@ const renderPanel = (props: Partial<Parameters<typeof ConversationPanel>[0]> = {
         onCancelRun={vi.fn()}
         onResumeSession={vi.fn().mockResolvedValue(undefined)}
         onOpenNotebook={vi.fn()}
-        onTogglePreviewPanel={vi.fn()}
         onRespondToPermission={vi.fn()}
         onPermissionProfileChange={vi.fn()}
         onRevokePermissionGrant={vi.fn()}
@@ -153,6 +151,12 @@ const getComposerForm = (): HTMLElement => {
   const form = container.querySelector('form')
   if (!form) throw new Error('composer form not found')
   return form as HTMLElement
+}
+
+const getConversationHeader = (): HTMLElement => {
+  const header = container.querySelector('[data-testid="conversation-header"]')
+  if (!header) throw new Error('conversation header not found')
+  return header as HTMLElement
 }
 
 const getComposerEditor = (): HTMLElement => {
@@ -181,6 +185,17 @@ const dispatchDrag = (type: string, dataTransferTypes: string[], files: File[] =
     getComposerForm().dispatchEvent(event)
   })
 }
+
+describe('ConversationPanel header spacing', () => {
+  it('keeps stable title spacing independent of sidebar state', () => {
+    renderPanel()
+
+    expect(getConversationHeader().className.split(' ')).toEqual(
+      expect.arrayContaining(['px-4', 'pt-2'])
+    )
+    expect(getConversationHeader().className.split(' ')).not.toContain('pl-8')
+  })
+})
 
 const hasDropOverlay = (): boolean =>
   container.textContent?.includes('Drop files to attach') ?? false

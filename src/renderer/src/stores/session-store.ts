@@ -204,6 +204,7 @@ type ReplaceMessageUploadsInput = {
 type ApplyDurableSessionProjectionInput = {
   source: ChatSession
   session: PersistedChatSession
+  mode?: 'merge-upload-identities' | 'replace-persisted-if-current'
 }
 
 type AppendMessageResult = {
@@ -1101,16 +1102,18 @@ export const useSessionStore = create<SessionStore>((set, get) => ({
     })
   },
 
-  // Acknowledges the exact projection returned by this client's save. Reference equality makes an
-  // unchanged source safe to replace wholesale; a later live mutation receives only the immutable
-  // Upload identity delta so the older response cannot roll back newer conversation state.
-  applyDurableSessionProjection: ({ source, session }) => {
+  // Acknowledges the exact projection returned by this client's save. Conflict recovery may replace
+  // the full persisted projection while the submitted source is still current; a later live mutation
+  // receives only the immutable Upload identity delta so the response cannot roll it back.
+  applyDurableSessionProjection: ({ source, session, mode = 'merge-upload-identities' }) => {
     set((state) => {
       const current = state.sessions.find((candidate) => candidate.id === session.id)
       if (!current) return state
 
       let projected: ChatSession
-      if (current === source) {
+      if (current === source && mode === 'replace-persisted-if-current') {
+        projected = withTransientSessionState(session, current)
+      } else if (current === source) {
         const flat = mergeDurableUploadProjection(
           source.messages,
           source.messages,

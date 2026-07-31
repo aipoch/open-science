@@ -28,7 +28,9 @@ const resource = {
 const createDependencies = (
   overrides: Partial<OfficePreviewSupervisorDependencies> = {}
 ): OfficePreviewSupervisorDependencies => ({
-  inspectResource: vi.fn().mockResolvedValue({ size: 1024, version: 1 }),
+  inspectResource: vi
+    .fn()
+    .mockResolvedValue({ size: 1024, version: 1, dev: 2n, ino: 3n, mtimeNs: 1_000_000n }),
   acquireResource: vi.fn().mockResolvedValue(resource),
   releaseResource: vi.fn(),
   createSessionId: () => 'session-1',
@@ -58,7 +60,7 @@ describe('OfficePreviewSupervisor OOPIF sessions', () => {
     expect(dependencies.acquireResource).toHaveBeenCalledWith(
       7,
       request,
-      { size: 1024, version: 1 },
+      { size: 1024, version: 1, dev: 2n, ino: 3n, mtimeNs: 1_000_000n },
       OFFICE_PREVIEW_MAX_FILE_BYTES
     )
     await supervisor.close(7, 'session-1')
@@ -67,9 +69,13 @@ describe('OfficePreviewSupervisor OOPIF sessions', () => {
   it('rejects an oversized file before acquiring a capability or creating a runtime URL', async () => {
     const createRuntimeUrl = vi.fn()
     const dependencies = createDependencies({
-      inspectResource: vi
-        .fn()
-        .mockResolvedValue({ size: OFFICE_PREVIEW_MAX_FILE_BYTES + 1, version: 1 }),
+      inspectResource: vi.fn().mockResolvedValue({
+        size: OFFICE_PREVIEW_MAX_FILE_BYTES + 1,
+        version: 1,
+        dev: 2n,
+        ino: 3n,
+        mtimeNs: 1_000_000n
+      }),
       createRuntimeUrl
     })
     const supervisor = new OfficePreviewSupervisor(dependencies)

@@ -15,6 +15,7 @@ export type PreviewFileFormat =
   | 'fasta'
   | 'html'
   | 'image'
+  | 'tiff'
   | 'pdb'
   | 'molecule'
   | 'pdf'
@@ -155,7 +156,7 @@ const restoredToSlice = (restored: RestoredPreviewSlice, projectId: string): Pre
   return {
     items,
     activeItemId,
-    panelState: restored.panelState ?? 'collapsed',
+    panelState: items.length > 0 ? (restored.panelState ?? 'collapsed') : 'collapsed',
     openRequestVersion: 0
   }
 }
@@ -261,7 +262,13 @@ export const usePreviewWorkbenchStore = create<PreviewWorkbenchStore>((set, get)
       delete byProject[projectId]
 
       // The expanded files surface is tied to the outgoing project's workbench layout.
-      return { ...targetSlice, activeProjectId: projectId, byProject, expandedToolItemId: null }
+      return {
+        ...targetSlice,
+        panelState: targetSlice.items.length > 0 ? targetSlice.panelState : 'collapsed',
+        activeProjectId: projectId,
+        byProject,
+        expandedToolItemId: null
+      }
     })
   },
 
@@ -303,8 +310,14 @@ export const usePreviewWorkbenchStore = create<PreviewWorkbenchStore>((set, get)
 
       // New items append to the horizontal preview list in discovery order.
       if (existingIndex === -1) {
+        const hasActiveItem = state.items.some(
+          (previewItem) => previewItem.id === state.activeItemId
+        )
+
         return {
-          items: [...state.items, createStoredPreviewItem(scopedItem)]
+          items: [...state.items, createStoredPreviewItem(scopedItem)],
+          // Passive discovery selects a fallback tab without opening the collapsed panel.
+          activeItemId: hasActiveItem ? state.activeItemId : (state.items[0]?.id ?? scopedItem.id)
         }
       }
 
@@ -350,6 +363,7 @@ export const usePreviewWorkbenchStore = create<PreviewWorkbenchStore>((set, get)
       return {
         items,
         activeItemId,
+        panelState: items.length > 0 ? state.panelState : 'collapsed',
         expandedToolItemId: state.expandedToolItemId === itemId ? null : state.expandedToolItemId
       }
     })
@@ -371,6 +385,7 @@ export const usePreviewWorkbenchStore = create<PreviewWorkbenchStore>((set, get)
         items,
         activeItemId,
         // A session-scoped tool tab could own the expanded surface; clear it when its tab is gone.
+        panelState: items.length > 0 ? state.panelState : 'collapsed',
         expandedToolItemId: items.some((item) => item.id === state.expandedToolItemId)
           ? state.expandedToolItemId
           : null
@@ -385,6 +400,8 @@ export const usePreviewWorkbenchStore = create<PreviewWorkbenchStore>((set, get)
 
   // Records an explicit open request so the resizable panel can expand even if it is already open.
   openPanel: () => {
+    if (get().items.length === 0) return
+
     set((state) => ({
       panelState: 'open',
       openRequestVersion: state.openRequestVersion + 1
@@ -408,7 +425,9 @@ export const usePreviewWorkbenchStore = create<PreviewWorkbenchStore>((set, get)
 
   // Mirrors resize-library state into the store after drag or imperative panel changes.
   syncPanelState: (panelState) => {
-    set({ panelState })
+    set((state) => ({
+      panelState: panelState === 'open' && state.items.length === 0 ? 'collapsed' : panelState
+    }))
   }
 }))
 

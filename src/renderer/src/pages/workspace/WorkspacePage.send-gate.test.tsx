@@ -26,6 +26,7 @@ import { type ComposerDoc } from './composer/composer-doc'
 // Capture the ConversationPanel props the page computes, notably canSendMessage and the draft callback.
 let conversationProps: {
   draftDoc: ComposerDoc
+  canEditDraft: boolean
   canSendMessage: boolean
   canEditMessage: boolean
   canCompactContext: boolean
@@ -35,6 +36,7 @@ let conversationProps: {
 
 const runtime = vi.hoisted(() => ({
   promptInFlightSessionIds: [] as string[],
+  sendPreparationInFlightSessionIds: [] as string[],
   nativeContextCompactionSessionIds: ['sess-a'] as string[],
   sendMessage: vi.fn(),
   compactContext: vi.fn(),
@@ -44,6 +46,9 @@ const runtime = vi.hoisted(() => ({
 }))
 
 vi.mock('@/components/ui/resizable', () => ({
+  ResizablePanel: ({ children }: { children: React.ReactNode }): React.JSX.Element => (
+    <div>{children}</div>
+  ),
   ResizablePanelGroup: ({ children }: { children: React.ReactNode }): React.JSX.Element => (
     <div>{children}</div>
   ),
@@ -55,6 +60,7 @@ vi.mock('@/lib/acp/useWorkspaceAgentRuntime', () => ({
     actionError: null,
     pendingPermissions: [],
     promptInFlightSessionIds: runtime.promptInFlightSessionIds,
+    sendPreparationInFlightSessionIds: runtime.sendPreparationInFlightSessionIds,
     nativeContextCompactionSessionIds: runtime.nativeContextCompactionSessionIds,
     sendMessage: runtime.sendMessage,
     compactContext: runtime.compactContext,
@@ -123,6 +129,7 @@ describe('WorkspacePage send gate while compacting', () => {
     })
     vi.clearAllMocks()
     runtime.promptInFlightSessionIds = []
+    runtime.sendPreparationInFlightSessionIds = []
     runtime.nativeContextCompactionSessionIds = ['sess-a']
 
     window.api = {
@@ -268,6 +275,32 @@ describe('WorkspacePage send gate while compacting', () => {
       )
     })
     expect(conversationProps.canSendMessage).toBe(true)
+  })
+
+  it('locks draft submission and message editing while a send prepares runtime adoption', async () => {
+    await renderPage()
+
+    await act(async () => {
+      conversationProps.onDraftDocChange(textDoc('wait for adoption'))
+    })
+    expect(conversationProps.canEditDraft).toBe(true)
+    expect(conversationProps.canSendMessage).toBe(true)
+    expect(conversationProps.canEditMessage).toBe(true)
+
+    runtime.sendPreparationInFlightSessionIds = ['sess-a']
+    await act(async () => {
+      root.render(
+        <WorkspacePage
+          isSessionPersistenceHydrated={true}
+          isSessionPersistenceReady={true}
+          canDeleteConversations={true}
+        />
+      )
+    })
+
+    expect(conversationProps.canEditDraft).toBe(false)
+    expect(conversationProps.canSendMessage).toBe(false)
+    expect(conversationProps.canEditMessage).toBe(false)
   })
 
   it('blocks new prompts after terminal conversation graph synchronization fails', async () => {

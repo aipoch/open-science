@@ -39,7 +39,9 @@ import type {
   SaveBlobFileRequest,
   SaveBlobFileResult,
   SaveManagedFileRequest,
-  SaveManagedFileResult
+  SaveManagedFileResult,
+  SaveSessionArtifactsRequest,
+  SaveSessionArtifactsResult
 } from '../shared/file-save'
 import type {
   ComputeApprovalDecision,
@@ -133,6 +135,7 @@ import type {
   DeleteSessionRequest,
   LoadAllSessionsResult,
   PersistedChatSession,
+  SaveSessionOptions,
   SaveSessionManifestRequest
 } from '../shared/session-persistence'
 import type {
@@ -283,6 +286,9 @@ const onIpcMessage = <Payload>(channel: string, listener: AcpListener<Payload>):
 type OpenScienceAPI = {
   saveBlobFile: (request: SaveBlobFileRequest) => Promise<SaveBlobFileResult>
   saveManagedFile: (request: SaveManagedFileRequest) => Promise<SaveManagedFileResult>
+  saveSessionArtifacts: (
+    request: SaveSessionArtifactsRequest
+  ) => Promise<SaveSessionArtifactsResult>
   // Host platform (process.platform), e.g. 'win32' | 'darwin' | 'linux'. Lets the renderer pick
   // platform-correct copy such as the claude install command shown in the onboarding/settings card.
   platform: string
@@ -314,7 +320,10 @@ type OpenScienceAPI = {
   }
   sessions: {
     loadAll: () => Promise<LoadAllSessionsResult>
-    saveSession: (session: PersistedChatSession) => Promise<PersistedChatSession>
+    saveSession: (
+      session: PersistedChatSession,
+      options?: SaveSessionOptions
+    ) => Promise<PersistedChatSession>
     deleteSession: (request: DeleteSessionRequest) => Promise<void>
     saveManifest: (request: SaveSessionManifestRequest) => Promise<void>
     exportConversation: (request: ExportConversationRequest) => Promise<ExportConversationResult>
@@ -742,6 +751,11 @@ const api: OpenScienceAPI = {
     ipcRenderer.invoke('file:save-blob', request) as Promise<SaveBlobFileResult>,
   saveManagedFile: (request) =>
     ipcRenderer.invoke('file:save-managed', request) as Promise<SaveManagedFileResult>,
+  saveSessionArtifacts: (request) =>
+    ipcRenderer.invoke(
+      'file:save-session-artifacts',
+      request
+    ) as Promise<SaveSessionArtifactsResult>,
   platform: process.platform,
   getRuntimeVersions: () => ({
     electron: process.versions.electron,
@@ -783,8 +797,10 @@ const api: OpenScienceAPI = {
     // Loads every per-session file plus the last-open manifest from the main process.
     loadAll: () => ipcRenderer.invoke('sessions:load-all') as Promise<LoadAllSessionsResult>,
     // Persists a single sanitized session file.
-    saveSession: (session) =>
-      ipcRenderer.invoke('sessions:save-session', session) as Promise<PersistedChatSession>,
+    saveSession: (session, options) =>
+      (options
+        ? ipcRenderer.invoke('sessions:save-session', session, options)
+        : ipcRenderer.invoke('sessions:save-session', session)) as Promise<PersistedChatSession>,
     // Removes one session file.
     deleteSession: (request) =>
       ipcRenderer.invoke('sessions:delete-session', request) as Promise<void>,

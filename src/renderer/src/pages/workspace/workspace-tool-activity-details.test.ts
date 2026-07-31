@@ -645,6 +645,63 @@ describe('workspace tool activity details', () => {
     expect(details?.sections[0]?.kind === 'code' && details.sections[0].text).not.toContain('a,b')
   })
 
+  it('does not classify artifact-file lookalikes as managed writes', () => {
+    const activity = createActivity({
+      providerToolName: 'delete_artifact_file',
+      toolKind: 'other',
+      title: 'Delete artifact file',
+      rawInput: { filename: 'obsolete.csv' },
+      rawOutput: { deleted: true }
+    })
+
+    const details = buildToolActivityDetails(activity)
+
+    expect(details?.displayName).toBe('delete_artifact_file')
+    expect(details?.sections.map((section) => section.label)).toEqual(['Input', 'Output'])
+    expect(details?.sections[1]?.kind === 'code' && details.sections[1].text).toContain('deleted')
+  })
+
+  it('summarizes a Codex artifact receipt envelope when the MCP identity is only in the title', () => {
+    const artifactReceipt = {
+      artifact: {
+        artifact_id: 'bfa741b1-2088-42b0-b075-812a640e1ec6',
+        version_id: 'de3cfa20-2cea-4f8a-87cd-7b482410e0ed',
+        version_number: 1,
+        filename: 'sin.png',
+        content_type: 'image/png',
+        size_bytes: 41671,
+        checksum: '75e5991b3bac5025d01ae83eb0d85fab922153411edb8d19859f728528f20a68',
+        producer_run_id: 'notebook-run-1785397616378-1',
+        environment: 'default-python'
+      }
+    }
+    const activity = createActivity({
+      toolKind: 'execute',
+      title: 'mcp.open-science-artifacts.write_artifact_file',
+      rawOutput: {
+        result: {
+          content: [{ type: 'text', text: JSON.stringify(artifactReceipt) }],
+          structuredContent: null,
+          _meta: null
+        },
+        error: null
+      }
+    })
+    const details = buildToolActivityDetails(activity)
+
+    expect(details?.displayName).toBe('Write file')
+    expect(details?.subtitle).toBe('sin.png')
+    expect(details?.metaLabel).toBe('41 KB')
+    expect(details?.sections.map((section) => section.label)).toEqual(['File'])
+    expect(details?.sections[0]?.kind === 'code' && details.sections[0].text).toContain('sin.png')
+    expect(details?.sections[0]?.kind === 'code' && details.sections[0].text).not.toContain(
+      'artifact_id'
+    )
+    expect(details?.sections[0]?.kind === 'code' && details.sections[0].text).not.toContain(
+      'structuredContent'
+    )
+  })
+
   it('renders a WebFetch with its URL, prompt, and fetched result', () => {
     const activity = createActivity({
       providerToolName: 'WebFetch',

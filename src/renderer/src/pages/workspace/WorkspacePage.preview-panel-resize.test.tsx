@@ -12,6 +12,29 @@ import {
 import { createInitialSessionState, useSessionStore } from '@/stores/session-store'
 
 const workspacePageHarness = vi.hoisted(() => ({
+  sidebarSize: 16,
+  sidebarPanelDefaultSize: undefined as string | undefined,
+  sidebarPanelMinSize: undefined as string | undefined,
+  sidebarOnResize: undefined as
+    | ((
+        panelSize: PanelSize,
+        panelId: string | number | undefined,
+        previousPanelSize: PanelSize | undefined
+      ) => void)
+    | undefined,
+  sidebarPanelRef: undefined as undefined | { current: PanelImperativeHandle | null },
+  sidebarPanelHandle: {
+    collapse: vi.fn(),
+    expand: vi.fn(),
+    getSize: vi.fn(() => ({
+      asPercentage: workspacePageHarness.sidebarSize,
+      inPixels: workspacePageHarness.sidebarSize * 10
+    })),
+    isCollapsed: vi.fn(() => false),
+    resize: vi.fn((size: number | string) => {
+      workspacePageHarness.sidebarSize = Number.parseFloat(String(size))
+    })
+  } as PanelImperativeHandle,
   previewSize: 0,
   previewPanelDefaultSize: undefined as string | undefined,
   previewPanelMinSize: undefined as string | undefined,
@@ -52,10 +75,60 @@ vi.mock('motion', () => ({
 }))
 
 vi.mock('@/components/ui/resizable', () => ({
+  ResizablePanel: ({
+    id,
+    children,
+    panelRef,
+    defaultSize,
+    minSize,
+    onResize
+  }: {
+    id?: string
+    children: React.ReactNode
+    panelRef?: React.Ref<PanelImperativeHandle>
+    defaultSize?: string
+    minSize?: string
+    onResize?: (
+      panelSize: PanelSize,
+      panelId: string | number | undefined,
+      previousPanelSize: PanelSize | undefined
+    ) => void
+  }): React.JSX.Element => {
+    if (id === 'left-panel') {
+      workspacePageHarness.sidebarPanelDefaultSize = defaultSize
+      workspacePageHarness.sidebarPanelMinSize = minSize
+      workspacePageHarness.sidebarOnResize = onResize
+
+      if (typeof panelRef === 'function') {
+        panelRef(workspacePageHarness.sidebarPanelHandle)
+      } else if (panelRef) {
+        workspacePageHarness.sidebarPanelRef = panelRef as {
+          current: PanelImperativeHandle | null
+        }
+        workspacePageHarness.sidebarPanelRef.current = workspacePageHarness.sidebarPanelHandle
+      }
+    }
+
+    return <div data-testid={id ?? 'resizable-panel'}>{children}</div>
+  },
   ResizablePanelGroup: ({ children }: { children: React.ReactNode }): React.JSX.Element => (
     <div>{children}</div>
   ),
-  ResizableHandle: (): React.JSX.Element => <div data-testid="resize-handle" />
+  ResizableHandle: ({
+    elementRef,
+    className,
+    ...props
+  }: React.HTMLAttributes<HTMLDivElement> & {
+    elementRef?: React.Ref<HTMLDivElement>
+  }): React.JSX.Element => (
+    <div
+      ref={elementRef}
+      data-testid="resize-handle"
+      tabIndex={0}
+      className={className}
+      {...props}
+    />
+  )
 }))
 
 vi.mock('@/lib/session-persistence/session-persistence', () => ({
@@ -74,26 +147,11 @@ vi.mock('@/lib/acp/useWorkspaceAgentRuntime', () => ({
 }))
 
 vi.mock('./WorkspaceSidebar', () => ({
-  WorkspaceSidebar: (): React.JSX.Element => <aside />
+  WorkspaceSidebar: (): React.JSX.Element => <aside data-testid="workspace-sidebar" />
 }))
 
 vi.mock('./ConversationPanel', () => ({
-  ConversationPanel: ({
-    isPreviewPanelCollapsed,
-    onTogglePreviewPanel
-  }: {
-    isPreviewPanelCollapsed: boolean
-    onTogglePreviewPanel: () => void
-  }): React.JSX.Element => (
-    <button
-      type="button"
-      data-testid="preview-toggle"
-      data-collapsed={isPreviewPanelCollapsed ? 'true' : 'false'}
-      onClick={onTogglePreviewPanel}
-    >
-      Toggle preview
-    </button>
-  )
+  ConversationPanel: (): React.JSX.Element => <section data-testid="conversation-panel" />
 }))
 
 vi.mock('./PreviewPanel', () => ({
@@ -142,6 +200,11 @@ describe('WorkspacePage preview panel resize sync', () => {
   beforeEach(() => {
     usePreviewWorkbenchStore.setState(createInitialPreviewWorkbenchState())
     useSessionStore.setState(createInitialSessionState())
+    workspacePageHarness.sidebarSize = 16
+    workspacePageHarness.sidebarPanelDefaultSize = undefined
+    workspacePageHarness.sidebarPanelMinSize = undefined
+    workspacePageHarness.sidebarOnResize = undefined
+    workspacePageHarness.sidebarPanelRef = undefined
     workspacePageHarness.previewSize = 0
     workspacePageHarness.previewPanelDefaultSize = undefined
     workspacePageHarness.previewPanelMinSize = undefined
@@ -176,10 +239,23 @@ describe('WorkspacePage preview panel resize sync', () => {
       root.unmount()
     })
     vi.restoreAllMocks()
+    vi.unstubAllGlobals()
     container.remove()
   })
 
-  const renderPage = async (): Promise<void> => {
+  const renderPage = async (withPreview = true): Promise<void> => {
+    if (withPreview) {
+      usePreviewWorkbenchStore.getState().upsertItem({
+        id: 'file:session-1:/workspace/project/report.md',
+        sessionId: 'session-1',
+        type: 'file',
+        title: 'report.md',
+        path: '/workspace/project/report.md',
+        format: 'markdown',
+        name: 'report.md'
+      })
+    }
+
     root = createRoot(container)
     await act(async () => {
       root.render(
@@ -191,6 +267,179 @@ describe('WorkspacePage preview panel resize sync', () => {
       )
     })
   }
+
+  const getPreviewToggle = (): HTMLButtonElement => {
+    const toggleButton = container.querySelector<HTMLButtonElement>(
+      '[data-testid="workspace-preview-toggle"]'
+    )
+    if (!toggleButton) throw new Error('workspace preview toggle not found')
+    return toggleButton
+  }
+
+  const getSidebarToggle = (): HTMLButtonElement => {
+    const toggleButton = container.querySelector<HTMLButtonElement>(
+      '[data-testid="workspace-sidebar-toggle"]'
+    )
+    if (!toggleButton) throw new Error('workspace sidebar toggle not found')
+    return toggleButton
+  }
+
+  it('keeps the sidebar toggle outside collapsible sidebar content', async () => {
+    await renderPage()
+
+    const toggleButton = getSidebarToggle()
+    const sidebarPanel = container.querySelector('[data-testid="left-panel"]')
+    const resizeHandle = container.querySelector('[data-testid="resize-handle"]')
+
+    expect(toggleButton.getAttribute('aria-expanded')).toBe('true')
+    expect(toggleButton.getAttribute('aria-controls')).toBe('left-panel')
+    expect(sidebarPanel?.contains(toggleButton)).toBe(false)
+    expect(toggleButton.className).toContain('absolute')
+    expect(toggleButton.className.split(' ')).toContain('top-0')
+    expect(toggleButton.className).not.toContain('-top-1')
+    expect(toggleButton.className).not.toContain('top-3')
+    expect(toggleButton.className).toContain('cursor-pointer')
+    expect(toggleButton.className).toContain('bg-transparent')
+    expect(toggleButton.className).toContain('hover:bg-surface-control-hover')
+    expect(toggleButton.className).not.toContain('bg-primary/20')
+    expect(toggleButton.style.left).not.toBe('0px')
+    expect(resizeHandle?.className).toContain('transition-opacity')
+  })
+
+  // Right preview edge keeps the always-on divider from main; left stays tick-on-hover only.
+  it('keeps the always-on border divider on the right preview resize handle', async () => {
+    await renderPage()
+
+    const rightHandle = container.querySelector('[aria-label="Resize right panel"]')
+    const leftHandle = container.querySelector('[aria-label="Resize left panel"]')
+
+    expect(rightHandle?.className).toContain('bg-border')
+    expect(rightHandle?.className).toContain('shadow-[1px_0_3px_rgba(30,28,24,0.08)]')
+    expect(rightHandle?.className).toContain('before:w-1')
+    expect(rightHandle?.className).toContain('before:right-full')
+    expect(leftHandle?.className).not.toContain('bg-border')
+    expect(leftHandle?.className).not.toContain('shadow-[1px_0_3px_rgba(30,28,24,0.08)]')
+    expect(leftHandle?.className).not.toContain('before:w-1')
+    expect(leftHandle?.className).toContain('before:right-full')
+    expect(leftHandle?.className).toContain('before:mr-[3px]')
+    expect(leftHandle?.className).toContain('before:left-auto')
+  })
+
+  it('animates the sidebar to zero and restores its last open size', async () => {
+    await renderPage()
+
+    const toggleButton = getSidebarToggle()
+    const initialToggleLeft = toggleButton.style.left
+    await act(async () => {
+      toggleButton.dispatchEvent(new MouseEvent('click', { bubbles: true }))
+    })
+
+    expect(toggleButton.getAttribute('aria-expanded')).toBe('false')
+    expect(toggleButton.style.left).toBe(initialToggleLeft)
+    expect(motionHarness.animate).toHaveBeenCalledWith(
+      16,
+      0,
+      expect.objectContaining({
+        duration: 0.22,
+        ease: [0.22, 1, 0.36, 1],
+        onUpdate: expect.any(Function)
+      })
+    )
+
+    const closeAnimationOptions = motionHarness.animate.mock.calls.at(-1)?.[2] as
+      { onComplete?: () => void } | undefined
+    await act(async () => {
+      workspacePageHarness.sidebarOnResize?.({ asPercentage: 8, inPixels: 80 }, 'left-panel', {
+        asPercentage: 16,
+        inPixels: 160
+      })
+    })
+    expect(toggleButton.style.left).toBe('42px')
+
+    await act(async () => {
+      workspacePageHarness.sidebarOnResize?.({ asPercentage: 0, inPixels: 0 }, 'left-panel', {
+        asPercentage: 8,
+        inPixels: 80
+      })
+    })
+    expect(toggleButton.style.left).toBe('0px')
+
+    await act(async () => {
+      closeAnimationOptions?.onComplete?.()
+    })
+    expect(workspacePageHarness.sidebarPanelHandle.resize).toHaveBeenCalledWith('0%')
+
+    await act(async () => {
+      toggleButton.dispatchEvent(new MouseEvent('click', { bubbles: true }))
+    })
+
+    expect(toggleButton.getAttribute('aria-expanded')).toBe('true')
+    expect(motionHarness.animate).toHaveBeenLastCalledWith(
+      0,
+      16,
+      expect.objectContaining({
+        duration: 0.22,
+        ease: [0.22, 1, 0.36, 1],
+        onUpdate: expect.any(Function)
+      })
+    )
+  })
+
+  it('keeps the preview toggle in stable workspace chrome outside collapsed panel content', async () => {
+    await renderPage()
+
+    const toggleButton = getPreviewToggle()
+    const conversationPanel = container.querySelector('[data-testid="conversation-panel"]')
+    const previewPanel = container.querySelector('[data-testid="preview-panel"]')
+
+    expect(toggleButton.getAttribute('aria-expanded')).toBe('false')
+    expect(conversationPanel?.contains(toggleButton)).toBe(false)
+    expect(previewPanel?.contains(toggleButton)).toBe(false)
+    expect(toggleButton.className).toContain('absolute')
+    expect(toggleButton.className).toContain('right-2')
+    expect(toggleButton.className.split(' ')).toContain('top-0')
+    expect(toggleButton.className).not.toContain('-top-0.5')
+    expect(toggleButton.className).not.toContain('-top-1')
+    expect(toggleButton.className).not.toContain('mt-0.5')
+    expect(toggleButton.className).toContain('bg-transparent')
+    expect(toggleButton.className).toContain('shadow-none')
+    expect(toggleButton.className).toContain('hover:bg-surface-control-hover')
+    expect(toggleButton.className).toContain('cursor-pointer')
+    expect(toggleButton.className).toContain('text-action-panel-toggle')
+    expect(toggleButton.className).not.toContain('bg-primary/20')
+    expect(toggleButton.className).not.toContain('shadow-card')
+  })
+
+  it('hides the preview toggle and keeps the panel collapsed when there are no preview items', async () => {
+    await renderPage(false)
+
+    expect(container.querySelector('[data-testid="workspace-preview-toggle"]')).toBeNull()
+    expect(workspacePageHarness.previewPanelDefaultSize).toBe('0%')
+    expect(usePreviewWorkbenchStore.getState().panelState).toBe('collapsed')
+  })
+
+  it('uses only background treatment to show the expanded preview toggle state', async () => {
+    await renderPage()
+
+    const toggleButton = getPreviewToggle()
+    await act(async () => {
+      toggleButton.dispatchEvent(new MouseEvent('click', { bubbles: true }))
+    })
+
+    expect(toggleButton.getAttribute('aria-expanded')).toBe('true')
+    expect(toggleButton.className).toContain('bg-primary/20')
+    expect(toggleButton.className).toContain('shadow-card')
+    expect(toggleButton.className).toContain('backdrop-blur')
+    expect(toggleButton.className).toContain('cursor-pointer')
+    expect(toggleButton.className.split(' ')).toContain('top-0')
+    expect(toggleButton.className).not.toContain('-top-0.5')
+    expect(toggleButton.className).not.toContain('-top-1')
+    expect(toggleButton.className).not.toContain('mt-0.5')
+    expect(toggleButton.className).toContain('text-action-panel-toggle')
+    expect(toggleButton.className).not.toContain('bg-transparent')
+    expect(toggleButton.className).not.toContain('shadow-none')
+    expect(toggleButton.className).not.toContain('hover:bg-surface-control-hover')
+  })
 
   it('syncs the initial collapsed preview size without running a close animation', async () => {
     workspacePageHarness.previewSize = 40
@@ -205,9 +454,7 @@ describe('WorkspacePage preview panel resize sync', () => {
   it('keeps an explicit open request when expand animation emits a near-zero resize', async () => {
     await renderPage()
 
-    const toggleButton = container.querySelector<HTMLButtonElement>(
-      '[data-testid="preview-toggle"]'
-    )
+    const toggleButton = getPreviewToggle()
     await act(async () => {
       toggleButton?.dispatchEvent(new MouseEvent('click', { bubbles: true }))
     })
@@ -236,9 +483,7 @@ describe('WorkspacePage preview panel resize sync', () => {
   it('keeps an explicit collapse request when animation resize lacks a previous size', async () => {
     await renderPage()
 
-    const toggleButton = container.querySelector<HTMLButtonElement>(
-      '[data-testid="preview-toggle"]'
-    )
+    const toggleButton = getPreviewToggle()
     await act(async () => {
       toggleButton?.dispatchEvent(new MouseEvent('click', { bubbles: true }))
     })
@@ -265,9 +510,7 @@ describe('WorkspacePage preview panel resize sync', () => {
   it('animates explicit preview open requests through panel percentage resize', async () => {
     await renderPage()
 
-    const toggleButton = container.querySelector<HTMLButtonElement>(
-      '[data-testid="preview-toggle"]'
-    )
+    const toggleButton = getPreviewToggle()
     await act(async () => {
       toggleButton?.dispatchEvent(new MouseEvent('click', { bubbles: true }))
     })
@@ -295,9 +538,7 @@ describe('WorkspacePage preview panel resize sync', () => {
   it('does not resize a detached preview panel during an in-flight animation', async () => {
     await renderPage()
 
-    const toggleButton = container.querySelector<HTMLButtonElement>(
-      '[data-testid="preview-toggle"]'
-    )
+    const toggleButton = getPreviewToggle()
     await act(async () => {
       toggleButton?.dispatchEvent(new MouseEvent('click', { bubbles: true }))
     })
@@ -322,9 +563,7 @@ describe('WorkspacePage preview panel resize sync', () => {
 
     expect(workspacePageHarness.previewPanelMinSize).toBe('30%')
 
-    const toggleButton = container.querySelector<HTMLButtonElement>(
-      '[data-testid="preview-toggle"]'
-    )
+    const toggleButton = getPreviewToggle()
     await act(async () => {
       toggleButton?.dispatchEvent(new MouseEvent('click', { bubbles: true }))
     })
@@ -339,5 +578,145 @@ describe('WorkspacePage preview panel resize sync', () => {
     })
 
     expect(workspacePageHarness.previewPanelMinSize).toBe('30%')
+  })
+
+  // Open sidebar should not shrink below the default open width.
+  it('keeps the open sidebar min size at the default open width', async () => {
+    await renderPage()
+
+    expect(workspacePageHarness.sidebarPanelMinSize).toBe('16%')
+
+    const toggleButton = getSidebarToggle()
+    await act(async () => {
+      toggleButton.dispatchEvent(new MouseEvent('click', { bubbles: true }))
+    })
+
+    expect(workspacePageHarness.sidebarPanelMinSize).toBe('0%')
+
+    const animationOptions = motionHarness.animate.mock.calls.at(-1)?.[2] as
+      { onUpdate?: (value: number) => void; onComplete?: () => void } | undefined
+
+    await act(async () => {
+      animationOptions?.onComplete?.()
+    })
+
+    expect(workspacePageHarness.sidebarPanelMinSize).toBe('16%')
+  })
+
+  it('keeps the sidebar open when an expand animation reports a near-zero resize', async () => {
+    await renderPage()
+
+    const toggleButton = getSidebarToggle()
+    await act(async () => {
+      toggleButton.dispatchEvent(new MouseEvent('click', { bubbles: true }))
+    })
+    const closeAnimationOptions = motionHarness.animate.mock.calls.at(-1)?.[2] as
+      { onComplete?: () => void } | undefined
+    await act(async () => closeAnimationOptions?.onComplete?.())
+
+    await act(async () => {
+      toggleButton.dispatchEvent(new MouseEvent('click', { bubbles: true }))
+    })
+    await act(async () => {
+      workspacePageHarness.sidebarOnResize?.({ asPercentage: 0.05, inPixels: 0.5 }, 'left-panel', {
+        asPercentage: 0,
+        inPixels: 0
+      })
+    })
+
+    expect(toggleButton.getAttribute('aria-expanded')).toBe('true')
+  })
+
+  it('moves keyboard focus from a collapsed sidebar separator to its toggle', async () => {
+    await renderPage()
+
+    const leftHandle = container.querySelector<HTMLElement>('[aria-label="Resize left panel"]')
+    const toggleButton = getSidebarToggle()
+    leftHandle?.focus()
+
+    await act(async () => {
+      workspacePageHarness.sidebarOnResize?.({ asPercentage: 0, inPixels: 0 }, 'left-panel', {
+        asPercentage: 16,
+        inPixels: 160
+      })
+    })
+
+    expect(document.activeElement).toBe(toggleButton)
+  })
+
+  it('moves keyboard focus from a collapsed preview separator to its toggle', async () => {
+    await renderPage()
+
+    const rightHandle = container.querySelector<HTMLElement>('[aria-label="Resize right panel"]')
+    const toggleButton = getPreviewToggle()
+    rightHandle?.focus()
+
+    await act(async () => {
+      workspacePageHarness.previewOnResize?.(
+        { asPercentage: 0, inPixels: 0 },
+        { asPercentage: 30, inPixels: 300 }
+      )
+    })
+
+    expect(document.activeElement).toBe(toggleButton)
+  })
+
+  it('lets an opposite sidebar drag interrupt a closing animation', async () => {
+    await renderPage()
+
+    const toggleButton = getSidebarToggle()
+    await act(async () => {
+      toggleButton.dispatchEvent(new MouseEvent('click', { bubbles: true }))
+    })
+    expect(toggleButton.getAttribute('aria-expanded')).toBe('false')
+    expect(workspacePageHarness.sidebarOnResize).toBeTypeOf('function')
+    await act(async () => {
+      workspacePageHarness.sidebarOnResize?.({ asPercentage: 10, inPixels: 100 }, 'left-panel', {
+        asPercentage: 9,
+        inPixels: 90
+      })
+    })
+
+    expect(toggleButton.getAttribute('aria-expanded')).toBe('true')
+  })
+
+  it('does not resize a detached sidebar panel during an in-flight animation', async () => {
+    await renderPage()
+
+    const toggleButton = getSidebarToggle()
+    await act(async () => {
+      toggleButton.dispatchEvent(new MouseEvent('click', { bubbles: true }))
+    })
+
+    const animationOptions = motionHarness.animate.mock.calls.at(-1)?.[2] as
+      { onUpdate?: (value: number) => void; onComplete?: () => void } | undefined
+    vi.mocked(workspacePageHarness.sidebarPanelHandle.resize).mockClear()
+    if (workspacePageHarness.sidebarPanelRef) {
+      workspacePageHarness.sidebarPanelRef.current = null
+    }
+
+    await act(async () => {
+      animationOptions?.onUpdate?.(8)
+      animationOptions?.onComplete?.()
+    })
+
+    expect(workspacePageHarness.sidebarPanelHandle.resize).not.toHaveBeenCalled()
+  })
+
+  it('skips sidebar animation when reduced motion is enabled', async () => {
+    vi.stubGlobal(
+      'matchMedia',
+      vi.fn(() => ({ matches: true }))
+    )
+
+    await renderPage()
+
+    const toggleButton = getSidebarToggle()
+    await act(async () => {
+      toggleButton.dispatchEvent(new MouseEvent('click', { bubbles: true }))
+    })
+
+    expect(motionHarness.animate).not.toHaveBeenCalled()
+    expect(workspacePageHarness.sidebarPanelHandle.resize).toHaveBeenCalledWith('0%')
   })
 })

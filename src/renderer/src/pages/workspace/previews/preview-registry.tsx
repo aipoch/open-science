@@ -10,6 +10,7 @@ import { OfficePreviewRenderer } from './renderers/OfficePreview'
 import { PdbPreviewRenderer } from './renderers/PdbPreview'
 import { PdfPreviewRenderer } from './renderers/PdfPreview'
 import { TextPreviewRenderer } from './renderers/TextPreview'
+import { TiffPreviewRenderer } from './renderers/TiffPreview'
 
 // Keeps the registry as the single routing point while avoiding dynamic component creation in render.
 export const renderPreviewFile = ({
@@ -34,6 +35,8 @@ export const renderPreviewFile = ({
       return <MoleculePreviewRenderer item={item} />
     case 'text':
       return <TextPreviewRenderer item={item} />
+    case 'tiff':
+      return <TiffPreviewRenderer item={item} />
     case 'pdf':
       return <PdfPreviewRenderer item={item} />
     case 'word':

@@ -224,6 +224,7 @@ export type SpecialistFieldError = {
 export const SPECIALIST_NAME_MAX_LENGTH = 80
 export const SPECIALIST_DISPLAY_NAME_MAX_LENGTH = 80
 export const SPECIALIST_DESCRIPTION_MAX_LENGTH = 200
+export const SPECIALIST_SYSTEM_PROMPT_MAX_LENGTH = 32_768
 
 // ---------------------------------------------------------------------------
 // Name validation
@@ -288,6 +289,13 @@ export const validateSpecialistDescription = (description: string): string | und
   return undefined
 }
 
+export const validateSpecialistSystemPrompt = (systemPrompt: string): string | undefined => {
+  if (systemPrompt.length > SPECIALIST_SYSTEM_PROMPT_MAX_LENGTH) {
+    return `System prompt must be ${SPECIALIST_SYSTEM_PROMPT_MAX_LENGTH} characters or fewer.`
+  }
+  return undefined
+}
+
 // Validate all fields for a CreateSpecialistInput.
 // Returns an array of field errors (empty = valid).
 export const validateCreateSpecialistInput = (
@@ -299,18 +307,24 @@ export const validateCreateSpecialistInput = (
 
   const nameError = validateSpecialistName(input.name, existingNames, undefined, existingIds)
   if (nameError) errors.push({ field: 'name', message: nameError })
-
-  // Apply public-name format rules when a displayName is sent (i.e. via the editor
-  // which always sends displayName). This ensures the error surfaces on the field,
-  // not after a round-trip to main.
-  if (input.displayName !== undefined) {
+  else {
     const publicNameError = validateSpecialistPublicName(input.name)
     if (publicNameError) errors.push({ field: 'name', message: publicNameError })
+  }
+
+  if (input.displayName !== undefined) {
+    const displayNameError = validateSpecialistDisplayName(input.displayName)
+    if (displayNameError) errors.push({ field: 'name', message: displayNameError })
   }
 
   if (input.description !== undefined) {
     const descriptionError = validateSpecialistDescription(input.description)
     if (descriptionError) errors.push({ field: 'description', message: descriptionError })
+  }
+
+  if (input.systemPrompt !== undefined) {
+    const systemPromptError = validateSpecialistSystemPrompt(input.systemPrompt)
+    if (systemPromptError) errors.push({ field: 'systemPrompt', message: systemPromptError })
   }
 
   return errors
@@ -329,18 +343,25 @@ export const validateUpdateSpecialistInput = (
   if (input.name !== undefined) {
     const nameError = validateSpecialistName(input.name, existingNames, input.id, existingIds)
     if (nameError) errors.push({ field: 'name', message: nameError })
-
-    // Apply same public-name format rules when displayName is present, keeping
-    // create and update symmetric.
-    if (input.displayName !== undefined) {
+    else {
       const publicNameError = validateSpecialistPublicName(input.name)
       if (publicNameError) errors.push({ field: 'name', message: publicNameError })
     }
   }
 
+  if (input.displayName !== undefined) {
+    const displayNameError = validateSpecialistDisplayName(input.displayName)
+    if (displayNameError) errors.push({ field: 'name', message: displayNameError })
+  }
+
   if (input.description !== undefined) {
     const descriptionError = validateSpecialistDescription(input.description)
     if (descriptionError) errors.push({ field: 'description', message: descriptionError })
+  }
+
+  if (input.systemPrompt !== undefined) {
+    const systemPromptError = validateSpecialistSystemPrompt(input.systemPrompt)
+    if (systemPromptError) errors.push({ field: 'systemPrompt', message: systemPromptError })
   }
 
   return errors

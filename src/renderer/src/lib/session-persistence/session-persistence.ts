@@ -5,6 +5,8 @@ import type {
   DeleteSessionRequest,
   LoadAllSessionsResult,
   PersistedChatSession,
+  SaveSessionOptions,
+  SessionConflictRebaseField,
   SaveSessionManifestRequest
 } from '../../../../shared/session-persistence'
 import { PENDING_UPLOAD_SESSION_ID } from '../../../../shared/uploads'
@@ -17,10 +19,75 @@ import type { ChatSession, SessionHydrationSelection } from '../../stores/sessio
 
 type SessionPersistenceApi = {
   loadAll: () => Promise<LoadAllSessionsResult>
-  saveSession: (session: PersistedChatSession) => Promise<PersistedChatSession>
+  saveSession: (
+    session: PersistedChatSession,
+    options?: SaveSessionOptions
+  ) => Promise<PersistedChatSession>
   deleteSession: (request: DeleteSessionRequest) => Promise<void>
   saveManifest: (request: SaveSessionManifestRequest) => Promise<void>
 }
+
+type OrderedSessionPersistence = Pick<SessionPersistenceApi, 'saveSession' | 'saveManifest'>
+
+const SESSION_CONFLICT_REBASE_FIELDS = [
+  'title',
+  'permissionProfile',
+  'autoReviewEnabled',
+  'enabledComputeHosts',
+  'pinned',
+  'specialistId'
+] as const satisfies readonly SessionConflictRebaseField[]
+
+const conflictRebaseFieldChanged = (
+  previous: ChatSession,
+  next: ChatSession,
+  field: SessionConflictRebaseField
+): boolean => {
+  if (field !== 'enabledComputeHosts') return previous[field] !== next[field]
+  const previousHosts = previous.enabledComputeHosts ?? []
+  const nextHosts = next.enabledComputeHosts ?? []
+  return (
+    previousHosts.length !== nextHosts.length ||
+    previousHosts.some((host, index) => host !== nextHosts[index])
+  )
+}
+
+// Serializes every renderer-originated Session write through one ordering seam. Callers enqueue the
+// snapshot immediately, so a later explicit Artifact save cannot be overtaken by an older store save
+// that was still waiting behind an in-flight write.
+const createOrderedSessionPersistence = (
+  api: OrderedSessionPersistence
+): OrderedSessionPersistence => {
+  let queue: Promise<unknown> = Promise.resolve()
+
+  const enqueue = <Result>(task: () => Promise<Result>): Promise<Result> => {
+    const run = queue.then(task, task)
+    queue = run.then(
+      () => undefined,
+      () => undefined
+    )
+    return run
+  }
+
+  return {
+    saveSession: (session, options) =>
+      enqueue(() => (options ? api.saveSession(session, options) : api.saveSession(session))),
+    saveManifest: (request) => enqueue(() => api.saveManifest(request))
+  }
+}
+
+// The Store saver and Artifact finalization share this instance in production. Its adapters resolve
+// window.api lazily, keeping module import safe in tests before the preload bridge is installed.
+const liveSessionPersistence = createOrderedSessionPersistence({
+  saveSession: (session, options) =>
+    options
+      ? window.api.sessions.saveSession(session, options)
+      : window.api.sessions.saveSession(session),
+  saveManifest: (request) => window.api.sessions.saveManifest(request)
+})
+
+const saveSessionInOrder = (session: PersistedChatSession): Promise<PersistedChatSession> =>
+  liveSessionPersistence.saveSession(session)
 
 // The one artifact command startup reconciliation needs; kept narrow so it is trivial to fake in tests.
 type ArtifactReconcileApi = {
@@ -96,10 +163,15 @@ type SessionPersistenceState = {
 
 type StoreSaverOptions = {
   forceTargets?: ReadonlySet<string>
+  conflictRebaseFieldsByTarget?: ReadonlyMap<string, readonly SessionConflictRebaseField[]>
+}
+
+type StoreSaverFailureContext = {
+  conflictRebaseFields?: readonly SessionConflictRebaseField[]
 }
 
 type StoreSaverObserver = {
-  onFailure?: (target: string, error: unknown) => void
+  onFailure?: (target: string, error: unknown, context: StoreSaverFailureContext) => void
   onSuccess?: (target: string) => void
 }
 
@@ -107,11 +179,15 @@ type StoreSaver = (state: SessionStoreSnapshot, options?: StoreSaverOptions) => 
 
 const pruneRemovedSessionWriteTargets = (
   targets: Set<string>,
-  sessions: readonly Pick<ChatSession, 'id'>[]
+  sessions: readonly Pick<ChatSession, 'id'>[],
+  conflictRebaseFields?: Map<string, SessionConflictRebaseField[]>
 ): void => {
   const activeSessionTargets = new Set(sessions.map((session) => `session:${session.id}`))
   for (const target of targets) {
-    if (target.startsWith('session:') && !activeSessionTargets.has(target)) targets.delete(target)
+    if (target.startsWith('session:') && !activeSessionTargets.has(target)) {
+      targets.delete(target)
+      conflictRebaseFields?.delete(target)
+    }
   }
 }
 
@@ -161,24 +237,21 @@ const hasStagedUploads = (session: ChatSession): boolean =>
 const createStoreSaver = (
   api: SessionPersistenceApi,
   initial: SessionStoreSnapshot = useSessionStore.getState(),
-  observer: StoreSaverObserver = {}
+  observer: StoreSaverObserver = {},
+  persistence: OrderedSessionPersistence = createOrderedSessionPersistence(api)
 ): StoreSaver => {
   let previousSessions = initial.sessions
   let previousSelection = initial.selectedSessionId
-  let queue: Promise<unknown> = Promise.resolve()
-
-  // Runs each write regardless of whether an earlier one rejected, preserving order.
-  const enqueue = (task: () => Promise<unknown>): Promise<unknown> => {
-    queue = queue.then(task, task)
-
-    return queue
-  }
 
   return (state, options) => {
     const nextSessions = state.sessions
     const previousById = indexById(previousSessions)
     const nextById = indexById(nextSessions)
-    const tasks: Array<{ target: string; run: () => Promise<unknown> }> = []
+    const tasks: Array<{
+      target: string
+      run: () => Promise<unknown>
+      failureContext: StoreSaverFailureContext
+    }> = []
 
     // Persist new or mutated sessions; pending sessions never touch disk until they bind a real id. A
     // session without a projectId cannot map to a sessions/<projectId>/ path (the main repository rejects
@@ -198,14 +271,34 @@ const createStoreSaver = (
         !session.conversationGraphSyncBlocked
       ) {
         const persisted = toPersistedSession(session)
+        const previousSession = previousById.get(session.id)
+        const changedConflictRebaseFields = previousSession
+          ? SESSION_CONFLICT_REBASE_FIELDS.filter((field) =>
+              conflictRebaseFieldChanged(previousSession, session, field)
+            )
+          : []
+        const conflictRebaseFields = [
+          ...new Set([
+            ...changedConflictRebaseFields,
+            ...(options?.conflictRebaseFieldsByTarget?.get(target) ?? [])
+          ])
+        ]
 
         tasks.push({
           target,
+          failureContext: { conflictRebaseFields },
           run: async () => {
-            const durableSession = await api.saveSession(persisted)
+            const durableSession = await persistence.saveSession(
+              persisted,
+              conflictRebaseFields.length > 0 ? { conflictRebaseFields } : undefined
+            )
             useSessionStore.getState().applyDurableSessionProjection({
               source: session,
-              session: durableSession
+              session: durableSession,
+              mode:
+                conflictRebaseFields.length > 0
+                  ? 'replace-persisted-if-current'
+                  : 'merge-upload-identities'
             })
           }
         })
@@ -224,8 +317,9 @@ const createStoreSaver = (
       if (!selectedSession?.isPending) {
         tasks.push({
           target: 'manifest',
+          failureContext: {},
           run: () =>
-            api.saveManifest({
+            persistence.saveManifest({
               lastSessionId: state.selectedSessionId,
               lastProjectId: selectedSession?.projectId
             })
@@ -236,18 +330,19 @@ const createStoreSaver = (
     previousSessions = nextSessions
     previousSelection = state.selectedSessionId
 
-    const scheduledTasks = tasks.map(({ target, run }) =>
-      enqueue(async () => {
-        try {
-          const result = await run()
+    const scheduledTasks = tasks.map(({ target, run, failureContext }) => {
+      // Invoke every task now so it takes its place in the shared persistence queue at snapshot time.
+      return run().then(
+        (result) => {
           observer.onSuccess?.(target)
           return result
-        } catch (error) {
-          observer.onFailure?.(target, error)
+        },
+        (error: unknown) => {
+          observer.onFailure?.(target, error, failureContext)
           throw error
         }
-      })
-    )
+      )
+    })
 
     return Promise.all(scheduledTasks).then(() => undefined)
   }
@@ -266,6 +361,7 @@ const useSessionPersistence = (): SessionPersistenceState => {
   const [loadAttempt, setLoadAttempt] = useState(0)
   const retrySelection = useRef<SessionHydrationSelection | undefined>(undefined)
   const failedWriteTargets = useRef(new Set<string>())
+  const failedConflictRebaseFields = useRef(new Map<string, SessionConflictRebaseField[]>())
   const retryManifestWritePending = useRef(false)
   const saverRef = useRef<StoreSaver | undefined>(undefined)
   const dismissLoadWarning = useCallback(() => setLoadWarning(undefined), [])
@@ -291,14 +387,19 @@ const useSessionPersistence = (): SessionPersistenceState => {
     if (!saver || failedWriteTargets.current.size === 0) return
 
     const state = useSessionStore.getState()
-    pruneRemovedSessionWriteTargets(failedWriteTargets.current, state.sessions)
+    pruneRemovedSessionWriteTargets(
+      failedWriteTargets.current,
+      state.sessions,
+      failedConflictRebaseFields.current
+    )
     if (failedWriteTargets.current.size === 0) {
       setWriteError(undefined)
       return
     }
 
     void saver(state, {
-      forceTargets: new Set(failedWriteTargets.current)
+      forceTargets: new Set(failedWriteTargets.current),
+      conflictRebaseFieldsByTarget: new Map(failedConflictRebaseFields.current)
     }).catch(reportPersistenceError)
   }, [])
 
@@ -308,6 +409,7 @@ const useSessionPersistence = (): SessionPersistenceState => {
     let activeSaver: StoreSaver | undefined
     saverRef.current = undefined
     failedWriteTargets.current.clear()
+    failedConflictRebaseFields.current.clear()
 
     // Loads before subscribing so the initial empty store cannot overwrite disk state.
     const startPersistence = async (): Promise<void> => {
@@ -389,38 +491,58 @@ const useSessionPersistence = (): SessionPersistenceState => {
       }
 
       // Snapshot the hydrated state as the diff baseline so hydration itself is not re-saved.
-      const save = createStoreSaver(window.api.sessions, useSessionStore.getState(), {
-        onFailure: (target) => {
-          if (!isMounted) return
-          failedWriteTargets.current.add(target)
-          pruneRemovedSessionWriteTargets(
-            failedWriteTargets.current,
-            useSessionStore.getState().sessions
-          )
-          // A queued save can lose a race with an authoritative deletion. Its tombstone rejection
-          // must not resurrect a retry target for a Session that no longer exists in the store.
-          if (!failedWriteTargets.current.has(target)) {
+      const save = createStoreSaver(
+        window.api.sessions,
+        useSessionStore.getState(),
+        {
+          onFailure: (target, _error, context) => {
+            if (!isMounted) return
+            failedWriteTargets.current.add(target)
+            const conflictRebaseFields = context.conflictRebaseFields
+            if (conflictRebaseFields && conflictRebaseFields.length > 0) {
+              failedConflictRebaseFields.current.set(target, [
+                ...new Set([
+                  ...(failedConflictRebaseFields.current.get(target) ?? []),
+                  ...conflictRebaseFields
+                ])
+              ])
+            }
+            pruneRemovedSessionWriteTargets(
+              failedWriteTargets.current,
+              useSessionStore.getState().sessions,
+              failedConflictRebaseFields.current
+            )
+            // A queued save can lose a race with an authoritative deletion. Its tombstone rejection
+            // must not resurrect a retry target for a Session that no longer exists in the store.
+            if (!failedWriteTargets.current.has(target)) {
+              if (failedWriteTargets.current.size === 0) setWriteError(undefined)
+              return
+            }
+            setWriteError(SAFE_SESSION_WRITE_ERROR)
+          },
+          onSuccess: (target) => {
+            if (!isMounted) return
+            failedWriteTargets.current.delete(target)
+            failedConflictRebaseFields.current.delete(target)
+            if (target === 'manifest' && retryManifestWritePending.current) {
+              retryManifestWritePending.current = false
+              setIsReady(true)
+              startPendingArtifactReconciliation()
+            }
             if (failedWriteTargets.current.size === 0) setWriteError(undefined)
-            return
           }
-          setWriteError(SAFE_SESSION_WRITE_ERROR)
         },
-        onSuccess: (target) => {
-          if (!isMounted) return
-          failedWriteTargets.current.delete(target)
-          if (target === 'manifest' && retryManifestWritePending.current) {
-            retryManifestWritePending.current = false
-            setIsReady(true)
-            startPendingArtifactReconciliation()
-          }
-          if (failedWriteTargets.current.size === 0) setWriteError(undefined)
-        }
-      })
+        liveSessionPersistence
+      )
       activeSaver = save
       saverRef.current = save
 
       unsubscribe = useSessionStore.subscribe((state) => {
-        pruneRemovedSessionWriteTargets(failedWriteTargets.current, state.sessions)
+        pruneRemovedSessionWriteTargets(
+          failedWriteTargets.current,
+          state.sessions,
+          failedConflictRebaseFields.current
+        )
         if (failedWriteTargets.current.size === 0) setWriteError(undefined)
         void save(state).catch(reportPersistenceError)
       })
@@ -471,5 +593,17 @@ const useSessionPersistence = (): SessionPersistenceState => {
   }
 }
 
-export { createStoreSaver, loadPersistedSessions, reconcilePendingArtifacts, useSessionPersistence }
-export type { ArtifactReconcileApi, SessionPersistenceApi, SessionPersistenceState }
+export {
+  createOrderedSessionPersistence,
+  createStoreSaver,
+  loadPersistedSessions,
+  reconcilePendingArtifacts,
+  saveSessionInOrder,
+  useSessionPersistence
+}
+export type {
+  ArtifactReconcileApi,
+  OrderedSessionPersistence,
+  SessionPersistenceApi,
+  SessionPersistenceState
+}

@@ -1,4 +1,5 @@
 import {
+  Archive,
   BookOpen,
   ChevronLeft,
   Download,
@@ -17,6 +18,7 @@ import {
   DropdownMenu,
   DropdownMenuContent,
   DropdownMenuItem,
+  DropdownMenuSeparator,
   DropdownMenuSub,
   DropdownMenuSubContent,
   DropdownMenuSubTrigger,
@@ -42,6 +44,8 @@ type WorkspaceSidebarProps = {
   onOpenFiles: () => void
   onOpenSession: (sessionId: string) => void
   onRenameSession: (session: ChatSession) => void
+  canDownloadArtifacts: boolean
+  onDownloadArtifacts: (session: ChatSession) => void
   onViewNotebook: (session: ChatSession) => void
   onExportSession?: (session: ChatSession, format: ConversationExportFormat) => void
   onTogglePin: (session: ChatSession) => void
@@ -91,6 +95,8 @@ const WorkspaceSidebar = ({
   onOpenFiles,
   onOpenSession,
   onRenameSession,
+  canDownloadArtifacts,
+  onDownloadArtifacts,
   onViewNotebook,
   onExportSession,
   onTogglePin,
@@ -108,20 +114,22 @@ const WorkspaceSidebar = ({
   sections.push({ label: 'Active', items: activeSessions })
 
   return (
-    <aside className="z-10 flex h-full w-[220px] min-w-0 shrink-0 flex-col">
-      <div className="m-2 mr-0 flex min-h-0 flex-1 flex-col rounded-lg bg-rail-card-bg shadow-card">
+    <aside className="z-10 flex h-full w-full min-w-0 flex-col overflow-hidden">
+      <div className="m-2 flex min-h-0 flex-1 flex-col rounded-lg bg-rail-card-bg shadow-card">
         <div className="px-3 pt-3">
-          <button
-            type="button"
-            onClick={onGoHome}
-            className={cn(
-              'flex w-full items-center gap-1 rounded-md px-1.5 py-1 text-[11px] text-text-100 hover:bg-bg-300 hover:text-text-000',
-              sidebarInteractiveTransitionClassName
-            )}
-          >
-            <ChevronLeft className="size-3.5" strokeWidth={2} aria-hidden="true" />
-            <span>All projects</span>
-          </button>
+          <div className="flex items-start pr-9">
+            <button
+              type="button"
+              onClick={onGoHome}
+              className={cn(
+                'flex min-w-0 flex-1 items-center gap-1 rounded-md px-1.5 py-1 text-[11px] text-text-100 hover:bg-bg-300 hover:text-text-000',
+                sidebarInteractiveTransitionClassName
+              )}
+            >
+              <ChevronLeft className="size-3.5 shrink-0" strokeWidth={2} aria-hidden="true" />
+              <span className="min-w-0 truncate">All projects</span>
+            </button>
+          </div>
           <div
             className="mt-1.5 truncate px-1.5 font-serif text-[16px] font-bold tracking-[-0.02em] text-text-000"
             title={projectName}
@@ -267,6 +275,18 @@ const WorkspaceSidebar = ({
                               </span>
                               Rename…
                             </DropdownMenuItem>
+                            <DropdownMenuSeparator />
+                            {canDownloadArtifacts ? (
+                              <DropdownMenuItem
+                                className="gap-2"
+                                onSelect={() => onDownloadArtifacts(session)}
+                              >
+                                <span className={sessionMenuIconClassName}>
+                                  <Archive className="size-4" strokeWidth={2} aria-hidden="true" />
+                                </span>
+                                Download all artifacts
+                              </DropdownMenuItem>
+                            ) : null}
                             <DropdownMenuItem
                               className="gap-2"
                               onSelect={() => onViewNotebook(session)}
@@ -321,6 +341,7 @@ const WorkspaceSidebar = ({
                                 </DropdownMenuSubContent>
                               </DropdownMenuSub>
                             ) : null}
+                            <DropdownMenuSeparator />
                             {/* Delete uses the project's danger token pair for light surfaces. */}
                             <DropdownMenuItem
                               className="gap-2 text-danger-000 data-[highlighted]:bg-danger-900 data-[highlighted]:text-danger-000"

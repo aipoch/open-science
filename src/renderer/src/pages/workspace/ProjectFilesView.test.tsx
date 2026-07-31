@@ -588,6 +588,32 @@ describe('ProjectFilesView', () => {
     expect(listFiles).toHaveBeenCalledTimes(fileCalls)
   })
 
+  it('preserves the file extension when a long list-row name runs out of width', async () => {
+    const name = 'very_long_experiment_analysis_result_2025.csv'
+    await renderView([
+      createSession({
+        artifacts: [
+          {
+            id: 'long-name-artifact',
+            kind: 'managed-file',
+            path: `/workspace/${name}`,
+            name
+          }
+        ]
+      })
+    ])
+
+    await act(async () => {
+      container.querySelector<HTMLButtonElement>('[aria-label="List view"]')?.click()
+    })
+
+    const row = container.querySelector(`[aria-label="Preview generated file ${name}"]`)
+    expect(row?.querySelector('[data-testid="file-name-root"]')).not.toBeNull()
+    expect(row?.querySelector('[data-testid="file-name-head"]')?.textContent).toMatch(/^very/)
+    expect(row?.querySelector('[data-testid="file-name-tail"]')?.textContent).toBe('_2025')
+    expect(row?.querySelector('[data-testid="file-name-extension"]')?.textContent).toBe('.csv')
+  })
+
   it('uses the requested search, list-row, and view-mode interaction styling', async () => {
     await renderView([
       createSession({
@@ -3129,6 +3155,64 @@ describe('ProjectFilesView', () => {
     expect(dialog?.querySelector('[aria-label="Download tree.png"]')).not.toBeNull()
     expect(dialog?.querySelector('[aria-label="Open full screen preview of tree.png"]')).toBeNull()
     expect(usePreviewWorkbenchStore.getState().items).toEqual([])
+  })
+
+  it('does not acquire a TIFF thumbnail until its grid tile is near the viewport', async () => {
+    const observed = new Map<Element, IntersectionObserverCallback>()
+    vi.stubGlobal(
+      'IntersectionObserver',
+      class {
+        observe = vi.fn((element: Element) => observed.set(element, this.callback))
+        unobserve = vi.fn()
+        disconnect = vi.fn()
+
+        constructor(private readonly callback: IntersectionObserverCallback) {}
+      }
+    )
+    await renderView([
+      createSession({
+        artifacts: [
+          {
+            id: 'artifact-tiff',
+            kind: 'managed-file',
+            path: '/workspace/chart.tiff',
+            fileUrl: 'file:///workspace/chart.tiff',
+            name: 'chart.tiff',
+            mimeType: 'image/tiff',
+            size: 152,
+            mtimeMs: 1710000002000
+          }
+        ]
+      })
+    ])
+    const artifactSentinel = container.querySelector(
+      '[data-testid="artifact-page-sentinel:session-1"]'
+    )
+    await act(async () => {
+      observed.get(artifactSentinel as Element)?.(
+        [{ isIntersecting: true } as IntersectionObserverEntry],
+        {} as IntersectionObserver
+      )
+      await Promise.resolve()
+      await Promise.resolve()
+    })
+    const tile = container.querySelector('[aria-label="Preview generated file chart.tiff"]')
+    expect(tile).not.toBeNull()
+    expect(window.api.previewResources.acquire).not.toHaveBeenCalled()
+
+    await act(async () => {
+      observed.get(tile as Element)?.(
+        [{ isIntersecting: true } as IntersectionObserverEntry],
+        {} as IntersectionObserver
+      )
+      await Promise.resolve()
+    })
+
+    await vi.waitFor(() =>
+      expect(window.api.previewResources.acquire).toHaveBeenCalledWith(
+        expect.objectContaining({ path: '/workspace/chart.tiff' })
+      )
+    )
   })
 
   it('does not restart a pending thumbnail read when another tile becomes visible', async () => {

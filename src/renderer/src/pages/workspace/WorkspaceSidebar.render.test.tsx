@@ -46,6 +46,8 @@ const renderSidebar = async (sessions: ChatSession[]): Promise<string> => {
       onOpenFiles={vi.fn()}
       onOpenSession={vi.fn()}
       onRenameSession={vi.fn()}
+      canDownloadArtifacts
+      onDownloadArtifacts={vi.fn()}
       onViewNotebook={vi.fn()}
       onExportSession={vi.fn()}
       onTogglePin={vi.fn()}
@@ -84,6 +86,20 @@ const getTextContent = (node: ReactNode): string => {
 }
 
 describe('WorkspaceSidebar accessible render', () => {
+  it('keeps the sidebar card inset even on both sides', async () => {
+    const html = await renderSidebar([createSession({ id: 'session-a' })])
+
+    expect(html).toContain('m-2 flex min-h-0 flex-1 flex-col rounded-lg')
+    expect(html).not.toContain('mr-0')
+  })
+
+  it('reserves header padding for the external panel toggle without spacer markup', async () => {
+    const html = await renderSidebar([createSession({ id: 'session-a' })])
+
+    expect(html).toContain('flex items-start pr-9')
+    expect(html).not.toContain('workspace-sidebar-toggle-slot')
+  })
+
   it('renders non-visual session status text for assistive technology', async () => {
     const html = await renderSidebar([
       createSession({ id: 'running-session', status: 'running' }),
@@ -116,6 +132,7 @@ describe('WorkspaceSidebar accessible render', () => {
     ]
     const onOpenSession = vi.fn()
     const onRenameSession = vi.fn()
+    const onDownloadArtifacts = vi.fn()
     const onDeleteSession = vi.fn()
     const onExportSession = vi.fn()
     const tree = WorkspaceSidebar({
@@ -131,6 +148,8 @@ describe('WorkspaceSidebar accessible render', () => {
       onOpenFiles: vi.fn(),
       onOpenSession,
       onRenameSession,
+      canDownloadArtifacts: true,
+      onDownloadArtifacts,
       onViewNotebook: vi.fn(),
       onExportSession,
       onTogglePin: vi.fn(),
@@ -145,6 +164,9 @@ describe('WorkspaceSidebar accessible render', () => {
         typeof element.props.onClick === 'function'
     )
     const renameItems = elements.filter((element) => getTextContent(element).trim() === 'Rename…')
+    const downloadItems = elements.filter(
+      (element) => getTextContent(element).trim() === 'Download all artifacts'
+    )
     const deleteItems = elements.filter((element) => getTextContent(element).trim() === 'Delete')
     const markdownItems = elements.filter(
       (element) => getTextContent(element).trim() === 'Markdown'
@@ -158,6 +180,10 @@ describe('WorkspaceSidebar accessible render', () => {
     expect(renameItems[1]?.props.onSelect).toBeTypeOf('function')
     ;(renameItems[1]?.props.onSelect as () => void)()
     expect(onRenameSession).toHaveBeenCalledWith(sessions[1])
+
+    expect(downloadItems[1]?.props.onSelect).toBeTypeOf('function')
+    ;(downloadItems[1]?.props.onSelect as () => void)()
+    expect(onDownloadArtifacts).toHaveBeenCalledWith(sessions[1])
 
     expect(markdownItems[0]?.props.onSelect).toBeTypeOf('function')
     ;(markdownItems[0]?.props.onSelect as () => void)()
@@ -188,6 +214,8 @@ describe('WorkspaceSidebar accessible render', () => {
       onOpenFiles,
       onOpenSession: vi.fn(),
       onRenameSession: vi.fn(),
+      canDownloadArtifacts: true,
+      onDownloadArtifacts: vi.fn(),
       onViewNotebook: vi.fn(),
       onExportSession: vi.fn(),
       onTogglePin: vi.fn(),
@@ -228,6 +256,8 @@ describe('WorkspaceSidebar accessible render', () => {
       onOpenFiles: vi.fn(),
       onOpenSession: vi.fn(),
       onRenameSession: vi.fn(),
+      canDownloadArtifacts: true,
+      onDownloadArtifacts: vi.fn(),
       onTogglePin: vi.fn(),
       onDeleteSession: vi.fn(),
       onViewNotebook,
@@ -277,6 +307,8 @@ describe('WorkspaceSidebar accessible render', () => {
       onOpenFiles: vi.fn(),
       onOpenSession: vi.fn(),
       onRenameSession: vi.fn(),
+      canDownloadArtifacts: true,
+      onDownloadArtifacts: vi.fn(),
       onViewNotebook: vi.fn(),
       onExportSession: vi.fn(),
       onTogglePin,
@@ -314,6 +346,8 @@ describe('WorkspaceSidebar accessible render', () => {
       onOpenFiles: vi.fn(),
       onOpenSession: vi.fn(),
       onRenameSession: vi.fn(),
+      canDownloadArtifacts: true,
+      onDownloadArtifacts: vi.fn(),
       onViewNotebook: vi.fn(),
       onTogglePin: vi.fn(),
       onDeleteSession: vi.fn(),
@@ -353,6 +387,8 @@ describe('WorkspaceSidebar accessible render', () => {
       onOpenFiles: vi.fn(),
       onOpenSession: vi.fn(),
       onRenameSession: vi.fn(),
+      canDownloadArtifacts: false,
+      onDownloadArtifacts: vi.fn(),
       onViewNotebook: vi.fn(),
       onExportSession: vi.fn(),
       onTogglePin: vi.fn(),
@@ -387,6 +423,8 @@ describe('WorkspaceSidebar accessible render', () => {
       onOpenFiles: vi.fn(),
       onOpenSession: vi.fn(),
       onRenameSession: vi.fn(),
+      canDownloadArtifacts: false,
+      onDownloadArtifacts: vi.fn(),
       onViewNotebook: vi.fn(),
       onTogglePin: vi.fn(),
       onDeleteSession: vi.fn(),
@@ -394,5 +432,36 @@ describe('WorkspaceSidebar accessible render', () => {
     })
 
     expect(getTextContent(tree)).not.toContain('Export conversation')
+  })
+
+  it('hides artifact downloads when the runtime does not provide the desktop save capability', async () => {
+    const { WorkspaceSidebar } = await import('./WorkspaceSidebar')
+    const session = createSession({ id: 'session-a', title: 'Notebook review' })
+    const tree = WorkspaceSidebar({
+      projectName: 'Example project',
+      sessions: [session],
+      activeSessionId: session.id,
+      canCreateConversation: true,
+      canMutateConversations: true,
+      canDeleteConversations: true,
+      onGoHome: vi.fn(),
+      onNewConversation: vi.fn(),
+      isFilesOpen: false,
+      onOpenFiles: vi.fn(),
+      onOpenSession: vi.fn(),
+      onRenameSession: vi.fn(),
+      canDownloadArtifacts: false,
+      onDownloadArtifacts: vi.fn(),
+      onViewNotebook: vi.fn(),
+      onTogglePin: vi.fn(),
+      onDeleteSession: vi.fn(),
+      onOpenSettings: vi.fn()
+    })
+
+    const downloadItem = collectElements(tree).find(
+      (element) => getTextContent(element).trim() === 'Download all artifacts'
+    )
+
+    expect(downloadItem).toBeUndefined()
   })
 })

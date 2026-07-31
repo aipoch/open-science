@@ -231,7 +231,7 @@ const PreviewTabBar = ({
       role="tablist"
       aria-label="Open previews"
       aria-orientation="horizontal"
-      className="flex min-w-0 w-full shrink-0 items-center gap-1 overflow-x-auto px-2 pb-2"
+      className="flex min-w-0 flex-1 basis-0 shrink-0 items-center gap-1 overflow-x-auto pb-2"
     >
       {tabs.map((tab, index) => (
         <PreviewTab
@@ -469,14 +469,6 @@ const PreviewPanel = ({
         ])
       : (activeItem?.id ?? 'empty')
 
-  const handleResize = (
-    panelSize: PanelSize,
-    _panelId: string | number | undefined,
-    previousPanelSize: PanelSize | undefined
-  ): void => {
-    onResize(panelSize, previousPanelSize)
-  }
-
   return (
     <ResizablePanel
       id="right-panel"
@@ -486,16 +478,21 @@ const PreviewPanel = ({
       minSize={minSize}
       collapsible
       collapsedSize="0%"
-      onResize={handleResize}
+      onResize={(panelSize, _panelId, previousPanelSize) => onResize(panelSize, previousPanelSize)}
     >
-      <aside className="flex h-full w-full flex-col overflow-hidden bg-bg-10 py-[10px]">
+      <aside className="relative flex h-full w-full flex-col overflow-hidden bg-bg-10 py-[10px]">
         {items.length > 0 ? (
-          <PreviewTabBar
-            tabs={items}
-            activeItemId={activeItemId}
-            onActivate={activateItem}
-            onClose={removeItem}
-          />
+          <div
+            data-testid="preview-panel-top-bar"
+            className="flex min-w-0 w-full shrink-0 items-start pl-2 pr-11"
+          >
+            <PreviewTabBar
+              tabs={items}
+              activeItemId={activeItemId}
+              onActivate={activateItem}
+              onClose={removeItem}
+            />
+          </div>
         ) : null}
         <div className={cn('min-h-0 flex-1', activeItem?.type === 'file' && 'pl-2 pr-1')}>
           {!activeItem ? <PreviewActiveContent key={activeContentKey} item={activeItem} /> : null}

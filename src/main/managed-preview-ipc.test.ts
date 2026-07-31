@@ -291,4 +291,77 @@ describe('managed preview IPC handlers', () => {
     expect(resources.releaseOwner).toHaveBeenCalledTimes(1)
     expect(resources.releaseOwner).toHaveBeenCalledWith(91)
   })
+
+  it('uses a strict inspected snapshot when acquire specifies a byte limit', async () => {
+    handlers.clear()
+    const resource: ManagedPreviewResource = {
+      id: 'strict-resource',
+      url: 'open-science-preview://strict-resource/chart.tiff',
+      size: 128,
+      mimeType: 'image/tiff',
+      version: 7
+    }
+    const resources = {
+      inspect: vi
+        .fn()
+        .mockResolvedValue({ size: 128, version: 7, dev: 8n, ino: 9n, mtimeNs: 7_000_000n }),
+      acquire: vi.fn().mockResolvedValue(resource),
+      readRange: vi.fn(),
+      release: vi.fn(),
+      releaseOwner: vi.fn()
+    } as unknown as ManagedPreviewResources
+    registerManagedPreviewIpcHandlers(resources)
+    const { event } = createFakeEvent(101)
+    const acquireHandler = handlers.get('preview-resources:acquire') as (
+      event: unknown,
+      payload: unknown
+    ) => Promise<ManagedPreviewResource>
+
+    await expect(
+      acquireHandler(event, {
+        source: 'artifact',
+        path: '/managed/chart.tiff',
+        mimeType: 'image/tiff',
+        maxBytes: 40 * 1024 * 1024
+      })
+    ).resolves.toEqual(resource)
+
+    const request = {
+      source: 'artifact' as const,
+      path: '/managed/chart.tiff',
+      mimeType: 'image/tiff'
+    }
+    expect(resources.inspect).toHaveBeenCalledWith(request)
+    expect(resources.acquire).toHaveBeenCalledWith(101, request, {
+      snapshot: { size: 128, version: 7, dev: 8n, ino: 9n, mtimeNs: 7_000_000n },
+      maxBytes: 40 * 1024 * 1024
+    })
+  })
+
+  it('rejects an invalid strict byte limit before inspecting the file', async () => {
+    handlers.clear()
+    const resources = {
+      inspect: vi.fn(),
+      acquire: vi.fn(),
+      readRange: vi.fn(),
+      release: vi.fn(),
+      releaseOwner: vi.fn()
+    } as unknown as ManagedPreviewResources
+    registerManagedPreviewIpcHandlers(resources)
+    const { event } = createFakeEvent(102)
+    const acquireHandler = handlers.get('preview-resources:acquire') as (
+      event: unknown,
+      payload: unknown
+    ) => Promise<ManagedPreviewResource>
+
+    await expect(
+      acquireHandler(event, {
+        source: 'artifact',
+        path: '/managed/chart.tiff',
+        maxBytes: Number.POSITIVE_INFINITY
+      })
+    ).rejects.toThrow('Invalid managed preview byte limit')
+    expect(resources.inspect).not.toHaveBeenCalled()
+    expect(resources.acquire).not.toHaveBeenCalled()
+  })
 })

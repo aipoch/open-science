@@ -394,6 +394,7 @@ Workspace-only tokens without a shadcn counterpart, plus shadow tokens. For shar
 - Overlay: `fixed inset-0 bg-black/50`, using Radix state animations for open and close; compact workspace dialogs use `bg-black/25 backdrop-blur-[2px]`.
 - Delete confirmation copy must include the session name and state that session artifacts remain in the project.
 - Rename dialog input uses `h-9 rounded-lg border-border-200 bg-bg-000 text-sm text-text-000 placeholder:text-text-100` and a subtle `ring-border-200/25` focus ring.
+- Session Artifact download dialog: use a scrollable `Dialog` up to `640px` wide and `80svh` high, with a compact header, an artifact checklist, and a persistent footer. Repair an incomplete Project Files index before treating the list as authoritative. Select every Artifact by default; show the selected/total count, file type, and size; disable download when none are selected; and keep failed items selected after a partial batch download.
 
 ### DropdownMenu / Popover / Select
 
@@ -405,7 +406,8 @@ Workspace-only tokens without a shadcn counterpart, plus shadow tokens. For shar
 - Session action menu content: `z-modal min-w-[9rem] rounded-xl border-[0.5px] border-border-200 bg-bg-000 p-1.5 shadow-menu`.
 - Session action trigger uses `MoreVertical`, opacity reveal on row hover/focus/menu-open, and an `aria-label` that includes the session title.
 - Session action items: `flex w-full cursor-pointer items-center gap-2 rounded-lg px-2 py-1.5 text-left text-sm text-text-100 data-[highlighted]:bg-bg-200 data-[highlighted]:text-text-000`.
-- Destructive session item: `text-danger-000 data-[highlighted]:bg-danger-900`; the menu includes only `Rename…` and `Delete`.
+- Destructive session item: `text-danger-000 data-[highlighted]:bg-danger-900`.
+- Group the Session action menu as: `Pin`/`Unpin` and `Rename…`; separator; `Download all artifacts` and `View notebook`; separator; destructive `Delete`.
 - Select trigger: `h-8 rounded-lg border border-border bg-card px-2.5`; hover and `data-state=open` use `bg-muted`, and keyboard focus uses the shared 3px ring.
 - Select content uses the same overscroll containment, surface, border, radius, and shadow as DropdownMenu. Options are `min-h-8 rounded-lg`; keyboard highlight uses `bg-muted text-foreground`.
 - Menus do not use a page scrim.
@@ -579,44 +581,44 @@ Workspace-only tokens without a shadcn counterpart, plus shadow tokens. For shar
 
 ## Clickable Area Guidelines
 
-| Area              | Clickable part                       | shadcn pattern                                                                           |
-| ----------------- | ------------------------------------ | ---------------------------------------------------------------------------------------- |
-| Home              | Account menu                         | `Button ghost icon` + `DropdownMenu`                                                     |
-| Home              | Main create button                   | `Button default` or `Button outline size=sm`                                             |
-| Home              | List row                             | `button` / `Link` + `hover:bg-accent`                                                    |
-| Home              | Row actions                          | `Button ghost icon` + opacity reveal                                                     |
-| Dialog            | Close                                | `DialogClose` or `Button ghost icon`                                                     |
-| Dialog            | Cancel / confirm                     | `DialogFooter` + `Button secondary/default`                                              |
-| Settings          | Left navigation                      | `Button ghost` or `TabsTrigger`; active uses `bg-muted`                                  |
-| Settings          | Back / forward                       | `size-7` icon `button` (`ArrowLeft` / `ArrowRight`), `disabled:opacity-40`               |
-| Settings          | Breadcrumb root                      | Text `button` (`text-muted-foreground hover:text-foreground`)                            |
-| Settings          | Maximize / restore                   | `size-7` icon `button` (`Maximize2` / `Minimize2`)                                       |
-| Settings          | Close                                | `size-7` icon `button` (`X`)                                                             |
-| Settings          | Select field                         | `Select`                                                                                 |
-| Skills            | Add skill                            | Neutral `DropdownMenu` trigger (`border border-border bg-card`) + `Plus` / `ChevronDown` |
-| Skills            | Group header                         | Full-width collapse `button` + rotating `ChevronDown`                                    |
-| Skills            | Skill row                            | Flex-1 `button` → detail; hover reveals no extra chrome                                  |
-| Skills            | Edit / delete                        | `SettingsIconAction` (`Button ghost icon-sm` + `Tooltip`)                                |
-| Skills            | Enable toggle                        | Shared shadcn `Switch`                                                                   |
-| Skills            | Import selected                      | Neutral `button` (`border border-border bg-card`), not primary                           |
-| Sidebar           | Back / collapse                      | `Sidebar` + `Button ghost icon`                                                          |
-| Sidebar           | Navigation row                       | `SidebarMenuButton`                                                                      |
-| Workspace sidebar | New conversation                     | `button` + `hover:bg-bg-300 cursor-pointer`                                              |
-| Workspace sidebar | Session row                          | Nested `button`; wrapper owns hover/active only                                          |
-| Workspace sidebar | Session actions                      | Icon `button` + opacity reveal + `DropdownMenu`                                          |
-| Workspace sidebar | Settings                             | Icon `button` + `hover:bg-bg-300 cursor-pointer`                                         |
-| Activity stream   | Tool row                             | `Button ghost`-style row, hover `bg-foreground/[0.04]`                                   |
-| Activity stream   | Link / reference                     | `text-primary hover:underline`                                                           |
-| Activity stream   | Output card                          | `Card` or button card                                                                    |
-| Composer          | Add / options / send                 | `Button ghost icon`                                                                      |
-| Composer          | Text field                           | `Textarea` or contenteditable shell, preserving shadcn focus ring                        |
-| Session menu      | Rename / delete                      | `DropdownMenu.Item`; destructive delete uses `text-danger-000`                           |
-| Workspace dialogs | Rename / delete confirm              | `RenameSessionDialog` uses `bg-text-000`; `DeleteSessionDialog` uses `bg-danger-000`     |
-| Viewer            | Tab                                  | `TabsTrigger`                                                                            |
-| Viewer            | More / fullscreen / download / close | `Button ghost icon` + `Tooltip`                                                          |
-| File library      | Search                               | `Input` / `CommandInput`                                                                 |
-| File library      | Grid/list switch                     | `ToggleGroup type="single"`; hover `bg-muted`, selected `bg-bg-400`                      |
-| File library      | File card / file row                 | `Card` / button row + neutral hover `bg-bg-100` / `bg-bg-200`                            |
+| Area              | Clickable part                                       | shadcn pattern                                                                           |
+| ----------------- | ---------------------------------------------------- | ---------------------------------------------------------------------------------------- |
+| Home              | Account menu                                         | `Button ghost icon` + `DropdownMenu`                                                     |
+| Home              | Main create button                                   | `Button default` or `Button outline size=sm`                                             |
+| Home              | List row                                             | `button` / `Link` + `hover:bg-accent`                                                    |
+| Home              | Row actions                                          | `Button ghost icon` + opacity reveal                                                     |
+| Dialog            | Close                                                | `DialogClose` or `Button ghost icon`                                                     |
+| Dialog            | Cancel / confirm                                     | `DialogFooter` + `Button secondary/default`                                              |
+| Settings          | Left navigation                                      | `Button ghost` or `TabsTrigger`; active uses `bg-muted`                                  |
+| Settings          | Back / forward                                       | `size-7` icon `button` (`ArrowLeft` / `ArrowRight`), `disabled:opacity-40`               |
+| Settings          | Breadcrumb root                                      | Text `button` (`text-muted-foreground hover:text-foreground`)                            |
+| Settings          | Maximize / restore                                   | `size-7` icon `button` (`Maximize2` / `Minimize2`)                                       |
+| Settings          | Close                                                | `size-7` icon `button` (`X`)                                                             |
+| Settings          | Select field                                         | `Select`                                                                                 |
+| Skills            | Add skill                                            | Neutral `DropdownMenu` trigger (`border border-border bg-card`) + `Plus` / `ChevronDown` |
+| Skills            | Group header                                         | Full-width collapse `button` + rotating `ChevronDown`                                    |
+| Skills            | Skill row                                            | Flex-1 `button` → detail; hover reveals no extra chrome                                  |
+| Skills            | Edit / delete                                        | `SettingsIconAction` (`Button ghost icon-sm` + `Tooltip`)                                |
+| Skills            | Enable toggle                                        | Shared shadcn `Switch`                                                                   |
+| Skills            | Import selected                                      | Neutral `button` (`border border-border bg-card`), not primary                           |
+| Sidebar           | Back / collapse                                      | `Sidebar` + `Button ghost icon`                                                          |
+| Sidebar           | Navigation row                                       | `SidebarMenuButton`                                                                      |
+| Workspace sidebar | New conversation                                     | `button` + `hover:bg-bg-300 cursor-pointer`                                              |
+| Workspace sidebar | Session row                                          | Nested `button`; wrapper owns hover/active only                                          |
+| Workspace sidebar | Session actions                                      | Icon `button` + opacity reveal + `DropdownMenu`                                          |
+| Workspace sidebar | Settings                                             | Icon `button` + `hover:bg-bg-300 cursor-pointer`                                         |
+| Activity stream   | Tool row                                             | `Button ghost`-style row, hover `bg-foreground/[0.04]`                                   |
+| Activity stream   | Link / reference                                     | `text-primary hover:underline`                                                           |
+| Activity stream   | Output card                                          | `Card` or button card                                                                    |
+| Composer          | Add / options / send                                 | `Button ghost icon`                                                                      |
+| Composer          | Text field                                           | `Textarea` or contenteditable shell, preserving shadcn focus ring                        |
+| Session menu      | Pin / rename / Artifact download / notebook / delete | `DropdownMenu.Item`; destructive delete uses `text-danger-000`                           |
+| Workspace dialogs | Rename / delete / Artifact download                  | Compact dialog chrome; download uses a scrollable checklist and persistent footer        |
+| Viewer            | Tab                                                  | `TabsTrigger`                                                                            |
+| Viewer            | More / fullscreen / download / close                 | `Button ghost icon` + `Tooltip`                                                          |
+| File library      | Search                                               | `Input` / `CommandInput`                                                                 |
+| File library      | Grid/list switch                                     | `ToggleGroup type="single"`; hover `bg-muted`, selected `bg-bg-400`                      |
+| File library      | File card / file row                                 | `Card` / button row + neutral hover `bg-bg-100` / `bg-bg-200`                            |
 
 ## Language Guidelines
 

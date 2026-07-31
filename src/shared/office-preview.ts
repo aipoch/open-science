@@ -62,11 +62,6 @@ export type OfficePreviewAttachResult =
   | { kind: 'attached'; start: OfficePreviewRuntimeStart }
   | { kind: 'unavailable'; reason: 'PREVIEW_PROCESS_NOT_ISOLATED' }
 
-export type OfficePreviewResourceSnapshot = {
-  size: number
-  version: number
-}
-
 export type OfficePreviewAdmissionError = Error & {
   code: 'FILE_TOO_LARGE'
   size: number

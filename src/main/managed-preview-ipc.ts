@@ -8,11 +8,13 @@ import type {
   ReleaseManagedPreviewRequest
 } from '../shared/preview-resources'
 import type { ManagedPreviewResources } from './managed-preview-resources'
+import type { AcquireManagedPreviewOptions } from './managed-preview-resources'
 
 type ManagedPreviewHandlers = {
   acquire: (
     ownerId: number,
-    request: AcquireManagedPreviewRequest
+    request: AcquireManagedPreviewRequest,
+    options?: AcquireManagedPreviewOptions
   ) => Promise<ManagedPreviewResource>
   readRange: (
     ownerId: number,
@@ -26,7 +28,8 @@ type OwnerTicket = { ownerId: number; generation: number }
 type ManagedPreviewOwnerRegistry = {
   acquire: (
     event: IpcMainInvokeEvent,
-    request: AcquireManagedPreviewRequest
+    request: AcquireManagedPreviewRequest,
+    prepareOptions?: () => Promise<AcquireManagedPreviewOptions>
   ) => Promise<ManagedPreviewResource>
   register: (event: IpcMainInvokeEvent) => OwnerTicket
 }
@@ -61,10 +64,20 @@ const createManagedPreviewOwnerRegistry = (
 
   const acquire = async (
     event: IpcMainInvokeEvent,
-    request: AcquireManagedPreviewRequest
+    request: AcquireManagedPreviewRequest,
+    prepareOptions?: () => Promise<AcquireManagedPreviewOptions>
   ): Promise<ManagedPreviewResource> => {
     const ticket = register(event)
-    const resource = await handlers.acquire(ticket.ownerId, request)
+    let resource: ManagedPreviewResource
+    if (prepareOptions) {
+      const options = await prepareOptions()
+      if (!isActive(ticket)) {
+        throw new Error('Managed preview owner is no longer available.')
+      }
+      resource = await handlers.acquire(ticket.ownerId, request, options)
+    } else {
+      resource = await handlers.acquire(ticket.ownerId, request)
+    }
 
     // Acquisition may finish after renderer teardown; immediately revoke that late capability.
     if (!isActive(ticket)) {
@@ -82,8 +95,19 @@ const registerManagedPreviewIpcHandlers = (resources: ManagedPreviewResources): 
   const owners = createManagedPreviewOwnerRegistry(resources)
   const ownerId = (event: IpcMainInvokeEvent): number => owners.register(event).ownerId
 
-  ipcMain.handle('preview-resources:acquire', (event, request: AcquireManagedPreviewRequest) =>
-    owners.acquire(event, request)
+  ipcMain.handle(
+    'preview-resources:acquire',
+    async (event, { maxBytes, ...request }: AcquireManagedPreviewRequest) => {
+      if (maxBytes === undefined) return owners.acquire(event, request)
+      if (!Number.isSafeInteger(maxBytes) || maxBytes <= 0) {
+        throw new Error('Invalid managed preview byte limit.')
+      }
+
+      return owners.acquire(event, request, async () => ({
+        snapshot: await resources.inspect(request),
+        maxBytes
+      }))
+    }
   )
   ipcMain.handle('preview-resources:read-range', (event, request: ReadManagedPreviewRangeRequest) =>
     resources.readRange(ownerId(event), request)

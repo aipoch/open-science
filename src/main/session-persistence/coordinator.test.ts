@@ -9,6 +9,7 @@ import {
   type PersistedChatSession
 } from '../../shared/session-persistence'
 import type { ArtifactProjectReconciliationSnapshot } from '../artifacts/provenance-repository'
+import { FinalizedArtifactBindingConflictError } from '../artifacts/provenance-message-snapshot'
 import { createProjectDbClient, ensureProjectSchema } from '../projects/prisma-client'
 import {
   OrphanLegacyUploadAuthorityMissingError,
@@ -171,6 +172,255 @@ describe('SessionPersistenceCoordinator', () => {
     expect(repository.saveSession).toHaveBeenCalledWith(durableSession)
   })
 
+  it('does not overwrite Session JSON when finalized Artifact bindings reject the snapshot', async () => {
+    let durableSession = createSession({ title: 'Durable latest' })
+    const repository = createSessionRepository({
+      saveSession: vi.fn(async (session) => {
+        durableSession = session
+      })
+    })
+    const provenance = createProvenancePersistence({
+      validateFinalizedMessageBindings: vi
+        .fn()
+        .mockRejectedValue(
+          new FinalizedArtifactBindingConflictError(
+            'Artifact-owning Message is outside its bound Branch.'
+          )
+        )
+    })
+    const coordinator = new SessionPersistenceCoordinator(
+      repository,
+      createFileIndex(),
+      undefined,
+      provenance
+    )
+
+    await expect(coordinator.saveSession(createSession({ title: 'Queued stale' }))).rejects.toThrow(
+      'Artifact-owning Message is outside its bound Branch.'
+    )
+
+    expect(durableSession.title).toBe('Durable latest')
+    expect(repository.saveSession).not.toHaveBeenCalled()
+    expect(provenance.captureFinalizedMessages).not.toHaveBeenCalled()
+  })
+
+  it('keeps JSON-first durability when pre-save provenance lookup is unavailable', async () => {
+    const validationError = new Error('artifact database unavailable')
+    const repository = createSessionRepository()
+    const provenance = createProvenancePersistence({
+      validateFinalizedMessageBindings: vi.fn().mockRejectedValue(validationError)
+    })
+    const warn = vi.spyOn(console, 'warn').mockImplementation(() => undefined)
+    const coordinator = new SessionPersistenceCoordinator(
+      repository,
+      createFileIndex(),
+      undefined,
+      provenance
+    )
+
+    try {
+      await expect(coordinator.saveSession(createSession())).resolves.toMatchObject({
+        id: 'session-1'
+      })
+      await expect(
+        coordinator.saveSession(createSession({ title: 'Retry validation' }))
+      ).resolves.toMatchObject({ id: 'session-1' })
+    } finally {
+      warn.mockRestore()
+    }
+
+    expect(provenance.validateFinalizedMessageBindings).toHaveBeenCalledTimes(2)
+    expect(repository.saveSession).toHaveBeenCalledTimes(2)
+    expect(provenance.captureFinalizedMessages).toHaveBeenCalledTimes(2)
+  })
+
+  it('revalidates finalized bindings only when topology or artifact bindings change', async () => {
+    const provenance = createProvenancePersistence()
+    const coordinator = new SessionPersistenceCoordinator(
+      createSessionRepository(),
+      createFileIndex(),
+      undefined,
+      provenance
+    )
+    const firstMessage = {
+      id: 'message-1',
+      role: 'agent' as const,
+      content: 'streaming',
+      status: 'streaming' as const,
+      eventIds: [],
+      createdAt: 1,
+      updatedAt: 1
+    }
+
+    await coordinator.saveSession(createSession({ messages: [firstMessage] }))
+    await coordinator.saveSession(
+      createSession({
+        title: 'Renamed while streaming',
+        messages: [{ ...firstMessage, content: 'more text', updatedAt: 2 }]
+      })
+    )
+
+    expect(provenance.validateFinalizedMessageBindings).toHaveBeenCalledOnce()
+
+    const secondMessage = {
+      id: 'message-2',
+      role: 'user' as const,
+      content: 'continue',
+      status: 'complete' as const,
+      eventIds: [],
+      createdAt: 3,
+      updatedAt: 3
+    }
+    await coordinator.saveSession(
+      createSession({
+        messages: [
+          { ...firstMessage, content: 'complete', status: 'complete', updatedAt: 2 },
+          secondMessage
+        ]
+      })
+    )
+
+    expect(provenance.validateFinalizedMessageBindings).toHaveBeenCalledTimes(2)
+
+    await coordinator.runSessionMutation('project-1', 'session-1', async () => undefined)
+    await coordinator.saveSession(
+      createSession({
+        messages: [
+          { ...firstMessage, content: 'complete', status: 'complete', updatedAt: 2 },
+          { ...secondMessage, content: 'continue after artifact finalization', updatedAt: 4 }
+        ]
+      })
+    )
+
+    expect(provenance.validateFinalizedMessageBindings).toHaveBeenCalledTimes(3)
+  })
+
+  it('rebases explicitly changed safe fields onto the latest durable graph after a conflict', async () => {
+    const authoritativeSession = createSession({
+      title: 'Durable latest',
+      pinned: false,
+      messages: [
+        {
+          id: 'durable-message',
+          role: 'agent',
+          content: 'Artifact finalized',
+          status: 'complete',
+          eventIds: [],
+          createdAt: 3,
+          updatedAt: 3
+        }
+      ],
+      updatedAt: 3
+    })
+    const submittedSession = createSession({
+      title: 'Local rename',
+      pinned: true,
+      messages: [
+        {
+          id: 'stale-message',
+          role: 'user',
+          content: 'Stale graph',
+          status: 'complete',
+          eventIds: [],
+          createdAt: 1,
+          updatedAt: 1
+        }
+      ],
+      updatedAt: 4
+    })
+    const repository = createSessionRepository({
+      loadSessionWithDiagnostics: vi
+        .fn()
+        .mockResolvedValue({ status: 'found', session: authoritativeSession })
+    })
+    const provenance = createProvenancePersistence({
+      validateFinalizedMessageBindings: vi
+        .fn()
+        .mockRejectedValueOnce(
+          new FinalizedArtifactBindingConflictError(
+            'Artifact-owning Message is outside its bound Branch.'
+          )
+        )
+        .mockResolvedValue(undefined)
+    })
+    const coordinator = new SessionPersistenceCoordinator(
+      repository,
+      createFileIndex(),
+      undefined,
+      provenance
+    )
+
+    const result = await coordinator.saveSession(submittedSession, {
+      conflictRebaseFields: ['title', 'pinned']
+    })
+
+    expect(result).toMatchObject({ title: 'Local rename', pinned: true, updatedAt: 5 })
+    expect(result.updatedAt).toBeGreaterThan(authoritativeSession.updatedAt)
+    expect(result.updatedAt).toBeGreaterThan(submittedSession.updatedAt)
+    expect(result.messages).toEqual(authoritativeSession.messages)
+    expect(repository.saveSession).toHaveBeenCalledWith(result)
+    expect(provenance.validateFinalizedMessageBindings).toHaveBeenCalledTimes(2)
+    expect(provenance.captureFinalizedMessages).toHaveBeenCalledWith(result)
+  })
+
+  it('rebases a specialist binding onto the latest durable graph after a conflict', async () => {
+    const authoritativeSession = createSession({
+      specialistId: 'specialist-old',
+      messages: [
+        {
+          id: 'durable-message',
+          role: 'agent',
+          content: 'Artifact finalized',
+          status: 'complete',
+          eventIds: [],
+          createdAt: 3,
+          updatedAt: 3
+        }
+      ],
+      updatedAt: 3
+    })
+    const submittedSession = createSession({
+      messages: [
+        {
+          id: 'stale-message',
+          role: 'user',
+          content: 'Stale graph',
+          status: 'complete',
+          eventIds: [],
+          createdAt: 1,
+          updatedAt: 1
+        }
+      ],
+      updatedAt: 4
+    })
+    const repository = createSessionRepository({
+      loadSessionWithDiagnostics: vi
+        .fn()
+        .mockResolvedValue({ status: 'found', session: authoritativeSession })
+    })
+    const provenance = createProvenancePersistence({
+      validateFinalizedMessageBindings: vi
+        .fn()
+        .mockRejectedValueOnce(new FinalizedArtifactBindingConflictError('stale graph'))
+        .mockResolvedValue(undefined)
+    })
+    const coordinator = new SessionPersistenceCoordinator(
+      repository,
+      createFileIndex(),
+      undefined,
+      provenance
+    )
+
+    const result = await coordinator.saveSessionSpecialistBinding(
+      submittedSession,
+      'specialist-new'
+    )
+
+    expect(result.specialistId).toBe('specialist-new')
+    expect(result.messages).toEqual(authoritativeSession.messages)
+    expect(repository.saveSession).toHaveBeenCalledWith(result)
+  })
+
   it('restores DB visibility and clears the tombstone when JSON deletion fails', async () => {
     const repository = createSessionRepository({
       deleteSession: vi.fn().mockRejectedValueOnce(new Error('disk locked'))
@@ -200,6 +450,7 @@ describe('SessionPersistenceCoordinator', () => {
     const fileIndex = createFileIndex()
     const onFilesChanged = vi.fn()
     const provenance = {
+      validateFinalizedMessageBindings: vi.fn().mockResolvedValue(undefined),
       captureFinalizedMessages: vi.fn().mockResolvedValue(undefined),
       reconcileSessionDeletions: vi.fn().mockResolvedValue(undefined),
       prepareSessionDeletion: vi.fn().mockResolvedValue({
@@ -298,6 +549,7 @@ describe('SessionPersistenceCoordinator', () => {
       })
     }
     const provenance = {
+      validateFinalizedMessageBindings: vi.fn().mockResolvedValue(undefined),
       captureFinalizedMessages: vi.fn().mockResolvedValue(undefined),
       reconcileSessionDeletions: vi.fn().mockResolvedValue(undefined),
       prepareSessionDeletion: vi.fn(async () => {
@@ -389,6 +641,7 @@ describe('SessionPersistenceCoordinator', () => {
       operationId: 'origin-delete-1'
     }
     const provenance = {
+      validateFinalizedMessageBindings: vi.fn().mockResolvedValue(undefined),
       captureFinalizedMessages: vi.fn().mockResolvedValue(undefined),
       reconcileSessionDeletions: vi.fn().mockResolvedValue(undefined),
       prepareSessionDeletion: vi.fn().mockResolvedValue(receipt),
@@ -480,6 +733,7 @@ describe('SessionPersistenceCoordinator', () => {
     })
     const fileIndex = createFileIndex()
     const provenance = {
+      validateFinalizedMessageBindings: vi.fn().mockResolvedValue(undefined),
       captureFinalizedMessages: vi.fn().mockResolvedValue(undefined),
       reconcileSessionDeletions: vi.fn().mockResolvedValue(undefined),
       prepareSessionDeletion: vi.fn(),
@@ -1433,6 +1687,7 @@ describe('SessionPersistenceCoordinator', () => {
     const markReconciliationIncomplete = vi.fn()
     const fileIndex = createFileIndex({ markReconciliationIncomplete })
     const provenance = {
+      validateFinalizedMessageBindings: vi.fn(),
       captureFinalizedMessages: vi.fn(),
       reconcileSessionDeletions: vi.fn().mockRejectedValue(new Error('recovery failed')),
       prepareSessionDeletion: vi.fn(),
@@ -2226,6 +2481,7 @@ const createSessionDeletionHandlers = (
 const createProvenancePersistence = (
   overrides: Partial<SessionProvenancePersistence> = {}
 ): SessionProvenancePersistence => ({
+  validateFinalizedMessageBindings: vi.fn().mockResolvedValue(undefined),
   captureFinalizedMessages: vi.fn().mockResolvedValue(undefined),
   reconcileSessionDeletions: vi.fn().mockResolvedValue(undefined),
   prepareSessionDeletion: vi

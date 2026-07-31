@@ -15,6 +15,7 @@ import {
   DropdownMenuTrigger
 } from '@/components/ui/dropdown-menu'
 import { Input } from '@/components/ui/input'
+import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from '@/components/ui/tooltip'
 import { SettingsToggle } from './SettingsLayout'
 import { useSpecialistStore } from '@/stores/specialist-store'
 import type { CreateSpecialistInput } from '../../../../shared/specialist'
@@ -264,15 +265,24 @@ const SpecialistsPanel = ({ view, onNavigate }: SpecialistsPanelProps): React.JS
                           onToggle={() => void setEnabled(item.id, !item.enabled)}
                         />
                         <DropdownMenu>
-                          <DropdownMenuTrigger asChild>
-                            <Button
-                              variant="ghost"
-                              size="icon"
-                              aria-label={`Actions for ${item.displayName ?? item.name}`}
-                            >
-                              <ChevronDown aria-hidden="true" />
-                            </Button>
-                          </DropdownMenuTrigger>
+                          <TooltipProvider delayDuration={200}>
+                            <Tooltip>
+                              <TooltipTrigger asChild>
+                                <DropdownMenuTrigger asChild>
+                                  <Button
+                                    variant="ghost"
+                                    size="icon"
+                                    aria-label={`Actions for ${item.displayName ?? item.name}`}
+                                  >
+                                    <ChevronDown aria-hidden="true" />
+                                  </Button>
+                                </DropdownMenuTrigger>
+                              </TooltipTrigger>
+                              <TooltipContent>
+                                Actions for {item.displayName ?? item.name}
+                              </TooltipContent>
+                            </Tooltip>
+                          </TooltipProvider>
                           <DropdownMenuContent align="end">
                             <DropdownMenuItem
                               className="gap-2 text-xs"
@@ -327,7 +337,7 @@ const SpecialistsPanel = ({ view, onNavigate }: SpecialistsPanelProps): React.JS
                     className="flex min-h-14 items-center gap-2 py-2.5"
                   >
                     <span
-                      className="flex size-7 shrink-0 items-center justify-center rounded-lg bg-[#dcfce7] text-[13px]"
+                      className="flex size-7 shrink-0 items-center justify-center rounded-lg bg-primary/10 text-[13px] text-primary"
                       aria-hidden="true"
                     >
                       ✓
@@ -370,7 +380,7 @@ const SpecialistsPanel = ({ view, onNavigate }: SpecialistsPanelProps): React.JS
             {deleteError ? (
               <p
                 role="alert"
-                className="mt-3 rounded-lg border border-amber-200 bg-amber-50 px-3 py-2 text-xs text-amber-900 dark:border-amber-900 dark:bg-amber-950 dark:text-amber-100"
+                className="mt-3 rounded-lg border border-danger-000/30 bg-danger-000/10 px-3 py-2 text-xs text-danger-000"
               >
                 {deleteError}
               </p>

@@ -3,11 +3,11 @@ import type {
   OfficePreviewAttachResult,
   OfficePreviewOpenRequest,
   OfficePreviewOpenResult,
-  OfficePreviewResourceSnapshot,
   OfficePreviewRuntimeResource,
   OfficePreviewRuntimeStart,
   OfficePreviewRuntimeState
 } from '../../shared/office-preview'
+import type { ManagedPreviewResourceSnapshot } from '../managed-preview-resources'
 import {
   getOfficePreviewTimeoutMs,
   OFFICE_PREVIEW_MAX_FILE_BYTES,
@@ -21,11 +21,11 @@ type OfficePreviewFrameProcess = {
 }
 
 type OfficePreviewSupervisorDependencies = {
-  inspectResource: (request: OfficePreviewOpenRequest) => Promise<OfficePreviewResourceSnapshot>
+  inspectResource: (request: OfficePreviewOpenRequest) => Promise<ManagedPreviewResourceSnapshot>
   acquireResource: (
     ownerId: number,
     request: OfficePreviewOpenRequest,
-    snapshot: OfficePreviewResourceSnapshot,
+    snapshot: ManagedPreviewResourceSnapshot,
     maxBytes: number
   ) => Promise<OfficePreviewRuntimeResource>
   releaseResource: (ownerId: number, resourceId: string) => void | Promise<void>

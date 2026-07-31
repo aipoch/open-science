@@ -5,6 +5,8 @@ import {
   validateCreateSpecialistInput,
   validateUpdateSpecialistInput,
   SPECIALIST_DESCRIPTION_MAX_LENGTH,
+  SPECIALIST_DISPLAY_NAME_MAX_LENGTH,
+  SPECIALIST_SYSTEM_PROMPT_MAX_LENGTH,
   emptyFullAccessConfig,
   emptySelectedConfig,
   resolveEffectiveSpecialistSkills,
@@ -65,6 +67,36 @@ describe('validateCreateSpecialistInput', () => {
     const errors = validateCreateSpecialistInput({ name: 'My Bot' }, [], map)
     expect(errors.some((e) => e.field === 'name')).toBe(true)
   })
+
+  it('rejects invalid public names even when displayName is omitted', () => {
+    expect(
+      validateCreateSpecialistInput({ name: '<bad>' }, []).map((error) => error.message)
+    ).toContain('Name may only contain letters, digits, spaces, hyphens, and underscores.')
+    expect(
+      validateUpdateSpecialistInput({ id: 'specialist-1', revision: 1, name: '<bad>' }, []).map(
+        (error) => error.message
+      )
+    ).toContain('Name may only contain letters, digits, spaces, hyphens, and underscores.')
+  })
+
+  it('rejects blank or oversized display names on create and update', () => {
+    expect(
+      validateCreateSpecialistInput({ name: 'Bot', displayName: '   ' }, []).map(
+        (error) => error.message
+      )
+    ).toContain('Display name is required.')
+
+    expect(
+      validateUpdateSpecialistInput(
+        {
+          id: 'specialist-1',
+          revision: 1,
+          displayName: 'x'.repeat(SPECIALIST_DISPLAY_NAME_MAX_LENGTH + 1)
+        },
+        []
+      ).map((error) => error.message)
+    ).toContain(`Display name must be ${SPECIALIST_DISPLAY_NAME_MAX_LENGTH} characters or fewer.`)
+  })
 })
 
 describe('validateSpecialistDescription', () => {
@@ -100,6 +132,24 @@ describe('description validation in create/update inputs', () => {
       []
     )
     expect(errors.some((e) => e.field === 'description')).toBe(true)
+  })
+})
+
+describe('system prompt validation in create/update inputs', () => {
+  it('rejects prompts over the shared storage and runtime limit', () => {
+    const oversized = 'a'.repeat(SPECIALIST_SYSTEM_PROMPT_MAX_LENGTH + 1)
+
+    expect(
+      validateCreateSpecialistInput({ name: 'Bot', systemPrompt: oversized }, []).some(
+        (error) => error.field === 'systemPrompt'
+      )
+    ).toBe(true)
+    expect(
+      validateUpdateSpecialistInput(
+        { id: 'specialist-1', revision: 1, systemPrompt: oversized },
+        []
+      ).some((error) => error.field === 'systemPrompt')
+    ).toBe(true)
   })
 })
 

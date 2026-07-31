@@ -131,11 +131,28 @@ describe('PreviewPanel', () => {
     return { tabBar, scrollTo }
   }
 
-  it('shows an empty state and no tab bar when there are no preview items', async () => {
+  it('shows an empty state without rendering preview header chrome', async () => {
     await renderPanel()
 
     expect(container.textContent).toContain('No preview content')
-    expect(container.querySelectorAll('[title]').length).toBe(0)
+    expect(container.querySelector('[aria-label="Open previews"]')).toBeNull()
+    expect(container.querySelector('[data-testid="preview-panel-top-bar"]')).toBeNull()
+  })
+
+  it('reserves stable header padding for the external preview toggle', async () => {
+    await renderTwoFileTabs()
+
+    const chromeRow = container.querySelector('[data-testid="preview-panel-top-bar"]')
+    const tabBar = container.querySelector('[aria-label="Open previews"]')
+
+    expect(chromeRow).not.toBeNull()
+    expect(chromeRow?.contains(tabBar)).toBe(true)
+    expect(tabBar?.parentElement).toBe(chromeRow)
+    expect(chromeRow?.className).toContain('pr-11')
+    expect(tabBar?.className).toContain('flex-1')
+    expect(tabBar?.className).not.toContain('pr-16')
+    expect(container.querySelector('[data-testid="preview-panel-toggle-slot"]')).toBeNull()
+    expect(container.querySelector('[data-testid="workspace-preview-toggle"]')).toBeNull()
   })
 
   it('renders a tab per item, highlights the active one, and routes file items to PreviewFileContent', async () => {
@@ -152,7 +169,7 @@ describe('PreviewPanel', () => {
 
     await renderPanel()
 
-    const tabs = container.querySelectorAll('[title]')
+    const tabs = container.querySelectorAll('[role="tab"]')
     expect(tabs.length).toBe(2)
     const previewTabs = container.querySelectorAll<HTMLElement>('[role="tab"]')
     for (const tab of previewTabs) {
@@ -209,7 +226,7 @@ describe('PreviewPanel', () => {
     expect(header?.querySelector(`[aria-label="Close preview of ${name}"]`)).not.toBeNull()
     expect(tabBar?.getAttribute('role')).toBe('tablist')
     expect(tabBar?.className).toContain('min-w-0')
-    expect(tabBar?.className).toContain('w-full')
+    expect(tabBar?.className).toContain('flex-1')
     expect(tabBar?.querySelector('[role="tab"][aria-selected="true"]')).not.toBeNull()
     expect(fileTab?.querySelector('[data-testid="file-name-head"]')?.textContent).toBe(
       'global_climate_anomaly_analysis_1850'
@@ -639,7 +656,7 @@ describe('PreviewPanel', () => {
     await act(async () => usePreviewWorkbenchStore.getState().collapsePanel())
     expect(container.querySelector('[data-testid="file-content"]')).toBeNull()
 
-    await act(async () => usePreviewWorkbenchStore.getState().openPanel())
+    await act(async () => usePreviewWorkbenchStore.getState().togglePanel())
     expect(container.querySelector('[data-testid="file-content"]')).not.toBeNull()
   })
 })

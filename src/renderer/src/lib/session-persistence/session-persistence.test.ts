@@ -1,6 +1,7 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest'
 
 import {
+  materializeSessionConversationGraph,
   SESSION_MANIFEST_VERSION,
   type LoadAllSessionsResult,
   type PersistedChatSession
@@ -9,9 +10,11 @@ import { toRuntimeUploadedAttachment } from '../../../../shared/uploads'
 import {
   createInitialSessionState,
   isExternallyHydratedSession,
+  toPersistedSession,
   useSessionStore
 } from '../../stores/session-store'
 import {
+  createOrderedSessionPersistence,
   createStoreSaver,
   loadPersistedSessions,
   reconcilePendingArtifacts,
@@ -191,6 +194,93 @@ describe('renderer session persistence bridge', () => {
     expect(api.saveSession).toHaveBeenCalledTimes(1)
     expect(api.saveSession).toHaveBeenCalledWith(
       expect.objectContaining({ id: 'session-1', projectId: 'project-a' })
+    )
+  })
+
+  it('reports only changed safe fields for stale-graph conflict rebasing', async () => {
+    const persisted = materializeSessionConversationGraph(
+      createPersistedSession({
+        projectId: 'project-a',
+        title: 'Original',
+        pinned: false,
+        messages: [
+          {
+            id: 'stale-message',
+            role: 'user',
+            content: 'Stale graph',
+            status: 'complete',
+            eventIds: [],
+            createdAt: 1,
+            updatedAt: 1
+          }
+        ]
+      })
+    )
+    const durable = materializeSessionConversationGraph(
+      createPersistedSession({
+        projectId: 'project-a',
+        title: 'Local rename',
+        pinned: true,
+        messages: [
+          {
+            id: 'durable-message',
+            role: 'agent',
+            content: 'Artifact finalized',
+            status: 'complete',
+            eventIds: [],
+            createdAt: 2,
+            updatedAt: 2
+          }
+        ],
+        updatedAt: 2
+      })
+    )
+    useSessionStore.getState().hydrateSessions([persisted])
+    const api = createApi({ saveSession: vi.fn().mockResolvedValue(durable) })
+    const save = createStoreSaver(api, useSessionStore.getState())
+
+    useSessionStore.getState().renameSession('session-1', 'Local rename')
+    useSessionStore.getState().togglePinned('session-1')
+    await save(useSessionStore.getState())
+
+    expect(api.saveSession).toHaveBeenCalledWith(
+      expect.objectContaining({ title: 'Local rename', pinned: true }),
+      { conflictRebaseFields: ['title', 'pinned'] }
+    )
+    expect(useSessionStore.getState().sessions[0].messages).toEqual(durable.messages)
+    expect(useSessionStore.getState().sessions[0].conversationGraph).toEqual(
+      durable.conversationGraph
+    )
+  })
+
+  it('retains safe-field rebase intent for a forced retry after a failed write', async () => {
+    const persisted = createPersistedSession({ projectId: 'project-a', title: 'Original' })
+    useSessionStore.getState().hydrateSessions([persisted])
+    const saveSession = vi
+      .fn()
+      .mockRejectedValueOnce(new Error('database busy'))
+      .mockImplementation(async (session: PersistedChatSession) => session)
+    const failedFields = new Map<string, readonly ['title']>()
+    const api = createApi({ saveSession })
+    const save = createStoreSaver(api, useSessionStore.getState(), {
+      onFailure: (target, _error, context) => {
+        if (context.conflictRebaseFields?.includes('title')) {
+          failedFields.set(target, ['title'])
+        }
+      }
+    })
+
+    useSessionStore.getState().renameSession('session-1', 'Local rename')
+    const state = useSessionStore.getState()
+    await expect(save(state)).rejects.toThrow('database busy')
+    await save(state, {
+      forceTargets: new Set(['session:session-1']),
+      conflictRebaseFieldsByTarget: failedFields
+    })
+
+    expect(saveSession).toHaveBeenLastCalledWith(
+      expect.objectContaining({ title: 'Local rename' }),
+      { conflictRebaseFields: ['title'] }
     )
   })
 
@@ -437,7 +527,11 @@ describe('renderer session persistence bridge', () => {
       content: 'Newer live message',
       projectId: 'project-a'
     })
-    useSessionStore.getState().applyDurableSessionProjection({ source, session: durable })
+    useSessionStore.getState().applyDurableSessionProjection({
+      source,
+      session: durable,
+      mode: 'replace-persisted-if-current'
+    })
 
     const projected = useSessionStore.getState().sessions[0]
     expect(projected.messages.map((message) => message.content)).toEqual([
@@ -607,6 +701,43 @@ describe('renderer session persistence bridge', () => {
     await expect(save(useSessionStore.getState())).rejects.toThrow('disk full')
     expect(api.saveSession).toHaveBeenCalledOnce()
     expect(api.saveManifest).toHaveBeenCalledOnce()
+  })
+
+  it('keeps an explicit latest Session save after older store snapshots', async () => {
+    const firstSave = createDeferred<void>()
+    let durableTitle = ''
+    const saveSession = vi.fn(async (submitted: PersistedChatSession) => {
+      if (submitted.title === 'Queued first') await firstSave.promise
+      durableTitle = submitted.title
+      return submitted
+    })
+    const api = createApi({ saveSession })
+    const persistence = createOrderedSessionPersistence(api)
+
+    useSessionStore.getState().appendUserMessage({
+      sessionId: 'session-1',
+      content: 'First',
+      cwd: '/workspace/project',
+      projectId: 'project-a'
+    })
+    const save = createStoreSaver(api, useSessionStore.getState(), {}, persistence)
+
+    useSessionStore.getState().renameSession('session-1', 'Queued first')
+    const queuedFirst = save(useSessionStore.getState())
+    useSessionStore.getState().renameSession('session-1', 'Queued stale')
+    const queuedStale = save(useSessionStore.getState())
+    useSessionStore.getState().renameSession('session-1', 'Artifact latest')
+    const latestSession = toPersistedSession(useSessionStore.getState().sessions[0])
+    const explicitLatest = persistence.saveSession(latestSession)
+
+    await flushMicrotasks()
+    expect(saveSession).toHaveBeenCalledOnce()
+
+    firstSave.resolve()
+    await Promise.all([queuedFirst, queuedStale, explicitLatest])
+
+    expect(saveSession).toHaveBeenCalledTimes(3)
+    expect(durableTitle).toBe('Artifact latest')
   })
 })
 

@@ -32,6 +32,7 @@ const FORMAT_LOADING_TITLES: Record<PreviewFileFormat, string> = {
   presentation: 'Preparing presentation',
   spreadsheet: 'Preparing spreadsheet',
   text: 'Preparing text file',
+  tiff: 'Preparing image',
   unknown: 'Preparing preview',
   word: 'Preparing document'
 }
@@ -49,6 +50,7 @@ const FORMAT_BADGES: Record<PreviewFileFormat, string> = {
   presentation: 'PPTX',
   spreadsheet: 'XLSX',
   text: 'TXT',
+  tiff: 'TIFF',
   unknown: 'FILE',
   word: 'DOCX'
 }

@@ -22,8 +22,10 @@ export const getArtifactPreviewFormat = (artifact: MessageArtifact): PreviewFile
   getPreviewFormatForFile({ name: getArtifactName(artifact), mimeType: artifact.mimeType })
 
 // Keeps image-specific size limits aligned with the central format decision.
-export const isImageArtifact = (artifact: MessageArtifact): boolean =>
-  getArtifactPreviewFormat(artifact) === 'image'
+export const isImageArtifact = (artifact: MessageArtifact): boolean => {
+  const format = getArtifactPreviewFormat(artifact)
+  return format === 'image' || format === 'tiff'
+}
 
 // Derives thumbnail eligibility from the shared encoding policy instead of a second allowlist.
 export const shouldReadArtifactPreview = (artifact: MessageArtifact): boolean =>

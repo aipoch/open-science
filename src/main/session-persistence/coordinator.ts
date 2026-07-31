@@ -1,3 +1,5 @@
+import { createHash } from 'node:crypto'
+
 import type { ProjectFilesChangedEvent } from '../../shared/project-files'
 import type { ProjectFileSource } from '../../shared/project-files'
 import type { ArtifactVersionFile } from '../../shared/artifact-provenance'
@@ -5,6 +7,7 @@ import type {
   LoadAllSessionsResult,
   PersistedArtifact,
   PersistedChatSession,
+  SaveSessionOptions,
   SaveSessionManifestRequest,
   SessionLoadFailure,
   SessionLoadWarning
@@ -12,7 +15,10 @@ import type {
 import type { ManagedFileSoftDeleteToken } from '../project-files/repository'
 import type { ProjectSessionDeletionState } from './repository'
 import { materializeSessionConversationGraph } from '../../shared/session-persistence'
-import type { SessionDeletionReceipt } from '../artifacts/provenance-message-snapshot'
+import {
+  FinalizedArtifactBindingConflictError,
+  type SessionDeletionReceipt
+} from '../artifacts/provenance-message-snapshot'
 import type { ArtifactProjectReconciliationSnapshot } from '../artifacts/provenance-repository'
 import {
   OrphanLegacyUploadAuthorityMissingError,
@@ -73,6 +79,7 @@ type SessionFileIndex = {
 }
 
 type SessionProvenancePersistence = {
+  validateFinalizedMessageBindings(session: PersistedChatSession): Promise<void>
   captureFinalizedMessages(session: PersistedChatSession): Promise<void>
   reconcileSessionDeletions(activeSessions: PersistedChatSession[]): Promise<void>
   prepareSessionDeletion(session: PersistedChatSession): Promise<SessionDeletionReceipt>
@@ -144,6 +151,85 @@ const appendUnique = (existing: string[] | undefined, incoming: readonly string[
     result.push(value)
   }
   return result
+}
+
+const rebaseSafeSessionFields = (
+  authoritative: PersistedChatSession,
+  submitted: PersistedChatSession,
+  fields: NonNullable<SaveSessionOptions['conflictRebaseFields']>
+): PersistedChatSession => {
+  const rebased = { ...authoritative }
+  for (const field of fields) {
+    switch (field) {
+      case 'title':
+        rebased.title = submitted.title
+        break
+      case 'permissionProfile':
+        rebased.permissionProfile = submitted.permissionProfile
+        break
+      case 'autoReviewEnabled':
+        rebased.autoReviewEnabled = submitted.autoReviewEnabled
+        break
+      case 'enabledComputeHosts':
+        rebased.enabledComputeHosts = submitted.enabledComputeHosts
+          ? [...submitted.enabledComputeHosts]
+          : undefined
+        break
+      case 'pinned':
+        rebased.pinned = submitted.pinned
+        break
+      case 'specialistId':
+        rebased.specialistId = submitted.specialistId
+        break
+    }
+  }
+  rebased.updatedAt = Math.max(authoritative.updatedAt, submitted.updatedAt) + 1
+  return rebased
+}
+
+const sessionBindingTopologyHash = (session: PersistedChatSession): string => {
+  const graph = session.conversationGraph
+  const topology = graph
+    ? {
+        rootFrameId: graph.rootFrameId,
+        branches: graph.branches.map(({ id, agentFrameId, headMessageId }) => ({
+          id,
+          agentFrameId,
+          headMessageId
+        })),
+        messages: graph.messages.map(({ id, agentFrameId, parentMessageId }) => ({
+          id,
+          agentFrameId,
+          parentMessageId
+        }))
+      }
+    : null
+  return createHash('sha256').update(JSON.stringify(topology)).digest('hex')
+}
+
+type FinalizedArtifactBindingValidation =
+  | { status: 'valid' }
+  | { status: 'unavailable' }
+  | { status: 'conflict'; error: FinalizedArtifactBindingConflictError }
+
+const validateFinalizedArtifactBindings = async (
+  provenance: SessionProvenancePersistence | undefined,
+  session: PersistedChatSession
+): Promise<FinalizedArtifactBindingValidation> => {
+  if (!provenance) return { status: 'valid' }
+
+  try {
+    await provenance.validateFinalizedMessageBindings(session)
+    return { status: 'valid' }
+  } catch (error) {
+    if (error instanceof FinalizedArtifactBindingConflictError) {
+      return { status: 'conflict', error }
+    }
+    // Provenance is derived from authoritative Session JSON. A transient lookup failure must not
+    // regress the JSON-first durability guarantee; capture/indexing keep their post-save retry path.
+    console.warn('[session-persistence] pre-save provenance validation unavailable', error)
+    return { status: 'unavailable' }
+  }
 }
 
 // Reattach native Versions through the Session authority, preserving graph-only inactive Branches.
@@ -228,6 +314,7 @@ class SessionPersistenceCoordinator {
   private queue: Promise<unknown> = Promise.resolve()
   private readonly deletedSessions = new Set<string>()
   private readonly deletedProjects = new Set<string>()
+  private readonly validatedBindingTopologies = new Map<string, string>()
   private destructiveStartupWindowOpen = true
   private sessionDeletionHandlers: SessionDeletionHandlers | undefined
 
@@ -253,6 +340,7 @@ class SessionPersistenceCoordinator {
    */
   loadAllReadOnly(): Promise<LoadAllSessionsResult> {
     return this.enqueue(async () => {
+      this.validatedBindingTopologies.clear()
       // Once any renderer has observed a degraded snapshot, later loads are no longer allowed to
       // treat the process as an untouched startup boundary for destructive cleanup.
       this.destructiveStartupWindowOpen = false
@@ -276,6 +364,7 @@ class SessionPersistenceCoordinator {
    */
   loadAll(): Promise<LoadAllSessionsResult> {
     return this.enqueue(async () => {
+      this.validatedBindingTopologies.clear()
       // Public loadAll can be called by multiple renderers/tasks. Only the first invocation in this
       // process is a startup boundary; consume it before any await so failures and partial scans cannot
       // reopen destructive cleanup while live clients may already hold the legacy projection.
@@ -400,7 +489,10 @@ class SessionPersistenceCoordinator {
   // Persists authoritative JSON before updating the derived index. If indexing fails, the save stays
   // durable, the caller receives the error for its normal retry path, and Files is reset to show its
   // incomplete state rather than silently presenting stale metadata as complete.
-  saveSession(session: PersistedChatSession): Promise<PersistedChatSession> {
+  saveSession(
+    session: PersistedChatSession,
+    options: SaveSessionOptions = {}
+  ): Promise<PersistedChatSession> {
     return this.enqueue(async () => {
       if (this.deletedProjects.has(session.projectId)) {
         throw new Error('Cannot save a session whose project has been deleted.')
@@ -410,12 +502,51 @@ class SessionPersistenceCoordinator {
       }
 
       const materializedSession = materializeSessionConversationGraph(session)
-      const durableSession = this.uploads
+      let durableSession = this.uploads
         ? await this.uploads.upgradeLegacySessionUploads(materializedSession, {
             mode: 'live-save'
           })
         : materializedSession
+      const key = sessionKey(session.projectId, session.id)
+      let bindingTopology = sessionBindingTopologyHash(durableSession)
+      let bindingValidation: FinalizedArtifactBindingValidation =
+        this.validatedBindingTopologies.get(key) === bindingTopology
+          ? { status: 'valid' }
+          : await validateFinalizedArtifactBindings(this.provenance, durableSession)
+      // Reject a stale graph before it can replace the authoritative Session JSON. Capture remains
+      // after the durable write so immutable evidence never includes Message bytes that were not saved.
+      // Streaming payload changes preserve this topology, avoiding a database lookup on every chunk.
+      if (bindingValidation.status === 'conflict') {
+        const conflictRebaseFields = options.conflictRebaseFields ?? []
+        if (conflictRebaseFields.length === 0) throw bindingValidation.error
+
+        const authoritative = await this.repository.loadSessionWithDiagnostics(
+          session.projectId,
+          session.id
+        )
+        if (authoritative.status !== 'found') throw bindingValidation.error
+
+        const rebasedSession = rebaseSafeSessionFields(
+          authoritative.session,
+          durableSession,
+          conflictRebaseFields
+        )
+        durableSession = this.uploads
+          ? await this.uploads.upgradeLegacySessionUploads(rebasedSession, { mode: 'live-save' })
+          : rebasedSession
+        bindingTopology = sessionBindingTopologyHash(durableSession)
+        bindingValidation =
+          this.validatedBindingTopologies.get(key) === bindingTopology
+            ? { status: 'valid' }
+            : await validateFinalizedArtifactBindings(this.provenance, durableSession)
+        if (bindingValidation.status === 'conflict') throw bindingValidation.error
+      }
       await this.repository.saveSession(durableSession)
+      // Cache only confirmed topology. A transient validation failure keeps the old fingerprint so
+      // the next autosave retries the narrow lookup instead of silently treating it as acknowledged.
+      if (bindingValidation.status === 'valid') {
+        this.validatedBindingTopologies.set(key, bindingTopology)
+      }
       await this.provenance?.captureFinalizedMessages(durableSession)
       let changedSources: ProjectFileSource[]
       try {
@@ -442,6 +573,18 @@ class SessionPersistenceCoordinator {
     })
   }
 
+  // Specialist switching reads the latest durable Session and changes only this safe binding. Keep
+  // that intent inside the persistence boundary so every caller receives graph-conflict recovery.
+  saveSessionSpecialistBinding(
+    session: PersistedChatSession,
+    specialistId: string | undefined
+  ): Promise<PersistedChatSession> {
+    return this.saveSession(
+      { ...session, specialistId },
+      { conflictRebaseFields: ['specialistId'] }
+    )
+  }
+
   // Joins late Session-owned side effects (for example Upload finalization) to the same ordering
   // boundary as JSON save and deletion. The mutation is rejected after a Session/Project tombstone.
   runSessionMutation<Result>(
@@ -456,7 +599,13 @@ class SessionPersistenceCoordinator {
       if (this.deletedSessions.has(sessionKey(projectId, sessionId))) {
         throw new Error('Cannot mutate a session that has been deleted.')
       }
-      return mutation()
+      try {
+        return await mutation()
+      } finally {
+        // Artifact finalization can add a new binding without changing the Session graph. Force the
+        // next save to validate that new database scope before reusing a topology fingerprint.
+        this.validatedBindingTopologies.delete(sessionKey(projectId, sessionId))
+      }
     })
   }
 
@@ -596,6 +745,9 @@ class SessionPersistenceCoordinator {
         // The marked directory rename is the sole authoritative commit. Derived index deletion runs
         // afterward so any failure is replayable from the durable Project intent and tombstone.
         await this.repository.deleteProjectSessions(projectId)
+        for (const sessionId of deletedSessionIds) {
+          this.validatedBindingTopologies.delete(sessionKey(projectId, sessionId))
+        }
         await this.fileIndex.softDeleteProject(projectId)
       } catch (error) {
         try {
@@ -737,6 +889,7 @@ class SessionPersistenceCoordinator {
         }
         await this.repository.deleteSession(projectId, sessionId)
         jsonDeleted = true
+        this.validatedBindingTopologies.delete(key)
         await this.provenance?.completeSessionDeletion(receipt)
       } catch (error) {
         try {

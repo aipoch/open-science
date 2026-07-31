@@ -36,6 +36,9 @@ const runtime = vi.hoisted(() => ({
 }))
 
 vi.mock('@/components/ui/resizable', () => ({
+  ResizablePanel: ({ children }: { children: React.ReactNode }): React.JSX.Element => (
+    <div>{children}</div>
+  ),
   ResizablePanelGroup: ({ children }: { children: React.ReactNode }): React.JSX.Element => (
     <div>{children}</div>
   ),

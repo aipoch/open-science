@@ -577,6 +577,7 @@ const FileTile = ({
             source={source}
             projectId={projectId}
             sessionId={sessionId}
+            isVisible={isNearViewport}
           />
           {missing ? (
             <span className="absolute left-1.5 top-1.5 rounded bg-text-000/75 px-1.5 py-0.5 text-[9px] font-semibold uppercase tracking-wide text-bg-000 shadow-sm">
@@ -652,9 +653,10 @@ const FileListRow = ({
         <span className="flex size-7 shrink-0 items-center justify-center rounded bg-bg-200 text-text-300">
           <File className="size-4" strokeWidth={1.7} aria-hidden="true" />
         </span>
-        <span className={cn('min-w-0 flex-1 truncate text-[12px]', missing && 'opacity-50')}>
-          {file.name}
-        </span>
+        <ExtensionPreservingFileName
+          name={file.name}
+          className={cn('flex-1 text-[12px]', missing && 'opacity-50')}
+        />
         {missing ? (
           <span className="shrink-0 text-[9px] font-semibold uppercase text-text-300">
             {FILE_MISSING_TAG}

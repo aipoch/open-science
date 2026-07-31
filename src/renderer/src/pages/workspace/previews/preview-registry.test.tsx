@@ -3,6 +3,7 @@ import { describe, expect, it, vi } from 'vitest'
 import type { PreviewFileItem } from '@/stores/preview-workbench-store'
 
 import { OfficePreviewRenderer } from './renderers/OfficePreview'
+import { TiffPreviewRenderer } from './renderers/TiffPreview'
 import { renderPreviewFile } from './preview-registry'
 
 vi.mock('./renderers/PdfPreview', () => ({ PdfPreviewRenderer: () => null }))
@@ -27,4 +28,10 @@ describe('preview registry Office routing', () => {
       expect(rendered?.type).toBe(OfficePreviewRenderer)
     }
   )
+
+  it('routes TIFF files to the TIFF renderer', () => {
+    const rendered = renderPreviewFile({ item: createItem('tiff') })
+
+    expect(rendered?.type).toBe(TiffPreviewRenderer)
+  })
 })

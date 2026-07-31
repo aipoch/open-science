@@ -22,7 +22,6 @@ import {
   Flag,
   Image as ImageIcon,
   Loader2,
-  PanelRight,
   Plus,
   ScanEye,
   Square,
@@ -106,7 +105,6 @@ type ConversationPanelProps = {
   canEditDraft: boolean
   canResumeSession: boolean
   actionError: string | null
-  isPreviewPanelCollapsed: boolean
   attachments: UploadedAttachment[]
   attachmentTransfers: ComposerUploadTransfer[]
   isUploadingAttachments: boolean
@@ -131,7 +129,6 @@ type ConversationPanelProps = {
   onCancelRun: () => void
   onResumeSession: () => Promise<void>
   onOpenNotebook: (notebook: NotebookSessionReference) => void
-  onTogglePreviewPanel: () => void
   onRespondToPermission: (requestId: string, optionId?: string) => Promise<void>
   onPermissionProfileChange: (profile: PermissionProfileId) => void
   onRevokePermissionGrant: (categoryKey: string) => void
@@ -171,7 +168,6 @@ const ConversationPanel = ({
   canEditDraft,
   canResumeSession,
   actionError,
-  isPreviewPanelCollapsed,
   attachments,
   attachmentTransfers,
   isUploadingAttachments,
@@ -194,7 +190,6 @@ const ConversationPanel = ({
   onCancelRun,
   onResumeSession,
   onOpenNotebook,
-  onTogglePreviewPanel,
   onRespondToPermission,
   onPermissionProfileChange,
   onRevokePermissionGrant,
@@ -314,23 +309,13 @@ const ConversationPanel = ({
         data-session-id={activeSession?.id ?? ''}
         data-agent-running={activeSession?.status === 'running' ? 'true' : 'false'}
       >
-        <header className="flex shrink-0 items-center gap-2 px-4 pb-3 pt-1">
+        <header
+          data-testid="conversation-header"
+          className="flex shrink-0 items-center gap-2 px-4 pb-3 pt-2"
+        >
           <h1 className="min-w-0 flex-1 truncate text-[13px] font-semibold text-text-000">
             {activeSession?.title ?? 'New conversation'}
           </h1>
-          {/* The conversation title row is the stable place to manually expand or collapse preview. */}
-          <button
-            type="button"
-            className={`flex size-7 shrink-0 items-center justify-center rounded-lg hover:bg-surface-control-hover ${
-              isPreviewPanelCollapsed ? 'text-action-panel-toggle' : 'text-primary'
-            }`}
-            aria-label={isPreviewPanelCollapsed ? 'Expand preview panel' : 'Collapse preview panel'}
-            aria-expanded={!isPreviewPanelCollapsed}
-            aria-controls="right-panel"
-            onClick={onTogglePreviewPanel}
-          >
-            <PanelRight className="size-4" strokeWidth={2} fill="none" aria-hidden="true" />
-          </button>
         </header>
 
         <WorkspaceMessageScroller

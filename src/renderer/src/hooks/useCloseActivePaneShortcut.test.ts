@@ -140,9 +140,11 @@ describe('useCloseActivePaneShortcut', () => {
     unmount()
   })
 
-  it('collapses the panel when it is open in the workspace but empty', () => {
+  it('collapses a legacy empty open panel state without closing the window', () => {
     useNavigationStore.setState({ view: 'workspace' })
-    usePreviewWorkbenchStore.getState().openPanel()
+    // Empty panels can no longer be opened through the public store API, but persisted legacy state
+    // may still contain this combination and the close shortcut should repair it safely.
+    usePreviewWorkbenchStore.setState({ panelState: 'open', items: [], activeItemId: undefined })
 
     const { unmount } = renderHook(() => useCloseActivePaneShortcut())
     act(() => closeActivePane?.())

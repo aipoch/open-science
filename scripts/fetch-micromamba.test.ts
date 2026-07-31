@@ -2,7 +2,13 @@ import { createHash } from 'node:crypto'
 
 import { describe, expect, it } from 'vitest'
 
-import { PINNED, SUBDIRS, resolveVersion, verifyArchiveDigest } from './fetch-micromamba.mjs'
+import {
+  PINNED,
+  SUBDIRS,
+  resolveDownloadUrl,
+  resolveVersion,
+  verifyArchiveDigest
+} from './fetch-micromamba.mjs'
 
 describe('micromamba pinning', () => {
   it('pins a concrete version, never `latest`', () => {
@@ -14,6 +20,12 @@ describe('micromamba pinning', () => {
     for (const subdir of SUBDIRS) {
       expect(PINNED.sha256[subdir], `missing digest for ${subdir}`).toMatch(/^[0-9a-f]{64}$/)
     }
+  })
+
+  it('downloads the pinned archive from the matching official GitHub release', () => {
+    expect(resolveDownloadUrl('osx-arm64')).toBe(
+      'https://github.com/mamba-org/micromamba-releases/releases/download/2.8.1-0/micromamba-osx-arm64.tar.bz2'
+    )
   })
 })
 

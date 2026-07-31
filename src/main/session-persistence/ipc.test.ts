@@ -145,6 +145,10 @@ describe('session persistence IPC handlers', () => {
     await handlers.saveSession(session)
     expect(repository.saveSession).toHaveBeenCalledWith(session)
 
+    const saveOptions = { conflictRebaseFields: ['title' as const] }
+    await handlers.saveSession(session, saveOptions)
+    expect(repository.saveSession).toHaveBeenLastCalledWith(session, saveOptions)
+
     await handlers.deleteSession({ projectId: 'project-a', sessionId: 'session-1' })
     expect(repository.deleteSession).toHaveBeenCalledWith('project-a', 'session-1')
     // Reviews are retained for Artifact Provenance after the session transcript is deleted.

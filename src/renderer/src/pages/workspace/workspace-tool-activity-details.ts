@@ -379,14 +379,25 @@ const buildGenericDetails = (activity: ToolActivity): ToolActivityDetails | unde
   }
 }
 
+const ARTIFACT_WRITE_ACTIVITY_IDENTITIES = new Set([
+  'write_artifact_file',
+  'write artifact file',
+  'save_artifacts',
+  'mcp__open-science-artifacts__write_artifact_file',
+  'mcp__open_science_artifacts__write_artifact_file',
+  'mcp.open-science-artifacts.write_artifact_file',
+  'open-science-artifacts_write_artifact_file',
+  'open_science_artifacts_write_artifact_file'
+])
+
 // Detects the managed artifact-writing MCP tool (open-science-artifacts / write_artifact_file).
 const isArtifactWriteActivity = (activity: ToolActivity): boolean => {
   const providerName = trimDetail(activity.providerToolName)?.toLowerCase() ?? ''
+  const title = trimDetail(activity.title)?.toLowerCase() ?? ''
 
   return (
-    providerName === 'save_artifacts' ||
-    providerName.includes('artifact_file') ||
-    providerName.includes('write_artifact')
+    ARTIFACT_WRITE_ACTIVITY_IDENTITIES.has(providerName) ||
+    ARTIFACT_WRITE_ACTIVITY_IDENTITIES.has(title)
   )
 }
 
@@ -417,19 +428,49 @@ const isEditActivity = (activity: ToolActivity): boolean => {
   return EDIT_PROVIDER_TOOL_NAMES.has(providerName)
 }
 
-// Reads the artifact metadata the MCP tool echoes back as `{ "artifact": { … } }` JSON output.
-const extractArtifactOutput = (activity: ToolActivity): Record<string, unknown> | undefined => {
-  for (const text of collectToolTexts(activity)) {
-    try {
-      const parsed: unknown = JSON.parse(text)
+// Finds an Artifact receipt in direct JSON, MCP content blocks, or a Codex bridge result envelope.
+const extractArtifactRecord = (value: unknown, depth = 0): Record<string, unknown> | undefined => {
+  if (depth > 4) return undefined
 
-      if (isRecord(parsed) && isRecord(parsed.artifact)) return parsed.artifact
+  if (typeof value === 'string') {
+    try {
+      return extractArtifactRecord(JSON.parse(value) as unknown, depth + 1)
     } catch {
-      // Not a JSON payload; keep scanning the remaining content blocks.
+      return undefined
+    }
+  }
+
+  if (!isRecord(value)) return undefined
+  if (isRecord(value.artifact)) return value.artifact
+
+  for (const nested of [value.result, value.structuredContent]) {
+    const artifact = extractArtifactRecord(nested, depth + 1)
+
+    if (artifact) return artifact
+  }
+
+  if (Array.isArray(value.content)) {
+    for (const block of value.content) {
+      if (!isRecord(block) || block.type !== 'text' || typeof block.text !== 'string') continue
+
+      const artifact = extractArtifactRecord(block.text, depth + 1)
+
+      if (artifact) return artifact
     }
   }
 
   return undefined
+}
+
+// Reads the artifact metadata the MCP tool echoes back as `{ "artifact": { … } }` JSON output.
+const extractArtifactOutput = (activity: ToolActivity): Record<string, unknown> | undefined => {
+  for (const text of collectToolTexts(activity)) {
+    const artifact = extractArtifactRecord(text)
+
+    if (artifact) return artifact
+  }
+
+  return extractArtifactRecord(activity.rawOutput)
 }
 
 // Reads a trimmed string field from an optional record without leaking non-string values.
@@ -439,14 +480,34 @@ const getRecordString = (
 ): string | undefined =>
   record && typeof record[key] === 'string' ? trimDetail(record[key] as string) : undefined
 
+// Reads the first finite numeric field from one of the supported receipt spellings.
+const getRecordNumber = (
+  record: Record<string, unknown> | undefined,
+  ...keys: string[]
+): number | undefined => {
+  for (const key of keys) {
+    const value = record?.[key]
+
+    if (typeof value === 'number' && Number.isFinite(value)) return value
+  }
+
+  return undefined
+}
+
 // Summarizes a saved artifact file (name/type/size/path) without echoing its raw content payload.
 const buildArtifactDetails = (activity: ToolActivity): ToolActivityDetails | undefined => {
   const rawInput = isRecord(activity.rawInput) ? activity.rawInput : undefined
   const output = extractArtifactOutput(activity)
-  const filename = getRecordString(rawInput, 'filename') ?? getRecordString(output, 'name')
-  const mimeType = getRecordString(rawInput, 'mimeType') ?? getRecordString(output, 'mimeType')
+  const filename =
+    getRecordString(rawInput, 'filename') ??
+    getRecordString(output, 'name') ??
+    getRecordString(output, 'filename')
+  const mimeType =
+    getRecordString(rawInput, 'mimeType') ??
+    getRecordString(output, 'mimeType') ??
+    getRecordString(output, 'content_type')
   const path = getRecordString(output, 'path')
-  const size = typeof output?.size === 'number' ? output.size : undefined
+  const size = getRecordNumber(output, 'size', 'size_bytes')
   const sizeLabel = formatByteSize(size)
 
   if (!filename && !path) return undefined

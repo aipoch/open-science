@@ -1,4 +1,5 @@
 import { randomUUID } from 'node:crypto'
+import type { BigIntStats } from 'node:fs'
 import { open, stat } from 'node:fs/promises'
 import type { FileHandle } from 'node:fs/promises'
 import { basename, extname } from 'node:path'
@@ -38,6 +39,8 @@ const MIME_TYPES_BY_EXTENSION: Record<string, string> = {
   '.pdf': 'application/pdf',
   '.png': 'image/png',
   '.svg': 'image/svg+xml',
+  '.tif': 'image/tiff',
+  '.tiff': 'image/tiff',
   '.webp': 'image/webp'
 }
 
@@ -62,8 +65,16 @@ type ManagedPreviewResourcesOptions = {
   createId?: () => string
 }
 
+type ManagedPreviewResourceSnapshot = {
+  size: number
+  version: number
+  dev: bigint
+  ino: bigint
+  mtimeNs: bigint
+}
+
 type AcquireManagedPreviewOptions = {
-  snapshot: { size: number; version: number }
+  snapshot: ManagedPreviewResourceSnapshot
   maxBytes: number
 }
 
@@ -71,8 +82,9 @@ type ResourceEntry = ManagedPreviewResource & {
   ownerId: number
   filePath: string
   strictSnapshot?: {
-    dev: number
-    ino: number
+    dev: bigint
+    ino: bigint
+    mtimeNs: bigint
     maxBytes: number
   }
 }
@@ -93,6 +105,20 @@ type RangeReader = {
     length: number,
     position: number
   ) => Promise<{ bytesRead: number }>
+}
+
+const snapshotFileStat = (fileStat: BigIntStats): ManagedPreviewResourceSnapshot => {
+  if (fileStat.size > BigInt(Number.MAX_SAFE_INTEGER)) {
+    throw new Error('Managed preview file size cannot be represented safely.')
+  }
+
+  return {
+    size: Number(fileStat.size),
+    version: Number(fileStat.mtimeNs) / 1_000_000,
+    dev: fileStat.dev,
+    ino: fileStat.ino,
+    mtimeNs: fileStat.mtimeNs
+  }
 }
 
 const readExactRange = async (
@@ -125,13 +151,13 @@ class ManagedPreviewResources {
     this.createId = options.createId ?? randomUUID
   }
 
-  async inspect(request: AcquireManagedPreviewRequest): Promise<{ size: number; version: number }> {
+  async inspect(request: AcquireManagedPreviewRequest): Promise<ManagedPreviewResourceSnapshot> {
     // Resolve through the managed repository so metadata checks never accept an arbitrary path.
     const filePath = await this.options.resolvePath(request.source, request)
-    const fileStat = await stat(filePath)
+    const fileStat = await stat(filePath, { bigint: true })
     if (!fileStat.isFile()) throw new Error('Managed preview path is not a file.')
 
-    return { size: fileStat.size, version: fileStat.mtimeMs }
+    return snapshotFileStat(fileStat)
   }
 
   async acquire(
@@ -141,17 +167,18 @@ class ManagedPreviewResources {
   ): Promise<ManagedPreviewResource> {
     // Resolve through the managed repository before minting an owner-scoped capability URL.
     const filePath = await this.options.resolvePath(request.source, request)
-    const fileStat = await stat(filePath)
+    const fileStat = await stat(filePath, { bigint: true })
 
     if (!fileStat.isFile()) {
       throw new Error('Managed preview path is not a file.')
     }
-    if (options && fileStat.size > options.maxBytes) {
+    const fileSnapshot = snapshotFileStat(fileStat)
+    if (options && fileSnapshot.size > options.maxBytes) {
       const error: OfficePreviewAdmissionError = Object.assign(
         new Error('Managed preview file is too large.'),
         {
           code: 'FILE_TOO_LARGE' as const,
-          size: fileStat.size,
+          size: fileSnapshot.size,
           limit: options.maxBytes
         }
       )
@@ -159,7 +186,10 @@ class ManagedPreviewResources {
     }
     if (
       options &&
-      (fileStat.size !== options.snapshot.size || fileStat.mtimeMs !== options.snapshot.version)
+      (fileSnapshot.size !== options.snapshot.size ||
+        fileSnapshot.mtimeNs !== options.snapshot.mtimeNs ||
+        fileSnapshot.dev !== options.snapshot.dev ||
+        fileSnapshot.ino !== options.snapshot.ino)
     ) {
       throw new Error('Managed preview file changed after admission.')
     }
@@ -168,9 +198,9 @@ class ManagedPreviewResources {
     const resource: ManagedPreviewResource = {
       id,
       url: `${PREVIEW_SCHEME}://${id}/${encodeURIComponent(basename(filePath))}`,
-      size: fileStat.size,
+      size: fileSnapshot.size,
       mimeType: inferMimeType(filePath, request.mimeType),
-      version: fileStat.mtimeMs
+      version: fileSnapshot.version
     }
 
     this.releasedOwners.delete(id)
@@ -181,8 +211,9 @@ class ManagedPreviewResources {
       ...(options
         ? {
             strictSnapshot: {
-              dev: fileStat.dev,
-              ino: fileStat.ino,
+              dev: options.snapshot.dev,
+              ino: options.snapshot.ino,
+              mtimeNs: options.snapshot.mtimeNs,
               maxBytes: options.maxBytes
             }
           }
@@ -264,12 +295,12 @@ class ManagedPreviewResources {
     // admitted inode while the protocol caps the response to the approved byte count.
     const fileHandle = await open(resource.filePath, 'r')
     try {
-      const fileStat = await fileHandle.stat()
+      const fileStat = await fileHandle.stat({ bigint: true })
       if (
         !fileStat.isFile() ||
-        fileStat.size !== resource.size ||
-        fileStat.size > resource.strictSnapshot.maxBytes ||
-        fileStat.mtimeMs !== resource.version ||
+        fileStat.size !== BigInt(resource.size) ||
+        fileStat.size > BigInt(resource.strictSnapshot.maxBytes) ||
+        fileStat.mtimeNs !== resource.strictSnapshot.mtimeNs ||
         fileStat.dev !== resource.strictSnapshot.dev ||
         fileStat.ino !== resource.strictSnapshot.ino
       ) {
@@ -278,12 +309,12 @@ class ManagedPreviewResources {
       }
 
       const verifyUnchanged = async (): Promise<void> => {
-        const finalStat = await fileHandle.stat()
+        const finalStat = await fileHandle.stat({ bigint: true })
         if (
           !finalStat.isFile() ||
-          finalStat.size !== resource.size ||
-          finalStat.size > resource.strictSnapshot!.maxBytes ||
-          finalStat.mtimeMs !== resource.version ||
+          finalStat.size !== BigInt(resource.size) ||
+          finalStat.size > BigInt(resource.strictSnapshot!.maxBytes) ||
+          finalStat.mtimeNs !== resource.strictSnapshot!.mtimeNs ||
           finalStat.dev !== resource.strictSnapshot!.dev ||
           finalStat.ino !== resource.strictSnapshot!.ino
         ) {
@@ -334,6 +365,7 @@ export {
 }
 export type {
   AcquireManagedPreviewOptions,
+  ManagedPreviewResourceSnapshot,
   ManagedPreviewResourcesOptions,
   PreviewProtocolResource
 }
