@@ -1088,7 +1088,7 @@ describe('SettingsPage layout', () => {
     ).toBeNull()
   })
 
-  it('does not attach a provider error to Off mode', async () => {
+  it('surfaces a provider detection error while access is Off', async () => {
     const remoteAccess = (
       window as unknown as {
         api: {
@@ -1118,7 +1118,7 @@ describe('SettingsPage layout', () => {
     })
     await act(async () => navButton('Remote control')?.click())
 
-    expect(document.body.textContent).not.toContain('The remote access app is not connected')
+    expect(document.body.textContent).toContain('The remote access app is not connected')
     expect(document.body.querySelector('[data-testid="remote-access-status"]')?.textContent).toBe(
       'Remote access is off'
     )

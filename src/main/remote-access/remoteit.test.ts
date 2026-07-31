@@ -515,6 +515,64 @@ describe('Remote.It adapter', () => {
     expect(script).toContain('System Service')
   })
 
+  it('waits for both existing services to report ready before returning', async () => {
+    let statusReads = 0
+    const services = [
+      {
+        id: 'app-service',
+        type: 7,
+        addressHost: '127.0.0.1',
+        addressPort: 4180,
+        isEnabled: true
+      },
+      {
+        id: 'browser-service',
+        type: 7,
+        addressHost: '127.0.0.1',
+        addressPort: 4180,
+        isEnabled: true
+      }
+    ]
+    const run = vi.fn<RemoteItCommandRunner>(async (_command, args) => {
+      if (args.join(' ') === 'status --json') {
+        statusReads += 1
+        return {
+          stdout: status(
+            services.map((service, index) => ({
+              ...service,
+              state: statusReads >= (index === 0 ? 2 : 3) ? 4 : 2
+            }))
+          ),
+          stderr: ''
+        }
+      }
+      if (args[0] === 'version') return { stdout: '4.1.0\n', stderr: '' }
+      throw new Error(`Unexpected mutation: ${args.join(' ')}`)
+    })
+
+    vi.useFakeTimers()
+    try {
+      const result = enableRemoteItServices(
+        '/usr/local/bin/remoteit',
+        4180,
+        {
+          active: 'app',
+          appServiceId: 'app-service',
+          browserServiceId: 'browser-service'
+        },
+        run
+      )
+      await vi.runAllTimersAsync()
+
+      await expect(result).resolves.toMatchObject({
+        installation: { service: { id: 'app-service', enabled: true, ready: true } }
+      })
+      expect(statusReads).toBe(3)
+    } finally {
+      vi.useRealTimers()
+    }
+  })
+
   it('waits for asynchronous Windows service registration and keeps both mutations non-admin', async () => {
     const services = [
       {

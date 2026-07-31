@@ -655,6 +655,9 @@ const hasExpectedServiceConfiguration = (
   numberValue(service.addressPort) === localPort &&
   service.isEnabled === enabled
 
+const hasReadyServiceConfiguration = (service: RemoteItStatusEntry, localPort: number): boolean =>
+  hasExpectedServiceConfiguration(service, localPort, true) && service.state === 4
+
 const serviceById = (
   status: Record<string, unknown>,
   serviceId: string
@@ -908,16 +911,30 @@ export const enableRemoteItServices = async (
   }
   await managed.onServiceIdsDiscovered?.({ appServiceId, browserServiceId })
 
+  const reportsReadyManagedServices = (candidate: Record<string, unknown>): boolean => {
+    const app = serviceById(candidate, appServiceId)
+    const browser = serviceById(candidate, browserServiceId)
+    return Boolean(
+      app &&
+      hasReadyServiceConfiguration(app, localPort) &&
+      browser &&
+      hasReadyServiceConfiguration(browser, localPort)
+    )
+  }
+  if (!reportsReadyManagedServices(status)) {
+    status = await readStatusAfterMutation(binaryPath, run, reportsReadyManagedServices)
+  }
+
   const finalApp = serviceById(status, appServiceId)
   const finalBrowser = serviceById(status, browserServiceId)
   if (
     !finalApp ||
-    !hasExpectedServiceConfiguration(finalApp, localPort, true) ||
+    !hasReadyServiceConfiguration(finalApp, localPort) ||
     !finalBrowser ||
-    !hasExpectedServiceConfiguration(finalBrowser, localPort, true)
+    !hasReadyServiceConfiguration(finalBrowser, localPort)
   ) {
     throw new Error(
-      `Remote.It did not apply both Open Science service endpoints at 127.0.0.1:${localPort}.`
+      `Remote.It did not make both Open Science service endpoints ready at 127.0.0.1:${localPort}.`
     )
   }
 

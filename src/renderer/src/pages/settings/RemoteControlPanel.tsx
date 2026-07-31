@@ -180,11 +180,11 @@ export const RemoteControlPanel = (): React.JSX.Element => {
     )
   }
 
-  const modeError = actionError ?? (snapshot.mode === 'off' ? undefined : snapshot.error)
+  const modeError = actionError ?? snapshot.error
   const changingMode = busy?.startsWith('mode:') === true
   const detectingAndRepairing = busy === 'detect'
   const blockingRemoteOperation = changingMode || detectingAndRepairing
-  const hasModeError = snapshot.mode !== 'off' && Boolean(modeError)
+  const hasModeError = Boolean(modeError)
   const accessIsApp = snapshot.mode === 'remoteit'
   const accessIsBrowser = snapshot.mode === 'remoteit-public'
   const statusLabel = providerStatus(snapshot)
