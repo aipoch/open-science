@@ -12,7 +12,7 @@ const REMOTE_IT_HTTP_TYPE = 7
 const REMOTE_IT_BATCH_MARKER = '__OPEN_SCIENCE_REMOTEIT_BATCH_COMMAND_END__'
 const REMOTE_IT_STATUS_RETRY_DELAYS_MS = [250, 750, 1_500, 3_000, 5_000] as const
 const REMOTE_IT_DEVICE_SETUP_AUTHORIZATION_MESSAGE =
-  'This Mac must be added as a Remote.It Device before Open Science can configure remote access. In Remote.It, choose +, select This system, and complete Add Device once. Then return to Open Science and click Detect again; both Open Science services will be created automatically.'
+  'This computer must be added as a Remote.It Device before Open Science can configure remote access. In Remote.It, choose +, select This system, and complete Add Device once. Then return to Open Science and click Detect again; both Open Science services will be created automatically.'
 export const REMOTE_IT_APP_SERVICE_NAME = 'Open Science Remote'
 export const REMOTE_IT_BROWSER_SERVICE_NAME = 'System Service'
 
@@ -124,6 +124,9 @@ const assertMutationSucceeded = (result: CommandResult): CommandResult => {
   return result
 }
 
+const mutationArgsForPlatform = (args: string[], platform: NodeJS.Platform): string[] =>
+  platform === 'win32' && !args.includes('--noAdmin') ? [...args, '--noAdmin'] : args
+
 const runRemoteItMutation = async (
   binaryPath: string,
   args: string[],
@@ -131,8 +134,9 @@ const runRemoteItMutation = async (
   platform: NodeJS.Platform,
   timeoutMs = 30_000
 ): Promise<CommandResult> => {
+  const platformArgs = mutationArgsForPlatform(args, platform)
   try {
-    return assertMutationSucceeded(await run(binaryPath, args, { timeoutMs }))
+    return assertMutationSucceeded(await run(binaryPath, platformArgs, { timeoutMs }))
   } catch (error) {
     if (!requiresElevation(error) || platform !== 'darwin') throw error
     try {
@@ -192,7 +196,11 @@ const runRemoteItMutationBatch = async (
   for (let index = 0; index < commands.length; index += 1) {
     const args = commands[index]
     try {
-      results.push(assertMutationSucceeded(await run(binaryPath, args, { timeoutMs })))
+      results.push(
+        assertMutationSucceeded(
+          await run(binaryPath, mutationArgsForPlatform(args, platform), { timeoutMs })
+        )
+      )
     } catch (error) {
       if (!requiresElevation(error) || platform !== 'darwin') throw error
       const remaining = commands.slice(index)
@@ -296,10 +304,21 @@ const knownBinaryPaths = (platform: NodeJS.Platform, env: NodeJS.ProcessEnv): st
     )
   } else if (platform === 'win32') {
     const programFiles = env.ProgramFiles?.trim()
+    const programFilesX86 = env['ProgramFiles(x86)']?.trim()
     if (programFiles) {
       paths.push(
+        `${programFiles}\\Remote.It\\resources\\remoteit.exe`,
+        `${programFiles}\\remoteit\\resources\\remoteit.exe`,
         `${programFiles}\\Remote.It\\remoteit.exe`,
         `${programFiles}\\remoteit\\remoteit.exe`
+      )
+    }
+    if (programFilesX86) {
+      paths.push(
+        `${programFilesX86}\\Remote.It\\resources\\remoteit.exe`,
+        `${programFilesX86}\\remoteit\\resources\\remoteit.exe`,
+        `${programFilesX86}\\Remote.It\\remoteit.exe`,
+        `${programFilesX86}\\remoteit\\remoteit.exe`
       )
     }
   } else {
@@ -369,18 +388,21 @@ const wait = (delayMs: number): Promise<void> =>
 
 const readStatusAfterMutation = async (
   binaryPath: string,
-  run: RemoteItCommandRunner
+  run: RemoteItCommandRunner,
+  isReady: (status: Record<string, unknown>) => boolean = () => true
 ): Promise<Record<string, unknown>> => {
   let lastError: unknown
   for (let attempt = 0; attempt <= REMOTE_IT_STATUS_RETRY_DELAYS_MS.length; attempt += 1) {
     try {
-      return await readStatus(binaryPath, run)
+      const status = await readStatus(binaryPath, run)
+      if (isReady(status)) return status
+      lastError = new Error('Remote.It status has not reported all accepted service changes yet.')
     } catch (error) {
       lastError = error
-      const delayMs = REMOTE_IT_STATUS_RETRY_DELAYS_MS[attempt]
-      if (delayMs === undefined) break
-      await wait(delayMs)
     }
+    const delayMs = REMOTE_IT_STATUS_RETRY_DELAYS_MS[attempt]
+    if (delayMs === undefined) break
+    await wait(delayMs)
   }
   const detail = commandError(lastError, 'Remote.It status is temporarily unavailable.').message
   throw new Error(
@@ -403,7 +425,7 @@ const installationView = (
   return {
     installed: true,
     // Remote.It does not expose the signed-in desktop account through `status --json` until this
-    // Mac has been registered as a Device. A registered Device is therefore also sufficient
+    // computer has been registered as a Device. A registered Device is therefore also sufficient
     // evidence that the CLI is associated with an account.
     loggedIn: Boolean(account || deviceId),
     registered: Boolean(deviceId),
@@ -447,6 +469,11 @@ export const detectRemoteIt = async (
 const serviceEntries = (status: Record<string, unknown>): RemoteItStatusEntry[] =>
   statusData(status).services?.filter((entry) => numberValue(entry.type) !== 35) ?? []
 
+const hasManagedEndpoint = (entry: RemoteItStatusEntry, localPort: number): boolean =>
+  numberValue(entry.type) === REMOTE_IT_HTTP_TYPE &&
+  isLoopbackHost(entry.addressHost) &&
+  numberValue(entry.addressPort) === localPort
+
 const matchingManagedService = (
   status: Record<string, unknown>,
   serviceId: string | undefined,
@@ -477,6 +504,97 @@ const matchingManagedService = (
       numberValue(entry.addressPort) === localPort
   )
   return exact.length === 1 ? exact[0] : undefined
+}
+
+const shouldReadCloudServiceNames = (
+  status: Record<string, unknown>,
+  localPort: number,
+  managedServiceIds: ReadonlySet<string>
+): boolean =>
+  serviceEntries(status).some((entry) => {
+    const id = stringValue(entry.id)
+    return (
+      hasManagedEndpoint(entry, localPort) &&
+      !stringValue(entry.name) &&
+      Boolean(id && !managedServiceIds.has(id))
+    )
+  })
+
+const readCloudServiceNames = async (
+  binaryPath: string,
+  deviceId: string,
+  run: RemoteItCommandRunner
+): Promise<Map<string, string>> => {
+  const query = `query OpenScienceDeviceServices {
+  login {
+    devices(size: 1, id: ${JSON.stringify(deviceId)}) {
+      items {
+        id
+        services { id name }
+      }
+    }
+  }
+}`
+  const { stdout } = await run(binaryPath, ['exec-gql', '--noAdmin', '--json', '--query', query], {
+    timeoutMs: 30_000
+  })
+  const data = parseRemoteItGraphQlData(stdout)
+  const login = data.login as
+    | {
+        devices?: {
+          items?: Array<{
+            id?: unknown
+            services?: Array<{ id?: unknown; name?: unknown }>
+          }>
+        }
+      }
+    | undefined
+  const device = login?.devices?.items?.find((entry) => stringValue(entry.id) === deviceId)
+  const names = new Map<string, string>()
+  for (const service of device?.services ?? []) {
+    const id = stringValue(service.id)
+    const name = stringValue(service.name)
+    if (id && name) names.set(id, name)
+  }
+  return names
+}
+
+const enrichWindowsServiceNames = async (
+  binaryPath: string,
+  status: Record<string, unknown>,
+  localPort: number,
+  managedServiceIds: ReadonlySet<string>,
+  run: RemoteItCommandRunner,
+  platform: NodeJS.Platform
+): Promise<Record<string, unknown>> => {
+  if (platform !== 'win32' || !shouldReadCloudServiceNames(status, localPort, managedServiceIds)) {
+    return status
+  }
+  const deviceId = stringValue(statusData(status).device?.id)
+  if (!deviceId) return status
+
+  try {
+    const names = await readCloudServiceNames(binaryPath, deviceId, run)
+    const unresolvedIds: string[] = []
+    for (const entry of serviceEntries(status)) {
+      const id = stringValue(entry.id)
+      if (!id || !hasManagedEndpoint(entry, localPort) || managedServiceIds.has(id)) continue
+      const name = names.get(id)
+      if (name) entry.name = name
+      else unresolvedIds.push(id)
+    }
+    if (unresolvedIds.length > 0) {
+      throw new Error(
+        'Remote.It has not reported the names of existing Windows services yet. Wait a few seconds, then try again; Open Science did not create duplicates.'
+      )
+    }
+    return status
+  } catch (error) {
+    throw commandError(
+      error,
+      'Remote.It could not identify existing Windows services, so Open Science stopped before creating duplicates.'
+    )
+  }
 }
 
 const assertDeviceRegistered = (status: Record<string, unknown>): void => {
@@ -629,6 +747,18 @@ export const enableRemoteItServices = async (
 }> => {
   let status = await readStatus(binaryPath, run)
   assertDeviceRegistered(status)
+  status = await enrichWindowsServiceNames(
+    binaryPath,
+    status,
+    localPort,
+    new Set(
+      [managed.appServiceId, managed.browserServiceId].filter(
+        (id): id is string => id !== undefined
+      )
+    ),
+    run,
+    platform
+  )
 
   const beforeIds = new Set(
     serviceEntries(status).flatMap((entry) => {
@@ -705,7 +835,39 @@ export const enableRemoteItServices = async (
     })
   }
 
-  status = planned.length > 0 ? await readStatusAfterMutation(binaryPath, run) : status
+  const statusIncludesPlannedMutations = (candidate: Record<string, unknown>): boolean => {
+    const entries = serviceEntries(candidate)
+    const knownAddedIds = new Set(addedIds.values())
+    let unresolvedAddCount = 0
+
+    for (const operation of planned) {
+      if (!operation.target) continue
+      const expectedId =
+        operation.kind === 'modify'
+          ? stringValue(existing[operation.target]?.id)
+          : addedIds.get(operation.target)
+      if (!expectedId) {
+        unresolvedAddCount += 1
+        continue
+      }
+      const entry = entries.find((candidateEntry) => stringValue(candidateEntry.id) === expectedId)
+      if (!entry || !hasExpectedServiceConfiguration(entry, localPort, true)) return false
+    }
+
+    const unresolvedNewEntries = entries.filter((entry) => {
+      const id = stringValue(entry.id)
+      return (
+        Boolean(id && !beforeIds.has(id) && !knownAddedIds.has(id)) &&
+        hasExpectedServiceConfiguration(entry, localPort, true)
+      )
+    })
+    return unresolvedNewEntries.length >= unresolvedAddCount
+  }
+
+  status =
+    planned.length > 0
+      ? await readStatusAfterMutation(binaryPath, run, statusIncludesPlannedMutations)
+      : status
   const finalEntries = serviceEntries(status)
   const newEntries = finalEntries.filter((entry) => {
     const id = stringValue(entry.id)
@@ -941,7 +1103,9 @@ export {
   buildMacElevationBatchScript,
   buildMacElevationScript,
   isLoopbackHost,
+  knownBinaryPaths,
   matchingManagedService,
+  mutationArgsForPlatform,
   parseRemoteItGraphQlData,
   requiresElevation,
   runRemoteItMutationBatch,

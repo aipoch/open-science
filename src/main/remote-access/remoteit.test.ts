@@ -8,6 +8,7 @@ import {
   enableRemoteItService,
   enableRemoteItServices,
   ensureRemoteItConnectLink,
+  knownBinaryPaths,
   parseRemoteItJson,
   runRemoteItMutationBatch,
   runRemoteItMutation,
@@ -116,6 +117,42 @@ describe('Remote.It adapter', () => {
     expect(script).toContain('with administrator privileges')
   })
 
+  it('uses the Remote.It non-admin channel for Windows service mutations', async () => {
+    const run = vi.fn<RemoteItCommandRunner>().mockResolvedValue({
+      stdout: '{"code":0,"message":"netxt"}',
+      stderr: ''
+    })
+
+    await expect(
+      runRemoteItMutation(
+        'C:\\Program Files\\Remote.It\\resources\\remoteit.exe',
+        ['service', 'modify', '--id', 'service-1', '--enable', 'true', '--json'],
+        run,
+        'win32'
+      )
+    ).resolves.toMatchObject({ stdout: expect.stringContaining('"code":0') })
+    expect(run).toHaveBeenCalledWith(
+      'C:\\Program Files\\Remote.It\\resources\\remoteit.exe',
+      ['service', 'modify', '--id', 'service-1', '--enable', 'true', '--json', '--noAdmin'],
+      { timeoutMs: 30_000 }
+    )
+    expect(run.mock.calls.some(([command]) => command === '/usr/bin/osascript')).toBe(false)
+  })
+
+  it('uses the expected Windows Desktop CLI installation paths', () => {
+    expect(
+      knownBinaryPaths('win32', {
+        ProgramFiles: 'C:\\Program Files',
+        'ProgramFiles(x86)': 'C:\\Program Files (x86)'
+      })
+    ).toEqual(
+      expect.arrayContaining([
+        'C:\\Program Files\\Remote.It\\resources\\remoteit.exe',
+        'C:\\Program Files (x86)\\Remote.It\\resources\\remoteit.exe'
+      ])
+    )
+  })
+
   it('parses noisy JSON and detects a user-installed signed-in CLI', async () => {
     expect(parseRemoteItJson(`notice\n${status()}\n`)).toMatchObject({ code: 0 })
     const run = vi.fn<RemoteItCommandRunner>(async (_command, args) => {
@@ -127,13 +164,13 @@ describe('Remote.It adapter', () => {
 
     await expect(
       detectRemoteIt(undefined, run, 'darwin', {
-        OPEN_SCIENCE_REMOTEIT_BIN: '/bin/sh'
+        OPEN_SCIENCE_REMOTEIT_BIN: process.execPath
       })
     ).resolves.toMatchObject({
       installed: true,
       loggedIn: true,
       registered: true,
-      binaryPath: '/bin/sh',
+      binaryPath: process.execPath,
       version: '4.1.0',
       account: 'person@example.com',
       deviceId: 'device-1'
@@ -151,7 +188,7 @@ describe('Remote.It adapter', () => {
 
     await expect(
       detectRemoteIt(undefined, run, 'darwin', {
-        OPEN_SCIENCE_REMOTEIT_BIN: '/bin/sh'
+        OPEN_SCIENCE_REMOTEIT_BIN: process.execPath
       })
     ).resolves.toMatchObject({
       installed: true,
@@ -241,7 +278,8 @@ describe('Remote.It adapter', () => {
         '/usr/local/bin/remoteit',
         4180,
         { name: 'Open Science Remote', preferredServiceId: 'service-1' },
-        run
+        run,
+        'linux'
       )
     ).resolves.toMatchObject({
       serviceId: 'service-1',
@@ -477,6 +515,130 @@ describe('Remote.It adapter', () => {
     expect(script).toContain('System Service')
   })
 
+  it('waits for asynchronous Windows service registration and keeps both mutations non-admin', async () => {
+    const services = [
+      {
+        id: 'app-service',
+        type: 7,
+        addressHost: '127.0.0.1',
+        addressPort: 44100,
+        isEnabled: true,
+        state: 4
+      },
+      {
+        id: 'browser-service',
+        type: 7,
+        addressHost: '127.0.0.1',
+        addressPort: 44100,
+        isEnabled: true,
+        state: 4
+      }
+    ]
+    let statusReads = 0
+    const run = vi.fn<RemoteItCommandRunner>(async (_command, args) => {
+      if (args.join(' ') === 'status --json') {
+        statusReads += 1
+        const visibleServices =
+          statusReads === 1 ? [] : statusReads === 2 ? services.slice(0, 1) : services
+        return { stdout: status(visibleServices), stderr: '' }
+      }
+      if (args[0] === 'version') return { stdout: '4.1.0\n', stderr: '' }
+      if (args[0] === 'service' && args[1] === 'add') {
+        return { stdout: '{"code":0,"message":"netxt"}', stderr: '' }
+      }
+      throw new Error(`Unexpected command: ${args.join(' ')}`)
+    })
+
+    vi.useFakeTimers()
+    try {
+      const result = expect(
+        enableRemoteItServices(
+          'C:\\Program Files\\Remote.It\\resources\\remoteit.exe',
+          44100,
+          { active: 'app' },
+          run,
+          'win32'
+        )
+      ).resolves.toMatchObject({
+        appServiceId: 'app-service',
+        browserServiceId: 'browser-service'
+      })
+      await vi.runAllTimersAsync()
+      await result
+    } finally {
+      vi.useRealTimers()
+    }
+
+    const mutations = run.mock.calls.filter(([, args]) => args[0] === 'service')
+    expect(mutations).toHaveLength(2)
+    expect(mutations.every(([, args]) => args.includes('--noAdmin'))).toBe(true)
+    expect(statusReads).toBe(3)
+  })
+
+  it('recovers existing named Windows services when local status omits their names', async () => {
+    const services = [
+      {
+        id: 'app-service',
+        type: 7,
+        addressHost: '127.0.0.1',
+        addressPort: 44100,
+        isEnabled: true,
+        state: 4
+      },
+      {
+        id: 'browser-service',
+        type: 7,
+        addressHost: '127.0.0.1',
+        addressPort: 44100,
+        isEnabled: true,
+        state: 4
+      }
+    ]
+    const cloudResponse = JSON.stringify({
+      code: 0,
+      data: JSON.stringify({
+        data: {
+          login: {
+            devices: {
+              items: [
+                {
+                  id: 'device-1',
+                  services: [
+                    { id: 'app-service', name: 'Open Science Remote' },
+                    { id: 'browser-service', name: 'System Service' }
+                  ]
+                }
+              ]
+            }
+          }
+        }
+      })
+    })
+    const run = vi.fn<RemoteItCommandRunner>(async (_command, args) => {
+      if (args.join(' ') === 'status --json') {
+        return { stdout: status(services), stderr: '' }
+      }
+      if (args[0] === 'version') return { stdout: '4.1.0\n', stderr: '' }
+      if (args[0] === 'exec-gql') return { stdout: cloudResponse, stderr: '' }
+      throw new Error(`Unexpected command: ${args.join(' ')}`)
+    })
+
+    await expect(
+      enableRemoteItServices(
+        'C:\\Program Files\\Remote.It\\resources\\remoteit.exe',
+        44100,
+        { active: 'app' },
+        run,
+        'win32'
+      )
+    ).resolves.toMatchObject({
+      appServiceId: 'app-service',
+      browserServiceId: 'browser-service'
+    })
+    expect(run.mock.calls.filter(([, args]) => args[0] === 'exec-gql')).toHaveLength(1)
+    expect(run.mock.calls.some(([, args]) => args[0] === 'service')).toBe(false)
+  })
+
   it('persists newly created service IDs before status recovery and reuses them on retry', async () => {
     const services = [
       {
@@ -631,7 +793,7 @@ describe('Remote.It adapter', () => {
 
     await expect(
       detectRemoteIt(undefined, run, 'darwin', {
-        OPEN_SCIENCE_REMOTEIT_BIN: '/bin/sh'
+        OPEN_SCIENCE_REMOTEIT_BIN: process.execPath
       })
     ).resolves.toMatchObject({
       installed: true,
