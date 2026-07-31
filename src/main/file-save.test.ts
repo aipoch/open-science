@@ -1,5 +1,5 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest'
-import { mkdtemp, readFile, rename, rm, writeFile } from 'node:fs/promises'
+import { mkdir, mkdtemp, readFile, rename, rm, writeFile } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 
@@ -7,11 +7,12 @@ const downloadsPath = join('/Users/example', 'Downloads')
 
 const handlers = new Map<string, (event: unknown, payload?: unknown) => unknown>()
 const showSaveDialog = vi.hoisted(() => vi.fn())
+const showOpenDialog = vi.hoisted(() => vi.fn())
 
 vi.mock('electron', () => ({
   app: { getPath: vi.fn(() => '/Users/example/Downloads') },
   BrowserWindow: { fromWebContents: vi.fn(() => null) },
-  dialog: { showSaveDialog },
+  dialog: { showOpenDialog, showSaveDialog },
   ipcMain: {
     handle: (channel: string, handler: (event: unknown, payload?: unknown) => unknown) => {
       handlers.set(channel, handler)
@@ -24,7 +25,231 @@ const { registerFileSaveHandlers } = await import('./file-save')
 describe('file save IPC handlers', () => {
   beforeEach(() => {
     handlers.clear()
+    showOpenDialog.mockReset()
     showSaveDialog.mockReset()
+  })
+
+  it('exports one selected Session Artifact through Save As', async () => {
+    const root = await mkdtemp(join(tmpdir(), 'open-science-save-session-artifact-'))
+    const sourcePath = join(root, 'managed-report.csv')
+    const destinationPath = join(root, 'downloaded-report.csv')
+    await writeFile(sourcePath, 'artifact bytes')
+    const resolveSessionArtifactFilePath = vi.fn().mockResolvedValue(sourcePath)
+    showSaveDialog.mockResolvedValue({ canceled: false, filePath: destinationPath })
+    registerFileSaveHandlers({ resolveSessionArtifactFilePath } as never)
+
+    try {
+      const result = await handlers.get('file:save-session-artifacts')!(
+        { sender: {} },
+        {
+          projectId: 'project-1',
+          sessionId: 'session-1',
+          files: [{ path: 'artifact://report', suggestedName: 'report.csv' }]
+        }
+      )
+
+      expect(resolveSessionArtifactFilePath).toHaveBeenCalledWith(
+        'project-1',
+        'session-1',
+        'artifact://report'
+      )
+      expect(showSaveDialog).toHaveBeenCalledWith(
+        expect.objectContaining({
+          defaultPath: join(downloadsPath, 'report.csv'),
+          title: 'Save artifact'
+        })
+      )
+      expect(result).toEqual({ saved: true, filePaths: [destinationPath] })
+      await expect(readFile(destinationPath, 'utf8')).resolves.toBe('artifact bytes')
+    } finally {
+      await rm(root, { recursive: true, force: true })
+    }
+  })
+
+  it('exports multiple selected Session Artifacts after choosing one destination folder', async () => {
+    const root = await mkdtemp(join(tmpdir(), 'open-science-save-session-artifacts-'))
+    const sourceA = join(root, 'managed-a.csv')
+    const sourceB = join(root, 'managed-b.png')
+    const destinationDirectory = join(root, 'downloads')
+    await writeFile(sourceA, 'artifact a')
+    await writeFile(sourceB, 'artifact b')
+    await mkdir(destinationDirectory)
+    const resolveSessionArtifactFilePath = vi
+      .fn()
+      .mockResolvedValueOnce(sourceA)
+      .mockResolvedValueOnce(sourceB)
+    showOpenDialog.mockResolvedValue({ canceled: false, filePaths: [destinationDirectory] })
+    registerFileSaveHandlers({ resolveSessionArtifactFilePath } as never)
+
+    try {
+      const result = await handlers.get('file:save-session-artifacts')!(
+        { sender: {} },
+        {
+          projectId: 'project-1',
+          sessionId: 'session-1',
+          files: [
+            { path: 'artifact://a', suggestedName: 'a.csv' },
+            { path: 'artifact://b', suggestedName: 'b.png' }
+          ]
+        }
+      )
+
+      expect(showOpenDialog).toHaveBeenCalledTimes(1)
+      expect(showOpenDialog).toHaveBeenCalledWith(
+        expect.objectContaining({
+          defaultPath: downloadsPath,
+          properties: ['openDirectory', 'createDirectory'],
+          title: 'Choose where to save artifacts'
+        })
+      )
+      expect(result).toEqual({
+        saved: true,
+        filePaths: [join(destinationDirectory, 'a.csv'), join(destinationDirectory, 'b.png')]
+      })
+      await expect(readFile(join(destinationDirectory, 'a.csv'), 'utf8')).resolves.toBe(
+        'artifact a'
+      )
+      await expect(readFile(join(destinationDirectory, 'b.png'), 'utf8')).resolves.toBe(
+        'artifact b'
+      )
+    } finally {
+      await rm(root, { recursive: true, force: true })
+    }
+  })
+
+  it('keeps existing files and selected duplicate names when exporting multiple Artifacts', async () => {
+    const root = await mkdtemp(join(tmpdir(), 'open-science-save-artifact-collisions-'))
+    const sourceA = join(root, 'managed-a.csv')
+    const sourceB = join(root, 'managed-b.csv')
+    const destinationDirectory = join(root, 'downloads')
+    await writeFile(sourceA, 'artifact a')
+    await writeFile(sourceB, 'artifact b')
+    await mkdir(destinationDirectory)
+    await writeFile(join(destinationDirectory, 'report.csv'), 'existing download')
+    const resolveSessionArtifactFilePath = vi
+      .fn()
+      .mockResolvedValueOnce(sourceA)
+      .mockResolvedValueOnce(sourceB)
+    showOpenDialog.mockResolvedValue({ canceled: false, filePaths: [destinationDirectory] })
+    registerFileSaveHandlers({ resolveSessionArtifactFilePath } as never)
+
+    try {
+      const result = await handlers.get('file:save-session-artifacts')!(
+        { sender: {} },
+        {
+          projectId: 'project-1',
+          sessionId: 'session-1',
+          files: [
+            { path: 'artifact://a', suggestedName: 'report.csv' },
+            { path: 'artifact://b', suggestedName: 'report.csv' }
+          ]
+        }
+      )
+
+      expect(result).toEqual({
+        saved: true,
+        filePaths: [
+          join(destinationDirectory, 'report (2).csv'),
+          join(destinationDirectory, 'report (3).csv')
+        ]
+      })
+      await expect(readFile(join(destinationDirectory, 'report.csv'), 'utf8')).resolves.toBe(
+        'existing download'
+      )
+      await expect(readFile(join(destinationDirectory, 'report (2).csv'), 'utf8')).resolves.toBe(
+        'artifact a'
+      )
+      await expect(readFile(join(destinationDirectory, 'report (3).csv'), 'utf8')).resolves.toBe(
+        'artifact b'
+      )
+    } finally {
+      await rm(root, { recursive: true, force: true })
+    }
+  })
+
+  it('reports one failed Artifact while keeping the other batch exports', async () => {
+    const destinationDirectory = '/downloads/session-artifacts'
+    const closeA = vi.fn().mockResolvedValue(undefined)
+    const closeB = vi.fn().mockResolvedValue(undefined)
+    const copyA = vi.fn().mockResolvedValue(undefined)
+    const copyB = vi.fn().mockRejectedValue(new Error('disk full'))
+    showOpenDialog.mockResolvedValue({ canceled: false, filePaths: [destinationDirectory] })
+    registerFileSaveHandlers({
+      resolveSessionArtifactFilePath: vi
+        .fn()
+        .mockResolvedValueOnce('/managed/a.csv')
+        .mockResolvedValueOnce('/managed/b.csv'),
+      openManagedFile: vi
+        .fn()
+        .mockResolvedValueOnce({ copyTo: copyA, close: closeA })
+        .mockResolvedValueOnce({ copyTo: copyB, close: closeB })
+    } as never)
+
+    const result = await handlers.get('file:save-session-artifacts')!(
+      { sender: {} },
+      {
+        projectId: 'project-1',
+        sessionId: 'session-1',
+        files: [
+          { path: 'artifact://a', suggestedName: 'a.csv' },
+          { path: 'artifact://b', suggestedName: 'b.csv' }
+        ]
+      }
+    )
+
+    expect(result).toEqual({
+      saved: true,
+      filePaths: [join(destinationDirectory, 'a.csv')],
+      failures: [
+        {
+          path: 'artifact://b',
+          suggestedName: 'b.csv',
+          message: 'disk full'
+        }
+      ]
+    })
+    expect(closeA).toHaveBeenCalledTimes(1)
+    expect(closeB).toHaveBeenCalledTimes(1)
+  })
+
+  it('keeps exporting valid Artifacts when one selected source no longer resolves', async () => {
+    const destinationDirectory = '/downloads/session-artifacts'
+    const copyTo = vi.fn().mockResolvedValue(undefined)
+    const close = vi.fn().mockResolvedValue(undefined)
+    showOpenDialog.mockResolvedValue({ canceled: false, filePaths: [destinationDirectory] })
+    registerFileSaveHandlers({
+      resolveSessionArtifactFilePath: vi
+        .fn()
+        .mockRejectedValueOnce(new Error('Artifact no longer exists'))
+        .mockResolvedValueOnce('/managed/b.csv'),
+      openManagedFile: vi.fn().mockResolvedValue({ copyTo, close })
+    } as never)
+
+    const result = await handlers.get('file:save-session-artifacts')!(
+      { sender: {} },
+      {
+        projectId: 'project-1',
+        sessionId: 'session-1',
+        files: [
+          { path: 'artifact://missing', suggestedName: 'missing.csv' },
+          { path: 'artifact://b', suggestedName: 'b.csv' }
+        ]
+      }
+    )
+
+    expect(result).toEqual({
+      saved: true,
+      filePaths: [join(destinationDirectory, 'b.csv')],
+      failures: [
+        {
+          path: 'artifact://missing',
+          suggestedName: 'missing.csv',
+          message: 'Artifact no longer exists'
+        }
+      ]
+    })
+    expect(copyTo).toHaveBeenCalledWith(join(destinationDirectory, 'b.csv'), { exclusive: true })
+    expect(close).toHaveBeenCalledTimes(1)
   })
 
   it('registers a managed-file save channel', () => {

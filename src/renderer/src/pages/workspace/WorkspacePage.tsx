@@ -42,6 +42,7 @@ import {
 } from './composer/composer-doc'
 import { ConversationPanel } from './ConversationPanel'
 import { DeleteSessionDialog } from './DeleteSessionDialog'
+import { DownloadSessionArtifactsDialog } from './DownloadSessionArtifactsDialog'
 import { PreviewPanel } from './PreviewPanel'
 import { RenameSessionDialog } from './RenameSessionDialog'
 import { SessionNotebookDialog } from './SessionNotebookDialog'
@@ -273,6 +274,9 @@ const WorkspacePage = ({
   >({})
   const [sessionToRename, setSessionToRename] = useState<ChatSession | undefined>(undefined)
   const [renameDraft, setRenameDraft] = useState('')
+  const [sessionToDownloadArtifacts, setSessionToDownloadArtifacts] = useState<
+    ChatSession | undefined
+  >(undefined)
   const [sessionToDelete, setSessionToDelete] = useState<ChatSession | undefined>(undefined)
   const [sessionDeletionInProgressIds, setSessionDeletionInProgressIds] = useState<
     ReadonlySet<string>
@@ -1447,6 +1451,7 @@ const WorkspacePage = ({
           onOpenFiles={openFilesPreview}
           onOpenSession={openSession}
           onRenameSession={openRenameDialog}
+          onDownloadArtifacts={setSessionToDownloadArtifacts}
           onViewNotebook={setSessionToViewNotebook}
           onTogglePin={(session) => {
             if (isSessionPersistenceReady) togglePinned(session.id)
@@ -1613,6 +1618,11 @@ const WorkspacePage = ({
         canDelete={canDeleteConversations}
         onCancel={closeDeleteDialog}
         onConfirmDelete={confirmDeleteSession}
+      />
+
+      <DownloadSessionArtifactsDialog
+        session={sessionToDownloadArtifacts}
+        onClose={() => setSessionToDownloadArtifacts(undefined)}
       />
 
       <SessionNotebookDialog

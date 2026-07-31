@@ -27,6 +27,7 @@ import { ALL_CONNECTOR_IDS } from './connectors/registry'
 import { ConnectorService } from './connectors/service'
 import { syncConnectorSkillDocs, syncCustomServerSkillDocs } from './connectors/provision'
 import { registerFileSaveHandlers } from './file-save'
+import { createSessionArtifactFileResolver } from './session-artifact-file-resolver'
 import { registerCliInstallIpcHandlers } from './cli-install/ipc'
 import { registerGithubIpcHandlers } from './github-ipc'
 import { BackendShutdownCoordinator, UPDATE_SHUTDOWN_BUDGET_MS } from './lifecycle-shutdown'
@@ -69,6 +70,7 @@ import { createProductionProvisioner, type RuntimeProvisioner } from './notebook
 import { runtimeRoot } from './notebook/runtime-paths'
 import type { NotebookEnvironmentManager } from './notebook/runtime-service'
 import { parseArtifactVersionLocator } from '../shared/artifact-provenance'
+import { DEFAULT_ARTIFACT_PROJECT_NAME } from '../shared/artifacts'
 import type { NotebookLanguage } from '../shared/notebook'
 import { OFFICE_PREVIEW_STATE_CHANNEL } from '../shared/office-preview'
 import { prepareExternalPythonRuntime } from './notebook/venv-overlay'
@@ -280,6 +282,13 @@ const registerIpcHandlers = async ({
         : notebookInputRegistry
             .resolvePreviewKey(request.path)
             .then((target) => target.absolutePath)
+  const resolveSessionArtifactFilePath = createSessionArtifactFileResolver({
+    compatibilityProjectName: DEFAULT_ARTIFACT_PROJECT_NAME,
+    resolveVersionContent: (identity) =>
+      artifactProvenanceRepository.resolveVersionContent(identity),
+    resolveLegacyArtifactPath: (projectName, sessionId, path) =>
+      artifactRepository.resolveSessionArtifactFilePath(projectName, sessionId, path)
+  })
   // One registry owns short-lived capability URLs for both managed artifact repositories.
   const previewResources = new ManagedPreviewResources({
     resolvePath: resolveManagedFilePath
@@ -579,7 +588,7 @@ const registerIpcHandlers = async ({
     }
   )
 
-  registerFileSaveHandlers({ resolveManagedFilePath })
+  registerFileSaveHandlers({ resolveManagedFilePath, resolveSessionArtifactFilePath })
   registerLogsIpcHandlers()
   registerGithubIpcHandlers()
   registerCliInstallIpcHandlers()

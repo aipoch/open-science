@@ -18,9 +18,31 @@ type SaveManagedFileRequest = {
 
 type SaveManagedFileResult = SaveBlobFileResult
 
+type SaveSessionArtifactFile = {
+  path: string
+  suggestedName: string
+}
+
+type SaveSessionArtifactsRequest = {
+  projectId: string
+  sessionId: string
+  files: SaveSessionArtifactFile[]
+}
+
+type SaveSessionArtifactFailure = SaveSessionArtifactFile & {
+  message: string
+}
+
+type SaveSessionArtifactsResult =
+  { saved: false } | { saved: true; filePaths: string[]; failures?: SaveSessionArtifactFailure[] }
+
 export type {
   SaveBlobFileRequest,
   SaveBlobFileResult,
   SaveManagedFileRequest,
-  SaveManagedFileResult
+  SaveManagedFileResult,
+  SaveSessionArtifactFailure,
+  SaveSessionArtifactFile,
+  SaveSessionArtifactsRequest,
+  SaveSessionArtifactsResult
 }

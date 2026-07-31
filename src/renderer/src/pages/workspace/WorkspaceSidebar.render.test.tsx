@@ -36,6 +36,7 @@ const renderSidebar = async (sessions: ChatSession[]): Promise<string> => {
       onOpenFiles={vi.fn()}
       onOpenSession={vi.fn()}
       onRenameSession={vi.fn()}
+      onDownloadArtifacts={vi.fn()}
       onViewNotebook={vi.fn()}
       onTogglePin={vi.fn()}
       onDeleteSession={vi.fn()}
@@ -105,6 +106,7 @@ describe('WorkspaceSidebar accessible render', () => {
     ]
     const onOpenSession = vi.fn()
     const onRenameSession = vi.fn()
+    const onDownloadArtifacts = vi.fn()
     const onDeleteSession = vi.fn()
     const tree = WorkspaceSidebar({
       projectName: 'Example project',
@@ -119,6 +121,7 @@ describe('WorkspaceSidebar accessible render', () => {
       onOpenFiles: vi.fn(),
       onOpenSession,
       onRenameSession,
+      onDownloadArtifacts,
       onViewNotebook: vi.fn(),
       onTogglePin: vi.fn(),
       onDeleteSession,
@@ -132,6 +135,9 @@ describe('WorkspaceSidebar accessible render', () => {
         typeof element.props.onClick === 'function'
     )
     const renameItems = elements.filter((element) => getTextContent(element).trim() === 'Rename…')
+    const downloadItems = elements.filter(
+      (element) => getTextContent(element).trim() === 'Download all artifacts'
+    )
     const deleteItems = elements.filter((element) => getTextContent(element).trim() === 'Delete')
 
     expect(notebookButton?.props.onClick).toBeTypeOf('function')
@@ -141,6 +147,10 @@ describe('WorkspaceSidebar accessible render', () => {
     expect(renameItems[1]?.props.onSelect).toBeTypeOf('function')
     ;(renameItems[1]?.props.onSelect as () => void)()
     expect(onRenameSession).toHaveBeenCalledWith(sessions[1])
+
+    expect(downloadItems[1]?.props.onSelect).toBeTypeOf('function')
+    ;(downloadItems[1]?.props.onSelect as () => void)()
+    expect(onDownloadArtifacts).toHaveBeenCalledWith(sessions[1])
 
     expect(deleteItems[0]?.props.onSelect).toBeTypeOf('function')
     ;(deleteItems[0]?.props.onSelect as () => void)()
@@ -163,6 +173,7 @@ describe('WorkspaceSidebar accessible render', () => {
       onOpenFiles,
       onOpenSession: vi.fn(),
       onRenameSession: vi.fn(),
+      onDownloadArtifacts: vi.fn(),
       onViewNotebook: vi.fn(),
       onTogglePin: vi.fn(),
       onDeleteSession: vi.fn(),
@@ -202,6 +213,7 @@ describe('WorkspaceSidebar accessible render', () => {
       onOpenFiles: vi.fn(),
       onOpenSession: vi.fn(),
       onRenameSession: vi.fn(),
+      onDownloadArtifacts: vi.fn(),
       onTogglePin: vi.fn(),
       onDeleteSession: vi.fn(),
       onViewNotebook,
@@ -250,6 +262,7 @@ describe('WorkspaceSidebar accessible render', () => {
       onOpenFiles: vi.fn(),
       onOpenSession: vi.fn(),
       onRenameSession: vi.fn(),
+      onDownloadArtifacts: vi.fn(),
       onViewNotebook: vi.fn(),
       onTogglePin,
       onDeleteSession: vi.fn(),
@@ -286,6 +299,7 @@ describe('WorkspaceSidebar accessible render', () => {
       onOpenFiles: vi.fn(),
       onOpenSession: vi.fn(),
       onRenameSession: vi.fn(),
+      onDownloadArtifacts: vi.fn(),
       onViewNotebook: vi.fn(),
       onTogglePin: vi.fn(),
       onDeleteSession: vi.fn(),

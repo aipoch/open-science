@@ -32,6 +32,7 @@ vi.mock('electron', () => ({
 
 // The subset of the bridge these tests exercise. Args are unknown — forwarding, not shape, is asserted.
 type PreloadApi = {
+  saveSessionArtifacts: (request: unknown) => unknown
   lifecycle: {
     getClientId: () => unknown
   }
@@ -199,8 +200,19 @@ const sampleFramework = { framework: 'opencode' }
 const sampleResumeRequest = { sessionId: 's-1', cwd: '/workspace/project' }
 const sampleGitHubPreview = { url: 'https://github.com/acme/skills/tree/main/foo' }
 const sampleAgentHomePreview = { source: 'agents', slug: 'foo' }
+const sampleSessionArtifactSelection = {
+  projectId: 'p-1',
+  sessionId: 's-1',
+  files: [{ path: 'artifact://report', suggestedName: 'report.csv' }]
+}
 
 const cases: ForwardingCase[] = [
+  {
+    name: 'saveSessionArtifacts → file:save-session-artifacts',
+    invoke: (a) => a.saveSessionArtifacts(sampleSessionArtifactSelection),
+    channel: 'file:save-session-artifacts',
+    args: [sampleSessionArtifactSelection]
+  },
   {
     name: 'lifecycle.getClientId → lifecycle:client-id (no args)',
     invoke: (a) => a.lifecycle.getClientId(),

@@ -100,6 +100,7 @@ export const WEB_INVOKE_CHANNELS = {
   'runtime.unregisterInterpreter': 'runtime:unregister-interpreter',
   saveBlobFile: 'file:save-blob',
   saveManagedFile: 'file:save-managed',
+  saveSessionArtifacts: 'file:save-session-artifacts',
   'sessions.deleteSession': 'sessions:delete-session',
   'sessions.loadAll': 'sessions:load-all',
   'sessions.saveManifest': 'sessions:save-manifest',

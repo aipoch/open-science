@@ -39,7 +39,9 @@ import type {
   SaveBlobFileRequest,
   SaveBlobFileResult,
   SaveManagedFileRequest,
-  SaveManagedFileResult
+  SaveManagedFileResult,
+  SaveSessionArtifactsRequest,
+  SaveSessionArtifactsResult
 } from '../shared/file-save'
 import type {
   ComputeApprovalDecision,
@@ -279,6 +281,9 @@ const onIpcMessage = <Payload>(channel: string, listener: AcpListener<Payload>):
 type OpenScienceAPI = {
   saveBlobFile: (request: SaveBlobFileRequest) => Promise<SaveBlobFileResult>
   saveManagedFile: (request: SaveManagedFileRequest) => Promise<SaveManagedFileResult>
+  saveSessionArtifacts: (
+    request: SaveSessionArtifactsRequest
+  ) => Promise<SaveSessionArtifactsResult>
   // Host platform (process.platform), e.g. 'win32' | 'darwin' | 'linux'. Lets the renderer pick
   // platform-correct copy such as the claude install command shown in the onboarding/settings card.
   platform: string
@@ -737,6 +742,11 @@ const api: OpenScienceAPI = {
     ipcRenderer.invoke('file:save-blob', request) as Promise<SaveBlobFileResult>,
   saveManagedFile: (request) =>
     ipcRenderer.invoke('file:save-managed', request) as Promise<SaveManagedFileResult>,
+  saveSessionArtifacts: (request) =>
+    ipcRenderer.invoke(
+      'file:save-session-artifacts',
+      request
+    ) as Promise<SaveSessionArtifactsResult>,
   platform: process.platform,
   getRuntimeVersions: () => ({
     electron: process.versions.electron,

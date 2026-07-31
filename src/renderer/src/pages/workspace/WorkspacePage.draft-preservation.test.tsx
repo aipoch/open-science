@@ -35,7 +35,12 @@ let sidebarProps: {
   canDeleteConversations: boolean
   onOpenSession: (id: string) => void
   onNewConversation: () => void
+  onDownloadArtifacts: (session: ChatSession) => void
   onDeleteSession: (session: ChatSession) => void
+}
+let downloadArtifactsDialogProps: {
+  session: ChatSession | undefined
+  onClose: () => void
 }
 let deleteDialogProps: {
   session: ChatSession | undefined
@@ -96,6 +101,15 @@ vi.mock('./RenameSessionDialog', () => ({
 vi.mock('./DeleteSessionDialog', () => ({
   DeleteSessionDialog: (props: typeof deleteDialogProps): React.JSX.Element => {
     deleteDialogProps = props
+    return <div />
+  }
+}))
+
+vi.mock('./DownloadSessionArtifactsDialog', () => ({
+  DownloadSessionArtifactsDialog: (
+    props: typeof downloadArtifactsDialogProps
+  ): React.JSX.Element => {
+    downloadArtifactsDialogProps = props
     return <div />
   }
 }))
@@ -260,6 +274,21 @@ describe('WorkspacePage draft preservation', () => {
       sidebarProps.onOpenSession(id)
     })
   }
+
+  it('opens and closes the Artifact download dialog for the selected sidebar Session', async () => {
+    await renderPage()
+    const sessionB = useSessionStore.getState().sessions.find((session) => session.id === 'sess-b')!
+
+    await act(async () => {
+      sidebarProps.onDownloadArtifacts(sessionB)
+    })
+    expect(downloadArtifactsDialogProps.session?.id).toBe('sess-b')
+
+    await act(async () => {
+      downloadArtifactsDialogProps.onClose()
+    })
+    expect(downloadArtifactsDialogProps.session).toBeUndefined()
+  })
 
   it('preserves each session doc independently when switching away and back', async () => {
     await renderPage()
