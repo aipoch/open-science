@@ -3064,35 +3064,38 @@ class SettingsService {
         : isCursorSubscriptionProvider(resolved.provider.type)
           ? await this.validateCursorSubscription(settings)
           : resolved.provider.type === 'claude-shared'
-          ? await this.validateClaudeSharedProvider(
-              resolved.provider,
-              settings,
-              resolved.storedId
-                ? settings.providers.find((provider) => provider.id === resolved.storedId)
-                : undefined
-            )
-          : resolved.provider.type === 'claude-isolated'
-            ? await this.getClaudeIsolatedStatus()
-            : await validateProvider(resolved.provider, {
-                // Probe over Electron's network stack, which honors the system/VPN proxy. Node's global
-                // fetch (undici) takes a direct path and ignores that proxy, so an official vendor reachable
-                // only through a proxy (e.g. api.openai.com) would fail the probe as a false `network` error
-                // even with a valid key. The local Responses-bridge loopback stays on the direct fetch.
-                fetchImpl: netFetchStandard,
-                // Codex reaches Chat Completions-only providers through the local Responses bridge.
-                // A plain ping cannot prove the streaming function-call contract that runtime needs.
-                requireBridgeToolCall: requiresChatCompletionsBridge(resolved.provider, framework),
-                requireNativeResponsesCompatibility: requiresNativeResponsesCompatibility(
-                  resolved.provider,
-                  framework
-                ),
-                // For a multi-route provider, probe the route this framework actually drives so a passing
-                // test proves that route (e.g. Claude Code hits /v1/messages, not /v1/chat/completions).
-                // Codex is excluded: it bridges the provider's OpenAI route under its `responses` protocol,
-                // so its HTTP route is decided by the bridge, not by supportedApiTypes — keep it as-is.
-                frameworkEndpoints:
-                  framework.id === 'codex' ? undefined : framework.supportedApiTypes
-              }))
+            ? await this.validateClaudeSharedProvider(
+                resolved.provider,
+                settings,
+                resolved.storedId
+                  ? settings.providers.find((provider) => provider.id === resolved.storedId)
+                  : undefined
+              )
+            : resolved.provider.type === 'claude-isolated'
+              ? await this.getClaudeIsolatedStatus()
+              : await validateProvider(resolved.provider, {
+                  // Probe over Electron's network stack, which honors the system/VPN proxy. Node's global
+                  // fetch (undici) takes a direct path and ignores that proxy, so an official vendor reachable
+                  // only through a proxy (e.g. api.openai.com) would fail the probe as a false `network` error
+                  // even with a valid key. The local Responses-bridge loopback stays on the direct fetch.
+                  fetchImpl: netFetchStandard,
+                  // Codex reaches Chat Completions-only providers through the local Responses bridge.
+                  // A plain ping cannot prove the streaming function-call contract that runtime needs.
+                  requireBridgeToolCall: requiresChatCompletionsBridge(
+                    resolved.provider,
+                    framework
+                  ),
+                  requireNativeResponsesCompatibility: requiresNativeResponsesCompatibility(
+                    resolved.provider,
+                    framework
+                  ),
+                  // For a multi-route provider, probe the route this framework actually drives so a passing
+                  // test proves that route (e.g. Claude Code hits /v1/messages, not /v1/chat/completions).
+                  // Codex is excluded: it bridges the provider's OpenAI route under its `responses` protocol,
+                  // so its HTTP route is decided by the bridge, not by supportedApiTypes — keep it as-is.
+                  frameworkEndpoints:
+                    framework.id === 'codex' ? undefined : framework.supportedApiTypes
+                }))
 
     if (resolved.storedId) {
       // Each early return here means the tested target no longer matches what is stored (a newer test
@@ -3644,10 +3647,7 @@ class SettingsService {
     const settings = await this.repository.getSettings()
     const forced = process.env.OPEN_SCIENCE_AGENT_FRAMEWORK
     const frameworkId: AgentFrameworkId =
-      forced === 'opencode' ||
-      forced === 'claude-code' ||
-      forced === 'codex' ||
-      forced === 'cursor'
+      forced === 'opencode' || forced === 'claude-code' || forced === 'codex' || forced === 'cursor'
         ? forced
         : (settings.agentFrameworkId ?? DEFAULT_AGENT_FRAMEWORK_ID)
 
@@ -3660,10 +3660,7 @@ class SettingsService {
     const settings = await this.repository.getSettings()
     const forced = process.env.OPEN_SCIENCE_AGENT_FRAMEWORK
     const frameworkId: AgentFrameworkId =
-      forced === 'opencode' ||
-      forced === 'claude-code' ||
-      forced === 'codex' ||
-      forced === 'cursor'
+      forced === 'opencode' || forced === 'claude-code' || forced === 'codex' || forced === 'cursor'
         ? forced
         : (settings.agentFrameworkId ?? DEFAULT_AGENT_FRAMEWORK_ID)
 
