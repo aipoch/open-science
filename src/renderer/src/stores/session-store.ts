@@ -1786,7 +1786,9 @@ export const useSessionStore = create<SessionStore>((set, get) => ({
         if (session.id !== sessionId) return session
 
         const keepArtifactError = isArtifactFinalizationError(session.error)
-        const now = Date.now()
+        // A deferred Artifact may have inserted the terminal message during the same millisecond.
+        // Advance its timestamp so graph synchronization accepts the completed payload as newer.
+        const now = Math.max(Date.now(), session.updatedAt + 1)
         const messages = completeStreamingMessages(
           session.messages,
           session.activeRun?.promptMessageId,

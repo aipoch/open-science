@@ -983,6 +983,89 @@ describe('workspace runtime events', () => {
     })
   })
 
+  it('attaches turn usage to an artifact-only terminal response', async () => {
+    const promptMessageId = useSessionStore.getState().sessions[0].activeRun?.promptMessageId
+    const finalizeRunArtifacts = vi.fn(async ({ messageId }: { messageId: string }) => [
+      createArtifactFile({
+        id: `transport-session-1:${messageId}:result.txt`,
+        sessionId: 'transport-session-1',
+        messageId,
+        runId: undefined
+      })
+    ])
+    const saveSession = vi.fn().mockResolvedValue(undefined)
+
+    await applyWorkspaceRuntimeEvent(
+      createEvent({
+        id: 'artifact-event-only-response',
+        kind: 'artifact',
+        runId: 'artifact-run-only-response',
+        promptMessageId,
+        artifactSessionId: 'artifact-session-1',
+        artifactClaimId: 'claim-only-response',
+        artifacts: [createArtifactFile({ runId: 'artifact-run-only-response' })]
+      }),
+      { finalizeRunArtifacts, saveSession }
+    )
+
+    await applyWorkspaceRuntimeEvent(
+      createEvent({
+        id: 'stop-only-response',
+        kind: 'stop',
+        turnUsage: { inputTokens: 31, cacheTokens: 15, outputTokens: 14 }
+      })
+    )
+
+    expect(useSessionStore.getState().sessions[0].messages[1]).toMatchObject({
+      role: 'agent',
+      content: '',
+      status: 'complete',
+      artifactIds: [expect.stringContaining(':result.txt')],
+      turnUsage: { inputTokens: 31, cacheTokens: 15, outputTokens: 14 }
+    })
+    expect(saveSession).toHaveBeenLastCalledWith(
+      expect.objectContaining({
+        messages: expect.arrayContaining([
+          expect.objectContaining({
+            role: 'agent',
+            turnUsage: { inputTokens: 31, cacheTokens: 15, outputTokens: 14 }
+          })
+        ])
+      })
+    )
+  })
+
+  it('marks an artifact-only terminal response when turn usage is unavailable', async () => {
+    const promptMessageId = useSessionStore.getState().sessions[0].activeRun?.promptMessageId
+
+    await applyWorkspaceRuntimeEvent(
+      createEvent({
+        id: 'artifact-event-only-unavailable-response',
+        kind: 'artifact',
+        runId: 'artifact-run-only-unavailable-response',
+        promptMessageId,
+        artifactSessionId: 'artifact-session-1',
+        artifactClaimId: 'claim-only-unavailable-response',
+        artifacts: [createArtifactFile({ runId: 'artifact-run-only-unavailable-response' })]
+      }),
+      {
+        finalizeRunArtifacts: vi.fn().mockResolvedValue([]),
+        saveSession: vi.fn().mockResolvedValue(undefined)
+      }
+    )
+
+    await applyWorkspaceRuntimeEvent(
+      createEvent({ id: 'stop-only-unavailable-response', kind: 'stop' })
+    )
+
+    expect(useSessionStore.getState().sessions[0].messages[1]).toMatchObject({
+      role: 'agent',
+      content: '',
+      status: 'complete',
+      turnUsageUnavailable: true
+    })
+  })
+
   it('binds a restarted runtime Artifact event to the current response in a historical Session', async () => {
     const finalizeRunArtifacts = vi.fn(async ({ messageId }: { messageId: string }) => [
       createArtifactFile({

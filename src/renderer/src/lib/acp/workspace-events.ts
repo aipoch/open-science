@@ -134,23 +134,22 @@ const saveSessionForArtifactFinalization = (
   session: PersistedChatSession
 ): Promise<PersistedChatSession> => saveSessionInOrder(session)
 
-const finalizeArtifactEvent = async (
-  event: AcpRuntimeEvent,
-  dependencies: WorkspaceRuntimeEventDependencies
-): Promise<boolean> => {
-  if (
-    event.kind !== 'artifact' ||
-    !event.sessionId ||
-    !event.runId ||
-    !event.artifactClaimId ||
-    !event.artifacts ||
-    event.artifacts.length === 0
-  ) {
-    return false
-  }
+type FinalizableArtifactEvent = AcpRuntimeEvent & {
+  kind: 'artifact'
+  sessionId: string
+  runId: string
+  artifactClaimId: string
+  artifacts: ArtifactFile[]
+}
 
-  const store = useSessionStore.getState()
-  const attached = store.attachRunArtifacts({
+const isFinalizableArtifactEvent = (event: AcpRuntimeEvent): event is FinalizableArtifactEvent =>
+  event.kind === 'artifact' &&
+  Boolean(event.sessionId && event.runId && event.artifactClaimId && event.artifacts?.length)
+
+const attachArtifactEvent = (
+  event: FinalizableArtifactEvent
+): { sessionId: string; messageId: string } | undefined =>
+  useSessionStore.getState().attachRunArtifacts({
     sessionId: event.sessionId,
     runId: event.runId,
     promptMessageId: event.promptMessageId,
@@ -158,7 +157,17 @@ const finalizeArtifactEvent = async (
     artifacts: event.artifacts
   })
 
+const finalizeArtifactEvent = async (
+  event: AcpRuntimeEvent,
+  dependencies: WorkspaceRuntimeEventDependencies
+): Promise<boolean> => {
+  if (!isFinalizableArtifactEvent(event)) return false
+
+  const attached = attachArtifactEvent(event)
+
   if (!attached) return true
+
+  const store = useSessionStore.getState()
 
   try {
     const persistLatestSession = async (): Promise<void> => {
@@ -407,6 +416,26 @@ const applyWorkspaceRuntimeEvent = async (
 
   if (event.kind === 'stop' && event.sessionId) {
     activityGroupToolCallIdsBySession.delete(event.sessionId)
+    const deferredArtifacts = deferredArtifactEventsBySession.get(event.sessionId)
+    const activeSession = store.sessions.find((session) => session.id === event.sessionId)
+    let deferredAttachmentError: unknown
+    let deferredAttachmentFailed = false
+
+    // Artifact-only turns need their terminal Agent message before finishRun chooses the owner of the
+    // usage footer. Binding is synchronous; durable finalization still happens after the run settles.
+    if (!activeSession?.conversationGraphSyncBlocked && deferredArtifacts) {
+      try {
+        for (const deferredArtifact of deferredArtifacts) {
+          if (isFinalizableArtifactEvent(deferredArtifact.event)) {
+            attachArtifactEvent(deferredArtifact.event)
+          }
+        }
+      } catch (error) {
+        deferredAttachmentError = error
+        deferredAttachmentFailed = true
+      }
+    }
+
     store.finishRun(event.sessionId, event.turnUsage)
 
     const terminalSession = useSessionStore
@@ -419,7 +448,11 @@ const applyWorkspaceRuntimeEvent = async (
       return true
     }
 
-    const deferredArtifacts = deferredArtifactEventsBySession.get(event.sessionId)
+    if (deferredAttachmentFailed) {
+      deferredArtifactEventsBySession.delete(event.sessionId)
+      throw deferredAttachmentError
+    }
+
     if (deferredArtifacts) {
       deferredArtifactEventsBySession.delete(event.sessionId)
       for (const deferredArtifact of deferredArtifacts) {
