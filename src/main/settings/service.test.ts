@@ -133,6 +133,7 @@ const createService = (
     installManagedCodexImpl?: ManagedCodexInstallImpl
     // When set, opencode detection resolves this path/version; otherwise it finds nothing.
     opencodeDetected?: { path: string; version: string }
+    allocateOpenCodeUsagePort?: () => Promise<number>
     codexDetected?: { path: string; version: string; nativePath?: string; nativeVersion?: string }
     managedCodexAdapterPath?: string
     managedCodexNativePath?: string
@@ -191,6 +192,7 @@ const createService = (
         ),
       resolveNpmBinDirs: () => Promise.resolve([])
     },
+    allocateOpenCodeUsagePort: options.allocateOpenCodeUsagePort ?? (() => Promise.resolve(42_424)),
     codexDetectDeps: {
       env: options.codexDetected ? { PATH: dirname(options.codexDetected.path) } : {},
       homePath: '/home',
@@ -2516,6 +2518,11 @@ describe('SettingsService: preflight & spawn config', () => {
       attachment: true,
       modalities: { input: ['text', 'image'] },
       limit: { context: 1_000_000, output: 32_000 }
+    })
+    expect(backend.args).toEqual(['--port', '42424', '--hostname', '127.0.0.1'])
+    expect(backend.opencodeUsageApi).toEqual({
+      baseUrl: 'http://127.0.0.1:42424',
+      authorization: `Basic ${Buffer.from(`opencode:${backend.env.OPENCODE_SERVER_PASSWORD}`).toString('base64')}`
     })
   })
 

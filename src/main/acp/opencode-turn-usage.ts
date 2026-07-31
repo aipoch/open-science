@@ -1,0 +1,111 @@
+import type { AcpTurnTokenUsage } from '../../shared/acp'
+import type { ResolvedAgentBackend } from '../agent-framework'
+
+export type OpenCodeUsageSnapshot = {
+  assistantMessageIds: Set<string>
+  usageByMessageId: Map<string, AcpTurnTokenUsage>
+}
+
+type OpenCodeMessageInfo = {
+  id?: unknown
+  role?: unknown
+  tokens?: unknown
+}
+
+const tokenCount = (value: unknown): number | undefined =>
+  typeof value === 'number' && Number.isSafeInteger(value) && value >= 0 ? value : undefined
+
+const messageUsage = (value: unknown): AcpTurnTokenUsage | undefined => {
+  if (typeof value !== 'object' || value === null || Array.isArray(value)) return undefined
+  const tokens = value as {
+    input?: unknown
+    output?: unknown
+    cache?: { read?: unknown; write?: unknown }
+  }
+  const inputTokens = tokenCount(tokens.input)
+  const outputTokens = tokenCount(tokens.output)
+  const cachedReadTokens = tokenCount(tokens.cache?.read ?? 0)
+  const cachedWriteTokens = tokenCount(tokens.cache?.write ?? 0)
+  if (
+    inputTokens === undefined ||
+    outputTokens === undefined ||
+    cachedReadTokens === undefined ||
+    cachedWriteTokens === undefined
+  ) {
+    return undefined
+  }
+
+  const cacheTokens = cachedReadTokens + cachedWriteTokens
+  return Number.isSafeInteger(cacheTokens) ? { inputTokens, cacheTokens, outputTokens } : undefined
+}
+
+export const fetchOpenCodeUsageSnapshot = async (
+  api: NonNullable<ResolvedAgentBackend['opencodeUsageApi']>,
+  sessionId: string,
+  cwd: string,
+  fetchImpl: typeof fetch = fetch
+): Promise<OpenCodeUsageSnapshot | undefined> => {
+  try {
+    const url = new URL(
+      `/session/${encodeURIComponent(sessionId)}/message`,
+      api.baseUrl.endsWith('/') ? api.baseUrl : `${api.baseUrl}/`
+    )
+    url.searchParams.set('directory', cwd)
+    const response = await fetchImpl(url, {
+      headers: { authorization: api.authorization },
+      signal: AbortSignal.timeout(2_000)
+    })
+    if (!response.ok) return undefined
+
+    const messages = (await response.json()) as unknown
+    if (!Array.isArray(messages)) return undefined
+
+    const assistantMessageIds = new Set<string>()
+    const usageByMessageId = new Map<string, AcpTurnTokenUsage>()
+    for (const message of messages) {
+      if (typeof message !== 'object' || message === null || Array.isArray(message)) continue
+      const info = (message as { info?: OpenCodeMessageInfo }).info
+      if (!info || info.role !== 'assistant' || typeof info.id !== 'string') continue
+      assistantMessageIds.add(info.id)
+      const usage = messageUsage(info.tokens)
+      if (usage) usageByMessageId.set(info.id, usage)
+    }
+
+    return { assistantMessageIds, usageByMessageId }
+  } catch {
+    return undefined
+  }
+}
+
+export const sumOpenCodeTurnUsage = (
+  before: OpenCodeUsageSnapshot | undefined,
+  after: OpenCodeUsageSnapshot | undefined
+): AcpTurnTokenUsage | undefined => {
+  if (!before || !after) return undefined
+
+  const newMessageIds = [...after.assistantMessageIds].filter(
+    (messageId) => !before.assistantMessageIds.has(messageId)
+  )
+  if (newMessageIds.length === 0) return undefined
+
+  let inputTokens = 0
+  let cacheTokens = 0
+  let outputTokens = 0
+  for (const messageId of newMessageIds) {
+    const usage = after.usageByMessageId.get(messageId)
+    // Never publish a partial sum when OpenCode changes or omits one new assistant record.
+    if (!usage) return undefined
+    inputTokens += usage.inputTokens
+    cacheTokens += usage.cacheTokens
+    outputTokens += usage.outputTokens
+    if (
+      !Number.isSafeInteger(inputTokens) ||
+      !Number.isSafeInteger(cacheTokens) ||
+      !Number.isSafeInteger(outputTokens)
+    ) {
+      return undefined
+    }
+  }
+
+  return { inputTokens, cacheTokens, outputTokens }
+}

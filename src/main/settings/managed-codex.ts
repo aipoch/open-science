@@ -258,7 +258,10 @@ const CODEX_ACP_TURN_USAGE_RESPONSE_SOURCE =
   'usage: this.buildPromptUsage(sessionState.lastTokenUsage),'
 const CODEX_ACP_TURN_USAGE_RESPONSE_LEGACY_REPLACEMENT =
   'usage: this.buildPromptUsage(sessionState.promptTokenUsageObserved ? sessionState.promptTokenUsage : null),'
-const CODEX_ACP_TURN_USAGE_RESPONSE_REPLACEMENT = [
+// The first turn-usage patch emitted a second `_meta` property immediately before the adapter's
+// existing quota metadata. JavaScript keeps only the latter property, so this exact shape must be
+// recognized and upgraded in already-managed installs.
+const CODEX_ACP_TURN_USAGE_RESPONSE_OVERWRITTEN_REPLACEMENT = [
   'usage: this.buildPromptUsage(',
   '  sessionState.lastTokenUsage',
   '),',
@@ -269,6 +272,22 @@ const CODEX_ACP_TURN_USAGE_RESPONSE_REPLACEMENT = [
   '      }',
   '    }',
   '  : {}),'
+].join('\n')
+const CODEX_ACP_TURN_USAGE_RESPONSE_REPLACEMENT = [
+  'usage: this.buildPromptUsage(',
+  '  sessionState.lastTokenUsage',
+  '),'
+].join('\n')
+const CODEX_ACP_TURN_USAGE_META_SOURCE = '_meta: this.buildQuotaMeta(sessionState)'
+const CODEX_ACP_TURN_USAGE_META_REPLACEMENT = [
+  '_meta: {',
+  '  ...this.buildQuotaMeta(sessionState),',
+  '  ...(sessionState.promptTokenUsageObserved',
+  '    ? {',
+  `        "${ACP_TURN_TOKEN_USAGE_META_KEY}": this.buildPromptUsage(sessionState.promptTokenUsage)`,
+  '      }',
+  '    : {})',
+  '}'
 ].join('\n')
 const CODEX_ACP_TURN_USAGE_FINISH_SOURCE = '      activePrompt.complete();'
 const CODEX_ACP_TURN_USAGE_FINISH_REPLACEMENT = [
@@ -422,11 +441,17 @@ export const patchCodexAcpTurnUsageSource = (source: string): string => {
       CODEX_ACP_TURN_USAGE_RESPONSE_LEGACY_REPLACEMENT,
       CODEX_ACP_TURN_USAGE_RESPONSE_REPLACEMENT
     )
+    .replaceAll(
+      CODEX_ACP_TURN_USAGE_RESPONSE_OVERWRITTEN_REPLACEMENT,
+      CODEX_ACP_TURN_USAGE_RESPONSE_REPLACEMENT
+    )
+    .replaceAll(CODEX_ACP_TURN_USAGE_META_SOURCE, CODEX_ACP_TURN_USAGE_META_REPLACEMENT)
 
   if (
     migratedSource.includes(CODEX_ACP_TURN_USAGE_UPDATE_REPLACEMENT) &&
     migratedSource.includes(CODEX_ACP_TURN_USAGE_START_REPLACEMENT) &&
     migratedSource.includes(CODEX_ACP_TURN_USAGE_RESPONSE_REPLACEMENT) &&
+    migratedSource.includes(CODEX_ACP_TURN_USAGE_META_REPLACEMENT) &&
     migratedSource.includes(CODEX_ACP_TURN_USAGE_FINISH_REPLACEMENT)
   ) {
     return migratedSource
@@ -435,9 +460,16 @@ export const patchCodexAcpTurnUsageSource = (source: string): string => {
   const updateMatches = migratedSource.split(CODEX_ACP_TURN_USAGE_UPDATE_SOURCE).length - 1
   const startMatches = migratedSource.split(CODEX_ACP_TURN_USAGE_START_SOURCE).length - 1
   const responseMatches = migratedSource.split(CODEX_ACP_TURN_USAGE_RESPONSE_SOURCE).length - 1
+  const metaMatches = migratedSource.split(CODEX_ACP_TURN_USAGE_META_REPLACEMENT).length - 1
   const finishMatches = migratedSource.split(CODEX_ACP_TURN_USAGE_FINISH_SOURCE).length - 1
 
-  if (updateMatches === 1 && startMatches === 1 && responseMatches === 3 && finishMatches === 1) {
+  if (
+    updateMatches === 1 &&
+    startMatches === 1 &&
+    responseMatches === 3 &&
+    metaMatches === 3 &&
+    finishMatches === 1
+  ) {
     return migratedSource
       .replace(CODEX_ACP_TURN_USAGE_UPDATE_SOURCE, CODEX_ACP_TURN_USAGE_UPDATE_REPLACEMENT)
       .replace(CODEX_ACP_TURN_USAGE_START_SOURCE, CODEX_ACP_TURN_USAGE_START_REPLACEMENT)

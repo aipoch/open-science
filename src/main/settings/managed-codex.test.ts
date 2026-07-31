@@ -1401,13 +1401,14 @@ describe('patchCodexAcpTurnUsageSource', () => {
     '    return null;',
     '  },',
     '    buildPromptUsage(usage) { return usage; },',
+    '    buildQuotaMeta() { return { quota: { remaining: 42 } }; },',
     '    startPrompt() {',
     '    sessionState.currentTurnId = null;',
     '    sessionState.lastTokenUsage = null;',
     '    },',
-    '    commandResponse() { return { usage: this.buildPromptUsage(sessionState.lastTokenUsage), }; },',
-    '    normalResponse() { return { usage: this.buildPromptUsage(sessionState.lastTokenUsage), }; },',
-    '    cancelledResponse() { return { usage: this.buildPromptUsage(sessionState.lastTokenUsage), }; },',
+    '    commandResponse() { return { usage: this.buildPromptUsage(sessionState.lastTokenUsage), _meta: this.buildQuotaMeta(sessionState), }; },',
+    '    normalResponse() { return { usage: this.buildPromptUsage(sessionState.lastTokenUsage), _meta: this.buildQuotaMeta(sessionState), }; },',
+    '    cancelledResponse() { return { usage: this.buildPromptUsage(sessionState.lastTokenUsage), _meta: this.buildQuotaMeta(sessionState), }; },',
     '    finishPrompt() {',
     '      const response = this.normalResponse();',
     '      activePrompt.complete();',
@@ -1541,6 +1542,27 @@ describe('patchCodexAcpTurnUsageSource', () => {
     })
   })
 
+  it('merges whole-turn usage with the pinned adapter quota metadata', () => {
+    const adapter = Function(patchCodexAcpTurnUsageSource(fixture))() as {
+      startPrompt: () => void
+      createUsageUpdate: (params: unknown) => void
+      finishPrompt: () => { _meta?: Record<string, unknown> }
+    }
+
+    adapter.startPrompt()
+    adapter.createUsageUpdate({
+      tokenUsage: {
+        last: usage(18, 12, 3, 3, 0),
+        total: usage(18, 12, 3, 3, 0)
+      }
+    })
+
+    expect(adapter.finishPrompt()._meta).toEqual({
+      quota: { remaining: 42 },
+      [ACP_TURN_TOKEN_USAGE_META_KEY]: usage(18, 12, 3, 3, 0)
+    })
+  })
+
   it('uses the first request snapshot when a resumed session has no cumulative baseline', () => {
     const adapter = Function(patchCodexAcpTurnUsageSource(fixture))() as {
       startPrompt: () => void
@@ -1623,6 +1645,42 @@ describe('patchCodexAcpTurnUsageSource', () => {
 
     expect(legacy).not.toBe(normalized)
     expect(patchCodexAcpTurnUsageSource(legacy)).toBe(normalized)
+  })
+
+  it('upgrades the overwritten turn-usage metadata shape in an existing managed adapter', () => {
+    const patched = patchCodexAcpTurnUsageSource(fixture)
+    const latestUsage = [
+      'usage: this.buildPromptUsage(',
+      '  sessionState.lastTokenUsage',
+      '),'
+    ].join('\n')
+    const overwrittenUsage = [
+      latestUsage,
+      '...(sessionState.promptTokenUsageObserved',
+      '  ? {',
+      '      _meta: {',
+      `        "${ACP_TURN_TOKEN_USAGE_META_KEY}": this.buildPromptUsage(sessionState.promptTokenUsage)`,
+      '      }',
+      '    }',
+      '  : {}),'
+    ].join('\n')
+    const mergedMeta = [
+      '_meta: {',
+      '  ...this.buildQuotaMeta(sessionState),',
+      '  ...(sessionState.promptTokenUsageObserved',
+      '    ? {',
+      `        "${ACP_TURN_TOKEN_USAGE_META_KEY}": this.buildPromptUsage(sessionState.promptTokenUsage)`,
+      '      }',
+      '    : {})',
+      '}'
+    ].join('\n')
+    const overwritten = patched.replaceAll(
+      `${latestUsage} ${mergedMeta}`,
+      `${overwrittenUsage} _meta: this.buildQuotaMeta(sessionState)`
+    )
+
+    expect(overwritten).not.toBe(patched)
+    expect(patchCodexAcpTurnUsageSource(overwritten)).toBe(patched)
   })
 
   it('composes with the context-usage patch without duplicate declarations', () => {

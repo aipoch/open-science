@@ -4,6 +4,7 @@ import { constants } from 'node:fs'
 import { homedir } from 'node:os'
 import { dirname, isAbsolute, join, relative, resolve, sep } from 'node:path'
 import { randomUUID } from 'node:crypto'
+import { createServer } from 'node:net'
 import { isDeepStrictEqual, promisify } from 'node:util'
 
 import { z } from 'zod'
@@ -281,6 +282,27 @@ type LeasedResponsesBridgeConnection = ResponsesBridgeConnection & {
   lease: NonNullable<ResolvedAgentBackend['responsesBridgeLease']>
 }
 
+const allocateLoopbackPort = async (): Promise<number> => {
+  const server = createServer()
+  try {
+    await new Promise<void>((resolve, reject) => {
+      server.once('error', reject)
+      server.listen(0, '127.0.0.1', resolve)
+    })
+    const address = server.address()
+    if (!address || typeof address === 'string') {
+      throw new Error('Could not reserve an OpenCode usage API port.')
+    }
+    return address.port
+  } finally {
+    if (server.listening) {
+      await new Promise<void>((resolve, reject) =>
+        server.close((error) => (error ? reject(error) : resolve()))
+      )
+    }
+  }
+}
+
 const execFileAsync = promisify(execFile)
 
 // Hard ceiling for a Claude credential probe so a stuck process can never hang the wizard.
@@ -490,6 +512,9 @@ export type SettingsServiceOptions = {
   storageRoot?: string
   detectDeps?: ClaudeDetectDeps
   opencodeDetectDeps?: OpencodeDetectDeps
+  // Reserves the authenticated loopback HTTP port exposed by `opencode acp`. Injectable so settings
+  // tests do not bind real sockets.
+  allocateOpenCodeUsagePort?: () => Promise<number>
   codexDetectDeps?: CodexDetectDeps
   // The machine's own Claude config dir, used by the shared provider for auth/spawn and scanned as a
   // user skill source. Injectable so tests don't touch the real ~/.claude.
@@ -538,6 +563,7 @@ class SettingsService {
   private readonly storageRoot: string
   private readonly detectDeps: ClaudeDetectDeps
   private readonly opencodeDetectDeps: OpencodeDetectDeps
+  private readonly allocateOpenCodeUsagePort: () => Promise<number>
   private readonly codexDetectDeps: CodexDetectDeps
   private readonly userClaudeDir: string
   private readonly userCodexDir: string
@@ -590,6 +616,7 @@ class SettingsService {
       ...baseOpencodeDetectDeps,
       extraDirs: [...(baseOpencodeDetectDeps.extraDirs ?? []), managedOpencodeDir(this.storageRoot)]
     }
+    this.allocateOpenCodeUsagePort = options.allocateOpenCodeUsagePort ?? allocateLoopbackPort
     const managedAdapterPath = managedCodexAdapterEntry(this.storageRoot)
     const managedNativePath = managedCodexBinary(this.storageRoot)
     this.codexDetectDeps = options.codexDetectDeps ?? {
@@ -3759,6 +3786,9 @@ class SettingsService {
         instructions: connectorInstructions
       })
       await writeAgentConfigFiles(modelConfig.configFiles)
+      const opencodeUsagePort =
+        framework.id === 'opencode' ? await this.allocateOpenCodeUsagePort() : undefined
+      const opencodeUsagePassword = opencodeUsagePort === undefined ? undefined : randomUUID()
       const usesCodexSystemProxy =
         framework.id === 'codex' && isCodexSubscriptionProvider(provider.type)
       const proxyEnv = usesCodexSystemProxy ? await this.resolveCodexProxyEnvironment() : undefined
@@ -3772,12 +3802,22 @@ class SettingsService {
         executablePath,
         env: {
           ...(modelConfig.env ?? {}),
+          ...(opencodeUsagePassword ? { OPENCODE_SERVER_PASSWORD: opencodeUsagePassword } : {}),
           ...(proxyEnv ?? {}),
           ...(framework.id === 'codex' && settings.codex?.nativePath
             ? { CODEX_PATH: settings.codex.nativePath }
             : {})
         },
-        args: modelConfig.args,
+        args:
+          opencodeUsagePort === undefined
+            ? modelConfig.args
+            : [
+                ...(modelConfig.args ?? []),
+                '--port',
+                String(opencodeUsagePort),
+                '--hostname',
+                '127.0.0.1'
+              ],
         ...(usesCodexSystemProxy
           ? { proxyEnvironmentMode: proxyEnv === undefined ? 'inherit' : 'replace' }
           : {}),
@@ -3790,6 +3830,14 @@ class SettingsService {
         contextUsageModel: provider.model,
         authentication: modelConfig.authentication,
         providerConfiguration: modelConfig.providerConfiguration,
+        ...(opencodeUsagePort === undefined || !opencodeUsagePassword
+          ? {}
+          : {
+              opencodeUsageApi: {
+                baseUrl: `http://127.0.0.1:${opencodeUsagePort}`,
+                authorization: `Basic ${Buffer.from(`opencode:${opencodeUsagePassword}`).toString('base64')}`
+              }
+            }),
         responsesBridgeLease: responsesBridge?.lease
       }
     } catch (error) {

@@ -7789,7 +7789,7 @@ describe('ACP runtime session management', () => {
     })
   })
 
-  it('corrects an unpatched external Codex total with its latest request usage at stop', async () => {
+  it('falls back to an unpatched Codex latest request usage at stop', async () => {
     const process = new FakeAgentProcess()
     const usageSent = createDeferred()
     const finishPrompt = createDeferred()
@@ -7833,9 +7833,11 @@ describe('ACP runtime session management', () => {
     expect(runtime.getSnapshot().contextUsageBySession).toMatchObject({
       s1: { used: 15, size: 128000 }
     })
-    expect(
-      runtime.getSnapshot().events.find((event) => event.kind === 'stop')?.turnUsage
-    ).toBeUndefined()
+    expect(runtime.getSnapshot().events.find((event) => event.kind === 'stop')?.turnUsage).toEqual({
+      inputTokens: 12,
+      cacheTokens: 3,
+      outputTokens: 3
+    })
   })
 
   it('keeps managed Codex turn totals separate from its latest context snapshot', async () => {
@@ -7879,6 +7881,37 @@ describe('ACP runtime session management', () => {
     })
   })
 
+  it('keeps Codex bridge usage visible when the adapter omits whole-turn metadata', async () => {
+    const process = new FakeAgentProcess()
+    startFakeAgent(process, ['s1'], {
+      modes: createModes(['read-only', 'agent', 'agent-full-access'], 'agent'),
+      onPrompt: () => ({
+        stopReason: 'end_turn',
+        // A Responses bridge still returns standard ACP usage even when its adapter does not publish
+        // Open Science's private whole-turn metadata. The footer must not become entirely unavailable.
+        usage: {
+          totalTokens: 27,
+          inputTokens: 19,
+          cachedReadTokens: 5,
+          outputTokens: 3
+        }
+      })
+    })
+    const runtime = new AcpRuntime({
+      appVersion: '0.1.0',
+      defaultCwd: '/workspace',
+      spawnAgent: () => asAgentProcess(process),
+      framework: codexFramework
+    })
+
+    await runtime.createSession({ cwd: '/workspace' })
+    await runtime.sendPrompt({ sessionId: 's1', text: 'answer through the bridge' })
+
+    expect(runtime.getSnapshot().events.find((event) => event.kind === 'stop')).toMatchObject({
+      turnUsage: { inputTokens: 19, cacheTokens: 5, outputTokens: 3 }
+    })
+  })
+
   it('uses OpenCode native input and cache-read context usage', async () => {
     const process = new FakeAgentProcess()
     startFakeAgent(process, ['s1'])
@@ -7897,6 +7930,72 @@ describe('ACP runtime session management', () => {
 
     expect(runtime.getSnapshot().contextUsageBySession).toMatchObject({
       s1: { used: 15, size: 128000 }
+    })
+  })
+
+  it('sums every OpenCode assistant model step created by one prompt turn', async () => {
+    const process = new FakeAgentProcess()
+    startFakeAgent(process, ['s1'], {
+      onPrompt: () => ({
+        stopReason: 'end_turn',
+        // OpenCode ACP currently exposes only the final assistant record here.
+        usage: {
+          totalTokens: 27,
+          inputTokens: 19,
+          cachedReadTokens: 5,
+          outputTokens: 3
+        }
+      })
+    })
+    const messageSnapshots = [
+      [{ info: { id: 'old', role: 'assistant' } }],
+      [
+        { info: { id: 'old', role: 'assistant' } },
+        {
+          info: {
+            id: 'step-1',
+            role: 'assistant',
+            tokens: { input: 12, output: 2, reasoning: 0, cache: { read: 3, write: 0 } }
+          }
+        },
+        {
+          info: {
+            id: 'step-2',
+            role: 'assistant',
+            tokens: { input: 19, output: 3, reasoning: 0, cache: { read: 5, write: 0 } }
+          }
+        }
+      ]
+    ]
+    const opencodeUsageFetch = vi.fn(
+      async () =>
+        new Response(JSON.stringify(messageSnapshots.shift() ?? []), {
+          headers: { 'content-type': 'application/json' }
+        })
+    )
+    const framework = { ...opencodeFramework, spawn: () => asAgentProcess(process) }
+    const runtime = new AcpRuntime({
+      appVersion: '0.1.0',
+      defaultCwd: '/workspace',
+      resolveBackend: () => ({
+        framework,
+        executablePath: '/bin/opencode',
+        env: {},
+        opencodeUsageApi: {
+          baseUrl: 'http://127.0.0.1:4242',
+          authorization: 'Basic test'
+        }
+      }),
+      framework,
+      opencodeUsageFetch
+    })
+
+    await runtime.createSession({ cwd: '/workspace' })
+    await runtime.sendPrompt({ sessionId: 's1', text: 'use a tool and summarize' })
+
+    expect(opencodeUsageFetch).toHaveBeenCalledTimes(2)
+    expect(runtime.getSnapshot().events.find((event) => event.kind === 'stop')).toMatchObject({
+      turnUsage: { inputTokens: 31, cacheTokens: 8, outputTokens: 5 }
     })
   })
 

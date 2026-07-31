@@ -71,6 +71,7 @@ import {
   toAcpRuntimeEvent
 } from './runtime-events'
 import { readWorkspaceTextFile, writeWorkspaceTextFile } from './filesystem'
+import { fetchOpenCodeUsageSnapshot, sumOpenCodeTurnUsage } from './opencode-turn-usage'
 import {
   matchSessionModelOption,
   resolveSessionEffortOption,
@@ -216,6 +217,8 @@ type AcpRuntimeOptions = {
   // injectable so tests can drive the degrade-to-file path with small fixtures.
   inlineImageBudgetBytes?: number
   contextUsageTracker?: ContextUsageTracker
+  // Injectable only for the authenticated OpenCode loopback usage snapshots; production uses fetch.
+  opencodeUsageFetch?: typeof fetch
   // Resolves the identity-inject text for a specialist UUID at session-creation time.
   // The main process reads the latest Profile from ProfileService; the runtime never caches it.
   // Returns undefined when the specialist is not found, disabled, or its Profile is corrupt —
@@ -877,6 +880,7 @@ class AcpRuntime {
   // initialize so the decrypted key is not retained by the runtime longer than necessary.
   private pendingAuthentication: ResolvedAgentBackend['authentication']
   private pendingProviderConfiguration: ResolvedAgentBackend['providerConfiguration']
+  private opencodeUsageApi: ResolvedAgentBackend['opencodeUsageApi']
   private responsesBridgeLease: ResolvedAgentBackend['responsesBridgeLease']
   private readonly skillSelectorAbortControllers = new Map<string, AbortController>()
   private readonly pendingPromptCancellations = new Map<string, Promise<void>>()
@@ -2672,6 +2676,7 @@ class AcpRuntime {
     this.pendingSystemPromptAppends = [...(backend.systemPromptAppends ?? [])]
     this.pendingAuthentication = backend.authentication
     this.pendingProviderConfiguration = backend.providerConfiguration
+    this.opencodeUsageApi = backend.opencodeUsageApi
     this.responsesBridgeLease = backend.responsesBridgeLease
   }
 
@@ -2954,6 +2959,19 @@ class AcpRuntime {
         skillActivitiesStarted = true
       }
 
+      const promptFramework = this.sessionFrameworks.get(request.sessionId) ?? this.framework.id
+      const opencodeUsageBefore =
+        promptFramework === 'opencode' && this.opencodeUsageApi
+          ? await fetchOpenCodeUsageSnapshot(
+              this.opencodeUsageApi,
+              activeSession.sessionId,
+              this.sessionCwds.get(request.sessionId) ?? this.cwd,
+              this.options.opencodeUsageFetch
+            )
+          : undefined
+      await awaitPendingCancellation()
+      if (turnWasCancelled()) return finishCancelledBeforePrompt()
+
       // Start the prompt and race it against routed updates from the active session queue.
       const promptFailure = new Promise<never>((_, reject) => {
         activeSession.prompt(promptContent).catch(reject)
@@ -2995,13 +3013,26 @@ class AcpRuntime {
             sessionId: request.sessionId,
             stopReason: message.stopReason
           })
-          const promptFramework = this.sessionFrameworks.get(request.sessionId) ?? this.framework.id
-          // Codex ACP exposes only the latest request in PromptResponse.usage. The managed adapter's
-          // app-owned metadata is the sole whole-turn source; other frameworks already accumulate usage.
+          const opencodeTurnUsage =
+            promptFramework === 'opencode' && this.opencodeUsageApi
+              ? sumOpenCodeTurnUsage(
+                  opencodeUsageBefore,
+                  await fetchOpenCodeUsageSnapshot(
+                    this.opencodeUsageApi,
+                    activeSession.sessionId,
+                    this.sessionCwds.get(request.sessionId) ?? this.cwd,
+                    this.options.opencodeUsageFetch
+                  )
+                )
+              : undefined
+          // Codex ACP exposes only the latest request in PromptResponse.usage. Prefer the managed
+          // adapter's app-owned whole-turn total, but retain the standard usage as a compatibility
+          // fallback so a bridge response never loses token accounting entirely when metadata is absent.
           const turnUsage =
             promptFramework === 'codex'
-              ? toAcpTurnTokenUsage(message.response._meta?.[ACP_TURN_TOKEN_USAGE_META_KEY])
-              : toAcpTurnTokenUsage(message.response.usage)
+              ? (toAcpTurnTokenUsage(message.response._meta?.[ACP_TURN_TOKEN_USAGE_META_KEY]) ??
+                toAcpTurnTokenUsage(message.response.usage))
+              : (opencodeTurnUsage ?? toAcpTurnTokenUsage(message.response.usage))
           this.pushEvent({
             kind: 'stop',
             level: 'info',

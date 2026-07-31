@@ -212,6 +212,12 @@ export type ResolvedAgentBackend = {
   contextUsageModel?: string
   authentication?: AgentAuthentication
   providerConfiguration?: AgentProviderConfiguration
+  // Authenticated loopback API exposed by the same OpenCode ACP process. The runtime snapshots
+  // assistant messages around a prompt so it can aggregate every model step in that user turn.
+  opencodeUsageApi?: {
+    baseUrl: string
+    authorization: string
+  }
   // A bridged backend owns one reference to its local loopback bridge. Runtime teardown releases it;
   // reviewer sessions register their Codex prompt_cache_key here so routing never depends on content.
   responsesBridgeLease?: {
