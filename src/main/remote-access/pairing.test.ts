@@ -7,6 +7,7 @@ import { afterEach, describe, expect, it, vi } from 'vitest'
 
 import { RemoteBrowserPairingManager } from './pairing'
 import { RemoteAccessRepository } from './repository'
+import type { RemotePairingDecision } from '../../shared/remote-access'
 
 const roots: string[] = []
 
@@ -177,6 +178,33 @@ describe('RemoteBrowserPairingManager', () => {
         new URL('https://home.example.ts.net/rpc/test')
       )
     ).resolves.toBe('denied')
+  })
+
+  it('rejects an invalid pairing decision without granting or persisting access', async () => {
+    const root = await mkdtemp(join(tmpdir(), 'open-science-remote-pairing-'))
+    roots.push(root)
+    const repository = new RemoteAccessRepository(root)
+    const manager = await RemoteBrowserPairingManager.create({
+      repository,
+      isAllowedRemoteHost: (hostname) => hostname === 'home.example.ts.net',
+      isEnabled: () => true,
+      requiresPairing: () => true,
+      onChanged: vi.fn()
+    })
+
+    await manager.webAccess.authorizeHttp(
+      request('/'),
+      response().response,
+      new URL('https://home.example.ts.net/')
+    )
+    const [pending] = manager.pendingViews()
+
+    await expect(
+      manager.approve(pending.id, 'unexpected' as RemotePairingDecision)
+    ).rejects.toThrow('Pairing decision must be once or always.')
+    expect(manager.pendingViews()).toHaveLength(1)
+    expect(manager.trustedViews()).toHaveLength(0)
+    expect((await repository.load()).trustedBrowsers).toHaveLength(0)
   })
 
   it('rejects an authorization that finishes after remote access was disabled', async () => {

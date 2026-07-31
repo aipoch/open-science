@@ -251,6 +251,9 @@ export class RemoteBrowserPairingManager {
   }
 
   async approve(requestId: string, decision: RemotePairingDecision): Promise<void> {
+    if (decision !== 'once' && decision !== 'always') {
+      throw new Error('Pairing decision must be once or always.')
+    }
     this.pruneExpired()
     const request = this.pending.get(requestId)
     if (!request || request.status !== 'pending') {

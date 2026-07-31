@@ -456,6 +456,17 @@ describe('startWebHttpServer', () => {
     const bootstrapUrl = `http://127.0.0.1:${server.port}/api/bootstrap`
 
     expect(REMOTE_LOCAL_ONLY_RPC_CHANNELS).toContain('runtime:set-selection')
+    for (const channel of [
+      'settings:login-isolated-claude',
+      'settings:login-isolated-claude-browser',
+      'settings:logout-isolated-claude',
+      'settings:login-isolated-codex',
+      'settings:logout-isolated-codex',
+      'settings:login-shared-claude',
+      'settings:logout-shared-claude'
+    ]) {
+      expect(REMOTE_LOCAL_ONLY_RPC_CHANNELS, channel).toContain(channel)
+    }
     const remoteBootstrap = await fetch(bootstrapUrl)
     expect(remoteBootstrap.status).toBe(200)
     expect(await remoteBootstrap.json()).toMatchObject({
