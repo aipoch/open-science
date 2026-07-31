@@ -325,7 +325,11 @@ describe('host delete guard', () => {
     const list = vi.fn(() => Promise.resolve([]))
     const hasActive = vi.fn(() => Promise.resolve(false))
     const invalidateProvider = vi.fn()
-    const broker = { invalidateProvider } as unknown as ComputeApprovalBroker
+    const completeProviderInvalidation = vi.fn()
+    const broker = {
+      invalidateProvider,
+      completeProviderInvalidation
+    } as unknown as ComputeApprovalBroker
     const handlers = createComputeHandlers(
       mockRepository({ delete: del, list }),
       undefined,
@@ -342,6 +346,7 @@ describe('host delete guard', () => {
     expect(invalidateProvider.mock.invocationCallOrder[0]).toBeLessThan(
       del.mock.invocationCallOrder[0]
     )
+    expect(completeProviderInvalidation).toHaveBeenCalledWith('ssh:biowulf')
   })
 
   it('allows deletion when no jobRepository is provided (backward compatibility)', async () => {
@@ -369,7 +374,11 @@ describe('host delete guard', () => {
     const get = vi.fn().mockResolvedValue(null)
     const create = vi.fn().mockResolvedValue(sampleHost({ id: 'replacement-host' }))
     const invalidateProvider = vi.fn()
-    const broker = { invalidateProvider } as unknown as ComputeApprovalBroker
+    const completeProviderInvalidation = vi.fn()
+    const broker = {
+      invalidateProvider,
+      completeProviderInvalidation
+    } as unknown as ComputeApprovalBroker
     const permissionGrantRegistry = { prune } as unknown as PermissionGrantRegistry
     const handlers = createComputeHandlers(
       mockRepository({ delete: del, get, create }),

@@ -13,6 +13,8 @@ import {
   type PermissionGrantOwner,
   type PermissionGrantRecord,
   type PermissionGrantScope,
+  type PermissionGrantUndoReceipt,
+  type ExtendPermissionGrantUndo,
   type RememberPermissionGrant,
   type RestorePermissionGrants,
   type RevokePermissionGrants
@@ -50,6 +52,7 @@ type PermissionGrantRegistry = {
   list(): Promise<PermissionGrantRecord[]>
   listCached(): PermissionGrantRecord[]
   revoke(command: RevokePermissionGrants): Promise<PermissionGrantMutationResult>
+  extendUndo(command: ExtendPermissionGrantUndo): Promise<PermissionGrantUndoReceipt | undefined>
   restore(command: RestorePermissionGrants): Promise<PermissionGrantMutationResult>
   prune(owner: PermissionGrantOwner): Promise<PermissionGrantRecord[]>
   finalizeOwnerDeletion(owner: PermissionGrantOwner): Promise<void>
@@ -290,7 +293,13 @@ const createPermissionGrantRegistry = async (
 
       for (const match of matches) {
         if (!options.isScopeLive || (await options.isScopeLive(match.grant.scope))) {
-          return { grant: match.grant, matchedScope: match.grant.scope.kind }
+          // Scope liveness can require storage I/O. A revoke/prune may complete while that check is
+          // pending, so re-read the cache before releasing authority instead of returning the stale
+          // record captured above.
+          const current = records.get(fingerprintFor(match.grant.capability, match.grant.scope))
+          if (current?.id === match.grant.id && current.revision === match.grant.revision) {
+            return { grant: current, matchedScope: current.scope.kind }
+          }
         }
       }
 
@@ -389,6 +398,23 @@ const createPermissionGrantRegistry = async (
           publish()
         }
         return mutation
+      })
+    },
+
+    extendUndo(command) {
+      return runMutation(async () => {
+        const extendedAt = now().getTime()
+        purgeExpiredReceipts(extendedAt)
+        const receipt = receipts.get(command.undoToken)
+        if (!receipt) return undefined
+
+        const expiresAt = extendedAt + receiptTtlMs
+        receipts.set(command.undoToken, { ...receipt, expiresAt })
+        return {
+          undoToken: command.undoToken,
+          expiresAt,
+          revokedCount: receipt.rows.length
+        }
       })
     },
 

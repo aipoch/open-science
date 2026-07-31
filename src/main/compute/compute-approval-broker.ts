@@ -67,6 +67,8 @@ export class ComputeApprovalBroker {
   >()
 
   private readonly providerGenerations = new Map<string, number>()
+  private readonly invalidatingProviders = new Set<string>()
+  private readonly inFlightRequests = new Map<string, Set<Promise<ComputeApprovalDecision>>>()
 
   // Legacy fallback used only when no durable adapter is supplied.
   private readonly conversationGrants = new Set<string>()
@@ -99,7 +101,25 @@ export class ComputeApprovalBroker {
 
   // Like request(), but checks conversation and project grants first. If a grant matches, resolves
   // immediately without broadcasting. When the user responds with a scope that has memory, records it.
-  async requestWithContext(
+  requestWithContext(
+    info: Omit<ComputeApprovalRequest, 'id'>,
+    ctx: ComputeApprovalContext
+  ): Promise<ComputeApprovalDecision> {
+    const providerId = info.provider_id
+    if (this.invalidatingProviders.has(providerId)) return Promise.resolve('deny')
+
+    const request = this.requestWithContextOperation(info, ctx)
+    const requests = this.inFlightRequests.get(providerId) ?? new Set()
+    requests.add(request)
+    this.inFlightRequests.set(providerId, requests)
+    void request.then(
+      () => this.releaseInFlightRequest(providerId, request),
+      () => this.releaseInFlightRequest(providerId, request)
+    )
+    return request
+  }
+
+  private async requestWithContextOperation(
     info: Omit<ComputeApprovalRequest, 'id'>,
     ctx: ComputeApprovalContext
   ): Promise<ComputeApprovalDecision> {
@@ -126,22 +146,29 @@ export class ComputeApprovalBroker {
     // ── legacy project grant check (persistent) ───────────────────────────────────
     if (this.deps.checkProjectGrant) {
       const hasProject = await this.deps.checkProjectGrant({ projectId, operation, providerId })
-      if (hasProject) return 'project'
+      if (hasProject) {
+        return (await this.isProviderCurrent(providerId, ctx.ownerId, providerGeneration))
+          ? 'project'
+          : 'deny'
+      }
     }
 
     // ── conversation grant check (session in-memory) ───────────────────────────────
     const convKey = `${sessionId}:${operation}:${providerId}`
-    if (this.conversationGrants.has(convKey)) return 'conversation'
+    if (this.conversationGrants.has(convKey)) {
+      return (await this.isProviderCurrent(providerId, ctx.ownerId, providerGeneration))
+        ? 'conversation'
+        : 'deny'
+    }
 
     // ── no grant — show approval card ─────────────────────────────────────────────
     const decision = await this.request(info, ctx)
 
     if ((this.providerGenerations.get(providerId) ?? 0) !== providerGeneration) return 'deny'
 
-    const remembersDecision =
-      decision === 'conversation' || decision === 'project' || decision === 'global'
+    const allowsDecision = decision !== 'deny'
     if (
-      remembersDecision &&
+      allowsDecision &&
       !(await this.isProviderCurrent(providerId, ctx.ownerId, providerGeneration))
     ) {
       return 'deny'
@@ -159,6 +186,13 @@ export class ComputeApprovalBroker {
       await this.deps.saveProjectGrant({ projectId, operation, providerId })
     }
 
+    if (
+      allowsDecision &&
+      !(await this.isProviderCurrent(providerId, ctx.ownerId, providerGeneration))
+    ) {
+      return 'deny'
+    }
+
     return decision
   }
 
@@ -169,7 +203,8 @@ export class ComputeApprovalBroker {
 
   // Host deletion begins by advancing its generation and denying every approval card that was
   // created for the old owner. A later host may reuse providerId, but it cannot reuse these calls.
-  invalidateProvider(providerId: string): void {
+  async invalidateProvider(providerId: string): Promise<void> {
+    this.invalidatingProviders.add(providerId)
     this.providerGenerations.set(providerId, (this.providerGenerations.get(providerId) ?? 0) + 1)
     for (const key of this.conversationGrants) {
       if (key.endsWith(`:${providerId}`)) this.conversationGrants.delete(key)
@@ -177,6 +212,20 @@ export class ComputeApprovalBroker {
     for (const [id, entry] of this.pending) {
       if (entry.providerId === providerId) this.settle(id, 'deny')
     }
+    await Promise.allSettled(Array.from(this.inFlightRequests.get(providerId) ?? []))
+  }
+
+  completeProviderInvalidation(providerId: string): void {
+    this.invalidatingProviders.delete(providerId)
+  }
+
+  private releaseInFlightRequest(
+    providerId: string,
+    request: Promise<ComputeApprovalDecision>
+  ): void {
+    const requests = this.inFlightRequests.get(providerId)
+    requests?.delete(request)
+    if (requests?.size === 0) this.inFlightRequests.delete(providerId)
   }
 
   private async isProviderCurrent(

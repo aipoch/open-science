@@ -338,9 +338,13 @@ const createComputeHandlers = (
             )
           }
         }
-        broker.invalidateProvider(providerId)
-        await repository.delete(providerId)
-        await permissionGrantRegistry?.prune({ kind: 'compute_provider', providerId })
+        await broker.invalidateProvider(providerId)
+        try {
+          await repository.delete(providerId)
+          await permissionGrantRegistry?.prune({ kind: 'compute_provider', providerId })
+        } finally {
+          broker.completeProviderInvalidation(providerId)
+        }
       }),
     sshConfigAliases: () => listSshAliases(),
     probe: (providerId) => service.probe(providerId),

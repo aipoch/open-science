@@ -8,11 +8,13 @@ import type { PermissionUndo } from '@/stores/permission-grants-store'
 
 const PermissionUndoItem = ({
   undo,
+  extend,
   restore,
   dismiss,
   isRestoring
 }: {
   undo: PermissionUndo
+  extend: (token: string) => Promise<number | undefined>
   restore: (token: string) => Promise<void>
   dismiss: (token: string) => void
   isRestoring: boolean
@@ -27,6 +29,29 @@ const PermissionUndoItem = ({
     const timer = window.setTimeout(() => dismiss(undo.token), remaining)
     return () => window.clearTimeout(timer)
   }, [dismiss, paused, undo.expiresAt, undo.token])
+
+  useEffect(() => {
+    if (!paused || undo.canRestore === false) return
+    let cancelled = false
+    let renewalTimer: number | undefined
+    const renew = async (): Promise<void> => {
+      const expiresAt = await extend(undo.token)
+      if (cancelled) return
+      if (!expiresAt || expiresAt <= Date.now()) {
+        dismiss(undo.token)
+        return
+      }
+      renewalTimer = window.setTimeout(
+        () => void renew(),
+        Math.max(250, Math.floor((expiresAt - Date.now()) / 2))
+      )
+    }
+    void renew()
+    return () => {
+      cancelled = true
+      if (renewalTimer !== undefined) window.clearTimeout(renewalTimer)
+    }
+  }, [dismiss, extend, paused, undo.canRestore, undo.token])
 
   return (
     <div
@@ -95,6 +120,7 @@ const PermissionUndoSnackbar = (): React.JSX.Element | null => {
   const undo = usePermissionGrantsStore((state) => state.undo)
   const undoQueue = usePermissionGrantsStore((state) => state.undoQueue)
   const restore = usePermissionGrantsStore((state) => state.restore)
+  const extend = usePermissionGrantsStore((state) => state.extendUndo)
   const dismiss = usePermissionGrantsStore((state) => state.dismissUndo)
   const isRestoring = usePermissionGrantsStore((state) => state.isRestoring)
 
@@ -117,6 +143,7 @@ const PermissionUndoSnackbar = (): React.JSX.Element | null => {
           <PermissionUndoItem
             key={item.token}
             undo={item}
+            extend={extend}
             restore={restore}
             dismiss={dismiss}
             isRestoring={isRestoring}

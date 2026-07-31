@@ -70,6 +70,7 @@ export const WEB_INVOKE_CHANNELS = {
   'notebookEnv.repair': 'notebook-env:repair',
   'notifications.peekPendingOpenSession': 'notifications:peek-pending-open-session',
   'notifications.takePendingOpenSession': 'notifications:take-pending-open-session',
+  'permissions.extendUndo': 'permissions:extend-undo',
   'permissions.list': 'permissions:list',
   'permissions.restore': 'permissions:restore',
   'permissions.revoke': 'permissions:revoke',

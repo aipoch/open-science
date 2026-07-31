@@ -67,6 +67,8 @@ import type {
   PermissionGrantRestoreRequest,
   PermissionGrantRevokeRequest,
   PermissionGrantSnapshot,
+  PermissionGrantUndoExtendRequest,
+  PermissionGrantUndoReceipt,
   PermissionGrantsChangedEvent
 } from '../shared/permission-grants'
 import type {
@@ -290,6 +292,9 @@ interface OpenScienceAPI {
   permissions: {
     list(): Promise<PermissionGrantSnapshot>
     revoke(request: PermissionGrantRevokeRequest): Promise<PermissionGrantMutationView>
+    extendUndo(
+      request: PermissionGrantUndoExtendRequest
+    ): Promise<PermissionGrantUndoReceipt | undefined>
     restore(request: PermissionGrantRestoreRequest): Promise<PermissionGrantMutationView>
     onChanged(listener: AcpListener<PermissionGrantsChangedEvent>): RemoveListener
   }

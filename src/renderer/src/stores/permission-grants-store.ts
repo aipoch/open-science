@@ -29,6 +29,7 @@ type PermissionGrantsStore = PermissionGrantSnapshot & {
   isRestoring: boolean
   load: () => Promise<void>
   revoke: (grants: PermissionGrantView[]) => Promise<void>
+  extendUndo: (token: string) => Promise<number | undefined>
   restore: (token?: string) => Promise<void>
   dismissUndo: (token?: string) => void
   listen: () => () => void
@@ -139,10 +140,11 @@ const applyAuthoritativeSnapshot = (
 ): PermissionGrantSnapshot =>
   withoutPendingRevocations(incoming.version < state.version ? snapshotFromState(state) : incoming)
 
+const allUndoItems = (state: Pick<PermissionGrantsStore, 'undo' | 'undoQueue'>): PermissionUndo[] =>
+  [state.undo, ...state.undoQueue].filter((item): item is PermissionUndo => Boolean(item))
+
 const undoItems = (state: Pick<PermissionGrantsStore, 'undo' | 'undoQueue'>): PermissionUndo[] =>
-  [state.undo, ...state.undoQueue].filter((item): item is PermissionUndo =>
-    Boolean(item && item.expiresAt > Date.now())
-  )
+  allUndoItems(state).filter((item) => item.expiresAt > Date.now())
 
 const withoutUndoToken = (
   state: Pick<PermissionGrantsStore, 'undo' | 'undoQueue'>,
@@ -272,6 +274,31 @@ const usePermissionGrantsStore = create<PermissionGrantsStore>((set, get) => ({
           error: errorMessage(error)
         }
       })
+    }
+  },
+
+  extendUndo: async (token) => {
+    const undo = allUndoItems(get()).find((item) => item.token === token)
+    if (!undo || undo.canRestore === false) return undefined
+
+    try {
+      const receipt = await window.api.permissions.extendUndo({ undoToken: token })
+      if (!receipt) {
+        set((state) => withoutUndoToken(state, token))
+        return undefined
+      }
+      set((state) =>
+        nextUndoState(
+          allUndoItems(state).map((item) =>
+            item.token === token ? { ...item, expiresAt: receipt.expiresAt } : item
+          )
+        )
+      )
+      return receipt.expiresAt
+    } catch {
+      // A receipt that cannot be renewed must not remain as a visible but ineffective action.
+      set((state) => withoutUndoToken(state, token))
+      return undefined
     }
   },
 

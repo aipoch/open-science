@@ -168,6 +168,92 @@ describe('ComputeApprovalBroker', () => {
     expect(remember).not.toHaveBeenCalled()
   })
 
+  it('drains an approval persistence tail before provider deletion proceeds', async () => {
+    const timer = makeTimer()
+    let releaseRemember: (() => void) | undefined
+    const remember = vi.fn(
+      () =>
+        new Promise<void>((resolve) => {
+          releaseRemember = resolve
+        })
+    )
+    const broker = new ComputeApprovalBroker({
+      generateId: () => 'id-1',
+      broadcast: () => undefined,
+      setTimer: timer.set,
+      clearTimer: timer.clear,
+      permissionGrants: { resolve: vi.fn(), remember } as never,
+      isProviderCurrent: vi.fn().mockResolvedValue(true)
+    })
+
+    const decision = broker.requestWithContext(makeRequest(), {
+      sessionId: 'session-1',
+      projectId: 'project-1',
+      operation: 'call_command',
+      ownerId: 'host-row-1'
+    })
+    await Promise.resolve()
+    broker.respond('id-1', 'project')
+    await vi.waitFor(() => expect(remember).toHaveBeenCalledOnce())
+
+    let invalidationCompleted = false
+    const invalidation = broker.invalidateProvider('ssh:biowulf').then(() => {
+      invalidationCompleted = true
+    })
+    await Promise.resolve()
+    expect(invalidationCompleted).toBe(false)
+
+    releaseRemember?.()
+    await invalidation
+    await expect(decision).resolves.toBe('deny')
+    broker.completeProviderInvalidation('ssh:biowulf')
+  })
+
+  it('denies new requests while provider deletion is draining', async () => {
+    const broker = new ComputeApprovalBroker({
+      generateId: () => 'id-1',
+      broadcast: vi.fn(),
+      permissionGrants: { resolve: vi.fn(), remember: vi.fn() } as never
+    })
+
+    await broker.invalidateProvider('ssh:biowulf')
+    await expect(
+      broker.requestWithContext(makeRequest(), {
+        sessionId: 'session-1',
+        projectId: 'project-1',
+        operation: 'call_command',
+        ownerId: 'host-row-1'
+      })
+    ).resolves.toBe('deny')
+    broker.completeProviderInvalidation('ssh:biowulf')
+  })
+
+  it('denies a stale Once request that reaches the broker after provider deletion completes', async () => {
+    const broadcast = vi.fn()
+    const remember = vi.fn()
+    const broker = new ComputeApprovalBroker({
+      generateId: () => 'id-1',
+      broadcast,
+      permissionGrants: { resolve: vi.fn(), remember } as never,
+      isProviderCurrent: vi.fn().mockResolvedValue(false)
+    })
+
+    await broker.invalidateProvider('ssh:biowulf')
+    broker.completeProviderInvalidation('ssh:biowulf')
+
+    const decision = broker.requestWithContext(makeRequest(), {
+      sessionId: 'session-1',
+      projectId: 'project-1',
+      operation: 'call_command',
+      ownerId: 'deleted-host-row'
+    })
+    await vi.waitFor(() => expect(broadcast).toHaveBeenCalledOnce())
+    broker.respond('id-1', 'once')
+
+    await expect(decision).resolves.toBe('deny')
+    expect(remember).not.toHaveBeenCalled()
+  })
+
   it('does not auto-allow an existing grant for a replacement host with the same provider id', async () => {
     const broadcast = vi.fn()
     const isProviderCurrent = vi.fn().mockResolvedValue(false)

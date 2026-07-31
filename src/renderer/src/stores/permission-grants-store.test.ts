@@ -231,6 +231,35 @@ describe('permission grants store', () => {
     expect(usePermissionGrantsStore.getState()).toMatchObject({ version: 3, grants: [] })
   })
 
+  it('updates an Undo item from the authoritative extended receipt', async () => {
+    const expiresAt = Date.now() + 16_000
+    const extendUndo = vi.fn().mockResolvedValue({
+      undoToken: 'undo-1',
+      expiresAt,
+      revokedCount: 1
+    })
+    setPermissionApi({ extendUndo })
+    usePermissionGrantsStore.setState({
+      undo: { token: 'undo-1', expiresAt: Date.now() + 8_000, message: 'Revoked Shell' }
+    })
+
+    await expect(usePermissionGrantsStore.getState().extendUndo('undo-1')).resolves.toBe(expiresAt)
+
+    expect(extendUndo).toHaveBeenCalledWith({ undoToken: 'undo-1' })
+    expect(usePermissionGrantsStore.getState().undo?.expiresAt).toBe(expiresAt)
+  })
+
+  it('dismisses an Undo item when its receipt can no longer be extended', async () => {
+    setPermissionApi({ extendUndo: vi.fn().mockResolvedValue(undefined) })
+    usePermissionGrantsStore.setState({
+      undo: { token: 'undo-1', expiresAt: Date.now() + 8_000, message: 'Revoked Shell' }
+    })
+
+    await expect(usePermissionGrantsStore.getState().extendUndo('undo-1')).resolves.toBeUndefined()
+
+    expect(usePermissionGrantsStore.getState().undo).toBeUndefined()
+  })
+
   it('restores a receipt once and clears the snackbar state', async () => {
     const restore = vi.fn().mockResolvedValue({ ...snapshot, conflicts: [] })
     setPermissionApi({ restore })

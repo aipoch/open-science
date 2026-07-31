@@ -57,7 +57,9 @@ const reconcilePermissionGrantOwners = async (
     }
 
     if (record.capability.kind === 'execution') {
-      const providerId = /^exec:compute\/([^/]+)\//.exec(record.capability.key)?.[1]
+      // Compute provider ids embed the user-selected SSH alias. Treat only the final path segment as
+      // the operation so valid aliases containing '/' are reconciled against their complete id.
+      const providerId = /^exec:compute\/(.+)\/[^/]+$/.exec(record.capability.key)?.[1]
       if (computeProviderIds && providerId && !computeProviderIds.has(providerId)) {
         owners.set(`compute:${providerId}`, { kind: 'compute_provider', providerId })
       }

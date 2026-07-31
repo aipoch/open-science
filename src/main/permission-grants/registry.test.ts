@@ -153,6 +153,32 @@ describe('PermissionGrantRegistry', () => {
     ).resolves.toMatchObject({ matchedScope: 'global' })
   })
 
+  it('does not authorize a grant revoked while scope liveness is being checked', async () => {
+    const client = await openClient()
+    let releaseLiveness: ((live: boolean) => void) | undefined
+    let deferLiveness = false
+    const registry = await createPermissionGrantRegistry({
+      getClient: async () => client,
+      createId: () => 'grant-1',
+      isScopeLive: async () =>
+        deferLiveness
+          ? new Promise<boolean>((resolve) => {
+              releaseLiveness = resolve
+            })
+          : true
+    })
+    const capability = { kind: 'file_operation' as const, key: 'file:read' }
+    const grant = await registry.remember({ capability, scope: { kind: 'global' } })
+
+    deferLiveness = true
+    const resolving = registry.resolve(capability, {})
+    await vi.waitFor(() => expect(releaseLiveness).toBeTypeOf('function'))
+    await registry.revoke({ grants: [{ id: grant.id, revision: grant.revision }] })
+    releaseLiveness?.(true)
+
+    await expect(resolving).resolves.toBeUndefined()
+  })
+
   it('revokes an exact revision and restores it through a one-time Undo receipt', async () => {
     const client = await openClient()
     await client.project.create({ data: { id: 'project-1', name: 'Project one' } })
@@ -280,6 +306,31 @@ describe('PermissionGrantRegistry', () => {
     ).resolves.toEqual([{ id: remembered.id, revision: remembered.revision }])
   })
 
+  it('extends a live Undo receipt from the authoritative clock', async () => {
+    const client = await openClient()
+    let now = 0
+    const registry = await createPermissionGrantRegistry({
+      getClient: async () => client,
+      createUndoToken: () => 'extended-undo',
+      now: () => new Date(now),
+      receiptTtlMs: 10
+    })
+    const capability = { kind: 'execution' as const, key: 'exec:local/python' }
+    const grant = await registry.remember({ capability, scope: { kind: 'global' } })
+    await registry.revoke({ grants: [{ id: grant.id, revision: grant.revision }] })
+
+    now = 6
+    await expect(registry.extendUndo({ undoToken: 'extended-undo' })).resolves.toEqual({
+      undoToken: 'extended-undo',
+      expiresAt: 16,
+      revokedCount: 1
+    })
+    now = 15
+    await registry.restore({ undoToken: 'extended-undo' })
+
+    await expect(registry.list()).resolves.toHaveLength(1)
+  })
+
   it('discards expired Undo receipts so their row snapshots cannot become live again', async () => {
     const client = await openClient()
     let now = 0
@@ -294,6 +345,7 @@ describe('PermissionGrantRegistry', () => {
     await registry.revoke({ grants: [{ id: grant.id, revision: grant.revision }] })
 
     now = 20
+    await expect(registry.extendUndo({ undoToken: 'expired-undo' })).resolves.toBeUndefined()
     await registry.restore({ undoToken: 'expired-undo' })
     now = 0
     await registry.restore({ undoToken: 'expired-undo' })

@@ -125,6 +125,92 @@ describe('ConnectorService', () => {
     })
   })
 
+  it('does not dispatch a bundled call blocked while its approval is pending', async () => {
+    const fetchImpl = vi.fn()
+    let connectors = {
+      enabledIds: [] as string[],
+      autoAllowIds: [] as string[],
+      askToolIds: ['chemistry/pubchem_get_compounds'],
+      blockedToolIds: [] as string[]
+    }
+    let settleApproval: ((decision: 'once') => void) | undefined
+    const requestApproval = vi.fn(
+      () =>
+        new Promise<'once'>((resolve) => {
+          settleApproval = resolve
+        })
+    )
+    const svc = new ConnectorService({
+      engine: new ParserEngine({ fetchImpl }),
+      getConnectors: () => connectors,
+      getConnectorsFresh: async () => connectors,
+      resolveApiKey: () => undefined,
+      requestApproval
+    })
+
+    const call = svc.call('chemistry', 'pubchem_get_compounds', { cids: [1] }, internal)
+    await vi.waitFor(() => expect(requestApproval).toHaveBeenCalledOnce())
+    connectors = {
+      ...connectors,
+      blockedToolIds: ['chemistry/pubchem_get_compounds']
+    }
+    settleApproval?.('once')
+
+    await expect(call).rejects.toThrow(/blocked by policy/)
+    expect(fetchImpl).not.toHaveBeenCalled()
+  })
+
+  it('does not dispatch from a stale cached Allow after durable policy becomes Block', async () => {
+    const fetchImpl = vi.fn()
+    const cached = {
+      enabledIds: [] as string[],
+      autoAllowIds: ['chemistry'],
+      askToolIds: [] as string[],
+      blockedToolIds: [] as string[]
+    }
+    const durable = {
+      ...cached,
+      blockedToolIds: ['chemistry/pubchem_get_compounds']
+    }
+    const requestApproval = vi.fn()
+    const getConnectorsFresh = vi.fn().mockResolvedValue(durable)
+    const svc = new ConnectorService({
+      engine: new ParserEngine({ fetchImpl }),
+      getConnectors: () => cached,
+      getConnectorsFresh,
+      resolveApiKey: () => undefined,
+      requestApproval
+    })
+
+    await expect(
+      svc.call('chemistry', 'pubchem_get_compounds', { cids: [1] }, internal)
+    ).rejects.toThrow(/blocked by policy/)
+    expect(getConnectorsFresh).toHaveBeenCalledOnce()
+    expect(requestApproval).not.toHaveBeenCalled()
+    expect(fetchImpl).not.toHaveBeenCalled()
+  })
+
+  it('does not reject a bundled call from stale cached Disabled after durable Enable', async () => {
+    const localHandler = vi.fn().mockResolvedValue({ ok: true })
+    const cached = {
+      enabledIds: [] as string[],
+      autoAllowIds: [] as string[],
+      disabledConnectorIds: ['chemistry']
+    }
+    const durable = { ...cached, disabledConnectorIds: [] as string[] }
+    const svc = new ConnectorService({
+      getConnectors: () => cached,
+      getConnectorsFresh: vi.fn().mockResolvedValue(durable),
+      resolveApiKey: () => undefined,
+      localToolHandlers: { 'chemistry/pubchem_get_compounds': localHandler }
+    })
+
+    await expect(
+      svc.call('chemistry', 'pubchem_get_compounds', { cids: [1] }, internal)
+    ).resolves.toEqual({ ok: true })
+    expect(localHandler).toHaveBeenCalledOnce()
+  })
+
   // Pins the ConnectorCallContext → ensureApproved → requestApproval seam. The connector service
   // already received the triggering session; a prior regression dropped it here, which made
   // ApprovalBroker → notification routing click on the wrong conversation (or none at all for
@@ -359,6 +445,119 @@ describe('ConnectorService', () => {
         'do_thing',
         { x: 1 }
       )
+    })
+
+    it('does not discover or dispatch a custom server blocked while approval is pending', async () => {
+      const call = vi.fn()
+      const mcpClientManager = manager(call)
+      let connectors = {
+        enabledIds: [] as string[],
+        autoAllowIds: [] as string[],
+        askToolIds: ['myserver/do_thing'],
+        blockedToolIds: [] as string[],
+        customMcpServers: [
+          {
+            id: '11111111-1111-4111-8111-111111111111',
+            name: 'myserver',
+            transport: 'stdio' as const,
+            command: 'server-command',
+            enabled: true
+          }
+        ]
+      }
+      let settleApproval: ((decision: 'once') => void) | undefined
+      const requestApproval = vi.fn(
+        () =>
+          new Promise<'once'>((resolve) => {
+            settleApproval = resolve
+          })
+      )
+      const svc = new ConnectorService({
+        mcpClientManager,
+        getConnectors: () => connectors,
+        getConnectorsFresh: async () => connectors,
+        resolveApiKey: () => undefined,
+        requestApproval
+      })
+
+      const pendingCall = svc.call('myserver', 'do_thing', {}, internal)
+      await vi.waitFor(() => expect(requestApproval).toHaveBeenCalledOnce())
+      connectors = { ...connectors, blockedToolIds: ['myserver/do_thing'] }
+      settleApproval?.('once')
+
+      await expect(pendingCall).rejects.toThrow(/blocked by policy/)
+      expect(mcpClientManager.listTools).not.toHaveBeenCalled()
+      expect(call).not.toHaveBeenCalled()
+    })
+
+    it('does not discover a custom server from a stale cached Allow after durable Block', async () => {
+      const call = vi.fn()
+      const mcpClientManager = manager(call)
+      const customMcpServers = [
+        {
+          id: '11111111-1111-4111-8111-111111111111',
+          name: 'myserver',
+          transport: 'stdio' as const,
+          command: 'server-command',
+          enabled: true
+        }
+      ]
+      const cached = {
+        enabledIds: [] as string[],
+        autoAllowIds: ['myserver'],
+        askToolIds: [] as string[],
+        blockedToolIds: [] as string[],
+        customMcpServers
+      }
+      const durable = {
+        ...cached,
+        blockedToolIds: ['myserver/do_thing']
+      }
+      const svc = new ConnectorService({
+        mcpClientManager,
+        getConnectors: () => cached,
+        getConnectorsFresh: vi.fn().mockResolvedValue(durable),
+        resolveApiKey: () => undefined,
+        requestApproval: vi.fn()
+      })
+
+      await expect(svc.call('myserver', 'do_thing', {}, internal)).rejects.toThrow(
+        /blocked by policy/
+      )
+      expect(mcpClientManager.listTools).not.toHaveBeenCalled()
+      expect(call).not.toHaveBeenCalled()
+    })
+
+    it('discovers a newly durable custom server before its cached projection refreshes', async () => {
+      const call = vi.fn().mockResolvedValue({ ok: true })
+      const mcpClientManager = manager(call)
+      const durable = {
+        enabledIds: [] as string[],
+        autoAllowIds: [] as string[],
+        customMcpServers: [
+          {
+            id: '11111111-1111-4111-8111-111111111111',
+            name: 'myserver',
+            transport: 'stdio' as const,
+            command: 'server-command',
+            enabled: true
+          }
+        ]
+      }
+      const svc = new ConnectorService({
+        mcpClientManager,
+        getConnectors: () => ({
+          enabledIds: [],
+          autoAllowIds: [],
+          customMcpServers: []
+        }),
+        getConnectorsFresh: vi.fn().mockResolvedValue(durable),
+        resolveApiKey: () => undefined
+      })
+
+      await expect(svc.call('myserver', 'do_thing', {}, internal)).resolves.toEqual({ ok: true })
+      expect(mcpClientManager.listTools).toHaveBeenCalledOnce()
+      expect(call).toHaveBeenCalledOnce()
     })
 
     it('routes a call to a remote (streamable_http) custom server with its url/headers', async () => {

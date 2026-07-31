@@ -469,6 +469,7 @@ const registerIpcHandlers = async ({
   })
   const connectorService = new ConnectorService({
     getConnectors: () => connectorsSnapshot,
+    getConnectorsFresh: () => settingsService.getConnectors(),
     resolveApiKey: (ref) => tryDecryptKey(ref),
     mcpClientManager,
     permissionGrantRegistry,

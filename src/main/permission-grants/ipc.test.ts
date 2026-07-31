@@ -23,6 +23,11 @@ describe('permission grant IPC', () => {
     const registry = {
       list: vi.fn().mockResolvedValue([]),
       revoke: vi.fn().mockResolvedValue({ grants: [], conflicts: [] }),
+      extendUndo: vi.fn().mockResolvedValue({
+        undoToken: 'undo-1',
+        expiresAt: 10,
+        revokedCount: 1
+      }),
       restore: vi.fn().mockResolvedValue({ grants: [], conflicts: [] }),
       subscribe: vi.fn((next: () => void) => {
         listener = next
@@ -40,16 +45,24 @@ describe('permission grant IPC', () => {
     expect([...handlers.keys()]).toEqual([
       'permissions:list',
       'permissions:revoke',
+      'permissions:extend-undo',
       'permissions:restore'
     ])
     expect(webRpc.channels()).toEqual(
-      expect.arrayContaining(['permissions:list', 'permissions:revoke', 'permissions:restore'])
+      expect.arrayContaining([
+        'permissions:list',
+        'permissions:revoke',
+        'permissions:extend-undo',
+        'permissions:restore'
+      ])
     )
     await handlers.get('permissions:revoke')?.(undefined, {
       grants: [{ id: 'grant-1', revision: 2 }]
     })
+    await handlers.get('permissions:extend-undo')?.(undefined, { undoToken: 'undo-1' })
     await handlers.get('permissions:restore')?.(undefined, { undoToken: 'undo-1' })
     expect(registry.revoke).toHaveBeenCalledWith({ grants: [{ id: 'grant-1', revision: 2 }] })
+    expect(registry.extendUndo).toHaveBeenCalledWith({ undoToken: 'undo-1' })
     expect(registry.restore).toHaveBeenCalledWith({ undoToken: 'undo-1' })
 
     controller.invalidateProjection()

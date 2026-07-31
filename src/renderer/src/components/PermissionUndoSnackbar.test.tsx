@@ -10,6 +10,7 @@ describe('PermissionUndoSnackbar', () => {
   let container: HTMLDivElement
   let root: Root
   const restore = vi.fn()
+  const extendUndo = vi.fn()
 
   beforeEach(() => {
     vi.useFakeTimers()
@@ -21,7 +22,14 @@ describe('PermissionUndoSnackbar', () => {
       counts: { all: 0, global: 0, project: 0, session: 0 },
       conflicts: []
     })
-    window.api = { permissions: { restore } } as unknown as Window['api']
+    extendUndo.mockReset().mockImplementation(({ undoToken }: { undoToken: string }) =>
+      Promise.resolve({
+        undoToken,
+        expiresAt: Date.now() + 8_000,
+        revokedCount: 1
+      })
+    )
+    window.api = { permissions: { extendUndo, restore } } as unknown as Window['api']
     usePermissionGrantsStore.setState({
       grants: [],
       counts: { all: 0, global: 0, project: 0, session: 0 },
@@ -88,7 +96,45 @@ describe('PermissionUndoSnackbar', () => {
     expect(stack?.querySelector('[data-slot="scroll-area-viewport"]')).toBeNull()
   })
 
-  it('pauses automatic dismissal while the snackbar is hovered', async () => {
+  it('renews the authoritative receipt while automatic dismissal is paused by hover', async () => {
+    await act(async () => root.render(<PermissionUndoSnackbar />))
+    const snackbar = container.querySelector<HTMLElement>(
+      '[data-testid="permission-undo-snackbar"]'
+    )
+
+    await act(async () => snackbar?.dispatchEvent(new MouseEvent('mouseover', { bubbles: true })))
+    await act(async () => vi.advanceTimersByTimeAsync(8_000))
+    expect(extendUndo).toHaveBeenCalledWith({ undoToken: 'undo-1' })
+    expect(container.querySelector('[data-testid="permission-undo-snackbar"]')).not.toBeNull()
+
+    await act(async () => snackbar?.dispatchEvent(new MouseEvent('mouseout', { bubbles: true })))
+    await act(async () => vi.advanceTimersByTimeAsync(7_999))
+    expect(container.querySelector('[data-testid="permission-undo-snackbar"]')).not.toBeNull()
+    await act(async () => vi.advanceTimersByTimeAsync(1))
+    expect(container.querySelector('[data-testid="permission-undo-snackbar"]')).toBeNull()
+  })
+
+  it('dismisses the action when its authoritative receipt cannot be renewed', async () => {
+    extendUndo.mockResolvedValueOnce(undefined)
+    await act(async () => root.render(<PermissionUndoSnackbar />))
+    const snackbar = container.querySelector<HTMLElement>(
+      '[data-testid="permission-undo-snackbar"]'
+    )
+
+    await act(async () => snackbar?.dispatchEvent(new MouseEvent('mouseover', { bubbles: true })))
+
+    expect(container.querySelector('[data-testid="permission-undo-snackbar"]')).toBeNull()
+  })
+
+  it('locally pauses a non-restorable explanation without trying to renew a receipt', async () => {
+    usePermissionGrantsStore.setState({
+      undo: {
+        token: 'undo-1',
+        expiresAt: Date.now() + 5_000,
+        message: "Couldn't restore permission: owner no longer exists",
+        canRestore: false
+      }
+    })
     await act(async () => root.render(<PermissionUndoSnackbar />))
     const snackbar = container.querySelector<HTMLElement>(
       '[data-testid="permission-undo-snackbar"]'
@@ -96,6 +142,7 @@ describe('PermissionUndoSnackbar', () => {
 
     await act(async () => snackbar?.dispatchEvent(new MouseEvent('mouseover', { bubbles: true })))
     await act(async () => vi.advanceTimersByTime(8_000))
+    expect(extendUndo).not.toHaveBeenCalled()
     expect(container.querySelector('[data-testid="permission-undo-snackbar"]')).not.toBeNull()
 
     await act(async () => snackbar?.dispatchEvent(new MouseEvent('mouseout', { bubbles: true })))

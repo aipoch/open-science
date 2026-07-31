@@ -9,6 +9,7 @@ import type { StoredConnectors, StoredCustomMcpServer } from '../settings/types'
 import type { PermissionGrantRegistry } from '../permission-grants/registry'
 import { ConnectorPermissionBroker } from '../permission-grants/connector-broker'
 import type { ConnectorPermissionRequest } from '../permission-grants/connector-broker'
+import type { PermissionGrantScope } from '../../shared/permission-grants'
 import type { ApprovalDecision, ConnectorApprovalScope } from '../../shared/settings'
 import type { SpecialistProfileView } from '../../shared/specialist'
 
@@ -25,6 +26,9 @@ type ConnectorServiceDeps = {
   engine?: ParserEngine
   mcpClientManager?: McpClientManagerLike
   getConnectors: () => StoredConnectors | undefined
+  // Re-read durable settings after an asynchronous approval/grant lookup so a policy change that
+  // completed while the call was waiting remains the final dispatch boundary.
+  getConnectorsFresh?: () => Promise<StoredConnectors | undefined>
   resolveApiKey: (ref?: string) => string | undefined
   permissionGrantRegistry?: PermissionGrantRegistry
   // Human approval gate for a tool call that isn't pre-approved. A connector call sends data to an
@@ -135,9 +139,12 @@ export class ConnectorService {
     )
   }
 
-  isEnabled(connector: string): boolean {
+  isEnabled(
+    connector: string,
+    connectors: StoredConnectors | undefined = this.deps.getConnectors()
+  ): boolean {
     // Bundled connectors are enabled by default; only an explicit opt-out disables one.
-    return !(this.deps.getConnectors()?.disabledConnectorIds ?? []).includes(connector)
+    return !(connectors?.disabledConnectorIds ?? []).includes(connector)
   }
 
   // Invalidates every call that captured the previous custom-server configuration. While the
@@ -176,7 +183,7 @@ export class ConnectorService {
     const isBundled = descriptor !== undefined || ALL_CONNECTOR_IDS.includes(connector)
     if (isBundled) return this.callBundled(connector, method, args, descriptor, context, access)
 
-    const custom = (this.deps.getConnectors()?.customMcpServers ?? []).find(
+    const custom = ((await this.currentConnectors())?.customMcpServers ?? []).find(
       (s) => s.name === connector
     )
     if (!custom) {
@@ -225,22 +232,19 @@ export class ConnectorService {
     context: ConnectorCallContext,
     access: ConnectorAccess
   ): Promise<unknown> {
-    if (!access.bypassMainEnablement && !this.isEnabled(connector)) {
-      throw new ConnectorGateError('connector_disabled', `connector not enabled: ${connector}`)
-    }
     if (!descriptor)
       throw new ConnectorGateError('connector_unavailable', `unknown tool: ${connector}/${method}`)
 
-    if (!access.bypassMainPolicy) {
-      await this.ensureAuthorized(connector, connector, [connector], method, args, context)
-    }
+    const authorizedConnectors = access.bypassMainPolicy
+      ? undefined
+      : await this.ensureAuthorized(connector, connector, [connector], method, args, context)
 
     // Bundled tools that need privileged local behavior run here, after the same gate, instead of the
     // read-only HTTP engine.
     const localHandler = this.deps.localToolHandlers?.[`${connector}/${method}`]
     if (localHandler) return localHandler(args, context)
 
-    return this.engine.call(descriptor, args, this.credentials())
+    return this.engine.call(descriptor, args, this.credentials(authorizedConnectors))
   }
 
   private async callCustom(
@@ -259,25 +263,18 @@ export class ConnectorService {
     if (!this.isCustomConfigRunnable(custom)) throw new ConnectorGateError('connector_unavailable')
     if (!this.deps.mcpClientManager) throw new ConnectorGateError('connector_runtime_unavailable')
 
-    const config = toCustomMcpConfig(custom)
-    const request = this.authorizationRequest(
-      custom.name,
-      custom.id,
-      [custom.id, custom.name],
+    // Approval must precede tools/list because even discovery connects the external server. The
+    // authorization state is retained across later policy rechecks so one Once approval never prompts
+    // twice merely because discovery itself was asynchronous.
+    let authorization = await this.authorizeCustomForCurrentPolicy(
+      custom,
       method,
       args,
-      context
+      context,
+      access,
+      generation
     )
-    // A Block decision must short-circuit before tools/list starts or connects an external process.
-    const policyDecision = access.bypassMainPolicy
-      ? undefined
-      : this.permissionBroker.preflight(request)
-    // Approval must precede tools/list because even discovery connects the external server. Defer
-    // durable broad grants until the approved method is confirmed in the discovered catalog.
-    const deferredScope = access.bypassMainPolicy
-      ? undefined
-      : await this.permissionBroker.authorize(request, policyDecision, { deferRemember: true })
-    this.assertCustomServerCurrent(custom, generation)
+    const config = toCustomMcpConfig(authorization.custom)
 
     let tools: Array<{ name: string }>
     try {
@@ -298,13 +295,31 @@ export class ConnectorService {
     if (!tools.some((tool) => tool.name === method)) {
       throw new ConnectorGateError(
         'connector_unavailable',
-        `unknown tool: ${custom.name}/${method}`
+        `unknown tool: ${authorization.custom.name}/${method}`
       )
     }
-    this.assertCustomServerCurrent(custom, generation)
-    if (deferredScope) await this.permissionBroker.remember(request, deferredScope)
+    authorization = await this.authorizeCustomForCurrentPolicy(
+      authorization.custom,
+      method,
+      args,
+      context,
+      access,
+      generation,
+      authorization
+    )
+    if (authorization.deferredScope) {
+      await this.permissionBroker.remember(authorization.request, authorization.deferredScope)
+    }
 
-    this.assertCustomServerCurrent(custom, generation)
+    authorization = await this.authorizeCustomForCurrentPolicy(
+      authorization.custom,
+      method,
+      args,
+      context,
+      access,
+      generation,
+      authorization
+    )
 
     try {
       const result = await this.deps.mcpClientManager.call(config, method, args)
@@ -359,17 +374,100 @@ export class ConnectorService {
     method: string,
     args: Record<string, unknown>,
     context: ConnectorCallContext
-  ): Promise<void> {
-    await this.permissionBroker.authorize(
-      this.authorizationRequest(
+  ): Promise<StoredConnectors | undefined> {
+    let requireApprovalSatisfied = false
+    for (;;) {
+      const connectors = await this.currentConnectors()
+      if (!this.isEnabled(connectorLabel, connectors)) {
+        throw new ConnectorGateError(
+          'connector_disabled',
+          `connector not enabled: ${connectorLabel}`
+        )
+      }
+      const request = this.authorizationRequest(
         connectorLabel,
         capabilityServerId,
         policyIds,
         method,
         args,
-        context
+        context,
+        connectors
       )
-    )
+      const policyDecision = this.permissionBroker.preflight(request)
+      if (policyDecision === 'allow' || requireApprovalSatisfied) return connectors
+
+      await this.permissionBroker.authorize(request, policyDecision)
+      requireApprovalSatisfied = true
+    }
+  }
+
+  private async authorizeCustomForCurrentPolicy(
+    custom: StoredCustomMcpServer,
+    method: string,
+    args: Record<string, unknown>,
+    context: ConnectorCallContext,
+    access: ConnectorAccess,
+    generation: number,
+    prior?: {
+      requireApprovalSatisfied: boolean
+      deferredScope?: PermissionGrantScope
+    }
+  ): Promise<{
+    custom: StoredCustomMcpServer
+    request: ConnectorPermissionRequest
+    requireApprovalSatisfied: boolean
+    deferredScope?: PermissionGrantScope
+  }> {
+    let requireApprovalSatisfied = prior?.requireApprovalSatisfied ?? false
+    let deferredScope = prior?.deferredScope
+
+    for (;;) {
+      const connectors = await this.currentConnectors()
+      const current = (connectors?.customMcpServers ?? []).find((server) => server.id === custom.id)
+      if (!current) throw new ConnectorGateError('connector_unavailable')
+      this.assertCustomServerCurrent(current, generation)
+      if (!access.bypassMainEnablement && !current.enabled) {
+        throw new ConnectorGateError('connector_disabled', `connector not enabled: ${current.name}`)
+      }
+      if (!this.isCustomConfigRunnable(current)) {
+        throw new ConnectorGateError('connector_unavailable')
+      }
+
+      const request = this.authorizationRequest(
+        current.name,
+        current.id,
+        [current.id, current.name],
+        method,
+        args,
+        context,
+        connectors
+      )
+      if (access.bypassMainPolicy) {
+        return { custom: current, request, requireApprovalSatisfied }
+      }
+
+      const policyDecision = this.permissionBroker.preflight(request)
+      if (policyDecision === 'allow') {
+        return { custom: current, request, requireApprovalSatisfied }
+      }
+      if (requireApprovalSatisfied) {
+        return {
+          custom: current,
+          request,
+          requireApprovalSatisfied,
+          ...(deferredScope ? { deferredScope } : {})
+        }
+      }
+
+      deferredScope = await this.permissionBroker.authorize(request, policyDecision, {
+        deferRemember: true
+      })
+      requireApprovalSatisfied = true
+    }
+  }
+
+  private currentConnectors(): Promise<StoredConnectors | undefined> {
+    return this.deps.getConnectorsFresh?.() ?? Promise.resolve(this.deps.getConnectors())
   }
 
   private authorizationRequest(
@@ -378,9 +476,9 @@ export class ConnectorService {
     policyIds: readonly string[],
     method: string,
     args: Record<string, unknown>,
-    context: ConnectorCallContext
+    context: ConnectorCallContext,
+    connectors: StoredConnectors | undefined = this.deps.getConnectors()
   ): ConnectorPermissionRequest {
-    const c = this.deps.getConnectors()
     return {
       capability: { kind: 'mcp_tool', key: `mcp:${capabilityServerId}/${method}` },
       context,
@@ -389,15 +487,16 @@ export class ConnectorService {
       args,
       policy: {
         aliases: policyIds,
-        autoAllowIds: c?.autoAllowIds,
-        blockedToolIds: c?.blockedToolIds,
-        askToolIds: c?.askToolIds
+        autoAllowIds: connectors?.autoAllowIds,
+        blockedToolIds: connectors?.blockedToolIds,
+        askToolIds: connectors?.askToolIds
       }
     }
   }
 
-  private credentials(): ConnectorCredentials {
-    const c = this.deps.getConnectors()
+  private credentials(
+    c: StoredConnectors | undefined = this.deps.getConnectors()
+  ): ConnectorCredentials {
     return { ncbiEmail: c?.contactEmail, ncbiApiKey: this.deps.resolveApiKey(c?.ncbiApiKeyRef) }
   }
 }

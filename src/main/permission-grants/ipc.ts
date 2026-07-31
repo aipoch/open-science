@@ -4,6 +4,8 @@ import type {
   PermissionGrantRestoreRequest,
   PermissionGrantRevokeRequest,
   PermissionGrantSnapshot,
+  PermissionGrantUndoExtendRequest,
+  PermissionGrantUndoReceipt,
   PermissionGrantsChangedEvent
 } from '../../shared/permission-grants'
 import type { Project } from '../../shared/projects'
@@ -118,6 +120,16 @@ const registerPermissionGrantIpcHandlers = (
       validateRevokeRequest(request)
       const result = await options.registry.revoke(request)
       return mutationSnapshot(result)
+    }
+  )
+  ipcMainHandle(
+    'permissions:extend-undo',
+    async (
+      _event,
+      request: PermissionGrantUndoExtendRequest
+    ): Promise<PermissionGrantUndoReceipt | undefined> => {
+      validateRestoreRequest(request)
+      return options.registry.extendUndo(request)
     }
   )
   ipcMainHandle(

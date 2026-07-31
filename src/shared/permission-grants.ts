@@ -56,6 +56,16 @@ export type RestorePermissionGrants = {
   undoToken: string
 }
 
+export type ExtendPermissionGrantUndo = {
+  undoToken: string
+}
+
+export type PermissionGrantUndoReceipt = {
+  undoToken: string
+  expiresAt: number
+  revokedCount: number
+}
+
 export type PermissionGrantOwner =
   | { kind: 'project'; projectId: string }
   | { kind: 'session'; projectId: string; sessionId: string }
@@ -69,11 +79,7 @@ export type PermissionGrantMutationConflict = {
 
 export type PermissionGrantMutationResult = {
   grants: PermissionGrantRecord[]
-  receipt?: {
-    undoToken: string
-    expiresAt: number
-    revokedCount: number
-  }
+  receipt?: PermissionGrantUndoReceipt
   conflicts: PermissionGrantMutationConflict[]
 }
 
@@ -129,12 +135,12 @@ export type PermissionGrantRestoreRequest = {
   undoToken: string
 }
 
+export type PermissionGrantUndoExtendRequest = {
+  undoToken: string
+}
+
 export type PermissionGrantMutationView = PermissionGrantSnapshot & {
-  receipt?: {
-    undoToken: string
-    expiresAt: number
-    revokedCount: number
-  }
+  receipt?: PermissionGrantUndoReceipt
   conflicts: PermissionGrantMutationConflict[]
 }
 
