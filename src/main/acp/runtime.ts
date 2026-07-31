@@ -38,6 +38,7 @@ import type {
   AcpStateSnapshot
 } from '../../shared/acp'
 import {
+  ACP_TURN_TOKEN_USAGE_META_KEY,
   getAcpRuntimeEventImage,
   MAX_ACP_SESSION_IMAGE_BYTES,
   toAcpTurnTokenUsage
@@ -2927,13 +2928,16 @@ class AcpRuntime {
             sessionId: request.sessionId,
             stopReason: message.stopReason
           })
+          const turnUsage =
+            toAcpTurnTokenUsage(message.response._meta?.[ACP_TURN_TOKEN_USAGE_META_KEY]) ??
+            toAcpTurnTokenUsage(message.response.usage)
           this.pushEvent({
             kind: 'stop',
             level: 'info',
             sessionId: request.sessionId,
             title: 'Prompt stopped',
             text: message.stopReason,
-            turnUsage: toAcpTurnTokenUsage(message.response.usage),
+            turnUsage,
             raw: message.response
           })
           if (this.shouldAutoCompactContext(request.sessionId)) {

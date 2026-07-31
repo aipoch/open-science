@@ -123,7 +123,7 @@ vi.mock('node:fs/promises', async (importActual) => {
       const [file, data] = args
       if (fsFaults.pauseNextWrite && typeof data === 'string') {
         fsFaults.pauseNextWrite = false
-        const patchTarget = '    const lastTokenUsage = this.sessionState.lastTokenUsage;'
+        const patchTarget = '    const contextTokenUsage = this.sessionState.lastTokenUsage;'
         const targetOffset = data.indexOf(patchTarget)
         if (targetOffset !== -1) {
           await actual.writeFile(file, data.slice(0, targetOffset))
@@ -1225,7 +1225,7 @@ describe('patchCodexAcpContextUsageSource', () => {
     const patched = patchCodexAcpContextUsageSource(source)
 
     expect(patched).toContain(
-      'lastTokenUsage.inputTokens + (lastTokenUsage.cachedInputTokens ?? 0)'
+      'contextTokenUsage.inputTokens + (contextTokenUsage.cachedInputTokens ?? 0)'
     )
     expect(patched).not.toContain('lastTokenUsage?.totalTokens')
     expect(patchCodexAcpContextUsageSource(patched)).toBe(patched)
@@ -1250,7 +1250,7 @@ describe('patchCodexAcpContextUsageSource', () => {
       await ensureManagedCodexContextUsage(adapterPath)
 
       expect(await readFile(adapterPath, 'utf8')).toContain(
-        'lastTokenUsage.inputTokens + (lastTokenUsage.cachedInputTokens ?? 0)'
+        'contextTokenUsage.inputTokens + (contextTokenUsage.cachedInputTokens ?? 0)'
       )
     } finally {
       await rm(patchRoot, { recursive: true, force: true })
@@ -1306,7 +1306,7 @@ describe('patchCodexAcpContextUsageSource', () => {
         await ensureManagedCodexContextUsage(adapterPath)
 
         expect(await readFile(adapterPath, 'utf8')).toContain(
-          'lastTokenUsage.inputTokens + (lastTokenUsage.cachedInputTokens ?? 0)'
+          'contextTokenUsage.inputTokens + (contextTokenUsage.cachedInputTokens ?? 0)'
         )
       } finally {
         fsFaults.adapterReplaceFailures = 0
@@ -1352,7 +1352,7 @@ describe('patchCodexAcpContextUsageSource', () => {
 
       await expect(firstCheck).resolves.toBeUndefined()
       expect(await readFile(adapterPath, 'utf8')).toContain(
-        'lastTokenUsage.inputTokens + (lastTokenUsage.cachedInputTokens ?? 0)'
+        'contextTokenUsage.inputTokens + (contextTokenUsage.cachedInputTokens ?? 0)'
       )
     } finally {
       releaseWrite?.()
@@ -1434,7 +1434,10 @@ describe('patchCodexAcpTurnUsageSource', () => {
     const adapter = Function(patched)() as {
       startPrompt: () => void
       createUsageUpdate: (params: unknown) => void
-      finishPrompt: () => { usage: ReturnType<typeof usage> | null }
+      finishPrompt: () => {
+        usage: ReturnType<typeof usage> | null
+        _meta?: Record<string, unknown>
+      }
     }
 
     // Seed the previous completed turn so the first update is derived from cumulative totals.
@@ -1465,7 +1468,9 @@ describe('patchCodexAcpTurnUsageSource', () => {
       }
     })
 
-    expect(adapter.finishPrompt().usage).toEqual(usage(45, 31, 8, 6, 0))
+    const response = adapter.finishPrompt()
+    expect(response.usage).toEqual(usage(27, 19, 5, 3, 0))
+    expect(response._meta?.['open-science/turn-usage']).toEqual(usage(45, 31, 8, 6, 0))
     expect(patchCodexAcpTurnUsageSource(patched)).toBe(patched)
   })
 
@@ -1484,7 +1489,29 @@ describe('patchCodexAcpTurnUsageSource', () => {
       }
     })
 
-    expect(adapter.finishPrompt().usage).toEqual(usage(18, 12, 3, 3, 0))
+    const response = adapter.finishPrompt() as {
+      usage: ReturnType<typeof usage> | null
+      _meta?: Record<string, unknown>
+    }
+    expect(response.usage).toEqual(usage(18, 12, 3, 3, 0))
+    expect(response._meta?.['open-science/turn-usage']).toEqual(usage(18, 12, 3, 3, 0))
+  })
+
+  it('composes with the context-usage patch without duplicate declarations', () => {
+    const contextFixture = fixture.replace(
+      '    this.handleTokenUsageUpdated(params);\n    return null;',
+      [
+        '    this.handleTokenUsageUpdated(params);',
+        '    const used = this.sessionState.lastTokenUsage?.totalTokens;',
+        '    return used;'
+      ].join('\n')
+    )
+    const composed = patchCodexAcpTurnUsageSource(patchCodexAcpContextUsageSource(contextFixture))
+
+    expect(() => Function(composed)).not.toThrow()
+    expect(composed).toContain(
+      'contextTokenUsage.inputTokens + (contextTokenUsage.cachedInputTokens ?? 0)'
+    )
   })
 })
 

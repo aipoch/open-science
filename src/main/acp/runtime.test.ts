@@ -7486,6 +7486,47 @@ describe('ACP runtime session management', () => {
     })
   })
 
+  it('keeps managed Codex turn totals separate from its latest context snapshot', async () => {
+    const process = new FakeAgentProcess()
+    startFakeAgent(process, ['s1'], {
+      modes: createModes(['read-only', 'agent', 'agent-full-access'], 'agent'),
+      onPrompt: () => ({
+        stopReason: 'end_turn',
+        usage: {
+          totalTokens: 27,
+          inputTokens: 19,
+          cachedReadTokens: 5,
+          outputTokens: 3
+        },
+        _meta: {
+          'open-science/turn-usage': {
+            totalTokens: 60,
+            inputTokens: 31,
+            cachedReadTokens: 8,
+            cachedWriteTokens: 7,
+            outputTokens: 14
+          }
+        }
+      })
+    })
+    const runtime = new AcpRuntime({
+      appVersion: '0.1.0',
+      defaultCwd: '/workspace',
+      spawnAgent: () => asAgentProcess(process),
+      framework: codexFramework
+    })
+
+    await runtime.createSession({ cwd: '/workspace' })
+    await runtime.sendPrompt({ sessionId: 's1', text: 'use a tool and summarize' })
+
+    expect(runtime.getSnapshot().contextUsageBySession).toMatchObject({
+      s1: { used: 24 }
+    })
+    expect(runtime.getSnapshot().events.find((event) => event.kind === 'stop')).toMatchObject({
+      turnUsage: { inputTokens: 31, cacheTokens: 15, outputTokens: 14 }
+    })
+  })
+
   it('uses OpenCode native input and cache-read context usage', async () => {
     const process = new FakeAgentProcess()
     startFakeAgent(process, ['s1'])

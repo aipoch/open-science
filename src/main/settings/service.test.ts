@@ -2237,7 +2237,7 @@ describe('SettingsService: preflight & spawn config', () => {
 
     expect(backend.executablePath).toBe(adapterPath)
     expect(await readFile(adapterPath, 'utf8')).toContain(
-      'lastTokenUsage.inputTokens + (lastTokenUsage.cachedInputTokens ?? 0)'
+      'contextTokenUsage.inputTokens + (contextTokenUsage.cachedInputTokens ?? 0)'
     )
   })
 

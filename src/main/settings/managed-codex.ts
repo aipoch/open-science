@@ -22,6 +22,7 @@ import { pipeline } from 'node:stream/promises'
 import { createGunzip } from 'node:zlib'
 
 import type { ClaudeInstallEvent, ClaudeInstallResult } from '../../shared/settings'
+import { ACP_TURN_TOKEN_USAGE_META_KEY } from '../../shared/acp'
 import {
   DEFAULT_REGISTRIES,
   defaultFetchJson,
@@ -110,12 +111,19 @@ const codexBinaryInRoot = (root: string, platform: ManagedCodexPlatform): string
 
 const CODEX_ACP_CONTEXT_USAGE_SOURCE =
   '    const used = this.sessionState.lastTokenUsage?.totalTokens;'
-const CODEX_ACP_CONTEXT_USAGE_REPLACEMENT = [
+const CODEX_ACP_CONTEXT_USAGE_LEGACY_REPLACEMENT = [
   '    const lastTokenUsage = this.sessionState.lastTokenUsage;',
   '    const used =',
   '      lastTokenUsage == null',
   '        ? void 0',
   '        : lastTokenUsage.inputTokens + (lastTokenUsage.cachedInputTokens ?? 0);'
+].join('\n')
+const CODEX_ACP_CONTEXT_USAGE_REPLACEMENT = [
+  '    const contextTokenUsage = this.sessionState.lastTokenUsage;',
+  '    const used =',
+  '      contextTokenUsage == null',
+  '        ? void 0',
+  '        : contextTokenUsage.inputTokens + (contextTokenUsage.cachedInputTokens ?? 0);'
 ].join('\n')
 
 const CODEX_ACP_TURN_USAGE_UPDATE_SOURCE = [
@@ -192,8 +200,20 @@ const CODEX_ACP_TURN_USAGE_START_REPLACEMENT = [
 
 const CODEX_ACP_TURN_USAGE_RESPONSE_SOURCE =
   'usage: this.buildPromptUsage(sessionState.lastTokenUsage),'
-const CODEX_ACP_TURN_USAGE_RESPONSE_REPLACEMENT =
+const CODEX_ACP_TURN_USAGE_RESPONSE_LEGACY_REPLACEMENT =
   'usage: this.buildPromptUsage(sessionState.promptTokenUsageObserved ? sessionState.promptTokenUsage : null),'
+const CODEX_ACP_TURN_USAGE_RESPONSE_REPLACEMENT = [
+  'usage: this.buildPromptUsage(',
+  '  sessionState.lastTokenUsage',
+  '),',
+  '...(sessionState.promptTokenUsageObserved',
+  '  ? {',
+  '      _meta: {',
+  `        "${ACP_TURN_TOKEN_USAGE_META_KEY}": this.buildPromptUsage(sessionState.promptTokenUsage)`,
+  '      }',
+  '    }',
+  '  : {}),'
+].join('\n')
 const CODEX_ACP_TURN_USAGE_FINISH_SOURCE = '      activePrompt.complete();'
 const CODEX_ACP_TURN_USAGE_FINISH_REPLACEMENT = [
   '      sessionState.promptTokenUsage = void 0;',
@@ -308,6 +328,12 @@ const renameWithTransientLockRetry = async (source: string, destination: string)
 // during installation instead of silently restoring the wrong metric.
 export const patchCodexAcpContextUsageSource = (source: string): string => {
   if (source.includes(CODEX_ACP_CONTEXT_USAGE_REPLACEMENT)) return source
+  if (source.includes(CODEX_ACP_CONTEXT_USAGE_LEGACY_REPLACEMENT)) {
+    return source.replace(
+      CODEX_ACP_CONTEXT_USAGE_LEGACY_REPLACEMENT,
+      CODEX_ACP_CONTEXT_USAGE_REPLACEMENT
+    )
+  }
 
   const matches = source.split(CODEX_ACP_CONTEXT_USAGE_SOURCE).length - 1
 
@@ -326,39 +352,44 @@ export const patchCodexAcpContextUsageSource = (source: string): string => {
   return source
 }
 
-// Codex ACP 1.1.4 projects only tokenUsage.last into PromptResponse.usage, so a prompt that performs
-// tools loses every model request except the final one. Accumulate deltas from tokenUsage.total while
-// the prompt is active. Falling back to `last` for the first update keeps resumed sessions from
-// attributing their historical cumulative total to the first new response.
+// Codex ACP 1.1.4 projects only tokenUsage.last into PromptResponse.usage. Preserve that latest
+// request for context reconciliation while accumulating whole-turn deltas into an app-owned _meta
+// field for the transcript footer. Falling back to `last` for the first update keeps resumed sessions
+// from attributing their historical cumulative total to the first new response.
 export const patchCodexAcpTurnUsageSource = (source: string): string => {
+  const migratedSource = source.replaceAll(
+    CODEX_ACP_TURN_USAGE_RESPONSE_LEGACY_REPLACEMENT,
+    CODEX_ACP_TURN_USAGE_RESPONSE_REPLACEMENT
+  )
+
   if (
-    source.includes(CODEX_ACP_TURN_USAGE_UPDATE_REPLACEMENT) &&
-    source.includes(CODEX_ACP_TURN_USAGE_START_REPLACEMENT) &&
-    source.includes(CODEX_ACP_TURN_USAGE_RESPONSE_REPLACEMENT) &&
-    source.includes(CODEX_ACP_TURN_USAGE_FINISH_REPLACEMENT)
+    migratedSource.includes(CODEX_ACP_TURN_USAGE_UPDATE_REPLACEMENT) &&
+    migratedSource.includes(CODEX_ACP_TURN_USAGE_START_REPLACEMENT) &&
+    migratedSource.includes(CODEX_ACP_TURN_USAGE_RESPONSE_REPLACEMENT) &&
+    migratedSource.includes(CODEX_ACP_TURN_USAGE_FINISH_REPLACEMENT)
   ) {
-    return source
+    return migratedSource
   }
 
-  const updateMatches = source.split(CODEX_ACP_TURN_USAGE_UPDATE_SOURCE).length - 1
-  const startMatches = source.split(CODEX_ACP_TURN_USAGE_START_SOURCE).length - 1
-  const responseMatches = source.split(CODEX_ACP_TURN_USAGE_RESPONSE_SOURCE).length - 1
-  const finishMatches = source.split(CODEX_ACP_TURN_USAGE_FINISH_SOURCE).length - 1
+  const updateMatches = migratedSource.split(CODEX_ACP_TURN_USAGE_UPDATE_SOURCE).length - 1
+  const startMatches = migratedSource.split(CODEX_ACP_TURN_USAGE_START_SOURCE).length - 1
+  const responseMatches = migratedSource.split(CODEX_ACP_TURN_USAGE_RESPONSE_SOURCE).length - 1
+  const finishMatches = migratedSource.split(CODEX_ACP_TURN_USAGE_FINISH_SOURCE).length - 1
 
   if (updateMatches === 1 && startMatches === 1 && responseMatches === 3 && finishMatches === 1) {
-    return source
+    return migratedSource
       .replace(CODEX_ACP_TURN_USAGE_UPDATE_SOURCE, CODEX_ACP_TURN_USAGE_UPDATE_REPLACEMENT)
       .replace(CODEX_ACP_TURN_USAGE_START_SOURCE, CODEX_ACP_TURN_USAGE_START_REPLACEMENT)
       .replaceAll(CODEX_ACP_TURN_USAGE_RESPONSE_SOURCE, CODEX_ACP_TURN_USAGE_RESPONSE_REPLACEMENT)
       .replace(CODEX_ACP_TURN_USAGE_FINISH_SOURCE, CODEX_ACP_TURN_USAGE_FINISH_REPLACEMENT)
   }
 
-  if (responseMatches > 0 || source.includes('buildPromptUsage(lastTokenUsage)')) {
+  if (responseMatches > 0 || migratedSource.includes('buildPromptUsage(lastTokenUsage)')) {
     throw new Error('Pinned Codex ACP turn-usage patch no longer matches the adapter bundle')
   }
 
   // Unit-test fixtures use tiny stand-in adapters rather than the pinned production bundle.
-  return source
+  return migratedSource
 }
 
 // The pinned adapter normally flattens every ACP text block into a Codex text input, discarding

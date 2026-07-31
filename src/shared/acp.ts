@@ -144,15 +144,19 @@ export type AcpTurnTokenUsage = {
   outputTokens: number
 }
 
+// Private PromptResponse metadata used by the managed Codex adapter to keep whole-turn totals
+// separate from ACP's latest-request usage snapshot.
+export const ACP_TURN_TOKEN_USAGE_META_KEY = 'open-science/turn-usage'
+
 const asTokenCount = (value: unknown): number | undefined =>
   typeof value === 'number' && Number.isSafeInteger(value) && value >= 0 ? value : undefined
 
 // Normalizes ACP's experimental PromptResponse usage into the stable, provider-neutral projection the
 // renderer persists. Missing cache categories mean zero; malformed totals suppress the entire footer.
-export const toAcpTurnTokenUsage = (
-  usage: Usage | null | undefined
-): AcpTurnTokenUsage | undefined => {
-  if (!usage) return undefined
+export const toAcpTurnTokenUsage = (value: unknown): AcpTurnTokenUsage | undefined => {
+  if (typeof value !== 'object' || value === null || Array.isArray(value)) return undefined
+
+  const usage = value as Partial<Usage>
 
   const inputTokens = asTokenCount(usage.inputTokens)
   const outputTokens = asTokenCount(usage.outputTokens)
