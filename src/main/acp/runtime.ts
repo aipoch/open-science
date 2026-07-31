@@ -2928,9 +2928,13 @@ class AcpRuntime {
             sessionId: request.sessionId,
             stopReason: message.stopReason
           })
+          const promptFramework = this.sessionFrameworks.get(request.sessionId) ?? this.framework.id
+          // Codex ACP exposes only the latest request in PromptResponse.usage. The managed adapter's
+          // app-owned metadata is the sole whole-turn source; other frameworks already accumulate usage.
           const turnUsage =
-            toAcpTurnTokenUsage(message.response._meta?.[ACP_TURN_TOKEN_USAGE_META_KEY]) ??
-            toAcpTurnTokenUsage(message.response.usage)
+            promptFramework === 'codex'
+              ? toAcpTurnTokenUsage(message.response._meta?.[ACP_TURN_TOKEN_USAGE_META_KEY])
+              : toAcpTurnTokenUsage(message.response.usage)
           this.pushEvent({
             kind: 'stop',
             level: 'info',

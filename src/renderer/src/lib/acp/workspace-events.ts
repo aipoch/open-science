@@ -44,7 +44,6 @@ type DeferredArtifactEvent = {
 }
 
 type PendingArtifactTurnUsage = {
-  promptMessageId: string
   turnUsage?: AcpTurnTokenUsage
   turnUsageUnavailable?: true
 }
@@ -56,7 +55,8 @@ type PendingArtifactTurnUsage = {
 const deferredArtifactEventsBySession = new Map<string, DeferredArtifactEvent[]>()
 // Some providers reverse that order and publish an artifact-only response just after stop. Keep the
 // terminal usage scoped to its prompt until the matching Artifact creates the owning Agent message.
-const pendingArtifactTurnUsageBySession = new Map<string, PendingArtifactTurnUsage>()
+const pendingArtifactTurnUsageBySession = new Map<string, Map<string, PendingArtifactTurnUsage>>()
+const MAX_PENDING_ARTIFACT_TURNS_PER_SESSION = 16
 const scheduledAutoReviewsBySession = new Map<string, ReturnType<typeof setTimeout>>()
 const AUTO_REVIEW_ARTIFACT_SETTLE_DELAY_MS = 100
 
@@ -482,14 +482,23 @@ const applyWorkspaceRuntimeEvent = async (
           )
       : undefined
     if (terminalPromptMessageId && !terminalResponse) {
-      pendingArtifactTurnUsageBySession.set(event.sessionId, {
-        promptMessageId: terminalPromptMessageId,
+      const pendingByPrompt =
+        pendingArtifactTurnUsageBySession.get(event.sessionId) ??
+        new Map<string, PendingArtifactTurnUsage>()
+      pendingByPrompt.set(terminalPromptMessageId, {
         ...(event.turnUsage
           ? { turnUsage: event.turnUsage }
           : { turnUsageUnavailable: true as const })
       })
-    } else {
-      pendingArtifactTurnUsageBySession.delete(event.sessionId)
+      if (pendingByPrompt.size > MAX_PENDING_ARTIFACT_TURNS_PER_SESSION) {
+        const oldestPromptMessageId = pendingByPrompt.keys().next().value
+        if (oldestPromptMessageId) pendingByPrompt.delete(oldestPromptMessageId)
+      }
+      pendingArtifactTurnUsageBySession.set(event.sessionId, pendingByPrompt)
+    } else if (terminalPromptMessageId) {
+      const pendingByPrompt = pendingArtifactTurnUsageBySession.get(event.sessionId)
+      pendingByPrompt?.delete(terminalPromptMessageId)
+      if (pendingByPrompt?.size === 0) pendingArtifactTurnUsageBySession.delete(event.sessionId)
     }
 
     if (deferredArtifacts) {
@@ -543,12 +552,14 @@ const applyWorkspaceRuntimeEvent = async (
     }
 
     cancelScheduledAutoReview(event.sessionId)
-    const pendingTurnUsage = pendingArtifactTurnUsageBySession.get(event.sessionId)
-    const matchingTurnUsage =
-      event.promptMessageId === pendingTurnUsage?.promptMessageId ? pendingTurnUsage : undefined
+    const pendingByPrompt = pendingArtifactTurnUsageBySession.get(event.sessionId)
+    const matchingTurnUsage = event.promptMessageId
+      ? pendingByPrompt?.get(event.promptMessageId)
+      : undefined
     const wasFinalized = await finalizeArtifactEvent(event, dependencies, matchingTurnUsage)
-    if (wasFinalized && matchingTurnUsage) {
-      pendingArtifactTurnUsageBySession.delete(event.sessionId)
+    if (wasFinalized && matchingTurnUsage && event.promptMessageId) {
+      pendingByPrompt?.delete(event.promptMessageId)
+      if (pendingByPrompt?.size === 0) pendingArtifactTurnUsageBySession.delete(event.sessionId)
     }
     if (wasFinalized) scheduleAutoReview(event.sessionId)
     return wasFinalized

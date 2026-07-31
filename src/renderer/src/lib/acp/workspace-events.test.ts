@@ -839,6 +839,57 @@ describe('workspace runtime events', () => {
     )
   })
 
+  it('keeps pending artifact usage isolated across consecutive prompts', async () => {
+    const firstPromptMessageId = useSessionStore.getState().sessions[0].activeRun?.promptMessageId
+    const firstTurnUsage = { inputTokens: 31, cacheTokens: 15, outputTokens: 14 }
+    const secondTurnUsage = { inputTokens: 47, cacheTokens: 9, outputTokens: 22 }
+    const saveSession = vi.fn().mockResolvedValue(undefined)
+    const finalizeRunArtifacts = vi.fn().mockResolvedValue([])
+
+    await applyWorkspaceRuntimeEvent(
+      createEvent({ id: 'first-stop-before-artifact', kind: 'stop', turnUsage: firstTurnUsage })
+    )
+    const secondPrompt = useSessionStore.getState().appendUserMessage({
+      sessionId: 'transport-session-1',
+      content: 'Create another artifact'
+    })
+    await applyWorkspaceRuntimeEvent(
+      createEvent({ id: 'second-stop-before-artifact', kind: 'stop', turnUsage: secondTurnUsage })
+    )
+
+    for (const [label, promptMessageId] of [
+      ['first', firstPromptMessageId],
+      ['second', secondPrompt?.messageId]
+    ] as const) {
+      await applyWorkspaceRuntimeEvent(
+        createEvent({
+          id: `${label}-late-artifact`,
+          kind: 'artifact',
+          runId: `${label}-artifact-run`,
+          promptMessageId,
+          artifactSessionId: 'artifact-session-1',
+          artifactClaimId: `${label}-artifact-claim`,
+          artifacts: [createArtifactFile({ runId: `${label}-artifact-run` })]
+        }),
+        { finalizeRunArtifacts, saveSession }
+      )
+    }
+
+    const messages = useSessionStore.getState().sessions[0].messages
+    expect(
+      messages.find((message) => message.responseToMessageId === firstPromptMessageId)
+    ).toMatchObject({
+      role: 'agent',
+      turnUsage: firstTurnUsage
+    })
+    expect(
+      messages.find((message) => message.responseToMessageId === secondPrompt?.messageId)
+    ).toMatchObject({
+      role: 'agent',
+      turnUsage: secondTurnUsage
+    })
+  })
+
   it('keeps Artifact persistence behind an older queued Session save', async () => {
     const promptMessageId = useSessionStore.getState().sessions[0].activeRun?.promptMessageId
     await applyWorkspaceRuntimeEvent(

@@ -7484,6 +7484,9 @@ describe('ACP runtime session management', () => {
     expect(runtime.getSnapshot().contextUsageBySession).toMatchObject({
       s1: { used: 15, size: 128000 }
     })
+    expect(
+      runtime.getSnapshot().events.find((event) => event.kind === 'stop')?.turnUsage
+    ).toBeUndefined()
   })
 
   it('keeps managed Codex turn totals separate from its latest context snapshot', async () => {
