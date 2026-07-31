@@ -1,0 +1,59 @@
+name: Windows Path Portability
+
+# Run a blocking, native-filesystem check before merge without duplicating the slow, advisory
+# Windows full suite. These contracts cover the path boundaries most likely to regress when code or
+# tests assume POSIX separators; the complete Windows suite remains a post-merge safety net.
+on:
+  pull_request:
+    branches:
+      - main
+    types: [opened, synchronize, reopened]
+    paths-ignore:
+      - '**/*.md'
+      - 'docs/**'
+      - 'LICENSE'
+      - '.gitignore'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: windows-path-portability-${{ github.event.pull_request.number || github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  path_portability:
+    name: Windows path portability
+    runs-on: windows-latest
+    timeout-minutes: 10
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v7
+
+      - name: Setup Node
+        uses: actions/setup-node@v7
+        with:
+          node-version: 22
+          cache: npm
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Test Windows path portability
+        run: >-
+          npx vitest run
+          src/main/acp/workspace-path.test.ts
+          src/main/file-save.test.ts
+          src/main/notebook/run-document-data-paths.test.ts
+          src/main/notebook/runtime-paths.test.ts
+          src/main/session-persistence/conversation-export.test.ts
+          src/main/session-persistence/data-path-roundtrip.test.ts
+          src/main/settings/shell-path.test.ts
+          src/main/specialist/repository.test.ts
+          src/main/storage/data-path.test.ts
+          src/main/storage/normalize-legacy-paths.test.ts
+          src/main/storage/path-presence.test.ts
+          --maxWorkers=1
+          --testTimeout=30000
+          --hookTimeout=30000
