@@ -70,7 +70,10 @@ describe('conversation export projection', () => {
         '<think>\nfirst\n</think>\n\n# Result\n\n**kept**\n<think>second</think>'
       )
     ).toBe('# Result\n\n**kept**')
-    expect(sanitizeExportMarkdown('before <think>unfinished')).toBe('before <think>unfinished')
+  })
+
+  it('removes an unterminated provider think block through the end of the response', () => {
+    expect(sanitizeExportMarkdown('before <think>unfinished private reasoning')).toBe('before')
   })
 
   it('projects only user-facing active messages and attachment names', () => {
@@ -135,11 +138,21 @@ describe('conversation export projection', () => {
     session.title = `${prompt.replace(/\s+/g, ' ').slice(0, 48)}...`
 
     expect(createConversationExportDocument(session, 1_710_000_003_000).title).toBe(
-      'Create a detailed reproducible research note comparing three open-science data management approaches.'
+      'Create a detailed reproducible research note comparing three open-science data management approaches. Include: - tables - code'
     )
   })
 
-  it('marks prompt-derived title truncation and preserves complete Unicode characters', () => {
+  it('replaces headless task automatic titles with the complete prompt-derived title', () => {
+    const session = createSession()
+    const prompt =
+      'Generate a reproducible analysis of the longitudinal dataset and summarize every validation step.'
+    session.messages[0].content = prompt
+    session.title = `${prompt.replace(/\s+/g, ' ').slice(0, 57)}...`
+
+    expect(createConversationExportDocument(session, 1_710_000_003_000).title).toBe(prompt)
+  })
+
+  it('keeps the complete prompt-derived document title beyond the filename limit', () => {
     const session = createSession()
     const prompt = `😀${'x'.repeat(300)}`
     session.messages[0].content = prompt
@@ -147,10 +160,7 @@ describe('conversation export projection', () => {
 
     const title = createConversationExportDocument(session, 1_710_000_003_000).title
 
-    expect(Array.from(title)).toHaveLength(243)
-    expect(title.startsWith('😀')).toBe(true)
-    expect(title.endsWith('...')).toBe(true)
-    expect(title).not.toContain('\uFFFD')
+    expect(title).toBe(prompt)
   })
 
   it('preserves manually assigned titles even when they end in an ellipsis', () => {

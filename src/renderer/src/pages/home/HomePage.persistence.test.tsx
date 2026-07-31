@@ -19,23 +19,32 @@ vi.mock('./DeleteProjectDialog', () => ({
     project,
     canDelete,
     hasCompleteSessionCatalog,
+    isDeleting,
+    error,
     onConfirmDelete
   }: {
     project: Project | undefined
     canDelete: boolean
     hasCompleteSessionCatalog: boolean
+    isDeleting: boolean
+    error: string | undefined
     onConfirmDelete: () => void
   }) => (
-    <button
-      type="button"
-      data-testid="confirm-project-delete"
-      data-can-delete={String(canDelete)}
-      data-has-project={String(Boolean(project))}
-      data-has-complete-session-catalog={String(hasCompleteSessionCatalog)}
-      onClick={onConfirmDelete}
-    >
-      Confirm delete
-    </button>
+    <>
+      <button
+        type="button"
+        data-testid="confirm-project-delete"
+        data-can-delete={String(canDelete)}
+        data-has-project={String(Boolean(project))}
+        data-has-complete-session-catalog={String(hasCompleteSessionCatalog)}
+        data-is-deleting={String(isDeleting)}
+        disabled={isDeleting}
+        onClick={onConfirmDelete}
+      >
+        Confirm delete
+      </button>
+      {error ? <p role="alert">{error}</p> : null}
+    </>
   )
 }))
 vi.mock('radix-ui', () => ({
@@ -174,5 +183,36 @@ describe('HomePage persistence recovery', () => {
       container.querySelector<HTMLButtonElement>('[data-testid="confirm-project-delete"]')?.dataset
         .hasCompleteSessionCatalog
     ).toBe('false')
+  })
+
+  it('keeps the confirmation open, explains a durable deletion failure, and allows retry', async () => {
+    deleteProject.mockRejectedValueOnce(new Error('Project storage is unavailable.'))
+
+    await act(async () => root.render(<HomePage canDeleteProjects hasCompleteSessionCatalog />))
+
+    const deleteAction = [...container.querySelectorAll<HTMLButtonElement>('button')].find(
+      (button) => button.textContent?.trim() === 'Delete'
+    )
+    await act(async () => deleteAction?.click())
+    await act(async () =>
+      container.querySelector<HTMLButtonElement>('[data-testid="confirm-project-delete"]')?.click()
+    )
+
+    const confirm = container.querySelector<HTMLButtonElement>(
+      '[data-testid="confirm-project-delete"]'
+    )
+    expect(confirm?.dataset.hasProject).toBe('true')
+    expect(confirm?.dataset.isDeleting).toBe('false')
+    expect(container.querySelector('[role="alert"]')?.textContent).toBe(
+      'Project storage is unavailable.'
+    )
+    expect(useProjectStore.getState().projects).toContainEqual(project)
+
+    deleteProject.mockResolvedValueOnce(undefined)
+    await act(async () => confirm?.click())
+
+    expect(deleteProject).toHaveBeenCalledTimes(2)
+    expect(confirm?.dataset.hasProject).toBe('false')
+    expect(container.querySelector('[role="alert"]')).toBeNull()
   })
 })

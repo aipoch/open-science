@@ -19,6 +19,8 @@ type DeleteProjectDialogProps = {
   sessionCount: number
   hasCompleteSessionCatalog: boolean
   canDelete: boolean
+  isDeleting: boolean
+  error: string | undefined
   onCancel: () => void
   onConfirmDelete: () => void
 }
@@ -26,12 +28,14 @@ type DeleteProjectDialogProps = {
 const deleteDialogConfirmButtonClassName =
   'border-transparent bg-danger-000 text-white hover:bg-danger-000/90 hover:text-white'
 
-// Destructive deletion requires confirmation; the project's sessions are removed with it, artifacts stay.
+// Destructive deletion requires confirmation and reports the app-managed data removed with the Project.
 const DeleteProjectDialog = ({
   project,
   sessionCount,
   hasCompleteSessionCatalog,
   canDelete,
+  isDeleting,
+  error,
   onCancel,
   onConfirmDelete
 }: DeleteProjectDialogProps): React.JSX.Element => {
@@ -46,7 +50,7 @@ const DeleteProjectDialog = ({
     <AlertDialog.Root
       open={Boolean(project)}
       onOpenChange={(open) => {
-        if (!open) onCancel()
+        if (!open && !isDeleting) onCancel()
       }}
     >
       <AlertDialog.Portal>
@@ -64,7 +68,9 @@ const DeleteProjectDialog = ({
                     ? ` and its ${dialogSessionCount} ${dialogSessionCount === 1 ? 'session' : 'sessions'}`
                     : ''
                   : ' and all of its saved conversations, including any that could not be loaded during recovery'}
-                . Generated artifacts remain on disk. This action cannot be undone.
+                . Generated artifacts and uploaded files stored by Open Science will also be
+                deleted. Files in the project&apos;s working folder are not deleted. This action
+                cannot be undone.
               </AlertDialog.Description>
             </div>
             <Button
@@ -73,27 +79,32 @@ const DeleteProjectDialog = ({
               size="icon-sm"
               aria-label="Close"
               className={dialogCloseButtonClassName}
+              disabled={isDeleting}
               onClick={onCancel}
             >
               <X className="size-4" aria-hidden="true" />
             </Button>
           </div>
+          {error ? (
+            <p className="mt-4 text-sm text-danger-000" role="alert">
+              {error}
+            </p>
+          ) : null}
           <div className={dialogFooterClassName}>
             <AlertDialog.Cancel asChild>
-              <Button type="button" variant="outline">
+              <Button type="button" variant="outline" disabled={isDeleting}>
                 Cancel
               </Button>
             </AlertDialog.Cancel>
-            <AlertDialog.Action asChild>
-              <Button
-                type="button"
-                className={deleteDialogConfirmButtonClassName}
-                disabled={!canDelete}
-                onClick={onConfirmDelete}
-              >
-                Delete
-              </Button>
-            </AlertDialog.Action>
+            {/* Async confirmation owns dialog closure so a failed deletion remains visible. */}
+            <Button
+              type="button"
+              className={deleteDialogConfirmButtonClassName}
+              disabled={!canDelete || isDeleting}
+              onClick={onConfirmDelete}
+            >
+              {isDeleting ? 'Deleting…' : 'Delete'}
+            </Button>
           </div>
         </AlertDialog.Content>
       </AlertDialog.Portal>

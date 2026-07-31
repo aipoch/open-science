@@ -73,6 +73,12 @@ export type OfficialVendor = {
   // the Codex Responses->Chat bridge. Ships with the app so such models are greyed in the picker
   // rather than user-tested. Absent/empty ⇒ every listed model is bridge-compatible.
   bridgeUnsupportedModels?: readonly string[]
+  // Models that accept native Responses API (/v1/responses) requests, for vendors where only a
+  // subset of the catalog implements the Responses protocol while the vendor-level `apiEndpoints`
+  // does not include 'responses'. A vendor that declares 'responses' in `apiEndpoints` serves it
+  // for its whole catalog and must not set this field. Absent ⇒ Responses availability is purely
+  // governed by `apiEndpoints`.
+  responsesModels?: readonly string[]
   // Describes which of this vendor's models accept image input (multimodal vision). Absent ⇒ the vendor
   // has no vision models. This must cover live-fetched ids too — a vendor that refreshes its catalog can
   // surface a vision model not in the bundled `models` array — so it is a rule, not a static id list:
@@ -195,7 +201,8 @@ export const OFFICIAL_VENDORS: OfficialVendor[] = [
     // DeepSeek exposes both routes: Anthropic /v1/messages under `/anthropic`, and the OpenAI-compatible
     // route under `/v1`. The same model ids work on both, so it's safe to prefer OpenAI where the
     // framework supports it (e.g. OpenCode). openaiBaseUrl is the exact version-carrying base clients
-    // append `/chat/completions` to.
+    // append `/chat/completions` to, and the same `/v1` root serves `/v1/responses` for Responses-capable
+    // models.
     apiEndpoints: ['anthropic', 'openai'],
     baseUrl: 'https://api.deepseek.com/anthropic',
     openaiBaseUrl: 'https://api.deepseek.com/v1',
@@ -205,7 +212,10 @@ export const OFFICIAL_VENDORS: OfficialVendor[] = [
       { id: 'deepseek-v4-pro', contextWindow: 1_000_000 },
       { id: 'deepseek-v4-pro[1m]', contextWindow: 1_000_000 },
       { id: 'deepseek-v4-flash', contextWindow: 1_000_000 }
-    ]
+    ],
+    // DeepSeek serves a native Responses API for deepseek-v4-flash only; deepseek-v4-pro does not yet
+    // implement /v1/responses (planned for early August 2026), so it stays on the Chat Completions bridge.
+    responsesModels: ['deepseek-v4-flash']
     // DeepSeek's chat models are text-only, so no `multimodal` rule (image input stays disabled).
   },
   {
@@ -786,6 +796,24 @@ export const isVendorModelMultimodal = (
   if (rule.multimodalModelPattern?.test(modelId)) return true
 
   return rule.multimodalModels?.includes(modelId) ?? false
+}
+
+// Whether a specific model from an official vendor accepts native Responses API (/v1/responses)
+// requests. A vendor that declares 'responses' in `apiEndpoints` serves it for its whole catalog, so
+// every model is Responses-capable. Vendors without that declaration may still list individual models
+// in `responsesModels`; those are the only ids that gain the Responses route. Returns false for an
+// unknown/absent vendor, an empty model id, or a vendor with no Responses support at all.
+export const isVendorModelResponsesSupported = (
+  vendorId: OfficialVendorId,
+  modelId: string | undefined
+): boolean => {
+  if (!modelId) return false
+
+  const vendor = VENDORS_BY_ID.get(vendorId)
+  if (!vendor) return false
+
+  if (vendor.apiEndpoints?.includes('responses')) return true
+  return vendor.responsesModels?.includes(modelId) ?? false
 }
 
 // Custom model ids are opaque: guessing from their name is less reliable than a stable documented

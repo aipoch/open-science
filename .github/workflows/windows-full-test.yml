@@ -51,6 +51,6 @@ jobs:
       - name: Test complete suite shard
         # SQLite-heavy integration suites contend heavily for Windows disk I/O when Vitest uses
         # every available core, and hosted-runner disk latency occasionally exceeds the default
-        # per-test/hook budgets. Keep files serial and use bounded 30-second budgets; the 25-minute
+        # per-test/hook budgets. Keep files serial and use bounded 60-second budgets; the 25-minute
         # job timeout remains the backstop for a real hang.
-        run: npm test -- --shard=${{ matrix.shard }}/2 --maxWorkers=1 --testTimeout=30000 --hookTimeout=30000
+        run: npm test -- --shard=${{ matrix.shard }}/2 --maxWorkers=1 --testTimeout=60000 --hookTimeout=60000

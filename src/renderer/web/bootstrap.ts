@@ -1,16 +1,16 @@
-import { WEB_EVENT_CHANNELS, WEB_INVOKE_CHANNELS } from './api-map.generated'
+import { WEB_EVENT_CHANNELS, WEB_INVOKE_CHANNELS } from '../../shared/web-api-map.generated'
+import {
+  WEB_RPC_PROTOCOL_VERSION,
+  webRpcBootstrapSchema,
+  webRpcEventSchema,
+  webRpcResponseSchema
+} from '../../shared/web-rpc-contract'
 import { applyTheme, resolveInitialTheme } from '@/lib/theme'
 
 // Apply the saved theme before the (async) web API install and the app import below, so the page
 // doesn't paint in light mode and then flip to dark. The Electron renderer does the same at the top
 // of main.tsx; the web build reaches main.tsx only after an async round trip, so it must apply here.
 applyTheme(resolveInitialTheme())
-
-type BootstrapInfo = {
-  platform: string
-  versions: { electron: string; chrome: string; node: string }
-  rpcChannels: string[]
-}
 
 type Listener = (payload: unknown) => void
 
@@ -52,14 +52,11 @@ const invoke = async (channel: string, args: unknown[]): Promise<unknown> => {
       'content-type': 'application/json',
       'x-open-science-client': clientId
     },
-    body: JSON.stringify({ args }, encodeBinary)
+    body: JSON.stringify({ protocolVersion: WEB_RPC_PROTOCOL_VERSION, args }, encodeBinary)
   })
-  const payload = JSON.parse(await response.text(), reviveBinary) as {
-    ok: boolean
-    result?: unknown
-    error?: string
-  }
-  if (!response.ok || !payload.ok) throw new Error(payload.error ?? `RPC ${channel} failed`)
+  const payload = webRpcResponseSchema.parse(JSON.parse(await response.text(), reviveBinary))
+  if (!payload.ok) throw new Error(payload.error.message)
+  if (!response.ok) throw new Error(`RPC ${channel} failed with HTTP ${response.status}`)
   return rewritePreviewUrls(payload.result)
 }
 
@@ -83,10 +80,7 @@ const connectEvents = (): void => {
     `${protocol}//${location.host}/events?client=${encodeURIComponent(clientId)}`
   )
   socket.addEventListener('message', (event) => {
-    const message = JSON.parse(String(event.data), reviveBinary) as {
-      channel: string
-      payload: unknown
-    }
+    const message = webRpcEventSchema.parse(JSON.parse(String(event.data), reviveBinary))
     for (const listener of listeners.get(message.channel) ?? []) listener(message.payload)
   })
   socket.addEventListener('close', () => window.setTimeout(connectEvents, 1_000))
@@ -144,7 +138,13 @@ const assignPath = (root: Record<string, unknown>, path: string, value: unknown)
 const installWebApi = async (): Promise<void> => {
   const bootstrapResponse = await fetch('/api/bootstrap')
   if (!bootstrapResponse.ok) throw new Error('Unable to initialize Open Science Web.')
-  const bootstrap = (await bootstrapResponse.json()) as BootstrapInfo
+  const parsedBootstrap = webRpcBootstrapSchema.safeParse(await bootstrapResponse.json())
+  if (!parsedBootstrap.success) {
+    throw new Error(
+      `Incompatible Open Science Web RPC protocol. Expected version ${WEB_RPC_PROTOCOL_VERSION}.`
+    )
+  }
+  const bootstrap = parsedBootstrap.data
   const api: Record<string, unknown> = {
     platform: bootstrap.platform,
     getRuntimeVersions: () => bootstrap.versions

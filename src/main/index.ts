@@ -57,7 +57,7 @@ if (shouldRunArtifactMcpServer) {
 // Boots the Electron app only in normal UI mode, keeping artifact MCP mode free of Electron imports.
 async function startElectronApp(mainEntryPath: string): Promise<void> {
   const [
-    { app, BrowserWindow, ipcMain, nativeImage, protocol },
+    { app, BrowserWindow, nativeImage, protocol },
     { electronApp },
     { default: icon },
     { default: iconDark },
@@ -109,7 +109,7 @@ async function startElectronApp(mainEntryPath: string): Promise<void> {
         { installMigrationQuitGuard, isMigrationInProgress },
         { createAppTray },
         { installAppLifecycle },
-        { installRpcCapture },
+        { webRpc },
         { parseWebModeOptions, createWebServiceController, buildAuthenticatedWebUrl },
         { routeSecondInstance },
         { detectActiveSessions: computeActiveSessions },
@@ -132,7 +132,7 @@ async function startElectronApp(mainEntryPath: string): Promise<void> {
         import('./storage/migration-state'),
         import('./tray'),
         import('./app-lifecycle'),
-        import('./web-service/rpc-capture'),
+        import('./ipc-handler-registry'),
         import('./web-service'),
         import('./second-instance-router'),
         import('./storage/detect-active'),
@@ -204,10 +204,6 @@ async function startElectronApp(mainEntryPath: string): Promise<void> {
       } = { current: undefined }
 
       const webMode = parseWebModeOptions(process.argv)
-      // Always install the capture layer BEFORE handlers register: it records ipcMain.handle handlers as
-      // they are added, so an on-demand web service (started later for a second launch's --serve request)
-      // can reach them. It only wraps ipcMain.handle — no server, no cost until something serves.
-      const rpcCapture = installRpcCapture(ipcMain)
       // Pass the concrete main entry path so ACP can launch the artifact MCP server from the same bundle.
       const {
         runtime,
@@ -281,7 +277,7 @@ async function startElectronApp(mainEntryPath: string): Promise<void> {
         initialVariant
       })
       const webController = createWebServiceController({
-        rpc: rpcCapture,
+        rpc: webRpc,
         requestQuit: () => app.quit()
       })
       // A launch that itself requested serving (a dedicated headless daemon, or an explicit --serve) is
@@ -316,7 +312,7 @@ async function startElectronApp(mainEntryPath: string): Promise<void> {
         log,
         webMode,
         webController,
-        rpcCapture
+        webRpc
       }
     },
     // Warn (rather than silently tear down) if the user tries to quit mid data-root migration. Installed
@@ -360,7 +356,7 @@ async function startElectronApp(mainEntryPath: string): Promise<void> {
             await ctx.shutdownCoordinator.runForQuit()
           } finally {
             await ctx.webController.close()
-            ctx.rpcCapture.dispose()
+            ctx.webRpc.dispose()
           }
         },
         isMigrationInProgress: ctx.isMigrationInProgress,

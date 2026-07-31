@@ -1,7 +1,9 @@
 import { randomUUID } from 'node:crypto'
 import { existsSync } from 'node:fs'
 
-import { BrowserWindow, ipcMain } from 'electron'
+import { BrowserWindow } from 'electron'
+
+import { ipcMainHandle } from '../ipc-handler-registry'
 
 import type { NotebookLanguage } from '../../shared/notebook'
 import { createLogger, errorLogFields } from '../logger'
@@ -387,8 +389,8 @@ export const registerNotebookEnvIpcHandlers = (
         onRepairCompleted
       )
     : createUnavailableHandlers()
-  ipcMain.handle('notebook-env:status', () => handlers.status())
-  ipcMain.handle('notebook-env:provision', (_event, lang: NotebookLanguage) =>
+  ipcMainHandle('notebook-env:status', () => handlers.status())
+  ipcMainHandle('notebook-env:provision', (_event, lang: NotebookLanguage) =>
     runLoggedRuntimeOperation(
       'provision',
       lang,
@@ -397,7 +399,7 @@ export const registerNotebookEnvIpcHandlers = (
       (progress) => broadcastNotebookEnvProgress({ ...progress, scope: lang })
     )
   )
-  ipcMain.handle('notebook-env:repair', (_event, lang: NotebookLanguage) =>
+  ipcMainHandle('notebook-env:repair', (_event, lang: NotebookLanguage) =>
     runLoggedRuntimeOperation(
       'repair',
       lang,
@@ -408,7 +410,7 @@ export const registerNotebookEnvIpcHandlers = (
   )
   // Synchronous best-effort abort of an in-flight provision; returns immediately (the aborted run
   // settles on its own and broadcasts its terminal progress).
-  ipcMain.handle('notebook-env:cancel', (_event, language?: NotebookLanguage) =>
+  ipcMainHandle('notebook-env:cancel', (_event, language?: NotebookLanguage) =>
     handlers.cancel(language)
   )
   if (serialized)

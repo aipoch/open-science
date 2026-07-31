@@ -1,4 +1,6 @@
-import { ipcMain, shell } from 'electron'
+import { shell } from 'electron'
+
+import { ipcMainHandle } from './ipc-handler-registry'
 
 import { getLogFilePath } from './logger'
 import type { OpenLogFileResult, RevealLogFileResult } from '../shared/logs'
@@ -7,9 +9,9 @@ import type { OpenLogFileResult, RevealLogFileResult } from '../shared/logs'
 // renderer can read the file path (to show it), open the file, or reveal it in its folder (to grab and
 // attach when reporting a bug). "Open" targets the log file itself; "reveal" selects it in the folder.
 const registerLogsIpcHandlers = (): void => {
-  ipcMain.handle('logs:get-path', () => getLogFilePath() ?? null)
+  ipcMainHandle('logs:get-path', () => getLogFilePath() ?? null)
 
-  ipcMain.handle('logs:open-file', async (): Promise<OpenLogFileResult> => {
+  ipcMainHandle('logs:open-file', async (): Promise<OpenLogFileResult> => {
     const path = getLogFilePath()
 
     if (!path) return { opened: false, error: 'No log file is available yet.' }
@@ -20,7 +22,7 @@ const registerLogsIpcHandlers = (): void => {
     return error ? { opened: false, error } : { opened: true }
   })
 
-  ipcMain.handle('logs:reveal-in-folder', (): RevealLogFileResult => {
+  ipcMainHandle('logs:reveal-in-folder', (): RevealLogFileResult => {
     const path = getLogFilePath()
 
     if (!path) return { revealed: false, error: 'No log file is available yet.' }

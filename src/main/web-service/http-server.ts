@@ -8,28 +8,19 @@ import type { ReadableStream as NodeReadableStream } from 'node:stream/web'
 import { net } from 'electron'
 import { WebSocket, WebSocketServer } from 'ws'
 
+import type { WebRpcRouter } from '../ipc-handler-registry'
 import { addRendererBroadcastSink } from '../renderer-broadcast'
+import {
+  isWebRpcChannel,
+  isWebRpcEventChannel,
+  WEB_RPC_PROTOCOL_VERSION,
+  webRpcRequestSchema
+} from '../../shared/web-rpc-contract'
 import { authenticateRequest, persistAuthCookie } from './auth'
-import type { RpcCapture } from './rpc-capture'
 import type { StartTaskRunRequest } from '../../shared/task-api'
 import { TaskApiError, type HeadlessTaskApi } from './task-api'
 
 const MAX_RPC_BODY_BYTES = 64 * 1024 * 1024
-
-// Channels unavailable over web. The browser reimplements file saves and window close client-side
-// because their main handlers require a real Electron WebContents. Installed-skill discovery reads
-// desktop-user agent homes, so it must not be exposed by a headless daemon. Omit these channels from
-// bootstrap capability discovery and reject direct /rpc calls before they reach the IPC handlers.
-const WEB_UNAVAILABLE_RPC_CHANNELS = new Set([
-  'file:save-blob',
-  'file:save-managed',
-  'sessions:export-conversation',
-  'file:save-session-artifacts',
-  'uploads:stage-local-file',
-  'window:close',
-  'settings:list-agent-home-skills',
-  'settings:import-agent-home-skills'
-])
 
 const MIME_TYPES: Record<string, string> = {
   '.css': 'text/css; charset=utf-8',
@@ -48,7 +39,7 @@ type WebServerOptions = {
   port: number
   token: string
   staticRoot: string
-  rpc: RpcCapture
+  rpc: WebRpcRouter
   tasks?: Pick<
     HeadlessTaskApi,
     | 'listProjects'
@@ -94,6 +85,19 @@ const json = (response: ServerResponse, status: number, value: unknown): void =>
       return child
     })
   )
+}
+
+const webRpcError = (
+  response: ServerResponse,
+  status: number,
+  code: 'invalid_request' | 'method_not_found' | 'handler_error',
+  message: string
+): void => {
+  json(response, status, {
+    protocolVersion: WEB_RPC_PROTOCOL_VERSION,
+    ok: false,
+    error: { code, message }
+  })
 }
 
 const readJsonBody = async (request: IncomingMessage): Promise<unknown> => {
@@ -335,10 +339,12 @@ const startWebHttpServer = async (options: WebServerOptions): Promise<RunningWeb
       }
 
       if (url.pathname === '/api/bootstrap' && request.method === 'GET') {
-        const rpcChannels = options.rpc
-          .channels()
-          .filter((channel) => !WEB_UNAVAILABLE_RPC_CHANNELS.has(channel))
-        json(response, 200, { ...options.bootstrap, rpcChannels })
+        const rpcChannels = options.rpc.channels().filter(isWebRpcChannel)
+        json(response, 200, {
+          ...options.bootstrap,
+          rpcProtocolVersion: WEB_RPC_PROTOCOL_VERSION,
+          rpcChannels
+        })
         return
       }
 
@@ -368,20 +374,61 @@ const startWebHttpServer = async (options: WebServerOptions): Promise<RunningWeb
 
       if (url.pathname.startsWith('/rpc/') && request.method === 'POST') {
         const channel = decodeURIComponent(url.pathname.slice('/rpc/'.length))
-        if (WEB_UNAVAILABLE_RPC_CHANNELS.has(channel)) {
-          json(response, 403, { ok: false, error: `Channel not available over web: ${channel}` })
+        if (!isWebRpcChannel(channel)) {
+          webRpcError(response, 404, 'method_not_found', 'Web RPC method not found.')
           return
         }
-        const body = (await readJsonBody(request)) as { args?: unknown[] }
+        let body: unknown
+        try {
+          body = await readJsonBody(request)
+        } catch (error) {
+          webRpcError(
+            response,
+            400,
+            'invalid_request',
+            error instanceof SyntaxError ? 'Request body must be valid JSON.' : String(error)
+          )
+          return
+        }
+        if (
+          body &&
+          typeof body === 'object' &&
+          'protocolVersion' in body &&
+          body.protocolVersion !== WEB_RPC_PROTOCOL_VERSION
+        ) {
+          webRpcError(
+            response,
+            426,
+            'invalid_request',
+            `Unsupported Web RPC protocol version. Expected ${WEB_RPC_PROTOCOL_VERSION}.`
+          )
+          return
+        }
+        const parsed = webRpcRequestSchema.safeParse(body)
+        if (!parsed.success) {
+          webRpcError(
+            response,
+            400,
+            'invalid_request',
+            'Request does not match the Web RPC schema.'
+          )
+          return
+        }
         const clientId = String(request.headers['x-open-science-client'] ?? 'web')
         try {
-          const result = await options.rpc.invoke(channel, clientId, body.args ?? [])
-          json(response, 200, { ok: true, result })
-        } catch (error) {
-          json(response, 500, {
-            ok: false,
-            error: error instanceof Error ? error.message : String(error)
+          const result = await options.rpc.invoke(channel, clientId, parsed.data.args)
+          json(response, 200, {
+            protocolVersion: WEB_RPC_PROTOCOL_VERSION,
+            ok: true,
+            result: result ?? null
           })
+        } catch (error) {
+          webRpcError(
+            response,
+            500,
+            'handler_error',
+            error instanceof Error ? error.message : String(error)
+          )
         }
         return
       }
@@ -440,7 +487,13 @@ const startWebHttpServer = async (options: WebServerOptions): Promise<RunningWeb
   })
 
   const removeBroadcastSink = addRendererBroadcastSink((channel, payload) => {
-    const internalMessage = JSON.stringify({ channel, payload })
+    const internalMessage = isWebRpcEventChannel(channel)
+      ? JSON.stringify({
+          protocolVersion: WEB_RPC_PROTOCOL_VERSION,
+          channel,
+          payload: payload ?? null
+        })
+      : undefined
     const publicMessage =
       channel === 'acp:event'
         ? JSON.stringify({ type: 'run.event', data: payload })
@@ -451,7 +504,7 @@ const startWebHttpServer = async (options: WebServerOptions): Promise<RunningWeb
       if (socket.readyState !== WebSocket.OPEN) continue
       if (publicEventSockets.has(socket)) {
         if (publicMessage) socket.send(publicMessage)
-      } else {
+      } else if (internalMessage) {
         socket.send(internalMessage)
       }
     }

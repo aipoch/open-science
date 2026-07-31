@@ -1,4 +1,6 @@
-import { app, BrowserWindow, dialog, ipcMain, type SaveDialogOptions } from 'electron'
+import { app, BrowserWindow, dialog, type SaveDialogOptions } from 'electron'
+
+import { ipcMainHandle } from '../ipc-handler-registry'
 import { mkdtemp, rm, writeFile } from 'node:fs/promises'
 import { join } from 'node:path'
 
@@ -23,6 +25,7 @@ type ConversationExportPrintWindow = {
 
 type ConversationExportDependencies = {
   loadSession(projectId: string, sessionId: string): Promise<PersistedChatSession | undefined>
+  isSessionActive(projectId: string, sessionId: string): boolean
   showSaveDialog(
     parentWindow: Electron.BrowserWindow | undefined,
     options: SaveDialogOptions
@@ -35,6 +38,16 @@ type ConversationExportDependencies = {
   getTempPath(): string
   now(): number
 }
+
+type ConversationExportRequiredDependencies = Pick<
+  ConversationExportDependencies,
+  'loadSession' | 'isSessionActive'
+>
+
+type ConversationExportDefaultDependencies = Omit<
+  ConversationExportDependencies,
+  keyof ConversationExportRequiredDependencies
+>
 
 type ConversationExportService = {
   exportConversation(
@@ -71,7 +84,7 @@ const createDefaultPrintWindow = (): ConversationExportPrintWindow =>
     }
   })
 
-const defaultDependencies: Omit<ConversationExportDependencies, 'loadSession'> = {
+const defaultDependencies: ConversationExportDefaultDependencies = {
   showSaveDialog: (parentWindow, options) =>
     parentWindow ? dialog.showSaveDialog(parentWindow, options) : dialog.showSaveDialog(options),
   writeFile,
@@ -84,8 +97,8 @@ const defaultDependencies: Omit<ConversationExportDependencies, 'loadSession'> =
 }
 
 const createConversationExportService = (
-  dependencies: Pick<ConversationExportDependencies, 'loadSession'> &
-    Partial<Omit<ConversationExportDependencies, 'loadSession'>>
+  dependencies: ConversationExportRequiredDependencies &
+    Partial<ConversationExportDefaultDependencies>
 ): ConversationExportService => {
   const deps: ConversationExportDependencies = { ...defaultDependencies, ...dependencies }
 
@@ -94,7 +107,11 @@ const createConversationExportService = (
       const request = assertExportConversationRequest(rawRequest)
       const session = await deps.loadSession(request.projectId, request.sessionId)
       if (!session) throw new Error('Conversation not found.')
-      if (session.status === 'running' || session.status === 'waiting-permission') {
+      if (
+        deps.isSessionActive(request.projectId, request.sessionId) ||
+        session.status === 'running' ||
+        session.status === 'waiting-permission'
+      ) {
         throw new Error('Wait for the conversation to finish before exporting it.')
       }
       if (session.messages.length === 0) throw new Error('Conversation has no messages to export.')
@@ -159,7 +176,7 @@ const createConversationExportService = (
 }
 
 const registerConversationExportIpcHandler = (service: ConversationExportService): void => {
-  ipcMain.handle(
+  ipcMainHandle(
     'sessions:export-conversation',
     (event, request: ExportConversationRequest): Promise<ExportConversationResult> =>
       service.exportConversation(request, BrowserWindow.fromWebContents(event.sender) ?? undefined)

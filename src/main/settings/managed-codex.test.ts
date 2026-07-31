@@ -17,6 +17,8 @@ import { Readable } from 'node:stream'
 import { gzipSync } from 'node:zlib'
 import { afterEach, describe, expect, it, vi } from 'vitest'
 
+import { ACP_TURN_TOKEN_USAGE_META_KEY, toAcpTurnTokenUsage } from '../../shared/acp'
+
 const PINNED_SKILL_MAPPER_FIXTURE = [
   'function buildPromptItems(prompt) {',
   '  return prompt.map((block) => {',
@@ -123,7 +125,7 @@ vi.mock('node:fs/promises', async (importActual) => {
       const [file, data] = args
       if (fsFaults.pauseNextWrite && typeof data === 'string') {
         fsFaults.pauseNextWrite = false
-        const patchTarget = '    const lastTokenUsage = this.sessionState.lastTokenUsage;'
+        const patchTarget = '    const contextTokenUsage = this.sessionState.lastTokenUsage;'
         const targetOffset = data.indexOf(patchTarget)
         if (targetOffset !== -1) {
           await actual.writeFile(file, data.slice(0, targetOffset))
@@ -178,6 +180,7 @@ import {
   patchCodexAcpContextUsageSource,
   patchCodexAcpModelCatalogStartupSource,
   patchCodexAcpSkillInputSource,
+  patchCodexAcpTurnUsageSource,
   resolveManagedCodexPlatform,
   sanitizeManagedCodexDiagnostic,
   verifyManagedCodexPair,
@@ -1224,7 +1227,7 @@ describe('patchCodexAcpContextUsageSource', () => {
     const patched = patchCodexAcpContextUsageSource(source)
 
     expect(patched).toContain(
-      'lastTokenUsage.inputTokens + (lastTokenUsage.cachedInputTokens ?? 0)'
+      'contextTokenUsage.inputTokens + (contextTokenUsage.cachedInputTokens ?? 0)'
     )
     expect(patched).not.toContain('lastTokenUsage?.totalTokens')
     expect(patchCodexAcpContextUsageSource(patched)).toBe(patched)
@@ -1249,7 +1252,7 @@ describe('patchCodexAcpContextUsageSource', () => {
       await ensureManagedCodexContextUsage(adapterPath)
 
       expect(await readFile(adapterPath, 'utf8')).toContain(
-        'lastTokenUsage.inputTokens + (lastTokenUsage.cachedInputTokens ?? 0)'
+        'contextTokenUsage.inputTokens + (contextTokenUsage.cachedInputTokens ?? 0)'
       )
     } finally {
       await rm(patchRoot, { recursive: true, force: true })
@@ -1305,7 +1308,7 @@ describe('patchCodexAcpContextUsageSource', () => {
         await ensureManagedCodexContextUsage(adapterPath)
 
         expect(await readFile(adapterPath, 'utf8')).toContain(
-          'lastTokenUsage.inputTokens + (lastTokenUsage.cachedInputTokens ?? 0)'
+          'contextTokenUsage.inputTokens + (contextTokenUsage.cachedInputTokens ?? 0)'
         )
       } finally {
         fsFaults.adapterReplaceFailures = 0
@@ -1351,7 +1354,7 @@ describe('patchCodexAcpContextUsageSource', () => {
 
       await expect(firstCheck).resolves.toBeUndefined()
       expect(await readFile(adapterPath, 'utf8')).toContain(
-        'lastTokenUsage.inputTokens + (lastTokenUsage.cachedInputTokens ?? 0)'
+        'contextTokenUsage.inputTokens + (contextTokenUsage.cachedInputTokens ?? 0)'
       )
     } finally {
       releaseWrite?.()
@@ -1371,6 +1374,271 @@ describe('patchCodexAcpContextUsageSource', () => {
 
     expect(() => patchCodexAcpContextUsageSource(drifted)).toThrow(
       /context-usage patch no longer matches/
+    )
+  })
+})
+
+describe('patchCodexAcpTurnUsageSource', () => {
+  type FixtureTokenUsage = {
+    totalTokens: number
+    inputTokens: number
+    cachedInputTokens?: number
+    outputTokens: number
+    reasoningOutputTokens: number
+  }
+
+  const fixture = [
+    '  const sessionState = { currentTurnId: null, lastTokenUsage: null, totalTokenUsage: null };',
+    '  const activePrompt = { complete() {} };',
+    '  const adapter = {',
+    '    sessionState,',
+    '    handleTokenUsageUpdated(params) {',
+    '      this.sessionState.lastTokenUsage = params.tokenUsage.last;',
+    '      this.sessionState.totalTokenUsage = params.tokenUsage.total;',
+    '    },',
+    '  createUsageUpdate(params) {',
+    '    this.handleTokenUsageUpdated(params);',
+    '    return null;',
+    '  },',
+    '    buildPromptUsage(usage) { return usage; },',
+    '    startPrompt() {',
+    '    sessionState.currentTurnId = null;',
+    '    sessionState.lastTokenUsage = null;',
+    '    },',
+    '    commandResponse() { return { usage: this.buildPromptUsage(sessionState.lastTokenUsage), }; },',
+    '    normalResponse() { return { usage: this.buildPromptUsage(sessionState.lastTokenUsage), }; },',
+    '    cancelledResponse() { return { usage: this.buildPromptUsage(sessionState.lastTokenUsage), }; },',
+    '    finishPrompt() {',
+    '      const response = this.normalResponse();',
+    '      activePrompt.complete();',
+    '      return response;',
+    '    }',
+    '  };',
+    '  return adapter;'
+  ].join('\n')
+
+  // Mirrors codex-acp 1.1.4's buildPromptUsage -> toPromptUsage output rather than using the
+  // passthrough mapper above, so this fixture covers the adapter-to-runtime cache-field contract.
+  const fixtureWithPinnedPromptUsage = fixture.replace(
+    '    buildPromptUsage(usage) { return usage; },',
+    [
+      '    buildPromptUsage(tokenCount) {',
+      '      if (tokenCount == null) return null;',
+      '      return {',
+      '        totalTokens: tokenCount.totalTokens,',
+      '        inputTokens: tokenCount.inputTokens,',
+      '        cachedReadTokens: tokenCount.cachedInputTokens,',
+      '        outputTokens: tokenCount.outputTokens,',
+      '        thoughtTokens: tokenCount.reasoningOutputTokens',
+      '      };',
+      '    },'
+    ].join('\n')
+  )
+
+  const usage = (
+    totalTokens: number,
+    inputTokens: number,
+    cachedInputTokens: number,
+    outputTokens: number,
+    reasoningOutputTokens: number
+  ): FixtureTokenUsage => ({
+    totalTokens,
+    inputTokens,
+    cachedInputTokens,
+    outputTokens,
+    reasoningOutputTokens
+  })
+
+  const uncachedUsage = (
+    totalTokens: number,
+    inputTokens: number,
+    outputTokens: number,
+    reasoningOutputTokens: number
+  ): FixtureTokenUsage => ({
+    totalTokens,
+    inputTokens,
+    outputTokens,
+    reasoningOutputTokens
+  })
+
+  it('accumulates every model request in one Codex prompt without double-counting updates', () => {
+    const patched = patchCodexAcpTurnUsageSource(fixture)
+    const adapter = Function(patched)() as {
+      startPrompt: () => void
+      createUsageUpdate: (params: unknown) => void
+      finishPrompt: () => {
+        usage: ReturnType<typeof usage> | null
+        _meta?: Record<string, unknown>
+      }
+    }
+
+    // Seed the previous completed turn so the first update is derived from cumulative totals.
+    adapter.createUsageUpdate({
+      tokenUsage: {
+        last: usage(100, 70, 13, 15, 2),
+        total: usage(100, 70, 13, 15, 2)
+      }
+    })
+    adapter.startPrompt()
+    adapter.createUsageUpdate({
+      tokenUsage: {
+        last: usage(18, 12, 3, 3, 0),
+        total: usage(118, 82, 16, 18, 2)
+      }
+    })
+    // Codex can repeat the same cumulative snapshot; a zero delta must not add the request twice.
+    adapter.createUsageUpdate({
+      tokenUsage: {
+        last: usage(18, 12, 3, 3, 0),
+        total: usage(118, 82, 16, 18, 2)
+      }
+    })
+    adapter.createUsageUpdate({
+      tokenUsage: {
+        last: usage(27, 19, 5, 3, 0),
+        total: usage(145, 101, 21, 21, 2)
+      }
+    })
+
+    const response = adapter.finishPrompt()
+    expect(response.usage).toEqual(usage(27, 19, 5, 3, 0))
+    expect(response._meta?.['open-science/turn-usage']).toEqual(usage(45, 31, 8, 6, 0))
+    expect(patchCodexAcpTurnUsageSource(patched)).toBe(patched)
+  })
+
+  it('preserves cached-input totals through the pinned adapter mapping and ACP normalization', () => {
+    const adapter = Function(patchCodexAcpTurnUsageSource(fixtureWithPinnedPromptUsage))() as {
+      startPrompt: () => void
+      createUsageUpdate: (params: unknown) => void
+      finishPrompt: () => { _meta?: Record<string, unknown> }
+    }
+
+    adapter.createUsageUpdate({
+      tokenUsage: {
+        last: usage(100, 70, 13, 15, 2),
+        total: usage(100, 70, 13, 15, 2)
+      }
+    })
+    adapter.startPrompt()
+    adapter.createUsageUpdate({
+      tokenUsage: {
+        last: usage(18, 12, 3, 3, 0),
+        total: usage(118, 82, 16, 18, 2)
+      }
+    })
+    adapter.createUsageUpdate({
+      tokenUsage: {
+        last: usage(27, 19, 5, 3, 0),
+        total: usage(145, 101, 21, 21, 2)
+      }
+    })
+
+    const response = adapter.finishPrompt()
+    expect(toAcpTurnTokenUsage(response._meta?.[ACP_TURN_TOKEN_USAGE_META_KEY])).toEqual({
+      inputTokens: 31,
+      cacheTokens: 8,
+      outputTokens: 6
+    })
+  })
+
+  it('uses the first request snapshot when a resumed session has no cumulative baseline', () => {
+    const adapter = Function(patchCodexAcpTurnUsageSource(fixture))() as {
+      startPrompt: () => void
+      createUsageUpdate: (params: unknown) => void
+      finishPrompt: () => { usage: ReturnType<typeof usage> | null }
+    }
+
+    adapter.startPrompt()
+    adapter.createUsageUpdate({
+      tokenUsage: {
+        last: usage(18, 12, 3, 3, 0),
+        total: usage(10_018, 8_012, 1_003, 903, 100)
+      }
+    })
+
+    const response = adapter.finishPrompt() as {
+      usage: ReturnType<typeof usage> | null
+      _meta?: Record<string, unknown>
+    }
+    expect(response.usage).toEqual(usage(18, 12, 3, 3, 0))
+    expect(response._meta?.['open-science/turn-usage']).toEqual(usage(18, 12, 3, 3, 0))
+  })
+
+  it('normalizes omitted cached-input counters without double-counting repeated updates', () => {
+    const adapter = Function(patchCodexAcpTurnUsageSource(fixture))() as {
+      startPrompt: () => void
+      createUsageUpdate: (params: unknown) => void
+      finishPrompt: () => { _meta?: Record<string, unknown> }
+    }
+
+    adapter.createUsageUpdate({
+      tokenUsage: {
+        last: uncachedUsage(100, 70, 15, 2),
+        total: uncachedUsage(100, 70, 15, 2)
+      }
+    })
+    adapter.startPrompt()
+    for (const snapshot of [
+      uncachedUsage(118, 82, 18, 2),
+      uncachedUsage(118, 82, 18, 2),
+      uncachedUsage(145, 101, 21, 2)
+    ]) {
+      adapter.createUsageUpdate({
+        tokenUsage: {
+          last:
+            snapshot.totalTokens === 118
+              ? uncachedUsage(18, 12, 3, 0)
+              : uncachedUsage(27, 19, 3, 0),
+          total: snapshot
+        }
+      })
+    }
+
+    expect(adapter.finishPrompt()._meta?.['open-science/turn-usage']).toEqual(
+      usage(45, 31, 0, 6, 0)
+    )
+  })
+
+  it('upgrades the existing turn-usage patch to normalize cached-input counters', () => {
+    const normalized = patchCodexAcpTurnUsageSource(fixture)
+    const legacy = normalized
+      .replace(
+        [
+          '    const normalizeTokenUsage = (usage) =>',
+          '      usage == null',
+          '        ? usage',
+          '        : { ...usage, cachedInputTokens: usage.cachedInputTokens ?? 0 };',
+          '    const previousTotalTokenUsage = normalizeTokenUsage(this.sessionState.totalTokenUsage);'
+        ].join('\n'),
+        '    const previousTotalTokenUsage = this.sessionState.totalTokenUsage;'
+      )
+      .replace(
+        '    const currentTotalTokenUsage = normalizeTokenUsage(this.sessionState.totalTokenUsage);',
+        '    const currentTotalTokenUsage = this.sessionState.totalTokenUsage;'
+      )
+      .replace(
+        '    const lastTokenUsage = normalizeTokenUsage(this.sessionState.lastTokenUsage);',
+        '    const lastTokenUsage = this.sessionState.lastTokenUsage;'
+      )
+
+    expect(legacy).not.toBe(normalized)
+    expect(patchCodexAcpTurnUsageSource(legacy)).toBe(normalized)
+  })
+
+  it('composes with the context-usage patch without duplicate declarations', () => {
+    const contextFixture = fixture.replace(
+      '    this.handleTokenUsageUpdated(params);\n    return null;',
+      [
+        '    this.handleTokenUsageUpdated(params);',
+        '    const used = this.sessionState.lastTokenUsage?.totalTokens;',
+        '    return used;'
+      ].join('\n')
+    )
+    const composed = patchCodexAcpTurnUsageSource(patchCodexAcpContextUsageSource(contextFixture))
+
+    expect(() => Function(composed)).not.toThrow()
+    expect(composed).toContain(
+      'contextTokenUsage.inputTokens + (contextTokenUsage.cachedInputTokens ?? 0)'
     )
   })
 })

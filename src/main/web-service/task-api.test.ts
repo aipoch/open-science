@@ -187,7 +187,8 @@ describe('HeadlessTaskApi', () => {
           kind: 'stop',
           level: 'info',
           sessionId: 'session-1',
-          text: 'end_turn'
+          text: 'end_turn',
+          turnUsage: { inputTokens: 31, cacheTokens: 15, outputTokens: 14 }
         })
         return {}
       }
@@ -232,12 +233,97 @@ describe('HeadlessTaskApi', () => {
       permissionProfile: 'auto',
       messages: [
         { id: 'user-message-1', role: 'user', content: 'Review these papers.' },
-        { role: 'agent', content: 'Research complete.', status: 'complete' }
+        {
+          role: 'agent',
+          content: 'Research complete.',
+          status: 'complete',
+          turnUsage: { inputTokens: 31, cacheTokens: 15, outputTokens: 14 }
+        }
       ]
     })
     expect(invoke).toHaveBeenCalledWith('acp:send-prompt', expect.any(String), [
       { sessionId: 'session-1', text: 'Review these papers.' }
     ])
+  })
+
+  it('marks artifact-only headless completions when turn usage is unavailable', async () => {
+    let emitEvent: ((event: AcpRuntimeEvent) => void) | undefined
+    const savedSessions: PersistedChatSession[] = []
+    const invoke = vi.fn(async (channel: string, _clientId: string, args: unknown[]) => {
+      if (channel === 'projects:list') return [project]
+      if (channel === 'sessions:load-all') return { sessions: [], manifest: { version: 1 } }
+      if (channel === 'acp:create-session') {
+        return { sessionId: 'session-artifact-only', cwd: '/workspace/session-artifact-only' }
+      }
+      if (channel === 'sessions:save-session') {
+        savedSessions.push(structuredClone(args[0]) as PersistedChatSession)
+        return undefined
+      }
+      if (channel === 'acp:send-prompt') {
+        emitEvent?.({
+          id: 'artifact-only-event',
+          timestamp: 10,
+          kind: 'artifact',
+          level: 'info',
+          sessionId: 'session-artifact-only',
+          artifactClaimId: 'artifact-only-claim',
+          artifacts: []
+        })
+        emitEvent?.({
+          id: 'artifact-only-stop',
+          timestamp: 11,
+          kind: 'stop',
+          level: 'info',
+          sessionId: 'session-artifact-only',
+          text: 'end_turn'
+        })
+        return {}
+      }
+      if (channel === 'artifacts:finalize-run') {
+        return {
+          ok: true,
+          artifacts: [
+            {
+              id: 'artifact-only-file',
+              projectName: project.id,
+              sessionId: 'session-artifact-only',
+              messageId: 'artifact-only-agent',
+              name: 'result.txt',
+              path: '/artifacts/result.txt',
+              fileUrl: 'open-science-preview://artifact-only-file/result.txt',
+              mimeType: 'text/plain',
+              size: 6,
+              mtimeMs: 11
+            }
+          ]
+        }
+      }
+      throw new Error(`Unexpected RPC channel: ${channel}`)
+    })
+    const api = new HeadlessTaskApi(
+      { invoke },
+      {
+        createId: (() => {
+          const ids = ['artifact-only-user', 'artifact-only-run', 'artifact-only-agent']
+          return () => ids.shift() ?? 'generated-id'
+        })(),
+        subscribeEvents: (listener) => {
+          emitEvent = listener
+          return () => undefined
+        }
+      }
+    )
+
+    await api.startRun({ project: project.id, prompt: 'Create a file.' })
+    await api.waitForRun('artifact-only-run')
+
+    expect(savedSessions.at(-1)?.messages.at(-1)).toMatchObject({
+      id: 'artifact-only-agent',
+      role: 'agent',
+      content: '',
+      turnUsageUnavailable: true,
+      artifactIds: ['artifact-only-file']
+    })
   })
 
   it('settles a run as failed when final session persistence fails', async () => {

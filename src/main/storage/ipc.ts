@@ -2,7 +2,9 @@ import { existsSync } from 'node:fs'
 import { mkdir } from 'node:fs/promises'
 import { join } from 'node:path'
 
-import { app, dialog, ipcMain, shell } from 'electron'
+import { app, dialog, shell } from 'electron'
+
+import { ipcMainHandle } from '../ipc-handler-registry'
 
 import type {
   DataRootInspection,
@@ -90,7 +92,7 @@ const registerStorageIpcHandlers = (deps: StorageIpcDeps): void => {
   let resolutionInProgress = false
   const cleanupRuntimeCache = deps.cleanupRuntimeCache ?? removeMicromambaCacheForRoot
 
-  ipcMain.handle('storage:get-info', async () => {
+  ipcMainHandle('storage:get-info', async () => {
     const dataRoot = resolveDataRoot()
     let available = 0
     try {
@@ -135,7 +137,7 @@ const registerStorageIpcHandlers = (deps: StorageIpcDeps): void => {
     }
   })
 
-  ipcMain.handle('storage:reveal-app-storage', async (): Promise<RevealAppStorageResult> => {
+  ipcMainHandle('storage:reveal-app-storage', async (): Promise<RevealAppStorageResult> => {
     // The renderer supplies no path: main resolves the single trusted config root at invocation time.
     try {
       const error = await shell.openPath(resolveConfigRoot())
@@ -151,7 +153,7 @@ const registerStorageIpcHandlers = (deps: StorageIpcDeps): void => {
   // The user answered the one-time legacy-data-move prompt without moving (declined, or chose "keep
   // it here"). Persist that so getInfo's legacyDataMovePrompt stays false and it's never shown again.
   // (Moving/relocating instead sets settings.dataRoot, which already disqualifies the prompt.)
-  ipcMain.handle('storage:dismiss-legacy-move-prompt', async (): Promise<void> => {
+  ipcMainHandle('storage:dismiss-legacy-move-prompt', async (): Promise<void> => {
     try {
       await deps.settingsService.dismissLegacyDataMovePrompt()
     } catch (err) {
@@ -159,7 +161,7 @@ const registerStorageIpcHandlers = (deps: StorageIpcDeps): void => {
     }
   })
 
-  ipcMain.handle('storage:detect-active', () =>
+  ipcMainHandle('storage:detect-active', () =>
     detectActiveSessions({
       runtime: { getActivePromptSessions: deps.getActivePromptSessions },
       // Call as a method (arrow wrapper), never a bare reference: the real notebook service is a
@@ -169,7 +171,7 @@ const registerStorageIpcHandlers = (deps: StorageIpcDeps): void => {
     })
   )
 
-  ipcMain.handle('storage:pick-directory', async (): Promise<string | null> => {
+  ipcMainHandle('storage:pick-directory', async (): Promise<string | null> => {
     try {
       if (deps.showOpenDialog) return await deps.showOpenDialog()
       const result = await dialog.showOpenDialog({
@@ -184,7 +186,7 @@ const registerStorageIpcHandlers = (deps: StorageIpcDeps): void => {
     }
   })
 
-  ipcMain.handle(
+  ipcMainHandle(
     'storage:migrate',
     async (_event, request: { parent: string }): Promise<MigrationOutcome> => {
       if (activeStaged || resolutionInProgress) {
@@ -249,7 +251,7 @@ const registerStorageIpcHandlers = (deps: StorageIpcDeps): void => {
     }
   )
 
-  ipcMain.handle('storage:cancel-migrate', () => {
+  ipcMainHandle('storage:cancel-migrate', () => {
     // Once a copy has completed (activeStaged set), only commit/discard may resolve it: a late cancel
     // (renderer still showing Cancel during the copy→done transition) must NOT clear the gate/token and
     // leave a committable-but-unfrozen copy behind.
@@ -262,7 +264,7 @@ const registerStorageIpcHandlers = (deps: StorageIpcDeps): void => {
   // old root, this just removes the new copy and leaves the app on its current root. discardStagedCopy
   // refuses anything that isn't a marker-confirmed staging copy for the current root, so a misrouted
   // parent can't delete live data. On a successful discard the write-gate is lifted. Never throws.
-  ipcMain.handle(
+  ipcMainHandle(
     'storage:discard-migrated-copy',
     async (_event, request: { parent: string }): Promise<void> => {
       if (activeMigration || resolutionInProgress) {
@@ -314,7 +316,7 @@ const registerStorageIpcHandlers = (deps: StorageIpcDeps): void => {
   // interruption during the delete only orphans the old root (never data loss); see
   // commitDataRootSwitch. On switchoverFailed it returns without relaunching so the modal can show
   // the error (copy intact, old root untouched).
-  ipcMain.handle(
+  ipcMainHandle(
     'storage:commit-and-relaunch',
     async (_event, request: { parent: string }): Promise<MigrationOutcome> => {
       if (activeMigration) {
@@ -378,7 +380,7 @@ const registerStorageIpcHandlers = (deps: StorageIpcDeps): void => {
   // Onboarding's first-run location step: check a candidate parent before letting the user commit
   // to it. Never throws: validateNewDataRoot already guards fs errors, this catch only covers
   // anything unexpected escaping that contract.
-  ipcMain.handle(
+  ipcMainHandle(
     'storage:validate-data-root',
     async (_event, request: { parent: string }): Promise<ValidateResult> => {
       try {
@@ -394,7 +396,7 @@ const registerStorageIpcHandlers = (deps: StorageIpcDeps): void => {
   // caller can route to the right UI (migrate confirm for 'move', adopt confirm for 'adopt',
   // inline error for 'invalid') and display the derived `<parent>/OpenScience` path regardless of
   // kind. Never throws.
-  ipcMain.handle(
+  ipcMainHandle(
     'storage:inspect-data-root',
     async (_event, request: { parent: string }): Promise<DataRootInspection> => {
       const dataRoot = dataRootForPicked(request.parent)
@@ -426,7 +428,7 @@ const registerStorageIpcHandlers = (deps: StorageIpcDeps): void => {
   // swap the wizard for Home (showing the OLD data root, and burying any failure below). Settings-
   // adopt omits it (onboarding has already completed). Order is load-bearing: classify -> mkdir ->
   // setDataRoot -> [markOnboardingComplete] -> relaunch. On an invalid parent, none of these run.
-  ipcMain.handle(
+  ipcMainHandle(
     'storage:set-data-root-and-relaunch',
     async (
       _event,

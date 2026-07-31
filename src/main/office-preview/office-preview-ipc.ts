@@ -1,5 +1,7 @@
 import { ipcMain } from 'electron'
 
+import { ipcMainHandle } from '../ipc-handler-registry'
+
 import type { OfficePreviewOpenRequest } from '../../shared/office-preview'
 import {
   isOfficePreviewRuntimeState,
@@ -20,7 +22,7 @@ const registerOfficePreviewIpcHandlers = (supervisor: OfficePreviewSupervisorPor
   const trackedOwners = new Map<number, Electron.WebContents>()
 
   // Ownership always comes from Electron's sender; renderer payloads never select another owner.
-  ipcMain.handle(OFFICE_PREVIEW_OPEN_CHANNEL, (event, request: OfficePreviewOpenRequest) => {
+  ipcMainHandle(OFFICE_PREVIEW_OPEN_CHANNEL, (event, request: OfficePreviewOpenRequest) => {
     const ownerId = event.sender.id
     if (trackedOwners.get(ownerId) !== event.sender) {
       trackedOwners.set(ownerId, event.sender)
@@ -41,7 +43,7 @@ const registerOfficePreviewIpcHandlers = (supervisor: OfficePreviewSupervisorPor
     })
   })
 
-  ipcMain.handle(OFFICE_PREVIEW_ATTACH_FRAME_CHANNEL, (event, sessionId: unknown) => {
+  ipcMainHandle(OFFICE_PREVIEW_ATTACH_FRAME_CHANNEL, (event, sessionId: unknown) => {
     if (typeof sessionId !== 'string' || !sessionId) return undefined
     return supervisor.attachFrame(event.sender.id, sessionId)
   })
@@ -63,7 +65,7 @@ const registerOfficePreviewIpcHandlers = (supervisor: OfficePreviewSupervisorPor
     }
   })
 
-  ipcMain.handle(OFFICE_PREVIEW_CLOSE_CHANNEL, (event, sessionId: unknown) => {
+  ipcMainHandle(OFFICE_PREVIEW_CLOSE_CHANNEL, (event, sessionId: unknown) => {
     if (typeof sessionId !== 'string' || !sessionId) return undefined
     return supervisor.close(event.sender.id, sessionId)
   })

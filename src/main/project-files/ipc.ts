@@ -1,4 +1,4 @@
-import { ipcMain } from 'electron'
+import { ipcMainHandle } from '../ipc-handler-registry'
 
 import type {
   ArtifactGroupPage,
@@ -64,17 +64,17 @@ const registerProjectFilesIpcHandlers = (
 ): void => {
   const handlers = createProjectFilesHandlers(repository, repairBackend, recoveryBackend)
 
-  ipcMain.handle('project-files:get-overview', (_event, request: GetProjectFilesOverviewRequest) =>
+  ipcMainHandle('project-files:get-overview', (_event, request: GetProjectFilesOverviewRequest) =>
     handlers.getOverview(request)
   )
-  ipcMain.handle('project-files:list-files', (_event, request: ListProjectFilesRequest) =>
+  ipcMainHandle('project-files:list-files', (_event, request: ListProjectFilesRequest) =>
     handlers.listFiles(request)
   )
-  ipcMain.handle(
+  ipcMainHandle(
     'project-files:list-artifact-groups',
     (_event, request: ListArtifactGroupsRequest) => handlers.listArtifactGroups(request)
   )
-  ipcMain.handle('project-files:repair-index', (_event, request: { projectId: string }) =>
+  ipcMainHandle('project-files:repair-index', (_event, request: { projectId: string }) =>
     handlers.repairIndex(request)
   )
 }

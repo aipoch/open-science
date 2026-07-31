@@ -1,4 +1,4 @@
-import { ipcMain } from 'electron'
+import { ipcMainHandle } from '../ipc-handler-registry'
 
 import { APP } from '../../shared/app-config'
 import type { AppInfo, UpdateStatus } from '../../shared/update'
@@ -9,15 +9,15 @@ import type { UpdateStrategy } from './strategy'
 export const registerUpdateIpcHandlers = (
   strategy: UpdateStrategy = createUpdateStrategy()
 ): UpdateStrategy => {
-  ipcMain.handle('update:get-app-info', (): AppInfo => ({
+  ipcMainHandle('update:get-app-info', (): AppInfo => ({
     name: APP.name,
     version: strategy.getStatus().current,
     copyright: APP.copyright
   }))
-  ipcMain.handle('update:get-status', (): UpdateStatus => strategy.getStatus())
-  ipcMain.handle('update:check', (): Promise<UpdateStatus> => strategy.check())
-  ipcMain.handle('update:download', (): Promise<UpdateStatus> => strategy.download())
-  ipcMain.handle('update:cancel', (): Promise<UpdateStatus> => strategy.cancel())
-  ipcMain.handle('update:apply', (): Promise<UpdateStatus> => strategy.apply())
+  ipcMainHandle('update:get-status', (): UpdateStatus => strategy.getStatus())
+  ipcMainHandle('update:check', (): Promise<UpdateStatus> => strategy.check())
+  ipcMainHandle('update:download', (): Promise<UpdateStatus> => strategy.download())
+  ipcMainHandle('update:cancel', (): Promise<UpdateStatus> => strategy.cancel())
+  ipcMainHandle('update:apply', (): Promise<UpdateStatus> => strategy.apply())
   return strategy
 }

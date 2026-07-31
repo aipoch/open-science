@@ -204,10 +204,20 @@ describe('workspace runtime events', () => {
         text: 'Done'
       })
     )
-    await applyWorkspaceRuntimeEvent(createEvent({ id: 'event-2', kind: 'stop', text: 'end_turn' }))
+    await applyWorkspaceRuntimeEvent(
+      createEvent({
+        id: 'event-2',
+        kind: 'stop',
+        text: 'end_turn',
+        turnUsage: { inputTokens: 31, cacheTokens: 15, outputTokens: 14 }
+      })
+    )
 
     expect(useSessionStore.getState().sessions[0].status).toBe('idle')
-    expect(useSessionStore.getState().sessions[0].messages[1].status).toBe('complete')
+    expect(useSessionStore.getState().sessions[0].messages[1]).toMatchObject({
+      status: 'complete',
+      turnUsage: { inputTokens: 31, cacheTokens: 15, outputTokens: 14 }
+    })
 
     useSessionStore.getState().appendUserMessage({
       sessionId: 'transport-session-1',
@@ -767,6 +777,119 @@ describe('workspace runtime events', () => {
     ])
   })
 
+  it.each([
+    {
+      label: 'reported',
+      turnUsage: { inputTokens: 31, cacheTokens: 15, outputTokens: 14 },
+      expectedUsage: {
+        turnUsage: { inputTokens: 31, cacheTokens: 15, outputTokens: 14 }
+      }
+    },
+    {
+      label: 'unavailable',
+      turnUsage: undefined,
+      expectedUsage: { turnUsageUnavailable: true }
+    }
+  ])('preserves $label usage for an artifact-only response received after stop', async (input) => {
+    const promptMessageId = useSessionStore.getState().sessions[0].activeRun?.promptMessageId
+    const saveSession = vi.fn().mockResolvedValue(undefined)
+    const finalizeRunArtifacts = vi.fn(async ({ messageId }: { messageId: string }) => [
+      createArtifactFile({
+        id: `transport-session-1:${messageId}:result.txt`,
+        sessionId: 'transport-session-1',
+        messageId,
+        runId: undefined
+      })
+    ])
+
+    await applyWorkspaceRuntimeEvent(
+      createEvent({
+        id: `stop-before-artifact-only-${input.label}`,
+        kind: 'stop',
+        turnUsage: input.turnUsage
+      })
+    )
+    expect(useSessionStore.getState().sessions[0].messages).toHaveLength(1)
+
+    await applyWorkspaceRuntimeEvent(
+      createEvent({
+        id: `artifact-only-after-stop-${input.label}`,
+        kind: 'artifact',
+        runId: `artifact-run-after-stop-${input.label}`,
+        promptMessageId,
+        artifactSessionId: 'artifact-session-1',
+        artifactClaimId: `claim-after-stop-${input.label}`,
+        artifacts: [createArtifactFile({ runId: `artifact-run-after-stop-${input.label}` })]
+      }),
+      { finalizeRunArtifacts, saveSession }
+    )
+
+    expect(useSessionStore.getState().sessions[0].messages[1]).toMatchObject({
+      role: 'agent',
+      content: '',
+      status: 'complete',
+      ...input.expectedUsage
+    })
+    expect(saveSession).toHaveBeenLastCalledWith(
+      expect.objectContaining({
+        messages: expect.arrayContaining([
+          expect.objectContaining({ role: 'agent', ...input.expectedUsage })
+        ])
+      })
+    )
+  })
+
+  it('keeps pending artifact usage isolated across consecutive prompts', async () => {
+    const firstPromptMessageId = useSessionStore.getState().sessions[0].activeRun?.promptMessageId
+    const firstTurnUsage = { inputTokens: 31, cacheTokens: 15, outputTokens: 14 }
+    const secondTurnUsage = { inputTokens: 47, cacheTokens: 9, outputTokens: 22 }
+    const saveSession = vi.fn().mockResolvedValue(undefined)
+    const finalizeRunArtifacts = vi.fn().mockResolvedValue([])
+
+    await applyWorkspaceRuntimeEvent(
+      createEvent({ id: 'first-stop-before-artifact', kind: 'stop', turnUsage: firstTurnUsage })
+    )
+    const secondPrompt = useSessionStore.getState().appendUserMessage({
+      sessionId: 'transport-session-1',
+      content: 'Create another artifact'
+    })
+    await applyWorkspaceRuntimeEvent(
+      createEvent({ id: 'second-stop-before-artifact', kind: 'stop', turnUsage: secondTurnUsage })
+    )
+
+    for (const [label, promptMessageId] of [
+      ['first', firstPromptMessageId],
+      ['second', secondPrompt?.messageId]
+    ] as const) {
+      await applyWorkspaceRuntimeEvent(
+        createEvent({
+          id: `${label}-late-artifact`,
+          kind: 'artifact',
+          runId: `${label}-artifact-run`,
+          promptMessageId,
+          artifactSessionId: 'artifact-session-1',
+          artifactClaimId: `${label}-artifact-claim`,
+          artifacts: [createArtifactFile({ runId: `${label}-artifact-run` })]
+        }),
+        { finalizeRunArtifacts, saveSession }
+      )
+    }
+
+    const messages = useSessionStore.getState().sessions[0].messages
+    expect(
+      messages.find((message) => message.responseToMessageId === firstPromptMessageId)
+    ).toMatchObject({
+      role: 'agent',
+      turnUsage: firstTurnUsage
+    })
+    expect(
+      messages.find((message) => message.responseToMessageId === secondPrompt?.messageId)
+    ).toMatchObject({
+      role: 'agent',
+      turnUsage: secondTurnUsage
+    })
+  })
+
   it('keeps Artifact persistence behind an older queued Session save', async () => {
     const promptMessageId = useSessionStore.getState().sessions[0].activeRun?.promptMessageId
     await applyWorkspaceRuntimeEvent(
@@ -970,6 +1093,89 @@ describe('workspace runtime events', () => {
     expect(finalizeRunArtifacts).not.toHaveBeenCalledWith({
       claimId: 'claim-before-stop',
       messageId: intermediateMessageId
+    })
+  })
+
+  it('attaches turn usage to an artifact-only terminal response', async () => {
+    const promptMessageId = useSessionStore.getState().sessions[0].activeRun?.promptMessageId
+    const finalizeRunArtifacts = vi.fn(async ({ messageId }: { messageId: string }) => [
+      createArtifactFile({
+        id: `transport-session-1:${messageId}:result.txt`,
+        sessionId: 'transport-session-1',
+        messageId,
+        runId: undefined
+      })
+    ])
+    const saveSession = vi.fn().mockResolvedValue(undefined)
+
+    await applyWorkspaceRuntimeEvent(
+      createEvent({
+        id: 'artifact-event-only-response',
+        kind: 'artifact',
+        runId: 'artifact-run-only-response',
+        promptMessageId,
+        artifactSessionId: 'artifact-session-1',
+        artifactClaimId: 'claim-only-response',
+        artifacts: [createArtifactFile({ runId: 'artifact-run-only-response' })]
+      }),
+      { finalizeRunArtifacts, saveSession }
+    )
+
+    await applyWorkspaceRuntimeEvent(
+      createEvent({
+        id: 'stop-only-response',
+        kind: 'stop',
+        turnUsage: { inputTokens: 31, cacheTokens: 15, outputTokens: 14 }
+      })
+    )
+
+    expect(useSessionStore.getState().sessions[0].messages[1]).toMatchObject({
+      role: 'agent',
+      content: '',
+      status: 'complete',
+      artifactIds: [expect.stringContaining(':result.txt')],
+      turnUsage: { inputTokens: 31, cacheTokens: 15, outputTokens: 14 }
+    })
+    expect(saveSession).toHaveBeenLastCalledWith(
+      expect.objectContaining({
+        messages: expect.arrayContaining([
+          expect.objectContaining({
+            role: 'agent',
+            turnUsage: { inputTokens: 31, cacheTokens: 15, outputTokens: 14 }
+          })
+        ])
+      })
+    )
+  })
+
+  it('marks an artifact-only terminal response when turn usage is unavailable', async () => {
+    const promptMessageId = useSessionStore.getState().sessions[0].activeRun?.promptMessageId
+
+    await applyWorkspaceRuntimeEvent(
+      createEvent({
+        id: 'artifact-event-only-unavailable-response',
+        kind: 'artifact',
+        runId: 'artifact-run-only-unavailable-response',
+        promptMessageId,
+        artifactSessionId: 'artifact-session-1',
+        artifactClaimId: 'claim-only-unavailable-response',
+        artifacts: [createArtifactFile({ runId: 'artifact-run-only-unavailable-response' })]
+      }),
+      {
+        finalizeRunArtifacts: vi.fn().mockResolvedValue([]),
+        saveSession: vi.fn().mockResolvedValue(undefined)
+      }
+    )
+
+    await applyWorkspaceRuntimeEvent(
+      createEvent({ id: 'stop-only-unavailable-response', kind: 'stop' })
+    )
+
+    expect(useSessionStore.getState().sessions[0].messages[1]).toMatchObject({
+      role: 'agent',
+      content: '',
+      status: 'complete',
+      turnUsageUnavailable: true
     })
   })
 

@@ -11,7 +11,8 @@ import { sanitizeActivityGroupTitle } from '../../../shared/activity-groups'
 import {
   MAX_ACP_SESSION_IMAGE_BYTES,
   sanitizeAcpMessageImage,
-  type AcpMessageImage
+  type AcpMessageImage,
+  type AcpTurnTokenUsage
 } from '../../../shared/acp'
 import {
   DEFAULT_PERMISSION_PROFILE,
@@ -187,6 +188,8 @@ type AttachRunArtifactsInput = {
   promptMessageId?: string
   eventId: string
   artifacts: ArtifactFile[]
+  turnUsage?: AcpTurnTokenUsage
+  turnUsageUnavailable?: true
 }
 
 type ReplaceMessageArtifactsInput = {
@@ -237,7 +240,7 @@ type SessionStore = SessionStoreData & {
   ) => void
   upsertPersistedSession: (session: PersistedChatSession) => void
   applyDurableSessionProjection: (input: ApplyDurableSessionProjectionInput) => void
-  finishRun: (sessionId: string) => void
+  finishRun: (sessionId: string, turnUsage?: AcpTurnTokenUsage) => void
   // opts.reportable overrides the report-affordance decision: pass false for a model-provider failure
   // (the agent relayed an upstream LLM/HTTP error), true to force it, or omit to let the store derive it
   // from the message (an app-crafted reminder → not reportable; anything else → reportable).
@@ -737,17 +740,39 @@ const appendUniqueStrings = (
 const isArtifactFinalizationError = (error: string | undefined): boolean =>
   error?.startsWith(ARTIFACT_ERROR_PREFIX) ?? false
 
-// Marks any open streamed messages as completed when a run stops.
-const completeStreamingMessages = (messages: ChatMessage[]): ChatMessage[] =>
-  messages.map((message) =>
-    message.status === 'streaming'
-      ? {
-          ...message,
-          status: 'complete',
-          updatedAt: Date.now()
-        }
-      : message
-  )
+// Marks open streams complete and attaches whole-turn usage to the final Agent message responding to
+// the active prompt. A turn can emit multiple message ids, so only its last response owns the footer.
+const completeStreamingMessages = (
+  messages: ChatMessage[],
+  promptMessageId: string | undefined,
+  turnUsage: AcpTurnTokenUsage | undefined,
+  now: number
+): ChatMessage[] => {
+  const usageFooterMessageId = promptMessageId
+    ? [...messages]
+        .reverse()
+        .find(
+          (message) => message.role === 'agent' && message.responseToMessageId === promptMessageId
+        )?.id
+    : undefined
+
+  return messages.map((message) => {
+    const completesStream = message.status === 'streaming'
+    const ownsTurnUsageFooter = message.id === usageFooterMessageId
+    if (!completesStream && !ownsTurnUsageFooter) return message
+
+    return {
+      ...message,
+      ...(completesStream ? { status: 'complete' as const } : {}),
+      ...(ownsTurnUsageFooter
+        ? turnUsage
+          ? { turnUsage }
+          : { turnUsageUnavailable: true as const }
+        : {}),
+      updatedAt: now
+    }
+  })
+}
 
 // Marks partial streamed messages as errored when a run fails.
 const failStreamingMessages = (messages: ChatMessage[]): ChatMessage[] =>
@@ -1260,7 +1285,15 @@ export const useSessionStore = create<SessionStore>((set, get) => ({
   },
 
   // Attaches a runtime artifact event to the best local assistant message before file finalization.
-  attachRunArtifacts: ({ sessionId, runId, promptMessageId, eventId, artifacts }) => {
+  attachRunArtifacts: ({
+    sessionId,
+    runId,
+    promptMessageId,
+    eventId,
+    artifacts,
+    turnUsage,
+    turnUsageUnavailable
+  }) => {
     if (!sessionId || !runId || !eventId || artifacts.length === 0) return undefined
 
     let result: AppendMessageResult | undefined
@@ -1369,6 +1402,11 @@ export const useSessionStore = create<SessionStore>((set, get) => ({
                   ...message,
                   eventIds: appendUniqueStrings(message.eventIds, [eventId]),
                   artifactIds: appendUniqueStrings(message.artifactIds, incomingArtifactIds),
+                  ...(turnUsage
+                    ? { turnUsage, turnUsageUnavailable: undefined }
+                    : turnUsageUnavailable
+                      ? { turnUsage: undefined, turnUsageUnavailable: true as const }
+                      : {}),
                   updatedAt: now
                 }
               : message
@@ -1392,6 +1430,11 @@ export const useSessionStore = create<SessionStore>((set, get) => ({
           responseToMessageId,
           eventIds: [eventId],
           artifactIds: incomingArtifactIds,
+          ...(turnUsage
+            ? { turnUsage }
+            : turnUsageUnavailable
+              ? { turnUsageUnavailable: true as const }
+              : {}),
           sortIndex: createSortIndex(),
           createdAt: now,
           updatedAt: now
@@ -1757,14 +1800,21 @@ export const useSessionStore = create<SessionStore>((set, get) => ({
   },
 
   // Completes the active run and any streamed messages for the session.
-  finishRun: (sessionId) => {
+  finishRun: (sessionId, turnUsage) => {
     set((state) => ({
       sessions: state.sessions.map((session) => {
         if (session.id !== sessionId) return session
 
         const keepArtifactError = isArtifactFinalizationError(session.error)
-        const now = Date.now()
-        const messages = completeStreamingMessages(session.messages)
+        // A deferred Artifact may have inserted the terminal message during the same millisecond.
+        // Advance its timestamp so graph synchronization accepts the completed payload as newer.
+        const now = Math.max(Date.now(), session.updatedAt + 1)
+        const messages = completeStreamingMessages(
+          session.messages,
+          session.activeRun?.promptMessageId,
+          turnUsage,
+          now
+        )
         const activities = completeOpenActivities(session.activities)
         const activityGroups = completeOpenActivityGroups(session.activityGroups, now)
         // Streaming updates intentionally stay in the lightweight flat projection. Before Branch

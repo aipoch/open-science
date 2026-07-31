@@ -3,7 +3,9 @@ import { mkdir, rm } from 'node:fs/promises'
 import { homedir } from 'node:os'
 import { join } from 'node:path'
 
-import { app, ipcMain } from 'electron'
+import { app } from 'electron'
+
+import { ipcMainHandle } from '../ipc-handler-registry'
 
 import type {
   AcpCancelPromptRequest,
@@ -287,10 +289,10 @@ const createRuntime = ({
 const registerAcpIpcHandlers = (options: AcpIpcOptions): AcpRuntimeCoordinator => {
   const runtime = createRuntime(options)
 
-  ipcMain.handle('acp:get-state', () => runtime.getSnapshot())
-  ipcMain.handle('acp:connect', (_event, request: AcpConnectRequest) => runtime.connect(request))
-  ipcMain.handle('acp:disconnect', () => runtime.disconnect())
-  ipcMain.handle('acp:create-session', async (_event, request: AcpCreateSessionRequest) => {
+  ipcMainHandle('acp:get-state', () => runtime.getSnapshot())
+  ipcMainHandle('acp:connect', (_event, request: AcpConnectRequest) => runtime.connect(request))
+  ipcMainHandle('acp:disconnect', () => runtime.disconnect())
+  ipcMainHandle('acp:create-session', async (_event, request: AcpCreateSessionRequest) => {
     try {
       const explicitCwd = request.cwd?.trim()
       if (explicitCwd) {
@@ -318,17 +320,17 @@ const registerAcpIpcHandlers = (options: AcpIpcOptions): AcpRuntimeCoordinator =
       throw error
     }
   })
-  ipcMain.handle('acp:resume-session', (_event, request: AcpResumeSessionRequest) =>
+  ipcMainHandle('acp:resume-session', (_event, request: AcpResumeSessionRequest) =>
     runtime.resumeSession(request)
   )
-  ipcMain.handle('acp:reset-session-context', (_event, request: AcpResumeSessionRequest) =>
+  ipcMainHandle('acp:reset-session-context', (_event, request: AcpResumeSessionRequest) =>
     runtime.resetSessionContext(request)
   )
-  ipcMain.handle('acp:compact-session', (_event, request: AcpCompactSessionRequest) =>
+  ipcMainHandle('acp:compact-session', (_event, request: AcpCompactSessionRequest) =>
     runtime.compactSession(request)
   )
   // Prompt calls wait for the turn to stop, then return the latest snapshot.
-  ipcMain.handle('acp:send-prompt', async (_event, request: AcpPromptRequest) => {
+  ipcMainHandle('acp:send-prompt', async (_event, request: AcpPromptRequest) => {
     // Remember the prompt's first line so a completion/failure notification can name the task.
     // If the runtime rejects before the turn starts (unknown session, another prompt in flight),
     // revert so a still-running turn keeps its own prompt's name.
@@ -343,23 +345,22 @@ const registerAcpIpcHandlers = (options: AcpIpcOptions): AcpRuntimeCoordinator =
 
     return runtime.getSnapshot()
   })
-  ipcMain.handle('acp:cancel', (_event, request: AcpCancelPromptRequest) =>
+  ipcMainHandle('acp:cancel', (_event, request: AcpCancelPromptRequest) =>
     runtime.cancelPrompt(request)
   )
-  ipcMain.handle('acp:delete-session', async (_event, request: AcpDeleteSessionRequest) => {
+  ipcMainHandle('acp:delete-session', async (_event, request: AcpDeleteSessionRequest) => {
     // The coordinator owns session disappearance notifications for delete, connection loss, and
     // retirement. Keeping that signal in one layer prevents a successful delete from firing twice.
     return runtime.deleteSession(request)
   })
-  ipcMain.handle('acp:respond-permission', (_event, response: AcpPermissionResponse) =>
+  ipcMainHandle('acp:respond-permission', (_event, response: AcpPermissionResponse) =>
     runtime.respondToPermission(response)
   )
-  ipcMain.handle('acp:set-permission-profile', (_event, request: AcpSetPermissionProfileRequest) =>
+  ipcMainHandle('acp:set-permission-profile', (_event, request: AcpSetPermissionProfileRequest) =>
     runtime.setPermissionProfile(request)
   )
-  ipcMain.handle(
-    'acp:revoke-permission-grant',
-    (_event, request: AcpRevokePermissionGrantRequest) => runtime.revokePermissionGrant(request)
+  ipcMainHandle('acp:revoke-permission-grant', (_event, request: AcpRevokePermissionGrantRequest) =>
+    runtime.revokePermissionGrant(request)
   )
 
   // Kill the agent child on quit so it never outlives the app as an orphaned process.

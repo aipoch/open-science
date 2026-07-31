@@ -44,10 +44,11 @@ export type ConversationExportDocument = {
   messages: ConversationExportMessage[]
 }
 
-const THINK_BLOCK_PATTERN = /<think\b[^>]*>[\s\S]*?<\/think\s*>/gi
+const THINK_BLOCK_PATTERN = /<think\b[^>]*>[\s\S]*?(?:<\/think\s*>|$)/gi
 const UNSAFE_FILENAME_CHARACTERS = /[<>:"/\\|?*]+/g
-const LEGACY_AUTO_TITLE_MAX_LENGTH = 48
-const EXPORT_TITLE_MAX_LENGTH = 240
+const RENDERER_AUTO_TITLE_PREFIX_LENGTH = 48
+const HEADLESS_AUTO_TITLE_MAX_LENGTH = 60
+const HEADLESS_AUTO_TITLE_PREFIX_LENGTH = 57
 const EXPORT_FILENAME_MAX_BYTES = 240
 
 const escapeHtml = (value: string): string =>
@@ -60,29 +61,21 @@ const escapeHtml = (value: string): string =>
 
 const normalizeInlineText = (value: string): string => value.replace(/\s+/g, ' ').trim()
 
-const truncateText = (value: string, maxLength: number): string => {
-  const characters = Array.from(value)
-  if (characters.length <= maxLength) return value
-  return `${characters.slice(0, maxLength).join('').trimEnd()}...`
-}
-
-const createLegacyAutoTitle = (content: string): string => {
+const isKnownTruncatedAutoTitle = (title: string, content: string): boolean => {
   const normalizedTitle = normalizeInlineText(content)
-  return normalizedTitle.length > LEGACY_AUTO_TITLE_MAX_LENGTH
-    ? `${normalizedTitle.slice(0, LEGACY_AUTO_TITLE_MAX_LENGTH)}...`
-    : normalizedTitle
+
+  return (
+    (normalizedTitle.length > RENDERER_AUTO_TITLE_PREFIX_LENGTH &&
+      title === `${normalizedTitle.slice(0, RENDERER_AUTO_TITLE_PREFIX_LENGTH)}...`) ||
+    (normalizedTitle.length > HEADLESS_AUTO_TITLE_MAX_LENGTH &&
+      title === `${normalizedTitle.slice(0, HEADLESS_AUTO_TITLE_PREFIX_LENGTH)}...`)
+  )
 }
 
 const deriveTitleFromPrompt = (content: string): string => {
-  const firstLine =
-    content
-      .split(/\r?\n/)
-      .map((line) => line.trim())
-      .find(Boolean) ?? ''
-  const normalizedLine = normalizeInlineText(firstLine).replace(/^#{1,6}\s+/, '')
-  const sentence = normalizedLine.match(/^(.+?[.!?。！？])(?:\s|$)/)?.[1] ?? normalizedLine
+  const normalizedPrompt = normalizeInlineText(content).replace(/^#{1,6}\s+/, '')
 
-  return truncateText(sentence, EXPORT_TITLE_MAX_LENGTH).trim()
+  return normalizedPrompt.trim()
 }
 
 const resolveConversationExportTitle = (session: PersistedChatSession): string => {
@@ -90,11 +83,7 @@ const resolveConversationExportTitle = (session: PersistedChatSession): string =
   const firstUserMessage = session.messages.find((message) => message.role === 'user')
   const prompt = firstUserMessage?.content ?? ''
 
-  if (
-    prompt &&
-    storedTitle === createLegacyAutoTitle(prompt) &&
-    normalizeInlineText(prompt).length > LEGACY_AUTO_TITLE_MAX_LENGTH
-  ) {
+  if (prompt && isKnownTruncatedAutoTitle(storedTitle, prompt)) {
     return deriveTitleFromPrompt(prompt) || storedTitle
   }
 

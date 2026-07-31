@@ -1,4 +1,4 @@
-import type { ToolCallContent, ToolCallLocation, ToolKind } from '@agentclientprotocol/sdk'
+import type { ToolCallContent, ToolCallLocation, ToolKind, Usage } from '@agentclientprotocol/sdk'
 import type { ArtifactFile, FileReference } from './artifacts'
 import type { UploadedAttachment } from './uploads'
 import type { PermissionProfileId, SessionPermissionProfileState } from './permission-profiles'
@@ -136,6 +136,62 @@ export type AcpContextUsage = {
   breakdown?: AcpContextUsageBreakdown
 }
 
+// Provider-reported totals for one completed prompt turn. Cache reads and writes are combined for the
+// transcript because both consume the provider's cache token budget and users need one comparable sum.
+export type AcpTurnTokenUsage = {
+  inputTokens: number
+  cacheTokens: number
+  outputTokens: number
+}
+
+// Private PromptResponse metadata used by the managed Codex adapter to keep whole-turn totals
+// separate from ACP's latest-request usage snapshot.
+export const ACP_TURN_TOKEN_USAGE_META_KEY = 'open-science/turn-usage'
+
+const asTokenCount = (value: unknown): number | undefined =>
+  typeof value === 'number' && Number.isSafeInteger(value) && value >= 0 ? value : undefined
+
+// Normalizes ACP's experimental PromptResponse usage into the stable, provider-neutral projection the
+// renderer persists. Missing cache categories mean zero; malformed totals suppress the entire footer.
+export const toAcpTurnTokenUsage = (value: unknown): AcpTurnTokenUsage | undefined => {
+  if (typeof value !== 'object' || value === null || Array.isArray(value)) return undefined
+
+  const usage = value as Partial<Usage>
+
+  const inputTokens = asTokenCount(usage.inputTokens)
+  const outputTokens = asTokenCount(usage.outputTokens)
+  const cachedReadTokens = asTokenCount(usage.cachedReadTokens ?? 0)
+  const cachedWriteTokens = asTokenCount(usage.cachedWriteTokens ?? 0)
+
+  if (
+    inputTokens === undefined ||
+    outputTokens === undefined ||
+    cachedReadTokens === undefined ||
+    cachedWriteTokens === undefined
+  ) {
+    return undefined
+  }
+
+  const cacheTokens = cachedReadTokens + cachedWriteTokens
+  if (!Number.isSafeInteger(cacheTokens)) return undefined
+
+  return { inputTokens, cacheTokens, outputTokens }
+}
+
+// Re-validates the durable projection when loading session JSON, dropping unknown or unsafe values.
+export const sanitizeAcpTurnTokenUsage = (value: unknown): AcpTurnTokenUsage | undefined => {
+  if (typeof value !== 'object' || value === null || Array.isArray(value)) return undefined
+
+  const usage = value as Record<string, unknown>
+  const inputTokens = asTokenCount(usage.inputTokens)
+  const cacheTokens = asTokenCount(usage.cacheTokens)
+  const outputTokens = asTokenCount(usage.outputTokens)
+
+  return inputTokens === undefined || cacheTokens === undefined || outputTokens === undefined
+    ? undefined
+    : { inputTokens, cacheTokens, outputTokens }
+}
+
 export type AcpRuntimeEvent = {
   id: string
   timestamp: number
@@ -144,6 +200,8 @@ export type AcpRuntimeEvent = {
   // Present only on a usage_update-derived event; the runtime records it per session and does not push
   // the event into the visible conversation.
   contextUsage?: AcpContextUsage
+  // Present on a completed prompt's stop event when the Agent reports whole-turn token totals.
+  turnUsage?: AcpTurnTokenUsage
   // Identifies who owns a native compaction lifecycle so overflow recovery can keep its retry gate
   // active until the replacement prompt takes over, even if control-turn events arrive first.
   compactionReason?: 'automatic' | 'manual' | 'overflow-recovery'

@@ -37,7 +37,12 @@ import type {
   AcpSetPermissionProfileRequest,
   AcpStateSnapshot
 } from '../../shared/acp'
-import { getAcpRuntimeEventImage, MAX_ACP_SESSION_IMAGE_BYTES } from '../../shared/acp'
+import {
+  ACP_TURN_TOKEN_USAGE_META_KEY,
+  getAcpRuntimeEventImage,
+  MAX_ACP_SESSION_IMAGE_BYTES,
+  toAcpTurnTokenUsage
+} from '../../shared/acp'
 import { ACP_PROMPT_FAILED_EVENT_TITLE } from '../../shared/acp'
 import {
   DEFAULT_PERMISSION_PROFILE,
@@ -2923,12 +2928,20 @@ class AcpRuntime {
             sessionId: request.sessionId,
             stopReason: message.stopReason
           })
+          const promptFramework = this.sessionFrameworks.get(request.sessionId) ?? this.framework.id
+          // Codex ACP exposes only the latest request in PromptResponse.usage. The managed adapter's
+          // app-owned metadata is the sole whole-turn source; other frameworks already accumulate usage.
+          const turnUsage =
+            promptFramework === 'codex'
+              ? toAcpTurnTokenUsage(message.response._meta?.[ACP_TURN_TOKEN_USAGE_META_KEY])
+              : toAcpTurnTokenUsage(message.response.usage)
           this.pushEvent({
             kind: 'stop',
             level: 'info',
             sessionId: request.sessionId,
             title: 'Prompt stopped',
             text: message.stopReason,
+            turnUsage,
             raw: message.response
           })
           if (this.shouldAutoCompactContext(request.sessionId)) {
@@ -5663,6 +5676,7 @@ class AcpRuntime {
       compactionReason: event.compactionReason,
       recoverable: event.recoverable,
       providerError: event.providerError,
+      turnUsage: event.turnUsage,
       sessionId: event.sessionId,
       messageId: event.messageId,
       role: event.role,

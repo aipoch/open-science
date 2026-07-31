@@ -1,7 +1,7 @@
 import { describe, expect, it, vi } from 'vitest'
 
+import type { WebRpcRouter } from '../ipc-handler-registry'
 import { createWebServiceController, type WebServiceControllerDeps } from './index'
-import type { RpcCapture } from './rpc-capture'
 
 type StartOptions = Parameters<WebServiceControllerDeps['startServer']>[0]
 
@@ -30,7 +30,7 @@ const makeController = (
   const removeState = vi.fn().mockResolvedValue(undefined)
 
   const controller = createWebServiceController(
-    { rpc: {} as RpcCapture, requestQuit },
+    { rpc: {} as WebRpcRouter, requestQuit },
     {
       startServer,
       resolveConfigRoot: () => '/fake/root',

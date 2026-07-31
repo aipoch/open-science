@@ -1,4 +1,5 @@
 import { Children, isValidElement, type ReactElement, type ReactNode } from 'react'
+import { AlertDialog } from 'radix-ui'
 import { describe, expect, it, vi } from 'vitest'
 
 import type { Project } from '../../../../shared/projects'
@@ -123,10 +124,13 @@ describe('home dialogs shared chrome', () => {
       sessionCount: 2,
       hasCompleteSessionCatalog: true,
       canDelete: true,
+      isDeleting: false,
+      error: undefined,
       onCancel,
       onConfirmDelete
     })
     const elements = collectElements(tree)
+    const text = getTextContent(tree)
     const deleteButton = elements.find(
       (element) => getTextContent(element).trim() === 'Delete' && element.props.onClick
     )
@@ -135,6 +139,12 @@ describe('home dialogs shared chrome', () => {
       interceptsOutsideClick: false
     })
     expect(deleteButton?.props.className).toContain('bg-danger-000')
+    expect(elements.some((element) => element.type === AlertDialog.Action)).toBe(false)
+    expect(text).toContain(
+      'Generated artifacts and uploaded files stored by Open Science will also be deleted.'
+    )
+    expect(text).toContain("Files in the project's working folder are not deleted.")
+    expect(text).not.toContain('Generated artifacts remain on disk')
   })
 
   it('warns about unreadable conversations without showing an incomplete session count', async () => {
@@ -145,6 +155,8 @@ describe('home dialogs shared chrome', () => {
       sessionCount: 1,
       hasCompleteSessionCatalog: false,
       canDelete: true,
+      isDeleting: false,
+      error: undefined,
       onCancel: vi.fn(),
       onConfirmDelete: vi.fn()
     })
@@ -154,5 +166,54 @@ describe('home dialogs shared chrome', () => {
       'all of its saved conversations, including any that could not be loaded during recovery'
     )
     expect(text).not.toContain('its 1 session')
+  })
+
+  it('renders a durable deletion failure as an inline alert', async () => {
+    const { DeleteProjectDialog } = await import('./DeleteProjectDialog')
+
+    const tree = DeleteProjectDialog({
+      project: createProject(),
+      sessionCount: 0,
+      hasCompleteSessionCatalog: true,
+      canDelete: true,
+      isDeleting: false,
+      error: 'Project storage is unavailable.',
+      onCancel: vi.fn(),
+      onConfirmDelete: vi.fn()
+    })
+    const alert = collectElements(tree).find((element) => element.props.role === 'alert')
+
+    expect(alert).toBeDefined()
+    expect(getTextContent(alert)).toBe('Project storage is unavailable.')
+  })
+
+  it('locks every dismissal and confirmation control while deletion is pending', async () => {
+    const { DeleteProjectDialog } = await import('./DeleteProjectDialog')
+
+    const tree = DeleteProjectDialog({
+      project: createProject(),
+      sessionCount: 0,
+      hasCompleteSessionCatalog: true,
+      canDelete: true,
+      isDeleting: true,
+      error: undefined,
+      onCancel: vi.fn(),
+      onConfirmDelete: vi.fn()
+    })
+    const elements = collectElements(tree)
+    const closeButton = elements.find((element) => element.props['aria-label'] === 'Close')
+    const cancelButton = elements.find(
+      (element) =>
+        getTextContent(element).trim() === 'Cancel' && element.props.variant === 'outline'
+    )
+    const deleteButton = elements.find(
+      (element) =>
+        getTextContent(element).trim() === 'Deleting…' &&
+        String(element.props.className).includes('bg-danger-000')
+    )
+
+    expect(closeButton?.props.disabled).toBe(true)
+    expect(cancelButton?.props.disabled).toBe(true)
+    expect(deleteButton?.props.disabled).toBe(true)
   })
 })

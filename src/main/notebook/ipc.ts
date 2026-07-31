@@ -1,4 +1,4 @@
-import { ipcMain } from 'electron'
+import { ipcMainHandle } from '../ipc-handler-registry'
 
 import type {
   AppendNotebookCodeCellRequest,
@@ -69,37 +69,37 @@ const createNotebookHandlers = (service: NotebookRuntimeService): NotebookHandle
 const registerNotebookIpcHandlers = (service: NotebookRuntimeService): void => {
   const handlers = createNotebookHandlers(service)
 
-  ipcMain.handle('notebook:state', (_event, request: NotebookSessionRequest) =>
+  ipcMainHandle('notebook:state', (_event, request: NotebookSessionRequest) =>
     handlers.state(request)
   )
-  ipcMain.handle('notebook:reference', (_event, request: NotebookSessionRequest) =>
+  ipcMainHandle('notebook:reference', (_event, request: NotebookSessionRequest) =>
     handlers.reference(request)
   )
-  ipcMain.handle('notebook:begin-code-cell', (_event, request: BeginNotebookCodeCellRequest) =>
+  ipcMainHandle('notebook:begin-code-cell', (_event, request: BeginNotebookCodeCellRequest) =>
     handlers.beginCodeCell(request)
   )
-  ipcMain.handle('notebook:append-code-cell', (_event, request: AppendNotebookCodeCellRequest) =>
+  ipcMainHandle('notebook:append-code-cell', (_event, request: AppendNotebookCodeCellRequest) =>
     handlers.appendCodeCell(request)
   )
-  ipcMain.handle('notebook:finish-code-cell', (_event, request: FinishNotebookCodeCellRequest) =>
+  ipcMainHandle('notebook:finish-code-cell', (_event, request: FinishNotebookCodeCellRequest) =>
     handlers.finishCodeCell(request)
   )
-  ipcMain.handle('notebook:run-cell', (_event, request: RunNotebookCellRequest) =>
+  ipcMainHandle('notebook:run-cell', (_event, request: RunNotebookCellRequest) =>
     handlers.runCell(request)
   )
-  ipcMain.handle('notebook:execute', (_event, request: ExecuteNotebookCodeRequest) =>
+  ipcMainHandle('notebook:execute', (_event, request: ExecuteNotebookCodeRequest) =>
     handlers.execute(request)
   )
-  ipcMain.handle('notebook:export-ipynb', (_event, request: ExportNotebookKernelRequest) =>
+  ipcMainHandle('notebook:export-ipynb', (_event, request: ExportNotebookKernelRequest) =>
     handlers.exportIpynb(request)
   )
-  ipcMain.handle('notebook:export-ipynb-all', (_event, request: ExportNotebookAllRequest) =>
+  ipcMainHandle('notebook:export-ipynb-all', (_event, request: ExportNotebookAllRequest) =>
     handlers.exportIpynbAll(request)
   )
-  ipcMain.handle('notebook:restart', (_event, request: NotebookSessionRequest) =>
+  ipcMainHandle('notebook:restart', (_event, request: NotebookSessionRequest) =>
     handlers.restart(request)
   )
-  ipcMain.handle('notebook:shutdown', (_event, request: NotebookSessionRequest) =>
+  ipcMainHandle('notebook:shutdown', (_event, request: NotebookSessionRequest) =>
     handlers.shutdown(request)
   )
 }

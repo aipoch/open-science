@@ -1,3 +1,5 @@
+import { join } from 'node:path'
+
 import { beforeEach, describe, expect, it, vi } from 'vitest'
 
 import type { PersistedChatSession } from '../../shared/session-persistence'
@@ -45,6 +47,7 @@ const session: PersistedChatSession = {
 
 describe('conversation export service', () => {
   const loadSession = vi.fn()
+  const isSessionActive = vi.fn()
   const showSaveDialog = vi.fn()
   const writeExportFile = vi.fn()
   const createTempDirectory = vi.fn()
@@ -62,6 +65,7 @@ describe('conversation export service', () => {
   beforeEach(() => {
     vi.clearAllMocks()
     loadSession.mockResolvedValue(session)
+    isSessionActive.mockReturnValue(false)
     showSaveDialog.mockResolvedValue({ canceled: false, filePath: '/downloads/export.md' })
     writeExportFile.mockResolvedValue(undefined)
     createTempDirectory.mockResolvedValue('/tmp/open-science-conversation-export-test')
@@ -74,6 +78,7 @@ describe('conversation export service', () => {
   const createService = (): ReturnType<typeof createConversationExportService> =>
     createConversationExportService({
       loadSession,
+      isSessionActive,
       showSaveDialog,
       writeFile: writeExportFile,
       createTempDirectory,
@@ -95,7 +100,7 @@ describe('conversation export service', () => {
     expect(showSaveDialog).toHaveBeenCalledWith(
       undefined,
       expect.objectContaining({
-        defaultPath: '/downloads/Export test.md',
+        defaultPath: join('/downloads', 'Export test.md'),
         filters: [{ name: 'Markdown', extensions: ['md'] }]
       })
     )
@@ -116,14 +121,16 @@ describe('conversation export service', () => {
       format: 'pdf'
     })
 
-    expect(createTempDirectory).toHaveBeenCalledWith('/tmp/open-science-conversation-export-')
+    expect(createTempDirectory).toHaveBeenCalledWith(
+      join('/tmp', 'open-science-conversation-export-')
+    )
     expect(writeExportFile).toHaveBeenNthCalledWith(
       1,
-      '/tmp/open-science-conversation-export-test/conversation.html',
+      join('/tmp/open-science-conversation-export-test', 'conversation.html'),
       expect.stringContaining('<!doctype html>')
     )
     expect(loadFile).toHaveBeenCalledWith(
-      '/tmp/open-science-conversation-export-test/conversation.html'
+      join('/tmp/open-science-conversation-export-test', 'conversation.html')
     )
     expect(executeJavaScript).toHaveBeenCalledOnce()
     expect(printToPDF).toHaveBeenCalledWith(
@@ -177,6 +184,22 @@ describe('conversation export service', () => {
     ).resolves.toEqual({ saved: false })
     expect(createPrintWindow).not.toHaveBeenCalled()
     expect(writeExportFile).not.toHaveBeenCalled()
+  })
+
+  it('rejects a live prompt after its durable status was normalized on load', async () => {
+    loadSession.mockResolvedValue({ ...session, status: 'error' })
+    isSessionActive.mockReturnValue(true)
+
+    await expect(
+      createService().exportConversation({
+        projectId: 'project-1',
+        sessionId: 'session-1',
+        format: 'markdown'
+      })
+    ).rejects.toThrow('finish before exporting')
+
+    expect(isSessionActive).toHaveBeenCalledWith('project-1', 'session-1')
+    expect(showSaveDialog).not.toHaveBeenCalled()
   })
 
   it('rejects missing, empty, active and malformed conversations', async () => {

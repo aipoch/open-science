@@ -22,6 +22,7 @@ import { pipeline } from 'node:stream/promises'
 import { createGunzip } from 'node:zlib'
 
 import type { ClaudeInstallEvent, ClaudeInstallResult } from '../../shared/settings'
+import { ACP_TURN_TOKEN_USAGE_META_KEY } from '../../shared/acp'
 import {
   DEFAULT_REGISTRIES,
   defaultFetchJson,
@@ -110,12 +111,170 @@ const codexBinaryInRoot = (root: string, platform: ManagedCodexPlatform): string
 
 const CODEX_ACP_CONTEXT_USAGE_SOURCE =
   '    const used = this.sessionState.lastTokenUsage?.totalTokens;'
-const CODEX_ACP_CONTEXT_USAGE_REPLACEMENT = [
+const CODEX_ACP_CONTEXT_USAGE_LEGACY_REPLACEMENT = [
   '    const lastTokenUsage = this.sessionState.lastTokenUsage;',
   '    const used =',
   '      lastTokenUsage == null',
   '        ? void 0',
   '        : lastTokenUsage.inputTokens + (lastTokenUsage.cachedInputTokens ?? 0);'
+].join('\n')
+const CODEX_ACP_CONTEXT_USAGE_REPLACEMENT = [
+  '    const contextTokenUsage = this.sessionState.lastTokenUsage;',
+  '    const used =',
+  '      contextTokenUsage == null',
+  '        ? void 0',
+  '        : contextTokenUsage.inputTokens + (contextTokenUsage.cachedInputTokens ?? 0);'
+].join('\n')
+
+const CODEX_ACP_TURN_USAGE_UPDATE_SOURCE = [
+  '  createUsageUpdate(params) {',
+  '    this.handleTokenUsageUpdated(params);'
+].join('\n')
+const CODEX_ACP_TURN_USAGE_UPDATE_LEGACY_REPLACEMENT = [
+  '  createUsageUpdate(params) {',
+  '    const previousTotalTokenUsage = this.sessionState.totalTokenUsage;',
+  '    this.handleTokenUsageUpdated(params);',
+  '    const currentTotalTokenUsage = this.sessionState.totalTokenUsage;',
+  '    const lastTokenUsage = this.sessionState.lastTokenUsage;',
+  '    const promptTokenUsage = this.sessionState.promptTokenUsage;',
+  '    if (',
+  '      promptTokenUsage != null &&',
+  '      currentTotalTokenUsage != null &&',
+  '      lastTokenUsage != null',
+  '    ) {',
+  '      const tokenKeys = [',
+  '        "totalTokens",',
+  '        "inputTokens",',
+  '        "cachedInputTokens",',
+  '        "outputTokens",',
+  '        "reasoningOutputTokens"',
+  '      ];',
+  '      const cumulativeDelta = previousTotalTokenUsage == null',
+  '        ? lastTokenUsage',
+  '        : {',
+  '            totalTokens: currentTotalTokenUsage.totalTokens - previousTotalTokenUsage.totalTokens,',
+  '            inputTokens: currentTotalTokenUsage.inputTokens - previousTotalTokenUsage.inputTokens,',
+  '            cachedInputTokens:',
+  '              currentTotalTokenUsage.cachedInputTokens - previousTotalTokenUsage.cachedInputTokens,',
+  '            outputTokens:',
+  '              currentTotalTokenUsage.outputTokens - previousTotalTokenUsage.outputTokens,',
+  '            reasoningOutputTokens:',
+  '              currentTotalTokenUsage.reasoningOutputTokens -',
+  '              previousTotalTokenUsage.reasoningOutputTokens',
+  '          };',
+  '      const increment = tokenKeys.every(',
+  '        (key) => Number.isSafeInteger(cumulativeDelta[key]) && cumulativeDelta[key] >= 0',
+  '      )',
+  '        ? cumulativeDelta',
+  '        : lastTokenUsage;',
+  '      const nextPromptTokenUsage = {',
+  '        totalTokens: promptTokenUsage.totalTokens + increment.totalTokens,',
+  '        inputTokens: promptTokenUsage.inputTokens + increment.inputTokens,',
+  '        cachedInputTokens: promptTokenUsage.cachedInputTokens + increment.cachedInputTokens,',
+  '        outputTokens: promptTokenUsage.outputTokens + increment.outputTokens,',
+  '        reasoningOutputTokens:',
+  '          promptTokenUsage.reasoningOutputTokens + increment.reasoningOutputTokens',
+  '      };',
+  '      if (tokenKeys.every((key) => Number.isSafeInteger(nextPromptTokenUsage[key]))) {',
+  '        this.sessionState.promptTokenUsage = nextPromptTokenUsage;',
+  '        this.sessionState.promptTokenUsageObserved = true;',
+  '      }',
+  '    }'
+].join('\n')
+
+const CODEX_ACP_TURN_USAGE_UPDATE_REPLACEMENT = [
+  '  createUsageUpdate(params) {',
+  '    const normalizeTokenUsage = (usage) =>',
+  '      usage == null',
+  '        ? usage',
+  '        : { ...usage, cachedInputTokens: usage.cachedInputTokens ?? 0 };',
+  '    const previousTotalTokenUsage = normalizeTokenUsage(this.sessionState.totalTokenUsage);',
+  '    this.handleTokenUsageUpdated(params);',
+  '    const currentTotalTokenUsage = normalizeTokenUsage(this.sessionState.totalTokenUsage);',
+  '    const lastTokenUsage = normalizeTokenUsage(this.sessionState.lastTokenUsage);',
+  '    const promptTokenUsage = this.sessionState.promptTokenUsage;',
+  '    if (',
+  '      promptTokenUsage != null &&',
+  '      currentTotalTokenUsage != null &&',
+  '      lastTokenUsage != null',
+  '    ) {',
+  '      const tokenKeys = [',
+  '        "totalTokens",',
+  '        "inputTokens",',
+  '        "cachedInputTokens",',
+  '        "outputTokens",',
+  '        "reasoningOutputTokens"',
+  '      ];',
+  '      const cumulativeDelta = previousTotalTokenUsage == null',
+  '        ? lastTokenUsage',
+  '        : {',
+  '            totalTokens: currentTotalTokenUsage.totalTokens - previousTotalTokenUsage.totalTokens,',
+  '            inputTokens: currentTotalTokenUsage.inputTokens - previousTotalTokenUsage.inputTokens,',
+  '            cachedInputTokens:',
+  '              currentTotalTokenUsage.cachedInputTokens - previousTotalTokenUsage.cachedInputTokens,',
+  '            outputTokens:',
+  '              currentTotalTokenUsage.outputTokens - previousTotalTokenUsage.outputTokens,',
+  '            reasoningOutputTokens:',
+  '              currentTotalTokenUsage.reasoningOutputTokens -',
+  '              previousTotalTokenUsage.reasoningOutputTokens',
+  '          };',
+  '      const increment = tokenKeys.every(',
+  '        (key) => Number.isSafeInteger(cumulativeDelta[key]) && cumulativeDelta[key] >= 0',
+  '      )',
+  '        ? cumulativeDelta',
+  '        : lastTokenUsage;',
+  '      const nextPromptTokenUsage = {',
+  '        totalTokens: promptTokenUsage.totalTokens + increment.totalTokens,',
+  '        inputTokens: promptTokenUsage.inputTokens + increment.inputTokens,',
+  '        cachedInputTokens: promptTokenUsage.cachedInputTokens + increment.cachedInputTokens,',
+  '        outputTokens: promptTokenUsage.outputTokens + increment.outputTokens,',
+  '        reasoningOutputTokens:',
+  '          promptTokenUsage.reasoningOutputTokens + increment.reasoningOutputTokens',
+  '      };',
+  '      if (tokenKeys.every((key) => Number.isSafeInteger(nextPromptTokenUsage[key]))) {',
+  '        this.sessionState.promptTokenUsage = nextPromptTokenUsage;',
+  '        this.sessionState.promptTokenUsageObserved = true;',
+  '      }',
+  '    }'
+].join('\n')
+
+const CODEX_ACP_TURN_USAGE_START_SOURCE = [
+  '    sessionState.currentTurnId = null;',
+  '    sessionState.lastTokenUsage = null;'
+].join('\n')
+const CODEX_ACP_TURN_USAGE_START_REPLACEMENT = [
+  CODEX_ACP_TURN_USAGE_START_SOURCE,
+  '    sessionState.promptTokenUsage = {',
+  '      totalTokens: 0,',
+  '      inputTokens: 0,',
+  '      cachedInputTokens: 0,',
+  '      outputTokens: 0,',
+  '      reasoningOutputTokens: 0',
+  '    };',
+  '    sessionState.promptTokenUsageObserved = false;'
+].join('\n')
+
+const CODEX_ACP_TURN_USAGE_RESPONSE_SOURCE =
+  'usage: this.buildPromptUsage(sessionState.lastTokenUsage),'
+const CODEX_ACP_TURN_USAGE_RESPONSE_LEGACY_REPLACEMENT =
+  'usage: this.buildPromptUsage(sessionState.promptTokenUsageObserved ? sessionState.promptTokenUsage : null),'
+const CODEX_ACP_TURN_USAGE_RESPONSE_REPLACEMENT = [
+  'usage: this.buildPromptUsage(',
+  '  sessionState.lastTokenUsage',
+  '),',
+  '...(sessionState.promptTokenUsageObserved',
+  '  ? {',
+  '      _meta: {',
+  `        "${ACP_TURN_TOKEN_USAGE_META_KEY}": this.buildPromptUsage(sessionState.promptTokenUsage)`,
+  '      }',
+  '    }',
+  '  : {}),'
+].join('\n')
+const CODEX_ACP_TURN_USAGE_FINISH_SOURCE = '      activePrompt.complete();'
+const CODEX_ACP_TURN_USAGE_FINISH_REPLACEMENT = [
+  '      sessionState.promptTokenUsage = void 0;',
+  '      sessionState.promptTokenUsageObserved = void 0;',
+  CODEX_ACP_TURN_USAGE_FINISH_SOURCE
 ].join('\n')
 
 const CODEX_ACP_SKILL_INPUT_SOURCE = [
@@ -225,6 +384,12 @@ const renameWithTransientLockRetry = async (source: string, destination: string)
 // during installation instead of silently restoring the wrong metric.
 export const patchCodexAcpContextUsageSource = (source: string): string => {
   if (source.includes(CODEX_ACP_CONTEXT_USAGE_REPLACEMENT)) return source
+  if (source.includes(CODEX_ACP_CONTEXT_USAGE_LEGACY_REPLACEMENT)) {
+    return source.replace(
+      CODEX_ACP_CONTEXT_USAGE_LEGACY_REPLACEMENT,
+      CODEX_ACP_CONTEXT_USAGE_REPLACEMENT
+    )
+  }
 
   const matches = source.split(CODEX_ACP_CONTEXT_USAGE_SOURCE).length - 1
 
@@ -241,6 +406,51 @@ export const patchCodexAcpContextUsageSource = (source: string): string => {
 
   // Unit-test fixtures use tiny stand-in adapters rather than the pinned production bundle.
   return source
+}
+
+// Codex ACP 1.1.4 projects only tokenUsage.last into PromptResponse.usage. Preserve that latest
+// request for context reconciliation while accumulating whole-turn deltas into an app-owned _meta
+// field for the transcript footer. Falling back to `last` for the first update keeps resumed sessions
+// from attributing their historical cumulative total to the first new response.
+export const patchCodexAcpTurnUsageSource = (source: string): string => {
+  const migratedSource = source
+    .replace(
+      CODEX_ACP_TURN_USAGE_UPDATE_LEGACY_REPLACEMENT,
+      CODEX_ACP_TURN_USAGE_UPDATE_REPLACEMENT
+    )
+    .replaceAll(
+      CODEX_ACP_TURN_USAGE_RESPONSE_LEGACY_REPLACEMENT,
+      CODEX_ACP_TURN_USAGE_RESPONSE_REPLACEMENT
+    )
+
+  if (
+    migratedSource.includes(CODEX_ACP_TURN_USAGE_UPDATE_REPLACEMENT) &&
+    migratedSource.includes(CODEX_ACP_TURN_USAGE_START_REPLACEMENT) &&
+    migratedSource.includes(CODEX_ACP_TURN_USAGE_RESPONSE_REPLACEMENT) &&
+    migratedSource.includes(CODEX_ACP_TURN_USAGE_FINISH_REPLACEMENT)
+  ) {
+    return migratedSource
+  }
+
+  const updateMatches = migratedSource.split(CODEX_ACP_TURN_USAGE_UPDATE_SOURCE).length - 1
+  const startMatches = migratedSource.split(CODEX_ACP_TURN_USAGE_START_SOURCE).length - 1
+  const responseMatches = migratedSource.split(CODEX_ACP_TURN_USAGE_RESPONSE_SOURCE).length - 1
+  const finishMatches = migratedSource.split(CODEX_ACP_TURN_USAGE_FINISH_SOURCE).length - 1
+
+  if (updateMatches === 1 && startMatches === 1 && responseMatches === 3 && finishMatches === 1) {
+    return migratedSource
+      .replace(CODEX_ACP_TURN_USAGE_UPDATE_SOURCE, CODEX_ACP_TURN_USAGE_UPDATE_REPLACEMENT)
+      .replace(CODEX_ACP_TURN_USAGE_START_SOURCE, CODEX_ACP_TURN_USAGE_START_REPLACEMENT)
+      .replaceAll(CODEX_ACP_TURN_USAGE_RESPONSE_SOURCE, CODEX_ACP_TURN_USAGE_RESPONSE_REPLACEMENT)
+      .replace(CODEX_ACP_TURN_USAGE_FINISH_SOURCE, CODEX_ACP_TURN_USAGE_FINISH_REPLACEMENT)
+  }
+
+  if (responseMatches > 0 || migratedSource.includes('buildPromptUsage(lastTokenUsage)')) {
+    throw new Error('Pinned Codex ACP turn-usage patch no longer matches the adapter bundle')
+  }
+
+  // Unit-test fixtures use tiny stand-in adapters rather than the pinned production bundle.
+  return migratedSource
 }
 
 // The pinned adapter normally flattens every ACP text block into a Codex text input, discarding
@@ -280,7 +490,9 @@ export const patchCodexAcpModelCatalogStartupSource = (source: string): string =
 export const ensureManagedCodexContextUsage = async (adapterPath: string): Promise<void> => {
   const source = await readFile(adapterPath, 'utf8')
   const patched = patchCodexAcpModelCatalogStartupSource(
-    patchCodexAcpSkillInputSource(patchCodexAcpContextUsageSource(source))
+    patchCodexAcpSkillInputSource(
+      patchCodexAcpTurnUsageSource(patchCodexAcpContextUsageSource(source))
+    )
   )
 
   if (patched === source) return

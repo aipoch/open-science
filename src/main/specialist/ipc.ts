@@ -1,4 +1,4 @@
-import { ipcMain } from 'electron'
+import { ipcMainHandle } from '../ipc-handler-registry'
 
 import type {
   CreateSpecialistRequest,
@@ -57,7 +57,7 @@ export const registerSpecialistIpcHandlers = (
   // Subscribe once so every mutation (create, setEnabled) triggers a broadcast.
   service.subscribe(broadcastCatalogChanged)
 
-  ipcMain.handle(SPECIALIST_IPC.LIST, async (): Promise<SpecialistListItem[]> => {
+  ipcMainHandle(SPECIALIST_IPC.LIST, async (): Promise<SpecialistListItem[]> => {
     try {
       return await service.listForSettings()
     } catch (error) {
@@ -66,7 +66,7 @@ export const registerSpecialistIpcHandlers = (
     }
   })
 
-  ipcMain.handle(
+  ipcMainHandle(
     SPECIALIST_IPC.CREATE,
     async (_event, request: CreateSpecialistRequest): Promise<SpecialistProfileView> => {
       // Re-validate in main process — renderer input is untrusted.
@@ -79,7 +79,7 @@ export const registerSpecialistIpcHandlers = (
     }
   )
 
-  ipcMain.handle(
+  ipcMainHandle(
     SPECIALIST_IPC.UPDATE,
     async (_event, request: UpdateSpecialistRequest): Promise<SpecialistProfileView> => {
       // Re-validate in main process — renderer input is untrusted.
@@ -96,7 +96,7 @@ export const registerSpecialistIpcHandlers = (
     }
   )
 
-  ipcMain.handle(
+  ipcMainHandle(
     SPECIALIST_IPC.SET_ENABLED,
     async (_event, request: SetSpecialistEnabledRequest): Promise<SpecialistProfileView> => {
       try {
@@ -110,7 +110,7 @@ export const registerSpecialistIpcHandlers = (
     }
   )
 
-  ipcMain.handle(
+  ipcMainHandle(
     SPECIALIST_IPC.DELETE,
     async (_event, request: DeleteSpecialistRequest): Promise<void> => {
       try {
@@ -123,7 +123,7 @@ export const registerSpecialistIpcHandlers = (
     }
   )
 
-  ipcMain.handle(
+  ipcMainHandle(
     SPECIALIST_IPC.DUPLICATE,
     async (_event, request: DuplicateSpecialistRequest): Promise<CreateSpecialistInput> =>
       service.duplicate(request.id)
@@ -131,7 +131,7 @@ export const registerSpecialistIpcHandlers = (
 
   // Session switching. This handler is a named seam: the future host.agents.switch() SDK (issue 08)
   // will resolve name→UUID and call this same channel, not a parallel path.
-  ipcMain.handle(
+  ipcMainHandle(
     SPECIALIST_IPC.SET_SESSION_SPECIALIST,
     async (_event, request: SetSessionSpecialistRequest): Promise<SetSessionSpecialistResponse> => {
       if (!request || typeof request.sessionId !== 'string') {
@@ -168,7 +168,7 @@ export const registerSpecialistIpcHandlers = (
     }
   )
 
-  ipcMain.handle(
+  ipcMainHandle(
     SPECIALIST_IPC.RESOLVE_SESSION_SPECIALIST,
     async (
       _event,
