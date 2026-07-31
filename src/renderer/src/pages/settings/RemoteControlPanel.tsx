@@ -292,9 +292,8 @@ export const RemoteControlPanel = (): React.JSX.Element => {
               )
             }
             return (
-              <div
+              <label
                 key={option.mode}
-                onClick={selectMode}
                 className={`relative min-w-0 rounded-xl border p-3 text-left transition-colors ${
                   disabled ? 'cursor-not-allowed opacity-55' : 'cursor-pointer hover:bg-muted/45'
                 } ${
@@ -326,7 +325,7 @@ export const RemoteControlPanel = (): React.JSX.Element => {
                   className="pointer-events-none absolute inset-0 rounded-xl ring-primary peer-focus-visible:ring-2 peer-focus-visible:ring-offset-2"
                   aria-hidden="true"
                 />
-              </div>
+              </label>
             )
           })}
         </div>

@@ -1,4 +1,4 @@
-import { mkdtemp, readFile, rm } from 'node:fs/promises'
+import { mkdtemp, readFile, rm, writeFile } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 
@@ -97,5 +97,22 @@ describe('RemoteAccessRepository', () => {
       remoteItBrowserServiceId: 'browser-service',
       remoteItPublicUrl: 'https://open-science.p020.r3proxy.com/'
     })
+  })
+
+  it('accepts a later save after an earlier filesystem write fails', async () => {
+    const parent = await mkdtemp(join(tmpdir(), 'open-science-remote-repository-recovery-'))
+    roots.push(parent)
+    const configRoot = join(parent, 'config')
+    await writeFile(configRoot, 'blocks directory creation')
+    const repository = new RemoteAccessRepository(configRoot)
+
+    await expect(
+      repository.save({ version: 4, mode: 'remoteit', trustedBrowsers: [] })
+    ).rejects.toThrow()
+
+    await rm(configRoot)
+    await repository.save({ version: 4, mode: 'remoteit-public', trustedBrowsers: [] })
+
+    await expect(repository.load()).resolves.toMatchObject({ mode: 'remoteit-public' })
   })
 })

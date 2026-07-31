@@ -91,13 +91,17 @@ export class RemoteAccessRepository {
 
   save(value: StoredRemoteAccess): Promise<void> {
     const snapshot = JSON.stringify(value, null, 2)
-    this.writeQueue = this.writeQueue.then(async () => {
+    const operation = this.writeQueue.then(async () => {
       await mkdir(dirname(this.path), { recursive: true })
       const temporaryPath = `${this.path}.${process.pid}.tmp`
       await writeFile(temporaryPath, `${snapshot}\n`, { encoding: 'utf8', mode: 0o600 })
       await rename(temporaryPath, this.path)
     })
-    return this.writeQueue
+    this.writeQueue = operation.then(
+      () => undefined,
+      () => undefined
+    )
+    return operation
   }
 }
 

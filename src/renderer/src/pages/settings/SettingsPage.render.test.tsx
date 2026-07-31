@@ -1020,6 +1020,7 @@ describe('SettingsPage layout', () => {
 
     act(() => remoteItMode?.click())
 
+    expect(remoteAccess.setMode).toHaveBeenCalledTimes(1)
     const overlay = document.body.querySelector('[data-testid="remote-access-operation-overlay"]')
     expect(overlay).not.toBeNull()
     expect(overlay?.textContent).toContain('Applying remote access settings')
