@@ -24,8 +24,9 @@ const GUARDED_FILE_TOOLS = ['Read', 'Edit', 'Glob', 'Grep'] as const
 //
 // Tradeoff: #105 originally denied WebSearch as an exfiltration-channel hardening measure (open-web
 // reach is a path for conversation/workspace data to leave the app). Re-opening it accepts that risk
-// in exchange for the model's built-in web reach. WebFetch additionally relies on the CLI's own
-// claude.ai domain-safety preflight (enforced inside the claude binary, not here) as a backstop.
+// in exchange for the model's built-in web reach. Subscription WebFetch additionally relies on the
+// CLI's claude.ai domain-safety preflight. Custom API-key sessions cannot reach that hard-coded check,
+// so they force WebFetch through the app broker and scope conversation grants to one hostname.
 const DENIED_BUILTIN_TOOLS = [] as const
 
 // Built-in tool deny entries this module OWNS across versions — the full set it has ever written into

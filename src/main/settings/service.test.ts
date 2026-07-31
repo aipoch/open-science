@@ -3019,7 +3019,10 @@ describe('SettingsService: preflight & spawn config', () => {
       CLAUDE_CONFIG_DIR: getAppClaudeConfigDir(storageRoot)
     })
     expect(config.sessionOptions).toEqual({
-      settings: { skipWebFetchPreflight: true }
+      settings: {
+        skipWebFetchPreflight: true,
+        permissions: { ask: ['WebFetch'] }
+      }
     })
     // Custom providers always use the bearer token variable, never x-api-key.
     expect(config.envOverrides.ANTHROPIC_API_KEY).toBeUndefined()
@@ -3140,7 +3143,10 @@ describe('SettingsService: official vendors', () => {
       ANTHROPIC_MODEL: 'deepseek-v4-flash'
     })
     expect(config.sessionOptions).toEqual({
-      settings: { skipWebFetchPreflight: true }
+      settings: {
+        skipWebFetchPreflight: true,
+        permissions: { ask: ['WebFetch'] }
+      }
     })
     expect(config.contextWindow).toBe(1_000_000)
   })

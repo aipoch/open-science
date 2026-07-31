@@ -199,6 +199,26 @@ const resolveNotebookPermissionContext = (
   return { runtime: resolveNotebookRuntime(tool, rawInput) }
 }
 
+// WebFetch bypasses Claude's remote hostname preflight for custom API-key providers. Force any
+// conversation-wide approval to stay on the exact hostname the user reviewed; an absent or malformed
+// URL deliberately yields no category, so the broker offers only the provider's one-shot approval.
+const resolveWebFetchHostname = (params: RequestPermissionRequest): string | undefined => {
+  if (extractProviderToolName(params.toolCall) !== 'WebFetch') return undefined
+
+  const input = recordInput(params.toolCall.rawInput)
+  const inputUrl = typeof input?.url === 'string' ? input.url.trim() : undefined
+  const titleUrl = params.toolCall.title?.match(/^Fetch\s+(https?:\/\/\S+)$/i)?.[1]
+  const candidate = inputUrl || titleUrl
+  if (!candidate) return undefined
+
+  try {
+    const url = new URL(candidate)
+    return url.protocol === 'http:' || url.protocol === 'https:' ? url.hostname : undefined
+  } catch {
+    return undefined
+  }
+}
+
 const isMcpPermission = (
   params: RequestPermissionRequest,
   mcpServerNames: readonly string[]
@@ -249,9 +269,10 @@ const projectPermissionOptions = (
 // 1. MCP tool (recognized across frameworks — Claude's mcp__ prefix or an opencode <server>_ name):
 //    keyed by tool identity, with notebook execution tools further separated by runtime.
 // 2. Native Skill tool: keyed by the stable provider capability.
-// 3. Shell/execute tool (provider tool name Bash, or execute kind): keyed by concrete command signature.
-// 4. File operations: keyed by stable operation/tool identity, independent of target path.
-// 5. Other built-ins (WebFetch/…): keyed by stable provider tool name.
+// 3. WebFetch: keyed by the exact parsed hostname; malformed/missing URLs cannot receive a grant.
+// 4. Shell/execute tool (provider tool name Bash, or execute kind): keyed by concrete command signature.
+// 5. File operations: keyed by stable operation/tool identity, independent of target path.
+// 6. Other built-ins: keyed by stable provider tool name.
 // The MCP check runs before the execute branch so an opencode MCP tool reporting kind:execute (e.g. a
 // notebook execute-cell) is grouped as its own MCP tool, not misrouted to the shared Bash category.
 const resolveCategoryKey = (
@@ -279,6 +300,11 @@ const resolveCategoryKey = (
   }
 
   if (isSkillPermission(params)) return 'skill'
+
+  if (providerToolName === 'WebFetch') {
+    const hostname = resolveWebFetchHostname(params)
+    return hostname ? `webfetch:${hostname}` : undefined
+  }
 
   if (providerToolName === 'Bash' || toolCall.kind === 'execute') {
     const command = resolveShellCommand(params)
@@ -348,6 +374,15 @@ const describeGrant = (categoryKey: string): AcpPermissionGrant => {
       categoryKey,
       kind: 'tool',
       label: 'Skill',
+      scope: 'session'
+    }
+  }
+
+  if (categoryKey.startsWith('webfetch:')) {
+    return {
+      categoryKey,
+      kind: 'tool',
+      label: `WebFetch (${categoryKey.slice('webfetch:'.length)})`,
       scope: 'session'
     }
   }

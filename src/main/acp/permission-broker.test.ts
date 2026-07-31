@@ -1111,14 +1111,22 @@ describe('ACP permission broker', () => {
     const broker = new AcpPermissionBroker((request) => emitted.push(request))
 
     const firstFetch = broker.requestPermission(
-      createToolPermissionRequest({ sessionId: 'session-1', providerToolName: 'WebFetch' })
+      createToolPermissionRequest({
+        sessionId: 'session-1',
+        providerToolName: 'WebFetch',
+        rawInput: { url: 'https://www.ncbi.nlm.nih.gov/' }
+      })
     )
     broker.respond({ requestId: emitted[0].requestId, optionId: getSessionOptionId(emitted[0]) })
     await firstFetch
 
     // The same category in a different session must still prompt.
     broker.requestPermission(
-      createToolPermissionRequest({ sessionId: 'session-2', providerToolName: 'WebFetch' })
+      createToolPermissionRequest({
+        sessionId: 'session-2',
+        providerToolName: 'WebFetch',
+        rawInput: { url: 'https://www.ncbi.nlm.nih.gov/' }
+      })
     )
     expect(emitted).toHaveLength(2)
   })
@@ -1131,7 +1139,8 @@ describe('ACP permission broker', () => {
     const secondBroker = new AcpPermissionBroker((request) => secondEmitted.push(request), store)
     const request = createToolPermissionRequest({
       sessionId: 'shared-conversation',
-      providerToolName: 'WebFetch'
+      providerToolName: 'WebFetch',
+      rawInput: { url: 'https://www.ncbi.nlm.nih.gov/' }
     })
 
     const firstPermission = firstBroker.requestPermission(request)
@@ -1146,13 +1155,85 @@ describe('ACP permission broker', () => {
     })
     expect(secondEmitted).toHaveLength(0)
     expect(secondBroker.listGrants('shared-conversation')).toEqual([
-      expect.objectContaining({ categoryKey: 'tool:WebFetch', scope: 'session' })
+      expect.objectContaining({
+        categoryKey: 'webfetch:www.ncbi.nlm.nih.gov',
+        label: 'WebFetch (www.ncbi.nlm.nih.gov)',
+        scope: 'session'
+      })
     ])
 
     secondBroker.clearSession('shared-conversation')
     expect(firstBroker.listGrants('shared-conversation')).toEqual([])
     void firstBroker.requestPermission(request)
     expect(firstEmitted).toHaveLength(2)
+  })
+
+  it('scopes WebFetch conversation grants to the approved hostname', async () => {
+    const emitted: EmittedPermissionRequest[] = []
+    const broker = new AcpPermissionBroker((request) => emitted.push(request))
+    const firstRequest = createToolPermissionRequest({
+      providerToolName: 'WebFetch',
+      rawInput: { url: 'https://www.ncbi.nlm.nih.gov/' }
+    })
+
+    const firstPermission = broker.requestPermission(firstRequest)
+    broker.respond({
+      requestId: emitted[0].requestId,
+      optionId: getSessionOptionId(emitted[0])
+    })
+    await firstPermission
+
+    await expect(
+      broker.requestPermission(
+        createToolPermissionRequest({
+          providerToolName: 'WebFetch',
+          rawInput: { url: 'https://www.ncbi.nlm.nih.gov/research/' }
+        })
+      )
+    ).resolves.toEqual({ outcome: { outcome: 'selected', optionId: 'allow-once' } })
+    expect(emitted).toHaveLength(1)
+
+    void broker.requestPermission(
+      createToolPermissionRequest({
+        providerToolName: 'WebFetch',
+        rawInput: { url: 'https://example.com/' }
+      })
+    )
+    expect(emitted).toHaveLength(2)
+  })
+
+  it('offers only one-shot approval when a WebFetch hostname cannot be verified', () => {
+    const emitted: EmittedPermissionRequest[] = []
+    const broker = new AcpPermissionBroker((request) => emitted.push(request))
+
+    void broker.requestPermission(
+      createToolPermissionRequest({ providerToolName: 'WebFetch', rawInput: { url: 'not-a-url' } })
+    )
+
+    expect(emitted[0].options).not.toContainEqual(expect.objectContaining({ scope: 'session' }))
+  })
+
+  it('scopes WebFetch grants from the adapter title when raw input is absent', async () => {
+    const emitted: EmittedPermissionRequest[] = []
+    const broker = new AcpPermissionBroker((request) => emitted.push(request))
+
+    const permission = broker.requestPermission(
+      createToolPermissionRequest({
+        title: 'Fetch https://www.ncbi.nlm.nih.gov/research/',
+        providerToolName: 'WebFetch'
+      })
+    )
+
+    broker.respond({
+      requestId: emitted[0].requestId,
+      optionId: getSessionOptionId(emitted[0])
+    })
+    await permission
+
+    expect(emitted[0].title).toBe('Fetch https://www.ncbi.nlm.nih.gov/research/')
+    expect(broker.listGrants('session-1')).toEqual([
+      expect.objectContaining({ categoryKey: 'webfetch:www.ncbi.nlm.nih.gov' })
+    ])
   })
 
   it('shares MCP grants across hyphenated and underscore-sanitized framework identities', async () => {

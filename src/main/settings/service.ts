@@ -3520,7 +3520,12 @@ class SettingsService {
               // Custom Anthropic-compatible gateways may work while Anthropic's domain preflight
               // endpoint is unreachable. Keep this override scoped to the ACP session so neither
               // project/user settings nor the isolated Claude runtime configuration are mutated.
-              settings: { skipWebFetchPreflight: true }
+              // WebFetch remains an explicit app-brokered permission, whose conversation grants are
+              // scoped to the approved hostname rather than the whole tool.
+              settings: {
+                skipWebFetchPreflight: true,
+                permissions: { ask: ['WebFetch'] }
+              }
             }
           : undefined
 
