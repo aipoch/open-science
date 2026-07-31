@@ -11,7 +11,7 @@ import { DEFAULT_WEB_PORT, type WebServiceController } from '../web-service'
 import { createLogger } from '../logger'
 import { broadcastToRenderers } from '../renderer-broadcast'
 import { resolveConfigRoot } from '../storage-root'
-import { RemoteBrowserPairingManager } from './pairing'
+import { RemoteSessionPairingManager } from './pairing'
 import {
   detectRemoteIt,
   disableRemoteItConnectLink,
@@ -81,7 +81,7 @@ export class RemoteAccessService {
   private readonly log = createLogger('remote-access')
 
   private constructor(
-    private readonly pairing: RemoteBrowserPairingManager,
+    private readonly pairing: RemoteSessionPairingManager,
     private readonly deps: Required<
       Pick<
         RemoteAccessServiceDeps,
@@ -100,11 +100,10 @@ export class RemoteAccessService {
   static async create(options: RemoteAccessServiceDeps = {}): Promise<RemoteAccessService> {
     const repository = options.repository ?? new RemoteAccessRepository(resolveConfigRoot())
     const context: { service?: RemoteAccessService } = {}
-    const pairing = await RemoteBrowserPairingManager.create({
+    const pairing = await RemoteSessionPairingManager.create({
       repository,
       isAllowedRemoteHost: (hostname) => context.service?.isAllowedRemoteHost(hostname) === true,
       isEnabled: () => context.service?.runtimeEnabled === true,
-      requiresPairing: () => context.service?.requiresBrowserPairing() !== false,
       authorizationGeneration: () => context.service?.authorizationGeneration ?? 0,
       onChanged: () => context.service?.notifyChanged()
     })
@@ -149,9 +148,9 @@ export class RemoteAccessService {
       error: this.error,
       remoteIt: this.remoteIt,
       pendingRequests:
-        canManagePairing && this.showsBrowserPairingManagement() ? this.pairing.pendingViews() : [],
+        canManagePairing && this.showsPairingManagement() ? this.pairing.pendingViews() : [],
       trustedBrowsers:
-        canManagePairing && this.showsBrowserPairingManagement() ? this.pairing.trustedViews() : []
+        canManagePairing && this.showsPairingManagement() ? this.pairing.trustedViews() : []
     }
   }
 
@@ -409,12 +408,8 @@ export class RemoteAccessService {
     return Boolean(this.remoteHost && hostname === this.remoteHost)
   }
 
-  private requiresBrowserPairing(): boolean {
-    return this.activeMode === 'remoteit-public'
-  }
-
-  private showsBrowserPairingManagement(): boolean {
-    return this.activeMode === 'remoteit-public'
+  private showsPairingManagement(): boolean {
+    return this.activeMode !== 'off'
   }
 
   private serialize<T>(operation: () => Promise<T>): Promise<T> {

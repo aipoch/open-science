@@ -53,7 +53,7 @@ const ACCESS_MODES: {
   {
     mode: 'remoteit',
     title: 'App access',
-    description: 'Open Open Science from the signed-in mobile app.',
+    description: 'Open Open Science from the signed-in mobile app with two-step verification.',
     icon: RadioTower
   },
   {
@@ -187,6 +187,7 @@ export const RemoteControlPanel = (): React.JSX.Element => {
   const hasModeError = Boolean(modeError)
   const accessIsApp = snapshot.mode === 'remoteit'
   const accessIsBrowser = snapshot.mode === 'remoteit-public'
+  const accessUsesPairing = snapshot.mode === 'remoteit' || snapshot.mode === 'remoteit-public'
   const statusLabel = providerStatus(snapshot)
   const statusClassName =
     statusLabel === 'Connected' ? 'border-0 bg-primary/10 text-primary' : undefined
@@ -338,7 +339,7 @@ export const RemoteControlPanel = (): React.JSX.Element => {
 
         {!snapshot.canManage ? (
           <div className="rounded-lg border border-border bg-muted/40 px-3 py-2 text-sm text-muted-foreground">
-            {snapshot.canManagePairing && accessIsBrowser
+            {snapshot.canManagePairing && accessUsesPairing
               ? 'Remote access settings can only be changed from the Open Science desktop window on the home computer. Two-step verification requests and trusted browsers can be managed below.'
               : 'Remote access settings can only be changed from the Open Science desktop window on the home computer.'}
           </div>
@@ -383,8 +384,12 @@ export const RemoteControlPanel = (): React.JSX.Element => {
                   <span className="font-medium">Open Science Remote</span>.
                 </li>
                 <li>
-                  <span className="font-medium">3.</span> Tap Connect or Launch to open Open Science
-                  directly. No six-digit verification is required for signed-in App access.
+                  <span className="font-medium">3.</span> Tap Connect or Launch, match the six-digit
+                  code, then approve the request from this computer or an already trusted browser.
+                </li>
+                <li>
+                  <span className="font-medium">4.</span> Choose “Always trust this browser” to skip
+                  approval on future visits to the same remote address.
                 </li>
               </ol>
             </div>
@@ -482,10 +487,10 @@ export const RemoteControlPanel = (): React.JSX.Element => {
         </SettingsSection>
       ) : null}
 
-      {snapshot.canManagePairing && accessIsBrowser ? (
+      {snapshot.canManagePairing && accessUsesPairing ? (
         <SettingsSection
           title="Trusted browsers"
-          description="Always-trusted browsers can reconnect while Browser access is enabled. Revoking one takes effect on its next request or WebSocket reconnect."
+          description="Always-trusted browsers can reconnect while the same remote address remains available. Revoking one takes effect on its next request or WebSocket reconnect."
         >
           {snapshot.trustedBrowsers.length === 0 ? (
             <div className="rounded-xl border border-dashed border-border px-4 py-6 text-center text-sm text-muted-foreground">
@@ -526,10 +531,10 @@ export const RemoteControlPanel = (): React.JSX.Element => {
         </SettingsSection>
       ) : null}
 
-      {snapshot.canManagePairing && accessIsBrowser ? (
+      {snapshot.canManagePairing && accessUsesPairing ? (
         <SettingsSection
           title={`Pairing requests${snapshot.pendingRequests.length ? ` (${snapshot.pendingRequests.length})` : ''}`}
-          description="Two-step verification uses a six-digit code. Approve a new browser only when its code matches the request shown here."
+          description="Two-step verification uses a six-digit code. Approve a new remote session only when its code matches the request shown here."
         >
           {snapshot.pendingRequests.length === 0 ? (
             <div className="rounded-xl border border-dashed border-border px-4 py-6 text-center text-sm text-muted-foreground">

@@ -5,7 +5,7 @@ import { join } from 'node:path'
 
 import { afterEach, describe, expect, it, vi } from 'vitest'
 
-import { RemoteBrowserPairingManager } from './pairing'
+import { RemoteSessionPairingManager } from './pairing'
 import { RemoteAccessRepository } from './repository'
 import type { RemotePairingDecision } from '../../shared/remote-access'
 
@@ -62,16 +62,15 @@ const response = (): CapturedResponse => {
 
 const cookiePair = (header: string): string => header.split(';', 1)[0]
 
-describe('RemoteBrowserPairingManager', () => {
+describe('RemoteSessionPairingManager', () => {
   it('grants one-time access without allowing the browser to manage pairing', async () => {
     const root = await mkdtemp(join(tmpdir(), 'open-science-remote-pairing-'))
     roots.push(root)
     const changed = vi.fn()
-    const manager = await RemoteBrowserPairingManager.create({
+    const manager = await RemoteSessionPairingManager.create({
       repository: new RemoteAccessRepository(root),
       isAllowedRemoteHost: (hostname) => hostname === 'home.example.ts.net',
       isEnabled: () => true,
-      requiresPairing: () => true,
       onChanged: changed
     })
 
@@ -122,11 +121,10 @@ describe('RemoteBrowserPairingManager', () => {
     const root = await mkdtemp(join(tmpdir(), 'open-science-remote-pairing-'))
     roots.push(root)
     const repository = new RemoteAccessRepository(root)
-    const manager = await RemoteBrowserPairingManager.create({
+    const manager = await RemoteSessionPairingManager.create({
       repository,
       isAllowedRemoteHost: (hostname) => hostname === 'home.example.ts.net',
       isEnabled: () => true,
-      requiresPairing: () => true,
       onChanged: vi.fn()
     })
 
@@ -184,11 +182,10 @@ describe('RemoteBrowserPairingManager', () => {
     const root = await mkdtemp(join(tmpdir(), 'open-science-remote-pairing-'))
     roots.push(root)
     const repository = new RemoteAccessRepository(root)
-    const manager = await RemoteBrowserPairingManager.create({
+    const manager = await RemoteSessionPairingManager.create({
       repository,
       isAllowedRemoteHost: (hostname) => hostname === 'home.example.ts.net',
       isEnabled: () => true,
-      requiresPairing: () => true,
       onChanged: vi.fn()
     })
 
@@ -214,11 +211,10 @@ describe('RemoteBrowserPairingManager', () => {
     let now = 0
     let enabled = true
     let authorizationGeneration = 0
-    const manager = await RemoteBrowserPairingManager.create({
+    const manager = await RemoteSessionPairingManager.create({
       repository,
       isAllowedRemoteHost: (hostname) => hostname === 'home.example.ts.net',
       isEnabled: () => enabled,
-      requiresPairing: () => true,
       authorizationGeneration: () => authorizationGeneration,
       onChanged: vi.fn(),
       now: () => now
@@ -273,14 +269,13 @@ describe('RemoteBrowserPairingManager', () => {
     await expect(authorization).resolves.toBeUndefined()
   })
 
-  it('opens a provider-authenticated app connection without browser pairing', async () => {
+  it('does not treat an allowed provider Host header as authentication', async () => {
     const root = await mkdtemp(join(tmpdir(), 'open-science-remote-pairing-'))
     roots.push(root)
-    const manager = await RemoteBrowserPairingManager.create({
+    const manager = await RemoteSessionPairingManager.create({
       repository: new RemoteAccessRepository(root),
       isAllowedRemoteHost: (hostname) => hostname.endsWith('.r3proxy.com'),
       isEnabled: () => true,
-      requiresPairing: () => false,
       onChanged: vi.fn()
     })
 
@@ -291,10 +286,24 @@ describe('RemoteBrowserPairingManager', () => {
         directResponse.response,
         new URL('https://session-123.r3proxy.com/')
       )
-    ).resolves.toMatchObject({ kind: 'authorized-pairing-manager' })
-    expect(directResponse.body()).toBe('')
-    expect(manager.pendingViews()).toHaveLength(0)
+    ).resolves.toBe('handled')
+    expect(directResponse.body()).toContain('Approve this browser')
+    expect(manager.pendingViews()).toHaveLength(1)
 
+    await expect(
+      manager.webAccess.authorizeHttp(
+        request(
+          '/rpc/test',
+          {
+            host: 'session-123.r3proxy.com',
+            origin: 'https://session-123.r3proxy.com'
+          },
+          'POST'
+        ),
+        response().response,
+        new URL('https://session-123.r3proxy.com/rpc/test')
+      )
+    ).resolves.toBe('denied')
     await expect(
       manager.webAccess.authorizeHttp(
         request(
@@ -325,7 +334,7 @@ describe('RemoteBrowserPairingManager', () => {
         }),
         new URL('https://session-123.r3proxy.com/events')
       )
-    ).resolves.toEqual({})
+    ).resolves.toBeUndefined()
     await expect(
       manager.webAccess.authorizeWebSocket(
         request('/events', {

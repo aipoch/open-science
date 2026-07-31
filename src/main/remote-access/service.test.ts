@@ -225,7 +225,7 @@ describe('RemoteAccessService', () => {
     })
   })
 
-  it('rejects the saved public Browser host after switching to App access', async () => {
+  it('rejects the saved public Browser host and pairs an App request after switching modes', async () => {
     const repository = await createRepository()
     const deps = createReadyDeps()
     deps.ensureRemoteItLink.mockResolvedValue('https://browser-session.r3proxy.com')
@@ -252,7 +252,8 @@ describe('RemoteAccessService', () => {
         remoteResponse(),
         new URL('https://private-app.r3proxy.com/')
       )
-    ).resolves.toMatchObject({ kind: 'authorized-pairing-manager' })
+    ).resolves.toBe('handled')
+    expect(service.snapshot(true).pendingRequests).toHaveLength(1)
   })
 
   it('ignores an invalid legacy Browser URL when authorizing App access', async () => {
@@ -279,7 +280,8 @@ describe('RemoteAccessService', () => {
         remoteResponse(),
         new URL('https://private-app.r3proxy.com/')
       )
-    ).resolves.toMatchObject({ kind: 'authorized-pairing-manager' })
+    ).resolves.toBe('handled')
+    expect(service.snapshot(true).pendingRequests).toHaveLength(1)
   })
 
   it('disconnects the revoked trusted browser immediately', async () => {

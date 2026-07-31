@@ -1170,65 +1170,81 @@ describe('SettingsPage layout', () => {
     expect(settingsSection('Remote Browser Access')).toBeUndefined()
   })
 
-  it('lets an approved Web browser manage two-step verification without desktop controls', async () => {
-    const remoteAccess = (
-      window as unknown as {
-        api: {
-          remoteAccess: {
-            getSnapshot: ReturnType<typeof vi.fn>
-            detect: ReturnType<typeof vi.fn>
+  it.each([
+    {
+      mode: 'remoteit',
+      accessUrl: undefined,
+      currentSection: 'Remote App Access',
+      otherSection: 'Remote Browser Access'
+    },
+    {
+      mode: 'remoteit-public',
+      accessUrl: 'https://open-science.connect.remote.it/',
+      currentSection: 'Remote Browser Access',
+      otherSection: 'Remote App Access'
+    }
+  ] as const)(
+    'lets an approved Web session manage two-step verification without desktop controls in $mode mode',
+    async ({ mode, accessUrl, currentSection, otherSection }) => {
+      const remoteAccess = (
+        window as unknown as {
+          api: {
+            remoteAccess: {
+              getSnapshot: ReturnType<typeof vi.fn>
+              detect: ReturnType<typeof vi.fn>
+            }
           }
         }
-      }
-    ).api.remoteAccess
-    remoteAccess.getSnapshot.mockResolvedValue({
-      canManage: false,
-      canManagePairing: true,
-      mode: 'remoteit-public',
-      enabled: true,
-      lifecycle: 'running',
-      accessUrl: 'https://open-science.connect.remote.it/',
-      remoteIt: { installed: true, loggedIn: true, registered: true },
-      pendingRequests: [
-        {
-          id: 'pending-1',
-          code: '123456',
-          browser: 'Google Chrome',
-          platform: 'Windows',
-          requestedAt: Date.now(),
-          expiresAt: Date.now() + 60_000
-        }
-      ],
-      trustedBrowsers: [
-        {
-          id: 'trusted-1',
-          browser: 'Chrome on iOS',
-          platform: 'iOS/iPadOS',
-          createdAt: Date.now(),
-          lastSeenAt: Date.now()
-        }
-      ]
-    })
+      ).api.remoteAccess
+      remoteAccess.getSnapshot.mockResolvedValue({
+        canManage: false,
+        canManagePairing: true,
+        mode,
+        enabled: true,
+        lifecycle: 'running',
+        accessUrl,
+        remoteIt: { installed: true, loggedIn: true, registered: true },
+        pendingRequests: [
+          {
+            id: 'pending-1',
+            code: '123456',
+            browser: 'Google Chrome',
+            platform: 'Windows',
+            requestedAt: Date.now(),
+            expiresAt: Date.now() + 60_000
+          }
+        ],
+        trustedBrowsers: [
+          {
+            id: 'trusted-1',
+            browser: 'Chrome on iOS',
+            platform: 'iOS/iPadOS',
+            createdAt: Date.now(),
+            lastSeenAt: Date.now()
+          }
+        ]
+      })
 
-    await act(async () => {
-      root.render(<SettingsPage open onClose={vi.fn()} />)
-    })
-    await act(async () => navButton('Remote control')?.click())
+      await act(async () => {
+        root.render(<SettingsPage open onClose={vi.fn()} />)
+      })
+      await act(async () => navButton('Remote control')?.click())
 
-    expect(document.body.textContent).toContain('Chrome on iOS · iOS/iPadOS')
-    expect(document.body.textContent).toContain('Google Chrome · Windows')
-    expect(document.body.textContent).toContain('123456')
-    expect(document.body.textContent).toContain(
-      'Two-step verification requests and trusted browsers can be managed below'
-    )
-    expect(
-      document.body.querySelector<HTMLInputElement>('input[name="remote-access-mode"]:checked')
-        ?.disabled
-    ).toBe(true)
-    expect(settingsSection('Remote App Access')).toBeUndefined()
-    expect(settingsSection('Remote Browser Access')).not.toBeUndefined()
-    expect(remoteAccess.detect).not.toHaveBeenCalled()
-  })
+      expect(document.body.textContent).toContain('Chrome on iOS · iOS/iPadOS')
+      expect(document.body.textContent).toContain('Google Chrome · Windows')
+      expect(document.body.textContent).toContain('123456')
+      expect(document.body.textContent).toContain(
+        'Two-step verification requests and trusted browsers can be managed below'
+      )
+      expect(
+        document.body.querySelector<HTMLInputElement>('input[name="remote-access-mode"]:checked')
+          ?.disabled
+      ).toBe(true)
+      expect(settingsSection(currentSection)).not.toBeUndefined()
+      expect(settingsSection(otherSection)).toBeUndefined()
+      expect(remoteAccess.detect).not.toHaveBeenCalled()
+    }
+  )
 
   it('shows the app-only Remote.It flow without asking for an IP address or port', async () => {
     const remoteAccess = (
@@ -1276,8 +1292,9 @@ describe('SettingsPage layout', () => {
     expect(
       document.body.querySelector<HTMLAnchorElement>('a[href="https://www.remote.it/download/"]')
     ).not.toBeNull()
-    expect(document.body.textContent).toContain('No six-digit verification is required')
-    expect(document.body.textContent).not.toContain('Pairing requests')
+    expect(document.body.textContent).toContain('six-digit code')
+    expect(document.body.textContent).toContain('Trusted browsers')
+    expect(document.body.textContent).toContain('Pairing requests')
     expect(settingsSection('Remote App Access')).not.toBeUndefined()
     expect(settingsSection('Remote Browser Access')).toBeUndefined()
     const connectedBadge = Array.from(

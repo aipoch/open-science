@@ -56,7 +56,6 @@ type PairingManagerOptions = {
   repository: RemoteAccessRepository
   isAllowedRemoteHost: (hostname: string) => boolean
   isEnabled: () => boolean
-  requiresPairing: () => boolean
   authorizationGeneration?: () => number
   onChanged: () => void
   now?: () => number
@@ -152,7 +151,7 @@ const json = (response: ServerResponse, status: number, value: unknown): void =>
   response.end(JSON.stringify(value))
 }
 
-export class RemoteBrowserPairingManager {
+export class RemoteSessionPairingManager {
   private stored: StoredRemoteAccess
   private readonly pending = new Map<string, PendingPairing>()
   private readonly oneTimeSessions = new Map<string, OneTimeSession>()
@@ -166,8 +165,8 @@ export class RemoteBrowserPairingManager {
     this.now = options.now ?? Date.now
   }
 
-  static async create(options: PairingManagerOptions): Promise<RemoteBrowserPairingManager> {
-    return new RemoteBrowserPairingManager(options, await options.repository.load())
+  static async create(options: PairingManagerOptions): Promise<RemoteSessionPairingManager> {
+    return new RemoteSessionPairingManager(options, await options.repository.load())
   }
 
   get preferences(): Pick<
@@ -341,22 +340,13 @@ export class RemoteBrowserPairingManager {
   ): Promise<ExternalWebAccessDecision> {
     const authorizationGeneration = this.options.authorizationGeneration?.() ?? 0
     const needsOrigin = request.method !== 'GET' && request.method !== 'HEAD'
-    const requiresPairing = this.options.requiresPairing()
+    // Provider hosts identify an expected route but are forgeable by local callers. Only the
+    // unguessable Open Science session checked below authenticates external workspace access.
     if (!this.isExpectedRemoteRequest(request, needsOrigin)) return 'denied'
-    if (!requiresPairing) {
-      return this.httpAuthorization(
-        request,
-        needsOrigin,
-        authorizationGeneration,
-        requiresPairing,
-        true
-      )
-    }
     const sessionAccess = await this.getSessionAccess(request)
     if (
       authorizationGeneration !== (this.options.authorizationGeneration?.() ?? 0) ||
-      !this.isExpectedRemoteRequest(request, needsOrigin) ||
-      !this.options.requiresPairing()
+      !this.isExpectedRemoteRequest(request, needsOrigin)
     ) {
       return 'denied'
     }
@@ -365,7 +355,6 @@ export class RemoteBrowserPairingManager {
         request,
         needsOrigin,
         authorizationGeneration,
-        requiresPairing,
         sessionAccess.kind === 'trusted'
       )
     }
@@ -393,14 +382,12 @@ export class RemoteBrowserPairingManager {
     request: IncomingMessage,
     needsOrigin: boolean,
     authorizationGeneration: number,
-    requiresPairing: boolean,
     canManagePairing: boolean
   ): ExternalWebAccessAuthorization {
     return {
       kind: canManagePairing ? 'authorized-pairing-manager' : 'authorized',
       isCurrent: () =>
         authorizationGeneration === (this.options.authorizationGeneration?.() ?? 0) &&
-        this.options.requiresPairing() === requiresPairing &&
         this.isExpectedRemoteRequest(request, needsOrigin)
     }
   }
@@ -413,12 +400,10 @@ export class RemoteBrowserPairingManager {
     if (url.pathname !== '/events' || !this.isExpectedRemoteRequest(request, true)) {
       return undefined
     }
-    if (!this.options.requiresPairing()) return {}
     const sessionAccess = await this.getSessionAccess(request)
     if (
       authorizationGeneration !== (this.options.authorizationGeneration?.() ?? 0) ||
-      !this.isExpectedRemoteRequest(request, true) ||
-      !this.options.requiresPairing()
+      !this.isExpectedRemoteRequest(request, true)
     ) {
       return undefined
     }
