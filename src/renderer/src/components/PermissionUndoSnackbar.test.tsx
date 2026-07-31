@@ -77,6 +77,17 @@ describe('PermissionUndoSnackbar', () => {
     expect(container.querySelector('[data-testid="permission-undo-snackbar"]')).toBeNull()
   })
 
+  it('keeps the Undo stack above the window bottom after Settings has closed', async () => {
+    await act(async () => root.render(<PermissionUndoSnackbar />))
+
+    const stack = container.querySelector<HTMLElement>('[data-testid="permission-undo-stack"]')
+
+    expect(stack?.className).toContain('bottom-[max(1.5rem,env(safe-area-inset-bottom))]')
+    expect(stack?.className).toContain('max-h-[min(70svh,32rem)]')
+    expect(stack?.className).toContain('overflow-y-auto')
+    expect(stack?.querySelector('[data-slot="scroll-area-viewport"]')).toBeNull()
+  })
+
   it('pauses automatic dismissal while the snackbar is hovered', async () => {
     await act(async () => root.render(<PermissionUndoSnackbar />))
     const snackbar = container.querySelector<HTMLElement>(
@@ -121,9 +132,6 @@ describe('PermissionUndoSnackbar', () => {
     expect(container.textContent).toContain('Revoked Shell')
     expect(container.textContent).toContain('Revoked Connector')
     expect(container.textContent).not.toContain('queued')
-    expect(
-      container.querySelector('[data-testid="permission-undo-stack"]')?.getAttribute('data-slot')
-    ).toBe('scroll-area')
 
     const fourthUndo = container.querySelector<HTMLButtonElement>(
       '[data-undo-token="undo-4"] button:not([aria-label])'

@@ -2,7 +2,6 @@ import { KeyRound, LoaderCircle, RotateCcw, X } from 'lucide-react'
 import { useEffect, useMemo, useState } from 'react'
 
 import { Button } from '@/components/ui/button'
-import { ScrollArea } from '@/components/ui/scroll-area'
 import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from '@/components/ui/tooltip'
 import { usePermissionGrantsStore } from '@/stores/permission-grants-store'
 import type { PermissionUndo } from '@/stores/permission-grants-store'
@@ -105,11 +104,13 @@ const PermissionUndoSnackbar = (): React.JSX.Element | null => {
   )
   if (items.length === 0) return null
 
+  // The shared ScrollArea viewport is full-height and requires a definite root height. This stack
+  // must instead size to its receipts so its bottom anchor cannot lay them out below the viewport.
   return (
-    <ScrollArea
+    <div
       aria-live="polite"
       data-testid="permission-undo-stack"
-      className="pointer-events-auto z-toast fixed bottom-[max(1.5rem,env(safe-area-inset-bottom))] left-1/2 max-h-[min(70svh,32rem)] -translate-x-1/2 overscroll-contain"
+      className="pointer-events-auto z-toast fixed bottom-[max(1.5rem,env(safe-area-inset-bottom))] left-1/2 max-h-[min(70svh,32rem)] -translate-x-1/2 overflow-y-auto overscroll-contain"
     >
       <div className="flex flex-col items-center gap-2 p-1 pr-3">
         {items.map((item) => (
@@ -122,7 +123,7 @@ const PermissionUndoSnackbar = (): React.JSX.Element | null => {
           />
         ))}
       </div>
-    </ScrollArea>
+    </div>
   )
 }
 
