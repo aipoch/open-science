@@ -259,6 +259,19 @@ describe('settings repository', () => {
     expect(settings.opencodeVersion).toBe('1.18.3')
   })
 
+  it('persists the cursor framework + Cursor Agent path across a sanitized read', async () => {
+    const repository = new SettingsRepository(await createStorageRoot())
+
+    await repository.setAgentFramework('cursor')
+    await repository.setCursorInfo('/usr/local/bin/agent', '2026.07.23', true)
+
+    const settings = await repository.getSettings()
+    expect(settings.agentFrameworkId).toBe('cursor')
+    expect(settings.cursorPath).toBe('/usr/local/bin/agent')
+    expect(settings.cursorVersion).toBe('2026.07.23')
+    expect(settings.cursorLoggedIn).toBe(true)
+  })
+
   it('persists the reasoning effort across a sanitized read and a reload', async () => {
     const root = await createStorageRoot()
     const repository = new SettingsRepository(root)

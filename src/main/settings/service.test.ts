@@ -8,6 +8,7 @@ import {
   CLAUDE_ISOLATED_PROVIDER_ID,
   CLAUDE_SHARED_PROVIDER_ID,
   CODEX_SUBSCRIPTION_PROVIDER_ID,
+  CURSOR_SUBSCRIPTION_PROVIDER_ID,
   type ClaudeDetectResult
 } from '../../shared/settings'
 import type { CodexAuthControllerPort, CodexAuthStatus } from './codex-auth'
@@ -133,6 +134,8 @@ const createService = (
     installManagedCodexImpl?: ManagedCodexInstallImpl
     // When set, opencode detection resolves this path/version; otherwise it finds nothing.
     opencodeDetected?: { path: string; version: string }
+    // When set, Cursor Agent detection resolves this path/version/login probe; otherwise nothing.
+    cursorDetected?: { path: string; version: string; loggedIn?: boolean }
     codexDetected?: { path: string; version: string; nativePath?: string; nativeVersion?: string }
     managedCodexAdapterPath?: string
     managedCodexNativePath?: string
@@ -190,6 +193,22 @@ const createService = (
           path === options.opencodeDetected?.path ? options.opencodeDetected.version : undefined
         ),
       resolveNpmBinDirs: () => Promise.resolve([])
+    },
+    cursorDetectDeps: {
+      env: options.cursorDetected ? { PATH: dirname(options.cursorDetected.path) } : {},
+      homePath: '/home',
+      platform: 'linux',
+      isExecutable: (path) => Promise.resolve(path === options.cursorDetected?.path),
+      getVersion: (path) =>
+        Promise.resolve(
+          path === options.cursorDetected?.path ? options.cursorDetected.version : undefined
+        ),
+      getLoginStatus: (path) =>
+        Promise.resolve(
+          path === options.cursorDetected?.path
+            ? (options.cursorDetected.loggedIn ?? true)
+            : undefined
+        )
     },
     codexDetectDeps: {
       env: options.codexDetected ? { PATH: dirname(options.codexDetected.path) } : {},
@@ -4110,6 +4129,89 @@ describe('detectOpencode', () => {
     const snapshot = await service.detectOpencode()
 
     expect(snapshot.opencode).toEqual({ resolvedPath: present, version: '1.18.3' })
+  })
+})
+
+describe('detectCursor', () => {
+  it('clears a stale record when nothing runnable is found', async () => {
+    await repository.setCursorInfo('/gone/bin/agent', '2026.07.23', true)
+    const service = createService()
+
+    const snapshot = await service.detectCursor()
+
+    expect(snapshot.cursor).toEqual({})
+    expect((await repository.getSettings()).cursorPath).toBeUndefined()
+  })
+
+  it('records the detected path, version, and login probe', async () => {
+    const service = createService(undefined, {
+      cursorDetected: { path: '/usr/local/bin/agent', version: '2026.07.23', loggedIn: true }
+    })
+
+    const snapshot = await service.detectCursor()
+
+    expect(snapshot.cursor).toEqual({
+      resolvedPath: '/usr/local/bin/agent',
+      version: '2026.07.23',
+      loggedIn: true
+    })
+  })
+
+  it('keeps a still-present record when the live probe misses', async () => {
+    const present = join(storageRoot, 'agent-present')
+    await writeFile(present, '', 'utf8')
+    await chmod(present, 0o755)
+    await repository.setCursorInfo(present, '2026.07.23', true)
+    const service = createService()
+
+    const snapshot = await service.detectCursor()
+
+    expect(snapshot.cursor).toEqual({
+      resolvedPath: present,
+      version: '2026.07.23',
+      loggedIn: true
+    })
+  })
+})
+
+describe('resolveAgentBackend cursor', () => {
+  it('resolves the Cursor Agent backend with cursor_login authentication', async () => {
+    vi.stubEnv('OPEN_SCIENCE_AGENT_FRAMEWORK', 'cursor')
+    const present = join(storageRoot, 'agent')
+    await writeFile(present, '', 'utf8')
+    await chmod(present, 0o755)
+    await repository.setAgentFramework('cursor')
+    await repository.setCursorInfo(present, '2026.07.23', true)
+    const service = createService(undefined, {
+      cursorDetected: { path: present, version: '2026.07.23', loggedIn: true }
+    })
+
+    const snapshot = await service.upsertProvider({ type: 'cursor-subscription' })
+    const provider = snapshot.providers.find(
+      (candidate) => candidate.id === CURSOR_SUBSCRIPTION_PROVIDER_ID
+    )
+    expect(provider).toBeDefined()
+    await service.setActiveProvider(CURSOR_SUBSCRIPTION_PROVIDER_ID)
+
+    const backend = await service.resolveActiveAgentBackend()
+
+    expect(backend.framework.id).toBe('cursor')
+    expect(backend.executablePath).toBe(present)
+    expect(backend.authentication).toEqual({ methodId: 'cursor_login' })
+    expect(backend.backendId).toBe(`cursor:${CURSOR_SUBSCRIPTION_PROVIDER_ID}`)
+  })
+
+  it('rejects resolve when the Cursor CLI is missing', async () => {
+    vi.stubEnv('OPEN_SCIENCE_AGENT_FRAMEWORK', 'cursor')
+    await repository.setAgentFramework('cursor')
+    const service = createService()
+    await service.upsertProvider({ type: 'cursor-subscription' })
+    await repository.setCursorInfo('/gone/bin/agent', '2026.07.23', true)
+    // Force the stored path away so resolve must live-detect (and fail).
+    await repository.clearCursorInfo()
+    await service.setActiveProvider(CURSOR_SUBSCRIPTION_PROVIDER_ID)
+
+    await expect(service.resolveActiveAgentBackend()).rejects.toThrow(/Cursor Agent executable/)
   })
 })
 

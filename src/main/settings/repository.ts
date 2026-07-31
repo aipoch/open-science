@@ -523,7 +523,8 @@ const sanitizeSettings = (value: unknown): StoredSettings => {
   if (
     agentFrameworkId === 'claude-code' ||
     agentFrameworkId === 'opencode' ||
-    agentFrameworkId === 'codex'
+    agentFrameworkId === 'codex' ||
+    agentFrameworkId === 'cursor'
   ) {
     settings.agentFrameworkId = agentFrameworkId
   }
@@ -569,6 +570,18 @@ const sanitizeSettings = (value: unknown): StoredSettings => {
 
     const opencodeVersion = asString(value.opencodeVersion)
     if (opencodeVersion) settings.opencodeVersion = opencodeVersion
+  }
+
+  const cursorPath = asString(value.cursorPath)
+
+  if (cursorPath) {
+    settings.cursorPath = cursorPath
+
+    const cursorVersion = asString(value.cursorVersion)
+    if (cursorVersion) settings.cursorVersion = cursorVersion
+
+    const cursorLoggedIn = asBoolean(value.cursorLoggedIn)
+    if (cursorLoggedIn !== undefined) settings.cursorLoggedIn = cursorLoggedIn
   }
 
   const notebookRuntimes = sanitizeNotebookRuntimes(value.notebookRuntimes)

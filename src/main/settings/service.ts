@@ -2275,7 +2275,7 @@ class SettingsService {
 
     if (active !== uninstalled) return
 
-    const candidates: AgentFrameworkId[] = ['claude-code', 'opencode', 'codex']
+    const candidates: AgentFrameworkId[] = ['claude-code', 'opencode', 'codex', 'cursor']
 
     for (const candidate of candidates) {
       if (candidate === uninstalled) continue
@@ -2285,7 +2285,9 @@ class SettingsService {
           ? settings.claude?.resolvedPath
           : candidate === 'opencode'
             ? settings.opencodePath
-            : settings.codex?.resolvedPath
+            : candidate === 'cursor'
+              ? settings.cursorPath
+              : settings.codex?.resolvedPath
       if (!path) continue
 
       const version =
@@ -2293,7 +2295,9 @@ class SettingsService {
           ? await this.detectDeps.getVersion(path)
           : candidate === 'opencode'
             ? await this.opencodeDetectDeps.getVersion(path)
-            : await this.codexDetectDeps.getAdapterVersion(path)
+            : candidate === 'cursor'
+              ? await this.cursorDetectDeps.getVersion(path)
+              : await this.codexDetectDeps.getAdapterVersion(path)
       if (version) {
         await this.repository.setAgentFramework(candidate)
         return
