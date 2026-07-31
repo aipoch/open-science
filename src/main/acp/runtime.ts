@@ -71,6 +71,7 @@ import {
   toAcpRuntimeEvent
 } from './runtime-events'
 import { readWorkspaceTextFile, writeWorkspaceTextFile } from './filesystem'
+import { toCodexTurnTokenUsage } from './codex-turn-usage'
 import { fetchOpenCodeUsageSnapshot, sumOpenCodeTurnUsage } from './opencode-turn-usage'
 import {
   matchSessionModelOption,
@@ -3030,8 +3031,8 @@ class AcpRuntime {
           // fallback so a bridge response never loses token accounting entirely when metadata is absent.
           const turnUsage =
             promptFramework === 'codex'
-              ? (toAcpTurnTokenUsage(message.response._meta?.[ACP_TURN_TOKEN_USAGE_META_KEY]) ??
-                toAcpTurnTokenUsage(message.response.usage))
+              ? (toCodexTurnTokenUsage(message.response._meta?.[ACP_TURN_TOKEN_USAGE_META_KEY]) ??
+                toCodexTurnTokenUsage(message.response.usage))
               : (opencodeTurnUsage ?? toAcpTurnTokenUsage(message.response.usage))
           this.pushEvent({
             kind: 'stop',
@@ -5401,9 +5402,9 @@ class AcpRuntime {
     return { outcome: { outcome: 'selected', optionId: allowOption.optionId } }
   }
 
-  // App-managed codex-acp emits the exact per-request numerator during generation. A user-managed
-  // unpatched adapter emits its latest total instead, but Codex PromptResponse.usage is also a
-  // per-request (not per-turn accumulated) snapshot, so use it as a final compatibility correction.
+  // App-managed codex-acp emits the exact per-request numerator during generation. Codex's pinned
+  // adapter publishes uncached input and cached input as separate PromptResponse categories, so
+  // recombine them for the context numerator when applying the final per-request correction.
   private recordCodexPromptResponseContextUsage(
     sessionId: string,
     response: PromptResponse,
@@ -5417,12 +5418,12 @@ class AcpRuntime {
       return
     }
 
-    const usage = response.usage
+    const usage = toCodexTurnTokenUsage(response.usage)
     const current = this.contextUsageBySession.get(sessionId)
     if (!usage || !current) return
 
-    const used = usage.inputTokens + (usage.cachedReadTokens ?? 0)
-    if (!Number.isFinite(used) || used < 0) return
+    const used = usage.inputTokens + usage.cacheTokens
+    if (!Number.isSafeInteger(used)) return
     if (current.used === used && current.breakdown?.status === 'reconciled') return
 
     this.contextUsageBySession.set(sessionId, {

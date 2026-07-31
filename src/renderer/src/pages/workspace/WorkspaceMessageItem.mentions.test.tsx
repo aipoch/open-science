@@ -45,6 +45,8 @@ beforeEach(() => {
 
 afterEach(() => {
   act(() => root.unmount())
+  vi.useRealTimers()
+  vi.restoreAllMocks()
   container.remove()
   document.body.innerHTML = ''
   delete (window as unknown as { api?: unknown }).api
@@ -76,7 +78,8 @@ const clickButton = (label: string): void => {
 
 const renderMessageItem = async (
   message: ChatMessage,
-  artifacts?: React.ComponentProps<typeof WorkspaceMessageItem>['artifacts']
+  artifacts?: React.ComponentProps<typeof WorkspaceMessageItem>['artifacts'],
+  turnStartedAt?: number
 ): Promise<void> => {
   await act(async () => {
     root.render(
@@ -87,6 +90,7 @@ const renderMessageItem = async (
         onPreviewUploadAttachment={noop}
         onOpenSkillMention={noop}
         onPreviewMentionArtifact={noop}
+        turnStartedAt={turnStartedAt}
       />
     )
   })
@@ -302,32 +306,308 @@ describe('WorkspaceMessageItem missing artifact badge', () => {
 })
 
 describe('WorkspaceMessageItem turn token usage', () => {
-  it('shows the completed response totals below the agent message', async () => {
+  it('keeps completion metadata compact and reveals response token totals from Usage', async () => {
     await renderMessageItem(
       createMessage({
         role: 'agent',
         content: 'Done',
+        createdAt: 1710000030000,
+        completedAt: 1710000125000,
+        updatedAt: 1710000999000,
+        turnUsage: { inputTokens: 12_345, cacheTokens: 678, outputTokens: 90 }
+      }),
+      undefined,
+      1710000000000
+    )
+
+    const footer = container.querySelector('[data-slot="assistant-message-footer"]')
+    const completedTime = footer?.querySelector('time')
+    const elapsedSegment = footer?.querySelector('[data-slot="assistant-message-elapsed-segment"]')
+    const usage = footer?.querySelector('[data-slot="turn-token-usage"]')
+    const usageTrigger = usage?.querySelector<HTMLButtonElement>('button')
+    const separator = usage?.querySelector('[data-slot="assistant-message-metadata-separator"]')
+
+    expect(completedTime?.textContent).toMatch(/^Completed /)
+    expect(completedTime?.getAttribute('datetime')).toBe('2024-03-09T16:02:05.000Z')
+    expect(elapsedSegment?.textContent).toBe('Elapsed 2m 5s')
+    expect(elapsedSegment?.classList.contains('whitespace-nowrap')).toBe(true)
+    expect(separator).toBeNull()
+    expect(usage?.textContent).toBe('Usage')
+    expect(usageTrigger?.getAttribute('aria-label')).toBe('Token usage for this response')
+    expect(usageTrigger?.className).toContain('border-dashed')
+    expect(usageTrigger?.className).toContain('focus-visible:ring-[3px]')
+    expect(usageTrigger?.className).toContain('focus-visible:ring-ring/50')
+    expect(usageTrigger?.className).toContain('motion-reduce:transition-none')
+    expect(footer?.className).toContain('whitespace-nowrap')
+    expect(footer?.textContent).toContain('Elapsed 2m 5s')
+    expect(document.body.textContent).not.toContain('Input 12,345')
+
+    await act(async () => {
+      usageTrigger?.dispatchEvent(new MouseEvent('pointerover', { bubbles: true }))
+      await Promise.resolve()
+    })
+
+    const usagePopover = document.body.querySelector('[data-slot="turn-token-usage-popover"]')
+    expect(usagePopover?.textContent).toContain('Usage')
+    expect(usagePopover?.textContent).toContain('Input12,345')
+    expect(usagePopover?.textContent).toContain('Cache678')
+    expect(usagePopover?.textContent).toContain('Output90')
+    expect(usagePopover?.textContent).toContain('Total13,113')
+    expect(usagePopover?.getAttribute('aria-label')).toBe('Token usage for this response')
+    expect(usagePopover?.className).toContain('border-border')
+    expect(usagePopover?.className).toContain('bg-popover')
+    expect(usagePopover?.className).toContain('shadow-menu')
+    expect(usagePopover?.className).toContain('w-48')
+    expect(usagePopover?.className).not.toContain('w-56')
+    expect(usagePopover?.className).toContain('p-2.5')
+    const breakdown = usagePopover?.querySelector('[data-slot="turn-token-usage-breakdown"]')
+    expect(breakdown?.getAttribute('aria-label')).toBe(
+      'Input 12,345, Cache 678, Output 90; Total 13,113 tokens'
+    )
+    const segments = Array.from(
+      breakdown?.querySelectorAll<HTMLElement>('[data-slot="turn-token-usage-segment"]') ?? []
+    )
+    expect(segments).toHaveLength(3)
+    expect(segments[0]?.className).toContain('bg-chart-2')
+    expect(segments[0]?.style.flexGrow).toBe('12345')
+    expect(segments[1]?.className).toContain('bg-chart-4')
+    expect(segments[1]?.style.flexGrow).toBe('678')
+    expect(segments[2]?.className).toContain('bg-chart-1')
+    expect(segments[2]?.style.flexGrow).toBe('90')
+    const markers = Array.from(
+      usagePopover?.querySelectorAll('[data-slot="turn-token-usage-marker"]') ?? []
+    )
+    expect(markers).toHaveLength(3)
+    expect(markers[0]?.className).toContain('bg-chart-2')
+    expect(markers[1]?.className).toContain('bg-chart-4')
+    expect(markers[2]?.className).toContain('bg-chart-1')
+    expect(
+      usagePopover?.querySelector('[data-slot="turn-token-usage-total"]')?.className
+    ).toContain('border-t')
+  })
+
+  it('splits cache reads and writes when the agent reports both categories', async () => {
+    await renderMessageItem(
+      createMessage({
+        role: 'agent',
+        content: 'Done',
+        createdAt: 1710000030000,
+        completedAt: 1710000125000,
+        turnUsage: {
+          inputTokens: 100,
+          cacheTokens: 50,
+          cachedReadTokens: 30,
+          cachedWriteTokens: 20,
+          outputTokens: 10
+        }
+      })
+    )
+
+    const usageTrigger = container.querySelector<HTMLButtonElement>(
+      '[data-slot="turn-token-usage"] button'
+    )
+    await act(async () => {
+      usageTrigger?.dispatchEvent(new MouseEvent('pointerover', { bubbles: true }))
+      await Promise.resolve()
+    })
+
+    const usagePopover = document.body.querySelector('[data-slot="turn-token-usage-popover"]')
+    expect(usagePopover?.textContent).toContain('Input100')
+    expect(usagePopover?.textContent).toContain('Cache read30')
+    expect(usagePopover?.textContent).toContain('Cache write20')
+    expect(usagePopover?.textContent).not.toContain('Cache50')
+    expect(usagePopover?.textContent).toContain('Output10')
+    expect(usagePopover?.textContent).toContain('Total160')
+
+    const segments = Array.from(
+      usagePopover?.querySelectorAll<HTMLElement>('[data-slot="turn-token-usage-segment"]') ?? []
+    )
+    expect(segments).toHaveLength(4)
+    expect(segments.map((segment) => segment.style.flexGrow)).toEqual(['100', '30', '20', '10'])
+    expect(segments[0]?.className).toContain('bg-chart-2')
+    expect(segments[1]?.className).toContain('bg-chart-4')
+    expect(segments[2]?.className).toContain('bg-chart-3')
+    expect(segments[3]?.className).toContain('bg-chart-1')
+  })
+
+  it('keeps the Usage popover open while the pointer crosses into it, then closes it', async () => {
+    vi.useFakeTimers()
+    await renderMessageItem(
+      createMessage({
+        role: 'agent',
+        content: 'Done',
+        completedAt: 1710000125000,
+        turnUsage: { inputTokens: 12_345, cacheTokens: 678, outputTokens: 90 }
+      })
+    )
+
+    const usageTrigger = container.querySelector<HTMLButtonElement>(
+      '[data-slot="turn-token-usage"] button'
+    )
+    act(() => {
+      usageTrigger?.dispatchEvent(new MouseEvent('pointerover', { bubbles: true }))
+    })
+
+    const usagePopover = document.body.querySelector('[data-slot="turn-token-usage-popover"]')
+    act(() => {
+      usageTrigger?.dispatchEvent(
+        new MouseEvent('pointerout', { bubbles: true, relatedTarget: usagePopover })
+      )
+      usagePopover?.dispatchEvent(
+        new MouseEvent('pointerover', { bubbles: true, relatedTarget: usageTrigger })
+      )
+      vi.advanceTimersByTime(100)
+    })
+    expect(document.body.querySelector('[data-slot="turn-token-usage-popover"]')).not.toBeNull()
+
+    act(() => {
+      usagePopover?.dispatchEvent(new MouseEvent('pointerout', { bubbles: true }))
+      vi.advanceTimersByTime(100)
+    })
+    expect(document.body.querySelector('[data-slot="turn-token-usage-popover"]')).toBeNull()
+  })
+
+  it('closes the Usage popover with Escape or when keyboard focus leaves it', async () => {
+    vi.useFakeTimers()
+    await renderMessageItem(
+      createMessage({
+        role: 'agent',
+        content: 'Done',
+        completedAt: 1710000125000,
+        turnUsage: { inputTokens: 12_345, cacheTokens: 678, outputTokens: 90 }
+      })
+    )
+
+    const usageTrigger = container.querySelector<HTMLButtonElement>(
+      '[data-slot="turn-token-usage"] button'
+    )
+    const nextButton = document.createElement('button')
+    document.body.appendChild(nextButton)
+
+    await act(async () => {
+      usageTrigger?.focus()
+      await Promise.resolve()
+    })
+    expect(document.body.querySelector('[data-slot="turn-token-usage-popover"]')).not.toBeNull()
+
+    await act(async () => {
+      usageTrigger?.dispatchEvent(new KeyboardEvent('keydown', { key: 'Escape', bubbles: true }))
+      await Promise.resolve()
+    })
+    expect(document.body.querySelector('[data-slot="turn-token-usage-popover"]')).toBeNull()
+
+    await act(async () => {
+      nextButton.focus()
+      usageTrigger?.focus()
+      await Promise.resolve()
+    })
+    expect(document.body.querySelector('[data-slot="turn-token-usage-popover"]')).not.toBeNull()
+
+    act(() => {
+      nextButton.focus()
+      vi.advanceTimersByTime(100)
+    })
+    expect(document.body.querySelector('[data-slot="turn-token-usage-popover"]')).toBeNull()
+  })
+
+  it('clears a pending Usage close when the token summary unmounts', async () => {
+    vi.useFakeTimers()
+    const setTimeoutSpy = vi.spyOn(globalThis, 'setTimeout')
+    const clearTimeoutSpy = vi.spyOn(globalThis, 'clearTimeout')
+    await renderMessageItem(
+      createMessage({
+        role: 'agent',
+        content: 'Done',
+        completedAt: 1710000125000,
+        turnUsage: { inputTokens: 12_345, cacheTokens: 678, outputTokens: 90 }
+      })
+    )
+
+    const usageTrigger = container.querySelector<HTMLButtonElement>(
+      '[data-slot="turn-token-usage"] button'
+    )
+    act(() => {
+      usageTrigger?.dispatchEvent(new MouseEvent('pointerover', { bubbles: true }))
+      usageTrigger?.dispatchEvent(new MouseEvent('pointerout', { bubbles: true }))
+    })
+    const closeTimerIndex = setTimeoutSpy.mock.calls.findLastIndex(([, delay]) => delay === 100)
+    const closeTimer = setTimeoutSpy.mock.results[closeTimerIndex]?.value
+    expect(closeTimer).toBeDefined()
+
+    await renderMessageItem(
+      createMessage({ role: 'agent', content: 'Done without totals', completedAt: 1710000126000 })
+    )
+
+    expect(clearTimeoutSpy).toHaveBeenCalledWith(closeTimer)
+  })
+
+  it('shows failed time and elapsed run time even when token totals are absent', async () => {
+    await renderMessageItem(
+      createMessage({
+        role: 'agent',
+        content: 'Partial answer',
+        status: 'error',
+        createdAt: 1710000030000,
+        failedAt: 1710000125000,
+        updatedAt: 1710000999000
+      }),
+      undefined,
+      1710000000000
+    )
+
+    const footer = container.querySelector('[data-slot="assistant-message-footer"]')
+    const failedTime = footer?.querySelector('time')
+
+    expect(failedTime?.textContent).toMatch(/^Failed /)
+    expect(failedTime?.getAttribute('datetime')).toBe('2024-03-09T16:02:05.000Z')
+    expect(footer?.textContent).toContain('Elapsed 2m 5s')
+    expect(footer?.querySelector('[data-slot="turn-token-usage"]')).toBeNull()
+  })
+
+  it('keeps Usage beside completion when elapsed metadata is unavailable', async () => {
+    await renderMessageItem(
+      createMessage({
+        role: 'agent',
+        content: 'Done',
+        completedAt: 1710000000000,
         turnUsage: { inputTokens: 12_345, cacheTokens: 678, outputTokens: 90 }
       })
     )
 
     const usage = container.querySelector('[data-slot="turn-token-usage"]')
-    expect(usage?.getAttribute('aria-label')).toBe('Token usage for this response')
-    expect(usage?.textContent).toContain('Input 12,345')
-    expect(usage?.textContent).toContain('Cache 678')
-    expect(usage?.textContent).toContain('Output 90')
+    const usageTrigger = usage?.querySelector('button')
+    expect(usageTrigger?.getAttribute('aria-label')).toBe('Token usage for this response')
+    expect(usage?.textContent).toBe('Usage')
+    expect(container.textContent).not.toContain('Input 12,345')
   })
 
-  it('shows unavailable totals when the agent did not report usage', async () => {
+  it('reveals unavailable totals from the Usage summary when the agent did not report them', async () => {
     await renderMessageItem(
-      createMessage({ role: 'agent', content: 'Done', turnUsageUnavailable: true })
+      createMessage({
+        role: 'agent',
+        content: 'Done',
+        completedAt: 1710000000000,
+        turnUsageUnavailable: true
+      })
     )
 
     const usage = container.querySelector('[data-slot="turn-token-usage"]')
-    expect(usage?.getAttribute('aria-label')).toBe('Token usage unavailable for this response')
-    expect(usage?.textContent).toContain('Input —')
-    expect(usage?.textContent).toContain('Cache —')
-    expect(usage?.textContent).toContain('Output —')
+    const usageTrigger = usage?.querySelector<HTMLButtonElement>('button')
+    expect(usageTrigger?.getAttribute('aria-label')).toBe(
+      'Token usage unavailable for this response'
+    )
+    expect(usage?.textContent).toBe('Usage')
+    expect(document.body.textContent).not.toContain('Input—')
+
+    await act(async () => {
+      usageTrigger?.focus()
+      await Promise.resolve()
+    })
+
+    const usagePopover = document.body.querySelector('[data-slot="turn-token-usage-popover"]')
+    expect(usagePopover?.textContent).toContain('Input—')
+    expect(usagePopover?.textContent).toContain('Cache—')
+    expect(usagePopover?.textContent).toContain('Output—')
   })
 
   it('omits the footer from a non-final agent message in the same turn', async () => {

@@ -145,6 +145,11 @@ The light theme uses a warm off-white page background, white cards, and a deep-g
   --accent: oklch(0.87 0.115 82);
   --accent-foreground: oklch(0.2 0.03 62);
   --destructive: oklch(0.58 0.22 25);
+  --chart-1: rgb(109 167 236);
+  --chart-2: rgb(88 176 133);
+  --chart-3: rgb(210 157 56);
+  --chart-4: rgb(178 132 229);
+  --chart-5: rgb(225 113 91);
   --border: #dededa;
   --input: #dededa;
   --ring: oklch(0.58 0.11 184);
@@ -455,6 +460,8 @@ Workspace-only tokens without a shadcn counterpart, plus shadow tokens. For shar
 - Message content is centered in `mx-auto w-full max-w-4xl pb-[56px]`.
 - User bubble: `ml-auto max-w-[90%] md:max-w-[min(85%,56rem)] rounded-2xl bg-bg-300 px-3.5 py-2 md:px-4 md:py-2.5 text-sm md:text-[15px] text-message-user-text`.
 - Assistant wrapper: `w-full max-w-[56rem] text-sm md:text-[15px] leading-relaxed text-text-000`.
+- Message metadata uses `text-[11px] text-text-300 tabular-nums` below the content. The visible timestamp format is fixed to English `MMM D, h:mm AM/PM`: User Messages show `Sent ...`, completed Agent Messages show `Completed ...`, and failed Agent Messages show `Failed ...`. Terminal timestamps are persisted separately from mutable record update times. Agent footers keep terminal time, elapsed time, and `Usage` on one line without a separator (`Completed ... Elapsed 2m 5s Usage`). `Usage` uses a dashed underline and reveals a compact Context-window-style popover on pointer hover or keyboard focus. The popover has a proportional color bar above its token rows and a divided `Total` row below them. Show Input, Cache, and Output when only aggregate cache data is available; split Cache into Cache read and Cache write, with distinct colors and bar segments, only when the agent reports both categories. The displayed categories are mutually exclusive and `Total` is their sum.
+- User Message Branch navigation, copy, and edit actions sit immediately left of the bubble, outside the metadata footer. Keep the sent time independently right-aligned below the bubble so action visibility never shifts it; reveal the actions on row hover or keyboard focus using the standard inline-action opacity transition.
 - Agent loading surface uses `rounded-2xl bg-bg-200`; animated dots use `bg-text-300`.
 - Tool row: `h-8 rounded-lg px-2 text-[13px] hover:bg-foreground/[0.04]`.
 - Tool row metadata: `text-[12.5px] text-muted-foreground tabular-nums`.

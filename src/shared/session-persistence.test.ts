@@ -67,6 +67,61 @@ describe('message part persistence', () => {
   })
 })
 
+describe('message terminal time persistence', () => {
+  it('backfills stable terminal timestamps for legacy agent messages', () => {
+    const restored = normalizeSessionFile({
+      ...createSessionWithActivity(undefined),
+      activities: undefined,
+      messages: [
+        {
+          id: 'complete-message',
+          role: 'agent',
+          content: 'Done',
+          status: 'complete',
+          eventIds: [],
+          createdAt: 10,
+          updatedAt: 20
+        },
+        {
+          id: 'failed-message',
+          role: 'agent',
+          content: 'Partial',
+          status: 'error',
+          eventIds: [],
+          createdAt: 30,
+          updatedAt: 40
+        }
+      ]
+    })
+
+    expect(restored?.messages).toEqual([
+      expect.objectContaining({ id: 'complete-message', completedAt: 20 }),
+      expect.objectContaining({ id: 'failed-message', failedAt: 40 })
+    ])
+  })
+
+  it('preserves explicit terminal timestamps when updatedAt changes later', () => {
+    const restored = normalizeSessionFile({
+      ...createSessionWithActivity(undefined),
+      activities: undefined,
+      messages: [
+        {
+          id: 'complete-message',
+          role: 'agent',
+          content: 'Done',
+          status: 'complete',
+          eventIds: [],
+          createdAt: 10,
+          completedAt: 20,
+          updatedAt: 99
+        }
+      ]
+    })
+
+    expect(restored?.messages[0]).toMatchObject({ completedAt: 20, updatedAt: 99 })
+  })
+})
+
 describe('upload message persistence', () => {
   it('keeps immutable Version identity while removing absolute legacy paths', () => {
     const restored = normalizeSessionFile({
@@ -291,7 +346,13 @@ describe('turn token usage persistence', () => {
           content: 'Done',
           status: 'complete',
           eventIds: [],
-          turnUsage: { inputTokens: 12_345, cacheTokens: 678, outputTokens: 90 },
+          turnUsage: {
+            inputTokens: 12_345,
+            cacheTokens: 678,
+            cachedReadTokens: 500,
+            cachedWriteTokens: 178,
+            outputTokens: 90
+          },
           createdAt: 1,
           updatedAt: 1
         },
@@ -324,6 +385,8 @@ describe('turn token usage persistence', () => {
     expect(restored?.messages[0].turnUsage).toEqual({
       inputTokens: 12_345,
       cacheTokens: 678,
+      cachedReadTokens: 500,
+      cachedWriteTokens: 178,
       outputTokens: 90
     })
     expect(restored?.messages[1].turnUsage).toBeUndefined()
@@ -508,7 +571,7 @@ describe('normalizeSessionFile with activities', () => {
           content: 'Partial response',
           status: 'streaming',
           createdAt: 1,
-          updatedAt: 1
+          updatedAt: 7
         }
       ],
       createdAt: 1,
@@ -516,7 +579,9 @@ describe('normalizeSessionFile with activities', () => {
     })
 
     expect(restored?.messages[0]?.status).toBe('error')
+    expect(restored?.messages[0]?.failedAt).toBe(7)
     expect(restored?.conversationGraph?.messages[0]?.status).toBe('error')
+    expect(restored?.conversationGraph?.messages[0]?.failedAt).toBe(7)
   })
 
   it('loads sessions that predate persisted activities', () => {

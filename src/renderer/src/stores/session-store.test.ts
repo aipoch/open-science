@@ -365,14 +365,16 @@ describe('session store', () => {
       status: 'complete',
       turnUsage: { inputTokens: 31, cacheTokens: 15, outputTokens: 14 }
     })
+    expect(agentMessage.completedAt).toBe(session.updatedAt)
     expect(
       session.conversationGraph?.messages.find((message) => message.id === agentMessage.id)
-        ?.turnUsage
-    ).toEqual({ inputTokens: 31, cacheTokens: 15, outputTokens: 14 })
-    expect(toPersistedSession(session).messages[1].turnUsage).toEqual({
-      inputTokens: 31,
-      cacheTokens: 15,
-      outputTokens: 14
+    ).toMatchObject({
+      completedAt: agentMessage.completedAt,
+      turnUsage: { inputTokens: 31, cacheTokens: 15, outputTokens: 14 }
+    })
+    expect(toPersistedSession(session).messages[1]).toMatchObject({
+      completedAt: agentMessage.completedAt,
+      turnUsage: { inputTokens: 31, cacheTokens: 15, outputTokens: 14 }
     })
     expect(session.status).toBe('idle')
     expect(session.activeRun).toBeUndefined()
@@ -562,7 +564,15 @@ describe('session store', () => {
     expect(session.activeRun).toBeUndefined()
     expect(session.messages[1]).toMatchObject({
       content: 'I started',
-      status: 'error'
+      status: 'error',
+      failedAt: Date.now()
+    })
+    expect(
+      session.conversationGraph?.messages.find((message) => message.id === session.messages[1].id)
+    ).toMatchObject({ status: 'error', failedAt: Date.now() })
+    expect(toPersistedSession(session).messages[1]).toMatchObject({
+      status: 'error',
+      failedAt: Date.now()
     })
   })
 

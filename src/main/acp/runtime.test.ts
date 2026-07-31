@@ -7118,7 +7118,7 @@ describe('ACP runtime session management', () => {
     expect(sharedAgent.resumedSessions).toEqual([])
   })
 
-  it('uses Codex input and cache-read tokens for context usage', async () => {
+  it('recombines Codex uncached input and cache read for context usage', async () => {
     const process = new FakeAgentProcess()
     const usageSent = createDeferred()
     const finishPrompt = createDeferred()
@@ -7127,7 +7127,7 @@ describe('ACP runtime session management', () => {
       onPrompt: async ({ sessionId }) => {
         handleSessionUpdate(runtime, {
           sessionId,
-          // Patched codex-acp reports only the current request's input plus cached input.
+          // Patched codex-acp recombines its exclusive input and cache-read categories.
           update: { sessionUpdate: 'usage_update', used: 15, size: 128000 }
         })
         usageSent.resolve()
@@ -7136,7 +7136,7 @@ describe('ACP runtime session management', () => {
         return {
           stopReason: 'end_turn',
           usage: {
-            totalTokens: 18,
+            totalTokens: 15,
             inputTokens: 12,
             cachedReadTokens: 3,
             outputTokens: 3
@@ -7798,14 +7798,14 @@ describe('ACP runtime session management', () => {
       onPrompt: async ({ sessionId }) => {
         handleSessionUpdate(runtime, {
           sessionId,
-          update: { sessionUpdate: 'usage_update', used: 18, size: 128000 }
+          update: { sessionUpdate: 'usage_update', used: 15, size: 128000 }
         })
         usageSent.resolve()
         await finishPrompt.promise
         return {
           stopReason: 'end_turn',
           usage: {
-            totalTokens: 18,
+            totalTokens: 15,
             inputTokens: 12,
             cachedReadTokens: 3,
             outputTokens: 3
@@ -7824,7 +7824,7 @@ describe('ACP runtime session management', () => {
     const prompt = runtime.sendPrompt({ sessionId: 's1', text: 'hi' })
     await usageSent.promise
     expect(runtime.getSnapshot().contextUsageBySession).toMatchObject({
-      s1: { used: 18, size: 128000 }
+      s1: { used: 15, size: 128000 }
     })
 
     finishPrompt.resolve()
@@ -7847,14 +7847,14 @@ describe('ACP runtime session management', () => {
       onPrompt: () => ({
         stopReason: 'end_turn',
         usage: {
-          totalTokens: 27,
+          totalTokens: 22,
           inputTokens: 19,
           cachedReadTokens: 5,
           outputTokens: 3
         },
         _meta: {
           'open-science/turn-usage': {
-            totalTokens: 60,
+            totalTokens: 45,
             inputTokens: 31,
             cachedReadTokens: 8,
             cachedWriteTokens: 7,
@@ -7877,7 +7877,13 @@ describe('ACP runtime session management', () => {
       s1: { used: 24 }
     })
     expect(runtime.getSnapshot().events.find((event) => event.kind === 'stop')).toMatchObject({
-      turnUsage: { inputTokens: 31, cacheTokens: 15, outputTokens: 14 }
+      turnUsage: {
+        inputTokens: 31,
+        cacheTokens: 15,
+        cachedReadTokens: 8,
+        cachedWriteTokens: 7,
+        outputTokens: 14
+      }
     })
   })
 

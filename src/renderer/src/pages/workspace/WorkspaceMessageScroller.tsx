@@ -216,6 +216,9 @@ const WorkspaceMessageScroller = ({
     [activeSession]
   )
   const showAgentLoadingMessage = shouldShowAgentLoadingMessage(activeSession)
+  const messageCreatedAtById = new Map(
+    activeSession?.messages.map((message) => [message.id, message.createdAt]) ?? []
+  )
 
   // Counts the user turns after each message; the destructive-resend warning keys off turns, not
   // raw message count, so a single follow-up turn stays warning-free.
@@ -537,6 +540,11 @@ const WorkspaceMessageScroller = ({
                           onPreviewMentionArtifact={onPreviewMentionArtifact}
                           canEditMessage={canEditMessage}
                           onSendEditedMessage={onSendEditedMessage}
+                          turnStartedAt={
+                            item.message.responseToMessageId
+                              ? messageCreatedAtById.get(item.message.responseToMessageId)
+                              : undefined
+                          }
                           subsequentTurns={subsequentTurnCountByMessageId.get(item.message.id) ?? 0}
                           revisionNavigation={
                             revisionIndex >= 0 && revisions.length > 1

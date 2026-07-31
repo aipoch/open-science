@@ -125,6 +125,13 @@ const CODEX_ACP_CONTEXT_USAGE_REPLACEMENT = [
   '        ? void 0',
   '        : contextTokenUsage.inputTokens + (contextTokenUsage.cachedInputTokens ?? 0);'
 ].join('\n')
+const CODEX_ACP_CONTEXT_USAGE_INPUT_ONLY_REPLACEMENT = [
+  '    const contextTokenUsage = this.sessionState.lastTokenUsage;',
+  '    const used =',
+  '      contextTokenUsage == null',
+  '        ? void 0',
+  '        : contextTokenUsage.inputTokens;'
+].join('\n')
 
 const CODEX_ACP_TURN_USAGE_UPDATE_SOURCE = [
   '  createUsageUpdate(params) {',
@@ -397,12 +404,18 @@ const renameWithTransientLockRetry = async (source: string, destination: string)
   }
 }
 
-// codex-acp receives a per-request tokenUsage.last snapshot but publishes totalTokens as ACP
-// context usage. Patch the pinned self-contained adapter so `used` excludes output and reasoning.
-// The registry integrity pin fixes the input bundle; the guards make a future source drift fail
-// during installation instead of silently restoring the wrong metric.
+// codex-acp receives a per-request tokenUsage.last snapshot but publishes totalTokens as ACP context
+// usage. Its internal TokenCount has already separated cached input from uncached input, so recombine
+// those two input categories while excluding output and reasoning. The registry integrity pin fixes
+// the input bundle; the guards make a future source drift fail during installation.
 export const patchCodexAcpContextUsageSource = (source: string): string => {
   if (source.includes(CODEX_ACP_CONTEXT_USAGE_REPLACEMENT)) return source
+  if (source.includes(CODEX_ACP_CONTEXT_USAGE_INPUT_ONLY_REPLACEMENT)) {
+    return source.replace(
+      CODEX_ACP_CONTEXT_USAGE_INPUT_ONLY_REPLACEMENT,
+      CODEX_ACP_CONTEXT_USAGE_REPLACEMENT
+    )
+  }
   if (source.includes(CODEX_ACP_CONTEXT_USAGE_LEGACY_REPLACEMENT)) {
     return source.replace(
       CODEX_ACP_CONTEXT_USAGE_LEGACY_REPLACEMENT,

@@ -1,5 +1,7 @@
 import { AgentMarkdown } from '@/components/streamdown/AgentMarkdown'
 import { MessageScrollerItem } from '@/components/ui/message-scroller'
+import { Popover, PopoverAnchor, PopoverContent } from '@/components/ui/popover'
+import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from '@/components/ui/tooltip'
 import { cn, formatByteSize } from '@/lib/utils'
 import type { ChatMessage, ChatSession } from '@/stores/session-store'
 import { Collapsible } from 'radix-ui'
@@ -12,7 +14,7 @@ import {
   Image as ImageIcon,
   Pencil
 } from 'lucide-react'
-import { useEffect, useRef, useState } from 'react'
+import { useEffect, useId, useRef, useState, type FocusEvent } from 'react'
 import type { ArtifactPreviewResult } from '../../../../shared/artifacts'
 import type { ProvenanceMessagePart } from '../../../../shared/artifact-provenance'
 import type { AcpTurnTokenUsage } from '../../../../shared/acp'
@@ -58,6 +60,8 @@ type WorkspaceMessageItemProps = {
   // Embedded transcript surfaces can supply their own horizontal gutter without changing live chat.
   contentPaddingClassName?: string
   onSendEditedMessage?: (messageId: string, doc: ComposerDoc) => void
+  // Prompt send time for an Agent response; paired with its completion time for elapsed duration.
+  turnStartedAt?: number
   // Number of user turns after this message; drives the destructive-resend warning threshold.
   subsequentTurns?: number
   revisionNavigation?: {
@@ -73,27 +77,212 @@ type WorkspaceMessageItemProps = {
 
 const ARTIFACT_GALLERY_VISIBLE_COUNT = 5
 const tokenCountFormatter = new Intl.NumberFormat('en-US')
+const messageTimestampFormatter = new Intl.DateTimeFormat('en-US', {
+  month: 'short',
+  day: 'numeric',
+  hour: 'numeric',
+  minute: '2-digit'
+})
+const messageTimestampTitleFormatter = new Intl.DateTimeFormat('en-US', {
+  dateStyle: 'full',
+  timeStyle: 'long'
+})
 
-const TurnTokenUsage = ({ usage }: { usage?: AcpTurnTokenUsage }): React.JSX.Element => (
-  <dl
-    data-slot="turn-token-usage"
-    aria-label={
-      usage ? 'Token usage for this response' : 'Token usage unavailable for this response'
-    }
-    className="mt-3 flex flex-wrap items-center gap-x-3 gap-y-1 text-[11px] leading-4 text-text-300 tabular-nums"
-  >
-    {[
-      ['Input', usage?.inputTokens],
-      ['Cache', usage?.cacheTokens],
-      ['Output', usage?.outputTokens]
-    ].map(([label, value]) => (
-      <div key={label} className="flex items-baseline gap-1">
-        <dt>{label}</dt>{' '}
-        <dd>{typeof value === 'number' ? tokenCountFormatter.format(value) : '—'}</dd>
-      </div>
-    ))}
-  </dl>
-)
+const MessageTimestamp = ({
+  label,
+  timestamp
+}: {
+  label: 'Sent' | 'Completed' | 'Failed'
+  timestamp: number
+}): React.JSX.Element => {
+  const date = new Date(timestamp)
+
+  return (
+    <time dateTime={date.toISOString()} title={messageTimestampTitleFormatter.format(date)}>
+      {label} {messageTimestampFormatter.format(date)}
+    </time>
+  )
+}
+
+const formatElapsedDuration = (durationMs: number): string => {
+  const totalSeconds = Math.max(0, Math.round(durationMs / 1000))
+  const hours = Math.floor(totalSeconds / 3600)
+  const minutes = Math.floor((totalSeconds % 3600) / 60)
+  const seconds = totalSeconds % 60
+
+  if (hours > 0) return `${hours}h ${minutes}m ${seconds}s`
+  if (minutes > 0) return `${minutes}m ${seconds}s`
+  return `${seconds}s`
+}
+
+type TurnTokenUsageEntry = readonly [
+  label: string,
+  value: number | undefined,
+  markerClassName: string
+]
+
+const TurnTokenUsage = ({ usage }: { usage?: AcpTurnTokenUsage }): React.JSX.Element => {
+  const [open, setOpen] = useState(false)
+  const contentId = useId()
+  const triggerRef = useRef<HTMLButtonElement | null>(null)
+  const contentRef = useRef<HTMLDivElement | null>(null)
+  const closeTimerRef = useRef<ReturnType<typeof setTimeout> | undefined>(undefined)
+  const openedFromPointerRef = useRef(false)
+  const accessibleLabel = usage
+    ? 'Token usage for this response'
+    : 'Token usage unavailable for this response'
+  const hasCacheBreakdown =
+    usage?.cachedReadTokens !== undefined && usage.cachedWriteTokens !== undefined
+  const entries: readonly TurnTokenUsageEntry[] = hasCacheBreakdown
+    ? [
+        ['Input', usage.inputTokens, 'bg-chart-2'],
+        ['Cache read', usage.cachedReadTokens, 'bg-chart-4'],
+        ['Cache write', usage.cachedWriteTokens, 'bg-chart-3'],
+        ['Output', usage.outputTokens, 'bg-chart-1']
+      ]
+    : [
+        ['Input', usage?.inputTokens, 'bg-chart-2'],
+        ['Cache', usage?.cacheTokens, 'bg-chart-4'],
+        ['Output', usage?.outputTokens, 'bg-chart-1']
+      ]
+  const totalTokens = usage ? usage.inputTokens + usage.cacheTokens + usage.outputTokens : undefined
+  const safeTotalTokens = Number.isSafeInteger(totalTokens) ? totalTokens : undefined
+  const breakdownLabel =
+    usage && safeTotalTokens !== undefined
+      ? `${entries
+          .map(([label, value]) => `${label} ${tokenCountFormatter.format(value ?? 0)}`)
+          .join(', ')}; Total ${tokenCountFormatter.format(safeTotalTokens)} tokens`
+      : 'Token usage breakdown unavailable'
+
+  const keepOpen = (): void => {
+    if (closeTimerRef.current) clearTimeout(closeTimerRef.current)
+    closeTimerRef.current = undefined
+  }
+
+  const scheduleClose = (): void => {
+    keepOpen()
+    closeTimerRef.current = setTimeout(() => {
+      const focused = document.activeElement
+      if (triggerRef.current?.contains(focused) || contentRef.current?.contains(focused)) return
+      setOpen(false)
+    }, 100)
+  }
+
+  const handleBlur = (event: FocusEvent<HTMLElement>): void => {
+    const next = event.relatedTarget
+    if (triggerRef.current?.contains(next) || contentRef.current?.contains(next)) return
+    scheduleClose()
+  }
+
+  useEffect(
+    () => () => {
+      if (closeTimerRef.current) clearTimeout(closeTimerRef.current)
+    },
+    []
+  )
+
+  return (
+    <Popover open={open} onOpenChange={setOpen}>
+      <PopoverAnchor asChild>
+        <span data-slot="turn-token-usage" className="inline-flex whitespace-nowrap">
+          <button
+            ref={triggerRef}
+            type="button"
+            aria-label={accessibleLabel}
+            aria-haspopup="dialog"
+            aria-expanded={open}
+            aria-controls={open ? contentId : undefined}
+            className="touch-manipulation border-b border-dashed border-current pb-px leading-none transition-colors duration-150 motion-reduce:transition-none hover:text-text-100 focus-visible:outline-none focus-visible:ring-[3px] focus-visible:ring-ring/50"
+            onPointerEnter={() => {
+              openedFromPointerRef.current = true
+              keepOpen()
+              setOpen(true)
+            }}
+            onPointerLeave={scheduleClose}
+            onFocus={() => {
+              openedFromPointerRef.current = false
+              keepOpen()
+              setOpen(true)
+            }}
+            onBlur={handleBlur}
+            onClick={() => {
+              openedFromPointerRef.current = false
+              keepOpen()
+              setOpen(true)
+            }}
+          >
+            Usage
+          </button>
+        </span>
+      </PopoverAnchor>
+      <PopoverContent
+        ref={contentRef}
+        id={contentId}
+        data-slot="turn-token-usage-popover"
+        aria-label={accessibleLabel}
+        side="top"
+        align="center"
+        sideOffset={8}
+        className="w-48 max-w-[calc(100vw-2rem)] rounded-lg border border-border bg-popover p-2.5 text-[12px] text-popover-foreground shadow-menu"
+        onPointerEnter={keepOpen}
+        onPointerLeave={scheduleClose}
+        onFocusCapture={keepOpen}
+        onBlurCapture={handleBlur}
+        onOpenAutoFocus={(event) => {
+          if (openedFromPointerRef.current) event.preventDefault()
+        }}
+      >
+        <div className="text-[13px] font-medium">Usage</div>
+        <div
+          data-slot="turn-token-usage-breakdown"
+          role="img"
+          aria-label={breakdownLabel}
+          className="mt-2 flex h-2 overflow-hidden rounded-full bg-muted"
+        >
+          {safeTotalTokens && safeTotalTokens > 0
+            ? entries.map(([label, value, markerClassName]) =>
+                typeof value === 'number' && value > 0 ? (
+                  <span
+                    key={label}
+                    data-slot="turn-token-usage-segment"
+                    className={`${markerClassName} h-full min-w-0`}
+                    style={{ flexBasis: 0, flexGrow: value }}
+                    aria-hidden="true"
+                  />
+                ) : null
+              )
+            : null}
+        </div>
+        <dl className="mt-2 space-y-1.5">
+          {entries.map(([label, value, markerClassName]) => (
+            <div key={label} className="flex items-center justify-between gap-4 whitespace-nowrap">
+              <dt className="flex items-center gap-2">
+                <span
+                  data-slot="turn-token-usage-marker"
+                  className={`${markerClassName} size-2 shrink-0 rounded-full`}
+                  aria-hidden="true"
+                />
+                {label}
+              </dt>
+              <dd className="tabular-nums text-muted-foreground">
+                {typeof value === 'number' ? tokenCountFormatter.format(value) : '—'}
+              </dd>
+            </div>
+          ))}
+        </dl>
+        <div
+          data-slot="turn-token-usage-total"
+          className="mt-2 flex items-center justify-between gap-4 border-t border-border pt-2 font-medium whitespace-nowrap"
+        >
+          <span>Total</span>
+          <span className="tabular-nums">
+            {safeTotalTokens !== undefined ? tokenCountFormatter.format(safeTotalTokens) : '—'}
+          </span>
+        </div>
+      </PopoverContent>
+    </Popover>
+  )
+}
 
 const artifactCardClassName =
   'h-[82px] w-[128px] shrink-0 overflow-hidden rounded-lg border border-border-200 bg-bg-000 text-left text-text-000 shadow-none transition-colors hover:bg-bg-200 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-border-200/60'
@@ -102,11 +291,24 @@ const artifactGalleryClassName = 'grid max-w-full grid-cols-[repeat(auto-fill,12
 
 const userMessageBubbleClassName =
   'max-w-[90%] break-words rounded-2xl bg-bg-300 px-3.5 py-2 text-sm text-message-user-text md:max-w-[min(85%,56rem)] md:px-4 md:py-2.5 md:text-[15px]'
-// Hover actions (copy / edit) sit to the left of the user bubble, revealed on row hover or focus.
+// Hover actions sit left of the user bubble, revealed on row hover or keyboard focus.
 const userMessageActionsClassName =
   'flex items-center gap-0.5 opacity-0 transition-opacity duration-150 group-hover:opacity-100 focus-within:opacity-100'
 const userMessageActionButtonClassName =
-  'flex size-6 items-center justify-center rounded-md text-text-300 transition-colors duration-200 ease-out hover:bg-bg-200 hover:text-text-100 disabled:cursor-not-allowed disabled:opacity-50'
+  'flex size-6 touch-manipulation items-center justify-center rounded-md text-text-300 transition-colors duration-200 ease-out hover:bg-bg-200 hover:text-text-100 focus-visible:outline-none focus-visible:ring-[3px] focus-visible:ring-ring/50 disabled:pointer-events-none disabled:opacity-50'
+
+const UserMessageActionTooltip = ({
+  children,
+  label
+}: {
+  children: React.ReactElement
+  label: string
+}): React.JSX.Element => (
+  <Tooltip>
+    <TooltipTrigger asChild>{children}</TooltipTrigger>
+    <TooltipContent>{label}</TooltipContent>
+  </Tooltip>
+)
 // Inline editing replaces the bubble with a bordered multi-line editor card aligned to the right.
 const editCardClassName =
   'flex w-[85%] max-w-[56rem] flex-col gap-2 rounded-2xl border border-border-200 bg-bg-000 px-3 py-2 shadow-card'
@@ -444,6 +646,7 @@ const WorkspaceMessageItem = ({
   showUserActions = true,
   contentPaddingClassName,
   onSendEditedMessage,
+  turnStartedAt,
   subsequentTurns = 0,
   revisionNavigation,
   artifacts = [],
@@ -451,6 +654,14 @@ const WorkspaceMessageItem = ({
 }: WorkspaceMessageItemProps): React.JSX.Element => {
   const isUserMessage = message.role === 'user'
   const uploads = message.uploads ?? []
+  const hasTurnUsage = Boolean(message.turnUsage || message.turnUsageUnavailable)
+  const terminalTimestamp =
+    message.status === 'complete'
+      ? message.completedAt
+      : message.status === 'error'
+        ? message.failedAt
+        : undefined
+  const terminalLabel = message.status === 'error' ? 'Failed' : 'Completed'
   const [copied, setCopied] = useState(false)
   // Inline editing swaps the bubble for a multi-line editor; the doc starts from the message's
   // structured parts so mention chips survive the round-trip.
@@ -554,82 +765,103 @@ const WorkspaceMessageItem = ({
               </div>
             </div>
           ) : (
-            <div className="group flex items-center justify-end gap-1">
-              {/* Copy/edit actions ride to the left of the user bubble, surfaced on hover or focus. */}
-              {showUserActions ? (
-                <div className={userMessageActionsClassName}>
-                  {revisionNavigation && revisionNavigation.total > 1 ? (
-                    <div className="mr-1 flex items-center gap-0.5 text-[11px] text-text-300">
-                      <button
-                        type="button"
-                        className={userMessageActionButtonClassName}
-                        aria-label="Previous message revision"
-                        disabled={!revisionNavigation.onPrevious || !canEditMessage}
-                        onClick={revisionNavigation.onPrevious}
-                      >
-                        <ChevronLeft className="size-3.5" aria-hidden="true" />
-                      </button>
-                      <span aria-label="Message revision">
-                        {revisionNavigation.index + 1}/{revisionNavigation.total}
-                      </span>
-                      <button
-                        type="button"
-                        className={userMessageActionButtonClassName}
-                        aria-label="Next message revision"
-                        disabled={!revisionNavigation.onNext || !canEditMessage}
-                        onClick={revisionNavigation.onNext}
-                      >
-                        <ChevronRight className="size-3.5" aria-hidden="true" />
-                      </button>
+            <div className="group flex flex-col items-end">
+              <div
+                data-slot="user-bubble-row"
+                className="flex max-w-full items-center justify-end gap-1"
+              >
+                {/* Branch/copy/edit controls stay left of the bubble and never shift its sent time. */}
+                {showUserActions ? (
+                  <TooltipProvider delayDuration={200}>
+                    <div data-slot="user-message-actions" className={userMessageActionsClassName}>
+                      {revisionNavigation && revisionNavigation.total > 1 ? (
+                        <div className="flex items-center gap-0.5">
+                          <UserMessageActionTooltip label="Previous message revision">
+                            <button
+                              type="button"
+                              className={userMessageActionButtonClassName}
+                              aria-label="Previous message revision"
+                              disabled={!revisionNavigation.onPrevious || !canEditMessage}
+                              onClick={revisionNavigation.onPrevious}
+                            >
+                              <ChevronLeft className="size-3.5" aria-hidden="true" />
+                            </button>
+                          </UserMessageActionTooltip>
+                          <span aria-label="Message revision">
+                            {revisionNavigation.index + 1}/{revisionNavigation.total}
+                          </span>
+                          <UserMessageActionTooltip label="Next message revision">
+                            <button
+                              type="button"
+                              className={userMessageActionButtonClassName}
+                              aria-label="Next message revision"
+                              disabled={!revisionNavigation.onNext || !canEditMessage}
+                              onClick={revisionNavigation.onNext}
+                            >
+                              <ChevronRight className="size-3.5" aria-hidden="true" />
+                            </button>
+                          </UserMessageActionTooltip>
+                        </div>
+                      ) : null}
+                      <UserMessageActionTooltip label={copied ? 'Copied' : 'Copy message'}>
+                        <button
+                          type="button"
+                          className={userMessageActionButtonClassName}
+                          aria-label={copied ? 'Copied' : 'Copy message'}
+                          onClick={handleCopyMessage}
+                        >
+                          {copied ? (
+                            <Check className="size-3.5" strokeWidth={2} aria-hidden="true" />
+                          ) : (
+                            <Copy className="size-3.5" strokeWidth={2} aria-hidden="true" />
+                          )}
+                        </button>
+                      </UserMessageActionTooltip>
+                      <UserMessageActionTooltip label="Edit message">
+                        <button
+                          type="button"
+                          className={userMessageActionButtonClassName}
+                          aria-label="Edit message"
+                          disabled={!canEditMessage}
+                          onClick={handleStartEdit}
+                        >
+                          <Pencil className="size-3.5" strokeWidth={2} aria-hidden="true" />
+                        </button>
+                      </UserMessageActionTooltip>
                     </div>
-                  ) : null}
-                  <button
-                    type="button"
-                    className={userMessageActionButtonClassName}
-                    aria-label={copied ? 'Copied' : 'Copy message'}
-                    onClick={handleCopyMessage}
-                  >
-                    {copied ? (
-                      <Check className="size-3.5" strokeWidth={2} aria-hidden="true" />
-                    ) : (
-                      <Copy className="size-3.5" strokeWidth={2} aria-hidden="true" />
-                    )}
-                  </button>
-                  <button
-                    type="button"
-                    className={userMessageActionButtonClassName}
-                    aria-label="Edit message"
-                    disabled={!canEditMessage}
-                    onClick={handleStartEdit}
-                  >
-                    <Pencil className="size-3.5" strokeWidth={2} aria-hidden="true" />
-                  </button>
-                </div>
-              ) : null}
-              <div className={userMessageBubbleClassName}>
-                <MessageUploadAttachmentList
-                  attachments={uploads}
-                  onPreviewUploadAttachment={onPreviewUploadAttachment}
-                />
-                {/* Structured parts drive styled pills; plain content is the backward-compatible fallback. */}
-                {staticParts && staticParts.length > 0 ? (
-                  <MessagePartsContent
-                    parts={staticParts}
-                    isStatic
-                    onOpenSkillMention={onOpenSkillMention}
-                    onPreviewMentionArtifact={onPreviewMentionArtifact}
-                  />
-                ) : message.parts && message.parts.length > 0 ? (
-                  <MessagePartsContent
-                    parts={message.parts}
-                    onOpenSkillMention={onOpenSkillMention}
-                    onPreviewMentionArtifact={onPreviewMentionArtifact}
-                  />
-                ) : message.content ? (
-                  <p className="whitespace-pre-wrap break-words [overflow-wrap:anywhere]">
-                    {message.content}
-                  </p>
+                  </TooltipProvider>
                 ) : null}
+                <div data-slot="user-message-bubble" className={userMessageBubbleClassName}>
+                  <MessageUploadAttachmentList
+                    attachments={uploads}
+                    onPreviewUploadAttachment={onPreviewUploadAttachment}
+                  />
+                  {/* Structured parts drive styled pills; plain content is the backward-compatible fallback. */}
+                  {staticParts && staticParts.length > 0 ? (
+                    <MessagePartsContent
+                      parts={staticParts}
+                      isStatic
+                      onOpenSkillMention={onOpenSkillMention}
+                      onPreviewMentionArtifact={onPreviewMentionArtifact}
+                    />
+                  ) : message.parts && message.parts.length > 0 ? (
+                    <MessagePartsContent
+                      parts={message.parts}
+                      onOpenSkillMention={onOpenSkillMention}
+                      onPreviewMentionArtifact={onPreviewMentionArtifact}
+                    />
+                  ) : message.content ? (
+                    <p className="whitespace-pre-wrap break-words [overflow-wrap:anywhere]">
+                      {message.content}
+                    </p>
+                  ) : null}
+                </div>
+              </div>
+              <div
+                data-slot="user-message-footer"
+                className="mt-1 flex min-h-6 items-center justify-end text-[11px] leading-4 text-text-300 tabular-nums"
+              >
+                <MessageTimestamp label="Sent" timestamp={message.createdAt} />
               </div>
             </div>
           )
@@ -643,9 +875,21 @@ const WorkspaceMessageItem = ({
             ) : null}
             <MessageImageList images={message.images ?? []} />
             <MessageArtifactList onPreviewArtifact={onPreviewArtifact} artifacts={artifacts} />
-            {message.status !== 'streaming' &&
-            (message.turnUsage || message.turnUsageUnavailable) ? (
-              <TurnTokenUsage usage={message.turnUsage} />
+            {terminalTimestamp !== undefined ? (
+              <div
+                data-slot="assistant-message-footer"
+                className="mt-3 flex items-center gap-x-3 whitespace-nowrap text-[11px] leading-4 text-text-300 tabular-nums"
+              >
+                <MessageTimestamp label={terminalLabel} timestamp={terminalTimestamp} />
+                {turnStartedAt !== undefined ? (
+                  <span data-slot="assistant-message-elapsed-segment" className="whitespace-nowrap">
+                    <span aria-label="Elapsed run time">
+                      Elapsed {formatElapsedDuration(terminalTimestamp - turnStartedAt)}
+                    </span>
+                  </span>
+                ) : null}
+                {hasTurnUsage ? <TurnTokenUsage usage={message.turnUsage} /> : null}
+              </div>
             ) : null}
           </div>
         )}

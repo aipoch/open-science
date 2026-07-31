@@ -760,10 +760,14 @@ const completeStreamingMessages = (
     const completesStream = message.status === 'streaming'
     const ownsTurnUsageFooter = message.id === usageFooterMessageId
     if (!completesStream && !ownsTurnUsageFooter) return message
+    const recordsCompletion =
+      completesStream ||
+      (ownsTurnUsageFooter && message.status === 'complete' && message.completedAt === undefined)
 
     return {
       ...message,
       ...(completesStream ? { status: 'complete' as const } : {}),
+      ...(recordsCompletion ? { completedAt: now } : {}),
       ...(ownsTurnUsageFooter
         ? turnUsage
           ? { turnUsage }
@@ -775,13 +779,14 @@ const completeStreamingMessages = (
 }
 
 // Marks partial streamed messages as errored when a run fails.
-const failStreamingMessages = (messages: ChatMessage[]): ChatMessage[] =>
+const failStreamingMessages = (messages: ChatMessage[], now = Date.now()): ChatMessage[] =>
   messages.map((message) =>
     message.status === 'streaming'
       ? {
           ...message,
           status: 'error',
-          updatedAt: Date.now()
+          failedAt: message.failedAt ?? now,
+          updatedAt: now
         }
       : message
   )
@@ -1437,6 +1442,7 @@ export const useSessionStore = create<SessionStore>((set, get) => ({
               : {}),
           sortIndex: createSortIndex(),
           createdAt: now,
+          ...(session.activeRun ? {} : { completedAt: now }),
           updatedAt: now
         }
         const messages = [...session.messages, artifactMessage]
@@ -1872,7 +1878,7 @@ export const useSessionStore = create<SessionStore>((set, get) => ({
         if (session.id !== sessionId) return session
 
         const now = Date.now()
-        const messages = failStreamingMessages(session.messages)
+        const messages = failStreamingMessages(session.messages, now)
         const activities = failOpenActivities(session.activities)
         const activityGroups = completeOpenActivityGroups(session.activityGroups, now)
         let conversationGraph: NonNullable<PersistedChatSession['conversationGraph']>

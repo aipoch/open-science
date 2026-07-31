@@ -36,7 +36,16 @@ const messageUsage = (value: unknown): AcpTurnTokenUsage | undefined => {
   }
 
   const cacheTokens = cachedReadTokens + cachedWriteTokens
-  return Number.isSafeInteger(cacheTokens) ? { inputTokens, cacheTokens, outputTokens } : undefined
+  const hasCacheBreakdown =
+    tokenCount(tokens.cache?.read) !== undefined && tokenCount(tokens.cache?.write) !== undefined
+  return Number.isSafeInteger(cacheTokens)
+    ? {
+        inputTokens,
+        cacheTokens,
+        ...(hasCacheBreakdown ? { cachedReadTokens, cachedWriteTokens } : {}),
+        outputTokens
+      }
+    : undefined
 }
 
 export const fetchOpenCodeUsageSnapshot = async (
@@ -90,6 +99,9 @@ export const sumOpenCodeTurnUsage = (
 
   let inputTokens = 0
   let cacheTokens = 0
+  let cachedReadTokens = 0
+  let cachedWriteTokens = 0
+  let hasCacheBreakdown = true
   let outputTokens = 0
   for (const messageId of newMessageIds) {
     const usage = after.usageByMessageId.get(messageId)
@@ -97,15 +109,28 @@ export const sumOpenCodeTurnUsage = (
     if (!usage) return undefined
     inputTokens += usage.inputTokens
     cacheTokens += usage.cacheTokens
+    if (usage.cachedReadTokens === undefined || usage.cachedWriteTokens === undefined) {
+      hasCacheBreakdown = false
+    } else {
+      cachedReadTokens += usage.cachedReadTokens
+      cachedWriteTokens += usage.cachedWriteTokens
+    }
     outputTokens += usage.outputTokens
     if (
       !Number.isSafeInteger(inputTokens) ||
       !Number.isSafeInteger(cacheTokens) ||
+      !Number.isSafeInteger(cachedReadTokens) ||
+      !Number.isSafeInteger(cachedWriteTokens) ||
       !Number.isSafeInteger(outputTokens)
     ) {
       return undefined
     }
   }
 
-  return { inputTokens, cacheTokens, outputTokens }
+  return {
+    inputTokens,
+    cacheTokens,
+    ...(hasCacheBreakdown ? { cachedReadTokens, cachedWriteTokens } : {}),
+    outputTokens
+  }
 }

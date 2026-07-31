@@ -260,6 +260,7 @@ const toChatMessage = (message: ProvenanceMessage, sortIndex: number): ChatMessa
   status: 'complete',
   eventIds: [],
   createdAt: message.createdAt,
+  ...(message.role === 'agent' ? { completedAt: message.createdAt } : {}),
   updatedAt: message.createdAt,
   sortIndex
 })

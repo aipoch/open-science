@@ -176,6 +176,17 @@ describe('workspace page component boundaries', () => {
     expect(mainCssSource).toContain('--always-black:')
   })
 
+  it('registers the semantic chart tokens used by the response Usage breakdown', () => {
+    const mainCssSource = readFileSync(resolve(__dirname, '../../assets/main.css'), 'utf8')
+    const messageItemSource = readFileSync(workspaceMessageItemPath, 'utf8')
+
+    for (const token of ['chart-1', 'chart-2', 'chart-3', 'chart-4']) {
+      expect(messageItemSource).toContain(`bg-${token}`)
+      expect(mainCssSource).toContain(`--color-${token}: var(--${token});`)
+      expect(mainCssSource.match(new RegExp(`--${token}:`, 'g'))).toHaveLength(2)
+    }
+  })
+
   it('uses the shared primary token for every workspace emphasis state', () => {
     const emphasisSources = [
       conversationPanelPath,
@@ -274,9 +285,10 @@ describe('conversation message scroller integration', () => {
     const workspaceMessageItemSource = readFileSync(workspaceMessageItemPath, 'utf8')
     const workspaceMessageScrollerSource = readFileSync(workspaceMessageScrollerPath, 'utf8')
 
-    expect(workspaceMessageItemSource).toContain(
-      'className="group flex items-center justify-end gap-1"'
-    )
+    expect(workspaceMessageItemSource).toContain('className="group flex flex-col items-end"')
+    expect(workspaceMessageItemSource).toContain('data-slot="user-bubble-row"')
+    expect(workspaceMessageItemSource).toContain('data-slot="user-message-actions"')
+    expect(workspaceMessageItemSource).toContain('data-slot="user-message-footer"')
     expect(workspaceMessageItemSource).toContain(
       "'max-w-[90%] break-words rounded-2xl bg-bg-300 px-3.5 py-2 text-sm text-message-user-text md:max-w-[min(85%,56rem)] md:px-4 md:py-2.5 md:text-[15px]'"
     )

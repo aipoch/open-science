@@ -94,6 +94,9 @@ export type PersistedChatMessage = {
   // Marks the final Agent message for a turn whose provider did not report usable totals.
   turnUsageUnavailable?: true
   createdAt: number
+  // Stable terminal timestamps survive later artifact/upload reconciliation that advances updatedAt.
+  completedAt?: number
+  failedAt?: number
   updatedAt: number
 }
 
@@ -283,7 +286,8 @@ const normalizeMessageAfterRestore = (message: PersistedChatMessage): PersistedC
   message.status === 'streaming'
     ? {
         ...message,
-        status: 'error'
+        status: 'error',
+        failedAt: message.updatedAt
       }
     : message
 
@@ -790,6 +794,8 @@ const sanitizeMessage = (
   const turnUsage = role === 'agent' ? sanitizeAcpTurnTokenUsage(message.turnUsage) : undefined
   const turnUsageUnavailable =
     role === 'agent' && !turnUsage && message.turnUsageUnavailable === true
+  const completedAt = asNumber(message.completedAt)
+  const failedAt = asNumber(message.failedAt)
 
   if (streamId) sanitized.streamId = streamId
   if (responseToMessageId) sanitized.responseToMessageId = responseToMessageId
@@ -799,6 +805,12 @@ const sanitizeMessage = (
   if (images) sanitized.images = images
   if (turnUsage) sanitized.turnUsage = turnUsage
   if (turnUsageUnavailable) sanitized.turnUsageUnavailable = true
+  if (role === 'agent' && sanitized.status === 'complete') {
+    sanitized.completedAt = completedAt ?? sanitized.updatedAt
+  }
+  if (role === 'agent' && sanitized.status === 'error') {
+    sanitized.failedAt = failedAt ?? sanitized.updatedAt
+  }
 
   return sanitized
 }

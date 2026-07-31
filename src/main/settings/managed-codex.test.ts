@@ -1215,7 +1215,7 @@ describe('patchCodexAcpContextUsageSource', () => {
     expect(used).toBe(42)
   })
 
-  it('reports the latest request input and cached input instead of total tokens', () => {
+  it("recombines the pinned adapter's exclusive input and cached input for context usage", () => {
     const source = [
       '  createUsageUpdate(params) {',
       '    this.handleTokenUsageUpdated(params);',
@@ -1227,7 +1227,7 @@ describe('patchCodexAcpContextUsageSource', () => {
     const patched = patchCodexAcpContextUsageSource(source)
 
     expect(patched).toContain(
-      'contextTokenUsage.inputTokens + (contextTokenUsage.cachedInputTokens ?? 0)'
+      ': contextTokenUsage.inputTokens + (contextTokenUsage.cachedInputTokens ?? 0);'
     )
     expect(patched).not.toContain('lastTokenUsage?.totalTokens')
     expect(patchCodexAcpContextUsageSource(patched)).toBe(patched)
@@ -1252,7 +1252,7 @@ describe('patchCodexAcpContextUsageSource', () => {
       await ensureManagedCodexContextUsage(adapterPath)
 
       expect(await readFile(adapterPath, 'utf8')).toContain(
-        'contextTokenUsage.inputTokens + (contextTokenUsage.cachedInputTokens ?? 0)'
+        ': contextTokenUsage.inputTokens + (contextTokenUsage.cachedInputTokens ?? 0);'
       )
     } finally {
       await rm(patchRoot, { recursive: true, force: true })
@@ -1308,7 +1308,7 @@ describe('patchCodexAcpContextUsageSource', () => {
         await ensureManagedCodexContextUsage(adapterPath)
 
         expect(await readFile(adapterPath, 'utf8')).toContain(
-          'contextTokenUsage.inputTokens + (contextTokenUsage.cachedInputTokens ?? 0)'
+          ': contextTokenUsage.inputTokens + (contextTokenUsage.cachedInputTokens ?? 0);'
         )
       } finally {
         fsFaults.adapterReplaceFailures = 0
@@ -1354,7 +1354,7 @@ describe('patchCodexAcpContextUsageSource', () => {
 
       await expect(firstCheck).resolves.toBeUndefined()
       expect(await readFile(adapterPath, 'utf8')).toContain(
-        'contextTokenUsage.inputTokens + (contextTokenUsage.cachedInputTokens ?? 0)'
+        ': contextTokenUsage.inputTokens + (contextTokenUsage.cachedInputTokens ?? 0);'
       )
     } finally {
       releaseWrite?.()
@@ -1696,7 +1696,7 @@ describe('patchCodexAcpTurnUsageSource', () => {
 
     expect(() => Function(composed)).not.toThrow()
     expect(composed).toContain(
-      'contextTokenUsage.inputTokens + (contextTokenUsage.cachedInputTokens ?? 0)'
+      ': contextTokenUsage.inputTokens + (contextTokenUsage.cachedInputTokens ?? 0);'
     )
   })
 })

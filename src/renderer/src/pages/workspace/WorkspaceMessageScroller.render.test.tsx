@@ -224,6 +224,32 @@ describe('WorkspaceMessageScroller loading render', () => {
     expect(html).toContain('Answer text')
   })
 
+  it('calculates elapsed time and keeps token totals behind the Usage summary', async () => {
+    const html = await renderScroller(
+      createSession({
+        status: 'idle',
+        messages: [
+          createMessage({ id: 'prompt-1', createdAt: 1710000000000 }),
+          createMessage({
+            id: 'reply-1',
+            role: 'agent',
+            content: 'Answer text',
+            responseToMessageId: 'prompt-1',
+            createdAt: 1710000030000,
+            completedAt: 1710000125000,
+            updatedAt: 1710000999000,
+            turnUsage: { inputTokens: 12_345, cacheTokens: 678, outputTokens: 90 }
+          })
+        ]
+      })
+    )
+
+    expect(html).toContain('Completed ')
+    expect(html).toContain('Elapsed 2m 5s')
+    expect(html).toContain('>Usage</button>')
+    expect(html).not.toContain('Input</dt>')
+  })
+
   it('keeps the loading row during permission waits and hides it without an active run', async () => {
     const runningSession = createSession({
       activeRun: {

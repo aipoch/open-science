@@ -162,6 +162,40 @@ describe('WorkspaceMessageItem user message actions', () => {
     expect(container.querySelector('[aria-label="Edit message"]')).toBeNull()
   })
 
+  it('keeps actions left of the user bubble while the sent time stays in its own footer', async () => {
+    await renderItem(createMessage(), {
+      canEditMessage: true,
+      revisionNavigation: { index: 1, total: 3 }
+    })
+
+    const bubbleRow = container.querySelector('[data-slot="user-bubble-row"]')
+    const bubble = bubbleRow?.querySelector('[data-slot="user-message-bubble"]')
+    const actions = bubbleRow?.querySelector('[data-slot="user-message-actions"]')
+    const footer = container.querySelector('[data-slot="user-message-footer"]')
+    const sentTime = footer?.querySelector('time')
+
+    if (!bubbleRow || !bubble || !actions || !footer) {
+      throw new Error('user bubble layout, actions, or footer not found')
+    }
+    expect(actions.compareDocumentPosition(bubble) & Node.DOCUMENT_POSITION_FOLLOWING).toBe(
+      Node.DOCUMENT_POSITION_FOLLOWING
+    )
+    expect(bubbleRow.compareDocumentPosition(footer) & Node.DOCUMENT_POSITION_FOLLOWING).toBe(
+      Node.DOCUMENT_POSITION_FOLLOWING
+    )
+    expect(sentTime?.textContent).toMatch(/^Sent /)
+    expect(sentTime?.textContent).toMatch(/^Sent [A-Z][a-z]{2} \d{1,2}, \d{1,2}:\d{2} [AP]M$/)
+    expect(sentTime?.getAttribute('datetime')).toBe('2024-03-09T16:00:00.000Z')
+    expect(footer.querySelector('[aria-label="Message revision"]')).toBeNull()
+    expect(actions.querySelector('[aria-label="Message revision"]')?.textContent).toBe('2/3')
+    const copyButton = actions.querySelector('[aria-label="Copy message"]')
+    expect(copyButton?.getAttribute('data-state')).toBe('closed')
+    expect(copyButton?.classList.contains('focus-visible:ring-[3px]')).toBe(true)
+    expect(copyButton?.classList.contains('focus-visible:ring-ring/50')).toBe(true)
+    expect(copyButton?.classList.contains('disabled:pointer-events-none')).toBe(true)
+    expect(actions.querySelector('[aria-label="Edit message"]')).not.toBeNull()
+  })
+
   it('hides copy and edit actions on an immutable message surface', async () => {
     await renderItem(createMessage(), { canEditMessage: false, showUserActions: false })
 

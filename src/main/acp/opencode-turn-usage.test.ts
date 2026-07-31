@@ -42,6 +42,39 @@ describe('OpenCode turn usage', () => {
     expect(snapshot?.usageByMessageId.get('assistant-1')).toEqual({
       inputTokens: 10,
       cacheTokens: 5,
+      cachedReadTokens: 3,
+      cachedWriteTokens: 2,
+      outputTokens: 4
+    })
+  })
+
+  it.each([
+    ['no cache fields', undefined, 0],
+    ['only cache read', { read: 7 }, 7],
+    ['only cache write', { write: 5 }, 5],
+    ['null cache read', { read: null, write: 5 }, 5],
+    ['null cache write', { read: 7, write: null }, 7]
+  ])('keeps aggregate cache without inventing a split for %s', async (_label, cache, total) => {
+    const fetchImpl = vi.fn(
+      async () =>
+        new Response(
+          JSON.stringify([
+            {
+              info: {
+                id: 'assistant-1',
+                role: 'assistant',
+                tokens: { input: 10, output: 4, ...(cache === undefined ? {} : { cache }) }
+              }
+            }
+          ])
+        )
+    )
+
+    const snapshot = await fetchOpenCodeUsageSnapshot(api, 'session-1', '/workspace', fetchImpl)
+
+    expect(snapshot?.usageByMessageId.get('assistant-1')).toEqual({
+      inputTokens: 10,
+      cacheTokens: total,
       outputTokens: 4
     })
   })
@@ -55,14 +88,34 @@ describe('OpenCode turn usage', () => {
       assistantMessageIds: new Set(['old', 'step-1', 'step-2']),
       usageByMessageId: new Map([
         ['old', { inputTokens: 99, cacheTokens: 9, outputTokens: 9 }],
-        ['step-1', { inputTokens: 12, cacheTokens: 3, outputTokens: 2 }],
-        ['step-2', { inputTokens: 19, cacheTokens: 5, outputTokens: 3 }]
+        [
+          'step-1',
+          {
+            inputTokens: 12,
+            cacheTokens: 3,
+            cachedReadTokens: 2,
+            cachedWriteTokens: 1,
+            outputTokens: 2
+          }
+        ],
+        [
+          'step-2',
+          {
+            inputTokens: 19,
+            cacheTokens: 5,
+            cachedReadTokens: 4,
+            cachedWriteTokens: 1,
+            outputTokens: 3
+          }
+        ]
       ])
     }
 
     expect(sumOpenCodeTurnUsage(before, after)).toEqual({
       inputTokens: 31,
       cacheTokens: 8,
+      cachedReadTokens: 6,
+      cachedWriteTokens: 2,
       outputTokens: 5
     })
   })
