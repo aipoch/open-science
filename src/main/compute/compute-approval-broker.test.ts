@@ -138,6 +138,43 @@ describe('ComputeApprovalBroker', () => {
     expect(remember).not.toHaveBeenCalled()
   })
 
+  it('does not create a pending approval after invalidation sweeps pending requests', async () => {
+    let finishGrantLookup: (() => void) | undefined
+    const resolveGrant = vi.fn(
+      () =>
+        new Promise<undefined>((resolve) => {
+          finishGrantLookup = () => resolve(undefined)
+        })
+    )
+    const broadcast = vi.fn()
+    const broker = new ComputeApprovalBroker({
+      generateId: () => 'id-1',
+      broadcast,
+      permissionGrants: { resolve: resolveGrant, remember: vi.fn() } as never
+    })
+
+    const decision = broker.requestWithContext(makeRequest(), {
+      sessionId: 'session-1',
+      projectId: 'project-1',
+      operation: 'call_command',
+      ownerId: 'host-row-1'
+    })
+    await vi.waitFor(() => expect(resolveGrant).toHaveBeenCalledOnce())
+
+    let invalidationCompleted = false
+    const invalidation = broker.invalidateProvider('ssh:biowulf').then(() => {
+      invalidationCompleted = true
+    })
+    await Promise.resolve()
+    expect(invalidationCompleted).toBe(false)
+
+    finishGrantLookup?.()
+    await invalidation
+    await expect(decision).resolves.toBe('deny')
+    expect(broadcast).not.toHaveBeenCalled()
+    broker.completeProviderInvalidation('ssh:biowulf')
+  })
+
   it('does not remember approval when the provider id belongs to a recreated host', async () => {
     const timer = makeTimer()
     const remember = vi.fn()

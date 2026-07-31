@@ -311,7 +311,7 @@ export class ConnectorService {
       await this.permissionBroker.remember(authorization.request, authorization.deferredScope)
     }
 
-    authorization = await this.authorizeCustomForCurrentPolicy(
+    await this.authorizeCustomForCurrentPolicy(
       authorization.custom,
       method,
       args,

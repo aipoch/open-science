@@ -162,6 +162,15 @@ export class ComputeApprovalBroker {
     }
 
     // ── no grant — show approval card ─────────────────────────────────────────────
+    // Grant lookups above are asynchronous. Invalidation may have started after this operation
+    // entered the in-flight set but before it reached the approval card. Fail closed here so the
+    // invalidator cannot miss a newly-created pending request and wait on it indefinitely.
+    if (
+      this.invalidatingProviders.has(providerId) ||
+      (this.providerGenerations.get(providerId) ?? 0) !== providerGeneration
+    ) {
+      return 'deny'
+    }
     const decision = await this.request(info, ctx)
 
     if ((this.providerGenerations.get(providerId) ?? 0) !== providerGeneration) return 'deny'
