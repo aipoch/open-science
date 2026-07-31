@@ -270,15 +270,22 @@ export const validateNewDataRoot = async (
 export type MigrationOutcome =
   MigrationResult | { ok: false; error: string; switchoverFailed: true }
 
-// runtime/ is not copied wholesale (env prefixes bake absolute paths), but its pkgs cache IS
-// relocatable inert data — copied so the envs can be rebuilt offline at the new root from their
-// exported locks. Nested path is intentional: copyAndVerify mirrors `from/<dir>` → `to/<dir>`.
+// runtime/ is not copied wholesale (env prefixes and mutable inventory-cache keys bake absolute
+// paths), but its pkgs cache IS relocatable inert data — copied so envs can be rebuilt offline at the
+// new root from their exported locks. Immutable Environment manifests are copied separately because
+// Notebook and Artifact provenance reference them by checksum. Nested paths are intentional:
+// copyAndVerify mirrors `from/<dir>` → `to/<dir>`.
 const RUNTIME_PKGS_DIR = join('runtime', 'pkgs')
-export const RUNTIME_PROVENANCE_DIR = join('runtime', 'provenance')
+export const RUNTIME_ENVIRONMENT_MANIFESTS_DIR = join(
+  'runtime',
+  'provenance',
+  'environment-manifests'
+)
+const RUNTIME_ENVIRONMENT_INVENTORY_DIR = join('runtime', 'provenance', 'environment-inventory')
 // The SQLite authority stays under the fixed config root. Keep the filename exported for migration
 // validation/tests, but never put it in the relocatable data-root copy/delete set.
 export const PROJECT_DATABASE_FILE = 'open-science.db'
-const BASE_MIGRATION_DIRS = [...MIGRATED_DIRS, RUNTIME_PROVENANCE_DIR]
+const BASE_MIGRATION_DIRS = [...MIGRATED_DIRS, RUNTIME_ENVIRONMENT_MANIFESTS_DIR]
 
 const defaultValidateProvenanceState = (dataRoot: string): Promise<void> =>
   validateProvenanceMigrationState(dataRoot, resolveConfigRoot())
@@ -366,6 +373,10 @@ export const runDataRootMigration = async (
   }
   try {
     await mkdir(target, { recursive: true })
+    // A runtime-only destination is a valid move target and may be residue from an earlier location.
+    // Drop only its path-keyed mutable Environment cache before staging; keep relocatable packages,
+    // exported locks, and every other rebuildable runtime file intact.
+    await rm(join(target, RUNTIME_ENVIRONMENT_INVENTORY_DIR), { recursive: true, force: true })
     await writeMigrationMarker(target, marker)
   } catch (err) {
     console.error('[migration-service] failed to initialize staging dir', err)
@@ -521,7 +532,7 @@ export const commitDataRootSwitch = async (
   }
 
   const migratedDirs = marker.migratedDirs ?? [...MIGRATED_DIRS]
-  const requiredPaths = [RUNTIME_PROVENANCE_DIR].filter((path) =>
+  const requiredPaths = [RUNTIME_ENVIRONMENT_MANIFESTS_DIR].filter((path) =>
     existsSync(join(deps.currentDataRoot, path))
   )
   if (requiredPaths.some((path) => !migratedDirs.includes(path))) {

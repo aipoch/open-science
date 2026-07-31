@@ -19,7 +19,7 @@ afterEach(async () => {
 })
 
 describe('validateProvenanceMigrationState', () => {
-  it('refuses a dirty Environment binding or unfinished operation', async () => {
+  it('accepts dirty Environment cache state because relocation rebuilds the runtime', async () => {
     const target = join(root, 'runtime', 'provenance', 'environment-inventory', 'environment-key')
     await mkdir(join(target, 'operations'), { recursive: true })
     await writeFile(
@@ -35,12 +35,30 @@ describe('validateProvenanceMigrationState', () => {
     )
     await writeFile(join(target, 'operations', 'operation-1.json'), '{}')
 
-    await expect(validateProvenanceMigrationState(root)).rejects.toThrow(
-      /unfinished Environment operation/i
-    )
+    await expect(validateProvenanceMigrationState(root)).resolves.toBeUndefined()
   })
 
-  it('refuses malformed Environment operation-log truncation metadata', async () => {
+  it.each(['operation-orphaned.json', 'operation-orphaned.json.123.tmp'])(
+    'accepts a clean Environment binding with an unbound operation file: %s',
+    async (operationFilename) => {
+      const target = join(root, 'runtime', 'provenance', 'environment-inventory', 'environment-key')
+      await mkdir(join(target, 'operations'), { recursive: true })
+      await writeFile(
+        join(target, 'binding.json'),
+        JSON.stringify({
+          schemaVersion: 1,
+          generation: 1,
+          state: 'clean',
+          operationLog: []
+        })
+      )
+      await writeFile(join(target, 'operations', operationFilename), '{}')
+
+      await expect(validateProvenanceMigrationState(root)).resolves.toBeUndefined()
+    }
+  )
+
+  it('ignores malformed Environment cache metadata that relocation does not preserve', async () => {
     const target = join(root, 'runtime', 'provenance', 'environment-inventory', 'environment-key')
     await mkdir(target, { recursive: true })
     await writeFile(
@@ -54,9 +72,7 @@ describe('validateProvenanceMigrationState', () => {
       })
     )
 
-    await expect(validateProvenanceMigrationState(root)).rejects.toThrow(
-      /invalid Environment binding/i
-    )
+    await expect(validateProvenanceMigrationState(root)).resolves.toBeUndefined()
   })
 
   it('refuses an Artifact staging directory that has not reached an immutable lifecycle state', async () => {

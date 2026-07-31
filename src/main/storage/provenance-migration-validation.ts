@@ -5,10 +5,7 @@ import { isAbsolute, join, relative, resolve, sep } from 'node:path'
 
 import { createProjectDbClient } from '../projects/prisma-client'
 import { validateConversationGraph } from '../../shared/conversation-graph'
-import {
-  isNotebookEnvironmentOperationLogTruncation,
-  NOTEBOOK_RUN_FILE
-} from '../../shared/notebook'
+import { NOTEBOOK_RUN_FILE } from '../../shared/notebook'
 import { normalizeSessionFile } from '../../shared/session-persistence'
 
 const SHA256_PATTERN = /^[a-f0-9]{64}$/
@@ -84,53 +81,18 @@ const recordValue = (value: unknown): Record<string, unknown> | undefined =>
     ? (value as Record<string, unknown>)
     : undefined
 
-const validateEnvironmentState = async (root: string): Promise<Set<string>> => {
-  const provenanceRoot = join(root, 'runtime', 'provenance')
-  const manifestDirectory = join(provenanceRoot, 'environment-manifests')
+// Environment bindings, inventories, and pending-operation records are mutable runtime caches keyed
+// by the interpreter command (including its absolute data-root path). A relocation rebuilds the
+// runtime under a different path, so those records cannot be reused and are intentionally not copied.
+// Only immutable manifests are migration evidence; collect their identities here so every Notebook
+// reference below can still be proven against the bytes that the migration preserves.
+const collectEnvironmentManifests = async (root: string): Promise<Set<string>> => {
+  const manifestDirectory = join(root, 'runtime', 'provenance', 'environment-manifests')
   const manifestChecksums = new Set<string>()
   for (const entry of await readEntries(manifestDirectory)) {
     if (!entry.isFile() || !entry.name.endsWith('.json')) continue
     const checksum = entry.name.slice(0, -'.json'.length)
     if (SHA256_PATTERN.test(checksum)) manifestChecksums.add(checksum)
-  }
-
-  const inventoryRoot = join(provenanceRoot, 'environment-inventory')
-  for (const target of await readEntries(inventoryRoot)) {
-    if (!target.isDirectory()) continue
-    const targetDirectory = join(inventoryRoot, target.name)
-    const operationEntries = (await readEntries(join(targetDirectory, 'operations'))).filter(
-      (entry) => entry.isFile()
-    )
-    let binding: Record<string, unknown> | undefined
-    try {
-      binding = await readRecord(join(targetDirectory, 'binding.json'))
-    } catch (error) {
-      if (!(
-        typeof error === 'object' &&
-        error !== null &&
-        'code' in error &&
-        (error as { code?: unknown }).code === 'ENOENT'
-      )) {
-        throw error
-      }
-    }
-    if (
-      operationEntries.length > 0 ||
-      binding?.state === 'dirty' ||
-      typeof binding?.dirtyOperationId === 'string' ||
-      typeof binding?.dirtyReason === 'string'
-    ) {
-      throw new Error(`Unfinished Environment operation blocks migration: ${target.name}`)
-    }
-    if (binding && (binding.schemaVersion !== 1 || !Array.isArray(binding.operationLog))) {
-      throw new Error(`Invalid Environment binding blocks migration: ${target.name}`)
-    }
-    if (
-      binding?.operationLogTruncation !== undefined &&
-      !isNotebookEnvironmentOperationLogTruncation(binding.operationLogTruncation)
-    ) {
-      throw new Error(`Invalid Environment binding blocks migration: ${target.name}`)
-    }
   }
   return manifestChecksums
 }
@@ -562,15 +524,16 @@ const validateSqliteStore = async (dataRoot: string, authorityRoot: string): Pro
   }
 }
 
-// Migration validates domain state in addition to byte-for-byte copy inventories. It refuses open
-// mutations and checks immutable evidence before either root can become authoritative.
+// Migration validates durable domain evidence in addition to byte-for-byte copy inventories. Mutable
+// Environment caches are rebuilt with the relocated runtime; immutable evidence must validate before
+// either root can become authoritative.
 export const validateProvenanceMigrationState = async (
   dataRoot: string,
   authorityRoot: string = dataRoot
 ): Promise<void> => {
   await validateSessionGraphs(authorityRoot)
   await validateSqliteStore(dataRoot, authorityRoot)
-  const manifests = await validateEnvironmentState(dataRoot)
+  const manifests = await collectEnvironmentManifests(dataRoot)
   await validateReferencedEnvironmentManifests(dataRoot, manifests)
   await validateArtifactVersions(dataRoot)
   await assertNoUploadStaging(dataRoot)

@@ -19,7 +19,7 @@ import {
   discardStagedCopy,
   MIGRATED_DIRS,
   PROJECT_DATABASE_FILE,
-  RUNTIME_PROVENANCE_DIR,
+  RUNTIME_ENVIRONMENT_MANIFESTS_DIR,
   runDataRootMigration,
   validateNewDataRoot
 } from './migration-service'
@@ -489,7 +489,7 @@ describe('runDataRootMigration (copy phase)', () => {
       expect.objectContaining({
         from: currentDataRoot,
         to: target,
-        dirs: [...MIGRATED_DIRS, RUNTIME_PROVENANCE_DIR]
+        dirs: [...MIGRATED_DIRS, RUNTIME_ENVIRONMENT_MANIFESTS_DIR]
       })
     )
     // runtime/ is excluded from the moved set (non-relocatable; rebuilt on demand).
@@ -550,11 +550,11 @@ describe('runDataRootMigration (copy phase)', () => {
     expect(deps.setDataRoot).not.toHaveBeenCalled()
   })
 
-  it('refuses to stage a migration when the frozen source has unresolved provenance state', async () => {
+  it('refuses to stage a migration when the frozen source has unresolved durable provenance', async () => {
     const deps = fakeDeps()
     const copyAndVerify = vi.fn(async (): Promise<MigrationResult> => ({ ok: true }))
     const validateProvenanceState = vi.fn(async () => {
-      throw new Error('unfinished Environment operation')
+      throw new Error('unfinished Artifact staging')
     })
 
     const result = await runDataRootMigration(
@@ -571,10 +571,64 @@ describe('runDataRootMigration (copy phase)', () => {
 
     expect(result).toEqual({
       ok: false,
-      error: 'Could not verify provenance data: unfinished Environment operation'
+      error: 'Could not verify provenance data: unfinished Artifact staging'
     })
     expect(validateProvenanceState).toHaveBeenCalledWith(currentDataRoot)
     expect(copyAndVerify).not.toHaveBeenCalled()
+  })
+
+  it('moves immutable Environment manifests without relocating dirty runtime cache state', async () => {
+    const deps = fakeDeps()
+    const environmentKey = '6781bee2cc7128dad60abe39756695758edd2dc2f9b42bb53db430253a7d8b43'
+    const inventoryTarget = join(
+      currentDataRoot,
+      'runtime',
+      'provenance',
+      'environment-inventory',
+      environmentKey
+    )
+    await mkdir(join(inventoryTarget, 'operations'), { recursive: true })
+    await writeFile(
+      join(inventoryTarget, 'binding.json'),
+      JSON.stringify({
+        schemaVersion: 1,
+        generation: 1,
+        state: 'dirty',
+        dirtyOperationId: 'operation-interrupted',
+        dirtyReason: 'recovery',
+        operationLog: []
+      })
+    )
+    await writeFile(join(inventoryTarget, 'operations', 'operation-interrupted.json'), '{}')
+
+    const manifestName = `${'a'.repeat(64)}.json`
+    const sourceManifest = join(currentDataRoot, RUNTIME_ENVIRONMENT_MANIFESTS_DIR, manifestName)
+    await mkdir(join(currentDataRoot, RUNTIME_ENVIRONMENT_MANIFESTS_DIR), { recursive: true })
+    await writeFile(sourceManifest, '{"schemaVersion":1}\n')
+
+    const target = dataRootFor(emptyParent)
+    const destinationInventory = join(
+      target,
+      'runtime',
+      'provenance',
+      'environment-inventory',
+      'stale-environment'
+    )
+    await mkdir(destinationInventory, { recursive: true })
+    await writeFile(join(destinationInventory, 'binding.json'), '{"state":"dirty"}\n')
+    const destinationRuntimeSentinel = join(target, 'runtime', 'cache-sentinel')
+    await writeFile(destinationRuntimeSentinel, 'keep')
+
+    const result = await runDataRootMigration(
+      { currentDataRoot, runtime: deps.runtime, notebook: deps.notebook },
+      emptyParent,
+      runOpts()
+    )
+
+    expect(result).toEqual({ ok: true })
+    expect(existsSync(join(target, RUNTIME_ENVIRONMENT_MANIFESTS_DIR, manifestName))).toBe(true)
+    expect(existsSync(join(target, 'runtime', 'provenance', 'environment-inventory'))).toBe(false)
+    expect(existsSync(destinationRuntimeSentinel)).toBe(true)
   })
 
   it("stamps a 'copying' marker before the copy and promotes it to 'verified' on success", async () => {
@@ -1004,7 +1058,7 @@ describe('runtime preservation + old-runtime cleanup', () => {
     // The (relocatable) pkgs cache is copied alongside the user data so envs rebuild offline there.
     expect(copyAndVerify).toHaveBeenCalledWith(
       expect.objectContaining({
-        dirs: [...MIGRATED_DIRS, RUNTIME_PROVENANCE_DIR, join('runtime', 'pkgs')]
+        dirs: [...MIGRATED_DIRS, RUNTIME_ENVIRONMENT_MANIFESTS_DIR, join('runtime', 'pkgs')]
       })
     )
   })
@@ -1028,7 +1082,7 @@ describe('runtime preservation + old-runtime cleanup', () => {
 
     expect(copyAndVerify).toHaveBeenCalledWith(
       expect.objectContaining({
-        dirs: [...MIGRATED_DIRS, RUNTIME_PROVENANCE_DIR]
+        dirs: [...MIGRATED_DIRS, RUNTIME_ENVIRONMENT_MANIFESTS_DIR]
       })
     )
   })
@@ -1055,7 +1109,7 @@ describe('runtime preservation + old-runtime cleanup', () => {
     expect(result).toEqual({ ok: true })
     expect(copyAndVerify).toHaveBeenCalledWith(
       expect.objectContaining({
-        dirs: [...MIGRATED_DIRS, RUNTIME_PROVENANCE_DIR]
+        dirs: [...MIGRATED_DIRS, RUNTIME_ENVIRONMENT_MANIFESTS_DIR]
       })
     )
   })
