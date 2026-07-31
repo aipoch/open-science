@@ -185,6 +185,9 @@ const SettingsPage = ({ open, onClose }: SettingsPageProps): React.JSX.Element =
   const codex = useSettingsStore((state) => state.codex)
   const isDetectingCodex = useSettingsStore((state) => state.isDetectingCodex)
   const detectCodex = useSettingsStore((state) => state.detectCodex)
+  const cursor = useSettingsStore((state) => state.cursor)
+  const isDetectingCursor = useSettingsStore((state) => state.isDetectingCursor)
+  const detectCursor = useSettingsStore((state) => state.detectCursor)
   const encryptionAvailable = useSettingsStore((state) => state.encryptionAvailable)
   const load = useSettingsStore((state) => state.load)
   const persistProvider = useSettingsStore((state) => state.persistProvider)
@@ -295,6 +298,13 @@ const SettingsPage = ({ open, onClose }: SettingsPageProps): React.JSX.Element =
       void detectCodex()
     }
   }, [open, agentFrameworkId, codex?.resolvedPath, isDetectingCodex, detectCodex])
+
+  // Cursor detection is detect-only (no install). Lazy like Codex so other frameworks skip the probe.
+  useEffect(() => {
+    if (open && agentFrameworkId === 'cursor' && !cursor?.resolvedPath && !isDetectingCursor) {
+      void detectCursor()
+    }
+  }, [open, agentFrameworkId, cursor?.resolvedPath, isDetectingCursor, detectCursor])
 
   const currentLocation = history[historyIndex]
   const activePanel = currentLocation.panel
@@ -880,6 +890,9 @@ const SettingsPage = ({ open, onClose }: SettingsPageProps): React.JSX.Element =
                       }
                       showClaudeIsolated={
                         agentFrameworkId === 'claude-code' && editingProvider === undefined
+                      }
+                      showCursorSubscriptions={
+                        agentFrameworkId === 'cursor' && editingProvider === undefined
                       }
                       defaultCustomApiEndpoint={customApiEndpoint}
                     />

@@ -1,6 +1,7 @@
 import {
   claudeIsolatedProviderIdentity,
   codexSubscriptionProviderIdentity,
+  cursorSubscriptionProviderIdentity,
   preferredEndpoint,
   type AgentFrameworkId,
   type ChatApiEndpoint,
@@ -73,18 +74,19 @@ export const defaultCustomApiEndpoint = (
 
 // Official providers expose the registry's complete protocol set; `apiEndpoint` only represents the
 // single format selected for a custom gateway and may be stale after switching provider kinds.
-export const providerFormApiEndpoints = (value: ProviderFormValue): ChatApiEndpoint[] =>
-  value.type === 'official' && value.vendorId
+// Cursor subscription is a closed CLI login marker — it carries no chat endpoint.
+export const providerFormApiEndpoints = (value: ProviderFormValue): ChatApiEndpoint[] => {
+  if (value.type === 'cursor-subscription') return []
+  return value.type === 'official' && value.vendorId
     ? resolveVendorApiEndpoints(value.vendorId)
     : [value.apiEndpoint]
+}
 
 // The provider kind pre-selected when the Add provider form opens, matched to the active agent
-// framework's most common official vendor: Claude Code → Anthropic, Codex → OpenAI,
-// OpenCode → DeepSeek. Exhaustive over AgentFrameworkId so a new framework forces a deliberate
-// choice, and keyed off OfficialVendorId so a registry rename fails at compile time.
-export const defaultProviderKindKey = (
-  frameworkId: AgentFrameworkId
-): `official:${OfficialVendorId}` => {
+// framework's most common choice: Claude Code → Anthropic, Codex → OpenAI, OpenCode → DeepSeek,
+// Cursor → Cursor subscription. Exhaustive over AgentFrameworkId so a new framework forces a
+// deliberate choice. Returns a provider-kind key string (official:* or a subscription kind).
+export const defaultProviderKindKey = (frameworkId: AgentFrameworkId): string => {
   switch (frameworkId) {
     case 'claude-code':
       return 'official:anthropic'
@@ -92,6 +94,8 @@ export const defaultProviderKindKey = (
       return 'official:openai'
     case 'opencode':
       return 'official:deepseek'
+    case 'cursor':
+      return 'cursor-subscription'
     default: {
       // The never assignment keeps the switch exhaustive at compile time. Persisted state could
       // still hold a stale value outside the union; this runs during render, so degrade to the
@@ -133,10 +137,9 @@ export const getProviderFormErrors = (
   } else if (value.type === 'official') {
     // No model is chosen at add time: the vendor catalog + the global model selection cover that.
     if (!value.key.trim() && !options.hasStoredKey) errors.key = 'API key is required.'
-  } else if (value.type === 'claude-isolated') {
-    // claude-isolated has no add-time fields: the type alone provisions the provider card, and the
-    // token paste lives in a separate sign-in modal (loginIsolatedClaude). Rejecting here would
-    // block the renderer from even creating the record, which contradicts the UX.
+  } else if (value.type === 'claude-isolated' || value.type === 'cursor-subscription') {
+    // claude-isolated / cursor-subscription have no add-time fields: the type alone provisions the
+    // provider card. Claude's token paste and Cursor's CLI login live outside this form.
   }
 
   return errors
@@ -146,16 +149,17 @@ export const getProviderFormErrors = (
 export const hasProviderFormErrors = (errors: ProviderFormErrors): boolean =>
   Object.keys(errors).length > 0
 
-// Grouping for the provider-type picker. 'codex' / 'claude' = each vendor's own subscription
-// sign-in, surfaced as its own section (only one is shown at a time, gated on the active
-// framework); 'api' = official vendors via their standard API key; 'other' = the custom gateway.
-export type ProviderKindGroup = 'codex' | 'claude' | 'api' | 'other'
+// Grouping for the provider-type picker. 'codex' / 'claude' / 'cursor' = each vendor's own
+// subscription sign-in, surfaced as its own section (only one is shown at a time, gated on the
+// active framework); 'api' = official vendors via their standard API key; 'other' = the custom gateway.
+export type ProviderKindGroup = 'codex' | 'claude' | 'cursor' | 'api' | 'other'
 
-// Group headers shown in the provider-type picker and dropdown, in display order. The two
-// subscription groups mirror each other: only the one matching the active framework is rendered.
+// Group headers shown in the provider-type picker and dropdown, in display order. The subscription
+// groups mirror each other: only the one matching the active framework is rendered.
 export const PROVIDER_KIND_GROUPS: { id: ProviderKindGroup; label: string }[] = [
   { id: 'codex', label: 'Codex subscription' },
   { id: 'claude', label: 'Claude subscription' },
+  { id: 'cursor', label: 'Cursor subscription' },
   { id: 'api', label: 'Official API' },
   { id: 'other', label: 'Other' }
 ]
@@ -183,6 +187,15 @@ export const PROVIDER_KINDS: ProviderKind[] = [
     label: claudeIsolatedProviderIdentity().name,
     description: 'Use an existing Claude profile or sign in with a separate Open Science profile.',
     group: 'claude'
+  },
+  {
+    // Marker provider for Cursor Agent: auth is the user's existing `agent login` in the Cursor CLI.
+    // Surfaced only when Cursor is the active framework. No API key is stored in Open Science.
+    key: 'cursor-subscription',
+    label: cursorSubscriptionProviderIdentity().name,
+    description:
+      'Use your existing Cursor Agent CLI login (`agent login`). No API key is stored here.',
+    group: 'cursor'
   },
   ...OFFICIAL_VENDORS.map((vendor): ProviderKind => ({
     key: `official:${vendor.id}`,
@@ -235,6 +248,22 @@ export const providerKindPatch = (
     }
   }
 
+  if (key === 'cursor-subscription') {
+    const identity = cursorSubscriptionProviderIdentity()
+    return {
+      type: 'cursor-subscription',
+      name: identity.name,
+      // Unused: Cursor is a closed routing gateway with no app-side chat endpoint.
+      apiEndpoint: 'anthropic',
+      baseUrl: '',
+      model: '',
+      contextWindow: '',
+      key: '',
+      vendorId: undefined,
+      region: undefined
+    }
+  }
+
   if (key.startsWith('official:')) {
     const vendorId = key.slice('official:'.length) as OfficialVendorId
     const vendor = getOfficialVendor(vendorId)
@@ -271,6 +300,9 @@ export const selectedKindKey = (value: ProviderFormValue): string => {
   if (value.type === 'codex-shared' || value.type === 'codex-isolated') {
     return 'codex-subscription'
   }
+  if (value.type === 'cursor-subscription') {
+    return 'cursor-subscription'
+  }
 
   return value.vendorId ? `official:${value.vendorId}` : 'custom'
 }
@@ -283,4 +315,6 @@ export const providerKindKey = (type: ProviderType, vendorId?: OfficialVendorId)
       ? 'codex-subscription'
       : type === 'claude-shared' || type === 'claude-isolated'
         ? 'claude-subscription'
-        : type
+        : type === 'cursor-subscription'
+          ? 'cursor-subscription'
+          : type

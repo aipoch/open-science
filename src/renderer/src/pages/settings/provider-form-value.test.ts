@@ -17,6 +17,7 @@ describe('defaultProviderKindKey', () => {
     expect(defaultProviderKindKey('claude-code')).toBe('official:anthropic')
     expect(defaultProviderKindKey('codex')).toBe('official:openai')
     expect(defaultProviderKindKey('opencode')).toBe('official:deepseek')
+    expect(defaultProviderKindKey('cursor')).toBe('cursor-subscription')
   })
 })
 
@@ -135,6 +136,7 @@ describe('provider-kind helpers', () => {
     // the Claude one hiding under Official API.
     expect(groupKeys('codex')).toEqual(['codex-subscription'])
     expect(groupKeys('claude')).toEqual(['claude-subscription'])
+    expect(groupKeys('cursor')).toEqual(['cursor-subscription'])
     expect(apiKeys).not.toContain('claude-subscription')
     expect(groupKeys('other')).toEqual(['custom'])
   })

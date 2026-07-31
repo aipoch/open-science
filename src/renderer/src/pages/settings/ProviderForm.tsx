@@ -57,6 +57,8 @@ type ProviderFormProps = {
   // showCodexSubscriptions: claude-isolated is only meaningful while Claude Code is the active
   // framework, so the wizard/settings page toggles this rather than showing it unconditionally.
   showClaudeIsolated?: boolean
+  // Whether to surface the Cursor subscription option. Only meaningful while Cursor is active.
+  showCursorSubscriptions?: boolean
   // Preferred protocol for a newly selected Custom Gateway, derived from the active framework.
   defaultCustomApiEndpoint?: ProviderFormValue['apiEndpoint']
 }
@@ -126,12 +128,14 @@ const ProviderForm = ({
   encryptionAvailable = true,
   showCodexSubscriptions = false,
   showClaudeIsolated = false,
+  showCursorSubscriptions = false,
   defaultCustomApiEndpoint = 'anthropic'
 }: ProviderFormProps): React.JSX.Element => {
   const isCustom = value.type === 'custom'
   const isOfficial = value.type === 'official'
   const isCodexSubscription = value.type === 'codex-shared' || value.type === 'codex-isolated'
   const isClaudeSubscription = value.type === 'claude-shared' || value.type === 'claude-isolated'
+  const isCursorSubscription = value.type === 'cursor-subscription'
   const vendor = isOfficial && value.vendorId ? getOfficialVendor(value.vendorId) : undefined
 
   const selectedKey = selectedKindKey(value)
@@ -212,6 +216,8 @@ const ProviderForm = ({
                 // The Claude subscription section mirrors it: gate on Claude Code being active,
                 // the only framework that speaks the app-owned bearer token.
                 if (group.id === 'claude' && !showClaudeIsolated) return false
+                // Cursor subscription uses the Cursor CLI login; only show while Cursor is active.
+                if (group.id === 'cursor' && !showCursorSubscriptions) return false
 
                 return true
               })
@@ -237,7 +243,7 @@ const ProviderForm = ({
         </Select>
       </div>
 
-      {!isCodexSubscription && !isClaudeSubscription ? (
+      {!isCodexSubscription && !isClaudeSubscription && !isCursorSubscription ? (
         <div className="space-y-1.5">
           <label className={fieldLabelClassName} htmlFor="provider-name">
             Name
@@ -250,6 +256,16 @@ const ProviderForm = ({
             placeholder={vendor ? vendor.label : 'e.g. My gateway'}
             onChange={(event) => onChange({ name: event.target.value })}
           />
+        </div>
+      ) : null}
+
+      {isCursorSubscription ? (
+        <div className="space-y-3 rounded-lg border border-border bg-muted/30 p-3">
+          <p className="text-xs text-muted-foreground">
+            Uses your existing Cursor Agent CLI login. Run{' '}
+            <code className="font-mono">agent login</code> in a terminal if you have not signed in
+            yet. Open Science does not store a Cursor API key.
+          </p>
         </div>
       ) : null}
 
@@ -551,7 +567,7 @@ const ProviderForm = ({
             ) : null}
           </div>
         </>
-      ) : isOfficial ? (
+      ) : isCursorSubscription ? null : isOfficial ? (
         <>
           {vendor?.regions ? (
             <div className="space-y-1.5">

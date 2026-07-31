@@ -84,6 +84,7 @@ describe('AgentStep', () => {
         claudeReady: true,
         opencodeReady: false,
         codexReady: false,
+        cursorReady: false,
         agentFrameworkId: 'claude-code',
         agentReady: true,
         activeProviderReady: false
@@ -104,7 +105,7 @@ describe('AgentStep', () => {
     expect(panel?.querySelector('button')?.textContent).toContain('Re-detect')
     expect(container.textContent).not.toContain('Agent framework')
     expect(container.textContent).toContain('Installed · 1')
-    expect(container.textContent).toContain('Available · 2')
+    expect(container.textContent).toContain('Available · 3')
     expect(container.querySelector('[aria-label="Use Claude Agent"]')).not.toBeNull()
     expect(container.querySelector('[aria-label="Install OpenCode"]')).not.toBeNull()
     expect(container.textContent).not.toContain('Uninstall')
@@ -118,6 +119,7 @@ describe('AgentStep', () => {
         claudeReady: false,
         opencodeReady: false,
         codexReady: false,
+        cursorReady: false,
         agentFrameworkId: 'claude-code',
         agentReady: false,
         activeProviderReady: false
@@ -142,6 +144,7 @@ describe('AgentStep', () => {
         claudeReady: false,
         opencodeReady: false,
         codexReady: false,
+        cursorReady: false,
         agentFrameworkId: 'claude-code',
         agentReady: false,
         activeProviderReady: false
@@ -168,6 +171,7 @@ describe('AgentStep', () => {
         claudeReady: true,
         opencodeReady: false,
         codexReady: false,
+        cursorReady: false,
         agentFrameworkId: 'claude-code',
         agentReady: true,
         activeProviderReady: false
@@ -198,6 +202,7 @@ describe('AgentStep', () => {
         claudeReady: true,
         opencodeReady: false,
         codexReady: false,
+        cursorReady: false,
         agentFrameworkId: 'claude-code',
         agentReady: true,
         activeProviderReady: false
@@ -239,6 +244,7 @@ describe('AgentStep', () => {
         claudeReady: true,
         opencodeReady: true,
         codexReady: true,
+        cursorReady: false,
         agentFrameworkId: 'claude-code',
         agentReady: true,
         activeProviderReady: false
@@ -265,6 +271,7 @@ describe('AgentStep', () => {
         claudeReady: true,
         opencodeReady: false,
         codexReady: false,
+        cursorReady: false,
         agentFrameworkId: 'claude-code',
         agentReady: true,
         activeProviderReady: false
@@ -290,6 +297,7 @@ describe('AgentStep', () => {
         claudeReady: true,
         opencodeReady: true,
         codexReady: false,
+        cursorReady: false,
         agentFrameworkId: 'opencode',
         agentReady: true,
         activeProviderReady: false
@@ -309,6 +317,7 @@ describe('AgentStep', () => {
         claudeReady: false,
         opencodeReady: false,
         codexReady: false,
+        cursorReady: false,
         agentFrameworkId: 'claude-code',
         agentReady: false,
         activeProviderReady: false
@@ -348,6 +357,7 @@ describe('AgentStep', () => {
         claudeReady: false,
         opencodeReady: true,
         codexReady: false,
+        cursorReady: false,
         agentFrameworkId: 'claude-code',
         agentReady: false,
         activeProviderReady: false
@@ -372,6 +382,7 @@ describe('AgentStep', () => {
         claudeReady: false,
         opencodeReady: false,
         codexReady: true,
+        cursorReady: false,
         agentFrameworkId: 'claude-code',
         agentReady: false,
         activeProviderReady: false
@@ -402,6 +413,7 @@ describe('AgentStep', () => {
         claudeReady: false,
         opencodeReady: true,
         codexReady: true,
+        cursorReady: false,
         agentFrameworkId: 'claude-code',
         agentReady: false,
         activeProviderReady: false
@@ -444,6 +456,7 @@ describe('AgentStep', () => {
         claudeReady: true,
         opencodeReady: false,
         codexReady: true,
+        cursorReady: false,
         agentFrameworkId: 'claude-code',
         agentReady: true,
         activeProviderReady: false
@@ -470,6 +483,7 @@ describe('AgentStep', () => {
         claudeReady: true,
         opencodeReady: true,
         codexReady: false,
+        cursorReady: false,
         agentFrameworkId: 'claude-code',
         agentReady: true,
         activeProviderReady: false
@@ -496,6 +510,7 @@ describe('AgentStep', () => {
         claudeReady: true,
         opencodeReady: true,
         codexReady: true,
+        cursorReady: false,
         agentFrameworkId: 'claude-code',
         agentReady: true,
         activeProviderReady: false
@@ -527,6 +542,7 @@ describe('AgentStep', () => {
         claudeReady: false,
         opencodeReady: false,
         codexReady: false,
+        cursorReady: false,
         agentFrameworkId: 'claude-code',
         agentReady: false,
         activeProviderReady: false
@@ -554,6 +570,7 @@ describe('AgentStep', () => {
         claudeReady: false,
         opencodeReady: false,
         codexReady: false,
+        cursorReady: false,
         agentFrameworkId: 'claude-code',
         agentReady: false,
         activeProviderReady: false
@@ -581,6 +598,7 @@ describe('AgentStep', () => {
         claudeReady: false,
         opencodeReady: false,
         codexReady: false,
+        cursorReady: false,
         agentFrameworkId: 'claude-code',
         agentReady: false,
         activeProviderReady: false
@@ -600,6 +618,7 @@ describe('AgentStep', () => {
     const detectClaude = vi.fn().mockResolvedValue({ found: false })
     const detectOpencode = vi.fn().mockResolvedValue(undefined)
     const detectCodex = vi.fn().mockResolvedValue(undefined)
+    const detectCursor = vi.fn().mockResolvedValue(undefined)
     const checkEnvironment = vi.fn().mockResolvedValue(undefined)
     useSettingsStore.setState({
       agentFrameworkId: 'claude-code',
@@ -608,11 +627,13 @@ describe('AgentStep', () => {
       detectClaude,
       detectOpencode,
       detectCodex,
+      detectCursor,
       checkEnvironment,
       preflight: {
         claudeReady: false,
         opencodeReady: false,
         codexReady: false,
+        cursorReady: false,
         agentFrameworkId: 'claude-code',
         agentReady: false,
         activeProviderReady: false
@@ -636,12 +657,14 @@ describe('AgentStep', () => {
     const detectClaude = vi.fn().mockResolvedValue({ found: false })
     const detectOpencode = vi.fn().mockResolvedValue(undefined)
     const detectCodex = vi.fn().mockResolvedValue(undefined)
+    const detectCursor = vi.fn().mockResolvedValue(undefined)
     const checkEnvironment = vi.fn().mockResolvedValue(undefined)
     useSettingsStore.setState({
       agentFrameworks: threeFrameworks,
       detectClaude,
       detectOpencode,
       detectCodex,
+      detectCursor,
       checkEnvironment,
       environmentCheck: environment(false)
     })
@@ -652,6 +675,7 @@ describe('AgentStep', () => {
     expect(detectClaude).toHaveBeenCalledOnce()
     expect(detectOpencode).toHaveBeenCalledOnce()
     expect(detectCodex).toHaveBeenCalledOnce()
+    expect(detectCursor).toHaveBeenCalledOnce()
     expect(checkEnvironment).toHaveBeenCalledOnce()
   })
 
@@ -659,12 +683,14 @@ describe('AgentStep', () => {
     const detectClaude = vi.fn().mockResolvedValue({ found: true, path: '/bin/claude' })
     const detectOpencode = vi.fn().mockResolvedValue(undefined)
     const detectCodex = vi.fn().mockRejectedValue(new Error('Codex detection failed.'))
+    const detectCursor = vi.fn().mockResolvedValue(undefined)
     const checkEnvironment = vi.fn().mockResolvedValue(undefined)
     useSettingsStore.setState({
       agentFrameworks: threeFrameworks,
       detectClaude,
       detectOpencode,
       detectCodex,
+      detectCursor,
       checkEnvironment,
       environmentCheck: environment(false)
     })
@@ -680,6 +706,7 @@ describe('AgentStep', () => {
     const detectClaude = vi.fn().mockResolvedValue({ found: false })
     const detectOpencode = vi.fn().mockResolvedValue(undefined)
     const detectCodex = vi.fn().mockRejectedValueOnce(new Error('Codex detection failed.'))
+    const detectCursor = vi.fn().mockResolvedValue(undefined)
     const checkEnvironment = vi.fn().mockResolvedValue(undefined)
     const installClaude = vi.fn().mockResolvedValue({ installId: 'repair-1', ok: true })
     useSettingsStore.setState({
@@ -688,6 +715,7 @@ describe('AgentStep', () => {
       detectClaude,
       detectOpencode,
       detectCodex,
+      detectCursor,
       checkEnvironment,
       installClaude,
       environmentCheck: environment(false)
@@ -723,6 +751,7 @@ describe('AgentStep', () => {
         claudeReady: false,
         opencodeReady: false,
         codexReady: false,
+        cursorReady: false,
         agentFrameworkId: 'claude-code',
         agentReady: false,
         activeProviderReady: false
@@ -748,6 +777,12 @@ describe('AgentStep', () => {
           installError: undefined
         },
         codex: {
+          isInstalling: false,
+          installLogs: [],
+          installProgress: null,
+          installError: undefined
+        },
+        cursor: {
           isInstalling: false,
           installLogs: [],
           installProgress: null,

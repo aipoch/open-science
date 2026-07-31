@@ -11,6 +11,8 @@ import {
   DEFAULT_REASONING_EFFORT,
   isClaudeSubscriptionProvider,
   isCodexSubscriptionProvider,
+  isCursorSubscriptionProvider,
+  cursorSubscriptionProviderIdentity,
   providerValidationFailed,
   selectClaudeSubscriptionProvider
 } from '../../../shared/settings'
@@ -27,6 +29,7 @@ import type {
   ClaudeSubscriptionProviderId,
   CodexInfo,
   CodexInstallSource,
+  CursorInfo,
   EnvironmentCheckResult,
   ManagedClaudeRegistry,
   Preflight,
@@ -101,11 +104,14 @@ type SettingsStoreData = {
   // Detected opencode executable, for the framework-aware detection card.
   opencode: OpencodeInfo
   codex: CodexInfo
+  cursor: CursorInfo
   // Whether each framework's detected runtime is the app-managed install (only these can be uninstalled
   // in-app). Mirrored from the main-process snapshot; a PATH/npm binary reads false.
   claudeManaged: boolean
   opencodeManaged: boolean
   codexManaged: boolean
+  // Cursor is detect-only (never app-managed); mirrored for snapshot parity.
+  cursorManaged: boolean
   onboardingCompletedAt: number | undefined
   // Bundled skills with their enabled state, loaded lazily when the Skills panel opens.
   skills: SkillView[]
@@ -136,8 +142,10 @@ type SettingsStoreData = {
   isDetectingClaude: boolean
   isDetectingOpencode: boolean
   isDetectingCodex: boolean
+  isDetectingCursor: boolean
   // Per-runtime install state, keyed by framework id. Each runtime's install writes only to its own
   // slice so its progress/logs/error render in its own card alone — never mirrored onto the others.
+  // Cursor is detect-only and never installs, but keeps an empty slice so the Record stays exhaustive.
   installStates: Record<AgentFrameworkId, RuntimeInstallState>
   // Whether the settings dialog is open (rendered at the app root, over Home/Workspace).
   isSettingsOpen: boolean
@@ -167,6 +175,8 @@ type SettingsStore = SettingsStoreData & {
   // Detects the opencode executable and refreshes its status card.
   detectOpencode: () => Promise<void>
   detectCodex: () => Promise<void>
+  // Detects the Cursor Agent CLI (detect-only; no in-app install) and refreshes its status card.
+  detectCursor: () => Promise<void>
   installClaude: (
     source: ClaudeInstallSource,
     managedRegistry?: ManagedClaudeRegistry
@@ -318,12 +328,14 @@ const createInitialRuntimeInstallState = (): RuntimeInstallState => ({
 export const selectAnyInstalling = (state: SettingsStoreData): boolean =>
   state.installStates['claude-code'].isInstalling ||
   state.installStates.opencode.isInstalling ||
-  state.installStates.codex.isInstalling
+  state.installStates.codex.isInstalling ||
+  state.installStates.cursor.isInstalling
 
 const createInitialPreflight = (): Preflight => ({
   claudeReady: false,
   opencodeReady: false,
   codexReady: false,
+  cursorReady: false,
   agentFrameworkId: 'claude-code',
   agentReady: false,
   activeProviderReady: false
@@ -343,9 +355,11 @@ export const createInitialSettingsState = (): SettingsStoreData => ({
   agentFrameworks: [],
   opencode: {},
   codex: {},
+  cursor: {},
   claudeManaged: false,
   opencodeManaged: false,
   codexManaged: false,
+  cursorManaged: false,
   onboardingCompletedAt: undefined,
   skills: [],
   connectors: [],
@@ -363,10 +377,12 @@ export const createInitialSettingsState = (): SettingsStoreData => ({
   isDetectingClaude: false,
   isDetectingOpencode: false,
   isDetectingCodex: false,
+  isDetectingCursor: false,
   installStates: {
     'claude-code': createInitialRuntimeInstallState(),
     opencode: createInitialRuntimeInstallState(),
-    codex: createInitialRuntimeInstallState()
+    codex: createInitialRuntimeInstallState(),
+    cursor: createInitialRuntimeInstallState()
   },
   isSettingsOpen: false,
   pendingSettingsPanel: undefined,
@@ -400,9 +416,11 @@ const applySnapshot = (snapshot: SettingsSnapshot): Partial<SettingsStoreData> =
   agentFrameworks: snapshot.agentFrameworks,
   opencode: snapshot.opencode,
   codex: snapshot.codex ?? {},
+  cursor: snapshot.cursor ?? {},
   claudeManaged: snapshot.claudeManaged,
   opencodeManaged: snapshot.opencodeManaged,
-  codexManaged: snapshot.codexManaged ?? false
+  codexManaged: snapshot.codexManaged ?? false,
+  cursorManaged: snapshot.cursorManaged ?? false
 })
 
 // Merges a patch into one runtime's install slice, leaving the other runtimes' slices untouched. This
@@ -567,6 +585,9 @@ const resolveUpsertedProviderId = (
 ): string | undefined => {
   if (isCodexSubscriptionProvider(request.type)) {
     return codexSubscriptionProviderIdentity().id
+  }
+  if (isCursorSubscriptionProvider(request.type)) {
+    return cursorSubscriptionProviderIdentity().id
   }
   // Both Claude subscription modes use fixed builtin ids; return the correct one for the new type
   // so mode switches (shared→isolated or vice versa) resolve to the incoming record, not the old one.
@@ -789,7 +810,7 @@ export const useSettingsStore = create<SettingsStore>((set, get) => ({
     set((state) => {
       const runtimes: AgentFrameworkId[] = runtime
         ? [runtime]
-        : ['claude-code', 'opencode', 'codex']
+        : ['claude-code', 'opencode', 'codex', 'cursor']
       const installStates = { ...state.installStates }
       // Clear only the transient display fields; preserve isInstalling. Resetting the whole slice would
       // flip isInstalling to false mid-install, dropping the single-install lock (selectAnyInstalling)
@@ -985,6 +1006,8 @@ export const useSettingsStore = create<SettingsStore>((set, get) => ({
         await get().detectOpencode()
       } else if (id === 'codex') {
         await get().detectCodex()
+      } else if (id === 'cursor') {
+        await get().detectCursor()
       } else {
         await get().detectClaude()
       }
@@ -1079,6 +1102,17 @@ export const useSettingsStore = create<SettingsStore>((set, get) => ({
       set(applySnapshot(await window.api.settings.detectCodex()))
     } finally {
       set({ isDetectingCodex: false })
+    }
+  },
+
+  // Detect-only: refreshes Cursor CLI path/version/login from main; never installs.
+  detectCursor: async () => {
+    set({ isDetectingCursor: true })
+
+    try {
+      set(applySnapshot(await window.api.settings.detectCursor()))
+    } finally {
+      set({ isDetectingCursor: false })
     }
   },
 

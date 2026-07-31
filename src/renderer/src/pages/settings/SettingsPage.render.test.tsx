@@ -25,6 +25,7 @@ const installApi = (): void => {
         claude: {},
         opencode: {},
         codex: {},
+        cursor: {},
         providers: [],
         agentFrameworkId: 'claude-code',
         agentFrameworks: [{ id: 'claude-code', displayName: 'Claude Code', supportsSkills: true }]
@@ -33,6 +34,7 @@ const installApi = (): void => {
         claude: {},
         opencode: {},
         codex: {},
+        cursor: {},
         providers: [],
         agentFrameworkId: 'claude-code',
         agentFrameworks: [{ id: 'claude-code', displayName: 'Claude Code', supportsSkills: true }]
@@ -41,6 +43,16 @@ const installApi = (): void => {
         claude: {},
         opencode: {},
         codex: {},
+        cursor: {},
+        providers: [],
+        agentFrameworkId: 'claude-code',
+        agentFrameworks: [{ id: 'claude-code', displayName: 'Claude Code', supportsSkills: true }]
+      }),
+      detectCursor: vi.fn().mockResolvedValue({
+        claude: {},
+        opencode: {},
+        codex: {},
+        cursor: {},
         providers: [],
         agentFrameworkId: 'claude-code',
         agentFrameworks: [{ id: 'claude-code', displayName: 'Claude Code', supportsSkills: true }]
@@ -259,6 +271,7 @@ describe('SettingsPage layout', () => {
       claudeReady: false,
       opencodeReady: false,
       codexReady: false,
+      cursorReady: false,
       agentFrameworkId: 'claude-code',
       agentReady: false,
       activeProviderReady: false
@@ -305,6 +318,7 @@ describe('SettingsPage layout', () => {
       claudeReady: false,
       opencodeReady: false,
       codexReady: false,
+      cursorReady: false,
       agentFrameworkId: 'claude-code',
       agentReady: false,
       activeProviderReady: false
@@ -394,6 +408,7 @@ describe('SettingsPage layout', () => {
       claudeReady: false,
       opencodeReady: false,
       codexReady: false,
+      cursorReady: false,
       agentFrameworkId: 'codex',
       agentReady: false,
       activeProviderReady: false
@@ -445,6 +460,7 @@ describe('SettingsPage layout', () => {
       claudeReady: false,
       opencodeReady: false,
       codexReady: false,
+      cursorReady: false,
       agentFrameworkId: 'claude-code',
       agentReady: false,
       activeProviderReady: false
@@ -678,6 +694,7 @@ describe('SettingsPage layout', () => {
       claude: {},
       opencode: { resolvedPath: '/x/opencode' },
       codex: {},
+      cursor: {},
       providers: [provider],
       activeProviderId: provider.id,
       activeModel: provider.model,
@@ -1407,13 +1424,15 @@ describe('SettingsPage Codex framework', () => {
       agentFrameworks: frameworks,
       claudeManaged: true,
       opencodeManaged: false,
-      codexManaged: true
+      codexManaged: true,
+      cursorManaged: false,
     }
     api.settings.getSettings = vi.fn().mockResolvedValue(snapshot)
     api.settings.getPreflight = vi.fn().mockResolvedValue({
       claudeReady: true,
       opencodeReady: false,
       codexReady: true,
+      cursorReady: false,
       agentFrameworkId: 'claude-code',
       agentReady: true,
       activeProviderReady: false
@@ -1455,17 +1474,20 @@ describe('SettingsPage Codex framework', () => {
       claude: { resolvedPath: '/data/claude', version: '2.1.0' },
       opencode: { resolvedPath: '/usr/local/bin/opencode', version: '1.18.3' },
       codex: {},
+      cursor: {},
       providers: [],
       agentFrameworkId: 'claude-code',
       agentFrameworks: frameworks,
       claudeManaged: true,
       opencodeManaged: false,
-      codexManaged: false
+      codexManaged: false,
+      cursorManaged: false,
     })
     api.settings.getPreflight = vi.fn().mockResolvedValue({
       claudeReady: true,
       opencodeReady: true,
       codexReady: false,
+      cursorReady: false,
       agentFrameworkId: 'claude-code',
       agentReady: true,
       activeProviderReady: false
@@ -1508,18 +1530,21 @@ describe('SettingsPage Codex framework', () => {
       claude: { resolvedPath: '/data/claude', version: '2.1.0' },
       opencode: { resolvedPath: '/usr/local/bin/opencode', version: '1.18.3' },
       codex: {},
+      cursor: {},
       providers: [],
       agentFrameworkId: 'claude-code',
       agentFrameworks: frameworks,
       claudeManaged: true,
       opencodeManaged: false,
-      codexManaged: false
+      codexManaged: false,
+      cursorManaged: false,
     }
     api.settings.getSettings = vi.fn().mockResolvedValue(snapshot)
     api.settings.getPreflight = vi.fn().mockResolvedValue({
       claudeReady: true,
       opencodeReady: true,
       codexReady: false,
+      cursorReady: false,
       agentFrameworkId: 'claude-code',
       agentReady: true,
       activeProviderReady: false
@@ -1527,9 +1552,11 @@ describe('SettingsPage Codex framework', () => {
     const detectClaude = vi.fn().mockResolvedValue(snapshot)
     const detectOpencode = vi.fn().mockResolvedValue(snapshot)
     const detectCodex = vi.fn().mockResolvedValue(snapshot)
+    const detectCursor = vi.fn().mockResolvedValue(snapshot)
     api.settings.detectClaude = detectClaude
     api.settings.detectOpencode = detectOpencode
     api.settings.detectCodex = detectCodex
+    api.settings.detectCursor = detectCursor
     const checkEnvironment = vi.fn().mockResolvedValue(undefined)
     useSettingsStore.setState({ checkEnvironment })
 
@@ -1538,13 +1565,13 @@ describe('SettingsPage Codex framework', () => {
     })
     await openAgentPanel()
 
-    // Two ready runtimes land in the Installed group; Codex (not ready) in Available.
+    // Two ready runtimes land in the Installed group; Codex + Cursor (not ready) in Available.
     expect(document.body.textContent).toContain('Installed · 2')
-    expect(document.body.textContent).toContain('Available · 1')
+    expect(document.body.textContent).toContain('Available · 2')
     // Claude is renamed in this panel only.
     expect(document.body.textContent).toContain('Claude Agent')
 
-    // The section-level Re-detect re-scans all three frameworks at once.
+    // The section-level Re-detect re-scans every framework at once.
     const redetect = Array.from(document.body.querySelectorAll<HTMLButtonElement>('button')).find(
       (button) => button.textContent?.trim() === 'Re-detect'
     )
@@ -1554,6 +1581,7 @@ describe('SettingsPage Codex framework', () => {
     expect(detectClaude).toHaveBeenCalledTimes(1)
     expect(detectOpencode).toHaveBeenCalledTimes(1)
     expect(detectCodex).toHaveBeenCalledTimes(1)
+    expect(detectCursor).toHaveBeenCalledTimes(1)
     expect(checkEnvironment).toHaveBeenCalledTimes(1)
   })
 
@@ -1581,11 +1609,13 @@ describe('SettingsPage Codex framework', () => {
       agentFrameworks: frameworks,
       claudeManaged: false,
       opencodeManaged: false,
-      codexManaged: true
+      codexManaged: true,
+      cursorManaged: false,
     }
     api.settings.getSettings = vi.fn().mockResolvedValue(snapshot)
     api.settings.getPreflight = vi.fn().mockResolvedValue({
       codexReady: true,
+      cursorReady: false,
       agentFrameworkId: 'codex',
       agentReady: true,
       activeProviderReady: true
@@ -1629,11 +1659,13 @@ describe('SettingsPage Codex framework', () => {
       agentFrameworks: frameworks,
       claudeManaged: false,
       opencodeManaged: false,
-      codexManaged: true
+      codexManaged: true,
+      cursorManaged: false,
     }
     api.settings.getSettings = vi.fn().mockResolvedValue(snapshot)
     api.settings.getPreflight = vi.fn().mockResolvedValue({
       codexReady: true,
+      cursorReady: false,
       agentFrameworkId: 'codex',
       agentReady: true,
       activeProviderReady: true
@@ -1676,10 +1708,12 @@ describe('SettingsPage Codex framework', () => {
       agentFrameworks: frameworks,
       claudeManaged: false,
       opencodeManaged: false,
-      codexManaged: true
+      codexManaged: true,
+      cursorManaged: false,
     })
     api.settings.getPreflight = vi.fn().mockResolvedValue({
       codexReady: true,
+      cursorReady: false,
       agentFrameworkId: 'codex',
       agentReady: true,
       activeProviderReady: false
@@ -1722,7 +1756,8 @@ describe('SettingsPage Codex framework', () => {
       agentFrameworks: frameworks,
       claudeManaged: false,
       opencodeManaged: false,
-      codexManaged: true
+      codexManaged: true,
+      cursorManaged: false,
     })
     // The browser flow never settles on its own; closing the dialog is what cancels it.
     api.settings.loginIsolatedCodex = vi.fn(() => new Promise(() => undefined))
@@ -1763,7 +1798,8 @@ describe('SettingsPage Codex framework', () => {
       agentFrameworks: frameworks,
       claudeManaged: false,
       opencodeManaged: false,
-      codexManaged: true
+      codexManaged: true,
+      cursorManaged: false,
     })
     api.settings.loginIsolatedCodex = vi
       .fn()

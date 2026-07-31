@@ -22,6 +22,8 @@ import {
   codexSubscriptionProviderIdentity,
   isClaudeSubscriptionProvider,
   isCodexSubscriptionProvider,
+  isCursorSubscriptionProvider,
+  cursorSubscriptionProviderIdentity,
   providerEndpoints,
   providerValidationFailed,
   resolveCodexSubscriptionType,
@@ -111,6 +113,7 @@ const describeType = (provider: ProviderView): string => {
   if (provider.type === 'claude-isolated' || provider.type === 'claude-shared')
     return 'Claude subscription'
   if (isCodexSubscriptionProvider(provider.type)) return codexSubscriptionProviderIdentity().name
+  if (isCursorSubscriptionProvider(provider.type)) return cursorSubscriptionProviderIdentity().name
 
   return provider.vendorId
     ? (getOfficialVendor(provider.vendorId)?.label ?? 'Official')

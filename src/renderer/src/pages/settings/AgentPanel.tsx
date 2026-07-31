@@ -6,6 +6,7 @@ import { RefreshCw, TriangleAlert } from 'lucide-react'
 // emoji-mart JSON import vitest can't parse). The Mono/Color components are self-contained.
 import ClaudeColor from '@lobehub/icons/es/Claude/components/Color'
 import Codex from '@lobehub/icons/es/Codex/components/Mono'
+import Cursor from '@lobehub/icons/es/Cursor/components/Mono'
 import OpenCode from '@lobehub/icons/es/OpenCode/components/Mono'
 import { ExternalTextLink } from '@/components/ExternalTextLink'
 import { Button } from '@/components/ui/button'
@@ -19,6 +20,7 @@ import type {
 import {
   getClaudeInstallSources,
   getCodexInstallSources,
+  getCursorInstallSources,
   getOpencodeInstallSources
 } from '../../../../shared/settings'
 import { AgentFrameworkCard } from './AgentFrameworkCard'
@@ -30,7 +32,7 @@ import { UninstallRuntimeDialog } from './UninstallRuntimeDialog'
 
 // The agent frameworks the settings page manages, keyed by their short name (used for the
 // uninstall dialog target and the framework card descriptors).
-type FrameworkKey = 'claude' | 'opencode' | 'codex'
+type FrameworkKey = 'claude' | 'opencode' | 'codex' | 'cursor'
 
 type AgentPanelProps = {
   variant?: 'settings' | 'onboarding'
@@ -66,10 +68,14 @@ const AgentPanel = ({
   const isDetectingCodex = useSettingsStore((state) => state.isDetectingCodex)
   const detectCodex = useSettingsStore((state) => state.detectCodex)
   const installCodex = useSettingsStore((state) => state.installCodex)
+  const cursor = useSettingsStore((state) => state.cursor)
+  const isDetectingCursor = useSettingsStore((state) => state.isDetectingCursor)
+  const detectCursor = useSettingsStore((state) => state.detectCursor)
   // Per-runtime install slices: each card renders only its own progress/logs/error (issue #278).
   const claudeInstall = useSettingsStore((state) => state.installStates['claude-code'])
   const opencodeInstall = useSettingsStore((state) => state.installStates.opencode)
   const codexInstall = useSettingsStore((state) => state.installStates.codex)
+  const cursorInstall = useSettingsStore((state) => state.installStates.cursor)
   // Any install running locks the framework selector and every card's uninstall button.
   const anyInstalling = useSettingsStore(selectAnyInstalling)
   const npmAvailable = useSettingsStore((state) => state.npmAvailable)
@@ -148,7 +154,8 @@ const AgentPanel = ({
     try {
       if (pendingUninstall === 'claude') await uninstallClaude()
       else if (pendingUninstall === 'opencode') await uninstallOpencode()
-      else await uninstallCodex()
+      else if (pendingUninstall === 'codex') await uninstallCodex()
+      // Cursor is detect-only and never managed; uninstall is never offered for it.
 
       setPendingUninstall(null)
     } finally {
@@ -244,7 +251,8 @@ const AgentPanel = ({
     const readyByFramework: Record<AgentFrameworkId, boolean> = {
       'claude-code': preflight.claudeReady,
       opencode: preflight.opencodeReady,
-      codex: preflight.codexReady
+      codex: preflight.codexReady,
+      cursor: preflight.cursorReady
     }
     if (readyByFramework[agentFrameworkId]) return
 
@@ -259,19 +267,26 @@ const AgentPanel = ({
     isOnboarding,
     preflight.claudeReady,
     preflight.codexReady,
+    preflight.cursorReady,
     preflight.opencodeReady,
     queueOnboardingSwitch
   ])
 
-  // The section-level Re-detect re-scans all three frameworks at once; the per-card detect buttons
+  // The section-level Re-detect re-scans every framework at once; the per-card detect buttons
   // were removed in favor of this single action.
-  const isDetectingAnyFramework = isDetectingClaude || isDetectingOpencode || isDetectingCodex
+  const isDetectingAnyFramework =
+    isDetectingClaude || isDetectingOpencode || isDetectingCodex || isDetectingCursor
   const handleDetectAllFrameworks = async (): Promise<void> => {
     setFrameworkDetectionError(undefined)
     setInstallActionError(undefined)
     // A non-selected runtime may be broken independently of the framework the user is configuring.
     // Wait for every detector, then refresh the selected environment even when one detector rejected.
-    const results = await Promise.allSettled([detectClaude(), detectOpencode(), detectCodex()])
+    const results = await Promise.allSettled([
+      detectClaude(),
+      detectOpencode(),
+      detectCodex(),
+      detectCursor()
+    ])
     await checkEnvironment({ force: true })
 
     const failure = results.find(
@@ -382,6 +397,38 @@ const AgentPanel = ({
       onInstall: (source) => {
         if (source !== 'official-script') return installCodex(source)
         return Promise.resolve(undefined)
+      }
+    },
+    {
+      key: 'cursor',
+      frameworkId: 'cursor',
+      name:
+        agentFrameworks.find((framework) => framework.id === 'cursor')?.displayName ??
+        'Cursor Agent',
+      icon: <Cursor size={24} className="text-foreground" />,
+      description:
+        'Cursor Agent CLI — detect-only; uses your existing Cursor CLI login (`agent login`).',
+      ready: preflight.cursorReady,
+      version: cursor.version,
+      path: cursor.resolvedPath,
+      sourceLabel: 'cursor.com/docs/cli',
+      sourceUrl: 'https://cursor.com/docs/cli',
+      notReadyHint: (
+        <>
+          Install the Cursor Agent CLI yourself (copy the official command below), run{' '}
+          <code className="font-mono">agent login</code>, then re-detect. Open Science does not
+          download or manage this runtime.
+        </>
+      ),
+      // Unused: managed is always false for Cursor, so uninstall is never offered.
+      uninstallCommand: '',
+      managed: false,
+      installSources: getCursorInstallSources(window.api?.platform),
+      install: cursorInstall,
+      // Detect-only: the official-script source is copyable guidance; selecting it re-detects.
+      onInstall: async () => {
+        await detectCursor()
+        return { installId: '', ok: true }
       }
     }
   ]
@@ -623,7 +670,7 @@ const AgentPanel = ({
       {isOnboarding ? null : (
         <>
           <UninstallRuntimeDialog
-            framework={pendingUninstall}
+            framework={pendingUninstall === 'cursor' ? null : pendingUninstall}
             isUninstalling={isUninstalling}
             onCancel={() => setPendingUninstall(null)}
             onConfirm={() => void handleConfirmUninstall()}

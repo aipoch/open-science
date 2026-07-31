@@ -121,6 +121,10 @@ const ProviderStep = ({
         return createEmptyProviderFormValue(providerKindPatch('codex-subscription'))
       }
 
+      if (agentFrameworkId === 'cursor') {
+        return createEmptyProviderFormValue(providerKindPatch('cursor-subscription'))
+      }
+
       if (current.type !== 'custom' || current.apiEndpoint === customApiEndpoint) return current
 
       return { ...current, apiEndpoint: customApiEndpoint }
@@ -349,6 +353,7 @@ const ProviderStep = ({
             encryptionAvailable={encryptionAvailable}
             showCodexSubscriptions={agentFrameworkId === 'codex'}
             showClaudeIsolated={agentFrameworkId === 'claude-code'}
+            showCursorSubscriptions={agentFrameworkId === 'cursor'}
             defaultCustomApiEndpoint={customApiEndpoint}
           />
           {formValue.type === 'claude-isolated' ? (

@@ -1,7 +1,10 @@
 import { AlertTriangle } from 'lucide-react'
 
 import { selectFrameworkApiEndpoints, useSettingsStore } from '@/stores/settings-store'
-import { isProviderUsableByFramework } from '../../../../shared/settings'
+import {
+  isCursorSubscriptionProvider,
+  isProviderUsableByFramework
+} from '../../../../shared/settings'
 import { isModelBridgeSupported } from '../../../../shared/provider-registry'
 import { incompatibilityReason } from '../workspace/composer-model-picker-utils'
 
@@ -33,13 +36,19 @@ const ModelFrameworkCompatibilityAlert = (): React.JSX.Element | null => {
   const frameworkName =
     agentFrameworks.find((framework) => framework.id === agentFrameworkId)?.displayName ??
     agentFrameworkId
+  const cursorMismatch =
+    agentFrameworkId === 'cursor' || isCursorSubscriptionProvider(active.type)
   const reason = modelUnsupportedByBridge
     ? 'This model is not supported over the Codex Chat Completions bridge. Pick another model for a Codex session.'
-    : incompatibilityReason(
-        { apiEndpoints: active.apiEndpoints, type: active.type, name: active.name },
-        frameworkName,
-        frameworkEndpoints
-      )
+    : cursorMismatch
+      ? isCursorSubscriptionProvider(active.type)
+        ? `${active.name} only works with Cursor Agent. Switch the agent framework to Cursor Agent, or pick another provider.`
+        : `${active.name} isn't usable with Cursor Agent. Add a Cursor subscription provider (existing Cursor CLI login), or switch the agent framework.`
+      : incompatibilityReason(
+          { apiEndpoints: active.apiEndpoints, type: active.type, name: active.name },
+          frameworkName,
+          frameworkEndpoints
+        )
 
   return (
     <div

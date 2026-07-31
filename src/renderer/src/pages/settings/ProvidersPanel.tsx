@@ -3,7 +3,10 @@ import { Plus } from 'lucide-react'
 
 import { useSettingsStore } from '@/stores/settings-store'
 import type { ProviderView, ValidateProviderResult } from '../../../../shared/settings'
-import { isCodexSubscriptionProvider } from '../../../../shared/settings'
+import {
+  isCodexSubscriptionProvider,
+  isCursorSubscriptionProvider
+} from '../../../../shared/settings'
 import { ActiveModelSelect } from './ActiveModelSelect'
 import { ProviderList } from './ProviderList'
 import { ReasoningEffortSelect } from './ReasoningEffortSelect'
@@ -100,12 +103,13 @@ const ProvidersPanel = ({
     }
   }, [cancelSharedClaudeLogin, cancelIsolatedClaudeLogin])
 
-  // Codex + Claude subscription pseudo-providers only make sense while their matching framework is the
-  // active one. Hide claude-isolated and claude-shared from non-claude-code frameworks (same rule as codex).
+  // Subscription pseudo-providers only make sense while their matching framework is the active one.
+  // Hide Claude / Codex / Cursor subscription records from frameworks that cannot drive them.
   const visibleProviders = providers.filter((provider) => {
     if (provider.type === 'claude-isolated' || provider.type === 'claude-shared')
       return agentFrameworkId === 'claude-code'
     if (isCodexSubscriptionProvider(provider.type)) return agentFrameworkId === 'codex'
+    if (isCursorSubscriptionProvider(provider.type)) return agentFrameworkId === 'cursor'
 
     return true
   })

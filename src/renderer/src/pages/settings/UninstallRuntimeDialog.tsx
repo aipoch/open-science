@@ -9,9 +9,12 @@ import {
 } from '@/components/ui/dialog-chrome'
 import { useRetainedDialogValue } from '@/components/ui/use-retained-dialog-value'
 
+type UninstallableFramework = 'claude' | 'opencode' | 'codex'
+
 type UninstallRuntimeDialogProps = {
   // The framework whose app-managed runtime is being removed; null keeps the dialog closed.
-  framework: 'claude' | 'opencode' | 'codex' | null
+  // Cursor is detect-only and never appears here (managed is always false on its card).
+  framework: UninstallableFramework | null
   isUninstalling: boolean
   onCancel: () => void
   onConfirm: () => void
@@ -23,7 +26,7 @@ const cancelButtonClassName =
 const confirmButtonClassName =
   'border-transparent bg-danger-000 text-white hover:bg-danger-000/90 hover:text-white'
 
-const DISPLAY_NAME: Record<'claude' | 'opencode' | 'codex', string> = {
+const DISPLAY_NAME: Record<UninstallableFramework, string> = {
   claude: 'Claude',
   opencode: 'OpenCode',
   codex: 'Codex'

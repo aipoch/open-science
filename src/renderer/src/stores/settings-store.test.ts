@@ -25,6 +25,7 @@ type SettingsApi = {
   detectClaude: ReturnType<typeof vi.fn>
   detectOpencode: ReturnType<typeof vi.fn>
   detectCodex: ReturnType<typeof vi.fn>
+  detectCursor: ReturnType<typeof vi.fn>
   installClaude: ReturnType<typeof vi.fn>
   installOpencode: ReturnType<typeof vi.fn>
   installCodex: ReturnType<typeof vi.fn>
@@ -86,9 +87,11 @@ const snapshot = (providers: SettingsSnapshot['providers']): SettingsSnapshot =>
   agentFrameworks: [{ id: 'claude-code', displayName: 'Claude Code', supportsSkills: true }],
   opencode: {},
   codex: {},
+  cursor: {},
   claudeManaged: false,
   opencodeManaged: false,
   codexManaged: false,
+  cursorManaged: false,
   reasoningEffort: 'default',
   notificationsEnabled: true,
   conversationSkillImportEnabled: true,
@@ -139,6 +142,14 @@ beforeEach(() => {
         ...snapshot([]),
         agentFrameworkId: 'codex',
         codex: { resolvedPath: '/bin/codex-acp', version: '1.1.4' }
+      })
+    }),
+    detectCursor: vi.fn().mockImplementation(() => {
+      callLog.push('detectCursor')
+      return Promise.resolve({
+        ...snapshot([]),
+        agentFrameworkId: 'cursor',
+        cursor: { resolvedPath: '/bin/agent', version: '2026.07.23' }
       })
     }),
     installClaude: vi.fn().mockResolvedValue({ installId: 'claude-1', ok: true }),
@@ -1342,11 +1353,23 @@ describe('settings store: setAgentFramework', () => {
     })
   })
 
+  it('switches to Cursor and live-detects its CLI', async () => {
+    await useSettingsStore.getState().setAgentFramework('cursor')
+
+    expect(callLog).toEqual(['setFramework:cursor', 'detectCursor'])
+    expect(useSettingsStore.getState()).toMatchObject({
+      agentFrameworkId: 'cursor',
+      cursor: { resolvedPath: '/bin/agent', version: '2026.07.23' },
+      isDetectingCursor: false
+    })
+  })
+
   it('installs and uninstalls Codex through the shared runtime lifecycle', async () => {
     api.getSettings.mockResolvedValue({
       ...snapshot([]),
       codex: { resolvedPath: '/data/codex-acp/dist/index.js', version: '1.1.4' },
-      codexManaged: true
+      codexManaged: true,
+      cursorManaged: false,
     })
     api.uninstallCodex.mockResolvedValue(snapshot([]))
 
