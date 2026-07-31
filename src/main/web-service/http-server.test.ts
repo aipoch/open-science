@@ -153,7 +153,7 @@ describe('startWebHttpServer', () => {
       const blockedResponse = await fetch(`${base}/rpc/${encodeURIComponent(channel)}`, {
         method: 'POST',
         headers: { cookie, 'content-type': 'application/json' },
-        body: JSON.stringify({ args: [] })
+        body: JSON.stringify({ protocolVersion: WEB_RPC_PROTOCOL_VERSION, args: [] })
       })
       expect(blockedResponse.status).toBe(404)
       expect(await blockedResponse.json()).toMatchObject({ ok: false })
@@ -304,7 +304,7 @@ describe('startWebHttpServer', () => {
           'content-type': 'application/json',
           'x-open-science-client': 'one-time-phone'
         },
-        body: JSON.stringify({ args: [] })
+        body: JSON.stringify({ protocolVersion: WEB_RPC_PROTOCOL_VERSION, args: [] })
       }
     )
 
@@ -330,7 +330,7 @@ describe('startWebHttpServer', () => {
       }
     })
     const rpc = {
-      channels: () => ['test:echo'],
+      channels: () => ['projects:list'],
       invoke: vi.fn(async () => ({ ok: true })),
       releaseClient: vi.fn(),
       dispose: vi.fn()
@@ -406,7 +406,13 @@ describe('startWebHttpServer', () => {
       return response
     }
 
-    expect(await postAfterExpiringAuthorization('/rpc/test%3Aecho', { args: [] }, 1)).toBe(401)
+    expect(
+      await postAfterExpiringAuthorization(
+        '/rpc/projects%3Alist',
+        { protocolVersion: WEB_RPC_PROTOCOL_VERSION, args: [] },
+        1
+      )
+    ).toBe(401)
     expect(rpc.invoke).not.toHaveBeenCalled()
 
     expect(
@@ -424,7 +430,7 @@ describe('startWebHttpServer', () => {
     roots.push(staticRoot)
     await writeFile(join(staticRoot, 'index.html'), '<!doctype html>')
     const localOnlyChannels = [...REMOTE_LOCAL_ONLY_RPC_CHANNELS]
-    const remotelyAvailableChannel = 'test:echo'
+    const remotelyAvailableChannel = 'projects:list'
     const rpcChannels = [...localOnlyChannels, remotelyAvailableChannel]
     const rpc = {
       channels: () => rpcChannels,
@@ -486,7 +492,7 @@ describe('startWebHttpServer', () => {
       const remoteResponse = await fetch(rpcUrl(channel), {
         method: 'POST',
         headers: { 'content-type': 'application/json' },
-        body: JSON.stringify({ args: [] })
+        body: JSON.stringify({ protocolVersion: WEB_RPC_PROTOCOL_VERSION, args: [] })
       })
       expect(remoteResponse.status, channel).toBe(403)
     }
@@ -498,7 +504,7 @@ describe('startWebHttpServer', () => {
         authorization: 'Bearer local-token',
         'content-type': 'application/json'
       },
-      body: JSON.stringify({ args: [] })
+      body: JSON.stringify({ protocolVersion: WEB_RPC_PROTOCOL_VERSION, args: [] })
     })
     expect(localResponse.status).toBe(200)
     expect(rpc.invoke).toHaveBeenCalledOnce()

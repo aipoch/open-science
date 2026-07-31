@@ -40,10 +40,7 @@ const SettingsSection = ({
     {...props}
   >
     <div
-      className={cn(
-        'flex flex-wrap items-start justify-between gap-3 sm:gap-4',
-        headerClassName
-      )}
+      className={cn('flex flex-wrap items-start justify-between gap-3 sm:gap-4', headerClassName)}
     >
       <div className="min-w-0">
         <h3

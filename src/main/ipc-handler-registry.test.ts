@@ -65,9 +65,11 @@ describe('createIpcHandlerRegistry', () => {
 
   it('scopes remote pairing authority to the current Web RPC invocation', async () => {
     const registry = createIpcHandlerRegistry({ handle: vi.fn() } as never)
-    registry.ipcMainHandle('remote-access:get-snapshot', (event: unknown) =>
-      (event as { sender: { canManageRemotePairing?: boolean } }).sender.canManageRemotePairing ===
-      true
+    registry.ipcMainHandle(
+      'remote-access:get-snapshot',
+      (event: unknown) =>
+        (event as { sender: { canManageRemotePairing?: boolean } }).sender
+          .canManageRemotePairing === true
     )
 
     await expect(
