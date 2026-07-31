@@ -351,6 +351,7 @@ const RuntimesPanel = ({ title, description }: RuntimesPanelProps): React.JSX.El
         description={description}
         aria-label={title}
         contentClassName="space-y-5"
+        actionClassName="ml-auto"
         action={
           <Button
             type="button"

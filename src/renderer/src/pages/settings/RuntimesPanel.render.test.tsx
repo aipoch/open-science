@@ -143,7 +143,9 @@ describe('RuntimesPanel', () => {
     const section = container.querySelector('section[aria-label="Custom runtime title"]')
     expect(section?.querySelector('h3')?.textContent).toBe('Custom runtime title')
     expect(section?.textContent).toContain('Custom runtime description')
-    expect(section?.querySelector('button')?.textContent).toContain('Recheck')
+    const recheck = section?.querySelector<HTMLButtonElement>('button')
+    expect(recheck?.textContent).toContain('Recheck')
+    expect(recheck?.parentElement?.className).toContain('ml-auto')
   })
 
   it('renders a card per detected env with version and interpreter path', async () => {

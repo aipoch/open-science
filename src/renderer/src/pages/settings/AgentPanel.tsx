@@ -519,6 +519,7 @@ const AgentPanel = ({
         title={title}
         aria-label={title}
         description={description}
+        actionClassName="ml-auto"
         action={
           <Button
             type="button"

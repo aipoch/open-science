@@ -2264,6 +2264,7 @@ describe('SettingsPage Codex framework', () => {
       (button) => button.textContent?.trim() === 'Re-detect'
     )
     expect(redetect).toBeDefined()
+    expect(redetect?.parentElement?.className).toContain('ml-auto')
     await act(async () => redetect?.click())
 
     expect(detectClaude).toHaveBeenCalledTimes(1)
