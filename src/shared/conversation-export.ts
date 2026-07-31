@@ -46,7 +46,9 @@ export type ConversationExportDocument = {
 
 const THINK_BLOCK_PATTERN = /<think\b[^>]*>[\s\S]*?(?:<\/think\s*>|$)/gi
 const UNSAFE_FILENAME_CHARACTERS = /[<>:"/\\|?*]+/g
-const LEGACY_AUTO_TITLE_MAX_LENGTH = 48
+const RENDERER_AUTO_TITLE_PREFIX_LENGTH = 48
+const HEADLESS_AUTO_TITLE_MAX_LENGTH = 60
+const HEADLESS_AUTO_TITLE_PREFIX_LENGTH = 57
 const EXPORT_FILENAME_MAX_BYTES = 240
 
 const escapeHtml = (value: string): string =>
@@ -59,11 +61,15 @@ const escapeHtml = (value: string): string =>
 
 const normalizeInlineText = (value: string): string => value.replace(/\s+/g, ' ').trim()
 
-const createLegacyAutoTitle = (content: string): string => {
+const isKnownTruncatedAutoTitle = (title: string, content: string): boolean => {
   const normalizedTitle = normalizeInlineText(content)
-  return normalizedTitle.length > LEGACY_AUTO_TITLE_MAX_LENGTH
-    ? `${normalizedTitle.slice(0, LEGACY_AUTO_TITLE_MAX_LENGTH)}...`
-    : normalizedTitle
+
+  return (
+    (normalizedTitle.length > RENDERER_AUTO_TITLE_PREFIX_LENGTH &&
+      title === `${normalizedTitle.slice(0, RENDERER_AUTO_TITLE_PREFIX_LENGTH)}...`) ||
+    (normalizedTitle.length > HEADLESS_AUTO_TITLE_MAX_LENGTH &&
+      title === `${normalizedTitle.slice(0, HEADLESS_AUTO_TITLE_PREFIX_LENGTH)}...`)
+  )
 }
 
 const deriveTitleFromPrompt = (content: string): string => {
@@ -77,11 +83,7 @@ const resolveConversationExportTitle = (session: PersistedChatSession): string =
   const firstUserMessage = session.messages.find((message) => message.role === 'user')
   const prompt = firstUserMessage?.content ?? ''
 
-  if (
-    prompt &&
-    storedTitle === createLegacyAutoTitle(prompt) &&
-    normalizeInlineText(prompt).length > LEGACY_AUTO_TITLE_MAX_LENGTH
-  ) {
+  if (prompt && isKnownTruncatedAutoTitle(storedTitle, prompt)) {
     return deriveTitleFromPrompt(prompt) || storedTitle
   }
 

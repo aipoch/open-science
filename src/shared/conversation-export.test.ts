@@ -142,6 +142,16 @@ describe('conversation export projection', () => {
     )
   })
 
+  it('replaces headless task automatic titles with the complete prompt-derived title', () => {
+    const session = createSession()
+    const prompt =
+      'Generate a reproducible analysis of the longitudinal dataset and summarize every validation step.'
+    session.messages[0].content = prompt
+    session.title = `${prompt.replace(/\s+/g, ' ').slice(0, 57)}...`
+
+    expect(createConversationExportDocument(session, 1_710_000_003_000).title).toBe(prompt)
+  })
+
   it('keeps the complete prompt-derived document title beyond the filename limit', () => {
     const session = createSession()
     const prompt = `😀${'x'.repeat(300)}`
