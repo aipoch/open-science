@@ -150,6 +150,20 @@ describe('ProfileService.setEnabled', () => {
   it('throws for unknown id', async () => {
     await expect(service.setEnabled('no-such-id', false)).rejects.toThrow()
   })
+
+  it('rejects a non-boolean enabled value without corrupting the profile', async () => {
+    const created = await service.create({ name: 'My Bot' })
+
+    await expect(service.setEnabled(created.id, 'false' as never)).rejects.toThrow(
+      /enabled must be a boolean/i
+    )
+
+    expect(await service.getById(created.id)).toMatchObject({
+      id: created.id,
+      enabled: true,
+      revision: created.revision
+    })
+  })
 })
 
 describe('ProfileService.update', () => {
@@ -229,6 +243,24 @@ describe('ProfileService.update', () => {
     expect((await service.getById(created.id)).revision).toBe(created.revision)
   })
 
+  it('rejects non-string identity fields without corrupting the stored profile', async () => {
+    const created = await service.create({ name: 'Safe Bot' })
+
+    await expect(
+      service.update({
+        id: created.id,
+        revision: created.revision,
+        systemPrompt: { injected: true }
+      } as never)
+    ).rejects.toThrow(/system prompt must be a string/i)
+
+    expect(await service.getById(created.id)).toMatchObject({
+      id: created.id,
+      name: 'Safe Bot',
+      revision: created.revision
+    })
+  })
+
   it('keeps the immutable id and supports renaming', async () => {
     const created = await service.create({ name: 'My Bot' })
     const updated = await service.update({
@@ -263,7 +295,7 @@ describe('ProfileService.update', () => {
   it('rejects a stale revision (optimistic concurrency conflict)', async () => {
     const created = await service.create({ name: 'My Bot' })
     await expect(
-      service.update({ id: created.id, revision: created.revision + 1, name: 'X' })
+      service.update({ id: created.id, revision: created.revision + 1, name: 'Valid Name' })
     ).rejects.toThrow(/revision conflict/i)
   })
 
@@ -327,6 +359,22 @@ describe('ProfileService.subscribe', () => {
 })
 
 describe('ProfileService lifecycle mutations', () => {
+  it('rejects malformed delete payloads without removing the profile', async () => {
+    const created = await service.create({ name: 'Safe Bot' })
+
+    await expect(service.delete(created.id, '1' as never)).rejects.toThrow(
+      /expected revision must be a positive integer/i
+    )
+    await expect(service.delete({ injected: true } as never)).rejects.toThrow(
+      /specialist id must be a non-empty string/i
+    )
+
+    expect(await service.getById(created.id)).toMatchObject({
+      id: created.id,
+      revision: created.revision
+    })
+  })
+
   it('keeps UUID stable across public rename and rejects a stale delete', async () => {
     const created = await service.create({ name: 'RNA Reviewer', displayName: 'RNA reviewer' })
     const renamed = await service.rename({

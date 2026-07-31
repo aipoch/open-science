@@ -300,6 +300,46 @@ describe('WorkspacePage fail-closed send gate', () => {
       specialistId: 'spec-b'
     })
   })
+
+  it('applies a pending switch to Main Agent before sending', async () => {
+    setupBase()
+    const setSessionSpecialist = vi.fn(() => Promise.resolve({ contextReset: false }))
+    useSessionStore.setState({
+      ...createInitialSessionState(),
+      sessions: [createSession({ specialistId: 'spec-a', status: 'running' })],
+      selectedSessionId: 'sess-a'
+    })
+    useSpecialistStore.setState({
+      items: [makeSpecialist('spec-a', 'Debugger')],
+      isLoaded: true,
+      load: vi.fn()
+    })
+    window.api = apiStub({ setSessionSpecialist })
+
+    await renderPage(root)
+
+    await act(async () => {
+      ;(conversationProps.onSpecialistChange as (id: string | undefined) => void)(undefined)
+    })
+    expect(conversationProps.specialistHasPendingSwitch).toBe(true)
+
+    await act(async () => {
+      useSessionStore.getState().finishRun('sess-a')
+    })
+    await act(async () => {
+      ;(conversationProps.onDraftDocChange as (doc: ComposerDoc) => void)(textDoc('continue'))
+    })
+    await act(async () => {
+      ;(conversationProps.onSendMessage as (ids: string[]) => void)([])
+    })
+
+    expect(setSessionSpecialist).toHaveBeenCalledWith({
+      sessionId: 'sess-a',
+      specialistId: undefined
+    })
+    expect(useSessionStore.getState().sessions[0].specialistId).toBeUndefined()
+    expect(runtime.sendMessage).toHaveBeenCalledOnce()
+  })
 })
 
 // ---------------------------------------------------------------------------
@@ -357,6 +397,69 @@ describe('WorkspacePage Retry recovery action', () => {
     expect(setSessionSpecialist).toHaveBeenCalledTimes(2)
     expect(runtime.sendMessage).toHaveBeenCalledOnce()
     expect(conversationProps.reconfigureError).toBeNull()
+  })
+
+  it('commits Main Agent to the session store only after Use None succeeds', async () => {
+    setupBase()
+    let resolveUseNone!: (value: { contextReset: boolean }) => void
+    const useNonePromise = new Promise<{ contextReset: boolean }>((resolve) => {
+      resolveUseNone = resolve
+    })
+    const setSessionSpecialist = vi
+      .fn()
+      .mockRejectedValueOnce(new Error('session reset failed'))
+      .mockReturnValueOnce(useNonePromise)
+
+    useSessionStore.setState({
+      ...createInitialSessionState(),
+      sessions: [createSession({ specialistId: 'spec-a', status: 'running' })],
+      selectedSessionId: 'sess-a'
+    })
+    useSpecialistStore.setState({
+      items: [makeSpecialist('spec-a', 'Debugger'), makeSpecialist('spec-b', 'Researcher')],
+      isLoaded: true,
+      load: vi.fn()
+    })
+    window.api = apiStub({ setSessionSpecialist })
+
+    await renderPage(root)
+    await act(async () => {
+      ;(conversationProps.onSpecialistChange as (id: string | undefined) => void)('spec-b')
+    })
+    await act(async () => {
+      useSessionStore.getState().finishRun('sess-a')
+      ;(conversationProps.onDraftDocChange as (doc: ComposerDoc) => void)(textDoc('keep me'))
+    })
+    await act(async () => {
+      ;(conversationProps.onSendMessage as (ids: string[]) => void)([])
+    })
+    expect(conversationProps.reconfigureError).toBeTruthy()
+
+    act(() => {
+      ;(conversationProps.onReconfigureUseNone as () => void)()
+    })
+    act(() => {
+      ;(conversationProps.onSendMessage as (ids: string[]) => void)([])
+      ;(conversationProps.onReconfigureUseNone as () => void)()
+      ;(conversationProps.onSpecialistChange as (id: string | undefined) => void)('spec-b')
+    })
+
+    expect(setSessionSpecialist).toHaveBeenCalledTimes(2)
+    expect(useSessionStore.getState().sessions[0].specialistId).toBe('spec-a')
+    expect(conversationProps.reconfigureError).toBeTruthy()
+    expect(runtime.sendMessage).not.toHaveBeenCalled()
+
+    await act(async () => {
+      resolveUseNone({ contextReset: false })
+    })
+
+    expect(setSessionSpecialist).toHaveBeenLastCalledWith({
+      sessionId: 'sess-a',
+      specialistId: undefined
+    })
+    expect(useSessionStore.getState().sessions[0].specialistId).toBeUndefined()
+    expect(conversationProps.reconfigureError).toBeNull()
+    expect(runtime.sendMessage).not.toHaveBeenCalled()
   })
 })
 

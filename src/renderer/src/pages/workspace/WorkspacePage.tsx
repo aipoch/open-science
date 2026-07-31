@@ -1012,7 +1012,8 @@ const WorkspacePage = ({
     const pendingSpecialistId = activeSession
       ? pendingSessionSpecialist[activeSession.id]
       : undefined
-    const hasPendingSwitch = activeSession !== undefined && pendingSpecialistId !== undefined
+    const hasPendingSwitch =
+      activeSession !== undefined && Object.hasOwn(pendingSessionSpecialist, activeSession.id)
 
     // Dispatches the final send after draft/attachment state has been cleared.
     // Shared by the normal send path and the Retry recovery action so the logic stays in sync.
@@ -1080,7 +1081,10 @@ const WorkspacePage = ({
 
     // Runs the reconfigure barrier then dispatches the send on success. Extracted so that both the
     // initial send path and the Retry recovery action can invoke the same ordered sequence.
-    const runBarrierAndSend = async (sessionId: string, specialistId: string): Promise<void> => {
+    const runBarrierAndSend = async (
+      sessionId: string,
+      specialistId: string | undefined
+    ): Promise<void> => {
       // Mark the barrier as in-flight synchronously (ref) and reactively (state). The ref allows
       // the sendCurrentMessage guard to block a second call before the state re-render fires;
       // the state drives canSendMessage so the Send button also disables on the next render.
@@ -1104,7 +1108,11 @@ const WorkspacePage = ({
           (item) => item.kind === 'custom' && item.id === specialistId
         )
         const name =
-          pendingProfile?.kind === 'custom' ? pendingProfile.name : 'the selected specialist'
+          specialistId === undefined
+            ? 'Main Agent'
+            : pendingProfile?.kind === 'custom'
+              ? pendingProfile.name
+              : 'the selected specialist'
         setReconfigureError({
           sessionId,
           specialistName: name,
@@ -1384,6 +1392,7 @@ const WorkspacePage = ({
   const handleExistingSessionSpecialistChange = (specialistId: string | undefined): void => {
     if (!activeSession) return
     const sessionId = activeSession.id
+    if (barrierInFlightRef.current.has(sessionId)) return
     const isRunning =
       activeSession.status === 'running' || activeSession.status === 'waiting-permission'
 
@@ -1524,7 +1533,7 @@ const WorkspacePage = ({
             }
             specialistHasPendingSwitch={
               activeSession !== undefined &&
-              pendingSessionSpecialist[activeSession.id] !== undefined &&
+              Object.hasOwn(pendingSessionSpecialist, activeSession.id) &&
               (activeSession.status === 'running' || activeSession.status === 'waiting-permission')
             }
             reconfigureError={
@@ -1534,8 +1543,7 @@ const WorkspacePage = ({
               // Re-run the full barrier: clears the banner first, then re-attempts the switch
               // and, on success, dispatches the send — identical to the original send path.
               if (!reconfigureError || !activeSession) return
-              const pendingId = pendingSessionSpecialist[reconfigureError.sessionId]
-              if (pendingId === undefined) {
+              if (!Object.hasOwn(pendingSessionSpecialist, reconfigureError.sessionId)) {
                 setReconfigureError(null)
                 return
               }
@@ -1557,18 +1565,37 @@ const WorkspacePage = ({
             }}
             onReconfigureUseNone={() => {
               if (activeSession && reconfigureError) {
-                setPendingSessionSpecialist((prev) => {
-                  const next = { ...prev }
-                  delete next[activeSession.id]
-                  return next
-                })
-                setReconfigureError(null)
-                void window.api?.specialist
-                  ?.setSessionSpecialist?.({ sessionId: activeSession.id, specialistId: undefined })
+                const sessionId = activeSession.id
+                const specialistApi = window.api?.specialist
+                if (
+                  !specialistApi?.setSessionSpecialist ||
+                  barrierInFlightRef.current.has(sessionId)
+                ) {
+                  return
+                }
+                barrierInFlightRef.current.add(sessionId)
+                setBarrierInFlightSessions((prev) => new Set(prev).add(sessionId))
+                void specialistApi
+                  .setSessionSpecialist({ sessionId, specialistId: undefined })
                   ?.then((result) => {
-                    if (result?.contextReset) markSpecialistSwitchResetRequired(activeSession.id)
+                    if (result?.contextReset) markSpecialistSwitchResetRequired(sessionId)
+                    setSessionSpecialistId(sessionId, undefined)
+                    setPendingSessionSpecialist((prev) => {
+                      const next = { ...prev }
+                      delete next[sessionId]
+                      return next
+                    })
+                    setReconfigureError(null)
                   })
                   ?.catch((err: unknown) => console.warn('setSessionSpecialist (none) failed', err))
+                  ?.finally(() => {
+                    barrierInFlightRef.current.delete(sessionId)
+                    setBarrierInFlightSessions((prev) => {
+                      const next = new Set(prev)
+                      next.delete(sessionId)
+                      return next
+                    })
+                  })
               }
             }}
             onSpecialistChange={

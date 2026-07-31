@@ -1,4 +1,5 @@
 import { useEffect, useMemo, useRef, useState, useCallback } from 'react'
+import { X } from 'lucide-react'
 import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
 import { Textarea } from '@/components/ui/textarea'
@@ -7,6 +8,7 @@ import { cn } from '@/lib/utils'
 import {
   SPECIALIST_DESCRIPTION_MAX_LENGTH,
   SPECIALIST_NAME_MAX_LENGTH,
+  SPECIALIST_SYSTEM_PROMPT_MAX_LENGTH,
   validateCreateSpecialistInput,
   type CreateSpecialistInput,
   type UpdateSpecialistInput,
@@ -16,6 +18,7 @@ import {
 import { SpecialistAvatar } from './specialist-avatar'
 import { AVATAR_COLORS, AVATAR_ICONS } from './specialist-icons'
 import { useSettingsStore } from '@/stores/settings-store'
+import { SettingsIconAction } from './SettingsLayout'
 
 type SpecialistEditorProps = {
   onCancel: () => void
@@ -649,6 +652,10 @@ const SpecialistEditor = ({
             instructions. Optional.
           </p>
           <div>
+            <div className="mb-1 text-right text-[11px] text-muted-foreground">
+              {form.systemPrompt.length.toLocaleString()} /{' '}
+              {SPECIALIST_SYSTEM_PROMPT_MAX_LENGTH.toLocaleString()}
+            </div>
             <label htmlFor="sp-system-prompt" className="sr-only">
               Instructions
             </label>
@@ -656,9 +663,13 @@ const SpecialistEditor = ({
               id="sp-system-prompt"
               value={form.systemPrompt}
               onChange={(e) => setForm((prev) => ({ ...prev, systemPrompt: e.target.value }))}
+              maxLength={SPECIALIST_SYSTEM_PROMPT_MAX_LENGTH}
               placeholder="Optional — leave empty to use the base prompt as-is."
               className="min-h-[120px] resize-y text-[13px]"
             />
+            {getFieldError('systemPrompt') ? (
+              <p className="mt-1 text-xs text-danger-000">{getFieldError('systemPrompt')}</p>
+            ) : null}
           </div>
         </section>
 
@@ -916,14 +927,12 @@ const SpecialistEditor = ({
                               ) : null}
                             </>
                           )}
-                          <button
-                            type="button"
-                            aria-label={`Remove ${skill.name}`}
+                          <SettingsIconAction
+                            label={`Remove ${skill.name}`}
+                            icon={X}
                             onClick={() => removeSkill(skill.id)}
-                            className="flex size-[22px] shrink-0 items-center justify-center rounded text-[12px] text-muted-foreground hover:bg-muted hover:text-destructive"
-                          >
-                            ✕
-                          </button>
+                            danger
+                          />
                         </div>
                       ))
                     )}
@@ -968,14 +977,12 @@ const SpecialistEditor = ({
                               Main disabled · available here
                             </span>
                           ) : null}
-                          <button
-                            type="button"
-                            aria-label={`Remove ${connector.name}`}
+                          <SettingsIconAction
+                            label={`Remove ${connector.name}`}
+                            icon={X}
                             onClick={() => removeConnector(connector.id)}
-                            className="flex size-[22px] shrink-0 items-center justify-center rounded text-[12px] text-muted-foreground hover:bg-muted hover:text-destructive"
-                          >
-                            ✕
-                          </button>
+                            danger
+                          />
                         </div>
                       ))
                     )}
@@ -1008,13 +1015,11 @@ const SpecialistEditor = ({
           <div
             role="alert"
             aria-label="Revision conflict"
-            className="mt-4 flex items-start gap-3 rounded-lg border border-amber-200 bg-amber-50 p-3 text-sm dark:border-amber-900 dark:bg-amber-950"
+            className="mt-4 flex items-start gap-3 rounded-lg border border-border bg-muted/50 p-3 text-sm"
           >
             <div className="min-w-0 flex-1">
-              <p className="font-semibold text-amber-900 dark:text-amber-100">
-                Someone else saved a newer version
-              </p>
-              <p className="mt-0.5 text-xs text-amber-700 dark:text-amber-300">
+              <p className="font-semibold text-foreground">Someone else saved a newer version</p>
+              <p className="mt-0.5 text-xs text-muted-foreground">
                 Your local edits are preserved. Reload to get the latest version (your unsaved
                 changes will be discarded), or cancel and try again.
               </p>
@@ -1026,7 +1031,7 @@ const SpecialistEditor = ({
                 variant="outline"
                 onClick={() => void handleReload()}
                 disabled={isReloading}
-                className="shrink-0 border-amber-300 text-amber-900 hover:bg-amber-100 dark:border-amber-700 dark:text-amber-100"
+                className="shrink-0"
               >
                 {isReloading ? 'Reloading…' : 'Reload'}
               </Button>

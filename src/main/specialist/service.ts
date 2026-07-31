@@ -99,11 +99,12 @@ const toView = (s: StoredSpecialist): SpecialistProfileView => ({
   revision: s.revision
 })
 
-const assertCreateInputShape = (input: CreateSpecialistInput): void => {
-  if (!input || typeof input !== 'object' || typeof input.name !== 'string') {
-    throw new Error('Name must be a string.')
-  }
-
+const assertOptionalIdentityFieldShapes = (
+  input: Pick<
+    UpdateSpecialistInput,
+    'description' | 'displayName' | 'systemPrompt' | 'iconKey' | 'colorKey'
+  >
+): void => {
   const optionalTextFields = [
     ['description', input.description],
     ['display name', input.displayName],
@@ -116,6 +117,13 @@ const assertCreateInputShape = (input: CreateSpecialistInput): void => {
       throw new Error(`${label[0].toUpperCase()}${label.slice(1)} must be a string.`)
     }
   }
+}
+
+const assertCreateInputShape = (input: CreateSpecialistInput): void => {
+  if (!input || typeof input !== 'object' || typeof input.name !== 'string') {
+    throw new Error('Name must be a string.')
+  }
+  assertOptionalIdentityFieldShapes(input)
 
   if (
     input.capabilityMode !== undefined &&
@@ -174,8 +182,8 @@ export class ProfileService {
     const existingNames = doc.specialists.map((s) => s.name)
     const existingIds = new Map(doc.specialists.map((s) => [s.name, s.id]))
 
-    // validateCreateSpecialistInput now applies the public-name format rule when
-    // displayName is present, so create and update share one symmetric rule set.
+    // Validate the required name and optional display name through the shared
+    // boundary rules before constructing the persisted record.
     const errors = validateCreateSpecialistInput(input, existingNames, existingIds)
     if (errors.length > 0) {
       throw new Error(errors.map((e) => e.message).join('; '))
@@ -207,6 +215,10 @@ export class ProfileService {
   }
 
   async setEnabled(id: string, enabled: boolean): Promise<SpecialistProfileView> {
+    if (typeof id !== 'string' || !id.trim()) {
+      throw new Error('Specialist id must be a non-empty string.')
+    }
+    if (typeof enabled !== 'boolean') throw new Error('Enabled must be a boolean.')
     const updatedDoc = await this.repo.setEnabled(id, enabled)
     this.notify()
     const found = updatedDoc.specialists.find((s) => s.id === id)
@@ -222,6 +234,10 @@ export class ProfileService {
     if (!input || typeof input.id !== 'string' || typeof input.revision !== 'number') {
       throw new Error('Update requires id and revision.')
     }
+    if (input.name !== undefined && typeof input.name !== 'string') {
+      throw new Error('Name must be a string.')
+    }
+    assertOptionalIdentityFieldShapes(input)
     assertCapabilityConfigShape(input)
 
     const doc = await this.repo.getAll()
@@ -271,6 +287,15 @@ export class ProfileService {
   }
 
   async delete(id: string, expectedRevision?: number): Promise<void> {
+    if (typeof id !== 'string' || !id.trim()) {
+      throw new Error('Specialist id must be a non-empty string.')
+    }
+    if (
+      expectedRevision !== undefined &&
+      (!Number.isInteger(expectedRevision) || expectedRevision < 1)
+    ) {
+      throw new Error('Expected revision must be a positive integer.')
+    }
     await this.repo.delete(id, expectedRevision)
     this.notify()
   }
