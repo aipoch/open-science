@@ -1,4 +1,6 @@
-import { ipcMain, type Event as ElectronEvent, type IpcMainInvokeEvent } from 'electron'
+import { type Event as ElectronEvent, type IpcMainInvokeEvent } from 'electron'
+
+import { ipcMainHandle } from '../ipc-handler-registry'
 
 import type { ReadArtifactPreviewRequest } from '../../shared/artifacts'
 import type {
@@ -161,7 +163,7 @@ const registerUploadIpcHandlers = (
   }
 
   // Uploads write/mutate under the data root, so block them during the data-root copy→commit window.
-  ipcMain.handle('uploads:stage-local-file', async (event, request: StageLocalUploadRequest) => {
+  ipcMainHandle('uploads:stage-local-file', async (event, request: StageLocalUploadRequest) => {
     const owner = registerUploadOwner(event)
     const existing = localWriters.get(request.transferId) ?? chunkWriters.get(request.transferId)
     if (existing) {
@@ -195,7 +197,7 @@ const registerUploadIpcHandlers = (
       throw error
     }
   })
-  ipcMain.handle('uploads:claim-local-file', (event, request: UploadTransferRequest) => {
+  ipcMainHandle('uploads:claim-local-file', (event, request: UploadTransferRequest) => {
     const writer = getOwnedLocalWriter(event, request.transferId)
     // Chunk/Web transfers have no local ownership record, so claiming them is an idempotent no-op.
     if (!writer) return
@@ -207,7 +209,7 @@ const registerUploadIpcHandlers = (
     }
     releaseLocalWriter(request.transferId, writer)
   })
-  ipcMain.handle('uploads:begin-transfer', async (event, request: BeginUploadTransferRequest) => {
+  ipcMainHandle('uploads:begin-transfer', async (event, request: BeginUploadTransferRequest) => {
     const owner = registerUploadOwner(event)
     const localWriter = localWriters.get(request.transferId)
     if (localWriter) {
@@ -247,7 +249,7 @@ const registerUploadIpcHandlers = (
       throw error
     }
   })
-  ipcMain.handle('uploads:append-transfer', async (event, request: AppendUploadTransferRequest) => {
+  ipcMainHandle('uploads:append-transfer', async (event, request: AppendUploadTransferRequest) => {
     const writer = getOwnedChunkWriter(event, request.transferId)
     if (!writer) return withDataRootWrite(() => repository.appendTransfer(request))
 
@@ -263,11 +265,11 @@ const registerUploadIpcHandlers = (
       writer.inFlight.delete(operation)
     }
   })
-  ipcMain.handle('uploads:transfer-status', (event, request: UploadTransferRequest) => {
+  ipcMainHandle('uploads:transfer-status', (event, request: UploadTransferRequest) => {
     getOwnedChunkWriter(event, request.transferId)
     return repository.getTransferStatus(request)
   })
-  ipcMain.handle('uploads:finish-transfer', async (event, request: UploadTransferRequest) => {
+  ipcMainHandle('uploads:finish-transfer', async (event, request: UploadTransferRequest) => {
     const writer = getOwnedChunkWriter(event, request.transferId)
     if (!writer) return withDataRootWrite(() => repository.finishTransfer(request))
 
@@ -287,7 +289,7 @@ const registerUploadIpcHandlers = (
       releaseChunkWriter(request.transferId, writer)
     }
   })
-  ipcMain.handle('uploads:abort-transfer', async (event, request: UploadTransferRequest) => {
+  ipcMainHandle('uploads:abort-transfer', async (event, request: UploadTransferRequest) => {
     const localWriter = getOwnedLocalWriter(event, request.transferId)
     if (localWriter) return abortLocalWriter(request.transferId, localWriter)
 
@@ -296,10 +298,10 @@ const registerUploadIpcHandlers = (
 
     await abortChunkWriter(request.transferId, writer)
   })
-  ipcMain.handle('uploads:delete', (_event, request: DeleteUploadRequest) =>
+  ipcMainHandle('uploads:delete', (_event, request: DeleteUploadRequest) =>
     withDataRootWrite(() => repository.deleteUpload(request))
   )
-  ipcMain.handle('uploads:finalize-session', (_event, request: FinalizeUploadSessionRequest) =>
+  ipcMainHandle('uploads:finalize-session', (_event, request: FinalizeUploadSessionRequest) =>
     withDataRootWrite(() => {
       const finalize = (): Promise<UploadedAttachment[]> =>
         repository.finalizePendingSessionUploads(
@@ -312,7 +314,7 @@ const registerUploadIpcHandlers = (
         : finalize()
     })
   )
-  ipcMain.handle('uploads:read-preview', (_event, request: ReadArtifactPreviewRequest) =>
+  ipcMainHandle('uploads:read-preview', (_event, request: ReadArtifactPreviewRequest) =>
     repository.readManagedUploadPreview(request)
   )
 }

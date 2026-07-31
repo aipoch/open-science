@@ -2,12 +2,12 @@ import { join } from 'node:path'
 
 import { app } from 'electron'
 
+import type { WebRpcRouter } from '../ipc-handler-registry'
 import { createLogger } from '../logger'
 import { addRendererBroadcastSink } from '../renderer-broadcast'
 import { resolveConfigRoot } from '../storage-root'
 import { loadOrCreateWebToken } from './auth'
 import { startWebHttpServer, type RunningWebServer } from './http-server'
-import type { RpcCapture } from './rpc-capture'
 import { HeadlessTaskApi } from './task-api'
 import { removeWebServiceState, writeWebServiceState, type WebServiceState } from './state-file'
 
@@ -55,7 +55,7 @@ const buildAuthenticatedWebUrl = async (port: number): Promise<string> =>
 // serving are reachable over HTTP); `requestQuit` quits the whole app when a dedicated headless daemon
 // is asked to shut down. An attached service instead only tears itself down and leaves the app running.
 const createWebServiceController = (
-  { rpc, requestQuit }: { rpc: RpcCapture; requestQuit: () => void },
+  { rpc, requestQuit }: { rpc: WebRpcRouter; requestQuit: () => void },
   deps: Partial<WebServiceControllerDeps> = {}
 ): WebServiceController => {
   const startServer = deps.startServer ?? startWebHttpServer

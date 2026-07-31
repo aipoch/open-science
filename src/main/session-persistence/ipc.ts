@@ -1,4 +1,4 @@
-import { ipcMain } from 'electron'
+import { ipcMainHandle } from '../ipc-handler-registry'
 
 import type {
   DeleteSessionRequest,
@@ -110,8 +110,8 @@ const registerSessionPersistenceIpcHandlers = (
   // Keep persistence IPC separate from ACP runtime commands; it owns durable UI state only.
   // loadAll can replay pending deletions and every mutation can materialize provenance/upload bytes.
   // Hold the shared data-root lease at the IPC boundary so migration drains the complete operation.
-  ipcMain.handle('sessions:load-all', () => withDataRootWrite(() => handlers.loadAll()))
-  ipcMain.handle(
+  ipcMainHandle('sessions:load-all', () => withDataRootWrite(() => handlers.loadAll()))
+  ipcMainHandle(
     'sessions:save-session',
     async (event, session: PersistedChatSession, options?: SaveSessionOptions) => {
       return withDataRootWrite(async () => {
@@ -127,13 +127,13 @@ const registerSessionPersistenceIpcHandlers = (
       })
     }
   )
-  ipcMain.handle('sessions:delete-session', async (_event, request: DeleteSessionRequest) => {
+  ipcMainHandle('sessions:delete-session', async (_event, request: DeleteSessionRequest) => {
     await withDataRootWrite(async () => {
       await handlers.deleteSession(request)
       broadcastLifecycleEvent(LIFECYCLE_CHANNELS.sessionDeleted, request)
     })
   })
-  ipcMain.handle('sessions:save-manifest', (_event, request: SaveSessionManifestRequest) =>
+  ipcMainHandle('sessions:save-manifest', (_event, request: SaveSessionManifestRequest) =>
     withDataRootWrite(() => handlers.saveManifest(request))
   )
 }

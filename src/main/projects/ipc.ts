@@ -1,4 +1,4 @@
-import { ipcMain } from 'electron'
+import { ipcMainHandle } from '../ipc-handler-registry'
 
 import type {
   DeletePreviewStateRequest,
@@ -79,32 +79,32 @@ const registerProjectIpcHandlers = (
 ): void => {
   const handlers = createProjectHandlers(repository, deletionCoordinator)
 
-  ipcMain.handle('projects:list', () => handlers.list())
-  ipcMain.handle('projects:get', (_event, id: string) => handlers.get(id))
-  ipcMain.handle('projects:create', async (_event, request: CreateProjectRequest) => {
+  ipcMainHandle('projects:list', () => handlers.list())
+  ipcMainHandle('projects:get', (_event, id: string) => handlers.get(id))
+  ipcMainHandle('projects:create', async (_event, request: CreateProjectRequest) => {
     const project = await handlers.create(request)
     broadcastLifecycleEvent(LIFECYCLE_CHANNELS.projectCreated, project)
     return project
   })
-  ipcMain.handle('projects:update', async (_event, request: UpdateProjectRequest) => {
+  ipcMainHandle('projects:update', async (_event, request: UpdateProjectRequest) => {
     const project = await handlers.update(request)
     broadcastLifecycleEvent(LIFECYCLE_CHANNELS.projectUpdated, project)
     return project
   })
-  ipcMain.handle('projects:delete', async (_event, request: DeleteProjectRequest) => {
+  ipcMainHandle('projects:delete', async (_event, request: DeleteProjectRequest) => {
     await handlers.delete(request.id)
     broadcastLifecycleEvent(LIFECYCLE_CHANNELS.projectDeleted, { projectId: request.id })
   })
 
-  ipcMain.handle(
+  ipcMainHandle(
     'preview:load',
     (_event, request: LoadPreviewStateRequest): Promise<PersistedPreviewState | null> =>
       previewRepository.get(request.projectId)
   )
-  ipcMain.handle('preview:save', (_event, request: SavePreviewStateRequest) =>
+  ipcMainHandle('preview:save', (_event, request: SavePreviewStateRequest) =>
     previewRepository.save(request.projectId, request.state)
   )
-  ipcMain.handle('preview:delete', (_event, request: DeletePreviewStateRequest) =>
+  ipcMainHandle('preview:delete', (_event, request: DeletePreviewStateRequest) =>
     previewRepository.delete(request.projectId)
   )
 }

@@ -1,4 +1,6 @@
-import { BrowserWindow, app, dialog, ipcMain, type OpenDialogOptions } from 'electron'
+import { BrowserWindow, app, dialog, type OpenDialogOptions } from 'electron'
+
+import { ipcMainHandle } from './ipc-handler-registry'
 import { constants } from 'node:fs'
 import { open, rm, writeFile } from 'node:fs/promises'
 import { basename, extname, join } from 'node:path'
@@ -159,7 +161,7 @@ const extensionForMime = (mimeType: string): string | undefined => {
 }
 
 const registerFileSaveHandlers = (options: RegisterFileSaveHandlersOptions = {}): void => {
-  ipcMain.handle(
+  ipcMainHandle(
     'file:save-blob',
     async (event, request: SaveBlobFileRequest): Promise<SaveBlobFileResult> => {
       const parentWindow = BrowserWindow.fromWebContents(event.sender)
@@ -184,7 +186,7 @@ const registerFileSaveHandlers = (options: RegisterFileSaveHandlersOptions = {})
   )
 
   // Managed-file export stays in main so large files never pass through renderer memory.
-  ipcMain.handle(
+  ipcMainHandle(
     'file:save-managed',
     async (event, request: SaveManagedFileRequest): Promise<SaveManagedFileResult> => {
       if (!options.resolveManagedFilePath) {
@@ -222,7 +224,7 @@ const registerFileSaveHandlers = (options: RegisterFileSaveHandlersOptions = {})
     }
   )
 
-  ipcMain.handle(
+  ipcMainHandle(
     'file:save-session-artifacts',
     async (event, request: SaveSessionArtifactsRequest): Promise<SaveSessionArtifactsResult> => {
       const resolveSessionArtifactFilePath = options.resolveSessionArtifactFilePath

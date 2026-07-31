@@ -1,4 +1,6 @@
-import { BrowserWindow, ipcMain, type IpcMainInvokeEvent, type WebContents } from 'electron'
+import { BrowserWindow, type IpcMainInvokeEvent, type WebContents } from 'electron'
+
+import { ipcMainHandle } from './ipc-handler-registry'
 
 import { WINDOW_CLOSE_CHANNEL } from '../shared/window-controls'
 
@@ -16,7 +18,7 @@ type WindowIpcDeps = {
 const registerWindowIpcHandlers = (deps: WindowIpcDeps = {}): void => {
   const resolveWindow = deps.resolveWindow ?? ((sender) => BrowserWindow.fromWebContents(sender))
 
-  ipcMain.handle(WINDOW_CLOSE_CHANNEL, (event: IpcMainInvokeEvent): void => {
+  ipcMainHandle(WINDOW_CLOSE_CHANNEL, (event: IpcMainInvokeEvent): void => {
     resolveWindow(event.sender)?.close()
   })
 }

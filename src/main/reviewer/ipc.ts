@@ -2,7 +2,7 @@
 // src/main/artifacts/ipc.ts: ipcMain.handle for renderer-callable commands and the shared renderer
 // broadcaster for push events to Electron windows and optional web clients.
 
-import { ipcMain } from 'electron'
+import { ipcMainHandle } from '../ipc-handler-registry'
 
 import type {
   ReviewWithChecks,
@@ -117,12 +117,12 @@ const registerReviewerIpcHandlers = (
 
   // reviewer:run — trigger a review for a completed turn. Fire-and-forget: the renderer does
   // not await this; it receives reviewer:updated events as the lifecycle progresses.
-  ipcMain.handle(REVIEWER_IPC.RUN, (_event, request: ReviewRunRequest) => triggerReview(request))
+  ipcMainHandle(REVIEWER_IPC.RUN, (_event, request: ReviewRunRequest) => triggerReview(request))
 
   // reviewer:get-for-session — load persisted reviews for a session at startup, flagging any whose
   // audited turn has since changed (e.g. an artifact was edited after the review completed) so the UI
   // does not present a stale verdict as current.
-  ipcMain.handle(REVIEWER_IPC.GET_FOR_SESSION, async (_event, request: ReviewSessionRequest) => {
+  ipcMainHandle(REVIEWER_IPC.GET_FOR_SESSION, async (_event, request: ReviewSessionRequest) => {
     const reviews = await reviewRepository.getReviewsForProjectSession(
       request.projectId,
       request.appSessionId
@@ -140,7 +140,7 @@ const registerReviewerIpcHandlers = (
 
   // reviewer:abort-fix-loop — renderer requests that the active fix loop for a session be aborted.
   // This is triggered when the user presses the cancel button during a fix loop.
-  ipcMain.handle(REVIEWER_IPC.ABORT_FIX_LOOP, (_event, request: ReviewSessionRequest) => {
+  ipcMainHandle(REVIEWER_IPC.ABORT_FIX_LOOP, (_event, request: ReviewSessionRequest) => {
     const key = `${request.projectId}\0${request.appSessionId}`
     const controller = fixLoopAbortControllers.get(key)
     if (controller) {

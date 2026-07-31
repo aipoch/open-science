@@ -1,4 +1,6 @@
-import { app, BrowserWindow, dialog, ipcMain, type SaveDialogOptions } from 'electron'
+import { app, BrowserWindow, dialog, type SaveDialogOptions } from 'electron'
+
+import { ipcMainHandle } from '../ipc-handler-registry'
 import { mkdtemp, rm, writeFile } from 'node:fs/promises'
 import { join } from 'node:path'
 
@@ -174,7 +176,7 @@ const createConversationExportService = (
 }
 
 const registerConversationExportIpcHandler = (service: ConversationExportService): void => {
-  ipcMain.handle(
+  ipcMainHandle(
     'sessions:export-conversation',
     (event, request: ExportConversationRequest): Promise<ExportConversationResult> =>
       service.exportConversation(request, BrowserWindow.fromWebContents(event.sender) ?? undefined)

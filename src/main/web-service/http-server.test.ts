@@ -12,6 +12,7 @@ vi.mock('electron', () => ({
   net: { fetch: vi.fn() }
 }))
 
+import { WEB_RPC_PROTOCOL_VERSION } from '../../shared/web-rpc-contract'
 import { broadcastToRenderers } from '../renderer-broadcast'
 import { startWebHttpServer, type RunningWebServer } from './http-server'
 import { TaskApiError } from './task-api'
@@ -31,7 +32,7 @@ describe('startWebHttpServer', () => {
     await writeFile(join(staticRoot, 'index.html'), '<!doctype html><title>Web test</title>')
     const rpc = {
       channels: () => [
-        'test:echo',
+        'projects:list',
         'sessions:export-conversation',
         'file:save-session-artifacts',
         'uploads:stage-local-file',
@@ -71,32 +72,41 @@ describe('startWebHttpServer', () => {
     expect(await bootstrap.json()).toMatchObject({
       appName: 'Open Science',
       configRoot: '/fake/root',
-      rpcChannels: ['test:echo']
+      rpcProtocolVersion: WEB_RPC_PROTOCOL_VERSION,
+      rpcChannels: ['projects:list']
     })
 
-    const rpcResponse = await fetch(`${base}/rpc/test%3Aecho`, {
+    const rpcResponse = await fetch(`${base}/rpc/projects%3Alist`, {
       method: 'POST',
       headers: {
         cookie,
         'content-type': 'application/json',
         'x-open-science-client': 'test-client'
       },
-      body: JSON.stringify({ args: [{ value: 1 }] })
+      body: JSON.stringify({ protocolVersion: WEB_RPC_PROTOCOL_VERSION, args: [{ value: 1 }] })
     })
-    expect(await rpcResponse.json()).toEqual({ ok: true, result: { value: 1 } })
+    expect(await rpcResponse.json()).toEqual({
+      protocolVersion: WEB_RPC_PROTOCOL_VERSION,
+      ok: true,
+      result: { value: 1 }
+    })
 
     const binary = Uint8Array.from([0, 1, 127, 128, 255])
     const encodedBinary = Buffer.from(binary).toString('base64')
-    const binaryRpcResponse = await fetch(`${base}/rpc/test%3Aecho`, {
+    const binaryRpcResponse = await fetch(`${base}/rpc/projects%3Alist`, {
       method: 'POST',
       headers: {
         cookie,
         'content-type': 'application/json',
         'x-open-science-client': 'test-client'
       },
-      body: JSON.stringify({ args: [{ $binary: encodedBinary }] })
+      body: JSON.stringify({
+        protocolVersion: WEB_RPC_PROTOCOL_VERSION,
+        args: [{ $binary: encodedBinary }]
+      })
     })
     expect(await binaryRpcResponse.json()).toEqual({
+      protocolVersion: WEB_RPC_PROTOCOL_VERSION,
       ok: true,
       result: { $binary: encodedBinary }
     })
@@ -118,7 +128,7 @@ describe('startWebHttpServer', () => {
         headers: { cookie, 'content-type': 'application/json' },
         body: JSON.stringify({ args: [] })
       })
-      expect(blockedResponse.status).toBe(403)
+      expect(blockedResponse.status).toBe(404)
       expect(await blockedResponse.json()).toMatchObject({ ok: false })
     }
     expect(rpc.invoke).toHaveBeenCalledTimes(2)
@@ -130,9 +140,10 @@ describe('startWebHttpServer', () => {
     const message = new Promise<string>((resolve) =>
       socket.once('message', (data) => resolve(data.toString()))
     )
-    broadcastToRenderers('test:event', { ready: true })
+    broadcastToRenderers('project:created', { ready: true })
     expect(JSON.parse(await message)).toEqual({
-      channel: 'test:event',
+      protocolVersion: WEB_RPC_PROTOCOL_VERSION,
+      channel: 'project:created',
       payload: { ready: true }
     })
     socket.close()
@@ -150,6 +161,63 @@ describe('startWebHttpServer', () => {
       data: { sessionId: 'session-1', kind: 'message', text: 'Hi' }
     })
     publicSocket.close()
+  })
+
+  it('exposes only versioned, schema-valid RPC contract channels', async () => {
+    const rpc = {
+      channels: () => ['projects:list', 'test:unsafe'],
+      invoke: vi.fn(async () => ({ ok: true })),
+      releaseClient: vi.fn(),
+      dispose: vi.fn()
+    }
+    const server = await startWebHttpServer({
+      host: '127.0.0.1',
+      port: 0,
+      token: 'test-token',
+      staticRoot: '/unused',
+      rpc,
+      bootstrap: {
+        appName: 'Open Science',
+        appVersion: '0.0.0',
+        configRoot: '/fake/root',
+        platform: 'test',
+        versions: { electron: '1', chrome: '1', node: '1' }
+      }
+    })
+    servers.push(server)
+    const base = `http://127.0.0.1:${server.port}`
+    const headers = {
+      authorization: 'Bearer test-token',
+      'content-type': 'application/json'
+    }
+
+    const bootstrap = await fetch(`${base}/api/bootstrap`, { headers })
+    expect(await bootstrap.json()).toMatchObject({
+      rpcProtocolVersion: WEB_RPC_PROTOCOL_VERSION,
+      rpcChannels: ['projects:list']
+    })
+
+    const unsafe = await fetch(`${base}/rpc/test%3Aunsafe`, {
+      method: 'POST',
+      headers,
+      body: JSON.stringify({ protocolVersion: WEB_RPC_PROTOCOL_VERSION, args: [] })
+    })
+    expect(unsafe.status).toBe(404)
+
+    const malformed = await fetch(`${base}/rpc/projects%3Alist`, {
+      method: 'POST',
+      headers,
+      body: JSON.stringify({ protocolVersion: WEB_RPC_PROTOCOL_VERSION, args: 'not-an-array' })
+    })
+    expect(malformed.status).toBe(400)
+
+    const incompatible = await fetch(`${base}/rpc/projects%3Alist`, {
+      method: 'POST',
+      headers,
+      body: JSON.stringify({ protocolVersion: WEB_RPC_PROTOCOL_VERSION + 1, args: [] })
+    })
+    expect(incompatible.status).toBe(426)
+    expect(rpc.invoke).not.toHaveBeenCalled()
   })
 
   it('authenticates shutdown requests before invoking the callback', async () => {

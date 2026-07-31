@@ -1,4 +1,4 @@
-import { ipcMain } from 'electron'
+import { ipcMainHandle } from '../ipc-handler-registry'
 
 import {
   CLAUDE_ISOLATED_PROVIDER_ID,
@@ -113,26 +113,26 @@ const registerSettingsIpcHandlers = ({
     onActiveProviderChanged?.()
   }
 
-  ipcMain.handle('settings:get-preflight', () => service.getPreflight())
-  ipcMain.handle('settings:get-settings', () => service.getSettingsView())
-  ipcMain.handle('settings:encryption-available', () => service.isEncryptionAvailable())
-  ipcMain.handle('settings:npm-available', () => service.isNpmAvailable())
-  ipcMain.handle('settings:check-environment', () => service.checkEnvironment())
-  ipcMain.handle('settings:detect-claude', () => service.detectClaude())
-  ipcMain.handle('settings:detect-opencode', () => service.detectOpencode())
-  ipcMain.handle('settings:detect-codex', () => service.detectCodex())
-  ipcMain.handle('settings:install-opencode', (_event, request: InstallOpencodeRequest) =>
+  ipcMainHandle('settings:get-preflight', () => service.getPreflight())
+  ipcMainHandle('settings:get-settings', () => service.getSettingsView())
+  ipcMainHandle('settings:encryption-available', () => service.isEncryptionAvailable())
+  ipcMainHandle('settings:npm-available', () => service.isNpmAvailable())
+  ipcMainHandle('settings:check-environment', () => service.checkEnvironment())
+  ipcMainHandle('settings:detect-claude', () => service.detectClaude())
+  ipcMainHandle('settings:detect-opencode', () => service.detectOpencode())
+  ipcMainHandle('settings:detect-codex', () => service.detectCodex())
+  ipcMainHandle('settings:install-opencode', (_event, request: InstallOpencodeRequest) =>
     service.installOpencode(request, broadcastInstallEvent)
   )
-  ipcMain.handle('settings:install-codex', (_event, request: InstallCodexRequest) =>
+  ipcMainHandle('settings:install-codex', (_event, request: InstallCodexRequest) =>
     service.installCodex(request, broadcastInstallEvent)
   )
 
-  ipcMain.handle('settings:install-claude', (_event, request: InstallClaudeRequest) =>
+  ipcMainHandle('settings:install-claude', (_event, request: InstallClaudeRequest) =>
     service.installClaude(request, broadcastInstallEvent)
   )
 
-  ipcMain.handle('settings:uninstall-claude', async () => {
+  ipcMainHandle('settings:uninstall-claude', async () => {
     const { snapshot, activeBackendAffected } = await service.uninstallClaude()
 
     // Refresh only when the removed runtime backed the active framework. Rotate generations when the
@@ -143,7 +143,7 @@ const registerSettingsIpcHandlers = ({
     return snapshot
   })
 
-  ipcMain.handle('settings:uninstall-opencode', async () => {
+  ipcMainHandle('settings:uninstall-opencode', async () => {
     const { snapshot, activeBackendAffected } = await service.uninstallOpencode()
 
     notifyAfterRuntimeUninstall('opencode', snapshot, activeBackendAffected)
@@ -151,7 +151,7 @@ const registerSettingsIpcHandlers = ({
     return snapshot
   })
 
-  ipcMain.handle('settings:uninstall-codex', async () => {
+  ipcMainHandle('settings:uninstall-codex', async () => {
     const { snapshot, activeBackendAffected } = await service.uninstallCodex()
 
     notifyAfterRuntimeUninstall('codex', snapshot, activeBackendAffected)
@@ -159,7 +159,7 @@ const registerSettingsIpcHandlers = ({
     return snapshot
   })
 
-  ipcMain.handle('settings:upsert-provider', async (_event, request: UpsertProviderRequest) => {
+  ipcMainHandle('settings:upsert-provider', async (_event, request: UpsertProviderRequest) => {
     const before = await service.getSettingsView()
     const snapshot = await service.upsertProvider(request)
 
@@ -175,7 +175,7 @@ const registerSettingsIpcHandlers = ({
 
     return snapshot
   })
-  ipcMain.handle('settings:delete-provider', async (_event, request: DeleteProviderRequest) => {
+  ipcMainHandle('settings:delete-provider', async (_event, request: DeleteProviderRequest) => {
     const before = await service.getSettingsView()
     const snapshot = await service.deleteProvider(request.id)
 
@@ -185,7 +185,7 @@ const registerSettingsIpcHandlers = ({
 
     return snapshot
   })
-  ipcMain.handle(
+  ipcMainHandle(
     'settings:set-active-provider',
     async (_event, request: SetActiveProviderRequest) => {
       const snapshot = await service.setActiveProvider(request.id, request.model)
@@ -196,7 +196,7 @@ const registerSettingsIpcHandlers = ({
       return snapshot
     }
   )
-  ipcMain.handle(
+  ipcMainHandle(
     'settings:set-agent-framework',
     async (_event, request: SetAgentFrameworkRequest) => {
       log.info('set agent framework requested', { id: request.id })
@@ -209,7 +209,7 @@ const registerSettingsIpcHandlers = ({
       return snapshot
     }
   )
-  ipcMain.handle(
+  ipcMainHandle(
     'settings:set-reasoning-effort',
     async (_event, request: SetReasoningEffortRequest) => {
       // Renderer payloads are untyped at runtime: reject anything outside the known levels instead
@@ -234,7 +234,7 @@ const registerSettingsIpcHandlers = ({
       return snapshot
     }
   )
-  ipcMain.handle(
+  ipcMainHandle(
     'settings:set-notifications-enabled',
     async (_event, request: SetNotificationsEnabledRequest) => {
       // Renderer payloads are untyped at runtime: only a real boolean may persist.
@@ -246,7 +246,7 @@ const registerSettingsIpcHandlers = ({
       return service.setNotificationsEnabled(request.enabled)
     }
   )
-  ipcMain.handle(
+  ipcMainHandle(
     'settings:set-conversation-skill-import-enabled',
     async (_event, request: SetConversationSkillImportEnabledRequest) => {
       if (typeof request?.enabled !== 'boolean') {
@@ -263,7 +263,7 @@ const registerSettingsIpcHandlers = ({
       return snapshot
     }
   )
-  ipcMain.handle(
+  ipcMainHandle(
     'settings:set-close-preference',
     async (_event, request: SetClosePreferenceRequest) => {
       const preference = request?.preference
@@ -275,8 +275,8 @@ const registerSettingsIpcHandlers = ({
       return service.setClosePreference(preference)
     }
   )
-  ipcMain.handle('settings:list-app-icons', (): AppIconPreview[] => listAppIconPreviews?.() ?? [])
-  ipcMain.handle(
+  ipcMainHandle('settings:list-app-icons', (): AppIconPreview[] => listAppIconPreviews?.() ?? [])
+  ipcMainHandle(
     'settings:set-app-icon-variant',
     async (_event, request: SetAppIconVariantRequest) => {
       // Renderer payloads are untyped at runtime: only a known variant may persist.
@@ -293,12 +293,12 @@ const registerSettingsIpcHandlers = ({
       return snapshot
     }
   )
-  ipcMain.handle('settings:validate-provider', (_event, request: ValidateProviderRequest) =>
+  ipcMainHandle('settings:validate-provider', (_event, request: ValidateProviderRequest) =>
     service.validateProvider(request)
   )
-  ipcMain.handle('settings:cancel-codex-login', () => service.cancelCodexLogin())
-  ipcMain.handle('settings:cancel-claude-login', () => service.cancelClaudeLogin())
-  ipcMain.handle('settings:login-shared-claude', async () => {
+  ipcMainHandle('settings:cancel-codex-login', () => service.cancelCodexLogin())
+  ipcMainHandle('settings:cancel-claude-login', () => service.cancelClaudeLogin())
+  ipcMainHandle('settings:login-shared-claude', async () => {
     const result = await service.loginClaudeShared()
 
     // A fresh login changes the credentials the live agent relies on; reconnect so it picks them
@@ -319,7 +319,7 @@ const registerSettingsIpcHandlers = ({
 
     return result
   })
-  ipcMain.handle('settings:logout-shared-claude', async () => {
+  ipcMainHandle('settings:logout-shared-claude', async () => {
     const result = await service.logoutClaudeShared()
 
     if (result.ok) {
@@ -331,7 +331,7 @@ const registerSettingsIpcHandlers = ({
 
     return result
   })
-  ipcMain.handle('settings:login-isolated-claude', async (_event, token: string) => {
+  ipcMainHandle('settings:login-isolated-claude', async (_event, token: string) => {
     // Renderer payloads are untyped at runtime: reject anything that isn't a string before it
     // reaches the controller, so a malicious or corrupt payload can never be coerced into a save.
     if (typeof token !== 'string') {
@@ -358,7 +358,7 @@ const registerSettingsIpcHandlers = ({
 
     return result
   })
-  ipcMain.handle('settings:login-isolated-claude-browser', async () => {
+  ipcMainHandle('settings:login-isolated-claude-browser', async () => {
     // Browser sign-in: runs `claude setup-token` under the isolated config dir, which opens the
     // browser for OAuth and returns the token the app stores. Same post-login reconnect rule as the
     // paste flow — a fresh credential means the live agent must reconnect to pick it up.
@@ -379,10 +379,10 @@ const registerSettingsIpcHandlers = ({
 
     return result
   })
-  ipcMain.handle('settings:cancel-isolated-claude-login', async () => {
+  ipcMainHandle('settings:cancel-isolated-claude-login', async () => {
     await service.cancelClaudeIsolatedLogin()
   })
-  ipcMain.handle('settings:logout-isolated-claude', async () => {
+  ipcMainHandle('settings:logout-isolated-claude', async () => {
     const result = await service.logoutIsolatedClaude()
 
     // Reconnect only when the sign-out actually cleared the credential. A failed sign-out leaves
@@ -397,7 +397,7 @@ const registerSettingsIpcHandlers = ({
 
     return result
   })
-  ipcMain.handle('settings:login-isolated-codex', async () => {
+  ipcMainHandle('settings:login-isolated-codex', async () => {
     const result = await service.loginIsolatedCodex()
 
     // A fresh login changes the credentials the live agent relies on; reconnect so it picks them
@@ -419,7 +419,7 @@ const registerSettingsIpcHandlers = ({
 
     return result
   })
-  ipcMain.handle('settings:logout-isolated-codex', async () => {
+  ipcMainHandle('settings:logout-isolated-codex', async () => {
     const result = await service.logoutIsolatedCodex()
 
     // Reconnect only when the app-owned credential was actually removed. If local cleanup fails,
@@ -433,20 +433,20 @@ const registerSettingsIpcHandlers = ({
 
     return result
   })
-  ipcMain.handle(
+  ipcMainHandle(
     'settings:refresh-provider-models',
     (_event, request: RefreshProviderModelsRequest) => service.refreshProviderModels(request)
   )
-  ipcMain.handle('settings:mark-onboarding-complete', () => service.markOnboardingComplete())
+  ipcMainHandle('settings:mark-onboarding-complete', () => service.markOnboardingComplete())
 
-  ipcMain.handle('settings:get-package-mirror', () => service.getPackageMirror())
-  ipcMain.handle('settings:set-package-mirror', (_event, request: SetPackageMirrorRequest) =>
+  ipcMainHandle('settings:get-package-mirror', () => service.getPackageMirror())
+  ipcMainHandle('settings:set-package-mirror', (_event, request: SetPackageMirrorRequest) =>
     service.setPackageMirror(request)
   )
 
-  ipcMain.handle('settings:list-skills', () => service.listSkills())
-  ipcMain.handle('settings:get-skill-detail', (_event, id: string) => service.getSkillDetail(id))
-  ipcMain.handle('settings:set-skill-enabled', async (_event, request: SetSkillEnabledRequest) => {
+  ipcMainHandle('settings:list-skills', () => service.listSkills())
+  ipcMainHandle('settings:get-skill-detail', (_event, id: string) => service.getSkillDetail(id))
+  ipcMainHandle('settings:set-skill-enabled', async (_event, request: SetSkillEnabledRequest) => {
     const skills = await service.setSkillEnabled(request)
 
     // A toggle takes effect on the next reconnect: the runtime re-provisions (re-materializes) the
@@ -455,32 +455,32 @@ const registerSettingsIpcHandlers = ({
 
     return skills
   })
-  ipcMain.handle('settings:create-skill', async (_event, request: CreateSkillRequest) => {
+  ipcMainHandle('settings:create-skill', async (_event, request: CreateSkillRequest) => {
     const skills = await service.createSkill(request)
     onSkillsChanged?.()
     return skills
   })
-  ipcMain.handle('settings:update-skill', async (_event, request: UpdateSkillRequest) => {
+  ipcMainHandle('settings:update-skill', async (_event, request: UpdateSkillRequest) => {
     const skills = await service.updateSkill(request)
     onSkillsChanged?.()
     return skills
   })
-  ipcMain.handle('settings:delete-skill', async (_event, request: DeleteSkillRequest) => {
+  ipcMainHandle('settings:delete-skill', async (_event, request: DeleteSkillRequest) => {
     const skills = await service.deleteSkill(request)
     onSkillsChanged?.()
     return skills
   })
-  ipcMain.handle('settings:import-skill', async (_event, request: ImportSkillRequest) => {
+  ipcMainHandle('settings:import-skill', async (_event, request: ImportSkillRequest) => {
     const result = await service.importSkill(request)
     onSkillsChanged?.()
     return result
   })
-  ipcMain.handle('settings:import-skill-zip', async (_event, request: ImportSkillZipRequest) => {
+  ipcMainHandle('settings:import-skill-zip', async (_event, request: ImportSkillZipRequest) => {
     const result = await service.importSkillZip(request)
     onSkillsChanged?.()
     return result
   })
-  ipcMain.handle(
+  ipcMainHandle(
     'settings:import-skill-zip-batch',
     async (_event, request: ImportSkillZipBatchRequest) => {
       const result = await service.importSkillZipBatch(request)
@@ -488,23 +488,23 @@ const registerSettingsIpcHandlers = ({
       return result
     }
   )
-  ipcMain.handle('settings:preview-skill-zip', (_event, request: PreviewSkillZipRequest) =>
+  ipcMainHandle('settings:preview-skill-zip', (_event, request: PreviewSkillZipRequest) =>
     service.previewSkillZip(request)
   )
-  ipcMain.handle('settings:preview-github-skill', (_event, request: PreviewGitHubSkillRequest) =>
+  ipcMainHandle('settings:preview-github-skill', (_event, request: PreviewGitHubSkillRequest) =>
     service.previewGitHubSkill(request)
   )
-  ipcMain.handle('settings:scan-repo-skills', (_event, request: ScanRepoRequest) =>
+  ipcMainHandle('settings:scan-repo-skills', (_event, request: ScanRepoRequest) =>
     service.scanRepoSkills(request)
   )
   // Lists the generic global skill source plus the active framework's source. Read-only — the
   // renderer submits checked source-id/slug pairs through the batch import handler below.
-  ipcMain.handle('settings:list-agent-home-skills', () => service.listAgentHomeSkills())
-  ipcMain.handle(
+  ipcMainHandle('settings:list-agent-home-skills', () => service.listAgentHomeSkills())
+  ipcMainHandle(
     'settings:preview-agent-home-skill',
     (_event, request: PreviewAgentHomeSkillRequest) => service.previewAgentHomeSkill(request)
   )
-  ipcMain.handle(
+  ipcMainHandle(
     'settings:import-agent-home-skills',
     async (_event, request: ImportAgentHomeSkillsRequest) => {
       const result = await service.importAgentHomeSkills(request)
@@ -516,11 +516,11 @@ const registerSettingsIpcHandlers = ({
     }
   )
 
-  ipcMain.handle('settings:list-connectors', () => service.listConnectors())
-  ipcMain.handle('settings:get-connector-detail', (_event, id: string) =>
+  ipcMainHandle('settings:list-connectors', () => service.listConnectors())
+  ipcMainHandle('settings:get-connector-detail', (_event, id: string) =>
     service.getConnectorDetail(id)
   )
-  ipcMain.handle(
+  ipcMainHandle(
     'settings:set-connector-enabled',
     async (_event, request: SetConnectorEnabledRequest) => {
       const snapshot = await service.setConnectorEnabled(request)
@@ -528,7 +528,7 @@ const registerSettingsIpcHandlers = ({
       return snapshot
     }
   )
-  ipcMain.handle(
+  ipcMainHandle(
     'settings:set-connector-auto-allow',
     async (_event, request: SetConnectorAutoAllowRequest) => {
       const snapshot = await service.setConnectorAutoAllow(request)
@@ -536,7 +536,7 @@ const registerSettingsIpcHandlers = ({
       return snapshot
     }
   )
-  ipcMain.handle(
+  ipcMainHandle(
     'settings:set-tool-permission',
     async (_event, request: SetToolPermissionRequest) => {
       const detail = await service.setToolPermission(request)
@@ -544,7 +544,7 @@ const registerSettingsIpcHandlers = ({
       return detail
     }
   )
-  ipcMain.handle(
+  ipcMainHandle(
     'settings:set-ncbi-credentials',
     async (_event, request: SetNcbiCredentialsRequest) => {
       const snapshot = await service.setNcbiCredentials(request)
@@ -552,12 +552,12 @@ const registerSettingsIpcHandlers = ({
       return snapshot
     }
   )
-  ipcMain.handle('settings:add-custom-server', async (_event, request: AddCustomServerRequest) => {
+  ipcMainHandle('settings:add-custom-server', async (_event, request: AddCustomServerRequest) => {
     const snapshot = await service.addCustomServer(request)
     onConnectorsChanged?.()
     return snapshot
   })
-  ipcMain.handle(
+  ipcMainHandle(
     'settings:set-custom-server-enabled',
     async (_event, request: SetCustomServerEnabledRequest) => {
       const snapshot = await service.setCustomServerEnabled(request)
@@ -565,7 +565,7 @@ const registerSettingsIpcHandlers = ({
       return snapshot
     }
   )
-  ipcMain.handle(
+  ipcMainHandle(
     'settings:remove-custom-server',
     async (_event, request: RemoveCustomServerRequest) => {
       const snapshot = await service.removeCustomServer(request)
@@ -573,7 +573,7 @@ const registerSettingsIpcHandlers = ({
       return snapshot
     }
   )
-  ipcMain.handle(
+  ipcMainHandle(
     'settings:update-custom-server',
     async (_event, request: UpdateCustomServerRequest) => {
       const snapshot = await service.updateCustomServer(request)
@@ -582,10 +582,10 @@ const registerSettingsIpcHandlers = ({
     }
   )
   // Compute file browser bookmarks: keyed by provider_id in settings.computeBookmarks.
-  ipcMain.handle('compute:bookmarks:get', (_event, providerId: string) =>
+  ipcMainHandle('compute:bookmarks:get', (_event, providerId: string) =>
     service.getComputeBookmarks(providerId)
   )
-  ipcMain.handle('compute:bookmarks:set', (_event, providerId: string, folders: string[]) =>
+  ipcMainHandle('compute:bookmarks:set', (_event, providerId: string, folders: string[]) =>
     service.setComputeBookmarks(providerId, folders)
   )
 }

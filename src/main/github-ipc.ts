@@ -1,4 +1,4 @@
-import { ipcMain } from 'electron'
+import { ipcMainHandle } from './ipc-handler-registry'
 
 import { APP } from '../shared/app-config'
 
@@ -33,7 +33,7 @@ const registerGithubIpcHandlers = (deps: { fetch?: FetchFn } = {}): void => {
   let cachedStars: number | null = null
   let inFlight: Promise<number | null> | null = null
 
-  ipcMain.handle('github:get-stars', (): Promise<number | null> => {
+  ipcMainHandle('github:get-stars', (): Promise<number | null> => {
     if (cachedStars !== null) return Promise.resolve(cachedStars)
 
     if (!inFlight) {

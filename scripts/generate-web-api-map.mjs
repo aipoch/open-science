@@ -6,7 +6,7 @@ import ts from 'typescript'
 
 const root = resolve(import.meta.dirname, '..')
 const preloadPath = resolve(root, 'src/preload/index.ts')
-const outputPath = resolve(root, 'src/renderer/web/api-map.generated.ts')
+const outputPath = resolve(root, 'src/shared/web-api-map.generated.ts')
 
 const specialChannels = {
   'REVIEWER_IPC.RUN': 'reviewer:run',

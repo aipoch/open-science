@@ -1,7 +1,9 @@
 import { homedir } from 'node:os'
 import { join } from 'node:path'
 
-import { app, ipcMain } from 'electron'
+import { app } from 'electron'
+
+import { ipcMainHandle } from '../ipc-handler-registry'
 
 import type { CliLauncherStatus } from '../../shared/cli'
 import { createLogger } from '../logger'
@@ -33,7 +35,7 @@ const resolveEnv = (): CliLauncherEnv => ({
 // they never need elevation. Every handler is guarded so a failure surfaces as a message, not a raw
 // rejection.
 const registerCliInstallIpcHandlers = (): void => {
-  ipcMain.handle('cli:get-status', async (): Promise<CliLauncherStatus> => {
+  ipcMainHandle('cli:get-status', async (): Promise<CliLauncherStatus> => {
     try {
       return await getCliLauncherStatus(resolveEnv())
     } catch (error) {
@@ -42,13 +44,13 @@ const registerCliInstallIpcHandlers = (): void => {
     }
   })
 
-  ipcMain.handle('cli:install', async (): Promise<CliLauncherStatus> => {
+  ipcMainHandle('cli:install', async (): Promise<CliLauncherStatus> => {
     const status = await installCliLauncher(resolveEnv())
     logger.info('installed cli launcher', { target: status.target, onPath: status.onPath })
     return status
   })
 
-  ipcMain.handle('cli:uninstall', async (): Promise<CliLauncherStatus> => {
+  ipcMainHandle('cli:uninstall', async (): Promise<CliLauncherStatus> => {
     const status = await uninstallCliLauncher(resolveEnv())
     logger.info('uninstalled cli launcher', { target: status.target })
     return status

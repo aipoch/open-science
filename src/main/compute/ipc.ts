@@ -2,7 +2,9 @@ import { randomUUID } from 'node:crypto'
 import { readdir } from 'node:fs/promises'
 import { join } from 'node:path'
 
-import { BrowserWindow, ipcMain, shell } from 'electron'
+import { BrowserWindow, shell } from 'electron'
+
+import { ipcMainHandle } from '../ipc-handler-registry'
 
 import type {
   ComputeApprovalDecision,
@@ -414,41 +416,41 @@ const registerComputeIpcHandlers = (
     taskNotifications
   )
 
-  ipcMain.handle('compute:list', () => handlers.list())
-  ipcMain.handle('compute:get', (_event, providerId: string) => handlers.get(providerId))
-  ipcMain.handle('compute:create', (_event, request: CreateComputeHostRequest) =>
+  ipcMainHandle('compute:list', () => handlers.list())
+  ipcMainHandle('compute:get', (_event, providerId: string) => handlers.get(providerId))
+  ipcMainHandle('compute:create', (_event, request: CreateComputeHostRequest) =>
     handlers.create(request)
   )
-  ipcMain.handle('compute:delete', (_event, request: DeleteComputeHostRequest) =>
+  ipcMainHandle('compute:delete', (_event, request: DeleteComputeHostRequest) =>
     handlers.delete(request.providerId)
   )
-  ipcMain.handle('compute:ssh-config-aliases', () => handlers.sshConfigAliases())
-  ipcMain.handle('compute:probe', (_event, providerId: string) => handlers.probe(providerId))
-  ipcMain.handle('compute:details:get', (_event, providerId: string) =>
+  ipcMainHandle('compute:ssh-config-aliases', () => handlers.sshConfigAliases())
+  ipcMainHandle('compute:probe', (_event, providerId: string) => handlers.probe(providerId))
+  ipcMainHandle('compute:details:get', (_event, providerId: string) =>
     handlers.detailsGet(providerId)
   )
-  ipcMain.handle(
+  ipcMainHandle(
     'compute:details:save',
     (_event, providerId: string, text: string, oldText: string, author: DetailsAuthor) =>
       handlers.detailsSave(providerId, text, oldText, author)
   )
-  ipcMain.handle('compute:scratch:set', (_event, providerId: string, path: string) =>
+  ipcMainHandle('compute:scratch:set', (_event, providerId: string, path: string) =>
     handlers.scratchSet(providerId, path)
   )
-  ipcMain.handle('compute:concurrency:set', (_event, providerId: string, limit: number) =>
+  ipcMainHandle('compute:concurrency:set', (_event, providerId: string, limit: number) =>
     handlers.concurrencySet(providerId, limit)
   )
   // Session-level concurrency control (Phase 3c, issue 04).
-  ipcMain.handle(
+  ipcMainHandle(
     'compute:session:set-concurrency-limit',
     (_event, sessionId: string, limit: number) =>
       handlers.setSessionConcurrencyLimit(sessionId, limit)
   )
-  ipcMain.handle('compute:session:status', (_event, sessionId: string) =>
+  ipcMainHandle('compute:session:status', (_event, sessionId: string) =>
     handlers.getSessionConcurrencyStatus(sessionId)
   )
   // Lists a remote directory (browse experience, issue 05).
-  ipcMain.handle('compute:list-dir', async (_event, providerId: string, path: string) => {
+  ipcMainHandle('compute:list-dir', async (_event, providerId: string, path: string) => {
     try {
       return await handlers.listDir(providerId, path)
     } catch (err) {
@@ -460,7 +462,7 @@ const registerComputeIpcHandlers = (
     }
   })
   // Downloads a remote file to OS Downloads or project artifact. No approval gate (issue 03).
-  ipcMain.handle(
+  ipcMainHandle(
     'compute:download',
     async (_event, providerId: string, remotePath: string, dest: DownloadDest) => {
       try {
@@ -475,37 +477,37 @@ const registerComputeIpcHandlers = (
     }
   )
   // Reveals a local file path in the OS file manager (Finder / Explorer).
-  ipcMain.handle('compute:reveal-in-folder', (_event, filePath: string) => {
+  ipcMainHandle('compute:reveal-in-folder', (_event, filePath: string) => {
     handlers.revealInFolder(filePath)
   })
   // Renderer responds to an in-flight approval card (issue 04/05). Decision now carries the
   // chosen scope: 'once' | 'conversation' | 'project' | 'deny'.
-  ipcMain.handle(
+  ipcMainHandle(
     'compute:approval-respond',
     (_event, request: { id: string; decision: ComputeApprovalDecision }) => {
       handlers.approvalRespond(request.id, request.decision)
     }
   )
   // Returns all jobs for a session as JobSummary[], optionally filtered by status (Phase 3d).
-  ipcMain.handle(
+  ipcMainHandle(
     COMPUTE_JOBS_LIST_CHANNEL,
     (_event, filter: { sessionId: string; status?: string[] }) => handlers.jobsList(filter)
   )
   // Returns jobs pending analysis turn (notifiedAt set, notificationConsumedAt null — issue 05).
-  ipcMain.handle('compute:jobs:pending-notification', (_event, sessionId: string) =>
+  ipcMainHandle('compute:jobs:pending-notification', (_event, sessionId: string) =>
     handlers.jobsPendingNotification(sessionId)
   )
   // Marks job ids as notification-consumed (analysis turn done — issue 05).
-  ipcMain.handle('compute:jobs:mark-consumed', (_event, sessionId: string, jobIds: string[]) =>
+  ipcMainHandle('compute:jobs:mark-consumed', (_event, sessionId: string, jobIds: string[]) =>
     handlers.jobsMarkConsumed(sessionId, jobIds)
   )
 
   // Per-session enabled compute hosts (issue 06). The renderer owns the durable state (session
   // JSON); the main-process registry is the runtime cache consulted by list_compute RPC ops.
-  ipcMain.handle('compute:enabled-hosts:get', (_event, sessionId: string): string[] =>
+  ipcMainHandle('compute:enabled-hosts:get', (_event, sessionId: string): string[] =>
     enabledComputeHostsRegistry.get(sessionId)
   )
-  ipcMain.handle(
+  ipcMainHandle(
     'compute:enabled-hosts:set',
     (_event, sessionId: string, providerIds: string[]): void => {
       enabledComputeHostsRegistry.set(sessionId, providerIds)

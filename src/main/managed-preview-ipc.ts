@@ -1,4 +1,6 @@
-import { ipcMain, type IpcMainInvokeEvent } from 'electron'
+import { type IpcMainInvokeEvent } from 'electron'
+
+import { ipcMainHandle } from './ipc-handler-registry'
 
 import type {
   AcquireManagedPreviewRequest,
@@ -95,7 +97,7 @@ const registerManagedPreviewIpcHandlers = (resources: ManagedPreviewResources): 
   const owners = createManagedPreviewOwnerRegistry(resources)
   const ownerId = (event: IpcMainInvokeEvent): number => owners.register(event).ownerId
 
-  ipcMain.handle(
+  ipcMainHandle(
     'preview-resources:acquire',
     async (event, { maxBytes, ...request }: AcquireManagedPreviewRequest) => {
       if (maxBytes === undefined) return owners.acquire(event, request)
@@ -109,10 +111,10 @@ const registerManagedPreviewIpcHandlers = (resources: ManagedPreviewResources): 
       }))
     }
   )
-  ipcMain.handle('preview-resources:read-range', (event, request: ReadManagedPreviewRangeRequest) =>
+  ipcMainHandle('preview-resources:read-range', (event, request: ReadManagedPreviewRangeRequest) =>
     resources.readRange(ownerId(event), request)
   )
-  ipcMain.handle('preview-resources:release', (event, request: ReleaseManagedPreviewRequest) =>
+  ipcMainHandle('preview-resources:release', (event, request: ReleaseManagedPreviewRequest) =>
     resources.release(ownerId(event), request)
   )
 }

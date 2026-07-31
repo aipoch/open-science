@@ -1,4 +1,6 @@
-import { ipcMain, shell } from 'electron'
+import { shell } from 'electron'
+
+import { ipcMainHandle } from '../ipc-handler-registry'
 
 import {
   ARTIFACT_OWNERSHIP_PERSISTENCE_RACE,
@@ -347,7 +349,7 @@ const registerArtifactIpcHandlers = (
     withSessionMutation
   })
 
-  ipcMain.handle(
+  ipcMainHandle(
     'artifacts:finalize-run',
     async (_event, request: FinalizeRunArtifactsRequest): Promise<FinalizeRunArtifactsResult> => {
       try {
@@ -362,36 +364,36 @@ const registerArtifactIpcHandlers = (
       }
     }
   )
-  ipcMain.handle('artifacts:list-project-files', (_event, request: ListProjectArtifactsRequest) =>
+  ipcMainHandle('artifacts:list-project-files', (_event, request: ListProjectArtifactsRequest) =>
     handlers.listProjectFiles(request)
   )
-  ipcMain.handle(
+  ipcMainHandle(
     'artifacts:reconcile-pending',
     (_event, request: ReconcilePendingArtifactsRequest) =>
       handlers.reconcilePendingArtifacts(request)
   )
-  ipcMain.handle('artifacts:open-file', (_event, request: OpenArtifactFileRequest) =>
+  ipcMainHandle('artifacts:open-file', (_event, request: OpenArtifactFileRequest) =>
     handlers.openFile(request)
   )
-  ipcMain.handle('artifacts:read-preview', (_event, request: ReadArtifactPreviewRequest) =>
+  ipcMainHandle('artifacts:read-preview', (_event, request: ReadArtifactPreviewRequest) =>
     handlers.readPreview(request)
   )
-  ipcMain.handle('artifacts:get-lineage', (_event, request: GetArtifactLineageRequest) =>
+  ipcMainHandle('artifacts:get-lineage', (_event, request: GetArtifactLineageRequest) =>
     handlers.getLineage(request)
   )
-  ipcMain.handle(
+  ipcMainHandle(
     'artifacts:get-version-provenance',
     (_event, request: GetArtifactVersionProvenanceRequest) => handlers.getVersionProvenance(request)
   )
-  ipcMain.handle(
+  ipcMainHandle(
     'artifacts:get-version-execution',
     (_event, request: GetArtifactVersionProvenanceRequest) => handlers.getVersionExecution(request)
   )
-  ipcMain.handle(
+  ipcMainHandle(
     'artifacts:get-version-messages',
     (_event, request: GetArtifactVersionProvenanceRequest) => handlers.getVersionMessages(request)
   )
-  ipcMain.handle(
+  ipcMainHandle(
     'artifacts:get-version-review',
     (_event, request: GetArtifactVersionProvenanceRequest) => handlers.getVersionReview(request)
   )

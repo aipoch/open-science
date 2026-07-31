@@ -1,4 +1,6 @@
-import { dialog, ipcMain } from 'electron'
+import { dialog } from 'electron'
+
+import { ipcMainHandle } from '../ipc-handler-registry'
 
 import type { NotebookLanguage } from '../../shared/notebook'
 import type {
@@ -101,13 +103,13 @@ const registerRuntimeIpcHandlers = (deps: RuntimeIpcDeps): void => {
     return { language, selection, managed: surveyed.managed, external }
   }
 
-  ipcMain.handle('runtime:survey', (): Promise<RuntimeSurvey[]> =>
+  ipcMainHandle('runtime:survey', (): Promise<RuntimeSurvey[]> =>
     Promise.all(RUNTIME_LANGUAGES.map(buildSurvey))
   )
 
   // v4 environment discovery: every detected interpreter (PATH / common dirs / pyenv / conda / app
   // envs) per language, for the Settings cards. Standard-location-only enumeration (no disk walk).
-  ipcMain.handle(
+  ipcMainHandle(
     'runtime:list-environments',
     async (): Promise<{ python: DiscoveredInterpreter[]; r: DiscoveredInterpreter[] }> => {
       // Snapshot the manual-interpreter catalog for both languages, then feed it into discovery as a
@@ -127,7 +129,7 @@ const registerRuntimeIpcHandlers = (deps: RuntimeIpcDeps): void => {
     }
   )
 
-  ipcMain.handle(
+  ipcMainHandle(
     'runtime:set-selection',
     async (
       _event,
@@ -170,7 +172,7 @@ const registerRuntimeIpcHandlers = (deps: RuntimeIpcDeps): void => {
 
   // v4: the persisted per-language enablement (explicit enabled-overrides + install-auth), so the
   // Settings cards reflect the SAVED state on load rather than re-deriving from provenance defaults.
-  ipcMain.handle(
+  ipcMainHandle(
     'runtime:get-enablement',
     async (_event, request: { language: NotebookLanguage }): Promise<RuntimeEnablement> =>
       deps.settingsService.getRuntimeEnablement(request.language)
@@ -178,7 +180,7 @@ const registerRuntimeIpcHandlers = (deps: RuntimeIpcDeps): void => {
 
   // WS11: live-session usage of a runtime (running/idle/dormant), so the disable affordance can warn
   // about impact before revoking. Unwired -> all-zero (no live sessions to consider).
-  ipcMain.handle(
+  ipcMainHandle(
     'runtime:describe-usage',
     async (_event, request: { language: NotebookLanguage; envId: string }): Promise<RuntimeUsage> =>
       deps.describeRuntimeUsage?.(request.language, request.envId) ?? {
@@ -194,7 +196,7 @@ const registerRuntimeIpcHandlers = (deps: RuntimeIpcDeps): void => {
   // resolveEnabledRuntime refuses a bind/execute with an actionable "enable one in Settings" message —
   // so there is no need to trap the user in an undisablable toggle here. Returns the refreshed
   // enablement so the UI updates in one shot.
-  ipcMain.handle(
+  ipcMainHandle(
     'runtime:set-environment-enabled',
     async (
       _event,
@@ -216,7 +218,7 @@ const registerRuntimeIpcHandlers = (deps: RuntimeIpcDeps): void => {
 
   // v4: set one env's high-risk package-install authorization for a language. Independent of the enabled
   // gate (execute-after-enable stays read-only until this is turned on). Returns the refreshed enablement.
-  ipcMain.handle(
+  ipcMainHandle(
     'runtime:set-install-authorized',
     async (
       _event,
@@ -225,7 +227,7 @@ const registerRuntimeIpcHandlers = (deps: RuntimeIpcDeps): void => {
       deps.settingsService.setInstallAuthorized(request.language, request.envId, request.authorized)
   )
 
-  ipcMain.handle('runtime:pick-interpreter', async (): Promise<string | null> => {
+  ipcMainHandle('runtime:pick-interpreter', async (): Promise<string | null> => {
     try {
       if (deps.showOpenDialog) return await deps.showOpenDialog()
       const result = await dialog.showOpenDialog({ properties: ['openFile'] })
@@ -240,7 +242,7 @@ const registerRuntimeIpcHandlers = (deps: RuntimeIpcDeps): void => {
 
   // v4: add a manually-picked interpreter path to the Settings catalog so discovery surfaces it as an
   // (initially user-own, disabled) runtime card. Returns the refreshed catalog for that language.
-  ipcMain.handle(
+  ipcMainHandle(
     'runtime:register-interpreter',
     async (_event, request: { language: NotebookLanguage; path: string }): Promise<string[]> =>
       deps.settingsService.addManualInterpreter(request.language, request.path)
@@ -248,7 +250,7 @@ const registerRuntimeIpcHandlers = (deps: RuntimeIpcDeps): void => {
 
   // v4: drop a manually-added interpreter from the catalog (it disappears from discovery unless it is
   // still detected by another source). Returns the refreshed catalog.
-  ipcMain.handle(
+  ipcMainHandle(
     'runtime:unregister-interpreter',
     async (_event, request: { language: NotebookLanguage; path: string }): Promise<string[]> =>
       deps.settingsService.removeManualInterpreter(request.language, request.path)

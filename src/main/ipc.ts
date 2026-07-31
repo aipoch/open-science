@@ -1,7 +1,9 @@
 import { join } from 'node:path'
 import { randomUUID } from 'node:crypto'
 
-import { app, BrowserWindow, ipcMain, net, Notification, protocol, webContents } from 'electron'
+import { app, BrowserWindow, net, Notification, protocol, webContents } from 'electron'
+
+import { ipcMainHandle } from './ipc-handler-registry'
 
 import { createDefaultNotebookRuntimeService, registerAcpIpcHandlers } from './acp/ipc'
 import { createDefaultArtifactRepository, registerArtifactIpcHandlers } from './artifacts/ipc'
@@ -381,10 +383,10 @@ const registerIpcHandlers = async ({
   // The renderer peeks once sessions are hydrated, then conditionally consumes the same target.
   // This lets partial recovery open an already-loaded conversation while retaining an omitted one
   // for retry, without an older IPC round trip clearing a newer click target.
-  ipcMain.handle('notifications:peek-pending-open-session', () =>
+  ipcMainHandle('notifications:peek-pending-open-session', () =>
     taskNotifications.peekPendingOpenSession()
   )
-  ipcMain.handle('notifications:take-pending-open-session', (_event, expectedToken: unknown) =>
+  ipcMainHandle('notifications:take-pending-open-session', (_event, expectedToken: unknown) =>
     typeof expectedToken === 'number' && Number.isSafeInteger(expectedToken) && expectedToken > 0
       ? taskNotifications.takePendingOpenSession(expectedToken)
       : null
@@ -559,19 +561,19 @@ const registerIpcHandlers = async ({
   )
 
   // The renderer's approval card responds here; the broker resolves the held connector call.
-  ipcMain.handle(
+  ipcMainHandle(
     'connectors:approval-respond',
     (_event, request: { id: string; decision: 'allow' | 'deny' }) => {
       approvalBroker.respond(request.id, request.decision)
     }
   )
-  ipcMain.handle(
+  ipcMainHandle(
     'skills:conversation-import-respond',
     (_event, response: ConversationSkillImportApprovalResponse) => {
       skillImportApprovalBroker.respond(response)
     }
   )
-  ipcMain.handle('skills:conversation-import-replay-pending', () => {
+  ipcMainHandle('skills:conversation-import-replay-pending', () => {
     skillImportApprovalBroker.replayPending()
   })
 
@@ -882,7 +884,7 @@ const registerIpcHandlers = async ({
     withSessionMutation: (projectId, sessionId, mutation) =>
       sessionPersistenceCoordinator.runSessionMutation(projectId, sessionId, mutation)
   })
-  ipcMain.handle('notebook:read-input-preview', (_event, request) =>
+  ipcMainHandle('notebook:read-input-preview', (_event, request) =>
     notebookInputRegistry.readPreview(request)
   )
   registerSessionPersistenceIpcHandlers(sessionPersistenceBackend, reviewRepository)
@@ -907,7 +909,7 @@ const registerIpcHandlers = async ({
   registerLifecycleIpcHandlers()
   // Compute IPC handlers are registered earlier (before the notebook RPC server) so computeService
   // can be injected into the RPC server for the computeCall route. See above.
-  // Wire the reviewer backend into the app lifecycle: installs ipcMain.handle('reviewer:run', ...)
+  // Wire the reviewer backend into the app lifecycle: installs ipcMainHandle('reviewer:run', ...)
   // and 'reviewer:get-for-session' so the renderer's fire-and-forget reviewer calls resolve to
   // real handlers instead of no-ops. Passing the already-constructed AcpRuntime so the reviewer
   // can spawn sessions under the same agent connection.
