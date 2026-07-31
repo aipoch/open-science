@@ -43,6 +43,8 @@ describe('PR Check platform test coverage', () => {
       'src/main/windows.test.ts',
       'src/main/windows-icon-assets.test.ts',
       'src/main/windows-powershell.test.ts',
+      'src/main/file-save.test.ts',
+      'src/main/specialist/repository.test.ts',
       'src/main/notebook/micromamba-cache-powershell.test.ts',
       'src/main/notebook/micromamba-cache-acl.integration.test.ts'
     ]) {

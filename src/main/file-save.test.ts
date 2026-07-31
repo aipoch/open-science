@@ -6,11 +6,12 @@ import { join } from 'node:path'
 const downloadsPath = join('/Users/example', 'Downloads')
 
 const handlers = new Map<string, (event: unknown, payload?: unknown) => unknown>()
+const getAppPath = vi.hoisted(() => vi.fn())
 const showSaveDialog = vi.hoisted(() => vi.fn())
 const showOpenDialog = vi.hoisted(() => vi.fn())
 
 vi.mock('electron', () => ({
-  app: { getPath: vi.fn(() => '/Users/example/Downloads') },
+  app: { getPath: getAppPath },
   BrowserWindow: { fromWebContents: vi.fn(() => null) },
   dialog: { showOpenDialog, showSaveDialog },
   ipcMain: {
@@ -25,6 +26,8 @@ const { registerFileSaveHandlers } = await import('./file-save')
 describe('file save IPC handlers', () => {
   beforeEach(() => {
     handlers.clear()
+    getAppPath.mockReset()
+    getAppPath.mockReturnValue(downloadsPath)
     showOpenDialog.mockReset()
     showSaveDialog.mockReset()
   })

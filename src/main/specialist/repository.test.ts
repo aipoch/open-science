@@ -1,6 +1,6 @@
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
-import { mkdir, rm, writeFile, chmod } from 'node:fs/promises'
+import { mkdir, rm, writeFile } from 'node:fs/promises'
 import { randomUUID } from 'node:crypto'
 import { describe, it, expect, beforeEach, afterEach } from 'vitest'
 
@@ -110,17 +110,12 @@ describe('SpecialistRepository.getAll', () => {
   })
 
   it('throws on non-ENOENT filesystem error instead of returning empty', async () => {
-    // Create the file then make it unreadable to trigger EACCES.
-    // Skip on CI environments that run as root (root ignores chmod 000).
+    // A directory at the expected file path makes readFile fail across supported platforms
+    // without relying on POSIX permission bits, which Windows does not enforce.
     const filePath = join(tmpDir, 'specialists.json')
-    await writeFile(filePath, '{}', 'utf8')
-    await chmod(filePath, 0o000)
+    await mkdir(filePath)
     const repo = new SpecialistRepository(tmpDir)
-    try {
-      await expect(repo.getAll()).rejects.toThrow()
-    } finally {
-      await chmod(filePath, 0o644)
-    }
+    await expect(repo.getAll()).rejects.toThrow()
   })
 })
 
