@@ -158,6 +158,26 @@ describe('useAcpRuntime respondToPermission', () => {
       cancelled: false
     })
   })
+
+  it('reports and rethrows a permission persistence failure', async () => {
+    acpApi.respondToPermission.mockRejectedValueOnce(
+      new Error('Permission approval could not be saved; the tool call was cancelled.')
+    )
+    const { result } = await mountRuntime()
+
+    let caught: unknown
+    await act(async () => {
+      try {
+        await result.current.respondToPermission('request-1', 'allow-project')
+      } catch (error) {
+        caught = error
+      }
+    })
+
+    expect(caught).toBeInstanceOf(Error)
+    expect((caught as Error).message).toContain('Permission approval could not be saved')
+    expect(result.current.actionError).toContain('Permission approval could not be saved')
+  })
 })
 
 describe('useAcpRuntime snapshot action failures', () => {

@@ -40,6 +40,8 @@ import { NotebookRuntimeService } from '../notebook/runtime-service'
 import { resolveConfigRoot, resolveDataRoot } from '../storage-root'
 import type { SettingsService } from '../settings/service'
 import type { UploadRepository } from '../uploads/repository'
+import type { PermissionGrantRegistry } from '../permission-grants/registry'
+import { projectRegistrySessionGrants } from './permission-broker'
 import { broadcastToRenderers } from '../renderer-broadcast'
 import { withDataRootWrite } from '../storage/migration-state'
 import { createLogger, errorLogFields } from '../logger'
@@ -76,6 +78,7 @@ type AcpIpcOptions = AcpIpcArtifacts & {
   ) => Promise<() => void>
   // Drives the agent spawn env from the active provider so switching takes effect on reconnect.
   settingsService: SettingsService
+  permissionGrantRegistry?: PermissionGrantRegistry
   initializationBarrier?: Promise<unknown>
   // Observes prompt starts and terminal turn events for desktop notifications. Optional so tests
   // and headless setups can run without a notification surface.
@@ -90,6 +93,7 @@ type AcpIpcOptions = AcpIpcArtifacts & {
   onSessionCancellationRequested?: (sessionId: string) => void
   onSessionUnavailable?: (sessionId: string) => void
   onAllSessionsCancellationRequested?: () => void
+  beforeSessionDelete?: (sessionId: string) => Promise<void>
   // Provides fresh Specialist Profiles for first-turn identity injection. Optional so existing
   // tests and headless setups that construct the runtime without specialist support are unaffected.
   profileService?: ProfileService
@@ -120,6 +124,7 @@ const createRuntime = ({
   notebookRpcServer,
   authorizeSkillImportReferencedUploads,
   settingsService,
+  permissionGrantRegistry,
   initializationBarrier,
   taskNotifications,
   onSessionTurnStarted,
@@ -128,6 +133,7 @@ const createRuntime = ({
   onSessionCancellationRequested,
   onSessionUnavailable,
   onAllSessionsCancellationRequested,
+  beforeSessionDelete,
   profileService
 }: AcpIpcOptions): AcpRuntimeCoordinator => {
   const configRoot = resolveConfigRoot()
@@ -194,9 +200,12 @@ const createRuntime = ({
         notebook: {
           projectName: DEFAULT_ARTIFACT_PROJECT_NAME,
           mcpEntryPath,
-          getRpcConnection: () => notebookRpcServer.ensureStarted(),
+          getRpcConnection: ({ sessionId, projectId }) =>
+            notebookRpcServer.issueSessionConnection(sessionId, projectId),
           registerSessionAlias: (aliasSessionId, sessionId) =>
             notebookRpcServer.registerSessionAlias(aliasSessionId, sessionId),
+          releaseSessionCapabilities: (sessionId) =>
+            notebookRpcServer.releaseSessionCapabilities(sessionId),
           registerSessionSpecialist: (sessionId, specialistId) =>
             notebookRpcServer.registerSessionSpecialist(sessionId, specialistId),
           setArtifactProvenanceContext: (sessionId, context) =>
@@ -214,6 +223,7 @@ const createRuntime = ({
         activityGroups: { mcpEntryPath },
         callbacks: runtimeCallbacks,
         permissionGrantStore,
+        permissionGrantRegistry,
         // Main process resolves the latest Profile so the renderer never needs to send systemPrompt.
         resolveSpecialistIdentity: profileService
           ? async (specialistId: string, frameworkId: string) => {
@@ -279,8 +289,12 @@ const createRuntime = ({
       onSessionTurnEnded,
       onSkillImportAttachmentEligible,
       onSessionCancellationRequested,
-      onAllSessionsCancellationRequested
-    }
+      onAllSessionsCancellationRequested,
+      beforeSessionDelete
+    },
+    permissionGrantRegistry
+      ? () => projectRegistrySessionGrants(permissionGrantRegistry.listCached())
+      : undefined
   )
 }
 

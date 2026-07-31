@@ -256,6 +256,95 @@ describe('notebook local RPC server', () => {
     }
   })
 
+  it('revokes session RPC capabilities and removes aliases when their session is released', async () => {
+    const root = await createStorageRoot()
+    const connectorCall = vi.fn(async () => ({ ok: true }))
+    const service = new NotebookRuntimeService({
+      configRoot: root,
+      dataRoot: root,
+      projectName: 'default-project',
+      repository: new NotebookRunRepository(root)
+    })
+    const server = new NotebookLocalRpcServer(service, {
+      token: 'secret-token',
+      connectorService: { call: connectorCall }
+    })
+    const connection = await server.issueSessionConnection('notebook-session-1', 'default-project')
+    server.registerSessionAlias('notebook-session-1', 'real-session-1')
+
+    try {
+      server.releaseSessionCapabilities('real-session-1')
+
+      const response = await fetch(connection.endpoint, {
+        method: 'POST',
+        headers: {
+          authorization: `Bearer ${connection.token}`,
+          'content-type': 'application/json'
+        },
+        body: JSON.stringify({
+          method: 'mcpCall',
+          params: { server: 'pubmed', method: 'search', args: {} }
+        })
+      })
+      const payload = (await response.json()) as { error: string }
+
+      expect(response.status).toBe(401)
+      expect(payload.error).toMatch(/invalid notebook rpc token/i)
+      expect(connectorCall).not.toHaveBeenCalled()
+      expect(
+        (
+          server as unknown as {
+            sessionAliases: Map<string, string>
+          }
+        ).sessionAliases.has('notebook-session-1')
+      ).toBe(false)
+    } finally {
+      await server.close()
+    }
+  })
+
+  it('rotates Agent capabilities across a pre-start alias without revoking the control plane', async () => {
+    const root = await createStorageRoot()
+    const connectorCall = vi.fn(async () => ({ ok: true }))
+    const service = new NotebookRuntimeService({
+      configRoot: root,
+      dataRoot: root,
+      projectName: 'default-project',
+      repository: new NotebookRunRepository(root)
+    })
+    const server = new NotebookLocalRpcServer(service, {
+      token: 'secret-token',
+      connectorService: { call: connectorCall }
+    })
+    const initial = await server.issueSessionConnection('notebook-session-1', 'default-project')
+    server.registerSessionAlias('notebook-session-1', 'real-session-1')
+    const control = await server.issueControlConnection('real-session-1', 'default-project')
+    const replacement = await server.issueSessionConnection('real-session-1', 'default-project')
+
+    const callConnector = (token: string): Promise<Response> =>
+      fetch(replacement.endpoint, {
+        method: 'POST',
+        headers: {
+          authorization: `Bearer ${token}`,
+          'content-type': 'application/json'
+        },
+        body: JSON.stringify({
+          method: 'mcpCall',
+          params: { server: 'pubmed', method: 'search', args: {} }
+        })
+      })
+
+    try {
+      await expect(callConnector(initial.token)).resolves.toMatchObject({ status: 401 })
+      await expect(callConnector(replacement.token)).resolves.toMatchObject({ status: 200 })
+      await expect(callConnector(control.token)).resolves.toMatchObject({ status: 200 })
+      expect(connectorCall).toHaveBeenCalledTimes(2)
+    } finally {
+      control.release()
+      await server.close()
+    }
+  })
+
   it('dispatches Artifact Version creation through the authenticated main-process bridge', async () => {
     const root = await createStorageRoot()
     const service = new NotebookRuntimeService({
@@ -962,16 +1051,19 @@ describe('notebook local RPC server', () => {
       token: 'secret-token',
       computeService: fakeComputeService
     })
-    const connection = await server.ensureStarted()
+    const connection = await server.issueSessionConnection('my-session', 'default-project')
 
     try {
       // Known session → returns the registered host list.
       const withHosts = await fetch(connection.endpoint, {
         method: 'POST',
-        headers: { authorization: 'Bearer secret-token', 'content-type': 'application/json' },
+        headers: {
+          authorization: `Bearer ${connection.token}`,
+          'content-type': 'application/json'
+        },
         body: JSON.stringify({
           method: 'computeCall',
-          params: { op: 'list_compute', session_id: 'my-session' }
+          params: { op: 'list_compute', session_id: 'forged-session' }
         })
       })
       const withHostsPayload = (await withHosts.json()) as { result: string[] }
@@ -980,9 +1072,16 @@ describe('notebook local RPC server', () => {
       expect(withHostsPayload.result).toEqual(['ssh:cluster-1'])
 
       // Unknown session → empty array.
-      const noHosts = await fetch(connection.endpoint, {
+      const otherConnection = await server.issueSessionConnection(
+        'other-session',
+        'default-project'
+      )
+      const noHosts = await fetch(otherConnection.endpoint, {
         method: 'POST',
-        headers: { authorization: 'Bearer secret-token', 'content-type': 'application/json' },
+        headers: {
+          authorization: `Bearer ${otherConnection.token}`,
+          'content-type': 'application/json'
+        },
         body: JSON.stringify({
           method: 'computeCall',
           params: { op: 'list_compute', session_id: 'other-session' }
@@ -1031,15 +1130,18 @@ describe('notebook local RPC server', () => {
       token: 'secret-token',
       computeService: fakeComputeService
     })
-    const connection = await server.ensureStarted()
+    const connection = await server.issueSessionConnection('my-session', 'default-project')
 
     try {
       const response = await fetch(connection.endpoint, {
         method: 'POST',
-        headers: { authorization: 'Bearer secret-token', 'content-type': 'application/json' },
+        headers: {
+          authorization: `Bearer ${connection.token}`,
+          'content-type': 'application/json'
+        },
         body: JSON.stringify({
           method: 'computeCall',
-          params: { op: 'set_concurrency_limit', session_id: 'my-session', limit: 10 }
+          params: { op: 'set_concurrency_limit', session_id: 'forged-session', limit: 10 }
         })
       })
 
@@ -1081,15 +1183,18 @@ describe('notebook local RPC server', () => {
       token: 'secret-token',
       computeService: fakeComputeService
     })
-    const connection = await server.ensureStarted()
+    const connection = await server.issueSessionConnection('my-session', 'default-project')
 
     try {
       const response = await fetch(connection.endpoint, {
         method: 'POST',
-        headers: { authorization: 'Bearer secret-token', 'content-type': 'application/json' },
+        headers: {
+          authorization: `Bearer ${connection.token}`,
+          'content-type': 'application/json'
+        },
         body: JSON.stringify({
           method: 'computeCall',
-          params: { op: 'concurrency_status', session_id: 'my-session' }
+          params: { op: 'concurrency_status', session_id: 'forged-session' }
         })
       })
       const payload = (await response.json()) as {

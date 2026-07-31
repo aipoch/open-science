@@ -104,7 +104,7 @@ export type StoredConnectors = {
   // Fully-qualified "<connector>/<method>" ids denied by policy; allow by default otherwise.
   blockedToolIds?: string[]
   // Fully-qualified "<connector>/<method>" ids that require per-call approval (opt-in). Tools default
-  // to allow (no prompt); this is the set the user switched to "Ask each time".
+  // to allow (no prompt); this is the set the user switched to "Require approval".
   askToolIds?: string[]
   // Ids of bundled connectors the user turned OFF. Absent/empty means every bundled connector is
   // enabled (default-on), mirroring disabledSkillIds. This is the authoritative bundled gate.
@@ -180,14 +180,12 @@ export type StoredSettings = {
   // Pinned bookmark folders for the remote file browser, keyed by provider_id.
   // Each value is an ordered array of absolute paths the user has pinned via Go-to.
   computeBookmarks?: Record<string, string[]>
-  // Persisted project-scope compute approval grants (design.md §6). Each grant means
-  // calls matching (projectId, operation, providerId) skip the approval card for that project.
-  // Conversation-scope grants are session-only (in-memory broker) and are NOT stored here.
+  // Legacy project-scope compute grants, read only for one-time migration into PermissionGrant.
+  // Production authorization never appends to this field; it is removed after a successful import.
   computeGrants?: StoredComputeGrant[]
 }
 
-// A single project-scope compute approval grant. The key is the triple (projectId, operation, providerId).
-// Stored in settings.json rather than the DB so it does not require a schema migration.
+// Legacy settings.json shape retained only so existing installations can migrate without data loss.
 export type StoredComputeGrant = {
   projectId: string
   operation: string

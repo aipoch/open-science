@@ -95,6 +95,24 @@ const installApi = (): void => {
       onState: vi.fn().mockReturnValue(() => {}),
       cancel: vi.fn()
     },
+    permissions: {
+      list: vi.fn().mockResolvedValue({
+        grants: [
+          {
+            id: 'grant-1',
+            revision: 1,
+            family: 'connectors',
+            capabilityKind: 'mcp_tool',
+            capabilityLabel: 'Search articles',
+            scopeKind: 'project',
+            scopeLabel: 'Project: Oncology review',
+            projectId: 'project-1'
+          }
+        ],
+        counts: { all: 1, global: 0, project: 1, session: 0 }
+      }),
+      onChanged: vi.fn().mockReturnValue(() => undefined)
+    },
     logs: {
       getPath: vi.fn().mockResolvedValue('/Users/x/Library/Logs/Open Science/main.log'),
       openFile: vi.fn().mockResolvedValue({ opened: true }),
@@ -192,7 +210,7 @@ describe('SettingsPage layout', () => {
     expect(dialog?.className).toContain('overscroll-contain')
 
     // Left navigation grouped as Capabilities (Skills, Connectors, Specialists, Compute, Network)
-    // and Workspace (Model with its Agent sub-item, Runtimes, Storage, General).
+    // and Workspace (Model with its Agent sub-item, Permissions, Runtimes, Storage, General).
     const nav = document.body.querySelector('nav[aria-label="Settings"]')
     expect(nav).not.toBeNull()
     expect(nav?.className).toContain('bg-background')
@@ -200,7 +218,7 @@ describe('SettingsPage layout', () => {
     expect(nav?.textContent).toContain('Capabilities')
     expect(nav?.textContent).toContain('Workspace')
     const navItems = nav?.querySelectorAll('li') ?? []
-    expect(navItems).toHaveLength(10)
+    expect(navItems).toHaveLength(11)
     expect(navItems[0]?.textContent).toContain('Skills')
     expect(navItems[1]?.textContent).toContain('Connectors')
     expect(navItems[2]?.textContent).toContain('Specialists')
@@ -208,9 +226,10 @@ describe('SettingsPage layout', () => {
     expect(navItems[4]?.textContent).toContain('Network')
     expect(navItems[5]?.textContent).toContain('Model')
     expect(navItems[6]?.textContent).toContain('Agent')
-    expect(navItems[7]?.textContent).toContain('Runtimes')
-    expect(navItems[8]?.textContent).toContain('Storage')
-    expect(navItems[9]?.textContent).toContain('General')
+    expect(navItems[7]?.textContent).toContain('Permissions')
+    expect(navItems[8]?.textContent).toContain('Runtimes')
+    expect(navItems[9]?.textContent).toContain('Storage')
+    expect(navItems[10]?.textContent).toContain('General')
     // Model is the default active panel.
     expect(nav?.querySelector('[aria-current="page"]')?.textContent).toContain('Model')
 
@@ -237,6 +256,60 @@ describe('SettingsPage layout', () => {
       (button) => button.textContent?.trim() === 'Add provider'
     )
     expect(addRow?.className).toContain('border-dashed')
+  })
+
+  it('opens the Permissions panel from Workspace navigation', async () => {
+    await act(async () => root.render(<SettingsPage open onClose={vi.fn()} />))
+    await act(async () => navButton('Permissions')?.click())
+
+    expect(document.body.querySelector('h2:not(.sr-only)')?.textContent).toBe('Permissions')
+    expect(
+      document.body.querySelector<HTMLButtonElement>('[aria-label="Filter permissions by scope"]')
+        ?.textContent
+    ).toContain('All (1)')
+    expect(document.body.textContent).toContain('Search articles')
+    expect(document.body.textContent).toContain('Project: Oncology review')
+    expect(
+      document.body.querySelector<HTMLElement>('[data-slot="settings-content-scroll"]')?.className
+    ).toContain('overflow-y-auto')
+    expect(
+      document.body.querySelector<HTMLElement>('[aria-label="Filter permissions by scope"]')
+        ?.parentElement?.className
+    ).toContain('sticky')
+  })
+
+  it('forwards session scope navigation from the Permissions panel', async () => {
+    const onOpenSession = vi.fn()
+    vi.mocked(window.api.permissions.list).mockResolvedValue({
+      version: 1,
+      incompleteStores: [],
+      grants: [
+        {
+          id: 'session-grant',
+          revision: 1,
+          family: 'file_operations',
+          capabilityKind: 'file_operation',
+          capabilityLabel: 'Edit',
+          scopeKind: 'session',
+          scopeLabel: 'Session: Analyze samples',
+          projectId: 'project-1',
+          sessionId: 'session-1'
+        }
+      ],
+      counts: { all: 1, global: 0, project: 0, session: 1 }
+    })
+
+    await act(async () =>
+      root.render(<SettingsPage open onClose={vi.fn()} onOpenSession={onOpenSession} />)
+    )
+    await act(async () => navButton('Permissions')?.click())
+    await act(async () =>
+      document.body
+        .querySelector<HTMLButtonElement>('[aria-label="Open Session: Analyze samples"]')
+        ?.click()
+    )
+
+    expect(onOpenSession).toHaveBeenCalledWith('session-1')
   })
 
   it('shows the agent framework on the Agent sub-panel', async () => {

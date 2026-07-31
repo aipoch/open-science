@@ -3,6 +3,7 @@ import {
   ArrowRight,
   Cloud,
   Globe,
+  LockKeyhole,
   Maximize2,
   Minimize2,
   ScrollText,
@@ -44,6 +45,7 @@ import { ConnectorsNavIcon } from './connector-icons'
 import { ComputePanel, type ComputeView } from './ComputePanel'
 import { ComputeAddForm } from './ComputeAddForm'
 import { ComputeHostDetail } from './ComputeHostDetail'
+import { PermissionsPanel } from './PermissionsPanel'
 import { resolveVendorModelsUrl } from '../../../../shared/provider-registry'
 import { ProviderForm } from './ProviderForm'
 import {
@@ -60,6 +62,7 @@ import {
 type SettingsPageProps = {
   open: boolean
   onClose: () => void
+  onOpenSession?: (sessionId: string) => void
 }
 
 // The model panel sub-view, driven by the settings navigation history so add/edit is a breadcrumb page.
@@ -134,6 +137,7 @@ const SETTINGS_GROUPS: ReadonlyArray<{ label: string; panels: ReadonlyArray<Sett
     panels: [
       { id: 'model', label: 'Model', Icon: SlidersHorizontal },
       { id: 'agent', label: 'Agent', parent: 'model' },
+      { id: 'permissions', label: 'Permissions', Icon: LockKeyhole },
       { id: 'runtimes', label: 'Runtimes', Icon: TerminalSquare },
       { id: 'storage', label: 'Storage', Icon: Cloud },
       { id: 'general', label: 'General', Icon: Settings2 }
@@ -174,7 +178,7 @@ const INITIAL_LOCATION: NavLocation = {
 
 // App-level model settings surface. Reuses the onboarding cards/form; manages providers (CRUD +
 // activate + test). Opened from the Home/Workspace gear entry.
-const SettingsPage = ({ open, onClose }: SettingsPageProps): React.JSX.Element => {
+const SettingsPage = ({ open, onClose, onOpenSession }: SettingsPageProps): React.JSX.Element => {
   const providers = useSettingsStore((state) => state.providers)
   const agentFrameworkId = useSettingsStore((state) => state.agentFrameworkId)
   const frameworkEndpoints = useSettingsStore(selectFrameworkApiEndpoints)
@@ -783,7 +787,7 @@ const SettingsPage = ({ open, onClose }: SettingsPageProps): React.JSX.Element =
               </div>
             </TooltipProvider>
 
-            <div className="min-h-0 flex-1 overflow-y-auto">
+            <div data-slot="settings-content-scroll" className="min-h-0 flex-1 overflow-y-auto">
               <div className="mx-auto min-h-full w-full max-w-[880px]">
                 {activePanel === 'skills' ? (
                   <SkillsPanel
@@ -795,7 +799,10 @@ const SettingsPage = ({ open, onClose }: SettingsPageProps): React.JSX.Element =
                   <SpecialistsPanel view={specialistsView} onNavigate={navigateSpecialists} />
                 ) : activePanel === 'connectors' ? (
                   connectorsView.kind === 'detail' ? (
-                    <ConnectorDetailView id={connectorsView.id} />
+                    <ConnectorDetailView
+                      id={connectorsView.id}
+                      onManagePermissions={() => navigatePanel('permissions')}
+                    />
                   ) : connectorsView.kind === 'add' ? (
                     <ConnectorAddForm
                       initialTransport={connectorsView.transport}
@@ -831,6 +838,17 @@ const SettingsPage = ({ open, onClose }: SettingsPageProps): React.JSX.Element =
                       setAgentMenuExpanded(true)
                       navigatePanel('agent')
                     }}
+                  />
+                ) : activePanel === 'permissions' ? (
+                  <PermissionsPanel
+                    onOpenSession={onOpenSession}
+                    onOpenConnector={(id) =>
+                      navigateConnectors(
+                        customServers.some((server) => server.id === id)
+                          ? { kind: 'edit', id }
+                          : { kind: 'detail', id }
+                      )
+                    }
                   />
                 ) : activePanel === 'runtimes' ? (
                   <RuntimesPanel

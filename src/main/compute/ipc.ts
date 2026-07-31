@@ -17,6 +17,7 @@ import type {
   DetailsAuthor,
   ProbeResult
 } from '../../shared/compute'
+import { computeProviderId } from '../../shared/compute'
 import type {
   DirListing,
   DownloadDest,
@@ -43,6 +44,8 @@ import { dispatchJob } from './job-dispatcher'
 import { EnabledComputeHostsRegistry, enabledComputeHostsRegistry } from './enabled-hosts-registry'
 import { getJobHarvestDir } from './harvest-engine'
 import { workspaceRelativePath } from './workspace-path'
+import type { PermissionGrantRegistry } from '../permission-grants/registry'
+import { createComputePermissionGrantAdapter } from './permission-grant-adapter'
 
 // IPC channel names for the renderer job feed (Phase 3d, issue 05).
 export const COMPUTE_JOBS_LIST_CHANNEL = 'compute:jobs:list'
@@ -191,8 +194,18 @@ const createComputeHandlers = (
   onJobUpdated?: (job: ComputeJob) => void,
   artifactResolver?: ArtifactResolver,
   storageRoot?: string,
-  taskNotifications?: Pick<TaskNotificationService, 'handleComputeApproval'>
+  taskNotifications?: Pick<TaskNotificationService, 'handleComputeApproval'>,
+  permissionGrantRegistry?: PermissionGrantRegistry
 ): ComputeHandlers => {
+  const permissionGrants = permissionGrantRegistry
+    ? createComputePermissionGrantAdapter(permissionGrantRegistry, settingsRepository)
+    : undefined
+  if (permissionGrants) {
+    void permissionGrants
+      .migrateLegacy()
+      .catch((error) => log.warn('legacy compute grant migration failed', errorLogFields(error)))
+  }
+
   // The broadcast function sends approval requests to all renderer windows. In tests, callers
   // inject a fake broker so this function is never called directly.
   const broker =
@@ -212,14 +225,34 @@ const createComputeHandlers = (
               win.webContents.send('compute:approval-request', request)
             }
           },
-      // Wire project-scope grant persistence through the settings repository (issue 05).
-      checkProjectGrant: settingsRepository
-        ? (grant) => settingsRepository.hasComputeGrant(grant)
-        : undefined,
-      saveProjectGrant: settingsRepository
-        ? (grant) => settingsRepository.addComputeGrant(grant).then(() => undefined)
-        : undefined
+      // Isolated legacy callers retain their old hooks. Production uses only the Registry adapter.
+      checkProjectGrant:
+        settingsRepository && !permissionGrantRegistry
+          ? (grant) => settingsRepository.hasComputeGrant(grant)
+          : undefined,
+      saveProjectGrant:
+        settingsRepository && !permissionGrantRegistry
+          ? (grant) => settingsRepository.addComputeGrant(grant).then(() => undefined)
+          : undefined,
+      isProviderCurrent: async ({ providerId, ownerId }) => {
+        const current = await repository.get(providerId)
+        return current !== null && (ownerId === undefined || current.id === ownerId)
+      },
+      permissionGrants
     })
+
+  // Compute provider ids are deterministic and reusable. Keep create, delete, and owner-grant cleanup
+  // in one FIFO so a replacement host cannot become visible before stale authority is pruned. The
+  // tail recovers after failures; create retries cleanup before exposing an absent provider id.
+  let hostLifecycleTail: Promise<void> = Promise.resolve()
+  const runHostLifecycleMutation = <T>(operation: () => Promise<T>): Promise<T> => {
+    const result = hostLifecycleTail.then(operation)
+    hostLifecycleTail = result.then(
+      () => undefined,
+      () => undefined
+    )
+    return result
+  }
 
   // Construct the production service with the full job dependency set so agent submit_job works and
   // dispatcher status transitions (submitted→running/error) broadcast to the renderer. Positional
@@ -283,19 +316,32 @@ const createComputeHandlers = (
   return {
     list: () => repository.list(),
     get: (providerId) => repository.get(providerId),
-    create: async (request) => repository.create(request),
-    delete: async (providerId) => {
-      if (jobRepository) {
-        const hasActive = await jobRepository.hasActiveJobsForProvider(providerId)
-        if (hasActive) {
-          throw new Error(
-            `Cannot delete host "${providerId}": it has submitted or running jobs. ` +
-              `Wait for those jobs to reach a terminal state before deleting the host.`
-          )
+    create: (request) =>
+      runHostLifecycleMutation(async () => {
+        if (permissionGrantRegistry) {
+          const providerId = computeProviderId(request.sshAlias)
+          const existing = await repository.get(providerId)
+          if (!existing) {
+            await permissionGrantRegistry.prune({ kind: 'compute_provider', providerId })
+          }
         }
-      }
-      await repository.delete(providerId)
-    },
+        return repository.create(request)
+      }),
+    delete: (providerId) =>
+      runHostLifecycleMutation(async () => {
+        if (jobRepository) {
+          const hasActive = await jobRepository.hasActiveJobsForProvider(providerId)
+          if (hasActive) {
+            throw new Error(
+              `Cannot delete host "${providerId}": it has submitted or running jobs. ` +
+                `Wait for those jobs to reach a terminal state before deleting the host.`
+            )
+          }
+        }
+        broker.invalidateProvider(providerId)
+        await repository.delete(providerId)
+        await permissionGrantRegistry?.prune({ kind: 'compute_provider', providerId })
+      }),
     sshConfigAliases: () => listSshAliases(),
     probe: (providerId) => service.probe(providerId),
     detailsGet: (providerId) => service.getDetails(providerId),
@@ -387,7 +433,8 @@ const registerComputeIpcHandlers = (
   // one constructed by createComputeHandlers. Lets the renderer-callable error wrapper around
   // `compute:list-dir` / `compute:download` be exercised end-to-end against a fake service.
   injectedService?: ComputeService,
-  taskNotifications?: Pick<TaskNotificationService, 'handleComputeApproval'>
+  taskNotifications?: Pick<TaskNotificationService, 'handleComputeApproval'>,
+  permissionGrantRegistry?: PermissionGrantRegistry
 ): {
   computeService: ComputeService
   jobRepository: ComputeJobRepository
@@ -397,7 +444,8 @@ const registerComputeIpcHandlers = (
   const storageRoot = resolveStorageRoot()
   const dataRoot = resolveDataRoot()
 
-  // Share the settings repository with the broker so project grants are persisted (issue 05).
+  // Read the legacy settings repository only for lazy one-way Project grant import. New remembered
+  // approvals are written exclusively through the SQLite PermissionGrant Registry.
   const settingsRepo = new SettingsRepository(storageRoot)
 
   // Broadcast dispatcher status transitions to the renderer, same hook shape as the JobPoller uses.
@@ -413,7 +461,8 @@ const registerComputeIpcHandlers = (
     onJobUpdated,
     artifactResolver,
     dataRoot,
-    taskNotifications
+    taskNotifications,
+    permissionGrantRegistry
   )
 
   ipcMainHandle('compute:list', () => handlers.list())
@@ -421,9 +470,9 @@ const registerComputeIpcHandlers = (
   ipcMainHandle('compute:create', (_event, request: CreateComputeHostRequest) =>
     handlers.create(request)
   )
-  ipcMainHandle('compute:delete', (_event, request: DeleteComputeHostRequest) =>
-    handlers.delete(request.providerId)
-  )
+  ipcMainHandle('compute:delete', async (_event, request: DeleteComputeHostRequest) => {
+    await handlers.delete(request.providerId)
+  })
   ipcMainHandle('compute:ssh-config-aliases', () => handlers.sshConfigAliases())
   ipcMainHandle('compute:probe', (_event, providerId: string) => handlers.probe(providerId))
   ipcMainHandle('compute:details:get', (_event, providerId: string) =>

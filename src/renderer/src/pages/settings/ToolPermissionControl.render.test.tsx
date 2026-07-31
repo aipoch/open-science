@@ -33,7 +33,7 @@ describe('ToolPermissionControl', () => {
 
     expect(document.body.querySelectorAll('[role="radio"]')).toHaveLength(3)
     expect(radio('Always allow')?.getAttribute('aria-checked')).toBe('false')
-    expect(radio('Ask each time')?.getAttribute('aria-checked')).toBe('false')
+    expect(radio('Require approval')?.getAttribute('aria-checked')).toBe('false')
     expect(radio('Block')?.getAttribute('aria-checked')).toBe('true')
   })
 
@@ -69,7 +69,7 @@ describe('ToolPermissionControl', () => {
     expect(onChange).toHaveBeenCalledWith('block')
   })
 
-  it('calls onChange("ask") when Ask each time is clicked', () => {
+  it('calls onChange("ask") when Require approval is clicked', () => {
     const onChange = vi.fn()
     act(() => {
       root.render(
@@ -81,7 +81,7 @@ describe('ToolPermissionControl', () => {
       )
     })
 
-    act(() => radio('Ask each time')?.click())
+    act(() => radio('Require approval')?.click())
     expect(onChange).toHaveBeenCalledWith('ask')
   })
 })

@@ -8,21 +8,27 @@ import { cn } from '@/lib/utils'
 
 type SettingsSectionProps = ComponentProps<'section'> & {
   title: string
+  titleId?: string
   // Optional decorative glyph rendered just before the title (e.g. a language logo).
   icon?: ReactNode
   description?: ReactNode
   action?: ReactNode
   separated?: boolean
+  headerClassName?: string
+  actionClassName?: string
   contentClassName?: string
 }
 
 // Keeps first-level settings groups aligned without turning every group into a card.
 const SettingsSection = ({
   title,
+  titleId,
   icon,
   description,
   action,
   separated = false,
+  headerClassName,
+  actionClassName,
   contentClassName,
   className,
   children,
@@ -33,9 +39,12 @@ const SettingsSection = ({
     className={cn(separated && 'border-t border-border pt-5', className)}
     {...props}
   >
-    <div className="flex items-start justify-between gap-4">
+    <div className={cn('flex items-start justify-between gap-4', headerClassName)}>
       <div className="min-w-0">
-        <h3 className="flex items-center gap-2 text-base font-semibold text-foreground">
+        <h3
+          id={titleId}
+          className="flex items-center gap-2 text-base font-semibold text-foreground"
+        >
           {icon ? (
             <span
               className="inline-flex size-5 shrink-0 items-center justify-center"
@@ -52,7 +61,7 @@ const SettingsSection = ({
           </p>
         ) : null}
       </div>
-      {action ? <div className="shrink-0">{action}</div> : null}
+      {action ? <div className={cn('shrink-0', actionClassName)}>{action}</div> : null}
     </div>
     <div className={cn('mt-3', contentClassName)}>{children}</div>
   </section>

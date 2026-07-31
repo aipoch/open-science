@@ -26,6 +26,39 @@ const PROJECT_TABLE_DDL = `CREATE TABLE IF NOT EXISTS "Project" (
     "updatedAt" DATETIME NOT NULL
 );`
 
+const PERMISSION_GRANT_TABLE_DDL = `CREATE TABLE IF NOT EXISTS "PermissionGrant" (
+    "id" TEXT NOT NULL PRIMARY KEY,
+    "capabilityKind" TEXT NOT NULL,
+    "capabilityKey" TEXT NOT NULL,
+    "qualifierMode" TEXT NOT NULL DEFAULT 'none',
+    "qualifierValue" TEXT,
+    "scopeKind" TEXT NOT NULL,
+    "projectId" TEXT,
+    "sessionId" TEXT,
+    "fingerprint" TEXT NOT NULL,
+    "revision" INTEGER NOT NULL DEFAULT 1,
+    "createdAt" DATETIME,
+    CONSTRAINT "PermissionGrant_capabilityKind_check" CHECK ("capabilityKind" IN ('customize_mutation', 'mcp_tool', 'execution', 'file_operation', 'skill_operation', 'builtin_tool')),
+    CONSTRAINT "PermissionGrant_capabilityKey_check" CHECK (length(trim("capabilityKey")) > 0),
+    CONSTRAINT "PermissionGrant_qualifier_check" CHECK (
+      ("qualifierMode" IN ('none', 'any') AND "qualifierValue" IS NULL) OR
+      ("qualifierMode" IN ('category', 'exact') AND "qualifierValue" IS NOT NULL AND length(trim("qualifierValue")) > 0)
+    ),
+    CONSTRAINT "PermissionGrant_scope_check" CHECK (
+      ("scopeKind" = 'global' AND "projectId" IS NULL AND "sessionId" IS NULL) OR
+      ("scopeKind" = 'project' AND "projectId" IS NOT NULL AND "sessionId" IS NULL) OR
+      ("scopeKind" = 'session' AND "projectId" IS NOT NULL AND "sessionId" IS NOT NULL)
+    ),
+    CONSTRAINT "PermissionGrant_revision_check" CHECK ("revision" >= 1),
+    CONSTRAINT "PermissionGrant_projectId_fkey" FOREIGN KEY ("projectId") REFERENCES "Project" ("id") ON DELETE CASCADE ON UPDATE CASCADE
+);`
+
+const PERMISSION_GRANT_INDEX_DDLS = [
+  `CREATE UNIQUE INDEX IF NOT EXISTS "PermissionGrant_fingerprint_key" ON "PermissionGrant"("fingerprint")`,
+  `CREATE INDEX IF NOT EXISTS "PermissionGrant_capabilityKind_capabilityKey_qualifierMode_qualifierValue_scopeKind_projectId_sessionId_idx" ON "PermissionGrant"("capabilityKind", "capabilityKey", "qualifierMode", "qualifierValue", "scopeKind", "projectId", "sessionId")`,
+  `CREATE INDEX IF NOT EXISTS "PermissionGrant_projectId_sessionId_idx" ON "PermissionGrant"("projectId", "sessionId")`
+]
+
 // Same runtime-DDL approach for the per-project preview panel state table.
 const PREVIEW_STATE_TABLE_DDL = `CREATE TABLE IF NOT EXISTS "ProjectPreviewState" (
     "projectId" TEXT NOT NULL PRIMARY KEY,
@@ -547,6 +580,10 @@ const addColumnIfMissing = async (
 // Creates the schema if missing. Idempotent; no projects are seeded, so a fresh install starts empty.
 const ensureProjectSchema = async (client: PrismaClient): Promise<void> => {
   await client.$executeRawUnsafe(PROJECT_TABLE_DDL)
+  await client.$executeRawUnsafe(PERMISSION_GRANT_TABLE_DDL)
+  for (const ddl of PERMISSION_GRANT_INDEX_DDLS) {
+    await client.$executeRawUnsafe(ddl)
+  }
   await client.$executeRawUnsafe(PREVIEW_STATE_TABLE_DDL)
   await client.$executeRawUnsafe(UNREAD_TASK_SESSION_TABLE_DDL)
   await client.$executeRawUnsafe(UNREAD_TASK_SESSION_SESSION_ID_INDEX_DDL)

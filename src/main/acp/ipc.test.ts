@@ -124,6 +124,7 @@ const registerWithFakes = (overrides?: {
   onSessionCancellationRequested?: (sessionId: string) => void
   onSessionUnavailable?: (sessionId: string) => void
   onAllSessionsCancellationRequested?: () => void
+  beforeSessionDelete?: (sessionId: string) => Promise<void>
   profileService?: { getById: (id: string) => Promise<unknown> }
   specialistSkillCatalog?: Array<{ id: string; frameworkName: string; displayName: string }>
   provisionedConnectorSkillNames?: string[]
@@ -156,6 +157,7 @@ const registerWithFakes = (overrides?: {
     onSessionCancellationRequested: overrides?.onSessionCancellationRequested,
     onSessionUnavailable: overrides?.onSessionUnavailable,
     onAllSessionsCancellationRequested: overrides?.onAllSessionsCancellationRequested,
+    beforeSessionDelete: overrides?.beforeSessionDelete,
     initializationBarrier: overrides?.initializationBarrier,
     profileService: overrides?.profileService as never
   }
@@ -293,7 +295,12 @@ describe('registerAcpIpcHandlers — Skill import cancellation lifecycle', () =>
   it('invalidates a stopped prompt and deleted session before runtime teardown starts', async () => {
     const onSessionCancellationRequested = vi.fn()
     const onSessionUnavailable = vi.fn()
-    registerWithFakes({ onSessionCancellationRequested, onSessionUnavailable })
+    const beforeSessionDelete = vi.fn().mockResolvedValue(undefined)
+    registerWithFakes({
+      onSessionCancellationRequested,
+      onSessionUnavailable,
+      beforeSessionDelete
+    })
 
     await handlers.get('acp:cancel')?.({}, { sessionId: 'session-1' })
     await handlers.get('acp:delete-session')?.({}, { sessionId: 'session-2' })
@@ -303,17 +310,34 @@ describe('registerAcpIpcHandlers — Skill import cancellation lifecycle', () =>
     expect(onSessionCancellationRequested).toHaveBeenNthCalledWith(2, 'session-2')
     expect(onSessionUnavailable).toHaveBeenCalledOnce()
     expect(onSessionUnavailable).toHaveBeenCalledWith('session-2')
+    expect(beforeSessionDelete).toHaveBeenCalledWith('session-2')
     expect(cancelPrompt).toHaveBeenCalledWith({ sessionId: 'session-1' })
     expect(deleteSession).toHaveBeenCalledWith({ sessionId: 'session-2' })
     expect(onSessionCancellationRequested.mock.invocationCallOrder[0]).toBeLessThan(
       cancelPrompt.mock.invocationCallOrder[0]
     )
     expect(onSessionCancellationRequested.mock.invocationCallOrder[1]).toBeLessThan(
+      beforeSessionDelete.mock.invocationCallOrder[0]
+    )
+    expect(beforeSessionDelete.mock.invocationCallOrder[0]).toBeLessThan(
       deleteSession.mock.invocationCallOrder[0]
     )
     expect(deleteSession.mock.invocationCallOrder[0]).toBeLessThan(
       onSessionUnavailable.mock.invocationCallOrder[0]
     )
+  })
+
+  it('keeps the agent session when notebook teardown fails', async () => {
+    const onSessionUnavailable = vi.fn()
+    const beforeSessionDelete = vi.fn().mockRejectedValue(new Error('notebook shutdown failed'))
+    registerWithFakes({ onSessionUnavailable, beforeSessionDelete })
+
+    await expect(
+      handlers.get('acp:delete-session')?.({}, { sessionId: 'session-2' })
+    ).rejects.toThrow('notebook shutdown failed')
+
+    expect(deleteSession).not.toHaveBeenCalled()
+    expect(onSessionUnavailable).not.toHaveBeenCalled()
   })
 
   it('keeps pending imports invalidated when prompt or session teardown fails', async () => {

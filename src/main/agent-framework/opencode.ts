@@ -83,8 +83,9 @@ const opencodeOutputLimit = (contextWindow: number, configured?: unknown): numbe
 }
 
 // The app's permission policy for opencode: every side-effecting/MCP tool must ASK the ACP client (the
-// app's broker then enforces the selected profile); only safe read-only tools run silently (parity with
-// Claude's Ask mode). The `*` catch-all covers unlisted tools (MCP artifact/notebook/connectors, etc.),
+// app's broker then enforces the selected profile); safe read-only tools and OpenCode's native skill
+// loader run silently (parity with other Agent frameworks). The `*` catch-all covers unlisted tools
+// (MCP artifact/notebook/connectors, etc.),
 // and the sensitive built-ins are pinned to `ask` explicitly so a lower-precedence config that sets one
 // of those keys to `allow` is overridden rather than winning. Enforced via the OPENCODE_CONFIG_CONTENT
 // layer (see prepareModelConfig), which also disables project config entirely — the config-file block is
@@ -99,7 +100,9 @@ const OPENCODE_PERMISSION_RULES: Record<string, 'ask' | 'allow' | 'deny'> = {
   edit: 'ask',
   bash: 'ask',
   task: 'ask',
-  skill: 'ask',
+  // Skill loading only reads definitions already provisioned into the isolated OpenCode config.
+  // Permission for creating/editing/enabling those definitions remains app-owned elsewhere.
+  skill: 'allow',
   webfetch: 'ask',
   websearch: 'ask',
   external_directory: 'ask'

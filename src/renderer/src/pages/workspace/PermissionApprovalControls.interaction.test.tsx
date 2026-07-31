@@ -37,13 +37,13 @@ afterEach(() => {
 })
 
 describe('PermissionApprovalControls interactions', () => {
-  it('default Allow button uses the conversation scope so a repeated tool does not re-prompt', () => {
-    // The easiest click approves for the whole conversation; narrowing to a one-time
+  it('default Allow button uses the Session scope so a repeated tool does not re-prompt', () => {
+    // The easiest click approves for the logical Session; narrowing to a one-time
     // approval is an explicit choice via the scope menu.
     act(() => {
       root.render(<PermissionApprovalControls requests={[baseRequest]} onRespond={vi.fn()} />)
     })
-    expect(container.textContent).toContain('this conversation')
+    expect(container.textContent).toContain('this session')
     expect(container.textContent).not.toContain('this call only')
   })
 
@@ -63,15 +63,15 @@ describe('PermissionApprovalControls interactions', () => {
 
     expect(
       (container.querySelector('[data-testid="allow-primary"]') as HTMLButtonElement).textContent
-    ).toBe('Allow for this conversation')
+    ).toBe('Allow for this session')
 
     const chevron = container.querySelector('[data-testid="scope-chevron"]') as HTMLButtonElement
     act(() => chevron.click())
 
     const sessionItem = Array.from(container.querySelectorAll('[role="menuitemradio"]')).find(
-      (item) => item.textContent?.includes('This conversation')
+      (item) => item.textContent?.includes('This session')
     )
-    expect(sessionItem?.textContent).toContain('Until this conversation ends')
+    expect(sessionItem?.textContent).toContain('Across restarts for this session')
     expect(container.textContent).not.toContain('Agent session')
   })
 
@@ -166,7 +166,7 @@ describe('PermissionApprovalControls interactions', () => {
     const chevron = container.querySelector('[data-testid="scope-chevron"]') as HTMLButtonElement
     act(() => chevron.click())
     const onceItem = Array.from(container.querySelectorAll('[role="menuitemradio"]')).find(
-      (el) => el.textContent?.includes('Once') && !el.textContent?.includes('conversation')
+      (el) => el.textContent?.includes('Once') && !el.textContent?.includes('session')
     ) as HTMLElement
     act(() => onceItem.click())
     expect(container.textContent).toContain('Allow once')
@@ -175,7 +175,7 @@ describe('PermissionApprovalControls interactions', () => {
     expect(onRespond).toHaveBeenCalledWith('req-1', 'opt-once')
   })
 
-  it('selecting This conversation sends the session option from the primary button', () => {
+  it('selecting This session sends the session option from the primary button', () => {
     const onRespond = vi.fn()
     act(() => {
       root.render(<PermissionApprovalControls requests={[baseRequest]} onRespond={onRespond} />)
@@ -183,20 +183,269 @@ describe('PermissionApprovalControls interactions', () => {
 
     const chevron = container.querySelector('[data-testid="scope-chevron"]') as HTMLButtonElement
     act(() => chevron.click())
-    const conversationItem = Array.from(
+    const sessionItem = Array.from(
       container.querySelectorAll<HTMLElement>('[role="menuitemradio"]')
-    ).find((item) => item.textContent?.includes('This conversation'))
+    ).find((item) => item.textContent?.includes('This session'))
 
-    expect(conversationItem).toBeDefined()
-    act(() => conversationItem?.click())
+    expect(sessionItem).toBeDefined()
+    act(() => sessionItem?.click())
 
     const allowButton = container.querySelector(
       '[data-testid="allow-primary"]'
     ) as HTMLButtonElement
-    expect(allowButton.textContent).toBe('Allow for this conversation')
+    expect(allowButton.textContent).toBe('Allow for this session')
     act(() => allowButton.click())
 
     expect(onRespond).toHaveBeenCalledWith('req-1', 'opt-always')
+  })
+
+  it('confirms Project and Global Broker scopes before sending their exact option ids', async () => {
+    const onRespond = vi.fn()
+    const scopedRequest: AcpPermissionRequest = {
+      ...baseRequest,
+      options: [
+        { optionId: 'scope-once', name: 'Once', kind: 'allow_once', scope: 'once' },
+        {
+          optionId: 'scope-session',
+          name: 'This session',
+          kind: 'allow_always',
+          scope: 'session'
+        },
+        {
+          optionId: 'scope-project',
+          name: 'This project',
+          kind: 'allow_always',
+          scope: 'project'
+        },
+        {
+          optionId: 'scope-global',
+          name: 'Global',
+          kind: 'allow_always',
+          scope: 'global'
+        },
+        { optionId: 'scope-deny', name: 'Deny', kind: 'reject_once' }
+      ]
+    }
+
+    act(() => {
+      root.render(<PermissionApprovalControls requests={[scopedRequest]} onRespond={onRespond} />)
+    })
+    act(() =>
+      (container.querySelector('[data-testid="scope-chevron"]') as HTMLButtonElement).click()
+    )
+    const project = Array.from(
+      container.querySelectorAll<HTMLButtonElement>('[role="menuitemradio"]')
+    ).find((item) => item.textContent?.includes('This project'))
+    expect(project).toBeDefined()
+    act(() => project?.click())
+    expect(container.querySelector('[data-testid="allow-primary"]')?.textContent).toBe(
+      'Allow for this project'
+    )
+    act(() =>
+      (container.querySelector('[data-testid="allow-primary"]') as HTMLButtonElement).click()
+    )
+    expect(onRespond).not.toHaveBeenCalled()
+    expect(document.body.textContent).toContain('Allow this command for this project?')
+    expect(document.body.textContent).toContain(
+      'Code will run without preview for every session in this project.'
+    )
+    expect(document.body.textContent).toContain('Settings → Permissions')
+    const dialog = document.body.querySelector<HTMLElement>('[role="alertdialog"]')
+    expect(dialog).not.toBeNull()
+    expect(dialog?.className).toContain('w-[min(420px,calc(100vw-2rem))]')
+    expect(dialog?.querySelector('h2')?.className).toContain('text-sm')
+
+    const cancel = document.body.querySelector<HTMLButtonElement>(
+      '[data-testid="permission-scope-cancel"]'
+    )
+    const confirm = document.body.querySelector<HTMLButtonElement>(
+      '[data-testid="permission-scope-confirm"]'
+    )
+    expect(cancel?.className).toContain('h-8')
+    expect(confirm?.className).toContain('h-8')
+    expect(cancel?.className).not.toContain('min-h-11')
+    expect(confirm?.className).not.toContain('min-h-11')
+    expect(document.activeElement).toBe(cancel)
+
+    act(() => cancel?.click())
+    await act(async () => Promise.resolve())
+    expect(onRespond).not.toHaveBeenCalled()
+    expect(document.body.querySelector('[data-testid="permission-scope-confirmation"]')).toBeNull()
+    expect(document.activeElement).toBe(
+      container.querySelector<HTMLButtonElement>('[data-testid="allow-primary"]')
+    )
+
+    act(() =>
+      (container.querySelector('[data-testid="allow-primary"]') as HTMLButtonElement).click()
+    )
+    act(() =>
+      document.body
+        .querySelector<HTMLButtonElement>('[data-testid="permission-scope-confirm"]')
+        ?.click()
+    )
+    expect(onRespond).toHaveBeenCalledWith('req-1', 'scope-project')
+
+    act(() => {
+      root.render(
+        <PermissionApprovalControls
+          requests={[{ ...scopedRequest, requestId: 'req-2', toolCallId: 'tool-2' }]}
+          onRespond={onRespond}
+        />
+      )
+    })
+    act(() =>
+      (container.querySelector('[data-testid="scope-chevron"]') as HTMLButtonElement).click()
+    )
+    const global = Array.from(
+      container.querySelectorAll<HTMLButtonElement>('[role="menuitemradio"]')
+    ).find((item) => item.textContent?.includes('Global'))
+    expect(global).toBeDefined()
+    act(() => global?.click())
+    expect(container.querySelector('[data-testid="allow-primary"]')?.textContent).toBe(
+      'Allow globally'
+    )
+    act(() =>
+      (container.querySelector('[data-testid="allow-primary"]') as HTMLButtonElement).click()
+    )
+    expect(onRespond).toHaveBeenCalledTimes(1)
+    expect(document.body.textContent).toContain('Allow this command globally?')
+    expect(document.body.textContent).toContain(
+      'Code will run without preview for every session in every project.'
+    )
+    act(() => {
+      document.dispatchEvent(new KeyboardEvent('keydown', { key: 'Escape', bubbles: true }))
+    })
+    await act(async () => Promise.resolve())
+    expect(onRespond).toHaveBeenCalledTimes(1)
+    expect(document.body.querySelector('[role="alertdialog"]')).toBeNull()
+    expect(document.activeElement).toBe(
+      container.querySelector<HTMLButtonElement>('[data-testid="allow-primary"]')
+    )
+
+    act(() =>
+      (container.querySelector('[data-testid="allow-primary"]') as HTMLButtonElement).click()
+    )
+    act(() =>
+      document.body
+        .querySelector<HTMLButtonElement>('[data-testid="permission-scope-confirm"]')
+        ?.click()
+    )
+    expect(onRespond).toHaveBeenCalledWith('req-2', 'scope-global')
+    expect(onRespond).toHaveBeenCalledTimes(2)
+  })
+
+  it('names the R runtime in the broad-scope warning without exposing the MCP tool name', () => {
+    const onRespond = vi.fn()
+    const rRequest: AcpPermissionRequest = {
+      ...baseRequest,
+      title: 'mcp__open-science-notebook__notebook_execute',
+      providerToolName: 'mcp__open-science-notebook__notebook_execute',
+      isMcp: true,
+      mcpIdentity: 'open-science-notebook/notebook_execute',
+      rawInput: { code: 'df <- read.csv("samples.csv")' },
+      options: [
+        { optionId: 'scope-once', name: 'Once', kind: 'allow_once', scope: 'once' },
+        {
+          optionId: 'scope-project',
+          name: 'This project',
+          kind: 'allow_always',
+          scope: 'project'
+        },
+        { optionId: 'scope-deny', name: 'Deny', kind: 'reject_once' }
+      ]
+    }
+
+    act(() => {
+      root.render(<PermissionApprovalControls requests={[rRequest]} onRespond={onRespond} />)
+    })
+    act(() =>
+      (container.querySelector('[data-testid="scope-chevron"]') as HTMLButtonElement).click()
+    )
+    const project = Array.from(
+      container.querySelectorAll<HTMLButtonElement>('[role="menuitemradio"]')
+    ).find((item) => item.textContent?.includes('This project'))
+    act(() => project?.click())
+    act(() =>
+      (container.querySelector('[data-testid="allow-primary"]') as HTMLButtonElement).click()
+    )
+
+    expect(document.body.textContent).toContain('Allow r for this project?')
+    expect(document.body.textContent).not.toContain('mcp__open-science-notebook')
+    expect(onRespond).not.toHaveBeenCalled()
+  })
+
+  it('uses a stable Broker MCP identity without falling back to the ACP provider name', () => {
+    const request: AcpPermissionRequest = {
+      ...baseRequest,
+      title: 'mcp__provider_specific_chem__search_articles',
+      providerToolName: 'mcp__provider_specific_chem__search_articles',
+      isMcp: true,
+      mcpIdentity: 'chem-search/search_articles',
+      options: [
+        { optionId: 'scope-once', name: 'Once', kind: 'allow_once', scope: 'once' },
+        {
+          optionId: 'scope-project',
+          name: 'This project',
+          kind: 'allow_always',
+          scope: 'project'
+        },
+        { optionId: 'scope-deny', name: 'Deny', kind: 'reject_once' }
+      ]
+    }
+
+    act(() => root.render(<PermissionApprovalControls requests={[request]} onRespond={vi.fn()} />))
+    act(() =>
+      (container.querySelector('[data-testid="scope-chevron"]') as HTMLButtonElement).click()
+    )
+    const project = Array.from(
+      container.querySelectorAll<HTMLButtonElement>('[role="menuitemradio"]')
+    ).find((item) => item.textContent?.includes('This project'))
+    act(() => project?.click())
+    act(() =>
+      (container.querySelector('[data-testid="allow-primary"]') as HTMLButtonElement).click()
+    )
+
+    expect(document.body.textContent).toContain(
+      'Allow Chem Search / Search Articles for this project?'
+    )
+    expect(document.body.textContent).not.toContain('provider_specific_chem')
+  })
+
+  it('uses generic confirmation copy when an MCP request lacks a stable Broker identity', () => {
+    const request: AcpPermissionRequest = {
+      ...baseRequest,
+      title: 'mcp__untrusted_provider__dangerous_tool',
+      providerToolName: 'mcp__untrusted_provider__dangerous_tool',
+      isMcp: true,
+      mcpIdentity: undefined,
+      options: [
+        { optionId: 'scope-once', name: 'Once', kind: 'allow_once', scope: 'once' },
+        {
+          optionId: 'scope-project',
+          name: 'This project',
+          kind: 'allow_always',
+          scope: 'project'
+        },
+        { optionId: 'scope-deny', name: 'Deny', kind: 'reject_once' }
+      ]
+    }
+
+    act(() => root.render(<PermissionApprovalControls requests={[request]} onRespond={vi.fn()} />))
+    act(() =>
+      (container.querySelector('[data-testid="scope-chevron"]') as HTMLButtonElement).click()
+    )
+    const project = Array.from(
+      container.querySelectorAll<HTMLButtonElement>('[role="menuitemradio"]')
+    ).find((item) => item.textContent?.includes('This project'))
+    act(() => project?.click())
+    act(() =>
+      (container.querySelector('[data-testid="allow-primary"]') as HTMLButtonElement).click()
+    )
+
+    const confirmation = document.body.querySelector<HTMLElement>('[role="alertdialog"]')
+    expect(confirmation?.textContent).toContain('Allow this external service for this project?')
+    expect(confirmation?.textContent).not.toContain('untrusted_provider')
+    expect(confirmation?.textContent).not.toContain('Untrusted Provider')
   })
 
   it('uses the only available scope without rendering a redundant picker', () => {
@@ -213,7 +462,7 @@ describe('PermissionApprovalControls interactions', () => {
       root.render(<PermissionApprovalControls requests={[alwaysOnly]} onRespond={onRespond} />)
     })
     // Defaults to the available session scope.
-    expect(container.textContent).toContain('Allow for this conversation')
+    expect(container.textContent).toContain('Allow for this session')
     expect(container.querySelector('[data-testid="scope-chevron"]')).toBeNull()
     expect(container.querySelector('[role="menu"]')).toBeNull()
     // Allowing sends the session option, never a mislabeled once grant.
@@ -310,6 +559,37 @@ describe('PermissionApprovalControls interactions', () => {
     expect(onRespond).toHaveBeenCalledWith('req-1', 'opt-sandbox')
   })
 
+  it('requires confirmation for a broad-scope extra option', () => {
+    const onRespond = vi.fn()
+    const withDuplicateProjectScope: AcpPermissionRequest = {
+      ...baseRequest,
+      options: [
+        { optionId: 'opt-once', name: 'Allow once', kind: 'allow_once', scope: 'once' },
+        { optionId: 'project-primary', name: 'Project', kind: 'custom', scope: 'project' },
+        { optionId: 'project-extra', name: 'Project fallback', kind: 'custom', scope: 'project' },
+        { optionId: 'opt-reject', name: 'Reject', kind: 'reject_once' }
+      ]
+    }
+    act(() => {
+      root.render(
+        <PermissionApprovalControls requests={[withDuplicateProjectScope]} onRespond={onRespond} />
+      )
+    })
+
+    const extra = container.querySelector('[data-testid="extra-option"]') as HTMLButtonElement
+    act(() => extra.click())
+
+    expect(onRespond).not.toHaveBeenCalled()
+    expect(document.body.textContent).toContain('Allow this command for this project?')
+
+    act(() =>
+      document.body
+        .querySelector<HTMLButtonElement>('[data-testid="permission-scope-confirm"]')
+        ?.click()
+    )
+    expect(onRespond).toHaveBeenCalledWith('req-1', 'project-extra')
+  })
+
   it('closes the scope menu when Escape is pressed', () => {
     act(() => {
       root.render(<PermissionApprovalControls requests={[baseRequest]} onRespond={vi.fn()} />)
@@ -335,7 +615,7 @@ describe('PermissionApprovalControls interactions', () => {
     const items = Array.from(
       container.querySelectorAll<HTMLButtonElement>('[role="menuitemradio"]')
     )
-    // The menu opens with focus on the currently selected scope (conversation by default).
+    // The menu opens with focus on the currently selected Session scope.
     expect(document.activeElement).toBe(items[1])
 
     // ArrowDown wraps from the last item back to the first.
@@ -433,7 +713,7 @@ describe('PermissionApprovalControls interactions', () => {
     const chevron = container.querySelector('[data-testid="scope-chevron"]') as HTMLButtonElement
     act(() => chevron.click())
     const onceItem = Array.from(container.querySelectorAll('[role="menuitemradio"]')).find(
-      (el) => el.textContent?.includes('Once') && !el.textContent?.includes('conversation')
+      (el) => el.textContent?.includes('Once') && !el.textContent?.includes('session')
     ) as HTMLElement
     act(() => onceItem.click())
     // Collapse the code card so we can prove it re-expands for the next request.
@@ -454,8 +734,8 @@ describe('PermissionApprovalControls interactions', () => {
     act(() => {
       root.render(<PermissionApprovalControls requests={[nextRequest]} onRespond={vi.fn()} />)
     })
-    // Scope reset to the default (conversation), menu closed, card re-expanded.
-    expect(container.textContent).toContain('this conversation')
+    // Scope reset to the default Session, menu closed, card re-expanded.
+    expect(container.textContent).toContain('this session')
     expect(container.textContent).not.toContain('this call only')
     expect(container.querySelector('[role="menuitemradio"]')).toBeNull()
     const nextToggle = container.querySelector(

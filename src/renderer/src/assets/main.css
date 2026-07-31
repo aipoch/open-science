@@ -60,6 +60,7 @@
   --shadow-menu: var(--shadow-menu-value);
   --shadow-dialog: var(--shadow-dialog-value);
   --z-index-modal: 50;
+  --z-index-toast: 70;
   --radius-sm: calc(var(--radius) - 4px);
   --radius-md: calc(var(--radius) - 2px);
   --radius-lg: var(--radius);

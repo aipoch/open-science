@@ -26,6 +26,25 @@ model Project {
   isExample   Boolean  @default(false)
   createdAt   DateTime @default(now())
   updatedAt   DateTime @updatedAt
+  permissionGrants PermissionGrant[]
+}
+
+model PermissionGrant {
+  id             String    @id
+  capabilityKind String
+  capabilityKey  String
+  qualifierMode  String    @default("none")
+  qualifierValue String?
+  scopeKind      String
+  projectId      String?
+  sessionId      String?
+  fingerprint    String    @unique
+  revision       Int       @default(1)
+  createdAt      DateTime?
+  project        Project?  @relation(fields: [projectId], references: [id], onDelete: Cascade)
+
+  @@index([capabilityKind, capabilityKey, qualifierMode, qualifierValue, scopeKind, projectId, sessionId])
+  @@index([projectId, sessionId])
 }
 
 // Per-project preview panel state (panel open/collapsed, active tab, opened file previews as JSON).

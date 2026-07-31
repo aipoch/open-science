@@ -14,8 +14,14 @@ import {
   describePermissionRequest,
   isArtifactWriteRequest,
   isMcpPermissionRequest,
+  type PermissionPresentation,
   type NotebookRuntime
 } from './permission-request-presentation'
+import {
+  PermissionScopeConfirmationDialog,
+  type BroadPermissionScope,
+  type PermissionScopeConfirmation
+} from './PermissionScopeConfirmationDialog'
 import { WorkspaceToolCodeBlock } from './WorkspaceToolCodeBlock'
 
 type PermissionApprovalControlsProps = {
@@ -27,25 +33,32 @@ type PermissionApprovalControlsProps = {
 }
 
 type PermissionOption = AcpPermissionRequest['options'][number]
-type PermissionScope = 'once' | 'session'
+type PermissionScope = 'once' | 'session' | 'project' | 'global'
+type PendingScopeConfirmation = PermissionScopeConfirmation & {
+  requestId: string
+  optionId: string
+}
 
 type ScopeOption = { scope: PermissionScope; label: string; subtitle: string }
 
 const SCOPE_OPTIONS: ScopeOption[] = [
   { scope: 'once', label: 'Once', subtitle: 'This call only' },
-  { scope: 'session', label: 'This conversation', subtitle: 'Until this conversation ends' }
+  { scope: 'session', label: 'This session', subtitle: 'Across restarts for this session' },
+  { scope: 'project', label: 'This project', subtitle: 'Across sessions in this project' },
+  { scope: 'global', label: 'Global', subtitle: 'Across all projects' }
 ]
+const PERMISSION_SCOPES = SCOPE_OPTIONS.map(({ scope }) => scope)
 
 // The ACP option kind that backs each scope. A scope is only offered when the request
 // actually carries that exact kind — we never substitute one for the other, since that
 // would grant a wider (or narrower) permission than the label promises.
-const SCOPE_KIND: Record<PermissionScope, string> = {
+const SCOPE_KIND: Partial<Record<PermissionScope, string>> = {
   once: 'allow_once',
   session: 'allow_always'
 }
 
 const getOptionScope = (option: PermissionOption): PermissionScope | undefined => {
-  if (option.scope === 'once' || option.scope === 'session') return option.scope
+  if (option.scope && PERMISSION_SCOPES.includes(option.scope)) return option.scope
   if (option.scope !== undefined) return undefined
 
   const kind = option.kind.toLowerCase()
@@ -80,9 +93,9 @@ const getDenyOptionId = (options: PermissionOption[]): string | undefined =>
 // The optionIds the Allow split-button can reach across both scopes (allow_once + allow_always).
 // The scope toggle chooses between them, so both count as reachable for the extra-options diff.
 const allowOptionIds = (options: PermissionOption[]): string[] =>
-  (['once', 'session'] as const)
-    .map((scope) => getAllowOptionId(options, scope))
-    .filter((id): id is string => id !== undefined)
+  PERMISSION_SCOPES.map((scope) => getAllowOptionId(options, scope)).filter(
+    (id): id is string => id !== undefined
+  )
 
 // Options the primary Allow/Deny controls can't reach, rendered as their own labeled buttons so a
 // protocol-offered choice is never silently dropped (which would leave Allow disabled and Deny
@@ -97,10 +110,7 @@ const getExtraOptions = (
 ): PermissionOption[] => {
   const reachable = new Set<string>(reachableAllowIds)
   if (denyOptionId) reachable.add(denyOptionId)
-  return options.filter(
-    (option) =>
-      !reachable.has(option.optionId) && option.scope !== 'project' && option.scope !== 'global'
-  )
+  return options.filter((option) => !reachable.has(option.optionId))
 }
 
 // Canonical, protocol-derived action word for a known option kind; undefined for unknown kinds.
@@ -123,6 +133,39 @@ const getExtraOptionLabel = (option: PermissionOption): string => {
   return provider && provider.toLowerCase() !== canonical.toLowerCase()
     ? `${canonical} · ${provider}`
     : canonical
+}
+
+const getScopeConfirmationSubject = (
+  presentation: PermissionPresentation,
+  request: AcpPermissionRequest
+): { subject: string; codeExecution: boolean } => {
+  if (presentation.notebookRuntime) {
+    return { subject: presentation.notebookRuntime, codeExecution: true }
+  }
+
+  switch (presentation.categoryLabel) {
+    case 'Command execution':
+      return { subject: 'this command', codeExecution: true }
+    case 'File access':
+      return { subject: 'this file read', codeExecution: false }
+    case 'File change':
+      return { subject: 'this file change', codeExecution: false }
+    case 'Network access':
+      return { subject: 'this network request', codeExecution: false }
+    case 'Artifact save':
+      return { subject: 'this artifact save', codeExecution: false }
+    case 'External service':
+      return {
+        subject: request.mcpIdentity
+          ? (presentation.actionDetail ?? 'this external service')
+          : 'this external service',
+        codeExecution: false
+      }
+    case 'Notebook control':
+      return { subject: 'this notebook action', codeExecution: false }
+    default:
+      return { subject: 'this tool', codeExecution: false }
+  }
 }
 
 type PermissionCode = { code: string; language?: string }
@@ -499,9 +542,13 @@ const PermissionApprovalControls = ({
 }: PermissionApprovalControlsProps): React.JSX.Element | null => {
   const [scope, setScope] = useState<PermissionScope>('session')
   const [scopeOpen, setScopeOpen] = useState(false)
+  const [scopeConfirmation, setScopeConfirmation] = useState<PendingScopeConfirmation | undefined>(
+    undefined
+  )
   const [submittingRequestId, setSubmittingRequestId] = useState<string | undefined>(undefined)
   const submittingRequestIdRef = useRef<string | undefined>(undefined)
   const scopeTriggerRef = useRef<HTMLButtonElement>(null)
+  const allowPrimaryRef = useRef<HTMLButtonElement>(null)
   const closeScopeMenu = useCallback((restoreTriggerFocus = false) => {
     setScopeOpen(false)
     if (restoreTriggerFocus) queueMicrotask(() => scopeTriggerRef.current?.focus())
@@ -510,11 +557,16 @@ const PermissionApprovalControls = ({
   // Show only the oldest pending request; the rest stay queued.
   const request = requests[0]
 
-  // Default the primary Allow action to the WIDEST in-session scope the request offers
-  // ('session', presented as this conversation), so a repeated tool doesn't re-prompt on every
-  // call. Narrowing to a one-time approval ('once') is an explicit choice via the scope menu.
+  // Default to Session when available: it avoids repeated prompts without silently widening to a
+  // whole Project or Global grant. Once remains the fallback for requests without Session scope.
   const availableScopes = request ? getAvailableScopes(request.options) : new Set<PermissionScope>()
-  const defaultScope: PermissionScope = availableScopes.has('session') ? 'session' : 'once'
+  const defaultScope: PermissionScope = availableScopes.has('session')
+    ? 'session'
+    : availableScopes.has('once')
+      ? 'once'
+      : availableScopes.has('project')
+        ? 'project'
+        : 'global'
 
   // Reset per-request UI state (scope + open menu) whenever the displayed request changes,
   // so nothing leaks from the previously answered prompt.
@@ -524,6 +576,7 @@ const PermissionApprovalControls = ({
     setLastRequestId(requestId)
     setScope(defaultScope)
     setScopeOpen(false)
+    setScopeConfirmation(undefined)
     setSubmittingRequestId(undefined)
   }
 
@@ -535,7 +588,12 @@ const PermissionApprovalControls = ({
   const presentation = describePermissionRequest(request)
   const allowOptionId = getAllowOptionId(request.options, effectiveScope)
   const denyOptionId = getDenyOptionId(request.options)
-  const scopeLabel = effectiveScope === 'once' ? 'once' : 'for this conversation'
+  const scopeLabel: Record<PermissionScope, string> = {
+    once: 'once',
+    session: 'for this session',
+    project: 'for this project',
+    global: 'globally'
+  }
   const notebookRuntimeLabel: Partial<Record<NotebookRuntime, string>> = {
     python: 'Python',
     r: 'R',
@@ -546,13 +604,27 @@ const PermissionApprovalControls = ({
     ? 'No approval scope is available for this request.'
     : effectiveScope === 'once'
       ? 'Approval applies to this call only.'
-      : presentation.notebookRuntime
-        ? `Approval covers later ${notebookRuntimeLabel[presentation.notebookRuntime]} calls in this conversation.`
-        : 'Approval applies until this conversation ends.'
+      : effectiveScope === 'project'
+        ? 'Approval applies to matching calls in this project.'
+        : effectiveScope === 'global'
+          ? 'Approval applies to matching calls in every project.'
+          : presentation.notebookRuntime
+            ? `Approval covers later ${notebookRuntimeLabel[presentation.notebookRuntime]} calls in this session.`
+            : 'Approval remains attached to this session across restarts.'
   const hasScopePicker = availableScopes.size > 1
   const isSubmitting = submittingRequestId === request.requestId
-  const respondOnce = (optionId?: string): void => {
+  const respondOnce = (optionId?: string, broadScopeConfirmed = false): void => {
     if (submittingRequestIdRef.current === request.requestId) return
+
+    const selectedScope = request.options.find((option) => option.optionId === optionId)?.scope
+    if (
+      !broadScopeConfirmed &&
+      optionId &&
+      (selectedScope === 'project' || selectedScope === 'global')
+    ) {
+      requestBroadScopeConfirmation(selectedScope, optionId)
+      return
+    }
 
     const submittedRequestId = request.requestId
     submittingRequestIdRef.current = submittedRequestId
@@ -601,6 +673,31 @@ const PermissionApprovalControls = ({
   })()
   const showInlineDetail =
     !isMcp && Boolean(titleDetail) && !permCode && !request.toolLocations?.length
+  const closeScopeConfirmation = (): void => {
+    setScopeConfirmation(undefined)
+    queueMicrotask(() => allowPrimaryRef.current?.focus())
+  }
+
+  const requestBroadScopeConfirmation = (
+    broadScope: BroadPermissionScope,
+    optionId: string
+  ): void => {
+    const confirmationCopy = getScopeConfirmationSubject(presentation, request)
+    setScopeOpen(false)
+    setScopeConfirmation({
+      ...confirmationCopy,
+      scope: broadScope,
+      requestId: request.requestId,
+      optionId
+    })
+  }
+
+  const confirmBroadScope = (): void => {
+    const pending = scopeConfirmation
+    setScopeConfirmation(undefined)
+    if (!pending || pending.requestId !== request.requestId) return
+    respondOnce(pending.optionId, true)
+  }
 
   return (
     <div className="mb-2 flex w-full max-w-full flex-col gap-3 rounded-xl border border-border bg-card p-5 text-xs leading-5 text-card-foreground shadow-dialog outline-none motion-safe:animate-in motion-safe:fade-in-0 motion-safe:slide-in-from-bottom-1 motion-safe:duration-200">
@@ -666,16 +763,18 @@ const PermissionApprovalControls = ({
           )}
           <div className="flex items-stretch overflow-hidden rounded-lg">
             <button
+              ref={allowPrimaryRef}
               type="button"
               data-testid="allow-primary"
               className="inline-flex h-8 select-none items-center justify-center gap-1 whitespace-nowrap bg-primary px-3 text-sm text-primary-foreground outline-none transition-colors hover:bg-primary/80 focus-visible:ring-3 focus-visible:ring-ring/50 disabled:opacity-50"
               disabled={!allowOptionId || isSubmitting}
               onClick={() => {
-                if (allowOptionId) respondOnce(allowOptionId)
+                if (!allowOptionId) return
+                respondOnce(allowOptionId)
               }}
             >
               <span className="font-semibold">Allow</span>{' '}
-              <span className="font-normal">{scopeLabel}</span>
+              <span className="font-normal">{scopeLabel[effectiveScope]}</span>
             </button>
             {hasScopePicker ? (
               <>
@@ -730,6 +829,11 @@ const PermissionApprovalControls = ({
           Deny
         </Button>
       </div>
+      <PermissionScopeConfirmationDialog
+        confirmation={scopeConfirmation}
+        onCancel={closeScopeConfirmation}
+        onConfirm={confirmBroadScope}
+      />
     </div>
   )
 }

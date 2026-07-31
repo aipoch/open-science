@@ -644,8 +644,8 @@ export class ComputeService {
   // Executes a short remote command on the SSH host, preceded by an approval gate (design.md §6).
   //
   // When sessionId and projectId are supplied, grant memory is checked and recorded:
-  //   - conversation: session in-memory grant (no card on repeat calls in the same session)
-  //   - project: persisted to settings JSON (no card for that project after first approval)
+  //   - conversation: durable logical Session grant (legacy wire name)
+  //   - project/global: durable Registry grants at the corresponding scope
   //   - once: no memory — card shown every time
   //
   // call_command does NOT count against the concurrent job limit (design.md §5).
@@ -688,7 +688,8 @@ export class ComputeService {
       ? await this.approvalBroker.requestWithContext(approvalInfo, {
           sessionId: context.sessionId,
           projectId: context.projectId,
-          operation: 'call_command'
+          operation: 'call_command',
+          ownerId: host.id
         })
       : await this.approvalBroker.request(approvalInfo)
 
@@ -855,7 +856,8 @@ export class ComputeService {
         ? await this.approvalBroker.requestWithContext(approvalInfo, {
             sessionId: context.sessionId,
             projectId: context.projectId,
-            operation: 'download'
+            operation: 'download',
+            ownerId: host.id
           })
         : await this.approvalBroker.request(approvalInfo)
 
@@ -1234,7 +1236,8 @@ export class ComputeService {
     const decision = await this.approvalBroker.requestWithContext(approvalInfo, {
       sessionId: context.sessionId,
       projectId: context.projectId,
-      operation: 'submit_job'
+      operation: 'submit_job',
+      ownerId: host.id
     })
 
     if (decision === 'deny') {

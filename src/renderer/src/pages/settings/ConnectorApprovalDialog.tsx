@@ -1,7 +1,12 @@
 import { ShieldAlert } from 'lucide-react'
 import { Dialog } from 'radix-ui'
+import { useState } from 'react'
 
 import { Button } from '@/components/ui/button'
+import {
+  PermissionScopeConfirmationDialog,
+  type BroadPermissionScope
+} from '@/pages/workspace/PermissionScopeConfirmationDialog'
 import { useSettingsStore } from '@/stores/settings-store'
 
 // A modal approval card for an un-trusted connector call. A connector tool sends data to an external
@@ -12,23 +17,30 @@ export function ConnectorApprovalDialog(): React.JSX.Element | null {
   const connectors = useSettingsStore((state) => state.connectors)
   const customServers = useSettingsStore((state) => state.customServers)
   const respondApproval = useSettingsStore((state) => state.respondApproval)
-  const setConnectorAutoAllow = useSettingsStore((state) => state.setConnectorAutoAllow)
+  const [pendingBroadScope, setPendingBroadScope] = useState<BroadPermissionScope>()
 
   if (!request) return null
+  const availableScopes = request.availableScopes ?? ['once']
 
   const displayName =
     connectors.find((c) => c.id === request.connector)?.displayName ??
     customServers.find((s) => s.name === request.connector)?.name ??
     request.connector
 
-  const allowOnce = (): void => void respondApproval(request.id, 'allow')
-  const deny = (): void => void respondApproval(request.id, 'deny')
-  // Pre-trust the whole connector ("Skip approvals"), then allow this call.
-  const allowAlways = (): void => {
-    void setConnectorAutoAllow(request.connector, true).finally(
-      () => void respondApproval(request.id, 'allow')
-    )
+  const allow = (scope: 'once' | 'session' | 'project' | 'global'): void => {
+    if (scope === 'project' || scope === 'global') {
+      setPendingBroadScope(scope)
+      return
+    }
+    void respondApproval(request.id, scope)
   }
+  const confirmBroadScope = (): void => {
+    if (!pendingBroadScope) return
+    const scope = pendingBroadScope
+    setPendingBroadScope(undefined)
+    void respondApproval(request.id, scope)
+  }
+  const deny = (): void => void respondApproval(request.id, 'deny')
 
   return (
     <Dialog.Root open>
@@ -46,7 +58,7 @@ export function ConnectorApprovalDialog(): React.JSX.Element | null {
                 Allow external request?
               </Dialog.Title>
               <Dialog.Description className="mt-1 text-xs text-muted-foreground [text-wrap:pretty]">
-                Claude wants to call a connector tool that sends data to an external service.
+                The agent wants to call a connector tool that sends data to an external service.
                 Approve only if you trust this connector with the current request.
               </Dialog.Description>
             </div>
@@ -69,19 +81,44 @@ export function ConnectorApprovalDialog(): React.JSX.Element | null {
             </div>
           </div>
 
-          <div className="mt-4 flex justify-end gap-2">
+          <div className="mt-4 flex flex-wrap justify-end gap-2">
             <Button type="button" variant="destructive" onClick={deny}>
               Deny
             </Button>
-            <Button type="button" variant="outline" onClick={allowAlways}>
-              Always allow
-            </Button>
-            <Button type="button" onClick={allowOnce}>
+            {availableScopes.includes('session') ? (
+              <Button type="button" variant="outline" onClick={() => allow('session')}>
+                This session
+              </Button>
+            ) : null}
+            {availableScopes.includes('project') ? (
+              <Button type="button" variant="outline" onClick={() => allow('project')}>
+                This project
+              </Button>
+            ) : null}
+            {availableScopes.includes('global') ? (
+              <Button type="button" variant="outline" onClick={() => allow('global')}>
+                Global
+              </Button>
+            ) : null}
+            <Button type="button" onClick={() => allow('once')}>
               Allow once
             </Button>
           </div>
         </Dialog.Content>
       </Dialog.Portal>
+      <PermissionScopeConfirmationDialog
+        confirmation={
+          pendingBroadScope
+            ? {
+                scope: pendingBroadScope,
+                subject: `${displayName} ${request.method}`,
+                codeExecution: false
+              }
+            : undefined
+        }
+        onCancel={() => setPendingBroadScope(undefined)}
+        onConfirm={confirmBroadScope}
+      />
     </Dialog.Root>
   )
 }

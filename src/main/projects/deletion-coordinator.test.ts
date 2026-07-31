@@ -36,12 +36,17 @@ describe('ProjectDeletionCoordinator', () => {
     const preview = { delete: vi.fn().mockResolvedValue(undefined) }
     const reviews = { deleteReviewsForProject: vi.fn().mockResolvedValue(undefined) }
     const provenance = { deleteProjectProvenance: vi.fn().mockResolvedValue(undefined) }
+    const permissionGrants = {
+      prune: vi.fn().mockResolvedValue([]),
+      finalizeOwnerDeletion: vi.fn().mockResolvedValue(undefined)
+    }
     const coordinator = new ProjectDeletionCoordinator(
       projects,
       sessions,
       preview,
       reviews,
-      provenance
+      provenance,
+      permissionGrants
     )
 
     await coordinator.deleteProject('project-1')
@@ -53,6 +58,93 @@ describe('ProjectDeletionCoordinator', () => {
     expect(preview.delete).toHaveBeenCalledWith('project-1')
     expect(reviews.deleteReviewsForProject).toHaveBeenCalledWith('project-1')
     expect(provenance.deleteProjectProvenance).toHaveBeenCalledWith('project-1')
+    expect(permissionGrants.prune).toHaveBeenCalledWith({
+      kind: 'project',
+      projectId: 'project-1'
+    })
+    expect(permissionGrants.finalizeOwnerDeletion).toHaveBeenCalledWith({
+      kind: 'project',
+      projectId: 'project-1'
+    })
+    expect(vi.mocked(permissionGrants.prune).mock.invocationCallOrder[0]).toBeLessThan(
+      vi.mocked(projects.delete).mock.invocationCallOrder[0]
+    )
+    expect(vi.mocked(projects.delete).mock.invocationCallOrder[0]).toBeLessThan(
+      vi.mocked(permissionGrants.finalizeOwnerDeletion).mock.invocationCallOrder[0]
+    )
+  })
+
+  it('retains the Project and deletion intent when grant pruning fails, then resumes idempotently', async () => {
+    let projectExists = true
+    let intentExists = false
+    const projects = createProjects()
+    projects.get = vi.fn(async () => (projectExists ? project : null))
+    projects.delete = vi.fn(async () => {
+      projectExists = false
+    })
+    projects.createDeletionIntent = vi.fn(async () => {
+      intentExists = true
+    })
+    projects.deleteDeletionIntent = vi.fn(async () => {
+      intentExists = false
+    })
+    projects.listDeletionIntents = vi.fn(async () => (intentExists ? ['project-1'] : []))
+    const sessions = createSessions()
+    const permissionGrants = {
+      prune: vi
+        .fn()
+        .mockRejectedValueOnce(new Error('permission registry unavailable'))
+        .mockResolvedValueOnce([])
+    }
+    const coordinator = new ProjectDeletionCoordinator(
+      projects,
+      sessions,
+      { delete: vi.fn().mockResolvedValue(undefined) },
+      undefined,
+      undefined,
+      permissionGrants
+    )
+
+    await expect(coordinator.deleteProject('project-1')).rejects.toThrow(
+      'permission registry unavailable'
+    )
+
+    expect(projectExists).toBe(true)
+    expect(intentExists).toBe(true)
+    expect(projects.delete).not.toHaveBeenCalled()
+    expect(sessions.completeProjectSessionDeletion).not.toHaveBeenCalled()
+
+    await expect(coordinator.deleteProject('project-1')).resolves.toBeUndefined()
+
+    expect(permissionGrants.prune).toHaveBeenCalledTimes(2)
+    expect(sessions.deleteProjectSessions).toHaveBeenCalledTimes(2)
+    expect(projects.delete).toHaveBeenCalledOnce()
+    expect(sessions.completeProjectSessionDeletion).toHaveBeenCalledOnce()
+    expect(projectExists).toBe(false)
+    expect(intentExists).toBe(false)
+  })
+
+  it('does not report a false deletion failure after the Project hard delete commits', async () => {
+    const projects = createProjects()
+    const sessions = createSessions()
+    const permissionGrants = {
+      prune: vi.fn().mockResolvedValue([]),
+      finalizeOwnerDeletion: vi.fn().mockRejectedValue(new Error('listener unavailable'))
+    }
+    const coordinator = new ProjectDeletionCoordinator(
+      projects,
+      sessions,
+      { delete: vi.fn().mockResolvedValue(undefined) },
+      undefined,
+      undefined,
+      permissionGrants
+    )
+
+    await expect(coordinator.deleteProject('project-1')).resolves.toBeUndefined()
+
+    expect(projects.delete).toHaveBeenCalledWith('project-1')
+    expect(sessions.completeProjectSessionDeletion).toHaveBeenCalledWith('project-1')
+    expect(projects.deleteDeletionIntent).toHaveBeenCalledWith('project-1')
   })
 
   it('keeps the project row and clears intent when session and index cleanup fails', async () => {

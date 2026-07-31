@@ -96,6 +96,10 @@ import { registerProjectFilesIpcHandlers } from './project-files/ipc'
 import { createManagedFileIndexRepository } from './project-files/repository'
 import { ProjectDeletionCoordinator } from './projects/deletion-coordinator'
 import { getProjectDbClient } from './projects/prisma-client'
+import { createPermissionGrantRegistry } from './permission-grants/registry'
+import { isPermissionGrantScopeLive } from './permission-grants/scope-liveness'
+import { registerPermissionGrantIpcHandlers } from './permission-grants/ipc'
+import { reconcilePermissionGrantOwners } from './permission-grants/reconciliation'
 import { SessionPersistenceCoordinator } from './session-persistence/coordinator'
 import { type SessionPersistenceBackend } from './session-persistence/ipc'
 import { tryDecryptKey } from './settings/crypto'
@@ -106,7 +110,7 @@ import { createProfileService } from './specialist/service'
 import { registerSpecialistIpcHandlers } from './specialist/ipc'
 import { SessionBindingService } from './specialist/session-binding'
 import type { StoredConnectors } from './settings/types'
-import type { AppIconPreview, AppIconVariant } from '../shared/settings'
+import type { AppIconPreview, AppIconVariant, RespondApprovalRequest } from '../shared/settings'
 import { registerStorageIpcHandlers } from './storage/ipc'
 import { normalizeLegacyDataPaths } from './storage/normalize-legacy-paths'
 import {
@@ -122,6 +126,8 @@ import { createDefaultUploadRepository, registerUploadIpcHandlers } from './uplo
 import { broadcastToRenderers } from './renderer-broadcast'
 import { ConversationSkillImporter, SkillImportApprovalBroker } from './skills/conversation-import'
 import type { ConversationSkillImportApprovalResponse } from '../shared/settings'
+
+const permissionGrantsLog = createLogger('permission-grants')
 
 type IpcRegistrationOptions = {
   mainEntryPath: string
@@ -300,9 +306,27 @@ const registerIpcHandlers = async ({
     resolvePath: resolveManagedFilePath
   })
 
+  // Permission scope validation starts before the ACP coordinator is constructed. Keep the late-bound
+  // reference here so a first-turn Session grant can recognize its live owner before the renderer's
+  // asynchronous session persistence finishes.
+  const runtimeRef: { current: ReturnType<typeof registerAcpIpcHandlers> | undefined } = {
+    current: undefined
+  }
+
   // Construct one storage/index/deletion graph for every related IPC surface. Sharing these instances
   // is essential: separate coordinators would have independent queues and recovery gates.
   const configRoot = resolveStorageRoot()
+  const permissionGrantRegistry = await createPermissionGrantRegistry({
+    getClient: () => getProjectDbClient(configRoot),
+    isScopeLive: (scope) =>
+      isPermissionGrantScopeLive(scope, {
+        projectExists: async (projectId) => (await projectRepository.get(projectId)) !== undefined,
+        persistedSessionExists: async (projectId, sessionId) =>
+          (await sessionRepository.loadSession(projectId, sessionId)) !== undefined,
+        liveSessionExists: (projectId, sessionId) =>
+          runtimeRef.current?.hasLiveSession(projectId, sessionId) ?? false
+      })
+  })
   const projectFilesRepository = createManagedFileIndexRepository(
     getProjectDbClient,
     configRoot,
@@ -314,7 +338,11 @@ const registerIpcHandlers = async ({
     (event) => broadcastToRenderers('project-files:changed', event),
     provenanceMessageSnapshots,
     uploadRepository,
-    artifactProvenanceRepository
+    artifactProvenanceRepository,
+    {
+      reconcileSessions: (sessions) =>
+        reconcilePermissionGrantOwners(permissionGrantRegistry, { sessions })
+    }
   )
   const reviewRepository = createDefaultReviewRepository()
   const projectDeletionCoordinator = new ProjectDeletionCoordinator(
@@ -322,7 +350,8 @@ const registerIpcHandlers = async ({
     sessionPersistenceCoordinator,
     previewStateRepository,
     reviewRepository,
-    artifactProvenanceRepository
+    artifactProvenanceRepository,
+    permissionGrantRegistry
   )
   const sessionPersistenceBackend: SessionPersistenceBackend = {
     loadAll: () =>
@@ -336,7 +365,9 @@ const registerIpcHandlers = async ({
     },
     deleteSession: async (projectId, sessionId) => {
       await projectDeletionCoordinator.recoverPendingDeletions()
-      return sessionPersistenceCoordinator.deleteSession(projectId, sessionId)
+      const result = await sessionPersistenceCoordinator.deleteSession(projectId, sessionId)
+      await permissionGrantRegistry.prune({ kind: 'session', projectId, sessionId })
+      return result
     },
     saveManifest: async (request) => {
       await projectDeletionCoordinator.recoverPendingDeletions()
@@ -406,11 +437,8 @@ const registerIpcHandlers = async ({
         notificationsLog.warn('connector approval notification failed', errorLogFields(error))
     })
   })
-  // Late-bound app runtime for connector tools that attach a generated file to the current turn. The
-  // runtime is created below (it depends on the connector service), so the handler resolves it lazily.
-  const runtimeRef: { current: ReturnType<typeof registerAcpIpcHandlers> | undefined } = {
-    current: undefined
-  }
+  // The late-bound app runtime also serves connector tools that attach a generated file to the current
+  // turn. It is created below because it depends on the connector service.
   const skillImportApprovalBroker = new SkillImportApprovalBroker({
     generateId: () => randomUUID(),
     broadcast: buildSkillImportApprovalBroadcast({
@@ -443,12 +471,14 @@ const registerIpcHandlers = async ({
     getConnectors: () => connectorsSnapshot,
     resolveApiKey: (ref) => tryDecryptKey(ref),
     mcpClientManager,
-    requestApproval: ({ connector, method, args, sessionId }) =>
+    permissionGrantRegistry,
+    requestApproval: ({ connector, method, args, sessionId, availableScopes }) =>
       approvalBroker.request({
         connector,
         method,
         argsPreview: previewArgs(args),
-        ...(sessionId ? { sessionId } : {})
+        ...(sessionId ? { sessionId } : {}),
+        availableScopes
       }),
     resolveSpecialistProfile: async (specialistId) => {
       try {
@@ -477,7 +507,8 @@ const registerIpcHandlers = async ({
     undefined,
     computeArtifactResolver,
     undefined,
-    taskNotifications
+    taskNotifications,
+    permissionGrantRegistry
   )
   const dataRoot = resolveDataRoot()
   // Start the JobPoller wired to the shared broadcaster so every state/tail change is pushed to all
@@ -544,7 +575,9 @@ const registerIpcHandlers = async ({
   // The RPC server needs the runtime service to dispatch to, and the runtime service needs the RPC
   // server's (lazily-started) connection for host.mcp() env injection — wire the second half here to
   // avoid a construction cycle.
-  notebookService.setMcpRpcConnectionResolver(() => notebookRpcServer.ensureStarted())
+  notebookService.setMcpRpcConnectionResolver(({ sessionId, projectId }) =>
+    notebookRpcServer.issueControlConnection(sessionId, projectId)
+  )
   // Same construction-order constraint as the RPC connection above: the runtime service is created
   // before the settings service, so the package-mirror lookup is wired in after the fact.
   notebookService.setPackageMirrorResolver(() => settingsService.getPackageMirror())
@@ -561,12 +594,9 @@ const registerIpcHandlers = async ({
   )
 
   // The renderer's approval card responds here; the broker resolves the held connector call.
-  ipcMainHandle(
-    'connectors:approval-respond',
-    (_event, request: { id: string; decision: 'allow' | 'deny' }) => {
-      approvalBroker.respond(request.id, request.decision)
-    }
-  )
+  ipcMainHandle('connectors:approval-respond', (_event, request: RespondApprovalRequest) => {
+    approvalBroker.respond(request.id, request.decision)
+  })
   ipcMainHandle(
     'skills:conversation-import-respond',
     (_event, response: ConversationSkillImportApprovalResponse) => {
@@ -594,6 +624,28 @@ const registerIpcHandlers = async ({
     }
   )
 
+  // Repair soft-owner grants left behind if the app stopped between deleting a Connector/ComputeHost
+  // and pruning its authority. A failed/timeout Connector refresh leaves that owner class untouched;
+  // app-owned MCP catalog ids are non-UUID and are never guessed to be stale.
+  void initialConnectorSkillsReady
+    .then(async () => {
+      const hosts = await hostRepository.list()
+      await reconcilePermissionGrantOwners(permissionGrantRegistry, {
+        ...(connectorsSnapshot
+          ? {
+              customServerIds: connectorsSnapshot.customMcpServers?.map((server) => server.id) ?? []
+            }
+          : {}),
+        computeProviderIds: hosts.map((host) => host.providerId)
+      })
+    })
+    .catch((error) =>
+      permissionGrantsLog.error(
+        'permission grant owner reconciliation failed',
+        errorLogFields(error)
+      )
+    )
+
   registerFileSaveHandlers({ resolveManagedFilePath, resolveSessionArtifactFilePath })
   registerLogsIpcHandlers()
   registerGithubIpcHandlers()
@@ -614,6 +666,7 @@ const registerIpcHandlers = async ({
     authorizeSkillImportReferencedUploads: (projectId, sessionId, paths) =>
       conversationSkillImporter.authorizeReferencedUploads(projectId, sessionId, paths),
     settingsService,
+    permissionGrantRegistry,
     taskNotifications,
     onSessionTurnStarted: (sessionId, turnToken) =>
       skillImportApprovalBroker.beginSessionTurn(sessionId, turnToken),
@@ -625,10 +678,13 @@ const registerIpcHandlers = async ({
       skillImportApprovalBroker.cancelSession(sessionId),
     onSessionUnavailable: (sessionId) => skillImportApprovalBroker.cancelSession(sessionId),
     onAllSessionsCancellationRequested: () => skillImportApprovalBroker.cancelAll(),
+    beforeSessionDelete: (sessionId) =>
+      notebookService.shutdownSession(sessionId).then(() => undefined),
     initializationBarrier: initialConnectorSkillsReady,
     profileService
   })
   runtimeRef.current = runtime
+  permissionGrantRegistry.subscribe(() => runtime.notifyPermissionGrantsChanged())
   // Single shared teardown owner for both the before-quit handler (index.ts) and the pre-update-install
   // gate. Built here because it needs the runtime, which does not exist when update IPC is registered
   // above — so the gate is injected via a late-bound closure rather than at strategy construction.
@@ -645,6 +701,9 @@ const registerIpcHandlers = async ({
   )
   // Spawn-config changes rotate the coordinator's runtime for future sessions. Existing sessions retain
   // their owning runtime, so a framework/provider switch cannot interrupt an in-flight turn.
+  let invalidatePermissionProjection = (): void => {
+    broadcastToRenderers('permissions:changed', { revision: Date.now() })
+  }
   registerSettingsIpcHandlers({
     service: settingsService,
     onActiveProviderChanged: () => void runtime.requestProviderReconnect(),
@@ -655,7 +714,10 @@ const registerIpcHandlers = async ({
     // service reads, then request a skills reload. The reload respawns the agent on next idle so a
     // non-Claude framework (Codex, opencode) — whose connector docs are materialized into its own
     // home at spawn — picks up the change too, not just the Claude config dir.
-    onConnectorsChanged: () =>
+    onConnectorsChanged: () => {
+      // Connector policy shadows or reactivates grants without mutating them. Republish the shared
+      // projection immediately so both Settings surfaces describe the same effective decision.
+      invalidatePermissionProjection()
       void wireConnectorReload(
         () =>
           refreshConnectorSkillDocs(
@@ -667,7 +729,20 @@ const registerIpcHandlers = async ({
             }
           ),
         () => void runtime.requestSkillsReload()
-      ),
+      )
+    },
+    onCustomServerRemoved: (serverId) =>
+      permissionGrantRegistry.prune({ kind: 'mcp_server', serverId }).then(() => undefined),
+    onCustomServerSecurityChanged: async (serverId) => {
+      const guard = connectorService.beginCustomServerSecurityChange(serverId)
+      try {
+        await permissionGrantRegistry.prune({ kind: 'mcp_server', serverId })
+        return guard
+      } catch (error) {
+        guard.rollback()
+        throw error
+      }
+    },
     onAppIconVariantChanged,
     listAppIconPreviews
   })
@@ -900,6 +975,23 @@ const registerIpcHandlers = async ({
           )
     })
   )
+  const permissionGrantIpc = registerPermissionGrantIpcHandlers({
+    registry: permissionGrantRegistry,
+    projects: {
+      list: async () => {
+        await projectDeletionCoordinator.recoverPendingDeletions()
+        return projectRepository.list()
+      }
+    },
+    sessions: sessionPersistenceBackend,
+    connectors: {
+      get: async () => ({
+        ...(await settingsService.getConnectors()),
+        bundledConnectorIds: ALL_CONNECTOR_IDS
+      })
+    }
+  })
+  invalidatePermissionProjection = permissionGrantIpc.invalidateProjection
   registerProjectFilesIpcHandlers(
     projectFilesRepository,
     sessionPersistenceCoordinator,

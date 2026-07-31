@@ -6,6 +6,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import type { ConnectorDetailView as ConnectorDetail } from '../../../../shared/settings'
 import { ConnectorDetailView } from './ConnectorDetailView'
 import { createInitialSettingsState, useSettingsStore } from '@/stores/settings-store'
+import { usePermissionGrantsStore } from '@/stores/permission-grants-store'
 
 let container: HTMLDivElement
 let root: Root
@@ -45,13 +46,25 @@ const updatedDetail: ConnectorDetail = {
 
 beforeEach(() => {
   ;(window as unknown as { api: unknown }).api = {
-    settings: { getConnectorDetail: vi.fn().mockResolvedValue(detail) }
+    settings: { getConnectorDetail: vi.fn().mockResolvedValue(detail) },
+    permissions: {
+      list: vi.fn().mockResolvedValue({
+        grants: [],
+        counts: { all: 0, global: 0, project: 0, session: 0 }
+      })
+    }
   }
   useSettingsStore.setState({
     ...createInitialSettingsState(),
     setConnectorEnabled: vi.fn().mockResolvedValue(undefined),
     setConnectorAutoAllow: vi.fn().mockResolvedValue(undefined),
     setToolPermission: vi.fn().mockResolvedValue(updatedDetail)
+  })
+  usePermissionGrantsStore.setState({
+    grants: [],
+    counts: { all: 0, global: 0, project: 0, session: 0 },
+    status: 'idle',
+    error: undefined
   })
   container = document.createElement('div')
   document.body.appendChild(container)
@@ -182,5 +195,43 @@ describe('ConnectorDetailView', () => {
       'ensembl',
       true
     )
+  })
+
+  it('discloses remembered scopes and links to Permissions from an expanded tool', async () => {
+    const onManagePermissions = vi.fn()
+    ;(window.api.permissions.list as ReturnType<typeof vi.fn>).mockResolvedValue({
+      grants: [
+        {
+          id: 'grant-1',
+          revision: 1,
+          family: 'connectors',
+          capabilityKind: 'mcp_tool',
+          capabilityLabel: 'Lookup gene',
+          scopeKind: 'project',
+          scopeLabel: 'Project: Research',
+          connectorServerId: 'ensembl',
+          connectorToolName: 'lookup_gene',
+          effectiveState: 'covered_by_policy'
+        }
+      ],
+      counts: { all: 1, global: 0, project: 1, session: 0 }
+    })
+    await act(async () => {
+      root.render(<ConnectorDetailView id="ensembl" onManagePermissions={onManagePermissions} />)
+      await Promise.resolve()
+    })
+    const toolButton = Array.from(
+      document.body.querySelectorAll<HTMLButtonElement>('button[aria-expanded]')
+    ).find((button) => button.textContent?.includes('lookup_gene'))
+    await act(async () => toolButton?.click())
+
+    expect(document.body.textContent).toContain('Remembered approvals: 1 · currently unnecessary')
+    expect(document.body.textContent).toContain('Project')
+    await act(async () =>
+      Array.from(document.body.querySelectorAll<HTMLButtonElement>('button'))
+        .find((button) => button.textContent?.includes('Manage permissions'))
+        ?.click()
+    )
+    expect(onManagePermissions).toHaveBeenCalledOnce()
   })
 })

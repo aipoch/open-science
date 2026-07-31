@@ -26,7 +26,7 @@ const GUARDED_FILE_TOOLS = ['Read', 'Edit', 'Glob', 'Grep'] as const
 // reach is a path for conversation/workspace data to leave the app). Re-opening it accepts that risk
 // in exchange for the model's built-in web reach. Subscription WebFetch additionally relies on the
 // CLI's claude.ai domain-safety preflight. Custom API-key sessions cannot reach that hard-coded check,
-// so they force WebFetch through the app broker and scope conversation grants to one hostname.
+// so they force every WebFetch call through the app broker for explicit Once-only approval.
 const DENIED_BUILTIN_TOOLS = [] as const
 
 // Built-in tool deny entries this module OWNS across versions — the full set it has ever written into

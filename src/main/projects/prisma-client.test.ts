@@ -53,6 +53,45 @@ describe('project prisma client (integration)', () => {
     }
   })
 
+  it('creates the Permission Grant authority table with constrained scopes and owner cascade', async () => {
+    storageRoot = await mkdtemp(join(tmpdir(), 'open-science-permission-grant-schema-'))
+    const client = createProjectDbClient(storageRoot)
+    disconnect = () => client.$disconnect()
+    await ensureProjectSchema(client)
+
+    const columns = await client.$queryRawUnsafe<Array<{ name: string }>>(
+      'PRAGMA table_info("PermissionGrant")'
+    )
+    expect(columns.map((column) => column.name)).toEqual([
+      'id',
+      'capabilityKind',
+      'capabilityKey',
+      'qualifierMode',
+      'qualifierValue',
+      'scopeKind',
+      'projectId',
+      'sessionId',
+      'fingerprint',
+      'revision',
+      'createdAt'
+    ])
+
+    await client.project.create({ data: { id: 'project-1', name: 'Project one' } })
+    await client.$executeRawUnsafe(
+      `INSERT INTO "PermissionGrant" ("id", "capabilityKind", "capabilityKey", "scopeKind", "projectId", "fingerprint") VALUES ('grant-1', 'execution', 'exec:agent/shell', 'project', 'project-1', 'fingerprint-1')`
+    )
+    await expect(
+      client.$executeRawUnsafe(
+        `INSERT INTO "PermissionGrant" ("id", "capabilityKind", "capabilityKey", "scopeKind", "projectId", "sessionId", "fingerprint") VALUES ('grant-invalid', 'execution', 'exec:agent/shell', 'global', 'project-1', 'session-1', 'fingerprint-invalid')`
+      )
+    ).rejects.toThrow()
+
+    await client.project.delete({ where: { id: 'project-1' } })
+    await expect(
+      client.$queryRawUnsafe<Array<{ id: string }>>('SELECT "id" FROM "PermissionGrant"')
+    ).resolves.toEqual([])
+  })
+
   it('creates an unread-task table that rejects duplicate session IDs', async () => {
     storageRoot = await mkdtemp(join(tmpdir(), 'open-science-unread-task-schema-'))
 

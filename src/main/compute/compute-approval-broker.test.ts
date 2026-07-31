@@ -1,4 +1,4 @@
-import { describe, it, expect } from 'vitest'
+import { describe, it, expect, vi } from 'vitest'
 import { ComputeApprovalBroker } from './compute-approval-broker'
 import type { ComputeApprovalRequest } from '../../shared/compute'
 
@@ -111,6 +111,89 @@ describe('ComputeApprovalBroker', () => {
     broker.respond('id-1', 'once') // no-op: already settled
     await expect(decision).resolves.toBe('deny')
     expect(() => broker.respond('nope', 'once')).not.toThrow()
+  })
+
+  it('denies a pending approval when its compute provider is invalidated', async () => {
+    const timer = makeTimer()
+    const remember = vi.fn()
+    const broker = new ComputeApprovalBroker({
+      generateId: () => 'id-1',
+      broadcast: () => undefined,
+      setTimer: timer.set,
+      clearTimer: timer.clear,
+      permissionGrants: { resolve: vi.fn(), remember } as never
+    })
+
+    const decision = broker.requestWithContext(makeRequest(), {
+      sessionId: 'session-1',
+      projectId: 'project-1',
+      operation: 'call_command',
+      ownerId: 'host-row-1'
+    })
+    await Promise.resolve()
+    broker.invalidateProvider('ssh:biowulf')
+    broker.respond('id-1', 'global')
+
+    await expect(decision).resolves.toBe('deny')
+    expect(remember).not.toHaveBeenCalled()
+  })
+
+  it('does not remember approval when the provider id belongs to a recreated host', async () => {
+    const timer = makeTimer()
+    const remember = vi.fn()
+    const isProviderCurrent = vi.fn().mockResolvedValue(false)
+    const broker = new ComputeApprovalBroker({
+      generateId: () => 'id-1',
+      broadcast: () => undefined,
+      setTimer: timer.set,
+      clearTimer: timer.clear,
+      permissionGrants: { resolve: vi.fn(), remember } as never,
+      isProviderCurrent
+    })
+
+    const decision = broker.requestWithContext(makeRequest(), {
+      sessionId: 'session-1',
+      projectId: 'project-1',
+      operation: 'call_command',
+      ownerId: 'deleted-host-row'
+    })
+    await Promise.resolve()
+    broker.respond('id-1', 'project')
+
+    await expect(decision).resolves.toBe('deny')
+    expect(isProviderCurrent).toHaveBeenCalledWith({
+      providerId: 'ssh:biowulf',
+      ownerId: 'deleted-host-row'
+    })
+    expect(remember).not.toHaveBeenCalled()
+  })
+
+  it('does not auto-allow an existing grant for a replacement host with the same provider id', async () => {
+    const broadcast = vi.fn()
+    const isProviderCurrent = vi.fn().mockResolvedValue(false)
+    const broker = new ComputeApprovalBroker({
+      generateId: () => 'id-1',
+      broadcast,
+      permissionGrants: {
+        resolve: vi.fn().mockResolvedValue('project'),
+        remember: vi.fn()
+      } as never,
+      isProviderCurrent
+    })
+
+    await expect(
+      broker.requestWithContext(makeRequest(), {
+        sessionId: 'session-1',
+        projectId: 'project-1',
+        operation: 'call_command',
+        ownerId: 'replacement-host-row'
+      })
+    ).resolves.toBe('deny')
+    expect(isProviderCurrent).toHaveBeenCalledWith({
+      providerId: 'ssh:biowulf',
+      ownerId: 'replacement-host-row'
+    })
+    expect(broadcast).not.toHaveBeenCalled()
   })
 
   // ── conversation scope ────────────────────────────────────────────────────────────

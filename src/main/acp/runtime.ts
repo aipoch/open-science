@@ -95,7 +95,11 @@ import {
   ConversationPermissionGrantStore,
   resolveNotebookPermissionContext
 } from './permission-broker'
-import { isMcpToolName, withTrustedMcpToolIdentity } from './permission-policy'
+import {
+  isMcpToolName,
+  withTrustedMcpToolIdentity,
+  withTrustedNativeToolIdentity
+} from './permission-policy'
 import { applyCurrentModeUpdate } from './permission-profile-controller'
 import {
   ARTIFACT_MCP_SERVER_NAME,
@@ -130,6 +134,7 @@ import { getNotebookDataRoot, getNotebookSessionRoot } from '../notebook/reposit
 import { codexStorageDir, codexSubscriptionStorageDir } from '../agent-framework/codex'
 import { getAppClaudeConfigDir } from '../settings/provider-env'
 import type { ResponsesBridgeSkillCandidate } from '../settings/responses-bridge'
+import type { PermissionGrantRegistry } from '../permission-grants/registry'
 import { withDataRootWrite } from '../storage/migration-state'
 import { opencodeStorageDir } from '../agent-framework/opencode'
 import { CodexSkillActivityProjector } from './codex-skill-activity'
@@ -181,6 +186,7 @@ type AcpRuntimeOptions = {
   defaultCwd: string
   callbacks?: AcpRuntimeCallbacks
   permissionGrantStore?: ConversationPermissionGrantStore
+  permissionGrantRegistry?: PermissionGrantRegistry
   spawnAgent?: () => ChildProcessWithoutNullStreams
   // Resolves the active agent backend (framework + spawn inputs) at connect time so a framework or
   // provider switch takes effect on reconnect. Ignored when an explicit spawnAgent is provided (tests
@@ -311,8 +317,12 @@ type AcpRuntimeNotebookOptions = {
   projectName: string
   mcpEntryPath: string
   mcpCommand?: string
-  getRpcConnection?: () => Promise<NotebookRpcConnection>
+  getRpcConnection?: (binding: {
+    sessionId: string
+    projectId: string
+  }) => Promise<NotebookRpcConnection>
   registerSessionAlias?: (aliasSessionId: string, sessionId: string) => void
+  releaseSessionCapabilities?: (sessionId: string) => void
   registerSessionSpecialist?: (sessionId: string, specialistId: string | undefined) => void
   setArtifactProvenanceContext?: (
     sessionId: string,
@@ -368,13 +378,15 @@ type CodexMcpToolIdentity = {
 type OpenCodeMcpToolInput = {
   title: string
   providerToolName: string
+  mcpIdentity: string
   rawInput?: unknown
 }
 
 type ClaudeCodeMcpToolInput = {
   title: string
   providerToolName: string
-  rawInput: Record<string, unknown>
+  mcpIdentity: string
+  rawInput?: Record<string, unknown>
 }
 
 type OpenCodePermissionContextWaitOutcome = 'ready' | 'timeout' | 'cancelled'
@@ -382,6 +394,23 @@ type OpenCodePermissionContextWaiter = (outcome: OpenCodePermissionContextWaitOu
 
 const isRecord = (value: unknown): value is Record<string, unknown> =>
   typeof value === 'object' && value !== null && !Array.isArray(value)
+
+// OpenCode's older permission bridge can omit provider metadata from request_permission. Accept the
+// native Skill identity only from a preceding tool_call: either explicit provider metadata, or the
+// legacy wire shape with an exact title plus a structured skill name. The runtime later binds this
+// observation to request_permission by session and toolCallId.
+const isOpenCodeNativeSkillToolCall = (update: SessionNotification['update']): boolean => {
+  if (update.sessionUpdate !== 'tool_call' || update.kind !== 'other') return false
+  const providerToolName = extractProviderToolName(update)?.trim().toLowerCase()
+  if (providerToolName !== undefined) return providerToolName === 'skill'
+
+  const rawInput = isRecord(update.rawInput) ? update.rawInput : undefined
+  return (
+    update.title?.trim().toLowerCase() === 'skill' &&
+    typeof rawInput?.name === 'string' &&
+    rawInput.name.trim().length > 0
+  )
+}
 
 const boundedNotebookPermissionInput = (
   title: string,
@@ -447,22 +476,19 @@ const codexMcpToolIdentity = (
   const server = event.rawInput.server
   const tool = event.rawInput.tool
 
-  if (
-    typeof server !== 'string' ||
-    !mcpServerNames.includes(server) ||
-    typeof tool !== 'string' ||
-    !tool.trim()
-  ) {
+  if (typeof server !== 'string' || typeof tool !== 'string' || !tool.trim()) {
     return undefined
   }
 
   const title = `mcp.${server}.${tool}`
   if (event.title !== title) return undefined
+  const mcpIdentity = resolveCanonicalMcpToolIdentity(title, mcpServerNames)
+  if (!mcpIdentity) return undefined
 
   return {
     title,
     providerToolName: tool,
-    mcpIdentity: `${server}/${tool}`,
+    mcpIdentity,
     rawInput: event.rawInput.arguments
   }
 }
@@ -739,6 +765,9 @@ class AcpRuntime {
   // preceding tool update carries those arguments under the same call id, so retain them until the
   // permission arrives. This is required for notebook runtime separation and permission preview.
   private readonly opencodeMcpToolInputs = new Map<string, Map<string, OpenCodeMcpToolInput>>()
+  // Native Skill approvals use the same two-message binding as sparse OpenCode MCP approvals. Only
+  // the call id is retained; instruction contents and skill arguments never enter permission state.
+  private readonly opencodeNativeSkillToolCalls = new Map<string, Map<string, true>>()
   // OpenCode writes the tool update and permission request back-to-back. The ACP SDK dispatches
   // incoming messages concurrently, so the permission handler can run before the earlier update has
   // populated opencodeMcpToolInputs. Waiters rendezvous those two messages by session + call id.
@@ -915,23 +944,27 @@ class AcpRuntime {
       artifacts: this.artifactRepository,
       artifactVersions: options.artifacts?.provenance
     })
-    this.permissionBroker = new AcpPermissionBroker((request) => {
-      // Relabel to the app-facing id when this session was adopted onto a replaced agent.
-      const sessionId = this.agentToAppSessionId.get(request.sessionId) ?? request.sessionId
-      const routed = sessionId === request.sessionId ? request : { ...request, sessionId }
+    this.permissionBroker = new AcpPermissionBroker(
+      (request) => {
+        // Relabel to the app-facing id when this session was adopted onto a replaced agent.
+        const sessionId = this.agentToAppSessionId.get(request.sessionId) ?? request.sessionId
+        const routed = sessionId === request.sessionId ? request : { ...request, sessionId }
 
-      this.pushEvent({
-        kind: 'permission',
-        level: 'warning',
-        sessionId: routed.sessionId,
-        toolCallId: routed.toolCallId,
-        title: 'Permission requested',
-        text: routed.title,
-        raw: routed
-      })
-      this.callbacks.onPermissionRequest?.(routed)
-      this.emitState()
-    }, options.permissionGrantStore)
+        this.pushEvent({
+          kind: 'permission',
+          level: 'warning',
+          sessionId: routed.sessionId,
+          toolCallId: routed.toolCallId,
+          title: 'Permission requested',
+          text: routed.title,
+          raw: routed
+        })
+        this.callbacks.onPermissionRequest?.(routed)
+        this.emitState()
+      },
+      options.permissionGrantStore,
+      options.permissionGrantRegistry
+    )
   }
 
   // Boundary-safe context for session-creation and process-spawn diagnostics. Keep this list explicit:
@@ -975,6 +1008,10 @@ class AcpRuntime {
       projectName: this.resolveSessionProjectName(sessionId),
       sessionId
     }))
+  }
+
+  hasLiveSession(projectId: string, sessionId: string): boolean {
+    return this.sessions.has(sessionId) && this.sessionProjectNames.get(sessionId) === projectId
   }
 
   private getInFlightSessionIds(): string[] {
@@ -1448,6 +1485,7 @@ class AcpRuntime {
   private async createSessionOperation(
     request: AcpCreateSessionRequest = {}
   ): Promise<AcpCreateSessionResponse> {
+    let provisionalNotebookSessionId: string | undefined
     try {
       log.info('createSession: starting', this.diagnosticContext())
       const sessionCwd = resolve(request.cwd || this.cwd || this.options.defaultCwd)
@@ -1456,6 +1494,7 @@ class AcpRuntime {
       const connection = await this.ensureConnected(sessionCwd)
       const artifactSessionId = this.createArtifactSessionId()
       const notebookSessionId = this.createNotebookSessionId()
+      provisionalNotebookSessionId = notebookSessionId || undefined
       const skillImportSessionId = this.createSkillImportSessionId()
 
       // Resolve specialist identity before starting the ACP session so the identity append is
@@ -1564,6 +1603,9 @@ class AcpRuntime {
         ...(this.backendId ? { backendId: this.backendId } : {})
       }
     } catch (error) {
+      if (provisionalNotebookSessionId) {
+        this.releaseNotebookSessionCapabilities(provisionalNotebookSessionId)
+      }
       safeLogError('createSession: failed', {
         ...diagnosticErrorFields(error),
         ...this.diagnosticContext()
@@ -2003,86 +2045,100 @@ class AcpRuntime {
       throw new Error('ACP agent does not support session resume.')
     }
 
-    // Resumed sessions already have stable ids, so the artifact session mirrors the runtime session id.
-    const mcpServers = await this.createMcpServers({
-      artifactSessionId: request.sessionId,
-      notebookSessionId: request.sessionId,
-      skillImportSessionId: request.sessionId,
-      sessionCwd,
-      projectName
-    })
-    let resumeResponse
+    // A Notebook bearer token is provisional until the resumed session is fully registered. Any
+    // later setup failure must revoke it so an unattached Agent cannot retain host.mcp/compute access.
+    let notebookCapabilityProvisional = Boolean(this.notebookOptions)
+    let session: ActiveSession | undefined
     try {
-      resumeResponse = await connection.agent.request(acp.methods.agent.session.resume, {
-        sessionId: request.sessionId,
-        cwd: sessionCwd,
-        mcpServers,
-        ...this.buildSessionMetaArg(
-          [],
-          await this.resolveCurrentSpecialistSkills(request.sessionId)
-        )
+      // Resumed sessions already have stable ids, so the artifact session mirrors the runtime session
+      // id.
+      const mcpServers = await this.createMcpServers({
+        artifactSessionId: request.sessionId,
+        notebookSessionId: request.sessionId,
+        skillImportSessionId: request.sessionId,
+        sessionCwd,
+        projectName
       })
-    } catch (error) {
-      if (!isUnresumableSessionError(error)) throw error
+      let resumeResponse
+      try {
+        resumeResponse = await connection.agent.request(acp.methods.agent.session.resume, {
+          sessionId: request.sessionId,
+          cwd: sessionCwd,
+          mcpServers,
+          ...this.buildSessionMetaArg(
+            [],
+            await this.resolveCurrentSpecialistSkills(request.sessionId)
+          )
+        })
+      } catch (error) {
+        if (!isUnresumableSessionError(error)) throw error
 
-      // The agent could not resume this session (an app restart spawned a fresh agent process that no
-      // longer holds it — surfacing as -32002 not-found or a generic -32603 Internal error). Rather
-      // than dead-end the thread, adopt a brand-new agent session under the SAME app id.
-      log.info('resumed session adopted after unrecoverable resume error', {
+        // The agent could not resume this session (an app restart spawned a fresh agent process that no
+        // longer holds it — surfacing as -32002 not-found or a generic -32603 Internal error). Revoke
+        // the token handed to that failed attempt before adopting a brand-new agent session under the
+        // SAME app id; adoptFreshSession owns the replacement token's lifecycle.
+        if (notebookCapabilityProvisional) {
+          this.releaseNotebookSessionCapabilities(request.sessionId)
+          notebookCapabilityProvisional = false
+        }
+        log.info('resumed session adopted after unrecoverable resume error', {
+          sessionId: request.sessionId,
+          ...errorLogFields(error)
+        })
+
+        return await this.adoptFreshSession(connection, request, sessionCwd, projectName)
+      }
+      // The SDK exposes public helpers for new sessions only. The runtime keeps this adapter
+      // narrow so resume can reuse the same update routing surface as newly-created sessions.
+      session = (connection.agent as unknown as ClientContextSessionAttacher).attachSession({
         sessionId: request.sessionId,
-        ...errorLogFields(error)
+        ...resumeResponse
       })
 
-      return this.adoptFreshSession(connection, request, sessionCwd, projectName)
-    }
-    // The SDK exposes public helpers for new sessions only. The runtime keeps this adapter
-    // narrow so resume can reuse the same update routing surface as newly-created sessions.
-    const session = (connection.agent as unknown as ClientContextSessionAttacher).attachSession({
-      sessionId: request.sessionId,
-      ...resumeResponse
-    })
-
-    try {
       await this.configurePermissionProfile(
         request.sessionId,
         session,
         normalizePermissionProfile(request.permissionProfile)
       )
+
+      const updatedConfigOptions = await this.applySessionModel(session)
+      await this.applySessionEffort(session, updatedConfigOptions)
+
+      this.sessions.set(request.sessionId, session)
+      if (updatedConfigOptions) {
+        this.latestSessionConfigOptions.set(request.sessionId, updatedConfigOptions)
+      }
+      this.sessionCwds.set(request.sessionId, sessionCwd)
+      this.sessionMcpServerNames.set(request.sessionId, this.mcpServerNamesOf(mcpServers))
+      this.sessionProjectNames.set(request.sessionId, projectName)
+      this.sessionFrameworks.set(request.sessionId, this.framework.id)
+      if (this.backendId) this.sessionBackendIds.set(request.sessionId, this.backendId)
+      this.rememberArtifactSession(request.sessionId, request.sessionId)
+      this.rememberSkillImportSession(request.sessionId, request.sessionId)
+      this.currentSessionId = request.sessionId
+      this.cwd = sessionCwd
+      this.pushEvent({
+        kind: 'system',
+        level: 'info',
+        sessionId: request.sessionId,
+        title: 'Session resumed',
+        text: sessionCwd
+      })
+      this.emitState()
+      notebookCapabilityProvisional = false
+
+      return {
+        sessionId: request.sessionId,
+        cwd: sessionCwd,
+        frameworkId: this.framework.id,
+        ...(this.backendId ? { backendId: this.backendId } : {})
+      }
     } catch (error) {
-      session.dispose()
+      session?.dispose()
+      if (notebookCapabilityProvisional) {
+        this.releaseNotebookSessionCapabilities(request.sessionId)
+      }
       throw error
-    }
-
-    const updatedConfigOptions = await this.applySessionModel(session)
-    await this.applySessionEffort(session, updatedConfigOptions)
-
-    this.sessions.set(request.sessionId, session)
-    if (updatedConfigOptions) {
-      this.latestSessionConfigOptions.set(request.sessionId, updatedConfigOptions)
-    }
-    this.sessionCwds.set(request.sessionId, sessionCwd)
-    this.sessionMcpServerNames.set(request.sessionId, this.mcpServerNamesOf(mcpServers))
-    this.sessionProjectNames.set(request.sessionId, projectName)
-    this.sessionFrameworks.set(request.sessionId, this.framework.id)
-    if (this.backendId) this.sessionBackendIds.set(request.sessionId, this.backendId)
-    this.rememberArtifactSession(request.sessionId, request.sessionId)
-    this.rememberSkillImportSession(request.sessionId, request.sessionId)
-    this.currentSessionId = request.sessionId
-    this.cwd = sessionCwd
-    this.pushEvent({
-      kind: 'system',
-      level: 'info',
-      sessionId: request.sessionId,
-      title: 'Session resumed',
-      text: sessionCwd
-    })
-    this.emitState()
-
-    return {
-      sessionId: request.sessionId,
-      cwd: sessionCwd,
-      frameworkId: this.framework.id,
-      ...(this.backendId ? { backendId: this.backendId } : {})
     }
   }
 
@@ -2096,61 +2152,70 @@ class AcpRuntime {
     sessionCwd: string,
     projectName: string
   ): Promise<AcpCreateSessionResponse> {
-    const mcpServers = await this.createMcpServers({
-      artifactSessionId: request.sessionId,
-      notebookSessionId: request.sessionId,
-      skillImportSessionId: request.sessionId,
-      sessionCwd,
-      projectName
-    })
-    // A freshly adopted session carries no prior _meta, so the specialist identity append (Claude)
-    // must be re-resolved from the live binding. Without this, a context reset or specialist switch
-    // would silently drop the session's specialist identity.
-    const specialistAppend = await this.resolveCurrentSpecialistIdentityAppend(request.sessionId)
-    const adopted = await connection.agent
-      .buildSession({
-        cwd: sessionCwd,
-        mcpServers,
-        ...this.buildSessionMetaArg(
-          specialistAppend ? [specialistAppend] : [],
-          await this.resolveCurrentSpecialistSkills(request.sessionId)
-        )
-      })
-      .start()
-
+    // Fresh adoption also receives a provisional Notebook bearer token. Transfer ownership only after
+    // adoptSession has registered the replacement; every earlier failure revokes it and disposes any
+    // partially-created Agent session.
+    let notebookCapabilityProvisional = Boolean(this.notebookOptions)
+    let adopted: ActiveSession | undefined
     try {
+      const mcpServers = await this.createMcpServers({
+        artifactSessionId: request.sessionId,
+        notebookSessionId: request.sessionId,
+        skillImportSessionId: request.sessionId,
+        sessionCwd,
+        projectName
+      })
+      // A freshly adopted session carries no prior _meta, so the specialist identity append (Claude)
+      // must be re-resolved from the live binding. Without this, a context reset or specialist switch
+      // would silently drop the session's specialist identity.
+      const specialistAppend = await this.resolveCurrentSpecialistIdentityAppend(request.sessionId)
+      adopted = await connection.agent
+        .buildSession({
+          cwd: sessionCwd,
+          mcpServers,
+          ...this.buildSessionMetaArg(
+            specialistAppend ? [specialistAppend] : [],
+            await this.resolveCurrentSpecialistSkills(request.sessionId)
+          )
+        })
+        .start()
+
       await this.configurePermissionProfile(
         request.sessionId,
         adopted,
         normalizePermissionProfile(request.permissionProfile)
       )
+
+      const updatedConfigOptions = await this.applySessionModel(adopted)
+      await this.applySessionEffort(adopted, updatedConfigOptions)
+      this.adoptSession(
+        request.sessionId,
+        adopted,
+        sessionCwd,
+        projectName,
+        this.mcpServerNamesOf(mcpServers)
+      )
+      // Keyed by the agent session id, matching the live-effort lookup over this.sessions values:
+      // an adopted session's agent id differs from the app id it is registered under.
+      if (updatedConfigOptions) {
+        this.latestSessionConfigOptions.set(adopted.sessionId, updatedConfigOptions)
+      }
+      this.emitState()
+      notebookCapabilityProvisional = false
+
+      return {
+        sessionId: request.sessionId,
+        cwd: sessionCwd,
+        frameworkId: this.framework.id,
+        ...(this.backendId ? { backendId: this.backendId } : {}),
+        contextReset: true
+      }
     } catch (error) {
-      adopted.dispose()
+      adopted?.dispose()
+      if (notebookCapabilityProvisional) {
+        this.releaseNotebookSessionCapabilities(request.sessionId)
+      }
       throw error
-    }
-
-    const updatedConfigOptions = await this.applySessionModel(adopted)
-    await this.applySessionEffort(adopted, updatedConfigOptions)
-    this.adoptSession(
-      request.sessionId,
-      adopted,
-      sessionCwd,
-      projectName,
-      this.mcpServerNamesOf(mcpServers)
-    )
-    // Keyed by the agent session id, matching the live-effort lookup over this.sessions values:
-    // an adopted session's agent id differs from the app id it is registered under.
-    if (updatedConfigOptions) {
-      this.latestSessionConfigOptions.set(adopted.sessionId, updatedConfigOptions)
-    }
-    this.emitState()
-
-    return {
-      sessionId: request.sessionId,
-      cwd: sessionCwd,
-      frameworkId: this.framework.id,
-      ...(this.backendId ? { backendId: this.backendId } : {}),
-      contextReset: true
     }
   }
 
@@ -2180,8 +2245,8 @@ class AcpRuntime {
   }
 
   // Revokes an app-owned session grant so the next matching tool call prompts again.
-  revokePermissionGrant(request: AcpRevokePermissionGrantRequest): AcpStateSnapshot {
-    this.permissionBroker.revokeGrant(request.sessionId, request.categoryKey)
+  async revokePermissionGrant(request: AcpRevokePermissionGrantRequest): Promise<AcpStateSnapshot> {
+    await this.permissionBroker.revokeGrant(request.sessionId, request.categoryKey)
     this.emitState()
 
     return this.getSnapshot()
@@ -2446,6 +2511,8 @@ class AcpRuntime {
       this.contextUsageTracker.clear()
       this.contextUsageUpdatedPromptTurnsBySession.clear()
       this.appliedSessionModels.clear()
+
+      this.releaseAllNotebookSessionCapabilities()
 
       for (const session of this.sessions.values()) {
         session.dispose()
@@ -3244,6 +3311,8 @@ class AcpRuntime {
     this.sessionSpecialistPrefixes.delete(request.sessionId)
     this.sessionSpecialistIds.delete(request.sessionId)
 
+    this.releaseNotebookSessionCapabilities(request.sessionId)
+
     // Only announce a deletion and shift the current session when something was actually attached; a
     // detached cleanup (post-switch) must not emit a spurious event or move currentSessionId.
     if (session) {
@@ -3264,15 +3333,25 @@ class AcpRuntime {
   }
 
   // Resolves or cancels one pending permission request from the renderer.
-  respondToPermission(response: AcpPermissionResponse): AcpStateSnapshot {
-    const handled = this.permissionBroker.respond(response)
-
-    this.pushEvent({
-      kind: 'permission',
-      level: handled ? 'info' : 'warning',
-      title: handled ? 'Permission response sent' : 'Permission request not found',
-      text: response.cancelled ? 'cancelled' : response.optionId
-    })
+  async respondToPermission(response: AcpPermissionResponse): Promise<AcpStateSnapshot> {
+    try {
+      const handled = await this.permissionBroker.respond(response)
+      this.pushEvent({
+        kind: 'permission',
+        level: handled ? 'info' : 'warning',
+        title: handled ? 'Permission response sent' : 'Permission request not found',
+        text: response.cancelled ? 'cancelled' : response.optionId
+      })
+    } catch (error) {
+      this.pushEvent({
+        kind: 'permission',
+        level: 'error',
+        title: 'Permission approval could not be saved',
+        text: error instanceof Error ? error.message : 'The tool call was cancelled.'
+      })
+      this.emitState()
+      throw error
+    }
     this.emitState()
 
     return this.getSnapshot()
@@ -3954,6 +4033,25 @@ class AcpRuntime {
     this.notebookOptions.registerSessionAlias?.(notebookSessionId, sessionId)
   }
 
+  // Capability cleanup is best-effort and must never replace the session lifecycle error that caused
+  // it. The production callback only mutates local maps, while this guard keeps injected/test adapters
+  // from masking the original failure.
+  private releaseNotebookSessionCapabilities(sessionId: string): void {
+    try {
+      this.notebookOptions?.releaseSessionCapabilities?.(sessionId)
+    } catch (error) {
+      safeLogError('release notebook session capabilities failed', {
+        ...diagnosticErrorFields(error),
+        ...this.diagnosticContext()
+      })
+    }
+  }
+
+  private releaseAllNotebookSessionCapabilities(): void {
+    const sessionIds = new Set([...this.sessions.keys(), ...this.notebookRoutingIds.keys()])
+    for (const sessionId of sessionIds) this.releaseNotebookSessionCapabilities(sessionId)
+  }
+
   private createSkillImportSessionId(): string {
     if (!this.skillImportOptions) return ''
 
@@ -3990,7 +4088,7 @@ class AcpRuntime {
   ): Promise<NotebookMcpEnvironment | undefined> {
     if (!this.notebookOptions || !notebookSessionId) return undefined
 
-    const connection = await this.resolveNotebookRpcConnection()
+    const connection = await this.resolveNotebookRpcConnection(notebookSessionId, projectName)
 
     return {
       endpoint: connection.endpoint,
@@ -4025,13 +4123,16 @@ class AcpRuntime {
   }
 
   // Resolves either a static test connection or the real app-local RPC server connection.
-  private async resolveNotebookRpcConnection(): Promise<NotebookRpcConnection> {
+  private async resolveNotebookRpcConnection(
+    sessionId: string,
+    projectId: string
+  ): Promise<NotebookRpcConnection> {
     if (!this.notebookOptions) {
       throw new Error('Notebook runtime is not configured.')
     }
 
     if (this.notebookOptions.getRpcConnection) {
-      return this.notebookOptions.getRpcConnection()
+      return this.notebookOptions.getRpcConnection({ sessionId, projectId })
     }
 
     throw new Error('Notebook runtime RPC connection is not configured.')
@@ -4721,7 +4822,8 @@ class AcpRuntime {
             this.framework.id,
           autoReviewStrategy: profileState?.autoReviewStrategy,
           cwd: this.sessionCwds.get(appSessionId),
-          mcpServerNames
+          mcpServerNames,
+          projectId: this.resolveSessionProjectName(appSessionId)
         }
       )
     } catch (error) {
@@ -4777,7 +4879,12 @@ class AcpRuntime {
 
     if (framework === 'claude-code') {
       const title = event.title
-      if (!title || !isMcpToolName(title, mcpServerNames) || !isRecord(event.rawInput)) return
+      if (!title || !isMcpToolName(title, mcpServerNames)) return
+      const providerToolName = event.providerToolName ?? title
+      const mcpIdentity =
+        resolveCanonicalMcpToolIdentity(providerToolName, mcpServerNames) ??
+        resolveCanonicalMcpToolIdentity(title, mcpServerNames)
+      if (!mcpIdentity) return
 
       const inputs = this.claudeCodeMcpToolInputs.get(sessionId) ?? new Map()
       this.setBoundedPermissionToolContext(
@@ -4785,8 +4892,9 @@ class AcpRuntime {
         event.toolCallId,
         {
           title,
-          providerToolName: event.providerToolName ?? title,
-          rawInput: event.rawInput
+          providerToolName,
+          mcpIdentity,
+          ...(isRecord(event.rawInput) ? { rawInput: event.rawInput } : {})
         },
         MAX_CLAUDE_CODE_MCP_TOOL_INPUTS_PER_SESSION
       )
@@ -4800,6 +4908,18 @@ class AcpRuntime {
       closedToolCalls?.delete(event.toolCallId)
       if (closedToolCalls?.size === 0) this.closedOpenCodeToolCalls.delete(sessionId)
     }
+    if (isOpenCodeNativeSkillToolCall(update)) {
+      const calls = this.opencodeNativeSkillToolCalls.get(sessionId) ?? new Map<string, true>()
+      this.setBoundedPermissionToolContext(
+        calls,
+        event.toolCallId,
+        true,
+        MAX_OPENCODE_MCP_TOOL_INPUTS_PER_SESSION
+      )
+      this.opencodeNativeSkillToolCalls.set(sessionId, calls)
+      this.resolveOpenCodeMcpToolInputWaiters(sessionId, event.toolCallId)
+      return
+    }
     const originalRawInput =
       update.sessionUpdate === 'tool_call' || update.sessionUpdate === 'tool_call_update'
         ? update.rawInput
@@ -4808,20 +4928,30 @@ class AcpRuntime {
     const previous = inputs.get(event.toolCallId)
     const title = event.title ?? previous?.title
     if (!title || !isMcpToolName(title, mcpServerNames)) return
+    const canReusePreviousIdentity = event.title == null || event.title === previous?.title
+    const providerToolName =
+      event.providerToolName ??
+      (canReusePreviousIdentity ? previous?.providerToolName : undefined) ??
+      title
+    const mcpIdentity =
+      resolveCanonicalMcpToolIdentity(providerToolName, mcpServerNames) ??
+      resolveCanonicalMcpToolIdentity(title, mcpServerNames) ??
+      (canReusePreviousIdentity ? previous?.mcpIdentity : undefined)
+    if (!mcpIdentity) return
 
     const rawInput =
       boundedNotebookPermissionInput(title, originalRawInput, mcpServerNames) ?? event.rawInput
     const hasRawInput = isRecord(rawInput) && Object.keys(rawInput).length > 0
-    const canReusePreviousRawInput = event.title == null || event.title === previous?.title
     const next: OpenCodeMcpToolInput = {
       title,
       // OpenCode may omit _meta.toolName from the later permission request. Retain the identity only
       // from a preceding MCP-classified tool event with the same toolCallId/title; an isolated
       // permission title never reaches this cache and therefore cannot obtain an automatic grant.
-      providerToolName: event.providerToolName ?? title,
+      providerToolName,
+      mcpIdentity,
       ...(hasRawInput
         ? { rawInput }
-        : canReusePreviousRawInput && previous?.rawInput !== undefined
+        : canReusePreviousIdentity && previous?.rawInput !== undefined
           ? { rawInput: previous.rawInput }
           : {})
     }
@@ -4847,12 +4977,22 @@ class AcpRuntime {
       return this.restoreClaudeCodeMcpToolInput(params, appSessionId, mcpServerNames)
     }
     if (framework === 'opencode') {
+      const trustedNativeSkill = this.restoreOpenCodeNativeSkillPermission(params, appSessionId)
+      if (trustedNativeSkill !== params) return trustedNativeSkill
+
       const restored = this.restoreOpenCodeMcpToolInput(params, appSessionId, mcpServerNames)
-      if (restored !== params || !isMcpToolName(params.toolCall.title, mcpServerNames)) {
+      const isMcpRequest = isMcpToolName(params.toolCall.title, mcpServerNames)
+      const isNativeSkillCandidate =
+        params.toolCall.kind === 'other' && params.toolCall.title?.trim().toLowerCase() === 'skill'
+      if (!isMcpRequest && !isNativeSkillCandidate) {
         return restored
       }
-      if (isRecord(params.toolCall.rawInput) && Object.keys(params.toolCall.rawInput).length > 0) {
-        return params
+      if (
+        isMcpRequest &&
+        isRecord(restored.toolCall.rawInput) &&
+        Object.keys(restored.toolCall.rawInput).length > 0
+      ) {
+        return restored
       }
 
       const outcome = await this.waitForOpenCodeMcpToolInput(
@@ -4868,6 +5008,8 @@ class AcpRuntime {
           waitMs: OPENCODE_PERMISSION_CONTEXT_WAIT_MS
         })
       }
+      const restoredNativeSkill = this.restoreOpenCodeNativeSkillPermission(params, appSessionId)
+      if (restoredNativeSkill !== params) return restoredNativeSkill
       return this.restoreOpenCodeMcpToolInput(params, appSessionId, mcpServerNames)
     }
     if (framework !== 'codex' || !isCodexMcpApproval(params)) return params
@@ -4906,24 +5048,27 @@ class AcpRuntime {
 
     const inputs = this.claudeCodeMcpToolInputs.get(appSessionId)
     const input = inputs?.get(params.toolCall.toolCallId)
-    if (!input || input.title !== title || !isMcpToolName(input.providerToolName, mcpServerNames)) {
+    if (!input || input.title !== title) {
       return params
     }
 
     inputs?.delete(params.toolCall.toolCallId)
     if (inputs?.size === 0) this.claudeCodeMcpToolInputs.delete(appSessionId)
 
-    return {
-      ...params,
-      toolCall: {
-        ...params.toolCall,
-        rawInput: params.toolCall.rawInput ?? input.rawInput,
-        _meta: {
-          ...(isRecord(params.toolCall._meta) ? params.toolCall._meta : {}),
-          toolName: input.providerToolName
+    return withTrustedMcpToolIdentity(
+      {
+        ...params,
+        toolCall: {
+          ...params.toolCall,
+          rawInput: params.toolCall.rawInput ?? input.rawInput,
+          _meta: {
+            ...(isRecord(params.toolCall._meta) ? params.toolCall._meta : {}),
+            toolName: input.providerToolName
+          }
         }
-      }
-    }
+      },
+      input.mcpIdentity
+    )
   }
 
   private waitForOpenCodeMcpToolInput(
@@ -4933,6 +5078,9 @@ class AcpRuntime {
   ): Promise<OpenCodePermissionContextWaitOutcome> {
     if (this.shouldCancelOpenCodePermission(sessionId, toolCallId, promptTurn)) {
       return Promise.resolve('cancelled')
+    }
+    if (this.opencodeNativeSkillToolCalls.get(sessionId)?.has(toolCallId)) {
+      return Promise.resolve('ready')
     }
     const rawInput = this.opencodeMcpToolInputs.get(sessionId)?.get(toolCallId)?.rawInput
     if (isRecord(rawInput) && Object.keys(rawInput).length > 0) {
@@ -4964,6 +5112,10 @@ class AcpRuntime {
         finish('cancelled')
         return
       }
+      if (this.opencodeNativeSkillToolCalls.get(sessionId)?.has(toolCallId)) {
+        finish('ready')
+        return
+      }
       const latestRawInput = this.opencodeMcpToolInputs.get(sessionId)?.get(toolCallId)?.rawInput
       if (isRecord(latestRawInput) && Object.keys(latestRawInput).length > 0) finish('ready')
     })
@@ -4982,6 +5134,7 @@ class AcpRuntime {
 
   private clearOpenCodePermissionToolContext(sessionId: string): void {
     this.opencodeMcpToolInputs.delete(sessionId)
+    this.opencodeNativeSkillToolCalls.delete(sessionId)
     this.closedOpenCodeToolCalls.delete(sessionId)
     const sessionWaiters = this.opencodeMcpToolInputWaiters.get(sessionId)
     if (!sessionWaiters) return
@@ -4993,6 +5146,7 @@ class AcpRuntime {
 
   private clearAllOpenCodePermissionToolContext(): void {
     this.opencodeMcpToolInputs.clear()
+    this.opencodeNativeSkillToolCalls.clear()
     for (const sessionId of Array.from(this.opencodeMcpToolInputWaiters.keys())) {
       this.clearOpenCodePermissionToolContext(sessionId)
     }
@@ -5031,29 +5185,52 @@ class AcpRuntime {
 
     const inputs = this.opencodeMcpToolInputs.get(appSessionId)
     const input = inputs?.get(params.toolCall.toolCallId)
-    if (!input || input.title !== title || !isMcpToolName(input.providerToolName, mcpServerNames)) {
+    if (!input || input.title !== title) {
       return params
     }
 
     const requestHasInput =
       isRecord(params.toolCall.rawInput) && Object.keys(params.toolCall.rawInput).length > 0
     const cachedHasInput = isRecord(input.rawInput) && Object.keys(input.rawInput).length > 0
-    if (!requestHasInput && !cachedHasInput) return params
-
-    inputs?.delete(params.toolCall.toolCallId)
-    if (inputs?.size === 0) this.opencodeMcpToolInputs.delete(appSessionId)
-
-    return {
-      ...params,
-      toolCall: {
-        ...params.toolCall,
-        rawInput: requestHasInput ? params.toolCall.rawInput : input.rawInput,
-        _meta: {
-          ...(isRecord(params.toolCall._meta) ? params.toolCall._meta : {}),
-          toolName: input.providerToolName
-        }
-      }
+    if (requestHasInput || cachedHasInput) {
+      inputs?.delete(params.toolCall.toolCallId)
+      if (inputs?.size === 0) this.opencodeMcpToolInputs.delete(appSessionId)
     }
+
+    return withTrustedMcpToolIdentity(
+      {
+        ...params,
+        toolCall: {
+          ...params.toolCall,
+          rawInput: requestHasInput ? params.toolCall.rawInput : input.rawInput,
+          _meta: {
+            ...(isRecord(params.toolCall._meta) ? params.toolCall._meta : {}),
+            toolName: input.providerToolName
+          }
+        }
+      },
+      input.mcpIdentity
+    )
+  }
+
+  private restoreOpenCodeNativeSkillPermission(
+    params: RequestPermissionRequest,
+    appSessionId: string
+  ): RequestPermissionRequest {
+    const calls = this.opencodeNativeSkillToolCalls.get(appSessionId)
+    if (!calls?.delete(params.toolCall.toolCallId)) return params
+    if (calls.size === 0) this.opencodeNativeSkillToolCalls.delete(appSessionId)
+
+    const providerToolName = extractProviderToolName(params.toolCall)?.trim().toLowerCase()
+    if (
+      params.toolCall.kind !== 'other' ||
+      params.toolCall.title?.trim().toLowerCase() !== 'skill' ||
+      (providerToolName != null && providerToolName !== 'skill')
+    ) {
+      return params
+    }
+
+    return withTrustedNativeToolIdentity(params, 'opencode/skill')
   }
 
   private setBoundedPermissionToolContext<T>(
@@ -5081,6 +5258,9 @@ class AcpRuntime {
     const opencodeInputs = this.opencodeMcpToolInputs.get(sessionId)
     opencodeInputs?.delete(toolCallId)
     if (opencodeInputs?.size === 0) this.opencodeMcpToolInputs.delete(sessionId)
+    const opencodeNativeSkills = this.opencodeNativeSkillToolCalls.get(sessionId)
+    opencodeNativeSkills?.delete(toolCallId)
+    if (opencodeNativeSkills?.size === 0) this.opencodeNativeSkillToolCalls.delete(sessionId)
     if (this.sessionFrameworks.get(sessionId) === 'opencode') {
       const closedToolCalls = this.closedOpenCodeToolCalls.get(sessionId) ?? new Set<string>()
       if (
@@ -5596,6 +5776,7 @@ class AcpRuntime {
     this.skillSelectorAbortControllers.clear()
     this.permissionBroker.cancelAllPending()
     this.clearReviewerSessionState()
+    this.releaseAllNotebookSessionCapabilities()
     this.sessions.clear()
     this.sessionCwds.clear()
     this.sessionInlineImageBytes.clear()

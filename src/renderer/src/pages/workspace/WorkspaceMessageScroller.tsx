@@ -69,10 +69,24 @@ const getMessageArtifacts = (
   if (!message.artifactIds || !session.artifacts) return []
 
   const artifactsById = new Map(session.artifacts.map((artifact) => [artifact.id, artifact]))
+  const artifactsByLogicalId = new Map<string, MessageArtifact>()
 
-  return message.artifactIds
-    .map((artifactId) => artifactsById.get(artifactId))
-    .filter((artifact): artifact is MessageArtifact => Boolean(artifact))
+  for (const artifactId of message.artifactIds) {
+    const artifact = artifactsById.get(artifactId)
+    if (!artifact) continue
+
+    const logicalId = artifact.versionId
+      ? `version:${artifact.versionId}`
+      : `artifact:${artifact.id}`
+    const current = artifactsByLogicalId.get(logicalId)
+    const isNativeVersion = Boolean(artifact.versionId && artifact.id === artifact.versionId)
+    const currentIsNativeVersion = Boolean(current?.versionId && current.id === current.versionId)
+    if (!current || (isNativeVersion && !currentIsNativeVersion)) {
+      artifactsByLogicalId.set(logicalId, artifact)
+    }
+  }
+
+  return Array.from(artifactsByLogicalId.values())
 }
 
 // Sends an app-managed generated file to the preview workbench instead of opening it locally.

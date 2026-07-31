@@ -1039,8 +1039,7 @@ export type ImportSkillResult = {
 
 // --- Connectors ---------------------------------------------------------------------------------
 
-// Per-tool permission. 'ask' is reserved for the future per-call approval flow and is not yet
-// functional — the UI renders it disabled and only 'allow'/'block' persist (to blockedToolIds).
+// Per-tool Connector policy. `ask` requires a matching Broker grant or a scoped approval prompt.
 export type ToolPermission = 'allow' | 'ask' | 'block'
 
 // One tool within a connector, with its current permission (derived: 'block' if blocklisted).
@@ -1146,8 +1145,11 @@ export type ConnectorApprovalRequest = {
   // The session that triggered the connector call, so a desktop notification can surface and open
   // that conversation. Absent for call paths that don't carry one.
   sessionId?: string
+  // Missing only when talking to an older main process during development; renderer falls back to Once.
+  availableScopes?: ConnectorApprovalScope[]
 }
-export type ApprovalDecision = 'allow' | 'deny'
+export type ConnectorApprovalScope = 'once' | 'session' | 'project' | 'global'
+export type ApprovalDecision = ConnectorApprovalScope | 'deny'
 export type RespondApprovalRequest = { id: string; decision: ApprovalDecision }
 
 // Minimal settings slice the remote-file-browser bookmark helpers depend on. Declared here in

@@ -2,6 +2,7 @@ import type { RequestPermissionRequest } from '@agentclientprotocol/sdk'
 import { describe, expect, it } from 'vitest'
 
 import { AcpPermissionBroker, ConversationPermissionGrantStore } from './permission-broker'
+import { withTrustedNativeToolIdentity } from './permission-policy'
 
 type EmittedPermissionRequest = Parameters<ConstructorParameters<typeof AcpPermissionBroker>[0]>[0]
 
@@ -139,7 +140,7 @@ describe('ACP permission broker', () => {
     )
     const sessionOption = emitted[0].options.find((option) => option.scope === 'session')
 
-    expect(sessionOption).toMatchObject({ name: 'This conversation', scope: 'session' })
+    expect(sessionOption).toMatchObject({ name: 'This session', scope: 'session' })
     expect(emitted[0].options.some((option) => option.optionId === 'allow-always')).toBe(false)
 
     broker.respond({ requestId: emitted[0].requestId, optionId: sessionOption?.optionId })
@@ -210,42 +211,44 @@ describe('ACP permission broker', () => {
     ])
   })
 
-  it('remembers an OpenCode Skill grant when its permission title is the only stable identity', async () => {
+  it('silently allows OpenCode native skill loading without remembering a grant', async () => {
     const emitted: EmittedPermissionRequest[] = []
     const broker = new AcpPermissionBroker((request) => emitted.push(request))
     const skillRequest = (): RequestPermissionRequest =>
-      createToolPermissionRequest({ title: 'Run skill?', rawInput: {} })
+      withTrustedNativeToolIdentity(
+        createToolPermissionRequest({ title: 'skill', kind: 'other', rawInput: {} }),
+        'opencode/skill'
+      )
 
-    const firstResponse = broker.requestPermission(skillRequest(), {
+    const response = broker.requestPermission(skillRequest(), {
       profile: 'ask',
       frameworkId: 'opencode'
     })
-
-    expect(emitted[0].options.find((option) => option.scope === 'session')).toMatchObject({
-      name: 'This conversation',
-      kind: 'allow_always'
-    })
-    broker.respond({ requestId: emitted[0].requestId, optionId: getSessionOptionId(emitted[0]) })
-
-    await expect(firstResponse).resolves.toEqual({
+    expect(emitted).toEqual([])
+    await expect(response).resolves.toEqual({
       outcome: { outcome: 'selected', optionId: 'allow-once' }
     })
-    await expect(
-      broker.requestPermission(skillRequest(), {
-        profile: 'ask',
-        frameworkId: 'opencode'
-      })
-    ).resolves.toEqual({ outcome: { outcome: 'selected', optionId: 'allow-once' } })
+    expect(broker.listGrants('session-1')).toEqual([])
+  })
 
-    expect(emitted).toHaveLength(1)
-    expect(broker.listGrants('session-1')).toEqual([
-      {
-        categoryKey: 'skill',
-        kind: 'tool',
-        label: 'Skill',
-        scope: 'session'
-      }
-    ])
+  it('keeps non-OpenCode and unknown OpenCode tools on the normal approval path', () => {
+    const emitted: EmittedPermissionRequest[] = []
+    const broker = new AcpPermissionBroker((request) => emitted.push(request))
+
+    void broker.requestPermission(
+      createToolPermissionRequest({ title: 'skill', kind: 'other', rawInput: {} }),
+      { profile: 'ask', frameworkId: 'claude-code' }
+    )
+    void broker.requestPermission(
+      createToolPermissionRequest({ title: 'unknown capability', kind: 'other', rawInput: {} }),
+      { profile: 'ask', frameworkId: 'opencode' }
+    )
+    void broker.requestPermission(
+      createToolPermissionRequest({ title: 'skill', kind: 'other', rawInput: {} }),
+      { profile: 'ask', frameworkId: 'opencode' }
+    )
+
+    expect(emitted).toHaveLength(3)
   })
 
   it('requires a stable server and tool identity before offering MCP session scope', () => {
@@ -444,7 +447,7 @@ describe('ACP permission broker', () => {
       getSessionOptionId(emitted[0])
     ])
     expect(emitted[0].options.find((option) => option.scope === 'session')).toMatchObject({
-      name: 'This conversation',
+      name: 'This session',
       kind: 'allow_always'
     })
   })
@@ -497,7 +500,7 @@ describe('ACP permission broker', () => {
     ])
   })
 
-  it('does not auto-select a Codex amendment under Full Access when it is the only allow option', () => {
+  it('fails closed without prompting when the provider has no one-call allow option', async () => {
     const emitted: Array<Parameters<ConstructorParameters<typeof AcpPermissionBroker>[0]>[0]> = []
     const broker = new AcpPermissionBroker((request) => emitted.push(request))
     const request = createCodexCommandPermissionRequest()
@@ -506,12 +509,10 @@ describe('ACP permission broker', () => {
       (option) => option.optionId !== 'allow_once' && option.optionId !== 'allow_always'
     )
 
-    void broker.requestPermission(request, { profile: 'full', frameworkId: 'codex' })
+    const response = broker.requestPermission(request, { profile: 'full', frameworkId: 'codex' })
 
-    // The amendment is projected away, so Full Access finds no allow option and must prompt instead
-    // of auto-approving a grant that persists outside the app's revocable model.
-    expect(emitted).toHaveLength(1)
-    expect(emitted[0].options.map((option) => option.optionId)).toEqual(['reject_once'])
+    await expect(response).resolves.toEqual({ outcome: { outcome: 'cancelled' } })
+    expect(emitted).toEqual([])
   })
 
   it('cancels a Codex policy amendment response that was not exposed', async () => {
@@ -560,7 +561,7 @@ describe('ACP permission broker', () => {
     expect(broker.listGrants('session-1')).toEqual([expect.objectContaining({ scope: 'session' })])
   })
 
-  it('auto-approves later notebook calls after the user picks This conversation', async () => {
+  it('auto-approves later notebook calls after the user picks This session', async () => {
     const emitted: EmittedPermissionRequest[] = []
     const broker = new AcpPermissionBroker((request) => emitted.push(request))
 
@@ -778,7 +779,7 @@ describe('ACP permission broker', () => {
     ])
     expect(emitted[1]).toMatchObject({ title: 'Run Python again' })
     expect(emitted[1].options).toEqual(
-      expect.arrayContaining([expect.objectContaining({ name: 'This conversation' })])
+      expect.arrayContaining([expect.objectContaining({ name: 'This session' })])
     )
     expect(emitted[2]).toMatchObject({ title: 'Remove build output' })
     expect(emitted).toHaveLength(3)
@@ -1106,7 +1107,7 @@ describe('ACP permission broker', () => {
     expect(emittedRequests).toHaveLength(2)
   })
 
-  it('does not remember session grants across Agent sessions', async () => {
+  it('keeps WebFetch Once-only across Agent sessions', async () => {
     const emitted: EmittedPermissionRequest[] = []
     const broker = new AcpPermissionBroker((request) => emitted.push(request))
 
@@ -1117,11 +1118,11 @@ describe('ACP permission broker', () => {
         rawInput: { url: 'https://www.ncbi.nlm.nih.gov/' }
       })
     )
-    broker.respond({ requestId: emitted[0].requestId, optionId: getSessionOptionId(emitted[0]) })
+    expect(emitted[0].options.map((option) => option.scope).filter(Boolean)).toEqual(['once'])
+    broker.respond({ requestId: emitted[0].requestId, optionId: 'allow-once' })
     await firstFetch
 
-    // The same category in a different session must still prompt.
-    broker.requestPermission(
+    const secondFetch = broker.requestPermission(
       createToolPermissionRequest({
         sessionId: 'session-2',
         providerToolName: 'WebFetch',
@@ -1129,9 +1130,11 @@ describe('ACP permission broker', () => {
       })
     )
     expect(emitted).toHaveLength(2)
+    broker.respond({ requestId: emitted[1].requestId, cancelled: true })
+    await secondFetch
   })
 
-  it('shares conversation grants across runtime brokers and clears them on deletion', async () => {
+  it('does not share WebFetch grants across runtime brokers', async () => {
     const store = new ConversationPermissionGrantStore()
     const firstEmitted: EmittedPermissionRequest[] = []
     const secondEmitted: EmittedPermissionRequest[] = []
@@ -1146,29 +1149,19 @@ describe('ACP permission broker', () => {
     const firstPermission = firstBroker.requestPermission(request)
     firstBroker.respond({
       requestId: firstEmitted[0].requestId,
-      optionId: getSessionOptionId(firstEmitted[0])
+      optionId: 'allow-once'
     })
     await firstPermission
 
-    await expect(secondBroker.requestPermission(request)).resolves.toEqual({
-      outcome: { outcome: 'selected', optionId: 'allow-once' }
-    })
-    expect(secondEmitted).toHaveLength(0)
-    expect(secondBroker.listGrants('shared-conversation')).toEqual([
-      expect.objectContaining({
-        categoryKey: 'webfetch:www.ncbi.nlm.nih.gov',
-        label: 'WebFetch (www.ncbi.nlm.nih.gov)',
-        scope: 'session'
-      })
-    ])
-
-    secondBroker.clearSession('shared-conversation')
+    const secondPermission = secondBroker.requestPermission(request)
+    expect(secondEmitted).toHaveLength(1)
+    expect(secondBroker.listGrants('shared-conversation')).toEqual([])
     expect(firstBroker.listGrants('shared-conversation')).toEqual([])
-    void firstBroker.requestPermission(request)
-    expect(firstEmitted).toHaveLength(2)
+    secondBroker.respond({ requestId: secondEmitted[0].requestId, cancelled: true })
+    await secondPermission
   })
 
-  it('scopes WebFetch conversation grants to the approved hostname', async () => {
+  it('prompts for every WebFetch call regardless of hostname', async () => {
     const emitted: EmittedPermissionRequest[] = []
     const broker = new AcpPermissionBroker((request) => emitted.push(request))
     const firstRequest = createToolPermissionRequest({
@@ -1179,27 +1172,29 @@ describe('ACP permission broker', () => {
     const firstPermission = broker.requestPermission(firstRequest)
     broker.respond({
       requestId: emitted[0].requestId,
-      optionId: getSessionOptionId(emitted[0])
+      optionId: 'allow-once'
     })
     await firstPermission
 
-    await expect(
-      broker.requestPermission(
-        createToolPermissionRequest({
-          providerToolName: 'WebFetch',
-          rawInput: { url: 'https://www.ncbi.nlm.nih.gov/research/' }
-        })
-      )
-    ).resolves.toEqual({ outcome: { outcome: 'selected', optionId: 'allow-once' } })
-    expect(emitted).toHaveLength(1)
+    const sameHostname = broker.requestPermission(
+      createToolPermissionRequest({
+        providerToolName: 'WebFetch',
+        rawInput: { url: 'https://www.ncbi.nlm.nih.gov/research/' }
+      })
+    )
+    expect(emitted).toHaveLength(2)
+    broker.respond({ requestId: emitted[1].requestId, cancelled: true })
+    await sameHostname
 
-    void broker.requestPermission(
+    const otherHostname = broker.requestPermission(
       createToolPermissionRequest({
         providerToolName: 'WebFetch',
         rawInput: { url: 'https://example.com/' }
       })
     )
-    expect(emitted).toHaveLength(2)
+    expect(emitted).toHaveLength(3)
+    broker.respond({ requestId: emitted[2].requestId, cancelled: true })
+    await otherHostname
   })
 
   it('offers only one-shot approval when a WebFetch hostname cannot be verified', () => {
@@ -1213,7 +1208,7 @@ describe('ACP permission broker', () => {
     expect(emitted[0].options).not.toContainEqual(expect.objectContaining({ scope: 'session' }))
   })
 
-  it('scopes WebFetch grants from the adapter title when raw input is absent', async () => {
+  it('keeps title-derived WebFetch requests Once-only', async () => {
     const emitted: EmittedPermissionRequest[] = []
     const broker = new AcpPermissionBroker((request) => emitted.push(request))
 
@@ -1226,14 +1221,13 @@ describe('ACP permission broker', () => {
 
     broker.respond({
       requestId: emitted[0].requestId,
-      optionId: getSessionOptionId(emitted[0])
+      optionId: 'allow-once'
     })
     await permission
 
     expect(emitted[0].title).toBe('Fetch https://www.ncbi.nlm.nih.gov/research/')
-    expect(broker.listGrants('session-1')).toEqual([
-      expect.objectContaining({ categoryKey: 'webfetch:www.ncbi.nlm.nih.gov' })
-    ])
+    expect(emitted[0].options.map((option) => option.scope).filter(Boolean)).toEqual(['once'])
+    expect(broker.listGrants('session-1')).toEqual([])
   })
 
   it('shares MCP grants across hyphenated and underscore-sanitized framework identities', async () => {

@@ -2,6 +2,7 @@ import { describe, it, expect, vi } from 'vitest'
 import { ConnectorService } from './service'
 import { ParserEngine } from './engine'
 import type { SpecialistProfileView } from '../../shared/specialist'
+import type { CustomMcpServerConfig } from './mcp-client-manager'
 
 const internal = { origin: 'internal' as const }
 
@@ -103,7 +104,7 @@ describe('ConnectorService', () => {
     const fetchImpl = vi
       .fn()
       .mockResolvedValue(jsonRes({ PropertyTable: { Properties: [{ CID: 1 }] } }))
-    const requestApproval = vi.fn().mockResolvedValue('allow')
+    const requestApproval = vi.fn().mockResolvedValue('once')
     const svc = new ConnectorService({
       engine: new ParserEngine({ fetchImpl }),
       getConnectors: () => ({
@@ -119,7 +120,8 @@ describe('ConnectorService', () => {
     expect(requestApproval).toHaveBeenCalledWith({
       connector: 'chemistry',
       method: 'pubchem_get_compounds',
-      args: { cids: [1] }
+      args: { cids: [1] },
+      availableScopes: ['once']
     })
   })
 
@@ -131,7 +133,7 @@ describe('ConnectorService', () => {
     const fetchImpl = vi
       .fn()
       .mockResolvedValue(jsonRes({ PropertyTable: { Properties: [{ CID: 1 }] } }))
-    const requestApproval = vi.fn().mockResolvedValue('allow')
+    const requestApproval = vi.fn().mockResolvedValue('once')
     const svc = new ConnectorService({
       engine: new ParserEngine({ fetchImpl }),
       getConnectors: () => ({
@@ -154,8 +156,79 @@ describe('ConnectorService', () => {
       connector: 'chemistry',
       method: 'pubchem_get_compounds',
       args: { cids: [1] },
-      sessionId: 'session-42'
+      sessionId: 'session-42',
+      availableScopes: ['once']
     })
+  })
+
+  it('does not ask again when the unified Broker resolves a matching Connector grant', async () => {
+    const fetchImpl = vi
+      .fn()
+      .mockResolvedValue(jsonRes({ PropertyTable: { Properties: [{ CID: 1 }] } }))
+    const requestApproval = vi.fn().mockResolvedValue('once')
+    const resolve = vi.fn().mockResolvedValue({ matchedScope: 'project' })
+    const svc = new ConnectorService({
+      engine: new ParserEngine({ fetchImpl }),
+      getConnectors: () => ({
+        enabledIds: [],
+        autoAllowIds: [],
+        askToolIds: ['chemistry/pubchem_get_compounds']
+      }),
+      resolveApiKey: () => undefined,
+      requestApproval,
+      permissionGrantRegistry: { resolve } as never
+    })
+
+    await svc.call(
+      'chemistry',
+      'pubchem_get_compounds',
+      { cids: [1] },
+      { sessionId: 'session-1', projectId: 'project-1' }
+    )
+
+    expect(resolve).toHaveBeenCalledWith(
+      { kind: 'mcp_tool', key: 'mcp:chemistry/pubchem_get_compounds' },
+      { sessionId: 'session-1', projectId: 'project-1' }
+    )
+    expect(requestApproval).not.toHaveBeenCalled()
+  })
+
+  it('commits a selected Session scope before releasing an ask-flagged Connector call', async () => {
+    const fetchImpl = vi
+      .fn()
+      .mockResolvedValue(jsonRes({ PropertyTable: { Properties: [{ CID: 1 }] } }))
+    const requestApproval = vi.fn().mockResolvedValue('session')
+    const resolve = vi.fn().mockResolvedValue(undefined)
+    const remember = vi.fn().mockResolvedValue(undefined)
+    const svc = new ConnectorService({
+      engine: new ParserEngine({ fetchImpl }),
+      getConnectors: () => ({
+        enabledIds: [],
+        autoAllowIds: [],
+        askToolIds: ['chemistry/pubchem_get_compounds']
+      }),
+      resolveApiKey: () => undefined,
+      requestApproval,
+      permissionGrantRegistry: { resolve, remember } as never
+    })
+
+    await svc.call(
+      'chemistry',
+      'pubchem_get_compounds',
+      { cids: [1] },
+      { sessionId: 'session-1', projectId: 'project-1' }
+    )
+
+    expect(requestApproval).toHaveBeenCalledWith(
+      expect.objectContaining({
+        availableScopes: ['once', 'session', 'project', 'global']
+      })
+    )
+    expect(remember).toHaveBeenCalledWith({
+      capability: { kind: 'mcp_tool', key: 'mcp:chemistry/pubchem_get_compounds' },
+      scope: { kind: 'session', projectId: 'project-1', sessionId: 'session-1' }
+    })
+    expect(fetchImpl).toHaveBeenCalledOnce()
   })
 
   it('rejects an ask-flagged tool when the user denies approval', async () => {
@@ -174,6 +247,24 @@ describe('ConnectorService', () => {
     await expect(
       svc.call('chemistry', 'pubchem_get_compounds', { cids: [1] }, internal)
     ).rejects.toThrow(/denied by user/)
+    expect(fetchImpl).not.toHaveBeenCalled()
+  })
+
+  it('fails closed when a required approval has no prompt transport', async () => {
+    const fetchImpl = vi.fn()
+    const svc = new ConnectorService({
+      engine: new ParserEngine({ fetchImpl }),
+      getConnectors: () => ({
+        enabledIds: [],
+        autoAllowIds: [],
+        askToolIds: ['chemistry/pubchem_get_compounds']
+      }),
+      resolveApiKey: () => undefined
+    })
+
+    await expect(
+      svc.call('chemistry', 'pubchem_get_compounds', { cids: [1] }, internal)
+    ).rejects.toThrow(/approval unavailable/)
     expect(fetchImpl).not.toHaveBeenCalled()
   })
 
@@ -212,10 +303,29 @@ describe('ConnectorService', () => {
   })
 
   describe('custom MCP servers', () => {
+    const manager = (
+      call: ReturnType<typeof vi.fn>,
+      tools = ['do_thing']
+    ): {
+      call: (
+        config: CustomMcpServerConfig,
+        method: string,
+        args: Record<string, unknown>
+      ) => Promise<unknown>
+      listTools: (config: CustomMcpServerConfig) => Promise<Array<{ name: string }>>
+    } => ({
+      call: call as unknown as (
+        config: CustomMcpServerConfig,
+        method: string,
+        args: Record<string, unknown>
+      ) => Promise<unknown>,
+      listTools: vi.fn().mockResolvedValue(tools.map((name) => ({ name })))
+    })
+
     it('routes a call to a custom server through mcpClientManager.call', async () => {
       const call = vi.fn().mockResolvedValue({ ok: true })
       const svc = new ConnectorService({
-        mcpClientManager: { call },
+        mcpClientManager: manager(call),
         getConnectors: () => ({
           enabledIds: [],
           autoAllowIds: [],
@@ -254,7 +364,7 @@ describe('ConnectorService', () => {
     it('routes a call to a remote (streamable_http) custom server with its url/headers', async () => {
       const call = vi.fn().mockResolvedValue({ ok: true })
       const svc = new ConnectorService({
-        mcpClientManager: { call },
+        mcpClientManager: manager(call),
         getConnectors: () => ({
           enabledIds: [],
           autoAllowIds: [],
@@ -292,7 +402,7 @@ describe('ConnectorService', () => {
     it('rejects a disabled custom server', async () => {
       const call = vi.fn()
       const svc = new ConnectorService({
-        mcpClientManager: { call },
+        mcpClientManager: manager(call),
         getConnectors: () => ({
           enabledIds: [],
           autoAllowIds: [],
@@ -308,21 +418,33 @@ describe('ConnectorService', () => {
 
     it('rejects a blocked tool on a custom server', async () => {
       const call = vi.fn()
+      const listTools = vi.fn().mockResolvedValue([{ name: 'dangerous' }])
+      const resolve = vi.fn().mockResolvedValue({ matchedScope: 'global' })
+      const requestApproval = vi.fn().mockResolvedValue('once')
       const svc = new ConnectorService({
-        mcpClientManager: { call },
+        mcpClientManager: {
+          call: call as never,
+          listTools
+        },
         getConnectors: () => ({
           enabledIds: [],
-          autoAllowIds: [],
+          autoAllowIds: ['myserver'],
+          askToolIds: ['myserver/dangerous'],
           blockedToolIds: ['myserver/dangerous'],
           customMcpServers: [
             { id: 'srv-1', name: 'myserver', transport: 'stdio', command: 'npx', enabled: true }
           ]
         }),
-        resolveApiKey: () => undefined
+        resolveApiKey: () => undefined,
+        permissionGrantRegistry: { resolve } as never,
+        requestApproval
       })
       await expect(svc.call('myserver', 'dangerous', {}, internal)).rejects.toThrow(
         /blocked by policy/
       )
+      expect(listTools).not.toHaveBeenCalled()
+      expect(resolve).not.toHaveBeenCalled()
+      expect(requestApproval).not.toHaveBeenCalled()
       expect(call).not.toHaveBeenCalled()
     })
 
@@ -336,9 +458,9 @@ describe('ConnectorService', () => {
 
     it('threads context.sessionId through to requestApproval for custom MCP tools', async () => {
       const call = vi.fn().mockResolvedValue({ ok: true })
-      const requestApproval = vi.fn().mockResolvedValue('allow')
+      const requestApproval = vi.fn().mockResolvedValue('once')
       const svc = new ConnectorService({
-        mcpClientManager: { call },
+        mcpClientManager: manager(call),
         getConnectors: () => ({
           enabledIds: [],
           autoAllowIds: [],
@@ -362,8 +484,164 @@ describe('ConnectorService', () => {
         connector: 'myserver',
         method: 'do_thing',
         args: { x: 1 },
-        sessionId: 'session-99'
+        sessionId: 'session-99',
+        availableScopes: ['once']
       })
+    })
+
+    it('does not connect an Ask-policy custom server before approval', async () => {
+      const call = vi.fn()
+      const listTools = vi.fn().mockResolvedValue([{ name: 'do_thing' }])
+      const requestApproval = vi.fn().mockResolvedValue('deny')
+      const svc = new ConnectorService({
+        mcpClientManager: { call: call as never, listTools },
+        getConnectors: () => ({
+          enabledIds: [],
+          autoAllowIds: [],
+          askToolIds: ['myserver/do_thing'],
+          customMcpServers: [
+            {
+              id: 'srv-1',
+              name: 'myserver',
+              transport: 'streamable_http',
+              url: 'https://private.example/mcp',
+              headers: { Authorization: 'Bearer secret' },
+              enabled: true
+            }
+          ]
+        }),
+        resolveApiKey: () => undefined,
+        requestApproval
+      })
+
+      await expect(svc.call('myserver', 'do_thing', {}, internal)).rejects.toThrow(/denied by user/)
+
+      expect(requestApproval).toHaveBeenCalledOnce()
+      expect(listTools).not.toHaveBeenCalled()
+      expect(call).not.toHaveBeenCalled()
+    })
+
+    it('persists a broad custom MCP grant only after validating the approved method', async () => {
+      const events: string[] = []
+      const requestApproval = vi.fn(async () => {
+        events.push('approval')
+        return 'project' as const
+      })
+      const listTools = vi.fn(async () => {
+        events.push('listTools')
+        return [{ name: 'do_thing' }]
+      })
+      const remember = vi.fn(async () => {
+        events.push('remember')
+        return {}
+      })
+      const call = vi.fn(async () => {
+        events.push('call')
+        return { ok: true }
+      })
+      const svc = new ConnectorService({
+        mcpClientManager: { call: call as never, listTools },
+        getConnectors: () => ({
+          enabledIds: [],
+          autoAllowIds: [],
+          askToolIds: ['myserver/do_thing'],
+          customMcpServers: [
+            {
+              id: 'srv-stable',
+              name: 'myserver',
+              transport: 'stdio',
+              command: 'npx',
+              enabled: true
+            }
+          ]
+        }),
+        resolveApiKey: () => undefined,
+        requestApproval,
+        permissionGrantRegistry: { resolve: vi.fn(), remember } as never
+      })
+
+      await expect(
+        svc.call(
+          'myserver',
+          'do_thing',
+          { x: 1 },
+          { origin: 'internal', sessionId: 'session-1', projectId: 'project-1' }
+        )
+      ).resolves.toEqual({ ok: true })
+
+      expect(events).toEqual(['approval', 'listTools', 'remember', 'call'])
+      expect(remember).toHaveBeenCalledWith({
+        capability: { kind: 'mcp_tool', key: 'mcp:srv-stable/do_thing' },
+        scope: { kind: 'project', projectId: 'project-1' }
+      })
+    })
+
+    it('rejects a pending approval when the custom server security configuration changes', async () => {
+      const original = {
+        id: 'srv-stable',
+        name: 'myserver',
+        transport: 'stdio' as const,
+        command: 'old-command',
+        enabled: true
+      }
+      const replacement = {
+        ...original,
+        command: 'new-command'
+      }
+      let current = original
+      let approve: ((decision: 'global') => void) | undefined
+      const requestApproval = vi.fn(
+        () =>
+          new Promise<'global' | 'once'>((resolve) => {
+            approve = (decision) => resolve(decision)
+          })
+      )
+      const remember = vi.fn()
+      const call = vi.fn()
+      const listTools = vi.fn().mockResolvedValue([{ name: 'do_thing' }])
+      const svc = new ConnectorService({
+        mcpClientManager: { call: call as never, listTools },
+        getConnectors: () => ({
+          enabledIds: [],
+          autoAllowIds: [],
+          askToolIds: ['myserver/do_thing'],
+          customMcpServers: [current]
+        }),
+        resolveApiKey: () => undefined,
+        requestApproval,
+        permissionGrantRegistry: { resolve: vi.fn(), remember } as never
+      })
+
+      const pendingCall = svc.call(
+        'myserver',
+        'do_thing',
+        {},
+        { origin: 'internal', sessionId: 'session-1', projectId: 'project-1' }
+      )
+      await vi.waitFor(() => expect(requestApproval).toHaveBeenCalledOnce())
+
+      const guard = svc.beginCustomServerSecurityChange(original.id)
+      current = replacement
+      guard.commit(replacement)
+      approve?.('global')
+
+      await expect(pendingCall).rejects.toThrow('connector_configuration_changed')
+      expect(listTools).not.toHaveBeenCalled()
+      expect(remember).not.toHaveBeenCalled()
+      expect(call).not.toHaveBeenCalled()
+
+      requestApproval.mockResolvedValueOnce('once')
+      call.mockResolvedValueOnce({ ok: true })
+      await expect(
+        svc.call(
+          'myserver',
+          'do_thing',
+          {},
+          { origin: 'internal', sessionId: 'session-1', projectId: 'project-1' }
+        )
+      ).resolves.toEqual({ ok: true })
+      expect(listTools).toHaveBeenCalledOnce()
+      expect(call).toHaveBeenCalledOnce()
     })
 
     it('fails closed after a custom connector cannot authenticate or start, without exposing its error', async () => {
@@ -373,7 +651,7 @@ describe('ConnectorService', () => {
           new Error('401 Unauthorized for https://private.example with Bearer SECRET')
         )
       const svc = new ConnectorService({
-        mcpClientManager: { call },
+        mcpClientManager: manager(call, ['lookup']),
         getConnectors: () => ({
           enabledIds: [],
           autoAllowIds: [],
@@ -383,7 +661,7 @@ describe('ConnectorService', () => {
               name: 'secured-server',
               transport: 'streamable_http',
               url: 'https://private.example/mcp',
-              enabled: false
+              enabled: true
             }
           ]
         }),
@@ -423,6 +701,82 @@ describe('ConnectorService', () => {
           expect(error.message).not.toContain('SECRET')
           expect(error.message).not.toContain('private.example')
         })
+    })
+
+    it('resolves remembered grants by immutable custom server id after a rename', async () => {
+      const call = vi.fn().mockResolvedValue({ ok: true })
+      const requestApproval = vi.fn().mockResolvedValue('once')
+      const resolve = vi.fn().mockResolvedValue({ matchedScope: 'session' })
+      const svc = new ConnectorService({
+        mcpClientManager: manager(call),
+        getConnectors: () => ({
+          enabledIds: [],
+          autoAllowIds: [],
+          // The editable name remains a supported policy alias while the grant uses immutable id.
+          askToolIds: ['renamed-server/do_thing'],
+          customMcpServers: [
+            {
+              id: 'srv-stable',
+              name: 'renamed-server',
+              transport: 'stdio',
+              command: 'npx',
+              enabled: true
+            }
+          ]
+        }),
+        resolveApiKey: () => undefined,
+        requestApproval,
+        permissionGrantRegistry: { resolve } as never
+      })
+
+      await svc.call(
+        'renamed-server',
+        'do_thing',
+        { x: 1 },
+        { origin: 'internal', sessionId: 'session-1', projectId: 'project-1' }
+      )
+
+      expect(resolve).toHaveBeenCalledWith(
+        { kind: 'mcp_tool', key: 'mcp:srv-stable/do_thing' },
+        {
+          origin: 'internal',
+          sessionId: 'session-1',
+          projectId: 'project-1'
+        }
+      )
+      expect(requestApproval).not.toHaveBeenCalled()
+    })
+
+    it('does not remember a broad approval for an unregistered custom method', async () => {
+      const call = vi.fn()
+      const requestApproval = vi.fn().mockResolvedValue('global')
+      const remember = vi.fn()
+      const svc = new ConnectorService({
+        mcpClientManager: manager(call, ['registered_method']),
+        getConnectors: () => ({
+          enabledIds: [],
+          autoAllowIds: [],
+          askToolIds: ['myserver/future_method'],
+          customMcpServers: [
+            { id: 'srv-1', name: 'myserver', transport: 'stdio', command: 'npx', enabled: true }
+          ]
+        }),
+        resolveApiKey: () => undefined,
+        requestApproval,
+        permissionGrantRegistry: { resolve: vi.fn(), remember } as never
+      })
+
+      await expect(
+        svc.call(
+          'myserver',
+          'future_method',
+          {},
+          { origin: 'internal', sessionId: 'session-1', projectId: 'project-1' }
+        )
+      ).rejects.toThrow(/unknown tool/)
+      expect(requestApproval).toHaveBeenCalledOnce()
+      expect(remember).not.toHaveBeenCalled()
+      expect(call).not.toHaveBeenCalled()
     })
   })
 })

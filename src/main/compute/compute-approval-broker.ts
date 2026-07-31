@@ -1,17 +1,21 @@
 import type { ComputeApprovalRequest, ComputeApprovalDecision } from '../../shared/compute'
+import type { ComputePermissionGrantAdapter } from './permission-grant-adapter'
 
 // Re-export so callers that import from this module don't have to reference shared/compute directly.
 export type { ComputeApprovalDecision }
 
 // Context passed with each approval request so the broker can check and record grants.
 export type ComputeApprovalContext = {
-  // Unique identifier for the current session (process lifetime). Used as the key for
-  // conversation-scope in-memory grants. A new process → no conversation grants.
+  // Stable logical Session identifier. The durable adapter persists it across process restarts;
+  // the legacy fallback below keeps the former in-memory behavior for isolated callers and tests.
   sessionId: string
   // Project identifier used for project-scope persistent grants.
   projectId: string
   // The compute operation being approved (e.g. 'call_command').
   operation: string
+  // Immutable ComputeHost row id captured with the request. Provider ids are reusable, so this
+  // distinguishes a deleted host from a later host created with the same SSH alias.
+  ownerId?: string
 }
 
 type ComputeApprovalBrokerDeps = {
@@ -24,6 +28,7 @@ type ComputeApprovalBrokerDeps = {
   // Injectable timer for tests.
   setTimer?: (fn: () => void, ms: number) => ReturnType<typeof setTimeout>
   clearTimer?: (handle: ReturnType<typeof setTimeout>) => void
+  permissionGrants?: ComputePermissionGrantAdapter
   // Optional: check whether a project-scope grant exists for (projectId, operation, providerId).
   // Return true → skip the approval card with 'project' decision.
   checkProjectGrant?: (grant: {
@@ -37,16 +42,17 @@ type ComputeApprovalBrokerDeps = {
     operation: string
     providerId: string
   }) => Promise<void>
+  // Revalidates the immutable host identity immediately before a remembered decision is persisted.
+  isProviderCurrent?: (owner: { providerId: string; ownerId?: string }) => Promise<boolean>
 }
 
 // Bridges the main-process compute gate to the renderer approval card. Holds the call_command
 // open (a Promise) while the user decides; auto-denies after timeoutMs to prevent indefinite hangs.
 // Follows the same promise + broadcast + IPC-respond pattern as ApprovalBroker in connectors.
 //
-// Issue 05 extends the issue-04 base with three approval scopes (design.md §6):
-//   - 'once':         no memory; card shown every time
-//   - 'conversation': in-memory grants map per (sessionId, operation, providerId); cleared on restart
-//   - 'project':      persisted via settings JSON per (projectId, operation, providerId)
+// The wire protocol retains `conversation`, but the production adapter translates it to a durable
+// Session grant. Project and Global use the same Registry; settings.json is read only for lazy legacy
+// Project migration. Callers without the adapter retain the older in-memory/test hooks below.
 //
 // Use request() for legacy callers that do not supply context (only 'once'/'deny' can result).
 // Use requestWithContext() to enable grant memory.
@@ -56,11 +62,13 @@ export class ComputeApprovalBroker {
     {
       resolve: (decision: ComputeApprovalDecision) => void
       timer: ReturnType<typeof setTimeout>
+      providerId: string
     }
   >()
 
-  // Conversation-scope in-memory grants. Key = `${sessionId}:${operation}:${providerId}`.
-  // Scoped to this broker instance (= one app session). A restart creates a new broker → no grants.
+  private readonly providerGenerations = new Map<string, number>()
+
+  // Legacy fallback used only when no durable adapter is supplied.
   private readonly conversationGrants = new Set<string>()
 
   private readonly timeoutMs: number
@@ -80,10 +88,11 @@ export class ComputeApprovalBroker {
     context?: ComputeApprovalContext
   ): Promise<ComputeApprovalDecision> {
     const id = this.deps.generateId()
+    const providerId = info.provider_id
 
     return new Promise<ComputeApprovalDecision>((resolve) => {
       const timer = this.setTimer(() => this.settle(id, 'deny'), this.timeoutMs)
-      this.pending.set(id, { resolve, timer })
+      this.pending.set(id, { resolve, timer, providerId })
       this.deps.broadcast({ id, ...info }, context)
     })
   }
@@ -96,8 +105,25 @@ export class ComputeApprovalBroker {
   ): Promise<ComputeApprovalDecision> {
     const { sessionId, projectId, operation } = ctx
     const providerId = info.provider_id
+    const providerGeneration = this.providerGenerations.get(providerId) ?? 0
 
-    // ── project grant check (persistent) ──────────────────────────────────────────
+    if (this.deps.permissionGrants) {
+      const durableScope = await this.deps.permissionGrants.resolve({
+        sessionId,
+        projectId,
+        operation,
+        providerId
+      })
+      if (durableScope) {
+        if (!(await this.isProviderCurrent(providerId, ctx.ownerId, providerGeneration))) {
+          return 'deny'
+        }
+        if (durableScope === 'session') return 'conversation'
+        return durableScope
+      }
+    }
+
+    // ── legacy project grant check (persistent) ───────────────────────────────────
     if (this.deps.checkProjectGrant) {
       const hasProject = await this.deps.checkProjectGrant({ projectId, operation, providerId })
       if (hasProject) return 'project'
@@ -110,8 +136,24 @@ export class ComputeApprovalBroker {
     // ── no grant — show approval card ─────────────────────────────────────────────
     const decision = await this.request(info, ctx)
 
+    if ((this.providerGenerations.get(providerId) ?? 0) !== providerGeneration) return 'deny'
+
+    const remembersDecision =
+      decision === 'conversation' || decision === 'project' || decision === 'global'
+    if (
+      remembersDecision &&
+      !(await this.isProviderCurrent(providerId, ctx.ownerId, providerGeneration))
+    ) {
+      return 'deny'
+    }
+
     // Record grant if applicable.
-    if (decision === 'conversation') {
+    if (this.deps.permissionGrants) {
+      await this.deps.permissionGrants.remember(
+        { sessionId, projectId, operation, providerId },
+        decision
+      )
+    } else if (decision === 'conversation') {
       this.conversationGrants.add(convKey)
     } else if (decision === 'project' && this.deps.saveProjectGrant) {
       await this.deps.saveProjectGrant({ projectId, operation, providerId })
@@ -123,6 +165,33 @@ export class ComputeApprovalBroker {
   // Called from the IPC handler when the renderer responds. Unknown ids are ignored.
   respond(id: string, decision: ComputeApprovalDecision): void {
     this.settle(id, decision)
+  }
+
+  // Host deletion begins by advancing its generation and denying every approval card that was
+  // created for the old owner. A later host may reuse providerId, but it cannot reuse these calls.
+  invalidateProvider(providerId: string): void {
+    this.providerGenerations.set(providerId, (this.providerGenerations.get(providerId) ?? 0) + 1)
+    for (const key of this.conversationGrants) {
+      if (key.endsWith(`:${providerId}`)) this.conversationGrants.delete(key)
+    }
+    for (const [id, entry] of this.pending) {
+      if (entry.providerId === providerId) this.settle(id, 'deny')
+    }
+  }
+
+  private async isProviderCurrent(
+    providerId: string,
+    ownerId: string | undefined,
+    expectedGeneration: number
+  ): Promise<boolean> {
+    if ((this.providerGenerations.get(providerId) ?? 0) !== expectedGeneration) return false
+    if (
+      this.deps.isProviderCurrent &&
+      !(await this.deps.isProviderCurrent({ providerId, ownerId }))
+    ) {
+      return false
+    }
+    return (this.providerGenerations.get(providerId) ?? 0) === expectedGeneration
   }
 
   private settle(id: string, decision: ComputeApprovalDecision): void {

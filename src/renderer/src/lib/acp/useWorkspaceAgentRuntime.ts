@@ -1607,10 +1607,10 @@ const useWorkspaceAgentRuntime = (): {
   const respondToPermission = useCallback(
     async (requestId: string, optionId?: string): Promise<void> => {
       const request = runtime.state.pendingPermissions.find((item) => item.requestId === requestId)
-      const snapshot = await runtime.respondToPermission(requestId, optionId)
-
-      if (!snapshot && request) {
-        useSessionStore.getState().failRun(request.sessionId, 'Permission response failed')
+      try {
+        await runtime.respondToPermission(requestId, optionId)
+      } catch (error) {
+        if (request) useSessionStore.getState().failRun(request.sessionId, getErrorMessage(error))
       }
     },
     [runtime]

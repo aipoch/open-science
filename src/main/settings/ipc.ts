@@ -48,7 +48,11 @@ import {
   type ValidateProviderRequest
 } from '../../shared/settings'
 import type { ResolvedReasoningEffort } from '../../shared/reasoning-effort'
-import { createDefaultSettingsService, SettingsService } from './service'
+import {
+  createDefaultSettingsService,
+  SettingsService,
+  type CustomServerSecurityChangeGuard
+} from './service'
 import { createLogger } from '../logger'
 import { broadcastToRenderers } from '../renderer-broadcast'
 
@@ -73,6 +77,13 @@ export type SettingsIpcOptions = {
   onSkillsChanged?: () => void
   // Called after a connector/tool/credential change so bundled + custom skill docs re-sync.
   onConnectorsChanged?: () => void
+  // Hard owner deletion prunes grants after the settings mutation succeeds.
+  onCustomServerRemoved?: (serverId: string) => Promise<void>
+  // Security-sensitive endpoint/executable edits revoke remembered authority before the new
+  // configuration is persisted. Failure leaves the old server configuration in place.
+  onCustomServerSecurityChanged?: (
+    serverId: string
+  ) => Promise<CustomServerSecurityChangeGuard | void>
   // Called after the app-icon variant changes so the main process applies it live to the window and
   // dock/taskbar. Absent (e.g. web mode) means only the persisted value changes.
   onAppIconVariantChanged?: (variant: AppIconVariant) => void
@@ -95,6 +106,8 @@ const registerSettingsIpcHandlers = ({
   onReasoningEffortChanged,
   onSkillsChanged,
   onConnectorsChanged,
+  onCustomServerRemoved,
+  onCustomServerSecurityChanged,
   onAppIconVariantChanged,
   listAppIconPreviews
 }: SettingsIpcOptions = {}): void => {
@@ -568,7 +581,11 @@ const registerSettingsIpcHandlers = ({
   ipcMainHandle(
     'settings:remove-custom-server',
     async (_event, request: RemoveCustomServerRequest) => {
+      const serverId = (await service.getConnectors())?.customMcpServers?.find(
+        (server) => server.id === request.id
+      )?.id
       const snapshot = await service.removeCustomServer(request)
+      if (serverId) await onCustomServerRemoved?.(serverId)
       onConnectorsChanged?.()
       return snapshot
     }
@@ -576,7 +593,7 @@ const registerSettingsIpcHandlers = ({
   ipcMainHandle(
     'settings:update-custom-server',
     async (_event, request: UpdateCustomServerRequest) => {
-      const snapshot = await service.updateCustomServer(request)
+      const snapshot = await service.updateCustomServer(request, onCustomServerSecurityChanged)
       onConnectorsChanged?.()
       return snapshot
     }

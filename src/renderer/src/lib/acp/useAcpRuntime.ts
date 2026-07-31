@@ -81,10 +81,7 @@ const useAcpRuntime = (): {
     resumeFallback?: AcpPromptRequest['resumeFallback'],
     provenanceContext?: AcpPromptRequest['provenanceContext']
   ) => Promise<AcpStateSnapshot>
-  respondToPermission: (
-    requestId: string,
-    optionId?: string
-  ) => Promise<AcpStateSnapshot | undefined>
+  respondToPermission: (requestId: string, optionId?: string) => Promise<AcpStateSnapshot>
   setPermissionProfile: (
     sessionId: string,
     profile: PermissionProfileId
@@ -321,16 +318,23 @@ const useAcpRuntime = (): {
 
   // Converts a UI permission click into the response shape expected by IPC.
   const respondToPermission = useCallback(
-    (requestId: string, optionId?: string) => {
+    async (requestId: string, optionId?: string): Promise<AcpStateSnapshot> => {
       const response: AcpPermissionResponse = {
         requestId,
         optionId,
         cancelled: !optionId
       }
-
-      return runSnapshotAction(undefined, () => window.api.acp.respondToPermission(response))
+      setActionError(null)
+      try {
+        const snapshot = await window.api.acp.respondToPermission(response)
+        setState(snapshot)
+        return snapshot
+      } catch (error) {
+        setActionError(getErrorMessage(error))
+        throw error
+      }
     },
-    [runSnapshotAction]
+    []
   )
 
   const setPermissionProfile = useCallback(

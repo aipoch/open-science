@@ -79,7 +79,7 @@ Key implemented capabilities, mapped to the codebase:
 - **Notebook execution kernel.** One persistent Python process per notebook session, bridged over stdin/stdout, with per-run history (`run.json`) and write-locking to prevent concurrent corruption.
 - **Artifacts and provenance.** An in-process MCP server (`open-science-artifacts`) exposes a `write_artifact_file` tool the agent calls with either inline content or a local file path. Each save creates an immutable, session-scoped artifact version with available producer code, execution history, input references, environment inventory, message context, and reviewer evidence.
 - **File preview.** Renderers for CSV, FASTA, HTML, image, JSON, Markdown, and plain text, plus a read-only notebook preview showing code and execution output side by side, all inside a dedicated preview workbench.
-- **Permissions.** An `AcpPermissionBroker` intercepts tool-call permission requests from the agent runtime and surfaces them to the renderer for explicit approval before the call proceeds.
+- **Permissions.** An `AcpPermissionBroker` intercepts tool-call permission requests from the agent runtime, resolves matching app-owned remembered grants, and surfaces unmatched requests to the renderer for explicit approval before the call proceeds.
 - **Attachments.** File uploads are threaded into the agent's prompt context.
 
 ### Provenance Guarantee Level

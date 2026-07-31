@@ -258,6 +258,109 @@ describe('SettingsService connectors', () => {
     expect(stored?.env).toEqual({ TOKEN: 'keep-me' })
   })
 
+  it('invalidates remembered authority before persisting a security-sensitive server edit', async () => {
+    const added = await service.addCustomServer({
+      name: 'mutable-endpoint',
+      transport: 'stdio',
+      command: 'old-command',
+      args: ['serve']
+    })
+    const id = added.customServers[0].id
+    const commit = vi.fn()
+    const rollback = vi.fn()
+    const invalidate = vi.fn(async (serverId: string) => {
+      const stored = (await service.getConnectors())?.customMcpServers?.find(
+        (server) => server.id === serverId
+      )
+      expect(stored?.command).toBe('old-command')
+      return { commit, rollback }
+    })
+
+    await service.updateCustomServer(
+      {
+        id,
+        transport: 'streamable_http',
+        url: 'https://new.example/mcp',
+        headers: { Authorization: 'Bearer replacement' }
+      },
+      invalidate
+    )
+
+    expect(invalidate).toHaveBeenCalledOnce()
+    expect(invalidate).toHaveBeenCalledWith(id)
+    expect(commit).toHaveBeenCalledOnce()
+    expect(commit.mock.calls[0]?.[0]).toMatchObject({ id, url: 'https://new.example/mcp' })
+    expect(rollback).not.toHaveBeenCalled()
+    const stored = (await service.getConnectors())?.customMcpServers?.find(
+      (server) => server.id === id
+    )
+    expect(stored?.transport).toBe('streamable_http')
+    expect(stored?.url).toBe('https://new.example/mcp')
+  })
+
+  it('keeps grants for display-only edits and fails closed when invalidation fails', async () => {
+    const added = await service.addCustomServer({
+      name: 'stable-endpoint',
+      description: 'Before',
+      transport: 'stdio',
+      command: 'stable-command'
+    })
+    const id = added.customServers[0].id
+    const invalidate = vi.fn().mockResolvedValue(undefined)
+
+    await service.updateCustomServer(
+      {
+        id,
+        description: 'After',
+        transport: 'stdio',
+        command: 'stable-command'
+      },
+      invalidate
+    )
+    expect(invalidate).not.toHaveBeenCalled()
+
+    invalidate.mockRejectedValueOnce(new Error('grant cleanup failed'))
+    await expect(
+      service.updateCustomServer(
+        {
+          id,
+          description: 'After',
+          transport: 'stdio',
+          command: 'replacement-command'
+        },
+        invalidate
+      )
+    ).rejects.toThrow('grant cleanup failed')
+
+    const stored = (await service.getConnectors())?.customMcpServers?.find(
+      (server) => server.id === id
+    )
+    expect(stored?.description).toBe('After')
+    expect(stored?.command).toBe('stable-command')
+  })
+
+  it('rolls back the custom-server security barrier when persistence fails', async () => {
+    const added = await service.addCustomServer({
+      name: 'rollback-endpoint',
+      transport: 'stdio',
+      command: 'old-command'
+    })
+    const id = added.customServers[0].id
+    const commit = vi.fn()
+    const rollback = vi.fn()
+    vi.spyOn(repository, 'updateCustomServer').mockRejectedValueOnce(new Error('write failed'))
+
+    await expect(
+      service.updateCustomServer({ id, transport: 'stdio', command: 'new-command' }, async () => ({
+        commit,
+        rollback
+      }))
+    ).rejects.toThrow('write failed')
+
+    expect(commit).not.toHaveBeenCalled()
+    expect(rollback).toHaveBeenCalledOnce()
+  })
+
   it('rejects editing an unknown custom server', async () => {
     await expect(
       service.updateCustomServer({ id: 'nope', transport: 'stdio', command: 'x' })

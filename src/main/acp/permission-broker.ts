@@ -6,18 +6,35 @@ import type {
   AcpPermissionRequest,
   AcpPermissionResponse
 } from '../../shared/acp'
+import type {
+  PermissionCapability,
+  PermissionGrantRecord,
+  PermissionGrantScope
+} from '../../shared/permission-grants'
 import { extractProviderToolName } from './runtime-events'
 import {
   isMcpToolName,
   resolveMcpProviderLeafIdentity,
   resolveAutomaticPermission,
+  trustedMcpToolIdentity,
   type PermissionPolicyContext
 } from './permission-policy'
-import { resolveCanonicalMcpToolIdentity } from '../agent-framework/app-mcp-names'
+import {
+  canonicalAppMcpServerName,
+  resolveCanonicalMcpToolIdentity
+} from '../agent-framework/app-mcp-names'
+import {
+  capabilityFromLegacyCategory,
+  categoryFromTrustedToolName
+} from '../permission-grants/capability'
+import { projectPermissionGrantSnapshot } from '../permission-grants/catalog'
+import type { PermissionGrantRegistry } from '../permission-grants/registry'
 
 type PendingPermission = {
   request: AcpPermissionRequest
   categoryKey?: string
+  capability?: PermissionCapability
+  projectId?: string
   providerAllowOnceOptionId?: string
   resolve: (response: RequestPermissionResponse) => void
 }
@@ -65,6 +82,8 @@ const ALLOW_ALWAYS_OPTION_KIND = 'allow_always'
 const ALLOW_ONCE_OPTION_KIND = 'allow_once'
 const REJECT_ALWAYS_OPTION_KIND = 'reject_always'
 const SESSION_ALLOW_OPTION_ID_PREFIX = 'open-science:allow-session:'
+const PROJECT_ALLOW_OPTION_ID_PREFIX = 'open-science:allow-project:'
+const GLOBAL_ALLOW_OPTION_ID_PREFIX = 'open-science:allow-global:'
 const FILE_TOOL_KINDS = new Set(['read', 'edit', 'delete', 'move'])
 const FILE_PROVIDER_TOOLS = new Set(['Read', 'Write', 'Edit', 'MultiEdit', 'NotebookEdit'])
 const NOTEBOOK_SERVER = 'open-science-notebook'
@@ -110,7 +129,28 @@ const resolveMcpToolIdentity = (
   resolveCanonicalMcpToolIdentity(name, mcpServerNames) ??
   resolveMcpProviderLeafIdentity(name, mcpServerNames)
 
+const resolveTrustedMcpToolIdentity = (
+  params: RequestPermissionRequest,
+  mcpServerNames: readonly string[]
+): string | undefined => {
+  const identity = trustedMcpToolIdentity(params)
+  const separator = identity?.indexOf('/') ?? -1
+  if (!identity || separator <= 0 || separator === identity.length - 1) return undefined
+
+  const server = canonicalAppMcpServerName(identity.slice(0, separator))
+  const configuredServers = new Set(mcpServerNames.map(canonicalAppMcpServerName))
+  if (!configuredServers.has(server)) return undefined
+
+  return `${server}/${identity.slice(separator + 1)}`
+}
+
 const commandSignature = (command: string): string => command.trim()
+
+const resolveLegacyClaudeMcpIdentity = (name: string | null | undefined): string | undefined => {
+  if (!name?.startsWith('mcp__')) return undefined
+  const [server, ...toolParts] = name.slice('mcp__'.length).split('__')
+  return server && toolParts.length > 0 ? `${server}/${toolParts.join('__')}` : undefined
+}
 
 const resolveShellCommand = (params: RequestPermissionRequest): string | undefined =>
   commandFromRawInput(params.toolCall.rawInput)?.trim()
@@ -126,14 +166,16 @@ const recordInput = (rawInput: unknown): Record<string, unknown> | undefined => 
     : record
 }
 
-// OpenCode's ACP permission request for its native Skill tool may be identified only by its title
-// (currently `Run skill?`). Skill metadata is not stable across ACP versions, so conversation
-// approval is deliberately scoped to the native Skill capability rather than an optional input name.
-const isSkillPermission = (params: RequestPermissionRequest): boolean => {
-  const title = params.toolCall.title?.trim().toLowerCase()
+// Durable Skill identity requires provider metadata. Display-only titles are accepted only by the
+// legacy in-memory broker, where they cannot create persistent authority.
+const isSkillPermission = (
+  params: RequestPermissionRequest,
+  allowLegacyDisplayIdentity = false
+): boolean => {
   const providerToolName = extractProviderToolName(params.toolCall)?.trim().toLowerCase()
 
-  return providerToolName === 'skill' || title === 'skill' || /^run\s+skill\??$/.test(title ?? '')
+  if (providerToolName === 'skill') return true
+  return allowLegacyDisplayIdentity && /\bskill\b/i.test(params.toolCall.title ?? '')
 }
 
 const normalizeNotebookRuntime = (value: string): string | undefined => {
@@ -193,30 +235,17 @@ const resolveNotebookPermissionContext = (
   const identity = resolveMcpToolIdentity(name, mcpServerNames)
   if (!identity) return undefined
 
+  return resolveNotebookPermissionContextForIdentity(identity, rawInput)
+}
+
+const resolveNotebookPermissionContextForIdentity = (
+  identity: string,
+  rawInput: unknown
+): { runtime?: string } | undefined => {
   const tool = resolveNotebookExecutionTool(identity)
   if (!tool) return undefined
 
   return { runtime: resolveNotebookRuntime(tool, rawInput) }
-}
-
-// WebFetch bypasses Claude's remote hostname preflight for custom API-key providers. Force any
-// conversation-wide approval to stay on the exact hostname the user reviewed; an absent or malformed
-// URL deliberately yields no category, so the broker offers only the provider's one-shot approval.
-const resolveWebFetchHostname = (params: RequestPermissionRequest): string | undefined => {
-  if (extractProviderToolName(params.toolCall) !== 'WebFetch') return undefined
-
-  const input = recordInput(params.toolCall.rawInput)
-  const inputUrl = typeof input?.url === 'string' ? input.url.trim() : undefined
-  const titleUrl = params.toolCall.title?.match(/^Fetch\s+(https?:\/\/\S+)$/i)?.[1]
-  const candidate = inputUrl || titleUrl
-  if (!candidate) return undefined
-
-  try {
-    const url = new URL(candidate)
-    return url.protocol === 'http:' || url.protocol === 'https:' ? url.hostname : undefined
-  } catch {
-    return undefined
-  }
 }
 
 const isMcpPermission = (
@@ -225,6 +254,7 @@ const isMcpPermission = (
 ): boolean => {
   const providerToolName = extractProviderToolName(params.toolCall)
   return (
+    resolveTrustedMcpToolIdentity(params, mcpServerNames) != null ||
     isMcpToolName(params.toolCall.title, mcpServerNames) ||
     isMcpToolName(providerToolName, mcpServerNames)
   )
@@ -269,29 +299,42 @@ const projectPermissionOptions = (
 // 1. MCP tool (recognized across frameworks — Claude's mcp__ prefix or an opencode <server>_ name):
 //    keyed by tool identity, with notebook execution tools further separated by runtime.
 // 2. Native Skill tool: keyed by the stable provider capability.
-// 3. WebFetch: keyed by the exact parsed hostname; malformed/missing URLs cannot receive a grant.
-// 4. Shell/execute tool (provider tool name Bash, or execute kind): keyed by concrete command signature.
-// 5. File operations: keyed by stable operation/tool identity, independent of target path.
-// 6. Other built-ins: keyed by stable provider tool name.
+// 3. Shell/execute tool (provider tool name Bash, or execute kind): keyed by concrete command signature.
+// 4. File operations: keyed by stable operation/tool identity, independent of target path.
+// 5. Other built-ins: keyed by stable provider tool name.
 // The MCP check runs before the execute branch so an opencode MCP tool reporting kind:execute (e.g. a
 // notebook execute-cell) is grouped as its own MCP tool, not misrouted to the shared Bash category.
 const resolveCategoryKey = (
   params: RequestPermissionRequest,
-  mcpServerNames: readonly string[] = []
+  mcpServerNames: readonly string[] = [],
+  allowLegacyReportedMcp = false
 ): string | undefined => {
   const { toolCall } = params
   const providerToolName = extractProviderToolName(toolCall)
+  const trustedIdentity = resolveTrustedMcpToolIdentity(params, mcpServerNames)
 
   if (isMcpPermission(params, mcpServerNames)) {
     const identity =
-      resolveMcpToolIdentity(toolCall.title, mcpServerNames) ??
-      resolveMcpToolIdentity(providerToolName, mcpServerNames)
+      trustedIdentity ??
+      resolveMcpToolIdentity(providerToolName, mcpServerNames) ??
+      (allowLegacyReportedMcp
+        ? (resolveMcpToolIdentity(toolCall.title, mcpServerNames) ??
+          resolveLegacyClaudeMcpIdentity(providerToolName) ??
+          resolveLegacyClaudeMcpIdentity(toolCall.title))
+        : undefined)
 
     if (!identity) return undefined
 
     const notebookContext =
-      resolveNotebookPermissionContext(toolCall.title, toolCall.rawInput, mcpServerNames) ??
-      resolveNotebookPermissionContext(providerToolName, toolCall.rawInput, mcpServerNames)
+      (trustedIdentity
+        ? resolveNotebookPermissionContextForIdentity(trustedIdentity, toolCall.rawInput)
+        : resolveNotebookPermissionContext(providerToolName, toolCall.rawInput, mcpServerNames)) ??
+      (allowLegacyReportedMcp
+        ? (() => {
+            const tool = resolveNotebookExecutionTool(identity)
+            return tool ? { runtime: resolveNotebookRuntime(tool, toolCall.rawInput) } : undefined
+          })()
+        : undefined)
     if (notebookContext) {
       return notebookContext.runtime ? `mcp:${identity}:${notebookContext.runtime}` : undefined
     }
@@ -299,12 +342,15 @@ const resolveCategoryKey = (
     return `mcp:${identity}`
   }
 
-  if (isSkillPermission(params)) return 'skill'
+  // Only provider metadata/codecs may create durable identities. `title` is display text and can be
+  // model-controlled on some ACP bridges, so title-only requests remain Once-only.
+  const registeredCategory = categoryFromTrustedToolName(providerToolName)
+  if (registeredCategory) return registeredCategory
 
-  if (providerToolName === 'WebFetch') {
-    const hostname = resolveWebFetchHostname(params)
-    return hostname ? `webfetch:${hostname}` : undefined
-  }
+  if (isSkillPermission(params, allowLegacyReportedMcp)) return 'skill'
+
+  // V1 provider-native web tools are always one-shot, including the legacy in-memory broker path.
+  if (providerToolName === 'WebFetch' || providerToolName === 'WebSearch') return undefined
 
   if (providerToolName === 'Bash' || toolCall.kind === 'execute') {
     const command = resolveShellCommand(params)
@@ -378,15 +424,6 @@ const describeGrant = (categoryKey: string): AcpPermissionGrant => {
     }
   }
 
-  if (categoryKey.startsWith('webfetch:')) {
-    return {
-      categoryKey,
-      kind: 'tool',
-      label: `WebFetch (${categoryKey.slice('webfetch:'.length)})`,
-      scope: 'session'
-    }
-  }
-
   if (categoryKey.startsWith('file:')) {
     return {
       categoryKey,
@@ -403,14 +440,50 @@ const describeGrant = (categoryKey: string): AcpPermissionGrant => {
   return { categoryKey, kind: 'tool', label: categoryKey, scope: 'session' }
 }
 
+const describeRegistryGrant = (record: PermissionGrantRecord): AcpPermissionGrant => {
+  const [view] = projectPermissionGrantSnapshot([record]).grants
+  const label = view.qualifierLabel
+    ? `${view.capabilityLabel} · ${view.qualifierLabel}`
+    : view.capabilityLabel
+  return {
+    // Existing renderer plumbing treats this field as opaque. Registry-backed Session grants use the
+    // durable row id so composer revoke cannot accidentally broaden to another capability.
+    categoryKey: record.id,
+    label,
+    kind:
+      record.capability.kind === 'execution'
+        ? 'shell'
+        : record.capability.kind === 'mcp_tool'
+          ? 'mcp'
+          : 'tool',
+    scope: 'session'
+  }
+}
+
+const projectRegistrySessionGrants = (
+  records: PermissionGrantRecord[]
+): Record<string, AcpPermissionGrant[]> => {
+  const grantsBySession: Record<string, AcpPermissionGrant[]> = {}
+  for (const record of records) {
+    if (record.scope.kind !== 'session') continue
+    const grants = grantsBySession[record.scope.sessionId] ?? []
+    grants.push(describeRegistryGrant(record))
+    grantsBySession[record.scope.sessionId] = grants
+  }
+  return grantsBySession
+}
+
 // Tracks permission requests until the renderer chooses an outcome.
 class AcpPermissionBroker {
   private pendingRequests = new Map<string, PendingPermission>()
+  private cancellationGeneration = 0
+  private readonly sessionCancellationGenerations = new Map<string, number>()
 
   // Accepts the callback used to publish new permission requests to listeners.
   constructor(
     private readonly emitPermissionRequest: EmitPermissionRequest,
-    private readonly conversationGrants = new ConversationPermissionGrantStore()
+    private readonly conversationGrants = new ConversationPermissionGrantStore(),
+    private readonly permissionGrantRegistry?: PermissionGrantRegistry
   ) {}
 
   // Returns serializable pending requests for runtime snapshots.
@@ -426,11 +499,32 @@ class AcpPermissionBroker {
 
   // Lists the app conversation's grants so the composer can show and revoke them.
   listGrants(sessionId: string): AcpPermissionGrant[] {
+    if (this.permissionGrantRegistry) {
+      return this.permissionGrantRegistry
+        .listCached()
+        .filter((record) => record.scope.kind === 'session' && record.scope.sessionId === sessionId)
+        .map(describeRegistryGrant)
+    }
     return this.conversationGrants.list(sessionId).map(describeGrant)
   }
 
   // Removes one session grant so its tool prompts again on the next call.
-  revokeGrant(sessionId: string, categoryKey: string): void {
+  async revokeGrant(sessionId: string, categoryKey: string): Promise<void> {
+    if (this.permissionGrantRegistry) {
+      const record = this.permissionGrantRegistry
+        .listCached()
+        .find(
+          (candidate) =>
+            candidate.id === categoryKey &&
+            candidate.scope.kind === 'session' &&
+            candidate.scope.sessionId === sessionId
+        )
+      if (!record) return
+      await this.permissionGrantRegistry.revoke({
+        grants: [{ id: record.id, revision: record.revision }]
+      })
+      return
+    }
     this.conversationGrants.revoke(sessionId, categoryKey)
   }
 
@@ -439,12 +533,17 @@ class AcpPermissionBroker {
     params: RequestPermissionRequest,
     policyContext?: PermissionPolicyContext
   ): Promise<RequestPermissionResponse> {
+    const cancellationGeneration = this.cancellationGeneration
+    const sessionCancellationGeneration =
+      this.sessionCancellationGenerations.get(params.sessionId) ?? 0
     const requestId = randomUUID()
     const mcpServerNames = policyContext?.mcpServerNames ?? []
-    const categoryKey = resolveCategoryKey(params, mcpServerNames)
+    const categoryKey = resolveCategoryKey(params, mcpServerNames, !this.permissionGrantRegistry)
+    const capability = categoryKey ? capabilityFromLegacyCategory(categoryKey) : undefined
     const isMcp = isMcpPermission(params, mcpServerNames)
     const mcpIdentity = isMcp
-      ? (resolveMcpToolIdentity(params.toolCall.title, mcpServerNames) ??
+      ? (resolveTrustedMcpToolIdentity(params, mcpServerNames) ??
+        resolveMcpToolIdentity(params.toolCall.title, mcpServerNames) ??
         resolveMcpToolIdentity(extractProviderToolName(params.toolCall), mcpServerNames))
       : undefined
     const projectedProviderOptions = projectPermissionOptions(params, policyContext, isMcp)
@@ -456,6 +555,11 @@ class AcpPermissionBroker {
     const providerAllowOnceOption = providerPermissionOptions.find(
       (option) => option.kind.toLowerCase() === ALLOW_ONCE_OPTION_KIND
     )
+    // Remembered scopes are app-owned, but every released call must still select a provider-native
+    // one-call option. Without one there is no safe positive response, so fail closed immediately.
+    if (!providerAllowOnceOption) {
+      return Promise.resolve({ outcome: { outcome: 'cancelled' } })
+    }
     const permissionOptions: AcpPermissionRequest['options'] = providerPermissionOptions.map(
       (option) => ({
         optionId: option.optionId,
@@ -464,13 +568,36 @@ class AcpPermissionBroker {
         ...(option.kind.toLowerCase() === ALLOW_ONCE_OPTION_KIND ? { scope: 'once' as const } : {})
       })
     )
-    if (providerAllowOnceOption && categoryKey) {
-      permissionOptions.push({
-        optionId: `${SESSION_ALLOW_OPTION_ID_PREFIX}${requestId}`,
-        name: 'This conversation',
-        kind: ALLOW_ALWAYS_OPTION_KIND,
-        scope: 'session'
-      })
+    if (categoryKey) {
+      if (this.permissionGrantRegistry && capability && policyContext?.projectId) {
+        permissionOptions.push(
+          {
+            optionId: `${SESSION_ALLOW_OPTION_ID_PREFIX}${requestId}`,
+            name: 'This session',
+            kind: ALLOW_ALWAYS_OPTION_KIND,
+            scope: 'session'
+          },
+          {
+            optionId: `${PROJECT_ALLOW_OPTION_ID_PREFIX}${requestId}`,
+            name: 'This project',
+            kind: ALLOW_ALWAYS_OPTION_KIND,
+            scope: 'project'
+          },
+          {
+            optionId: `${GLOBAL_ALLOW_OPTION_ID_PREFIX}${requestId}`,
+            name: 'Always',
+            kind: ALLOW_ALWAYS_OPTION_KIND,
+            scope: 'global'
+          }
+        )
+      } else if (!this.permissionGrantRegistry) {
+        permissionOptions.push({
+          optionId: `${SESSION_ALLOW_OPTION_ID_PREFIX}${requestId}`,
+          name: 'This session',
+          kind: ALLOW_ALWAYS_OPTION_KIND,
+          scope: 'session'
+        })
+      }
     }
     const request: AcpPermissionRequest = {
       requestId,
@@ -501,6 +628,36 @@ class AcpPermissionBroker {
       })
     }
 
+    if (this.permissionGrantRegistry && capability) {
+      return this.permissionGrantRegistry
+        .resolve(capability, {
+          projectId: policyContext?.projectId,
+          sessionId: params.sessionId
+        })
+        .then((match) => {
+          if (
+            cancellationGeneration !== this.cancellationGeneration ||
+            sessionCancellationGeneration !==
+              (this.sessionCancellationGenerations.get(params.sessionId) ?? 0)
+          ) {
+            return { outcome: { outcome: 'cancelled' as const } }
+          }
+          if (match && providerAllowOnceOption) {
+            return {
+              outcome: { outcome: 'selected' as const, optionId: providerAllowOnceOption.optionId }
+            }
+          }
+          return this.enqueuePermissionRequest({
+            requestId,
+            request,
+            categoryKey,
+            capability,
+            projectId: policyContext?.projectId,
+            providerAllowOnceOptionId: providerAllowOnceOption?.optionId
+          })
+        })
+    }
+
     // A prior app-owned session grant auto-approves without prompting again.
     const autoAllowOptionId = categoryKey
       ? this.resolveAutoAllowOptionId(request, categoryKey)
@@ -513,19 +670,29 @@ class AcpPermissionBroker {
     }
 
     // The returned promise is held open until the UI selects or cancels an option.
+    return this.enqueuePermissionRequest({
+      requestId,
+      request,
+      categoryKey,
+      providerAllowOnceOptionId: providerAllowOnceOption?.optionId
+    })
+  }
+
+  private enqueuePermissionRequest(
+    pending: Omit<PendingPermission, 'resolve'> & { requestId: string }
+  ): Promise<RequestPermissionResponse> {
     return new Promise((resolve) => {
+      const { requestId, ...entry } = pending
       this.pendingRequests.set(requestId, {
-        request,
-        categoryKey,
-        providerAllowOnceOptionId: providerAllowOnceOption?.optionId,
+        ...entry,
         resolve
       })
-      this.emitPermissionRequest(request)
+      this.emitPermissionRequest(entry.request)
     })
   }
 
   // Resolves one pending request and reports whether it was found.
-  respond(response: AcpPermissionResponse): boolean {
+  async respond(response: AcpPermissionResponse): Promise<boolean> {
     const pending = this.pendingRequests.get(response.requestId)
 
     if (!pending) {
@@ -547,15 +714,45 @@ class AcpPermissionBroker {
     }
 
     const selected = pending.request.options.find((option) => option.optionId === response.optionId)
-    const providerOptionId =
-      selected?.scope === 'session' ? pending.providerAllowOnceOptionId : response.optionId
+    const rememberedScope =
+      selected?.scope === 'session' || selected?.scope === 'project' || selected?.scope === 'global'
+    const providerOptionId = rememberedScope ? pending.providerAllowOnceOptionId : response.optionId
 
     if (!providerOptionId) {
       pending.resolve({ outcome: { outcome: 'cancelled' } })
       return true
     }
 
-    // Session grants are owned by Open Science. The Agent receives only its one-shot option.
+    if (
+      rememberedScope &&
+      selected?.scope &&
+      pending.capability &&
+      pending.projectId &&
+      this.permissionGrantRegistry
+    ) {
+      const scope: PermissionGrantScope =
+        selected.scope === 'global'
+          ? { kind: 'global' }
+          : selected.scope === 'project'
+            ? { kind: 'project', projectId: pending.projectId }
+            : {
+                kind: 'session',
+                projectId: pending.projectId,
+                sessionId: pending.request.sessionId
+              }
+      try {
+        await this.permissionGrantRegistry.remember({ capability: pending.capability, scope })
+        pending.resolve({ outcome: { outcome: 'selected', optionId: providerOptionId } })
+      } catch (error) {
+        pending.resolve({ outcome: { outcome: 'cancelled' } })
+        throw new Error('Permission approval could not be saved; the tool call was cancelled.', {
+          cause: error
+        })
+      }
+      return true
+    }
+
+    // Legacy Session grants are owned by Open Science. The Agent receives only its one-shot option.
     if (pending.categoryKey) {
       this.rememberSessionGrant(pending.request, pending.categoryKey, response.optionId)
     }
@@ -597,6 +794,7 @@ class AcpPermissionBroker {
 
   // Cancels every pending request while preserving conversation grants across Agent reconnects.
   cancelAllPending(): void {
+    this.cancellationGeneration += 1
     const pendingRequests = Array.from(this.pendingRequests.keys())
 
     for (const requestId of pendingRequests) {
@@ -606,6 +804,10 @@ class AcpPermissionBroker {
 
   // Cancels pending requests for one session while leaving other sessions intact.
   cancelForSession(sessionId: string): void {
+    this.sessionCancellationGenerations.set(
+      sessionId,
+      (this.sessionCancellationGenerations.get(sessionId) ?? 0) + 1
+    )
     const pendingRequests = Array.from(this.pendingRequests.values())
 
     for (const { request } of pendingRequests) {
@@ -625,6 +827,7 @@ class AcpPermissionBroker {
 export {
   AcpPermissionBroker,
   ConversationPermissionGrantStore,
+  projectRegistrySessionGrants,
   resolveCategoryKey,
   resolveNotebookPermissionContext
 }

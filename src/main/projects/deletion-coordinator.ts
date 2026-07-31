@@ -35,6 +35,11 @@ type ProjectProvenanceDeletion = {
   deleteProjectProvenance(projectId: string): Promise<void>
 }
 
+type ProjectPermissionGrantDeletion = {
+  prune(owner: { kind: 'project'; projectId: string }): Promise<unknown>
+  finalizeOwnerDeletion?(owner: { kind: 'project'; projectId: string }): Promise<void>
+}
+
 // Persists deletion intent so a crash cannot strand an absent project with active session data. The
 // same sticky recovery gate is shared by project CRUD, session persistence, and Files queries.
 class ProjectDeletionCoordinator {
@@ -47,7 +52,8 @@ class ProjectDeletionCoordinator {
     private readonly sessions: ProjectSessionDeletion,
     private readonly preview: PreviewDeletion,
     private readonly reviews?: ProjectReviewDeletion,
-    private readonly provenance?: ProjectProvenanceDeletion
+    private readonly provenance?: ProjectProvenanceDeletion,
+    private readonly permissionGrants?: ProjectPermissionGrantDeletion
   ) {}
 
   // Enqueues before yielding so two callers in the same event-loop turn cannot publish competing
@@ -190,10 +196,20 @@ class ProjectDeletionCoordinator {
     }
   }
 
-  // The project row is removed only after session/index deletion succeeds; deleting the intent last
-  // makes this tail idempotent if the app crashes between either statement.
+  // The Project row is removed only after every fallible authority cleanup succeeds. Keeping both
+  // the row and deletion intent through Permission Grant pruning lets the renderer contract report
+  // the failure without publishing a false success; replaying this tail is idempotent.
   private async finishDeletion(projectId: string): Promise<void> {
+    // Prune is transactional and idempotent. Run it before the hard delete so a Registry/database
+    // failure retains the visible Project plus its durable intent for an explicit or startup retry.
+    await this.permissionGrants?.prune({ kind: 'project', projectId })
     if (await this.projects.get(projectId)) await this.projects.delete(projectId)
+    // The Project FK cascade commits outside the Registry mutation queue. A remember/restore that
+    // was already in flight may have updated its cache around that commit, so enqueue one non-failing
+    // cache barrier after the hard delete. Later mutations fail owner-liveness validation.
+    await this.permissionGrants
+      ?.finalizeOwnerDeletion?.({ kind: 'project', projectId })
+      .catch(() => undefined)
 
     // Preview state is derived UI state; a cleanup failure must not resurrect deleted chat data.
     await this.preview.delete(projectId).catch(() => undefined)
@@ -222,5 +238,6 @@ export type {
   ProjectDeletionRepository,
   ProjectReviewDeletion,
   ProjectProvenanceDeletion,
+  ProjectPermissionGrantDeletion,
   ProjectSessionDeletion
 }

@@ -923,7 +923,13 @@ async function hostMcp(server, method, args = undefined, kwargs = undefined) {
     // Without it the ConnectorService gate rejects the call with missing_session.
     body: JSON.stringify({
       method: 'mcpCall',
-      params: { server, method, args: callArgs, sessionId: COMPUTE_SESSION_ID }
+      params: {
+        server,
+        method,
+        args: callArgs,
+        sessionId: COMPUTE_SESSION_ID,
+        ...(COMPUTE_PROJECT_NAME ? { projectId: COMPUTE_PROJECT_NAME } : {})
+      }
     })
   })
   const body = await res.json().catch(() => ({}))

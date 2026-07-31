@@ -95,13 +95,33 @@ describe('ComputeApprovalDialog', () => {
   it.each([
     ['Deny', 'deny'],
     ['Once', 'once'],
-    ['This conversation', 'conversation'],
-    ['This project', 'project']
+    ['This session', 'conversation']
   ] as const)('keeps the %s approval decision', (label, decision) => {
     useComputeStore.setState({ pendingApprovals: [request] })
     act(() => root.render(<ComputeApprovalDialog />))
 
     act(() => findButton(label)?.click())
+
+    expect(useComputeStore.getState().respondApproval).toHaveBeenCalledWith(request.id, decision)
+  })
+
+  it.each([
+    ['This project', 'project', 'for this project'],
+    ['Always', 'global', 'globally']
+  ] as const)('requires confirmation before %s is remembered', (label, decision, scopePhrase) => {
+    useComputeStore.setState({ pendingApprovals: [request] })
+    act(() => root.render(<ComputeApprovalDialog />))
+
+    act(() => findButton(label)?.click())
+
+    expect(useComputeStore.getState().respondApproval).not.toHaveBeenCalled()
+    expect(document.body.querySelector('[role="alertdialog"]')?.textContent).toContain(scopePhrase)
+
+    act(() =>
+      document.body
+        .querySelector<HTMLButtonElement>('[data-testid="permission-scope-confirm"]')
+        ?.click()
+    )
 
     expect(useComputeStore.getState().respondApproval).toHaveBeenCalledWith(request.id, decision)
   })

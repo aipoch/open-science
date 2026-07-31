@@ -8,6 +8,7 @@ import type { ComputeHost, ComputeJob, CreateComputeHostRequest } from '../../sh
 import type { DirListing, DownloadDest, LocalFile } from '../../shared/remote-fs'
 import { decodeRemoteFsError } from '../../shared/remote-fs'
 import type { ComputeService } from './compute-service'
+import type { ComputeApprovalBroker } from './compute-approval-broker'
 import {
   COMPUTE_JOB_UPDATED_CHANNEL,
   COMPUTE_JOBS_LIST_CHANNEL,
@@ -21,6 +22,7 @@ import type { ComputeJobRepository } from './job-repository'
 import type { ComputeHostRepository } from './repository'
 import { EnabledComputeHostsRegistry } from './enabled-hosts-registry'
 import { addRendererBroadcastSink } from '../renderer-broadcast'
+import type { PermissionGrantRegistry } from '../permission-grants/registry'
 
 // ---------------------------------------------------------------------------
 // electron mock — captures ipcMain.handle registrations and stubs BrowserWindow
@@ -322,11 +324,13 @@ describe('host delete guard', () => {
     const del = vi.fn(() => Promise.resolve())
     const list = vi.fn(() => Promise.resolve([]))
     const hasActive = vi.fn(() => Promise.resolve(false))
+    const invalidateProvider = vi.fn()
+    const broker = { invalidateProvider } as unknown as ComputeApprovalBroker
     const handlers = createComputeHandlers(
       mockRepository({ delete: del, list }),
       undefined,
       undefined,
-      undefined,
+      broker,
       undefined,
       mockJobRepo({ hasActiveJobsForProvider: hasActive })
     )
@@ -334,6 +338,10 @@ describe('host delete guard', () => {
     await handlers.delete('ssh:biowulf')
     expect(del).toHaveBeenCalledWith('ssh:biowulf')
     expect(hasActive).toHaveBeenCalledWith('ssh:biowulf')
+    expect(invalidateProvider).toHaveBeenCalledWith('ssh:biowulf')
+    expect(invalidateProvider.mock.invocationCallOrder[0]).toBeLessThan(
+      del.mock.invocationCallOrder[0]
+    )
   })
 
   it('allows deletion when no jobRepository is provided (backward compatibility)', async () => {
@@ -343,6 +351,58 @@ describe('host delete guard', () => {
 
     await handlers.delete('ssh:biowulf')
     expect(del).toHaveBeenCalledWith('ssh:biowulf')
+  })
+
+  it('does not expose a replacement provider id until deletion grant cleanup completes', async () => {
+    let releaseDeletePrune: (() => void) | undefined
+    let pruneCalls = 0
+    const prune = vi.fn(() => {
+      pruneCalls += 1
+      if (pruneCalls === 1) {
+        return new Promise<[]>((resolve) => {
+          releaseDeletePrune = () => resolve([])
+        })
+      }
+      return Promise.resolve([])
+    })
+    const del = vi.fn().mockResolvedValue(undefined)
+    const get = vi.fn().mockResolvedValue(null)
+    const create = vi.fn().mockResolvedValue(sampleHost({ id: 'replacement-host' }))
+    const invalidateProvider = vi.fn()
+    const broker = { invalidateProvider } as unknown as ComputeApprovalBroker
+    const permissionGrantRegistry = { prune } as unknown as PermissionGrantRegistry
+    const handlers = createComputeHandlers(
+      mockRepository({ delete: del, get, create }),
+      undefined,
+      undefined,
+      broker,
+      undefined,
+      undefined,
+      undefined,
+      undefined,
+      undefined,
+      undefined,
+      permissionGrantRegistry
+    )
+
+    const deleting = handlers.delete('ssh:biowulf')
+    await vi.waitFor(() => expect(prune).toHaveBeenCalledTimes(1))
+    const creating = handlers.create({ sshAlias: 'biowulf' })
+    await Promise.resolve()
+
+    expect(create).not.toHaveBeenCalled()
+    releaseDeletePrune?.()
+    await deleting
+    await expect(creating).resolves.toMatchObject({ id: 'replacement-host' })
+    expect(prune).toHaveBeenNthCalledWith(1, {
+      kind: 'compute_provider',
+      providerId: 'ssh:biowulf'
+    })
+    expect(prune).toHaveBeenNthCalledWith(2, {
+      kind: 'compute_provider',
+      providerId: 'ssh:biowulf'
+    })
+    expect(create).toHaveBeenCalledOnce()
   })
 })
 

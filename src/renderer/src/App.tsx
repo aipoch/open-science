@@ -8,6 +8,7 @@ import { CloseConfirmModal } from '@/components/CloseConfirmModal'
 import { DataRootMissingDialog } from '@/components/DataRootMissingDialog'
 import { LegacyDataMoveDialog } from '@/components/LegacyDataMoveDialog'
 import { LifecycleToast } from '@/components/LifecycleToast'
+import { PermissionUndoSnackbar } from '@/components/PermissionUndoSnackbar'
 import { SessionPersistenceAlert } from '@/components/SessionPersistenceAlert'
 import { UpdateDialog } from '@/components/UpdateDialog'
 import { Button } from '@/components/ui/button'
@@ -33,6 +34,7 @@ import { useComputeStore } from '@/stores/compute-store'
 import { useSessionJobStore } from '@/stores/session-job-store'
 import { useSkillImportStore } from '@/stores/skill-import-store'
 import { useUpdateStore } from '@/stores/update-store'
+import { usePermissionGrantsStore } from '@/stores/permission-grants-store'
 
 type NotificationOpenIntent = {
   generation: number
@@ -75,7 +77,20 @@ const App = (): React.JSX.Element | null => {
   const isUpdateDialogOpen = useUpdateStore((state) => state.isDialogOpen)
   const initEnv = useNotebookEnvStore((state) => state.init)
   const envUi = useNotebookEnvStore((state) => state.ui)
+  const listenForPermissionChanges = usePermissionGrantsStore((state) => state.listen)
   const retryEnv = useNotebookEnvStore((state) => state.retry)
+  const openPermissionSession = useCallback(
+    (sessionId: string): void => {
+      const sessionExists = useSessionStore
+        .getState()
+        .sessions.some((session) => session.id === sessionId)
+      if (!sessionExists) return
+
+      useNavigationStore.getState().openSessionById(sessionId, 'user')
+      closeSettings()
+    },
+    [closeSettings]
+  )
   // §20.4: settings.dataRoot configured but the folder is gone (deleted or an unmounted drive).
   const [missingDataRoot, setMissingDataRoot] = useState<string | undefined>(undefined)
   // Legacy (pre-§20) install whose data still lives in the hidden config root: offer the one-time
@@ -120,6 +135,8 @@ const App = (): React.JSX.Element | null => {
   useEffect(() => {
     initUpdates()
   }, [initUpdates])
+
+  useEffect(() => listenForPermissionChanges(), [listenForPermissionChanges])
 
   // Mirrors the main-process provisioner once at launch (Plan A auto-runs upgradeIfNeeded and
   // broadcasts progress); the returned `ui` drives the top-level upgrade/error banner below.
@@ -410,7 +427,11 @@ const App = (): React.JSX.Element | null => {
           canDeleteConversations={sessionPersistence.canDeleteSessionsAndProjects}
         />
       )}
-      <SettingsPage open={isSettingsOpen} onClose={closeSettings} />
+      <SettingsPage
+        open={isSettingsOpen}
+        onClose={closeSettings}
+        onOpenSession={openPermissionSession}
+      />
       <ConnectorApprovalDialog />
       <SkillImportApprovalDialog />
       <LifecycleToast
@@ -418,6 +439,7 @@ const App = (): React.JSX.Element | null => {
         onDismiss={lifecycleSync.dismissNotice}
         onView={lifecycleSync.viewNotice}
       />
+      <PermissionUndoSnackbar />
       <ComputeApprovalDialog />
       <UpdateDialog />
       <CloseConfirmModal onOpenChange={setIsCloseConfirmOpen} />

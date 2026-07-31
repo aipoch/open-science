@@ -20,6 +20,7 @@ import {
   type SessionDeletionReceipt
 } from '../artifacts/provenance-message-snapshot'
 import type { ArtifactProjectReconciliationSnapshot } from '../artifacts/provenance-repository'
+import { repairHistoricalArtifactAliases } from './artifact-alias-repair'
 import {
   OrphanLegacyUploadAuthorityMissingError,
   UnsafeLegacyUploadResidualError
@@ -85,6 +86,12 @@ type SessionProvenancePersistence = {
   prepareSessionDeletion(session: PersistedChatSession): Promise<SessionDeletionReceipt>
   completeSessionDeletion(receipt: SessionDeletionReceipt): Promise<void>
   abortSessionDeletion(receipt: SessionDeletionReceipt): Promise<void>
+}
+
+type SessionPermissionGrantReconciliation = {
+  reconcileSessions(
+    sessions: ReadonlyArray<{ projectId: string; sessionId: string }>
+  ): Promise<void>
 }
 
 type SessionUploadPersistence = {
@@ -324,7 +331,8 @@ class SessionPersistenceCoordinator {
     private readonly onFilesChanged?: (event: ProjectFilesChangedEvent) => void,
     private readonly provenance?: SessionProvenancePersistence,
     private readonly uploads?: SessionUploadPersistence,
-    private readonly artifactStorage?: ArtifactStorageReconciler
+    private readonly artifactStorage?: ArtifactStorageReconciler,
+    private readonly permissionGrants?: SessionPermissionGrantReconciliation
   ) {}
 
   // Binds unread cleanup to authoritative Session mutations. Reconciliation is called only with a
@@ -393,6 +401,18 @@ class SessionPersistenceCoordinator {
         console.error('[session-persistence] unread deletion reconciliation failed', error)
       }
 
+      if (mayRunDestructiveStartupCleanup) {
+        try {
+          await this.permissionGrants?.reconcileSessions(
+            sessions.map((session) => ({ projectId: session.projectId, sessionId: session.id }))
+          )
+        } catch (error) {
+          // Chat hydration remains available. The Registry is still fail-closed by exact live scope
+          // matching, and the complete scan will retry cleanup on the next process startup.
+          console.error('[session-persistence] permission grant reconciliation failed', error)
+        }
+      }
+
       try {
         if (this.uploads) {
           for (let index = 0; index < sessions.length; index += 1) {
@@ -449,10 +469,15 @@ class SessionPersistenceCoordinator {
               projectReconciliation: projectReconciliations.get(session.projectId)!
             }
           )
-          const recoveredSession = attachRecoveredMessageArtifacts(
+          const attachedSession = attachRecoveredMessageArtifacts(
             session,
             artifactRecovery?.recoveredMessageArtifacts ?? []
           )
+          const recoveredSession = repairHistoricalArtifactAliases(attachedSession, {
+            // One reconciliation pass writes one JSON revision even when recovery and historical
+            // alias repair both contribute to the same atomic Session update.
+            advanceFilesRevision: attachedSession === session
+          })
           if (recoveredSession !== session) {
             sessions = sessions.map((candidate, candidateIndex) =>
               candidateIndex === index ? recoveredSession : candidate

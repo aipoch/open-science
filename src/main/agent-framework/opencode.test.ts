@@ -67,18 +67,10 @@ describe('opencodeFramework.prepareModelConfig', () => {
 
     const rules = JSON.parse(config.env?.OPENCODE_CONFIG_CONTENT ?? '{}').permission
     expect(rules['*']).toBe('ask')
-    for (const tool of ['read', 'glob', 'grep', 'list', 'lsp']) {
+    for (const tool of ['read', 'glob', 'grep', 'list', 'lsp', 'skill']) {
       expect(rules[tool]).toBe('allow')
     }
-    for (const tool of [
-      'edit',
-      'bash',
-      'task',
-      'skill',
-      'webfetch',
-      'websearch',
-      'external_directory'
-    ]) {
+    for (const tool of ['edit', 'bash', 'task', 'webfetch', 'websearch', 'external_directory']) {
       expect(rules[tool]).toBe('ask')
     }
   })
@@ -405,17 +397,10 @@ describe('buildOpencodeConfig', () => {
     )
 
     // Our rules override the base for every side-effecting built-in.
-    for (const tool of [
-      'edit',
-      'bash',
-      'task',
-      'skill',
-      'webfetch',
-      'websearch',
-      'external_directory'
-    ]) {
+    for (const tool of ['edit', 'bash', 'task', 'webfetch', 'websearch', 'external_directory']) {
       expect(config.permission[tool]).toBe('ask')
     }
+    expect(config.permission.skill).toBe('allow')
   })
 
   it('delegates every side-effecting tool (incl. MCP) via a "*" catch-all, allowing safe reads', () => {
@@ -427,7 +412,7 @@ describe('buildOpencodeConfig', () => {
 
     expect(config.permission['*']).toBe('ask')
     // Safe read-only tools run without prompting (parity with Claude's Ask mode).
-    for (const tool of ['read', 'glob', 'grep', 'list', 'lsp']) {
+    for (const tool of ['read', 'glob', 'grep', 'list', 'lsp', 'skill']) {
       expect(config.permission[tool]).toBe('allow')
     }
     // Mutating/external tools are pinned to ask (and unlisted MCP tools fall through to "*" → ask).

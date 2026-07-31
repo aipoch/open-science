@@ -217,7 +217,7 @@ const ComposerAgentControlsMenu = ({
             {hasGrants ? (
               <span
                 className="flex h-4 min-w-4 shrink-0 items-center justify-center rounded-full bg-bg-300 px-1 text-[10px] font-medium leading-none text-text-100"
-                aria-label={`${grants!.length} allowed this conversation`}
+                aria-label={`${grants!.length} allowed this session`}
               >
                 {grants!.length}
               </span>
@@ -344,13 +344,13 @@ const ComposerAgentControlsMenu = ({
             <div className="mt-1 border-t border-border-200 pt-1">
               <div className="flex items-center justify-between px-2 pb-0.5">
                 <span className="text-[11px] font-medium uppercase tracking-wide text-text-300">
-                  Allowed this conversation
+                  Allowed this session
                 </span>
                 {/* One-click clear for a long session; swallow the event so the menu stays open. */}
                 <button
                   type="button"
                   className="shrink-0 text-[11px] text-text-300 hover:text-text-000 disabled:cursor-not-allowed disabled:opacity-50 disabled:hover:text-text-300"
-                  aria-label="Clear all conversation grants"
+                  aria-label="Clear all session grants"
                   disabled={grantActionsReadOnly}
                   onClick={(event) => {
                     event.preventDefault()
@@ -378,7 +378,7 @@ const ComposerAgentControlsMenu = ({
                     <button
                       type="button"
                       className="flex size-5 shrink-0 items-center justify-center rounded text-text-300 hover:bg-bg-200 hover:text-text-000 disabled:cursor-not-allowed disabled:opacity-50 disabled:hover:bg-transparent disabled:hover:text-text-300"
-                      aria-label={`Revoke conversation grant for ${grant.label}`}
+                      aria-label={`Revoke session grant for ${grant.label}`}
                       disabled={grantActionsReadOnly}
                       onClick={(event) => {
                         event.preventDefault()

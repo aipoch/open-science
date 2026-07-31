@@ -19,6 +19,7 @@ import {
 
 type PermissionPolicyContext = {
   profile: PermissionProfileId
+  projectId?: string
   frameworkId?: AgentFrameworkId
   autoReviewStrategy?: PermissionAutoReviewStrategy
   cwd?: string
@@ -27,8 +28,12 @@ type PermissionPolicyContext = {
 }
 
 const TRUSTED_MCP_TOOL_IDENTITY = Symbol('trusted-mcp-tool-identity')
+const TRUSTED_NATIVE_TOOL_IDENTITY = Symbol('trusted-native-tool-identity')
 type TrustedMcpPermissionRequest = RequestPermissionRequest & {
   [TRUSTED_MCP_TOOL_IDENTITY]?: string
+}
+type TrustedNativePermissionRequest = RequestPermissionRequest & {
+  [TRUSTED_NATIVE_TOOL_IDENTITY]?: string
 }
 
 // Carries a runtime-verified MCP identity across the broker without serializing it back to ACP. A
@@ -38,6 +43,20 @@ const withTrustedMcpToolIdentity = (
   params: RequestPermissionRequest,
   identity: string
 ): RequestPermissionRequest => Object.assign({}, params, { [TRUSTED_MCP_TOOL_IDENTITY]: identity })
+
+const trustedMcpToolIdentity = (params: RequestPermissionRequest): string | undefined =>
+  (params as TrustedMcpPermissionRequest)[TRUSTED_MCP_TOOL_IDENTITY]
+
+// Marks a provider-native tool only after the runtime binds its preceding tool_call to the later
+// request_permission by session and call id. ACP JSON cannot forge this process-local Symbol.
+const withTrustedNativeToolIdentity = (
+  params: RequestPermissionRequest,
+  identity: string
+): RequestPermissionRequest =>
+  Object.assign({}, params, { [TRUSTED_NATIVE_TOOL_IDENTITY]: identity })
+
+const trustedNativeToolIdentity = (params: RequestPermissionRequest): string | undefined =>
+  (params as TrustedNativePermissionRequest)[TRUSTED_NATIVE_TOOL_IDENTITY]
 
 // MCP tool naming differs per framework: Claude Code namespaces them mcp__<server>__<tool>, Codex
 // reports mcp.<server>.<tool>, and opencode joins them <server>_<tool>. Claude's distinctive prefix is
@@ -133,6 +152,23 @@ const canConservativelyAutoApprove = (
 const resolveAllowOptionId = (params: RequestPermissionRequest): string | undefined =>
   params.options.find((option) => option.kind.toLowerCase() === 'allow_once')?.optionId
 
+// OpenCode's native Skill tool only reads an app-provisioned skill definition into the model's
+// context. It is framework plumbing rather than a user-authorizable side effect. Older OpenCode
+// sessions can still emit request_permission, so the runtime binds that request to a preceding native
+// tool_call and attaches the process-local identity below. Presentation text alone is never trusted.
+const isOpenCodeNativeSkillPermission = (
+  params: RequestPermissionRequest,
+  context: PermissionPolicyContext | undefined
+): boolean => {
+  if (context?.frameworkId !== 'opencode' || params.toolCall.kind !== 'other') return false
+  if (trustedNativeToolIdentity(params) !== 'opencode/skill') return false
+
+  const title = params.toolCall.title?.trim().toLowerCase()
+  const providerToolName = extractProviderToolName(params.toolCall)?.trim().toLowerCase()
+
+  return title === 'skill' && (providerToolName == null || providerToolName === 'skill')
+}
+
 const isArtifactSaveTool = (
   params: RequestPermissionRequest,
   mcpServerNames: readonly string[]
@@ -146,7 +182,7 @@ const isArtifactSaveTool = (
   const providerToolName = extractProviderToolName(params.toolCall)
   if (!providerToolName) return false
 
-  const trustedMcpIdentity = (params as TrustedMcpPermissionRequest)[TRUSTED_MCP_TOOL_IDENTITY]
+  const trustedMcpIdentity = trustedMcpToolIdentity(params)
 
   return (
     trustedMcpIdentity === 'open-science-artifacts/write_artifact_file' ||
@@ -166,6 +202,10 @@ const resolveAutomaticPermission = (
   context: PermissionPolicyContext | undefined
 ): string | undefined => {
   if (context?.profile === 'full') {
+    return resolveAllowOptionId(params)
+  }
+
+  if (isOpenCodeNativeSkillPermission(params, context)) {
     return resolveAllowOptionId(params)
   }
 
@@ -207,6 +247,8 @@ export {
   resolveMcpProviderLeafIdentity,
   resolveAutomaticPermission,
   resolveAllowOptionId,
+  trustedMcpToolIdentity,
+  withTrustedNativeToolIdentity,
   withTrustedMcpToolIdentity
 }
 export type { PermissionPolicyContext }

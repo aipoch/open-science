@@ -12,27 +12,39 @@ import {
 } from '@/components/ui/dialog-chrome'
 import { useRetainedDialogValue } from '@/components/ui/use-retained-dialog-value'
 import { cn } from '@/lib/utils'
+import {
+  PermissionScopeConfirmationDialog,
+  type BroadPermissionScope
+} from '@/pages/workspace/PermissionScopeConfirmationDialog'
 import { useComputeStore } from '@/stores/compute-store'
 
 // A modal approval card for a pending compute call_command. The card cannot be dismissed without
 // a decision — the call is held open in main until the user responds (or a 5-minute timeout fires).
 //
-// Three scope buttons (design.md §6, no Global):
+// Four approval scopes; Broker persists Session/Project/Global and the compute adapter receives a
+// one-call allow decision only after that write succeeds.
 //   Once             — approve this call only; card shown every time
-//   This conversation — approve for (provider, operation) for the rest of this session
+//   This session      — approve for (provider, operation) for this persisted session
 //   This project      — approve for (provider, operation) for all future calls in this project
+//   Always            — approve for (provider, operation) across projects
 export function ComputeApprovalDialog(): React.JSX.Element | null {
   const request = useComputeStore((state) => state.pendingApprovals[0])
   const respondApproval = useComputeStore((state) => state.respondApproval)
   const [expandedRequestId, setExpandedRequestId] = useState<string | null>(null)
+  const [pendingBroadScope, setPendingBroadScope] = useState<BroadPermissionScope>()
 
   const dialogRequest = useRetainedDialogValue(request)
   if (!dialogRequest) return null
 
   const deny = (): void => void respondApproval(dialogRequest.id, 'deny')
   const approveOnce = (): void => void respondApproval(dialogRequest.id, 'once')
-  const approveConversation = (): void => void respondApproval(dialogRequest.id, 'conversation')
-  const approveProject = (): void => void respondApproval(dialogRequest.id, 'project')
+  const approveSession = (): void => void respondApproval(dialogRequest.id, 'conversation')
+  const confirmBroadScope = (): void => {
+    if (!pendingBroadScope) return
+    const scope = pendingBroadScope
+    setPendingBroadScope(undefined)
+    void respondApproval(dialogRequest.id, scope)
+  }
 
   const isLongCommand = dialogRequest.command_preview !== dialogRequest.command_full
   const showFull = expandedRequestId === dialogRequest.id
@@ -119,15 +131,31 @@ export function ComputeApprovalDialog(): React.JSX.Element | null {
             <Button type="button" variant="outline" onClick={approveOnce}>
               Once
             </Button>
-            <Button type="button" variant="outline" onClick={approveConversation}>
-              This conversation
+            <Button type="button" variant="outline" onClick={approveSession}>
+              This session
             </Button>
-            <Button type="button" onClick={approveProject}>
+            <Button type="button" variant="outline" onClick={() => setPendingBroadScope('project')}>
               This project
+            </Button>
+            <Button type="button" onClick={() => setPendingBroadScope('global')}>
+              Always
             </Button>
           </div>
         </Dialog.Content>
       </Dialog.Portal>
+      <PermissionScopeConfirmationDialog
+        confirmation={
+          pendingBroadScope
+            ? {
+                scope: pendingBroadScope,
+                subject: `remote commands on ${dialogRequest.provider_name}`,
+                codeExecution: true
+              }
+            : undefined
+        }
+        onCancel={() => setPendingBroadScope(undefined)}
+        onConfirm={confirmBroadScope}
+      />
     </Dialog.Root>
   )
 }

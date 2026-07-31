@@ -96,9 +96,9 @@ export type ComputeCallError = {
   retry_after_user_action: boolean
 }
 
-// The three approval scopes available in the compute approval card. 'deny' is the negative outcome.
-// No 'global' scope per design.md §6 — deliberately omitted.
-export type ComputeApprovalScope = 'once' | 'conversation' | 'project'
+// Broker-owned durable scopes. `conversation` remains the wire value for compatibility, but is
+// presented and persisted as a Session grant; Agent ACP adapters still receive only allow-once.
+export type ComputeApprovalScope = 'once' | 'conversation' | 'project' | 'global'
 export type ComputeApprovalDecision = ComputeApprovalScope | 'deny'
 
 // Approval request broadcast from main to the renderer for a compute:call_command invocation.

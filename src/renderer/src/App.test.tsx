@@ -185,8 +185,23 @@ vi.mock('@/pages/settings/SkillImportApprovalDialog', () => ({
   SkillImportApprovalDialog: (): React.JSX.Element => <div data-testid="skill-import-dialog" />
 }))
 vi.mock('@/pages/settings/SettingsPage', () => ({
-  SettingsPage: ({ open }: { open: boolean }): React.JSX.Element => (
-    <div data-testid="settings-page">{open ? 'open' : 'closed'}</div>
+  SettingsPage: ({
+    open,
+    onOpenSession
+  }: {
+    open: boolean
+    onOpenSession?: (sessionId: string) => void
+  }): React.JSX.Element => (
+    <div>
+      <span data-testid="settings-page">{open ? 'open' : 'closed'}</span>
+      <button
+        type="button"
+        data-testid="open-settings-session"
+        onClick={() => onOpenSession?.('settings-session')}
+      >
+        Open settings session
+      </button>
+    </div>
   )
 }))
 vi.mock('@/pages/workspace/EnvStatusBanner', () => ({
@@ -224,6 +239,7 @@ describe('App startup routing', () => {
     mocks.settings.isSettingsOpen = false
     mocks.settings.load.mockReset().mockResolvedValue(true)
     mocks.settings.checkEnvironment.mockReset().mockResolvedValue(undefined)
+    mocks.settings.closeSettings.mockClear()
     mocks.skillImport.enqueue.mockClear()
     mocks.skillImport.dismiss.mockClear()
     mocks.navigation.view = 'home'
@@ -265,7 +281,8 @@ describe('App startup routing', () => {
         onApprovalRequest: vi.fn(() => vi.fn()),
         onJobUpdated: vi.fn(() => vi.fn()),
         enabledHostsSet: vi.fn(() => Promise.resolve())
-      }
+      },
+      permissions: { onChanged: vi.fn(() => vi.fn()) }
     } as unknown as Window['api']
     mocks.openSessionById.mockClear()
     mocks.sessions = []
@@ -432,6 +449,26 @@ describe('App startup routing', () => {
     })
   })
 
+  it('opens a remembered permission session from Settings and keeps missing sessions safe', async () => {
+    mocks.settings.isLoaded = true
+    mocks.settings.isSettingsOpen = true
+    await render()
+
+    const openSession = container.querySelector<HTMLButtonElement>(
+      '[data-testid="open-settings-session"]'
+    )
+    await act(async () => openSession?.click())
+
+    expect(mocks.openSessionById).not.toHaveBeenCalled()
+    expect(mocks.settings.closeSettings).not.toHaveBeenCalled()
+
+    mocks.sessions = [{ id: 'settings-session' }]
+    await act(async () => openSession?.click())
+
+    expect(mocks.openSessionById).toHaveBeenCalledWith('settings-session', 'user')
+    expect(mocks.settings.closeSettings).toHaveBeenCalledOnce()
+  })
+
   it('reports retained session content as hidden during retry loading and hard failure', async () => {
     mocks.settings.isLoaded = true
     mocks.navigation.view = 'workspace'
@@ -502,6 +539,7 @@ describe('App startup routing', () => {
     expect(mocks.settings.load).toHaveBeenCalled()
     expect(mocks.settings.checkEnvironment).toHaveBeenCalled()
     expect(mocks.getInfo).toHaveBeenCalled()
+    expect(window.api.permissions.onChanged).toHaveBeenCalledOnce()
   })
 
   it('surfaces a session load failure with a retry action', async () => {

@@ -40,11 +40,12 @@ describe('ApprovalBroker', () => {
       id: 'id-1',
       connector: 'biomart',
       method: 'get_data',
-      argsPreview: '{}'
+      argsPreview: '{}',
+      availableScopes: ['once']
     })
 
-    broker.respond('id-1', 'allow')
-    await expect(decision).resolves.toBe('allow')
+    broker.respond('id-1', 'once')
+    await expect(decision).resolves.toBe('once')
   })
 
   it('auto-denies when the request times out', async () => {
@@ -72,9 +73,9 @@ describe('ApprovalBroker', () => {
 
     const decision = broker.request({ connector: 'biomart', method: 'get_data', argsPreview: '{}' })
     broker.respond('id-1', 'deny')
-    broker.respond('id-1', 'allow') // no-op: already settled
+    broker.respond('id-1', 'once') // no-op: already settled
     await expect(decision).resolves.toBe('deny')
-    expect(() => broker.respond('nope', 'allow')).not.toThrow()
+    expect(() => broker.respond('nope', 'once')).not.toThrow()
   })
 
   it('runs concurrent requests independently', async () => {
@@ -92,10 +93,10 @@ describe('ApprovalBroker', () => {
 
     const a = broker.request({ connector: 'x', method: 'm', argsPreview: '{}' })
     const b = broker.request({ connector: 'y', method: 'm', argsPreview: '{}' })
-    broker.respond('id-2', 'allow')
+    broker.respond('id-2', 'once')
     broker.respond('id-1', 'deny')
     await expect(a).resolves.toBe('deny')
-    await expect(b).resolves.toBe('allow')
+    await expect(b).resolves.toBe('once')
     expect(vi.isMockFunction(broker.request)).toBe(false)
   })
 
@@ -115,7 +116,8 @@ describe('ApprovalBroker', () => {
       connector: 'pubchem',
       method: 'search_compound',
       argsPreview: '{}',
-      sessionId: 'session-42'
+      sessionId: 'session-42',
+      availableScopes: ['once', 'session', 'project', 'global']
     })
 
     expect(broadcast).toEqual({
@@ -123,10 +125,11 @@ describe('ApprovalBroker', () => {
       connector: 'pubchem',
       method: 'search_compound',
       argsPreview: '{}',
-      sessionId: 'session-42'
+      sessionId: 'session-42',
+      availableScopes: ['once', 'session', 'project', 'global']
     })
 
-    broker.respond('id-1', 'allow')
-    await expect(decision).resolves.toBe('allow')
+    broker.respond('id-1', 'global')
+    await expect(decision).resolves.toBe('global')
   })
 })

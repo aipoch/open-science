@@ -7,6 +7,7 @@ export type SettingsPanelId =
   | 'connectors'
   | 'specialists'
   | 'compute'
+  | 'permissions'
   | 'general'
   | 'storage'
   | 'network'

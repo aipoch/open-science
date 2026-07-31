@@ -1180,16 +1180,23 @@ class SettingsRepository {
     })
   }
 
-  // Removes a custom MCP server by id (and any stale per-tool blocks under its name).
+  // Removes a custom MCP server by id and every policy alias owned by its immutable id/editable name.
   async removeCustomServer(id: string): Promise<StoredSettings> {
     return this.mutateConnectors((connectors) => {
       const removed = (connectors.customMcpServers ?? []).find((s) => s.id === id)
       connectors.customMcpServers = (connectors.customMcpServers ?? []).filter((s) => s.id !== id)
-      if (removed && connectors.blockedToolIds) {
-        const prefix = `${removed.name}/`
-        const kept = connectors.blockedToolIds.filter((t) => !t.startsWith(prefix))
-        connectors.blockedToolIds = kept.length > 0 ? kept : undefined
+      if (!removed) return
+
+      const aliases = new Set([removed.id, removed.name])
+      connectors.autoAllowIds = connectors.autoAllowIds.filter((entry) => !aliases.has(entry))
+      const withoutToolAliases = (entries: string[] | undefined): string[] | undefined => {
+        const kept = (entries ?? []).filter(
+          (entry) => !Array.from(aliases).some((alias) => entry.startsWith(`${alias}/`))
+        )
+        return kept.length > 0 ? kept : undefined
       }
+      connectors.blockedToolIds = withoutToolAliases(connectors.blockedToolIds)
+      connectors.askToolIds = withoutToolAliases(connectors.askToolIds)
     })
   }
 
@@ -1261,6 +1268,18 @@ class SettingsRepository {
         g.operation === grant.operation &&
         g.providerId === grant.providerId
     )
+  }
+
+  async listComputeGrants(): Promise<StoredComputeGrant[]> {
+    return [...((await this.getSettings()).computeGrants ?? [])]
+  }
+
+  async clearComputeGrants(): Promise<void> {
+    await this.mutate((settings) => {
+      const next = { ...settings }
+      delete next.computeGrants
+      return next
+    })
   }
 
   // Serializes a read-modify-write cycle so concurrent callers cannot clobber each other.

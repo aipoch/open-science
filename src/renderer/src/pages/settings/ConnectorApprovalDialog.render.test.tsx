@@ -52,7 +52,13 @@ describe('ConnectorApprovalDialog', () => {
   it('shows the oldest request with the resolved connector name and tool', () => {
     useSettingsStore.setState({
       pendingApprovals: [
-        { id: 'r1', connector: 'biomart', method: 'get_data', argsPreview: '{"x":1}' }
+        {
+          id: 'r1',
+          connector: 'biomart',
+          method: 'get_data',
+          argsPreview: '{"x":1}',
+          availableScopes: ['once', 'session', 'project', 'global']
+        }
       ]
     })
     act(() => root.render(<ConnectorApprovalDialog />))
@@ -62,37 +68,99 @@ describe('ConnectorApprovalDialog', () => {
     expect(document.body.textContent).toContain('{"x":1}')
     expect(button('Deny')?.getAttribute('data-slot')).toBe('button')
     expect(button('Deny')?.getAttribute('data-variant')).toBe('destructive')
-    expect(button('Always allow')?.getAttribute('data-variant')).toBe('outline')
+    expect(button('This session')?.getAttribute('data-variant')).toBe('outline')
+    expect(button('This project')?.getAttribute('data-variant')).toBe('outline')
+    expect(button('Global')?.getAttribute('data-variant')).toBe('outline')
     expect(button('Allow once')?.getAttribute('data-variant')).toBe('default')
     expect(document.body.querySelector('[role="dialog"]')?.className).toContain(
       'overscroll-contain'
     )
   })
 
-  it('Allow once responds allow without pre-trusting the connector', () => {
+  it('Allow once responds with one-call scope without changing Connector policy', () => {
     useSettingsStore.setState({
-      pendingApprovals: [{ id: 'r1', connector: 'biomart', method: 'get_data', argsPreview: '{}' }]
+      pendingApprovals: [
+        {
+          id: 'r1',
+          connector: 'biomart',
+          method: 'get_data',
+          argsPreview: '{}',
+          availableScopes: ['once']
+        }
+      ]
     })
     act(() => root.render(<ConnectorApprovalDialog />))
 
     act(() => button('Allow once')?.click())
-    expect(useSettingsStore.getState().respondApproval).toHaveBeenCalledWith('r1', 'allow')
+    expect(useSettingsStore.getState().respondApproval).toHaveBeenCalledWith('r1', 'once')
     expect(useSettingsStore.getState().setConnectorAutoAllow).not.toHaveBeenCalled()
   })
 
-  it('Always allow pre-trusts the connector then allows', () => {
+  it.each([['This session', 'session']] as const)(
+    '%s returns the remembered Broker scope without changing Connector policy',
+    (label, scope) => {
+      useSettingsStore.setState({
+        pendingApprovals: [
+          {
+            id: 'r1',
+            connector: 'biomart',
+            method: 'get_data',
+            argsPreview: '{}',
+            availableScopes: ['once', 'session', 'project', 'global']
+          }
+        ]
+      })
+      act(() => root.render(<ConnectorApprovalDialog />))
+
+      act(() => button(label)?.click())
+      expect(useSettingsStore.getState().respondApproval).toHaveBeenCalledWith('r1', scope)
+      expect(useSettingsStore.getState().setConnectorAutoAllow).not.toHaveBeenCalled()
+    }
+  )
+
+  it.each([
+    ['This project', 'project', 'for this project'],
+    ['Global', 'global', 'globally']
+  ] as const)('requires confirmation before %s is remembered', (label, scope, scopePhrase) => {
     useSettingsStore.setState({
-      pendingApprovals: [{ id: 'r1', connector: 'biomart', method: 'get_data', argsPreview: '{}' }]
+      pendingApprovals: [
+        {
+          id: 'r1',
+          connector: 'biomart',
+          method: 'get_data',
+          argsPreview: '{}',
+          availableScopes: ['once', 'session', 'project', 'global']
+        }
+      ]
     })
     act(() => root.render(<ConnectorApprovalDialog />))
 
-    act(() => button('Always allow')?.click())
-    expect(useSettingsStore.getState().setConnectorAutoAllow).toHaveBeenCalledWith('biomart', true)
+    act(() => button(label)?.click())
+
+    expect(useSettingsStore.getState().respondApproval).not.toHaveBeenCalled()
+    expect(document.body.querySelector('[role="alertdialog"]')?.textContent).toContain(scopePhrase)
+
+    act(() =>
+      document.body
+        .querySelector<HTMLButtonElement>('[data-testid="permission-scope-confirm"]')
+        ?.click()
+    )
+
+    expect(useSettingsStore.getState().respondApproval).toHaveBeenCalledWith('r1', scope)
+    expect(useSettingsStore.getState().setConnectorAutoAllow).not.toHaveBeenCalled()
   })
 
   it('Deny responds deny', () => {
     useSettingsStore.setState({
-      pendingApprovals: [{ id: 'r1', connector: 'biomart', method: 'get_data', argsPreview: '{}' }]
+      pendingApprovals: [
+        {
+          id: 'r1',
+          connector: 'biomart',
+          method: 'get_data',
+          argsPreview: '{}',
+          availableScopes: ['once']
+        }
+      ]
     })
     act(() => root.render(<ConnectorApprovalDialog />))
 

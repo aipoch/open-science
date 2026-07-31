@@ -44,7 +44,10 @@ type AcpRuntimeCoordinatorTeardownCallbacks = {
   ) => void
   onSessionCancellationRequested?: (sessionId: string) => void
   onAllSessionsCancellationRequested?: () => void
+  beforeSessionDelete?: (sessionId: string) => Promise<void>
 }
+
+type PermissionGrantSnapshotProvider = () => AcpStateSnapshot['permissionGrants']
 
 type PendingPromptStart = {
   id: string
@@ -92,7 +95,8 @@ class AcpRuntimeCoordinator {
     private readonly initializationBarrier?: Promise<unknown>,
     private readonly onDisconnected?: () => void,
     private readonly onSessionUnavailable?: (sessionId: string) => void,
-    private readonly teardownCallbacks: AcpRuntimeCoordinatorTeardownCallbacks = {}
+    private readonly teardownCallbacks: AcpRuntimeCoordinatorTeardownCallbacks = {},
+    private readonly permissionGrantSnapshot?: PermissionGrantSnapshotProvider
   ) {
     this.activeRuntime = this.addRuntime()
     this.lastRuntime = this.activeRuntime
@@ -171,7 +175,7 @@ class AcpRuntimeCoordinator {
         {},
         ...snapshots.map(({ snapshot }) => snapshot.permissionProfiles)
       ),
-      permissionGrants: this.permissionGrantStore.snapshot(),
+      permissionGrants: this.permissionGrantSnapshot?.() ?? this.permissionGrantStore.snapshot(),
       contextUsageBySession,
       nativeContextCompactionSessionIds,
       promptInFlight: promptInFlightSessionIds.length > 0,
@@ -181,6 +185,11 @@ class AcpRuntimeCoordinator {
 
   getActivePromptSessions(): { projectName: string; sessionId: string }[] {
     return Array.from(this.runtimes).flatMap((runtime) => runtime.getActivePromptSessions())
+  }
+
+  hasLiveSession(projectId: string, sessionId: string): boolean {
+    const runtime = this.sessionRuntimes.get(sessionId)
+    return runtime?.hasLiveSession(projectId, sessionId) ?? false
   }
 
   getActiveArtifactRunIds(): string[] {
@@ -372,6 +381,7 @@ class AcpRuntimeCoordinator {
     this.invalidateSessionTurn(request.sessionId)
     const runtime = this.runtimeForSession(request.sessionId)
     const ownedBeforeDelete = this.sessionRuntimes.get(request.sessionId) === runtime
+    await this.teardownCallbacks.beforeSessionDelete?.(request.sessionId)
     await runtime.deleteSession(request)
     const ownerAfterDelete = this.sessionRuntimes.get(request.sessionId)
     // Attached deletes emit a runtime state change, whose reconciliation already notifies exactly once.
@@ -386,7 +396,7 @@ class AcpRuntimeCoordinator {
     return this.getSnapshot()
   }
 
-  respondToPermission(response: AcpPermissionResponse): AcpStateSnapshot {
+  async respondToPermission(response: AcpPermissionResponse): Promise<AcpStateSnapshot> {
     const runtime =
       this.permissionRuntimes.get(response.requestId) ??
       Array.from(this.runtimes).find((candidate) =>
@@ -395,8 +405,11 @@ class AcpRuntimeCoordinator {
           .pendingPermissions.some((request) => request.requestId === response.requestId)
       ) ??
       this.getActiveRuntime()
-    runtime.respondToPermission(response)
-    this.permissionRuntimes.delete(response.requestId)
+    try {
+      await runtime.respondToPermission(response)
+    } finally {
+      this.permissionRuntimes.delete(response.requestId)
+    }
     return this.getSnapshot()
   }
 
@@ -405,9 +418,13 @@ class AcpRuntimeCoordinator {
     return this.getSnapshot()
   }
 
-  revokePermissionGrant(request: AcpRevokePermissionGrantRequest): AcpStateSnapshot {
-    this.runtimeForSession(request.sessionId).revokePermissionGrant(request)
+  async revokePermissionGrant(request: AcpRevokePermissionGrantRequest): Promise<AcpStateSnapshot> {
+    await this.runtimeForSession(request.sessionId).revokePermissionGrant(request)
     return this.getSnapshot()
+  }
+
+  notifyPermissionGrantsChanged(): void {
+    this.callbacks.onStateChanged?.(this.getSnapshot())
   }
 
   // A framework change takes effect for every future turn and workflow. The old generation stays alive

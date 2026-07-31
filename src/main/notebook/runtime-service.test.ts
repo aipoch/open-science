@@ -816,6 +816,61 @@ describe('notebook runtime service', () => {
     })
   })
 
+  it('caches a session-bound control connection and releases it with the runtime session', async () => {
+    const root = await createStorageRoot()
+    const executions: NotebookExecutionRequest[] = []
+    const release = vi.fn()
+    const resolveConnection = vi.fn(async (binding: { sessionId: string; projectId: string }) => ({
+      endpoint: 'http://127.0.0.1:1/x',
+      token: 'session-token',
+      release,
+      binding
+    }))
+    const service = new NotebookRuntimeService({
+      configRoot: root,
+      dataRoot: root,
+      projectName: 'default-project',
+      repository: new NotebookRunRepository(root),
+      executorFactory: () => ({
+        execute: async (request): Promise<NotebookExecutionResult> => {
+          executions.push(request)
+          return {
+            status: 'completed',
+            stdout: '',
+            stderr: '',
+            traceback: '',
+            cwdAfter: request.cwd,
+            outputs: []
+          }
+        },
+        shutdown: async () => ({ reaped: true })
+      })
+    })
+    service.setMcpRpcConnectionResolver(resolveConnection)
+
+    for (const code of ['return 1', 'return 2']) {
+      await service.executeControl({
+        projectName: 'default-project',
+        sessionId: 'session-1',
+        workspaceCwd: root,
+        code
+      })
+    }
+
+    expect(resolveConnection).toHaveBeenCalledOnce()
+    expect(resolveConnection).toHaveBeenCalledWith({
+      sessionId: 'session-1',
+      projectId: 'default-project'
+    })
+    expect(executions.map((request) => request.mcpRpcToken)).toEqual([
+      'session-token',
+      'session-token'
+    ])
+
+    await service.shutdown({ sessionId: 'session-1', workspaceCwd: root })
+    expect(release).toHaveBeenCalledOnce()
+  })
+
   it('rejects a dynamically executed package installer in the control REPL before dispatch', async () => {
     const root = await createStorageRoot()
     const execute = vi.fn()

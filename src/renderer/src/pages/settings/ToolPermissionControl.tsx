@@ -9,8 +9,8 @@ type ToolPermissionControlProps = {
   label: string // accessible group label, e.g. "Permission for list_marts"
 }
 
-// A 3-segment permission pill: "Always allow / Ask each time / Block". Each segment shows a hover
-// tooltip. "Ask each time" (the secure default) requires per-call approval before the tool runs.
+// A 3-segment permission pill: "Always allow / Require approval / Block". The middle policy asks
+// only when the Broker cannot resolve an existing Global, Project, or Session approval.
 export function ToolPermissionControl({
   value,
   onChange,
@@ -53,14 +53,14 @@ export function ToolPermissionControl({
               type="button"
               role="radio"
               aria-checked={value === 'ask'}
-              aria-label="Ask each time"
+              aria-label="Require approval"
               onClick={() => onChange('ask')}
               className={segment(value === 'ask', false)}
             >
               <Hand className="size-3.5" aria-hidden />
             </button>
           </TooltipTrigger>
-          <TooltipContent>Ask each time</TooltipContent>
+          <TooltipContent>Require approval</TooltipContent>
         </Tooltip>
         <Tooltip>
           <TooltipTrigger asChild>

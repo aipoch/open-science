@@ -1303,8 +1303,8 @@ describe('settings store: connectors slice', () => {
     useSettingsStore.getState().enqueueApproval(request)
     expect(useSettingsStore.getState().pendingApprovals).toHaveLength(1)
 
-    await useSettingsStore.getState().respondApproval('req-1', 'allow')
-    expect(api.respondConnectorApproval).toHaveBeenCalledWith({ id: 'req-1', decision: 'allow' })
+    await useSettingsStore.getState().respondApproval('req-1', 'once')
+    expect(api.respondConnectorApproval).toHaveBeenCalledWith({ id: 'req-1', decision: 'once' })
     expect(useSettingsStore.getState().pendingApprovals).toEqual([])
   })
 })

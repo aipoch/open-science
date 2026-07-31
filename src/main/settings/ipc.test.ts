@@ -70,7 +70,8 @@ type FakeSettingsService = Record<
   | 'listAgentHomeSkills'
   | 'previewAgentHomeSkill'
   | 'importAgentHomeSkills'
-  | 'setConnectorEnabled',
+  | 'setConnectorEnabled'
+  | 'updateCustomServer',
   ReturnType<typeof vi.fn>
 >
 
@@ -155,7 +156,8 @@ const createFakeService = (): FakeSettingsService => ({
   listAgentHomeSkills: vi.fn().mockResolvedValue([]),
   previewAgentHomeSkill: vi.fn().mockResolvedValue({ name: 'Installed preview' }),
   importAgentHomeSkills: vi.fn().mockResolvedValue({ results: [], skills: [] }),
-  setConnectorEnabled: vi.fn().mockResolvedValue({ connectors: [] })
+  setConnectorEnabled: vi.fn().mockResolvedValue({ connectors: [] }),
+  updateCustomServer: vi.fn().mockResolvedValue({ connectors: [], customServers: [] })
 })
 
 // Adapts the spy bag into the SettingsService shape the registration function expects.
@@ -341,6 +343,28 @@ describe('settings IPC handlers', () => {
     // The callback is what drives ipc.ts's refresh-then-reload chain (reload runs in a .finally so it
     // fires even if the refresh rejects — see connector-skill-reload.finally.test.ts).
     expect(service.setConnectorEnabled).toHaveBeenCalledWith({ id: 'biomart', enabled: false })
+    expect(onConnectorsChanged).toHaveBeenCalledOnce()
+  })
+
+  it('passes the custom-server security invalidation gate through before refreshing connectors', async () => {
+    handlers.clear()
+    const service = createFakeService()
+    const onCustomServerSecurityChanged = vi.fn().mockResolvedValue(undefined)
+    const onConnectorsChanged = vi.fn()
+    registerSettingsIpcHandlers({
+      service: asService(service),
+      onCustomServerSecurityChanged,
+      onConnectorsChanged
+    })
+    const request = {
+      id: 'server-id',
+      transport: 'streamable_http' as const,
+      url: 'https://replacement.example/mcp'
+    }
+
+    await invoke('settings:update-custom-server', request)
+
+    expect(service.updateCustomServer).toHaveBeenCalledWith(request, onCustomServerSecurityChanged)
     expect(onConnectorsChanged).toHaveBeenCalledOnce()
   })
 

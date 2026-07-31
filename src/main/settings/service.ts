@@ -241,6 +241,7 @@ import {
   type CodexAuthControllerPort,
   type CodexAuthStatus
 } from './codex-auth'
+
 import { resolveSystemProxyEnvironment, type SystemProxyEnvironment } from './system-proxy'
 import {
   ClaudeIsolatedAuthController,
@@ -252,6 +253,11 @@ import {
   type ClaudeSharedAuthControllerPort,
   type ClaudeSharedAuthStatus
 } from './claude-shared-auth'
+
+type CustomServerSecurityChangeGuard = {
+  commit(server: StoredCustomMcpServer): void
+  rollback(): void
+}
 
 export type AgentBackendSelection = {
   frameworkId: AgentFrameworkId
@@ -3319,8 +3325,8 @@ class SettingsService {
     return this.connectorsSnapshot()
   }
 
-  // Sets one tool's permission (allow = run without a prompt [default], ask = prompt each call,
-  // block = denied) and returns the connector's refreshed detail.
+  // Sets one tool's policy (allow = run without a prompt [default], ask = require approval when no
+  // remembered Broker grant applies, block = denied) and returns the refreshed detail.
   async setToolPermission(request: SetToolPermissionRequest): Promise<ConnectorDetailView> {
     await this.repository.setToolPolicy(
       request.toolId,
@@ -3394,8 +3400,16 @@ class SettingsService {
   }
 
   // Edits an existing custom MCP server, keeping its immutable identity (id, name, enabled, trust).
-  // Omitted env/headers keep the stored secret values; providing them replaces the set.
-  async updateCustomServer(request: UpdateCustomServerRequest): Promise<ConnectorsSnapshot> {
+  // Omitted env/headers keep the stored secret values; providing them replaces the set. A caller can
+  // invalidate remembered authority after validation but before persistence whenever the executable,
+  // endpoint, transport, arguments, or credentials change. If invalidation fails, the old server
+  // configuration remains authoritative.
+  async updateCustomServer(
+    request: UpdateCustomServerRequest,
+    beforeSecuritySensitiveUpdate?: (
+      serverId: string
+    ) => Promise<CustomServerSecurityChangeGuard | void>
+  ): Promise<ConnectorsSnapshot> {
     const existing = (await this.getConnectors())?.customMcpServers?.find(
       (s) => s.id === request.id
     )
@@ -3429,7 +3443,25 @@ class SettingsService {
 
     if (!server) throw new Error('Invalid custom connector configuration')
 
-    await this.repository.updateCustomServer(request.id, server)
+    const securitySensitiveConfigChanged =
+      existing.transport !== server.transport ||
+      existing.command !== server.command ||
+      !isDeepStrictEqual(existing.args ?? [], server.args ?? []) ||
+      existing.url !== server.url ||
+      request.env !== undefined ||
+      request.headers !== undefined
+
+    const securityChangeGuard = securitySensitiveConfigChanged
+      ? await beforeSecuritySensitiveUpdate?.(request.id)
+      : undefined
+
+    try {
+      await this.repository.updateCustomServer(request.id, server)
+      securityChangeGuard?.commit(server)
+    } catch (error) {
+      securityChangeGuard?.rollback()
+      throw error
+    }
 
     return this.connectorsSnapshot()
   }
@@ -3521,8 +3553,8 @@ class SettingsService {
               // Custom Anthropic-compatible gateways may work while Anthropic's domain preflight
               // endpoint is unreachable. Keep this override scoped to the ACP session so neither
               // project/user settings nor the isolated Claude runtime configuration are mutated.
-              // WebFetch remains an explicit app-brokered permission, whose conversation grants are
-              // scoped to the approved hostname rather than the whole tool.
+              // V1 keeps provider-native WebFetch/WebSearch Once-only. This bypass removes Claude's
+              // remote preflight dependency but does not create Session, Project, or Global grants.
               settings: {
                 skipWebFetchPreflight: true,
                 permissions: { ask: ['WebFetch'] }
@@ -4373,3 +4405,4 @@ class SettingsService {
 const createDefaultSettingsService = (): SettingsService => new SettingsService()
 
 export { SettingsService, createDefaultSettingsService }
+export type { CustomServerSecurityChangeGuard }

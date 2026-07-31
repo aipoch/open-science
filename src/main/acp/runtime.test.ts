@@ -438,6 +438,7 @@ const startPermissionProbeAgent = (
     toolKind?: 'other' | 'execute' | 'read' | null
     toolRawInput?: unknown
     providerToolName?: string
+    announcedProviderToolName?: string
     codexMcpIdentity?: {
       server: string
       tool: string
@@ -489,7 +490,10 @@ const startPermissionProbeAgent = (
             title: options.toolTitle,
             kind: options.toolKind ?? 'other',
             status: 'pending',
-            ...(options.toolRawInput === undefined ? {} : { rawInput: options.toolRawInput })
+            ...(options.toolRawInput === undefined ? {} : { rawInput: options.toolRawInput }),
+            ...(options.announcedProviderToolName
+              ? { _meta: { toolName: options.announcedProviderToolName } }
+              : {})
           }
         })
       }
@@ -1246,6 +1250,33 @@ describe('ACP runtime session management', () => {
     expect(runtime.getSnapshot().sessionIds).toEqual([])
   })
 
+  it('releases notebook RPC capabilities after an unexpected protocol close', async () => {
+    const process = new FakeAgentProcess()
+    startFakeAgent(process, ['unexpected-close-session'])
+    const releaseSessionCapabilities = vi.fn()
+    const runtime = new AcpRuntime({
+      appVersion: '0.2.0',
+      defaultCwd: '/workspace',
+      spawnAgent: () => asAgentProcess(process),
+      notebook: {
+        projectName: 'default-project',
+        mcpEntryPath: '/app/out/main/index.js',
+        getRpcConnection: async () => ({
+          endpoint: 'http://127.0.0.1:4567',
+          token: 'secret-token'
+        }),
+        releaseSessionCapabilities
+      }
+    })
+
+    const session = await runtime.createSession({ cwd: '/workspace' })
+    process.stdout.end()
+
+    await vi.waitFor(() => expect(runtime.getSnapshot().status).toBe('closed'))
+    expect(releaseSessionCapabilities).toHaveBeenCalledOnce()
+    expect(releaseSessionCapabilities).toHaveBeenCalledWith(session.sessionId)
+  })
+
   it('emits a terminal failure for every in-flight prompt before an unexpected close clears state', async () => {
     const process = new FakeAgentProcess()
     const promptGate = createDeferred()
@@ -1996,10 +2027,23 @@ describe('ACP runtime session management', () => {
   })
 
   it('adopts a fresh agent session under the same app id on a context reset', async () => {
+    const root = await createTemporaryRoot()
+    const connectorCall = vi.fn(async () => ({ ok: true }))
+    const notebookService = new NotebookRuntimeService({
+      configRoot: root,
+      dataRoot: root,
+      projectName: 'default-project',
+      repository: new NotebookRunRepository(root)
+    })
+    const notebookRpcServer = new NotebookLocalRpcServer(notebookService, {
+      token: 'control-token',
+      connectorService: { call: connectorCall }
+    })
+    temporaryDisconnections.push(() => notebookRpcServer.close())
     const process = new FakeAgentProcess()
     const receivedPrompts: ContentBlock[][] = []
     // A second agent session id is available for the fresh adoption that the reset performs.
-    startFakeAgent(process, ['remote-session-1', 'remote-session-2'], {
+    const fakeAgent = startFakeAgent(process, ['remote-session-1', 'remote-session-2'], {
       onPrompt: ({ prompt }) => {
         receivedPrompts.push(prompt)
       }
@@ -2007,14 +2051,32 @@ describe('ACP runtime session management', () => {
     const runtime = new AcpRuntime({
       appVersion: '0.1.0',
       defaultCwd: '/workspace',
-      spawnAgent: () => asAgentProcess(process)
+      spawnAgent: () => asAgentProcess(process),
+      notebook: {
+        projectName: 'default-project',
+        mcpEntryPath: '/app/out/main/index.js',
+        getRpcConnection: ({ sessionId, projectId }) =>
+          notebookRpcServer.issueSessionConnection(sessionId, projectId),
+        registerSessionAlias: (aliasSessionId, sessionId) =>
+          notebookRpcServer.registerSessionAlias(aliasSessionId, sessionId),
+        releaseSessionCapabilities: (sessionId) =>
+          notebookRpcServer.releaseSessionCapabilities(sessionId)
+      }
     })
 
     const session = await runtime.createSession({ cwd: '/workspace' })
+    const initialNotebookServer = fakeAgent.newSessions[0]?.mcpServers[0]
+    const initialEndpoint = getEnvValue(initialNotebookServer, 'OPEN_SCIENCE_NOTEBOOK_RPC_ENDPOINT')
+    const initialToken = getEnvValue(initialNotebookServer, 'OPEN_SCIENCE_NOTEBOOK_RPC_TOKEN')
     const reset = await runtime.resetSessionContext({
       sessionId: session.sessionId,
       cwd: '/workspace'
     })
+    const replacementNotebookServer = fakeAgent.newSessions[1]?.mcpServers[0]
+    const replacementToken = getEnvValue(
+      replacementNotebookServer,
+      'OPEN_SCIENCE_NOTEBOOK_RPC_TOKEN'
+    )
 
     // The app-facing id stays attached (a brand-new agent session now backs it), and the caller is told
     // to replay a transcript because the agent-side context was dropped.
@@ -2025,6 +2087,24 @@ describe('ACP runtime session management', () => {
     // The fresh session still accepts prompts, so the conversation continues after the reset.
     await runtime.sendPrompt({ sessionId: session.sessionId, text: 'continue after compaction' })
     expect(receivedPrompts.at(-1)).toBeDefined()
+
+    const callConnector = (token: string): Promise<Response> =>
+      fetch(initialEndpoint, {
+        method: 'POST',
+        headers: {
+          authorization: `Bearer ${token}`,
+          'content-type': 'application/json'
+        },
+        body: JSON.stringify({
+          method: 'mcpCall',
+          params: { server: 'pubmed', method: 'search', args: {} }
+        })
+      })
+
+    expect(replacementToken).not.toBe(initialToken)
+    await expect(callConnector(initialToken)).resolves.toMatchObject({ status: 401 })
+    await expect(callConnector(replacementToken)).resolves.toMatchObject({ status: 200 })
+    expect(connectorCall).toHaveBeenCalledOnce()
   })
 
   it('uses the framework native command to compact without adding command output to chat events', async () => {
@@ -2349,7 +2429,8 @@ describe('ACP runtime session management', () => {
 
     expect(opencodeMcpToolInputsMap(runtime).get(session.sessionId)?.get('retitled-call')).toEqual({
       title: 'open-science-notebook_notebook_execute',
-      providerToolName: 'open-science-notebook_notebook_execute'
+      providerToolName: 'open-science-notebook_notebook_execute',
+      mcpIdentity: 'open-science-notebook/notebook_execute'
     })
   })
 
@@ -4368,6 +4449,123 @@ describe('ACP runtime session management', () => {
     ])
   })
 
+  it('silently allows OpenCode native skill loading without publishing a permission request', async () => {
+    const process = new FakeAgentProcess()
+    const permissionRequests: AcpPermissionRequest[] = []
+    let permissionResponse: unknown
+    startPermissionProbeAgent(process, {
+      newSessionId: 'opencode-skill-session',
+      toolCallId: 'opencode-skill-call',
+      toolTitle: 'skill',
+      toolKind: 'other',
+      toolRawInput: { name: 'mcp-pubmed' },
+      announceToolCall: true,
+      permissionOptions: [
+        { optionId: 'once', kind: 'allow_once', name: 'Allow once' },
+        { optionId: 'always', kind: 'allow_always', name: 'Always allow' },
+        { optionId: 'reject', kind: 'reject_once', name: 'Reject' }
+      ],
+      onPermissionResponse: (response) => {
+        permissionResponse = response
+      }
+    })
+    const runtime = new AcpRuntime({
+      appVersion: '0.1.0',
+      defaultCwd: '/workspace',
+      spawnAgent: () => asAgentProcess(process),
+      framework: opencodeFramework,
+      callbacks: {
+        onPermissionRequest: (request) => permissionRequests.push(request)
+      }
+    })
+    const session = await runtime.createSession({ cwd: '/workspace', permissionProfile: 'ask' })
+
+    await runtime.sendPrompt({ sessionId: session.sessionId, text: 'load a skill' })
+
+    expect(permissionRequests).toEqual([])
+    expect(permissionResponse).toEqual({ outcome: { outcome: 'selected', optionId: 'once' } })
+    expect(runtime.getSnapshot().permissionGrants[session.sessionId]).toEqual([])
+  })
+
+  it('does not trust an isolated OpenCode permission title as native Skill identity', async () => {
+    const process = new FakeAgentProcess()
+    const permissionRequests: AcpPermissionRequest[] = []
+    let permissionResponse: unknown
+    startPermissionProbeAgent(process, {
+      newSessionId: 'opencode-untrusted-skill-session',
+      toolCallId: 'opencode-untrusted-skill-call',
+      toolTitle: 'skill',
+      toolKind: 'other',
+      toolRawInput: {},
+      permissionOptions: [
+        { optionId: 'once', kind: 'allow_once', name: 'Allow once' },
+        { optionId: 'reject', kind: 'reject_once', name: 'Reject' }
+      ],
+      onPermissionResponse: (response) => {
+        permissionResponse = response
+      }
+    })
+    const runtime = new AcpRuntime({
+      appVersion: '0.1.0',
+      defaultCwd: '/workspace',
+      spawnAgent: () => asAgentProcess(process),
+      framework: opencodeFramework,
+      callbacks: {
+        onPermissionRequest: (request) => {
+          permissionRequests.push(request)
+          runtime.respondToPermission({ requestId: request.requestId, optionId: 'reject' })
+        }
+      }
+    })
+    const session = await runtime.createSession({ cwd: '/workspace', permissionProfile: 'ask' })
+
+    await runtime.sendPrompt({ sessionId: session.sessionId, text: 'request an unknown tool' })
+
+    expect(permissionRequests).toHaveLength(1)
+    expect(permissionRequests[0]).toMatchObject({ title: 'skill', providerToolName: undefined })
+    expect(permissionResponse).toEqual({ outcome: { outcome: 'selected', optionId: 'reject' } })
+  })
+
+  it('does not use the OpenCode Skill fallback when tool metadata names a different tool', async () => {
+    const process = new FakeAgentProcess()
+    const permissionRequests: AcpPermissionRequest[] = []
+    let permissionResponse: unknown
+    startPermissionProbeAgent(process, {
+      newSessionId: 'opencode-explicit-tool-session',
+      toolCallId: 'opencode-explicit-tool-call',
+      toolTitle: 'skill',
+      toolKind: 'other',
+      toolRawInput: { name: 'mcp-pubmed' },
+      announceToolCall: true,
+      announcedProviderToolName: 'Bash',
+      permissionOptions: [
+        { optionId: 'once', kind: 'allow_once', name: 'Allow once' },
+        { optionId: 'reject', kind: 'reject_once', name: 'Reject' }
+      ],
+      onPermissionResponse: (response) => {
+        permissionResponse = response
+      }
+    })
+    const runtime = new AcpRuntime({
+      appVersion: '0.1.0',
+      defaultCwd: '/workspace',
+      spawnAgent: () => asAgentProcess(process),
+      framework: opencodeFramework,
+      callbacks: {
+        onPermissionRequest: (request) => {
+          permissionRequests.push(request)
+          runtime.respondToPermission({ requestId: request.requestId, optionId: 'reject' })
+        }
+      }
+    })
+    const session = await runtime.createSession({ cwd: '/workspace', permissionProfile: 'ask' })
+
+    await runtime.sendPrompt({ sessionId: session.sessionId, text: 'run a non-Skill tool' })
+
+    expect(permissionRequests).toHaveLength(1)
+    expect(permissionResponse).toEqual({ outcome: { outcome: 'selected', optionId: 'reject' } })
+  })
+
   it('restores OpenCode MCP inputs before separating notebook grants by language', async () => {
     const process = new FakeAgentProcess()
     const permissionRequests: AcpPermissionRequest[] = []
@@ -5465,7 +5663,7 @@ describe('ACP runtime session management', () => {
       isMcp: true,
       rawInput: { code: 'print(1)', language: 'python' },
       options: expect.arrayContaining([
-        expect.objectContaining({ name: 'This conversation', scope: 'session' })
+        expect.objectContaining({ name: 'This session', scope: 'session' })
       ])
     })
     expect(permissionResponse).toEqual({
@@ -6166,6 +6364,60 @@ describe('ACP runtime session management', () => {
     expect(mcpServerNamesMap(runtime).has(session.sessionId)).toBe(false)
   })
 
+  it('releases notebook RPC capabilities when a session is deleted', async () => {
+    const process = new FakeAgentProcess()
+    startFakeAgent(process, ['remote-session-1'])
+    const releaseSessionCapabilities = vi.fn()
+    const runtime = new AcpRuntime({
+      appVersion: '0.1.0',
+      defaultCwd: '/workspace',
+      spawnAgent: () => asAgentProcess(process),
+      notebook: {
+        projectName: 'default-project',
+        mcpEntryPath: '/app/out/main/index.js',
+        getRpcConnection: async () => ({
+          endpoint: 'http://127.0.0.1:4567',
+          token: 'secret-token'
+        }),
+        releaseSessionCapabilities
+      }
+    })
+
+    const session = await runtime.createSession({ cwd: '/workspace' })
+    await runtime.deleteSession({ sessionId: session.sessionId })
+
+    expect(releaseSessionCapabilities).toHaveBeenCalledOnce()
+    expect(releaseSessionCapabilities).toHaveBeenCalledWith(session.sessionId)
+  })
+
+  it('releases notebook RPC capabilities for every session on disconnect', async () => {
+    const process = new FakeAgentProcess()
+    startFakeAgent(process, ['remote-session-1', 'remote-session-2'])
+    const releaseSessionCapabilities = vi.fn()
+    const runtime = new AcpRuntime({
+      appVersion: '0.1.0',
+      defaultCwd: '/workspace',
+      spawnAgent: () => asAgentProcess(process),
+      notebook: {
+        projectName: 'default-project',
+        mcpEntryPath: '/app/out/main/index.js',
+        getRpcConnection: async () => ({
+          endpoint: 'http://127.0.0.1:4567',
+          token: 'secret-token'
+        }),
+        releaseSessionCapabilities
+      }
+    })
+
+    const first = await runtime.createSession({ cwd: '/workspace' })
+    const second = await runtime.createSession({ cwd: '/workspace' })
+    await runtime.disconnect()
+
+    expect(releaseSessionCapabilities).toHaveBeenCalledTimes(2)
+    expect(releaseSessionCapabilities).toHaveBeenCalledWith(first.sessionId)
+    expect(releaseSessionCapabilities).toHaveBeenCalledWith(second.sessionId)
+  })
+
   it('clears all MCP server names on disconnect', async () => {
     const process = new FakeAgentProcess()
     startFakeAgent(process, ['remote-session-1'])
@@ -6366,6 +6618,103 @@ describe('ACP runtime session management', () => {
         { sessionId: 'remote-session-1', text: 'reply for remote-session-1' }
       ])
     )
+  })
+
+  it('releases the notebook RPC capability when resumed-session setup fails', async () => {
+    const process = new FakeAgentProcess()
+    startFakeAgent(process, [])
+    const releaseSessionCapabilities = vi.fn()
+    const runtime = new AcpRuntime({
+      appVersion: '0.1.0',
+      defaultCwd: '/workspace',
+      spawnAgent: () => asAgentProcess(process),
+      notebook: {
+        projectName: 'default-project',
+        mcpEntryPath: '/app/out/main/index.js',
+        getRpcConnection: async () => ({
+          endpoint: 'http://127.0.0.1:4567',
+          token: 'resumed-token'
+        }),
+        releaseSessionCapabilities
+      }
+    })
+    const failure = new Error('resumed permission setup failed')
+    vi.spyOn(
+      runtime as unknown as { configurePermissionProfile: () => Promise<void> },
+      'configurePermissionProfile'
+    ).mockRejectedValueOnce(failure)
+
+    await expect(
+      runtime.resumeSession({ sessionId: 'restored-session', cwd: '/workspace' })
+    ).rejects.toBe(failure)
+
+    expect(releaseSessionCapabilities).toHaveBeenCalledOnce()
+    expect(releaseSessionCapabilities).toHaveBeenCalledWith('restored-session')
+  })
+
+  it('releases the notebook RPC capability when fresh-session adoption fails', async () => {
+    const process = new FakeAgentProcess()
+    startFakeAgent(process, ['adopted-session'])
+    const releaseSessionCapabilities = vi.fn()
+    const runtime = new AcpRuntime({
+      appVersion: '0.1.0',
+      defaultCwd: '/workspace',
+      spawnAgent: () => asAgentProcess(process),
+      notebook: {
+        projectName: 'default-project',
+        mcpEntryPath: '/app/out/main/index.js',
+        getRpcConnection: async () => ({
+          endpoint: 'http://127.0.0.1:4567',
+          token: 'adopted-token'
+        }),
+        releaseSessionCapabilities
+      }
+    })
+    const failure = new Error('adopted permission setup failed')
+    vi.spyOn(
+      runtime as unknown as { configurePermissionProfile: () => Promise<void> },
+      'configurePermissionProfile'
+    ).mockRejectedValueOnce(failure)
+
+    await expect(
+      runtime.resumeSession({
+        sessionId: 'switched-session',
+        cwd: '/workspace',
+        previousFrameworkId: 'codex'
+      })
+    ).rejects.toBe(failure)
+
+    expect(releaseSessionCapabilities).toHaveBeenCalledOnce()
+    expect(releaseSessionCapabilities).toHaveBeenCalledWith('switched-session')
+  })
+
+  it('replaces a failed resume capability without revoking the adopted session capability', async () => {
+    const process = new FakeAgentProcess()
+    startFakeAgent(process, ['adopted-session'], { resumeNotFound: true })
+    const getRpcConnection = vi.fn(async () => ({
+      endpoint: 'http://127.0.0.1:4567',
+      token: 'session-token'
+    }))
+    const releaseSessionCapabilities = vi.fn()
+    const runtime = new AcpRuntime({
+      appVersion: '0.1.0',
+      defaultCwd: '/workspace',
+      spawnAgent: () => asAgentProcess(process),
+      notebook: {
+        projectName: 'default-project',
+        mcpEntryPath: '/app/out/main/index.js',
+        getRpcConnection,
+        releaseSessionCapabilities
+      }
+    })
+
+    await expect(
+      runtime.resumeSession({ sessionId: 'restored-session', cwd: '/workspace' })
+    ).resolves.toMatchObject({ sessionId: 'restored-session', contextReset: true })
+
+    expect(getRpcConnection).toHaveBeenCalledTimes(2)
+    expect(releaseSessionCapabilities).toHaveBeenCalledOnce()
+    expect(releaseSessionCapabilities).toHaveBeenCalledWith('restored-session')
   })
 
   it('times out and tears down a reconnect when the agent never answers session/resume', async () => {
@@ -8432,6 +8781,10 @@ describe('ACP runtime session management', () => {
     const process = new FakeAgentProcess()
     const fakeAgent = startFakeAgent(process, ['remote-session-1'])
     const aliases: Array<{ aliasSessionId: string; sessionId: string }> = []
+    const getRpcConnection = vi.fn(async () => ({
+      endpoint: 'http://127.0.0.1:4567',
+      token: 'secret-token'
+    }))
     const runtime = new AcpRuntime({
       appVersion: '0.1.0',
       defaultCwd: '/workspace',
@@ -8440,10 +8793,7 @@ describe('ACP runtime session management', () => {
         projectName: 'default-project',
         mcpEntryPath: '/app/out/main/index.js',
         mcpCommand: '/Applications/Open Science.app/Contents/MacOS/Open Science',
-        getRpcConnection: async () => ({
-          endpoint: 'http://127.0.0.1:4567',
-          token: 'secret-token'
-        }),
+        getRpcConnection,
         registerSessionAlias: (aliasSessionId, sessionId) => {
           aliases.push({ aliasSessionId, sessionId })
         }
@@ -8478,6 +8828,17 @@ describe('ACP runtime session management', () => {
         sessionId: 'remote-session-1'
       }
     ])
+    expect(getRpcConnection).toHaveBeenNthCalledWith(1, {
+      sessionId: getEnvValue(
+        fakeAgent.newSessions[0].mcpServers[0],
+        'OPEN_SCIENCE_NOTEBOOK_SESSION_ID'
+      ),
+      projectId: 'default-project'
+    })
+    expect(getRpcConnection).toHaveBeenNthCalledWith(2, {
+      sessionId: 'remote-session-2',
+      projectId: 'default-project'
+    })
     expect(fakeAgent.resumedSessions[0].mcpServers).toHaveLength(1)
     expect(
       getEnvValue(fakeAgent.resumedSessions[0].mcpServers[0], 'OPEN_SCIENCE_NOTEBOOK_SESSION_ID')
@@ -11255,6 +11616,38 @@ describe('ACP runtime — session-creation and spawn diagnostics', () => {
       generation: 1,
       status: 'connected'
     })
+  })
+
+  it('releases the provisional notebook RPC capability when session creation fails', async () => {
+    const process = new FakeAgentProcess()
+    startFakeAgent(process, ['perm-fail-session'])
+    const releaseSessionCapabilities = vi.fn()
+    const runtime = new AcpRuntime({
+      appVersion: '0.1.0',
+      defaultCwd: '/workspace',
+      spawnAgent: () => asAgentProcess(process),
+      notebook: {
+        projectName: 'default-project',
+        mcpEntryPath: '/app/out/main/index.js',
+        getRpcConnection: async () => ({
+          endpoint: 'http://127.0.0.1:4567',
+          token: 'secret-token'
+        }),
+        releaseSessionCapabilities
+      }
+    })
+    const failure = new Error('permission setup failed')
+    vi.spyOn(
+      runtime as unknown as { configurePermissionProfile: () => Promise<void> },
+      'configurePermissionProfile'
+    ).mockRejectedValueOnce(failure)
+
+    await expect(runtime.createSession({ cwd: '/workspace' })).rejects.toBe(failure)
+
+    expect(releaseSessionCapabilities).toHaveBeenCalledOnce()
+    expect(releaseSessionCapabilities).toHaveBeenCalledWith(
+      expect.stringMatching(/^notebook-session-/)
+    )
   })
 
   it('logs backend and spawn success without executable, arguments, env, or pid', async () => {

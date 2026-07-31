@@ -327,10 +327,11 @@ type DefaultEnvProvisioner = {
   provisionR: (onProgress: (p: ProvisionProgress) => void) => Promise<void>
 }
 
-// The connector RPC endpoint/token injected into a kernel's spawn env for host.mcp(). The token is
-// stable for the lifetime of the local RPC server that issues it, so resolving it again on every run
-// is cheap and always yields the same value the already-spawned kernel captured at its own spawn time.
-type McpRpcConnection = { endpoint: string; token: string }
+// The session-scoped connector RPC capability injected into the persistent control-plane REPL. The
+// service caches it for the RuntimeSession lifetime because the child captures it only when spawned;
+// release revokes that capability when the runtime session is shut down.
+type McpRpcConnection = { endpoint: string; token: string; release?: () => void }
+type McpRpcConnectionBinding = { sessionId: string; projectId: string }
 
 type NotebookRuntimeServiceOptions = {
   // Config root: source of the app-owned claude config dir (protected from the kernel). Never relocated.
@@ -344,7 +345,7 @@ type NotebookRuntimeServiceOptions = {
   // Resolves the connector RPC connection to inject into the kernel spawn env. Usually set after
   // construction via setMcpRpcConnectionResolver, since the RPC server is constructed with this
   // service as a dependency (constructing them in the other order would cycle).
-  getMcpRpcConnection?: () => Promise<McpRpcConnection>
+  getMcpRpcConnection?: (binding: McpRpcConnectionBinding) => Promise<McpRpcConnection>
   // Resolves the user-configured package mirror (settings). Usually set after construction via
   // setPackageMirrorResolver, mirroring getMcpRpcConnection above — kept optional/async so a
   // synchronous test double works just as well as the real (disk-backed) settings service.
@@ -441,6 +442,9 @@ type RuntimeSession = {
   // control runs proceed independently of data cells but are still serialized among themselves (the
   // single control process handles one request at a time).
   controlQueue: Promise<unknown>
+  // Dedicated capability for host.mcp/host.compute. It is separate from the Agent-facing Notebook MCP
+  // token so reconnect rotation cannot invalidate a live persistent REPL.
+  mcpRpcConnection?: McpRpcConnection
   // Process keys whose kernel was lost (crash/hard-timeout) during their current run. A run clears its
   // key before executing and re-adds it via onTerminated on loss, so the post-run 'idle' write is
   // skipped and the 'terminated' status survives (the next clean run of that key clears it back).
@@ -1063,7 +1067,8 @@ class NotebookRuntimeService {
   // can settle them) rather than leaking a dangling teardown.
   private readonly revocationDrains = new Set<Promise<void>>()
   private runSequence = 0
-  private mcpRpcConnectionResolver: (() => Promise<McpRpcConnection>) | undefined
+  private mcpRpcConnectionResolver:
+    ((binding: McpRpcConnectionBinding) => Promise<McpRpcConnection>) | undefined
   private packageMirrorResolver:
     (() => PackageMirror | undefined | Promise<PackageMirror | undefined>) | undefined
   private runtimeEnablementResolver:
@@ -1659,7 +1664,9 @@ class NotebookRuntimeService {
 
   // Wires the connector RPC connection lookup after construction (the local RPC server that provides
   // it is itself constructed with this service as a dependency, so it cannot be passed in up front).
-  setMcpRpcConnectionResolver(resolver: () => Promise<McpRpcConnection>): void {
+  setMcpRpcConnectionResolver(
+    resolver: (binding: McpRpcConnectionBinding) => Promise<McpRpcConnection>
+  ): void {
     this.mcpRpcConnectionResolver = resolver
   }
 
@@ -2178,9 +2185,9 @@ class NotebookRuntimeService {
       inputFiles: request.provenanceContext ? (request.registeredInputFiles ?? []) : []
     }
 
-    // Backed by the RPC server's cached start promise, so it settles to the same stable {endpoint,
-    // token} the repl kernel captured at its own spawn time.
-    const mcpRpc = await this.resolveMcpRpcConnection()
+    // Resolve once per RuntimeSession: the persistent repl captures this dedicated capability when
+    // it starts, and the service releases it with the session.
+    const mcpRpc = await this.resolveMcpRpcConnection(session)
 
     const blockedMutation = detectManagedRuntimeMutation({
       source: request.code,
@@ -3300,14 +3307,19 @@ class NotebookRuntimeService {
   async shutdown(
     request: NotebookSessionRequest
   ): Promise<{ sessionId: string; status: 'shutdown' }> {
-    const session = this.sessions.get(request.sessionId)
+    return this.shutdownSession(request.sessionId)
+  }
+
+  async shutdownSession(sessionId: string): Promise<{ sessionId: string; status: 'shutdown' }> {
+    const session = this.sessions.get(sessionId)
 
     if (session) {
       await session.executor.shutdown()
-      this.sessions.delete(request.sessionId)
+      this.releaseMcpRpcConnection(session)
+      this.sessions.delete(sessionId)
     }
 
-    return { sessionId: request.sessionId, status: 'shutdown' }
+    return { sessionId, status: 'shutdown' }
   }
 
   // Crash recovery (WS13): reconcile any runtime operation the previous process left in flight. Run at
@@ -3652,9 +3664,9 @@ class NotebookRuntimeService {
     // Let any in-flight disable drain-and-close settle first, so a revocation teardown never races the
     // shutdown (and tests don't leak a dangling background drain).
     await Promise.all(Array.from(this.revocationDrains)).catch(() => undefined)
-    const results = await Promise.all(
-      Array.from(this.sessions.values()).map((session) => session.executor.shutdown())
-    )
+    const sessions = Array.from(this.sessions.values())
+    const results = await Promise.all(sessions.map((session) => session.executor.shutdown()))
+    for (const session of sessions) this.releaseMcpRpcConnection(session)
     this.sessions.clear()
     return { reaped: results.every((result) => result.reaped) }
   }
@@ -3909,16 +3921,30 @@ class NotebookRuntimeService {
     return { run, result }
   }
 
-  // Best-effort lookup of the connector RPC connection: host.mcp() is unavailable (rather than the
-  // whole cell failing) when no resolver is wired or the RPC server fails to start.
-  private async resolveMcpRpcConnection(): Promise<McpRpcConnection | undefined> {
+  // Best-effort, once-per-runtime-session capability lookup: host.mcp() is unavailable (rather than
+  // the whole cell failing) when no resolver is wired or the RPC server fails to start.
+  private async resolveMcpRpcConnection(
+    session: RuntimeSession
+  ): Promise<McpRpcConnection | undefined> {
+    if (session.mcpRpcConnection) return session.mcpRpcConnection
     if (!this.mcpRpcConnectionResolver) return undefined
 
     try {
-      return await this.mcpRpcConnectionResolver()
+      const connection = await this.mcpRpcConnectionResolver({
+        sessionId: session.sessionId,
+        projectId: session.projectName
+      })
+      session.mcpRpcConnection = connection
+      return connection
     } catch {
       return undefined
     }
+  }
+
+  private releaseMcpRpcConnection(session: RuntimeSession): void {
+    const connection = session.mcpRpcConnection
+    session.mcpRpcConnection = undefined
+    connection?.release?.()
   }
 
   // Best-effort lookup of the configured package mirror: an install falls back to the region default

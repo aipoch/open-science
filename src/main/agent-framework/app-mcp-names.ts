@@ -51,6 +51,8 @@ const APP_MCP_SERVER_BY_OPENCODE_NAME = new Map(
   APP_MCP_SERVERS.map((definition) => [definition.openCodeName, definition])
 )
 
+const frameworkSafeMcpServerName = (name: string): string => name.replace(/[^a-zA-Z0-9_]/g, '_')
+
 const canonicalAppMcpServerName = (name: string): string =>
   APP_MCP_SERVER_BY_OPENCODE_NAME.get(name)?.canonicalName ?? name
 
@@ -65,7 +67,13 @@ const appMcpServerAliases = (name: string): readonly string[] => {
   const canonicalName = canonicalAppMcpServerName(name)
   const definition = APP_MCP_SERVER_BY_CANONICAL_NAME.get(canonicalName)
 
-  return definition ? [definition.canonicalName, definition.openCodeName] : [canonicalName]
+  return [
+    ...new Set(
+      definition
+        ? [definition.canonicalName, definition.openCodeName]
+        : [canonicalName, frameworkSafeMcpServerName(canonicalName)]
+    )
+  ]
 }
 
 const resolveCanonicalMcpToolIdentity = (
@@ -77,14 +85,20 @@ const resolveCanonicalMcpToolIdentity = (
   const canonicalServers = [
     ...new Set(mcpServerNames.map((server) => canonicalAppMcpServerName(server)))
   ]
-  const configuredServerFor = (reportedServer: string): string | undefined =>
-    canonicalServers.find((server) => appMcpServerAliases(server).includes(reportedServer))
+  const configuredServerFor = (reportedServer: string): string | undefined => {
+    const matches = canonicalServers.filter((server) =>
+      appMcpServerAliases(server).includes(reportedServer)
+    )
+    return matches.length === 1 ? matches[0] : undefined
+  }
 
   if (name.startsWith('mcp__')) {
     const [reportedServer, ...toolParts] = name.slice('mcp__'.length).split('__')
     if (!reportedServer || toolParts.length === 0) return undefined
+    const server = configuredServerFor(reportedServer)
+    if (!server) return undefined
 
-    return `${configuredServerFor(reportedServer) ?? reportedServer}/${toolParts.join('__')}`
+    return `${server}/${toolParts.join('__')}`
   }
 
   const serverAliases = canonicalServers

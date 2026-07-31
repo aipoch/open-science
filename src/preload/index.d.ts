@@ -63,6 +63,13 @@ import type {
   SessionUpsertEvent
 } from '../shared/lifecycle-events'
 import type {
+  PermissionGrantMutationView,
+  PermissionGrantRestoreRequest,
+  PermissionGrantRevokeRequest,
+  PermissionGrantSnapshot,
+  PermissionGrantsChangedEvent
+} from '../shared/permission-grants'
+import type {
   AppendNotebookCodeCellRequest,
   BeginNotebookCodeCellRequest,
   NotebookAvailableEvent,
@@ -279,6 +286,12 @@ interface OpenScienceAPI {
     onState(listener: AcpListener<AcpStateSnapshot>): RemoveListener
     onEvent(listener: AcpListener<AcpRuntimeEvent>): RemoveListener
     onPermissionRequest(listener: AcpListener<AcpPermissionRequest>): RemoveListener
+  }
+  permissions: {
+    list(): Promise<PermissionGrantSnapshot>
+    revoke(request: PermissionGrantRevokeRequest): Promise<PermissionGrantMutationView>
+    restore(request: PermissionGrantRestoreRequest): Promise<PermissionGrantMutationView>
+    onChanged(listener: AcpListener<PermissionGrantsChangedEvent>): RemoveListener
   }
   sessions: {
     loadAll(): Promise<LoadAllSessionsResult>

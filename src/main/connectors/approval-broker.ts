@@ -1,4 +1,8 @@
-import type { ApprovalDecision, ConnectorApprovalRequest } from '../../shared/settings'
+import type {
+  ApprovalDecision,
+  ConnectorApprovalRequest,
+  ConnectorApprovalScope
+} from '../../shared/settings'
 
 export type ApprovalInfo = {
   connector: string
@@ -7,6 +11,7 @@ export type ApprovalInfo = {
   // The session that triggered the connector call, when one is known, so the desktop notification
   // can open that conversation.
   sessionId?: string
+  availableScopes?: ConnectorApprovalScope[]
 }
 
 type ApprovalBrokerDeps = {
@@ -46,7 +51,7 @@ export class ApprovalBroker {
     return new Promise<ApprovalDecision>((resolve) => {
       const timer = this.setTimer(() => this.settle(id, 'deny'), this.timeoutMs)
       this.pending.set(id, { resolve, timer })
-      this.deps.broadcast({ id, ...info })
+      this.deps.broadcast({ id, ...info, availableScopes: info.availableScopes ?? ['once'] })
     })
   }
 

@@ -6,6 +6,7 @@ import { describe, expect, it, vi } from 'vitest'
 import type { ArtifactVersionFile } from '../../shared/artifact-provenance'
 import {
   materializeSessionConversationGraph,
+  type PersistedArtifact,
   type PersistedChatSession
 } from '../../shared/session-persistence'
 import type { ArtifactProjectReconciliationSnapshot } from '../artifacts/provenance-repository'
@@ -99,6 +100,40 @@ const createRecoveredArtifact = (
   size: 12,
   mtimeMs: 3,
   ...overrides
+})
+
+const createPersistedRecoveredArtifact = (
+  overrides: Partial<ArtifactVersionFile> = {}
+): PersistedArtifact => {
+  const artifact = createRecoveredArtifact(overrides)
+  return {
+    id: artifact.id,
+    artifactId: artifact.artifactId,
+    versionId: artifact.versionId,
+    versionNumber: artifact.versionNumber,
+    kind: 'managed-file',
+    path: artifact.path,
+    fileUrl: artifact.fileUrl,
+    name: artifact.name,
+    mimeType: artifact.mimeType,
+    size: artifact.size,
+    mtimeMs: artifact.mtimeMs,
+    sha256: artifact.checksum
+  }
+}
+
+const createLegacyArtifactAlias = (): PersistedArtifact => ({
+  id: 'session-1:message-1:result.csv',
+  artifactId: 'artifact-lineage-1',
+  versionId: 'artifact-version-1',
+  versionNumber: 1,
+  kind: 'managed-file',
+  path: '/managed/message-1/result.csv',
+  fileUrl: 'file:///managed/message-1/result.csv',
+  name: 'result.csv',
+  mimeType: 'text/csv',
+  size: 12,
+  mtimeMs: 2
 })
 
 const createProjectReconciliationSnapshot = (): ArtifactProjectReconciliationSnapshot =>
@@ -774,6 +809,58 @@ describe('SessionPersistenceCoordinator', () => {
     expect(artifactStorage.reconcileSession).not.toHaveBeenCalled()
   })
 
+  it('reconciles durable Session grants only on the first complete startup scan', async () => {
+    const session = createSession()
+    const result = { sessions: [session], manifest: { version: 1 as const } }
+    const repository = createSessionRepository({
+      loadAllWithDiagnostics: vi.fn().mockResolvedValue({ result, isComplete: true })
+    })
+    const reconcileSessions = vi.fn().mockResolvedValue(undefined)
+    const coordinator = new SessionPersistenceCoordinator(
+      repository,
+      createFileIndex(),
+      undefined,
+      undefined,
+      undefined,
+      undefined,
+      { reconcileSessions }
+    )
+
+    await coordinator.loadAll()
+    await coordinator.loadAll()
+
+    expect(reconcileSessions).toHaveBeenCalledOnce()
+    expect(reconcileSessions).toHaveBeenCalledWith([
+      { projectId: 'project-1', sessionId: 'session-1' }
+    ])
+  })
+
+  it('does not prune durable Session grants from a partial startup scan', async () => {
+    const session = createSession()
+    const result = { sessions: [session], manifest: { version: 1 as const } }
+    const repository = createSessionRepository({
+      loadAllWithDiagnostics: vi
+        .fn()
+        .mockResolvedValueOnce({ result, isComplete: false })
+        .mockResolvedValueOnce({ result, isComplete: true })
+    })
+    const reconcileSessions = vi.fn().mockResolvedValue(undefined)
+    const coordinator = new SessionPersistenceCoordinator(
+      repository,
+      createFileIndex(),
+      undefined,
+      undefined,
+      undefined,
+      undefined,
+      { reconcileSessions }
+    )
+
+    await coordinator.loadAll()
+    await coordinator.loadAll()
+
+    expect(reconcileSessions).not.toHaveBeenCalled()
+  })
+
   it('reconciles path-free Upload copies only on the first complete load from multiple clients', async () => {
     const root = await mkdtemp(join(tmpdir(), 'open-science-upload-startup-reconcile-'))
     const client = createProjectDbClient(root)
@@ -1363,6 +1450,202 @@ describe('SessionPersistenceCoordinator', () => {
     expect(replayed.sessions[0].artifacts).toHaveLength(1)
     expect(replayed.sessions[0].filesRevision).toBe(5)
     expect(repository.saveSession).toHaveBeenCalledOnce()
+  })
+
+  it('replaces a recovered Artifact Version legacy alias instead of preserving two projections', async () => {
+    const legacyAlias = createLegacyArtifactAlias()
+    const originalSession = materializeSessionConversationGraph(
+      createSession({
+        filesRevision: 4,
+        messages: [
+          {
+            id: 'message-1',
+            role: 'agent',
+            content: 'result',
+            status: 'complete',
+            eventIds: [],
+            artifactIds: [legacyAlias.id],
+            createdAt: 1,
+            updatedAt: 2
+          }
+        ],
+        artifacts: [legacyAlias]
+      })
+    )
+    const repository = createSessionRepository({
+      loadAllWithDiagnostics: vi.fn().mockResolvedValue({
+        result: { sessions: [originalSession], manifest: { version: 1 as const } },
+        isComplete: true
+      })
+    })
+    const artifactStorage = {
+      prepareProjectReconciliation: vi
+        .fn()
+        .mockResolvedValue(createProjectReconciliationSnapshot()),
+      reconcileSession: vi.fn().mockResolvedValue({
+        recoveredMessageArtifacts: [
+          { messageId: 'message-1', artifacts: [createRecoveredArtifact()] }
+        ]
+      })
+    }
+    const coordinator = new SessionPersistenceCoordinator(
+      repository,
+      createFileIndex(),
+      undefined,
+      undefined,
+      undefined,
+      artifactStorage
+    )
+
+    const loaded = await coordinator.loadAll()
+    const recoveredSession = loaded.sessions[0]
+
+    expect(recoveredSession.messages[0].artifactIds).toEqual(['artifact-version-1'])
+    expect(recoveredSession.conversationGraph?.messages[0].artifactIds).toEqual([
+      'artifact-version-1'
+    ])
+    expect(recoveredSession.artifacts).toEqual([
+      expect.objectContaining({
+        id: 'artifact-version-1',
+        versionId: 'artifact-version-1',
+        sha256: 'a'.repeat(64)
+      })
+    ])
+    expect(recoveredSession.filesRevision).toBe(5)
+    expect(repository.saveSession).toHaveBeenCalledOnce()
+  })
+
+  it('normalizes an already duplicated historical Artifact Version without recovery input', async () => {
+    const legacyAlias = createLegacyArtifactAlias()
+    const nativeVersion = createPersistedRecoveredArtifact()
+    const originalSession = materializeSessionConversationGraph(
+      createSession({
+        filesRevision: 7,
+        messages: [
+          {
+            id: 'message-1',
+            role: 'agent',
+            content: 'result',
+            status: 'complete',
+            eventIds: [],
+            artifactIds: [legacyAlias.id, nativeVersion.id],
+            createdAt: 1,
+            updatedAt: 2
+          }
+        ],
+        artifacts: [legacyAlias, nativeVersion]
+      })
+    )
+    let durableSession = originalSession
+    const repository = createSessionRepository({
+      loadAllWithDiagnostics: vi.fn(async () => ({
+        result: { sessions: [durableSession], manifest: { version: 1 as const } },
+        isComplete: true
+      })),
+      saveSession: vi.fn(async (session) => {
+        durableSession = structuredClone(session)
+      })
+    })
+    const artifactStorage = {
+      prepareProjectReconciliation: vi
+        .fn()
+        .mockResolvedValue(createProjectReconciliationSnapshot()),
+      reconcileSession: vi.fn().mockResolvedValue(undefined)
+    }
+    const coordinator = new SessionPersistenceCoordinator(
+      repository,
+      createFileIndex(),
+      undefined,
+      undefined,
+      undefined,
+      artifactStorage
+    )
+
+    const loaded = await coordinator.loadAll()
+    const normalizedSession = loaded.sessions[0]
+
+    expect(normalizedSession.messages[0].artifactIds).toEqual(['artifact-version-1'])
+    expect(normalizedSession.conversationGraph?.messages[0].artifactIds).toEqual([
+      'artifact-version-1'
+    ])
+    expect(normalizedSession.artifacts).toEqual([nativeVersion])
+    expect(normalizedSession.filesRevision).toBe(8)
+    expect(repository.saveSession).toHaveBeenCalledOnce()
+
+    const replayed = await coordinator.loadAll()
+    expect(replayed.sessions[0]).toEqual(normalizedSession)
+    expect(repository.saveSession).toHaveBeenCalledOnce()
+  })
+
+  it('retries a failed historical Artifact alias write-back without replay churn', async () => {
+    const legacyAlias = createLegacyArtifactAlias()
+    const nativeVersion = createPersistedRecoveredArtifact()
+    const originalSession = materializeSessionConversationGraph(
+      createSession({
+        filesRevision: 7,
+        messages: [
+          {
+            id: 'message-1',
+            role: 'agent',
+            content: 'historical result',
+            status: 'complete',
+            eventIds: ['event-1'],
+            artifactIds: [legacyAlias.id, nativeVersion.id],
+            createdAt: 1,
+            updatedAt: 2
+          }
+        ],
+        artifacts: [legacyAlias, nativeVersion]
+      })
+    )
+    let durableSession = originalSession
+    let writeAttempt = 0
+    const repository = createSessionRepository({
+      loadAllWithDiagnostics: vi.fn(async () => ({
+        result: { sessions: [durableSession], manifest: { version: 1 as const } },
+        isComplete: true
+      })),
+      saveSession: vi.fn(async (session) => {
+        writeAttempt += 1
+        if (writeAttempt === 1) throw new Error('session json is read-only')
+        durableSession = structuredClone(session)
+      })
+    })
+    const markReconciliationIncomplete = vi.fn()
+    const artifactStorage = {
+      prepareProjectReconciliation: vi
+        .fn()
+        .mockResolvedValue(createProjectReconciliationSnapshot()),
+      reconcileSession: vi.fn().mockResolvedValue(undefined)
+    }
+    const coordinator = new SessionPersistenceCoordinator(
+      repository,
+      createFileIndex({ markReconciliationIncomplete }),
+      undefined,
+      undefined,
+      undefined,
+      artifactStorage
+    )
+
+    const failedWriteView = await coordinator.loadAll()
+    expect(failedWriteView.sessions[0].messages[0]).toMatchObject({
+      content: 'historical result',
+      eventIds: ['event-1'],
+      artifactIds: ['artifact-version-1'],
+      createdAt: 1,
+      updatedAt: 2
+    })
+    expect(failedWriteView.sessions[0].artifacts).toEqual([nativeVersion])
+    expect(failedWriteView.diagnostics?.failure).toBe('startup-reconciliation-failed')
+    expect(markReconciliationIncomplete).toHaveBeenCalledOnce()
+
+    const retried = await coordinator.loadAll()
+    expect(retried.sessions[0].messages[0].artifactIds).toEqual(['artifact-version-1'])
+    expect(repository.saveSession).toHaveBeenCalledTimes(2)
+
+    const replayed = await coordinator.loadAll()
+    expect(replayed.sessions[0]).toEqual(retried.sessions[0])
+    expect(repository.saveSession).toHaveBeenCalledTimes(2)
   })
 
   it('returns the recovered Session view and retries when its JSON save fails', async () => {

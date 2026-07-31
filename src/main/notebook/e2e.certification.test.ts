@@ -150,9 +150,12 @@ const makeHarness = async (opts: { idleTimeoutMs?: number } = {}): Promise<Harne
   })
 
   const rpcServer = new NotebookLocalRpcServer(service, { connectorService })
-  // Same wiring order as main/ipc.ts: the repl kernel gets the RPC server's connection for host.mcp().
-  service.setMcpRpcConnectionResolver(() => rpcServer.ensureStarted())
-  const conn = await rpcServer.ensureStarted()
+  // Same wiring order as main/ipc.ts: the Agent-facing MCP and persistent control REPL receive
+  // separate session-bound capabilities, so rotating one cannot invalidate the other.
+  service.setMcpRpcConnectionResolver(({ sessionId, projectId }) =>
+    rpcServer.issueControlConnection(sessionId, projectId)
+  )
+  const conn = await rpcServer.issueSessionConnection(SESSION, PROJECT)
 
   const env: NotebookMcpEnvironment = {
     endpoint: conn.endpoint,

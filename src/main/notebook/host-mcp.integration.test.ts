@@ -1,6 +1,7 @@
 import { join } from 'node:path'
 import { describe, it, expect } from 'vitest'
 import { NotebookKernelExecutor } from './kernel-executor'
+import { NotebookLocalRpcServer } from './local-rpc-server'
 
 // host.mcp now lives ONLY in the control-plane repl kernel (a Node process). Node is always available
 // under vitest, so the sole gate is RUN_KERNEL — no provisioned python/r env is needed.
@@ -21,6 +22,8 @@ const baseRequest = (
     code: string
     mcpRpcEndpoint: string
     mcpRpcToken: string
+    sessionId: string
+    projectName: string
   }>
 ): {
   code: string
@@ -31,6 +34,8 @@ const baseRequest = (
   runtimeRoot: string
   mcpRpcEndpoint?: string
   mcpRpcToken?: string
+  sessionId?: string
+  projectName?: string
 } => ({
   code: '',
   cwd: process.cwd(),
@@ -42,6 +47,43 @@ const baseRequest = (
 })
 
 gate('repl kernel host.mcp', () => {
+  it('uses a session-bound control capability to reach the real connector route', async () => {
+    const rpcServer = new NotebookLocalRpcServer({ execute: async () => ({}) } as never, {
+      connectorService: {
+        call: async (server, method, args, context) => ({ server, method, args, context })
+      }
+    })
+    const connection = await rpcServer.issueControlConnection('session-42', 'project-1')
+    const exec = makeExecutor()
+
+    try {
+      const result = await exec.execute(
+        baseRequest({
+          code: `
+            const result = await host.mcp('pubmed', 'search_articles', { query: 'tumor immunology' })
+            console.log(JSON.stringify(result))
+          `,
+          mcpRpcEndpoint: connection.endpoint,
+          mcpRpcToken: connection.token,
+          sessionId: 'session-42',
+          projectName: 'project-1'
+        })
+      )
+
+      expect(result.status).toBe('completed')
+      expect(JSON.parse(result.stdout.trim())).toEqual({
+        server: 'pubmed',
+        method: 'search_articles',
+        args: { query: 'tumor immunology' },
+        context: { sessionId: 'session-42', projectId: 'project-1', origin: 'agent' }
+      })
+    } finally {
+      await exec.shutdown()
+      connection.release()
+      await rpcServer.close()
+    }
+  })
+
   it('host.mcp posts to the RPC endpoint and returns the parsed result', async () => {
     // Minimal stub RPC endpoint returning a fixed dict for any mcpCall.
     const { createServer } = await import('node:http')
@@ -73,7 +115,9 @@ gate('repl kernel host.mcp', () => {
   it('host.mcp forwards a positional args object to the RPC server', async () => {
     // Stub RPC endpoint that echoes back the args it received so the test can assert forwarding.
     const { createServer } = await import('node:http')
-    let received: { params?: { args?: unknown } } = {}
+    let received: {
+      params?: { args?: unknown; sessionId?: string; projectId?: string }
+    } = {}
     const server = createServer((req, res) => {
       let body = ''
       req.on('data', (c) => (body += c))
@@ -91,7 +135,9 @@ gate('repl kernel host.mcp', () => {
       baseRequest({
         code: "const r = await host.mcp('chemistry','pubchem_get_properties',{ cids: [1, 2] }); console.log(JSON.stringify(r.echoedArgs.cids))",
         mcpRpcEndpoint: `http://127.0.0.1:${addr.port}`,
-        mcpRpcToken: 'tok'
+        mcpRpcToken: 'tok',
+        sessionId: 'session-42',
+        projectName: 'project-1'
       })
     )
     await exec.shutdown()
@@ -99,6 +145,7 @@ gate('repl kernel host.mcp', () => {
     expect(result.status).toBe('completed')
     expect(result.stdout).toContain('[1,2]')
     expect(received.params?.args).toEqual({ cids: [1, 2] })
+    expect(received.params).toMatchObject({ sessionId: 'session-42', projectId: 'project-1' })
   })
 
   it('surfaces the RPC server error message when host.mcp gets a non-2xx response', async () => {

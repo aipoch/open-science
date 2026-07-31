@@ -67,27 +67,32 @@ const createFakeRuntime = (options: {
   let snapshot = emptySnapshot()
   let sessionIndex = 0
   let turnSequence = 0
+  const sessionProjects = new Map<string, string>()
   const connect = vi.fn(async () => snapshot)
-  const createSession = vi.fn(async () => {
+  const createSession = vi.fn(async (request: { projectName?: string } = {}) => {
     const sessionId = options.sessionIds[sessionIndex]
     sessionIndex += 1
+    sessionProjects.set(sessionId, request.projectName ?? 'Artifacts')
     snapshot = { ...snapshot, sessionId, sessionIds: [...snapshot.sessionIds, sessionId] }
     options.callbacks.onStateChanged?.(snapshot)
     return { sessionId, cwd: '/workspace', frameworkId: options.frameworkId }
   })
-  const resumeSession = vi.fn(async ({ sessionId }: { sessionId: string }) => {
-    await options.beforeResume?.()
-    snapshot = {
-      ...snapshot,
-      sessionId,
-      sessionIds: snapshot.sessionIds.includes(sessionId)
-        ? snapshot.sessionIds
-        : [...snapshot.sessionIds, sessionId]
+  const resumeSession = vi.fn(
+    async ({ sessionId, projectName }: { sessionId: string; projectName?: string }) => {
+      await options.beforeResume?.()
+      sessionProjects.set(sessionId, projectName ?? 'Artifacts')
+      snapshot = {
+        ...snapshot,
+        sessionId,
+        sessionIds: snapshot.sessionIds.includes(sessionId)
+          ? snapshot.sessionIds
+          : [...snapshot.sessionIds, sessionId]
+      }
+      options.callbacks.onStateChanged?.(snapshot)
+      await options.afterResumeAttached?.()
+      return { sessionId, cwd: '/workspace', frameworkId: options.frameworkId, contextReset: true }
     }
-    options.callbacks.onStateChanged?.(snapshot)
-    await options.afterResumeAttached?.()
-    return { sessionId, cwd: '/workspace', frameworkId: options.frameworkId, contextReset: true }
-  })
+  )
   const resetSessionContext = vi.fn(async ({ sessionId }: { sessionId: string }) => ({
     sessionId,
     cwd: '/workspace',
@@ -98,6 +103,7 @@ const createFakeRuntime = (options: {
   const compactSession = vi.fn(async () => ({ stopReason: 'end_turn' }))
   const cancelPrompt = vi.fn(async () => snapshot)
   const deleteSession = vi.fn(async ({ sessionId }: { sessionId: string }) => {
+    sessionProjects.delete(sessionId)
     snapshot = {
       ...snapshot,
       sessionId: snapshot.sessionId === sessionId ? undefined : snapshot.sessionId,
@@ -153,6 +159,8 @@ const createFakeRuntime = (options: {
   const runtime = {
     getSnapshot: () => snapshot,
     getActivePromptSessions: () => [],
+    hasLiveSession: (projectId: string, sessionId: string) =>
+      snapshot.sessionIds.includes(sessionId) && sessionProjects.get(sessionId) === projectId,
     getActiveArtifactRunIds: () => [],
     connect,
     createSession,
@@ -229,6 +237,24 @@ const createFakeRuntime = (options: {
 }
 
 describe('AcpRuntimeCoordinator', () => {
+  it('recognizes a live session only under its owning project', async () => {
+    const coordinator = new AcpRuntimeCoordinator(
+      (callbacks) =>
+        createFakeRuntime({
+          frameworkId: 'claude-code',
+          sessionIds: ['session-1'],
+          callbacks
+        }).runtime
+    )
+    const session = await coordinator.createSession({ projectName: 'project-1' })
+
+    expect(coordinator.hasLiveSession('project-1', session.sessionId)).toBe(true)
+    expect(coordinator.hasLiveSession('project-2', session.sessionId)).toBe(false)
+
+    await coordinator.deleteSession({ sessionId: session.sessionId })
+    expect(coordinator.hasLiveSession('project-1', session.sessionId)).toBe(false)
+  })
+
   it('forwards switchSpecialist to the owning runtime and returns its contextReset flag', async () => {
     const created: ReturnType<typeof createFakeRuntime>[] = []
     const coordinator = new AcpRuntimeCoordinator((callbacks) => {
@@ -496,20 +522,20 @@ describe('AcpRuntimeCoordinator', () => {
       return fake.runtime
     })
     const session = await coordinator.createSession()
-    store?.remember(session.sessionId, 'tool:WebFetch')
+    store?.remember(session.sessionId, 'file:Write')
 
     await coordinator.requestAgentFrameworkSwitch()
 
     expect(coordinator.getSnapshot()).toMatchObject({
       sessionIds: [],
       permissionGrants: {
-        [session.sessionId]: [{ categoryKey: 'tool:WebFetch', label: 'WebFetch', scope: 'session' }]
+        [session.sessionId]: [{ categoryKey: 'file:Write', label: 'Write', scope: 'session' }]
       }
     })
 
     coordinator.revokePermissionGrant({
       sessionId: session.sessionId,
-      categoryKey: 'tool:WebFetch'
+      categoryKey: 'file:Write'
     })
     expect(coordinator.getSnapshot().permissionGrants).toEqual({})
 
@@ -519,6 +545,49 @@ describe('AcpRuntimeCoordinator', () => {
       previousFrameworkId: 'claude-code'
     })
     expect(coordinator.getSnapshot().permissionGrants).toEqual({})
+  })
+
+  it('projects durable registry grants across runtime rotation and refresh notifications', async () => {
+    const created: ReturnType<typeof createFakeRuntime>[] = []
+    const onStateChanged = vi.fn()
+    const durableGrants: AcpStateSnapshot['permissionGrants'] = {
+      'session-1': [
+        {
+          categoryKey: 'durable-grant-1',
+          kind: 'mcp',
+          label: 'Manage packages',
+          scope: 'session'
+        }
+      ]
+    }
+    const coordinator = new AcpRuntimeCoordinator(
+      (callbacks, permissionGrantStore) => {
+        const fake = createFakeRuntime({
+          frameworkId: created.length === 0 ? 'claude-code' : 'codex',
+          sessionIds: [`session-${created.length + 1}`],
+          callbacks,
+          permissionGrantStore
+        })
+        created.push(fake)
+        return fake.runtime
+      },
+      { onStateChanged },
+      '',
+      undefined,
+      undefined,
+      undefined,
+      {},
+      () => durableGrants
+    )
+
+    await coordinator.createSession()
+    await coordinator.requestAgentFrameworkSwitch()
+
+    expect(coordinator.getSnapshot().permissionGrants).toEqual(durableGrants)
+    coordinator.notifyPermissionGrantsChanged()
+    expect(onStateChanged).toHaveBeenLastCalledWith(
+      expect.objectContaining({ permissionGrants: durableGrants })
+    )
   })
 
   it('moves later settings and model-resolved effort across active generations', async () => {

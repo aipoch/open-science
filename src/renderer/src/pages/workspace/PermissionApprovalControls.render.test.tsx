@@ -137,9 +137,9 @@ const secondPermissionRequest: AcpPermissionRequest = {
 }
 
 describe('PermissionApprovalControls', () => {
-  it('renders the Allow button with the conversation scope by default', () => {
+  it('renders the Allow button with the Session scope by default', () => {
     const html = renderControls()
-    expect(html).toContain('for this conversation')
+    expect(html).toContain('for this session')
     expect(html).not.toContain('for this call only')
     expect(html).toContain('data-testid="allow-primary"')
     expect(html).toContain('data-testid="deny-button"')
@@ -612,7 +612,7 @@ describe('PermissionApprovalControls', () => {
     expect(html).toContain('Run in sandbox')
   })
 
-  it('does not expose reserved project or global scopes before they are implemented', () => {
+  it('routes explicit Project and Global choices through the scope picker, not extra actions', () => {
     const twoAlways: AcpPermissionRequest = {
       requestId: 'two-1',
       sessionId: 'session-1',
@@ -624,7 +624,7 @@ describe('PermissionApprovalControls', () => {
         { optionId: 'opt-once', name: 'Allow once', kind: 'allow_once', scope: 'once' },
         {
           optionId: 'opt-always-session',
-          name: 'This conversation',
+          name: 'This session',
           kind: 'allow_always',
           scope: 'session'
         },
@@ -646,8 +646,7 @@ describe('PermissionApprovalControls', () => {
       <PermissionApprovalControls requests={[twoAlways]} onRespond={() => undefined} />
     )
     expect(html).not.toContain('data-testid="extra-option"')
-    expect(html).not.toContain('This project')
-    expect(html).not.toContain('Global')
+    expect(html).toContain('data-testid="scope-chevron"')
   })
 
   it('keeps reject_always reachable with a canonical label when Deny sends reject_once', () => {

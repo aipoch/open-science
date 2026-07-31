@@ -298,12 +298,11 @@ describe('ComposerAgentControlsMenu', () => {
       )
     })
 
-    expect(container.textContent).toContain('Allowed this conversation')
+    expect(container.textContent).toContain('Allowed this session')
     expect(container.textContent).toContain('git status')
 
     const revokeButton = Array.from(container.querySelectorAll('button')).find(
-      (candidate) =>
-        candidate.getAttribute('aria-label') === 'Revoke conversation grant for git status'
+      (candidate) => candidate.getAttribute('aria-label') === 'Revoke session grant for git status'
     )
 
     if (!revokeButton) throw new Error('revoke button not found')
@@ -335,7 +334,7 @@ describe('ComposerAgentControlsMenu', () => {
         )
       })
 
-      expect(container.textContent).toContain('Allowed this conversation')
+      expect(container.textContent).toContain('Allowed this session')
       expect(container.textContent).toContain('Notebook REPL (Python)')
     }
   )
@@ -360,7 +359,7 @@ describe('ComposerAgentControlsMenu', () => {
     })
 
     const clearButton = Array.from(container.querySelectorAll('button')).find(
-      (candidate) => candidate.getAttribute('aria-label') === 'Clear all conversation grants'
+      (candidate) => candidate.getAttribute('aria-label') === 'Clear all session grants'
     )
 
     if (!clearButton) throw new Error('clear button not found')
@@ -541,11 +540,10 @@ describe('ComposerAgentControlsMenu', () => {
     ).toBe(true)
 
     const clearButton = Array.from(container.querySelectorAll('button')).find(
-      (candidate) => candidate.getAttribute('aria-label') === 'Clear all conversation grants'
+      (candidate) => candidate.getAttribute('aria-label') === 'Clear all session grants'
     )
     const revokeButton = Array.from(container.querySelectorAll('button')).find(
-      (candidate) =>
-        candidate.getAttribute('aria-label') === 'Revoke conversation grant for git status'
+      (candidate) => candidate.getAttribute('aria-label') === 'Revoke session grant for git status'
     )
     expect(clearButton?.disabled).toBe(true)
     expect(revokeButton?.disabled).toBe(true)
@@ -584,11 +582,11 @@ describe('ComposerAgentControlsMenu', () => {
     ).toBe(true)
 
     const clearButton = Array.from(container.querySelectorAll('button')).find(
-      (candidate) => candidate.getAttribute('aria-label') === 'Clear all conversation grants'
+      (candidate) => candidate.getAttribute('aria-label') === 'Clear all session grants'
     )
     const revokeButton = Array.from(container.querySelectorAll('button')).find(
       (candidate) =>
-        candidate.getAttribute('aria-label') === 'Revoke conversation grant for Shell commands'
+        candidate.getAttribute('aria-label') === 'Revoke session grant for Shell commands'
     )
     expect(clearButton?.disabled).toBe(false)
     expect(revokeButton?.disabled).toBe(false)

@@ -39,6 +39,7 @@ type NotebookLocalRpcServerOptions = {
       args: Record<string, unknown>,
       context?: {
         sessionId?: string
+        projectId?: string
         origin?: 'agent' | 'internal'
         specialistId?: string
       }
@@ -115,6 +116,12 @@ type ArtifactRpcCapability = Omit<ArtifactRpcCapabilityBinding, 'allowedMethods'
   drainWaiters: Set<() => void>
 }
 
+type NotebookRpcSessionBinding = {
+  sessionId: string
+  projectId: string
+  allowedMethods?: ReadonlySet<string>
+}
+
 class RpcHttpError extends Error {
   constructor(
     readonly statusCode: number,
@@ -132,6 +139,7 @@ const ARTIFACT_RPC_METHODS = new Set<ArtifactRpcMethod>([
 // Capabilities are revoked when the turn ends. This upper bound only limits abandoned tokens, so
 // it must comfortably exceed long notebook executions that remain inside one active turn.
 const DEFAULT_ARTIFACT_RPC_CAPABILITY_TTL_MS = 2 * 60 * 60 * 1_000
+const CONTROL_RPC_METHODS = new Set(['mcpCall', 'computeCall'])
 
 const isArtifactRpcMethod = (method: string): method is ArtifactRpcMethod =>
   ARTIFACT_RPC_METHODS.has(method as ArtifactRpcMethod)
@@ -177,6 +185,8 @@ class NotebookLocalRpcServer {
   private server: Server | undefined
   private startPromise: Promise<NotebookRpcConnection> | undefined
   private readonly sessionAliases = new Map<string, string>()
+  private readonly sessionRpcCapabilities = new Map<string, NotebookRpcSessionBinding>()
+  private readonly sessionRpcTokens = new Map<string, string>()
   // The session → Specialist relationship is established by the ACP runtime, not supplied by the
   // notebook process. Keeping it here prevents an agent from selecting another Specialist's scope
   // by forging an RPC parameter.
@@ -283,6 +293,8 @@ class NotebookLocalRpcServer {
     this.server = undefined
     this.startPromise = undefined
     this.artifactRpcCapabilities.clear()
+    this.sessionRpcCapabilities.clear()
+    this.sessionRpcTokens.clear()
 
     if (!server) return
 
@@ -297,6 +309,99 @@ class NotebookLocalRpcServer {
   // Remembers the final ACP session id for notebook aliases created before session start.
   registerSessionAlias(aliasSessionId: string, sessionId: string): void {
     this.sessionAliases.set(aliasSessionId, sessionId)
+  }
+
+  private resolveSessionCapabilityOwners(sessionId: string): Set<string> {
+    const ownedSessionIds = new Set([sessionId])
+
+    // Alias chains are not expected, but computing the small transitive closure keeps rotation and
+    // revocation correct if an adopted session is ever remapped more than once.
+    let foundAlias = true
+    while (foundAlias) {
+      foundAlias = false
+      for (const [aliasSessionId, targetSessionId] of this.sessionAliases) {
+        if (!ownedSessionIds.has(aliasSessionId) && !ownedSessionIds.has(targetSessionId)) continue
+        if (!ownedSessionIds.has(aliasSessionId)) {
+          ownedSessionIds.add(aliasSessionId)
+          foundAlias = true
+        }
+        if (!ownedSessionIds.has(targetSessionId)) {
+          ownedSessionIds.add(targetSessionId)
+          foundAlias = true
+        }
+      }
+    }
+
+    return ownedSessionIds
+  }
+
+  private revokeAgentSessionCapabilities(sessionId: string): void {
+    for (const ownedSessionId of this.resolveSessionCapabilityOwners(sessionId)) {
+      const token = this.sessionRpcTokens.get(ownedSessionId)
+      if (token) this.sessionRpcCapabilities.delete(token)
+      this.sessionRpcTokens.delete(ownedSessionId)
+    }
+  }
+
+  // Revokes every bearer capability owned by one app session, including capabilities issued under
+  // the pre-start alias used before ACP returns the final session id. Control-plane capabilities are
+  // discovered by their binding rather than sessionRpcTokens because they intentionally do not rotate
+  // the Agent-facing token.
+  releaseSessionCapabilities(sessionId: string): void {
+    const ownedSessionIds = this.resolveSessionCapabilityOwners(sessionId)
+
+    for (const [token, binding] of this.sessionRpcCapabilities) {
+      if (ownedSessionIds.has(binding.sessionId)) this.sessionRpcCapabilities.delete(token)
+    }
+    for (const ownedSessionId of ownedSessionIds) {
+      this.sessionRpcTokens.delete(ownedSessionId)
+      this.sessionSpecialists.delete(ownedSessionId)
+    }
+    for (const [aliasSessionId, targetSessionId] of this.sessionAliases) {
+      if (ownedSessionIds.has(aliasSessionId) || ownedSessionIds.has(targetSessionId)) {
+        this.sessionAliases.delete(aliasSessionId)
+      }
+    }
+  }
+
+  async issueSessionConnection(
+    sessionId: string,
+    projectId: string
+  ): Promise<NotebookRpcConnection> {
+    const connection = await this.ensureStarted()
+    // A context reset issues the replacement under the final ACP id, while the original token can be
+    // keyed by its pre-start notebook-session-* alias. Rotate the complete Agent-facing alias closure;
+    // dedicated control-plane capabilities stay valid for the live Notebook runtime.
+    this.revokeAgentSessionCapabilities(sessionId)
+
+    const token = randomUUID()
+    this.sessionRpcTokens.set(sessionId, token)
+    this.sessionRpcCapabilities.set(token, { sessionId, projectId })
+    return { endpoint: connection.endpoint, token }
+  }
+
+  // Issues a dedicated capability for the persistent control-plane REPL. Unlike the Agent-facing
+  // session connection, this does not rotate `sessionRpcTokens`: both callers remain valid, and the
+  // narrower capability cannot invoke Notebook lifecycle or execution RPC methods.
+  async issueControlConnection(
+    sessionId: string,
+    projectId: string
+  ): Promise<NotebookRpcConnection & { release: () => void }> {
+    const connection = await this.ensureStarted()
+    const token = randomUUID()
+    this.sessionRpcCapabilities.set(token, {
+      sessionId,
+      projectId,
+      allowedMethods: CONTROL_RPC_METHODS
+    })
+
+    return {
+      endpoint: connection.endpoint,
+      token,
+      release: () => {
+        this.sessionRpcCapabilities.delete(token)
+      }
+    }
   }
 
   registerSessionSpecialist(sessionId: string, specialistId: string | undefined): void {
@@ -427,8 +532,27 @@ class NotebookLocalRpcServer {
         const acquired = this.acquireArtifactRpcRequest(method, bearerToken, params)
         params = acquired.params
         releaseArtifactRequest = acquired.release
-      } else if (authorization !== `Bearer ${this.token}`) {
-        throw new RpcHttpError(401, 'Invalid notebook RPC token.')
+      } else {
+        const sessionBinding = this.sessionRpcCapabilities.get(bearerToken)
+        if (sessionBinding) {
+          if (sessionBinding.allowedMethods && !sessionBinding.allowedMethods.has(method)) {
+            throw new RpcHttpError(403, `Notebook RPC capability does not allow ${method}.`)
+          }
+          // The request body is agent-controlled. Owner fields always come from the unforgeable,
+          // per-session capability issued while building this session's Notebook environment.
+          params = {
+            ...params,
+            sessionId: sessionBinding.sessionId,
+            projectId: sessionBinding.projectId
+          }
+        } else {
+          if (authorization !== `Bearer ${this.token}`) {
+            throw new RpcHttpError(401, 'Invalid notebook RPC token.')
+          }
+          if (method === 'mcpCall' || method === 'computeCall') {
+            throw new RpcHttpError(401, 'A session-bound notebook RPC token is required.')
+          }
+        }
       }
       // Resolve pre-session aliases before the runtime service looks up persistent state.
       const result = await this.dispatch(method, this.resolveSessionAlias(params))
@@ -533,8 +657,10 @@ class NotebookLocalRpcServer {
       const toolMethod = typeof params.method === 'string' ? params.method : ''
       const args = isRecord(params.args) ? params.args : {}
       const sessionId = typeof params.sessionId === 'string' ? params.sessionId : undefined
+      const projectId = typeof params.projectId === 'string' ? params.projectId : undefined
       return this.connectorService.call(server, toolMethod, args, {
         sessionId,
+        ...(projectId ? { projectId } : {}),
         origin: 'agent',
         ...(sessionId && this.sessionSpecialists.get(sessionId)
           ? { specialistId: this.sessionSpecialists.get(sessionId) }
@@ -542,12 +668,14 @@ class NotebookLocalRpcServer {
       })
     }
 
-    // computeCall routes compute API operations to ComputeService (design.md §2). The `op` field
-    // allows future ops (list, details) to be added without breaking the contract (design.md §5).
-    // Not session-scoped — like mcpCall it bypasses the session routing below.
+    // computeCall routes compute API operations to ComputeService. Ownership comes only from the
+    // session-bound RPC capability; snake_case owner fields in the agent-controlled body are never
+    // accepted as authority.
     if (method === 'computeCall') {
       if (!this.computeService) throw new Error('Compute service is not configured.')
       const op = typeof params.op === 'string' ? params.op : ''
+      const sessionId = typeof params.sessionId === 'string' ? params.sessionId : ''
+      const projectId = typeof params.projectId === 'string' ? params.projectId : ''
       if (op === 'call_command') {
         const providerId = typeof params.provider_id === 'string' ? params.provider_id : ''
         const cmd = typeof params.cmd === 'string' ? params.cmd : ''
@@ -555,10 +683,6 @@ class NotebookLocalRpcServer {
         const loginShell = typeof params.login_shell === 'boolean' ? params.login_shell : true
         const timeoutSeconds =
           typeof params.timeout_seconds === 'number' ? params.timeout_seconds : undefined
-        // Optional session/project context for grant-scope approval memory (issue 05).
-        // When absent, callCommand falls back to the legacy 'once'-only behaviour.
-        const sessionId = typeof params.session_id === 'string' ? params.session_id : undefined
-        const projectId = typeof params.project_id === 'string' ? params.project_id : undefined
         const context = sessionId && projectId ? { sessionId, projectId } : undefined
         try {
           return await this.computeService.callCommand(
@@ -613,9 +737,6 @@ class NotebookLocalRpcServer {
       if (op === 'download') {
         const providerId = typeof params.provider_id === 'string' ? params.provider_id : ''
         const remotePath = typeof params.remote_path === 'string' ? params.remote_path : ''
-        // Optional session/project context for grant-scope approval memory (matching call_command).
-        const sessionId = typeof params.session_id === 'string' ? params.session_id : undefined
-        const projectId = typeof params.project_id === 'string' ? params.project_id : undefined
         const context = sessionId && projectId ? { sessionId, projectId } : undefined
         return this.computeService.download(
           providerId,
@@ -631,8 +752,6 @@ class NotebookLocalRpcServer {
         const providerId = typeof params.provider_id === 'string' ? params.provider_id : ''
         const intent = typeof params.intent === 'string' ? params.intent : ''
         const command = typeof params.command === 'string' ? params.command : ''
-        const sessionId = typeof params.session_id === 'string' ? params.session_id : ''
-        const projectId = typeof params.project_id === 'string' ? params.project_id : ''
         const options = {
           environment: typeof params.environment === 'string' ? params.environment : undefined,
           resourceRequest: isRecord(params.resources)
@@ -681,7 +800,6 @@ class NotebookLocalRpcServer {
       // this conversation via the ComputeHostSelector. Session id comes from COMPUTE_SESSION_ID in
       // the repl spawn env (same passthrough used by submit_job / call_command).
       if (op === 'list_compute') {
-        const sessionId = typeof params.session_id === 'string' ? params.session_id : ''
         return this.computeService.getEnabledComputeHosts(sessionId)
       }
 
@@ -689,7 +807,6 @@ class NotebookLocalRpcServer {
       // Limits the number of non-terminal jobs across all providers in this session. Jobs exceeding
       // the limit enter 'queued' state and auto-dispatch when slots free up.
       if (op === 'set_concurrency_limit') {
-        const sessionId = typeof params.session_id === 'string' ? params.session_id : ''
         const limit = typeof params.limit === 'number' ? params.limit : 0
         return this.computeService.setSessionConcurrencyLimit(sessionId, limit)
       }
@@ -698,7 +815,6 @@ class NotebookLocalRpcServer {
       // Returns session_limit (user-set or null), active_count (non-terminal jobs in session),
       // queued_count (queued jobs in session), and provider_ceilings (per-provider hard limits).
       if (op === 'concurrency_status') {
-        const sessionId = typeof params.session_id === 'string' ? params.session_id : ''
         return this.computeService.getSessionConcurrencyStatus(sessionId)
       }
 

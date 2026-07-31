@@ -326,6 +326,57 @@ describe('WorkspaceMessageScroller loading render', () => {
     expect(html).toContain('TXT')
   })
 
+  it('renders one generated card for legacy and native ids of the same Artifact Version', async () => {
+    const html = await renderScroller(
+      createSession({
+        status: 'idle',
+        messages: [
+          createMessage({ id: 'prompt-1' }),
+          createMessage({
+            id: 'reply-1',
+            role: 'agent',
+            content: 'Saved the script',
+            artifactIds: ['session-1:reply-1:test_script.r', 'artifact-version-1']
+          })
+        ],
+        artifacts: [
+          {
+            id: 'session-1:reply-1:test_script.r',
+            artifactId: 'artifact-lineage-1',
+            versionId: 'artifact-version-1',
+            versionNumber: 1,
+            kind: 'managed-file',
+            path: '/managed/reply-1/test_script.r',
+            name: 'test_script.r',
+            mimeType: 'text/x-r',
+            size: 227,
+            mtimeMs: 1710000000100
+          },
+          {
+            id: 'artifact-version-1',
+            artifactId: 'artifact-lineage-1',
+            versionId: 'artifact-version-1',
+            versionNumber: 1,
+            kind: 'managed-file',
+            path: '/managed/.provenance/artifact-lineage-1/artifact-version-1/content',
+            name: 'test_script.r',
+            mimeType: 'text/x-r',
+            size: 227,
+            mtimeMs: 1710000000101,
+            sha256: 'a'.repeat(64)
+          }
+        ]
+      })
+    )
+
+    expect(html).toContain('GENERATED · 1')
+    expect(html.match(/aria-label="Preview generated file test_script\.r"/g)).toHaveLength(1)
+    expect(html).toContain(
+      'title="/managed/.provenance/artifact-lineage-1/artifact-version-1/content"'
+    )
+    expect(html).not.toContain('title="/managed/reply-1/test_script.r"')
+  })
+
   it('renders image cards and a more button for larger generated artifact sets without file urls', async () => {
     const artifacts = Array.from({ length: 7 }, (_, index) => ({
       id: `artifact-${index + 1}`,

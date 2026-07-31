@@ -6,12 +6,15 @@ import type {
   ToolPermission
 } from '../../../../shared/settings'
 import { useSettingsStore } from '@/stores/settings-store'
+import { usePermissionGrantsStore } from '@/stores/permission-grants-store'
+import { Button } from '@/components/ui/button'
 import { ConnectorGlyph } from './connector-icons'
 import { SettingsToggle } from './SettingsLayout'
 import { ToolPermissionControl } from './ToolPermissionControl'
 
 type ConnectorDetailViewProps = {
   id: string
+  onManagePermissions?: () => void
 }
 
 // One label/value row in the Details section.
@@ -31,7 +34,10 @@ const DetailRow = ({
 // Detail view for one bundled connector: header (name + Featured badge + enable toggle + description),
 // a "Skip approvals" row, the per-tool permission list, and connector metadata under "Details". The
 // breadcrumb and back control live in the settings header, not here.
-const ConnectorDetailView = ({ id }: ConnectorDetailViewProps): React.JSX.Element => {
+const ConnectorDetailView = ({
+  id,
+  onManagePermissions
+}: ConnectorDetailViewProps): React.JSX.Element => {
   const setConnectorEnabled = useSettingsStore((state) => state.setConnectorEnabled)
   const setConnectorAutoAllow = useSettingsStore((state) => state.setConnectorAutoAllow)
   const setToolPermission = useSettingsStore((state) => state.setToolPermission)
@@ -40,6 +46,8 @@ const ConnectorDetailView = ({ id }: ConnectorDetailViewProps): React.JSX.Elemen
   // enabled/autoAllow from the store (falling back to the initial detail) keeps the two header
   // switches live after a toggle, mirroring how SkillDetailView derives enabled from the store.
   const storeConnector = useSettingsStore((state) => state.connectors.find((c) => c.id === id))
+  const permissionGrants = usePermissionGrantsStore((state) => state.grants)
+  const loadPermissionGrants = usePermissionGrantsStore((state) => state.load)
   const [detail, setDetail] = useState<ConnectorDetail | null>(null)
   // Ids of tools whose description is expanded.
   const [expanded, setExpanded] = useState<Set<string>>(new Set())
@@ -61,6 +69,10 @@ const ConnectorDetailView = ({ id }: ConnectorDetailViewProps): React.JSX.Elemen
       active = false
     }
   }, [id])
+
+  useEffect(() => {
+    void loadPermissionGrants()
+  }, [loadPermissionGrants])
 
   // Persist one tool's permission, folding the refreshed detail back into local state.
   const handleToolChange = async (toolId: string, permission: ToolPermission): Promise<void> => {
@@ -105,8 +117,8 @@ const ConnectorDetailView = ({ id }: ConnectorDetailViewProps): React.JSX.Elemen
         <div className="min-w-0">
           <p className="text-sm text-foreground">Skip approvals</p>
           <p className="text-xs text-muted-foreground [text-wrap:pretty]">
-            Allow Claude to use every tool from this connector without showing an approval card each
-            time.
+            Allow the agent to use every tool from this connector without showing an approval card
+            each time.
           </p>
         </div>
         <SettingsToggle
@@ -119,13 +131,16 @@ const ConnectorDetailView = ({ id }: ConnectorDetailViewProps): React.JSX.Elemen
       {/* Tools: per-tool permission controls. */}
       <section className="mt-6 border-t border-border pt-4">
         <h2 className="text-sm font-semibold text-foreground">Tools</h2>
-        <p className="text-xs text-muted-foreground">What Claude can do with this connector</p>
+        <p className="text-xs text-muted-foreground">What the agent can do with this connector</p>
         {detail.tools.length === 0 ? (
           <p className="mt-3 text-sm text-muted-foreground">This connector has no tools.</p>
         ) : (
           <div className="mt-2 flex flex-col">
             {detail.tools.map((tool) => {
               const isExpanded = expanded.has(tool.id)
+              const remembered = permissionGrants.filter(
+                (grant) => grant.connectorServerId === id && grant.connectorToolName === tool.method
+              )
 
               return (
                 <div key={tool.id}>
@@ -151,9 +166,47 @@ const ConnectorDetailView = ({ id }: ConnectorDetailViewProps): React.JSX.Elemen
                     />
                   </div>
                   {isExpanded ? (
-                    <p className="whitespace-pre-wrap pb-3 pl-6 pr-2 text-xs text-muted-foreground [text-wrap:pretty]">
-                      {tool.description || 'No description provided for this tool.'}
-                    </p>
+                    <div className="space-y-2 pb-3 pl-6 pr-2 text-xs text-muted-foreground">
+                      <p className="whitespace-pre-wrap [text-wrap:pretty]">
+                        {tool.description || 'No description provided for this tool.'}
+                      </p>
+                      {tool.permission === 'ask' ? (
+                        <p>Ask when no Session, Project, or Global permission applies.</p>
+                      ) : null}
+                      {remembered.length > 0 ? (
+                        <div className="flex flex-wrap items-center gap-1.5">
+                          <span>
+                            Remembered approvals: {remembered.length}
+                            {tool.permission === 'block'
+                              ? ' · currently blocked'
+                              : tool.permission === 'allow' || autoAllow
+                                ? ' · currently unnecessary'
+                                : ''}
+                          </span>
+                          {remembered.map((grant) => (
+                            <span
+                              key={grant.id}
+                              className="rounded-md bg-muted px-1.5 py-0.5 text-muted-foreground"
+                            >
+                              {grant.scopeKind === 'global'
+                                ? 'Global'
+                                : grant.scopeKind === 'project'
+                                  ? 'Project'
+                                  : 'Session'}
+                            </span>
+                          ))}
+                          <Button
+                            type="button"
+                            variant="link"
+                            size="sm"
+                            className="h-auto px-1 py-0 text-xs"
+                            onClick={onManagePermissions}
+                          >
+                            Manage permissions
+                          </Button>
+                        </div>
+                      ) : null}
+                    </div>
                   ) : null}
                 </div>
               )
