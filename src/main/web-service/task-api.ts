@@ -492,6 +492,7 @@ class HeadlessTaskApi {
     const assistantEvents = events.filter(
       (event) => event.kind === 'message' && event.role === 'assistant'
     )
+    const terminalStopEvent = [...events].reverse().find((event) => event.kind === 'stop')
     const output = assistantEvents.map((event) => getAcpRuntimeEventText(event) ?? '').join('')
     const assistantMessageId = this.dependencies.createId()
     const images = assistantEvents
@@ -508,6 +509,11 @@ class HeadlessTaskApi {
       responseToMessageId: session.activeRun?.promptMessageId,
       eventIds: assistantEvents.map((event) => event.id),
       images: images.length ? images : undefined,
+      ...(terminalStopEvent?.turnUsage
+        ? { turnUsage: terminalStopEvent.turnUsage }
+        : terminalStopEvent
+          ? { turnUsageUnavailable: true as const }
+          : {}),
       createdAt: now,
       updatedAt: now
     }

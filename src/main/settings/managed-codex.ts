@@ -130,12 +130,68 @@ const CODEX_ACP_TURN_USAGE_UPDATE_SOURCE = [
   '  createUsageUpdate(params) {',
   '    this.handleTokenUsageUpdated(params);'
 ].join('\n')
-const CODEX_ACP_TURN_USAGE_UPDATE_REPLACEMENT = [
+const CODEX_ACP_TURN_USAGE_UPDATE_LEGACY_REPLACEMENT = [
   '  createUsageUpdate(params) {',
   '    const previousTotalTokenUsage = this.sessionState.totalTokenUsage;',
   '    this.handleTokenUsageUpdated(params);',
   '    const currentTotalTokenUsage = this.sessionState.totalTokenUsage;',
   '    const lastTokenUsage = this.sessionState.lastTokenUsage;',
+  '    const promptTokenUsage = this.sessionState.promptTokenUsage;',
+  '    if (',
+  '      promptTokenUsage != null &&',
+  '      currentTotalTokenUsage != null &&',
+  '      lastTokenUsage != null',
+  '    ) {',
+  '      const tokenKeys = [',
+  '        "totalTokens",',
+  '        "inputTokens",',
+  '        "cachedInputTokens",',
+  '        "outputTokens",',
+  '        "reasoningOutputTokens"',
+  '      ];',
+  '      const cumulativeDelta = previousTotalTokenUsage == null',
+  '        ? lastTokenUsage',
+  '        : {',
+  '            totalTokens: currentTotalTokenUsage.totalTokens - previousTotalTokenUsage.totalTokens,',
+  '            inputTokens: currentTotalTokenUsage.inputTokens - previousTotalTokenUsage.inputTokens,',
+  '            cachedInputTokens:',
+  '              currentTotalTokenUsage.cachedInputTokens - previousTotalTokenUsage.cachedInputTokens,',
+  '            outputTokens:',
+  '              currentTotalTokenUsage.outputTokens - previousTotalTokenUsage.outputTokens,',
+  '            reasoningOutputTokens:',
+  '              currentTotalTokenUsage.reasoningOutputTokens -',
+  '              previousTotalTokenUsage.reasoningOutputTokens',
+  '          };',
+  '      const increment = tokenKeys.every(',
+  '        (key) => Number.isSafeInteger(cumulativeDelta[key]) && cumulativeDelta[key] >= 0',
+  '      )',
+  '        ? cumulativeDelta',
+  '        : lastTokenUsage;',
+  '      const nextPromptTokenUsage = {',
+  '        totalTokens: promptTokenUsage.totalTokens + increment.totalTokens,',
+  '        inputTokens: promptTokenUsage.inputTokens + increment.inputTokens,',
+  '        cachedInputTokens: promptTokenUsage.cachedInputTokens + increment.cachedInputTokens,',
+  '        outputTokens: promptTokenUsage.outputTokens + increment.outputTokens,',
+  '        reasoningOutputTokens:',
+  '          promptTokenUsage.reasoningOutputTokens + increment.reasoningOutputTokens',
+  '      };',
+  '      if (tokenKeys.every((key) => Number.isSafeInteger(nextPromptTokenUsage[key]))) {',
+  '        this.sessionState.promptTokenUsage = nextPromptTokenUsage;',
+  '        this.sessionState.promptTokenUsageObserved = true;',
+  '      }',
+  '    }'
+].join('\n')
+
+const CODEX_ACP_TURN_USAGE_UPDATE_REPLACEMENT = [
+  '  createUsageUpdate(params) {',
+  '    const normalizeTokenUsage = (usage) =>',
+  '      usage == null',
+  '        ? usage',
+  '        : { ...usage, cachedInputTokens: usage.cachedInputTokens ?? 0 };',
+  '    const previousTotalTokenUsage = normalizeTokenUsage(this.sessionState.totalTokenUsage);',
+  '    this.handleTokenUsageUpdated(params);',
+  '    const currentTotalTokenUsage = normalizeTokenUsage(this.sessionState.totalTokenUsage);',
+  '    const lastTokenUsage = normalizeTokenUsage(this.sessionState.lastTokenUsage);',
   '    const promptTokenUsage = this.sessionState.promptTokenUsage;',
   '    if (',
   '      promptTokenUsage != null &&',
@@ -357,10 +413,15 @@ export const patchCodexAcpContextUsageSource = (source: string): string => {
 // field for the transcript footer. Falling back to `last` for the first update keeps resumed sessions
 // from attributing their historical cumulative total to the first new response.
 export const patchCodexAcpTurnUsageSource = (source: string): string => {
-  const migratedSource = source.replaceAll(
-    CODEX_ACP_TURN_USAGE_RESPONSE_LEGACY_REPLACEMENT,
-    CODEX_ACP_TURN_USAGE_RESPONSE_REPLACEMENT
-  )
+  const migratedSource = source
+    .replace(
+      CODEX_ACP_TURN_USAGE_UPDATE_LEGACY_REPLACEMENT,
+      CODEX_ACP_TURN_USAGE_UPDATE_REPLACEMENT
+    )
+    .replaceAll(
+      CODEX_ACP_TURN_USAGE_RESPONSE_LEGACY_REPLACEMENT,
+      CODEX_ACP_TURN_USAGE_RESPONSE_REPLACEMENT
+    )
 
   if (
     migratedSource.includes(CODEX_ACP_TURN_USAGE_UPDATE_REPLACEMENT) &&

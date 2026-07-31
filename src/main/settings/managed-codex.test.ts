@@ -1380,7 +1380,7 @@ describe('patchCodexAcpTurnUsageSource', () => {
   type FixtureTokenUsage = {
     totalTokens: number
     inputTokens: number
-    cachedInputTokens: number
+    cachedInputTokens?: number
     outputTokens: number
     reasoningOutputTokens: number
   }
@@ -1425,6 +1425,18 @@ describe('patchCodexAcpTurnUsageSource', () => {
     totalTokens,
     inputTokens,
     cachedInputTokens,
+    outputTokens,
+    reasoningOutputTokens
+  })
+
+  const uncachedUsage = (
+    totalTokens: number,
+    inputTokens: number,
+    outputTokens: number,
+    reasoningOutputTokens: number
+  ): FixtureTokenUsage => ({
+    totalTokens,
+    inputTokens,
     outputTokens,
     reasoningOutputTokens
   })
@@ -1495,6 +1507,67 @@ describe('patchCodexAcpTurnUsageSource', () => {
     }
     expect(response.usage).toEqual(usage(18, 12, 3, 3, 0))
     expect(response._meta?.['open-science/turn-usage']).toEqual(usage(18, 12, 3, 3, 0))
+  })
+
+  it('normalizes omitted cached-input counters without double-counting repeated updates', () => {
+    const adapter = Function(patchCodexAcpTurnUsageSource(fixture))() as {
+      startPrompt: () => void
+      createUsageUpdate: (params: unknown) => void
+      finishPrompt: () => { _meta?: Record<string, unknown> }
+    }
+
+    adapter.createUsageUpdate({
+      tokenUsage: {
+        last: uncachedUsage(100, 70, 15, 2),
+        total: uncachedUsage(100, 70, 15, 2)
+      }
+    })
+    adapter.startPrompt()
+    for (const snapshot of [
+      uncachedUsage(118, 82, 18, 2),
+      uncachedUsage(118, 82, 18, 2),
+      uncachedUsage(145, 101, 21, 2)
+    ]) {
+      adapter.createUsageUpdate({
+        tokenUsage: {
+          last:
+            snapshot.totalTokens === 118
+              ? uncachedUsage(18, 12, 3, 0)
+              : uncachedUsage(27, 19, 3, 0),
+          total: snapshot
+        }
+      })
+    }
+
+    expect(adapter.finishPrompt()._meta?.['open-science/turn-usage']).toEqual(
+      usage(45, 31, 0, 6, 0)
+    )
+  })
+
+  it('upgrades the existing turn-usage patch to normalize cached-input counters', () => {
+    const normalized = patchCodexAcpTurnUsageSource(fixture)
+    const legacy = normalized
+      .replace(
+        [
+          '    const normalizeTokenUsage = (usage) =>',
+          '      usage == null',
+          '        ? usage',
+          '        : { ...usage, cachedInputTokens: usage.cachedInputTokens ?? 0 };',
+          '    const previousTotalTokenUsage = normalizeTokenUsage(this.sessionState.totalTokenUsage);'
+        ].join('\n'),
+        '    const previousTotalTokenUsage = this.sessionState.totalTokenUsage;'
+      )
+      .replace(
+        '    const currentTotalTokenUsage = normalizeTokenUsage(this.sessionState.totalTokenUsage);',
+        '    const currentTotalTokenUsage = this.sessionState.totalTokenUsage;'
+      )
+      .replace(
+        '    const lastTokenUsage = normalizeTokenUsage(this.sessionState.lastTokenUsage);',
+        '    const lastTokenUsage = this.sessionState.lastTokenUsage;'
+      )
+
+    expect(legacy).not.toBe(normalized)
+    expect(patchCodexAcpTurnUsageSource(legacy)).toBe(normalized)
   })
 
   it('composes with the context-usage patch without duplicate declarations', () => {
