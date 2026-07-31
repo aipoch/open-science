@@ -36,7 +36,10 @@ import {
 } from '../notifications/task-notifications'
 import { NotebookLocalRpcServer } from '../notebook/local-rpc-server'
 import { NotebookRunRepository } from '../notebook/repository'
-import { NotebookRuntimeService } from '../notebook/runtime-service'
+import {
+  NotebookRuntimeService,
+  type NotebookRuntimeServiceOptions
+} from '../notebook/runtime-service'
 import { resolveConfigRoot, resolveDataRoot } from '../storage-root'
 import type { SettingsService } from '../settings/service'
 import type { UploadRepository } from '../uploads/repository'
@@ -384,7 +387,14 @@ const registerAcpIpcHandlers = (options: AcpIpcOptions): AcpRuntimeCoordinator =
 }
 
 // Creates the shared notebook runtime used by both renderer IPC and agent MCP calls.
-const createDefaultNotebookRuntimeService = (): NotebookRuntimeService => {
+type DefaultNotebookRuntimeServiceDeps = Pick<
+  NotebookRuntimeServiceOptions,
+  'getPackageMirror' | 'getRuntimeEnablement' | 'getManualInterpreters'
+>
+
+const createDefaultNotebookRuntimeService = (
+  deps: DefaultNotebookRuntimeServiceDeps = {}
+): NotebookRuntimeService => {
   const dataRoot = resolveDataRoot()
   const artifactRepository = new ArtifactRepository(dataRoot)
 
@@ -393,8 +403,8 @@ const createDefaultNotebookRuntimeService = (): NotebookRuntimeService => {
     dataRoot,
     projectName: DEFAULT_ARTIFACT_PROJECT_NAME,
     repository: new NotebookRunRepository(dataRoot),
-    // Region default for manage_packages when no mirror is configured; the configured override is
-    // wired in main/ipc.ts via setPackageMirrorResolver once the settings service is constructed.
+    ...deps,
+    // Region default for manage_packages when no mirror is configured.
     locale: app.getLocale(),
     appVersion: app.getVersion(),
     resolveArtifactPath: (request) =>

@@ -1,5 +1,6 @@
 import type { ComputeJobRepository } from './job-repository'
 import type { ComputeHostRepository } from './repository'
+import type { ComputeJob } from '../../shared/compute'
 
 export type SessionStatus = {
   session_limit: number | null
@@ -13,6 +14,14 @@ const DEFAULT_PROVIDER_CEILING = 10
 
 // Global queue limit (max queued jobs across all sessions).
 const GLOBAL_QUEUE_LIMIT = 100
+const TERMINAL_JOB_STATUSES: ReadonlySet<ComputeJob['status']> = new Set([
+  'success',
+  'failed',
+  'timeout',
+  'error'
+])
+
+type DispatchQueuedJob = (jobId: string, onJobUpdated: (job: ComputeJob) => void) => Promise<void>
 
 // Enforces session-level and provider-level concurrency limits for compute jobs.
 // Stores session limits in memory, decides whether jobs should queue or dispatch,
@@ -34,8 +43,17 @@ export class ConcurrencyManager {
   constructor(
     private readonly jobRepository: ComputeJobRepository,
     private readonly hostRepository: ComputeHostRepository,
-    private readonly dispatchJob: (jobId: string) => Promise<void>
+    private readonly dispatchJob: DispatchQueuedJob,
+    private readonly publishJobUpdated: (job: ComputeJob) => void = () => undefined
   ) {}
+
+  // Owns the complete update policy used by ComputeService: publish every persisted projection, then
+  // free and refill queue capacity for terminal states. Dispatcher and poller both receive this bound
+  // handler, and the manager's own fallback persistence uses it below.
+  handleJobUpdated = (job: ComputeJob): void => {
+    this.publishJobUpdated(job)
+    if (TERMINAL_JOB_STATUSES.has(job.status)) void this.onJobCompleted()
+  }
 
   // Set session-level concurrency limit (stored in memory, not persisted).
   setSessionLimit(sessionId: string, limit: number): void {
@@ -189,14 +207,15 @@ export class ConcurrencyManager {
         if (!reserved) continue // limits hit — leave queued for a future completion
 
         try {
-          await this.dispatchJob(job.job_id)
+          await this.dispatchJob(job.job_id, this.handleJobUpdated)
         } catch {
           // If dispatch fails, mark job as error and continue to next queued job.
-          await this.jobRepository.update(job.job_id, {
+          const updated = await this.jobRepository.update(job.job_id, {
             status: 'error',
             errorCode: 'dispatch_failed',
             finishedAt: new Date()
           })
+          this.handleJobUpdated(updated)
         }
       }
     } finally {

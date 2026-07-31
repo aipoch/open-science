@@ -5,13 +5,16 @@ import { app } from 'electron'
 
 import { ElectronUpdaterStrategy } from './electron-updater-strategy'
 import { UpdateService } from './service'
-import type { UpdateStrategy } from './strategy'
+import type { InstallGate, UpdateStrategy } from './strategy'
 
 export type CreateStrategyOptions = {
   // Whether this is a packaged (installed) build. Defaults to app.isPackaged; injectable for tests.
   isPackaged?: boolean
   // Running app version. Defaults to app.getVersion(); injectable for tests.
   version?: string
+  // Immutable pre-install backend shutdown gate for in-place strategies. The manual installer flow
+  // ignores it because applying there does not quit or replace the running app.
+  installGate?: InstallGate
 }
 
 const OFFICIAL_MAC_BUNDLE_ID = 'com.aipoch.open-science'
@@ -50,12 +53,15 @@ export const createUpdateStrategy = (
   platform: NodeJS.Platform = process.platform,
   opts: CreateStrategyOptions = {}
 ): UpdateStrategy => {
-  if (platform === 'win32' || platform === 'linux') return new ElectronUpdaterStrategy()
+  const createInPlaceStrategy = (): ElectronUpdaterStrategy =>
+    new ElectronUpdaterStrategy(opts.installGate ? { installGate: opts.installGate } : {})
+
+  if (platform === 'win32' || platform === 'linux') return createInPlaceStrategy()
 
   const isPackaged = opts.isPackaged ?? app?.isPackaged ?? false
   const version = opts.version ?? app?.getVersion?.() ?? '0.0.0'
   if (platform === 'darwin' && macCanAutoUpdate(isPackaged, version)) {
-    return new ElectronUpdaterStrategy()
+    return createInPlaceStrategy()
   }
   return new UpdateService()
 }

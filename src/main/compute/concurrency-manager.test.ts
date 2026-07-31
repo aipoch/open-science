@@ -1,4 +1,4 @@
-import { describe, it, expect, beforeEach, vi } from 'vitest'
+import { describe, it, expect, beforeEach, vi, type Mock } from 'vitest'
 import { ConcurrencyManager } from './concurrency-manager'
 import type { ComputeJobRepository } from './job-repository'
 import type { ComputeHostRepository } from './repository'
@@ -33,20 +33,24 @@ const createMockHostRepo = (): ComputeHostRepository =>
     delete: vi.fn()
   }) as unknown as ComputeHostRepository
 
-const createMockDispatchJob = (): ((jobId: string) => Promise<void>) =>
-  vi.fn(() => Promise.resolve())
+const createMockDispatchJob = (): ((
+  jobId: string,
+  onJobUpdated: (job: ComputeJob) => void
+) => Promise<void>) => vi.fn(() => Promise.resolve())
 
 describe('ConcurrencyManager', () => {
   let jobRepo: ComputeJobRepository
   let hostRepo: ComputeHostRepository
   let dispatchJob: ReturnType<typeof createMockDispatchJob>
+  let onJobUpdated: Mock<(job: ComputeJob) => void>
   let manager: ConcurrencyManager
 
   beforeEach(() => {
     jobRepo = createMockJobRepo()
     hostRepo = createMockHostRepo()
     dispatchJob = createMockDispatchJob()
-    manager = new ConcurrencyManager(jobRepo, hostRepo, dispatchJob)
+    onJobUpdated = vi.fn()
+    manager = new ConcurrencyManager(jobRepo, hostRepo, dispatchJob, onJobUpdated)
   })
 
   describe('setSessionLimit', () => {
@@ -263,7 +267,7 @@ describe('ConcurrencyManager', () => {
 
       // Should dispatch job-1 first (earlier createdAt)
       expect(jobRepo.update).toHaveBeenCalledWith('job-1', { status: 'submitted' })
-      expect(dispatchJob).toHaveBeenCalledWith('job-1')
+      expect(dispatchJob).toHaveBeenCalledWith('job-1', expect.any(Function))
     })
 
     it('re-checks both session limit and provider ceiling', async () => {
@@ -291,7 +295,7 @@ describe('ConcurrencyManager', () => {
       expect(jobRepo.countActiveBySession).toHaveBeenCalledWith('session-1')
       expect(jobRepo.countActiveByProvider).toHaveBeenCalledWith('ssh:cluster-a')
       expect(jobRepo.update).toHaveBeenCalledWith('job-1', { status: 'submitted' })
-      expect(dispatchJob).toHaveBeenCalledWith('job-1')
+      expect(dispatchJob).toHaveBeenCalledWith('job-1', expect.any(Function))
     })
 
     it('skips jobs that still violate session limit', async () => {
@@ -374,8 +378,8 @@ describe('ConcurrencyManager', () => {
 
       expect(jobRepo.update).toHaveBeenCalledTimes(2)
       expect(dispatchJob).toHaveBeenCalledTimes(2)
-      expect(dispatchJob).toHaveBeenNthCalledWith(1, 'job-1')
-      expect(dispatchJob).toHaveBeenNthCalledWith(2, 'job-2')
+      expect(dispatchJob).toHaveBeenNthCalledWith(1, 'job-1', expect.any(Function))
+      expect(dispatchJob).toHaveBeenNthCalledWith(2, 'job-2', expect.any(Function))
     })
   })
 
@@ -510,7 +514,10 @@ describe('ConcurrencyManager', () => {
       vi.mocked(hostRepo.get).mockResolvedValue({
         concurrencyLimit: 10
       } as ComputeHost)
-      vi.mocked(jobRepo.update).mockResolvedValue({} as ComputeJob)
+      const failedJob = { ...queuedJobs[0], status: 'error' as const }
+      vi.mocked(jobRepo.update)
+        .mockResolvedValueOnce({ ...queuedJobs[0], status: 'submitted' } as ComputeJob)
+        .mockResolvedValueOnce(failedJob)
 
       // Simulate dispatchJob failure
       vi.mocked(dispatchJob).mockRejectedValueOnce(new Error('SSH connection failed'))
@@ -525,6 +532,7 @@ describe('ConcurrencyManager', () => {
         errorCode: 'dispatch_failed',
         finishedAt: expect.any(Date)
       })
+      expect(onJobUpdated).toHaveBeenCalledWith(failedJob)
     })
 
     it('continues processing next queued job after dispatch failure', async () => {
@@ -569,7 +577,7 @@ describe('ConcurrencyManager', () => {
 
       // Second job should still be dispatched
       expect(jobRepo.update).toHaveBeenCalledWith('job-2', { status: 'submitted' })
-      expect(dispatchJob).toHaveBeenCalledWith('job-2')
+      expect(dispatchJob).toHaveBeenCalledWith('job-2', expect.any(Function))
     })
 
     it('prevents concurrent tryDispatchNext execution', async () => {

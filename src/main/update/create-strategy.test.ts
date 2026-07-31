@@ -1,6 +1,7 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest'
 
 const spawnSync = vi.hoisted(() => vi.fn())
+const quitAndInstall = vi.hoisted(() => vi.fn())
 
 vi.mock('node:child_process', () => ({ spawnSync }))
 
@@ -16,7 +17,12 @@ vi.mock('electron', () => ({
   BrowserWindow: { getAllWindows: () => [] }
 }))
 vi.mock('electron-updater', () => ({
-  autoUpdater: { on: () => {}, autoDownload: true, autoInstallOnAppQuit: true }
+  autoUpdater: {
+    on: () => {},
+    autoDownload: true,
+    autoInstallOnAppQuit: true,
+    quitAndInstall
+  }
 }))
 
 import { createUpdateStrategy } from './create-strategy'
@@ -26,6 +32,7 @@ import { UpdateService } from './service'
 describe('createUpdateStrategy', () => {
   beforeEach(() => {
     spawnSync.mockReset()
+    quitAndInstall.mockReset()
     spawnSync.mockReturnValue({
       status: 0,
       stdout: '',
@@ -39,6 +46,16 @@ describe('createUpdateStrategy', () => {
 
   it('uses ElectronUpdaterStrategy on linux', () => {
     expect(createUpdateStrategy('linux')).toBeInstanceOf(ElectronUpdaterStrategy)
+  })
+
+  it('constructs the in-place strategy with its install gate', async () => {
+    const installGate = vi.fn(async () => ({ completed: true, reaped: true }))
+    const strategy = createUpdateStrategy('win32', { installGate })
+
+    await strategy.apply()
+
+    expect(installGate).toHaveBeenCalledTimes(1)
+    expect(quitAndInstall).toHaveBeenCalledWith(true, true)
   })
 
   it('uses ElectronUpdaterStrategy on darwin for a packaged stable build', () => {

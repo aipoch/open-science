@@ -6115,14 +6115,14 @@ describe('v4 runtime bindings & agent tools', () => {
     expect(removed).toEqual(['my-analysis'])
   })
 
-  // End-to-end wiring of setManualInterpretersResolver: a Settings-added interpreter is folded into the
+  // End-to-end constructor wiring of getManualInterpreters: a Settings-added interpreter is folded into the
   // service's REAL default discovery (NOT an injected discoverRuntimes), so it becomes discoverable,
   // enable-able, and bindable — and survives a restart (a fresh service with the same resolver still
   // resolves it active, not 'missing'). Exercises the actual manualInterpretersResolver seam with a real
   // executable interpreter so the version probe + runnability classification run for real. POSIX-only:
   // it relies on a chmod-executable shell shim, which Windows can't run as `<path> --version`.
   it.skipIf(process.platform === 'win32')(
-    'discovers, binds, and (across a restart) keeps a manual interpreter added via setManualInterpretersResolver',
+    'discovers, binds, and (across a restart) keeps a constructor-injected manual interpreter',
     async () => {
       // Real discovery is exercised (no injected discoverRuntimes): it enumerates PATH + conda roots and
       // probes every real interpreter's `--version`, and it runs on each list/bind/execute/restart call —
@@ -6159,6 +6159,7 @@ describe('v4 runtime bindings & agent tools', () => {
           projectName: 'default-project',
           repository: new NotebookRunRepository(root),
           getRuntimeEnablement: async () => enablement,
+          getManualInterpreters: resolver,
           executorFactory: () => ({
             execute: async (request): Promise<NotebookExecutionResult> => {
               executions.push(request)
@@ -6175,7 +6176,6 @@ describe('v4 runtime bindings & agent tools', () => {
             terminate: async () => undefined
           })
         })
-        service.setManualInterpretersResolver(resolver)
         return service
       }
 

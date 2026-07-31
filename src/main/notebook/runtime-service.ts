@@ -346,16 +346,17 @@ type NotebookRuntimeServiceOptions = {
   // construction via setMcpRpcConnectionResolver, since the RPC server is constructed with this
   // service as a dependency (constructing them in the other order would cycle).
   getMcpRpcConnection?: (binding: McpRpcConnectionBinding) => Promise<McpRpcConnection>
-  // Resolves the user-configured package mirror (settings). Usually set after construction via
-  // setPackageMirrorResolver, mirroring getMcpRpcConnection above — kept optional/async so a
-  // synchronous test double works just as well as the real (disk-backed) settings service.
+  // Resolves the user-configured package mirror (settings). Optional/async so a synchronous test
+  // double works just as well as the real disk-backed settings service.
   getPackageMirror?: () => PackageMirror | undefined | Promise<PackageMirror | undefined>
   // Resolves the v4 per-language enablement (enabled/install-authorized maps) used to gate which
-  // discovered runtimes the agent may bind. Usually wired after construction via
-  // setRuntimeEnablementResolver (settings service). Undefined / returning undefined -> the provenance
-  // defaults (app-managed enabled; user-own disabled), so an unwired resolver can never enable a BYO
-  // env — the enable gate holds by default (defense-in-depth).
+  // discovered runtimes the agent may bind. Undefined / returning undefined -> the provenance defaults
+  // (app-managed enabled; user-own disabled), so an omitted resolver can never enable a BYO env — the
+  // enable gate holds by default (defense-in-depth).
   getRuntimeEnablement?: (language: NotebookLanguage) => Promise<RuntimeEnablement | undefined>
+  // Resolves Settings-added interpreters that are not discoverable from PATH/conda roots. Injected at
+  // construction so production cannot briefly expose a different catalog during startup.
+  getManualInterpreters?: (language: NotebookLanguage) => Promise<string[]>
   // Discovers the interpreters available for a language (app-managed + user-own). Injectable so tests
   // don't spawn real interpreters; production defaults to environment-discovery over the runtime root.
   discoverRuntimes?: (language: NotebookLanguage) => Promise<DiscoveredInterpreter[]>
@@ -1069,14 +1070,14 @@ class NotebookRuntimeService {
   private runSequence = 0
   private mcpRpcConnectionResolver:
     ((binding: McpRpcConnectionBinding) => Promise<McpRpcConnection>) | undefined
-  private packageMirrorResolver:
+  private readonly packageMirrorResolver:
     (() => PackageMirror | undefined | Promise<PackageMirror | undefined>) | undefined
-  private runtimeEnablementResolver:
+  private readonly runtimeEnablementResolver:
     ((language: NotebookLanguage) => Promise<RuntimeEnablement | undefined>) | undefined
   // Manually-added interpreter paths (Settings catalog) folded into discovery so a picked interpreter
   // that is NOT on PATH / in a conda root is still discovered here — and therefore bindable and not
-  // reported 'missing' after a restart. Wired post-construction like the enablement resolver.
-  private manualInterpretersResolver:
+  // reported 'missing' after a restart. Fixed at construction with the other Settings dependencies.
+  private readonly manualInterpretersResolver:
     ((language: NotebookLanguage) => Promise<string[]>) | undefined
   // Resolves when startup crash-recovery has finished; awaited by materialize/install so their prefix
   // work never races recovery's cleanup. Undefined until recoverInterruptedOperations is kicked off.
@@ -1151,6 +1152,7 @@ class NotebookRuntimeService {
     this.mcpRpcConnectionResolver = options.getMcpRpcConnection
     this.packageMirrorResolver = options.getPackageMirror
     this.runtimeEnablementResolver = options.getRuntimeEnablement
+    this.manualInterpretersResolver = options.getManualInterpreters
     this.runtimeDiscoveryImpl =
       options.discoverRuntimes ??
       (async (language) => {
@@ -1668,29 +1670,6 @@ class NotebookRuntimeService {
     resolver: (binding: McpRpcConnectionBinding) => Promise<McpRpcConnection>
   ): void {
     this.mcpRpcConnectionResolver = resolver
-  }
-
-  // Wires the package-mirror lookup after construction (typically the settings service, constructed
-  // alongside/after this one in main/ipc.ts), mirroring setMcpRpcConnectionResolver above.
-  setPackageMirrorResolver(
-    resolver: () => PackageMirror | undefined | Promise<PackageMirror | undefined>
-  ): void {
-    this.packageMirrorResolver = resolver
-  }
-
-  // Wires the per-language enablement lookup after construction (settings service), mirroring the
-  // resolvers above. Absent -> the provenance defaults, so a BYO env is never enabled until this is
-  // wired AND the user turns it on — the enable gate holds by default.
-  setRuntimeEnablementResolver(
-    resolver: (language: NotebookLanguage) => Promise<RuntimeEnablement | undefined>
-  ): void {
-    this.runtimeEnablementResolver = resolver
-  }
-
-  // Wires the manual-interpreter catalog lookup after construction, so the service's discovery folds in
-  // Settings-added interpreters (same set the Settings survey sees). Absent -> only PATH/conda/app envs.
-  setManualInterpretersResolver(resolver: (language: NotebookLanguage) => Promise<string[]>): void {
-    this.manualInterpretersResolver = resolver
   }
 
   // Starts an exclusive agent/user write stream into a cell and locks notebook editing.

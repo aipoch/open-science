@@ -43,7 +43,7 @@ export type ElectronUpdaterDeps = {
   // Injectable for tests; defaults to the public stable manifest.
   fetchImpl?: typeof fetch
   manifestUrl?: string
-  // Pre-install backend-shutdown gate; usually injected later via setInstallGate once the runtime exists.
+  // Pre-install backend-shutdown gate, fixed when the strategy is constructed.
   installGate?: InstallGate
   // Diagnostics sink for the apply path; defaults to a no-op so unit tests stay quiet.
   log?: UpdaterLogger
@@ -174,8 +174,8 @@ export class ElectronUpdaterStrategy implements UpdateStrategy {
   // In-flight manifest notes fetch for the current update, awaited by check() so the returned
   // status reflects the hydrated notes.
   private notesHydration?: Promise<void>
-  // Pre-install backend-shutdown gate, injected once the runtime exists (see ipc.ts).
-  private installGate?: InstallGate
+  // Pre-install backend-shutdown gate, owned immutably for the strategy lifetime.
+  private readonly installGate?: InstallGate
 
   constructor(deps: ElectronUpdaterDeps = {}) {
     this.updater = deps.updater ?? (autoUpdater as unknown as MinimalAutoUpdater)
@@ -207,10 +207,6 @@ export class ElectronUpdaterStrategy implements UpdateStrategy {
     this.updater.autoDownload = false
     this.updater.autoInstallOnAppQuit = false
     this.subscribe()
-  }
-
-  setInstallGate(gate: InstallGate): void {
-    this.installGate = gate
   }
 
   private subscribe(): void {

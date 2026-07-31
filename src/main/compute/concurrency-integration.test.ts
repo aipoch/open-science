@@ -4,7 +4,7 @@
 import { mkdtemp, rm } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
-import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
+import { afterEach, beforeEach, describe, expect, it, vi, type Mock } from 'vitest'
 
 import { createProjectDbClient, ensureProjectSchema } from '../projects/prisma-client'
 import { ComputeHostRepository } from './repository'
@@ -58,7 +58,7 @@ describe('ConcurrencyManager integration with ComputeService', () => {
   let jobRepo: ComputeJobRepository
   let service: ComputeService
   let concurrencyManager: ConcurrencyManager
-  let onJobUpdatedSpy: ReturnType<typeof vi.fn>
+  let onJobUpdatedSpy: Mock<(job: ComputeJob) => void>
 
   beforeEach(async () => {
     storageRoot = await mkdtemp(join(tmpdir(), 'concurrency-int-'))
@@ -82,9 +82,8 @@ describe('ConcurrencyManager integration with ComputeService', () => {
       // Don't immediately transition to running in the mock - let the test control this
     })
 
-    concurrencyManager = new ConcurrencyManager(jobRepo, hostRepo, mockDispatch)
-
     onJobUpdatedSpy = vi.fn()
+    concurrencyManager = new ConcurrencyManager(jobRepo, hostRepo, mockDispatch, onJobUpdatedSpy)
 
     service = new ComputeService(
       makeFakeRunner(),
@@ -93,7 +92,7 @@ describe('ConcurrencyManager integration with ComputeService', () => {
       makeFakeScp(),
       undefined,
       jobRepo,
-      onJobUpdatedSpy as unknown as (job: ComputeJob) => void,
+      undefined,
       undefined,
       storageRoot,
       concurrencyManager
@@ -262,13 +261,14 @@ describe('ConcurrencyManager integration with ComputeService', () => {
       exitCode: 0
     })
 
-    // Trigger onJobCompleted
+    // Route the poller-observed update through the same authoritative sink used by dispatch.
     const job1 = await jobRepo.get(result1.job_id)
-    service.notifyJobCompleted(job1!)
+    service.handleJobUpdated(job1!)
 
     // Wait for async dispatch to complete
     await new Promise((resolve) => setTimeout(resolve, 200))
 
+    expect(onJobUpdatedSpy).toHaveBeenCalledWith(job1)
     // Second job should now be submitted
     const job2Updated = await jobRepo.get(result2.job_id)
     expect(job2Updated?.status).toBe('submitted')
@@ -324,7 +324,7 @@ describe('ConcurrencyManager integration with ComputeService', () => {
     })
 
     const job1 = await jobRepo.get(result1.job_id)
-    service.notifyJobCompleted(job1!)
+    service.handleJobUpdated(job1!)
 
     await new Promise((resolve) => setTimeout(resolve, 200))
 
@@ -408,7 +408,7 @@ describe('ConcurrencyManager integration with ComputeService', () => {
     })
 
     const job1 = await jobRepo.get(result1.job_id)
-    service.notifyJobCompleted(job1!)
+    service.handleJobUpdated(job1!)
 
     await new Promise((resolve) => setTimeout(resolve, 200))
 
@@ -457,7 +457,7 @@ describe('ConcurrencyManager integration with ComputeService', () => {
       })
 
       const job1 = await jobRepo.get(result1.job_id)
-      service.notifyJobCompleted(job1!)
+      service.handleJobUpdated(job1!)
 
       await new Promise((resolve) => setTimeout(resolve, 200))
 

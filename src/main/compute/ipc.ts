@@ -264,54 +264,44 @@ const createComputeHandlers = (
   // jobs when a slot frees up. It is wired here (not in ComputeService) because it needs a
   // dispatchJob closure carrying the same runner/scp/repository deps the dispatcher uses. Only built
   // for the production path — tests inject their own service and drive the manager directly.
-  let service: ComputeService
-  if (injectedService) {
-    service = injectedService
-  } else {
-    const sshRunner = new SystemSshRunner()
-    const scpRunner = new SystemScpRunner()
+  const service =
+    injectedService ??
+    (() => {
+      const sshRunner = new SystemSshRunner()
+      const scpRunner = new SystemScpRunner()
 
-    // Terminal transitions must both broadcast to the renderer AND wake the ConcurrencyManager so
-    // the next queued job dispatches. The dispatcher (submitted→running/error) flows through this
-    // hook, so an error during dispatch drains the queue too.
-    //
-    // DRAIN CONTRACT (two sites, keep in sync): this hook covers dispatcher-observed transitions.
-    // Poller-observed terminal transitions (success/failed/timeout of a running job) are drained
-    // separately in src/main/ipc.ts, which composes the broadcaster with
-    // computeService.notifyJobCompleted(). The two paths cover disjoint transitions — do not remove
-    // either without moving its responsibility to the other, or queued jobs stop dispatching.
-    let concurrencyManager: ConcurrencyManager | undefined
-    const TERMINAL = new Set(['success', 'failed', 'timeout', 'error'])
-    const onJobUpdatedWithDrain = (job: ComputeJob): void => {
-      onJobUpdated?.(job)
-      if (TERMINAL.has(job.status)) void concurrencyManager?.onJobCompleted()
-    }
+      // ConcurrencyManager owns the complete publish-and-drain policy. It hands that same bound
+      // sink to queued dispatches, while ComputeService delegates direct dispatch and poller updates
+      // to it. This keeps one contract without a construction-order callback box.
+      const concurrencyManager = jobRepository
+        ? new ConcurrencyManager(
+            jobRepository,
+            repository,
+            (queuedJobId, handleJobUpdated) =>
+              dispatchJob(queuedJobId, {
+                runner: sshRunner,
+                scpRunner,
+                hostRepository: repository,
+                jobRepository,
+                onJobUpdated: handleJobUpdated
+              }),
+            onJobUpdated
+          )
+        : undefined
 
-    if (jobRepository) {
-      concurrencyManager = new ConcurrencyManager(jobRepository, repository, (queuedJobId) =>
-        dispatchJob(queuedJobId, {
-          runner: sshRunner,
-          scpRunner,
-          hostRepository: repository,
-          jobRepository,
-          onJobUpdated: onJobUpdatedWithDrain
-        })
+      return new ComputeService(
+        sshRunner,
+        repository,
+        broker,
+        scpRunner,
+        undefined,
+        jobRepository,
+        undefined,
+        artifactResolver,
+        storageRoot,
+        concurrencyManager
       )
-    }
-
-    service = new ComputeService(
-      sshRunner,
-      repository,
-      broker,
-      scpRunner,
-      undefined,
-      jobRepository,
-      onJobUpdatedWithDrain,
-      artifactResolver,
-      storageRoot,
-      concurrencyManager
-    )
-  }
+    })()
 
   return {
     list: () => repository.list(),

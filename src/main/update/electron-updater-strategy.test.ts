@@ -273,9 +273,9 @@ describe('ElectronUpdaterStrategy', () => {
     const strategy = new ElectronUpdaterStrategy({
       updater,
       currentVersion: '0.2.0',
-      broadcast: vi.fn()
+      broadcast: vi.fn(),
+      installGate: gate
     })
-    strategy.setInstallGate(gate)
 
     await strategy.apply()
 

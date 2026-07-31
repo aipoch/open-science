@@ -7,6 +7,7 @@ import { tmpdir } from 'node:os'
 import type {
   ComputeCallError,
   ComputeHost,
+  ComputeJob,
   DetailsAuthor,
   ExecResult,
   JobResult,
@@ -1300,7 +1301,7 @@ export class ComputeService {
         scpRunner: this.scpRunner,
         hostRepository: this.repository,
         jobRepository: this.jobRepository,
-        onJobUpdated: this.onJobUpdated
+        onJobUpdated: this.handleJobUpdated
       })
     }
 
@@ -1470,16 +1471,13 @@ export class ComputeService {
     return status
   }
 
-  // Internal callback wrapper: when a job transitions to a terminal state, notify ConcurrencyManager
-  // to trigger auto-dispatch of queued jobs. This is called by the JobPoller via onJobUpdated.
-  // Exposed as a method so the JobPoller (or IPC layer) can wire it in production.
-  notifyJobCompleted(job: import('../../shared/compute').ComputeJob): void {
-    const terminalStates = new Set(['success', 'failed', 'timeout', 'error'])
-    if (terminalStates.has(job.status) && this.concurrencyManager) {
-      // Fire-and-forget: ConcurrencyManager.onJobCompleted() is async but we don't await it here
-      // to keep the onJobUpdated callback synchronous (matches the existing pattern).
-      void this.concurrencyManager.onJobCompleted()
-    }
+  // Stable producer-facing sink for every persisted job update, regardless of whether the dispatcher
+  // or poller observed it. ConcurrencyManager owns the combined broadcast-and-drain policy when
+  // queueing is enabled; otherwise this preserves the observer-only behavior used by lightweight
+  // service configurations.
+  handleJobUpdated = (job: ComputeJob): void => {
+    if (this.concurrencyManager) this.concurrencyManager.handleJobUpdated(job)
+    else this.onJobUpdated?.(job)
   }
 }
 

@@ -10,16 +10,9 @@ import { createDefaultArtifactRepository, registerArtifactIpcHandlers } from './
 import { ArtifactProvenanceRepository } from './artifacts/provenance-repository'
 import { ProvenanceMessageSnapshotRepository } from './artifacts/provenance-message-snapshot'
 import { ArtifactRunRegistry } from './artifacts/run-registry'
-import {
-  registerComputeIpcHandlers,
-  createJobUpdatedBroadcaster,
-  broadcastJobUpdated
-} from './compute/ipc'
+import { registerComputeIpcHandlers } from './compute/ipc'
 import { attachEnabledComputeHosts } from './compute/enabled-hosts-registry'
-import { JobPoller } from './compute/job-poller'
-import { SystemSshRunner } from './compute/ssh-runner'
-import { SystemScpRunner } from './compute/scp-runner'
-import { harvestJob } from './compute/harvest-engine'
+import { createComputeJobRuntime } from './compute/job-runtime'
 import { waitForInitialConnectorRefresh, wireConnectorReload } from './connector-reload'
 import { ApprovalBroker } from './connectors/approval-broker'
 import { toCustomMcpConfig, selectEnabledCustomServers } from './connectors/custom-mcp-bootstrap'
@@ -121,6 +114,7 @@ import {
   samePath
 } from './storage-root'
 import { registerUpdateIpcHandlers } from './update/ipc'
+import { createUpdateStrategy } from './update/create-strategy'
 import { startUpdateScheduler } from './update/scheduler'
 import { createDefaultUploadRepository, registerUploadIpcHandlers } from './uploads/ipc'
 import { broadcastToRenderers } from './renderer-broadcast'
@@ -374,7 +368,11 @@ const registerIpcHandlers = async ({
       return sessionPersistenceCoordinator.saveManifest(request)
     }
   }
-  const notebookService = createDefaultNotebookRuntimeService()
+  const notebookService = createDefaultNotebookRuntimeService({
+    getPackageMirror: () => settingsService.getPackageMirror(),
+    getRuntimeEnablement: (language) => settingsService.getRuntimeEnablement(language),
+    getManualInterpreters: (language) => settingsService.getManualInterpreters(language)
+  })
 
   // Read fresh on every call so a future connectors-settings mutation (Plan 2 UI) only needs to call
   // refreshConnectorSkillDocs again to take effect, without reconstructing the connector service.
@@ -517,37 +515,11 @@ const registerIpcHandlers = async ({
   // (inside ComputeService) uses the same hook, so submitted→running/error transitions broadcast too.
   // Phase 3b: harvestFn drives automatic harvest on terminal transitions; broadcast + storageRoot
   // wire the compute_done notification emitter for all three terminal outcomes (issue 06).
-  const sshRunner = new SystemSshRunner()
-  const scpRunner = new SystemScpRunner()
-  // Poller-observed terminal transitions (success/failed/timeout of originally-submitted jobs) must
-  // both broadcast to the renderer AND wake the ConcurrencyManager so the next queued job dispatches
-  // when a slot frees. Compose the broadcaster with computeService.notifyJobCompleted (a no-op for
-  // non-terminal states and when no ConcurrencyManager is wired).
-  //
-  // DRAIN CONTRACT (two sites, keep in sync): this covers poller-observed completions. Dispatcher-
-  // observed transitions (submitted→running/error) are drained inside registerComputeIpcHandlers via
-  // onJobUpdatedWithDrain (src/main/compute/ipc.ts). Dropping the notifyJobCompleted call below would
-  // silently stop queued jobs from dispatching on completion — with no test failure at this seam.
-  const broadcastJobUpdatedHook = createJobUpdatedBroadcaster(hostRepository, dataRoot)
-  const jobPoller = new JobPoller({
-    runner: sshRunner,
+  const jobPoller = createComputeJobRuntime({
+    computeService,
     hostRepository,
     jobRepository,
-    onJobUpdated: (job) => {
-      broadcastJobUpdatedHook(job)
-      computeService.notifyJobCompleted(job)
-    },
-    broadcast: broadcastJobUpdated,
-    storageRoot: dataRoot,
-    harvestFn: (job) =>
-      harvestJob(job, {
-        sshRunner,
-        scpRunner,
-        hostRepository,
-        jobRepository,
-        storageRoot: dataRoot,
-        broadcast: broadcastJobUpdated
-      })
+    storageRoot: dataRoot
   })
   jobPoller.start()
   // Augment computeService with getEnabledComputeHosts so the RPC server can serve list_compute.
@@ -579,21 +551,6 @@ const registerIpcHandlers = async ({
   notebookService.setMcpRpcConnectionResolver(({ sessionId, projectId }) =>
     notebookRpcServer.issueControlConnection(sessionId, projectId)
   )
-  // Same construction-order constraint as the RPC connection above: the runtime service is created
-  // before the settings service, so the package-mirror lookup is wired in after the fact.
-  notebookService.setPackageMirrorResolver(() => settingsService.getPackageMirror())
-  // v4 per-language enablement (which discovered runtimes the agent may bind). Same construction-order
-  // reason as above; unwired -> the provenance defaults keep the enable gate closed for BYO envs.
-  notebookService.setRuntimeEnablementResolver((language) =>
-    settingsService.getRuntimeEnablement(language)
-  )
-  // Fold the manually-added interpreter catalog into the service's discovery too, so an interpreter
-  // added via "Add interpreter…" (not on PATH) is bindable by the agent and survives a restart instead
-  // of resolving to 'missing'. Same construction-order reason as the resolvers above.
-  notebookService.setManualInterpretersResolver((language) =>
-    settingsService.getManualInterpreters(language)
-  )
-
   // The renderer's approval card responds here; the broker resolves the held connector call.
   ipcMainHandle('connectors:approval-respond', (_event, request: RespondApprovalRequest) => {
     approvalBroker.respond(request.id, request.decision)
@@ -653,8 +610,6 @@ const registerIpcHandlers = async ({
   registerCliInstallIpcHandlers()
   registerWindowIpcHandlers()
   registerWindowFindIpcHandlers()
-  const updateService = registerUpdateIpcHandlers()
-  startUpdateScheduler(updateService)
   // ACP identity resolution and the Specialist settings IPC must use the same service instance.
   // Creating it only for settings leaves create-session unable to resolve a selected UUID.
   const runtime = registerAcpIpcHandlers({
@@ -687,19 +642,21 @@ const registerIpcHandlers = async ({
   runtimeRef.current = runtime
   permissionGrantRegistry.subscribe(() => runtime.notifyPermissionGrantsChanged())
   // Single shared teardown owner for both the before-quit handler (index.ts) and the pre-update-install
-  // gate. Built here because it needs the runtime, which does not exist when update IPC is registered
-  // above — so the gate is injected via a late-bound closure rather than at strategy construction.
+  // gate. Update handling is deliberately constructed below, after this dependency is complete.
   const shutdownCoordinator = new BackendShutdownCoordinator({
     runtime,
     notebook: notebookService,
     log: createLogger('shutdown')
   })
-  // Reap the agent + kernel trees before an in-place install so the NSIS uninstall step never hits files
-  // still locked by a background child. Non-latching, so a refused (degraded) install leaves the app
-  // usable. No-op on the manifest fallback strategy, which does not implement setInstallGate.
-  updateService.setInstallGate?.(() =>
-    shutdownCoordinator.runForUpdateGate(UPDATE_SHUTDOWN_BUDGET_MS)
+  // Construct update handling only after its backend-shutdown gate exists. The in-place strategy owns
+  // this immutable dependency from construction; the manifest fallback ignores it because it does not
+  // quit the running app to install.
+  const updateService = registerUpdateIpcHandlers(
+    createUpdateStrategy(process.platform, {
+      installGate: () => shutdownCoordinator.runForUpdateGate(UPDATE_SHUTDOWN_BUDGET_MS)
+    })
   )
+  startUpdateScheduler(updateService)
   // Spawn-config changes rotate the coordinator's runtime for future sessions. Existing sessions retain
   // their owning runtime, so a framework/provider switch cannot interrupt an in-flight turn.
   let invalidatePermissionProjection = (): void => {
