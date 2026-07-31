@@ -9,9 +9,9 @@ import type {
   PermissionGrantsChangedEvent
 } from '../../shared/permission-grants'
 import type { Project } from '../../shared/projects'
-import type { LoadAllSessionsResult } from '../../shared/session-persistence'
 import { ipcMainHandle } from '../ipc-handler-registry'
 import { broadcastToRenderers } from '../renderer-broadcast'
+import type { SessionMetadataSnapshot } from '../session-persistence/coordinator'
 import {
   projectPermissionGrantMutation,
   projectPermissionGrantSnapshot,
@@ -22,7 +22,7 @@ import type { PermissionGrantRegistry } from './registry'
 type PermissionGrantIpcOptions = {
   registry: PermissionGrantRegistry
   projects: { list(): Promise<Project[]> }
-  sessions: { loadAll(): Promise<LoadAllSessionsResult> }
+  sessions: { metadataSnapshot(): Promise<SessionMetadataSnapshot> }
   connectors?: { get(): Promise<ConnectorPolicySnapshot | undefined> }
   broadcast?: (channel: string, payload: PermissionGrantsChangedEvent) => void
 }
@@ -59,19 +59,19 @@ const registerPermissionGrantIpcHandlers = (
   }> => {
     const [projectsResult, sessionsResult, connectorPolicyResult] = await Promise.allSettled([
       options.projects.list(),
-      options.sessions.loadAll(),
+      Promise.resolve().then(() => options.sessions.metadataSnapshot()),
       options.connectors?.get()
     ])
     const projects = projectsResult.status === 'fulfilled' ? projectsResult.value : []
-    const sessions: LoadAllSessionsResult =
+    const sessions: SessionMetadataSnapshot =
       sessionsResult.status === 'fulfilled'
         ? sessionsResult.value
-        : { sessions: [], manifest: { version: 1 } }
+        : { sessions: [], isComplete: false }
     const connectorPolicy =
       connectorPolicyResult.status === 'fulfilled' ? connectorPolicyResult.value : undefined
     const incompleteStores: PermissionGrantSnapshot['incompleteStores'] = []
     if (projectsResult.status === 'rejected') incompleteStores.push('projects')
-    if (sessionsResult.status === 'rejected' || sessions.diagnostics?.isComplete === false) {
+    if (sessionsResult.status === 'rejected' || !sessions.isComplete) {
       incompleteStores.push('sessions')
     }
     if (connectorPolicyResult.status === 'rejected') incompleteStores.push('connector_policy')

@@ -29,6 +29,13 @@ import {
 type ProjectSessionDeletionResult =
   { status: 'completed' } | { status: 'orphan-retained'; reason: 'missing-upload-authority' }
 
+type SessionMetadata = Readonly<Pick<PersistedChatSession, 'id' | 'projectId' | 'title'>>
+
+type SessionMetadataSnapshot = Readonly<{
+  sessions: readonly SessionMetadata[]
+  isComplete: boolean
+}>
+
 type SessionMutationRepository = {
   loadAllWithDiagnostics(options?: { mode?: 'repair' | 'read-only' }): Promise<{
     result: LoadAllSessionsResult
@@ -322,6 +329,8 @@ class SessionPersistenceCoordinator {
   private readonly deletedSessions = new Set<string>()
   private readonly deletedProjects = new Set<string>()
   private readonly validatedBindingTopologies = new Map<string, string>()
+  private sessionMetadata = new Map<string, SessionMetadata>()
+  private isSessionMetadataComplete = false
   private destructiveStartupWindowOpen = true
   private sessionDeletionHandlers: SessionDeletionHandlers | undefined
 
@@ -341,6 +350,44 @@ class SessionPersistenceCoordinator {
     this.sessionDeletionHandlers = handlers
   }
 
+  sessionMetadataSnapshot(): Promise<SessionMetadataSnapshot> {
+    return this.enqueue(async () => ({
+      sessions: [...this.sessionMetadata.values()],
+      isComplete: this.isSessionMetadataComplete
+    }))
+  }
+
+  private replaceSessionMetadata(
+    sessions: readonly PersistedChatSession[],
+    isComplete: boolean
+  ): void {
+    this.sessionMetadata = new Map(
+      sessions.map((session) => [
+        session.id,
+        { id: session.id, projectId: session.projectId, title: session.title }
+      ])
+    )
+    this.isSessionMetadataComplete = isComplete
+  }
+
+  private upsertSessionMetadata(session: PersistedChatSession): void {
+    this.sessionMetadata.set(session.id, {
+      id: session.id,
+      projectId: session.projectId,
+      title: session.title
+    })
+  }
+
+  private removeSessionMetadata(sessionId: string): void {
+    this.sessionMetadata.delete(sessionId)
+  }
+
+  private removeProjectSessionMetadata(projectId: string): void {
+    for (const [sessionId, metadata] of this.sessionMetadata) {
+      if (metadata.projectId === projectId) this.sessionMetadata.delete(sessionId)
+    }
+  }
+
   /**
    * Reads the Session authority without running recovery or derived-state reconciliation. This is
    * the degraded path used when an earlier startup prerequisite failed: healthy transcripts remain
@@ -354,6 +401,7 @@ class SessionPersistenceCoordinator {
       this.destructiveStartupWindowOpen = false
       this.fileIndex.markReconciliationIncomplete()
       const scan = await this.repository.loadAllWithDiagnostics({ mode: 'read-only' })
+      this.replaceSessionMetadata(scan.result.sessions, false)
 
       return {
         ...scan.result,
@@ -379,6 +427,7 @@ class SessionPersistenceCoordinator {
       const mayRunDestructiveStartupCleanup = this.destructiveStartupWindowOpen
       this.destructiveStartupWindowOpen = false
       const scan = await this.repository.loadAllWithDiagnostics()
+      this.replaceSessionMetadata(scan.result.sessions, scan.isComplete)
       scan.result.diagnostics = {
         isComplete: scan.isComplete,
         warnings: scan.warnings ?? [],
@@ -496,6 +545,7 @@ class SessionPersistenceCoordinator {
           await this.fileIndex.syncSession(session)
         }
       } catch (error) {
+        this.isSessionMetadataComplete = false
         this.fileIndex.markReconciliationIncomplete()
         console.error('[session-persistence] startup reconciliation failed', error)
         // Keep chat hydration available while Files remains explicitly incomplete and retryable.
@@ -567,6 +617,7 @@ class SessionPersistenceCoordinator {
         if (bindingValidation.status === 'conflict') throw bindingValidation.error
       }
       await this.repository.saveSession(durableSession)
+      this.upsertSessionMetadata(durableSession)
       // Cache only confirmed topology. A transient validation failure keeps the old fingerprint so
       // the next autosave retries the narrow lookup instead of silently treating it as acknowledged.
       if (bindingValidation.status === 'valid') {
@@ -577,6 +628,7 @@ class SessionPersistenceCoordinator {
       try {
         changedSources = await this.fileIndex.syncSession(durableSession)
       } catch (error) {
+        this.isSessionMetadataComplete = false
         // The JSON is already durable. Tell open Files views to surface the incomplete projection,
         // then preserve the rejection so the normal persistence retry path remains active.
         this.notifyFilesChanged({
@@ -770,6 +822,7 @@ class SessionPersistenceCoordinator {
         // The marked directory rename is the sole authoritative commit. Derived index deletion runs
         // afterward so any failure is replayable from the durable Project intent and tombstone.
         await this.repository.deleteProjectSessions(projectId)
+        this.removeProjectSessionMetadata(projectId)
         for (const sessionId of deletedSessionIds) {
           this.validatedBindingTopologies.delete(sessionKey(projectId, sessionId))
         }
@@ -914,6 +967,7 @@ class SessionPersistenceCoordinator {
         }
         await this.repository.deleteSession(projectId, sessionId)
         jsonDeleted = true
+        this.removeSessionMetadata(sessionId)
         this.validatedBindingTopologies.delete(key)
         await this.provenance?.completeSessionDeletion(receipt)
       } catch (error) {
@@ -944,6 +998,7 @@ class SessionPersistenceCoordinator {
       try {
         const scan = await this.repository.loadAllWithDiagnostics()
         if (scan.isComplete) {
+          this.replaceSessionMetadata(scan.result.sessions, true)
           // The deleted session may have owned a canonical row referenced by a surviving legacy
           // session. Retry the project's revision ledgers after the owner is durably gone.
           for (const session of scan.result.sessions) {
@@ -957,9 +1012,11 @@ class SessionPersistenceCoordinator {
           // and any other stale ledgers that no longer have authoritative JSON.
           await this.fileIndex.reconcileActiveSessions(scan.result.sessions)
         } else {
+          this.isSessionMetadataComplete = false
           this.fileIndex.markReconciliationIncomplete()
         }
       } catch {
+        this.isSessionMetadataComplete = false
         this.fileIndex.markReconciliationIncomplete()
       }
 
@@ -1021,6 +1078,8 @@ export type {
   ProjectSessionDeletionResult,
   SessionDeletionHandlers,
   SessionFileIndex,
+  SessionMetadata,
+  SessionMetadataSnapshot,
   SessionMutationRepository,
   SessionProvenancePersistence
 }

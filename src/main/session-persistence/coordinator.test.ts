@@ -140,6 +140,179 @@ const createProjectReconciliationSnapshot = (): ArtifactProjectReconciliationSna
   ({}) as ArtifactProjectReconciliationSnapshot
 
 describe('SessionPersistenceCoordinator', () => {
+  it('exposes Session metadata from the latest complete load without reading storage again', async () => {
+    const session = createSession({ title: 'Cached session' })
+    const loadAllWithDiagnostics = vi.fn().mockResolvedValue({
+      result: { sessions: [session], manifest: { version: 1 as const } },
+      isComplete: true
+    })
+    const coordinator = new SessionPersistenceCoordinator(
+      createSessionRepository({ loadAllWithDiagnostics }),
+      createFileIndex()
+    )
+
+    await coordinator.loadAll()
+
+    await expect(coordinator.sessionMetadataSnapshot()).resolves.toEqual({
+      sessions: [{ id: 'session-1', projectId: 'project-1', title: 'Cached session' }],
+      isComplete: true
+    })
+    expect(loadAllWithDiagnostics).toHaveBeenCalledOnce()
+  })
+
+  it('updates cached Session metadata after a durable save', async () => {
+    const session = createSession({ title: 'Original title' })
+    const coordinator = new SessionPersistenceCoordinator(
+      createSessionRepository({
+        loadAllWithDiagnostics: vi.fn().mockResolvedValue({
+          result: { sessions: [session], manifest: { version: 1 as const } },
+          isComplete: true
+        })
+      }),
+      createFileIndex()
+    )
+
+    await coordinator.loadAll()
+    await coordinator.saveSession(createSession({ title: 'Renamed session' }))
+
+    await expect(coordinator.sessionMetadataSnapshot()).resolves.toEqual({
+      sessions: [{ id: 'session-1', projectId: 'project-1', title: 'Renamed session' }],
+      isComplete: true
+    })
+  })
+
+  it('waits for an in-flight save before returning Session metadata', async () => {
+    const saveGate = createDeferred<void>()
+    const repository = createSessionRepository({
+      saveSession: vi.fn(() => saveGate.promise)
+    })
+    const coordinator = new SessionPersistenceCoordinator(repository, createFileIndex())
+
+    const save = coordinator.saveSession(createSession({ title: 'Renamed session' }))
+    await vi.waitFor(() => expect(repository.saveSession).toHaveBeenCalledOnce())
+    const snapshot = Promise.resolve(coordinator.sessionMetadataSnapshot())
+
+    saveGate.resolve()
+    await save
+
+    await expect(snapshot).resolves.toEqual({
+      sessions: [{ id: 'session-1', projectId: 'project-1', title: 'Renamed session' }],
+      isComplete: false
+    })
+  })
+
+  it('marks saved Session metadata incomplete when the derived file index update fails', async () => {
+    const session = createSession({ title: 'Original title' })
+    const repository = createSessionRepository({
+      loadAllWithDiagnostics: vi.fn().mockResolvedValue({
+        result: { sessions: [session], manifest: { version: 1 as const } },
+        isComplete: true
+      })
+    })
+    const syncSession = vi
+      .fn()
+      .mockResolvedValueOnce([])
+      .mockRejectedValueOnce(new Error('index unavailable'))
+    const coordinator = new SessionPersistenceCoordinator(
+      repository,
+      createFileIndex({ syncSession })
+    )
+
+    await coordinator.loadAll()
+    await expect(
+      coordinator.saveSession(createSession({ title: 'Durable renamed session' }))
+    ).rejects.toThrow('index unavailable')
+
+    expect(repository.saveSession).toHaveBeenCalled()
+    await expect(coordinator.sessionMetadataSnapshot()).resolves.toEqual({
+      sessions: [{ id: 'session-1', projectId: 'project-1', title: 'Durable renamed session' }],
+      isComplete: false
+    })
+  })
+
+  it('removes cached Session metadata after durable deletion', async () => {
+    const session = createSession()
+    const loadAllWithDiagnostics = vi
+      .fn()
+      .mockResolvedValueOnce({
+        result: { sessions: [session], manifest: { version: 1 as const } },
+        isComplete: true
+      })
+      .mockResolvedValueOnce({
+        result: { sessions: [], manifest: { version: 1 as const } },
+        isComplete: true
+      })
+    const coordinator = new SessionPersistenceCoordinator(
+      createSessionRepository({
+        loadAllWithDiagnostics,
+        loadSessionWithDiagnostics: vi.fn().mockResolvedValue({ status: 'found', session })
+      }),
+      createFileIndex()
+    )
+
+    await coordinator.loadAll()
+    await coordinator.deleteSession('project-1', 'session-1')
+
+    await expect(coordinator.sessionMetadataSnapshot()).resolves.toEqual({
+      sessions: [],
+      isComplete: true
+    })
+  })
+
+  it('removes only the deleted Project from cached Session metadata', async () => {
+    const deletedSession = createSession()
+    const survivingSession = createSession({ id: 'session-2', projectId: 'project-2' })
+    const coordinator = new SessionPersistenceCoordinator(
+      createSessionRepository({
+        loadAllWithDiagnostics: vi.fn().mockResolvedValue({
+          result: {
+            sessions: [deletedSession, survivingSession],
+            manifest: { version: 1 as const }
+          },
+          isComplete: true
+        }),
+        loadProjectWithDiagnostics: vi.fn().mockResolvedValue({
+          sessions: [deletedSession],
+          isComplete: true
+        })
+      }),
+      createFileIndex()
+    )
+
+    await coordinator.loadAll()
+    await coordinator.deleteProjectSessions('project-1')
+
+    await expect(coordinator.sessionMetadataSnapshot()).resolves.toEqual({
+      sessions: [{ id: 'session-2', projectId: 'project-2', title: 'Session' }],
+      isComplete: true
+    })
+  })
+
+  it('marks cached Session metadata incomplete until a complete authority scan succeeds', async () => {
+    const session = createSession()
+    const coordinator = new SessionPersistenceCoordinator(
+      createSessionRepository({
+        loadAllWithDiagnostics: vi.fn().mockResolvedValue({
+          result: { sessions: [session], manifest: { version: 1 as const } },
+          isComplete: false
+        })
+      }),
+      createFileIndex()
+    )
+
+    await expect(coordinator.sessionMetadataSnapshot()).resolves.toEqual({
+      sessions: [],
+      isComplete: false
+    })
+
+    await coordinator.loadAll()
+
+    await expect(coordinator.sessionMetadataSnapshot()).resolves.toEqual({
+      sessions: [{ id: 'session-1', projectId: 'project-1', title: 'Session' }],
+      isComplete: false
+    })
+  })
+
   it('serializes a pending save before deletion and rejects saves after the tombstone', async () => {
     const order: string[] = []
     const saveGate = createDeferred<void>()
@@ -1890,6 +2063,10 @@ describe('SessionPersistenceCoordinator', () => {
         isComplete: false,
         failure: 'startup-reconciliation-failed'
       }
+    })
+    await expect(coordinator.sessionMetadataSnapshot()).resolves.toEqual({
+      sessions: [{ id: 'session-1', projectId: 'project-1', title: 'Session' }],
+      isComplete: false
     })
     expect(markReconciliationIncomplete).toHaveBeenCalledOnce()
   })

@@ -18,6 +18,38 @@ import { registerPermissionGrantIpcHandlers } from './ipc'
 beforeEach(() => handlers.clear())
 
 describe('permission grant IPC', () => {
+  it('projects Session-scoped grants from cached metadata without loading Session storage', async () => {
+    const loadAll = vi.fn().mockRejectedValue(new Error('full Session load must not run'))
+    const metadataSnapshot = vi.fn().mockResolvedValue({
+      sessions: [{ id: 'session-1', projectId: 'project-1', title: 'Cached session' }],
+      isComplete: true
+    })
+    const sessions = { metadataSnapshot, loadAll }
+    const registry = {
+      list: vi.fn().mockResolvedValue([
+        {
+          id: 'grant-1',
+          revision: 1,
+          capability: { kind: 'file_operation', key: 'file:read' },
+          scope: { kind: 'session', projectId: 'project-1', sessionId: 'session-1' }
+        }
+      ]),
+      subscribe: vi.fn(() => () => undefined)
+    } as unknown as PermissionGrantRegistry
+    registerPermissionGrantIpcHandlers({
+      registry,
+      projects: { list: vi.fn().mockResolvedValue([]) },
+      sessions
+    })
+
+    await expect(handlers.get('permissions:list')?.(undefined)).resolves.toMatchObject({
+      incompleteStores: [],
+      grants: [{ scopeLabel: 'Session: Cached session' }]
+    })
+    expect(metadataSnapshot).toHaveBeenCalledOnce()
+    expect(loadAll).not.toHaveBeenCalled()
+  })
+
   it('registers list, revision-aware revoke, restore, and change notification', async () => {
     let listener: (() => void) | undefined
     const registry = {
@@ -38,7 +70,7 @@ describe('permission grant IPC', () => {
     const controller = registerPermissionGrantIpcHandlers({
       registry,
       projects: { list: vi.fn().mockResolvedValue([]) },
-      sessions: { loadAll: vi.fn().mockResolvedValue({ sessions: [], manifest: {} }) },
+      sessions: { metadataSnapshot: vi.fn().mockResolvedValue({ sessions: [], isComplete: true }) },
       broadcast
     })
 
@@ -79,7 +111,7 @@ describe('permission grant IPC', () => {
     registerPermissionGrantIpcHandlers({
       registry,
       projects: { list: vi.fn().mockResolvedValue([]) },
-      sessions: { loadAll: vi.fn().mockResolvedValue({ sessions: [], manifest: {} }) }
+      sessions: { metadataSnapshot: vi.fn().mockResolvedValue({ sessions: [], isComplete: true }) }
     })
 
     await expect(handlers.get('permissions:revoke')?.(undefined, { grants: [] })).rejects.toThrow(
@@ -107,10 +139,8 @@ describe('permission grant IPC', () => {
       registry,
       projects: { list: vi.fn().mockRejectedValue(new Error('project store unavailable')) },
       sessions: {
-        loadAll: vi.fn().mockResolvedValue({
-          sessions: [],
-          manifest: {},
-          diagnostics: { isComplete: false, warnings: [] }
+        metadataSnapshot: vi.fn(() => {
+          throw new Error('Session metadata unavailable')
         })
       },
       connectors: { get: vi.fn().mockRejectedValue(new Error('settings unavailable')) },

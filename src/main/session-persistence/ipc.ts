@@ -14,6 +14,7 @@ import { SessionRepository } from './repository'
 import { ReviewRepository } from '../reviewer/repository'
 import { getProjectDbClient } from '../projects/prisma-client'
 import { withDataRootWrite } from '../storage/migration-state'
+import type { SessionMetadataSnapshot } from './coordinator'
 
 type SessionPersistenceBackend = {
   loadAll: () => Promise<LoadAllSessionsResult>
@@ -44,6 +45,10 @@ type SessionStartupLoader = {
   loadAllReadOnly: () => Promise<LoadAllSessionsResult>
 }
 
+type SessionMetadataLoader = {
+  sessionMetadataSnapshot: () => Promise<SessionMetadataSnapshot>
+}
+
 const withProjectDeletionRecoveryStatus = (
   result: LoadAllSessionsResult,
   isProjectDeletionRecoveryComplete: boolean
@@ -56,6 +61,16 @@ const withProjectDeletionRecoveryStatus = (
     isProjectDeletionRecoveryComplete
   }
 })
+
+// Cached metadata must not overtake queued Project deletion work. Let recovery failures reject so
+// Permissions reports the Session store as incomplete instead of publishing stale navigation labels.
+const loadSessionMetadataAfterProjectRecovery = async (
+  projectRecovery: ProjectDeletionRecoveryBackend,
+  sessionLoader: SessionMetadataLoader
+): Promise<SessionMetadataSnapshot> => {
+  await projectRecovery.recoverPendingDeletions()
+  return sessionLoader.sessionMetadataSnapshot()
+}
 
 // Project deletion recovery is a prerequisite for mutating startup reconciliation. If it fails,
 // expose only the coordinator's explicit read-only snapshot so healthy transcripts remain navigable
@@ -142,6 +157,7 @@ export {
   createDefaultReviewRepository,
   createDefaultSessionRepository,
   createSessionPersistenceHandlers,
+  loadSessionMetadataAfterProjectRecovery,
   loadSessionsAfterProjectRecovery,
   registerSessionPersistenceIpcHandlers
 }

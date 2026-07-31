@@ -78,6 +78,7 @@ import { registerReviewerIpcHandlers } from './reviewer/ipc'
 import {
   createDefaultReviewRepository,
   createDefaultSessionRepository,
+  loadSessionMetadataAfterProjectRecovery,
   loadSessionsAfterProjectRecovery,
   registerSessionPersistenceIpcHandlers
 } from './session-persistence/ipc'
@@ -941,7 +942,13 @@ const registerIpcHandlers = async ({
         return projectRepository.list()
       }
     },
-    sessions: sessionPersistenceBackend,
+    sessions: {
+      metadataSnapshot: () =>
+        loadSessionMetadataAfterProjectRecovery(
+          projectDeletionCoordinator,
+          sessionPersistenceCoordinator
+        )
+    },
     connectors: {
       get: async () => ({
         ...(await settingsService.getConnectors()),

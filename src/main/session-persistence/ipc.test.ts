@@ -22,6 +22,7 @@ vi.mock('../lifecycle-broadcast', () => ({
 
 import {
   createSessionPersistenceHandlers,
+  loadSessionMetadataAfterProjectRecovery,
   loadSessionsAfterProjectRecovery,
   registerSessionPersistenceIpcHandlers,
   type SessionPersistenceBackend
@@ -53,6 +54,43 @@ const createMockReviewRepository = (): ReviewRepository =>
   }) as unknown as ReviewRepository
 
 describe('session persistence IPC handlers', () => {
+  it('reads cached Session metadata only after Project deletion recovery', async () => {
+    const order: string[] = []
+    const projectRecovery = {
+      recoverPendingDeletions: vi.fn(async () => {
+        order.push('recovery')
+      })
+    }
+    const snapshot = {
+      sessions: [{ id: 'session-1', projectId: 'project-a', title: 'Session' }],
+      isComplete: true
+    }
+    const sessionLoader = {
+      sessionMetadataSnapshot: vi.fn(async () => {
+        order.push('snapshot')
+        return snapshot
+      })
+    }
+
+    await expect(
+      loadSessionMetadataAfterProjectRecovery(projectRecovery, sessionLoader)
+    ).resolves.toBe(snapshot)
+    expect(order).toEqual(['recovery', 'snapshot'])
+  })
+
+  it('does not expose cached Session metadata when Project deletion recovery fails', async () => {
+    const failure = new Error('Project deletion recovery failed')
+    const projectRecovery = {
+      recoverPendingDeletions: vi.fn().mockRejectedValue(failure)
+    }
+    const sessionLoader = { sessionMetadataSnapshot: vi.fn() }
+
+    await expect(
+      loadSessionMetadataAfterProjectRecovery(projectRecovery, sessionLoader)
+    ).rejects.toBe(failure)
+    expect(sessionLoader.sessionMetadataSnapshot).not.toHaveBeenCalled()
+  })
+
   it('hydrates a read-only Session snapshot when Project deletion recovery fails', async () => {
     const failure = new Error('Project deletion journal is locked')
     const consoleError = vi.spyOn(console, 'error').mockImplementation(() => undefined)
