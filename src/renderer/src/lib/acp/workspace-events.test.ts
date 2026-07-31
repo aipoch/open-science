@@ -777,6 +777,68 @@ describe('workspace runtime events', () => {
     ])
   })
 
+  it.each([
+    {
+      label: 'reported',
+      turnUsage: { inputTokens: 31, cacheTokens: 15, outputTokens: 14 },
+      expectedUsage: {
+        turnUsage: { inputTokens: 31, cacheTokens: 15, outputTokens: 14 }
+      }
+    },
+    {
+      label: 'unavailable',
+      turnUsage: undefined,
+      expectedUsage: { turnUsageUnavailable: true }
+    }
+  ])('preserves $label usage for an artifact-only response received after stop', async (input) => {
+    const promptMessageId = useSessionStore.getState().sessions[0].activeRun?.promptMessageId
+    const saveSession = vi.fn().mockResolvedValue(undefined)
+    const finalizeRunArtifacts = vi.fn(async ({ messageId }: { messageId: string }) => [
+      createArtifactFile({
+        id: `transport-session-1:${messageId}:result.txt`,
+        sessionId: 'transport-session-1',
+        messageId,
+        runId: undefined
+      })
+    ])
+
+    await applyWorkspaceRuntimeEvent(
+      createEvent({
+        id: `stop-before-artifact-only-${input.label}`,
+        kind: 'stop',
+        turnUsage: input.turnUsage
+      })
+    )
+    expect(useSessionStore.getState().sessions[0].messages).toHaveLength(1)
+
+    await applyWorkspaceRuntimeEvent(
+      createEvent({
+        id: `artifact-only-after-stop-${input.label}`,
+        kind: 'artifact',
+        runId: `artifact-run-after-stop-${input.label}`,
+        promptMessageId,
+        artifactSessionId: 'artifact-session-1',
+        artifactClaimId: `claim-after-stop-${input.label}`,
+        artifacts: [createArtifactFile({ runId: `artifact-run-after-stop-${input.label}` })]
+      }),
+      { finalizeRunArtifacts, saveSession }
+    )
+
+    expect(useSessionStore.getState().sessions[0].messages[1]).toMatchObject({
+      role: 'agent',
+      content: '',
+      status: 'complete',
+      ...input.expectedUsage
+    })
+    expect(saveSession).toHaveBeenLastCalledWith(
+      expect.objectContaining({
+        messages: expect.arrayContaining([
+          expect.objectContaining({ role: 'agent', ...input.expectedUsage })
+        ])
+      })
+    )
+  })
+
   it('keeps Artifact persistence behind an older queued Session save', async () => {
     const promptMessageId = useSessionStore.getState().sessions[0].activeRun?.promptMessageId
     await applyWorkspaceRuntimeEvent(

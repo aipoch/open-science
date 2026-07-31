@@ -188,6 +188,8 @@ type AttachRunArtifactsInput = {
   promptMessageId?: string
   eventId: string
   artifacts: ArtifactFile[]
+  turnUsage?: AcpTurnTokenUsage
+  turnUsageUnavailable?: true
 }
 
 type ReplaceMessageArtifactsInput = {
@@ -1283,7 +1285,15 @@ export const useSessionStore = create<SessionStore>((set, get) => ({
   },
 
   // Attaches a runtime artifact event to the best local assistant message before file finalization.
-  attachRunArtifacts: ({ sessionId, runId, promptMessageId, eventId, artifacts }) => {
+  attachRunArtifacts: ({
+    sessionId,
+    runId,
+    promptMessageId,
+    eventId,
+    artifacts,
+    turnUsage,
+    turnUsageUnavailable
+  }) => {
     if (!sessionId || !runId || !eventId || artifacts.length === 0) return undefined
 
     let result: AppendMessageResult | undefined
@@ -1392,6 +1402,11 @@ export const useSessionStore = create<SessionStore>((set, get) => ({
                   ...message,
                   eventIds: appendUniqueStrings(message.eventIds, [eventId]),
                   artifactIds: appendUniqueStrings(message.artifactIds, incomingArtifactIds),
+                  ...(turnUsage
+                    ? { turnUsage, turnUsageUnavailable: undefined }
+                    : turnUsageUnavailable
+                      ? { turnUsage: undefined, turnUsageUnavailable: true as const }
+                      : {}),
                   updatedAt: now
                 }
               : message
@@ -1415,6 +1430,11 @@ export const useSessionStore = create<SessionStore>((set, get) => ({
           responseToMessageId,
           eventIds: [eventId],
           artifactIds: incomingArtifactIds,
+          ...(turnUsage
+            ? { turnUsage }
+            : turnUsageUnavailable
+              ? { turnUsageUnavailable: true as const }
+              : {}),
           sortIndex: createSortIndex(),
           createdAt: now,
           updatedAt: now

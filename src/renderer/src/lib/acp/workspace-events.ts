@@ -1,4 +1,8 @@
-import type { AcpRuntimeEvent, AcpPermissionRequest } from '../../../../shared/acp'
+import type {
+  AcpRuntimeEvent,
+  AcpPermissionRequest,
+  AcpTurnTokenUsage
+} from '../../../../shared/acp'
 import {
   ARTIFACT_OWNERSHIP_PERSISTENCE_RACE,
   type ArtifactFile,
@@ -39,16 +43,26 @@ type DeferredArtifactEvent = {
   dependencies: WorkspaceRuntimeEventDependencies
 }
 
+type PendingArtifactTurnUsage = {
+  promptMessageId: string
+  turnUsage?: AcpTurnTokenUsage
+  turnUsageUnavailable?: true
+}
+
 // The runtime deliberately publishes generated files immediately before its stop event. Providers may
 // still have a terminal assistant chunk queued behind the tool result, so binding at the artifact event
 // can capture an intermediate message. Hold every event until stop makes the renderer's terminal
 // Message/Branch projection authoritative; one turn may publish more than one generated file claim.
 const deferredArtifactEventsBySession = new Map<string, DeferredArtifactEvent[]>()
+// Some providers reverse that order and publish an artifact-only response just after stop. Keep the
+// terminal usage scoped to its prompt until the matching Artifact creates the owning Agent message.
+const pendingArtifactTurnUsageBySession = new Map<string, PendingArtifactTurnUsage>()
 const scheduledAutoReviewsBySession = new Map<string, ReturnType<typeof setTimeout>>()
 const AUTO_REVIEW_ARTIFACT_SETTLE_DELAY_MS = 100
 
 const resetDeferredArtifactEventsForTests = (): void => {
   deferredArtifactEventsBySession.clear()
+  pendingArtifactTurnUsageBySession.clear()
   for (const timer of scheduledAutoReviewsBySession.values()) clearTimeout(timer)
   scheduledAutoReviewsBySession.clear()
 }
@@ -147,23 +161,27 @@ const isFinalizableArtifactEvent = (event: AcpRuntimeEvent): event is Finalizabl
   Boolean(event.sessionId && event.runId && event.artifactClaimId && event.artifacts?.length)
 
 const attachArtifactEvent = (
-  event: FinalizableArtifactEvent
+  event: FinalizableArtifactEvent,
+  turnUsage?: PendingArtifactTurnUsage
 ): { sessionId: string; messageId: string } | undefined =>
   useSessionStore.getState().attachRunArtifacts({
     sessionId: event.sessionId,
     runId: event.runId,
     promptMessageId: event.promptMessageId,
     eventId: event.id,
-    artifacts: event.artifacts
+    artifacts: event.artifacts,
+    turnUsage: turnUsage?.turnUsage,
+    turnUsageUnavailable: turnUsage?.turnUsageUnavailable
   })
 
 const finalizeArtifactEvent = async (
   event: AcpRuntimeEvent,
-  dependencies: WorkspaceRuntimeEventDependencies
+  dependencies: WorkspaceRuntimeEventDependencies,
+  turnUsage?: PendingArtifactTurnUsage
 ): Promise<boolean> => {
   if (!isFinalizableArtifactEvent(event)) return false
 
-  const attached = attachArtifactEvent(event)
+  const attached = attachArtifactEvent(event, turnUsage)
 
   if (!attached) return true
 
@@ -418,6 +436,7 @@ const applyWorkspaceRuntimeEvent = async (
     activityGroupToolCallIdsBySession.delete(event.sessionId)
     const deferredArtifacts = deferredArtifactEventsBySession.get(event.sessionId)
     const activeSession = store.sessions.find((session) => session.id === event.sessionId)
+    const terminalPromptMessageId = activeSession?.activeRun?.promptMessageId
     let deferredAttachmentError: unknown
     let deferredAttachmentFailed = false
 
@@ -445,12 +464,32 @@ const applyWorkspaceRuntimeEvent = async (
       // The run is visibly settled as an integrity error, but its terminal Message is not proven to
       // belong to the active Branch. Acknowledge the stop without publishing Artifact or Review data.
       deferredArtifactEventsBySession.delete(event.sessionId)
+      pendingArtifactTurnUsageBySession.delete(event.sessionId)
       return true
     }
 
     if (deferredAttachmentFailed) {
       deferredArtifactEventsBySession.delete(event.sessionId)
       throw deferredAttachmentError
+    }
+
+    const terminalResponse = terminalPromptMessageId
+      ? [...(terminalSession?.messages ?? [])]
+          .reverse()
+          .find(
+            (message) =>
+              message.role === 'agent' && message.responseToMessageId === terminalPromptMessageId
+          )
+      : undefined
+    if (terminalPromptMessageId && !terminalResponse) {
+      pendingArtifactTurnUsageBySession.set(event.sessionId, {
+        promptMessageId: terminalPromptMessageId,
+        ...(event.turnUsage
+          ? { turnUsage: event.turnUsage }
+          : { turnUsageUnavailable: true as const })
+      })
+    } else {
+      pendingArtifactTurnUsageBySession.delete(event.sessionId)
     }
 
     if (deferredArtifacts) {
@@ -504,13 +543,20 @@ const applyWorkspaceRuntimeEvent = async (
     }
 
     cancelScheduledAutoReview(event.sessionId)
-    const wasFinalized = await finalizeArtifactEvent(event, dependencies)
+    const pendingTurnUsage = pendingArtifactTurnUsageBySession.get(event.sessionId)
+    const matchingTurnUsage =
+      event.promptMessageId === pendingTurnUsage?.promptMessageId ? pendingTurnUsage : undefined
+    const wasFinalized = await finalizeArtifactEvent(event, dependencies, matchingTurnUsage)
+    if (wasFinalized && matchingTurnUsage) {
+      pendingArtifactTurnUsageBySession.delete(event.sessionId)
+    }
     if (wasFinalized) scheduleAutoReview(event.sessionId)
     return wasFinalized
   }
 
   if (event.kind === 'error' && event.sessionId) {
     activityGroupToolCallIdsBySession.delete(event.sessionId)
+    pendingArtifactTurnUsageBySession.delete(event.sessionId)
     // A recoverable request-size overflow shows the neutral "compacting" note ONLY while a recovery is
     // actually in flight — the workspace runtime flips the session to `compacting` first (its recovery
     // effect runs before this event is applied). If the session is not compacting, no recovery started
