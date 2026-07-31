@@ -3515,7 +3515,14 @@ class SettingsService {
             settings: join(appConfigDir, 'settings.json'),
             plugins: [{ type: 'local', path: appConfigDir, skipMcpDiscovery: true }]
           }
-        : undefined
+        : provider.type === 'custom'
+          ? {
+              // Custom Anthropic-compatible gateways may work while Anthropic's domain preflight
+              // endpoint is unreachable. Keep this override scoped to the ACP session so neither
+              // project/user settings nor the isolated Claude runtime configuration are mutated.
+              settings: { skipWebFetchPreflight: true }
+            }
+          : undefined
 
     return {
       envOverrides,

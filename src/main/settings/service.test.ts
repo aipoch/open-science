@@ -3018,8 +3018,26 @@ describe('SettingsService: preflight & spawn config', () => {
       ANTHROPIC_MODEL: 'm',
       CLAUDE_CONFIG_DIR: getAppClaudeConfigDir(storageRoot)
     })
+    expect(config.sessionOptions).toEqual({
+      settings: { skipWebFetchPreflight: true }
+    })
     // Custom providers always use the bearer token variable, never x-api-key.
     expect(config.envOverrides.ANTHROPIC_API_KEY).toBeUndefined()
+  })
+
+  it('does not inject WebFetch preflight settings into isolated Claude sessions', async () => {
+    const service = createService()
+    const { encryptKey, maskKey } = await import('./crypto.js')
+    await repository.setClaudeInfo({ resolvedPath: execPath, version: '2.1.0' })
+    await repository.upsertClaudeIsolatedProvider({
+      keyRef: encryptKey('sk-ant-isolated'),
+      keyMask: maskKey('sk-ant-isolated')
+    })
+    await service.setActiveProvider(CLAUDE_ISOLATED_PROVIDER_ID)
+
+    const config = await service.resolveActiveSpawnConfig()
+
+    expect(config.sessionOptions).toBeUndefined()
   })
 
   it('throws a clear error when no active provider is configured', async () => {
@@ -3120,6 +3138,9 @@ describe('SettingsService: official vendors', () => {
       ANTHROPIC_BASE_URL: 'https://api.deepseek.com/anthropic',
       ANTHROPIC_AUTH_TOKEN: 'sk-ds',
       ANTHROPIC_MODEL: 'deepseek-v4-flash'
+    })
+    expect(config.sessionOptions).toEqual({
+      settings: { skipWebFetchPreflight: true }
     })
     expect(config.contextWindow).toBe(1_000_000)
   })
