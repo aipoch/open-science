@@ -17,6 +17,8 @@ import { Readable } from 'node:stream'
 import { gzipSync } from 'node:zlib'
 import { afterEach, describe, expect, it, vi } from 'vitest'
 
+import { ACP_TURN_TOKEN_USAGE_META_KEY, toAcpTurnTokenUsage } from '../../shared/acp'
+
 const PINNED_SKILL_MAPPER_FIXTURE = [
   'function buildPromptItems(prompt) {',
   '  return prompt.map((block) => {',
@@ -1415,6 +1417,24 @@ describe('patchCodexAcpTurnUsageSource', () => {
     '  return adapter;'
   ].join('\n')
 
+  // Mirrors codex-acp 1.1.4's buildPromptUsage -> toPromptUsage output rather than using the
+  // passthrough mapper above, so this fixture covers the adapter-to-runtime cache-field contract.
+  const fixtureWithPinnedPromptUsage = fixture.replace(
+    '    buildPromptUsage(usage) { return usage; },',
+    [
+      '    buildPromptUsage(tokenCount) {',
+      '      if (tokenCount == null) return null;',
+      '      return {',
+      '        totalTokens: tokenCount.totalTokens,',
+      '        inputTokens: tokenCount.inputTokens,',
+      '        cachedReadTokens: tokenCount.cachedInputTokens,',
+      '        outputTokens: tokenCount.outputTokens,',
+      '        thoughtTokens: tokenCount.reasoningOutputTokens',
+      '      };',
+      '    },'
+    ].join('\n')
+  )
+
   const usage = (
     totalTokens: number,
     inputTokens: number,
@@ -1484,6 +1504,41 @@ describe('patchCodexAcpTurnUsageSource', () => {
     expect(response.usage).toEqual(usage(27, 19, 5, 3, 0))
     expect(response._meta?.['open-science/turn-usage']).toEqual(usage(45, 31, 8, 6, 0))
     expect(patchCodexAcpTurnUsageSource(patched)).toBe(patched)
+  })
+
+  it('preserves cached-input totals through the pinned adapter mapping and ACP normalization', () => {
+    const adapter = Function(patchCodexAcpTurnUsageSource(fixtureWithPinnedPromptUsage))() as {
+      startPrompt: () => void
+      createUsageUpdate: (params: unknown) => void
+      finishPrompt: () => { _meta?: Record<string, unknown> }
+    }
+
+    adapter.createUsageUpdate({
+      tokenUsage: {
+        last: usage(100, 70, 13, 15, 2),
+        total: usage(100, 70, 13, 15, 2)
+      }
+    })
+    adapter.startPrompt()
+    adapter.createUsageUpdate({
+      tokenUsage: {
+        last: usage(18, 12, 3, 3, 0),
+        total: usage(118, 82, 16, 18, 2)
+      }
+    })
+    adapter.createUsageUpdate({
+      tokenUsage: {
+        last: usage(27, 19, 5, 3, 0),
+        total: usage(145, 101, 21, 21, 2)
+      }
+    })
+
+    const response = adapter.finishPrompt()
+    expect(toAcpTurnTokenUsage(response._meta?.[ACP_TURN_TOKEN_USAGE_META_KEY])).toEqual({
+      inputTokens: 31,
+      cacheTokens: 8,
+      outputTokens: 6
+    })
   })
 
   it('uses the first request snapshot when a resumed session has no cumulative baseline', () => {
