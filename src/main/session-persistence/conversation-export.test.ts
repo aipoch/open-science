@@ -1,3 +1,5 @@
+import { join } from 'node:path'
+
 import { beforeEach, describe, expect, it, vi } from 'vitest'
 
 import type { PersistedChatSession } from '../../shared/session-persistence'
@@ -98,7 +100,7 @@ describe('conversation export service', () => {
     expect(showSaveDialog).toHaveBeenCalledWith(
       undefined,
       expect.objectContaining({
-        defaultPath: '/downloads/Export test.md',
+        defaultPath: join('/downloads', 'Export test.md'),
         filters: [{ name: 'Markdown', extensions: ['md'] }]
       })
     )
@@ -119,14 +121,16 @@ describe('conversation export service', () => {
       format: 'pdf'
     })
 
-    expect(createTempDirectory).toHaveBeenCalledWith('/tmp/open-science-conversation-export-')
+    expect(createTempDirectory).toHaveBeenCalledWith(
+      join('/tmp', 'open-science-conversation-export-')
+    )
     expect(writeExportFile).toHaveBeenNthCalledWith(
       1,
-      '/tmp/open-science-conversation-export-test/conversation.html',
+      join('/tmp/open-science-conversation-export-test', 'conversation.html'),
       expect.stringContaining('<!doctype html>')
     )
     expect(loadFile).toHaveBeenCalledWith(
-      '/tmp/open-science-conversation-export-test/conversation.html'
+      join('/tmp/open-science-conversation-export-test', 'conversation.html')
     )
     expect(executeJavaScript).toHaveBeenCalledOnce()
     expect(printToPDF).toHaveBeenCalledWith(

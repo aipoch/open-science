@@ -55,7 +55,7 @@ describe('post-merge Windows validation', () => {
     })
     expect(job.strategy?.matrix?.shard).toEqual([1, 2])
     expect(findStep(job, 'Test complete suite shard').run).toBe(
-      'npm test -- --shard=${{ matrix.shard }}/2 --maxWorkers=1 --testTimeout=30000 --hookTimeout=30000'
+      'npm test -- --shard=${{ matrix.shard }}/2 --maxWorkers=1 --testTimeout=60000 --hookTimeout=60000'
     )
   })
 
