@@ -71,10 +71,12 @@ export const REMOTE_LOCAL_ONLY_RPC_CHANNELS = new Set([
   'storage:cancel-migrate',
   'storage:commit-and-relaunch',
   'storage:discard-migrated-copy',
+  'storage:inspect-data-root',
   'storage:migrate',
   'storage:pick-directory',
   'storage:reveal-app-storage',
   'storage:set-data-root-and-relaunch',
+  'storage:validate-data-root',
   'update:apply',
   'update:cancel',
   'update:download'

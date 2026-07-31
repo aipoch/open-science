@@ -463,7 +463,9 @@ describe('startWebHttpServer', () => {
       'settings:login-isolated-codex',
       'settings:logout-isolated-codex',
       'settings:login-shared-claude',
-      'settings:logout-shared-claude'
+      'settings:logout-shared-claude',
+      'storage:inspect-data-root',
+      'storage:validate-data-root'
     ]) {
       expect(REMOTE_LOCAL_ONLY_RPC_CHANNELS, channel).toContain(channel)
     }
