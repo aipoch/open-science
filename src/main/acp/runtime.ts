@@ -72,6 +72,13 @@ import {
 } from './runtime-events'
 import { readWorkspaceTextFile, writeWorkspaceTextFile } from './filesystem'
 import {
+  CURSOR_ASK_QUESTION_METHOD,
+  CURSOR_CREATE_PLAN_METHOD,
+  parseCursorExtensionParams,
+  rejectCursorPlan,
+  skipCursorQuestion
+} from './cursor-extensions'
+import {
   matchSessionModelOption,
   resolveSessionEffortOption,
   type SessionModelSelection
@@ -3839,6 +3846,8 @@ class AcpRuntime {
       .onRequest(acp.methods.client.fs.writeTextFile, (ctx) =>
         writeWorkspaceTextFile(this.resolveSessionCwd(ctx.params.sessionId), ctx.params)
       )
+      .onRequest(CURSOR_ASK_QUESTION_METHOD, parseCursorExtensionParams, skipCursorQuestion)
+      .onRequest(CURSOR_CREATE_PLAN_METHOD, parseCursorExtensionParams, rejectCursorPlan)
       .connect(stream)
   }
 

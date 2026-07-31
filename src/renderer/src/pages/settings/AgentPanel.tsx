@@ -406,8 +406,7 @@ const AgentPanel = ({
         agentFrameworks.find((framework) => framework.id === 'cursor')?.displayName ??
         'Cursor Agent',
       icon: <Cursor size={24} className="text-foreground" />,
-      description:
-        'Cursor Agent CLI — detect-only; uses your existing Cursor CLI login (`agent login`).',
+      description: 'Cursor Agent CLI — detect-only; uses your existing Cursor CLI login.',
       ready: preflight.cursorReady,
       version: cursor.version,
       path: cursor.resolvedPath,
@@ -416,8 +415,10 @@ const AgentPanel = ({
       notReadyHint: (
         <>
           Install the Cursor Agent CLI yourself (copy the official command below), run{' '}
-          <code className="font-mono">agent login</code>, then re-detect. Open Science does not
-          download or manage this runtime.
+          <code className="rounded-md bg-accent/50 px-1.5 py-0.5 font-mono text-sm text-primary">
+            agent login
+          </code>
+          , then re-detect. Open Science does not download or manage this runtime.
         </>
       ),
       // Unused: managed is always false for Cursor, so uninstall is never offered.

@@ -259,16 +259,6 @@ const ProviderForm = ({
         </div>
       ) : null}
 
-      {isCursorSubscription ? (
-        <div className="space-y-3 rounded-lg border border-border bg-muted/30 p-3">
-          <p className="text-xs text-muted-foreground">
-            Uses your existing Cursor Agent CLI login. Run{' '}
-            <code className="font-mono">agent login</code> in a terminal if you have not signed in
-            yet. Open Science does not store a Cursor API key.
-          </p>
-        </div>
-      ) : null}
-
       {isCodexSubscription ? (
         <div className="space-y-3 rounded-lg border border-border bg-muted/30 p-3">
           <div className="space-y-1.5">

@@ -4,6 +4,7 @@ import { describe, expect, it } from 'vitest'
 import {
   collectCandidateDirs,
   detectCursor,
+  parseLoginStatus,
   parseVersion,
   type CursorDetectDeps
 } from './cursor-detect'
@@ -25,6 +26,12 @@ describe('cursor-detect', () => {
   it('parses the first non-empty version line', () => {
     expect(parseVersion('2026.07.23-e383d2b\n')).toBe('2026.07.23-e383d2b')
     expect(parseVersion('\n  agent 1.0.0  \n')).toBe('agent 1.0.0')
+  })
+
+  it('does not mistake the unauthenticated status text for a successful login', () => {
+    expect(parseLoginStatus('Starting login process...\nNot logged in\n')).toBe(false)
+    expect(parseLoginStatus('Logged in as researcher@example.com')).toBe(true)
+    expect(parseLoginStatus('Status unavailable')).toBeUndefined()
   })
 
   it('returns undefined when no candidate is executable', async () => {

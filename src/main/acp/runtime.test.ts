@@ -27,7 +27,12 @@ import type { ModelReasoningEffort } from '../../shared/reasoning-effort'
 import { terminateProcessTree } from '../process-tree'
 import { AgentMcpHttpHost } from './mcp-http-host'
 import { SkillRegistry } from '../skills/registry'
-import { claudeCodeFramework, codexFramework, opencodeFramework } from '../agent-framework'
+import {
+  claudeCodeFramework,
+  codexFramework,
+  cursorFramework,
+  opencodeFramework
+} from '../agent-framework'
 import { ArtifactRepository } from '../artifacts/repository'
 import { ArtifactProvenanceRepository } from '../artifacts/provenance-repository'
 import type { ArtifactRunClaim } from '../artifacts/run-registry'
@@ -169,6 +174,7 @@ const startFakeAgent = (
     }) => Promise<PromptResponse | void> | PromptResponse | void
     replyForPrompt?: (text: string) => string
     usageForPrompt?: (text: string) => { used: number; size: number } | undefined
+    requestCursorExtensions?: boolean
   } = {}
 ): {
   authRequests: unknown[]
@@ -180,6 +186,7 @@ const startFakeAgent = (
   cancelledSessions: string[]
   modeChanges: Array<{ sessionId: string; modeId: string }>
   configChanges: Array<{ sessionId: string; configId: string; value: string | boolean }>
+  cursorExtensionResponses: unknown[]
   actions: string[]
 } => {
   const authRequests: unknown[] = []
@@ -196,6 +203,7 @@ const startFakeAgent = (
   const cancelledSessions: string[] = []
   const modeChanges: Array<{ sessionId: string; modeId: string }> = []
   const configChanges: Array<{ sessionId: string; configId: string; value: string | boolean }> = []
+  const cursorExtensionResponses: unknown[] = []
   const actions: string[] = []
   let sessionIndex = 0
 
@@ -308,6 +316,27 @@ const startFakeAgent = (
         text,
         prompt: ctx.params.prompt
       })
+      if (options.requestCursorExtensions) {
+        cursorExtensionResponses.push(
+          await ctx.client.request('cursor/ask_question', {
+            toolCallId: 'question-1',
+            questions: [
+              {
+                id: 'mode',
+                prompt: 'Which mode?',
+                options: [{ id: 'agent', label: 'Agent' }]
+              }
+            ]
+          })
+        )
+        cursorExtensionResponses.push(
+          await ctx.client.request('cursor/create_plan', {
+            toolCallId: 'plan-1',
+            plan: '1. Inspect the project.',
+            todos: []
+          })
+        )
+      }
       const usage = options.usageForPrompt?.(text)
       if (usage) {
         await ctx.client.notify(acp.methods.client.session.update, {
@@ -358,6 +387,7 @@ const startFakeAgent = (
     cancelledSessions,
     modeChanges,
     configChanges,
+    cursorExtensionResponses,
     actions
   }
 }
@@ -937,6 +967,37 @@ describe('ACP runtime migration write-gate', () => {
 })
 
 describe('ACP runtime session management', () => {
+  it('answers Cursor blocking extensions with documented non-blocking fallbacks', async () => {
+    const process = new FakeAgentProcess()
+    const fakeAgent = startFakeAgent(process, ['cursor-session'], {
+      requestCursorExtensions: true
+    })
+    const runtime = new AcpRuntime({
+      appVersion: '0.2.0',
+      defaultCwd: '/workspace',
+      spawnAgent: () => asAgentProcess(process),
+      framework: cursorFramework
+    })
+
+    const session = await runtime.createSession({ cwd: '/workspace' })
+    await runtime.sendPrompt({ sessionId: session.sessionId, text: 'Inspect the project' })
+
+    expect(fakeAgent.cursorExtensionResponses).toEqual([
+      {
+        outcome: {
+          outcome: 'skipped',
+          reason: 'Open Science does not support Cursor interactive questions yet.'
+        }
+      },
+      {
+        outcome: {
+          outcome: 'rejected',
+          reason: 'Open Science does not support Cursor plan approval yet.'
+        }
+      }
+    ])
+  })
+
   it('injects activity-group declarations into main sessions but not reviewer sessions', async () => {
     const process = new FakeAgentProcess()
     const fakeAgent = startFakeAgent(process, ['main-session', 'reviewer-session'])

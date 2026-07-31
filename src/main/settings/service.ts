@@ -1018,8 +1018,14 @@ class SettingsService {
         detected.loggedIn
       )
     } else {
-      const cached = (await this.repository.getSettings()).cursorPath
-      if (cached && !(await this.pathExists(cached))) {
+      const settings = await this.repository.getSettings()
+      const cached = settings.cursorPath
+      if (cached && (await this.pathExists(cached))) {
+        // A GUI PATH miss should not discard a still-installed runtime, but Re-detect must still
+        // refresh its credential state. Unknown/error clears a prior `true` through setCursorInfo.
+        const loggedIn = await this.cursorDetectDeps.getLoginStatus(cached).catch(() => undefined)
+        await this.repository.setCursorInfo(cached, settings.cursorVersion, loggedIn)
+      } else if (cached) {
         await this.repository.clearCursorInfo()
       }
     }
@@ -4060,11 +4066,14 @@ class SettingsService {
     }
 
     const loggedIn = await this.cursorDetectDeps.getLoginStatus(executablePath)
-    if (loggedIn === false) {
+    if (loggedIn !== true) {
       return {
         ok: false,
         category: 'auth',
-        message: 'Not signed in to Cursor. Run `agent login` in a terminal, then test again.'
+        message:
+          loggedIn === false
+            ? 'Not signed in to Cursor. Run `agent login` in a terminal, then test again.'
+            : 'Could not verify the Cursor login. Run `agent status`, sign in if needed, then test again.'
       }
     }
 
@@ -4224,10 +4233,10 @@ class SettingsService {
   private async isProviderKeyUsable(provider: StoredProvider): Promise<boolean> {
     if (isCodexSubscriptionProvider(provider.type)) return true
     if (isCursorSubscriptionProvider(provider.type)) {
-      // Cursor credentials live in the CLI login. A prior successful Detect/login probe is enough;
+      // Cursor credentials live in the CLI login. A prior successful Detect/login probe is required;
       // spawn still re-authenticates via ACP cursor_login.
       const settings = await this.repository.getSettings()
-      return Boolean(settings.cursorPath) && settings.cursorLoggedIn !== false
+      return Boolean(settings.cursorPath) && settings.cursorLoggedIn === true
     }
     if (provider.type === 'claude-shared') {
       if (provider.disconnectedAt !== undefined) return false

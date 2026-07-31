@@ -1257,6 +1257,24 @@ describe('SettingsService: providers', () => {
 })
 
 describe('SettingsService: validation', () => {
+  it('fails closed when the Cursor login probe is inconclusive', async () => {
+    const present = join(storageRoot, 'cursor-agent')
+    await writeFile(present, '', 'utf8')
+    await chmod(present, 0o755)
+    await repository.setCursorInfo(present, '2026.07.23', undefined)
+    const service = createService()
+    const cursorProvider = (await service.upsertProvider({ type: 'cursor-subscription' }))
+      .providers[0]
+
+    const result = await service.validateProvider({ providerId: cursorProvider.id })
+
+    expect(result).toMatchObject({
+      ok: false,
+      category: 'auth',
+      message: expect.stringContaining('Could not verify the Cursor login')
+    })
+  })
+
   it('records lastValidatedAt for a saved provider on success', async () => {
     const service = createService()
     vi.stubGlobal('fetch', vi.fn().mockResolvedValue(validAnthropicResponse()))
@@ -1662,6 +1680,28 @@ describe('SettingsService: validation', () => {
 })
 
 describe('SettingsService: preflight & spawn config', () => {
+  it('does not mark a Cursor subscription ready without a confirmed login', async () => {
+    const present = join(storageRoot, 'cursor-agent')
+    await writeFile(present, '', 'utf8')
+    await chmod(present, 0o755)
+    await repository.setAgentFramework('cursor')
+    await repository.setCursorInfo(present, '2026.07.23', undefined)
+    const service = createService(undefined, {
+      cursorDetected: { path: present, version: '2026.07.23', loggedIn: true }
+    })
+    const cursorProvider = (await service.upsertProvider({ type: 'cursor-subscription' }))
+      .providers[0]
+    const stored = (await repository.getSettings()).providers[0]
+    await repository.upsertProvider({ ...stored, lastValidatedAt: Date.now() })
+    await service.setActiveProvider(cursorProvider.id)
+
+    await expect(service.getPreflight()).resolves.toMatchObject({
+      cursorReady: true,
+      agentReady: true,
+      activeProviderReady: false
+    })
+  })
+
   it('gates on a detected claude and a validated active provider', async () => {
     const service = createService()
     vi.stubGlobal('fetch', vi.fn().mockResolvedValue(validAnthropicResponse()))
@@ -1691,6 +1731,7 @@ describe('SettingsService: preflight & spawn config', () => {
       claudeReady: true,
       opencodeReady: false,
       codexReady: false,
+      cursorReady: false,
       agentFrameworkId: 'claude-code',
       agentReady: true,
       activeProviderReady: true
@@ -4180,7 +4221,7 @@ describe('detectCursor', () => {
     })
   })
 
-  it('keeps a still-present record when the live probe misses', async () => {
+  it('keeps a still-present runtime but clears stale login state when the live probe misses', async () => {
     const present = join(storageRoot, 'agent-present')
     await writeFile(present, '', 'utf8')
     await chmod(present, 0o755)
@@ -4191,9 +4232,9 @@ describe('detectCursor', () => {
 
     expect(snapshot.cursor).toEqual({
       resolvedPath: present,
-      version: '2026.07.23',
-      loggedIn: true
+      version: '2026.07.23'
     })
+    expect((await repository.getSettings()).cursorLoggedIn).toBeUndefined()
   })
 })
 
@@ -4357,9 +4398,16 @@ describe('checkEnvironment', () => {
       'Claude Code runtime',
       'OpenCode runtime',
       'Codex native CLI',
-      'Codex ACP adapter'
+      'Codex ACP adapter',
+      'Cursor Agent runtime'
     ])
-    expect(agentRows.map((row) => row.status)).toEqual(['passed', 'passed', 'warning', 'warning'])
+    expect(agentRows.map((row) => row.status)).toEqual([
+      'passed',
+      'passed',
+      'warning',
+      'warning',
+      'warning'
+    ])
     expect(result.agentFrameworkId).toBe('opencode')
     expect(result.runtime).toEqual({
       found: true,
@@ -4394,7 +4442,8 @@ describe('checkEnvironment', () => {
       'Claude Code runtime:passed',
       'OpenCode runtime:failed',
       'Codex native CLI:warning',
-      'Codex ACP adapter:warning'
+      'Codex ACP adapter:warning',
+      'Cursor Agent runtime:warning'
     ])
     // Selection drives readiness: the missing selected runtime blocks Continue even though Claude runs.
     expect(result.agentFrameworkId).toBe('opencode')

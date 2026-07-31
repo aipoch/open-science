@@ -60,6 +60,23 @@ describe('cursorFramework', () => {
     expect(cursorFramework.mapPermissionProfile('full', modes).state.fullAccessAvailable).toBe(true)
   })
 
+  it('falls back safely when an older Cursor build advertises model ids as modes', () => {
+    const legacyModes = {
+      currentModeId: 'composer-2.5',
+      availableModes: [
+        { id: 'composer-2.5', name: 'Composer 2.5' },
+        { id: 'claude-4-sonnet', name: 'Claude 4 Sonnet' }
+      ]
+    }
+
+    expect(cursorFramework.mapPermissionProfile('ask', legacyModes).modeId).toBeUndefined()
+    expect(cursorFramework.mapPermissionProfile('auto', legacyModes).modeId).toBeUndefined()
+    expect(cursorFramework.mapPermissionProfile('full', legacyModes).modeId).toBeUndefined()
+    expect(
+      cursorFramework.mapPermissionProfile('full', legacyModes).state.fullAccessAvailable
+    ).toBe(true)
+  })
+
   it('keeps the Cursor storage root under the app data tree', () => {
     expect(cursorStorageDir('/data')).toBe(join('/data', 'cursor'))
   })

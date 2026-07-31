@@ -115,6 +115,20 @@ const parseVersion = (output: string): string | undefined => {
   return line || undefined
 }
 
+// Parse negative phrases before the positive one: Cursor's unauthenticated status output includes
+// "Not logged in", which also contains the substring "logged in".
+const parseLoginStatus = (output: string): boolean | undefined => {
+  if (
+    /\bnot logged in\b|\blogged out\b|\bunauth(?:enticated|ori[sz]ed)\b|\bplease log in\b/i.test(
+      output
+    )
+  ) {
+    return false
+  }
+  if (/\blogged in\b/i.test(output)) return true
+  return undefined
+}
+
 const runWithShellIfNeeded = async (
   platform: NodeJS.Platform,
   filePath: string,
@@ -153,9 +167,7 @@ const runCursorLoginStatus =
   async (filePath: string): Promise<boolean | undefined> => {
     try {
       const stdout = await runWithShellIfNeeded(platform, filePath, ['status'])
-      if (/logged in/i.test(stdout)) return true
-      if (/not logged in|log in|unauthor/i.test(stdout)) return false
-      return undefined
+      return parseLoginStatus(stdout)
     } catch {
       return undefined
     }
@@ -174,4 +186,10 @@ const createDefaultDetectDeps = (): CursorDetectDeps => {
   }
 }
 
-export { collectCandidateDirs, createDefaultDetectDeps, detectCursor, parseVersion }
+export {
+  collectCandidateDirs,
+  createDefaultDetectDeps,
+  detectCursor,
+  parseLoginStatus,
+  parseVersion
+}

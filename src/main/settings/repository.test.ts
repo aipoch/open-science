@@ -270,6 +270,10 @@ describe('settings repository', () => {
     expect(settings.cursorPath).toBe('/usr/local/bin/agent')
     expect(settings.cursorVersion).toBe('2026.07.23')
     expect(settings.cursorLoggedIn).toBe(true)
+
+    await repository.setCursorInfo('/usr/local/bin/agent', '2026.07.24', undefined)
+
+    expect((await repository.getSettings()).cursorLoggedIn).toBeUndefined()
   })
 
   it('persists the reasoning effort across a sanitized read and a reload', async () => {

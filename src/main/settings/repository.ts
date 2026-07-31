@@ -976,12 +976,19 @@ class SettingsRepository {
     version?: string,
     loggedIn?: boolean
   ): Promise<StoredSettings> {
-    return this.mutate((settings) => ({
-      ...settings,
-      cursorPath: resolvedPath,
-      cursorVersion: version,
-      ...(loggedIn !== undefined ? { cursorLoggedIn: loggedIn } : {})
-    }))
+    return this.mutate((settings) => {
+      // An inconclusive live status probe must clear any earlier authenticated result. Otherwise a
+      // transient/changed CLI status can leave a stale `true` that keeps the subscription ready.
+      const { cursorLoggedIn, ...rest } = settings
+      void cursorLoggedIn
+
+      return {
+        ...rest,
+        cursorPath: resolvedPath,
+        cursorVersion: version,
+        ...(loggedIn !== undefined ? { cursorLoggedIn: loggedIn } : {})
+      }
+    })
   }
 
   async clearCursorInfo(): Promise<StoredSettings> {

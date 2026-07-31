@@ -77,7 +77,8 @@ const AgentInstallSourceMenu = ({
               </span>
               {item.description ? (
                 <span className="text-xs text-muted-foreground">{item.description}</span>
-              ) : item.displayCommand ? (
+              ) : null}
+              {item.displayCommand ? (
                 <span className="font-mono text-xs text-muted-foreground">
                   {item.displayCommand}
                 </span>

@@ -470,4 +470,20 @@ describe('ProviderList', () => {
 
     expect(container.textContent).toContain('/v1/messages · /v1/chat/completions')
   })
+
+  it('does not claim that a Cursor subscription speaks an app-managed chat endpoint', () => {
+    renderList([
+      provider({
+        type: 'cursor-subscription',
+        name: 'Cursor subscription',
+        apiEndpoints: undefined,
+        maskedKey: undefined,
+        hasKey: false
+      })
+    ])
+
+    expect(container.textContent).toContain('Cursor subscription')
+    expect(container.querySelector('[aria-label^="Speaks the "]')).toBeNull()
+    expect(container.textContent).not.toContain('/v1/messages')
+  })
 })

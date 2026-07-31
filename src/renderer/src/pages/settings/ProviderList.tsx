@@ -191,6 +191,7 @@ const ProviderList = ({
           // A passing test shows a green check. Suppressed while a test is in flight.
           const isVerified = !failure && !isBusy && provider.lastValidatedAt !== undefined
           const isCodexSubscription = isCodexSubscriptionProvider(provider.type)
+          const isCursorSubscription = isCursorSubscriptionProvider(provider.type)
           const codexSubscriptionType = isCodexSubscription
             ? resolveCodexSubscriptionType(provider)
             : undefined
@@ -225,7 +226,7 @@ const ProviderList = ({
                       />
                       {describeType(provider)}
                     </span>
-                    {!isCodexSubscription ? (
+                    {!isCodexSubscription && !isCursorSubscription ? (
                       <Tooltip>
                         <TooltipTrigger asChild>
                           <span
