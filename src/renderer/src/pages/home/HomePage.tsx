@@ -103,6 +103,8 @@ const HomePage = ({
   const [isSubmitting, setIsSubmitting] = useState(false)
   const [formError, setFormError] = useState<string | undefined>(undefined)
   const [projectToDelete, setProjectToDelete] = useState<Project | undefined>(undefined)
+  const [isDeletingProject, setIsDeletingProject] = useState(false)
+  const [deleteProjectError, setDeleteProjectError] = useState<string | undefined>(undefined)
 
   // Non-pending sessions only; pending ones have no durable project yet.
   const persistedSessions = useMemo(
@@ -160,7 +162,15 @@ const HomePage = ({
   const openDeleteDialog = (project: Project): void => {
     if (!canDeleteProjects) return
 
+    setDeleteProjectError(undefined)
     setProjectToDelete(project)
+  }
+
+  const closeDeleteDialog = (): void => {
+    if (isDeletingProject) return
+
+    setProjectToDelete(undefined)
+    setDeleteProjectError(undefined)
   }
 
   const closeFormDialog = (): void => {
@@ -206,7 +216,7 @@ const HomePage = ({
 
   // Main coordinates durable project/session/index cleanup; renderer state changes only after it succeeds.
   const confirmDeleteProject = (): void => {
-    if (!canDeleteProjects || !projectToDelete) return
+    if (!canDeleteProjects || !projectToDelete || isDeletingProject) return
 
     const projectId = projectToDelete.id
 
@@ -214,14 +224,23 @@ const HomePage = ({
     // the navigation revision before the async mutation so deferred startup intents cannot reopen a
     // conversation after the post-delete view has settled.
     useNavigationStore.getState().recordUserNavigation()
-    setProjectToDelete(undefined)
+    setIsDeletingProject(true)
+    setDeleteProjectError(undefined)
 
     void deleteProject(projectId)
       .then(() => {
         useSessionStore.getState().removeSessionsForProject(projectId)
+        setProjectToDelete(undefined)
       })
-      .catch(() => {
-        // Durable deletion failed; leave the project and in-memory sessions untouched.
+      .catch((error: unknown) => {
+        // Durable deletion failed; keep the target and in-memory sessions visible so the user can
+        // inspect the failure and retry or cancel explicitly.
+        setDeleteProjectError(
+          error instanceof Error ? error.message : 'Could not delete the project. Please try again.'
+        )
+      })
+      .finally(() => {
+        setIsDeletingProject(false)
       })
   }
 
@@ -442,7 +461,9 @@ const HomePage = ({
         sessionCount={deleteTargetSessionCount}
         hasCompleteSessionCatalog={hasCompleteSessionCatalog}
         canDelete={canDeleteProjects}
-        onCancel={() => setProjectToDelete(undefined)}
+        isDeleting={isDeletingProject}
+        error={deleteProjectError}
+        onCancel={closeDeleteDialog}
         onConfirmDelete={confirmDeleteProject}
       />
     </main>
