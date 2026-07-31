@@ -204,7 +204,12 @@ export type SaveSessionOptions = {
 export const INTERRUPTED_SESSION_ERROR = 'Session was interrupted before the app closed.'
 
 const MESSAGE_ROLES = new Set<PersistedMessageRole>(['user', 'agent'])
-const AGENT_FRAMEWORK_IDS = new Set<AgentFrameworkId>(['claude-code', 'opencode', 'codex'])
+const AGENT_FRAMEWORK_IDS = new Set<AgentFrameworkId>([
+  'claude-code',
+  'opencode',
+  'codex',
+  'cursor'
+])
 const MESSAGE_STATUSES = new Set<PersistedMessageStatus>(['complete', 'streaming', 'error'])
 const TOOL_ACTIVITY_STATUSES = new Set<PersistedToolActivityStatus>([
   'pending',

@@ -7,6 +7,7 @@ import {
 import {
   isClaudeSubscriptionProvider,
   isCodexSubscriptionProvider,
+  isCursorSubscriptionProvider,
   type ProviderType
 } from './settings'
 
@@ -35,6 +36,7 @@ export const resolveProviderEffectiveModel = (
     return requestedModel
   }
   if (isCodexSubscriptionProvider(provider.type)) return undefined
+  if (isCursorSubscriptionProvider(provider.type)) return undefined
   if (
     provider.model &&
     (availableModels.length === 0 || availableModels.includes(provider.model))
@@ -78,6 +80,10 @@ export const resolveProviderReasoningEffortProfile = (
     case 'claude-shared':
     case 'claude-isolated':
       return model ? resolveVendorModelReasoningEffort('anthropic', model) : { supported: false }
+    case 'cursor-subscription':
+      // Cursor owns effort inside its model variant ids (for example `...-high`). The app does not
+      // remap an independent thought_level for this backend.
+      return { supported: false }
     case 'custom':
       return resolveReasoningEffortProfile(provider.reasoningEffortPreset)
   }

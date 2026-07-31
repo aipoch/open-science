@@ -22,7 +22,13 @@ export const SETTINGS_FILE_VERSION = 2
 // OAuth login via `claude auth login`); claude-isolated uses an app-owned CLAUDE_CONFIG_DIR
 // (setup-token paste, no ~/.claude touch).
 export type ProviderType =
-  'custom' | 'claude-shared' | 'claude-isolated' | 'official' | 'codex-shared' | 'codex-isolated'
+  | 'custom'
+  | 'claude-shared'
+  | 'claude-isolated'
+  | 'official'
+  | 'codex-shared'
+  | 'codex-isolated'
+  | 'cursor-subscription'
 
 // The stored Codex subscription always uses the app-owned runtime type. This discriminator preserves
 // which setup choice produced it so editing an imported profile does not masquerade as an isolated
@@ -67,6 +73,37 @@ export const isClaudeSubscriptionProvider = (
   type: ProviderType
 ): type is 'claude-shared' | 'claude-isolated' =>
   type === 'claude-shared' || type === 'claude-isolated'
+
+// Cursor Agent is a closed routing gateway authenticated via the user's existing `agent login`.
+// The subscription provider is a marker record: no API key lives in Open Science.
+export const CURSOR_SUBSCRIPTION_PROVIDER_ID = 'builtin-cursor-subscription'
+
+export const isCursorSubscriptionProvider = (type: ProviderType): type is 'cursor-subscription' =>
+  type === 'cursor-subscription'
+
+export const cursorSubscriptionProviderIdentity = (): { id: string; name: string } => ({
+  id: CURSOR_SUBSCRIPTION_PROVIDER_ID,
+  name: 'Cursor subscription'
+})
+
+export const isCursorSubscriptionProviderId = (id: string): boolean =>
+  id === CURSOR_SUBSCRIPTION_PROVIDER_ID
+
+// Curated Cursor model ids advertised by `agent models`. The live ACP session may expose a richer
+// or differently-encoded set via configOptions; the runtime applies an explicit selection best-effort.
+export const CURSOR_SUBSCRIPTION_MODEL_IDS = [
+  'auto',
+  'composer-2.5',
+  'composer-2.5-fast',
+  'cursor-grok-4.5-high',
+  'cursor-grok-4.5-high-fast',
+  'cursor-grok-4.5-medium',
+  'claude-opus-5-thinking-high',
+  'claude-sonnet-5-thinking-high',
+  'gpt-5.5-high',
+  'gpt-5.6-sol-high',
+  'gpt-5.3-codex'
+] as const
 
 // The claude-isolated record's fixed identity. Every isolated lookup (repository upsert,
 // service login/edit/validation) keys on CLAUDE_ISOLATED_PROVIDER_ID.
@@ -153,6 +190,8 @@ export const isProviderUsableByFramework = (
   framework: { id: AgentFrameworkId; supportedApiTypes: readonly ChatApiEndpoint[] }
 ): boolean => {
   if (isCodexSubscriptionProvider(provider.type)) return framework.id === 'codex'
+  // Cursor subscription credentials live in the Cursor CLI login; only the Cursor backend can use them.
+  if (isCursorSubscriptionProvider(provider.type)) return framework.id === 'cursor'
   // Both Claude subscription modes rely on the ~/.claude or app-owned credential that only
   // claude-code knows how to read; OpenCode receives neither an endpoint nor a token.
   if (isClaudeSubscriptionProvider(provider.type) && framework.id !== 'claude-code') return false
@@ -199,6 +238,15 @@ export type CodexInfo = {
   resolvedPath?: string
   version?: string
   nativeVersion?: string
+}
+
+// Detected Cursor Agent CLI metadata (resolved path + reported version). Login state is probed
+// separately at detect time and is not persisted — credentials stay in the Cursor CLI profile.
+export type CursorInfo = {
+  resolvedPath?: string
+  version?: string
+  // True when the last detect found a usable `agent login` session. Absent when unknown/unprobed.
+  loggedIn?: boolean
 }
 
 // Result of probing the machine for a runnable claude executable.
@@ -291,7 +339,7 @@ export const providerValidationFailed = (provider: {
 
 // The agent backends the app can drive over ACP. Persisted settings and the UI reference these ids;
 // the main-process AgentFramework registry is keyed by the same union.
-export type AgentFrameworkId = 'claude-code' | 'opencode' | 'codex'
+export type AgentFrameworkId = 'claude-code' | 'opencode' | 'codex' | 'cursor'
 
 // How much reasoning effort the user asks the agent to spend. 'default' means "don't override": the
 // agent keeps its own default and nothing is sent. The concrete levels form a relative scale
@@ -367,6 +415,8 @@ export type SettingsSnapshot = {
   opencode: OpencodeInfo
   // Detected codex-acp adapter and its paired native Codex runtime.
   codex: CodexInfo
+  // Detected Cursor Agent CLI, for the framework-aware detection card.
+  cursor: CursorInfo
   activeProviderId?: string
   // Last explicitly configured Claude subscription mode, used when another provider is active.
   claudeSubscriptionProviderId?: ClaudeSubscriptionProviderId
@@ -383,6 +433,8 @@ export type SettingsSnapshot = {
   claudeManaged: boolean
   opencodeManaged: boolean
   codexManaged: boolean
+  // Cursor is detect-only in this release (no app-managed install), so this is always false.
+  cursorManaged: boolean
   // Timestamp of first-run onboarding completion; undefined until it finishes at least once.
   onboardingCompletedAt?: number
   // Non-secret package-mirror overrides (conda/pypi/cran). Absent means public hosts.
@@ -441,6 +493,7 @@ export type Preflight = {
   claudeReady: boolean
   opencodeReady: boolean
   codexReady: boolean
+  cursorReady: boolean
   // Readiness of the selected agent framework, plus which one it is.
   agentFrameworkId: AgentFrameworkId
   agentReady: boolean
@@ -693,6 +746,25 @@ export const getOpencodeInstallSources = (
   }
 
   return sources
+}
+
+// Cursor Agent is detect-only: Open Science does not download or uninstall the Cursor CLI. The card
+// surfaces the official install command so users can install it themselves, then Detect.
+export const getCursorInstallSources = (platform: string = 'linux'): ClaudeInstallSourceInfo[] => {
+  const isWindows = platform === 'win32'
+
+  return [
+    {
+      id: 'official-script',
+      label: isWindows ? 'Official PowerShell installer' : 'Official install script',
+      displayCommand: isWindows
+        ? "irm 'https://cursor.com/install?win32=true' | iex"
+        : 'curl https://cursor.com/install -fsS | bash',
+      requiresNpm: false,
+      description:
+        'Install the Cursor Agent CLI yourself, run agent login, then Detect. Open Science does not manage this runtime.'
+    }
+  ]
 }
 
 // One streamed line of installer output. `installId` groups a single install run.

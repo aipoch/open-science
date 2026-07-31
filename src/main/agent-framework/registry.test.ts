@@ -3,17 +3,24 @@ import { describe, expect, it } from 'vitest'
 import { getAgentFramework, listAgentFrameworks } from './registry'
 
 describe('agent framework registry', () => {
-  it('exposes Codex as a selectable Responses-only framework', () => {
+  it('exposes Codex and Cursor as selectable frameworks', () => {
     expect(listAgentFrameworks().map((framework) => framework.id)).toEqual([
       'claude-code',
       'opencode',
-      'codex'
+      'codex',
+      'cursor'
     ])
     expect(getAgentFramework('codex')).toMatchObject({
       displayName: 'Codex',
       supportedApiTypes: ['responses'],
       supportsSkills: true,
       acceptsStdioMcp: true
+    })
+    expect(getAgentFramework('cursor')).toMatchObject({
+      displayName: 'Cursor Agent',
+      supportedApiTypes: [],
+      supportsSkills: false,
+      acceptsStdioMcp: false
     })
   })
 
@@ -32,6 +39,9 @@ describe('agent framework registry', () => {
     expect(getAgentFramework('codex').contextCompaction).toEqual({
       kind: 'native-command',
       command: '/compact'
+    })
+    expect(getAgentFramework('cursor').contextCompaction).toEqual({
+      kind: 'framework-managed'
     })
   })
 })

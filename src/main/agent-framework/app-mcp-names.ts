@@ -121,6 +121,22 @@ const modelFacingAppMcpToolName = (
 
 const renderAppMcpToolReferences = (frameworkId: AgentFrameworkId, text: string): string => {
   if (frameworkId === 'codex') return text
+  // Cursor receives app tooling over HTTP MCP. Keep canonical server names in guidance; tool
+  // callable names follow the Claude-style mcp__ projection used for non-OpenCode/non-Codex backends.
+  if (frameworkId === 'cursor') {
+    let rendered = text
+    for (const definition of APP_MCP_SERVERS) {
+      for (const tool of definition.tools) {
+        const callableName = modelFacingAppMcpToolName(
+          'claude-code',
+          definition.canonicalName,
+          tool
+        )
+        rendered = rendered.replace(new RegExp(`\\b${tool}\\b`, 'g'), callableName)
+      }
+    }
+    return rendered
+  }
 
   let rendered = text
   if (frameworkId === 'opencode') {

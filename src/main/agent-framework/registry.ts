@@ -1,12 +1,14 @@
 import { claudeCodeFramework } from './claude-code'
 import { codexFramework } from './codex'
+import { cursorFramework } from './cursor'
 import { opencodeFramework } from './opencode'
 import type { AgentFramework, AgentFrameworkId } from './types'
 
 const FRAMEWORKS: Record<AgentFrameworkId, AgentFramework> = {
   'claude-code': claudeCodeFramework,
   opencode: opencodeFramework,
-  codex: codexFramework
+  codex: codexFramework,
+  cursor: cursorFramework
 }
 
 // The default framework until framework selection is wired into settings.

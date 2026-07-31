@@ -3,6 +3,7 @@ import { describe, expect, it } from 'vitest'
 import { isModelBridgeSupported } from './provider-registry'
 import {
   getCodexInstallSources,
+  getCursorInstallSources,
   getOpencodeInstallSources,
   isProviderCompatibleWith,
   isProviderUsableByFramework,
@@ -104,6 +105,20 @@ describe('provider endpoint compatibility', () => {
       )
     }
   })
+
+  it('allows Cursor subscription profiles only with the Cursor framework', () => {
+    const cursor = { id: 'cursor' as const, supportedApiTypes: [] as const }
+    const claude = { id: 'claude-code' as const, supportedApiTypes: ['anthropic'] as const }
+    const codex = { id: 'codex' as const, supportedApiTypes: ['responses'] as const }
+
+    expect(isProviderUsableByFramework({ type: 'cursor-subscription' }, cursor)).toBe(true)
+    expect(isProviderUsableByFramework({ type: 'cursor-subscription' }, claude)).toBe(false)
+    expect(isProviderUsableByFramework({ type: 'cursor-subscription' }, codex)).toBe(false)
+    // Cursor's empty supportedApiTypes rejects ordinary API providers.
+    expect(
+      isProviderUsableByFramework({ type: 'official', apiEndpoints: ['anthropic'] }, cursor)
+    ).toBe(false)
+  })
 })
 
 describe('resolveCodexSubscriptionType', () => {
@@ -151,5 +166,14 @@ describe('getOpencodeInstallSources', () => {
     const ids = getOpencodeInstallSources('win32').map((source) => source.id)
 
     expect(ids).toEqual(['managed', 'npm'])
+  })
+})
+
+describe('getCursorInstallSources', () => {
+  it('is detect-only with the official install script on every platform', () => {
+    expect(getCursorInstallSources('linux').map((source) => source.id)).toEqual(['official-script'])
+    expect(getCursorInstallSources('win32')[0]?.displayCommand).toContain('win32=true')
+    expect(getCursorInstallSources('darwin')[0]?.displayCommand).toContain('cursor.com/install')
+    expect(getCursorInstallSources('linux')[0]?.requiresNpm).toBe(false)
   })
 })
