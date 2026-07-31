@@ -80,10 +80,13 @@ import {
   DEFAULT_CONVERSATION_SKILL_IMPORT_ENABLED,
   DEFAULT_NOTIFICATIONS_ENABLED,
   DEFAULT_REASONING_EFFORT,
+  CURSOR_SUBSCRIPTION_MODEL_IDS,
+  cursorSubscriptionProviderIdentity,
   isClaudeSubscriptionProvider,
   isClaudeSubscriptionProviderId,
   isCodexSubscriptionProvider,
   isCodexSubscriptionProviderId,
+  isCursorSubscriptionProvider,
   isProviderUsableByFramework,
   providerEndpoints,
   resolveCodexSubscriptionType,
@@ -135,6 +138,11 @@ import {
   detectOpencode,
   type OpencodeDetectDeps
 } from './opencode-detect'
+import {
+  createDefaultDetectDeps as createCursorDetectDeps,
+  detectCursor,
+  type CursorDetectDeps
+} from './cursor-detect'
 import {
   detectCodex,
   parseVersion as parseCodexVersion,
@@ -483,6 +491,7 @@ export type SettingsServiceOptions = {
   storageRoot?: string
   detectDeps?: ClaudeDetectDeps
   opencodeDetectDeps?: OpencodeDetectDeps
+  cursorDetectDeps?: CursorDetectDeps
   codexDetectDeps?: CodexDetectDeps
   // The machine's own Claude config dir, used by the shared provider for auth/spawn and scanned as a
   // user skill source. Injectable so tests don't touch the real ~/.claude.
@@ -531,6 +540,7 @@ class SettingsService {
   private readonly storageRoot: string
   private readonly detectDeps: ClaudeDetectDeps
   private readonly opencodeDetectDeps: OpencodeDetectDeps
+  private readonly cursorDetectDeps: CursorDetectDeps
   private readonly codexDetectDeps: CodexDetectDeps
   private readonly userClaudeDir: string
   private readonly userCodexDir: string
@@ -583,6 +593,7 @@ class SettingsService {
       ...baseOpencodeDetectDeps,
       extraDirs: [...(baseOpencodeDetectDeps.extraDirs ?? []), managedOpencodeDir(this.storageRoot)]
     }
+    this.cursorDetectDeps = options.cursorDetectDeps ?? createCursorDetectDeps()
     const managedAdapterPath = managedCodexAdapterEntry(this.storageRoot)
     const managedNativePath = managedCodexBinary(this.storageRoot)
     this.codexDetectDeps = options.codexDetectDeps ?? {
@@ -712,6 +723,11 @@ class SettingsService {
         version: settings.codex?.version,
         nativeVersion: settings.codex?.nativeVersion
       },
+      cursor: {
+        resolvedPath: settings.cursorPath,
+        version: settings.cursorVersion,
+        ...(settings.cursorLoggedIn !== undefined ? { loggedIn: settings.cursorLoggedIn } : {})
+      },
       claudeManaged: settings.claude?.resolvedPath
         ? isManagedClaudePath(settings.claude.resolvedPath, this.storageRoot)
         : false,
@@ -721,6 +737,8 @@ class SettingsService {
       codexManaged: settings.codex?.resolvedPath
         ? isManagedCodexPath(settings.codex.resolvedPath, this.storageRoot)
         : false,
+      // Cursor is detect-only; Open Science never installs or owns its binary.
+      cursorManaged: false,
       activeProviderId: settings.activeProviderId,
       claudeSubscriptionProviderId: settings.claudeSubscriptionProviderId,
       activeModel: settings.activeModel,
@@ -983,6 +1001,26 @@ class SettingsService {
     } else {
       const cached = (await this.repository.getSettings()).codex?.resolvedPath
       if (cached && !(await this.pathExists(cached))) await this.repository.clearCodexInfo()
+    }
+
+    return this.getSettingsView()
+  }
+
+  // Detects the Cursor Agent CLI and persists its path/version/login probe for the settings card.
+  async detectCursor(): Promise<SettingsSnapshot> {
+    const detected = await detectCursor(this.cursorDetectDeps)
+
+    if (detected) {
+      await this.repository.setCursorInfo(
+        detected.resolvedPath,
+        detected.version,
+        detected.loggedIn
+      )
+    } else {
+      const cached = (await this.repository.getSettings()).cursorPath
+      if (cached && !(await this.pathExists(cached))) {
+        await this.repository.clearCursorInfo()
+      }
     }
 
     return this.getSettingsView()
@@ -1676,6 +1714,9 @@ class SettingsService {
       ? (await this.opencodeDetectDeps.getVersion(settings.opencodePath)) !== undefined
       : false
     const codexPathExists = (await this.probeCodexRuntime(settings.codex)) !== undefined
+    const cursorPathExists = settings.cursorPath
+      ? (await this.cursorDetectDeps.getVersion(settings.cursorPath)) !== undefined
+      : false
 
     const agentFrameworkId = settings.agentFrameworkId ?? DEFAULT_AGENT_FRAMEWORK_ID
     const framework = getAgentFramework(agentFrameworkId)
@@ -1708,6 +1749,7 @@ class SettingsService {
       claudePathExists,
       opencodePathExists,
       codexPathExists,
+      cursorPathExists,
       agentFrameworkId,
       isProviderKeyUsable: (provider) =>
         provider.id === activeProvider?.id && activeProviderKeyUsable,
@@ -1724,10 +1766,11 @@ class SettingsService {
 
     // Detect every framework's runtime so onboarding can show them side by side; only the selected
     // one's readiness gates Continue (enforced inside runEnvironmentCheck).
-    const [claudeRuntime, opencodeRuntime, codexRuntime] = await Promise.all([
+    const [claudeRuntime, opencodeRuntime, codexRuntime, cursorRuntime] = await Promise.all([
       this.resolveClaudeRuntime(settings),
       this.resolveOpencodeRuntime(settings),
-      this.resolveCodexRuntime(settings)
+      this.resolveCodexRuntime(settings),
+      this.resolveCursorRuntime(settings)
     ])
 
     return runEnvironmentCheck({
@@ -1748,6 +1791,11 @@ class SettingsService {
           id: 'codex',
           label: getAgentFramework('codex').displayName,
           runtime: codexRuntime
+        },
+        {
+          id: 'cursor',
+          label: getAgentFramework('cursor').displayName,
+          runtime: cursorRuntime
         }
       ],
       encryptionAvailable: this.isEncryptionAvailable()
@@ -1806,6 +1854,41 @@ class SettingsService {
 
     if (cachedPath && !(await this.pathExists(cachedPath))) {
       await this.repository.clearOpencodeInfo()
+    }
+
+    return { found: false }
+  }
+
+  // Same recorded-runtime-first logic for Cursor Agent.
+  private async resolveCursorRuntime(settings: StoredSettings): Promise<ClaudeDetectResult> {
+    const cachedPath = settings.cursorPath
+
+    if (cachedPath) {
+      const version = await this.cursorDetectDeps.getVersion(cachedPath)
+
+      if (version) {
+        if (version !== settings.cursorVersion) {
+          await this.repository.setCursorInfo(cachedPath, version, settings.cursorLoggedIn)
+        }
+
+        return { found: true, path: cachedPath, version }
+      }
+    }
+
+    const detected = await detectCursor(this.cursorDetectDeps)
+
+    if (detected) {
+      await this.repository.setCursorInfo(
+        detected.resolvedPath,
+        detected.version,
+        detected.loggedIn
+      )
+
+      return { found: true, path: detected.resolvedPath, version: detected.version }
+    }
+
+    if (cachedPath && !(await this.pathExists(cachedPath))) {
+      await this.repository.clearCursorInfo()
     }
 
     return { found: false }
@@ -2253,11 +2336,13 @@ class SettingsService {
     // and the active provider would spawn the agent unauthenticated.
     const subscriptionIdentity = isCodexSubscriptionProvider(request.type)
       ? codexSubscriptionProviderIdentity()
-      : request.type === 'claude-isolated'
-        ? claudeIsolatedProviderIdentity()
-        : request.type === 'claude-shared'
-          ? claudeSharedProviderIdentity()
-          : undefined
+      : isCursorSubscriptionProvider(request.type)
+        ? cursorSubscriptionProviderIdentity()
+        : request.type === 'claude-isolated'
+          ? claudeIsolatedProviderIdentity()
+          : request.type === 'claude-shared'
+            ? claudeSharedProviderIdentity()
+            : undefined
     const requestedId = subscriptionIdentity?.id ?? request.id
     const existing = requestedId
       ? settings.providers.find((provider) => provider.id === requestedId)
@@ -2334,6 +2419,10 @@ class SettingsService {
       credentialsChanged =
         existing !== undefined &&
         (existing.codexAuthMode !== provider.codexAuthMode || reimportCodexAuthentication)
+    } else if (isCursorSubscriptionProvider(request.type)) {
+      // Cursor subscription has no app-held key. Auth is the user's existing `agent login`.
+      provider.apiEndpoints = []
+      credentialsChanged = existing !== undefined && existing.type !== 'cursor-subscription'
     } else if (request.type === 'claude-isolated') {
       // claude-isolated has no fields of its own: the type tells the renderer/env-builder what to do
       // with the encrypted token (stored separately on login). A model override is allowed. The
@@ -2949,6 +3038,7 @@ class SettingsService {
     const framework = getAgentFramework(settings.agentFrameworkId ?? DEFAULT_AGENT_FRAMEWORK_ID)
     const incompatibility =
       isCodexSubscriptionProvider(resolved.provider.type) ||
+      isCursorSubscriptionProvider(resolved.provider.type) ||
       resolved.provider.type === 'claude-isolated'
         ? undefined
         : this.frameworkIncompatibilityResult(resolved.provider, framework)
@@ -2967,7 +3057,9 @@ class SettingsService {
             ),
             'Not signed in. Use Sign in to connect your ChatGPT account.'
           )
-        : resolved.provider.type === 'claude-shared'
+        : isCursorSubscriptionProvider(resolved.provider.type)
+          ? await this.validateCursorSubscription(settings)
+          : resolved.provider.type === 'claude-shared'
           ? await this.validateClaudeSharedProvider(
               resolved.provider,
               settings,
@@ -3548,7 +3640,10 @@ class SettingsService {
     const settings = await this.repository.getSettings()
     const forced = process.env.OPEN_SCIENCE_AGENT_FRAMEWORK
     const frameworkId: AgentFrameworkId =
-      forced === 'opencode' || forced === 'claude-code' || forced === 'codex'
+      forced === 'opencode' ||
+      forced === 'claude-code' ||
+      forced === 'codex' ||
+      forced === 'cursor'
         ? forced
         : (settings.agentFrameworkId ?? DEFAULT_AGENT_FRAMEWORK_ID)
 
@@ -3561,7 +3656,10 @@ class SettingsService {
     const settings = await this.repository.getSettings()
     const forced = process.env.OPEN_SCIENCE_AGENT_FRAMEWORK
     const frameworkId: AgentFrameworkId =
-      forced === 'opencode' || forced === 'claude-code' || forced === 'codex'
+      forced === 'opencode' ||
+      forced === 'claude-code' ||
+      forced === 'codex' ||
+      forced === 'cursor'
         ? forced
         : (settings.agentFrameworkId ?? DEFAULT_AGENT_FRAMEWORK_ID)
 
@@ -3656,6 +3754,35 @@ class SettingsService {
         sessionEffort,
         contextWindow,
         contextUsageModel: effectiveModel
+      }
+    }
+
+    if (framework.id === 'cursor') {
+      const executablePath = await this.resolveCursorExecutable(settings.cursorPath)
+      const provider = this.resolveProvider(activeProvider, effectiveModel)
+      const modelConfig = framework.prepareModelConfig(provider, {
+        storageRoot: this.storageRoot,
+        executablePath,
+        reasoningEffort: sessionEffort,
+        reasoningEfforts: supportedReasoningEfforts,
+        instructions: connectorInstructions
+      })
+      await writeAgentConfigFiles(modelConfig.configFiles)
+      const sessionModel = modelConfig.sessionModel ?? provider.model
+
+      return {
+        framework,
+        backendId: `${framework.id}:${activeProvider.id}`,
+        executablePath,
+        env: { ...(modelConfig.env ?? {}) },
+        args: modelConfig.args,
+        sessionModel,
+        sessionEffort,
+        contextWindow: provider.contextWindow,
+        contextUsageModel: provider.model,
+        authentication: modelConfig.authentication,
+        providerConfiguration: modelConfig.providerConfiguration,
+        systemPromptAppends: connectorInstructions ? [connectorInstructions] : undefined
       }
     }
 
@@ -3896,6 +4023,52 @@ class SettingsService {
     return detected.resolvedPath
   }
 
+  // Locates the Cursor Agent CLI: stored path wins when still present, else a live detect.
+  private async resolveCursorExecutable(storedPath: string | undefined): Promise<string> {
+    if (storedPath && (await this.pathExists(storedPath))) return storedPath
+
+    const detected = await detectCursor(this.cursorDetectDeps)
+
+    if (!detected) {
+      throw new Error(
+        'Cursor Agent executable not found. Install the Cursor CLI (`agent`), run `agent login`, then Detect in Settings.'
+      )
+    }
+
+    return detected.resolvedPath
+  }
+
+  // Read-only Cursor login check used by provider validation. Re-probes the stored (or freshly
+  // detected) CLI so a stale `cursorLoggedIn` flag cannot keep an expired session "ready".
+  private async validateCursorSubscription(
+    settings: StoredSettings
+  ): Promise<ValidateProviderResult> {
+    const executablePath =
+      settings.cursorPath && (await this.pathExists(settings.cursorPath))
+        ? settings.cursorPath
+        : (await detectCursor(this.cursorDetectDeps))?.resolvedPath
+
+    if (!executablePath) {
+      return {
+        ok: false,
+        category: 'unknown',
+        message:
+          'Cursor Agent CLI not found. Install it from https://cursor.com, run `agent login`, then Detect in Settings.'
+      }
+    }
+
+    const loggedIn = await this.cursorDetectDeps.getLoginStatus(executablePath)
+    if (loggedIn === false) {
+      return {
+        ok: false,
+        category: 'auth',
+        message: 'Not signed in to Cursor. Run `agent login` in a terminal, then test again.'
+      }
+    }
+
+    return { ok: true, category: 'ok' }
+  }
+
   private async resolveCodexExecutable(
     storedPath: string | undefined,
     nativePath: string | undefined
@@ -3974,6 +4147,7 @@ class SettingsService {
 
   private providerSupportsImageInput(provider: StoredProvider, activeModel?: string): boolean {
     if (isCodexSubscriptionProvider(provider.type)) return true
+    if (isCursorSubscriptionProvider(provider.type)) return true
     // Both Claude subscription modes authenticate against Anthropic and inherit vision support.
     if (isClaudeSubscriptionProvider(provider.type)) return true
 
@@ -4032,6 +4206,12 @@ class SettingsService {
   // claude-shared needs a cached live profile check; all key-backed providers must still decrypt.
   private async isProviderKeyUsable(provider: StoredProvider): Promise<boolean> {
     if (isCodexSubscriptionProvider(provider.type)) return true
+    if (isCursorSubscriptionProvider(provider.type)) {
+      // Cursor credentials live in the CLI login. A prior successful Detect/login probe is enough;
+      // spawn still re-authenticates via ACP cursor_login.
+      const settings = await this.repository.getSettings()
+      return Boolean(settings.cursorPath) && settings.cursorLoggedIn !== false
+    }
     if (provider.type === 'claude-shared') {
       if (provider.disconnectedAt !== undefined) return false
       return this.getClaudeSharedAuthStatus()
@@ -4046,6 +4226,10 @@ class SettingsService {
   private availableModels(provider: StoredProvider): string[] {
     if (isCodexSubscriptionProvider(provider.type)) {
       return getOfficialVendorModelIds('openai')
+    }
+
+    if (isCursorSubscriptionProvider(provider.type)) {
+      return [...CURSOR_SUBSCRIPTION_MODEL_IDS]
     }
 
     if (provider.type === 'official' && provider.vendorId) {

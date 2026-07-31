@@ -46,6 +46,7 @@ type PreloadApi = {
   settings: {
     detectOpencode: () => unknown
     detectCodex: () => unknown
+    detectCursor: () => unknown
     installOpencode: (request: unknown) => unknown
     installCodex: (request: unknown) => unknown
     setAgentFramework: (request: unknown) => unknown
@@ -273,6 +274,12 @@ const cases: ForwardingCase[] = [
     name: 'settings.detectCodex → settings:detect-codex (no args)',
     invoke: (a) => a.settings.detectCodex(),
     channel: 'settings:detect-codex',
+    args: []
+  },
+  {
+    name: 'settings.detectCursor → settings:detect-cursor (no args)',
+    invoke: (a) => a.settings.detectCursor(),
+    channel: 'settings:detect-cursor',
     args: []
   },
   {

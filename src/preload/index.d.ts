@@ -302,6 +302,7 @@ interface OpenScienceAPI {
     detectClaude(): Promise<ClaudeDetectResult>
     detectOpencode(): Promise<SettingsSnapshot>
     detectCodex(): Promise<SettingsSnapshot>
+    detectCursor(): Promise<SettingsSnapshot>
     installClaude(request: InstallClaudeRequest): Promise<ClaudeInstallResult>
     installOpencode(request: InstallOpencodeRequest): Promise<ClaudeInstallResult>
     installCodex(request: InstallCodexRequest): Promise<ClaudeInstallResult>

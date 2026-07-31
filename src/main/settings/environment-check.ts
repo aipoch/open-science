@@ -29,7 +29,10 @@ const REGISTRY_LABELS: Record<ManagedClaudeRegistry, string> = {
 const REGISTRY_PROBE_PATHS: Record<AgentFrameworkId, string> = {
   'claude-code': '/@anthropic-ai%2fclaude-code/latest',
   opencode: '/opencode-ai/latest',
-  codex: '/@agentclientprotocol%2fcodex-acp/latest'
+  codex: '/@agentclientprotocol%2fcodex-acp/latest',
+  // Cursor is detect-only (no npm-managed install). Keep a harmless probe target so the map stays
+  // exhaustive; the Cursor card never offers an in-app install path.
+  cursor: '/@anthropic-ai%2fclaude-code/latest'
 }
 const REGISTRY_PROBE_TIMEOUT_MS = 5_000
 
@@ -154,6 +157,8 @@ const runEnvironmentCheck = async ({
     (() => {
       if (agentFrameworkId === 'opencode') return resolveOpencodePlatform()
       if (agentFrameworkId === 'codex') return resolveManagedCodexPlatform()
+      // Cursor has no app-managed platform map; reuse Claude's host check for the system-compat row.
+      if (agentFrameworkId === 'cursor') return getManagedPlatform()
       return getManagedPlatform()
     })
   const findPython = deps.findPython ?? findPythonCommand

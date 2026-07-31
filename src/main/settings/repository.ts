@@ -56,6 +56,7 @@ const PROVIDER_TYPES = new Set<ProviderType>([
   'claude-shared',
   'claude-isolated',
   'official',
+  'cursor-subscription',
   'codex-shared',
   'codex-isolated'
 ])
@@ -954,6 +955,32 @@ class SettingsRepository {
       opencodePath: resolvedPath,
       opencodeVersion: version
     }))
+  }
+
+  // Records the detected Cursor Agent CLI path + version (+ optional login probe) for the status card.
+  async setCursorInfo(
+    resolvedPath: string,
+    version?: string,
+    loggedIn?: boolean
+  ): Promise<StoredSettings> {
+    return this.mutate((settings) => ({
+      ...settings,
+      cursorPath: resolvedPath,
+      cursorVersion: version,
+      ...(loggedIn !== undefined ? { cursorLoggedIn: loggedIn } : {})
+    }))
+  }
+
+  async clearCursorInfo(): Promise<StoredSettings> {
+    return this.mutate((settings) => {
+      const { cursorPath, cursorVersion, cursorLoggedIn, ...rest } = settings
+
+      void cursorPath
+      void cursorVersion
+      void cursorLoggedIn
+
+      return rest
+    })
   }
 
   async setCodexInfo(codex: StoredCodexInfo): Promise<StoredSettings> {

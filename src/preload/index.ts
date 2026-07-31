@@ -340,6 +340,7 @@ type OpenScienceAPI = {
     detectClaude: () => Promise<ClaudeDetectResult>
     detectOpencode: () => Promise<SettingsSnapshot>
     detectCodex: () => Promise<SettingsSnapshot>
+    detectCursor: () => Promise<SettingsSnapshot>
     installClaude: (request: InstallClaudeRequest) => Promise<ClaudeInstallResult>
     installOpencode: (request: InstallOpencodeRequest) => Promise<ClaudeInstallResult>
     installCodex: (request: InstallCodexRequest) => Promise<ClaudeInstallResult>
@@ -830,6 +831,8 @@ const api: OpenScienceAPI = {
     detectOpencode: () =>
       ipcRenderer.invoke('settings:detect-opencode') as Promise<SettingsSnapshot>,
     detectCodex: () => ipcRenderer.invoke('settings:detect-codex') as Promise<SettingsSnapshot>,
+    detectCursor: () =>
+      ipcRenderer.invoke('settings:detect-cursor') as Promise<SettingsSnapshot>,
     installClaude: (request) =>
       ipcRenderer.invoke('settings:install-claude', request) as Promise<ClaudeInstallResult>,
     installOpencode: (request) =>

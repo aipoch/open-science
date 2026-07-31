@@ -116,6 +116,7 @@ export const WEB_INVOKE_CHANNELS = {
   'settings.deleteSkill': 'settings:delete-skill',
   'settings.detectClaude': 'settings:detect-claude',
   'settings.detectCodex': 'settings:detect-codex',
+  'settings.detectCursor': 'settings:detect-cursor',
   'settings.detectOpencode': 'settings:detect-opencode',
   'settings.getConnectorDetail': 'settings:get-connector-detail',
   'settings.getPackageMirror': 'settings:get-package-mirror',

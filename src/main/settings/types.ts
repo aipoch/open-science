@@ -136,6 +136,11 @@ export type StoredSettings = {
   // Detected opencode executable path + reported version (for the status card). Absent = detect on PATH.
   opencodePath?: string
   opencodeVersion?: string
+  // Detected Cursor Agent CLI path + reported version (for the status card). Absent = detect on PATH.
+  cursorPath?: string
+  cursorVersion?: string
+  // Last-probed Cursor login state from `agent status`. Not a credential — credentials stay in the CLI.
+  cursorLoggedIn?: boolean
   // codex-acp adapter plus the native Codex runtime it launches.
   codex?: StoredCodexInfo
   activeProviderId?: string

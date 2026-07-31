@@ -28,6 +28,7 @@ const run = (overrides: Partial<PreflightInput> = {}): ReturnType<typeof compute
     claudePathExists: true,
     opencodePathExists: false,
     codexPathExists: false,
+    cursorPathExists: false,
     agentFrameworkId: 'claude-code',
     isProviderKeyUsable: alwaysUsable,
     activeProviderCompatible: true,
@@ -40,6 +41,7 @@ describe('computePreflight', () => {
       claudeReady: true,
       opencodeReady: false,
       codexReady: false,
+      cursorReady: false,
       agentFrameworkId: 'claude-code',
       agentReady: true,
       activeProviderReady: true
@@ -91,6 +93,19 @@ describe('computePreflight', () => {
     })
     expect(run({ settings, agentFrameworkId: 'codex', codexPathExists: false })).toMatchObject({
       codexReady: false,
+      agentReady: false
+    })
+  })
+
+  it('tracks Cursor readiness and binds agentReady to Cursor when selected', () => {
+    const settings = baseSettings({ cursorPath: '/bin/agent' })
+
+    expect(run({ settings, agentFrameworkId: 'cursor', cursorPathExists: true })).toMatchObject({
+      cursorReady: true,
+      agentReady: true
+    })
+    expect(run({ settings, agentFrameworkId: 'cursor', cursorPathExists: false })).toMatchObject({
+      cursorReady: false,
       agentReady: false
     })
   })

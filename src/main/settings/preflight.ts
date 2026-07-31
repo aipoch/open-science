@@ -16,9 +16,11 @@ export type PreflightInput = {
   opencodePathExists: boolean
   // Whether the recorded codex-acp adapter still reports a version.
   codexPathExists: boolean
+  // Whether the recorded Cursor Agent CLI still exists.
+  cursorPathExists: boolean
   // The selected framework, resolved (default applied) by the caller.
   agentFrameworkId: AgentFrameworkId
-  // Whether a provider's credentials are usable (codex subscriptions always; custom must decrypt).
+  // Whether a provider's credentials are usable (codex/cursor subscriptions always; custom must decrypt).
   isProviderKeyUsable: (provider: StoredProvider) => boolean
   // Whether the active provider can actually drive the selected framework (endpoint + provider-type
   // compatibility). Resolved by the caller, which has the vendor registry to derive official apiTypes.
@@ -33,6 +35,7 @@ const computePreflight = ({
   claudePathExists,
   opencodePathExists,
   codexPathExists,
+  cursorPathExists,
   agentFrameworkId,
   isProviderKeyUsable,
   activeProviderCompatible
@@ -40,10 +43,12 @@ const computePreflight = ({
   const claudeReady = Boolean(settings.claude?.resolvedPath) && claudePathExists
   const opencodeReady = Boolean(settings.opencodePath) && opencodePathExists
   const codexReady = Boolean(settings.codex?.resolvedPath) && codexPathExists
+  const cursorReady = Boolean(settings.cursorPath) && cursorPathExists
   const readyByFramework: Record<AgentFrameworkId, boolean> = {
     'claude-code': claudeReady,
     opencode: opencodeReady,
-    codex: codexReady
+    codex: codexReady,
+    cursor: cursorReady
   }
   const agentReady = readyByFramework[agentFrameworkId]
 
@@ -65,6 +70,7 @@ const computePreflight = ({
     claudeReady,
     opencodeReady,
     codexReady,
+    cursorReady,
     agentFrameworkId,
     agentReady,
     activeProviderReady

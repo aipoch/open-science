@@ -121,6 +121,7 @@ const registerSettingsIpcHandlers = ({
   ipcMain.handle('settings:detect-claude', () => service.detectClaude())
   ipcMain.handle('settings:detect-opencode', () => service.detectOpencode())
   ipcMain.handle('settings:detect-codex', () => service.detectCodex())
+  ipcMain.handle('settings:detect-cursor', () => service.detectCursor())
   ipcMain.handle('settings:install-opencode', (_event, request: InstallOpencodeRequest) =>
     service.installOpencode(request, broadcastInstallEvent)
   )
