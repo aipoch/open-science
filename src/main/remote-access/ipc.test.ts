@@ -6,9 +6,11 @@ vi.mock('electron', () => ({ ipcMain: { handle: vi.fn() } }))
 import {
   canManagePairing,
   isDesktopSender,
+  registerRemoteAccessIpcHandlers,
   requireDesktopSender,
   requirePairingManager
 } from './ipc'
+import { webRpc } from '../ipc-handler-registry'
 
 const eventWithSenderId = (id: number, remotePairingManager = false): IpcMainInvokeEvent =>
   ({
@@ -16,6 +18,27 @@ const eventWithSenderId = (id: number, remotePairingManager = false): IpcMainInv
   }) as unknown as IpcMainInvokeEvent
 
 describe('remote access IPC authorization', () => {
+  it('registers remote access handlers with the Web RPC router', async () => {
+    const snapshot = vi.fn(() => ({ mode: 'off' }))
+    registerRemoteAccessIpcHandlers({ snapshot } as never)
+
+    expect(webRpc.channels()).toEqual(
+      expect.arrayContaining([
+        'remote-access:approve',
+        'remote-access:detect',
+        'remote-access:disable',
+        'remote-access:get-snapshot',
+        'remote-access:reject',
+        'remote-access:revoke-browser',
+        'remote-access:set-mode'
+      ])
+    )
+    await expect(webRpc.invoke('remote-access:get-snapshot', 'browser-1', [])).resolves.toEqual({
+      mode: 'off'
+    })
+    expect(snapshot).toHaveBeenCalledWith(false, false)
+  })
+
   it('allows a real Electron WebContents sender', () => {
     const event = eventWithSenderId(7)
     expect(isDesktopSender(event)).toBe(true)
