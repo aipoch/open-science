@@ -7431,6 +7431,13 @@ describe('ACP runtime session management', () => {
     expect(runtime.getSnapshot().contextUsageBySession).toMatchObject({
       s1: { used: 24, size: 200000 }
     })
+    expect(runtime.getSnapshot().events.find((event) => event.kind === 'stop')).toMatchObject({
+      turnUsage: {
+        inputTokens: 31,
+        cacheTokens: 15,
+        outputTokens: 14
+      }
+    })
   })
 
   it('corrects an unpatched external Codex total with its latest request usage at stop', async () => {

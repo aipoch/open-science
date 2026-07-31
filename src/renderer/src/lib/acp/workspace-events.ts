@@ -407,7 +407,7 @@ const applyWorkspaceRuntimeEvent = async (
 
   if (event.kind === 'stop' && event.sessionId) {
     activityGroupToolCallIdsBySession.delete(event.sessionId)
-    store.finishRun(event.sessionId)
+    store.finishRun(event.sessionId, event.turnUsage)
 
     const terminalSession = useSessionStore
       .getState()

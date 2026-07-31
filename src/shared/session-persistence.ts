@@ -5,7 +5,9 @@ import {
   MAX_ACP_MESSAGE_IMAGE_BYTES_PER_MESSAGE,
   MAX_ACP_SESSION_IMAGE_BYTES,
   sanitizeAcpMessageImage,
-  type AcpMessageImage
+  sanitizeAcpTurnTokenUsage,
+  type AcpMessageImage,
+  type AcpTurnTokenUsage
 } from './acp'
 import {
   DEFAULT_PERMISSION_PROFILE,
@@ -87,6 +89,10 @@ export type PersistedChatMessage = {
   images?: PersistedMessageImage[]
   // Structured mention segments for the styled user bubble; optional for backward compatibility.
   parts?: MessagePart[]
+  // Whole-turn totals reported with the completed Agent response; absent for older sessions/providers.
+  turnUsage?: AcpTurnTokenUsage
+  // Marks the final Agent message for a turn whose provider did not report usable totals.
+  turnUsageUnavailable?: true
   createdAt: number
   updatedAt: number
 }
@@ -781,6 +787,9 @@ const sanitizeMessage = (
     ? message.parts.map(sanitizeMessagePart).filter((item): item is MessagePart => !!item)
     : []
   const images = sanitizeMessageImages(message.images)
+  const turnUsage = role === 'agent' ? sanitizeAcpTurnTokenUsage(message.turnUsage) : undefined
+  const turnUsageUnavailable =
+    role === 'agent' && !turnUsage && message.turnUsageUnavailable === true
 
   if (streamId) sanitized.streamId = streamId
   if (responseToMessageId) sanitized.responseToMessageId = responseToMessageId
@@ -788,6 +797,8 @@ const sanitizeMessage = (
   if (uploads.length > 0) sanitized.uploads = uploads
   if (parts.length > 0) sanitized.parts = parts
   if (images) sanitized.images = images
+  if (turnUsage) sanitized.turnUsage = turnUsage
+  if (turnUsageUnavailable) sanitized.turnUsageUnavailable = true
 
   return sanitized
 }

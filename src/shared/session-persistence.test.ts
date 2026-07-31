@@ -276,6 +276,62 @@ describe('message image persistence', () => {
   })
 })
 
+describe('turn token usage persistence', () => {
+  it('round-trips valid totals and drops invalid usage fields', () => {
+    const restored = normalizeSessionFile({
+      id: 'session-1',
+      projectId: 'project-a',
+      title: 'Usage',
+      cwd: '/workspace',
+      status: 'idle',
+      messages: [
+        {
+          id: 'message-valid',
+          role: 'agent',
+          content: 'Done',
+          status: 'complete',
+          eventIds: [],
+          turnUsage: { inputTokens: 12_345, cacheTokens: 678, outputTokens: 90 },
+          createdAt: 1,
+          updatedAt: 1
+        },
+        {
+          id: 'message-invalid',
+          role: 'agent',
+          content: 'Also done',
+          status: 'complete',
+          eventIds: [],
+          turnUsage: { inputTokens: -1, cacheTokens: 2, outputTokens: 3 },
+          turnUsageUnavailable: true,
+          createdAt: 2,
+          updatedAt: 2
+        },
+        {
+          id: 'message-user',
+          role: 'user',
+          content: 'Prompt',
+          status: 'complete',
+          eventIds: [],
+          turnUsageUnavailable: true,
+          createdAt: 3,
+          updatedAt: 3
+        }
+      ],
+      createdAt: 1,
+      updatedAt: 2
+    })
+
+    expect(restored?.messages[0].turnUsage).toEqual({
+      inputTokens: 12_345,
+      cacheTokens: 678,
+      outputTokens: 90
+    })
+    expect(restored?.messages[1].turnUsage).toBeUndefined()
+    expect(restored?.messages[1].turnUsageUnavailable).toBe(true)
+    expect(restored?.messages[2].turnUsageUnavailable).toBeUndefined()
+  })
+})
+
 describe('sanitizeToolActivity', () => {
   it('keeps identity fields and known text/diff content', () => {
     const activity = sanitizeToolActivity({

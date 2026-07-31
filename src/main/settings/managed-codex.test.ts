@@ -178,6 +178,7 @@ import {
   patchCodexAcpContextUsageSource,
   patchCodexAcpModelCatalogStartupSource,
   patchCodexAcpSkillInputSource,
+  patchCodexAcpTurnUsageSource,
   resolveManagedCodexPlatform,
   sanitizeManagedCodexDiagnostic,
   verifyManagedCodexPair,
@@ -1372,6 +1373,118 @@ describe('patchCodexAcpContextUsageSource', () => {
     expect(() => patchCodexAcpContextUsageSource(drifted)).toThrow(
       /context-usage patch no longer matches/
     )
+  })
+})
+
+describe('patchCodexAcpTurnUsageSource', () => {
+  type FixtureTokenUsage = {
+    totalTokens: number
+    inputTokens: number
+    cachedInputTokens: number
+    outputTokens: number
+    reasoningOutputTokens: number
+  }
+
+  const fixture = [
+    '  const sessionState = { currentTurnId: null, lastTokenUsage: null, totalTokenUsage: null };',
+    '  const activePrompt = { complete() {} };',
+    '  const adapter = {',
+    '    sessionState,',
+    '    handleTokenUsageUpdated(params) {',
+    '      this.sessionState.lastTokenUsage = params.tokenUsage.last;',
+    '      this.sessionState.totalTokenUsage = params.tokenUsage.total;',
+    '    },',
+    '  createUsageUpdate(params) {',
+    '    this.handleTokenUsageUpdated(params);',
+    '    return null;',
+    '  },',
+    '    buildPromptUsage(usage) { return usage; },',
+    '    startPrompt() {',
+    '    sessionState.currentTurnId = null;',
+    '    sessionState.lastTokenUsage = null;',
+    '    },',
+    '    commandResponse() { return { usage: this.buildPromptUsage(sessionState.lastTokenUsage), }; },',
+    '    normalResponse() { return { usage: this.buildPromptUsage(sessionState.lastTokenUsage), }; },',
+    '    cancelledResponse() { return { usage: this.buildPromptUsage(sessionState.lastTokenUsage), }; },',
+    '    finishPrompt() {',
+    '      const response = this.normalResponse();',
+    '      activePrompt.complete();',
+    '      return response;',
+    '    }',
+    '  };',
+    '  return adapter;'
+  ].join('\n')
+
+  const usage = (
+    totalTokens: number,
+    inputTokens: number,
+    cachedInputTokens: number,
+    outputTokens: number,
+    reasoningOutputTokens: number
+  ): FixtureTokenUsage => ({
+    totalTokens,
+    inputTokens,
+    cachedInputTokens,
+    outputTokens,
+    reasoningOutputTokens
+  })
+
+  it('accumulates every model request in one Codex prompt without double-counting updates', () => {
+    const patched = patchCodexAcpTurnUsageSource(fixture)
+    const adapter = Function(patched)() as {
+      startPrompt: () => void
+      createUsageUpdate: (params: unknown) => void
+      finishPrompt: () => { usage: ReturnType<typeof usage> | null }
+    }
+
+    // Seed the previous completed turn so the first update is derived from cumulative totals.
+    adapter.createUsageUpdate({
+      tokenUsage: {
+        last: usage(100, 70, 13, 15, 2),
+        total: usage(100, 70, 13, 15, 2)
+      }
+    })
+    adapter.startPrompt()
+    adapter.createUsageUpdate({
+      tokenUsage: {
+        last: usage(18, 12, 3, 3, 0),
+        total: usage(118, 82, 16, 18, 2)
+      }
+    })
+    // Codex can repeat the same cumulative snapshot; a zero delta must not add the request twice.
+    adapter.createUsageUpdate({
+      tokenUsage: {
+        last: usage(18, 12, 3, 3, 0),
+        total: usage(118, 82, 16, 18, 2)
+      }
+    })
+    adapter.createUsageUpdate({
+      tokenUsage: {
+        last: usage(27, 19, 5, 3, 0),
+        total: usage(145, 101, 21, 21, 2)
+      }
+    })
+
+    expect(adapter.finishPrompt().usage).toEqual(usage(45, 31, 8, 6, 0))
+    expect(patchCodexAcpTurnUsageSource(patched)).toBe(patched)
+  })
+
+  it('uses the first request snapshot when a resumed session has no cumulative baseline', () => {
+    const adapter = Function(patchCodexAcpTurnUsageSource(fixture))() as {
+      startPrompt: () => void
+      createUsageUpdate: (params: unknown) => void
+      finishPrompt: () => { usage: ReturnType<typeof usage> | null }
+    }
+
+    adapter.startPrompt()
+    adapter.createUsageUpdate({
+      tokenUsage: {
+        last: usage(18, 12, 3, 3, 0),
+        total: usage(10_018, 8_012, 1_003, 903, 100)
+      }
+    })
+
+    expect(adapter.finishPrompt().usage).toEqual(usage(18, 12, 3, 3, 0))
   })
 })
 

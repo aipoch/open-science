@@ -37,7 +37,11 @@ import type {
   AcpSetPermissionProfileRequest,
   AcpStateSnapshot
 } from '../../shared/acp'
-import { getAcpRuntimeEventImage, MAX_ACP_SESSION_IMAGE_BYTES } from '../../shared/acp'
+import {
+  getAcpRuntimeEventImage,
+  MAX_ACP_SESSION_IMAGE_BYTES,
+  toAcpTurnTokenUsage
+} from '../../shared/acp'
 import { ACP_PROMPT_FAILED_EVENT_TITLE } from '../../shared/acp'
 import {
   DEFAULT_PERMISSION_PROFILE,
@@ -2929,6 +2933,7 @@ class AcpRuntime {
             sessionId: request.sessionId,
             title: 'Prompt stopped',
             text: message.stopReason,
+            turnUsage: toAcpTurnTokenUsage(message.response.usage),
             raw: message.response
           })
           if (this.shouldAutoCompactContext(request.sessionId)) {
@@ -5663,6 +5668,7 @@ class AcpRuntime {
       compactionReason: event.compactionReason,
       recoverable: event.recoverable,
       providerError: event.providerError,
+      turnUsage: event.turnUsage,
       sessionId: event.sessionId,
       messageId: event.messageId,
       role: event.role,

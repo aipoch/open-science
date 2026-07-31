@@ -15,6 +15,7 @@ import {
 import { useEffect, useRef, useState } from 'react'
 import type { ArtifactPreviewResult } from '../../../../shared/artifacts'
 import type { ProvenanceMessagePart } from '../../../../shared/artifact-provenance'
+import type { AcpTurnTokenUsage } from '../../../../shared/acp'
 import type { MessagePart } from '../../../../shared/session-persistence'
 import { getUploadedAttachmentName } from '../../../../shared/uploads'
 
@@ -71,6 +72,29 @@ type WorkspaceMessageItemProps = {
 }
 
 const ARTIFACT_GALLERY_VISIBLE_COUNT = 5
+const tokenCountFormatter = new Intl.NumberFormat('en-US')
+
+const TurnTokenUsage = ({ usage }: { usage?: AcpTurnTokenUsage }): React.JSX.Element => (
+  <dl
+    data-slot="turn-token-usage"
+    aria-label={
+      usage ? 'Token usage for this response' : 'Token usage unavailable for this response'
+    }
+    className="mt-3 flex flex-wrap items-center gap-x-3 gap-y-1 text-[11px] leading-4 text-text-300 tabular-nums"
+  >
+    {[
+      ['Input', usage?.inputTokens],
+      ['Cache', usage?.cacheTokens],
+      ['Output', usage?.outputTokens]
+    ].map(([label, value]) => (
+      <div key={label} className="flex items-baseline gap-1">
+        <dt>{label}</dt>{' '}
+        <dd>{typeof value === 'number' ? tokenCountFormatter.format(value) : '—'}</dd>
+      </div>
+    ))}
+  </dl>
+)
+
 const artifactCardClassName =
   'h-[82px] w-[128px] shrink-0 overflow-hidden rounded-lg border border-border-200 bg-bg-000 text-left text-text-000 shadow-none transition-colors hover:bg-bg-200 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-border-200/60'
 const artifactPreviewClassName = 'h-[56px] w-full overflow-hidden bg-bg-200'
@@ -619,6 +643,10 @@ const WorkspaceMessageItem = ({
             ) : null}
             <MessageImageList images={message.images ?? []} />
             <MessageArtifactList onPreviewArtifact={onPreviewArtifact} artifacts={artifacts} />
+            {message.status !== 'streaming' &&
+            (message.turnUsage || message.turnUsageUnavailable) ? (
+              <TurnTokenUsage usage={message.turnUsage} />
+            ) : null}
           </div>
         )}
       </div>

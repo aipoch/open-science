@@ -345,7 +345,11 @@ describe('session store', () => {
       content: ' complete'
     })
 
-    useSessionStore.getState().finishRun('transport-session-1')
+    useSessionStore.getState().finishRun('transport-session-1', {
+      inputTokens: 31,
+      cacheTokens: 15,
+      outputTokens: 14
+    })
 
     const session = useSessionStore.getState().sessions[0]
     const agentMessage = session.messages[1]
@@ -358,10 +362,86 @@ describe('session store', () => {
       streamId: 'assistant-message-1',
       responseToMessageId: result?.messageId,
       eventIds: ['event-1', 'event-2'],
-      status: 'complete'
+      status: 'complete',
+      turnUsage: { inputTokens: 31, cacheTokens: 15, outputTokens: 14 }
+    })
+    expect(
+      session.conversationGraph?.messages.find((message) => message.id === agentMessage.id)
+        ?.turnUsage
+    ).toEqual({ inputTokens: 31, cacheTokens: 15, outputTokens: 14 })
+    expect(toPersistedSession(session).messages[1].turnUsage).toEqual({
+      inputTokens: 31,
+      cacheTokens: 15,
+      outputTokens: 14
     })
     expect(session.status).toBe('idle')
     expect(session.activeRun).toBeUndefined()
+  })
+
+  it('attaches whole-turn usage only to the final agent message for the active prompt', () => {
+    useSessionStore.getState().appendUserMessage({
+      sessionId: 'transport-session-1',
+      content: 'Explain the analysis'
+    })
+    useSessionStore.getState().appendAgentMessageChunk({
+      sessionId: 'transport-session-1',
+      streamId: 'assistant-message-1',
+      eventId: 'event-1',
+      content: 'I will inspect the data.'
+    })
+    useSessionStore.getState().appendAgentMessageChunk({
+      sessionId: 'transport-session-1',
+      streamId: 'assistant-message-2',
+      eventId: 'event-2',
+      content: 'The analysis is complete.'
+    })
+
+    useSessionStore.getState().finishRun('transport-session-1', {
+      inputTokens: 120,
+      cacheTokens: 30,
+      outputTokens: 45
+    })
+
+    const agentMessages = useSessionStore
+      .getState()
+      .sessions[0].messages.filter((message) => message.role === 'agent')
+    expect(agentMessages[0].turnUsage).toBeUndefined()
+    expect(agentMessages[1].turnUsage).toEqual({
+      inputTokens: 120,
+      cacheTokens: 30,
+      outputTokens: 45
+    })
+  })
+
+  it('marks only the final agent message when whole-turn usage is unavailable', () => {
+    useSessionStore.getState().appendUserMessage({
+      sessionId: 'transport-session-1',
+      content: 'Explain the analysis'
+    })
+    useSessionStore.getState().appendAgentMessageChunk({
+      sessionId: 'transport-session-1',
+      streamId: 'assistant-message-1',
+      eventId: 'event-1',
+      content: 'I will inspect the data.'
+    })
+    useSessionStore.getState().appendAgentMessageChunk({
+      sessionId: 'transport-session-1',
+      streamId: 'assistant-message-2',
+      eventId: 'event-2',
+      content: 'The analysis is complete.'
+    })
+
+    useSessionStore.getState().finishRun('transport-session-1')
+
+    const session = useSessionStore.getState().sessions[0]
+    const agentMessages = session.messages.filter((message) => message.role === 'agent')
+    expect(agentMessages[0].turnUsageUnavailable).toBeUndefined()
+    expect(agentMessages[1].turnUsageUnavailable).toBe(true)
+    expect(
+      session.conversationGraph?.messages.find((message) => message.id === agentMessages[1].id)
+        ?.turnUsageUnavailable
+    ).toBe(true)
+    expect(toPersistedSession(session).messages.at(-1)?.turnUsageUnavailable).toBe(true)
   })
 
   it('merges image-only and text chunks into the same agent message', () => {

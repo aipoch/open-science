@@ -204,10 +204,20 @@ describe('workspace runtime events', () => {
         text: 'Done'
       })
     )
-    await applyWorkspaceRuntimeEvent(createEvent({ id: 'event-2', kind: 'stop', text: 'end_turn' }))
+    await applyWorkspaceRuntimeEvent(
+      createEvent({
+        id: 'event-2',
+        kind: 'stop',
+        text: 'end_turn',
+        turnUsage: { inputTokens: 31, cacheTokens: 15, outputTokens: 14 }
+      })
+    )
 
     expect(useSessionStore.getState().sessions[0].status).toBe('idle')
-    expect(useSessionStore.getState().sessions[0].messages[1].status).toBe('complete')
+    expect(useSessionStore.getState().sessions[0].messages[1]).toMatchObject({
+      status: 'complete',
+      turnUsage: { inputTokens: 31, cacheTokens: 15, outputTokens: 14 }
+    })
 
     useSessionStore.getState().appendUserMessage({
       sessionId: 'transport-session-1',

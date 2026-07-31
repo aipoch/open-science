@@ -300,3 +300,47 @@ describe('WorkspaceMessageItem missing artifact badge', () => {
     expect(container.textContent).toContain('Missing')
   })
 })
+
+describe('WorkspaceMessageItem turn token usage', () => {
+  it('shows the completed response totals below the agent message', async () => {
+    await renderMessageItem(
+      createMessage({
+        role: 'agent',
+        content: 'Done',
+        turnUsage: { inputTokens: 12_345, cacheTokens: 678, outputTokens: 90 }
+      })
+    )
+
+    const usage = container.querySelector('[data-slot="turn-token-usage"]')
+    expect(usage?.getAttribute('aria-label')).toBe('Token usage for this response')
+    expect(usage?.textContent).toContain('Input 12,345')
+    expect(usage?.textContent).toContain('Cache 678')
+    expect(usage?.textContent).toContain('Output 90')
+  })
+
+  it('shows unavailable totals when the agent did not report usage', async () => {
+    await renderMessageItem(
+      createMessage({ role: 'agent', content: 'Done', turnUsageUnavailable: true })
+    )
+
+    const usage = container.querySelector('[data-slot="turn-token-usage"]')
+    expect(usage?.getAttribute('aria-label')).toBe('Token usage unavailable for this response')
+    expect(usage?.textContent).toContain('Input —')
+    expect(usage?.textContent).toContain('Cache —')
+    expect(usage?.textContent).toContain('Output —')
+  })
+
+  it('omits the footer from a non-final agent message in the same turn', async () => {
+    await renderMessageItem(createMessage({ role: 'agent', content: 'Intermediate update' }))
+
+    expect(container.querySelector('[data-slot="turn-token-usage"]')).toBeNull()
+  })
+
+  it('waits until an agent response completes before showing unavailable totals', async () => {
+    await renderMessageItem(
+      createMessage({ role: 'agent', content: 'Still working', status: 'streaming' })
+    )
+
+    expect(container.querySelector('[data-slot="turn-token-usage"]')).toBeNull()
+  })
+})
