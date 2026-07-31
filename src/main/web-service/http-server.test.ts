@@ -32,6 +32,7 @@ describe('startWebHttpServer', () => {
     const rpc = {
       channels: () => [
         'test:echo',
+        'file:save-session-artifacts',
         'uploads:stage-local-file',
         'settings:list-agent-home-skills',
         'settings:import-agent-home-skills'
@@ -104,6 +105,7 @@ describe('startWebHttpServer', () => {
 
     // Channels unavailable to web clients are rejected over /rpc without reaching the handler.
     for (const channel of [
+      'file:save-session-artifacts',
       'window:close',
       'uploads:stage-local-file',
       'settings:list-agent-home-skills',

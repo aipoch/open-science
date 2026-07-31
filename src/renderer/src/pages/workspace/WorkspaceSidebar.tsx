@@ -37,6 +37,7 @@ type WorkspaceSidebarProps = {
   onOpenFiles: () => void
   onOpenSession: (sessionId: string) => void
   onRenameSession: (session: ChatSession) => void
+  canDownloadArtifacts: boolean
   onDownloadArtifacts: (session: ChatSession) => void
   onViewNotebook: (session: ChatSession) => void
   onTogglePin: (session: ChatSession) => void
@@ -86,6 +87,7 @@ const WorkspaceSidebar = ({
   onOpenFiles,
   onOpenSession,
   onRenameSession,
+  canDownloadArtifacts,
   onDownloadArtifacts,
   onViewNotebook,
   onTogglePin,
@@ -259,15 +261,17 @@ const WorkspaceSidebar = ({
                               Rename…
                             </DropdownMenuItem>
                             <DropdownMenuSeparator />
-                            <DropdownMenuItem
-                              className="gap-2"
-                              onSelect={() => onDownloadArtifacts(session)}
-                            >
-                              <span className={sessionMenuIconClassName}>
-                                <Archive className="size-4" strokeWidth={2} aria-hidden="true" />
-                              </span>
-                              Download all artifacts
-                            </DropdownMenuItem>
+                            {canDownloadArtifacts ? (
+                              <DropdownMenuItem
+                                className="gap-2"
+                                onSelect={() => onDownloadArtifacts(session)}
+                              >
+                                <span className={sessionMenuIconClassName}>
+                                  <Archive className="size-4" strokeWidth={2} aria-hidden="true" />
+                                </span>
+                                Download all artifacts
+                              </DropdownMenuItem>
+                            ) : null}
                             <DropdownMenuItem
                               className="gap-2"
                               onSelect={() => onViewNotebook(session)}

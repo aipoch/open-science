@@ -36,6 +36,7 @@ const renderSidebar = async (sessions: ChatSession[]): Promise<string> => {
       onOpenFiles={vi.fn()}
       onOpenSession={vi.fn()}
       onRenameSession={vi.fn()}
+      canDownloadArtifacts
       onDownloadArtifacts={vi.fn()}
       onViewNotebook={vi.fn()}
       onTogglePin={vi.fn()}
@@ -121,6 +122,7 @@ describe('WorkspaceSidebar accessible render', () => {
       onOpenFiles: vi.fn(),
       onOpenSession,
       onRenameSession,
+      canDownloadArtifacts: true,
       onDownloadArtifacts,
       onViewNotebook: vi.fn(),
       onTogglePin: vi.fn(),
@@ -173,6 +175,7 @@ describe('WorkspaceSidebar accessible render', () => {
       onOpenFiles,
       onOpenSession: vi.fn(),
       onRenameSession: vi.fn(),
+      canDownloadArtifacts: true,
       onDownloadArtifacts: vi.fn(),
       onViewNotebook: vi.fn(),
       onTogglePin: vi.fn(),
@@ -213,6 +216,7 @@ describe('WorkspaceSidebar accessible render', () => {
       onOpenFiles: vi.fn(),
       onOpenSession: vi.fn(),
       onRenameSession: vi.fn(),
+      canDownloadArtifacts: true,
       onDownloadArtifacts: vi.fn(),
       onTogglePin: vi.fn(),
       onDeleteSession: vi.fn(),
@@ -262,6 +266,7 @@ describe('WorkspaceSidebar accessible render', () => {
       onOpenFiles: vi.fn(),
       onOpenSession: vi.fn(),
       onRenameSession: vi.fn(),
+      canDownloadArtifacts: true,
       onDownloadArtifacts: vi.fn(),
       onViewNotebook: vi.fn(),
       onTogglePin,
@@ -299,6 +304,7 @@ describe('WorkspaceSidebar accessible render', () => {
       onOpenFiles: vi.fn(),
       onOpenSession: vi.fn(),
       onRenameSession: vi.fn(),
+      canDownloadArtifacts: true,
       onDownloadArtifacts: vi.fn(),
       onViewNotebook: vi.fn(),
       onTogglePin: vi.fn(),
@@ -313,5 +319,36 @@ describe('WorkspaceSidebar accessible render', () => {
     expect(pinItem?.props.disabled).toBe(true)
     expect(renameItem?.props.disabled).toBe(true)
     expect(deleteItem?.props.disabled).toBe(false)
+  })
+
+  it('hides artifact downloads when the runtime does not provide the desktop save capability', async () => {
+    const { WorkspaceSidebar } = await import('./WorkspaceSidebar')
+    const session = createSession({ id: 'session-a', title: 'Notebook review' })
+    const tree = WorkspaceSidebar({
+      projectName: 'Example project',
+      sessions: [session],
+      activeSessionId: session.id,
+      canCreateConversation: true,
+      canMutateConversations: true,
+      canDeleteConversations: true,
+      onGoHome: vi.fn(),
+      onNewConversation: vi.fn(),
+      isFilesOpen: false,
+      onOpenFiles: vi.fn(),
+      onOpenSession: vi.fn(),
+      onRenameSession: vi.fn(),
+      canDownloadArtifacts: false,
+      onDownloadArtifacts: vi.fn(),
+      onViewNotebook: vi.fn(),
+      onTogglePin: vi.fn(),
+      onDeleteSession: vi.fn(),
+      onOpenSettings: vi.fn()
+    })
+
+    const downloadItem = collectElements(tree).find(
+      (element) => getTextContent(element).trim() === 'Download all artifacts'
+    )
+
+    expect(downloadItem).toBeUndefined()
   })
 })

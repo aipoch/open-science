@@ -1451,6 +1451,7 @@ const WorkspacePage = ({
           onOpenFiles={openFilesPreview}
           onOpenSession={openSession}
           onRenameSession={openRenameDialog}
+          canDownloadArtifacts={typeof window.api?.saveSessionArtifacts === 'function'}
           onDownloadArtifacts={setSessionToDownloadArtifacts}
           onViewNotebook={setSessionToViewNotebook}
           onTogglePin={(session) => {
