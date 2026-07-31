@@ -31,6 +31,7 @@ import {
   type MigrationMarker
 } from './migration-marker'
 import { withDataRootWrite } from './migration-state'
+import { operationJournalPath, RuntimeOperationJournal } from '../notebook/operation-journal'
 
 // Writes a verified staging marker for `<parent>/OpenScience`, as a completed copy phase would have.
 const seedVerifiedMarker = async (
@@ -574,6 +575,34 @@ describe('runDataRootMigration (copy phase)', () => {
       error: 'Could not verify provenance data: unfinished Artifact staging'
     })
     expect(validateProvenanceState).toHaveBeenCalledWith(currentDataRoot)
+    expect(copyAndVerify).not.toHaveBeenCalled()
+  })
+
+  it('refuses to copy while the source runtime recovery journal has a pending operation', async () => {
+    const deps = fakeDeps()
+    const runtimeRoot = join(currentDataRoot, 'runtime')
+    const journal = RuntimeOperationJournal.forPath(operationJournalPath(runtimeRoot))
+    await journal.begin({
+      operationId: 'operation-installing',
+      kind: 'install',
+      runtimeId: 'default-python',
+      phase: 'install-python',
+      startedAt: Date.now(),
+      targetPath: join(runtimeRoot, 'envs', 'default-python')
+    })
+    const copyAndVerify = vi.fn(async (): Promise<MigrationResult> => ({ ok: true }))
+
+    const result = await runDataRootMigration(
+      { currentDataRoot, runtime: deps.runtime, notebook: deps.notebook, copyAndVerify },
+      emptyParent,
+      runOpts()
+    )
+
+    expect(result).toEqual({
+      ok: false,
+      error:
+        'Could not verify provenance data: Unfinished Runtime operation blocks migration: operation-installing'
+    })
     expect(copyAndVerify).not.toHaveBeenCalled()
   })
 

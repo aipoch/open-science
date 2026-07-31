@@ -3,10 +3,11 @@ import { createReadStream, type Dirent } from 'node:fs'
 import { readFile, readdir, stat } from 'node:fs/promises'
 import { isAbsolute, join, relative, resolve, sep } from 'node:path'
 
-import { createProjectDbClient } from '../projects/prisma-client'
 import { validateConversationGraph } from '../../shared/conversation-graph'
 import { NOTEBOOK_RUN_FILE } from '../../shared/notebook'
 import { normalizeSessionFile } from '../../shared/session-persistence'
+import { operationJournalPath, RuntimeOperationJournal } from '../notebook/operation-journal'
+import { createProjectDbClient } from '../projects/prisma-client'
 
 const SHA256_PATTERN = /^[a-f0-9]{64}$/
 const storageKey = (...segments: string[]): string => segments.join('/')
@@ -80,6 +81,26 @@ const recordValue = (value: unknown): Record<string, unknown> | undefined =>
   value && typeof value === 'object' && !Array.isArray(value)
     ? (value as Record<string, unknown>)
     : undefined
+
+// Runtime operation journals are the authoritative crash-recovery record for prefix mutations. Unlike
+// the path-keyed Environment inventory cache below, a pending record may identify a still-running child
+// or a prefix that startup recovery has deliberately kept blocked. Migration must fail closed here:
+// switching roots would orphan that journal, and a preserved runtime bundle lets commit delete the old
+// runtime after switchover.
+const assertNoRuntimeOperations = async (root: string): Promise<void> => {
+  const runtimeRoot = join(root, 'runtime')
+  const journal = RuntimeOperationJournal.forPath(operationJournalPath(runtimeRoot))
+  const state = await journal.readState()
+  if (state === 'corrupt') {
+    throw new Error(
+      'Runtime operation journal is corrupt; repair or reset the affected runtime before moving data.'
+    )
+  }
+  const pending = state.records[0]
+  if (pending) {
+    throw new Error(`Unfinished Runtime operation blocks migration: ${pending.operationId}`)
+  }
+}
 
 // Environment bindings, inventories, and pending-operation records are mutable runtime caches keyed
 // by the interpreter command (including its absolute data-root path). A relocation rebuilds the
@@ -531,6 +552,7 @@ export const validateProvenanceMigrationState = async (
   dataRoot: string,
   authorityRoot: string = dataRoot
 ): Promise<void> => {
+  await assertNoRuntimeOperations(dataRoot)
   await validateSessionGraphs(authorityRoot)
   await validateSqliteStore(dataRoot, authorityRoot)
   const manifests = await collectEnvironmentManifests(dataRoot)

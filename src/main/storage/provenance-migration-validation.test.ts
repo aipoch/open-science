@@ -5,6 +5,7 @@ import { join } from 'node:path'
 import { afterEach, beforeEach, describe, expect, it } from 'vitest'
 
 import { validateProvenanceMigrationState } from './provenance-migration-validation'
+import { operationJournalPath, RuntimeOperationJournal } from '../notebook/operation-journal'
 import { createProjectDbClient, ensureProjectSchema } from '../projects/prisma-client'
 
 let root: string
@@ -73,6 +74,33 @@ describe('validateProvenanceMigrationState', () => {
     )
 
     await expect(validateProvenanceMigrationState(root)).resolves.toBeUndefined()
+  })
+
+  it('refuses a pending runtime operation from the authoritative recovery journal', async () => {
+    const runtimeRoot = join(root, 'runtime')
+    const journal = RuntimeOperationJournal.forPath(operationJournalPath(runtimeRoot))
+    await journal.begin({
+      operationId: 'operation-installing',
+      kind: 'install',
+      runtimeId: 'default-python',
+      phase: 'install-python',
+      startedAt: Date.now(),
+      targetPath: join(runtimeRoot, 'envs', 'default-python')
+    })
+
+    await expect(validateProvenanceMigrationState(root)).rejects.toThrow(
+      /unfinished Runtime operation blocks migration: operation-installing/i
+    )
+  })
+
+  it('refuses a corrupt runtime operation journal instead of treating it as empty', async () => {
+    const runtimeRoot = join(root, 'runtime')
+    await mkdir(runtimeRoot, { recursive: true })
+    await writeFile(operationJournalPath(runtimeRoot), '{ not valid json')
+
+    await expect(validateProvenanceMigrationState(root)).rejects.toThrow(
+      /Runtime operation journal is corrupt/i
+    )
   })
 
   it('refuses an Artifact staging directory that has not reached an immutable lifecycle state', async () => {
