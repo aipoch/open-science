@@ -1088,14 +1088,14 @@ export const disableRemoteItConnectLink = async (
     const data = parseRemoteItGraphQlData(stdout)
     const link = data.setConnectLink as RemoteItConnectLink | undefined
     if (link?.enabled !== false || stringValue(link?.service?.id) !== serviceId) {
-      throw new Error('Remote.It did not disable the App service public endpoint.')
+      throw new Error('Remote.It did not disable the service public endpoint.')
     }
   } catch (error) {
     const detail = commandError(
       error,
-      'Remote.It could not disable the App service public endpoint.'
+      'Remote.It could not disable the service public endpoint.'
     ).message
-    throw new Error(`Remote.It App privacy setup failed: ${detail}`)
+    throw new Error(`Remote.It public endpoint privacy setup failed: ${detail}`)
   }
 }
 

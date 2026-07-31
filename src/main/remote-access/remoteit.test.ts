@@ -843,7 +843,7 @@ describe('Remote.It adapter', () => {
     ).resolves.toMatchObject({ serviceId: 'service-recreated' })
   })
 
-  it('disables the App service Persistent Public URL without administrator elevation', async () => {
+  it('disables a service Persistent Public URL without administrator elevation', async () => {
     const run = vi.fn<RemoteItCommandRunner>().mockResolvedValue({
       stdout: JSON.stringify({
         code: 0,

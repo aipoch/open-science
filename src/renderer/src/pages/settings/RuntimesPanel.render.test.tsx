@@ -300,6 +300,25 @@ describe('RuntimesPanel', () => {
     expect(setEnvironmentEnabled).toHaveBeenCalledWith('python', '/usr/bin/python3', true)
   })
 
+  it('shows a clear local-desktop message when remote runtime management is restricted', async () => {
+    pickInterpreter.mockRejectedValueOnce(
+      new Error(
+        'This action is only available in the local desktop app (runtime:pick-interpreter).'
+      )
+    )
+    await render()
+    const addBtn = Array.from(container.querySelectorAll('button')).find((button) =>
+      /add interpreter/i.test(button.textContent ?? '')
+    )
+
+    await click(addBtn ?? null)
+
+    expect(container.querySelector('[data-testid="runtimes-error"]')?.textContent).toContain(
+      'only available in the local desktop app'
+    )
+    expect(registerInterpreter).not.toHaveBeenCalled()
+  })
+
   it('shows a determinate progress bar + Cancel in the app-managed setup card while downloading', async () => {
     await render()
     // R has no provisioned managed env, so its section shows the app-managed SETUP card (which carries

@@ -23,6 +23,10 @@ export type WebServiceController = {
   ) => Promise<{ port: number; url: string }>
   // Stops the web service and removes its state file. Idempotent; safe to call when not running.
   close: () => Promise<void>
+  // Closes remotely authenticated sockets without disturbing local Web clients.
+  closeExternalConnections: (sessionId?: string) => void
+  // Subscribes to actual server stops, including attached shutdown requests from the CLI.
+  onStopped: (listener: () => void) => () => void
   isRunning: () => boolean
   // The live port when serving, else undefined (used to build the tray's "Open Web" URL).
   runningPort: () => number | undefined
@@ -87,14 +91,26 @@ const createWebServiceController = (
       })
   })
 
-  let running: { close: () => Promise<void>; port: number; configRoot: string } | undefined
+  let running:
+    | {
+        close: () => Promise<void>
+        closeExternalConnections: (sessionId?: string) => void
+        port: number
+        configRoot: string
+      }
+    | undefined
   let starting: Promise<{ port: number; url: string }> | undefined
+  const stoppedListeners = new Set<() => void>()
 
   const close = async (): Promise<void> => {
     const current = running
     running = undefined
     if (!current) return
-    await current.close()
+    try {
+      await current.close()
+    } finally {
+      for (const listener of stoppedListeners) listener()
+    }
   }
 
   const start = async (port: number, attached: boolean): Promise<{ port: number; url: string }> => {
@@ -124,6 +140,7 @@ const createWebServiceController = (
     running = {
       port: server.port,
       configRoot,
+      closeExternalConnections: server.closeExternalConnections,
       close: async () => {
         try {
           await server.close()
@@ -174,6 +191,11 @@ const createWebServiceController = (
   return {
     ensureStarted,
     close,
+    closeExternalConnections: (sessionId) => running?.closeExternalConnections(sessionId),
+    onStopped: (listener) => {
+      stoppedListeners.add(listener)
+      return () => stoppedListeners.delete(listener)
+    },
     isRunning: () => running !== undefined,
     runningPort: () => running?.port
   }

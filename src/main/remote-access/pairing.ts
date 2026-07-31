@@ -6,7 +6,11 @@ import type {
   RemotePairingRequestView,
   TrustedRemoteBrowserView
 } from '../../shared/remote-access'
-import type { ExternalWebAccess, ExternalWebAccessDecision } from '../web-service/http-server'
+import type {
+  ExternalWebAccess,
+  ExternalWebAccessAuthorization,
+  ExternalWebAccessDecision
+} from '../web-service/http-server'
 import { REMOTE_PAIR_STATUS_PATH, renderPairingPage } from './pairing-page'
 import {
   RemoteAccessRepository,
@@ -45,13 +49,15 @@ type OneTimeSession = {
   expiresAt: number
 }
 
-type RemoteSessionAccess = 'none' | 'once' | 'trusted'
+type RemoteSessionAccess =
+  ({ kind: 'once'; sessionId: string } | { kind: 'trusted'; sessionId: string }) | undefined
 
 type PairingManagerOptions = {
   repository: RemoteAccessRepository
   isAllowedRemoteHost: (hostname: string) => boolean
   isEnabled: () => boolean
   requiresPairing: () => boolean
+  authorizationGeneration?: () => number
   onChanged: () => void
   now?: () => number
 }
@@ -330,11 +336,36 @@ export class RemoteBrowserPairingManager {
     response: ServerResponse,
     url: URL
   ): Promise<ExternalWebAccessDecision> {
+    const authorizationGeneration = this.options.authorizationGeneration?.() ?? 0
     const needsOrigin = request.method !== 'GET' && request.method !== 'HEAD'
+    const requiresPairing = this.options.requiresPairing()
     if (!this.isExpectedRemoteRequest(request, needsOrigin)) return 'denied'
-    if (!this.options.requiresPairing()) return 'authorized-pairing-manager'
+    if (!requiresPairing) {
+      return this.httpAuthorization(
+        request,
+        needsOrigin,
+        authorizationGeneration,
+        requiresPairing,
+        true
+      )
+    }
     const sessionAccess = await this.getSessionAccess(request)
-    if (sessionAccess !== 'none') return 'authorized-pairing-manager'
+    if (
+      authorizationGeneration !== (this.options.authorizationGeneration?.() ?? 0) ||
+      !this.isExpectedRemoteRequest(request, needsOrigin) ||
+      !this.options.requiresPairing()
+    ) {
+      return 'denied'
+    }
+    if (sessionAccess) {
+      return this.httpAuthorization(
+        request,
+        needsOrigin,
+        authorizationGeneration,
+        requiresPairing,
+        sessionAccess.kind === 'trusted'
+      )
+    }
 
     if (url.pathname === REMOTE_PAIR_STATUS_PATH && request.method === 'GET') {
       await this.handlePairingStatus(request, response)
@@ -355,12 +386,40 @@ export class RemoteBrowserPairingManager {
     return 'handled'
   }
 
-  private async authorizeWebSocket(request: IncomingMessage, url: URL): Promise<boolean> {
-    return (
-      url.pathname === '/events' &&
-      this.isExpectedRemoteRequest(request, true) &&
-      (!this.options.requiresPairing() || (await this.getSessionAccess(request)) !== 'none')
-    )
+  private httpAuthorization(
+    request: IncomingMessage,
+    needsOrigin: boolean,
+    authorizationGeneration: number,
+    requiresPairing: boolean,
+    canManagePairing: boolean
+  ): ExternalWebAccessAuthorization {
+    return {
+      kind: canManagePairing ? 'authorized-pairing-manager' : 'authorized',
+      isCurrent: () =>
+        authorizationGeneration === (this.options.authorizationGeneration?.() ?? 0) &&
+        this.options.requiresPairing() === requiresPairing &&
+        this.isExpectedRemoteRequest(request, needsOrigin)
+    }
+  }
+
+  private async authorizeWebSocket(
+    request: IncomingMessage,
+    url: URL
+  ): ReturnType<ExternalWebAccess['authorizeWebSocket']> {
+    const authorizationGeneration = this.options.authorizationGeneration?.() ?? 0
+    if (url.pathname !== '/events' || !this.isExpectedRemoteRequest(request, true)) {
+      return undefined
+    }
+    if (!this.options.requiresPairing()) return {}
+    const sessionAccess = await this.getSessionAccess(request)
+    if (
+      authorizationGeneration !== (this.options.authorizationGeneration?.() ?? 0) ||
+      !this.isExpectedRemoteRequest(request, true) ||
+      !this.options.requiresPairing()
+    ) {
+      return undefined
+    }
+    return sessionAccess ? { sessionId: sessionAccess.sessionId } : undefined
   }
 
   private ensurePending(request: IncomingMessage, response: ServerResponse): PendingPairing {
@@ -437,25 +496,25 @@ export class RemoteBrowserPairingManager {
   private async getSessionAccess(request: IncomingMessage): Promise<RemoteSessionAccess> {
     this.pruneExpired()
     const value = readCookies(request).get(SESSION_COOKIE)
-    if (!value) return 'none'
+    if (!value) return undefined
     const separator = value.indexOf('.')
-    if (separator <= 0) return 'none'
+    if (separator <= 0) return undefined
     const id = value.slice(0, separator)
     const tokenHash = hash(value.slice(separator + 1))
 
     const once = this.oneTimeSessions.get(id)
     if (once && once.expiresAt > this.now() && safeHashEqual(once.tokenHash, tokenHash)) {
-      return 'once'
+      return { kind: 'once', sessionId: id }
     }
 
     const trusted = this.stored.trustedBrowsers.find((browser) => browser.id === id)
-    if (!trusted || !safeHashEqual(trusted.tokenHash, tokenHash)) return 'none'
+    if (!trusted || !safeHashEqual(trusted.tokenHash, tokenHash)) return undefined
     if (this.now() - trusted.lastSeenAt >= LAST_SEEN_WRITE_INTERVAL_MS) {
       trusted.lastSeenAt = this.now()
       await this.options.repository.save(this.stored)
       this.options.onChanged()
     }
-    return 'trusted'
+    return { kind: 'trusted', sessionId: id }
   }
 
   private pruneExpired(): void {

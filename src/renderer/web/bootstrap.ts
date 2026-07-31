@@ -5,6 +5,7 @@ import {
   webRpcEventSchema,
   webRpcResponseSchema
 } from '../../shared/web-rpc-contract'
+import { assignApiPath, installWebInvokeChannels } from './api-installer'
 import { applyTheme, resolveInitialTheme } from '@/lib/theme'
 import openScienceLogoSvg from '../../main/remote-access/openscience-logo.svg?raw'
 
@@ -245,17 +246,6 @@ const transformArgs = (path: string, args: unknown[]): unknown[] => {
   return args
 }
 
-const assignPath = (root: Record<string, unknown>, path: string, value: unknown): void => {
-  const parts = path.split('.')
-  const key = parts.pop()!
-  let target = root
-  for (const part of parts) {
-    target[part] ??= {}
-    target = target[part] as Record<string, unknown>
-  }
-  target[key] = value
-}
-
 const installWebApi = async (): Promise<void> => {
   const parsedBootstrap = webRpcBootstrapSchema.safeParse(await fetchBootstrap())
   if (!parsedBootstrap.success) {
@@ -269,13 +259,19 @@ const installWebApi = async (): Promise<void> => {
     getRuntimeVersions: () => bootstrap.versions
   }
   const availableRpcChannels = new Set(bootstrap.rpcChannels)
+  const restrictedRpcChannels = new Set(bootstrap.restrictedRpcChannels ?? [])
 
-  for (const [path, channel] of Object.entries(WEB_INVOKE_CHANNELS)) {
-    if (!availableRpcChannels.has(channel)) continue
-    assignPath(api, path, (...args: unknown[]) => invoke(channel, transformArgs(path, args)))
-  }
+  installWebInvokeChannels(
+    api,
+    WEB_INVOKE_CHANNELS,
+    availableRpcChannels,
+    restrictedRpcChannels,
+    (path, channel) =>
+      (...args: unknown[]) =>
+        invoke(channel, transformArgs(path, args))
+  )
   for (const [path, channel] of Object.entries(WEB_EVENT_CHANNELS)) {
-    assignPath(api, path, (listener: Listener) => subscribe(channel, listener))
+    assignApiPath(api, path, (listener: Listener) => subscribe(channel, listener))
   }
 
   api.saveBlobFile = (request: { suggestedName: string; mimeType: string; data: ArrayBuffer }) => {
@@ -299,7 +295,7 @@ const installWebApi = async (): Promise<void> => {
       await invoke('preview-resources:release', [{ resourceId: resource.id }])
     }
   }
-  assignPath(api, 'window.close', () => {
+  assignApiPath(api, 'window.close', () => {
     window.close()
     return Promise.resolve()
   })

@@ -17,14 +17,16 @@ const makeController = (
   writeState: ReturnType<typeof vi.fn>
   removeState: ReturnType<typeof vi.fn>
   serverClose: ReturnType<typeof vi.fn>
+  serverCloseExternalConnections: ReturnType<typeof vi.fn>
   lastOptions: () => StartOptions
   requestQuit: ReturnType<typeof vi.fn>
 } => {
   const serverClose = vi.fn().mockResolvedValue(undefined)
+  const closeExternalConnections = vi.fn()
   const seen: StartOptions[] = []
   const startServer = vi.fn(async (options: StartOptions) => {
     seen.push(options)
-    return { port: options.port, close: serverClose }
+    return { port: options.port, closeExternalConnections, close: serverClose }
   })
   const writeState = vi.fn().mockResolvedValue(undefined)
   const removeState = vi.fn().mockResolvedValue(undefined)
@@ -54,6 +56,7 @@ const makeController = (
     writeState,
     removeState,
     serverClose,
+    serverCloseExternalConnections: closeExternalConnections,
     lastOptions: () => seen[seen.length - 1],
     requestQuit
   }
@@ -92,7 +95,11 @@ describe('createWebServiceController', () => {
     })
     const startServer = vi.fn(async (options: StartOptions) => {
       await gate
-      return { port: options.port, close: vi.fn().mockResolvedValue(undefined) }
+      return {
+        port: options.port,
+        closeExternalConnections: vi.fn(),
+        close: vi.fn().mockResolvedValue(undefined)
+      }
     })
     const h = makeController({ startServer })
 
@@ -118,6 +125,15 @@ describe('createWebServiceController', () => {
     expect(h.startServer).toHaveBeenCalledTimes(2)
   })
 
+  it('forwards remote socket closure to the running server', async () => {
+    const h = makeController()
+    await h.controller.ensureStarted(44100, { attached: true })
+
+    h.controller.closeExternalConnections('trusted-browser')
+
+    expect(h.serverCloseExternalConnections).toHaveBeenCalledWith('trusted-browser')
+  })
+
   it('an attached shutdown request tears down only the web service, never quitting the app', async () => {
     const h = makeController()
     await h.controller.ensureStarted(44100, { attached: true })
@@ -131,6 +147,16 @@ describe('createWebServiceController', () => {
     expect(h.serverClose).toHaveBeenCalledTimes(1)
     expect(h.removeState).toHaveBeenCalledWith('/fake/root')
     expect(h.requestQuit).not.toHaveBeenCalled()
+  })
+
+  it('notifies dependants when an attached shutdown stops the web service', async () => {
+    const h = makeController()
+    const stopped = vi.fn()
+    h.controller.onStopped(stopped)
+    await h.controller.ensureStarted(44100, { attached: true })
+
+    h.lastOptions().onShutdownRequest?.()
+    await vi.waitFor(() => expect(stopped).toHaveBeenCalledTimes(1))
   })
 
   it('a non-attached (dedicated daemon) shutdown request quits the app', async () => {

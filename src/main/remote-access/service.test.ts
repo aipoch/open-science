@@ -1,4 +1,5 @@
 import { mkdtemp, rm } from 'node:fs/promises'
+import type { IncomingMessage, ServerResponse } from 'node:http'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 
@@ -27,12 +28,29 @@ const createRepository = async (): Promise<RemoteAccessRepository> => {
   return new RemoteAccessRepository(root)
 }
 
+const remoteRequest = (host: string): IncomingMessage =>
+  ({
+    method: 'GET',
+    url: '/',
+    headers: { host },
+    socket: { remoteAddress: '203.0.113.10' }
+  }) as unknown as IncomingMessage
+
+const remoteResponse = (): ServerResponse =>
+  ({
+    setHeader: vi.fn(),
+    writeHead: vi.fn().mockReturnThis(),
+    end: vi.fn().mockReturnThis()
+  }) as unknown as ServerResponse
+
 const webController = (port = 4180): WebServiceController => ({
   ensureStarted: vi.fn().mockResolvedValue({
     port,
     url: `http://127.0.0.1:${port}/?token=local-only`
   }),
   close: vi.fn().mockResolvedValue(undefined),
+  closeExternalConnections: vi.fn(),
+  onStopped: vi.fn(() => vi.fn()),
   isRunning: vi.fn(() => true),
   runningPort: vi.fn(() => port)
 })
@@ -134,7 +152,8 @@ describe('RemoteAccessService', () => {
       ...deps,
       broadcast: vi.fn()
     })
-    service.attachWebController(webController())
+    const controller = webController()
+    service.attachWebController(controller)
 
     await expect(service.setMode('remoteit-public')).resolves.toMatchObject({
       mode: 'remoteit-public',
@@ -174,11 +193,20 @@ describe('RemoteAccessService', () => {
       ...deps,
       broadcast: vi.fn()
     })
-    service.attachWebController(webController())
+    const controller = webController()
+    service.attachWebController(controller)
 
     await service.setMode('remoteit')
     await service.setMode('remoteit-public')
     await service.setMode('remoteit')
+
+    expect(controller.closeExternalConnections).toHaveBeenCalledTimes(2)
+    expect(deps.disableRemoteItLink).toHaveBeenCalledTimes(5)
+    expect(deps.disableRemoteItLink).toHaveBeenNthCalledWith(
+      5,
+      '/usr/local/bin/remoteit',
+      'browser-service-1'
+    )
 
     expect(deps.enableRemoteIt).toHaveBeenNthCalledWith(
       3,
@@ -197,6 +225,102 @@ describe('RemoteAccessService', () => {
     })
   })
 
+  it('rejects the saved public Browser host after switching to App access', async () => {
+    const repository = await createRepository()
+    const deps = createReadyDeps()
+    deps.ensureRemoteItLink.mockResolvedValue('https://browser-session.r3proxy.com')
+    const service = await RemoteAccessService.create({
+      repository,
+      ...deps,
+      broadcast: vi.fn()
+    })
+    service.attachWebController(webController())
+
+    await service.setMode('remoteit-public')
+    await service.setMode('remoteit')
+
+    await expect(
+      service.webAccess.authorizeHttp(
+        remoteRequest('browser-session.r3proxy.com'),
+        remoteResponse(),
+        new URL('https://browser-session.r3proxy.com/')
+      )
+    ).resolves.toBe('denied')
+    await expect(
+      service.webAccess.authorizeHttp(
+        remoteRequest('private-app.r3proxy.com'),
+        remoteResponse(),
+        new URL('https://private-app.r3proxy.com/')
+      )
+    ).resolves.toMatchObject({ kind: 'authorized-pairing-manager' })
+  })
+
+  it('ignores an invalid legacy Browser URL when authorizing App access', async () => {
+    const repository = await createRepository()
+    await repository.save({
+      version: 4,
+      mode: 'remoteit',
+      remoteItAppServiceId: 'app-service',
+      remoteItBrowserServiceId: 'browser-service',
+      remoteItPublicUrl: 'not-a-url',
+      trustedBrowsers: []
+    })
+    const service = await RemoteAccessService.create({
+      repository,
+      ...createReadyDeps(),
+      broadcast: vi.fn()
+    })
+    service.attachWebController(webController())
+    await service.restore()
+
+    await expect(
+      service.webAccess.authorizeHttp(
+        remoteRequest('private-app.r3proxy.com'),
+        remoteResponse(),
+        new URL('https://private-app.r3proxy.com/')
+      )
+    ).resolves.toMatchObject({ kind: 'authorized-pairing-manager' })
+  })
+
+  it('disconnects the revoked trusted browser immediately', async () => {
+    const repository = await createRepository()
+    await repository.save({
+      version: 4,
+      mode: 'remoteit-public',
+      trustedBrowsers: [
+        {
+          id: 'trusted-browser',
+          browser: 'Safari',
+          platform: 'macOS',
+          tokenHash: '00',
+          createdAt: 1,
+          lastSeenAt: 1
+        }
+      ]
+    })
+    const service = await RemoteAccessService.create({
+      repository,
+      ...createReadyDeps(),
+      broadcast: vi.fn()
+    })
+    const controller = {
+      ...webController(),
+      closeExternalConnections: vi.fn()
+    }
+    service.attachWebController(controller)
+    let releaseSave: (() => void) | undefined
+    const saveGate = new Promise<void>((resolve) => {
+      releaseSave = resolve
+    })
+    vi.spyOn(repository, 'save').mockReturnValue(saveGate)
+
+    const revocation = service.revoke('trusted-browser')
+
+    expect(controller.closeExternalConnections).toHaveBeenCalledWith('trusted-browser')
+    releaseSave?.()
+    await revocation
+  })
+
   it('soft-disables access without deleting either provider service', async () => {
     const repository = await createRepository()
     const deps = createReadyDeps()
@@ -205,7 +329,8 @@ describe('RemoteAccessService', () => {
       ...deps,
       broadcast: vi.fn()
     })
-    service.attachWebController(webController())
+    const controller = webController()
+    service.attachWebController(controller)
 
     await service.setMode('remoteit-public')
     await expect(service.disable()).resolves.toMatchObject({
@@ -215,7 +340,90 @@ describe('RemoteAccessService', () => {
       accessUrl: undefined
     })
     expect(deps.enableRemoteIt).toHaveBeenCalledTimes(1)
+    expect(controller.closeExternalConnections).toHaveBeenCalledWith()
     expect((await repository.load()).mode).toBe('off')
+  })
+
+  it('marks remote access unavailable when the attached Web service stops and repairs on detect', async () => {
+    const repository = await createRepository()
+    const deps = createReadyDeps()
+    const service = await RemoteAccessService.create({
+      repository,
+      ...deps,
+      broadcast: vi.fn()
+    })
+    let stopped: (() => void) | undefined
+    const controller = {
+      ...webController(),
+      onStopped: vi.fn((listener: () => void) => {
+        stopped = listener
+        return vi.fn()
+      })
+    }
+    service.attachWebController(controller)
+    await service.setMode('remoteit')
+
+    stopped?.()
+
+    expect(service.snapshot(true)).toMatchObject({
+      mode: 'remoteit',
+      enabled: false,
+      lifecycle: 'error'
+    })
+    expect(service.snapshot(true).error).toMatch(/web service stopped/i)
+
+    await expect(service.detect()).resolves.toMatchObject({
+      mode: 'remoteit',
+      enabled: true,
+      lifecycle: 'running'
+    })
+    expect(controller.ensureStarted).toHaveBeenCalledTimes(2)
+  })
+
+  it('does not report Running when the attached Web service stops during provider setup', async () => {
+    const repository = await createRepository()
+    const deps = createReadyDeps()
+    let releaseProvider: (() => void) | undefined
+    const providerGate = new Promise<void>((resolve) => {
+      releaseProvider = resolve
+    })
+    deps.enableRemoteIt.mockImplementation(async () => {
+      await providerGate
+      return {
+        installation: readyInstallation('app-service'),
+        appServiceId: 'app-service',
+        browserServiceId: 'browser-service'
+      }
+    })
+    const service = await RemoteAccessService.create({
+      repository,
+      ...deps,
+      broadcast: vi.fn()
+    })
+    let stopped: (() => void) | undefined
+    let webRunning = true
+    const controller = {
+      ...webController(),
+      isRunning: vi.fn(() => webRunning),
+      onStopped: vi.fn((listener: () => void) => {
+        stopped = listener
+        return vi.fn()
+      })
+    }
+    service.attachWebController(controller)
+
+    const starting = service.setMode('remoteit')
+    await vi.waitFor(() => expect(deps.enableRemoteIt).toHaveBeenCalledOnce())
+    webRunning = false
+    stopped?.()
+    releaseProvider?.()
+
+    await expect(starting).resolves.toMatchObject({
+      mode: 'remoteit',
+      enabled: false,
+      lifecycle: 'error'
+    })
+    expect(service.snapshot(true).error).toMatch(/web service stopped/i)
   })
 
   it('fails closed and keeps the setup error attached to the selected mode', async () => {
@@ -243,6 +451,28 @@ describe('RemoteAccessService', () => {
     })
     expect(controller.ensureStarted).not.toHaveBeenCalled()
     expect((await repository.load()).mode).toBe('off')
+  })
+
+  it('fails closed and disconnects remote clients when provider detection fails', async () => {
+    const repository = await createRepository()
+    const deps = createReadyDeps()
+    const service = await RemoteAccessService.create({
+      repository,
+      ...deps,
+      broadcast: vi.fn()
+    })
+    const controller = webController()
+    service.attachWebController(controller)
+    await service.setMode('remoteit')
+    deps.detectRemoteIt.mockRejectedValueOnce(new Error('provider probe failed'))
+
+    await expect(service.detect()).resolves.toMatchObject({
+      mode: 'remoteit',
+      enabled: false,
+      lifecycle: 'error',
+      error: 'provider probe failed'
+    })
+    expect(controller.closeExternalConnections).toHaveBeenCalledOnce()
   })
 
   it('runs the full local Device and service setup when Detect follows a pre-install selection', async () => {
@@ -311,7 +541,8 @@ describe('RemoteAccessService', () => {
       ...deps,
       broadcast: vi.fn()
     })
-    service.attachWebController(webController())
+    const controller = webController()
+    service.attachWebController(controller)
 
     await service.setMode('remoteit-public')
     await expect(service.detect()).resolves.toMatchObject({
@@ -320,11 +551,55 @@ describe('RemoteAccessService', () => {
       accessUrl: 'https://open-science.connect.remote.it/'
     })
     expect(deps.ensureRemoteItLink).toHaveBeenCalledTimes(2)
+    expect(controller.closeExternalConnections).toHaveBeenCalledOnce()
     expect(deps.enableRemoteIt).toHaveBeenLastCalledWith(
       '/usr/local/bin/remoteit',
       4180,
       expect.objectContaining({
         active: 'browser',
+        appServiceId: 'app-service',
+        browserServiceId: 'browser-service-1',
+        onServiceIdsDiscovered: expect.any(Function)
+      })
+    )
+  })
+
+  it('repairs an unavailable App route when Detect runs', async () => {
+    const repository = await createRepository()
+    const deps = createReadyDeps()
+    const service = await RemoteAccessService.create({
+      repository,
+      ...deps,
+      broadcast: vi.fn()
+    })
+    const controller = webController()
+    service.attachWebController(controller)
+
+    await service.setMode('remoteit')
+    deps.detectRemoteIt.mockResolvedValueOnce({
+      ...readyInstallation('app-service'),
+      service: {
+        id: 'app-service',
+        host: '127.0.0.1',
+        port: 4180,
+        enabled: false,
+        ready: false
+      }
+    })
+
+    await expect(service.detect()).resolves.toMatchObject({
+      mode: 'remoteit',
+      enabled: true,
+      lifecycle: 'running',
+      remoteIt: { service: { id: 'app-service', enabled: true, ready: true } }
+    })
+    expect(controller.closeExternalConnections).toHaveBeenCalledOnce()
+    expect(deps.enableRemoteIt).toHaveBeenCalledTimes(2)
+    expect(deps.enableRemoteIt).toHaveBeenLastCalledWith(
+      '/usr/local/bin/remoteit',
+      4180,
+      expect.objectContaining({
+        active: 'app',
         appServiceId: 'app-service',
         browserServiceId: 'browser-service-1',
         onServiceIdsDiscovered: expect.any(Function)

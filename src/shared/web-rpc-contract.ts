@@ -85,6 +85,7 @@ export const webRpcBootstrapSchema = z
     platform: z.string(),
     versions: z.object({ electron: z.string(), chrome: z.string(), node: z.string() }).strict(),
     rpcProtocolVersion: z.literal(WEB_RPC_PROTOCOL_VERSION),
+    restrictedRpcChannels: z.array(z.string()).optional(),
     rpcChannels: z.array(z.string()).superRefine((channels, context) => {
       for (const channel of channels) {
         if (isWebRpcChannel(channel)) continue

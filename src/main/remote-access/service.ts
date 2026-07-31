@@ -73,7 +73,10 @@ export class RemoteAccessService {
   private remoteItBrowserServiceId: string | undefined
   private error: string | undefined
   private runtimeEnabled = false
+  private authorizationGeneration = 0
+  private webStopGeneration = 0
   private webController: WebServiceController | undefined
+  private detachWebController: (() => void) | undefined
   private mutationQueue: Promise<void> = Promise.resolve()
   private readonly log = createLogger('remote-access')
 
@@ -102,6 +105,7 @@ export class RemoteAccessService {
       isAllowedRemoteHost: (hostname) => context.service?.isAllowedRemoteHost(hostname) === true,
       isEnabled: () => context.service?.runtimeEnabled === true,
       requiresPairing: () => context.service?.requiresBrowserPairing() !== false,
+      authorizationGeneration: () => context.service?.authorizationGeneration ?? 0,
       onChanged: () => context.service?.notifyChanged()
     })
     const service = new RemoteAccessService(pairing, {
@@ -120,7 +124,17 @@ export class RemoteAccessService {
   }
 
   attachWebController(controller: WebServiceController): void {
+    this.detachWebController?.()
     this.webController = controller
+    this.detachWebController = controller.onStopped(() => {
+      this.webStopGeneration += 1
+      const shouldReportFailure = this.runtimeEnabled && this.activeMode !== 'off'
+      this.invalidateExternalAccess(false)
+      if (!shouldReportFailure) return
+      this.lifecycle = 'error'
+      this.error = 'The local web service stopped. Detect again to restore remote access.'
+      this.notifyChanged()
+    })
   }
 
   snapshot(canManage: boolean, canManagePairing = canManage): RemoteAccessSnapshot {
@@ -150,27 +164,21 @@ export class RemoteAccessService {
   }
 
   async detect(): Promise<RemoteAccessSnapshot> {
-    await this.refreshInstallation()
-
-    if (this.activeMode === 'off') {
-      this.runtimeEnabled = false
-      this.lifecycle = 'disabled'
-      this.remoteHost = undefined
-      this.accessUrl = undefined
-      this.error = undefined
+    try {
+      await this.refreshInstallation()
+      if (this.activeMode !== 'off') this.assertProviderReady()
+    } catch (error) {
+      this.invalidateExternalAccess()
+      this.lifecycle = 'error'
+      this.error = error instanceof Error ? error.message : String(error)
       this.notifyChanged()
       return this.snapshot(true)
     }
 
-    try {
-      this.assertProviderReady()
-    } catch (error) {
-      this.runtimeEnabled = false
-      this.lifecycle = 'error'
-      this.remoteHost = undefined
-      this.accessUrl = undefined
-      this.pairing.clearTransientAccess()
-      this.error = error instanceof Error ? error.message : String(error)
+    if (this.activeMode === 'off') {
+      this.invalidateExternalAccess()
+      this.lifecycle = 'disabled'
+      this.error = undefined
       this.notifyChanged()
       return this.snapshot(true)
     }
@@ -183,10 +191,8 @@ export class RemoteAccessService {
       routeNeedsRepair ||
       browserRouteNeedsRefresh
     ) {
-      this.runtimeEnabled = false
-      this.lifecycle = 'starting'
       return this.setMode(this.activeMode, {
-        forceReconcile: browserRouteNeedsRefresh
+        forceReconcile: routeNeedsRepair || browserRouteNeedsRefresh
       })
     }
 
@@ -213,12 +219,10 @@ export class RemoteAccessService {
       }
       if (mode === 'off') return this.stopActiveRoute(options.persistPreference !== false)
       if (!this.webController) throw new Error('Remote access is not initialized yet.')
+      const webStopGeneration = this.webStopGeneration
 
       this.lifecycle = 'starting'
-      this.runtimeEnabled = false
-      this.remoteHost = undefined
-      this.accessUrl = undefined
-      this.pairing.clearTransientAccess()
+      this.invalidateExternalAccess(this.runtimeEnabled)
       this.error = undefined
       this.notifyChanged()
 
@@ -240,8 +244,8 @@ export class RemoteAccessService {
         })
         this.remoteIt = enabled.installation
         await this.rememberRemoteItServiceIds(enabled)
-        // The App entry is always private, including when Browser access was initialized first.
-        // This cloud-only mutation does not need administrator approval.
+        // App is always private. App mode also closes Browser's Persistent Public URL so a link
+        // issued by an earlier Browser session cannot keep reaching the loopback service.
         await this.deps.disableRemoteItLink(binaryPath, enabled.appServiceId)
 
         if (mode === 'remoteit-public') {
@@ -253,11 +257,16 @@ export class RemoteAccessService {
           }
           this.accessUrl = connectLinkUrl
           this.remoteHost = new URL(connectLinkUrl).hostname.toLowerCase()
+        } else {
+          await this.deps.disableRemoteItLink(binaryPath, enabled.browserServiceId)
         }
 
+        if (options.persistPreference !== false) await this.pairing.setModePreference(mode)
+        if (webStopGeneration !== this.webStopGeneration || !this.webController.isRunning()) {
+          throw new Error('The local web service stopped. Detect again to restore remote access.')
+        }
         this.activeMode = mode
         this.runtimeEnabled = true
-        if (options.persistPreference !== false) await this.pairing.setModePreference(mode)
         this.lifecycle = 'running'
         this.log.info('Remote access enabled', {
           mode,
@@ -308,14 +317,15 @@ export class RemoteAccessService {
     canManage = true,
     canManagePairing = canManage
   ): Promise<RemoteAccessSnapshot> {
-    await this.pairing.revoke(browserId)
+    const revocation = this.pairing.revoke(browserId)
+    this.authorizationGeneration += 1
+    this.webController?.closeExternalConnections(browserId)
+    await revocation
     return this.snapshot(canManage, canManagePairing)
   }
 
   shutdown(): Promise<void> {
-    this.runtimeEnabled = false
-    this.remoteHost = undefined
-    this.pairing.clearTransientAccess()
+    this.invalidateExternalAccess()
     return Promise.resolve()
   }
 
@@ -323,11 +333,18 @@ export class RemoteAccessService {
     this.deps.broadcast(REMOTE_ACCESS_CHANGED_CHANNEL, {})
   }
 
-  private async stopActiveRoute(persistPreference: boolean): Promise<RemoteAccessSnapshot> {
-    this.lifecycle = 'stopping'
+  private invalidateExternalAccess(closeConnections = true): void {
+    this.authorizationGeneration += 1
     this.runtimeEnabled = false
     this.remoteHost = undefined
+    this.accessUrl = undefined
+    if (closeConnections) this.webController?.closeExternalConnections()
     this.pairing.clearTransientAccess()
+  }
+
+  private async stopActiveRoute(persistPreference: boolean): Promise<RemoteAccessSnapshot> {
+    this.lifecycle = 'stopping'
+    this.invalidateExternalAccess()
     this.notifyChanged()
 
     if (this.activeMode !== 'off') {
@@ -377,7 +394,18 @@ export class RemoteAccessService {
   }
 
   private isAllowedRemoteHost(hostname: string): boolean {
-    if (this.activeMode === 'remoteit') return isRemoteItAppHost(hostname)
+    if (this.activeMode === 'remoteit') {
+      const publicBrowserUrl = this.pairing.preferences.remoteItPublicUrl
+      let publicBrowserHost: string | undefined
+      try {
+        publicBrowserHost = publicBrowserUrl
+          ? new URL(publicBrowserUrl).hostname.toLowerCase()
+          : undefined
+      } catch {
+        // Older or manually edited preferences must not break private App access authorization.
+      }
+      return hostname !== publicBrowserHost && isRemoteItAppHost(hostname)
+    }
     return Boolean(this.remoteHost && hostname === this.remoteHost)
   }
 

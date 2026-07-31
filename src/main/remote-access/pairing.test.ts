@@ -62,7 +62,7 @@ const response = (): CapturedResponse => {
 const cookiePair = (header: string): string => header.split(';', 1)[0]
 
 describe('RemoteBrowserPairingManager', () => {
-  it('shows only a pairing page until the desktop grants one-time access', async () => {
+  it('grants one-time access without allowing the browser to manage pairing', async () => {
     const root = await mkdtemp(join(tmpdir(), 'open-science-remote-pairing-'))
     roots.push(root)
     const changed = vi.fn()
@@ -112,7 +112,7 @@ describe('RemoteBrowserPairingManager', () => {
         authorizedResponse.response,
         new URL('https://home.example.ts.net/api/bootstrap')
       )
-    ).resolves.toBe('authorized-pairing-manager')
+    ).resolves.toMatchObject({ kind: 'authorized' })
     expect(manager.trustedViews()).toHaveLength(0)
     expect(changed).toHaveBeenCalled()
   })
@@ -157,7 +157,7 @@ describe('RemoteBrowserPairingManager', () => {
         response().response,
         new URL('https://home.example.ts.net/rpc/remote-access%3Aget-snapshot')
       )
-    ).resolves.toBe('authorized-pairing-manager')
+    ).resolves.toMatchObject({ kind: 'authorized-pairing-manager' })
 
     await expect(
       manager.webAccess.authorizeHttp(
@@ -179,6 +179,72 @@ describe('RemoteBrowserPairingManager', () => {
     ).resolves.toBe('denied')
   })
 
+  it('rejects an authorization that finishes after remote access was disabled', async () => {
+    const root = await mkdtemp(join(tmpdir(), 'open-science-remote-pairing-'))
+    roots.push(root)
+    const repository = new RemoteAccessRepository(root)
+    let now = 0
+    let enabled = true
+    let authorizationGeneration = 0
+    const manager = await RemoteBrowserPairingManager.create({
+      repository,
+      isAllowedRemoteHost: (hostname) => hostname === 'home.example.ts.net',
+      isEnabled: () => enabled,
+      requiresPairing: () => true,
+      authorizationGeneration: () => authorizationGeneration,
+      onChanged: vi.fn(),
+      now: () => now
+    })
+    const firstResponse = response()
+    await manager.webAccess.authorizeHttp(
+      request('/'),
+      firstResponse.response,
+      new URL('https://home.example.ts.net/')
+    )
+    const pendingCookie = cookiePair(firstResponse.headers.get('set-cookie') as string)
+    await manager.approve(manager.pendingViews()[0].id, 'always')
+    const statusResponse = response()
+    await manager.webAccess.authorizeHttp(
+      request('/__open_science_remote/pair/status', { cookie: pendingCookie }),
+      statusResponse.response,
+      new URL('https://home.example.ts.net/__open_science_remote/pair/status')
+    )
+    const sessionCookie = cookiePair((statusResponse.headers.get('set-cookie') as string[])[0])
+    const httpAuthorization = await manager.webAccess.authorizeHttp(
+      request(
+        '/rpc/test',
+        { cookie: sessionCookie, origin: 'https://home.example.ts.net' },
+        'POST'
+      ),
+      response().response,
+      new URL('https://home.example.ts.net/rpc/test')
+    )
+    expect(httpAuthorization).toMatchObject({ kind: 'authorized-pairing-manager' })
+    if (typeof httpAuthorization !== 'object') throw new Error('Expected HTTP authorization.')
+    expect(httpAuthorization.isCurrent()).toBe(true)
+    now = 60_001
+    let releaseSave: (() => void) | undefined
+    const saveGate = new Promise<void>((resolve) => {
+      releaseSave = resolve
+    })
+    const save = vi.spyOn(repository, 'save').mockReturnValue(saveGate)
+
+    const authorization = manager.webAccess.authorizeWebSocket(
+      request('/events', {
+        cookie: sessionCookie,
+        origin: 'https://home.example.ts.net'
+      }),
+      new URL('https://home.example.ts.net/events')
+    )
+    await vi.waitFor(() => expect(save).toHaveBeenCalledOnce())
+    enabled = false
+    authorizationGeneration += 1
+    expect(httpAuthorization.isCurrent()).toBe(false)
+    releaseSave?.()
+
+    await expect(authorization).resolves.toBeUndefined()
+  })
+
   it('opens a provider-authenticated app connection without browser pairing', async () => {
     const root = await mkdtemp(join(tmpdir(), 'open-science-remote-pairing-'))
     roots.push(root)
@@ -197,7 +263,7 @@ describe('RemoteBrowserPairingManager', () => {
         directResponse.response,
         new URL('https://session-123.r3proxy.com/')
       )
-    ).resolves.toBe('authorized-pairing-manager')
+    ).resolves.toMatchObject({ kind: 'authorized-pairing-manager' })
     expect(directResponse.body()).toBe('')
     expect(manager.pendingViews()).toHaveLength(0)
 
@@ -231,7 +297,7 @@ describe('RemoteBrowserPairingManager', () => {
         }),
         new URL('https://session-123.r3proxy.com/events')
       )
-    ).resolves.toBe(true)
+    ).resolves.toEqual({})
     await expect(
       manager.webAccess.authorizeWebSocket(
         request('/events', {
@@ -240,6 +306,6 @@ describe('RemoteBrowserPairingManager', () => {
         }),
         new URL('https://session-123.r3proxy.com/events')
       )
-    ).resolves.toBe(false)
+    ).resolves.toBeUndefined()
   })
 })

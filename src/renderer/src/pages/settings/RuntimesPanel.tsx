@@ -216,11 +216,11 @@ const RuntimesPanel = ({ title, description }: RuntimesPanelProps): React.JSX.El
   }
 
   const addInterpreter = async (language: NotebookLanguage): Promise<void> => {
-    const path = await window.api.runtime.pickInterpreter()
-    if (!path) return
     setBusy(true)
     setError(null)
     try {
+      const path = await window.api.runtime.pickInterpreter()
+      if (!path) return
       // Add the picked path to the discovery catalog; it then surfaces as a (user-own) card once
       // discovery probes it. It starts DISABLED (user-own default) — the user enables it explicitly.
       await window.api.runtime.registerInterpreter(language, path)
