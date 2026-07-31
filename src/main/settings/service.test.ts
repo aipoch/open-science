@@ -2594,7 +2594,9 @@ describe('SettingsService: preflight & spawn config', () => {
       ...storedProvider,
       lastValidatedAt: Date.now()
     })
-    await service.setActiveProvider(provider.id, 'deepseek-v4-flash')
+    // deepseek-v4-pro does not yet support the native Responses API, so it drives the Chat Completions
+    // bridge (the test's whole purpose). deepseek-v4-flash would route to native Responses instead.
+    await service.setActiveProvider(provider.id, 'deepseek-v4-pro')
     await repository.setReasoningEffort('low')
 
     vi.stubEnv('OPEN_SCIENCE_AGENT_FRAMEWORK', 'codex')
@@ -3272,6 +3274,27 @@ describe('SettingsService: official vendors', () => {
     expect(body).toMatchObject({
       stream: true,
       tools: [{ type: 'function', function: { name: 'open_science_bridge_probe' } }]
+    })
+  })
+
+  it('probes DeepSeek flash through the native Responses route under Codex', async () => {
+    const service = createService()
+    await repository.setAgentFramework('codex')
+    const fetchMock = vi.fn().mockResolvedValue(validNativeCompatibilityToolCallResponse())
+    vi.stubGlobal('fetch', fetchMock)
+
+    const result = await service.validateProvider({
+      draft: { type: 'official', vendorId: 'deepseek', key: 'sk-ds', model: 'deepseek-v4-flash' }
+    })
+
+    expect(result).toMatchObject({ ok: true, category: 'ok' })
+    // deepseek-v4-flash supports the native Responses API, so the probe must hit /v1/responses with
+    // the namespace compatibility contract instead of the Chat Completions bridge.
+    expect(fetchMock.mock.calls[0][0]).toBe('https://api.deepseek.com/v1/responses')
+    expect(JSON.parse(String(fetchMock.mock.calls[0][1]?.body))).toMatchObject({
+      model: 'deepseek-v4-flash',
+      stream: true,
+      tools: [{ type: 'function', name: 'open_science__bridge_probe' }]
     })
   })
 

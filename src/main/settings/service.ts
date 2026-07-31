@@ -104,6 +104,7 @@ import {
   isModelBridgeSupported,
   isOfficialVendorId,
   isVendorModelMultimodal,
+  isVendorModelResponsesSupported,
   resolveCustomModelContextWindow,
   resolveModelContextWindow,
   resolveVendorApiEndpoints,
@@ -1685,7 +1686,7 @@ class SettingsService {
     // Resolve compatibility here where the vendor registry is available (official endpoints + the
     // static bridge-support marks) and pass the boolean into the pure preflight computation.
     const activeEndpoints = activeProvider
-      ? this.resolveProviderApiEndpoints(activeProvider)
+      ? this.resolveProviderApiEndpoints(activeProvider, activeProvider.model)
       : undefined
     const activeProviderCompatible = activeProvider
       ? isProviderUsableByFramework(
@@ -3626,7 +3627,7 @@ class SettingsService {
     if (
       !isProviderUsableByFramework(
         {
-          apiEndpoints: this.resolveProviderApiEndpoints(activeProvider),
+          apiEndpoints: this.resolveProviderApiEndpoints(activeProvider, effectiveModel),
           type: activeProvider.type
         },
         framework
@@ -3928,10 +3929,25 @@ class SettingsService {
   }
 
   // The chat APIs a provider speaks: official providers come from the registry, custom gateways from
-  // their stored/drafted endpoints, everything else defaults to Anthropic /v1/messages.
-  private resolveProviderApiEndpoints(provider: StoredProvider): ChatApiEndpoint[] {
+  // their stored/drafted endpoints, everything else defaults to Anthropic /v1/messages. For official
+  // vendors the set is model-aware: a vendor may serve the Responses protocol for a subset of its
+  // catalog (e.g. DeepSeek's deepseek-v4-flash), so 'responses' is injected only when the active model
+  // is in that subset. When no active model is supplied, the vendor default model is used so the
+  // resolved set always matches the model the session actually drives.
+  private resolveProviderApiEndpoints(
+    provider: StoredProvider,
+    activeModel?: string
+  ): ChatApiEndpoint[] {
     if (provider.type === 'official' && provider.vendorId) {
-      return resolveVendorApiEndpoints(provider.vendorId)
+      const vendorEndpoints = resolveVendorApiEndpoints(provider.vendorId)
+      const modelToCheck = activeModel ?? defaultVendorModel(provider.vendorId)
+      if (
+        !vendorEndpoints.includes('responses') &&
+        isVendorModelResponsesSupported(provider.vendorId, modelToCheck)
+      ) {
+        return [...vendorEndpoints, 'responses']
+      }
+      return vendorEndpoints
     }
 
     return provider.apiEndpoints && provider.apiEndpoints.length > 0
@@ -3951,7 +3967,7 @@ class SettingsService {
       type: provider.type,
       codexAuthMode: provider.codexAuthMode,
       name: provider.name,
-      apiEndpoints: this.resolveProviderApiEndpoints(provider),
+      apiEndpoints: this.resolveProviderApiEndpoints(provider, activeModel),
       baseUrl: provider.baseUrl,
       model: provider.model,
       contextWindow: provider.contextWindow,
@@ -4107,7 +4123,7 @@ class SettingsService {
         model,
         ...(contextWindow === undefined ? {} : { contextWindow }),
         key,
-        apiEndpoints: this.resolveProviderApiEndpoints(provider),
+        apiEndpoints: this.resolveProviderApiEndpoints(provider, model),
         supportsImageInput: this.providerSupportsImageInput(provider, modelOverride)
       }
     }
@@ -4127,7 +4143,7 @@ class SettingsService {
       model,
       ...(contextWindow === undefined ? {} : { contextWindow }),
       key,
-      apiEndpoints: this.resolveProviderApiEndpoints(provider),
+      apiEndpoints: this.resolveProviderApiEndpoints(provider, model),
       supportsImageInput: this.providerSupportsImageInput(provider, modelOverride),
       ...(provider.type === 'custom'
         ? { reasoningEffortTransport: provider.reasoningEffortTransport }
@@ -4139,15 +4155,24 @@ class SettingsService {
   // with the vendor's registry base URL + default model.
   private resolveDraft(draft: ProviderDraft): ResolvedProvider {
     if (draft.type === 'official' && isOfficialVendorId(draft.vendorId)) {
+      const draftModel = draft.model ?? defaultVendorModel(draft.vendorId)
+      const vendorEndpoints = resolveVendorApiEndpoints(draft.vendorId)
+      const draftEndpoints: ChatApiEndpoint[] =
+        !vendorEndpoints.includes('responses') &&
+        isVendorModelResponsesSupported(draft.vendorId, draftModel)
+          ? [...vendorEndpoints, 'responses']
+          : vendorEndpoints
       return {
         type: 'custom',
         vendorId: draft.vendorId,
         baseUrl: resolveVendorBaseUrl(draft.vendorId, draft.region),
         openaiBaseUrl: resolveVendorOpenAiBaseUrl(draft.vendorId, draft.region),
-        model: draft.model ?? defaultVendorModel(draft.vendorId),
+        model: draftModel,
         key: draft.key,
         // Official vendors declare their own endpoints; a custom draft carries the user's choice.
-        apiEndpoints: resolveVendorApiEndpoints(draft.vendorId)
+        // The set is model-aware so a vendor with per-model Responses support (e.g. DeepSeek flash)
+        // validates against the Responses route when the draft's model implements it.
+        apiEndpoints: draftEndpoints
       }
     }
 

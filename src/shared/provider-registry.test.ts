@@ -6,6 +6,7 @@ import {
   getOfficialVendor,
   isOfficialVendorId,
   isVendorModelMultimodal,
+  isVendorModelResponsesSupported,
   resolveCustomModelContextWindow,
   resolveModelContextWindow,
   resolveVendorApiEndpoints,
@@ -443,6 +444,36 @@ describe('provider registry', () => {
       expect(isVendorModelMultimodal('openrouter', 'somevendor/unknown-model')).toBe(false)
       // Kimi's list is k3-only; an unknown id is not vision-capable.
       expect(isVendorModelMultimodal('kimi', 'kimi-k9-imaginary')).toBe(false)
+    })
+  })
+
+  describe('isVendorModelResponsesSupported', () => {
+    it('returns true for every model of a vendor that declares responses in apiEndpoints', () => {
+      // xAI and MiniMax declare vendor-level 'responses', so their whole catalog supports it.
+      expect(isVendorModelResponsesSupported('xai', 'grok-4.5')).toBe(true)
+      expect(isVendorModelResponsesSupported('xai', 'grok-build-0.1')).toBe(true)
+      expect(isVendorModelResponsesSupported('minimax', 'MiniMax-M3')).toBe(true)
+      expect(isVendorModelResponsesSupported('volcengine', 'doubao-seed-2-1-pro-260628')).toBe(true)
+    })
+
+    it('returns true for DeepSeek flash only (per-model Responses support)', () => {
+      expect(isVendorModelResponsesSupported('deepseek', 'deepseek-v4-flash')).toBe(true)
+    })
+
+    it('returns false for DeepSeek models that do not yet implement Responses', () => {
+      expect(isVendorModelResponsesSupported('deepseek', 'deepseek-v4-pro')).toBe(false)
+      expect(isVendorModelResponsesSupported('deepseek', 'deepseek-v4-pro[1m]')).toBe(false)
+    })
+
+    it('returns false for vendors with no Responses support at all', () => {
+      expect(isVendorModelResponsesSupported('zhipu', 'glm-5.2')).toBe(false)
+      expect(isVendorModelResponsesSupported('kimi', 'kimi-k3')).toBe(false)
+      expect(isVendorModelResponsesSupported('anthropic', 'claude-opus-5')).toBe(false)
+    })
+
+    it('returns false for an undefined model id', () => {
+      expect(isVendorModelResponsesSupported('deepseek', undefined)).toBe(false)
+      expect(isVendorModelResponsesSupported('xai', undefined)).toBe(false)
     })
   })
 
