@@ -208,21 +208,6 @@ Provider vendors, available models, and regional endpoints can evolve independen
 
 Open Science stores project data, settings, artifact versions, and provenance evidence on the local computer. API Keys are kept locally and use the operating system's secure credential storage when it is available. Logs are local and are not uploaded automatically.
 
-### Downgrading safely
-
-Installing an older Open Science application does not downgrade data that a newer version has
-already written. To prepare a compatible, isolated copy for Open Science 0.7.3, quit the app and run:
-
-```bash
-open-science rollback-to-0.7.3 --yes
-```
-
-The command preserves the newer Config Root and data without rewriting them, converts the active
-Session branches into the 0.7.3 format, and activates a separate rollback Data Root. It does not
-require a backup made before the upgrade. Install and start 0.7.3 only after the command succeeds.
-See [the CLI downgrade guide](packages/open-science/CLI.md#rollback-to-073) for retained data,
-limitations, custom paths, and recovery locations.
-
 External data flow is still possible and should be reviewed:
 
 - Model requests send the prompt and necessary context to the selected model provider.
