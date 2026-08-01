@@ -1139,7 +1139,7 @@ export const useSettingsStore = create<SettingsStore>((set, get) => ({
     } catch (error) {
       finishSettingsWrite(set, writeToken, SETTINGS_WRITE_ERRORS.agentFramework)
       console.error('Failed to switch agent framework', error)
-      return
+      throw error
     }
 
     if (!isCurrentSettingsWrite(writeToken)) return

@@ -171,7 +171,13 @@ const AgentPanel = ({
         if (request.intentVersion !== onboardingUserIntentVersion.current) continue
 
         if (useSettingsStore.getState().agentFrameworkId !== request.target) {
-          await setAgentFramework(request.target)
+          try {
+            await setAgentFramework(request.target)
+          } catch {
+            // The store already records safe feedback. Do not inspect the still-selected old
+            // framework; continue only if a newer user intent was queued during the failed IPC.
+            continue
+          }
         }
 
         // If the user changed their mind during the IPC, immediately apply the newer queued target.
@@ -186,6 +192,9 @@ const AgentPanel = ({
 
   const queueOnboardingSwitch = useCallback(
     (target: AgentFrameworkId, intentVersion = onboardingUserIntentVersion.current): void => {
+      // Invalidate readiness immediately: until this switch is saved and checked, the previous
+      // framework's successful result must not leave onboarding's Continue gate enabled.
+      useSettingsStore.setState({ environmentCheck: undefined, environmentCheckError: undefined })
       onboardingPendingSwitch.current = { target, intentVersion }
       void drainOnboardingSwitches()
     },
@@ -219,6 +228,10 @@ const AgentPanel = ({
       await setAgentFramework(target)
       // Framework detection updates the cards; the full pass owns the Home repair alert.
       await checkEnvironment({ force: true })
+    } catch {
+      // The Settings-level alert owns the failure copy. Stopping here prevents a stale environment
+      // check and consumes the event-handler rejection after the store has recorded diagnostics.
+      return
     } finally {
       settingsSwitchInFlight.current = false
       setIsSwitching(false)

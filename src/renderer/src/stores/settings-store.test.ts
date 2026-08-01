@@ -1375,9 +1375,10 @@ describe('settings store: setAgentFramework', () => {
 
   it('keeps the previous framework and exposes a visible failure when main rejects', async () => {
     const consoleError = vi.spyOn(console, 'error').mockImplementation(() => undefined)
-    api.setAgentFramework.mockRejectedValue(new Error('ipc down'))
+    const ipcError = new Error('ipc down')
+    api.setAgentFramework.mockRejectedValue(ipcError)
 
-    await useSettingsStore.getState().setAgentFramework('opencode')
+    await expect(useSettingsStore.getState().setAgentFramework('opencode')).rejects.toBe(ipcError)
 
     expect(useSettingsStore.getState().agentFrameworkId).toBe('claude-code')
     expect(useSettingsStore.getState().settingsWriteError).toBe(

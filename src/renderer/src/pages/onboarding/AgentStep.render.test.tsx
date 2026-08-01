@@ -258,6 +258,42 @@ describe('AgentStep', () => {
     expect(checkEnvironment).toHaveBeenCalledOnce()
   })
 
+  it('does not refresh the old framework environment when a switch fails', async () => {
+    const setAgentFramework = vi.fn().mockRejectedValue(new Error('framework save failed'))
+    const checkEnvironment = vi.fn().mockResolvedValue(undefined)
+    useSettingsStore.setState({
+      agentFrameworkId: 'claude-code',
+      agentFrameworks: threeFrameworks,
+      claude: { resolvedPath: '/bin/claude', version: '2.1.0' },
+      codex: { resolvedPath: '/bin/codex-acp', version: '0.9.0' },
+      preflight: {
+        claudeReady: true,
+        opencodeReady: false,
+        codexReady: true,
+        agentFrameworkId: 'claude-code',
+        agentReady: true,
+        activeProviderReady: false
+      },
+      environmentCheck: environment(true),
+      setAgentFramework,
+      checkEnvironment
+    })
+
+    await renderStep()
+    await act(async () => {
+      container.querySelector<HTMLElement>('[aria-label="Use Codex"]')?.click()
+      await Promise.resolve()
+      await Promise.resolve()
+    })
+
+    expect(setAgentFramework).toHaveBeenCalledWith('codex')
+    expect(checkEnvironment).not.toHaveBeenCalled()
+    const continueButton = [...container.querySelectorAll('button')].find(
+      (button) => button.textContent === 'Continue'
+    )
+    expect(continueButton?.disabled).toBe(true)
+  })
+
   it('enables Continue only when the latest check passes for the selected framework', async () => {
     useSettingsStore.setState({
       agentFrameworks: twoFrameworks,
