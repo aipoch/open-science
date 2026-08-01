@@ -110,6 +110,7 @@ describe('pull request policy', () => {
       env: {
         ...process.env,
         EVENT_NAME: 'pull_request',
+        GITHUB_STEP_SUMMARY: '',
         POLICY_SCOPE: 'title',
         PR_TITLE: 'feat(ci): refresh pull request metadata'
       }
