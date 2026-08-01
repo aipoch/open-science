@@ -2,7 +2,7 @@ import { expect } from '@playwright/test'
 import type { AxeResults } from 'axe-core'
 import { readFile } from 'node:fs/promises'
 import { resolve } from 'node:path'
-import type { Locator, Page } from 'playwright'
+import type { Page } from 'playwright'
 import { test } from './fixtures/electron-app'
 
 const AXE_PATH = resolve(process.cwd(), 'node_modules/axe-core/axe.min.js')
@@ -15,34 +15,18 @@ type BlockingViolation = {
   nodes: Array<{ html: string; target: unknown }>
 }
 
-const expectNoBlockingViolations = async (
-  page: Page,
-  surface: string,
-  context?: Locator
-): Promise<void> => {
+const expectNoBlockingViolations = async (page: Page, surface: string): Promise<void> => {
   const axeSource = await readFile(AXE_PATH, 'utf8')
   await page.evaluate(axeSource)
-  const results = (
-    context
-      ? await context.evaluate(async (root, tags) => {
-          const axe = (
-            globalThis as unknown as {
-              axe: { run: (context: Element, options: unknown) => Promise<unknown> }
-            }
-          ).axe
+  const results = (await page.evaluate(async (tags) => {
+    const axe = (
+      globalThis as unknown as {
+        axe: { run: (context: Document, options: unknown) => Promise<unknown> }
+      }
+    ).axe
 
-          return axe.run(root, { runOnly: { type: 'tag', values: tags } })
-        }, WCAG_TAGS)
-      : await page.evaluate(async (tags) => {
-          const axe = (
-            globalThis as unknown as {
-              axe: { run: (context: Document, options: unknown) => Promise<unknown> }
-            }
-          ).axe
-
-          return axe.run(document, { runOnly: { type: 'tag', values: tags } })
-        }, WCAG_TAGS)
-  ) as AxeResults
+    return axe.run(document, { runOnly: { type: 'tag', values: tags } })
+  }, WCAG_TAGS)) as AxeResults
   const blocking = results.violations
     .filter((violation) => violation.impact === 'critical' || violation.impact === 'serious')
     .map<BlockingViolation>(({ id, impact, help, nodes }) => ({
@@ -115,10 +99,9 @@ test('has no blocking accessibility violations in permission and file preview st
   await composer.fill('Request fixture permission.')
   await page.getByRole('button', { name: 'Send message' }).click()
   await expect(page.getByText('Write fixture output', { exact: true })).toBeVisible()
-  const permissionCard = page.getByTestId('deny-button').locator('..').locator('..')
   await waitForFiniteAnimations(page)
   try {
-    await expectNoBlockingViolations(page, 'Permission request', permissionCard)
+    await expectNoBlockingViolations(page, 'Permission request')
   } finally {
     await page.getByRole('button', { name: 'Deny', exact: true }).click()
   }
@@ -141,5 +124,5 @@ test('has no blocking accessibility violations in permission and file preview st
   const preview = page.getByRole('dialog', { name: 'Preview accessible-preview.md' })
   await expect(preview).toBeVisible()
   await waitForFiniteAnimations(page)
-  await expectNoBlockingViolations(page, 'File preview dialog', preview)
+  await expectNoBlockingViolations(page, 'File preview dialog')
 })

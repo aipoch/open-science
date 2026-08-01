@@ -877,7 +877,7 @@ const WorkspaceMessageItem = ({
               {sentDate ? (
                 <div
                   data-slot="user-message-footer"
-                  className="mt-1 flex min-h-6 items-center justify-end text-[11px] leading-4 text-text-300 tabular-nums"
+                  className="mt-1 flex min-h-6 items-center justify-end text-[11px] leading-4 text-text-000/70 tabular-nums"
                 >
                   <MessageTimestamp label="Sent" date={sentDate} />
                 </div>
@@ -897,7 +897,7 @@ const WorkspaceMessageItem = ({
             {terminalDate || (terminalTimestamp !== undefined && hasTurnUsage) ? (
               <div
                 data-slot="assistant-message-footer"
-                className="mt-3 flex items-center gap-x-3 whitespace-nowrap text-[11px] leading-4 text-text-300 tabular-nums"
+                className="mt-3 flex items-center gap-x-3 whitespace-nowrap text-[11px] leading-4 text-text-000/70 tabular-nums"
               >
                 {terminalDate ? (
                   <MessageTimestamp label={terminalLabel} date={terminalDate} />

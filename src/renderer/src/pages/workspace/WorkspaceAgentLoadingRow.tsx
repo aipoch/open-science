@@ -56,7 +56,7 @@ const AgentLoadingIndicator = ({ sessionId }: WorkspaceAgentLoadingRowProps): Re
 
   return (
     <div className="flex min-h-5 flex-col gap-1" role="status" aria-live="polite">
-      <div className="flex items-center gap-2 text-xs text-text-300">
+      <div className="flex items-center gap-2 text-xs text-text-000/70">
         <span className="sr-only">Agent is responding</span>
         <AgentLoadingDots />
         {startedAt ? (
@@ -67,7 +67,7 @@ const AgentLoadingIndicator = ({ sessionId }: WorkspaceAgentLoadingRowProps): Re
         {slow ? <span aria-hidden="true">· taking longer than usual</span> : null}
       </div>
       {status ? (
-        <span className="truncate text-[11px] text-text-300/80" title={status}>
+        <span className="truncate text-[11px] text-text-000/70" title={status}>
           {status}
         </span>
       ) : null}

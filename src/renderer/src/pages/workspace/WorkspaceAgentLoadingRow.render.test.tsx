@@ -51,6 +51,9 @@ describe('WorkspaceAgentLoadingRow', () => {
 
     expect(container.textContent).toContain('0:05')
     expect(container.textContent).not.toContain('taking longer than usual')
+    const statusRow = container.querySelector('[role="status"] > div')
+    expect(statusRow?.classList.contains('text-text-000/70')).toBe(true)
+    expect(statusRow?.classList.contains('text-text-300')).toBe(false)
   })
 
   it('adds a "taking longer than usual" hint past the threshold', () => {
@@ -98,5 +101,8 @@ describe('WorkspaceAgentLoadingRow', () => {
     act(() => root.render(<AgentLoadingIndicator sessionId="s1" />))
 
     expect(container.textContent).toContain('retrying request…')
+    const statusLine = container.querySelector<HTMLElement>('[title="retrying request…"]')
+    expect(statusLine?.classList.contains('text-text-000/70')).toBe(true)
+    expect(statusLine?.classList.contains('text-text-300/80')).toBe(false)
   })
 })

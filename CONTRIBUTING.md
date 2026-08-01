@@ -46,6 +46,7 @@ Run installation, development, and validation commands from the repository root:
 | Target test | `npm test -- <affected-test-path> [-t '<test pattern>']`   |
 | UI E2E      | `npm run build:e2e`, then `npm run test:e2e`               |
 | UI journeys | `npm run build:e2e`, then `npm run test:e2e:journey`       |
+| Workspace   | `npm run build:e2e`, then `npm run test:e2e:workspace`     |
 | A11y        | `npm run build:e2e`, then `npm run test:e2e:accessibility` |
 | Visual      | `npm run build:e2e`, then `npm run test:e2e:visual`        |
 

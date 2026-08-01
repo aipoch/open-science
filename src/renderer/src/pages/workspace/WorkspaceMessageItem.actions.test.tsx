@@ -186,6 +186,8 @@ describe('WorkspaceMessageItem user message actions', () => {
     expect(sentTime?.textContent).toMatch(/^Sent /)
     expect(sentTime?.textContent).toMatch(/^Sent [A-Z][a-z]{2} \d{1,2}, \d{1,2}:\d{2} [AP]M$/)
     expect(sentTime?.getAttribute('datetime')).toBe('2024-03-09T16:00:00.000Z')
+    expect(footer.classList.contains('text-text-000/70')).toBe(true)
+    expect(footer.classList.contains('text-text-300')).toBe(false)
     expect(footer.querySelector('[aria-label="Message revision"]')).toBeNull()
     expect(actions.querySelector('[aria-label="Message revision"]')?.textContent).toBe('2/3')
     const copyButton = actions.querySelector('[aria-label="Copy message"]')
