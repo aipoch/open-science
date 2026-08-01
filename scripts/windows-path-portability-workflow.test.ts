@@ -94,6 +94,8 @@ describe('Windows path portability workflow', () => {
       'src/main/notebook/runtime-paths.test.ts',
       'src/main/session-persistence/conversation-export.test.ts',
       'src/main/session-persistence/data-path-roundtrip.test.ts',
+      'src/main/settings/notebook-runtime-settings.test.ts',
+      'src/main/settings/preferences.test.ts',
       'src/main/settings/shell-path.test.ts',
       'src/main/specialist/repository.test.ts',
       'src/main/storage/data-path.test.ts',

@@ -1,6 +1,6 @@
 import { mkdtemp, rm } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
-import { join } from 'node:path'
+import { join, resolve } from 'node:path'
 
 import { afterEach, describe, expect, it } from 'vitest'
 
@@ -35,9 +35,10 @@ describe('NotebookRuntimeSettingsModule', () => {
 
   it('persists and clears a runtime selection through the repository policy', async () => {
     const settings = await createModule()
+    const interpreterPath = resolve('/usr/bin/python3')
     const selection = {
       source: 'external' as const,
-      interpreterPath: '/usr/bin/python3',
+      interpreterPath,
       interpreterArgs: ['-I'],
       appOwnedOverlay: false,
       packageInstallAuthorized: true
@@ -58,35 +59,33 @@ describe('NotebookRuntimeSettingsModule', () => {
 
   it('keeps environment enablement and install authorization as separate choices', async () => {
     const settings = await createModule()
+    const interpreterPath = resolve('/usr/bin/python3')
 
-    await expect(
-      settings.setEnvironmentEnabled('python', '/usr/bin/python3', true)
-    ).resolves.toEqual({
-      enabled: { '/usr/bin/python3': true },
+    await expect(settings.setEnvironmentEnabled('python', interpreterPath, true)).resolves.toEqual({
+      enabled: { [interpreterPath]: true },
       installAuthorized: {}
     })
-    await expect(
-      settings.setInstallAuthorized('python', '/usr/bin/python3', false)
-    ).resolves.toEqual({
-      enabled: { '/usr/bin/python3': true },
-      installAuthorized: { '/usr/bin/python3': false }
+    await expect(settings.setInstallAuthorized('python', interpreterPath, false)).resolves.toEqual({
+      enabled: { [interpreterPath]: true },
+      installAuthorized: { [interpreterPath]: false }
     })
 
     const snapshot = await settings.getSnapshot('python')
-    snapshot.runtimeEnablement.enabled['/usr/bin/python3'] = false
+    snapshot.runtimeEnablement.enabled[interpreterPath] = false
     expect((await settings.getSnapshot('python')).runtimeEnablement).toEqual({
-      enabled: { '/usr/bin/python3': true },
-      installAuthorized: { '/usr/bin/python3': false }
+      enabled: { [interpreterPath]: true },
+      installAuthorized: { [interpreterPath]: false }
     })
   })
 
   it('preserves repository normalization for manual interpreters and package mirrors', async () => {
     const settings = await createModule()
+    const interpreterPath = resolve('/opt/python/bin/python3')
 
-    await settings.addManualInterpreter('python', '  /opt/python/bin/python3  ')
-    await expect(
-      settings.addManualInterpreter('python', '/opt/python/bin/python3')
-    ).resolves.toEqual(['/opt/python/bin/python3'])
+    await settings.addManualInterpreter('python', `  ${interpreterPath}  `)
+    await expect(settings.addManualInterpreter('python', interpreterPath)).resolves.toEqual([
+      interpreterPath
+    ])
     await expect(
       settings.setPackageMirror({
         condaChannel: ' https://mirror.example/conda ',
@@ -95,12 +94,10 @@ describe('NotebookRuntimeSettingsModule', () => {
     ).resolves.toEqual({ condaChannel: ' https://mirror.example/conda ' })
 
     const snapshot = await settings.getSnapshot('python')
-    expect(snapshot.manualInterpreters).toEqual(['/opt/python/bin/python3'])
+    expect(snapshot.manualInterpreters).toEqual([interpreterPath])
     expect(snapshot.packageMirror).toEqual({ condaChannel: ' https://mirror.example/conda ' })
 
-    await expect(
-      settings.removeManualInterpreter('python', '/opt/python/bin/python3')
-    ).resolves.toEqual([])
+    await expect(settings.removeManualInterpreter('python', interpreterPath)).resolves.toEqual([])
     await expect(settings.setPackageMirror({})).resolves.toEqual({})
   })
 })

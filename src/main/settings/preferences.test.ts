@@ -1,6 +1,6 @@
 import { mkdtemp, rm } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
-import { join } from 'node:path'
+import { join, resolve } from 'node:path'
 
 import { afterEach, describe, expect, it } from 'vitest'
 
@@ -36,13 +36,14 @@ describe('SettingsPreferencesModule', () => {
 
   it('persists scalar commands with the existing defaults and one-time markers', async () => {
     const { preferences, repository } = await createModule(2_000)
+    const dataRoot = resolve('/data/open-science')
 
     await preferences.setReasoningEffort('high')
     await preferences.setNotificationsEnabled(false)
     await preferences.setConversationSkillImportEnabled(false)
     await preferences.setClosePreference('quit')
     await preferences.setAppIconVariant('dark')
-    await preferences.setDataRoot('/data/open-science')
+    await preferences.setDataRoot(dataRoot)
     await preferences.markOnboardingComplete()
     await preferences.markPathsNormalized()
     await preferences.dismissLegacyDataMovePrompt()
@@ -51,7 +52,7 @@ describe('SettingsPreferencesModule', () => {
       onboardingCompletedAt: 2_000,
       pathsNormalizedAt: 2_000,
       legacyDataMovePromptDismissedAt: 2_000,
-      dataRoot: '/data/open-science',
+      dataRoot,
       reasoningEffort: 'high',
       notificationsEnabled: false,
       conversationSkillImportEnabled: false,
@@ -65,7 +66,7 @@ describe('SettingsPreferencesModule', () => {
       onboardingCompletedAt: 2_000,
       pathsNormalizedAt: 2_000,
       legacyDataMovePromptDismissedAt: 2_000,
-      dataRoot: '/data/open-science',
+      dataRoot,
       reasoningEffort: 'high',
       notificationsEnabled: false,
       conversationSkillImportEnabled: false,
