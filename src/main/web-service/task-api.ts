@@ -51,11 +51,12 @@ class HeadlessTaskApi {
     dependencies: Partial<TaskApiDependencies> = {}
   ) {
     const subscribeEvents = dependencies.subscribeEvents ?? (() => () => undefined)
+    // Compatibility removal target: A6/T2 replace these façade channel mappings with direct owner
+    // adapters while TaskRunner keeps the same narrow ports.
     this.runner = new TaskRunner({
       projects: {
         list: () => this.invoke('projects:list') as Promise<Project[]>,
-        create: (request) =>
-          this.invoke('projects:create', request) as Promise<Project>
+        create: (request) => this.invoke('projects:create', request) as Promise<Project>
       },
       sessions: {
         list: async () => {

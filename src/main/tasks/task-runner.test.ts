@@ -768,4 +768,53 @@ describe('TaskRunner', () => {
       ]
     })
   })
+
+  it('releases its runtime-event subscription when disposed', () => {
+    let unsubscribeCount = 0
+    const runner = createRunner({
+      runtimeEvents: {
+        subscribe: () => () => {
+          unsubscribeCount += 1
+        }
+      }
+    })
+
+    runner.dispose()
+
+    expect(unsubscribeCount).toBe(1)
+  })
+
+  it('retains at most 200 terminal runs while preserving current snapshots', async () => {
+    let idCounter = 0
+    let sessionCounter = 0
+    let time = 0
+    const runner = createRunner({
+      agent: {
+        listAttachedSessionIds: async () => [],
+        createSession: async () => ({ sessionId: `session-${++sessionCounter}` }),
+        resumeSession: async (request) => ({ sessionId: request.sessionId }),
+        setPermissionProfile: async () => undefined,
+        sendPrompt: async () => undefined
+      },
+      createId: () => `id-${++idCounter}`,
+      now: () => ++time
+    })
+    let firstRunId = ''
+    let latestRunId = ''
+
+    for (let index = 0; index < 201; index += 1) {
+      const started = await runner.startRun({
+        project: project.id,
+        prompt: `Research request ${index}`
+      })
+      if (index === 0) firstRunId = started.id
+      latestRunId = started.id
+      await runner.waitForRun(started.id)
+    }
+
+    expect(() => runner.getRun(firstRunId)).toThrow(
+      expect.objectContaining({ code: 'run_not_found' })
+    )
+    expect(runner.getRun(latestRunId)).toMatchObject({ status: 'completed' })
+  })
 })
