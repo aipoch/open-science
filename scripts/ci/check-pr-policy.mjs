@@ -26,17 +26,22 @@ const subjectPattern = new RegExp(
 export function checkPrPolicy({
   eventName,
   title,
-  commitSubjects,
-  commitMessages = commitSubjects
+  commitSubjects = [],
+  commitMessages = commitSubjects,
+  scope = 'all'
 }) {
   if (eventName !== 'pull_request') return { ok: true, violations: [] }
 
   const violations = []
-  if (!subjectPattern.test(title ?? '')) violations.push({ kind: 'title', subject: title ?? '' })
-  for (const [index, subject] of commitSubjects.entries()) {
-    if (!subjectPattern.test(subject)) violations.push({ kind: 'commit', subject })
-    if (/\)!:/.test(subject) && !/^BREAKING CHANGE:\s+\S.*$/m.test(commitMessages[index] ?? '')) {
-      violations.push({ kind: 'breaking-change-footer', subject })
+  if (scope !== 'commits' && !subjectPattern.test(title ?? '')) {
+    violations.push({ kind: 'title', subject: title ?? '' })
+  }
+  if (scope !== 'title') {
+    for (const [index, subject] of commitSubjects.entries()) {
+      if (!subjectPattern.test(subject)) violations.push({ kind: 'commit', subject })
+      if (/\)!:/.test(subject) && !/^BREAKING CHANGE:\s+\S.*$/m.test(commitMessages[index] ?? '')) {
+        violations.push({ kind: 'breaking-change-footer', subject })
+      }
     }
   }
 
@@ -79,10 +84,14 @@ ${violations}
 
 export function runPrPolicyCli(environment = process.env) {
   const eventName = environment.EVENT_NAME ?? ''
+  const scope = environment.POLICY_SCOPE ?? 'all'
+  if (!['all', 'commits', 'title'].includes(scope)) {
+    throw new Error('POLICY_SCOPE must be one of: all, commits, title')
+  }
   let commitSubjects = []
   let commitMessages = []
 
-  if (eventName === 'pull_request') {
+  if (eventName === 'pull_request' && scope !== 'title') {
     const base = requireCommit(environment.BASE_SHA, 'BASE_SHA')
     const head = requireCommit(environment.HEAD_SHA, 'HEAD_SHA')
     const commitHashes = execFileSync('git', ['log', '--format=%H', `${base}..${head}`], {
@@ -102,7 +111,8 @@ export function runPrPolicyCli(environment = process.env) {
     eventName,
     title: environment.PR_TITLE ?? '',
     commitSubjects,
-    commitMessages
+    commitMessages,
+    scope
   })
   const summary = formatPrPolicySummary(result)
   if (environment.GITHUB_STEP_SUMMARY) appendFileSync(environment.GITHUB_STEP_SUMMARY, summary)

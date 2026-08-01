@@ -42,7 +42,10 @@ const step = (name: string): Step => {
 
 describe('CI Integrity workflow', () => {
   it('runs the stable trusted check for pull requests and merge groups', () => {
-    expect(workflow.on).toHaveProperty('pull_request_target')
+    expect(workflow.on?.pull_request_target).toEqual({
+      branches: ['main'],
+      types: ['opened', 'edited', 'synchronize', 'reopened', 'ready_for_review']
+    })
     expect(workflow.on).toHaveProperty('merge_group')
     expect(workflow.permissions).toEqual({ contents: 'read' })
     expect(workflow.concurrency).toEqual({
@@ -84,5 +87,17 @@ describe('CI Integrity workflow', () => {
     expect(step('Inspect CI-sensitive changes').run).toBe(
       'node scripts/ci/check-ci-integrity.mjs --base "$BASE_SHA" --head "$HEAD_SHA"'
     )
+  })
+
+  it('revalidates PR metadata with the trusted base policy instead of restarting PR Gate', () => {
+    expect(step('Validate pull request metadata')).toMatchObject({
+      env: {
+        EVENT_NAME:
+          "${{ github.event_name == 'pull_request_target' && 'pull_request' || github.event_name }}",
+        PR_TITLE: '${{ github.event.pull_request.title }}',
+        POLICY_SCOPE: 'title'
+      },
+      run: 'node scripts/ci/check-pr-policy.mjs'
+    })
   })
 })

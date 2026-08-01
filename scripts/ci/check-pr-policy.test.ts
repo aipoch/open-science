@@ -84,6 +84,41 @@ describe('pull request policy', () => {
     ])
   })
 
+  it('can validate editable title policy separately from immutable commit policy', () => {
+    expect(
+      checkPrPolicy({
+        eventName: 'pull_request',
+        scope: 'title',
+        title: 'Improve CI',
+        commitSubjects: ['missing conventional format']
+      }).violations
+    ).toEqual([{ kind: 'title', subject: 'Improve CI' }])
+
+    expect(
+      checkPrPolicy({
+        eventName: 'pull_request',
+        scope: 'commits',
+        title: 'Improve CI',
+        commitSubjects: ['missing conventional format']
+      }).violations
+    ).toEqual([{ kind: 'commit', subject: 'missing conventional format' }])
+  })
+
+  it('validates a title-only CLI run without requiring Git revisions', () => {
+    const result = spawnSync(process.execPath, [resolve('scripts/ci/check-pr-policy.mjs')], {
+      encoding: 'utf8',
+      env: {
+        ...process.env,
+        EVENT_NAME: 'pull_request',
+        POLICY_SCOPE: 'title',
+        PR_TITLE: 'feat(ci): refresh pull request metadata'
+      }
+    })
+
+    expect(result.status, result.stderr).toBe(0)
+    expect(result.stdout).toContain('Result: **pass**')
+  })
+
   it('rejects a breaking commit without the required footer', () => {
     const result = checkPrPolicy({
       eventName: 'pull_request',

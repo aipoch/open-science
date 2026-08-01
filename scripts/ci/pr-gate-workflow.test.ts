@@ -46,14 +46,7 @@ describe('PR Gate workflow', () => {
   it('always emits the same gate without workflow-level path exclusions', () => {
     expect(workflow.on?.pull_request).toEqual({
       branches: ['main'],
-      types: [
-        'opened',
-        'edited',
-        'synchronize',
-        'reopened',
-        'ready_for_review',
-        'converted_to_draft'
-      ]
+      types: ['opened', 'synchronize', 'reopened', 'ready_for_review', 'converted_to_draft']
     })
     expect(workflow.on?.pull_request?.['paths-ignore']).toBeUndefined()
     expect(workflow.on?.merge_group).toEqual({ types: ['checks_requested'] })
@@ -94,6 +87,20 @@ describe('PR Gate workflow', () => {
     })
     expect(gate.steps?.at(-1)?.run).toBe('node scripts/ci/evaluate-pr-gate.mjs')
     expect(workflowText).not.toMatch(/needs:.*(?:ai|codex|review)/i)
+  })
+
+  it('validates commit policy without coupling the gate to editable PR metadata', () => {
+    const policy = workflow.jobs.policy.steps?.find(
+      ({ name }) => name === 'Validate pull request policy'
+    )
+
+    expect(policy?.env).toEqual({
+      BASE_SHA: '${{ github.event.pull_request.base.sha || github.event.merge_group.base_sha }}',
+      EVENT_NAME: '${{ github.event_name }}',
+      HEAD_SHA:
+        '${{ github.event.pull_request.head.sha || github.event.merge_group.head_sha || github.sha }}',
+      POLICY_SCOPE: 'commits'
+    })
   })
 
   it('pins every third-party action to an immutable commit', () => {

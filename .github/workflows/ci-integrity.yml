@@ -3,7 +3,7 @@ name: CI Integrity
 on:
   pull_request_target:
     branches: [main]
-    types: [opened, synchronize, reopened, ready_for_review]
+    types: [opened, edited, synchronize, reopened, ready_for_review]
   merge_group:
     types: [checks_requested]
 
@@ -74,6 +74,13 @@ jobs:
 
           echo "base=$base_sha" >> "$GITHUB_OUTPUT"
           echo "head=$head_sha" >> "$GITHUB_OUTPUT"
+
+      - name: Validate pull request metadata
+        env:
+          EVENT_NAME: ${{ github.event_name == 'pull_request_target' && 'pull_request' || github.event_name }}
+          PR_TITLE: ${{ github.event.pull_request.title }}
+          POLICY_SCOPE: title
+        run: node scripts/ci/check-pr-policy.mjs
 
       - name: Inspect CI-sensitive changes
         env:
