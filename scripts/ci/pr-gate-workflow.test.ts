@@ -113,9 +113,13 @@ describe('PR Gate workflow', () => {
   })
 
   it('checks only changed files for formatting', () => {
+    const docsCheckout = workflow.jobs.docs.steps?.find(({ name }) => name === 'Checkout')
+    const formatCheckout = workflow.jobs.format.steps?.find(({ name }) => name === 'Checkout')
     const docs = workflow.jobs.docs.steps?.find(({ name }) => name === 'Check Markdown formatting')
     const format = workflow.jobs.format.steps?.find(({ name }) => name === 'Check formatting')
 
+    expect(docsCheckout?.with?.['fetch-depth']).toBe(0)
+    expect(formatCheckout?.with?.['fetch-depth']).toBe(0)
     expect(docs).toMatchObject({
       env: {
         BASE_SHA: '${{ needs.preflight.outputs.base }}',
