@@ -95,6 +95,41 @@ describe('createIpcHandlerRegistry', () => {
     ).resolves.toBe(false)
   })
 
+  it('does not leak authority between concurrent calls from the same Web client', async () => {
+    const registry = createIpcHandlerRegistry({ handle: vi.fn() } as never)
+    let resumeFirst!: () => void
+    const firstPaused = new Promise<void>((resolve) => {
+      resumeFirst = resolve
+    })
+    registry.ipcMainHandle(
+      'remote-access:get-snapshot',
+      async (event: unknown, request: { pause?: boolean }) => {
+        if (request.pause) await firstPaused
+        return (
+          event as { sender: { callerContext: { authorities: readonly string[] } } }
+        ).sender.callerContext.authorities.includes('manage-remote-pairing')
+      }
+    )
+
+    const trusted = registry.webRpc.invoke(
+      'remote-access:get-snapshot',
+      createWebCallerContext('browser-1', {
+        location: 'remote',
+        authorities: ['manage-remote-pairing']
+      }),
+      [{ pause: true }]
+    )
+    await expect(
+      registry.webRpc.invoke(
+        'remote-access:get-snapshot',
+        createWebCallerContext('browser-1', { location: 'remote' }),
+        [{}]
+      )
+    ).resolves.toBe(false)
+    resumeFirst()
+    await expect(trusted).resolves.toBe(true)
+  })
+
   it('rejects a caller whose authorization became stale before dispatch', async () => {
     const registry = createIpcHandlerRegistry({ handle: vi.fn() } as never)
     const handler = vi.fn()

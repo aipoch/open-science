@@ -174,7 +174,11 @@ describe('startWebHttpServer', () => {
     const socket = new WebSocket(`ws://127.0.0.1:${server.port}/events?client=test-client`, {
       headers: { cookie, origin: base }
     })
+    const secondSocket = new WebSocket(`ws://127.0.0.1:${server.port}/events?client=test-client`, {
+      headers: { cookie, origin: base }
+    })
     await new Promise<void>((resolve) => socket.once('open', resolve))
+    await new Promise<void>((resolve) => secondSocket.once('open', resolve))
     const message = new Promise<string>((resolve) =>
       socket.once('message', (data) => resolve(data.toString()))
     )
@@ -187,7 +191,14 @@ describe('startWebHttpServer', () => {
     const socketClosed = new Promise<void>((resolve) => socket.once('close', () => resolve()))
     socket.close()
     await socketClosed
+    expect(rpc.releaseClient).not.toHaveBeenCalled()
+    const secondSocketClosed = new Promise<void>((resolve) =>
+      secondSocket.once('close', () => resolve())
+    )
+    secondSocket.close()
+    await secondSocketClosed
     await vi.waitFor(() => expect(rpc.releaseClient).toHaveBeenCalledWith('test-client'))
+    expect(rpc.releaseClient).toHaveBeenCalledTimes(1)
 
     await new Promise<void>((resolve, reject) => {
       const unauthenticatedSocket = new WebSocket(`ws://127.0.0.1:${server.port}/api/v1/events`)
