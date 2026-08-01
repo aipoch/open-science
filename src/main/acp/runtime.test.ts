@@ -6900,6 +6900,65 @@ describe('ACP runtime session management', () => {
     expect(fakeAgent.prompts).toEqual([{ sessionId: 'adopted-session-1', text: 'keep going' }])
   })
 
+  it('adopts a fresh Codex session when an app-facing id is not a valid Codex UUID', async () => {
+    const process = new FakeAgentProcess()
+    const fakeAgent = startFakeAgent(process, ['019fb8c8-6c66-7f22-9653-17b5b287dbbb'], {
+      modes: createModes(['read-only', 'agent', 'agent-full-access'], 'agent'),
+      resumeInternalErrorDetails:
+        'invalid session id: invalid character: expected an optional prefix of `urn:uuid:` followed by [0-9a-fA-F-], found `s` at 1'
+    })
+    const runtime = new AcpRuntime({
+      appVersion: '0.1.0',
+      defaultCwd: '/workspace',
+      spawnAgent: () => asAgentProcess(process),
+      framework: codexFramework
+    })
+
+    await expect(
+      runtime.resumeSession({
+        sessionId: 'ses_0458258b7ffeH2DeqPYBPk6fh2',
+        cwd: '/workspace',
+        previousFrameworkId: 'codex'
+      })
+    ).resolves.toMatchObject({
+      sessionId: 'ses_0458258b7ffeH2DeqPYBPk6fh2',
+      contextReset: true
+    })
+    expect(fakeAgent.resumedSessions).toEqual([])
+    expect(fakeAgent.newSessions).toHaveLength(1)
+  })
+
+  it.each([
+    '019fb8c8-6c66-7f22-9653-17b5b287dbbb',
+    'urn:uuid:019fb8c8-6c66-7f22-9653-17b5b287dbbb'
+  ])('resumes a valid Codex protocol session id: %s', async (sessionId) => {
+    const process = new FakeAgentProcess()
+    const fakeAgent = startFakeAgent(process, [], {
+      modes: createModes(['read-only', 'agent', 'agent-full-access'], 'agent')
+    })
+    const runtime = new AcpRuntime({
+      appVersion: '0.1.0',
+      defaultCwd: '/workspace',
+      spawnAgent: () => asAgentProcess(process),
+      framework: codexFramework
+    })
+
+    await expect(
+      runtime.resumeSession({
+        sessionId,
+        cwd: '/workspace',
+        previousFrameworkId: 'codex'
+      })
+    ).resolves.toMatchObject({ sessionId })
+    expect(fakeAgent.resumedSessions).toEqual([
+      expect.objectContaining({
+        sessionId,
+        cwd: '/workspace'
+      })
+    ])
+    expect(fakeAgent.newSessions).toEqual([])
+  })
+
   it('adopts a fresh session from a language-independent session-loss reason', async () => {
     const process = new FakeAgentProcess()
     const fakeAgent = startFakeAgent(process, ['adopted-session-1'], {

@@ -640,6 +640,9 @@ const isUnresumableSessionErrorKind = (errorKind: unknown): boolean =>
       .replace(/^_|_$/g, '')
   )
 
+const isCodexProtocolSessionId = (sessionId: string): boolean =>
+  /^(?:urn:uuid:)?[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(sessionId)
+
 // Legacy agents may expose only an English diagnostic. Keep this fallback deliberately narrow: a
 // false positive silently resets agent-side context, while a false negative leaves the real error
 // visible and can be fixed by teaching the backend to emit a machine-readable errorKind.
@@ -2041,6 +2044,17 @@ class AcpRuntime {
         toBackend: this.backendId
       })
 
+      return this.adoptFreshSession(connection, request, sessionCwd, projectName)
+    }
+
+    // A conversation adopted from another framework keeps its app-facing id. After restart the
+    // in-memory agent-id mapping is gone, and Codex cannot parse non-UUID ids such as OpenCode's
+    // `ses_...` form. The resume call is guaranteed to fail, so adopt a fresh Codex session directly
+    // and let the caller replay the visible transcript under the stable app id.
+    if (this.framework.id === 'codex' && !isCodexProtocolSessionId(request.sessionId)) {
+      log.info('skipping invalid Codex session resume; adopting a fresh session', {
+        sessionId: request.sessionId
+      })
       return this.adoptFreshSession(connection, request, sessionCwd, projectName)
     }
 
