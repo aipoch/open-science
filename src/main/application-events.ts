@@ -1,0 +1,153 @@
+import type { AcpPermissionRequest, AcpRuntimeEvent, AcpStateSnapshot } from '../shared/acp'
+import type { ComputeApprovalRequest, JobSummary } from '../shared/compute'
+import type { DownloadProgress } from '../shared/download-progress'
+import type {
+  Project,
+  ProjectDeletedEvent,
+  SessionDeletedEvent,
+  SessionUpsertEvent
+} from '../shared/lifecycle-events'
+import type { NotebookAvailableEvent, NotebookChangedEvent } from '../shared/notebook'
+import type { PermissionGrantsChangedEvent } from '../shared/permission-grants'
+import type { ProjectFilesChangedEvent } from '../shared/project-files'
+import type {
+  ReviewSessionRequest,
+  ReviewSuppressionEvent,
+  ReviewUpdateEvent
+} from '../shared/reviewer'
+import type {
+  ClaudeInstallEvent,
+  ConnectorApprovalRequest,
+  ConversationSkillImportApprovalRequest
+} from '../shared/settings'
+import type { PendingSwitchBroadcast } from '../shared/specialist'
+import type { MigrationProgress } from '../shared/storage'
+import type { UpdateStatus } from '../shared/update'
+
+// This catalog describes only events that already flow through renderer-broadcast. Window-only
+// signals and generated Web-only channels stay on their existing transports until their owner moves
+// them deliberately.
+export type ApplicationEventMap = {
+  'acp:state': AcpStateSnapshot
+  'acp:event': AcpRuntimeEvent
+  'acp:permission-request': AcpPermissionRequest
+  'notebook:available': NotebookAvailableEvent
+  'notebook:changed': NotebookChangedEvent
+  'project:created': Project
+  'project:updated': Project
+  'project:deleted': ProjectDeletedEvent
+  'session:created': SessionUpsertEvent
+  'session:updated': SessionUpsertEvent
+  'session:deleted': SessionDeletedEvent
+  'project-files:changed': ProjectFilesChangedEvent
+  'permissions:changed': PermissionGrantsChangedEvent
+  'connectors:approval-request': ConnectorApprovalRequest
+  'skills:conversation-import-request': ConversationSkillImportApprovalRequest
+  'skills:conversation-import-settled': string
+  'compute:approval-request': ComputeApprovalRequest
+  'compute:job-updated': JobSummary
+  'specialist:catalog-changed': undefined
+  'specialist:pending-switch': PendingSwitchBroadcast
+  'settings:install-log': ClaudeInstallEvent
+  'storage:migrate-progress': MigrationProgress
+  'reviewer:updated': ReviewUpdateEvent
+  'reviewer:suppress-next-auto-review': ReviewSuppressionEvent
+  'reviewer:fix-loop-start': ReviewSessionRequest
+  'reviewer:fix-loop-end': ReviewSessionRequest
+  'remote-access:changed': Record<string, never>
+  'update:status': UpdateStatus
+  'update:progress': DownloadProgress
+}
+
+export type ApplicationEventChannel = keyof ApplicationEventMap
+
+export type ApplicationEvent<Channel extends ApplicationEventChannel = ApplicationEventChannel> = {
+  [CurrentChannel in Channel]: Readonly<{
+    channel: CurrentChannel
+    payload: ApplicationEventMap[CurrentChannel]
+  }>
+}[Channel]
+
+export type ApplicationEventListener = (event: ApplicationEvent) => void
+
+export type ApplicationEventPublisher = {
+  publish<Channel extends ApplicationEventChannel>(
+    channel: Channel,
+    payload: ApplicationEventMap[Channel]
+  ): void
+}
+
+export type ApplicationEventSource = {
+  subscribe(listener: ApplicationEventListener): () => void
+}
+
+export type ApplicationEvents = ApplicationEventPublisher & ApplicationEventSource
+
+export type ApplicationEventInstaller = (events: ApplicationEvents) => () => void
+
+export type ApplicationEventModule = {
+  name: 'application-events'
+  capability: ApplicationEvents
+  start(): void
+  rollback(): void
+  dispose(): void
+}
+
+// Owns in-process publication order and subscription lifetime. It deliberately knows nothing about
+// Electron, WebSocket serialization, public allowlists, or durable state.
+export class ApplicationEventHub implements ApplicationEvents {
+  private readonly listeners = new Set<ApplicationEventListener>()
+  private disposed = false
+
+  publish<Channel extends ApplicationEventChannel>(
+    channel: Channel,
+    payload: ApplicationEventMap[Channel]
+  ): void {
+    if (this.disposed) return
+    const event = Object.freeze({ channel, payload }) as ApplicationEvent
+
+    // Iterate the live Set deliberately. The compatibility broadcaster used the same semantics:
+    // removing a not-yet-called listener skips it in the active publication, and listener failures
+    // stop later delivery and propagate to the publisher.
+    for (const listener of this.listeners) listener(event)
+  }
+
+  subscribe(listener: ApplicationEventListener): () => void {
+    if (this.disposed) return () => undefined
+    this.listeners.add(listener)
+
+    return () => {
+      this.listeners.delete(listener)
+    }
+  }
+
+  dispose(): void {
+    if (this.disposed) return
+    this.disposed = true
+    this.listeners.clear()
+  }
+}
+
+// The runtime registers this module first, so reverse disposal keeps publication and every
+// projection alive while later-owned backends emit their final shutdown events.
+export const createApplicationEventModule = (
+  install: ApplicationEventInstaller
+): ApplicationEventModule => {
+  const hub = new ApplicationEventHub()
+  let uninstall: (() => void) | undefined
+  const dispose = (): void => {
+    uninstall?.()
+    uninstall = undefined
+    hub.dispose()
+  }
+
+  return {
+    name: 'application-events',
+    capability: hub,
+    start: () => {
+      uninstall = install(hub)
+    },
+    rollback: dispose,
+    dispose
+  }
+}
