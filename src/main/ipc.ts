@@ -6,7 +6,7 @@ import { app, BrowserWindow, net, Notification, protocol, webContents } from 'el
 import { ipcMainHandle } from './ipc-handler-registry'
 import {
   APPLICATION_MODULE_DISPOSAL_BUDGET_MS,
-  composeApplicationRuntime,
+  composeApplicationRuntimeWithAdapters,
   type ApplicationModuleBuilder
 } from './application-runtime'
 
@@ -1142,20 +1142,11 @@ const createApplicationModules = async (
   }
 }
 
-// Installs transports only after every named application module has been constructed successfully.
-// Future application-only modules (including an orchestrator) do not need an Electron adapter entry.
-const installElectronAdapters = async (
-  interfaces: Pick<ApplicationModuleInterfaces, 'electronAdapters'>
-): Promise<void> => {
-  await installElectronRuntimeAdapters(interfaces.electronAdapters)
-}
-
 const registerIpcHandlers = async (options: IpcRegistrationOptions): Promise<IpcRegistration> => {
-  const applicationRuntime = await composeApplicationRuntime(async (modules) => {
-    const { electronAdapters, ...interfaces } = await createApplicationModules(options, modules)
-    await installElectronAdapters({ electronAdapters })
-    return interfaces
-  })
+  const applicationRuntime = await composeApplicationRuntimeWithAdapters(
+    (modules) => createApplicationModules(options, modules),
+    installElectronRuntimeAdapters
+  )
   return {
     ...applicationRuntime.interfaces,
     dispose: applicationRuntime.dispose

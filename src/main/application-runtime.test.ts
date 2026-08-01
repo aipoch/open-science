@@ -2,6 +2,7 @@ import { describe, expect, it, vi } from 'vitest'
 
 import {
   composeApplicationRuntime,
+  composeApplicationRuntimeWithAdapters,
   shutdownApplicationSurfaces,
   withApplicationRuntimeShutdown
 } from './application-runtime'
@@ -196,6 +197,38 @@ describe('application runtime composition', () => {
       vi.useRealTimers()
     }
   })
+
+  it('installs adapters from the completed production composition before exposing interfaces', async () => {
+    const order: string[] = []
+    const adapterInterfaces = { compute: {}, acp: {} }
+
+    const runtime = await composeApplicationRuntimeWithAdapters(
+      async (modules) => {
+        const capability = await modules.add({}, () => ({
+          name: 'runtime',
+          capability: { ready: true },
+          start: () => {
+            order.push('start')
+          },
+          dispose: () => {
+            order.push('dispose')
+          }
+        }))
+        order.push('created')
+        return { capability, electronAdapters: adapterInterfaces }
+      },
+      (adapters) => {
+        expect(adapters).toBe(adapterInterfaces)
+        order.push('install')
+      }
+    )
+
+    expect(runtime.interfaces).toEqual({ capability: { ready: true } })
+    expect(order).toEqual(['start', 'created', 'install'])
+
+    await runtime.dispose()
+    expect(order).toEqual(['start', 'created', 'install', 'dispose'])
+  })
 })
 
 describe('application surface shutdown', () => {
@@ -249,7 +282,7 @@ describe('application surface shutdown', () => {
     ).resolves.toBeUndefined()
 
     expect(log.error).toHaveBeenCalledWith(
-      'application runtime disposal failed during application shutdown',
+      'application runtime disposal failed during application shutdown: Error: backend shutdown failed',
       failure
     )
     expect(shutdownRemoteAccess).toHaveBeenCalledOnce()

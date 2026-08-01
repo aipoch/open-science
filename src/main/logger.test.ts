@@ -1,4 +1,4 @@
-import { mkdtemp, readdir, rm } from 'node:fs/promises'
+import { mkdtemp, readFile, readdir, rm } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 
@@ -12,6 +12,10 @@ import {
   formatLine,
   initLogger
 } from './logger'
+import {
+  ApplicationModuleDisposalTimeoutError,
+  shutdownApplicationSurfaces
+} from './application-runtime'
 
 let logDir: string | undefined
 
@@ -930,6 +934,40 @@ describe('logger: errorLogFields', () => {
     expect(fixed.data.error).toBe('x')
     expect(typeof fixed.data.stack).toBe('string')
     expect(fixed.data.framework).toBe('claude-code')
+  })
+})
+
+describe('logger: application shutdown diagnostics', () => {
+  it('persists every aggregate cause with the timed-out module name and budget', async () => {
+    logDir = await mkdtemp(join(tmpdir(), 'os-logger-shutdown-'))
+    initLogger({ logDir, fileName: 'main.log', mirrorToConsole: false })
+    const log = createLogger('shutdown')
+
+    await shutdownApplicationSurfaces({
+      disposeApplicationRuntime: () =>
+        Promise.reject(
+          new AggregateError([
+            new ApplicationModuleDisposalTimeoutError('mcp-client-manager', 1000),
+            new Error('compute poller stop failed')
+          ])
+        ),
+      shutdownRemoteAccess: () => undefined,
+      closeWebController: () => undefined,
+      disposeWebRpc: () => undefined,
+      log
+    })
+    await flushLogs()
+
+    const records = (await readFile(join(logDir, 'main.log'), 'utf8'))
+      .trim()
+      .split('\n')
+      .map((line) => JSON.parse(line) as { msg: string })
+
+    expect(records.map((record) => record.msg)).toEqual([
+      expect.stringContaining('mcp-client-manager'),
+      expect.stringContaining('compute poller stop failed')
+    ])
+    expect(records[0].msg).toContain('1000ms')
   })
 })
 

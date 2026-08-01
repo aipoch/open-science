@@ -64,11 +64,22 @@ export const shutdownApplicationSurfaces = async ({
   disposeWebRpc,
   log
 }: ApplicationSurfaceShutdown): Promise<void> => {
+  const flattenErrors = (error: unknown): unknown[] =>
+    error instanceof AggregateError ? error.errors.flatMap(flattenErrors) : [error]
+  const describeError = (error: unknown): string =>
+    error instanceof Error ? `${error.name}: ${error.message}` : String(error)
   const dispose = async (name: string, operation: () => Awaitable<void>): Promise<void> => {
     try {
       await operation()
     } catch (error) {
-      log?.error(`${name} disposal failed during application shutdown`, error)
+      for (const cause of flattenErrors(error)) {
+        // Put the cause summary in the top-level message: the production logger intentionally serializes
+        // an Error as name/message/stack and does not retain AggregateError.errors or custom properties.
+        log?.error(
+          `${name} disposal failed during application shutdown: ${describeError(cause)}`,
+          cause
+        )
+      }
     }
   }
 
@@ -208,3 +219,17 @@ export const composeApplicationRuntime = async <Interfaces>(
     throw error
   }
 }
+
+export const composeApplicationRuntimeWithAdapters = async <Interfaces extends object, Adapters>(
+  createModules: (
+    modules: ApplicationModuleBuilder
+  ) => Awaitable<Interfaces & { electronAdapters: Adapters }>,
+  installAdapters: (adapters: Adapters) => Awaitable<void>
+): Promise<ApplicationRuntime<Interfaces>> =>
+  composeApplicationRuntime(async (modules) => {
+    const built = await createModules(modules)
+    await installAdapters(built.electronAdapters)
+    const { electronAdapters: _electronAdapters, ...interfaces } = built
+    void _electronAdapters
+    return interfaces as Interfaces
+  })
