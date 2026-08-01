@@ -4,6 +4,16 @@ import { defineConfig, configDefaults } from 'vitest/config'
 const testRoot = resolve('.')
 const sharedInstallRoot = basename(dirname(testRoot)) === '.worktree' ? resolve('../..') : testRoot
 
+const VITEST_EXCLUDE_PATTERNS = [
+  ...configDefaults.exclude,
+  'e2e/**',
+  '**/.claude/**',
+  '**/.pnpm-store/**',
+  '**/tmp/**',
+  '**/.worktrees/**',
+  '**/.worktree/**'
+]
+
 // Mirrors the renderer alias from electron.vite.config.ts so tests that mount real component
 // trees (instead of mocking every aliased import) can resolve '@/...' without a build step.
 export default defineConfig({
@@ -38,7 +48,7 @@ export default defineConfig({
     // often stale) suites during local runs. Playwright owns e2e/; Vitest must not execute those specs
     // in its Node workers. .worktree is the project-standard root; .claude remains excluded for
     // existing local checkouts.
-    exclude: [...configDefaults.exclude, 'e2e/**', '**/.claude/**', '**/.worktree/**'],
+    exclude: VITEST_EXCLUDE_PATTERNS,
     // Lift the 5s default: the full coverage run instruments 4400+ tests across parallel workers on a
     // shared CI runner, so a fast fully-mocked test can still be CPU-starved past 5s and time out
     // spuriously. 15s absorbs that contention without masking a genuine hang (real work is far slower).
@@ -84,3 +94,5 @@ export default defineConfig({
     }
   }
 })
+
+export { VITEST_EXCLUDE_PATTERNS }
