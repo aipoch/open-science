@@ -616,8 +616,21 @@ type SettingsWriteFailure = {
   message: string
 }
 
+type OptimisticSettingsWriteKey =
+  'reasoningEffort' | 'notifications' | 'conversationSkillImport' | 'closePreference' | 'appIcon'
+
+type OptimisticSettingsWriteState<T> = {
+  confirmedValue: T
+  pendingCount: number
+}
+
 const settingsWriteGenerations = new Map<SettingsWriteKey, number>()
 const settingsWriteFailures = new Map<SettingsWriteKey, SettingsWriteFailure>()
+const settingsWriteQueues = new Map<OptimisticSettingsWriteKey, Promise<unknown>>()
+const optimisticSettingsWriteStates = new Map<
+  OptimisticSettingsWriteKey,
+  OptimisticSettingsWriteState<unknown>
+>()
 let settingsWriteFailureId = 0
 
 const currentSettingsWriteError = (): string | undefined => {
@@ -646,6 +659,58 @@ const beginSettingsWrite = (key: SettingsWriteKey): SettingsWriteToken => {
 
 const isCurrentSettingsWrite = (token: SettingsWriteToken): boolean =>
   settingsWriteGenerations.get(token.key) === token.generation
+
+// Preserve click order for one optimistic preference while unrelated preferences still write in
+// parallel. This makes the last confirmed value deterministic even when users change one control
+// repeatedly before its previous IPC round trip finishes.
+const runOptimisticSettingsWrite = async <T>(
+  key: OptimisticSettingsWriteKey,
+  write: () => Promise<T>
+): Promise<T> => {
+  const previous = settingsWriteQueues.get(key)
+  const current = previous ? previous.catch(() => undefined).then(write) : write()
+  settingsWriteQueues.set(key, current)
+
+  try {
+    return await current
+  } finally {
+    if (settingsWriteQueues.get(key) === current) settingsWriteQueues.delete(key)
+  }
+}
+
+const beginOptimisticSettingsWrite = <T>(
+  key: OptimisticSettingsWriteKey,
+  confirmedValue: T
+): { writeToken: SettingsWriteToken; optimisticState: OptimisticSettingsWriteState<T> } => {
+  let optimisticState = optimisticSettingsWriteStates.get(key) as
+    OptimisticSettingsWriteState<T> | undefined
+
+  if (!optimisticState) {
+    optimisticState = { confirmedValue, pendingCount: 0 }
+    optimisticSettingsWriteStates.set(key, optimisticState as OptimisticSettingsWriteState<unknown>)
+  }
+  optimisticState.pendingCount += 1
+
+  return { writeToken: beginSettingsWrite(key), optimisticState }
+}
+
+const completeOptimisticSettingsWrite = <T>(
+  key: OptimisticSettingsWriteKey,
+  optimisticState: OptimisticSettingsWriteState<T>,
+  confirmedValue?: { value: T }
+): T => {
+  if (confirmedValue) optimisticState.confirmedValue = confirmedValue.value
+  optimisticState.pendingCount -= 1
+
+  if (
+    optimisticState.pendingCount === 0 &&
+    optimisticSettingsWriteStates.get(key) === optimisticState
+  ) {
+    optimisticSettingsWriteStates.delete(key)
+  }
+
+  return optimisticState.confirmedValue
+}
 
 const finishSettingsWrite = (
   set: StoreApi<SettingsStore>['setState'],
@@ -1103,17 +1168,26 @@ export const useSettingsStore = create<SettingsStore>((set, get) => ({
   // trip includes that reconnect, which is too slow to gate the selector on — apply the pick
   // optimistically, reconcile from the returned snapshot, and revert if the write fails.
   setReasoningEffort: async (effort) => {
-    const writeToken = beginSettingsWrite('reasoningEffort')
     const previous = get().reasoningEffort
+    const { writeToken, optimisticState } = beginOptimisticSettingsWrite(
+      'reasoningEffort',
+      previous
+    )
     set({ reasoningEffort: effort })
 
     try {
-      const snapshot = await window.api.settings.setReasoningEffort({ effort })
+      const snapshot = await runOptimisticSettingsWrite('reasoningEffort', () =>
+        window.api.settings.setReasoningEffort({ effort })
+      )
+      completeOptimisticSettingsWrite('reasoningEffort', optimisticState, {
+        value: snapshot.reasoningEffort
+      })
       if (!isCurrentSettingsWrite(writeToken)) return
       set(applySnapshot(snapshot))
       finishSettingsWrite(set, writeToken)
     } catch (error) {
-      if (isCurrentSettingsWrite(writeToken)) set({ reasoningEffort: previous })
+      const confirmedValue = completeOptimisticSettingsWrite('reasoningEffort', optimisticState)
+      if (isCurrentSettingsWrite(writeToken)) set({ reasoningEffort: confirmedValue })
       finishSettingsWrite(set, writeToken, SETTINGS_WRITE_ERRORS.reasoningEffort)
       console.error('Failed to set reasoning effort', error)
     }
@@ -1122,51 +1196,80 @@ export const useSettingsStore = create<SettingsStore>((set, get) => ({
   // Toggles desktop notifications. Optimistic like the other preference setters: apply the pick,
   // reconcile from the returned snapshot, and revert if the write fails.
   setNotificationsEnabled: async (enabled) => {
-    const writeToken = beginSettingsWrite('notifications')
     const previous = get().notificationsEnabled
+    const { writeToken, optimisticState } = beginOptimisticSettingsWrite('notifications', previous)
     set({ notificationsEnabled: enabled })
 
     try {
-      const snapshot = await window.api.settings.setNotificationsEnabled({ enabled })
+      const snapshot = await runOptimisticSettingsWrite('notifications', () =>
+        window.api.settings.setNotificationsEnabled({ enabled })
+      )
+      completeOptimisticSettingsWrite('notifications', optimisticState, {
+        value: snapshot.notificationsEnabled
+      })
       if (!isCurrentSettingsWrite(writeToken)) return
       set(applySnapshot(snapshot))
       finishSettingsWrite(set, writeToken)
     } catch (error) {
-      if (isCurrentSettingsWrite(writeToken)) set({ notificationsEnabled: previous })
+      const confirmedValue = completeOptimisticSettingsWrite('notifications', optimisticState)
+      if (isCurrentSettingsWrite(writeToken)) set({ notificationsEnabled: confirmedValue })
       finishSettingsWrite(set, writeToken, SETTINGS_WRITE_ERRORS.notifications)
       console.error('Failed to set notifications enabled', error)
     }
   },
 
   setConversationSkillImportEnabled: async (enabled) => {
-    const writeToken = beginSettingsWrite('conversationSkillImport')
     const previous = get().conversationSkillImportEnabled
+    const { writeToken, optimisticState } = beginOptimisticSettingsWrite(
+      'conversationSkillImport',
+      previous
+    )
     set({ conversationSkillImportEnabled: enabled })
 
     try {
-      const snapshot = await window.api.settings.setConversationSkillImportEnabled({ enabled })
+      const snapshot = await runOptimisticSettingsWrite('conversationSkillImport', () =>
+        window.api.settings.setConversationSkillImportEnabled({ enabled })
+      )
+      completeOptimisticSettingsWrite('conversationSkillImport', optimisticState, {
+        value: snapshot.conversationSkillImportEnabled
+      })
       if (!isCurrentSettingsWrite(writeToken)) return
       set(applySnapshot(snapshot))
       finishSettingsWrite(set, writeToken)
     } catch (error) {
-      if (isCurrentSettingsWrite(writeToken)) set({ conversationSkillImportEnabled: previous })
+      const confirmedValue = completeOptimisticSettingsWrite(
+        'conversationSkillImport',
+        optimisticState
+      )
+      if (isCurrentSettingsWrite(writeToken)) {
+        set({ conversationSkillImportEnabled: confirmedValue })
+      }
       finishSettingsWrite(set, writeToken, SETTINGS_WRITE_ERRORS.conversationSkillImport)
       console.error('Failed to set conversation Skill import enabled', error)
     }
   },
 
   setClosePreference: async (preference) => {
-    const writeToken = beginSettingsWrite('closePreference')
     const previous = get().closePreference
+    const { writeToken, optimisticState } = beginOptimisticSettingsWrite(
+      'closePreference',
+      previous
+    )
     set({ closePreference: preference })
 
     try {
-      const snapshot = await window.api.settings.setClosePreference({ preference })
+      const snapshot = await runOptimisticSettingsWrite('closePreference', () =>
+        window.api.settings.setClosePreference({ preference })
+      )
+      completeOptimisticSettingsWrite('closePreference', optimisticState, {
+        value: snapshot.closePreference
+      })
       if (!isCurrentSettingsWrite(writeToken)) return
       set(applySnapshot(snapshot))
       finishSettingsWrite(set, writeToken)
     } catch (error) {
-      if (isCurrentSettingsWrite(writeToken)) set({ closePreference: previous })
+      const confirmedValue = completeOptimisticSettingsWrite('closePreference', optimisticState)
+      if (isCurrentSettingsWrite(writeToken)) set({ closePreference: confirmedValue })
       finishSettingsWrite(set, writeToken, SETTINGS_WRITE_ERRORS.closePreference)
       console.error('Failed to set close preference', error)
     }
@@ -1175,17 +1278,23 @@ export const useSettingsStore = create<SettingsStore>((set, get) => ({
   // Sets the app-icon look. Optimistic like the other preference setters: apply the pick, reconcile
   // from the returned snapshot, and revert if the write fails.
   setAppIconVariant: async (variant) => {
-    const writeToken = beginSettingsWrite('appIcon')
     const previous = get().appIconVariant
+    const { writeToken, optimisticState } = beginOptimisticSettingsWrite('appIcon', previous)
     set({ appIconVariant: variant })
 
     try {
-      const snapshot = await window.api.settings.setAppIconVariant({ variant })
+      const snapshot = await runOptimisticSettingsWrite('appIcon', () =>
+        window.api.settings.setAppIconVariant({ variant })
+      )
+      completeOptimisticSettingsWrite('appIcon', optimisticState, {
+        value: snapshot.appIconVariant
+      })
       if (!isCurrentSettingsWrite(writeToken)) return
       set(applySnapshot(snapshot))
       finishSettingsWrite(set, writeToken)
     } catch (error) {
-      if (isCurrentSettingsWrite(writeToken)) set({ appIconVariant: previous })
+      const confirmedValue = completeOptimisticSettingsWrite('appIcon', optimisticState)
+      if (isCurrentSettingsWrite(writeToken)) set({ appIconVariant: confirmedValue })
       finishSettingsWrite(set, writeToken, SETTINGS_WRITE_ERRORS.appIcon)
       console.error('Failed to set app icon variant', error)
     }

@@ -1671,24 +1671,51 @@ describe('settings store: setReasoningEffort', () => {
 
   it('ignores a stale failure from an older write to the same preference', async () => {
     vi.spyOn(console, 'error').mockImplementation(() => undefined)
-    let rejectOlder: (reason?: unknown) => void = () => undefined
     api.setReasoningEffort
-      .mockImplementationOnce(
-        () =>
-          new Promise<SettingsSnapshot>((_resolve, reject) => {
-            rejectOlder = reject
-          })
-      )
+      .mockRejectedValueOnce(new Error('stale failure'))
       .mockResolvedValueOnce({ ...snapshot([]), reasoningEffort: 'max' })
 
     const olderWrite = useSettingsStore.getState().setReasoningEffort('high')
-    await useSettingsStore.getState().setReasoningEffort('max')
+    const newerWrite = useSettingsStore.getState().setReasoningEffort('max')
 
-    rejectOlder(new Error('stale failure'))
-    await olderWrite
+    await Promise.all([olderWrite, newerWrite])
 
     expect(useSettingsStore.getState().reasoningEffort).toBe('max')
     expect(useSettingsStore.getState().settingsWriteError).toBeUndefined()
+  })
+
+  it('restores the confirmed value when concurrent writes to the same preference both fail', async () => {
+    vi.spyOn(console, 'error').mockImplementation(() => undefined)
+    api.setReasoningEffort
+      .mockRejectedValueOnce(new Error('older failure'))
+      .mockRejectedValueOnce(new Error('newer failure'))
+
+    const olderWrite = useSettingsStore.getState().setReasoningEffort('high')
+    const newerWrite = useSettingsStore.getState().setReasoningEffort('max')
+
+    await Promise.all([olderWrite, newerWrite])
+
+    expect(useSettingsStore.getState().reasoningEffort).toBe('default')
+    expect(useSettingsStore.getState().settingsWriteError).toBe(
+      'Could not save reasoning effort. Try again.'
+    )
+  })
+
+  it('restores the last successful value when a queued newer write fails', async () => {
+    vi.spyOn(console, 'error').mockImplementation(() => undefined)
+    api.setReasoningEffort
+      .mockResolvedValueOnce({ ...snapshot([]), reasoningEffort: 'high' })
+      .mockRejectedValueOnce(new Error('newer failure'))
+
+    const olderWrite = useSettingsStore.getState().setReasoningEffort('high')
+    const newerWrite = useSettingsStore.getState().setReasoningEffort('max')
+
+    await Promise.all([olderWrite, newerWrite])
+
+    expect(useSettingsStore.getState().reasoningEffort).toBe('high')
+    expect(useSettingsStore.getState().settingsWriteError).toBe(
+      'Could not save reasoning effort. Try again.'
+    )
   })
 
   it('reverts to the previous level and exposes a visible failure when main rejects', async () => {
