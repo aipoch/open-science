@@ -352,4 +352,30 @@ describe('session persistence IPC handlers', () => {
     ).rejects.toBe(failure)
     expect(broadcastLifecycleEvent).not.toHaveBeenCalled()
   })
+
+  it('publishes a lifecycle event only after the durable Session transition is readable', async () => {
+    const session = createSession()
+    let durableReadable = false
+    const repository: SessionPersistenceBackend = {
+      loadAll: vi.fn().mockResolvedValue({ sessions: [], manifest: { version: 1 as const } }),
+      saveSession: vi.fn(async () => {
+        durableReadable = true
+        return { created: true, session }
+      }),
+      deleteSession: vi.fn().mockResolvedValue(undefined),
+      saveManifest: vi.fn().mockResolvedValue(undefined)
+    }
+    broadcastLifecycleEvent.mockImplementationOnce(() => {
+      expect(durableReadable).toBe(true)
+    })
+    registerSessionPersistenceIpcHandlers(repository, createMockReviewRepository())
+
+    await ipcHandlers.get('sessions:save-session')?.(
+      { sender: { id: 1, lifecycleClientId: 'electron:origin' } },
+      session
+    )
+
+    expect(repository.saveSession).toHaveBeenCalledOnce()
+    expect(broadcastLifecycleEvent).toHaveBeenCalledOnce()
+  })
 })
