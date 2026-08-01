@@ -44,6 +44,7 @@ Run installation, development, and validation commands from the repository root:
 | Run         | `npm run dev`                                            |
 | Validate    | `npm run typecheck`, `npm run lint`, and `npm test`      |
 | Target test | `npm test -- <affected-test-path> [-t '<test pattern>']` |
+| UI E2E      | `npm run build:e2e`, then `npm run test:e2e`             |
 
 Create Git worktrees only under the repository's `.worktree/<name>` directory, with each change
 branch based on the default branch. Do not remove or move another worktree.

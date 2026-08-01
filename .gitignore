@@ -11,6 +11,8 @@ release/
 
 # Test coverage reports
 coverage/
+playwright-report/
+test-results/
 *.asar
 *.blockmap
 

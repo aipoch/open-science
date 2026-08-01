@@ -35,9 +35,10 @@ export default defineConfig({
     setupFiles: ['./test/setup-dotenv.ts', './test/setup-jsdom-polyfills.ts'],
     // Keep vitest's defaults (node_modules, dist, .git, ...) and also ignore git worktrees — those hold
     // full source + node_modules copies that would otherwise be discovered and run as duplicate (and
-    // often stale) suites during local runs. .worktree is the project-standard root; .claude remains
-    // excluded for existing local checkouts.
-    exclude: [...configDefaults.exclude, '**/.claude/**', '**/.worktree/**'],
+    // often stale) suites during local runs. Playwright owns e2e/; Vitest must not execute those specs
+    // in its Node workers. .worktree is the project-standard root; .claude remains excluded for
+    // existing local checkouts.
+    exclude: [...configDefaults.exclude, 'e2e/**', '**/.claude/**', '**/.worktree/**'],
     // Lift the 5s default: the full coverage run instruments 4400+ tests across parallel workers on a
     // shared CI runner, so a fast fully-mocked test can still be CPU-starved past 5s and time out
     // spuriously. 15s absorbs that contention without masking a genuine hang (real work is far slower).

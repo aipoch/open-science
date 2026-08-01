@@ -142,3 +142,41 @@ jobs:
       - name: Audit dependencies (advisory)
         if: matrix.os == 'macos-14'
         run: npm audit --audit-level=high || true
+
+  # Exercise the real desktop boundary independently from the Vitest matrix. This job runs in
+  # parallel with verify and launches BrowserWindow -> preload -> renderer -> IPC against isolated
+  # storage, so a UI failure does not wait behind the three-platform unit-test matrix.
+  electron_e2e:
+    name: Electron UI E2E (macOS)
+    runs-on: macos-14
+    timeout-minutes: 15
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v7
+
+      - name: Setup Node
+        uses: actions/setup-node@v7
+        with:
+          node-version: 22
+          cache: npm
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Build Electron application
+        run: npm run build:e2e
+
+      - name: Run Electron UI E2E
+        run: npm run test:e2e
+
+      - name: Upload Electron UI E2E failure artifacts
+        if: failure()
+        uses: actions/upload-artifact@v7
+        with:
+          name: electron-ui-e2e-failure
+          path: |
+            playwright-report/
+            test-results/
+          retention-days: 5
+          if-no-files-found: warn
