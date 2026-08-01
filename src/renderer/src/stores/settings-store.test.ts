@@ -867,6 +867,22 @@ describe('settings store: provider/model selection', () => {
 
     expect(useSettingsStore.getState().settingsWriteError).toBeUndefined()
   })
+
+  it('records a safe write error and preserves rejection semantics when activation fails', async () => {
+    const consoleError = vi.spyOn(console, 'error').mockImplementation(() => undefined)
+    const ipcError = new Error('/Users/example/.open-science/settings.json is unavailable')
+    api.setActiveProvider.mockRejectedValueOnce(ipcError)
+
+    await expect(useSettingsStore.getState().setActiveProvider('p1', 'glm-4.7')).rejects.toBe(
+      ipcError
+    )
+
+    expect(useSettingsStore.getState().settingsWriteError).toBe(
+      'Could not switch active provider or model. Try again.'
+    )
+    expect(useSettingsStore.getState().settingsWriteError).not.toContain('/Users/example')
+    expect(consoleError).toHaveBeenCalledWith('Failed to set active provider', ipcError)
+  })
 })
 
 describe('selectProviderModelOptions', () => {

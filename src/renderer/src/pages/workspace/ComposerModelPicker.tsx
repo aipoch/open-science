@@ -375,7 +375,11 @@ const ComposerModelPicker = (): React.JSX.Element | null => {
                         <MenuRadioItem
                           key={`${option.providerId}:${option.model}`}
                           checked={isActive}
-                          onSelect={() => void setActiveProvider(option.providerId, option.model)}
+                          onSelect={() =>
+                            void setActiveProvider(option.providerId, option.model).catch(
+                              () => undefined
+                            )
+                          }
                           leading={
                             <ProviderKindIcon
                               kindKey={providerKindKey(option.providerType, option.vendorId)}

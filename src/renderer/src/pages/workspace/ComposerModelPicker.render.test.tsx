@@ -201,7 +201,7 @@ describe('ComposerModelPicker', () => {
     // keyboard-unreachable), keep it unselectable, and still offer a way out to Settings. The reason
     // row now lives inside the "Model" submenu; "Open Settings" stays on the first level.
     const openSettings = vi.fn()
-    const setActiveProvider = vi.fn()
+    const setActiveProvider = vi.fn().mockResolvedValue(undefined)
     useSettingsStore.setState({
       agentFrameworkId: 'claude-code',
       agentFrameworks: [
@@ -618,7 +618,7 @@ describe('ComposerModelPicker', () => {
   })
 
   it('keeps the grouped provider catalog in the Model submenu and switches on pick', async () => {
-    const setActiveProvider = vi.fn()
+    const setActiveProvider = vi.fn().mockResolvedValue(undefined)
     useSettingsStore.setState({
       providers: [
         provider({

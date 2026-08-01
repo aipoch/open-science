@@ -594,6 +594,7 @@ const reportSettingsLoadError = (error: unknown): void => {
 
 // Visible copy stays stable and path-safe; raw IPC failures remain in the console for diagnostics.
 const SETTINGS_WRITE_ERRORS = {
+  activeProvider: 'Could not switch active provider or model. Try again.',
   agentFramework: 'Could not switch agent framework. Try again.',
   reasoningEffort: 'Could not save reasoning effort. Try again.',
   notifications: 'Could not save notification preference. Try again.',
@@ -602,7 +603,7 @@ const SETTINGS_WRITE_ERRORS = {
   appIcon: 'Could not save app icon preference. Try again.'
 } as const
 
-type SettingsWriteKey = keyof typeof SETTINGS_WRITE_ERRORS | 'activeProvider'
+type SettingsWriteKey = keyof typeof SETTINGS_WRITE_ERRORS
 
 type SettingsWriteToken = {
   key: SettingsWriteKey
@@ -1044,10 +1045,17 @@ export const useSettingsStore = create<SettingsStore>((set, get) => ({
   // An empty model string is treated as "no specific model" so main uses the provider default.
   setActiveProvider: async (providerId, model) => {
     const writeToken = beginSettingsWrite('activeProvider')
-    const snapshot = await window.api.settings.setActiveProvider({
-      id: providerId,
-      model: model || undefined
-    })
+    let snapshot: SettingsSnapshot
+    try {
+      snapshot = await window.api.settings.setActiveProvider({
+        id: providerId,
+        model: model || undefined
+      })
+    } catch (error) {
+      finishSettingsWrite(set, writeToken, SETTINGS_WRITE_ERRORS.activeProvider)
+      console.error('Failed to set active provider', error)
+      throw error
+    }
 
     if (!isCurrentSettingsWrite(writeToken)) return
     set(applySnapshot(snapshot))

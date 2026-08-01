@@ -67,7 +67,7 @@ const ActiveModelSelect = (): React.JSX.Element | null => {
       value={current ? `${current.providerId}${SEP}${current.model}` : undefined}
       onValueChange={(value) => {
         const [providerId, model] = value.split(SEP)
-        void setActiveProvider(providerId, model)
+        void setActiveProvider(providerId, model).catch(() => undefined)
       }}
     >
       <SelectTrigger aria-label="Active model">
