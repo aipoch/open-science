@@ -1,0 +1,120 @@
+import { readFileSync } from 'node:fs'
+import { join } from 'node:path'
+
+import { load } from 'js-yaml'
+import { describe, expect, it } from 'vitest'
+
+type Step = {
+  env?: Record<string, string>
+  id?: string
+  if?: string
+  name?: string
+  run?: string
+  uses?: string
+  with?: Record<string, unknown>
+}
+
+type Job = {
+  env?: Record<string, string>
+  if?: string
+  name?: string
+  needs?: string | string[]
+  outputs?: Record<string, string>
+  'runs-on'?: string
+  steps?: Step[]
+  'timeout-minutes'?: number
+}
+
+type Workflow = {
+  concurrency?: { 'cancel-in-progress'?: boolean; group?: string }
+  jobs: Record<string, Job>
+  on?: {
+    merge_group?: { types?: string[] }
+    pull_request?: { branches?: string[]; 'paths-ignore'?: string[]; types?: string[] }
+    workflow_dispatch?: unknown
+  }
+  permissions?: Record<string, string>
+}
+
+const workflowText = readFileSync(join(process.cwd(), '.github/workflows/pr-gate.yml'), 'utf8')
+const workflow = load(workflowText) as Workflow
+const manifest = JSON.parse(
+  readFileSync(join(process.cwd(), 'scripts/ci/change-impact.json'), 'utf8')
+) as { laneOrder: string[] }
+
+describe('PR Gate workflow', () => {
+  it('always emits the same gate without workflow-level path exclusions', () => {
+    expect(workflow.on?.pull_request).toEqual({
+      branches: ['main'],
+      types: ['opened', 'synchronize', 'reopened', 'ready_for_review', 'converted_to_draft']
+    })
+    expect(workflow.on?.pull_request?.['paths-ignore']).toBeUndefined()
+    expect(workflow.on?.merge_group).toEqual({ types: ['checks_requested'] })
+    expect(workflow.on).toHaveProperty('workflow_dispatch')
+    expect(workflow.permissions).toEqual({ contents: 'read', 'pull-requests': 'read' })
+    expect(workflow.concurrency).toEqual({
+      group:
+        'pr-gate-${{ github.event.pull_request.number || github.event.merge_group.head_ref || github.ref }}',
+      'cancel-in-progress': true
+    })
+  })
+
+  it('fans every declared lane out directly from preflight', () => {
+    expect(workflow.jobs.preflight.outputs).toEqual({
+      base: '${{ steps.revisions.outputs.base }}',
+      head: '${{ steps.revisions.outputs.head }}',
+      lanes: '${{ steps.classify.outputs.lanes }}',
+      plan: '${{ steps.classify.outputs.plan }}'
+    })
+
+    for (const lane of manifest.laneOrder) {
+      expect(workflow.jobs[lane], `missing job for ${lane}`).toBeDefined()
+      expect(workflow.jobs[lane].needs).toBe('preflight')
+      expect(workflow.jobs[lane].if).toContain("needs.preflight.result == 'success'")
+      expect(workflow.jobs[lane].if).toContain(`'${lane}'`)
+    }
+  })
+
+  it('aggregates all deterministic lanes into the stable PR Gate job', () => {
+    const gate = workflow.jobs.gate
+
+    expect(gate.name).toBe('PR Gate')
+    expect(gate.if).toBe('${{ always() }}')
+    expect(gate.needs).toEqual(['preflight', ...manifest.laneOrder])
+    expect(gate.env).toEqual({
+      PR_GATE_NEEDS: '${{ toJSON(needs) }}',
+      PR_GATE_PLAN: '${{ needs.preflight.outputs.plan }}'
+    })
+    expect(gate.steps?.at(-1)?.run).toBe('node scripts/ci/evaluate-pr-gate.mjs')
+    expect(workflowText).not.toMatch(/needs:.*(?:ai|codex|review)/i)
+  })
+
+  it('pins every third-party action to an immutable commit', () => {
+    for (const job of Object.values(workflow.jobs)) {
+      for (const step of job.steps ?? []) {
+        if (!step.uses || step.uses.startsWith('./')) continue
+        expect(step.uses).toMatch(/^[^@]+@[0-9a-f]{40}$/)
+      }
+    }
+  })
+
+  it('checks only changed files for formatting', () => {
+    const docs = workflow.jobs.docs.steps?.find(({ name }) => name === 'Check Markdown formatting')
+    const format = workflow.jobs.format.steps?.find(({ name }) => name === 'Check formatting')
+
+    expect(docs).toMatchObject({
+      env: {
+        BASE_SHA: '${{ needs.preflight.outputs.base }}',
+        HEAD_SHA: '${{ needs.preflight.outputs.head }}'
+      },
+      run: 'node scripts/ci/check-changed-format.mjs --base "$BASE_SHA" --head "$HEAD_SHA" --kind markdown'
+    })
+    expect(format).toMatchObject({
+      env: {
+        BASE_SHA: '${{ needs.preflight.outputs.base }}',
+        HEAD_SHA: '${{ needs.preflight.outputs.head }}'
+      },
+      run: 'node scripts/ci/check-changed-format.mjs --base "$BASE_SHA" --head "$HEAD_SHA" --kind non-markdown'
+    })
+  })
+})

@@ -1,0 +1,82 @@
+name: CI Integrity
+
+on:
+  pull_request_target:
+    branches: [main]
+    types: [opened, synchronize, reopened, ready_for_review]
+  merge_group:
+    types: [checks_requested]
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ci-integrity-${{ github.event.pull_request.number || github.event.merge_group.head_ref || github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  integrity:
+    name: CI Integrity
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - name: Checkout trusted base
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+        with:
+          fetch-depth: 0
+          persist-credentials: false
+          ref: ${{ github.event.pull_request.base.sha || github.event.merge_group.base_sha }}
+
+      - name: Setup Node
+        uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7
+        with:
+          node-version: 22
+          cache: npm
+
+      - name: Install trusted parsing toolchain
+        run: npm ci --ignore-scripts
+
+      - name: Resolve inspected revisions
+        id: revisions
+        shell: bash
+        env:
+          EVENT_NAME: ${{ github.event_name }}
+          MERGE_HEAD_REF: ${{ github.event.merge_group.head_ref }}
+          MERGE_HEAD_SHA: ${{ github.event.merge_group.head_sha }}
+          PR_NUMBER: ${{ github.event.pull_request.number }}
+        run: |
+          set -euo pipefail
+          base_sha="$(git rev-parse HEAD)"
+
+          if [[ "$EVENT_NAME" == "pull_request_target" ]]; then
+            if [[ ! "$PR_NUMBER" =~ ^[0-9]+$ ]]; then
+              echo "Invalid pull request number" >&2
+              exit 1
+            fi
+            git fetch --no-tags origin "refs/pull/${PR_NUMBER}/head"
+            head_sha="$(git rev-parse FETCH_HEAD)"
+          elif [[ "$EVENT_NAME" == "merge_group" ]]; then
+            if [[ ! "$MERGE_HEAD_SHA" =~ ^[0-9a-f]{40}$ ]]; then
+              echo "Invalid merge-group head SHA" >&2
+              exit 1
+            fi
+            git check-ref-format "$MERGE_HEAD_REF"
+            git fetch --no-tags origin "$MERGE_HEAD_REF"
+            head_sha="$(git rev-parse FETCH_HEAD)"
+            if [[ "$head_sha" != "$MERGE_HEAD_SHA" ]]; then
+              echo "Merge-group head changed while resolving revisions" >&2
+              exit 1
+            fi
+          else
+            echo "Unsupported CI Integrity event: $EVENT_NAME" >&2
+            exit 1
+          fi
+
+          echo "base=$base_sha" >> "$GITHUB_OUTPUT"
+          echo "head=$head_sha" >> "$GITHUB_OUTPUT"
+
+      - name: Inspect CI-sensitive changes
+        env:
+          BASE_SHA: ${{ steps.revisions.outputs.base }}
+          HEAD_SHA: ${{ steps.revisions.outputs.head }}
+        run: node scripts/ci/check-ci-integrity.mjs --base "$BASE_SHA" --head "$HEAD_SHA"
