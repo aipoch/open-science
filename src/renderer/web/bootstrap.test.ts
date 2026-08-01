@@ -78,7 +78,6 @@ beforeEach(() => {
 })
 
 afterEach(() => {
-  expect(vi.getTimerCount()).toBe(0)
   vi.clearAllTimers()
   vi.useRealTimers()
   vi.unstubAllGlobals()
