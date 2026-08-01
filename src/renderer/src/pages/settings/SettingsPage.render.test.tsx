@@ -212,9 +212,9 @@ const settingsSection = (title: string): HTMLElement | undefined =>
 const agentItem = (): HTMLElement | null => navButton('Agent')?.closest('li') ?? null
 
 describe('SettingsPage layout', () => {
-  it('shows and dismisses a settings write failure above the scrolling content', () => {
+  it('shows and dismisses a settings write failure above the scrolling content', async () => {
     useSettingsStore.setState({
-      settingsWriteError: 'Could not save notification preference. ipc down'
+      settingsWriteError: 'Could not save notification preference. Try again.'
     })
 
     act(() => {
@@ -224,14 +224,18 @@ describe('SettingsPage layout', () => {
     const alert = document.body.querySelector<HTMLElement>('[data-slot="settings-write-error"]')
     const scroll = document.body.querySelector<HTMLElement>('[data-slot="settings-content-scroll"]')
     expect(alert?.getAttribute('role')).toBe('alert')
-    expect(alert?.textContent).toContain('Could not save notification preference. ipc down')
+    expect(alert?.textContent).toContain('Could not save notification preference. Try again.')
     expect(alert?.className).toContain('border-danger-000/30')
     expect(alert?.className).toContain('bg-danger-000/10')
     expect(alert?.className).toContain('text-danger-000')
     expect(alert?.nextElementSibling).toBe(scroll)
 
+    const dismiss = alert?.querySelector<HTMLButtonElement>('[aria-label="Dismiss settings error"]')
+    await act(async () => dismiss?.focus())
+    expect(document.body.textContent).toContain('Dismiss')
+
     act(() => {
-      alert?.querySelector<HTMLButtonElement>('[aria-label="Dismiss settings error"]')?.click()
+      dismiss?.click()
     })
 
     expect(useSettingsStore.getState().settingsWriteError).toBeUndefined()

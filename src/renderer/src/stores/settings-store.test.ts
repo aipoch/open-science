@@ -1350,7 +1350,7 @@ describe('settings store: setAgentFramework', () => {
 
     expect(useSettingsStore.getState().agentFrameworkId).toBe('claude-code')
     expect(useSettingsStore.getState().settingsWriteError).toBe(
-      'Could not switch agent framework. ipc down'
+      'Could not switch agent framework. Try again.'
     )
     expect(consoleError).toHaveBeenCalledWith('Failed to switch agent framework', expect.any(Error))
   })
@@ -1561,6 +1561,46 @@ describe('settings store: setReasoningEffort', () => {
     expect(useSettingsStore.getState().reasoningEffort).toBe('max')
   })
 
+  it('ignores an older write failure after a newer settings write succeeds', async () => {
+    let rejectReasoning: (reason?: unknown) => void = () => undefined
+    api.setReasoningEffort.mockImplementation(
+      () =>
+        new Promise<SettingsSnapshot>((_resolve, reject) => {
+          rejectReasoning = reject
+        })
+    )
+
+    const olderWrite = useSettingsStore.getState().setReasoningEffort('high')
+    await useSettingsStore.getState().setNotificationsEnabled(false)
+
+    rejectReasoning(new Error('stale failure'))
+    await olderWrite
+
+    expect(useSettingsStore.getState().settingsWriteError).toBeUndefined()
+  })
+
+  it('keeps a newer write failure when an older settings write succeeds later', async () => {
+    vi.spyOn(console, 'error').mockImplementation(() => undefined)
+    let resolveReasoning: (value: SettingsSnapshot) => void = () => undefined
+    api.setReasoningEffort.mockImplementation(
+      () =>
+        new Promise<SettingsSnapshot>((resolve) => {
+          resolveReasoning = resolve
+        })
+    )
+    api.setNotificationsEnabled.mockRejectedValue(new Error('newer failure'))
+
+    const olderWrite = useSettingsStore.getState().setReasoningEffort('high')
+    await useSettingsStore.getState().setNotificationsEnabled(false)
+
+    resolveReasoning({ ...snapshot([]), reasoningEffort: 'high' })
+    await olderWrite
+
+    expect(useSettingsStore.getState().settingsWriteError).toBe(
+      'Could not save notification preference. Try again.'
+    )
+  })
+
   it('reverts to the previous level and exposes a visible failure when main rejects', async () => {
     const consoleError = vi.spyOn(console, 'error').mockImplementation(() => undefined)
     api.setReasoningEffort.mockRejectedValue(new Error('ipc down'))
@@ -1569,7 +1609,7 @@ describe('settings store: setReasoningEffort', () => {
 
     expect(useSettingsStore.getState().reasoningEffort).toBe('default')
     expect(useSettingsStore.getState().settingsWriteError).toBe(
-      'Could not save reasoning effort. ipc down'
+      'Could not save reasoning effort. Try again.'
     )
     expect(consoleError).toHaveBeenCalledWith('Failed to set reasoning effort', expect.any(Error))
   })
@@ -1599,7 +1639,7 @@ describe('settings store: setNotificationsEnabled', () => {
 
     expect(useSettingsStore.getState().notificationsEnabled).toBe(true)
     expect(useSettingsStore.getState().settingsWriteError).toBe(
-      'Could not save notification preference. ipc down'
+      'Could not save notification preference. Try again.'
     )
     expect(consoleError).toHaveBeenCalledWith(
       'Failed to set notifications enabled',
@@ -1632,7 +1672,7 @@ describe('settings store: setConversationSkillImportEnabled', () => {
 
     expect(useSettingsStore.getState().conversationSkillImportEnabled).toBe(true)
     expect(useSettingsStore.getState().settingsWriteError).toBe(
-      'Could not save conversation Skill import preference. ipc down'
+      'Could not save conversation Skill import preference. Try again.'
     )
     expect(consoleError).toHaveBeenCalledWith(
       'Failed to set conversation Skill import enabled',
@@ -1672,7 +1712,7 @@ describe('settings store: setClosePreference', () => {
 
     expect(useSettingsStore.getState().closePreference).toBe('quit')
     expect(useSettingsStore.getState().settingsWriteError).toBe(
-      'Could not save window close preference. ipc down'
+      'Could not save window close preference. Try again.'
     )
     expect(consoleError).toHaveBeenCalledWith('Failed to set close preference', expect.any(Error))
   })
@@ -1703,7 +1743,7 @@ describe('settings store: setAppIconVariant', () => {
 
     expect(useSettingsStore.getState().appIconVariant).toBe('light')
     expect(useSettingsStore.getState().settingsWriteError).toBe(
-      'Could not save app icon preference. ipc down'
+      'Could not save app icon preference. Try again.'
     )
     expect(consoleError).toHaveBeenCalledWith('Failed to set app icon variant', expect.any(Error))
   })

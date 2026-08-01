@@ -585,6 +585,7 @@ const resolveUpsertedProviderId = (
 }
 
 let settingsLoadPromise: Promise<boolean> | undefined
+let settingsWriteGeneration = 0
 const SAFE_SETTINGS_LOAD_ERROR = 'Open Science could not load settings. Retry to continue.'
 
 // Keep raw IPC diagnostics in the developer channel while renderer state remains path-safe.
@@ -592,11 +593,29 @@ const reportSettingsLoadError = (error: unknown): void => {
   console.warn('Settings startup loading failed', error)
 }
 
-// Keep the action-specific summary stable while preserving an actionable IPC message when one exists.
-// Raw failures remain in the console for diagnostics; non-Error payloads never leak into the UI.
-const describeSettingsWriteError = (summary: string, error: unknown): string => {
-  const detail = error instanceof Error ? error.message.trim() : ''
-  return detail ? `${summary} ${detail}` : summary
+// Visible copy stays stable and path-safe; raw IPC failures remain in the console for diagnostics.
+const SETTINGS_WRITE_ERRORS = {
+  agentFramework: 'Could not switch agent framework. Try again.',
+  reasoningEffort: 'Could not save reasoning effort. Try again.',
+  notifications: 'Could not save notification preference. Try again.',
+  conversationSkillImport: 'Could not save conversation Skill import preference. Try again.',
+  closePreference: 'Could not save window close preference. Try again.',
+  appIcon: 'Could not save app icon preference. Try again.'
+} as const
+
+// Shared banner ownership follows user intent order, not network completion order. A late result from
+// an older write must never clear or replace the outcome of a newer Settings action.
+const beginSettingsWrite = (): number => {
+  settingsWriteGeneration += 1
+  return settingsWriteGeneration
+}
+
+const finishSettingsWrite = (
+  set: StoreApi<SettingsStore>['setState'],
+  generation: number,
+  error?: string
+): void => {
+  if (generation === settingsWriteGeneration) set({ settingsWriteError: error })
 }
 
 // Renderer cache of the main-process settings service. The main process stays the source of truth
@@ -987,20 +1006,20 @@ export const useSettingsStore = create<SettingsStore>((set, get) => ({
   // Switches the agent backend; main reconnects so the choice applies on the next prompt. A failed
   // write leaves the previous framework selected and feeds the shared Settings error banner.
   setAgentFramework: async (id) => {
+    const writeGeneration = beginSettingsWrite()
     set({ settingsWriteError: undefined })
 
     let snapshot: SettingsSnapshot
     try {
       snapshot = await window.api.settings.setAgentFramework({ id })
     } catch (error) {
-      set({
-        settingsWriteError: describeSettingsWriteError('Could not switch agent framework.', error)
-      })
+      finishSettingsWrite(set, writeGeneration, SETTINGS_WRITE_ERRORS.agentFramework)
       console.error('Failed to switch agent framework', error)
       return
     }
 
     set(applySnapshot(snapshot))
+    finishSettingsWrite(set, writeGeneration)
 
     try {
       // Live-detect the newly-selected framework so a binary installed (or deleted) since the last
@@ -1024,16 +1043,16 @@ export const useSettingsStore = create<SettingsStore>((set, get) => ({
   // trip includes that reconnect, which is too slow to gate the selector on — apply the pick
   // optimistically, reconcile from the returned snapshot, and revert if the write fails.
   setReasoningEffort: async (effort) => {
+    const writeGeneration = beginSettingsWrite()
     const previous = get().reasoningEffort
     set({ reasoningEffort: effort, settingsWriteError: undefined })
 
     try {
       set(applySnapshot(await window.api.settings.setReasoningEffort({ effort })))
+      finishSettingsWrite(set, writeGeneration)
     } catch (error) {
-      set({
-        reasoningEffort: previous,
-        settingsWriteError: describeSettingsWriteError('Could not save reasoning effort.', error)
-      })
+      set({ reasoningEffort: previous })
+      finishSettingsWrite(set, writeGeneration, SETTINGS_WRITE_ERRORS.reasoningEffort)
       console.error('Failed to set reasoning effort', error)
     }
   },
@@ -1041,55 +1060,46 @@ export const useSettingsStore = create<SettingsStore>((set, get) => ({
   // Toggles desktop notifications. Optimistic like the other preference setters: apply the pick,
   // reconcile from the returned snapshot, and revert if the write fails.
   setNotificationsEnabled: async (enabled) => {
+    const writeGeneration = beginSettingsWrite()
     const previous = get().notificationsEnabled
     set({ notificationsEnabled: enabled, settingsWriteError: undefined })
 
     try {
       set(applySnapshot(await window.api.settings.setNotificationsEnabled({ enabled })))
+      finishSettingsWrite(set, writeGeneration)
     } catch (error) {
-      set({
-        notificationsEnabled: previous,
-        settingsWriteError: describeSettingsWriteError(
-          'Could not save notification preference.',
-          error
-        )
-      })
+      set({ notificationsEnabled: previous })
+      finishSettingsWrite(set, writeGeneration, SETTINGS_WRITE_ERRORS.notifications)
       console.error('Failed to set notifications enabled', error)
     }
   },
 
   setConversationSkillImportEnabled: async (enabled) => {
+    const writeGeneration = beginSettingsWrite()
     const previous = get().conversationSkillImportEnabled
     set({ conversationSkillImportEnabled: enabled, settingsWriteError: undefined })
 
     try {
       set(applySnapshot(await window.api.settings.setConversationSkillImportEnabled({ enabled })))
+      finishSettingsWrite(set, writeGeneration)
     } catch (error) {
-      set({
-        conversationSkillImportEnabled: previous,
-        settingsWriteError: describeSettingsWriteError(
-          'Could not save conversation Skill import preference.',
-          error
-        )
-      })
+      set({ conversationSkillImportEnabled: previous })
+      finishSettingsWrite(set, writeGeneration, SETTINGS_WRITE_ERRORS.conversationSkillImport)
       console.error('Failed to set conversation Skill import enabled', error)
     }
   },
 
   setClosePreference: async (preference) => {
+    const writeGeneration = beginSettingsWrite()
     const previous = get().closePreference
     set({ closePreference: preference, settingsWriteError: undefined })
 
     try {
       set(applySnapshot(await window.api.settings.setClosePreference({ preference })))
+      finishSettingsWrite(set, writeGeneration)
     } catch (error) {
-      set({
-        closePreference: previous,
-        settingsWriteError: describeSettingsWriteError(
-          'Could not save window close preference.',
-          error
-        )
-      })
+      set({ closePreference: previous })
+      finishSettingsWrite(set, writeGeneration, SETTINGS_WRITE_ERRORS.closePreference)
       console.error('Failed to set close preference', error)
     }
   },
@@ -1097,16 +1107,16 @@ export const useSettingsStore = create<SettingsStore>((set, get) => ({
   // Sets the app-icon look. Optimistic like the other preference setters: apply the pick, reconcile
   // from the returned snapshot, and revert if the write fails.
   setAppIconVariant: async (variant) => {
+    const writeGeneration = beginSettingsWrite()
     const previous = get().appIconVariant
     set({ appIconVariant: variant, settingsWriteError: undefined })
 
     try {
       set(applySnapshot(await window.api.settings.setAppIconVariant({ variant })))
+      finishSettingsWrite(set, writeGeneration)
     } catch (error) {
-      set({
-        appIconVariant: previous,
-        settingsWriteError: describeSettingsWriteError('Could not save app icon preference.', error)
-      })
+      set({ appIconVariant: previous })
+      finishSettingsWrite(set, writeGeneration, SETTINGS_WRITE_ERRORS.appIcon)
       console.error('Failed to set app icon variant', error)
     }
   },
