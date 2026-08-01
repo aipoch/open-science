@@ -9,6 +9,7 @@ import type { ClaudeSharedAuthControllerPort, ClaudeSharedAuthStatus } from './c
 import type { ValidateProviderResult } from '../../shared/settings'
 import type { ResolvedProvider } from './provider-env'
 import type { StoredSettings } from './types'
+import { getAgentFramework } from '../agent-framework'
 
 vi.mock('electron', () => ({
   safeStorage: {
@@ -132,6 +133,79 @@ describe('ProviderAccountsModule', () => {
 
     await module.deleteProvider(stored.id)
     expect((await repository.getSettings()).providers).toEqual([])
+  })
+
+  it('projects an ephemeral runtime target without changing the stored provider selection', async () => {
+    await module.upsertProvider({
+      type: 'custom',
+      name: 'Lab gateway',
+      baseUrl: 'https://lab.example/v1',
+      model: 'lab-model',
+      key: 'secret-key',
+      apiEndpoints: ['openai']
+    })
+    const before = await repository.getSettings()
+    const stored = before.providers[0]
+
+    const target = module.resolveRuntimeTarget(
+      stored,
+      { kind: 'configured', requestedModel: 'unavailable-model' },
+      getAgentFramework('codex')
+    )
+
+    expect(target).toMatchObject({
+      providerId: stored.id,
+      effectiveModel: 'lab-model',
+      provider: { model: 'lab-model', key: 'secret-key' },
+      needsChatResponsesBridge: true
+    })
+    expect(module.resolveRuntimeReasoningEffortProfile(stored, 'lab-model')).toMatchObject({
+      supported: true
+    })
+    expect(await repository.getSettings()).toEqual(before)
+    expect(JSON.stringify(before)).not.toContain('secret-key')
+  })
+
+  it('rejects an unavailable required model instead of applying the configured fallback', async () => {
+    await module.upsertProvider({
+      type: 'custom',
+      name: 'Lab gateway',
+      baseUrl: 'https://lab.example/v1',
+      model: 'lab-model',
+      key: 'secret-key',
+      apiEndpoints: ['openai']
+    })
+    const before = await repository.getSettings()
+    const stored = before.providers[0]
+
+    expect(() =>
+      module.resolveRuntimeTarget(
+        stored,
+        { kind: 'required', model: 'unavailable-model' },
+        getAgentFramework('codex')
+      )
+    ).toThrow(
+      `The requested model "unavailable-model" is not available for provider "Lab gateway".`
+    )
+    expect(await repository.getSettings()).toEqual(before)
+  })
+
+  it('keeps an exact required model when a subscription catalog is unknown', async () => {
+    await module.upsertProvider({ type: 'claude-shared' })
+    const before = await repository.getSettings()
+    const stored = before.providers[0]
+
+    const target = module.resolveRuntimeTarget(
+      stored,
+      { kind: 'required', model: 'account-model' },
+      getAgentFramework('claude-code')
+    )
+
+    expect(target).toMatchObject({
+      effectiveModel: 'account-model',
+      provider: { model: 'account-model' }
+    })
+    expect(await repository.getSettings()).toEqual(before)
   })
 
   it('keeps only the newest validation result for one provider id', async () => {

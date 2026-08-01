@@ -38,7 +38,12 @@ import {
   resolveVendorModelsUrl,
   resolveVendorOpenAiBaseUrl
 } from '../../shared/provider-registry'
-import { resolveProviderEffectiveModel } from '../../shared/provider-reasoning-effort'
+import {
+  resolveProviderEffectiveModel,
+  resolveProviderReasoningEffortProfile
+} from '../../shared/provider-reasoning-effort'
+import type { ReasoningEffortProfile } from '../../shared/reasoning-effort'
+import { isModelBridgeSupported } from '../../shared/provider-registry'
 import {
   DEFAULT_AGENT_FRAMEWORK_ID,
   getAgentFramework,
@@ -100,6 +105,25 @@ type ProviderAccountsModuleOptions = {
   codexAuth?: CodexAuthControllerPort
   claudeIsolatedAuth?: ClaudeIsolatedAuthControllerPort
   claudeSharedAuth?: ClaudeSharedAuthControllerPort
+}
+
+export type RuntimeProviderModelSelection =
+  | { kind: 'configured'; requestedModel?: string }
+  | { kind: 'required'; model: string }
+  | { kind: 'provider-default' }
+
+export type ProviderRuntimeTarget = {
+  providerId: string
+  providerType: StoredProvider['type']
+  disconnectedAt?: number
+  effectiveModel?: string
+  apiEndpoints: ChatApiEndpoint[]
+  provider: ResolvedProvider
+  reasoningEffortProfile: ReasoningEffortProfile
+  frameworkCompatible: boolean
+  modelBridgeSupported: boolean
+  needsChatResponsesBridge: boolean
+  needsNativeResponsesCompatibility: boolean
 }
 
 // Native Responses vendors other than OpenAI require the same namespace compatibility proxy during
@@ -1025,6 +1049,72 @@ class ProviderAccountsModule {
     return resolveProviderEffectiveModel(
       provider ? { ...provider, models: this.availableModels(provider) } : undefined,
       requested
+    )
+  }
+
+  // Produces the complete ephemeral provider input for one backend generation without mutating the
+  // active selection, refreshing catalogs, or entering an authentication lifecycle. A configured
+  // selection retains the historical fallback rules; an explicit required model must match exactly.
+  resolveRuntimeTarget(
+    storedProvider: StoredProvider,
+    selection: RuntimeProviderModelSelection,
+    framework: { id: AgentFrameworkId; supportedApiTypes: readonly ChatApiEndpoint[] }
+  ): ProviderRuntimeTarget {
+    const availableModels = this.availableModels(storedProvider)
+    if (
+      selection.kind === 'required' &&
+      availableModels.length > 0 &&
+      !availableModels.includes(selection.model)
+    ) {
+      throw new Error(
+        `The requested model "${selection.model}" is not available for provider "${storedProvider.name}".`
+      )
+    }
+
+    const effectiveModel =
+      selection.kind === 'required'
+        ? this.resolveActiveModel(storedProvider, selection.model)
+        : this.resolveActiveModel(
+            storedProvider,
+            selection.kind === 'configured' ? selection.requestedModel : undefined
+          )
+
+    if (selection.kind === 'required' && effectiveModel !== selection.model) {
+      throw new Error(
+        `The requested model "${selection.model}" is not available for provider "${storedProvider.name}".`
+      )
+    }
+
+    const apiEndpoints = this.resolveProviderApiEndpoints(storedProvider, effectiveModel)
+    const provider = this.resolveProvider(storedProvider, effectiveModel)
+
+    return {
+      providerId: storedProvider.id,
+      providerType: storedProvider.type,
+      ...(storedProvider.disconnectedAt === undefined
+        ? {}
+        : { disconnectedAt: storedProvider.disconnectedAt }),
+      effectiveModel,
+      apiEndpoints,
+      provider,
+      reasoningEffortProfile: resolveProviderReasoningEffortProfile(storedProvider, effectiveModel),
+      frameworkCompatible: isProviderUsableByFramework(
+        { apiEndpoints, type: storedProvider.type },
+        framework
+      ),
+      modelBridgeSupported: isModelBridgeSupported(storedProvider, effectiveModel),
+      needsChatResponsesBridge: requiresChatCompletionsBridge(provider, framework),
+      needsNativeResponsesCompatibility: requiresNativeResponsesCompatibility(provider, framework)
+    }
+  }
+
+  resolveRuntimeReasoningEffortProfile(
+    storedProvider: StoredProvider,
+    requestedModel?: string
+  ): ReasoningEffortProfile {
+    return resolveProviderReasoningEffortProfile(
+      storedProvider,
+      this.resolveActiveModel(storedProvider, requestedModel)
     )
   }
 
