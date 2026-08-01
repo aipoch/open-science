@@ -1,13 +1,16 @@
 import { test as base } from '@playwright/test'
 import { spawn } from 'node:child_process'
-import { mkdtemp, rm } from 'node:fs/promises'
+import { chmod, mkdir, mkdtemp, readdir, rm, writeFile } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
-import { join, resolve } from 'node:path'
+import { delimiter, join, resolve } from 'node:path'
 import { _electron as electron, type ElectronApplication, type Page } from 'playwright'
 
 const APP_ROOT = resolve(process.cwd())
+const FAKE_AGENT_PATH = resolve(APP_ROOT, 'e2e', 'fixtures', 'fake-opencode.mjs')
+const FAKE_PROVIDER_NAME = 'Electron E2E provider'
 
 type LaunchRoots = {
+  fakeAgentBinRoot: string
   storageRoot: string
   userDataRoot: string
 }
@@ -17,6 +20,7 @@ type ShortcutModifier = 'alt' | 'control' | 'meta' | 'shift'
 type ElectronApp = {
   readonly page: Page
   completeOnboarding: () => Promise<Page>
+  configureFakeAgent: () => Promise<Page>
   findOverlayIsVisible: () => Promise<boolean>
   launchSecondInstance: () => Promise<Page>
   mainWindowState: () => Promise<{ minimized: boolean; visible: boolean }>
@@ -25,7 +29,10 @@ type ElectronApp = {
   restart: () => Promise<Page>
 }
 
-const launchEnvironment = (storageRoot: string): Record<string, string> => {
+const launchEnvironment = (
+  storageRoot: string,
+  fakeAgentBinRoot?: string
+): Record<string, string> => {
   const environment: Record<string, string> = {}
 
   for (const [key, value] of Object.entries(process.env)) {
@@ -33,18 +40,58 @@ const launchEnvironment = (storageRoot: string): Record<string, string> => {
   }
 
   environment.OPEN_SCIENCE_STORAGE_ROOT = storageRoot
+  if (fakeAgentBinRoot) {
+    environment.OPEN_SCIENCE_AGENT_FRAMEWORK = 'opencode'
+    environment.PATH = `${fakeAgentBinRoot}${delimiter}${environment.PATH ?? ''}`
+  }
   return environment
 }
 
-const launchOpenScience = ({
-  storageRoot,
-  userDataRoot
-}: LaunchRoots): Promise<ElectronApplication> =>
+const launchOpenScience = (
+  { storageRoot, userDataRoot, fakeAgentBinRoot }: LaunchRoots,
+  fakeAgentEnabled: boolean
+): Promise<ElectronApplication> =>
   electron.launch({
     args: [`--user-data-dir=${userDataRoot}`, APP_ROOT],
     cwd: APP_ROOT,
-    env: launchEnvironment(storageRoot)
+    env: launchEnvironment(storageRoot, fakeAgentEnabled ? fakeAgentBinRoot : undefined)
   })
+
+const shellQuote = (value: string): string => `'${value.replaceAll("'", "'\\''")}'`
+
+const writeFakeAgentLauncher = async (binRoot: string): Promise<void> => {
+  await mkdir(binRoot, { recursive: true })
+
+  if (process.platform === 'win32') {
+    await writeFile(
+      join(binRoot, 'opencode.cmd'),
+      `@echo off\r\n"${process.execPath}" "${FAKE_AGENT_PATH}" %*\r\n`,
+      'utf8'
+    )
+    return
+  }
+
+  const launcher = join(binRoot, 'opencode')
+  await writeFile(
+    launcher,
+    `#!/bin/sh\nexec ${shellQuote(process.execPath)} ${shellQuote(FAKE_AGENT_PATH)} "$@"\n`,
+    'utf8'
+  )
+  await chmod(launcher, 0o755)
+}
+
+const makeTreeWritable = async (root: string): Promise<void> => {
+  await chmod(root, 0o700).catch(() => undefined)
+  const entries = await readdir(root, { withFileTypes: true }).catch(() => [])
+
+  await Promise.all(
+    entries.map(async (entry) => {
+      const path = join(root, entry.name)
+      if (entry.isDirectory()) await makeTreeWritable(path)
+      else if (!entry.isSymbolicLink()) await chmod(path, 0o600).catch(() => undefined)
+    })
+  )
+}
 
 const observeRendererFailures = (page: Page): void => {
   page.on('console', (message) => {
@@ -63,6 +110,7 @@ const openMainWindow = async (application: ElectronApplication): Promise<Page> =
 class ElectronAppHarness implements ElectronApp {
   private application: ElectronApplication | undefined
   private currentPage: Page | undefined
+  private fakeAgentEnabled = false
 
   private constructor(
     private readonly testRoot: string,
@@ -72,9 +120,11 @@ class ElectronAppHarness implements ElectronApp {
   static async create(): Promise<ElectronAppHarness> {
     const testRoot = await mkdtemp(join(tmpdir(), 'open-science-electron-e2e-'))
     const harness = new ElectronAppHarness(testRoot, {
+      fakeAgentBinRoot: join(testRoot, 'fake-agent-bin'),
       storageRoot: join(testRoot, 'storage'),
       userDataRoot: join(testRoot, 'electron-profile')
     })
+    await writeFakeAgentLauncher(harness.roots.fakeAgentBinRoot)
     await harness.launch()
     return harness
   }
@@ -93,6 +143,43 @@ class ElectronAppHarness implements ElectronApp {
     })
     await this.page.reload({ waitUntil: 'domcontentloaded' })
     return this.page
+  }
+
+  async configureFakeAgent(): Promise<Page> {
+    await this.page.evaluate(async (providerName) => {
+      const bridge = globalThis as unknown as {
+        api: {
+          settings: {
+            setActiveProvider: (request: { id: string; model: string }) => Promise<unknown>
+            setAgentFramework: (request: { id: 'opencode' }) => Promise<unknown>
+            upsertProvider: (request: {
+              apiEndpoints: ['openai']
+              baseUrl: string
+              key: string
+              model: string
+              name: string
+              type: 'custom'
+            }) => Promise<{ providers: Array<{ id: string; name: string }> }>
+          }
+        }
+      }
+      const snapshot = await bridge.api.settings.upsertProvider({
+        type: 'custom',
+        name: providerName,
+        apiEndpoints: ['openai'],
+        baseUrl: 'http://127.0.0.1:9/v1',
+        model: 'e2e-model',
+        key: 'e2e-key'
+      })
+      const provider = snapshot.providers.find((item) => item.name === providerName)
+      if (!provider) throw new Error('The E2E provider was not persisted.')
+
+      await bridge.api.settings.setActiveProvider({ id: provider.id, model: 'e2e-model' })
+      await bridge.api.settings.setAgentFramework({ id: 'opencode' })
+    }, FAKE_PROVIDER_NAME)
+
+    this.fakeAgentEnabled = true
+    return this.restart()
   }
 
   async findOverlayIsVisible(): Promise<boolean> {
@@ -124,7 +211,10 @@ class ElectronAppHarness implements ElectronApp {
     await new Promise<void>((resolveLaunch, rejectLaunch) => {
       const child = spawn(executable, [`--user-data-dir=${this.roots.userDataRoot}`, appPath], {
         cwd: APP_ROOT,
-        env: launchEnvironment(this.roots.storageRoot),
+        env: launchEnvironment(
+          this.roots.storageRoot,
+          this.fakeAgentEnabled ? this.roots.fakeAgentBinRoot : undefined
+        ),
         stdio: 'ignore'
       })
       child.once('error', rejectLaunch)
@@ -174,11 +264,12 @@ class ElectronAppHarness implements ElectronApp {
 
   async dispose(): Promise<void> {
     await this.close().catch(() => undefined)
+    await makeTreeWritable(this.testRoot)
     await rm(this.testRoot, { force: true, recursive: true })
   }
 
   private async launch(): Promise<void> {
-    this.application = await launchOpenScience(this.roots)
+    this.application = await launchOpenScience(this.roots, this.fakeAgentEnabled)
     this.currentPage = await openMainWindow(this.application)
   }
 
