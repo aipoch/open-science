@@ -5638,6 +5638,26 @@ class AcpRuntime {
         })
         .start()
 
+      // Reviewer ids share protocol routing with primary/adopted sessions. An agent-provided
+      // collision must fail before the reviewer receives permission authority, bridge scope, or a
+      // prompt; otherwise its strict reviewer identity could overwrite state owned by a conversation.
+      if (
+        this.sessions.has(session.sessionId) ||
+        this.agentToAppSessionId.has(session.sessionId) ||
+        this.reviewerSessionIds.has(session.sessionId)
+      ) {
+        const collision = new Error(`Reviewer session id collision: ${session.sessionId}`)
+        try {
+          session.dispose()
+        } catch (cleanupError) {
+          safeLogError('reviewer collision session disposal failed', {
+            ...diagnosticErrorFields(cleanupError),
+            sessionId: session.sessionId
+          })
+        }
+        throw collision
+      }
+
       try {
         // Apply the framework's Ask baseline before prompting. The dedicated reviewer MCP is
         // then selectively approved by resolveReviewerPermission; all other permission requests fail.

@@ -6255,6 +6255,152 @@ describe('ACP runtime session management', () => {
     expect(spawnAgent).not.toHaveBeenCalled()
   })
 
+  it('rejects a reviewer session id that collides with a primary session before authority setup', async () => {
+    const process = new FakeAgentProcess()
+    const fakeAgent = startFakeAgent(process, ['shared-session', 'shared-session'])
+    const runtime = new AcpRuntime({
+      appVersion: '0.1.0',
+      defaultCwd: '/workspace',
+      spawnAgent: () => asAgentProcess(process)
+    })
+
+    await runtime.createSession({ cwd: '/workspace' })
+
+    await expect(
+      runtime.buildReviewerSession({
+        cwd: '/workspace',
+        mcpServers: [
+          {
+            type: 'http',
+            name: 'open-science-reviewer',
+            url: 'http://127.0.0.1:1/mcp',
+            headers: []
+          }
+        ]
+      })
+    ).rejects.toThrow('Reviewer session id collision: shared-session')
+
+    const reviewerCwd = fakeAgent.newSessions[1]?.cwd
+    expect(reviewerCwd).toMatch(/open-science-reviewer-/)
+    await expect(stat(reviewerCwd!)).rejects.toMatchObject({ code: 'ENOENT' })
+    expect(fakeAgent.modeChanges).toEqual([])
+    expect(runtime.getSnapshot().sessionIds).toEqual(['shared-session'])
+  })
+
+  it('keeps the reviewer collision as primary when the duplicate session cannot dispose', async () => {
+    errorLogSpy.mockClear()
+    const process = new FakeAgentProcess()
+    const fakeAgent = startFakeAgent(process, ['shared-session', 'shared-session'])
+    const runtime = new AcpRuntime({
+      appVersion: '0.1.0',
+      defaultCwd: '/workspace',
+      spawnAgent: () => asAgentProcess(process)
+    })
+    await runtime.createSession({ cwd: '/workspace' })
+    const disposeSpy = vi
+      .spyOn(acp.ActiveSession.prototype, 'dispose')
+      .mockImplementationOnce(() => {
+        throw new Error('duplicate dispose failed')
+      })
+
+    try {
+      await expect(
+        runtime.buildReviewerSession({
+          cwd: '/workspace',
+          mcpServers: [
+            {
+              type: 'http',
+              name: 'open-science-reviewer',
+              url: 'http://127.0.0.1:1/mcp',
+              headers: []
+            }
+          ]
+        })
+      ).rejects.toThrow('Reviewer session id collision: shared-session')
+    } finally {
+      disposeSpy.mockRestore()
+    }
+
+    const reviewerCwd = fakeAgent.newSessions[1]?.cwd
+    await expect(stat(reviewerCwd!)).rejects.toMatchObject({ code: 'ENOENT' })
+    expect(errorLogSpy).toHaveBeenCalledWith('reviewer collision session disposal failed', {
+      errorCategory: 'error',
+      sessionId: 'shared-session'
+    })
+  })
+
+  it('rejects a reviewer session id that collides with a freshly adopted provider session', async () => {
+    const process = new FakeAgentProcess()
+    const fakeAgent = startFakeAgent(process, ['provider-session', 'provider-session'], {
+      resumeNotFound: true
+    })
+    const runtime = new AcpRuntime({
+      appVersion: '0.1.0',
+      defaultCwd: '/workspace',
+      spawnAgent: () => asAgentProcess(process)
+    })
+
+    await expect(
+      runtime.resumeSession({ sessionId: 'stable-app-session', cwd: '/workspace' })
+    ).resolves.toMatchObject({ sessionId: 'stable-app-session', contextReset: true })
+
+    await expect(
+      runtime.buildReviewerSession({
+        cwd: '/workspace',
+        mcpServers: [
+          {
+            type: 'http',
+            name: 'open-science-reviewer',
+            url: 'http://127.0.0.1:1/mcp',
+            headers: []
+          }
+        ]
+      })
+    ).rejects.toThrow('Reviewer session id collision: provider-session')
+
+    const reviewerCwd = fakeAgent.newSessions[1]?.cwd
+    expect(reviewerCwd).toMatch(/open-science-reviewer-/)
+    await expect(stat(reviewerCwd!)).rejects.toMatchObject({ code: 'ENOENT' })
+    expect(fakeAgent.modeChanges).toEqual([])
+    expect(runtime.getSnapshot().sessionIds).toEqual(['stable-app-session'])
+  })
+
+  it('rejects a reviewer session id that collides with an existing reviewer', async () => {
+    const process = new FakeAgentProcess()
+    const fakeAgent = startFakeAgent(process, ['reviewer-session', 'reviewer-session'])
+    const runtime = new AcpRuntime({
+      appVersion: '0.1.0',
+      defaultCwd: '/workspace',
+      spawnAgent: () => asAgentProcess(process)
+    })
+    const request = {
+      cwd: '/workspace',
+      mcpServers: [
+        {
+          type: 'http' as const,
+          name: 'open-science-reviewer',
+          url: 'http://127.0.0.1:1/mcp',
+          headers: []
+        }
+      ]
+    }
+
+    const first = await runtime.buildReviewerSession(request)
+
+    await expect(runtime.buildReviewerSession(request)).rejects.toThrow(
+      'Reviewer session id collision: reviewer-session'
+    )
+
+    const duplicateCwd = fakeAgent.newSessions[1]?.cwd
+    expect(duplicateCwd).toMatch(/open-science-reviewer-/)
+    await expect(stat(duplicateCwd!)).rejects.toMatchObject({ code: 'ENOENT' })
+    await first.session.prompt([{ type: 'text', text: 'first reviewer remains active' }])
+    expect(fakeAgent.prompts).toEqual([
+      { sessionId: 'reviewer-session', text: 'first reviewer remains active' }
+    ])
+    runtime.disposeReviewerSession(first.session)
+  })
+
   it('removes the temporary reviewer directory when session startup fails', async () => {
     const process = new FakeAgentProcess()
     const fakeAgent = startFakeAgent(process, ['reviewer-session-1'], {
