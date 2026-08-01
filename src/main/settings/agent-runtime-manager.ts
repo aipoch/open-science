@@ -25,7 +25,9 @@ import {
   getAgentFramework,
   type AgentFrameworkId
 } from '../agent-framework'
+import type { AgentConfigFile } from '../agent-framework/types'
 import { syncConnectorSkillDocs } from '../connectors/provision'
+import { writeAgentConfigFiles } from './agent-config-files'
 import { createDefaultDetectDeps, detectClaude, type ClaudeDetectDeps } from './claude-detect'
 import {
   createDefaultDetectDeps as createOpencodeDetectDeps,
@@ -594,6 +596,10 @@ export class AgentRuntimeManager {
       join(configRoot, 'skills'),
       this.connectors.enabledConnectorIds(connectors)
     )
+  }
+
+  async materializeAgentConfigFiles(files: AgentConfigFile[] | undefined): Promise<void> {
+    await writeAgentConfigFiles(files)
   }
 
   async provisionClaudeRuntimeConfig(

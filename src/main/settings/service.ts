@@ -1,11 +1,6 @@
-import { execFile } from 'node:child_process'
-import { access } from 'node:fs/promises'
-import { constants } from 'node:fs'
 import { homedir } from 'node:os'
-import { dirname, join } from 'node:path'
+import { join } from 'node:path'
 import { randomUUID } from 'node:crypto'
-import { createServer } from 'node:net'
-import { promisify } from 'node:util'
 
 import { z } from 'zod'
 
@@ -74,7 +69,6 @@ import type { PackageMirror } from '../../shared/mirror'
 import {
   buildActiveModelIncompatibleMessage,
   CODEX_BRIDGE_UNSUPPORTED_MESSAGE,
-  CLAUDE_EXECUTABLE_MISSING_MESSAGE,
   NO_ACTIVE_PROVIDER_MESSAGE
 } from '../../shared/run-error-classification'
 import type { NotebookLanguage } from '../../shared/notebook'
@@ -87,7 +81,6 @@ import {
   type ResolvedReasoningEffort
 } from '../../shared/reasoning-effort'
 import { resolveStorageRoot } from '../storage-root'
-import { buildAgentSpawnEnv } from '../acp/agent-process'
 import {
   DEFAULT_AGENT_FRAMEWORK_ID,
   getAgentFramework,
@@ -95,63 +88,21 @@ import {
   type AgentFrameworkId,
   type ResolvedAgentBackend
 } from '../agent-framework'
-import { createDefaultDetectDeps, detectClaude, type ClaudeDetectDeps } from './claude-detect'
-import {
-  createDefaultDetectDeps as createOpencodeDetectDeps,
-  detectOpencode,
-  type OpencodeDetectDeps
-} from './opencode-detect'
-import {
-  detectCodex,
-  parseVersion as parseCodexVersion,
-  runAcpInitializeSmoke,
-  type CodexDetectDeps
-} from './codex-detect'
+import type { ClaudeDetectDeps } from './claude-detect'
+import type { OpencodeDetectDeps } from './opencode-detect'
+import type { CodexDetectDeps } from './codex-detect'
 import { openAiCompletionsBase } from './base-url'
-import {
-  installManagedOpencode,
-  isManagedOpencodePath,
-  managedOpencodeDir,
-  uninstallManagedOpencode,
-  type InstallManagedOpencodeOptions
-} from './managed-opencode'
+import type { InstallManagedOpencodeOptions } from './managed-opencode'
 import { opencodeConfigDir } from '../agent-framework/opencode'
 import {
   codexStorageDir,
   codexSubscriptionStorageDir,
   normalizeResponsesBaseUrl
 } from '../agent-framework/codex'
-import { detectNpmAvailable, runInstallWithFallback, type InstallTarget } from './claude-install'
-import { OPENCODE_INSTALL_TARGET } from './opencode-install'
-import {
-  ensureManagedCodexContextUsage,
-  installManagedCodex,
-  managedCodexAdapterEntry,
-  managedCodexBinary,
-  uninstallManagedCodex,
-  type InstallManagedCodexOptions,
-  type ManagedCodexInstallOutcome
-} from './managed-codex'
-import { runEnvironmentCheck } from './environment-check'
-import { writeAgentConfigFiles } from './agent-config-files'
-import {
-  DEFAULT_REGISTRIES,
-  installManagedClaude,
-  isManagedClaudePath,
-  managedClaudeDir,
-  uninstallManagedClaude,
-  type InstallManagedClaudeOptions,
-  type ManagedInstallOutcome
-} from './managed-claude'
+import type { InstallManagedCodexOptions, ManagedCodexInstallOutcome } from './managed-codex'
+import type { InstallManagedClaudeOptions, ManagedInstallOutcome } from './managed-claude'
 import { isEncryptionAvailable } from './crypto'
-import { augmentedPathEnv } from './shell-path'
-import { computePreflight } from './preflight'
-import {
-  buildProviderEnv,
-  getAppClaudeConfigDir,
-  getUserClaudeConfigDir,
-  type ResolvedProvider
-} from './provider-env'
+import { buildProviderEnv, getUserClaudeConfigDir, type ResolvedProvider } from './provider-env'
 import {
   ResponsesBridge,
   type ResponsesBridgeConnection,
@@ -168,9 +119,9 @@ import {
   ProviderAccountsModule,
   requiresNativeResponsesCompatibility
 } from './provider-accounts'
+import { AgentRuntimeManager, type ExecuteClaudeProbe } from './agent-runtime-manager'
 import { CONNECTOR_CATALOG } from '../connectors/catalog'
 import { renderConnectorInstructions } from '../connectors/skill-doc'
-import { syncConnectorSkillDocs } from '../connectors/provision'
 import { SkillRegistry } from '../skills/registry'
 import { UserSkillRepository } from '../skills/user-skill-repository'
 import { requestSkillImportToolSchema } from '../skills/mcp-server'
@@ -187,10 +138,10 @@ import {
   BEGIN_ACTIVITY_GROUP_TOOL_NAME
 } from '../../shared/activity-groups'
 import { REVIEWER_BRIDGE_NAMESPACED_TOOLS } from '../reviewer/bridge-tools'
-import type { StoredConnectors, StoredCodexInfo, StoredSettings } from './types'
+import type { StoredConnectors, StoredSettings } from './types'
 import { ensureCodexAuthHome, type CodexAuthControllerPort } from './codex-auth'
 
-import { resolveSystemProxyEnvironment, type SystemProxyEnvironment } from './system-proxy'
+import type { SystemProxyEnvironment } from './system-proxy'
 import { type ClaudeIsolatedAuthControllerPort } from './claude-isolated-auth'
 import { type ClaudeSharedAuthControllerPort } from './claude-shared-auth'
 
@@ -214,37 +165,6 @@ type NativeResponsesCompatibilityEntry = {
 
 type LeasedResponsesBridgeConnection = ResponsesBridgeConnection & {
   lease: NonNullable<ResolvedAgentBackend['responsesBridgeLease']>
-}
-
-const allocateLoopbackPort = async (): Promise<number> => {
-  const server = createServer()
-  try {
-    await new Promise<void>((resolve, reject) => {
-      server.once('error', reject)
-      server.listen(0, '127.0.0.1', resolve)
-    })
-    const address = server.address()
-    if (!address || typeof address === 'string') {
-      throw new Error('Could not reserve an OpenCode usage API port.')
-    }
-    return address.port
-  } finally {
-    if (server.listening) {
-      await new Promise<void>((resolve, reject) =>
-        server.close((error) => (error ? reject(error) : resolve()))
-      )
-    }
-  }
-}
-
-const execFileAsync = promisify(execFile)
-
-// Hard ceiling for a Claude credential probe so a stuck process can never hang the wizard.
-const CLAUDE_PROBE_TIMEOUT_MS = 20_000
-const CODEX_INSTALL_TARGET: InstallTarget = {
-  npmPackage: '@agentclientprotocol/codex-acp',
-  // Codex exposes no supported shell installer; InstallCodexRequest cannot select this branch.
-  scriptUnix: ''
 }
 
 // Codex exposes local MCP tools as namespaced Responses functions. Chat Completions has no namespace
@@ -310,87 +230,6 @@ const CODEX_BRIDGE_SKILL_IMPORT_TOOLS: ResponsesBridgeNamespacedTool[] = [
     }) as ResponsesBridgeNamespacedTool['parameters']
   }
 ]
-const isManagedCodexPath = (adapterPath: string, storageRoot: string): boolean =>
-  adapterPath === managedCodexAdapterEntry(storageRoot)
-
-type ExecuteClaudeProbe = (
-  executablePath: string,
-  env: NodeJS.ProcessEnv,
-  runtimeArgs?: string[]
-) => Promise<void>
-
-const executeClaudeProbe: ExecuteClaudeProbe = async (executablePath, env, runtimeArgs = []) => {
-  await execFileAsync(executablePath, [...runtimeArgs, '-p', 'ok'], {
-    env,
-    timeout: CLAUDE_PROBE_TIMEOUT_MS,
-    // On Windows the detected claude is a `claude.cmd` shim, which execFile can't launch without a
-    // shell (spawn EINVAL); route the probe through the shell there.
-    shell: process.platform === 'win32',
-    windowsHide: true
-  })
-}
-
-const runCodexAdapterVersion = async (
-  adapterPath: string,
-  fallback: (path: string) => Promise<string | undefined>
-): Promise<string | undefined> => {
-  if (!/\.[cm]?js$/i.test(adapterPath)) return fallback(adapterPath)
-
-  try {
-    const { stdout } = await execFileAsync(process.execPath, [adapterPath, '--version'], {
-      env: { ...process.env, ELECTRON_RUN_AS_NODE: '1', NO_BROWSER: '1' },
-      timeout: 5_000,
-      windowsHide: true
-    })
-    return stdout
-  } catch {
-    return undefined
-  }
-}
-
-// Detects a child-process timeout (SIGTERM kill or ETIMEDOUT) so the probe can report it distinctly.
-const isTimeoutError = (error: unknown): boolean => {
-  if (typeof error !== 'object' || error === null) return false
-
-  const candidate = error as { killed?: boolean; signal?: string; code?: string }
-
-  return (
-    candidate.killed === true || candidate.signal === 'SIGTERM' || candidate.code === 'ETIMEDOUT'
-  )
-}
-
-const classifyClaudeProbeFailure = (error: unknown): 'auth' | 'network' | 'unknown' => {
-  if (typeof error !== 'object' || error === null) return 'unknown'
-
-  const candidate = error as {
-    code?: string | number
-    message?: string
-    stderr?: unknown
-    stdout?: unknown
-  }
-  if (candidate.code === 'ENOENT' || candidate.code === 'EACCES') return 'unknown'
-
-  const detail = [candidate.message, candidate.stderr, candidate.stdout]
-    .filter((value): value is string => typeof value === 'string')
-    .join(' ')
-  if (
-    /\b(?:401|403)\b|unauthori[sz]ed|not authenticated|not logged in|authentication failed|invalid api key|api key.*invalid|please run \/login|oauth.*(?:invalid|expired|reject)|(?:invalid|expired|rejected).*token|token.*(?:invalid|expired|rejected)/i.test(
-      detail
-    )
-  ) {
-    return 'auth'
-  }
-  if (
-    /\b(?:ECONNREFUSED|ECONNRESET|ENETUNREACH|EHOSTUNREACH|EAI_AGAIN)\b|network|fetch failed|getaddrinfo/i.test(
-      detail
-    )
-  ) {
-    return 'network'
-  }
-
-  return 'unknown'
-}
-
 // A spawn configuration the ACP runtime reads at connect time so the active provider's credentials
 // are always current.
 export type AgentSpawnConfig = {
@@ -466,23 +305,9 @@ class SettingsService {
   private readonly skills: SkillCatalogModule
   private readonly connectors: ConnectorSettingsModule
   private readonly providers: ProviderAccountsModule
+  private readonly runtimeManager: AgentRuntimeManager
   private readonly storageRoot: string
-  private readonly detectDeps: ClaudeDetectDeps
-  private readonly opencodeDetectDeps: OpencodeDetectDeps
-  private readonly allocateOpenCodeUsagePort: () => Promise<number>
-  private readonly codexDetectDeps: CodexDetectDeps
   private readonly userClaudeDir: string
-  private readonly executeClaudeProbe: ExecuteClaudeProbe
-  private readonly installManagedClaudeImpl: (
-    options: InstallManagedClaudeOptions
-  ) => Promise<ManagedInstallOutcome>
-  private readonly installManagedOpencodeImpl: (
-    options: InstallManagedOpencodeOptions
-  ) => Promise<ManagedInstallOutcome>
-  private readonly installManagedCodexImpl: (
-    options: InstallManagedCodexOptions
-  ) => Promise<ManagedCodexInstallOutcome>
-  private readonly resolveCodexProxyEnvironment: () => Promise<SystemProxyEnvironment | undefined>
   // A bridge owns mutable per-runtime state (reasoning override, reviewer scopes, and reasoning
   // replay). Track each backend generation separately so an overlapping reconnect cannot mutate the
   // bridge still serving the retiring generation.
@@ -501,36 +326,6 @@ class SettingsService {
     this.preferences = new SettingsPreferencesModule(this.repository)
     this.notebookRuntimeSettings = new NotebookRuntimeSettingsModule(this.repository)
     this.connectors = new ConnectorSettingsModule(this.repository)
-    // Probe the app-managed install dir too, so a managed Claude is re-detected even if the cached
-    // path is ever cleared (e.g. a manual re-detect).
-    const baseDetectDeps = options.detectDeps ?? createDefaultDetectDeps()
-    this.detectDeps = {
-      ...baseDetectDeps,
-      extraDirs: [...(baseDetectDeps.extraDirs ?? []), managedClaudeDir(this.storageRoot)]
-    }
-    // Same rationale for opencode: probe the app-managed dir so a managed opencode is re-detected
-    // (its bare `which/where` PATH lookup would otherwise never see the app-owned install dir).
-    const baseOpencodeDetectDeps = options.opencodeDetectDeps ?? createOpencodeDetectDeps()
-    this.opencodeDetectDeps = {
-      ...baseOpencodeDetectDeps,
-      extraDirs: [...(baseOpencodeDetectDeps.extraDirs ?? []), managedOpencodeDir(this.storageRoot)]
-    }
-    this.allocateOpenCodeUsagePort = options.allocateOpenCodeUsagePort ?? allocateLoopbackPort
-    const managedAdapterPath = managedCodexAdapterEntry(this.storageRoot)
-    const managedNativePath = managedCodexBinary(this.storageRoot)
-    this.codexDetectDeps = options.codexDetectDeps ?? {
-      env: baseOpencodeDetectDeps.env,
-      homePath: baseOpencodeDetectDeps.homePath,
-      platform: baseOpencodeDetectDeps.platform,
-      isRunnable: baseOpencodeDetectDeps.isExecutable,
-      getAdapterVersion: (path) => runCodexAdapterVersion(path, baseOpencodeDetectDeps.getVersion),
-      getCodexVersion: baseOpencodeDetectDeps.getVersion,
-      smokeInitialize: runAcpInitializeSmoke(baseOpencodeDetectDeps.platform),
-      resolveNpmBinDirs: baseOpencodeDetectDeps.resolveNpmBinDirs,
-      extraDirs: [dirname(managedAdapterPath)],
-      managedAdapterPath,
-      managedCodexPath: managedNativePath
-    }
     this.userClaudeDir = options.userClaudeDir ?? getUserClaudeConfigDir()
     const userCodexDir = options.userCodexDir ?? join(homedir(), '.codex')
     this.skills = new SkillCatalogModule({
@@ -542,23 +337,35 @@ class SettingsService {
       skillRegistry: options.skillRegistry ?? new SkillRegistry(),
       userSkills: options.userSkills ?? new UserSkillRepository(this.storageRoot)
     })
-    this.executeClaudeProbe = options.executeClaudeProbe ?? executeClaudeProbe
-    this.installManagedClaudeImpl = options.installManagedClaudeImpl ?? installManagedClaude
-    this.installManagedOpencodeImpl = options.installManagedOpencodeImpl ?? installManagedOpencode
-    this.installManagedCodexImpl = options.installManagedCodexImpl ?? installManagedCodex
-    this.resolveCodexProxyEnvironment =
-      options.resolveCodexProxyEnvironment ?? resolveSystemProxyEnvironment
+    const allocateSettingsIdSequence = (): number => this.nextSettingsIdSequence()
+    this.runtimeManager = new AgentRuntimeManager({
+      repository: this.repository,
+      storageRoot: this.storageRoot,
+      userClaudeDir: this.userClaudeDir,
+      skills: this.skills,
+      connectors: this.connectors,
+      allocateSettingsIdSequence,
+      detectDeps: options.detectDeps,
+      opencodeDetectDeps: options.opencodeDetectDeps,
+      codexDetectDeps: options.codexDetectDeps,
+      allocateOpenCodeUsagePort: options.allocateOpenCodeUsagePort,
+      executeClaudeProbe: options.executeClaudeProbe,
+      installManagedClaudeImpl: options.installManagedClaudeImpl,
+      installManagedOpencodeImpl: options.installManagedOpencodeImpl,
+      installManagedCodexImpl: options.installManagedCodexImpl,
+      resolveCodexProxyEnvironment: options.resolveCodexProxyEnvironment
+    })
     this.providers = new ProviderAccountsModule({
       repository: this.repository,
       storageRoot: this.storageRoot,
       userClaudeDir: this.userClaudeDir,
       userCodexDir,
-      allocateSettingsIdSequence: () => this.nextSettingsIdSequence(),
+      allocateSettingsIdSequence,
       resolveCodexExecutable: (adapterPath, nativePath) =>
-        this.resolveCodexExecutable(adapterPath, nativePath),
-      resolveCodexProxyEnvironment: this.resolveCodexProxyEnvironment,
+        this.runtimeManager.resolveCodexExecutable(adapterPath, nativePath),
+      resolveCodexProxyEnvironment: () => this.runtimeManager.resolveCodexProxyEnvironment(),
       runClaudeSubscriptionProbe: (provider, settings) =>
-        this.runClaudeSubscriptionProbe(provider, settings),
+        this.runtimeManager.runClaudeSubscriptionProbe(provider, settings),
       codexAuth: options.codexAuth,
       claudeIsolatedAuth: options.claudeIsolatedAuth,
       claudeSharedAuth: options.claudeSharedAuth
@@ -585,13 +392,13 @@ class SettingsService {
         nativeVersion: settings.codex?.nativeVersion
       },
       claudeManaged: settings.claude?.resolvedPath
-        ? isManagedClaudePath(settings.claude.resolvedPath, this.storageRoot)
+        ? this.runtimeManager.isManagedRuntimePath('claude-code', settings.claude.resolvedPath)
         : false,
       opencodeManaged: settings.opencodePath
-        ? isManagedOpencodePath(settings.opencodePath, this.storageRoot)
+        ? this.runtimeManager.isManagedRuntimePath('opencode', settings.opencodePath)
         : false,
       codexManaged: settings.codex?.resolvedPath
-        ? isManagedCodexPath(settings.codex.resolvedPath, this.storageRoot)
+        ? this.runtimeManager.isManagedRuntimePath('codex', settings.codex.resolvedPath)
         : false,
       activeProviderId: settings.activeProviderId,
       claudeSubscriptionProviderId: settings.claudeSubscriptionProviderId,
@@ -776,39 +583,12 @@ class SettingsService {
   // Detects the opencode executable and persists its path, mirroring detectClaude. Returns the refreshed
   // snapshot so the settings card reflects the result.
   async detectOpencode(): Promise<SettingsSnapshot> {
-    const detected = await detectOpencode(this.opencodeDetectDeps)
-
-    if (detected) {
-      await this.repository.setOpencodeInfo(detected.resolvedPath, detected.version)
-    } else {
-      // Live probe found nothing. Only forget the stored record when its binary is actually gone from
-      // disk (a real uninstall) — a transient probe miss (e.g. a slow --version, a GUI PATH gap) must
-      // not wipe a still-installed opencode.
-      const cached = (await this.repository.getSettings()).opencodePath
-
-      if (cached && !(await this.pathExists(cached))) {
-        await this.repository.clearOpencodeInfo()
-      }
-    }
-
+    await this.runtimeManager.detectOpencode()
     return this.getSettingsView()
   }
 
   async detectCodex(): Promise<SettingsSnapshot> {
-    const detected = await detectCodex(this.codexDetectDeps)
-
-    if (detected) {
-      await this.repository.setCodexInfo({
-        resolvedPath: detected.adapterPath,
-        version: detected.adapterVersion,
-        nativePath: detected.nativeCodexPath,
-        nativeVersion: detected.nativeCodexVersion
-      })
-    } else {
-      const cached = (await this.repository.getSettings()).codex?.resolvedPath
-      if (cached && !(await this.pathExists(cached))) await this.repository.clearCodexInfo()
-    }
-
+    await this.runtimeManager.detectCodex()
     return this.getSettingsView()
   }
 
@@ -973,324 +753,19 @@ class SettingsService {
   }
   // Computes the two startup gates, re-checking the claude path each call as the design requires.
   async getPreflight(): Promise<Preflight> {
-    const settings = await this.repository.getSettings()
-    // Validate each recorded runtime exactly as the authoritative env check does — by invoking
-    // `--version`, not mere X_OK — so a corrupt-but-executable binary cannot pass preflight and get
-    // auto-selected as "ready" only to be rejected later by the env gate that actually runs it.
-    const claudePathExists = settings.claude?.resolvedPath
-      ? (await this.detectDeps.getVersion(settings.claude.resolvedPath)) !== undefined
-      : false
-    const opencodePathExists = settings.opencodePath
-      ? (await this.opencodeDetectDeps.getVersion(settings.opencodePath)) !== undefined
-      : false
-    const codexPathExists = (await this.probeCodexRuntime(settings.codex)) !== undefined
-
-    const agentFrameworkId = settings.agentFrameworkId ?? DEFAULT_AGENT_FRAMEWORK_ID
-    const framework = getAgentFramework(agentFrameworkId)
-    const activeProvider = settings.activeProviderId
-      ? settings.providers.find((provider) => provider.id === settings.activeProviderId)
-      : undefined
-    // Resolve compatibility here where the vendor registry is available (official endpoints + the
-    // static bridge-support marks) and pass the boolean into the pure preflight computation.
-    const activeEndpoints = activeProvider
-      ? this.providers.resolveProviderApiEndpoints(activeProvider, activeProvider.model)
-      : undefined
-    const activeProviderCompatible = activeProvider
-      ? isProviderUsableByFramework(
-          { apiEndpoints: activeEndpoints, type: activeProvider.type },
-          framework
-        ) &&
-        (framework.id !== 'codex' ||
-          isModelBridgeSupported(
-            activeProvider,
-            this.providers.resolveActiveModel(activeProvider, settings.activeModel)
-          ))
-      : false
-    const activeProviderKeyUsable =
-      activeProvider && activeProvider.lastValidatedAt !== undefined
-        ? await this.providers.isProviderKeyUsable(activeProvider)
-        : false
-
-    return computePreflight({
-      settings,
-      claudePathExists,
-      opencodePathExists,
-      codexPathExists,
-      agentFrameworkId,
-      isProviderKeyUsable: (provider) =>
-        provider.id === activeProvider?.id && activeProviderKeyUsable,
-      activeProviderCompatible
-    })
+    return this.runtimeManager.getPreflight(this.providers)
   }
 
   // Re-runs the complete host inspection on every app launch, for the SELECTED framework's runtime, so
   // a runtime installed outside Open Science between launches is picked up and onboarding can be
   // completed with Claude or OpenCode alone.
   async checkEnvironment(): Promise<EnvironmentCheckResult> {
-    const settings = await this.repository.getSettings()
-    const agentFrameworkId = settings.agentFrameworkId ?? DEFAULT_AGENT_FRAMEWORK_ID
-
-    // Detect every framework's runtime so onboarding can show them side by side; only the selected
-    // one's readiness gates Continue (enforced inside runEnvironmentCheck).
-    const [claudeRuntime, opencodeRuntime, codexRuntime] = await Promise.all([
-      this.resolveClaudeRuntime(settings),
-      this.resolveOpencodeRuntime(settings),
-      this.resolveCodexRuntime(settings)
-    ])
-
-    return runEnvironmentCheck({
-      storageRoot: this.storageRoot,
-      agentFrameworkId,
-      frameworks: [
-        {
-          id: 'claude-code',
-          label: getAgentFramework('claude-code').displayName,
-          runtime: claudeRuntime
-        },
-        {
-          id: 'opencode',
-          label: getAgentFramework('opencode').displayName,
-          runtime: opencodeRuntime
-        },
-        {
-          id: 'codex',
-          label: getAgentFramework('codex').displayName,
-          runtime: codexRuntime
-        }
-      ],
-      encryptionAvailable: this.isEncryptionAvailable()
-    })
-  }
-
-  // Resolves the Claude runtime for the environment check. Prefers a previously recorded runtime that
-  // still runs over this launch's re-detection, keeping a healthy app-managed/manual executable from
-  // being replaced by a PATH entry discovered later; the `--version` probe (not mere file existence)
-  // is the usability signal, so a stale-but-present path is never reported healthy.
-  private async resolveClaudeRuntime(settings: StoredSettings): Promise<ClaudeDetectResult> {
-    const cached = settings.claude
-
-    if (cached?.resolvedPath) {
-      const version = await this.detectDeps.getVersion(cached.resolvedPath)
-
-      if (version) {
-        // Keep the stored version in sync when an in-place update changed it under the same path.
-        if (version !== cached.version) {
-          await this.repository.setClaudeInfo({ resolvedPath: cached.resolvedPath, version })
-        }
-
-        return { found: true, path: cached.resolvedPath, version }
-      }
-    }
-
-    // No healthy recorded runtime: full detection, which persists what it finds.
-    return this.detectClaude()
-  }
-
-  // Same recorded-runtime-first logic for OpenCode, mapped into the shared detect-result shape.
-  private async resolveOpencodeRuntime(settings: StoredSettings): Promise<ClaudeDetectResult> {
-    const cachedPath = settings.opencodePath
-
-    if (cachedPath) {
-      const version = await this.opencodeDetectDeps.getVersion(cachedPath)
-
-      if (version) {
-        if (version !== settings.opencodeVersion) {
-          await this.repository.setOpencodeInfo(cachedPath, version)
-        }
-
-        return { found: true, path: cachedPath, version }
-      }
-    }
-
-    // Probe once (not twice): detect, then persist a hit or clear a truly-gone record — same rule as
-    // detectOpencode — so the card/gates stay accurate without running the full PATH/version probe again.
-    const detected = await detectOpencode(this.opencodeDetectDeps)
-
-    if (detected) {
-      await this.repository.setOpencodeInfo(detected.resolvedPath, detected.version)
-
-      return { found: true, path: detected.resolvedPath, version: detected.version }
-    }
-
-    if (cachedPath && !(await this.pathExists(cachedPath))) {
-      await this.repository.clearOpencodeInfo()
-    }
-
-    return { found: false }
-  }
-
-  private async resolveCodexRuntime(settings: StoredSettings): Promise<ClaudeDetectResult> {
-    const cached = settings.codex
-
-    const cachedVersions = await this.probeCodexRuntime(cached)
-    if (cached?.resolvedPath && cachedVersions) {
-      await this.repository.setCodexInfo({ ...cached, ...cachedVersions })
-
-      // Build codexComponents even for successful detection so onboarding shows separate rows.
-      let nativeCliFound = !!cached.nativePath
-      let nativeCliPath = cached.nativePath
-      let nativeCliVersion = cachedVersions.nativeVersion
-
-      if (!cached.nativePath) {
-        // A non-managed adapter only gets cached after passing the full smoke test, so a working
-        // native CLI exists. Trust that (mirroring the fresh-detect branch) rather than letting a
-        // narrow probe miss it and block Continue. The probe just enriches the path/version.
-        nativeCliFound = true
-        const { detectNativeCodex } = await import('./codex-detect')
-        const nativeCodex = await detectNativeCodex(this.codexDetectDeps)
-        if (nativeCodex) {
-          nativeCliPath = nativeCodex.path
-          nativeCliVersion = nativeCodex.version
-        }
-      }
-
-      const codexComponents: ClaudeDetectResult['codexComponents'] = {
-        adapterFound: true,
-        adapterPath: cached.resolvedPath,
-        adapterVersion: cachedVersions.version,
-        nativeCliFound,
-        nativeCliPath,
-        nativeCliVersion
-      }
-
-      return {
-        found: true,
-        path: cached.resolvedPath,
-        version: cachedVersions.version,
-        codexComponents
-      }
-    }
-
-    const detected = await detectCodex(this.codexDetectDeps)
-    if (detected) {
-      await this.repository.setCodexInfo({
-        resolvedPath: detected.adapterPath,
-        version: detected.adapterVersion,
-        nativePath: detected.nativeCodexPath,
-        nativeVersion: detected.nativeCodexVersion
-      })
-
-      // The controlled adapter is paired with an explicit native executable. Legacy generic
-      // detection can still omit it, so retain the independent display probe for that shape.
-      let nativeCliFound = !!detected.nativeCodexPath
-      let nativeCliPath = detected.nativeCodexPath
-      let nativeCliVersion = detected.nativeCodexVersion
-
-      if (!detected.nativeCodexPath) {
-        // Non-managed adapter passed the ACP smoke test, which proves a working native CLI exists
-        // (the handshake spawns a real session). Trust that: mark native as found even if the
-        // independent probe below can't pinpoint the exact path, so a successful pairing never
-        // blocks Continue. The probe only enriches the display with a concrete path/version.
-        nativeCliFound = true
-        const { detectNativeCodex } = await import('./codex-detect')
-        const nativeCodex = await detectNativeCodex(this.codexDetectDeps)
-        if (nativeCodex) {
-          nativeCliPath = nativeCodex.path
-          nativeCliVersion = nativeCodex.version
-        }
-      }
-
-      const codexComponents: ClaudeDetectResult['codexComponents'] = {
-        adapterFound: true,
-        adapterPath: detected.adapterPath,
-        adapterVersion: detected.adapterVersion,
-        nativeCliFound,
-        nativeCliPath,
-        nativeCliVersion
-      }
-
-      return {
-        found: true,
-        path: detected.adapterPath,
-        version: detected.adapterVersion,
-        codexComponents
-      }
-    }
-
-    // Full detection failed. Perform detailed component-level detection to provide accurate
-    // diagnostic information distinguishing "adapter missing" from "native Codex missing" from
-    // "both present but incompatible".
-    if (cached?.resolvedPath && !(await this.pathExists(cached.resolvedPath))) {
-      await this.repository.clearCodexInfo()
-    }
-
-    const { detectCodexComponents } = await import('./codex-detect')
-    const components = await detectCodexComponents(this.codexDetectDeps)
-
-    // Build diagnostic message based on what was found
-    let diagnostic: string | undefined
-    if (components.nativeCliFound && !components.adapterFound) {
-      diagnostic = `Native Codex ${components.nativeCliVersion} is installed at ${components.nativeCliPath}, but the Codex ACP adapter required by Open Science is missing.`
-    } else if (!components.nativeCliFound && components.adapterFound) {
-      if (components.adapterFailureReason === 'smoke-test-failed') {
-        diagnostic = `Codex ACP adapter ${components.adapterVersion} is installed at ${components.adapterPath}, but it failed to initialize (native Codex CLI may be missing or incompatible).`
-      } else {
-        diagnostic = `Codex ACP adapter is installed at ${components.adapterPath}, but version detection failed.`
-      }
-    } else if (components.nativeCliFound && components.adapterFound) {
-      if (components.adapterFailureReason === 'smoke-test-failed') {
-        diagnostic = `Both native Codex ${components.nativeCliVersion} and ACP adapter ${components.adapterVersion} are installed, but the adapter failed to initialize with the native CLI.`
-      } else if (components.adapterFailureReason === 'version-probe-failed') {
-        diagnostic = `Native Codex ${components.nativeCliVersion} is installed, and an ACP adapter exists at ${components.adapterPath}, but the adapter's version could not be determined.`
-      }
-    }
-
-    return {
-      found: false,
-      diagnostic,
-      codexComponents: {
-        nativeCliFound: components.nativeCliFound,
-        nativeCliPath: components.nativeCliPath,
-        nativeCliVersion: components.nativeCliVersion,
-        adapterFound: components.adapterFound,
-        adapterPath: components.adapterPath,
-        adapterVersion: components.adapterVersion,
-        adapterFailureReason: components.adapterFailureReason
-      }
-    }
-  }
-
-  private async probeCodexRuntime(
-    codex: StoredCodexInfo | undefined
-  ): Promise<Pick<StoredCodexInfo, 'version' | 'nativeVersion'> | undefined> {
-    if (!codex?.resolvedPath) return undefined
-
-    const controlledAdapterPath =
-      this.codexDetectDeps.managedAdapterPath ?? managedCodexAdapterEntry(this.storageRoot)
-    // A cached global adapter is legacy detection data, not an eligible runtime. Force a fresh
-    // controlled-pair detection so its native executable can be retained while the adapter is
-    // replaced with the app-owned one.
-    if (codex.resolvedPath !== controlledAdapterPath) return undefined
-
-    const adapterOutput = await this.codexDetectDeps.getAdapterVersion(codex.resolvedPath)
-    const version = adapterOutput ? parseCodexVersion(adapterOutput) : undefined
-    if (!version) return undefined
-
-    if (!codex.nativePath) return undefined
-
-    const nativeOutput = await this.codexDetectDeps.getCodexVersion(codex.nativePath)
-    const nativeVersion = nativeOutput ? parseCodexVersion(nativeOutput) : undefined
-    return nativeVersion ? { version, nativeVersion } : undefined
+    return this.runtimeManager.checkEnvironment()
   }
 
   // Detects claude and persists the resolved path/version for later spawns.
   async detectClaude(): Promise<ClaudeDetectResult> {
-    const result = await detectClaude(this.detectDeps)
-
-    if (result.found && result.path) {
-      await this.repository.setClaudeInfo({ resolvedPath: result.path, version: result.version })
-    } else {
-      // Live probe missed it. A GUI launch can have a narrower PATH than the installing shell, so only
-      // forget the cached record when the stored binary is actually gone from disk (a real uninstall) —
-      // mirroring checkEnvironment's cached-path resilience so the status surfaces cannot disagree.
-      const cached = (await this.repository.getSettings()).claude
-
-      if (cached?.resolvedPath && !(await this.pathExists(cached.resolvedPath))) {
-        await this.repository.setClaudeInfo({})
-      }
-    }
-
-    return result
+    return this.runtimeManager.detectClaude()
   }
 
   private nextSettingsIdSequence(): number {
@@ -1306,46 +781,7 @@ class SettingsService {
     request: InstallClaudeRequest,
     onEvent: (event: ClaudeInstallEvent) => void
   ): Promise<ClaudeInstallResult> {
-    const installId = `install-${Date.now()}-${this.nextSettingsIdSequence()}`
-
-    if (request.source === 'managed') {
-      const registries =
-        request.managedRegistry === 'npmmirror'
-          ? [DEFAULT_REGISTRIES[1], DEFAULT_REGISTRIES[0]]
-          : DEFAULT_REGISTRIES
-      const outcome = await this.installManagedClaudeImpl({
-        installId,
-        onEvent,
-        dataRoot: this.storageRoot,
-        registries
-      })
-
-      if (outcome.result.ok && outcome.resolvedPath) {
-        const installedVersion = await this.detectDeps.getVersion(outcome.resolvedPath)
-
-        if (!installedVersion) {
-          const error =
-            'The installed Claude runtime could not report its version. It may be incompatible or incomplete. Delete it and install again.'
-          onEvent({ kind: 'log', installId, stream: 'system', chunk: `${error}\n` })
-          return { installId, ok: false, error }
-        }
-
-        await this.repository.setClaudeInfo({
-          resolvedPath: outcome.resolvedPath,
-          version: outcome.version
-        })
-      }
-
-      return outcome.result
-    }
-
-    const result = await runInstallWithFallback({ source: request.source, installId, onEvent })
-
-    if (result.ok) {
-      await this.detectClaude()
-    }
-
-    return result
+    return this.runtimeManager.installClaude(request, onEvent)
   }
 
   // Installs OpenCode from the requested source (app-managed download is the first recommendation, like
@@ -1355,76 +791,14 @@ class SettingsService {
     request: InstallOpencodeRequest,
     onEvent: (event: ClaudeInstallEvent) => void
   ): Promise<ClaudeInstallResult> {
-    const installId = `install-opencode-${Date.now()}-${this.nextSettingsIdSequence()}`
-
-    if (request.source === 'managed') {
-      const outcome = await this.installManagedOpencodeImpl({
-        installId,
-        onEvent,
-        dataRoot: this.storageRoot
-      })
-
-      if (outcome.result.ok && outcome.resolvedPath) {
-        await this.repository.setOpencodeInfo(outcome.resolvedPath, outcome.version)
-      }
-
-      return outcome.result
-    }
-
-    const result = await runInstallWithFallback({
-      source: request.source,
-      installId,
-      onEvent,
-      installTarget: OPENCODE_INSTALL_TARGET
-    })
-
-    if (result.ok) {
-      await this.detectOpencode()
-    }
-
-    return result
+    return this.runtimeManager.installOpencode(request, onEvent)
   }
 
   async installCodex(
     request: InstallCodexRequest,
     onEvent: (event: ClaudeInstallEvent) => void
   ): Promise<ClaudeInstallResult> {
-    const installId = `install-codex-${Date.now()}-${this.nextSettingsIdSequence()}`
-
-    if (request.source === 'managed') {
-      const outcome = await this.installManagedCodexImpl({
-        installId,
-        onEvent,
-        dataRoot: this.storageRoot
-      })
-
-      if (
-        outcome.result.ok &&
-        outcome.adapterPath &&
-        outcome.adapterVersion &&
-        outcome.codexPath &&
-        outcome.codexVersion
-      ) {
-        await this.repository.setCodexInfo({
-          resolvedPath: outcome.adapterPath,
-          version: outcome.adapterVersion,
-          nativePath: outcome.codexPath,
-          nativeVersion: outcome.codexVersion
-        })
-      }
-
-      return outcome.result
-    }
-
-    const result = await runInstallWithFallback({
-      source: request.source,
-      installId,
-      onEvent,
-      installTarget: CODEX_INSTALL_TARGET
-    })
-    if (result.ok) await this.detectCodex()
-
-    return result
+    return this.runtimeManager.installCodex(request, onEvent)
   }
 
   // Uninstalls the app-managed Claude runtime. Only an install we own (a binary inside the app's data
@@ -1434,21 +808,8 @@ class SettingsService {
   // framework, so the IPC layer can reconnect the agent for that case alone — uninstalling the inactive
   // runtime leaves the live agent untouched and needs no reconnect.
   async uninstallClaude(): Promise<UninstallResult> {
-    const settings = await this.repository.getSettings()
-    const resolvedPath = settings.claude?.resolvedPath
-    const wasActive = (settings.agentFrameworkId ?? DEFAULT_AGENT_FRAMEWORK_ID) === 'claude-code'
-
-    if (!resolvedPath || !isManagedClaudePath(resolvedPath, this.storageRoot)) {
-      return { snapshot: await this.getSettingsView(), activeBackendAffected: false }
-    }
-
-    await uninstallManagedClaude(this.storageRoot)
-    // Re-detect resolves what remains: clears the stored path when nothing is left on disk, or adopts a
-    // still-present PATH install if one also exists.
-    await this.detectClaude()
-    await this.autoSwitchAwayFrom('claude-code')
-
-    return { snapshot: await this.getSettingsView(), activeBackendAffected: wasActive }
+    const { activeBackendAffected } = await this.runtimeManager.uninstallClaude()
+    return { snapshot: await this.getSettingsView(), activeBackendAffected }
   }
 
   // Uninstalls the app-managed OpenCode runtime, mirroring uninstallClaude (guard, delete, re-detect,
@@ -1456,76 +817,13 @@ class SettingsService {
   // removed; a PATH/npm opencode is left untouched. `activeBackendAffected` is true only when OpenCode
   // was active.
   async uninstallOpencode(): Promise<UninstallResult> {
-    const settings = await this.repository.getSettings()
-    const resolvedPath = settings.opencodePath
-    const wasActive = (settings.agentFrameworkId ?? DEFAULT_AGENT_FRAMEWORK_ID) === 'opencode'
-
-    if (!resolvedPath || !isManagedOpencodePath(resolvedPath, this.storageRoot)) {
-      return { snapshot: await this.getSettingsView(), activeBackendAffected: false }
-    }
-
-    await uninstallManagedOpencode(this.storageRoot)
-    await this.detectOpencode()
-    await this.autoSwitchAwayFrom('opencode')
-
-    return { snapshot: await this.getSettingsView(), activeBackendAffected: wasActive }
+    const { activeBackendAffected } = await this.runtimeManager.uninstallOpencode()
+    return { snapshot: await this.getSettingsView(), activeBackendAffected }
   }
 
   async uninstallCodex(): Promise<UninstallResult> {
-    const settings = await this.repository.getSettings()
-    const resolvedPath = settings.codex?.resolvedPath
-    const wasActive = (settings.agentFrameworkId ?? DEFAULT_AGENT_FRAMEWORK_ID) === 'codex'
-
-    // Exact app-owned adapter entry is the authority: never delete a PATH/npm global installation.
-    if (!resolvedPath || !isManagedCodexPath(resolvedPath, this.storageRoot)) {
-      return { snapshot: await this.getSettingsView(), activeBackendAffected: false }
-    }
-
-    await uninstallManagedCodex(this.storageRoot)
-    await this.repository.clearCodexInfo()
-    await this.detectCodex()
-    await this.autoSwitchAwayFrom('codex')
-
-    return { snapshot: await this.getSettingsView(), activeBackendAffected: wasActive }
-  }
-
-  // After a framework's runtime is uninstalled, if it was the active backend and the other framework
-  // has a *ready* runtime, switch the active framework to it so sessions keep a working agent. Readiness
-  // means the binary reports `--version`, matching the preflight gate's rule — not merely that a file
-  // exists on disk. An existing-but-broken runtime (can't run, e.g. a corrupt binary) is treated as not
-  // ready, so the selection is left as-is and the preflight gate reports the active framework as not
-  // ready rather than silently parking the user on an unusable agent. No reconnect happens here; the
-  // caller refreshes it.
-  private async autoSwitchAwayFrom(uninstalled: AgentFrameworkId): Promise<void> {
-    const settings = await this.repository.getSettings()
-    const active = settings.agentFrameworkId ?? DEFAULT_AGENT_FRAMEWORK_ID
-
-    if (active !== uninstalled) return
-
-    const candidates: AgentFrameworkId[] = ['claude-code', 'opencode', 'codex']
-
-    for (const candidate of candidates) {
-      if (candidate === uninstalled) continue
-
-      const path =
-        candidate === 'claude-code'
-          ? settings.claude?.resolvedPath
-          : candidate === 'opencode'
-            ? settings.opencodePath
-            : settings.codex?.resolvedPath
-      if (!path) continue
-
-      const version =
-        candidate === 'claude-code'
-          ? await this.detectDeps.getVersion(path)
-          : candidate === 'opencode'
-            ? await this.opencodeDetectDeps.getVersion(path)
-            : await this.codexDetectDeps.getAdapterVersion(path)
-      if (version) {
-        await this.repository.setAgentFramework(candidate)
-        return
-      }
-    }
+    const { activeBackendAffected } = await this.runtimeManager.uninstallCodex()
+    return { snapshot: await this.getSettingsView(), activeBackendAffected }
   }
 
   // Records that first-run onboarding finished so later launches skip the wizard.
@@ -1640,47 +938,6 @@ class SettingsService {
     return this.connectors.getConnectors()
   }
 
-  // Materializes the enabled skill set into opencode's isolated config dir (same skills/<name>/SKILL.md
-  // layout Claude uses), so opencode's native skill tool discovers them. A turn-forced skill overrides
-  // its disabled state, mirroring the Claude provisioning path.
-  private async materializeAgentSkills(
-    settings: StoredSettings,
-    configRoot: string,
-    forcedSkillIds: ReadonlySet<string>
-  ): Promise<void> {
-    await this.skills.materializeSkills(configRoot, settings.disabledSkillIds ?? [], forcedSkillIds)
-
-    // Connector skill docs (which instruct the agent to reach a service ONLY via `host.mcp` from the
-    // notebook kernel) are otherwise synced only into the Claude config dir. Non-Claude frameworks
-    // (Codex, opencode) read skills from their own home, so without this they never get connector
-    // guidance and fall back to ad-hoc calls (e.g. curl). Materialize them into this framework's dir too.
-    const connectors = await this.getConnectors()
-    await syncConnectorSkillDocs(
-      join(configRoot, 'skills'),
-      this.connectors.enabledConnectorIds(connectors)
-    )
-  }
-
-  private async provisionClaudeRuntimeConfig(
-    settings: StoredSettings,
-    forcedSkillIds: ReadonlySet<string> = new Set()
-  ): Promise<string> {
-    const configDir = getAppClaudeConfigDir(this.storageRoot)
-    const disabledSkillIds = (settings.disabledSkillIds ?? []).filter(
-      (id) => !forcedSkillIds.has(id)
-    )
-
-    await this.skills.provisionClaudeConfig(configDir, disabledSkillIds)
-
-    const connectors = await this.getConnectors()
-    await syncConnectorSkillDocs(
-      join(configDir, 'skills'),
-      this.connectors.enabledConnectorIds(connectors)
-    )
-
-    return configDir
-  }
-
   // Lists every bundled connector with enabled / auto-allow state, plus shared NCBI credential state.
   async listConnectors(): Promise<ConnectorsSnapshot> {
     return this.connectors.listConnectors()
@@ -1746,9 +1003,7 @@ class SettingsService {
 
   // Reports whether npm is on PATH so the installer UI can default to/enable the npm source.
   async isNpmAvailable(): Promise<boolean> {
-    const { available } = await detectNpmAvailable()
-
-    return available
+    return this.runtimeManager.isNpmAvailable()
   }
 
   // Returns the bookmark folders for a provider. Used by the remote file browser Go-to dropdown.
@@ -1778,19 +1033,9 @@ class SettingsService {
     forcedSkillIds: ReadonlySet<string>,
     resolvedSelection?: { model?: string }
   ): Promise<AgentSpawnConfig> {
-    let executablePath = settings.claude?.resolvedPath
-
-    // Trust the stored path only if it still exists. A user who uninstalled Claude leaves a stale path
-    // behind; spawning it launches a ghost that dies immediately (surfacing as write EPIPE), so fall
-    // back to a live detect and, if that also finds nothing, fail with a clear, actionable message.
-    if (!executablePath || !(await this.pathExists(executablePath))) {
-      const detected = await detectClaude(this.detectDeps)
-      executablePath = detected.found ? detected.path : undefined
-    }
-
-    if (!executablePath) {
-      throw new Error(CLAUDE_EXECUTABLE_MISSING_MESSAGE)
-    }
+    const executablePath = await this.runtimeManager.resolveClaudeExecutable(
+      settings.claude?.resolvedPath
+    )
 
     const activeProvider = settings.activeProviderId
       ? settings.providers.find((provider) => provider.id === settings.activeProviderId)
@@ -1806,7 +1051,10 @@ class SettingsService {
 
     // Provision the app-owned runtime bundle. Shared auth reads credentials from ~/.claude while the
     // ACP session injects this bundle as a local plugin plus highest-priority settings layer.
-    const appConfigDir = await this.provisionClaudeRuntimeConfig(settings, forcedSkillIds)
+    const appConfigDir = await this.runtimeManager.provisionClaudeRuntimeConfig(
+      settings,
+      forcedSkillIds
+    )
 
     const provider = this.providers.resolveProvider(
       activeProvider,
@@ -1972,17 +1220,17 @@ class SettingsService {
 
     const executablePath =
       framework.id === 'codex'
-        ? await this.resolveCodexExecutable(
+        ? await this.runtimeManager.resolveCodexExecutable(
             settings.codex?.resolvedPath,
             settings.codex?.nativePath
           )
-        : await this.resolveOpencodeExecutable(settings.opencodePath)
+        : await this.runtimeManager.resolveOpencodeExecutable(settings.opencodePath)
     // Model metadata is a compatibility contract with the native Codex binary that is about to
     // start. Probe that exact executable now instead of trusting a cached version from detection;
     // a missing or stale cache must only make us choose the conservative generated catalog.
     const codexNativeVersion =
       framework.id === 'codex'
-        ? await this.probeCodexNativeVersion(settings.codex?.nativePath)
+        ? await this.runtimeManager.probeCodexNativeVersion(settings.codex?.nativePath)
         : undefined
     const provider = this.providers.resolveProvider(activeProvider, effectiveModel)
     if (framework.id === 'codex' && isCodexSubscriptionProvider(provider.type)) {
@@ -2003,7 +1251,7 @@ class SettingsService {
           ? codexSubscriptionStorageDir(this.storageRoot)
           : codexStorageDir(this.storageRoot)
         : opencodeConfigDir(this.storageRoot)
-    await this.materializeAgentSkills(settings, skillsRoot, forcedSkillIds)
+    await this.runtimeManager.materializeAgentSkills(settings, skillsRoot, forcedSkillIds)
     // Chat-only providers require protocol translation. Non-OpenAI native Responses providers keep
     // their protocol, but use a narrow compatibility proxy because Codex emits namespace tools while
     // several compatible APIs accept only flat function names. Official OpenAI and subscriptions
@@ -2036,13 +1284,17 @@ class SettingsService {
         // materialized as on-demand `mcp-*` skills above, avoiding a full catalog in every request.
         instructions: connectorInstructions
       })
-      await writeAgentConfigFiles(modelConfig.configFiles)
+      await this.runtimeManager.materializeAgentConfigFiles(modelConfig.configFiles)
       const opencodeUsagePort =
-        framework.id === 'opencode' ? await this.allocateOpenCodeUsagePort() : undefined
+        framework.id === 'opencode'
+          ? await this.runtimeManager.reserveOpenCodeUsagePort()
+          : undefined
       const opencodeUsagePassword = opencodeUsagePort === undefined ? undefined : randomUUID()
       const usesCodexSystemProxy =
         framework.id === 'codex' && isCodexSubscriptionProvider(provider.type)
-      const proxyEnv = usesCodexSystemProxy ? await this.resolveCodexProxyEnvironment() : undefined
+      const proxyEnv = usesCodexSystemProxy
+        ? await this.runtimeManager.resolveCodexProxyEnvironment()
+        : undefined
 
       // Protocol-driven frameworks apply an explicit model through the ACP session configOption. A Codex
       // subscription with no explicit selection leaves this undefined so Codex uses the account default.
@@ -2210,55 +1462,6 @@ class SettingsService {
     }
   }
 
-  // Locates the opencode binary: an explicitly stored path wins, else a best-effort PATH lookup.
-  private async resolveOpencodeExecutable(storedPath: string | undefined): Promise<string> {
-    // Trust the stored path only if it still exists. A user who uninstalled opencode leaves a stale
-    // path behind; spawning it launches a ghost that dies immediately (surfacing as write EPIPE), so
-    // fall back to a live detect and, if that also finds nothing, fail with a clear, actionable message.
-    if (storedPath && (await this.pathExists(storedPath))) return storedPath
-
-    const detected = await detectOpencode(this.opencodeDetectDeps)
-
-    if (!detected) {
-      throw new Error(
-        'opencode executable not found. Install opencode or set its path in settings.'
-      )
-    }
-
-    return detected.resolvedPath
-  }
-
-  private async resolveCodexExecutable(
-    storedPath: string | undefined,
-    nativePath: string | undefined
-  ): Promise<string> {
-    // `storedPath` can contain a legacy/global codex-acp path. It remains useful as migration
-    // evidence only; runtime and authentication must always cross the app-controlled adapter where
-    // Open Science applies its pinned ACP extensions. A global installation may supply CODEX_PATH,
-    // never the adapter process itself.
-    void storedPath
-    if (!nativePath) {
-      throw new Error('Codex native executable not found. Re-detect or install Codex in settings.')
-    }
-    const adapterPath =
-      this.codexDetectDeps.managedAdapterPath ?? managedCodexAdapterEntry(this.storageRoot)
-    if (!(await this.pathExists(adapterPath))) {
-      throw new Error('Open Science Codex ACP adapter not found. Install Codex in settings.')
-    }
-
-    await ensureManagedCodexContextUsage(adapterPath)
-    return adapterPath
-  }
-
-  private async probeCodexNativeVersion(
-    nativePath: string | undefined
-  ): Promise<string | undefined> {
-    if (!nativePath) return undefined
-
-    const output = await this.codexDetectDeps.getCodexVersion(nativePath).catch(() => undefined)
-    return output ? parseCodexVersion(output) : undefined
-  }
-
   private resolveReasoningEffortFromSettings(
     settings: StoredSettings,
     intent: ReasoningEffort
@@ -2276,85 +1479,6 @@ class SettingsService {
     )
 
     return resolveReasoningEffortValue(intent, profile)
-  }
-
-  private async runClaudeSubscriptionProbe(
-    provider: ResolvedProvider,
-    settings: StoredSettings
-  ): Promise<ValidateProviderResult> {
-    const executablePath = settings.claude?.resolvedPath
-
-    if (!executablePath) {
-      return {
-        ok: false,
-        category: 'unknown',
-        message: 'Claude executable is not configured. Complete Claude detection in settings first.'
-      }
-    }
-
-    const appConfigDir = await this.provisionClaudeRuntimeConfig(settings)
-    const envOverrides = buildProviderEnv(provider, {
-      storageRoot: this.storageRoot,
-      claudeExecutablePath: executablePath,
-      userClaudeConfigDir: this.userClaudeDir
-    })
-    const env = buildAgentSpawnEnv(augmentedPathEnv(process.env), envOverrides, executablePath)
-
-    try {
-      if (provider.type === 'claude-shared') {
-        await this.executeClaudeProbe(executablePath, env, [
-          '--settings',
-          join(appConfigDir, 'settings.json'),
-          '--plugin-dir',
-          appConfigDir
-        ])
-      } else {
-        await this.executeClaudeProbe(executablePath, env)
-      }
-
-      return { ok: true, category: 'ok' }
-    } catch (error) {
-      if (isTimeoutError(error)) {
-        return {
-          ok: false,
-          category: 'timeout',
-          message:
-            provider.type === 'claude-shared'
-              ? 'Claude shared-profile validation timed out. Try again.'
-              : 'Claude token validation timed out. Try again.'
-        }
-      }
-
-      const category = classifyClaudeProbeFailure(error)
-      const messages =
-        provider.type === 'claude-shared'
-          ? {
-              auth: 'Claude rejected the shared profile. Sign in again and retry.',
-              network:
-                'Claude could not reach Anthropic while validating the shared profile. Check your network and try again.',
-              unknown:
-                'Claude could not run the shared-profile validation probe. Re-detect Claude and try again.'
-            }
-          : {
-              auth: 'Claude rejected the setup token. Run `claude setup-token` again and paste a new token.',
-              network:
-                'Claude could not reach Anthropic while validating the token. Check your network and try again.',
-              unknown:
-                'Claude could not run the token validation probe. Re-detect Claude and try again.'
-            }
-
-      return { ok: false, category, message: messages[category] }
-    }
-  }
-
-  private async pathExists(path: string): Promise<boolean> {
-    try {
-      await access(path, constants.X_OK)
-
-      return true
-    } catch {
-      return false
-    }
   }
 }
 
