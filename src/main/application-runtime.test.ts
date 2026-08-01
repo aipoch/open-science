@@ -147,6 +147,55 @@ describe('application runtime composition', () => {
     await expect(runtime.dispose()).rejects.toBe(disposalError)
     expect(events).toEqual(['dispose:second', 'dispose:first'])
   })
+
+  it('bounds a hung module, reports its name, and continues reverse disposal', async () => {
+    vi.useFakeTimers()
+    const events: string[] = []
+    let rejectLate: ((error: Error) => void) | undefined
+
+    try {
+      const runtime = await composeApplicationRuntime(async (modules) => {
+        await modules.add({}, () => ({
+          name: 'settings',
+          capability: {},
+          dispose: () => {
+            events.push('dispose:settings')
+          }
+        }))
+        await modules.add({}, () => ({
+          name: 'mcp-client-manager',
+          capability: {},
+          disposeTimeoutMs: 25,
+          dispose: () =>
+            new Promise<void>((_resolve, reject) => {
+              rejectLate = reject
+            })
+        }))
+        return {}
+      })
+
+      const disposal = runtime.dispose().catch((error: unknown) => error)
+      await vi.advanceTimersByTimeAsync(25)
+
+      const error = await disposal
+      expect(error).toMatchObject({
+        errors: [
+          expect.objectContaining({
+            name: 'ApplicationModuleDisposalTimeoutError',
+            moduleName: 'mcp-client-manager',
+            timeoutMs: 25
+          })
+        ]
+      })
+      expect(events).toEqual(['dispose:settings'])
+
+      // A timed-out disposer remains observed: a later transport rejection must not become unhandled.
+      rejectLate?.(new Error('late MCP close failure'))
+      await Promise.resolve()
+    } finally {
+      vi.useRealTimers()
+    }
+  })
 })
 
 describe('application surface shutdown', () => {
@@ -182,21 +231,27 @@ describe('application surface shutdown', () => {
     expect(order).toEqual(['application-runtime', 'remote-access', 'web-controller', 'web-rpc'])
   })
 
-  it('continues closing surfaces when application runtime disposal rejects', async () => {
+  it('diagnoses runtime failure and continues closing surfaces without rejecting lifecycle', async () => {
     const failure = new Error('backend shutdown failed')
     const shutdownRemoteAccess = vi.fn()
     const closeWebController = vi.fn()
     const disposeWebRpc = vi.fn()
+    const log = { error: vi.fn() }
 
     await expect(
       shutdownApplicationSurfaces({
         disposeApplicationRuntime: () => Promise.reject(failure),
         shutdownRemoteAccess,
         closeWebController,
-        disposeWebRpc
+        disposeWebRpc,
+        log
       })
-    ).rejects.toBe(failure)
+    ).resolves.toBeUndefined()
 
+    expect(log.error).toHaveBeenCalledWith(
+      'application runtime disposal failed during application shutdown',
+      failure
+    )
     expect(shutdownRemoteAccess).toHaveBeenCalledOnce()
     expect(closeWebController).toHaveBeenCalledOnce()
     expect(disposeWebRpc).toHaveBeenCalledOnce()

@@ -209,7 +209,7 @@ async function startElectronApp(mainEntryPath: string): Promise<void> {
       const {
         taskNotifications,
         settingsService,
-        sessionPersistenceCoordinator,
+        sessionDeletionCapability,
         detectActiveSessions,
         dispose: disposeApplicationRuntime
       } = await registerIpcHandlers({
@@ -257,7 +257,7 @@ async function startElectronApp(mainEntryPath: string): Promise<void> {
         headless: webMode.headless,
         unreadController: unreadTaskController,
         unreadTaskRepository,
-        sessionPersistenceCoordinator
+        sessionPersistenceCoordinator: sessionDeletionCapability
       })
       visibilityProbeBox.current = registerUnreadTaskIpc({
         getMainWindow: () => mainWindowGetterBox.current?.(),
@@ -370,7 +370,8 @@ async function startElectronApp(mainEntryPath: string): Promise<void> {
             disposeApplicationRuntime: ctx.disposeApplicationRuntime,
             remoteAccess: ctx.remoteAccess,
             webController: ctx.webController,
-            webRpc: ctx.webRpc
+            webRpc: ctx.webRpc,
+            log: ctx.log
           }
         )
       )

@@ -4,7 +4,11 @@ import { randomUUID } from 'node:crypto'
 import { app, BrowserWindow, net, Notification, protocol, webContents } from 'electron'
 
 import { ipcMainHandle } from './ipc-handler-registry'
-import { composeApplicationRuntime, type ApplicationModuleBuilder } from './application-runtime'
+import {
+  APPLICATION_MODULE_DISPOSAL_BUDGET_MS,
+  composeApplicationRuntime,
+  type ApplicationModuleBuilder
+} from './application-runtime'
 
 import { createAcpRuntime, createDefaultNotebookRuntimeService } from './acp/ipc'
 import { createDefaultArtifactRepository, registerArtifactIpcHandlers } from './artifacts/ipc'
@@ -26,7 +30,11 @@ import { registerFileSaveHandlers } from './file-save'
 import { createSessionArtifactFileResolver } from './session-artifact-file-resolver'
 import { registerCliInstallIpcHandlers } from './cli-install/ipc'
 import { registerGithubIpcHandlers } from './github-ipc'
-import { BackendShutdownCoordinator, UPDATE_SHUTDOWN_BUDGET_MS } from './lifecycle-shutdown'
+import {
+  BackendShutdownCoordinator,
+  QUIT_SHUTDOWN_BUDGET_MS,
+  UPDATE_SHUTDOWN_BUDGET_MS
+} from './lifecycle-shutdown'
 import { registerLifecycleIpcHandlers } from './lifecycle-broadcast'
 import { registerLogsIpcHandlers } from './logs-ipc'
 import { registerWindowIpcHandlers } from './window-ipc'
@@ -143,7 +151,7 @@ type IpcRegistrationOptions = {
   listAppIconPreviews?: () => AppIconPreview[]
 }
 
-type ApplicationRuntimeInterfaces = {
+export type ApplicationRuntimeInterfaces = {
   taskNotifications: Pick<
     TaskNotificationService,
     'setActivationHandler' | 'setAttentionHandlers' | 'setPendingOpenSession' | 'setUnreadHandler'
@@ -152,7 +160,7 @@ type ApplicationRuntimeInterfaces = {
     SettingsService,
     'getAppIconVariant' | 'getClosePreference' | 'setClosePreference'
   >
-  sessionPersistenceCoordinator: SessionPersistenceCoordinator
+  sessionDeletionCapability: Pick<SessionPersistenceCoordinator, 'setSessionDeletionHandlers'>
   detectActiveSessions: () => ReturnType<typeof detectActiveSessions>
 }
 
@@ -416,7 +424,9 @@ const createApplicationModules = async (
     (settings) => {
       const notebook = createDefaultNotebookRuntimeService(settings)
       return {
+        name: 'notebook-runtime',
         capability: notebook,
+        disposeTimeoutMs: QUIT_SHUTDOWN_BUDGET_MS,
         rollback: () =>
           backendTeardownOwnedByCoordinator
             ? undefined
@@ -479,6 +489,7 @@ const createApplicationModules = async (
   const mcpClientManager = await modules.add(undefined, () => {
     const manager = new McpClientManager()
     return {
+      name: 'mcp-client-manager',
       capability: manager,
       dispose: () => manager.closeAll()
     }
@@ -581,6 +592,7 @@ const createApplicationModules = async (
     (dependencies) => {
       const jobPoller = createComputeJobRuntime(dependencies)
       return {
+        name: 'compute-job-runtime',
         capability: undefined,
         start: () => jobPoller.start(),
         dispose: () => jobPoller.stop()
@@ -712,7 +724,9 @@ const createApplicationModules = async (
     (options) => {
       const runtime = createAcpRuntime(options)
       return {
+        name: 'acp-runtime',
         capability: runtime,
+        disposeTimeoutMs: QUIT_SHUTDOWN_BUDGET_MS,
         rollback: () =>
           backendTeardownOwnedByCoordinator
             ? undefined
@@ -738,6 +752,7 @@ const createApplicationModules = async (
   })
   let stopUpdateScheduler: (() => void) | undefined
   await modules.add(undefined, () => ({
+    name: 'update-scheduler',
     capability: undefined,
     dispose: () => stopUpdateScheduler?.()
   }))
@@ -1105,7 +1120,9 @@ const createApplicationModules = async (
   // The shared coordinator is the sole normal owner of ACP + Notebook teardown. Register it last so
   // reverse disposal executes the existing bounded backend shutdown before supporting modules stop.
   await modules.add({ shutdownCoordinator }, ({ shutdownCoordinator: coordinator }) => ({
+    name: 'backend-shutdown-coordinator',
     capability: undefined,
+    disposeTimeoutMs: QUIT_SHUTDOWN_BUDGET_MS + APPLICATION_MODULE_DISPOSAL_BUDGET_MS,
     dispose: () => coordinator.runForQuit().then(() => undefined)
   }))
   backendTeardownOwnedByCoordinator = true
@@ -1113,7 +1130,7 @@ const createApplicationModules = async (
   return {
     taskNotifications,
     settingsService,
-    sessionPersistenceCoordinator,
+    sessionDeletionCapability: sessionPersistenceCoordinator,
     detectActiveSessions: () => detectActiveSessions({ runtime, notebook: notebookService }),
     electronAdapters: {
       beforeCompute: beforeComputeAdapters,

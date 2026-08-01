@@ -1,12 +1,26 @@
 type Awaitable<T> = T | Promise<T>
 
+export const APPLICATION_MODULE_DISPOSAL_BUDGET_MS = 1000
+
+export class ApplicationModuleDisposalTimeoutError extends Error {
+  constructor(
+    readonly moduleName: string,
+    readonly timeoutMs: number
+  ) {
+    super(`Application runtime module "${moduleName}" disposal exceeded ${timeoutMs}ms.`)
+    this.name = 'ApplicationModuleDisposalTimeoutError'
+  }
+}
+
 export type ApplicationModule<Capability> = {
+  name?: string
   capability: Capability
   start?: () => Awaitable<void>
   // Releases a partially-constructed module before runtime ownership has been fully established.
   // When omitted, normal disposal is also safe for rollback.
   rollback?: () => Awaitable<void>
   dispose?: () => Awaitable<void>
+  disposeTimeoutMs?: number
 }
 
 export type ApplicationModuleFactory<Dependencies, Capability> = (
@@ -30,6 +44,7 @@ export type ApplicationSurfaceShutdown = {
   shutdownRemoteAccess(): Awaitable<void>
   closeWebController(): Awaitable<void>
   disposeWebRpc(): Awaitable<void>
+  log?: { error(message: string, error: unknown): void }
 }
 
 export type ApplicationLifecycleShutdownDependencies = {
@@ -37,6 +52,7 @@ export type ApplicationLifecycleShutdownDependencies = {
   remoteAccess: { shutdown(): Awaitable<void> }
   webController: { close(): Awaitable<void> }
   webRpc: { dispose(): Awaitable<void> }
+  log?: ApplicationSurfaceShutdown['log']
 }
 
 // Preserves the desktop quit order while guaranteeing that a failed surface cannot strand a later
@@ -45,21 +61,21 @@ export const shutdownApplicationSurfaces = async ({
   disposeApplicationRuntime,
   shutdownRemoteAccess,
   closeWebController,
-  disposeWebRpc
+  disposeWebRpc,
+  log
 }: ApplicationSurfaceShutdown): Promise<void> => {
-  try {
-    await disposeApplicationRuntime()
-  } finally {
+  const dispose = async (name: string, operation: () => Awaitable<void>): Promise<void> => {
     try {
-      await shutdownRemoteAccess()
-    } finally {
-      try {
-        await closeWebController()
-      } finally {
-        await disposeWebRpc()
-      }
+      await operation()
+    } catch (error) {
+      log?.error(`${name} disposal failed during application shutdown`, error)
     }
   }
+
+  await dispose('application runtime', disposeApplicationRuntime)
+  await dispose('remote access', shutdownRemoteAccess)
+  await dispose('web controller', closeWebController)
+  await dispose('web RPC', disposeWebRpc)
 }
 
 // Builds the exact callback passed to the Electron lifecycle. Requiring the application disposer here
@@ -68,14 +84,16 @@ export const createApplicationLifecycleShutdown = ({
   disposeApplicationRuntime,
   remoteAccess,
   webController,
-  webRpc
+  webRpc,
+  log
 }: ApplicationLifecycleShutdownDependencies): (() => Promise<void>) => {
   return () =>
     shutdownApplicationSurfaces({
       disposeApplicationRuntime,
       shutdownRemoteAccess: () => remoteAccess.shutdown(),
       closeWebController: () => webController.close(),
-      disposeWebRpc: () => webRpc.dispose()
+      disposeWebRpc: () => webRpc.dispose(),
+      log
     })
 }
 
@@ -87,7 +105,10 @@ export const withApplicationRuntimeShutdown = <Options extends object>(
   shutdownBackends: createApplicationLifecycleShutdown(dependencies)
 })
 
-type OwnedModule = Pick<ApplicationModule<unknown>, 'dispose' | 'rollback'>
+type OwnedModule = Pick<
+  ApplicationModule<unknown>,
+  'name' | 'dispose' | 'rollback' | 'disposeTimeoutMs'
+>
 
 class RuntimeModuleBuilder implements ApplicationModuleBuilder {
   private readonly modules: OwnedModule[] = []
@@ -120,9 +141,16 @@ class RuntimeModuleBuilder implements ApplicationModuleBuilder {
 
   private async disposeModules(mode: 'runtime' | 'rollback'): Promise<void> {
     const failures: unknown[] = []
-    for (const module of [...this.modules].reverse()) {
+    for (const [index, module] of [...this.modules].reverse().entries()) {
       try {
-        await (mode === 'rollback' ? (module.rollback ?? module.dispose)?.() : module.dispose?.())
+        const dispose = mode === 'rollback' ? (module.rollback ?? module.dispose) : module.dispose
+        if (dispose) {
+          await this.disposeModule(
+            module.name ?? `module-${this.modules.length - index}`,
+            dispose,
+            module.disposeTimeoutMs ?? APPLICATION_MODULE_DISPOSAL_BUDGET_MS
+          )
+        }
       } catch (error) {
         failures.push(error)
       }
@@ -130,6 +158,30 @@ class RuntimeModuleBuilder implements ApplicationModuleBuilder {
     if (failures.length > 0) {
       throw new AggregateError(failures, 'Application runtime disposal failed.')
     }
+  }
+
+  private async disposeModule(
+    moduleName: string,
+    dispose: () => Awaitable<void>,
+    timeoutMs: number
+  ): Promise<void> {
+    const observed = Promise.resolve()
+      .then(dispose)
+      .then(
+        () => ({ status: 'fulfilled' as const }),
+        (reason: unknown) => ({ status: 'rejected' as const, reason })
+      )
+    let timer: ReturnType<typeof setTimeout> | undefined
+    const timeout = new Promise<{ status: 'timeout' }>((resolve) => {
+      timer = setTimeout(() => resolve({ status: 'timeout' }), timeoutMs)
+      timer.unref?.()
+    })
+    const outcome = await Promise.race([observed, timeout])
+    if (timer) clearTimeout(timer)
+    if (outcome.status === 'timeout') {
+      throw new ApplicationModuleDisposalTimeoutError(moduleName, timeoutMs)
+    }
+    if (outcome.status === 'rejected') throw outcome.reason
   }
 }
 

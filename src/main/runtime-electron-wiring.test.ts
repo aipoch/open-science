@@ -1,4 +1,6 @@
-import { describe, expect, it, vi } from 'vitest'
+import { describe, expect, expectTypeOf, it, vi } from 'vitest'
+
+import type { ApplicationRuntimeInterfaces } from './ipc'
 
 const { installAcpIpcHandlers, installComputeIpcHandlers, order } = vi.hoisted(() => {
   const order: string[] = []
@@ -19,6 +21,12 @@ vi.mock('./compute/ipc', () => ({ installComputeIpcHandlers }))
 import { installElectronRuntimeAdapters } from './runtime-electron-wiring'
 
 describe('production Electron runtime wiring', () => {
+  it('exports only the named Session deletion capability to application startup', () => {
+    expectTypeOf<
+      keyof ApplicationRuntimeInterfaces['sessionDeletionCapability']
+    >().toEqualTypeOf<'setSessionDeletionHandlers'>()
+  })
+
   it('installs the constructed Compute and ACP modules before remaining surfaces', async () => {
     const compute = { handlers: {}, enabledComputeHostsRegistry: {} } as never
     const runtime = {} as never
