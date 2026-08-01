@@ -1,7 +1,7 @@
 import { spawn, type ChildProcess } from 'node:child_process'
 import { randomUUID } from 'node:crypto'
 import { existsSync, realpathSync } from 'node:fs'
-import { readFile, realpath, rm, writeFile } from 'node:fs/promises'
+import { readFile, realpath, writeFile } from 'node:fs/promises'
 import { isAbsolute, join, relative, resolve, sep, win32 } from 'node:path'
 
 import type {
@@ -97,19 +97,15 @@ import {
 } from './environment-discovery'
 import {
   operationJournalPath,
-  readOperationChild,
   recordOperationChildSync,
   recordSpawnIntentSync,
   removeOperationChildSync,
   RuntimeOperationJournal
 } from './operation-journal'
-import {
-  reconcileInterruptedOperations,
-  defaultOperationChildLiveness,
-  readProcessStartToken
-} from './operation-recovery'
+import { readProcessStartToken } from './operation-recovery'
 import { isChildUnconfirmedError } from './provisioner-runtime'
 import { EnvironmentLeaseManager, type EnvironmentLeaseMode } from './environment-lease-manager'
+import { NotebookRecoveryCoordinator } from './recovery-coordinator'
 import { getAppClaudeConfigDir } from '../settings/provider-env'
 import { terminateProcessTree } from '../process-tree'
 import { createLogger, getLogFilePath } from '../logger'
@@ -1018,54 +1014,13 @@ class NotebookRuntimeService {
   // reported 'missing' after a restart. Fixed at construction with the other Settings dependencies.
   private readonly manualInterpretersResolver:
     ((language: NotebookLanguage) => Promise<string[]>) | undefined
-  // Resolves when startup crash-recovery has finished; awaited by materialize/install so their prefix
-  // work never races recovery's cleanup. Undefined until recoverInterruptedOperations is kicked off.
-  private recoveryComplete: Promise<void> | undefined
-  private recoveryInFlight: Promise<void> | undefined
-  // Env prefixes an interrupted op left possibly-live: recovery couldn't confirm the child process died
-  // (liveness 'unknown' — no ps / Windows / unparsable), so a survivor might STILL be writing this
-  // prefix. Any op that would write it (default materialize, package install, named-env create, UI
-  // provision/repair) must refuse while the durable journal still retains that operation — the recovery
-  // barrier resolving is not enough, since the op wasn't actually reconciled. A later guarded refresh
-  // (or restart) re-runs recovery; once the owner commits or the pid is verifiably gone, the prefix clears.
-  private readonly blockedPrefixes = new Set<string>()
-  // Runtime IDs an interrupted INSTALL left possibly-live (recovery couldn't confirm the child died).
-  // Prefix-keyed blocking doesn't fit an install: an EXTERNAL install writes the user's OWN env (not a
-  // path under runtimeRoot) and a managed named install's identity is its runtimeId, so execute() and
-  // managePackages() refuse a BOUND runtime by its runtimeId here — while managed materialize/create/
-  // remove/startup maintenance keep refusing by real prefix (blockedPrefixes). Cleared the same way:
-  // a later restart re-runs recovery and, once the pid is gone/verifiable, reconciles the journal entry.
-  private readonly blockedRuntimeIds = new Set<string>()
+  // Owns startup-recovery promises, journal reconciliation, fail-closed block decisions, Reset
+  // allowlisting, and same-process live-unconfirmed tracking. The service retains its public recovery
+  // facade so Electron, Web, CLI, and IPC adapters keep the same contract.
+  private readonly recoveryCoordinator: NotebookRecoveryCoordinator
   // Immediate in-process gate for a protected-identity failure. It is armed before kernel termination
   // and before the durable registry write, so disk-full/permission errors cannot reopen the damaged env.
   private readonly repairBlockedEnvs = new Set<string>()
-  // Subsets populated specifically by startup recovery. Unlike same-process live-unconfirmed blocks,
-  // these are refreshable: during a data-root relaunch the prior app can finish and durably remove its
-  // journal record after this process first observed it. A later recovery pass rebuilds these sets from
-  // the current journal instead of retaining a stale in-memory quarantine forever.
-  private readonly startupBlockedPrefixes = new Set<string>()
-  private readonly startupBlockedRuntimeIds = new Set<string>()
-  // GLOBAL write barrier set when the operation journal itself is corrupt/unreadable. A corrupt journal
-  // means we CANNOT enumerate what was in flight, so we can't know which prefix (if any) an orphan might
-  // still be writing — blocking only the two managed defaults (the original fix) left a possibly-live
-  // NAMED env, or an external install, free to be rm -rf'd. This flag makes every recovery-blocked check
-  // below (prefix, default-env, runtimeId) refuse EVERYTHING until an explicit Reset moves the corrupt
-  // journal aside (clearCorruptRecoveryBlock).
-  private recoveryCorrupt = false
-  // Prefixes an explicit force Reset released from recoveryCorrupt (see clearCorruptRecoveryBlock). While
-  // recoveryCorrupt is set (a corrupt journal blocks all prefixes), a prefix listed here is exempt — its
-  // env was reset and its corrupt journal moved aside, so it can rebuild while every OTHER env stays
-  // blocked. Empty on the normal path (recoveryCorrupt false makes it moot). Cleared implicitly on the
-  // next boot, which reads the now-absent journal and never sets recoveryCorrupt again.
-  private readonly corruptResetAllowlist = new Set<string>()
-  // Prefixes a write in THIS process left with a child we could not confirm stopped (an orphan MAY still
-  // be writing). A subset of blockedPrefixes, but tracked separately because a force Reset must treat it
-  // DIFFERENTLY from an ordinary recovery block: an ordinary block came from a PRIOR boot (the spawning
-  // process is gone, so Reset may delete+rebuild), whereas a live-unconfirmed prefix's orphan could still
-  // be running NOW — Reset must refuse it until a restart. Read by the provisioner via the injected
-  // isPrefixLiveUnconfirmed dep (clearQuarantine). Per-process, so it is empty after a restart.
-  private readonly liveUnconfirmedPrefixes = new Set<string>()
-  private readonly liveUnconfirmedRuntimeIds = new Set<string>()
   private readonly runtimeDiscoveryImpl: (
     language: NotebookLanguage
   ) => Promise<DiscoveredInterpreter[]>
@@ -1088,6 +1043,7 @@ class NotebookRuntimeService {
 
   constructor(private readonly options: NotebookRuntimeServiceOptions) {
     this.repository = options.repository ?? new NotebookRunRepository(options.dataRoot)
+    this.recoveryCoordinator = new NotebookRecoveryCoordinator(getRuntimeRoot(options.dataRoot))
     this.mcpRpcConnectionResolver = options.getMcpRpcConnection
     this.packageMirrorResolver = options.getPackageMirror
     this.runtimeEnablementResolver = options.getRuntimeEnablement
@@ -1775,9 +1731,9 @@ class NotebookRuntimeService {
       this.repairBlockedEnvs.has(repairBlockKey(cell.language, env, binding)) ||
       repairKeys.some((key) => isRepairRequired(repairRegistryRoot, key))
     if (
-      (binding?.runtimeId && this.blockedRuntimeIds.has(binding.runtimeId)) ||
+      (binding?.runtimeId && this.recoveryCoordinator.isRuntimeIdBlocked(binding.runtimeId)) ||
       prefixBlocked ||
-      (isExternal && this.recoveryCorrupt)
+      (isExternal && this.recoveryCoordinator.isGloballyBlocked())
     ) {
       // Recovery flagged this BOUND runtime possibly-live after an interrupted install (external or a
       // managed named env) — OR its managed prefix is recovery-blocked (per-prefix block or a not-yet-
@@ -2481,9 +2437,9 @@ class NotebookRuntimeService {
       !isExternal && this.isPrefixRecoveryBlocked(envPrefix(runtimeRoot, envName))
 
     if (
-      (binding?.runtimeId && this.blockedRuntimeIds.has(binding.runtimeId)) ||
+      (binding?.runtimeId && this.recoveryCoordinator.isRuntimeIdBlocked(binding.runtimeId)) ||
       prefixBlocked ||
-      (isExternal && this.recoveryCorrupt)
+      (isExternal && this.recoveryCoordinator.isGloballyBlocked())
     ) {
       throw new Error(
         `RUNTIME_RECOVERY_BLOCKED: the ${request.language} environment is recovering from an ` +
@@ -2739,14 +2695,15 @@ class NotebookRuntimeService {
     // Returned as a structured error (not thrown) to match managePackages' other refusals.
     const isExternal = binding?.source === 'external'
     const runtimeIdBlocked =
-      binding?.runtimeId !== undefined && this.blockedRuntimeIds.has(binding.runtimeId)
+      binding?.runtimeId !== undefined &&
+      this.recoveryCoordinator.isRuntimeIdBlocked(binding.runtimeId)
     // A managed/default install is gated by its real prefix via isPrefixRecoveryBlocked, which already
     // folds in the corrupt-journal barrier AND honours a force Reset's per-prefix allowlist — so a reset
     // (allowlisted) default env can be installed into again while other envs stay blocked. An EXTERNAL
     // install has no managed prefix to key that allowlist on, so it keeps the raw corrupt catch-all.
     const prefixBlocked =
       !isExternal && this.isPrefixRecoveryBlocked(envPrefix(runtimeRoot, envName))
-    const corruptBlockedExternal = isExternal && this.recoveryCorrupt
+    const corruptBlockedExternal = isExternal && this.recoveryCoordinator.isGloballyBlocked()
     if (runtimeIdBlocked || prefixBlocked || corruptBlockedExternal) {
       return {
         ok: false,
@@ -2994,8 +2951,7 @@ class NotebookRuntimeService {
         // (the install's identity — external or managed named) and, for a managed install, its prefix.
         // blockPrefixRecovery ALSO marks the prefix live-unconfirmed, so a force Reset this session
         // refuses to delete + rebuild it out from under the possibly-live installer (clearQuarantine).
-        this.blockedRuntimeIds.add(repairRuntimeId)
-        this.liveUnconfirmedRuntimeIds.add(repairRuntimeId)
+        this.recoveryCoordinator.markRuntimeLiveUnconfirmed(repairRuntimeId)
         if (journalTarget) this.blockPrefixRecovery(journalTarget)
       }
       throw error
@@ -3248,23 +3204,7 @@ class NotebookRuntimeService {
   // download (staging cleanup), materialize (verify/rebuild the env prefix), and install (flag
   // repair-required) paths all populate the journal, so each reconcile action below is wired to a real effect.
   async recoverInterruptedOperations(): Promise<void> {
-    if (this.recoveryInFlight) {
-      await this.recoveryInFlight
-      return
-    }
-    // Publish the in-flight recovery so new prefix-touching operations (materialize/install) can await
-    // it — otherwise an old op's cleanup/delete could race a fresh fetch/install on the same prefix.
-    const run = this.runRecovery()
-    this.recoveryInFlight = run
-    this.recoveryComplete = run.then(
-      () => undefined,
-      () => undefined
-    )
-    try {
-      await run
-    } finally {
-      if (this.recoveryInFlight === run) this.recoveryInFlight = undefined
-    }
+    await this.recoveryCoordinator.recover()
   }
 
   // Awaited by materialize/install before they touch a prefix, so startup recovery has finished
@@ -3273,18 +3213,7 @@ class NotebookRuntimeService {
   // startup env gate and UI provision/repair handlers can share the SAME barrier (they touch prefixes
   // too, not just materialize/install).
   async ensureRecovered(): Promise<void> {
-    if (this.recoveryComplete) await this.recoveryComplete
-    // A startup block is a snapshot of another process's in-flight journal. Re-read it before refusing
-    // a new write: the operation owner may have committed and removed the record after our first pass
-    // (notably while the old app drains during a data-root relaunch). Same-process unconfirmed blocks
-    // are excluded from these sets and therefore remain blocked until restart/Reset.
-    if (
-      this.startupBlockedPrefixes.size > 0 ||
-      this.startupBlockedRuntimeIds.size > 0 ||
-      this.recoveryCorrupt
-    ) {
-      await this.recoverInterruptedOperations()
-    }
+    await this.recoveryCoordinator.ensureReady()
   }
 
   // Throws if `prefix` is one recovery couldn't confirm free of a live orphan (see blockedPrefixes).
@@ -3314,21 +3243,19 @@ class NotebookRuntimeService {
   // Whether an arbitrary env prefix is recovery-blocked. Injected into the provisioner (ipc.ts) so its
   // startup restore/upgrade/repair and named create self-refuse a possibly-live prefix — the guarantee
   // the barrier alone didn't give the startup gate. Keyed by real prefix, matching blockedPrefixes.
-  // recoveryCorrupt (a corrupt journal — see runRecovery) blocks EVERY prefix, not just a specific one:
+  // A corrupt journal blocks EVERY prefix, not just a specific one:
   // an unreadable journal means we can't rule out an orphan writing an arbitrary (including named) env.
   // A force Reset can exempt ONE prefix from that global block (corruptResetAllowlist) so it rebuilds
   // while the others stay blocked; the explicit per-prefix block (blockedPrefixes) still applies to it.
   isPrefixRecoveryBlocked(prefix: string): boolean {
-    if (this.blockedPrefixes.has(prefix)) return true
-    return this.recoveryCorrupt && !this.corruptResetAllowlist.has(prefix)
+    return this.recoveryCoordinator.isPrefixBlocked(prefix)
   }
 
   // Drops the in-memory recovery block for a prefix. Called by an EXPLICIT user recovery (repair with
   // force, wired via ipc.ts) so a quarantined runtime can be reset. The provisioner also clears the
   // retained journal record + sidecar for the prefix, so the quarantine won't re-arm next startup.
   clearRecoveryBlock(prefix: string): void {
-    this.blockedPrefixes.delete(prefix)
-    this.startupBlockedPrefixes.delete(prefix)
+    this.recoveryCoordinator.clearPrefixBlock(prefix)
   }
 
   // Drops the in-memory recovery block for a runtime ID. An interrupted INSTALL blocks the bound
@@ -3336,8 +3263,7 @@ class NotebookRuntimeService {
   // sessions rejected by blockedRuntimeIds until the next restart. The provisioner's Reset collects the
   // runtimeIds of the retained install records for the reset prefix and clears them here too.
   clearRuntimeRecoveryBlock(runtimeId: string): void {
-    this.blockedRuntimeIds.delete(runtimeId)
-    this.startupBlockedRuntimeIds.delete(runtimeId)
+    this.recoveryCoordinator.clearRuntimeBlock(runtimeId)
   }
 
   // Called only after the explicit UI Runtime Reset has rebuilt and verified the managed default env.
@@ -3389,7 +3315,7 @@ class NotebookRuntimeService {
   // (which re-reads the now-absent journal and clears the barrier entirely). The user accepted the risk
   // for the prefix they explicitly reset, and only that prefix. Idempotent.
   clearCorruptRecoveryBlock(prefix: string): void {
-    this.corruptResetAllowlist.add(prefix)
+    this.recoveryCoordinator.allowCorruptReset(prefix)
   }
 
   // Records, in THIS process, that a prefix write failed with a child we could not confirm stopped — a
@@ -3398,8 +3324,7 @@ class NotebookRuntimeService {
   // it live-unconfirmed so a force Reset this session refuses to delete it out from under that orphan.
   // Injected into the provisioner as blockPrefix (ipc.ts), and called directly by the install path.
   blockPrefixRecovery(prefix: string): void {
-    this.blockedPrefixes.add(prefix)
-    this.liveUnconfirmedPrefixes.add(prefix)
+    this.recoveryCoordinator.markLiveUnconfirmed(prefix)
   }
 
   // True when a write in THIS process left `prefix` with a child that could not be confirmed stopped (see
@@ -3410,7 +3335,7 @@ class NotebookRuntimeService {
   // from the DURABLE journal/sidecar and clears the block only once the child is provably gone (pid ESRCH /
   // reused) or, for a no-PID orphan, a Linux machine-reboot proof (boot_id changed).
   isPrefixLiveUnconfirmed(prefix: string): boolean {
-    return this.liveUnconfirmedPrefixes.has(prefix)
+    return this.recoveryCoordinator.isPrefixLiveUnconfirmed(prefix)
   }
 
   // Runs fn under the SAME exclusive per-env lease that package installs use, so a
@@ -3435,163 +3360,13 @@ class NotebookRuntimeService {
     }
   }
 
-  private async runRecovery(): Promise<void> {
-    const runtimeRoot = getRuntimeRoot(this.options.dataRoot)
-    const nextStartupBlockedPrefixes = new Set<string>()
-    const nextStartupBlockedRuntimeIds = new Set<string>()
-    // Reclaim any prior-session pack-download cache FIRST — before the corrupt-journal early return
-    // below — so this housekeeping runs on every startup path, not just the healthy-journal one. It is
-    // only housekeeping: correctness of "app closes → start from scratch" is guaranteed independently by
-    // the per-session cache key (createFetchBundleAdapter), so a failure here (or skipping it) can never
-    // let a new fetch resume last session's .part — it only leaves reclaimable disk. Hence best-effort.
-    await rm(join(runtimeRoot, 'packs', '.cache'), { recursive: true, force: true }).catch(
-      () => undefined
-    )
-    const journal = RuntimeOperationJournal.forPath(operationJournalPath(runtimeRoot))
-    // Fail SAFE on a corrupt/unreadable journal: reconcileInterruptedOperations would read it as empty
-    // (nothing in flight) and open the recovery barrier, but a corrupt journal is NOT proof that no op
-    // was interrupted — an install/materialize may have been mid-write into ANY prefix (default, named,
-    // or an external install's runtimeId). We can't know which, so block EVERYTHING for this session
-    // (recoveryCorrupt — checked by every isPrefixRecoveryBlocked/isDefaultEnvRecoveryBlocked/
-    // assertPrefixRecoverable call, including named-env remove, which carries no journal record of its
-    // own and previously only checked the per-prefix set) and leave the journal untouched so a later
-    // boot — or an explicit Reset, which moves it aside — can recover.
-    if ((await journal.readState()) === 'corrupt') {
-      console.error(
-        '[notebook] operation journal is unreadable; blocking all runtime writes until recovery'
-      )
-      this.recoveryCorrupt = true
-      return
-    }
-    const reconciled = await reconcileInterruptedOperations(journal, {
-      operationChildLiveness: defaultOperationChildLiveness,
-      // Resolve the spawn lifecycle from the synchronous sidecar (see operation-journal): a recorded PID
-      // (recovering one the async journal update lost) is probed; a "spawning" intent with no PID means
-      // a child MAY be live so recovery must block (spawnAttempted); no sidecar means the op never
-      // reached the spawn stage and is safe to reconcile. Never a wall-clock guess.
-      hydrateInterruptedChild: (record) => {
-        // The synchronous sidecar is the AUTHORITATIVE record of the CURRENT spawn lifecycle: it is
-        // re-armed ({ spawning: true }) before EVERY spawn and converted to the PID on each spawn, so it
-        // always reflects the latest spawn. The journal's async childPid can be STALE — an op that
-        // spawns twice (materialize's cache-repair retry, or R's conda→CRAN) records spawn #1's PID in
-        // the journal; if it then crashed after spawn #2 started but before spawn #2's PID landed, the
-        // journal still names the (exited) first child. Trusting that would probe a dead pid, conclude
-        // 'dead', and clean the prefix while spawn #2 is still writing. So read the sidecar FIRST and let
-        // it override the journal.
-        const state = readOperationChild(runtimeRoot, record.operationId)
-        if (state === undefined) return record // no sidecar (legacy) -> fall back to the journal PID
-        // 'corrupt' (present but unreadable/invalid) or a bare spawn intent -> a child MAY be live but its
-        // PID is unknown. Block, and DROP any stale journal PID so recovery doesn't probe an earlier,
-        // already-exited child and wrongly conclude the target is free.
-        if (state === 'corrupt' || 'spawning' in state)
-          return {
-            ...record,
-            childPid: undefined,
-            childStartedAt: undefined,
-            childStartToken: undefined,
-            spawnAttempted: true
-          }
-        // Sidecar has the current PID -> probe it (overrides the journal). Its childStartToken (present
-        // only when the sidecar carried one) rides along in the spread as the authoritative identity.
-        return { ...record, ...state }
-      },
-      cleanStaging: async (record) => {
-        if (record.targetPath) await rm(record.targetPath, { recursive: true, force: true })
-      },
-      // materialize/upgrade: an interrupted create can leave the env prefix without conda-meta (a
-      // half-built dir micromamba would later refuse). Remove such an incomplete prefix so the next
-      // lazy materialize rebuilds it cleanly; a complete conda env (has conda-meta) is left intact.
-      verifyOrRebuildEnv: async (record) => {
-        if (!record.targetPath) return
-        if (!existsSync(record.targetPath)) return
-        if (existsSync(join(record.targetPath, 'conda-meta'))) return
-        await rm(record.targetPath, { recursive: true, force: true })
-      },
-      // install: an interrupted package install may be half-applied — flag the runtime repair-required
-      // so a bound session refuses it (no silent success). The flag is cleared when a fresh install of
-      // that runtime completes (managePackages), which is how the user repairs it.
-      markRepairRequired: async (record) => {
-        if (!record.runtimeId) return
-        const reason = record.repairReason ?? 'interrupted-install'
-        const language =
-          record.phase === 'install-r'
-            ? 'r'
-            : record.phase === 'install-python'
-              ? 'python'
-              : undefined
-        const alreadyScoped = /^managed:(?:python|r):/u.test(record.runtimeId)
-        const repairKey =
-          reason === 'protected-identity-change' || !record.targetPath || !language || alreadyScoped
-            ? record.runtimeId
-            : managedRepairRegistryKey(record.runtimeId, language)
-        addRepairRequired(getRuntimeRoot(this.options.dataRoot), repairKey, reason)
-      },
-      // liveness 'unknown' (couldn't confirm the child died — e.g. Windows with a recorded start time):
-      // a possibly-live orphan may still be writing this operation's env prefix. Block that PREFIX while
-      // its durable operation remains so any write to it (default materialize, package install, named-env
-      // create, UI provision/repair) refuses — rather than racing the survivor once the recovery barrier
-      // opens. Keyed by targetPath (the prefix the op writes), which materialize/
-      // upgrade/install all carry and which is exactly what the write paths check via
-      // assertPrefixRecoverable — unlike a repair-required flag, whose env/interpreter-id key does not
-      // match the materialize op's env-NAME runtimeId (so that flag never fired for the default env, and
-      // install is deliberately allowed while repair-required anyway). The journal entry is retained, so
-      // a later restart re-runs recovery and, once the pid is gone/verifiable, reconciles + unblocks.
-      //
-      // A 'download' op needs no block: each fetch stages into its own unique mkdtemp('.incoming-') dir
-      // and commits by atomic rename, so an orphaned download can't corrupt a fresh fetch (a later
-      // startup reaps the leftover). Its targetPath is that staging dir, which nothing else writes.
-      blockUnknownChildTarget: async (record) => {
-        // An INSTALL is identified by its runtimeId, not a managed prefix: an external install's target
-        // is the user's own env (no path under runtimeRoot) and a managed named install's identity is
-        // its runtimeId. Block the runtimeId so execute()/managePackages() refuse the bound runtime.
-        if (record.kind === 'install') nextStartupBlockedRuntimeIds.add(record.runtimeId)
-        // materialize/upgrade name the real managed prefix they write — block it so managed materialize/
-        // create/remove/startup maintenance refuse it. (An external install carries no targetPath, so
-        // it never wrongly blocks the app-managed default here.)
-        if (record.targetPath) nextStartupBlockedPrefixes.add(record.targetPath)
-      }
-    })
-
-    // Replace only the blocks derived from the prior recovery snapshot. Same-process unconfirmed
-    // workers remain in the live sets and can never be cleared merely because a journal file vanished.
-    for (const prefix of this.startupBlockedPrefixes) {
-      if (!nextStartupBlockedPrefixes.has(prefix) && !this.liveUnconfirmedPrefixes.has(prefix)) {
-        this.blockedPrefixes.delete(prefix)
-      }
-    }
-    for (const runtimeId of this.startupBlockedRuntimeIds) {
-      if (
-        !nextStartupBlockedRuntimeIds.has(runtimeId) &&
-        !this.liveUnconfirmedRuntimeIds.has(runtimeId)
-      ) {
-        this.blockedRuntimeIds.delete(runtimeId)
-      }
-    }
-    this.startupBlockedPrefixes.clear()
-    this.startupBlockedRuntimeIds.clear()
-    for (const prefix of nextStartupBlockedPrefixes) {
-      this.startupBlockedPrefixes.add(prefix)
-      this.blockedPrefixes.add(prefix)
-    }
-    for (const runtimeId of nextStartupBlockedRuntimeIds) {
-      this.startupBlockedRuntimeIds.add(runtimeId)
-      this.blockedRuntimeIds.add(runtimeId)
-    }
-    // A cleanly readable journal supersedes a previous corrupt snapshot. Reset allowlisting is only
-    // meaningful while the global corrupt barrier is active.
-    this.recoveryCorrupt = false
-    this.corruptResetAllowlist.clear()
-
-    // Reconciled records are cleared from the journal, so their PID sidecars are now inert — remove them
-    // so they don't accumulate. A retained (unknown-blocked) record keeps its sidecar for the next
-    // startup's liveness probe.
-    for (const record of reconciled) removeOperationChildSync(runtimeRoot, record.operationId)
-  }
-
   // Shuts down every live interpreter, used by app-level cleanup paths. Returns { reaped }: true only
   // when every kernel tree was cleanly reaped, so the update-install gate can refuse to trigger the
   // NSIS uninstall while a kernel may still hold file handles under the install dir.
   async shutdownAll(): Promise<{ reaped: boolean }> {
+    // Recovery is process-owned work. Await any active reconciliation and permanently close its command
+    // surface before tearing down kernels, so late startup work cannot reopen a target during shutdown.
+    await this.recoveryCoordinator.dispose()
     // Let any in-flight disable drain-and-close settle first, so a revocation teardown never races the
     // shutdown (and tests don't leak a dangling background drain).
     await Promise.all(Array.from(this.revocationDrains)).catch(() => undefined)

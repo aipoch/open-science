@@ -1,0 +1,74 @@
+import { mkdir, mkdtemp, rm, writeFile } from 'node:fs/promises'
+import { tmpdir } from 'node:os'
+import { join } from 'node:path'
+import { afterEach, describe, expect, it } from 'vitest'
+
+import { operationJournalPath } from './operation-journal'
+import { NotebookRecoveryCoordinator } from './recovery-coordinator'
+
+let root: string | undefined
+
+afterEach(async () => {
+  if (root) {
+    await rm(root, { recursive: true, force: true })
+    root = undefined
+  }
+})
+
+const createRuntimeRoot = async (): Promise<string> => {
+  root = await mkdtemp(join(tmpdir(), 'open-science-notebook-recovery-'))
+  return join(root, 'runtime')
+}
+
+describe('NotebookRecoveryCoordinator', () => {
+  it('owns blocked and live-unconfirmed recovery state in one snapshot', async () => {
+    const coordinator = new NotebookRecoveryCoordinator(await createRuntimeRoot())
+
+    coordinator.markLiveUnconfirmed('/runtime/envs/default-python', 'managed:python:default')
+
+    expect(coordinator.snapshot()).toMatchObject({
+      readiness: 'not-started',
+      blockedPrefixes: ['/runtime/envs/default-python'],
+      blockedRuntimeIds: ['managed:python:default'],
+      liveUnconfirmedPrefixes: ['/runtime/envs/default-python'],
+      liveUnconfirmedRuntimeIds: ['managed:python:default'],
+      corruptJournal: false
+    })
+  })
+
+  it('keeps a corrupt journal fail-closed while allowlisting only the reset prefix', async () => {
+    const runtimeRoot = await createRuntimeRoot()
+    await mkdir(runtimeRoot, { recursive: true })
+    await writeFile(operationJournalPath(runtimeRoot), '{ not json', 'utf8')
+    const coordinator = new NotebookRecoveryCoordinator(runtimeRoot)
+
+    await coordinator.recover()
+
+    const resetPrefix = join(runtimeRoot, 'envs', 'default-python')
+    const otherPrefix = join(runtimeRoot, 'envs', 'analysis')
+    expect(coordinator.snapshot()).toMatchObject({ readiness: 'ready', corruptJournal: true })
+    expect(coordinator.isPrefixBlocked(resetPrefix)).toBe(true)
+    expect(coordinator.isPrefixBlocked(otherPrefix)).toBe(true)
+
+    coordinator.allowCorruptReset(resetPrefix)
+
+    expect(coordinator.isPrefixBlocked(resetPrefix)).toBe(false)
+    expect(coordinator.isPrefixBlocked(otherPrefix)).toBe(true)
+  })
+
+  it('fails closed after disposal even if reset commands clear known blocks', async () => {
+    const coordinator = new NotebookRecoveryCoordinator(await createRuntimeRoot())
+    const prefix = '/runtime/envs/default-python'
+    coordinator.markLiveUnconfirmed(prefix, 'managed:python:default')
+
+    await coordinator.dispose()
+    coordinator.clearPrefixBlock(prefix)
+    coordinator.clearRuntimeBlock('managed:python:default')
+    coordinator.allowCorruptReset(prefix)
+
+    expect(coordinator.snapshot().readiness).toBe('disposed')
+    expect(coordinator.isPrefixBlocked(prefix)).toBe(true)
+    expect(coordinator.isRuntimeIdBlocked('managed:python:default')).toBe(true)
+    await expect(coordinator.recover()).rejects.toThrow(/disposed/)
+  })
+})

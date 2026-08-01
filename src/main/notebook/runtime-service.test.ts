@@ -1439,7 +1439,7 @@ describe('notebook runtime service', () => {
     })
     const readState = vi
       .spyOn(RuntimeOperationJournal.prototype, 'readState')
-      .mockImplementation(async function () {
+      .mockImplementation(async function (this: RuntimeOperationJournal) {
         await readGate
         return originalReadState.call(this)
       })
