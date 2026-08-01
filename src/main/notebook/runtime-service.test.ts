@@ -6093,6 +6093,52 @@ describe('v4 runtime bindings & agent tools', () => {
     await service.shutdownAll()
   })
 
+  it('shares one aggregate initialization across concurrent public session reads', async () => {
+    const root = await createStorageRoot()
+    const repository = new NotebookRunRepository(root)
+    const loadOrCreate = repository.loadOrCreate.bind(repository)
+    let releaseFirstLoad!: () => void
+    const firstLoadGate = new Promise<void>((resolve) => {
+      releaseFirstLoad = resolve
+    })
+    let gateFirstLoad = true
+    const loadSpy = vi.spyOn(repository, 'loadOrCreate').mockImplementation(async (request) => {
+      if (gateFirstLoad) {
+        gateFirstLoad = false
+        await firstLoadGate
+      }
+      return loadOrCreate(request)
+    })
+    const executorFactory = vi.fn(() => ({
+      execute: async (request: NotebookExecutionRequest): Promise<NotebookExecutionResult> => ({
+        status: 'completed',
+        stdout: request.code,
+        stderr: '',
+        traceback: '',
+        cwdAfter: request.cwd,
+        outputs: []
+      }),
+      shutdown: async () => ({ reaped: true })
+    }))
+    const service = new NotebookRuntimeService({
+      configRoot: root,
+      dataRoot: root,
+      projectName: 'default-project',
+      repository,
+      executorFactory
+    })
+    const request = { sessionId: 's', workspaceCwd: root }
+
+    const first = service.state(request)
+    const second = service.state(request)
+
+    await vi.waitFor(() => expect(loadSpy).toHaveBeenCalledTimes(1))
+    expect(executorFactory).not.toHaveBeenCalled()
+    releaseFirstLoad()
+    await expect(Promise.all([first, second])).resolves.toHaveLength(2)
+    expect(executorFactory).toHaveBeenCalledTimes(1)
+  })
+
   it('remains usable after temporary shutdowns for update and migration gates', async () => {
     const root = await createStorageRoot()
     const executions: string[] = []
@@ -6174,6 +6220,7 @@ describe('v4 runtime bindings & agent tools', () => {
     })
 
     const disposal = service.dispose()
+    expect(service.dispose()).toBe(disposal)
     let disposed = false
     void disposal.then(() => {
       disposed = true
@@ -6266,6 +6313,38 @@ describe('v4 runtime bindings & agent tools', () => {
     expect(disposed).toBe(false)
     releaseRecovery?.()
     await expect(disposal).rejects.toBe(shutdownError)
+  })
+
+  it('reports kernel and recovery disposal failures together in deterministic order', async () => {
+    const root = await createStorageRoot()
+    const shutdownError = new Error('kernel teardown failed')
+    const recoveryError = new Error('recovery disposal failed')
+    const service = new NotebookRuntimeService({
+      configRoot: root,
+      dataRoot: root,
+      projectName: 'default-project',
+      repository: new NotebookRunRepository(root),
+      executorFactory: () => ({
+        execute: async (request): Promise<NotebookExecutionResult> => ({
+          status: 'completed',
+          stdout: request.code,
+          stderr: '',
+          traceback: '',
+          cwdAfter: request.cwd,
+          outputs: []
+        }),
+        shutdown: vi.fn(async () => Promise.reject(shutdownError))
+      })
+    })
+    await service.state({ sessionId: 's', workspaceCwd: root })
+    Object.defineProperty(service, 'recoveryCoordinator', {
+      value: { dispose: vi.fn(async () => Promise.reject(recoveryError)) }
+    })
+
+    const failure = await service.dispose().catch((error: unknown) => error)
+
+    expect(failure).toBeInstanceOf(AggregateError)
+    expect((failure as AggregateError).errors).toEqual([shutdownError, recoveryError])
   })
 
   it('describeRuntimeUsage counts bound sessions by kernel state for the disable warning (WS11)', async () => {

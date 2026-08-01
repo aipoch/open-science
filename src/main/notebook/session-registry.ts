@@ -4,6 +4,10 @@ export type NotebookSessionRegistryMember = {
   releaseMcpRpcConnection: () => void
 }
 
+export type NotebookSessionRegistryOptions = {
+  beforeTeardown?: () => Promise<void>
+}
+
 type AdmissionGate = {
   promise: Promise<void>
   release: () => void
@@ -27,8 +31,14 @@ export class NotebookSessionRegistry<Session extends NotebookSessionRegistryMemb
   private terminal = false
   private disposalPromise: Promise<{ reaped: boolean }> | undefined
 
+  constructor(private readonly options: NotebookSessionRegistryOptions = {}) {}
+
   get(sessionId: string): Session | undefined {
     return this.sessions.get(sessionId)
+  }
+
+  values(): IterableIterator<Session> {
+    return this.sessions.values()
   }
 
   getOrCreate(sessionId: string, create: () => Promise<Session>): Promise<Session> {
@@ -107,11 +117,26 @@ export class NotebookSessionRegistry<Session extends NotebookSessionRegistryMemb
   private async disposePermanently(): Promise<{ reaped: boolean }> {
     const shutdown = this.shutdownPromise
     if (shutdown) return shutdown
+    return this.teardownOwnedSessions()
+  }
 
+  private async shutdownWithinGate(gate: AdmissionGate): Promise<{ reaped: boolean }> {
+    try {
+      return await this.teardownOwnedSessions()
+    } finally {
+      if (this.globalGate === gate) this.globalGate = undefined
+      gate.release()
+    }
+  }
+
+  private async teardownOwnedSessions(): Promise<{ reaped: boolean }> {
+    // Global gates are acquired before per-ID gates. A teardown already owned by remove() counts
+    // toward this operation, but is never retried, so colliding lifecycle calls release resources once.
     const removals = Array.from(this.removals.entries()).sort(([left], [right]) =>
       left.localeCompare(right)
     )
     const removalOutcomes = await Promise.allSettled(removals.map(([, removal]) => removal))
+    await this.options.beforeTeardown?.()
     await Promise.allSettled(Array.from(this.creations.values()))
     const removalIds = new Set(removals.map(([sessionId]) => sessionId))
     const sessions = Array.from(this.sessions.entries())
@@ -150,56 +175,6 @@ export class NotebookSessionRegistry<Session extends NotebookSessionRegistryMemb
         .map(({ reason }) => reason)
     )
     return { reaped }
-  }
-
-  private async shutdownWithinGate(gate: AdmissionGate): Promise<{ reaped: boolean }> {
-    try {
-      const removals = Array.from(this.removals.entries()).sort(([left], [right]) =>
-        left.localeCompare(right)
-      )
-      const removalOutcomes = await Promise.allSettled(removals.map(([, removal]) => removal))
-      await Promise.allSettled(Array.from(this.creations.values()))
-      const removalIds = new Set(removals.map(([sessionId]) => sessionId))
-      const sessions = Array.from(this.sessions.entries())
-        .filter(([sessionId]) => !removalIds.has(sessionId))
-        .sort(([left], [right]) => left.localeCompare(right))
-      const outcomes = await Promise.allSettled(
-        sessions.map(([, session]) => session.shutdownExecutor())
-      )
-      const failures: Array<{ sessionId: string; reason: unknown }> = []
-      let reaped = true
-
-      removalOutcomes.forEach((outcome, index) => {
-        const [sessionId] = removals[index]
-        if (outcome.status === 'rejected') {
-          failures.push({ sessionId, reason: outcome.reason })
-          return
-        }
-        reaped &&= outcome.value.reaped
-      })
-
-      outcomes.forEach((outcome, index) => {
-        const [sessionId, session] = sessions[index]
-        if (outcome.status === 'rejected') {
-          failures.push({ sessionId, reason: outcome.reason })
-          return
-        }
-
-        reaped &&= outcome.value.reaped
-        session.releaseMcpRpcConnection()
-        if (this.sessions.get(sessionId) === session) this.sessions.delete(sessionId)
-      })
-
-      this.throwFailures(
-        failures
-          .sort((left, right) => left.sessionId.localeCompare(right.sessionId))
-          .map(({ reason }) => reason)
-      )
-      return { reaped }
-    } finally {
-      if (this.globalGate === gate) this.globalGate = undefined
-      gate.release()
-    }
   }
 
   private async removeWithinGate(

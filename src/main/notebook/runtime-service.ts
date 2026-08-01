@@ -113,6 +113,7 @@ import {
   type NotebookSessionResolvedInterpreter,
   type NotebookSessionRuntimeBinding
 } from './session-aggregate'
+import { NotebookSessionRegistry } from './session-registry'
 import { getAppClaudeConfigDir } from '../settings/provider-env'
 import { terminateProcessTree } from '../process-tree'
 import { createLogger, getLogFilePath } from '../logger'
@@ -869,7 +870,7 @@ const resolveDefaultExecutorOptions = (): NotebookKernelExecutorOptions => {
 // Coordinates notebook cells, shared interpreters, persisted run history, and UI notifications.
 class NotebookRuntimeService {
   private readonly repository: NotebookRunRepository
-  private readonly sessions = new Map<string, RuntimeSession>()
+  private readonly sessions: NotebookSessionRegistry<RuntimeSession>
   private readonly announcedAgentSessionIds = new Set<string>()
   // Owns per-environment shared run and exclusive mutation leases. The runtime decides which paths
   // require which mode; acquisition, queueing, cancellation, and release stay inside the manager.
@@ -920,9 +921,15 @@ class NotebookRuntimeService {
   private environmentManager: NotebookEnvironmentManager | undefined
   private defaultEnvProvisioner: DefaultEnvProvisioner | undefined
   private defaultEnvProgress: (progress: ProvisionProgress) => void = () => undefined
+  private disposalPromise: Promise<{ reaped: boolean }> | undefined
 
   constructor(private readonly options: NotebookRuntimeServiceOptions) {
     this.repository = options.repository ?? new NotebookRunRepository(options.dataRoot)
+    this.sessions = new NotebookSessionRegistry({
+      beforeTeardown: async () => {
+        await Promise.all(Array.from(this.revocationDrains)).catch(() => undefined)
+      }
+    })
     this.recoveryCoordinator = new NotebookRecoveryCoordinator(getRuntimeRoot(options.dataRoot))
     this.mcpRpcConnectionResolver = options.getMcpRpcConnection
     this.packageMirrorResolver = options.getPackageMirror
@@ -3015,14 +3022,7 @@ class NotebookRuntimeService {
   }
 
   async shutdownSession(sessionId: string): Promise<{ sessionId: string; status: 'shutdown' }> {
-    const session = this.sessions.get(sessionId)
-
-    if (session) {
-      await session.shutdownExecutor()
-      session.releaseMcpRpcConnection()
-      this.sessions.delete(sessionId)
-    }
-
+    await this.sessions.remove(sessionId)
     return { sessionId, status: 'shutdown' }
   }
 
@@ -3193,21 +3193,16 @@ class NotebookRuntimeService {
   // Shuts down every live interpreter, used by app-level cleanup paths. Returns { reaped }: true only
   // when every kernel tree was cleanly reaped, so the update-install gate can refuse to trigger the
   // NSIS uninstall while a kernel may still hold file handles under the install dir.
-  async shutdownAll(): Promise<{ reaped: boolean }> {
-    // Let any in-flight disable drain-and-close settle first, so a revocation teardown never races the
-    // shutdown (and tests don't leak a dangling background drain).
-    await Promise.all(Array.from(this.revocationDrains)).catch(() => undefined)
-    const sessions = Array.from(this.sessions.values())
-    const results = await Promise.all(sessions.map((session) => session.shutdownExecutor()))
-    for (const session of sessions) session.releaseMcpRpcConnection()
-    this.sessions.clear()
-    return { reaped: results.every((result) => result.reaped) }
+  shutdownAll(): Promise<{ reaped: boolean }> {
+    return this.sessions.shutdownAll()
   }
 
   // Permanently closes process-owned recovery work before the final kernel teardown. Unlike
   // shutdownAll(), this is terminal: quit/relaunch and module disposal use it, while update and data-root
   // migration gates retain the reusable shutdown contract so a refused/cancelled flow can resume work.
-  async dispose(): Promise<{ reaped: boolean }> {
+  dispose(): Promise<{ reaped: boolean }> {
+    if (this.disposalPromise) return this.disposalPromise
+
     // Close the terminal admission boundary before any asynchronous teardown starts. Existing holders
     // are released and queued acquisitions reject, so no package/environment operation can begin after
     // application disposal has crossed this point.
@@ -3216,11 +3211,21 @@ class NotebookRuntimeService {
     // quit budget before kernel teardown even starts. Await both so non-quit module disposal still leaves
     // no recovery work behind once this terminal operation resolves.
     const recoveryDisposal = this.recoveryCoordinator.dispose()
-    const shutdown = this.shutdownAll()
-    const [shutdownResult, recoveryResult] = await Promise.allSettled([shutdown, recoveryDisposal])
-    if (recoveryResult.status === 'rejected') throw recoveryResult.reason
-    if (shutdownResult.status === 'rejected') throw shutdownResult.reason
-    return shutdownResult.value
+    const shutdown = this.sessions.dispose()
+    const disposal = Promise.allSettled([shutdown, recoveryDisposal]).then(
+      ([shutdownResult, recoveryResult]) => {
+        const failures = [shutdownResult, recoveryResult]
+          .filter((result): result is PromiseRejectedResult => result.status === 'rejected')
+          .map((result) => result.reason)
+        if (failures.length === 1) throw failures[0]
+        if (failures.length > 1) {
+          throw new AggregateError(failures, 'Multiple notebook runtime resources failed to dispose.')
+        }
+        return (shutdownResult as PromiseFulfilledResult<{ reaped: boolean }>).value
+      }
+    )
+    this.disposalPromise = disposal
+    return disposal
   }
 
   // Lists sessions with a cell mid-execution, for the pre-migration active-session warning.
@@ -3233,50 +3238,56 @@ class NotebookRuntimeService {
   // Creates or returns the runtime session bound to an ACP/chat session id.
   private async ensureSession(request: NotebookSessionRequest): Promise<RuntimeSession> {
     const projectName = request.projectName ?? this.options.projectName
-    const existing = this.sessions.get(request.sessionId)
+    return this.sessions.getOrCreate(request.sessionId, async () => {
+      let document = await this.repository.loadOrCreate({
+        projectName,
+        sessionId: request.sessionId,
+        workspaceCwd: request.workspaceCwd
+      })
+      // Crash recovery (WS12): the FIRST time this process loads a session, any run still marked
+      // 'running'/'queued' was in flight when a previous process died — its kernel is gone. Reconcile it
+      // to 'interrupted' so history is truthful and the UI/agent see it ended. Only reconcile when such a
+      // stale run exists (avoids rewriting a clean doc), and only here at session creation (never in
+      // state()/loadOrCreate), so a run that is genuinely live in THIS process is never mislabeled.
+      if (document.runs.some((run) => run.status === 'running' || run.status === 'queued')) {
+        document = await this.repository.reconcileInterruptedRuns(projectName, request.sessionId)
+      }
+      // Runtime session roots come from run.json normalization so UI, MCP, and Python agree.
+      const session: RuntimeSession = new NotebookSessionAggregate({
+        sessionId: request.sessionId,
+        projectName,
+        // Start the interpreter in the session's writable data dir (like a Jupyter notebook's cwd), not
+        // the outer workspace. Relative writes — e.g. plt.savefig("plot.png") — then land in a directory
+        // that is inside the artifact import roots, so the agent never has to guess an absolute path.
+        // dataRoot lives under notebookSessionRoot (an allowed import root) and is created before this.
+        cwd: document.dataRoot,
+        notebookSessionRoot: document.notebookSessionRoot,
+        dataRoot: document.dataRoot,
+        runtimeRoot: document.kernel.runtimeRoot,
+        runJsonPath: getNotebookRunJsonPath(this.options.dataRoot, projectName, request.sessionId),
+        executionCount: document.runs.length,
+        executor: this.createExecutor(request.sessionId, projectName)
+      })
 
-    if (existing) {
-      return existing
-    }
-
-    let document = await this.repository.loadOrCreate({
-      projectName,
-      sessionId: request.sessionId,
-      workspaceCwd: request.workspaceCwd
+      try {
+        // Rehydrate + revalidate any persisted runtime bindings (WS1-rest/WS12): a still-usable binding
+        // is restored active; one whose runtime is now disabled/missing is kept as unavailable (no
+        // silent fallback). Publish only after this initialization completes so same-ID callers cannot
+        // observe a partially hydrated aggregate.
+        await this.reloadPersistedBindings(session, document.runtimeBindings)
+        return session
+      } catch (error) {
+        // Initialization failures stay retryable. Best-effort cleanup must not replace the repository /
+        // binding error that callers already observe.
+        await session.shutdownExecutor().catch(() => undefined)
+        try {
+          session.releaseMcpRpcConnection()
+        } catch {
+          // Preserve the initialization failure.
+        }
+        throw error
+      }
     })
-    // Crash recovery (WS12): the FIRST time this process loads a session, any run still marked
-    // 'running'/'queued' was in flight when a previous process died — its kernel is gone. Reconcile it
-    // to 'interrupted' so history is truthful and the UI/agent see it ended. Only reconcile when such a
-    // stale run exists (avoids rewriting a clean doc), and only here at session creation (never in
-    // state()/loadOrCreate), so a run that is genuinely live in THIS process is never mislabeled.
-    if (document.runs.some((run) => run.status === 'running' || run.status === 'queued')) {
-      document = await this.repository.reconcileInterruptedRuns(projectName, request.sessionId)
-    }
-    // Runtime session roots come from run.json normalization so UI, MCP, and Python agree.
-    const session: RuntimeSession = new NotebookSessionAggregate({
-      sessionId: request.sessionId,
-      projectName,
-      // Start the interpreter in the session's writable data dir (like a Jupyter notebook's cwd), not
-      // the outer workspace. Relative writes — e.g. plt.savefig("plot.png") — then land in a directory
-      // that is inside the artifact import roots, so the agent never has to guess an absolute path.
-      // dataRoot lives under notebookSessionRoot (an allowed import root) and is created before this.
-      cwd: document.dataRoot,
-      notebookSessionRoot: document.notebookSessionRoot,
-      dataRoot: document.dataRoot,
-      runtimeRoot: document.kernel.runtimeRoot,
-      runJsonPath: getNotebookRunJsonPath(this.options.dataRoot, projectName, request.sessionId),
-      executionCount: document.runs.length,
-      executor: this.createExecutor(request.sessionId, projectName)
-    })
-
-    this.sessions.set(request.sessionId, session)
-
-    // Rehydrate + revalidate any persisted runtime bindings (WS1-rest/WS12): a still-usable binding is
-    // restored active; one whose runtime is now disabled/missing is kept as unavailable (no silent
-    // fallback). Only touches discovery when bindings were actually persisted.
-    await this.reloadPersistedBindings(session, document.runtimeBindings)
-
-    return session
   }
 
   // Builds the interpreter backend, allowing tests to inject a fake executor. The default (D-B4)
