@@ -1,4 +1,5 @@
 import {
+  AlertTriangle,
   ArrowLeft,
   ArrowRight,
   Cloud,
@@ -206,6 +207,8 @@ const SettingsPage = ({ open, onClose, onOpenSession }: SettingsPageProps): Reac
   const consumePendingSkill = useSettingsStore((state) => state.consumePendingSkill)
   const pendingSettingsPanel = useSettingsStore((state) => state.pendingSettingsPanel)
   const consumePendingSettingsPanel = useSettingsStore((state) => state.consumePendingSettingsPanel)
+  const settingsWriteError = useSettingsStore((state) => state.settingsWriteError)
+  const clearSettingsWriteError = useSettingsStore((state) => state.clearSettingsWriteError)
   const canImportInstalledSkills =
     typeof window.api.settings.listAgentHomeSkills === 'function' &&
     typeof window.api.settings.importAgentHomeSkills === 'function'
@@ -833,6 +836,27 @@ const SettingsPage = ({ open, onClose, onOpenSession }: SettingsPageProps): Reac
                 </div>
               </div>
             </TooltipProvider>
+
+            {settingsWriteError ? (
+              <div
+                data-slot="settings-write-error"
+                role="alert"
+                className="mx-3 mt-3 flex items-start gap-2 rounded-lg border border-danger-000/30 bg-danger-000/10 px-3 py-2 text-xs text-danger-000"
+              >
+                <AlertTriangle className="mt-0.5 size-3.5 shrink-0" aria-hidden="true" />
+                <p className="min-w-0 flex-1 break-words py-0.5">{settingsWriteError}</p>
+                <Button
+                  type="button"
+                  variant="ghost"
+                  size="icon-sm"
+                  aria-label="Dismiss settings error"
+                  className="-my-1 -mr-1 shrink-0 rounded-md text-danger-000 hover:bg-danger-000/10 hover:text-danger-000"
+                  onClick={clearSettingsWriteError}
+                >
+                  <X className="size-3.5" aria-hidden="true" />
+                </Button>
+              </div>
+            ) : null}
 
             <div data-slot="settings-content-scroll" className="min-h-0 flex-1 overflow-y-auto">
               <div className="mx-auto min-h-full w-full max-w-[880px]">
