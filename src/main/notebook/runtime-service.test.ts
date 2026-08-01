@@ -2246,6 +2246,67 @@ describe('notebook runtime service', () => {
       await install
     })
 
+    it('serializes environment mutations that target the same environment', async () => {
+      const root = await createStorageRoot()
+      const service = new NotebookRuntimeService({
+        configRoot: root,
+        dataRoot: root,
+        projectName: 'default-project',
+        repository: new NotebookRunRepository(root)
+      })
+      const events: string[] = []
+      let releaseFirst: (() => void) | undefined
+
+      const first = service.withEnvLock('analysis', async () => {
+        events.push('first:start')
+        await new Promise<void>((resolve) => {
+          releaseFirst = resolve
+        })
+        events.push('first:end')
+      })
+      await vi.waitFor(() => expect(releaseFirst).toBeDefined())
+
+      const second = service.withEnvLock('analysis', async () => {
+        events.push('second:start')
+      })
+      await Promise.resolve()
+      expect(events).toEqual(['first:start'])
+
+      releaseFirst?.()
+      await Promise.all([first, second])
+      expect(events).toEqual(['first:start', 'first:end', 'second:start'])
+    })
+
+    it('allows environment mutations for different environments to proceed concurrently', async () => {
+      const root = await createStorageRoot()
+      const service = new NotebookRuntimeService({
+        configRoot: root,
+        dataRoot: root,
+        projectName: 'default-project',
+        repository: new NotebookRunRepository(root)
+      })
+      const events: string[] = []
+      let releaseFirst: (() => void) | undefined
+
+      const first = service.withEnvLock('analysis-a', async () => {
+        events.push('first:start')
+        await new Promise<void>((resolve) => {
+          releaseFirst = resolve
+        })
+        events.push('first:end')
+      })
+      await vi.waitFor(() => expect(releaseFirst).toBeDefined())
+
+      await service.withEnvLock('analysis-b', async () => {
+        events.push('second:start')
+      })
+      expect(events).toEqual(['first:start', 'second:start'])
+
+      releaseFirst?.()
+      await first
+      expect(events).toEqual(['first:start', 'second:start', 'first:end'])
+    })
+
     it('leaves a terminated kernel status after a run whose kernel rejected (G3)', async () => {
       const root = await createStorageRoot()
       // eslint-disable-next-line prefer-const -- forward ref: the executor closure captures svc before `service` exists
