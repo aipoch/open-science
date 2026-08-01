@@ -7,6 +7,15 @@ import { callerContextForEvent, hasCallerAuthority, type CallerContext } from '.
 
 type IpcHandler = Parameters<IpcMain['handle']>[1]
 
+type IpcHandlerInstallation = {
+  uninstall(): void
+}
+
+type IpcHandlerInstallationScope = {
+  complete(cleanup?: () => void): IpcHandlerInstallation
+  rollback(): void
+}
+
 class WebIpcSender {
   readonly id: number
   readonly lifecycleClientId: string
@@ -53,10 +62,14 @@ export type WebRpcRouter = {
 type IpcHandlerRegistry = {
   ipcMainHandle: IpcMain['handle']
   webRpc: WebRpcRouter
+  createInstallationScope(): IpcHandlerInstallationScope
 }
 
-const createIpcHandlerRegistry = (target: Pick<IpcMain, 'handle'>): IpcHandlerRegistry => {
+const createIpcHandlerRegistry = (
+  target: Pick<IpcMain, 'handle'> & Partial<Pick<IpcMain, 'removeHandler'>>
+): IpcHandlerRegistry => {
   const webHandlers = new Map<string, IpcHandler>()
+  const registeredChannels = new Set<string>()
   const clients = new Map<string, { id: number; lifecycle: EventEmitter }>()
   let nextSenderId = -1
 
@@ -79,11 +92,50 @@ const createIpcHandlerRegistry = (target: Pick<IpcMain, 'handle'>): IpcHandlerRe
 
   const ipcMainHandle: IpcMain['handle'] = (channel, listener) => {
     target.handle(channel, listener)
+    registeredChannels.add(channel)
     if (isWebRpcChannel(channel)) webHandlers.set(channel, listener)
+  }
+
+  const removeChannels = (channels: Iterable<string>): void => {
+    for (const channel of channels) {
+      target.removeHandler?.(channel)
+      registeredChannels.delete(channel)
+      webHandlers.delete(channel)
+    }
   }
 
   return {
     ipcMainHandle,
+    createInstallationScope: () => {
+      const before = new Set(registeredChannels)
+      let settled = false
+      const addedChannels = (): string[] =>
+        [...registeredChannels].filter((channel) => !before.has(channel))
+      return {
+        complete: (cleanup) => {
+          if (settled) throw new Error('IPC handler installation scope is already settled.')
+          settled = true
+          const channels = addedChannels()
+          let uninstalled = false
+          return {
+            uninstall: () => {
+              if (uninstalled) return
+              uninstalled = true
+              try {
+                cleanup?.()
+              } finally {
+                removeChannels(channels)
+              }
+            }
+          }
+        },
+        rollback: () => {
+          if (settled) return
+          settled = true
+          removeChannels(addedChannels())
+        }
+      }
+    },
     webRpc: {
       invoke: async (channel, callerContext, args) => {
         if (!isWebRpcChannel(channel)) throw new Error(`Unknown Web RPC channel: ${channel}`)
@@ -113,5 +165,14 @@ const defaultRegistry = createIpcHandlerRegistry(ipcMain)
 
 const ipcMainHandle = defaultRegistry.ipcMainHandle
 const webRpc = defaultRegistry.webRpc
+const createIpcHandlerInstallationScope = (): IpcHandlerInstallationScope =>
+  defaultRegistry.createInstallationScope()
 
-export { createIpcHandlerRegistry, ipcMainHandle, isRemotePairingManagerSender, webRpc }
+export {
+  createIpcHandlerInstallationScope,
+  createIpcHandlerRegistry,
+  ipcMainHandle,
+  isRemotePairingManagerSender,
+  webRpc
+}
+export type { IpcHandlerInstallation, IpcHandlerInstallationScope }

@@ -144,4 +144,33 @@ describe('createIpcHandlerRegistry', () => {
     )
     expect(handler).not.toHaveBeenCalled()
   })
+
+  it('uninstalls only the handlers registered by a completed installation scope', () => {
+    const removeHandler = vi.fn()
+    const registry = createIpcHandlerRegistry({ handle: vi.fn(), removeHandler } as never)
+    registry.ipcMainHandle('projects:list', vi.fn())
+
+    const scope = registry.createInstallationScope()
+    registry.ipcMainHandle('test:scoped', vi.fn())
+    const cleanup = vi.fn()
+    const installation = scope.complete(cleanup)
+
+    installation.uninstall()
+    installation.uninstall()
+
+    expect(cleanup).toHaveBeenCalledOnce()
+    expect(removeHandler).toHaveBeenCalledOnce()
+    expect(removeHandler).toHaveBeenCalledWith('test:scoped')
+  })
+
+  it('rolls back handlers registered before an installation failure', () => {
+    const removeHandler = vi.fn()
+    const registry = createIpcHandlerRegistry({ handle: vi.fn(), removeHandler } as never)
+    const scope = registry.createInstallationScope()
+    registry.ipcMainHandle('test:partial', vi.fn())
+
+    scope.rollback()
+
+    expect(removeHandler).toHaveBeenCalledWith('test:partial')
+  })
 })

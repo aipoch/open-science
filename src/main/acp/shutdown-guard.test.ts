@@ -7,6 +7,7 @@ import { installAgentShutdownGuard } from './shutdown-guard'
 // Captures registered app event handlers so the will-quit teardown can be invoked without Electron.
 const createFakeApp = (): {
   on: App['on']
+  off: App['off']
   emit: (event: string) => void
 } => {
   const handlers = new Map<string, () => void>()
@@ -15,6 +16,9 @@ const createFakeApp = (): {
     on: ((event: string, handler: () => void) => {
       handlers.set(event, handler)
     }) as App['on'],
+    off: ((event: string, handler: () => void) => {
+      if (handlers.get(event) === handler) handlers.delete(event)
+    }) as App['off'],
     emit: (event: string) => handlers.get(event)?.()
   }
 }

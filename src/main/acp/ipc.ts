@@ -5,7 +5,11 @@ import { join } from 'node:path'
 
 import { app } from 'electron'
 
-import { ipcMainHandle } from '../ipc-handler-registry'
+import {
+  createIpcHandlerInstallationScope,
+  ipcMainHandle,
+  type IpcHandlerInstallation
+} from '../ipc-handler-registry'
 
 import type {
   AcpCancelPromptRequest,
@@ -301,8 +305,7 @@ const createAcpRuntime = ({
   )
 }
 
-// Installs the renderer-callable Electron adapter over an already-constructed ACP coordinator.
-const installAcpIpcHandlers = (
+const registerAcpIpcHandlerSet = (
   runtime: AcpRuntimeCoordinator,
   taskNotifications?: TaskNotificationService
 ): void => {
@@ -379,9 +382,22 @@ const installAcpIpcHandlers = (
   ipcMainHandle('acp:revoke-permission-grant', (_event, request: AcpRevokePermissionGrantRequest) =>
     runtime.revokePermissionGrant(request)
   )
+}
 
-  // Kill the agent child on quit so it never outlives the app as an orphaned process.
-  installAgentShutdownGuard(app, runtime)
+// Installs the renderer-callable Electron adapter over an already-constructed ACP coordinator.
+const installAcpIpcHandlers = (
+  runtime: AcpRuntimeCoordinator,
+  taskNotifications?: TaskNotificationService
+): IpcHandlerInstallation => {
+  const scope = createIpcHandlerInstallationScope()
+  try {
+    registerAcpIpcHandlerSet(runtime, taskNotifications)
+    // Kill the agent child on quit so it never outlives the app as an orphaned process.
+    return scope.complete(installAgentShutdownGuard(app, runtime))
+  } catch (error) {
+    scope.rollback()
+    throw error
+  }
 }
 
 // Compatibility wrapper for isolated callers; application composition uses the two-phase seam above.

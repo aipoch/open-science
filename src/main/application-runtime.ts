@@ -224,11 +224,19 @@ export const composeApplicationRuntimeWithAdapters = async <Interfaces extends o
   createModules: (
     modules: ApplicationModuleBuilder
   ) => Awaitable<Interfaces & { electronAdapters: Adapters }>,
-  installAdapters: (adapters: Adapters) => Awaitable<void>
+  installAdapters: (adapters: Adapters) => Awaitable<void | { uninstall(): Awaitable<void> }>
 ): Promise<ApplicationRuntime<Interfaces>> =>
   composeApplicationRuntime(async (modules) => {
     const built = await createModules(modules)
-    await installAdapters(built.electronAdapters)
+    const installation = await installAdapters(built.electronAdapters)
+    if (installation) {
+      await modules.add(installation, (installed) => ({
+        name: 'electron-runtime-adapters',
+        capability: undefined,
+        rollback: () => installed.uninstall(),
+        dispose: () => installed.uninstall()
+      }))
+    }
     const { electronAdapters: _electronAdapters, ...interfaces } = built
     void _electronAdapters
     return interfaces as Interfaces

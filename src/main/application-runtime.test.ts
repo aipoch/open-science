@@ -220,6 +220,11 @@ describe('application runtime composition', () => {
       (adapters) => {
         expect(adapters).toBe(adapterInterfaces)
         order.push('install')
+        return {
+          uninstall: () => {
+            order.push('uninstall')
+          }
+        }
       }
     )
 
@@ -227,7 +232,7 @@ describe('application runtime composition', () => {
     expect(order).toEqual(['start', 'created', 'install'])
 
     await runtime.dispose()
-    expect(order).toEqual(['start', 'created', 'install', 'dispose'])
+    expect(order).toEqual(['start', 'created', 'install', 'uninstall', 'dispose'])
   })
 })
 

@@ -4,7 +4,11 @@ import { join } from 'node:path'
 
 import { BrowserWindow, shell } from 'electron'
 
-import { ipcMainHandle } from '../ipc-handler-registry'
+import {
+  createIpcHandlerInstallationScope,
+  ipcMainHandle,
+  type IpcHandlerInstallation
+} from '../ipc-handler-registry'
 
 import type {
   ComputeApprovalDecision,
@@ -472,11 +476,12 @@ const createComputeIpcModule = (
   }
 }
 
-// Installs only the renderer-callable Electron adapter over an already-constructed Compute module.
-const installComputeIpcHandlers = ({
+type ComputeIpcAdapter = Pick<ComputeIpcModule, 'handlers' | 'enabledComputeHostsRegistry'>
+
+const registerComputeIpcHandlerSet = ({
   handlers,
   enabledComputeHostsRegistry
-}: Pick<ComputeIpcModule, 'handlers' | 'enabledComputeHostsRegistry'>): void => {
+}: ComputeIpcAdapter): void => {
   ipcMainHandle('compute:list', () => handlers.list())
   ipcMainHandle('compute:get', (_event, providerId: string) => handlers.get(providerId))
   ipcMainHandle('compute:create', (_event, request: CreateComputeHostRequest) =>
@@ -574,6 +579,18 @@ const installComputeIpcHandlers = ({
       enabledComputeHostsRegistry.set(sessionId, providerIds)
     }
   )
+}
+
+// Installs only the renderer-callable Electron adapter over an already-constructed Compute module.
+const installComputeIpcHandlers = (module: ComputeIpcAdapter): IpcHandlerInstallation => {
+  const scope = createIpcHandlerInstallationScope()
+  try {
+    registerComputeIpcHandlerSet(module)
+    return scope.complete()
+  } catch (error) {
+    scope.rollback()
+    throw error
+  }
 }
 
 // Compatibility wrapper for isolated callers; application composition uses the two-phase seam above.

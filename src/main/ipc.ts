@@ -3,7 +3,7 @@ import { randomUUID } from 'node:crypto'
 
 import { app, BrowserWindow, net, Notification, protocol, webContents } from 'electron'
 
-import { ipcMainHandle } from './ipc-handler-registry'
+import { createIpcHandlerInstallationScope, ipcMainHandle } from './ipc-handler-registry'
 import {
   APPLICATION_MODULE_DISPOSAL_BUDGET_MS,
   composeApplicationRuntimeWithAdapters,
@@ -234,11 +234,20 @@ const createApplicationModules = async (
   const beforeAcpAdapters: NamedElectronSurfaceAdapter[] = []
   const afterAcpAdapters: NamedElectronSurfaceAdapter[] = []
   let surfaceAdapters = beforeComputeAdapters
-  const declareElectronAdapter = (
-    name: string,
-    install: NamedElectronSurfaceAdapter['install']
-  ): void => {
-    surfaceAdapters.push({ name, install })
+  const declareElectronAdapter = (name: string, install: () => void | (() => void)): void => {
+    surfaceAdapters.push({
+      name,
+      install: () => {
+        const scope = createIpcHandlerInstallationScope()
+        try {
+          const cleanup = install()
+          return scope.complete(typeof cleanup === 'function' ? cleanup : undefined)
+        } catch (error) {
+          scope.rollback()
+          throw error
+        }
+      }
+    })
   }
   // One settings service backs both the settings IPC and the ACP spawn config (single source of truth).
   const settingsService = await modules.add(undefined, () => ({
@@ -955,7 +964,7 @@ const createApplicationModules = async (
   )
   declareElectronAdapter('managed-preview', () => {
     registerManagedPreviewIpcHandlers(previewResources)
-    registerManagedPreviewProtocol(previewResources)
+    return registerManagedPreviewProtocol(previewResources)
   })
   declareElectronAdapter('office-preview-runtime', () =>
     registerOfficePreviewRuntimeProtocol(

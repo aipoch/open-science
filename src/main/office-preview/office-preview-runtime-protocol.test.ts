@@ -181,18 +181,21 @@ describe('Office preview runtime protocol', () => {
   })
 
   it('registers only the dedicated runtime scheme', async () => {
-    const targetProtocol = { handle: vi.fn() }
+    const targetProtocol = { handle: vi.fn(), unhandle: vi.fn() }
     const options = {
       runtimeHtmlPath: '/app/renderer/office-preview.html',
       fetchRuntime: vi.fn()
     }
 
-    const result = runtimeProtocol.registerOfficePreviewRuntimeProtocol(options, targetProtocol)
+    const unregister = runtimeProtocol.registerOfficePreviewRuntimeProtocol(options, targetProtocol)
 
     expect(targetProtocol.handle).toHaveBeenCalledWith(
       runtimeProtocol.OFFICE_PREVIEW_RUNTIME_SCHEME,
       expect.any(Function)
     )
-    expect(result).toBeUndefined()
+    unregister()
+    expect(targetProtocol.unhandle).toHaveBeenCalledWith(
+      runtimeProtocol.OFFICE_PREVIEW_RUNTIME_SCHEME
+    )
   })
 })

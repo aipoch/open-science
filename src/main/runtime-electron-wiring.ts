@@ -3,9 +3,15 @@ import type { AcpRuntimeCoordinator } from './acp/runtime-coordinator'
 import { installComputeIpcHandlers, type ComputeIpcModule } from './compute/ipc'
 import type { TaskNotificationService } from './notifications/task-notifications'
 
+type Awaitable<T> = T | Promise<T>
+
+export type InstalledElectronSurfaceAdapter = {
+  uninstall(): Awaitable<void>
+}
+
 export type NamedElectronSurfaceAdapter = {
   readonly name: string
-  install(): void | Promise<void>
+  install(): Awaitable<InstalledElectronSurfaceAdapter>
 }
 
 export type ElectronRuntimeAdapterInterfaces = {
@@ -27,10 +33,46 @@ export const installElectronRuntimeAdapters = async ({
   beforeAcp,
   acp,
   afterAcp
-}: ElectronRuntimeAdapterInterfaces): Promise<void> => {
-  for (const surface of beforeCompute) await surface.install()
-  installComputeIpcHandlers(compute)
-  for (const surface of beforeAcp) await surface.install()
-  installAcpIpcHandlers(acp.runtime, acp.taskNotifications)
-  for (const surface of afterAcp) await surface.install()
+}: ElectronRuntimeAdapterInterfaces): Promise<InstalledElectronSurfaceAdapter> => {
+  const installed: Array<{ name: string; installation: InstalledElectronSurfaceAdapter }> = []
+  const install = async (
+    name: string,
+    operation: () => Awaitable<InstalledElectronSurfaceAdapter>
+  ): Promise<void> => {
+    installed.push({ name, installation: await operation() })
+  }
+  const uninstall = async (): Promise<void> => {
+    const failures: unknown[] = []
+    for (const { installation } of [...installed].reverse()) {
+      try {
+        await installation.uninstall()
+      } catch (error) {
+        failures.push(error)
+      }
+    }
+    installed.length = 0
+    if (failures.length > 0) {
+      throw new AggregateError(failures, 'Electron runtime adapter uninstall failed.')
+    }
+  }
+
+  try {
+    for (const surface of beforeCompute) await install(surface.name, () => surface.install())
+    await install('compute', () => installComputeIpcHandlers(compute))
+    for (const surface of beforeAcp) await install(surface.name, () => surface.install())
+    await install('acp', () => installAcpIpcHandlers(acp.runtime, acp.taskNotifications))
+    for (const surface of afterAcp) await install(surface.name, () => surface.install())
+  } catch (error) {
+    try {
+      await uninstall()
+    } catch (rollbackError) {
+      throw new AggregateError(
+        [error, rollbackError],
+        'Electron runtime adapter installation and rollback failed.'
+      )
+    }
+    throw error
+  }
+
+  return { uninstall }
 }

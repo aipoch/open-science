@@ -8,9 +8,11 @@ const { installAcpIpcHandlers, installComputeIpcHandlers, order } = vi.hoisted((
     order,
     installAcpIpcHandlers: vi.fn(() => {
       order.push('acp')
+      return { uninstall: vi.fn() }
     }),
     installComputeIpcHandlers: vi.fn(() => {
       order.push('compute')
+      return { uninstall: vi.fn() }
     })
   }
 })
@@ -39,6 +41,7 @@ describe('production Electron runtime wiring', () => {
           name: 'notifications',
           install: () => {
             order.push('notifications')
+            return { uninstall: vi.fn() }
           }
         }
       ],
@@ -47,6 +50,7 @@ describe('production Electron runtime wiring', () => {
           name: 'connectors',
           install: () => {
             order.push('connectors')
+            return { uninstall: vi.fn() }
           }
         }
       ],
@@ -56,6 +60,7 @@ describe('production Electron runtime wiring', () => {
           name: 'settings',
           install: () => {
             order.push('settings')
+            return { uninstall: vi.fn() }
           }
         }
       ]
@@ -64,5 +69,45 @@ describe('production Electron runtime wiring', () => {
     expect(installComputeIpcHandlers).toHaveBeenCalledWith(compute)
     expect(installAcpIpcHandlers).toHaveBeenCalledWith(runtime, taskNotifications)
     expect(order).toEqual(['notifications', 'compute', 'connectors', 'acp', 'settings'])
+  })
+
+  it('rolls back every installed adapter in reverse order when a later install fails', async () => {
+    const rollbackOrder: string[] = []
+    const compute = { handlers: {}, enabledComputeHostsRegistry: {} } as never
+    const runtime = {} as never
+    const taskNotifications = {} as never
+    installComputeIpcHandlers.mockReturnValueOnce({
+      uninstall: vi.fn(() => {
+        rollbackOrder.push('compute')
+      })
+    })
+
+    await expect(
+      installElectronRuntimeAdapters({
+        compute,
+        beforeCompute: [
+          {
+            name: 'first',
+            install: () => ({
+              uninstall: () => {
+                rollbackOrder.push('first')
+              }
+            })
+          }
+        ],
+        beforeAcp: [
+          {
+            name: 'failing',
+            install: () => {
+              throw new Error('adapter install failed')
+            }
+          }
+        ],
+        acp: { runtime, taskNotifications },
+        afterAcp: []
+      })
+    ).rejects.toThrow('adapter install failed')
+
+    expect(rollbackOrder).toEqual(['compute', 'first'])
   })
 })

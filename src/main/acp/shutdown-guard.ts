@@ -8,10 +8,12 @@ import type { AcpRuntime } from './runtime'
 // asking the user to keep waiting — does not tear the agent down early. The runtime shutdown is
 // synchronous because Electron does not await quit-event handlers.
 export const installAgentShutdownGuard = (
-  app: Pick<App, 'on'>,
+  app: Pick<App, 'on' | 'off'>,
   runtime: Pick<AcpRuntime, 'shutdown'>
-): void => {
-  app.on('will-quit', () => {
+): (() => void) => {
+  const shutdown = (): void => {
     runtime.shutdown()
-  })
+  }
+  app.on('will-quit', shutdown)
+  return () => app.off('will-quit', shutdown)
 }
