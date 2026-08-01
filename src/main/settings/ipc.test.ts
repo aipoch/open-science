@@ -172,12 +172,12 @@ type TestSettingsIpcOptions = {
   service: SettingsService
   onActiveProviderChanged?: () => void
   onAgentFrameworkChanged?: () => void
-  onReasoningEffortChanged?: SettingsWorkflowEffects['applyReasoningEffort']
+  onReasoningEffortChanged?: SettingsWorkflowEffects['runtime']['applyReasoningEffort']
   onSkillsChanged?: () => void
   onConnectorsChanged?: () => void
   onCustomServerRemoved?: (serverId: string) => Promise<void>
   onCustomServerSecurityChanged?: (serverId: string) => Promise<unknown>
-  onAppIconVariantChanged?: SettingsWorkflowEffects['applyAppIconVariant']
+  onAppIconVariantChanged?: SettingsWorkflowEffects['appearance']['applyAppIconVariant']
   listAppIconPreviews?: SettingsIpcOptions['listAppIconPreviews']
 }
 
@@ -197,19 +197,28 @@ const registerTestSettingsIpcHandlers = ({
   registerSettingsIpcHandlers({
     service,
     workflows: createSettingsWorkflows(service, {
-      requestProviderReconnect: onActiveProviderChanged,
-      requestAgentFrameworkSwitch: onAgentFrameworkChanged,
-      applyReasoningEffort: onReasoningEffortChanged,
-      requestSkillsReload: onSkillsChanged,
-      invalidatePermissionProjection: onConnectorsChanged,
-      pruneCustomServerPermissions:
-        onCustomServerRemoved ??
-        (onCustomServerSecurityChanged
-          ? async (serverId) => {
-              await onCustomServerSecurityChanged(serverId)
-            }
-          : undefined),
-      applyAppIconVariant: onAppIconVariantChanged
+      runtime: {
+        requestProviderReconnect: onActiveProviderChanged ?? (() => undefined),
+        requestAgentFrameworkSwitch: onAgentFrameworkChanged ?? (() => undefined),
+        applyReasoningEffort: onReasoningEffortChanged ?? (async () => false)
+      },
+      skills: { requestSkillsReload: onSkillsChanged ?? (() => undefined) },
+      connectors: {
+        invalidatePermissionProjection: onConnectorsChanged ?? (() => undefined),
+        refreshConnectorSkillDocs: async () => undefined,
+        requestSkillsReload: onSkillsChanged ?? (() => undefined),
+        pruneCustomServerPermissions:
+          onCustomServerRemoved ??
+          (onCustomServerSecurityChanged
+            ? async (serverId) => {
+                await onCustomServerSecurityChanged(serverId)
+              }
+            : async () => undefined),
+        beginCustomServerSecurityChange: () => undefined
+      },
+      appearance: {
+        applyAppIconVariant: onAppIconVariantChanged ?? (() => undefined)
+      }
     }),
     listAppIconPreviews
   })

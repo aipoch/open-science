@@ -99,4 +99,71 @@ describe('ConnectorRuntimeSettingsProjection', () => {
       expect.objectContaining({ message: 'read failed' })
     )
   })
+
+  it('serializes simultaneous refresh pipelines so an older write cannot replace newer docs', async () => {
+    const first = connectors({ disabledConnectorIds: ['chemistry'] })
+    const second = connectors({ disabledConnectorIds: ['literature'] })
+    const readConnectors = vi
+      .fn<() => Promise<StoredConnectors | undefined>>()
+      .mockResolvedValueOnce(first)
+      .mockResolvedValueOnce(second)
+    let finishFirstSync: (() => void) | undefined
+    const firstSync = new Promise<void>((resolve) => {
+      finishFirstSync = resolve
+    })
+    const syncBundledSkillDocs = vi
+      .fn()
+      .mockReturnValueOnce(firstSync)
+      .mockResolvedValueOnce(undefined)
+    const projection = new ConnectorRuntimeSettingsProjection({
+      readConnectors,
+      skillsDir: '/config/skills',
+      mcpClientManager: { listTools: vi.fn().mockResolvedValue([]) },
+      syncBundledSkillDocs,
+      syncCustomSkillDocs: vi.fn().mockResolvedValue(undefined)
+    })
+
+    const olderRefresh = projection.refresh()
+    await vi.waitFor(() => expect(syncBundledSkillDocs).toHaveBeenCalledOnce())
+    const newerRefresh = projection.refresh()
+
+    // The newer read and all of its writes stay behind the older full pipeline.
+    await Promise.resolve()
+    expect(readConnectors).toHaveBeenCalledOnce()
+    expect(projection.current()).toBe(first)
+
+    finishFirstSync?.()
+    await olderRefresh
+    await newerRefresh
+
+    expect(readConnectors).toHaveBeenCalledTimes(2)
+    expect(projection.current()).toBe(second)
+  })
+
+  it('continues the refresh queue after an earlier pipeline fails', async () => {
+    const first = connectors({ disabledConnectorIds: ['chemistry'] })
+    const second = connectors({ disabledConnectorIds: ['literature'] })
+    const reportError = vi.fn()
+    const projection = new ConnectorRuntimeSettingsProjection({
+      readConnectors: vi
+        .fn<() => Promise<StoredConnectors | undefined>>()
+        .mockResolvedValueOnce(first)
+        .mockResolvedValueOnce(second),
+      skillsDir: '/config/skills',
+      mcpClientManager: { listTools: vi.fn().mockResolvedValue([]) },
+      syncBundledSkillDocs: vi
+        .fn()
+        .mockRejectedValueOnce(new Error('older sync failed'))
+        .mockResolvedValueOnce(undefined),
+      syncCustomSkillDocs: vi.fn().mockResolvedValue(undefined),
+      reportError
+    })
+
+    await Promise.all([projection.refresh(), projection.refresh()])
+
+    expect(reportError).toHaveBeenCalledWith(
+      expect.objectContaining({ message: 'older sync failed' })
+    )
+    expect(projection.current()).toBe(second)
+  })
 })

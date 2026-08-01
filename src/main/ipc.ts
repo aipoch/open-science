@@ -816,17 +816,22 @@ const createApplicationModules = async (
     broadcastToRenderers('permissions:changed', { revision: Date.now() })
   }
   const settingsWorkflows = createSettingsWorkflows(settingsService, {
-    requestProviderReconnect: () => void runtime.requestProviderReconnect(),
-    requestAgentFrameworkSwitch: () => void runtime.requestAgentFrameworkSwitch(),
-    applyReasoningEffort: (effort) => runtime.applyReasoningEffortChange(effort),
-    requestSkillsReload: () => void runtime.requestSkillsReload(),
-    invalidatePermissionProjection: () => invalidatePermissionProjection(),
-    refreshConnectorSkillDocs: () => connectorRuntimeSettings.refresh(),
-    pruneCustomServerPermissions: (serverId) =>
-      permissionGrantRegistry.prune({ kind: 'mcp_server', serverId }).then(() => undefined),
-    beginCustomServerSecurityChange: (serverId) =>
-      connectorService.beginCustomServerSecurityChange(serverId),
-    applyAppIconVariant: onAppIconVariantChanged
+    runtime: {
+      requestProviderReconnect: () => void runtime.requestProviderReconnect(),
+      requestAgentFrameworkSwitch: () => void runtime.requestAgentFrameworkSwitch(),
+      applyReasoningEffort: (effort) => runtime.applyReasoningEffortChange(effort)
+    },
+    skills: { requestSkillsReload: () => void runtime.requestSkillsReload() },
+    connectors: {
+      invalidatePermissionProjection: () => invalidatePermissionProjection(),
+      refreshConnectorSkillDocs: () => connectorRuntimeSettings.refresh(),
+      requestSkillsReload: () => void runtime.requestSkillsReload(),
+      pruneCustomServerPermissions: (serverId) =>
+        permissionGrantRegistry.prune({ kind: 'mcp_server', serverId }).then(() => undefined),
+      beginCustomServerSecurityChange: (serverId) =>
+        connectorService.beginCustomServerSecurityChange(serverId)
+    },
+    appearance: { applyAppIconVariant: onAppIconVariantChanged ?? (() => undefined) }
   })
   declareElectronAdapter('settings', () =>
     registerSettingsIpcHandlers({

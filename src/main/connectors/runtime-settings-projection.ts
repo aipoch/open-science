@@ -18,6 +18,7 @@ type ConnectorRuntimeSettingsProjectionOptions = {
 // bootstrap and Settings mutations exactly as before.
 class ConnectorRuntimeSettingsProjection {
   private snapshot: StoredConnectors | undefined
+  private refreshQueue: Promise<void> = Promise.resolve()
   private readonly syncBundledSkillDocs: typeof syncConnectorSkillDocs
   private readonly syncCustomSkillDocs: typeof syncCustomServerSkillDocs
   private readonly reportError: (error: unknown) => void
@@ -37,6 +38,12 @@ class ConnectorRuntimeSettingsProjection {
   }
 
   async refresh(): Promise<void> {
+    const queued = this.refreshQueue.then(() => this.refreshOnce())
+    this.refreshQueue = queued
+    return queued
+  }
+
+  private async refreshOnce(): Promise<void> {
     try {
       const connectors = await this.options.readConnectors()
       this.snapshot = connectors

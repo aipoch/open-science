@@ -41,8 +41,8 @@ import {
   type UpsertProviderRequest,
   type ValidateProviderRequest
 } from '../../shared/settings'
-import { createDefaultSettingsService, SettingsService } from './service'
-import { createSettingsWorkflows, type SettingsWorkflows } from './workflows'
+import { SettingsService } from './service'
+import type { SettingsWorkflows } from './workflows'
 import { createLogger } from '../logger'
 import { broadcastToRenderers } from '../renderer-broadcast'
 
@@ -53,8 +53,8 @@ const log = createLogger('settings-ipc')
 const SETTINGS_INSTALL_LOG_CHANNEL = 'settings:install-log'
 
 export type SettingsIpcOptions = {
-  service?: SettingsService
-  workflows?: SettingsWorkflows
+  service: SettingsService
+  workflows: SettingsWorkflows
   // Renders the built-in icon variants to preview data URLs for the Appearance picker. Absent means
   // the picker gets an empty list (no bundled assets available, e.g. an environment without them).
   listAppIconPreviews?: () => AppIconPreview[]
@@ -68,10 +68,10 @@ const broadcastInstallEvent = (event: ClaudeInstallEvent): void => {
 // Registers renderer-callable settings commands. Secret handling stays entirely in the service; the
 // handlers only marshal typed requests and forward install log streaming.
 const registerSettingsIpcHandlers = ({
-  service = createDefaultSettingsService(),
-  workflows = createSettingsWorkflows(service),
+  service,
+  workflows,
   listAppIconPreviews
-}: SettingsIpcOptions = {}): void => {
+}: SettingsIpcOptions): void => {
   ipcMainHandle('settings:get-preflight', () => service.getPreflight())
   ipcMainHandle('settings:get-settings', () => service.getSettingsView())
   ipcMainHandle('settings:encryption-available', () => service.isEncryptionAvailable())
@@ -92,31 +92,31 @@ const registerSettingsIpcHandlers = ({
   )
 
   ipcMainHandle('settings:uninstall-claude', () =>
-    workflows.uninstallRuntime('uninstallClaude', 'claude-code')
+    workflows.runtime.uninstallRuntime('uninstallClaude', 'claude-code')
   )
 
   ipcMainHandle('settings:uninstall-opencode', () =>
-    workflows.uninstallRuntime('uninstallOpencode', 'opencode')
+    workflows.runtime.uninstallRuntime('uninstallOpencode', 'opencode')
   )
 
   ipcMainHandle('settings:uninstall-codex', () =>
-    workflows.uninstallRuntime('uninstallCodex', 'codex')
+    workflows.runtime.uninstallRuntime('uninstallCodex', 'codex')
   )
 
   ipcMainHandle('settings:upsert-provider', (_event, request: UpsertProviderRequest) =>
-    workflows.upsertProvider(request)
+    workflows.runtime.upsertProvider(request)
   )
   ipcMainHandle('settings:delete-provider', (_event, request: DeleteProviderRequest) =>
-    workflows.deleteProvider(request.id)
+    workflows.runtime.deleteProvider(request.id)
   )
   ipcMainHandle('settings:set-active-provider', (_event, request: SetActiveProviderRequest) =>
-    workflows.setActiveProvider(request)
+    workflows.runtime.setActiveProvider(request)
   )
   ipcMainHandle(
     'settings:set-agent-framework',
     async (_event, request: SetAgentFrameworkRequest) => {
       log.info('set agent framework requested', { id: request.id })
-      return workflows.setAgentFramework(request)
+      return workflows.runtime.setAgentFramework(request)
     }
   )
   ipcMainHandle(
@@ -129,7 +129,7 @@ const registerSettingsIpcHandlers = ({
       }
 
       log.info('set reasoning effort requested', { effort: request.effort })
-      return workflows.setReasoningEffort(request)
+      return workflows.runtime.setReasoningEffort(request)
     }
   )
   ipcMainHandle(
@@ -154,7 +154,7 @@ const registerSettingsIpcHandlers = ({
       }
 
       log.info('set conversation Skill import enabled requested', { enabled: request.enabled })
-      return workflows.setConversationSkillImportEnabled(request)
+      return workflows.skills.setConversationSkillImportEnabled(request)
     }
   )
   ipcMainHandle(
@@ -179,7 +179,7 @@ const registerSettingsIpcHandlers = ({
       }
 
       log.info('set app icon variant requested', { variant: request.variant })
-      return workflows.setAppIconVariant(request.variant)
+      return workflows.appearance.setAppIconVariant(request.variant)
     }
   )
   ipcMainHandle('settings:validate-provider', (_event, request: ValidateProviderRequest) =>
@@ -187,8 +187,8 @@ const registerSettingsIpcHandlers = ({
   )
   ipcMainHandle('settings:cancel-codex-login', () => service.cancelCodexLogin())
   ipcMainHandle('settings:cancel-claude-login', () => service.cancelClaudeLogin())
-  ipcMainHandle('settings:login-shared-claude', () => workflows.loginClaudeShared())
-  ipcMainHandle('settings:logout-shared-claude', () => workflows.logoutClaudeShared())
+  ipcMainHandle('settings:login-shared-claude', () => workflows.runtime.loginClaudeShared())
+  ipcMainHandle('settings:logout-shared-claude', () => workflows.runtime.logoutClaudeShared())
   ipcMainHandle('settings:login-isolated-claude', async (_event, token: string) => {
     // Renderer payloads are untyped at runtime: reject anything that isn't a string before it
     // reaches the controller, so a malicious or corrupt payload can never be coerced into a save.
@@ -196,17 +196,17 @@ const registerSettingsIpcHandlers = ({
       throw new Error('Claude sign-in token must be a string.')
     }
 
-    return workflows.loginIsolatedClaude(token)
+    return workflows.runtime.loginIsolatedClaude(token)
   })
   ipcMainHandle('settings:login-isolated-claude-browser', () =>
-    workflows.loginIsolatedClaudeBrowser()
+    workflows.runtime.loginIsolatedClaudeBrowser()
   )
   ipcMainHandle('settings:cancel-isolated-claude-login', async () => {
     await service.cancelClaudeIsolatedLogin()
   })
-  ipcMainHandle('settings:logout-isolated-claude', () => workflows.logoutIsolatedClaude())
-  ipcMainHandle('settings:login-isolated-codex', () => workflows.loginIsolatedCodex())
-  ipcMainHandle('settings:logout-isolated-codex', () => workflows.logoutIsolatedCodex())
+  ipcMainHandle('settings:logout-isolated-claude', () => workflows.runtime.logoutIsolatedClaude())
+  ipcMainHandle('settings:login-isolated-codex', () => workflows.runtime.loginIsolatedCodex())
+  ipcMainHandle('settings:logout-isolated-codex', () => workflows.runtime.logoutIsolatedCodex())
   ipcMainHandle(
     'settings:refresh-provider-models',
     (_event, request: RefreshProviderModelsRequest) => service.refreshProviderModels(request)
@@ -221,25 +221,25 @@ const registerSettingsIpcHandlers = ({
   ipcMainHandle('settings:list-skills', () => service.listSkills())
   ipcMainHandle('settings:get-skill-detail', (_event, id: string) => service.getSkillDetail(id))
   ipcMainHandle('settings:set-skill-enabled', (_event, request: SetSkillEnabledRequest) =>
-    workflows.setSkillEnabled(request)
+    workflows.skills.setSkillEnabled(request)
   )
   ipcMainHandle('settings:create-skill', (_event, request: CreateSkillRequest) =>
-    workflows.createSkill(request)
+    workflows.skills.createSkill(request)
   )
   ipcMainHandle('settings:update-skill', (_event, request: UpdateSkillRequest) =>
-    workflows.updateSkill(request)
+    workflows.skills.updateSkill(request)
   )
   ipcMainHandle('settings:delete-skill', (_event, request: DeleteSkillRequest) =>
-    workflows.deleteSkill(request)
+    workflows.skills.deleteSkill(request)
   )
   ipcMainHandle('settings:import-skill', (_event, request: ImportSkillRequest) =>
-    workflows.importSkill(request)
+    workflows.skills.importSkill(request)
   )
   ipcMainHandle('settings:import-skill-zip', (_event, request: ImportSkillZipRequest) =>
-    workflows.importSkillZip(request)
+    workflows.skills.importSkillZip(request)
   )
   ipcMainHandle('settings:import-skill-zip-batch', (_event, request: ImportSkillZipBatchRequest) =>
-    workflows.importSkillZipBatch(request)
+    workflows.skills.importSkillZipBatch(request)
   )
   ipcMainHandle('settings:preview-skill-zip', (_event, request: PreviewSkillZipRequest) =>
     service.previewSkillZip(request)
@@ -259,7 +259,8 @@ const registerSettingsIpcHandlers = ({
   )
   ipcMainHandle(
     'settings:import-agent-home-skills',
-    (_event, request: ImportAgentHomeSkillsRequest) => workflows.importAgentHomeSkills(request)
+    (_event, request: ImportAgentHomeSkillsRequest) =>
+      workflows.skills.importAgentHomeSkills(request)
   )
 
   ipcMainHandle('settings:list-connectors', () => service.listConnectors())
@@ -267,30 +268,32 @@ const registerSettingsIpcHandlers = ({
     service.getConnectorDetail(id)
   )
   ipcMainHandle('settings:set-connector-enabled', (_event, request: SetConnectorEnabledRequest) =>
-    workflows.setConnectorEnabled(request)
+    workflows.connectors.setConnectorEnabled(request)
   )
   ipcMainHandle(
     'settings:set-connector-auto-allow',
-    (_event, request: SetConnectorAutoAllowRequest) => workflows.setConnectorAutoAllow(request)
+    (_event, request: SetConnectorAutoAllowRequest) =>
+      workflows.connectors.setConnectorAutoAllow(request)
   )
   ipcMainHandle('settings:set-tool-permission', (_event, request: SetToolPermissionRequest) =>
-    workflows.setToolPermission(request)
+    workflows.connectors.setToolPermission(request)
   )
   ipcMainHandle('settings:set-ncbi-credentials', (_event, request: SetNcbiCredentialsRequest) =>
-    workflows.setNcbiCredentials(request)
+    workflows.connectors.setNcbiCredentials(request)
   )
   ipcMainHandle('settings:add-custom-server', (_event, request: AddCustomServerRequest) =>
-    workflows.addCustomServer(request)
+    workflows.connectors.addCustomServer(request)
   )
   ipcMainHandle(
     'settings:set-custom-server-enabled',
-    (_event, request: SetCustomServerEnabledRequest) => workflows.setCustomServerEnabled(request)
+    (_event, request: SetCustomServerEnabledRequest) =>
+      workflows.connectors.setCustomServerEnabled(request)
   )
   ipcMainHandle('settings:remove-custom-server', (_event, request: RemoveCustomServerRequest) =>
-    workflows.removeCustomServer(request)
+    workflows.connectors.removeCustomServer(request)
   )
   ipcMainHandle('settings:update-custom-server', (_event, request: UpdateCustomServerRequest) =>
-    workflows.updateCustomServer(request)
+    workflows.connectors.updateCustomServer(request)
   )
   // Compute file browser bookmarks: keyed by provider_id in settings.computeBookmarks.
   ipcMainHandle('compute:bookmarks:get', (_event, providerId: string) =>

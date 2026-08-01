@@ -12,6 +12,32 @@ import {
   type SettingsWorkflowStore
 } from './workflows'
 
+type TestSettingsWorkflowEffects = Partial<
+  SettingsWorkflowEffects['runtime'] &
+    SettingsWorkflowEffects['skills'] &
+    SettingsWorkflowEffects['connectors'] &
+    SettingsWorkflowEffects['appearance']
+>
+
+// Tests select one narrow owner at a time. No-op adapters are explicit here so required production
+// effects cannot disappear merely because a property was omitted from workflow construction.
+const testEffects = (effects: TestSettingsWorkflowEffects = {}): SettingsWorkflowEffects => ({
+  runtime: {
+    requestProviderReconnect: effects.requestProviderReconnect ?? (() => undefined),
+    requestAgentFrameworkSwitch: effects.requestAgentFrameworkSwitch ?? (() => undefined),
+    applyReasoningEffort: effects.applyReasoningEffort ?? (async () => false)
+  },
+  skills: { requestSkillsReload: effects.requestSkillsReload ?? (() => undefined) },
+  connectors: {
+    invalidatePermissionProjection: effects.invalidatePermissionProjection ?? (() => undefined),
+    refreshConnectorSkillDocs: effects.refreshConnectorSkillDocs ?? (async () => undefined),
+    requestSkillsReload: effects.requestSkillsReload ?? (() => undefined),
+    pruneCustomServerPermissions: effects.pruneCustomServerPermissions ?? (async () => undefined),
+    beginCustomServerSecurityChange: effects.beginCustomServerSecurityChange ?? (() => undefined)
+  },
+  appearance: { applyAppIconVariant: effects.applyAppIconVariant ?? (() => undefined) }
+})
+
 const snapshot = (overrides: Partial<SettingsSnapshot> = {}): SettingsSnapshot => ({
   claude: {},
   opencode: {},
@@ -89,10 +115,10 @@ describe('SettingsWorkflows runtime effects', () => {
       const requestAgentFrameworkSwitch = vi.fn()
       const requestProviderReconnect = vi.fn()
 
-      await createSettingsWorkflows(capability, {
-        requestAgentFrameworkSwitch,
-        requestProviderReconnect
-      }).uninstallRuntime(method, framework)
+      await createSettingsWorkflows(
+        capability,
+        testEffects({ requestAgentFrameworkSwitch, requestProviderReconnect })
+      ).runtime.uninstallRuntime(method, framework)
 
       expect(requestAgentFrameworkSwitch).toHaveBeenCalledOnce()
       expect(requestProviderReconnect).not.toHaveBeenCalled()
@@ -108,10 +134,10 @@ describe('SettingsWorkflows runtime effects', () => {
     const requestProviderReconnect = vi.fn()
     const requestAgentFrameworkSwitch = vi.fn()
 
-    await createSettingsWorkflows(capability, {
-      requestProviderReconnect,
-      requestAgentFrameworkSwitch
-    }).uninstallRuntime('uninstallClaude', 'claude-code')
+    await createSettingsWorkflows(
+      capability,
+      testEffects({ requestProviderReconnect, requestAgentFrameworkSwitch })
+    ).runtime.uninstallRuntime('uninstallClaude', 'claude-code')
 
     expect(requestProviderReconnect).toHaveBeenCalledOnce()
     expect(requestAgentFrameworkSwitch).not.toHaveBeenCalled()
@@ -120,10 +146,10 @@ describe('SettingsWorkflows runtime effects', () => {
       snapshot: snapshot({ agentFrameworkId: 'claude-code' }),
       activeBackendAffected: false
     })
-    await createSettingsWorkflows(capability, {
-      requestProviderReconnect,
-      requestAgentFrameworkSwitch
-    }).uninstallRuntime('uninstallClaude', 'claude-code')
+    await createSettingsWorkflows(
+      capability,
+      testEffects({ requestProviderReconnect, requestAgentFrameworkSwitch })
+    ).runtime.uninstallRuntime('uninstallClaude', 'claude-code')
     expect(requestProviderReconnect).toHaveBeenCalledOnce()
   })
 
@@ -146,9 +172,10 @@ describe('SettingsWorkflows runtime effects', () => {
       calls.push('delete')
       return snapshot({ activeProviderId: undefined })
     })
-    const workflows = createSettingsWorkflows(capability, {
-      requestProviderReconnect: () => calls.push('reconnect')
-    })
+    const workflows = createSettingsWorkflows(
+      capability,
+      testEffects({ requestProviderReconnect: () => calls.push('reconnect') })
+    ).runtime
 
     await workflows.upsertProvider({ id: 'active', name: 'Active', type: 'custom' })
     await workflows.setActiveProvider({ id: 'next' })
@@ -171,7 +198,10 @@ describe('SettingsWorkflows runtime effects', () => {
     store.getSettingsView.mockResolvedValue(snapshot({ activeProviderId: 'active' }))
     store.upsertProvider.mockResolvedValue(snapshot({ activeProviderId: 'active' }))
     const requestProviderReconnect = vi.fn()
-    const workflows = createSettingsWorkflows(capability, { requestProviderReconnect })
+    const workflows = createSettingsWorkflows(
+      capability,
+      testEffects({ requestProviderReconnect })
+    ).runtime
 
     await workflows.upsertProvider({ name: 'New', type: 'custom' })
     await workflows.upsertProvider({ id: 'inactive', name: 'Inactive', type: 'custom' })
@@ -196,10 +226,13 @@ describe('SettingsWorkflows runtime effects', () => {
       calls.push('apply')
       return true
     })
-    const workflows = createSettingsWorkflows(capability, {
-      applyReasoningEffort,
-      requestProviderReconnect: () => calls.push('reconnect')
-    })
+    const workflows = createSettingsWorkflows(
+      capability,
+      testEffects({
+        applyReasoningEffort,
+        requestProviderReconnect: () => calls.push('reconnect')
+      })
+    ).runtime
 
     await workflows.setReasoningEffort({ effort: 'high' })
     expect(calls).toEqual(['persist', 'resolve', 'apply'])
@@ -215,10 +248,13 @@ describe('SettingsWorkflows runtime effects', () => {
   it('propagates live reasoning failures without a fallback reconnect', async () => {
     const { capability } = fakeStore()
     const requestProviderReconnect = vi.fn()
-    const workflows = createSettingsWorkflows(capability, {
-      applyReasoningEffort: vi.fn().mockRejectedValue(new Error('live apply failed')),
-      requestProviderReconnect
-    })
+    const workflows = createSettingsWorkflows(
+      capability,
+      testEffects({
+        applyReasoningEffort: vi.fn().mockRejectedValue(new Error('live apply failed')),
+        requestProviderReconnect
+      })
+    ).runtime
 
     await expect(workflows.setReasoningEffort({ effort: 'high' })).rejects.toThrow(
       'live apply failed'
@@ -255,7 +291,10 @@ describe('SettingsWorkflows authentication follow-up', () => {
       snapshot({ activeProviderId, providers: [provider] as SettingsSnapshot['providers'] })
     )
     const requestProviderReconnect = vi.fn()
-    const workflows = createSettingsWorkflows(capability, { requestProviderReconnect })
+    const workflows = createSettingsWorkflows(
+      capability,
+      testEffects({ requestProviderReconnect })
+    ).runtime
 
     if (method === 'loginIsolatedClaude') await workflows.loginIsolatedClaude('token')
     else await workflows[method]()
@@ -266,7 +305,10 @@ describe('SettingsWorkflows authentication follow-up', () => {
   it('does not reconnect failed, stale, or no-longer-active login results', async () => {
     const { store, capability } = fakeStore()
     const requestProviderReconnect = vi.fn()
-    const workflows = createSettingsWorkflows(capability, { requestProviderReconnect })
+    const workflows = createSettingsWorkflows(
+      capability,
+      testEffects({ requestProviderReconnect })
+    ).runtime
 
     store.loginIsolatedCodex.mockResolvedValue({ ok: true, category: 'ok', applied: false })
     await workflows.loginIsolatedCodex()
@@ -287,7 +329,9 @@ describe('SettingsWorkflows authentication follow-up', () => {
     const { store, capability } = fakeStore()
     store.getSettingsView.mockResolvedValue(snapshot({ activeProviderId }))
     const requestProviderReconnect = vi.fn()
-    await createSettingsWorkflows(capability, { requestProviderReconnect })[method]()
+    await createSettingsWorkflows(capability, testEffects({ requestProviderReconnect })).runtime[
+      method
+    ]()
     expect(requestProviderReconnect).toHaveBeenCalledOnce()
   })
 })
@@ -296,7 +340,10 @@ describe('SettingsWorkflows catalog and appearance effects', () => {
   it('reloads once after successful Skill mutations and not after a failure', async () => {
     const { store, capability } = fakeStore()
     const requestSkillsReload = vi.fn()
-    const workflows = createSettingsWorkflows(capability, { requestSkillsReload })
+    const workflows = createSettingsWorkflows(
+      capability,
+      testEffects({ requestSkillsReload })
+    ).skills
 
     await workflows.setSkillEnabled({ id: 'skill', enabled: true })
     await workflows.createSkill({ name: 'Skill', description: '', body: 'Body' })
@@ -310,7 +357,10 @@ describe('SettingsWorkflows catalog and appearance effects', () => {
   it('reloads installed Skill batches only when an item changed', async () => {
     const { store, capability } = fakeStore()
     const requestSkillsReload = vi.fn()
-    const workflows = createSettingsWorkflows(capability, { requestSkillsReload })
+    const workflows = createSettingsWorkflows(
+      capability,
+      testEffects({ requestSkillsReload })
+    ).skills
     const request = { skills: [] }
 
     store.importAgentHomeSkills.mockResolvedValue({
@@ -338,16 +388,16 @@ describe('SettingsWorkflows catalog and appearance effects', () => {
     const refresh = new Promise<void>((resolve) => {
       finishRefresh = resolve
     })
-    const effects: SettingsWorkflowEffects = {
+    const effects = testEffects({
       invalidatePermissionProjection: () => calls.push('invalidate'),
       refreshConnectorSkillDocs: () => {
         calls.push('refresh')
         return refresh
       },
       requestSkillsReload: () => calls.push('reload')
-    }
+    })
 
-    await createSettingsWorkflows(capability, effects).setConnectorEnabled({
+    await createSettingsWorkflows(capability, effects).connectors.setConnectorEnabled({
       id: 'chemistry',
       enabled: false
     })
@@ -374,13 +424,16 @@ describe('SettingsWorkflows catalog and appearance effects', () => {
     const pruneCustomServerPermissions = vi.fn(async () => {
       calls.push('prune')
     })
-    const workflows = createSettingsWorkflows(capability, {
-      pruneCustomServerPermissions,
-      invalidatePermissionProjection: () => calls.push('invalidate'),
-      refreshConnectorSkillDocs: async () => {
-        calls.push('refresh')
-      }
-    })
+    const workflows = createSettingsWorkflows(
+      capability,
+      testEffects({
+        pruneCustomServerPermissions,
+        invalidatePermissionProjection: () => calls.push('invalidate'),
+        refreshConnectorSkillDocs: async () => {
+          calls.push('refresh')
+        }
+      })
+    ).connectors
 
     await workflows.removeCustomServer({ id: 'server' })
     expect(calls).toEqual(['persist', 'prune', 'invalidate', 'refresh'])
@@ -407,17 +460,20 @@ describe('SettingsWorkflows catalog and appearance effects', () => {
     const pruneCustomServerPermissions = vi.fn(async () => {
       calls.push('prune')
     })
-    const workflows = createSettingsWorkflows(capability, {
-      beginCustomServerSecurityChange: () => {
-        calls.push('begin')
-        return guard as never
-      },
-      pruneCustomServerPermissions,
-      invalidatePermissionProjection: () => calls.push('invalidate'),
-      refreshConnectorSkillDocs: async () => {
-        calls.push('refresh')
-      }
-    })
+    const workflows = createSettingsWorkflows(
+      capability,
+      testEffects({
+        beginCustomServerSecurityChange: () => {
+          calls.push('begin')
+          return guard as never
+        },
+        pruneCustomServerPermissions,
+        invalidatePermissionProjection: () => calls.push('invalidate'),
+        refreshConnectorSkillDocs: async () => {
+          calls.push('refresh')
+        }
+      })
+    ).connectors
     const request = { id: 'server', transport: 'stdio' as const, command: 'new-mcp' }
 
     await workflows.updateCustomServer(request)
@@ -436,9 +492,10 @@ describe('SettingsWorkflows catalog and appearance effects', () => {
       calls.push('persist')
       return snapshot({ appIconVariant: 'dark' })
     })
-    const workflows = createSettingsWorkflows(capability, {
-      applyAppIconVariant: () => calls.push('apply')
-    })
+    const workflows = createSettingsWorkflows(
+      capability,
+      testEffects({ applyAppIconVariant: () => calls.push('apply') })
+    ).appearance
 
     await workflows.setAppIconVariant('dark')
     expect(calls).toEqual(['persist', 'apply'])
