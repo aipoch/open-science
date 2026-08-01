@@ -116,7 +116,8 @@ describe('OpenCode turn usage', () => {
       cacheTokens: 8,
       cachedReadTokens: 6,
       cachedWriteTokens: 2,
-      outputTokens: 5
+      outputTokens: 5,
+      turnCount: 2
     })
   })
 

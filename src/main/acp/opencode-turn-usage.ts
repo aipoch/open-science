@@ -131,6 +131,7 @@ export const sumOpenCodeTurnUsage = (
     inputTokens,
     cacheTokens,
     ...(hasCacheBreakdown ? { cachedReadTokens, cachedWriteTokens } : {}),
-    outputTokens
+    outputTokens,
+    turnCount: newMessageIds.length
   }
 }

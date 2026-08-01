@@ -19,6 +19,7 @@ describe('claudeCodeFramework', () => {
 
     expect(setup.meta).toMatchObject({
       claudeCode: {
+        emitRawSDKMessages: [{ type: 'result' }],
         options: {
           ...sessionOptions,
           settingSources: ['user'],

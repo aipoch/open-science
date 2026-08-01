@@ -66,6 +66,9 @@ export const claudeCodeFramework: AgentFramework = {
     // Shared mode adds app-owned settings/plugins at the SDK flag layer via sessionOptions.
     const meta: Record<string, unknown> = {
       claudeCode: {
+        // The ACP usage total omits Claude SDK's agentic turn count. Request only terminal result
+        // frames through the adapter's extension channel so the runtime can retain `num_turns`.
+        emitRawSDKMessages: [{ type: 'result' }],
         options: {
           tools: CLAUDE_CODE_BUILTIN_TOOLS,
           ...ctx.sessionOptions,

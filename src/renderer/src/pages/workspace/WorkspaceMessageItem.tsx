@@ -236,7 +236,17 @@ const TurnTokenUsage = ({ usage }: { usage?: AcpTurnTokenUsage }): React.JSX.Ele
           if (openedFromPointerRef.current) event.preventDefault()
         }}
       >
-        <div className="text-[13px] font-medium">Usage</div>
+        <div className="flex items-baseline justify-between gap-3">
+          <div className="text-[13px] font-medium">Usage</div>
+          {usage?.turnCount ? (
+            <div
+              data-slot="turn-token-usage-turn-count"
+              className="text-[10px] font-normal text-muted-foreground tabular-nums"
+            >
+              {usage.turnCount} {usage.turnCount === 1 ? 'turn' : 'turns'}
+            </div>
+          ) : null}
+        </div>
         <div
           data-slot="turn-token-usage-breakdown"
           role="img"

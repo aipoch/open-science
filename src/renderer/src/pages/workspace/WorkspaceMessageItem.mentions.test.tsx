@@ -314,7 +314,7 @@ describe('WorkspaceMessageItem turn token usage', () => {
         createdAt: 1710000030000,
         completedAt: 1710000125000,
         updatedAt: 1710000999000,
-        turnUsage: { inputTokens: 12_345, cacheTokens: 678, outputTokens: 90 }
+        turnUsage: { inputTokens: 12_345, cacheTokens: 678, outputTokens: 90, turnCount: 3 }
       }),
       undefined,
       1710000000000
@@ -349,6 +349,9 @@ describe('WorkspaceMessageItem turn token usage', () => {
 
     const usagePopover = document.body.querySelector('[data-slot="turn-token-usage-popover"]')
     expect(usagePopover?.textContent).toContain('Usage')
+    expect(
+      usagePopover?.querySelector('[data-slot="turn-token-usage-turn-count"]')?.textContent
+    ).toBe('3 turns')
     expect(usagePopover?.textContent).toContain('Input12,345')
     expect(usagePopover?.textContent).toContain('Cache678')
     expect(usagePopover?.textContent).toContain('Output90')
@@ -398,7 +401,8 @@ describe('WorkspaceMessageItem turn token usage', () => {
           cacheTokens: 50,
           cachedReadTokens: 30,
           cachedWriteTokens: 20,
-          outputTokens: 10
+          outputTokens: 10,
+          turnCount: 1
         }
       })
     )
@@ -418,6 +422,9 @@ describe('WorkspaceMessageItem turn token usage', () => {
     expect(usagePopover?.textContent).not.toContain('Cache50')
     expect(usagePopover?.textContent).toContain('Output10')
     expect(usagePopover?.textContent).toContain('Total160')
+    expect(
+      usagePopover?.querySelector('[data-slot="turn-token-usage-turn-count"]')?.textContent
+    ).toBe('1 turn')
 
     const segments = Array.from(
       usagePopover?.querySelectorAll<HTMLElement>('[data-slot="turn-token-usage-segment"]') ?? []

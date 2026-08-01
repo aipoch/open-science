@@ -145,11 +145,15 @@ export type AcpTurnTokenUsage = {
   cachedReadTokens?: number
   cachedWriteTokens?: number
   outputTokens: number
+  // Number of model inference turns performed during this completed agent run. Optional because
+  // ACP adapters do not all expose a reliable request count.
+  turnCount?: number
 }
 
 // Private PromptResponse metadata used by the managed Codex adapter to keep whole-turn totals
 // separate from ACP's latest-request usage snapshot.
 export const ACP_TURN_TOKEN_USAGE_META_KEY = 'open-science/turn-usage'
+export const ACP_MODEL_TURN_COUNT_META_KEY = 'open-science/model-turn-count'
 
 const asTokenCount = (value: unknown): number | undefined =>
   typeof value === 'number' && Number.isSafeInteger(value) && value >= 0 ? value : undefined
@@ -195,6 +199,7 @@ export const sanitizeAcpTurnTokenUsage = (value: unknown): AcpTurnTokenUsage | u
   const inputTokens = asTokenCount(usage.inputTokens)
   const cacheTokens = asTokenCount(usage.cacheTokens)
   const outputTokens = asTokenCount(usage.outputTokens)
+  const turnCount = asTokenCount(usage.turnCount)
 
   if (inputTokens === undefined || cacheTokens === undefined || outputTokens === undefined) {
     return undefined
@@ -212,7 +217,8 @@ export const sanitizeAcpTurnTokenUsage = (value: unknown): AcpTurnTokenUsage | u
     inputTokens,
     cacheTokens,
     ...(hasCacheBreakdown ? { cachedReadTokens, cachedWriteTokens } : {}),
-    outputTokens
+    outputTokens,
+    ...(turnCount !== undefined && turnCount > 0 ? { turnCount } : {})
   }
 }
 

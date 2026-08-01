@@ -17,7 +17,11 @@ import { Readable } from 'node:stream'
 import { gzipSync } from 'node:zlib'
 import { afterEach, describe, expect, it, vi } from 'vitest'
 
-import { ACP_TURN_TOKEN_USAGE_META_KEY, toAcpTurnTokenUsage } from '../../shared/acp'
+import {
+  ACP_MODEL_TURN_COUNT_META_KEY,
+  ACP_TURN_TOKEN_USAGE_META_KEY,
+  toAcpTurnTokenUsage
+} from '../../shared/acp'
 
 const PINNED_SKILL_MAPPER_FIXTURE = [
   'function buildPromptItems(prompt) {',
@@ -1504,6 +1508,7 @@ describe('patchCodexAcpTurnUsageSource', () => {
     const response = adapter.finishPrompt()
     expect(response.usage).toEqual(usage(27, 19, 5, 3, 0))
     expect(response._meta?.['open-science/turn-usage']).toEqual(usage(45, 31, 8, 6, 0))
+    expect(response._meta?.['open-science/model-turn-count']).toBe(2)
     expect(patchCodexAcpTurnUsageSource(patched)).toBe(patched)
   })
 
@@ -1559,7 +1564,8 @@ describe('patchCodexAcpTurnUsageSource', () => {
 
     expect(adapter.finishPrompt()._meta).toEqual({
       quota: { remaining: 42 },
-      [ACP_TURN_TOKEN_USAGE_META_KEY]: usage(18, 12, 3, 3, 0)
+      [ACP_TURN_TOKEN_USAGE_META_KEY]: usage(18, 12, 3, 3, 0),
+      [ACP_MODEL_TURN_COUNT_META_KEY]: 1
     })
   })
 
@@ -1659,7 +1665,8 @@ describe('patchCodexAcpTurnUsageSource', () => {
       '...(sessionState.promptTokenUsageObserved',
       '  ? {',
       '      _meta: {',
-      `        "${ACP_TURN_TOKEN_USAGE_META_KEY}": this.buildPromptUsage(sessionState.promptTokenUsage)`,
+      `        "${ACP_TURN_TOKEN_USAGE_META_KEY}": this.buildPromptUsage(sessionState.promptTokenUsage),`,
+      `        "${ACP_MODEL_TURN_COUNT_META_KEY}": sessionState.promptModelTurnCount`,
       '      }',
       '    }',
       '  : {}),'
@@ -1669,7 +1676,8 @@ describe('patchCodexAcpTurnUsageSource', () => {
       '  ...this.buildQuotaMeta(sessionState),',
       '  ...(sessionState.promptTokenUsageObserved',
       '    ? {',
-      `        "${ACP_TURN_TOKEN_USAGE_META_KEY}": this.buildPromptUsage(sessionState.promptTokenUsage)`,
+      `        "${ACP_TURN_TOKEN_USAGE_META_KEY}": this.buildPromptUsage(sessionState.promptTokenUsage),`,
+      `        "${ACP_MODEL_TURN_COUNT_META_KEY}": sessionState.promptModelTurnCount`,
       '      }',
       '    : {})',
       '}'

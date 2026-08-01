@@ -169,6 +169,7 @@ const startFakeAgent = (
     }) => Promise<PromptResponse | void> | PromptResponse | void
     replyForPrompt?: (text: string) => string
     usageForPrompt?: (text: string) => { used: number; size: number } | undefined
+    claudeTurnCountForPrompt?: (text: string) => number | undefined
   } = {}
 ): {
   authRequests: unknown[]
@@ -313,6 +314,13 @@ const startFakeAgent = (
         await ctx.client.notify(acp.methods.client.session.update, {
           sessionId: ctx.params.sessionId,
           update: { sessionUpdate: 'usage_update', ...usage }
+        })
+      }
+      const claudeTurnCount = options.claudeTurnCountForPrompt?.(text)
+      if (claudeTurnCount !== undefined) {
+        await ctx.client.notify('_claude/sdkMessage', {
+          sessionId: ctx.params.sessionId,
+          message: { type: 'result', num_turns: claudeTurnCount }
         })
       }
       // Stream one assistant chunk through the client callback path before stopping.
@@ -6594,6 +6602,7 @@ describe('ACP runtime session management', () => {
         // Every session (new or resumed) is restricted to the app-owned "user" settings scope.
         _meta: {
           claudeCode: {
+            emitRawSDKMessages: [{ type: 'result' }],
             options: {
               settingSources: ['user'],
               tools: { type: 'preset', preset: 'claude_code' }
@@ -7848,6 +7857,40 @@ describe('ACP runtime session management', () => {
     })
   })
 
+  it('attaches Claude SDK model-turn counts to completed turn usage', async () => {
+    const process = new FakeAgentProcess()
+    startFakeAgent(process, ['s1'], {
+      claudeTurnCountForPrompt: () => 3,
+      onPrompt: () => ({
+        stopReason: 'end_turn',
+        usage: {
+          totalTokens: 60,
+          inputTokens: 31,
+          cachedReadTokens: 8,
+          cachedWriteTokens: 7,
+          outputTokens: 14
+        }
+      })
+    })
+    const runtime = new AcpRuntime({
+      appVersion: '0.1.0',
+      defaultCwd: '/workspace',
+      spawnAgent: () => asAgentProcess(process)
+    })
+
+    await runtime.createSession({ cwd: '/workspace' })
+    await runtime.sendPrompt({ sessionId: 's1', text: 'use tools' })
+
+    expect(runtime.getSnapshot().events.find((event) => event.kind === 'stop')?.turnUsage).toEqual({
+      inputTokens: 31,
+      cacheTokens: 15,
+      cachedReadTokens: 8,
+      cachedWriteTokens: 7,
+      outputTokens: 14,
+      turnCount: 3
+    })
+  })
+
   it('falls back to an unpatched Codex latest request usage at stop', async () => {
     const process = new FakeAgentProcess()
     const usageSent = createDeferred()
@@ -7918,7 +7961,8 @@ describe('ACP runtime session management', () => {
             cachedReadTokens: 8,
             cachedWriteTokens: 7,
             outputTokens: 14
-          }
+          },
+          'open-science/model-turn-count': 2
         }
       })
     })
@@ -7941,7 +7985,8 @@ describe('ACP runtime session management', () => {
         cacheTokens: 15,
         cachedReadTokens: 8,
         cachedWriteTokens: 7,
-        outputTokens: 14
+        outputTokens: 14,
+        turnCount: 2
       }
     })
   })
