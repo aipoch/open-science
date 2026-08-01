@@ -133,6 +133,30 @@ jobs:
     )
   })
 
+  it.each(['- "uses": actions/checkout@v7', '[{ "uses": actions/checkout@v7 }]'])(
+    'rejects a mutable action reference expressed as valid YAML: %s',
+    (stepYaml) => {
+      const result = checkCiIntegrityChanges([
+        {
+          path: '.github/workflows/example.yml',
+          baseText: '',
+          headText: `jobs:
+  verify:
+    steps:
+      ${stepYaml}
+`
+        }
+      ])
+
+      expect(result.violations).toContainEqual(
+        expect.objectContaining({
+          path: '.github/workflows/example.yml',
+          rule: 'immutable-action-reference'
+        })
+      )
+    }
+  )
+
   it('rejects mutable third-party action references retained in a changed workflow', () => {
     const text = `jobs:
   verify:
@@ -152,6 +176,81 @@ jobs:
         path: '.github/workflows/example.yml',
         rule: 'immutable-action-reference'
       })
+    )
+  })
+
+  it('does not treat ordinary uses keys as action references', () => {
+    const result = checkCiIntegrityChanges([
+      {
+        path: '.github/workflows/example.yml',
+        baseText: '',
+        headText: `env:
+  uses: ordinary-value
+jobs:
+  verify:
+    steps:
+      - run: echo safe
+        env: { uses: another-ordinary-value }
+`
+      }
+    ])
+
+    expect(result.violations).not.toContainEqual(
+      expect.objectContaining({ rule: 'immutable-action-reference' })
+    )
+  })
+
+  it.each([
+    {
+      label: 'reusable workflow job',
+      path: '.github/workflows/reusable.yml',
+      headText: `jobs:
+  call:
+    uses: example/project/.github/workflows/reuse.yml@main
+`
+    },
+    {
+      label: 'composite action step',
+      path: '.github/actions/action.yml',
+      headText: `name: Example
+runs:
+  using: composite
+  steps:
+    - uses: example/project/action@main
+`
+    }
+  ])('rejects a mutable action reference in a $label', ({ path, headText }) => {
+    const result = checkCiIntegrityChanges([{ path, baseText: '', headText }])
+
+    expect(result.violations).toContainEqual(
+      expect.objectContaining({ path, rule: 'immutable-action-reference' })
+    )
+  })
+
+  it.each([
+    {
+      label: 'reusable workflow job',
+      path: '.github/workflows/reusable.yml',
+      headText: `jobs:
+  call:
+    uses: example/project/.github/workflows/reuse.yml@3d3c42e5aac5ba805825da76410c181273ba90b1
+`
+    },
+    {
+      label: 'composite action step',
+      path: '.github/actions/example/action.yml',
+      headText: `name: Example
+runs:
+  using: composite
+  steps:
+    - uses: example/project/action@3d3c42e5aac5ba805825da76410c181273ba90b1
+`
+    }
+  ])('accepts an immutable action reference in a $label', ({ path, headText }) => {
+    const result = checkCiIntegrityChanges([{ path, baseText: '', headText }])
+
+    expect(result.violations).not.toContainEqual(
+      expect.objectContaining({ rule: 'immutable-action-reference' })
     )
   })
 
@@ -217,6 +316,26 @@ jobs: {}
     )
   })
 
+  it('rejects quoted inline write permissions on pull_request_target', () => {
+    const result = checkCiIntegrityChanges([
+      {
+        path: '.github/workflows/privileged-inline.yml',
+        baseText: '',
+        headText: `"on": { "pull_request_target": {} }
+"permissions": { "contents": write }
+jobs: {}
+`
+      }
+    ])
+
+    expect(result.violations).toContainEqual(
+      expect.objectContaining({
+        path: '.github/workflows/privileged-inline.yml',
+        rule: 'minimal-target-permissions'
+      })
+    )
+  })
+
   it.each([
     ['.github/workflows/pr-gate.yml', 'PR Gate'],
     ['.github/workflows/ci-integrity.yml', 'CI Integrity']
@@ -231,6 +350,77 @@ jobs: {}
 
     expect(result.violations).toContainEqual(
       expect.objectContaining({ path, rule: 'stable-required-check' })
+    )
+  })
+
+  it.each([`\${{ 'PR Gate' }}`, `\${{ matrix.check }}`, `PR \${{ matrix.suffix }}`])(
+    'rejects a dynamic job name that can equal a reserved check: %s',
+    (name) => {
+      const result = checkCiIntegrityChanges([
+        {
+          path: '.github/workflows/untrusted.yml',
+          baseText: '',
+          headText: `jobs:
+  other:
+    name: "${name}"
+    strategy:
+      matrix:
+        check: [PR Gate]
+`
+        }
+      ])
+
+      expect(result.violations).toContainEqual(
+        expect.objectContaining({
+          path: '.github/workflows/untrusted.yml',
+          rule: 'reserved-dynamic-check'
+        })
+      )
+    }
+  )
+
+  it('rejects changes elsewhere in a workflow with a spoofable dynamic job name', () => {
+    const baseText = `jobs:
+  setup:
+    outputs:
+      check: Safe check
+  verify:
+    needs: setup
+    name: "\${{ needs.setup.outputs.check }}"
+`
+    const result = checkCiIntegrityChanges([
+      {
+        path: '.github/workflows/existing.yml',
+        baseText,
+        headText: baseText.replace('Safe check', 'PR Gate')
+      }
+    ])
+
+    expect(result.violations).toContainEqual(
+      expect.objectContaining({ rule: 'reserved-dynamic-check' })
+    )
+  })
+
+  it('allows a changed workflow whose dynamic name cannot equal a reserved check', () => {
+    const workflow = `jobs:
+  verify:
+    name: "Verify (\${{ matrix.os }})"
+    strategy:
+      matrix:
+        os: [ubuntu-latest]
+    steps:
+      - run: echo safe
+`
+    const result = checkCiIntegrityChanges([
+      {
+        path: '.github/workflows/existing.yml',
+        baseText: workflow,
+        headText: workflow.replace('echo safe', 'echo still-safe')
+      }
+    ])
+
+    expect(result.violations).not.toContainEqual(
+      expect.objectContaining({ rule: 'reserved-dynamic-check' })
     )
   })
 
@@ -259,6 +449,73 @@ jobs: {}
       expect.objectContaining({
         path: '.github/workflows/pr-gate.yml',
         rule: 'protected-gate-control-plane'
+      })
+    )
+  })
+
+  it.each([
+    'scripts/ci/check-ci-integrity.mjs',
+    'scripts/ci/check-pr-policy.mjs',
+    'scripts/ci/classify-pr-changes.mjs',
+    'scripts/ci/change-impact.json',
+    'scripts/ci/evaluate-pr-gate.mjs'
+  ])('rejects semantic changes to established trusted control-plane file %s', (path) => {
+    const result = checkCiIntegrityChanges([
+      {
+        path,
+        baseText: 'trusted base content\n',
+        headText: 'weakened head content\n'
+      }
+    ])
+
+    expect(result.violations).toContainEqual(
+      expect.objectContaining({ path, rule: 'protected-gate-control-plane' })
+    )
+  })
+
+  it('rejects a content-preserving rename of an established required workflow', () => {
+    const workflow = `jobs:
+  gate:
+    name: PR Gate
+`
+    const result = checkCiIntegrityChanges([
+      {
+        path: '.github/workflows/replacement.yml',
+        previousPath: '.github/workflows/pr-gate.yml',
+        baseText: workflow,
+        headText: workflow
+      }
+    ])
+
+    expect(result.violations).toContainEqual(
+      expect.objectContaining({
+        path: '.github/workflows/replacement.yml',
+        rule: 'protected-gate-control-plane'
+      })
+    )
+  })
+
+  it.each([
+    ['gate', 'Unrelated gate'],
+    ['other', 'PR Gate'],
+    ['integrity', 'Unrelated integrity'],
+    ['other', 'CI Integrity']
+  ])('rejects reserved required-check identity %s/%s in another workflow', (jobId, name) => {
+    const result = checkCiIntegrityChanges([
+      {
+        path: '.github/workflows/untrusted.yml',
+        baseText: '',
+        headText: `jobs:
+  ${jobId}:
+    name: ${name}
+`
+      }
+    ])
+
+    expect(result.violations).toContainEqual(
+      expect.objectContaining({
+        path: '.github/workflows/untrusted.yml',
+        rule: 'reserved-required-check'
       })
     )
   })

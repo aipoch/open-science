@@ -9,10 +9,34 @@ import { load } from 'js-yaml'
 
 import { parseNameStatus } from './classify-pr-changes.mjs'
 
-function actionReferences(text) {
+function actionReferences(document, workflow) {
   const references = new Set()
-  const pattern = /^\s*(?:-\s*)?uses:\s*['"]?([^'"\s#]+)['"]?/gm
-  for (const match of text.matchAll(pattern)) references.add(match[1])
+
+  function addStepReferences(steps) {
+    if (!Array.isArray(steps)) return
+    for (const step of steps) {
+      if (
+        step &&
+        typeof step === 'object' &&
+        !Array.isArray(step) &&
+        typeof step.uses === 'string'
+      ) {
+        references.add(step.uses)
+      }
+    }
+  }
+
+  if (workflow) {
+    for (const job of Object.values(workflowJobs(document))) {
+      if (!job || typeof job !== 'object' || Array.isArray(job)) continue
+      if (typeof job.uses === 'string') references.add(job.uses)
+      addStepReferences(job.steps)
+    }
+  } else if (document && typeof document === 'object' && !Array.isArray(document)) {
+    const runs = document.runs
+    if (runs && typeof runs === 'object' && !Array.isArray(runs)) addStepReferences(runs.steps)
+  }
+
   return references
 }
 
@@ -22,31 +46,69 @@ function isImmutableActionReference(reference) {
   return /@[0-9a-f]{40}$/i.test(reference)
 }
 
-function withoutCommentLines(text) {
-  return text
-    .split('\n')
-    .filter((line) => !/^\s*#/.test(line))
-    .join('\n')
+function isPullRequestTargetWorkflow(document) {
+  if (!document || typeof document !== 'object' || Array.isArray(document)) return false
+  const triggers = document.on
+  if (triggers === 'pull_request_target') return true
+  if (Array.isArray(triggers)) return triggers.includes('pull_request_target')
+  return Boolean(
+    triggers &&
+    typeof triggers === 'object' &&
+    !Array.isArray(triggers) &&
+    Object.hasOwn(triggers, 'pull_request_target')
+  )
 }
 
-function executesPullRequestHead(text) {
-  const workflow = withoutCommentLines(text)
-  if (!/\bpull_request_target\b/.test(workflow)) return false
+function scalarStrings(document) {
+  const strings = []
+  const visited = new WeakSet()
 
-  return [
+  function visit(value) {
+    if (typeof value === 'string') {
+      strings.push(value)
+      return
+    }
+    if (!value || typeof value !== 'object' || visited.has(value)) return
+    visited.add(value)
+    for (const child of Array.isArray(value) ? value : Object.values(value)) visit(child)
+  }
+
+  visit(document)
+  return strings
+}
+
+function executesPullRequestHead(document) {
+  if (!isPullRequestTargetWorkflow(document)) return false
+
+  const patterns = [
     /github\.event\.pull_request\.head\.(?:sha|ref)/,
     /\bgithub\.head_ref\b/,
     /\bgh\s+pr\s+checkout\b/,
     /\bgit\s+(?:checkout|switch)\b[^\n]*(?:head|pull\/)/i
-  ].some((pattern) => pattern.test(workflow))
+  ]
+  return scalarStrings(document).some((value) => patterns.some((pattern) => pattern.test(value)))
 }
 
-function writePermissions(text) {
+function writePermissions(document) {
   const permissions = new Set()
-  const workflow = withoutCommentLines(text)
-  if (/^\s*permissions:\s*write-all\s*$/m.test(workflow)) permissions.add('write-all')
-  for (const match of workflow.matchAll(/^\s*([a-z-]+):\s*write\s*$/gm)) {
-    permissions.add(match[1])
+
+  function addWrites(value, scope) {
+    if (value === 'write-all') {
+      permissions.add(`${scope}:write-all`)
+      return
+    }
+    if (!value || typeof value !== 'object' || Array.isArray(value)) return
+    for (const [permission, access] of Object.entries(value)) {
+      if (access === 'write') permissions.add(`${scope}:${permission}`)
+    }
+  }
+
+  if (!document || typeof document !== 'object' || Array.isArray(document)) return permissions
+  addWrites(document.permissions, 'workflow')
+  for (const [jobId, job] of Object.entries(workflowJobs(document))) {
+    if (job && typeof job === 'object' && !Array.isArray(job)) {
+      addWrites(job.permissions, `job:${jobId}`)
+    }
   }
   return permissions
 }
@@ -56,24 +118,77 @@ const stableChecks = {
   '.github/workflows/ci-integrity.yml': { jobId: 'integrity', name: 'CI Integrity' }
 }
 
+const protectedControlPlanePaths = new Set([
+  ...Object.keys(stableChecks),
+  'scripts/ci/check-ci-integrity.mjs',
+  'scripts/ci/check-pr-policy.mjs',
+  'scripts/ci/classify-pr-changes.mjs',
+  'scripts/ci/change-impact.json',
+  'scripts/ci/evaluate-pr-gate.mjs'
+])
+
 function isWorkflowPath(path) {
   return /^\.github\/workflows\/.*\.ya?ml$/i.test(path)
 }
 
 function isActionDefinitionPath(path) {
-  return /^\.github\/actions\/.*\/action\.ya?ml$/i.test(path)
+  return /^\.github\/actions\/(?:.*\/)?action\.ya?ml$/i.test(path)
 }
 
-function hasStableJobName(text, { jobId, name }) {
-  const lines = text.split('\n')
-  const start = lines.findIndex((line) => line.trimEnd() === `  ${jobId}:`)
-  if (start === -1) return false
+function workflowJobs(document) {
+  if (!document || typeof document !== 'object' || Array.isArray(document)) return {}
+  const jobs = document.jobs
+  return jobs && typeof jobs === 'object' && !Array.isArray(jobs) ? jobs : {}
+}
 
-  for (let index = start + 1; index < lines.length; index += 1) {
-    if (/^ {2}\S/.test(lines[index])) return false
-    if (lines[index].trimEnd() === `    name: ${name}`) return true
+function hasStableJobName(document, { jobId, name }) {
+  const job = workflowJobs(document)[jobId]
+  return Boolean(job && typeof job === 'object' && !Array.isArray(job) && job.name === name)
+}
+
+function escapeRegularExpression(value) {
+  return value.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')
+}
+
+function dynamicNameCouldEqual(jobName, reservedName) {
+  if (!jobName.includes('${{')) return false
+  const source = jobName
+    .split(/\$\{\{[\s\S]*?\}\}/g)
+    .map(escapeRegularExpression)
+    .join('.*')
+  return new RegExp(`^${source}$`, 's').test(reservedName)
+}
+
+function reservedCheckViolations(path, document, workflowChanged) {
+  const violations = []
+  for (const [jobId, job] of Object.entries(workflowJobs(document))) {
+    const jobName = job && typeof job === 'object' && !Array.isArray(job) ? job.name : undefined
+    for (const [canonicalPath, stableCheck] of Object.entries(stableChecks)) {
+      const isCanonicalJob =
+        path === canonicalPath && jobId === stableCheck.jobId && jobName === stableCheck.name
+      if (!isCanonicalJob && (jobId === stableCheck.jobId || jobName === stableCheck.name)) {
+        violations.push({
+          path,
+          rule: 'reserved-required-check',
+          message: `${stableCheck.jobId}/${stableCheck.name} is reserved for ${canonicalPath}`
+        })
+      }
+    }
+
+    const couldSpoofReservedCheck =
+      workflowChanged &&
+      typeof jobName === 'string' &&
+      Object.values(stableChecks).some(({ name }) => dynamicNameCouldEqual(jobName, name))
+    if (couldSpoofReservedCheck) {
+      violations.push({
+        path,
+        rule: 'reserved-dynamic-check',
+        message:
+          'A dynamic job name that can equal a reserved required check needs an explicit maintainer ruleset bypass'
+      })
+    }
   }
-  return false
+  return violations
 }
 
 export function checkCiIntegrityChanges(files) {
@@ -81,23 +196,34 @@ export function checkCiIntegrityChanges(files) {
 
   for (const file of files) {
     const headText = file.headText ?? ''
+    const baseText = file.baseText ?? ''
     const workflow = isWorkflowPath(file.path)
     const executableYaml = workflow || isActionDefinitionPath(file.path)
+    let document
+    let baseDocument
 
-    if (workflow && headText) {
+    if (workflow && baseText) {
       try {
-        load(headText)
+        baseDocument = load(baseText)
+      } catch {
+        // The base revision is already trusted; only proposed YAML is reported here.
+      }
+    }
+
+    if (executableYaml && headText) {
+      try {
+        document = load(headText)
       } catch (error) {
         violations.push({
           path: file.path,
-          rule: 'valid-workflow-yaml',
+          rule: workflow ? 'valid-workflow-yaml' : 'valid-action-yaml',
           message: error instanceof Error ? error.message.split('\n', 1)[0] : 'Invalid YAML'
         })
       }
     }
 
-    if (executableYaml) {
-      for (const reference of actionReferences(headText)) {
+    if (document !== undefined) {
+      for (const reference of actionReferences(document, workflow)) {
         if (!isImmutableActionReference(reference)) {
           violations.push({
             path: file.path,
@@ -108,16 +234,26 @@ export function checkCiIntegrityChanges(files) {
       }
     }
 
-    if (workflow && executesPullRequestHead(headText)) {
+    if (workflow) {
+      violations.push(
+        ...reservedCheckViolations(
+          file.path,
+          document,
+          headText !== baseText || Boolean(file.previousPath && file.path !== file.previousPath)
+        )
+      )
+    }
+
+    if (workflow && executesPullRequestHead(document)) {
       violations.push({
         path: file.path,
         rule: 'no-pr-head-execution',
         message: 'pull_request_target workflows must never checkout or execute PR-head code'
       })
     }
-    if (workflow && /\bpull_request_target\b/.test(withoutCommentLines(headText))) {
-      const baseWritePermissions = writePermissions(file.baseText ?? '')
-      for (const permission of writePermissions(headText)) {
+    if (workflow && isPullRequestTargetWorkflow(document)) {
+      const baseWritePermissions = writePermissions(baseDocument)
+      for (const permission of writePermissions(document)) {
         if (!baseWritePermissions.has(permission)) {
           violations.push({
             path: file.path,
@@ -129,15 +265,18 @@ export function checkCiIntegrityChanges(files) {
     }
 
     const stableCheck = stableChecks[file.path] ?? stableChecks[file.previousPath]
-    if (stableCheck && file.baseText && headText !== file.baseText) {
+    const protectedPath = [file.path, file.previousPath]
+      .filter(Boolean)
+      .find((path) => protectedControlPlanePaths.has(path))
+    const movedProtectedPath = file.previousPath && file.path !== file.previousPath
+    if (protectedPath && file.baseText && (headText !== file.baseText || movedProtectedPath)) {
       violations.push({
         path: file.path,
         rule: 'protected-gate-control-plane',
-        message:
-          'Established required workflows may change only through an explicit maintainer ruleset bypass'
+        message: `Established gate control-plane file ${protectedPath} may change only through an explicit maintainer ruleset bypass`
       })
     }
-    if (stableCheck && !hasStableJobName(headText, stableCheck)) {
+    if (stableCheck && !hasStableJobName(document, stableCheck)) {
       violations.push({
         path: file.path,
         rule: 'stable-required-check',
