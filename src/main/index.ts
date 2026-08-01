@@ -4,7 +4,6 @@ import { fileURLToPath } from 'node:url'
 // SDK graph) are imported lazily inside the matching branch, and the Electron backend is imported only
 // after the single-instance lock is held — so no backend module loads before the lock in UI mode.
 import {
-  ACTIVITY_GROUP_MCP_SERVER_ARG,
   ARTIFACT_MCP_SERVER_ARG,
   NOTEBOOK_MCP_SERVER_ARG,
   SKILL_IMPORT_MCP_SERVER_ARG
@@ -16,7 +15,6 @@ const APP_NAME = 'Open Science'
 const APP_USER_MODEL_ID = 'com.aipoch.open-science'
 const shouldRunArtifactMcpServer = process.argv.includes(ARTIFACT_MCP_SERVER_ARG)
 const shouldRunNotebookMcpServer = process.argv.includes(NOTEBOOK_MCP_SERVER_ARG)
-const shouldRunActivityGroupMcpServer = process.argv.includes(ACTIVITY_GROUP_MCP_SERVER_ARG)
 const shouldRunSkillImportMcpServer = process.argv.includes(SKILL_IMPORT_MCP_SERVER_ARG)
 
 if (shouldRunArtifactMcpServer) {
@@ -31,13 +29,6 @@ if (shouldRunArtifactMcpServer) {
   // Keep notebook MCP mode as a Node stdio process that proxies to the app-owned runtime.
   void import('./notebook/mcp-server')
     .then(({ runNotebookMcpServer }) => runNotebookMcpServer())
-    .catch((error: unknown) => {
-      console.error(error)
-      process.exitCode = 1
-    })
-} else if (shouldRunActivityGroupMcpServer) {
-  void import('./activity-groups/mcp-server')
-    .then(({ runActivityGroupMcpServer }) => runActivityGroupMcpServer())
     .catch((error: unknown) => {
       console.error(error)
       process.exitCode = 1

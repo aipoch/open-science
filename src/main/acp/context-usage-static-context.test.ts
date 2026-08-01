@@ -5,14 +5,13 @@ import { contextUsageMcpSections } from './context-usage-static-context'
 describe('contextUsageMcpSections', () => {
   it('uses OpenCode MCP tool names in its serialized schema baseline', () => {
     const sections = contextUsageMcpSections('opencode', {
-      activity: true,
       artifacts: true,
       notebook: true,
       skillImport: true
     })
 
     const text = sections.map((section) => section.text).join('\n')
-    expect(text).toContain('open_science_activity_begin_activity_group')
+    expect(text).not.toContain('open_science_activity_begin_activity_group')
     expect(text).toContain('open_science_artifacts_write_artifact_file')
     expect(text).toContain('open_science_notebook_notebook_execute')
     expect(text).toContain('open_science_skills_request_skill_import')
@@ -25,7 +24,6 @@ describe('contextUsageMcpSections', () => {
 
   it('uses Codex MCP tool names in its serialized schema baseline', () => {
     const sections = contextUsageMcpSections('codex', {
-      activity: false,
       artifacts: false,
       notebook: true,
       skillImport: false
@@ -38,7 +36,6 @@ describe('contextUsageMcpSections', () => {
 
   it('uses bridge aliases for Codex MCP tools delivered through a compatibility proxy', () => {
     const sections = contextUsageMcpSections('codex', {
-      activity: false,
       artifacts: false,
       notebook: true,
       skillImport: false,
@@ -52,14 +49,12 @@ describe('contextUsageMcpSections', () => {
 
   it('serializes only the app-owned MCP schemas enabled for the session', () => {
     const sections = contextUsageMcpSections('claude-code', {
-      activity: true,
       artifacts: true,
       notebook: true,
       skillImport: false
     })
 
     expect(sections.map(({ sectionId }) => sectionId)).toEqual([
-      'mcp-schema:open-science-activity',
       'mcp-schema:open-science-artifacts',
       'mcp-schema:open-science-notebook'
     ])
@@ -72,7 +67,6 @@ describe('contextUsageMcpSections', () => {
   it('returns no baseline when app MCP tooling is unavailable', () => {
     expect(
       contextUsageMcpSections('claude-code', {
-        activity: false,
         artifacts: false,
         notebook: false,
         skillImport: false
@@ -81,7 +75,7 @@ describe('contextUsageMcpSections', () => {
   })
 
   it('caches each static availability combination', () => {
-    const options = { activity: true, artifacts: false, notebook: true, skillImport: false }
+    const options = { artifacts: false, notebook: true, skillImport: false }
     expect(contextUsageMcpSections('claude-code', options)).toBe(
       contextUsageMcpSections('claude-code', options)
     )

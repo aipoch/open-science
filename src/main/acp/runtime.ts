@@ -107,11 +107,6 @@ import {
   type ArtifactMcpEnvironment,
   type ArtifactRunContext
 } from '../artifacts/mcp-server'
-import {
-  ACTIVITY_GROUP_MCP_SERVER_NAME,
-  BEGIN_ACTIVITY_GROUP_TOOL_NAME,
-  createActivityGroupMcpServerConfig
-} from '../activity-groups/mcp-server'
 import { AgentMcpHttpHost } from './mcp-http-host'
 import { ArtifactRepository, getArtifactCurrentRunFilePath } from '../artifacts/repository'
 import { ArtifactRunRegistry } from '../artifacts/run-registry'
@@ -201,7 +196,6 @@ type AcpRuntimeOptions = {
   uploads?: AcpRuntimeUploadOptions
   notebook?: AcpRuntimeNotebookOptions
   skillImport?: AcpRuntimeSkillImportOptions
-  activityGroups?: AcpRuntimeActivityGroupOptions
   skills?: AcpRuntimeSkillsOptions
   // The agent backend to drive. Defaults to Claude Code; selecting another (opencode) swaps only the
   // framework-coupled behavior (spawn, session meta, permission-mode mapping) via AgentFramework.
@@ -357,11 +351,6 @@ type AcpRuntimeSkillImportOptions = {
   ) => Promise<() => void>
 }
 
-type AcpRuntimeActivityGroupOptions = {
-  mcpEntryPath: string
-  mcpCommand?: string
-}
-
 type SessionAttachmentResponse = {
   sessionId: string
   modes?: SessionModeState | null
@@ -382,15 +371,6 @@ const CLAUDE_AUTONOMOUS_RESULT_ORIGINS = new Set([
   'observer',
   'observer-activity'
 ])
-const ACTIVITY_GROUP_SYSTEM_PROMPT_APPEND = [
-  '<open_science_activity_group_instructions>',
-  `Before the first tool call in each coherent group of work, call the MCP tool \`${BEGIN_ACTIVITY_GROUP_TOOL_NAME}\` from the \`${ACTIVITY_GROUP_MCP_SERVER_NAME}\` server with a concise user-facing purpose title.`,
-  'Call it once for the group, not once per tool or step. A turn may contain multiple groups when the purpose changes.',
-  'Declare the group before doing its work. Do not call it when you will answer without using tools.',
-  'The declaration is control metadata: it is not itself a visible step and does not replace the actual tool calls.',
-  '</open_science_activity_group_instructions>'
-].join('\n')
-const ACTIVITY_GROUP_TURN_PROMPT_REMINDER = `Before each coherent tool group this turn, call \`${BEGIN_ACTIVITY_GROUP_TOOL_NAME}\` with one concise purpose title immediately before that group's first tool. Repeat the declaration whenever the purpose changes; do not reuse the previous group. Call it once per group, not once per tool.`
 // An end_turn is final from the runtime's perspective, so promised work must be a tool call in the
 // current turn or an explicit request for user input rather than text that implies later execution.
 const TURN_CONTINUITY_SYSTEM_PROMPT_APPEND = [
@@ -761,7 +741,6 @@ class AcpRuntime {
   private readonly artifactOptions: AcpRuntimeArtifactOptions | undefined
   private readonly notebookOptions: AcpRuntimeNotebookOptions | undefined
   private readonly skillImportOptions: AcpRuntimeSkillImportOptions | undefined
-  private readonly activityGroupOptions: AcpRuntimeActivityGroupOptions | undefined
   private readonly artifactRepository: ArtifactRepository | undefined
   private readonly artifactRunRegistry: ArtifactRunRegistry | undefined
   private readonly uploadRepository: UploadRepository | undefined
@@ -802,7 +781,6 @@ class AcpRuntime {
     this.artifactOptions = options.artifacts
     this.notebookOptions = options.notebook
     this.skillImportOptions = options.skillImport
-    this.activityGroupOptions = options.activityGroups
     this.artifactRepository = options.artifacts
       ? (options.artifacts.repository ?? new ArtifactRepository(options.artifacts.dataRoot))
       : undefined
@@ -2921,14 +2899,13 @@ class AcpRuntime {
 
       // Prepend a short steering nudge naming the picked skills. It goes only into the content sent to
       // the agent; the user-facing message event keeps the original text (which already shows /Name).
-      // Framework-neutral delivery of the system-prompt guidance: Claude carries the complete appends in
-      // session _meta but repeats the short activity declaration reminder here; frameworks without a
-      // session preset carry the complete guidance as a prompt prefix.
+      // Framework-neutral delivery of system-prompt guidance: Claude carries appends in session _meta;
+      // frameworks without a session preset carry the guidance as a prompt prefix.
       const { promptPrefix: frameworkPromptPrefix } = this.framework.buildSessionSetup({
         systemPromptAppends: this.getSystemPromptAppends(
           this.specialistSkillGuidance(currentSpecialistSkills)
         ),
-        turnPromptReminders: this.getTurnPromptReminders(),
+        turnPromptReminders: [],
         sessionOptions: this.pendingSessionOptions
       })
       // For Codex/OpenCode, prepend the per-session specialist identity prefix (set at createSession).
@@ -4223,17 +4200,6 @@ class AcpRuntime {
     }
   }
 
-  private createActivityGroupMcpServers(): McpServer[] {
-    if (!this.activityGroupOptions) return []
-
-    return [
-      createActivityGroupMcpServerConfig({
-        command: this.activityGroupOptions.mcpCommand ?? process.execPath,
-        entryPath: this.activityGroupOptions.mcpEntryPath
-      })
-    ]
-  }
-
   // Builds the notebook MCP environment for one session, shared by the stdio config and the http host.
   private async buildNotebookEnvironment(
     notebookSessionId: string,
@@ -4341,7 +4307,6 @@ class AcpRuntime {
     // runs instead of failing on an unsupported stdio server config.
     const servers = this.framework.acceptsStdioMcp
       ? [
-          ...this.createActivityGroupMcpServers(),
           ...(artifactEnabled
             ? await this.createArtifactMcpServers(artifactSessionId, sessionCwd, projectName)
             : []),
@@ -4503,9 +4468,6 @@ class AcpRuntime {
       TURN_CONTINUITY_SYSTEM_PROMPT_APPEND,
       LARGE_DATA_FILE_SYSTEM_PROMPT_APPEND,
       ...this.pendingSystemPromptAppends,
-      ...(this.activityGroupOptions && this.framework.acceptsStdioMcp
-        ? [ACTIVITY_GROUP_SYSTEM_PROMPT_APPEND]
-        : []),
       ...(this.artifactToolingAvailable() ? [ARTIFACT_FILE_SYSTEM_PROMPT_APPEND] : []),
       ...(this.notebookToolingAvailable() ? [NOTEBOOK_SYSTEM_PROMPT_APPEND] : []),
       ...(this.skillImportToolingAvailable() ? [SKILL_IMPORT_SYSTEM_PROMPT_APPEND] : []),
@@ -4574,12 +4536,6 @@ class AcpRuntime {
   ): string | undefined {
     if (this.framework.id === 'claude-code' || skills?.kind !== 'specialist') return undefined
     return `Allowed Specialist Skills for this session:\n${skills.frameworkNames.map((name) => `- ${name}`).join('\n')}`
-  }
-
-  private getTurnPromptReminders(): string[] {
-    return this.activityGroupOptions && this.framework.acceptsStdioMcp
-      ? [ACTIVITY_GROUP_TURN_PROMPT_REMINDER]
-      : []
   }
 
   // Builds the ACP `_meta` argument for session/new and session/resume, delegating the framework-specific
@@ -5209,7 +5165,6 @@ class AcpRuntime {
       sessionOptions: this.pendingSessionOptions
     })
     const persistentSections = contextUsageMcpSections(this.framework.id, {
-      activity: Boolean(this.activityGroupOptions && this.framework.acceptsStdioMcp),
       artifacts: this.artifactToolingAvailable(),
       notebook: this.notebookToolingAvailable(),
       skillImport: this.skillImportToolingAvailable(),

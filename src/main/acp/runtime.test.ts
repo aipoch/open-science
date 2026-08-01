@@ -40,10 +40,7 @@ import type { ArtifactRunClaim } from '../artifacts/run-registry'
 import { createPngBytes, createPngInlineSource } from '../artifacts/artifact-test-fixtures'
 import { writeArtifactFileForCurrentRun } from '../artifacts/mcp-server'
 import { createArtifactVersionLocator } from '../../shared/artifact-provenance'
-import {
-  ACTIVITY_GROUP_MCP_SERVER_NAME,
-  BEGIN_ACTIVITY_GROUP_TOOL_NAME
-} from '../activity-groups/mcp-server'
+import { BEGIN_ACTIVITY_GROUP_TOOL_NAME } from '../../shared/activity-groups'
 import type { UploadedAttachment } from '../../shared/uploads'
 import { projectConversationMessage } from '../../shared/conversation-graph'
 import type { PersistedChatSession } from '../../shared/session-persistence'
@@ -1016,31 +1013,29 @@ describe('ACP runtime migration write-gate', () => {
 })
 
 describe('ACP runtime session management', () => {
-  it('injects activity-group declarations into main sessions but not reviewer sessions', async () => {
+  it('omits activity-group declarations from main and reviewer sessions', async () => {
     const process = new FakeAgentProcess()
     const fakeAgent = startFakeAgent(process, ['main-session', 'reviewer-session'])
     const runtime = new AcpRuntime({
       appVersion: '0.2.0',
       defaultCwd: '/workspace',
-      spawnAgent: () => asAgentProcess(process),
-      activityGroups: { mcpEntryPath: '/app/out/main/index.js' }
+      spawnAgent: () => asAgentProcess(process)
     })
 
     const mainSession = await runtime.createSession({ cwd: '/workspace' })
     await runtime.sendPrompt({ sessionId: mainSession.sessionId, text: 'Search PubMed' })
 
-    expect(fakeAgent.newSessions[0].mcpServers).toEqual([
-      expect.objectContaining({
-        name: ACTIVITY_GROUP_MCP_SERVER_NAME,
-        args: ['/app/out/main/index.js', '--open-science-activity-group-mcp']
-      })
-    ])
-    expect(JSON.stringify(fakeAgent.newSessions[0]._meta)).toContain(BEGIN_ACTIVITY_GROUP_TOOL_NAME)
+    expect(fakeAgent.newSessions[0].mcpServers).toEqual([])
+    expect(JSON.stringify(fakeAgent.newSessions[0]._meta)).not.toContain(
+      BEGIN_ACTIVITY_GROUP_TOOL_NAME
+    )
     expect(JSON.stringify(fakeAgent.newSessions[0]._meta)).toContain(
       'Do not describe a tool-backed action as future work'
     )
-    expect(fakeAgent.prompts[0].text).toContain('mcp__open-science-activity__begin_activity_group')
-    expect(fakeAgent.prompts[0].text).toContain('Before each coherent tool group this turn')
+    expect(fakeAgent.prompts[0].text).not.toContain(
+      'mcp__open-science-activity__begin_activity_group'
+    )
+    expect(fakeAgent.prompts[0].text).not.toContain('Before each coherent tool group this turn')
 
     const reviewerServer = {
       type: 'http' as const,
@@ -1069,7 +1064,7 @@ describe('ACP runtime session management', () => {
     ['opencode', opencodeFramework],
     ['codex', codexFramework]
   ] as const)(
-    'injects activity-group tooling and prompt guidance for %s',
+    'omits activity-group tooling and prompt guidance for %s',
     async (_name, framework) => {
       const process = new FakeAgentProcess()
       const fakeAgent = startFakeAgent(process, ['main-session'], {
@@ -1082,27 +1077,21 @@ describe('ACP runtime session management', () => {
         appVersion: '0.2.0',
         defaultCwd: '/workspace',
         spawnAgent: () => asAgentProcess(process),
-        framework,
-        activityGroups: { mcpEntryPath: '/app/out/main/index.js' }
+        framework
       })
 
       const session = await runtime.createSession({ cwd: '/workspace' })
       await runtime.sendPrompt({ sessionId: session.sessionId, text: 'Inspect the project' })
 
-      expect(fakeAgent.newSessions[0].mcpServers).toEqual([
-        expect.objectContaining({
-          name:
-            framework.id === 'opencode' ? 'open_science_activity' : ACTIVITY_GROUP_MCP_SERVER_NAME
-        })
-      ])
-      expect(fakeAgent.prompts[0].text).toContain(BEGIN_ACTIVITY_GROUP_TOOL_NAME)
+      expect(fakeAgent.newSessions[0].mcpServers).toEqual([])
+      expect(fakeAgent.prompts[0].text).not.toContain(BEGIN_ACTIVITY_GROUP_TOOL_NAME)
       expect(fakeAgent.prompts[0].text).toContain(
         'Do not describe a tool-backed action as future work'
       )
     }
   )
 
-  it('gives OpenCode stable underscore names for every app-owned MCP on create and resume', async () => {
+  it('gives OpenCode stable underscore names for app-owned action MCPs on create and resume', async () => {
     const root = await createTemporaryRoot()
     const process = new FakeAgentProcess()
     const fakeAgent = startFakeAgent(process, ['opencode-session'], { supportsResume: true })
@@ -1111,7 +1100,6 @@ describe('ACP runtime session management', () => {
       defaultCwd: '/workspace',
       spawnAgent: () => asAgentProcess(process),
       framework: opencodeFramework,
-      activityGroups: { mcpEntryPath: '/app/out/main/index.js' },
       artifacts: {
         configRoot: root,
         dataRoot: root,
@@ -1138,7 +1126,6 @@ describe('ACP runtime session management', () => {
     await runtime.sendPrompt({ sessionId: 'resumed-opencode-session', text: 'Continue with tools' })
 
     const expectedServerNames = [
-      'open_science_activity',
       'open_science_artifacts',
       'open_science_notebook',
       'open_science_skills'
@@ -1151,7 +1138,7 @@ describe('ACP runtime session management', () => {
     ).toEqual(expectedServerNames)
 
     for (const prompt of fakeAgent.prompts) {
-      expect(prompt.text).toContain('`open_science_activity_begin_activity_group`')
+      expect(prompt.text).not.toContain('`open_science_activity_begin_activity_group`')
       expect(prompt.text).toContain('`open_science_artifacts_write_artifact_file`')
       expect(prompt.text).toContain('`open_science_notebook_notebook_execute`')
       expect(prompt.text).toContain('open_science_skills_request_skill_import')
@@ -5034,44 +5021,6 @@ describe('ACP runtime session management', () => {
     expect(permissionRequests).toHaveLength(0)
   })
 
-  it('auto-allows the OpenCode underscore Activity group declaration', async () => {
-    const process = new FakeAgentProcess()
-    const permissionRequests: AcpPermissionRequest[] = []
-    let permissionResponse: unknown
-    startPermissionProbeAgent(process, {
-      newSessionId: 'opencode-underscore-activity-session',
-      toolCallId: 'opencode-underscore-activity-call',
-      toolTitle: 'open_science_activity_begin_activity_group',
-      toolRawInput: { title: 'Inspect the project' },
-      permissionOptions: [
-        { optionId: 'once', kind: 'allow_once', name: 'Allow once' },
-        { optionId: 'reject', kind: 'reject_once', name: 'Reject' }
-      ],
-      onPermissionResponse: (response) => {
-        permissionResponse = response
-      }
-    })
-    const runtime = new AcpRuntime({
-      appVersion: '0.1.0',
-      defaultCwd: '/workspace',
-      spawnAgent: () => asAgentProcess(process),
-      framework: opencodeFramework,
-      activityGroups: { mcpEntryPath: '/app/out/main/index.js' },
-      callbacks: {
-        onPermissionRequest: (request) => {
-          permissionRequests.push(request)
-          runtime.respondToPermission({ requestId: request.requestId, cancelled: true })
-        }
-      }
-    })
-    const session = await runtime.createSession({ cwd: '/workspace', permissionProfile: 'ask' })
-
-    await runtime.sendPrompt({ sessionId: session.sessionId, text: 'inspect the project' })
-
-    expect(permissionRequests).toHaveLength(0)
-    expect(permissionResponse).toEqual({ outcome: { outcome: 'selected', optionId: 'once' } })
-  })
-
   it('auto-allows a Codex Artifact save restored from its sparse MCP approval', async () => {
     const process = new FakeAgentProcess()
     const permissionRequests: AcpPermissionRequest[] = []
@@ -7746,7 +7695,7 @@ describe('ACP runtime session management', () => {
     })
   })
 
-  it('estimates bridge-backed Codex MCP schemas with compatibility aliases', async () => {
+  it('omits the retired activity schema from bridge-backed Codex context estimates', async () => {
     const process = new FakeAgentProcess()
     startFakeAgent(process, ['s1'], {
       modes: createModes(['read-only', 'agent', 'agent-full-access'], 'agent')
@@ -7773,8 +7722,7 @@ describe('ACP runtime session management', () => {
           headers: { authorization: 'Bearer bridge' }
         }
       }),
-      framework: codexFramework,
-      activityGroups: { mcpEntryPath: '/app/out/main/index.js' }
+      framework: codexFramework
     })
 
     await runtime.createSession({ cwd: '/workspace' })
@@ -7783,11 +7731,9 @@ describe('ACP runtime session management', () => {
       update: { sessionUpdate: 'usage_update', used: 150, size: 128_000 }
     })
 
-    expect(runtime.getSnapshot().contextUsageBySession.s1.breakdown?.categories).toContainEqual({
-      key: 'mcp',
-      tokens: 101,
-      estimated: true
-    })
+    expect(runtime.getSnapshot().contextUsageBySession.s1.breakdown?.categories).not.toContainEqual(
+      expect.objectContaining({ key: 'mcp' })
+    )
   })
 
   it('publishes the local estimate while a prompt is still generating', async () => {
@@ -8071,7 +8017,11 @@ describe('ACP runtime session management', () => {
         env: {},
         contextUsageModel: 'deepseek-v4-flash'
       }),
-      activityGroups: { mcpEntryPath: '/app/out/main/index.js' }
+      notebook: {
+        projectName: 'default-project',
+        mcpEntryPath: '/app/out/main/index.js',
+        getRpcConnection: async () => ({ endpoint: 'http://127.0.0.1:4567', token: 'nb' })
+      }
     })
 
     await runtime.createSession({ cwd: '/workspace' })

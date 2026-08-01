@@ -2652,17 +2652,14 @@ describe('SettingsService: preflight & spawn config', () => {
         expect.objectContaining({
           type: 'function',
           function: expect.objectContaining({
-            name: 'mcp__open_science_activity__begin_activity_group'
-          })
-        }),
-        expect.objectContaining({
-          type: 'function',
-          function: expect.objectContaining({
             name: 'mcp__open_science_skills__request_skill_import'
           })
         })
       ])
     })
+    expect(JSON.stringify(upstreamRequest?.tools)).not.toContain(
+      'mcp__open_science_activity__begin_activity_group'
+    )
     const upstreamMessages = JSON.stringify(upstreamRequest?.messages)
     expect(upstreamRequest).toMatchObject({ thinking: { type: 'disabled' } })
     expect(upstreamRequest).not.toHaveProperty('reasoning_effort')

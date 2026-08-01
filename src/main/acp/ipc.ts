@@ -292,7 +292,6 @@ const createAcpRuntime = ({
             notebookRpcServer.registerSessionAlias(aliasSessionId, sessionId),
           authorizeReferencedUploads: authorizeSkillImportReferencedUploads
         },
-        activityGroups: { mcpEntryPath },
         callbacks: runtimeCallbacks,
         permissionGrantStore,
         permissionGrantRegistry,

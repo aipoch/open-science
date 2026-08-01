@@ -1,10 +1,5 @@
 import { z } from 'zod'
 
-import {
-  ACTIVITY_GROUP_MCP_SERVER_NAME,
-  BEGIN_ACTIVITY_GROUP_TOOL_NAME,
-  beginActivityGroupToolDefinition
-} from '../activity-groups/mcp-server'
 import { ARTIFACT_MCP_SERVER_NAME, writeArtifactFileToolDefinition } from '../artifacts/mcp-server'
 import { NOTEBOOK_MCP_SERVER_NAME, NOTEBOOK_RPC_TOOLS } from '../notebook/mcp-server'
 import {
@@ -16,7 +11,6 @@ import { modelFacingAppMcpToolName } from '../agent-framework/app-mcp-names'
 import { REQUEST_SKILL_IMPORT_TOOL_NAME } from '../../shared/skill-import'
 
 type ContextUsageMcpOptions = {
-  activity: boolean
   artifacts: boolean
   notebook: boolean
   skillImport: boolean
@@ -66,20 +60,12 @@ const contextUsageMcpSections = (
   const cacheKey = [
     frameworkId,
     Number(codexBridgeAliases),
-    ...[options.activity, options.artifacts, options.notebook, options.skillImport].map(Number)
+    ...[options.artifacts, options.notebook, options.skillImport].map(Number)
   ].join(':')
   const cached = sectionsByAvailability.get(cacheKey)
   if (cached) return cached
 
   const sections: ContextUsageMcpSection[] = []
-
-  if (options.activity) {
-    sections.push(
-      serializeToolDefinitions(frameworkId, codexBridgeAliases, ACTIVITY_GROUP_MCP_SERVER_NAME, [
-        { name: BEGIN_ACTIVITY_GROUP_TOOL_NAME, definition: beginActivityGroupToolDefinition }
-      ])
-    )
-  }
 
   if (options.artifacts) {
     sections.push(
