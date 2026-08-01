@@ -143,13 +143,23 @@ jobs:
         if: matrix.os == 'macos-14'
         run: npm audit --audit-level=high || true
 
-  # Exercise the real desktop boundary independently from the Vitest matrix. This job runs in
-  # parallel with verify and launches BrowserWindow -> preload -> renderer -> IPC against isolated
-  # storage, so a UI failure does not wait behind the three-platform unit-test matrix.
+  # Exercise the real desktop boundary independently from the Vitest matrix. macOS and Windows run
+  # in parallel and launch BrowserWindow -> preload -> renderer -> IPC against isolated storage, so
+  # one platform's UI failure does not wait behind the other platform or the unit-test matrix.
   electron_e2e:
-    name: Electron UI E2E (macOS)
-    runs-on: macos-14
+    name: Electron UI E2E (${{ matrix.label }})
+    runs-on: ${{ matrix.os }}
     timeout-minutes: 15
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - os: macos-14
+            label: macOS
+            artifact-suffix: macos
+          - os: windows-latest
+            label: Windows
+            artifact-suffix: windows
 
     steps:
       - name: Checkout
@@ -174,19 +184,29 @@ jobs:
         if: failure()
         uses: actions/upload-artifact@v7
         with:
-          name: electron-ui-e2e-failure
+          name: electron-ui-e2e-${{ matrix.artifact-suffix }}-failure
           path: |
             playwright-report/
             test-results/
           retention-days: 5
           if-no-files-found: warn
 
-  # Accessibility runs independently so axe findings are attributable and do not wait behind the
-  # UI journey. It scans the production renderer inside a real Electron BrowserWindow.
+  # Accessibility runs independently on macOS and Windows so axe findings are attributable to the
+  # platform-specific renderer and do not wait behind UI journeys.
   electron_accessibility:
-    name: Electron Accessibility (macOS)
-    runs-on: macos-14
+    name: Electron Accessibility (${{ matrix.label }})
+    runs-on: ${{ matrix.os }}
     timeout-minutes: 15
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - os: macos-14
+            label: macOS
+            artifact-suffix: macos
+          - os: windows-latest
+            label: Windows
+            artifact-suffix: windows
 
     steps:
       - name: Checkout
@@ -211,7 +231,7 @@ jobs:
         if: failure()
         uses: actions/upload-artifact@v7
         with:
-          name: electron-accessibility-failure
+          name: electron-accessibility-${{ matrix.artifact-suffix }}-failure
           path: |
             playwright-report/
             test-results/

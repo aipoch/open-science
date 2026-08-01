@@ -12,6 +12,13 @@ const createProject = async (page: Page, name: string): Promise<void> => {
   await dialog.getByRole('button', { name: 'Create project' }).click()
   await expect(page.getByRole('heading', { name: 'New conversation' })).toBeVisible()
 }
+
+const openProjectActions = async (page: Page, name: string): Promise<void> => {
+  const projects = page.getByRole('region', { name: 'Projects' })
+  await projects.getByRole('button', { name, exact: true }).hover()
+  await projects.getByRole('button', { name: `Open actions for ${name}` }).click()
+}
+
 test('creates a project through the desktop stack and reloads it after relaunch', async ({
   app
 }) => {
@@ -40,7 +47,7 @@ test('renames a project through the home actions and keeps the change after rela
   await createProject(page, PROJECT_NAME)
 
   await page.getByRole('button', { name: 'All projects' }).click()
-  await page.getByRole('button', { name: `Open actions for ${PROJECT_NAME}` }).click()
+  await openProjectActions(page, PROJECT_NAME)
   await page.getByRole('menuitem', { name: 'Rename…' }).click()
 
   const dialog = page.getByRole('dialog', { name: 'Edit project' })
@@ -66,7 +73,7 @@ test('deletes a project through confirmation and keeps it absent after relaunch'
   await createProject(page, PROJECT_NAME)
 
   await page.getByRole('button', { name: 'All projects' }).click()
-  await page.getByRole('button', { name: `Open actions for ${PROJECT_NAME}` }).click()
+  await openProjectActions(page, PROJECT_NAME)
   await page.getByRole('menuitem', { name: 'Delete' }).click()
 
   const dialog = page.getByRole('alertdialog', { name: 'Delete project?' })

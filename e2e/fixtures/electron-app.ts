@@ -1,4 +1,5 @@
 import { test as base } from '@playwright/test'
+import { spawn } from 'node:child_process'
 import { mkdtemp, rm } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join, resolve } from 'node:path'
@@ -14,6 +15,10 @@ type LaunchRoots = {
 type ElectronApp = {
   readonly page: Page
   completeOnboarding: () => Promise<Page>
+  findOverlayIsVisible: () => Promise<boolean>
+  launchSecondInstance: () => Promise<Page>
+  mainWindowState: () => Promise<{ minimized: boolean; visible: boolean }>
+  requestMainWindowClose: () => Promise<void>
   restart: () => Promise<Page>
 }
 
@@ -87,6 +92,53 @@ class ElectronAppHarness implements ElectronApp {
     return this.page
   }
 
+  async findOverlayIsVisible(): Promise<boolean> {
+    return this.runningApplication.evaluate(({ BrowserWindow }) => {
+      const mainWindow = BrowserWindow.getAllWindows()[0]
+      if (!mainWindow) return false
+
+      return mainWindow.contentView.children.some((view) => {
+        const bounds = view.getBounds()
+        return bounds.width > 0 && bounds.height > 0
+      })
+    })
+  }
+
+  async mainWindowState(): Promise<{ minimized: boolean; visible: boolean }> {
+    return this.runningApplication.evaluate(({ BrowserWindow }) => {
+      const mainWindow = BrowserWindow.getAllWindows()[0]
+      if (!mainWindow) throw new Error('Open Science main window was not found.')
+
+      return { minimized: mainWindow.isMinimized(), visible: mainWindow.isVisible() }
+    })
+  }
+
+  async launchSecondInstance(): Promise<Page> {
+    const executable = this.runningApplication.process().spawnfile
+    await new Promise<void>((resolveLaunch, rejectLaunch) => {
+      const child = spawn(executable, [`--user-data-dir=${this.roots.userDataRoot}`, APP_ROOT], {
+        cwd: APP_ROOT,
+        env: launchEnvironment(this.roots.storageRoot),
+        stdio: 'ignore',
+        windowsHide: true
+      })
+      child.once('error', rejectLaunch)
+      child.once('exit', (code, signal) => {
+        if (code === 0) resolveLaunch()
+        else rejectLaunch(new Error(`Second Electron instance exited with ${code ?? signal}.`))
+      })
+    })
+    return this.page
+  }
+
+  async requestMainWindowClose(): Promise<void> {
+    await this.runningApplication.evaluate(({ BrowserWindow }) => {
+      const mainWindow = BrowserWindow.getAllWindows()[0]
+      if (!mainWindow) throw new Error('Open Science main window was not found.')
+      mainWindow.close()
+    })
+  }
+
   async restart(): Promise<Page> {
     await this.close()
     await this.launch()
@@ -101,6 +153,11 @@ class ElectronAppHarness implements ElectronApp {
   private async launch(): Promise<void> {
     this.application = await launchOpenScience(this.roots)
     this.currentPage = await openMainWindow(this.application)
+  }
+
+  private get runningApplication(): ElectronApplication {
+    if (!this.application) throw new Error('Electron application is not running.')
+    return this.application
   }
 
   private async close(): Promise<void> {
