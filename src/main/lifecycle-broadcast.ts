@@ -21,7 +21,7 @@ const broadcastLifecycleEvent = <Payload>(channel: string, payload: Payload): vo
 }
 
 const getLifecycleClientId = (event: {
-  sender: { id: number; callerContext?: CallerContext }
+  sender: { id: number; callerContext?: CallerContext; lifecycleClientId?: string }
 }): string => callerContextForEvent(event).lifecycleClientId
 
 const registerLifecycleIpcHandlers = (): void => {

@@ -80,10 +80,13 @@ describe('caller context', () => {
   })
 
   it('fails closed when a synthetic negative sender omits its adapter context', () => {
-    const context = callerContextForEvent({ sender: { id: -1 } })
+    const context = callerContextForEvent({
+      sender: { id: -1, lifecycleClientId: 'web:legacy-browser' }
+    })
 
     expect(context.surface).toBe('web')
     expect(context.principalKind).toBe('automation')
+    expect(context.lifecycleClientId).toBe('web:legacy-browser')
     expect(canSatisfyHumanApproval(context)).toBe(false)
   })
 })

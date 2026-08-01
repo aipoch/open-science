@@ -92,6 +92,7 @@ type CallerEvent = {
   sender: {
     id: number
     callerContext?: CallerContext
+    lifecycleClientId?: string
   }
 }
 
@@ -106,9 +107,9 @@ const callerContextForEvent = (event: CallerEvent): CallerContext => {
     event.sender.id > 0
       ? createElectronCallerContext(event.sender.id)
       : createCallerContext({
-          clientId: String(event.sender.id),
-          lifecycleClientId: `electron:${event.sender.id}`,
-          leaseId: `electron:${event.sender.id}`,
+          clientId: event.sender.lifecycleClientId?.replace(/^web:/, '') ?? String(event.sender.id),
+          lifecycleClientId: event.sender.lifecycleClientId ?? `electron:${event.sender.id}`,
+          leaseId: event.sender.lifecycleClientId?.replace(/^web:/, '') ?? String(event.sender.id),
           surface: 'web',
           location: 'remote',
           principalKind: 'automation',
