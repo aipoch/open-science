@@ -17,8 +17,6 @@ import type {
   ClaudeInstallResult,
   ConnectorDetailView,
   ConnectorsSnapshot,
-  ConnectorView,
-  CustomServerView,
   AddCustomServerRequest,
   RemoveCustomServerRequest,
   SetCustomServerEnabledRequest,
@@ -33,7 +31,6 @@ import type {
   InstallCodexRequest,
   InstallOpencodeRequest,
   ChatApiEndpoint,
-  NcbiCredentialsView,
   Preflight,
   ProviderDraft,
   ProviderView,
@@ -49,7 +46,6 @@ import type {
   AppIconVariant,
   SkillDetailView,
   SkillView,
-  ToolPermission,
   ImportSkillRequest,
   ImportSkillResult,
   ImportSkillZipRequest,
@@ -194,12 +190,11 @@ import {
 } from './responses-bridge'
 import { NativeResponsesCompatibilityProxy } from './native-responses-compatibility'
 import { SettingsRepository } from './repository'
-import { sanitizeCustomMcpServer } from './repository'
 import { SettingsPreferencesModule, toSettingsPreferencesSnapshot } from './preferences'
 import { NotebookRuntimeSettingsModule } from './notebook-runtime-settings'
 import { SkillCatalogModule } from './skill-catalog'
+import { ConnectorSettingsModule, type CustomServerSecurityChangeGuard } from './connector-settings'
 import { CONNECTOR_CATALOG } from '../connectors/catalog'
-import { getConnectorTools } from '../connectors/registry'
 import { renderConnectorInstructions } from '../connectors/skill-doc'
 import { syncConnectorSkillDocs } from '../connectors/provision'
 import { SkillRegistry } from '../skills/registry'
@@ -219,13 +214,7 @@ import {
   BEGIN_ACTIVITY_GROUP_TOOL_NAME
 } from '../../shared/activity-groups'
 import { REVIEWER_BRIDGE_NAMESPACED_TOOLS } from '../reviewer/bridge-tools'
-import type {
-  StoredConnectors,
-  StoredCodexInfo,
-  StoredCustomMcpServer,
-  StoredProvider,
-  StoredSettings
-} from './types'
+import type { StoredConnectors, StoredCodexInfo, StoredProvider, StoredSettings } from './types'
 import { classifyStatus, validateProvider } from './validate'
 import {
   clearAppOwnedCodexAuthentication,
@@ -249,11 +238,6 @@ import {
   type ClaudeSharedAuthControllerPort,
   type ClaudeSharedAuthStatus
 } from './claude-shared-auth'
-
-type CustomServerSecurityChangeGuard = {
-  commit(server: StoredCustomMcpServer): void
-  rollback(): void
-}
 
 export type AgentBackendSelection = {
   frameworkId: AgentFrameworkId
@@ -548,6 +532,7 @@ class SettingsService {
   private readonly preferences: SettingsPreferencesModule
   private readonly notebookRuntimeSettings: NotebookRuntimeSettingsModule
   private readonly skills: SkillCatalogModule
+  private readonly connectors: ConnectorSettingsModule
   private readonly storageRoot: string
   private readonly detectDeps: ClaudeDetectDeps
   private readonly opencodeDetectDeps: OpencodeDetectDeps
@@ -589,6 +574,7 @@ class SettingsService {
     this.repository = options.repository ?? new SettingsRepository(this.storageRoot)
     this.preferences = new SettingsPreferencesModule(this.repository)
     this.notebookRuntimeSettings = new NotebookRuntimeSettingsModule(this.repository)
+    this.connectors = new ConnectorSettingsModule(this.repository)
     // Probe the app-managed install dir too, so a managed Claude is re-detected even if the cached
     // path is ever cleared (e.g. a manual re-detect).
     const baseDetectDeps = options.detectDeps ?? createDefaultDetectDeps()
@@ -859,14 +845,7 @@ class SettingsService {
       changed = true
     }
 
-    const ncbiRef = settings.connectors?.ncbiApiKeyRef
-    if (ncbiRef?.startsWith('plain:')) {
-      const key = tryDecryptKey(ncbiRef)
-      if (key) {
-        await this.repository.setNcbiCredentials(settings.connectors?.contactEmail, encryptKey(key))
-        changed = true
-      }
-    }
+    changed = (await this.connectors.migrateLegacyNcbiKeyRef(settings.connectors)) || changed
 
     return changed ? this.repository.getSettings() : settings
   }
@@ -1008,12 +987,7 @@ class SettingsService {
   // skill whitelist so the agent can discover connector tools; the per-call ConnectorService gate
   // still enforces the specialist's own connector access config.
   async provisionedConnectorSkillNames(): Promise<string[]> {
-    const connectors = await this.getConnectors()
-    const bundled = this.enabledConnectorIds(connectors)
-    const custom = (connectors?.customMcpServers ?? [])
-      .filter((server) => server.enabled)
-      .map((server) => server.id)
-    return Array.from(new Set([...bundled, ...custom].map((id) => `mcp-${id}`)))
+    return this.connectors.provisionedConnectorSkillNames()
   }
 
   // Returns the subset of forced ids that are currently disabled in settings — i.e. the picks that need
@@ -1040,7 +1014,7 @@ class SettingsService {
     codexHome: string | undefined
   ): Promise<Array<{ name: string; description: string; path: string }>> {
     return this.skills.codexSkillCatalog(codexHome, (settings) => {
-      return this.enabledConnectorIds(settings.connectors).flatMap((id) => {
+      return this.connectors.enabledConnectorIds(settings.connectors).flatMap((id) => {
         const connector = CONNECTOR_CATALOG.find((candidate) => candidate.id === id)
         return connector
           ? [
@@ -2610,50 +2584,7 @@ class SettingsService {
   // Reads the connector enablement/config block, read fresh so callers see the latest saved state.
   // Undefined when no connector has ever been configured.
   async getConnectors(): Promise<StoredConnectors | undefined> {
-    const settings = await this.repository.getSettings()
-    const connectors = settings.connectors
-    if (!connectors?.customMcpServers) return connectors
-
-    const resolvedServers: StoredCustomMcpServer[] = []
-    for (const stored of connectors.customMcpServers) {
-      let secured = stored
-      // Migrate pre-encryption settings on first read. The renderer never receives the resolved secrets.
-      if ((stored.env || stored.headers) && isEncryptionAvailable()) {
-        secured = {
-          ...stored,
-          ...(stored.env ? { envRefs: this.encryptSecretRecord(stored.env) } : {}),
-          ...(stored.headers ? { headerRefs: this.encryptSecretRecord(stored.headers) } : {}),
-          env: undefined,
-          headers: undefined
-        }
-        await this.repository.updateCustomServer(stored.id, secured)
-      }
-
-      resolvedServers.push({
-        ...secured,
-        env: secured.envRefs ? this.decryptSecretRecord(secured.envRefs) : secured.env,
-        headers: secured.headerRefs ? this.decryptSecretRecord(secured.headerRefs) : secured.headers
-      })
-    }
-
-    return { ...connectors, customMcpServers: resolvedServers }
-  }
-
-  private encryptSecretRecord(values: Record<string, string>): Record<string, string> {
-    return Object.fromEntries(
-      Object.entries(values).map(([name, value]) => [name, encryptKey(value)])
-    )
-  }
-
-  private decryptSecretRecord(
-    refs: Record<string, string> | undefined
-  ): Record<string, string> | undefined {
-    if (!refs) return undefined
-    const values = Object.entries(refs).flatMap(([name, ref]) => {
-      const value = tryDecryptKey(ref)
-      return value === undefined ? [] : [[name, value] as const]
-    })
-    return values.length > 0 ? Object.fromEntries(values) : undefined
+    return this.connectors.getConnectors()
   }
 
   // Materializes the enabled skill set into opencode's isolated config dir (same skills/<name>/SKILL.md
@@ -2671,7 +2602,10 @@ class SettingsService {
     // (Codex, opencode) read skills from their own home, so without this they never get connector
     // guidance and fall back to ad-hoc calls (e.g. curl). Materialize them into this framework's dir too.
     const connectors = await this.getConnectors()
-    await syncConnectorSkillDocs(join(configRoot, 'skills'), this.enabledConnectorIds(connectors))
+    await syncConnectorSkillDocs(
+      join(configRoot, 'skills'),
+      this.connectors.enabledConnectorIds(connectors)
+    )
   }
 
   private async provisionClaudeRuntimeConfig(
@@ -2686,186 +2620,61 @@ class SettingsService {
     await this.skills.provisionClaudeConfig(configDir, disabledSkillIds)
 
     const connectors = await this.getConnectors()
-    await syncConnectorSkillDocs(join(configDir, 'skills'), this.enabledConnectorIds(connectors))
+    await syncConnectorSkillDocs(
+      join(configDir, 'skills'),
+      this.connectors.enabledConnectorIds(connectors)
+    )
 
     return configDir
   }
 
-  // Bundled connectors the user hasn't turned off (default-on), for skill and baseline delivery.
-  private enabledConnectorIds(connectors: StoredConnectors | undefined): string[] {
-    const disabled = new Set(connectors?.disabledConnectorIds ?? [])
-
-    return CONNECTOR_CATALOG.map((meta) => meta.id).filter((id) => !disabled.has(id))
-  }
-
-  // Projects the bundled catalog into renderer views, applying the stored opt-out / auto-allow sets.
-  private toConnectorViews(connectors: StoredConnectors | undefined): ConnectorView[] {
-    const disabled = new Set(connectors?.disabledConnectorIds ?? [])
-    const autoAllow = new Set(connectors?.autoAllowIds ?? [])
-
-    return CONNECTOR_CATALOG.map((meta) => ({
-      id: meta.id,
-      displayName: meta.displayName,
-      description: meta.description,
-      sources: meta.sources,
-      requiresNcbi: meta.requiresNcbi,
-      enabled: !disabled.has(meta.id),
-      autoAllow: autoAllow.has(meta.id),
-      group: meta.group ?? 'featured'
-    })).sort((a, b) => a.displayName.localeCompare(b.displayName))
-  }
-
-  private ncbiView(connectors: StoredConnectors | undefined): NcbiCredentialsView {
-    return { contactEmail: connectors?.contactEmail, hasApiKey: !!connectors?.ncbiApiKeyRef }
-  }
-
-  // Projects stored custom MCP servers into renderer views (no secret env/header values).
-  private toCustomServerViews(connectors: StoredConnectors | undefined): CustomServerView[] {
-    return (connectors?.customMcpServers ?? [])
-      .map((s) => {
-        const unavailable =
-          (s.transport === 'stdio' && !s.command) || (s.transport !== 'stdio' && !s.url)
-        return {
-          id: s.id,
-          name: s.name,
-          description: s.description,
-          transport: s.transport,
-          enabled: s.enabled,
-          command: s.command,
-          args: s.args,
-          url: s.url,
-          ...(unavailable ? { availability: 'unavailable' as const } : {})
-        }
-      })
-      .sort((a, b) => a.name.localeCompare(b.name))
-  }
-
-  private async connectorsSnapshot(): Promise<ConnectorsSnapshot> {
-    const connectors = await this.getConnectors()
-
-    return {
-      connectors: this.toConnectorViews(connectors),
-      customServers: this.toCustomServerViews(connectors),
-      ncbi: this.ncbiView(connectors)
-    }
-  }
-
   // Lists every bundled connector with enabled / auto-allow state, plus shared NCBI credential state.
   async listConnectors(): Promise<ConnectorsSnapshot> {
-    return this.connectorsSnapshot()
+    return this.connectors.listConnectors()
   }
 
   // Returns one connector's view plus its tools (with per-tool permission) and metadata.
   async getConnectorDetail(id: string): Promise<ConnectorDetailView> {
-    const meta = CONNECTOR_CATALOG.find((entry) => entry.id === id)
-
-    if (!meta) throw new Error(`Unknown connector: ${id}`)
-
-    const connectors = await this.getConnectors()
-    const view = this.toConnectorViews(connectors).find((entry) => entry.id === id)
-    const blocked = new Set(connectors?.blockedToolIds ?? [])
-    const ask = new Set(connectors?.askToolIds ?? [])
-    const tools = getConnectorTools(id).map((tool) => {
-      const toolId = `${id}/${tool.id}`
-      // Precedence: block > ask > allow (the default; tools run without a prompt unless opted in).
-      const permission: ToolPermission = blocked.has(toolId)
-        ? 'block'
-        : ask.has(toolId)
-          ? 'ask'
-          : 'allow'
-
-      return { id: toolId, method: tool.id, description: tool.description, permission }
-    })
-
-    return { ...view!, useWhen: meta.useWhen, termsUrl: meta.termsUrl, tools }
+    return this.connectors.getConnectorDetail(id)
   }
 
   // Enables/disables one bundled connector and returns the refreshed snapshot.
   async setConnectorEnabled(request: SetConnectorEnabledRequest): Promise<ConnectorsSnapshot> {
-    await this.repository.setConnectorDisabled(request.id, !request.enabled)
-
-    return this.connectorsSnapshot()
+    return this.connectors.setConnectorEnabled(request)
   }
 
   // Toggles "skip approvals" for one connector (autoAllowIds) and returns the refreshed snapshot.
   async setConnectorAutoAllow(request: SetConnectorAutoAllowRequest): Promise<ConnectorsSnapshot> {
-    await this.repository.setConnectorAutoAllow(request.id, request.autoAllow)
-
-    return this.connectorsSnapshot()
+    return this.connectors.setConnectorAutoAllow(request)
   }
 
   // Sets one tool's policy (allow = run without a prompt [default], ask = require approval when no
   // remembered Broker grant applies, block = denied) and returns the refreshed detail.
   async setToolPermission(request: SetToolPermissionRequest): Promise<ConnectorDetailView> {
-    await this.repository.setToolPolicy(
-      request.toolId,
-      request.permission === 'ask',
-      request.permission === 'block'
-    )
-    const connectorId = request.toolId.split('/')[0]
-
-    return this.getConnectorDetail(connectorId)
+    return this.connectors.setToolPermission(request)
   }
 
   // Sets or clears the shared contact email and NCBI API key (encrypted at rest), returning state.
   async setNcbiCredentials(request: SetNcbiCredentialsRequest): Promise<ConnectorsSnapshot> {
-    const existing = await this.getConnectors()
-    // An omitted apiKey leaves the stored key unchanged; an empty string clears it.
-    const apiKeyRef =
-      request.apiKey === undefined
-        ? existing?.ncbiApiKeyRef
-        : request.apiKey === ''
-          ? undefined
-          : encryptKey(request.apiKey)
-
-    await this.repository.setNcbiCredentials(request.contactEmail?.trim() || undefined, apiKeyRef)
-
-    return this.connectorsSnapshot()
+    return this.connectors.setNcbiCredentials(request)
   }
 
   // Adds a user-provided custom MCP server (add-time trust is the caller's responsibility). The
   // config is sanitized to enforce per-transport requirements before it is persisted.
   async addCustomServer(request: AddCustomServerRequest): Promise<ConnectorsSnapshot> {
-    const candidate: StoredCustomMcpServer = {
-      id: randomUUID(),
-      name: request.name.trim(),
-      transport: request.transport,
-      enabled: true,
-      trustedAt: Date.now(),
-      ...(request.description?.trim() ? { description: request.description.trim() } : {}),
-      ...(request.command?.trim() ? { command: request.command.trim() } : {}),
-      ...(request.args && request.args.length > 0 ? { args: request.args } : {}),
-      ...(request.env && Object.keys(request.env).length > 0
-        ? { envRefs: this.encryptSecretRecord(request.env) }
-        : {}),
-      ...(request.url?.trim() ? { url: request.url.trim() } : {}),
-      ...(request.headers && Object.keys(request.headers).length > 0
-        ? { headerRefs: this.encryptSecretRecord(request.headers) }
-        : {})
-    }
-    const server = sanitizeCustomMcpServer(candidate)
-
-    if (!server) throw new Error('Invalid custom connector configuration')
-
-    await this.repository.addCustomServer(server)
-
-    return this.connectorsSnapshot()
+    return this.connectors.addCustomServer(request)
   }
 
   // Enables/disables one custom MCP server and returns the refreshed snapshot.
   async setCustomServerEnabled(
     request: SetCustomServerEnabledRequest
   ): Promise<ConnectorsSnapshot> {
-    await this.repository.setCustomServerEnabled(request.id, request.enabled)
-
-    return this.connectorsSnapshot()
+    return this.connectors.setCustomServerEnabled(request)
   }
 
   // Removes one custom MCP server and returns the refreshed snapshot.
   async removeCustomServer(request: RemoveCustomServerRequest): Promise<ConnectorsSnapshot> {
-    await this.repository.removeCustomServer(request.id)
-
-    return this.connectorsSnapshot()
+    return this.connectors.removeCustomServer(request)
   }
 
   // Edits an existing custom MCP server, keeping its immutable identity (id, name, enabled, trust).
@@ -2879,60 +2688,7 @@ class SettingsService {
       serverId: string
     ) => Promise<CustomServerSecurityChangeGuard | void>
   ): Promise<ConnectorsSnapshot> {
-    const existing = (await this.getConnectors())?.customMcpServers?.find(
-      (s) => s.id === request.id
-    )
-
-    if (!existing) throw new Error(`Unknown custom connector: ${request.id}`)
-
-    const envRefs = request.env ? this.encryptSecretRecord(request.env) : existing.envRefs
-    const headerRefs = request.headers
-      ? this.encryptSecretRecord(request.headers)
-      : existing.headerRefs
-    // Preserve legacy plaintext only when the caller leaves it untouched and safeStorage is still
-    // unavailable. A later getConnectors() call migrates it as soon as encryption becomes available.
-    const legacyEnv = request.env === undefined ? existing.env : undefined
-    const legacyHeaders = request.headers === undefined ? existing.headers : undefined
-    const merged: StoredCustomMcpServer = {
-      id: existing.id,
-      name: existing.name,
-      transport: request.transport,
-      enabled: existing.enabled,
-      ...(existing.trustedAt !== undefined ? { trustedAt: existing.trustedAt } : {}),
-      ...(request.description?.trim() ? { description: request.description.trim() } : {}),
-      ...(request.command?.trim() ? { command: request.command.trim() } : {}),
-      ...(request.args && request.args.length > 0 ? { args: request.args } : {}),
-      ...(envRefs && Object.keys(envRefs).length > 0 ? { envRefs } : {}),
-      ...(legacyEnv && Object.keys(legacyEnv).length > 0 ? { env: legacyEnv } : {}),
-      ...(request.url?.trim() ? { url: request.url.trim() } : {}),
-      ...(headerRefs && Object.keys(headerRefs).length > 0 ? { headerRefs } : {}),
-      ...(legacyHeaders && Object.keys(legacyHeaders).length > 0 ? { headers: legacyHeaders } : {})
-    }
-    const server = sanitizeCustomMcpServer(merged)
-
-    if (!server) throw new Error('Invalid custom connector configuration')
-
-    const securitySensitiveConfigChanged =
-      existing.transport !== server.transport ||
-      existing.command !== server.command ||
-      !isDeepStrictEqual(existing.args ?? [], server.args ?? []) ||
-      existing.url !== server.url ||
-      request.env !== undefined ||
-      request.headers !== undefined
-
-    const securityChangeGuard = securitySensitiveConfigChanged
-      ? await beforeSecuritySensitiveUpdate?.(request.id)
-      : undefined
-
-    try {
-      await this.repository.updateCustomServer(request.id, server)
-      securityChangeGuard?.commit(server)
-    } catch (error) {
-      securityChangeGuard?.rollback()
-      throw error
-    }
-
-    return this.connectorsSnapshot()
+    return this.connectors.updateCustomServer(request, beforeSecuritySensitiveUpdate)
   }
 
   // Reports whether npm is on PATH so the installer UI can default to/enable the npm source.
@@ -3137,8 +2893,8 @@ class SettingsService {
       throw new Error(buildActiveModelIncompatibleMessage(framework.displayName))
     }
 
-    const enabledConnectorIds = this.enabledConnectorIds(settings.connectors)
-    const connectorInstructions = renderConnectorInstructions(enabledConnectorIds)
+    const activeConnectorIds = this.connectors.enabledConnectorIds(settings.connectors)
+    const connectorInstructions = renderConnectorInstructions(activeConnectorIds)
 
     if (framework.id === 'codex' && !isModelBridgeSupported(activeProvider, effectiveModel)) {
       throw new Error(CODEX_BRIDGE_UNSUPPORTED_MESSAGE)

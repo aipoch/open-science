@@ -1,0 +1,341 @@
+import { randomUUID } from 'node:crypto'
+import { isDeepStrictEqual } from 'node:util'
+
+import type {
+  AddCustomServerRequest,
+  ConnectorDetailView,
+  ConnectorsSnapshot,
+  ConnectorView,
+  CustomServerView,
+  NcbiCredentialsView,
+  RemoveCustomServerRequest,
+  SetConnectorAutoAllowRequest,
+  SetConnectorEnabledRequest,
+  SetCustomServerEnabledRequest,
+  SetNcbiCredentialsRequest,
+  SetToolPermissionRequest,
+  ToolPermission,
+  UpdateCustomServerRequest
+} from '../../shared/settings'
+import { CONNECTOR_CATALOG } from '../connectors/catalog'
+import { getConnectorTools } from '../connectors/registry'
+import { encryptKey, isEncryptionAvailable, tryDecryptKey } from './crypto'
+import { sanitizeCustomMcpServer, type SettingsRepository } from './repository'
+import type { StoredConnectors, StoredCustomMcpServer } from './types'
+
+type CustomServerSecurityChangeGuard = {
+  commit(server: StoredCustomMcpServer): void
+  rollback(): void
+}
+
+// Owns durable Connector policy, secret migration/projection, and custom-server mutation. Live MCP
+// clients, approval decisions, Specialist bindings, and refresh workflows remain outside this module.
+class ConnectorSettingsModule {
+  constructor(private readonly repository: SettingsRepository) {}
+
+  // Bundled connectors are default-on. Keep this projection on the durable owner so runtime
+  // configuration, Skill provisioning, and renderer views all apply the same opt-out rule.
+  enabledConnectorIds(connectors: StoredConnectors | undefined): string[] {
+    const disabled = new Set(connectors?.disabledConnectorIds ?? [])
+
+    return CONNECTOR_CATALOG.map((meta) => meta.id).filter((id) => !disabled.has(id))
+  }
+
+  // Called from SettingsService's existing whole-settings migration path so the trigger timing and
+  // provider-before-Connector ordering stay unchanged while Connector migration has one owner.
+  async migrateLegacyNcbiKeyRef(connectors: StoredConnectors | undefined): Promise<boolean> {
+    const ref = connectors?.ncbiApiKeyRef
+    if (!ref?.startsWith('plain:')) return false
+    const key = tryDecryptKey(ref)
+    if (!key) return false
+
+    await this.repository.setNcbiCredentials(connectors?.contactEmail, encryptKey(key))
+
+    return true
+  }
+
+  // Main-process-only read used by live Connector and runtime consumers. Renderer-facing methods
+  // below project secret-free views instead of exposing decrypted env/header values.
+  async getConnectors(): Promise<StoredConnectors | undefined> {
+    const settings = await this.repository.getSettings()
+    const connectors = settings.connectors
+    if (!connectors?.customMcpServers) return connectors
+
+    const resolvedServers: StoredCustomMcpServer[] = []
+    for (const stored of connectors.customMcpServers) {
+      let secured = stored
+      // Migrate pre-encryption settings on first read. The renderer never receives resolved secrets.
+      if ((stored.env || stored.headers) && isEncryptionAvailable()) {
+        secured = {
+          ...stored,
+          ...(stored.env ? { envRefs: this.encryptSecretRecord(stored.env) } : {}),
+          ...(stored.headers ? { headerRefs: this.encryptSecretRecord(stored.headers) } : {}),
+          env: undefined,
+          headers: undefined
+        }
+        await this.repository.updateCustomServer(stored.id, secured)
+      }
+
+      resolvedServers.push({
+        ...secured,
+        env: secured.envRefs ? this.decryptSecretRecord(secured.envRefs) : secured.env,
+        headers: secured.headerRefs ? this.decryptSecretRecord(secured.headerRefs) : secured.headers
+      })
+    }
+
+    return { ...connectors, customMcpServers: resolvedServers }
+  }
+
+  async provisionedConnectorSkillNames(): Promise<string[]> {
+    const connectors = await this.getConnectors()
+    const bundled = this.enabledConnectorIds(connectors)
+    const custom = (connectors?.customMcpServers ?? [])
+      .filter((server) => server.enabled)
+      .map((server) => server.id)
+
+    return Array.from(new Set([...bundled, ...custom].map((id) => `mcp-${id}`)))
+  }
+
+  async listConnectors(): Promise<ConnectorsSnapshot> {
+    return this.connectorsSnapshot()
+  }
+
+  async getConnectorDetail(id: string): Promise<ConnectorDetailView> {
+    const meta = CONNECTOR_CATALOG.find((entry) => entry.id === id)
+
+    if (!meta) throw new Error(`Unknown connector: ${id}`)
+
+    const connectors = await this.getConnectors()
+    const view = this.toConnectorViews(connectors).find((entry) => entry.id === id)
+    const blocked = new Set(connectors?.blockedToolIds ?? [])
+    const ask = new Set(connectors?.askToolIds ?? [])
+    const tools = getConnectorTools(id).map((tool) => {
+      const toolId = `${id}/${tool.id}`
+      // Precedence: block > ask > allow (the default; tools run without a prompt unless opted in).
+      const permission: ToolPermission = blocked.has(toolId)
+        ? 'block'
+        : ask.has(toolId)
+          ? 'ask'
+          : 'allow'
+
+      return { id: toolId, method: tool.id, description: tool.description, permission }
+    })
+
+    return { ...view!, useWhen: meta.useWhen, termsUrl: meta.termsUrl, tools }
+  }
+
+  async setConnectorEnabled(request: SetConnectorEnabledRequest): Promise<ConnectorsSnapshot> {
+    await this.repository.setConnectorDisabled(request.id, !request.enabled)
+
+    return this.connectorsSnapshot()
+  }
+
+  async setConnectorAutoAllow(request: SetConnectorAutoAllowRequest): Promise<ConnectorsSnapshot> {
+    await this.repository.setConnectorAutoAllow(request.id, request.autoAllow)
+
+    return this.connectorsSnapshot()
+  }
+
+  async setToolPermission(request: SetToolPermissionRequest): Promise<ConnectorDetailView> {
+    await this.repository.setToolPolicy(
+      request.toolId,
+      request.permission === 'ask',
+      request.permission === 'block'
+    )
+    const connectorId = request.toolId.split('/')[0]
+
+    return this.getConnectorDetail(connectorId)
+  }
+
+  async setNcbiCredentials(request: SetNcbiCredentialsRequest): Promise<ConnectorsSnapshot> {
+    const existing = await this.getConnectors()
+    // An omitted apiKey leaves the stored key unchanged; an empty string clears it.
+    const apiKeyRef =
+      request.apiKey === undefined
+        ? existing?.ncbiApiKeyRef
+        : request.apiKey === ''
+          ? undefined
+          : encryptKey(request.apiKey)
+
+    await this.repository.setNcbiCredentials(request.contactEmail?.trim() || undefined, apiKeyRef)
+
+    return this.connectorsSnapshot()
+  }
+
+  async addCustomServer(request: AddCustomServerRequest): Promise<ConnectorsSnapshot> {
+    const candidate: StoredCustomMcpServer = {
+      id: randomUUID(),
+      name: request.name.trim(),
+      transport: request.transport,
+      enabled: true,
+      trustedAt: Date.now(),
+      ...(request.description?.trim() ? { description: request.description.trim() } : {}),
+      ...(request.command?.trim() ? { command: request.command.trim() } : {}),
+      ...(request.args && request.args.length > 0 ? { args: request.args } : {}),
+      ...(request.env && Object.keys(request.env).length > 0
+        ? { envRefs: this.encryptSecretRecord(request.env) }
+        : {}),
+      ...(request.url?.trim() ? { url: request.url.trim() } : {}),
+      ...(request.headers && Object.keys(request.headers).length > 0
+        ? { headerRefs: this.encryptSecretRecord(request.headers) }
+        : {})
+    }
+    const server = sanitizeCustomMcpServer(candidate)
+
+    if (!server) throw new Error('Invalid custom connector configuration')
+
+    await this.repository.addCustomServer(server)
+
+    return this.connectorsSnapshot()
+  }
+
+  async setCustomServerEnabled(
+    request: SetCustomServerEnabledRequest
+  ): Promise<ConnectorsSnapshot> {
+    await this.repository.setCustomServerEnabled(request.id, request.enabled)
+
+    return this.connectorsSnapshot()
+  }
+
+  async removeCustomServer(request: RemoveCustomServerRequest): Promise<ConnectorsSnapshot> {
+    await this.repository.removeCustomServer(request.id)
+
+    return this.connectorsSnapshot()
+  }
+
+  // Omitted env/headers retain their stored values. Security-sensitive changes acquire a guard
+  // before persistence, commit it after the durable write, and roll it back if that write fails.
+  async updateCustomServer(
+    request: UpdateCustomServerRequest,
+    beforeSecuritySensitiveUpdate?: (
+      serverId: string
+    ) => Promise<CustomServerSecurityChangeGuard | void>
+  ): Promise<ConnectorsSnapshot> {
+    const existing = (await this.getConnectors())?.customMcpServers?.find(
+      (server) => server.id === request.id
+    )
+
+    if (!existing) throw new Error(`Unknown custom connector: ${request.id}`)
+
+    const envRefs = request.env ? this.encryptSecretRecord(request.env) : existing.envRefs
+    const headerRefs = request.headers
+      ? this.encryptSecretRecord(request.headers)
+      : existing.headerRefs
+    // Preserve legacy plaintext only when the caller leaves it untouched and safeStorage is still
+    // unavailable. A later getConnectors() call migrates it as soon as encryption becomes available.
+    const legacyEnv = request.env === undefined ? existing.env : undefined
+    const legacyHeaders = request.headers === undefined ? existing.headers : undefined
+    const merged: StoredCustomMcpServer = {
+      id: existing.id,
+      name: existing.name,
+      transport: request.transport,
+      enabled: existing.enabled,
+      ...(existing.trustedAt !== undefined ? { trustedAt: existing.trustedAt } : {}),
+      ...(request.description?.trim() ? { description: request.description.trim() } : {}),
+      ...(request.command?.trim() ? { command: request.command.trim() } : {}),
+      ...(request.args && request.args.length > 0 ? { args: request.args } : {}),
+      ...(envRefs && Object.keys(envRefs).length > 0 ? { envRefs } : {}),
+      ...(legacyEnv && Object.keys(legacyEnv).length > 0 ? { env: legacyEnv } : {}),
+      ...(request.url?.trim() ? { url: request.url.trim() } : {}),
+      ...(headerRefs && Object.keys(headerRefs).length > 0 ? { headerRefs } : {}),
+      ...(legacyHeaders && Object.keys(legacyHeaders).length > 0 ? { headers: legacyHeaders } : {})
+    }
+    const server = sanitizeCustomMcpServer(merged)
+
+    if (!server) throw new Error('Invalid custom connector configuration')
+
+    const securitySensitiveConfigChanged =
+      existing.transport !== server.transport ||
+      existing.command !== server.command ||
+      !isDeepStrictEqual(existing.args ?? [], server.args ?? []) ||
+      existing.url !== server.url ||
+      request.env !== undefined ||
+      request.headers !== undefined
+
+    const securityChangeGuard = securitySensitiveConfigChanged
+      ? await beforeSecuritySensitiveUpdate?.(request.id)
+      : undefined
+
+    try {
+      await this.repository.updateCustomServer(request.id, server)
+      securityChangeGuard?.commit(server)
+    } catch (error) {
+      securityChangeGuard?.rollback()
+      throw error
+    }
+
+    return this.connectorsSnapshot()
+  }
+
+  private encryptSecretRecord(values: Record<string, string>): Record<string, string> {
+    return Object.fromEntries(
+      Object.entries(values).map(([name, value]) => [name, encryptKey(value)])
+    )
+  }
+
+  private decryptSecretRecord(
+    refs: Record<string, string> | undefined
+  ): Record<string, string> | undefined {
+    if (!refs) return undefined
+    const values = Object.entries(refs).flatMap(([name, ref]) => {
+      const value = tryDecryptKey(ref)
+      return value === undefined ? [] : [[name, value] as const]
+    })
+
+    return values.length > 0 ? Object.fromEntries(values) : undefined
+  }
+
+  private toConnectorViews(connectors: StoredConnectors | undefined): ConnectorView[] {
+    const disabled = new Set(connectors?.disabledConnectorIds ?? [])
+    const autoAllow = new Set(connectors?.autoAllowIds ?? [])
+
+    return CONNECTOR_CATALOG.map((meta) => ({
+      id: meta.id,
+      displayName: meta.displayName,
+      description: meta.description,
+      sources: meta.sources,
+      requiresNcbi: meta.requiresNcbi,
+      enabled: !disabled.has(meta.id),
+      autoAllow: autoAllow.has(meta.id),
+      group: meta.group ?? 'featured'
+    })).sort((a, b) => a.displayName.localeCompare(b.displayName))
+  }
+
+  private ncbiView(connectors: StoredConnectors | undefined): NcbiCredentialsView {
+    return { contactEmail: connectors?.contactEmail, hasApiKey: !!connectors?.ncbiApiKeyRef }
+  }
+
+  private toCustomServerViews(connectors: StoredConnectors | undefined): CustomServerView[] {
+    return (connectors?.customMcpServers ?? [])
+      .map((server) => {
+        const unavailable =
+          (server.transport === 'stdio' && !server.command) ||
+          (server.transport !== 'stdio' && !server.url)
+        return {
+          id: server.id,
+          name: server.name,
+          description: server.description,
+          transport: server.transport,
+          enabled: server.enabled,
+          command: server.command,
+          args: server.args,
+          url: server.url,
+          ...(unavailable ? { availability: 'unavailable' as const } : {})
+        }
+      })
+      .sort((a, b) => a.name.localeCompare(b.name))
+  }
+
+  private async connectorsSnapshot(): Promise<ConnectorsSnapshot> {
+    const connectors = await this.getConnectors()
+
+    return {
+      connectors: this.toConnectorViews(connectors),
+      customServers: this.toCustomServerViews(connectors),
+      ncbi: this.ncbiView(connectors)
+    }
+  }
+}
+
+export { ConnectorSettingsModule }
+export type { CustomServerSecurityChangeGuard }
