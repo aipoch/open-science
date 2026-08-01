@@ -709,6 +709,86 @@ describe('notebook runtime service', () => {
     expect(changedSessions.filter((sessionId) => sessionId === 'agent-session').length).toBe(5)
   })
 
+  it('keeps agent notebook availability process-scoped across session shutdown', async () => {
+    const root = await createStorageRoot()
+    const availableSessions: string[] = []
+    const service = new NotebookRuntimeService({
+      configRoot: root,
+      dataRoot: root,
+      projectName: 'default-project',
+      repository: new NotebookRunRepository(root),
+      callbacks: {
+        onNotebookAvailable: (event) => availableSessions.push(event.sessionId)
+      },
+      executorFactory: () => ({
+        execute: async (request) => ({
+          status: 'completed',
+          stdout: request.code,
+          stderr: '',
+          traceback: '',
+          cwdAfter: request.cwd,
+          outputs: []
+        }),
+        shutdown: async () => ({ reaped: true })
+      })
+    })
+
+    for (const code of ['before-shutdown', 'after-shutdown']) {
+      if (availableSessions.length > 0) {
+        await service.shutdown({ sessionId: 'session-1', workspaceCwd: root })
+      }
+      await service.execute({
+        sessionId: 'session-1',
+        workspaceCwd: root,
+        code,
+        language: 'python'
+      })
+    }
+
+    expect(availableSessions).toEqual(['session-1'])
+  })
+
+  it('keeps a runtime session usable when executor shutdown fails', async () => {
+    const root = await createStorageRoot()
+    const shutdownError = new Error('kernel teardown failed')
+    const service = new NotebookRuntimeService({
+      configRoot: root,
+      dataRoot: root,
+      projectName: 'default-project',
+      repository: new NotebookRunRepository(root),
+      executorFactory: () => ({
+        execute: async (request) => ({
+          status: 'completed',
+          stdout: request.code,
+          stderr: '',
+          traceback: '',
+          cwdAfter: request.cwd,
+          outputs: []
+        }),
+        shutdown: async () => Promise.reject(shutdownError)
+      })
+    })
+
+    await service.execute({
+      sessionId: 'session-1',
+      workspaceCwd: root,
+      code: 'before-failed-shutdown',
+      language: 'python'
+    })
+
+    await expect(
+      service.shutdown({ sessionId: 'session-1', workspaceCwd: root })
+    ).rejects.toBe(shutdownError)
+    await expect(
+      service.execute({
+        sessionId: 'session-1',
+        workspaceCwd: root,
+        code: 'after-failed-shutdown',
+        language: 'python'
+      })
+    ).resolves.toMatchObject({ status: 'completed', script: 'after-failed-shutdown' })
+  })
+
   it('does not thread the mcp RPC connection into the data-cell execute request', async () => {
     const root = await createStorageRoot()
     const executions: NotebookExecutionRequest[] = []
