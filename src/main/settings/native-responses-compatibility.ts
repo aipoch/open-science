@@ -209,7 +209,16 @@ const upstreamHeaders = (
 ): Record<string, string> => {
   const headers: Record<string, string> = {}
   for (const [name, value] of Object.entries(request.headers)) {
-    if (HOP_BY_HOP_HEADERS.has(name) || name === 'authorization' || value === undefined) continue
+    // Node fetch adds Fetch Metadata headers to the loopback request. Chromium owns these headers and
+    // rejects callers that pass them explicitly to Electron net.fetch with ERR_INVALID_ARGUMENT.
+    if (
+      HOP_BY_HOP_HEADERS.has(name) ||
+      name === 'authorization' ||
+      name.startsWith('sec-fetch-') ||
+      value === undefined
+    ) {
+      continue
+    }
     headers[name] = Array.isArray(value) ? value.join(', ') : value
   }
   headers['content-type'] = 'application/json'

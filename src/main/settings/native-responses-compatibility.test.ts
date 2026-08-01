@@ -321,6 +321,43 @@ describe('native Responses compatibility', () => {
     }
   })
 
+  it('forwards loopback requests without browser-controlled Fetch Metadata headers', async () => {
+    const fetchImpl = vi.fn(
+      async (_url: Parameters<typeof fetch>[0], init?: Parameters<typeof fetch>[1]) => {
+        const headers = new Headers(init?.headers)
+        if (headers.has('sec-fetch-mode')) throw new Error('net::ERR_INVALID_ARGUMENT')
+
+        return new Response(JSON.stringify({ id: 'response-1', output: [] }), {
+          status: 200,
+          headers: { 'content-type': 'application/json' }
+        })
+      }
+    )
+    const proxy = new NativeResponsesCompatibilityProxy(
+      { baseUrl: 'https://api.deepseek.com/v1', model: 'deepseek-v4-flash' },
+      fetchImpl
+    )
+    const connection = await proxy.start()
+    try {
+      const response = await fetch(`${connection.baseUrl}/responses`, {
+        method: 'POST',
+        headers: {
+          authorization: `Bearer ${connection.token}`,
+          'content-type': 'application/json'
+        },
+        body: JSON.stringify({
+          model: 'deepseek-v4-flash',
+          input: 'ping'
+        })
+      })
+
+      expect(response.ok, await response.text()).toBe(true)
+      expect(fetchImpl).toHaveBeenCalledOnce()
+    } finally {
+      await proxy.close()
+    }
+  })
+
   it('forwards a near-limit multimodal request larger than 32 MiB', async () => {
     const upstreamBodies: string[] = []
     const fetchImpl = vi.fn(
