@@ -191,6 +191,55 @@ jobs:
           retention-days: 5
           if-no-files-found: warn
 
+  # Agent-backed workspace journeys are isolated from the baseline project/window suite. Both
+  # platforms run in parallel against a deterministic ACP fixture, covering conversation persistence,
+  # permission decisions, attachment ownership, project-file indexing, and preview rendering without
+  # external model credentials or network calls.
+  electron_workspace_e2e:
+    name: Electron Workspace E2E (${{ matrix.label }})
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 15
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - os: macos-14
+            label: macOS
+            artifact-suffix: macos
+          - os: windows-latest
+            label: Windows
+            artifact-suffix: windows
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v7
+
+      - name: Setup Node
+        uses: actions/setup-node@v7
+        with:
+          node-version: 22
+          cache: npm
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Build Electron application
+        run: npm run build:e2e
+
+      - name: Run Electron workspace E2E
+        run: npm run test:e2e:workspace
+
+      - name: Upload Electron workspace E2E failure artifacts
+        if: failure()
+        uses: actions/upload-artifact@v7
+        with:
+          name: electron-workspace-e2e-${{ matrix.artifact-suffix }}-failure
+          path: |
+            playwright-report/
+            test-results/
+          retention-days: 5
+          if-no-files-found: warn
+
   # Accessibility runs independently on macOS and Windows so axe findings are attributable to the
   # platform-specific renderer and do not wait behind UI journeys.
   electron_accessibility:
