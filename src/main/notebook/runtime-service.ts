@@ -3219,7 +3219,10 @@ class NotebookRuntimeService {
           .map((result) => result.reason)
         if (failures.length === 1) throw failures[0]
         if (failures.length > 1) {
-          throw new AggregateError(failures, 'Multiple notebook runtime resources failed to dispose.')
+          throw new AggregateError(
+            failures,
+            'Multiple notebook runtime resources failed to dispose.'
+          )
         }
         return (shutdownResult as PromiseFulfilledResult<{ reaped: boolean }>).value
       }
