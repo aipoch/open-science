@@ -1,0 +1,102 @@
+import { describe, expect, it, vi } from 'vitest'
+
+import type { StoredConnectors } from '../settings/types'
+import { ConnectorRuntimeSettingsProjection } from './runtime-settings-projection'
+
+const connectors = (overrides: Partial<StoredConnectors> = {}): StoredConnectors => ({
+  enabledIds: [],
+  autoAllowIds: [],
+  ...overrides
+})
+
+describe('ConnectorRuntimeSettingsProjection', () => {
+  it('owns the current snapshot and synchronizes bundled and enabled custom Skill docs', async () => {
+    const stored = connectors({
+      disabledConnectorIds: ['chemistry'],
+      customMcpServers: [
+        {
+          id: 'server-id',
+          name: 'Enabled',
+          transport: 'stdio',
+          command: 'mcp',
+          enabled: true
+        },
+        {
+          id: 'disabled-id',
+          name: 'Disabled',
+          transport: 'stdio',
+          command: 'mcp',
+          enabled: false
+        }
+      ]
+    })
+    const listTools = vi.fn().mockResolvedValue([])
+    const syncBundledSkillDocs = vi.fn().mockResolvedValue(undefined)
+    const syncCustomSkillDocs = vi.fn(async (_dir, servers, loadTools) => {
+      await loadTools(servers[0])
+    })
+    const projection = new ConnectorRuntimeSettingsProjection({
+      readConnectors: vi.fn().mockResolvedValue(stored),
+      skillsDir: '/config/skills',
+      mcpClientManager: { listTools },
+      syncBundledSkillDocs,
+      syncCustomSkillDocs
+    })
+
+    await projection.refresh()
+
+    expect(projection.current()).toBe(stored)
+    expect(syncBundledSkillDocs).toHaveBeenCalledWith(
+      '/config/skills',
+      expect.not.arrayContaining(['chemistry'])
+    )
+    expect(syncCustomSkillDocs).toHaveBeenCalledWith(
+      '/config/skills',
+      [stored.customMcpServers?.[0]],
+      expect.any(Function)
+    )
+    expect(listTools).toHaveBeenCalledWith(
+      expect.objectContaining({ id: 'server-id', command: 'mcp', transport: 'stdio' })
+    )
+  })
+
+  it('contains refresh errors while retaining the last snapshot reached by the refresh', async () => {
+    const first = connectors({ disabledConnectorIds: ['chemistry'] })
+    const second = connectors({ disabledConnectorIds: ['literature'] })
+    const readConnectors = vi
+      .fn<() => Promise<StoredConnectors | undefined>>()
+      .mockResolvedValueOnce(first)
+      .mockResolvedValueOnce(second)
+      .mockRejectedValueOnce(new Error('read failed'))
+    const syncBundledSkillDocs = vi
+      .fn()
+      .mockResolvedValueOnce(undefined)
+      .mockRejectedValueOnce(new Error('sync failed'))
+    const reportError = vi.fn()
+    const projection = new ConnectorRuntimeSettingsProjection({
+      readConnectors,
+      skillsDir: '/config/skills',
+      mcpClientManager: { listTools: vi.fn().mockResolvedValue([]) },
+      syncBundledSkillDocs,
+      syncCustomSkillDocs: vi.fn().mockResolvedValue(undefined),
+      reportError
+    })
+
+    await projection.refresh()
+    expect(projection.current()).toBe(first)
+
+    await projection.refresh()
+    expect(projection.current()).toBe(second)
+    expect(reportError).toHaveBeenNthCalledWith(
+      1,
+      expect.objectContaining({ message: 'sync failed' })
+    )
+
+    await projection.refresh()
+    expect(projection.current()).toBe(second)
+    expect(reportError).toHaveBeenNthCalledWith(
+      2,
+      expect.objectContaining({ message: 'read failed' })
+    )
+  })
+})
