@@ -58,7 +58,9 @@ describe('SkillCatalogModule', () => {
     const runtimeRoot = await mkdtemp(join(tmpdir(), 'settings-skill-runtime-'))
     roots.push(runtimeRoot)
     await catalog.materializeSkills(runtimeRoot, ['demo'])
-    await expect(readFile(join(runtimeRoot, 'skills', 'os-demo', 'SKILL.md'), 'utf8')).rejects.toThrow()
+    await expect(
+      readFile(join(runtimeRoot, 'skills', 'os-demo', 'SKILL.md'), 'utf8')
+    ).rejects.toThrow()
     await catalog.materializeSkills(runtimeRoot, ['demo'], new Set(['demo']))
     await expect(
       readFile(join(runtimeRoot, 'skills', 'os-demo', 'SKILL.md'), 'utf8')
@@ -71,9 +73,9 @@ describe('SkillCatalogModule', () => {
       })
     ).resolves.toEqual([])
     expect(
-      (
-        await catalog.createSkill({ name: 'My Skill', description: 'Mine.', body: '# Mine' })
-      ).map((skill) => skill.id)
+      (await catalog.createSkill({ name: 'My Skill', description: 'Mine.', body: '# Mine' })).map(
+        (skill) => skill.id
+      )
     ).toEqual(['demo', 'personal-my-skill'])
     expect(
       (
@@ -85,9 +87,9 @@ describe('SkillCatalogModule', () => {
         })
       ).find((skill) => skill.id === 'personal-my-skill')
     ).toMatchObject({ description: 'Edited.' })
-    expect((await catalog.deleteSkill({ id: 'personal-my-skill' })).map((skill) => skill.id)).toEqual([
-      'demo'
-    ])
+    expect(
+      (await catalog.deleteSkill({ id: 'personal-my-skill' })).map((skill) => skill.id)
+    ).toEqual(['demo'])
   })
 
   it('owns active-framework agent-home discovery and batch import', async () => {
@@ -129,9 +131,7 @@ describe('SkillCatalogModule', () => {
           skills: [{ source: 'agents', slug: 'shared' }]
         })
       ).results
-    ).toEqual([
-      { source: 'agents', slug: 'shared', status: 'imported', id: 'imported-shared' }
-    ])
+    ).toEqual([{ source: 'agents', slug: 'shared', status: 'imported', id: 'imported-shared' }])
 
     const preview = await catalog.previewAgentHomeSkill({ source: 'claude', slug: 'claude-only' })
     expect(preview.sourceLabel).toBe('~/.claude/skills/claude-only')

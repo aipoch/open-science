@@ -2657,11 +2657,7 @@ class SettingsService {
     configRoot: string,
     forcedSkillIds: ReadonlySet<string>
   ): Promise<void> {
-    await this.skills.materializeSkills(
-      configRoot,
-      settings.disabledSkillIds ?? [],
-      forcedSkillIds
-    )
+    await this.skills.materializeSkills(configRoot, settings.disabledSkillIds ?? [], forcedSkillIds)
 
     // Connector skill docs (which instruct the agent to reach a service ONLY via `host.mcp` from the
     // notebook kernel) are otherwise synced only into the Claude config dir. Non-Claude frameworks

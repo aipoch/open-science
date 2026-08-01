@@ -27,10 +27,7 @@ import type {
   SkillView,
   UpdateSkillRequest
 } from '../../shared/settings'
-import {
-  DEFAULT_AGENT_FRAMEWORK_ID,
-  type AgentFrameworkId
-} from '../agent-framework'
+import { DEFAULT_AGENT_FRAMEWORK_ID, type AgentFrameworkId } from '../agent-framework'
 import { codexStorageDir, codexSubscriptionStorageDir } from '../agent-framework/codex'
 import { parseGitHubSkillUrl } from '../skills/github-import'
 import { decodeBoundedBase64, SKILL_IMPORT_LIMITS } from '../skills/import-limits'
@@ -45,8 +42,7 @@ import type { SettingsRepository } from './repository'
 type SkillCatalogEntry = { name: string; description: string; path: string }
 type AdditionalSkillCatalogEntry = Omit<SkillCatalogEntry, 'path'> & { directory: string }
 type AdditionalSkillCatalogEntries =
-  | readonly AdditionalSkillCatalogEntry[]
-  | (() => Promise<readonly AdditionalSkillCatalogEntry[]>)
+  readonly AdditionalSkillCatalogEntry[] | (() => Promise<readonly AdditionalSkillCatalogEntry[]>)
 type AgentHomeSkillDir = { source: AgentHomeSkillSource; dir: string }
 type DiscoveredAgentHomeSkill = {
   skill: AgentHomeSkillView
@@ -102,9 +98,7 @@ class SkillCatalogModule {
   }
 
   async skillsNeedingForceLoad(ids: string[]): Promise<string[]> {
-    const disabled = new Set(
-      (await this.options.repository.getSettings()).disabledSkillIds ?? []
-    )
+    const disabled = new Set((await this.options.repository.getSettings()).disabledSkillIds ?? [])
     return ids.filter((id) => disabled.has(id))
   }
 
@@ -274,9 +268,7 @@ class SkillCatalogModule {
     return this.userSkills.importFromZipBatch(zip, items)
   }
 
-  async previewGitHubSkill(
-    request: PreviewGitHubSkillRequest
-  ): Promise<SkillImportPreviewContent> {
+  async previewGitHubSkill(request: PreviewGitHubSkillRequest): Promise<SkillImportPreviewContent> {
     const location = parseGitHubSkillUrl(request.url)
     if (!location) throw new Error('Not a recognizable GitHub URL.')
     const preview = await this.userSkills.previewGitHubSkill(request.url, netFetch)
@@ -518,9 +510,7 @@ class SkillCatalogModule {
         const discoveredSkill = discoveredByPath.get(pathKey)
         const outcome = await this.userSkills.importAgentHomeSkill(sourcePath, canonical, {
           aliases: discoveredSkill?.aliases,
-          fallbackSlugs: discoveredSkill
-            ? [...discoveredSkill.matchedFallbackSlugs]
-            : undefined
+          fallbackSlugs: discoveredSkill ? [...discoveredSkill.matchedFallbackSlugs] : undefined
         })
         results.push({ ...validated, ...outcome })
       } catch (error) {
