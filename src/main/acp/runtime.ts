@@ -5647,14 +5647,10 @@ class AcpRuntime {
         this.reviewerSessionIds.has(session.sessionId)
       ) {
         const collision = new Error(`Reviewer session id collision: ${session.sessionId}`)
-        try {
-          session.dispose()
-        } catch (cleanupError) {
-          safeLogError('reviewer collision session disposal failed', {
-            ...diagnosticErrorFields(cleanupError),
-            sessionId: session.sessionId
-          })
-        }
+        this.disposeReviewerSessionAfterFailure(
+          session,
+          'reviewer collision session disposal failed'
+        )
         throw collision
       }
 
@@ -5669,7 +5665,7 @@ class AcpRuntime {
           })
         }
       } catch (error) {
-        session.dispose()
+        this.disposeReviewerSessionAfterFailure(session, 'reviewer startup session disposal failed')
         throw error
       }
 
@@ -5686,6 +5682,17 @@ class AcpRuntime {
     }
   }
 
+  private disposeReviewerSessionAfterFailure(session: ActiveSession, logMessage: string): void {
+    try {
+      session.dispose()
+    } catch (cleanupError) {
+      safeLogError(logMessage, {
+        ...diagnosticErrorFields(cleanupError),
+        sessionId: session.sessionId
+      })
+    }
+  }
+
   // Disposes an ephemeral reviewer session and unregisters it from the auto-approve set. Safe to call
   // even if the session was never registered (e.g. it failed before start). Returns the gate rejection
   // count plus whether a bridged reviewer request actually hit its trusted session scope. The reads and
@@ -5693,18 +5700,52 @@ class AcpRuntime {
   disposeReviewerSession(
     session: import('@agentclientprotocol/sdk').ActiveSession
   ): ReviewerSessionDisposition {
+    const cleanupFailures: unknown[] = []
+    const runCleanup = <Result>(stage: string, cleanup: () => Result): Result | undefined => {
+      try {
+        return cleanup()
+      } catch (cleanupError) {
+        cleanupFailures.push(cleanupError)
+        safeLogError('reviewer session cleanup failed', {
+          ...diagnosticErrorFields(cleanupError),
+          sessionId: session.sessionId,
+          stage
+        })
+        return undefined
+      }
+    }
+
     const rejectedToolCalls = this.reviewerRejectedToolCalls.get(session.sessionId) ?? 0
     this.reviewerSessionIds.delete(session.sessionId)
-    const reviewerBridgeScoped = this.unregisterReviewerBridgeSession(session.sessionId)
+    const reviewerBridgeScoped = runCleanup('bridge', () =>
+      this.unregisterReviewerBridgeSession(session.sessionId)
+    )
     this.sessionMcpServerNames.delete(session.sessionId)
-    this.permissionContext.clearCorrelationsForSession(session.sessionId)
+    runCleanup('permission-correlations', () =>
+      this.permissionContext.clearCorrelationsForSession(session.sessionId)
+    )
     this.sessionFrameworks.delete(session.sessionId)
     this.reviewerRejectedToolCalls.delete(session.sessionId)
     const reviewerCwd = this.reviewerSessionDirectories.get(session.sessionId)
     this.reviewerSessionDirectories.delete(session.sessionId)
-    session.dispose()
+
+    let disposeFailed = false
+    let disposeFailure: unknown
+    try {
+      session.dispose()
+    } catch (error) {
+      disposeFailed = true
+      disposeFailure = error
+    }
+
     if (reviewerCwd) this.removeReviewerDirectory(reviewerCwd)
-    this.maybeApplyPendingProviderReconnect()
+    runCleanup('reconnect-retirement', () => this.maybeApplyPendingProviderReconnect())
+
+    // Session disposal is the primary lifecycle failure. Every authority/resource cleanup above still
+    // runs, and any secondary failure is reported without replacing the error the caller must handle.
+    if (disposeFailed) throw disposeFailure
+    if (cleanupFailures.length > 0) throw cleanupFailures[0]
+
     return { rejectedToolCalls, reviewerBridgeScoped }
   }
 

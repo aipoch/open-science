@@ -133,6 +133,55 @@ const incompleteReviewMessage = (rejectedToolCalls: number): string =>
 const REVIEWER_BRIDGE_SCOPE_ERROR =
   'Reviewer request was not constrained to the reviewer-only tool scope.'
 
+type ReviewerCleanupResult = {
+  rejectedToolCalls: number
+  reviewerBridgeScoped: boolean | undefined
+  runtimeCleanupFailed: boolean
+  runtimeCleanupError?: unknown
+}
+
+// Reviewer ACP disposal and MCP shutdown are independent cleanup operations. A throwing ACP adapter
+// must not strand the authenticated MCP server; callers decide whether the disposal error is primary
+// or secondary to an earlier reviewer failure after both cleanup attempts have completed.
+const cleanupReviewerResources = async (
+  acpRuntime: ReviewerAcpRuntime,
+  reviewerSession: ActiveSession | undefined,
+  mcpServer: ReviewerMcpServer | undefined
+): Promise<ReviewerCleanupResult> => {
+  let rejectedToolCalls = 0
+  let reviewerBridgeScoped: boolean | undefined
+  let runtimeCleanupFailed = false
+  let runtimeCleanupError: unknown
+
+  if (reviewerSession) {
+    try {
+      const disposition = acpRuntime.disposeReviewerSession(reviewerSession)
+      rejectedToolCalls = disposition.rejectedToolCalls
+      reviewerBridgeScoped = disposition.reviewerBridgeScoped
+    } catch (error) {
+      runtimeCleanupFailed = true
+      runtimeCleanupError = error
+    }
+  }
+
+  try {
+    await mcpServer?.stop()
+  } catch (error) {
+    // MCP stop was historically best-effort. Keep that contract while reporting the failure; a
+    // runtime cleanup error, when present, remains the cleanup error returned to orchestration.
+    log.error('reviewer MCP server cleanup failed', {
+      error: error instanceof Error ? error.message : String(error)
+    })
+  }
+
+  return {
+    rejectedToolCalls,
+    reviewerBridgeScoped,
+    runtimeCleanupFailed,
+    ...(runtimeCleanupError === undefined ? {} : { runtimeCleanupError })
+  }
+}
+
 // Streaming content deltas are emitted one-per-chunk as the reviewer writes its message/thinking, so
 // their count tracks how much it *says*, not how much it *does*. Counting them toward the loop cap
 // made a normally-verbose review trip the guard mid-stream before it could call submit_findings. Only
@@ -814,6 +863,8 @@ const runScopedReview = async (options: {
   let checksSubmitted = false
   let rejectedToolCalls = 0
   let reviewerBridgeScoped: boolean | undefined
+  let reviewerSessionFailed = false
+  let reviewerSessionError: unknown
   const capturedLog: ReviewerLogEntry[] = []
 
   try {
@@ -860,7 +911,33 @@ const runScopedReview = async (options: {
       { onUpdate: (entry) => capturedLog.push(entry) }
     )
   } catch (error) {
-    const errorMsg = error instanceof Error ? error.message : String(error)
+    reviewerSessionFailed = true
+    reviewerSessionError = error
+  } finally {
+    const cleanup = await cleanupReviewerResources(acpRuntime, reviewerSession, mcpServer)
+    rejectedToolCalls = cleanup.rejectedToolCalls
+    reviewerBridgeScoped = cleanup.reviewerBridgeScoped
+    if (cleanup.runtimeCleanupFailed) {
+      if (reviewerSessionFailed) {
+        log.error('scoped re-review session cleanup also failed', {
+          reviewId: review.id,
+          error:
+            cleanup.runtimeCleanupError instanceof Error
+              ? cleanup.runtimeCleanupError.message
+              : String(cleanup.runtimeCleanupError)
+        })
+      } else {
+        reviewerSessionFailed = true
+        reviewerSessionError = cleanup.runtimeCleanupError
+      }
+    }
+  }
+
+  if (reviewerSessionFailed) {
+    const errorMsg =
+      reviewerSessionError instanceof Error
+        ? reviewerSessionError.message
+        : String(reviewerSessionError)
     log.error('scoped re-review session failed', { reviewId: review.id, error: errorMsg })
 
     review = await runReviewMutation(runSessionMutation, () =>
@@ -873,14 +950,6 @@ const runScopedReview = async (options: {
     const errorWithChecks: ReviewWithChecks = { ...review, checks: [] }
     onReviewUpdate?.(errorWithChecks)
     return { review: errorWithChecks, submittedChecks: [] }
-  } finally {
-    // dispose returns the gate's rejection count and clears it atomically — no ordering hazard.
-    if (reviewerSession) {
-      const disposition = acpRuntime.disposeReviewerSession(reviewerSession)
-      rejectedToolCalls = disposition.rejectedToolCalls
-      reviewerBridgeScoped = disposition.reviewerBridgeScoped
-    }
-    await mcpServer?.stop().catch(() => undefined)
   }
 
   if (reviewerBridgeScoped === false) {
@@ -1035,6 +1104,8 @@ const runReviewWithSession = async (
   let checksSubmitted = false
   let rejectedToolCalls = 0
   let reviewerBridgeScoped: boolean | undefined
+  let reviewerSessionFailed = false
+  let reviewerSessionError: unknown
   const capturedLog: ReviewerLogEntry[] = []
 
   try {
@@ -1096,7 +1167,33 @@ const runReviewWithSession = async (
     )
     log.info('reviewer session stopped', { reviewId: review.id, stopReason })
   } catch (error) {
-    const errorMsg = error instanceof Error ? error.message : String(error)
+    reviewerSessionFailed = true
+    reviewerSessionError = error
+  } finally {
+    const cleanup = await cleanupReviewerResources(acpRuntime, reviewerSession, mcpServer)
+    rejectedToolCalls = cleanup.rejectedToolCalls
+    reviewerBridgeScoped = cleanup.reviewerBridgeScoped
+    if (cleanup.runtimeCleanupFailed) {
+      if (reviewerSessionFailed) {
+        log.error('reviewer session cleanup also failed', {
+          reviewId: review.id,
+          error:
+            cleanup.runtimeCleanupError instanceof Error
+              ? cleanup.runtimeCleanupError.message
+              : String(cleanup.runtimeCleanupError)
+        })
+      } else {
+        reviewerSessionFailed = true
+        reviewerSessionError = cleanup.runtimeCleanupError
+      }
+    }
+  }
+
+  if (reviewerSessionFailed) {
+    const errorMsg =
+      reviewerSessionError instanceof Error
+        ? reviewerSessionError.message
+        : String(reviewerSessionError)
     log.error('reviewer session failed', { reviewId: review.id, error: errorMsg })
 
     review = await runReviewMutation(runSessionMutation, () =>
@@ -1110,16 +1207,6 @@ const runReviewWithSession = async (
     onReviewUpdate?.(errorWithFindings)
 
     return errorWithFindings
-  } finally {
-    // Always dispose the reviewer session and shut down the servers. dispose returns the gate's
-    // rejection count and clears it atomically, so an incomplete review reports the real cause with
-    // no capture-before-dispose ordering to get wrong.
-    if (reviewerSession) {
-      const disposition = acpRuntime.disposeReviewerSession(reviewerSession)
-      rejectedToolCalls = disposition.rejectedToolCalls
-      reviewerBridgeScoped = disposition.reviewerBridgeScoped
-    }
-    await mcpServer?.stop().catch(() => undefined)
   }
 
   if (reviewerBridgeScoped === false) {

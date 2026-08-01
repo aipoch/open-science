@@ -6437,6 +6437,53 @@ describe('ACP runtime session management', () => {
     expect(mcpServerNamesMap(runtime).has('reviewer-session-1')).toBe(false)
   })
 
+  it('keeps setMode failure primary when reviewer startup disposal also fails', async () => {
+    errorLogSpy.mockClear()
+    const process = new FakeAgentProcess()
+    const fakeAgent = startFakeAgent(process, ['reviewer-session-1'], {
+      modes: createModes(['default'], 'unexpected-mode'),
+      rejectModeChange: true
+    })
+    const runtime = new AcpRuntime({
+      appVersion: '0.1.0',
+      defaultCwd: '/workspace',
+      spawnAgent: () => asAgentProcess(process)
+    })
+    const disposeSpy = vi
+      .spyOn(acp.ActiveSession.prototype, 'dispose')
+      .mockImplementationOnce(() => {
+        throw new Error('startup dispose failed')
+      })
+
+    try {
+      await expect(
+        runtime.buildReviewerSession({
+          cwd: '/workspace',
+          mcpServers: [
+            {
+              type: 'http',
+              name: 'open-science-reviewer',
+              url: 'http://127.0.0.1:1/mcp',
+              headers: []
+            }
+          ]
+        })
+      ).rejects.toMatchObject({
+        message: 'Internal error',
+        data: { details: 'set mode failed' }
+      })
+    } finally {
+      disposeSpy.mockRestore()
+    }
+
+    const reviewerCwd = fakeAgent.newSessions[0]?.cwd
+    await expect(stat(reviewerCwd!)).rejects.toMatchObject({ code: 'ENOENT' })
+    expect(errorLogSpy).toHaveBeenCalledWith('reviewer startup session disposal failed', {
+      errorCategory: 'error',
+      sessionId: 'reviewer-session-1'
+    })
+  })
+
   it('rejects tools from every MCP namespace except the dedicated reviewer server', async () => {
     const process = new FakeAgentProcess()
     let permissionResponse: unknown
@@ -9032,6 +9079,56 @@ describe('ACP runtime session management', () => {
       sessionId: 'reviewer-session-1'
     })
     expect(process.killed).toBe(true)
+    expect(releaseBridge).toHaveBeenCalledOnce()
+  })
+
+  it('completes reviewer cleanup before propagating a session disposal failure', async () => {
+    const process = new FakeAgentProcess()
+    const registerReviewerSession = vi.fn()
+    const unregisterReviewerSession = vi.fn(() => true)
+    const releaseBridge = vi.fn(async () => undefined)
+    const fakeAgent = startFakeAgent(process, ['reviewer-session-1'])
+    const runtime = new AcpRuntime({
+      appVersion: '0.1.0',
+      defaultCwd: '/workspace',
+      resolveBackend: () => ({
+        framework: { ...claudeCodeFramework, spawn: () => asAgentProcess(process) },
+        executablePath: '/bin/claude',
+        env: {},
+        responsesBridgeLease: {
+          selectSkills: vi.fn(async () => []),
+          registerReviewerSession,
+          unregisterReviewerSession,
+          release: releaseBridge
+        }
+      })
+    })
+    const { session } = await runtime.buildReviewerSession({
+      cwd: '/workspace',
+      mcpServers: [
+        {
+          type: 'http',
+          name: 'open-science-reviewer',
+          url: 'http://127.0.0.1:1/mcp',
+          headers: []
+        }
+      ]
+    })
+    const reviewerCwd = fakeAgent.newSessions[0]!.cwd
+
+    await runtime.requestProviderReconnect()
+    expect(process.killed).toBe(false)
+
+    vi.spyOn(session, 'dispose').mockImplementationOnce(() => {
+      throw new Error('reviewer dispose failed')
+    })
+
+    expect(() => runtime.disposeReviewerSession(session)).toThrow('reviewer dispose failed')
+
+    expect(unregisterReviewerSession).toHaveBeenCalledWith('reviewer-session-1')
+    expect(runtime.reviewerRejectedToolCallCount('reviewer-session-1')).toBe(0)
+    await expect(stat(reviewerCwd)).rejects.toMatchObject({ code: 'ENOENT' })
+    await vi.waitFor(() => expect(process.killed).toBe(true))
     expect(releaseBridge).toHaveBeenCalledOnce()
   })
 
