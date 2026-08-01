@@ -57,4 +57,42 @@ describe('SettingsService provider facade', () => {
     })
     expect(JSON.stringify(snapshot)).not.toContain('legacy-key')
   })
+
+  it('preserves the shared id suffix sequence across providers and runtime installs', async () => {
+    const now = vi.spyOn(Date, 'now').mockReturnValue(123)
+    const facade = new SettingsService({
+      repository,
+      storageRoot: dir,
+      installManagedClaudeImpl: async ({ installId }) => ({
+        result: { installId, ok: false, error: 'expected test failure' }
+      })
+    })
+
+    try {
+      const first = await facade.upsertProvider({
+        type: 'custom',
+        name: 'First',
+        baseUrl: 'https://first.example/v1',
+        model: 'first-model',
+        key: 'first-key',
+        apiEndpoints: ['openai']
+      })
+      expect(first.providers[0]?.id).toBe('p_123_1')
+
+      const install = await facade.installClaude({ source: 'managed' }, () => undefined)
+      expect(install.installId).toBe('install-123-2')
+
+      const second = await facade.upsertProvider({
+        type: 'custom',
+        name: 'Second',
+        baseUrl: 'https://second.example/v1',
+        model: 'second-model',
+        key: 'second-key',
+        apiEndpoints: ['openai']
+      })
+      expect(second.providers.find((provider) => provider.name === 'Second')?.id).toBe('p_123_3')
+    } finally {
+      now.mockRestore()
+    }
+  })
 })

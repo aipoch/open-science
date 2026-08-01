@@ -491,7 +491,9 @@ class SettingsService {
     string,
     NativeResponsesCompatibilityEntry
   >()
-  private installSequence = 0
+  // Provider and runtime-install IDs historically shared one monotonic suffix. Keep that observable
+  // ordering while the provider owner remains responsible for formatting provider IDs.
+  private settingsIdSequence = 0
 
   constructor(options: SettingsServiceOptions = {}) {
     this.storageRoot = options.storageRoot ?? resolveStorageRoot()
@@ -551,6 +553,7 @@ class SettingsService {
       storageRoot: this.storageRoot,
       userClaudeDir: this.userClaudeDir,
       userCodexDir,
+      allocateSettingsIdSequence: () => this.nextSettingsIdSequence(),
       resolveCodexExecutable: (adapterPath, nativePath) =>
         this.resolveCodexExecutable(adapterPath, nativePath),
       resolveCodexProxyEnvironment: this.resolveCodexProxyEnvironment,
@@ -1290,6 +1293,11 @@ class SettingsService {
     return result
   }
 
+  private nextSettingsIdSequence(): number {
+    this.settingsIdSequence += 1
+    return this.settingsIdSequence
+  }
+
   // Runs the one-click installer, then re-detects claude so a success immediately unblocks the gate.
   // The app-managed source downloads the native binary itself and persists its exact path; the npm and
   // official-script sources shell out (with an automatic npm fallback when the official script is
@@ -1298,8 +1306,7 @@ class SettingsService {
     request: InstallClaudeRequest,
     onEvent: (event: ClaudeInstallEvent) => void
   ): Promise<ClaudeInstallResult> {
-    this.installSequence += 1
-    const installId = `install-${Date.now()}-${this.installSequence}`
+    const installId = `install-${Date.now()}-${this.nextSettingsIdSequence()}`
 
     if (request.source === 'managed') {
       const registries =
@@ -1348,8 +1355,7 @@ class SettingsService {
     request: InstallOpencodeRequest,
     onEvent: (event: ClaudeInstallEvent) => void
   ): Promise<ClaudeInstallResult> {
-    this.installSequence += 1
-    const installId = `install-opencode-${Date.now()}-${this.installSequence}`
+    const installId = `install-opencode-${Date.now()}-${this.nextSettingsIdSequence()}`
 
     if (request.source === 'managed') {
       const outcome = await this.installManagedOpencodeImpl({
@@ -1383,8 +1389,7 @@ class SettingsService {
     request: InstallCodexRequest,
     onEvent: (event: ClaudeInstallEvent) => void
   ): Promise<ClaudeInstallResult> {
-    this.installSequence += 1
-    const installId = `install-codex-${Date.now()}-${this.installSequence}`
+    const installId = `install-codex-${Date.now()}-${this.nextSettingsIdSequence()}`
 
     if (request.source === 'managed') {
       const outcome = await this.installManagedCodexImpl({

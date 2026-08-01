@@ -45,6 +45,7 @@ describe('ProviderAccountsModule', () => {
   beforeEach(async () => {
     dir = await mkdtemp(join(tmpdir(), 'osci-provider-accounts-'))
     repository = new SettingsRepository(dir)
+    let settingsIdSequence = 0
     codexAuth = {
       getStatus: vi.fn(async (mode: CodexAuthStatus['mode'] = 'isolated') => ({
         mode,
@@ -84,6 +85,10 @@ describe('ProviderAccountsModule', () => {
       storageRoot: dir,
       userClaudeDir: join(dir, 'user-claude'),
       userCodexDir: join(dir, 'user-codex'),
+      allocateSettingsIdSequence: () => {
+        settingsIdSequence += 1
+        return settingsIdSequence
+      },
       resolveCodexExecutable: vi.fn(async () => '/codex-acp'),
       resolveCodexProxyEnvironment: vi.fn(async () => undefined),
       runClaudeSubscriptionProbe,
@@ -141,6 +146,7 @@ describe('ProviderAccountsModule', () => {
       })
 
     const first = module.validateProvider({ providerId: 'builtin-codex-subscription' })
+    await vi.waitFor(() => expect(codexAuth.getStatus).toHaveBeenCalledOnce())
     const second = await module.validateProvider({ providerId: 'builtin-codex-subscription' })
     firstStatus.resolve({
       mode: 'isolated',

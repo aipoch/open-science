@@ -87,6 +87,7 @@ type ProviderAccountsModuleOptions = {
   storageRoot: string
   userClaudeDir: string
   userCodexDir: string
+  allocateSettingsIdSequence: () => number
   resolveCodexExecutable: (
     adapterPath: string | undefined,
     nativePath: string | undefined
@@ -126,7 +127,6 @@ class ProviderAccountsModule {
   private claudeSharedAuthStatusGeneration = 0
   private claudeSharedAuthStatusPromise:
     { generation: number; promise: Promise<boolean> } | undefined
-  private providerSequence = 0
   private readonly providerValidationGenerations = new Map<string, number>()
 
   constructor(private readonly options: ProviderAccountsModuleOptions) {
@@ -1172,8 +1172,7 @@ class ProviderAccountsModule {
   }
 
   private createProviderId(): string {
-    this.providerSequence += 1
-    return `p_${Date.now()}_${this.providerSequence}`
+    return `p_${Date.now()}_${this.options.allocateSettingsIdSequence()}`
   }
 }
 
