@@ -7290,6 +7290,58 @@ describe('ACP runtime session management', () => {
     expect(sharedAgent.resumedSessions).toEqual([])
   })
 
+  it('returns detached snapshot collections without collapsing hidden event sequence slots', async () => {
+    const process = new FakeAgentProcess()
+    startFakeAgent(process, ['s1'])
+    const runtime = new AcpRuntime({
+      appVersion: '0.1.0',
+      defaultCwd: '/workspace',
+      spawnAgent: () => asAgentProcess(process)
+    })
+
+    await runtime.createSession({ cwd: '/workspace' })
+    const existingEventCount = runtime.getSnapshot().events.length
+    handleSessionUpdate(runtime, {
+      sessionId: 's1',
+      update: {
+        sessionUpdate: 'agent_message_chunk',
+        messageId: 'message-1',
+        content: { type: 'text', text: 'first' }
+      }
+    })
+    // Usage updates consume their normalized event id before being projected into context state. They
+    // intentionally remain absent from the visible event log, so the following message keeps the gap.
+    handleSessionUpdate(runtime, {
+      sessionId: 's1',
+      update: { sessionUpdate: 'usage_update', used: 12, size: 128_000 }
+    })
+    handleSessionUpdate(runtime, {
+      sessionId: 's1',
+      update: {
+        sessionUpdate: 'agent_message_chunk',
+        messageId: 'message-2',
+        content: { type: 'text', text: 'second' }
+      }
+    })
+
+    const snapshot = runtime.getSnapshot()
+    const messageEventIds = snapshot.events
+      .slice(existingEventCount)
+      .map(({ id }) => Number(id.replace('acp-event-', '')))
+    expect(messageEventIds).toHaveLength(2)
+    expect(messageEventIds[1] - messageEventIds[0]).toBe(2)
+    expect(snapshot.contextUsageBySession).toMatchObject({ s1: { used: 12, size: 128_000 } })
+
+    const retainedEventIds = snapshot.events.map(({ id }) => id)
+    snapshot.events.length = 0
+    delete snapshot.contextUsageBySession.s1
+
+    expect(runtime.getSnapshot().events.map(({ id }) => id)).toEqual(retainedEventIds)
+    expect(runtime.getSnapshot().contextUsageBySession).toMatchObject({
+      s1: { used: 12, size: 128_000 }
+    })
+  })
+
   it('recombines Codex uncached input and cache read for context usage', async () => {
     const process = new FakeAgentProcess()
     const usageSent = createDeferred()
