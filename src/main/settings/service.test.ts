@@ -3819,6 +3819,43 @@ describe('SettingsService: skills', () => {
     }
   })
 
+  it('builds the Codex skill catalog from one settings snapshot', async () => {
+    const skillsRoot = join(storageRoot, 'codex', 'skills')
+    await Promise.all(
+      ['os-demo', 'mcp-pubmed'].map(async (directory) => {
+        const skillDir = join(skillsRoot, directory)
+        await mkdir(skillDir, { recursive: true })
+        await writeFile(join(skillDir, 'SKILL.md'), `# ${directory}`, 'utf8')
+      })
+    )
+    const service = new SettingsService({
+      repository,
+      storageRoot,
+      skillRegistry: new SkillRegistry(await seedBundle())
+    })
+    const empty = await repository.getSettings()
+    const getSettings = vi
+      .spyOn(repository, 'getSettings')
+      .mockResolvedValueOnce({
+        ...empty,
+        connectors: {
+          enabledIds: [],
+          autoAllowIds: [],
+          disabledConnectorIds: ['pubmed']
+        }
+      })
+      .mockResolvedValueOnce({
+        ...empty,
+        disabledSkillIds: ['demo'],
+        connectors: { enabledIds: [], autoAllowIds: [] }
+      })
+
+    const catalog = await service.codexSkillCatalog(join(storageRoot, 'codex'))
+
+    expect(catalog.map(({ name }) => name)).toEqual(['demo'])
+    expect(getSettings).toHaveBeenCalledTimes(1)
+  })
+
   it('migrates legacy shared Codex skills into the app-owned subscription home only', async () => {
     const adapterPath = join(storageRoot, 'bin', 'codex-acp')
     await mkdir(dirname(adapterPath), { recursive: true })

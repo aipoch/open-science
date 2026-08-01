@@ -38,11 +38,15 @@ import { readSkillFile } from '../skills/skill-files'
 import { SAFE_SLUG, UserSkillRepository } from '../skills/user-skill-repository'
 import { provisionAppClaudeConfigDir } from './claude-config-provision'
 import type { SettingsRepository } from './repository'
+import type { StoredSettings } from './types'
 
 type SkillCatalogEntry = { name: string; description: string; path: string }
 type AdditionalSkillCatalogEntry = Omit<SkillCatalogEntry, 'path'> & { directory: string }
 type AdditionalSkillCatalogEntries =
-  readonly AdditionalSkillCatalogEntry[] | (() => Promise<readonly AdditionalSkillCatalogEntry[]>)
+  | readonly AdditionalSkillCatalogEntry[]
+  | ((
+      settings: StoredSettings
+    ) => readonly AdditionalSkillCatalogEntry[] | Promise<readonly AdditionalSkillCatalogEntry[]>)
 type AgentHomeSkillDir = { source: AgentHomeSkillSource; dir: string }
 type DiscoveredAgentHomeSkill = {
   skill: AgentHomeSkillView
@@ -148,11 +152,14 @@ class SkillCatalogModule {
     const realRoot = await realpath(skillsRoot).catch(() => undefined)
     if (!realRoot) return []
     const rootWithSep = realRoot.endsWith(sep) ? realRoot : `${realRoot}${sep}`
-    const [skills, settings, extensions] = await Promise.all([
+    const [skills, settings] = await Promise.all([
       this.catalog(),
-      this.options.repository.getSettings(),
-      typeof additionalEntries === 'function' ? additionalEntries() : additionalEntries
+      this.options.repository.getSettings()
     ])
+    const extensions =
+      typeof additionalEntries === 'function'
+        ? await additionalEntries(settings)
+        : additionalEntries
     const disabled = new Set(settings.disabledSkillIds ?? [])
     const enabled = [
       ...skills

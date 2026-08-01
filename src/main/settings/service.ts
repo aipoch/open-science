@@ -1031,8 +1031,7 @@ class SettingsService {
   async codexSkillCatalog(
     codexHome: string | undefined
   ): Promise<Array<{ name: string; description: string; path: string }>> {
-    return this.skills.codexSkillCatalog(codexHome, async () => {
-      const settings = await this.repository.getSettings()
+    return this.skills.codexSkillCatalog(codexHome, (settings) => {
       return this.enabledConnectorIds(settings.connectors).flatMap((id) => {
         const connector = CONNECTOR_CATALOG.find((candidate) => candidate.id === id)
         return connector
