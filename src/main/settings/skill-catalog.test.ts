@@ -1,4 +1,4 @@
-import { mkdir, mkdtemp, rm, writeFile } from 'node:fs/promises'
+import { chmod, mkdir, mkdtemp, readFile, rm, writeFile } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 
@@ -50,7 +50,26 @@ describe('SkillCatalogModule', () => {
       expect.objectContaining({ id: 'demo', description: 'A demo skill.', enabled: true })
     ])
     expect((await catalog.setSkillEnabled({ id: 'demo', enabled: false }))[0].enabled).toBe(false)
+    expect(await catalog.listSpecialistSkillCatalog()).toEqual([
+      { id: 'demo', frameworkName: 'demo', displayName: 'Demo' }
+    ])
     expect((await catalog.getSkillDetail('demo')).body).toContain('demo body')
+
+    const runtimeRoot = await mkdtemp(join(tmpdir(), 'settings-skill-runtime-'))
+    roots.push(runtimeRoot)
+    await catalog.materializeSkills(runtimeRoot, ['demo'])
+    await expect(readFile(join(runtimeRoot, 'skills', 'os-demo', 'SKILL.md'), 'utf8')).rejects.toThrow()
+    await catalog.materializeSkills(runtimeRoot, ['demo'], new Set(['demo']))
+    await expect(
+      readFile(join(runtimeRoot, 'skills', 'os-demo', 'SKILL.md'), 'utf8')
+    ).resolves.toContain('demo body')
+    expect((await catalog.listSkills())[0].enabled).toBe(false)
+    await chmod(join(runtimeRoot, 'skills', 'os-demo'), 0o755)
+    await expect(
+      catalog.codexSkillCatalog(join(tmpdir(), 'untrusted-codex-home'), async () => {
+        throw new Error('untrusted homes must not resolve catalog extensions')
+      })
+    ).resolves.toEqual([])
     expect(
       (
         await catalog.createSkill({ name: 'My Skill', description: 'Mine.', body: '# Mine' })
@@ -112,6 +131,24 @@ describe('SkillCatalogModule', () => {
       ).results
     ).toEqual([
       { source: 'agents', slug: 'shared', status: 'imported', id: 'imported-shared' }
+    ])
+
+    const preview = await catalog.previewAgentHomeSkill({ source: 'claude', slug: 'claude-only' })
+    expect(preview.sourceLabel).toBe('~/.claude/skills/claude-only')
+    expect(JSON.stringify(preview)).not.toContain(userClaudeDir)
+
+    expect(
+      (
+        await catalog.importAgentHomeSkills({
+          skills: [{ source: 'agents', slug: '../escape' }]
+        })
+      ).results
+    ).toEqual([
+      {
+        source: 'agents',
+        slug: '../escape',
+        error: 'Refusing to import installed skill with unsafe slug: ../escape'
+      }
     ])
   })
 })
