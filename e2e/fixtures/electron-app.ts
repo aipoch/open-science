@@ -106,7 +106,7 @@ const openMainWindow = async (
   rendererFailures: RendererFailureGate
 ): Promise<Page> => {
   const page = await application.firstWindow()
-  rendererFailures.observe(page)
+  await rendererFailures.observe(page)
   await page.waitForLoadState('domcontentloaded')
   return page
 }
