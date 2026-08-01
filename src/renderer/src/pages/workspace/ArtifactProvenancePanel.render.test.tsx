@@ -665,12 +665,13 @@ describe('ArtifactProvenancePanel', () => {
     expect(workspaceMessageItemSpy).toHaveBeenCalledTimes(2)
     expect(workspaceMessageItemSpy).toHaveBeenLastCalledWith(
       expect.objectContaining({
-        message: expect.objectContaining({ id: 'agent-1', completedAt: 2 }),
+        message: expect.objectContaining({ id: 'agent-1' }),
         artifacts: [],
         showUserActions: false,
         contentPaddingClassName: 'px-0 md:px-0'
       })
     )
+    expect(workspaceMessageItemSpy.mock.lastCall?.[0].message).not.toHaveProperty('completedAt')
     expect(workspaceActivityGroupSpy).toHaveBeenCalledWith(
       expect.objectContaining({
         group: expect.objectContaining({

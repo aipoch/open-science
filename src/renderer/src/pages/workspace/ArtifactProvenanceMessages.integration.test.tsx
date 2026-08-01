@@ -89,4 +89,37 @@ describe('ProvenanceMessagesTimeline integration', () => {
       expect(row.classList.contains('md:px-6')).toBe(false)
     }
   })
+
+  it('does not fabricate an agent completion time from its creation time', async () => {
+    const snapshot: AvailableMessages = {
+      state: 'available',
+      items: [
+        {
+          id: 'agent-1',
+          role: 'agent',
+          content: 'The chart is ready.',
+          createdAt: 1
+        }
+      ],
+      activities: [],
+      activityGroups: []
+    }
+    container = document.createElement('div')
+    document.body.appendChild(container)
+    root = createRoot(container)
+
+    await act(async () => {
+      root?.render(
+        <ProvenanceMessagesTimeline
+          snapshot={snapshot}
+          projectId="project-1"
+          sessionId="session-1"
+        />
+      )
+    })
+
+    expect(container.textContent).toContain('The chart is ready.')
+    expect(container.textContent).not.toContain('Completed')
+    expect(container.querySelector('time')).toBeNull()
+  })
 })
