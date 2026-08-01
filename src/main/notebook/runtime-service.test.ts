@@ -16,7 +16,6 @@ import {
   resolveShellInvocation,
   terminateShellOnTimeout
 } from './runtime-service'
-import { NotebookKernelExecutor } from './kernel-executor'
 import { effectiveMirrorAsync, resetAutoMirrorCache } from './mirror-probe'
 import { NotebookRunRepository, getRuntimeRoot } from './repository'
 import {
@@ -776,9 +775,9 @@ describe('notebook runtime service', () => {
       language: 'python'
     })
 
-    await expect(
-      service.shutdown({ sessionId: 'session-1', workspaceCwd: root })
-    ).rejects.toBe(shutdownError)
+    await expect(service.shutdown({ sessionId: 'session-1', workspaceCwd: root })).rejects.toBe(
+      shutdownError
+    )
     await expect(
       service.execute({
         sessionId: 'session-1',
@@ -3510,7 +3509,7 @@ describe('notebook runtime service', () => {
       })
     })
 
-    it('builds a NotebookKernelExecutor by default (no executorFactory injected)', async () => {
+    it('creates and shuts down a session through the default executor', async () => {
       const root = await createStorageRoot()
       const service = new NotebookRuntimeService({
         configRoot: root,
@@ -3519,16 +3518,12 @@ describe('notebook runtime service', () => {
         repository: new NotebookRunRepository(root)
       })
 
-      // beginCodeCell creates the runtime session (and thus the default executor) without ever
-      // spawning a loop -- spawning is deferred to the first execute(). Reach into the private
-      // session map to prove the default backend is the exec-loop executor, python and r as two
-      // independent persistent processes rather than a single restart-on-language-switch kernel.
-      await service.beginCodeCell({ sessionId: 'session-1', workspaceCwd: root })
-      const executor = (
-        service as unknown as { sessions: Map<string, { executor: unknown }> }
-      ).sessions.get('session-1')?.executor
+      const cell = await service.beginCodeCell({ sessionId: 'session-1', workspaceCwd: root })
 
-      expect(executor).toBeInstanceOf(NotebookKernelExecutor)
+      expect(cell).toMatchObject({ sessionId: 'session-1', status: 'receiving-code' })
+      await expect(
+        service.shutdown({ sessionId: 'session-1', workspaceCwd: root })
+      ).resolves.toEqual({ sessionId: 'session-1', status: 'shutdown' })
     })
   })
 
