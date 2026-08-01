@@ -19,14 +19,13 @@ import { ArtifactRunRegistry } from './artifacts/run-registry'
 import { createComputeIpcModule } from './compute/ipc'
 import { attachEnabledComputeHosts } from './compute/enabled-hosts-registry'
 import { createComputeJobRuntime } from './compute/job-runtime'
-import { waitForInitialConnectorRefresh, wireConnectorReload } from './connector-reload'
+import { waitForInitialConnectorRefresh } from './connector-reload'
 import { ApprovalBroker } from './connectors/approval-broker'
-import { toCustomMcpConfig, selectEnabledCustomServers } from './connectors/custom-mcp-bootstrap'
 import { McpClientManager } from './connectors/mcp-client-manager'
 import { createMoleculePreviewHandler } from './connectors/molecule-preview'
 import { ALL_CONNECTOR_IDS } from './connectors/registry'
+import { ConnectorRuntimeSettingsProjection } from './connectors/runtime-settings-projection'
 import { ConnectorService } from './connectors/service'
-import { syncConnectorSkillDocs, syncCustomServerSkillDocs } from './connectors/provision'
 import { registerFileSaveHandlers } from './file-save'
 import { createSessionArtifactFileResolver } from './session-artifact-file-resolver'
 import { registerCliInstallIpcHandlers } from './cli-install/ipc'
@@ -109,7 +108,9 @@ import { type SessionPersistenceBackend } from './session-persistence/ipc'
 import { tryDecryptKey } from './settings/crypto'
 import { registerSettingsIpcHandlers } from './settings/ipc'
 import { getAppClaudeConfigDir } from './settings/provider-env'
-import { createDefaultSettingsService, type SettingsService } from './settings/service'
+import { createDefaultSettingsService } from './settings/service'
+import type { WindowSettingsCapabilities } from './settings/service-capabilities'
+import { createSettingsWorkflows } from './settings/workflows'
 import { createProfileService } from './specialist/service'
 import { AgentsService } from './agents/agents-service'
 import { PendingSessionSpecialistBindings } from './agents/pending-session-specialist-bindings'
@@ -117,7 +118,6 @@ import { passthroughApprovalGateway } from './agents/passthrough-approval-gatewa
 import { registerSpecialistIpcHandlers } from './specialist/ipc'
 import { SessionBindingService } from './specialist/session-binding'
 import { SPECIALIST_IPC } from '../shared/specialist'
-import type { StoredConnectors } from './settings/types'
 import type { AppIconPreview, AppIconVariant, RespondApprovalRequest } from '../shared/settings'
 import { registerStorageIpcHandlers } from './storage/ipc'
 import { normalizeLegacyDataPaths } from './storage/normalize-legacy-paths'
@@ -162,10 +162,7 @@ export type ApplicationRuntimeInterfaces = {
     TaskNotificationService,
     'setActivationHandler' | 'setAttentionHandlers' | 'setPendingOpenSession' | 'setUnreadHandler'
   >
-  settingsService: Pick<
-    SettingsService,
-    'getAppIconVariant' | 'getClosePreference' | 'setClosePreference'
-  >
+  settingsService: WindowSettingsCapabilities
   sessionDeletionCapability: Pick<SessionPersistenceCoordinator, 'setSessionDeletionHandlers'>
   detectActiveSessions: () => ReturnType<typeof detectActiveSessions>
 }
@@ -187,38 +184,6 @@ const previewArgs = (args: Record<string, unknown>): string => {
     json = '{…}'
   }
   return json.length > 300 ? `${json.slice(0, 300)}…` : json
-}
-
-// Reads the connectors settings block and refreshes the mcp-<connector>/mcp-<server> skill docs to
-// match — both the bundled catalog and any enabled custom MCP servers (stdio + remote). Called at
-// startup;
-// a future connectors-settings mutation (Plan 2/5 UI) should call this again so enable/disable
-// (bundled or custom) takes effect without an app restart. Never throws — a bad read or a
-// misconfigured/unreachable custom server (e.g. bad command) is logged and leaves the previous
-// snapshot and on-disk docs in place rather than breaking bootstrap.
-const refreshConnectorSkillDocs = async (
-  settingsService: SettingsService,
-  storageRoot: string,
-  mcpClientManager: McpClientManager,
-  onSnapshot: (connectors: StoredConnectors | undefined) => void
-): Promise<void> => {
-  try {
-    const connectors = await settingsService.getConnectors()
-
-    onSnapshot(connectors)
-    const skillsDir = join(getAppClaudeConfigDir(storageRoot), 'skills')
-
-    // Opt-out model: every bundled connector is enabled unless explicitly disabled.
-    const disabled = new Set(connectors?.disabledConnectorIds ?? [])
-    const enabledIds = ALL_CONNECTOR_IDS.filter((id) => !disabled.has(id))
-
-    await syncConnectorSkillDocs(skillsDir, enabledIds)
-    await syncCustomServerSkillDocs(skillsDir, selectEnabledCustomServers(connectors), (server) =>
-      mcpClientManager.listTools(toCustomMcpConfig(server))
-    )
-  } catch (error) {
-    console.error('Failed to sync connector skill docs:', error)
-  }
 }
 
 // Constructs application-owned modules and their narrow Electron adapter interfaces. The factory does
@@ -466,9 +431,6 @@ const createApplicationModules = async (
     }
   )
 
-  // Read fresh on every call so a future connectors-settings mutation (Plan 2 UI) only needs to call
-  // refreshConnectorSkillDocs again to take effect, without reconstructing the connector service.
-  let connectorsSnapshot: StoredConnectors | undefined
   // Resolved lazily per connector call so dispatch always sees the latest persisted Specialist profile.
   const profileService = createProfileService(resolveStorageRoot())
   // Per-session specialist binding store. Shared between the SET_SESSION_SPECIALIST barrier
@@ -525,6 +487,11 @@ const createApplicationModules = async (
       dispose: () => manager.closeAll()
     }
   })
+  const connectorRuntimeSettings = new ConnectorRuntimeSettingsProjection({
+    readConnectors: () => settingsService.getConnectors(),
+    skillsDir: join(getAppClaudeConfigDir(resolveStorageRoot()), 'skills'),
+    mcpClientManager
+  })
   // Bridges un-trusted connector calls to the renderer approval card. A tool call that isn't
   // pre-allowed or skip-approved is held here until the user decides (or it auto-denies on timeout).
   const approvalBroker = new ApprovalBroker({
@@ -567,7 +534,7 @@ const createApplicationModules = async (
     }
   })
   const connectorService = new ConnectorService({
-    getConnectors: () => connectorsSnapshot,
+    getConnectors: () => connectorRuntimeSettings.current(),
     getConnectorsFresh: () => settingsService.getConnectors(),
     resolveApiKey: (ref) => tryDecryptKey(ref),
     mcpClientManager,
@@ -733,14 +700,7 @@ const createApplicationModules = async (
   })
 
   const initialConnectorSkillsReady = waitForInitialConnectorRefresh(
-    refreshConnectorSkillDocs(
-      settingsService,
-      resolveStorageRoot(),
-      mcpClientManager,
-      (connectors) => {
-        connectorsSnapshot = connectors
-      }
-    ),
+    connectorRuntimeSettings.refresh(),
     {
       // If custom MCP discovery outlives the startup barrier, the first agent may already have
       // materialized the old connector docs. Rotate it once the late refresh settles so the next
@@ -756,9 +716,11 @@ const createApplicationModules = async (
     .then(async () => {
       const hosts = await hostRepository.list()
       await reconcilePermissionGrantOwners(permissionGrantRegistry, {
-        ...(connectorsSnapshot
+        ...(connectorRuntimeSettings.current()
           ? {
-              customServerIds: connectorsSnapshot.customMcpServers?.map((server) => server.id) ?? []
+              customServerIds:
+                connectorRuntimeSettings.current()?.customMcpServers?.map((server) => server.id) ??
+                []
             }
           : {}),
         computeProviderIds: hosts.map((host) => host.providerId)
@@ -853,47 +815,23 @@ const createApplicationModules = async (
   let invalidatePermissionProjection = (): void => {
     broadcastToRenderers('permissions:changed', { revision: Date.now() })
   }
+  const settingsWorkflows = createSettingsWorkflows(settingsService, {
+    requestProviderReconnect: () => void runtime.requestProviderReconnect(),
+    requestAgentFrameworkSwitch: () => void runtime.requestAgentFrameworkSwitch(),
+    applyReasoningEffort: (effort) => runtime.applyReasoningEffortChange(effort),
+    requestSkillsReload: () => void runtime.requestSkillsReload(),
+    invalidatePermissionProjection: () => invalidatePermissionProjection(),
+    refreshConnectorSkillDocs: () => connectorRuntimeSettings.refresh(),
+    pruneCustomServerPermissions: (serverId) =>
+      permissionGrantRegistry.prune({ kind: 'mcp_server', serverId }).then(() => undefined),
+    beginCustomServerSecurityChange: (serverId) =>
+      connectorService.beginCustomServerSecurityChange(serverId),
+    applyAppIconVariant: onAppIconVariantChanged
+  })
   declareElectronAdapter('settings', () =>
     registerSettingsIpcHandlers({
       service: settingsService,
-      onActiveProviderChanged: () => void runtime.requestProviderReconnect(),
-      onAgentFrameworkChanged: () => void runtime.requestAgentFrameworkSwitch(),
-      onReasoningEffortChanged: (effort) => runtime.applyReasoningEffortChange(effort),
-      onSkillsChanged: () => void runtime.requestSkillsReload(),
-      // Re-sync bundled + custom skill docs and refresh the in-memory snapshot the connector
-      // service reads, then request a skills reload. The reload respawns the agent on next idle so a
-      // non-Claude framework (Codex, opencode) — whose connector docs are materialized into its own
-      // home at spawn — picks up the change too, not just the Claude config dir.
-      onConnectorsChanged: () => {
-        // Connector policy shadows or reactivates grants without mutating them. Republish the shared
-        // projection immediately so both Settings surfaces describe the same effective decision.
-        invalidatePermissionProjection()
-        void wireConnectorReload(
-          () =>
-            refreshConnectorSkillDocs(
-              settingsService,
-              resolveStorageRoot(),
-              mcpClientManager,
-              (connectors) => {
-                connectorsSnapshot = connectors
-              }
-            ),
-          () => void runtime.requestSkillsReload()
-        )
-      },
-      onCustomServerRemoved: (serverId) =>
-        permissionGrantRegistry.prune({ kind: 'mcp_server', serverId }).then(() => undefined),
-      onCustomServerSecurityChanged: async (serverId) => {
-        const guard = connectorService.beginCustomServerSecurityChange(serverId)
-        try {
-          await permissionGrantRegistry.prune({ kind: 'mcp_server', serverId })
-          return guard
-        } catch (error) {
-          guard.rollback()
-          throw error
-        }
-      },
-      onAppIconVariantChanged,
+      workflows: settingsWorkflows,
       listAppIconPreviews
     })
   )

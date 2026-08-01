@@ -45,7 +45,7 @@ import {
   type NotebookRuntimeServiceOptions
 } from '../notebook/runtime-service'
 import { resolveConfigRoot, resolveDataRoot } from '../storage-root'
-import type { SettingsService } from '../settings/service'
+import type { AcpSettingsCapabilities } from '../settings/service-capabilities'
 import type { UploadRepository } from '../uploads/repository'
 import type { PermissionGrantRegistry } from '../permission-grants/registry'
 import { projectRegistrySessionGrants } from './permission-broker'
@@ -84,7 +84,7 @@ type AcpIpcOptions = AcpIpcArtifacts & {
     paths: string[]
   ) => Promise<() => void>
   // Drives the agent spawn env from the active provider so switching takes effect on reconnect.
-  settingsService: SettingsService
+  settingsService: AcpSettingsCapabilities
   permissionGrantRegistry?: PermissionGrantRegistry
   initializationBarrier?: Promise<unknown>
   // Observes prompt starts and terminal turn events for desktop notifications. Optional so tests
