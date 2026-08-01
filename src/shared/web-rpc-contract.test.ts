@@ -30,6 +30,67 @@ describe('Web RPC contract', () => {
     expect(isWebRpcEventChannel('test:internal')).toBe(false)
   })
 
+  it('pins the local Web Specialist, Permission, and Compute surface asymmetry', () => {
+    const invokePaths = Object.keys(WEB_INVOKE_CHANNELS)
+    const eventPaths = Object.keys(WEB_EVENT_CHANNELS)
+
+    expect(invokePaths.filter((path) => path.startsWith('specialist.'))).toEqual([])
+    expect(eventPaths.filter((path) => path.startsWith('specialist.'))).toEqual([])
+
+    expect(invokePaths.filter((path) => path.startsWith('permissions.'))).toEqual([
+      'permissions.extendUndo',
+      'permissions.list',
+      'permissions.restore',
+      'permissions.revoke'
+    ])
+    expect(
+      [
+        WEB_INVOKE_CHANNELS['acp.respondToPermission'],
+        WEB_INVOKE_CHANNELS['acp.revokePermissionGrant'],
+        WEB_INVOKE_CHANNELS['acp.setPermissionProfile'],
+        ...invokePaths
+          .filter((path) => path.startsWith('permissions.'))
+          .map((path) => WEB_INVOKE_CHANNELS[path as keyof typeof WEB_INVOKE_CHANNELS])
+      ].every(isWebRpcChannel)
+    ).toBe(true)
+    expect(WEB_EVENT_CHANNELS['acp.onPermissionRequest']).toBe('acp:permission-request')
+    expect(WEB_EVENT_CHANNELS['permissions.onChanged']).toBe('permissions:changed')
+
+    expect(invokePaths.filter((path) => path.startsWith('compute.'))).toEqual([
+      'compute.bookmarksGet',
+      'compute.bookmarksSet',
+      'compute.concurrencySet',
+      'compute.create',
+      'compute.delete',
+      'compute.detailsGet',
+      'compute.detailsSave',
+      'compute.download',
+      'compute.enabledHostsGet',
+      'compute.enabledHostsSet',
+      'compute.get',
+      'compute.jobsList',
+      'compute.jobsMarkConsumed',
+      'compute.jobsPendingNotification',
+      'compute.list',
+      'compute.listDir',
+      'compute.probe',
+      'compute.respondApproval',
+      'compute.revealInFolder',
+      'compute.scratchSet',
+      'compute.sshConfigAliases'
+    ])
+    expect(
+      invokePaths
+        .filter((path) => path.startsWith('compute.'))
+        .map((path) => WEB_INVOKE_CHANNELS[path as keyof typeof WEB_INVOKE_CHANNELS])
+        .every(isWebRpcChannel)
+    ).toBe(true)
+    expect(eventPaths.filter((path) => path.startsWith('compute.'))).toEqual([
+      'compute.onApprovalRequest',
+      'compute.onJobUpdated'
+    ])
+  })
+
   it('validates versioned request and response envelopes at runtime', () => {
     expect(
       webRpcRequestSchema.safeParse({

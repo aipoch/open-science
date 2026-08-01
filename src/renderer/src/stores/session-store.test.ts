@@ -348,7 +348,8 @@ describe('session store', () => {
     useSessionStore.getState().finishRun('transport-session-1', {
       inputTokens: 31,
       cacheTokens: 15,
-      outputTokens: 14
+      outputTokens: 14,
+      turnCount: 3
     })
 
     const session = useSessionStore.getState().sessions[0]
@@ -363,18 +364,18 @@ describe('session store', () => {
       responseToMessageId: result?.messageId,
       eventIds: ['event-1', 'event-2'],
       status: 'complete',
-      turnUsage: { inputTokens: 31, cacheTokens: 15, outputTokens: 14 }
+      turnUsage: { inputTokens: 31, cacheTokens: 15, outputTokens: 14, turnCount: 3 }
     })
     expect(agentMessage.completedAt).toBe(session.updatedAt)
     expect(
       session.conversationGraph?.messages.find((message) => message.id === agentMessage.id)
     ).toMatchObject({
       completedAt: agentMessage.completedAt,
-      turnUsage: { inputTokens: 31, cacheTokens: 15, outputTokens: 14 }
+      turnUsage: { inputTokens: 31, cacheTokens: 15, outputTokens: 14, turnCount: 3 }
     })
     expect(toPersistedSession(session).messages[1]).toMatchObject({
       completedAt: agentMessage.completedAt,
-      turnUsage: { inputTokens: 31, cacheTokens: 15, outputTokens: 14 }
+      turnUsage: { inputTokens: 31, cacheTokens: 15, outputTokens: 14, turnCount: 3 }
     })
     expect(session.status).toBe('idle')
     expect(session.activeRun).toBeUndefined()
@@ -1722,7 +1723,37 @@ describe('session store', () => {
     })
 
     it('markResumed clears the interrupted state so the composer is usable', () => {
-      hydrateInterrupted()
+      hydrateInterrupted({
+        messages: [
+          {
+            id: 'prompt-1',
+            role: 'user',
+            content: 'Continue the analysis',
+            status: 'complete',
+            eventIds: [],
+            createdAt: 10,
+            completedAt: 11,
+            updatedAt: 11
+          },
+          {
+            id: 'response-1',
+            role: 'agent',
+            content: 'The first turn completed.',
+            status: 'complete',
+            responseToMessageId: 'prompt-1',
+            eventIds: [],
+            turnUsage: {
+              inputTokens: 31,
+              cacheTokens: 15,
+              outputTokens: 14,
+              turnCount: 3
+            },
+            createdAt: 12,
+            completedAt: 13,
+            updatedAt: 13
+          }
+        ]
+      })
 
       useSessionStore.getState().markResumed('resumable-session', 'codex', 'codex:codex-isolated')
       const session = useSessionStore.getState().sessions[0]
@@ -1732,8 +1763,18 @@ describe('session store', () => {
       expect(session.status).toBe('idle')
       expect(session.agentFrameworkId).toBe('codex')
       expect(session.agentBackendId).toBe('codex:codex-isolated')
+      expect(session.messages[1]).toMatchObject({
+        responseToMessageId: 'prompt-1',
+        completedAt: 13,
+        turnUsage: { inputTokens: 31, cacheTokens: 15, outputTokens: 14, turnCount: 3 }
+      })
       expect(toPersistedSession(session).agentFrameworkId).toBe('codex')
       expect(toPersistedSession(session).agentBackendId).toBe('codex:codex-isolated')
+      expect(toPersistedSession(session).messages[1]).toMatchObject({
+        responseToMessageId: 'prompt-1',
+        completedAt: 13,
+        turnUsage: { inputTokens: 31, cacheTokens: 15, outputTokens: 14, turnCount: 3 }
+      })
     })
 
     it('markDisconnected flags a live drop and settles the half-streamed reply, keeping the user turn', () => {
