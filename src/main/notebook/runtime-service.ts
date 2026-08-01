@@ -3383,8 +3383,10 @@ class NotebookRuntimeService {
     // no recovery work behind once this terminal operation resolves.
     const recoveryDisposal = this.recoveryCoordinator.dispose()
     const shutdown = this.shutdownAll()
-    const [result] = await Promise.all([shutdown, recoveryDisposal])
-    return result
+    const [shutdownResult, recoveryResult] = await Promise.allSettled([shutdown, recoveryDisposal])
+    if (recoveryResult.status === 'rejected') throw recoveryResult.reason
+    if (shutdownResult.status === 'rejected') throw shutdownResult.reason
+    return shutdownResult.value
   }
 
   // Lists sessions with a cell mid-execution, for the pre-migration active-session warning.
