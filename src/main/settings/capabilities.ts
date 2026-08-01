@@ -49,30 +49,22 @@ export type NotebookRuntimeSettingsSnapshot = {
 
 export interface NotebookRuntimeSettings {
   getSnapshot(language: NotebookLanguage): Promise<NotebookRuntimeSettingsSnapshot>
+  getPackageMirror(): Promise<PackageMirror>
   setRuntimeSelection(
     language: NotebookLanguage,
     selection: RuntimeSelection | null
-  ): Promise<NotebookRuntimeSettingsSnapshot>
+  ): Promise<RuntimeSelection | undefined>
   setEnvironmentEnabled(
     language: NotebookLanguage,
     envId: string,
     enabled: boolean
-  ): Promise<NotebookRuntimeSettingsSnapshot>
+  ): Promise<RuntimeEnablement>
   setInstallAuthorized(
     language: NotebookLanguage,
     envId: string,
     authorized: boolean
-  ): Promise<NotebookRuntimeSettingsSnapshot>
-  addManualInterpreter(
-    language: NotebookLanguage,
-    path: string
-  ): Promise<NotebookRuntimeSettingsSnapshot>
-  removeManualInterpreter(
-    language: NotebookLanguage,
-    path: string
-  ): Promise<NotebookRuntimeSettingsSnapshot>
-  setPackageMirror(
-    request: SetPackageMirrorRequest,
-    language?: NotebookLanguage
-  ): Promise<NotebookRuntimeSettingsSnapshot>
+  ): Promise<RuntimeEnablement>
+  addManualInterpreter(language: NotebookLanguage, path: string): Promise<string[]>
+  removeManualInterpreter(language: NotebookLanguage, path: string): Promise<string[]>
+  setPackageMirror(request: SetPackageMirrorRequest): Promise<PackageMirror>
 }

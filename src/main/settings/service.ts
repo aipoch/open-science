@@ -199,6 +199,7 @@ import { NativeResponsesCompatibilityProxy } from './native-responses-compatibil
 import { SettingsRepository } from './repository'
 import { sanitizeCustomMcpServer } from './repository'
 import { SettingsPreferencesModule, toSettingsPreferencesSnapshot } from './preferences'
+import { NotebookRuntimeSettingsModule } from './notebook-runtime-settings'
 import { CONNECTOR_CATALOG } from '../connectors/catalog'
 import { getConnectorTools } from '../connectors/registry'
 import { renderConnectorInstructions } from '../connectors/skill-doc'
@@ -560,6 +561,7 @@ export type SettingsServiceOptions = {
 class SettingsService {
   private readonly repository: SettingsRepository
   private readonly preferences: SettingsPreferencesModule
+  private readonly notebookRuntimeSettings: NotebookRuntimeSettingsModule
   private readonly storageRoot: string
   private readonly detectDeps: ClaudeDetectDeps
   private readonly opencodeDetectDeps: OpencodeDetectDeps
@@ -603,6 +605,7 @@ class SettingsService {
     this.storageRoot = options.storageRoot ?? resolveStorageRoot()
     this.repository = options.repository ?? new SettingsRepository(this.storageRoot)
     this.preferences = new SettingsPreferencesModule(this.repository)
+    this.notebookRuntimeSettings = new NotebookRuntimeSettingsModule(this.repository)
     // Probe the app-managed install dir too, so a managed Claude is re-detected even if the cached
     // path is ever cleared (e.g. a manual re-detect).
     const baseDetectDeps = options.detectDeps ?? createDefaultDetectDeps()
@@ -786,13 +789,13 @@ class SettingsService {
   // Reads the package-mirror configuration, read fresh so callers see the latest saved state.
   // Empty object means public hosts (no override configured).
   async getPackageMirror(): Promise<PackageMirror> {
-    return (await this.repository.getSettings()).packageMirror ?? {}
+    return this.notebookRuntimeSettings.getPackageMirror()
   }
 
   // The persisted notebook runtime selection for a language (managed vs the user's own interpreter),
   // read fresh. undefined means "not chosen" -> the notebook runtime resolves to the managed default.
   async getRuntimeSelection(language: NotebookLanguage): Promise<RuntimeSelection | undefined> {
-    return (await this.repository.getSettings()).notebookRuntimes?.[language]
+    return (await this.notebookRuntimeSettings.getSnapshot(language)).runtimeSelection
   }
 
   // Sets (or clears, when `selection` is null) the persisted runtime choice for a language, returning
@@ -802,18 +805,14 @@ class SettingsService {
     language: NotebookLanguage,
     selection: RuntimeSelection | null
   ): Promise<RuntimeSelection | undefined> {
-    const settings = await this.repository.setRuntimeSelection(language, selection)
-
-    return settings.notebookRuntimes?.[language]
+    return this.notebookRuntimeSettings.setRuntimeSelection(language, selection)
   }
 
   // The persisted v4 environment enablement for a language, read fresh. Always returns a concrete
   // RuntimeEnablement (empty maps when nothing is stored) so callers can index it and apply the
   // provenance default (isEnvEnabled) without a null check.
   async getRuntimeEnablement(language: NotebookLanguage): Promise<RuntimeEnablement> {
-    const stored = (await this.repository.getSettings()).notebookRuntimeEnablement?.[language]
-
-    return { enabled: { ...stored?.enabled }, installAuthorized: { ...stored?.installAuthorized } }
+    return (await this.notebookRuntimeSettings.getSnapshot(language)).runtimeEnablement
   }
 
   // Sets one env's explicit enabled override (keyed by envId) for a language, read-modify-write over
@@ -824,14 +823,7 @@ class SettingsService {
     envId: string,
     enabled: boolean
   ): Promise<RuntimeEnablement> {
-    const current = await this.getRuntimeEnablement(language)
-    const next: RuntimeEnablement = {
-      enabled: { ...current.enabled, [envId]: enabled },
-      installAuthorized: { ...current.installAuthorized }
-    }
-    const settings = await this.repository.setRuntimeEnablement(language, next)
-
-    return settings.notebookRuntimeEnablement?.[language] ?? { enabled: {}, installAuthorized: {} }
+    return this.notebookRuntimeSettings.setEnvironmentEnabled(language, envId, enabled)
   }
 
   // Sets one env's high-risk package-install authorization (keyed by envId) for a language, returning
@@ -842,44 +834,28 @@ class SettingsService {
     envId: string,
     authorized: boolean
   ): Promise<RuntimeEnablement> {
-    const current = await this.getRuntimeEnablement(language)
-    const next: RuntimeEnablement = {
-      enabled: { ...current.enabled },
-      installAuthorized: { ...current.installAuthorized, [envId]: authorized }
-    }
-    const settings = await this.repository.setRuntimeEnablement(language, next)
-
-    return settings.notebookRuntimeEnablement?.[language] ?? { enabled: {}, installAuthorized: {} }
+    return this.notebookRuntimeSettings.setInstallAuthorized(language, envId, authorized)
   }
 
   // The manual-interpreter catalog for a language (paths added via "Add interpreter…"), for merging
   // into environment discovery. Empty array when none.
   async getManualInterpreters(language: NotebookLanguage): Promise<string[]> {
-    return (await this.repository.getSettings()).notebookManualInterpreters?.[language] ?? []
+    return (await this.notebookRuntimeSettings.getSnapshot(language)).manualInterpreters
   }
 
   // Adds an interpreter path to a language's manual catalog (idempotent), returning the refreshed list.
   async addManualInterpreter(language: NotebookLanguage, path: string): Promise<string[]> {
-    const current = await this.getManualInterpreters(language)
-    const settings = await this.repository.setManualInterpreters(language, [...current, path])
-    return settings.notebookManualInterpreters?.[language] ?? []
+    return this.notebookRuntimeSettings.addManualInterpreter(language, path)
   }
 
   // Removes an interpreter path from a language's manual catalog, returning the refreshed list.
   async removeManualInterpreter(language: NotebookLanguage, path: string): Promise<string[]> {
-    const current = await this.getManualInterpreters(language)
-    const settings = await this.repository.setManualInterpreters(
-      language,
-      current.filter((p) => p !== path)
-    )
-    return settings.notebookManualInterpreters?.[language] ?? []
+    return this.notebookRuntimeSettings.removeManualInterpreter(language, path)
   }
 
   // Sets (or clears) the package-mirror configuration and returns the sanitized, persisted value.
   async setPackageMirror(request: SetPackageMirrorRequest): Promise<PackageMirror> {
-    const settings = await this.repository.setPackageMirror(request)
-
-    return settings.packageMirror ?? {}
+    return this.notebookRuntimeSettings.setPackageMirror(request)
   }
 
   private async migrateLegacyKeyRefs(settings: StoredSettings): Promise<StoredSettings> {
