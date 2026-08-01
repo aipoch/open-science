@@ -6966,7 +6966,7 @@ describe('ACP runtime session management', () => {
     expect(fakeAgent.resumedSessions).toEqual([
       expect.objectContaining({
         sessionId,
-        cwd: '/workspace'
+        cwd: resolve('/workspace')
       })
     ])
     expect(fakeAgent.newSessions).toEqual([])
