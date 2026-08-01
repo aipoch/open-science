@@ -1,11 +1,60 @@
 /* eslint-disable @typescript-eslint/explicit-function-return-type */
 
-import { appendFileSync } from 'node:fs'
+import { appendFileSync, readFileSync } from 'node:fs'
 import { resolve } from 'node:path'
 import { fileURLToPath } from 'node:url'
 
-export function evaluatePrGate(plan, conclusions) {
+const gateManifest = JSON.parse(
+  readFileSync(new URL('./change-impact.json', import.meta.url), 'utf8')
+)
+
+function expectedBundlesForLanes(lanes) {
+  if (!Array.isArray(lanes) || new Set(lanes).size !== lanes.length) return undefined
+
+  const selected = new Set()
+  const declaredBundles = new Set(gateManifest.bundleOrder)
+  for (const lane of lanes) {
+    if (!gateManifest.laneOrder.includes(lane)) return undefined
+    const bundle = gateManifest.laneBundles[lane]
+    if (!bundle || !declaredBundles.has(bundle)) return undefined
+    selected.add(bundle)
+  }
+  return gateManifest.bundleOrder.filter((bundle) => selected.has(bundle))
+}
+
+export function evaluatePrGate(plan, conclusions, { executionMode = 'lanes' } = {}) {
   const failures = []
+  const hasBundlePlan = Array.isArray(plan.bundles)
+  const expectedBundles = expectedBundlesForLanes(plan.lanes)
+  const hasValidBundlePlan =
+    hasBundlePlan &&
+    expectedBundles !== undefined &&
+    plan.bundles.length === expectedBundles.length &&
+    plan.bundles.every((bundle, index) => bundle === expectedBundles[index])
+  const selectedExecutions =
+    executionMode === 'bundles' ? (hasValidBundlePlan ? plan.bundles : []) : plan.lanes
+
+  if (executionMode !== 'lanes' && executionMode !== 'bundles') {
+    failures.push({
+      lane: 'preflight',
+      conclusion: 'invalid',
+      reason: `unsupported execution mode: ${executionMode}`
+    })
+  }
+
+  if (executionMode === 'bundles' && !hasBundlePlan) {
+    failures.push({
+      lane: 'preflight',
+      conclusion: 'invalid',
+      reason: 'execution bundle plan is missing'
+    })
+  } else if (executionMode === 'bundles' && !hasValidBundlePlan) {
+    failures.push({
+      lane: 'preflight',
+      conclusion: 'invalid',
+      reason: 'execution bundle plan does not match selected lanes'
+    })
+  }
 
   if (plan.schemaVersion !== 1) {
     failures.push({
@@ -22,18 +71,21 @@ export function evaluatePrGate(plan, conclusions) {
     })
   }
 
-  for (const lane of plan.lanes) {
-    const conclusion = conclusions[lane] ?? 'missing'
+  for (const execution of selectedExecutions) {
+    const conclusion = conclusions[execution] ?? 'missing'
     if (conclusion !== 'success') {
       failures.push({
-        lane,
+        lane: execution,
         conclusion,
-        reason: 'selected lane did not succeed'
+        reason:
+          executionMode === 'bundles'
+            ? 'selected execution bundle did not succeed'
+            : 'selected lane did not succeed'
       })
     }
   }
 
-  const selected = new Set(plan.lanes)
+  const selected = new Set(selectedExecutions)
   for (const [lane, conclusion] of Object.entries(conclusions)) {
     if (
       lane !== 'preflight' &&
@@ -52,7 +104,8 @@ export function evaluatePrGate(plan, conclusions) {
   return {
     ok: failures.length === 0,
     failures,
-    selectedLanes: [...plan.lanes]
+    selectedLanes: [...plan.lanes],
+    selectedBundles: executionMode === 'bundles' && hasValidBundlePlan ? [...plan.bundles] : []
   }
 }
 
@@ -66,6 +119,10 @@ function escapeHtml(value) {
 }
 
 export function formatPrGateSummary(result) {
+  const bundles =
+    result.selectedBundles.length === 0
+      ? ''
+      : `\n- Execution bundles: ${result.selectedBundles.map(escapeHtml).join(', ')}`
   const failures =
     result.failures.length === 0
       ? '- None'
@@ -80,7 +137,7 @@ export function formatPrGateSummary(result) {
 
 Result: **${result.ok ? 'pass' : 'fail'}**
 
-- Selected lanes: ${result.selectedLanes.map(escapeHtml).join(', ') || '_none_'}
+- Selected lanes: ${result.selectedLanes.map(escapeHtml).join(', ') || '_none_'}${bundles}
 
 ### Failures
 
@@ -97,7 +154,9 @@ export function runPrGateCli(environment = process.env) {
   const conclusions = Object.fromEntries(
     Object.entries(needs).map(([lane, value]) => [lane, value?.result ?? 'missing'])
   )
-  const result = evaluatePrGate(plan, conclusions)
+  const result = evaluatePrGate(plan, conclusions, {
+    executionMode: environment.PR_GATE_EXECUTION_MODE ?? 'lanes'
+  })
   const summary = formatPrGateSummary(result)
 
   if (environment.GITHUB_STEP_SUMMARY) appendFileSync(environment.GITHUB_STEP_SUMMARY, summary)

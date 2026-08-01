@@ -104,11 +104,24 @@ export function classifyChanges(changes, manifest = defaultManifest) {
     }
   }
 
+  const selectedLanes = manifest.laneOrder.filter((lane) => lanes.has(lane))
+  const selectedBundles = new Set()
+  const declaredBundles = new Set(manifest.bundleOrder)
+  for (const lane of selectedLanes) {
+    const bundle = manifest.laneBundles[lane]
+    if (!bundle) throw new Error(`Missing execution bundle for selected lane: ${lane}`)
+    if (!declaredBundles.has(bundle)) {
+      throw new Error(`Unknown execution bundle for selected lane ${lane}: ${bundle}`)
+    }
+    selectedBundles.add(bundle)
+  }
+
   return {
     schemaVersion: manifest.schemaVersion,
     mode,
     roots: [...roots].sort(),
-    lanes: manifest.laneOrder.filter((lane) => lanes.has(lane)),
+    lanes: selectedLanes,
+    bundles: manifest.bundleOrder.filter((bundle) => selectedBundles.has(bundle)),
     reasonChains: [...reasonChains].sort()
   }
 }
@@ -141,6 +154,7 @@ function escapeHtml(value) {
 export function formatPlanSummary(plan) {
   const roots = plan.roots.length === 0 ? '_none_' : plan.roots.map(escapeHtml).join(', ')
   const lanes = plan.lanes.length === 0 ? '_none_' : plan.lanes.map(escapeHtml).join(', ')
+  const bundles = plan.bundles?.length > 0 ? plan.bundles.map(escapeHtml).join(', ') : '_none_'
   const reasons =
     plan.reasonChains.length === 0
       ? '- _No changed paths_'
@@ -151,6 +165,7 @@ export function formatPlanSummary(plan) {
 - Mode: **${escapeHtml(plan.mode)}**
 - Roots: ${roots}
 - Selected lanes: ${lanes}
+- Execution bundles: ${bundles}
 
 ### Reason chains
 

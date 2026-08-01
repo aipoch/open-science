@@ -60,6 +60,9 @@ describe('pull request change classification', () => {
       expect(readFileSync(summary, 'utf8')).toContain(
         'src/shared/acp.ts -&gt; shared_contract -&gt; preload_adapter'
       )
+      expect(readFileSync(summary, 'utf8')).toContain(
+        'Execution bundles: policy, static, unit, coverage_macos, windows_core, macos_e2e, windows_e2e'
+      )
     } finally {
       rmSync(root, { force: true, recursive: true })
     }
@@ -124,7 +127,34 @@ describe('pull request change classification', () => {
         'e2e_visual_macos'
       ])
     )
+    expect(plan.bundles).toEqual([
+      'policy',
+      'static',
+      'unit',
+      'coverage_macos',
+      'windows_core',
+      'macos_e2e',
+      'windows_e2e'
+    ])
     expect(plan.reasonChains).toContain('src/new-runtime/capability.ts -> unknown -> full')
+  })
+
+  it('fails closed when a selected lane has no execution bundle', () => {
+    const manifest = JSON.parse(readFileSync(resolve('scripts/ci/change-impact.json'), 'utf8'))
+    delete manifest.laneBundles.policy
+
+    expect(() => classifyChanges([], manifest)).toThrow(
+      'Missing execution bundle for selected lane: policy'
+    )
+  })
+
+  it('fails closed when a selected lane references an undeclared execution bundle', () => {
+    const manifest = JSON.parse(readFileSync(resolve('scripts/ci/change-impact.json'), 'utf8'))
+    manifest.laneBundles.policy = 'undeclared'
+
+    expect(() => classifyChanges([], manifest)).toThrow(
+      'Unknown execution bundle for selected lane policy: undeclared'
+    )
   })
 
   it('keeps documentation-only changes on the stable minimal gate', () => {
@@ -135,6 +165,7 @@ describe('pull request change classification', () => {
 
     expect(plan.mode).toBe('selective')
     expect(plan.lanes).toEqual(['policy', 'docs'])
+    expect(plan.bundles).toEqual(['policy', 'static'])
     expect(plan.reasonChains).toEqual(
       expect.arrayContaining([
         'README.md -> documentation',

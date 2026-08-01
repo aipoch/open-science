@@ -24,6 +24,38 @@
     "e2e_accessibility_windows",
     "e2e_visual_macos"
   ],
+  "bundleOrder": [
+    "policy",
+    "static",
+    "unit",
+    "coverage_macos",
+    "windows_core",
+    "macos_e2e",
+    "windows_e2e"
+  ],
+  "laneBundles": {
+    "policy": "policy",
+    "docs": "static",
+    "format": "static",
+    "lint": "static",
+    "typecheck_node": "static",
+    "typecheck_web": "static",
+    "interface_contracts": "static",
+    "cli_sdk": "static",
+    "unit_linux": "unit",
+    "coverage_macos": "coverage_macos",
+    "windows_runtime": "windows_core",
+    "windows_path": "windows_core",
+    "unit_renderer": "unit",
+    "build": "macos_e2e",
+    "e2e_functional_macos": "macos_e2e",
+    "e2e_functional_windows": "windows_e2e",
+    "e2e_workspace_macos": "macos_e2e",
+    "e2e_workspace_windows": "windows_e2e",
+    "e2e_accessibility_macos": "macos_e2e",
+    "e2e_accessibility_windows": "windows_e2e",
+    "e2e_visual_macos": "macos_e2e"
+  },
   "rules": [
     {
       "id": "global_gate_input",
