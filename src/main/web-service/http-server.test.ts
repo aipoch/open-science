@@ -294,6 +294,49 @@ describe('startWebHttpServer', () => {
     expect(rpc.invoke).not.toHaveBeenCalled()
   })
 
+  it('releases each active client once when the server closes', async () => {
+    const staticRoot = await mkdtemp(join(tmpdir(), 'open-science-web-static-'))
+    roots.push(staticRoot)
+    await writeFile(join(staticRoot, 'index.html'), '<!doctype html>')
+    const releaseClient = vi.fn()
+    const server = await startWebHttpServer({
+      host: '127.0.0.1',
+      port: 0,
+      token: 'test-token',
+      staticRoot,
+      rpc: {
+        channels: () => [],
+        invoke: vi.fn(),
+        releaseClient,
+        dispose: vi.fn()
+      },
+      bootstrap: {
+        appName: 'Open Science',
+        appVersion: '0.0.0',
+        configRoot: '/fake/root',
+        platform: 'test',
+        versions: { electron: '1', chrome: '1', node: '1' }
+      }
+    })
+    servers.push(server)
+    const firstSocket = new WebSocket(
+      `ws://127.0.0.1:${server.port}/events?token=test-token&client=test-client`
+    )
+    const secondSocket = new WebSocket(
+      `ws://127.0.0.1:${server.port}/events?token=test-token&client=test-client`
+    )
+    await Promise.all([
+      new Promise<void>((resolve) => firstSocket.once('open', resolve)),
+      new Promise<void>((resolve) => secondSocket.once('open', resolve))
+    ])
+
+    await server.close()
+    servers.splice(servers.indexOf(server), 1)
+
+    expect(releaseClient).toHaveBeenCalledTimes(1)
+    expect(releaseClient).toHaveBeenCalledWith('test-client')
+  })
+
   it('passes pairing authority only for trusted-browser Web RPC calls', async () => {
     const staticRoot = await mkdtemp(join(tmpdir(), 'open-science-web-static-'))
     roots.push(staticRoot)
