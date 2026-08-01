@@ -16,18 +16,15 @@ describe('application runtime composition', () => {
           events.push('dispose:settings')
         }
       }))
-      const synthetic = await modules.add(
-        { readSetting: settings.read },
-        ({ readSetting }) => ({
-          capability: { describe: () => `synthetic:${readSetting()}` },
-          start: () => {
-            events.push('start:synthetic')
-          },
-          dispose: () => {
-            events.push('dispose:synthetic')
-          }
-        })
-      )
+      const synthetic = await modules.add({ readSetting: settings.read }, ({ readSetting }) => ({
+        capability: { describe: () => `synthetic:${readSetting()}` },
+        start: () => {
+          events.push('start:synthetic')
+        },
+        dispose: () => {
+          events.push('dispose:synthetic')
+        }
+      }))
 
       return { settings, synthetic }
     })
@@ -78,12 +75,7 @@ describe('application runtime composition', () => {
       })
     ).rejects.toBe(failure)
 
-    expect(events).toEqual([
-      'start:first',
-      'start:second',
-      'dispose:second',
-      'dispose:first'
-    ])
+    expect(events).toEqual(['start:first', 'start:second', 'dispose:second', 'dispose:first'])
   })
 
   it('releases a module whose startup fails before propagating the error', async () => {
@@ -104,5 +96,36 @@ describe('application runtime composition', () => {
     ).rejects.toBe(failure)
 
     expect(dispose).toHaveBeenCalledOnce()
+  })
+
+  it('attempts every disposer in reverse order when cleanup reports failures', async () => {
+    const events: string[] = []
+    const firstFailure = new Error('first disposal failed')
+    const secondFailure = new Error('second disposal failed')
+
+    const runtime = await composeApplicationRuntime(async (modules) => {
+      await modules.add({}, () => ({
+        capability: {},
+        dispose: () => {
+          events.push('dispose:first')
+          throw firstFailure
+        }
+      }))
+      await modules.add({}, () => ({
+        capability: {},
+        dispose: () => {
+          events.push('dispose:second')
+          throw secondFailure
+        }
+      }))
+      return {}
+    })
+
+    const disposalError = await runtime.dispose().catch((error: unknown) => error)
+    expect(disposalError).toMatchObject({
+      errors: [secondFailure, firstFailure]
+    })
+    await expect(runtime.dispose()).rejects.toBe(disposalError)
+    expect(events).toEqual(['dispose:second', 'dispose:first'])
   })
 })
