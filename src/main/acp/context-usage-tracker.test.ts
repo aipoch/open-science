@@ -675,4 +675,74 @@ describe('ContextUsageTracker', () => {
       estimated: true
     })
   })
+
+  it('owns provider reconciliation without exposing mutable usage collections', () => {
+    const tracker = new ContextUsageTracker(wordCounter)
+    tracker.beginSession('s1', { frameworkId: 'opencode', model: 'deepseek-v4' })
+    tracker.appendText('s1', 'messages', 'one two three')
+    tracker.reconcileProviderUsage('s1', { used: 8, size: 64_000 }, 128_000)
+
+    const snapshot = tracker.usageSnapshot()
+    expect(snapshot.s1).toMatchObject({
+      used: 8,
+      size: 128_000,
+      breakdown: { status: 'reconciled', estimatedTokens: 3, difference: 5 }
+    })
+
+    snapshot.s1.used = 999
+    snapshot.s1.breakdown?.categories.splice(0)
+
+    expect(tracker.usageSnapshot().s1).toMatchObject({
+      used: 8,
+      breakdown: {
+        categories: [
+          { key: 'messages', tokens: 3, estimated: true },
+          { key: 'other', tokens: 5, estimated: false }
+        ]
+      }
+    })
+  })
+
+  it('restores the last provider reading when a preflight estimate receives no fresh update', () => {
+    const tracker = new ContextUsageTracker(wordCounter)
+    tracker.beginSession('s1', { frameworkId: 'opencode', model: 'deepseek-v4' })
+    tracker.appendText('s1', 'messages', 'committed history')
+    tracker.reconcileProviderUsage('s1', { used: 20, size: 128_000 })
+    const checkpoint = tracker.checkpointSession('s1')
+
+    tracker.appendPromptContent('s1', 'new prompt')
+    expect(tracker.refreshUsage('s1', 'preflight', 128_000)).toBe(true)
+    expect(tracker.usage('s1')?.breakdown?.status).toBe('preflight')
+
+    expect(tracker.restorePreflightUsage('s1', checkpoint)).toBe(true)
+    expect(tracker.usageSnapshot().s1).toMatchObject({
+      used: 20,
+      size: 128_000,
+      breakdown: { status: 'reconciled' }
+    })
+  })
+
+  it('keeps only a fresh provider reading after context compaction', () => {
+    const tracker = new ContextUsageTracker(wordCounter)
+    const input = { frameworkId: 'claude-code' as const, model: 'claude-sonnet-4-5' }
+    tracker.beginSession('stale', input)
+    tracker.reconcileProviderUsage('stale', { used: 100, size: 200_000 })
+    const staleCheckpoint = tracker.checkpointSession('stale')
+
+    tracker.resetAfterCompaction('stale', input, staleCheckpoint, 200_000)
+    expect(tracker.usageSnapshot().stale).toBeUndefined()
+
+    tracker.beginSession('fresh', input)
+    tracker.appendText('fresh', 'messages', 'compacted conversation')
+    tracker.reconcileProviderUsage('fresh', { used: 100, size: 200_000 })
+    const freshCheckpoint = tracker.checkpointSession('fresh')
+    tracker.reconcileProviderUsage('fresh', { used: 12, size: 200_000 })
+    tracker.resetAfterCompaction('fresh', input, freshCheckpoint, 200_000)
+
+    expect(tracker.usageSnapshot().fresh).toMatchObject({
+      used: 12,
+      size: 200_000,
+      breakdown: { status: 'reconciled' }
+    })
+  })
 })

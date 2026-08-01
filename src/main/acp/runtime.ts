@@ -40,8 +40,6 @@ import type {
 import {
   ACP_MODEL_TURN_COUNT_META_KEY,
   ACP_TURN_TOKEN_USAGE_META_KEY,
-  getAcpRuntimeEventImage,
-  MAX_ACP_SESSION_IMAGE_BYTES,
   toAcpTurnTokenUsage
 } from '../../shared/acp'
 import { ACP_PROMPT_FAILED_EVENT_TITLE } from '../../shared/acp'
@@ -80,6 +78,7 @@ import {
   type SessionModelSelection
 } from './session-config'
 import { describePromptError, isProviderPromptError } from './prompt-error'
+import { AcpRuntimeSnapshotOwner } from './runtime-snapshot-owner'
 import {
   ATTACHMENT_PREVIEW_BYTES,
   MAX_EMBEDDED_TEXT_UPLOAD_BYTES,
@@ -498,8 +497,6 @@ const codexMcpToolIdentity = (
   }
 }
 
-// Keeps runtime snapshots bounded so long conversations do not grow renderer payloads forever.
-const MAX_EVENTS = 500
 // Bounds pending Codex MCP identities even if an agent never emits terminal tool updates.
 const MAX_CODEX_MCP_TOOL_IDENTITIES_PER_SESSION = 32
 const MAX_CLAUDE_CODE_MCP_TOOL_INPUTS_PER_SESSION = 32
@@ -729,19 +726,8 @@ const isUnresumableSessionError = (error: unknown): boolean => {
 
 // Owns the agent process, protocol connection, and all active protocol sessions.
 class AcpRuntime {
-  private status: AcpStateSnapshot['status'] = 'idle'
-  private cwd: string
-  private error: string | undefined
-  private events: AcpRuntimeEvent[] = []
-  private eventSequence = 0
-  // Latest context-window usage per app session, from ACP usage_update. Consumed by getSnapshot;
-  // entries appear once the active framework emits a usable context count.
-  private contextUsageBySession = new Map<string, AcpContextUsage>()
+  private readonly snapshotOwner: AcpRuntimeSnapshotOwner
   private readonly contextUsageTracker: ContextUsageTracker
-  // Identifies prompt turns that received provider-side context-bearing updates. A prompt rejected
-  // before its first update can be rolled back safely; once output/tool/usage events arrive, the live
-  // provider session may retain that partial turn and the estimator must retain it too.
-  private readonly contextUsageUpdatedPromptTurnsBySession = new Map<string, number>()
   private agentProcess: ChildProcessWithoutNullStreams | undefined
   // Latched by shutdown() on app quit. A connect can be mid-spawn (resolveSpawnConfig is async) when
   // quit fires, so this lets the post-spawn path kill a child that was created after killAgentProcess ran.
@@ -938,7 +924,7 @@ class AcpRuntime {
 
   // Wires runtime dependencies and forwards permission prompts into the event stream.
   constructor(private readonly options: AcpRuntimeOptions) {
-    this.cwd = resolve(options.defaultCwd)
+    this.snapshotOwner = new AcpRuntimeSnapshotOwner(resolve(options.defaultCwd))
     this.callbacks = options.callbacks ?? {}
     this.spawnAgent = options.spawnAgent
     this.skillsHooks = options.skills
@@ -996,27 +982,25 @@ class AcpRuntime {
     framework: AgentFramework['id'] = this.framework.id,
     generation = this.connectionGeneration
   ): { framework: AgentFramework['id']; generation: number; status: AcpStateSnapshot['status'] } {
-    return { framework, generation, status: this.status }
+    return { framework, generation, status: this.snapshotOwner.status }
   }
 
   // Returns an immutable renderer-facing view of connection and session state.
   getSnapshot(): AcpStateSnapshot {
     const sessionIds = Array.from(this.sessions.keys())
     const promptInFlightSessionIds = this.getInFlightSessionIds()
+    const snapshot = this.snapshotOwner.snapshot()
 
     return {
-      status: this.status,
-      cwd: this.cwd,
+      ...snapshot,
       sessionId: this.currentSessionId,
       sessionIds,
-      error: this.error,
-      events: [...this.events],
       pendingPermissions: this.permissionBroker.getPendingRequests(),
       permissionProfiles: Object.fromEntries(this.permissionProfiles),
       permissionGrants: Object.fromEntries(
         sessionIds.map((sessionId) => [sessionId, this.permissionBroker.listGrants(sessionId)])
       ),
-      contextUsageBySession: Object.fromEntries(this.contextUsageBySession),
+      contextUsageBySession: this.contextUsageTracker.usageSnapshot(),
       nativeContextCompactionSessionIds:
         this.framework.contextCompaction.kind === 'native-command' ? sessionIds : [],
       promptInFlight: promptInFlightSessionIds.length > 0,
@@ -1295,8 +1279,8 @@ class AcpRuntime {
       await this.disconnectCurrent(false)
       this.assertCurrentConnectionGeneration(generation)
 
-      this.cwd = cwd
-      this.error = undefined
+      this.snapshotOwner.updateCwd(cwd)
+      this.snapshotOwner.updateError(undefined)
       this.setStatus('connecting')
       log.info('connecting agent', this.diagnosticContext(this.framework.id, generation))
 
@@ -1340,7 +1324,7 @@ class AcpRuntime {
       this.connection.closed.then(() => {
         if (
           this.connectionGeneration === generation &&
-          (this.status === 'connected' || this.status === 'connecting')
+          (this.snapshotOwner.status === 'connected' || this.snapshotOwner.status === 'connecting')
         ) {
           this.handleConnectionClosed()
         }
@@ -1438,7 +1422,7 @@ class AcpRuntime {
             /* a throwing logger must not mask the cause */
           }
         } else {
-          this.error = errorMessage(cause)
+          this.snapshotOwner.updateError(errorMessage(cause))
           safeLogError('agent connection failed', {
             ...diagnosticErrorFields(cause),
             ...processFields
@@ -1449,7 +1433,7 @@ class AcpRuntime {
               kind: 'error',
               level: 'error',
               title: 'Connection failed',
-              text: this.error
+              text: this.snapshotOwner.error
             })
           } catch (notifyError) {
             safeLogError('agent connection failure notification failed', {
@@ -1467,7 +1451,7 @@ class AcpRuntime {
               ...processFields
             })
           }
-          this.status = 'error'
+          this.snapshotOwner.transitionStatus('error')
           try {
             this.emitState()
           } catch (notifyError) {
@@ -1510,7 +1494,7 @@ class AcpRuntime {
     let provisionalNotebookSessionId: string | undefined
     try {
       log.info('createSession: starting', this.diagnosticContext())
-      const sessionCwd = resolve(request.cwd || this.cwd || this.options.defaultCwd)
+      const sessionCwd = resolve(request.cwd || this.snapshotOwner.cwd || this.options.defaultCwd)
       const projectName = this.normalizeProjectName(request.projectName)
       log.info('createSession: ensureConnected', this.diagnosticContext())
       const connection = await this.ensureConnected(sessionCwd)
@@ -1607,7 +1591,7 @@ class AcpRuntime {
       this.notebookOptions?.registerSessionSpecialist?.(session.sessionId, request.specialistId)
       this.rememberSkillImportSession(session.sessionId, skillImportSessionId)
       this.currentSessionId = session.sessionId
-      this.cwd = sessionCwd
+      this.snapshotOwner.updateCwd(sessionCwd)
       this.pushEvent({
         kind: 'system',
         level: 'info',
@@ -1665,7 +1649,7 @@ class AcpRuntime {
     this.rememberNotebookSession(appSessionId, appSessionId)
     this.rememberSkillImportSession(appSessionId, appSessionId)
     this.currentSessionId = appSessionId
-    this.cwd = cwd
+    this.snapshotOwner.updateCwd(cwd)
   }
 
   // Reattaches a persisted protocol session after an app restart so later prompts can stream.
@@ -1677,7 +1661,7 @@ class AcpRuntime {
     request: AcpResumeSessionRequest
   ): Promise<AcpCreateSessionResponse> {
     if (request.specialistId) this.sessionSpecialistIds.set(request.sessionId, request.specialistId)
-    const sessionCwd = resolve(request.cwd || this.cwd || this.options.defaultCwd)
+    const sessionCwd = resolve(request.cwd || this.snapshotOwner.cwd || this.options.defaultCwd)
     const projectName = this.normalizeProjectName(request.projectName)
 
     // If the runtime already attached this session, only refresh routing metadata.
@@ -1694,7 +1678,7 @@ class AcpRuntime {
         )
       )
       this.currentSessionId = request.sessionId
-      this.cwd = sessionCwd
+      this.snapshotOwner.updateCwd(sessionCwd)
       this.sessionCwds.set(request.sessionId, sessionCwd)
       this.sessionProjectNames.set(request.sessionId, projectName)
       this.emitState()
@@ -1725,7 +1709,7 @@ class AcpRuntime {
   private async resetSessionContextOperation(
     request: AcpResumeSessionRequest
   ): Promise<AcpCreateSessionResponse> {
-    const sessionCwd = resolve(request.cwd || this.cwd || this.options.defaultCwd)
+    const sessionCwd = resolve(request.cwd || this.snapshotOwner.cwd || this.options.defaultCwd)
     const projectName = this.normalizeProjectName(request.projectName)
     const connection = await this.ensureConnected(sessionCwd)
 
@@ -1753,9 +1737,7 @@ class AcpRuntime {
     this.sessionInlineImageBytes.delete(request.sessionId)
     // A context reset creates a new agent-side conversation under the same app id. Do not carry the
     // previous context size into the fresh conversation before its first usage_update arrives.
-    this.contextUsageBySession.delete(request.sessionId)
     this.contextUsageTracker.deleteSession(request.sessionId)
-    this.contextUsageUpdatedPromptTurnsBySession.delete(request.sessionId)
     this.appliedSessionModels.delete(request.sessionId)
 
     // Release the failed turn's in-flight lock now. Its own `finally` clears it too, but that runs only
@@ -1882,7 +1864,7 @@ class AcpRuntime {
     const strategy = this.framework.contextCompaction
     if (strategy.kind !== 'native-command' || strategy.triggerAtPercent === undefined) return false
 
-    const usage = this.contextUsageBySession.get(sessionId)
+    const usage = this.contextUsageTracker.usage(sessionId)
     if (!usage || usage.size === undefined || usage.size <= 0 || usage.used < 0) return false
     if (usage.breakdown?.status === 'preflight') return false
 
@@ -1898,15 +1880,9 @@ class AcpRuntime {
     if (strategy.kind !== 'native-command') {
       throw new Error(`${this.framework.displayName} manages context compaction automatically.`)
     }
-    const contextUsageBeforeCompaction = this.contextUsageBySession.get(appSessionId)
     const contextUsageCheckpoint = this.contextUsageTracker.checkpointSession(appSessionId)
     const restoreContextEstimate = (): void => {
       this.contextUsageTracker.restoreSession(appSessionId, contextUsageCheckpoint)
-      if (contextUsageBeforeCompaction) {
-        this.contextUsageBySession.set(appSessionId, contextUsageBeforeCompaction)
-      } else {
-        this.contextUsageBySession.delete(appSessionId)
-      }
     }
 
     this.pushEvent({
@@ -1949,15 +1925,12 @@ class AcpRuntime {
           // Some adapters do not emit usage_update for their compaction control turn. Invalidate only
           // the unchanged pre-compaction reading; a fresh update received during the turn is a new
           // object and remains available to the context meter and auto-compaction threshold.
-          this.contextUsageTracker.resetSession(
+          this.contextUsageTracker.resetAfterCompaction(
             appSessionId,
-            this.contextUsageEstimateInput(appSessionId)
+            this.contextUsageEstimateInput(appSessionId),
+            contextUsageCheckpoint,
+            this.selectedContextWindowFor(appSessionId)
           )
-          if (this.contextUsageBySession.get(appSessionId) === contextUsageBeforeCompaction) {
-            this.contextUsageBySession.delete(appSessionId)
-          } else {
-            this.refreshEstimatedContextUsage(appSessionId, 'reconciled')
-          }
           this.sessionInlineImageBytes.delete(appSessionId)
           this.pushEvent({
             kind: 'compaction',
@@ -2149,7 +2122,7 @@ class AcpRuntime {
       this.rememberArtifactSession(request.sessionId, request.sessionId)
       this.rememberSkillImportSession(request.sessionId, request.sessionId)
       this.currentSessionId = request.sessionId
-      this.cwd = sessionCwd
+      this.snapshotOwner.updateCwd(sessionCwd)
       this.pushEvent({
         kind: 'system',
         level: 'info',
@@ -2309,7 +2282,6 @@ class AcpRuntime {
     this.connection = undefined
     this.killAgentProcess()
     this.contextUsageTracker.clear()
-    this.contextUsageUpdatedPromptTurnsBySession.clear()
     this.appliedSessionModels.clear()
     void this.closeMcpHttpHost()
     void this.releaseResponsesBridgeLease()
@@ -2378,10 +2350,8 @@ class AcpRuntime {
     // The selected backend changed even if teardown must wait for an active prompt. Its old context
     // measurement no longer describes the selected generation, so hide it immediately and let the
     // replacement generation repopulate usage after reconnect/resume.
-    if (this.contextUsageBySession.size > 0) {
-      this.contextUsageBySession.clear()
+    if (this.contextUsageTracker.hasUsage()) {
       this.contextUsageTracker.clear()
-      this.contextUsageUpdatedPromptTurnsBySession.clear()
       this.appliedSessionModels.clear()
       this.emitState()
     }
@@ -2440,7 +2410,7 @@ class AcpRuntime {
       // old backend; the re-check there will fall through to a fresh connect(). Set status directly
       // rather than via setStatus — the throw may have come from emitState itself.
       this.connection = undefined
-      this.status = 'closed'
+      this.snapshotOwner.transitionStatus('closed')
       // Broadcast the closed status defensively so the renderer doesn't keep showing the prior
       // 'connected' state when no createSession follows to re-emit it. Guarded because emitState may
       // be the very thing that threw — the barrier release below must still run.
@@ -2540,9 +2510,7 @@ class AcpRuntime {
       // Context usage belongs to this live agent-context generation. Invalidate it before teardown,
       // including when a later session.dispose throws. A reconnect may resume the native context or
       // replay history into a fresh one; only that generation's own usage_update can repopulate it.
-      this.contextUsageBySession.clear()
       this.contextUsageTracker.clear()
-      this.contextUsageUpdatedPromptTurnsBySession.clear()
       this.appliedSessionModels.clear()
 
       this.releaseAllNotebookSessionCapabilities()
@@ -2791,7 +2759,7 @@ class AcpRuntime {
 
         if (toForce.length > 0) {
           // Capture routing before disconnect clears it, so resume lands on the same conversation.
-          const sessionCwd = this.sessionCwds.get(request.sessionId) ?? this.cwd
+          const sessionCwd = this.sessionCwds.get(request.sessionId) ?? this.snapshotOwner.cwd
           const projectName = this.resolveSessionProjectName(request.sessionId)
           const permissionProfile =
             this.permissionProfiles.get(request.sessionId)?.selectedProfile ??
@@ -2858,7 +2826,6 @@ class AcpRuntime {
     let skillActivitiesFinalized = false
     let revokeReferencedUploadGrant: (() => void) | undefined
     let contextUsageCheckpoint: ReturnType<ContextUsageTracker['checkpointSession']> | undefined
-    let contextUsageBeforePrompt: AcpContextUsage | undefined
     let contextUsageEstimateCommitted = false
 
     try {
@@ -2970,7 +2937,6 @@ class AcpRuntime {
       )
 
       contextUsageCheckpoint = this.contextUsageTracker.checkpointSession(request.sessionId)
-      contextUsageBeforePrompt = this.contextUsageBySession.get(request.sessionId)
       await this.recordPromptContextEstimate(
         request.sessionId,
         promptContent,
@@ -2996,7 +2962,7 @@ class AcpRuntime {
           ? await fetchOpenCodeUsageSnapshot(
               this.opencodeUsageApi,
               activeSession.sessionId,
-              this.sessionCwds.get(request.sessionId) ?? this.cwd,
+              this.sessionCwds.get(request.sessionId) ?? this.snapshotOwner.cwd,
               this.options.opencodeUsageFetch
             )
           : undefined
@@ -3032,7 +2998,7 @@ class AcpRuntime {
           if (
             this.restoreContextUsageBeforePromptIfPreflight(
               request.sessionId,
-              contextUsageBeforePrompt
+              contextUsageCheckpoint
             )
           ) {
             this.emitState()
@@ -3051,7 +3017,7 @@ class AcpRuntime {
                   await fetchOpenCodeUsageSnapshot(
                     this.opencodeUsageApi,
                     activeSession.sessionId,
-                    this.sessionCwds.get(request.sessionId) ?? this.cwd,
+                    this.sessionCwds.get(request.sessionId) ?? this.snapshotOwner.cwd,
                     this.options.opencodeUsageFetch
                   )
                 )
@@ -3122,7 +3088,7 @@ class AcpRuntime {
         !this.pendingProviderReconnect
       ) {
         const partialTurnWasObserved =
-          this.contextUsageUpdatedPromptTurnsBySession.get(request.sessionId) === promptTurn
+          this.contextUsageTracker.promptTurnWasUpdated(request.sessionId, promptTurn)
         if (partialTurnWasObserved) {
           // The provider may keep a turn that already streamed context-bearing updates even when its
           // prompt request ultimately rejects. Preserve those prompt/tool/output estimates, but do not
@@ -3130,15 +3096,10 @@ class AcpRuntime {
           this.contextUsageTracker.finalizeAssistantOutput(request.sessionId)
           this.restoreContextUsageBeforePromptIfPreflight(
             request.sessionId,
-            contextUsageBeforePrompt
+            contextUsageCheckpoint
           )
         } else {
           this.contextUsageTracker.restoreSession(request.sessionId, contextUsageCheckpoint)
-          if (contextUsageBeforePrompt) {
-            this.contextUsageBySession.set(request.sessionId, contextUsageBeforePrompt)
-          } else {
-            this.contextUsageBySession.delete(request.sessionId)
-          }
         }
       }
       if (skillActivitiesStarted && !skillActivitiesFinalized) {
@@ -3220,9 +3181,7 @@ class AcpRuntime {
         this.claudeTurnCountsBySession.delete(request.sessionId)
         this.clearOpenCodePermissionToolContext(request.sessionId)
         this.currentPromptTurnBySession.delete(request.sessionId)
-        if (this.contextUsageUpdatedPromptTurnsBySession.get(request.sessionId) === promptTurn) {
-          this.contextUsageUpdatedPromptTurnsBySession.delete(request.sessionId)
-        }
+        this.contextUsageTracker.clearPromptTurn(request.sessionId, promptTurn)
         this.promptInFlightSessionIds.delete(request.sessionId)
         if (this.skillImportTurnTokens.get(request.sessionId) === skillImportTurnToken) {
           this.skillImportTurnTokens.delete(request.sessionId)
@@ -3375,9 +3334,7 @@ class AcpRuntime {
     this.sessionProjectNames.delete(request.sessionId)
     this.sessionFrameworks.delete(request.sessionId)
     this.sessionBackendIds.delete(request.sessionId)
-    this.contextUsageBySession.delete(request.sessionId)
     this.contextUsageTracker.deleteSession(request.sessionId)
-    this.contextUsageUpdatedPromptTurnsBySession.delete(request.sessionId)
     this.appliedSessionModels.delete(request.sessionId)
     this.permissionProfiles.delete(request.sessionId)
     this.artifactSessionIds.delete(request.sessionId)
@@ -3948,7 +3905,7 @@ class AcpRuntime {
       await this.reconnectBarrier
     }
 
-    if (this.connection && this.status === 'connected') {
+    if (this.connection && this.snapshotOwner.status === 'connected') {
       return this.connection
     }
 
@@ -5497,36 +5454,20 @@ class AcpRuntime {
     }
 
     const usage = toCodexTurnTokenUsage(response.usage)
-    const current = this.contextUsageBySession.get(sessionId)
-    if (!usage || !current) return
+    if (!usage) return
 
     const used = usage.inputTokens + usage.cacheTokens
-    if (!Number.isSafeInteger(used)) return
-    if (current.used === used && current.breakdown?.status === 'reconciled') return
-
-    this.contextUsageBySession.set(sessionId, {
-      used,
-      ...(current.size === undefined ? {} : { size: current.size }),
-      breakdown: this.contextUsageTracker.compare(sessionId, used, 'reconciled')
-    })
-    this.emitState()
+    if (this.contextUsageTracker.reconcileUsed(sessionId, used)) this.emitState()
   }
 
   private restoreContextUsageBeforePromptIfPreflight(
     sessionId: string,
-    usageBeforePrompt: AcpContextUsage | undefined
+    checkpoint: ReturnType<ContextUsageTracker['checkpointSession']>
   ): boolean {
-    if (this.contextUsageBySession.get(sessionId)?.breakdown?.status !== 'preflight') return false
-
     // Preflight is a generation-only projection. If this turn produced no authoritative update,
     // return to the last Agent reading so compaction remains available; a prior preflight reading is
     // not authoritative either, so clear it instead of carrying the transient state across turns.
-    if (usageBeforePrompt && usageBeforePrompt.breakdown?.status !== 'preflight') {
-      this.contextUsageBySession.set(sessionId, usageBeforePrompt)
-    } else {
-      this.contextUsageBySession.delete(sessionId)
-    }
-    return true
+    return this.contextUsageTracker.restorePreflightUsage(sessionId, checkpoint)
   }
 
   private contextUsageSelectionFor(sessionId?: string): {
@@ -5593,27 +5534,9 @@ class AcpRuntime {
     sessionId: string,
     status: NonNullable<AcpContextUsage['breakdown']>['status']
   ): boolean {
-    const current = this.contextUsageBySession.get(sessionId)
-    if (status === 'preflight') {
-      const breakdown = this.contextUsageTracker.estimate(sessionId)
-      const size = this.selectedContextWindowFor(sessionId) ?? current?.size
-      if (!breakdown) return false
-      const agentUsed =
-        current?.breakdown?.status === 'preflight' ? current.agentUsed : current?.used
-      this.contextUsageBySession.set(sessionId, {
-        used: agentUsed ?? breakdown.estimatedTokens,
-        ...(agentUsed === undefined ? {} : { agentUsed }),
-        ...(size === undefined ? {} : { size }),
-        breakdown
-      })
-      return true
-    }
-
-    if (!current) return false
-    const breakdown = this.contextUsageTracker.compare(sessionId, current.used, status)
-    if (!breakdown) return false
-    this.contextUsageBySession.set(sessionId, { ...current, breakdown })
-    return true
+    const selectedSize = this.selectedContextWindowFor(sessionId)
+    const size = selectedSize ?? this.contextUsageTracker.usage(sessionId)?.size
+    return this.contextUsageTracker.refreshUsage(sessionId, status, size)
   }
 
   private async recordPromptContextEstimate(
@@ -5701,7 +5624,7 @@ class AcpRuntime {
       ) {
         const promptTurn = this.currentPromptTurnBySession.get(routed.sessionId)
         if (promptTurn !== undefined) {
-          this.contextUsageUpdatedPromptTurnsBySession.set(routed.sessionId, promptTurn)
+          this.contextUsageTracker.markPromptTurnUpdated(routed.sessionId, promptTurn)
         }
       }
     }
@@ -5725,16 +5648,11 @@ class AcpRuntime {
       // must stay hidden until disconnect replaces the agent-context generation.
       if (this.pendingProviderReconnect) return
 
-      const breakdown = this.contextUsageTracker.compare(
+      this.contextUsageTracker.reconcileProviderUsage(
         routed.sessionId,
-        event.contextUsage.used,
-        'reconciled'
+        event.contextUsage,
+        this.selectedContextWindowFor(routed.sessionId)
       )
-      this.contextUsageBySession.set(routed.sessionId, {
-        ...event.contextUsage,
-        size: this.selectedContextWindowFor(routed.sessionId) ?? event.contextUsage.size,
-        ...(breakdown ? { breakdown } : {})
-      })
       this.emitState()
       return
     }
@@ -5743,7 +5661,7 @@ class AcpRuntime {
 
     if (
       !this.pendingProviderReconnect &&
-      this.contextUsageBySession.get(routed.sessionId)?.breakdown?.status !== 'reconciled'
+      this.contextUsageTracker.usage(routed.sessionId)?.breakdown?.status !== 'reconciled'
     ) {
       this.refreshEstimatedContextUsage(routed.sessionId, 'preflight')
     }
@@ -5803,7 +5721,7 @@ class AcpRuntime {
         log.warn('agent stderr', {
           text,
           framework,
-          status: this.status,
+          status: this.snapshotOwner.status,
           sessionCount: this.sessions.size
         })
       }
@@ -5837,12 +5755,12 @@ class AcpRuntime {
         return
       }
 
-      this.error = errorMessage(error)
+      this.snapshotOwner.updateError(errorMessage(error))
       this.pushEvent({
         kind: 'error',
         level: 'error',
         title: 'Agent process error',
-        text: this.error
+        text: this.snapshotOwner.error
       })
       this.setStatus('error')
     })
@@ -5852,7 +5770,7 @@ class AcpRuntime {
         code,
         signal,
         framework,
-        status: this.status,
+        status: this.snapshotOwner.status,
         expected: this.expectedProcessExits.has(agentProcess),
         sessionCount: this.sessions.size,
         pid: agentProcess.pid
@@ -5862,7 +5780,10 @@ class AcpRuntime {
         return
       }
 
-      if (this.status === 'connected' || this.status === 'connecting') {
+      if (
+        this.snapshotOwner.status === 'connected' ||
+        this.snapshotOwner.status === 'connecting'
+      ) {
         this.pushEvent({
           kind: 'system',
           level: code === 0 ? 'info' : 'warning',
@@ -5899,9 +5820,7 @@ class AcpRuntime {
     this.codexSkillActivity.clear()
     this.clearAllOpenCodePermissionToolContext()
     this.sessionProjectNames.clear()
-    this.contextUsageBySession.clear()
     this.contextUsageTracker.clear()
-    this.contextUsageUpdatedPromptTurnsBySession.clear()
     this.appliedSessionModels.clear()
     this.artifactSessionIds.clear()
     this.notebookRoutingIds.clear()
@@ -5935,7 +5854,7 @@ class AcpRuntime {
 
   // Updates connection status and broadcasts the new snapshot.
   private setStatus(status: AcpStateSnapshot['status']): void {
-    this.status = status
+    this.snapshotOwner.transitionStatus(status)
     this.emitState()
   }
 
@@ -5943,63 +5862,14 @@ class AcpRuntime {
   private pushEvent(
     event: Omit<AcpRuntimeEvent, 'id' | 'timestamp'> & Partial<AcpRuntimeEvent>
   ): void {
-    let image = event.image
-    let raw = event.raw
-    let text = event.text
-    if (image && event.sessionId) {
-      const retainedBytes = this.events
-        .filter((candidate) => candidate.sessionId === event.sessionId)
-        .reduce(
-          (total, candidate) => total + (getAcpRuntimeEventImage(candidate)?.byteLength ?? 0),
-          0
-        )
-      if (retainedBytes + image.byteLength > MAX_ACP_SESSION_IMAGE_BYTES) {
-        image = undefined
-        raw = undefined
-        text = 'Agent image omitted because the session image budget was reached.'
-      }
-    }
-
-    const runtimeEvent: AcpRuntimeEvent = {
-      id: event.id ?? this.nextEventId(),
-      timestamp: event.timestamp ?? Date.now(),
-      level: event.level ?? 'info',
-      kind: event.kind,
-      compactionReason: event.compactionReason,
-      recoverable: event.recoverable,
-      providerError: event.providerError,
-      turnUsage: event.turnUsage,
-      sessionId: event.sessionId,
-      messageId: event.messageId,
-      role: event.role,
-      text,
-      image,
-      title: event.title,
-      status: event.status,
-      toolCallId: event.toolCallId,
-      providerToolName: event.providerToolName,
-      toolKind: event.toolKind,
-      toolContent: event.toolContent,
-      toolLocations: event.toolLocations,
-      rawInput: event.rawInput,
-      rawOutput: event.rawOutput,
-      runId: event.runId,
-      promptMessageId: event.promptMessageId,
-      artifactSessionId: event.artifactSessionId,
-      artifactClaimId: event.artifactClaimId,
-      artifacts: event.artifacts,
-      raw
-    }
-
-    this.events = [...this.events, runtimeEvent].slice(-MAX_EVENTS)
+    const runtimeEvent = this.snapshotOwner.appendEvent(event)
     this.callbacks.onEvent?.(runtimeEvent)
     this.emitState()
   }
 
   // Generates monotonically increasing event ids for this runtime instance.
   private nextEventId(): string {
-    this.eventSequence += 1
-    return `acp-event-${this.eventSequence}`
+    return this.snapshotOwner.nextEventId()
   }
 
   // Broadcasts the latest runtime snapshot if a listener is registered.

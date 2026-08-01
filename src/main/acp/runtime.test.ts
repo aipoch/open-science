@@ -584,12 +584,15 @@ const agentToAppSessionMap = (runtime: AcpRuntime): Map<string, string> =>
 const sessionFrameworksMap = (runtime: AcpRuntime): Map<string, string> =>
   (runtime as unknown as { sessionFrameworks: Map<string, string> }).sessionFrameworks
 
-const contextUsageMap = (runtime: AcpRuntime): Map<string, { used: number; size: number }> =>
-  (
-    runtime as unknown as {
-      contextUsageBySession: Map<string, { used: number; size: number }>
-    }
-  ).contextUsageBySession
+const contextUsageMap = (
+  runtime: AcpRuntime
+): { set: (sessionId: string, usage: AcpContextUsage) => void } => {
+  const tracker = (runtime as unknown as { contextUsageTracker: ContextUsageTracker })
+    .contextUsageTracker
+  return {
+    set: (sessionId, usage) => tracker.reconcileProviderUsage(sessionId, usage)
+  }
+}
 
 const sessionInlineImageBytesMap = (runtime: AcpRuntime): Map<string, number> =>
   (runtime as unknown as { sessionInlineImageBytes: Map<string, number> }).sessionInlineImageBytes
@@ -7333,10 +7336,24 @@ describe('ACP runtime session management', () => {
     expect(snapshot.contextUsageBySession).toMatchObject({ s1: { used: 12, size: 128_000 } })
 
     const retainedEventIds = snapshot.events.map(({ id }) => id)
+    const retainedEventTitles = snapshot.events.map(({ title }) => title)
+    const messageRaw = snapshot.events.find(({ messageId }) => messageId === 'message-1')?.raw as {
+      update: { content: { text: string } }
+    }
+    messageRaw.update.content.text = 'mutated outside the runtime'
+    if (snapshot.events[0]) snapshot.events[0].title = 'mutated outside the runtime'
     snapshot.events.length = 0
     delete snapshot.contextUsageBySession.s1
 
     expect(runtime.getSnapshot().events.map(({ id }) => id)).toEqual(retainedEventIds)
+    expect(runtime.getSnapshot().events.map(({ title }) => title)).toEqual(retainedEventTitles)
+    expect(
+      (
+        runtime.getSnapshot().events.find(({ messageId }) => messageId === 'message-1')?.raw as {
+          update: { content: { text: string } }
+        }
+      ).update.content.text
+    ).toBe('first')
     expect(runtime.getSnapshot().contextUsageBySession).toMatchObject({
       s1: { used: 12, size: 128_000 }
     })

@@ -6,6 +6,7 @@ import cl100kBase from 'js-tiktoken/ranks/cl100k_base'
 import o200kBase from 'js-tiktoken/ranks/o200k_base'
 
 import type {
+  AcpContextUsage,
   AcpContextUsageBreakdown,
   AcpContextUsageCategory,
   AcpContextUsageCategoryKey
@@ -47,6 +48,8 @@ type SessionEstimateInput = {
 
 type SessionEstimateCheckpoint = {
   state?: SessionEstimate
+  usage?: AcpContextUsage
+  usageRevision: number
 }
 
 type SessionUpdateObservation = {
@@ -312,6 +315,9 @@ const toolContentText = (content: ToolUpdate['content'], budget: ToolTextBudget)
 
 class ContextUsageTracker {
   private readonly sessions = new Map<string, SessionEstimate>()
+  private readonly usageBySession = new Map<string, AcpContextUsage>()
+  private readonly usageRevisions = new Map<string, number>()
+  private readonly updatedPromptTurnsBySession = new Map<string, number>()
 
   constructor(private readonly counter: TokenCounter = defaultTokenCounter) {}
 
@@ -354,12 +360,128 @@ class ContextUsageTracker {
 
   checkpointSession(sessionId: string): SessionEstimateCheckpoint {
     const state = this.sessions.get(sessionId)
-    return state ? { state: cloneSessionEstimate(state) } : {}
+    const usage = this.usageBySession.get(sessionId)
+    return {
+      ...(state ? { state: cloneSessionEstimate(state) } : {}),
+      ...(usage ? { usage: this.cloneUsage(usage) } : {}),
+      usageRevision: this.usageRevisions.get(sessionId) ?? 0
+    }
   }
 
   restoreSession(sessionId: string, checkpoint: SessionEstimateCheckpoint): void {
     if (checkpoint.state) this.sessions.set(sessionId, cloneSessionEstimate(checkpoint.state))
     else this.sessions.delete(sessionId)
+    if (checkpoint.usage) this.replaceUsage(sessionId, checkpoint.usage)
+    else this.deleteUsage(sessionId)
+  }
+
+  usage(sessionId: string): AcpContextUsage | undefined {
+    const usage = this.usageBySession.get(sessionId)
+    return usage ? this.cloneUsage(usage) : undefined
+  }
+
+  hasUsage(): boolean {
+    return this.usageBySession.size > 0
+  }
+
+  usageSnapshot(): Record<string, AcpContextUsage> {
+    return Object.fromEntries(
+      Array.from(this.usageBySession, ([sessionId, usage]) => [sessionId, this.cloneUsage(usage)])
+    )
+  }
+
+  reconcileProviderUsage(
+    sessionId: string,
+    usage: AcpContextUsage,
+    selectedContextWindow?: number
+  ): void {
+    const breakdown = this.compare(sessionId, usage.used, 'reconciled')
+    this.replaceUsage(sessionId, {
+      ...usage,
+      size: selectedContextWindow ?? usage.size,
+      ...(breakdown ? { breakdown } : {})
+    })
+  }
+
+  reconcileUsed(sessionId: string, used: number): boolean {
+    const current = this.usageBySession.get(sessionId)
+    if (!current || !Number.isSafeInteger(used)) return false
+    if (current.used === used && current.breakdown?.status === 'reconciled') return false
+
+    this.replaceUsage(sessionId, {
+      used,
+      ...(current.size === undefined ? {} : { size: current.size }),
+      breakdown: this.compare(sessionId, used, 'reconciled')
+    })
+    return true
+  }
+
+  refreshUsage(
+    sessionId: string,
+    status: AcpContextUsageBreakdown['status'],
+    size?: number
+  ): boolean {
+    const current = this.usageBySession.get(sessionId)
+    if (status === 'preflight') {
+      const breakdown = this.estimate(sessionId)
+      if (!breakdown) return false
+      const agentUsed = current?.breakdown?.status === 'preflight' ? current.agentUsed : current?.used
+      this.replaceUsage(sessionId, {
+        used: agentUsed ?? breakdown.estimatedTokens,
+        ...(agentUsed === undefined ? {} : { agentUsed }),
+        ...(size === undefined ? {} : { size }),
+        breakdown
+      })
+      return true
+    }
+
+    if (!current) return false
+    const breakdown = this.compare(sessionId, current.used, status)
+    if (!breakdown) return false
+    this.replaceUsage(sessionId, { ...current, breakdown })
+    return true
+  }
+
+  restorePreflightUsage(sessionId: string, checkpoint: SessionEstimateCheckpoint): boolean {
+    if (this.usageBySession.get(sessionId)?.breakdown?.status !== 'preflight') return false
+
+    if (checkpoint.usage && checkpoint.usage.breakdown?.status !== 'preflight') {
+      this.replaceUsage(sessionId, checkpoint.usage)
+    } else {
+      this.deleteUsage(sessionId)
+    }
+    return true
+  }
+
+  resetAfterCompaction(
+    sessionId: string,
+    input: SessionEstimateInput,
+    checkpoint: SessionEstimateCheckpoint,
+    size?: number
+  ): void {
+    this.resetSession(sessionId, input)
+    if ((this.usageRevisions.get(sessionId) ?? 0) === checkpoint.usageRevision) {
+      this.deleteUsage(sessionId)
+    } else {
+      this.refreshUsage(sessionId, 'reconciled', size)
+    }
+  }
+
+  markPromptTurnUpdated(sessionId: string, promptTurn: number): void {
+    this.updatedPromptTurnsBySession.set(sessionId, promptTurn)
+  }
+
+  promptTurnWasUpdated(sessionId: string, promptTurn: number): boolean {
+    return this.updatedPromptTurnsBySession.get(sessionId) === promptTurn
+  }
+
+  clearPromptTurn(sessionId: string, promptTurn?: number): void {
+    if (
+      promptTurn === undefined ||
+      this.updatedPromptTurnsBySession.get(sessionId) === promptTurn
+    ) {
+      this.updatedPromptTurnsBySession.delete(sessionId)
+    }
   }
 
   appendText(sessionId: string, category: EstimatedCategoryKey, text: string): void {
@@ -636,12 +758,42 @@ class ContextUsageTracker {
     }
   }
 
+  private cloneUsage(usage: AcpContextUsage): AcpContextUsage {
+    return {
+      ...usage,
+      ...(usage.breakdown
+        ? {
+            breakdown: {
+              ...usage.breakdown,
+              categories: usage.breakdown.categories.map((category) => ({ ...category }))
+            }
+          }
+        : {})
+    }
+  }
+
+  private replaceUsage(sessionId: string, usage: AcpContextUsage): void {
+    this.usageBySession.set(sessionId, this.cloneUsage(usage))
+    this.usageRevisions.set(sessionId, (this.usageRevisions.get(sessionId) ?? 0) + 1)
+  }
+
+  private deleteUsage(sessionId: string): void {
+    if (!this.usageBySession.delete(sessionId)) return
+    this.usageRevisions.set(sessionId, (this.usageRevisions.get(sessionId) ?? 0) + 1)
+  }
+
   deleteSession(sessionId: string): void {
     this.sessions.delete(sessionId)
+    this.deleteUsage(sessionId)
+    this.usageRevisions.delete(sessionId)
+    this.updatedPromptTurnsBySession.delete(sessionId)
   }
 
   clear(): void {
     this.sessions.clear()
+    this.usageBySession.clear()
+    this.usageRevisions.clear()
+    this.updatedPromptTurnsBySession.clear()
   }
 }
 
