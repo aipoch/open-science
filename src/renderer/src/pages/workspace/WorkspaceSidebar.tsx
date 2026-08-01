@@ -141,7 +141,7 @@ const WorkspaceSidebar = ({
                 type="button"
                 onClick={onGoHome}
                 className={cn(
-                  'flex w-full items-center gap-1 rounded-md px-1.5 py-1 text-[11px] text-text-100 hover:bg-bg-300 hover:text-text-000',
+                  'flex w-full items-center gap-1 rounded-md px-1.5 py-1 text-[11px] text-muted-foreground hover:bg-bg-300 hover:text-text-000',
                   sidebarInteractiveTransitionClassName
                 )}
               >
@@ -217,7 +217,7 @@ const WorkspaceSidebar = ({
           <div className="min-h-0 flex-1 overflow-y-auto py-1">
             {sections.map((section) => (
               <div key={section.label}>
-                <div className="px-2 pb-[5px] pt-3.5 text-[11px] font-medium text-text-100">
+                <div className="px-2 pb-[5px] pt-3.5 text-[11px] font-medium text-muted-foreground">
                   {section.label}
                 </div>
                 {section.items.map((session) => {

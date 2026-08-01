@@ -264,7 +264,7 @@ const HomePage = ({
             >
               Open Science
             </a>
-            <div className="mt-1 text-[11px] text-text-100">Beta</div>
+            <div className="mt-1 text-[11px] text-muted-foreground">Beta</div>
           </div>
           <div className="flex flex-wrap items-center justify-end gap-1 sm:gap-2">
             <UpdateCapsule />
@@ -323,7 +323,7 @@ const HomePage = ({
                 Could not load projects: {loadError}
               </div>
             ) : projectSummaries.length === 0 ? (
-              <div className="rounded-2xl border border-dashed border-border-200/70 px-4 py-10 text-center text-sm text-text-100">
+              <div className="rounded-2xl border border-dashed border-border-200/70 px-4 py-10 text-center text-sm text-muted-foreground">
                 No projects yet. Create one to get started.
               </div>
             ) : (
@@ -402,7 +402,7 @@ const HomePage = ({
               Recent sessions
             </h2>
             {recentSessions.length === 0 ? (
-              <div className="rounded-2xl border border-dashed border-border-200/70 px-4 py-10 text-center text-sm text-text-100">
+              <div className="rounded-2xl border border-dashed border-border-200/70 px-4 py-10 text-center text-sm text-muted-foreground">
                 Sessions you start will appear here.
               </div>
             ) : (

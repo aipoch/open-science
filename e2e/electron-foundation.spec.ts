@@ -1,102 +1,86 @@
-import { expect, test } from '@playwright/test'
-import { mkdtemp, rm } from 'node:fs/promises'
-import { tmpdir } from 'node:os'
-import { join, resolve } from 'node:path'
-import { _electron as electron, type ElectronApplication, type Page } from 'playwright'
+import { expect } from '@playwright/test'
+import type { Page } from 'playwright'
+import { test } from './fixtures/electron-app'
 
-const APP_ROOT = resolve(process.cwd())
 const PROJECT_NAME = 'Electron E2E project'
 
-type LaunchRoots = {
-  storageRoot: string
-  userDataRoot: string
+const createProject = async (page: Page, name: string): Promise<void> => {
+  await page.getByRole('button', { name: 'New project' }).click()
+  const dialog = page.getByRole('dialog', { name: 'New project' })
+  await dialog.getByLabel('Name').fill(name)
+  await dialog.getByLabel('Description').fill('Created through the real Electron IPC boundary.')
+  await dialog.getByRole('button', { name: 'Create project' }).click()
+  await expect(page.getByRole('heading', { name: 'New conversation' })).toBeVisible()
 }
+test('creates a project through the desktop stack and reloads it after relaunch', async ({
+  app
+}) => {
+  await expect(
+    app.page.getByRole('heading', { name: 'Set up your research workspace.' })
+  ).toBeVisible()
 
-const launchEnvironment = (storageRoot: string): Record<string, string> => {
-  const environment: Record<string, string> = {}
+  // Seed only the external-provider-dependent prerequisite. The journey remains visible UI backed
+  // by the production preload bridge, main process, and project database.
+  let page = await app.completeOnboarding()
 
-  for (const [key, value] of Object.entries(process.env)) {
-    if (value !== undefined && key !== 'ELECTRON_RENDERER_URL') environment[key] = value
-  }
+  await createProject(page, PROJECT_NAME)
+  await expect(page.getByRole('button', { name: 'All projects' })).toBeVisible()
 
-  environment.OPEN_SCIENCE_STORAGE_ROOT = storageRoot
-  return environment
-}
+  page = await app.restart()
 
-const launchOpenScience = ({
-  storageRoot,
-  userDataRoot
-}: LaunchRoots): Promise<ElectronApplication> =>
-  electron.launch({
-    args: [`--user-data-dir=${userDataRoot}`, APP_ROOT],
-    cwd: APP_ROOT,
-    env: launchEnvironment(storageRoot)
-  })
+  const projects = page.getByRole('region', { name: 'Projects' })
+  await expect(projects.getByRole('button', { name: PROJECT_NAME, exact: true })).toBeVisible()
+})
 
-const observeRendererFailures = (page: Page): void => {
-  page.on('console', (message) => {
-    if (message.type() === 'error') console.error(`[renderer console] ${message.text()}`)
-  })
-  page.on('pageerror', (error) => console.error('[renderer pageerror]', error))
-}
+test('renames a project through the home actions and keeps the change after relaunch', async ({
+  app
+}) => {
+  const renamedProject = 'Renamed Electron project'
+  let page = await app.completeOnboarding()
+  await createProject(page, PROJECT_NAME)
 
-const openMainWindow = async (application: ElectronApplication): Promise<Page> => {
-  const page = await application.firstWindow()
-  observeRendererFailures(page)
-  await page.waitForLoadState('domcontentloaded')
-  return page
-}
+  await page.getByRole('button', { name: 'All projects' }).click()
+  await page.getByRole('button', { name: `Open actions for ${PROJECT_NAME}` }).click()
+  await page.getByRole('menuitem', { name: 'Rename…' }).click()
 
-const closeApplication = async (application: ElectronApplication | undefined): Promise<void> => {
-  if (!application) return
-  await application.close()
-}
+  const dialog = page.getByRole('dialog', { name: 'Edit project' })
+  await dialog.getByLabel('Name').fill(renamedProject)
+  await dialog.getByRole('button', { name: 'Save changes' }).click()
 
-test('creates a project through the desktop stack and reloads it after relaunch', async () => {
-  const testRoot = await mkdtemp(join(tmpdir(), 'open-science-electron-e2e-'))
-  const roots: LaunchRoots = {
-    storageRoot: join(testRoot, 'storage'),
-    userDataRoot: join(testRoot, 'electron-profile')
-  }
-  let application: ElectronApplication | undefined
+  const projects = page.getByRole('region', { name: 'Projects' })
+  await expect(projects.getByRole('button', { name: renamedProject, exact: true })).toBeVisible()
+  await expect(projects.getByRole('button', { name: PROJECT_NAME, exact: true })).toHaveCount(0)
 
-  try {
-    application = await launchOpenScience(roots)
-    let page = await openMainWindow(application)
+  page = await app.restart()
+  await expect(
+    page
+      .getByRole('region', { name: 'Projects' })
+      .getByRole('button', { name: renamedProject, exact: true })
+  ).toBeVisible()
+})
 
-    await expect(
-      page.getByRole('heading', { name: 'Set up your research workspace.' })
-    ).toBeVisible()
+test('deletes a project through confirmation and keeps it absent after relaunch', async ({
+  app
+}) => {
+  let page = await app.completeOnboarding()
+  await createProject(page, PROJECT_NAME)
 
-    // Use the production preload bridge to seed only the external-provider-dependent prerequisite.
-    // Everything after this point is visible UI backed by the real main process and project database.
-    await page.evaluate(async () => {
-      const bridge = globalThis as unknown as {
-        api: { settings: { markOnboardingComplete: () => Promise<unknown> } }
-      }
-      await bridge.api.settings.markOnboardingComplete()
-    })
-    await page.reload({ waitUntil: 'domcontentloaded' })
+  await page.getByRole('button', { name: 'All projects' }).click()
+  await page.getByRole('button', { name: `Open actions for ${PROJECT_NAME}` }).click()
+  await page.getByRole('menuitem', { name: 'Delete' }).click()
 
-    await page.getByRole('button', { name: 'New project' }).click()
-    const dialog = page.getByRole('dialog', { name: 'New project' })
-    await dialog.getByLabel('Name').fill(PROJECT_NAME)
-    await dialog.getByLabel('Description').fill('Created through the real Electron IPC boundary.')
-    await dialog.getByRole('button', { name: 'Create project' }).click()
+  const dialog = page.getByRole('alertdialog', { name: 'Delete project?' })
+  await expect(dialog).toContainText(`This will permanently delete "${PROJECT_NAME}"`)
+  await dialog.getByRole('button', { name: 'Delete' }).click()
 
-    await expect(page.getByRole('heading', { name: 'New conversation' })).toBeVisible()
-    await expect(page.getByRole('button', { name: 'All projects' })).toBeVisible()
+  const projects = page.getByRole('region', { name: 'Projects' })
+  await expect(projects.getByRole('button', { name: PROJECT_NAME, exact: true })).toHaveCount(0)
+  await expect(projects).toContainText('No projects yet. Create one to get started.')
 
-    await closeApplication(application)
-    application = undefined
-
-    application = await launchOpenScience(roots)
-    page = await openMainWindow(application)
-
-    const projects = page.getByRole('region', { name: 'Projects' })
-    await expect(projects.getByRole('button', { name: PROJECT_NAME, exact: true })).toBeVisible()
-  } finally {
-    await closeApplication(application).catch(() => undefined)
-    await rm(testRoot, { force: true, recursive: true })
-  }
+  page = await app.restart()
+  await expect(
+    page
+      .getByRole('region', { name: 'Projects' })
+      .getByRole('button', { name: PROJECT_NAME, exact: true })
+  ).toHaveCount(0)
 })

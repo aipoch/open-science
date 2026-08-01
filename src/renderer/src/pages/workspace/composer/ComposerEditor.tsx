@@ -24,7 +24,7 @@ const composerEditorClassName =
 
 // Placeholder overlay aligned to the editor's text start; pointer-events-none lets clicks reach the box.
 const composerPlaceholderClassName =
-  'pointer-events-none absolute inset-x-0 top-0 truncate py-1.5 text-[15px] leading-relaxed text-text-300'
+  'pointer-events-none absolute inset-x-0 top-0 truncate py-1.5 text-[15px] leading-relaxed text-muted-foreground'
 
 type ComposerEditorProps = {
   doc: ComposerDoc

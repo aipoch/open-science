@@ -53,7 +53,7 @@ const GitHubStarBadge = ({ className }: GitHubStarBadgeProps): React.JSX.Element
       aria-label={label}
       title={label}
       className={cn(
-        'inline-flex h-8 items-center gap-1.5 rounded-md px-2 text-text-300 transition-colors duration-150 ease-out hover:bg-bg-300 hover:text-text-000',
+        'inline-flex h-8 items-center gap-1.5 rounded-md px-2 text-muted-foreground transition-colors duration-150 ease-out hover:bg-bg-300 hover:text-text-000',
         className
       )}
     >

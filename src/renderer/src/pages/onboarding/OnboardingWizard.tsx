@@ -45,11 +45,7 @@ const OnboardingProgress = ({ step }: { step: WizardStep }): React.JSX.Element =
             aria-current={state === 'active' ? 'step' : undefined}
             className={cn(
               'flex items-center gap-2 text-sm',
-              state === 'active'
-                ? 'font-medium text-text-000'
-                : state === 'done'
-                  ? 'text-text-100'
-                  : 'text-text-300'
+              state === 'active' ? 'font-medium text-text-000' : 'text-muted-foreground'
             )}
           >
             <span
@@ -164,14 +160,14 @@ const OnboardingWizard = (): React.JSX.Element => {
           className="mt-12 grid grid-cols-[240px_minmax(0,1fr)] gap-10"
         >
           <section aria-labelledby="onboarding-introduction-title" className="pt-2">
-            <p className="text-[11px] font-medium text-text-100">FIRST-TIME SETUP</p>
+            <p className="text-[11px] font-medium text-muted-foreground">FIRST-TIME SETUP</p>
             <h1
               id="onboarding-introduction-title"
               className="mt-2 font-serif text-[28px] leading-[1.15] font-medium text-text-000"
             >
               Set up your research workspace.
             </h1>
-            <p className="mt-3 max-w-60 text-sm leading-5 text-text-100">
+            <p className="mt-3 max-w-60 text-sm leading-5 text-muted-foreground">
               A quick host check confirms this computer is ready, you connect the model you want to
               use, then you choose where your data lives.
             </p>

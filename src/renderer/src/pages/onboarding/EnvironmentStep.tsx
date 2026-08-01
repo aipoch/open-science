@@ -64,7 +64,7 @@ const EnvironmentStep = ({ onContinue }: EnvironmentStepProps): React.JSX.Elemen
         </section>
       </CardContent>
       <CardFooter className="mt-auto items-center justify-between gap-4 rounded-b-lg border-border-200 bg-bg-10 px-6 py-3">
-        <p className="text-xs leading-5 text-text-100">
+        <p className="text-xs leading-5 text-muted-foreground">
           {hostReady
             ? 'All required environment checks passed.'
             : 'Complete every required item above to continue.'}

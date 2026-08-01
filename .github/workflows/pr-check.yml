@@ -168,13 +168,87 @@ jobs:
         run: npm run build:e2e
 
       - name: Run Electron UI E2E
-        run: npm run test:e2e
+        run: npm run test:e2e:journey
 
       - name: Upload Electron UI E2E failure artifacts
         if: failure()
         uses: actions/upload-artifact@v7
         with:
           name: electron-ui-e2e-failure
+          path: |
+            playwright-report/
+            test-results/
+          retention-days: 5
+          if-no-files-found: warn
+
+  # Accessibility runs independently so axe findings are attributable and do not wait behind the
+  # UI journey. It scans the production renderer inside a real Electron BrowserWindow.
+  electron_accessibility:
+    name: Electron Accessibility (macOS)
+    runs-on: macos-14
+    timeout-minutes: 15
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v7
+
+      - name: Setup Node
+        uses: actions/setup-node@v7
+        with:
+          node-version: 22
+          cache: npm
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Build Electron application
+        run: npm run build:e2e
+
+      - name: Run Electron accessibility checks
+        run: npm run test:e2e:accessibility
+
+      - name: Upload Electron accessibility failure artifacts
+        if: failure()
+        uses: actions/upload-artifact@v7
+        with:
+          name: electron-accessibility-failure
+          path: |
+            playwright-report/
+            test-results/
+          retention-days: 5
+          if-no-files-found: warn
+
+  # Visual baselines are macOS-specific and run separately from behavior and axe checks so a visual
+  # diff has its own report, screenshots, and trace.
+  electron_visual:
+    name: Electron Visual Regression (macOS)
+    runs-on: macos-14
+    timeout-minutes: 15
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v7
+
+      - name: Setup Node
+        uses: actions/setup-node@v7
+        with:
+          node-version: 22
+          cache: npm
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Build Electron application
+        run: npm run build:e2e
+
+      - name: Run Electron visual regression
+        run: npm run test:e2e:visual
+
+      - name: Upload Electron visual failure artifacts
+        if: failure()
+        uses: actions/upload-artifact@v7
+        with:
+          name: electron-visual-regression-failure
           path: |
             playwright-report/
             test-results/
