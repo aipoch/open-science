@@ -320,7 +320,11 @@ const startFakeAgent = (
       if (claudeTurnCount !== undefined) {
         await ctx.client.notify('_claude/sdkMessage', {
           sessionId: ctx.params.sessionId,
-          message: { type: 'result', num_turns: claudeTurnCount }
+          message: {
+            type: 'result',
+            num_turns: claudeTurnCount,
+            origin: { kind: 'human' }
+          }
         })
       }
       // Stream one assistant chunk through the client callback path before stopping.

@@ -505,6 +505,15 @@ const MAX_CODEX_MCP_TOOL_IDENTITIES_PER_SESSION = 32
 const MAX_CLAUDE_CODE_MCP_TOOL_INPUTS_PER_SESSION = 32
 const MAX_OPENCODE_MCP_TOOL_INPUTS_PER_SESSION = 32
 const MAX_PERMISSION_CODE_PREVIEW_CHARS = 7_500
+// Mirror claude-agent-acp's autonomous result lanes. Unknown future origins stay eligible so a
+// newly introduced user lane does not silently lose the terminal SDK `num_turns` value.
+const CLAUDE_AUTONOMOUS_RESULT_ORIGINS = new Set([
+  'task-notification',
+  'peer',
+  'coordinator',
+  'observer',
+  'observer-activity'
+])
 const OPENCODE_PERMISSION_CONTEXT_WAIT_MS = 1_000
 const ACTIVITY_GROUP_SYSTEM_PROMPT_APPEND = [
   '<open_science_activity_group_instructions>',
@@ -4000,7 +4009,12 @@ class AcpRuntime {
     if (typeof params.message !== 'object' || params.message === null) return
 
     const message = params.message as Record<string, unknown>
-    if (message.type !== 'result' || message.origin != null) return
+    if (message.type !== 'result') return
+    const origin =
+      typeof message.origin === 'object' && message.origin !== null
+        ? (message.origin as Record<string, unknown>).kind
+        : undefined
+    if (typeof origin === 'string' && CLAUDE_AUTONOMOUS_RESULT_ORIGINS.has(origin)) return
     if (!Number.isSafeInteger(message.num_turns) || (message.num_turns as number) <= 0) return
 
     const appSessionId = this.agentToAppSessionId.get(params.sessionId) ?? params.sessionId
