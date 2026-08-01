@@ -6,15 +6,27 @@ import type {
   AcpRuntimeEvent,
   AcpSetPermissionProfileRequest
 } from '../../shared/acp'
+import { getAcpRuntimeEventImage, getAcpRuntimeEventText } from '../../shared/acp'
 import type {
+  ArtifactFile,
   FinalizeRunArtifactsRequest,
   FinalizeRunArtifactsResult
 } from '../../shared/artifacts'
+import { ARTIFACT_OWNERSHIP_PERSISTENCE_RACE } from '../../shared/artifacts'
+import { DEFAULT_PERMISSION_PROFILE } from '../../shared/permission-profiles'
 import type { Project } from '../../shared/projects'
-import type { PersistedArtifact, PersistedChatSession } from '../../shared/session-persistence'
+import type {
+  PersistedArtifact,
+  PersistedChatMessage,
+  PersistedChatSession,
+  PersistedMessageImage,
+  PersistedToolActivity
+} from '../../shared/session-persistence'
 import type {
   AcquiredTaskArtifact,
+  StartTaskRunRequest,
   TaskApiErrorCode,
+  TaskRun,
   TaskSessionSummary
 } from '../../shared/task-api'
 
@@ -69,6 +81,76 @@ type TaskRunnerDependencies = {
   now: () => number
 }
 
+type MutableTaskRun = TaskRun & {
+  events: AcpRuntimeEvent[]
+  completion: Promise<void>
+}
+
+type CompletedTaskSession = {
+  session: PersistedChatSession
+  output: string
+  artifacts: ArtifactFile[]
+}
+
+class PartialTaskCompletionError extends Error {
+  constructor(
+    readonly completion: CompletedTaskSession,
+    readonly failure: unknown
+  ) {
+    super(failure instanceof Error ? failure.message : String(failure))
+    this.name = 'PartialTaskCompletionError'
+  }
+}
+
+const MAX_RETAINED_RUNS = 200
+
+const cloneRun = (run: MutableTaskRun): TaskRun => ({
+  id: run.id,
+  sessionId: run.sessionId,
+  projectId: run.projectId,
+  status: run.status,
+  startedAt: run.startedAt,
+  completedAt: run.completedAt,
+  output: run.output,
+  error: run.error,
+  artifacts: [...run.artifacts]
+})
+
+const createTitle = (prompt: string): string => {
+  const normalized = prompt.trim().replace(/\s+/g, ' ')
+  return normalized.length <= 60 ? normalized : `${normalized.slice(0, 57)}...`
+}
+
+const createUserMessage = (id: string, content: string, now: number): PersistedChatMessage => ({
+  id,
+  role: 'user',
+  content,
+  status: 'complete',
+  eventIds: [],
+  createdAt: now,
+  updatedAt: now
+})
+
+const toPersistedArtifact = (artifact: ArtifactFile): PersistedArtifact => ({
+  id: artifact.id,
+  kind: 'managed-file',
+  path: artifact.path,
+  fileUrl: artifact.fileUrl,
+  name: artifact.name,
+  mimeType: artifact.mimeType,
+  size: artifact.size,
+  mtimeMs: artifact.mtimeMs
+})
+
+const createHistoryPreamble = (session: PersistedChatSession): string | undefined => {
+  if (session.messages.length === 0) return undefined
+  const transcript = session.messages
+    .filter((message) => message.content.trim())
+    .map((message) => `${message.role === 'user' ? 'User' : 'Assistant'}: ${message.content}`)
+    .join('\n\n')
+  return transcript ? `Previous conversation:\n\n${transcript}` : undefined
+}
+
 const summarizeSession = (session: PersistedChatSession): TaskSessionSummary => ({
   id: session.id,
   projectId: session.projectId,
@@ -93,7 +175,19 @@ class TaskRunnerError extends Error {
 }
 
 class TaskRunner {
-  constructor(private readonly dependencies: TaskRunnerDependencies) {}
+  private readonly runs = new Map<string, MutableTaskRun>()
+  private readonly activeRunBySession = new Map<string, string>()
+  private readonly unsubscribeEvents: () => void
+
+  constructor(private readonly dependencies: TaskRunnerDependencies) {
+    this.unsubscribeEvents = dependencies.runtimeEvents.subscribe((event) =>
+      this.captureEvent(event)
+    )
+  }
+
+  dispose(): void {
+    this.unsubscribeEvents()
+  }
 
   listProjects(): Promise<Project[]> {
     return this.dependencies.projects.list()
@@ -148,6 +242,429 @@ class TaskRunner {
 
   async releaseArtifact(resourceId: string): Promise<void> {
     await this.dependencies.previewResources.release(resourceId)
+  }
+
+  async startRun(request: StartTaskRunRequest): Promise<TaskRun> {
+    if (!request || typeof request !== 'object') {
+      throw new TaskRunnerError('invalid_request', 'Run request must be an object.')
+    }
+    if (typeof request.project !== 'string' || !request.project.trim()) {
+      throw new TaskRunnerError('invalid_request', 'Project is required.')
+    }
+    if (request.sessionId !== undefined && typeof request.sessionId !== 'string') {
+      throw new TaskRunnerError('invalid_request', 'Session id must be a string.')
+    }
+    if (
+      request.permissionProfile !== undefined &&
+      !['ask', 'auto', 'full'].includes(request.permissionProfile)
+    ) {
+      throw new TaskRunnerError('invalid_request', 'Approval profile must be ask, auto, or full.')
+    }
+    if (
+      request.skillIds !== undefined &&
+      (!Array.isArray(request.skillIds) ||
+        request.skillIds.some((skillId) => typeof skillId !== 'string' || !skillId.trim()))
+    ) {
+      throw new TaskRunnerError('invalid_request', 'Skill ids must be non-empty strings.')
+    }
+    const prompt = typeof request.prompt === 'string' ? request.prompt.trim() : ''
+    if (!prompt) throw new TaskRunnerError('invalid_request', 'Prompt is required.')
+
+    const project = await this.resolveProject(request.project)
+    const sessions = await this.dependencies.sessions.list()
+    const existing = request.sessionId
+      ? sessions.find((session) => session.id === request.sessionId)
+      : undefined
+    if (request.sessionId && !existing) {
+      throw new TaskRunnerError('session_not_found', `Session not found: ${request.sessionId}`)
+    }
+    if (existing && existing.projectId !== project.id) {
+      throw new TaskRunnerError(
+        'invalid_request',
+        `Session ${existing.id} does not belong to project ${project.id}.`
+      )
+    }
+
+    const userMessageId = this.dependencies.createId()
+    const runId = this.dependencies.createId()
+    if (existing) this.reserveSession(existing.id, runId)
+    let prepared: Awaited<ReturnType<TaskRunner['prepareSession']>>
+    try {
+      prepared = await this.prepareSession(project, existing, request, prompt, userMessageId)
+      this.reserveSession(prepared.session.id, runId)
+    } catch (error) {
+      if (existing) this.releaseSession(existing.id, runId)
+      throw error
+    }
+    const session = prepared.session
+    const run = {
+      id: runId,
+      sessionId: session.id,
+      projectId: project.id,
+      status: 'running' as const,
+      startedAt: this.dependencies.now(),
+      artifacts: [],
+      events: [],
+      completion: Promise.resolve()
+    } satisfies MutableTaskRun
+
+    this.pruneRuns()
+    this.runs.set(runId, run)
+    run.completion = this.executeRun(
+      run,
+      session,
+      request,
+      prompt,
+      prepared.historyPreamble,
+      prepared.resumeFallback
+    ).finally(() => this.releaseSession(session.id, runId))
+    return cloneRun(run)
+  }
+
+  getRun(runId: string): TaskRun {
+    const run = this.runs.get(runId)
+    if (!run) throw new TaskRunnerError('run_not_found', `Run not found: ${runId}`)
+    return cloneRun(run)
+  }
+
+  async waitForRun(runId: string): Promise<TaskRun> {
+    const run = this.runs.get(runId)
+    if (!run) throw new TaskRunnerError('run_not_found', `Run not found: ${runId}`)
+    await run.completion
+    return cloneRun(run)
+  }
+
+  private reserveSession(sessionId: string, runId: string): void {
+    const activeRunId = this.activeRunBySession.get(sessionId)
+    if (activeRunId && activeRunId !== runId) {
+      throw new TaskRunnerError('session_busy', `Session already has an active run: ${sessionId}`)
+    }
+    this.activeRunBySession.set(sessionId, runId)
+  }
+
+  private releaseSession(sessionId: string, runId: string): void {
+    if (this.activeRunBySession.get(sessionId) === runId) {
+      this.activeRunBySession.delete(sessionId)
+    }
+  }
+
+  private async prepareSession(
+    project: Project,
+    existing: PersistedChatSession | undefined,
+    request: StartTaskRunRequest,
+    prompt: string,
+    userMessageId: string
+  ): Promise<{
+    session: PersistedChatSession
+    historyPreamble?: string
+    resumeFallback?: AcpPromptRequest['resumeFallback']
+  }> {
+    const now = this.dependencies.now()
+    const permissionProfile =
+      request.permissionProfile ?? existing?.permissionProfile ?? DEFAULT_PERMISSION_PROFILE
+    let sessionInfo: AcpCreateSessionResponse
+
+    if (existing) {
+      const attachedSessionIds = await this.dependencies.agent.listAttachedSessionIds()
+      if (attachedSessionIds.includes(existing.id)) {
+        if (request.permissionProfile && request.permissionProfile !== existing.permissionProfile) {
+          await this.dependencies.agent.setPermissionProfile({
+            sessionId: existing.id,
+            profile: request.permissionProfile
+          })
+        }
+        sessionInfo = {
+          sessionId: existing.id,
+          cwd: existing.cwd,
+          frameworkId: existing.agentFrameworkId,
+          backendId: existing.agentBackendId
+        }
+      } else {
+        sessionInfo = await this.dependencies.agent.resumeSession({
+          sessionId: existing.id,
+          cwd: existing.cwd,
+          projectName: project.id,
+          permissionProfile,
+          previousFrameworkId: existing.agentFrameworkId,
+          previousBackendId: existing.agentBackendId
+        })
+      }
+    } else {
+      sessionInfo = await this.dependencies.agent.createSession({
+        projectName: project.id,
+        permissionProfile
+      })
+    }
+
+    const userMessage = createUserMessage(userMessageId, prompt, now)
+    const session: PersistedChatSession = existing
+      ? {
+          ...existing,
+          cwd: sessionInfo.cwd ?? existing.cwd,
+          status: 'running',
+          permissionProfile,
+          agentFrameworkId: sessionInfo.frameworkId ?? existing.agentFrameworkId,
+          agentBackendId: sessionInfo.backendId ?? existing.agentBackendId,
+          messages: [...existing.messages, userMessage],
+          activeRun: { promptMessageId: userMessageId, startedAt: now },
+          error: undefined,
+          updatedAt: now
+        }
+      : {
+          id: sessionInfo.sessionId,
+          projectId: project.id,
+          title: createTitle(prompt),
+          cwd: sessionInfo.cwd ?? '',
+          status: 'running',
+          permissionProfile,
+          agentFrameworkId: sessionInfo.frameworkId,
+          agentBackendId: sessionInfo.backendId,
+          messages: [userMessage],
+          activeRun: { promptMessageId: userMessageId, startedAt: now },
+          createdAt: now,
+          updatedAt: now
+        }
+
+    await this.dependencies.sessions.save(session)
+    const previousHistoryPreamble = existing ? createHistoryPreamble(existing) : undefined
+    return {
+      session,
+      historyPreamble: sessionInfo.contextReset ? previousHistoryPreamble : undefined,
+      resumeFallback:
+        request.skillIds?.length && previousHistoryPreamble
+          ? { historyPreamble: previousHistoryPreamble }
+          : undefined
+    }
+  }
+
+  private async executeRun(
+    run: MutableTaskRun,
+    session: PersistedChatSession,
+    request: StartTaskRunRequest,
+    prompt: string,
+    historyPreamble?: string,
+    resumeFallback?: AcpPromptRequest['resumeFallback']
+  ): Promise<void> {
+    let promptError: unknown
+    try {
+      await this.dependencies.agent.sendPrompt({
+        sessionId: session.id,
+        text: prompt,
+        ...(request.skillIds?.length ? { forcedSkillIds: request.skillIds } : {}),
+        ...(historyPreamble ? { historyPreamble } : {}),
+        ...(resumeFallback ? { resumeFallback } : {})
+      })
+    } catch (error) {
+      promptError = error
+    }
+
+    let completed: CompletedTaskSession | undefined
+    let completionError: unknown
+    try {
+      completed = await this.completeSession(session, run.events)
+    } catch (error) {
+      if (error instanceof PartialTaskCompletionError) {
+        completed = error.completion
+        completionError = error.failure
+      } else {
+        completionError = error
+      }
+    }
+
+    const failure = completionError ?? promptError
+    if (failure) {
+      await this.failRun(run, session, completed, failure)
+      return
+    }
+
+    try {
+      await this.dependencies.sessions.save(completed!.session)
+    } catch (error) {
+      await this.failRun(run, session, completed, error)
+      return
+    }
+    run.status = 'completed'
+    run.output = completed!.output
+    run.artifacts = completed!.artifacts
+    run.completedAt = this.dependencies.now()
+  }
+
+  private async failRun(
+    run: MutableTaskRun,
+    session: PersistedChatSession,
+    completed: CompletedTaskSession | undefined,
+    failure: unknown
+  ): Promise<void> {
+    const runtimeError = [...run.events]
+      .reverse()
+      .find((event) => event.kind === 'error' && event.text?.trim())
+    const message =
+      runtimeError?.text?.trim() || (failure instanceof Error ? failure.message : String(failure))
+    const failed: PersistedChatSession = {
+      ...(completed?.session ?? session),
+      status: 'error',
+      activeRun: undefined,
+      error: message,
+      ...(runtimeError?.providerError ? { errorReportable: false } : {}),
+      updatedAt: this.dependencies.now()
+    }
+    run.status = 'failed'
+    run.error = message
+    run.output = completed?.output
+    run.artifacts = completed?.artifacts ?? []
+    run.completedAt = this.dependencies.now()
+    await this.dependencies.sessions.save(failed).catch(() => undefined)
+  }
+
+  private async completeSession(
+    session: PersistedChatSession,
+    events: AcpRuntimeEvent[]
+  ): Promise<CompletedTaskSession> {
+    const now = this.dependencies.now()
+    const assistantEvents = events.filter(
+      (event) => event.kind === 'message' && event.role === 'assistant'
+    )
+    const terminalStopEvent = [...events].reverse().find((event) => event.kind === 'stop')
+    const output = assistantEvents.map((event) => getAcpRuntimeEventText(event) ?? '').join('')
+    const images = assistantEvents
+      .map((event) => {
+        const image = getAcpRuntimeEventImage(event)
+        return image ? ({ id: event.id, ...image } satisfies PersistedMessageImage) : undefined
+      })
+      .filter((image): image is PersistedMessageImage => Boolean(image))
+    const assistantMessageId = this.dependencies.createId()
+    const assistantMessage: PersistedChatMessage = {
+      id: assistantMessageId,
+      role: 'agent',
+      content: output,
+      status: 'complete',
+      responseToMessageId: session.activeRun?.promptMessageId,
+      eventIds: assistantEvents.map((event) => event.id),
+      images: images.length ? images : undefined,
+      ...(terminalStopEvent?.turnUsage
+        ? { turnUsage: terminalStopEvent.turnUsage }
+        : terminalStopEvent
+          ? { turnUsageUnavailable: true as const }
+          : {}),
+      createdAt: now,
+      updatedAt: now
+    }
+    const activities = this.createActivities(events, now)
+    const finalizedArtifacts: ArtifactFile[] = []
+    const buildCompletion = (): CompletedTaskSession => {
+      const uniqueArtifacts = [
+        ...new Map(finalizedArtifacts.map((artifact) => [artifact.id, artifact])).values()
+      ]
+      const persistedArtifacts = uniqueArtifacts.map(toPersistedArtifact)
+      const linkedAssistantMessage: PersistedChatMessage = {
+        ...assistantMessage,
+        artifactIds: uniqueArtifacts.length
+          ? uniqueArtifacts.map((artifact) => artifact.id)
+          : undefined
+      }
+      const hasAssistantMessage = Boolean(output || images.length || persistedArtifacts.length)
+
+      return {
+        output,
+        artifacts: uniqueArtifacts,
+        session: {
+          ...session,
+          status: 'idle',
+          activeRun: undefined,
+          messages: hasAssistantMessage
+            ? [...session.messages, linkedAssistantMessage]
+            : session.messages,
+          activities: [...(session.activities ?? []), ...activities],
+          artifacts: [...(session.artifacts ?? []), ...persistedArtifacts],
+          filesRevision:
+            persistedArtifacts.length > 0
+              ? (session.filesRevision ?? 0) + 1
+              : session.filesRevision,
+          updatedAt: now
+        }
+      }
+    }
+    let ownershipSessionPersisted = false
+    for (const event of events) {
+      if (event.kind !== 'artifact' || !event.artifactClaimId) continue
+      try {
+        const request = {
+          claimId: event.artifactClaimId,
+          messageId: assistantMessageId
+        }
+        let result = await this.dependencies.artifacts.finalizeRun(request)
+        if (!result.ok) {
+          if (result.code !== ARTIFACT_OWNERSHIP_PERSISTENCE_RACE) {
+            throw new Error(result.message)
+          }
+          if (!ownershipSessionPersisted) {
+            await this.dependencies.sessions.save({
+              ...session,
+              messages: [...session.messages, assistantMessage],
+              activities: [...(session.activities ?? []), ...activities],
+              updatedAt: now
+            })
+            ownershipSessionPersisted = true
+          }
+          result = await this.dependencies.artifacts.finalizeRun(request)
+          if (!result.ok) throw new Error(result.message)
+        }
+        finalizedArtifacts.push(...result.artifacts)
+      } catch (error) {
+        throw new PartialTaskCompletionError(buildCompletion(), error)
+      }
+    }
+    return buildCompletion()
+  }
+
+  private createActivities(events: AcpRuntimeEvent[], now: number): PersistedToolActivity[] {
+    const activities = new Map<string, PersistedToolActivity>()
+    for (const event of events) {
+      if (event.kind !== 'tool' || !event.toolCallId) continue
+      const existing = activities.get(event.toolCallId)
+      activities.set(event.toolCallId, {
+        id: event.toolCallId,
+        kind: 'tool',
+        title: event.title?.trim() || existing?.title || 'Tool call',
+        status:
+          event.status === 'failed'
+            ? 'failed'
+            : event.status === 'completed'
+              ? 'completed'
+              : 'in_progress',
+        sortIndex: existing?.sortIndex ?? now + activities.size,
+        eventIds: [...(existing?.eventIds ?? []), event.id],
+        providerToolName: event.providerToolName ?? existing?.providerToolName,
+        toolKind: event.toolKind ?? existing?.toolKind,
+        toolContent: event.toolContent ?? existing?.toolContent,
+        toolLocations: event.toolLocations ?? existing?.toolLocations,
+        rawInput: event.rawInput ?? existing?.rawInput,
+        rawOutput: event.rawOutput ?? existing?.rawOutput,
+        terminalOutput: event.terminalOutput ?? existing?.terminalOutput,
+        terminalExitCode: event.terminalExitCode ?? existing?.terminalExitCode,
+        createdAt: existing?.createdAt ?? now,
+        updatedAt: now
+      })
+    }
+    return [...activities.values()]
+  }
+
+  private captureEvent(event: AcpRuntimeEvent): void {
+    if (!event.sessionId) return
+    for (const run of this.runs.values()) {
+      if (run.status === 'running' && run.sessionId === event.sessionId) run.events.push(event)
+    }
+  }
+
+  private pruneRuns(): void {
+    if (this.runs.size < MAX_RETAINED_RUNS) return
+    const completed = [...this.runs.values()]
+      .filter((run) => run.status !== 'running')
+      .sort((left, right) => left.startedAt - right.startedAt)
+    for (const run of completed) {
+      this.runs.delete(run.id)
+      if (this.runs.size < MAX_RETAINED_RUNS) return
+    }
   }
 
   private async resolveProject(identifier: string): Promise<Project> {

@@ -1,5 +1,7 @@
 import { describe, expect, it } from 'vitest'
 
+import type { AcpRuntimeEvent } from '../../shared/acp'
+import { ARTIFACT_OWNERSHIP_PERSISTENCE_RACE } from '../../shared/artifacts'
 import type { Project } from '../../shared/projects'
 import type { PersistedChatSession } from '../../shared/session-persistence'
 import {
@@ -165,5 +167,605 @@ describe('TaskRunner', () => {
     })
     await runner.releaseArtifact('resource-1')
     expect(released).toEqual(['resource-1'])
+  })
+
+  it('rejects malformed run requests before crossing a port', async () => {
+    let listedProjects = false
+    const runner = createRunner({
+      projects: {
+        list: async () => {
+          listedProjects = true
+          return [project]
+        },
+        create: async (request) => ({ ...project, ...request })
+      }
+    })
+
+    await expect(runner.startRun(null as never)).rejects.toMatchObject({
+      code: 'invalid_request',
+      message: 'Run request must be an object.'
+    })
+    await expect(
+      runner.startRun({
+        project: project.id,
+        prompt: 'Research',
+        permissionProfile: 'unsafe' as never
+      })
+    ).rejects.toMatchObject({ code: 'invalid_request' })
+    expect(listedProjects).toBe(false)
+  })
+
+  it('runs a prompt in a new durable session and returns the assistant output', async () => {
+    let emitEvent: ((event: AcpRuntimeEvent) => void) | undefined
+    const savedSessions: PersistedChatSession[] = []
+    const ids = ['user-message-1', 'run-1', 'assistant-message-1']
+    const runner = createRunner({
+      sessions: {
+        list: async () => [],
+        save: async (saved) => {
+          savedSessions.push(structuredClone(saved))
+        }
+      },
+      agent: {
+        listAttachedSessionIds: async () => [],
+        createSession: async () => ({
+          sessionId: 'session-1',
+          cwd: '/workspace/session-1',
+          frameworkId: 'codex',
+          backendId: 'codex:shared'
+        }),
+        resumeSession: async (request) => ({ sessionId: request.sessionId }),
+        setPermissionProfile: async () => undefined,
+        sendPrompt: async () => {
+          emitEvent?.({
+            id: 'event-1',
+            timestamp: 10,
+            kind: 'message',
+            level: 'info',
+            sessionId: 'session-1',
+            role: 'assistant',
+            text: 'Research complete.'
+          })
+          emitEvent?.({
+            id: 'event-2',
+            timestamp: 11,
+            kind: 'stop',
+            level: 'info',
+            sessionId: 'session-1',
+            text: 'end_turn',
+            turnUsage: { inputTokens: 31, cacheTokens: 15, outputTokens: 14 }
+          })
+        }
+      },
+      runtimeEvents: {
+        subscribe: (listener) => {
+          emitEvent = listener
+          return () => undefined
+        }
+      },
+      createId: () => ids.shift() ?? 'generated-id',
+      now: () => 100
+    })
+
+    const started = await runner.startRun({
+      project: project.name,
+      prompt: 'Review these papers.',
+      permissionProfile: 'auto'
+    })
+    expect(started).toMatchObject({
+      id: 'run-1',
+      sessionId: 'session-1',
+      projectId: project.id,
+      status: 'running'
+    })
+
+    await expect(runner.waitForRun('run-1')).resolves.toMatchObject({
+      status: 'completed',
+      output: 'Research complete.'
+    })
+    expect(savedSessions.at(-1)).toMatchObject({
+      id: 'session-1',
+      projectId: project.id,
+      status: 'idle',
+      permissionProfile: 'auto',
+      messages: [
+        { id: 'user-message-1', role: 'user', content: 'Review these papers.' },
+        {
+          id: 'assistant-message-1',
+          role: 'agent',
+          content: 'Research complete.',
+          turnUsage: { inputTokens: 31, cacheTokens: 15, outputTokens: 14 }
+        }
+      ]
+    })
+  })
+
+  it('rejects overlapping runs for the same durable session', async () => {
+    let finishPrompt: (() => void) | undefined
+    const promptGate = new Promise<void>((resolve) => {
+      finishPrompt = resolve
+    })
+    const existing: PersistedChatSession = {
+      ...session,
+      id: 'session-busy',
+      cwd: '/workspace/session-busy'
+    }
+    const ids = ['first-user', 'first-run', 'second-user', 'second-run', 'assistant-message']
+    const runner = createRunner({
+      sessions: { list: async () => [existing], save: async () => undefined },
+      agent: {
+        listAttachedSessionIds: async () => [existing.id],
+        createSession: async () => ({ sessionId: 'unused' }),
+        resumeSession: async (request) => ({ sessionId: request.sessionId }),
+        setPermissionProfile: async () => undefined,
+        sendPrompt: async () => promptGate
+      },
+      createId: () => ids.shift() ?? 'generated-id'
+    })
+
+    const first = await runner.startRun({
+      project: project.id,
+      sessionId: existing.id,
+      prompt: 'First prompt'
+    })
+
+    try {
+      await expect(
+        runner.startRun({
+          project: project.id,
+          sessionId: existing.id,
+          prompt: 'Overlapping prompt'
+        })
+      ).rejects.toMatchObject({
+        code: 'session_busy',
+        message: `Session already has an active run: ${existing.id}`
+      })
+    } finally {
+      finishPrompt?.()
+      await runner.waitForRun(first.id)
+    }
+  })
+
+  it('resumes a detached session without duplicating the new prompt in history replay', async () => {
+    const existing: PersistedChatSession = {
+      ...session,
+      messages: [
+        {
+          id: 'old-user',
+          role: 'user',
+          content: 'Initial question',
+          status: 'complete',
+          eventIds: [],
+          createdAt: 1,
+          updatedAt: 1
+        },
+        {
+          id: 'old-agent',
+          role: 'agent',
+          content: 'Initial answer',
+          status: 'complete',
+          eventIds: [],
+          createdAt: 2,
+          updatedAt: 2
+        }
+      ]
+    }
+    const resumeRequests: Parameters<TaskRunnerDependencies['agent']['resumeSession']>[0][] = []
+    const prompts: Parameters<TaskRunnerDependencies['agent']['sendPrompt']>[0][] = []
+    const ids = ['new-user', 'run-2', 'new-agent']
+    const runner = createRunner({
+      sessions: { list: async () => [existing], save: async () => undefined },
+      agent: {
+        listAttachedSessionIds: async () => [],
+        createSession: async () => ({ sessionId: 'unused' }),
+        resumeSession: async (request) => {
+          resumeRequests.push(request)
+          return { sessionId: existing.id, cwd: existing.cwd, contextReset: true }
+        },
+        setPermissionProfile: async () => undefined,
+        sendPrompt: async (request) => {
+          prompts.push(request)
+        }
+      },
+      createId: () => ids.shift() ?? 'generated-id'
+    })
+
+    const started = await runner.startRun({
+      project: project.id,
+      sessionId: existing.id,
+      prompt: 'Follow-up question',
+      permissionProfile: 'auto'
+    })
+    await runner.waitForRun(started.id)
+
+    expect(resumeRequests).toEqual([
+      expect.objectContaining({ sessionId: existing.id, permissionProfile: 'auto' })
+    ])
+    expect(prompts).toEqual([
+      {
+        sessionId: existing.id,
+        text: 'Follow-up question',
+        historyPreamble:
+          'Previous conversation:\n\nUser: Initial question\n\nAssistant: Initial answer'
+      }
+    ])
+  })
+
+  it('provides transcript fallback for skill-triggered reconnects', async () => {
+    const existing: PersistedChatSession = {
+      ...session,
+      messages: [
+        {
+          id: 'prior-user',
+          role: 'user',
+          content: 'Prior question',
+          status: 'complete',
+          eventIds: [],
+          createdAt: 1,
+          updatedAt: 1
+        },
+        {
+          id: 'prior-agent',
+          role: 'agent',
+          content: 'Prior answer',
+          status: 'complete',
+          eventIds: [],
+          createdAt: 2,
+          updatedAt: 2
+        }
+      ]
+    }
+    const prompts: Parameters<TaskRunnerDependencies['agent']['sendPrompt']>[0][] = []
+    const ids = ['skill-user', 'skill-run', 'skill-agent']
+    const runner = createRunner({
+      sessions: { list: async () => [existing], save: async () => undefined },
+      agent: {
+        listAttachedSessionIds: async () => [existing.id],
+        createSession: async () => ({ sessionId: 'unused' }),
+        resumeSession: async (request) => ({ sessionId: request.sessionId }),
+        setPermissionProfile: async () => undefined,
+        sendPrompt: async (request) => {
+          prompts.push(request)
+        }
+      },
+      createId: () => ids.shift() ?? 'generated-id'
+    })
+
+    const started = await runner.startRun({
+      project: project.id,
+      sessionId: existing.id,
+      prompt: 'Use the selected skill.',
+      skillIds: ['literature-review']
+    })
+    await runner.waitForRun(started.id)
+
+    expect(prompts).toEqual([
+      {
+        sessionId: existing.id,
+        text: 'Use the selected skill.',
+        forcedSkillIds: ['literature-review'],
+        resumeFallback: {
+          historyPreamble:
+            'Previous conversation:\n\nUser: Prior question\n\nAssistant: Prior answer'
+        }
+      }
+    ])
+  })
+
+  it('marks artifact-only completions when turn usage is unavailable', async () => {
+    let emitEvent: ((event: AcpRuntimeEvent) => void) | undefined
+    const savedSessions: PersistedChatSession[] = []
+    const ids = ['artifact-user', 'artifact-run', 'artifact-agent']
+    const runner = createRunner({
+      sessions: {
+        list: async () => [],
+        save: async (saved) => {
+          savedSessions.push(structuredClone(saved))
+        }
+      },
+      agent: {
+        listAttachedSessionIds: async () => [],
+        createSession: async () => ({ sessionId: 'session-artifact', cwd: '/workspace/artifact' }),
+        resumeSession: async (request) => ({ sessionId: request.sessionId }),
+        setPermissionProfile: async () => undefined,
+        sendPrompt: async () => {
+          emitEvent?.({
+            id: 'artifact-event',
+            timestamp: 10,
+            kind: 'artifact',
+            level: 'info',
+            sessionId: 'session-artifact',
+            artifactClaimId: 'artifact-claim',
+            artifacts: []
+          })
+          emitEvent?.({
+            id: 'artifact-stop',
+            timestamp: 11,
+            kind: 'stop',
+            level: 'info',
+            sessionId: 'session-artifact',
+            text: 'end_turn'
+          })
+        }
+      },
+      artifacts: {
+        finalizeRun: async () => ({
+          ok: true,
+          artifacts: [
+            {
+              id: 'artifact-file',
+              projectName: project.id,
+              sessionId: 'session-artifact',
+              messageId: 'artifact-agent',
+              name: 'result.txt',
+              path: '/artifacts/result.txt',
+              fileUrl: 'open-science-preview://artifact-file/result.txt',
+              mimeType: 'text/plain',
+              size: 6,
+              mtimeMs: 11
+            }
+          ]
+        })
+      },
+      runtimeEvents: {
+        subscribe: (listener) => {
+          emitEvent = listener
+          return () => undefined
+        }
+      },
+      createId: () => ids.shift() ?? 'generated-id'
+    })
+
+    const started = await runner.startRun({ project: project.id, prompt: 'Create a file.' })
+    const completed = await runner.waitForRun(started.id)
+
+    expect(completed).toMatchObject({
+      status: 'completed',
+      artifacts: [{ id: 'artifact-file', name: 'result.txt' }]
+    })
+    expect(savedSessions.at(-1)?.messages.at(-1)).toMatchObject({
+      id: 'artifact-agent',
+      role: 'agent',
+      content: '',
+      turnUsageUnavailable: true,
+      artifactIds: ['artifact-file']
+    })
+  })
+
+  it('settles a run as failed when final session persistence fails', async () => {
+    let emitEvent: ((event: AcpRuntimeEvent) => void) | undefined
+    let saveCount = 0
+    const ids = ['save-user', 'save-run', 'save-agent']
+    const runner = createRunner({
+      sessions: {
+        list: async () => [],
+        save: async () => {
+          saveCount += 1
+          if (saveCount === 2) throw new Error('Session storage is unavailable')
+        }
+      },
+      agent: {
+        listAttachedSessionIds: async () => [],
+        createSession: async () => ({ sessionId: 'session-save', cwd: '/workspace/save' }),
+        resumeSession: async (request) => ({ sessionId: request.sessionId }),
+        setPermissionProfile: async () => undefined,
+        sendPrompt: async () => {
+          emitEvent?.({
+            id: 'save-event',
+            timestamp: 10,
+            kind: 'message',
+            level: 'info',
+            sessionId: 'session-save',
+            role: 'assistant',
+            text: 'Unsaved answer'
+          })
+        }
+      },
+      runtimeEvents: {
+        subscribe: (listener) => {
+          emitEvent = listener
+          return () => undefined
+        }
+      },
+      createId: () => ids.shift() ?? 'generated-id',
+      now: () => 100
+    })
+
+    const started = await runner.startRun({ project: project.id, prompt: 'Produce an answer.' })
+
+    await expect(runner.waitForRun(started.id)).resolves.toMatchObject({
+      status: 'failed',
+      error: 'Session storage is unavailable',
+      output: 'Unsaved answer',
+      completedAt: 100
+    })
+    expect(saveCount).toBe(3)
+  })
+
+  it('preserves finalized artifacts when a later claim fails after an ownership retry', async () => {
+    let emitEvent: ((event: AcpRuntimeEvent) => void) | undefined
+    let finalizeAttempts = 0
+    const savedSessions: PersistedChatSession[] = []
+    const ids = ['partial-user', 'partial-run', 'partial-agent']
+    const runner = createRunner({
+      sessions: {
+        list: async () => [],
+        save: async (saved) => {
+          savedSessions.push(structuredClone(saved))
+        }
+      },
+      agent: {
+        listAttachedSessionIds: async () => [],
+        createSession: async () => ({ sessionId: 'session-partial', cwd: '/workspace/partial' }),
+        resumeSession: async (request) => ({ sessionId: request.sessionId }),
+        setPermissionProfile: async () => undefined,
+        sendPrompt: async () => {
+          emitEvent?.({
+            id: 'artifact-first',
+            timestamp: 10,
+            kind: 'artifact',
+            level: 'info',
+            sessionId: 'session-partial',
+            artifactClaimId: 'claim-1',
+            artifacts: []
+          })
+          emitEvent?.({
+            id: 'artifact-second',
+            timestamp: 11,
+            kind: 'artifact',
+            level: 'info',
+            sessionId: 'session-partial',
+            artifactClaimId: 'claim-2',
+            artifacts: []
+          })
+          emitEvent?.({
+            id: 'provider-error',
+            timestamp: 12,
+            kind: 'error',
+            level: 'error',
+            sessionId: 'session-partial',
+            text: 'Provider rejected the request.'
+          })
+          throw new Error('raw provider failure')
+        }
+      },
+      artifacts: {
+        finalizeRun: async (request) => {
+          finalizeAttempts += 1
+          if (request.claimId === 'claim-1' && finalizeAttempts === 1) {
+            return {
+              ok: false,
+              code: ARTIFACT_OWNERSHIP_PERSISTENCE_RACE,
+              message: 'The durable projection has not caught up yet.'
+            }
+          }
+          if (request.claimId === 'claim-2') {
+            throw new Error('compatibility publication failed')
+          }
+          return {
+            ok: true,
+            artifacts: [
+              {
+                id: 'artifact-partial',
+                projectName: project.id,
+                sessionId: 'session-partial',
+                messageId: 'partial-agent',
+                name: 'partial-report.md',
+                path: '/artifacts/partial-report.md',
+                fileUrl: 'open-science-preview://artifact-partial/partial-report.md',
+                mimeType: 'text/markdown',
+                size: 10,
+                mtimeMs: 12
+              }
+            ]
+          }
+        }
+      },
+      runtimeEvents: {
+        subscribe: (listener) => {
+          emitEvent = listener
+          return () => undefined
+        }
+      },
+      createId: () => ids.shift() ?? 'generated-id'
+    })
+
+    const started = await runner.startRun({ project: project.id, prompt: 'Create a report.' })
+    const failed = await runner.waitForRun(started.id)
+
+    expect(failed).toMatchObject({
+      status: 'failed',
+      error: 'Provider rejected the request.',
+      artifacts: [{ id: 'artifact-partial', name: 'partial-report.md' }]
+    })
+    expect(finalizeAttempts).toBe(3)
+    expect(savedSessions.at(-1)).toMatchObject({
+      status: 'error',
+      error: 'Provider rejected the request.',
+      artifacts: [{ id: 'artifact-partial', name: 'partial-report.md' }]
+    })
+  })
+
+  it('persists terminal tool activity and provider failure reportability', async () => {
+    let emitEvent: ((event: AcpRuntimeEvent) => void) | undefined
+    const savedSessions: PersistedChatSession[] = []
+    const ids = ['tool-user', 'tool-run', 'tool-agent']
+    const runner = createRunner({
+      sessions: {
+        list: async () => [],
+        save: async (saved) => {
+          savedSessions.push(structuredClone(saved))
+        }
+      },
+      agent: {
+        listAttachedSessionIds: async () => [],
+        createSession: async () => ({ sessionId: 'session-tool', cwd: '/workspace/tool' }),
+        resumeSession: async (request) => ({ sessionId: request.sessionId }),
+        setPermissionProfile: async () => undefined,
+        sendPrompt: async () => {
+          emitEvent?.({
+            id: 'tool-start',
+            timestamp: 10,
+            kind: 'tool',
+            level: 'info',
+            sessionId: 'session-tool',
+            toolCallId: 'tool-call-1',
+            title: 'Run analysis',
+            status: 'in_progress',
+            providerToolName: 'shell'
+          })
+          emitEvent?.({
+            id: 'tool-complete',
+            timestamp: 11,
+            kind: 'tool',
+            level: 'info',
+            sessionId: 'session-tool',
+            toolCallId: 'tool-call-1',
+            status: 'completed',
+            terminalOutput: 'done\n',
+            terminalExitCode: 0
+          })
+          emitEvent?.({
+            id: 'provider-error',
+            timestamp: 12,
+            kind: 'error',
+            level: 'error',
+            sessionId: 'session-tool',
+            text: 'Provider quota exceeded.',
+            providerError: true
+          })
+          throw new Error('opaque provider error')
+        }
+      },
+      runtimeEvents: {
+        subscribe: (listener) => {
+          emitEvent = listener
+          return () => undefined
+        }
+      },
+      createId: () => ids.shift() ?? 'generated-id',
+      now: () => 100
+    })
+
+    const started = await runner.startRun({ project: project.id, prompt: 'Run analysis.' })
+    await expect(runner.waitForRun(started.id)).resolves.toMatchObject({
+      status: 'failed',
+      error: 'Provider quota exceeded.'
+    })
+    expect(savedSessions.at(-1)).toMatchObject({
+      status: 'error',
+      error: 'Provider quota exceeded.',
+      errorReportable: false,
+      activities: [
+        {
+          id: 'tool-call-1',
+          title: 'Run analysis',
+          status: 'completed',
+          eventIds: ['tool-start', 'tool-complete'],
+          terminalOutput: 'done\n',
+          terminalExitCode: 0
+        }
+      ]
+    })
   })
 })
