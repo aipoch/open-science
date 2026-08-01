@@ -91,6 +91,7 @@ import { SkillRegistry } from '../skills/registry'
 import { UserSkillRepository } from '../skills/user-skill-repository'
 import type { StoredConnectors, StoredSettings } from './types'
 import type { CodexAuthControllerPort } from './codex-auth'
+import { createSettingsIdSequence } from './id-sequence'
 
 import type { SystemProxyEnvironment } from './system-proxy'
 import { type ClaudeIsolatedAuthControllerPort } from './claude-isolated-auth'
@@ -166,10 +167,6 @@ class SettingsService {
   private readonly backendResolver: AgentBackendResolver
   private readonly storageRoot: string
   private readonly userClaudeDir: string
-  // Provider and runtime-install IDs historically shared one monotonic suffix. Keep that observable
-  // ordering while the provider owner remains responsible for formatting provider IDs.
-  private settingsIdSequence = 0
-
   constructor(options: SettingsServiceOptions = {}) {
     this.storageRoot = options.storageRoot ?? resolveStorageRoot()
     this.repository = options.repository ?? new SettingsRepository(this.storageRoot)
@@ -187,7 +184,7 @@ class SettingsService {
       skillRegistry: options.skillRegistry ?? new SkillRegistry(),
       userSkills: options.userSkills ?? new UserSkillRepository(this.storageRoot)
     })
-    const allocateSettingsIdSequence = (): number => this.nextSettingsIdSequence()
+    const allocateSettingsIdSequence = createSettingsIdSequence()
     this.runtimeManager = new AgentRuntimeManager({
       repository: this.repository,
       storageRoot: this.storageRoot,
@@ -622,11 +619,6 @@ class SettingsService {
   // Detects claude and persists the resolved path/version for later spawns.
   async detectClaude(): Promise<ClaudeDetectResult> {
     return this.runtimeManager.detectClaude()
-  }
-
-  private nextSettingsIdSequence(): number {
-    this.settingsIdSequence += 1
-    return this.settingsIdSequence
   }
 
   // Runs the one-click installer, then re-detects claude so a success immediately unblocks the gate.
