@@ -2,7 +2,7 @@ import { describe, expect, it, vi } from 'vitest'
 
 import { waitForInitialConnectorRefresh, wireConnectorReload } from './connector-reload'
 
-// Exercises the REAL wiring used by ipc.ts's onConnectorsChanged (not a reimplementation): the skills
+// Exercises the settle rule used by SettingsWorkflows (not a reimplementation): the skills
 // reload must run on BOTH settle paths, so if the source ever regressed `.finally` to `.then` these
 // tests would fail.
 describe('wireConnectorReload', () => {
