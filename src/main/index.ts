@@ -112,7 +112,6 @@ async function startElectronApp(mainEntryPath: string): Promise<void> {
         { webRpc },
         { parseWebModeOptions, createWebServiceController, buildAuthenticatedWebUrl },
         { routeSecondInstance },
-        { detectActiveSessions: computeActiveSessions },
         { createElectronCloseConfirm },
         { installWindowShortcuts },
         { createAppIconController, buildAppIconPreviews },
@@ -136,7 +135,6 @@ async function startElectronApp(mainEntryPath: string): Promise<void> {
         import('./ipc-handler-registry'),
         import('./web-service'),
         import('./second-instance-router'),
-        import('./storage/detect-active'),
         import('./window-close-confirm'),
         import('./window-shortcuts'),
         import('./app-icon'),
@@ -208,12 +206,12 @@ async function startElectronApp(mainEntryPath: string): Promise<void> {
       const webMode = parseWebModeOptions(process.argv)
       // Pass the concrete main entry path so ACP can launch the artifact MCP server from the same bundle.
       const {
-        runtime,
-        notebook,
         shutdownCoordinator,
         taskNotifications,
         settingsService,
-        sessionPersistenceCoordinator
+        sessionPersistenceCoordinator,
+        detectActiveSessions,
+        dispose: disposeApplicationRuntime
       } = await registerIpcHandlers({
         mainEntryPath,
         headless: webMode.headless,
@@ -305,8 +303,8 @@ async function startElectronApp(mainEntryPath: string): Promise<void> {
         unreadTaskController,
         mainWindowGetterBox,
         settingsService,
-        // Running-work snapshot + confirm coordinator, bound here where runtime/notebook are in scope.
-        detectActiveSessions: () => computeActiveSessions({ runtime, notebook }),
+        disposeApplicationRuntime,
+        detectActiveSessions,
         createConfirmClose: (getWindow: () => InstanceType<typeof BrowserWindow> | undefined) =>
           createElectronCloseConfirm(getWindow, {
             get: () => settingsService.getClosePreference(),
@@ -368,6 +366,7 @@ async function startElectronApp(mainEntryPath: string): Promise<void> {
             await ctx.remoteAccess.shutdown()
             await ctx.webController.close()
             ctx.webRpc.dispose()
+            await ctx.disposeApplicationRuntime()
           }
         },
         isMigrationInProgress: ctx.isMigrationInProgress,

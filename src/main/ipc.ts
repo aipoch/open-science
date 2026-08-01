@@ -4,6 +4,7 @@ import { randomUUID } from 'node:crypto'
 import { app, BrowserWindow, net, Notification, protocol, webContents } from 'electron'
 
 import { ipcMainHandle } from './ipc-handler-registry'
+import { composeApplicationRuntime, type ApplicationModuleBuilder } from './application-runtime'
 
 import { createDefaultNotebookRuntimeService, registerAcpIpcHandlers } from './acp/ipc'
 import { createDefaultArtifactRepository, registerArtifactIpcHandlers } from './artifacts/ipc'
@@ -107,6 +108,7 @@ import type { StoredConnectors } from './settings/types'
 import type { AppIconPreview, AppIconVariant, RespondApprovalRequest } from '../shared/settings'
 import { registerStorageIpcHandlers } from './storage/ipc'
 import { normalizeLegacyDataPaths } from './storage/normalize-legacy-paths'
+import { detectActiveSessions } from './storage/detect-active'
 import {
   computeDefaultDataRoot,
   initDataRoot,
@@ -134,6 +136,27 @@ type IpcRegistrationOptions = {
   onAppIconVariantChanged?: (variant: AppIconVariant) => void
   // Renders the built-in icon variants to preview data URLs for the Appearance picker.
   listAppIconPreviews?: () => AppIconPreview[]
+}
+
+type ApplicationRuntimeInterfaces = {
+  shutdownCoordinator: BackendShutdownCoordinator
+  taskNotifications: Pick<
+    TaskNotificationService,
+    | 'setActivationHandler'
+    | 'setAttentionHandlers'
+    | 'setPendingOpenSession'
+    | 'setUnreadHandler'
+  >
+  settingsService: Pick<
+    SettingsService,
+    'getAppIconVariant' | 'getClosePreference' | 'setClosePreference'
+  >
+  sessionPersistenceCoordinator: SessionPersistenceCoordinator
+  detectActiveSessions: () => ReturnType<typeof detectActiveSessions>
+}
+
+type IpcRegistration = ApplicationRuntimeInterfaces & {
+  dispose: () => Promise<void>
 }
 
 // Builds a short, human-readable preview of a connector call's arguments for the approval card.
@@ -182,21 +205,19 @@ const refreshConnectorSkillDocs = async (
 // Registers every main-process IPC surface used by the renderer. Async because the notebook-env gate
 // needs the configured package mirror, read from disk; callers await this before creating the main
 // window so every IPC channel (incl. notebook-env) is registered before the renderer can call it.
-const registerIpcHandlers = async ({
-  mainEntryPath,
-  headless = false,
-  onAppIconVariantChanged,
-  listAppIconPreviews
-}: IpcRegistrationOptions): Promise<{
-  runtime: ReturnType<typeof registerAcpIpcHandlers>
-  notebook: ReturnType<typeof createDefaultNotebookRuntimeService>
-  shutdownCoordinator: BackendShutdownCoordinator
-  taskNotifications: TaskNotificationService
-  settingsService: SettingsService
-  sessionPersistenceCoordinator: SessionPersistenceCoordinator
-}> => {
+const installElectronAdapters = async (
+  {
+    mainEntryPath,
+    headless = false,
+    onAppIconVariantChanged,
+    listAppIconPreviews
+  }: IpcRegistrationOptions,
+  modules: ApplicationModuleBuilder
+): Promise<ApplicationRuntimeInterfaces> => {
   // One settings service backs both the settings IPC and the ACP spawn config (single source of truth).
-  const settingsService = createDefaultSettingsService()
+  const settingsService = await modules.add(undefined, () => ({
+    capability: createDefaultSettingsService()
+  }))
   const storedSettings = await settingsService.getStoredSettings()
   // Prime the data-root cache from settings before any data repository is constructed below. A change
   // to this value only takes effect after a restart, so reading it once here is sufficient.
@@ -369,11 +390,22 @@ const registerIpcHandlers = async ({
       return sessionPersistenceCoordinator.saveManifest(request)
     }
   }
-  const notebookService = createDefaultNotebookRuntimeService({
-    getPackageMirror: () => settingsService.getPackageMirror(),
-    getRuntimeEnablement: (language) => settingsService.getRuntimeEnablement(language),
-    getManualInterpreters: (language) => settingsService.getManualInterpreters(language)
-  })
+  const notebookService = await modules.add(
+    {
+      getPackageMirror: () => settingsService.getPackageMirror(),
+      getRuntimeEnablement: (language: NotebookLanguage) =>
+        settingsService.getRuntimeEnablement(language),
+      getManualInterpreters: (language: NotebookLanguage) =>
+        settingsService.getManualInterpreters(language)
+    },
+    (settings) => {
+      const notebook = createDefaultNotebookRuntimeService(settings)
+      return {
+        capability: notebook,
+        dispose: () => notebook.shutdownAll().then(() => undefined)
+      }
+    }
+  )
 
   // Read fresh on every call so a future connectors-settings mutation (Plan 2 UI) only needs to call
   // refreshConnectorSkillDocs again to take effect, without reconstructing the connector service.
@@ -424,7 +456,13 @@ const registerIpcHandlers = async ({
   // One MCP client manager backs both dispatch (ConnectorService.call → custom server) and skill-doc
   // generation (listTools) for user-added custom MCP servers (stdio + remote). It lazily connects per
   // server, so constructing it here does not spawn anything until a custom server is actually used.
-  const mcpClientManager = new McpClientManager()
+  const mcpClientManager = await modules.add(undefined, () => {
+    const manager = new McpClientManager()
+    return {
+      capability: manager,
+      dispose: () => manager.closeAll()
+    }
+  })
   // Bridges un-trusted connector calls to the renderer approval card. A tool call that isn't
   // pre-allowed or skip-approved is held here until the user decides (or it auto-denies on timeout).
   const approvalBroker = new ApprovalBroker({
@@ -516,13 +554,17 @@ const registerIpcHandlers = async ({
   // (inside ComputeService) uses the same hook, so submitted→running/error transitions broadcast too.
   // Phase 3b: harvestFn drives automatic harvest on terminal transitions; broadcast + storageRoot
   // wire the compute_done notification emitter for all three terminal outcomes (issue 06).
-  const jobPoller = createComputeJobRuntime({
-    computeService,
-    hostRepository,
-    jobRepository,
-    storageRoot: dataRoot
-  })
-  jobPoller.start()
+  await modules.add(
+    { computeService, hostRepository, jobRepository, storageRoot: dataRoot },
+    (dependencies) => {
+      const jobPoller = createComputeJobRuntime(dependencies)
+      return {
+        capability: undefined,
+        start: () => jobPoller.start(),
+        dispose: () => jobPoller.stop()
+      }
+    }
+  )
   // Augment computeService with getEnabledComputeHosts so the RPC server can serve list_compute.
   // Must preserve ComputeService's prototype methods (list/getDetails/submitJob/...) — see the helper.
   const computeServiceWithRegistry = attachEnabledComputeHosts(computeService, hostsRegistry)
@@ -613,33 +655,42 @@ const registerIpcHandlers = async ({
   registerWindowFindIpcHandlers()
   // ACP identity resolution and the Specialist settings IPC must use the same service instance.
   // Creating it only for settings leaves create-session unable to resolve a selected UUID.
-  const runtime = registerAcpIpcHandlers({
-    mcpEntryPath: mainEntryPath,
-    repository: artifactRepository,
-    runRegistry: artifactRunRegistry,
-    provenanceRepository: artifactProvenanceRepository,
-    uploadRepository,
-    notebookRpcServer,
-    authorizeSkillImportReferencedUploads: (projectId, sessionId, paths) =>
-      conversationSkillImporter.authorizeReferencedUploads(projectId, sessionId, paths),
-    settingsService,
-    permissionGrantRegistry,
-    taskNotifications,
-    onSessionTurnStarted: (sessionId, turnToken) =>
-      skillImportApprovalBroker.beginSessionTurn(sessionId, turnToken),
-    onSessionTurnEnded: (sessionId, turnToken) =>
-      skillImportApprovalBroker.endSessionTurn(sessionId, turnToken),
-    onSkillImportAttachmentEligible: (sessionId, turnToken, attachmentUri) =>
-      skillImportApprovalBroker.allowSessionTurnAttachment(sessionId, turnToken, attachmentUri),
-    onSessionCancellationRequested: (sessionId) =>
-      skillImportApprovalBroker.cancelSession(sessionId),
-    onSessionUnavailable: (sessionId) => skillImportApprovalBroker.cancelSession(sessionId),
-    onAllSessionsCancellationRequested: () => skillImportApprovalBroker.cancelAll(),
-    beforeSessionDelete: (sessionId) =>
-      notebookService.shutdownSession(sessionId).then(() => undefined),
-    initializationBarrier: initialConnectorSkillsReady,
-    profileService
-  })
+  const runtime = await modules.add(
+    {
+      mcpEntryPath: mainEntryPath,
+      repository: artifactRepository,
+      runRegistry: artifactRunRegistry,
+      provenanceRepository: artifactProvenanceRepository,
+      uploadRepository,
+      notebookRpcServer,
+      authorizeSkillImportReferencedUploads: (projectId, sessionId, paths) =>
+        conversationSkillImporter.authorizeReferencedUploads(projectId, sessionId, paths),
+      settingsService,
+      permissionGrantRegistry,
+      taskNotifications,
+      onSessionTurnStarted: (sessionId, turnToken) =>
+        skillImportApprovalBroker.beginSessionTurn(sessionId, turnToken),
+      onSessionTurnEnded: (sessionId, turnToken) =>
+        skillImportApprovalBroker.endSessionTurn(sessionId, turnToken),
+      onSkillImportAttachmentEligible: (sessionId, turnToken, attachmentUri) =>
+        skillImportApprovalBroker.allowSessionTurnAttachment(sessionId, turnToken, attachmentUri),
+      onSessionCancellationRequested: (sessionId) =>
+        skillImportApprovalBroker.cancelSession(sessionId),
+      onSessionUnavailable: (sessionId) => skillImportApprovalBroker.cancelSession(sessionId),
+      onAllSessionsCancellationRequested: () => skillImportApprovalBroker.cancelAll(),
+      beforeSessionDelete: (sessionId) =>
+        notebookService.shutdownSession(sessionId).then(() => undefined),
+      initializationBarrier: initialConnectorSkillsReady,
+      profileService
+    },
+    (options) => {
+      const runtime = registerAcpIpcHandlers(options)
+      return {
+        capability: runtime,
+        dispose: () => runtime.shutdownForQuit().then(() => undefined)
+      }
+    }
+  )
   runtimeRef.current = runtime
   permissionGrantRegistry.subscribe(() => runtime.notifyPermissionGrantsChanged())
   // Single shared teardown owner for both the before-quit handler (index.ts) and the pre-update-install
@@ -652,12 +703,24 @@ const registerIpcHandlers = async ({
   // Construct update handling only after its backend-shutdown gate exists. The in-place strategy owns
   // this immutable dependency from construction; the manifest fallback ignores it because it does not
   // quit the running app to install.
-  const updateService = registerUpdateIpcHandlers(
-    createUpdateStrategy(process.platform, {
-      installGate: () => shutdownCoordinator.runForUpdateGate(UPDATE_SHUTDOWN_BUDGET_MS)
-    })
+  await modules.add(
+    { shutdownCoordinator, platform: process.platform },
+    ({ shutdownCoordinator: coordinator, platform }) => {
+      const service = registerUpdateIpcHandlers(
+        createUpdateStrategy(platform, {
+          installGate: () => coordinator.runForUpdateGate(UPDATE_SHUTDOWN_BUDGET_MS)
+        })
+      )
+      let stopScheduler: (() => void) | undefined
+      return {
+        capability: service,
+        start: () => {
+          stopScheduler = startUpdateScheduler(service)
+        },
+        dispose: () => stopScheduler?.()
+      }
+    }
   )
-  startUpdateScheduler(updateService)
   // Spawn-config changes rotate the coordinator's runtime for future sessions. Existing sessions retain
   // their owning runtime, so a framework/provider switch cannot interrupt an in-flight turn.
   let invalidatePermissionProjection = (): void => {
@@ -980,12 +1043,21 @@ const registerIpcHandlers = async ({
   // Return the long-lived backend handles so the app lifecycle (before-quit) can shut them down
   // cleanly on quit — the agent process tree and every notebook kernel.
   return {
-    runtime,
-    notebook: notebookService,
     shutdownCoordinator,
     taskNotifications,
     settingsService,
-    sessionPersistenceCoordinator
+    sessionPersistenceCoordinator,
+    detectActiveSessions: () => detectActiveSessions({ runtime, notebook: notebookService })
+  }
+}
+
+const registerIpcHandlers = async (options: IpcRegistrationOptions): Promise<IpcRegistration> => {
+  const applicationRuntime = await composeApplicationRuntime((modules) =>
+    installElectronAdapters(options, modules)
+  )
+  return {
+    ...applicationRuntime.interfaces,
+    dispose: applicationRuntime.dispose
   }
 }
 
