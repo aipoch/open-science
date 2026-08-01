@@ -3,7 +3,7 @@ import { EventEmitter } from 'node:events'
 import { ipcMain, type IpcMain, type IpcMainInvokeEvent } from 'electron'
 
 import { isWebRpcChannel } from '../shared/web-rpc-contract'
-import type { CallerContext } from './caller-context'
+import { callerContextForEvent, hasCallerAuthority, type CallerContext } from './caller-context'
 
 type IpcHandler = Parameters<IpcMain['handle']>[1]
 
@@ -107,8 +107,7 @@ const createIpcHandlerRegistry = (target: Pick<IpcMain, 'handle'>): IpcHandlerRe
 }
 
 const isRemotePairingManagerSender = (event: IpcMainInvokeEvent): boolean =>
-  event.sender.id < 0 &&
-  (event.sender as unknown as { canManageRemotePairing?: boolean }).canManageRemotePairing === true
+  hasCallerAuthority(callerContextForEvent(event), 'manage-remote-pairing')
 
 const defaultRegistry = createIpcHandlerRegistry(ipcMain)
 

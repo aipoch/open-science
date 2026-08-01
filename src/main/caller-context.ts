@@ -88,6 +88,36 @@ export type ClientLease = Readonly<{
   release: () => void
 }>
 
+type CallerEvent = {
+  sender: {
+    id: number
+    callerContext?: CallerContext
+  }
+}
+
+const nativeCallerContexts = new WeakMap<object, CallerContext>()
+
+const callerContextForEvent = (event: CallerEvent): CallerContext => {
+  if (event.sender.callerContext) return event.sender.callerContext
+  const sender = event.sender as object
+  const existing = nativeCallerContexts.get(sender)
+  if (existing) return existing
+  const context =
+    event.sender.id > 0
+      ? createElectronCallerContext(event.sender.id)
+      : createCallerContext({
+          clientId: String(event.sender.id),
+          lifecycleClientId: `electron:${event.sender.id}`,
+          leaseId: `electron:${event.sender.id}`,
+          surface: 'web',
+          location: 'remote',
+          principalKind: 'automation',
+          actionOrigin: 'automation'
+        })
+  nativeCallerContexts.set(sender, context)
+  return context
+}
+
 export class ClientLeaseRegistry {
   private readonly leasesByClient = new Map<string, Set<symbol>>()
   private disposed = false
@@ -133,6 +163,7 @@ export class ClientLeaseRegistry {
 }
 
 export {
+  callerContextForEvent,
   canSatisfyHumanApproval,
   createCallerContext,
   createElectronCallerContext,

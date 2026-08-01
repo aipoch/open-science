@@ -6,10 +6,12 @@ import type {
   RevokeRemoteBrowserRequest,
   SetRemoteAccessModeRequest
 } from '../../shared/remote-access'
+import { callerContextForEvent } from '../caller-context'
 import { ipcMainHandle, isRemotePairingManagerSender } from '../ipc-handler-registry'
 import { RemoteAccessService } from './service'
 
-const isDesktopSender = (event: IpcMainInvokeEvent): boolean => event.sender.id > 0
+const isDesktopSender = (event: IpcMainInvokeEvent): boolean =>
+  callerContextForEvent(event).surface === 'electron'
 
 const requireDesktopSender = (event: IpcMainInvokeEvent): void => {
   if (!isDesktopSender(event)) {

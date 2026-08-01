@@ -2,6 +2,7 @@ import { describe, expect, it, vi } from 'vitest'
 
 import {
   ClientLeaseRegistry,
+  callerContextForEvent,
   canSatisfyHumanApproval,
   createCallerContext,
   createElectronCallerContext,
@@ -65,6 +66,24 @@ describe('caller context', () => {
       actionOrigin: 'agent-session'
     })
 
+    expect(canSatisfyHumanApproval(context)).toBe(false)
+  })
+
+  it('derives one stable Electron context and accepts an adapter-owned Web context', () => {
+    const sender = { id: 7 }
+    const first = callerContextForEvent({ sender })
+    expect(callerContextForEvent({ sender })).toBe(first)
+    expect(first.lifecycleClientId).toBe('electron:7')
+
+    const web = createWebCallerContext('browser-1')
+    expect(callerContextForEvent({ sender: { id: -1, callerContext: web } })).toBe(web)
+  })
+
+  it('fails closed when a synthetic negative sender omits its adapter context', () => {
+    const context = callerContextForEvent({ sender: { id: -1 } })
+
+    expect(context.surface).toBe('web')
+    expect(context.principalKind).toBe('automation')
     expect(canSatisfyHumanApproval(context)).toBe(false)
   })
 })
