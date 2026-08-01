@@ -70,4 +70,48 @@ describe('SkillCatalogModule', () => {
       'demo'
     ])
   })
+
+  it('owns active-framework agent-home discovery and batch import', async () => {
+    const storageRoot = await mkdtemp(join(tmpdir(), 'settings-agent-home-catalog-'))
+    const bundleRoot = await mkdtemp(join(tmpdir(), 'settings-agent-home-bundle-'))
+    const userClaudeDir = await mkdtemp(join(tmpdir(), 'settings-agent-home-claude-'))
+    const userAgentsDir = await mkdtemp(join(tmpdir(), 'settings-agent-home-agents-'))
+    roots.push(storageRoot, bundleRoot, userClaudeDir, userAgentsDir)
+    await writeFile(join(bundleRoot, 'manifest.json'), JSON.stringify({ version: 1, skills: [] }))
+    const seed = async (home: string, slug: string): Promise<void> => {
+      await mkdir(join(home, 'skills', slug), { recursive: true })
+      await writeFile(
+        join(home, 'skills', slug, 'SKILL.md'),
+        `---\nname: ${slug}\ndescription: Test ${slug}\n---\nBody\n`
+      )
+    }
+    await seed(userAgentsDir, 'shared')
+    await seed(userClaudeDir, 'claude-only')
+    const repository = new SettingsRepository(storageRoot)
+    await repository.setAgentFramework('claude-code')
+    const catalog = new SkillCatalogModule({
+      repository,
+      storageRoot,
+      userClaudeDir,
+      userAgentsDir,
+      userCodexDir: join(storageRoot, 'user-codex'),
+      skillRegistry: new SkillRegistry(bundleRoot)
+    })
+
+    expect(
+      (await catalog.listAgentHomeSkills()).map(({ source, slug }) => ({ source, slug }))
+    ).toEqual([
+      { source: 'agents', slug: 'shared' },
+      { source: 'claude', slug: 'claude-only' }
+    ])
+    expect(
+      (
+        await catalog.importAgentHomeSkills({
+          skills: [{ source: 'agents', slug: 'shared' }]
+        })
+      ).results
+    ).toEqual([
+      { source: 'agents', slug: 'shared', status: 'imported', id: 'imported-shared' }
+    ])
+  })
 })

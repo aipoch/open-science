@@ -1,15 +1,22 @@
 import { readdir, realpath } from 'node:fs/promises'
-import { join, resolve, sep } from 'node:path'
+import { homedir } from 'node:os'
+import { isAbsolute, join, relative, resolve, sep } from 'node:path'
 
 import type {
+  AgentHomeSkillRef,
+  AgentHomeSkillSource,
+  AgentHomeSkillView,
   CreateSkillRequest,
   DeleteSkillRequest,
   ImportSkillRequest,
   ImportSkillResult,
+  ImportAgentHomeSkillsRequest,
+  ImportAgentHomeSkillsResult,
   ImportSkillZipBatchRequest,
   ImportSkillZipBatchResult,
   ImportSkillZipRequest,
   PreviewGitHubSkillRequest,
+  PreviewAgentHomeSkillRequest,
   PreviewSkillZipRequest,
   ScanRepoRequest,
   ScanRepoResult,
@@ -20,6 +27,10 @@ import type {
   SkillView,
   UpdateSkillRequest
 } from '../../shared/settings'
+import {
+  DEFAULT_AGENT_FRAMEWORK_ID,
+  type AgentFrameworkId
+} from '../agent-framework'
 import { codexStorageDir, codexSubscriptionStorageDir } from '../agent-framework/codex'
 import { parseGitHubSkillUrl } from '../skills/github-import'
 import { decodeBoundedBase64, SKILL_IMPORT_LIMITS } from '../skills/import-limits'
@@ -27,7 +38,7 @@ import { ClaudeCodeSkillMaterializer, OS_SKILL_PREFIX } from '../skills/material
 import { netFetch } from '../skills/net-fetch'
 import { SkillRegistry, type BundledSkill } from '../skills/registry'
 import { readSkillFile } from '../skills/skill-files'
-import { UserSkillRepository } from '../skills/user-skill-repository'
+import { SAFE_SLUG, UserSkillRepository } from '../skills/user-skill-repository'
 import { provisionAppClaudeConfigDir } from './claude-config-provision'
 import type { SettingsRepository } from './repository'
 
@@ -36,6 +47,14 @@ type AdditionalSkillCatalogEntry = Omit<SkillCatalogEntry, 'path'> & { directory
 type AdditionalSkillCatalogEntries =
   | readonly AdditionalSkillCatalogEntry[]
   | (() => Promise<readonly AdditionalSkillCatalogEntry[]>)
+type AgentHomeSkillDir = { source: AgentHomeSkillSource; dir: string }
+type DiscoveredAgentHomeSkill = {
+  skill: AgentHomeSkillView
+  realPath: string
+  aliases: AgentHomeSkillRef[]
+  fallbackAliases: AgentHomeSkillRef[]
+  matchedFallbackSlugs: Set<string>
+}
 
 type SkillCatalogModuleOptions = {
   repository: SettingsRepository
@@ -271,6 +290,321 @@ class SkillCatalogModule {
 
   async scanRepoSkills(request: ScanRepoRequest): Promise<ScanRepoResult> {
     return { skills: await this.userSkills.scanRepo(request.repo, netFetch) }
+  }
+
+  async listAgentHomeSkills(): Promise<AgentHomeSkillView[]> {
+    const settings = await this.options.repository.getSettings()
+    const framework = settings.agentFrameworkId ?? DEFAULT_AGENT_FRAMEWORK_ID
+    return (await this.discoverAgentHomeSkills(this.agentHomeDirs(framework))).map(
+      (item) => item.skill
+    )
+  }
+
+  private async discoverAgentHomeSkills(
+    sources: AgentHomeSkillDir[]
+  ): Promise<DiscoveredAgentHomeSkill[]> {
+    const scanResults = await Promise.allSettled(
+      sources.map(async ({ source, dir }) => {
+        const skills = await this.userSkills.listAgentHomeSkills(dir, source)
+        const visible: {
+          skill: AgentHomeSkillView
+          realPath: string
+          alias: AgentHomeSkillRef
+        }[] = []
+        for (const skill of skills) {
+          try {
+            const realPath = await this.resolveAgentHomeSkillPath(source, skill.slug, sources)
+            visible.push({
+              realPath,
+              alias: { source, slug: skill.slug },
+              skill: {
+                source,
+                slug: skill.slug,
+                name: skill.name,
+                description: skill.description,
+                alreadyImported: skill.alreadyImported
+              }
+            })
+          } catch {
+            continue
+          }
+        }
+        return visible
+      })
+    )
+    const groups = scanResults.flatMap((result) =>
+      result.status === 'fulfilled' ? [result.value] : []
+    )
+    const firstFailure = scanResults.find((result) => result.status === 'rejected')
+    if (groups.every((group) => group.length === 0) && firstFailure?.status === 'rejected') {
+      throw firstFailure.reason
+    }
+
+    const unique = new Map<string, DiscoveredAgentHomeSkill>()
+    for (const item of groups.flat()) {
+      const pathKey = process.platform === 'win32' ? item.realPath.toLowerCase() : item.realPath
+      const existing = unique.get(pathKey)
+      if (existing) {
+        existing.aliases.push(item.alias)
+        existing.skill.alreadyImported ||= item.skill.alreadyImported
+      } else {
+        unique.set(pathKey, {
+          skill: item.skill,
+          realPath: item.realPath,
+          aliases: [item.alias],
+          fallbackAliases: [],
+          matchedFallbackSlugs: new Set()
+        })
+      }
+    }
+
+    const discovered = [...unique.values()]
+    try {
+      const matches = await this.userSkills.matchImportedAgentHomeSkills(
+        discovered.map((item) => ({
+          sourcePath: item.realPath,
+          canonical: { source: item.skill.source, slug: item.skill.slug },
+          aliases: item.aliases
+        }))
+      )
+      for (const [index, match] of matches.entries()) {
+        const item = discovered[index]
+        if (!item) continue
+        item.skill.alreadyImported = match.identityImported
+        item.fallbackAliases.push(...match.fallbackAliases)
+        if (match.identityMigrationNeeded) {
+          try {
+            await this.userSkills.importAgentHomeSkill(
+              item.realPath,
+              { source: item.skill.source, slug: item.skill.slug },
+              {
+                aliases: item.aliases,
+                expectedSignature: match.matchedIdentitySignature,
+                expectedImportedIdentity: match.matchedImportedIdentity
+              }
+            )
+          } catch {
+            item.skill.alreadyImported = false
+          }
+        }
+      }
+    } catch {
+      // Keep readable rows when compatibility matching cannot inspect malformed legacy imports.
+    }
+
+    const fallbackBySlug = new Map<
+      string,
+      { item: DiscoveredAgentHomeSkill; alias: AgentHomeSkillRef }[]
+    >()
+    for (const item of discovered) {
+      if (item.skill.alreadyImported) continue
+      for (const alias of item.fallbackAliases) {
+        const candidates = fallbackBySlug.get(alias.slug) ?? []
+        candidates.push({ item, alias })
+        fallbackBySlug.set(alias.slug, candidates)
+      }
+    }
+    for (const [fallbackSlug, candidates] of fallbackBySlug) {
+      for (const candidate of candidates) {
+        candidate.item.skill.alreadyImported = true
+        candidate.item.matchedFallbackSlugs.add(fallbackSlug)
+      }
+    }
+    return discovered
+  }
+
+  async previewAgentHomeSkill(
+    request: PreviewAgentHomeSkillRequest
+  ): Promise<SkillImportPreviewContent> {
+    const settings = await this.options.repository.getSettings()
+    const framework = settings.agentFrameworkId ?? DEFAULT_AGENT_FRAMEWORK_ID
+    const availableSources = this.agentHomeDirs(framework)
+    const requestedSourcePath = join(
+      availableSources.find((candidate) => candidate.source === request.source)?.dir ?? '',
+      request.slug
+    )
+    const sourcePath = await this.resolveAgentHomeSkillPath(
+      request.source,
+      request.slug,
+      availableSources
+    )
+    const canonical = await this.canonicalAgentHomeSkillRef(sourcePath, availableSources)
+    if (!canonical) {
+      throw new Error('Refusing to preview installed skill outside a top-level skill directory.')
+    }
+    const sourceRoot =
+      canonical.source === 'agents'
+        ? '~/.agents/skills'
+        : canonical.source === 'claude'
+          ? '~/.claude/skills'
+          : '~/.codex/skills'
+    const sourceLabel = `${sourceRoot}/${canonical.slug}`
+    try {
+      return {
+        ...(await this.userSkills.previewAgentHomeSkill(sourcePath)),
+        sourceLabel
+      }
+    } catch (error) {
+      const message =
+        error instanceof Error ? error.message : 'Could not preview the installed skill.'
+      const redacted = [sourcePath, requestedSourcePath].reduce((value, hostPath) => {
+        if (!hostPath) return value
+        return value
+          .split(`${hostPath}${sep}`)
+          .join(`${sourceLabel}/`)
+          .split(hostPath)
+          .join(sourceLabel)
+      }, message)
+      throw new Error(redacted)
+    }
+  }
+
+  async importAgentHomeSkills(
+    request: ImportAgentHomeSkillsRequest
+  ): Promise<ImportAgentHomeSkillsResult> {
+    if (!request || !Array.isArray(request.skills)) {
+      throw new Error('Installed skills must be an array.')
+    }
+    if (request.skills.length > SKILL_IMPORT_LIMITS.maxSkillsPerBundle) {
+      throw new Error(
+        `Cannot import more than ${SKILL_IMPORT_LIMITS.maxSkillsPerBundle} installed skills at once.`
+      )
+    }
+
+    const settings = await this.options.repository.getSettings()
+    const framework = settings.agentFrameworkId ?? DEFAULT_AGENT_FRAMEWORK_ID
+    const availableSources = this.agentHomeDirs(framework)
+    const discovered = await this.discoverAgentHomeSkills(availableSources).catch(
+      () => [] as DiscoveredAgentHomeSkill[]
+    )
+    const discoveredByPath = new Map(
+      discovered.map((item) => [
+        process.platform === 'win32' ? item.realPath.toLowerCase() : item.realPath,
+        item
+      ])
+    )
+    const results: ImportAgentHomeSkillsResult['results'] = []
+
+    for (const skill of request.skills) {
+      const candidate =
+        typeof skill === 'object' && skill !== null
+          ? (skill as { source?: unknown; slug?: unknown })
+          : undefined
+      const ref: Partial<AgentHomeSkillRef> = {}
+      if (
+        candidate?.source === 'agents' ||
+        candidate?.source === 'claude' ||
+        candidate?.source === 'codex'
+      ) {
+        ref.source = candidate.source
+      }
+      if (typeof candidate?.slug === 'string') ref.slug = candidate.slug
+
+      try {
+        if (!ref.source || ref.slug === undefined) {
+          throw new Error('Installed skill entries must include a valid source and slug.')
+        }
+        const validated: AgentHomeSkillRef = { source: ref.source, slug: ref.slug }
+        const sourcePath = await this.resolveAgentHomeSkillPath(
+          validated.source,
+          validated.slug,
+          availableSources
+        )
+        const canonical = await this.canonicalAgentHomeSkillRef(sourcePath, availableSources)
+        if (!canonical) {
+          throw new Error('Refusing to import installed skill outside a top-level skill directory.')
+        }
+        const pathKey = process.platform === 'win32' ? sourcePath.toLowerCase() : sourcePath
+        const discoveredSkill = discoveredByPath.get(pathKey)
+        const outcome = await this.userSkills.importAgentHomeSkill(sourcePath, canonical, {
+          aliases: discoveredSkill?.aliases,
+          fallbackSlugs: discoveredSkill
+            ? [...discoveredSkill.matchedFallbackSlugs]
+            : undefined
+        })
+        results.push({ ...validated, ...outcome })
+      } catch (error) {
+        results.push({
+          ...ref,
+          error: error instanceof Error ? error.message : 'Could not import the installed skill.'
+        })
+      }
+    }
+    return { results, skills: await this.listSkills() }
+  }
+
+  private agentHomeDirs(framework: AgentFrameworkId): AgentHomeSkillDir[] {
+    const sources: AgentHomeSkillDir[] = [
+      {
+        source: 'agents',
+        dir: join(this.options.userAgentsDir ?? join(homedir(), '.agents'), 'skills')
+      }
+    ]
+    if (framework === 'claude-code') {
+      sources.push({
+        source: 'claude',
+        dir: join(this.options.userClaudeDir ?? join(homedir(), '.claude'), 'skills')
+      })
+    } else if (framework === 'codex') {
+      sources.push({
+        source: 'codex',
+        dir: join(this.options.userCodexDir ?? join(homedir(), '.codex'), 'skills')
+      })
+    }
+    return sources
+  }
+
+  private async resolveAgentHomeSkillPath(
+    source: AgentHomeSkillSource,
+    slug: string,
+    availableSources: AgentHomeSkillDir[]
+  ): Promise<string> {
+    const homeSkillsDir = availableSources.find((candidate) => candidate.source === source)?.dir
+    if (!homeSkillsDir) {
+      throw new Error(`Installed skill source "${String(source)}" is not available.`)
+    }
+    if (!SAFE_SLUG.test(slug)) {
+      throw new Error(`Refusing to import installed skill with unsafe slug: ${slug}`)
+    }
+    const lexicalCandidate = resolve(homeSkillsDir, slug)
+    const candidate = await realpath(lexicalCandidate).catch(() => lexicalCandidate)
+    const allowedRoots = await Promise.all(
+      availableSources.map(({ dir }) => realpath(dir).catch(() => resolve(dir)))
+    )
+    const withinAllowedRoot = allowedRoots.some((root) => {
+      const rootWithSep = root.endsWith(sep) ? root : root + sep
+      return candidate === root || candidate.startsWith(rootWithSep)
+    })
+    if (!withinAllowedRoot) {
+      throw new Error(`Refusing to import installed skill outside its source: ${slug}`)
+    }
+    if (!(await this.canonicalAgentHomeSkillRef(candidate, availableSources))) {
+      throw new Error(
+        `Refusing to import installed skill outside a top-level skill directory: ${slug}`
+      )
+    }
+    return candidate
+  }
+
+  private async canonicalAgentHomeSkillRef(
+    realSkillPath: string,
+    availableSources: AgentHomeSkillDir[]
+  ): Promise<AgentHomeSkillRef | undefined> {
+    for (const source of availableSources) {
+      const realRoot = await realpath(source.dir).catch(() => resolve(source.dir))
+      const child = relative(realRoot, realSkillPath)
+      if (
+        child &&
+        !isAbsolute(child) &&
+        child !== '..' &&
+        !child.startsWith(`..${sep}`) &&
+        !child.includes(sep) &&
+        SAFE_SLUG.test(child)
+      ) {
+        return { source: source.source, slug: child }
+      }
+    }
+    return undefined
   }
 
   async materializeSkills(
