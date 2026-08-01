@@ -3378,6 +3378,10 @@ class NotebookRuntimeService {
   // shutdownAll(), this is terminal: quit/relaunch and module disposal use it, while update and data-root
   // migration gates retain the reusable shutdown contract so a refused/cancelled flow can resume work.
   async dispose(): Promise<{ reaped: boolean }> {
+    // Close the terminal admission boundary before any asynchronous teardown starts. Existing holders
+    // are released and queued acquisitions reject, so no package/environment operation can begin after
+    // application disposal has crossed this point.
+    this.environmentLeases.dispose()
     // Mark recovery disposed first, but do not let slow startup filesystem reconciliation consume the
     // quit budget before kernel teardown even starts. Await both so non-quit module disposal still leaves
     // no recovery work behind once this terminal operation resolves.

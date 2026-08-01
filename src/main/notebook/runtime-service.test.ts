@@ -6052,6 +6052,36 @@ describe('v4 runtime bindings & agent tools', () => {
     await expect(disposal).resolves.toEqual({ reaped: true })
   })
 
+  it('closes environment leases before terminal disposal can release queued operations', async () => {
+    const root = await createStorageRoot()
+    const service = new NotebookRuntimeService({
+      configRoot: root,
+      dataRoot: root,
+      projectName: 'default-project',
+      repository: new NotebookRunRepository(root)
+    })
+    const leaseManager = (
+      service as unknown as {
+        environmentLeases: {
+          acquire: (
+            environment: string,
+            mode: 'shared' | 'exclusive'
+          ) => { granted: Promise<{ release(): boolean }> }
+          snapshot: () => { disposed: boolean }
+        }
+      }
+    ).environmentLeases
+    const held = await leaseManager.acquire('default', 'exclusive').granted
+    const queued = leaseManager.acquire('default', 'exclusive').granted
+
+    const disposal = service.dispose()
+
+    await expect(queued).rejects.toThrow(/disposed/)
+    expect(leaseManager.snapshot().disposed).toBe(true)
+    expect(held.release()).toBe(false)
+    await expect(disposal).resolves.toEqual({ reaped: true })
+  })
+
   it('waits for recovery disposal before propagating a kernel teardown failure', async () => {
     const root = await createStorageRoot()
     let releaseRecovery: (() => void) | undefined
