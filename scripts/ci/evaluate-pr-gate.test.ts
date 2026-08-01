@@ -144,6 +144,7 @@ describe('PR Gate aggregation', () => {
       encoding: 'utf8',
       env: {
         ...process.env,
+        GITHUB_STEP_SUMMARY: '',
         PR_GATE_EXECUTION_MODE: 'bundles',
         PR_GATE_PLAN: JSON.stringify({
           schemaVersion: 1,
