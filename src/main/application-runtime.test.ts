@@ -1,6 +1,10 @@
 import { describe, expect, it, vi } from 'vitest'
 
-import { composeApplicationRuntime, shutdownApplicationSurfaces } from './application-runtime'
+import {
+  composeApplicationRuntime,
+  shutdownApplicationSurfaces,
+  withApplicationRuntimeShutdown
+} from './application-runtime'
 
 describe('application runtime composition', () => {
   it('constructs and starts each module once through declared dependencies', async () => {
@@ -149,21 +153,32 @@ describe('application surface shutdown', () => {
   it('keeps one ordered quit path from the composed backend through web surfaces', async () => {
     const order: string[] = []
 
-    await shutdownApplicationSurfaces({
-      disposeApplicationRuntime: () => {
-        order.push('application-runtime')
-      },
-      shutdownRemoteAccess: () => {
-        order.push('remote-access')
-      },
-      closeWebController: () => {
-        order.push('web-controller')
-      },
-      disposeWebRpc: () => {
-        order.push('web-rpc')
+    const lifecycle = withApplicationRuntimeShutdown(
+      { marker: 'electron-lifecycle' },
+      {
+        disposeApplicationRuntime: () => {
+          order.push('application-runtime')
+        },
+        remoteAccess: {
+          shutdown: () => {
+            order.push('remote-access')
+          }
+        },
+        webController: {
+          close: () => {
+            order.push('web-controller')
+          }
+        },
+        webRpc: {
+          dispose: () => {
+            order.push('web-rpc')
+          }
+        }
       }
-    })
+    )
+    await lifecycle.shutdownBackends()
 
+    expect(lifecycle.marker).toBe('electron-lifecycle')
     expect(order).toEqual(['application-runtime', 'remote-access', 'web-controller', 'web-rpc'])
   })
 

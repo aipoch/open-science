@@ -32,6 +32,13 @@ export type ApplicationSurfaceShutdown = {
   disposeWebRpc(): Awaitable<void>
 }
 
+export type ApplicationLifecycleShutdownDependencies = {
+  disposeApplicationRuntime: ApplicationSurfaceShutdown['disposeApplicationRuntime']
+  remoteAccess: { shutdown(): Awaitable<void> }
+  webController: { close(): Awaitable<void> }
+  webRpc: { dispose(): Awaitable<void> }
+}
+
 // Preserves the desktop quit order while guaranteeing that a failed surface cannot strand a later
 // one. Backend shutdown is owned by the application runtime and remains bounded by its coordinator.
 export const shutdownApplicationSurfaces = async ({
@@ -54,6 +61,31 @@ export const shutdownApplicationSurfaces = async ({
     }
   }
 }
+
+// Builds the exact callback passed to the Electron lifecycle. Requiring the application disposer here
+// prevents index wiring from falling back to surface-only cleanup and orphaning backend ownership.
+export const createApplicationLifecycleShutdown = ({
+  disposeApplicationRuntime,
+  remoteAccess,
+  webController,
+  webRpc
+}: ApplicationLifecycleShutdownDependencies): (() => Promise<void>) => {
+  return () =>
+    shutdownApplicationSurfaces({
+      disposeApplicationRuntime,
+      shutdownRemoteAccess: () => remoteAccess.shutdown(),
+      closeWebController: () => webController.close(),
+      disposeWebRpc: () => webRpc.dispose()
+    })
+}
+
+export const withApplicationRuntimeShutdown = <Options extends object>(
+  options: Options,
+  dependencies: ApplicationLifecycleShutdownDependencies
+): NoInfer<Options> & { shutdownBackends: () => Promise<void> } => ({
+  ...options,
+  shutdownBackends: createApplicationLifecycleShutdown(dependencies)
+})
 
 type OwnedModule = Pick<ApplicationModule<unknown>, 'dispose' | 'rollback'>
 

@@ -9,7 +9,7 @@ import {
   NOTEBOOK_MCP_SERVER_ARG,
   SKILL_IMPORT_MCP_SERVER_ARG
 } from './mcp-server-args'
-import { shutdownApplicationSurfaces } from './application-runtime'
+import { withApplicationRuntimeShutdown } from './application-runtime'
 
 const APP_NAME = 'Open Science'
 const APP_USER_MODEL_ID = 'com.aipoch.open-science'
@@ -330,47 +330,50 @@ async function startElectronApp(mainEntryPath: string): Promise<void> {
     // is bound with the live backend handles; the agent teardown latches shutting-down and awaits the
     // process tree so a Windows taskkill /T completes before app.exit.
     installAppLifecycle: (ctx) => {
-      const { showMainWindow, getMainWindow, isMainWindowHidden } = ctx.installAppLifecycle({
-        app,
-        createMainWindow: ctx.createMainWindow,
-        createTray: (handlers) => {
-          const webPort = ctx.webController.runningPort()
-          const headlessWeb = ctx.webMode.headless && webPort !== undefined
-          return ctx.createAppTray({
-            iconPath: trayIconPath,
-            templateIconPath: process.platform === 'darwin' ? trayMacTemplate : undefined,
-            ...handlers,
-            ...(headlessWeb
-              ? {
-                  headless: true,
-                  onOpenWeb: async () => {
-                    const { shell } = await import('electron')
-                    await shell.openExternal(await ctx.buildAuthenticatedWebUrl(webPort))
-                  },
-                  onCopyWebUrl: async () => {
-                    const { clipboard } = await import('electron')
-                    clipboard.writeText(await ctx.buildAuthenticatedWebUrl(webPort))
-                  }
-                }
-              : {})
-          })
-        },
-        // Application composition owns the one bounded ACP/Notebook shutdown. Remaining surfaces close
-        // afterward in their established order, even when an earlier disposer rejects.
-        shutdownBackends: () =>
-          shutdownApplicationSurfaces({
+      const { showMainWindow, getMainWindow, isMainWindowHidden } = ctx.installAppLifecycle(
+        withApplicationRuntimeShutdown(
+          {
+            app,
+            createMainWindow: ctx.createMainWindow,
+            createTray: (handlers) => {
+              const webPort = ctx.webController.runningPort()
+              const headlessWeb = ctx.webMode.headless && webPort !== undefined
+              return ctx.createAppTray({
+                iconPath: trayIconPath,
+                templateIconPath: process.platform === 'darwin' ? trayMacTemplate : undefined,
+                ...handlers,
+                ...(headlessWeb
+                  ? {
+                      headless: true,
+                      onOpenWeb: async () => {
+                        const { shell } = await import('electron')
+                        await shell.openExternal(await ctx.buildAuthenticatedWebUrl(webPort))
+                      },
+                      onCopyWebUrl: async () => {
+                        const { clipboard } = await import('electron')
+                        clipboard.writeText(await ctx.buildAuthenticatedWebUrl(webPort))
+                      }
+                    }
+                  : {})
+              })
+            },
+            isMigrationInProgress: ctx.isMigrationInProgress,
+            quit: () => app.quit(),
+            countWindows: () => BrowserWindow.getAllWindows().length,
+            createInitialWindow: !ctx.webMode.headless,
+            detectActiveSessions: ctx.detectActiveSessions,
+            createConfirmClose: ctx.createConfirmClose
+          },
+          {
+            // Application composition owns the one bounded ACP/Notebook shutdown. Remaining surfaces
+            // close afterward in their established order, even when an earlier disposer rejects.
             disposeApplicationRuntime: ctx.disposeApplicationRuntime,
-            shutdownRemoteAccess: () => ctx.remoteAccess.shutdown(),
-            closeWebController: () => ctx.webController.close(),
-            disposeWebRpc: () => ctx.webRpc.dispose()
-          }),
-        isMigrationInProgress: ctx.isMigrationInProgress,
-        quit: () => app.quit(),
-        countWindows: () => BrowserWindow.getAllWindows().length,
-        createInitialWindow: !ctx.webMode.headless,
-        detectActiveSessions: ctx.detectActiveSessions,
-        createConfirmClose: ctx.createConfirmClose
-      })
+            remoteAccess: ctx.remoteAccess,
+            webController: ctx.webController,
+            webRpc: ctx.webRpc
+          }
+        )
+      )
 
       // Window lifecycle now exists: expose it to the restored controller, reapply any Windows
       // overlay to the first window, then attach completion/focus/window-recreation events.

@@ -6,16 +6,12 @@ import { app, BrowserWindow, net, Notification, protocol, webContents } from 'el
 import { ipcMainHandle } from './ipc-handler-registry'
 import { composeApplicationRuntime, type ApplicationModuleBuilder } from './application-runtime'
 
-import {
-  createAcpRuntime,
-  createDefaultNotebookRuntimeService,
-  installAcpIpcHandlers
-} from './acp/ipc'
+import { createAcpRuntime, createDefaultNotebookRuntimeService } from './acp/ipc'
 import { createDefaultArtifactRepository, registerArtifactIpcHandlers } from './artifacts/ipc'
 import { ArtifactProvenanceRepository } from './artifacts/provenance-repository'
 import { ProvenanceMessageSnapshotRepository } from './artifacts/provenance-message-snapshot'
 import { ArtifactRunRegistry } from './artifacts/run-registry'
-import { createComputeIpcModule, installComputeIpcHandlers } from './compute/ipc'
+import { createComputeIpcModule } from './compute/ipc'
 import { attachEnabledComputeHosts } from './compute/enabled-hosts-registry'
 import { createComputeJobRuntime } from './compute/job-runtime'
 import { waitForInitialConnectorRefresh, wireConnectorReload } from './connector-reload'
@@ -125,6 +121,11 @@ import { createUpdateStrategy } from './update/create-strategy'
 import { startUpdateScheduler } from './update/scheduler'
 import { createDefaultUploadRepository, registerUploadIpcHandlers } from './uploads/ipc'
 import { broadcastToRenderers } from './renderer-broadcast'
+import {
+  installElectronRuntimeAdapters,
+  type ElectronRuntimeAdapterInterfaces,
+  type NamedElectronSurfaceAdapter
+} from './runtime-electron-wiring'
 import { ConversationSkillImporter, SkillImportApprovalBroker } from './skills/conversation-import'
 import type { ConversationSkillImportApprovalResponse } from '../shared/settings'
 
@@ -155,13 +156,8 @@ type ApplicationRuntimeInterfaces = {
   detectActiveSessions: () => ReturnType<typeof detectActiveSessions>
 }
 
-type NamedElectronAdapter = {
-  readonly name: string
-  install(): void | Promise<void>
-}
-
 type ApplicationModuleInterfaces = ApplicationRuntimeInterfaces & {
-  readonly electronAdapters: readonly NamedElectronAdapter[]
+  readonly electronAdapters: ElectronRuntimeAdapterInterfaces
 }
 
 type IpcRegistration = ApplicationRuntimeInterfaces & {
@@ -222,9 +218,15 @@ const createApplicationModules = async (
   }: IpcRegistrationOptions,
   modules: ApplicationModuleBuilder
 ): Promise<ApplicationModuleInterfaces> => {
-  const electronAdapters: NamedElectronAdapter[] = []
-  const declareElectronAdapter = (name: string, install: NamedElectronAdapter['install']): void => {
-    electronAdapters.push({ name, install })
+  const beforeComputeAdapters: NamedElectronSurfaceAdapter[] = []
+  const beforeAcpAdapters: NamedElectronSurfaceAdapter[] = []
+  const afterAcpAdapters: NamedElectronSurfaceAdapter[] = []
+  let surfaceAdapters = beforeComputeAdapters
+  const declareElectronAdapter = (
+    name: string,
+    install: NamedElectronSurfaceAdapter['install']
+  ): void => {
+    surfaceAdapters.push({ name, install })
   }
   // One settings service backs both the settings IPC and the ACP spawn config (single source of truth).
   const settingsService = await modules.add(undefined, () => ({
@@ -561,13 +563,13 @@ const createApplicationModules = async (
     taskNotifications,
     permissionGrantRegistry
   )
+  surfaceAdapters = beforeAcpAdapters
   const {
     computeService,
     jobRepository,
     hostRepository,
     enabledComputeHostsRegistry: hostsRegistry
   } = computeIpcModule
-  declareElectronAdapter('compute', () => installComputeIpcHandlers(computeIpcModule))
   const dataRoot = resolveDataRoot()
   // Start the JobPoller wired to the shared broadcaster so every state/tail change is pushed to all
   // renderer windows via 'compute:job-updated' (Phase 3d, design.md §9 + §15.3). The dispatcher
@@ -718,7 +720,7 @@ const createApplicationModules = async (
       }
     }
   )
-  declareElectronAdapter('acp', () => installAcpIpcHandlers(runtime, taskNotifications))
+  surfaceAdapters = afterAcpAdapters
   runtimeRef.current = runtime
   permissionGrantRegistry.subscribe(() => runtime.notifyPermissionGrantsChanged())
   // Single shared teardown owner for both the before-quit handler (index.ts) and the pre-update-install
@@ -1113,7 +1115,13 @@ const createApplicationModules = async (
     settingsService,
     sessionPersistenceCoordinator,
     detectActiveSessions: () => detectActiveSessions({ runtime, notebook: notebookService }),
-    electronAdapters
+    electronAdapters: {
+      beforeCompute: beforeComputeAdapters,
+      compute: computeIpcModule,
+      beforeAcp: beforeAcpAdapters,
+      acp: { runtime, taskNotifications },
+      afterAcp: afterAcpAdapters
+    }
   }
 }
 
@@ -1122,7 +1130,7 @@ const createApplicationModules = async (
 const installElectronAdapters = async (
   interfaces: Pick<ApplicationModuleInterfaces, 'electronAdapters'>
 ): Promise<void> => {
-  for (const adapter of interfaces.electronAdapters) await adapter.install()
+  await installElectronRuntimeAdapters(interfaces.electronAdapters)
 }
 
 const registerIpcHandlers = async (options: IpcRegistrationOptions): Promise<IpcRegistration> => {
