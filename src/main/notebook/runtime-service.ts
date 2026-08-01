@@ -109,6 +109,7 @@ import {
   readProcessStartToken
 } from './operation-recovery'
 import { isChildUnconfirmedError } from './provisioner-runtime'
+import { EnvironmentLeaseManager, type EnvironmentLeaseMode } from './environment-lease-manager'
 import { getAppClaudeConfigDir } from '../settings/provider-env'
 import { terminateProcessTree } from '../process-tree'
 import { createLogger, getLogFilePath } from '../logger'
@@ -989,78 +990,16 @@ const findCell = (session: RuntimeSession, cellId: string): NotebookCell => {
   return cell
 }
 
-// Per-ENV readers-writer lock serializing environment management against kernel runs (§5
-// "serialize package management against the target environment"). A run is a shared reader (runs on
-// the same env proceed concurrently, e.g. across
-// sessions), an install is an exclusive writer (blocks every run on that env until it finishes), so a
-// pip/conda/CRAN install can never overlap an in-flight cell on the same env. Keyed by the RESOLVED env
-// name (not language), so installs into DIFFERENT envs run concurrently while install+run on the SAME
-// env stay mutually exclusive. Held at the service instance level because installs are process-global.
-class EnvConcurrencyLock {
-  // Tail of the exclusive (install) chain per env; a live install keeps this promise unresolved.
-  private readonly writer = new Map<string, Promise<void>>()
-  // In-flight readers (runs) per env, awaited by a pending install so it never overlaps one.
-  private readonly readers = new Map<string, Set<Promise<void>>>()
-
-  private readersFor(env: string): Set<Promise<void>> {
-    let set = this.readers.get(env)
-    if (!set) {
-      set = new Set()
-      this.readers.set(env, set)
-    }
-    return set
-  }
-
-  // Shared slot for a kernel run: waits out any active install, then runs concurrently with peers.
-  async withRun<T>(env: string, fn: () => Promise<T>): Promise<T> {
-    // Re-check after each wait so a run that arrives mid-install joins only once the install clears.
-    let active = this.writer.get(env)
-    while (active) {
-      await active
-      active = this.writer.get(env)
-    }
-    // Register synchronously (no await between the writer check above and this add) so a concurrent
-    // install can never slip in and start between our check and registration.
-    const readers = this.readersFor(env)
-    let done!: () => void
-    const reader = new Promise<void>((resolve) => (done = resolve))
-    readers.add(reader)
-    try {
-      return await fn()
-    } finally {
-      readers.delete(reader)
-      done()
-    }
-  }
-
-  // Exclusive slot for an install: waits for the previous install and every in-flight run on this env
-  // to drain, then runs alone. New runs registered after this point block on `mine`.
-  async withInstall<T>(env: string, fn: () => Promise<T>): Promise<T> {
-    const prev = this.writer.get(env) ?? Promise.resolve()
-    let done!: () => void
-    const mine = new Promise<void>((resolve) => (done = resolve))
-    this.writer.set(env, mine)
-    try {
-      await prev
-      await Promise.all(Array.from(this.readersFor(env)))
-      return await fn()
-    } finally {
-      if (this.writer.get(env) === mine) this.writer.delete(env)
-      done()
-    }
-  }
-}
-
 // Coordinates notebook cells, shared interpreters, persisted run history, and UI notifications.
 class NotebookRuntimeService {
   private readonly repository: NotebookRunRepository
   private readonly sessions = new Map<string, RuntimeSession>()
   private readonly announcedAgentSessionIds = new Set<string>()
-  // Serializes environment management (installs) against kernel runs on the same language's env;
-  // shared across this service's sessions because installs are process-global (§5, G2).
-  private readonly envLock = new EnvConcurrencyLock()
+  // Owns per-environment shared run and exclusive mutation leases. The runtime decides which paths
+  // require which mode; acquisition, queueing, cancellation, and release stay inside the manager.
+  private readonly environmentLeases = new EnvironmentLeaseManager()
   // Process-global set of env process keys ('r:<env>') with a pending R-kernel restart recommendation
-  // after an install/uninstall. Shared across sessions like envLock, since installs are process-global;
+  // after an install/uninstall. Shared across sessions like environmentLeases, since installs are process-global;
   // set in managePackages, cleared when the owning session restarts. Only R populates it.
   private readonly restartRecommendedEnvs = new Set<string>()
   // In-flight background drains kicked off by revokeRuntime (disable): each drains the affected env's
@@ -1974,7 +1913,7 @@ class NotebookRuntimeService {
       session,
       runningRun,
       () =>
-        this.envLock.withRun(env, async () => {
+        this.withEnvironmentLease(env, 'shared', async () => {
           // The run may have waited behind an installer after computing interpreterResolveError above.
           // Re-read the repair gate only after the shared run lease is acquired so a transaction that
           // quarantined this env while we waited cannot release the lock and let a stale decision spawn it.
@@ -2593,7 +2532,7 @@ class NotebookRuntimeService {
       binding?.resolvedInterpreter,
       runtimeRoot
     )
-    const inspection = await this.envLock.withRun(envName, () =>
+    const inspection = await this.withEnvironmentLease(envName, 'shared', () =>
       this.environmentStateTracker.inspectPackages(target, request.packages)
     )
     return {
@@ -2859,7 +2798,7 @@ class NotebookRuntimeService {
       // env lock while it clearQuarantine()s the prefix's journal records; recording before acquiring the
       // lock let the Reset delete THIS record between our begin() and the install starting, after which
       // journal.update() no-ops and a crash would strand a sidecar with no journal record recovery scans.
-      result = await this.envLock.withInstall(envName, async () => {
+      result = await this.withEnvironmentLease(envName, 'exclusive', async () => {
         // Fail CLOSED, like the provisioner's prefix writes: if we can't record the intent (journal
         // begin — also throws on a corrupt journal), do NOT spawn the installer; a crash would otherwise
         // leave an unrecorded child recovery can't reap. The begun flag routes this to a structured
@@ -3204,7 +3143,7 @@ class NotebookRuntimeService {
         // it) — creating over a possibly-live prefix could corrupt it.
         this.assertPrefixRecoverable(envPrefix(getRuntimeRoot(this.options.dataRoot), name))
         // Serialize create against installs / other env ops on the same env (design D4 / review A).
-        return this.envLock.withInstall(name, async () => {
+        return this.withEnvironmentLease(name, 'exclusive', async () => {
           await manager.createNamedEnvironment(name, language, request.packages)
           return { environments: manager.listEnvironments() }
         })
@@ -3237,7 +3176,7 @@ class NotebookRuntimeService {
         // is still writing. Mirrors the 'create' guard; keyed by the same real prefix.
         this.assertPrefixRecoverable(envPrefix(getRuntimeRoot(this.options.dataRoot), name))
         // Serialize the rm -rf against a concurrent install into the same env (design D4 / review A).
-        return this.envLock.withInstall(name, async () => {
+        return this.withEnvironmentLease(name, 'exclusive', async () => {
           const environments = manager.removeEnvironment(name)
           this.clearRemovedManagedEnvironmentRepair(name)
           return { environments }
@@ -3474,13 +3413,26 @@ class NotebookRuntimeService {
     return this.liveUnconfirmedPrefixes.has(prefix)
   }
 
-  // Runs fn under the SAME exclusive per-env lock that package installs use (envLock.withInstall), so a
+  // Runs fn under the SAME exclusive per-env lease that package installs use, so a
   // default-env materialize/repair/upgrade in the provisioner serializes with an install into that env
   // instead of racing it on a separate lock. Injected into the provisioner as withPrefixLock (ipc.ts).
   // Keyed by env NAME, matching managePackages/named-env create/remove. The provisioner only calls this
   // from its top-level entries (never re-entrantly), so it cannot deadlock against itself.
   withEnvLock<T>(envName: string, fn: () => Promise<T>): Promise<T> {
-    return this.envLock.withInstall(envName, fn)
+    return this.withEnvironmentLease(envName, 'exclusive', fn)
+  }
+
+  private async withEnvironmentLease<T>(
+    envName: string,
+    mode: EnvironmentLeaseMode,
+    fn: () => Promise<T>
+  ): Promise<T> {
+    const lease = await this.environmentLeases.acquire(envName, mode).granted
+    try {
+      return await fn()
+    } finally {
+      lease.release()
+    }
   }
 
   private async runRecovery(): Promise<void> {
