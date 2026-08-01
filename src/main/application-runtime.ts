@@ -3,6 +3,9 @@ type Awaitable<T> = T | Promise<T>
 export type ApplicationModule<Capability> = {
   capability: Capability
   start?: () => Awaitable<void>
+  // Releases a partially-constructed module before runtime ownership has been fully established.
+  // When omitted, normal disposal is also safe for rollback.
+  rollback?: () => Awaitable<void>
   dispose?: () => Awaitable<void>
 }
 
@@ -22,7 +25,37 @@ export type ApplicationRuntime<Interfaces> = {
   dispose(): Promise<void>
 }
 
-type OwnedModule = Pick<ApplicationModule<unknown>, 'dispose'>
+export type ApplicationSurfaceShutdown = {
+  disposeApplicationRuntime(): Awaitable<void>
+  shutdownRemoteAccess(): Awaitable<void>
+  closeWebController(): Awaitable<void>
+  disposeWebRpc(): Awaitable<void>
+}
+
+// Preserves the desktop quit order while guaranteeing that a failed surface cannot strand a later
+// one. Backend shutdown is owned by the application runtime and remains bounded by its coordinator.
+export const shutdownApplicationSurfaces = async ({
+  disposeApplicationRuntime,
+  shutdownRemoteAccess,
+  closeWebController,
+  disposeWebRpc
+}: ApplicationSurfaceShutdown): Promise<void> => {
+  try {
+    await disposeApplicationRuntime()
+  } finally {
+    try {
+      await shutdownRemoteAccess()
+    } finally {
+      try {
+        await closeWebController()
+      } finally {
+        await disposeWebRpc()
+      }
+    }
+  }
+}
+
+type OwnedModule = Pick<ApplicationModule<unknown>, 'dispose' | 'rollback'>
 
 class RuntimeModuleBuilder implements ApplicationModuleBuilder {
   private readonly modules: OwnedModule[] = []
@@ -47,17 +80,17 @@ class RuntimeModuleBuilder implements ApplicationModuleBuilder {
     this.acceptingModules = false
   }
 
-  dispose(): Promise<void> {
+  dispose(mode: 'runtime' | 'rollback' = 'runtime'): Promise<void> {
     this.acceptingModules = false
-    this.disposePromise ??= this.disposeModules()
+    this.disposePromise ??= this.disposeModules(mode)
     return this.disposePromise
   }
 
-  private async disposeModules(): Promise<void> {
+  private async disposeModules(mode: 'runtime' | 'rollback'): Promise<void> {
     const failures: unknown[] = []
     for (const module of [...this.modules].reverse()) {
       try {
-        await module.dispose?.()
+        await (mode === 'rollback' ? (module.rollback ?? module.dispose)?.() : module.dispose?.())
       } catch (error) {
         failures.push(error)
       }
@@ -81,7 +114,7 @@ export const composeApplicationRuntime = async <Interfaces>(
     }
   } catch (error) {
     try {
-      await modules.dispose()
+      await modules.dispose('rollback')
     } catch (disposeError) {
       throw new AggregateError(
         [error, disposeError],

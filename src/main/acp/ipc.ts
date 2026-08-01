@@ -118,7 +118,7 @@ const createManagedSessionWorkspace = async (): Promise<string> => {
 
 // Creates the runtime coordinator used by all ACP IPC handlers and artifact claims. Each child runtime
 // captures one framework generation so sessions on different frameworks can remain live concurrently.
-const createRuntime = ({
+const createAcpRuntime = ({
   mcpEntryPath,
   repository,
   runRegistry,
@@ -301,11 +301,11 @@ const createRuntime = ({
   )
 }
 
-// Registers renderer-callable runtime commands on Electron IPC and returns the coordinator used by
-// settings, storage, reviewer, and shutdown integrations.
-const registerAcpIpcHandlers = (options: AcpIpcOptions): AcpRuntimeCoordinator => {
-  const runtime = createRuntime(options)
-
+// Installs the renderer-callable Electron adapter over an already-constructed ACP coordinator.
+const installAcpIpcHandlers = (
+  runtime: AcpRuntimeCoordinator,
+  taskNotifications?: TaskNotificationService
+): void => {
   ipcMainHandle('acp:get-state', () => runtime.getSnapshot())
   ipcMainHandle('acp:connect', (_event, request: AcpConnectRequest) => runtime.connect(request))
   ipcMainHandle('acp:disconnect', () => runtime.disconnect())
@@ -351,12 +351,12 @@ const registerAcpIpcHandlers = (options: AcpIpcOptions): AcpRuntimeCoordinator =
     // Remember the prompt's first line so a completion/failure notification can name the task.
     // If the runtime rejects before the turn starts (unknown session, another prompt in flight),
     // revert so a still-running turn keeps its own prompt's name.
-    const tracked = options.taskNotifications?.trackPrompt(request)
+    const tracked = taskNotifications?.trackPrompt(request)
 
     try {
       await runtime.sendPrompt(request)
     } catch (error) {
-      if (tracked) options.taskNotifications?.untrackPrompt(request.sessionId, tracked)
+      if (tracked) taskNotifications?.untrackPrompt(request.sessionId, tracked)
       throw error
     }
 
@@ -382,7 +382,12 @@ const registerAcpIpcHandlers = (options: AcpIpcOptions): AcpRuntimeCoordinator =
 
   // Kill the agent child on quit so it never outlives the app as an orphaned process.
   installAgentShutdownGuard(app, runtime)
+}
 
+// Compatibility wrapper for isolated callers; application composition uses the two-phase seam above.
+const registerAcpIpcHandlers = (options: AcpIpcOptions): AcpRuntimeCoordinator => {
+  const runtime = createAcpRuntime(options)
+  installAcpIpcHandlers(runtime, options.taskNotifications)
   return runtime
 }
 
@@ -420,4 +425,10 @@ const createDefaultNotebookRuntimeService = (
   })
 }
 
-export { createDefaultNotebookRuntimeService, registerAcpIpcHandlers }
+export {
+  createAcpRuntime,
+  createDefaultNotebookRuntimeService,
+  installAcpIpcHandlers,
+  registerAcpIpcHandlers
+}
+export type { AcpIpcOptions }

@@ -9,6 +9,7 @@ import {
   NOTEBOOK_MCP_SERVER_ARG,
   SKILL_IMPORT_MCP_SERVER_ARG
 } from './mcp-server-args'
+import { shutdownApplicationSurfaces } from './application-runtime'
 
 const APP_NAME = 'Open Science'
 const APP_USER_MODEL_ID = 'com.aipoch.open-science'
@@ -206,7 +207,6 @@ async function startElectronApp(mainEntryPath: string): Promise<void> {
       const webMode = parseWebModeOptions(process.argv)
       // Pass the concrete main entry path so ACP can launch the artifact MCP server from the same bundle.
       const {
-        shutdownCoordinator,
         taskNotifications,
         settingsService,
         sessionPersistenceCoordinator,
@@ -298,7 +298,6 @@ async function startElectronApp(mainEntryPath: string): Promise<void> {
         createAppTray,
         buildAuthenticatedWebUrl,
         routeSecondInstance,
-        shutdownCoordinator,
         taskNotifications,
         unreadTaskController,
         mainWindowGetterBox,
@@ -356,19 +355,15 @@ async function startElectronApp(mainEntryPath: string): Promise<void> {
               : {})
           })
         },
-        // Latching quit teardown via the shared coordinator (the same one the update gate uses). The
-        // coordinator awaits the agent + kernel process trees so a Windows taskkill /T completes before
-        // app.exit; runForQuit bounds it so a stuck backend can't hang quit.
-        shutdownBackends: async () => {
-          try {
-            await ctx.shutdownCoordinator.runForQuit()
-          } finally {
-            await ctx.remoteAccess.shutdown()
-            await ctx.webController.close()
-            ctx.webRpc.dispose()
-            await ctx.disposeApplicationRuntime()
-          }
-        },
+        // Application composition owns the one bounded ACP/Notebook shutdown. Remaining surfaces close
+        // afterward in their established order, even when an earlier disposer rejects.
+        shutdownBackends: () =>
+          shutdownApplicationSurfaces({
+            disposeApplicationRuntime: ctx.disposeApplicationRuntime,
+            shutdownRemoteAccess: () => ctx.remoteAccess.shutdown(),
+            closeWebController: () => ctx.webController.close(),
+            disposeWebRpc: () => ctx.webRpc.dispose()
+          }),
         isMigrationInProgress: ctx.isMigrationInProgress,
         quit: () => app.quit(),
         countWindows: () => BrowserWindow.getAllWindows().length,

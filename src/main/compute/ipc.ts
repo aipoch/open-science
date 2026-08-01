@@ -416,8 +416,17 @@ export const createJobUpdatedBroadcaster =
       })
   }
 
-// Registers the renderer-callable compute host commands.
-const registerComputeIpcHandlers = (
+type ComputeIpcModule = {
+  handlers: ComputeHandlers
+  computeService: ComputeService
+  jobRepository: ComputeJobRepository
+  hostRepository: ComputeHostRepository
+  enabledComputeHostsRegistry: EnabledComputeHostsRegistry
+}
+
+// Constructs the shared Compute module without installing an Electron transport. Keeping this seam
+// explicit lets application composition start the Job runtime before any renderer adapter exists.
+const createComputeIpcModule = (
   repository = createDefaultComputeHostRepository(),
   jobRepository = createDefaultComputeJobRepository(),
   // Resolves artifact-store paths for job input staging. Optional: when omitted, artifact inputs
@@ -429,12 +438,7 @@ const registerComputeIpcHandlers = (
   injectedService?: ComputeService,
   taskNotifications?: Pick<TaskNotificationService, 'handleComputeApproval'>,
   permissionGrantRegistry?: PermissionGrantRegistry
-): {
-  computeService: ComputeService
-  jobRepository: ComputeJobRepository
-  hostRepository: ComputeHostRepository
-  enabledComputeHostsRegistry: EnabledComputeHostsRegistry
-} => {
+): ComputeIpcModule => {
   const storageRoot = resolveStorageRoot()
   const dataRoot = resolveDataRoot()
 
@@ -459,6 +463,20 @@ const registerComputeIpcHandlers = (
     permissionGrantRegistry
   )
 
+  return {
+    handlers,
+    computeService: handlers.computeService,
+    jobRepository,
+    hostRepository: repository,
+    enabledComputeHostsRegistry
+  }
+}
+
+// Installs only the renderer-callable Electron adapter over an already-constructed Compute module.
+const installComputeIpcHandlers = ({
+  handlers,
+  enabledComputeHostsRegistry
+}: Pick<ComputeIpcModule, 'handlers' | 'enabledComputeHostsRegistry'>): void => {
   ipcMainHandle('compute:list', () => handlers.list())
   ipcMainHandle('compute:get', (_event, providerId: string) => handlers.get(providerId))
   ipcMainHandle('compute:create', (_event, request: CreateComputeHostRequest) =>
@@ -556,20 +574,41 @@ const registerComputeIpcHandlers = (
       enabledComputeHostsRegistry.set(sessionId, providerIds)
     }
   )
+}
 
-  return {
-    computeService: handlers.computeService,
+// Compatibility wrapper for isolated callers; application composition uses the two-phase seam above.
+const registerComputeIpcHandlers = (
+  repository = createDefaultComputeHostRepository(),
+  jobRepository = createDefaultComputeJobRepository(),
+  artifactResolver?: ArtifactResolver,
+  injectedService?: ComputeService,
+  taskNotifications?: Pick<TaskNotificationService, 'handleComputeApproval'>,
+  permissionGrantRegistry?: PermissionGrantRegistry
+): Omit<ComputeIpcModule, 'handlers'> => {
+  const module = createComputeIpcModule(
+    repository,
     jobRepository,
-    hostRepository: repository,
-    enabledComputeHostsRegistry
+    artifactResolver,
+    injectedService,
+    taskNotifications,
+    permissionGrantRegistry
+  )
+  installComputeIpcHandlers(module)
+  return {
+    computeService: module.computeService,
+    jobRepository: module.jobRepository,
+    hostRepository: module.hostRepository,
+    enabledComputeHostsRegistry: module.enabledComputeHostsRegistry
   }
 }
 
 export {
   createComputeHandlers,
+  createComputeIpcModule,
   createDefaultComputeHostRepository,
   createDefaultComputeJobRepository,
+  installComputeIpcHandlers,
   registerComputeIpcHandlers,
   enabledComputeHostsRegistry
 }
-export type { ComputeHandlers }
+export type { ComputeHandlers, ComputeIpcModule }

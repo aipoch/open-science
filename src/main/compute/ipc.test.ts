@@ -14,7 +14,9 @@ import {
   COMPUTE_JOBS_LIST_CHANNEL,
   broadcastJobUpdated,
   createComputeHandlers,
+  createComputeIpcModule,
   createJobUpdatedBroadcaster,
+  installComputeIpcHandlers,
   registerComputeIpcHandlers,
   toJobSummary
 } from './ipc'
@@ -1181,6 +1183,17 @@ describe('registerComputeIpcHandlers', () => {
     for (const channel of expected) {
       expect(handlers.has(channel)).toBe(true)
     }
+  })
+
+  it('keeps Compute construction separate from Electron adapter installation', () => {
+    const module = createComputeIpcModule(mockRepository({}), mockJobRepo({}))
+
+    expect(handlers.size).toBe(0)
+
+    installComputeIpcHandlers(module)
+
+    expect(handlers.has('compute:list')).toBe(true)
+    expect(module.computeService).toBeDefined()
   })
 
   it('round-trips the enabled-hosts registry through get/set IPC channels', async () => {

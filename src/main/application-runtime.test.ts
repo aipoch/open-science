@@ -1,6 +1,6 @@
 import { describe, expect, it, vi } from 'vitest'
 
-import { composeApplicationRuntime } from './application-runtime'
+import { composeApplicationRuntime, shutdownApplicationSurfaces } from './application-runtime'
 
 describe('application runtime composition', () => {
   it('constructs and starts each module once through declared dependencies', async () => {
@@ -98,6 +98,21 @@ describe('application runtime composition', () => {
     expect(dispose).toHaveBeenCalledOnce()
   })
 
+  it('uses rollback ownership only for failed composition', async () => {
+    const rollback = vi.fn()
+    const dispose = vi.fn()
+
+    await expect(
+      composeApplicationRuntime(async (modules) => {
+        await modules.add({}, () => ({ capability: {}, rollback, dispose }))
+        throw new Error('construction failed')
+      })
+    ).rejects.toThrow('construction failed')
+
+    expect(rollback).toHaveBeenCalledOnce()
+    expect(dispose).not.toHaveBeenCalled()
+  })
+
   it('attempts every disposer in reverse order when cleanup reports failures', async () => {
     const events: string[] = []
     const firstFailure = new Error('first disposal failed')
@@ -127,5 +142,48 @@ describe('application runtime composition', () => {
     })
     await expect(runtime.dispose()).rejects.toBe(disposalError)
     expect(events).toEqual(['dispose:second', 'dispose:first'])
+  })
+})
+
+describe('application surface shutdown', () => {
+  it('keeps one ordered quit path from the composed backend through web surfaces', async () => {
+    const order: string[] = []
+
+    await shutdownApplicationSurfaces({
+      disposeApplicationRuntime: () => {
+        order.push('application-runtime')
+      },
+      shutdownRemoteAccess: () => {
+        order.push('remote-access')
+      },
+      closeWebController: () => {
+        order.push('web-controller')
+      },
+      disposeWebRpc: () => {
+        order.push('web-rpc')
+      }
+    })
+
+    expect(order).toEqual(['application-runtime', 'remote-access', 'web-controller', 'web-rpc'])
+  })
+
+  it('continues closing surfaces when application runtime disposal rejects', async () => {
+    const failure = new Error('backend shutdown failed')
+    const shutdownRemoteAccess = vi.fn()
+    const closeWebController = vi.fn()
+    const disposeWebRpc = vi.fn()
+
+    await expect(
+      shutdownApplicationSurfaces({
+        disposeApplicationRuntime: () => Promise.reject(failure),
+        shutdownRemoteAccess,
+        closeWebController,
+        disposeWebRpc
+      })
+    ).rejects.toBe(failure)
+
+    expect(shutdownRemoteAccess).toHaveBeenCalledOnce()
+    expect(closeWebController).toHaveBeenCalledOnce()
+    expect(disposeWebRpc).toHaveBeenCalledOnce()
   })
 })

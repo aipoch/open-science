@@ -6,12 +6,16 @@ import { app, BrowserWindow, net, Notification, protocol, webContents } from 'el
 import { ipcMainHandle } from './ipc-handler-registry'
 import { composeApplicationRuntime, type ApplicationModuleBuilder } from './application-runtime'
 
-import { createDefaultNotebookRuntimeService, registerAcpIpcHandlers } from './acp/ipc'
+import {
+  createAcpRuntime,
+  createDefaultNotebookRuntimeService,
+  installAcpIpcHandlers
+} from './acp/ipc'
 import { createDefaultArtifactRepository, registerArtifactIpcHandlers } from './artifacts/ipc'
 import { ArtifactProvenanceRepository } from './artifacts/provenance-repository'
 import { ProvenanceMessageSnapshotRepository } from './artifacts/provenance-message-snapshot'
 import { ArtifactRunRegistry } from './artifacts/run-registry'
-import { registerComputeIpcHandlers } from './compute/ipc'
+import { createComputeIpcModule, installComputeIpcHandlers } from './compute/ipc'
 import { attachEnabledComputeHosts } from './compute/enabled-hosts-registry'
 import { createComputeJobRuntime } from './compute/job-runtime'
 import { waitForInitialConnectorRefresh, wireConnectorReload } from './connector-reload'
@@ -139,13 +143,9 @@ type IpcRegistrationOptions = {
 }
 
 type ApplicationRuntimeInterfaces = {
-  shutdownCoordinator: BackendShutdownCoordinator
   taskNotifications: Pick<
     TaskNotificationService,
-    | 'setActivationHandler'
-    | 'setAttentionHandlers'
-    | 'setPendingOpenSession'
-    | 'setUnreadHandler'
+    'setActivationHandler' | 'setAttentionHandlers' | 'setPendingOpenSession' | 'setUnreadHandler'
   >
   settingsService: Pick<
     SettingsService,
@@ -153,6 +153,15 @@ type ApplicationRuntimeInterfaces = {
   >
   sessionPersistenceCoordinator: SessionPersistenceCoordinator
   detectActiveSessions: () => ReturnType<typeof detectActiveSessions>
+}
+
+type NamedElectronAdapter = {
+  readonly name: string
+  install(): void | Promise<void>
+}
+
+type ApplicationModuleInterfaces = ApplicationRuntimeInterfaces & {
+  readonly electronAdapters: readonly NamedElectronAdapter[]
 }
 
 type IpcRegistration = ApplicationRuntimeInterfaces & {
@@ -202,10 +211,9 @@ const refreshConnectorSkillDocs = async (
   }
 }
 
-// Registers every main-process IPC surface used by the renderer. Async because the notebook-env gate
-// needs the configured package mirror, read from disk; callers await this before creating the main
-// window so every IPC channel (incl. notebook-env) is registered before the renderer can call it.
-const installElectronAdapters = async (
+// Constructs application-owned modules and their narrow Electron adapter interfaces. The factory does
+// not register a channel or protocol; transport installation happens only after construction succeeds.
+const createApplicationModules = async (
   {
     mainEntryPath,
     headless = false,
@@ -213,7 +221,11 @@ const installElectronAdapters = async (
     listAppIconPreviews
   }: IpcRegistrationOptions,
   modules: ApplicationModuleBuilder
-): Promise<ApplicationRuntimeInterfaces> => {
+): Promise<ApplicationModuleInterfaces> => {
+  const electronAdapters: NamedElectronAdapter[] = []
+  const declareElectronAdapter = (name: string, install: NamedElectronAdapter['install']): void => {
+    electronAdapters.push({ name, install })
+  }
   // One settings service backs both the settings IPC and the ACP spawn config (single source of truth).
   const settingsService = await modules.add(undefined, () => ({
     capability: createDefaultSettingsService()
@@ -325,7 +337,7 @@ const installElectronAdapters = async (
   // Permission scope validation starts before the ACP coordinator is constructed. Keep the late-bound
   // reference here so a first-turn Session grant can recognize its live owner before the renderer's
   // asynchronous session persistence finishes.
-  const runtimeRef: { current: ReturnType<typeof registerAcpIpcHandlers> | undefined } = {
+  const runtimeRef: { current: ReturnType<typeof createAcpRuntime> | undefined } = {
     current: undefined
   }
 
@@ -390,6 +402,7 @@ const installElectronAdapters = async (
       return sessionPersistenceCoordinator.saveManifest(request)
     }
   }
+  let backendTeardownOwnedByCoordinator = false
   const notebookService = await modules.add(
     {
       getPackageMirror: () => settingsService.getPackageMirror(),
@@ -402,7 +415,10 @@ const installElectronAdapters = async (
       const notebook = createDefaultNotebookRuntimeService(settings)
       return {
         capability: notebook,
-        dispose: () => notebook.shutdownAll().then(() => undefined)
+        rollback: () =>
+          backendTeardownOwnedByCoordinator
+            ? undefined
+            : notebook.shutdownAll().then(() => undefined)
       }
     }
   )
@@ -445,14 +461,16 @@ const installElectronAdapters = async (
   // The renderer peeks once sessions are hydrated, then conditionally consumes the same target.
   // This lets partial recovery open an already-loaded conversation while retaining an omitted one
   // for retry, without an older IPC round trip clearing a newer click target.
-  ipcMainHandle('notifications:peek-pending-open-session', () =>
-    taskNotifications.peekPendingOpenSession()
-  )
-  ipcMainHandle('notifications:take-pending-open-session', (_event, expectedToken: unknown) =>
-    typeof expectedToken === 'number' && Number.isSafeInteger(expectedToken) && expectedToken > 0
-      ? taskNotifications.takePendingOpenSession(expectedToken)
-      : null
-  )
+  declareElectronAdapter('task-notifications', () => {
+    ipcMainHandle('notifications:peek-pending-open-session', () =>
+      taskNotifications.peekPendingOpenSession()
+    )
+    ipcMainHandle('notifications:take-pending-open-session', (_event, expectedToken: unknown) =>
+      typeof expectedToken === 'number' && Number.isSafeInteger(expectedToken) && expectedToken > 0
+        ? taskNotifications.takePendingOpenSession(expectedToken)
+        : null
+    )
+  })
   // One MCP client manager backs both dispatch (ConnectorService.call → custom server) and skill-doc
   // generation (listTools) for user-added custom MCP servers (stdio + remote). It lazily connects per
   // server, so constructing it here does not spawn anything until a custom server is actually used.
@@ -535,12 +553,7 @@ const installElectronAdapters = async (
   const computeArtifactResolver = {
     resolveArtifactPath: (path: string) => artifactRepository.resolveManagedFilePath({ path })
   }
-  const {
-    computeService,
-    jobRepository,
-    hostRepository,
-    enabledComputeHostsRegistry: hostsRegistry
-  } = registerComputeIpcHandlers(
+  const computeIpcModule = createComputeIpcModule(
     undefined,
     undefined,
     computeArtifactResolver,
@@ -548,6 +561,13 @@ const installElectronAdapters = async (
     taskNotifications,
     permissionGrantRegistry
   )
+  const {
+    computeService,
+    jobRepository,
+    hostRepository,
+    enabledComputeHostsRegistry: hostsRegistry
+  } = computeIpcModule
+  declareElectronAdapter('compute', () => installComputeIpcHandlers(computeIpcModule))
   const dataRoot = resolveDataRoot()
   // Start the JobPoller wired to the shared broadcaster so every state/tail change is pushed to all
   // renderer windows via 'compute:job-updated' (Phase 3d, design.md §9 + §15.3). The dispatcher
@@ -595,17 +615,19 @@ const installElectronAdapters = async (
     notebookRpcServer.issueControlConnection(sessionId, projectId)
   )
   // The renderer's approval card responds here; the broker resolves the held connector call.
-  ipcMainHandle('connectors:approval-respond', (_event, request: RespondApprovalRequest) => {
-    approvalBroker.respond(request.id, request.decision)
-  })
-  ipcMainHandle(
-    'skills:conversation-import-respond',
-    (_event, response: ConversationSkillImportApprovalResponse) => {
-      skillImportApprovalBroker.respond(response)
-    }
-  )
-  ipcMainHandle('skills:conversation-import-replay-pending', () => {
-    skillImportApprovalBroker.replayPending()
+  declareElectronAdapter('connector-approvals', () => {
+    ipcMainHandle('connectors:approval-respond', (_event, request: RespondApprovalRequest) => {
+      approvalBroker.respond(request.id, request.decision)
+    })
+    ipcMainHandle(
+      'skills:conversation-import-respond',
+      (_event, response: ConversationSkillImportApprovalResponse) => {
+        skillImportApprovalBroker.respond(response)
+      }
+    )
+    ipcMainHandle('skills:conversation-import-replay-pending', () => {
+      skillImportApprovalBroker.replayPending()
+    })
   })
 
   const initialConnectorSkillsReady = waitForInitialConnectorRefresh(
@@ -647,12 +669,14 @@ const installElectronAdapters = async (
       )
     )
 
-  registerFileSaveHandlers({ resolveManagedFilePath, resolveSessionArtifactFilePath })
-  registerLogsIpcHandlers()
-  registerGithubIpcHandlers()
-  registerCliInstallIpcHandlers()
-  registerWindowIpcHandlers()
-  registerWindowFindIpcHandlers()
+  declareElectronAdapter('desktop-utilities', () => {
+    registerFileSaveHandlers({ resolveManagedFilePath, resolveSessionArtifactFilePath })
+    registerLogsIpcHandlers()
+    registerGithubIpcHandlers()
+    registerCliInstallIpcHandlers()
+    registerWindowIpcHandlers()
+    registerWindowFindIpcHandlers()
+  })
   // ACP identity resolution and the Specialist settings IPC must use the same service instance.
   // Creating it only for settings leaves create-session unable to resolve a selected UUID.
   const runtime = await modules.add(
@@ -684,13 +708,17 @@ const installElectronAdapters = async (
       profileService
     },
     (options) => {
-      const runtime = registerAcpIpcHandlers(options)
+      const runtime = createAcpRuntime(options)
       return {
         capability: runtime,
-        dispose: () => runtime.shutdownForQuit().then(() => undefined)
+        rollback: () =>
+          backendTeardownOwnedByCoordinator
+            ? undefined
+            : runtime.shutdownForQuit().then(() => undefined)
       }
     }
   )
+  declareElectronAdapter('acp', () => installAcpIpcHandlers(runtime, taskNotifications))
   runtimeRef.current = runtime
   permissionGrantRegistry.subscribe(() => runtime.notifyPermissionGrantsChanged())
   // Single shared teardown owner for both the before-quit handler (index.ts) and the pre-update-install
@@ -703,72 +731,68 @@ const installElectronAdapters = async (
   // Construct update handling only after its backend-shutdown gate exists. The in-place strategy owns
   // this immutable dependency from construction; the manifest fallback ignores it because it does not
   // quit the running app to install.
-  await modules.add(
-    { shutdownCoordinator, platform: process.platform },
-    ({ shutdownCoordinator: coordinator, platform }) => {
-      const service = registerUpdateIpcHandlers(
-        createUpdateStrategy(platform, {
-          installGate: () => coordinator.runForUpdateGate(UPDATE_SHUTDOWN_BUDGET_MS)
-        })
-      )
-      let stopScheduler: (() => void) | undefined
-      return {
-        capability: service,
-        start: () => {
-          stopScheduler = startUpdateScheduler(service)
-        },
-        dispose: () => stopScheduler?.()
-      }
-    }
-  )
+  const updateStrategy = createUpdateStrategy(process.platform, {
+    installGate: () => shutdownCoordinator.runForUpdateGate(UPDATE_SHUTDOWN_BUDGET_MS)
+  })
+  let stopUpdateScheduler: (() => void) | undefined
+  await modules.add(undefined, () => ({
+    capability: undefined,
+    dispose: () => stopUpdateScheduler?.()
+  }))
+  declareElectronAdapter('update', () => {
+    const updateService = registerUpdateIpcHandlers(updateStrategy)
+    stopUpdateScheduler = startUpdateScheduler(updateService)
+  })
   // Spawn-config changes rotate the coordinator's runtime for future sessions. Existing sessions retain
   // their owning runtime, so a framework/provider switch cannot interrupt an in-flight turn.
   let invalidatePermissionProjection = (): void => {
     broadcastToRenderers('permissions:changed', { revision: Date.now() })
   }
-  registerSettingsIpcHandlers({
-    service: settingsService,
-    onActiveProviderChanged: () => void runtime.requestProviderReconnect(),
-    onAgentFrameworkChanged: () => void runtime.requestAgentFrameworkSwitch(),
-    onReasoningEffortChanged: (effort) => runtime.applyReasoningEffortChange(effort),
-    onSkillsChanged: () => void runtime.requestSkillsReload(),
-    // Re-sync bundled + custom skill docs and refresh the in-memory snapshot the connector
-    // service reads, then request a skills reload. The reload respawns the agent on next idle so a
-    // non-Claude framework (Codex, opencode) — whose connector docs are materialized into its own
-    // home at spawn — picks up the change too, not just the Claude config dir.
-    onConnectorsChanged: () => {
-      // Connector policy shadows or reactivates grants without mutating them. Republish the shared
-      // projection immediately so both Settings surfaces describe the same effective decision.
-      invalidatePermissionProjection()
-      void wireConnectorReload(
-        () =>
-          refreshConnectorSkillDocs(
-            settingsService,
-            resolveStorageRoot(),
-            mcpClientManager,
-            (connectors) => {
-              connectorsSnapshot = connectors
-            }
-          ),
-        () => void runtime.requestSkillsReload()
-      )
-    },
-    onCustomServerRemoved: (serverId) =>
-      permissionGrantRegistry.prune({ kind: 'mcp_server', serverId }).then(() => undefined),
-    onCustomServerSecurityChanged: async (serverId) => {
-      const guard = connectorService.beginCustomServerSecurityChange(serverId)
-      try {
-        await permissionGrantRegistry.prune({ kind: 'mcp_server', serverId })
-        return guard
-      } catch (error) {
-        guard.rollback()
-        throw error
-      }
-    },
-    onAppIconVariantChanged,
-    listAppIconPreviews
-  })
-  registerNotebookIpcHandlers(notebookService)
+  declareElectronAdapter('settings', () =>
+    registerSettingsIpcHandlers({
+      service: settingsService,
+      onActiveProviderChanged: () => void runtime.requestProviderReconnect(),
+      onAgentFrameworkChanged: () => void runtime.requestAgentFrameworkSwitch(),
+      onReasoningEffortChanged: (effort) => runtime.applyReasoningEffortChange(effort),
+      onSkillsChanged: () => void runtime.requestSkillsReload(),
+      // Re-sync bundled + custom skill docs and refresh the in-memory snapshot the connector
+      // service reads, then request a skills reload. The reload respawns the agent on next idle so a
+      // non-Claude framework (Codex, opencode) — whose connector docs are materialized into its own
+      // home at spawn — picks up the change too, not just the Claude config dir.
+      onConnectorsChanged: () => {
+        // Connector policy shadows or reactivates grants without mutating them. Republish the shared
+        // projection immediately so both Settings surfaces describe the same effective decision.
+        invalidatePermissionProjection()
+        void wireConnectorReload(
+          () =>
+            refreshConnectorSkillDocs(
+              settingsService,
+              resolveStorageRoot(),
+              mcpClientManager,
+              (connectors) => {
+                connectorsSnapshot = connectors
+              }
+            ),
+          () => void runtime.requestSkillsReload()
+        )
+      },
+      onCustomServerRemoved: (serverId) =>
+        permissionGrantRegistry.prune({ kind: 'mcp_server', serverId }).then(() => undefined),
+      onCustomServerSecurityChanged: async (serverId) => {
+        const guard = connectorService.beginCustomServerSecurityChange(serverId)
+        try {
+          await permissionGrantRegistry.prune({ kind: 'mcp_server', serverId })
+          return guard
+        } catch (error) {
+          guard.rollback()
+          throw error
+        }
+      },
+      onAppIconVariantChanged,
+      listAppIconPreviews
+    })
+  )
+  declareElectronAdapter('notebook', () => registerNotebookIpcHandlers(notebookService))
   // Wire session deletion to the binding store so stale in-memory bindings do not accumulate.
   // The renderer calls sessions:delete-session (via sessionPersistenceBackend) and acp:delete-session
   // separately; both paths should clear the binding. Override the backend deleteSession callback here
@@ -781,74 +805,82 @@ const installElectronAdapters = async (
     sessionBindingService.clearSession(sessionId)
   }
   const specialistPersistLog = createLogger('specialist:persist')
-  registerSpecialistIpcHandlers(
-    profileService,
-    sessionBindingService,
-    // Persist only the specialist UUID to the durable session file — never a profile snapshot.
-    // Read the current session file, patch specialistId, and save so the binding survives restarts.
-    // Reading all sessions to locate the target is intentional: sessionId alone is not sufficient to
-    // open the file (it lives under sessions/<projectId>/<sessionId>.json), and this operation is
-    // infrequent enough that the scan cost is acceptable.
-    async (sessionId, specialistId) => {
-      const allSessions = await sessionRepository.loadAll()
-      const session = allSessions.sessions.find((s) => s.id === sessionId)
-      if (!session) {
-        // The session has not yet been persisted (created but not saved). The specialistId will be
-        // written when the renderer calls sessions:save-session for the first time.
-        specialistPersistLog.debug(
-          'session not yet durable; specialistId will be written on first save',
-          {
-            sessionId,
-            specialistId
-          }
-        )
-        return
-      }
-      await sessionPersistenceCoordinator.saveSessionSpecialistBinding(session, specialistId)
-    },
-    // Apply the switch to the live agent runtime. `runtime` is assigned above (registerAcpIpcHandlers),
-    // but the closure is invoked per-request so a late-bound reference is unnecessary.
-    (sessionId, specialistId) => runtime.switchSpecialist(sessionId, specialistId),
-    // A specialist capability edit (skills/connectors/enabled) must reach live sessions on the next
-    // turn: reconnect so the agent respawns (re-provisioning skills) and resumes with the updated
-    // specialist whitelist in the session _meta.
-    () => void runtime.requestSkillsReload()
+  declareElectronAdapter('specialist', () =>
+    registerSpecialistIpcHandlers(
+      profileService,
+      sessionBindingService,
+      // Persist only the specialist UUID to the durable session file — never a profile snapshot.
+      // Read the current session file, patch specialistId, and save so the binding survives restarts.
+      // Reading all sessions to locate the target is intentional: sessionId alone is not sufficient to
+      // open the file (it lives under sessions/<projectId>/<sessionId>.json), and this operation is
+      // infrequent enough that the scan cost is acceptable.
+      async (sessionId, specialistId) => {
+        const allSessions = await sessionRepository.loadAll()
+        const session = allSessions.sessions.find((s) => s.id === sessionId)
+        if (!session) {
+          // The session has not yet been persisted (created but not saved). The specialistId will be
+          // written when the renderer calls sessions:save-session for the first time.
+          specialistPersistLog.debug(
+            'session not yet durable; specialistId will be written on first save',
+            {
+              sessionId,
+              specialistId
+            }
+          )
+          return
+        }
+        await sessionPersistenceCoordinator.saveSessionSpecialistBinding(session, specialistId)
+      },
+      // Apply the switch to the live agent runtime. `runtime` is assigned above (registerAcpIpcHandlers),
+      // but the closure is invoked per-request so a late-bound reference is unnecessary.
+      (sessionId, specialistId) => runtime.switchSpecialist(sessionId, specialistId),
+      // A specialist capability edit (skills/connectors/enabled) must reach live sessions on the next
+      // turn: reconnect so the agent respawns (re-provisioning skills) and resumes with the updated
+      // specialist whitelist in the session _meta.
+      () => void runtime.requestSkillsReload()
+    )
   )
   // Runtime selection UI (Settings/Onboarding): survey managed+external per language, persist the
   // choice, and pick an interpreter file. The runtime root MUST match the executor/service's
   // (getRuntimeRoot(<dataRoot>)); read lazily so a data-root switch is reflected without re-register.
-  registerRuntimeIpcHandlers({
-    settingsService,
-    runtimeRoot: () => getRuntimeRoot(resolveDataRoot()),
-    // WS10: revoke a disabled runtime from any live session bound to it (mark binding unavailable).
-    onRuntimeDisabled: (language, envId, force) =>
-      notebookService.revokeRuntime(language, envId, { force }),
-    // WS11: live-session usage of a runtime, for the disable-impact warning.
-    describeRuntimeUsage: (language, envId) =>
-      notebookService.describeRuntimeUsage(language, envId),
-    prepareExternalPython: async (selection, root) => {
-      const configuredMirror = await settingsService.getPackageMirror()
-      const mirror = await effectiveMirrorAsync(configuredMirror, app.getLocale())
-      await prepareExternalPythonRuntime(selection, root, {
-        pypiIndex: mirror.pypiIndex,
-        caBundle: mirror.caBundle
-      })
-    }
-  })
-  registerManagedPreviewIpcHandlers(previewResources)
-  registerManagedPreviewProtocol(previewResources)
-  registerOfficePreviewRuntimeProtocol(
-    {
-      runtimeHtmlPath: join(__dirname, '../renderer/office-preview.html'),
-      devServerUrl: process.env['ELECTRON_RENDERER_URL'],
-      fetchRuntime: (targetUrl, request) =>
-        net.fetch(targetUrl, {
-          // Runtime assets are public application files. Forwarding custom-protocol headers or its
-          // abort signal makes Chromium treat the local fetch as a cross-site renderer request.
-          method: request.method
+  declareElectronAdapter('notebook-runtime', () =>
+    registerRuntimeIpcHandlers({
+      settingsService,
+      runtimeRoot: () => getRuntimeRoot(resolveDataRoot()),
+      // WS10: revoke a disabled runtime from any live session bound to it (mark binding unavailable).
+      onRuntimeDisabled: (language, envId, force) =>
+        notebookService.revokeRuntime(language, envId, { force }),
+      // WS11: live-session usage of a runtime, for the disable-impact warning.
+      describeRuntimeUsage: (language, envId) =>
+        notebookService.describeRuntimeUsage(language, envId),
+      prepareExternalPython: async (selection, root) => {
+        const configuredMirror = await settingsService.getPackageMirror()
+        const mirror = await effectiveMirrorAsync(configuredMirror, app.getLocale())
+        await prepareExternalPythonRuntime(selection, root, {
+          pypiIndex: mirror.pypiIndex,
+          caBundle: mirror.caBundle
         })
-    },
-    protocol
+      }
+    })
+  )
+  declareElectronAdapter('managed-preview', () => {
+    registerManagedPreviewIpcHandlers(previewResources)
+    registerManagedPreviewProtocol(previewResources)
+  })
+  declareElectronAdapter('office-preview-runtime', () =>
+    registerOfficePreviewRuntimeProtocol(
+      {
+        runtimeHtmlPath: join(__dirname, '../renderer/office-preview.html'),
+        devServerUrl: process.env['ELECTRON_RENDERER_URL'],
+        fetchRuntime: (targetUrl, request) =>
+          net.fetch(targetUrl, {
+            // Runtime assets are public application files. Forwarding custom-protocol headers or its
+            // abort signal makes Chromium treat the local fetch as a cross-site renderer request.
+            method: request.method
+          })
+      },
+      protocol
+    )
   )
   const officePreviewSupervisor = new OfficePreviewSupervisor({
     inspectResource: ({ source, path }) => previewResources.inspect({ source, path }),
@@ -866,7 +898,9 @@ const installElectronAdapters = async (
     publishState: (ownerId, state) =>
       webContents.fromId(ownerId)?.send(OFFICE_PREVIEW_STATE_CHANNEL, state)
   })
-  registerOfficePreviewIpcHandlers(officePreviewSupervisor)
+  declareElectronAdapter('office-preview', () =>
+    registerOfficePreviewIpcHandlers(officePreviewSupervisor)
+  )
 
   // Resolve the shared conda base under the app data root (relocatable, where the runtime install
   // lives) and start the env readiness gate. The conda channel comes from the effective package mirror
@@ -944,12 +978,14 @@ const installElectronAdapters = async (
 
   // Always register the handlers (serialized is undefined when the provisioner could not be built). The
   // recovery barrier is threaded in so the startup gate and UI provision/repair await recovery first.
-  registerNotebookEnvIpcHandlers(
-    serialized,
-    provisioningRoot,
-    waitForRecovery,
-    assertProvisionAllowed,
-    (language) => notebookService.completeRuntimeRepair(language)
+  declareElectronAdapter('notebook-environment', () =>
+    registerNotebookEnvIpcHandlers(
+      serialized,
+      provisioningRoot,
+      waitForRecovery,
+      assertProvisionAllowed,
+      (language) => notebookService.completeRuntimeRepair(language)
+    )
   )
   if (provisioner && serialized) {
     // Back the notebook service's manage_environments tool with the same provisioner that owns the env
@@ -963,98 +999,138 @@ const installElectronAdapters = async (
   }
 
   // Registered after the acp/notebook handlers exist: migration needs to interrupt both runtimes.
-  registerStorageIpcHandlers({
-    runtime,
-    notebook: notebookService,
-    getActivePromptSessions: () => runtime.getActivePromptSessions(),
-    settingsService
-  })
-  registerArtifactIpcHandlers(
-    artifactRepository,
-    artifactRunRegistry,
-    () => (runtimeRef.current ? runtimeRef.current.getActiveArtifactRunIds() : []),
-    artifactProvenanceRepository,
-    (projectId, sessionId, mutation) =>
-      sessionPersistenceCoordinator.runSessionMutation(projectId, sessionId, mutation)
-  )
-  registerUploadIpcHandlers(uploadRepository, {
-    withSessionMutation: (projectId, sessionId, mutation) =>
-      sessionPersistenceCoordinator.runSessionMutation(projectId, sessionId, mutation)
-  })
-  ipcMainHandle('notebook:read-input-preview', (_event, request) =>
-    notebookInputRegistry.readPreview(request)
-  )
-  registerSessionPersistenceIpcHandlers(sessionPersistenceBackend, reviewRepository)
-  registerConversationExportIpcHandler(
-    createConversationExportService({
-      loadSession: (projectId, sessionId) => sessionRepository.loadSession(projectId, sessionId),
-      isSessionActive: (projectId, sessionId) =>
-        runtime
-          .getActivePromptSessions()
-          .some(
-            (activeSession) =>
-              activeSession.projectName === projectId && activeSession.sessionId === sessionId
-          )
+  declareElectronAdapter('storage', () =>
+    registerStorageIpcHandlers({
+      runtime,
+      notebook: notebookService,
+      getActivePromptSessions: () => runtime.getActivePromptSessions(),
+      settingsService
     })
   )
-  const permissionGrantIpc = registerPermissionGrantIpcHandlers({
-    registry: permissionGrantRegistry,
-    projects: {
-      list: async () => {
-        await projectDeletionCoordinator.recoverPendingDeletions()
-        return projectRepository.list()
-      }
-    },
-    sessions: {
-      metadataSnapshot: () =>
-        loadSessionMetadataAfterProjectRecovery(
-          projectDeletionCoordinator,
-          sessionPersistenceCoordinator
-        )
-    },
-    connectors: {
-      get: async () => ({
-        ...(await settingsService.getConnectors()),
-        bundledConnectorIds: ALL_CONNECTOR_IDS
-      })
-    }
-  })
-  invalidatePermissionProjection = permissionGrantIpc.invalidateProjection
-  registerProjectFilesIpcHandlers(
-    projectFilesRepository,
-    sessionPersistenceCoordinator,
-    projectDeletionCoordinator
+  declareElectronAdapter('artifacts', () =>
+    registerArtifactIpcHandlers(
+      artifactRepository,
+      artifactRunRegistry,
+      () => (runtimeRef.current ? runtimeRef.current.getActiveArtifactRunIds() : []),
+      artifactProvenanceRepository,
+      (projectId, sessionId, mutation) =>
+        sessionPersistenceCoordinator.runSessionMutation(projectId, sessionId, mutation)
+    )
   )
-  registerProjectIpcHandlers(projectRepository, previewStateRepository, projectDeletionCoordinator)
-  registerLifecycleIpcHandlers()
+  declareElectronAdapter('uploads', () =>
+    registerUploadIpcHandlers(uploadRepository, {
+      withSessionMutation: (projectId, sessionId, mutation) =>
+        sessionPersistenceCoordinator.runSessionMutation(projectId, sessionId, mutation)
+    })
+  )
+  declareElectronAdapter('notebook-input-preview', () => {
+    ipcMainHandle('notebook:read-input-preview', (_event, request) =>
+      notebookInputRegistry.readPreview(request)
+    )
+  })
+  declareElectronAdapter('session-persistence', () =>
+    registerSessionPersistenceIpcHandlers(sessionPersistenceBackend, reviewRepository)
+  )
+  declareElectronAdapter('conversation-export', () =>
+    registerConversationExportIpcHandler(
+      createConversationExportService({
+        loadSession: (projectId, sessionId) => sessionRepository.loadSession(projectId, sessionId),
+        isSessionActive: (projectId, sessionId) =>
+          runtime
+            .getActivePromptSessions()
+            .some(
+              (activeSession) =>
+                activeSession.projectName === projectId && activeSession.sessionId === sessionId
+            )
+      })
+    )
+  )
+  declareElectronAdapter('permission-grants', () => {
+    const permissionGrantIpc = registerPermissionGrantIpcHandlers({
+      registry: permissionGrantRegistry,
+      projects: {
+        list: async () => {
+          await projectDeletionCoordinator.recoverPendingDeletions()
+          return projectRepository.list()
+        }
+      },
+      sessions: {
+        metadataSnapshot: () =>
+          loadSessionMetadataAfterProjectRecovery(
+            projectDeletionCoordinator,
+            sessionPersistenceCoordinator
+          )
+      },
+      connectors: {
+        get: async () => ({
+          ...(await settingsService.getConnectors()),
+          bundledConnectorIds: ALL_CONNECTOR_IDS
+        })
+      }
+    })
+    invalidatePermissionProjection = permissionGrantIpc.invalidateProjection
+  })
+  declareElectronAdapter('project-files', () =>
+    registerProjectFilesIpcHandlers(
+      projectFilesRepository,
+      sessionPersistenceCoordinator,
+      projectDeletionCoordinator
+    )
+  )
+  declareElectronAdapter('projects', () =>
+    registerProjectIpcHandlers(
+      projectRepository,
+      previewStateRepository,
+      projectDeletionCoordinator
+    )
+  )
+  declareElectronAdapter('lifecycle', () => registerLifecycleIpcHandlers())
   // Compute IPC handlers are registered earlier (before the notebook RPC server) so computeService
   // can be injected into the RPC server for the computeCall route. See above.
   // Wire the reviewer backend into the app lifecycle: installs ipcMainHandle('reviewer:run', ...)
   // and 'reviewer:get-for-session' so the renderer's fire-and-forget reviewer calls resolve to
   // real handlers instead of no-ops. Passing the already-constructed AcpRuntime so the reviewer
   // can spawn sessions under the same agent connection.
-  registerReviewerIpcHandlers({
-    acpRuntime: runtime,
-    artifactProvenanceRepository,
-    withSessionMutation: (projectId, sessionId, mutation) =>
-      sessionPersistenceCoordinator.runSessionMutation(projectId, sessionId, mutation)
+  declareElectronAdapter('reviewer', () => {
+    registerReviewerIpcHandlers({
+      acpRuntime: runtime,
+      artifactProvenanceRepository,
+      withSessionMutation: (projectId, sessionId, mutation) =>
+        sessionPersistenceCoordinator.runSessionMutation(projectId, sessionId, mutation)
+    })
   })
 
-  // Return the long-lived backend handles so the app lifecycle (before-quit) can shut them down
-  // cleanly on quit — the agent process tree and every notebook kernel.
+  // The shared coordinator is the sole normal owner of ACP + Notebook teardown. Register it last so
+  // reverse disposal executes the existing bounded backend shutdown before supporting modules stop.
+  await modules.add({ shutdownCoordinator }, ({ shutdownCoordinator: coordinator }) => ({
+    capability: undefined,
+    dispose: () => coordinator.runForQuit().then(() => undefined)
+  }))
+  backendTeardownOwnedByCoordinator = true
+
   return {
-    shutdownCoordinator,
     taskNotifications,
     settingsService,
     sessionPersistenceCoordinator,
-    detectActiveSessions: () => detectActiveSessions({ runtime, notebook: notebookService })
+    detectActiveSessions: () => detectActiveSessions({ runtime, notebook: notebookService }),
+    electronAdapters
   }
 }
 
+// Installs transports only after every named application module has been constructed successfully.
+// Future application-only modules (including an orchestrator) do not need an Electron adapter entry.
+const installElectronAdapters = async (
+  interfaces: Pick<ApplicationModuleInterfaces, 'electronAdapters'>
+): Promise<void> => {
+  for (const adapter of interfaces.electronAdapters) await adapter.install()
+}
+
 const registerIpcHandlers = async (options: IpcRegistrationOptions): Promise<IpcRegistration> => {
-  const applicationRuntime = await composeApplicationRuntime((modules) =>
-    installElectronAdapters(options, modules)
-  )
+  const applicationRuntime = await composeApplicationRuntime(async (modules) => {
+    const { electronAdapters, ...interfaces } = await createApplicationModules(options, modules)
+    await installElectronAdapters({ electronAdapters })
+    return interfaces
+  })
   return {
     ...applicationRuntime.interfaces,
     dispose: applicationRuntime.dispose

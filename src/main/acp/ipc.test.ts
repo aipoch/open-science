@@ -112,7 +112,8 @@ vi.mock('../storage-root', () => ({
   resolveDataRoot: () => '/tmp/data'
 }))
 
-const { registerAcpIpcHandlers } = await import('./ipc')
+const { createAcpRuntime, installAcpIpcHandlers, registerAcpIpcHandlers } = await import('./ipc')
+type AcpTestOptions = Parameters<typeof registerAcpIpcHandlers>[0]
 
 // Minimal options — createRuntime just forwards them into the mocked AcpRuntime constructor.
 const registerWithFakes = (overrides?: {
@@ -128,7 +129,7 @@ const registerWithFakes = (overrides?: {
   profileService?: { getById: (id: string) => Promise<unknown> }
   specialistSkillCatalog?: Array<{ id: string; frameworkName: string; displayName: string }>
   provisionedConnectorSkillNames?: string[]
-}): void => {
+}): AcpTestOptions => {
   const taskNotifications =
     overrides?.taskNotifications ??
     ({ trackPrompt: vi.fn(), untrackPrompt: vi.fn() } as unknown as {
@@ -163,6 +164,7 @@ const registerWithFakes = (overrides?: {
   }
 
   registerAcpIpcHandlers(options)
+  return options as AcpTestOptions
 }
 
 afterEach(() => {
@@ -182,6 +184,22 @@ afterEach(() => {
   sendPrompt.mockResolvedValue(undefined)
   errorLogSpy.mockClear()
   AcpRuntimeMock.mockClear()
+})
+
+describe('ACP module transport seam', () => {
+  it('constructs the coordinator before installing Electron handlers', () => {
+    const options = registerWithFakes()
+    handlers.clear()
+
+    const runtime = createAcpRuntime(options)
+
+    expect(handlers.size).toBe(0)
+
+    installAcpIpcHandlers(runtime, options.taskNotifications)
+
+    expect(handlers.has('acp:get-state')).toBe(true)
+    expect(handlers.has('acp:respond-permission')).toBe(true)
+  })
 })
 
 describe('registerAcpIpcHandlers — Specialist identity resolver', () => {
