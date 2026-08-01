@@ -444,6 +444,13 @@ class AcpPermissionContext {
     )
   }
 
+  isPermissionRequestCancelled(toolCallId: string, context: PermissionRestoreContext): boolean {
+    return (
+      context.framework === 'opencode' &&
+      this.isOpenCodeRequestCancelled(context.sessionId, toolCallId, context)
+    )
+  }
+
   cancelAllPending(): void {
     this.broker.cancelAllPending()
     this.humanOnlyRequestIds.clear()

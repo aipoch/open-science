@@ -4680,13 +4680,20 @@ class AcpRuntime {
         ? this.sessions.has(appSessionId)
         : this.currentPromptTurnBySession.get(appSessionId) !== promptTurn ||
           this.cancelledPromptTurnsBySession.get(appSessionId) === promptTurn)
-    const normalizedParams = await this.permissionContext.restoreToolCall(params, {
+    const restoreContext = {
       sessionId: appSessionId,
       framework,
       mcpServerNames,
       isCancelled: isPermissionContextCancelled
-    })
-    if (!normalizedParams || isPermissionContextCancelled()) {
+    }
+    const normalizedParams = await this.permissionContext.restoreToolCall(params, restoreContext)
+    if (
+      !normalizedParams ||
+      this.permissionContext.isPermissionRequestCancelled(
+        params.toolCall.toolCallId,
+        restoreContext
+      )
+    ) {
       return { outcome: { outcome: 'cancelled' } }
     }
     const toolName = extractProviderToolName(normalizedParams.toolCall)

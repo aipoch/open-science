@@ -5370,7 +5370,7 @@ describe('ACP runtime session management', () => {
     expect(opencodeMcpToolInputWaitersMap(runtime).has(session.sessionId)).toBe(false)
   })
 
-  it('cancels an OpenCode permission that arrives after its tool call ended', async () => {
+  it('cancels an OpenCode permission when its tool call ends as context restore completes', async () => {
     const process = new FakeAgentProcess()
     const permissionResponses: acp.RequestPermissionResponse[] = []
 
@@ -5396,14 +5396,6 @@ describe('ACP runtime session management', () => {
             kind: 'other',
             status: 'pending',
             rawInput: { language: 'python', code: 'print(1)' }
-          }
-        })
-        await ctx.client.notify(acp.methods.client.session.update, {
-          sessionId: ctx.params.sessionId,
-          update: {
-            sessionUpdate: 'tool_call_update',
-            toolCallId,
-            status: 'completed'
           }
         })
         permissionResponses.push(
@@ -5443,9 +5435,28 @@ describe('ACP runtime session management', () => {
         mcpEntryPath: '/app/out/main/index.js',
         getRpcConnection: async () => ({ endpoint: 'http://127.0.0.1:4567', token: 'nb' })
       },
-      callbacks: { onPermissionRequest }
+      callbacks: {
+        onPermissionRequest: (request) => {
+          onPermissionRequest(request)
+          void runtime.respondToPermission({ requestId: request.requestId, cancelled: true })
+        }
+      }
     })
     const session = await runtime.createSession({ cwd: '/workspace', permissionProfile: 'ask' })
+    const context = permissionContext(runtime)
+    const restoreToolCall = context.restoreToolCall.bind(context)
+    vi.spyOn(context, 'restoreToolCall').mockImplementation(async (params, restoreContext) => {
+      const restored = await restoreToolCall(params, restoreContext)
+      observePermissionToolContext(runtime, {
+        sessionId: session.sessionId,
+        update: {
+          sessionUpdate: 'tool_call_update',
+          toolCallId: params.toolCall.toolCallId,
+          status: 'completed'
+        }
+      })
+      return restored
+    })
 
     await runtime.sendPrompt({ sessionId: session.sessionId, text: 'run python' })
 
