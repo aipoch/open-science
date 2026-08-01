@@ -690,7 +690,7 @@ class TaskRunner {
   }
 }
 
-export { TaskRunner, TaskRunnerError }
+export { TaskRunner, TaskRunnerError, summarizeSession }
 export type {
   CreateTaskProjectRequest,
   TaskAgentPort,
