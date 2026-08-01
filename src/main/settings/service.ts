@@ -5,7 +5,7 @@ import { homedir } from 'node:os'
 import { dirname, join } from 'node:path'
 import { randomUUID } from 'node:crypto'
 import { createServer } from 'node:net'
-import { isDeepStrictEqual, promisify } from 'node:util'
+import { promisify } from 'node:util'
 
 import { z } from 'zod'
 
@@ -30,10 +30,7 @@ import type {
   InstallClaudeRequest,
   InstallCodexRequest,
   InstallOpencodeRequest,
-  ChatApiEndpoint,
   Preflight,
-  ProviderDraft,
-  ProviderView,
   RefreshProviderModelsRequest,
   RefreshProviderModelsResult,
   SetConnectorAutoAllowRequest,
@@ -66,21 +63,11 @@ import type {
   ValidateProviderResult
 } from '../../shared/settings'
 import {
-  CLAUDE_ISOLATED_PROVIDER_ID,
-  CLAUDE_SHARED_PROVIDER_ID,
   CODEX_ISOLATED_PROVIDER_ID,
-  claudeIsolatedProviderIdentity,
-  claudeSharedProviderIdentity,
-  codexSubscriptionProviderIdentity,
   DEFAULT_CONVERSATION_SKILL_IMPORT_ENABLED,
   DEFAULT_REASONING_EFFORT,
-  isClaudeSubscriptionProvider,
-  isClaudeSubscriptionProviderId,
   isCodexSubscriptionProvider,
-  isCodexSubscriptionProviderId,
   isProviderUsableByFramework,
-  providerEndpoints,
-  resolveCodexSubscriptionType,
   requiresChatCompletionsBridge
 } from '../../shared/settings'
 import type { PackageMirror } from '../../shared/mirror'
@@ -92,24 +79,8 @@ import {
 } from '../../shared/run-error-classification'
 import type { NotebookLanguage } from '../../shared/notebook'
 import type { RuntimeEnablement, RuntimeSelection } from '../../shared/notebook-runtime'
-import {
-  defaultVendorModel,
-  getOfficialVendorModelIds,
-  isModelBridgeSupported,
-  isOfficialVendorId,
-  isVendorModelMultimodal,
-  isVendorModelResponsesSupported,
-  resolveCustomModelContextWindow,
-  resolveModelContextWindow,
-  resolveVendorApiEndpoints,
-  resolveVendorBaseUrl,
-  resolveVendorModelsUrl,
-  resolveVendorOpenAiBaseUrl
-} from '../../shared/provider-registry'
-import {
-  resolveProviderEffectiveModel,
-  resolveProviderReasoningEffortProfile
-} from '../../shared/provider-reasoning-effort'
+import { isModelBridgeSupported } from '../../shared/provider-registry'
+import { resolveProviderReasoningEffortProfile } from '../../shared/provider-reasoning-effort'
 import {
   resolveReasoningEffortValue,
   type ModelReasoningEffort,
@@ -148,7 +119,6 @@ import { opencodeConfigDir } from '../agent-framework/opencode'
 import {
   codexStorageDir,
   codexSubscriptionStorageDir,
-  isOfficialOpenAiResponsesBase,
   normalizeResponsesBaseUrl
 } from '../agent-framework/codex'
 import { detectNpmAvailable, runInstallWithFallback, type InstallTarget } from './claude-install'
@@ -173,10 +143,9 @@ import {
   type InstallManagedClaudeOptions,
   type ManagedInstallOutcome
 } from './managed-claude'
-import { encryptKey, isEncryptionAvailable, maskKey, tryDecryptKey } from './crypto'
+import { isEncryptionAvailable } from './crypto'
 import { augmentedPathEnv } from './shell-path'
 import { computePreflight } from './preflight'
-import { listProviderModels } from './list-models'
 import {
   buildProviderEnv,
   getAppClaudeConfigDir,
@@ -194,12 +163,16 @@ import { SettingsPreferencesModule, toSettingsPreferencesSnapshot } from './pref
 import { NotebookRuntimeSettingsModule } from './notebook-runtime-settings'
 import { SkillCatalogModule } from './skill-catalog'
 import { ConnectorSettingsModule, type CustomServerSecurityChangeGuard } from './connector-settings'
+import {
+  CLAUDE_SHARED_DISCONNECTED_MESSAGE,
+  ProviderAccountsModule,
+  requiresNativeResponsesCompatibility
+} from './provider-accounts'
 import { CONNECTOR_CATALOG } from '../connectors/catalog'
 import { renderConnectorInstructions } from '../connectors/skill-doc'
 import { syncConnectorSkillDocs } from '../connectors/provision'
 import { SkillRegistry } from '../skills/registry'
 import { UserSkillRepository } from '../skills/user-skill-repository'
-import { netFetchStandard } from '../skills/net-fetch'
 import { requestSkillImportToolSchema } from '../skills/mcp-server'
 import {
   REQUEST_SKILL_IMPORT_TOOL_DESCRIPTION,
@@ -214,30 +187,12 @@ import {
   BEGIN_ACTIVITY_GROUP_TOOL_NAME
 } from '../../shared/activity-groups'
 import { REVIEWER_BRIDGE_NAMESPACED_TOOLS } from '../reviewer/bridge-tools'
-import type { StoredConnectors, StoredCodexInfo, StoredProvider, StoredSettings } from './types'
-import { classifyStatus, validateProvider } from './validate'
-import {
-  clearAppOwnedCodexAuthentication,
-  clearImportedCodexProviderRoute,
-  CodexAuthController,
-  ensureCodexAuthHome,
-  importCodexAuthentication,
-  openCodexAuthSession,
-  type CodexAuthControllerPort,
-  type CodexAuthStatus
-} from './codex-auth'
+import type { StoredConnectors, StoredCodexInfo, StoredSettings } from './types'
+import { ensureCodexAuthHome, type CodexAuthControllerPort } from './codex-auth'
 
 import { resolveSystemProxyEnvironment, type SystemProxyEnvironment } from './system-proxy'
-import {
-  ClaudeIsolatedAuthController,
-  type ClaudeIsolatedAuthControllerPort,
-  type ClaudeIsolatedAuthStatus
-} from './claude-isolated-auth'
-import {
-  ClaudeSharedAuthController,
-  type ClaudeSharedAuthControllerPort,
-  type ClaudeSharedAuthStatus
-} from './claude-shared-auth'
+import { type ClaudeIsolatedAuthControllerPort } from './claude-isolated-auth'
+import { type ClaudeSharedAuthControllerPort } from './claude-shared-auth'
 
 export type AgentBackendSelection = {
   frameworkId: AgentFrameworkId
@@ -286,34 +241,11 @@ const execFileAsync = promisify(execFile)
 
 // Hard ceiling for a Claude credential probe so a stuck process can never hang the wizard.
 const CLAUDE_PROBE_TIMEOUT_MS = 20_000
-// Anthropic documents `claude setup-token` as a one-year long-lived OAuth token. We surface
-// "expires <date>" on the Settings card using this estimate until the first Claude session returns
-// a real expiry. A one-year window is a coarse upper bound; a token that the underlying
-// subscription has already revoked surfaces as a validation failure on first use, so the worst case
-// is a card that says "expires in a year" for a credential that actually expires sooner.
-const SETUP_TOKEN_LIFETIME_MS = 365 * 24 * 60 * 60 * 1000
-const CLAUDE_SHARED_AUTH_STATUS_TTL_MS = 5_000
-const CLAUDE_SHARED_DISCONNECTED_MESSAGE =
-  'Claude is disconnected from Open Science. Sign in again to use your shared Claude profile.'
 const CODEX_INSTALL_TARGET: InstallTarget = {
   npmPackage: '@agentclientprotocol/codex-acp',
   // Codex exposes no supported shell installer; InstallCodexRequest cannot select this branch.
   scriptUnix: ''
 }
-
-// Native Responses vendors other than OpenAI run through a protocol-preserving proxy because Codex
-// emits namespace tools that those upstream APIs do not accept directly. Validation and runtime must
-// share this predicate so a passing test proves the same path the agent will use.
-const requiresNativeResponsesCompatibility = (
-  provider: ResolvedProvider,
-  framework: { id: AgentFrameworkId; supportedApiTypes: readonly ChatApiEndpoint[] }
-): boolean =>
-  framework.id === 'codex' &&
-  framework.supportedApiTypes.includes('responses') &&
-  providerEndpoints(provider).includes('responses') &&
-  !isCodexSubscriptionProvider(provider.type) &&
-  provider.vendorId !== 'openai' &&
-  !isOfficialOpenAiResponsesBase(provider.openaiBaseUrl ?? provider.baseUrl)
 
 // Codex exposes local MCP tools as namespaced Responses functions. Chat Completions has no namespace
 // field, so the bridge receives the app-owned notebook schemas and aliases them for the upstream.
@@ -533,13 +465,13 @@ class SettingsService {
   private readonly notebookRuntimeSettings: NotebookRuntimeSettingsModule
   private readonly skills: SkillCatalogModule
   private readonly connectors: ConnectorSettingsModule
+  private readonly providers: ProviderAccountsModule
   private readonly storageRoot: string
   private readonly detectDeps: ClaudeDetectDeps
   private readonly opencodeDetectDeps: OpencodeDetectDeps
   private readonly allocateOpenCodeUsagePort: () => Promise<number>
   private readonly codexDetectDeps: CodexDetectDeps
   private readonly userClaudeDir: string
-  private readonly userCodexDir: string
   private readonly executeClaudeProbe: ExecuteClaudeProbe
   private readonly installManagedClaudeImpl: (
     options: InstallManagedClaudeOptions
@@ -551,13 +483,6 @@ class SettingsService {
     options: InstallManagedCodexOptions
   ) => Promise<ManagedCodexInstallOutcome>
   private readonly resolveCodexProxyEnvironment: () => Promise<SystemProxyEnvironment | undefined>
-  private readonly codexAuth: CodexAuthControllerPort
-  private readonly claudeIsolatedAuth: ClaudeIsolatedAuthControllerPort
-  private readonly claudeSharedAuth: ClaudeSharedAuthControllerPort
-  private claudeSharedAuthStatusCache: { authenticated: boolean; checkedAt: number } | undefined
-  private claudeSharedAuthStatusGeneration = 0
-  private claudeSharedAuthStatusPromise:
-    { generation: number; promise: Promise<boolean> } | undefined
   // A bridge owns mutable per-runtime state (reasoning override, reviewer scopes, and reasoning
   // replay). Track each backend generation separately so an overlapping reconnect cannot mutate the
   // bridge still serving the retiring generation.
@@ -566,8 +491,7 @@ class SettingsService {
     string,
     NativeResponsesCompatibilityEntry
   >()
-  private providerSequence = 0
-  private readonly providerValidationGenerations = new Map<string, number>()
+  private installSequence = 0
 
   constructor(options: SettingsServiceOptions = {}) {
     this.storageRoot = options.storageRoot ?? resolveStorageRoot()
@@ -606,12 +530,12 @@ class SettingsService {
       managedCodexPath: managedNativePath
     }
     this.userClaudeDir = options.userClaudeDir ?? getUserClaudeConfigDir()
-    this.userCodexDir = options.userCodexDir ?? join(homedir(), '.codex')
+    const userCodexDir = options.userCodexDir ?? join(homedir(), '.codex')
     this.skills = new SkillCatalogModule({
       repository: this.repository,
       storageRoot: this.storageRoot,
       userClaudeDir: this.userClaudeDir,
-      userCodexDir: this.userCodexDir,
+      userCodexDir,
       userAgentsDir: options.userAgentsDir ?? join(homedir(), '.agents'),
       skillRegistry: options.skillRegistry ?? new SkillRegistry(),
       userSkills: options.userSkills ?? new UserSkillRepository(this.storageRoot)
@@ -622,88 +546,19 @@ class SettingsService {
     this.installManagedCodexImpl = options.installManagedCodexImpl ?? installManagedCodex
     this.resolveCodexProxyEnvironment =
       options.resolveCodexProxyEnvironment ?? resolveSystemProxyEnvironment
-    this.codexAuth =
-      options.codexAuth ??
-      new CodexAuthController({
-        openSession: async (mode) => {
-          const settings = await this.repository.getSettings()
-          return openCodexAuthSession({
-            adapterPath: await this.resolveCodexExecutable(
-              settings.codex?.resolvedPath,
-              settings.codex?.nativePath
-            ),
-            nativePath: settings.codex?.nativePath,
-            mode,
-            storageRoot: this.storageRoot,
-            proxyEnv: await this.resolveCodexProxyEnvironment()
-          })
-        }
-      })
-    // The claude-isolated token is stored on the (single) builtin-claude-isolated provider record,
-    // so the controller reads/writes that record directly. The renderer creates the record before
-    // sign-in; conditional writes keep a late browser result from recreating it after deletion.
-    this.claudeIsolatedAuth =
-      options.claudeIsolatedAuth ??
-      new ClaudeIsolatedAuthController({
-        store: {
-          loadToken: () => this.loadClaudeIsolatedToken(),
-          saveToken: (token) => this.saveClaudeIsolatedToken(token),
-          clearToken: () => this.clearClaudeIsolatedToken(),
-          isEncryptionAvailable: () => isEncryptionAvailable()
-        },
-        // Resolve the path lazily so a just-detected app-managed binary is used without requiring a
-        // service restart. Falls back to 'claude' on PATH if detection hasn't run yet.
-        claudePath: async () => {
-          const s = await this.repository.getSettings()
-          return s.claude?.resolvedPath ?? 'claude'
-        },
-        configDir: getAppClaudeConfigDir(this.storageRoot)
-      })
-    this.claudeSharedAuth =
-      options.claudeSharedAuth ??
-      new ClaudeSharedAuthController({
-        // Same lazy resolution: use the detected absolute path so app-managed binaries not on PATH work.
-        claudePath: async () => {
-          const s = await this.repository.getSettings()
-          return s.claude?.resolvedPath ?? 'claude'
-        },
-        configDir: this.userClaudeDir
-      })
-  }
-
-  // Reads (and decrypts) the long-lived OAuth token stored on the single builtin-claude-isolated
-  // provider record. Reading before the renderer has created that record returns undefined, which
-  // the controller renders as "not signed in".
-  private async loadClaudeIsolatedToken(): Promise<string | undefined> {
-    const settings = await this.repository.getSettings()
-    const provider = settings.providers.find(
-      (candidate) => candidate.id === CLAUDE_ISOLATED_PROVIDER_ID
-    )
-
-    if (!provider?.keyRef) return undefined
-
-    return tryDecryptKey(provider.keyRef)
-  }
-
-  // Persists the encrypted OAuth token only while the builtin-claude-isolated provider still exists.
-  // The renderer creates the record before either sign-in flow starts; refusing to upsert here keeps
-  // a late browser completion from recreating a provider that the user deleted in the meantime.
-  private async saveClaudeIsolatedToken(token: string): Promise<void> {
-    const keyRef = encryptKey(token)
-    const applied = await this.repository.updateClaudeIsolatedCredentialsIfExists({
-      keyRef,
-      keyMask: maskKey(token)
-    })
-
-    if (!applied) throw new Error('The Claude provider was removed before sign-in completed.')
-  }
-
-  // Drops the stored token when the record still exists. A concurrent provider deletion wins without
-  // allowing this cleanup path to recreate an empty subscription record.
-  private async clearClaudeIsolatedToken(): Promise<void> {
-    await this.repository.updateClaudeIsolatedCredentialsIfExists({
-      keyRef: undefined,
-      keyMask: undefined
+    this.providers = new ProviderAccountsModule({
+      repository: this.repository,
+      storageRoot: this.storageRoot,
+      userClaudeDir: this.userClaudeDir,
+      userCodexDir,
+      resolveCodexExecutable: (adapterPath, nativePath) =>
+        this.resolveCodexExecutable(adapterPath, nativePath),
+      resolveCodexProxyEnvironment: this.resolveCodexProxyEnvironment,
+      runClaudeSubscriptionProbe: (provider, settings) =>
+        this.runClaudeSubscriptionProbe(provider, settings),
+      codexAuth: options.codexAuth,
+      claudeIsolatedAuth: options.claudeIsolatedAuth,
+      claudeSharedAuth: options.claudeSharedAuth
     })
   }
 
@@ -739,7 +594,7 @@ class SettingsService {
       claudeSubscriptionProviderId: settings.claudeSubscriptionProviderId,
       activeModel: settings.activeModel,
       providers: settings.providers.map((provider) =>
-        this.toProviderView(
+        this.providers.toProviderView(
           provider,
           provider.id === settings.activeProviderId ? settings.activeModel : undefined
         )
@@ -835,15 +690,7 @@ class SettingsService {
 
   private async migrateLegacyKeyRefs(settings: StoredSettings): Promise<StoredSettings> {
     if (!isEncryptionAvailable()) return settings
-    let changed = false
-
-    for (const provider of settings.providers) {
-      if (!provider.keyRef?.startsWith('plain:')) continue
-      const key = tryDecryptKey(provider.keyRef)
-      if (!key) continue
-      await this.repository.upsertProvider({ ...provider, keyRef: encryptKey(key) })
-      changed = true
-    }
+    let changed = await this.providers.migrateLegacyKeyRefs(settings.providers)
 
     changed = (await this.connectors.migrateLegacyNcbiKeyRef(settings.connectors)) || changed
 
@@ -1143,7 +990,7 @@ class SettingsService {
     // Resolve compatibility here where the vendor registry is available (official endpoints + the
     // static bridge-support marks) and pass the boolean into the pure preflight computation.
     const activeEndpoints = activeProvider
-      ? this.resolveProviderApiEndpoints(activeProvider, activeProvider.model)
+      ? this.providers.resolveProviderApiEndpoints(activeProvider, activeProvider.model)
       : undefined
     const activeProviderCompatible = activeProvider
       ? isProviderUsableByFramework(
@@ -1153,12 +1000,12 @@ class SettingsService {
         (framework.id !== 'codex' ||
           isModelBridgeSupported(
             activeProvider,
-            this.resolveActiveModel(activeProvider, settings.activeModel)
+            this.providers.resolveActiveModel(activeProvider, settings.activeModel)
           ))
       : false
     const activeProviderKeyUsable =
       activeProvider && activeProvider.lastValidatedAt !== undefined
-        ? await this.isProviderKeyUsable(activeProvider)
+        ? await this.providers.isProviderKeyUsable(activeProvider)
         : false
 
     return computePreflight({
@@ -1451,8 +1298,8 @@ class SettingsService {
     request: InstallClaudeRequest,
     onEvent: (event: ClaudeInstallEvent) => void
   ): Promise<ClaudeInstallResult> {
-    this.providerSequence += 1
-    const installId = `install-${Date.now()}-${this.providerSequence}`
+    this.installSequence += 1
+    const installId = `install-${Date.now()}-${this.installSequence}`
 
     if (request.source === 'managed') {
       const registries =
@@ -1501,8 +1348,8 @@ class SettingsService {
     request: InstallOpencodeRequest,
     onEvent: (event: ClaudeInstallEvent) => void
   ): Promise<ClaudeInstallResult> {
-    this.providerSequence += 1
-    const installId = `install-opencode-${Date.now()}-${this.providerSequence}`
+    this.installSequence += 1
+    const installId = `install-opencode-${Date.now()}-${this.installSequence}`
 
     if (request.source === 'managed') {
       const outcome = await this.installManagedOpencodeImpl({
@@ -1536,8 +1383,8 @@ class SettingsService {
     request: InstallCodexRequest,
     onEvent: (event: ClaudeInstallEvent) => void
   ): Promise<ClaudeInstallResult> {
-    this.providerSequence += 1
-    const installId = `install-codex-${Date.now()}-${this.providerSequence}`
+    this.installSequence += 1
+    const installId = `install-codex-${Date.now()}-${this.installSequence}`
 
     if (request.source === 'managed') {
       const outcome = await this.installManagedCodexImpl({
@@ -1702,878 +1549,79 @@ class SettingsService {
     await this.preferences.dismissLegacyDataMovePrompt()
   }
 
-  // Encrypts any new key, recomputes its mask, and inserts/updates the provider record.
+  // Provider account state lives behind one owner; this façade keeps every existing transport and
+  // renderer contract stable while whole-settings snapshot composition remains here.
   async upsertProvider(request: UpsertProviderRequest): Promise<SettingsSnapshot> {
-    const settings = await this.repository.getSettings()
-    // Both Codex and Claude subscription providers use a fixed builtin id so the add path, the
-    // token-save path, and every id-keyed lookup in this service converge on a single record.
-    // Without this, a random id from `createProviderId()` would shadow the token-holding record
-    // and the active provider would spawn the agent unauthenticated.
-    const subscriptionIdentity = isCodexSubscriptionProvider(request.type)
-      ? codexSubscriptionProviderIdentity()
-      : request.type === 'claude-isolated'
-        ? claudeIsolatedProviderIdentity()
-        : request.type === 'claude-shared'
-          ? claudeSharedProviderIdentity()
-          : undefined
-    const requestedId = subscriptionIdentity?.id ?? request.id
-    const existing = requestedId
-      ? settings.providers.find((provider) => provider.id === requestedId)
-      : undefined
-
-    // An imported subscription becomes app-owned after the initial copy. Ordinary edits must not
-    // depend on the external CLI profile still existing or re-read a route that changed afterward.
-    // Only a new import, an explicit isolated -> imported switch, or the card's explicit re-import
-    // action crosses that profile boundary.
-    const reimportCodexAuthentication =
-      request.type === 'codex-shared' && request.reimportCodexAuthentication === true
-    if (
-      request.type === 'codex-shared' &&
-      (existing?.codexAuthMode !== 'imported' || reimportCodexAuthentication)
-    ) {
-      // The isolated adapter owns auth.json until its session has closed. Waiting here prevents a
-      // late browser-login write from replacing the credentials copied immediately below.
-      await this.codexAuth.cancelLogin()
-      await importCodexAuthentication(
-        this.userCodexDir,
-        codexSubscriptionStorageDir(this.storageRoot)
-      )
-      // Re-import can replace auth.json and the loopback route without changing any persisted
-      // provider field. Advance the generation so a status check started against the previous copy
-      // cannot write its result onto the refreshed credentials.
-      if (reimportCodexAuthentication && requestedId) {
-        this.advanceProviderValidationGeneration(requestedId)
-      }
-    } else if (request.type === 'codex-isolated' && existing?.codexAuthMode !== 'isolated') {
-      if (existing) await this.codexAuth.cancelLogin()
-      const codexHome = codexSubscriptionStorageDir(this.storageRoot)
-      await clearImportedCodexProviderRoute(codexHome)
-      await clearAppOwnedCodexAuthentication(codexHome)
-    }
-    if (isCodexSubscriptionProvider(request.type)) {
-      await ensureCodexAuthHome(
-        request.type === 'codex-shared' ? 'shared' : 'isolated',
-        this.storageRoot
-      )
-    }
-
-    const provider: StoredProvider = {
-      id: subscriptionIdentity?.id ?? existing?.id ?? this.createProviderId(),
-      // A legacy shared selection performs a one-time credential import above, then converges on the
-      // same app-owned runtime form as an in-app sign-in.
-      type: request.type === 'codex-shared' ? 'codex-isolated' : request.type,
-      name:
-        subscriptionIdentity?.name ??
-        (request.name?.trim() || existing?.name || 'Untitled provider')
-    }
-
-    // Both custom and official gateways authenticate with a bearer key; carry it (or keep the stored
-    // ciphertext on edit) via one shared helper.
-    const carryKey = (): boolean => {
-      const hasKey = Boolean(request.key) || Boolean(existing?.keyRef)
-
-      if (request.key) {
-        provider.keyRef = encryptKey(request.key)
-        provider.keyMask = maskKey(request.key)
-      } else if (existing?.keyRef) {
-        provider.keyRef = existing.keyRef
-        provider.keyMask = existing.keyMask
-      }
-
-      return hasKey
-    }
-
-    // Tracks whether credentials/endpoint changed, which invalidates a prior validation.
-    let credentialsChanged = false
-
-    if (isCodexSubscriptionProvider(request.type)) {
-      provider.apiEndpoints = ['responses']
-      provider.codexAuthMode = request.type === 'codex-shared' ? 'imported' : 'isolated'
-      credentialsChanged =
-        existing !== undefined &&
-        (existing.codexAuthMode !== provider.codexAuthMode || reimportCodexAuthentication)
-    } else if (request.type === 'claude-isolated') {
-      // claude-isolated has no fields of its own: the type tells the renderer/env-builder what to do
-      // with the encrypted token (stored separately on login). A model override is allowed. The
-      // encrypted token AND the credential's estimated expiry
-      // must carry over an edit so a model change does not silently drop the stored credential or
-      // hide the Expires <date> on the Settings card; sign-in itself is handled by
-      // loginIsolatedClaude, which sets expiresAt on a fresh paste.
-      provider.apiEndpoints = ['anthropic']
-      if (existing?.keyRef) {
-        provider.keyRef = existing.keyRef
-        provider.keyMask = existing.keyMask
-      }
-      if (existing?.expiresAt !== undefined) {
-        provider.expiresAt = existing.expiresAt
-      }
-      const model =
-        request.model === undefined ? existing?.model : request.model.trim() || undefined
-      credentialsChanged = model !== existing?.model
-
-      if (model) provider.model = model
-    } else if (request.type === 'claude-shared') {
-      // claude-shared credentials live in ~/.claude, managed by the CLI. No token or expiry to
-      // carry over; only the optional model override is stored on the record.
-      provider.apiEndpoints = ['anthropic']
-      const model =
-        request.model === undefined ? existing?.model : request.model.trim() || undefined
-      credentialsChanged = model !== existing?.model
-
-      if (model) provider.model = model
-      if (existing?.disconnectedAt !== undefined) provider.disconnectedAt = existing.disconnectedAt
-    } else if (request.type === 'official') {
-      // Base URL and model catalog come from the registry; the provider only stores which vendor
-      // (and, for multi-region vendors, which endpoint) plus the key.
-      const vendorId = isOfficialVendorId(request.vendorId) ? request.vendorId : existing?.vendorId
-
-      if (!vendorId) throw new Error('A vendor is required for an official provider.')
-
-      const region = request.region ?? existing?.region
-
-      // Official providers store no model of their own: the catalog is fixed by the registry and the
-      // chosen model is the global selection (activeModel). Only vendor/region/key are persisted.
-      provider.vendorId = vendorId
-      if (region) provider.region = region
-      // Keep any live-fetched models across an edit, unless the vendor itself changed (then they're
-      // stale and will be re-fetched on demand).
-      if (existing?.fetchedModels && vendorId === existing.vendorId) {
-        provider.fetchedModels = existing.fetchedModels
-      }
-
-      if (!carryKey()) throw new Error('API key is required for an official provider.')
-
-      credentialsChanged =
-        Boolean(request.key) ||
-        provider.vendorId !== existing?.vendorId ||
-        provider.region !== existing?.region
-    } else if (request.type === 'custom') {
-      const baseUrl = request.baseUrl?.trim() || existing?.baseUrl
-      const model = request.model?.trim() || existing?.model
-      const contextWindow =
-        request.contextWindow === null
-          ? undefined
-          : (request.contextWindow ?? existing?.contextWindow)
-
-      // Required-field guard: never persist an incomplete custom provider, even if the UI is bypassed.
-      if (!baseUrl) throw new Error('Base URL is required for a custom provider.')
-      if (!model) throw new Error('Model is required for a custom provider.')
-      if (!carryKey()) throw new Error('API key is required for a custom provider.')
-      if (
-        contextWindow !== undefined &&
-        (!Number.isSafeInteger(contextWindow) || contextWindow <= 0)
-      ) {
-        throw new Error('Context window must be a positive whole number of tokens.')
-      }
-
-      const apiEndpoints = request.apiEndpoints ?? existing?.apiEndpoints ?? ['anthropic']
-
-      provider.baseUrl = baseUrl
-      provider.model = model
-      if (contextWindow !== undefined) provider.contextWindow = contextWindow
-      provider.supportsImageInput =
-        request.supportsImageInput ?? existing?.supportsImageInput ?? false
-      provider.reasoningEffortPreset =
-        request.reasoningEffortPreset ?? existing?.reasoningEffortPreset ?? 'standard-5'
-      provider.reasoningEffortTransport =
-        request.reasoningEffortTransport ?? existing?.reasoningEffortTransport ?? 'reasoning-effort'
-      // Which chat APIs this gateway speaks (drives per-framework availability); defaults to anthropic.
-      provider.apiEndpoints = apiEndpoints
-      credentialsChanged =
-        Boolean(request.key) ||
-        provider.baseUrl !== existing?.baseUrl ||
-        provider.model !== existing?.model ||
-        provider.apiEndpoints.join(',') !== (existing?.apiEndpoints ?? []).join(',')
-    }
-
-    // A re-test is required before a changed provider can re-gate onboarding.
-    if (existing?.lastValidatedAt !== undefined && !credentialsChanged) {
-      provider.lastValidatedAt = existing.lastValidatedAt
-    }
-
-    // Carry a prior failure only while credentials are unchanged; a credential change invalidates it
-    // (the provider must be re-tested), so it drops and the warning clears until the next test. A local
-    // shared-Claude disconnect is different: model edits must keep its renderer-visible auth failure
-    // until browser login clears disconnectedAt, or pickers can offer a profile runtime will reject.
-    const preserveValidationFailure =
-      !credentialsChanged ||
-      (provider.type === 'claude-shared' && provider.disconnectedAt !== undefined)
-    if (existing?.lastValidationFailure !== undefined && preserveValidationFailure) {
-      provider.lastValidationFailure = existing.lastValidationFailure
-    }
-
-    // Claude auth modes own separate fixed records. Keep the sibling record so switching modes does
-    // not discard its credential or validation state; the renderer collapses both records into one
-    // card and prefers the active id.
-    if (isClaudeSubscriptionProvider(provider.type)) {
-      const outgoingId =
-        provider.type === 'claude-shared' ? CLAUDE_ISOLATED_PROVIDER_ID : CLAUDE_SHARED_PROVIDER_ID
-      const collapsedCardWasActive =
-        settings.activeProviderId === provider.id || settings.activeProviderId === outgoingId
-
-      await this.repository.upsertProvider(provider)
-
-      // Move an active collapsed card to the selected mode and use that mode's saved model/default.
-      // An inactive sibling remains inactive.
-      if (collapsedCardWasActive) {
-        await this.repository.setActiveProvider(provider.id, this.resolveActiveModel(provider))
-      }
-
-      return this.getSettingsView()
-    }
-
-    await this.repository.upsertProvider(provider)
-
+    await this.providers.upsertProvider(request)
     return this.getSettingsView()
   }
 
   async deleteProvider(id: string): Promise<SettingsSnapshot> {
-    if (isCodexSubscriptionProviderId(id)) {
-      await this.codexAuth.cancelLogin()
-      const codexHome = codexSubscriptionStorageDir(this.storageRoot)
-      await clearImportedCodexProviderRoute(codexHome)
-      await clearAppOwnedCodexAuthentication(codexHome)
-    }
-
-    if (isClaudeSubscriptionProviderId(id)) {
-      this.claudeIsolatedAuth.cancelLogin()
-      this.claudeSharedAuth.cancelLogin()
-    }
-
-    await this.repository.deleteProvider(id)
-
+    await this.providers.deleteProvider(id)
     return this.getSettingsView()
   }
 
   cancelCodexLogin(): void {
-    void this.codexAuth.cancelLogin()
+    this.providers.cancelCodexLogin()
   }
 
   cancelClaudeLogin(): void {
-    this.claudeSharedAuth.cancelLogin()
+    this.providers.cancelClaudeLogin()
   }
 
-  // The explicit isolated sign-in — the only path that opens the browser login. Saving or testing a
-  // provider never does. The outcome is recorded like a validation result, so the provider card shows
-  // the verified check on success or the unverified warning (with the reason) on failure.
   async loginIsolatedCodex(): Promise<ValidateProviderResult> {
-    const result = this.codexAuthValidationResult(await this.codexAuth.loginIsolated())
-
-    const settings = await this.repository.getSettings()
-    const provider = settings.providers.find(
-      (candidate) => candidate.id === codexSubscriptionProviderIdentity().id
-    )
-    // The provider can be edited while the browser flow is open. Unless the stored record is still
-    // the isolated subscription the login was started for, the outcome is stale and discarded —
-    // recording it could overwrite a switched-to-imported profile's independent validation. Flag
-    // it as not-applied so a caller gating navigation on success (onboarding) does not advance on a
-    // result the stored provider never received.
-    if (provider?.type !== 'codex-isolated' || provider.codexAuthMode !== 'isolated') {
-      return { ...result, applied: false }
-    }
-
-    await this.repository.upsertProvider(
-      result.ok
-        ? {
-            ...provider,
-            lastValidatedAt: Date.now(),
-            lastValidationFailure: undefined
-          }
-        : {
-            ...provider,
-            lastValidatedAt: undefined,
-            lastValidationFailure: {
-              at: Date.now(),
-              category: result.category,
-              status: result.status,
-              message: result.message
-            }
-          }
-    )
-
-    return { ...result, applied: true }
+    return this.providers.loginIsolatedCodex()
   }
 
   async logoutIsolatedCodex(): Promise<ValidateProviderResult> {
-    const settings = await this.repository.getSettings()
-    const provider = settings.providers.find(
-      (candidate) => candidate.id === codexSubscriptionProviderIdentity().id
-    )
-    if (provider?.type !== 'codex-isolated' || provider.codexAuthMode !== 'isolated') {
-      return {
-        ok: false,
-        category: 'unknown',
-        message: 'No isolated Open Science Codex login is configured.'
-      }
-    }
-
-    // Never call the adapter's account/logout here. A legacy isolated profile may still hold a
-    // token copied from the user's CLI profile, and remotely revoking it would sign the CLI out as
-    // well. Removing only the file under the app-owned CODEX_HOME disconnects Open Science while
-    // preserving every external Codex login.
-    await this.codexAuth.cancelLogin()
-    try {
-      // Legacy isolated homes could still point at the OS keychain. Pin the app-owned profile to the
-      // file store before removing auth.json so future status/runtime checks cannot re-authenticate
-      // through a credential shared with the user's global CLI profile.
-      await ensureCodexAuthHome('isolated', this.storageRoot)
-      await clearAppOwnedCodexAuthentication(codexSubscriptionStorageDir(this.storageRoot))
-    } catch {
-      return {
-        ok: false,
-        category: 'unknown',
-        message: 'The Open Science Codex login could not be removed.'
-      }
-    }
-
-    await this.repository.upsertProvider({
-      ...provider,
-      lastValidatedAt: undefined,
-      lastValidationFailure: undefined
-    })
-
-    return { ok: true, category: 'ok' }
+    return this.providers.logoutIsolatedCodex()
   }
 
-  // Stores a pasted OAuth token, then runs a one-shot Claude request with the exact isolated spawn
-  // environment. Storage roundtrip success alone is not authentication: only the subprocess probe
-  // can mark the provider verified or advance onboarding.
   async loginIsolatedClaude(token: string): Promise<ValidateProviderResult> {
-    return this.finalizeClaudeIsolatedLogin(
-      this.claudeIsolatedAuthValidationResult(await this.claudeIsolatedAuth.loginIsolated(token))
-    )
+    return this.providers.loginIsolatedClaude(token)
   }
 
-  // Browser sign-in for claude-isolated: the app runs `claude setup-token` (which opens the browser
-  // for OAuth) under the isolated config dir, captures the returned token, and stores it — the same
-  // end state as a manual paste, but with no copy/paste step. Post-login processing (probe + verified
-  // markers) is shared with the paste flow via finalizeClaudeIsolatedLogin.
   async loginIsolatedClaudeBrowser(): Promise<ValidateProviderResult> {
-    const authStatus = await this.claudeIsolatedAuth.loginIsolatedBrowser()
-    // A user-cancel should not mark the card as failed: the user intentionally stopped the flow,
-    // so no failure marker is written and the card keeps its previous state.
-    if (authStatus.cancelled) {
-      return {
-        ok: false,
-        category: 'unknown',
-        message: authStatus.message,
-        applied: false,
-        cancelled: true
-      }
-    }
-    return this.finalizeClaudeIsolatedLogin(this.claudeIsolatedAuthValidationResult(authStatus))
+    return this.providers.loginIsolatedClaudeBrowser()
   }
 
-  // Cancels an in-flight claude-isolated browser sign-in (the `claude setup-token` subprocess).
   async cancelClaudeIsolatedLogin(): Promise<void> {
-    this.claudeIsolatedAuth.cancelLogin()
+    return this.providers.cancelClaudeIsolatedLogin()
   }
 
-  // Shared post-login pipeline for both claude-isolated sign-in paths (paste + browser). Given the
-  // controller's storage result, runs the credential probe and records verified/failed markers on the
-  // provider card, so both flows converge on identical state.
-  private async finalizeClaudeIsolatedLogin(
-    initialResult: ValidateProviderResult
-  ): Promise<ValidateProviderResult> {
-    let result = initialResult
-
-    const settings = await this.repository.getSettings()
-    const provider = settings.providers.find(
-      (candidate) => candidate.id === CLAUDE_ISOLATED_PROVIDER_ID
-    )
-    // The card can be deleted mid-sign-in. A deleted claude-isolated record means the login should
-    // land fresh: create a new one carrying the now-stored token (the controller just persisted it
-    // for us via upsertClaudeIsolatedProvider, which has already written the record).
-    if (!provider) return { ...result, applied: false }
-
-    if (result.ok) {
-      result = await this.runClaudeSubscriptionProbe(
-        this.resolveProvider(
-          provider,
-          settings.activeProviderId === provider.id ? settings.activeModel : undefined
-        ),
-        settings
-      )
-
-      const applied = await this.repository.updateClaudeIsolatedValidationIfKeyMatches(
-        provider.keyRef,
-        result.ok
-          ? {
-              expiresAt: Date.now() + SETUP_TOKEN_LIFETIME_MS,
-              lastValidatedAt: Date.now(),
-              lastValidationFailure: undefined
-            }
-          : {
-              expiresAt: undefined,
-              lastValidatedAt: undefined,
-              lastValidationFailure: {
-                at: Date.now(),
-                category: result.category,
-                status: result.status,
-                message: result.message
-              }
-            }
-      )
-
-      return { ...result, applied }
-    }
-
-    // Mirror the success path: use the key-matched writer so a concurrent paste that already wrote a
-    // new token does not get overwritten by the stale provider snapshot we read before the login.
-    const applied = await this.repository.updateClaudeIsolatedValidationIfKeyMatches(
-      provider.keyRef,
-      {
-        expiresAt: undefined,
-        lastValidatedAt: undefined,
-        lastValidationFailure: {
-          at: Date.now(),
-          category: result.category,
-          status: result.status,
-          message: result.message
-        }
-      }
-    )
-
-    return { ...result, applied }
-  }
-
-  // Drops the stored token. The provider card stays so the user can sign back in without a fresh
-  // add; the verified markers are cleared so the next validation/test must succeed before it can
-  // re-gate onboarding. When the controller reports an error (status.message set), the token may
-  // still be in storage — we leave the existing validation markers untouched so the next status
-  // check surfaces the real state instead of a misleading "cleared, please retest".
   async logoutIsolatedClaude(): Promise<ValidateProviderResult> {
-    const status = await this.claudeIsolatedAuth.logoutIsolated()
-
-    // Propagate the controller's error independently of `authenticated`: a failed logout can leave
-    // the token in storage and still report `authenticated: false`, but the controller's `message`
-    // is what the user needs to see rather than a silent success.
-    if (status.message) {
-      return {
-        ok: false,
-        category: status.message.toLowerCase().includes('timed out') ? 'timeout' : 'unknown',
-        message: status.message
-      }
-    }
-
-    const settings = await this.repository.getSettings()
-    const provider = settings.providers.find(
-      (candidate) => candidate.id === CLAUDE_ISOLATED_PROVIDER_ID
-    )
-
-    if (provider && status.authenticated === false) {
-      await this.repository.upsertProvider({
-        ...provider,
-        expiresAt: undefined,
-        lastValidatedAt: undefined,
-        lastValidationFailure: undefined
-      })
-    }
-
-    return { ok: true, category: 'ok' }
+    return this.providers.logoutIsolatedClaude()
   }
 
-  // Runs `claude auth login --claudeai` which opens the browser for OAuth. The CLI stores the
-  // credentials in ~/.claude; the app never touches them. After success, runs a probe to validate.
   async loginClaudeShared(): Promise<ValidateProviderResult> {
-    const loginTarget = await this.repository.getSettings()
-    const targetProvider = loginTarget.providers.find(
-      (candidate) => candidate.id === CLAUDE_SHARED_PROVIDER_ID
-    )
-    this.invalidateClaudeSharedAuthStatus()
-    const authStatus = await this.claudeSharedAuth.loginShared()
-    this.invalidateClaudeSharedAuthStatus()
-    let result = this.claudeSharedAuthValidationResult(authStatus)
-
-    // A user-cancel: don't write a failure marker and surface the cancellation to the caller.
-    if (authStatus.cancelled) {
-      return { ...result, applied: false, cancelled: true }
-    }
-
-    if (targetProvider?.type !== 'claude-shared') return { ...result, applied: false }
-
-    const settings = await this.repository.getSettings()
-    const currentProvider = settings.providers.find(
-      (candidate) => candidate.id === CLAUDE_SHARED_PROVIDER_ID
-    )
-    if (
-      settings.claudeSubscriptionProviderId !== loginTarget.claudeSubscriptionProviderId ||
-      !isDeepStrictEqual(currentProvider, targetProvider)
-    ) {
-      return { ...result, applied: false }
-    }
-
-    const resolvedTarget = this.resolveProvider(
-      targetProvider,
-      settings.activeProviderId === targetProvider.id ? settings.activeModel : undefined
-    )
-
-    if (result.ok) {
-      result = await this.runClaudeSubscriptionProbe(resolvedTarget, settings)
-    }
-
-    const applied = await this.repository.updateClaudeSharedValidationIfUnchanged(
-      targetProvider,
-      loginTarget.claudeSubscriptionProviderId,
-      resolvedTarget.model,
-      result.ok
-        ? {
-            disconnectedAt: undefined,
-            lastValidatedAt: Date.now(),
-            lastValidationFailure: undefined
-          }
-        : {
-            disconnectedAt: authStatus.authenticated ? undefined : targetProvider.disconnectedAt,
-            lastValidatedAt: undefined,
-            lastValidationFailure: {
-              at: Date.now(),
-              category: result.category,
-              status: result.status,
-              message: result.message
-            }
-          }
-    )
-
-    return { ...result, applied }
+    return this.providers.loginClaudeShared()
   }
 
   async logoutClaudeShared(): Promise<ValidateProviderResult> {
-    this.invalidateClaudeSharedAuthStatus()
-    const settings = await this.repository.getSettings()
-    const provider = settings.providers.find(
-      (candidate) => candidate.id === CLAUDE_SHARED_PROVIDER_ID
-    )
-
-    if (provider) {
-      const disconnectedAt = Date.now()
-      await this.repository.upsertProvider({
-        ...provider,
-        disconnectedAt,
-        lastValidatedAt: undefined,
-        lastValidationFailure: {
-          at: disconnectedAt,
-          category: 'auth',
-          message: CLAUDE_SHARED_DISCONNECTED_MESSAGE
-        }
-      })
-    }
-
-    return { ok: true, category: 'ok' }
+    return this.providers.logoutClaudeShared()
   }
 
   async getClaudeSharedStatus(): Promise<ValidateProviderResult> {
-    const settings = await this.repository.getSettings()
-    const provider = settings.providers.find(
-      (candidate) => candidate.id === CLAUDE_SHARED_PROVIDER_ID
-    )
-
-    if (provider?.type !== 'claude-shared') {
-      return {
-        ok: false,
-        category: 'unknown',
-        message: 'Claude subscription provider is not configured.'
-      }
-    }
-
-    return this.validateClaudeSharedProvider(
-      this.resolveProvider(
-        provider,
-        settings.activeProviderId === provider.id ? settings.activeModel : undefined
-      ),
-      settings,
-      provider
-    )
+    return this.providers.getClaudeSharedStatus()
   }
 
-  private async validateClaudeSharedProvider(
-    provider: ResolvedProvider,
-    settings: StoredSettings,
-    storedProvider?: StoredProvider
-  ): Promise<ValidateProviderResult> {
-    if (storedProvider?.disconnectedAt !== undefined) {
-      return { ok: false, category: 'auth', message: CLAUDE_SHARED_DISCONNECTED_MESSAGE }
-    }
-
-    const status = await this.claudeSharedAuth.getStatus()
-    this.claudeSharedAuthStatusCache = {
-      authenticated: status.authenticated,
-      checkedAt: Date.now()
-    }
-
-    if (!status.authenticated) {
-      return this.claudeSharedAuthValidationResult(
-        status,
-        'Not signed in. Sign in via browser OAuth in the Settings card to connect your Claude subscription.'
-      )
-    }
-
-    return this.runClaudeSubscriptionProbe(provider, settings)
-  }
-
-  private claudeSharedAuthValidationResult(
-    status: ClaudeSharedAuthStatus,
-    notSignedInMessage?: string
-  ): ValidateProviderResult {
-    if (status.authenticated) return { ok: true, category: 'ok' }
-
-    const message = status.message ?? notSignedInMessage
-
-    return { ok: false, category: 'unknown', message }
-  }
-
-  // Re-validates a stored claude-isolated credential through the same one-shot Claude command used
-  // during sign-in. Reading the encrypted token only proves storage health; the subprocess probe is
-  // what detects a rejected, revoked, or expired setup-token.
   async getClaudeIsolatedStatus(): Promise<ValidateProviderResult> {
-    const status = await this.claudeIsolatedAuth.getStatus()
-
-    if (!status.authenticated) {
-      return this.claudeIsolatedAuthValidationResult(
-        status,
-        'Not signed in. Run `claude setup-token` and paste the token to connect your Claude subscription.'
-      )
-    }
-
-    const settings = await this.repository.getSettings()
-    const provider = settings.providers.find(
-      (candidate) => candidate.id === CLAUDE_ISOLATED_PROVIDER_ID
-    )
-
-    if (!provider) {
-      return {
-        ok: false,
-        category: 'unknown',
-        message: 'Claude subscription provider is not configured.'
-      }
-    }
-
-    return this.runClaudeSubscriptionProbe(
-      this.resolveProvider(
-        provider,
-        settings.activeProviderId === provider.id ? settings.activeModel : undefined
-      ),
-      settings
-    )
+    return this.providers.getClaudeIsolatedStatus()
   }
 
-  // The Claude-auth status does not have a 'timeout' or 'incompatible' category of its own; map it
-  // to the same validation-result envelope the renderer already understands for the codex path.
-  private claudeIsolatedAuthValidationResult(
-    status: ClaudeIsolatedAuthStatus,
-    notSignedInMessage?: string
-  ): ValidateProviderResult {
-    if (status.authenticated) return { ok: true, category: 'ok' }
-
-    const message = status.message ?? notSignedInMessage
-
-    return { ok: false, category: 'unknown', message }
-  }
-
-  // Activates a provider and the model to run within it. An omitted/unknown model falls back to the
-  // provider's default (its stored model, or the vendor's first catalog entry).
   async setActiveProvider(id: string, model?: string): Promise<SettingsSnapshot> {
-    const settings = await this.repository.getSettings()
-    const provider = settings.providers.find((candidate) => candidate.id === id)
-    const resolvedModel = this.resolveActiveModel(provider, model)
-
-    await this.repository.setActiveProvider(id, resolvedModel)
-
+    await this.providers.setActiveProvider(id, model)
     return this.getSettingsView()
   }
 
-  // Validates a saved provider or an unsaved draft; on success for a saved provider records the time.
   async validateProvider(request: ValidateProviderRequest): Promise<ValidateProviderResult> {
-    const settings = await this.repository.getSettings()
-    const resolved = this.resolveValidationTarget(request, settings)
-
-    if (!resolved) {
-      return { ok: false, category: 'unknown', message: 'No provider to validate.' }
-    }
-
-    const storedValidationTarget = resolved.storedId
-      ? settings.providers.find((provider) => provider.id === resolved.storedId)
-      : undefined
-
-    const validationGeneration = resolved.storedId
-      ? this.advanceProviderValidationGeneration(resolved.storedId)
-      : undefined
-
-    // Test against the framework the agent will actually spawn with. An OpenAI-only gateway tested
-    // while Claude Code is active would otherwise fail a raw /v1/messages probe and be reported as an
-    // auth error, even though the key is valid — the pairing, not the credential, is the problem. Decide
-    // this before any network call so the card names the real reason (which route the framework needs).
-    // codex-subscription + claude-isolated keep their own login-status branches; their usability is
-    // enforced elsewhere.
-    const framework = getAgentFramework(settings.agentFrameworkId ?? DEFAULT_AGENT_FRAMEWORK_ID)
-    const incompatibility =
-      isCodexSubscriptionProvider(resolved.provider.type) ||
-      resolved.provider.type === 'claude-isolated'
-        ? undefined
-        : this.frameworkIncompatibilityResult(resolved.provider, framework)
-
-    const result =
-      incompatibility ??
-      (isCodexSubscriptionProvider(resolved.provider.type)
-        ? this.codexAuthValidationResult(
-            // Validation is a read-only status check in both modes: signing in is a separate explicit
-            // action (loginIsolatedCodex), so testing or saving a provider never pops a browser the
-            // user didn't ask for.
-            await this.codexAuth.getStatus(
-              resolveCodexSubscriptionType(resolved.provider) === 'codex-shared'
-                ? 'shared'
-                : 'isolated'
-            ),
-            'Not signed in. Use Sign in to connect your ChatGPT account.'
-          )
-        : resolved.provider.type === 'claude-shared'
-          ? await this.validateClaudeSharedProvider(
-              resolved.provider,
-              settings,
-              resolved.storedId
-                ? settings.providers.find((provider) => provider.id === resolved.storedId)
-                : undefined
-            )
-          : resolved.provider.type === 'claude-isolated'
-            ? await this.getClaudeIsolatedStatus()
-            : await validateProvider(resolved.provider, {
-                // Probe over Electron's network stack, which honors the system/VPN proxy. Node's global
-                // fetch (undici) takes a direct path and ignores that proxy, so an official vendor reachable
-                // only through a proxy (e.g. api.openai.com) would fail the probe as a false `network` error
-                // even with a valid key. The local Responses-bridge loopback stays on the direct fetch.
-                fetchImpl: netFetchStandard,
-                // Codex reaches Chat Completions-only providers through the local Responses bridge.
-                // A plain ping cannot prove the streaming function-call contract that runtime needs.
-                requireBridgeToolCall: requiresChatCompletionsBridge(resolved.provider, framework),
-                requireNativeResponsesCompatibility: requiresNativeResponsesCompatibility(
-                  resolved.provider,
-                  framework
-                ),
-                // For a multi-route provider, probe the route this framework actually drives so a passing
-                // test proves that route (e.g. Claude Code hits /v1/messages, not /v1/chat/completions).
-                // Codex is excluded: it bridges the provider's OpenAI route under its `responses` protocol,
-                // so its HTTP route is decided by the bridge, not by supportedApiTypes — keep it as-is.
-                frameworkEndpoints:
-                  framework.id === 'codex' ? undefined : framework.supportedApiTypes
-              }))
-
-    if (resolved.storedId) {
-      // Each early return here means the tested target no longer matches what is stored (a newer test
-      // superseded this one, the provider was deleted, or it was edited mid-flight). The outcome is
-      // real but was not recorded, so `applied: false` tells a success-gated caller not to advance.
-      if (this.providerValidationGenerations.get(resolved.storedId) !== validationGeneration) {
-        return { ...result, applied: false }
-      }
-      const latestSettings = await this.repository.getSettings()
-      const stored = latestSettings.providers.find((provider) => provider.id === resolved.storedId)
-      if (!stored) return { ...result, applied: false }
-      const latestResolved = this.resolveProvider(
-        stored,
-        latestSettings.activeProviderId === stored.id ? latestSettings.activeModel : undefined
-      )
-      if (!this.sameValidationTarget(resolved.provider, latestResolved)) {
-        return { ...result, applied: false }
-      }
-
-      // Success stamps the validated time and clears any prior failure. A failure keeps the provider
-      // but records why, so the list can flag it and the model pickers exclude it until it passes.
-      const validationPatch = result.ok
-        ? {
-            lastValidatedAt: Date.now(),
-            lastValidationFailure: undefined
-          }
-        : {
-            lastValidatedAt: undefined,
-            lastValidationFailure: {
-              at: Date.now(),
-              category: result.category,
-              status: result.status,
-              message: result.message
-            }
-          }
-
-      if (stored.type === 'claude-shared') {
-        if (storedValidationTarget?.type !== 'claude-shared') {
-          return { ...result, applied: false }
-        }
-
-        const applied = await this.repository.updateClaudeSharedValidationIfUnchanged(
-          storedValidationTarget,
-          settings.claudeSubscriptionProviderId,
-          resolved.provider.model,
-          validationPatch
-        )
-
-        return { ...result, applied }
-      }
-
-      await this.repository.upsertProvider({ ...stored, ...validationPatch })
-
-      return { ...result, applied: true }
-    }
-
-    return result
+    return this.providers.validateProvider(request)
   }
 
-  private codexAuthValidationResult(
-    status: CodexAuthStatus,
-    isolatedFallback = 'Codex sign-in did not complete.'
-  ): ValidateProviderResult {
-    if (status.authenticated) return { ok: true, category: 'ok' }
-
-    return {
-      ok: false,
-      category: status.message?.toLowerCase().includes('timed out')
-        ? 'timeout'
-        : status.supported
-          ? 'auth'
-          : 'unknown',
-      message:
-        status.message ??
-        (status.mode === 'shared'
-          ? 'No existing Codex login was found. Run `codex login` or use the isolated Open Science login.'
-          : isolatedFallback)
-    }
-  }
-
-  // Fetches a saved provider's live model list from the vendor and, on success, persists it as the
-  // provider's models (overriding the bundled catalog). Failures leave the bundled catalog in place.
   async refreshProviderModels(
     request: RefreshProviderModelsRequest
   ): Promise<RefreshProviderModelsResult> {
-    const settings = await this.repository.getSettings()
-    const stored = settings.providers.find((provider) => provider.id === request.providerId)
-
-    if (!stored) return { ok: false, category: 'unknown', message: 'Provider not found.' }
-
-    const modelsUrl =
-      stored.type === 'official' && stored.vendorId
-        ? resolveVendorModelsUrl(stored.vendorId, stored.region)
-        : undefined
-
-    if (!modelsUrl) {
-      return {
-        ok: false,
-        category: 'unknown',
-        message: 'This provider has no model-list endpoint.'
-      }
-    }
-
-    const result = await listProviderModels({
-      url: modelsUrl,
-      key: this.resolveProvider(stored).key
-    })
-
-    if (!result.ok || !result.models) {
-      return {
-        ok: false,
-        category: result.status ? classifyStatus(result.status) : 'network',
-        message: result.message
-      }
-    }
-
-    await this.repository.upsertProvider({ ...stored, fetchedModels: result.models })
-
-    return { ok: true, category: 'ok', models: result.models }
+    return this.providers.refreshProviderModels(request)
   }
 
   // Reports whether the OS keychain is usable so the UI can warn before a save is attempted.
@@ -2755,11 +1803,11 @@ class SettingsService {
     // ACP session injects this bundle as a local plugin plus highest-priority settings layer.
     const appConfigDir = await this.provisionClaudeRuntimeConfig(settings, forcedSkillIds)
 
-    const provider = this.resolveProvider(
+    const provider = this.providers.resolveProvider(
       activeProvider,
       resolvedSelection
         ? resolvedSelection.model
-        : this.resolveActiveModel(activeProvider, settings.activeModel)
+        : this.providers.resolveActiveModel(activeProvider, settings.activeModel)
     )
     const envOverrides = buildProviderEnv(provider, {
       storageRoot: this.storageRoot,
@@ -2865,7 +1913,7 @@ class SettingsService {
     // Resolve the model exactly once for this backend generation. The same selection drives the
     // model profile, bridge compatibility, and the framework config so a refreshed catalog cannot
     // make the effort belong to one model while the request is sent to another.
-    const effectiveModel = this.resolveActiveModel(activeProvider, settings.activeModel)
+    const effectiveModel = this.providers.resolveActiveModel(activeProvider, settings.activeModel)
     const effortIntent = settings.reasoningEffort ?? DEFAULT_REASONING_EFFORT
     const reasoningEffortProfile = resolveProviderReasoningEffortProfile(
       activeProvider,
@@ -2884,7 +1932,7 @@ class SettingsService {
     if (
       !isProviderUsableByFramework(
         {
-          apiEndpoints: this.resolveProviderApiEndpoints(activeProvider, effectiveModel),
+          apiEndpoints: this.providers.resolveProviderApiEndpoints(activeProvider, effectiveModel),
           type: activeProvider.type
         },
         framework
@@ -2931,7 +1979,7 @@ class SettingsService {
       framework.id === 'codex'
         ? await this.probeCodexNativeVersion(settings.codex?.nativePath)
         : undefined
-    const provider = this.resolveProvider(activeProvider, effectiveModel)
+    const provider = this.providers.resolveProvider(activeProvider, effectiveModel)
     if (framework.id === 'codex' && isCodexSubscriptionProvider(provider.type)) {
       // Runtime resolution can be reached without opening a Settings auth session first. Enforce
       // file-backed credentials here as well so a direct prompt never falls through to the user's
@@ -3206,164 +2254,6 @@ class SettingsService {
     return output ? parseCodexVersion(output) : undefined
   }
 
-  // The chat APIs a provider speaks: official providers come from the registry, custom gateways from
-  // their stored/drafted endpoints, everything else defaults to Anthropic /v1/messages. For official
-  // vendors the set is model-aware: a vendor may serve the Responses protocol for a subset of its
-  // catalog (e.g. DeepSeek's deepseek-v4-flash), so 'responses' is injected only when the active model
-  // is in that subset. When no active model is supplied, the vendor default model is used so the
-  // resolved set always matches the model the session actually drives.
-  private resolveProviderApiEndpoints(
-    provider: StoredProvider,
-    activeModel?: string
-  ): ChatApiEndpoint[] {
-    if (provider.type === 'official' && provider.vendorId) {
-      const vendorEndpoints = resolveVendorApiEndpoints(provider.vendorId)
-      const modelToCheck = activeModel ?? defaultVendorModel(provider.vendorId)
-      if (
-        !vendorEndpoints.includes('responses') &&
-        isVendorModelResponsesSupported(provider.vendorId, modelToCheck)
-      ) {
-        return [...vendorEndpoints, 'responses']
-      }
-      return vendorEndpoints
-    }
-
-    return provider.apiEndpoints && provider.apiEndpoints.length > 0
-      ? [...provider.apiEndpoints]
-      : ['anthropic']
-  }
-
-  // Maps a stored provider to its masked renderer view, flagging custom keys that no longer decrypt.
-  private toProviderView(provider: StoredProvider, activeModel?: string): ProviderView {
-    const hasKey = Boolean(provider.keyRef)
-    // custom and official both require a decryptable key; claude-isolated carries a stored token,
-    // so it follows the same "needs a decryptable keyRef" rule as custom.
-    const needsKey = hasKey && tryDecryptKey(provider.keyRef) === undefined
-
-    return {
-      id: provider.id,
-      type: provider.type,
-      codexAuthMode: provider.codexAuthMode,
-      name: provider.name,
-      apiEndpoints: this.resolveProviderApiEndpoints(provider, activeModel),
-      baseUrl: provider.baseUrl,
-      model: provider.model,
-      contextWindow: provider.contextWindow,
-      supportsImageInput: this.providerSupportsImageInput(provider, activeModel),
-      reasoningEffortPreset:
-        provider.type === 'custom' ? provider.reasoningEffortPreset : undefined,
-      reasoningEffortTransport:
-        provider.type === 'custom' ? provider.reasoningEffortTransport : undefined,
-      vendorId: provider.vendorId,
-      region: provider.region,
-      models: this.availableModels(provider),
-      maskedKey: provider.keyMask,
-      hasKey,
-      needsKey,
-      lastValidatedAt: provider.lastValidatedAt,
-      lastValidationFailure: provider.lastValidationFailure,
-      ...(provider.expiresAt !== undefined ? { expiresAt: provider.expiresAt } : {})
-    }
-  }
-
-  private providerSupportsImageInput(provider: StoredProvider, activeModel?: string): boolean {
-    if (isCodexSubscriptionProvider(provider.type)) return true
-    // Both Claude subscription modes authenticate against Anthropic and inherit vision support.
-    if (isClaudeSubscriptionProvider(provider.type)) return true
-
-    // Custom providers: respect the user-configured supportsImageInput flag
-    if (provider.type === 'custom') return provider.supportsImageInput === true
-
-    // Official vendors: check the model against the vendor's multimodalModels registry. When no model
-    // is active, fall back to the vendor's default model — the exact id resolveProvider spawns — not the
-    // first of the (possibly live-refreshed) catalog, so the capability always matches the model actually
-    // sent. Otherwise a refreshed list whose first entry is text-only would strip images from a default
-    // that supports them (e.g. Kimi's default kimi-k3).
-    if (provider.type === 'official' && provider.vendorId) {
-      const modelToCheck = activeModel ?? defaultVendorModel(provider.vendorId)
-      return isVendorModelMultimodal(provider.vendorId, modelToCheck)
-    }
-
-    return false
-  }
-
-  private invalidateClaudeSharedAuthStatus(): void {
-    this.claudeSharedAuthStatusCache = undefined
-    this.claudeSharedAuthStatusGeneration += 1
-  }
-
-  private async getClaudeSharedAuthStatus(): Promise<boolean> {
-    const cached = this.claudeSharedAuthStatusCache
-    if (cached && Date.now() - cached.checkedAt < CLAUDE_SHARED_AUTH_STATUS_TTL_MS) {
-      return cached.authenticated
-    }
-    const generation = this.claudeSharedAuthStatusGeneration
-    const pending = this.claudeSharedAuthStatusPromise
-    if (pending?.generation === generation) return pending.promise
-
-    const promise = this.claudeSharedAuth
-      .getStatus()
-      .then((status) => {
-        if (this.claudeSharedAuthStatusGeneration === generation) {
-          this.claudeSharedAuthStatusCache = {
-            authenticated: status.authenticated,
-            checkedAt: Date.now()
-          }
-        }
-        return status.authenticated
-      })
-      .finally(() => {
-        if (this.claudeSharedAuthStatusPromise?.promise === promise) {
-          this.claudeSharedAuthStatusPromise = undefined
-        }
-      })
-
-    this.claudeSharedAuthStatusPromise = { generation, promise }
-    return promise
-  }
-
-  // Resolves credential usability at the provider seam. Codex subscriptions are adapter-managed;
-  // claude-shared needs a cached live profile check; all key-backed providers must still decrypt.
-  private async isProviderKeyUsable(provider: StoredProvider): Promise<boolean> {
-    if (isCodexSubscriptionProvider(provider.type)) return true
-    if (provider.type === 'claude-shared') {
-      if (provider.disconnectedAt !== undefined) return false
-      return this.getClaudeSharedAuthStatus()
-    }
-
-    return Boolean(provider.keyRef) && tryDecryptKey(provider.keyRef) !== undefined
-  }
-
-  // Models selectable for a provider: Codex subscriptions expose the app's curated candidate catalog,
-  // official providers use their vendor catalog, and custom/local providers expose their configured
-  // override. Codex validates an explicit candidate against the live session options before applying it.
-  private availableModels(provider: StoredProvider): string[] {
-    if (isCodexSubscriptionProvider(provider.type)) {
-      return getOfficialVendorModelIds('openai')
-    }
-
-    if (provider.type === 'official' && provider.vendorId) {
-      // Live-fetched models (via "refresh from vendor") take precedence over the bundled catalog.
-      if (provider.fetchedModels && provider.fetchedModels.length > 0) return provider.fetchedModels
-
-      return getOfficialVendorModelIds(provider.vendorId)
-    }
-
-    return provider.model ? [provider.model] : []
-  }
-
-  // Picks the model to activate. Codex subscriptions keep an omitted/unknown selection undefined so the
-  // account default is used; other providers retain their catalog/default fallback behavior.
-  private resolveActiveModel(
-    provider: StoredProvider | undefined,
-    requested?: string
-  ): string | undefined {
-    return resolveProviderEffectiveModel(
-      provider ? { ...provider, models: this.availableModels(provider) } : undefined,
-      requested
-    )
-  }
-
   private resolveReasoningEffortFromSettings(
     settings: StoredSettings,
     intent: ReasoningEffort
@@ -3377,187 +2267,10 @@ class SettingsService {
 
     const profile = resolveProviderReasoningEffortProfile(
       provider,
-      this.resolveActiveModel(provider, settings.activeModel)
+      this.providers.resolveActiveModel(provider, settings.activeModel)
     )
 
     return resolveReasoningEffortValue(intent, profile)
-  }
-
-  // Decrypts a stored provider into the spawn/validation shape (plaintext key held only transiently).
-  // Official vendors reuse the custom HTTP/bearer path: base URL comes from the registry and the model
-  // defaults to the vendor's first catalog entry unless a specific one is passed as the override.
-  private resolveProvider(provider: StoredProvider, modelOverride?: string): ResolvedProvider {
-    const key = provider.keyRef ? tryDecryptKey(provider.keyRef) : undefined
-
-    if (provider.type === 'official' && provider.vendorId) {
-      const model = modelOverride ?? defaultVendorModel(provider.vendorId)
-      const contextWindow = resolveModelContextWindow(provider.vendorId, model)
-
-      return {
-        type: 'custom',
-        vendorId: provider.vendorId,
-        baseUrl: resolveVendorBaseUrl(provider.vendorId, provider.region),
-        openaiBaseUrl: resolveVendorOpenAiBaseUrl(provider.vendorId, provider.region),
-        model,
-        ...(contextWindow === undefined ? {} : { contextWindow }),
-        key,
-        apiEndpoints: this.resolveProviderApiEndpoints(provider, model),
-        supportsImageInput: this.providerSupportsImageInput(provider, modelOverride)
-      }
-    }
-
-    const model = modelOverride ?? provider.model
-    const contextWindow =
-      provider.type === 'custom'
-        ? resolveCustomModelContextWindow(provider.contextWindow)
-        : isClaudeSubscriptionProvider(provider.type)
-          ? resolveModelContextWindow('anthropic', model)
-          : undefined
-
-    return {
-      type: provider.type,
-      ...(provider.codexAuthMode === undefined ? {} : { codexAuthMode: provider.codexAuthMode }),
-      baseUrl: provider.baseUrl,
-      model,
-      ...(contextWindow === undefined ? {} : { contextWindow }),
-      key,
-      apiEndpoints: this.resolveProviderApiEndpoints(provider, model),
-      supportsImageInput: this.providerSupportsImageInput(provider, modelOverride),
-      ...(provider.type === 'custom'
-        ? { reasoningEffortTransport: provider.reasoningEffortTransport }
-        : {})
-    }
-  }
-
-  // Resolves an unsaved draft into the validation shape, mapping an official draft to the custom path
-  // with the vendor's registry base URL + default model.
-  private resolveDraft(draft: ProviderDraft): ResolvedProvider {
-    if (draft.type === 'official' && isOfficialVendorId(draft.vendorId)) {
-      const draftModel = draft.model ?? defaultVendorModel(draft.vendorId)
-      const vendorEndpoints = resolveVendorApiEndpoints(draft.vendorId)
-      const draftEndpoints: ChatApiEndpoint[] =
-        !vendorEndpoints.includes('responses') &&
-        isVendorModelResponsesSupported(draft.vendorId, draftModel)
-          ? [...vendorEndpoints, 'responses']
-          : vendorEndpoints
-      return {
-        type: 'custom',
-        vendorId: draft.vendorId,
-        baseUrl: resolveVendorBaseUrl(draft.vendorId, draft.region),
-        openaiBaseUrl: resolveVendorOpenAiBaseUrl(draft.vendorId, draft.region),
-        model: draftModel,
-        key: draft.key,
-        // Official vendors declare their own endpoints; a custom draft carries the user's choice.
-        // The set is model-aware so a vendor with per-model Responses support (e.g. DeepSeek flash)
-        // validates against the Responses route when the draft's model implements it.
-        apiEndpoints: draftEndpoints
-      }
-    }
-
-    return {
-      type: draft.type,
-      baseUrl: draft.baseUrl,
-      model: draft.model,
-      ...(draft.type === 'custom'
-        ? { contextWindow: resolveCustomModelContextWindow(draft.contextWindow ?? undefined) }
-        : {}),
-      key: draft.key,
-      apiEndpoints: draft.apiEndpoints ?? ['anthropic'],
-      ...(draft.type === 'custom'
-        ? { reasoningEffortTransport: draft.reasoningEffortTransport }
-        : {})
-    }
-  }
-
-  // A failed-validation result when the provider can't drive the active agent framework, or undefined
-  // when the pair is compatible. Mirrors the spawn-time guard in resolveActiveAgentBackend so the test
-  // reports the same mismatch here, instead of a misleading auth failure, before it blocks a session.
-  private frameworkIncompatibilityResult(
-    provider: ResolvedProvider,
-    framework: ReturnType<typeof getAgentFramework>
-  ): ValidateProviderResult | undefined {
-    if (
-      isProviderUsableByFramework(
-        { apiEndpoints: provider.apiEndpoints, type: provider.type },
-        framework
-      )
-    ) {
-      return undefined
-    }
-
-    return {
-      ok: false,
-      category: 'incompatible',
-      message: this.frameworkIncompatibilityMessage(provider, framework)
-    }
-  }
-
-  // The human reason a provider can't drive a framework: a route mismatch (which endpoint the framework
-  // needs vs. which the provider speaks). Route paths, not vendor names, so it reads as "which API
-  // shape".
-  private frameworkIncompatibilityMessage(
-    provider: ResolvedProvider,
-    framework: { displayName: string; supportedApiTypes: readonly ChatApiEndpoint[] }
-  ): string {
-    if (provider.type === 'claude-isolated') {
-      return `Carries an Anthropic OAuth token (setup-token) in app-owned storage, which only Claude Code can carry. Switch to Claude Code or pick another provider.`
-    }
-
-    const routes: Record<ChatApiEndpoint, string> = {
-      anthropic: '/v1/messages',
-      openai: '/v1/chat/completions',
-      responses: '/v1/responses'
-    }
-    const needs = framework.supportedApiTypes.map((endpoint) => routes[endpoint]).join(' or ')
-    const speaks = providerEndpoints(provider)
-      .map((endpoint) => routes[endpoint])
-      .join(' or ')
-
-    return `Not compatible with ${framework.displayName}: it needs ${needs}, but this provider speaks ${speaks}. Change the API format or switch the agent framework.`
-  }
-
-  // Resolves what validateProvider should probe: a stored provider (by id) or an inline draft.
-  private resolveValidationTarget(
-    request: ValidateProviderRequest,
-    settings: StoredSettings
-  ): { provider: ResolvedProvider; storedId?: string } | undefined {
-    if (request.providerId) {
-      const stored = settings.providers.find((provider) => provider.id === request.providerId)
-
-      return stored
-        ? {
-            provider: this.resolveProvider(
-              stored,
-              settings.activeProviderId === stored.id ? settings.activeModel : undefined
-            ),
-            storedId: stored.id
-          }
-        : undefined
-    }
-
-    if (request.draft) {
-      return { provider: this.resolveDraft(request.draft) }
-    }
-
-    return undefined
-  }
-
-  private sameValidationTarget(left: ResolvedProvider, right: ResolvedProvider): boolean {
-    return (
-      left.type === right.type &&
-      left.codexAuthMode === right.codexAuthMode &&
-      left.baseUrl === right.baseUrl &&
-      left.openaiBaseUrl === right.openaiBaseUrl &&
-      left.model === right.model &&
-      left.key === right.key &&
-      (left.apiEndpoints ?? []).join(',') === (right.apiEndpoints ?? []).join(',')
-    )
-  }
-
-  private advanceProviderValidationGeneration(providerId: string): number {
-    const generation = (this.providerValidationGenerations.get(providerId) ?? 0) + 1
-    this.providerValidationGenerations.set(providerId, generation)
-    return generation
   }
 
   private async runClaudeSubscriptionProbe(
@@ -3627,13 +2340,6 @@ class SettingsService {
 
       return { ok: false, category, message: messages[category] }
     }
-  }
-
-  // Issues a fresh, monotonically-increasing provider id for an upsert.
-  private createProviderId(): string {
-    this.providerSequence += 1
-
-    return `p_${Date.now()}_${this.providerSequence}`
   }
 
   private async pathExists(path: string): Promise<boolean> {
