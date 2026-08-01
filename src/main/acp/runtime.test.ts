@@ -15,6 +15,7 @@ import { PassThrough, Readable, Writable } from 'node:stream'
 import { afterEach, describe, expect, it, vi } from 'vitest'
 
 import { AcpRuntime } from './runtime'
+import { AcpPermissionContext } from './permission-context'
 import { ContextUsageTracker, type TokenCounter } from './context-usage-tracker'
 import {
   ACP_PROMPT_FAILED_EVENT_TITLE,
@@ -614,19 +615,28 @@ const handleSessionUpdate = (runtime: AcpRuntime, notification: SessionNotificat
 const reviewerSessionIds = (runtime: AcpRuntime): Set<string> =>
   (runtime as unknown as { reviewerSessionIds: Set<string> }).reviewerSessionIds
 
+const permissionContext = (runtime: AcpRuntime): AcpPermissionContext =>
+  (runtime as unknown as { permissionContext: AcpPermissionContext }).permissionContext
+
 const codexMcpToolIdentitiesMap = (runtime: AcpRuntime): Map<string, Map<string, unknown>> =>
-  (runtime as unknown as { codexMcpToolIdentities: Map<string, Map<string, unknown>> })
-    .codexMcpToolIdentities
+  (
+    permissionContext(runtime) as unknown as {
+      codexMcpToolIdentities: Map<string, Map<string, unknown>>
+    }
+  ).codexMcpToolIdentities
 
 const opencodeMcpToolInputsMap = (runtime: AcpRuntime): Map<string, Map<string, unknown>> =>
-  (runtime as unknown as { opencodeMcpToolInputs: Map<string, Map<string, unknown>> })
-    .opencodeMcpToolInputs
+  (
+    permissionContext(runtime) as unknown as {
+      opencodeMcpToolInputs: Map<string, Map<string, unknown>>
+    }
+  ).opencodeMcpToolInputs
 
 const opencodeMcpToolInputWaitersMap = (
   runtime: AcpRuntime
 ): Map<string, Map<string, Set<unknown>>> =>
   (
-    runtime as unknown as {
+    permissionContext(runtime) as unknown as {
       opencodeMcpToolInputWaiters: Map<string, Map<string, Set<unknown>>>
     }
   ).opencodeMcpToolInputWaiters
@@ -637,14 +647,24 @@ const waitForOpenCodeMcpToolInput = (
   toolCallId: string
 ): Promise<'ready' | 'timeout' | 'cancelled'> =>
   (
-    runtime as unknown as {
+    permissionContext(runtime) as unknown as {
       waitForOpenCodeMcpToolInput: (
         currentSessionId: string,
         currentToolCallId: string,
-        promptTurn: number | undefined
+        context: {
+          sessionId: string
+          framework: 'opencode'
+          mcpServerNames: readonly string[]
+          isCancelled: () => boolean
+        }
       ) => Promise<'ready' | 'timeout' | 'cancelled'>
     }
-  ).waitForOpenCodeMcpToolInput(sessionId, toolCallId, undefined)
+  ).waitForOpenCodeMcpToolInput(sessionId, toolCallId, {
+    sessionId,
+    framework: 'opencode',
+    mcpServerNames: ['open-science-notebook'],
+    isCancelled: () => false
+  })
 
 const observePermissionToolContext = (
   runtime: AcpRuntime,

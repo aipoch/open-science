@@ -92,16 +92,9 @@ import {
   mimeEssence
 } from './attachment-content'
 import { readBoundedManagedFilePreview } from '../managed-file-preview'
-import {
-  AcpPermissionBroker,
-  ConversationPermissionGrantStore,
-  resolveNotebookPermissionContext
-} from './permission-broker'
-import {
-  isMcpToolName,
-  withTrustedMcpToolIdentity,
-  withTrustedNativeToolIdentity
-} from './permission-policy'
+import { ConversationPermissionGrantStore } from './permission-broker'
+import { isMcpToolName } from './permission-policy'
+import { AcpPermissionContext, HUMAN_PERMISSION_ACTION_ORIGIN } from './permission-context'
 import { applyCurrentModeUpdate } from './permission-profile-controller'
 import {
   ARTIFACT_MCP_SERVER_NAME,
@@ -372,136 +365,6 @@ type ClientContextSessionAttacher = {
   attachSession: (response: SessionAttachmentResponse) => ActiveSession
 }
 
-type CodexMcpToolIdentity = {
-  title: string
-  providerToolName: string
-  mcpIdentity: string
-  rawInput: unknown
-}
-
-type OpenCodeMcpToolInput = {
-  title: string
-  providerToolName: string
-  mcpIdentity: string
-  rawInput?: unknown
-}
-
-type ClaudeCodeMcpToolInput = {
-  title: string
-  providerToolName: string
-  mcpIdentity: string
-  rawInput?: Record<string, unknown>
-}
-
-type OpenCodePermissionContextWaitOutcome = 'ready' | 'timeout' | 'cancelled'
-type OpenCodePermissionContextWaiter = (outcome: OpenCodePermissionContextWaitOutcome) => void
-
-const isRecord = (value: unknown): value is Record<string, unknown> =>
-  typeof value === 'object' && value !== null && !Array.isArray(value)
-
-// OpenCode's older permission bridge can omit provider metadata from request_permission. Accept the
-// native Skill identity only from a preceding tool_call: either explicit provider metadata, or the
-// legacy wire shape with an exact title plus a structured skill name. The runtime later binds this
-// observation to request_permission by session and toolCallId.
-const isOpenCodeNativeSkillToolCall = (update: SessionNotification['update']): boolean => {
-  if (update.sessionUpdate !== 'tool_call' || update.kind !== 'other') return false
-  const providerToolName = extractProviderToolName(update)?.trim().toLowerCase()
-  if (providerToolName !== undefined) return providerToolName === 'skill'
-
-  const rawInput = isRecord(update.rawInput) ? update.rawInput : undefined
-  return (
-    update.title?.trim().toLowerCase() === 'skill' &&
-    typeof rawInput?.name === 'string' &&
-    rawInput.name.trim().length > 0
-  )
-}
-
-const boundedNotebookPermissionInput = (
-  title: string,
-  rawInput: unknown,
-  mcpServerNames: readonly string[]
-): Record<string, unknown> | undefined => {
-  const context = resolveNotebookPermissionContext(title, rawInput, mcpServerNames)
-  if (!context) return undefined
-
-  const outer = isRecord(rawInput) ? rawInput : {}
-  const input = isRecord(outer.arguments) ? outer.arguments : outer
-  const bounded: Record<string, unknown> = {}
-  const hasExecutionInput = ['code', 'command', 'script'].some(
-    (field) => typeof input[field] === 'string'
-  )
-
-  for (const field of ['kernelKind', 'kernel', 'language']) {
-    if (typeof input[field] === 'string') bounded[field] = input[field]
-  }
-  if (
-    context.runtime &&
-    hasExecutionInput &&
-    !bounded.kernelKind &&
-    !bounded.kernel &&
-    !bounded.language
-  ) {
-    bounded.language = context.runtime
-  }
-
-  for (const field of ['code', 'command', 'script']) {
-    const value = input[field]
-    if (typeof value !== 'string') continue
-
-    bounded[field] = value.slice(0, MAX_PERMISSION_CODE_PREVIEW_CHARS)
-    if (value.length > MAX_PERMISSION_CODE_PREVIEW_CHARS) bounded.inputTruncated = true
-    break
-  }
-
-  return bounded
-}
-
-const isCodexMcpApproval = (params: RequestPermissionRequest): boolean => {
-  const meta = (params as RequestPermissionRequest & { _meta?: unknown })._meta
-
-  return isRecord(meta) && meta.is_mcp_tool_approval === true
-}
-
-const isCodexMcpToolCall = (update: SessionNotification['update']): boolean => {
-  const meta = (update as SessionNotification['update'] & { _meta?: unknown })._meta
-
-  return isRecord(meta) && meta.is_mcp_tool_call === true
-}
-
-// Codex emits the full MCP identity in tool_call immediately before a sparse permission request.
-// Trust it only when the adapter marks the event as MCP, its qualified title matches server/tool,
-// and the reported server is one this session was actually configured to use.
-const codexMcpToolIdentity = (
-  event: AcpRuntimeEvent,
-  mcpServerNames: readonly string[]
-): CodexMcpToolIdentity | undefined => {
-  if (!isRecord(event.rawInput)) return undefined
-
-  const server = event.rawInput.server
-  const tool = event.rawInput.tool
-
-  if (typeof server !== 'string' || typeof tool !== 'string' || !tool.trim()) {
-    return undefined
-  }
-
-  const title = `mcp.${server}.${tool}`
-  if (event.title !== title) return undefined
-  const mcpIdentity = resolveCanonicalMcpToolIdentity(title, mcpServerNames)
-  if (!mcpIdentity) return undefined
-
-  return {
-    title,
-    providerToolName: tool,
-    mcpIdentity,
-    rawInput: event.rawInput.arguments
-  }
-}
-
-// Bounds pending Codex MCP identities even if an agent never emits terminal tool updates.
-const MAX_CODEX_MCP_TOOL_IDENTITIES_PER_SESSION = 32
-const MAX_CLAUDE_CODE_MCP_TOOL_INPUTS_PER_SESSION = 32
-const MAX_OPENCODE_MCP_TOOL_INPUTS_PER_SESSION = 32
-const MAX_PERMISSION_CODE_PREVIEW_CHARS = 7_500
 // Mirror claude-agent-acp's autonomous result lanes. Unknown future origins stay eligible so a
 // newly introduced user lane does not silently lose the terminal SDK `num_turns` value.
 const CLAUDE_AUTONOMOUS_RESULT_ORIGINS = new Set([
@@ -511,7 +374,6 @@ const CLAUDE_AUTONOMOUS_RESULT_ORIGINS = new Set([
   'observer',
   'observer-activity'
 ])
-const OPENCODE_PERMISSION_CONTEXT_WAIT_MS = 1_000
 const ACTIVITY_GROUP_SYSTEM_PROMPT_APPEND = [
   '<open_science_activity_group_instructions>',
   `Before the first tool call in each coherent group of work, call the MCP tool \`${BEGIN_ACTIVITY_GROUP_TOOL_NAME}\` from the \`${ACTIVITY_GROUP_MCP_SERVER_NAME}\` server with a concise user-facing purpose title.`,
@@ -760,29 +622,7 @@ class AcpRuntime {
   // opencode's <server>_<tool>) and never conservatively auto-approved. Derived per session rather
   // than hardcoded so it can't drift from what createMcpServers wires up.
   private readonly sessionMcpServerNames = new Map<string, string[]>()
-  // Codex splits an MCP approval across two ACP messages: tool_call carries the identity/arguments,
-  // then request_permission carries only the call id. Retain only pending identities until consumed.
-  private readonly codexMcpToolIdentities = new Map<string, Map<string, CodexMcpToolIdentity>>()
-  // Claude Code can omit provider metadata from request_permission even though the preceding tool_call
-  // carries the exact qualified MCP title and arguments. Bind those two messages by call id so the
-  // Artifact save exception never has to trust an isolated, presentation-only permission title.
-  private readonly claudeCodeMcpToolInputs = new Map<string, Map<string, ClaudeCodeMcpToolInput>>()
-  // OpenCode sends the MCP name in request_permission but drops its arguments to `{}`. The immediately
-  // preceding tool update carries those arguments under the same call id, so retain them until the
-  // permission arrives. This is required for notebook runtime separation and permission preview.
-  private readonly opencodeMcpToolInputs = new Map<string, Map<string, OpenCodeMcpToolInput>>()
-  // Native Skill approvals use the same two-message binding as sparse OpenCode MCP approvals. Only
-  // the call id is retained; instruction contents and skill arguments never enter permission state.
-  private readonly opencodeNativeSkillToolCalls = new Map<string, Map<string, true>>()
-  // OpenCode writes the tool update and permission request back-to-back. The ACP SDK dispatches
-  // incoming messages concurrently, so the permission handler can run before the earlier update has
-  // populated opencodeMcpToolInputs. Waiters rendezvous those two messages by session + call id.
-  private readonly opencodeMcpToolInputWaiters = new Map<
-    string,
-    Map<string, Set<OpenCodePermissionContextWaiter>>
-  >()
   private readonly cancelledPromptTurnsBySession = new Map<string, number>()
-  private readonly closedOpenCodeToolCalls = new Map<string, Set<string>>()
   // Ephemeral background reviewer sessions (built via buildReviewerSession). They are deliberately kept
   // out of `this.sessions` — not tracked in the snapshot, not user-facing. Their permission requests are
   // handled by a strict allowlist: only the scope-bounded reviewer MCP is approved; every built-in tool is
@@ -849,7 +689,7 @@ class AcpRuntime {
   private reconnectBarrier: Promise<void> | undefined
   private reconnectBarrierResolve: (() => void) | undefined
   private expectedProcessExits = new WeakSet<ChildProcessWithoutNullStreams>()
-  private readonly permissionBroker: AcpPermissionBroker
+  private readonly permissionContext: AcpPermissionContext
   private readonly callbacks: AcpRuntimeCallbacks
   private readonly spawnAgent: (() => ChildProcessWithoutNullStreams) | undefined
   private readonly skillsHooks: AcpRuntimeSkillsOptions | undefined
@@ -955,8 +795,8 @@ class AcpRuntime {
       artifacts: this.artifactRepository,
       artifactVersions: options.artifacts?.provenance
     })
-    this.permissionBroker = new AcpPermissionBroker(
-      (request) => {
+    this.permissionContext = new AcpPermissionContext({
+      emitPermissionRequest: (request) => {
         // Relabel to the app-facing id when this session was adopted onto a replaced agent.
         const sessionId = this.agentToAppSessionId.get(request.sessionId) ?? request.sessionId
         const routed = sessionId === request.sessionId ? request : { ...request, sessionId }
@@ -973,9 +813,14 @@ class AcpRuntime {
         this.callbacks.onPermissionRequest?.(routed)
         this.emitState()
       },
-      options.permissionGrantStore,
-      options.permissionGrantRegistry
-    )
+      conversationGrants: options.permissionGrantStore,
+      permissionGrantRegistry: options.permissionGrantRegistry,
+      setTimer: this.setTimer,
+      clearTimer: this.clearTimer,
+      onOpenCodeWaitTimeout: ({ sessionId, toolCallId, waitMs }) => {
+        log.warn('OpenCode permission context wait timed out', { sessionId, toolCallId, waitMs })
+      }
+    })
   }
 
   // Boundary-safe context for session-creation and process-spawn diagnostics. Keep this list explicit:
@@ -996,10 +841,10 @@ class AcpRuntime {
     return this.snapshotOwner.snapshot({
       sessionId: this.currentSessionId,
       sessionIds,
-      pendingPermissions: this.permissionBroker.getPendingRequests(),
+      pendingPermissions: this.permissionContext.getPendingRequests(),
       permissionProfiles: Object.fromEntries(this.permissionProfiles),
       permissionGrants: Object.fromEntries(
-        sessionIds.map((sessionId) => [sessionId, this.permissionBroker.listGrants(sessionId)])
+        sessionIds.map((sessionId) => [sessionId, this.permissionContext.listGrants(sessionId)])
       ),
       contextUsageBySession: this.contextUsageTracker.usageSnapshot(),
       nativeContextCompactionSessionIds:
@@ -1722,8 +1567,6 @@ class AcpRuntime {
     // the same id, so retain its visible/revocable grants while cancelling requests owned by the old
     // agent session. Provider tool context must not survive because a fresh agent may reuse call ids.
     this.cancelPermissionFlowForSession(request.sessionId)
-    this.codexMcpToolIdentities.delete(request.sessionId)
-    this.claudeCodeMcpToolInputs.delete(request.sessionId)
 
     if (attached) {
       attached.dispose()
@@ -2242,7 +2085,7 @@ class AcpRuntime {
     if (this.hasSessionInteractionInFlight(request.sessionId)) {
       throw new Error('Permission profile cannot be changed while the Agent is running.')
     }
-    if (this.permissionBroker.hasPendingForSession(request.sessionId)) {
+    if (this.permissionContext.hasPendingForSession(request.sessionId)) {
       throw new Error('Resolve the pending permission request before changing profiles.')
     }
 
@@ -2254,7 +2097,7 @@ class AcpRuntime {
 
   // Revokes an app-owned session grant so the next matching tool call prompts again.
   async revokePermissionGrant(request: AcpRevokePermissionGrantRequest): Promise<AcpStateSnapshot> {
-    await this.permissionBroker.revokeGrant(request.sessionId, request.categoryKey)
+    await this.permissionContext.revokeGrant(request.sessionId, request.categoryKey)
     this.emitState()
 
     return this.getSnapshot()
@@ -2507,7 +2350,7 @@ class AcpRuntime {
       this.cancelTimers.clear()
       for (const controller of this.skillSelectorAbortControllers.values()) controller.abort()
       this.skillSelectorAbortControllers.clear()
-      this.permissionBroker.cancelAllPending()
+      this.permissionContext.dispose()
       this.clearReviewerSessionState()
       this.promptInFlightSessionIds.clear()
       this.contextCompactionInFlightSessionIds.clear()
@@ -2531,10 +2374,8 @@ class AcpRuntime {
       this.claudeTurnCountsBySession.clear()
       this.latestSessionConfigOptions.clear()
       this.sessionMcpServerNames.clear()
-      this.codexMcpToolIdentities.clear()
-      this.claudeCodeMcpToolInputs.clear()
       this.codexSkillActivity.clear()
-      this.clearAllOpenCodePermissionToolContext()
+      this.cancelledPromptTurnsBySession.clear()
       this.sessionProjectNames.clear()
       this.permissionProfiles.clear()
       this.artifactSessionIds.clear()
@@ -3178,10 +3019,8 @@ class AcpRuntime {
         const cancelTimer = this.cancelTimers.get(request.sessionId)
         if (cancelTimer) this.clearTimer(cancelTimer)
         this.cancelTimers.delete(request.sessionId)
-        this.codexMcpToolIdentities.delete(request.sessionId)
-        this.claudeCodeMcpToolInputs.delete(request.sessionId)
+        this.permissionContext.clearCorrelationsForSession(request.sessionId)
         this.claudeTurnCountsBySession.delete(request.sessionId)
-        this.clearOpenCodePermissionToolContext(request.sessionId)
         this.currentPromptTurnBySession.delete(request.sessionId)
         if (this.contextUsageUpdatedPromptTurnsBySession.get(request.sessionId) === promptTurn) {
           this.contextUsageUpdatedPromptTurnsBySession.delete(request.sessionId)
@@ -3316,7 +3155,7 @@ class AcpRuntime {
     // disconnects (clearing this.sessions and most maps) but deliberately KEEPS sessionFrameworks, so
     // deleting a session that was never re-adopted under the new framework would leak that entry —
     // later misleading the cross-framework-resume check. These deletes are no-ops when the id is absent.
-    this.permissionBroker.clearSession(request.sessionId)
+    this.permissionContext.clearSession(request.sessionId)
     const cancelTimer = this.cancelTimers.get(request.sessionId)
     if (cancelTimer) this.clearTimer(cancelTimer)
     this.cancelTimers.delete(request.sessionId)
@@ -3332,9 +3171,6 @@ class AcpRuntime {
     this.cancelledPromptTurnsBySession.delete(request.sessionId)
     this.latestSessionConfigOptions.delete(request.sessionId)
     this.sessionMcpServerNames.delete(request.sessionId)
-    this.codexMcpToolIdentities.delete(request.sessionId)
-    this.claudeCodeMcpToolInputs.delete(request.sessionId)
-    this.clearOpenCodePermissionToolContext(request.sessionId)
     this.sessionProjectNames.delete(request.sessionId)
     this.sessionFrameworks.delete(request.sessionId)
     this.sessionBackendIds.delete(request.sessionId)
@@ -3375,7 +3211,10 @@ class AcpRuntime {
   // Resolves or cancels one pending permission request from the renderer.
   async respondToPermission(response: AcpPermissionResponse): Promise<AcpStateSnapshot> {
     try {
-      const handled = await this.permissionBroker.respond(response)
+      const handled = await this.permissionContext.respondToPermission(
+        response,
+        HUMAN_PERMISSION_ACTION_ORIGIN
+      )
       this.pushEvent({
         kind: 'permission',
         level: handled ? 'info' : 'warning',
@@ -4834,19 +4673,20 @@ class AcpRuntime {
     const appSessionId = this.agentToAppSessionId.get(params.sessionId) ?? params.sessionId
     const mcpServerNames = this.sessionMcpServerNames.get(appSessionId) ?? []
     const promptTurn = this.currentPromptTurnBySession.get(appSessionId)
-    if (this.shouldCancelOpenCodePermission(appSessionId, params.toolCall.toolCallId, promptTurn)) {
-      return { outcome: { outcome: 'cancelled' } }
-    }
-    const normalizedParams = await this.restorePermissionToolContext(
-      params,
-      appSessionId,
+    const framework = this.sessionFrameworks.get(appSessionId)
+    const isPermissionContextCancelled = (): boolean =>
+      framework === 'opencode' &&
+      (promptTurn === undefined
+        ? this.sessions.has(appSessionId)
+        : this.currentPromptTurnBySession.get(appSessionId) !== promptTurn ||
+          this.cancelledPromptTurnsBySession.get(appSessionId) === promptTurn)
+    const normalizedParams = await this.permissionContext.restoreToolCall(params, {
+      sessionId: appSessionId,
+      framework,
       mcpServerNames,
-      promptTurn
-    )
-    if (
-      !normalizedParams ||
-      this.shouldCancelOpenCodePermission(appSessionId, params.toolCall.toolCallId, promptTurn)
-    ) {
+      isCancelled: isPermissionContextCancelled
+    })
+    if (!normalizedParams || isPermissionContextCancelled()) {
       return { outcome: { outcome: 'cancelled' } }
     }
     const toolName = extractProviderToolName(normalizedParams.toolCall)
@@ -4880,7 +4720,7 @@ class AcpRuntime {
 
       const profileState = this.permissionProfiles.get(appSessionId)
 
-      return await this.permissionBroker.requestPermission(
+      return await this.permissionContext.requestPermission(
         appSessionId === normalizedParams.sessionId
           ? normalizedParams
           : { ...normalizedParams, sessionId: appSessionId },
@@ -4919,433 +4759,17 @@ class AcpRuntime {
   private observePermissionToolContext(notification: SessionNotification): void {
     const sessionId = this.agentToAppSessionId.get(notification.sessionId) ?? notification.sessionId
     const framework = this.sessionFrameworks.get(sessionId)
-    if (framework !== 'codex' && framework !== 'opencode' && framework !== 'claude-code') return
-
-    const routed =
-      sessionId === notification.sessionId ? notification : { ...notification, sessionId }
-    const event = toAcpRuntimeEvent(routed, 'permission-tool-context')
-    if (event.kind !== 'tool' || !event.toolCallId) return
-
-    if (event.status === 'completed' || event.status === 'failed') {
-      this.deletePermissionToolContext(sessionId, event.toolCallId)
-      return
-    }
-
-    const mcpServerNames = this.sessionMcpServerNames.get(sessionId) ?? []
-    if (framework === 'codex') {
-      if (!isCodexMcpToolCall(notification.update)) return
-
-      const identity = codexMcpToolIdentity(event, mcpServerNames)
-      if (!identity) return
-
-      const identities = this.codexMcpToolIdentities.get(sessionId) ?? new Map()
-      this.setBoundedPermissionToolContext(
-        identities,
-        event.toolCallId,
-        identity,
-        MAX_CODEX_MCP_TOOL_IDENTITIES_PER_SESSION
-      )
-      this.codexMcpToolIdentities.set(sessionId, identities)
-      return
-    }
-
-    if (framework === 'claude-code') {
-      const title = event.title
-      if (!title || !isMcpToolName(title, mcpServerNames)) return
-      const providerToolName = event.providerToolName ?? title
-      const mcpIdentity =
-        resolveCanonicalMcpToolIdentity(providerToolName, mcpServerNames) ??
-        resolveCanonicalMcpToolIdentity(title, mcpServerNames)
-      if (!mcpIdentity) return
-
-      const inputs = this.claudeCodeMcpToolInputs.get(sessionId) ?? new Map()
-      this.setBoundedPermissionToolContext(
-        inputs,
-        event.toolCallId,
-        {
-          title,
-          providerToolName,
-          mcpIdentity,
-          ...(isRecord(event.rawInput) ? { rawInput: event.rawInput } : {})
-        },
-        MAX_CLAUDE_CODE_MCP_TOOL_INPUTS_PER_SESSION
-      )
-      this.claudeCodeMcpToolInputs.set(sessionId, inputs)
-      return
-    }
-
-    const update = notification.update
-    if (update.sessionUpdate === 'tool_call') {
-      const closedToolCalls = this.closedOpenCodeToolCalls.get(sessionId)
-      closedToolCalls?.delete(event.toolCallId)
-      if (closedToolCalls?.size === 0) this.closedOpenCodeToolCalls.delete(sessionId)
-    }
-    if (isOpenCodeNativeSkillToolCall(update)) {
-      const calls = this.opencodeNativeSkillToolCalls.get(sessionId) ?? new Map<string, true>()
-      this.setBoundedPermissionToolContext(
-        calls,
-        event.toolCallId,
-        true,
-        MAX_OPENCODE_MCP_TOOL_INPUTS_PER_SESSION
-      )
-      this.opencodeNativeSkillToolCalls.set(sessionId, calls)
-      this.resolveOpenCodeMcpToolInputWaiters(sessionId, event.toolCallId)
-      return
-    }
-    const originalRawInput =
-      update.sessionUpdate === 'tool_call' || update.sessionUpdate === 'tool_call_update'
-        ? update.rawInput
-        : undefined
-    const inputs = this.opencodeMcpToolInputs.get(sessionId) ?? new Map()
-    const previous = inputs.get(event.toolCallId)
-    const title = event.title ?? previous?.title
-    if (!title || !isMcpToolName(title, mcpServerNames)) return
-    const canReusePreviousIdentity = event.title == null || event.title === previous?.title
-    const providerToolName =
-      event.providerToolName ??
-      (canReusePreviousIdentity ? previous?.providerToolName : undefined) ??
-      title
-    const mcpIdentity =
-      resolveCanonicalMcpToolIdentity(providerToolName, mcpServerNames) ??
-      resolveCanonicalMcpToolIdentity(title, mcpServerNames) ??
-      (canReusePreviousIdentity ? previous?.mcpIdentity : undefined)
-    if (!mcpIdentity) return
-
-    const rawInput =
-      boundedNotebookPermissionInput(title, originalRawInput, mcpServerNames) ?? event.rawInput
-    const hasRawInput = isRecord(rawInput) && Object.keys(rawInput).length > 0
-    const next: OpenCodeMcpToolInput = {
-      title,
-      // OpenCode may omit _meta.toolName from the later permission request. Retain the identity only
-      // from a preceding MCP-classified tool event with the same toolCallId/title; an isolated
-      // permission title never reaches this cache and therefore cannot obtain an automatic grant.
-      providerToolName,
-      mcpIdentity,
-      ...(hasRawInput
-        ? { rawInput }
-        : canReusePreviousIdentity && previous?.rawInput !== undefined
-          ? { rawInput: previous.rawInput }
-          : {})
-    }
-
-    this.setBoundedPermissionToolContext(
-      inputs,
-      event.toolCallId,
-      next,
-      MAX_OPENCODE_MCP_TOOL_INPUTS_PER_SESSION
-    )
-    this.opencodeMcpToolInputs.set(sessionId, inputs)
-    if (hasRawInput) this.resolveOpenCodeMcpToolInputWaiters(sessionId, event.toolCallId)
-  }
-
-  private async restorePermissionToolContext(
-    params: RequestPermissionRequest,
-    appSessionId: string,
-    mcpServerNames: readonly string[],
-    promptTurn: number | undefined
-  ): Promise<RequestPermissionRequest | undefined> {
-    const framework = this.sessionFrameworks.get(appSessionId)
-    if (framework === 'claude-code') {
-      return this.restoreClaudeCodeMcpToolInput(params, appSessionId, mcpServerNames)
-    }
-    if (framework === 'opencode') {
-      const trustedNativeSkill = this.restoreOpenCodeNativeSkillPermission(params, appSessionId)
-      if (trustedNativeSkill !== params) return trustedNativeSkill
-
-      const restored = this.restoreOpenCodeMcpToolInput(params, appSessionId, mcpServerNames)
-      const isMcpRequest = isMcpToolName(params.toolCall.title, mcpServerNames)
-      const isNativeSkillCandidate =
-        params.toolCall.kind === 'other' && params.toolCall.title?.trim().toLowerCase() === 'skill'
-      if (!isMcpRequest && !isNativeSkillCandidate) {
-        return restored
-      }
-      if (
-        isMcpRequest &&
-        isRecord(restored.toolCall.rawInput) &&
-        Object.keys(restored.toolCall.rawInput).length > 0
-      ) {
-        return restored
-      }
-
-      const outcome = await this.waitForOpenCodeMcpToolInput(
-        appSessionId,
-        params.toolCall.toolCallId,
-        promptTurn
-      )
-      if (outcome === 'cancelled') return undefined
-      if (outcome === 'timeout') {
-        log.warn('OpenCode permission context wait timed out', {
-          sessionId: appSessionId,
-          toolCallId: params.toolCall.toolCallId,
-          waitMs: OPENCODE_PERMISSION_CONTEXT_WAIT_MS
-        })
-      }
-      const restoredNativeSkill = this.restoreOpenCodeNativeSkillPermission(params, appSessionId)
-      if (restoredNativeSkill !== params) return restoredNativeSkill
-      return this.restoreOpenCodeMcpToolInput(params, appSessionId, mcpServerNames)
-    }
-    if (framework !== 'codex' || !isCodexMcpApproval(params)) return params
-
-    const identities = this.codexMcpToolIdentities.get(appSessionId)
-    const identity = identities?.get(params.toolCall.toolCallId)
-
-    if (!identity || !isMcpToolName(identity.title, mcpServerNames)) return params
-
-    identities?.delete(params.toolCall.toolCallId)
-    if (identities?.size === 0) this.codexMcpToolIdentities.delete(appSessionId)
-
-    const toolMeta = isRecord(params.toolCall._meta) ? params.toolCall._meta : {}
-
-    return withTrustedMcpToolIdentity(
-      {
-        ...params,
-        toolCall: {
-          ...params.toolCall,
-          title: params.toolCall.title ?? identity.title,
-          rawInput: params.toolCall.rawInput ?? identity.rawInput,
-          _meta: { ...toolMeta, toolName: identity.providerToolName }
-        }
-      },
-      identity.mcpIdentity
-    )
-  }
-
-  private restoreClaudeCodeMcpToolInput(
-    params: RequestPermissionRequest,
-    appSessionId: string,
-    mcpServerNames: readonly string[]
-  ): RequestPermissionRequest {
-    const title = params.toolCall.title
-    if (!isMcpToolName(title, mcpServerNames)) return params
-
-    const inputs = this.claudeCodeMcpToolInputs.get(appSessionId)
-    const input = inputs?.get(params.toolCall.toolCallId)
-    if (!input || input.title !== title) {
-      return params
-    }
-
-    inputs?.delete(params.toolCall.toolCallId)
-    if (inputs?.size === 0) this.claudeCodeMcpToolInputs.delete(appSessionId)
-
-    return withTrustedMcpToolIdentity(
-      {
-        ...params,
-        toolCall: {
-          ...params.toolCall,
-          rawInput: params.toolCall.rawInput ?? input.rawInput,
-          _meta: {
-            ...(isRecord(params.toolCall._meta) ? params.toolCall._meta : {}),
-            toolName: input.providerToolName
-          }
-        }
-      },
-      input.mcpIdentity
-    )
-  }
-
-  private waitForOpenCodeMcpToolInput(
-    sessionId: string,
-    toolCallId: string,
-    promptTurn: number | undefined
-  ): Promise<OpenCodePermissionContextWaitOutcome> {
-    if (this.shouldCancelOpenCodePermission(sessionId, toolCallId, promptTurn)) {
-      return Promise.resolve('cancelled')
-    }
-    if (this.opencodeNativeSkillToolCalls.get(sessionId)?.has(toolCallId)) {
-      return Promise.resolve('ready')
-    }
-    const rawInput = this.opencodeMcpToolInputs.get(sessionId)?.get(toolCallId)?.rawInput
-    if (isRecord(rawInput) && Object.keys(rawInput).length > 0) {
-      return Promise.resolve('ready')
-    }
-
-    return new Promise((resolve) => {
-      const sessionWaiters = this.opencodeMcpToolInputWaiters.get(sessionId) ?? new Map()
-      const callWaiters =
-        sessionWaiters.get(toolCallId) ?? new Set<OpenCodePermissionContextWaiter>()
-      const timer: { handle?: ReturnType<typeof setTimeout> } = {}
-      let finished = false
-      const finish = (outcome: OpenCodePermissionContextWaitOutcome): void => {
-        if (finished) return
-        finished = true
-        if (timer.handle) this.clearTimer(timer.handle)
-        callWaiters.delete(finish)
-        if (callWaiters.size === 0) sessionWaiters.delete(toolCallId)
-        if (sessionWaiters.size === 0) this.opencodeMcpToolInputWaiters.delete(sessionId)
-        resolve(outcome)
-      }
-
-      callWaiters.add(finish)
-      sessionWaiters.set(toolCallId, callWaiters)
-      this.opencodeMcpToolInputWaiters.set(sessionId, sessionWaiters)
-      timer.handle = this.setTimer(() => finish('timeout'), OPENCODE_PERMISSION_CONTEXT_WAIT_MS)
-
-      if (this.shouldCancelOpenCodePermission(sessionId, toolCallId, promptTurn)) {
-        finish('cancelled')
-        return
-      }
-      if (this.opencodeNativeSkillToolCalls.get(sessionId)?.has(toolCallId)) {
-        finish('ready')
-        return
-      }
-      const latestRawInput = this.opencodeMcpToolInputs.get(sessionId)?.get(toolCallId)?.rawInput
-      if (isRecord(latestRawInput) && Object.keys(latestRawInput).length > 0) finish('ready')
+    this.permissionContext.observeToolCall(notification, {
+      sessionId,
+      framework,
+      mcpServerNames: this.sessionMcpServerNames.get(sessionId) ?? []
     })
-  }
-
-  private resolveOpenCodeMcpToolInputWaiters(
-    sessionId: string,
-    toolCallId: string,
-    outcome: OpenCodePermissionContextWaitOutcome = 'ready'
-  ): void {
-    const waiters = this.opencodeMcpToolInputWaiters.get(sessionId)?.get(toolCallId)
-    if (!waiters) return
-
-    for (const finish of Array.from(waiters)) finish(outcome)
-  }
-
-  private clearOpenCodePermissionToolContext(sessionId: string): void {
-    this.opencodeMcpToolInputs.delete(sessionId)
-    this.opencodeNativeSkillToolCalls.delete(sessionId)
-    this.closedOpenCodeToolCalls.delete(sessionId)
-    const sessionWaiters = this.opencodeMcpToolInputWaiters.get(sessionId)
-    if (!sessionWaiters) return
-
-    for (const waiters of Array.from(sessionWaiters.values())) {
-      for (const finish of Array.from(waiters)) finish('cancelled')
-    }
-  }
-
-  private clearAllOpenCodePermissionToolContext(): void {
-    this.opencodeMcpToolInputs.clear()
-    this.opencodeNativeSkillToolCalls.clear()
-    for (const sessionId of Array.from(this.opencodeMcpToolInputWaiters.keys())) {
-      this.clearOpenCodePermissionToolContext(sessionId)
-    }
-    this.cancelledPromptTurnsBySession.clear()
-    this.closedOpenCodeToolCalls.clear()
   }
 
   private cancelPermissionFlowForSession(sessionId: string): void {
     const promptTurn = this.currentPromptTurnBySession.get(sessionId)
     if (promptTurn !== undefined) this.cancelledPromptTurnsBySession.set(sessionId, promptTurn)
-    this.permissionBroker.cancelForSession(sessionId)
-    this.clearOpenCodePermissionToolContext(sessionId)
-  }
-
-  private shouldCancelOpenCodePermission(
-    sessionId: string,
-    toolCallId: string,
-    promptTurn: number | undefined
-  ): boolean {
-    if (this.sessionFrameworks.get(sessionId) !== 'opencode') return false
-    if (this.closedOpenCodeToolCalls.get(sessionId)?.has(toolCallId)) return true
-    if (promptTurn === undefined) return this.sessions.has(sessionId)
-    return (
-      this.currentPromptTurnBySession.get(sessionId) !== promptTurn ||
-      this.cancelledPromptTurnsBySession.get(sessionId) === promptTurn
-    )
-  }
-
-  private restoreOpenCodeMcpToolInput(
-    params: RequestPermissionRequest,
-    appSessionId: string,
-    mcpServerNames: readonly string[]
-  ): RequestPermissionRequest {
-    const title = params.toolCall.title
-    if (!isMcpToolName(title, mcpServerNames)) return params
-
-    const inputs = this.opencodeMcpToolInputs.get(appSessionId)
-    const input = inputs?.get(params.toolCall.toolCallId)
-    if (!input || input.title !== title) {
-      return params
-    }
-
-    const requestHasInput =
-      isRecord(params.toolCall.rawInput) && Object.keys(params.toolCall.rawInput).length > 0
-    const cachedHasInput = isRecord(input.rawInput) && Object.keys(input.rawInput).length > 0
-    if (requestHasInput || cachedHasInput) {
-      inputs?.delete(params.toolCall.toolCallId)
-      if (inputs?.size === 0) this.opencodeMcpToolInputs.delete(appSessionId)
-    }
-
-    return withTrustedMcpToolIdentity(
-      {
-        ...params,
-        toolCall: {
-          ...params.toolCall,
-          rawInput: requestHasInput ? params.toolCall.rawInput : input.rawInput,
-          _meta: {
-            ...(isRecord(params.toolCall._meta) ? params.toolCall._meta : {}),
-            toolName: input.providerToolName
-          }
-        }
-      },
-      input.mcpIdentity
-    )
-  }
-
-  private restoreOpenCodeNativeSkillPermission(
-    params: RequestPermissionRequest,
-    appSessionId: string
-  ): RequestPermissionRequest {
-    const calls = this.opencodeNativeSkillToolCalls.get(appSessionId)
-    if (!calls?.delete(params.toolCall.toolCallId)) return params
-    if (calls.size === 0) this.opencodeNativeSkillToolCalls.delete(appSessionId)
-
-    const providerToolName = extractProviderToolName(params.toolCall)?.trim().toLowerCase()
-    if (
-      params.toolCall.kind !== 'other' ||
-      params.toolCall.title?.trim().toLowerCase() !== 'skill' ||
-      (providerToolName != null && providerToolName !== 'skill')
-    ) {
-      return params
-    }
-
-    return withTrustedNativeToolIdentity(params, 'opencode/skill')
-  }
-
-  private setBoundedPermissionToolContext<T>(
-    contexts: Map<string, T>,
-    toolCallId: string,
-    context: T,
-    limit: number
-  ): void {
-    if (!contexts.has(toolCallId) && contexts.size >= limit) {
-      const oldestToolCallId = contexts.keys().next().value
-      if (oldestToolCallId) contexts.delete(oldestToolCallId)
-    }
-    contexts.set(toolCallId, context)
-  }
-
-  private deletePermissionToolContext(sessionId: string, toolCallId: string): void {
-    const codexIdentities = this.codexMcpToolIdentities.get(sessionId)
-    codexIdentities?.delete(toolCallId)
-    if (codexIdentities?.size === 0) this.codexMcpToolIdentities.delete(sessionId)
-
-    const claudeCodeInputs = this.claudeCodeMcpToolInputs.get(sessionId)
-    claudeCodeInputs?.delete(toolCallId)
-    if (claudeCodeInputs?.size === 0) this.claudeCodeMcpToolInputs.delete(sessionId)
-
-    const opencodeInputs = this.opencodeMcpToolInputs.get(sessionId)
-    opencodeInputs?.delete(toolCallId)
-    if (opencodeInputs?.size === 0) this.opencodeMcpToolInputs.delete(sessionId)
-    const opencodeNativeSkills = this.opencodeNativeSkillToolCalls.get(sessionId)
-    opencodeNativeSkills?.delete(toolCallId)
-    if (opencodeNativeSkills?.size === 0) this.opencodeNativeSkillToolCalls.delete(sessionId)
-    if (this.sessionFrameworks.get(sessionId) === 'opencode') {
-      const closedToolCalls = this.closedOpenCodeToolCalls.get(sessionId) ?? new Set<string>()
-      if (
-        !closedToolCalls.has(toolCallId) &&
-        closedToolCalls.size >= MAX_OPENCODE_MCP_TOOL_INPUTS_PER_SESSION
-      ) {
-        const oldestToolCallId = closedToolCalls.values().next().value
-        if (oldestToolCallId) closedToolCalls.delete(oldestToolCallId)
-      }
-      closedToolCalls.add(toolCallId)
-      this.closedOpenCodeToolCalls.set(sessionId, closedToolCalls)
-    }
-    this.resolveOpenCodeMcpToolInputWaiters(sessionId, toolCallId, 'cancelled')
+    this.permissionContext.cancelForSession(sessionId)
   }
 
   // Returns the leaf reviewer tool name when a claude-code MCP *title* matches the reviewer. The
@@ -5807,7 +5231,7 @@ class AcpRuntime {
     this.cancelTimers.clear()
     for (const controller of this.skillSelectorAbortControllers.values()) controller.abort()
     this.skillSelectorAbortControllers.clear()
-    this.permissionBroker.cancelAllPending()
+    this.permissionContext.dispose()
     this.clearReviewerSessionState()
     this.releaseAllNotebookSessionCapabilities()
     this.sessions.clear()
@@ -5817,10 +5241,8 @@ class AcpRuntime {
     this.claudeTurnCountsBySession.clear()
     this.latestSessionConfigOptions.clear()
     this.sessionMcpServerNames.clear()
-    this.codexMcpToolIdentities.clear()
-    this.claudeCodeMcpToolInputs.clear()
     this.codexSkillActivity.clear()
-    this.clearAllOpenCodePermissionToolContext()
+    this.cancelledPromptTurnsBySession.clear()
     this.sessionProjectNames.clear()
     this.contextUsageTracker.clear()
     this.contextUsageUpdatedPromptTurnsBySession.clear()
@@ -5884,9 +5306,7 @@ class AcpRuntime {
     for (const [sessionId, reviewerCwd] of this.reviewerSessionDirectories) {
       this.unregisterReviewerBridgeSession(sessionId)
       this.removeReviewerDirectory(reviewerCwd)
-      this.codexMcpToolIdentities.delete(sessionId)
-      this.claudeCodeMcpToolInputs.delete(sessionId)
-      this.clearOpenCodePermissionToolContext(sessionId)
+      this.permissionContext.clearCorrelationsForSession(sessionId)
       this.sessionFrameworks.delete(sessionId)
     }
     this.reviewerSessionDirectories.clear()
@@ -6016,9 +5436,7 @@ class AcpRuntime {
     this.reviewerSessionIds.delete(session.sessionId)
     const reviewerBridgeScoped = this.unregisterReviewerBridgeSession(session.sessionId)
     this.sessionMcpServerNames.delete(session.sessionId)
-    this.codexMcpToolIdentities.delete(session.sessionId)
-    this.claudeCodeMcpToolInputs.delete(session.sessionId)
-    this.clearOpenCodePermissionToolContext(session.sessionId)
+    this.permissionContext.clearCorrelationsForSession(session.sessionId)
     this.sessionFrameworks.delete(session.sessionId)
     this.reviewerRejectedToolCalls.delete(session.sessionId)
     const reviewerCwd = this.reviewerSessionDirectories.get(session.sessionId)

@@ -88,7 +88,11 @@ describe('ACP permission context', () => {
 
     const restored = await context.restoreToolCall(
       {
-        ...permissionRequest('session-1', 'call-39', { title: undefined, kind: 'execute' }),
+        ...permissionRequest('session-1', 'call-39', {
+          title: undefined,
+          kind: 'execute',
+          rawInput: undefined
+        }),
         _meta: { is_mcp_tool_approval: true }
       },
       {
@@ -133,9 +137,7 @@ describe('ACP permission context', () => {
       isCancelled: () => false
     })
 
-    await vi.waitFor(() =>
-      expect(context.snapshot().sessions['session-1']?.pendingWaiters).toBe(1)
-    )
+    await vi.waitFor(() => expect(context.snapshot().sessions['session-1']?.pendingWaiters).toBe(1))
 
     observe(
       context,
@@ -157,7 +159,7 @@ describe('ACP permission context', () => {
       code: code.slice(0, 7_500),
       inputTruncated: true
     })
-    expect(context.snapshot().sessions['session-1']?.pendingWaiters).toBe(0)
+    expect(context.snapshot().sessions['session-1']?.pendingWaiters ?? 0).toBe(0)
   })
 
   it('keeps a human-only decision parked when an agent-origin action tries to resolve it', async () => {
@@ -193,6 +195,52 @@ describe('ACP permission context', () => {
     } satisfies RequestPermissionResponse)
   })
 
+  it('drops waiter and preview residue when OpenCode correlation times out', async () => {
+    vi.useFakeTimers()
+    try {
+      const onOpenCodeWaitTimeout = vi.fn()
+      const context = new AcpPermissionContext({
+        emitPermissionRequest: vi.fn(),
+        onOpenCodeWaitTimeout
+      })
+      observe(
+        context,
+        {
+          sessionId: 'session-1',
+          update: {
+            sessionUpdate: 'tool_call',
+            toolCallId: 'call-1',
+            title: 'open_science_notebook_notebook_execute',
+            kind: 'other',
+            status: 'pending',
+            rawInput: {}
+          }
+        },
+        'opencode'
+      )
+      const restored = context.restoreToolCall(permissionRequest('session-1', 'call-1'), {
+        sessionId: 'session-1',
+        framework: 'opencode',
+        mcpServerNames: NOTEBOOK_SERVERS,
+        isCancelled: () => false
+      })
+
+      await vi.advanceTimersByTimeAsync(1_000)
+
+      await expect(restored).resolves.toMatchObject({
+        toolCall: { _meta: { toolName: 'open_science_notebook_notebook_execute' } }
+      })
+      expect(onOpenCodeWaitTimeout).toHaveBeenCalledWith({
+        sessionId: 'session-1',
+        toolCallId: 'call-1',
+        waitMs: 1_000
+      })
+      expect(context.snapshot()).toEqual({ pendingRequests: [], sessions: {} })
+    } finally {
+      vi.useRealTimers()
+    }
+  })
+
   it('cancels pending correlation waiters and decisions on session cleanup', async () => {
     const emitted: Array<{ requestId: string }> = []
     const context = new AcpPermissionContext({
@@ -222,9 +270,7 @@ describe('ACP permission context', () => {
     })
     const decision = context.requestPermission(permissionRequest('session-1', 'call-2'))
 
-    await vi.waitFor(() =>
-      expect(context.snapshot().sessions['session-1']?.pendingWaiters).toBe(1)
-    )
+    await vi.waitFor(() => expect(context.snapshot().sessions['session-1']?.pendingWaiters).toBe(1))
     context.cancelForSession('session-1')
 
     await expect(correlation).resolves.toBeUndefined()
@@ -256,9 +302,7 @@ describe('ACP permission context', () => {
       isCancelled: () => false
     })
 
-    await vi.waitFor(() =>
-      expect(context.snapshot().sessions['session-1']?.pendingWaiters).toBe(1)
-    )
+    await vi.waitFor(() => expect(context.snapshot().sessions['session-1']?.pendingWaiters).toBe(1))
     context.dispose()
 
     await expect(correlation).resolves.toBeUndefined()
