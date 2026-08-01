@@ -9,7 +9,13 @@ import { isNewer, selectDownload, type UpdateStatus } from '../../shared/update'
 import { downloadInstaller } from './downloader'
 import { fetchManifest } from './manifest'
 import type { UpdateStrategy } from './strategy'
+import type { ApplicationEventMap } from '../application-events'
 import { broadcastToRenderers } from '../renderer-broadcast'
+
+type UpdateBroadcast = <Channel extends 'update:status' | 'update:progress'>(
+  channel: Channel,
+  payload: ApplicationEventMap[Channel]
+) => void
 
 export type UpdateServiceDeps = {
   fetchImpl?: typeof fetch
@@ -17,7 +23,7 @@ export type UpdateServiceDeps = {
   arch?: string
   currentVersion?: string
   manifestUrl?: string
-  broadcast?: (channel: string, payload: unknown) => void
+  broadcast?: UpdateBroadcast
   // Resolves where to save the installer, or null if the user cancels. Injected in tests; the
   // default is platform-aware (see resolveSavePath).
   promptSavePath?: (defaultFileName: string) => Promise<string | null>
@@ -32,9 +38,8 @@ export type UpdateServiceDeps = {
 }
 
 // Default broadcast pushes to every live window, mirroring the connector approval-broker pattern.
-const defaultBroadcast = (channel: string, payload: unknown): void => {
+const defaultBroadcast: UpdateBroadcast = (channel, payload) =>
   broadcastToRenderers(channel, payload)
-}
 
 // Derive a safe on-disk installer name from the URL path only (never the query string), so a
 // query-polluted or malformed URL still yields a sane default filename.
@@ -64,7 +69,7 @@ export class UpdateService implements UpdateStrategy {
   private readonly arch: string
   private readonly currentVersion: string
   private readonly manifestUrl: string
-  private readonly broadcast: (channel: string, payload: unknown) => void
+  private readonly broadcast: UpdateBroadcast
   private readonly promptSavePath: (defaultFileName: string) => Promise<string | null>
   private readonly fileExists: (path: string) => boolean
   private readonly openPath: (path: string) => Promise<string>

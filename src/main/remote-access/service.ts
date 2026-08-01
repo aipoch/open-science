@@ -26,7 +26,10 @@ type RemoteAccessServiceDeps = {
   enableRemoteIt?: typeof enableRemoteItServices
   ensureRemoteItLink?: typeof ensureRemoteItConnectLink
   disableRemoteItLink?: typeof disableRemoteItConnectLink
-  broadcast?: (channel: string, payload: unknown) => void
+  broadcast?: (
+    channel: typeof REMOTE_ACCESS_CHANGED_CHANNEL,
+    payload: Record<string, never>
+  ) => void
 }
 
 const isRemoteItBrowserHost = (hostname: string): boolean =>

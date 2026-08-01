@@ -6,7 +6,13 @@ import { APP } from '../../shared/app-config'
 import type { UpdateStatus } from '../../shared/update'
 import { fetchManifest } from './manifest'
 import type { InstallGate, UpdateStrategy } from './strategy'
+import type { ApplicationEventMap } from '../application-events'
 import { broadcastToRenderers } from '../renderer-broadcast'
+
+type UpdateBroadcast = <Channel extends 'update:status' | 'update:progress'>(
+  channel: Channel,
+  payload: ApplicationEventMap[Channel]
+) => void
 
 // Minimal logger surface so tests inject a spy without pulling electron-log.
 type UpdaterLogger = { info: (msg: string) => void; error: (msg: string, err?: unknown) => void }
@@ -35,7 +41,7 @@ export type ElectronUpdaterDeps = {
   currentVersion?: string
   platform?: NodeJS.Platform
   arch?: string
-  broadcast?: (channel: string, payload: unknown) => void
+  broadcast?: UpdateBroadcast
   // Factory for the per-download cancellation token; defaults to electron-updater's CancellationToken.
   // Injectable so tests can drive cancel() without the real class.
   createCancellationToken?: () => MinimalCancellationToken
@@ -81,9 +87,8 @@ const defaultIsRosetta = (): boolean | undefined => {
 
 // Default broadcast pushes to every live window (mirrors service.ts). Never runs in unit tests, which
 // inject their own broadcast.
-const defaultBroadcast = (channel: string, payload: unknown): void => {
+const defaultBroadcast: UpdateBroadcast = (channel, payload) =>
   broadcastToRenderers(channel, payload)
-}
 
 // Coerce electron-updater's releaseNotes (string | {note}[] | null) to a plain string for the dialog.
 const notesToString = (notes: unknown): string => {
@@ -156,7 +161,7 @@ export class ElectronUpdaterStrategy implements UpdateStrategy {
   private readonly currentVersion: string
   private readonly platform: NodeJS.Platform
   private readonly arch: string
-  private readonly broadcast: (channel: string, payload: unknown) => void
+  private readonly broadcast: UpdateBroadcast
   private readonly fetchImpl?: typeof fetch
   private readonly manifestUrl: string
   private readonly log: UpdaterLogger

@@ -3,13 +3,17 @@ import { ipcMainHandle } from './ipc-handler-registry'
 import { LIFECYCLE_CHANNELS } from '../shared/lifecycle-events'
 import { callerContextForEvent, type CallerContext } from './caller-context'
 import { createLogger } from './logger'
+import type { ApplicationEventChannel, ApplicationEventMap } from './application-events'
 import { broadcastToRenderers } from './renderer-broadcast'
 
 const log = createLogger('lifecycle-broadcast')
 
 // Lifecycle notifications keep first-party clients fresh, but a disconnected renderer must never
 // turn an already-committed repository mutation into a failed RPC.
-const broadcastLifecycleEvent = <Payload>(channel: string, payload: Payload): void => {
+const broadcastLifecycleEvent = <Channel extends ApplicationEventChannel>(
+  channel: Channel,
+  payload: ApplicationEventMap[Channel]
+): void => {
   try {
     broadcastToRenderers(channel, payload)
   } catch (error) {

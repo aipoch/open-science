@@ -56,7 +56,10 @@ export const buildTaskNotificationShow =
 // to the wrong broadcast channel) would break notification click-to-open without TaskNotificationService
 // tests catching it.
 export type BuildConnectorApprovalBroadcastDeps = {
-  broadcastToRenderers: (channel: string, payload: ConnectorApprovalRequest) => void
+  broadcastToRenderers: (
+    channel: 'connectors:approval-request',
+    payload: ConnectorApprovalRequest
+  ) => void
   taskNotifications: Pick<TaskNotificationService, 'handleConnectorApproval'>
   onNotificationError?: (error: unknown) => void
 }
@@ -72,7 +75,10 @@ export const buildConnectorApprovalBroadcast =
   }
 
 export type BuildComputeApprovalBroadcastDeps = {
-  broadcastToRenderers: (channel: string, payload: ComputeApprovalRequest) => void
+  broadcastToRenderers: (
+    channel: 'compute:approval-request',
+    payload: ComputeApprovalRequest
+  ) => void
   taskNotifications: Pick<TaskNotificationService, 'handleComputeApproval'>
   onNotificationError?: (error: unknown) => void
 }
@@ -90,7 +96,10 @@ export const buildComputeApprovalBroadcast =
   }
 
 export type BuildSkillImportApprovalBroadcastDeps = {
-  broadcastToRenderers: (channel: string, payload: ConversationSkillImportApprovalRequest) => void
+  broadcastToRenderers: (
+    channel: 'skills:conversation-import-request',
+    payload: ConversationSkillImportApprovalRequest
+  ) => void
   taskNotifications: Pick<TaskNotificationService, 'handleSkillImportApproval'>
   onNotificationError?: (error: unknown) => void
 }

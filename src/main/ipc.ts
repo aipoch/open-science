@@ -9,6 +9,7 @@ import {
   composeApplicationRuntimeWithAdapters,
   type ApplicationModuleBuilder
 } from './application-runtime'
+import { createApplicationEventModule, type ApplicationEventSource } from './application-events'
 
 import { createAcpRuntime, createDefaultNotebookRuntimeService } from './acp/ipc'
 import { createDefaultArtifactRepository, registerArtifactIpcHandlers } from './artifacts/ipc'
@@ -132,7 +133,7 @@ import { registerUpdateIpcHandlers } from './update/ipc'
 import { createUpdateStrategy } from './update/create-strategy'
 import { startUpdateScheduler } from './update/scheduler'
 import { createDefaultUploadRepository, registerUploadIpcHandlers } from './uploads/ipc'
-import { broadcastToRenderers } from './renderer-broadcast'
+import { broadcastToRenderers, installRendererBroadcastEventHub } from './renderer-broadcast'
 import {
   installElectronRuntimeAdapters,
   type ElectronRuntimeAdapterInterfaces,
@@ -156,6 +157,7 @@ type IpcRegistrationOptions = {
 }
 
 export type ApplicationRuntimeInterfaces = {
+  applicationEvents: ApplicationEventSource
   taskNotifications: Pick<
     TaskNotificationService,
     'setActivationHandler' | 'setAttentionHandlers' | 'setPendingOpenSession' | 'setUnreadHandler'
@@ -249,6 +251,10 @@ const createApplicationModules = async (
       }
     })
   }
+  const applicationEvents = await modules.add(
+    installRendererBroadcastEventHub,
+    createApplicationEventModule
+  )
   // One settings service backs both the settings IPC and the ACP spawn config (single source of truth).
   const settingsService = await modules.add(undefined, () => ({
     capability: createDefaultSettingsService()
@@ -1210,6 +1216,7 @@ const createApplicationModules = async (
   backendTeardownOwnedByCoordinator = true
 
   return {
+    applicationEvents,
     taskNotifications,
     settingsService,
     sessionDeletionCapability: sessionPersistenceCoordinator,

@@ -106,10 +106,8 @@ type AcpIpcOptions = AcpIpcArtifacts & {
   profileService?: ProfileService
 }
 
-// Sends one runtime payload to every currently open renderer window.
-const broadcast = <Payload>(channel: string, payload: Payload): void => {
-  broadcastToRenderers(channel, payload)
-}
+// Sends one runtime payload through the typed application-event compatibility facade.
+const broadcast = broadcastToRenderers
 
 // Gives every new conversation an isolated working directory under the relocatable data root.
 // Persisted sessions keep this returned path as their cwd, so resumes return to the same workspace.

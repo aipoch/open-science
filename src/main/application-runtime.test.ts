@@ -6,6 +6,7 @@ import {
   shutdownApplicationSurfaces,
   withApplicationRuntimeShutdown
 } from './application-runtime'
+import { createApplicationEventModule } from './application-events'
 
 describe('application runtime composition', () => {
   it('constructs and starts each module once through declared dependencies', async () => {
@@ -233,6 +234,42 @@ describe('application runtime composition', () => {
 
     await runtime.dispose()
     expect(order).toEqual(['start', 'created', 'install', 'uninstall', 'dispose'])
+  })
+
+  it('keeps application event publication alive until later-owned backends finish disposal', async () => {
+    const order: string[] = []
+    let emitTerminalEvent = (): void => undefined
+
+    const runtime = await composeApplicationRuntime(async (modules) => {
+      const events = await modules.add((installedEvents) => {
+        emitTerminalEvent = () =>
+          installedEvents.publish('acp:event', {
+            id: 'event-1',
+            timestamp: 100,
+            kind: 'stop',
+            level: 'info',
+            sessionId: 'session-1',
+            turnUsage: { inputTokens: 3, cacheTokens: 2, outputTokens: 1 }
+          })
+        return () => order.push('uninstall:application-events')
+      }, createApplicationEventModule)
+      events.subscribe((event) => {
+        if (event.channel === 'acp:event') order.push(`event:${event.payload.kind}`)
+      })
+      await modules.add(undefined, () => ({
+        capability: undefined,
+        dispose: () => {
+          order.push('dispose:backend')
+          emitTerminalEvent()
+        }
+      }))
+      return {}
+    })
+
+    await runtime.dispose()
+    emitTerminalEvent()
+
+    expect(order).toEqual(['dispose:backend', 'event:stop', 'uninstall:application-events'])
   })
 })
 
