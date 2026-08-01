@@ -31,18 +31,25 @@ type ElectronApp = {
 
 const launchEnvironment = (
   storageRoot: string,
-  fakeAgentBinRoot?: string
+  fakeAgentBinRoot?: string,
+  inheritedEnvironment: NodeJS.ProcessEnv = process.env
 ): Record<string, string> => {
   const environment: Record<string, string> = {}
 
-  for (const [key, value] of Object.entries(process.env)) {
+  for (const [key, value] of Object.entries(inheritedEnvironment)) {
     if (value !== undefined && key !== 'ELECTRON_RENDERER_URL') environment[key] = value
   }
 
   environment.OPEN_SCIENCE_STORAGE_ROOT = storageRoot
   if (fakeAgentBinRoot) {
+    const inheritedPath = Object.entries(environment).find(
+      ([key]) => key.toLowerCase() === 'path'
+    )?.[1]
+    for (const key of Object.keys(environment)) {
+      if (key.toLowerCase() === 'path') delete environment[key]
+    }
     environment.OPEN_SCIENCE_AGENT_FRAMEWORK = 'opencode'
-    environment.PATH = `${fakeAgentBinRoot}${delimiter}${environment.PATH ?? ''}`
+    environment.PATH = `${fakeAgentBinRoot}${delimiter}${inheritedPath ?? ''}`
   }
   return environment
 }
@@ -302,5 +309,5 @@ const test = base.extend<{ app: ElectronApp }>({
   }
 })
 
-export { test }
+export { launchEnvironment, test }
 export type { ElectronApp }
