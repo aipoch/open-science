@@ -5,7 +5,7 @@ import { join, resolve } from 'node:path'
 
 import { describe, expect, it } from 'vitest'
 
-import { checkCiIntegrityChanges } from './check-ci-integrity.mjs'
+import { checkCiIntegrityChanges, ciIntegrityFilesFromRevisions } from './check-ci-integrity.mjs'
 
 describe('CI integrity policy', () => {
   it('accepts the repository PR Gate and CI Integrity workflows as new files', () => {
@@ -81,6 +81,28 @@ describe('CI integrity policy', () => {
     ])
 
     expect(result.ok).toBe(false)
+    expect(result.violations).toContainEqual(
+      expect.objectContaining({
+        path: '.github/workflows/example.yml',
+        rule: 'immutable-action-reference'
+      })
+    )
+  })
+
+  it('rejects mutable third-party action references retained in a changed workflow', () => {
+    const text = `jobs:
+  verify:
+    steps:
+      - uses: actions/checkout@v7
+`
+    const result = checkCiIntegrityChanges([
+      {
+        path: '.github/workflows/example.yml',
+        baseText: text,
+        headText: text
+      }
+    ])
+
     expect(result.violations).toContainEqual(
       expect.objectContaining({
         path: '.github/workflows/example.yml',
@@ -166,5 +188,93 @@ jobs: {}
     expect(result.violations).toContainEqual(
       expect.objectContaining({ path, rule: 'stable-required-check' })
     )
+  })
+
+  it('preserves the stable PR Gate when its workflow is renamed', () => {
+    const result = checkCiIntegrityChanges([
+      {
+        path: '.github/workflows/replacement.yml',
+        previousPath: '.github/workflows/pr-gate.yml',
+        baseText: 'jobs:\n  gate:\n    name: PR Gate\n',
+        headText: 'jobs:\n  renamed:\n    name: Something Else\n'
+      }
+    ])
+
+    expect(result.violations).toContainEqual(
+      expect.objectContaining({
+        path: '.github/workflows/replacement.yml',
+        rule: 'stable-required-check'
+      })
+    )
+  })
+
+  it('retains the previous required-workflow path from a Git rename', () => {
+    const root = mkdtempSync(join(tmpdir(), 'ci-integrity-rename-'))
+
+    try {
+      execFileSync('git', ['init', '--quiet'], { cwd: root })
+      execFileSync('git', ['config', 'user.email', 'ci@example.com'], { cwd: root })
+      execFileSync('git', ['config', 'user.name', 'CI Test'], { cwd: root })
+      mkdirSync(join(root, '.github', 'workflows'), { recursive: true })
+      writeFileSync(
+        join(root, '.github', 'workflows', 'pr-gate.yml'),
+        `name: Pull request checks
+on: pull_request
+permissions:
+  contents: read
+jobs:
+  gate:
+    name: PR Gate
+    runs-on: ubuntu-latest
+    steps:
+      - run: npm test
+`
+      )
+      execFileSync('git', ['add', '.github/workflows/pr-gate.yml'], { cwd: root })
+      execFileSync('git', ['commit', '--quiet', '-m', 'add gate'], { cwd: root })
+      const base = execFileSync('git', ['rev-parse', 'HEAD'], {
+        cwd: root,
+        encoding: 'utf8'
+      }).trim()
+
+      execFileSync(
+        'git',
+        ['mv', '.github/workflows/pr-gate.yml', '.github/workflows/replacement.yml'],
+        { cwd: root }
+      )
+      writeFileSync(
+        join(root, '.github', 'workflows', 'replacement.yml'),
+        `name: Pull request checks
+on: pull_request
+permissions:
+  contents: read
+jobs:
+  renamed:
+    name: Something Else
+    runs-on: ubuntu-latest
+    steps:
+      - run: npm test
+`
+      )
+      execFileSync('git', ['add', '.github/workflows/replacement.yml'], { cwd: root })
+      execFileSync('git', ['commit', '--quiet', '-m', 'rename gate'], { cwd: root })
+      const head = execFileSync('git', ['rev-parse', 'HEAD'], {
+        cwd: root,
+        encoding: 'utf8'
+      }).trim()
+
+      const files = ciIntegrityFilesFromRevisions(base, head, { cwd: root })
+      expect(files).toContainEqual(
+        expect.objectContaining({
+          path: '.github/workflows/replacement.yml',
+          previousPath: '.github/workflows/pr-gate.yml'
+        })
+      )
+      expect(checkCiIntegrityChanges(files).violations).toContainEqual(
+        expect.objectContaining({ rule: 'stable-required-check' })
+      )
+    } finally {
+      rmSync(root, { force: true, recursive: true })
+    }
   })
 })

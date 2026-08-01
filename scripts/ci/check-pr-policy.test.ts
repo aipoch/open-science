@@ -28,7 +28,18 @@ describe('pull request policy', () => {
 
       writeFileSync(join(root, 'README.md'), '# updated fixture\n')
       execFileSync('git', ['add', 'README.md'], { cwd: root })
-      execFileSync('git', ['commit', '--quiet', '-m', 'ci(gate): add policy'], { cwd: root })
+      execFileSync(
+        'git',
+        [
+          'commit',
+          '--quiet',
+          '-m',
+          'feat(api)!: remove legacy session endpoint',
+          '-m',
+          'BREAKING CHANGE: remove the legacy session endpoint.'
+        ],
+        { cwd: root }
+      )
       const head = execFileSync('git', ['rev-parse', 'HEAD'], {
         cwd: root,
         encoding: 'utf8'
@@ -43,7 +54,7 @@ describe('pull request policy', () => {
           EVENT_NAME: 'pull_request',
           GITHUB_STEP_SUMMARY: summary,
           HEAD_SHA: head,
-          PR_TITLE: 'ci(gate): add policy'
+          PR_TITLE: 'feat(api): update the session endpoint'
         }
       })
 
@@ -71,5 +82,31 @@ describe('pull request policy', () => {
       { kind: 'commit', subject: 'missing conventional format' },
       { kind: 'commit', subject: 'fix(Bad Scope): Uppercase description' }
     ])
+  })
+
+  it('rejects a breaking commit without the required footer', () => {
+    const result = checkPrPolicy({
+      eventName: 'pull_request',
+      title: 'feat(api): update the session endpoint',
+      commitSubjects: ['feat(api)!: remove legacy session endpoint'],
+      commitMessages: ['feat(api)!: remove legacy session endpoint']
+    })
+
+    expect(result.violations).toContainEqual({
+      kind: 'breaking-change-footer',
+      subject: 'feat(api)!: remove legacy session endpoint'
+    })
+  })
+
+  it('accepts a breaking commit with its required footer', () => {
+    const subject = 'feat(api)!: remove legacy session endpoint'
+    const result = checkPrPolicy({
+      eventName: 'pull_request',
+      title: 'feat(api): update the session endpoint',
+      commitSubjects: [subject],
+      commitMessages: [`${subject}\n\nBREAKING CHANGE: remove the legacy session endpoint.`]
+    })
+
+    expect(result).toEqual({ ok: true, violations: [] })
   })
 })

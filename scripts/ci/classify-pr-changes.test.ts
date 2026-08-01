@@ -203,6 +203,35 @@ describe('pull request change classification', () => {
     )
   })
 
+  it.each([
+    ['Windows runtime', 'src/main/windows.ts'],
+    ['PowerShell', 'src/main/notebook/micromamba-cache-powershell.test.ts'],
+    ['path handling', 'src/main/acp/workspace-path.ts'],
+    ['ACL behavior', 'src/main/notebook/micromamba-cache-acl.integration.test.ts'],
+    ['storage', 'src/main/storage/ipc.ts'],
+    ['session persistence', 'src/main/session-persistence/ipc.ts'],
+    ['file save', 'src/main/file-save.ts'],
+    ['specialist repository', 'src/main/specialist/repository.ts'],
+    ['notebook runtime settings', 'src/main/settings/notebook-runtime-settings.ts'],
+    ['preferences', 'src/main/settings/preferences.ts']
+  ])('adds native Windows lanes for %s changes', (_category, path) => {
+    const plan = classifyChanges([{ path, status: 'modified' }])
+
+    expect(plan.roots).toContain('windows_sensitive')
+    expect(plan.lanes).toEqual(expect.arrayContaining(['windows_runtime', 'windows_path']))
+    expect(plan.reasonChains).toContain(`${path} -> windows_sensitive`)
+  })
+
+  it('does not add focused Windows lanes for platform-neutral Main changes', () => {
+    const plan = classifyChanges([
+      { path: 'src/main/notebook/runtime-service.ts', status: 'modified' }
+    ])
+
+    expect(plan.roots).not.toContain('windows_sensitive')
+    expect(plan.lanes).not.toContain('windows_runtime')
+    expect(plan.lanes).not.toContain('windows_path')
+  })
+
   it('selects visual and accessibility consumers for a Renderer view change', () => {
     const plan = classifyChanges([
       { path: 'src/renderer/src/components/Button.tsx', status: 'modified' }

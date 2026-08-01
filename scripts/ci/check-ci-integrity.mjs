@@ -72,7 +72,6 @@ export function checkCiIntegrityChanges(files) {
   const violations = []
 
   for (const file of files) {
-    const baseReferences = actionReferences(file.baseText ?? '')
     const headText = file.headText ?? ''
     if (/^\.github\/workflows\/.*\.ya?ml$/i.test(file.path) && headText) {
       try {
@@ -86,7 +85,7 @@ export function checkCiIntegrityChanges(files) {
       }
     }
     for (const reference of actionReferences(headText)) {
-      if (!baseReferences.has(reference) && !isImmutableActionReference(reference)) {
+      if (!isImmutableActionReference(reference)) {
         violations.push({
           path: file.path,
           rule: 'immutable-action-reference',
@@ -113,7 +112,7 @@ export function checkCiIntegrityChanges(files) {
         }
       }
     }
-    const stableCheck = stableChecks[file.path]
+    const stableCheck = stableChecks[file.path] ?? stableChecks[file.previousPath]
     if (stableCheck && !hasStableJobName(headText, stableCheck)) {
       violations.push({
         path: file.path,
@@ -141,9 +140,10 @@ function isGuardedPath(path) {
   )
 }
 
-function textAtRevision(revision, path) {
+function textAtRevision(revision, path, cwd) {
   try {
     return execFileSync('git', ['show', `${revision}:${path}`], {
+      cwd,
       encoding: 'utf8',
       stdio: ['ignore', 'pipe', 'ignore']
     })
@@ -152,14 +152,15 @@ function textAtRevision(revision, path) {
   }
 }
 
-export function ciIntegrityFilesFromRevisions(base, head) {
-  const diff = execFileSync('git', ['diff', '--name-status', '-z', base, head])
+export function ciIntegrityFilesFromRevisions(base, head, { cwd = process.cwd() } = {}) {
+  const diff = execFileSync('git', ['diff', '--name-status', '-z', base, head], { cwd })
   return parseNameStatus(diff.toString('utf8'))
     .filter(({ path, previousPath }) => [path, previousPath].filter(Boolean).some(isGuardedPath))
     .map(({ path, previousPath }) => ({
       path,
-      baseText: textAtRevision(base, previousPath ?? path),
-      headText: textAtRevision(head, path)
+      previousPath,
+      baseText: textAtRevision(base, previousPath ?? path, cwd),
+      headText: textAtRevision(head, path, cwd)
     }))
 }
 

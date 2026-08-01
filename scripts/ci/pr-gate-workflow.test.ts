@@ -46,7 +46,14 @@ describe('PR Gate workflow', () => {
   it('always emits the same gate without workflow-level path exclusions', () => {
     expect(workflow.on?.pull_request).toEqual({
       branches: ['main'],
-      types: ['opened', 'synchronize', 'reopened', 'ready_for_review', 'converted_to_draft']
+      types: [
+        'opened',
+        'edited',
+        'synchronize',
+        'reopened',
+        'ready_for_review',
+        'converted_to_draft'
+      ]
     })
     expect(workflow.on?.pull_request?.['paths-ignore']).toBeUndefined()
     expect(workflow.on?.merge_group).toEqual({ types: ['checks_requested'] })
@@ -116,5 +123,15 @@ describe('PR Gate workflow', () => {
       },
       run: 'node scripts/ci/check-changed-format.mjs --base "$BASE_SHA" --head "$HEAD_SHA" --kind non-markdown'
     })
+  })
+
+  it('covers both root CLI and publishable SDK tests in the narrow lane', () => {
+    const testStep = workflow.jobs.cli_sdk.steps?.find(({ name }) => name === 'Test CLI and SDK')
+
+    expect(testStep?.run).toBe('npx vitest run cli packages/open-science')
+  })
+
+  it('labels the existing cross-process checks as a shadow baseline', () => {
+    expect(workflow.jobs.interface_contracts.name).toBe('Interface contract baseline (shadow)')
   })
 })

@@ -3,7 +3,7 @@ name: PR Gate
 on:
   pull_request:
     branches: [main]
-    types: [opened, synchronize, reopened, ready_for_review, converted_to_draft]
+    types: [opened, edited, synchronize, reopened, ready_for_review, converted_to_draft]
   merge_group:
     types: [checks_requested]
   workflow_dispatch:
@@ -227,7 +227,7 @@ jobs:
         run: npm run typecheck:web
 
   interface_contracts:
-    name: Interface contracts
+    name: Interface contract baseline (shadow)
     needs: preflight
     if: ${{ needs.preflight.result == 'success' && contains(fromJSON(needs.preflight.outputs.lanes), 'interface_contracts') }}
     runs-on: ubuntu-latest
@@ -268,7 +268,7 @@ jobs:
       - name: Install dependencies
         run: npm ci
       - name: Test CLI and SDK
-        run: npm run test:cli
+        run: npx vitest run cli packages/open-science
       - name: Check CLI package
         run: npm run check:cli-package
 

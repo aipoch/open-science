@@ -74,6 +74,22 @@
       "capabilities": ["main_runtime"]
     },
     {
+      "id": "windows_sensitive",
+      "paths": [
+        "src/main/**/*windows*.ts",
+        "src/main/**/*powershell*.ts",
+        "src/main/**/*path*.ts",
+        "src/main/**/*acl*.ts",
+        "src/main/storage/**",
+        "src/main/session-persistence/**",
+        "src/main/file-save.ts",
+        "src/main/specialist/repository.ts",
+        "src/main/settings/notebook-runtime-settings.ts",
+        "src/main/settings/preferences.ts"
+      ],
+      "capabilities": ["windows_sensitive"]
+    },
+    {
       "id": "renderer_view",
       "paths": ["src/renderer/**"],
       "capabilities": ["renderer_view"]
@@ -150,6 +166,10 @@
     "renderer_runtime": {
       "consumers": ["e2e_functional", "e2e_workspace"],
       "lanes": ["typecheck_web", "unit_renderer", "build"]
+    },
+    "windows_sensitive": {
+      "consumers": [],
+      "lanes": ["windows_runtime", "windows_path"]
     },
     "renderer_view": {
       "consumers": ["e2e_functional", "e2e_accessibility", "e2e_visual"],
