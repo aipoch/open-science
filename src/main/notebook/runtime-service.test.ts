@@ -1424,6 +1424,58 @@ describe('notebook runtime service', () => {
     expect(await journal.pending()).toEqual([])
   })
 
+  it('shares one startup recovery attempt across concurrent callers', async () => {
+    const root = await createStorageRoot()
+    const service = new NotebookRuntimeService({
+      configRoot: root,
+      dataRoot: root,
+      projectName: 'default-project',
+      repository: new NotebookRunRepository(root)
+    })
+    const originalReadState = RuntimeOperationJournal.prototype.readState
+    let releaseRead!: () => void
+    const readGate = new Promise<void>((resolve) => {
+      releaseRead = resolve
+    })
+    const readState = vi
+      .spyOn(RuntimeOperationJournal.prototype, 'readState')
+      .mockImplementation(async function () {
+        await readGate
+        return originalReadState.call(this)
+      })
+
+    const first = service.recoverInterruptedOperations()
+    await vi.waitFor(() => expect(readState).toHaveBeenCalledOnce())
+    const second = service.recoverInterruptedOperations()
+
+    await Promise.resolve()
+    expect(readState).toHaveBeenCalledOnce()
+
+    releaseRead()
+    await Promise.all([first, second])
+
+    // One healthy recovery reads once for the fail-closed preflight and once for reconciliation.
+    expect(readState).toHaveBeenCalledTimes(2)
+    readState.mockRestore()
+  })
+
+  it('treats a missing startup journal as ready without blocking runtimes', async () => {
+    const root = await createStorageRoot()
+    const runtimeRoot = getRuntimeRoot(root)
+    const service = new NotebookRuntimeService({
+      configRoot: root,
+      dataRoot: root,
+      projectName: 'default-project',
+      repository: new NotebookRunRepository(root)
+    })
+
+    await service.recoverInterruptedOperations()
+
+    expect(service.isPrefixRecoveryBlocked(envPrefix(runtimeRoot, DEFAULT_PY_ENV))).toBe(false)
+    expect(service.isPrefixRecoveryBlocked(envPrefix(runtimeRoot, DEFAULT_R_ENV))).toBe(false)
+    expect(existsSync(operationJournalPath(runtimeRoot))).toBe(false)
+  })
+
   it('wipes the pack download cache on startup so a restart does not resume a partial (WS13)', async () => {
     const root = await createStorageRoot()
     const runtimeRoot = join(root, 'runtime')
