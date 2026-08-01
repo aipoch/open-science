@@ -1,8 +1,5 @@
 import { homedir } from 'node:os'
 import { join } from 'node:path'
-import { randomUUID } from 'node:crypto'
-
-import { z } from 'zod'
 
 import type { CloseActionPreference } from '../../shared/window-controls'
 
@@ -57,33 +54,13 @@ import type {
   ValidateProviderRequest,
   ValidateProviderResult
 } from '../../shared/settings'
-import {
-  CODEX_ISOLATED_PROVIDER_ID,
-  DEFAULT_CONVERSATION_SKILL_IMPORT_ENABLED,
-  DEFAULT_REASONING_EFFORT,
-  isCodexSubscriptionProvider,
-  isProviderUsableByFramework,
-  requiresChatCompletionsBridge
-} from '../../shared/settings'
 import type { PackageMirror } from '../../shared/mirror'
-import {
-  buildActiveModelIncompatibleMessage,
-  CODEX_BRIDGE_UNSUPPORTED_MESSAGE,
-  NO_ACTIVE_PROVIDER_MESSAGE
-} from '../../shared/run-error-classification'
 import type { NotebookLanguage } from '../../shared/notebook'
 import type { RuntimeEnablement, RuntimeSelection } from '../../shared/notebook-runtime'
-import { isModelBridgeSupported } from '../../shared/provider-registry'
-import { resolveProviderReasoningEffortProfile } from '../../shared/provider-reasoning-effort'
-import {
-  resolveReasoningEffortValue,
-  type ModelReasoningEffort,
-  type ResolvedReasoningEffort
-} from '../../shared/reasoning-effort'
+import type { ResolvedReasoningEffort } from '../../shared/reasoning-effort'
 import { resolveStorageRoot } from '../storage-root'
 import {
   DEFAULT_AGENT_FRAMEWORK_ID,
-  getAgentFramework,
   listAgentFrameworks,
   type AgentFrameworkId,
   type ResolvedAgentBackend
@@ -91,153 +68,33 @@ import {
 import type { ClaudeDetectDeps } from './claude-detect'
 import type { OpencodeDetectDeps } from './opencode-detect'
 import type { CodexDetectDeps } from './codex-detect'
-import { openAiCompletionsBase } from './base-url'
 import type { InstallManagedOpencodeOptions } from './managed-opencode'
-import { opencodeConfigDir } from '../agent-framework/opencode'
-import {
-  codexStorageDir,
-  codexSubscriptionStorageDir,
-  normalizeResponsesBaseUrl
-} from '../agent-framework/codex'
 import type { InstallManagedCodexOptions, ManagedCodexInstallOutcome } from './managed-codex'
 import type { InstallManagedClaudeOptions, ManagedInstallOutcome } from './managed-claude'
 import { isEncryptionAvailable } from './crypto'
-import { buildProviderEnv, getUserClaudeConfigDir, type ResolvedProvider } from './provider-env'
-import {
-  ResponsesBridge,
-  type ResponsesBridgeConnection,
-  type ResponsesBridgeNamespacedTool
-} from './responses-bridge'
-import { NativeResponsesCompatibilityProxy } from './native-responses-compatibility'
+import { getUserClaudeConfigDir } from './provider-env'
 import { SettingsRepository } from './repository'
 import { SettingsPreferencesModule, toSettingsPreferencesSnapshot } from './preferences'
 import { NotebookRuntimeSettingsModule } from './notebook-runtime-settings'
 import { SkillCatalogModule } from './skill-catalog'
 import { ConnectorSettingsModule, type CustomServerSecurityChangeGuard } from './connector-settings'
-import {
-  CLAUDE_SHARED_DISCONNECTED_MESSAGE,
-  ProviderAccountsModule,
-  requiresNativeResponsesCompatibility
-} from './provider-accounts'
+import { ProviderAccountsModule } from './provider-accounts'
 import { AgentRuntimeManager, type ExecuteClaudeProbe } from './agent-runtime-manager'
+import {
+  AgentBackendResolver,
+  type AgentBackendResolutionContext,
+  type AgentBackendSelection,
+  type AgentSpawnConfig
+} from './backend-resolver'
 import { CONNECTOR_CATALOG } from '../connectors/catalog'
-import { renderConnectorInstructions } from '../connectors/skill-doc'
 import { SkillRegistry } from '../skills/registry'
 import { UserSkillRepository } from '../skills/user-skill-repository'
-import { requestSkillImportToolSchema } from '../skills/mcp-server'
-import {
-  REQUEST_SKILL_IMPORT_TOOL_DESCRIPTION,
-  REQUEST_SKILL_IMPORT_TOOL_NAME,
-  SKILL_IMPORT_MCP_SERVER_NAME
-} from '../../shared/skill-import'
-import { NOTEBOOK_MCP_SERVER_NAME, NOTEBOOK_RPC_TOOLS } from '../notebook/mcp-server'
-import { ARTIFACT_MCP_SERVER_NAME, writeArtifactFileToolSchema } from '../artifacts/mcp-server'
-import { beginActivityGroupToolSchema } from '../activity-groups/mcp-server'
-import {
-  ACTIVITY_GROUP_MCP_SERVER_NAME,
-  BEGIN_ACTIVITY_GROUP_TOOL_NAME
-} from '../../shared/activity-groups'
-import { REVIEWER_BRIDGE_NAMESPACED_TOOLS } from '../reviewer/bridge-tools'
 import type { StoredConnectors, StoredSettings } from './types'
-import { ensureCodexAuthHome, type CodexAuthControllerPort } from './codex-auth'
+import type { CodexAuthControllerPort } from './codex-auth'
 
 import type { SystemProxyEnvironment } from './system-proxy'
 import { type ClaudeIsolatedAuthControllerPort } from './claude-isolated-auth'
 import { type ClaudeSharedAuthControllerPort } from './claude-shared-auth'
-
-export type AgentBackendSelection = {
-  frameworkId: AgentFrameworkId
-}
-
-export type AgentBackendResolutionContext = {
-  forcedSkillIds?: string[]
-}
-
-type ResponsesBridgeEntry = {
-  bridge: ResponsesBridge
-  connection: Promise<ResponsesBridgeConnection>
-}
-
-type NativeResponsesCompatibilityEntry = {
-  proxy: NativeResponsesCompatibilityProxy
-  connection: Promise<ResponsesBridgeConnection>
-}
-
-type LeasedResponsesBridgeConnection = ResponsesBridgeConnection & {
-  lease: NonNullable<ResolvedAgentBackend['responsesBridgeLease']>
-}
-
-// Codex exposes local MCP tools as namespaced Responses functions. Chat Completions has no namespace
-// field, so the bridge receives the app-owned notebook schemas and aliases them for the upstream.
-const CODEX_NOTEBOOK_TOOL_NAMESPACE = `mcp__${NOTEBOOK_MCP_SERVER_NAME.replace(
-  /[^a-zA-Z0-9_]/g,
-  '_'
-)}`
-const CODEX_BRIDGE_NOTEBOOK_TOOLS: ResponsesBridgeNamespacedTool[] = NOTEBOOK_RPC_TOOLS.map(
-  (tool) => ({
-    namespace: CODEX_NOTEBOOK_TOOL_NAMESPACE,
-    name: tool.name,
-    description:
-      tool.name === 'notebook_execute'
-        ? `${tool.description} For Open Science data connectors, the Python code MUST call host.mcp(server, method, arguments). Never use requests, urllib, httpx, curl, or a raw upstream API for connector data; those bypass app permissions, credentials, and rate limits. Codex MCP resource-list tools are not connector discovery.`
-        : tool.description,
-    parameters: z.toJSONSchema(z.object(tool.inputSchema), {
-      target: 'draft-7'
-    }) as ResponsesBridgeNamespacedTool['parameters']
-  })
-)
-const CODEX_ARTIFACT_TOOL_NAMESPACE = `mcp__${ARTIFACT_MCP_SERVER_NAME.replace(
-  /[^a-zA-Z0-9_]/g,
-  '_'
-)}`
-const CODEX_BRIDGE_ARTIFACT_TOOLS: ResponsesBridgeNamespacedTool[] = [
-  {
-    namespace: CODEX_ARTIFACT_TOOL_NAMESPACE,
-    name: 'write_artifact_file',
-    description:
-      'Attach a generated image, chart, report, data export, or archive to the current Open Science response. The file must already exist before using a localPath source.',
-    parameters: z.toJSONSchema(z.object(writeArtifactFileToolSchema), {
-      target: 'draft-7'
-    }) as ResponsesBridgeNamespacedTool['parameters']
-  }
-]
-const CODEX_ACTIVITY_TOOL_NAMESPACE = `mcp__${ACTIVITY_GROUP_MCP_SERVER_NAME.replace(
-  /[^a-zA-Z0-9_]/g,
-  '_'
-)}`
-const CODEX_BRIDGE_ACTIVITY_TOOLS: ResponsesBridgeNamespacedTool[] = [
-  {
-    namespace: CODEX_ACTIVITY_TOOL_NAMESPACE,
-    name: BEGIN_ACTIVITY_GROUP_TOOL_NAME,
-    description:
-      'Declare the concise purpose of the next coherent group of tool calls. Call once before the first tool in that group, not once per step.',
-    parameters: z.toJSONSchema(z.object(beginActivityGroupToolSchema), {
-      target: 'draft-7'
-    }) as ResponsesBridgeNamespacedTool['parameters']
-  }
-]
-const CODEX_SKILL_IMPORT_TOOL_NAMESPACE = `mcp__${SKILL_IMPORT_MCP_SERVER_NAME.replace(
-  /[^a-zA-Z0-9_]/g,
-  '_'
-)}`
-const CODEX_BRIDGE_SKILL_IMPORT_TOOLS: ResponsesBridgeNamespacedTool[] = [
-  {
-    namespace: CODEX_SKILL_IMPORT_TOOL_NAMESPACE,
-    name: REQUEST_SKILL_IMPORT_TOOL_NAME,
-    description: REQUEST_SKILL_IMPORT_TOOL_DESCRIPTION,
-    parameters: z.toJSONSchema(z.object(requestSkillImportToolSchema), {
-      target: 'draft-7'
-    }) as ResponsesBridgeNamespacedTool['parameters']
-  }
-]
-// A spawn configuration the ACP runtime reads at connect time so the active provider's credentials
-// are always current.
-export type AgentSpawnConfig = {
-  envOverrides: Record<string, string>
-  executablePath: string
-  contextWindow?: number
-  sessionOptions?: Record<string, unknown>
-}
 
 // Outcome of uninstalling a managed runtime. `activeBackendAffected` is true only when the removed
 // runtime backed the active framework, so the IPC layer reconnects the agent for that case alone —
@@ -306,16 +163,9 @@ class SettingsService {
   private readonly connectors: ConnectorSettingsModule
   private readonly providers: ProviderAccountsModule
   private readonly runtimeManager: AgentRuntimeManager
+  private readonly backendResolver: AgentBackendResolver
   private readonly storageRoot: string
   private readonly userClaudeDir: string
-  // A bridge owns mutable per-runtime state (reasoning override, reviewer scopes, and reasoning
-  // replay). Track each backend generation separately so an overlapping reconnect cannot mutate the
-  // bridge still serving the retiring generation.
-  private readonly responsesBridges = new Map<string, ResponsesBridgeEntry>()
-  private readonly nativeResponsesCompatibilityProxies = new Map<
-    string,
-    NativeResponsesCompatibilityEntry
-  >()
   // Provider and runtime-install IDs historically shared one monotonic suffix. Keep that observable
   // ordering while the provider owner remains responsible for formatting provider IDs.
   private settingsIdSequence = 0
@@ -369,6 +219,14 @@ class SettingsService {
       codexAuth: options.codexAuth,
       claudeIsolatedAuth: options.claudeIsolatedAuth,
       claudeSharedAuth: options.claudeSharedAuth
+    })
+    this.backendResolver = new AgentBackendResolver({
+      readSettings: () => this.repository.getSettings(),
+      providers: this.providers,
+      runtime: this.runtimeManager,
+      connectors: this.connectors,
+      storageRoot: this.storageRoot,
+      userClaudeDir: this.userClaudeDir
     })
   }
 
@@ -526,9 +384,7 @@ class SettingsService {
   // profile. This is intentionally async only because settings are read from disk; capability lookup
   // is synchronous and never performs provider discovery or a network request.
   async resolveActiveReasoningEffort(intent: ReasoningEffort): Promise<ResolvedReasoningEffort> {
-    const settings = await this.repository.getSettings()
-
-    return this.resolveReasoningEffortFromSettings(settings, intent)
+    return this.backendResolver.resolveActiveReasoningEffort(intent)
   }
 
   // Whether desktop notifications for finished/failed agent tasks are on, read fresh so the
@@ -1023,77 +879,7 @@ class SettingsService {
   async resolveActiveSpawnConfig(
     context: AgentBackendResolutionContext = {}
   ): Promise<AgentSpawnConfig> {
-    const settings = await this.repository.getSettings()
-
-    return this.resolveSpawnConfig(settings, new Set(context.forcedSkillIds ?? []))
-  }
-
-  private async resolveSpawnConfig(
-    settings: StoredSettings,
-    forcedSkillIds: ReadonlySet<string>,
-    resolvedSelection?: { model?: string }
-  ): Promise<AgentSpawnConfig> {
-    const executablePath = await this.runtimeManager.resolveClaudeExecutable(
-      settings.claude?.resolvedPath
-    )
-
-    const activeProvider = settings.activeProviderId
-      ? settings.providers.find((provider) => provider.id === settings.activeProviderId)
-      : undefined
-
-    if (!activeProvider) {
-      throw new Error(NO_ACTIVE_PROVIDER_MESSAGE)
-    }
-
-    if (activeProvider.type === 'claude-shared' && activeProvider.disconnectedAt !== undefined) {
-      throw new Error(CLAUDE_SHARED_DISCONNECTED_MESSAGE)
-    }
-
-    // Provision the app-owned runtime bundle. Shared auth reads credentials from ~/.claude while the
-    // ACP session injects this bundle as a local plugin plus highest-priority settings layer.
-    const appConfigDir = await this.runtimeManager.provisionClaudeRuntimeConfig(
-      settings,
-      forcedSkillIds
-    )
-
-    const provider = this.providers.resolveProvider(
-      activeProvider,
-      resolvedSelection
-        ? resolvedSelection.model
-        : this.providers.resolveActiveModel(activeProvider, settings.activeModel)
-    )
-    const envOverrides = buildProviderEnv(provider, {
-      storageRoot: this.storageRoot,
-      claudeExecutablePath: executablePath,
-      userClaudeConfigDir: this.userClaudeDir
-    })
-
-    const sessionOptions =
-      activeProvider.type === 'claude-shared'
-        ? {
-            settings: join(appConfigDir, 'settings.json'),
-            plugins: [{ type: 'local', path: appConfigDir, skipMcpDiscovery: true }]
-          }
-        : provider.type === 'custom'
-          ? {
-              // Custom Anthropic-compatible gateways may work while Anthropic's domain preflight
-              // endpoint is unreachable. Keep this override scoped to the ACP session so neither
-              // project/user settings nor the isolated Claude runtime configuration are mutated.
-              // V1 keeps provider-native WebFetch/WebSearch Once-only. This bypass removes Claude's
-              // remote preflight dependency but does not create Session, Project, or Global grants.
-              settings: {
-                skipWebFetchPreflight: true,
-                permissions: { ask: ['WebFetch'] }
-              }
-            }
-          : undefined
-
-    return {
-      envOverrides,
-      executablePath,
-      sessionOptions,
-      contextWindow: provider.contextWindow
-    }
+    return this.backendResolver.resolveActiveSpawnConfig(context)
   }
 
   // Resolves the active agent backend for one connect: the selected framework plus its spawn inputs.
@@ -1104,381 +890,20 @@ class SettingsService {
   async resolveActiveAgentBackend(
     context: AgentBackendResolutionContext = {}
   ): Promise<ResolvedAgentBackend> {
-    const settings = await this.repository.getSettings()
-    const forced = process.env.OPEN_SCIENCE_AGENT_FRAMEWORK
-    const frameworkId: AgentFrameworkId =
-      forced === 'opencode' || forced === 'claude-code' || forced === 'codex'
-        ? forced
-        : (settings.agentFrameworkId ?? DEFAULT_AGENT_FRAMEWORK_ID)
-
-    return this.resolveAgentBackendFromSettings(settings, frameworkId, context)
+    return this.backendResolver.resolveActiveBackend(context)
   }
 
   // Captures only non-secret backend identity. Runtime generations resolve credentials again at spawn,
   // so decrypted keys are not retained by the coordinator after AcpRuntime finishes authentication.
   async captureActiveAgentBackendSelection(): Promise<AgentBackendSelection> {
-    const settings = await this.repository.getSettings()
-    const forced = process.env.OPEN_SCIENCE_AGENT_FRAMEWORK
-    const frameworkId: AgentFrameworkId =
-      forced === 'opencode' || forced === 'claude-code' || forced === 'codex'
-        ? forced
-        : (settings.agentFrameworkId ?? DEFAULT_AGENT_FRAMEWORK_ID)
-
-    return { frameworkId }
+    return this.backendResolver.captureConfiguredSelection()
   }
 
   async resolveAgentBackend(
     selection: AgentBackendSelection,
     context: AgentBackendResolutionContext = {}
   ): Promise<ResolvedAgentBackend> {
-    const stored = await this.repository.getSettings()
-    const settings: StoredSettings = {
-      ...stored,
-      agentFrameworkId: selection.frameworkId
-    }
-
-    return this.resolveAgentBackendFromSettings(settings, selection.frameworkId, context)
-  }
-
-  private async resolveAgentBackendFromSettings(
-    settings: StoredSettings,
-    frameworkId: AgentFrameworkId,
-    context: AgentBackendResolutionContext
-  ): Promise<ResolvedAgentBackend> {
-    const forcedSkillIds = new Set(context.forcedSkillIds ?? [])
-    const framework = getAgentFramework(frameworkId)
-    // 'default' means "don't override": nothing is sent over ACP or framework config, so the agent
-    // keeps its own default effort. A concrete intent is projected through the active model profile
-    // exactly once here, then delivered through the framework config and ACP session channels. Those
-    // transports receive the same model-native value and must not independently reinterpret it.
-
-    // Enforce provider↔framework compatibility up front so an incompatible pair fails with a clear
-    // message instead of spawning an agent that can't use the credentials — e.g. OpenCode + a Local
-    // Claude provider (Claude-only login), or Claude + an OpenAI-only gateway.
-    const activeProvider = settings.activeProviderId
-      ? settings.providers.find((provider) => provider.id === settings.activeProviderId)
-      : undefined
-
-    if (!activeProvider) {
-      throw new Error(NO_ACTIVE_PROVIDER_MESSAGE)
-    }
-
-    // Resolve the model exactly once for this backend generation. The same selection drives the
-    // model profile, bridge compatibility, and the framework config so a refreshed catalog cannot
-    // make the effort belong to one model while the request is sent to another.
-    const effectiveModel = this.providers.resolveActiveModel(activeProvider, settings.activeModel)
-    const effortIntent = settings.reasoningEffort ?? DEFAULT_REASONING_EFFORT
-    const reasoningEffortProfile = resolveProviderReasoningEffortProfile(
-      activeProvider,
-      effectiveModel
-    )
-    const resolvedEffort =
-      effortIntent === DEFAULT_REASONING_EFFORT
-        ? DEFAULT_REASONING_EFFORT
-        : resolveReasoningEffortValue(effortIntent, reasoningEffortProfile)
-    const sessionEffort: ModelReasoningEffort | undefined =
-      resolvedEffort === 'default' ? undefined : resolvedEffort
-    const supportedReasoningEfforts = reasoningEffortProfile.supported
-      ? [...new Set(reasoningEffortProfile.slots)]
-      : undefined
-
-    if (
-      !isProviderUsableByFramework(
-        {
-          apiEndpoints: this.providers.resolveProviderApiEndpoints(activeProvider, effectiveModel),
-          type: activeProvider.type
-        },
-        framework
-      )
-    ) {
-      throw new Error(buildActiveModelIncompatibleMessage(framework.displayName))
-    }
-
-    const activeConnectorIds = this.connectors.enabledConnectorIds(settings.connectors)
-    const connectorInstructions = renderConnectorInstructions(activeConnectorIds)
-
-    if (framework.id === 'codex' && !isModelBridgeSupported(activeProvider, effectiveModel)) {
-      throw new Error(CODEX_BRIDGE_UNSUPPORTED_MESSAGE)
-    }
-
-    if (framework.id === 'claude-code') {
-      // Claude path: app-owned runtime provisioning + Anthropic-shaped env + local-auth handling.
-      const { envOverrides, executablePath, sessionOptions, contextWindow } =
-        await this.resolveSpawnConfig(settings, forcedSkillIds, { model: effectiveModel })
-
-      return {
-        framework,
-        backendId: `${framework.id}:${activeProvider.id}`,
-        executablePath,
-        env: envOverrides,
-        sessionOptions,
-        sessionEffort,
-        contextWindow,
-        contextUsageModel: effectiveModel
-      }
-    }
-
-    const executablePath =
-      framework.id === 'codex'
-        ? await this.runtimeManager.resolveCodexExecutable(
-            settings.codex?.resolvedPath,
-            settings.codex?.nativePath
-          )
-        : await this.runtimeManager.resolveOpencodeExecutable(settings.opencodePath)
-    // Model metadata is a compatibility contract with the native Codex binary that is about to
-    // start. Probe that exact executable now instead of trusting a cached version from detection;
-    // a missing or stale cache must only make us choose the conservative generated catalog.
-    const codexNativeVersion =
-      framework.id === 'codex'
-        ? await this.runtimeManager.probeCodexNativeVersion(settings.codex?.nativePath)
-        : undefined
-    const provider = this.providers.resolveProvider(activeProvider, effectiveModel)
-    if (framework.id === 'codex' && isCodexSubscriptionProvider(provider.type)) {
-      // Runtime resolution can be reached without opening a Settings auth session first. Enforce
-      // file-backed credentials here as well so a direct prompt never falls through to the user's
-      // global Codex keyring.
-      await ensureCodexAuthHome('isolated', this.storageRoot)
-    }
-    // `codex-shared` is accepted only as a legacy/provider-time import request. Every runtime
-    // subscription record converges on the same app-owned backend and profile boundary.
-    const backendProviderId =
-      framework.id === 'codex' && isCodexSubscriptionProvider(provider.type)
-        ? CODEX_ISOLATED_PROVIDER_ID
-        : activeProvider.id
-    const skillsRoot =
-      framework.id === 'codex'
-        ? isCodexSubscriptionProvider(provider.type)
-          ? codexSubscriptionStorageDir(this.storageRoot)
-          : codexStorageDir(this.storageRoot)
-        : opencodeConfigDir(this.storageRoot)
-    await this.runtimeManager.materializeAgentSkills(settings, skillsRoot, forcedSkillIds)
-    // Chat-only providers require protocol translation. Non-OpenAI native Responses providers keep
-    // their protocol, but use a narrow compatibility proxy because Codex emits namespace tools while
-    // several compatible APIs accept only flat function names. Official OpenAI and subscriptions
-    // already implement Codex's native wire contract and remain direct.
-    const needsChatResponsesBridge = requiresChatCompletionsBridge(provider, framework)
-    const needsNativeResponsesCompatibility = requiresNativeResponsesCompatibility(
-      provider,
-      framework
-    )
-    // A bridge may still serve a live Codex runtime from an earlier framework generation. Do not stop
-    // or retarget it merely because the newly selected framework/provider does not need one.
-    const responsesBridge = needsChatResponsesBridge
-      ? await this.ensureResponsesBridge(
-          provider,
-          sessionEffort,
-          settings.conversationSkillImportEnabled ?? DEFAULT_CONVERSATION_SKILL_IMPORT_ENABLED
-        )
-      : needsNativeResponsesCompatibility
-        ? await this.ensureNativeResponsesCompatibility(provider)
-        : undefined
-    try {
-      const modelConfig = framework.prepareModelConfig(provider, {
-        storageRoot: this.storageRoot,
-        executablePath,
-        ...(codexNativeVersion ? { nativeVersion: codexNativeVersion } : {}),
-        responsesBridge,
-        reasoningEffort: sessionEffort,
-        reasoningEfforts: supportedReasoningEfforts,
-        // Keep only connector calling conventions in OpenCode's baseline. Detailed tools are already
-        // materialized as on-demand `mcp-*` skills above, avoiding a full catalog in every request.
-        instructions: connectorInstructions
-      })
-      await this.runtimeManager.materializeAgentConfigFiles(modelConfig.configFiles)
-      const opencodeUsagePort =
-        framework.id === 'opencode'
-          ? await this.runtimeManager.reserveOpenCodeUsagePort()
-          : undefined
-      const opencodeUsagePassword = opencodeUsagePort === undefined ? undefined : randomUUID()
-      const usesCodexSystemProxy =
-        framework.id === 'codex' && isCodexSubscriptionProvider(provider.type)
-      const proxyEnv = usesCodexSystemProxy
-        ? await this.runtimeManager.resolveCodexProxyEnvironment()
-        : undefined
-
-      // Protocol-driven frameworks apply an explicit model through the ACP session configOption. A Codex
-      // subscription with no explicit selection leaves this undefined so Codex uses the account default.
-      const sessionModel = modelConfig.sessionModel ?? provider.model
-      return {
-        framework,
-        backendId: `${framework.id}:${backendProviderId}`,
-        executablePath,
-        env: {
-          ...(modelConfig.env ?? {}),
-          ...(opencodeUsagePassword ? { OPENCODE_SERVER_PASSWORD: opencodeUsagePassword } : {}),
-          ...(proxyEnv ?? {}),
-          ...(framework.id === 'codex' && settings.codex?.nativePath
-            ? { CODEX_PATH: settings.codex.nativePath }
-            : {})
-        },
-        args:
-          opencodeUsagePort === undefined
-            ? modelConfig.args
-            : [
-                ...(modelConfig.args ?? []),
-                '--port',
-                String(opencodeUsagePort),
-                '--hostname',
-                '127.0.0.1'
-              ],
-        ...(usesCodexSystemProxy
-          ? { proxyEnvironmentMode: proxyEnv === undefined ? 'inherit' : 'replace' }
-          : {}),
-        sessionModel,
-        ...(framework.id === 'codex' && isCodexSubscriptionProvider(provider.type) && sessionModel
-          ? { sessionModelRequired: true }
-          : {}),
-        sessionEffort,
-        contextWindow: provider.contextWindow,
-        contextUsageModel: provider.model,
-        authentication: modelConfig.authentication,
-        providerConfiguration: modelConfig.providerConfiguration,
-        ...(opencodeUsagePort === undefined || !opencodeUsagePassword
-          ? {}
-          : {
-              opencodeUsageApi: {
-                baseUrl: `http://127.0.0.1:${opencodeUsagePort}`,
-                authorization: `Basic ${Buffer.from(`opencode:${opencodeUsagePassword}`).toString('base64')}`
-              }
-            }),
-        responsesBridgeLease: responsesBridge?.lease
-      }
-    } catch (error) {
-      await responsesBridge?.lease.release()
-      throw error
-    }
-  }
-
-  private async ensureResponsesBridge(
-    provider: ResolvedProvider,
-    reasoningEffort: ModelReasoningEffort | undefined,
-    conversationSkillImportEnabled: boolean
-  ): Promise<LeasedResponsesBridgeConnection> {
-    // Resolve to the OpenAI base the bridge appends `/chat/completions` to: an official vendor's exact
-    // versioned base, or a custom gateway root normalized to `<root>/v1`.
-    const targetBaseUrl = openAiCompletionsBase(provider)
-    if (!targetBaseUrl) throw new Error('The Chat Completions provider has no base URL.')
-
-    const target = {
-      baseUrl: targetBaseUrl,
-      key: provider.key,
-      vendorId: provider.vendorId,
-      reasoningEffortTransport: provider.reasoningEffortTransport,
-      model: provider.model,
-      reasoningEffort,
-      namespacedTools: [
-        ...CODEX_BRIDGE_NOTEBOOK_TOOLS,
-        ...CODEX_BRIDGE_ARTIFACT_TOOLS,
-        ...CODEX_BRIDGE_ACTIVITY_TOOLS,
-        ...(conversationSkillImportEnabled ? CODEX_BRIDGE_SKILL_IMPORT_TOOLS : [])
-      ],
-      reviewerScope: {
-        namespacedTools: REVIEWER_BRIDGE_NAMESPACED_TOOLS
-      }
-    }
-    const bridgeId = randomUUID()
-    const bridge = new ResponsesBridge(target)
-    const entry = { bridge, connection: bridge.start() }
-    this.responsesBridges.set(bridgeId, entry)
-
-    let connection: ResponsesBridgeConnection
-    try {
-      connection = await entry.connection
-    } catch (error) {
-      if (this.responsesBridges.get(bridgeId) === entry) this.responsesBridges.delete(bridgeId)
-      await entry.bridge.close().catch(() => undefined)
-      throw error
-    }
-
-    let released = false
-    const leasedEntry = entry
-    return {
-      ...connection,
-      lease: {
-        selectSkills: (text, catalog, signal) =>
-          leasedEntry.bridge.selectSkills(text, catalog, signal),
-        registerReviewerSession: (promptCacheKey) =>
-          leasedEntry.bridge.registerReviewerSession(promptCacheKey),
-        unregisterReviewerSession: (promptCacheKey) =>
-          leasedEntry.bridge.unregisterReviewerSession(promptCacheKey),
-        setReasoningEffort: (effort) => leasedEntry.bridge.setReasoningEffort(effort),
-        release: async () => {
-          if (released) return
-          released = true
-          if (this.responsesBridges.get(bridgeId) !== leasedEntry) return
-          this.responsesBridges.delete(bridgeId)
-          await leasedEntry.bridge.close()
-        }
-      }
-    }
-  }
-
-  private async ensureNativeResponsesCompatibility(
-    provider: ResolvedProvider
-  ): Promise<LeasedResponsesBridgeConnection> {
-    const targetBaseUrl = normalizeResponsesBaseUrl(provider.openaiBaseUrl ?? provider.baseUrl)
-    if (!targetBaseUrl) throw new Error('The native Responses provider has no base URL.')
-
-    const proxyId = randomUUID()
-    const proxy = new NativeResponsesCompatibilityProxy({
-      baseUrl: targetBaseUrl,
-      key: provider.key,
-      model: provider.model,
-      reviewerScope: { namespacedTools: REVIEWER_BRIDGE_NAMESPACED_TOOLS }
-    })
-    const entry = { proxy, connection: proxy.start() }
-    this.nativeResponsesCompatibilityProxies.set(proxyId, entry)
-
-    let connection: ResponsesBridgeConnection
-    try {
-      connection = await entry.connection
-    } catch (error) {
-      if (this.nativeResponsesCompatibilityProxies.get(proxyId) === entry) {
-        this.nativeResponsesCompatibilityProxies.delete(proxyId)
-      }
-      await entry.proxy.close().catch(() => undefined)
-      throw error
-    }
-
-    let released = false
-    const leasedEntry = entry
-    return {
-      ...connection,
-      lease: {
-        selectSkills: (text, catalog, signal) =>
-          leasedEntry.proxy.selectSkills(text, catalog, signal),
-        registerReviewerSession: (promptCacheKey) =>
-          leasedEntry.proxy.registerReviewerSession(promptCacheKey),
-        unregisterReviewerSession: (promptCacheKey) =>
-          leasedEntry.proxy.unregisterReviewerSession(promptCacheKey),
-        release: async () => {
-          if (released) return
-          released = true
-          if (this.nativeResponsesCompatibilityProxies.get(proxyId) !== leasedEntry) return
-          this.nativeResponsesCompatibilityProxies.delete(proxyId)
-          await leasedEntry.proxy.close()
-        }
-      }
-    }
-  }
-
-  private resolveReasoningEffortFromSettings(
-    settings: StoredSettings,
-    intent: ReasoningEffort
-  ): ResolvedReasoningEffort {
-    if (intent === DEFAULT_REASONING_EFFORT) return DEFAULT_REASONING_EFFORT
-
-    const provider = settings.activeProviderId
-      ? settings.providers.find((candidate) => candidate.id === settings.activeProviderId)
-      : undefined
-    if (!provider) return DEFAULT_REASONING_EFFORT
-
-    const profile = resolveProviderReasoningEffortProfile(
-      provider,
-      this.providers.resolveActiveModel(provider, settings.activeModel)
-    )
-
-    return resolveReasoningEffortValue(intent, profile)
+    return this.backendResolver.resolveSelection(selection, context)
   }
 }
 
@@ -1487,3 +912,8 @@ const createDefaultSettingsService = (): SettingsService => new SettingsService(
 
 export { SettingsService, createDefaultSettingsService }
 export type { CustomServerSecurityChangeGuard }
+export type {
+  AgentBackendResolutionContext,
+  AgentBackendSelection,
+  AgentSpawnConfig
+} from './backend-resolver'

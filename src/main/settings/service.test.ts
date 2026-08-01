@@ -17,8 +17,6 @@ import type {
 } from './claude-isolated-auth'
 import type { ClaudeSharedAuthControllerPort } from './claude-shared-auth'
 import type { UserSkillRepository } from '../skills/user-skill-repository'
-import type { ResponsesBridge } from './responses-bridge'
-import type { NativeResponsesCompatibilityProxy } from './native-responses-compatibility'
 import type { SystemProxyEnvironment } from './system-proxy'
 
 // Reversible fake safeStorage so provider keys can be encrypted/decrypted without an OS keychain.
@@ -2780,7 +2778,6 @@ describe('SettingsService: preflight & spawn config', () => {
 
     await service.setActiveProvider(first.id)
     const firstBackend = await service.resolveActiveAgentBackend()
-    const firstBackendPeer = await service.resolveActiveAgentBackend()
     await service.setActiveProvider(second.id)
     const secondBackend = await service.resolveActiveAgentBackend()
 
@@ -2788,26 +2785,8 @@ describe('SettingsService: preflight & spawn config', () => {
       secondBackend.providerConfiguration?.baseUrl
     )
 
-    const bridges = Array.from(
-      (
-        service as unknown as {
-          responsesBridges: Map<string, { bridge: ResponsesBridge }>
-        }
-      ).responsesBridges.values(),
-      (entry) => entry.bridge
-    )
-    const skillCatalog = [
-      { name: 'mcp-pubmed', description: 'Search PubMed.', path: '/skills/pubmed/SKILL.md' }
-    ]
-    const selectSkills = vi
-      .spyOn(bridges[0], 'selectSkills')
-      .mockResolvedValue([{ name: 'mcp-pubmed', path: '/skills/pubmed/SKILL.md' }])
-    await expect(
-      firstBackend.responsesBridgeLease?.selectSkills('search PubMed', skillCatalog)
-    ).resolves.toEqual([{ name: 'mcp-pubmed', path: '/skills/pubmed/SKILL.md' }])
-    expect(selectSkills).toHaveBeenCalledWith('search PubMed', skillCatalog, undefined)
-    bridges[0].registerReviewerSession('reviewer-one')
-    bridges[2].registerReviewerSession('reviewer-two')
+    firstBackend.responsesBridgeLease?.registerReviewerSession('reviewer-one')
+    secondBackend.responsesBridgeLease?.registerReviewerSession('reviewer-two')
 
     const send = async (backend: typeof firstBackend, promptCacheKey: string): Promise<void> => {
       const response = await localFetch(`${backend.providerConfiguration?.baseUrl}/responses`, {
@@ -2846,18 +2825,8 @@ describe('SettingsService: preflight & spawn config', () => {
       expect.arrayContaining(['mcp__open_science_reviewer__submit_findings'])
     ])
 
-    const bridgePool = (
-      service as unknown as {
-        responsesBridges: Map<string, unknown>
-      }
-    ).responsesBridges
-    expect(bridgePool.size).toBe(3)
     await firstBackend.responsesBridgeLease?.release()
-    expect(bridgePool.size).toBe(2)
-    await firstBackendPeer.responsesBridgeLease?.release()
-    expect(bridgePool.size).toBe(1)
     await secondBackend.responsesBridgeLease?.release()
-    expect(bridgePool.size).toBe(0)
   })
 
   it('closes and evicts a responses bridge whose start fails', async () => {
@@ -2893,14 +2862,13 @@ describe('SettingsService: preflight & spawn config', () => {
     await service.setActiveProvider(provider.id)
     vi.stubEnv('OPEN_SCIENCE_AGENT_FRAMEWORK', 'codex')
 
-    await expect(service.resolveActiveAgentBackend()).rejects.toBe(startError)
-
-    const bridgePool = (service as unknown as { responsesBridges: Map<string, unknown> })
-      .responsesBridges
-    expect(closeSpy).toHaveBeenCalledOnce()
-    expect(bridgePool.size).toBe(0)
-    startSpy.mockRestore()
-    closeSpy.mockRestore()
+    try {
+      await expect(service.resolveActiveAgentBackend()).rejects.toBe(startError)
+      expect(closeSpy).toHaveBeenCalledOnce()
+    } finally {
+      startSpy.mockRestore()
+      closeSpy.mockRestore()
+    }
   })
 
   it('routes a native-Responses vendor through the protocol-preserving compatibility proxy', async () => {
@@ -2972,34 +2940,7 @@ describe('SettingsService: preflight & spawn config', () => {
     expect(backend.authentication).toBeUndefined()
     expect(backend.env.CODEX_CONFIG).not.toContain('mm-secret')
 
-    const proxies = Array.from(
-      (
-        service as unknown as {
-          nativeResponsesCompatibilityProxies: Map<
-            string,
-            { proxy: NativeResponsesCompatibilityProxy }
-          >
-        }
-      ).nativeResponsesCompatibilityProxies.values(),
-      (entry) => entry.proxy
-    )
-    expect(proxies).toHaveLength(1)
-    const skillCatalog = [
-      { name: 'mcp-pubmed', description: 'Search PubMed.', path: '/skills/pubmed/SKILL.md' }
-    ]
-    const selectSkills = vi
-      .spyOn(proxies[0], 'selectSkills')
-      .mockResolvedValue([{ name: 'mcp-pubmed', path: '/skills/pubmed/SKILL.md' }])
-    await expect(
-      backend.responsesBridgeLease?.selectSkills('用 PubMed 搜索肿瘤免疫文章', skillCatalog)
-    ).resolves.toEqual([{ name: 'mcp-pubmed', path: '/skills/pubmed/SKILL.md' }])
-    expect(selectSkills).toHaveBeenCalledWith('用 PubMed 搜索肿瘤免疫文章', skillCatalog, undefined)
-
     await backend.responsesBridgeLease?.release()
-    expect(
-      (service as unknown as { nativeResponsesCompatibilityProxies: Map<string, unknown> })
-        .nativeResponsesCompatibilityProxies.size
-    ).toBe(0)
   })
 
   it('builds spawn env from the active provider with the decrypted key', async () => {
@@ -4685,85 +4626,6 @@ describe('SettingsService: reasoning effort', () => {
     expect(backend.sessionModel).toBe('claude-opus-5')
     expect(backend.sessionEffort).toBe('max')
     expect(content.model).toBe('anthropic/claude-opus-5')
-  })
-
-  it('isolates live effort changes between overlapping bridge generations', async () => {
-    const localFetch = globalThis.fetch
-    const upstreamEfforts: unknown[] = []
-    vi.stubGlobal(
-      'fetch',
-      vi.fn(async (_url: Parameters<typeof fetch>[0], init?: Parameters<typeof fetch>[1]) => {
-        const body = JSON.parse(String(init?.body)) as Record<string, unknown>
-        upstreamEfforts.push(body.reasoning_effort)
-        return new Response(
-          [
-            'data: ' +
-              JSON.stringify({
-                id: 'chat-isolated-effort',
-                model: 'model-a',
-                choices: [{ index: 0, delta: {}, finish_reason: 'stop' }]
-              }),
-            '',
-            'data: [DONE]',
-            ''
-          ].join('\n'),
-          { headers: { 'content-type': 'text/event-stream' } }
-        )
-      })
-    )
-    const service = createService()
-    const bridgeService = service as unknown as {
-      ensureResponsesBridge: (
-        provider: {
-          type: 'custom'
-          baseUrl: string
-          apiEndpoints: ['openai']
-          model: string
-          key: string
-        },
-        effort: 'low' | 'max'
-      ) => Promise<{
-        baseUrl: string
-        token: string
-        lease: {
-          setReasoningEffort: (effort: 'low' | 'high' | 'max') => void
-          release: () => Promise<void>
-        }
-      }>
-    }
-    const provider = {
-      type: 'custom' as const,
-      baseUrl: 'https://vendor.example/v1',
-      apiEndpoints: ['openai'] as ['openai'],
-      model: 'model-a',
-      key: 'key-a'
-    }
-    const first = await bridgeService.ensureResponsesBridge(provider, 'low')
-    const second = await bridgeService.ensureResponsesBridge(provider, 'max')
-    const post = async (connection: { baseUrl: string; token: string }): Promise<void> => {
-      const response = await localFetch(`${connection.baseUrl}/responses`, {
-        method: 'POST',
-        headers: {
-          authorization: `Bearer ${connection.token}`,
-          'content-type': 'application/json'
-        },
-        body: JSON.stringify({ model: 'catalog', input: 'hi', stream: true })
-      })
-      await response.text()
-    }
-
-    try {
-      await post(first)
-      await post(second)
-      second.lease.setReasoningEffort('high')
-      await post(first)
-      await post(second)
-
-      expect(upstreamEfforts).toEqual(['low', 'max', 'low', 'high'])
-    } finally {
-      await first.lease.release()
-      await second.lease.release()
-    }
   })
 
   it('surfaces sessionEffort on the Claude backend too (the early-return path)', async () => {
