@@ -60,6 +60,37 @@ describe('task CLI', () => {
     expect(() => parseCliArgs(['run', '--timeout-ms', '1000'])).toThrow(
       '--timeout-ms requires run --wait.'
     )
+    expect(
+      parseCliArgs([
+        'run',
+        '--project',
+        'project-1',
+        '--prompt',
+        'Research this.',
+        '--session',
+        'session-1',
+        '--approval-profile',
+        'full',
+        '--skill',
+        'literature-review',
+        '--skill',
+        'citation-check'
+      ])
+    ).toMatchObject({
+      command: 'run',
+      options: {
+        session: 'session-1',
+        approvalProfile: 'full',
+        skills: ['literature-review', 'citation-check']
+      }
+    })
+    expect(() => parseCliArgs(['run', '--approval-profile', 'unsafe'])).toThrow(
+      'Invalid approval profile: unsafe'
+    )
+    expect(() => parseCliArgs(['run', '--json', '--jsonl', '--wait'])).toThrow(
+      'Use only one of --json or --jsonl.'
+    )
+    expect(() => parseCliArgs(['status', '--unknown'])).toThrow('Unknown option: --unknown')
   })
 
   it('reads a prompt file, waits for completion, and emits one JSON result', async () => {
@@ -327,6 +358,71 @@ describe('task CLI', () => {
     )
   })
 
+  it('stops only the CLI event wait when a timeout occurs', async () => {
+    const timeout = Object.assign(new Error('Timed out waiting for run run-1.'), {
+      code: 'timeout'
+    })
+    let eventSignal: AbortSignal | undefined
+    const events = vi.fn(({ signal }: { signal: AbortSignal }) => {
+      eventSignal = signal
+      return {
+        ready: Promise.resolve(),
+        [Symbol.asyncIterator]() {
+          return {
+            next: () =>
+              new Promise<IteratorResult<never>>((resolve) => {
+                signal.addEventListener(
+                  'abort',
+                  () => resolve({ value: undefined as never, done: true }),
+                  { once: true }
+                )
+              })
+          }
+        }
+      }
+    })
+    const client = {
+      events,
+      startRun: vi.fn().mockResolvedValue({
+        id: 'run-1',
+        sessionId: 'session-1',
+        status: 'running'
+      }),
+      waitForRun: vi.fn().mockRejectedValue(timeout)
+    }
+
+    await expect(
+      runTaskCommand(
+        {
+          command: 'run',
+          options: {
+            project: 'project-1',
+            prompt: 'Research this.',
+            wait: true,
+            timeoutMs: 25,
+            json: false,
+            jsonl: false
+          }
+        },
+        { connect: vi.fn().mockResolvedValue(client), stdinIsTTY: true }
+      )
+    ).rejects.toBe(timeout)
+
+    expect(client.waitForRun).toHaveBeenCalledWith('run-1', { timeoutMs: 25 })
+    expect(eventSignal?.aborted).toBe(true)
+    expect(client).not.toHaveProperty('cancelRun')
+  })
+
+  it('keeps permission approval, Specialist, and Compute management outside the CLI', async () => {
+    const connect = vi.fn().mockResolvedValue({})
+
+    for (const command of ['permission', 'specialist', 'compute']) {
+      await expect(
+        runTaskCommand({ command, options: { json: false } }, { connect, stdinIsTTY: true })
+      ).rejects.toThrow(`Unknown command: ${command}`)
+    }
+  })
+
   it('emits structured machine errors with stable exit codes', () => {
     const error = vi.fn()
     const setExitCode = vi.fn()
@@ -342,5 +438,31 @@ describe('task CLI', () => {
       exitCode: 2
     })
     expect(setExitCode).toHaveBeenCalledWith(2)
+
+    const cases = [
+      { code: 'daemon_unavailable', exitCode: 3 },
+      { code: 'project_not_found', exitCode: 4 },
+      { code: 'session_not_found', exitCode: 4 },
+      { code: 'run_not_found', exitCode: 4 },
+      { code: 'artifact_not_found', exitCode: 4 },
+      { code: 'timeout', exitCode: 1 },
+      { code: 'session_busy', exitCode: 1 },
+      { code: 'command_failed', exitCode: 1 }
+    ]
+    for (const contract of cases) {
+      error.mockClear()
+      setExitCode.mockClear()
+      const failure = Object.assign(new Error(`${contract.code} message`), {
+        code: contract.code
+      })
+      expect(reportCliError(failure, ['run', '--json'], { error, setExitCode })).toBe(
+        contract.exitCode
+      )
+      expect(JSON.parse(error.mock.calls[0][0])).toEqual({
+        error: { code: contract.code, message: `${contract.code} message` },
+        exitCode: contract.exitCode
+      })
+      expect(setExitCode).toHaveBeenCalledWith(contract.exitCode)
+    }
   })
 })
