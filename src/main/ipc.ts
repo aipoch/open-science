@@ -428,9 +428,7 @@ const createApplicationModules = async (
         capability: notebook,
         disposeTimeoutMs: QUIT_SHUTDOWN_BUDGET_MS,
         rollback: () =>
-          backendTeardownOwnedByCoordinator
-            ? undefined
-            : notebook.shutdownAll().then(() => undefined)
+          backendTeardownOwnedByCoordinator ? undefined : notebook.dispose().then(() => undefined)
       }
     }
   )

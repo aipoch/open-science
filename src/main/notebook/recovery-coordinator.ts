@@ -8,18 +8,11 @@ import {
   removeOperationChildSync,
   RuntimeOperationJournal
 } from './operation-journal'
-import {
-  defaultOperationChildLiveness,
-  reconcileInterruptedOperations
-} from './operation-recovery'
+import { defaultOperationChildLiveness, reconcileInterruptedOperations } from './operation-recovery'
 import { addRepairRequired, managedRepairRegistryKey } from './runtime-paths'
 
 export type NotebookRecoveryReadiness =
-  | 'not-started'
-  | 'recovering'
-  | 'ready'
-  | 'failed'
-  | 'disposed'
+  'not-started' | 'recovering' | 'ready' | 'failed' | 'disposed'
 
 export type NotebookRecoverySnapshot = {
   readiness: NotebookRecoveryReadiness

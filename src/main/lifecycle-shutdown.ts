@@ -21,7 +21,7 @@ export type QuitShutdownDeps = {
     // instead of orphaning its freshly-spawned child. disconnect() alone does not set that latch.
     shutdownForQuit: () => Promise<{ reaped: boolean }>
   }
-  notebook: { shutdownAll: () => Promise<{ reaped: boolean }> }
+  notebook: { dispose: () => Promise<{ reaped: boolean }> }
   log?: ShutdownLogger
   // Upper bound for the quit-path helpers; defaults to QUIT_SHUTDOWN_BUDGET_MS.
   timeoutMs?: number
@@ -33,6 +33,10 @@ export type BackendShutdownDeps = QuitShutdownDeps & {
     // Non-latching pre-update-install teardown: reaps the agent tree but leaves the runtime usable so a
     // refused install does not wedge the app (the next prompt lazily reconnects).
     shutdownForUpdateGate: () => Promise<{ reaped: boolean }>
+  }
+  notebook: QuitShutdownDeps['notebook'] & {
+    // Reusable kernel teardown for update checks that may leave the current app running.
+    shutdownAll: () => Promise<{ reaped: boolean }>
   }
 }
 
@@ -62,7 +66,7 @@ const runBounded = async (
         log?.error('runtime shutdown failed during shutdown', runtimeResult.reason)
       }
       if (notebookResult.status === 'rejected') {
-        log?.error('notebook shutdownAll failed during shutdown', notebookResult.reason)
+        log?.error('notebook shutdown failed during shutdown', notebookResult.reason)
       }
 
       // Optional chaining keeps the never-throw invariant even if a teardown resolves a malformed value.
@@ -95,7 +99,7 @@ const runBounded = async (
 export const shutdownBackends = async (deps: QuitShutdownDeps): Promise<void> => {
   await runBounded(
     deps.runtime.shutdownForQuit(),
-    deps.notebook.shutdownAll(),
+    deps.notebook.dispose(),
     deps.timeoutMs ?? QUIT_SHUTDOWN_BUDGET_MS,
     deps.log
   )
@@ -116,7 +120,7 @@ export class BackendShutdownCoordinator {
   ): Promise<ShutdownOutcome> {
     return runBounded(
       this.deps.runtime.shutdownForQuit(),
-      this.deps.notebook.shutdownAll(),
+      this.deps.notebook.dispose(),
       budgetMs,
       this.deps.log
     )

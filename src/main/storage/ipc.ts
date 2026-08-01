@@ -43,14 +43,15 @@ import { RELOCATABLE_DATA_DIRS } from './data-directories'
 type SessionSource = { projectName: string; sessionId: string }
 
 type StorageIpcDeps = {
-  // disconnect drives the migration session-interrupt; shutdownForQuit is the awaited quit/relaunch
-  // teardown used by cleanRelaunch (via shutdownBackends).
+  // disconnect/shutdownAll drive the reusable migration session-interrupt; shutdownForQuit/dispose are
+  // the terminal teardown used by cleanRelaunch (via shutdownBackends).
   runtime: {
     disconnect: () => Promise<unknown>
     shutdownForQuit: () => Promise<{ reaped: boolean }>
   }
   notebook: {
     shutdownAll: () => Promise<{ reaped: boolean }>
+    dispose: () => Promise<{ reaped: boolean }>
     getActiveNotebookSessions: () => SessionSource[]
   }
   getActivePromptSessions: () => SessionSource[]

@@ -13,7 +13,10 @@ const makeDeps = (overrides: Partial<BackendShutdownDeps> = {}): BackendShutdown
     shutdownForQuit: vi.fn(async () => ({ reaped: true })),
     shutdownForUpdateGate: vi.fn(async () => ({ reaped: true }))
   },
-  notebook: { shutdownAll: vi.fn(async () => ({ reaped: true })) },
+  notebook: {
+    shutdownAll: vi.fn(async () => ({ reaped: true })),
+    dispose: vi.fn(async () => ({ reaped: true }))
+  },
   log: { error: vi.fn() },
   ...overrides
 })
@@ -27,7 +30,8 @@ describe('shutdownBackends', () => {
     const deps = makeDeps()
     await shutdownBackends(deps)
     expect(deps.runtime.shutdownForQuit).toHaveBeenCalledTimes(1)
-    expect(deps.notebook.shutdownAll).toHaveBeenCalledTimes(1)
+    expect(deps.notebook.dispose).toHaveBeenCalledTimes(1)
+    expect(deps.notebook.shutdownAll).not.toHaveBeenCalled()
   })
 
   it('still runs notebook shutdown and resolves when runtime teardown rejects', async () => {
@@ -39,14 +43,17 @@ describe('shutdownBackends', () => {
       }
     })
     await expect(shutdownBackends(deps)).resolves.toBeUndefined()
-    expect(deps.notebook.shutdownAll).toHaveBeenCalledTimes(1)
+    expect(deps.notebook.dispose).toHaveBeenCalledTimes(1)
     expect(deps.log?.error).toHaveBeenCalledWith(expect.any(String), err)
   })
 
   it('resolves and logs even when notebook shutdown rejects', async () => {
     const err = new Error('notebook boom')
     const deps = makeDeps({
-      notebook: { shutdownAll: vi.fn(async () => Promise.reject(err)) }
+      notebook: {
+        shutdownAll: vi.fn(async () => ({ reaped: true })),
+        dispose: vi.fn(async () => Promise.reject(err))
+      }
     })
     await expect(shutdownBackends(deps)).resolves.toBeUndefined()
     expect(deps.runtime.shutdownForQuit).toHaveBeenCalledTimes(1)
@@ -95,7 +102,8 @@ describe('BackendShutdownCoordinator', () => {
     expect(outcome).toEqual({ completed: true, reaped: true })
     expect(deps.runtime.shutdownForQuit).toHaveBeenCalledTimes(1)
     expect(deps.runtime.shutdownForUpdateGate).not.toHaveBeenCalled()
-    expect(deps.notebook.shutdownAll).toHaveBeenCalledTimes(1)
+    expect(deps.notebook.dispose).toHaveBeenCalledTimes(1)
+    expect(deps.notebook.shutdownAll).not.toHaveBeenCalled()
   })
 
   it('runForUpdateGate uses the non-latching teardown', async () => {
@@ -112,7 +120,10 @@ describe('BackendShutdownCoordinator', () => {
 
   it('reports reaped:false when a tree kill was degraded', async () => {
     const deps = makeDeps({
-      notebook: { shutdownAll: vi.fn(async () => ({ reaped: false })) }
+      notebook: {
+        shutdownAll: vi.fn(async () => ({ reaped: false })),
+        dispose: vi.fn(async () => ({ reaped: true }))
+      }
     })
     const coordinator = new BackendShutdownCoordinator(deps)
 

@@ -5960,6 +5960,51 @@ describe('v4 runtime bindings & agent tools', () => {
     await service.shutdownAll()
   })
 
+  it('remains usable after temporary shutdowns for update and migration gates', async () => {
+    const root = await createStorageRoot()
+    const executions: string[] = []
+    let shutdowns = 0
+    const service = new NotebookRuntimeService({
+      configRoot: root,
+      dataRoot: root,
+      projectName: 'default-project',
+      repository: new NotebookRunRepository(root),
+      executorFactory: () => ({
+        execute: async (request): Promise<NotebookExecutionResult> => {
+          executions.push(request.code)
+          return {
+            status: 'completed',
+            stdout: request.code,
+            stderr: '',
+            traceback: '',
+            cwdAfter: request.cwd,
+            outputs: []
+          }
+        },
+        shutdown: async () => {
+          shutdowns += 1
+          return { reaped: true }
+        }
+      })
+    })
+
+    for (const code of ['before-gate', 'after-update-gate', 'after-migration-gate']) {
+      if (executions.length > 0) await service.shutdownAll()
+
+      const result = await service.execute({
+        sessionId: 's',
+        workspaceCwd: root,
+        code,
+        language: 'python'
+      })
+
+      expect(result.status).toBe('completed')
+    }
+
+    expect(executions).toEqual(['before-gate', 'after-update-gate', 'after-migration-gate'])
+    expect(shutdowns).toBe(2)
+  })
+
   it('describeRuntimeUsage counts bound sessions by kernel state for the disable warning (WS11)', async () => {
     const root = await createStorageRoot()
     const service = bindingService(root, {

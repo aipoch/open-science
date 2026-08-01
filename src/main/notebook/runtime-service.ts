@@ -3364,9 +3364,6 @@ class NotebookRuntimeService {
   // when every kernel tree was cleanly reaped, so the update-install gate can refuse to trigger the
   // NSIS uninstall while a kernel may still hold file handles under the install dir.
   async shutdownAll(): Promise<{ reaped: boolean }> {
-    // Recovery is process-owned work. Await any active reconciliation and permanently close its command
-    // surface before tearing down kernels, so late startup work cannot reopen a target during shutdown.
-    await this.recoveryCoordinator.dispose()
     // Let any in-flight disable drain-and-close settle first, so a revocation teardown never races the
     // shutdown (and tests don't leak a dangling background drain).
     await Promise.all(Array.from(this.revocationDrains)).catch(() => undefined)
@@ -3375,6 +3372,14 @@ class NotebookRuntimeService {
     for (const session of sessions) this.releaseMcpRpcConnection(session)
     this.sessions.clear()
     return { reaped: results.every((result) => result.reaped) }
+  }
+
+  // Permanently closes process-owned recovery work before the final kernel teardown. Unlike
+  // shutdownAll(), this is terminal: quit/relaunch and module disposal use it, while update and data-root
+  // migration gates retain the reusable shutdown contract so a refused/cancelled flow can resume work.
+  async dispose(): Promise<{ reaped: boolean }> {
+    await this.recoveryCoordinator.dispose()
+    return this.shutdownAll()
   }
 
   // Lists sessions with a cell mid-execution, for the pre-migration active-session warning.

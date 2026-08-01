@@ -71,6 +71,7 @@ const fakeDeps = (overrides: Partial<FakeDeps> = {}): FakeDeps => ({
   },
   notebook: {
     shutdownAll: vi.fn().mockResolvedValue({ reaped: true }),
+    dispose: vi.fn().mockResolvedValue({ reaped: true }),
     getActiveNotebookSessions: vi.fn().mockReturnValue([])
   },
   getActivePromptSessions: vi.fn().mockReturnValue([]),
@@ -319,7 +320,8 @@ describe('storage IPC handlers', () => {
         .fn()
         .mockReturnValue([{ projectName: 'p', sessionId: 'agent-1' }]),
       notebook: {
-        shutdownAll: vi.fn().mockResolvedValue(undefined),
+        shutdownAll: vi.fn().mockResolvedValue({ reaped: true }),
+        dispose: vi.fn().mockResolvedValue({ reaped: true }),
         getActiveNotebookSessions: vi
           .fn()
           .mockReturnValue([{ projectName: 'p', sessionId: 'nb-1' }])
@@ -339,7 +341,8 @@ describe('storage IPC handlers', () => {
     // reference drops `this` and throws "Cannot read properties of undefined (reading 'values')".
     class FakeNotebookService {
       private sessions = new Map([['nb-1', { projectName: 'p', sessionId: 'nb-1' }]])
-      shutdownAll = vi.fn().mockResolvedValue(undefined)
+      shutdownAll = vi.fn().mockResolvedValue({ reaped: true })
+      dispose = vi.fn().mockResolvedValue({ reaped: true })
       getActiveNotebookSessions(): { projectName: string; sessionId: string }[] {
         return Array.from(this.sessions.values())
       }
@@ -453,7 +456,8 @@ describe('storage IPC handlers', () => {
     })
 
     expect(deps.runtime.shutdownForQuit).toHaveBeenCalledTimes(1)
-    expect(deps.notebook.shutdownAll).toHaveBeenCalledTimes(1)
+    expect(deps.notebook.dispose).toHaveBeenCalledTimes(1)
+    expect(deps.notebook.shutdownAll).not.toHaveBeenCalled()
     expect(appRelaunch).toHaveBeenCalledTimes(1)
     expect(appExit).toHaveBeenCalledWith(0)
     expect(cleanupRuntimeCache).toHaveBeenCalledWith(join(dataRoot, 'runtime'))
@@ -473,7 +477,8 @@ describe('storage IPC handlers', () => {
     ).resolves.toEqual({ ok: true })
 
     expect(deps.runtime.shutdownForQuit).toHaveBeenCalledTimes(1)
-    expect(deps.notebook.shutdownAll).toHaveBeenCalledTimes(1)
+    expect(deps.notebook.dispose).toHaveBeenCalledTimes(1)
+    expect(deps.notebook.shutdownAll).not.toHaveBeenCalled()
     expect(appRelaunch).toHaveBeenCalledTimes(1)
     expect(appExit).toHaveBeenCalledWith(0)
   })
