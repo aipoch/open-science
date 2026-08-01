@@ -40,4 +40,73 @@ describe('NotebookSessionRegistry', () => {
     await expect(Promise.all([first, second])).resolves.toEqual([session, session])
     expect(registry.get('session-1')).toBe(session)
   })
+
+  it('allows another initialization after the first attempt rejects', async () => {
+    const registry = new NotebookSessionRegistry<TestSession>()
+    const initializationError = new Error('initialization failed')
+    const session = testSession('session-1')
+    const create = vi
+      .fn<() => Promise<TestSession>>()
+      .mockRejectedValueOnce(initializationError)
+      .mockResolvedValueOnce(session)
+
+    await expect(registry.getOrCreate('session-1', create)).rejects.toBe(initializationError)
+    await expect(registry.getOrCreate('session-1', create)).resolves.toBe(session)
+
+    expect(create).toHaveBeenCalledTimes(2)
+  })
+
+  it('initializes different session IDs without serializing them', async () => {
+    const registry = new NotebookSessionRegistry<TestSession>()
+    const firstInitialization = deferred<TestSession>()
+    const second = testSession('session-2')
+
+    const firstAdmission = registry.getOrCreate('session-1', () => firstInitialization.promise)
+    const secondAdmission = registry.getOrCreate('session-2', async () => second)
+
+    await expect(secondAdmission).resolves.toBe(second)
+    const first = testSession('session-1')
+    firstInitialization.resolve(first)
+    await expect(firstAdmission).resolves.toBe(first)
+  })
+
+  it('removes an in-flight session before admitting a fresh generation', async () => {
+    const registry = new NotebookSessionRegistry<TestSession>()
+    const initialization = deferred<TestSession>()
+    const original = testSession('session-1')
+    const replacement = testSession('session-1')
+    const createReplacement = vi.fn(async () => replacement)
+
+    const originalAdmission = registry.getOrCreate('session-1', () => initialization.promise)
+    const removal = registry.remove('session-1')
+    const replacementAdmission = registry.getOrCreate('session-1', createReplacement)
+
+    expect(createReplacement).not.toHaveBeenCalled()
+    initialization.resolve(original)
+
+    await expect(originalAdmission).resolves.toBe(original)
+    await expect(removal).resolves.toEqual({ reaped: true })
+    await expect(replacementAdmission).resolves.toBe(replacement)
+    expect(original.shutdownExecutor).toHaveBeenCalledTimes(1)
+    expect(original.releaseMcpRpcConnection).toHaveBeenCalledTimes(1)
+    expect(registry.get('session-1')).toBe(replacement)
+  })
+
+  it('restores queued admission to the old session when removal fails', async () => {
+    const registry = new NotebookSessionRegistry<TestSession>()
+    const teardownError = new Error('teardown failed')
+    const original = testSession('session-1')
+    vi.mocked(original.shutdownExecutor).mockRejectedValueOnce(teardownError)
+    await registry.getOrCreate('session-1', async () => original)
+    const createReplacement = vi.fn(async () => testSession('session-1'))
+
+    const removal = registry.remove('session-1')
+    const queuedAdmission = registry.getOrCreate('session-1', createReplacement)
+
+    await expect(removal).rejects.toBe(teardownError)
+    await expect(queuedAdmission).resolves.toBe(original)
+    expect(createReplacement).not.toHaveBeenCalled()
+    expect(original.releaseMcpRpcConnection).not.toHaveBeenCalled()
+    expect(registry.get('session-1')).toBe(original)
+  })
 })
