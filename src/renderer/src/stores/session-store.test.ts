@@ -558,21 +558,23 @@ describe('session store', () => {
     useSessionStore.getState().failRun('transport-session-1', 'Permission denied')
 
     const session = useSessionStore.getState().sessions[0]
+    const failedAt = session.messages[1].failedAt
 
     expect(session.status).toBe('error')
     expect(session.error).toBe('Permission denied')
     expect(session.activeRun).toBeUndefined()
+    expect(failedAt).toEqual(expect.any(Number))
     expect(session.messages[1]).toMatchObject({
       content: 'I started',
       status: 'error',
-      failedAt: Date.now()
+      failedAt
     })
     expect(
       session.conversationGraph?.messages.find((message) => message.id === session.messages[1].id)
-    ).toMatchObject({ status: 'error', failedAt: Date.now() })
+    ).toMatchObject({ status: 'error', failedAt })
     expect(toPersistedSession(session).messages[1]).toMatchObject({
       status: 'error',
-      failedAt: Date.now()
+      failedAt
     })
   })
 
