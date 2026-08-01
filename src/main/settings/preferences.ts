@@ -1,0 +1,89 @@
+import {
+  DEFAULT_APP_ICON_VARIANT,
+  DEFAULT_CONVERSATION_SKILL_IMPORT_ENABLED,
+  DEFAULT_NOTIFICATIONS_ENABLED,
+  DEFAULT_REASONING_EFFORT,
+  type AppIconVariant,
+  type ReasoningEffort
+} from '../../shared/settings'
+import type { CloseActionPreference } from '../../shared/window-controls'
+import type { SettingsPreferences, SettingsPreferencesSnapshot } from './capabilities'
+import type { SettingsRepository } from './repository'
+import type { StoredSettings } from './types'
+
+// Project only the values owned by this module. Keeping the projection here lets the compatibility
+// facade combine one repository read with its provider/runtime views without exposing StoredSettings
+// through the capability interface.
+const toSettingsPreferencesSnapshot = (settings: StoredSettings): SettingsPreferencesSnapshot => ({
+  ...(settings.onboardingCompletedAt === undefined
+    ? {}
+    : { onboardingCompletedAt: settings.onboardingCompletedAt }),
+  ...(settings.pathsNormalizedAt === undefined
+    ? {}
+    : { pathsNormalizedAt: settings.pathsNormalizedAt }),
+  ...(settings.legacyDataMovePromptDismissedAt === undefined
+    ? {}
+    : { legacyDataMovePromptDismissedAt: settings.legacyDataMovePromptDismissedAt }),
+  ...(settings.dataRoot === undefined ? {} : { dataRoot: settings.dataRoot }),
+  reasoningEffort: settings.reasoningEffort ?? DEFAULT_REASONING_EFFORT,
+  notificationsEnabled: settings.notificationsEnabled ?? DEFAULT_NOTIFICATIONS_ENABLED,
+  conversationSkillImportEnabled:
+    settings.conversationSkillImportEnabled ?? DEFAULT_CONVERSATION_SKILL_IMPORT_ENABLED,
+  ...(settings.closePreference === undefined ? {} : { closePreference: settings.closePreference }),
+  appIconVariant: settings.appIconVariant ?? DEFAULT_APP_ICON_VARIANT
+})
+
+class SettingsPreferencesModule implements SettingsPreferences {
+  constructor(
+    private readonly repository: SettingsRepository,
+    private readonly now: () => number = Date.now
+  ) {}
+
+  async getSnapshot(): Promise<SettingsPreferencesSnapshot> {
+    return toSettingsPreferencesSnapshot(await this.repository.getSettings())
+  }
+
+  async markOnboardingComplete(): Promise<SettingsPreferencesSnapshot> {
+    return toSettingsPreferencesSnapshot(await this.repository.markOnboardingComplete(this.now()))
+  }
+
+  async markPathsNormalized(): Promise<SettingsPreferencesSnapshot> {
+    return toSettingsPreferencesSnapshot(await this.repository.markPathsNormalized(this.now()))
+  }
+
+  async setDataRoot(path: string): Promise<SettingsPreferencesSnapshot> {
+    return toSettingsPreferencesSnapshot(await this.repository.setDataRoot(path))
+  }
+
+  async dismissLegacyDataMovePrompt(): Promise<SettingsPreferencesSnapshot> {
+    return toSettingsPreferencesSnapshot(
+      await this.repository.markLegacyDataMovePromptDismissed(this.now())
+    )
+  }
+
+  async setReasoningEffort(effort: ReasoningEffort): Promise<SettingsPreferencesSnapshot> {
+    return toSettingsPreferencesSnapshot(await this.repository.setReasoningEffort(effort))
+  }
+
+  async setNotificationsEnabled(enabled: boolean): Promise<SettingsPreferencesSnapshot> {
+    return toSettingsPreferencesSnapshot(await this.repository.setNotificationsEnabled(enabled))
+  }
+
+  async setConversationSkillImportEnabled(enabled: boolean): Promise<SettingsPreferencesSnapshot> {
+    return toSettingsPreferencesSnapshot(
+      await this.repository.setConversationSkillImportEnabled(enabled)
+    )
+  }
+
+  async setClosePreference(
+    preference: CloseActionPreference | undefined
+  ): Promise<SettingsPreferencesSnapshot> {
+    return toSettingsPreferencesSnapshot(await this.repository.setClosePreference(preference))
+  }
+
+  async setAppIconVariant(variant: AppIconVariant): Promise<SettingsPreferencesSnapshot> {
+    return toSettingsPreferencesSnapshot(await this.repository.setAppIconVariant(variant))
+  }
+}
+
+export { SettingsPreferencesModule, toSettingsPreferencesSnapshot }
