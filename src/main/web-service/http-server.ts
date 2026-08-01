@@ -10,7 +10,12 @@ import { gzip } from 'node:zlib'
 import { net } from 'electron'
 import { WebSocket, WebSocketServer } from 'ws'
 
-import { ClientLeaseRegistry, createWebCallerContext } from '../caller-context'
+import {
+  ClientLeaseRegistry,
+  createTaskCallerContext,
+  createWebCallerContext,
+  type CallerContext
+} from '../caller-context'
 import type { WebRpcRouter } from '../ipc-handler-registry'
 import { addRendererBroadcastSink } from '../renderer-broadcast'
 import {
@@ -115,6 +120,7 @@ type WebServerOptions = {
     | 'listArtifacts'
     | 'acquireArtifact'
     | 'releaseArtifact'
+    | 'runWithCallerContext'
   >
   onShutdownRequest?: () => void
   bootstrap: {
@@ -334,75 +340,77 @@ const handleTaskApiRequest = async (
   response: ServerResponse,
   url: URL,
   tasks: NonNullable<WebServerOptions['tasks']>,
+  callerContext: CallerContext,
   externalAuthorization?: ExternalWebAccessAuthorization
-): Promise<boolean> => {
-  try {
-    if (url.pathname === '/api/v1/projects' && request.method === 'GET') {
-      assertExternalAuthorizationCurrent(externalAuthorization)
-      json(response, 200, { data: await tasks.listProjects() })
-      return true
-    }
-    if (url.pathname === '/api/v1/projects' && request.method === 'POST') {
-      const body = (await readJsonBody(request)) as { name?: string; description?: string }
-      assertExternalAuthorizationCurrent(externalAuthorization)
-      json(response, 201, {
-        data: await tasks.createProject({ name: body.name ?? '', description: body.description })
-      })
-      return true
-    }
-    if (url.pathname === '/api/v1/sessions' && request.method === 'GET') {
-      assertExternalAuthorizationCurrent(externalAuthorization)
-      json(response, 200, {
-        data: await tasks.listSessions(url.searchParams.get('project') ?? undefined)
-      })
-      return true
-    }
-    if (url.pathname === '/api/v1/runs' && request.method === 'POST') {
-      const body = (await readJsonBody(request)) as StartTaskRunRequest
-      assertExternalAuthorizationCurrent(externalAuthorization)
-      json(response, 202, { data: await tasks.startRun(body) })
-      return true
-    }
-
-    const runMatch = url.pathname.match(/^\/api\/v1\/runs\/([^/]+)$/)
-    if (runMatch && request.method === 'GET') {
-      assertExternalAuthorizationCurrent(externalAuthorization)
-      json(response, 200, { data: tasks.getRun(decodeURIComponent(runMatch[1])) })
-      return true
-    }
-    const sessionArtifactsMatch = url.pathname.match(/^\/api\/v1\/sessions\/([^/]+)\/artifacts$/)
-    if (sessionArtifactsMatch && request.method === 'GET') {
-      assertExternalAuthorizationCurrent(externalAuthorization)
-      json(response, 200, {
-        data: await tasks.listArtifacts(decodeURIComponent(sessionArtifactsMatch[1]))
-      })
-      return true
-    }
-    const sessionMatch = url.pathname.match(/^\/api\/v1\/sessions\/([^/]+)$/)
-    if (sessionMatch && request.method === 'GET') {
-      assertExternalAuthorizationCurrent(externalAuthorization)
-      json(response, 200, { data: await tasks.getSession(decodeURIComponent(sessionMatch[1])) })
-      return true
-    }
-    const artifactMatch = url.pathname.match(/^\/api\/v1\/artifacts\/([^/]+)\/content$/)
-    if (artifactMatch && (request.method === 'GET' || request.method === 'HEAD')) {
-      assertExternalAuthorizationCurrent(externalAuthorization)
-      const artifact = await tasks.acquireArtifact(decodeURIComponent(artifactMatch[1]))
-      try {
-        await streamPreviewResource(request, response, artifact.url, {
-          'content-disposition': `attachment; filename*=UTF-8''${encodeURIComponent(artifact.name)}`
-        })
-      } finally {
-        await tasks.releaseArtifact(artifact.resourceId)
+): Promise<boolean> =>
+  tasks.runWithCallerContext(callerContext, async () => {
+    try {
+      if (url.pathname === '/api/v1/projects' && request.method === 'GET') {
+        assertExternalAuthorizationCurrent(externalAuthorization)
+        json(response, 200, { data: await tasks.listProjects() })
+        return true
       }
+      if (url.pathname === '/api/v1/projects' && request.method === 'POST') {
+        const body = (await readJsonBody(request)) as { name?: string; description?: string }
+        assertExternalAuthorizationCurrent(externalAuthorization)
+        json(response, 201, {
+          data: await tasks.createProject({ name: body.name ?? '', description: body.description })
+        })
+        return true
+      }
+      if (url.pathname === '/api/v1/sessions' && request.method === 'GET') {
+        assertExternalAuthorizationCurrent(externalAuthorization)
+        json(response, 200, {
+          data: await tasks.listSessions(url.searchParams.get('project') ?? undefined)
+        })
+        return true
+      }
+      if (url.pathname === '/api/v1/runs' && request.method === 'POST') {
+        const body = (await readJsonBody(request)) as StartTaskRunRequest
+        assertExternalAuthorizationCurrent(externalAuthorization)
+        json(response, 202, { data: await tasks.startRun(body) })
+        return true
+      }
+
+      const runMatch = url.pathname.match(/^\/api\/v1\/runs\/([^/]+)$/)
+      if (runMatch && request.method === 'GET') {
+        assertExternalAuthorizationCurrent(externalAuthorization)
+        json(response, 200, { data: tasks.getRun(decodeURIComponent(runMatch[1])) })
+        return true
+      }
+      const sessionArtifactsMatch = url.pathname.match(/^\/api\/v1\/sessions\/([^/]+)\/artifacts$/)
+      if (sessionArtifactsMatch && request.method === 'GET') {
+        assertExternalAuthorizationCurrent(externalAuthorization)
+        json(response, 200, {
+          data: await tasks.listArtifacts(decodeURIComponent(sessionArtifactsMatch[1]))
+        })
+        return true
+      }
+      const sessionMatch = url.pathname.match(/^\/api\/v1\/sessions\/([^/]+)$/)
+      if (sessionMatch && request.method === 'GET') {
+        assertExternalAuthorizationCurrent(externalAuthorization)
+        json(response, 200, { data: await tasks.getSession(decodeURIComponent(sessionMatch[1])) })
+        return true
+      }
+      const artifactMatch = url.pathname.match(/^\/api\/v1\/artifacts\/([^/]+)\/content$/)
+      if (artifactMatch && (request.method === 'GET' || request.method === 'HEAD')) {
+        assertExternalAuthorizationCurrent(externalAuthorization)
+        const artifact = await tasks.acquireArtifact(decodeURIComponent(artifactMatch[1]))
+        try {
+          await streamPreviewResource(request, response, artifact.url, {
+            'content-disposition': `attachment; filename*=UTF-8''${encodeURIComponent(artifact.name)}`
+          })
+        } finally {
+          await tasks.releaseArtifact(artifact.resourceId)
+        }
+        return true
+      }
+    } catch (error) {
+      taskError(response, error)
       return true
     }
-  } catch (error) {
-    taskError(response, error)
-    return true
-  }
-  return false
-}
+    return false
+  })
 
 const serveStatic = async (
   request: IncomingMessage,
@@ -519,7 +527,21 @@ const startWebHttpServer = async (options: WebServerOptions): Promise<RunningWeb
       if (
         url.pathname.startsWith('/api/v1/') &&
         options.tasks &&
-        (await handleTaskApiRequest(request, response, url, options.tasks, externalAuthorization))
+        (await handleTaskApiRequest(
+          request,
+          response,
+          url,
+          options.tasks,
+          createTaskCallerContext({
+            ...(externalAuthorization
+              ? {
+                  location: 'remote' as const,
+                  isAuthorizationCurrent: externalAuthorization.isCurrent
+                }
+              : {})
+          }),
+          externalAuthorization
+        ))
       ) {
         return
       }

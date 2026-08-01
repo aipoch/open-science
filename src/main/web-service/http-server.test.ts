@@ -33,6 +33,8 @@ const accessOnlyExternalAccess = (): ExternalWebAccessAuthorization => ({
   kind: 'authorized' as const,
   isCurrent: () => true
 })
+const runWithCallerContext = <Result>(_context: CallerContext, operation: () => Result): Result =>
+  operation()
 
 afterEach(async () => {
   await Promise.all(servers.splice(0).map((server) => server.close()))
@@ -434,7 +436,16 @@ describe('startWebHttpServer', () => {
       releaseClient: vi.fn(),
       dispose: vi.fn()
     }
+    const taskContexts: CallerContext[] = []
+    const runWithCapturedCallerContext = <Result>(
+      context: CallerContext,
+      operation: () => Result
+    ): Result => {
+      taskContexts.push(context)
+      return operation()
+    }
     const tasks = {
+      runWithCallerContext: runWithCapturedCallerContext,
       listProjects: vi.fn(),
       createProject: vi.fn(),
       listSessions: vi.fn(),
@@ -522,6 +533,14 @@ describe('startWebHttpServer', () => {
       )
     ).toBe(401)
     expect(tasks.startRun).not.toHaveBeenCalled()
+    const taskContext = taskContexts[0]
+    expect(taskContext).toMatchObject({
+      surface: 'task',
+      location: 'remote',
+      principalKind: 'automation',
+      actionOrigin: 'automation'
+    })
+    expect(taskContext?.isAuthorizationCurrent()).toBe(false)
   })
 
   it('keeps host-management RPC local while preserving the local Web client', async () => {
@@ -870,7 +889,16 @@ describe('startWebHttpServer', () => {
     const staticRoot = await mkdtemp(join(tmpdir(), 'open-science-web-static-'))
     roots.push(staticRoot)
     await writeFile(join(staticRoot, 'index.html'), '<!doctype html>')
+    const taskContexts: CallerContext[] = []
+    const runWithCapturedCallerContext = <Result>(
+      context: CallerContext,
+      operation: () => Result
+    ): Result => {
+      taskContexts.push(context)
+      return operation()
+    }
     const tasks = {
+      runWithCallerContext: runWithCapturedCallerContext,
       listProjects: vi.fn().mockResolvedValue([{ id: 'project-1', name: 'Research' }]),
       createProject: vi.fn().mockResolvedValue({ id: 'project-2', name: 'Created' }),
       listSessions: vi.fn().mockResolvedValue([{ id: 'session/1', title: 'Review' }]),
@@ -927,6 +955,12 @@ describe('startWebHttpServer', () => {
     expect(projects.headers.get('content-type')).toBe('application/json; charset=utf-8')
     expect(projects.headers.get('cache-control')).toBe('no-store')
     expect(await projects.json()).toEqual({ data: [{ id: 'project-1', name: 'Research' }] })
+    expect(taskContexts[0]).toMatchObject({
+      surface: 'task',
+      location: 'local',
+      principalKind: 'automation',
+      actionOrigin: 'automation'
+    })
 
     const created = await fetch(`${base}/api/v1/projects`, {
       method: 'POST',
@@ -1042,6 +1076,7 @@ describe('startWebHttpServer', () => {
       })
     )
     const tasks = {
+      runWithCallerContext,
       listProjects: vi.fn(),
       createProject: vi.fn(),
       listSessions: vi.fn(),
@@ -1107,6 +1142,7 @@ describe('startWebHttpServer', () => {
       )
     )
     const tasks = {
+      runWithCallerContext,
       listProjects: vi.fn(),
       createProject: vi.fn(),
       listSessions: vi.fn(),

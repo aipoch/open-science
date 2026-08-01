@@ -28,6 +28,10 @@ type CreateWebCallerContextOptions = Partial<
   isAuthorizationCurrent?: () => boolean
 }
 
+type CreateTaskCallerContextOptions = Partial<Pick<CallerContext, 'location'>> & {
+  isAuthorizationCurrent?: () => boolean
+}
+
 const alwaysCurrent = (): boolean => true
 
 const createCallerContext = (input: CreateCallerContextInput): CallerContext =>
@@ -64,15 +68,16 @@ const createWebCallerContext = (
     isAuthorizationCurrent: options.isAuthorizationCurrent
   })
 
-const createTaskCallerContext = (): CallerContext =>
+const createTaskCallerContext = (options: CreateTaskCallerContextOptions = {}): CallerContext =>
   createCallerContext({
     clientId: 'headless-task-api',
     lifecycleClientId: 'web:headless-task-api',
     leaseId: 'headless-task-api',
     surface: 'task',
-    location: 'local',
+    location: options.location ?? 'local',
     principalKind: 'automation',
-    actionOrigin: 'automation'
+    actionOrigin: 'automation',
+    isAuthorizationCurrent: options.isAuthorizationCurrent
   })
 
 const hasCallerAuthority = (context: CallerContext, authority: CallerAuthority): boolean =>

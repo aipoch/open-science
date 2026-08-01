@@ -3,6 +3,7 @@ import { describe, expect, it, vi } from 'vitest'
 import type { AcpRuntimeEvent } from '../../shared/acp'
 import { ARTIFACT_OWNERSHIP_PERSISTENCE_RACE } from '../../shared/artifacts'
 import type { PersistedChatSession } from '../../shared/session-persistence'
+import { createTaskCallerContext, type CallerContext } from '../caller-context'
 import { HeadlessTaskApi } from './task-api'
 
 const project = {
@@ -91,6 +92,53 @@ describe('HeadlessTaskApi', () => {
     expect(invoke).toHaveBeenCalledWith('preview-resources:release', taskCallerContext(), [
       { resourceId: 'resource-query' }
     ])
+  })
+
+  it('keeps the request caller context across asynchronous run RPC', async () => {
+    let finishPrompt: (() => void) | undefined
+    const promptGate = new Promise<void>((resolve) => {
+      finishPrompt = resolve
+    })
+    const invoke = vi.fn(
+      async (channel: string, _callerContext: CallerContext, _args: unknown[]) => {
+        void _callerContext
+        void _args
+        if (channel === 'projects:list') return [project]
+        if (channel === 'sessions:load-all') return { sessions: [], manifest: { version: 1 } }
+        if (channel === 'acp:create-session') {
+          return { sessionId: 'session-context', cwd: '/workspace/context' }
+        }
+        if (channel === 'acp:send-prompt') return promptGate
+        if (channel === 'sessions:save-session') return undefined
+        if (channel === 'preview-resources:release') return undefined
+        throw new Error(`Unexpected RPC channel: ${channel}`)
+      }
+    )
+    const api = new HeadlessTaskApi({ invoke })
+    let authorizationCurrent = true
+    const context = createTaskCallerContext({
+      location: 'remote',
+      isAuthorizationCurrent: () => authorizationCurrent
+    })
+
+    const run = await api.runWithCallerContext(context, () =>
+      api.startRun({ project: project.id, prompt: 'Research with remote context.' })
+    )
+    authorizationCurrent = false
+    finishPrompt?.()
+    await api.waitForRun(run.id)
+
+    expect(invoke).toHaveBeenCalled()
+    expect(invoke.mock.calls.every(([, callerContext]) => callerContext === context)).toBe(true)
+    expect(context.isAuthorizationCurrent()).toBe(false)
+
+    await api.runWithCallerContext(context, () => api.releaseArtifact('resource-context'))
+    expect(invoke).toHaveBeenLastCalledWith(
+      'preview-resources:release',
+      expect.objectContaining({ location: 'local', actionOrigin: 'automation' }),
+      [{ resourceId: 'resource-context' }]
+    )
+    expect(invoke.mock.calls.at(-1)?.[1].isAuthorizationCurrent()).toBe(true)
   })
 
   it('rejects malformed public run requests before invoking internal RPC', async () => {
