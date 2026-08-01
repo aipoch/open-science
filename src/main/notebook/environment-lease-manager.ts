@@ -35,7 +35,6 @@ export class EnvironmentLeaseManager {
   private disposed = false
 
   acquire(environment: string, mode: EnvironmentLeaseMode): EnvironmentLeaseAcquisition {
-    let pending!: PendingAcquisition
     let resolveGranted!: (lease: EnvironmentLease) => void
     let rejectGranted!: (error: Error) => void
     const granted = new Promise<EnvironmentLease>((resolve, reject) => {
@@ -46,7 +45,7 @@ export class EnvironmentLeaseManager {
       granted,
       cancel: () => this.cancelPendingAcquisition(environment, pending)
     }
-    pending = { mode, acquisition, resolve: resolveGranted, reject: rejectGranted }
+    const pending = { mode, acquisition, resolve: resolveGranted, reject: rejectGranted }
 
     if (this.disposed) {
       pending.reject(new Error('Environment lease manager is disposed.'))
