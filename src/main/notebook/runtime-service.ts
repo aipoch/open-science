@@ -3378,8 +3378,13 @@ class NotebookRuntimeService {
   // shutdownAll(), this is terminal: quit/relaunch and module disposal use it, while update and data-root
   // migration gates retain the reusable shutdown contract so a refused/cancelled flow can resume work.
   async dispose(): Promise<{ reaped: boolean }> {
-    await this.recoveryCoordinator.dispose()
-    return this.shutdownAll()
+    // Mark recovery disposed first, but do not let slow startup filesystem reconciliation consume the
+    // quit budget before kernel teardown even starts. Await both so non-quit module disposal still leaves
+    // no recovery work behind once this terminal operation resolves.
+    const recoveryDisposal = this.recoveryCoordinator.dispose()
+    const shutdown = this.shutdownAll()
+    const [result] = await Promise.all([shutdown, recoveryDisposal])
+    return result
   }
 
   // Lists sessions with a cell mid-execution, for the pre-migration active-session warning.

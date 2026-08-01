@@ -6005,6 +6005,53 @@ describe('v4 runtime bindings & agent tools', () => {
     expect(shutdowns).toBe(2)
   })
 
+  it('starts kernel teardown without waiting for startup recovery to settle', async () => {
+    const root = await createStorageRoot()
+    let releaseRecovery: (() => void) | undefined
+    const recoveryDisposal = new Promise<void>((resolve) => {
+      releaseRecovery = resolve
+    })
+    const shutdown = vi.fn(async () => ({ reaped: true }))
+    const service = new NotebookRuntimeService({
+      configRoot: root,
+      dataRoot: root,
+      projectName: 'default-project',
+      repository: new NotebookRunRepository(root),
+      executorFactory: () => ({
+        execute: async (request): Promise<NotebookExecutionResult> => ({
+          status: 'completed',
+          stdout: request.code,
+          stderr: '',
+          traceback: '',
+          cwdAfter: request.cwd,
+          outputs: []
+        }),
+        shutdown
+      })
+    })
+
+    await service.execute({
+      sessionId: 's',
+      workspaceCwd: root,
+      code: 'before-quit',
+      language: 'python'
+    })
+    Object.defineProperty(service, 'recoveryCoordinator', {
+      value: { dispose: vi.fn(() => recoveryDisposal) }
+    })
+
+    const disposal = service.dispose()
+    let disposed = false
+    void disposal.then(() => {
+      disposed = true
+    })
+
+    await vi.waitFor(() => expect(shutdown).toHaveBeenCalledTimes(1))
+    expect(disposed).toBe(false)
+    releaseRecovery?.()
+    await expect(disposal).resolves.toEqual({ reaped: true })
+  })
+
   it('describeRuntimeUsage counts bound sessions by kernel state for the disable warning (WS11)', async () => {
     const root = await createStorageRoot()
     const service = bindingService(root, {
