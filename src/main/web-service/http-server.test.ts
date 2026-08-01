@@ -173,19 +173,44 @@ describe('startWebHttpServer', () => {
       channel: 'project:created',
       payload: { ready: true }
     })
+    const socketClosed = new Promise<void>((resolve) => socket.once('close', () => resolve()))
     socket.close()
+    await socketClosed
+    await vi.waitFor(() => expect(rpc.releaseClient).toHaveBeenCalledWith('test-client'))
+
+    await new Promise<void>((resolve, reject) => {
+      const unauthenticatedSocket = new WebSocket(`ws://127.0.0.1:${server.port}/api/v1/events`)
+      unauthenticatedSocket.once('open', () => reject(new Error('Unauthenticated socket opened.')))
+      unauthenticatedSocket.once('error', () => undefined)
+      unauthenticatedSocket.once('unexpected-response', (_request, response) => {
+        expect(response.statusCode).toBe(401)
+        response.resume()
+        resolve()
+      })
+    })
 
     const publicSocket = new WebSocket(
       `ws://127.0.0.1:${server.port}/api/v1/events?token=test-token`
     )
     await new Promise<void>((resolve) => publicSocket.once('open', resolve))
-    const publicMessage = new Promise<string>((resolve) =>
-      publicSocket.once('message', (data) => resolve(data.toString()))
-    )
+    const publicMessages: unknown[] = []
+    publicSocket.on('message', (data) => publicMessages.push(JSON.parse(data.toString())))
     broadcastToRenderers('acp:event', { sessionId: 'session-1', kind: 'message', text: 'Hi' })
-    expect(JSON.parse(await publicMessage)).toEqual({
-      type: 'run.event',
-      data: { sessionId: 'session-1', kind: 'message', text: 'Hi' }
+    broadcastToRenderers('acp:permission-request', {
+      sessionId: 'session-1',
+      requestId: 'permission-1'
+    })
+    await vi.waitFor(() => {
+      expect(publicMessages).toEqual([
+        {
+          type: 'run.event',
+          data: { sessionId: 'session-1', kind: 'message', text: 'Hi' }
+        },
+        {
+          type: 'permission.requested',
+          data: { sessionId: 'session-1', requestId: 'permission-1' }
+        }
+      ])
     })
     publicSocket.close()
   })
@@ -510,6 +535,125 @@ describe('startWebHttpServer', () => {
     expect(rpc.invoke).toHaveBeenCalledOnce()
   })
 
+  it.each([
+    ['one-time', accessOnlyExternalAccess],
+    ['trusted', authorizedExternalAccess]
+  ])('pins the %s remote capability matrix', async (_authority, createAuthorization) => {
+    const staticRoot = await mkdtemp(join(tmpdir(), 'open-science-web-static-'))
+    roots.push(staticRoot)
+    await writeFile(join(staticRoot, 'index.html'), '<!doctype html>')
+    const permissionChannels = [
+      'acp:respond-permission',
+      'acp:set-permission-profile',
+      'acp:revoke-permission-grant',
+      'permissions:extend-undo',
+      'permissions:list',
+      'permissions:restore',
+      'permissions:revoke'
+    ]
+    const computeChannels = [
+      'compute:bookmarks:get',
+      'compute:bookmarks:set',
+      'compute:concurrency:set',
+      'compute:create',
+      'compute:delete',
+      'compute:details:get',
+      'compute:details:save',
+      'compute:download',
+      'compute:enabled-hosts:get',
+      'compute:enabled-hosts:set',
+      'compute:get',
+      'compute:jobs:list',
+      'compute:jobs:mark-consumed',
+      'compute:jobs:pending-notification',
+      'compute:list',
+      'compute:list-dir',
+      'compute:probe',
+      'compute:approval-respond',
+      'compute:reveal-in-folder',
+      'compute:scratch:set',
+      'compute:ssh-config-aliases'
+    ]
+    const remoteDeniedComputeChannels = ['compute:download', 'compute:reveal-in-folder']
+    const remoteAllowedChannels = [
+      ...permissionChannels,
+      ...computeChannels.filter((channel) => !remoteDeniedComputeChannels.includes(channel))
+    ]
+    const rpcChannels = ['specialist:list', ...permissionChannels, ...computeChannels]
+    const rpc = {
+      channels: () => rpcChannels,
+      invoke: vi.fn(async (channel: string) => ({ channel })),
+      releaseClient: vi.fn(),
+      dispose: vi.fn()
+    }
+    const server = await startWebHttpServer({
+      host: '127.0.0.1',
+      port: 0,
+      token: 'local-token',
+      staticRoot,
+      rpc,
+      externalAccess: {
+        authorizeHttp: vi.fn().mockResolvedValue(createAuthorization()),
+        authorizeWebSocket: vi.fn().mockResolvedValue({})
+      },
+      bootstrap: {
+        appName: 'Open Science',
+        appVersion: '0.0.0',
+        configRoot: '/fake/root',
+        platform: 'test',
+        versions: { electron: '1', chrome: '1', node: '1' }
+      }
+    })
+    servers.push(server)
+    const base = `http://127.0.0.1:${server.port}`
+    const invoke = (channel: string, local = false): Promise<Response> =>
+      fetch(`${base}/rpc/${encodeURIComponent(channel)}`, {
+        method: 'POST',
+        headers: {
+          ...(local ? { authorization: 'Bearer local-token' } : {}),
+          'content-type': 'application/json'
+        },
+        body: JSON.stringify({ protocolVersion: WEB_RPC_PROTOCOL_VERSION, args: [] })
+      })
+
+    const remoteBootstrap = await fetch(`${base}/api/bootstrap`)
+    const remoteBootstrapBody = (await remoteBootstrap.json()) as {
+      rpcChannels: string[]
+      restrictedRpcChannels: string[]
+    }
+    expect(remoteBootstrapBody.rpcChannels).toEqual(remoteAllowedChannels)
+    expect(remoteBootstrapBody.restrictedRpcChannels).toEqual(remoteDeniedComputeChannels)
+
+    for (const channel of remoteAllowedChannels) {
+      const response = await invoke(channel)
+      expect(response.status, channel).toBe(200)
+    }
+    for (const channel of remoteDeniedComputeChannels) {
+      const remoteResponse = await invoke(channel)
+      expect(remoteResponse.status, channel).toBe(403)
+
+      const localResponse = await invoke(channel, true)
+      expect(localResponse.status, channel).toBe(200)
+    }
+
+    const localBootstrap = await fetch(`${base}/api/bootstrap`, {
+      headers: { authorization: 'Bearer local-token' }
+    })
+    const localBootstrapBody = (await localBootstrap.json()) as {
+      rpcChannels: string[]
+      restrictedRpcChannels: string[]
+    }
+    expect(localBootstrapBody.rpcChannels).toEqual([...permissionChannels, ...computeChannels])
+    expect(localBootstrapBody.restrictedRpcChannels).toEqual([])
+
+    expect((await invoke('specialist:list')).status).toBe(404)
+    expect((await invoke('specialist:list', true)).status).toBe(404)
+    expect(rpc.invoke.mock.calls.map(([channel]) => channel)).toEqual([
+      ...remoteAllowedChannels,
+      ...remoteDeniedComputeChannels
+    ])
+  })
+
   it('closes targeted or all external WebSockets without disturbing local clients', async () => {
     const staticRoot = await mkdtemp(join(tmpdir(), 'open-science-web-static-'))
     roots.push(staticRoot)
@@ -654,9 +798,9 @@ describe('startWebHttpServer', () => {
     await writeFile(join(staticRoot, 'index.html'), '<!doctype html>')
     const tasks = {
       listProjects: vi.fn().mockResolvedValue([{ id: 'project-1', name: 'Research' }]),
-      createProject: vi.fn(),
-      listSessions: vi.fn(),
-      getSession: vi.fn(),
+      createProject: vi.fn().mockResolvedValue({ id: 'project-2', name: 'Created' }),
+      listSessions: vi.fn().mockResolvedValue([{ id: 'session/1', title: 'Review' }]),
+      getSession: vi.fn().mockResolvedValue({ id: 'session/1', title: 'Review' }),
       startRun: vi.fn().mockResolvedValue({
         id: 'run-1',
         sessionId: 'session-1',
@@ -675,7 +819,7 @@ describe('startWebHttpServer', () => {
         output: 'Done',
         artifacts: []
       }),
-      listArtifacts: vi.fn(),
+      listArtifacts: vi.fn().mockResolvedValue([{ id: 'artifact/1', name: 'report.md' }]),
       acquireArtifact: vi.fn(),
       releaseArtifact: vi.fn(),
       dispose: vi.fn()
@@ -706,18 +850,53 @@ describe('startWebHttpServer', () => {
 
     const projects = await fetch(`${base}/api/v1/projects`, { headers })
     expect(projects.status).toBe(200)
+    expect(projects.headers.get('content-type')).toBe('application/json; charset=utf-8')
+    expect(projects.headers.get('cache-control')).toBe('no-store')
     expect(await projects.json()).toEqual({ data: [{ id: 'project-1', name: 'Research' }] })
+
+    const created = await fetch(`${base}/api/v1/projects`, {
+      method: 'POST',
+      headers: { ...headers, 'content-type': 'application/json' },
+      body: JSON.stringify({ name: 'Created', description: 'A new project' })
+    })
+    expect(created.status).toBe(201)
+    expect(await created.json()).toEqual({ data: { id: 'project-2', name: 'Created' } })
+    expect(tasks.createProject).toHaveBeenCalledWith({
+      name: 'Created',
+      description: 'A new project'
+    })
+
+    const sessions = await fetch(`${base}/api/v1/sessions?project=Research%20%2F%20Lab`, {
+      headers
+    })
+    expect(await sessions.json()).toEqual({ data: [{ id: 'session/1', title: 'Review' }] })
+    expect(tasks.listSessions).toHaveBeenCalledWith('Research / Lab')
+
+    const session = await fetch(`${base}/api/v1/sessions/session%2F1`, { headers })
+    expect(await session.json()).toEqual({ data: { id: 'session/1', title: 'Review' } })
+    expect(tasks.getSession).toHaveBeenCalledWith('session/1')
+
+    const artifacts = await fetch(`${base}/api/v1/sessions/session%2F1/artifacts`, { headers })
+    expect(await artifacts.json()).toEqual({
+      data: [{ id: 'artifact/1', name: 'report.md' }]
+    })
+    expect(tasks.listArtifacts).toHaveBeenCalledWith('session/1')
 
     const started = await fetch(`${base}/api/v1/runs`, {
       method: 'POST',
       headers: { ...headers, 'content-type': 'application/json' },
-      body: JSON.stringify({ project: 'project-1', prompt: 'Research this.' })
+      body: JSON.stringify({
+        project: 'project-1',
+        prompt: 'Research this.',
+        permissionProfile: 'auto'
+      })
     })
     expect(started.status).toBe(202)
     expect(await started.json()).toMatchObject({ data: { id: 'run-1', status: 'running' } })
     expect(tasks.startRun).toHaveBeenCalledWith({
       project: 'project-1',
-      prompt: 'Research this.'
+      prompt: 'Research this.',
+      permissionProfile: 'auto'
     })
 
     const status = await fetch(`${base}/api/v1/runs/run-1`, { headers })
@@ -738,6 +917,45 @@ describe('startWebHttpServer', () => {
         message: 'Session already has an active run: session-1'
       }
     })
+
+    tasks.startRun.mockRejectedValueOnce(
+      new TaskApiError('project_not_found', 'Project not found: missing')
+    )
+    const missingProject = await fetch(`${base}/api/v1/runs`, {
+      method: 'POST',
+      headers: { ...headers, 'content-type': 'application/json' },
+      body: JSON.stringify({ project: 'missing', prompt: 'Research this.' })
+    })
+    expect(missingProject.status).toBe(404)
+    expect(await missingProject.json()).toEqual({
+      error: { code: 'project_not_found', message: 'Project not found: missing' }
+    })
+
+    const malformed = await fetch(`${base}/api/v1/runs`, {
+      method: 'POST',
+      headers: { ...headers, 'content-type': 'application/json' },
+      body: '{not-json'
+    })
+    expect(malformed.status).toBe(400)
+    expect(await malformed.json()).toEqual({
+      error: { code: 'invalid_request', message: 'Request body must be valid JSON.' }
+    })
+
+    const unauthenticated = await fetch(`${base}/api/v1/projects`)
+    expect(unauthenticated.status).toBe(401)
+    expect(await unauthenticated.text()).toBe('Unauthorized')
+
+    for (const path of [
+      '/api/v1/permissions/permission-1/approve',
+      '/api/v1/specialists',
+      '/api/v1/compute'
+    ]) {
+      const absent = await fetch(`${base}${path}`, { method: 'POST', headers })
+      expect(absent.status).toBe(404)
+      expect(await absent.json()).toEqual({
+        error: { code: 'not_found', message: 'Task API endpoint not found.' }
+      })
+    }
   })
 
   it('streams an acquired artifact and always releases its capability', async () => {
