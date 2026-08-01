@@ -1691,6 +1691,29 @@ describe('patchCodexAcpTurnUsageSource', () => {
     expect(patchCodexAcpTurnUsageSource(overwritten)).toBe(patched)
   })
 
+  it('repairs an overwritten response when other response sites already match the current patch', () => {
+    const patched = patchCodexAcpTurnUsageSource(fixture)
+    const latestUsage = [
+      'usage: this.buildPromptUsage(',
+      '  sessionState.lastTokenUsage',
+      '),'
+    ].join('\n')
+    const overwrittenUsage = [
+      latestUsage,
+      '...(sessionState.promptTokenUsageObserved',
+      '  ? {',
+      '      _meta: {',
+      `        "${ACP_TURN_TOKEN_USAGE_META_KEY}": this.buildPromptUsage(sessionState.promptTokenUsage),`,
+      `        "${ACP_MODEL_TURN_COUNT_META_KEY}": sessionState.promptModelTurnCount`,
+      '      }',
+      '    }',
+      '  : {}),'
+    ].join('\n')
+    const mixedResponseSites = `${patched}\n${overwrittenUsage}`
+
+    expect(patchCodexAcpTurnUsageSource(mixedResponseSites)).toBe(`${patched}\n${latestUsage}`)
+  })
+
   it('composes with the context-usage patch without duplicate declarations', () => {
     const contextFixture = fixture.replace(
       '    this.handleTokenUsageUpdated(params);\n    return null;',

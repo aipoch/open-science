@@ -526,6 +526,19 @@ export const patchCodexAcpContextUsageSource = (source: string): string => {
 // field for the transcript footer. Falling back to `last` for the first update keeps resumed sessions
 // from attributing their historical cumulative total to the first new response.
 export const patchCodexAcpTurnUsageSource = (source: string): string => {
+  const repairedResponseSource = source
+    .replaceAll(
+      CODEX_ACP_TURN_USAGE_RESPONSE_OVERWRITTEN_WITH_COUNT_REPLACEMENT,
+      CODEX_ACP_TURN_USAGE_RESPONSE_REPLACEMENT
+    )
+    .replaceAll(
+      CODEX_ACP_TURN_USAGE_RESPONSE_OVERWRITTEN_REPLACEMENT,
+      CODEX_ACP_TURN_USAGE_RESPONSE_REPLACEMENT
+    )
+  if (repairedResponseSource !== source) {
+    return patchCodexAcpTurnUsageSource(repairedResponseSource)
+  }
+
   if (
     source.includes(CODEX_ACP_TURN_USAGE_UPDATE_REPLACEMENT) &&
     source.includes(CODEX_ACP_TURN_USAGE_START_REPLACEMENT) &&
@@ -565,14 +578,6 @@ export const patchCodexAcpTurnUsageSource = (source: string): string => {
     )
     .replaceAll(
       CODEX_ACP_TURN_USAGE_RESPONSE_LEGACY_REPLACEMENT,
-      CODEX_ACP_TURN_USAGE_RESPONSE_REPLACEMENT
-    )
-    .replaceAll(
-      CODEX_ACP_TURN_USAGE_RESPONSE_OVERWRITTEN_WITH_COUNT_REPLACEMENT,
-      CODEX_ACP_TURN_USAGE_RESPONSE_REPLACEMENT
-    )
-    .replaceAll(
-      CODEX_ACP_TURN_USAGE_RESPONSE_OVERWRITTEN_REPLACEMENT,
       CODEX_ACP_TURN_USAGE_RESPONSE_REPLACEMENT
     )
     .replaceAll(CODEX_ACP_TURN_USAGE_META_SOURCE, CODEX_ACP_TURN_USAGE_META_REPLACEMENT)
