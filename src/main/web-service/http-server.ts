@@ -10,6 +10,7 @@ import { gzip } from 'node:zlib'
 import { net } from 'electron'
 import { WebSocket, WebSocketServer } from 'ws'
 
+import { ClientLeaseRegistry, createWebCallerContext } from '../caller-context'
 import type { WebRpcRouter } from '../ipc-handler-registry'
 import { addRendererBroadcastSink } from '../renderer-broadcast'
 import {
@@ -453,7 +454,7 @@ const startWebHttpServer = async (options: WebServerOptions): Promise<RunningWeb
   const sockets = new Set<WebSocket>()
   const externalSockets = new Map<WebSocket, string | undefined>()
   const publicEventSockets = new Set<WebSocket>()
-  const clientConnections = new Map<string, number>()
+  const clientLeases = new ClientLeaseRegistry(options.rpc.releaseClient)
   const wsServer = new WebSocketServer({ noServer: true })
 
   const server = createServer(async (request, response) => {
@@ -461,7 +462,6 @@ const startWebHttpServer = async (options: WebServerOptions): Promise<RunningWeb
       const url = new URL(request.url ?? '/', `http://${request.headers.host ?? '127.0.0.1'}`)
       const auth = authenticateRequest(request, url, options.token)
       let authorized = auth.ok
-      let canManageRemotePairing = false
       let externalAuthorization: ExternalWebAccessAuthorization | undefined
       if (!authorized && options.externalAccess) {
         const decision = await options.externalAccess.authorizeHttp(request, response, url)
@@ -469,7 +469,6 @@ const startWebHttpServer = async (options: WebServerOptions): Promise<RunningWeb
         authorized = typeof decision === 'object'
         if (typeof decision === 'object') {
           externalAuthorization = decision
-          canManageRemotePairing = decision.kind === 'authorized-pairing-manager'
         }
       }
       if (!authorized) {
@@ -583,11 +582,21 @@ const startWebHttpServer = async (options: WebServerOptions): Promise<RunningWeb
           return
         }
         const clientId = String(request.headers['x-open-science-client'] ?? 'web')
+        const callerContext = createWebCallerContext(clientId, {
+          ...(externalAuthorization
+            ? {
+                location: 'remote' as const,
+                authorities:
+                  externalAuthorization.kind === 'authorized-pairing-manager'
+                    ? (['manage-remote-pairing'] as const)
+                    : [],
+                isAuthorizationCurrent: externalAuthorization.isCurrent
+              }
+            : {})
+        })
         try {
           assertExternalAuthorizationCurrent(externalAuthorization)
-          const result = await options.rpc.invoke(channel, clientId, parsed.data.args, {
-            canManageRemotePairing
-          })
+          const result = await options.rpc.invoke(channel, callerContext, parsed.data.args)
           json(response, 200, {
             protocolVersion: WEB_RPC_PROTOCOL_VERSION,
             ok: true,
@@ -662,20 +671,14 @@ const startWebHttpServer = async (options: WebServerOptions): Promise<RunningWeb
   wsServer.on('connection', (socket, request) => {
     const url = new URL(request.url ?? '/', `http://${request.headers.host ?? '127.0.0.1'}`)
     const clientId = url.searchParams.get('client') ?? 'web'
+    const lease = clientLeases.acquire(clientId)
     sockets.add(socket)
     if (url.pathname === '/api/v1/events') publicEventSockets.add(socket)
-    clientConnections.set(clientId, (clientConnections.get(clientId) ?? 0) + 1)
     socket.on('close', () => {
       sockets.delete(socket)
       externalSockets.delete(socket)
       publicEventSockets.delete(socket)
-      const remaining = (clientConnections.get(clientId) ?? 1) - 1
-      if (remaining <= 0) {
-        clientConnections.delete(clientId)
-        options.rpc.releaseClient(clientId)
-      } else {
-        clientConnections.set(clientId, remaining)
-      }
+      lease.release()
     })
   })
 
@@ -728,6 +731,7 @@ const startWebHttpServer = async (options: WebServerOptions): Promise<RunningWeb
       for (const socket of sockets) socket.close()
       wsServer.close()
       await new Promise<void>((resolveClose) => server.close(() => resolveClose()))
+      clientLeases.dispose()
     }
   }
 }

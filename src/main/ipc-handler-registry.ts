@@ -3,33 +3,48 @@ import { EventEmitter } from 'node:events'
 import { ipcMain, type IpcMain, type IpcMainInvokeEvent } from 'electron'
 
 import { isWebRpcChannel } from '../shared/web-rpc-contract'
+import type { CallerContext } from './caller-context'
 
 type IpcHandler = Parameters<IpcMain['handle']>[1]
 
-class WebIpcSender extends EventEmitter {
+class WebIpcSender {
   readonly id: number
   readonly lifecycleClientId: string
-  canManageRemotePairing = false
+  readonly callerContext: CallerContext
 
-  constructor(id: number, clientId: string) {
-    super()
+  constructor(
+    id: number,
+    callerContext: CallerContext,
+    private readonly lifecycle: EventEmitter
+  ) {
     this.id = id
-    this.lifecycleClientId = `web:${clientId}`
+    this.lifecycleClientId = callerContext.lifecycleClientId
+    this.callerContext = callerContext
   }
 
-  destroy(): void {
-    this.emit('destroyed')
-    this.removeAllListeners()
+  once(event: string, listener: (...args: unknown[]) => void): this {
+    this.lifecycle.once(event, listener)
+    return this
+  }
+
+  on(event: string, listener: (...args: unknown[]) => void): this {
+    this.lifecycle.on(event, listener)
+    return this
+  }
+
+  off(event: string, listener: (...args: unknown[]) => void): this {
+    this.lifecycle.off(event, listener)
+    return this
+  }
+
+  removeListener(event: string, listener: (...args: unknown[]) => void): this {
+    this.lifecycle.removeListener(event, listener)
+    return this
   }
 }
 
 export type WebRpcRouter = {
-  invoke: (
-    channel: string,
-    clientId: string,
-    args: unknown[],
-    context?: { canManageRemotePairing?: boolean }
-  ) => Promise<unknown>
+  invoke: (channel: string, callerContext: CallerContext, args: unknown[]) => Promise<unknown>
   releaseClient: (clientId: string) => void
   dispose: () => void
   channels: () => string[]
@@ -42,15 +57,24 @@ type IpcHandlerRegistry = {
 
 const createIpcHandlerRegistry = (target: Pick<IpcMain, 'handle'>): IpcHandlerRegistry => {
   const webHandlers = new Map<string, IpcHandler>()
-  const senders = new Map<string, WebIpcSender>()
+  const clients = new Map<string, { id: number; lifecycle: EventEmitter }>()
   let nextSenderId = -1
 
-  const senderFor = (clientId: string): WebIpcSender => {
-    const existing = senders.get(clientId)
-    if (existing) return existing
-    const sender = new WebIpcSender(nextSenderId--, clientId)
-    senders.set(clientId, sender)
-    return sender
+  const senderFor = (callerContext: CallerContext): WebIpcSender => {
+    let client = clients.get(callerContext.clientId)
+    if (!client) {
+      client = { id: nextSenderId--, lifecycle: new EventEmitter() }
+      clients.set(callerContext.clientId, client)
+    }
+    return new WebIpcSender(client.id, callerContext, client.lifecycle)
+  }
+
+  const destroyClient = (clientId: string): void => {
+    const client = clients.get(clientId)
+    if (!client) return
+    clients.delete(clientId)
+    client.lifecycle.emit('destroyed')
+    client.lifecycle.removeAllListeners()
   }
 
   const ipcMainHandle: IpcMain['handle'] = (channel, listener) => {
@@ -61,22 +85,20 @@ const createIpcHandlerRegistry = (target: Pick<IpcMain, 'handle'>): IpcHandlerRe
   return {
     ipcMainHandle,
     webRpc: {
-      invoke: async (channel, clientId, args, context = {}) => {
+      invoke: async (channel, callerContext, args) => {
         if (!isWebRpcChannel(channel)) throw new Error(`Unknown Web RPC channel: ${channel}`)
         const handler = webHandlers.get(channel)
         if (!handler) throw new Error(`Unregistered Web RPC channel: ${channel}`)
-        const sender = senderFor(clientId)
-        sender.canManageRemotePairing = context.canManageRemotePairing === true
+        if (!callerContext.isAuthorizationCurrent()) {
+          throw new Error('Caller authorization is no longer current.')
+        }
+        const sender = senderFor(callerContext)
         const event = { sender } as unknown as IpcMainInvokeEvent
         return handler(event, ...args)
       },
-      releaseClient: (clientId) => {
-        senders.get(clientId)?.destroy()
-        senders.delete(clientId)
-      },
+      releaseClient: destroyClient,
       dispose: () => {
-        for (const sender of senders.values()) sender.destroy()
-        senders.clear()
+        for (const clientId of [...clients.keys()]) destroyClient(clientId)
         webHandlers.clear()
       },
       channels: () => [...webHandlers.keys()].sort()

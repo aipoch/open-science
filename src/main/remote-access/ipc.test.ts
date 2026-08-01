@@ -10,6 +10,7 @@ import {
   requireDesktopSender,
   requirePairingManager
 } from './ipc'
+import { createWebCallerContext } from '../caller-context'
 import { webRpc } from '../ipc-handler-registry'
 
 const eventWithSenderId = (id: number, remotePairingManager = false): IpcMainInvokeEvent =>
@@ -33,9 +34,9 @@ describe('remote access IPC authorization', () => {
         'remote-access:set-mode'
       ])
     )
-    await expect(webRpc.invoke('remote-access:get-snapshot', 'browser-1', [])).resolves.toEqual({
-      mode: 'off'
-    })
+    await expect(
+      webRpc.invoke('remote-access:get-snapshot', createWebCallerContext('browser-1'), [])
+    ).resolves.toEqual({ mode: 'off' })
     expect(snapshot).toHaveBeenCalledWith(false, false)
   })
 

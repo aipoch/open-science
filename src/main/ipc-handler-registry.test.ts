@@ -1,5 +1,6 @@
 import { describe, expect, it, vi } from 'vitest'
 
+import { createWebCallerContext } from './caller-context'
 import { createIpcHandlerRegistry } from './ipc-handler-registry'
 
 describe('createIpcHandlerRegistry', () => {
@@ -16,11 +17,11 @@ describe('createIpcHandlerRegistry', () => {
     expect([...nativeHandlers.keys()]).toEqual(['projects:list', 'test:unsafe'])
     expect(registry.webRpc.channels()).toEqual(['projects:list'])
     await expect(
-      registry.webRpc.invoke('projects:list', 'client-a', [{ page: 1 }])
+      registry.webRpc.invoke('projects:list', createWebCallerContext('client-a'), [{ page: 1 }])
     ).resolves.toEqual({ request: { page: 1 } })
-    await expect(registry.webRpc.invoke('test:unsafe', 'client-a', [])).rejects.toThrow(
-      'Unknown Web RPC channel'
-    )
+    await expect(
+      registry.webRpc.invoke('test:unsafe', createWebCallerContext('client-a'), [])
+    ).rejects.toThrow('Unknown Web RPC channel')
   })
 
   it('uses stable lifecycle senders and releases them without patching ipcMain.handle', async () => {
@@ -41,11 +42,19 @@ describe('createIpcHandlerRegistry', () => {
       return { senderId: sender.id, lifecycleClientId: sender.lifecycleClientId }
     })
 
-    const first = (await registry.webRpc.invoke('projects:list', 'browser-1', [])) as {
+    const first = (await registry.webRpc.invoke(
+      'projects:list',
+      createWebCallerContext('browser-1'),
+      []
+    )) as {
       senderId: number
       lifecycleClientId: string
     }
-    const second = (await registry.webRpc.invoke('projects:list', 'browser-1', [])) as typeof first
+    const second = (await registry.webRpc.invoke(
+      'projects:list',
+      createWebCallerContext('browser-1'),
+      []
+    )) as typeof first
     expect(second.senderId).toBe(first.senderId)
     expect(first.lifecycleClientId).toBe('web:browser-1')
 
@@ -54,7 +63,7 @@ describe('createIpcHandlerRegistry', () => {
 
     const reconnected = (await registry.webRpc.invoke(
       'projects:list',
-      'browser-1',
+      createWebCallerContext('browser-1'),
       []
     )) as typeof first
     expect(reconnected.senderId).not.toBe(first.senderId)
@@ -65,20 +74,39 @@ describe('createIpcHandlerRegistry', () => {
 
   it('scopes remote pairing authority to the current Web RPC invocation', async () => {
     const registry = createIpcHandlerRegistry({ handle: vi.fn() } as never)
-    registry.ipcMainHandle(
-      'remote-access:get-snapshot',
-      (event: unknown) =>
-        (event as { sender: { canManageRemotePairing?: boolean } }).sender
-          .canManageRemotePairing === true
+    registry.ipcMainHandle('remote-access:get-snapshot', (event: unknown) =>
+      (
+        event as { sender: { callerContext: { authorities: readonly string[] } } }
+      ).sender.callerContext.authorities.includes('manage-remote-pairing')
     )
 
     await expect(
-      registry.webRpc.invoke('remote-access:get-snapshot', 'browser-1', [], {
-        canManageRemotePairing: true
-      })
+      registry.webRpc.invoke(
+        'remote-access:get-snapshot',
+        createWebCallerContext('browser-1', {
+          location: 'remote',
+          authorities: ['manage-remote-pairing']
+        }),
+        []
+      )
     ).resolves.toBe(true)
     await expect(
-      registry.webRpc.invoke('remote-access:get-snapshot', 'browser-1', [])
+      registry.webRpc.invoke('remote-access:get-snapshot', createWebCallerContext('browser-1'), [])
     ).resolves.toBe(false)
+  })
+
+  it('rejects a caller whose authorization became stale before dispatch', async () => {
+    const registry = createIpcHandlerRegistry({ handle: vi.fn() } as never)
+    const handler = vi.fn()
+    registry.ipcMainHandle('projects:list', handler)
+    const context = createWebCallerContext('browser-1', {
+      location: 'remote',
+      isAuthorizationCurrent: () => false
+    })
+
+    await expect(registry.webRpc.invoke('projects:list', context, [])).rejects.toThrow(
+      'authorization is no longer current'
+    )
+    expect(handler).not.toHaveBeenCalled()
   })
 })

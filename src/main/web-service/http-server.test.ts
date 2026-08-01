@@ -13,6 +13,7 @@ vi.mock('electron', () => ({
 }))
 
 import { WEB_RPC_PROTOCOL_VERSION } from '../../shared/web-rpc-contract'
+import type { CallerContext } from '../caller-context'
 import { broadcastToRenderers } from '../renderer-broadcast'
 import {
   REMOTE_LOCAL_ONLY_RPC_CHANNELS,
@@ -54,7 +55,9 @@ describe('startWebHttpServer', () => {
         'settings:list-agent-home-skills',
         'settings:import-agent-home-skills'
       ],
-      invoke: vi.fn(async (_channel: string, _client: string, args: unknown[]) => args[0]),
+      invoke: vi.fn(
+        async (_channel: string, _callerContext: CallerContext, args: unknown[]) => args[0]
+      ),
       releaseClient: vi.fn(),
       dispose: vi.fn()
     }
@@ -114,9 +117,17 @@ describe('startWebHttpServer', () => {
       ok: true,
       result: { value: 1 }
     })
-    expect(rpc.invoke).toHaveBeenCalledWith('projects:list', 'test-client', [{ value: 1 }], {
-      canManageRemotePairing: false
-    })
+    expect(rpc.invoke).toHaveBeenCalledWith(
+      'projects:list',
+      expect.objectContaining({
+        clientId: 'test-client',
+        lifecycleClientId: 'web:test-client',
+        location: 'local',
+        actionOrigin: 'human',
+        authorities: []
+      }),
+      [{ value: 1 }]
+    )
 
     const binary = Uint8Array.from([0, 1, 127, 128, 255])
     const encodedBinary = Buffer.from(binary).toString('base64')
@@ -316,9 +327,15 @@ describe('startWebHttpServer', () => {
     )
 
     expect(response.status).toBe(200)
-    expect(rpc.invoke).toHaveBeenCalledWith('remote-access:get-snapshot', 'trusted-phone', [], {
-      canManageRemotePairing: true
-    })
+    expect(rpc.invoke).toHaveBeenCalledWith(
+      'remote-access:get-snapshot',
+      expect.objectContaining({
+        clientId: 'trusted-phone',
+        location: 'remote',
+        authorities: ['manage-remote-pairing']
+      }),
+      []
+    )
 
     authorizeHttp.mockResolvedValueOnce(accessOnlyExternalAccess())
     const oneTimeResponse = await fetch(
@@ -336,9 +353,12 @@ describe('startWebHttpServer', () => {
     expect(oneTimeResponse.status).toBe(200)
     expect(rpc.invoke).toHaveBeenLastCalledWith(
       'remote-access:get-snapshot',
-      'one-time-phone',
-      [],
-      { canManageRemotePairing: false }
+      expect.objectContaining({
+        clientId: 'one-time-phone',
+        location: 'remote',
+        authorities: []
+      }),
+      []
     )
   })
 

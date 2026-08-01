@@ -28,12 +28,13 @@ import type {
   TaskRun,
   TaskSessionSummary
 } from '../../shared/task-api'
+import { createTaskCallerContext, type CallerContext } from '../caller-context'
 
-const TASK_API_CLIENT_ID = 'headless-task-api'
+const TASK_CALLER_CONTEXT = createTaskCallerContext()
 const MAX_RETAINED_RUNS = 200
 
 type TaskRpc = {
-  invoke(channel: string, clientId: string, args: unknown[]): Promise<unknown>
+  invoke(channel: string, callerContext: CallerContext, args: unknown[]): Promise<unknown>
 }
 
 type TaskApiDependencies = {
@@ -671,7 +672,7 @@ class HeadlessTaskApi {
   }
 
   private invoke(channel: string, ...args: unknown[]): Promise<unknown> {
-    return this.rpc.invoke(channel, TASK_API_CLIENT_ID, args)
+    return this.rpc.invoke(channel, TASK_CALLER_CONTEXT, args)
   }
 }
 
