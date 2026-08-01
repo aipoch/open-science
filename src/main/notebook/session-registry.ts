@@ -24,12 +24,16 @@ export class NotebookSessionRegistry<Session extends NotebookSessionRegistryMemb
   private readonly removals = new Map<string, Promise<{ reaped: boolean }>>()
   private globalGate: AdmissionGate | undefined
   private shutdownPromise: Promise<{ reaped: boolean }> | undefined
+  private terminal = false
+  private disposalPromise: Promise<{ reaped: boolean }> | undefined
 
   get(sessionId: string): Session | undefined {
     return this.sessions.get(sessionId)
   }
 
   getOrCreate(sessionId: string, create: () => Promise<Session>): Promise<Session> {
+    if (this.terminal) return Promise.reject(this.disposedError())
+
     const globalGate = this.globalGate
     if (globalGate) return globalGate.promise.then(() => this.getOrCreate(sessionId, create))
 
@@ -42,10 +46,12 @@ export class NotebookSessionRegistry<Session extends NotebookSessionRegistryMemb
     const pending = this.creations.get(sessionId)
     if (pending) return pending
 
-    const creation = create().then((session) => {
-      this.sessions.set(sessionId, session)
-      return session
-    })
+    const creation = Promise.resolve()
+      .then(create)
+      .then((session) => {
+        this.sessions.set(sessionId, session)
+        return session
+      })
     this.creations.set(sessionId, creation)
     void creation.then(
       () => this.clearCreation(sessionId, creation),
@@ -55,6 +61,8 @@ export class NotebookSessionRegistry<Session extends NotebookSessionRegistryMemb
   }
 
   remove(sessionId: string): Promise<{ reaped: boolean }> {
+    if (this.terminal) return Promise.reject(this.disposedError())
+
     const globalGate = this.globalGate
     if (globalGate) return globalGate.promise.then(() => this.remove(sessionId))
 
@@ -73,6 +81,7 @@ export class NotebookSessionRegistry<Session extends NotebookSessionRegistryMemb
   }
 
   shutdownAll(): Promise<{ reaped: boolean }> {
+    if (this.terminal) return Promise.reject(this.disposedError())
     if (this.shutdownPromise) return this.shutdownPromise
 
     const gate = admissionGate()
@@ -84,6 +93,63 @@ export class NotebookSessionRegistry<Session extends NotebookSessionRegistryMemb
       () => this.clearShutdown(shutdown)
     )
     return shutdown
+  }
+
+  dispose(): Promise<{ reaped: boolean }> {
+    if (this.disposalPromise) return this.disposalPromise
+
+    this.terminal = true
+    const disposal = this.disposePermanently()
+    this.disposalPromise = disposal
+    return disposal
+  }
+
+  private async disposePermanently(): Promise<{ reaped: boolean }> {
+    const shutdown = this.shutdownPromise
+    if (shutdown) return shutdown
+
+    const removals = Array.from(this.removals.entries()).sort(([left], [right]) =>
+      left.localeCompare(right)
+    )
+    const removalOutcomes = await Promise.allSettled(removals.map(([, removal]) => removal))
+    await Promise.allSettled(Array.from(this.creations.values()))
+    const removalIds = new Set(removals.map(([sessionId]) => sessionId))
+    const sessions = Array.from(this.sessions.entries())
+      .filter(([sessionId]) => !removalIds.has(sessionId))
+      .sort(([left], [right]) => left.localeCompare(right))
+    const outcomes = await Promise.allSettled(
+      sessions.map(([, session]) => session.shutdownExecutor())
+    )
+    const failures: Array<{ sessionId: string; reason: unknown }> = []
+    let reaped = true
+
+    removalOutcomes.forEach((outcome, index) => {
+      const [sessionId] = removals[index]
+      if (outcome.status === 'rejected') {
+        failures.push({ sessionId, reason: outcome.reason })
+        return
+      }
+      reaped &&= outcome.value.reaped
+    })
+
+    outcomes.forEach((outcome, index) => {
+      const [sessionId, session] = sessions[index]
+      if (outcome.status === 'rejected') {
+        failures.push({ sessionId, reason: outcome.reason })
+        return
+      }
+
+      reaped &&= outcome.value.reaped
+      session.releaseMcpRpcConnection()
+      if (this.sessions.get(sessionId) === session) this.sessions.delete(sessionId)
+    })
+
+    this.throwFailures(
+      failures
+        .sort((left, right) => left.sessionId.localeCompare(right.sessionId))
+        .map(({ reason }) => reason)
+    )
+    return { reaped }
   }
 
   private async shutdownWithinGate(gate: AdmissionGate): Promise<{ reaped: boolean }> {
@@ -172,5 +238,9 @@ export class NotebookSessionRegistry<Session extends NotebookSessionRegistryMemb
     if (failures.length > 1) {
       throw new AggregateError(failures, 'Multiple notebook sessions failed to shut down.')
     }
+  }
+
+  private disposedError(): Error {
+    return new Error('Notebook session registry has been disposed.')
   }
 }

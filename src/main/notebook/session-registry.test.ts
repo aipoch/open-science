@@ -33,6 +33,7 @@ describe('NotebookSessionRegistry', () => {
     const first = registry.getOrCreate('session-1', create)
     const second = registry.getOrCreate('session-1', create)
 
+    await Promise.resolve()
     expect(create).toHaveBeenCalledTimes(1)
     const session = testSession('session-1')
     initialization.resolve(session)
@@ -54,6 +55,21 @@ describe('NotebookSessionRegistry', () => {
     await expect(registry.getOrCreate('session-1', create)).resolves.toBe(session)
 
     expect(create).toHaveBeenCalledTimes(2)
+  })
+
+  it('turns a synchronous initialization failure into a retryable rejection', async () => {
+    const registry = new NotebookSessionRegistry<TestSession>()
+    const initializationError = new Error('synchronous initialization failed')
+    const session = testSession('session-1')
+    const create = vi
+      .fn<() => Promise<TestSession>>()
+      .mockImplementationOnce(() => {
+        throw initializationError
+      })
+      .mockResolvedValueOnce(session)
+
+    await expect(registry.getOrCreate('session-1', create)).rejects.toBe(initializationError)
+    await expect(registry.getOrCreate('session-1', create)).resolves.toBe(session)
   })
 
   it('initializes different session IDs without serializing them', async () => {
@@ -227,5 +243,106 @@ describe('NotebookSessionRegistry', () => {
     ])
     expect(session.shutdownExecutor).toHaveBeenCalledTimes(1)
     expect(session.releaseMcpRpcConnection).toHaveBeenCalledTimes(1)
+  })
+
+  it('permanently closes admission and shares terminal disposal across callers', async () => {
+    const registry = new NotebookSessionRegistry<TestSession>()
+    const initialization = deferred<TestSession>()
+    const session = testSession('session-1')
+    vi.mocked(session.shutdownExecutor).mockResolvedValueOnce({ reaped: false })
+    const admission = registry.getOrCreate('session-1', () => initialization.promise)
+
+    const firstDisposal = registry.dispose()
+    const repeatedDisposal = registry.dispose()
+    const createAfterDispose = vi.fn(async () => testSession('session-2'))
+
+    expect(repeatedDisposal).toBe(firstDisposal)
+    await expect(registry.getOrCreate('session-2', createAfterDispose)).rejects.toThrow(/disposed/)
+    expect(createAfterDispose).not.toHaveBeenCalled()
+    initialization.resolve(session)
+
+    await expect(admission).resolves.toBe(session)
+    await expect(firstDisposal).resolves.toEqual({ reaped: false })
+    expect(session.shutdownExecutor).toHaveBeenCalledTimes(1)
+    expect(session.releaseMcpRpcConnection).toHaveBeenCalledTimes(1)
+    await expect(registry.getOrCreate('session-1', async () => session)).rejects.toThrow(/disposed/)
+  })
+
+  it('rethrows one terminal teardown error unchanged after attempting every session', async () => {
+    const registry = new NotebookSessionRegistry<TestSession>()
+    const teardownError = new Error('terminal teardown failed')
+    const failed = testSession('session-1')
+    const removed = testSession('session-2')
+    vi.mocked(failed.shutdownExecutor).mockRejectedValueOnce(teardownError)
+    await registry.getOrCreate('session-1', async () => failed)
+    await registry.getOrCreate('session-2', async () => removed)
+
+    await expect(registry.dispose()).rejects.toBe(teardownError)
+
+    expect(failed.shutdownExecutor).toHaveBeenCalledTimes(1)
+    expect(removed.shutdownExecutor).toHaveBeenCalledTimes(1)
+    expect(registry.get('session-1')).toBe(failed)
+    expect(registry.get('session-2')).toBeUndefined()
+  })
+
+  it('orders multiple terminal teardown errors by session ID', async () => {
+    const registry = new NotebookSessionRegistry<TestSession>()
+    const firstError = new Error('session-1 terminal teardown failed')
+    const secondError = new Error('session-2 terminal teardown failed')
+    const second = testSession('session-2')
+    const first = testSession('session-1')
+    vi.mocked(second.shutdownExecutor).mockRejectedValueOnce(secondError)
+    vi.mocked(first.shutdownExecutor).mockRejectedValueOnce(firstError)
+    await registry.getOrCreate('session-2', async () => second)
+    await registry.getOrCreate('session-1', async () => first)
+
+    const failure = await registry.dispose().catch((error: unknown) => error)
+
+    expect(failure).toBeInstanceOf(AggregateError)
+    expect((failure as AggregateError).errors).toEqual([firstError, secondError])
+  })
+
+  it('finishes terminal disposal when an in-flight initialization rejects', async () => {
+    const registry = new NotebookSessionRegistry<TestSession>()
+    const initialization = deferred<TestSession>()
+    const initializationError = new Error('factory failed')
+    const admission = registry.getOrCreate('session-1', () => initialization.promise)
+
+    const disposal = registry.dispose()
+    initialization.reject(initializationError)
+
+    await expect(admission).rejects.toBe(initializationError)
+    await expect(disposal).resolves.toEqual({ reaped: true })
+  })
+
+  it('includes an earlier failed removal in terminal disposal without retrying teardown', async () => {
+    const registry = new NotebookSessionRegistry<TestSession>()
+    const teardownError = new Error('removal teardown failed')
+    const session = testSession('session-1')
+    vi.mocked(session.shutdownExecutor).mockRejectedValueOnce(teardownError)
+    await registry.getOrCreate('session-1', async () => session)
+
+    const removal = registry.remove('session-1')
+    const disposal = registry.dispose()
+
+    await expect(removal).rejects.toBe(teardownError)
+    await expect(disposal).rejects.toBe(teardownError)
+    expect(session.shutdownExecutor).toHaveBeenCalledTimes(1)
+    expect(registry.get('session-1')).toBe(session)
+  })
+
+  it('adopts an earlier global shutdown as terminal cleanup without retrying failures', async () => {
+    const registry = new NotebookSessionRegistry<TestSession>()
+    const teardownError = new Error('global teardown failed')
+    const session = testSession('session-1')
+    vi.mocked(session.shutdownExecutor).mockRejectedValueOnce(teardownError)
+    await registry.getOrCreate('session-1', async () => session)
+
+    const shutdown = registry.shutdownAll()
+    const disposal = registry.dispose()
+
+    await expect(shutdown).rejects.toBe(teardownError)
+    await expect(disposal).rejects.toBe(teardownError)
+    expect(session.shutdownExecutor).toHaveBeenCalledTimes(1)
   })
 })
