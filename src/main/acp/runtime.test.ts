@@ -28,7 +28,12 @@ import type { ModelReasoningEffort } from '../../shared/reasoning-effort'
 import { terminateProcessTree } from '../process-tree'
 import { AgentMcpHttpHost } from './mcp-http-host'
 import { SkillRegistry } from '../skills/registry'
-import { claudeCodeFramework, codexFramework, opencodeFramework } from '../agent-framework'
+import {
+  claudeCodeFramework,
+  codexFramework,
+  opencodeFramework,
+  type ResolvedAgentBackend
+} from '../agent-framework'
 import { ArtifactRepository } from '../artifacts/repository'
 import { ArtifactProvenanceRepository } from '../artifacts/provenance-repository'
 import type { ArtifactRunClaim } from '../artifacts/run-registry'
@@ -111,6 +116,22 @@ class FakeAgentProcess extends EventEmitter {
 // Narrows the fake process into the runtime's child process type.
 const asAgentProcess = (process: FakeAgentProcess): ChildProcessWithoutNullStreams =>
   process as unknown as ChildProcessWithoutNullStreams
+
+const createBackendLeaseHarness = (): {
+  release: () => Promise<void>
+  lease: NonNullable<ResolvedAgentBackend['responsesBridgeLease']>
+} => {
+  const release = vi.fn(async () => undefined)
+  return {
+    release,
+    lease: {
+      selectSkills: vi.fn(async () => []),
+      registerReviewerSession: vi.fn(),
+      unregisterReviewerSession: vi.fn(() => false),
+      release
+    }
+  }
+}
 
 // Creates a manually controlled promise for ordering async protocol steps.
 const createDeferred = <Value = void>(): {
@@ -1156,11 +1177,17 @@ describe('ACP runtime session management', () => {
 
   it('kills the agent process synchronously on shutdown so it cannot outlive the app', async () => {
     const process = new FakeAgentProcess()
+    const { lease, release } = createBackendLeaseHarness()
     startFakeAgent(process, ['shutdown-session'])
     const runtime = new AcpRuntime({
       appVersion: '0.2.0',
       defaultCwd: '/workspace',
-      spawnAgent: () => asAgentProcess(process)
+      resolveBackend: () => ({
+        framework: { ...claudeCodeFramework, spawn: () => asAgentProcess(process) },
+        executablePath: '/bin/agent',
+        env: {},
+        responsesBridgeLease: lease
+      })
     })
 
     await runtime.createSession({ cwd: '/workspace' })
@@ -1172,6 +1199,7 @@ describe('ACP runtime session management', () => {
 
     // Calling it again after the process is gone is a no-op, not a crash.
     expect(() => runtime.shutdown()).not.toThrow()
+    await vi.waitFor(() => expect(release).toHaveBeenCalledOnce())
   })
 
   it('kills a child that finishes spawning after shutdown began, so quit-during-connect cannot orphan it', async () => {
@@ -1290,6 +1318,31 @@ describe('ACP runtime session management', () => {
     await vi.waitFor(() => expect(runtime.getSnapshot().status).toBe('closed'))
     await vi.waitFor(() => expect(process.killed).toBe(true))
     expect(runtime.getSnapshot().sessionIds).toEqual([])
+  })
+
+  it('releases the backend lease exactly once after an unexpected protocol close', async () => {
+    const process = new FakeAgentProcess()
+    const { lease, release } = createBackendLeaseHarness()
+    startFakeAgent(process, ['unexpected-close-lease-session'])
+    const runtime = new AcpRuntime({
+      appVersion: '0.2.0',
+      defaultCwd: '/workspace',
+      resolveBackend: () => ({
+        framework: { ...claudeCodeFramework, spawn: () => asAgentProcess(process) },
+        executablePath: '/bin/agent',
+        env: {},
+        responsesBridgeLease: lease
+      })
+    })
+
+    await runtime.createSession({ cwd: '/workspace' })
+    process.stdout.end()
+
+    await vi.waitFor(() => expect(runtime.getSnapshot().status).toBe('closed'))
+    await vi.waitFor(() => expect(release).toHaveBeenCalledOnce())
+
+    runtime.shutdown()
+    expect(release).toHaveBeenCalledOnce()
   })
 
   it('releases notebook RPC capabilities after an unexpected protocol close', async () => {
@@ -11433,19 +11486,29 @@ describe('ACP runtime — connect failure logging', () => {
     warnLogSpy.mockClear()
     errorLogSpy.mockClear()
     const process = new FakeAgentProcess()
+    const { lease, release } = createBackendLeaseHarness()
     process.pid = 1212
     const runtime = new AcpRuntime({
       appVersion: '0.1.0',
       defaultCwd: '/workspace',
       // Bump the connection generation synchronously during spawn: the connect that captured the older
       // generation must detect the supersede after the child appears and abandon it.
-      spawnAgent: () => {
-        ;(runtime as unknown as { connectionGeneration: number }).connectionGeneration += 1
-        return asAgentProcess(process)
-      }
+      resolveBackend: () => ({
+        framework: {
+          ...claudeCodeFramework,
+          spawn: () => {
+            ;(runtime as unknown as { connectionGeneration: number }).connectionGeneration += 1
+            return asAgentProcess(process)
+          }
+        },
+        executablePath: '/bin/agent',
+        env: {},
+        responsesBridgeLease: lease
+      })
     })
 
     await expect(runtime.createSession({ cwd: '/workspace' })).rejects.toThrow(/superseded/i)
+    expect(release).toHaveBeenCalledOnce()
 
     const abandoned = warnLogSpy.mock.calls.find(
       ([message]) => message === 'agent connection abandoned (superseded or shutting down)'
@@ -11465,6 +11528,7 @@ describe('ACP runtime — connect failure logging', () => {
 
   it('labels a real-backend spawn failure with the resolved (switched) framework, not the old one', async () => {
     errorLogSpy.mockClear()
+    const { lease, release } = createBackendLeaseHarness()
     // The runtime defaults to claude-code; this reconnect resolves a *different* backend whose real
     // framework.spawn() throws. spawnAgentProcess sets this.framework to opencode before spawning, so
     // the failure must be attributed to opencode — the backend actually launched — via the spawn tag,
@@ -11480,11 +11544,13 @@ describe('ACP runtime — connect failure logging', () => {
           }
         },
         executablePath: '/bin/opencode',
-        env: {}
+        env: {},
+        responsesBridgeLease: lease
       })
     })
 
     await expect(runtime.createSession({ cwd: '/workspace' })).rejects.toThrow(/opencode ENOENT/)
+    expect(release).toHaveBeenCalledOnce()
 
     const call = errorLogSpy.mock.calls.find(([message]) => message === 'agent connection failed')
     expect(call).toBeDefined()
