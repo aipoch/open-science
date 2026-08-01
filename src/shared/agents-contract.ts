@@ -52,13 +52,10 @@ export type AgentsOrdinaryWriteOpName =
 // — without touching the auth/token transport in local-rpc-server.ts.
 export type AgentsOpName = AgentsReadOpName | AgentsWriteOpName
 
-// The trusted calling-session identity captured outside the sandbox (the control-plane REPL's
-// module-closure COMPUTE_SESSION_ID). This is the ONLY value switch() may target; sandbox code
-// cannot forge it. It is injected into dispatch as SERVER CONTEXT — the dispatcher and the domain
-// mutations it calls never read it back out of the forwarded op-params. (The transport in
-// local-rpc-server.ts does take `session_id` from the request to populate this context; see that
-// file's agentsCall comment for why that request value is trusted: the JS control REPL binds it to
-// the spawn-captured COMPUTE_SESSION_ID and the loopback is Bearer-token-gated.)
+// The trusted calling-session identity derived from the control-plane REPL's session-bound RPC
+// capability. This is the ONLY value switch() may target; sandbox code cannot forge it. It is
+// injected into dispatch as SERVER CONTEXT — the dispatcher and the domain mutations it calls never
+// read it back out of forwarded op-params.
 export type TrustedCallingSession = {
   sessionId?: string
 }
@@ -245,6 +242,8 @@ export const AGENTS_RESERVED_PARAM_KEYS = [
   'op',
   'session_id',
   'sessionId',
+  'project_id',
+  'projectId',
   'specialist_id',
   'specialistId',
   'target_specialist_id',

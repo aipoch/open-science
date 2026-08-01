@@ -40,6 +40,7 @@ import {
   isNameChangingPatch
 } from './specialist-privileged-ops'
 import type { SpecialistUpdatePatch } from './specialist-approval-presentation'
+import { AgentsSafeError, agentsPublicError, formatAgentsError } from './agents-error'
 
 // The minimal read surface this adapter needs from the settings/connectors catalog. Keeping it
 // narrow avoids pulling the whole SettingsService into the SDK contract and lets tests stub it.
@@ -139,19 +140,9 @@ export type AgentsReadOp =
   | { op: 'list_skills'; params: { name_or_id?: unknown } }
   | { op: 'list_connectors'; params: { name_or_id?: unknown } }
 
-const METHOD_PREFIX = 'host.agents'
-
-// Sanitizes an arbitrary error into a stable message. Connector args, credentials, headers,
-// environment values, and internal stack detail must never reach the sandbox. We keep only the
-// top-level message and strip anything that looks like a secret-bearing JSON blob.
-const sanitizeError = (value: unknown): string => {
-  const raw = value instanceof Error ? value.message : String(value)
-  return raw
-}
-
-class AgentsCallError extends Error {
+class AgentsCallError extends AgentsSafeError {
   constructor(method: string, cause: unknown) {
-    super(`${METHOD_PREFIX}.${method}: ${sanitizeError(cause)}`)
+    super(formatAgentsError(method, cause))
     this.name = 'AgentsCallError'
   }
 }
@@ -251,7 +242,7 @@ export class AgentsService {
       if (opName === 'delete') return await this.runDelete(params)
       // The dispatcher covers every operation the contract names. An unrecognized op was already
       // rejected as unknown above, so this branch is unreachable for a validated op name.
-      throw new Error(`Operation "${opName}" is not implemented yet`)
+      throw agentsPublicError(`Operation "${opName}" is not implemented yet`)
     } catch (error) {
       throw new AgentsCallError(opName, error)
     }
@@ -286,7 +277,7 @@ export class AgentsService {
   ): Promise<unknown> {
     const { approvalGateway, switchNotifier, sessionBinding, persistSessionSpecialist } = this.deps
     if (!approvalGateway || !switchNotifier || !sessionBinding || !persistSessionSpecialist) {
-      throw new Error(
+      throw agentsPublicError(
         'Operation "switch" is not configured (approval/binding/persistence seams missing)'
       )
     }
@@ -352,11 +343,11 @@ export class AgentsService {
 
     // `enabled` is accepted on the name-changing patch too (defect #1): validate it is a boolean
     // here (matching the ordinary path's `enabled must be a boolean.` error) and carry it onto the
-    // specialistPatch so applyNameChangingUpdate can apply it via setEnabled after the atomic rename.
-    // There is no snake_case variant — the contract uses `enabled` on both create and update.
+    // complete atomic ProfileService.update patch. There is no snake_case variant — the contract
+    // uses `enabled` on both create and update.
     if (patchRecord.enabled !== undefined) {
       if (typeof patchRecord.enabled !== 'boolean') {
-        throw new Error('enabled must be a boolean.')
+        throw agentsPublicError('enabled must be a boolean.')
       }
       specialistPatch.enabled = patchRecord.enabled
     }
@@ -366,7 +357,7 @@ export class AgentsService {
     }
 
     const currentName = typeof params.name === 'string' ? params.name : undefined
-    if (!currentName) throw new Error('name is required')
+    if (!currentName) throw agentsPublicError('name is required')
     const revision = patchRecord.revision
     if (
       typeof revision !== 'number' ||
@@ -374,7 +365,7 @@ export class AgentsService {
       !Number.isInteger(revision) ||
       revision <= 0
     ) {
-      throw new Error('revision must be a positive integer.')
+      throw agentsPublicError('revision must be a positive integer.')
     }
 
     // Project capability fields (skill_names/connector_names/unrestricted) so a rename coinciding
@@ -402,7 +393,7 @@ export class AgentsService {
 
     const { approvalGateway, invalidateCatalog } = this.deps
     if (!approvalGateway) {
-      throw new Error('Operation "update" is not configured (approval gateway missing)')
+      throw agentsPublicError('Operation "update" is not configured (approval gateway missing)')
     }
     const result = await applyNameChangingUpdate({
       profileService: this.deps.profileService,
@@ -424,10 +415,10 @@ export class AgentsService {
   private async runDelete(params: Record<string, unknown>): Promise<unknown> {
     const { approvalGateway, invalidateCatalog } = this.deps
     if (!approvalGateway) {
-      throw new Error('Operation "delete" is not configured (approval gateway missing)')
+      throw agentsPublicError('Operation "delete" is not configured (approval gateway missing)')
     }
     const currentName = typeof params.name === 'string' ? params.name : undefined
-    if (!currentName) throw new Error('name is required')
+    if (!currentName) throw agentsPublicError('name is required')
     const revision = params.revision
     if (
       typeof revision !== 'number' ||
@@ -435,7 +426,7 @@ export class AgentsService {
       !Number.isInteger(revision) ||
       revision <= 0
     ) {
-      throw new Error('revision must be a positive integer.')
+      throw agentsPublicError('revision must be a positive integer.')
     }
     return applyDelete({
       profileService: this.deps.profileService,
@@ -456,7 +447,7 @@ export class AgentsService {
   // read model including stable id and revision.
   async get(params: { name?: unknown }): Promise<AgentReadModel> {
     const name = asString(params.name)
-    if (!name) throw new Error('name is required')
+    if (!name) throw agentsPublicError('name is required')
     const profile = await this.deps.profileService.getByName(name)
     return projectAgent(profile)
   }
@@ -562,14 +553,14 @@ export function applyNameOrIdFilter<T extends Nameable>(
   // 2. Otherwise match a unique public name (name, then display name).
   const byName = entries.filter((entry) => entry.name === ref || entry.displayName === ref)
   if (byName.length === 0) {
-    throw new Error(
+    throw agentsPublicError(
       `No catalog entry matches "${ref}". Use the stable id from list_skills/list_connectors.`
     )
   }
   if (byName.length > 1) {
     // Ambiguous public name: instruct the caller to use the stable id instead of guessing.
     const ids = byName.map((entry) => entry.id).join(', ')
-    throw new Error(
+    throw agentsPublicError(
       `Multiple catalog entries match name "${ref}" (${ids}). Use the stable id from ${method} instead.`
     )
   }

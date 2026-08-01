@@ -505,13 +505,14 @@ describe('executeAgentsMutation — update', () => {
     expect(passed.systemPrompt).toBe('new prompt')
     expect(passed.iconKey).toBe('flask')
     expect(passed.colorKey).toBe('blue')
+    expect(passed.enabled).toBe(false)
     expect(passed.capabilityMode).toBe('selected')
     expect(passed.selectedCapabilities?.skillIds).toEqual(['sk1'])
     expect(passed.selectedCapabilities?.connectorIds).toEqual(['c1'])
-    // read-back is the real returned view, not echoed input. revision reflects both mutations
-    // (update bumps 1->2, setEnabled bumps 2->3) since enabled lives on a separate service method.
+    // The complete patch, including enabled, is one revision-guarded atomic update.
     expect(result.id).toBe('sp-1')
-    expect(result.revision).toBe(3)
+    expect(result.revision).toBe(2)
+    expect(svc.calls.map((call) => call.method)).toEqual(['update'])
   })
 
   it('update({ unrestricted: true }) switches to Full without destroying the stored Selected config', async () => {
@@ -846,7 +847,7 @@ describe('executeAgentsMutation — errors are sanitized', () => {
         { op: 'create', params: { name: 'Bio' } },
         { profileService: svc, catalog }
       )
-    ).rejects.toThrow(/host\.agents\.create:/)
+    ).rejects.toThrow('host.agents.create: Internal operation failed.')
   })
 
   it('a repo revision-conflict surfaces as a sanitized host.agents.update: error', async () => {

@@ -961,16 +961,16 @@ async function computeRpc(params) {
 // (list/get/list_skills/list_connectors); mutation/switch land in later issues. Routed over the SAME
 // loopback RPC endpoint as host.mcp/host.compute but as its own `agentsCall` method — never through
 // host.mcp(). Uses the captured RPC_ENDPOINT/TOKEN + capturedFetch for the same token-isolation
-// reasons. The trusted calling session identity is the COMPUTE_SESSION_ID captured at spawn time
-// (above), forwarded on every call so switch() cannot be forged from sandbox user code.
-async function agentsRpc(op, params = {}, sessionId = COMPUTE_SESSION_ID) {
+// reasons. The trusted calling session identity is derived by the server from the session-bound
+// capability; it is never accepted from sandbox-controlled request params.
+async function agentsRpc(op, params = {}) {
   if (!RPC_ENDPOINT) throw new Error('host.agents is unavailable: connector RPC endpoint not set')
   const res = await capturedFetch(RPC_ENDPOINT, {
     method: 'POST',
     headers: { 'content-type': 'application/json', authorization: 'Bearer ' + (RPC_TOKEN || '') },
     body: JSON.stringify({
       method: 'agentsCall',
-      params: { op, ...(sessionId ? { session_id: sessionId } : {}), ...(params || {}) }
+      params: { op, ...(params || {}) }
     })
   })
   const body = await res.json().catch(() => ({}))

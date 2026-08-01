@@ -179,6 +179,8 @@ describe('AgentsService read surface', () => {
       profileService: failing as unknown as ProfileService,
       catalog: catalog()
     })
-    await expect(service.read({ op: 'list' })).rejects.toThrow(/host\.agents\.list:/)
+    await expect(service.read({ op: 'list' })).rejects.toThrow(
+      'host.agents.list: Internal operation failed.'
+    )
   })
 })

@@ -206,6 +206,7 @@ export type UpdateSpecialistInput = {
   systemPrompt?: string
   iconKey?: string
   colorKey?: string
+  enabled?: boolean
   capabilityMode?: SpecialistCapabilityMode
   fullAccess?: SpecialistFullAccessConfig
   selectedCapabilities?: SpecialistSelectedConfig

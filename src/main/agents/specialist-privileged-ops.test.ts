@@ -127,7 +127,8 @@ describe('applyNameChangingUpdate — approved atomic update', () => {
     const patch: SpecialistUpdatePatch = {
       name: 'DATA_SCIENTIST',
       description: 'updated desc',
-      systemPrompt: 'new instructions'
+      systemPrompt: 'new instructions',
+      enabled: false
     }
     const result = await applyNameChangingUpdate({
       profileService: service,
@@ -139,7 +140,12 @@ describe('applyNameChangingUpdate — approved atomic update', () => {
     // Returned actual camelCase read-back, not the input patch.
     expect(result).toEqual<AgentUpdatedResult>({
       status: 'updated',
-      agent: expect.objectContaining({ id: 'sp-1', name: 'DATA_SCIENTIST', revision: 4 })
+      agent: expect.objectContaining({
+        id: 'sp-1',
+        name: 'DATA_SCIENTIST',
+        enabled: false,
+        revision: 4
+      })
     })
     // Re-resolved by public name immediately before mutation.
     expect(calls.getByName).toContain('DATA_ANALYST')
@@ -152,7 +158,8 @@ describe('applyNameChangingUpdate — approved atomic update', () => {
         id: 'sp-1',
         revision: 3,
         name: 'DATA_SCIENTIST',
-        description: 'updated desc'
+        description: 'updated desc',
+        enabled: false
       })
     })
   })
@@ -284,7 +291,7 @@ describe('applyDelete — approved delete', () => {
         currentName: 'DATA_ANALYST',
         reviewedRevision: 3
       })
-    ).rejects.toThrow(/host\.agents\.delete:.*I\/O error/)
+    ).rejects.toThrow('host.agents.delete: Internal operation failed.')
   })
 
   it('fails closed with a sanitized error when revision drifted before approval', async () => {

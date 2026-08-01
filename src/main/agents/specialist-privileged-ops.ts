@@ -25,17 +25,11 @@ import type { ApprovalGateway, ApprovalResult } from '../../shared/agents-contra
 import type { SpecialistProfileView, UpdateSpecialistInput } from '../../shared/specialist'
 import type { ProfileService } from '../specialist/service'
 import type { SpecialistUpdatePatch } from './specialist-approval-presentation'
+import { AgentsSafeError, agentsPublicError, formatAgentsError } from './agents-error'
 
-const METHOD_PREFIX = 'host.agents'
-
-// Sanitizes an error into a stable, method-scoped message. System instructions, connector args,
-// credentials, and stack detail must never reach the sandbox. We keep only the top-level message.
-const sanitizeError = (value: unknown): string =>
-  value instanceof Error ? value.message : String(value)
-
-class PrivilegedOpError extends Error {
+class PrivilegedOpError extends AgentsSafeError {
   constructor(method: string, cause: unknown) {
-    super(`${METHOD_PREFIX}.${method}: ${sanitizeError(cause)}`)
+    super(formatAgentsError(method, cause))
     this.name = 'PrivilegedOpError'
   }
 }
@@ -96,7 +90,9 @@ const reResolveForMutation = async (
   if (current.revision !== reviewedRevision) {
     throw new PrivilegedOpError(
       method,
-      `reviewed revision ${reviewedRevision} no longer matches current revision ${current.revision}`
+      agentsPublicError(
+        `reviewed revision ${reviewedRevision} no longer matches current revision ${current.revision}`
+      )
     )
   }
   return current
@@ -142,6 +138,7 @@ const toServiceUpdate = (
   systemPrompt: patch.systemPrompt,
   iconKey: patch.iconKey,
   colorKey: patch.colorKey,
+  enabled: patch.enabled,
   capabilityMode: patch.capabilityMode,
   fullAccess: patch.fullAccess,
   selectedCapabilities: patch.selectedCapabilities
@@ -179,19 +176,6 @@ export const applyNameChangingUpdate = async (
     updated = await profileService.update(toServiceUpdate(current.id, current.revision, patch))
   } catch (error) {
     throw new PrivilegedOpError('update', error)
-  }
-
-  // `enabled` lives on a separate ProfileService method (update() does not carry it), mirroring the
-  // ordinary update path. After the atomic name-changing commit succeeds we have the real read-back;
-  // when the requested enabled state differs from the read-back, flip it via setEnabled and re-read.
-  // setEnabled is not revision-guarded (same as the ordinary path), so ordering update-first is safe
-  // and the stale-revision guard on the atomic rename still gates the whole mutation (defect #1).
-  if (patch.enabled !== undefined && patch.enabled !== updated.enabled) {
-    try {
-      updated = await profileService.setEnabled(current.id, patch.enabled)
-    } catch (error) {
-      throw new PrivilegedOpError('update', error)
-    }
   }
 
   if (deps.invalidateCatalog) await deps.invalidateCatalog()
@@ -263,7 +247,10 @@ export const applyDelete = async (deps: ApplyDeleteDeps): Promise<DeleteResult> 
     // Expected: getByName threw "not found" — absence verified.
   }
   if (stillPresent) {
-    throw new PrivilegedOpError('delete', `specialist "${currentName}" still present after delete`)
+    throw new PrivilegedOpError(
+      'delete',
+      agentsPublicError(`specialist "${currentName}" still present after delete`)
+    )
   }
 
   if (deps.invalidateCatalog) await deps.invalidateCatalog()

@@ -149,7 +149,7 @@ const ARTIFACT_RPC_METHODS = new Set<ArtifactRpcMethod>([
 // Capabilities are revoked when the turn ends. This upper bound only limits abandoned tokens, so
 // it must comfortably exceed long notebook executions that remain inside one active turn.
 const DEFAULT_ARTIFACT_RPC_CAPABILITY_TTL_MS = 2 * 60 * 60 * 1_000
-const CONTROL_RPC_METHODS = new Set(['mcpCall', 'computeCall'])
+const CONTROL_RPC_METHODS = new Set(['mcpCall', 'computeCall', 'agentsCall'])
 
 const isArtifactRpcMethod = (method: string): method is ArtifactRpcMethod =>
   ARTIFACT_RPC_METHODS.has(method as ArtifactRpcMethod)
@@ -561,7 +561,7 @@ class NotebookLocalRpcServer {
           if (authorization !== `Bearer ${this.token}`) {
             throw new RpcHttpError(401, 'Invalid notebook RPC token.')
           }
-          if (method === 'mcpCall' || method === 'computeCall') {
+          if (method === 'mcpCall' || method === 'computeCall' || method === 'agentsCall') {
             throw new RpcHttpError(401, 'A session-bound notebook RPC token is required.')
           }
         }
@@ -836,20 +836,10 @@ class NotebookLocalRpcServer {
     // agentsCall: host.agents control-plane SDK (issue 02). Routes operations to the AgentsService
     // dispatcher.
     //
-    // TRUSTED CALLING-SESSION IDENTITY: the `session_id` read from this request IS the trusted
-    // calling-session identity, forwarded to AgentsService.read() as server context — exactly the
-    // same way mcpCall/computeCall forward the caller's `sessionId`. It is NOT "ignored": only the
-    // forwarded op-params are stripped (stripAgentsReservedParams below). It is trusted because (a)
-    // the JS control REPL binds `session_id` to the spawn-captured COMPUTE_SESSION_ID at the
-    // `agentsRpc` boundary (see resources/notebook/repl_loop.js) and exposes no override through the
-    // `host.agents` SDK surface, and (b) this loopback RPC is Bearer-token-gated (handleRequest
-    // enforces `Bearer ${this.token}`), with the token captured and removed from `process.env`
-    // before the sandbox is built and held in an opaque module closure.
-    //
-    // RESIDUAL DEFENSE-IN-DEPTH LIMITATION: a single shared loopback server that trusts a
-    // caller-supplied session id means session-identity assurance ultimately rests on that token
-    // gate. Server-side session derivation (e.g. a session-bound token or per-session connection)
-    // is a possible future hardening, tracked separately — NOT implemented here.
+    // TRUSTED CALLING-SESSION IDENTITY: handleRequest derives `sessionId` from the per-session
+    // control capability and overwrites any request-body value before dispatch. The snake_case
+    // `session_id` field is reserved and stripped below, so sandbox code cannot target another
+    // conversation even if it forges raw agentsCall params.
     //
     // DISPATCH SEPARATION: this route owns ONLY auth + sandbox injection. It strips every reserved
     // routing/identity/switch key (AGENTS_RESERVED_PARAM_KEYS in src/shared/agents-contract.ts) and
@@ -858,14 +848,14 @@ class NotebookLocalRpcServer {
     // AgentsService.dispatch's extension-point comment.
     if (method === 'agentsCall') {
       if (!this.agentsService) throw new Error('Agents service is not configured.')
-      const sessionId = typeof params.session_id === 'string' ? params.session_id : undefined
+      const sessionId = typeof params.sessionId === 'string' ? params.sessionId : undefined
       const op = typeof params.op === 'string' ? params.op : ''
       // Strip every reserved routing/identity/switch key before forwarding. The AgentsService and
       // its injected approval/switch seams only ever see the op + their own snake_case params; the
       // trusted session identity stays in the server context (NOT taken from the forwarded params).
       // Sandbox-supplied values for specialist_id, target_specialist_id, reconfigure, etc. are
-      // provably ignored — note that session_id above is intentionally read from the request as the
-      // trusted identity, not from the forwarded op-params.
+      // provably ignored. The trusted session identity comes from the capability-bound camelCase
+      // field injected by handleRequest, not from sandbox-supplied snake_case params.
       const rest = stripAgentsReservedParams(params)
       return this.agentsService.read({ op, params: rest }, { sessionId })
     }

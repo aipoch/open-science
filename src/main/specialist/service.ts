@@ -237,6 +237,9 @@ export class ProfileService {
     if (input.name !== undefined && typeof input.name !== 'string') {
       throw new Error('Name must be a string.')
     }
+    if (input.enabled !== undefined && typeof input.enabled !== 'boolean') {
+      throw new Error('Enabled must be a boolean.')
+    }
     assertOptionalIdentityFieldShapes(input)
     assertCapabilityConfigShape(input)
 
@@ -256,6 +259,7 @@ export class ProfileService {
     if (input.systemPrompt !== undefined) patch.systemPrompt = input.systemPrompt
     if (input.iconKey !== undefined) patch.iconKey = input.iconKey
     if (input.colorKey !== undefined) patch.colorKey = input.colorKey
+    if (input.enabled !== undefined) patch.enabled = input.enabled
     if (input.capabilityMode !== undefined) patch.capabilityMode = input.capabilityMode
     if (input.fullAccess !== undefined) patch.fullAccess = input.fullAccess
     if (input.selectedCapabilities !== undefined) {

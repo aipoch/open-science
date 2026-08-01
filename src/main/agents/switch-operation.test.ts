@@ -357,7 +357,7 @@ describe('SwitchOperation — approval-time re-validation (fail closed)', () => 
     })
 
     await expect(op.run({ name: 'BIO_EXPERT' }, { sessionId: 'session-trusted' })).rejects.toThrow(
-      /host\.agents\.switch:/
+      'host.agents.switch: Internal operation failed.'
     )
   })
 
@@ -521,6 +521,55 @@ describe('SwitchOperation — last-write-wins & restart survival', () => {
     } satisfies PendingSwitch)
   })
 
+  it('serializes durable commits per session so an older slow write cannot land last', async () => {
+    const ps = makeProfileService([
+      profile({ id: 'sp-1', name: 'A' }),
+      profile({ id: 'sp-2', name: 'B' })
+    ])
+    const sharedSequencer = new SwitchCommitSequencer()
+    const binding = makeSessionBinding(new Map())
+    const writes: string[] = []
+    let releaseFirst!: () => void
+    let markFirstEntered!: () => void
+    const firstEntered = new Promise<void>((resolve) => (markFirstEntered = resolve))
+    const firstBlocked = new Promise<void>((resolve) => (releaseFirst = resolve))
+    const persist = vi.fn(async (_sessionId: string, specialistId: string | undefined) => {
+      if (specialistId === 'sp-1') {
+        markFirstEntered()
+        await firstBlocked
+      }
+      writes.push(specialistId ?? 'main')
+    })
+    const notify = vi.fn(async () => undefined)
+    const makeOp = (): SwitchOperation =>
+      new SwitchOperation({
+        profileService: ps,
+        sessionBinding: binding,
+        approvalGateway: approvingGateway(),
+        switchNotifier: { notify },
+        persistBinding: persist,
+        sequencer: sharedSequencer
+      })
+
+    const first = makeOp().run({ name: 'A' }, { sessionId: 'session-trusted' })
+    await firstEntered
+    const second = makeOp().run({ name: 'B' }, { sessionId: 'session-trusted' })
+    await new Promise((resolve) => setTimeout(resolve, 0))
+
+    // B must wait for A's entire durable commit. Otherwise A can finish after B and become the
+    // durable value despite being the older request.
+    expect(persist).toHaveBeenCalledTimes(1)
+    releaseFirst()
+    await Promise.all([first, second])
+
+    expect(writes).toEqual(['sp-1', 'sp-2'])
+    expect(binding.setBinding).toHaveBeenLastCalledWith('session-trusted', 'sp-2')
+    expect(notify).toHaveBeenLastCalledWith({
+      sessionId: 'session-trusted',
+      targetName: 'B'
+    } satisfies PendingSwitch)
+  })
+
   it('successful switch returns actual persisted binding/pending read-back', async () => {
     const ps = makeProfileService([profile({ id: 'sp-9', name: 'Z', revision: 7 })])
     const op = new SwitchOperation({
@@ -576,7 +625,7 @@ describe('SwitchOperation — sanitization and no-sensitive-data', () => {
       })
     })
     await expect(op.run({ name: 'BIO_EXPERT' }, { sessionId: 'session-trusted' })).rejects.toThrow(
-      /host\.agents\.switch:/
+      'host.agents.switch: Internal operation failed.'
     )
   })
 

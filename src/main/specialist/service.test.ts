@@ -167,6 +167,30 @@ describe('ProfileService.setEnabled', () => {
 })
 
 describe('ProfileService.update', () => {
+  it('atomically persists enabled with other fields and bumps revision once', async () => {
+    const created = await service.create({ name: 'My Bot' })
+    const updated = await service.update({
+      id: created.id,
+      revision: created.revision,
+      name: 'My Disabled Bot',
+      enabled: false
+    })
+
+    expect(updated).toMatchObject({
+      id: created.id,
+      name: 'My Disabled Bot',
+      enabled: false,
+      revision: created.revision + 1
+    })
+
+    const restarted = new ProfileService(new SpecialistRepository(tmpDir))
+    await expect(restarted.getById(created.id)).resolves.toMatchObject({
+      name: 'My Disabled Bot',
+      enabled: false,
+      revision: created.revision + 1
+    })
+  })
+
   it('updates identity fields and bumps revision', async () => {
     const created = await service.create({ name: 'RNA-seq Reviewer' })
     const updated = await service.update({

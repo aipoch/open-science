@@ -569,19 +569,13 @@ describe('AgentsService.dispatch — privileged mutation routing (issue 08a comp
     expect(invalidateCatalog).not.toHaveBeenCalled()
   })
 
-  // Regression (defect #1): a name-changing patch that ALSO toggles `enabled` must land BOTH. The
-  // ordinary update path applies `enabled` via a separate ProfileService.setEnabled(...) call after
-  // the identity/capability update; the privileged path previously built specialistPatch without
-  // `enabled` and never called setEnabled, so the enabled change was silently dropped on approval.
+  // Regression (defect #1): a name-changing patch that ALSO toggles `enabled` must land BOTH in one
+  // revision-guarded ProfileService.update call. Splitting this across update + setEnabled allows a
+  // partial rename when the second write fails and bypasses optimistic concurrency for the toggle.
   it('a name-changing patch that also toggles enabled applies BOTH the rename and the enabled change', async () => {
-    // After the atomic rename (revision 3->4), setEnabled flips enabled to false and bumps again
-    // (revision 4->5). The dispatcher must return the REAL post-setEnabled read-back with the new
-    // name AND enabled === false.
-    const renamed = specialist({ name: 'Biology', revision: 4, enabled: true })
-    const afterToggle = specialist({ name: 'Biology', revision: 5, enabled: false })
+    const updated = specialist({ name: 'Biology', revision: 4, enabled: false })
     const { service, profileService } = buildService({ profiles: [specialist()] })
-    ;(profileService.update as ReturnType<typeof vi.fn>).mockResolvedValue(renamed)
-    ;(profileService.setEnabled as ReturnType<typeof vi.fn>) = vi.fn(async () => afterToggle)
+    ;(profileService.update as ReturnType<typeof vi.fn>).mockResolvedValue(updated)
 
     const result = (await service.dispatch({
       op: 'update',
@@ -592,11 +586,9 @@ describe('AgentsService.dispatch — privileged mutation routing (issue 08a comp
     // REAL post-write read-back carries BOTH the rename and the enabled toggle.
     expect(result.agent.name).toBe('Biology')
     expect(result.agent.enabled).toBe(false)
-    expect(result.agent.revision).toBe(5)
-    // setEnabled was invoked with the toggled value, after the atomic rename committed.
-    expect(profileService.setEnabled as ReturnType<typeof vi.fn>).toHaveBeenCalledWith(
-      'sp-1',
-      false
+    expect(result.agent.revision).toBe(4)
+    expect(profileService.update as ReturnType<typeof vi.fn>).toHaveBeenCalledWith(
+      expect.objectContaining({ id: 'sp-1', name: 'Biology', enabled: false, revision: 3 })
     )
   })
 
