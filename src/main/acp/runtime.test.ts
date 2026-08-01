@@ -7295,14 +7295,27 @@ describe('ACP runtime session management', () => {
 
   it('returns detached snapshot collections without collapsing hidden event sequence slots', async () => {
     const process = new FakeAgentProcess()
-    startFakeAgent(process, ['s1'])
+    startPermissionProbeAgent(process, {
+      newSessionId: 's1',
+      toolCallId: 'snapshot-permission',
+      toolTitle: 'Run nested input',
+      toolKind: 'execute',
+      toolRawInput: { command: 'npm test', metadata: { source: 'provider' } },
+      modes: createModes(['read-only', 'agent'], 'agent'),
+      permissionOptions: [
+        { optionId: 'allow-once', name: 'Allow once', kind: 'allow_once' },
+        { optionId: 'reject', name: 'Reject', kind: 'reject_once' }
+      ]
+    })
     const runtime = new AcpRuntime({
       appVersion: '0.1.0',
       defaultCwd: '/workspace',
       spawnAgent: () => asAgentProcess(process)
     })
 
-    await runtime.createSession({ cwd: '/workspace' })
+    const session = await runtime.createSession({ cwd: '/workspace' })
+    const prompt = runtime.sendPrompt({ sessionId: session.sessionId, text: 'request permission' })
+    await vi.waitFor(() => expect(runtime.getSnapshot().pendingPermissions).toHaveLength(1))
     const existingEventCount = runtime.getSnapshot().events.length
     handleSessionUpdate(runtime, {
       sessionId: 's1',
@@ -7340,23 +7353,54 @@ describe('ACP runtime session management', () => {
     const messageRaw = snapshot.events.find(({ messageId }) => messageId === 'message-1')?.raw as {
       update: { content: { text: string } }
     }
+    const contextCategory = snapshot.contextUsageBySession.s1.breakdown?.categories[0]
+    const pendingPermission = snapshot.pendingPermissions[0]
+    const pendingRawInput = pendingPermission.rawInput as {
+      metadata: { source: string }
+    }
+    const permissionProfile = snapshot.permissionProfiles.s1
+    expect(contextCategory).toBeDefined()
+    const retainedContextCategoryTokens = contextCategory!.tokens
     messageRaw.update.content.text = 'mutated outside the runtime'
     if (snapshot.events[0]) snapshot.events[0].title = 'mutated outside the runtime'
+    contextCategory!.tokens = 999
+    pendingRawInput.metadata.source = 'mutated outside the runtime'
+    pendingPermission.options[0].name = 'mutated outside the runtime'
+    permissionProfile.availableModeIds[0] = 'mutated outside the runtime'
     snapshot.events.length = 0
     delete snapshot.contextUsageBySession.s1
 
-    expect(runtime.getSnapshot().events.map(({ id }) => id)).toEqual(retainedEventIds)
-    expect(runtime.getSnapshot().events.map(({ title }) => title)).toEqual(retainedEventTitles)
+    const retainedSnapshot = runtime.getSnapshot()
+    expect(retainedSnapshot.events.map(({ id }) => id)).toEqual(retainedEventIds)
+    expect(retainedSnapshot.events.map(({ title }) => title)).toEqual(retainedEventTitles)
     expect(
       (
-        runtime.getSnapshot().events.find(({ messageId }) => messageId === 'message-1')?.raw as {
+        retainedSnapshot.events.find(({ messageId }) => messageId === 'message-1')?.raw as {
           update: { content: { text: string } }
         }
       ).update.content.text
     ).toBe('first')
-    expect(runtime.getSnapshot().contextUsageBySession).toMatchObject({
+    expect(retainedSnapshot.contextUsageBySession).toMatchObject({
       s1: { used: 12, size: 128_000 }
     })
+    expect(retainedSnapshot.contextUsageBySession.s1.breakdown?.categories[0]?.tokens).toBe(
+      retainedContextCategoryTokens
+    )
+    expect(retainedSnapshot.pendingPermissions[0].rawInput).toEqual({
+      command: 'npm test',
+      metadata: { source: 'provider' }
+    })
+    expect(retainedSnapshot.pendingPermissions[0].options[0]).toMatchObject({
+      optionId: 'allow-once',
+      name: 'Allow once'
+    })
+    expect(retainedSnapshot.permissionProfiles.s1.availableModeIds).toEqual(['read-only', 'agent'])
+
+    runtime.respondToPermission({
+      requestId: retainedSnapshot.pendingPermissions[0].requestId,
+      optionId: 'reject'
+    })
+    await prompt
   })
 
   it('recombines Codex uncached input and cache read for context usage', async () => {

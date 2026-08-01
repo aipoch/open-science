@@ -317,7 +317,6 @@ class ContextUsageTracker {
   private readonly sessions = new Map<string, SessionEstimate>()
   private readonly usageBySession = new Map<string, AcpContextUsage>()
   private readonly usageRevisions = new Map<string, number>()
-  private readonly updatedPromptTurnsBySession = new Map<string, number>()
 
   constructor(private readonly counter: TokenCounter = defaultTokenCounter) {}
 
@@ -425,7 +424,8 @@ class ContextUsageTracker {
     if (status === 'preflight') {
       const breakdown = this.estimate(sessionId)
       if (!breakdown) return false
-      const agentUsed = current?.breakdown?.status === 'preflight' ? current.agentUsed : current?.used
+      const agentUsed =
+        current?.breakdown?.status === 'preflight' ? current.agentUsed : current?.used
       this.replaceUsage(sessionId, {
         used: agentUsed ?? breakdown.estimatedTokens,
         ...(agentUsed === undefined ? {} : { agentUsed }),
@@ -464,23 +464,6 @@ class ContextUsageTracker {
       this.deleteUsage(sessionId)
     } else {
       this.refreshUsage(sessionId, 'reconciled', size)
-    }
-  }
-
-  markPromptTurnUpdated(sessionId: string, promptTurn: number): void {
-    this.updatedPromptTurnsBySession.set(sessionId, promptTurn)
-  }
-
-  promptTurnWasUpdated(sessionId: string, promptTurn: number): boolean {
-    return this.updatedPromptTurnsBySession.get(sessionId) === promptTurn
-  }
-
-  clearPromptTurn(sessionId: string, promptTurn?: number): void {
-    if (
-      promptTurn === undefined ||
-      this.updatedPromptTurnsBySession.get(sessionId) === promptTurn
-    ) {
-      this.updatedPromptTurnsBySession.delete(sessionId)
     }
   }
 
@@ -786,14 +769,12 @@ class ContextUsageTracker {
     this.sessions.delete(sessionId)
     this.deleteUsage(sessionId)
     this.usageRevisions.delete(sessionId)
-    this.updatedPromptTurnsBySession.delete(sessionId)
   }
 
   clear(): void {
     this.sessions.clear()
     this.usageBySession.clear()
     this.usageRevisions.clear()
-    this.updatedPromptTurnsBySession.clear()
   }
 }
 

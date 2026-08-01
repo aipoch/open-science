@@ -728,6 +728,9 @@ const isUnresumableSessionError = (error: unknown): boolean => {
 class AcpRuntime {
   private readonly snapshotOwner: AcpRuntimeSnapshotOwner
   private readonly contextUsageTracker: ContextUsageTracker
+  // Prompt lifecycle stays with the runtime: this marks turns that received provider-side
+  // context-bearing updates so a rejected prompt rolls back only when the provider saw no turn data.
+  private readonly contextUsageUpdatedPromptTurnsBySession = new Map<string, number>()
   private agentProcess: ChildProcessWithoutNullStreams | undefined
   // Latched by shutdown() on app quit. A connect can be mid-spawn (resolveSpawnConfig is async) when
   // quit fires, so this lets the post-spawn path kill a child that was created after killAgentProcess ran.
@@ -989,10 +992,8 @@ class AcpRuntime {
   getSnapshot(): AcpStateSnapshot {
     const sessionIds = Array.from(this.sessions.keys())
     const promptInFlightSessionIds = this.getInFlightSessionIds()
-    const snapshot = this.snapshotOwner.snapshot()
 
-    return {
-      ...snapshot,
+    return this.snapshotOwner.snapshot({
       sessionId: this.currentSessionId,
       sessionIds,
       pendingPermissions: this.permissionBroker.getPendingRequests(),
@@ -1005,7 +1006,7 @@ class AcpRuntime {
         this.framework.contextCompaction.kind === 'native-command' ? sessionIds : [],
       promptInFlight: promptInFlightSessionIds.length > 0,
       promptInFlightSessionIds
-    }
+    })
   }
 
   // Lists sessions with an in-flight prompt, for the pre-migration active-session warning.
@@ -1738,6 +1739,7 @@ class AcpRuntime {
     // A context reset creates a new agent-side conversation under the same app id. Do not carry the
     // previous context size into the fresh conversation before its first usage_update arrives.
     this.contextUsageTracker.deleteSession(request.sessionId)
+    this.contextUsageUpdatedPromptTurnsBySession.delete(request.sessionId)
     this.appliedSessionModels.delete(request.sessionId)
 
     // Release the failed turn's in-flight lock now. Its own `finally` clears it too, but that runs only
@@ -2282,6 +2284,7 @@ class AcpRuntime {
     this.connection = undefined
     this.killAgentProcess()
     this.contextUsageTracker.clear()
+    this.contextUsageUpdatedPromptTurnsBySession.clear()
     this.appliedSessionModels.clear()
     void this.closeMcpHttpHost()
     void this.releaseResponsesBridgeLease()
@@ -2352,6 +2355,7 @@ class AcpRuntime {
     // replacement generation repopulate usage after reconnect/resume.
     if (this.contextUsageTracker.hasUsage()) {
       this.contextUsageTracker.clear()
+      this.contextUsageUpdatedPromptTurnsBySession.clear()
       this.appliedSessionModels.clear()
       this.emitState()
     }
@@ -2511,6 +2515,7 @@ class AcpRuntime {
       // including when a later session.dispose throws. A reconnect may resume the native context or
       // replay history into a fresh one; only that generation's own usage_update can repopulate it.
       this.contextUsageTracker.clear()
+      this.contextUsageUpdatedPromptTurnsBySession.clear()
       this.appliedSessionModels.clear()
 
       this.releaseAllNotebookSessionCapabilities()
@@ -3088,16 +3093,13 @@ class AcpRuntime {
         !this.pendingProviderReconnect
       ) {
         const partialTurnWasObserved =
-          this.contextUsageTracker.promptTurnWasUpdated(request.sessionId, promptTurn)
+          this.contextUsageUpdatedPromptTurnsBySession.get(request.sessionId) === promptTurn
         if (partialTurnWasObserved) {
           // The provider may keep a turn that already streamed context-bearing updates even when its
           // prompt request ultimately rejects. Preserve those prompt/tool/output estimates, but do not
           // leave their transient preflight reading in place without a fresh authoritative total.
           this.contextUsageTracker.finalizeAssistantOutput(request.sessionId)
-          this.restoreContextUsageBeforePromptIfPreflight(
-            request.sessionId,
-            contextUsageCheckpoint
-          )
+          this.restoreContextUsageBeforePromptIfPreflight(request.sessionId, contextUsageCheckpoint)
         } else {
           this.contextUsageTracker.restoreSession(request.sessionId, contextUsageCheckpoint)
         }
@@ -3181,7 +3183,9 @@ class AcpRuntime {
         this.claudeTurnCountsBySession.delete(request.sessionId)
         this.clearOpenCodePermissionToolContext(request.sessionId)
         this.currentPromptTurnBySession.delete(request.sessionId)
-        this.contextUsageTracker.clearPromptTurn(request.sessionId, promptTurn)
+        if (this.contextUsageUpdatedPromptTurnsBySession.get(request.sessionId) === promptTurn) {
+          this.contextUsageUpdatedPromptTurnsBySession.delete(request.sessionId)
+        }
         this.promptInFlightSessionIds.delete(request.sessionId)
         if (this.skillImportTurnTokens.get(request.sessionId) === skillImportTurnToken) {
           this.skillImportTurnTokens.delete(request.sessionId)
@@ -3335,6 +3339,7 @@ class AcpRuntime {
     this.sessionFrameworks.delete(request.sessionId)
     this.sessionBackendIds.delete(request.sessionId)
     this.contextUsageTracker.deleteSession(request.sessionId)
+    this.contextUsageUpdatedPromptTurnsBySession.delete(request.sessionId)
     this.appliedSessionModels.delete(request.sessionId)
     this.permissionProfiles.delete(request.sessionId)
     this.artifactSessionIds.delete(request.sessionId)
@@ -5624,7 +5629,7 @@ class AcpRuntime {
       ) {
         const promptTurn = this.currentPromptTurnBySession.get(routed.sessionId)
         if (promptTurn !== undefined) {
-          this.contextUsageTracker.markPromptTurnUpdated(routed.sessionId, promptTurn)
+          this.contextUsageUpdatedPromptTurnsBySession.set(routed.sessionId, promptTurn)
         }
       }
     }
@@ -5780,10 +5785,7 @@ class AcpRuntime {
         return
       }
 
-      if (
-        this.snapshotOwner.status === 'connected' ||
-        this.snapshotOwner.status === 'connecting'
-      ) {
+      if (this.snapshotOwner.status === 'connected' || this.snapshotOwner.status === 'connecting') {
         this.pushEvent({
           kind: 'system',
           level: code === 0 ? 'info' : 'warning',
@@ -5821,6 +5823,7 @@ class AcpRuntime {
     this.clearAllOpenCodePermissionToolContext()
     this.sessionProjectNames.clear()
     this.contextUsageTracker.clear()
+    this.contextUsageUpdatedPromptTurnsBySession.clear()
     this.appliedSessionModels.clear()
     this.artifactSessionIds.clear()
     this.notebookRoutingIds.clear()

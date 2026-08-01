@@ -4,6 +4,7 @@ import { getAcpRuntimeEventImage, MAX_ACP_SESSION_IMAGE_BYTES } from '../../shar
 const MAX_EVENTS = 500
 
 type RuntimeSnapshotFields = Pick<AcpStateSnapshot, 'status' | 'cwd' | 'error' | 'events'>
+type RuntimeSnapshotProjection = Omit<AcpStateSnapshot, keyof RuntimeSnapshotFields>
 type RuntimeEventInput = Omit<AcpRuntimeEvent, 'id' | 'timestamp'> & Partial<AcpRuntimeEvent>
 
 const cloneEvent = (event: AcpRuntimeEvent): AcpRuntimeEvent => structuredClone(event)
@@ -103,15 +104,16 @@ class AcpRuntimeSnapshotOwner {
     return runtimeEvent
   }
 
-  snapshot(): RuntimeSnapshotFields {
-    return {
+  snapshot(projection: RuntimeSnapshotProjection): AcpStateSnapshot {
+    return structuredClone({
       status: this.connectionStatus,
       cwd: this.workingDirectory,
       error: this.currentError,
-      events: this.retainedEvents.map(cloneEvent)
-    }
+      events: this.retainedEvents,
+      ...projection
+    })
   }
 }
 
 export { AcpRuntimeSnapshotOwner }
-export type { RuntimeEventInput, RuntimeSnapshotFields }
+export type { RuntimeEventInput, RuntimeSnapshotFields, RuntimeSnapshotProjection }
