@@ -4,6 +4,7 @@ import { chmod, mkdir, mkdtemp, readdir, rm, writeFile } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { delimiter, join, resolve } from 'node:path'
 import { _electron as electron, type ElectronApplication, type Page } from 'playwright'
+import { RendererFailureGate } from './renderer-failure-gate'
 
 const APP_ROOT = resolve(process.cwd())
 const FAKE_AGENT_PATH = resolve(APP_ROOT, 'e2e', 'fixtures', 'fake-opencode.mjs')
@@ -100,16 +101,12 @@ const makeTreeWritable = async (root: string): Promise<void> => {
   )
 }
 
-const observeRendererFailures = (page: Page): void => {
-  page.on('console', (message) => {
-    if (message.type() === 'error') console.error(`[renderer console] ${message.text()}`)
-  })
-  page.on('pageerror', (error) => console.error('[renderer pageerror]', error))
-}
-
-const openMainWindow = async (application: ElectronApplication): Promise<Page> => {
+const openMainWindow = async (
+  application: ElectronApplication,
+  rendererFailures: RendererFailureGate
+): Promise<Page> => {
   const page = await application.firstWindow()
-  observeRendererFailures(page)
+  rendererFailures.observe(page)
   await page.waitForLoadState('domcontentloaded')
   return page
 }
@@ -118,6 +115,7 @@ class ElectronAppHarness implements ElectronApp {
   private application: ElectronApplication | undefined
   private currentPage: Page | undefined
   private fakeAgentEnabled = false
+  private readonly rendererFailures = new RendererFailureGate()
 
   private constructor(
     private readonly testRoot: string,
@@ -273,11 +271,12 @@ class ElectronAppHarness implements ElectronApp {
     await this.close().catch(() => undefined)
     await makeTreeWritable(this.testRoot)
     await rm(this.testRoot, { force: true, recursive: true })
+    this.rendererFailures.assertNoFailures()
   }
 
   private async launch(): Promise<void> {
     this.application = await launchOpenScience(this.roots, this.fakeAgentEnabled)
-    this.currentPage = await openMainWindow(this.application)
+    this.currentPage = await openMainWindow(this.application, this.rendererFailures)
   }
 
   private get runningApplication(): ElectronApplication {
