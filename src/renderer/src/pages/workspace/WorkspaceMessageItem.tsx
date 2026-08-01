@@ -88,15 +88,19 @@ const messageTimestampTitleFormatter = new Intl.DateTimeFormat('en-US', {
   timeStyle: 'long'
 })
 
+const toMessageDate = (timestamp: number | undefined): Date | undefined => {
+  if (timestamp === undefined) return undefined
+  const date = new Date(timestamp)
+  return Number.isNaN(date.getTime()) ? undefined : date
+}
+
 const MessageTimestamp = ({
   label,
-  timestamp
+  date
 }: {
   label: 'Sent' | 'Completed' | 'Failed'
-  timestamp: number
+  date: Date
 }): React.JSX.Element => {
-  const date = new Date(timestamp)
-
   return (
     <time dateTime={date.toISOString()} title={messageTimestampTitleFormatter.format(date)}>
       {label} {messageTimestampFormatter.format(date)}
@@ -661,6 +665,9 @@ const WorkspaceMessageItem = ({
       : message.status === 'error'
         ? message.failedAt
         : undefined
+  const sentDate = toMessageDate(message.createdAt)
+  const terminalDate = toMessageDate(terminalTimestamp)
+  const turnStartedDate = toMessageDate(turnStartedAt)
   const terminalLabel = message.status === 'error' ? 'Failed' : 'Completed'
   const [copied, setCopied] = useState(false)
   // Inline editing swaps the bubble for a multi-line editor; the doc starts from the message's
@@ -857,12 +864,14 @@ const WorkspaceMessageItem = ({
                   ) : null}
                 </div>
               </div>
-              <div
-                data-slot="user-message-footer"
-                className="mt-1 flex min-h-6 items-center justify-end text-[11px] leading-4 text-text-300 tabular-nums"
-              >
-                <MessageTimestamp label="Sent" timestamp={message.createdAt} />
-              </div>
+              {sentDate ? (
+                <div
+                  data-slot="user-message-footer"
+                  className="mt-1 flex min-h-6 items-center justify-end text-[11px] leading-4 text-text-300 tabular-nums"
+                >
+                  <MessageTimestamp label="Sent" date={sentDate} />
+                </div>
+              ) : null}
             </div>
           )
         ) : (
@@ -875,16 +884,19 @@ const WorkspaceMessageItem = ({
             ) : null}
             <MessageImageList images={message.images ?? []} />
             <MessageArtifactList onPreviewArtifact={onPreviewArtifact} artifacts={artifacts} />
-            {terminalTimestamp !== undefined ? (
+            {terminalDate || (terminalTimestamp !== undefined && hasTurnUsage) ? (
               <div
                 data-slot="assistant-message-footer"
                 className="mt-3 flex items-center gap-x-3 whitespace-nowrap text-[11px] leading-4 text-text-300 tabular-nums"
               >
-                <MessageTimestamp label={terminalLabel} timestamp={terminalTimestamp} />
-                {turnStartedAt !== undefined ? (
+                {terminalDate ? (
+                  <MessageTimestamp label={terminalLabel} date={terminalDate} />
+                ) : null}
+                {terminalDate && turnStartedDate ? (
                   <span data-slot="assistant-message-elapsed-segment" className="whitespace-nowrap">
                     <span aria-label="Elapsed run time">
-                      Elapsed {formatElapsedDuration(terminalTimestamp - turnStartedAt)}
+                      Elapsed{' '}
+                      {formatElapsedDuration(terminalDate.getTime() - turnStartedDate.getTime())}
                     </span>
                   </span>
                 ) : null}

@@ -564,6 +564,45 @@ describe('WorkspaceMessageItem turn token usage', () => {
     expect(footer?.querySelector('[data-slot="turn-token-usage"]')).toBeNull()
   })
 
+  it('keeps Usage available when a persisted completion time is out of range', async () => {
+    await renderMessageItem(
+      createMessage({
+        role: 'agent',
+        content: 'Done with a corrupted timestamp',
+        completedAt: Number.MAX_VALUE,
+        turnUsage: { inputTokens: 12, cacheTokens: 3, outputTokens: 4 }
+      }),
+      undefined,
+      1710000000000
+    )
+
+    const footer = container.querySelector('[data-slot="assistant-message-footer"]')
+
+    expect(container.textContent).toContain('Done with a corrupted timestamp')
+    expect(footer?.querySelector('time')).toBeNull()
+    expect(footer?.querySelector('[data-slot="assistant-message-elapsed-segment"]')).toBeNull()
+    expect(footer?.querySelector('[data-slot="turn-token-usage"]')).not.toBeNull()
+  })
+
+  it('omits elapsed time when the paired turn start is out of range', async () => {
+    await renderMessageItem(
+      createMessage({
+        role: 'agent',
+        content: 'Done with a valid completion time',
+        completedAt: 1710000125000,
+        turnUsage: { inputTokens: 12, cacheTokens: 3, outputTokens: 4 }
+      }),
+      undefined,
+      Number.MAX_VALUE
+    )
+
+    const footer = container.querySelector('[data-slot="assistant-message-footer"]')
+
+    expect(footer?.querySelector('time')?.textContent).toMatch(/^Completed /)
+    expect(footer?.querySelector('[data-slot="assistant-message-elapsed-segment"]')).toBeNull()
+    expect(footer?.querySelector('[data-slot="turn-token-usage"]')).not.toBeNull()
+  })
+
   it('keeps Usage beside completion when elapsed metadata is unavailable', async () => {
     await renderMessageItem(
       createMessage({

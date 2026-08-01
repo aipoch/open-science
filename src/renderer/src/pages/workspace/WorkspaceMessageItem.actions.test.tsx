@@ -196,6 +196,13 @@ describe('WorkspaceMessageItem user message actions', () => {
     expect(actions.querySelector('[aria-label="Edit message"]')).not.toBeNull()
   })
 
+  it('omits an out-of-range persisted sent time without losing the message', async () => {
+    await renderItem(createMessage({ createdAt: Number.MAX_VALUE }))
+
+    expect(container.textContent).toContain('Prompt text')
+    expect(container.querySelector('[data-slot="user-message-footer"]')).toBeNull()
+  })
+
   it('hides copy and edit actions on an immutable message surface', async () => {
     await renderItem(createMessage(), { canEditMessage: false, showUserActions: false })
 
