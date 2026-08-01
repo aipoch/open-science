@@ -172,15 +172,25 @@ describe('AgentsService read surface', () => {
   it('surfaces internal failures as sanitized host.agents.<method>: errors', async () => {
     const failing = {
       list: vi.fn(async () => {
-        throw new Error('internal secret: apikey=ABCDEF')
+        throw new Error(
+          'request failed at /Users/alice/private/config.json with Authorization: Bearer TOP-SECRET and apiKey=ABCDEF'
+        )
       })
     }
     const service = new AgentsService({
       profileService: failing as unknown as ProfileService,
       catalog: catalog()
     })
-    await expect(service.read({ op: 'list' })).rejects.toThrow(
-      'host.agents.list: Internal operation failed.'
-    )
+    let message = ''
+    try {
+      await service.read({ op: 'list' })
+    } catch (error) {
+      message = error instanceof Error ? error.message : String(error)
+    }
+
+    expect(message).toBe('host.agents.list: Internal operation failed.')
+    expect(message).not.toContain('TOP-SECRET')
+    expect(message).not.toContain('ABCDEF')
+    expect(message).not.toContain('/Users/alice/private/config.json')
   })
 })
