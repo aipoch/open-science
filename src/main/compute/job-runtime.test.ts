@@ -9,7 +9,7 @@ import type { SshRunner } from './ssh-runner'
 import { createComputeJobRuntime } from './job-runtime'
 
 describe('createComputeJobRuntime', () => {
-  it('routes poller updates through the service-owned broadcast and drain seam', async () => {
+  it('routes updates through the service-owned seams and delegates runtime start/stop', async () => {
     const handleJobUpdated = vi.fn()
     const start = vi.fn()
     const stop = vi.fn()
@@ -44,6 +44,7 @@ describe('createComputeJobRuntime', () => {
     pollerDeps?.onJobUpdated?.(job)
     await pollerDeps?.harvestFn?.(job)
     runtime.start()
+    runtime.stop()
 
     expect(handleJobUpdated).toHaveBeenCalledWith(job)
     expect(harvest).toHaveBeenCalledWith(job, {
@@ -55,5 +56,6 @@ describe('createComputeJobRuntime', () => {
       broadcast
     })
     expect(start).toHaveBeenCalledTimes(1)
+    expect(stop).toHaveBeenCalledTimes(1)
   })
 })

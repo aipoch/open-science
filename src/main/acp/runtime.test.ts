@@ -170,6 +170,10 @@ const startFakeAgent = (
     replyForPrompt?: (text: string) => string
     usageForPrompt?: (text: string) => { used: number; size: number } | undefined
     claudeTurnCountForPrompt?: (text: string) => number | undefined
+    claudeResultMessagesForPrompt?: (text: string) => Array<{
+      numTurns: number
+      origin?: string
+    }>
   } = {}
 ): {
   authRequests: unknown[]
@@ -317,13 +321,16 @@ const startFakeAgent = (
         })
       }
       const claudeTurnCount = options.claudeTurnCountForPrompt?.(text)
-      if (claudeTurnCount !== undefined) {
+      const claudeResultMessages =
+        options.claudeResultMessagesForPrompt?.(text) ??
+        (claudeTurnCount === undefined ? [] : [{ numTurns: claudeTurnCount, origin: 'human' }])
+      for (const result of claudeResultMessages) {
         await ctx.client.notify('_claude/sdkMessage', {
           sessionId: ctx.params.sessionId,
           message: {
             type: 'result',
-            num_turns: claudeTurnCount,
-            origin: { kind: 'human' }
+            num_turns: result.numTurns,
+            ...(result.origin === undefined ? {} : { origin: { kind: result.origin } })
           }
         })
       }
@@ -3735,6 +3742,65 @@ describe('ACP runtime session management', () => {
     expect(fakeAgent.prompts[0].text).toContain('hello opencode')
   })
 
+  it('waits for session-scoped MCP capability readiness before creating the agent session', async () => {
+    const httpHost = {
+      ensureStarted: vi.fn(async () => ({
+        endpoint: 'http://127.0.0.1:4321',
+        token: 'host-token'
+      })),
+      registerNotebook: vi.fn(),
+      urlFor: vi.fn(
+        (kind: string, routingId: string) =>
+          `http://127.0.0.1:4321/mcp/${kind}/${encodeURIComponent(routingId)}`
+      ),
+      unregister: vi.fn(),
+      clear: vi.fn(),
+      close: vi.fn(async () => undefined)
+    } as unknown as AgentMcpHttpHost
+    const process = new FakeAgentProcess()
+    const fakeAgent = startFakeAgent(process, ['http-session'])
+    const capabilityRequested = createDeferred()
+    const capabilityReady = createDeferred<{ endpoint: string; token: string }>()
+    const runtime = new AcpRuntime({
+      appVersion: '0.1.0',
+      defaultCwd: '/workspace',
+      spawnAgent: () => asAgentProcess(process),
+      framework: { ...opencodeFramework, acceptsStdioMcp: false },
+      mcpHttpHost: httpHost,
+      notebook: {
+        projectName: 'default-project',
+        mcpEntryPath: '/app/out/main/index.js',
+        getRpcConnection: async () => {
+          capabilityRequested.resolve()
+          return capabilityReady.promise
+        }
+      }
+    })
+
+    try {
+      const creating = runtime.createSession({ cwd: '/workspace' })
+      await capabilityRequested.promise
+
+      // The backend must not observe a session whose advertised Notebook MCP endpoint/token is not
+      // ready yet. This ordering is part of the runtime composition contract, not an HTTP-host detail.
+      expect(fakeAgent.newSessions).toEqual([])
+
+      capabilityReady.resolve({ endpoint: 'http://127.0.0.1:4567', token: 'notebook-token' })
+      await expect(creating).resolves.toMatchObject({ sessionId: 'http-session' })
+      expect(fakeAgent.newSessions).toHaveLength(1)
+      expect(fakeAgent.newSessions[0].mcpServers).toEqual([
+        expect.objectContaining({
+          type: 'http',
+          name: 'open_science_notebook',
+          url: expect.stringMatching(/^http:\/\/127\.0\.0\.1:\d+\/mcp\/notebook\//)
+        })
+      ])
+    } finally {
+      capabilityReady.resolve({ endpoint: 'http://127.0.0.1:4567', token: 'notebook-token' })
+      await runtime.disconnect()
+    }
+  })
+
   it('serves app MCP tools over the http host for an http-only framework', async () => {
     const root = await createTemporaryRoot()
     const httpHost = new AgentMcpHttpHost()
@@ -6920,25 +6986,59 @@ describe('ACP runtime session management', () => {
       resumeInternalErrorDetails:
         'invalid session id: invalid character: expected an optional prefix of `urn:uuid:` followed by [0-9a-fA-F-], found `s` at 1'
     })
+    const messageEvents: Array<{ sessionId?: string; role?: string; text?: string }> = []
     const runtime = new AcpRuntime({
       appVersion: '0.1.0',
       defaultCwd: '/workspace',
       spawnAgent: () => asAgentProcess(process),
-      framework: codexFramework
+      framework: codexFramework,
+      callbacks: {
+        onEvent: (event) => {
+          if (event.kind === 'message') {
+            messageEvents.push({ sessionId: event.sessionId, role: event.role, text: event.text })
+          }
+        }
+      }
     })
 
-    await expect(
-      runtime.resumeSession({
-        sessionId: 'ses_0458258b7ffeH2DeqPYBPk6fh2',
-        cwd: '/workspace',
-        previousFrameworkId: 'codex'
-      })
-    ).resolves.toMatchObject({
+    const resumed = await runtime.resumeSession({
+      sessionId: 'ses_0458258b7ffeH2DeqPYBPk6fh2',
+      cwd: '/workspace',
+      previousFrameworkId: 'codex'
+    })
+    expect(resumed).toMatchObject({
       sessionId: 'ses_0458258b7ffeH2DeqPYBPk6fh2',
       contextReset: true
     })
     expect(fakeAgent.resumedSessions).toEqual([])
     expect(fakeAgent.newSessions).toHaveLength(1)
+
+    await runtime.sendPrompt({
+      sessionId: resumed.sessionId,
+      text: 'continue the analysis',
+      historyPreamble: 'PRIOR CONTEXT: the last result was incomplete.'
+    })
+
+    expect(fakeAgent.prompts).toEqual([
+      {
+        sessionId: '019fb8c8-6c66-7f22-9653-17b5b287dbbb',
+        text: expect.stringContaining('PRIOR CONTEXT: the last result was incomplete.')
+      }
+    ])
+    expect(messageEvents).toEqual(
+      expect.arrayContaining([
+        {
+          sessionId: 'ses_0458258b7ffeH2DeqPYBPk6fh2',
+          role: 'user',
+          text: 'continue the analysis'
+        },
+        {
+          sessionId: 'ses_0458258b7ffeH2DeqPYBPk6fh2',
+          role: 'assistant',
+          text: 'reply for 019fb8c8-6c66-7f22-9653-17b5b287dbbb'
+        }
+      ])
+    )
   })
 
   it.each([
@@ -7892,6 +7992,48 @@ describe('ACP runtime session management', () => {
       cachedWriteTokens: 7,
       outputTokens: 14,
       turnCount: 3
+    })
+  })
+
+  it('excludes autonomous Claude result lanes from the user prompt model-turn count', async () => {
+    const process = new FakeAgentProcess()
+    startFakeAgent(process, ['s1'], {
+      claudeResultMessagesForPrompt: () => [
+        ...['task-notification', 'peer', 'coordinator', 'observer', 'observer-activity'].map(
+          (origin) => ({ numTurns: 100, origin })
+        ),
+        { numTurns: 2, origin: 'human' },
+        // Unknown future origins remain eligible so a newly introduced user-driven lane does not
+        // silently under-report model turns until Open Science knows its name.
+        { numTurns: 3, origin: 'future-user-lane' }
+      ],
+      onPrompt: () => ({
+        stopReason: 'end_turn',
+        usage: {
+          totalTokens: 60,
+          inputTokens: 31,
+          cachedReadTokens: 8,
+          cachedWriteTokens: 7,
+          outputTokens: 14
+        }
+      })
+    })
+    const runtime = new AcpRuntime({
+      appVersion: '0.1.0',
+      defaultCwd: '/workspace',
+      spawnAgent: () => asAgentProcess(process)
+    })
+
+    await runtime.createSession({ cwd: '/workspace' })
+    await runtime.sendPrompt({ sessionId: 's1', text: 'use tools' })
+
+    expect(runtime.getSnapshot().events.find((event) => event.kind === 'stop')?.turnUsage).toEqual({
+      inputTokens: 31,
+      cacheTokens: 15,
+      cachedReadTokens: 8,
+      cachedWriteTokens: 7,
+      outputTokens: 14,
+      turnCount: 5
     })
   })
 

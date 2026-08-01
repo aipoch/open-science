@@ -100,25 +100,55 @@ describe('message terminal time persistence', () => {
     ])
   })
 
-  it('preserves explicit terminal timestamps when updatedAt changes later', () => {
+  it('preserves response linkage and explicit terminal timestamps when updatedAt changes later', () => {
     const restored = normalizeSessionFile({
       ...createSessionWithActivity(undefined),
       activities: undefined,
       messages: [
+        {
+          id: 'prompt-message',
+          role: 'user',
+          content: 'Run the analysis',
+          status: 'complete',
+          eventIds: [],
+          createdAt: 10,
+          updatedAt: 10
+        },
         {
           id: 'complete-message',
           role: 'agent',
           content: 'Done',
           status: 'complete',
           eventIds: [],
-          createdAt: 10,
+          responseToMessageId: 'prompt-message',
+          createdAt: 11,
           completedAt: 20,
           updatedAt: 99
+        },
+        {
+          id: 'failed-message',
+          role: 'agent',
+          content: 'Partial result',
+          status: 'error',
+          eventIds: [],
+          responseToMessageId: 'prompt-message',
+          createdAt: 12,
+          failedAt: 30,
+          updatedAt: 100
         }
       ]
     })
 
-    expect(restored?.messages[0]).toMatchObject({ completedAt: 20, updatedAt: 99 })
+    expect(restored?.messages[1]).toMatchObject({
+      responseToMessageId: 'prompt-message',
+      completedAt: 20,
+      updatedAt: 99
+    })
+    expect(restored?.messages[2]).toMatchObject({
+      responseToMessageId: 'prompt-message',
+      failedAt: 30,
+      updatedAt: 100
+    })
   })
 })
 
