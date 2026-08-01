@@ -1,0 +1,73 @@
+import { mkdir, mkdtemp, rm, writeFile } from 'node:fs/promises'
+import { tmpdir } from 'node:os'
+import { join } from 'node:path'
+
+import { afterEach, describe, expect, it } from 'vitest'
+
+import { SkillRegistry } from '../skills/registry'
+import { SettingsRepository } from './repository'
+import { SkillCatalogModule } from './skill-catalog'
+
+const roots: string[] = []
+
+afterEach(async () => {
+  await Promise.all(roots.splice(0).map((root) => rm(root, { recursive: true, force: true })))
+})
+
+const createCatalog = async (): Promise<SkillCatalogModule> => {
+  const storageRoot = await mkdtemp(join(tmpdir(), 'settings-skill-catalog-'))
+  const bundleRoot = await mkdtemp(join(tmpdir(), 'settings-skill-bundle-'))
+  roots.push(storageRoot, bundleRoot)
+  await mkdir(join(bundleRoot, 'demo'), { recursive: true })
+  await writeFile(
+    join(bundleRoot, 'demo', 'SKILL.md'),
+    '---\nname: demo\ndescription: A demo skill.\n---\n\ndemo body\n'
+  )
+  await writeFile(
+    join(bundleRoot, 'manifest.json'),
+    JSON.stringify({
+      version: 1,
+      skills: [
+        { id: 'demo', name: 'Demo', source: 'featured', updatedAt: '2026-01-01T00:00:00.000Z' }
+      ]
+    })
+  )
+  return new SkillCatalogModule({
+    repository: new SettingsRepository(storageRoot),
+    storageRoot,
+    skillRegistry: new SkillRegistry(bundleRoot),
+    userClaudeDir: join(storageRoot, 'user-claude'),
+    userCodexDir: join(storageRoot, 'user-codex'),
+    userAgentsDir: join(storageRoot, 'user-agents')
+  })
+}
+
+describe('SkillCatalogModule', () => {
+  it('owns catalog projection, enablement, detail, and personal CRUD', async () => {
+    const catalog = await createCatalog()
+
+    expect(await catalog.listSkills()).toEqual([
+      expect.objectContaining({ id: 'demo', description: 'A demo skill.', enabled: true })
+    ])
+    expect((await catalog.setSkillEnabled({ id: 'demo', enabled: false }))[0].enabled).toBe(false)
+    expect((await catalog.getSkillDetail('demo')).body).toContain('demo body')
+    expect(
+      (
+        await catalog.createSkill({ name: 'My Skill', description: 'Mine.', body: '# Mine' })
+      ).map((skill) => skill.id)
+    ).toEqual(['demo', 'personal-my-skill'])
+    expect(
+      (
+        await catalog.updateSkill({
+          id: 'personal-my-skill',
+          name: 'My Skill',
+          description: 'Edited.',
+          body: '# Edited'
+        })
+      ).find((skill) => skill.id === 'personal-my-skill')
+    ).toMatchObject({ description: 'Edited.' })
+    expect((await catalog.deleteSkill({ id: 'personal-my-skill' })).map((skill) => skill.id)).toEqual([
+      'demo'
+    ])
+  })
+})
