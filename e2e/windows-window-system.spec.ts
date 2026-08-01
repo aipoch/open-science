@@ -38,7 +38,7 @@ test.describe('Windows window system', () => {
     page = await app.launchSecondInstance()
     await expect.poll(() => app.mainWindowState()).toEqual({ minimized: false, visible: true })
 
-    await page.keyboard.press('Control+W')
+    await app.pressMainWindowShortcut('W', ['control'])
     await expect.poll(() => app.mainWindowState()).toEqual({ minimized: false, visible: false })
 
     page = await app.launchSecondInstance()
@@ -55,7 +55,7 @@ test.describe('Windows window system', () => {
     await expect(page.getByRole('heading', { name: 'New conversation' })).toBeVisible()
 
     await expect.poll(() => app.findOverlayIsVisible()).toBe(false)
-    await page.keyboard.press('Control+F')
+    await app.pressMainWindowShortcut('F', ['control'])
     await expect.poll(() => app.findOverlayIsVisible()).toBe(true)
   })
 })

@@ -12,12 +12,15 @@ type LaunchRoots = {
   userDataRoot: string
 }
 
+type ShortcutModifier = 'alt' | 'control' | 'meta' | 'shift'
+
 type ElectronApp = {
   readonly page: Page
   completeOnboarding: () => Promise<Page>
   findOverlayIsVisible: () => Promise<boolean>
   launchSecondInstance: () => Promise<Page>
   mainWindowState: () => Promise<{ minimized: boolean; visible: boolean }>
+  pressMainWindowShortcut: (key: string, modifiers: ShortcutModifier[]) => Promise<void>
   requestMainWindowClose: () => Promise<void>
   restart: () => Promise<Page>
 }
@@ -114,13 +117,15 @@ class ElectronAppHarness implements ElectronApp {
   }
 
   async launchSecondInstance(): Promise<Page> {
-    const executable = this.runningApplication.process().spawnfile
+    const { appPath, executable } = await this.runningApplication.evaluate(({ app }) => ({
+      appPath: app.getAppPath(),
+      executable: process.execPath
+    }))
     await new Promise<void>((resolveLaunch, rejectLaunch) => {
-      const child = spawn(executable, [`--user-data-dir=${this.roots.userDataRoot}`, APP_ROOT], {
+      const child = spawn(executable, [`--user-data-dir=${this.roots.userDataRoot}`, appPath], {
         cwd: APP_ROOT,
         env: launchEnvironment(this.roots.storageRoot),
-        stdio: 'ignore',
-        windowsHide: true
+        stdio: 'ignore'
       })
       child.once('error', rejectLaunch)
       child.once('exit', (code, signal) => {
@@ -129,6 +134,28 @@ class ElectronAppHarness implements ElectronApp {
       })
     })
     return this.page
+  }
+
+  async pressMainWindowShortcut(key: string, modifiers: ShortcutModifier[]): Promise<void> {
+    await this.runningApplication.evaluate(
+      ({ BrowserWindow }, input) => {
+        const mainWindow = BrowserWindow.getAllWindows()[0]
+        if (!mainWindow) throw new Error('Open Science main window was not found.')
+
+        mainWindow.webContents.focus()
+        mainWindow.webContents.sendInputEvent({
+          type: 'keyDown',
+          keyCode: input.key,
+          modifiers: input.modifiers
+        })
+        mainWindow.webContents.sendInputEvent({
+          type: 'keyUp',
+          keyCode: input.key,
+          modifiers: input.modifiers
+        })
+      },
+      { key, modifiers }
+    )
   }
 
   async requestMainWindowClose(): Promise<void> {
