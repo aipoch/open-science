@@ -17,13 +17,13 @@ import {
   type CallerContext
 } from '../caller-context'
 import type { WebRpcRouter } from '../ipc-handler-registry'
-import { addRendererBroadcastSink } from '../renderer-broadcast'
+import type { ApplicationEventSource } from '../application-events'
 import {
   isWebRpcChannel,
-  isWebRpcEventChannel,
   WEB_RPC_PROTOCOL_VERSION,
   webRpcRequestSchema
 } from '../../shared/web-rpc-contract'
+import { projectPublicTaskEvent, projectWebRendererEvent } from './application-event-projections'
 import { authenticateRequest, persistAuthCookie } from './auth'
 import type { StartTaskRunRequest } from '../../shared/task-api'
 import { TaskApiError, type HeadlessTaskApi } from './task-api'
@@ -108,6 +108,7 @@ type WebServerOptions = {
   token: string
   staticRoot: string
   rpc: WebRpcRouter
+  applicationEvents: ApplicationEventSource
   externalAccess?: ExternalWebAccess
   tasks?: Pick<
     HeadlessTaskApi,
@@ -704,20 +705,11 @@ const startWebHttpServer = async (options: WebServerOptions): Promise<RunningWeb
     })
   })
 
-  const removeBroadcastSink = addRendererBroadcastSink((channel, payload) => {
-    const internalMessage = isWebRpcEventChannel(channel)
-      ? JSON.stringify({
-          protocolVersion: WEB_RPC_PROTOCOL_VERSION,
-          channel,
-          payload: payload ?? null
-        })
-      : undefined
-    const publicMessage =
-      channel === 'acp:event'
-        ? JSON.stringify({ type: 'run.event', data: payload })
-        : channel === 'acp:permission-request'
-          ? JSON.stringify({ type: 'permission.requested', data: payload })
-          : undefined
+  const removeBroadcastSink = options.applicationEvents.subscribe((event) => {
+    const internalProjection = projectWebRendererEvent(event)
+    const publicProjection = projectPublicTaskEvent(event)
+    const internalMessage = internalProjection ? JSON.stringify(internalProjection) : undefined
+    const publicMessage = publicProjection ? JSON.stringify(publicProjection) : undefined
     for (const socket of sockets) {
       if (socket.readyState !== WebSocket.OPEN) continue
       if (publicEventSockets.has(socket)) {
@@ -728,13 +720,19 @@ const startWebHttpServer = async (options: WebServerOptions): Promise<RunningWeb
     }
   })
 
-  await new Promise<void>((resolveListening, reject) => {
-    server.once('error', reject)
-    server.listen(options.port, options.host, () => {
-      server.off('error', reject)
-      resolveListening()
+  try {
+    await new Promise<void>((resolveListening, reject) => {
+      server.once('error', reject)
+      server.listen(options.port, options.host, () => {
+        server.off('error', reject)
+        resolveListening()
+      })
     })
-  })
+  } catch (error) {
+    removeBroadcastSink()
+    clientLeases.dispose()
+    throw error
+  }
 
   const address = server.address()
   const port = typeof address === 'object' && address ? address.port : options.port

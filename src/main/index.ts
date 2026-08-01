@@ -207,6 +207,7 @@ async function startElectronApp(mainEntryPath: string): Promise<void> {
       const webMode = parseWebModeOptions(process.argv)
       // Pass the concrete main entry path so ACP can launch the artifact MCP server from the same bundle.
       const {
+        applicationEvents,
         taskNotifications,
         settingsService,
         sessionDeletionCapability,
@@ -280,7 +281,8 @@ async function startElectronApp(mainEntryPath: string): Promise<void> {
       const webController = createWebServiceController({
         rpc: webRpc,
         requestQuit: () => app.quit(),
-        externalAccess: remoteAccess.webAccess
+        externalAccess: remoteAccess.webAccess,
+        applicationEvents
       })
       remoteAccess.attachWebController(webController)
       registerRemoteAccessIpcHandlers(remoteAccess)

@@ -4,10 +4,11 @@ import { app } from 'electron'
 
 import type { WebRpcRouter } from '../ipc-handler-registry'
 import { createLogger } from '../logger'
-import { addRendererBroadcastSink } from '../renderer-broadcast'
+import type { ApplicationEventSource } from '../application-events'
 import { resolveConfigRoot } from '../storage-root'
 import { loadOrCreateWebToken } from './auth'
 import { startWebHttpServer, type ExternalWebAccess, type RunningWebServer } from './http-server'
+import { projectTaskRuntimeEvent } from './application-event-projections'
 import { HeadlessTaskApi } from './task-api'
 import { removeWebServiceState, writeWebServiceState, type WebServiceState } from './state-file'
 
@@ -62,8 +63,14 @@ const createWebServiceController = (
   {
     rpc,
     requestQuit,
-    externalAccess
-  }: { rpc: WebRpcRouter; requestQuit: () => void; externalAccess?: ExternalWebAccess },
+    externalAccess,
+    applicationEvents
+  }: {
+    rpc: WebRpcRouter
+    requestQuit: () => void
+    externalAccess?: ExternalWebAccess
+    applicationEvents: ApplicationEventSource
+  },
   deps: Partial<WebServiceControllerDeps> = {}
 ): WebServiceController => {
   const startServer = deps.startServer ?? startWebHttpServer
@@ -86,8 +93,9 @@ const createWebServiceController = (
     }))
   const tasks = new HeadlessTaskApi(rpc, {
     subscribeEvents: (listener) =>
-      addRendererBroadcastSink((channel, payload) => {
-        if (channel === 'acp:event') listener(payload as Parameters<typeof listener>[0])
+      applicationEvents.subscribe((event) => {
+        const runtimeEvent = projectTaskRuntimeEvent(event)
+        if (runtimeEvent) listener(runtimeEvent)
       })
   })
 
@@ -123,6 +131,7 @@ const createWebServiceController = (
       token,
       staticRoot: join(info.appPath, 'out', 'web'),
       rpc,
+      applicationEvents,
       externalAccess,
       tasks,
       // Attached: a graceful shutdown request stops only the web service (the app keeps running). A

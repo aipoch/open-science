@@ -1,5 +1,6 @@
 import { describe, expect, it, vi } from 'vitest'
 
+import { ApplicationEventHub } from '../application-events'
 import type { WebRpcRouter } from '../ipc-handler-registry'
 import { createWebServiceController, type WebServiceControllerDeps } from './index'
 
@@ -32,7 +33,11 @@ const makeController = (
   const removeState = vi.fn().mockResolvedValue(undefined)
 
   const controller = createWebServiceController(
-    { rpc: {} as WebRpcRouter, requestQuit },
+    {
+      rpc: {} as WebRpcRouter,
+      requestQuit,
+      applicationEvents: new ApplicationEventHub()
+    },
     {
       startServer,
       resolveConfigRoot: () => '/fake/root',

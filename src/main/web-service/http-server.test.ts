@@ -13,8 +13,8 @@ vi.mock('electron', () => ({
 }))
 
 import { WEB_RPC_PROTOCOL_VERSION } from '../../shared/web-rpc-contract'
+import { ApplicationEventHub } from '../application-events'
 import type { CallerContext } from '../caller-context'
-import { broadcastToRenderers } from '../renderer-broadcast'
 import {
   REMOTE_LOCAL_ONLY_RPC_CHANNELS,
   startWebHttpServer,
@@ -25,6 +25,10 @@ import { TaskApiError } from './task-api'
 
 const roots: string[] = []
 const servers: RunningWebServer[] = []
+const applicationEvents = new ApplicationEventHub()
+const startTestWebHttpServer = (
+  options: Omit<Parameters<typeof startWebHttpServer>[0], 'applicationEvents'>
+): ReturnType<typeof startWebHttpServer> => startWebHttpServer({ ...options, applicationEvents })
 const authorizedExternalAccess = (): ExternalWebAccessAuthorization => ({
   kind: 'authorized-pairing-manager' as const,
   isCurrent: () => true
@@ -42,6 +46,41 @@ afterEach(async () => {
 })
 
 describe('startWebHttpServer', () => {
+  it('releases its application-event subscription when listening fails', async () => {
+    const unsubscribe = vi.fn()
+    const subscribe = vi.fn(() => unsubscribe)
+    const options = {
+      host: '127.0.0.1',
+      token: 'test-token',
+      staticRoot: '/unused',
+      applicationEvents: { subscribe },
+      rpc: {
+        channels: () => [],
+        invoke: vi.fn(async () => undefined),
+        releaseClient: vi.fn(),
+        dispose: vi.fn()
+      },
+      bootstrap: {
+        appName: 'Open Science',
+        appVersion: '0.0.0',
+        configRoot: '/fake/root',
+        platform: 'test',
+        versions: { electron: '1', chrome: '1', node: '1' }
+      }
+    }
+
+    await expect(startWebHttpServer({ ...options, port: -1 })).rejects.toThrow()
+
+    expect(subscribe).toHaveBeenCalledOnce()
+    expect(unsubscribe).toHaveBeenCalledOnce()
+
+    const retry = await startWebHttpServer({ ...options, port: 0 })
+    expect(subscribe).toHaveBeenCalledTimes(2)
+    expect(unsubscribe).toHaveBeenCalledOnce()
+    await retry.close()
+    expect(unsubscribe).toHaveBeenCalledTimes(2)
+  })
+
   it('authenticates, serves the UI, invokes RPC, and mirrors events over WebSocket', async () => {
     const staticRoot = await mkdtemp(join(tmpdir(), 'open-science-web-static-'))
     roots.push(staticRoot)
@@ -63,7 +102,7 @@ describe('startWebHttpServer', () => {
       releaseClient: vi.fn(),
       dispose: vi.fn()
     }
-    const server = await startWebHttpServer({
+    const server = await startTestWebHttpServer({
       host: '127.0.0.1',
       port: 0,
       token: 'test-token',
@@ -184,11 +223,19 @@ describe('startWebHttpServer', () => {
     const message = new Promise<string>((resolve) =>
       socket.once('message', (data) => resolve(data.toString()))
     )
-    broadcastToRenderers('project:created', { ready: true })
+    const project = {
+      id: 'project-1',
+      name: 'Test project',
+      description: '',
+      isExample: false,
+      createdAt: 1,
+      updatedAt: 1
+    }
+    applicationEvents.publish('project:created', project)
     expect(JSON.parse(await message)).toEqual({
       protocolVersion: WEB_RPC_PROTOCOL_VERSION,
       channel: 'project:created',
-      payload: { ready: true }
+      payload: project
     })
     const socketClosed = new Promise<void>((resolve) => socket.once('close', () => resolve()))
     socket.close()
@@ -219,20 +266,43 @@ describe('startWebHttpServer', () => {
     await new Promise<void>((resolve) => publicSocket.once('open', resolve))
     const publicMessages: unknown[] = []
     publicSocket.on('message', (data) => publicMessages.push(JSON.parse(data.toString())))
-    broadcastToRenderers('acp:event', { sessionId: 'session-1', kind: 'message', text: 'Hi' })
-    broadcastToRenderers('acp:permission-request', {
+    applicationEvents.publish('acp:event', {
+      id: 'event-1',
+      timestamp: 1,
+      level: 'info',
       sessionId: 'session-1',
-      requestId: 'permission-1'
+      kind: 'message',
+      text: 'Hi'
+    })
+    applicationEvents.publish('acp:permission-request', {
+      sessionId: 'session-1',
+      requestId: 'permission-1',
+      toolCallId: 'tool-1',
+      title: 'Run command',
+      options: []
     })
     await vi.waitFor(() => {
       expect(publicMessages).toEqual([
         {
           type: 'run.event',
-          data: { sessionId: 'session-1', kind: 'message', text: 'Hi' }
+          data: {
+            id: 'event-1',
+            timestamp: 1,
+            level: 'info',
+            sessionId: 'session-1',
+            kind: 'message',
+            text: 'Hi'
+          }
         },
         {
           type: 'permission.requested',
-          data: { sessionId: 'session-1', requestId: 'permission-1' }
+          data: {
+            sessionId: 'session-1',
+            requestId: 'permission-1',
+            toolCallId: 'tool-1',
+            title: 'Run command',
+            options: []
+          }
         }
       ])
     })
@@ -246,7 +316,7 @@ describe('startWebHttpServer', () => {
       releaseClient: vi.fn(),
       dispose: vi.fn()
     }
-    const server = await startWebHttpServer({
+    const server = await startTestWebHttpServer({
       host: '127.0.0.1',
       port: 0,
       token: 'test-token',
@@ -301,7 +371,7 @@ describe('startWebHttpServer', () => {
     roots.push(staticRoot)
     await writeFile(join(staticRoot, 'index.html'), '<!doctype html>')
     const releaseClient = vi.fn()
-    const server = await startWebHttpServer({
+    const server = await startTestWebHttpServer({
       host: '127.0.0.1',
       port: 0,
       token: 'test-token',
@@ -350,7 +420,7 @@ describe('startWebHttpServer', () => {
       dispose: vi.fn()
     }
     const authorizeHttp = vi.fn().mockResolvedValue(authorizedExternalAccess())
-    const server = await startWebHttpServer({
+    const server = await startTestWebHttpServer({
       host: '127.0.0.1',
       port: 0,
       token: 'local-token',
@@ -463,7 +533,7 @@ describe('startWebHttpServer', () => {
       acquireArtifact: vi.fn(),
       releaseArtifact: vi.fn()
     }
-    const server = await startWebHttpServer({
+    const server = await startTestWebHttpServer({
       host: '127.0.0.1',
       port: 0,
       token: 'local-token',
@@ -556,7 +626,7 @@ describe('startWebHttpServer', () => {
       releaseClient: vi.fn(),
       dispose: vi.fn()
     }
-    const server = await startWebHttpServer({
+    const server = await startTestWebHttpServer({
       host: '127.0.0.1',
       port: 0,
       token: 'local-token',
@@ -679,7 +749,7 @@ describe('startWebHttpServer', () => {
       releaseClient: vi.fn(),
       dispose: vi.fn()
     }
-    const server = await startWebHttpServer({
+    const server = await startTestWebHttpServer({
       host: '127.0.0.1',
       port: 0,
       token: 'local-token',
@@ -751,7 +821,7 @@ describe('startWebHttpServer', () => {
     const staticRoot = await mkdtemp(join(tmpdir(), 'open-science-web-static-'))
     roots.push(staticRoot)
     await writeFile(join(staticRoot, 'index.html'), '<!doctype html>')
-    const server = await startWebHttpServer({
+    const server = await startTestWebHttpServer({
       host: '127.0.0.1',
       port: 0,
       token: 'local-token',
@@ -811,7 +881,7 @@ describe('startWebHttpServer', () => {
     roots.push(staticRoot)
     await writeFile(join(staticRoot, 'index.html'), '<!doctype html>')
     const onShutdownRequest = vi.fn()
-    const server = await startWebHttpServer({
+    const server = await startTestWebHttpServer({
       host: '127.0.0.1',
       port: 0,
       token: 'test-token',
@@ -851,7 +921,7 @@ describe('startWebHttpServer', () => {
     roots.push(staticRoot)
     await writeFile(join(staticRoot, 'index.html'), '<!doctype html>')
     const onShutdownRequest = vi.fn()
-    const server = await startWebHttpServer({
+    const server = await startTestWebHttpServer({
       host: '127.0.0.1',
       port: 0,
       token: 'local-token',
@@ -926,7 +996,7 @@ describe('startWebHttpServer', () => {
       releaseArtifact: vi.fn(),
       dispose: vi.fn()
     }
-    const server = await startWebHttpServer({
+    const server = await startTestWebHttpServer({
       host: '127.0.0.1',
       port: 0,
       token: 'test-token',
@@ -1093,7 +1163,7 @@ describe('startWebHttpServer', () => {
       }),
       releaseArtifact: vi.fn().mockResolvedValue(undefined)
     }
-    const server = await startWebHttpServer({
+    const server = await startTestWebHttpServer({
       host: '127.0.0.1',
       port: 0,
       token: 'test-token',
@@ -1159,7 +1229,7 @@ describe('startWebHttpServer', () => {
       }),
       releaseArtifact: vi.fn().mockResolvedValue(undefined)
     }
-    const server = await startWebHttpServer({
+    const server = await startTestWebHttpServer({
       host: '127.0.0.1',
       port: 0,
       token: 'test-token',
