@@ -75,6 +75,29 @@ describe('PR Gate workflow', () => {
     }
   })
 
+  it('plans with the trusted base classifier and fails closed during bootstrap', () => {
+    const prepare = workflow.jobs.preflight.steps?.find(
+      ({ name }) => name === 'Prepare trusted classifier'
+    )
+    const classify = workflow.jobs.preflight.steps?.find(
+      ({ name }) => name === 'Classify change impact'
+    )
+
+    expect(prepare?.run).toContain('git show "${BASE_SHA}:${file}"')
+    expect(prepare?.run).toContain('source=bootstrap')
+    expect(classify?.env).toMatchObject({
+      TRUSTED_CLASSIFIER_DIR: '${{ steps.trusted_classifier.outputs.dir }}',
+      TRUSTED_CLASSIFIER_SOURCE: '${{ steps.trusted_classifier.outputs.source }}'
+    })
+    expect(classify?.run).toContain(
+      'node "$TRUSTED_CLASSIFIER_DIR/classify-pr-changes.mjs" --base "$BASE_SHA" --head "$HEAD_SHA"'
+    )
+    expect(classify?.run).toContain("mode: 'full'")
+    expect(classify?.run).not.toContain(
+      'node scripts/ci/classify-pr-changes.mjs --base "$BASE_SHA" --head "$HEAD_SHA"'
+    )
+  })
+
   it('aggregates all deterministic lanes into the stable PR Gate job', () => {
     const gate = workflow.jobs.gate
 
@@ -83,9 +106,23 @@ describe('PR Gate workflow', () => {
     expect(gate.needs).toEqual(['preflight', ...manifest.laneOrder])
     expect(gate.env).toEqual({
       PR_GATE_NEEDS: '${{ toJSON(needs) }}',
-      PR_GATE_PLAN: '${{ needs.preflight.outputs.plan }}'
+      PR_GATE_PLAN: '${{ needs.preflight.outputs.plan }}',
+      PREFLIGHT_RESULT: '${{ needs.preflight.result }}'
     })
-    expect(gate.steps?.at(-1)?.run).toBe('node scripts/ci/evaluate-pr-gate.mjs')
+    expect(gate.steps?.at(0)).toMatchObject({
+      name: 'Checkout trusted gate evaluator',
+      if: "${{ needs.preflight.result == 'success' }}",
+      with: {
+        'fetch-depth': 1,
+        'persist-credentials': false,
+        ref: '${{ github.event.pull_request.base.sha || github.event.merge_group.base_sha || needs.preflight.outputs.base }}'
+      }
+    })
+    expect(gate.steps?.at(-1)).toMatchObject({
+      name: 'Evaluate deterministic gate from trusted base'
+    })
+    expect(gate.steps?.at(-1)?.run).toContain('node scripts/ci/evaluate-pr-gate.mjs')
+    expect(gate.steps?.at(-1)?.run).toContain('Bootstrap-only strict evaluator')
     expect(workflowText).not.toMatch(/needs:.*(?:ai|codex|review)/i)
   })
 

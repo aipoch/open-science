@@ -67,6 +67,50 @@ describe('CI integrity policy', () => {
     }
   })
 
+  it('inspects CI scripts without treating embedded workflow fixtures as executable YAML', () => {
+    const root = mkdtempSync(join(tmpdir(), 'ci-integrity-script-fixture-'))
+
+    try {
+      execFileSync('git', ['init', '--quiet'], { cwd: root })
+      execFileSync('git', ['config', 'user.email', 'ci@example.com'], { cwd: root })
+      execFileSync('git', ['config', 'user.name', 'CI Test'], { cwd: root })
+      writeFileSync(join(root, 'README.md'), '# fixture\n')
+      execFileSync('git', ['add', 'README.md'], { cwd: root })
+      execFileSync('git', ['commit', '--quiet', '-m', 'initial'], { cwd: root })
+      const base = execFileSync('git', ['rev-parse', 'HEAD'], {
+        cwd: root,
+        encoding: 'utf8'
+      }).trim()
+
+      mkdirSync(join(root, 'scripts', 'ci'), { recursive: true })
+      writeFileSync(
+        join(root, 'scripts', 'ci', 'policy.test.ts'),
+        `const unsafeWorkflowFixture = \`on: pull_request_target
+permissions:
+  contents: write
+jobs:
+  inspect:
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          ref: \${{ github.event.pull_request.head.sha }}
+\`\n`
+      )
+      execFileSync('git', ['add', 'scripts/ci/policy.test.ts'], { cwd: root })
+      execFileSync('git', ['commit', '--quiet', '-m', 'add CI policy fixture'], { cwd: root })
+      const head = execFileSync('git', ['rev-parse', 'HEAD'], {
+        cwd: root,
+        encoding: 'utf8'
+      }).trim()
+
+      const files = ciIntegrityFilesFromRevisions(base, head, { cwd: root })
+      expect(files.map(({ path }) => path)).toEqual(['scripts/ci/policy.test.ts'])
+      expect(checkCiIntegrityChanges(files)).toMatchObject({ ok: true, violations: [] })
+    } finally {
+      rmSync(root, { force: true, recursive: true })
+    }
+  })
+
   it('rejects a newly introduced mutable third-party action reference', () => {
     const result = checkCiIntegrityChanges([
       {
@@ -187,6 +231,35 @@ jobs: {}
 
     expect(result.violations).toContainEqual(
       expect.objectContaining({ path, rule: 'stable-required-check' })
+    )
+  })
+
+  it('rejects semantic changes to an established required workflow', () => {
+    const baseText = `jobs:
+  gate:
+    name: PR Gate
+    needs: [preflight]
+    steps:
+      - run: node scripts/ci/evaluate-pr-gate.mjs
+`
+    const result = checkCiIntegrityChanges([
+      {
+        path: '.github/workflows/pr-gate.yml',
+        baseText,
+        headText: `jobs:
+  gate:
+    name: PR Gate
+    steps:
+      - run: echo pass
+`
+      }
+    ])
+
+    expect(result.violations).toContainEqual(
+      expect.objectContaining({
+        path: '.github/workflows/pr-gate.yml',
+        rule: 'protected-gate-control-plane'
+      })
     )
   })
 

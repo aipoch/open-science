@@ -56,6 +56,14 @@ const stableChecks = {
   '.github/workflows/ci-integrity.yml': { jobId: 'integrity', name: 'CI Integrity' }
 }
 
+function isWorkflowPath(path) {
+  return /^\.github\/workflows\/.*\.ya?ml$/i.test(path)
+}
+
+function isActionDefinitionPath(path) {
+  return /^\.github\/actions\/.*\/action\.ya?ml$/i.test(path)
+}
+
 function hasStableJobName(text, { jobId, name }) {
   const lines = text.split('\n')
   const start = lines.findIndex((line) => line.trimEnd() === `  ${jobId}:`)
@@ -73,7 +81,10 @@ export function checkCiIntegrityChanges(files) {
 
   for (const file of files) {
     const headText = file.headText ?? ''
-    if (/^\.github\/workflows\/.*\.ya?ml$/i.test(file.path) && headText) {
+    const workflow = isWorkflowPath(file.path)
+    const executableYaml = workflow || isActionDefinitionPath(file.path)
+
+    if (workflow && headText) {
       try {
         load(headText)
       } catch (error) {
@@ -84,23 +95,27 @@ export function checkCiIntegrityChanges(files) {
         })
       }
     }
-    for (const reference of actionReferences(headText)) {
-      if (!isImmutableActionReference(reference)) {
-        violations.push({
-          path: file.path,
-          rule: 'immutable-action-reference',
-          message: `New action reference must use an immutable full commit SHA: ${reference}`
-        })
+
+    if (executableYaml) {
+      for (const reference of actionReferences(headText)) {
+        if (!isImmutableActionReference(reference)) {
+          violations.push({
+            path: file.path,
+            rule: 'immutable-action-reference',
+            message: `New action reference must use an immutable full commit SHA: ${reference}`
+          })
+        }
       }
     }
-    if (executesPullRequestHead(headText)) {
+
+    if (workflow && executesPullRequestHead(headText)) {
       violations.push({
         path: file.path,
         rule: 'no-pr-head-execution',
         message: 'pull_request_target workflows must never checkout or execute PR-head code'
       })
     }
-    if (/\bpull_request_target\b/.test(withoutCommentLines(headText))) {
+    if (workflow && /\bpull_request_target\b/.test(withoutCommentLines(headText))) {
       const baseWritePermissions = writePermissions(file.baseText ?? '')
       for (const permission of writePermissions(headText)) {
         if (!baseWritePermissions.has(permission)) {
@@ -112,7 +127,16 @@ export function checkCiIntegrityChanges(files) {
         }
       }
     }
+
     const stableCheck = stableChecks[file.path] ?? stableChecks[file.previousPath]
+    if (stableCheck && file.baseText && headText !== file.baseText) {
+      violations.push({
+        path: file.path,
+        rule: 'protected-gate-control-plane',
+        message:
+          'Established required workflows may change only through an explicit maintainer ruleset bypass'
+      })
+    }
     if (stableCheck && !hasStableJobName(headText, stableCheck)) {
       violations.push({
         path: file.path,
