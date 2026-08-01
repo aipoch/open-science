@@ -43,6 +43,7 @@ import {
   emptyDoc,
   type ComposerDoc
 } from './composer/composer-doc'
+import { buildCustomizePrefillDoc } from '@/lib/customize-chat'
 import { ConversationPanel } from './ConversationPanel'
 import { DeleteSessionDialog } from './DeleteSessionDialog'
 import { MobilePreviewSheet } from './MobilePreviewSheet'
@@ -376,6 +377,8 @@ const WorkspacePage = ({
   // is only reachable via openProject/openSession (which set it); '' is a defensive sentinel that
   // matches no session and triggers the redirect below.
   const activeProjectId = useNavigationStore((state) => state.activeProjectId)
+  const pendingCustomizePrefill = useNavigationStore((state) => state.pendingCustomizePrefill)
+  const consumeCustomizePrefill = useNavigationStore((state) => state.consumeCustomizePrefill)
   const goHome = useNavigationStore((state) => state.goHome)
   const openSettings = useSettingsStore((state) => state.openSettings)
   const activeProviderId = useSettingsStore((state) => state.activeProviderId)
@@ -486,6 +489,27 @@ const WorkspacePage = ({
       (item) => item.kind === 'custom' && item.enabled && item.id === newConversationSpecialistId
     )
 
+  // Consume the `Chat with agent` prefill intent in the render phase (matching the pending-skill /
+  // pending-panel pattern): land the exact `/customize` ComposerDoc on the New Conversation draft once,
+  // clear any Specialist binding for that fresh draft, then clear the store intent below. The intent is
+  // navigation/prefill only — it never sends, creates a session, or implies mutation approval. The
+  // appliedCustomizePrefill state tracks the intent already applied so a re-render does not clobber an
+  // edited draft.
+  const [appliedCustomizePrefill, setAppliedCustomizePrefill] = useState<string | undefined>(
+    undefined
+  )
+  if (
+    pendingCustomizePrefill !== undefined &&
+    pendingCustomizePrefill === activeProjectId &&
+    selectedSessionId === undefined &&
+    appliedCustomizePrefill !== pendingCustomizePrefill
+  ) {
+    setAppliedCustomizePrefill(pendingCustomizePrefill)
+    setDraftDoc(buildCustomizePrefillDoc())
+    // A fresh New Conversation draft carries no Specialist binding (no badge, no Customize Profile).
+    setNewConversationSpecialistId(undefined)
+  }
+
   // Per-session pending specialist selection for existing conversations.
   // Key: sessionId. Value: the pending UUID (or undefined to clear binding).
   // The pending value is the user's last selection; it takes effect on the next send via reconfigure
@@ -493,6 +517,11 @@ const WorkspacePage = ({
   const [pendingSessionSpecialist, setPendingSessionSpecialist] = useState<
     Record<string, string | undefined>
   >({})
+
+  // Latest specialist catalog, mirrored into a ref so the pending-switch broadcast subscription
+  // stays stable (subscribes once on mount) while still reading fresh data when a host.agents.switch()
+  // broadcast arrives. Set in an effect (never during render) to comply with the react-hooks/refs rule.
+  const specialistItemsRef = useRef(specialistItems)
 
   // Reconfigure failure state: set when a pre-send dispose/resume fails.
   // Keeps the draft intact, shows the recovery banner above the composer.
@@ -747,6 +776,13 @@ const WorkspacePage = ({
   // previews) and persists/restores each project's panel state across switches and restarts.
   usePreviewPersistence(activeProjectId, isSessionPersistenceReady)
 
+  // Clear the consumed `Chat with agent` prefill intent from the store once it has been applied in the
+  // render phase above, so a later normal open starts fresh. (Calling a store action — not a React
+  // setter — so this does not trip the set-state-in-effect rule.)
+  useEffect(() => {
+    if (pendingCustomizePrefill !== undefined) consumeCustomizePrefill()
+  }, [pendingCustomizePrefill, consumeCustomizePrefill])
+
   // Escape closes the mobile navigation drawer without touching the active session or draft.
   useEffect(() => {
     if (!isMobile || !isMobileSidebarOpen) return
@@ -770,6 +806,30 @@ const WorkspacePage = ({
       attachments,
       attachmentTransfers
     }
+    // When the selection lands on the New Conversation key while a `Chat with agent` prefill is
+    // pending for the active project, the render-phase consumer above has already set the exact
+    // `/customize` doc. This effect runs AFTER that render-phase write, so loading the stored/empty
+    // draft here would clobber the prefill (the last writer wins). Bail out instead: advance the
+    // tracked key so a later switch still saves the prefill draft, and clear any attachments that
+    // leaked from the previously-selected session so the fresh draft starts clean.
+    const customizePrefillPending =
+      currentDraftKey === NEW_CONVERSATION_DRAFT_KEY &&
+      pendingCustomizePrefill !== undefined &&
+      pendingCustomizePrefill === activeProjectId
+    if (customizePrefillPending) {
+      // The render-phase consumer above has already landed the exact `/customize` doc. Only the
+      // attachments need clearing here (they may have leaked from the previously-selected session).
+      // Do NOT reload the stored/empty draft doc — that would clobber the prefill (last writer wins).
+      const freshDraft = composerDraftsRef.current[currentDraftKey] ?? {
+        doc: emptyDoc,
+        attachments: [],
+        attachmentTransfers: []
+      }
+      setAttachments(freshDraft.attachments)
+      setAttachmentTransfers(freshDraft.attachmentTransfers)
+      previousDraftKeyRef.current = currentDraftKey
+      return
+    }
     const nextDraft = composerDraftsRef.current[currentDraftKey] ?? {
       doc: emptyDoc,
       attachments: [],
@@ -779,7 +839,14 @@ const WorkspacePage = ({
     setAttachments(nextDraft.attachments)
     setAttachmentTransfers(nextDraft.attachmentTransfers)
     previousDraftKeyRef.current = currentDraftKey
-  }, [selectedSessionId, draftDoc, attachments, attachmentTransfers])
+  }, [
+    selectedSessionId,
+    draftDoc,
+    attachments,
+    attachmentTransfers,
+    pendingCustomizePrefill,
+    activeProjectId
+  ])
 
   // The first agent-side notebook call promotes a notebook entry into the composer status bar.
   useEffect(() => {
@@ -1637,6 +1704,63 @@ const WorkspacePage = ({
     })
     return remove
   }, [loadSpecialists])
+
+  // Keep the latest specialist catalog in a ref so the stable broadcast subscription below reads
+  // fresh data without re-subscribing on every catalog change.
+  useEffect(() => {
+    specialistItemsRef.current = specialistItems
+  }, [specialistItems])
+
+  // Subscribe to durable next-message switch broadcasts from host.agents.switch() (issue 08b/08a).
+  // An approved switch ALREADY persisted the binding on main and is running inside the current reply's
+  // Agent; the renderer only mirrors the pending target so the composer shows the "takes effect on the
+  // next message" state and the next-send reconfigure barrier applies the approved identity. The live
+  // agent is NOT switched here — setSessionSpecialist runs only at the next sendMessage barrier.
+  useEffect(() => {
+    if (!window.api?.specialist?.onPendingSwitch) return
+    const remove = window.api.specialist.onPendingSwitch((pending) => {
+      // null target => revert to Main Agent. main already persisted the clear BEFORE broadcasting
+      // (host.agents.switch(null) writes the Main binding, then notifies), so the renderer only
+      // mirrors it here — no resolveSessionSpecialist round-trip is needed, unlike the named-target
+      // fallthrough below. The pending entry is set to undefined so the next-send barrier, which keys
+      // on pendingSessionSpecialist ownership, clears the binding. If a target resolves unavailable
+      // between approval and broadcast the pending entry is simply unset and the failure surfaces
+      // fail-closed at the next send; the message never runs under the wrong identity.
+      if (pending.targetName === null) {
+        setPendingSessionSpecialist((prev) => ({ ...prev, [pending.sessionId]: undefined }))
+        return
+      }
+      // Resolve the public name to a UUID against the live catalog (last-write-wins: each broadcast
+      // overwrites the pending entry).
+      const match = specialistItemsRef.current.find(
+        (item) => item.kind === 'custom' && item.name === pending.targetName
+      )
+      if (match && match.kind === 'custom') {
+        setPendingSessionSpecialist((prev) => ({ ...prev, [pending.sessionId]: match.id }))
+        return
+      }
+      // Catalog not yet loaded or the target was renamed/deleted between approval and broadcast:
+      // resolve the durable binding that host.agents.switch already persisted on main. The result is
+      // mirrored as the pending target so the barrier still reconfigures at the next send.
+      const resolver = window.api?.specialist?.resolveSessionSpecialist
+      if (!resolver) return
+      void resolver
+        .call(window.api.specialist, { sessionId: pending.sessionId })
+        .then((resolution) => {
+          if (resolution.kind === 'bound') {
+            setPendingSessionSpecialist((prev) => ({
+              ...prev,
+              [pending.sessionId]: resolution.profile.id
+            }))
+          }
+        })
+        .catch(() => {
+          // Resolution failed: the durable binding still applies on the next session create/resume;
+          // leave the pending state unset so the user can retry explicitly.
+        })
+    })
+    return remove
+  }, [])
 
   const toggleSidebarPanel = (): void => {
     setSidebarPanelState((state) => (state === 'collapsed' ? 'open' : 'collapsed'))

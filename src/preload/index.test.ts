@@ -369,6 +369,7 @@ describe('preload bridge — public surface inventory', () => {
       'specialist.duplicate',
       'specialist.list',
       'specialist.onCatalogChanged',
+      'specialist.onPendingSwitch',
       'specialist.resolveSessionSpecialist',
       'specialist.setEnabled',
       'specialist.setSessionSpecialist',

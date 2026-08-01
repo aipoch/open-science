@@ -61,6 +61,7 @@ import type {
   ReasoningEffort,
   SkillBundlePreviewResult,
   SkillImportPreviewContent,
+  SkillSource,
   ScanRepoRequest,
   ScanRepoResult,
   UpdateSkillRequest,
@@ -990,7 +991,14 @@ class SettingsService {
   // Specialist scopes intentionally see the installed catalog irrespective of Main Agent toggles.
   // The result is rebuilt for every caller so future imports and removals take effect on the next turn.
   async listSpecialistSkillCatalog(): Promise<
-    Array<{ id: string; frameworkName: string; displayName: string }>
+    Array<{
+      id: string
+      frameworkName: string
+      displayName: string
+      source: SkillSource
+      mainEnabled: boolean
+      available: boolean
+    }>
   > {
     return this.skills.listSpecialistSkillCatalog()
   }

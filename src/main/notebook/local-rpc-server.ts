@@ -27,6 +27,7 @@ import type {
   CreateArtifactVersionRequest,
   ReplayArtifactVersionRequest
 } from '../../shared/artifact-provenance'
+import { stripAgentsReservedParams } from '../../shared/agents-contract'
 
 type NotebookLocalRpcServerOptions = {
   token?: string
@@ -102,6 +103,15 @@ type NotebookLocalRpcServerOptions = {
   }
   inputRegistry?: Pick<NotebookInputRegistry, 'registerTurn' | 'getTurnInputs' | 'clearSession'> &
     Partial<Pick<NotebookInputRegistry, 'openRun'>>
+  // host.agents control-plane SDK (issue 02): exposes the Specialist/catalog surface to the
+  // JavaScript control-plane REPL via the extensible dispatcher. Never routed through host.mcp();
+  // carries the trusted calling session identity captured outside the sandbox so switch()
+  // (added later) cannot be forged. `read` is kept for backward compatibility and delegates to the
+  // same dispatcher; the route calls it so existing wiring and tests stay green.
+  agentsService?: {
+    read(op: unknown, context: { sessionId?: string }): Promise<unknown>
+    dispatch?(op: unknown, context: { sessionId?: string }): Promise<unknown>
+  }
 }
 
 type NotebookRpcPayload = {
@@ -182,6 +192,7 @@ class NotebookLocalRpcServer {
   private readonly skillImporter: NotebookLocalRpcServerOptions['skillImporter']
   private readonly artifactProvenance: NotebookLocalRpcServerOptions['artifactProvenance']
   private readonly inputRegistry: NotebookLocalRpcServerOptions['inputRegistry']
+  private readonly agentsService: NotebookLocalRpcServerOptions['agentsService']
   private server: Server | undefined
   private startPromise: Promise<NotebookRpcConnection> | undefined
   private readonly sessionAliases = new Map<string, string>()
@@ -210,6 +221,7 @@ class NotebookLocalRpcServer {
     this.skillImporter = options.skillImporter
     this.artifactProvenance = options.artifactProvenance
     this.inputRegistry = options.inputRegistry
+    this.agentsService = options.agentsService
   }
 
   issueArtifactRunCapability(
@@ -819,6 +831,43 @@ class NotebookLocalRpcServer {
       }
 
       throw new Error(`Unknown computeCall op: ${op}`)
+    }
+
+    // agentsCall: host.agents control-plane SDK (issue 02). Routes operations to the AgentsService
+    // dispatcher.
+    //
+    // TRUSTED CALLING-SESSION IDENTITY: the `session_id` read from this request IS the trusted
+    // calling-session identity, forwarded to AgentsService.read() as server context — exactly the
+    // same way mcpCall/computeCall forward the caller's `sessionId`. It is NOT "ignored": only the
+    // forwarded op-params are stripped (stripAgentsReservedParams below). It is trusted because (a)
+    // the JS control REPL binds `session_id` to the spawn-captured COMPUTE_SESSION_ID at the
+    // `agentsRpc` boundary (see resources/notebook/repl_loop.js) and exposes no override through the
+    // `host.agents` SDK surface, and (b) this loopback RPC is Bearer-token-gated (handleRequest
+    // enforces `Bearer ${this.token}`), with the token captured and removed from `process.env`
+    // before the sandbox is built and held in an opaque module closure.
+    //
+    // RESIDUAL DEFENSE-IN-DEPTH LIMITATION: a single shared loopback server that trusts a
+    // caller-supplied session id means session-identity assurance ultimately rests on that token
+    // gate. Server-side session derivation (e.g. a session-bound token or per-session connection)
+    // is a possible future hardening, tracked separately — NOT implemented here.
+    //
+    // DISPATCH SEPARATION: this route owns ONLY auth + sandbox injection. It strips every reserved
+    // routing/identity/switch key (AGENTS_RESERVED_PARAM_KEYS in src/shared/agents-contract.ts) and
+    // forwards the op + sanitized params + trusted session to AgentsService.read() (which delegates
+    // to the extensible dispatch()). Adding a new operation never touches this path — see
+    // AgentsService.dispatch's extension-point comment.
+    if (method === 'agentsCall') {
+      if (!this.agentsService) throw new Error('Agents service is not configured.')
+      const sessionId = typeof params.session_id === 'string' ? params.session_id : undefined
+      const op = typeof params.op === 'string' ? params.op : ''
+      // Strip every reserved routing/identity/switch key before forwarding. The AgentsService and
+      // its injected approval/switch seams only ever see the op + their own snake_case params; the
+      // trusted session identity stays in the server context (NOT taken from the forwarded params).
+      // Sandbox-supplied values for specialist_id, target_specialist_id, reconfigure, etc. are
+      // provably ignored — note that session_id above is intentionally read from the request as the
+      // trusted identity, not from the forwarded op-params.
+      const rest = stripAgentsReservedParams(params)
+      return this.agentsService.read({ op, params: rest }, { sessionId })
     }
 
     assertSessionParams(params)

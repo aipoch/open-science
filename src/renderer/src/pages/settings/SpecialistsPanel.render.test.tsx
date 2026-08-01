@@ -6,8 +6,25 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 
 import { SpecialistsPanel } from './SpecialistsPanel'
 import { clickRadixMenuItem, openRadixMenu } from './test-utils'
+import { useProjectStore } from '@/stores/project-store'
+import { useSettingsStore } from '@/stores/settings-store'
 import { useSpecialistStore } from '@/stores/specialist-store'
 import type { SpecialistListItem } from '../../../../shared/specialist'
+
+const navigationMock = vi.hoisted(() => ({
+  startCustomizeConversation: vi.fn()
+}))
+
+vi.mock('@/stores/navigation-store', () => ({
+  useNavigationStore: {
+    getState: () => ({ startCustomizeConversation: navigationMock.startCustomizeConversation })
+  }
+}))
+vi.mock('@/lib/last-opened-project', () => ({
+  resolveCustomizeProjectId: vi.fn((projects: { id: string }[]) => projects[0]?.id),
+  recordLastOpenedProject: vi.fn(),
+  getLastOpenedProjectId: vi.fn(() => undefined)
+}))
 
 ;(globalThis as { IS_REACT_ACT_ENVIRONMENT?: boolean }).IS_REACT_ACT_ENVIRONMENT = true
 
@@ -346,5 +363,152 @@ describe('SpecialistsPanel', () => {
     // Dialog stays open and shows the error.
     expect(document.body.querySelector('[role="alertdialog"]')).not.toBeNull()
     expect(document.body.textContent).toMatch(/revision conflict|try again/i)
+  })
+})
+
+// ---------------------------------------------------------------------------
+// Add specialist › Chat with agent (issue 07 — Settings-to-composer journey)
+// ---------------------------------------------------------------------------
+describe('SpecialistsPanel Chat with agent', () => {
+  const initialProjectStore = useProjectStore.getState()
+  let closeSettingsSpy: ReturnType<typeof vi.spyOn>
+
+  const project = (
+    id: string,
+    updatedAt: number
+  ): {
+    id: string
+    name: string
+    description: string
+    isExample: boolean
+    createdAt: number
+    updatedAt: number
+  } => ({
+    id,
+    name: id,
+    description: '',
+    isExample: false,
+    createdAt: 1,
+    updatedAt
+  })
+
+  beforeEach(() => {
+    useSpecialistStore.setState({ ...initialStore, isLoaded: true, items: specialistItems })
+    useProjectStore.setState({ ...initialProjectStore, projects: [], isLoaded: true })
+    navigationMock.startCustomizeConversation.mockReset()
+    closeSettingsSpy = vi
+      .spyOn(useSettingsStore.getState(), 'closeSettings')
+      .mockImplementation(() => undefined)
+    container = document.createElement('div')
+    document.body.appendChild(container)
+    root = createRoot(container)
+  })
+
+  afterEach(() => {
+    act(() => root.unmount())
+    container.remove()
+    document.body.innerHTML = ''
+    useProjectStore.setState(initialProjectStore, true)
+    closeSettingsSpy.mockRestore()
+  })
+
+  const openAddSpecialistMenu = (): HTMLElement | undefined =>
+    Array.from(document.body.querySelectorAll<HTMLButtonElement>('button')).find((button) =>
+      button.textContent?.includes('Add specialist')
+    )
+
+  const renderList = async (): Promise<void> => {
+    await act(async () => {
+      root.render(<SpecialistsPanel view={{ kind: 'list' }} onNavigate={vi.fn()} />)
+    })
+  }
+
+  it('keeps Write from scratch and adds a Chat with agent entry', async () => {
+    useProjectStore.setState({ projects: [project('climate-models', 1)] })
+    await renderList()
+
+    openRadixMenu(openAddSpecialistMenu())
+    const items = Array.from(document.body.querySelectorAll<HTMLElement>('[role="menuitem"]'))
+    const labels = items.map((item) => item.textContent ?? '')
+
+    expect(labels.some((label) => label.includes('Write from scratch'))).toBe(true)
+    expect(labels.some((label) => label.includes('Chat with agent'))).toBe(true)
+  })
+
+  it('uses the approved Chat with agent subtitle copy', async () => {
+    useProjectStore.setState({ projects: [project('climate-models', 1)] })
+    await renderList()
+
+    openRadixMenu(openAddSpecialistMenu())
+    expect(document.body.textContent).toContain(
+      'Start a normal conversation; the agent guides you step by step'
+    )
+  })
+
+  it('disables Chat with agent and shows the zero-project help text with no projects', async () => {
+    useProjectStore.setState({ projects: [] })
+    await renderList()
+
+    openRadixMenu(openAddSpecialistMenu())
+    const chatItem = Array.from(
+      document.body.querySelectorAll<HTMLElement>('[role="menuitem"]')
+    ).find((item) => item.textContent?.includes('Chat with agent'))
+
+    expect(chatItem).toBeDefined()
+    expect(chatItem?.getAttribute('aria-disabled')).toBe('true')
+    expect(chatItem?.hasAttribute('data-disabled')).toBe(true)
+    expect(document.body.textContent).toContain('Open a project to chat with the agent')
+  })
+
+  it('does not start a conversation when Chat with agent is clicked with zero projects', async () => {
+    useProjectStore.setState({ projects: [] })
+    await renderList()
+
+    openRadixMenu(openAddSpecialistMenu())
+    const chatItem = Array.from(
+      document.body.querySelectorAll<HTMLElement>('[role="menuitem"]')
+    ).find((item) => item.textContent?.includes('Chat with agent'))
+    // Radix disabled items drop click handling; simulate a click anyway to prove it is inert.
+    await act(async () => {
+      chatItem?.click()
+    })
+
+    expect(navigationMock.startCustomizeConversation).not.toHaveBeenCalled()
+    expect(closeSettingsSpy).not.toHaveBeenCalled()
+  })
+
+  it('closes Settings and starts a customize conversation for the resolved project', async () => {
+    useProjectStore.setState({ projects: [project('climate-models', 5)] })
+    await renderList()
+
+    openRadixMenu(openAddSpecialistMenu())
+    const chatItem = Array.from(
+      document.body.querySelectorAll<HTMLElement>('[role="menuitem"]')
+    ).find((item) => item.textContent?.includes('Chat with agent'))
+    await act(async () => {
+      clickRadixMenuItem(chatItem)
+    })
+
+    expect(navigationMock.startCustomizeConversation).toHaveBeenCalledWith('climate-models')
+    expect(closeSettingsSpy).toHaveBeenCalled()
+  })
+
+  it('stays within navigation/prefill intent: no Specialist binding or create-form navigation', async () => {
+    const onNavigate = vi.fn()
+    useProjectStore.setState({ projects: [project('climate-models', 5)] })
+    await act(async () => {
+      root.render(<SpecialistsPanel view={{ kind: 'list' }} onNavigate={onNavigate} />)
+    })
+
+    openRadixMenu(openAddSpecialistMenu())
+    const chatItem = Array.from(
+      document.body.querySelectorAll<HTMLElement>('[role="menuitem"]')
+    ).find((item) => item.textContent?.includes('Chat with agent'))
+    await act(async () => {
+      clickRadixMenuItem(chatItem)
+    })
+
+    // No create-form navigation, no specialist create — pure navigation/prefill intent.
+    expect(onNavigate).not.toHaveBeenCalled()
   })
 })

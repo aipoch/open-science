@@ -24,6 +24,7 @@ import type {
   SkillBundlePreviewResult,
   SkillDetailView,
   SkillImportPreviewContent,
+  SkillSource,
   SkillView,
   UpdateSkillRequest
 } from '../../shared/settings'
@@ -92,12 +93,28 @@ class SkillCatalogModule {
   }
 
   async listSpecialistSkillCatalog(): Promise<
-    Array<{ id: string; frameworkName: string; displayName: string }>
+    Array<{
+      id: string
+      frameworkName: string
+      displayName: string
+      source: SkillSource
+      mainEnabled: boolean
+      available: boolean
+    }>
   > {
-    return (await this.catalog()).map((skill) => ({
+    const [skills, settings] = await Promise.all([
+      this.catalog(),
+      this.options.repository.getSettings()
+    ])
+    const disabled = new Set(settings.disabledSkillIds ?? [])
+    return skills.map((skill) => ({
       id: skill.id,
       frameworkName: skill.source === 'featured' ? skill.id : skill.name,
-      displayName: skill.name
+      displayName: skill.name,
+      source: skill.source,
+      mainEnabled: !disabled.has(skill.id),
+      // Catalog entries are installed skills, so they resolve to a present entry at dispatch time.
+      available: true
     }))
   }
 

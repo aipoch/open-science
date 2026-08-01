@@ -110,8 +110,12 @@ import { registerSettingsIpcHandlers } from './settings/ipc'
 import { getAppClaudeConfigDir } from './settings/provider-env'
 import { createDefaultSettingsService, type SettingsService } from './settings/service'
 import { createProfileService } from './specialist/service'
+import { AgentsService } from './agents/agents-service'
+import { PendingSessionSpecialistBindings } from './agents/pending-session-specialist-bindings'
+import { passthroughApprovalGateway } from './agents/passthrough-approval-gateway'
 import { registerSpecialistIpcHandlers } from './specialist/ipc'
 import { SessionBindingService } from './specialist/session-binding'
+import { SPECIALIST_IPC } from '../shared/specialist'
 import type { StoredConnectors } from './settings/types'
 import type { AppIconPreview, AppIconVariant, RespondApprovalRequest } from '../shared/settings'
 import { registerStorageIpcHandlers } from './storage/ipc'
@@ -391,6 +395,10 @@ const createApplicationModules = async (
     artifactProvenanceRepository,
     permissionGrantRegistry
   )
+  // Stashed host.agents.switch bindings for sessions that are not yet durable (fresh unsent drafts),
+  // flushed to disk on the session's first save so an approved switch survives an app restart before
+  // the next message. Shared by persistSessionSpecialist (stash) and saveSession (flush).
+  const pendingSpecialistBindings = new PendingSessionSpecialistBindings()
   const sessionPersistenceBackend: SessionPersistenceBackend = {
     loadAll: () =>
       loadSessionsAfterProjectRecovery(projectDeletionCoordinator, sessionPersistenceCoordinator),
@@ -399,6 +407,16 @@ const createApplicationModules = async (
       const created =
         (await sessionRepository.loadSession(session.projectId, session.id)) === undefined
       const durableSession = await sessionPersistenceCoordinator.saveSession(session, options)
+      // Flush any approved host.agents.switch binding stashed while this session was not yet durable,
+      // so the approved target survives a restart before the next message (the in-memory binding
+      // alone does not persist across restart).
+      if (pendingSpecialistBindings.has(durableSession.id)) {
+        const specialistId = pendingSpecialistBindings.take(durableSession.id)
+        await sessionPersistenceCoordinator.saveSessionSpecialistBinding(
+          durableSession,
+          specialistId
+        )
+      }
       return { created, session: durableSession }
     },
     deleteSession: async (projectId, sessionId) => {
@@ -600,6 +618,62 @@ const createApplicationModules = async (
   // Augment computeService with getEnabledComputeHosts so the RPC server can serve list_compute.
   // Must preserve ComputeService's prototype methods (list/getDetails/submitJob/...) — see the helper.
   const computeServiceWithRegistry = attachEnabledComputeHosts(computeService, hostsRegistry)
+  // host.agents control-plane SDK (issue 02/05): read Specialist/catalog surface plus the durable
+  // next-message switch lifecycle. The catalog adapter delegates to the authoritative
+  // SettingsService + ProfileService; switch() reuses the SAME SessionBindingService and durable
+  // session-file persistence seam the SET_SESSION_SPECIALIST IPC handler uses (no parallel switch
+  // service). The runtime reconfigure callback is intentionally NOT wired here — it runs at the safe
+  // next-message boundary, not inside the SDK call. Issue 08 composes the pass-through approval
+  // gateway + SwitchNotifier + catalog invalidation here so delete/name-change/switch reach
+  // ProfileService end-to-end; the standard ACP permission card is a separate later issue.
+  const agentsService = new AgentsService({
+    profileService,
+    catalog: {
+      listSkillCatalog: () => settingsService.listSpecialistSkillCatalog(),
+      getConnectors: () => settingsService.getConnectors()
+    },
+    sessionBinding: sessionBindingService,
+    // Pass-through approval gateway (issue 08a milestone). Privileged Specialist operations
+    // (name-changing update, delete, switch) route THROUGH this seam; in this milestone the
+    // user-facing confirmation is the /customize Skill's chat-text review, so the gateway always
+    // approves. Swapping in the future standard-card ACP gateway requires no dispatcher/Skill/contract
+    // change — only this injected implementation. It holds no pending state (no second approval store).
+    approvalGateway: passthroughApprovalGateway,
+    // SwitchNotifier broadcasts ONLY the session id + target public name (null = Main Agent) over the
+    // existing specialist:pending-switch channel — never system instructions, UUIDs, secrets, or tokens.
+    // The renderer closure (issue 08b) subscribes; main-side broadcast is owned by this slice.
+    switchNotifier: {
+      notify: (pending) => {
+        broadcastToRenderers(SPECIALIST_IPC.PENDING_SWITCH, pending)
+      }
+    },
+    // Catalog invalidation after a successful privileged mutation: reconnect live sessions so the
+    // agent respawns (re-provisioning skills) and re-applies the updated Specialist whitelist. The
+    // ProfileService already broadcasts specialist:catalog-changed on update/delete; this refreshes the
+    // RUNTIME capability resolution (mirrors the Settings IPC path's onProfilesChanged callback).
+    invalidateCatalog: () => void runtime.requestSkillsReload(),
+    persistSessionSpecialist: async (sessionId, specialistId) => {
+      const allSessions = await sessionRepository.loadAll()
+      const session = allSessions.sessions.find((s) => s.id === sessionId)
+      if (!session) {
+        // The calling session is a fresh unsent draft that is not yet on disk. Stash the approved
+        // binding so the save path flushes it on first persist — otherwise an app restart before the
+        // first save would silently lose the approved switch (only the in-memory binding survives).
+        pendingSpecialistBindings.stash(sessionId, specialistId)
+        specialistPersistLog.debug(
+          'session not yet durable; stashed specialist binding for first save',
+          {
+            sessionId,
+            specialistId
+          }
+        )
+        return
+      }
+      // The session is already durable: this write is authoritative, so drop any stale stash.
+      pendingSpecialistBindings.take(sessionId)
+      await sessionPersistenceCoordinator.saveSessionSpecialistBinding(session, specialistId)
+    }
+  })
   const notebookRpcServer = new NotebookLocalRpcServer(notebookService, {
     connectorService,
     computeService: computeServiceWithRegistry,
@@ -618,7 +692,8 @@ const createApplicationModules = async (
           () => artifactProvenanceRepository.replayVersion(request)
         )
     },
-    inputRegistry: notebookInputRegistry
+    inputRegistry: notebookInputRegistry,
+    agentsService
   })
   // The RPC server needs the runtime service to dispatch to, and the runtime service needs the RPC
   // server's (lazily-started) connection for host.mcp() env injection — wire the second half here to

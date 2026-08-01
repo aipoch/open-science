@@ -251,7 +251,8 @@ import type {
   SetSessionSpecialistRequest,
   SetSessionSpecialistResponse,
   ResolveSessionSpecialistRequest,
-  SessionSpecialistResolution
+  SessionSpecialistResolution,
+  PendingSwitchBroadcast
 } from '../shared/specialist'
 import type {
   CloseConfirmRequest,
@@ -417,6 +418,8 @@ interface OpenScienceAPI {
     delete(request: DeleteSpecialistRequest): Promise<void>
     duplicate(request: DuplicateSpecialistRequest): Promise<CreateSpecialistRequest>
     onCatalogChanged(listener: () => void): RemoveListener
+    // host.agents.switch() durable next-message switch broadcast (issue 08b).
+    onPendingSwitch(listener: AcpListener<PendingSwitchBroadcast>): RemoveListener
     // Session switching (issue 07).
     setSessionSpecialist(
       request: SetSessionSpecialistRequest

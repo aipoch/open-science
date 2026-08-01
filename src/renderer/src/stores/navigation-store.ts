@@ -1,5 +1,7 @@
 import { create } from 'zustand'
 
+import { recordLastOpenedProject } from '@/lib/last-opened-project'
+
 import { useSessionStore } from './session-store'
 
 export type NavigationView = 'home' | 'workspace'
@@ -14,6 +16,9 @@ type NavigationStore = {
   // Advances when an explicit navigation intent should supersede a deferred startup deep link.
   // Desktop-notification clicks count here, but not as in-app user navigation above.
   explicitNavigationRevision: number
+  // Project id targeted by a pending `Chat with agent` prefill, consumed once by WorkspacePage when it
+  // opens that project's New Conversation draft. Undefined means no prefill is pending.
+  pendingCustomizePrefill: string | undefined
   recordUserNavigation: () => void
   goHome: (origin: NavigationOrigin) => void
   openProject: (projectId: string, origin: NavigationOrigin) => void
@@ -21,6 +26,11 @@ type NavigationStore = {
   // Opens a session knowing only its id (e.g. a desktop-notification click); a no-op when the
   // session no longer exists or hasn't loaded yet.
   openSessionById: (sessionId: string, origin: NavigationOrigin) => void
+  // Opens a project's New Conversation draft (no Specialist binding) carrying a `/customize` prefill.
+  // The intent does not send, create a session, or imply mutation approval; WorkspacePage consumes the
+  // prefill once and clears it.
+  startCustomizeConversation: (projectId: string) => void
+  consumeCustomizePrefill: () => void
 }
 
 const navigationState = (
@@ -56,6 +66,7 @@ export const useNavigationStore = create<NavigationStore>((set) => ({
   activeProjectId: undefined,
   userNavigationRevision: 0,
   explicitNavigationRevision: 0,
+  pendingCustomizePrefill: undefined,
 
   // Records user-owned navigation that changes another store (for example, opening the local New
   // Conversation draft clears Session selection without changing the top-level view).
@@ -68,7 +79,8 @@ export const useNavigationStore = create<NavigationStore>((set) => ({
   // Returns to the home screen without discarding session state.
   goHome: (origin) => set((state) => navigationState(state, origin, { view: 'home' })),
 
-  // Enters a project's workspace, selecting its most recent session when one exists.
+  // Enters a project's workspace, selecting its most recent session when one exists. An explicit user
+  // open also records the durable last-opened project so `Chat with agent` re-opens it next time.
   openProject: (projectId, origin) => {
     const mostRecentSessionId = findMostRecentSessionId(projectId)
 
@@ -78,6 +90,8 @@ export const useNavigationStore = create<NavigationStore>((set) => ({
       useSessionStore.getState().clearSelection()
     }
 
+    if (origin === 'user') recordLastOpenedProject(projectId)
+
     set((state) =>
       navigationState(state, origin, { view: 'workspace', activeProjectId: projectId })
     )
@@ -86,6 +100,8 @@ export const useNavigationStore = create<NavigationStore>((set) => ({
   // Opens a specific session inside its project's workspace.
   openSession: (projectId, sessionId, origin) => {
     useSessionStore.getState().selectSession(sessionId)
+
+    if (origin === 'user') recordLastOpenedProject(projectId)
 
     set((state) =>
       navigationState(state, origin, { view: 'workspace', activeProjectId: projectId })
@@ -110,5 +126,22 @@ export const useNavigationStore = create<NavigationStore>((set) => ({
         activeProjectId: session.projectId
       })
     )
-  }
+  },
+
+  // Opens a project's New Conversation draft carrying a `/customize` prefill. Clears session selection
+  // so the fresh draft has no Specialist binding, records the target as the last-opened project, and
+  // stamps a pending prefill intent that WorkspacePage consumes once. The intent never sends or creates
+  // a session; it is a navigation/prefill intent only.
+  startCustomizeConversation: (projectId) => {
+    useSessionStore.getState().clearSelection()
+    recordLastOpenedProject(projectId)
+
+    set((state) => ({
+      ...navigationState(state, 'user', { view: 'workspace', activeProjectId: projectId }),
+      pendingCustomizePrefill: projectId
+    }))
+  },
+
+  // Clears the consumed prefill intent so a later normal open starts fresh.
+  consumeCustomizePrefill: () => set({ pendingCustomizePrefill: undefined })
 }))

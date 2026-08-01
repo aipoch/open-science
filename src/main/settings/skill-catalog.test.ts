@@ -51,7 +51,14 @@ describe('SkillCatalogModule', () => {
     ])
     expect((await catalog.setSkillEnabled({ id: 'demo', enabled: false }))[0].enabled).toBe(false)
     expect(await catalog.listSpecialistSkillCatalog()).toEqual([
-      { id: 'demo', frameworkName: 'demo', displayName: 'Demo' }
+      {
+        id: 'demo',
+        frameworkName: 'demo',
+        displayName: 'Demo',
+        source: 'featured',
+        mainEnabled: false,
+        available: true
+      }
     ])
     expect((await catalog.getSkillDetail('demo')).body).toContain('demo body')
 

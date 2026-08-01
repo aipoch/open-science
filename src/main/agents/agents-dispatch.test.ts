@@ -1,0 +1,676 @@
+import { describe, expect, it, vi } from 'vitest'
+
+import { AgentsService, type AgentsCatalogSource } from './agents-service'
+import type { ApprovalGateway, ApprovalResult, SwitchNotifier } from '../../shared/agents-contract'
+import type { SpecialistProfileView } from '../../shared/specialist'
+import type { ProfileService } from '../specialist/service'
+import type { SessionBindingService } from '../specialist/session-binding'
+
+const noopCatalog = (): AgentsCatalogSource => ({
+  listSkillCatalog: vi.fn(async () => []),
+  getConnectors: vi.fn(async () => ({ enabledIds: [], autoAllowIds: [] }))
+})
+
+const noopProfileService = (): ProfileService =>
+  ({
+    list: vi.fn(async () => []),
+    getByName: vi.fn(async () => {
+      throw new Error('not found')
+    })
+  }) as unknown as ProfileService
+
+describe('AgentsService.dispatch — extensible operation dispatcher', () => {
+  it('routes a read op identically to read()', async () => {
+    const service = new AgentsService({
+      profileService: {
+        list: vi.fn(async () => [
+          {
+            id: 'sp-1',
+            name: 'Bio',
+            displayName: 'Bio',
+            description: '',
+            systemPrompt: '',
+            enabled: true,
+            capabilityMode: 'selected',
+            fullAccess: { excludedSkillIds: [], excludedConnectorIds: [], connectorTools: [] },
+            selectedCapabilities: { skillIds: [], connectorIds: [], connectorTools: [] },
+            revision: 1
+          }
+        ]),
+        getByName: vi.fn()
+      } as unknown as ProfileService,
+      catalog: noopCatalog()
+    })
+    const viaDispatch = await service.dispatch({ op: 'list' })
+    const viaRead = await service.read({ op: 'list' })
+    expect(viaDispatch).toEqual(viaRead)
+    expect((viaDispatch as Array<{ id: string }>)[0].id).toBe('sp-1')
+  })
+
+  it('rejects an unknown op with a sanitized host.agents.<op>: error', async () => {
+    const service = new AgentsService({
+      profileService: noopProfileService(),
+      catalog: noopCatalog()
+    })
+    await expect(service.dispatch({ op: 'rename' })).rejects.toThrow(/host\.agents\.rename:/)
+  })
+
+  it('rejects a malformed request (no op) with a host.agents.unknown: error', async () => {
+    const service = new AgentsService({
+      profileService: noopProfileService(),
+      catalog: noopCatalog()
+    })
+    await expect(service.dispatch({})).rejects.toThrow(/host\.agents\.unknown:/)
+    await expect(service.dispatch(null)).rejects.toThrow(/host\.agents\.unknown:/)
+  })
+
+  it('strips reserved routing/identity/switch keys before reading params', async () => {
+    const getByName = vi.fn(
+      async () =>
+        ({
+          id: 'sp-1',
+          name: 'Bio',
+          displayName: 'Bio',
+          description: '',
+          systemPrompt: '',
+          enabled: true,
+          capabilityMode: 'selected',
+          fullAccess: { excludedSkillIds: [], excludedConnectorIds: [], connectorTools: [] },
+          selectedCapabilities: { skillIds: [], connectorIds: [], connectorTools: [] },
+          revision: 1
+        }) as SpecialistProfileView
+    )
+    const service = new AgentsService({
+      profileService: { list: vi.fn(), getByName } as unknown as ProfileService,
+      catalog: noopCatalog()
+    })
+    // Sandbox tries to forge a session, a specialist id, a switch target, and a reconfigure flag.
+    await service.dispatch({
+      op: 'get',
+      params: {
+        name: 'Bio',
+        session_id: 'forged',
+        specialist_id: 'forged-sp',
+        target_specialist_id: 'forged-target',
+        reconfigure: true
+      }
+    })
+    // The service received ONLY { name: 'Bio' } — every reserved key was dropped.
+    expect(getByName).toHaveBeenCalledWith('Bio')
+    expect(getByName.mock.calls[0]).toEqual(['Bio'])
+  })
+
+  it('fail-closes privileged ops when their approval seam is not configured', async () => {
+    // Ordinary mutations (create/update/attach/detach) are implemented (issue 03); switch is
+    // implemented but fails closed on missing seams (issue 05, asserted below); delete and
+    // name-changing update are implemented (issue 04 module) and fail closed only when the injected
+    // approval gateway is absent. With no gateway wired, both surface a sanitized "not configured"
+    // error rather than silently no-op'ing.
+    const service = new AgentsService({
+      profileService: noopProfileService(),
+      catalog: noopCatalog()
+    })
+    await expect(service.dispatch({ op: 'delete', params: {} })).rejects.toThrow(
+      /host\.agents\.delete:.*not configured/
+    )
+  })
+
+  it('ordinary mutations route to ProfileService (no longer fail-closed)', async () => {
+    const created = vi.fn(async () => ({
+      id: 'sp-1',
+      name: 'Bio',
+      displayName: 'Bio',
+      description: '',
+      systemPrompt: '',
+      enabled: true,
+      capabilityMode: 'full' as const,
+      fullAccess: { excludedSkillIds: [], excludedConnectorIds: [], connectorTools: [] },
+      selectedCapabilities: { skillIds: [], connectorIds: [], connectorTools: [] },
+      revision: 1
+    }))
+    const service = new AgentsService({
+      profileService: { ...noopProfileService(), create: created } as unknown as ProfileService,
+      catalog: noopCatalog()
+    })
+    const result = (await service.dispatch({ op: 'create', params: { name: 'Bio' } })) as {
+      id: string
+      capabilityMode: string
+    }
+    expect(created).toHaveBeenCalledTimes(1)
+    expect(result.id).toBe('sp-1')
+    expect(result.capabilityMode).toBe('full')
+  })
+
+  it('switch fails closed when its approval/binding/persistence seams are not configured', async () => {
+    const service = new AgentsService({
+      profileService: noopProfileService(),
+      catalog: noopCatalog()
+    })
+    await expect(service.dispatch({ op: 'switch', params: {} })).rejects.toThrow(
+      /host\.agents\.switch:.*not configured/
+    )
+  })
+
+  it('reads unchanged: existing list/get/list_skills behavior preserved', async () => {
+    const service = new AgentsService({
+      profileService: noopProfileService(),
+      catalog: noopCatalog()
+    })
+    await expect(service.read({ op: 'list' })).resolves.toEqual([])
+    await expect(service.read({ op: 'get', params: {} })).rejects.toThrow(/host\.agents\.get:/)
+    // list_skills with an empty catalog returns []; list_connectors projects the bundled catalog
+    // (covered by the dedicated connector test in agents-service.test.ts) so we only assert skills
+    // here to avoid coupling this contract test to the bundled connector set.
+    await expect(service.read({ op: 'list_skills', params: {} })).resolves.toEqual([])
+  })
+})
+
+describe('AgentsService.dispatch — switch op routing (issue 05)', () => {
+  const specialist = (overrides: Partial<SpecialistProfileView> = {}): SpecialistProfileView => ({
+    id: 'sp-1',
+    name: 'BIO_EXPERT',
+    displayName: 'Bio Expert',
+    description: '',
+    systemPrompt: 'SECRET INSTRUCTIONS',
+    enabled: true,
+    capabilityMode: 'selected',
+    fullAccess: { excludedSkillIds: [], excludedConnectorIds: [], connectorTools: [] },
+    selectedCapabilities: { skillIds: [], connectorIds: [], connectorTools: [] },
+    revision: 2,
+    ...overrides
+  })
+
+  type BuildServiceResult = {
+    service: AgentsService
+    profileService: ProfileService
+    sessionBinding: SessionBindingService
+    persist: (sessionId: string, specialistId: string | undefined) => Promise<void>
+    notify: SwitchNotifier['notify']
+    gateway: ApprovalGateway
+  }
+
+  const buildService = (opts: {
+    profiles?: SpecialistProfileView[]
+    decision?: ApprovalResult
+  }): BuildServiceResult => {
+    const profiles = opts.profiles ?? [specialist()]
+    const profileService = {
+      list: vi.fn(async () => profiles),
+      getByName: vi.fn(async (name: string) => {
+        const found = profiles.find((p) => p.name === name)
+        if (!found) throw new Error(`Specialist "${name}" not found.`)
+        return found
+      })
+    } as unknown as ProfileService
+    const sessionBinding = {
+      setBinding: vi.fn(),
+      getBinding: vi.fn()
+    } as unknown as SessionBindingService
+    const persist = vi.fn(async () => undefined)
+    const notify = vi.fn(async () => undefined)
+    const gateway: ApprovalGateway = {
+      decide: vi.fn(async (): Promise<ApprovalResult> => opts.decision ?? { status: 'approved' })
+    }
+    const notifier: SwitchNotifier = { notify }
+    const service = new AgentsService({
+      profileService,
+      catalog: noopCatalog(),
+      approvalGateway: gateway,
+      switchNotifier: notifier,
+      sessionBinding,
+      persistSessionSpecialist: persist
+    })
+    return { service, profileService, sessionBinding, persist, notify, gateway }
+  }
+
+  it('routes an approved switch through the dispatcher and persists + broadcasts', async () => {
+    const { service, persist, notify, sessionBinding } = buildService({})
+    const result = (await service.dispatch(
+      { op: 'switch', params: { name: 'BIO_EXPERT' } },
+      { sessionId: 'session-trusted' }
+    )) as {
+      status: string
+      binding: { specialistId: string }
+      pendingReconfigure: { targetName: string }
+    }
+    expect(result.status).toBe('approved')
+    expect(result.binding.specialistId).toBe('sp-1')
+    expect(result.pendingReconfigure.targetName).toBe('BIO_EXPERT')
+    expect(persist).toHaveBeenCalledWith('session-trusted', 'sp-1')
+    expect(notify).toHaveBeenCalledWith({ sessionId: 'session-trusted', targetName: 'BIO_EXPERT' })
+    expect(sessionBinding.setBinding).toHaveBeenCalledWith('session-trusted', 'sp-1')
+  })
+
+  it('a declined switch returns the structured declined shape and changes nothing', async () => {
+    const { service, persist, notify, sessionBinding } = buildService({
+      decision: { status: 'declined', operation: 'switch' }
+    })
+    const result = await service.dispatch(
+      { op: 'switch', params: { name: 'BIO_EXPERT' } },
+      { sessionId: 'session-trusted' }
+    )
+    expect(result).toEqual({ status: 'declined', operation: 'switch' })
+    expect(persist).not.toHaveBeenCalled()
+    expect(notify).not.toHaveBeenCalled()
+    expect(sessionBinding.setBinding).not.toHaveBeenCalled()
+  })
+
+  it('null name switches to Main Agent (clears the binding) through the dispatcher', async () => {
+    const { service, persist, notify } = buildService({})
+    const result = (await service.dispatch(
+      { op: 'switch', params: { name: null } },
+      { sessionId: 'session-trusted' }
+    )) as { binding: { specialistId: string | undefined } }
+    expect(result.binding.specialistId).toBeUndefined()
+    expect(persist).toHaveBeenCalledWith('session-trusted', undefined)
+    expect(notify).toHaveBeenCalledWith({ sessionId: 'session-trusted', targetName: null })
+  })
+
+  it('the trusted calling session is the only session the switch may target', async () => {
+    const { service, persist } = buildService({})
+    // A sandbox forges a session id in params; the dispatcher honors only the server context.
+    await service.dispatch(
+      { op: 'switch', params: { name: 'BIO_EXPERT', session_id: 'forged', sessionId: 'forged' } },
+      { sessionId: 'session-trusted' }
+    )
+    expect(persist).toHaveBeenCalledWith('session-trusted', 'sp-1')
+  })
+})
+
+describe('AgentsService.dispatch — privileged mutation routing (issue 08a composition)', () => {
+  const specialist = (overrides: Partial<SpecialistProfileView> = {}): SpecialistProfileView => ({
+    id: 'sp-1',
+    name: 'Bio',
+    displayName: 'Bio',
+    description: 'old',
+    systemPrompt: 'SECRET INSTRUCTIONS',
+    enabled: true,
+    capabilityMode: 'selected',
+    fullAccess: { excludedSkillIds: [], excludedConnectorIds: [], connectorTools: [] },
+    selectedCapabilities: { skillIds: [], connectorIds: [], connectorTools: [] },
+    revision: 3,
+    ...overrides
+  })
+
+  const buildService = (opts: {
+    profiles?: SpecialistProfileView[]
+    decision?: ApprovalResult
+  }): {
+    service: AgentsService
+    profileService: ProfileService
+    gateway: ApprovalGateway
+    invalidateCatalog: ReturnType<typeof vi.fn>
+  } => {
+    const profiles = opts.profiles ?? [specialist()]
+    const profileService = {
+      list: vi.fn(async () => profiles),
+      getByName: vi.fn(async (name: string) => {
+        const found = profiles.find((p) => p.name === name)
+        if (!found) throw new Error(`Specialist "${name}" not found.`)
+        return found
+      }),
+      update: vi.fn(async () => {
+        throw new Error('unexpected')
+      }),
+      delete: vi.fn(async () => undefined)
+    } as unknown as ProfileService
+    const gateway: ApprovalGateway = {
+      decide: vi.fn(async (): Promise<ApprovalResult> => opts.decision ?? { status: 'approved' })
+    }
+    const invalidateCatalog = vi.fn(async () => undefined)
+    const service = new AgentsService({
+      profileService,
+      catalog: noopCatalog(),
+      approvalGateway: gateway,
+      invalidateCatalog
+    })
+    return { service, profileService, gateway, invalidateCatalog }
+  }
+
+  it('routes a name-changing update through applyNameChangingUpdate (real read-back, no echo)', async () => {
+    // The ProfileService returns the REAL post-write record (new name + bumped revision); the dispatcher
+    // must surface it verbatim, not echo the request patch.
+    const updated = specialist({ name: 'Biology', description: 'new', revision: 4 })
+    const { service, profileService } = buildService({
+      profiles: [specialist()]
+    })
+    ;(profileService.update as ReturnType<typeof vi.fn>).mockResolvedValue(updated)
+
+    const result = (await service.dispatch({
+      op: 'update',
+      params: { name: 'Bio', patch: { name: 'Biology', description: 'new', revision: 3 } }
+    })) as { status: string; agent: SpecialistProfileView }
+
+    expect(result.status).toBe('updated')
+    expect(result.agent.name).toBe('Biology')
+    expect(result.agent.revision).toBe(4)
+    // The privileged module re-resolved name -> id and pinned the re-resolved revision before update.
+    const updateArgs = (profileService.update as ReturnType<typeof vi.fn>).mock.calls[0][0]
+    expect(updateArgs.id).toBe('sp-1')
+    expect(updateArgs.revision).toBe(3)
+    expect(updateArgs.name).toBe('Biology')
+  })
+
+  it('a non-name update stays on the ordinary-mutation path (not the privileged module)', async () => {
+    const ordinaryReturn = specialist({ description: 'edited', revision: 4 })
+    const profileService = {
+      ...noopProfileService(),
+      getByName: vi.fn(async () => specialist()),
+      update: vi.fn(async () => ordinaryReturn)
+    } as unknown as ProfileService
+    const gateway: ApprovalGateway = {
+      decide: vi.fn(async (): Promise<ApprovalResult> => ({ status: 'approved' }))
+    }
+    const service = new AgentsService({
+      profileService,
+      catalog: noopCatalog(),
+      approvalGateway: gateway
+    })
+
+    const result = (await service.dispatch({
+      op: 'update',
+      params: { name: 'Bio', patch: { description: 'edited', revision: 3 } }
+    })) as { id: string; description: string }
+
+    // Ordinary path returns a projected AgentReadModel (no {status:'updated'} envelope).
+    expect(result.id).toBe('sp-1')
+    expect(result.description).toBe('edited')
+    // The privileged gateway was NOT consulted for a non-name update.
+    expect(gateway.decide).not.toHaveBeenCalled()
+  })
+
+  it('routes delete through applyDelete and returns { status: deleted, name }', async () => {
+    const { service, profileService, invalidateCatalog } = buildService({
+      profiles: [specialist()]
+    })
+    // getByName throws "not found" after delete -> absence verified.
+    ;(profileService.getByName as ReturnType<typeof vi.fn>)
+      .mockResolvedValueOnce(specialist())
+      .mockRejectedValueOnce(new Error('Specialist "Bio" not found.'))
+
+    const result = (await service.dispatch({
+      op: 'delete',
+      params: { name: 'Bio', revision: 3 }
+    })) as { status: string; name: string }
+
+    expect(result).toEqual({ status: 'deleted', name: 'Bio' })
+    expect(profileService.delete as ReturnType<typeof vi.fn>).toHaveBeenCalledWith('sp-1', 3)
+    expect(invalidateCatalog).toHaveBeenCalledTimes(1)
+  })
+
+  it('a declined delete returns the structured declined shape and mutates nothing', async () => {
+    const { service, profileService, invalidateCatalog } = buildService({
+      profiles: [specialist()],
+      decision: { status: 'declined', operation: 'delete', reason: 'user cancelled' }
+    })
+
+    const result = await service.dispatch({
+      op: 'delete',
+      params: { name: 'Bio', revision: 3 }
+    })
+
+    expect(result).toEqual({ status: 'declined', operation: 'delete', reason: 'user cancelled' })
+    expect(profileService.delete as ReturnType<typeof vi.fn>).not.toHaveBeenCalled()
+    expect(invalidateCatalog).not.toHaveBeenCalled()
+  })
+
+  it('a stale revision fails closed with a sanitized error (no mutation, no retry)', async () => {
+    const { service, profileService, invalidateCatalog } = buildService({
+      // Live revision drifted to 5 while the reviewed revision was 3.
+      profiles: [specialist({ revision: 5 })]
+    })
+
+    await expect(
+      service.dispatch({ op: 'delete', params: { name: 'Bio', revision: 3 } })
+    ).rejects.toThrow(/host\.agents\.delete:.*reviewed revision 3/)
+    expect(profileService.delete as ReturnType<typeof vi.fn>).not.toHaveBeenCalled()
+    expect(invalidateCatalog).not.toHaveBeenCalled()
+  })
+
+  it('delete never clears session bindings (no binding sink invoked)', async () => {
+    const { service, profileService } = buildService({ profiles: [specialist()] })
+    // getByName resolves the live record pre-delete, then throws "not found" post-delete (absence).
+    ;(profileService.getByName as ReturnType<typeof vi.fn>)
+      .mockResolvedValueOnce(specialist())
+      .mockRejectedValueOnce(new Error('Specialist "Bio" not found.'))
+    // The result surface and dispatcher carry NO binding-clearance path; the contract is that bound
+    // conversations resolve unavailable later. This asserts the dispatcher routes through a module
+    // that does not clear bindings — there is no such seam on AgentsServiceDeps.
+    const result = await service.dispatch({ op: 'delete', params: { name: 'Bio', revision: 3 } })
+    expect(result).toEqual({ status: 'deleted', name: 'Bio' })
+  })
+
+  // Regression (08a review): a name-changing patch that ALSO edits capabilities MUST apply both
+  // atomically. The /customize Skill sends skill_names/connector_names in the same update patch as a
+  // rename (preferAtomicUpdate), and explainNameChange promises to "rename ... and apply the rest of
+  // the reviewed changes in one step". Previously runPrivilegedUpdate projected identity/text fields
+  // only and silently dropped the capability edit.
+  const skillCatalog = (): AgentsCatalogSource => ({
+    listSkillCatalog: vi.fn(async () => [
+      {
+        id: 'sk-reviewer',
+        frameworkName: 'reviewer',
+        displayName: 'Reviewer',
+        source: 'bundled',
+        mainEnabled: true,
+        available: true
+      }
+    ]),
+    getConnectors: vi.fn(async () => ({ enabledIds: [], autoAllowIds: [] }))
+  })
+
+  const buildServiceWithSkills = (opts: {
+    profiles: SpecialistProfileView[]
+    decision?: ApprovalResult
+  }): {
+    service: AgentsService
+    profileService: ProfileService
+    invalidateCatalog: ReturnType<typeof vi.fn>
+  } => {
+    const profileService = {
+      list: vi.fn(async () => opts.profiles),
+      getByName: vi.fn(async (name: string) => {
+        const found = opts.profiles.find((p) => p.name === name)
+        if (!found) throw new Error(`Specialist "${name}" not found.`)
+        return found
+      }),
+      update: vi.fn(async () => {
+        throw new Error('unexpected')
+      }),
+      delete: vi.fn(async () => undefined)
+    } as unknown as ProfileService
+    const gateway: ApprovalGateway = {
+      decide: vi.fn(async (): Promise<ApprovalResult> => opts.decision ?? { status: 'approved' })
+    }
+    const invalidateCatalog = vi.fn(async () => undefined)
+    const service = new AgentsService({
+      profileService,
+      catalog: skillCatalog(),
+      approvalGateway: gateway,
+      invalidateCatalog
+    })
+    return { service, profileService, invalidateCatalog }
+  }
+
+  it('a name-changing patch that also edits skill_names applies BOTH atomically (no capability drop)', async () => {
+    // The ProfileService returns the REAL post-write record (renamed, bumped revision, AND the new
+    // selected capability collection). The dispatcher must surface it verbatim, not echo the request.
+    const updated: SpecialistProfileView = {
+      ...specialist({ name: 'Biology', revision: 4 }),
+      capabilityMode: 'selected',
+      selectedCapabilities: { skillIds: ['sk-reviewer'], connectorIds: [], connectorTools: [] },
+      fullAccess: { excludedSkillIds: [], excludedConnectorIds: [], connectorTools: [] }
+    }
+    const { service, profileService } = buildServiceWithSkills({ profiles: [specialist()] })
+    ;(profileService.update as ReturnType<typeof vi.fn>).mockResolvedValue(updated)
+
+    const result = (await service.dispatch({
+      op: 'update',
+      params: {
+        name: 'Bio',
+        patch: { name: 'Biology', skill_names: ['sk-reviewer'], revision: 3 }
+      }
+    })) as { status: string; agent: SpecialistProfileView }
+
+    expect(result.status).toBe('updated')
+    // REAL post-write read-back: BOTH the rename and the capability edit landed.
+    expect(result.agent.name).toBe('Biology')
+    expect(result.agent.capabilityMode).toBe('selected')
+    expect(result.agent.selectedCapabilities.skillIds).toEqual(['sk-reviewer'])
+    expect(result.agent.revision).toBe(4)
+
+    // The privileged module received the COMPLETE patch: name + resolved capability fields. The
+    // skill ref was resolved to its stable id and projected onto the patch (not stripped).
+    const updateArgs = (profileService.update as ReturnType<typeof vi.fn>).mock.calls[0][0]
+    expect(updateArgs.name).toBe('Biology')
+    expect(updateArgs.capabilityMode).toBe('selected')
+    expect(updateArgs.selectedCapabilities).toEqual({
+      skillIds: ['sk-reviewer'],
+      connectorIds: [],
+      connectorTools: []
+    })
+  })
+
+  it('a declined name-changing+capability patch mutates nothing (decline path preserved)', async () => {
+    const { service, profileService, invalidateCatalog } = buildServiceWithSkills({
+      profiles: [specialist()],
+      decision: { status: 'declined', operation: 'update', reason: 'user cancelled' }
+    })
+
+    const result = await service.dispatch({
+      op: 'update',
+      params: {
+        name: 'Bio',
+        patch: { name: 'Biology', skill_names: ['sk-reviewer'], revision: 3 }
+      }
+    })
+
+    expect(result).toEqual({ status: 'declined', operation: 'update', reason: 'user cancelled' })
+    expect(profileService.update as ReturnType<typeof vi.fn>).not.toHaveBeenCalled()
+    expect(invalidateCatalog).not.toHaveBeenCalled()
+  })
+
+  it('a combined name+capability patch with a stale revision fails closed (no mutation)', async () => {
+    // Live revision drifted to 5 while the reviewed revision was 3.
+    const { service, profileService, invalidateCatalog } = buildServiceWithSkills({
+      profiles: [specialist({ revision: 5 })]
+    })
+
+    await expect(
+      service.dispatch({
+        op: 'update',
+        params: {
+          name: 'Bio',
+          patch: { name: 'Biology', skill_names: ['sk-reviewer'], revision: 3 }
+        }
+      })
+    ).rejects.toThrow(/host\.agents\.update:.*reviewed revision 3/)
+    expect(profileService.update as ReturnType<typeof vi.fn>).not.toHaveBeenCalled()
+    expect(invalidateCatalog).not.toHaveBeenCalled()
+  })
+
+  // Regression (defect #1): a name-changing patch that ALSO toggles `enabled` must land BOTH. The
+  // ordinary update path applies `enabled` via a separate ProfileService.setEnabled(...) call after
+  // the identity/capability update; the privileged path previously built specialistPatch without
+  // `enabled` and never called setEnabled, so the enabled change was silently dropped on approval.
+  it('a name-changing patch that also toggles enabled applies BOTH the rename and the enabled change', async () => {
+    // After the atomic rename (revision 3->4), setEnabled flips enabled to false and bumps again
+    // (revision 4->5). The dispatcher must return the REAL post-setEnabled read-back with the new
+    // name AND enabled === false.
+    const renamed = specialist({ name: 'Biology', revision: 4, enabled: true })
+    const afterToggle = specialist({ name: 'Biology', revision: 5, enabled: false })
+    const { service, profileService } = buildService({ profiles: [specialist()] })
+    ;(profileService.update as ReturnType<typeof vi.fn>).mockResolvedValue(renamed)
+    ;(profileService.setEnabled as ReturnType<typeof vi.fn>) = vi.fn(async () => afterToggle)
+
+    const result = (await service.dispatch({
+      op: 'update',
+      params: { name: 'Bio', patch: { name: 'Biology', enabled: false, revision: 3 } }
+    })) as { status: string; agent: SpecialistProfileView }
+
+    expect(result.status).toBe('updated')
+    // REAL post-write read-back carries BOTH the rename and the enabled toggle.
+    expect(result.agent.name).toBe('Biology')
+    expect(result.agent.enabled).toBe(false)
+    expect(result.agent.revision).toBe(5)
+    // setEnabled was invoked with the toggled value, after the atomic rename committed.
+    expect(profileService.setEnabled as ReturnType<typeof vi.fn>).toHaveBeenCalledWith(
+      'sp-1',
+      false
+    )
+  })
+
+  // Regression (defect #5): a name-changing patch must reject unknown keys the same way the ordinary
+  // update path does. Previously runPrivilegedUpdate never called rejectUnknownKeys, so an unknown
+  // field (e.g. a forged/malicious key) was silently ignored instead of rejected.
+  it('rejects a name-changing patch carrying an unknown field with a sanitized error', async () => {
+    const { service, profileService, invalidateCatalog } = buildService({
+      profiles: [specialist()]
+    })
+
+    await expect(
+      service.dispatch({
+        op: 'update',
+        params: {
+          name: 'Bio',
+          patch: { name: 'Biology', malicious_field: 'x', revision: 3 }
+        }
+      })
+    ).rejects.toThrow(/host\.agents\.update:.*Unknown field "malicious_field"/)
+    expect(profileService.update as ReturnType<typeof vi.fn>).not.toHaveBeenCalled()
+    expect(invalidateCatalog).not.toHaveBeenCalled()
+  })
+})
+
+describe('AgentsService — injected seams are fake-able and routed (composition against fakes)', () => {
+  // Simulates a downstream module (issue 04/05) implementing the gateway + notifier as fakes and
+  // confirming the service accepts them and the dispatcher's write-op branches are the integration
+  // point. Real behavior is deferred; this only proves the contract composes.
+  it('accepts an injected ApprovalGateway and SwitchNotifier and they satisfy the dep types', () => {
+    const fakeGateway: ApprovalGateway = {
+      decide: vi.fn(async (): Promise<ApprovalResult> => ({ status: 'approved' }))
+    }
+    const fakeNotifier: SwitchNotifier = { notify: vi.fn() }
+    const service = new AgentsService({
+      profileService: noopProfileService(),
+      catalog: noopCatalog(),
+      approvalGateway: fakeGateway,
+      switchNotifier: fakeNotifier
+    })
+    expect(service).toBeInstanceOf(AgentsService)
+  })
+
+  it('the injected gateway can return the structured declined shape (PRD:137)', async () => {
+    const decisions: ApprovalResult[] = [
+      { status: 'declined', operation: 'switch' },
+      { status: 'declined', operation: 'delete', reason: 'user cancelled' },
+      { status: 'approved' }
+    ]
+    const fakeGateway: ApprovalGateway = {
+      decide: vi.fn(
+        async (): Promise<ApprovalResult> => decisions.shift() ?? { status: 'approved' }
+      )
+    }
+    expect(
+      await fakeGateway.decide({
+        operation: 'switch',
+        summary: {},
+        session: { sessionId: 's' }
+      })
+    ).toEqual({ status: 'declined', operation: 'switch' })
+    expect(
+      await fakeGateway.decide({
+        operation: 'delete',
+        summary: {},
+        session: { sessionId: 's' }
+      })
+    ).toEqual({ status: 'declined', operation: 'delete', reason: 'user cancelled' })
+    expect(
+      await fakeGateway.decide({
+        operation: 'switch',
+        summary: {},
+        session: { sessionId: 's' }
+      })
+    ).toEqual({ status: 'approved' })
+  })
+})

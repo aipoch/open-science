@@ -108,6 +108,12 @@
       "name": "Remote Compute (SSH)",
       "source": "featured",
       "updatedAt": "2026-07-22T00:00:00.000Z"
+    },
+    {
+      "id": "customize",
+      "name": "Customize",
+      "source": "featured",
+      "updatedAt": "2026-07-31T00:00:00.000Z"
     }
   ]
 }

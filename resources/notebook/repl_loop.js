@@ -957,6 +957,86 @@ async function computeRpc(params) {
   return body.result
 }
 
+// host.agents: control-plane Specialist management SDK (issue 02). Read-only in this slice
+// (list/get/list_skills/list_connectors); mutation/switch land in later issues. Routed over the SAME
+// loopback RPC endpoint as host.mcp/host.compute but as its own `agentsCall` method — never through
+// host.mcp(). Uses the captured RPC_ENDPOINT/TOKEN + capturedFetch for the same token-isolation
+// reasons. The trusted calling session identity is the COMPUTE_SESSION_ID captured at spawn time
+// (above), forwarded on every call so switch() cannot be forged from sandbox user code.
+async function agentsRpc(op, params = {}, sessionId = COMPUTE_SESSION_ID) {
+  if (!RPC_ENDPOINT) throw new Error('host.agents is unavailable: connector RPC endpoint not set')
+  const res = await capturedFetch(RPC_ENDPOINT, {
+    method: 'POST',
+    headers: { 'content-type': 'application/json', authorization: 'Bearer ' + (RPC_TOKEN || '') },
+    body: JSON.stringify({
+      method: 'agentsCall',
+      params: { op, ...(sessionId ? { session_id: sessionId } : {}), ...(params || {}) }
+    })
+  })
+  const body = await res.json().catch(() => ({}))
+  if (!res.ok || body.error) {
+    // Server-side method errors are already `host.agents.<method>: <message>`. Boundary failures
+    // (auth, unknown method) are not method-scoped, so prefix them with the op the caller invoked so
+    // the agent always sees a host.agents.* namespaced, secret-free message.
+    const serverMessage = body.error || 'host.agents HTTP ' + res.status
+    const prefixed = /^host\.agents\./.test(serverMessage)
+      ? serverMessage
+      : `host.agents.${op}: ${serverMessage}`
+    throw new Error(prefixed)
+  }
+  return body.result
+}
+
+// host.agents namespace. Methods and filter/write fields are snake_case; returned records are
+// camelCase. list_skills/list_connectors accept an optional stable id or unique public name.
+// create/update/attach_*/detach_* are the ordinary-mutation surface (issue 03); they return a real
+// post-write camelCase Profile read-back and never echo requested input. switch/delete are the
+// privileged surface (issue 04/05): authorized this milestone by the /customize Skill's chat-text
+// confirmation + the pass-through SDK approval gateway (design.md §7/§14), not the standard card.
+const hostAgents = {
+  async list() {
+    return agentsRpc('list')
+  },
+  async get(name) {
+    return agentsRpc('get', { name })
+  },
+  async list_skills(nameOrId = undefined) {
+    return agentsRpc('list_skills', nameOrId !== undefined ? { name_or_id: nameOrId } : {})
+  },
+  async list_connectors(nameOrId = undefined) {
+    return agentsRpc('list_connectors', nameOrId !== undefined ? { name_or_id: nameOrId } : {})
+  },
+  async create(input) {
+    return agentsRpc('create', input || {})
+  },
+  async update(name, patch) {
+    // Nest the patch so a rename (patch.name) never collides with the lookup name on the wire —
+    // design.md §4 / customize-skill.md: update(name, patch) where patch may carry a new `name`.
+    return agentsRpc('update', { name, patch: patch || {} })
+  },
+  async attach_skill(name, skillRef, options) {
+    return agentsRpc('attach_skill', { name, skill_ref: skillRef, ...(options || {}) })
+  },
+  async detach_skill(name, skillRef, options) {
+    return agentsRpc('detach_skill', { name, skill_ref: skillRef, ...(options || {}) })
+  },
+  async attach_connector(name, connectorRef, options) {
+    return agentsRpc('attach_connector', { name, connector_ref: connectorRef, ...(options || {}) })
+  },
+  async detach_connector(name, connectorRef, options) {
+    return agentsRpc('detach_connector', { name, connector_ref: connectorRef, ...(options || {}) })
+  },
+  // Privileged: switch binds only the trusted calling session (server-captured) and takes effect on
+  // the next message; nameOrNull === null (or omitted) reverts the session to Main Agent.
+  async switch(nameOrNull) {
+    return agentsRpc('switch', { name: nameOrNull === undefined ? null : nameOrNull })
+  },
+  // Privileged and revision-guarded: bound conversations become unavailable (not Main) after delete.
+  async delete(name, options) {
+    return agentsRpc('delete', { name, ...(options || {}) })
+  }
+}
+
 // Maps a computeCall failure into an Error. ComputeService raises structured errors that the RPC layer
 // re-serializes as a JSON string in `error` ({error_code, message, retry_after_user_action}); parse it
 // and hang those fields off the Error so REPL code can branch on `e.error_code` (matching the old Python
@@ -1094,7 +1174,7 @@ const hostCompute = {
 
 // Persistent sandbox: user-declared globals persist across requests (assign to `globalThis`/bare).
 const sandbox = {
-  host: { mcp: hostMcp, compute: hostCompute },
+  host: { mcp: hostMcp, compute: hostCompute, agents: hostAgents },
   console,
   process,
   require,

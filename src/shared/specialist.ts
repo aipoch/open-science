@@ -12,8 +12,22 @@ export const SPECIALIST_IPC = {
   CATALOG_CHANGED: 'specialist:catalog-changed',
   // Session switching (issue 07): per-session mutable binding.
   SET_SESSION_SPECIALIST: 'specialist:set-session-specialist',
-  RESOLVE_SESSION_SPECIALIST: 'specialist:resolve-session-specialist'
+  RESOLVE_SESSION_SPECIALIST: 'specialist:resolve-session-specialist',
+  // host.agents.switch() durable next-message switch (issue 05/08): main broadcasts a pending-switch
+  // intent to the renderer so the composer shows the "takes effect on the next message" state and the
+  // next-send barrier reconfigures the live agent. Payload carries only the session id and the target
+  // Specialist public name (null = Main Agent) — never system instructions, UUIDs, or secrets.
+  PENDING_SWITCH: 'specialist:pending-switch'
 } as const
+
+// The pending-switch broadcast payload (design.md §9 / PRD §8). Mirrors the shared PendingSwitch
+// contract but lives here so the preload + renderer consume one type without importing
+// src/shared/agents-contract's pending-switch/reconfigure seam.
+export type PendingSwitchBroadcast = {
+  sessionId: string
+  // Target Specialist public name, or null to revert to Main Agent. Display-only; never a secret.
+  targetName: string | null
+}
 
 // Session switching request types — resolution type is declared after SpecialistProfileView below.
 export type SetSessionSpecialistRequest = {

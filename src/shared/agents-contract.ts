@@ -1,0 +1,298 @@
+// Shared `host.agents` composition contracts (issue 02, round 2).
+//
+// This module is the single source of truth for the request/result shapes, the injected approval
+// gateway, and the trusted calling-session + pending-switch/reconfigure seam that the downstream
+// mutation, switch, and renderer slices (issues 03-07) compile and test against. Defining the
+// contracts here — in `src/shared/`, with NO `src/main` import — keeps them safe for preload
+// (sandbox: true) and lets a downstream module implement every seam as a fake while real
+// composition is deferred to issue 08.
+//
+// Rules mirrored from design.md §7/§8/§9 and PRD §2/§8:
+//  - Method names and write-side/filter fields are snake_case; returned records are camelCase.
+//  - A permission denial is a normal camelCase result `{ status: 'declined', operation }`.
+//  - The trusted calling-session identity and pending-switch seam are server-supplied; sandbox
+//    params can never supply or override them (the RPC route strips those fields before dispatch).
+//  - Main validates every payload; sandbox input is untrusted.
+//
+// This module deliberately defines TYPES and a pure VALIDATION helper only — it holds no real
+// mutation/switch/approval BEHAVIOR. Behavior lands in issues 03/04/05/08.
+
+// ---------------------------------------------------------------------------
+// Operation discriminator + trusted calling session
+// ---------------------------------------------------------------------------
+
+// The set of operations the read slice already serves. These are stable; the dispatcher must keep
+// routing them exactly as before.
+export type AgentsReadOpName = 'list' | 'get' | 'list_skills' | 'list_connectors'
+
+// Placeholder operation names for the mutation/switch slices. The read slice does NOT implement
+// them, but the union must already name them so downstream modules type-check against the contract
+// and the dispatcher's op union is provably extensible (see AgentsService.dispatch).
+//
+// `create`/`update` plus the four attach/detach ops are ORDINARY mutations (issue 03): chat review
+// is the only confirmation, no permission card. `delete`/`switch` are PRIVILEGED (issues 04/05) and
+// route through the approval gateway before mutation.
+export type AgentsWriteOpName =
+  | 'create'
+  | 'update'
+  | 'attach_skill'
+  | 'detach_skill'
+  | 'attach_connector'
+  | 'detach_connector'
+  | 'delete'
+  | 'switch'
+
+// The ordinary-mutation ops implemented in this slice (issue 03). Privileged ops (delete/switch and
+// name-changing update) stay out of scope here — they require the approval gateway.
+export type AgentsOrdinaryWriteOpName =
+  'create' | 'update' | 'attach_skill' | 'detach_skill' | 'attach_connector' | 'detach_connector'
+
+// Every operation name the contract recognizes today. Adding a new operation means: (1) add its
+// name here, (2) add its validated params/result branch below, (3) wire it in AgentsService.dispatch
+// — without touching the auth/token transport in local-rpc-server.ts.
+export type AgentsOpName = AgentsReadOpName | AgentsWriteOpName
+
+// The trusted calling-session identity captured outside the sandbox (the control-plane REPL's
+// module-closure COMPUTE_SESSION_ID). This is the ONLY value switch() may target; sandbox code
+// cannot forge it. It is injected into dispatch as SERVER CONTEXT — the dispatcher and the domain
+// mutations it calls never read it back out of the forwarded op-params. (The transport in
+// local-rpc-server.ts does take `session_id` from the request to populate this context; see that
+// file's agentsCall comment for why that request value is trusted: the JS control REPL binds it to
+// the spawn-captured COMPUTE_SESSION_ID and the loopback is Bearer-token-gated.)
+export type TrustedCallingSession = {
+  sessionId?: string
+}
+
+// ---------------------------------------------------------------------------
+// Canonical request/result union
+// ---------------------------------------------------------------------------
+
+// Read-side ops — identical shapes to the ones the read slice already accepts. Re-declared here so
+// downstream code imports ONE canonical union instead of re-deriving it from the service.
+export type AgentsReadRequest =
+  | { op: 'list' }
+  | { op: 'get'; params: { name?: string } }
+  | { op: 'list_skills'; params: { name_or_id?: string } }
+  | { op: 'list_connectors'; params: { name_or_id?: string } }
+
+// Placeholder write/switch ops. Their params intentionally mirror design.md §4/§5 and PRD §2/§4
+// (snake_case fields). They are UNVALIDATED beyond shape here on purpose: the real mutation modules
+// (issues 03/04/05) own the domain validation against ProfileService. We only enforce that an
+// unknown op is rejected and that a recognized op is allowed through, so the dispatcher union is
+// the extension point.
+export type AgentsWriteRequest =
+  | { op: 'create'; params: Record<string, unknown> }
+  | { op: 'update'; params: { name?: string; patch?: Record<string, unknown> } }
+  | { op: 'delete'; params: { name?: string; revision?: number } }
+  | { op: 'switch'; params: { name?: string | null } }
+  | { op: 'attach_skill'; params: { name?: string; skill_ref?: string; revision?: number } }
+  | { op: 'detach_skill'; params: { name?: string; skill_ref?: string; revision?: number } }
+  | { op: 'attach_connector'; params: { name?: string; connector_ref?: string; revision?: number } }
+  | { op: 'detach_connector'; params: { name?: string; connector_ref?: string; revision?: number } }
+
+// The full extensible request union. `unknown op` is intentionally NOT part of this union: the
+// dispatcher rejects unrecognized ops with a sanitized error, which keeps the contract closed under
+// extension while remaining open for the listed write operations.
+export type AgentsRequest = AgentsReadRequest | AgentsWriteRequest
+
+// A structured permission denial (design.md §8 / PRD §2:137). Returned by the injected approval
+// gateway as a normal camelCase result — it is NOT an error. `operation` echoes the privileged op
+// the user declined.
+export type AgentsDeclinedResult = {
+  status: 'declined'
+  operation: 'update' | 'delete' | 'switch'
+  reason?: string
+}
+
+// A structured approval (no payload beyond the decision). The privileged mutation modules attach
+// read-back state themselves; the gateway only owns the approve/decline decision.
+export type AgentsApprovedResult = { status: 'approved' }
+
+// ---------------------------------------------------------------------------
+// Injected approval gateway (fake-able; real behavior deferred to issues 04/05)
+// ---------------------------------------------------------------------------
+
+// The privileged operations that must pass the approval gateway before mutation. `update` here
+// means a NAME-CHANGING update only (design.md §7); ordinary chat-reviewed mutations do not call
+// the gateway.
+export type PrivilegedOperation = 'update' | 'delete' | 'switch'
+
+export type ApprovalRequest = {
+  operation: PrivilegedOperation
+  // A redacted, user-facing description of the proposed privileged change. Never carries system
+  // instructions, credentials, headers, environment values, connector args, or tokens.
+  // `target` is the named Specialist for a switch, or null to revert to Main Agent (the card surface
+  // distinguishes "Main Agent" from a named target — see specialist-approval-gateway.ts).
+  summary: {
+    name?: string
+    newName?: string
+    target?: string | null
+  }
+  // The trusted calling-session identity, threaded from server context. The gateway must not trust
+  // any caller-supplied value here.
+  session: TrustedCallingSession
+}
+
+export type ApprovalResult = AgentsApprovedResult | AgentsDeclinedResult
+
+// INJECTED seam. Production wires the real ACP permission broker/card; tests and downstream
+// development wire fakes. The dispatcher hands each privileged op to this gateway; a decline is a
+// normal result, not a thrown error.
+export type ApprovalGateway = {
+  decide(request: ApprovalRequest): Promise<ApprovalResult>
+}
+
+// ---------------------------------------------------------------------------
+// Standard renderer presentation for privileged Specialist operations (issue 04)
+// ---------------------------------------------------------------------------
+
+// The three privileged Specialist operation kinds that render a standard permission card
+// (design.md §7 / prototype.html scenes 5/7/8). These are the ONLY operations that pass through the
+// approval gateway; ordinary chat-reviewed mutations never produce a card.
+export type SpecialistApprovalKind = 'update' | 'delete' | 'switch'
+
+// A compact, redacted change manifest for ONE field on a name-changing update card. It never carries
+// full text — only an edited/added/removed signal plus optional counts — so system instructions,
+// descriptions, and capability lists stay out of the card (their full content lives in the chat
+// review). This is the "minimum public change summary" cross-cutting requirement made concrete.
+export type SpecialistFieldChange =
+  | { field: string; kind: 'edited'; detail?: string }
+  | { field: string; kind: 'changed'; from: string; to: string }
+  | {
+      field: string
+      kind: 'collection'
+      added: number
+      removed: number
+      total: number
+      detail?: string
+    }
+
+// The renderer payload for a name-changing update card (prototype scene 7). Shows old name → new name
+// plus a compact manifest of every other field changed in the SAME atomic patch. States that stable
+// conversation bindings are unaffected. Excludes UUIDs, secrets, and complete system instructions.
+export type SpecialistUpdateCardPayload = {
+  kind: 'update'
+  // The current public name (struck through on the card).
+  name: string
+  // The proposed new public name.
+  newName: string
+  // Compact manifest of the OTHER fields changed in the same atomic patch. `name` itself is not
+  // listed here — it is shown as old → new above.
+  changes: SpecialistFieldChange[]
+  // True so the card can state: existing conversation bindings keep working (they follow the
+  // profile, not the name).
+  bindingsStable: true
+}
+
+// The renderer payload for a delete card (prototype scene 8). States that conversations still bound
+// to the deleted Specialist become UNAVAILABLE and are NOT switched to Main Agent automatically.
+export type SpecialistDeleteCardPayload = {
+  kind: 'delete'
+  name: string
+  // True so the card can state the fail-closed binding behavior (becomes unavailable, not Main).
+  boundConversationsUnavailable: true
+}
+
+// The renderer payload for a switch card (prototype scene 5). Names the current Specialist, the
+// target (another Specialist or Main Agent), and states "takes effect on the next message".
+export type SpecialistSwitchCardPayload = {
+  kind: 'switch'
+  // The current Specialist public name, or null/undefined when the conversation is on Main Agent.
+  currentName: string | null
+  // The target Specialist public name, or null to revert to Main Agent.
+  targetName: string | null
+  // True so the card can state "takes effect on the next message".
+  takesEffectOnNextMessage: true
+}
+
+// The discriminated union consumed by the standard Specialist permission card renderer. Every branch
+// is a minimum public summary and excludes complete system instructions, UUIDs, secrets, RPC tokens,
+// and connector args. The presentation mapper (issue 04) is the single producer of this type.
+export type SpecialistPermissionCardPayload =
+  SpecialistUpdateCardPayload | SpecialistDeleteCardPayload | SpecialistSwitchCardPayload
+
+// ---------------------------------------------------------------------------
+// Trusted calling-session + pending-switch/reconfigure notification seam
+// ---------------------------------------------------------------------------
+
+// The pending-switch state the switch slice (issue 05) persists and the renderer (issue 07) renders.
+// Mirrors design.md §9 / PRD §8: the approved target is persisted immediately and takes effect on
+// the NEXT message, surviving restart.
+export type PendingSwitch = {
+  // The trusted calling session this switch targets. Always the server-captured identity.
+  sessionId: string
+  // Target Specialist public name, or null to revert to Main Agent.
+  targetName: string | null
+}
+
+// INJECTED seam consumed by the future switch + renderer slices. It is supplied server-side (in the
+// dispatch context), and sandbox request params must NEVER be able to supply or override it. The
+// switch module (issue 05) will call `notify` after an approved switch; the renderer module
+// (issue 07) will subscribe. This type only defines the sink; wiring is deferred to issue 08.
+export type SwitchNotifier = {
+  notify(pending: PendingSwitch): Promise<void> | void
+}
+
+// ---------------------------------------------------------------------------
+// Routing fields the RPC route must strip before forwarding to the dispatcher.
+// ---------------------------------------------------------------------------
+
+// Every request field that controls routing, identity, or the trusted switch seam. These are
+// server-owned: the RPC route removes them from sandbox-supplied params so the dispatcher and its
+// injected seams only ever see values the server supplied. Keep this list in sync with the strip in
+// local-rpc-server.ts's agentsCall route.
+export const AGENTS_RESERVED_PARAM_KEYS = [
+  'op',
+  'session_id',
+  'sessionId',
+  'specialist_id',
+  'specialistId',
+  'target_specialist_id',
+  'targetSpecialistId',
+  'reconfigure',
+  'context_reset',
+  'contextReset'
+] as const
+
+export type AgentsReservedParamKey = (typeof AGENTS_RESERVED_PARAM_KEYS)[number]
+
+// Returns a copy of `params` with every reserved routing/identity/switch key removed. The RPC route
+// uses this so sandbox-supplied values for those keys are provably ignored. Pure and side-effect
+// free so it is unit-testable in isolation.
+export const stripAgentsReservedParams = (
+  params: Record<string, unknown>
+): Record<string, unknown> => {
+  const stripped: Record<string, unknown> = {}
+  const reserved = new Set<string>(AGENTS_RESERVED_PARAM_KEYS)
+  for (const [key, value] of Object.entries(params)) {
+    if (!reserved.has(key)) stripped[key] = value
+  }
+  return stripped
+}
+
+// ---------------------------------------------------------------------------
+// Payload validation (pure; reuses the read slice's existing patterns)
+// ---------------------------------------------------------------------------
+
+// A recognized operation whose params object is a plain record (write ops) or one of the typed read
+// shapes. This guard is the only validation the contract performs centrally; domain rules stay in
+// the service modules. Returns a typed narrowing so the dispatcher can branch safely.
+export const isAgentsOpName = (value: unknown): value is AgentsOpName =>
+  typeof value === 'string' &&
+  (value === 'list' ||
+    value === 'get' ||
+    value === 'list_skills' ||
+    value === 'list_connectors' ||
+    value === 'create' ||
+    value === 'update' ||
+    value === 'attach_skill' ||
+    value === 'detach_skill' ||
+    value === 'attach_connector' ||
+    value === 'detach_connector' ||
+    value === 'delete' ||
+    value === 'switch')
+
+// Narrows arbitrary RPC params into a plain object the dispatcher can read. Mirrors the isRecord
+// helper used by the RPC server.
+export const isAgentsParams = (value: unknown): value is Record<string, unknown> =>
+  typeof value === 'object' && value !== null && !Array.isArray(value)

@@ -261,7 +261,8 @@ import type {
   SetSessionSpecialistRequest,
   SetSessionSpecialistResponse,
   ResolveSessionSpecialistRequest,
-  SessionSpecialistResolution
+  SessionSpecialistResolution,
+  PendingSwitchBroadcast
 } from '../shared/specialist'
 import { SPECIALIST_IPC } from '../shared/specialist'
 import {
@@ -457,6 +458,10 @@ type OpenScienceAPI = {
     delete(request: DeleteSpecialistRequest): Promise<void>
     duplicate(request: DuplicateSpecialistRequest): Promise<CreateSpecialistRequest>
     onCatalogChanged: (listener: () => void) => RemoveListener
+    // host.agents.switch() durable next-message switch broadcast (issue 08b). Main persists the
+    // binding and notifies the renderer so it mirrors the pending target WITHOUT switching the live
+    // agent mid-reply; the next-send barrier applies the approved identity.
+    onPendingSwitch: (listener: AcpListener<PendingSwitchBroadcast>) => RemoveListener
     // Session switching (issue 07).
     setSessionSpecialist: (
       request: SetSessionSpecialistRequest
@@ -1067,6 +1072,8 @@ const api: OpenScienceAPI = {
       ipcRenderer.invoke(SPECIALIST_IPC.DUPLICATE, request) as Promise<CreateSpecialistRequest>,
     onCatalogChanged: (listener: () => void) =>
       onIpcMessage(SPECIALIST_IPC.CATALOG_CHANGED, listener),
+    // host.agents.switch() durable next-message switch broadcast (issue 08b).
+    onPendingSwitch: (listener) => onIpcMessage(SPECIALIST_IPC.PENDING_SWITCH, listener),
     // Session switching (issue 07).
     setSessionSpecialist: (request: SetSessionSpecialistRequest) =>
       ipcRenderer.invoke(

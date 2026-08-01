@@ -1,11 +1,18 @@
-import { beforeEach, describe, expect, it } from 'vitest'
+import { beforeEach, describe, expect, it, vi } from 'vitest'
 
 import {
   SESSION_MANIFEST_VERSION,
   type PersistedChatSession
 } from '../../../shared/session-persistence'
+import { recordLastOpenedProject } from '@/lib/last-opened-project'
 import { createInitialSessionState, useSessionStore } from './session-store'
 import { useNavigationStore } from './navigation-store'
+
+vi.mock('@/lib/last-opened-project', () => ({
+  recordLastOpenedProject: vi.fn(),
+  getLastOpenedProjectId: vi.fn(() => undefined),
+  resolveCustomizeProjectId: vi.fn(() => undefined)
+}))
 
 const createSession = (overrides: Partial<PersistedChatSession>): PersistedChatSession => ({
   id: 'session-1',
@@ -25,8 +32,10 @@ beforeEach(() => {
     view: 'home',
     activeProjectId: undefined,
     userNavigationRevision: 0,
-    explicitNavigationRevision: 0
+    explicitNavigationRevision: 0,
+    pendingCustomizePrefill: undefined
   })
+  vi.mocked(recordLastOpenedProject).mockClear()
 })
 
 describe('navigation store', () => {
@@ -126,5 +135,50 @@ describe('navigation store', () => {
     useNavigationStore.getState().recordUserNavigation()
     expect(useNavigationStore.getState().userNavigationRevision).toBe(2)
     expect(useNavigationStore.getState().explicitNavigationRevision).toBe(3)
+  })
+
+  it('records the last-opened project only for explicit user project opens', () => {
+    useNavigationStore.getState().openProject('project-a', 'user')
+    expect(recordLastOpenedProject).toHaveBeenCalledWith('project-a')
+
+    vi.mocked(recordLastOpenedProject).mockClear()
+    useNavigationStore.getState().openProject('project-b', 'automatic')
+    expect(recordLastOpenedProject).not.toHaveBeenCalled()
+  })
+
+  it('records the last-opened project when a user opens a session', () => {
+    useNavigationStore.getState().openSession('project-a', 'session-1', 'user')
+    expect(recordLastOpenedProject).toHaveBeenCalledWith('project-a')
+  })
+})
+
+describe('navigation store customize conversation', () => {
+  it('starts a customize conversation: opens the project, clears selection, and sets a prefill intent', () => {
+    useNavigationStore.getState().startCustomizeConversation('project-a')
+
+    const state = useNavigationStore.getState()
+    expect(state.view).toBe('workspace')
+    expect(state.activeProjectId).toBe('project-a')
+    // New conversation draft: no session selected, so no Specialist binding.
+    expect(useSessionStore.getState().selectedSessionId).toBeUndefined()
+    expect(state.pendingCustomizePrefill).toBe('project-a')
+  })
+
+  it('records the customize target as the last-opened project', () => {
+    useNavigationStore.getState().startCustomizeConversation('project-a')
+    expect(recordLastOpenedProject).toHaveBeenCalledWith('project-a')
+  })
+
+  it('counts the customize entry as explicit user navigation', () => {
+    useNavigationStore.getState().startCustomizeConversation('project-a')
+    expect(useNavigationStore.getState().userNavigationRevision).toBe(1)
+  })
+
+  it('clears the pending prefill intent once consumed', () => {
+    useNavigationStore.getState().startCustomizeConversation('project-a')
+    expect(useNavigationStore.getState().pendingCustomizePrefill).toBe('project-a')
+
+    useNavigationStore.getState().consumeCustomizePrefill()
+    expect(useNavigationStore.getState().pendingCustomizePrefill).toBeUndefined()
   })
 })

@@ -581,12 +581,9 @@ const SpecialistEditor = ({
 
           {/* Name */}
           <div className="mb-4">
-            <label
-              htmlFor="sp-name"
-              className="mb-1.5 flex items-baseline justify-between text-xs font-semibold"
-            >
+            <label htmlFor="sp-name" className="mb-1.5 flex items-baseline justify-between text-xs">
               <span>Name</span>
-              <span className="font-normal tabular-nums text-muted-foreground">
+              <span className="text-[11px] tabular-nums text-muted-foreground">
                 {form.name.length} / {SPECIALIST_NAME_MAX_LENGTH}
               </span>
             </label>
@@ -614,12 +611,12 @@ const SpecialistEditor = ({
           <div className="mb-0">
             <label
               htmlFor="sp-description"
-              className="mb-1.5 flex items-baseline justify-between text-xs font-semibold"
+              className="mb-1.5 flex items-baseline justify-between text-xs"
             >
               <span>
-                Description <span className="font-normal text-muted-foreground">(optional)</span>
+                Description <span className="text-muted-foreground">(optional)</span>
               </span>
-              <span className="font-normal tabular-nums text-muted-foreground">
+              <span className="text-[11px] tabular-nums text-muted-foreground">
                 {form.description.length} / {SPECIALIST_DESCRIPTION_MAX_LENGTH}
               </span>
             </label>
@@ -651,11 +648,7 @@ const SpecialistEditor = ({
             Appended to the app&rsquo;s base prompt — does not replace safety rules or tool
             instructions. Optional.
           </p>
-          <div>
-            <div className="mb-1 text-right text-[11px] text-muted-foreground">
-              {form.systemPrompt.length.toLocaleString()} /{' '}
-              {SPECIALIST_SYSTEM_PROMPT_MAX_LENGTH.toLocaleString()}
-            </div>
+          <div className="relative">
             <label htmlFor="sp-system-prompt" className="sr-only">
               Instructions
             </label>
@@ -665,8 +658,12 @@ const SpecialistEditor = ({
               onChange={(e) => setForm((prev) => ({ ...prev, systemPrompt: e.target.value }))}
               maxLength={SPECIALIST_SYSTEM_PROMPT_MAX_LENGTH}
               placeholder="Optional — leave empty to use the base prompt as-is."
-              className="min-h-[120px] resize-y text-[13px]"
+              className="min-h-[120px] resize-y pb-7 text-[13px]"
             />
+            <span className="pointer-events-none absolute bottom-2 right-3 text-[11px] tabular-nums text-muted-foreground">
+              {form.systemPrompt.length.toLocaleString()} /{' '}
+              {SPECIALIST_SYSTEM_PROMPT_MAX_LENGTH.toLocaleString()}
+            </span>
             {getFieldError('systemPrompt') ? (
               <p className="mt-1 text-xs text-danger-000">{getFieldError('systemPrompt')}</p>
             ) : null}
@@ -819,9 +816,9 @@ const SpecialistEditor = ({
                                   addSkill(skill.id)
                                   setSkillPopoverOpen(false)
                                 }}
-                                className="flex h-[38px] w-full items-center gap-2 px-3 text-left hover:bg-muted"
+                                className="flex h-[32px] w-full items-center gap-2 px-3 text-left hover:bg-muted"
                               >
-                                <span className="min-w-0 flex-1 truncate font-mono text-[12.5px]">
+                                <span className="min-w-0 flex-1 truncate text-[12.5px]">
                                   {skill.name}
                                 </span>
                               </button>
@@ -873,7 +870,7 @@ const SpecialistEditor = ({
                                   addConnector(connector.id)
                                   setConnectorPopoverOpen(false)
                                 }}
-                                className="flex h-[38px] w-full items-center gap-2 px-3 text-left hover:bg-muted"
+                                className="flex h-[32px] w-full items-center gap-2 px-3 text-left hover:bg-muted"
                               >
                                 <span className="min-w-0 flex-1 truncate text-[12.5px]">
                                   {connector.name}
@@ -902,7 +899,7 @@ const SpecialistEditor = ({
                           className="flex h-[40px] items-center gap-2.5 border-b border-border px-3 last:border-b-0"
                         >
                           <div className="min-w-0 flex-1">
-                            <div className="truncate font-mono text-[12.5px]">{skill.name}</div>
+                            <div className="truncate text-[12.5px]">{skill.name}</div>
                             {!skill.missing && skill.description ? (
                               <div className="truncate text-[11px] text-muted-foreground">
                                 {skill.description}

@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useState } from 'react'
-import { ChevronDown, Copy, Pencil, Plus, Search, Trash2 } from 'lucide-react'
+import { ChevronDown, Copy, MessagesSquare, Pencil, Plus, Search, Trash2 } from 'lucide-react'
 import { AlertDialog } from 'radix-ui'
 import { Button } from '@/components/ui/button'
 import {
@@ -12,11 +12,16 @@ import {
   DropdownMenu,
   DropdownMenuContent,
   DropdownMenuItem,
+  DropdownMenuSeparator,
   DropdownMenuTrigger
 } from '@/components/ui/dropdown-menu'
 import { Input } from '@/components/ui/input'
 import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from '@/components/ui/tooltip'
+import { resolveCustomizeProjectId } from '@/lib/last-opened-project'
 import { SettingsToggle } from './SettingsLayout'
+import { useNavigationStore } from '@/stores/navigation-store'
+import { useProjectStore } from '@/stores/project-store'
+import { useSettingsStore } from '@/stores/settings-store'
 import { useSpecialistStore } from '@/stores/specialist-store'
 import type { CreateSpecialistInput } from '../../../../shared/specialist'
 import { SpecialistEditor } from './SpecialistEditor'
@@ -50,6 +55,9 @@ const SpecialistsPanel = ({ view, onNavigate }: SpecialistsPanelProps): React.JS
   const updateSpecialist = useSpecialistStore((s) => s.update)
   const deleteSpecialist = useSpecialistStore((s) => s.delete)
   const duplicateSpecialist = useSpecialistStore((s) => s.duplicate)
+  // Live project catalog drives the `Chat with agent` entry's enabled state and routing. The stored
+  // last-opened reference is re-validated against this list before navigating.
+  const projects = useProjectStore((s) => s.projects)
   const [filter, setFilter] = useState<CategoryFilter>('all')
   const [query, setQuery] = useState('')
   const [deletingItem, setDeletingItem] = useState<{
@@ -89,6 +97,19 @@ const SpecialistsPanel = ({ view, onNavigate }: SpecialistsPanelProps): React.JS
     if (!term || 'reviewer used by auto-review'.includes(term)) return reviewerItems
     return []
   }, [filter, query, reviewerItems])
+
+  // Resolves the valid last-opened project (or the newest-existing fallback) against the live catalog.
+  // Undefined means zero projects and the entry is disabled with explanatory help text.
+  const chatProjectId = useMemo(() => resolveCustomizeProjectId(projects), [projects])
+
+  // Navigation/prefill intent only: closes Settings and opens the resolved project's New Conversation
+  // draft carrying a `/customize` prefill. Does not send, create a session, bind a Specialist, or imply
+  // mutation approval. Final activation against the real Featured Skill is owned by issue 08.
+  const startChatWithAgent = (): void => {
+    if (!chatProjectId) return
+    useSettingsStore.getState().closeSettings()
+    useNavigationStore.getState().startCustomizeConversation(chatProjectId)
+  }
 
   if (view.kind === 'create') {
     return (
@@ -204,6 +225,36 @@ const SpecialistsPanel = ({ view, onNavigate }: SpecialistsPanelProps): React.JS
                 </span>
               </span>
             </DropdownMenuItem>
+            <DropdownMenuItem
+              className="gap-2.5"
+              disabled={!chatProjectId}
+              aria-disabled={!chatProjectId}
+              onSelect={(event) => {
+                // A disabled item cannot fire onSelect in Radix, but keep the guard explicit so the
+                // intent stays a no-op if the catalog empties between render and click.
+                if (!chatProjectId) {
+                  event.preventDefault()
+                  return
+                }
+                startChatWithAgent()
+              }}
+            >
+              <MessagesSquare className="size-4 shrink-0 text-primary" aria-hidden="true" />
+              <span className="flex flex-col">
+                <span>Chat with agent</span>
+                <span className="text-xs text-muted-foreground">
+                  Start a normal conversation; the agent guides you step by step
+                </span>
+              </span>
+            </DropdownMenuItem>
+            {!chatProjectId ? (
+              <>
+                <DropdownMenuSeparator />
+                <p className="px-2.5 pb-1 pt-0.5 text-xs text-muted-foreground">
+                  Open a project to chat with the agent
+                </p>
+              </>
+            ) : null}
           </DropdownMenuContent>
         </DropdownMenu>
       </div>

@@ -1,0 +1,505 @@
+// @vitest-environment jsdom
+// Renderer-side tests for the durable next-message switch closure (issue 08b).
+// Covers: receiving the specialist:pending-switch broadcast from host.agents.switch(),
+// mirroring the pending target WITHOUT switching the live agent mid-reply, applying the
+// approved identity at the next sendMessage, restart survival via the durable binding,
+// last-write-wins across multiple broadcasts, Main-Agent (null) clearing, and the pending
+// chip being shown while the current reply completes under the old agent.
+import { act } from 'react'
+import { createRoot, type Root } from 'react-dom/client'
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
+import type * as React from 'react'
+
+import { useNavigationStore } from '@/stores/navigation-store'
+import {
+  createInitialPreviewWorkbenchState,
+  usePreviewWorkbenchStore
+} from '@/stores/preview-workbench-store'
+import { useProjectStore } from '@/stores/project-store'
+import {
+  createInitialSessionState,
+  useSessionStore,
+  type ChatSession
+} from '@/stores/session-store'
+import { useSpecialistStore } from '@/stores/specialist-store'
+
+import { type ComposerDoc } from './composer/composer-doc'
+import type { SpecialistListItem } from '../../../../shared/specialist'
+
+;(globalThis as { IS_REACT_ACT_ENVIRONMENT?: boolean }).IS_REACT_ACT_ENVIRONMENT = true
+
+// Capture all props WorkspacePage passes to ConversationPanel.
+let conversationProps: Record<string, unknown>
+
+const runtime = vi.hoisted(() => ({
+  promptInFlightSessionIds: [] as string[],
+  nativeContextCompactionSessionIds: [] as string[],
+  sendMessage: vi.fn().mockResolvedValue({ sessionId: 'sess-a', messageId: 'msg-1' }),
+  compactContext: vi.fn(),
+  cancelRun: vi.fn(),
+  deleteRuntimeSession: vi.fn(),
+  respondToPermission: vi.fn()
+}))
+
+vi.mock('@/components/ui/resizable', () => ({
+  ResizablePanel: ({ children }: { children: React.ReactNode }): React.JSX.Element => (
+    <div>{children}</div>
+  ),
+  ResizablePanelGroup: ({ children }: { children: React.ReactNode }): React.JSX.Element => (
+    <div>{children}</div>
+  ),
+  ResizableHandle: (): React.JSX.Element => <div data-testid="resize-handle" />
+}))
+
+vi.mock('@/lib/acp/useWorkspaceAgentRuntime', () => ({
+  useWorkspaceAgentRuntime: () => ({
+    actionError: null,
+    pendingPermissions: [],
+    promptInFlightSessionIds: runtime.promptInFlightSessionIds,
+    nativeContextCompactionSessionIds: runtime.nativeContextCompactionSessionIds,
+    sendMessage: runtime.sendMessage,
+    compactContext: runtime.compactContext,
+    cancelRun: runtime.cancelRun,
+    deleteRuntimeSession: runtime.deleteRuntimeSession,
+    respondToPermission: runtime.respondToPermission
+  })
+}))
+
+vi.mock('./WorkspaceSidebar', () => ({
+  WorkspaceSidebar: (): React.JSX.Element => <aside />
+}))
+
+vi.mock('./ConversationPanel', () => ({
+  ConversationPanel: (props: Record<string, unknown>): React.JSX.Element => {
+    conversationProps = props
+    return <section data-testid="conversation" />
+  }
+}))
+
+vi.mock('./PreviewPanel', () => ({
+  PreviewPanel: (): React.JSX.Element => <div data-testid="preview-panel" />
+}))
+
+vi.mock('./RenameSessionDialog', () => ({
+  RenameSessionDialog: (): React.JSX.Element => <div />
+}))
+
+vi.mock('./DeleteSessionDialog', () => ({
+  DeleteSessionDialog: (): React.JSX.Element => <div />
+}))
+
+const { WorkspacePage } = await import('./WorkspacePage')
+
+const makeSpecialist = (
+  id: string,
+  name: string,
+  enabled = true
+): SpecialistListItem & { kind: 'custom' } => ({
+  kind: 'custom',
+  id,
+  name,
+  description: '',
+  systemPrompt: 'You are...',
+  enabled,
+  capabilityMode: 'full',
+  fullAccess: { excludedSkillIds: [], excludedConnectorIds: [], connectorTools: [] },
+  selectedCapabilities: { skillIds: [], connectorIds: [], connectorTools: [] },
+  revision: 1
+})
+
+const createSession = (overrides: Partial<ChatSession> = {}): ChatSession => {
+  const now = Date.now()
+  return {
+    id: 'sess-a',
+    projectId: 'proj-1',
+    title: 'sess-a',
+    cwd: '/workspace/proj-1',
+    status: 'idle',
+    messages: [],
+    createdAt: now,
+    updatedAt: now,
+    ...overrides
+  }
+}
+
+const textDoc = (text: string): ComposerDoc => ({ nodes: [{ type: 'text', text }] })
+
+let container: HTMLDivElement
+let root: Root
+
+// Captured pending-switch listener; the test fires it to simulate the host.agents.switch() broadcast.
+let pendingSwitchListener:
+  ((pending: { sessionId: string; targetName: string | null }) => void) | undefined
+
+const apiStub = (specialistOverrides?: Record<string, unknown>): typeof window.api => {
+  pendingSwitchListener = undefined
+  return {
+    notebook: {
+      onAvailable: vi.fn(() => vi.fn()),
+      getReference: vi.fn(() => Promise.resolve(null))
+    },
+    preview: {
+      load: vi.fn(() => Promise.resolve(undefined)),
+      save: vi.fn(() => Promise.resolve())
+    },
+    uploads: { deleteUpload: vi.fn() },
+    reviewer: {
+      onUpdated: vi.fn(() => vi.fn()),
+      onSuppressNextAutoReview: vi.fn(() => vi.fn()),
+      onFixLoopStart: vi.fn(() => vi.fn()),
+      onFixLoopEnd: vi.fn(() => vi.fn()),
+      abortFixLoop: vi.fn(() => Promise.resolve())
+    },
+    compute: { enabledHostsSet: vi.fn(() => Promise.resolve()) },
+    specialist: {
+      onCatalogChanged: vi.fn(() => vi.fn()),
+      onPendingSwitch: vi.fn((listener) => {
+        pendingSwitchListener = listener
+        return () => {
+          pendingSwitchListener = undefined
+        }
+      }),
+      setSessionSpecialist: vi.fn(() => Promise.resolve({ contextReset: false })),
+      resolveSessionSpecialist: vi.fn(() => Promise.resolve({ kind: 'main' as const })),
+      ...specialistOverrides
+    }
+  } as never
+}
+
+const renderPage = async (r: Root): Promise<void> => {
+  await act(async () => {
+    r.render(
+      <WorkspacePage
+        isSessionPersistenceHydrated={true}
+        isSessionPersistenceReady={true}
+        canDeleteConversations={true}
+      />
+    )
+  })
+}
+
+const setupBase = (): void => {
+  usePreviewWorkbenchStore.setState(createInitialPreviewWorkbenchState())
+  useProjectStore.setState({ projects: [] })
+  useNavigationStore.setState({ view: 'workspace', activeProjectId: 'proj-1' })
+  vi.clearAllMocks()
+  runtime.promptInFlightSessionIds = []
+  runtime.nativeContextCompactionSessionIds = []
+  runtime.sendMessage.mockResolvedValue({ sessionId: 'sess-a', messageId: 'msg-1' })
+}
+
+beforeEach(() => {
+  container = document.createElement('div')
+  document.body.appendChild(container)
+  root = createRoot(container)
+})
+
+afterEach(async () => {
+  await act(async () => {
+    root.unmount()
+  })
+  container.remove()
+})
+
+// ---------------------------------------------------------------------------
+// Broadcast mirrors pending target without switching the live agent
+// ---------------------------------------------------------------------------
+
+describe('WorkspacePage pending-switch broadcast', () => {
+  it('mirrors the pending target WITHOUT calling setSessionSpecialist mid-reply', async () => {
+    setupBase()
+    useSessionStore.setState({
+      ...createInitialSessionState(),
+      // The /customize reply is still running under the OLD specialist (spec-a).
+      sessions: [createSession({ specialistId: 'spec-a', status: 'running' })],
+      selectedSessionId: 'sess-a'
+    })
+    useSpecialistStore.setState({
+      items: [makeSpecialist('spec-a', 'Data Analyst'), makeSpecialist('spec-b', 'SQL Wrangler')],
+      isLoaded: true,
+      load: vi.fn()
+    })
+    window.api = apiStub()
+
+    await renderPage(root)
+
+    // The broadcast arrives: host.agents.switch('SQL Wrangler') was approved on main.
+    await act(async () => {
+      pendingSwitchListener?.({ sessionId: 'sess-a', targetName: 'SQL Wrangler' })
+    })
+
+    // The pending-switch chip must show.
+    expect(conversationProps.specialistHasPendingSwitch).toBe(true)
+    // The effective badge still shows the OLD specialist — the live agent was NOT switched.
+    expect(conversationProps.specialistId).toBe('spec-a')
+    // Critically: the runtime switch must NOT have happened during the broadcast.
+    expect(window.api.specialist.setSessionSpecialist).not.toHaveBeenCalled()
+  })
+
+  it('subscribes to the specialist:pending-switch channel once on mount', async () => {
+    setupBase()
+    useSessionStore.setState({
+      ...createInitialSessionState(),
+      sessions: [createSession()],
+      selectedSessionId: 'sess-a'
+    })
+    useSpecialistStore.setState({ items: [], isLoaded: true, load: vi.fn() })
+    window.api = apiStub()
+
+    await renderPage(root)
+
+    expect(window.api.specialist.onPendingSwitch).toHaveBeenCalledTimes(1)
+  })
+
+  it('clears the binding (pending Main) when the broadcast targetName is null', async () => {
+    setupBase()
+    useSessionStore.setState({
+      ...createInitialSessionState(),
+      sessions: [createSession({ specialistId: 'spec-a', status: 'running' })],
+      selectedSessionId: 'sess-a'
+    })
+    useSpecialistStore.setState({
+      items: [makeSpecialist('spec-a', 'Data Analyst')],
+      isLoaded: true,
+      load: vi.fn()
+    })
+    const setSessionSpecialist = vi.fn(() => Promise.resolve({ contextReset: false }))
+    window.api = apiStub({ setSessionSpecialist })
+
+    await renderPage(root)
+
+    // host.agents.switch(null) → revert to Main Agent.
+    await act(async () => {
+      pendingSwitchListener?.({ sessionId: 'sess-a', targetName: null })
+    })
+
+    expect(conversationProps.specialistHasPendingSwitch).toBe(true)
+
+    // Finish the run and send — the barrier must clear the binding via the same next-message path.
+    await act(async () => {
+      useSessionStore.getState().finishRun('sess-a')
+    })
+    await act(async () => {
+      ;(conversationProps.onDraftDocChange as (doc: ComposerDoc) => void)(textDoc('go'))
+    })
+    await act(async () => {
+      ;(conversationProps.onSendMessage as (ids: string[]) => void)([])
+    })
+
+    expect(setSessionSpecialist).toHaveBeenCalledWith({
+      sessionId: 'sess-a',
+      specialistId: undefined
+    })
+    expect(useSessionStore.getState().sessions[0].specialistId).toBeUndefined()
+    expect(runtime.sendMessage).toHaveBeenCalledOnce()
+  })
+
+  it('applies the approved target at the next sendMessage via the reconfigure barrier', async () => {
+    setupBase()
+    useSessionStore.setState({
+      ...createInitialSessionState(),
+      sessions: [createSession({ specialistId: 'spec-a', status: 'running' })],
+      selectedSessionId: 'sess-a'
+    })
+    useSpecialistStore.setState({
+      items: [makeSpecialist('spec-a', 'Data Analyst'), makeSpecialist('spec-b', 'SQL Wrangler')],
+      isLoaded: true,
+      load: vi.fn()
+    })
+    const setSessionSpecialist = vi.fn(() => Promise.resolve({ contextReset: false }))
+    window.api = apiStub({ setSessionSpecialist })
+
+    await renderPage(root)
+
+    await act(async () => {
+      pendingSwitchListener?.({ sessionId: 'sess-a', targetName: 'SQL Wrangler' })
+    })
+
+    // The reply finishes; the next user message triggers the barrier.
+    await act(async () => {
+      useSessionStore.getState().finishRun('sess-a')
+    })
+    await act(async () => {
+      ;(conversationProps.onDraftDocChange as (doc: ComposerDoc) => void)(textDoc('next turn'))
+    })
+    await act(async () => {
+      ;(conversationProps.onSendMessage as (ids: string[]) => void)([])
+    })
+
+    // The barrier reconfigured the live runtime under the NEW specialist (spec-b).
+    expect(setSessionSpecialist).toHaveBeenCalledWith({
+      sessionId: 'sess-a',
+      specialistId: 'spec-b'
+    })
+    expect(useSessionStore.getState().sessions[0].specialistId).toBe('spec-b')
+    expect(runtime.sendMessage).toHaveBeenCalledOnce()
+  })
+
+  it('is last-write-wins when multiple broadcasts arrive before the next send', async () => {
+    setupBase()
+    useSessionStore.setState({
+      ...createInitialSessionState(),
+      sessions: [createSession({ specialistId: 'spec-a', status: 'running' })],
+      selectedSessionId: 'sess-a'
+    })
+    useSpecialistStore.setState({
+      items: [
+        makeSpecialist('spec-a', 'Data Analyst'),
+        makeSpecialist('spec-b', 'SQL Wrangler'),
+        makeSpecialist('spec-c', 'Researcher')
+      ],
+      isLoaded: true,
+      load: vi.fn()
+    })
+    const setSessionSpecialist = vi.fn(() => Promise.resolve({ contextReset: false }))
+    window.api = apiStub({ setSessionSpecialist })
+
+    await renderPage(root)
+
+    // First approved switch, then a newer approved switch before the next send.
+    await act(async () => {
+      pendingSwitchListener?.({ sessionId: 'sess-a', targetName: 'SQL Wrangler' })
+    })
+    await act(async () => {
+      pendingSwitchListener?.({ sessionId: 'sess-a', targetName: 'Researcher' })
+    })
+
+    await act(async () => {
+      useSessionStore.getState().finishRun('sess-a')
+    })
+    await act(async () => {
+      ;(conversationProps.onDraftDocChange as (doc: ComposerDoc) => void)(textDoc('final'))
+    })
+    await act(async () => {
+      ;(conversationProps.onSendMessage as (ids: string[]) => void)([])
+    })
+
+    // The newest target (Researcher → spec-c) wins.
+    expect(setSessionSpecialist).toHaveBeenCalledWith({
+      sessionId: 'sess-a',
+      specialistId: 'spec-c'
+    })
+    expect(useSessionStore.getState().sessions[0].specialistId).toBe('spec-c')
+    expect(runtime.sendMessage).toHaveBeenCalledOnce()
+  })
+
+  it('preserves the composer draft when the reconfigure barrier fails', async () => {
+    setupBase()
+    useSessionStore.setState({
+      ...createInitialSessionState(),
+      sessions: [createSession({ specialistId: 'spec-a', status: 'running' })],
+      selectedSessionId: 'sess-a'
+    })
+    useSpecialistStore.setState({
+      items: [makeSpecialist('spec-a', 'Data Analyst'), makeSpecialist('spec-b', 'SQL Wrangler')],
+      isLoaded: true,
+      load: vi.fn()
+    })
+    const setSessionSpecialist = vi.fn().mockRejectedValueOnce(new Error('reconfigure failed'))
+    window.api = apiStub({ setSessionSpecialist })
+
+    await renderPage(root)
+
+    await act(async () => {
+      ;(conversationProps.onDraftDocChange as (doc: ComposerDoc) => void)(textDoc('keep my draft'))
+    })
+    await act(async () => {
+      pendingSwitchListener?.({ sessionId: 'sess-a', targetName: 'SQL Wrangler' })
+    })
+
+    await act(async () => {
+      useSessionStore.getState().finishRun('sess-a')
+    })
+    await act(async () => {
+      ;(conversationProps.onSendMessage as (ids: string[]) => void)([])
+    })
+
+    // Reconfigure failed: never sent, draft preserved, recovery surface shown.
+    expect(runtime.sendMessage).not.toHaveBeenCalled()
+    expect(conversationProps.reconfigureError).toBeTruthy()
+    // The draft content must survive the failure.
+    expect((conversationProps.draftDoc as ComposerDoc).nodes[0]).toMatchObject({
+      type: 'text',
+      text: 'keep my draft'
+    })
+  })
+
+  it('falls back to the durable binding when the target name is not in the loaded catalog', async () => {
+    setupBase()
+    useSessionStore.setState({
+      ...createInitialSessionState(),
+      sessions: [createSession({ specialistId: 'spec-a', status: 'running' })],
+      selectedSessionId: 'sess-a'
+    })
+    // Catalog loaded but does NOT contain the target name (e.g. name resolution must use the
+    // durable binding that host.agents.switch already persisted on main).
+    useSpecialistStore.setState({
+      items: [makeSpecialist('spec-a', 'Data Analyst')],
+      isLoaded: true,
+      load: vi.fn()
+    })
+    const setSessionSpecialist = vi.fn(() => Promise.resolve({ contextReset: false }))
+    const resolveSessionSpecialist = vi.fn(() =>
+      Promise.resolve({
+        kind: 'bound' as const,
+        profile: makeSpecialist('spec-b', 'SQL Wrangler')
+      })
+    )
+    window.api = apiStub({ setSessionSpecialist, resolveSessionSpecialist })
+
+    await renderPage(root)
+
+    await act(async () => {
+      pendingSwitchListener?.({ sessionId: 'sess-a', targetName: 'SQL Wrangler' })
+    })
+    // Let the async resolve settle.
+    await act(async () => {
+      await Promise.resolve()
+    })
+
+    // The renderer resolved the durable binding for the pending target.
+    expect(resolveSessionSpecialist).toHaveBeenCalledWith({ sessionId: 'sess-a' })
+    expect(conversationProps.specialistHasPendingSwitch).toBe(true)
+  })
+
+  it('does not eagerly switch the live agent when a broadcast arrives while idle', async () => {
+    setupBase()
+    // The calling session already finished its reply (idle). Main already persisted the durable
+    // binding; the broadcast only mirrors the pending target so the next send applies it.
+    useSessionStore.setState({
+      ...createInitialSessionState(),
+      sessions: [createSession({ specialistId: 'spec-a', status: 'idle' })],
+      selectedSessionId: 'sess-a'
+    })
+    useSpecialistStore.setState({
+      items: [makeSpecialist('spec-a', 'Data Analyst'), makeSpecialist('spec-b', 'SQL Wrangler')],
+      isLoaded: true,
+      load: vi.fn()
+    })
+    const setSessionSpecialist = vi.fn(() => Promise.resolve({ contextReset: false }))
+    window.api = apiStub({ setSessionSpecialist })
+
+    await renderPage(root)
+
+    await act(async () => {
+      pendingSwitchListener?.({ sessionId: 'sess-a', targetName: 'SQL Wrangler' })
+    })
+
+    // The broadcast mirrors pending state only — the runtime must NOT switch eagerly.
+    expect(setSessionSpecialist).not.toHaveBeenCalled()
+
+    // The pending target still applies at the next send via the reconfigure barrier.
+    await act(async () => {
+      ;(conversationProps.onDraftDocChange as (doc: ComposerDoc) => void)(textDoc('next'))
+    })
+    await act(async () => {
+      ;(conversationProps.onSendMessage as (ids: string[]) => void)([])
+    })
+
+    expect(setSessionSpecialist).toHaveBeenCalledWith({
+      sessionId: 'sess-a',
+      specialistId: 'spec-b'
+    })
+    expect(runtime.sendMessage).toHaveBeenCalledOnce()
+  })
+})
