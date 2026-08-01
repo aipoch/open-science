@@ -950,6 +950,64 @@ describe('notebook runtime service', () => {
     expect(release).toHaveBeenCalledOnce()
   })
 
+  it('keeps control connections and cleanup isolated between runtime sessions', async () => {
+    const root = await createStorageRoot()
+    const releases = new Map([
+      ['session-1', vi.fn()],
+      ['session-2', vi.fn()]
+    ])
+    const resolveConnection = vi.fn(
+      async ({ sessionId }: { sessionId: string; projectId: string }) => ({
+        endpoint: 'http://127.0.0.1:1/x',
+        token: `${sessionId}-token`,
+        release: releases.get(sessionId)
+      })
+    )
+    const service = new NotebookRuntimeService({
+      configRoot: root,
+      dataRoot: root,
+      projectName: 'default-project',
+      repository: new NotebookRunRepository(root),
+      executorFactory: (sessionId) => ({
+        execute: async (request): Promise<NotebookExecutionResult> => ({
+          status: 'completed',
+          stdout: `${sessionId}:${request.mcpRpcToken}`,
+          stderr: '',
+          traceback: '',
+          cwdAfter: request.cwd,
+          outputs: []
+        }),
+        shutdown: async () => ({ reaped: true })
+      })
+    })
+    service.setMcpRpcConnectionResolver(resolveConnection)
+
+    const [first, second] = await Promise.all(
+      ['session-1', 'session-2'].map((sessionId) =>
+        service.executeControl({ sessionId, workspaceCwd: root, code: 'return 1' })
+      )
+    )
+
+    expect([first.stdout, second.stdout]).toEqual([
+      'session-1:session-1-token',
+      'session-2:session-2-token'
+    ])
+
+    await service.shutdown({ sessionId: 'session-1', workspaceCwd: root })
+    expect(releases.get('session-1')).toHaveBeenCalledOnce()
+    expect(releases.get('session-2')).not.toHaveBeenCalled()
+
+    await expect(
+      service.executeControl({ sessionId: 'session-2', workspaceCwd: root, code: 'return 2' })
+    ).resolves.toMatchObject({ stdout: 'session-2:session-2-token' })
+    expect(
+      resolveConnection.mock.calls.filter(([binding]) => binding.sessionId === 'session-2')
+    ).toHaveLength(1)
+
+    await service.shutdownAll()
+    expect(releases.get('session-2')).toHaveBeenCalledOnce()
+  })
+
   it('rejects a dynamically executed package installer in the control REPL before dispatch', async () => {
     const root = await createStorageRoot()
     const execute = vi.fn()

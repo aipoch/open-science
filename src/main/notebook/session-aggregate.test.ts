@@ -1,5 +1,7 @@
 import { describe, expect, it } from 'vitest'
 
+import type { NotebookCell } from '../../shared/notebook'
+
 import { NotebookSessionAggregate } from './session-aggregate'
 
 describe('NotebookSessionAggregate', () => {
@@ -51,5 +53,50 @@ describe('NotebookSessionAggregate', () => {
     releaseFirst()
     await expect(Promise.all([first, second])).resolves.toEqual(['first-result', 'second-result'])
     expect(started).toEqual(['first', 'other', 'second'])
+  })
+
+  it('returns snapshots that cannot mutate owned cell or kernel state', () => {
+    const session = new NotebookSessionAggregate({
+      sessionId: 'session-1',
+      projectName: 'default-project',
+      cwd: '/workspace/data',
+      notebookSessionRoot: '/workspace',
+      dataRoot: '/workspace/data',
+      runtimeRoot: '/runtime',
+      runJsonPath: '/workspace/run.json',
+      executionCount: 0,
+      executor: {
+        execute: async () => ({
+          status: 'completed',
+          stdout: '',
+          stderr: '',
+          traceback: '',
+          cwdAfter: '/workspace/data',
+          outputs: []
+        }),
+        shutdown: async () => ({ reaped: true })
+      }
+    })
+    session.beginCellWrite({
+      cellId: 'cell-1',
+      language: 'python',
+      writeId: 'write-1',
+      source: 'agent',
+      startedAt: 1
+    })
+    session.appendCellCode('cell-1', 'write-1', 'original')
+    session.finishCellWrite('cell-1', 'write-1')
+    session.setKernelStatus('python:default-python', 'idle')
+
+    const snapshot = session.snapshot()
+    ;(snapshot.cells as NotebookCell[])[0].code = 'mutated'
+    ;(snapshot.kernelStatuses as Array<[string, (typeof snapshot.kernelStatuses)[number][1]]>).push(
+      ['r:default-r', 'running']
+    )
+
+    expect(session.snapshot()).toMatchObject({
+      cells: [{ id: 'cell-1', code: 'original', status: 'idle' }],
+      kernelStatuses: [['python:default-python', 'idle']]
+    })
   })
 })
