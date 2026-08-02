@@ -451,6 +451,8 @@ describe('WorkspaceMessageItem turn token usage', () => {
     const details = document.body.querySelector('[data-slot="turn-runtime-details"]')
     expect(details?.textContent).toContain('Agent: Codex')
     expect(details?.textContent).toContain('Model: gpt-test')
+    expect(details?.querySelector('[data-slot="turn-runtime-agent-detail-icon"]')).not.toBeNull()
+    expect(details?.querySelector('[data-slot="turn-runtime-model-detail-icon"]')).not.toBeNull()
 
     await act(async () => {
       useSettingsStore.setState({

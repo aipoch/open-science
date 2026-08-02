@@ -358,10 +358,30 @@ const TurnTokenUsage = ({
             data-slot="turn-runtime-details"
             className="mt-2 space-y-0.5 border-t border-border pt-2 text-[11px] leading-4 text-muted-foreground"
           >
-            {frameworkName ? <div className="truncate">Agent: {frameworkName}</div> : null}
+            {frameworkName && runtimeIdentity?.frameworkId ? (
+              <div className="flex min-w-0 items-center gap-1.5">
+                <span
+                  data-slot="turn-runtime-agent-detail-icon"
+                  aria-hidden="true"
+                  className="flex size-3 shrink-0 items-center justify-center"
+                >
+                  <AgentFrameworkIcon frameworkId={runtimeIdentity.frameworkId} size={10} />
+                </span>
+                <span className="truncate">Agent: {frameworkName}</span>
+              </div>
+            ) : null}
             {model ? (
-              <div className="truncate" title={model}>
-                Model: {model}
+              <div className="flex min-w-0 items-center gap-1.5" title={model}>
+                {provider && kindKey ? (
+                  <span
+                    data-slot="turn-runtime-model-detail-icon"
+                    aria-hidden="true"
+                    className="flex size-3 shrink-0 items-center justify-center"
+                  >
+                    <ProviderKindIcon kindKey={kindKey} className="size-2.5" />
+                  </span>
+                ) : null}
+                <span className="truncate">Model: {model}</span>
               </div>
             ) : null}
           </div>
