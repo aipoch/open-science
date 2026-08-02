@@ -175,6 +175,26 @@ describe('NotebookSessionRegistry', () => {
     expect(removed.releaseMcpRpcConnection).toHaveBeenCalledTimes(1)
   })
 
+  it('isolates a synchronous executor shutdown failure from other aggregates', async () => {
+    const registry = new NotebookSessionRegistry<TestSession>()
+    const teardownError = new Error('synchronous teardown failed')
+    const failed = testSession('session-1')
+    const removed = testSession('session-2')
+    vi.mocked(failed.shutdownExecutor).mockImplementationOnce(() => {
+      throw teardownError
+    })
+    await registry.getOrCreate('session-1', async () => failed)
+    await registry.getOrCreate('session-2', async () => removed)
+
+    await expect(registry.shutdownAll()).rejects.toBe(teardownError)
+
+    expect(failed.shutdownExecutor).toHaveBeenCalledTimes(1)
+    expect(removed.shutdownExecutor).toHaveBeenCalledTimes(1)
+    expect(registry.get('session-1')).toBe(failed)
+    expect(registry.get('session-2')).toBeUndefined()
+    expect(removed.releaseMcpRpcConnection).toHaveBeenCalledTimes(1)
+  })
+
   it('reports multiple shutdown failures in deterministic session-ID order', async () => {
     const registry = new NotebookSessionRegistry<TestSession>()
     const firstError = new Error('session-1 teardown failed')
@@ -192,6 +212,33 @@ describe('NotebookSessionRegistry', () => {
     expect((failure as AggregateError).errors).toEqual([firstError, secondError])
     expect(registry.get('session-1')).toBe(first)
     expect(registry.get('session-2')).toBe(second)
+  })
+
+  it('isolates reusable release failures and aggregates them with executor failures', async () => {
+    const registry = new NotebookSessionRegistry<TestSession>()
+    const executorError = new Error('session-1 executor teardown failed')
+    const releaseError = new Error('session-2 connection release failed')
+    const executorFailed = testSession('session-1')
+    const releaseFailed = testSession('session-2')
+    const removed = testSession('session-3')
+    vi.mocked(executorFailed.shutdownExecutor).mockRejectedValueOnce(executorError)
+    vi.mocked(releaseFailed.releaseMcpRpcConnection).mockImplementationOnce(() => {
+      throw releaseError
+    })
+    await registry.getOrCreate('session-1', async () => executorFailed)
+    await registry.getOrCreate('session-2', async () => releaseFailed)
+    await registry.getOrCreate('session-3', async () => removed)
+
+    const failure = await registry.shutdownAll().catch((error: unknown) => error)
+
+    expect(failure).toBeInstanceOf(AggregateError)
+    expect((failure as AggregateError).errors).toEqual([executorError, releaseError])
+    expect(executorFailed.shutdownExecutor).toHaveBeenCalledTimes(1)
+    expect(releaseFailed.releaseMcpRpcConnection).toHaveBeenCalledTimes(1)
+    expect(removed.releaseMcpRpcConnection).toHaveBeenCalledTimes(1)
+    expect(registry.get('session-1')).toBe(executorFailed)
+    expect(registry.get('session-2')).toBe(releaseFailed)
+    expect(registry.get('session-3')).toBeUndefined()
   })
 
   it('returns reaped false after releasing sessions, then reopens admission', async () => {
@@ -285,7 +332,51 @@ describe('NotebookSessionRegistry', () => {
 
     expect(failed.shutdownExecutor).toHaveBeenCalledTimes(1)
     expect(removed.shutdownExecutor).toHaveBeenCalledTimes(1)
-    expect(registry.get('session-1')).toBe(failed)
+    expect(failed.releaseMcpRpcConnection).toHaveBeenCalledTimes(1)
+    expect(removed.releaseMcpRpcConnection).toHaveBeenCalledTimes(1)
+    expect(registry.get('session-1')).toBeUndefined()
+    expect(registry.get('session-2')).toBeUndefined()
+  })
+
+  it('releases terminal resources exactly once after executor shutdown rejects', async () => {
+    const registry = new NotebookSessionRegistry<TestSession>()
+    const teardownError = new Error('terminal executor teardown failed')
+    const session = testSession('session-1')
+    vi.mocked(session.shutdownExecutor).mockRejectedValueOnce(teardownError)
+    await registry.getOrCreate('session-1', async () => session)
+
+    const disposal = registry.dispose()
+
+    await expect(disposal).rejects.toBe(teardownError)
+    expect(session.shutdownExecutor).toHaveBeenCalledTimes(1)
+    expect(session.releaseMcpRpcConnection).toHaveBeenCalledTimes(1)
+    expect(registry.get('session-1')).toBeUndefined()
+    await expect(registry.dispose()).rejects.toBe(teardownError)
+    expect(session.releaseMcpRpcConnection).toHaveBeenCalledTimes(1)
+  })
+
+  it('aggregates terminal executor and release failures after attempting every aggregate', async () => {
+    const registry = new NotebookSessionRegistry<TestSession>()
+    const executorError = new Error('session-1 terminal executor failed')
+    const releaseError = new Error('session-1 terminal release failed')
+    const failed = testSession('session-1')
+    const cleaned = testSession('session-2')
+    vi.mocked(failed.shutdownExecutor).mockRejectedValueOnce(executorError)
+    vi.mocked(failed.releaseMcpRpcConnection).mockImplementationOnce(() => {
+      throw releaseError
+    })
+    await registry.getOrCreate('session-1', async () => failed)
+    await registry.getOrCreate('session-2', async () => cleaned)
+
+    const failure = await registry.dispose().catch((error: unknown) => error)
+
+    expect(failure).toBeInstanceOf(AggregateError)
+    expect((failure as AggregateError).errors).toEqual([executorError, releaseError])
+    expect(failed.shutdownExecutor).toHaveBeenCalledTimes(1)
+    expect(cleaned.shutdownExecutor).toHaveBeenCalledTimes(1)
+    expect(failed.releaseMcpRpcConnection).toHaveBeenCalledTimes(1)
+    expect(cleaned.releaseMcpRpcConnection).toHaveBeenCalledTimes(1)
+    expect(registry.get('session-1')).toBeUndefined()
     expect(registry.get('session-2')).toBeUndefined()
   })
 
@@ -332,7 +423,27 @@ describe('NotebookSessionRegistry', () => {
     await expect(removal).rejects.toBe(teardownError)
     await expect(disposal).rejects.toBe(teardownError)
     expect(session.shutdownExecutor).toHaveBeenCalledTimes(1)
-    expect(registry.get('session-1')).toBe(session)
+    expect(session.releaseMcpRpcConnection).toHaveBeenCalledTimes(1)
+    expect(registry.get('session-1')).toBeUndefined()
+  })
+
+  it('does not repeat a release that already failed during removal before terminal disposal', async () => {
+    const registry = new NotebookSessionRegistry<TestSession>()
+    const releaseError = new Error('removal release failed')
+    const session = testSession('session-1')
+    vi.mocked(session.releaseMcpRpcConnection).mockImplementationOnce(() => {
+      throw releaseError
+    })
+    await registry.getOrCreate('session-1', async () => session)
+
+    const removal = registry.remove('session-1')
+    const disposal = registry.dispose()
+
+    await expect(removal).rejects.toBe(releaseError)
+    await expect(disposal).rejects.toBe(releaseError)
+    expect(session.shutdownExecutor).toHaveBeenCalledTimes(1)
+    expect(session.releaseMcpRpcConnection).toHaveBeenCalledTimes(1)
+    expect(registry.get('session-1')).toBeUndefined()
   })
 
   it('adopts an earlier global shutdown as terminal cleanup without retrying failures', async () => {

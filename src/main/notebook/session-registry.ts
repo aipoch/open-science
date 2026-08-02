@@ -13,6 +13,12 @@ type AdmissionGate = {
   release: () => void
 }
 
+type RemovalOperation = {
+  promise: Promise<{ reaped: boolean }>
+  releaseAttempted: boolean
+  failureStage?: number
+}
+
 const admissionGate = (): AdmissionGate => {
   let release!: () => void
   const promise = new Promise<void>((resolve) => {
@@ -25,7 +31,7 @@ export class NotebookSessionRegistry<Session extends NotebookSessionRegistryMemb
   private readonly sessions = new Map<string, Session>()
   private readonly creations = new Map<string, Promise<Session>>()
   private readonly removalGates = new Map<string, AdmissionGate>()
-  private readonly removals = new Map<string, Promise<{ reaped: boolean }>>()
+  private readonly removals = new Map<string, RemovalOperation>()
   private globalGate: AdmissionGate | undefined
   private shutdownPromise: Promise<{ reaped: boolean }> | undefined
   private terminal = false
@@ -77,17 +83,21 @@ export class NotebookSessionRegistry<Session extends NotebookSessionRegistryMemb
     if (globalGate) return globalGate.promise.then(() => this.remove(sessionId))
 
     const existing = this.removals.get(sessionId)
-    if (existing) return existing
+    if (existing) return existing.promise
 
     const gate = admissionGate()
     this.removalGates.set(sessionId, gate)
-    const removal = this.removeWithinGate(sessionId, gate)
-    this.removals.set(sessionId, removal)
-    void removal.then(
-      () => this.clearRemoval(sessionId, removal),
-      () => this.clearRemoval(sessionId, removal)
+    const operation: RemovalOperation = {
+      promise: Promise.resolve({ reaped: true }),
+      releaseAttempted: false
+    }
+    operation.promise = this.removeWithinGate(sessionId, gate, operation)
+    this.removals.set(sessionId, operation)
+    void operation.promise.then(
+      () => this.clearRemoval(sessionId, operation),
+      () => this.clearRemoval(sessionId, operation)
     )
-    return removal
+    return operation.promise
   }
 
   shutdownAll(): Promise<{ reaped: boolean }> {
@@ -117,25 +127,27 @@ export class NotebookSessionRegistry<Session extends NotebookSessionRegistryMemb
   private async disposePermanently(): Promise<{ reaped: boolean }> {
     const shutdown = this.shutdownPromise
     if (shutdown) return shutdown
-    return this.teardownOwnedSessions()
+    return this.teardownOwnedSessions(true)
   }
 
   private async shutdownWithinGate(gate: AdmissionGate): Promise<{ reaped: boolean }> {
     try {
-      return await this.teardownOwnedSessions()
+      return await this.teardownOwnedSessions(false)
     } finally {
       if (this.globalGate === gate) this.globalGate = undefined
       gate.release()
     }
   }
 
-  private async teardownOwnedSessions(): Promise<{ reaped: boolean }> {
+  private async teardownOwnedSessions(terminalCleanup: boolean): Promise<{ reaped: boolean }> {
     // Global gates are acquired before per-ID gates. A teardown already owned by remove() counts
     // toward this operation, but is never retried, so colliding lifecycle calls release resources once.
     const removals = Array.from(this.removals.entries()).sort(([left], [right]) =>
       left.localeCompare(right)
     )
-    const removalOutcomes = await Promise.allSettled(removals.map(([, removal]) => removal))
+    const removalOutcomes = await Promise.allSettled(
+      removals.map(([, operation]) => operation.promise)
+    )
     await this.options.beforeTeardown?.()
     await Promise.allSettled(Array.from(this.creations.values()))
     const removalIds = new Set(removals.map(([sessionId]) => sessionId))
@@ -143,15 +155,34 @@ export class NotebookSessionRegistry<Session extends NotebookSessionRegistryMemb
       .filter(([sessionId]) => !removalIds.has(sessionId))
       .sort(([left], [right]) => left.localeCompare(right))
     const outcomes = await Promise.allSettled(
-      sessions.map(([, session]) => session.shutdownExecutor())
+      sessions.map(([, session]) => Promise.resolve().then(() => session.shutdownExecutor()))
     )
-    const failures: Array<{ sessionId: string; reason: unknown }> = []
+    const failures: Array<{ sessionId: string; stage: number; reason: unknown }> = []
     let reaped = true
+    const terminal = terminalCleanup || this.terminal
 
     removalOutcomes.forEach((outcome, index) => {
-      const [sessionId] = removals[index]
+      const [sessionId, operation] = removals[index]
       if (outcome.status === 'rejected') {
-        failures.push({ sessionId, reason: outcome.reason })
+        failures.push({
+          sessionId,
+          stage: operation.failureStage ?? 0,
+          reason: outcome.reason
+        })
+        if (terminal) {
+          const session = this.sessions.get(sessionId)
+          if (session && !operation.releaseAttempted) {
+            operation.releaseAttempted = true
+            try {
+              session.releaseMcpRpcConnection()
+            } catch (error) {
+              failures.push({ sessionId, stage: 1, reason: error })
+            }
+          }
+          if (session && this.sessions.get(sessionId) === session) {
+            this.sessions.delete(sessionId)
+          }
+        }
         return
       }
       reaped &&= outcome.value.reaped
@@ -160,18 +191,30 @@ export class NotebookSessionRegistry<Session extends NotebookSessionRegistryMemb
     outcomes.forEach((outcome, index) => {
       const [sessionId, session] = sessions[index]
       if (outcome.status === 'rejected') {
-        failures.push({ sessionId, reason: outcome.reason })
-        return
+        failures.push({ sessionId, stage: 0, reason: outcome.reason })
+      } else {
+        reaped &&= outcome.value.reaped
       }
 
-      reaped &&= outcome.value.reaped
-      session.releaseMcpRpcConnection()
-      if (this.sessions.get(sessionId) === session) this.sessions.delete(sessionId)
+      if (outcome.status === 'fulfilled' || terminal) {
+        let released = false
+        try {
+          session.releaseMcpRpcConnection()
+          released = true
+        } catch (error) {
+          failures.push({ sessionId, stage: 1, reason: error })
+        }
+        if ((released || terminal) && this.sessions.get(sessionId) === session) {
+          this.sessions.delete(sessionId)
+        }
+      }
     })
 
     this.throwFailures(
       failures
-        .sort((left, right) => left.sessionId.localeCompare(right.sessionId))
+        .sort(
+          (left, right) => left.sessionId.localeCompare(right.sessionId) || left.stage - right.stage
+        )
         .map(({ reason }) => reason)
     )
     return { reaped }
@@ -179,15 +222,28 @@ export class NotebookSessionRegistry<Session extends NotebookSessionRegistryMemb
 
   private async removeWithinGate(
     sessionId: string,
-    gate: AdmissionGate
+    gate: AdmissionGate,
+    operation: RemovalOperation
   ): Promise<{ reaped: boolean }> {
     try {
       await this.creations.get(sessionId)?.catch(() => undefined)
       const session = this.sessions.get(sessionId)
       if (!session) return { reaped: true }
 
-      const result = await session.shutdownExecutor()
-      session.releaseMcpRpcConnection()
+      let result: { reaped: boolean }
+      try {
+        result = await Promise.resolve().then(() => session.shutdownExecutor())
+      } catch (error) {
+        operation.failureStage = 0
+        throw error
+      }
+      operation.releaseAttempted = true
+      try {
+        session.releaseMcpRpcConnection()
+      } catch (error) {
+        operation.failureStage = 1
+        throw error
+      }
       if (this.sessions.get(sessionId) === session) this.sessions.delete(sessionId)
       return result
     } finally {
@@ -200,8 +256,8 @@ export class NotebookSessionRegistry<Session extends NotebookSessionRegistryMemb
     if (this.creations.get(sessionId) === creation) this.creations.delete(sessionId)
   }
 
-  private clearRemoval(sessionId: string, removal: Promise<{ reaped: boolean }>): void {
-    if (this.removals.get(sessionId) === removal) this.removals.delete(sessionId)
+  private clearRemoval(sessionId: string, operation: RemovalOperation): void {
+    if (this.removals.get(sessionId) === operation) this.removals.delete(sessionId)
   }
 
   private clearShutdown(shutdown: Promise<{ reaped: boolean }>): void {
