@@ -186,6 +186,7 @@ const startFakeAgent = (
     rejectModeChange?: boolean
     newSessionError?: unknown
     onNewSession?: (context: { sessionId: string; index: number }) => Promise<void> | void
+    onResumeRequest?: (context: { sessionId: string; index: number }) => Promise<void> | void
     onResume?: (sessionId: string) => Promise<void> | void
     onSetMode?: (context: { sessionId: string; modeId: string }) => Promise<void> | void
     onClose?: (sessionId: string) => Promise<void> | void
@@ -231,6 +232,7 @@ const startFakeAgent = (
   const configChanges: Array<{ sessionId: string; configId: string; value: string | boolean }> = []
   const actions: string[] = []
   let sessionIndex = 0
+  let resumeIndex = 0
 
   acp
     .agent({ name: 'test-agent' })
@@ -275,6 +277,10 @@ const startFakeAgent = (
       }
     })
     .onRequest(acp.methods.agent.session.resume, async (ctx) => {
+      const index = resumeIndex
+      resumeIndex += 1
+      await options.onResumeRequest?.({ sessionId: ctx.params.sessionId, index })
+
       if (options.resumeNotFound) {
         throw acp.RequestError.resourceNotFound(ctx.params.sessionId)
       }
@@ -4331,7 +4337,7 @@ describe('ACP runtime session management', () => {
     }
   })
 
-  it('continues partial provisional route cleanup without replacing the startup error', async () => {
+  it('cleans partial provisional routes after a framework switch without replacing the startup error', async () => {
     const root = await createTemporaryRoot()
     const startupFailure = new Error('notebook capability setup failed')
     let unregisterAttempt = 0
@@ -4376,6 +4382,7 @@ describe('ACP runtime session management', () => {
         projectName: 'default-project',
         mcpEntryPath: '/app/out/main/index.js',
         getRpcConnection: async () => {
+          setRuntimeFramework(runtime, claudeCodeFramework)
           throw startupFailure
         }
       },
@@ -7887,6 +7894,7 @@ describe('ACP runtime session management', () => {
       const staleModeStarted = createDeferred()
       const releaseStaleMode = createDeferred()
       const capabilityReleases: ReturnType<typeof vi.fn>[] = []
+      const releaseSessionCapabilities = vi.fn()
       startFakeAgent(process, ['stale-provider', 'successor-provider'], {
         modes: createModes(['read-only', 'agent', 'agent-full-access'], 'agent'),
         onSetMode: async ({ modeId }) => {
@@ -7925,6 +7933,7 @@ describe('ACP runtime session management', () => {
         notebook: {
           projectName: 'default-project',
           mcpEntryPath: '/app/out/main/index.js',
+          releaseSessionCapabilities,
           getRpcConnection: async () => {
             const release = vi.fn()
             capabilityReleases.push(release)
@@ -7991,6 +8000,7 @@ describe('ACP runtime session management', () => {
         expect(capabilityReleases).toHaveLength(2)
         expect(capabilityReleases[0]).toHaveBeenCalledOnce()
         expect(capabilityReleases[1]).not.toHaveBeenCalled()
+        expect(releaseSessionCapabilities).not.toHaveBeenCalled()
       } finally {
         releaseStaleMode.resolve()
         await staleOutcome
@@ -8000,6 +8010,63 @@ describe('ACP runtime session management', () => {
       }
     }
   )
+
+  it('does not let a superseded failed resume revoke its same-id successor capability', async () => {
+    const sessionId = '123e4567-e89b-42d3-a456-426614174000'
+    const process = new FakeAgentProcess()
+    const staleResumeStarted = createDeferred()
+    const releaseStaleResume = createDeferred()
+    const releaseSessionCapabilities = vi.fn()
+    const fakeAgent = startFakeAgent(process, [], {
+      onResumeRequest: async ({ index }) => {
+        if (index !== 0) return
+        staleResumeStarted.resolve()
+        await releaseStaleResume.promise
+        throw acp.RequestError.resourceNotFound(sessionId)
+      }
+    })
+    const runtime = new AcpRuntime({
+      appVersion: '0.1.0',
+      defaultCwd: '/workspace',
+      spawnAgent: () => asAgentProcess(process),
+      notebook: {
+        projectName: 'default-project',
+        mcpEntryPath: '/app/out/main/index.js',
+        getRpcConnection: async () => ({
+          endpoint: 'http://127.0.0.1:4567',
+          token: 'legacy-notebook-token'
+        }),
+        releaseSessionCapabilities
+      }
+    })
+    await runtime.connect({ cwd: '/workspace' })
+
+    const stale = runtime.resumeSession({ sessionId, cwd: '/workspace' })
+    const staleOutcome = stale.then(
+      (value) => ({ value, error: undefined }),
+      (error: unknown) => ({ value: undefined, error })
+    )
+    await staleResumeStarted.promise
+    ;(
+      runtime as unknown as { invalidatePendingSessionStartups: () => void }
+    ).invalidatePendingSessionStartups()
+    const successor = await runtime.resumeSession({ sessionId, cwd: '/workspace' })
+
+    try {
+      releaseStaleResume.resolve()
+      const outcome = await staleOutcome
+      expect(outcome.error).toMatchObject({ message: 'ACP session startup was superseded.' })
+      expect(successor).toMatchObject({ sessionId })
+      expect(fakeAgent.newSessions).toHaveLength(0)
+      expect(fakeAgent.resumedSessions).toHaveLength(1)
+      expect(releaseSessionCapabilities).not.toHaveBeenCalled()
+      expect(runtime.getSnapshot().sessionIds).toEqual([sessionId])
+    } finally {
+      releaseStaleResume.resolve()
+      await staleOutcome
+      await runtime.deleteSession({ sessionId })
+    }
+  })
 
   it('reserves a known resumed app id before provider attach completes', async () => {
     const sessionId = '123e4567-e89b-42d3-a456-426614174000'
@@ -14934,6 +15001,41 @@ describe('ACP runtime — session-creation and spawn diagnostics', () => {
 
     await expect(runtime.createSession({ cwd: '/workspace' })).rejects.toBe(failure)
 
+    expect(releaseSessionCapabilities).toHaveBeenCalledOnce()
+    expect(releaseSessionCapabilities).toHaveBeenCalledWith(
+      expect.stringMatching(/^notebook-session-/)
+    )
+  })
+
+  it('releases owned session metadata after its exact provisional capability fails to publish', async () => {
+    const process = new FakeAgentProcess()
+    startFakeAgent(process, ['perm-fail-session'])
+    const release = vi.fn()
+    const releaseSessionCapabilities = vi.fn()
+    const runtime = new AcpRuntime({
+      appVersion: '0.1.0',
+      defaultCwd: '/workspace',
+      spawnAgent: () => asAgentProcess(process),
+      notebook: {
+        projectName: 'default-project',
+        mcpEntryPath: '/app/out/main/index.js',
+        getRpcConnection: async () => ({
+          endpoint: 'http://127.0.0.1:4567',
+          token: 'secret-token',
+          release
+        }),
+        releaseSessionCapabilities
+      }
+    })
+    const failure = new Error('permission setup failed')
+    vi.spyOn(
+      runtime as unknown as { configurePermissionProfile: () => Promise<void> },
+      'configurePermissionProfile'
+    ).mockRejectedValueOnce(failure)
+
+    await expect(runtime.createSession({ cwd: '/workspace' })).rejects.toBe(failure)
+
+    expect(release).toHaveBeenCalledOnce()
     expect(releaseSessionCapabilities).toHaveBeenCalledOnce()
     expect(releaseSessionCapabilities).toHaveBeenCalledWith(
       expect.stringMatching(/^notebook-session-/)

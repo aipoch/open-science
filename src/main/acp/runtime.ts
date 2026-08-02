@@ -1518,6 +1518,7 @@ class AcpRuntime {
     let releaseProvisionalNotebookConnection: (() => void) | undefined
     let primaryIdentityReservation: PrimarySessionIdentityReservation | undefined
     let provisionalSession: ActiveSession | undefined
+    let provisionalHttpMcpRoutes = false
     try {
       log.info('createSession: starting', this.diagnosticContext())
       const sessionCwd = resolve(request.cwd || this.snapshotOwner.cwd || this.options.defaultCwd)
@@ -1559,6 +1560,7 @@ class AcpRuntime {
       }
 
       log.info('createSession: createMcpServers', this.diagnosticContext())
+      provisionalHttpMcpRoutes = !this.framework.acceptsStdioMcp
       const mcpServers = await this.createMcpServers({
         artifactSessionId,
         notebookSessionId,
@@ -1716,11 +1718,14 @@ class AcpRuntime {
           'primary startup session disposal failed'
         )
       }
-      this.unregisterProvisionalHttpMcpRoutes([
-        provisionalArtifactSessionId,
-        provisionalNotebookSessionId,
-        provisionalSkillImportSessionId
-      ])
+      this.unregisterProvisionalHttpMcpRoutes(
+        [
+          provisionalArtifactSessionId,
+          provisionalNotebookSessionId,
+          provisionalSkillImportSessionId
+        ],
+        provisionalHttpMcpRoutes
+      )
       this.releaseProvisionalNotebookCapability(
         provisionalNotebookSessionId,
         releaseProvisionalNotebookConnection,
@@ -2281,9 +2286,11 @@ class AcpRuntime {
     let notebookCapabilityProvisional = Boolean(this.notebookOptions)
     let releaseProvisionalNotebookConnection: (() => void) | undefined
     let session: ActiveSession | undefined
+    let provisionalHttpMcpRoutes = false
     try {
       // Resumed sessions already have stable ids, so the artifact session mirrors the runtime session
       // id.
+      provisionalHttpMcpRoutes = !this.framework.acceptsStdioMcp
       const mcpServers = await this.createMcpServers({
         artifactSessionId: request.sessionId,
         notebookSessionId: request.sessionId,
@@ -2310,6 +2317,24 @@ class AcpRuntime {
         })
       } catch (error) {
         if (!isUnresumableSessionError(error)) throw error
+
+        // The failed resume crossed a network await. If teardown replaced this startup meanwhile,
+        // release only its concrete bearer lease and stop: broad app-id cleanup or fresh adoption
+        // could otherwise revoke or overwrite the same-id successor.
+        try {
+          this.assertPrimarySessionIdentityReservation(primaryIdentityReservation)
+        } catch (supersededError) {
+          if (notebookCapabilityProvisional) {
+            this.releaseProvisionalNotebookCapability(
+              request.sessionId,
+              releaseProvisionalNotebookConnection,
+              false
+            )
+            notebookCapabilityProvisional = false
+            releaseProvisionalNotebookConnection = undefined
+          }
+          throw supersededError
+        }
 
         // The agent could not resume this session (an app restart spawned a fresh agent process that no
         // longer holds it — surfacing as -32002 not-found or a generic -32603 Internal error). Revoke
@@ -2430,7 +2455,7 @@ class AcpRuntime {
         ownsProvisionalHttpRoutes = false
       }
       if (ownsProvisionalHttpRoutes) {
-        this.unregisterProvisionalHttpMcpRoutes([request.sessionId])
+        this.unregisterProvisionalHttpMcpRoutes([request.sessionId], provisionalHttpMcpRoutes)
       }
       if (session) {
         this.disposeSessionAfterFailure(session, 'resumed startup session disposal failed')
@@ -2463,7 +2488,9 @@ class AcpRuntime {
     let notebookCapabilityProvisional = Boolean(this.notebookOptions)
     let releaseProvisionalNotebookConnection: (() => void) | undefined
     let adopted: ActiveSession | undefined
+    let provisionalHttpMcpRoutes = false
     try {
+      provisionalHttpMcpRoutes = !this.framework.acceptsStdioMcp
       const mcpServers = await this.createMcpServers({
         artifactSessionId: request.sessionId,
         notebookSessionId: request.sessionId,
@@ -2564,7 +2591,7 @@ class AcpRuntime {
         ownsProvisionalHttpRoutes = false
       }
       if (ownsProvisionalHttpRoutes) {
-        this.unregisterProvisionalHttpMcpRoutes([request.sessionId])
+        this.unregisterProvisionalHttpMcpRoutes([request.sessionId], provisionalHttpMcpRoutes)
       }
       if (adopted) {
         this.disposeSessionAfterFailure(adopted, 'adopted startup session disposal failed')
@@ -4847,8 +4874,11 @@ class AcpRuntime {
   // unregisterHttpMcpSession. Drop their direct HTTP-host registrations while the startup still owns
   // its identity. A superseded resume/adoption skips this cleanup because teardown already cleared the
   // old generation and the same routing id may now belong to its successor.
-  private unregisterProvisionalHttpMcpRoutes(routingIds: readonly (string | undefined)[]): void {
-    if (!this.mcpHttpHost || this.framework.acceptsStdioMcp) return
+  private unregisterProvisionalHttpMcpRoutes(
+    routingIds: readonly (string | undefined)[],
+    usedHttpTransport: boolean
+  ): void {
+    if (!this.mcpHttpHost || !usedHttpTransport) return
 
     for (const routingId of new Set(routingIds)) {
       if (!routingId) continue
