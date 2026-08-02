@@ -1,8 +1,8 @@
 import { spawn, type ChildProcess } from 'node:child_process'
 import { randomUUID } from 'node:crypto'
 import { existsSync, realpathSync } from 'node:fs'
-import { readFile, realpath, writeFile } from 'node:fs/promises'
-import { isAbsolute, join, relative, resolve, sep, win32 } from 'node:path'
+import { writeFile } from 'node:fs/promises'
+import { join, win32 } from 'node:path'
 
 import type {
   NotebookCell,
@@ -20,7 +20,6 @@ import type {
   NotebookKernelMetadata,
   NotebookLanguage,
   NotebookOutput,
-  NotebookRunDocument,
   NotebookRunRecord,
   NotebookRunSource,
   NotebookRunStatus,
@@ -31,7 +30,6 @@ import type {
   RunNotebookCellRequest,
   NotebookWorkingFile
 } from '../../shared/notebook'
-import { resolveDataKernelForTab } from '../../shared/notebook'
 import type {
   EnvironmentInfo,
   ManageEnvironmentsRequest,
@@ -39,12 +37,7 @@ import type {
   ProvisionProgress
 } from '../../shared/notebook-env'
 import type { PackageMirror } from '../../shared/mirror'
-import {
-  runDocumentToIpynbByKernel,
-  runDocumentToIpynbForKernel,
-  type NbformatOutput,
-  type ResolvedArtifact
-} from './ipynb-export'
+import { NotebookExportReader } from './export-reader'
 import { NotebookKernelExecutor, type NotebookKernelExecutorOptions } from './kernel-executor'
 import { saveIpynbAll } from './save-ipynb-all'
 import type { KernelProcessKind } from './kernel-executor'
@@ -390,110 +383,6 @@ const saveIpynbWithDialog = async (
 // the per-tab path (a single .ipynb) goes through `saveIpynbWithDialog` instead. The actual
 // orchestration (directory picker, conflict check, partial-write cleanup) lives in save-ipynb-all
 // so tests can exercise the real path with a mocked electron instead of bypassing via the seam.
-
-const isPathInside = (root: string, candidate: string): boolean => {
-  const relativePath = relative(resolve(root), resolve(candidate))
-  return (
-    relativePath !== '' &&
-    relativePath !== '..' &&
-    !relativePath.startsWith(`..${sep}`) &&
-    !isAbsolute(relativePath)
-  )
-}
-
-const artifactMimeData = async (
-  root: string,
-  artifact: NotebookRunRecord['artifacts'][number],
-  resolveManagedPath?: (request: {
-    path: string
-    projectName: string
-    sessionId: string
-  }) => Promise<string>
-): Promise<ResolvedArtifact | null> => {
-  const mimeType = artifact.mimeType
-  if (!mimeType) return null
-
-  let filePath: string | undefined
-  if (isPathInside(root, artifact.path)) {
-    // Lexical containment is not enough — a symlink inside the notebook root can point anywhere.
-    // Canonicalize both sides and require the real path to stay inside the real notebook root.
-    const [realRoot, realFilePath] = await Promise.all([realpath(root), realpath(artifact.path)])
-    if (!isPathInside(realRoot, realFilePath)) {
-      throw new Error(`Artifact escapes the notebook session root: ${artifact.name}`)
-    }
-    filePath = realFilePath
-  } else {
-    filePath = await resolveManagedPath?.({
-      path: artifact.path,
-      projectName: artifact.projectName,
-      sessionId: artifact.sessionId
-    })
-  }
-  if (!filePath) return null
-
-  const binary = await readFile(filePath)
-  // nbformat stores SVG as raw text; only binary images (png/jpeg/…) are base64-encoded.
-  if (mimeType === 'image/svg+xml') {
-    return { mimeType, data: binary.toString('utf8') }
-  }
-  if (mimeType.startsWith('image/')) {
-    return { mimeType, data: binary.toString('base64') }
-  }
-  if (mimeType === 'application/json') {
-    return { mimeType, data: JSON.parse(binary.toString('utf8')) as unknown }
-  }
-  if (mimeType.startsWith('text/')) {
-    return { mimeType, data: binary.toString('utf8') }
-  }
-  return null
-}
-
-// The IO phase of an ipynb export: resolves every run's artifacts into nbformat outputs up front,
-// so the projection itself (runDocumentToIpynb) is a pure function that never touches the
-// filesystem. Only artifacts belonging to this document are inlined; read/parse failures degrade
-// to a stderr marker output rather than aborting the export.
-const resolveNotebookArtifactOutputs = async (
-  document: NotebookRunDocument,
-  resolveManagedPath?: (request: {
-    path: string
-    projectName: string
-    sessionId: string
-  }) => Promise<string>
-): Promise<Map<string, NbformatOutput[]>> => {
-  const outputsByRun = new Map<string, NbformatOutput[]>()
-  const artifactSessionId = document.artifactSessionId ?? document.sessionId
-
-  for (const run of document.runs) {
-    if (run.artifacts.length === 0) continue
-
-    const outputs: NbformatOutput[] = []
-    for (const artifact of run.artifacts) {
-      try {
-        const belongsToDocument =
-          artifact.projectName === document.projectName && artifact.sessionId === artifactSessionId
-        const resolved = belongsToDocument
-          ? await artifactMimeData(document.notebookSessionRoot, artifact, resolveManagedPath)
-          : null
-        if (resolved) {
-          outputs.push({
-            output_type: 'display_data',
-            data: { [resolved.mimeType]: resolved.data },
-            metadata: {}
-          })
-        }
-      } catch {
-        outputs.push({
-          output_type: 'stream',
-          name: 'stderr',
-          text: [`[Open Science] Could not inline artifact: ${artifact.name}\n`]
-        })
-      }
-    }
-    outputsByRun.set(run.runId, outputs)
-  }
-
-  return outputsByRun
-}
 
 // Turns unexpected executor exceptions into ordinary run results for the agent to inspect.
 const errorToExecutionResult = (error: unknown, cwd: string): NotebookExecutionResult => {
@@ -884,6 +773,7 @@ const resolveDefaultExecutorOptions = (): NotebookKernelExecutorOptions => {
 // Coordinates notebook cells, shared interpreters, persisted run history, and UI notifications.
 class NotebookRuntimeService {
   private readonly repository: NotebookRunRepository
+  private readonly exportReader: NotebookExportReader
   private readonly runTerminalization: NotebookRunTerminalizationOwner
   private readonly sessions: NotebookSessionRegistry<RuntimeSession>
   private readonly announcedAgentSessionIds = new Set<string>()
@@ -921,6 +811,12 @@ class NotebookRuntimeService {
 
   constructor(private readonly options: NotebookRuntimeServiceOptions) {
     this.repository = options.repository ?? new NotebookRunRepository(options.dataRoot)
+    this.exportReader = new NotebookExportReader({
+      repository: this.repository,
+      defaultProjectName: options.projectName,
+      appVersion: options.appVersion,
+      resolveArtifactPath: options.resolveArtifactPath
+    })
     this.sessions = new NotebookSessionRegistry({
       beforeTeardown: async () => {
         await this.environmentOperations.waitForRevocationDrains().catch(() => undefined)
@@ -1968,33 +1864,8 @@ class NotebookRuntimeService {
   // file to come back as `kernelspec.name='ir'`, and a user on the repl tab gets the .ipynb
   // scoped to whichever data kernel was most recently active when repl ran.
   async exportIpynb(request: ExportNotebookKernelRequest): Promise<ExportNotebookResult> {
-    const projectName = request.projectName ?? this.options.projectName
-    const document = await this.repository.findExisting(projectName, request.sessionId)
-    if (!document) {
-      throw new Error(`Notebook session not found: ${request.sessionId}`)
-    }
-
-    const dataKernel = resolveDataKernelForTab(document.runs, request.kernel)
-    if (!dataKernel) {
-      // The session has no python/r runs at all — every run is a control-plane run, so there is no
-      // kernelspec we'd be honest about. Refuse rather than synthesize a phantom notebook.
-      throw new Error(
-        `No ${request.kernel === 'repl' || request.kernel === 'bash' ? 'data-kernel' : request.kernel} runs in this session. Run a Python or R cell first.`
-      )
-    }
-
-    const artifactOutputs = await resolveNotebookArtifactOutputs(
-      document,
-      this.options.resolveArtifactPath
-    )
-    const notebook = runDocumentToIpynbForKernel(document, dataKernel, {
-      appVersion: this.options.appVersion,
-      artifactOutputs
-    })
-    const suggestedName = `session-${request.sessionId.slice(0, 8)}-${dataKernel}.ipynb`
-    const serialized = `${JSON.stringify(notebook, null, 2)}\n`
-
-    return (this.options.saveIpynb ?? saveIpynbWithDialog)(suggestedName, serialized)
+    const file = await this.exportReader.readKernel(request)
+    return (this.options.saveIpynb ?? saveIpynbWithDialog)(file.name, file.data)
   }
 
   // The "Download all" path: writes one .ipynb per data kernel that has runs to a directory the
@@ -2002,36 +1873,7 @@ class NotebookRuntimeService {
   // data kernels — a single-kernel session's "Download all" would be a confusing duplicate of the
   // main button, so the renderer gates the secondary button on `kindsWithRuns.has('python') && has('r')`.
   async exportIpynbAll(request: ExportNotebookAllRequest): Promise<ExportNotebookAllResult> {
-    const projectName = request.projectName ?? this.options.projectName
-    const document = await this.repository.findExisting(projectName, request.sessionId)
-    if (!document) {
-      throw new Error(`Notebook session not found: ${request.sessionId}`)
-    }
-
-    const artifactOutputs = await resolveNotebookArtifactOutputs(
-      document,
-      this.options.resolveArtifactPath
-    )
-    const notebooks = runDocumentToIpynbByKernel(document, {
-      appVersion: this.options.appVersion,
-      artifactOutputs
-    })
-
-    const prefix = `session-${request.sessionId.slice(0, 8)}`
-    const files: Array<{ kernel: 'python' | 'r'; name: string; data: string }> = (
-      ['python', 'r'] as const
-    )
-      .filter((kernel) => notebooks[kernel] !== undefined)
-      .map((kernel) => ({
-        kernel,
-        name: `${prefix}-${kernel}.ipynb`,
-        data: `${JSON.stringify(notebooks[kernel], null, 2)}\n`
-      }))
-
-    if (files.length === 0) {
-      throw new Error('No data-kernel runs in this session. Run a Python or R cell first.')
-    }
-
+    const files = await this.exportReader.readAll(request)
     return (this.options.saveIpynbAll ?? saveIpynbAll)(files)
   }
 
