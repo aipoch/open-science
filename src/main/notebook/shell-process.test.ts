@@ -1,0 +1,190 @@
+import type { ChildProcess } from 'node:child_process'
+import { join } from 'node:path'
+
+import { describe, expect, it, vi } from 'vitest'
+
+import {
+  buildShellEnv,
+  normalizePowerShellStderr,
+  resolveShellInvocation,
+  runShellCommand,
+  terminateShellOnTimeout
+} from './runtime-service'
+
+describe('notebook shell process behavior', () => {
+  describe('invocation', () => {
+    it('uses a POSIX sh command on Unix platforms', () => {
+      expect(resolveShellInvocation('echo hi', 'linux')).toEqual({
+        executable: 'sh',
+        args: ['-c', 'echo hi']
+      })
+    })
+
+    it('uses an absolute non-interactive PowerShell command on Windows without relying on PATH', () => {
+      vi.stubEnv('SystemRoot', 'C:\\Windows')
+      const invocation = resolveShellInvocation('cp "source.png" "destination.png"', 'win32')
+
+      expect(invocation.executable).toBe(
+        'C:\\Windows\\System32\\WindowsPowerShell\\v1.0\\powershell.exe'
+      )
+      expect(invocation.args.slice(0, -1)).toEqual([
+        '-NoLogo',
+        '-NoProfile',
+        '-NonInteractive',
+        '-EncodedCommand'
+      ])
+
+      const script = Buffer.from(invocation.args.at(-1) ?? '', 'base64').toString('utf16le')
+      expect(script).toContain('[Console]::OutputEncoding = $openScienceUtf8')
+      expect(script).toContain('$OutputEncoding = $openScienceUtf8')
+      expect(script).toContain('$env:PSModulePath = $env:OPEN_SCIENCE_PSMODULEPATH')
+      expect(script).toContain(
+        'Import-Module "$PSHOME\\Modules\\Microsoft.PowerShell.Management\\Microsoft.PowerShell.Management.psd1" -ErrorAction Stop'
+      )
+      expect(script).toContain(
+        'Import-Module "$PSHOME\\Modules\\Microsoft.PowerShell.Utility\\Microsoft.PowerShell.Utility.psd1" -ErrorAction Stop'
+      )
+      expect(script).toContain(
+        "[System.Environment]::SetEnvironmentVariable('OPEN_SCIENCE_PSMODULEPATH', $null, [System.EnvironmentVariableTarget]::Process)"
+      )
+      expect(script).toContain("$ProgressPreference = 'SilentlyContinue'")
+      expect(script).toContain("$ErrorActionPreference = 'Stop'")
+      expect(script).toContain('catch {')
+      expect(script).toContain('[Console]::Error.WriteLine($_.ToString())')
+      const encodedCommand = script.match(/\$openScienceCommandBase64 = '([A-Za-z0-9+/=]+)'/)?.[1]
+      expect(Buffer.from(encodedCommand ?? '', 'base64').toString('utf8')).toBe(
+        'cp "source.png" "destination.png"'
+      )
+      expect(script).toContain('[ScriptBlock]::Create($openScienceCommandText)')
+      expect(script).toContain('& $openScienceCommand')
+      expect(script).toContain('$openScienceSucceeded = $?')
+      expect(script).toContain('exit $openScienceNativeExitCode')
+      expect(script).toMatch(/if \(\$openScienceSucceeded\) \{ exit 0 \}/)
+      expect(script.indexOf('exit $openScienceNativeExitCode')).toBeLessThan(
+        script.indexOf('if ($openScienceSucceeded) { exit 0 }')
+      )
+      expect(script).toMatch(/exit 1\s*$/)
+    })
+
+    it('isolates PowerShell command syntax from the exit-code wrapper', () => {
+      vi.stubEnv('SystemRoot', 'C:\\Windows')
+      const command = "Write-Output 'first'\n# keep this comment\nWrite-Output 'continued' `"
+      const invocation = resolveShellInvocation(command, 'win32')
+      const script = Buffer.from(invocation.args.at(-1) ?? '', 'base64').toString('utf16le')
+      const encodedCommand = script.match(/\$openScienceCommandBase64 = '([A-Za-z0-9+/=]+)'/)?.[1]
+
+      expect(script).not.toContain(command)
+      expect(encodedCommand).toBeDefined()
+      expect(Buffer.from(encodedCommand ?? '', 'base64').toString('utf8')).toBe(command)
+      expect(script).toContain('[ScriptBlock]::Create($openScienceCommandText)')
+      expect(script).toContain('& $openScienceCommand')
+    })
+  })
+
+  describe('Windows support', () => {
+    const completedProgressClixml =
+      '#< CLIXML\n' +
+      '<Objs Version="1.1.0.1" xmlns="http://schemas.microsoft.com/powershell/2004/04">' +
+      '<Obj S="progress" RefId="0"><TN RefId="0"><T>System.Management.Automation.PSCustomObject</T><T>System.Object</T></TN><MS><I64 N="SourceId">1</I64><PR N="Record"><AV>Preparing modules for first use.</AV><AI>0</AI><Nil /><PI>-1</PI><PC>-1</PC><T>Completed</T><SR>-1</SR><SD> </SD></PR></MS></Obj>' +
+      '<Obj S="progress" RefId="1"><TNRef RefId="0" /><MS><I64 N="SourceId">1</I64><PR N="Record"><AV>Preparing modules for first use.</AV><AI>0</AI><Nil /><PI>-1</PI><PC>-1</PC><T>Completed</T><SR>-1</SR><SD> </SD></PR></MS></Obj>' +
+      '</Objs>\n'
+
+    it('drops progress-only PowerShell CLIXML stderr records', () => {
+      expect(normalizePowerShellStderr(completedProgressClixml, 'win32')).toBe('')
+    })
+
+    it('preserves real stderr around benign PowerShell CLIXML progress records', () => {
+      expect(
+        normalizePowerShellStderr(
+          `real warning\n${completedProgressClixml}\nstill important\n`,
+          'win32'
+        )
+      ).toBe('real warning\nstill important\n')
+    })
+
+    it('preserves non-progress PowerShell CLIXML records', () => {
+      const errorClixml =
+        '#< CLIXML\n' +
+        '<Objs Version="1.1.0.1" xmlns="http://schemas.microsoft.com/powershell/2004/04">' +
+        '<Obj S="Error" RefId="0"><MS><S N="Message">boom</S></MS></Obj>' +
+        '</Objs>\n'
+
+      expect(normalizePowerShellStderr(errorClixml, 'win32')).toBe(errorClixml)
+    })
+
+    it('keeps Windows shell runtime variables while excluding host secrets', () => {
+      const env = buildShellEnv('/notebook/handoff', 'win32', {
+        PATH: 'C:\\Windows\\System32',
+        ProgramFiles: 'C:\\Program Files',
+        SystemRoot: 'C:\\Windows',
+        WINDIR: 'C:\\Windows',
+        ComSpec: 'C:\\Windows\\System32\\cmd.exe',
+        PATHEXT: '.COM;.EXE;.BAT;.CMD',
+        USERPROFILE: 'C:\\Users\\Ada',
+        PSModulePath: 'C:\\host\\third-party-modules',
+        OPEN_SCIENCE_PSMODULEPATH: 'C:\\host\\controlled-modules',
+        OPEN_SCIENCE_TEST_SECRET: 'must-not-leak'
+      })
+
+      expect(env).toMatchObject({
+        PATH: 'C:\\Windows\\System32',
+        SystemRoot: 'C:\\Windows',
+        WINDIR: 'C:\\Windows',
+        ComSpec: 'C:\\Windows\\System32\\cmd.exe',
+        PATHEXT: '.COM;.EXE;.BAT;.CMD',
+        USERPROFILE: 'C:\\Users\\Ada',
+        PSModulePath:
+          'C:\\Program Files\\WindowsPowerShell\\Modules;C:\\Windows\\System32\\WindowsPowerShell\\v1.0\\Modules',
+        OPEN_SCIENCE_PSMODULEPATH:
+          'C:\\Program Files\\WindowsPowerShell\\Modules;C:\\Windows\\System32\\WindowsPowerShell\\v1.0\\Modules',
+        OPEN_SCIENCE_HANDOFF_DIR: '/notebook/handoff'
+      })
+      expect(env.ProgramFiles).toBeUndefined()
+      expect(env.OPEN_SCIENCE_TEST_SECRET).toBeUndefined()
+    })
+
+    it('uses the Windows process-tree terminator for a timed-out shell command', () => {
+      const child = {} as ChildProcess
+      let finishTermination: ((result: { reaped: boolean }) => void) | undefined
+      const terminateTree = vi.fn(
+        () =>
+          new Promise<{ reaped: boolean }>((resolve) => {
+            finishTermination = resolve
+          })
+      )
+
+      const termination = terminateShellOnTimeout(child, 'win32', terminateTree)
+
+      expect(termination).toBeInstanceOf(Promise)
+      expect(terminateTree).toHaveBeenCalledWith(child)
+      finishTermination?.({ reaped: true })
+      return expect(termination).resolves.toBe(true)
+    })
+  })
+
+  describe.runIf(process.platform !== 'win32')('process results', () => {
+    const execute = (command: string, timeoutMs = 5_000) =>
+      runShellCommand({
+        command,
+        cwd: process.cwd(),
+        handoffDir: process.cwd(),
+        runtimeRoot: join(process.cwd(), '.open-science-test-runtime'),
+        platform: 'linux',
+        timeoutMs
+      })
+
+    it('preserves stdout, stderr, and a non-zero exit code as one ordinary result', async () => {
+      await expect(
+        execute("printf 'visible'; printf 'warning' >&2; exit 7")
+      ).resolves.toEqual({ stdout: 'visible', stderr: 'warning', exitCode: 7 })
+    })
+
+    it('classifies a timeout with a null exit code and appends its diagnostic after stderr', async () => {
+      await expect(execute("printf 'before timeout' >&2; sleep 5", 50)).resolves.toEqual({
+        stdout: '',
+        stderr: 'before timeout\nShell command timed out after 50ms and was killed.',
+        exitCode: null
+      })
+    })
+  })
+})
