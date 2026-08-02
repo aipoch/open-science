@@ -1283,6 +1283,67 @@ describe('ACP runtime migration write-gate', () => {
 })
 
 describe('ACP runtime session management', () => {
+  it('keeps the current primary capability set separate from reviewer-only authority', async () => {
+    const root = await createTemporaryRoot()
+    const process = new FakeAgentProcess()
+    const fakeAgent = startFakeAgent(process, ['primary-session', 'reviewer-session'])
+    const runtime = new AcpRuntime({
+      appVersion: '0.2.0',
+      defaultCwd: '/workspace',
+      spawnAgent: () => asAgentProcess(process),
+      artifacts: {
+        configRoot: root,
+        dataRoot: root,
+        projectName: 'default-project',
+        mcpEntryPath: '/app/out/main/index.js'
+      },
+      notebook: {
+        projectName: 'default-project',
+        mcpEntryPath: '/app/out/main/index.js',
+        getRpcConnection: async () => ({
+          endpoint: 'http://127.0.0.1:4567',
+          token: 'notebook-token'
+        })
+      },
+      skillImport: {
+        mcpEntryPath: '/app/out/main/index.js',
+        getRpcConnection: async () => ({
+          endpoint: 'http://127.0.0.1:4568',
+          token: 'skill-token'
+        })
+      }
+    })
+
+    const reviewerServer = {
+      type: 'http' as const,
+      name: 'open-science-reviewer',
+      url: 'http://127.0.0.1:1/mcp',
+      headers: []
+    }
+
+    try {
+      await runtime.createSession({ cwd: '/workspace' })
+      const reviewer = await runtime.buildReviewerSession({
+        cwd: '/workspace',
+        mcpServers: [reviewerServer]
+      })
+
+      expect(
+        fakeAgent.newSessions[0].mcpServers.map((server) => (server as { name: string }).name)
+      ).toEqual([
+        'open-science-artifacts',
+        'open-science-notebook',
+        'open-science-skills'
+      ])
+      expect(fakeAgent.newSessions[1].mcpServers).toEqual([reviewerServer])
+      expect(reviewer.role).toBe('reviewer')
+
+      await runtime.disposeReviewerSession(reviewer.session)
+    } finally {
+      await runtime.disconnect()
+    }
+  })
+
   it('omits activity-group declarations from main and reviewer sessions', async () => {
     const process = new FakeAgentProcess()
     const fakeAgent = startFakeAgent(process, ['main-session', 'reviewer-session'])
