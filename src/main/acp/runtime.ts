@@ -12,8 +12,8 @@ import type {
 } from '@agentclientprotocol/sdk'
 import type { ChildProcessWithoutNullStreams } from 'node:child_process'
 import { randomUUID } from 'node:crypto'
-import { mkdir, readFile, stat, writeFile } from 'node:fs/promises'
-import { dirname, join, resolve } from 'node:path'
+import { readFile, stat } from 'node:fs/promises'
+import { join, resolve } from 'node:path'
 import { Readable, Writable } from 'node:stream'
 import { pathToFileURL } from 'node:url'
 
@@ -94,9 +94,8 @@ import { ConversationPermissionGrantStore } from './permission-broker'
 import { isMcpToolName } from './permission-policy'
 import { AcpPermissionContext, HUMAN_PERMISSION_ACTION_ORIGIN } from './permission-context'
 import { applyCurrentModeUpdate } from './permission-profile-controller'
-import { type ArtifactRunContext } from '../artifacts/mcp-server'
 import { AgentMcpHttpHost } from './mcp-http-host'
-import { ArtifactRepository, getArtifactCurrentRunFilePath } from '../artifacts/repository'
+import { ArtifactRepository } from '../artifacts/repository'
 import { ArtifactRunRegistry } from '../artifacts/run-registry'
 import { NOTEBOOK_SYSTEM_PROMPT_APPEND, type NotebookRpcConnection } from '../notebook/mcp-server'
 import {
@@ -104,7 +103,6 @@ import {
   type SkillImportRpcConnection
 } from '../skills/mcp-server'
 import { isImportableSkillArchivePath } from '../skills/skill-archive-sniffer'
-import { getNotebookDataRoot, getNotebookSessionRoot } from '../notebook/repository'
 import { codexStorageDir, codexSubscriptionStorageDir } from '../agent-framework/codex'
 import { getAppClaudeConfigDir } from '../settings/provider-env'
 import type { ResponsesBridgeSkillCandidate } from '../settings/responses-bridge'
@@ -139,6 +137,7 @@ import {
   CURRENT_PRIMARY_SESSION_CAPABILITY_POLICY,
   type SessionCapabilityRoutingIds
 } from './session-capability-owner'
+import { ArtifactTurnOwner, type ArtifactTurnHandle } from './artifact-turn-owner'
 import {
   buildImageContentData,
   canInlineImageInSession,
@@ -284,25 +283,6 @@ type AcpRuntimeArtifactOptions = {
 
 type AcpRuntimeUploadOptions = {
   repository: UploadRepository
-}
-
-type ActiveArtifactRun = {
-  appSessionId: string
-  runId: string
-  artifactSessionId: string
-  currentRunFile: string
-  rootFrameId: string
-  agentFrameId: string
-  messageBranchId: string
-  messageBranchAncestry: string[]
-  messageAncestry: string[]
-  runtimeSegmentId: string
-  promptMessageId: string
-  agentName: string
-  rpcCapabilityToken?: string
-  writesClosed: boolean
-  inFlightAppWrites: Set<Promise<unknown>>
-  writeDrainPromise?: Promise<void>
 }
 
 type AcpRuntimeNotebookOptions = {
@@ -722,16 +702,10 @@ class AcpRuntime {
   private readonly skillImportOptions: AcpRuntimeSkillImportOptions | undefined
   private readonly artifactRepository: ArtifactRepository | undefined
   private readonly artifactRunRegistry: ArtifactRunRegistry | undefined
+  private readonly artifactTurns: ArtifactTurnOwner | undefined
   private readonly uploadRepository: UploadRepository | undefined
   private readonly fileReferenceResolver: FileReferenceResolver
   private readonly skillImportTurnTokens = new Map<string, string>()
-  private artifactRunSequence = 0
-  private readonly runtimeInstanceId = randomUUID()
-  // The in-flight artifact run keyed by app session id, so app-side tools (e.g. molecule preview)
-  // attach a generated file to the run of the session that triggered the call. Parallel sessions each
-  // keep their own entry — a single global field would let one session's turn capture another's write.
-  // An entry is set while that session's prompt is active and cleared in the prompt's finally.
-  private readonly activeArtifactRuns = new Map<string, ActiveArtifactRun>()
 
   // Wires runtime dependencies and forwards permission prompts into the event stream.
   constructor(private readonly options: AcpRuntimeOptions) {
@@ -762,6 +736,25 @@ class AcpRuntime {
     this.artifactRunRegistry = options.artifacts
       ? (options.artifacts.runRegistry ?? new ArtifactRunRegistry())
       : undefined
+    this.artifactTurns =
+      options.artifacts && this.artifactRepository && this.artifactRunRegistry
+        ? new ArtifactTurnOwner({
+            dataRoot: options.artifacts.dataRoot,
+            repository: this.artifactRepository,
+            runRegistry: this.artifactRunRegistry,
+            issueRpcCapability: options.artifacts.issueRpcCapability,
+            revokeRpcCapability: options.artifacts.revokeRpcCapability,
+            provenance: options.artifacts.provenance,
+            ...(options.notebook
+              ? {
+                  notebook: {
+                    setArtifactProvenanceContext:
+                      options.notebook.setArtifactProvenanceContext
+                  }
+                }
+              : {})
+          })
+        : undefined
     this.uploadRepository = options.uploads?.repository
     this.fileReferenceResolver = createManagedFileReferenceResolver({
       uploads: this.uploadRepository,
@@ -986,7 +979,7 @@ class AcpRuntime {
   // handoff, which survives a crash). The artifact orphan scan uses this to exclude files a running
   // turn is still writing, while a crashed run — absent here — correctly surfaces as orphaned.
   getActiveArtifactRunIds(): string[] {
-    return Array.from(this.activeArtifactRuns.values(), (run) => run.runId)
+    return this.artifactTurns?.activeRunIds() ?? []
   }
 
   // Resolves an application profile against per-session ACP capabilities and applies the real Agent
@@ -3342,7 +3335,7 @@ class AcpRuntime {
       sessionId: request.sessionId,
       textLength: request.text?.length ?? 0
     })
-    let artifactRun: ActiveArtifactRun | undefined
+    let artifactRun: ArtifactTurnHandle | undefined
     let artifactEmitted = false
     let skillActivityInputs: Array<{ name: string; path: string }> = []
     let skillActivitiesStarted = false
@@ -3354,11 +3347,6 @@ class AcpRuntime {
     try {
       // Create a fresh run context before prompting so MCP writes can be attributed to this turn.
       artifactRun = await this.activateArtifactRun(request.sessionId, request.provenanceContext)
-      if (artifactRun) {
-        this.activeArtifactRuns.set(request.sessionId, artifactRun)
-      } else {
-        this.activeArtifactRuns.delete(request.sessionId)
-      }
       let userMessageEmitted = false
       const emitUserMessage = (): void => {
         if (
@@ -3703,14 +3691,8 @@ class AcpRuntime {
           text: errorMessage(error)
         })
       }
-      // Only clear shared turn state if a newer turn hasn't taken over this app session id. An
-      // overflow-recovery replay reuses the id: after resetSessionContext releases this (failed) turn's
-      // lock and the renderer starts the replay, this stale finally must not delete the replay's in-flight
-      // lock (which would reopen same-session sends and misreport prompt-in-flight) or clear its active
-      // artifact run. Identity/token comparisons scope each clear to the turn that still owns the state.
-      if (artifactRun && this.activeArtifactRuns.get(request.sessionId) === artifactRun) {
-        this.activeArtifactRuns.delete(request.sessionId)
-      }
+      // ArtifactTurnOwner clears only the handle that still owns this Session. A superseded turn's
+      // delayed finally therefore cannot erase the replacement turn's handoff or active-run state.
       if (this.currentPromptTurnBySession.get(request.sessionId) === promptTurn) {
         const cancelTimer = this.cancelTimers.get(request.sessionId)
         if (cancelTimer) this.clearTimer(cancelTimer)
@@ -4164,7 +4146,7 @@ class AcpRuntime {
         appSessionId: sessionId,
         promptMessageId:
           request.provenanceContext?.promptMessageId ??
-          this.activeArtifactRuns.get(sessionId)?.promptMessageId ??
+          this.artifactTurns?.promptMessageIdFor(sessionId) ??
           `prompt-unbound-${sessionId}`,
         uploads: finalizedPromptUploads,
         references: referencedArtifacts
@@ -4744,172 +4726,26 @@ class AcpRuntime {
     )
   }
 
-  // Resolves the per-session handoff file that tells the MCP process which run is active.
-  private getArtifactCurrentRunFile(artifactSessionId: string, projectName: string): string {
-    if (!this.artifactOptions) {
-      throw new Error('Artifact storage is not configured.')
-    }
-
-    return getArtifactCurrentRunFilePath(
-      this.artifactOptions.dataRoot,
-      projectName,
-      artifactSessionId
-    )
-  }
-
   // Marks a new assistant turn as the active artifact run before the model can call the MCP tool.
   private async activateArtifactRun(
     sessionId: string,
     provenanceContext: AcpPromptRequest['provenanceContext']
-  ): Promise<ActiveArtifactRun | undefined> {
-    if (!this.artifactOptions || !this.artifactRepository) return undefined
+  ): Promise<ArtifactTurnHandle | undefined> {
+    if (!this.artifactTurns) return undefined
 
-    this.artifactRunSequence += 1
-    const artifactSessionId = this.sessionCapabilities.artifactRoutingIdFor(sessionId) ?? sessionId
-    const projectName = this.resolveSessionProjectName(sessionId)
-    const currentRunFile = this.getArtifactCurrentRunFile(artifactSessionId, projectName)
-    const runId = `artifact-run-${Date.now()}-${this.artifactRunSequence}`
-    const rootFrameId = provenanceContext?.rootFrameId ?? `root-frame-${sessionId}`
-    const messageBranchId = provenanceContext?.messageBranchId ?? `message-branch-${sessionId}`
-    const promptMessageId = provenanceContext?.promptMessageId ?? `prompt-${runId}`
-    // Imported/restored graphs may provide ancestor-only paths, while some legacy paths already
-    // include the active leaf. Canonicalize only the runtime-owned leaf: preserve every ancestor and
-    // keep repository validation strict for duplicates or unrelated ids elsewhere in the proof.
-    const messageBranchAncestry = [
-      ...(provenanceContext?.messageBranchAncestry ?? []).filter(
-        (branchId) => branchId !== messageBranchId
-      ),
-      messageBranchId
-    ]
-    const messageAncestry = [
-      ...(provenanceContext?.messageAncestry ?? []).filter(
-        (messageId) => messageId !== promptMessageId
-      ),
-      promptMessageId
-    ]
-    const artifactRun: ActiveArtifactRun = {
+    return this.artifactTurns.open({
       appSessionId: sessionId,
-      runId,
-      artifactSessionId,
-      currentRunFile,
-      rootFrameId,
-      agentFrameId: provenanceContext?.agentFrameId ?? rootFrameId,
-      messageBranchId,
-      messageBranchAncestry,
-      messageAncestry,
-      runtimeSegmentId:
-        provenanceContext?.runtimeSegmentId ?? `runtime-segment-${this.runtimeInstanceId}`,
-      promptMessageId,
+      artifactStorageSessionId:
+        this.sessionCapabilities.artifactRoutingIdFor(sessionId) ?? sessionId,
+      projectId: this.resolveSessionProjectName(sessionId),
       agentName: this.framework.displayName,
-      writesClosed: false,
-      inFlightAppWrites: new Set()
-    }
-    // Notebook kernels are keyed by the FINAL ACP session id (the notebook RPC layer rewrites the
-    // pre-start alias to it before touching disk). This handoff runs per turn with that final id, so
-    // it — not the session-creation env, which only had the alias — is the correct place to pin the
-    // kernel's data dir + session root for relative/bare artifact imports.
-    const runContext: ArtifactRunContext =
-      this.notebookOptions && this.artifactOptions
-        ? {
-            artifactRunId: artifactRun.runId,
-            appSessionId: sessionId,
-            rootFrameId: artifactRun.rootFrameId,
-            agentFrameId: artifactRun.agentFrameId,
-            messageBranchId: artifactRun.messageBranchId,
-            messageBranchAncestry: artifactRun.messageBranchAncestry,
-            messageAncestry: artifactRun.messageAncestry,
-            runtimeSegmentId: artifactRun.runtimeSegmentId,
-            promptMessageId: artifactRun.promptMessageId,
-            agentName: artifactRun.agentName,
-            notebookSessionId: sessionId,
-            notebookDataDir: getNotebookDataRoot(
-              this.artifactOptions.dataRoot,
-              projectName,
-              sessionId
-            ),
-            notebookSessionRoot: getNotebookSessionRoot(
-              this.artifactOptions.dataRoot,
-              projectName,
-              sessionId
-            )
-          }
-        : {
-            artifactRunId: artifactRun.runId,
-            appSessionId: sessionId,
-            rootFrameId: artifactRun.rootFrameId,
-            agentFrameId: artifactRun.agentFrameId,
-            messageBranchId: artifactRun.messageBranchId,
-            messageBranchAncestry: artifactRun.messageBranchAncestry,
-            messageAncestry: artifactRun.messageAncestry,
-            runtimeSegmentId: artifactRun.runtimeSegmentId,
-            promptMessageId: artifactRun.promptMessageId,
-            agentName: artifactRun.agentName
-          }
-
-    artifactRun.rpcCapabilityToken = this.artifactOptions.issueRpcCapability?.({
-      projectId: projectName,
-      appSessionId: sessionId,
-      artifactStorageSessionId: artifactSessionId,
-      artifactRunId: artifactRun.runId,
-      rootFrameId: artifactRun.rootFrameId,
-      agentFrameId: artifactRun.agentFrameId,
-      messageBranchId: artifactRun.messageBranchId,
-      messageBranchAncestry: artifactRun.messageBranchAncestry,
-      messageAncestry: artifactRun.messageAncestry,
-      runtimeSegmentId: artifactRun.runtimeSegmentId,
-      promptMessageId: artifactRun.promptMessageId,
-      agentName: artifactRun.agentName,
-      ...(this.notebookOptions ? { notebookSessionId: sessionId } : {}),
-      allowedMethods: ['artifactCreateVersion', 'artifactReplayVersion']
+      provenanceContext
     })
-    if (artifactRun.rpcCapabilityToken) {
-      runContext.rpcCapabilityToken = artifactRun.rpcCapabilityToken
-    }
-
-    try {
-      await mkdir(dirname(currentRunFile), { recursive: true })
-      await writeFile(currentRunFile, `${JSON.stringify(runContext)}\n`, 'utf8')
-      this.notebookOptions?.setArtifactProvenanceContext?.(sessionId, {
-        rootFrameId: artifactRun.rootFrameId,
-        agentFrameId: artifactRun.agentFrameId,
-        messageBranchId: artifactRun.messageBranchId,
-        runtimeSegmentId: artifactRun.runtimeSegmentId,
-        promptMessageId: artifactRun.promptMessageId
-      })
-
-      return artifactRun
-    } catch (error) {
-      if (artifactRun.rpcCapabilityToken) {
-        await this.artifactOptions.revokeRpcCapability?.(artifactRun.rpcCapabilityToken)
-      }
-      throw error
-    }
-  }
-
-  // Seals both Artifact write entrances synchronously, then drains operations that already crossed
-  // either entrance. Every emit/cleanup path shares this promise so repeated teardown cannot observe
-  // a partially drained run or bypass an earlier revoke.
-  private closeArtifactRunWrites(artifactRun: ActiveArtifactRun): Promise<void> {
-    if (artifactRun.writeDrainPromise) return artifactRun.writeDrainPromise
-
-    artifactRun.writesClosed = true
-    const rpcDrain = artifactRun.rpcCapabilityToken
-      ? Promise.resolve(this.artifactOptions?.revokeRpcCapability?.(artifactRun.rpcCapabilityToken))
-      : Promise.resolve()
-    artifactRun.writeDrainPromise = (async () => {
-      await rpcDrain
-      await Promise.allSettled([...artifactRun.inFlightAppWrites])
-    })()
-    return artifactRun.writeDrainPromise
   }
 
   // Clears the handoff file after the prompt so late MCP writes cannot attach to a completed turn.
-  private async clearArtifactRun(artifactRun: ActiveArtifactRun | undefined): Promise<void> {
-    if (!artifactRun) return
-
-    await this.closeArtifactRunWrites(artifactRun)
-    await writeFile(artifactRun.currentRunFile, `${JSON.stringify({})}\n`, 'utf8')
-    this.notebookOptions?.setArtifactProvenanceContext?.(artifactRun.appSessionId, undefined)
+  private async clearArtifactRun(artifactRun: ArtifactTurnHandle | undefined): Promise<void> {
+    if (artifactRun) await this.artifactTurns?.dispose(artifactRun)
   }
 
   // Writes an inline file into the in-flight turn's pending artifact run so it attaches to the resulting
@@ -4923,127 +4759,31 @@ class AcpRuntime {
       mimeType?: string
     }
   ): Promise<ArtifactFile> {
-    // Attribute the write to the run of the session that triggered it, resolved from the caller's
-    // session id — never a global "current" run, so a parallel session's in-flight turn cannot capture
-    // this file. Fail closed when the session has no active run.
-    const run = sessionId ? this.activeArtifactRuns.get(sessionId) : undefined
-    if (!run || run.writesClosed || !this.artifactRepository) {
+    if (!this.artifactTurns) {
       throw new Error('No active assistant turn to attach a generated file to.')
     }
-
-    const projectName = this.resolveSessionProjectName(sessionId)
-    const provenance = this.artifactOptions?.provenance
-    const write = provenance
-      ? provenance.writeAppGeneratedVersion({
-          projectId: projectName,
-          appSessionId: sessionId,
-          artifactStorageSessionId: run.artifactSessionId,
-          artifactRunId: run.runId,
-          rootFrameId: run.rootFrameId,
-          agentFrameId: run.agentFrameId,
-          messageBranchId: run.messageBranchId,
-          messageBranchAncestry: run.messageBranchAncestry,
-          messageAncestry: run.messageAncestry,
-          runtimeSegmentId: run.runtimeSegmentId,
-          promptMessageId: run.promptMessageId,
-          agentName: run.agentName,
-          filename: input.filename,
-          content: input.content,
-          contentType: input.mimeType
-        })
-      : this.artifactRepository.writePendingFile({
-          projectName,
-          sessionId: run.artifactSessionId,
-          runId: run.runId,
-          filename: input.filename,
-          mimeType: input.mimeType,
-          source: { kind: 'inline', content: input.content, encoding: 'utf8' }
-        })
-    run.inFlightAppWrites.add(write)
-    void write.then(
-      () => run.inFlightAppWrites.delete(write),
-      () => run.inFlightAppWrites.delete(write)
-    )
-    return write
+    return this.artifactTurns.writeForActiveTurn(sessionId, input)
   }
 
   // Publishes pending files as a claim event; the renderer later supplies the final message id.
   private async emitArtifactRunEvent(
     sessionId: string,
-    artifactRun: ActiveArtifactRun | undefined
+    artifactRun: ArtifactTurnHandle | undefined
   ): Promise<void> {
-    if (!artifactRun) return
-    await this.closeArtifactRunWrites(artifactRun)
-
-    if (!this.artifactOptions || !this.artifactRepository || !this.artifactRunRegistry) {
-      return
-    }
-
-    const sessionProjectName = this.resolveSessionProjectName(sessionId)
-    let artifacts: ArtifactFile[]
-    let artifactVersionIds: string[] | undefined
-    if (this.artifactOptions.provenance) {
-      const versions = await this.artifactOptions.provenance.listRunVersions({
-        projectId: sessionProjectName,
-        appSessionId: sessionId,
-        artifactRunId: artifactRun.runId
-      })
-      artifacts = versions
-      artifactVersionIds = versions.map((version) => version.versionId)
-    } else {
-      artifacts = await this.artifactRepository.listPendingRunFiles({
-        projectName: sessionProjectName,
-        sessionId: artifactRun.artifactSessionId,
-        runId: artifactRun.runId
-      })
-    }
-
-    if (artifacts.length === 0) return
-
-    // Commit the runtime's decision to publish this completed run before exposing an in-memory claim.
-    // If the process exits before the renderer supplies its terminal message id, startup recovery can
-    // still prove this handoff against the durable conversation graph. A run that crashes mid-turn
-    // never reaches this point and therefore cannot be mistaken for a completed handoff.
-    await this.artifactRepository.prepareRunFinalization({
-      projectName: sessionProjectName,
-      sourceSessionId: artifactRun.artifactSessionId,
-      sessionId,
-      runId: artifactRun.runId,
-      ...(artifactVersionIds ? { artifactVersionIds } : {}),
-      provenanceContext: {
-        rootFrameId: artifactRun.rootFrameId,
-        agentFrameId: artifactRun.agentFrameId,
-        messageBranchId: artifactRun.messageBranchId,
-        runtimeSegmentId: artifactRun.runtimeSegmentId,
-        promptMessageId: artifactRun.promptMessageId
-      }
-    })
-
-    const artifactClaimId = this.artifactRunRegistry.register({
-      projectName: sessionProjectName,
-      artifactSessionId: artifactRun.artifactSessionId,
-      sessionId,
-      runId: artifactRun.runId,
-      artifactVersionIds,
-      rootFrameId: artifactRun.rootFrameId,
-      agentFrameId: artifactRun.agentFrameId,
-      messageBranchId: artifactRun.messageBranchId,
-      messageBranchAncestry: artifactRun.messageBranchAncestry,
-      messageAncestry: artifactRun.messageAncestry,
-      runtimeSegmentId: artifactRun.runtimeSegmentId,
-      promptMessageId: artifactRun.promptMessageId
-    })
+    if (!artifactRun || !this.artifactTurns) return
+    const publication = await this.artifactTurns.finalize(artifactRun)
+    if (!publication) return
 
     this.pushEvent({
       kind: 'artifact',
       level: 'info',
       sessionId,
       title: 'Generated files',
-      runId: artifactRun.runId,
-      promptMessageId: artifactRun.promptMessageId,
-      artifactSessionId: artifactRun.artifactSessionId,
-      artifactClaimId,
-      artifacts
+      runId: publication.runId,
+      promptMessageId: publication.promptMessageId,
+      artifactSessionId: publication.artifactStorageSessionId,
+      artifactClaimId: publication.artifactClaimId,
+      artifacts: publication.artifacts
     })
   }
 
