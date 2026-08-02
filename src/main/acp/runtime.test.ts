@@ -764,8 +764,15 @@ const mcpServerNamesFor = (runtime: AcpRuntime, sessionId: string): readonly str
 const agentToAppSessionMap = (runtime: AcpRuntime): Map<string, string> =>
   (runtime as unknown as { agentToAppSessionId: Map<string, string> }).agentToAppSessionId
 
-const sessionFrameworksMap = (runtime: AcpRuntime): Map<string, string> =>
-  (runtime as unknown as { sessionFrameworks: Map<string, string> }).sessionFrameworks
+const activeSessionForTest = (
+  runtime: AcpRuntime,
+  sessionId: string
+): { dispose: () => void } | undefined =>
+  (
+    runtime as unknown as {
+      activeSessionFor: (sessionId: string) => { dispose: () => void } | undefined
+    }
+  ).activeSessionFor(sessionId)
 
 const contextUsageMap = (
   runtime: AcpRuntime
@@ -837,15 +844,18 @@ const pendingReviewerSessionIds = (runtime: AcpRuntime): Map<string, symbol> =>
 const pendingPrimarySessionIds = (runtime: AcpRuntime): Map<string, symbol> =>
   (runtime as unknown as { pendingPrimarySessionIds: Map<string, symbol> }).pendingPrimarySessionIds
 
-const sessionSpecialistIds = (runtime: AcpRuntime): Map<string, string> =>
-  (runtime as unknown as { sessionSpecialistIds: Map<string, string> }).sessionSpecialistIds
-
-const sessionSpecialistPrefixes = (runtime: AcpRuntime): Map<string, string> =>
-  (runtime as unknown as { sessionSpecialistPrefixes: Map<string, string> })
-    .sessionSpecialistPrefixes
-
-const appliedSessionModels = (runtime: AcpRuntime): Map<string, string> =>
-  (runtime as unknown as { appliedSessionModels: Map<string, string> }).appliedSessionModels
+const contextUsageSelectionForTest = (
+  runtime: AcpRuntime,
+  sessionId: string
+): { model?: string; contextWindow?: number } =>
+  (
+    runtime as unknown as {
+      contextUsageSelectionFor: (sessionId: string) => {
+        model?: string
+        contextWindow?: number
+      }
+    }
+  ).contextUsageSelectionFor(sessionId)
 
 const permissionContext = (runtime: AcpRuntime): AcpPermissionContext =>
   (runtime as unknown as { permissionContext: AcpPermissionContext }).permissionContext
@@ -1646,12 +1656,55 @@ describe('ACP runtime session management', () => {
       spawnAgent: () => asAgentProcess(process)
     })
 
-    await runtime.createSession({ cwd: '/workspace' })
+    const session = await runtime.createSession({ cwd: '/workspace', permissionProfile: 'ask' })
     process.stdout.end()
 
     await vi.waitFor(() => expect(runtime.getSnapshot().status).toBe('closed'))
     await vi.waitFor(() => expect(process.killed).toBe(true))
     expect(runtime.getSnapshot().sessionIds).toEqual([])
+    expect(runtime.getSnapshot().permissionProfiles[session.sessionId]?.selectedProfile).toBe('ask')
+    expect(runtime.getSessionFramework(session.sessionId)).toBe('claude-code')
+  })
+
+  it('publishes reattached sessions in their new attachment order', async () => {
+    const initialProcess = new FakeAgentProcess()
+    const resumedProcess = new FakeAgentProcess()
+    startFakeAgent(initialProcess, ['session-a', 'session-b'])
+    startFakeAgent(resumedProcess, [])
+    let spawnCount = 0
+    const runtime = new AcpRuntime({
+      appVersion: '0.2.0',
+      defaultCwd: '/workspace',
+      spawnAgent: () => asAgentProcess(spawnCount++ === 0 ? initialProcess : resumedProcess)
+    })
+
+    await runtime.createSession({ cwd: '/workspace' })
+    await runtime.createSession({ cwd: '/workspace' })
+    expect(runtime.getSnapshot().sessionIds).toEqual(['session-a', 'session-b'])
+
+    await runtime.disconnect()
+    await runtime.resumeSession({ sessionId: 'session-b', cwd: '/workspace' })
+    await runtime.resumeSession({ sessionId: 'session-a', cwd: '/workspace' })
+
+    expect(runtime.getSnapshot().sessionIds).toEqual(['session-b', 'session-a'])
+  })
+
+  it('moves a context-reset session to its new attachment order', async () => {
+    const process = new FakeAgentProcess()
+    startFakeAgent(process, ['session-a', 'session-b', 'replacement-a'])
+    const runtime = new AcpRuntime({
+      appVersion: '0.2.0',
+      defaultCwd: '/workspace',
+      spawnAgent: () => asAgentProcess(process)
+    })
+
+    await runtime.createSession({ cwd: '/workspace' })
+    await runtime.createSession({ cwd: '/workspace' })
+    expect(runtime.getSnapshot().sessionIds).toEqual(['session-a', 'session-b'])
+
+    await runtime.resetSessionContext({ sessionId: 'session-a', cwd: '/workspace' })
+
+    expect(runtime.getSnapshot().sessionIds).toEqual(['session-b', 'session-a'])
   })
 
   it('releases the backend lease exactly once after an unexpected protocol close', async () => {
@@ -6868,7 +6921,7 @@ describe('ACP runtime session management', () => {
       role: 'reviewer'
     })
     expect(mcpServerNamesFor(runtime, 'reviewer-session-1')).toEqual([])
-    expect(sessionFrameworksMap(runtime).has('reviewer-session-1')).toBe(false)
+    expect(runtime.getSessionFramework('reviewer-session-1')).toBeUndefined()
 
     // Drive a tool-call permission request through the reviewer session (auto-approved by the runtime).
     await session.prompt([{ type: 'text', text: 'review this turn' }])
@@ -6879,7 +6932,7 @@ describe('ACP runtime session management', () => {
     runtime.disposeReviewerSession(session)
     expect(reviewerOwnerProbe(runtime).contextFor('reviewer-session-1')).toBeUndefined()
     expect(mcpServerNamesFor(runtime, 'reviewer-session-1')).toEqual([])
-    expect(sessionFrameworksMap(runtime).has('reviewer-session-1')).toBe(false)
+    expect(runtime.getSessionFramework('reviewer-session-1')).toBeUndefined()
   })
 
   it('keeps reviewer ownership out of public primary state and capability hooks', async () => {
@@ -7376,9 +7429,7 @@ describe('ACP runtime session management', () => {
         }
       })
       const primary = await runtime.createSession({ cwd: '/workspace' })
-      const activePrimary = (
-        runtime as unknown as { sessions: Map<string, { dispose: () => void }> }
-      ).sessions.get(primary.sessionId)!
+      const activePrimary = activeSessionForTest(runtime, primary.sessionId)!
       const disposePrimary = activePrimary.dispose.bind(activePrimary)
       activePrimary.dispose = vi.fn(() => {
         throw new Error('primary disconnect dispose failed')
@@ -7804,9 +7855,7 @@ describe('ACP runtime session management', () => {
         }
       })
       const active = await runtime.createSession({ cwd: '/workspace' })
-      const activeSession = (
-        runtime as unknown as { sessions: Map<string, { dispose: () => void }> }
-      ).sessions.get(active.sessionId)!
+      const activeSession = activeSessionForTest(runtime, active.sessionId)!
       const disposeActive = activeSession.dispose.bind(activeSession)
       activeSession.dispose = vi.fn(() => {
         throw new Error('active primary disconnect dispose failed')
@@ -7859,7 +7908,7 @@ describe('ACP runtime session management', () => {
     const process = new FakeAgentProcess()
     const staleModeStarted = createDeferred()
     const releaseStaleMode = createDeferred()
-    startFakeAgent(process, ['shared-primary', 'shared-primary'], {
+    const fakeAgent = startFakeAgent(process, ['shared-primary', 'shared-primary'], {
       modes: createModes(['read-only', 'agent', 'agent-full-access'], 'agent'),
       onSetMode: async ({ modeId }) => {
         if (modeId === 'agent-full-access') {
@@ -7909,8 +7958,9 @@ describe('ACP runtime session management', () => {
         effectiveProfile: 'ask',
         currentModeId: 'read-only'
       })
-      expect(sessionSpecialistIds(runtime).has('shared-primary')).toBe(false)
-      expect(sessionSpecialistPrefixes(runtime).has('shared-primary')).toBe(false)
+      await runtime.sendPrompt({ sessionId: 'shared-primary', text: 'successor turn' })
+      expect(fakeAgent.prompts.at(-1)?.text).toContain('successor turn')
+      expect(fakeAgent.prompts.at(-1)?.text).not.toContain('stale-specialist prefix')
     } finally {
       releaseStaleMode.resolve()
       await stale.catch(() => undefined)
@@ -8042,11 +8092,11 @@ describe('ACP runtime session management', () => {
       await expect(runtime.disconnect()).rejects.toThrow('disconnect teardown failed')
       ;(runtime as unknown as { pendingSessionModel?: string }).pendingSessionModel = 'model-new'
       successor = await runtime.createSession({ cwd: '/workspace' })
-      expect(appliedSessionModels(runtime).get('shared-primary')).toBe('model-new')
+      expect(contextUsageSelectionForTest(runtime, 'shared-primary').model).toBe('model-new')
 
       releaseStaleModel.resolve()
       await expect(stale).rejects.toThrow('ACP session startup was superseded.')
-      expect(appliedSessionModels(runtime).get('shared-primary')).toBe('model-new')
+      expect(contextUsageSelectionForTest(runtime, 'shared-primary').model).toBe('model-new')
     } finally {
       releaseStaleModel.resolve()
       await stale.catch(() => undefined)
@@ -8245,9 +8295,7 @@ describe('ACP runtime session management', () => {
       }
     })
     const active = await runtime.createSession({ cwd: '/workspace' })
-    const activeSession = (
-      runtime as unknown as { sessions: Map<string, { dispose: () => void }> }
-    ).sessions.get(active.sessionId)!
+    const activeSession = activeSessionForTest(runtime, active.sessionId)!
     const disposeActive = activeSession.dispose.bind(activeSession)
     activeSession.dispose = vi.fn(() => {
       throw new Error('active primary dispose failed')
@@ -8515,7 +8563,7 @@ describe('ACP runtime session management', () => {
       const releaseStaleMode = createDeferred()
       const capabilityReleases: ReturnType<typeof vi.fn>[] = []
       const releaseSessionCapabilities = vi.fn()
-      startFakeAgent(process, ['stale-provider', 'successor-provider'], {
+      const fakeAgent = startFakeAgent(process, ['stale-provider', 'successor-provider'], {
         modes: createModes(['read-only', 'agent', 'agent-full-access'], 'agent'),
         onSetMode: async ({ modeId }) => {
           if (modeId === 'agent-full-access') {
@@ -8611,8 +8659,9 @@ describe('ACP runtime session management', () => {
           effectiveProfile: 'ask',
           currentModeId: 'read-only'
         })
-        expect(sessionSpecialistIds(runtime).has(sessionId)).toBe(false)
-        expect(sessionSpecialistPrefixes(runtime).has(sessionId)).toBe(false)
+        await runtime.sendPrompt({ sessionId, text: 'successor turn' })
+        expect(fakeAgent.prompts.at(-1)?.text).toContain('successor turn')
+        expect(fakeAgent.prompts.at(-1)?.text).not.toContain('stale-specialist prefix')
         expect(runtime.getSnapshot().sessionIds).toEqual([sessionId])
         expect(
           (runtime as unknown as { mcpHttpHost: AgentMcpHttpHost }).mcpHttpHost.unregister
@@ -15114,7 +15163,7 @@ describe('ACP runtime Codex Skill activity projection', () => {
         env: NodeJS.ProcessEnv
       }) => void
       handleSessionUpdate: (notification: SessionNotification) => void
-      sessions: Map<string, { sessionId: string }>
+      activeSessionFor: (sessionId: string) => { sessionId: string } | undefined
     }
     internal.applyResolvedBackend({
       framework: codexFramework,
@@ -15122,7 +15171,7 @@ describe('ACP runtime Codex Skill activity projection', () => {
       executablePath: '/data/codex-acp',
       env: { CODEX_HOME: codexHome }
     })
-    internal.sessions.set('session-1', { sessionId: 'session-1' })
+    vi.spyOn(internal, 'activeSessionFor').mockReturnValue({ sessionId: 'session-1' })
 
     internal.handleSessionUpdate({
       sessionId: 'session-1',
