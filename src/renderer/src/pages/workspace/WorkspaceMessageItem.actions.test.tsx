@@ -150,6 +150,13 @@ describe('WorkspaceMessageItem user message actions', () => {
     expect(transcriptRow?.classList.contains('md:px-6')).toBe(true)
   })
 
+  it('measures the user bubble against the full transcript width', async () => {
+    await renderItem(createMessage())
+
+    const bubbleRow = container.querySelector<HTMLElement>('[data-slot="user-bubble-row"]')
+    expect(bubbleRow?.classList.contains('w-full')).toBe(true)
+  })
+
   it('renders copy and edit actions next to user bubbles only', async () => {
     await renderItem(createMessage())
 

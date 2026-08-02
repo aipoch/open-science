@@ -785,7 +785,7 @@ const WorkspaceMessageItem = ({
             <div className="group flex flex-col items-end">
               <div
                 data-slot="user-bubble-row"
-                className="flex max-w-full items-center justify-end gap-1"
+                className="flex w-full max-w-full items-center justify-end gap-1"
               >
                 {/* Branch/copy/edit controls stay left of the bubble and never shift its sent time. */}
                 {showUserActions ? (
