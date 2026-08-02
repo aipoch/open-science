@@ -283,6 +283,10 @@ export type ReviewerSessionDisposition = {
 
 type PrimarySessionIdentityReservation = {
   generation: number
+  // A startup that begins without a usable connection (or behind an already-armed reconnect barrier)
+  // may cross the connection setup's expected invalidation exactly once. An explicit teardown that
+  // starts after a live-session reset receives no such permit and cannot adopt a later successor.
+  mayRenewAfterConnectionSetup: boolean
   token: symbol
   sessionIds: Set<string>
 }
@@ -1848,9 +1852,8 @@ class AcpRuntime {
   ): Promise<AcpCreateSessionResponse> {
     const sessionCwd = resolve(request.cwd || this.snapshotOwner.cwd || this.options.defaultCwd)
     const projectName = this.normalizeProjectName(request.projectName)
-    const publishedAppSessionId = this.sessions.has(request.sessionId)
-      ? request.sessionId
-      : undefined
+    const publishedSession = this.sessions.get(request.sessionId)
+    const publishedAppSessionId = publishedSession ? request.sessionId : undefined
     const reservationResult = this.reservePrimarySessionIds(
       undefined,
       [request.sessionId],
@@ -1864,7 +1867,8 @@ class AcpRuntime {
         request,
         sessionCwd,
         projectName,
-        reservation
+        reservation,
+        publishedSession
       )
     } finally {
       this.releasePrimarySessionIdentityReservation(reservation)
@@ -1875,12 +1879,24 @@ class AcpRuntime {
     request: AcpResumeSessionRequest,
     sessionCwd: string,
     projectName: string,
-    primaryIdentityReservation: PrimarySessionIdentityReservation
+    primaryIdentityReservation: PrimarySessionIdentityReservation,
+    publishedSession: ActiveSession | undefined
   ): Promise<AcpCreateSessionResponse> {
     const connection = await this.ensureConnected(sessionCwd)
+    const currentPublishedSession = this.sessions.get(request.sessionId)
+    const reconnectReplacedPublishedSession =
+      publishedSession !== undefined &&
+      currentPublishedSession === undefined &&
+      primaryIdentityReservation.generation !== this.sessionStartupGeneration &&
+      primaryIdentityReservation.mayRenewAfterConnectionSetup
+    if (currentPublishedSession !== publishedSession && !reconnectReplacedPublishedSession) {
+      throw new Error('ACP session startup was superseded.')
+    }
     this.renewPrimarySessionIdentityReservation(
       primaryIdentityReservation,
-      this.sessions.has(request.sessionId) ? request.sessionId : undefined
+      currentPublishedSession === publishedSession && currentPublishedSession
+        ? request.sessionId
+        : undefined
     )
 
     // Tear down the currently attached agent session (if any) before adopting a replacement, dropping
@@ -6451,6 +6467,9 @@ class AcpRuntime {
       reservation ??
       ({
         generation,
+        mayRenewAfterConnectionSetup: Boolean(
+          this.reconnectBarrier || !this.connection || this.snapshotOwner.status !== 'connected'
+        ),
         token: Symbol('primary-session-identity'),
         sessionIds: new Set<string>()
       } satisfies PrimarySessionIdentityReservation)
@@ -6469,7 +6488,15 @@ class AcpRuntime {
     publishedAppSessionId?: string
   ): void {
     const previousGeneration = reservation.generation
+    const previousMayRenewAfterConnectionSetup = reservation.mayRenewAfterConnectionSetup
+    if (
+      previousGeneration !== this.sessionStartupGeneration &&
+      !previousMayRenewAfterConnectionSetup
+    ) {
+      throw new Error('ACP session startup was superseded.')
+    }
     reservation.generation = this.sessionStartupGeneration
+    reservation.mayRenewAfterConnectionSetup = false
     const result = this.reservePrimarySessionIds(
       reservation,
       [...reservation.sessionIds],
@@ -6477,6 +6504,7 @@ class AcpRuntime {
     )
     if (result.collision) {
       reservation.generation = previousGeneration
+      reservation.mayRenewAfterConnectionSetup = previousMayRenewAfterConnectionSetup
       throw result.collision
     }
     this.pendingSessionStartupBlockers.add(reservation.token)

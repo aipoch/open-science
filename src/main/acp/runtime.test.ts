@@ -8418,6 +8418,73 @@ describe('ACP runtime session management', () => {
     }
   })
 
+  it('does not let an invalidated context reset replace a same-id successor session', async () => {
+    const oldProcess = new FakeAgentProcess()
+    const newProcess = new FakeAgentProcess()
+    startFakeAgent(oldProcess, ['stable-app-session'])
+    const newAgent = startFakeAgent(newProcess, ['stale-reset-provider-session'])
+    let spawnCount = 0
+    const runtime = new AcpRuntime({
+      appVersion: '0.1.0',
+      defaultCwd: '/workspace',
+      resolveBackend: () => {
+        spawnCount += 1
+        return {
+          framework: {
+            ...claudeCodeFramework,
+            spawn: () => asAgentProcess(spawnCount === 1 ? oldProcess : newProcess)
+          },
+          executablePath: '/bin/agent',
+          env: {}
+        }
+      }
+    })
+    await runtime.createSession({ cwd: '/workspace' })
+
+    const ensureConnectedStarted = createDeferred()
+    const replacementConnection = createDeferred<unknown>()
+    const internal = runtime as unknown as {
+      connection: unknown
+      ensureConnected: (cwd: string) => Promise<unknown>
+    }
+    vi.spyOn(internal, 'ensureConnected').mockImplementationOnce(async () => {
+      ensureConnectedStarted.resolve()
+      return replacementConnection.promise
+    })
+
+    const reset = runtime.resetSessionContext({
+      sessionId: 'stable-app-session',
+      cwd: '/workspace'
+    })
+    await ensureConnectedStarted.promise
+    await runtime.disconnect()
+    const successor = await runtime.resumeSession({
+      sessionId: 'stable-app-session',
+      cwd: '/workspace'
+    })
+    replacementConnection.resolve(internal.connection)
+
+    try {
+      await expect(reset).rejects.toThrow('ACP session startup was superseded.')
+      expect(successor).toMatchObject({ sessionId: 'stable-app-session' })
+      expect(newAgent.newSessions).toHaveLength(0)
+      expect(runtime.getSnapshot().sessionIds).toEqual(['stable-app-session'])
+      await runtime.sendPrompt({
+        sessionId: 'stable-app-session',
+        text: 'successor remains active'
+      })
+      expect(newAgent.prompts.at(-1)).toMatchObject({
+        sessionId: 'stable-app-session',
+        text: expect.stringContaining('successor remains active')
+      })
+    } finally {
+      replacementConnection.resolve(internal.connection)
+      await reset.catch(() => undefined)
+      await runtime.deleteSession({ sessionId: 'stable-app-session' }).catch(() => undefined)
+      await runtime.disconnect().catch(() => undefined)
+    }
+  })
+
   it.each([
     {
       operation: 'new primary session',
