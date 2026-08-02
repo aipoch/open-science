@@ -2,6 +2,8 @@ import {
   AlertTriangle,
   ArrowLeft,
   ArrowRight,
+  Bot,
+  Brain,
   Cloud,
   Globe,
   LockKeyhole,
@@ -11,7 +13,6 @@ import {
   MonitorSmartphone,
   ScrollText,
   Settings2,
-  SlidersHorizontal,
   TerminalSquare,
   Users,
   X,
@@ -119,11 +120,7 @@ const toUpsertRequest = (
 type SettingsPanel = {
   id: SettingsPanelId
   label: string
-  // Top-level entries carry a nav icon; sub-items (see `parent`) render indented without one.
-  Icon?: React.ComponentType<{ className?: string }>
-  // Marks this panel as a sub-item of another panel in the nav (e.g. Agent under Model). Sub-items
-  // are still full panels in the location/history model — `parent` only affects nav presentation.
-  parent?: SettingsPanelId
+  Icon: React.ComponentType<{ className?: string }>
 }
 
 const SETTINGS_GROUPS: ReadonlyArray<{ label: string; panels: ReadonlyArray<SettingsPanel> }> = [
@@ -140,8 +137,8 @@ const SETTINGS_GROUPS: ReadonlyArray<{ label: string; panels: ReadonlyArray<Sett
   {
     label: 'Workspace',
     panels: [
-      { id: 'model', label: 'Model', Icon: SlidersHorizontal },
-      { id: 'agent', label: 'Agent', parent: 'model' },
+      { id: 'model', label: 'Model', Icon: Brain },
+      { id: 'agent', label: 'Agent', Icon: Bot },
       { id: 'permissions', label: 'Permissions', Icon: LockKeyhole },
       { id: 'runtimes', label: 'Runtimes', Icon: TerminalSquare },
       { id: 'storage', label: 'Storage', Icon: Cloud },
@@ -236,11 +233,6 @@ const SettingsPage = ({ open, onClose, onOpenSession }: SettingsPageProps): Reac
   // Shared with ProvidersPanel: the post-save validation and the list's manual test both mark the
   // provider busy so its card shows "Testing…".
   const [busyProviderId, setBusyProviderId] = useState<string | undefined>(undefined)
-  // The Model branch's sub-item (Agent) starts expanded (settings lands on Model by default) and
-  // stays expanded once the user opens the branch — other panels never collapse it. Deep-linking
-  // elsewhere (e.g. a skill mention) collapses it: that case arrives AFTER mount (this component
-  // stays mounted while closed), so it is handled in the seeding block below, not the initializer.
-  const [agentMenuExpanded, setAgentMenuExpanded] = useState(true)
 
   // Refresh settings whenever the dialog opens so external changes are reflected.
   useEffect(() => {
@@ -254,9 +246,6 @@ const SettingsPage = ({ open, onClose, onOpenSession }: SettingsPageProps): Reac
   const [seededSkillId, setSeededSkillId] = useState<string | undefined>(undefined)
   if (open && pendingSkillId !== undefined && pendingSkillId !== seededSkillId) {
     setSeededSkillId(pendingSkillId)
-    // Landing outside the Model branch starts the Agent sub-item collapsed; clicking Model
-    // re-expands it (sticky from then on).
-    setAgentMenuExpanded(false)
     setHistory([
       {
         panel: 'skills',
@@ -276,7 +265,6 @@ const SettingsPage = ({ open, onClose, onOpenSession }: SettingsPageProps): Reac
   const [seededSettingsPanel, setSeededSettingsPanel] = useState<SettingsPanelId | undefined>()
   if (open && pendingSettingsPanel !== undefined && pendingSettingsPanel !== seededSettingsPanel) {
     setSeededSettingsPanel(pendingSettingsPanel)
-    setAgentMenuExpanded(pendingSettingsPanel === 'model' || pendingSettingsPanel === 'agent')
     setHistory([{ ...INITIAL_LOCATION, panel: pendingSettingsPanel }])
     setHistoryIndex(0)
   }
@@ -659,63 +647,31 @@ const SettingsPage = ({ open, onClose, onOpenSession }: SettingsPageProps): Reac
                   {group.label}
                 </div>
                 <ul className="flex flex-col gap-0.5">
-                  {group.panels.map(({ id, label, Icon, parent }) => {
+                  {group.panels.map(({ id, label, Icon }) => {
                     const isActive = activePanel === id
-                    // A sub-item (Agent under Model) expands once the user enters the Model branch
-                    // and then stays expanded — selecting other panels never collapses it.
-                    const subItemExpanded = parent === undefined || agentMenuExpanded
-
-                    const button = (
-                      <button
-                        type="button"
-                        aria-current={isActive ? 'page' : undefined}
-                        // A collapsed sub-item is height-0/opacity-0 — keep it out of the tab order too.
-                        tabIndex={parent && !subItemExpanded ? -1 : undefined}
-                        onClick={() => {
-                          // Entering the Model branch expands its sub-item (sticky — see above).
-                          if (id === 'model' || id === 'agent') setAgentMenuExpanded(true)
-                          setIsMobileNavOpen(false)
-                          navigatePanel(id)
-                        }}
-                        className={`flex h-8 w-full items-center gap-2 rounded-lg px-2 text-left text-sm transition-colors duration-150 motion-reduce:transition-none ${
-                          parent ? 'h-7 text-[13px] ' : ''
-                        }${
-                          isActive
-                            ? 'bg-muted font-medium text-foreground'
-                            : 'text-muted-foreground hover:bg-muted hover:text-foreground'
-                        }`}
-                      >
-                        {Icon ? (
+                    return (
+                      <li key={id}>
+                        <button
+                          type="button"
+                          aria-current={isActive ? 'page' : undefined}
+                          onClick={() => {
+                            setIsMobileNavOpen(false)
+                            navigatePanel(id)
+                          }}
+                          className={`flex h-8 w-full items-center gap-2 rounded-lg px-2 text-left text-sm transition-colors duration-150 motion-reduce:transition-none ${
+                            isActive
+                              ? 'bg-muted font-medium text-foreground'
+                              : 'text-muted-foreground hover:bg-muted hover:text-foreground'
+                          }`}
+                        >
                           <Icon
                             className="size-4 shrink-0 text-muted-foreground"
                             aria-hidden="true"
                           />
-                        ) : null}
-                        <span className="min-w-0 flex-1 truncate">{label}</span>
-                      </button>
+                          <span className="min-w-0 flex-1 truncate">{label}</span>
+                        </button>
+                      </li>
                     )
-
-                    // Sub-items render inside a height-animated wrapper (0fr → 1fr) with a tree
-                    // guide line dropped from the parent's icon gutter, marking the relationship.
-                    if (parent) {
-                      return (
-                        <li
-                          key={id}
-                          className={cn(
-                            'grid transition-[grid-template-rows,opacity] duration-200 motion-reduce:transition-none',
-                            subItemExpanded
-                              ? 'grid-rows-[1fr] opacity-100'
-                              : 'grid-rows-[0fr] opacity-0'
-                          )}
-                        >
-                          <div className="ml-[15px] min-h-0 overflow-hidden border-l border-border pl-[9px]">
-                            {button}
-                          </div>
-                        </li>
-                      )
-                    }
-
-                    return <li key={id}>{button}</li>
                   })}
                 </ul>
               </div>
@@ -911,7 +867,6 @@ const SettingsPage = ({ open, onClose, onOpenSession }: SettingsPageProps): Reac
                 ) : activePanel === 'storage' ? (
                   <StoragePanel
                     onContinueToAgent={() => {
-                      setAgentMenuExpanded(true)
                       navigatePanel('agent')
                     }}
                   />

@@ -208,9 +208,6 @@ const settingsSection = (title: string): HTMLElement | undefined =>
     (section) => section.querySelector('h3')?.textContent?.trim() === title
   )
 
-// The Agent sub-item's <li> wrapper, whose grid-rows class drives the expand/collapse animation.
-const agentItem = (): HTMLElement | null => navButton('Agent')?.closest('li') ?? null
-
 describe('SettingsPage layout', () => {
   it('shows and dismisses a settings write failure above the scrolling content', async () => {
     useSettingsStore.setState({
@@ -274,7 +271,7 @@ describe('SettingsPage layout', () => {
     expect(dialog?.className).toContain('overscroll-contain')
 
     // Left navigation grouped as Capabilities (Skills, Connectors, Specialists, Compute, Network)
-    // and Workspace (Model with its Agent sub-item, Permissions, Runtimes, Storage, General).
+    // and Workspace (Model, Agent, Permissions, Runtimes, Storage, General).
     // Remote access stays isolated from both groups.
     const nav = document.body.querySelector('nav[aria-label="Settings"]')
     expect(nav).not.toBeNull()
@@ -299,6 +296,14 @@ describe('SettingsPage layout', () => {
     expect(navItems[9]?.textContent).toContain('Storage')
     expect(navItems[10]?.textContent).toContain('General')
     expect(navItems[11]?.textContent).toContain('Remote control')
+    const modelNavButton = navButton('Model')
+    const agentNavButton = navButton('Agent')
+    expect(modelNavButton?.querySelector('.lucide-brain')).not.toBeNull()
+    expect(agentNavButton?.querySelector('.lucide-bot')).not.toBeNull()
+    expect(modelNavButton?.className).toContain('h-8')
+    expect(agentNavButton?.className).toContain('h-8')
+    expect(agentNavButton?.className).toContain('text-sm')
+    expect(agentNavButton?.parentElement?.tagName).toBe('LI')
     // Model is the default active panel.
     expect(nav?.querySelector('[aria-current="page"]')?.textContent).toContain('Model')
 
@@ -648,44 +653,29 @@ describe('SettingsPage layout', () => {
     expect(opencodeManaged?.getAttribute('data-disabled')).toBeNull()
   })
 
-  it('keeps the Agent sub-item expanded once the Model branch is opened', async () => {
+  it('keeps Model and Agent as first-level tabs while navigating settings', async () => {
     await act(async () => {
       root.render(<SettingsPage open onClose={vi.fn()} />)
     })
 
-    // Model is the default panel, so the branch starts expanded…
-    expect(agentItem()?.className).toContain('grid-rows-[1fr]')
-
-    // …and switching to another top-level panel never collapses it.
+    expect(navButton('Model')?.parentElement?.tagName).toBe('LI')
+    expect(navButton('Agent')?.parentElement?.tagName).toBe('LI')
     await act(async () => navButton('General')?.click())
-    expect(agentItem()?.className).toContain('grid-rows-[1fr]')
+    expect(navButton('Agent')).not.toBeUndefined()
     expect(navButton('Agent')?.tabIndex).toBe(0)
   })
 
-  it('collapses the Agent sub-item when a skill mention deep-links in, until Model is clicked', async () => {
-    // Render the default (Model) landing first: the component stays mounted across opens, so a
-    // deep link arrives as a store update AFTER mount — the exact path the regression hit.
+  it('keeps Agent available when a skill mention deep-links into settings', async () => {
     await act(async () => {
       root.render(<SettingsPage open onClose={vi.fn()} />)
     })
 
-    expect(agentItem()?.className).toContain('grid-rows-[1fr]')
-
-    // A skill mention deep-links settings to the Skills panel (the seeding effect re-seeds history).
     await act(async () => {
       useSettingsStore.setState({ pendingSkillId: 'alpha' })
     })
-    expect(agentItem()?.className).toContain('grid-rows-[0fr]')
-    expect(navButton('Agent')?.tabIndex).toBe(-1)
 
-    // Clicking Model expands it…
-    await act(async () => navButton('Model')?.click())
-    expect(agentItem()?.className).toContain('grid-rows-[1fr]')
+    expect(navButton('Agent')?.parentElement?.tagName).toBe('LI')
     expect(navButton('Agent')?.tabIndex).toBe(0)
-
-    // …and it stays expanded after leaving the branch again.
-    await act(async () => navButton('General')?.click())
-    expect(agentItem()?.className).toContain('grid-rows-[1fr]')
   })
 
   it('uses an off-canvas settings navigation on a narrow browser viewport', async () => {
