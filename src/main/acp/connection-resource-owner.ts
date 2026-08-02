@@ -79,9 +79,7 @@ export class AcpConnectionResourceOwner {
   }
 
   connect(
-    operation: (
-      attempt: AcpConnectionResourceAttempt
-    ) => Promise<AcpConnectionResourceReadyHandle>
+    operation: (attempt: AcpConnectionResourceAttempt) => Promise<AcpConnectionResourceReadyHandle>
   ): Promise<AcpConnectionResourceReadyHandle> {
     if (this.connectInFlight) return this.connectInFlight
 
@@ -112,6 +110,15 @@ export class AcpConnectionResourceOwner {
     return this.resourceEpoch
   }
 
+  restorePublished(expectedEpoch: number): boolean {
+    // A teardown may fail before detach transfers the published resource back to Runtime. Restore only
+    // that still-owned publication into the teardown epoch; a stale caller, provisional startup, or
+    // already-detached resource must never be able to revive a connection.
+    if (expectedEpoch !== this.resourceEpoch || !this.current) return false
+    this.current.epoch = expectedEpoch
+    return true
+  }
+
   detach(expectedEpoch = this.resourceEpoch): AcpDetachedConnectionResource | undefined {
     if (expectedEpoch !== this.resourceEpoch) return undefined
     const resource = this.provisional ?? this.current
@@ -136,9 +143,7 @@ export class AcpConnectionResourceOwner {
   }
 
   setBridgeReasoningEffort(
-    effort: Parameters<
-      NonNullable<NonNullable<ResponsesBridgeLease>['setReasoningEffort']>
-    >[0]
+    effort: Parameters<NonNullable<NonNullable<ResponsesBridgeLease>['setReasoningEffort']>>[0]
   ): void {
     this.currentResource()?.bridgeLease?.setReasoningEffort?.(effort)
   }
@@ -192,8 +197,9 @@ export class AcpConnectionResourceOwner {
         return handle
       },
       owns: (connection) =>
-        epoch === this.resourceEpoch &&
-        (this.provisional?.connection === connection || this.current?.connection === connection)
+        this.currentResource()?.connection === connection ||
+        (this.provisional?.epoch === this.resourceEpoch &&
+          this.provisional.connection === connection)
     })
   }
 }

@@ -133,6 +133,49 @@ describe('AcpConnectionResourceOwner', () => {
     expect(() => replacement.assertCurrent()).toThrow('ACP connection was superseded.')
   })
 
+  it('restores only a still-attached published resource after teardown fails', async () => {
+    const owner = new AcpConnectionResourceOwner()
+    const handle = await owner.connect(async (attempt) => attachAndPublish(attempt, 'restored'))
+    const teardownEpoch = owner.supersede()
+
+    expect(owner.connection).toBeUndefined()
+    expect(owner.restorePublished(teardownEpoch)).toBe(true)
+    expect(owner.connection).toBe(handle.connection)
+
+    const staleEpoch = teardownEpoch
+    const replacementTeardownEpoch = owner.supersede()
+    expect(owner.restorePublished(staleEpoch)).toBe(false)
+    expect(owner.detach(replacementTeardownEpoch)?.connection).toBe(handle.connection)
+    expect(owner.restorePublished(replacementTeardownEpoch)).toBe(false)
+    expect(owner.connection).toBeUndefined()
+  })
+
+  it('never promotes a provisional resource through teardown rollback', async () => {
+    const owner = new AcpConnectionResourceOwner()
+    const attached = createDeferred()
+    const canPublish = createDeferred()
+    const pending = owner.connect(async (attempt) => {
+      attempt.attach({
+        process: process('provisional'),
+        connection: connection('provisional'),
+        framework: 'codex',
+        bridgeLease: undefined
+      })
+      attached.resolve()
+      await canPublish.promise
+      return attempt.publish({ close: false, delete: false, resume: false })
+    })
+    await attached.promise
+
+    const teardownEpoch = owner.supersede()
+    expect(owner.restorePublished(teardownEpoch)).toBe(false)
+    expect(owner.connection).toBeUndefined()
+
+    canPublish.resolve()
+    await expect(pending).rejects.toThrow('ACP connection was superseded.')
+    expect(owner.detach(teardownEpoch)?.connection).toMatchObject({ id: 'provisional' })
+  })
+
   it('exposes an immutable ready handle without process or bridge release authority', async () => {
     const owner = new AcpConnectionResourceOwner()
     const handle = await owner.connect(async (attempt) => attachAndPublish(attempt, 'ready'))

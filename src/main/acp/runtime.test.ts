@@ -1066,6 +1066,37 @@ describe('ACP runtime migration write-gate', () => {
     await runtime.disconnect()
   })
 
+  it('keeps using a published connection when teardown fails before resource detach', async () => {
+    const process = new FakeAgentProcess()
+    const fakeAgent = startFakeAgent(process, ['first-session', 'successor-session'])
+    const spawnAgent = vi.fn(() => asAgentProcess(process))
+    const runtime = new AcpRuntime({
+      appVersion: '0.1.0',
+      defaultCwd: '/workspace',
+      spawnAgent
+    })
+    await runtime.createSession({ cwd: '/workspace' })
+    const internal = runtime as unknown as {
+      disconnectCurrent: (emitClosedStatus?: boolean) => Promise<AcpStateSnapshot>
+    }
+    const disconnectCurrentSpy = vi
+      .spyOn(internal, 'disconnectCurrent')
+      .mockRejectedValueOnce(new Error('disconnect failed before detach'))
+
+    try {
+      await expect(runtime.disconnect()).rejects.toThrow('disconnect failed before detach')
+      await expect(runtime.createSession({ cwd: '/workspace' })).resolves.toMatchObject({
+        sessionId: 'successor-session'
+      })
+      expect(fakeAgent.newSessions).toHaveLength(2)
+      expect(spawnAgent).toHaveBeenCalledOnce()
+      expect(process.killed).toBe(false)
+    } finally {
+      disconnectCurrentSpy.mockRestore()
+      await runtime.disconnect().catch(() => undefined)
+    }
+  })
+
   it.each(['initialize', 'authenticate'] as const)(
     'clears one-shot connection intents when %s fails',
     async (failureStage) => {

@@ -1499,7 +1499,6 @@ class AcpRuntime {
 
       throw cause
     }
-
   }
 
   // Creates a protocol session, injects artifact tooling, and uses the returned id as the app session id.
@@ -2674,6 +2673,12 @@ class AcpRuntime {
 
     try {
       return await this.disconnectCurrent(emitClosedStatus, teardownGeneration)
+    } catch (error) {
+      // disconnectCurrent transfers the resource with detach before physical teardown. If it failed
+      // earlier, the owner still holds a live published connection: restore only that exact teardown
+      // epoch so callers retain the pre-refactor recovery behavior. Once detached, rollback is a no-op.
+      this.connectionResources.restorePublished(teardownGeneration)
+      throw error
     } finally {
       try {
         await this.closeMcpHttpHost(teardownGeneration)
