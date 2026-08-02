@@ -418,14 +418,17 @@ describe('notebook runtime service', () => {
       cellId: begin.cellId
     })
 
+    const now = vi.spyOn(Date, 'now').mockReturnValue(42)
     const summary = await service.runCell({
       projectName: 'default-project',
       sessionId: 'session-1',
       workspaceCwd: '/workspace',
       cellId: begin.cellId
     })
+    now.mockRestore()
 
     expect(summary).toMatchObject({
+      runId: 'notebook-run-42-1',
       cellId: begin.cellId,
       source: 'agent',
       script: "print('hello')",
@@ -1516,11 +1519,13 @@ describe('notebook runtime service', () => {
       const root = await createStorageRoot()
       const service = createShellService(root)
 
+      const now = vi.spyOn(Date, 'now').mockReturnValue(42)
       const result = await service.executeShell({
         sessionId: 'session-1',
         workspaceCwd: root,
         command: 'echo hi'
       })
+      now.mockRestore()
 
       expect(result.stdout).toContain('hi')
       expect(result.exitCode).toBe(0)
@@ -1528,6 +1533,7 @@ describe('notebook runtime service', () => {
       const state = await service.state({ sessionId: 'session-1', workspaceCwd: root })
       expect(state.runs).toHaveLength(1)
       expect(state.runs[0]).toMatchObject({
+        runId: 'notebook-run-42-1',
         kernelKind: 'bash',
         script: 'echo hi',
         status: 'completed',
