@@ -1,4 +1,4 @@
-import { mkdtemp, readFile, rm, writeFile } from 'node:fs/promises'
+import { mkdir, mkdtemp, readFile, rm, writeFile } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 
@@ -325,10 +325,20 @@ describe('ArtifactTurnOwner', () => {
   it('clears active ownership even when capability revocation fails', async () => {
     const dataRoot = await createRoot()
     const notebookContexts: unknown[] = []
+    const writeStarted = createDeferred()
+    const releaseWrite = createDeferred()
     const owner = new ArtifactTurnOwner({
       dataRoot,
       repository: new ArtifactRepository(dataRoot),
       runRegistry: new ArtifactRunRegistry(),
+      provenance: {
+        listRunVersions: async () => [],
+        writeAppGeneratedVersion: async () => {
+          writeStarted.resolve()
+          await releaseWrite.promise
+          return artifactVersion()
+        }
+      },
       issueRpcCapability: () => 'capability-1',
       revokeRpcCapability: async () => {
         throw new Error('revoke failed')
@@ -343,17 +353,231 @@ describe('ArtifactTurnOwner', () => {
       projectId: 'project-1',
       agentName: 'Codex'
     })
+    const acceptedWrite = owner.writeForActiveTurn('session-1', {
+      filename: 'accepted.txt',
+      content: 'accepted'
+    })
+    await writeStarted.promise
     const currentRunFile = getArtifactCurrentRunFilePath(
       dataRoot,
       'project-1',
       'artifact-session-1'
     )
 
-    await expect(owner.dispose(turn)).rejects.toThrow('revoke failed')
+    const disposal = owner.dispose(turn)
+    let disposalSettled = false
+    void disposal.then(
+      () => {
+        disposalSettled = true
+      },
+      () => {
+        disposalSettled = true
+      }
+    )
+    await Promise.resolve()
+    expect(disposalSettled).toBe(false)
 
+    releaseWrite.resolve()
+    await acceptedWrite
+    await expect(disposal).rejects.toThrow('revoke failed')
+
+    expect(disposalSettled).toBe(true)
     expect(owner.activeRunIds()).toEqual([])
     await expect(readFile(currentRunFile, 'utf8')).resolves.toBe('{}\n')
     expect(notebookContexts.at(-1)).toBeUndefined()
+  })
+
+  it('clears a stale turn handoff when its replacement uses a different storage Session', async () => {
+    const dataRoot = await createRoot()
+    const owner = new ArtifactTurnOwner({
+      dataRoot,
+      repository: new ArtifactRepository(dataRoot),
+      runRegistry: new ArtifactRunRegistry()
+    })
+    const first = await owner.open({
+      appSessionId: 'session-1',
+      artifactStorageSessionId: 'artifact-session-provisional',
+      projectId: 'project-1',
+      agentName: 'Codex'
+    })
+    const replacement = await owner.open({
+      appSessionId: 'session-1',
+      artifactStorageSessionId: 'session-1',
+      projectId: 'project-1',
+      agentName: 'Codex'
+    })
+    const firstHandoff = getArtifactCurrentRunFilePath(
+      dataRoot,
+      'project-1',
+      'artifact-session-provisional'
+    )
+    const replacementHandoff = getArtifactCurrentRunFilePath(dataRoot, 'project-1', 'session-1')
+
+    await owner.dispose(first)
+
+    await expect(readFile(firstHandoff, 'utf8')).resolves.toBe('{}\n')
+    await expect(readFile(replacementHandoff, 'utf8')).resolves.toContain('artifact-run-')
+    expect(owner.activeRunIds()).toHaveLength(1)
+    await owner.dispose(replacement)
+  })
+
+  it('retries failed claim preparation without duplicating a successful claim', async () => {
+    const dataRoot = await createRoot()
+    const repository = new ArtifactRepository(dataRoot)
+    const runRegistry = new ArtifactRunRegistry()
+    const register = vi.spyOn(runRegistry, 'register')
+    const listRunVersions = vi
+      .fn()
+      .mockRejectedValueOnce(new Error('temporary list failure'))
+      .mockResolvedValue([artifactVersion()])
+    const owner = new ArtifactTurnOwner({
+      dataRoot,
+      repository,
+      runRegistry,
+      provenance: {
+        listRunVersions,
+        writeAppGeneratedVersion: async () => artifactVersion()
+      }
+    })
+    const turn = await owner.open({
+      appSessionId: 'session-1',
+      artifactStorageSessionId: 'artifact-session-1',
+      projectId: 'project-1',
+      agentName: 'Codex'
+    })
+
+    await expect(owner.finalize(turn)).rejects.toThrow('temporary list failure')
+    await expect(owner.finalize(turn)).resolves.toMatchObject({
+      artifactClaimId: expect.stringMatching(/^artifact-claim-/)
+    })
+
+    expect(listRunVersions).toHaveBeenCalledTimes(2)
+    expect(register).toHaveBeenCalledOnce()
+    await owner.dispose(turn)
+  })
+
+  it('serializes finalization with disposal and never reopens a disposed turn', async () => {
+    const dataRoot = await createRoot()
+    const listStarted = createDeferred()
+    const releaseList = createDeferred()
+    const owner = new ArtifactTurnOwner({
+      dataRoot,
+      repository: new ArtifactRepository(dataRoot),
+      runRegistry: new ArtifactRunRegistry(),
+      provenance: {
+        listRunVersions: async () => {
+          listStarted.resolve()
+          await releaseList.promise
+          return [artifactVersion()]
+        },
+        writeAppGeneratedVersion: async () => artifactVersion()
+      }
+    })
+    const turn = await owner.open({
+      appSessionId: 'session-1',
+      artifactStorageSessionId: 'artifact-session-1',
+      projectId: 'project-1',
+      agentName: 'Codex'
+    })
+    const finalization = owner.finalize(turn)
+    await listStarted.promise
+    const disposal = owner.dispose(turn)
+    let disposalSettled = false
+    void disposal.then(() => {
+      disposalSettled = true
+    })
+
+    await Promise.resolve()
+    expect(disposalSettled).toBe(false)
+    releaseList.resolve()
+    const publication = await finalization
+    await disposal
+
+    expect(owner.snapshot(turn).phase).toBe('disposed')
+    await expect(owner.finalize(turn)).resolves.toBe(publication)
+    expect(owner.snapshot(turn).phase).toBe('disposed')
+
+    const disposedWithoutFinalization = await owner.open({
+      appSessionId: 'session-2',
+      artifactStorageSessionId: 'artifact-session-2',
+      projectId: 'project-1',
+      agentName: 'Codex'
+    })
+    await owner.dispose(disposedWithoutFinalization)
+    await expect(owner.finalize(disposedWithoutFinalization)).rejects.toThrow(/disposed/i)
+  })
+
+  it('clears a written handoff when Notebook provenance setup fails', async () => {
+    const dataRoot = await createRoot()
+    const contexts: unknown[] = []
+    const revoked: string[] = []
+    const owner = new ArtifactTurnOwner({
+      dataRoot,
+      repository: new ArtifactRepository(dataRoot),
+      runRegistry: new ArtifactRunRegistry(),
+      issueRpcCapability: () => 'capability-1',
+      revokeRpcCapability: (token) => {
+        revoked.push(token)
+        throw new Error('cleanup revoke failed')
+      },
+      notebook: {
+        setArtifactProvenanceContext: (_sessionId, context) => {
+          contexts.push(context)
+          if (context) throw new Error('Notebook context failed')
+        }
+      }
+    })
+    const currentRunFile = getArtifactCurrentRunFilePath(
+      dataRoot,
+      'project-1',
+      'artifact-session-1'
+    )
+
+    await expect(
+      owner.open({
+        appSessionId: 'session-1',
+        artifactStorageSessionId: 'artifact-session-1',
+        projectId: 'project-1',
+        agentName: 'Codex'
+      })
+    ).rejects.toThrow('Notebook context failed')
+
+    await expect(readFile(currentRunFile, 'utf8')).resolves.toBe('{}\n')
+    expect(contexts.at(-1)).toBeUndefined()
+    expect(revoked).toEqual(['capability-1'])
+    expect(owner.activeRunIds()).toEqual([])
+  })
+
+  it('clears Notebook context and ownership when handoff cleanup fails', async () => {
+    const dataRoot = await createRoot()
+    const contexts: unknown[] = []
+    const owner = new ArtifactTurnOwner({
+      dataRoot,
+      repository: new ArtifactRepository(dataRoot),
+      runRegistry: new ArtifactRunRegistry(),
+      notebook: {
+        setArtifactProvenanceContext: (_sessionId, context) => contexts.push(context)
+      }
+    })
+    const turn = await owner.open({
+      appSessionId: 'session-1',
+      artifactStorageSessionId: 'artifact-session-1',
+      projectId: 'project-1',
+      agentName: 'Codex'
+    })
+    const currentRunFile = getArtifactCurrentRunFilePath(
+      dataRoot,
+      'project-1',
+      'artifact-session-1'
+    )
+    await rm(currentRunFile)
+    await mkdir(currentRunFile)
+
+    await expect(owner.dispose(turn)).rejects.toThrow()
+
+    expect(contexts.at(-1)).toBeUndefined()
+    expect(owner.activeRunIds()).toEqual([])
+    expect(owner.snapshot(turn).phase).toBe('disposed')
   })
 
   it('revokes a capability and publishes no active state when opening the handoff fails', async () => {

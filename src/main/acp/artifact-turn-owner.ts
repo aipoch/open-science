@@ -144,6 +144,7 @@ class ArtifactTurnOwner {
   async open(request: OpenArtifactTurnRequest): Promise<ArtifactTurnHandle> {
     const turn = this.createTurn(request)
     const runContext = this.createRunContext(turn)
+    let handoffWritten = false
 
     turn.rpcCapabilityToken = this.options.issueRpcCapability?.({
       projectId: turn.projectId,
@@ -166,6 +167,7 @@ class ArtifactTurnOwner {
     try {
       await mkdir(dirname(turn.currentRunFile), { recursive: true })
       await writeFile(turn.currentRunFile, `${JSON.stringify(runContext)}\n`, 'utf8')
+      handoffWritten = true
       this.options.notebook?.setArtifactProvenanceContext?.(turn.appSessionId, {
         rootFrameId: turn.rootFrameId,
         agentFrameId: turn.agentFrameId,
@@ -175,7 +177,23 @@ class ArtifactTurnOwner {
       })
     } catch (error) {
       if (turn.rpcCapabilityToken) {
-        await this.options.revokeRpcCapability?.(turn.rpcCapabilityToken)
+        try {
+          await this.options.revokeRpcCapability?.(turn.rpcCapabilityToken)
+        } catch {
+          // Preserve the activation failure while still attempting every remaining cleanup stage.
+        }
+      }
+      if (handoffWritten) {
+        try {
+          await writeFile(turn.currentRunFile, `${JSON.stringify({})}\n`, 'utf8')
+        } catch {
+          // The original activation failure remains the caller-visible error.
+        }
+        try {
+          this.options.notebook?.setArtifactProvenanceContext?.(turn.appSessionId, undefined)
+        } catch {
+          // The original activation failure remains the caller-visible error.
+        }
       }
       throw error
     }
@@ -205,10 +223,7 @@ class ArtifactTurnOwner {
     }
   }
 
-  writeForActiveTurn(
-    sessionId: string,
-    input: ArtifactTurnWriteInput
-  ): Promise<ArtifactFile> {
+  writeForActiveTurn(sessionId: string, input: ArtifactTurnWriteInput): Promise<ArtifactFile> {
     const turn = sessionId ? this.activeTurnsBySession.get(sessionId) : undefined
     if (!turn || turn.phase !== 'open') {
       return Promise.reject(new Error('No active assistant turn to attach a generated file to.'))
@@ -251,20 +266,34 @@ class ArtifactTurnOwner {
 
   finalize(handle: ArtifactTurnHandle): Promise<ArtifactTurnPublication | undefined> {
     const turn = this.resolve(handle)
-    turn.finalizationPromise ??= this.finalizeTurn(turn)
+    if (turn.disposalPromise && !turn.finalizationPromise) {
+      return Promise.reject(new Error('Artifact turn is already disposing or disposed.'))
+    }
+    if (!turn.finalizationPromise) {
+      const finalization = this.finalizeTurn(turn)
+      turn.finalizationPromise = finalization
+      void finalization.catch(() => {
+        // Claim preparation can fail transiently. Preserve the runtime's existing finally retry while
+        // keeping a concurrent disposal terminal and non-reopenable.
+        if (turn.finalizationPromise === finalization && !turn.disposalPromise) {
+          turn.finalizationPromise = undefined
+        }
+      })
+    }
     return turn.finalizationPromise
   }
 
   dispose(handle: ArtifactTurnHandle): Promise<void> {
     const turn = this.resolve(handle)
-    turn.disposalPromise ??= this.disposeTurn(turn)
+    turn.disposalPromise ??= this.disposeAfterFinalization(turn)
     return turn.disposalPromise
   }
 
   private createTurn(request: OpenArtifactTurnRequest): ArtifactTurn {
     this.sequence += 1
     const runId = `artifact-run-${this.now()}-${this.sequence}`
-    const rootFrameId = request.provenanceContext?.rootFrameId ?? `root-frame-${request.appSessionId}`
+    const rootFrameId =
+      request.provenanceContext?.rootFrameId ?? `root-frame-${request.appSessionId}`
     const messageBranchId =
       request.provenanceContext?.messageBranchId ?? `message-branch-${request.appSessionId}`
     const promptMessageId = request.provenanceContext?.promptMessageId ?? `prompt-${runId}`
@@ -297,8 +326,7 @@ class ArtifactTurnOwner {
       messageBranchAncestry,
       messageAncestry,
       runtimeSegmentId:
-        request.provenanceContext?.runtimeSegmentId ??
-        `runtime-segment-${this.runtimeInstanceId}`,
+        request.provenanceContext?.runtimeSegmentId ?? `runtime-segment-${this.runtimeInstanceId}`,
       promptMessageId,
       agentName: request.agentName,
       phase: 'open',
@@ -347,8 +375,11 @@ class ArtifactTurnOwner {
         )
       : Promise.resolve()
     turn.writeDrainPromise = (async () => {
-      await rpcDrain
-      await Promise.allSettled([...turn.inFlightAppWrites])
+      const [rpcResult] = await Promise.allSettled([
+        rpcDrain,
+        Promise.allSettled([...turn.inFlightAppWrites])
+      ])
+      if (rpcResult.status === 'rejected') throw rpcResult.reason
     })()
     return turn.writeDrainPromise
   }
@@ -364,7 +395,9 @@ class ArtifactTurnOwner {
         appSessionId: turn.appSessionId,
         artifactRunId: turn.runId
       })
-      artifactVersionIds = artifacts.map((artifact) => artifact.versionId).filter(Boolean) as string[]
+      artifactVersionIds = artifacts
+        .map((artifact) => artifact.versionId)
+        .filter(Boolean) as string[]
     } else {
       artifacts = await this.options.repository.listPendingRunFiles({
         projectName: turn.projectId,
@@ -421,28 +454,48 @@ class ArtifactTurnOwner {
     return publication
   }
 
+  private async disposeAfterFinalization(turn: ArtifactTurn): Promise<void> {
+    if (turn.finalizationPromise) {
+      try {
+        await turn.finalizationPromise
+      } catch {
+        // Disposal must still clear every ephemeral resource after failed claim preparation.
+      }
+    }
+    await this.disposeTurn(turn)
+  }
+
   private async disposeTurn(turn: ArtifactTurn): Promise<void> {
-    let hasDrainError = false
-    let drainError: unknown
+    const cleanupErrors: unknown[] = []
     try {
       await this.closeWrites(turn)
     } catch (error) {
-      hasDrainError = true
-      drainError = error
+      cleanupErrors.push(error)
     }
-    const ownsActiveTurn = this.activeTurnsBySession.get(turn.appSessionId) === turn
+
+    const activeTurn = this.activeTurnsBySession.get(turn.appSessionId)
+    const ownsActiveTurn = activeTurn === turn
+    const ownsDistinctHandoff = activeTurn?.currentRunFile !== turn.currentRunFile
+    try {
+      if (ownsActiveTurn || ownsDistinctHandoff) {
+        await writeFile(turn.currentRunFile, `${JSON.stringify({})}\n`, 'utf8')
+      }
+    } catch (error) {
+      cleanupErrors.push(error)
+    }
     try {
       if (ownsActiveTurn) {
-        await writeFile(turn.currentRunFile, `${JSON.stringify({})}\n`, 'utf8')
         this.options.notebook?.setArtifactProvenanceContext?.(turn.appSessionId, undefined)
       }
+    } catch (error) {
+      cleanupErrors.push(error)
     } finally {
       if (this.activeTurnsBySession.get(turn.appSessionId) === turn) {
         this.activeTurnsBySession.delete(turn.appSessionId)
       }
       turn.phase = 'disposed'
     }
-    if (hasDrainError) throw drainError
+    if (cleanupErrors.length > 0) throw cleanupErrors[0]
   }
 
   private resolve(handle: ArtifactTurnHandle): ArtifactTurn {

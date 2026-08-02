@@ -748,8 +748,7 @@ class AcpRuntime {
             ...(options.notebook
               ? {
                   notebook: {
-                    setArtifactProvenanceContext:
-                      options.notebook.setArtifactProvenanceContext
+                    setArtifactProvenanceContext: options.notebook.setArtifactProvenanceContext
                   }
                 }
               : {})
