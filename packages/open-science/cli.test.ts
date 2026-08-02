@@ -308,6 +308,59 @@ describe('task CLI', () => {
     expect(setExitCode).toHaveBeenCalledWith(1)
   })
 
+  it('keeps run --session on the stable app id for Task API calls and events', async () => {
+    const stableSessionId = 'stable-app-session'
+    const providerSessionId = 'provider-session'
+    const stableEvent = {
+      type: 'run.event',
+      data: { sessionId: stableSessionId, kind: 'tool' }
+    }
+    const client = {
+      events: async function* () {
+        yield { type: 'run.event', data: { sessionId: providerSessionId, kind: 'tool' } }
+        yield stableEvent
+      },
+      startRun: vi.fn().mockResolvedValue({
+        id: 'run-1',
+        sessionId: stableSessionId,
+        status: 'running'
+      }),
+      waitForRun: vi.fn().mockResolvedValue({
+        id: 'run-1',
+        sessionId: stableSessionId,
+        status: 'completed',
+        output: 'Done',
+        artifacts: []
+      })
+    }
+    const log = vi.fn()
+
+    await runTaskCommand(
+      parseCliArgs([
+        'run',
+        '--project',
+        'project-1',
+        '--session',
+        stableSessionId,
+        '--prompt',
+        'Continue research.',
+        '--wait',
+        '--jsonl'
+      ]),
+      { connect: vi.fn().mockResolvedValue(client), stdinIsTTY: true, log }
+    )
+
+    expect(client.startRun).toHaveBeenCalledWith({
+      project: 'project-1',
+      prompt: 'Continue research.',
+      sessionId: stableSessionId
+    })
+    expect(log.mock.calls.map(([line]) => JSON.parse(line))).toEqual([
+      stableEvent,
+      expect.objectContaining({ id: 'run-1', sessionId: stableSessionId, status: 'completed' })
+    ])
+  })
+
   it('passes the wait timeout and warns when a run needs approval', async () => {
     const events = async function* (): AsyncGenerator<{
       type: string

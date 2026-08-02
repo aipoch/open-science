@@ -478,6 +478,12 @@ describe('specialist hot-switch — Claude Code', () => {
         specialistId === 'sp-a'
           ? { append: buildSpecialistIdentityAppend(profileA), prefix: '' }
           : { append: buildSpecialistIdentityAppend(profileB), prefix: '' },
+      resolveSpecialistSkills: async () => ({
+        kind: 'specialist',
+        skillIds: ['allowed'],
+        frameworkNames: ['Allowed Skill'],
+        missingSkillIds: []
+      }),
       notebook: {
         projectName: 'test',
         mcpEntryPath: '/test/mcp.js',
@@ -496,6 +502,9 @@ describe('specialist hot-switch — Claude Code', () => {
     expect(fakeAgent.newSessions).toHaveLength(2)
     expect(JSON.stringify(fakeAgent.newSessions[1]._meta)).toContain('Specialist B')
     expect(JSON.stringify(fakeAgent.newSessions[1]._meta)).not.toContain('Specialist A')
+    expect(fakeAgent.newSessions[1]._meta).toMatchObject({
+      claudeCode: { options: { skills: ['Allowed Skill'] } }
+    })
     expect(registerSessionSpecialist).toHaveBeenLastCalledWith('session-claude', 'sp-b')
   })
 
