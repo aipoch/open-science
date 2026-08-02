@@ -2903,6 +2903,59 @@ describe('ACP runtime session management', () => {
     ).toEqual([])
   })
 
+  it('serializes prompts and compaction per session without blocking another session', async () => {
+    const process = new FakeAgentProcess()
+    const firstPromptGate = createDeferred<PromptResponse>()
+    const secondCompactionGate = createDeferred<PromptResponse>()
+    const agent = startFakeAgent(process, ['remote-session-1', 'remote-session-2'], {
+      onPrompt: ({ sessionId, text }) => {
+        if (sessionId === 'remote-session-1' && text === 'first prompt') {
+          return firstPromptGate.promise
+        }
+        if (sessionId === 'remote-session-2' && text === '/compact') {
+          return secondCompactionGate.promise
+        }
+        return undefined
+      }
+    })
+    const runtime = new AcpRuntime({
+      appVersion: '0.1.0',
+      defaultCwd: '/workspace',
+      spawnAgent: () => asAgentProcess(process),
+      framework: claudeCodeFramework
+    })
+    const first = await runtime.createSession({ cwd: '/workspace' })
+    const second = await runtime.createSession({ cwd: '/workspace' })
+
+    const prompting = runtime.sendPrompt({ sessionId: first.sessionId, text: 'first prompt' })
+    await vi.waitFor(() =>
+      expect(agent.prompts).toContainEqual({
+        sessionId: 'remote-session-1',
+        text: 'first prompt'
+      })
+    )
+    await expect(runtime.compactSession({ sessionId: first.sessionId })).rejects.toThrow(
+      /already running/
+    )
+
+    const compacting = runtime.compactSession({ sessionId: second.sessionId })
+    await vi.waitFor(() =>
+      expect(agent.prompts).toContainEqual({ sessionId: 'remote-session-2', text: '/compact' })
+    )
+    await expect(
+      runtime.sendPrompt({ sessionId: second.sessionId, text: 'blocked prompt' })
+    ).rejects.toThrow(/already running/)
+    expect(runtime.getSnapshot().promptInFlightSessionIds).toEqual([
+      first.sessionId,
+      second.sessionId
+    ])
+
+    firstPromptGate.resolve({ stopReason: 'end_turn' })
+    secondCompactionGate.resolve({ stopReason: 'end_turn' })
+    await expect(Promise.all([prompting, compacting])).resolves.toHaveLength(2)
+    expect(runtime.getSnapshot().promptInFlightSessionIds).toEqual([])
+  })
+
   it('drops estimated pre-compaction categories when no fresh usage update arrives', async () => {
     const process = new FakeAgentProcess()
     startFakeAgent(process, ['remote-session-1'])
