@@ -1,12 +1,5 @@
 import { useCallback, useEffect, useRef, useState } from 'react'
 import { RefreshCw, TriangleAlert } from 'lucide-react'
-
-// Import the bare Mono/Color components straight from their modules: each icon's entry point
-// eagerly attaches its Avatar/Combine companions, which drag in @lobehub/ui (antd-style + an
-// emoji-mart JSON import vitest can't parse). The Mono/Color components are self-contained.
-import ClaudeColor from '@lobehub/icons/es/Claude/components/Color'
-import Codex from '@lobehub/icons/es/Codex/components/Mono'
-import OpenCode from '@lobehub/icons/es/OpenCode/components/Mono'
 import { ExternalTextLink } from '@/components/ExternalTextLink'
 import { Button } from '@/components/ui/button'
 import { selectAnyInstalling, useSettingsStore } from '@/stores/settings-store'
@@ -23,6 +16,7 @@ import {
 } from '../../../../shared/settings'
 import { AgentFrameworkCard } from './AgentFrameworkCard'
 import { ModelFrameworkCompatibilityAlert } from './ModelFrameworkCompatibilityAlert'
+import { AgentFrameworkIcon } from './provider-icons'
 import { RepairFrameworkDialog } from './RepairFrameworkDialog'
 import { SettingsSection } from './SettingsLayout'
 import { SwitchFrameworkDialog } from './SwitchFrameworkDialog'
@@ -329,7 +323,7 @@ const AgentPanel = ({
       key: 'claude',
       frameworkId: 'claude-code',
       name: 'Claude Agent',
-      icon: <ClaudeColor size={24} />,
+      icon: <AgentFrameworkIcon frameworkId="claude-code" size={24} />,
       description: "Anthropic's agentic coding tool for the terminal.",
       ready: preflight.claudeReady,
       version: claude.version,
@@ -353,7 +347,7 @@ const AgentPanel = ({
       key: 'opencode',
       frameworkId: 'opencode',
       name: 'OpenCode',
-      icon: <OpenCode size={24} className="text-foreground" />,
+      icon: <AgentFrameworkIcon frameworkId="opencode" size={24} />,
       description: 'Open-source coding agent for the terminal.',
       ready: preflight.opencodeReady,
       version: opencode.version,
@@ -377,7 +371,7 @@ const AgentPanel = ({
       key: 'codex',
       frameworkId: 'codex',
       name: 'Codex',
-      icon: <Codex size={24} className="text-foreground" />,
+      icon: <AgentFrameworkIcon frameworkId="codex" size={24} />,
       description: "OpenAI's coding agent, connected through the Codex ACP adapter.",
       ready: preflight.codexReady,
       version: codex.version,

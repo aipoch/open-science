@@ -3,6 +3,7 @@ import { MessageScrollerItem } from '@/components/ui/message-scroller'
 import { Popover, PopoverAnchor, PopoverContent } from '@/components/ui/popover'
 import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from '@/components/ui/tooltip'
 import { cn, formatByteSize } from '@/lib/utils'
+import { useSettingsStore } from '@/stores/settings-store'
 import type { ChatMessage, ChatSession } from '@/stores/session-store'
 import { Collapsible } from 'radix-ui'
 import {
@@ -18,13 +19,20 @@ import { useEffect, useId, useRef, useState, type FocusEvent } from 'react'
 import type { ArtifactPreviewResult } from '../../../../shared/artifacts'
 import type { ProvenanceMessagePart } from '../../../../shared/artifact-provenance'
 import type { AcpTurnTokenUsage } from '../../../../shared/acp'
+import type { PersistedRuntimeSegment } from '../../../../shared/conversation-graph'
 import type { MessagePart } from '../../../../shared/session-persistence'
+import {
+  isClaudeSubscriptionProviderId,
+  isCodexSubscriptionProviderId
+} from '../../../../shared/settings'
 import { getUploadedAttachmentName } from '../../../../shared/uploads'
 
 import { ArtifactPreview } from './artifact-preview'
 import { ComposerEditor } from './composer/ComposerEditor'
 import { EditMessageConfirmDialog } from './EditMessageConfirmDialog'
 import { ExtensionPreservingFileName } from './ExtensionPreservingFileName'
+import { providerKindKey } from '../settings/provider-form-value'
+import { AgentFrameworkIcon, ProviderKindIcon } from '../settings/provider-icons'
 import {
   docFromMessageParts,
   docFromText,
@@ -40,11 +48,13 @@ import {
 import { FILE_MISSING_TAG, isUnavailableFileError } from './previews/preview-errors'
 import { useNearViewport } from './previews/useNearViewport'
 import { useUnavailablePreviewProbe } from './previews/useUnavailablePreviewProbe'
+import { resolveSessionProviderId } from './error-report'
 
 type MessageArtifact = NonNullable<ChatSession['artifacts']>[number]
 type MessageUploadAttachment = NonNullable<ChatMessage['uploads']>[number]
 type MessageImage = NonNullable<ChatMessage['images']>[number]
 type ArtifactMentionPart = Extract<MessagePart, { type: 'artifact' }>
+type MessageRuntimeIdentity = Pick<PersistedRuntimeSegment, 'frameworkId' | 'backendId' | 'model'>
 type WorkspaceMessageItemProps = {
   message: ChatMessage
   onPreviewArtifact: (artifact: MessageArtifact) => void
@@ -62,6 +72,8 @@ type WorkspaceMessageItemProps = {
   onSendEditedMessage?: (messageId: string, doc: ComposerDoc) => void
   // Prompt send time for an Agent response; paired with its completion time for elapsed duration.
   turnStartedAt?: number
+  // Per-turn runtime codes come from the Conversation Graph; names and icons resolve from Settings.
+  runtimeIdentity?: MessageRuntimeIdentity
   // A tool-calling turn can contain several assistant fragments; only its final fragment owns the
   // whole-turn completion/elapsed/usage footer. Other transcript surfaces default to showing it.
   showAssistantFooter?: boolean
@@ -128,7 +140,55 @@ type TurnTokenUsageEntry = readonly [
   markerClassName: string
 ]
 
-const TurnTokenUsage = ({ usage }: { usage?: AcpTurnTokenUsage }): React.JSX.Element => {
+const TurnRuntimeIcons = ({ runtime }: { runtime: MessageRuntimeIdentity }): React.JSX.Element => {
+  const frameworks = useSettingsStore((state) => state.agentFrameworks)
+  const providers = useSettingsStore((state) => state.providers)
+  const frameworkName =
+    frameworks.find((framework) => framework.id === runtime.frameworkId)?.displayName ??
+    runtime.frameworkId
+  const providerId = resolveSessionProviderId(runtime.backendId)
+  const provider = providers.find((candidate) => candidate.id === providerId)
+  const kindKey = provider
+    ? providerKindKey(provider.type, provider.vendorId)
+    : isCodexSubscriptionProviderId(providerId ?? '')
+      ? 'codex-subscription'
+      : isClaudeSubscriptionProviderId(providerId ?? '')
+        ? 'claude-subscription'
+        : ''
+  const frameworkLabel = `Agent framework: ${frameworkName}`
+  const modelLabel = `Model provider: ${provider?.name ?? providerId ?? 'Unknown'}${runtime.model ? `; model: ${runtime.model}` : ''}`
+
+  return (
+    <div data-slot="turn-runtime-icons" className="flex items-center gap-1">
+      <span
+        data-slot="turn-runtime-framework"
+        role="img"
+        aria-label={frameworkLabel}
+        title={frameworkLabel}
+        className="inline-flex size-5 items-center justify-center rounded-full border border-border bg-background"
+      >
+        <AgentFrameworkIcon frameworkId={runtime.frameworkId} size={12} />
+      </span>
+      <span
+        data-slot="turn-runtime-model"
+        role="img"
+        aria-label={modelLabel}
+        title={modelLabel}
+        className="inline-flex size-5 items-center justify-center rounded-full border border-border bg-background"
+      >
+        <ProviderKindIcon kindKey={kindKey} className="size-3" />
+      </span>
+    </div>
+  )
+}
+
+const TurnTokenUsage = ({
+  usage,
+  runtimeIdentity
+}: {
+  usage?: AcpTurnTokenUsage
+  runtimeIdentity?: MessageRuntimeIdentity
+}): React.JSX.Element => {
   const [open, setOpen] = useState(false)
   const contentId = useId()
   const triggerRef = useRef<HTMLButtonElement | null>(null)
@@ -239,8 +299,11 @@ const TurnTokenUsage = ({ usage }: { usage?: AcpTurnTokenUsage }): React.JSX.Ele
           if (openedFromPointerRef.current) event.preventDefault()
         }}
       >
-        <div className="flex items-baseline justify-between gap-3">
-          <div className="text-[13px] font-medium">Usage</div>
+        <div className="flex items-center justify-between gap-3">
+          <div className="flex items-center gap-1.5">
+            <div className="text-[13px] font-medium">Usage</div>
+            {runtimeIdentity ? <TurnRuntimeIcons runtime={runtimeIdentity} /> : null}
+          </div>
           {usage?.turnCount ? (
             <div
               data-slot="turn-token-usage-turn-count"
@@ -664,6 +727,7 @@ const WorkspaceMessageItem = ({
   contentPaddingClassName,
   onSendEditedMessage,
   turnStartedAt,
+  runtimeIdentity,
   showAssistantFooter = true,
   subsequentTurns = 0,
   revisionNavigation,
@@ -673,6 +737,7 @@ const WorkspaceMessageItem = ({
   const isUserMessage = message.role === 'user'
   const uploads = message.uploads ?? []
   const hasTurnUsage = Boolean(message.turnUsage || message.turnUsageUnavailable)
+  const showTurnUsage = hasTurnUsage || (message.status === 'complete' && Boolean(runtimeIdentity))
   const terminalTimestamp =
     message.status === 'complete'
       ? message.completedAt
@@ -899,7 +964,7 @@ const WorkspaceMessageItem = ({
             <MessageImageList images={message.images ?? []} />
             <MessageArtifactList onPreviewArtifact={onPreviewArtifact} artifacts={artifacts} />
             {showAssistantFooter &&
-            (terminalDate || (terminalTimestamp !== undefined && hasTurnUsage)) ? (
+            (terminalDate || (terminalTimestamp !== undefined && showTurnUsage)) ? (
               <div
                 data-slot="assistant-message-footer"
                 className="mt-3 flex items-center gap-x-3 whitespace-nowrap text-[11px] leading-4 text-text-000/70 tabular-nums"
@@ -915,7 +980,9 @@ const WorkspaceMessageItem = ({
                     </span>
                   </span>
                 ) : null}
-                {hasTurnUsage ? <TurnTokenUsage usage={message.turnUsage} /> : null}
+                {showTurnUsage ? (
+                  <TurnTokenUsage usage={message.turnUsage} runtimeIdentity={runtimeIdentity} />
+                ) : null}
               </div>
             ) : null}
           </div>

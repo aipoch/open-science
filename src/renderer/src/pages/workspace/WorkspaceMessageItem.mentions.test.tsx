@@ -4,6 +4,7 @@ import { createRoot, type Root } from 'react-dom/client'
 import type { JSX, PropsWithChildren } from 'react'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 
+import { createInitialSettingsState, useSettingsStore } from '@/stores/settings-store'
 import type { ChatMessage } from '@/stores/session-store'
 
 import { WorkspaceMessageItem } from './WorkspaceMessageItem'
@@ -38,6 +39,7 @@ const createMessage = (overrides: Partial<ChatMessage>): ChatMessage => ({
 const noop = (): void => {}
 
 beforeEach(() => {
+  useSettingsStore.setState(createInitialSettingsState())
   container = document.createElement('div')
   document.body.appendChild(container)
   root = createRoot(container)
@@ -79,7 +81,8 @@ const clickButton = (label: string): void => {
 const renderMessageItem = async (
   message: ChatMessage,
   artifacts?: React.ComponentProps<typeof WorkspaceMessageItem>['artifacts'],
-  turnStartedAt?: number
+  turnStartedAt?: number,
+  runtimeIdentity?: React.ComponentProps<typeof WorkspaceMessageItem>['runtimeIdentity']
 ): Promise<void> => {
   await act(async () => {
     root.render(
@@ -91,6 +94,7 @@ const renderMessageItem = async (
         onOpenSkillMention={noop}
         onPreviewMentionArtifact={noop}
         turnStartedAt={turnStartedAt}
+        runtimeIdentity={runtimeIdentity}
       />
     )
   })
@@ -387,6 +391,63 @@ describe('WorkspaceMessageItem turn token usage', () => {
     expect(
       usagePopover?.querySelector('[data-slot="turn-token-usage-total"]')?.className
     ).toContain('border-t')
+  })
+
+  it('resolves the completed turn framework and model provider icons from stored runtime codes', async () => {
+    useSettingsStore.setState({
+      agentFrameworks: [
+        {
+          id: 'codex',
+          displayName: 'Codex',
+          supportedApiTypes: ['responses'],
+          supportsSkills: true
+        }
+      ],
+      providers: [
+        {
+          id: 'provider-openai',
+          type: 'official',
+          name: 'OpenAI',
+          vendorId: 'openai',
+          models: ['gpt-test'],
+          supportsImageInput: true,
+          hasKey: true,
+          needsKey: false
+        }
+      ]
+    })
+    await renderMessageItem(
+      createMessage({
+        role: 'agent',
+        content: 'Done',
+        completedAt: 1710000125000
+      }),
+      undefined,
+      undefined,
+      {
+        frameworkId: 'codex',
+        backendId: 'codex:provider-openai',
+        model: 'gpt-test'
+      }
+    )
+
+    const usageTrigger = container.querySelector<HTMLButtonElement>(
+      '[data-slot="turn-token-usage"] button'
+    )
+    await act(async () => {
+      usageTrigger?.dispatchEvent(new MouseEvent('pointerover', { bubbles: true }))
+      await Promise.resolve()
+    })
+
+    const frameworkIcon = document.body.querySelector('[data-slot="turn-runtime-framework"]')
+    const modelIcon = document.body.querySelector('[data-slot="turn-runtime-model"]')
+    expect(frameworkIcon?.getAttribute('aria-label')).toBe('Agent framework: Codex')
+    expect(frameworkIcon?.getAttribute('title')).toBe('Agent framework: Codex')
+    expect(modelIcon?.getAttribute('aria-label')).toBe('Model provider: OpenAI; model: gpt-test')
+    expect(modelIcon?.getAttribute('title')).toBe('Model provider: OpenAI; model: gpt-test')
+    expect(
+      decodeURIComponent(modelIcon?.querySelector('img')?.getAttribute('src') ?? '')
+    ).toContain('<title>OpenAI</title>')
   })
 
   it('splits cache reads and writes when the agent reports both categories', async () => {

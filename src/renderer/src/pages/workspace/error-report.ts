@@ -100,6 +100,18 @@ const normalizeSessionProviderId = (providerId: string | undefined): string | un
     : providerId
 }
 
+// Agent backend ids encode the framework and provider as "{frameworkId}:{providerId}". Split only
+// the first colon because provider ids may contain their own namespace (for example "ssh:box").
+export const resolveSessionProviderId = (
+  agentBackendId: string | undefined
+): string | undefined => {
+  if (!agentBackendId) return undefined
+  const colonIndex = agentBackendId.indexOf(':')
+  return normalizeSessionProviderId(
+    colonIndex === -1 ? undefined : agentBackendId.slice(colonIndex + 1)
+  )
+}
+
 // Resolves the framework name and provider from the session's own stored identifiers. backendId is
 // encoded as "${frameworkId}:${providerId}" (see service.ts) — we split on the first colon because
 // provider ids can themselves contain colons (e.g. "ssh:alias"). Codex subscription sessions retain
@@ -116,11 +128,7 @@ export const resolveSessionSubject = (
 
   if (!subject.agentBackendId) return { frameworkName, model: subject.model }
 
-  // backendId format: "{frameworkId}:{providerId}" — split on first colon only.
-  const colonIdx = subject.agentBackendId.indexOf(':')
-  const providerId = normalizeSessionProviderId(
-    colonIdx !== -1 ? subject.agentBackendId.slice(colonIdx + 1) : undefined
-  )
+  const providerId = resolveSessionProviderId(subject.agentBackendId)
 
   const provider = providerId ? providers.find((p) => p.id === providerId) : undefined
   const providerName = provider?.name

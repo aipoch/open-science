@@ -1,5 +1,10 @@
 import { CirclePlus, Sparkles } from 'lucide-react'
 
+// Import the bare icon components so this shared renderer stays free of @lobehub/ui.
+import ClaudeColor from '@lobehub/icons/es/Claude/components/Color'
+import Codex from '@lobehub/icons/es/Codex/components/Mono'
+import OpenCode from '@lobehub/icons/es/OpenCode/components/Mono'
+
 import { cn } from '@/lib/utils'
 import anthropicLogo from '@/assets/provider-icons/anthropic.svg'
 import claudeLogo from '@/assets/provider-icons/claude.svg'
@@ -15,6 +20,24 @@ import xiaomimimoLogo from '@/assets/provider-icons/xiaomimimo.svg'
 import sensenovaLogo from '@/assets/provider-icons/sensenova.svg'
 import volcengineLogo from '@/assets/provider-icons/volcengine.svg'
 import type { OfficialVendorId } from '../../../../shared/provider-registry'
+import type { AgentFrameworkId } from '../../../../shared/settings'
+
+// The same framework marks are used by Settings cards and completed-message metadata.
+export const AgentFrameworkIcon = ({
+  frameworkId,
+  size = 20,
+  className
+}: {
+  frameworkId: AgentFrameworkId
+  size?: number
+  className?: string
+}): React.JSX.Element => {
+  if (frameworkId === 'claude-code') return <ClaudeColor size={size} className={className} />
+  if (frameworkId === 'opencode') {
+    return <OpenCode size={size} className={cn('text-foreground', className)} />
+  }
+  return <Codex size={size} className={cn('text-foreground', className)} />
+}
 
 // Official vendor brand marks, bundled as assets. Both Kimi providers (the general Moonshot platform
 // and Kimi For Coding) share the one Kimi mark, both GLM providers (pay-as-you-go Zhipu and the GLM
