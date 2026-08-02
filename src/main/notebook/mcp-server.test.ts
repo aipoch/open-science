@@ -708,6 +708,39 @@ describe('compactNotebookStateResult', () => {
     expect(serialized).toContain('output-19')
   })
 
+  it('keeps the latest successful text result available for recovery', () => {
+    const state = {
+      sessionId: 'session-1',
+      runs: [
+        {
+          runId: 'run-1',
+          status: 'completed',
+          text: { stdout: '', stderr: '', traceback: '', plain: [] },
+          outputs: [{ type: 'display', data: { 'text/plain': 'older result' } }]
+        },
+        {
+          runId: 'run-2',
+          status: 'completed',
+          text: { stdout: '', stderr: '', traceback: '', plain: [] },
+          outputs: [
+            {
+              type: 'display',
+              data: { 'text/plain': '{"total_count":42}', 'image/png': 'A'.repeat(60_000) }
+            }
+          ]
+        }
+      ]
+    }
+
+    const compact = compactNotebookStateResult(state) as {
+      recentRuns: Array<Record<string, unknown>>
+    }
+
+    expect(compact.recentRuns[0]).not.toHaveProperty('outputPreview')
+    expect(compact.recentRuns[1]).toHaveProperty('outputPreview', '{"total_count":42}')
+    expect(JSON.stringify(compact)).not.toContain('image/png')
+  })
+
   it('passes through non-object state results', () => {
     expect(compactNotebookStateResult(null)).toBeNull()
     expect(compactNotebookStateResult('plain')).toBe('plain')

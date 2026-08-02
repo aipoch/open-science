@@ -470,9 +470,19 @@ const compactStateRun = (value: unknown, includeOutputPreview: boolean): unknown
   const record = asRecord(value)
   if (!record) return value
   const text = asRecord(record.text)
-  const output = ['traceback', 'stderr', 'stdout']
+  const diagnosticOutput = ['traceback', 'stderr', 'stdout']
     .map((field) => text?.[field])
     .find((candidate) => typeof candidate === 'string' && candidate.length > 0)
+  const displayOutput = Array.isArray(record.outputs)
+    ? record.outputs
+        .map((candidate) => {
+          const output = asRecord(candidate)
+          const data = output?.type === 'display' ? asRecord(output.data) : undefined
+          return data?.['text/plain']
+        })
+        .find((candidate) => typeof candidate === 'string' && candidate.length > 0)
+    : undefined
+  const output = diagnosticOutput ?? displayOutput
   const outputPreview =
     includeOutputPreview && typeof output === 'string'
       ? clipAgentText(output, NOTEBOOK_MCP_STATE_OUTPUT_PREVIEW_LIMIT).text
