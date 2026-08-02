@@ -39,14 +39,17 @@ const LOOPBACK_PROXY_BYPASS = [
 export const loopbackProxyBypassEnvironment = (
   sourceEnv: NodeJS.ProcessEnv = process.env
 ): Pick<SystemProxyEnvironment, 'NO_PROXY' | 'no_proxy'> => {
-  const appendLoopback = (value: string | undefined): string => {
-    const bypass = (value?.split(',') ?? []).map((entry) => entry.trim()).filter(Boolean)
-    return [...new Set([...bypass, ...LOOPBACK_PROXY_BYPASS])].join(',')
-  }
+  // Some clients prefer the lowercase alias once it exists. Give both aliases the same union so
+  // adding a missing spelling cannot hide bypasses inherited through the other one.
+  const inheritedBypass = [sourceEnv.NO_PROXY, sourceEnv.no_proxy]
+    .flatMap((value) => value?.split(',') ?? [])
+    .map((entry) => entry.trim())
+    .filter(Boolean)
+  const bypass = [...new Set([...inheritedBypass, ...LOOPBACK_PROXY_BYPASS])].join(',')
 
   return {
-    NO_PROXY: appendLoopback(sourceEnv.NO_PROXY),
-    no_proxy: appendLoopback(sourceEnv.no_proxy)
+    NO_PROXY: bypass,
+    no_proxy: bypass
   }
 }
 

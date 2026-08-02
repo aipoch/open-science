@@ -54,6 +54,20 @@ describe('resolveSystemProxyEnvironment', () => {
     }
   })
 
+  it.each(['NO_PROXY', 'no_proxy'] as const)(
+    'preserves inherited bypasses in both aliases when only %s is defined',
+    async (key) => {
+      const inheritedBypass = 'metadata.example.test'
+      const resolved = await resolveSystemProxyEnvironment(
+        vi.fn().mockResolvedValue('PROXY proxy.example.test:3128'),
+        { [key]: inheritedBypass }
+      )
+
+      expect(resolved?.NO_PROXY?.split(',')).toContain(inheritedBypass)
+      expect(resolved?.no_proxy?.split(',')).toContain(inheritedBypass)
+    }
+  )
+
   it('falls back to the inherited or direct network when resolution fails', async () => {
     const resolveProxy = vi.fn().mockRejectedValue(new Error('proxy resolver unavailable'))
 

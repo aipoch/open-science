@@ -534,13 +534,11 @@ describe('AgentBackendResolver bridge predicates', () => {
       expect(backend.env).not.toHaveProperty('HTTPS_PROXY')
       const loopbackBypass = ['localhost', '127.0.0.1', '127.0.0.0/8', '::1', '[::1]']
       expect(backend.env.NO_PROXY?.split(',')).toEqual(
-        expect.arrayContaining(['metadata.example.test', ...loopbackBypass])
+        expect.arrayContaining(['metadata.example.test', 'existing.internal', ...loopbackBypass])
       )
-      expect(backend.env.NO_PROXY?.split(',')).not.toContain('existing.internal')
       expect(backend.env.no_proxy?.split(',')).toEqual(
-        expect.arrayContaining(['existing.internal', ...loopbackBypass])
+        expect.arrayContaining(['metadata.example.test', 'existing.internal', ...loopbackBypass])
       )
-      expect(backend.env.no_proxy?.split(',')).not.toContain('metadata.example.test')
       await backend.responsesBridgeLease?.release()
     } finally {
       vi.unstubAllEnvs()
