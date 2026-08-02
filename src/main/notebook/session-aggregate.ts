@@ -67,6 +67,16 @@ export type NotebookSessionExecutor<
   terminate?: (kind: 'python' | 'r' | 'repl', env: string) => Promise<void>
 }
 
+export type NotebookSessionExecutorGeneration = symbol
+
+export type NotebookSessionOwnedExecutor<
+  Request = NotebookSessionExecutionRequest,
+  Result = NotebookSessionExecutionResult
+> = {
+  executor: NotebookSessionExecutor<Request, Result>
+  generation: NotebookSessionExecutorGeneration
+}
+
 export type NotebookSessionMcpRpcConnection = {
   endpoint: string
   token: string
@@ -86,6 +96,7 @@ export type NotebookSessionAggregateInit<
   runJsonPath: string
   executionCount: number
   executor: NotebookSessionExecutor<Request, Result>
+  executorGeneration: NotebookSessionExecutorGeneration
 }
 
 export type NotebookSessionSnapshot = Readonly<{
@@ -139,6 +150,12 @@ export class NotebookSessionAggregate<
   private activeRunIdValue: string | undefined
   private executionCountValue: number
   private executorValue: NotebookSessionExecutor<Request, Result>
+  private executorGenerationValue: NotebookSessionExecutorGeneration
+  private executorGenerationActive = true
+  // Serializes lifecycle callback commits with executor teardown. Teardown synchronously closes
+  // admission, then drains the callbacks that already proved ownership before replacing/removing the
+  // executor, so their persistence cannot land on a successor.
+  private executorLifecycleQueue: Promise<void> = Promise.resolve()
   private readonly executionQueues = new Map<string, Promise<unknown>>()
   private controlQueue: Promise<unknown> = Promise.resolve()
   private mcpRpcConnection: NotebookSessionMcpRpcConnection | undefined
@@ -158,6 +175,7 @@ export class NotebookSessionAggregate<
     this.runJsonPath = init.runJsonPath
     this.executionCountValue = init.executionCount
     this.executorValue = init.executor
+    this.executorGenerationValue = init.executorGeneration
   }
 
   get cwd(): string {
@@ -344,23 +362,53 @@ export class NotebookSessionAggregate<
     return this.executorValue.execute(request)
   }
 
+  ownsExecutorGeneration(generation: NotebookSessionExecutorGeneration): boolean {
+    return this.executorGenerationActive && this.executorGenerationValue === generation
+  }
+
+  // Commits one executor-owned callback only while its generation still owns this Aggregate. A stale
+  // callback still joins the queue, but resolves as a no-op before it can mutate, persist, or notify.
+  runExecutorLifecycleCallback<T>(
+    generation: NotebookSessionExecutorGeneration,
+    callback: () => Promise<T>
+  ): Promise<T | undefined> {
+    const run = this.executorLifecycleQueue.then(() => {
+      if (!this.ownsExecutorGeneration(generation)) return undefined
+      return callback()
+    })
+    this.executorLifecycleQueue = run.then(
+      () => undefined,
+      () => undefined
+    )
+    return run
+  }
+
   terminateExecutor(kind: 'python' | 'r' | 'repl', env: string): Promise<void> {
     return this.executorValue.terminate?.(kind, env) ?? Promise.resolve()
   }
 
   async restartExecutor(
-    replacement: () => NotebookSessionExecutor<Request, Result>
+    replacement: () => NotebookSessionOwnedExecutor<Request, Result>
   ): Promise<void> {
     if (this.executorValue.restart) {
       await this.executorValue.restart()
       return
     }
+    this.executorGenerationActive = false
+    const lifecycleDrain = this.executorLifecycleQueue
+    await lifecycleDrain
     await this.executorValue.shutdown()
-    this.executorValue = replacement()
+    const next = replacement()
+    this.executorValue = next.executor
+    this.executorGenerationValue = next.generation
+    this.executorGenerationActive = true
   }
 
   shutdownExecutor(): Promise<{ reaped: boolean }> {
-    return this.executorValue.shutdown()
+    const executor = this.executorValue
+    this.executorGenerationActive = false
+    const lifecycleDrain = this.executorLifecycleQueue
+    return lifecycleDrain.then(() => executor.shutdown())
   }
 
   async resolveMcpRpcConnection(

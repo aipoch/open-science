@@ -20,6 +20,7 @@ describe('NotebookSessionAggregate', () => {
       runtimeRoot: '/runtime',
       runJsonPath: '/workspace/run.json',
       executionCount: 0,
+      executorGeneration: Symbol('executor-1'),
       executor: {
         execute: async () => ({
           status: 'completed',
@@ -65,6 +66,7 @@ describe('NotebookSessionAggregate', () => {
       runtimeRoot: '/runtime',
       runJsonPath: '/workspace/run.json',
       executionCount: 0,
+      executorGeneration: Symbol('executor-1'),
       executor: {
         execute: async () => ({
           status: 'completed',

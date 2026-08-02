@@ -6,7 +6,11 @@ import { tmpdir } from 'node:os'
 import { dirname, join } from 'node:path'
 import { afterEach, beforeAll, describe, expect, it, vi } from 'vitest'
 
-import type { NotebookExecutionRequest, NotebookExecutionResult } from './runtime-service'
+import type {
+  NotebookExecutionRequest,
+  NotebookExecutionResult,
+  NotebookExecutorLifecycleCallbacks
+} from './runtime-service'
 import {
   NotebookRuntimeService,
   buildShellEnv,
@@ -94,6 +98,47 @@ const verifiedPackageMutationTracker = (): Pick<
   markPackageMutationDirty: vi.fn().mockResolvedValue(undefined),
   refreshAfterPackageMutation: vi.fn().mockResolvedValue({ result: 'success' })
 })
+
+const lifecycleCallbackHarness = (
+  root: string,
+  options: {
+    inPlaceRestart?: boolean
+    repository?: NotebookRunRepository
+    shutdown?: () => Promise<{ reaped: boolean }>
+  } = {}
+): {
+  service: NotebookRuntimeService
+  lifecycles: NotebookExecutorLifecycleCallbacks[]
+  changedSessions: string[]
+} => {
+  const lifecycles: NotebookExecutorLifecycleCallbacks[] = []
+  const changedSessions: string[] = []
+  const service = new NotebookRuntimeService({
+    configRoot: root,
+    dataRoot: root,
+    projectName: 'default-project',
+    repository: options.repository ?? new NotebookRunRepository(root),
+    callbacks: {
+      onNotebookChanged: (event) => changedSessions.push(event.sessionId)
+    },
+    executorFactory: (_sessionId, lifecycle) => {
+      lifecycles.push(lifecycle)
+      return {
+        execute: async (request): Promise<NotebookExecutionResult> => ({
+          status: 'completed',
+          stdout: '',
+          stderr: '',
+          traceback: '',
+          cwdAfter: request.cwd,
+          outputs: []
+        }),
+        shutdown: options.shutdown ?? (async () => ({ reaped: true })),
+        restart: options.inPlaceRestart ? async () => undefined : undefined
+      }
+    }
+  })
+  return { service, lifecycles, changedSessions }
+}
 
 describe('resolveShellInvocation', () => {
   it('uses a POSIX sh command on Unix platforms', () => {
@@ -1995,6 +2040,25 @@ describe('notebook runtime service', () => {
     expect(settled.kernelStatus).toBe('idle')
   })
 
+  it('keeps the executor callback current across an in-place restart', async () => {
+    const root = await createStorageRoot()
+    const { service, lifecycles, changedSessions } = lifecycleCallbackHarness(root, {
+      inPlaceRestart: true
+    })
+
+    await service.execute({ sessionId: 'session-1', workspaceCwd: root, code: '1' })
+    await service.restart({ sessionId: 'session-1', workspaceCwd: root })
+    const changedCountBefore = changedSessions.length
+
+    expect(lifecycles).toHaveLength(1)
+    await lifecycles[0].onIdleShutdown('python', DEFAULT_PY_ENV)
+
+    expect((await service.state({ sessionId: 'session-1', workspaceCwd: root })).kernelStatus).toBe(
+      'terminated'
+    )
+    expect(changedSessions).toHaveLength(changedCountBefore + 1)
+  })
+
   it('idle-shutdown reports a terminated kernel status and notifies listeners', async () => {
     const root = await createStorageRoot()
     const changedSessions: string[] = []
@@ -2034,6 +2098,190 @@ describe('notebook runtime service', () => {
     const state = await service.state({ sessionId: 'session-1', workspaceCwd: root })
     expect(state.kernelStatus).toBe('terminated')
     expect(changedSessions).toContain('session-1')
+  })
+
+  it('ignores an idle-shutdown callback from a session replaced under the same id', async () => {
+    const root = await createStorageRoot()
+    const { service, lifecycles, changedSessions } = lifecycleCallbackHarness(root)
+
+    await service.execute({ sessionId: 'session-1', workspaceCwd: root, code: '1' })
+    await service.shutdown({ sessionId: 'session-1', workspaceCwd: root })
+    const replacement = await service.state({ sessionId: 'session-1', workspaceCwd: root })
+    const runJsonBefore = await readFile(replacement.runJsonPath, 'utf8')
+    const changedCountBefore = changedSessions.length
+
+    expect(lifecycles).toHaveLength(2)
+    await lifecycles[0].onIdleShutdown('python', DEFAULT_PY_ENV)
+
+    expect(await readFile(replacement.runJsonPath, 'utf8')).toBe(runJsonBefore)
+    expect((await service.state({ sessionId: 'session-1', workspaceCwd: root })).kernelStatus).toBe(
+      'idle'
+    )
+    expect(changedSessions).toHaveLength(changedCountBefore)
+  })
+
+  it.each(['idle', 'terminated'] as const)(
+    'ignores an old %s callback after shutdown and before same-id recreation',
+    async (callback) => {
+      const root = await createStorageRoot()
+      const { service, lifecycles, changedSessions } = lifecycleCallbackHarness(root)
+
+      const current = await service.state({
+        sessionId: 'session-1',
+        workspaceCwd: root
+      })
+      await service.shutdown({ sessionId: 'session-1', workspaceCwd: root })
+      const runJsonBefore = await readFile(current.runJsonPath, 'utf8')
+      const changedCountBefore = changedSessions.length
+
+      expect(lifecycles).toHaveLength(1)
+      if (callback === 'idle') {
+        await lifecycles[0].onIdleShutdown('python', DEFAULT_PY_ENV)
+      } else {
+        await lifecycles[0].onTerminated('python', DEFAULT_PY_ENV)
+      }
+
+      expect(await readFile(current.runJsonPath, 'utf8')).toBe(runJsonBefore)
+      expect(changedSessions).toHaveLength(changedCountBefore)
+
+      const replacement = await service.state({ sessionId: 'session-1', workspaceCwd: root })
+      expect(replacement.kernelStatus).toBe('idle')
+      expect(lifecycles).toHaveLength(2)
+    }
+  )
+
+  it('applies only the current terminated callback after executor replacement', async () => {
+    const root = await createStorageRoot()
+    const { service, lifecycles, changedSessions } = lifecycleCallbackHarness(root)
+
+    await service.execute({ sessionId: 'session-1', workspaceCwd: root, code: '1' })
+    await service.restart({ sessionId: 'session-1', workspaceCwd: root })
+    const restarted = await service.state({ sessionId: 'session-1', workspaceCwd: root })
+    const runJsonBefore = await readFile(restarted.runJsonPath, 'utf8')
+    const environmentsBefore = restarted.environments
+    const changedCountBefore = changedSessions.length
+
+    expect(lifecycles).toHaveLength(2)
+    await lifecycles[0].onTerminated('python', 'analysis')
+    expect(
+      (await service.state({ sessionId: 'session-1', workspaceCwd: root })).environments
+    ).toEqual(environmentsBefore)
+    expect(await readFile(restarted.runJsonPath, 'utf8')).toBe(runJsonBefore)
+    expect(changedSessions).toHaveLength(changedCountBefore)
+
+    await lifecycles[1].onTerminated('python', 'analysis')
+    expect(
+      (await service.state({ sessionId: 'session-1', workspaceCwd: root })).environments
+    ).toEqual([
+      ...environmentsBefore,
+      {
+        processKey: 'python:analysis',
+        kind: 'python',
+        environment: 'analysis',
+        status: 'terminated',
+        restartRecommended: false
+      }
+    ])
+    expect(await readFile(restarted.runJsonPath, 'utf8')).toBe(runJsonBefore)
+    expect(changedSessions).toHaveLength(changedCountBefore + 1)
+  })
+
+  it.each([
+    { operation: 'session shutdown', callback: 'idle' },
+    { operation: 'executor replacement', callback: 'terminated' }
+  ] as const)(
+    'drops the old $callback callback once $operation teardown begins',
+    async ({ operation, callback }) => {
+      const root = await createStorageRoot()
+      let releaseShutdown!: () => void
+      const shutdownGate = new Promise<void>((resolve) => {
+        releaseShutdown = resolve
+      })
+      const shutdownExecutor = vi.fn(async () => {
+        await shutdownGate
+        return { reaped: true }
+      })
+      const { service, lifecycles, changedSessions } = lifecycleCallbackHarness(root, {
+        shutdown: shutdownExecutor
+      })
+
+      await service.execute({ sessionId: 'session-1', workspaceCwd: root, code: '1' })
+      const beforeTeardown = await service.state({ sessionId: 'session-1', workspaceCwd: root })
+      const teardown =
+        operation === 'session shutdown'
+          ? service.shutdown({ sessionId: 'session-1', workspaceCwd: root })
+          : service.restart({ sessionId: 'session-1', workspaceCwd: root })
+      await vi.waitFor(() => expect(shutdownExecutor).toHaveBeenCalledTimes(1))
+
+      const duringTeardown =
+        operation === 'executor replacement'
+          ? await service.state({ sessionId: 'session-1', workspaceCwd: root })
+          : beforeTeardown
+      const runJsonBefore = await readFile(duringTeardown.runJsonPath, 'utf8')
+      const environmentsBefore = duringTeardown.environments
+      const changedCountBefore = changedSessions.length
+
+      if (callback === 'idle') {
+        await lifecycles[0].onIdleShutdown('python', DEFAULT_PY_ENV)
+      } else {
+        await lifecycles[0].onTerminated('python', 'analysis')
+      }
+
+      try {
+        expect(await readFile(duringTeardown.runJsonPath, 'utf8')).toBe(runJsonBefore)
+        if (operation === 'executor replacement') {
+          expect(
+            (await service.state({ sessionId: 'session-1', workspaceCwd: root })).environments
+          ).toEqual(environmentsBefore)
+        }
+        expect(changedSessions).toHaveLength(changedCountBefore)
+      } finally {
+        releaseShutdown()
+        await teardown
+      }
+      if (operation === 'session shutdown') {
+        await service.state({ sessionId: 'session-1', workspaceCwd: root })
+      }
+      expect(lifecycles).toHaveLength(2)
+    }
+  )
+
+  it('drains a callback that already owns persistence before session teardown', async () => {
+    const root = await createStorageRoot()
+    const repository = new NotebookRunRepository(root)
+    const shutdownExecutor = vi.fn(async () => ({ reaped: true }))
+    const { service, lifecycles, changedSessions } = lifecycleCallbackHarness(root, {
+      repository,
+      shutdown: shutdownExecutor
+    })
+    await service.execute({ sessionId: 'session-1', workspaceCwd: root, code: '1' })
+
+    let releasePersistence!: () => void
+    const persistenceGate = new Promise<void>((resolve) => {
+      releasePersistence = resolve
+    })
+    const updateKernelStatus = repository.updateKernelStatus.bind(repository)
+    const updateSpy = vi
+      .spyOn(repository, 'updateKernelStatus')
+      .mockImplementation(async (request) => {
+        await persistenceGate
+        return updateKernelStatus(request)
+      })
+    const changedCountBefore = changedSessions.length
+
+    const callback = lifecycles[0].onIdleShutdown('python', DEFAULT_PY_ENV)
+    await vi.waitFor(() => expect(updateSpy).toHaveBeenCalledTimes(1))
+    const teardown = service.shutdown({ sessionId: 'session-1', workspaceCwd: root })
+
+    await new Promise((resolve) => setTimeout(resolve, 20))
+    expect(shutdownExecutor).not.toHaveBeenCalled()
+
+    releasePersistence()
+    await callback
+    await teardown
+
+    expect(shutdownExecutor).toHaveBeenCalledTimes(1)
+    expect(changedSessions).toHaveLength(changedCountBefore + 1)
   })
 
   it('clears a stale terminated status once a run completes on the transparently respawned kernel', async () => {

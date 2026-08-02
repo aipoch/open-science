@@ -106,6 +106,8 @@ import { EnvironmentLeaseManager, type EnvironmentLeaseMode } from './environmen
 import { NotebookRecoveryCoordinator } from './recovery-coordinator'
 import {
   NotebookSessionAggregate,
+  type NotebookSessionExecutorGeneration,
+  type NotebookSessionOwnedExecutor,
   type NotebookSessionExecutionRequest,
   type NotebookSessionExecutionResult,
   type NotebookSessionExecutor,
@@ -237,6 +239,11 @@ type InspectPackagesResult = PackageInspectionResult & {
 
 type NotebookExecutor = NotebookSessionExecutor
 
+type NotebookExecutorLifecycleCallbacks = {
+  onIdleShutdown: (kind?: KernelProcessKind, env?: string) => Promise<void>
+  onTerminated: (kind: KernelProcessKind, env?: string) => Promise<void>
+}
+
 type NotebookRuntimeServiceCallbacks = {
   onNotebookAvailable?: (event: NotebookSessionReference) => void
   onNotebookChanged?: (event: NotebookSessionReference) => void
@@ -278,7 +285,10 @@ type NotebookRuntimeServiceOptions = {
   dataRoot: string
   projectName: string
   repository?: NotebookRunRepository
-  executorFactory?: (sessionId: string) => NotebookExecutor
+  executorFactory?: (
+    sessionId: string,
+    lifecycle: NotebookExecutorLifecycleCallbacks
+  ) => NotebookExecutor
   callbacks?: NotebookRuntimeServiceCallbacks
   // Resolves the connector RPC connection to inject into the kernel spawn env. Usually set after
   // construction via setMcpRpcConnectionResolver, since the RPC server is constructed with this
@@ -3256,6 +3266,7 @@ class NotebookRuntimeService {
         document = await this.repository.reconcileInterruptedRuns(projectName, request.sessionId)
       }
       // Runtime session roots come from run.json normalization so UI, MCP, and Python agree.
+      const ownedExecutor = this.createExecutor(request.sessionId, projectName)
       const session: RuntimeSession = new NotebookSessionAggregate({
         sessionId: request.sessionId,
         projectName,
@@ -3269,7 +3280,8 @@ class NotebookRuntimeService {
         runtimeRoot: document.kernel.runtimeRoot,
         runJsonPath: getNotebookRunJsonPath(this.options.dataRoot, projectName, request.sessionId),
         executionCount: document.runs.length,
-        executor: this.createExecutor(request.sessionId, projectName)
+        executor: ownedExecutor.executor,
+        executorGeneration: ownedExecutor.generation
       })
 
       try {
@@ -3298,19 +3310,30 @@ class NotebookRuntimeService {
   // shutdown proc (kernel-executor.ts's own idle timer) surfaces as a 'terminated' kernel status; this
   // branch is not exercised by unit tests (see resolveDefaultExecutorOptions for the tested,
   // spawn-free portion).
-  private createExecutor(sessionId: string, projectName: string): NotebookExecutor {
-    if (this.options.executorFactory) return this.options.executorFactory(sessionId)
+  private createExecutor(sessionId: string, projectName: string): NotebookSessionOwnedExecutor {
+    const generation = Symbol(`notebook-executor:${sessionId}`)
+    const lifecycle: NotebookExecutorLifecycleCallbacks = {
+      onIdleShutdown: (kind, env) =>
+        this.handleKernelIdleShutdown(sessionId, projectName, kind, env, generation),
+      onTerminated: (kind, env) =>
+        this.handleKernelTerminated(sessionId, projectName, kind, env, generation)
+    }
 
-    return new NotebookKernelExecutor({
+    if (this.options.executorFactory) {
+      return { executor: this.options.executorFactory(sessionId, lifecycle), generation }
+    }
+
+    const executor = new NotebookKernelExecutor({
       ...resolveDefaultExecutorOptions(),
       platform: this.options.platform,
       onIdleShutdown: (kind, env) => {
-        void this.handleKernelIdleShutdown(sessionId, projectName, kind, env)
+        void lifecycle.onIdleShutdown(kind, env)
       },
       onTerminated: (kind, env) => {
-        void this.handleKernelTerminated(sessionId, projectName, kind, env)
+        void lifecycle.onTerminated(kind, env)
       }
     })
+    return { executor, generation }
   }
 
   // Persists 'terminated' for a proc the executor dropped after its idle window, then notifies the
@@ -3322,15 +3345,27 @@ class NotebookRuntimeService {
     sessionId: string,
     projectName: string,
     kind?: KernelProcessKind,
-    env?: string
+    env?: string,
+    generation?: NotebookSessionExecutorGeneration
   ): Promise<void> {
     const session = this.sessions.get(sessionId)
     const processKey = kernelProcessKey(kind, env)
     if (session) {
+      if (generation) {
+        await session.runExecutorLifecycleCallback(generation, async () => {
+          await this.persistKernelStatus(session, 'terminated', processKey)
+          this.notifyNotebookChanged(session)
+        })
+        return
+      }
       await this.persistKernelStatus(session, 'terminated', processKey)
       this.notifyNotebookChanged(session)
       return
     }
+    // Executor-owned callbacks are valid only while their Aggregate generation is published. Once
+    // teardown removes that owner, do not fall through to the legacy rehydration path and rewrite the
+    // durable state a same-ID successor will load.
+    if (generation) return
     // No live session (rehydrated after relaunch): still persist the default env's run.json status.
     if (!persistsToRunJson(processKey)) return
     try {
@@ -3348,16 +3383,26 @@ class NotebookRuntimeService {
     sessionId: string,
     projectName: string,
     kind: KernelProcessKind,
-    env?: string
+    env?: string,
+    generation?: NotebookSessionExecutorGeneration
   ): Promise<void> {
     const session = this.sessions.get(sessionId)
     const processKey = kernelProcessKey(kind, env)
     if (session) {
+      if (generation) {
+        await session.runExecutorLifecycleCallback(generation, async () => {
+          session.markKernelTerminated(processKey)
+          await this.persistKernelStatus(session, 'terminated', processKey)
+          this.notifyNotebookChanged(session)
+        })
+        return
+      }
       session.markKernelTerminated(processKey)
       await this.persistKernelStatus(session, 'terminated', processKey)
       this.notifyNotebookChanged(session)
       return
     }
+    if (generation) return
     if (!persistsToRunJson(processKey)) return
     try {
       await this.repository.updateKernelStatus({ projectName, sessionId, status: 'terminated' })
@@ -3666,6 +3711,7 @@ export type {
   InspectPackagesRequest,
   InspectPackagesResult,
   NotebookExecutor,
+  NotebookExecutorLifecycleCallbacks,
   NotebookEnvironmentManager,
   NotebookRuntimeServiceCallbacks,
   NotebookRuntimeServiceOptions
