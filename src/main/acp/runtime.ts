@@ -138,6 +138,7 @@ import {
   type AcpConnectionResourceAttempt,
   type AcpConnectionResourceReadyHandle
 } from './connection-resource-owner'
+import { AcpConnectionTransitionOwner } from './connection-transition-owner'
 
 export type AcpRuntimeCallbacks = {
   onStateChanged?: (state: AcpStateSnapshot) => void
@@ -512,6 +513,7 @@ class AcpRuntime {
   // context-bearing updates so a rejected prompt rolls back only when the provider saw no turn data.
   private readonly contextUsageUpdatedPromptTurnsBySession = new Map<string, number>()
   private readonly connectionResources: AcpConnectionResourceOwner
+  private readonly connectionTransitions: AcpConnectionTransitionOwner
   // Stable app identities, provider aliases, publication order, selection, and startup/delete
   // arbitration share one owner. The runtime retains only protocol/resource orchestration.
   private readonly sessionRegistry: AcpSessionRegistry
@@ -542,18 +544,6 @@ class AcpRuntime {
   private readonly handoffPromptRequests = new Map<string, AcpPromptRequest>()
   private readonly handoffUserTasks = new Map<string, HandoffUserTask[]>()
   private readonly pendingClaudeCodeHandoffAppends = new Map<string, string>()
-  // A provider change requested while a prompt was running, applied when the session next goes idle.
-  private pendingProviderReconnect = false
-  private pendingSkillsReload = false
-  // A coordinator-owned framework generation retires after its last active turn or background workflow.
-  // Unlike a provider reconnect, it must never spawn again: future work uses the coordinator's current
-  // runtime.
-  private pendingRetirement = false
-  // Barrier awaited by ensureConnected so a createSession called while a deferred reconnect is
-  // queued blocks until the reconnect completes rather than reusing the stale connection.
-  private reconnectBarrier: Promise<void> | undefined
-  private reconnectBarrierResolve: (() => void) | undefined
-  private reconnectBarrierGeneration = 0
   private readonly permissionContext: AcpPermissionContext
   private readonly callbacks: AcpRuntimeCallbacks
   private readonly spawnAgent: (() => ChildProcessWithoutNullStreams) | undefined
@@ -606,6 +596,18 @@ class AcpRuntime {
       closeMcpHost: async () => {
         await options.mcpHttpHost?.close()
       }
+    })
+    this.connectionTransitions = new AcpConnectionTransitionOwner({
+      blockers: () => ({
+        reconnect: this.hasBlockingActivity(),
+        retirement: this.hasRetirementBlockingActivity()
+      }),
+      connectionGeneration: () => this.connectionGeneration,
+      disconnect: (emitClosedStatus) => this.disconnect(emitClosedStatus),
+      onRetired: () => this.callbacks.onRetired?.(),
+      publishIdle: () => this.setStatus('idle'),
+      recoverFailedDeferredDisconnect: () => this.recoverFailedDeferredDisconnect(),
+      reportFailure: (message, error) => safeLogError(message, errorLogFields(error))
     })
     this.spawnAgent = options.spawnAgent
     this.skillsHooks = options.skills
@@ -715,7 +717,7 @@ class AcpRuntime {
         this.permissionContext.clearCorrelationsForSession(sessionId),
       currentStartupGeneration: () => this.sessionRegistry.startupGeneration,
       isPrimarySessionIdClaimed: (sessionId) => this.sessionRegistry.isIdentityClaimed(sessionId),
-      onActiveSessionReleased: () => this.maybeApplyPendingProviderReconnect(),
+      onActiveSessionReleased: () => this.connectionTransitions.activityChanged(),
       registerBridgeSession: (sessionId) =>
         this.connectionResources.registerBridgeReviewerSession(sessionId),
       removeStartupBlocker: (token) => this.pendingSessionStartupBlockers.delete(token),
@@ -726,6 +728,14 @@ class AcpRuntime {
 
   private get connection(): ClientConnection | undefined {
     return this.connectionResources.connection
+  }
+
+  private get pendingProviderReconnect(): boolean {
+    return this.connectionTransitions.providerReconnectPending
+  }
+
+  private get reconnectBarrier(): Promise<void> | undefined {
+    return this.connectionTransitions.barrier
   }
 
   private get connectionGeneration(): number {
@@ -2658,25 +2668,22 @@ class AcpRuntime {
 
   // Tears down every local session route and closes the underlying agent process.
   async disconnect(emitClosedStatus = true): Promise<AcpStateSnapshot> {
-    const teardownGeneration = this.connectionResources.supersede()
-    const reconnectBarrierGeneration = this.reconnectBarrierGeneration
-    this.invalidatePendingSessionStartups()
+    return this.connectionTransitions.settleTeardown(async () => {
+      const teardownGeneration = this.connectionResources.supersede()
+      this.invalidatePendingSessionStartups()
 
-    try {
-      return await this.disconnectCurrent(emitClosedStatus, teardownGeneration)
-    } catch (error) {
-      // disconnectCurrent transfers the resource with detach before physical teardown. If it failed
-      // earlier, the owner still holds a live published connection: restore only that exact teardown
-      // epoch so callers retain the pre-refactor recovery behavior. Once detached, rollback is a no-op.
-      this.connectionResources.restorePublished(teardownGeneration)
-      throw error
-    } finally {
       try {
-        await this.connectionResources.closeMcp(teardownGeneration)
+        return await this.disconnectCurrent(emitClosedStatus, teardownGeneration)
+      } catch (error) {
+        // disconnectCurrent transfers the resource with detach before physical teardown. If it failed
+        // earlier, the owner still holds a live published connection: restore only that exact teardown
+        // epoch so callers retain the pre-refactor recovery behavior. Once detached, rollback is a no-op.
+        this.connectionResources.restorePublished(teardownGeneration)
+        throw error
       } finally {
-        this.completePendingReconnectTeardown(reconnectBarrierGeneration)
+        await this.connectionResources.closeMcp(teardownGeneration)
       }
-    }
+    })
   }
 
   // Synchronously terminates the agent child for app shutdown. Electron's `will-quit` cannot await, so
@@ -2685,7 +2692,7 @@ class AcpRuntime {
   // reclaims the remaining connection/session state as the process exits.
   shutdown(): void {
     this.connectionResources.shutdownSynchronously(() => this.invalidatePendingSessionStartups())
-    this.completePendingReconnectTeardown()
+    this.connectionTransitions.resetReconnect()
     this.contextUsageTracker.clear()
     this.contextUsageUpdatedPromptTurnsBySession.clear()
     this.clearAppliedSessionModels()
@@ -2729,13 +2736,7 @@ class AcpRuntime {
   // Retires this framework generation without interrupting active turns or background workflows. The
   // coordinator stops routing new work here immediately; teardown waits for every prompt and lease.
   async requestRetirement(): Promise<void> {
-    this.pendingRetirement = true
-    if (this.hasRetirementBlockingActivity()) return
-
-    this.pendingRetirement = false
-    this.pendingProviderReconnect = false
-    this.pendingSkillsReload = false
-    await this.disconnectForRetirement()
+    await this.connectionTransitions.requestRetirement()
   }
 
   // Applies an active-provider change without interrupting the user. The agent bakes its provider env in
@@ -2753,109 +2754,23 @@ class AcpRuntime {
       this.emitState()
     }
 
-    if (this.hasBlockingActivity()) {
-      this.pendingProviderReconnect = true
-      // Arm the barrier so any concurrent createSession waits for the reconnect
-      // rather than reusing the stale connection with the old backend.
-      this.armReconnectBarrier()
-      return
-    }
-
-    this.pendingProviderReconnect = false
-    await this.disconnectForPlannedReconnect()
+    await this.connectionTransitions.requestProviderReconnect()
   }
 
-  // If a provider reconnect was deferred while a prompt ran, apply it once nothing is in flight.
-  private maybeApplyPendingProviderReconnect(): void {
-    if (this.pendingRetirement) {
-      if (this.hasRetirementBlockingActivity()) return
-
-      this.pendingRetirement = false
-      this.pendingProviderReconnect = false
-      this.pendingSkillsReload = false
-      void this.disconnectForRetirement()
-      return
-    }
-
-    if (this.hasBlockingActivity()) return
-
-    // A single reconnect satisfies both a pending provider switch and a pending skills reload: the
-    // fresh spawn picks up the new backend AND re-provisions the current skill set. So clear both
-    // flags before tearing down — leaving one set would fire a second, redundant disconnect on the
-    // next idle turn, needlessly killing the just-established connection.
-    if (this.pendingProviderReconnect || this.pendingSkillsReload) {
-      this.pendingProviderReconnect = false
-      this.pendingSkillsReload = false
-      // Resolve the barrier once teardown settles so ensureConnected falls through to a fresh
-      // connect with the new backend, not back onto the stale connection. disconnectForDeferredReconnect
-      // resolves the barrier even if disconnect() rejects — otherwise it strands and every later
-      // createSession hangs forever — and swallows the rejection so it never surfaces as unhandled.
-      void this.disconnectForDeferredReconnect()
-    }
-  }
-
-  // Tears down the connection for a deferred provider/skills reconnect, always releasing the
-  // reconnect barrier — even if the disconnect rejects — and never leaking an unhandled rejection.
-  private async disconnectForDeferredReconnect(): Promise<void> {
-    const reconnectBarrierGeneration = this.reconnectBarrierGeneration
-    try {
-      await this.disconnectForPlannedReconnect()
-    } catch (error) {
-      safeLogError('deferred reconnect disconnect failed', errorLogFields(error))
-      // disconnect() rejected — its synchronous teardown may have thrown before clearing the
-      // connection (e.g. session.dispose or connection.close). Force the connection invalid so the
-      // barrier-release below cannot let a blocked ensureConnected reuse the STALE connection on the
-      // old backend; the re-check there will fall through to a fresh connect(). Set status directly
-      // rather than via setStatus — the throw may have come from emitState itself.
-      const teardownGeneration = this.connectionResources.supersede()
-      void this.connectionResources.teardown(teardownGeneration, (stage, cleanupError) => {
-        safeLogError(`${stage} cleanup after failed deferred disconnect failed`, {
-          ...diagnosticErrorFields(cleanupError)
-        })
+  private recoverFailedDeferredDisconnect(): void {
+    // A failed Runtime teardown may still expose the stale connection. Supersede it before releasing
+    // the transition barrier so the next startup must resolve and connect a fresh backend.
+    const teardownGeneration = this.connectionResources.supersede()
+    void this.connectionResources.teardown(teardownGeneration, (stage, cleanupError) => {
+      safeLogError(`${stage} cleanup after failed deferred disconnect failed`, {
+        ...diagnosticErrorFields(cleanupError)
       })
-      this.snapshotOwner.transitionStatus('closed')
-      // Broadcast the closed status defensively so the renderer doesn't keep showing the prior
-      // 'connected' state when no createSession follows to re-emit it. Guarded because emitState may
-      // be the very thing that threw — the barrier release below must still run.
-      try {
-        this.emitState()
-      } catch (emitError) {
-        safeLogError('emitState after failed deferred disconnect failed', errorLogFields(emitError))
-      }
-    } finally {
-      // Tests and embedders may replace disconnect(), and a newer provider intent can arrive while
-      // this one is settling. Complete only the barrier generation this teardown was started for.
-      this.completePendingReconnectTeardown(reconnectBarrierGeneration)
-    }
-  }
-
-  // A provider/model change deliberately detaches the current native sessions so the next prompt can
-  // resume them on a freshly configured process. Publish `idle`, not `closed`: renderer treats a
-  // running-session transition to closed/error as an unexpected transport loss and offers Resume.
-  // The main-process turn can already be terminal while its renderer event is still queued, so even an
-  // otherwise idle reconnect must not expose that race as a false interruption.
-  private async disconnectForPlannedReconnect(): Promise<void> {
-    const disconnect = this.disconnect(false)
-    const teardownGeneration = this.connectionGeneration
-    await disconnect
-    if (teardownGeneration === this.connectionGeneration) this.setStatus('idle')
-  }
-
-  // Retirement is terminal for this runtime generation. Swallow teardown failures just like deferred
-  // reconnect cleanup so a late dispose error cannot become an unhandled rejection after a prompt ends.
-  private async disconnectForRetirement(): Promise<void> {
+    })
+    this.snapshotOwner.transitionStatus('closed')
     try {
-      // Retirement is an intentional handoff after all blocking activity has finished. Suppress the
-      // abnormal-drop status so the renderer does not mark the just-completed turn as interrupted.
-      await this.disconnect(false)
+      this.emitState()
     } catch (error) {
-      safeLogError('retired runtime disconnect failed', errorLogFields(error))
-    } finally {
-      try {
-        this.callbacks.onRetired?.()
-      } catch (error) {
-        safeLogError('retired runtime callback failed', errorLogFields(error))
-      }
+      safeLogError('emitState after failed deferred disconnect failed', errorLogFields(error))
     }
   }
 
@@ -2869,7 +2784,7 @@ class AcpRuntime {
       return await work(this)
     } finally {
       this.activityLeaseCount = Math.max(0, this.activityLeaseCount - 1)
-      this.maybeApplyPendingProviderReconnect()
+      this.connectionTransitions.activityChanged()
     }
   }
 
@@ -2879,7 +2794,7 @@ class AcpRuntime {
       return await work()
     } finally {
       this.operationLeaseCount = Math.max(0, this.operationLeaseCount - 1)
-      this.maybeApplyPendingProviderReconnect()
+      this.connectionTransitions.activityChanged()
     }
   }
 
@@ -2894,36 +2809,6 @@ class AcpRuntime {
 
   private hasRetirementBlockingActivity(): boolean {
     return this.operationLeaseCount > 0 || this.hasBlockingActivity()
-  }
-
-  // Creates the reconnect barrier promise if one is not already pending.
-  private armReconnectBarrier(): void {
-    this.reconnectBarrierGeneration += 1
-    if (!this.reconnectBarrier) {
-      this.reconnectBarrier = new Promise<void>((resolve) => {
-        this.reconnectBarrierResolve = resolve
-      })
-    }
-  }
-
-  // Resolves and clears the reconnect barrier, unblocking any ensureConnected callers.
-  private resolveReconnectBarrier(): void {
-    const resolve = this.reconnectBarrierResolve
-    this.reconnectBarrier = undefined
-    this.reconnectBarrierResolve = undefined
-    resolve?.()
-  }
-
-  private completePendingReconnectTeardown(expectedBarrierGeneration?: number): void {
-    if (
-      expectedBarrierGeneration !== undefined &&
-      expectedBarrierGeneration !== this.reconnectBarrierGeneration
-    ) {
-      return
-    }
-    this.pendingProviderReconnect = false
-    this.pendingSkillsReload = false
-    this.resolveReconnectBarrier()
   }
 
   private async disconnectCurrent(
@@ -3720,8 +3605,7 @@ class AcpRuntime {
         }
       }
       // emitState invokes the renderer onStateChanged callback; guard it so a throw there cannot skip
-      // the reconnect below. maybeApplyPendingProviderReconnect is what resolves an armed reconnect
-      // barrier, so skipping it would strand the barrier and hang every later createSession.
+      // transition arbitration and strand a barrier awaited by a later createSession.
       try {
         this.emitState()
       } catch (error) {
@@ -3732,10 +3616,11 @@ class AcpRuntime {
       // must happen before the reconnect is applied so the fresh spawn no longer sees the forced ids.
       if (didForceReload) {
         this.turnForcedSkillIds.clear()
-        this.pendingSkillsReload = true
+        this.connectionTransitions.requestSkillsReload()
+      } else {
+        // A provider switch requested mid-turn is applied now that the session is idle.
+        this.connectionTransitions.activityChanged()
       }
-      // A provider switch requested mid-turn is applied now that the session is idle.
-      this.maybeApplyPendingProviderReconnect()
     }
   }
 
@@ -4829,7 +4714,7 @@ class AcpRuntime {
     // the reconnect barrier must unblock now — it will fall through to connect()
     // and pick up the new backend from resolveBackend. A fresh spawn re-provisions
     // skills too, so clear both pending flags to avoid a spurious later reconnect.
-    this.completePendingReconnectTeardown()
+    this.connectionTransitions.resetReconnect()
     void this.connectionResources.closeMcp(teardownGeneration)
     try {
       this.setStatus('closed')
@@ -4852,7 +4737,7 @@ class AcpRuntime {
       }
       // An unexpected close satisfies any pending reconnect, but retirement remains terminal. Re-run
       // its evaluator now and again when outstanding operation/activity leases drain.
-      this.maybeApplyPendingProviderReconnect()
+      this.connectionTransitions.activityChanged()
     }
   }
 
