@@ -12,10 +12,9 @@ import type {
 } from '@agentclientprotocol/sdk'
 import type { ChildProcessWithoutNullStreams } from 'node:child_process'
 import { randomUUID } from 'node:crypto'
-import { readFile, stat } from 'node:fs/promises'
+import { readFile } from 'node:fs/promises'
 import { join, resolve } from 'node:path'
 import { Readable, Writable } from 'node:stream'
-import { pathToFileURL } from 'node:url'
 
 import type {
   AcpCancelPromptRequest,
@@ -77,19 +76,6 @@ import {
 } from './session-config'
 import { describePromptError, isProviderPromptError } from './prompt-error'
 import { AcpRuntimeSnapshotOwner } from './runtime-snapshot-owner'
-import {
-  ATTACHMENT_PREVIEW_BYTES,
-  MAX_EMBEDDED_TEXT_UPLOAD_BYTES,
-  buildDatasetAttachmentNotice,
-  buildDeferredMediaNotice,
-  buildOversizedAttachmentNotice,
-  imageAttachmentMimeType,
-  isDatasetAttachment,
-  isTabularAttachment,
-  isTextLikeAttachment,
-  mimeEssence
-} from './attachment-content'
-import { readBoundedManagedFilePreview } from '../managed-file-preview'
 import { ConversationPermissionGrantStore } from './permission-broker'
 import { isMcpToolName } from './permission-policy'
 import { AcpPermissionContext, HUMAN_PERMISSION_ACTION_ORIGIN } from './permission-context'
@@ -102,7 +88,6 @@ import {
   SKILL_IMPORT_SYSTEM_PROMPT_APPEND,
   type SkillImportRpcConnection
 } from '../skills/mcp-server'
-import { isImportableSkillArchivePath } from '../skills/skill-archive-sniffer'
 import { codexStorageDir, codexSubscriptionStorageDir } from '../agent-framework/codex'
 import { getAppClaudeConfigDir } from '../settings/provider-env'
 import type { ResponsesBridgeSkillCandidate } from '../settings/responses-bridge'
@@ -116,10 +101,7 @@ import {
   type SessionUpdateObservation
 } from './context-usage-tracker'
 import { contextUsageMcpSections } from './context-usage-static-context'
-import {
-  createManagedFileReferenceResolver,
-  type FileReferenceResolver
-} from './file-reference-resolver'
+import { createManagedFileReferenceResolver } from './file-reference-resolver'
 import type { UploadRepository } from '../uploads/repository'
 import { DEFAULT_UPLOAD_PROJECT_NAME, type UploadedAttachment } from '../../shared/uploads'
 import type { ArtifactFile, FileReference } from '../../shared/artifacts'
@@ -138,17 +120,7 @@ import {
   type SessionCapabilityRoutingIds
 } from './session-capability-owner'
 import { ArtifactTurnOwner, type ArtifactTurnHandle } from './artifact-turn-owner'
-import {
-  buildImageContentData,
-  canInlineImageInSession,
-  consumeInlineImageBudget,
-  extractPdfText,
-  ImageContentError,
-  MAX_AUTO_EXTRACT_PDF_BYTES,
-  MAX_AUTO_PROCESS_IMAGE_BYTES,
-  MAX_SESSION_INLINE_IMAGE_BYTES,
-  type InlineImageBudget
-} from '../uploads/attachment-media'
+import { AcpPromptContentOwner } from './prompt-content-owner'
 
 export type AcpRuntimeCallbacks = {
   onStateChanged?: (state: AcpStateSnapshot) => void
@@ -554,12 +526,6 @@ class AcpRuntime {
   private supportsSessionResume = false
   private readonly sessions = new Map<string, ActiveSession>()
   private readonly sessionCwds = new Map<string, string>()
-  // Running total of base64 image bytes this session has inlined. The agent replays full history each
-  // turn, so this accumulates; once it nears the request ceiling further images degrade to file links
-  // (see canInlineImageInSession) so a long conversation can never overflow the request or break
-  // compaction with `media_unstrippable`. Cleared after successful native compaction, on session
-  // delete, and on disconnect.
-  private readonly sessionInlineImageBytes = new Map<string, number>()
   // App-owned MCP construction, routing aliases, and bearer lease ownership are kept behind one
   // explicit role policy. Connection/process lifetime remains with this runtime.
   private readonly sessionCapabilities: AcpSessionCapabilityOwner
@@ -693,7 +659,6 @@ class AcpRuntime {
   // Bounded resume network timeout + injectable timers (defaults to real setTimeout/clearTimeout).
   private readonly resumeTimeoutMs: number
   private readonly cancelTimeoutMs: number
-  private readonly inlineImageBudgetBytes: number
   private readonly setTimer: (fn: () => void, ms: number) => ReturnType<typeof setTimeout>
   private readonly clearTimer: (handle: ReturnType<typeof setTimeout>) => void
   private readonly cancelTimers = new Map<string, ReturnType<typeof setTimeout>>()
@@ -703,8 +668,7 @@ class AcpRuntime {
   private readonly artifactRepository: ArtifactRepository | undefined
   private readonly artifactRunRegistry: ArtifactRunRegistry | undefined
   private readonly artifactTurns: ArtifactTurnOwner | undefined
-  private readonly uploadRepository: UploadRepository | undefined
-  private readonly fileReferenceResolver: FileReferenceResolver
+  private readonly promptContentOwner: AcpPromptContentOwner
   private readonly skillImportTurnTokens = new Map<string, string>()
 
   // Wires runtime dependencies and forwards permission prompts into the event stream.
@@ -717,7 +681,6 @@ class AcpRuntime {
     this.mcpHttpHost = options.mcpHttpHost
     this.resumeTimeoutMs = options.resumeTimeoutMs ?? 30_000
     this.cancelTimeoutMs = options.cancelTimeoutMs ?? 5_000
-    this.inlineImageBudgetBytes = options.inlineImageBudgetBytes ?? MAX_SESSION_INLINE_IMAGE_BYTES
     this.contextUsageTracker = options.contextUsageTracker ?? new ContextUsageTracker()
     this.setTimer = options.setTimer ?? ((fn, ms) => setTimeout(fn, ms))
     this.clearTimer = options.clearTimer ?? ((handle) => clearTimeout(handle))
@@ -754,11 +717,16 @@ class AcpRuntime {
               : {})
           })
         : undefined
-    this.uploadRepository = options.uploads?.repository
-    this.fileReferenceResolver = createManagedFileReferenceResolver({
-      uploads: this.uploadRepository,
+    const uploadRepository = options.uploads?.repository
+    const fileReferenceResolver = createManagedFileReferenceResolver({
+      uploads: uploadRepository,
       artifacts: this.artifactRepository,
       artifactVersions: options.artifacts?.provenance
+    })
+    this.promptContentOwner = new AcpPromptContentOwner({
+      uploadRepository,
+      fileReferenceResolver,
+      inlineImageBudgetBytes: options.inlineImageBudgetBytes
     })
     this.permissionContext = new AcpPermissionContext({
       emitPermissionRequest: (request) => {
@@ -1884,7 +1852,7 @@ class AcpRuntime {
     }
 
     // The fresh agent session holds no history, so the accumulated media is gone; start its budget clean.
-    this.sessionInlineImageBytes.delete(request.sessionId)
+    this.promptContentOwner.resetSession(request.sessionId)
     // A context reset creates a new agent-side conversation under the same app id. Do not carry the
     // previous context size into the fresh conversation before its first usage_update arrives.
     this.contextUsageTracker.deleteSession(request.sessionId)
@@ -2094,7 +2062,7 @@ class AcpRuntime {
             contextUsageCheckpoint,
             this.selectedContextWindowFor(appSessionId)
           )
-          this.sessionInlineImageBytes.delete(appSessionId)
+          this.promptContentOwner.resetSession(appSessionId)
           this.pushEvent({
             kind: 'compaction',
             compactionReason: reason,
@@ -2977,7 +2945,7 @@ class AcpRuntime {
 
     this.sessions.clear()
     this.sessionCwds.clear()
-    this.sessionInlineImageBytes.clear()
+    this.promptContentOwner.clear()
     this.currentPromptTurnBySession.clear()
     this.currentPromptIdentityBySession.clear()
     this.claudeTurnCountsBySession.clear()
@@ -3447,13 +3415,45 @@ class AcpRuntime {
         request.sessionId,
         request.referencedArtifacts ?? []
       )
-      const promptContent = this.attachCodexSkillInputs(
-        await this.createPromptContent(request.sessionId, {
-          ...request,
-          text: promptText
-        }),
-        codexSkillInputs
-      )
+      const projectId = this.resolveSessionProjectName(request.sessionId)
+      const preparedPrompt = await this.promptContentOwner.prepare({
+        appSessionId: request.sessionId,
+        projectId,
+        text: promptText,
+        historyImages: request.historyImages ?? [],
+        historyUploads: request.historyAttachments ?? [],
+        currentUploads: request.attachments ?? [],
+        references: request.referencedArtifacts ?? [],
+        codexSkillInputs,
+        skillImportEnabled: this.sessionCapabilities.isSkillImportEnabled(),
+        skillImportTurnToken: this.skillImportTurnTokens.get(request.sessionId),
+        onSkillImportAttachmentEligible: this.callbacks.onSkillImportAttachmentEligible
+          ? (attachmentUri) => {
+              try {
+                this.callbacks.onSkillImportAttachmentEligible?.(
+                  request.sessionId,
+                  skillImportTurnToken,
+                  attachmentUri
+                )
+              } catch (error) {
+                safeLogError('skill import attachment callback failed', errorLogFields(error))
+              }
+            }
+          : undefined
+      })
+      if (this.notebookOptions?.registerTurnInputs && preparedPrompt.turnInputs) {
+        await this.notebookOptions.registerTurnInputs({
+          projectId,
+          appSessionId: request.sessionId,
+          promptMessageId:
+            request.provenanceContext?.promptMessageId ??
+            this.artifactTurns?.promptMessageIdFor(request.sessionId) ??
+            `prompt-unbound-${request.sessionId}`,
+          uploads: preparedPrompt.turnInputs.uploads,
+          references: preparedPrompt.turnInputs.references
+        })
+      }
+      const promptContent = preparedPrompt.content
 
       contextUsageCheckpoint = this.contextUsageTracker.checkpointSession(request.sessionId)
       await this.recordPromptContextEstimate(
@@ -3864,7 +3864,7 @@ class AcpRuntime {
     this.sessionCapabilities.revokeSession(request.sessionId)
     this.sessions.delete(request.sessionId)
     this.sessionCwds.delete(request.sessionId)
-    this.sessionInlineImageBytes.delete(request.sessionId)
+    this.promptContentOwner.resetSession(request.sessionId)
     this.currentPromptTurnBySession.delete(request.sessionId)
     this.currentPromptIdentityBySession.delete(request.sessionId)
     this.handoffPromptRequests.delete(request.sessionId)
@@ -4009,34 +4009,6 @@ class AcpRuntime {
     }
   }
 
-  private attachCodexSkillInputs(
-    content: string | ContentBlock[],
-    descriptors: Array<{ name: string; path: string }>
-  ): string | ContentBlock[] {
-    if (descriptors.length === 0) return content
-
-    const metadata = { 'open-science/skill-inputs': descriptors }
-    if (typeof content === 'string') {
-      return [{ type: 'text', text: content, _meta: metadata }]
-    }
-
-    const blocks = [...content]
-    const textIndex = blocks.findIndex((block) => block.type === 'text')
-    if (textIndex < 0) {
-      blocks.unshift({ type: 'text', text: '', _meta: metadata })
-      return blocks
-    }
-
-    const textBlock = blocks[textIndex]
-    if (textBlock.type === 'text') {
-      blocks[textIndex] = {
-        ...textBlock,
-        _meta: { ...(textBlock._meta ?? {}), ...metadata }
-      }
-    }
-    return blocks
-  }
-
   // Native UserInput::Skill entries are consumed inside Codex and may not emit a filesystem read
   // lifecycle over ACP. Project the same compact activity explicitly so selected and auto-routed
   // Skills remain visible without sending their path or document to renderer state or persistence.
@@ -4057,102 +4029,6 @@ class AcpRuntime {
         status
       })
     }
-  }
-
-  // Turns the renderer prompt plus upload references into the ACP prompt payload.
-  private async createPromptContent(
-    sessionId: string,
-    request: AcpPromptRequest
-  ): Promise<string | ContentBlock[]> {
-    const attachments = [...(request.historyAttachments ?? []), ...(request.attachments ?? [])]
-    const referencedArtifacts = request.referencedArtifacts ?? []
-    let finalizedPromptUploads: UploadedAttachment[] = []
-
-    if (
-      attachments.length === 0 &&
-      referencedArtifacts.length === 0 &&
-      (request.historyImages?.length ?? 0) === 0
-    )
-      return request.text
-
-    const contentBlocks: ContentBlock[] = request.text.trim()
-      ? [{ type: 'text', text: request.text }]
-      : []
-    let imageBudget: InlineImageBudget = { imageCount: 0, base64Bytes: 0 }
-    const appendBlock = (block: ContentBlock, overflowFallback?: ContentBlock): void => {
-      if (block.type === 'image') {
-        try {
-          imageBudget = consumeInlineImageBudget(imageBudget, {
-            data: block.data,
-            mimeType: block.mimeType
-          })
-        } catch (error) {
-          if (error instanceof ImageContentError && error.code === 'IMAGE_TOTAL_BUDGET_EXCEEDED') {
-            if (overflowFallback) contentBlocks.push(overflowFallback)
-            return
-          }
-          throw error
-        }
-      }
-      contentBlocks.push(block)
-    }
-    for (const image of request.historyImages ?? []) {
-      appendBlock({ type: 'image', data: image.data, mimeType: image.mimeType })
-    }
-    if ((request.historyImages?.length ?? 0) > 0) {
-      this.sessionInlineImageBytes.set(sessionId, imageBudget.base64Bytes)
-    }
-
-    // Staged uploads own the durable session id here, so finalize before turning them into blocks.
-    if (attachments.length > 0) {
-      if (!this.uploadRepository) throw new Error('Upload storage is not configured.')
-
-      const finalizedAttachments = await this.uploadRepository.finalizePendingSessionUploads(
-        sessionId,
-        attachments,
-        this.resolveSessionProjectName(sessionId)
-      )
-      finalizedPromptUploads = finalizedAttachments
-
-      // Keep the user's text first, then append files in the same order they were added. A file may
-      // expand to several blocks (an oversized text file becomes a preview notice + a resource link);
-      // route each through appendBlock so image blocks still honor the per-request inline budget.
-      for (const attachment of finalizedAttachments) {
-        const blocks = await this.createAttachmentContentBlock(sessionId, attachment)
-        for (const block of blocks) {
-          appendBlock(
-            block,
-            this.imageOverflowResourceLink(block, attachment.originalName, attachment.size)
-          )
-        }
-      }
-    }
-
-    // `@`-mentioned artifacts reuse the same per-type block builder as uploads, in mention order.
-    for (const reference of referencedArtifacts) {
-      const blocks = await this.createReferencedArtifactContentBlock(sessionId, reference)
-      for (const block of blocks) {
-        appendBlock(block, this.imageOverflowResourceLink(block, reference.name))
-      }
-    }
-
-    if (
-      this.notebookOptions?.registerTurnInputs &&
-      (finalizedPromptUploads.length > 0 || referencedArtifacts.length > 0)
-    ) {
-      await this.notebookOptions.registerTurnInputs({
-        projectId: this.resolveSessionProjectName(sessionId),
-        appSessionId: sessionId,
-        promptMessageId:
-          request.provenanceContext?.promptMessageId ??
-          this.artifactTurns?.promptMessageIdFor(sessionId) ??
-          `prompt-unbound-${sessionId}`,
-        uploads: finalizedPromptUploads,
-        references: referencedArtifacts
-      })
-    }
-
-    return contentBlocks
   }
 
   // Converts the user's explicit `@` selections into a turn-scoped capability for Skill import.
@@ -4176,289 +4052,6 @@ class AcpRuntime {
     })
 
     return authorize(this.resolveSessionProjectName(sessionId), sessionId, paths)
-  }
-
-  private imageOverflowResourceLink(
-    block: ContentBlock,
-    name: string,
-    size?: number
-  ): ContentBlock | undefined {
-    if (block.type !== 'image' || !block.uri) return undefined
-
-    return {
-      type: 'resource_link',
-      uri: block.uri,
-      name,
-      title: name,
-      mimeType: block.mimeType,
-      size
-    }
-  }
-
-  // Converts one managed upload into the richest ACP content block that is safe for its type.
-  private async createAttachmentContentBlock(
-    sessionId: string,
-    attachment: UploadedAttachment
-  ): Promise<ContentBlock[]> {
-    if (!this.uploadRepository) throw new Error('Upload storage is not configured.')
-
-    const filePath = await this.uploadRepository.resolveManagedUploadPath(
-      { path: attachment.path },
-      { projectId: this.resolveSessionProjectName(sessionId), sessionId }
-    )
-    const { size } = await stat(filePath)
-
-    return this.buildFileContentBlock({
-      sessionId,
-      absolutePath: filePath,
-      uri: pathToFileURL(filePath).href,
-      name: attachment.originalName || attachment.name,
-      mimeType: attachment.mimeType,
-      size,
-      allowSkillImportReference: true
-    })
-  }
-
-  // Converts one `@`-mentioned artifact into the same content block an equivalent upload produces.
-  private async createReferencedArtifactContentBlock(
-    sessionId: string,
-    reference: FileReference
-  ): Promise<ContentBlock[]> {
-    const resolvedReference = await this.fileReferenceResolver.resolve(
-      { sessionId, projectId: this.resolveSessionProjectName(sessionId) },
-      reference
-    )
-
-    return this.buildFileContentBlock({
-      sessionId,
-      absolutePath: resolvedReference.absolutePath,
-      uri: resolvedReference.uri,
-      name: resolvedReference.name,
-      mimeType: resolvedReference.mimeType,
-      size: resolvedReference.size,
-      // The import tool currently owns only session uploads. Artifact-store paths remain ordinary
-      // references so the prompt never advertises a URI that main will reject at the trust boundary.
-      allowSkillImportReference: resolvedReference.allowSkillImportReference
-    })
-  }
-
-  // Builds the richest ACP content block that is safe for a resolved file, shared by uploads and
-  // `@`-mentioned artifacts so both reach the agent through identical per-type logic.
-  private async buildFileContentBlock(descriptor: {
-    sessionId: string
-    absolutePath: string
-    uri: string
-    name: string
-    mimeType?: string
-    size: number
-    allowSkillImportReference: boolean
-  }): Promise<ContentBlock[]> {
-    const { sessionId, absolutePath, uri, name, mimeType, size, allowSkillImportReference } =
-      descriptor
-
-    // ACP providers such as OpenCode reject ZIP uploads before the prompt reaches the agent
-    // (`file part media type application/zip functionality not supported`). Keep all ZIPs off that
-    // file-part path, but mark only importer-owned, manifest-confirmed archives as Skill packages so an
-    // ordinary ZIP remains inspectable without advertising request_skill_import.
-    const attachmentTextReference = (
-      tag: 'attached_skill_package' | 'attached_local_archive',
-      skillImportEligible: boolean,
-      turnToken?: string
-    ): ContentBlock => ({
-      type: 'text',
-      text: [
-        `<${tag}>`,
-        JSON.stringify({
-          name,
-          uri,
-          mimeType,
-          size,
-          skillImportEligible,
-          ...(turnToken ? { skillImportTurnToken: turnToken } : {})
-        }),
-        `</${tag}>`
-      ].join('\n')
-    })
-    if (
-      this.sessionCapabilities.isSkillImportEnabled() &&
-      allowSkillImportReference &&
-      (await this.isSkillPackageFile(name, absolutePath))
-    ) {
-      const turnToken = this.skillImportTurnTokens.get(sessionId)
-      if (turnToken) {
-        try {
-          this.callbacks.onSkillImportAttachmentEligible?.(sessionId, turnToken, uri)
-        } catch (error) {
-          safeLogError('skill import attachment callback failed', errorLogFields(error))
-        }
-        return [attachmentTextReference('attached_skill_package', true, turnToken)]
-      }
-    }
-
-    const normalizedName = name.toLowerCase()
-    const normalizedMimeType = mimeEssence(mimeType)
-    if (
-      normalizedName.endsWith('.zip') ||
-      normalizedName.endsWith('.skill') ||
-      normalizedMimeType === 'application/zip' ||
-      normalizedMimeType === 'application/x-zip-compressed'
-    ) {
-      return [attachmentTextReference('attached_local_archive', false)]
-    }
-
-    // Images are embedded as base64 so vision-capable agents receive the actual pixels.
-    // Large images are downscaled/re-encoded first so one file cannot overflow the request. Detection
-    // falls back to the file extension so a `.png` with a missing/generic MIME (some drag/drop and paste
-    // sources omit it) is still inlined as pixels instead of degrading to a bare file link.
-    const imageMimeType = imageAttachmentMimeType(name, mimeType)
-
-    if (imageMimeType) {
-      if (size > MAX_AUTO_PROCESS_IMAGE_BYTES) {
-        return [
-          {
-            type: 'text',
-            text: buildDeferredMediaNotice({ name, size, kind: 'image' })
-          },
-          { type: 'resource_link', uri, name, title: name, mimeType: imageMimeType, size }
-        ]
-      }
-      const { data, mimeType: outMimeType } = await buildImageContentData(
-        absolutePath,
-        imageMimeType,
-        size
-      )
-
-      // Inlined images accumulate over a conversation's replayed history. Once this session's running
-      // total nears the request ceiling, degrade further images to a file reference (like large binary
-      // uploads) instead of base64, so the conversation never overflows the request or breaks
-      // compaction with `media_unstrippable`. The file stays reachable to the agent via its uri.
-      const alreadyInlined = this.sessionInlineImageBytes.get(sessionId) ?? 0
-
-      if (!canInlineImageInSession(alreadyInlined, data.length, this.inlineImageBudgetBytes)) {
-        return [{ type: 'resource_link', uri, name, title: name, mimeType: imageMimeType, size }]
-      }
-
-      this.sessionInlineImageBytes.set(sessionId, alreadyInlined + data.length)
-
-      return [{ type: 'image', data, mimeType: outMimeType, uri }]
-    }
-
-    // PDFs are never inlined as base64 (a 20MB file overflows the 32MB request limit); instead we
-    // extract selectable text so the model reads readable content. Page images are a future option.
-    if (this.isPdfFile(name, mimeType)) {
-      if (size > MAX_AUTO_EXTRACT_PDF_BYTES) {
-        return [
-          {
-            type: 'text',
-            text: buildDeferredMediaNotice({ name, size, kind: 'PDF' })
-          },
-          { type: 'resource_link', uri, name, title: name, mimeType: 'application/pdf', size }
-        ]
-      }
-      return [await this.createPdfContentBlock(name, absolutePath, uri)]
-    }
-
-    if (isTextLikeAttachment(name, mimeType)) {
-      // Small text-like files are embedded for direct reading.
-      if (size <= MAX_EMBEDDED_TEXT_UPLOAD_BYTES) {
-        return [
-          {
-            type: 'resource',
-            resource: { uri, mimeType, text: await readFile(absolutePath, 'utf8') }
-          }
-        ]
-      }
-
-      // Oversized text/tabular files are never inlined — a full read is the main request-size overflow
-      // source. Send a bounded preview (structure + a few rows) plus a link so the agent reads only what
-      // it needs instead of loading the whole file into context.
-      const preview = await readBoundedManagedFilePreview(
-        absolutePath,
-        { path: absolutePath, maxBytes: ATTACHMENT_PREVIEW_BYTES, encoding: 'utf8' },
-        'Attachment preview requires UTF-8 encoding.'
-      )
-
-      return [
-        {
-          type: 'text',
-          text: buildOversizedAttachmentNotice({
-            name,
-            size,
-            preview: preview.content,
-            truncated: preview.truncated,
-            tabular: isTabularAttachment(name, mimeType)
-          })
-        },
-        { type: 'resource_link', uri, name, title: name, mimeType, size }
-      ]
-    }
-
-    if (isDatasetAttachment(name, mimeType)) {
-      return [
-        { type: 'text', text: buildDatasetAttachmentNotice({ name, size }) },
-        { type: 'resource_link', uri, name, title: name, mimeType, size }
-      ]
-    }
-
-    // Binary and large files are passed as resource links so agents can decide how to fetch them.
-    return [
-      {
-        type: 'resource_link',
-        uri,
-        name,
-        title: name,
-        mimeType,
-        size
-      }
-    ]
-  }
-
-  // Recognizes PDFs by MIME type or extension since the renderer does not always send a MIME type.
-  private isPdfFile(name: string, mimeType?: string): boolean {
-    if (mimeType === 'application/pdf') return true
-
-    return name.toLowerCase().endsWith('.pdf')
-  }
-
-  private async isSkillPackageFile(name: string, filePath: string): Promise<boolean> {
-    const normalizedName = name.toLowerCase()
-
-    if (!normalizedName.endsWith('.skill') && !normalizedName.endsWith('.zip')) return false
-
-    return isImportableSkillArchivePath(filePath)
-  }
-
-  // Turns a PDF into a text resource block, degrading to an explanatory note when extraction fails
-  // or yields nothing (e.g. scanned/image-only PDFs) rather than ever inlining the raw file.
-  private async createPdfContentBlock(
-    name: string,
-    filePath: string,
-    uri: string
-  ): Promise<ContentBlock> {
-    const toResource = (text: string): ContentBlock => ({
-      type: 'resource',
-      resource: { uri, mimeType: 'text/plain', text }
-    })
-
-    try {
-      const { text, pageCount, truncated } = await extractPdfText(filePath)
-
-      if (!text) {
-        return toResource(
-          `[No selectable text could be extracted from "${name}" (${pageCount} page(s)). It may be a scanned or image-only PDF.]`
-        )
-      }
-
-      const header = `[PDF text extracted from "${name}" — ${pageCount} page(s)${
-        truncated ? ', truncated' : ''
-      }]`
-
-      return toResource(`${header}\n\n${text}`)
-    } catch (error) {
-      return toResource(
-        `[Failed to extract text from "${name}": ${errorMessage(error)}. The PDF was not sent to avoid exceeding the request size limit.]`
-      )
-    }
   }
 
   // Lazily initializes the process connection before session creation.
@@ -5280,7 +4873,7 @@ class AcpRuntime {
     this.sessionCapabilities.dispose(this.sessions.keys())
     this.sessions.clear()
     this.sessionCwds.clear()
-    this.sessionInlineImageBytes.clear()
+    this.promptContentOwner.clear()
     this.currentPromptTurnBySession.clear()
     this.currentPromptIdentityBySession.clear()
     this.handoffPromptRequests.clear()

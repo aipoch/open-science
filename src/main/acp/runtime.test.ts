@@ -777,8 +777,14 @@ const contextUsageMap = (
   }
 }
 
-const sessionInlineImageBytesMap = (runtime: AcpRuntime): Map<string, number> =>
-  (runtime as unknown as { sessionInlineImageBytes: Map<string, number> }).sessionInlineImageBytes
+const promptContentLifecycle = (
+  runtime: AcpRuntime
+): { resetSession: (sessionId: string) => void } =>
+  (
+    runtime as unknown as {
+      promptContentOwner: { resetSession: (sessionId: string) => void }
+    }
+  ).promptContentOwner
 
 const resolveArtifactRunClaim = (runtime: AcpRuntime, claimId: string): ArtifactRunClaim =>
   (
@@ -2817,13 +2823,14 @@ describe('ACP runtime session management', () => {
     })
 
     const session = await runtime.createSession({ cwd: '/workspace' })
-    sessionInlineImageBytesMap(runtime).set(session.sessionId, 2048)
+    const resetPromptContent = vi.spyOn(promptContentLifecycle(runtime), 'resetSession')
     contextUsageMap(runtime).set(session.sessionId, { used: 180_000, size: 200_000 })
     expect(runtime.getSnapshot().nativeContextCompactionSessionIds).toEqual([session.sessionId])
     await runtime.compactSession({ sessionId: session.sessionId })
 
     expect(agent.prompts).toEqual([{ sessionId: 'remote-session-1', text: '/compact' }])
-    expect(sessionInlineImageBytesMap(runtime).has(session.sessionId)).toBe(false)
+    expect(resetPromptContent).toHaveBeenCalledOnce()
+    expect(resetPromptContent).toHaveBeenCalledWith(session.sessionId)
     expect(runtime.getSnapshot().contextUsageBySession).toEqual({})
     expect(
       runtime
@@ -2880,13 +2887,13 @@ describe('ACP runtime session management', () => {
     })
 
     const session = await runtime.createSession({ cwd: '/workspace' })
-    sessionInlineImageBytesMap(runtime).set(session.sessionId, 2048)
+    const resetPromptContent = vi.spyOn(promptContentLifecycle(runtime), 'resetSession')
 
     await expect(runtime.compactSession({ sessionId: session.sessionId })).resolves.toMatchObject({
       stopReason: 'cancelled'
     })
 
-    expect(sessionInlineImageBytesMap(runtime).get(session.sessionId)).toBe(2048)
+    expect(resetPromptContent).not.toHaveBeenCalled()
     expect(
       runtime
         .getSnapshot()
@@ -2917,13 +2924,13 @@ describe('ACP runtime session management', () => {
     })
 
     const session = await runtime.createSession({ cwd: '/workspace' })
-    sessionInlineImageBytesMap(runtime).set(session.sessionId, 2048)
+    const resetPromptContent = vi.spyOn(promptContentLifecycle(runtime), 'resetSession')
 
     await expect(runtime.compactSession({ sessionId: session.sessionId })).rejects.toThrow(
       'Compacting failed: media_unstrippable'
     )
 
-    expect(sessionInlineImageBytesMap(runtime).get(session.sessionId)).toBe(2048)
+    expect(resetPromptContent).not.toHaveBeenCalled()
     expect(runtime.getSnapshot().events).toContainEqual(
       expect.objectContaining({
         kind: 'compaction',
