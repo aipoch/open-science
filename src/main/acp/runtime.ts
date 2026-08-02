@@ -61,7 +61,6 @@ import {
 } from '../agent-framework'
 import { resolveCanonicalMcpToolIdentity } from '../agent-framework/app-mcp-names'
 import { createLogger, diagnosticErrorFields, errorLogFields } from '../logger'
-import { terminateProcessTree } from '../process-tree'
 import {
   extractProviderToolName,
   extractToolFailureText,
@@ -504,22 +503,15 @@ const isUnresumableSessionError = (error: unknown): boolean => {
   )
 }
 
-// ACP Session facade. Connection publication and resource identity have their own epoch owner while
-// spawn/initialize and physical teardown remain runtime ports until A9.1a2.
+// ACP Session facade. Connection publication and physical teardown live behind their epoch owner;
+// Runtime retains protocol startup, Session/Permission/Notebook cleanup, and status/event projection.
 class AcpRuntime {
   private readonly snapshotOwner: AcpRuntimeSnapshotOwner
   private readonly contextUsageTracker: ContextUsageTracker
   // Prompt lifecycle stays with the runtime: this marks turns that received provider-side
   // context-bearing updates so a rejected prompt rolls back only when the provider saw no turn data.
   private readonly contextUsageUpdatedPromptTurnsBySession = new Map<string, number>()
-  private readonly connectionResources = new AcpConnectionResourceOwner()
-  // Latched by shutdown() on app quit. A connect can be mid-spawn (resolveSpawnConfig is async) when
-  // quit fires, so this lets the post-spawn path kill a child that was created after killAgentProcess ran.
-  private shuttingDown = false
-  // AND-accumulated reaped result of the tree kills performed during the current teardown. Reset to true
-  // at the start of shutdownForQuit/shutdownForUpdateGate, then narrowed by each terminateProcessTree so
-  // those methods can report whether the agent tree was cleanly reaped (vs a degraded taskkill fallback).
-  private lastTreeKillReaped = true
+  private readonly connectionResources: AcpConnectionResourceOwner
   // Stable app identities, provider aliases, publication order, selection, and startup/delete
   // arbitration share one owner. The runtime retains only protocol/resource orchestration.
   private readonly sessionRegistry: AcpSessionRegistry
@@ -562,7 +554,6 @@ class AcpRuntime {
   private reconnectBarrier: Promise<void> | undefined
   private reconnectBarrierResolve: (() => void) | undefined
   private reconnectBarrierGeneration = 0
-  private expectedProcessExits = new WeakSet<ChildProcessWithoutNullStreams>()
   private readonly permissionContext: AcpPermissionContext
   private readonly callbacks: AcpRuntimeCallbacks
   private readonly spawnAgent: (() => ChildProcessWithoutNullStreams) | undefined
@@ -572,7 +563,6 @@ class AcpRuntime {
   private backendId: string | undefined
   private codexHome: string | undefined
   private readonly codexSkillActivity = new CodexSkillActivityProjector()
-  private readonly mcpHttpHost: AgentMcpHttpHost | undefined
   // A Chat Completions provider uses the local Responses bridge. App-owned notebook, artifact, and
   // reviewer MCPs have explicit namespaced bridge mappings; other MCP tools still require Responses.
   private nativeMcpEnabled = true
@@ -612,10 +602,14 @@ class AcpRuntime {
   constructor(private readonly options: AcpRuntimeOptions) {
     this.snapshotOwner = new AcpRuntimeSnapshotOwner(resolve(options.defaultCwd))
     this.callbacks = options.callbacks ?? {}
+    this.connectionResources = new AcpConnectionResourceOwner({
+      closeMcpHost: async () => {
+        await options.mcpHttpHost?.close()
+      }
+    })
     this.spawnAgent = options.spawnAgent
     this.skillsHooks = options.skills
     this.framework = options.framework ?? claudeCodeFramework
-    this.mcpHttpHost = options.mcpHttpHost
     this.resumeTimeoutMs = options.resumeTimeoutMs ?? 30_000
     this.contextUsageTracker = options.contextUsageTracker ?? new ContextUsageTracker()
     this.setTimer = options.setTimer ?? ((fn, ms) => setTimeout(fn, ms))
@@ -1253,17 +1247,20 @@ class AcpRuntime {
       // late spawn without holding a shuttingDown latch it might never release if it is itself abandoned
       // on timeout. Awaited (not a bare kill) so a teardown that awaits this in-flight connect does not
       // resolve before the child's whole tree is reaped on Windows.
-      if (this.shuttingDown || generation !== this.connectionGeneration) {
-        try {
-          const result = await terminateProcessTree(agentProcess, undefined, log)
-          this.lastTreeKillReaped = this.lastTreeKillReaped && result.reaped
-        } finally {
-          await spawned.backend.responsesBridgeLease?.release()
-          agentProcess = undefined
-          unattachedBridgeLease = undefined
-        }
+      if (this.connectionResources.isShuttingDown || generation !== this.connectionGeneration) {
+        await this.connectionResources.cleanupUnattached(
+          { process: agentProcess, bridgeLease: unattachedBridgeLease },
+          (stage, error) => {
+            safeLogError(`unattached ACP ${stage} cleanup failed`, {
+              ...diagnosticErrorFields(error),
+              ...this.diagnosticContext(spawnedFramework, generation)
+            })
+          }
+        )
+        agentProcess = undefined
+        unattachedBridgeLease = undefined
         throw new Error(
-          this.shuttingDown
+          this.connectionResources.isShuttingDown
             ? 'ACP runtime is shutting down.'
             : 'ACP connection superseded during spawn.'
         )
@@ -1375,27 +1372,21 @@ class AcpRuntime {
       // Before attach(), the owner cannot detach the candidate for failure cleanup. Keep that
       // pre-publication resource local and transfer-or-release it exactly once.
       if (!resourceAttached && agentProcess) {
-        this.expectedProcessExits.add(agentProcess)
-        try {
-          unattachedConnection?.close()
-        } catch (cleanupError) {
-          safeLogError('unattached ACP connection cleanup failed', {
-            ...diagnosticErrorFields(cleanupError),
-            ...this.diagnosticContext(spawnedFramework, generation)
-          })
-        }
+        await this.connectionResources.cleanupUnattached(
+          {
+            process: agentProcess,
+            connection: unattachedConnection,
+            bridgeLease: unattachedBridgeLease
+          },
+          (stage, cleanupError) => {
+            safeLogError(`unattached ACP ${stage} cleanup failed`, {
+              ...diagnosticErrorFields(cleanupError),
+              ...this.diagnosticContext(spawnedFramework, generation)
+            })
+          }
+        )
         unattachedConnection = undefined
-        try {
-          const result = await terminateProcessTree(agentProcess, undefined, log)
-          this.lastTreeKillReaped = this.lastTreeKillReaped && result.reaped
-        } catch (cleanupError) {
-          safeLogError('unattached agent process cleanup failed', {
-            ...diagnosticErrorFields(cleanupError),
-            ...this.diagnosticContext(spawnedFramework, generation)
-          })
-        }
         agentProcess = undefined
-        await this.releaseResponsesBridgeLease(unattachedBridgeLease)
         unattachedBridgeLease = undefined
       }
 
@@ -2681,7 +2672,7 @@ class AcpRuntime {
       throw error
     } finally {
       try {
-        await this.closeMcpHttpHost(teardownGeneration)
+        await this.connectionResources.closeMcp(teardownGeneration)
       } finally {
         this.completePendingReconnectTeardown(reconnectBarrierGeneration)
       }
@@ -2693,18 +2684,11 @@ class AcpRuntime {
   // the app is gone would be an orphaned process still holding its network connection open. The OS
   // reclaims the remaining connection/session state as the process exits.
   shutdown(): void {
-    this.shuttingDown = true
-    const teardownGeneration = this.connectionResources.supersede()
-    this.invalidatePendingSessionStartups()
-    const resource = this.connectionResources.detach(teardownGeneration)
-    resource?.connection.close()
+    this.connectionResources.shutdownSynchronously(() => this.invalidatePendingSessionStartups())
     this.completePendingReconnectTeardown()
-    this.killAgentProcess(resource?.process)
     this.contextUsageTracker.clear()
     this.contextUsageUpdatedPromptTurnsBySession.clear()
     this.clearAppliedSessionModels()
-    void this.closeMcpHttpHost()
-    void this.releaseResponsesBridgeLease(resource?.bridgeLease)
   }
 
   // Awaitable quit/relaunch teardown. Latches shuttingDown FIRST so a connect that is mid-spawn when
@@ -2713,10 +2697,7 @@ class AcpRuntime {
   // remains — assigned, connecting, or mid-spawn. Returns { reaped } so the caller can tell a clean
   // teardown from a degraded one (taskkill fallback left grandchildren) before committing to app.exit.
   async shutdownForQuit(): Promise<{ reaped: boolean }> {
-    this.lastTreeKillReaped = true
-    this.shuttingDown = true
-    // Capture the in-flight connect before disconnect() clears it.
-    const inFlight = this.connectionResources.inFlight
+    const shutdown = this.connectionResources.beginAwaitableShutdown(true)
     // Kill the currently-assigned agent tree right away. Do NOT wait on the in-flight connect first: it
     // may be stalled on ACP initialize with the child already assigned, and waiting would let
     // shutdownBackends time out and app.exit orphan it. disconnect() reaps that child's tree and closes
@@ -2725,8 +2706,7 @@ class AcpRuntime {
     // Cover the child that had not been assigned yet when disconnect ran: a connect still mid-spawn hits
     // the shutting-down check and tree-kills its freshly-spawned child. Await it (swallowing its
     // rejection, bounded by shutdownBackends' timeout) so that kill completes before we resolve.
-    if (inFlight) await inFlight.catch(() => undefined)
-    return { reaped: this.lastTreeKillReaped }
+    return shutdown.finish()
   }
 
   // Teardown for the pre-update-install gate. Reaps the current agent tree (so the NSIS installer can
@@ -2740,14 +2720,10 @@ class AcpRuntime {
   // signal (so a degraded reap makes the caller refuse the install); if that await is abandoned on
   // timeout the caller refuses on !completed and the stale-generation self-reap still collects the child.
   async shutdownForUpdateGate(): Promise<{ reaped: boolean }> {
-    this.lastTreeKillReaped = true
-    // Capture the in-flight connect before disconnect() clears it. disconnect() bumps the generation, so
-    // a connect still mid-spawn will self-reap on the stale-generation check regardless of this await.
-    const inFlight = this.connectionResources.inFlight
+    const shutdown = this.connectionResources.beginAwaitableShutdown(false)
     await this.disconnect(false)
     // Await so the mid-spawn child's kill settles before we report the reaped signal.
-    if (inFlight) await inFlight.catch(() => undefined)
-    return { reaped: this.lastTreeKillReaped }
+    return shutdown.finish()
   }
 
   // Retires this framework generation without interrupting active turns or background workflows. The
@@ -2832,21 +2808,11 @@ class AcpRuntime {
       // old backend; the re-check there will fall through to a fresh connect(). Set status directly
       // rather than via setStatus — the throw may have come from emitState itself.
       const teardownGeneration = this.connectionResources.supersede()
-      const detached = this.connectionResources.detach(teardownGeneration)
-      try {
-        detached?.connection.close()
-      } catch (closeError) {
-        safeLogError('connection close after failed deferred disconnect failed', {
-          ...diagnosticErrorFields(closeError)
+      void this.connectionResources.teardown(teardownGeneration, (stage, cleanupError) => {
+        safeLogError(`${stage} cleanup after failed deferred disconnect failed`, {
+          ...diagnosticErrorFields(cleanupError)
         })
-      }
-      void this.killAgentProcessTree(detached?.process)
-        .catch((cleanupError) =>
-          safeLogError('agent process cleanup after failed deferred disconnect failed', {
-            ...diagnosticErrorFields(cleanupError)
-          })
-        )
-        .then(() => this.releaseResponsesBridgeLease(detached?.bridgeLease))
+      })
       this.snapshotOwner.transitionStatus('closed')
       // Broadcast the closed status defensively so the renderer doesn't keep showing the prior
       // 'connected' state when no createSession follows to re-emit it. Guarded because emitState may
@@ -3013,18 +2979,7 @@ class AcpRuntime {
     runCleanup('MCP HTTP routes', () => this.sessionCapabilities.clearHttpRoutes())
     this.sessionRegistry.select(undefined)
 
-    // Detach generation-owned resources before the first teardown await. A newer connect may publish
-    // replacements while process/lease cleanup is still settling; the old teardown must never close or
-    // release those replacements when it resumes.
-    const resource = this.connectionResources.detach(teardownGeneration)
-    runCleanup('connection', () => resource?.connection.close())
-
-    try {
-      await this.killAgentProcessTree(resource?.process)
-    } catch (error) {
-      recordFailure('agent-process', error)
-    }
-    await this.releaseResponsesBridgeLease(resource?.bridgeLease)
+    await this.connectionResources.teardown(teardownGeneration, recordFailure)
 
     if (emitClosedStatus && teardownGeneration === this.connectionGeneration) {
       runCleanup('closed-status', () => this.setStatus('closed'))
@@ -3032,33 +2987,6 @@ class AcpRuntime {
 
     if (teardownFailed) throw teardownFailure
     return this.getSnapshot()
-  }
-
-  // Signals the current agent child to exit and marks the exit expected so the stderr/error/exit
-  // handlers stay quiet. Synchronous: used by the will-quit backstop (shutdown()), which Electron
-  // cannot await. It only signals the immediate child — the awaited disconnect path below reaps the
-  // whole tree.
-  private killAgentProcess(child: ChildProcessWithoutNullStreams | undefined): void {
-    if (child) {
-      this.expectedProcessExits.add(child)
-
-      if (!child.killed) {
-        child.kill()
-      }
-    }
-  }
-
-  // Awaitable tree teardown for the async disconnect path: marks the exit expected, then hands the
-  // whole process tree to terminateProcessTree so a Windows grandchild (taskkill /T) is reaped before
-  // the caller (before-quit shutdownBackends) proceeds to app.exit.
-  private async killAgentProcessTree(
-    child: ChildProcessWithoutNullStreams | undefined
-  ): Promise<void> {
-    if (!child) return
-    this.expectedProcessExits.add(child)
-    const result = await terminateProcessTree(child, undefined, log)
-    // Narrow the current teardown's reaped accumulator (reset by shutdownForQuit/shutdownForUpdateGate).
-    this.lastTreeKillReaped = this.lastTreeKillReaped && result.reaped
   }
 
   // Creates the agent process, preferring an injected spawner (tests) and otherwise resolving the
@@ -3109,7 +3037,9 @@ class AcpRuntime {
       // Wrap (never mutate) the failure with the framework this spawn targeted: the connect-level catch
       // would otherwise fall back to this.framework.id, which an overlapping reconnect could move before
       // the log is written. connectFresh unwraps this and re-throws the original `error` value.
-      await backend.responsesBridgeLease?.release()
+      await this.connectionResources.cleanupUnattached({
+        bridgeLease: backend.responsesBridgeLease
+      })
       throw new SpawnFailure(backend.framework.id, error)
     }
 
@@ -3143,30 +3073,6 @@ class AcpRuntime {
     this.pendingAuthentication = backend.authentication
     this.pendingProviderConfiguration = backend.providerConfiguration
     this.opencodeUsageApi = backend.opencodeUsageApi
-  }
-
-  private async releaseResponsesBridgeLease(
-    lease: ResolvedAgentBackend['responsesBridgeLease']
-  ): Promise<void> {
-    try {
-      await lease?.release()
-    } catch (error) {
-      safeLogError('responses bridge lease release failed', errorLogFields(error))
-    }
-  }
-
-  private async closeMcpHttpHost(expectedGeneration?: number): Promise<void> {
-    // The host instance is shared across reconnects. An older disconnect may finish after a successor
-    // has already registered routes on it, so only the generation that initiated teardown may close it.
-    // shutdown() omits the guard because it latches the runtime terminal before calling this helper.
-    if (expectedGeneration !== undefined && expectedGeneration !== this.connectionGeneration) {
-      return
-    }
-    try {
-      await this.mcpHttpHost?.close()
-    } catch (error) {
-      safeLogError('MCP HTTP host close failed', errorLogFields(error))
-    }
   }
 
   // Sends one prompt turn to the targeted session and streams updates until stop.
@@ -4834,9 +4740,8 @@ class AcpRuntime {
         })
       }
 
-      if (this.expectedProcessExits.has(agentProcess)) {
+      if (this.connectionResources.processEventDisposition(agentProcess, generation) !== 'current')
         return
-      }
 
       if (text) {
         // Attribute stderr to a session only when exactly one prompt is in flight — then it's
@@ -4859,9 +4764,8 @@ class AcpRuntime {
         ...this.diagnosticContext(framework, generation)
       })
 
-      if (this.expectedProcessExits.has(agentProcess)) {
+      if (this.connectionResources.processEventDisposition(agentProcess, generation) !== 'current')
         return
-      }
 
       this.snapshotOwner.updateError(errorMessage(error))
       this.pushEvent({
@@ -4874,19 +4778,18 @@ class AcpRuntime {
     })
 
     agentProcess.on('exit', (code, signal) => {
+      const disposition = this.connectionResources.processEventDisposition(agentProcess, generation)
       log.info('agent process exit', {
         code,
         signal,
         framework,
         status: this.snapshotOwner.status,
-        expected: this.expectedProcessExits.has(agentProcess),
+        expected: disposition === 'expected',
         sessionCount: this.activeSessionIds().length,
         pid: agentProcess.pid
       })
 
-      if (this.expectedProcessExits.has(agentProcess)) {
-        return
-      }
+      if (disposition !== 'current') return
 
       if (this.snapshotOwner.status === 'connected' || this.snapshotOwner.status === 'connecting') {
         this.pushEvent({
@@ -4906,11 +4809,7 @@ class AcpRuntime {
     this.invalidatePendingSessionStartups()
     this.permissionContext.dispose()
     this.reviewerSessions.clear()
-    const resource = this.connectionResources.detach(teardownGeneration)
-    if (resource?.process) {
-      this.expectedProcessExits.add(resource.process)
-      void terminateProcessTree(resource.process, undefined, log)
-    }
+    this.connectionResources.cleanupUnexpectedClose(teardownGeneration)
     this.sessionCapabilities.dispose(this.activeSessionIds())
     for (const entry of this.sessionRegistry.entries()) {
       if (entry.attachment) this.sessionRegistry.detach(entry.attachment, 'connection')
@@ -4931,8 +4830,7 @@ class AcpRuntime {
     // and pick up the new backend from resolveBackend. A fresh spawn re-provisions
     // skills too, so clear both pending flags to avoid a spurious later reconnect.
     this.completePendingReconnectTeardown()
-    void this.closeMcpHttpHost(teardownGeneration)
-    void this.releaseResponsesBridgeLease(resource?.bridgeLease)
+    void this.connectionResources.closeMcp(teardownGeneration)
     try {
       this.setStatus('closed')
     } finally {
