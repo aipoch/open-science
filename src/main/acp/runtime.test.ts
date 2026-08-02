@@ -838,9 +838,6 @@ const pendingReviewerSessionIds = (runtime: AcpRuntime): Map<string, symbol> =>
       .map(({ sessionId }) => [sessionId, Symbol.for(sessionId)])
   )
 
-const pendingPrimarySessionIds = (runtime: AcpRuntime): Map<string, symbol> =>
-  (runtime as unknown as { pendingPrimarySessionIds: Map<string, symbol> }).pendingPrimarySessionIds
-
 const contextUsageSelectionForTest = (
   runtime: AcpRuntime,
   sessionId: string
@@ -7780,15 +7777,12 @@ describe('ACP runtime session management', () => {
       await expect(reviewer).rejects.toThrow('Reviewer session id collision: shared-session')
       expect(modeRequestCount()).toBe(1)
       expect(lease.registerReviewerSession).not.toHaveBeenCalled()
-      expect([...pendingPrimarySessionIds(runtime).keys()]).toEqual(['shared-session'])
-
       const duplicateCwd = fakeAgent.newSessions[1]?.cwd
       expect(duplicateCwd).toMatch(/open-science-reviewer-/)
       await expect(stat(duplicateCwd!)).rejects.toMatchObject({ code: 'ENOENT' })
 
       releasePrimaryMode.resolve()
       const winner = await primary
-      expect(pendingPrimarySessionIds(runtime).size).toBe(0)
       expect(runtime.getSnapshot()).toMatchObject({
         sessionIds: ['shared-session'],
         permissionProfiles: {
@@ -7883,13 +7877,10 @@ describe('ACP runtime session management', () => {
       let successor: Awaited<ReturnType<AcpRuntime['createSession']>> | undefined
 
       try {
-        expect([...pendingPrimarySessionIds(runtime).keys()]).toEqual(['stale-primary'])
-
         await expect(runTeardown(runtime)).rejects.toThrow(
           'active primary disconnect dispose failed'
         )
 
-        expect(pendingPrimarySessionIds(runtime).size).toBe(0)
         if (canStartSuccessor) {
           successor = await runtime.createSession({ cwd: '/workspace' })
           expect(runtime.getSnapshot().sessionIds).toContain('stale-primary')
@@ -8539,15 +8530,12 @@ describe('ACP runtime session management', () => {
         'Reviewer session id collision: 123e4567-e89b-42d3-a456-426614174000'
       )
       expect(modeRequestCount()).toBe(1)
-      expect([...pendingPrimarySessionIds(runtime).keys()]).toEqual([sessionId])
-
       const duplicateCwd = fakeAgent.newSessions[0]?.cwd
       expect(duplicateCwd).toMatch(/open-science-reviewer-/)
       await expect(stat(duplicateCwd!)).rejects.toMatchObject({ code: 'ENOENT' })
 
       releasePrimaryMode.resolve()
       await expect(primary).resolves.toMatchObject({ sessionId })
-      expect(pendingPrimarySessionIds(runtime).size).toBe(0)
       expect(runtime.getSnapshot().sessionIds).toEqual([sessionId])
       await runtime.sendPrompt({ sessionId, text: 'resumed primary remains active' })
       expect(fakeAgent.prompts).toHaveLength(1)
@@ -8792,12 +8780,10 @@ describe('ACP runtime session management', () => {
 
     try {
       await expect(reviewer).rejects.toThrow(`Reviewer session id collision: ${sessionId}`)
-      expect([...pendingPrimarySessionIds(runtime).keys()]).toEqual([sessionId])
       await expect(stat(fakeAgent.newSessions[0]!.cwd)).rejects.toMatchObject({ code: 'ENOENT' })
 
       releaseResume.resolve()
       await expect(primary).resolves.toMatchObject({ sessionId })
-      expect(pendingPrimarySessionIds(runtime).size).toBe(0)
     } finally {
       releaseResume.resolve()
       await reviewer.then(
@@ -8899,7 +8885,6 @@ describe('ACP runtime session management', () => {
 
     try {
       await expect(reviewer).rejects.toThrow('Reviewer session id collision: stable-app-session')
-      expect([...pendingPrimarySessionIds(runtime).keys()]).toEqual(['stable-app-session'])
       await expect(stat(fakeAgent.newSessions[1]!.cwd)).rejects.toMatchObject({ code: 'ENOENT' })
 
       releaseAdoption.resolve()
@@ -8907,7 +8892,6 @@ describe('ACP runtime session management', () => {
         sessionId: 'stable-app-session',
         contextReset: true
       })
-      expect(pendingPrimarySessionIds(runtime).size).toBe(0)
     } finally {
       releaseAdoption.resolve()
       await reviewer.then(
@@ -8933,12 +8917,6 @@ describe('ACP runtime session management', () => {
     try {
       await expect(reviewer).rejects.toThrow('Reviewer session id collision: stable-app-session')
       expect(modeRequestCount()).toBe(1)
-      expect([...pendingPrimarySessionIds(runtime).keys()]).toEqual([
-        'stable-app-session',
-        'new-provider-session'
-      ])
-      expect(new Set(pendingPrimarySessionIds(runtime).values()).size).toBe(1)
-
       const duplicateCwd = fakeAgent.newSessions[1]?.cwd
       expect(duplicateCwd).toMatch(/open-science-reviewer-/)
       await expect(stat(duplicateCwd!)).rejects.toMatchObject({ code: 'ENOENT' })
@@ -8948,7 +8926,6 @@ describe('ACP runtime session management', () => {
         sessionId: 'stable-app-session',
         contextReset: true
       })
-      expect(pendingPrimarySessionIds(runtime).size).toBe(0)
       expect(runtime.getSnapshot().sessionIds).toEqual(['stable-app-session'])
       await runtime.sendPrompt({
         sessionId: 'stable-app-session',
@@ -8986,12 +8963,6 @@ describe('ACP runtime session management', () => {
         'Reviewer session id collision: reserved-provider-session'
       )
       expect(modeRequestCount()).toBe(1)
-      expect([...pendingPrimarySessionIds(runtime).keys()]).toEqual([
-        'stable-app-session',
-        'reserved-provider-session'
-      ])
-      expect(new Set(pendingPrimarySessionIds(runtime).values()).size).toBe(1)
-
       const duplicateCwd = fakeAgent.newSessions[1]?.cwd
       expect(duplicateCwd).toMatch(/open-science-reviewer-/)
       await expect(stat(duplicateCwd!)).rejects.toMatchObject({ code: 'ENOENT' })
@@ -9001,7 +8972,6 @@ describe('ACP runtime session management', () => {
         sessionId: 'stable-app-session',
         contextReset: true
       })
-      expect(pendingPrimarySessionIds(runtime).size).toBe(0)
       expect(runtime.getSnapshot().sessionIds).toEqual(['stable-app-session'])
       await runtime.sendPrompt({
         sessionId: 'stable-app-session',
@@ -9074,7 +9044,6 @@ describe('ACP runtime session management', () => {
 
     try {
       await expect(reviewer).rejects.toThrow('Reviewer session id collision: stable-app-session')
-      expect([...pendingPrimarySessionIds(runtime).keys()]).toEqual(['stable-app-session'])
       await expect(stat(fakeAgent.newSessions[2]!.cwd)).rejects.toMatchObject({ code: 'ENOENT' })
 
       releaseReplacement.resolve()
@@ -9082,7 +9051,6 @@ describe('ACP runtime session management', () => {
         sessionId: 'stable-app-session',
         contextReset: true
       })
-      expect(pendingPrimarySessionIds(runtime).size).toBe(0)
       await runtime.sendPrompt({
         sessionId: 'stable-app-session',
         text: 'replacement primary remains active'
@@ -9803,10 +9771,8 @@ describe('ACP runtime session management', () => {
     ).rejects.toThrow(/not found/)
   })
 
-  it('releases an adopted provider id for reuse when the app session is deleted', async () => {
+  it('allows a deleted adopted provider id to be reused by a new session', async () => {
     const process = new FakeAgentProcess()
-    // Resume rejects, so the runtime adopts a fresh agent session (adopted-session-1) under the
-    // app-facing id (switched-session), registering the reverse mapping used to relabel agent events.
     const fakeAgent = startFakeAgent(process, ['adopted-session-1', 'adopted-session-1'], {
       resumeNotFound: true
     })
@@ -9819,15 +9785,16 @@ describe('ACP runtime session management', () => {
     await runtime.resumeSession({ sessionId: 'switched-session', cwd: '/workspace' })
     await runtime.deleteSession({ sessionId: 'switched-session' })
 
-    // A new provider session may reuse the deleted underlying id without colliding with a stale alias.
     const reused = await runtime.createSession({ cwd: '/workspace' })
     expect(reused.sessionId).toBe('adopted-session-1')
+    expect(runtime.getSnapshot().sessionIds).toEqual(['adopted-session-1'])
 
     await runtime.sendPrompt({ sessionId: reused.sessionId, text: 'reuse provider identity' })
     expect(fakeAgent.prompts.at(-1)).toEqual({
       sessionId: 'adopted-session-1',
       text: 'reuse provider identity'
     })
+
     await runtime.deleteSession({ sessionId: reused.sessionId })
   })
 
@@ -9985,7 +9952,13 @@ describe('ACP runtime session management', () => {
 
       expect(releaseSessionCapabilities).toHaveBeenCalledOnce()
       expect(releaseSessionCapabilities).toHaveBeenCalledWith('restored-session')
-      expect(pendingPrimarySessionIds(runtime).size).toBe(0)
+
+      const recovered = await runtime.resumeSession({
+        sessionId: 'restored-session',
+        cwd: '/workspace'
+      })
+      expect(recovered.sessionId).toBe('restored-session')
+      await runtime.deleteSession({ sessionId: recovered.sessionId })
     } finally {
       disposeSpy.mockRestore()
     }
@@ -9993,7 +9966,7 @@ describe('ACP runtime session management', () => {
 
   it('releases the notebook RPC capability when fresh-session adoption fails', async () => {
     const process = new FakeAgentProcess()
-    startFakeAgent(process, ['adopted-session'])
+    startFakeAgent(process, ['adopted-session', 'adopted-session'])
     const releaseSessionCapabilities = vi.fn()
     const runtime = new AcpRuntime({
       appVersion: '0.1.0',
@@ -10031,7 +10004,14 @@ describe('ACP runtime session management', () => {
 
       expect(releaseSessionCapabilities).toHaveBeenCalledOnce()
       expect(releaseSessionCapabilities).toHaveBeenCalledWith('switched-session')
-      expect(pendingPrimarySessionIds(runtime).size).toBe(0)
+
+      const recovered = await runtime.resumeSession({
+        sessionId: 'switched-session',
+        cwd: '/workspace',
+        previousFrameworkId: 'codex'
+      })
+      expect(recovered).toMatchObject({ sessionId: 'switched-session', contextReset: true })
+      await runtime.deleteSession({ sessionId: recovered.sessionId })
     } finally {
       disposeSpy.mockRestore()
     }
@@ -16064,7 +16044,7 @@ describe('ACP runtime — session-creation and spawn diagnostics', () => {
   it('logs a safe category when permission-profile setup throws', async () => {
     errorLogSpy.mockClear()
     const process = new FakeAgentProcess()
-    startFakeAgent(process, ['perm-fail-session'])
+    startFakeAgent(process, ['perm-fail-session', 'perm-fail-session'])
     const runtime = new AcpRuntime({
       appVersion: '0.1.0',
       defaultCwd: '/workspace',
@@ -16078,8 +16058,6 @@ describe('ACP runtime — session-creation and spawn diagnostics', () => {
     ).mockRejectedValueOnce(boom)
 
     await expect(runtime.createSession({ cwd: '/workspace' })).rejects.toBe(boom)
-    expect(pendingPrimarySessionIds(runtime).size).toBe(0)
-
     const call = errorLogSpy.mock.calls.find(
       ([message]) => message === 'createSession: configurePermissionProfile failed'
     )
@@ -16090,6 +16068,10 @@ describe('ACP runtime — session-creation and spawn diagnostics', () => {
       generation: 1,
       status: 'connected'
     })
+
+    const recovered = await runtime.createSession({ cwd: '/workspace' })
+    expect(recovered.sessionId).toBe('perm-fail-session')
+    await runtime.deleteSession({ sessionId: recovered.sessionId })
   })
 
   it('releases the provisional notebook RPC capability when session creation fails', async () => {
