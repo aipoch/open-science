@@ -928,6 +928,29 @@ describe('workspace agent message sending', () => {
     })
   })
 
+  it('uses a generic creation error when IPC supplies no downstream detail', async () => {
+    const runtime = {
+      state: createSnapshot(),
+      createSession: vi
+        .fn()
+        .mockRejectedValue(new Error("Error invoking remote method 'acp:create-session': Error")),
+      resumeSession: vi.fn(),
+      resetSessionContext: vi.fn(),
+      sendPrompt: vi.fn()
+    }
+
+    await sendWorkspaceMessage(runtime, {
+      text: 'Start a new analysis',
+      cwd: '/workspace/project',
+      agentFrameworkId: 'codex'
+    })
+    await flushRuntimeTasks()
+
+    expect(useSessionStore.getState().sessions[0]?.error).toBe(
+      'Agent session could not be created.'
+    )
+  })
+
   it('unwraps an IPC-wrapped config failure at session start and marks it non-reportable', async () => {
     // resolveActiveAgentBackend throws app-authored setup guidance at spawn time; it crosses IPC wrapped
     // as "Error invoking remote method '…': Error: <msg>". The createSession path must unwrap it so the

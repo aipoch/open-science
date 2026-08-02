@@ -156,7 +156,7 @@ const RESUME_UNKNOWN_ERROR_MESSAGE = 'Agent session resume failed: Unknown error
 const getCreateSessionFailureMessage = (error: unknown): string => {
   const message = error instanceof Error ? error.message : String(error)
 
-  return unwrapIpcErrorDetail(message) || message.trim() || 'Agent session could not be created.'
+  return unwrapIpcErrorDetail(message) || 'Agent session could not be created.'
 }
 
 // Turns a resume failure into an actionable message. Each branch matches one distinct cause thrown
