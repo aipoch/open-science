@@ -24,9 +24,9 @@ export const clearSystemProxyEnvironment = (env: NodeJS.ProcessEnv): void => {
   for (const key of SYSTEM_PROXY_ENV_KEYS) delete env[key]
 }
 
-// Imported subscription routes are intentionally restricted to loopback. Keep those local calls
-// out of a resolved corporate/system proxy while covering the common spellings understood by
-// different HTTP stacks (host, IPv4 range/CIDR, and bracketed/unbracketed IPv6).
+// App-owned local services are intentionally restricted to loopback. Keep those calls out of an
+// inherited or resolved proxy while covering the common spellings understood by different HTTP
+// stacks (host, IPv4 range/CIDR, and bracketed/unbracketed IPv6).
 const LOOPBACK_PROXY_BYPASS = [
   'localhost',
   '.localhost',
@@ -35,6 +35,20 @@ const LOOPBACK_PROXY_BYPASS = [
   '::1',
   '[::1]'
 ] as const
+
+export const loopbackProxyBypassEnvironment = (
+  sourceEnv: NodeJS.ProcessEnv = process.env
+): Pick<SystemProxyEnvironment, 'NO_PROXY' | 'no_proxy'> => {
+  const appendLoopback = (value: string | undefined): string => {
+    const bypass = (value?.split(',') ?? []).map((entry) => entry.trim()).filter(Boolean)
+    return [...new Set([...bypass, ...LOOPBACK_PROXY_BYPASS])].join(',')
+  }
+
+  return {
+    NO_PROXY: appendLoopback(sourceEnv.NO_PROXY),
+    no_proxy: appendLoopback(sourceEnv.no_proxy)
+  }
+}
 
 const proxyEnvironmentForDirective = (
   kind: string,
@@ -109,13 +123,7 @@ export const resolveSystemProxyEnvironment = async (
     const proxyEnv = parseSystemProxyRules(await resolveProxy(CODEX_PROXY_TARGET_URL))
     if (Object.keys(proxyEnv).length === 0) return {}
 
-    const bypass = [sourceEnv.NO_PROXY, sourceEnv.no_proxy]
-      .flatMap((value) => value?.split(',') ?? [])
-      .map((value) => value.trim())
-      .filter(Boolean)
-    const noProxy = [...new Set([...bypass, ...LOOPBACK_PROXY_BYPASS])].join(',')
-
-    return { ...proxyEnv, NO_PROXY: noProxy, no_proxy: noProxy }
+    return { ...proxyEnv, ...loopbackProxyBypassEnvironment(sourceEnv) }
   } catch {
     // `undefined` is distinct from the empty environment produced by an explicit DIRECT decision.
     // Callers preserve the app's inherited proxy variables only for this resolver-failure fallback.

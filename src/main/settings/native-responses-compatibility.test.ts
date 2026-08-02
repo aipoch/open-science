@@ -1,10 +1,26 @@
-import { describe, expect, it, vi } from 'vitest'
+import { afterEach, describe, expect, it, vi } from 'vitest'
+
+const logSpies = vi.hoisted(() => ({
+  debug: vi.fn(),
+  error: vi.fn(),
+  info: vi.fn(),
+  warn: vi.fn()
+}))
+
+vi.mock('../logger', async (importOriginal) => ({
+  ...(await importOriginal<typeof import('../logger')>()),
+  createLogger: () => logSpies
+}))
 
 import {
   NativeResponsesCompatibilityProxy,
   flattenNativeResponsesRequest,
   restoreNativeResponsesPayload
 } from './native-responses-compatibility'
+
+afterEach(() => {
+  for (const spy of Object.values(logSpies)) spy.mockClear()
+})
 
 describe('native Responses compatibility', () => {
   it('flattens namespace tools and matching history without changing plain functions', () => {
@@ -199,6 +215,9 @@ describe('native Responses compatibility', () => {
       tool_choice: { type: 'function', name: 'select_skills' },
       tools: [expect.objectContaining({ type: 'function', name: 'select_skills' })]
     })
+    const serializedLogs = JSON.stringify(Object.values(logSpies).flatMap((spy) => spy.mock.calls))
+    expect(serializedLogs).not.toContain('用 PubMed 搜索肿瘤免疫文章')
+    expect(serializedLogs).not.toContain('mcp-pubmed')
   })
 
   it('continues scanning for smaller Skills after a candidate exceeds the catalog byte budget', async () => {
@@ -353,6 +372,112 @@ describe('native Responses compatibility', () => {
 
       expect(response.ok, await response.text()).toBe(true)
       expect(fetchImpl).toHaveBeenCalledOnce()
+    } finally {
+      await proxy.close()
+    }
+  })
+
+  it('logs a privacy-safe lifecycle that distinguishes an upstream 502', async () => {
+    const privatePrompt = 'private medical prompt'
+    const privateUpstreamDetail = 'private gateway diagnostic'
+    const proxy = new NativeResponsesCompatibilityProxy(
+      {
+        baseUrl: 'https://api.deepseek.com/v1',
+        key: 'private-api-key',
+        model: 'deepseek-v4-flash'
+      },
+      vi.fn().mockResolvedValue(
+        new Response(JSON.stringify({ error: { message: privateUpstreamDetail } }), {
+          status: 502,
+          headers: { 'content-type': 'application/json' }
+        })
+      )
+    )
+    const connection = await proxy.start()
+    try {
+      const response = await fetch(`${connection.baseUrl}/responses`, {
+        method: 'POST',
+        headers: {
+          authorization: `Bearer ${connection.token}`,
+          'content-type': 'application/json'
+        },
+        body: JSON.stringify({ model: 'deepseek-v4-flash', input: privatePrompt })
+      })
+      expect(response.status).toBe(502)
+      await response.text()
+
+      const received = logSpies.info.mock.calls.find(
+        ([message]) => message === 'native Responses compatibility request'
+      )
+      const upstream = logSpies.info.mock.calls.find(
+        ([message]) => message === 'native Responses compatibility upstream response'
+      )
+      const completed = logSpies.info.mock.calls.find(
+        ([message]) => message === 'native Responses compatibility request completed'
+      )
+      expect(received?.[1]).toMatchObject({ requestId: expect.any(String) })
+      expect(upstream?.[1]).toMatchObject({
+        requestId: received?.[1]?.requestId,
+        status: 502,
+        responseType: 'json',
+        durationMs: expect.any(Number)
+      })
+      expect(completed?.[1]).toMatchObject({
+        requestId: received?.[1]?.requestId,
+        status: 502,
+        durationMs: expect.any(Number)
+      })
+      const serialized = JSON.stringify(Object.values(logSpies).flatMap((spy) => spy.mock.calls))
+      expect(serialized).not.toContain(privatePrompt)
+      expect(serialized).not.toContain(privateUpstreamDetail)
+      expect(serialized).not.toContain('private-api-key')
+      expect(serialized).not.toContain(connection.token)
+      expect(serialized).not.toContain('api.deepseek.com')
+    } finally {
+      await proxy.close()
+    }
+  })
+
+  it('classifies an upstream transport failure without logging its raw message', async () => {
+    const privateError = Object.assign(
+      new Error('fetch failed for https://private-gateway.example.test/account/alice'),
+      { code: 'ECONNRESET' }
+    )
+    const fetchImpl = vi.fn().mockRejectedValue(privateError)
+    const proxy = new NativeResponsesCompatibilityProxy(
+      { baseUrl: 'https://api.deepseek.com/v1', key: 'private-api-key' },
+      fetchImpl
+    )
+    const connection = await proxy.start()
+    try {
+      const response = await fetch(`${connection.baseUrl}/responses`, {
+        method: 'POST',
+        headers: {
+          authorization: `Bearer ${connection.token}`,
+          'content-type': 'application/json'
+        },
+        body: JSON.stringify({ model: 'private-model', input: 'private prompt' })
+      })
+      expect(response.status).toBe(400)
+      await response.text()
+      expect(fetchImpl).toHaveBeenCalledOnce()
+
+      expect(logSpies.warn.mock.calls).toContainEqual([
+        'native Responses compatibility request failed',
+        expect.objectContaining({
+          requestId: expect.any(String),
+          phase: 'upstream-fetch',
+          outcome: 'error',
+          errorCategory: 'network',
+          errorCode: 'ECONNRESET',
+          durationMs: expect.any(Number)
+        })
+      ])
+      const serialized = JSON.stringify(Object.values(logSpies).flatMap((spy) => spy.mock.calls))
+      expect(serialized).not.toContain('private-gateway.example.test')
+      expect(serialized).not.toContain('private-api-key')
+      expect(serialized).not.toContain('private-model')
+      expect(serialized).not.toContain('private prompt')
     } finally {
       await proxy.close()
     }

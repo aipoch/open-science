@@ -513,6 +513,39 @@ describe('AgentBackendResolver bridge predicates', () => {
     )
     await backend.responsesBridgeLease?.release()
   })
+
+  it('bypasses loopback without disabling inherited proxies for native Responses compatibility', async () => {
+    vi.stubEnv('HTTPS_PROXY', 'http://proxy.example.test:3128')
+    vi.stubEnv('NO_PROXY', 'metadata.example.test')
+    vi.stubEnv('no_proxy', 'existing.internal')
+    try {
+      const harness = makeHarness({
+        targetOverride: () => ({ needsNativeResponsesCompatibility: true })
+      })
+
+      const backend = await harness.resolver.resolveExplicitTarget({
+        frameworkId: 'codex',
+        providerId: 'provider-a',
+        model: { kind: 'provider-default' },
+        reasoningEffort: 'high'
+      })
+
+      expect(backend.proxyEnvironmentMode).toBeUndefined()
+      expect(backend.env).not.toHaveProperty('HTTPS_PROXY')
+      const loopbackBypass = ['localhost', '127.0.0.1', '127.0.0.0/8', '::1', '[::1]']
+      expect(backend.env.NO_PROXY?.split(',')).toEqual(
+        expect.arrayContaining(['metadata.example.test', ...loopbackBypass])
+      )
+      expect(backend.env.NO_PROXY?.split(',')).not.toContain('existing.internal')
+      expect(backend.env.no_proxy?.split(',')).toEqual(
+        expect.arrayContaining(['existing.internal', ...loopbackBypass])
+      )
+      expect(backend.env.no_proxy?.split(',')).not.toContain('metadata.example.test')
+      await backend.responsesBridgeLease?.release()
+    } finally {
+      vi.unstubAllEnvs()
+    }
+  })
 })
 
 describe('AgentBackendResolver bridge generations', () => {

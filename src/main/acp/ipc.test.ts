@@ -93,14 +93,21 @@ const {
   }
 })
 
-// Spy on the file logger so the create-session failure path can be asserted (routes to main.log, not a
-// bare console.error). errorLogFields stays real so the assertion also covers its output shape.
-const { errorLogSpy } = vi.hoisted(() => ({ errorLogSpy: vi.fn() }))
+// Spy on the file logger so session lifecycle diagnostics can be asserted (routes to main.log, not a
+// bare console). errorLogFields stays real so the create-session assertion also covers its output.
+const { errorLogSpy, infoLogSpy } = vi.hoisted(() => ({
+  errorLogSpy: vi.fn(),
+  infoLogSpy: vi.fn()
+}))
 vi.mock('../logger', async (importOriginal) => {
   const actual = await importOriginal<typeof import('../logger')>()
   return {
     ...actual,
-    createLogger: (scope: string) => ({ ...actual.createLogger(scope), error: errorLogSpy })
+    createLogger: (scope: string) => ({
+      ...actual.createLogger(scope),
+      error: errorLogSpy,
+      info: infoLogSpy
+    })
   }
 })
 
@@ -183,6 +190,7 @@ afterEach(() => {
   sendPrompt.mockReset()
   sendPrompt.mockResolvedValue(undefined)
   errorLogSpy.mockClear()
+  infoLogSpy.mockClear()
   AcpRuntimeMock.mockClear()
 })
 
@@ -588,6 +596,114 @@ describe('registerAcpIpcHandlers — reset-session-context bridge', () => {
     // The distinct resume channel must not be driven by the reset call.
     expect(resumeSession).not.toHaveBeenCalled()
     expect(result).toEqual({ sessionId: 's-1', cwd: '/workspace', contextReset: true })
+  })
+})
+
+describe('registerAcpIpcHandlers — resume-session diagnostics', () => {
+  it('logs a privacy-safe correlated lifecycle on success', async () => {
+    registerWithFakes()
+    const request: AcpResumeSessionRequest = {
+      sessionId: 'private-session-id',
+      cwd: '/Users/alice/private-project',
+      projectName: 'private-project'
+    }
+    resumeSession.mockResolvedValueOnce({
+      sessionId: request.sessionId,
+      cwd: request.cwd,
+      frameworkId: 'codex',
+      backendId: 'private-backend-id',
+      contextReset: true
+    })
+
+    await handlers.get('acp:resume-session')?.({}, request)
+
+    const started = infoLogSpy.mock.calls.find(
+      ([message]) => message === 'acp:resume-session started'
+    )
+    const completed = infoLogSpy.mock.calls.find(
+      ([message]) => message === 'acp:resume-session completed'
+    )
+    expect(started?.[1]).toMatchObject({
+      operationId: expect.any(String),
+      sessionHash: expect.stringMatching(/^[a-f0-9]{12}$/)
+    })
+    expect(completed?.[1]).toMatchObject({
+      operationId: started?.[1]?.operationId,
+      sessionHash: started?.[1]?.sessionHash,
+      frameworkId: 'codex',
+      contextReset: true,
+      durationMs: expect.any(Number)
+    })
+    const serialized = JSON.stringify(infoLogSpy.mock.calls)
+    expect(serialized).not.toContain(request.sessionId)
+    expect(serialized).not.toContain(request.cwd)
+    expect(serialized).not.toContain(request.projectName)
+    expect(serialized).not.toContain('private-backend-id')
+  })
+
+  it('classifies a failure without logging private error details', async () => {
+    registerWithFakes()
+    const request: AcpResumeSessionRequest = {
+      sessionId: 'private-session-id',
+      cwd: '/Users/alice/private-project'
+    }
+    const failure = Object.assign(
+      new Error('private provider detail at https://secret.example.test'),
+      {
+        name: 'RequestError',
+        code: -32603,
+        data: {
+          errorKind: 'session_not_found',
+          service: 'session',
+          details: 'private upstream details'
+        }
+      }
+    )
+    resumeSession.mockRejectedValueOnce(failure)
+
+    await expect(handlers.get('acp:resume-session')?.({}, request)).rejects.toBe(failure)
+
+    const started = infoLogSpy.mock.calls.find(
+      ([message]) => message === 'acp:resume-session started'
+    )
+    const failed = errorLogSpy.mock.calls.find(
+      ([message]) => message === 'acp:resume-session failed'
+    )
+    expect(failed?.[1]).toMatchObject({
+      operationId: started?.[1]?.operationId,
+      sessionHash: started?.[1]?.sessionHash,
+      errorCategory: 'request',
+      rpcCode: -32603,
+      errorKind: 'session_not_found',
+      service: 'session',
+      durationMs: expect.any(Number)
+    })
+    const serialized = JSON.stringify([infoLogSpy.mock.calls, errorLogSpy.mock.calls])
+    expect(serialized).not.toContain(request.sessionId)
+    expect(serialized).not.toContain(request.cwd)
+    expect(serialized).not.toContain('secret.example.test')
+    expect(serialized).not.toContain('private upstream details')
+  })
+
+  it('buckets an unknown numeric RPC code instead of copying it into the log', async () => {
+    registerWithFakes()
+    const privateCode = 987_654_321
+    resumeSession.mockRejectedValueOnce(
+      Object.assign(new Error('private detail'), { code: privateCode })
+    )
+
+    await expect(
+      handlers.get('acp:resume-session')?.(
+        {},
+        { sessionId: 'private-session-id', cwd: '/private/workspace' }
+      )
+    ).rejects.toThrow('private detail')
+
+    const failed = errorLogSpy.mock.calls.find(
+      ([message]) => message === 'acp:resume-session failed'
+    )
+    expect(failed?.[1]).toMatchObject({ errorCategory: 'request', rpcCode: 'other' })
+    expect(JSON.stringify(failed)).not.toContain(String(privateCode))
   })
 })
 

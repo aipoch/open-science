@@ -65,6 +65,7 @@ import {
   type RuntimeProviderModelSelection
 } from './provider-accounts'
 import { ensureCodexAuthHome } from './codex-auth'
+import { loopbackProxyBypassEnvironment } from './system-proxy'
 import type { StoredSettings } from './types'
 
 export type AgentBackendSelection = Readonly<{
@@ -470,6 +471,12 @@ export class AgentBackendResolver {
       const proxyEnv = usesCodexSystemProxy
         ? await this.runtime.resolveCodexProxyEnvironment()
         : undefined
+      // Only the Codex child talks to the app-owned bridge at loopback. Add a bypass override for
+      // that local hop without copying or clearing proxy variables. This leaves the main-process
+      // bridge's upstream network route untouched.
+      const loopbackProxyBypass = responsesBridge
+        ? loopbackProxyBypassEnvironment(process.env)
+        : undefined
       const sessionModel = modelConfig.sessionModel ?? provider.model
 
       return {
@@ -480,6 +487,7 @@ export class AgentBackendResolver {
           ...(modelConfig.env ?? {}),
           ...(opencodeUsagePassword ? { OPENCODE_SERVER_PASSWORD: opencodeUsagePassword } : {}),
           ...(proxyEnv ?? {}),
+          ...(loopbackProxyBypass ?? {}),
           ...(framework.id === 'codex' && settings.codex?.nativePath
             ? { CODEX_PATH: settings.codex.nativePath }
             : {})

@@ -1,7 +1,7 @@
-import { randomBytes } from 'node:crypto'
+import { randomBytes, randomUUID } from 'node:crypto'
 import { createServer, type IncomingMessage, type Server, type ServerResponse } from 'node:http'
 
-import { createLogger } from '../logger'
+import { createLogger, diagnosticErrorFields } from '../logger'
 import type {
   ResponsesBridgeConnection,
   ResponsesBridgeNamespacedTool,
@@ -45,6 +45,41 @@ const MAX_SKILL_SELECTOR_NAME_BYTES = 128
 const MAX_SKILL_SELECTOR_DESCRIPTION_BYTES = 2 * 1024
 const MAX_SKILL_SELECTOR_CATALOG_BYTES = 256 * 1024
 const log = createLogger('native-responses-compatibility')
+const SAFE_NETWORK_ERROR_CODES = new Set([
+  'EAI_AGAIN',
+  'ECONNREFUSED',
+  'ECONNRESET',
+  'EHOSTUNREACH',
+  'ENETUNREACH',
+  'ESOCKETTIMEDOUT',
+  'ETIMEDOUT'
+])
+
+const safeRead = (value: object, key: string): unknown => {
+  try {
+    return (value as Record<string, unknown>)[key]
+  } catch {
+    return undefined
+  }
+}
+
+const safeNetworkErrorCode = (error: unknown): string | undefined => {
+  if (typeof error !== 'object' || error === null) return undefined
+  const directCode = safeRead(error, 'code')
+  if (typeof directCode === 'string' && SAFE_NETWORK_ERROR_CODES.has(directCode)) return directCode
+  const cause = safeRead(error, 'cause')
+  if (typeof cause !== 'object' || cause === null) return undefined
+  const causeCode = safeRead(cause, 'code')
+  return typeof causeCode === 'string' && SAFE_NETWORK_ERROR_CODES.has(causeCode)
+    ? causeCode
+    : undefined
+}
+
+const upstreamResponseType = (contentType: string): 'event-stream' | 'json' | 'binary' => {
+  if (contentType.includes('text/event-stream')) return 'event-stream'
+  if (contentType.includes('application/json')) return 'json'
+  return 'binary'
+}
 
 const isObject = (value: unknown): value is JsonObject =>
   typeof value === 'object' && value !== null && !Array.isArray(value)
@@ -414,7 +449,7 @@ export class NativeResponsesCompatibilityProxy {
       log.info('native Responses Skill selection completed', {
         model: this.target.model,
         catalogCount: catalog.length,
-        selectedNames: selected.map(({ name }) => name)
+        selectedCount: selected.length
       })
       return selected
     } catch {
@@ -505,6 +540,9 @@ export class NativeResponsesCompatibilityProxy {
     }
 
     const abortController = new AbortController()
+    const requestId = randomUUID()
+    const startedAt = Date.now()
+    let phase = 'read-request'
     const abortUpstream = (): void => abortController.abort()
     const abortOnRequestClose = (): void => {
       if (request.aborted || !request.complete) abortUpstream()
@@ -535,11 +573,12 @@ export class NativeResponsesCompatibilityProxy {
         : body
       const { request: upstreamRequest, aliases } = flattenNativeResponsesRequest(scopedBody)
       log.info('native Responses compatibility request', {
-        model: body.model,
+        requestId,
         namespaceToolCount: aliases.size,
         stream: body.stream === true,
         reviewerScoped
       })
+      phase = 'upstream-fetch'
       const upstream = await this.fetchImpl(responsesUrl(this.target.baseUrl), {
         method: 'POST',
         headers: upstreamHeaders(request, this.target.key),
@@ -547,18 +586,40 @@ export class NativeResponsesCompatibilityProxy {
         signal: abortController.signal
       })
       const contentType = upstream.headers.get('content-type') ?? ''
-      if (contentType.includes('text/event-stream')) {
+      const responseType = upstreamResponseType(contentType)
+      log.info('native Responses compatibility upstream response', {
+        requestId,
+        status: upstream.status,
+        responseType,
+        durationMs: Math.max(0, Date.now() - startedAt)
+      })
+      phase = 'forward-response'
+      if (responseType === 'event-stream') {
         await streamResponse(upstream, response, aliases)
-        return
-      }
-      if (contentType.includes('application/json')) {
+      } else if (responseType === 'json') {
         const payload = restoreNativeResponsesPayload(await upstream.json(), aliases)
         response.writeHead(upstream.status, copyResponseHeaders(upstream))
         response.end(JSON.stringify(payload))
-        return
+      } else {
+        response.writeHead(upstream.status, copyResponseHeaders(upstream))
+        response.end(Buffer.from(await upstream.arrayBuffer()))
       }
-      response.writeHead(upstream.status, copyResponseHeaders(upstream))
-      response.end(Buffer.from(await upstream.arrayBuffer()))
+      log.info('native Responses compatibility request completed', {
+        requestId,
+        status: upstream.status,
+        durationMs: Math.max(0, Date.now() - startedAt)
+      })
+    } catch (error) {
+      const errorCode = safeNetworkErrorCode(error)
+      log.warn('native Responses compatibility request failed', {
+        requestId,
+        phase,
+        outcome: abortController.signal.aborted ? 'aborted' : 'error',
+        durationMs: Math.max(0, Date.now() - startedAt),
+        ...diagnosticErrorFields(error),
+        ...(errorCode ? { errorCode } : {})
+      })
+      throw error
     } finally {
       request.off('aborted', abortUpstream)
       request.off('close', abortOnRequestClose)
