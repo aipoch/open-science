@@ -448,6 +448,30 @@ describe('WorkspaceMessageItem turn token usage', () => {
     expect(
       decodeURIComponent(modelIcon?.querySelector('img')?.getAttribute('src') ?? '')
     ).toContain('<title>OpenAI</title>')
+    const details = document.body.querySelector('[data-slot="turn-runtime-details"]')
+    expect(details?.textContent).toContain('Agent: Codex')
+    expect(details?.textContent).toContain('Model: gpt-test')
+  })
+
+  it('omits historical runtime metadata that no longer resolves to displayable values', async () => {
+    useSettingsStore.setState({ agentFrameworks: [], providers: [] })
+    await renderMessageItem(
+      createMessage({ role: 'agent', content: 'Legacy answer', completedAt: 1710000125000 }),
+      undefined,
+      undefined,
+      { frameworkId: 'codex', backendId: 'codex:deleted-provider' }
+    )
+
+    const usageTrigger = container.querySelector<HTMLButtonElement>(
+      '[data-slot="turn-token-usage"] button'
+    )
+    await act(async () => {
+      usageTrigger?.dispatchEvent(new MouseEvent('pointerover', { bubbles: true }))
+      await Promise.resolve()
+    })
+
+    expect(document.body.querySelector('[data-slot="turn-runtime-icons"]')).toBeNull()
+    expect(document.body.querySelector('[data-slot="turn-runtime-details"]')).toBeNull()
   })
 
   it('splits cache reads and writes when the agent reports both categories', async () => {

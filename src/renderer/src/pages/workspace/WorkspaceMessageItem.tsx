@@ -21,10 +21,6 @@ import type { ProvenanceMessagePart } from '../../../../shared/artifact-provenan
 import type { AcpTurnTokenUsage } from '../../../../shared/acp'
 import type { PersistedRuntimeSegment } from '../../../../shared/conversation-graph'
 import type { MessagePart } from '../../../../shared/session-persistence'
-import {
-  isClaudeSubscriptionProviderId,
-  isCodexSubscriptionProviderId
-} from '../../../../shared/settings'
 import { getUploadedAttachmentName } from '../../../../shared/uploads'
 
 import { ArtifactPreview } from './artifact-preview'
@@ -140,48 +136,6 @@ type TurnTokenUsageEntry = readonly [
   markerClassName: string
 ]
 
-const TurnRuntimeIcons = ({ runtime }: { runtime: MessageRuntimeIdentity }): React.JSX.Element => {
-  const frameworks = useSettingsStore((state) => state.agentFrameworks)
-  const providers = useSettingsStore((state) => state.providers)
-  const frameworkName =
-    frameworks.find((framework) => framework.id === runtime.frameworkId)?.displayName ??
-    runtime.frameworkId
-  const providerId = resolveSessionProviderId(runtime.backendId)
-  const provider = providers.find((candidate) => candidate.id === providerId)
-  const kindKey = provider
-    ? providerKindKey(provider.type, provider.vendorId)
-    : isCodexSubscriptionProviderId(providerId ?? '')
-      ? 'codex-subscription'
-      : isClaudeSubscriptionProviderId(providerId ?? '')
-        ? 'claude-subscription'
-        : ''
-  const frameworkLabel = `Agent framework: ${frameworkName}`
-  const modelLabel = `Model provider: ${provider?.name ?? providerId ?? 'Unknown'}${runtime.model ? `; model: ${runtime.model}` : ''}`
-
-  return (
-    <div data-slot="turn-runtime-icons" className="flex items-center gap-1">
-      <span
-        data-slot="turn-runtime-framework"
-        role="img"
-        aria-label={frameworkLabel}
-        title={frameworkLabel}
-        className="inline-flex size-5 items-center justify-center rounded-full border border-border bg-background"
-      >
-        <AgentFrameworkIcon frameworkId={runtime.frameworkId} size={12} />
-      </span>
-      <span
-        data-slot="turn-runtime-model"
-        role="img"
-        aria-label={modelLabel}
-        title={modelLabel}
-        className="inline-flex size-5 items-center justify-center rounded-full border border-border bg-background"
-      >
-        <ProviderKindIcon kindKey={kindKey} className="size-3" />
-      </span>
-    </div>
-  )
-}
-
 const TurnTokenUsage = ({
   usage,
   runtimeIdentity
@@ -190,6 +144,14 @@ const TurnTokenUsage = ({
   runtimeIdentity?: MessageRuntimeIdentity
 }): React.JSX.Element => {
   const [open, setOpen] = useState(false)
+  const settings = open && runtimeIdentity ? useSettingsStore.getState() : undefined
+  const frameworkName = settings?.agentFrameworks.find(
+    (framework) => framework.id === runtimeIdentity?.frameworkId
+  )?.displayName
+  const providerId = resolveSessionProviderId(runtimeIdentity?.backendId)
+  const provider = settings?.providers.find((candidate) => candidate.id === providerId)
+  const kindKey = provider ? providerKindKey(provider.type, provider.vendorId) : undefined
+  const model = runtimeIdentity?.model?.trim()
   const contentId = useId()
   const triggerRef = useRef<HTMLButtonElement | null>(null)
   const contentRef = useRef<HTMLDivElement | null>(null)
@@ -302,7 +264,32 @@ const TurnTokenUsage = ({
         <div className="flex items-center justify-between gap-3">
           <div className="flex items-center gap-1.5">
             <div className="text-[13px] font-medium">Usage</div>
-            {runtimeIdentity ? <TurnRuntimeIcons runtime={runtimeIdentity} /> : null}
+            {frameworkName || provider ? (
+              <div data-slot="turn-runtime-icons" className="flex items-center gap-1">
+                {frameworkName && runtimeIdentity ? (
+                  <span
+                    data-slot="turn-runtime-framework"
+                    role="img"
+                    aria-label={`Agent framework: ${frameworkName}`}
+                    title={`Agent framework: ${frameworkName}`}
+                    className="inline-flex size-5 items-center justify-center rounded-full border border-border bg-background"
+                  >
+                    <AgentFrameworkIcon frameworkId={runtimeIdentity.frameworkId} size={12} />
+                  </span>
+                ) : null}
+                {provider && kindKey ? (
+                  <span
+                    data-slot="turn-runtime-model"
+                    role="img"
+                    aria-label={`Model provider: ${provider.name}${model ? `; model: ${model}` : ''}`}
+                    title={`Model provider: ${provider.name}${model ? `; model: ${model}` : ''}`}
+                    className="inline-flex size-5 items-center justify-center rounded-full border border-border bg-background"
+                  >
+                    <ProviderKindIcon kindKey={kindKey} className="size-3" />
+                  </span>
+                ) : null}
+              </div>
+            ) : null}
           </div>
           {usage?.turnCount ? (
             <div
@@ -359,6 +346,19 @@ const TurnTokenUsage = ({
             {safeTotalTokens !== undefined ? tokenCountFormatter.format(safeTotalTokens) : '—'}
           </span>
         </div>
+        {frameworkName || model ? (
+          <div
+            data-slot="turn-runtime-details"
+            className="mt-2 space-y-0.5 border-t border-border pt-2 text-[11px] leading-4 text-muted-foreground"
+          >
+            {frameworkName ? <div className="truncate">Agent: {frameworkName}</div> : null}
+            {model ? (
+              <div className="truncate" title={model}>
+                Model: {model}
+              </div>
+            ) : null}
+          </div>
+        ) : null}
       </PopoverContent>
     </Popover>
   )
