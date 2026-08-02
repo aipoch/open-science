@@ -12485,6 +12485,46 @@ describe('ACP runtime session management', () => {
     expect(onRetired).toHaveBeenCalledOnce()
   })
 
+  it('lets retirement supersede a deferred provider reconnect exactly once', async () => {
+    const process = new FakeAgentProcess()
+    const promptStarted = createDeferred()
+    const releasePrompt = createDeferred()
+    const onRetired = vi.fn()
+    const states: string[] = []
+    startFakeAgent(process, ['s1'], {
+      onPrompt: async () => {
+        promptStarted.resolve()
+        await releasePrompt.promise
+      }
+    })
+    const runtime = new AcpRuntime({
+      appVersion: '0.1.0',
+      defaultCwd: '/workspace',
+      spawnAgent: () => asAgentProcess(process),
+      callbacks: {
+        onRetired,
+        onStateChanged: (snapshot) => states.push(snapshot.status)
+      }
+    })
+
+    await runtime.createSession({ cwd: '/workspace' })
+    const prompt = runtime.sendPrompt({ sessionId: 's1', text: 'hi' })
+    await promptStarted.promise
+    states.length = 0
+
+    await runtime.requestProviderReconnect()
+    await runtime.requestRetirement()
+    expect(process.killed).toBe(false)
+    expect(onRetired).not.toHaveBeenCalled()
+
+    releasePrompt.resolve()
+    await prompt
+    await vi.waitFor(() => expect(onRetired).toHaveBeenCalledOnce())
+
+    expect(process.killed).toBe(true)
+    expect(states).not.toContain('idle')
+  })
+
   it('does not retire while createSession is resolving its backend', async () => {
     const process = new FakeAgentProcess()
     const backendEntered = createDeferred()
