@@ -113,8 +113,8 @@ jobs:
             exit 0
           fi
 
-          # The introducing PR has no trusted classifier in its base. It is shadow-only, so bootstrap
-          # with an explicit full plan. Once merged, every later PR executes the base revision above.
+          # The introducing PR has no trusted classifier in its base. Bootstrap with a strict full
+          # plan so the stable gate still fails closed until the trusted implementation is available.
           node --input-type=module <<'NODE'
           import { appendFileSync } from 'node:fs'
 
@@ -141,11 +141,21 @@ jobs:
             'e2e_accessibility_windows',
             'e2e_visual_macos'
           ]
+          const bundles = [
+            'policy',
+            'static',
+            'unit',
+            'coverage_macos',
+            'windows_core',
+            'macos_e2e',
+            'windows_e2e'
+          ]
           const plan = {
             schemaVersion: 1,
             mode: 'full',
             roots: ['bootstrap'],
             lanes,
+            bundles,
             reasonChains: ['trusted base classifier unavailable -> bootstrap -> full']
           }
           appendFileSync(
@@ -157,6 +167,8 @@ jobs:
               process.env.GITHUB_STEP_SUMMARY,
               '## PR Gate preflight\n\n- Mode: **full**\n- Roots: bootstrap\n- Selected lanes: ' +
                 lanes.join(', ') +
+                '\n- Execution bundles: ' +
+                bundles.join(', ') +
                 '\n\n### Reason chains\n\n- `trusted base classifier unavailable -> bootstrap -> full`\n'
             )
           }
@@ -165,7 +177,7 @@ jobs:
   policy:
     name: PR policy
     needs: preflight
-    if: ${{ needs.preflight.result == 'success' && contains(fromJSON(needs.preflight.outputs.lanes), 'policy') }}
+    if: ${{ needs.preflight.result == 'success' && contains(fromJSON(needs.preflight.outputs.plan).bundles, 'policy') }}
     runs-on: ubuntu-latest
     timeout-minutes: 2
     steps:
@@ -174,12 +186,10 @@ jobs:
         with:
           fetch-depth: 0
           persist-credentials: false
-
       - name: Setup Node
         uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7
         with:
           node-version: 22
-
       - name: Validate pull request policy
         env:
           BASE_SHA: ${{ github.event.pull_request.base.sha || github.event.merge_group.base_sha }}
@@ -188,180 +198,105 @@ jobs:
           POLICY_SCOPE: commits
         run: node scripts/ci/check-pr-policy.mjs
 
-  docs:
-    name: Documentation
+  static:
+    name: Static checks
     needs: preflight
-    if: ${{ needs.preflight.result == 'success' && contains(fromJSON(needs.preflight.outputs.lanes), 'docs') }}
+    if: ${{ needs.preflight.result == 'success' && contains(fromJSON(needs.preflight.outputs.plan).bundles, 'static') }}
     runs-on: ubuntu-latest
-    timeout-minutes: 3
+    timeout-minutes: 12
     steps:
       - name: Checkout
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
         with:
           fetch-depth: 0
           persist-credentials: false
-
       - name: Setup Node
         uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7
         with:
           node-version: 22
           cache: npm
-
-      - name: Install formatting toolchain
-        run: npm ci --ignore-scripts
-
+      - name: Install dependencies
+        run: npm ci
       - name: Check Markdown formatting
+        id: docs
+        if: ${{ contains(fromJSON(needs.preflight.outputs.plan).lanes, 'docs') }}
+        continue-on-error: true
         env:
           BASE_SHA: ${{ needs.preflight.outputs.base }}
           HEAD_SHA: ${{ needs.preflight.outputs.head }}
         run: node scripts/ci/check-changed-format.mjs --base "$BASE_SHA" --head "$HEAD_SHA" --kind markdown
-
-  format:
-    name: Format
-    needs: preflight
-    if: ${{ needs.preflight.result == 'success' && contains(fromJSON(needs.preflight.outputs.lanes), 'format') }}
-    runs-on: ubuntu-latest
-    timeout-minutes: 5
-    steps:
-      - name: Checkout
-        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
-        with:
-          fetch-depth: 0
-          persist-credentials: false
-
-      - name: Setup Node
-        uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7
-        with:
-          node-version: 22
-          cache: npm
-
-      - name: Install dependencies
-        run: npm ci --ignore-scripts
-
       - name: Check formatting
+        id: format
+        if: ${{ contains(fromJSON(needs.preflight.outputs.plan).lanes, 'format') }}
+        continue-on-error: true
         env:
           BASE_SHA: ${{ needs.preflight.outputs.base }}
           HEAD_SHA: ${{ needs.preflight.outputs.head }}
         run: node scripts/ci/check-changed-format.mjs --base "$BASE_SHA" --head "$HEAD_SHA" --kind non-markdown
-
-  lint:
-    name: Lint
-    needs: preflight
-    if: ${{ needs.preflight.result == 'success' && contains(fromJSON(needs.preflight.outputs.lanes), 'lint') }}
-    runs-on: ubuntu-latest
-    timeout-minutes: 5
-    steps:
-      - name: Checkout
-        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
-        with:
-          persist-credentials: false
-
-      - name: Setup Node
-        uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7
-        with:
-          node-version: 22
-          cache: npm
-
-      - name: Install dependencies
-        run: npm ci
-
       - name: Lint
+        id: lint
+        if: ${{ contains(fromJSON(needs.preflight.outputs.plan).lanes, 'lint') }}
+        continue-on-error: true
         run: npm run lint
-
-  typecheck_node:
-    name: Typecheck node
-    needs: preflight
-    if: ${{ needs.preflight.result == 'success' && contains(fromJSON(needs.preflight.outputs.lanes), 'typecheck_node') }}
-    runs-on: ubuntu-latest
-    timeout-minutes: 5
-    steps:
-      - name: Checkout
-        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
-        with:
-          persist-credentials: false
-      - name: Setup Node
-        uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7
-        with:
-          node-version: 22
-          cache: npm
-      - name: Install dependencies
-        run: npm ci
       - name: Typecheck node
+        id: typecheck_node
+        if: ${{ contains(fromJSON(needs.preflight.outputs.plan).lanes, 'typecheck_node') }}
+        continue-on-error: true
         run: npm run typecheck:node
-
-  typecheck_web:
-    name: Typecheck web
-    needs: preflight
-    if: ${{ needs.preflight.result == 'success' && contains(fromJSON(needs.preflight.outputs.lanes), 'typecheck_web') }}
-    runs-on: ubuntu-latest
-    timeout-minutes: 5
-    steps:
-      - name: Checkout
-        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
-        with:
-          persist-credentials: false
-      - name: Setup Node
-        uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7
-        with:
-          node-version: 22
-          cache: npm
-      - name: Install dependencies
-        run: npm ci
       - name: Typecheck web
+        id: typecheck_web
+        if: ${{ contains(fromJSON(needs.preflight.outputs.plan).lanes, 'typecheck_web') }}
+        continue-on-error: true
         run: npm run typecheck:web
-
-  interface_contracts:
-    name: Interface contract baseline (shadow)
-    needs: preflight
-    if: ${{ needs.preflight.result == 'success' && contains(fromJSON(needs.preflight.outputs.lanes), 'interface_contracts') }}
-    runs-on: ubuntu-latest
-    timeout-minutes: 5
-    steps:
-      - name: Checkout
-        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
-        with:
-          persist-credentials: false
-      - name: Setup Node
-        uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7
-        with:
-          node-version: 22
-          cache: npm
-      - name: Install dependencies
-        run: npm ci
-      - name: Check web API map
-        run: npm run check:web-api-map
-      - name: Test existing cross-process contracts
-        run: npx vitest run src/preload/index.test.ts src/shared/web-rpc-contract.test.ts
-
-  cli_sdk:
-    name: CLI and SDK
-    needs: preflight
-    if: ${{ needs.preflight.result == 'success' && contains(fromJSON(needs.preflight.outputs.lanes), 'cli_sdk') }}
-    runs-on: ubuntu-latest
-    timeout-minutes: 5
-    steps:
-      - name: Checkout
-        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
-        with:
-          persist-credentials: false
-      - name: Setup Node
-        uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7
-        with:
-          node-version: 22
-          cache: npm
-      - name: Install dependencies
-        run: npm ci
+      - name: Check interface contract baseline (shadow)
+        id: interface_contracts
+        if: ${{ contains(fromJSON(needs.preflight.outputs.plan).lanes, 'interface_contracts') }}
+        continue-on-error: true
+        run: |
+          npm run check:web-api-map
+          npx vitest run src/preload/index.test.ts src/shared/web-rpc-contract.test.ts
       - name: Test CLI and SDK
-        run: npx vitest run cli packages/open-science
-      - name: Check CLI package
-        run: npm run check:cli-package
+        id: cli_sdk
+        if: ${{ contains(fromJSON(needs.preflight.outputs.plan).lanes, 'cli_sdk') }}
+        continue-on-error: true
+        run: |
+          npx vitest run cli packages/open-science
+          npm run check:cli-package
+      - name: Enforce selected static checks
+        if: ${{ always() }}
+        shell: bash
+        env:
+          CLI_SDK_OUTCOME: ${{ steps.cli_sdk.outcome }}
+          DOCS_OUTCOME: ${{ steps.docs.outcome }}
+          FORMAT_OUTCOME: ${{ steps.format.outcome }}
+          INTERFACE_CONTRACTS_OUTCOME: ${{ steps.interface_contracts.outcome }}
+          LINT_OUTCOME: ${{ steps.lint.outcome }}
+          TYPECHECK_NODE_OUTCOME: ${{ steps.typecheck_node.outcome }}
+          TYPECHECK_WEB_OUTCOME: ${{ steps.typecheck_web.outcome }}
+        run: |
+          set -euo pipefail
+          failed=0
+          check() {
+            if [[ "$2" == "failure" || "$2" == "cancelled" ]]; then
+              echo "$1 ended with $2" >&2
+              failed=1
+            fi
+          }
+          check docs "$DOCS_OUTCOME"
+          check format "$FORMAT_OUTCOME"
+          check lint "$LINT_OUTCOME"
+          check typecheck_node "$TYPECHECK_NODE_OUTCOME"
+          check typecheck_web "$TYPECHECK_WEB_OUTCOME"
+          check interface_contracts "$INTERFACE_CONTRACTS_OUTCOME"
+          check cli_sdk "$CLI_SDK_OUTCOME"
+          exit "$failed"
 
-  unit_linux:
-    name: Unit Linux (advisory during shadow rollout)
+  unit:
+    name: Unit tests
     needs: preflight
-    if: ${{ needs.preflight.result == 'success' && contains(fromJSON(needs.preflight.outputs.lanes), 'unit_linux') }}
+    if: ${{ needs.preflight.result == 'success' && contains(fromJSON(needs.preflight.outputs.plan).bundles, 'unit') }}
     runs-on: ubuntu-latest
-    timeout-minutes: 8
+    timeout-minutes: 12
     steps:
       - name: Checkout
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
@@ -374,14 +309,32 @@ jobs:
           cache: npm
       - name: Install dependencies
         run: npm ci
-      - name: Test complete portable suite
+      - name: Test complete portable suite (advisory)
+        id: unit_linux
+        if: ${{ contains(fromJSON(needs.preflight.outputs.plan).lanes, 'unit_linux') }}
         continue-on-error: true
         run: npm test
+      - name: Test Renderer
+        id: unit_renderer
+        if: ${{ contains(fromJSON(needs.preflight.outputs.plan).lanes, 'unit_renderer') }}
+        continue-on-error: true
+        run: npx vitest run src/renderer
+      - name: Enforce selected unit checks
+        if: ${{ always() }}
+        shell: bash
+        env:
+          UNIT_RENDERER_OUTCOME: ${{ steps.unit_renderer.outcome }}
+        run: |
+          set -euo pipefail
+          if [[ "$UNIT_RENDERER_OUTCOME" == "failure" || "$UNIT_RENDERER_OUTCOME" == "cancelled" ]]; then
+            echo "unit_renderer ended with $UNIT_RENDERER_OUTCOME" >&2
+            exit 1
+          fi
 
   coverage_macos:
     name: Coverage macOS
     needs: preflight
-    if: ${{ needs.preflight.result == 'success' && contains(fromJSON(needs.preflight.outputs.lanes), 'coverage_macos') }}
+    if: ${{ needs.preflight.result == 'success' && contains(fromJSON(needs.preflight.outputs.plan).bundles, 'coverage_macos') }}
     runs-on: macos-14
     timeout-minutes: 8
     steps:
@@ -407,12 +360,12 @@ jobs:
           retention-days: 5
           if-no-files-found: warn
 
-  windows_runtime:
-    name: Windows runtime
+  windows_core:
+    name: Windows core
     needs: preflight
-    if: ${{ needs.preflight.result == 'success' && contains(fromJSON(needs.preflight.outputs.lanes), 'windows_runtime') }}
+    if: ${{ needs.preflight.result == 'success' && contains(fromJSON(needs.preflight.outputs.plan).bundles, 'windows_core') }}
     runs-on: windows-latest
-    timeout-minutes: 8
+    timeout-minutes: 12
     steps:
       - name: Checkout
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
@@ -426,6 +379,9 @@ jobs:
       - name: Install dependencies
         run: npm ci
       - name: Test Windows-specific behavior
+        id: windows_runtime
+        if: ${{ contains(fromJSON(needs.preflight.outputs.plan).lanes, 'windows_runtime') }}
+        continue-on-error: true
         run: >-
           npx vitest run
           src/main/windows.test.ts
@@ -436,33 +392,23 @@ jobs:
           src/main/notebook/micromamba-cache-powershell.test.ts
           src/main/notebook/micromamba-cache-acl.integration.test.ts
       - name: Test Windows notebook shell behavior
+        id: windows_shell
+        if: ${{ contains(fromJSON(needs.preflight.outputs.plan).lanes, 'windows_runtime') }}
+        continue-on-error: true
         run: npx vitest run src/main/notebook/windows-shell.integration.test.ts
       - name: Test Windows notebook shell service timeout
+        id: windows_service_timeout
+        if: ${{ contains(fromJSON(needs.preflight.outputs.plan).lanes, 'windows_runtime') }}
+        continue-on-error: true
         run: >-
           npx vitest run
           src/main/notebook/runtime-service.test.ts
           --testNamePattern
           "kills a command that outlasts the timeout and returns a non-normal result"
-
-  windows_path:
-    name: Windows path portability
-    needs: preflight
-    if: ${{ needs.preflight.result == 'success' && contains(fromJSON(needs.preflight.outputs.lanes), 'windows_path') }}
-    runs-on: windows-latest
-    timeout-minutes: 8
-    steps:
-      - name: Checkout
-        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
-        with:
-          persist-credentials: false
-      - name: Setup Node
-        uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7
-        with:
-          node-version: 22
-          cache: npm
-      - name: Install dependencies
-        run: npm ci
       - name: Test Windows path portability
+        id: windows_path
+        if: ${{ contains(fromJSON(needs.preflight.outputs.plan).lanes, 'windows_path') }}
+        continue-on-error: true
         run: >-
           npx vitest run
           src/main/acp/workspace-path.test.ts
@@ -481,55 +427,35 @@ jobs:
           --maxWorkers=1
           --testTimeout=30000
           --hookTimeout=30000
+      - name: Enforce selected Windows core checks
+        if: ${{ always() }}
+        shell: bash
+        env:
+          WINDOWS_PATH_OUTCOME: ${{ steps.windows_path.outcome }}
+          WINDOWS_RUNTIME_OUTCOME: ${{ steps.windows_runtime.outcome }}
+          WINDOWS_SERVICE_TIMEOUT_OUTCOME: ${{ steps.windows_service_timeout.outcome }}
+          WINDOWS_SHELL_OUTCOME: ${{ steps.windows_shell.outcome }}
+        run: |
+          set -euo pipefail
+          failed=0
+          check() {
+            if [[ "$2" == "failure" || "$2" == "cancelled" ]]; then
+              echo "$1 ended with $2" >&2
+              failed=1
+            fi
+          }
+          check windows_runtime "$WINDOWS_RUNTIME_OUTCOME"
+          check windows_shell "$WINDOWS_SHELL_OUTCOME"
+          check windows_service_timeout "$WINDOWS_SERVICE_TIMEOUT_OUTCOME"
+          check windows_path "$WINDOWS_PATH_OUTCOME"
+          exit "$failed"
 
-  unit_renderer:
-    name: Renderer unit
+  macos_e2e:
+    name: macOS build and E2E
     needs: preflight
-    if: ${{ needs.preflight.result == 'success' && contains(fromJSON(needs.preflight.outputs.lanes), 'unit_renderer') }}
-    runs-on: ubuntu-latest
-    timeout-minutes: 8
-    steps:
-      - name: Checkout
-        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
-        with:
-          persist-credentials: false
-      - name: Setup Node
-        uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7
-        with:
-          node-version: 22
-          cache: npm
-      - name: Install dependencies
-        run: npm ci
-      - name: Test Renderer
-        run: npx vitest run src/renderer
-
-  build:
-    name: Build macOS
-    needs: preflight
-    if: ${{ needs.preflight.result == 'success' && contains(fromJSON(needs.preflight.outputs.lanes), 'build') }}
+    if: ${{ needs.preflight.result == 'success' && contains(fromJSON(needs.preflight.outputs.plan).bundles, 'macos_e2e') }}
     runs-on: macos-14
-    timeout-minutes: 8
-    steps:
-      - name: Checkout
-        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
-        with:
-          persist-credentials: false
-      - name: Setup Node
-        uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7
-        with:
-          node-version: 22
-          cache: npm
-      - name: Install dependencies
-        run: npm ci
-      - name: Build desktop and web applications
-        run: npm run build:e2e && npm run build:web
-
-  e2e_functional_macos:
-    name: Electron functional E2E (macOS)
-    needs: preflight
-    if: ${{ needs.preflight.result == 'success' && contains(fromJSON(needs.preflight.outputs.lanes), 'e2e_functional_macos') }}
-    runs-on: macos-14
-    timeout-minutes: 10
+    timeout-minutes: 15
     steps:
       - name: Checkout
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
@@ -543,11 +469,22 @@ jobs:
       - name: Install dependencies
         run: npm ci
       - name: Build Electron application
+        id: build_electron
+        continue-on-error: true
         run: npm run build:e2e
+      - name: Build web application
+        id: build_web
+        if: ${{ contains(fromJSON(needs.preflight.outputs.plan).lanes, 'build') }}
+        continue-on-error: true
+        run: npm run build:web
       - name: Run functional journeys
+        id: e2e_functional_macos
+        if: ${{ steps.build_electron.outcome == 'success' && contains(fromJSON(needs.preflight.outputs.plan).lanes, 'e2e_functional_macos') }}
+        continue-on-error: true
         run: npm run test:e2e:journey
-      - name: Upload failure artifacts
-        if: ${{ failure() }}
+      - name: Upload functional failure artifacts
+        if: ${{ steps.e2e_functional_macos.outcome == 'failure' }}
+        continue-on-error: true
         uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7
         with:
           name: functional-e2e-macos-failure
@@ -556,64 +493,14 @@ jobs:
             test-results/
           retention-days: 5
           if-no-files-found: warn
-
-  e2e_functional_windows:
-    name: Electron functional E2E (Windows)
-    needs: preflight
-    if: ${{ needs.preflight.result == 'success' && contains(fromJSON(needs.preflight.outputs.lanes), 'e2e_functional_windows') }}
-    runs-on: windows-latest
-    timeout-minutes: 10
-    steps:
-      - name: Checkout
-        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
-        with:
-          persist-credentials: false
-      - name: Setup Node
-        uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7
-        with:
-          node-version: 22
-          cache: npm
-      - name: Install dependencies
-        run: npm ci
-      - name: Build Electron application
-        run: npm run build:e2e
-      - name: Run functional journeys
-        run: npm run test:e2e:journey
-      - name: Upload failure artifacts
-        if: ${{ failure() }}
-        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7
-        with:
-          name: functional-e2e-windows-failure
-          path: |
-            playwright-report/
-            test-results/
-          retention-days: 5
-          if-no-files-found: warn
-
-  e2e_workspace_macos:
-    name: Electron workspace E2E (macOS)
-    needs: preflight
-    if: ${{ needs.preflight.result == 'success' && contains(fromJSON(needs.preflight.outputs.lanes), 'e2e_workspace_macos') }}
-    runs-on: macos-14
-    timeout-minutes: 10
-    steps:
-      - name: Checkout
-        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
-        with:
-          persist-credentials: false
-      - name: Setup Node
-        uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7
-        with:
-          node-version: 22
-          cache: npm
-      - name: Install dependencies
-        run: npm ci
-      - name: Build Electron application
-        run: npm run build:e2e
       - name: Run workspace journeys
+        id: e2e_workspace_macos
+        if: ${{ steps.build_electron.outcome == 'success' && contains(fromJSON(needs.preflight.outputs.plan).lanes, 'e2e_workspace_macos') }}
+        continue-on-error: true
         run: npm run test:e2e:workspace
-      - name: Upload failure artifacts
-        if: ${{ failure() }}
+      - name: Upload workspace failure artifacts
+        if: ${{ steps.e2e_workspace_macos.outcome == 'failure' }}
+        continue-on-error: true
         uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7
         with:
           name: workspace-e2e-macos-failure
@@ -622,64 +509,14 @@ jobs:
             test-results/
           retention-days: 5
           if-no-files-found: warn
-
-  e2e_workspace_windows:
-    name: Electron workspace E2E (Windows)
-    needs: preflight
-    if: ${{ needs.preflight.result == 'success' && contains(fromJSON(needs.preflight.outputs.lanes), 'e2e_workspace_windows') }}
-    runs-on: windows-latest
-    timeout-minutes: 10
-    steps:
-      - name: Checkout
-        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
-        with:
-          persist-credentials: false
-      - name: Setup Node
-        uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7
-        with:
-          node-version: 22
-          cache: npm
-      - name: Install dependencies
-        run: npm ci
-      - name: Build Electron application
-        run: npm run build:e2e
-      - name: Run workspace journeys
-        run: npm run test:e2e:workspace
-      - name: Upload failure artifacts
-        if: ${{ failure() }}
-        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7
-        with:
-          name: workspace-e2e-windows-failure
-          path: |
-            playwright-report/
-            test-results/
-          retention-days: 5
-          if-no-files-found: warn
-
-  e2e_accessibility_macos:
-    name: Electron accessibility (macOS)
-    needs: preflight
-    if: ${{ needs.preflight.result == 'success' && contains(fromJSON(needs.preflight.outputs.lanes), 'e2e_accessibility_macos') }}
-    runs-on: macos-14
-    timeout-minutes: 10
-    steps:
-      - name: Checkout
-        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
-        with:
-          persist-credentials: false
-      - name: Setup Node
-        uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7
-        with:
-          node-version: 22
-          cache: npm
-      - name: Install dependencies
-        run: npm ci
-      - name: Build Electron application
-        run: npm run build:e2e
       - name: Run accessibility checks
+        id: e2e_accessibility_macos
+        if: ${{ steps.build_electron.outcome == 'success' && contains(fromJSON(needs.preflight.outputs.plan).lanes, 'e2e_accessibility_macos') }}
+        continue-on-error: true
         run: npm run test:e2e:accessibility
-      - name: Upload failure artifacts
-        if: ${{ failure() }}
+      - name: Upload accessibility failure artifacts
+        if: ${{ steps.e2e_accessibility_macos.outcome == 'failure' }}
+        continue-on-error: true
         uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7
         with:
           name: accessibility-macos-failure
@@ -688,64 +525,14 @@ jobs:
             test-results/
           retention-days: 5
           if-no-files-found: warn
-
-  e2e_accessibility_windows:
-    name: Electron accessibility (Windows)
-    needs: preflight
-    if: ${{ needs.preflight.result == 'success' && contains(fromJSON(needs.preflight.outputs.lanes), 'e2e_accessibility_windows') }}
-    runs-on: windows-latest
-    timeout-minutes: 10
-    steps:
-      - name: Checkout
-        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
-        with:
-          persist-credentials: false
-      - name: Setup Node
-        uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7
-        with:
-          node-version: 22
-          cache: npm
-      - name: Install dependencies
-        run: npm ci
-      - name: Build Electron application
-        run: npm run build:e2e
-      - name: Run accessibility checks
-        run: npm run test:e2e:accessibility
-      - name: Upload failure artifacts
-        if: ${{ failure() }}
-        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7
-        with:
-          name: accessibility-windows-failure
-          path: |
-            playwright-report/
-            test-results/
-          retention-days: 5
-          if-no-files-found: warn
-
-  e2e_visual_macos:
-    name: Electron visual regression (macOS)
-    needs: preflight
-    if: ${{ needs.preflight.result == 'success' && contains(fromJSON(needs.preflight.outputs.lanes), 'e2e_visual_macos') }}
-    runs-on: macos-14
-    timeout-minutes: 10
-    steps:
-      - name: Checkout
-        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
-        with:
-          persist-credentials: false
-      - name: Setup Node
-        uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7
-        with:
-          node-version: 22
-          cache: npm
-      - name: Install dependencies
-        run: npm ci
-      - name: Build Electron application
-        run: npm run build:e2e
       - name: Run visual regression
+        id: e2e_visual_macos
+        if: ${{ steps.build_electron.outcome == 'success' && contains(fromJSON(needs.preflight.outputs.plan).lanes, 'e2e_visual_macos') }}
+        continue-on-error: true
         run: npm run test:e2e:visual
-      - name: Upload failure artifacts
-        if: ${{ failure() }}
+      - name: Upload visual failure artifacts
+        if: ${{ steps.e2e_visual_macos.outcome == 'failure' }}
+        continue-on-error: true
         uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7
         with:
           name: visual-regression-macos-failure
@@ -754,6 +541,125 @@ jobs:
             test-results/
           retention-days: 5
           if-no-files-found: warn
+      - name: Enforce selected macOS checks
+        if: ${{ always() }}
+        shell: bash
+        env:
+          BUILD_ELECTRON_OUTCOME: ${{ steps.build_electron.outcome }}
+          BUILD_WEB_OUTCOME: ${{ steps.build_web.outcome }}
+          E2E_ACCESSIBILITY_OUTCOME: ${{ steps.e2e_accessibility_macos.outcome }}
+          E2E_FUNCTIONAL_OUTCOME: ${{ steps.e2e_functional_macos.outcome }}
+          E2E_VISUAL_OUTCOME: ${{ steps.e2e_visual_macos.outcome }}
+          E2E_WORKSPACE_OUTCOME: ${{ steps.e2e_workspace_macos.outcome }}
+        run: |
+          set -euo pipefail
+          failed=0
+          check() {
+            if [[ "$2" == "failure" || "$2" == "cancelled" ]]; then
+              echo "$1 ended with $2" >&2
+              failed=1
+            fi
+          }
+          check build_electron "$BUILD_ELECTRON_OUTCOME"
+          check build_web "$BUILD_WEB_OUTCOME"
+          check e2e_functional_macos "$E2E_FUNCTIONAL_OUTCOME"
+          check e2e_workspace_macos "$E2E_WORKSPACE_OUTCOME"
+          check e2e_accessibility_macos "$E2E_ACCESSIBILITY_OUTCOME"
+          check e2e_visual_macos "$E2E_VISUAL_OUTCOME"
+          exit "$failed"
+
+  windows_e2e:
+    name: Windows E2E
+    needs: preflight
+    if: ${{ needs.preflight.result == 'success' && contains(fromJSON(needs.preflight.outputs.plan).bundles, 'windows_e2e') }}
+    runs-on: windows-latest
+    timeout-minutes: 15
+    steps:
+      - name: Checkout
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+        with:
+          persist-credentials: false
+      - name: Setup Node
+        uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7
+        with:
+          node-version: 22
+          cache: npm
+      - name: Install dependencies
+        run: npm ci
+      - name: Build Electron application
+        id: build_electron
+        continue-on-error: true
+        run: npm run build:e2e
+      - name: Run functional journeys
+        id: e2e_functional_windows
+        if: ${{ steps.build_electron.outcome == 'success' && contains(fromJSON(needs.preflight.outputs.plan).lanes, 'e2e_functional_windows') }}
+        continue-on-error: true
+        run: npm run test:e2e:journey
+      - name: Upload functional failure artifacts
+        if: ${{ steps.e2e_functional_windows.outcome == 'failure' }}
+        continue-on-error: true
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7
+        with:
+          name: functional-e2e-windows-failure
+          path: |
+            playwright-report/
+            test-results/
+          retention-days: 5
+          if-no-files-found: warn
+      - name: Run workspace journeys
+        id: e2e_workspace_windows
+        if: ${{ steps.build_electron.outcome == 'success' && contains(fromJSON(needs.preflight.outputs.plan).lanes, 'e2e_workspace_windows') }}
+        continue-on-error: true
+        run: npm run test:e2e:workspace
+      - name: Upload workspace failure artifacts
+        if: ${{ steps.e2e_workspace_windows.outcome == 'failure' }}
+        continue-on-error: true
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7
+        with:
+          name: workspace-e2e-windows-failure
+          path: |
+            playwright-report/
+            test-results/
+          retention-days: 5
+          if-no-files-found: warn
+      - name: Run accessibility checks
+        id: e2e_accessibility_windows
+        if: ${{ steps.build_electron.outcome == 'success' && contains(fromJSON(needs.preflight.outputs.plan).lanes, 'e2e_accessibility_windows') }}
+        continue-on-error: true
+        run: npm run test:e2e:accessibility
+      - name: Upload accessibility failure artifacts
+        if: ${{ steps.e2e_accessibility_windows.outcome == 'failure' }}
+        continue-on-error: true
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7
+        with:
+          name: accessibility-windows-failure
+          path: |
+            playwright-report/
+            test-results/
+          retention-days: 5
+          if-no-files-found: warn
+      - name: Enforce selected Windows E2E checks
+        if: ${{ always() }}
+        shell: bash
+        env:
+          BUILD_ELECTRON_OUTCOME: ${{ steps.build_electron.outcome }}
+          E2E_ACCESSIBILITY_OUTCOME: ${{ steps.e2e_accessibility_windows.outcome }}
+          E2E_FUNCTIONAL_OUTCOME: ${{ steps.e2e_functional_windows.outcome }}
+          E2E_WORKSPACE_OUTCOME: ${{ steps.e2e_workspace_windows.outcome }}
+        run: |
+          set -euo pipefail
+          failed=0
+          check() {
+            if [[ "$2" == "failure" || "$2" == "cancelled" ]]; then
+              echo "$1 ended with $2" >&2
+              failed=1
+            fi
+          }
+          check build_electron "$BUILD_ELECTRON_OUTCOME"
+          check e2e_functional_windows "$E2E_FUNCTIONAL_OUTCOME"
+          check e2e_workspace_windows "$E2E_WORKSPACE_OUTCOME"
+          check e2e_accessibility_windows "$E2E_ACCESSIBILITY_OUTCOME"
+          exit "$failed"
 
   gate:
     name: PR Gate
@@ -761,29 +667,16 @@ jobs:
     needs:
       - preflight
       - policy
-      - docs
-      - format
-      - lint
-      - typecheck_node
-      - typecheck_web
-      - interface_contracts
-      - cli_sdk
-      - unit_linux
+      - static
+      - unit
       - coverage_macos
-      - windows_runtime
-      - windows_path
-      - unit_renderer
-      - build
-      - e2e_functional_macos
-      - e2e_functional_windows
-      - e2e_workspace_macos
-      - e2e_workspace_windows
-      - e2e_accessibility_macos
-      - e2e_accessibility_windows
-      - e2e_visual_macos
+      - windows_core
+      - macos_e2e
+      - windows_e2e
     runs-on: ubuntu-latest
     timeout-minutes: 3
     env:
+      PR_GATE_EXECUTION_MODE: bundles
       PR_GATE_NEEDS: ${{ toJSON(needs) }}
       PR_GATE_PLAN: ${{ needs.preflight.outputs.plan }}
       PREFLIGHT_RESULT: ${{ needs.preflight.result }}
@@ -820,25 +713,26 @@ jobs:
           const plan = JSON.parse(process.env.PR_GATE_PLAN)
           const needs = JSON.parse(process.env.PR_GATE_NEEDS)
           const conclusions = Object.fromEntries(
-            Object.entries(needs).map(([lane, value]) => [lane, value?.result ?? 'missing'])
+            Object.entries(needs).map(([bundle, value]) => [bundle, value?.result ?? 'missing'])
           )
           const failures = []
           if (plan.schemaVersion !== 1) failures.push('unsupported plan schema')
           if (conclusions.preflight !== 'success') failures.push('preflight did not succeed')
-          const selected = new Set(plan.lanes)
-          for (const lane of plan.lanes) {
-            if (conclusions[lane] !== 'success') {
-              failures.push(lane + ' ended with ' + (conclusions[lane] ?? 'missing'))
+          if (!Array.isArray(plan.bundles)) failures.push('execution bundle plan is missing')
+          const selected = new Set(Array.isArray(plan.bundles) ? plan.bundles : [])
+          for (const bundle of selected) {
+            if (conclusions[bundle] !== 'success') {
+              failures.push(bundle + ' ended with ' + (conclusions[bundle] ?? 'missing'))
             }
           }
-          for (const [lane, conclusion] of Object.entries(conclusions)) {
+          for (const [bundle, conclusion] of Object.entries(conclusions)) {
             if (
-              lane !== 'preflight' &&
-              !selected.has(lane) &&
+              bundle !== 'preflight' &&
+              !selected.has(bundle) &&
               conclusion !== 'success' &&
               conclusion !== 'skipped'
             ) {
-              failures.push(lane + ' unexpectedly ended with ' + conclusion)
+              failures.push(bundle + ' unexpectedly ended with ' + conclusion)
             }
           }
           const summary =
@@ -846,6 +740,8 @@ jobs:
             (failures.length === 0 ? 'pass' : 'fail') +
             '**\n\n- Selected lanes: ' +
             plan.lanes.join(', ') +
+            '\n- Execution bundles: ' +
+            [...selected].join(', ') +
             '\n\n### Failures\n\n' +
             (failures.length === 0 ? '- None' : failures.map((failure) => '- ' + failure).join('\n')) +
             '\n'
