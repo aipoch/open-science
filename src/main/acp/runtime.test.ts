@@ -7227,6 +7227,32 @@ describe('ACP runtime session management', () => {
     )
   })
 
+  it('adopts a fresh Claude session instead of resuming an OpenCode session id', async () => {
+    const process = new FakeAgentProcess()
+    const fakeAgent = startFakeAgent(process, ['claude-session-replacement'], {
+      resumeInternalErrorDetails:
+        'Claude Code returned an error result: Error: --resume requires a valid session ID or session title when used with --print. Usage: claude -p --resume <session-id|title>. Provided value "ses_03fed93d1ffe1uw7XFraUNPhun" is not a UUID and does not match any session title.'
+    })
+    const runtime = new AcpRuntime({
+      appVersion: '0.1.0',
+      defaultCwd: '/workspace',
+      spawnAgent: () => asAgentProcess(process)
+    })
+
+    await expect(
+      runtime.resumeSession({
+        sessionId: 'ses_03fed93d1ffe1uw7XFraUNPhun',
+        cwd: '/workspace'
+      })
+    ).resolves.toMatchObject({
+      sessionId: 'ses_03fed93d1ffe1uw7XFraUNPhun',
+      frameworkId: 'claude-code',
+      contextReset: true
+    })
+    expect(fakeAgent.resumedSessions).toEqual([])
+    expect(fakeAgent.newSessions).toHaveLength(1)
+  })
+
   it.each([
     '019fb8c8-6c66-7f22-9653-17b5b287dbbb',
     'urn:uuid:019fb8c8-6c66-7f22-9653-17b5b287dbbb'

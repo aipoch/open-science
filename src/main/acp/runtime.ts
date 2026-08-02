@@ -520,6 +520,8 @@ const isUnresumableSessionErrorKind = (errorKind: unknown): boolean =>
 const isCodexProtocolSessionId = (sessionId: string): boolean =>
   /^(?:urn:uuid:)?[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(sessionId)
 
+const isOpenCodeProtocolSessionId = (sessionId: string): boolean => sessionId.startsWith('ses_')
+
 // Legacy agents may expose only an English diagnostic. Keep this fallback deliberately narrow: a
 // false positive silently resets agent-side context, while a false negative leaves the real error
 // visible and can be fixed by teaching the backend to emit a machine-readable errorKind.
@@ -2023,6 +2025,17 @@ class AcpRuntime {
     // and let the caller replay the visible transcript under the stable app id.
     if (this.framework.id === 'codex' && !isCodexProtocolSessionId(request.sessionId)) {
       log.info('skipping invalid Codex session resume; adopting a fresh session', {
+        sessionId: request.sessionId
+      })
+      return this.adoptFreshSession(connection, request, sessionCwd, projectName)
+    }
+
+    // Persisted sessions created before framework provenance was recorded may restore without a
+    // previousFrameworkId. OpenCode ids use the `ses_...` namespace, which Claude Code rejects before
+    // it can return a resumable session-not-found result. Avoid the guaranteed failing request and
+    // preserve the app-facing conversation by adopting a fresh Claude session for transcript replay.
+    if (this.framework.id === 'claude-code' && isOpenCodeProtocolSessionId(request.sessionId)) {
+      log.info('skipping OpenCode session id for Claude resume; adopting a fresh session', {
         sessionId: request.sessionId
       })
       return this.adoptFreshSession(connection, request, sessionCwd, projectName)
