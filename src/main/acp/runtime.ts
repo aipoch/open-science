@@ -282,11 +282,13 @@ export type ReviewerSessionDisposition = {
 }
 
 type PrimarySessionIdentityReservation = {
+  deletionEpochs: Map<string, number>
   generation: number
   // A startup that begins without a usable connection (or behind an already-armed reconnect barrier)
   // may cross the connection setup's expected invalidation exactly once. An explicit teardown that
   // starts after a live-session reset receives no such permit and cannot adopt a later successor.
   mayRenewAfterConnectionSetup: boolean
+  released: boolean
   token: symbol
   sessionIds: Set<string>
 }
@@ -668,6 +670,12 @@ class AcpRuntime {
   // for publication. Tokens make multi-id reservations owner-aware so one concurrent startup can never
   // release another startup's identity.
   private readonly pendingPrimarySessionIds = new Map<string, symbol>()
+  // Explicit deletion must supersede any same-id reset/resume that was already waiting for connection
+  // setup. Keep a per-id epoch across disconnects so a detached delete cannot be mistaken for the
+  // reconnect teardown that removed the captured ActiveSession.
+  private readonly primarySessionDeletionEpochs = new Map<string, number>()
+  private readonly primarySessionDeletionsInFlight = new Map<string, number>()
+  private readonly primarySessionIdentityReservationCounts = new Map<string, number>()
   // A startup that begins while a reconnect barrier is already armed must not block the reconnect it
   // is waiting for. Once it reaches the replacement connection, renewal adds its token here so any
   // later reconnect waits for publication or rollback.
@@ -1529,6 +1537,7 @@ class AcpRuntime {
       const projectName = this.normalizeProjectName(request.projectName)
       log.info('createSession: ensureConnected', this.diagnosticContext())
       const connection = await this.ensureConnected(sessionCwd)
+      this.assertCurrentConnectedConnection(connection)
       const sessionStartupGeneration = this.sessionStartupGeneration
       const artifactSessionId = this.createArtifactSessionId()
       provisionalArtifactSessionId = artifactSessionId || undefined
@@ -1883,6 +1892,7 @@ class AcpRuntime {
     publishedSession: ActiveSession | undefined
   ): Promise<AcpCreateSessionResponse> {
     const connection = await this.ensureConnected(sessionCwd)
+    this.assertCurrentConnectedConnection(connection)
     const currentPublishedSession = this.sessions.get(request.sessionId)
     const reconnectReplacedPublishedSession =
       publishedSession !== undefined &&
@@ -2227,6 +2237,7 @@ class AcpRuntime {
     primaryIdentityReservation: PrimarySessionIdentityReservation
   ): Promise<AcpCreateSessionResponse> {
     const connection = await this.ensureConnected(sessionCwd)
+    this.assertCurrentConnectedConnection(connection)
     this.renewPrimarySessionIdentityReservation(primaryIdentityReservation)
     // A session created under a different framework can never be resumed by the current agent — each
     // framework keeps its own session store, so the request is guaranteed to fail and only makes the
@@ -3789,7 +3800,26 @@ class AcpRuntime {
 
   // Closes the agent-side session when supported, then removes local routing state.
   async deleteSession(request: AcpDeleteSessionRequest): Promise<AcpStateSnapshot> {
-    return this.withOperationLease(() => this.deleteSessionOperation(request))
+    this.primarySessionDeletionEpochs.set(
+      request.sessionId,
+      (this.primarySessionDeletionEpochs.get(request.sessionId) ?? 0) + 1
+    )
+    this.primarySessionDeletionsInFlight.set(
+      request.sessionId,
+      (this.primarySessionDeletionsInFlight.get(request.sessionId) ?? 0) + 1
+    )
+    try {
+      return await this.withOperationLease(() => this.deleteSessionOperation(request))
+    } finally {
+      const remainingDeletions =
+        (this.primarySessionDeletionsInFlight.get(request.sessionId) ?? 1) - 1
+      if (remainingDeletions > 0) {
+        this.primarySessionDeletionsInFlight.set(request.sessionId, remainingDeletions)
+      } else {
+        this.primarySessionDeletionsInFlight.delete(request.sessionId)
+      }
+      this.releasePrimarySessionDeletionEpochIfUnused(request.sessionId)
+    }
   }
 
   private async deleteSessionOperation(
@@ -6236,6 +6266,7 @@ class AcpRuntime {
     }
 
     const connection = await this.ensureConnected(request.cwd)
+    this.assertCurrentConnectedConnection(connection)
     const sessionStartupGeneration = this.sessionStartupGeneration
     const reviewerCwd = await mkdtemp(join(tmpdir(), 'open-science-reviewer-'))
 
@@ -6430,6 +6461,16 @@ class AcpRuntime {
     }
 
     const uniqueSessionIds = [...new Set(sessionIds)]
+    const deletionCollision = uniqueSessionIds.find((sessionId) =>
+      this.primarySessionDeletionsInFlight.has(sessionId)
+    )
+    if (deletionCollision) {
+      return {
+        collision: new Error(
+          `Primary session id collision with deletion in progress: ${deletionCollision}`
+        )
+      }
+    }
     const pendingReviewerCollision = uniqueSessionIds.find((sessionId) =>
       this.pendingReviewerSessionIds.has(sessionId)
     )
@@ -6466,10 +6507,12 @@ class AcpRuntime {
     const owner =
       reservation ??
       ({
+        deletionEpochs: new Map<string, number>(),
         generation,
         mayRenewAfterConnectionSetup: Boolean(
           this.reconnectBarrier || !this.connection || this.snapshotOwner.status !== 'connected'
         ),
+        released: false,
         token: Symbol('primary-session-identity'),
         sessionIds: new Set<string>()
       } satisfies PrimarySessionIdentityReservation)
@@ -6477,6 +6520,13 @@ class AcpRuntime {
       this.pendingSessionStartupBlockers.add(owner.token)
     }
     for (const sessionId of uniqueSessionIds) {
+      if (!owner.deletionEpochs.has(sessionId)) {
+        owner.deletionEpochs.set(sessionId, this.primarySessionDeletionEpochs.get(sessionId) ?? 0)
+        this.primarySessionIdentityReservationCounts.set(
+          sessionId,
+          (this.primarySessionIdentityReservationCounts.get(sessionId) ?? 0) + 1
+        )
+      }
       owner.sessionIds.add(sessionId)
       this.pendingPrimarySessionIds.set(sessionId, owner.token)
     }
@@ -6489,9 +6539,15 @@ class AcpRuntime {
   ): void {
     const previousGeneration = reservation.generation
     const previousMayRenewAfterConnectionSetup = reservation.mayRenewAfterConnectionSetup
+    const wasDeleted = [...reservation.sessionIds].some(
+      (sessionId) =>
+        reservation.deletionEpochs.get(sessionId) !==
+        (this.primarySessionDeletionEpochs.get(sessionId) ?? 0)
+    )
     if (
-      previousGeneration !== this.sessionStartupGeneration &&
-      !previousMayRenewAfterConnectionSetup
+      wasDeleted ||
+      (previousGeneration !== this.sessionStartupGeneration &&
+        !previousMayRenewAfterConnectionSetup)
     ) {
       throw new Error('ACP session startup was superseded.')
     }
@@ -6516,6 +6572,11 @@ class AcpRuntime {
     if (
       reservation.generation !== this.sessionStartupGeneration ||
       [...reservation.sessionIds].some(
+        (sessionId) =>
+          reservation.deletionEpochs.get(sessionId) !==
+          (this.primarySessionDeletionEpochs.get(sessionId) ?? 0)
+      ) ||
+      [...reservation.sessionIds].some(
         (sessionId) => this.pendingPrimarySessionIds.get(sessionId) !== reservation.token
       )
     ) {
@@ -6523,14 +6584,39 @@ class AcpRuntime {
     }
   }
 
+  private assertCurrentConnectedConnection(connection: ClientConnection): void {
+    if (this.connection !== connection || this.snapshotOwner.status !== 'connected') {
+      throw new Error('ACP session startup was superseded.')
+    }
+  }
+
   private releasePrimarySessionIdentityReservation(
     reservation: PrimarySessionIdentityReservation
   ): void {
+    if (reservation.released) return
+    reservation.released = true
     this.pendingSessionStartupBlockers.delete(reservation.token)
     for (const sessionId of reservation.sessionIds) {
       if (this.pendingPrimarySessionIds.get(sessionId) === reservation.token) {
         this.pendingPrimarySessionIds.delete(sessionId)
       }
+      const remainingReservations =
+        (this.primarySessionIdentityReservationCounts.get(sessionId) ?? 1) - 1
+      if (remainingReservations > 0) {
+        this.primarySessionIdentityReservationCounts.set(sessionId, remainingReservations)
+      } else {
+        this.primarySessionIdentityReservationCounts.delete(sessionId)
+      }
+      this.releasePrimarySessionDeletionEpochIfUnused(sessionId)
+    }
+  }
+
+  private releasePrimarySessionDeletionEpochIfUnused(sessionId: string): void {
+    if (
+      !this.primarySessionDeletionsInFlight.has(sessionId) &&
+      !this.primarySessionIdentityReservationCounts.has(sessionId)
+    ) {
+      this.primarySessionDeletionEpochs.delete(sessionId)
     }
   }
 

@@ -11871,6 +11871,167 @@ describe('ACP runtime session management', () => {
     expect(spawnCount).toBe(2)
   })
 
+  it.each([
+    {
+      operation: 'resume',
+      interruption: 'delete',
+      sessionId: '123e4567-e89b-42d3-a456-426614174000'
+    },
+    {
+      operation: 'context reset',
+      interruption: 'delete',
+      sessionId: 'stable-app-session'
+    },
+    {
+      operation: 'resume',
+      interruption: 'disconnect',
+      sessionId: '123e4567-e89b-42d3-a456-426614174000'
+    },
+    {
+      operation: 'context reset',
+      interruption: 'disconnect',
+      sessionId: 'stable-app-session'
+    }
+  ])(
+    'rejects a pending $operation after a second $interruption invalidation',
+    async ({ operation, interruption, sessionId }) => {
+      const oldProcess = new FakeAgentProcess()
+      const newProcess = new FakeAgentProcess()
+      const promptGate = createDeferred()
+      startFakeAgent(oldProcess, ['stable-app-session'], {
+        onPrompt: () => promptGate.promise
+      })
+      const newAgent = startFakeAgent(newProcess, ['unexpected-provider-session'])
+
+      let spawnCount = 0
+      const runtime = new AcpRuntime({
+        appVersion: '0.1.0',
+        defaultCwd: '/workspace',
+        resolveBackend: async () => {
+          spawnCount += 1
+          return {
+            framework: {
+              ...claudeCodeFramework,
+              spawn: () => asAgentProcess(spawnCount === 1 ? oldProcess : newProcess)
+            },
+            executablePath: '/bin/agent',
+            env: {},
+            args: []
+          }
+        }
+      })
+
+      await runtime.createSession({ cwd: '/workspace' })
+      const prompt = runtime.sendPrompt({ sessionId: 'stable-app-session', text: 'hi' })
+      await runtime.requestProviderReconnect()
+
+      const connectionReady = createDeferred()
+      const releaseEnsureConnected = createDeferred()
+      const internal = runtime as unknown as {
+        ensureConnected: (cwd: string) => Promise<unknown>
+      }
+      const ensureConnected = internal.ensureConnected.bind(runtime)
+      vi.spyOn(internal, 'ensureConnected').mockImplementationOnce(async (cwd) => {
+        const connection = await ensureConnected(cwd)
+        connectionReady.resolve()
+        await releaseEnsureConnected.promise
+        return connection
+      })
+
+      const pending =
+        operation === 'context reset'
+          ? runtime.resetSessionContext({ sessionId, cwd: '/workspace' })
+          : runtime.resumeSession({ sessionId, cwd: '/workspace' })
+
+      promptGate.resolve()
+      await prompt
+      await connectionReady.promise
+
+      if (interruption === 'delete') {
+        await runtime.deleteSession({ sessionId })
+        releaseEnsureConnected.resolve()
+      } else {
+        // Resolving the wrapper queues the startup continuation. disconnect() invalidates its
+        // generation and clears the just-returned connection synchronously before yielding.
+        releaseEnsureConnected.resolve()
+        await runtime.disconnect()
+      }
+
+      try {
+        await expect(pending).rejects.toThrow('ACP session startup was superseded.')
+        expect(newAgent.newSessions).toEqual([])
+        expect(newAgent.resumedSessions).toEqual([])
+        expect(runtime.getSnapshot().sessionIds).not.toContain(sessionId)
+      } finally {
+        promptGate.resolve()
+        releaseEnsureConnected.resolve()
+        await pending.catch(() => undefined)
+        await runtime.disconnect().catch(() => undefined)
+      }
+    }
+  )
+
+  it('blocks a same-id reset while deletion is in flight and allows retry after deletion fails', async () => {
+    const process = new FakeAgentProcess()
+    const closeStarted = createDeferred()
+    const releaseClose = createDeferred()
+    const deleteFailure = new Error('agent delete failed')
+    const fakeAgent = startFakeAgent(
+      process,
+      ['stable-app-session', 'replacement-provider-session'],
+      {
+        onClose: async () => {
+          closeStarted.resolve()
+          await releaseClose.promise
+          throw deleteFailure
+        }
+      }
+    )
+    const runtime = new AcpRuntime({
+      appVersion: '0.1.0',
+      defaultCwd: '/workspace',
+      spawnAgent: () => asAgentProcess(process)
+    })
+    await runtime.createSession({ cwd: '/workspace' })
+
+    const deleting = runtime.deleteSession({ sessionId: 'stable-app-session' })
+    await closeStarted.promise
+    const resetWhileDeleting = runtime.resetSessionContext({
+      sessionId: 'stable-app-session',
+      cwd: '/workspace'
+    })
+
+    try {
+      await expect(resetWhileDeleting).rejects.toThrow(
+        'Primary session id collision with deletion in progress: stable-app-session'
+      )
+      expect(fakeAgent.newSessions).toHaveLength(1)
+
+      releaseClose.resolve()
+      await expect(deleting).rejects.toMatchObject({
+        code: -32603,
+        data: { details: deleteFailure.message }
+      })
+
+      await expect(
+        runtime.resetSessionContext({
+          sessionId: 'stable-app-session',
+          cwd: '/workspace'
+        })
+      ).resolves.toMatchObject({
+        sessionId: 'stable-app-session',
+        contextReset: true
+      })
+      expect(fakeAgent.newSessions).toHaveLength(2)
+    } finally {
+      releaseClose.resolve()
+      await deleting.catch(() => undefined)
+      await resetWhileDeleting.catch(() => undefined)
+      await runtime.deleteSession({ sessionId: 'stable-app-session' }).catch(() => undefined)
+      await runtime.disconnect().catch(() => undefined)
+    }
+  })
+
   it('createSession proceeds immediately when an unexpected connection close resolves the barrier', async () => {
     const oldProcess = new FakeAgentProcess()
     const newProcess = new FakeAgentProcess()
