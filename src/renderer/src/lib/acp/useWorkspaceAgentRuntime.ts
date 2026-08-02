@@ -1379,6 +1379,18 @@ const markRunningSessionsDisconnectedOnDrop = (
   }
 }
 
+// Copies live context usage into the durable Session. Missing usage clears only attached sessions,
+// preserving the last snapshot for detached sessions while invalidating replaced runtime contexts.
+const syncWorkspaceContextUsage = (
+  sessionIds: readonly string[],
+  contextUsageBySession: Record<string, AcpContextUsage>
+): void => {
+  const { setContextUsage } = useSessionStore.getState()
+  for (const sessionId of sessionIds) {
+    setContextUsage(sessionId, contextUsageBySession[sessionId])
+  }
+}
+
 // Deletes in three ordered ownership layers: agent runtime, durable JSON/DB coordinator, then renderer
 // state. A failure in either authoritative layer leaves the session visible with an actionable error.
 const deleteWorkspaceSession = async (
@@ -1504,6 +1516,10 @@ const useWorkspaceAgentRuntime = (): {
   useEffect(() => {
     syncWorkspacePermissionState(runtime.state.pendingPermissions)
   }, [runtime.state.pendingPermissions])
+
+  useEffect(() => {
+    syncWorkspaceContextUsage(runtime.state.sessionIds, runtime.state.contextUsageBySession)
+  }, [runtime.state.sessionIds, runtime.state.contextUsageBySession])
 
   // An abnormal live drop (agent crash / gateway drop) surfaces as a transition into 'closed'/'error'
   // while a session is still running. Flag those sessions so the Resume banner appears.
@@ -1688,5 +1704,6 @@ export {
   resendEditedWorkspaceMessage,
   resumeInterruptedWorkspaceSession,
   sendWorkspaceMessage,
+  syncWorkspaceContextUsage,
   useWorkspaceAgentRuntime
 }

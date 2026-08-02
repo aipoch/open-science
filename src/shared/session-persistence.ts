@@ -4,8 +4,10 @@ import {
   MAX_ACP_MESSAGE_IMAGES_PER_MESSAGE,
   MAX_ACP_MESSAGE_IMAGE_BYTES_PER_MESSAGE,
   MAX_ACP_SESSION_IMAGE_BYTES,
+  sanitizeAcpContextUsage,
   sanitizeAcpMessageImage,
   sanitizeAcpTurnTokenUsage,
+  type AcpContextUsage,
   type AcpMessageImage,
   type AcpTurnTokenUsage
 } from './acp'
@@ -178,6 +180,9 @@ export type PersistedChatSession = {
   // Agent). Written once when the session is created and never changed; the Profile is resolved
   // fresh from ProfileService before every turn via the UUID.
   specialistId?: string
+  // Last known context-window usage. A live attached runtime replaces or clears this snapshot; a
+  // detached restored Session keeps it so the indicator survives an app restart.
+  contextUsage?: AcpContextUsage
   messages: PersistedChatMessage[]
   // Session JSON v2 authority. Flat messages/activities remain an active-Branch compatibility view.
   conversationGraph?: PersistedConversationGraph
@@ -1152,6 +1157,8 @@ const sanitizeSession = (
   // at send time; the sanitizer only ensures the value is safe to re-persist.
   const specialistId = asString(session.specialistId)
   if (specialistId) sanitized.specialistId = specialistId
+  const contextUsage = sanitizeAcpContextUsage(session.contextUsage)
+  if (contextUsage) sanitized.contextUsage = contextUsage
 
   // Normalize interrupted runtime state before constructing a graph for legacy sessions. Otherwise
   // the compatibility message list becomes an error while the newly-created canonical graph retains

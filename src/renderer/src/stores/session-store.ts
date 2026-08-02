@@ -11,6 +11,7 @@ import { sanitizeActivityGroupTitle } from '../../../shared/activity-groups'
 import {
   MAX_ACP_SESSION_IMAGE_BYTES,
   sanitizeAcpMessageImage,
+  type AcpContextUsage,
   type AcpMessageImage,
   type AcpTurnTokenUsage
 } from '../../../shared/acp'
@@ -280,6 +281,7 @@ type SessionStore = SessionStoreData & {
   completeActivityGroup: (sessionId: string, promptMessageId?: string) => void
   setPermissionPending: (sessionId: string) => void
   clearPermissionPending: (sessionId: string) => void
+  setContextUsage: (sessionId: string, contextUsage: AcpContextUsage | undefined) => void
   setPermissionProfile: (sessionId: string, profile: PermissionProfileId) => void
   // Persists the per-session auto-review toggle. true = on; false = off (default).
   setAutoReviewEnabled: (sessionId: string, enabled: boolean) => void
@@ -2317,6 +2319,21 @@ export const useSessionStore = create<SessionStore>((set, get) => ({
           : session
       )
     }))
+  },
+
+  setContextUsage: (sessionId, contextUsage) => {
+    set((state) => {
+      const session = state.sessions.find((candidate) => candidate.id === sessionId)
+      if (!session || JSON.stringify(session.contextUsage) === JSON.stringify(contextUsage)) {
+        return state
+      }
+
+      return {
+        sessions: state.sessions.map((candidate) =>
+          candidate.id === sessionId ? { ...candidate, contextUsage } : candidate
+        )
+      }
+    })
   },
 
   setEnabledComputeHosts: (sessionId, providerIds) => {

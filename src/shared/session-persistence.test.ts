@@ -427,6 +427,56 @@ describe('turn token usage persistence', () => {
   })
 })
 
+describe('context usage persistence', () => {
+  it('round-trips a valid snapshot and drops malformed usage', () => {
+    const contextUsage = {
+      used: 29_500,
+      agentUsed: 29_500,
+      size: 168_000,
+      breakdown: {
+        source: 'estimated',
+        tokenizer: 'o200k_base',
+        model: 'gpt-5.6-sol',
+        estimatedTokens: 29_405,
+        difference: 95,
+        status: 'reconciled',
+        categories: [
+          { key: 'system', tokens: 7_200, estimated: true },
+          { key: 'other', tokens: 95, estimated: false }
+        ]
+      }
+    }
+    const restored = normalizeSessionFile({
+      ...createSessionWithActivity(undefined),
+      activities: undefined,
+      contextUsage
+    })
+    const malformed = normalizeSessionFile({
+      ...createSessionWithActivity(undefined),
+      activities: undefined,
+      contextUsage: { used: -1, size: 168_000 }
+    })
+    const unsafeBreakdown = normalizeSessionFile({
+      ...createSessionWithActivity(undefined),
+      activities: undefined,
+      contextUsage: {
+        used: 100,
+        breakdown: {
+          source: 'estimated',
+          estimatedTokens: 100,
+          difference: 0,
+          status: 'reconciled',
+          categories: [{ key: 'unknown', tokens: 100, estimated: true }]
+        }
+      }
+    })
+
+    expect(restored?.contextUsage).toEqual(contextUsage)
+    expect(malformed?.contextUsage).toBeUndefined()
+    expect(unsafeBreakdown?.contextUsage).toEqual({ used: 100 })
+  })
+})
+
 describe('sanitizeToolActivity', () => {
   it('keeps identity fields and known text/diff content', () => {
     const activity = sanitizeToolActivity({

@@ -143,6 +143,87 @@ export type AcpContextUsage = {
   breakdown?: AcpContextUsageBreakdown
 }
 
+const asTokenCount = (value: unknown): number | undefined =>
+  typeof value === 'number' && Number.isSafeInteger(value) && value >= 0 ? value : undefined
+
+const ACP_CONTEXT_USAGE_CATEGORY_KEYS = new Set<AcpContextUsageCategoryKey>([
+  'system',
+  'tools',
+  'messages',
+  'mcp',
+  'skills',
+  'other'
+])
+const ACP_CONTEXT_USAGE_TOKENIZERS = new Set<NonNullable<AcpContextUsageBreakdown['tokenizer']>>([
+  'anthropic',
+  'o200k_base',
+  'cl100k_base'
+])
+
+// Re-validates the last known context snapshot before restoring it from Session JSON.
+export const sanitizeAcpContextUsage = (value: unknown): AcpContextUsage | undefined => {
+  if (typeof value !== 'object' || value === null || Array.isArray(value)) return undefined
+
+  const usage = value as Record<string, unknown>
+  const used = asTokenCount(usage.used)
+  if (used === undefined) return undefined
+
+  const sanitized: AcpContextUsage = { used }
+  const agentUsed = asTokenCount(usage.agentUsed)
+  const size = asTokenCount(usage.size)
+  if (agentUsed !== undefined) sanitized.agentUsed = agentUsed
+  if (size !== undefined && size > 0) sanitized.size = size
+
+  if (typeof usage.breakdown !== 'object' || usage.breakdown === null) return sanitized
+  const breakdown = usage.breakdown as Record<string, unknown>
+  const estimatedTokens = asTokenCount(breakdown.estimatedTokens)
+  const difference = breakdown.difference
+  const source = breakdown.source
+  const status = breakdown.status
+  if (
+    (source !== 'estimated' && source !== 'native') ||
+    estimatedTokens === undefined ||
+    typeof difference !== 'number' ||
+    !Number.isSafeInteger(difference) ||
+    (status !== 'preflight' && status !== 'reconciled') ||
+    !Array.isArray(breakdown.categories)
+  ) {
+    return sanitized
+  }
+
+  const categories: AcpContextUsageCategory[] = []
+  const categoryKeys = new Set<AcpContextUsageCategoryKey>()
+  for (const value of breakdown.categories) {
+    if (typeof value !== 'object' || value === null || Array.isArray(value)) return sanitized
+    const category = value as Record<string, unknown>
+    const key = category.key as AcpContextUsageCategoryKey
+    const tokens = asTokenCount(category.tokens)
+    if (
+      !ACP_CONTEXT_USAGE_CATEGORY_KEYS.has(key) ||
+      categoryKeys.has(key) ||
+      tokens === undefined ||
+      typeof category.estimated !== 'boolean'
+    ) {
+      return sanitized
+    }
+    categoryKeys.add(key)
+    categories.push({ key, tokens, estimated: category.estimated })
+  }
+
+  const tokenizer = breakdown.tokenizer as AcpContextUsageBreakdown['tokenizer']
+  const model = typeof breakdown.model === 'string' && breakdown.model ? breakdown.model : undefined
+  sanitized.breakdown = {
+    source,
+    ...(tokenizer && ACP_CONTEXT_USAGE_TOKENIZERS.has(tokenizer) ? { tokenizer } : {}),
+    ...(model ? { model } : {}),
+    estimatedTokens,
+    difference,
+    status,
+    categories
+  }
+  return sanitized
+}
+
 // Provider-reported totals for one completed prompt turn. `cacheTokens` stays as the comparable
 // provider-neutral total. Read/write details are present as a pair only when the adapter reports both
 // categories separately.
@@ -161,9 +242,6 @@ export type AcpTurnTokenUsage = {
 // separate from ACP's latest-request usage snapshot.
 export const ACP_TURN_TOKEN_USAGE_META_KEY = 'open-science/turn-usage'
 export const ACP_MODEL_TURN_COUNT_META_KEY = 'open-science/model-turn-count'
-
-const asTokenCount = (value: unknown): number | undefined =>
-  typeof value === 'number' && Number.isSafeInteger(value) && value >= 0 ? value : undefined
 
 // Normalizes ACP's experimental PromptResponse usage into the stable, provider-neutral projection the
 // renderer persists. Missing cache categories mean zero; malformed totals suppress the entire footer.

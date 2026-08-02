@@ -657,7 +657,9 @@ const WorkspacePage = ({
     : undefined
   // Session grants only exist for a bound Agent session; new conversations have none yet.
   const activePermissionGrants = activeSession ? (permissionGrants?.[activeSession.id] ?? []) : []
-  const activeContextUsage = activeSession ? contextUsageBySession?.[activeSession.id] : undefined
+  const activeContextUsage = activeSession
+    ? (contextUsageBySession?.[activeSession.id] ?? activeSession.contextUsage)
+    : undefined
   const activeSessionSupportsNativeCompaction = activeSession
     ? nativeContextCompactionSessionIds?.includes(activeSession.id) === true
     : false

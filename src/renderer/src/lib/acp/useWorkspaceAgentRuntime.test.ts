@@ -4,6 +4,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 
 import {
   createInitialSessionState,
+  toPersistedSession,
   useSessionStore,
   type ChatMessage
 } from '../../stores/session-store'
@@ -24,7 +25,8 @@ import {
   recoverContextOverflowWorkspaceSession,
   resendEditedWorkspaceMessage,
   resumeInterruptedWorkspaceSession,
-  sendWorkspaceMessage
+  sendWorkspaceMessage,
+  syncWorkspaceContextUsage
 } from './useWorkspaceAgentRuntime'
 
 const createEvent = (overrides: Partial<AcpRuntimeEvent>): AcpRuntimeEvent => ({
@@ -270,6 +272,39 @@ describe('resume failure classification', () => {
     expect(message).toBe(
       'Agent session resume failed: ACP protocol version is not compatible with this client'
     )
+  })
+})
+
+describe('workspace context usage persistence', () => {
+  it('keeps detached snapshots and replaces or clears attached snapshots', () => {
+    useSessionStore.setState(createInitialSessionState())
+    useSessionStore.getState().appendUserMessage({
+      sessionId: 'session-1',
+      content: 'Persist context usage',
+      cwd: '/workspace/project',
+      projectId: 'project-1'
+    })
+    const usage = { used: 24_890, size: 200_000 }
+    const updatedAt = useSessionStore.getState().sessions[0].updatedAt
+
+    syncWorkspaceContextUsage(['session-1'], { 'session-1': usage })
+    const sessionWithUsage = useSessionStore.getState().sessions[0]
+    expect(toPersistedSession(sessionWithUsage).contextUsage).toEqual(usage)
+    expect(sessionWithUsage.updatedAt).toBe(updatedAt)
+
+    syncWorkspaceContextUsage([], {})
+    expect(useSessionStore.getState().sessions[0]).toBe(sessionWithUsage)
+
+    syncWorkspaceContextUsage(['session-1'], { 'session-1': { ...usage } })
+    expect(useSessionStore.getState().sessions[0]).toBe(sessionWithUsage)
+
+    syncWorkspaceContextUsage(['session-1'], {
+      'session-1': { used: 30_000, size: 200_000 }
+    })
+    expect(useSessionStore.getState().sessions[0].contextUsage?.used).toBe(30_000)
+
+    syncWorkspaceContextUsage(['session-1'], {})
+    expect(useSessionStore.getState().sessions[0].contextUsage).toBeUndefined()
   })
 })
 
