@@ -1,12 +1,18 @@
 // @vitest-environment jsdom
-import { act } from 'react'
+import { act, useCallback, useEffect } from 'react'
 import { createRoot, type Root } from 'react-dom/client'
 import type { PropsWithChildren } from 'react'
-import type { ChatMessage, ChatSession } from '@/stores/session-store'
-import { createInitialReviewState, useReviewStore } from '@/stores/review-store'
+import { useSessionStore, type ChatMessage, type ChatSession } from '@/stores/session-store'
+import {
+  createInitialReviewState,
+  selectProjectSessionReviews,
+  useReviewStore
+} from '@/stores/review-store'
 import { createUploadVersionReference, type UploadedAttachment } from '../../../../shared/uploads'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import type { ReviewWithChecks } from '../../../../shared/reviewer'
+
+import type { ComposerDoc } from './composer/composer-doc'
 
 // pdfjs-dist references DOMMatrix at module load, which jsdom does not provide. This suite exercises
 // click/scroll behavior, not PDF rendering, so stub the library to keep the import graph loadable.
@@ -27,8 +33,13 @@ vi.mock('pdfjs-dist', () => {
   }
 })
 
+const { agentMarkdownRenderMock } = vi.hoisted(() => ({ agentMarkdownRenderMock: vi.fn() }))
+
 vi.mock('@/components/streamdown/AgentMarkdown', () => ({
-  AgentMarkdown: ({ content }: { content: string }) => <div>{content}</div>
+  AgentMarkdown: ({ content }: { content: string }) => {
+    agentMarkdownRenderMock(content)
+    return <div>{content}</div>
+  }
 }))
 
 vi.mock('@/components/ui/message-scroller', () => {
@@ -154,6 +165,7 @@ describe('WorkspaceMessageScroller artifact click behavior', () => {
 
   it('updates the visible message-branch review card when a running review completes', async () => {
     const { WorkspaceMessageScroller } = await import('./WorkspaceMessageScroller')
+    const { WorkspaceMessageEditStateProvider } = await import('./workspace-message-edit-state')
     const runningReview: ReviewWithChecks = {
       id: 'review-1',
       projectId: 'default',
@@ -187,18 +199,51 @@ describe('WorkspaceMessageScroller artifact click behavior', () => {
         })
       ]
     })
+    useSessionStore.setState({ sessions: [session], selectedSessionId: session.id })
+
+    const resendEditedMessage = vi.fn()
+    const ReviewLifecycleParent = (): React.JSX.Element => {
+      // Mirrors WorkspacePage: composer controls subscribe to the Session review lifecycle while the
+      // transcript sits below that reactive parent.
+      const isReviewing = useReviewStore((state) =>
+        selectProjectSessionReviews(state.reviewsBySession, session.projectId, session.id).some(
+          (review) => review.lifecycle === 'running'
+        )
+      )
+      const activeSession = useSessionStore((state) =>
+        state.sessions.find((candidate) => candidate.id === session.id)
+      )
+      const activeSessionId = activeSession?.id
+      // Mirrors WorkspacePage: the edit handler is scoped to the durable session identity rather than
+      // the ChatSession object, whose transient operation gates can change during reviewer updates.
+      const onSendEditedMessage = useCallback(
+        (messageId: string, doc: ComposerDoc) => {
+          if (activeSessionId) resendEditedMessage(activeSessionId, messageId, doc)
+        },
+        [activeSessionId]
+      )
+      useEffect(() => {
+        useSessionStore.getState().setBranchSwitchBlocked(session.id, isReviewing)
+      }, [isReviewing])
+      return (
+        <div data-reviewing={isReviewing ? 'true' : 'false'}>
+          <WorkspaceMessageEditStateProvider canEditMessage={!isReviewing}>
+            <WorkspaceMessageScroller
+              activeSession={activeSession}
+              onSendEditedMessage={onSendEditedMessage}
+            />
+          </WorkspaceMessageEditStateProvider>
+        </div>
+      )
+    }
 
     root = createRoot(container)
     await act(async () => {
-      root.render(
-        <WorkspaceMessageScroller
-          activeSession={session}
-          canEditMessage={false}
-          onSendEditedMessage={vi.fn()}
-        />
-      )
+      root.render(<ReviewLifecycleParent />)
     })
     expect(container.textContent).toContain('Reviewing…')
+    expect(container.querySelector('[data-reviewing="true"]')).not.toBeNull()
+    agentMarkdownRenderMock.mockClear()
 
     await act(async () => {
       useReviewStore.getState().handleReviewUpdate({
@@ -216,6 +261,10 @@ describe('WorkspaceMessageScroller artifact click behavior', () => {
     ).toBe('complete')
     expect(container.textContent).toContain('No issues found')
     expect(container.textContent).not.toContain('Reviewing…')
+    expect(container.querySelector('[data-reviewing="false"]')).not.toBeNull()
+    // Reviewer pushes should update only the card. Re-rendering the complete rich transcript here made
+    // large 0.9 sessions repeatedly rebuild every Markdown tree at end_turn on Windows.
+    expect(agentMarkdownRenderMock).not.toHaveBeenCalled()
   })
 
   it('upserts and activates the clicked artifact in the preview store, scoped to the active session', async () => {
@@ -249,11 +298,7 @@ describe('WorkspaceMessageScroller artifact click behavior', () => {
     root = createRoot(container)
     await act(async () => {
       root.render(
-        <WorkspaceMessageScroller
-          activeSession={session}
-          canEditMessage={false}
-          onSendEditedMessage={vi.fn()}
-        />
+        <WorkspaceMessageScroller activeSession={session} onSendEditedMessage={vi.fn()} />
       )
     })
 
@@ -289,7 +334,6 @@ describe('WorkspaceMessageScroller artifact click behavior', () => {
       root.render(
         <WorkspaceMessageScroller
           activeSession={createSession({ status: 'idle' })}
-          canEditMessage={false}
           onSendEditedMessage={vi.fn()}
         />
       )
@@ -331,11 +375,7 @@ describe('WorkspaceMessageScroller artifact click behavior', () => {
     root = createRoot(container)
     await act(async () => {
       root.render(
-        <WorkspaceMessageScroller
-          activeSession={session}
-          canEditMessage={false}
-          onSendEditedMessage={vi.fn()}
-        />
+        <WorkspaceMessageScroller activeSession={session} onSendEditedMessage={vi.fn()} />
       )
     })
 
@@ -368,11 +408,7 @@ describe('WorkspaceMessageScroller artifact click behavior', () => {
     root = createRoot(container)
     await act(async () => {
       root.render(
-        <WorkspaceMessageScroller
-          activeSession={session}
-          canEditMessage={false}
-          onSendEditedMessage={vi.fn()}
-        />
+        <WorkspaceMessageScroller activeSession={session} onSendEditedMessage={vi.fn()} />
       )
     })
 
@@ -431,11 +467,7 @@ describe('WorkspaceMessageScroller artifact click behavior', () => {
     root = createRoot(container)
     await act(async () => {
       root.render(
-        <WorkspaceMessageScroller
-          activeSession={session}
-          canEditMessage={false}
-          onSendEditedMessage={vi.fn()}
-        />
+        <WorkspaceMessageScroller activeSession={session} onSendEditedMessage={vi.fn()} />
       )
     })
 
@@ -498,11 +530,7 @@ describe('WorkspaceMessageScroller artifact click behavior', () => {
     root = createRoot(container)
     await act(async () => {
       root.render(
-        <WorkspaceMessageScroller
-          activeSession={session}
-          canEditMessage={false}
-          onSendEditedMessage={vi.fn()}
-        />
+        <WorkspaceMessageScroller activeSession={session} onSendEditedMessage={vi.fn()} />
       )
     })
     expect(window.api.artifacts.readPreview).not.toHaveBeenCalled()

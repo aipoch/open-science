@@ -168,11 +168,7 @@ const renderScroller = async (session: ChatSession): Promise<string> => {
   const { WorkspaceMessageScroller } = await import('./WorkspaceMessageScroller')
 
   return renderToStaticMarkup(
-    <WorkspaceMessageScroller
-      activeSession={session}
-      canEditMessage={false}
-      onSendEditedMessage={vi.fn()}
-    />
+    <WorkspaceMessageScroller activeSession={session} onSendEditedMessage={vi.fn()} />
   )
 }
 

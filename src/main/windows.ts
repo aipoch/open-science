@@ -1,6 +1,7 @@
 import {
   app,
   BrowserWindow,
+  dialog,
   ipcMain,
   shell,
   WebContentsView,
@@ -36,6 +37,15 @@ const icon = process.platform === 'win32' ? iconWindows : iconPng
 // same way in dev (project root) and packaged (asar root) via app.getAppPath().
 const findOverlayEntry = join(app.getAppPath(), 'resources/find-overlay/index.html')
 const log = createLogger('window')
+const RENDERER_RECOVERY_WINDOW_MS = 60_000
+const MAX_AUTOMATIC_RENDERER_RECOVERIES = 2
+const RECOVERABLE_RENDERER_EXIT_REASONS = new Set([
+  'abnormal-exit',
+  'crashed',
+  'oom',
+  'launch-failed',
+  'integrity-failure'
+])
 
 const loadRenderer = (window: BrowserWindow): void => {
   if (is.dev && process.env['ELECTRON_RENDERER_URL']) {
@@ -115,6 +125,8 @@ const createMainWindow = (opts?: MainWindowCloseOptions): BrowserWindow => {
   let windowFindListenerReady = false
   let rendererResponsive = true
   let rendererUnresponsiveAt: number | undefined
+  let rendererRecoveryTimes: number[] = []
+  let rendererRecoveryDialogOpen = false
   const clearRendererHangState = (): void => {
     rendererResponsive = true
     rendererUnresponsiveAt = undefined
@@ -161,6 +173,18 @@ const createMainWindow = (opts?: MainWindowCloseOptions): BrowserWindow => {
       findOverlay.close()
     }
   })
+  // Keep renderer bootstrap failures diagnosable without persisting the failed URL, preload path, or
+  // error message (all of which can contain local paths or Session-derived data).
+  window.webContents.on(
+    'did-fail-load',
+    (_event, errorCode, errorDescription, _validatedURL, isMainFrame) => {
+      if (!isMainFrame) return
+      log.error('renderer document failed to load', { errorCode, errorDescription })
+    }
+  )
+  window.webContents.on('preload-error', (_event, _preloadPath, error) => {
+    log.error('renderer preload failed', { errorName: error.name })
+  })
   // Persist only fixed Electron lifecycle vocabulary and numeric timing/exit metadata. Current URLs,
   // Session content, renderer console output, process arguments, and local paths stay out of main.log.
   window.webContents.on('render-process-gone', (_event, details) => {
@@ -177,6 +201,61 @@ const createMainWindow = (opts?: MainWindowCloseOptions): BrowserWindow => {
     windowFindListenerReady = false
     clearRendererHangState()
     findOverlay.close()
+
+    if (!RECOVERABLE_RENDERER_EXIT_REASONS.has(details.reason) || window.isDestroyed()) return
+
+    const now = Date.now()
+    rendererRecoveryTimes = rendererRecoveryTimes.filter(
+      (recoveryAt) => now - recoveryAt < RENDERER_RECOVERY_WINDOW_MS
+    )
+    if (rendererRecoveryTimes.length < MAX_AUTOMATIC_RENDERER_RECOVERIES) {
+      rendererRecoveryTimes.push(now)
+      log.warn('reloading renderer after process exit', {
+        reason: details.reason,
+        automaticRecoveryAttempt: rendererRecoveryTimes.length
+      })
+      loadRenderer(window)
+      return
+    }
+
+    if (rendererRecoveryDialogOpen) return
+    rendererRecoveryDialogOpen = true
+    log.error('renderer automatic recovery paused after repeated exits', {
+      reason: details.reason,
+      automaticRecoveries: rendererRecoveryTimes.length,
+      recoveryWindowMs: RENDERER_RECOVERY_WINDOW_MS
+    })
+    void dialog
+      .showMessageBox(window, {
+        type: 'error',
+        buttons: ['Reload', 'Close window'],
+        defaultId: 0,
+        cancelId: 1,
+        title: 'Open Science',
+        message: 'The app window stopped responding repeatedly.',
+        detail:
+          'Automatic recovery has been paused. Reloading returns this window to the home screen; background work may still be running.'
+      })
+      .then(
+        ({ response }) => {
+          rendererRecoveryDialogOpen = false
+          if (window.isDestroyed()) return
+          if (response === 0) {
+            rendererRecoveryTimes = []
+            log.warn('reloading renderer after user confirmation')
+            loadRenderer(window)
+            return
+          }
+          // Bypass the normal Windows close-to-tray interception: the user explicitly chose to close
+          // this unrecoverable blank window, not leave it hidden and alive in the tray.
+          window.destroy()
+        },
+        () => {
+          rendererRecoveryDialogOpen = false
+          log.error('renderer recovery dialog failed')
+          if (!window.isDestroyed()) window.destroy()
+        }
+      )
   })
   window.webContents.on('unresponsive', () => {
     if (rendererResponsive) {

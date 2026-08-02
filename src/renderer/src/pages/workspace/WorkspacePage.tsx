@@ -735,6 +735,10 @@ const WorkspacePage = ({
     !activeSession?.conversationGraphSyncBlocked &&
     !activeSession?.compacting &&
     !sessionDeletionInProgressIds.has(activeSession?.id ?? '')
+  const canEditMessageRef = useRef(canEditMessage)
+  useLayoutEffect(() => {
+    canEditMessageRef.current = canEditMessage
+  }, [canEditMessage])
   useEffect(() => {
     const sessionId = activeSession?.id
     if (!sessionId) return
@@ -1188,16 +1192,19 @@ const WorkspacePage = ({
   // Resends an inline-edited prompt: the conversation is truncated at the edited message, the agent
   // context resets, and the kept turns replay as a preamble on the resent prompt. The gate mirrors
   // canEditMessage so a resend never overlaps an in-flight turn.
-  const sendEditedMessage = (messageId: string, doc: ComposerDoc): void => {
-    if (!canEditMessage || docIsEmpty(doc) || !activeSession) return
+  const sendEditedMessage = useCallback(
+    (messageId: string, doc: ComposerDoc): void => {
+      if (!canEditMessageRef.current || docIsEmpty(doc) || !activeSessionId) return
 
-    void resendEditedMessage(activeSession.id, messageId, {
-      text: docToText(doc),
-      parts: doc.nodes,
-      forcedSkillIds: docToSkillIds(doc),
-      referencedArtifacts: docToArtifactRefs(doc)
-    })
-  }
+      void resendEditedMessage(activeSessionId, messageId, {
+        text: docToText(doc),
+        parts: doc.nodes,
+        forcedSkillIds: docToSkillIds(doc),
+        referencedArtifacts: docToArtifactRefs(doc)
+      })
+    },
+    [activeSessionId, resendEditedMessage]
+  )
 
   // Sends the current draft only after hydration so restored selection cannot overwrite intent.
   // ConversationPanel owns preventDefault and passes the skills picked as inline chips.

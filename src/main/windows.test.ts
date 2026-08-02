@@ -11,11 +11,13 @@ import {
 } from '../shared/window-controls'
 
 // Hoisted so the electron mock and the test body share the same spies.
-const { openExternalMock, ipcMainOnMock, ipcMainRemoveListenerMock } = vi.hoisted(() => ({
-  openExternalMock: vi.fn(),
-  ipcMainOnMock: vi.fn(),
-  ipcMainRemoveListenerMock: vi.fn()
-}))
+const { openExternalMock, ipcMainOnMock, ipcMainRemoveListenerMock, showMessageBoxMock } =
+  vi.hoisted(() => ({
+    openExternalMock: vi.fn(),
+    ipcMainOnMock: vi.fn(),
+    ipcMainRemoveListenerMock: vi.fn(),
+    showMessageBoxMock: vi.fn()
+  }))
 
 const { windowLogSpies } = vi.hoisted(() => ({
   windowLogSpies: {
@@ -61,6 +63,8 @@ let lastWindow: FakeBrowserWindow | undefined
 
 class FakeBrowserWindow {
   closeMock = vi.fn()
+  destroyMock = vi.fn()
+  loadFileMock = vi.fn(() => Promise.resolve())
   sendMock = vi.fn()
   webContentsHandlers = new Map<string, WebContentsHandler>()
   handlers = new Map<string, Array<(event: CloseEvent) => void>>()
@@ -99,6 +103,11 @@ class FakeBrowserWindow {
     if (!event.defaultPrevented) this.destroyed = true
   }
 
+  destroy(): void {
+    this.destroyMock()
+    this.destroyed = true
+  }
+
   show(): void {
     this.hidden = false
   }
@@ -117,7 +126,7 @@ class FakeBrowserWindow {
   }
 
   loadFile(): Promise<void> {
-    return Promise.resolve()
+    return this.loadFileMock()
   }
 }
 
@@ -132,6 +141,7 @@ vi.mock('electron', () => ({
     }
   },
   WebContentsView: class {},
+  dialog: { showMessageBox: showMessageBoxMock },
   ipcMain: { on: ipcMainOnMock, removeListener: ipcMainRemoveListenerMock },
   shell: { openExternal: openExternalMock }
 }))
@@ -276,6 +286,8 @@ describe('close chord interception', () => {
     windowLogSpies.info.mockClear()
     windowLogSpies.warn.mockClear()
     windowLogSpies.error.mockClear()
+    showMessageBoxMock.mockReset()
+    showMessageBoxMock.mockResolvedValue({ response: 0 })
   })
 
   // Fires an ipcMain handshake signal that main registered via ipcMain.on, spoofing the sender as this
@@ -523,6 +535,109 @@ describe('close chord interception', () => {
       exitCode: 139,
       wasUnresponsive: false
     })
+  })
+
+  it('records a main-frame load failure without logging its URL', () => {
+    createMainWindow()
+    const window = currentWindow!
+
+    fireWebContentsEvent(
+      window,
+      'did-fail-load',
+      {},
+      -105,
+      'NAME_NOT_RESOLVED',
+      'file:///private/session-content/index.html',
+      true
+    )
+
+    expect(windowLogSpies.error).toHaveBeenCalledWith('renderer document failed to load', {
+      errorCode: -105,
+      errorDescription: 'NAME_NOT_RESOLVED'
+    })
+    expect(JSON.stringify(windowLogSpies.error.mock.calls)).not.toContain('session-content')
+  })
+
+  it('records a preload failure without logging its path or error text', () => {
+    createMainWindow()
+    const window = currentWindow!
+
+    fireWebContentsEvent(
+      window,
+      'preload-error',
+      {},
+      'C:\\Users\\person\\private-preload.js',
+      new Error('secret from local data')
+    )
+
+    expect(windowLogSpies.error).toHaveBeenCalledWith('renderer preload failed', {
+      errorName: 'Error'
+    })
+    expect(JSON.stringify(windowLogSpies.error.mock.calls)).not.toContain('private-preload')
+    expect(JSON.stringify(windowLogSpies.error.mock.calls)).not.toContain('secret from local data')
+  })
+
+  it('reloads the safe renderer entry after an unexpected renderer exit', () => {
+    createMainWindow()
+    const window = currentWindow!
+    expect(window.loadFileMock).toHaveBeenCalledTimes(1)
+
+    fireWebContentsEvent(window, 'render-process-gone', {}, { reason: 'crashed', exitCode: 139 })
+
+    expect(window.loadFileMock).toHaveBeenCalledTimes(2)
+    expect(windowLogSpies.warn).toHaveBeenCalledWith('reloading renderer after process exit', {
+      reason: 'crashed',
+      automaticRecoveryAttempt: 1
+    })
+  })
+
+  it.each(['clean-exit', 'killed'])('does not reload after an intentional %s', (reason) => {
+    createMainWindow()
+    const window = currentWindow!
+
+    fireWebContentsEvent(window, 'render-process-gone', {}, { reason, exitCode: 0 })
+
+    expect(window.loadFileMock).toHaveBeenCalledTimes(1)
+    expect(showMessageBoxMock).not.toHaveBeenCalled()
+  })
+
+  it('stops automatic reloads and asks before retrying a renderer crash loop', async () => {
+    createMainWindow()
+    const window = currentWindow!
+
+    for (let attempt = 0; attempt < 3; attempt += 1) {
+      fireWebContentsEvent(window, 'render-process-gone', {}, { reason: 'crashed', exitCode: 139 })
+    }
+
+    expect(window.loadFileMock).toHaveBeenCalledTimes(3)
+    expect(showMessageBoxMock).toHaveBeenCalledTimes(1)
+    expect(showMessageBoxMock).toHaveBeenCalledWith(
+      window,
+      expect.objectContaining({
+        type: 'error',
+        buttons: ['Reload', 'Close window'],
+        defaultId: 0,
+        cancelId: 1
+      })
+    )
+    await vi.waitFor(() => expect(window.loadFileMock).toHaveBeenCalledTimes(4))
+  })
+
+  it('destroys the blank window when the user closes a renderer crash-loop prompt', async () => {
+    showMessageBoxMock.mockResolvedValueOnce({ response: 1 })
+    createMainWindow({
+      classifyClose: () => 'hide',
+      resolveCloseAction: vi.fn(),
+      requestQuit: vi.fn()
+    })
+    const window = currentWindow!
+
+    for (let attempt = 0; attempt < 3; attempt += 1) {
+      fireWebContentsEvent(window, 'render-process-gone', {}, { reason: 'oom', exitCode: 5 })
+    }
+
+    await vi.waitFor(() => expect(window.destroyMock).toHaveBeenCalledTimes(1))
+    expect(window.hidden).toBe(false)
   })
 
   it('records the known hang duration when an unresponsive renderer terminates', () => {

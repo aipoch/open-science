@@ -10,6 +10,7 @@ import {
   SKILL_IMPORT_MCP_SERVER_ARG
 } from './mcp-server-args'
 import { withApplicationRuntimeShutdown } from './application-runtime'
+import { installChildProcessGoneLogging, startLocalCrashReporting } from './crash-diagnostics'
 
 const APP_NAME = 'Open Science'
 const APP_USER_MODEL_ID = 'com.aipoch.open-science'
@@ -58,7 +59,7 @@ if (shouldRunArtifactMcpServer) {
 // Boots the Electron app only in normal UI mode, keeping artifact MCP mode free of Electron imports.
 async function startElectronApp(mainEntryPath: string): Promise<void> {
   const [
-    { app, BrowserWindow, nativeImage, protocol },
+    { app, BrowserWindow, crashReporter, nativeImage, protocol },
     { electronApp },
     { default: icon },
     { default: iconDark },
@@ -102,6 +103,18 @@ async function startElectronApp(mainEntryPath: string): Promise<void> {
     acquireSingleInstanceLock: (opts) => acquireSingleInstanceLock(opts),
     quit: () => app.quit(),
     prepare: async () => {
+      // Start Windows Crashpad after the single-instance lock but before any BrowserWindow can create
+      // a renderer. Upload stays disabled: dumps remain local for explicit support collection. Without
+      // this initialization the affected Windows renderer failures surface only as
+      // Crashpad_NotConnectedToHandler, which masks the native crash that caused the white window.
+      const crashReporting = startLocalCrashReporting({
+        platform: process.platform,
+        productName: APP_NAME,
+        companyName: 'aipoch',
+        appVersion: app.getVersion(),
+        start: (options) => crashReporter.start(options)
+      })
+
       const [
         { registerIpcHandlers },
         { createMainWindow },
@@ -174,8 +187,16 @@ async function startElectronApp(mainEntryPath: string): Promise<void> {
         electron: process.versions.electron,
         node: process.versions.node,
         execPath: process.execPath,
-        logFile: getLogFilePath()
+        logFile: getLogFilePath(),
+        crashReporting: crashReporting.enabled
+          ? { ...crashReporting, dumpsDirectory: app.getPath('crashDumps') }
+          : crashReporting
       })
+
+      // Renderer exits are logged by each BrowserWindow. This complementary app-level event catches
+      // GPU and utility-process failures, which can also leave a window blank but are otherwise absent
+      // from main.log. Keep only Electron lifecycle vocabulary and numeric exit metadata.
+      installChildProcessGoneLogging((listener) => app.on('child-process-gone', listener), log)
 
       // Capture otherwise-silent crashes so a hang or unexpected exit leaves a trail in the log file.
       process.on('uncaughtException', (error) => log.error('uncaughtException', error))

@@ -263,4 +263,17 @@ describe('WorkspacePage inline edit resend', () => {
     })
     expect(conversationProps.canEditMessage).toBe(true)
   })
+
+  it('keeps the resend handler stable when only the branch-switch operation gate changes', async () => {
+    await renderPage()
+
+    const initialHandler = conversationProps.onSendEditedMessage
+
+    await act(async () => {
+      useSessionStore.getState().setBranchSwitchBlocked('sess-a', true)
+    })
+
+    expect(conversationProps.canEditMessage).toBe(true)
+    expect(conversationProps.onSendEditedMessage).toBe(initialHandler)
+  })
 })

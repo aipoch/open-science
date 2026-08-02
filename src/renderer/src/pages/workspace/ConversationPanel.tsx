@@ -61,6 +61,7 @@ import { ReportErrorDialog } from './ReportErrorDialog'
 import { SessionInterruptedBanner } from './SessionInterruptedBanner'
 import { ExtensionPreservingFileName } from './ExtensionPreservingFileName'
 import { WorkspaceMessageScroller } from './WorkspaceMessageScroller'
+import { WorkspaceMessageEditStateProvider } from './workspace-message-edit-state'
 
 const composerInteractiveTransitionClassName = 'transition-colors duration-200 ease-out'
 
@@ -346,11 +347,12 @@ const ConversationPanel = ({
           </button>
         </header>
 
-        <WorkspaceMessageScroller
-          activeSession={activeSession}
-          canEditMessage={canEditMessage}
-          onSendEditedMessage={onSendEditedMessage}
-        />
+        <WorkspaceMessageEditStateProvider canEditMessage={canEditMessage}>
+          <WorkspaceMessageScroller
+            activeSession={activeSession}
+            onSendEditedMessage={onSendEditedMessage}
+          />
+        </WorkspaceMessageEditStateProvider>
 
         <div className="relative shrink-0">
           <div
