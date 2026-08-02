@@ -7,6 +7,8 @@ import { useSettingsStore } from '@/stores/settings-store'
 import type { ChatMessage, ChatSession } from '@/stores/session-store'
 import { Collapsible } from 'radix-ui'
 import {
+  Bot,
+  Brain,
   Check,
   ChevronLeft,
   ChevronRight,
@@ -365,29 +367,27 @@ const TurnTokenUsage = ({
             data-slot="turn-runtime-details"
             className="mt-2 space-y-0.5 border-t border-border pt-2 text-[11px] leading-4 text-muted-foreground"
           >
-            {frameworkName && runtimeIdentity?.frameworkId ? (
+            {frameworkName ? (
               <div className="flex min-w-0 items-center gap-1.5">
                 <span
                   data-slot="turn-runtime-agent-detail-icon"
                   aria-hidden="true"
                   className="flex size-3 shrink-0 items-center justify-center"
                 >
-                  <AgentFrameworkIcon frameworkId={runtimeIdentity.frameworkId} size={10} />
+                  <Bot className="size-2.5" strokeWidth={2} />
                 </span>
                 <span className="truncate">Agent: {frameworkName}</span>
               </div>
             ) : null}
             {model ? (
               <div className="flex min-w-0 items-center gap-1.5" title={model}>
-                {provider && kindKey ? (
-                  <span
-                    data-slot="turn-runtime-model-detail-icon"
-                    aria-hidden="true"
-                    className="flex size-3 shrink-0 items-center justify-center"
-                  >
-                    <ProviderKindIcon kindKey={kindKey} className="size-2.5" />
-                  </span>
-                ) : null}
+                <span
+                  data-slot="turn-runtime-model-detail-icon"
+                  aria-hidden="true"
+                  className="flex size-3 shrink-0 items-center justify-center"
+                >
+                  <Brain className="size-2.5" strokeWidth={2} />
+                </span>
                 <span className="truncate">Model: {model}</span>
               </div>
             ) : null}
