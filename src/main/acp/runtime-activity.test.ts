@@ -21,7 +21,7 @@ const createActivityMock = (): Pick<
     // inspect it. Read it once to keep @typescript-eslint/no-unused-vars happy without changing
     // the contract shape.
     void req
-    return { session: { sessionId: 'reviewer-1' } } as Awaited<
+    return { role: 'reviewer', session: { sessionId: 'reviewer-1' } } as Awaited<
       ReturnType<AcpRuntime['buildReviewerSession']>
     >
   }),
@@ -102,6 +102,7 @@ describe('AcpRuntimeActivity', () => {
     })
 
     expect(result.built.session.sessionId).toBe('reviewer-1')
+    expect(result.built.role).toBe('reviewer')
     expect(result.sent.stopReason).toBe('end_turn')
     expect(mock.buildReviewerSession).toHaveBeenCalledOnce()
     expect(mock.sendPrompt).toHaveBeenCalledOnce()

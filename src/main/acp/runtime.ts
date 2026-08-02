@@ -13,9 +13,7 @@ import type {
 } from '@agentclientprotocol/sdk'
 import type { ChildProcessWithoutNullStreams } from 'node:child_process'
 import { randomUUID } from 'node:crypto'
-import { rmSync } from 'node:fs'
-import { mkdir, mkdtemp, readFile, stat, writeFile } from 'node:fs/promises'
-import { tmpdir } from 'node:os'
+import { mkdir, readFile, stat, writeFile } from 'node:fs/promises'
 import { dirname, join, resolve } from 'node:path'
 import { Readable, Writable } from 'node:stream'
 import { pathToFileURL } from 'node:url'
@@ -149,7 +147,12 @@ import type { ArtifactFile, FileReference } from '../../shared/artifacts'
 import type { ArtifactRpcCapabilityBinding } from '../../shared/artifact-provenance'
 import { isMediaOverflowError } from '../../shared/media-overflow'
 import type { AcpRuntimeActivity, AcpRuntimeActivityOptions } from './runtime-activity'
-import { REVIEWER_MCP_SERVER_NAME, REVIEWER_MCP_TOOLS } from '../../shared/reviewer'
+import {
+  ReviewerSessionOwner,
+  type ReviewerSessionDisposition,
+  type ReviewerSessionRequest,
+  type ReviewerSessionResult
+} from './reviewer-session-owner'
 import {
   buildImageContentData,
   canInlineImageInSession,
@@ -245,40 +248,6 @@ type AcpRuntimeSkillsOptions = {
   // Lists only enabled, materialized app-owned Skills from the active isolated Codex home. The
   // Chat Completions compatibility selector receives name + description; paths remain local.
   catalogForCodexHome?: (codexHome: string | undefined) => Promise<ResponsesBridgeSkillCandidate[]>
-}
-
-type ReviewerSessionRequest = {
-  cwd: string
-  mcpServers: McpServer[]
-  systemPromptAppend?: string
-}
-
-type ReviewerSessionResult = {
-  session: import('@agentclientprotocol/sdk').ActiveSession
-  promptPrefix?: string
-}
-
-type ReviewerSessionIdentityReservation = {
-  generation: number
-  sessionId: string
-  token: symbol
-}
-
-type ReviewerSessionIdentityReservationResult =
-  | { reservation: ReviewerSessionIdentityReservation; collision?: never }
-  | { reservation?: never; collision: Error }
-
-type ReviewerSessionOwner = {
-  cwd: string
-  session: ActiveSession
-  sessionId: string
-  token: symbol
-}
-
-export type ReviewerSessionDisposition = {
-  rejectedToolCalls: number
-  // Undefined for frameworks/providers that do not traverse the Responses bridge.
-  reviewerBridgeScoped: boolean | undefined
 }
 
 type PrimarySessionIdentityReservation = {
@@ -486,26 +455,6 @@ class SpawnFailure {
 
 const log = createLogger('acp')
 
-const REVIEWER_MCP_OPENCODE_TOOL_NAMES = new Set(
-  Object.values(REVIEWER_MCP_TOOLS).map((toolName) => `${REVIEWER_MCP_SERVER_NAME}_${toolName}`)
-)
-const REVIEWER_MCP_LEAF_TOOL_NAMES = new Set<string>(Object.values(REVIEWER_MCP_TOOLS))
-// claude-code namespaces MCP tools as mcp__<server>__<tool>. Depending on the provider path, the
-// server segment either preserves hyphens or replaces them with underscores. Match both exact forms:
-// the tool call title can be the only identity available to a permission request.
-const REVIEWER_MCP_SERVER_NAME_SANITIZED = REVIEWER_MCP_SERVER_NAME.replace(/[^a-zA-Z0-9]/g, '_')
-const REVIEWER_MCP_CLAUDE_TOOL_NAMES = new Set(
-  Object.values(REVIEWER_MCP_TOOLS).flatMap((toolName) =>
-    [REVIEWER_MCP_SERVER_NAME, REVIEWER_MCP_SERVER_NAME_SANITIZED].map(
-      (serverName) => `mcp__${serverName}__${toolName}`
-    )
-  )
-)
-const REVIEWER_MCP_PROVIDER_TOOL_NAMES = new Set([
-  ...REVIEWER_MCP_OPENCODE_TOOL_NAMES,
-  ...REVIEWER_MCP_CLAUDE_TOOL_NAMES
-])
-
 // Logs an error without ever throwing back into the caller. Used on failure paths where a throwing
 // logger (or a hostile payload) must never mask the original error being handled/re-thrown.
 const safeLogError = (message: string, data?: unknown): void => {
@@ -652,20 +601,9 @@ class AcpRuntime {
   // than hardcoded so it can't drift from what createMcpServers wires up.
   private readonly sessionMcpServerNames = new Map<string, string[]>()
   private readonly cancelledPromptTurnsBySession = new Map<string, number>()
-  // Ephemeral background reviewer sessions (built via buildReviewerSession). They are deliberately kept
-  // out of `this.sessions` — not tracked in the snapshot, not user-facing. Their permission requests are
-  // handled by a strict allowlist: only the scope-bounded reviewer MCP is approved; every built-in tool is
-  // rejected. Each session also gets an empty temporary cwd so ungated read-only tools see no project data.
-  private readonly reviewerSessionIds = new Set<string>()
-  private readonly reviewerSessionOwners = new Map<string, ReviewerSessionOwner>()
-  private readonly reviewerSessionOwnersBySession = new WeakMap<
-    ActiveSession,
-    ReviewerSessionOwner
-  >()
-  // Session/new returns an agent-owned id before the reviewer permission baseline has finished. Reserve
-  // that identity across the async mode switch so a concurrent reviewer cannot claim the same protocol
-  // route before either session has authority.
-  private readonly pendingReviewerSessionIds = new Map<string, symbol>()
+  // Ephemeral Reviewer identity, isolation, permission, and resource state lives behind one owner.
+  // Primary session registries remain here and collaborate through narrow collision/blocker ports.
+  private readonly reviewerSessions: ReviewerSessionOwner
   // A primary startup can know both its stable app id and its provider protocol id before it is ready
   // for publication. Tokens make multi-id reservations owner-aware so one concurrent startup can never
   // release another startup's identity.
@@ -680,11 +618,6 @@ class AcpRuntime {
   // is waiting for. Once it reaches the replacement connection, renewal adds its token here so any
   // later reconnect waits for publication or rollback.
   private readonly pendingSessionStartupBlockers = new Set<symbol>()
-  private readonly reviewerSessionDirectories = new Map<string, string>()
-  // Per reviewer session: count of tool calls the strict allowlist rejected. Lets the orchestrator
-  // distinguish "reviewer never called its tools" from "the gate blocked them" when a review ends
-  // without submit_findings, so the reported cause is accurate instead of misleading.
-  private readonly reviewerRejectedToolCalls = new Map<string, number>()
   // A replaced agent's own session id -> the app-facing id it was adopted under (after a provider
   // switch), so agent-origin events/permissions relabel into the conversation the renderer tracks.
   private readonly agentToAppSessionId = new Map<string, string>()
@@ -884,6 +817,22 @@ class AcpRuntime {
       onOpenCodeWaitTimeout: ({ sessionId, toolCallId, waitMs }) => {
         log.warn('OpenCode permission context wait timed out', { sessionId, toolCallId, waitMs })
       }
+    })
+    this.reviewerSessions = new ReviewerSessionOwner({
+      addStartupBlocker: (token) => this.pendingSessionStartupBlockers.add(token),
+      clearPermissionCorrelations: (sessionId) =>
+        this.permissionContext.clearCorrelationsForSession(sessionId),
+      currentStartupGeneration: () => this.sessionStartupGeneration,
+      isPrimarySessionIdClaimed: (sessionId) =>
+        this.sessions.has(sessionId) ||
+        this.agentToAppSessionId.has(sessionId) ||
+        this.pendingPrimarySessionIds.has(sessionId),
+      onActiveSessionReleased: () => this.maybeApplyPendingProviderReconnect(),
+      registerBridgeSession: (sessionId) =>
+        this.responsesBridgeLease?.registerReviewerSession(sessionId),
+      removeStartupBlocker: (token) => this.pendingSessionStartupBlockers.delete(token),
+      unregisterBridgeSession: (sessionId) =>
+        this.responsesBridgeLease?.unregisterReviewerSession(sessionId)
     })
   }
 
@@ -2942,7 +2891,7 @@ class AcpRuntime {
     return (
       this.promptInFlightSessionIds.size > 0 ||
       this.contextCompactionInFlightSessionIds.size > 0 ||
-      this.reviewerSessionIds.size > 0 ||
+      this.reviewerSessions.hasActiveSessions() ||
       this.pendingSessionStartupBlockers.size > 0 ||
       this.activityLeaseCount > 0
     )
@@ -3012,7 +2961,7 @@ class AcpRuntime {
     for (const controller of this.skillSelectorAbortControllers.values()) controller.abort()
     this.skillSelectorAbortControllers.clear()
     runCleanup('permission-context', () => this.permissionContext.dispose())
-    runCleanup('reviewer-state', () => this.clearReviewerSessionState())
+    runCleanup('reviewer-state', () => this.reviewerSessions.clear())
     this.promptInFlightSessionIds.clear()
     this.contextCompactionInFlightSessionIds.clear()
     // Context usage belongs to this live agent-context generation. Invalidate it before teardown,
@@ -5600,9 +5549,11 @@ class AcpRuntime {
     // tool identity (name/kind) and whether it looks like MCP — never the title (a WebFetch title is the
     // full URL with query params, i.e. user data).
     const appSessionId = this.agentToAppSessionId.get(params.sessionId) ?? params.sessionId
-    const mcpServerNames = this.sessionMcpServerNames.get(appSessionId) ?? []
+    const reviewerContext = this.reviewerSessions.contextFor(params.sessionId)
+    const mcpServerNames =
+      reviewerContext?.mcpServerNames ?? this.sessionMcpServerNames.get(appSessionId) ?? []
     const promptTurn = this.currentPromptTurnBySession.get(appSessionId)
-    const framework = this.sessionFrameworks.get(appSessionId)
+    const framework = reviewerContext?.frameworkId ?? this.sessionFrameworks.get(appSessionId)
     const isPermissionContextCancelled = (): boolean =>
       framework === 'opencode' &&
       (promptTurn === undefined
@@ -5642,12 +5593,10 @@ class AcpRuntime {
       // Background reviewer sessions run unattended and are intentionally absent from `this.sessions`.
       // Approve only their dedicated, scope-bounded MCP. Bash, filesystem, network, other MCP servers,
       // and unknown tools are rejected without involving the renderer.
-      if (this.reviewerSessionIds.has(params.sessionId)) {
-        return this.resolveReviewerPermission(
-          normalizedParams,
-          mcpServerNames,
-          this.sessionFrameworks.get(params.sessionId)
-        )
+      if (reviewerContext) {
+        const response = this.reviewerSessions.resolvePermission(normalizedParams)
+        if (response) return response
+        throw new Error(`Unknown ACP reviewer session: ${params.sessionId}`)
       }
 
       if (!this.sessions.has(appSessionId)) {
@@ -5694,11 +5643,13 @@ class AcpRuntime {
   // place where a preceding tool_call can reliably enrich a later sparse permission request.
   private observePermissionToolContext(notification: SessionNotification): void {
     const sessionId = this.agentToAppSessionId.get(notification.sessionId) ?? notification.sessionId
-    const framework = this.sessionFrameworks.get(sessionId)
+    const reviewerContext = this.reviewerSessions.contextFor(notification.sessionId)
+    const framework = reviewerContext?.frameworkId ?? this.sessionFrameworks.get(sessionId)
     this.permissionContext.observeToolCall(notification, {
       sessionId,
       framework,
-      mcpServerNames: this.sessionMcpServerNames.get(sessionId) ?? []
+      mcpServerNames:
+        reviewerContext?.mcpServerNames ?? this.sessionMcpServerNames.get(sessionId) ?? []
     })
   }
 
@@ -5706,100 +5657,6 @@ class AcpRuntime {
     const promptTurn = this.currentPromptTurnBySession.get(sessionId)
     if (promptTurn !== undefined) this.cancelledPromptTurnsBySession.set(sessionId, promptTurn)
     this.permissionContext.cancelForSession(sessionId)
-  }
-
-  // Returns the leaf reviewer tool name when a claude-code MCP *title* matches the reviewer. The
-  // identity must come from the title (the same field the generic MCP classifier trusts), never the
-  // toolCallId: a tool call id is an opaque, agent-chosen string, so matching it would let a Bash call
-  // carrying a reviewer-shaped id (e.g. mcp__open_science_reviewer__read_turn_0) slip past the gate.
-  // claude-code emits the exact mcp__<server>__<tool> form as the title with no numeric suffix, so an
-  // exact set membership check across its preserved and sanitized server-name forms is sufficient.
-  private matchReviewerClaudeToolName(title: string | null | undefined): string | undefined {
-    if (typeof title !== 'string') return undefined
-    return REVIEWER_MCP_CLAUDE_TOOL_NAMES.has(title) ? title : undefined
-  }
-
-  // Grants only the dedicated reviewer MCP. The old implementation selected the first available option
-  // for every reviewer request, which effectively approved Bash/network/filesystem tools. A denied call
-  // uses a one-shot reject when offered and otherwise cancels; it never falls through to an allow option.
-  private resolveReviewerPermission(
-    params: RequestPermissionRequest,
-    mcpServerNames: readonly string[],
-    frameworkId: string | undefined
-  ): RequestPermissionResponse {
-    const toolName = extractProviderToolName(params.toolCall)
-    const reportedTitle = params.toolCall.title
-    const opencodeToolName =
-      toolName == null &&
-      frameworkId === 'opencode' &&
-      typeof reportedTitle === 'string' &&
-      REVIEWER_MCP_OPENCODE_TOOL_NAMES.has(reportedTitle)
-        ? reportedTitle
-        : undefined
-    const codexToolName =
-      frameworkId === 'codex' &&
-      toolName != null &&
-      REVIEWER_MCP_LEAF_TOOL_NAMES.has(toolName) &&
-      reportedTitle === `mcp.${REVIEWER_MCP_SERVER_NAME}.${toolName}`
-        ? toolName
-        : undefined
-    // claude-code (and the OpenAI-compatible providers routed through it) emit reviewer MCP calls with
-    // no provider _meta tool name; the sanitized mcp__<server>__<tool> identity rides in the tool call
-    // title. Recognize it there — the same field the generic MCP classifier trusts — so the strict
-    // allowlist does not reject the reviewer's own tools. The toolCallId is deliberately not consulted:
-    // it is agent-controlled, so trusting it would let a Bash call with a reviewer-shaped id slip past.
-    const claudeToolName =
-      toolName == null && frameworkId === 'claude-code'
-        ? this.matchReviewerClaudeToolName(reportedTitle)
-        : undefined
-    const isReviewerMcp =
-      mcpServerNames.length === 1 &&
-      mcpServerNames[0] === REVIEWER_MCP_SERVER_NAME &&
-      ((toolName != null && REVIEWER_MCP_PROVIDER_TOOL_NAMES.has(toolName)) ||
-        opencodeToolName != null ||
-        codexToolName != null ||
-        claudeToolName != null)
-
-    if (!isReviewerMcp) {
-      const rejectOption =
-        params.options.find((option) => option.kind === 'reject_once') ??
-        params.options.find((option) => option.kind === 'reject_always')
-
-      this.reviewerRejectedToolCalls.set(
-        params.sessionId,
-        (this.reviewerRejectedToolCalls.get(params.sessionId) ?? 0) + 1
-      )
-
-      log.warn('rejecting non-reviewer tool requested by background reviewer', {
-        sessionId: params.sessionId,
-        tool: toolName ?? params.toolCall.kind,
-        toolCallId: params.toolCall?.toolCallId
-      })
-
-      return rejectOption
-        ? { outcome: { outcome: 'selected', optionId: rejectOption.optionId } }
-        : { outcome: { outcome: 'cancelled' } }
-    }
-
-    const allowOption =
-      params.options.find((option) => option.kind === 'allow_once') ??
-      params.options.find((option) => option.kind === 'allow_always')
-
-    if (!allowOption) {
-      log.warn('reviewer MCP permission request had no allow option; cancelling', {
-        sessionId: params.sessionId,
-        toolCallId: params.toolCall?.toolCallId
-      })
-      return { outcome: { outcome: 'cancelled' } }
-    }
-
-    log.debug('approving scope-bounded reviewer MCP tool call', {
-      sessionId: params.sessionId,
-      toolCallId: params.toolCall?.toolCallId,
-      optionId: allowOption.optionId
-    })
-
-    return { outcome: { outcome: 'selected', optionId: allowOption.optionId } }
   }
 
   // App-managed codex-acp emits the exact per-request numerator during generation. Codex's pinned
@@ -6169,7 +6026,7 @@ class AcpRuntime {
     for (const controller of this.skillSelectorAbortControllers.values()) controller.abort()
     this.skillSelectorAbortControllers.clear()
     this.permissionContext.dispose()
-    this.clearReviewerSessionState()
+    this.reviewerSessions.clear()
     this.releaseAllNotebookSessionCapabilities()
     this.sessions.clear()
     this.sessionCwds.clear()
@@ -6248,267 +6105,28 @@ class AcpRuntime {
     this.callbacks.onStateChanged?.(this.getSnapshot())
   }
 
-  private clearReviewerSessionState(): void {
-    for (const [sessionId, reviewerCwd] of this.reviewerSessionDirectories) {
-      try {
-        this.unregisterReviewerBridgeSession(sessionId)
-      } catch (error) {
-        safeLogError('reviewer bridge cleanup after connection close failed', {
-          ...diagnosticErrorFields(error),
-          sessionId
-        })
-      }
-      try {
-        this.removeReviewerDirectory(reviewerCwd)
-      } catch (error) {
-        safeLogError('reviewer directory cleanup after connection close failed', {
-          ...diagnosticErrorFields(error),
-          sessionId
-        })
-      }
-      try {
-        this.permissionContext.clearCorrelationsForSession(sessionId)
-      } catch (error) {
-        safeLogError('reviewer permission cleanup after connection close failed', {
-          ...diagnosticErrorFields(error),
-          sessionId
-        })
-      }
-      this.sessionFrameworks.delete(sessionId)
-    }
-    this.reviewerSessionDirectories.clear()
-    this.reviewerSessionOwners.clear()
-    this.reviewerSessionIds.clear()
-    this.reviewerRejectedToolCalls.clear()
-  }
-
-  private removeReviewerDirectory(reviewerCwd: string): void {
-    try {
-      rmSync(reviewerCwd, { recursive: true, force: true })
-    } catch (error) {
-      log.warn('failed to remove temporary reviewer directory', {
-        reviewerCwd,
-        error: errorMessage(error)
-      })
-    }
-  }
-
   // Creates an ephemeral reviewer ACP session using the existing agent connection. The reviewer
   // session is isolated from main agent sessions: it is not tracked in this.sessions, does not
   // appear in the snapshot, and callers are responsible for disposing it. This allows background
   // review to run in parallel with the main session without affecting the main state machine.
   async buildReviewerSession(request: ReviewerSessionRequest): Promise<ReviewerSessionResult> {
-    return this.withOperationLease(() => this.buildReviewerSessionOperation(request))
-  }
-
-  private async buildReviewerSessionOperation(
-    request: ReviewerSessionRequest
-  ): Promise<ReviewerSessionResult> {
-    // Used only to establish/reuse the shared agent connection. The reviewer session itself runs in an
-    // app-created empty temporary directory so built-in read tools cannot see the audited workspace.
-    const mcpServerNames = this.mcpServerNamesOf(request.mcpServers)
-    const reviewerMcp = request.mcpServers[0]
-    const reviewerMcpHttp =
-      reviewerMcp && 'type' in reviewerMcp && reviewerMcp.type === 'http' ? reviewerMcp : undefined
-    let reviewerMcpUrl: URL | undefined
-    try {
-      reviewerMcpUrl = reviewerMcpHttp ? new URL(reviewerMcpHttp.url) : undefined
-    } catch {
-      reviewerMcpUrl = undefined
-    }
-    if (
-      request.mcpServers.length !== 1 ||
-      mcpServerNames.length !== 1 ||
-      mcpServerNames[0] !== REVIEWER_MCP_SERVER_NAME ||
-      !reviewerMcpHttp ||
-      reviewerMcpUrl?.protocol !== 'http:' ||
-      reviewerMcpUrl.hostname !== '127.0.0.1'
-    ) {
-      throw new Error(
-        `Reviewer sessions require exactly one loopback HTTP ${REVIEWER_MCP_SERVER_NAME} MCP server.`
-      )
-    }
-
-    const connection = await this.ensureConnected(request.cwd)
-    this.assertCurrentConnectedConnection(connection)
-    const sessionStartupGeneration = this.sessionStartupGeneration
-    const reviewerCwd = await mkdtemp(join(tmpdir(), 'open-science-reviewer-'))
-
-    const setup = this.framework.buildSessionSetup({
-      systemPromptAppends: request.systemPromptAppend ? [request.systemPromptAppend] : [],
-      sessionOptions: this.pendingSessionOptions
-    })
-    const reviewerMeta: Record<string, unknown> = {
-      ...(setup.meta ?? {}),
-      // claude-agent-acp honors this legacy switch. codex-acp currently ignores it, so bridged
-      // Codex turns are independently restricted to reviewer MCP schemas at the bridge boundary.
-      disableBuiltInTools: true
-    }
-    if (this.framework.id === 'claude-code') {
-      const claudeCode =
-        typeof reviewerMeta.claudeCode === 'object' && reviewerMeta.claudeCode !== null
-          ? (reviewerMeta.claudeCode as Record<string, unknown>)
-          : {}
-      const claudeOptions =
-        typeof claudeCode.options === 'object' && claudeCode.options !== null
-          ? (claudeCode.options as Record<string, unknown>)
-          : {}
-      reviewerMeta.claudeCode = {
-        ...claudeCode,
-        options: { ...claudeOptions, tools: [] }
-      }
-    }
-
-    try {
-      const session = await connection.agent
-        .buildSession({
-          cwd: reviewerCwd,
-          mcpServers: request.mcpServers,
-          _meta: reviewerMeta
-        })
-        .start()
-
-      // Reviewer ids share protocol routing with primary/adopted sessions. An agent-provided
-      // collision must fail before the reviewer receives permission authority, bridge scope, or a
-      // prompt; otherwise its strict reviewer identity could overwrite state owned by a conversation.
-      const reservationResult = this.reserveReviewerSessionId(
-        session.sessionId,
-        sessionStartupGeneration
-      )
-      if (reservationResult.collision) {
-        this.disposeSessionAfterFailure(session, 'reviewer collision session disposal failed')
-        throw reservationResult.collision
-      }
-      const identityReservation = reservationResult.reservation
-      let identityActivated = false
-
-      try {
-        // Apply the framework's Ask baseline before prompting. The dedicated reviewer MCP is
-        // then selectively approved by resolveReviewerPermission; all other permission requests fail.
-        const permission = this.framework.mapPermissionProfile('ask', session.modes)
-        if (permission.modeId && permission.modeId !== session.modes?.currentModeId) {
-          await connection.agent.request(acp.methods.agent.session.setMode, {
-            sessionId: session.sessionId,
-            modeId: permission.modeId
-          })
+    return this.withOperationLease(() =>
+      this.reviewerSessions.create(request, async () => {
+        const connection = await this.ensureConnected(request.cwd)
+        this.assertCurrentConnectedConnection(connection)
+        return {
+          connection,
+          framework: this.framework,
+          sessionOptions: this.pendingSessionOptions,
+          startupGeneration: this.sessionStartupGeneration
         }
-
-        // No await separates the pending -> active transition: protocol routing always sees exactly
-        // one identity state. Bridge authority is granted only after the active reviewer route exists.
-        this.activateReviewerSessionIdentity(identityReservation, session, reviewerCwd)
-        identityActivated = true
-        this.responsesBridgeLease?.registerReviewerSession(session.sessionId)
-        this.reviewerSessionDirectories.set(session.sessionId, reviewerCwd)
-        this.sessionMcpServerNames.set(session.sessionId, mcpServerNames)
-        this.sessionFrameworks.set(session.sessionId, this.framework.id)
-
-        return { session, promptPrefix: setup.promptPrefix }
-      } catch (error) {
-        let startupError = error
-        if (!identityActivated) {
-          try {
-            this.assertReviewerSessionIdentityReservation(identityReservation)
-          } catch (supersededError) {
-            startupError = supersededError
-          }
-        }
-        this.releaseReviewerSessionIdentityReservation(identityReservation)
-        const activeOwner = this.reviewerSessionOwners.get(session.sessionId)
-        if (identityActivated && activeOwner?.session === session) {
-          this.reviewerSessionOwners.delete(session.sessionId)
-          this.reviewerSessionOwnersBySession.delete(session)
-          this.reviewerSessionIds.delete(session.sessionId)
-          this.reviewerRejectedToolCalls.delete(session.sessionId)
-          try {
-            this.responsesBridgeLease?.unregisterReviewerSession(session.sessionId)
-          } catch (cleanupError) {
-            safeLogError('reviewer bridge registration rollback failed', {
-              ...diagnosticErrorFields(cleanupError),
-              sessionId: session.sessionId
-            })
-          }
-        }
-        this.disposeSessionAfterFailure(session, 'reviewer startup session disposal failed')
-        throw startupError
-      }
-    } catch (error) {
-      this.removeReviewerDirectory(reviewerCwd)
-      throw error
-    }
-  }
-
-  private reserveReviewerSessionId(
-    sessionId: string,
-    generation: number
-  ): ReviewerSessionIdentityReservationResult {
-    if (generation !== this.sessionStartupGeneration) {
-      return { collision: new Error('ACP session startup was superseded.') }
-    }
-
-    if (
-      this.sessions.has(sessionId) ||
-      this.agentToAppSessionId.has(sessionId) ||
-      this.reviewerSessionIds.has(sessionId) ||
-      this.pendingReviewerSessionIds.has(sessionId) ||
-      this.pendingPrimarySessionIds.has(sessionId)
-    ) {
-      return { collision: new Error(`Reviewer session id collision: ${sessionId}`) }
-    }
-
-    const reservation = {
-      generation,
-      sessionId,
-      token: Symbol('reviewer-session-identity')
-    } satisfies ReviewerSessionIdentityReservation
-    this.pendingReviewerSessionIds.set(sessionId, reservation.token)
-    this.pendingSessionStartupBlockers.add(reservation.token)
-    return { reservation }
-  }
-
-  private activateReviewerSessionIdentity(
-    reservation: ReviewerSessionIdentityReservation,
-    session: ActiveSession,
-    cwd: string
-  ): void {
-    this.assertReviewerSessionIdentityReservation(reservation)
-
-    this.pendingReviewerSessionIds.delete(reservation.sessionId)
-    this.pendingSessionStartupBlockers.delete(reservation.token)
-    const owner = {
-      cwd,
-      session,
-      sessionId: reservation.sessionId,
-      token: reservation.token
-    } satisfies ReviewerSessionOwner
-    this.reviewerSessionOwners.set(reservation.sessionId, owner)
-    this.reviewerSessionOwnersBySession.set(session, owner)
-    this.reviewerRejectedToolCalls.delete(reservation.sessionId)
-    this.reviewerSessionIds.add(reservation.sessionId)
-  }
-
-  private assertReviewerSessionIdentityReservation(
-    reservation: ReviewerSessionIdentityReservation
-  ): void {
-    if (
-      reservation.generation !== this.sessionStartupGeneration ||
-      this.pendingReviewerSessionIds.get(reservation.sessionId) !== reservation.token
-    ) {
-      throw new Error('ACP session startup was superseded.')
-    }
-  }
-
-  private releaseReviewerSessionIdentityReservation(
-    reservation: ReviewerSessionIdentityReservation
-  ): void {
-    this.pendingSessionStartupBlockers.delete(reservation.token)
-    if (this.pendingReviewerSessionIds.get(reservation.sessionId) === reservation.token) {
-      this.pendingReviewerSessionIds.delete(reservation.sessionId)
-    }
+      })
+    )
   }
 
   private invalidatePendingSessionStartups(): void {
     this.sessionStartupGeneration += 1
-    this.pendingReviewerSessionIds.clear()
+    this.reviewerSessions.invalidatePending()
     this.pendingPrimarySessionIds.clear()
     this.pendingSessionStartupBlockers.clear()
   }
@@ -6536,7 +6154,7 @@ class AcpRuntime {
       }
     }
     const pendingReviewerCollision = uniqueSessionIds.find((sessionId) =>
-      this.pendingReviewerSessionIds.has(sessionId)
+      this.reviewerSessions.hasPendingSessionId(sessionId)
     )
     if (pendingReviewerCollision) {
       return {
@@ -6547,7 +6165,7 @@ class AcpRuntime {
     }
 
     const activeReviewerCollision = uniqueSessionIds.find((sessionId) =>
-      this.reviewerSessionIds.has(sessionId)
+      this.reviewerSessions.hasActiveSessionId(sessionId)
     )
     if (activeReviewerCollision) {
       return {
@@ -6702,80 +6320,15 @@ class AcpRuntime {
   disposeReviewerSession(
     session: import('@agentclientprotocol/sdk').ActiveSession
   ): ReviewerSessionDisposition {
-    const cleanupFailures: unknown[] = []
-    const runCleanup = <Result>(stage: string, cleanup: () => Result): Result | undefined => {
-      try {
-        return cleanup()
-      } catch (cleanupError) {
-        cleanupFailures.push(cleanupError)
-        safeLogError('reviewer session cleanup failed', {
-          ...diagnosticErrorFields(cleanupError),
-          sessionId: session.sessionId,
-          stage
-        })
-        return undefined
-      }
-    }
-
-    const owner = this.reviewerSessionOwnersBySession.get(session)
-    this.reviewerSessionOwnersBySession.delete(session)
-    const ownsActiveIdentity =
-      owner !== undefined && this.reviewerSessionOwners.get(owner.sessionId)?.token === owner.token
-    const rejectedToolCalls = ownsActiveIdentity
-      ? (this.reviewerRejectedToolCalls.get(session.sessionId) ?? 0)
-      : 0
-    let reviewerBridgeScoped: boolean | undefined
-    if (ownsActiveIdentity) {
-      this.reviewerSessionOwners.delete(session.sessionId)
-      this.reviewerSessionIds.delete(session.sessionId)
-      reviewerBridgeScoped = runCleanup('bridge', () =>
-        this.unregisterReviewerBridgeSession(session.sessionId)
-      )
-      this.sessionMcpServerNames.delete(session.sessionId)
-      runCleanup('permission-correlations', () =>
-        this.permissionContext.clearCorrelationsForSession(session.sessionId)
-      )
-      this.sessionFrameworks.delete(session.sessionId)
-      this.reviewerRejectedToolCalls.delete(session.sessionId)
-      this.reviewerSessionDirectories.delete(session.sessionId)
-    }
-    const reviewerCwd = owner?.cwd
-
-    let disposeFailed = false
-    let disposeFailure: unknown
-    try {
-      session.dispose()
-    } catch (error) {
-      disposeFailed = true
-      disposeFailure = error
-    }
-
-    if (reviewerCwd) this.removeReviewerDirectory(reviewerCwd)
-    if (ownsActiveIdentity) {
-      runCleanup('reconnect-retirement', () => this.maybeApplyPendingProviderReconnect())
-    }
-
-    // Session disposal is the primary lifecycle failure. Every authority/resource cleanup above still
-    // runs, and any secondary failure is reported without replacing the error the caller must handle.
-    if (disposeFailed) throw disposeFailure
-    if (cleanupFailures.length > 0) throw cleanupFailures[0]
-
-    return { rejectedToolCalls, reviewerBridgeScoped }
-  }
-
-  private unregisterReviewerBridgeSession(sessionId: string): boolean | undefined {
-    const scoped = this.responsesBridgeLease?.unregisterReviewerSession(sessionId)
-    if (scoped === false) {
-      log.error('reviewer bridge request was never scoped', { sessionId })
-    }
-    return scoped
+    return this.reviewerSessions.dispose(session)
   }
 
   // Returns how many permission requests the strict reviewer gate rejected for a given reviewer
   // session. Non-zero means the session was active but the gate blocked its tool calls.
   reviewerRejectedToolCallCount(sessionId: string): number {
-    return this.reviewerRejectedToolCalls.get(sessionId) ?? 0
+    return this.reviewerSessions.rejectedToolCallCount(sessionId)
   }
 }
 
 export { AcpRuntime }
+export type { ReviewerSessionDisposition } from './reviewer-session-owner'

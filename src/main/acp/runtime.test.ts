@@ -792,12 +792,40 @@ const handleSessionUpdate = (runtime: AcpRuntime, notification: SessionNotificat
     }
   ).handleSessionUpdate(notification)
 
+type ReviewerOwnerProbe = {
+  contextFor: (sessionId: string) =>
+    | {
+        frameworkId: string
+        mcpServerNames: readonly string[]
+        role: 'reviewer'
+      }
+    | undefined
+  rejectedToolCalls: Map<string, number>
+  snapshot: () => Array<{
+    lifecycle: 'pending' | 'active'
+    role: 'reviewer'
+    sessionId: string
+  }>
+}
+
+const reviewerOwnerProbe = (runtime: AcpRuntime): ReviewerOwnerProbe =>
+  (runtime as unknown as { reviewerSessions: ReviewerOwnerProbe }).reviewerSessions
+
 const reviewerSessionIds = (runtime: AcpRuntime): Set<string> =>
-  (runtime as unknown as { reviewerSessionIds: Set<string> }).reviewerSessionIds
+  new Set(
+    reviewerOwnerProbe(runtime)
+      .snapshot()
+      .filter(({ lifecycle }) => lifecycle === 'active')
+      .map(({ sessionId }) => sessionId)
+  )
 
 const pendingReviewerSessionIds = (runtime: AcpRuntime): Map<string, symbol> =>
-  (runtime as unknown as { pendingReviewerSessionIds: Map<string, symbol> })
-    .pendingReviewerSessionIds
+  new Map(
+    reviewerOwnerProbe(runtime)
+      .snapshot()
+      .filter(({ lifecycle }) => lifecycle === 'pending')
+      .map(({ sessionId }) => [sessionId, Symbol.for(sessionId)])
+  )
 
 const pendingPrimarySessionIds = (runtime: AcpRuntime): Map<string, symbol> =>
   (runtime as unknown as { pendingPrimarySessionIds: Map<string, symbol> }).pendingPrimarySessionIds
@@ -6535,7 +6563,7 @@ describe('ACP runtime session management', () => {
     expect(mcpServerNamesMap(runtime).get('switched-session')).toEqual(['open-science-artifacts'])
   })
 
-  it('registers a reviewer session MCP names for auditing and clears them on dispose', async () => {
+  it('returns an explicit reviewer role while preserving MCP audit routing', async () => {
     infoLogSpy.mockClear()
     const process = new FakeAgentProcess()
     startPermissionProbeAgent(process, {
@@ -6552,7 +6580,7 @@ describe('ACP runtime session management', () => {
 
     // The reviewer session records its MCP server name so its (auto-approved) tool calls still audit
     // with the correct isMcp classification.
-    const { session } = await runtime.buildReviewerSession({
+    const built = await runtime.buildReviewerSession({
       cwd: '/workspace',
       mcpServers: [
         {
@@ -6563,19 +6591,100 @@ describe('ACP runtime session management', () => {
         }
       ]
     })
+    const { session } = built
+    expect(built.role).toBe('reviewer')
     expect(session.sessionId).toBe('reviewer-session-1')
-    expect(mcpServerNamesMap(runtime).has('reviewer-session-1')).toBe(true)
-    expect(sessionFrameworksMap(runtime).get('reviewer-session-1')).toBe('claude-code')
+    expect(reviewerOwnerProbe(runtime).contextFor('reviewer-session-1')).toEqual({
+      frameworkId: 'claude-code',
+      mcpServerNames: ['open-science-reviewer'],
+      role: 'reviewer'
+    })
+    expect(mcpServerNamesMap(runtime).has('reviewer-session-1')).toBe(false)
+    expect(sessionFrameworksMap(runtime).has('reviewer-session-1')).toBe(false)
 
     // Drive a tool-call permission request through the reviewer session (auto-approved by the runtime).
     await session.prompt([{ type: 'text', text: 'review this turn' }])
 
     expect(auditedIsMcp('reviewer-mcp')).toBe(true)
 
-    // Disposing the reviewer session unregisters its MCP names.
+    // Disposing the reviewer session clears only the owner-private invocation context.
     runtime.disposeReviewerSession(session)
+    expect(reviewerOwnerProbe(runtime).contextFor('reviewer-session-1')).toBeUndefined()
     expect(mcpServerNamesMap(runtime).has('reviewer-session-1')).toBe(false)
     expect(sessionFrameworksMap(runtime).has('reviewer-session-1')).toBe(false)
+  })
+
+  it('keeps reviewer ownership out of public primary state and capability hooks', async () => {
+    const process = new FakeAgentProcess()
+    startFakeAgent(process, ['primary-session', 'reviewer-session'])
+    const resolveSpecialistIdentity = vi.fn(async () => ({ append: '', prefix: '' }))
+    const resolveSpecialistSkills = vi.fn(async () => ({
+      kind: 'specialist' as const,
+      skillIds: [],
+      frameworkNames: [],
+      missingSkillIds: []
+    }))
+    const registerSessionSpecialist = vi.fn()
+    const onPermissionRequest = vi.fn()
+    const runtime = new AcpRuntime({
+      appVersion: '0.1.0',
+      defaultCwd: '/workspace',
+      spawnAgent: () => asAgentProcess(process),
+      resolveSpecialistIdentity,
+      resolveSpecialistSkills,
+      notebook: {
+        projectName: 'default-project',
+        mcpEntryPath: '/app/out/main/index.js',
+        getRpcConnection: async () => ({
+          endpoint: 'http://127.0.0.1:4567',
+          token: 'notebook-token'
+        }),
+        registerSessionSpecialist
+      },
+      callbacks: { onPermissionRequest }
+    })
+    await runtime.createSession({ cwd: '/workspace' })
+    resolveSpecialistIdentity.mockClear()
+    resolveSpecialistSkills.mockClear()
+    registerSessionSpecialist.mockClear()
+
+    const primaryProjection = (): object => {
+      const snapshot = runtime.getSnapshot()
+      return {
+        sessionId: snapshot.sessionId,
+        sessionIds: snapshot.sessionIds,
+        pendingPermissions: snapshot.pendingPermissions,
+        permissionProfiles: snapshot.permissionProfiles,
+        permissionGrants: snapshot.permissionGrants,
+        contextUsageBySession: snapshot.contextUsageBySession
+      }
+    }
+    const before = primaryProjection()
+    const built = await runtime.buildReviewerSession({
+      cwd: '/workspace',
+      mcpServers: [
+        {
+          type: 'http',
+          name: 'open-science-reviewer',
+          url: 'http://127.0.0.1:1/mcp',
+          headers: []
+        }
+      ]
+    })
+
+    expect(primaryProjection()).toEqual(before)
+    expect(reviewerOwnerProbe(runtime).snapshot()).toEqual([
+      { lifecycle: 'active', role: 'reviewer', sessionId: 'reviewer-session' }
+    ])
+    expect(reviewerOwnerProbe(runtime).snapshot()[0]).not.toHaveProperty('cwd')
+    expect(resolveSpecialistIdentity).not.toHaveBeenCalled()
+    expect(resolveSpecialistSkills).not.toHaveBeenCalled()
+    expect(registerSessionSpecialist).not.toHaveBeenCalled()
+    expect(onPermissionRequest).not.toHaveBeenCalled()
+
+    runtime.disposeReviewerSession(built.session)
+    expect(primaryProjection()).toEqual(before)
+    await runtime.disconnect()
   })
 
   it.each([
@@ -7157,9 +7266,7 @@ describe('ACP runtime session management', () => {
     }
     await runtime.buildReviewerSession(reviewerRequest)
     await runtime.buildReviewerSession(reviewerRequest)
-    ;(
-      runtime as unknown as { reviewerRejectedToolCalls: Map<string, number> }
-    ).reviewerRejectedToolCalls.set('reviewer-one', 2)
+    reviewerOwnerProbe(runtime).rejectedToolCalls.set('reviewer-one', 2)
     const reviewerCwds = fakeAgent.newSessions.map(({ cwd }) => cwd)
     await runtime.requestProviderReconnect()
     const handleConnectionClosed = (
@@ -7171,10 +7278,7 @@ describe('ACP runtime session management', () => {
       expect(lease.unregisterReviewerSession).toHaveBeenCalledWith('reviewer-one')
       expect(lease.unregisterReviewerSession).toHaveBeenCalledWith('reviewer-two')
       expect(reviewerSessionIds(runtime).size).toBe(0)
-      expect(
-        (runtime as unknown as { reviewerRejectedToolCalls: Map<string, number> })
-          .reviewerRejectedToolCalls.size
-      ).toBe(0)
+      expect(reviewerOwnerProbe(runtime).rejectedToolCalls.size).toBe(0)
       expect(
         (runtime as unknown as { reconnectBarrier?: Promise<void> }).reconnectBarrier
       ).toBeUndefined()
