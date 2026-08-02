@@ -165,8 +165,7 @@ const startFakeAgent = (
     // When true, the resume handler rejects with the ACP "Resource not found" (-32002) — the signal a
     // replaced agent (e.g. after a provider switch) gives for a session id it does not hold.
     resumeNotFound?: boolean
-    // When true, the resume handler rejects with a generic "Internal error" (-32603) — what some
-    // agents return instead of a clean not-found after their process was replaced by an app restart.
+    // When true, the resume handler rejects with a detail-free generic "Internal error" (-32603).
     resumeInternalError?: boolean
     // A plain handler error is serialized by the ACP SDK as -32603 with the original message in
     // data.details. This mirrors agents that do not translate their resume failure to resourceNotFound.

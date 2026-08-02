@@ -138,16 +138,15 @@ type WorkspaceRuntimeEventProcessor = {
 const sessionSendPreparationsInFlight = new Set<string>()
 
 // Strips the Electron IPC wrapper ("Error invoking remote method '…': Error: <cause>") and any
-// leading "Error:" so the underlying agent message can be shown to the user on its own. Used by both
-// the resume and createSession failure paths, since either crosses IPC and arrives wrapped.
+// leading "Error:" (or a lone "Error" type label) so the underlying agent message can be shown to the
+// user on its own. Used by both resume and createSession failure paths, since either arrives wrapped.
 const unwrapIpcErrorDetail = (message: string): string =>
   message
     .replace(/^Error invoking remote method '[^']*':\s*/i, '')
-    .replace(/^Error:\s*/i, '')
+    .replace(/^Error(?::\s*|$)/i, '')
     .trim()
 
-const RESUME_INTERNAL_ERROR_MESSAGE =
-  'The agent could not restore this conversation. Try Resume again; if it still fails, switch back to the original agent or start a new conversation.'
+const RESUME_UNKNOWN_ERROR_MESSAGE = 'Agent session resume failed: Unknown error'
 
 // Turns a createSession (conversation-start) failure into the message persisted on the session. The
 // error crosses IPC wrapped, so it is unwrapped first — this keeps the app-authored setup guidance
@@ -196,14 +195,14 @@ const getResumeFailureMessage = (error: unknown): string => {
 
   const detail = unwrapIpcErrorDetail(message)
 
-  // Electron preserves the custom RequestError name/message but drops its structured `data.details`
-  // while crossing IPC. Do not expose that opaque implementation label as if it were actionable;
-  // keep specific non-Internal errors visible below so unexpected failures remain diagnosable.
-  if (detail === 'RequestError: Internal error') {
-    return RESUME_INTERNAL_ERROR_MESSAGE
+  // Electron can preserve only the custom RequestError name/message while dropping structured
+  // `data.details` across IPC. A bare Internal error supplies no evidence for a network, session, or
+  // provider diagnosis, so classify it as unknown. Specific downstream causes stay visible below.
+  if (detail === 'RequestError: Internal error' || detail === 'Internal error') {
+    return RESUME_UNKNOWN_ERROR_MESSAGE
   }
 
-  return detail ? `Agent session resume failed: ${detail}` : 'Agent session resume failed'
+  return detail ? `Agent session resume failed: ${detail}` : RESUME_UNKNOWN_ERROR_MESSAGE
 }
 
 // Keeps attachment-finalization failures displayable without assuming Error instances.

@@ -212,14 +212,28 @@ describe('workspace agent runtime event processing', () => {
 })
 
 describe('resume failure classification', () => {
-  it('replaces an opaque ACP Internal error with actionable recovery guidance', () => {
+  it('classifies an opaque ACP Internal error as unknown without guessing a cause', () => {
     const message = getResumeFailureMessage(
       new Error("Error invoking remote method 'acp:resume-session': RequestError: Internal error")
     )
 
-    expect(message).toBe(
-      'The agent could not restore this conversation. Try Resume again; if it still fails, switch back to the original agent or start a new conversation.'
+    expect(message).toBe('Agent session resume failed: Unknown error')
+  })
+
+  it('classifies a bare Internal error as unknown when IPC drops the custom error name', () => {
+    const message = getResumeFailureMessage(
+      new Error("Error invoking remote method 'acp:resume-session': Error: Internal error")
     )
+
+    expect(message).toBe('Agent session resume failed: Unknown error')
+  })
+
+  it('classifies an empty downstream failure at the Electron IPC seam as unknown', () => {
+    const message = getResumeFailureMessage(
+      new Error("Error invoking remote method 'acp:resume-session': Error")
+    )
+
+    expect(message).toBe('Agent session resume failed: Unknown error')
   })
 
   it('keeps a specific RequestError cause visible', () => {
