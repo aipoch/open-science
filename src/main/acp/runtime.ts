@@ -268,6 +268,13 @@ type ReviewerSessionIdentityReservationResult =
   | { reservation: ReviewerSessionIdentityReservation; collision?: never }
   | { reservation?: never; collision: Error }
 
+type ReviewerSessionOwner = {
+  cwd: string
+  session: ActiveSession
+  sessionId: string
+  token: symbol
+}
+
 export type ReviewerSessionDisposition = {
   rejectedToolCalls: number
   // Undefined for frameworks/providers that do not traverse the Responses bridge.
@@ -283,6 +290,11 @@ type PrimarySessionIdentityReservation = {
 type PrimarySessionIdentityReservationResult =
   | { reservation: PrimarySessionIdentityReservation; collision?: never }
   | { reservation?: never; collision: Error }
+
+type SessionModelApplication = {
+  appliedModel: string | undefined
+  configOptions: SessionConfigOption[] | null | undefined
+}
 
 type AcpRuntimeArtifactOptions = {
   // Config root: where the app-owned claude config dir lives (never relocated).
@@ -639,6 +651,11 @@ class AcpRuntime {
   // handled by a strict allowlist: only the scope-bounded reviewer MCP is approved; every built-in tool is
   // rejected. Each session also gets an empty temporary cwd so ungated read-only tools see no project data.
   private readonly reviewerSessionIds = new Set<string>()
+  private readonly reviewerSessionOwners = new Map<string, ReviewerSessionOwner>()
+  private readonly reviewerSessionOwnersBySession = new WeakMap<
+    ActiveSession,
+    ReviewerSessionOwner
+  >()
   // Session/new returns an agent-owned id before the reviewer permission baseline has finished. Reserve
   // that identity across the async mode switch so a concurrent reviewer cannot claim the same protocol
   // route before either session has authority.
@@ -721,6 +738,7 @@ class AcpRuntime {
   // queued blocks until the reconnect completes rather than reusing the stale connection.
   private reconnectBarrier: Promise<void> | undefined
   private reconnectBarrierResolve: (() => void) | undefined
+  private reconnectBarrierGeneration = 0
   private expectedProcessExits = new WeakSet<ChildProcessWithoutNullStreams>()
   private readonly permissionContext: AcpPermissionContext
   private readonly callbacks: AcpRuntimeCallbacks
@@ -1034,11 +1052,10 @@ class AcpRuntime {
   // Resolves an application profile against per-session ACP capabilities and applies the real Agent
   // mode before any prompt is sent. The selected/effective projection is then shared with the UI and
   // the conservative fallback reviewer.
-  private async configurePermissionProfile(
-    appSessionId: string,
+  private async applyPermissionProfileMode(
     session: ActiveSession,
     profile: PermissionProfileId
-  ): Promise<void> {
+  ): Promise<SessionPermissionProfileState> {
     const application = this.framework.mapPermissionProfile(profile, session.modes)
 
     if (application.modeId && application.modeId !== session.modes?.currentModeId) {
@@ -1050,8 +1067,19 @@ class AcpRuntime {
       })
     }
 
-    this.permissionProfiles.set(appSessionId, application.state)
     log.info('permission profile applied', this.diagnosticContext())
+    return application.state
+  }
+
+  private async configurePermissionProfile(
+    appSessionId: string,
+    session: ActiveSession,
+    profile: PermissionProfileId,
+    commit = true
+  ): Promise<SessionPermissionProfileState> {
+    const state = await this.applyPermissionProfileMode(session, profile)
+    if (commit) this.permissionProfiles.set(appSessionId, state)
+    return state
   }
 
   // Applies the active model to a freshly built/resumed session via the ACP model configOption, for
@@ -1060,11 +1088,10 @@ class AcpRuntime {
   // exists or application fails; required selections fail visibly rather than silently running another
   // model. Returns the agent's post-application configOptions when it reports them — effort levels are
   // model-dependent, so callers resolving further options must use the set from AFTER the model switch.
-  private async applySessionModel(
-    session: ActiveSession
-  ): Promise<SessionConfigOption[] | null | undefined> {
-    this.appliedSessionModels.delete(session.sessionId)
-    if (!this.pendingSessionModel || !this.connection) return undefined
+  private async applySessionModel(session: ActiveSession): Promise<SessionModelApplication> {
+    if (!this.pendingSessionModel || !this.connection) {
+      return { appliedModel: undefined, configOptions: undefined }
+    }
 
     const configOptions = (
       session as { newSessionResponse?: { configOptions?: SessionConfigOption[] | null } }
@@ -1079,7 +1106,7 @@ class AcpRuntime {
           `The selected model "${this.pendingSessionModel}" is not available for this Codex account.`
         )
       }
-      return undefined
+      return { appliedModel: undefined, configOptions: undefined }
     }
 
     // The agent already has the desired model — typically because the framework seeded it via
@@ -1088,8 +1115,7 @@ class AcpRuntime {
     // sending the same value back stalled the first prompt of a new session for ~2 min (issue #277).
     if (selection.alreadyCurrent) {
       log.info('session model already current', this.diagnosticContext())
-      this.appliedSessionModels.set(session.sessionId, selection.value)
-      return configOptions ?? null
+      return { appliedModel: selection.value, configOptions: configOptions ?? null }
     }
 
     try {
@@ -1102,11 +1128,13 @@ class AcpRuntime {
         }
       )) as { configOptions?: SessionConfigOption[] | null }
       log.info('session model applied', this.diagnosticContext())
-      this.appliedSessionModels.set(session.sessionId, selection.value)
       // The model switch rebuilds the agent's options (effort rungs are model-dependent). The
       // caller commits the fresh set to latestSessionConfigOptions once the session is registered,
       // so the map never holds an entry for a session that failed to attach.
-      return response?.configOptions ?? configOptions
+      return {
+        appliedModel: selection.value,
+        configOptions: response?.configOptions ?? configOptions
+      }
     } catch (error) {
       const message = error instanceof Error ? error.message : String(error)
       log.warn('set session model failed', {
@@ -1119,7 +1147,7 @@ class AcpRuntime {
           `The selected model "${this.pendingSessionModel}" could not be applied: ${message}`
         )
       }
-      return undefined
+      return { appliedModel: undefined, configOptions: undefined }
     }
   }
 
@@ -1558,20 +1586,14 @@ class AcpRuntime {
       }
       primaryIdentityReservation = reservationResult.reservation
 
-      // For Codex / OpenCode the specialist identity rides every prompt turn as a prefix.
-      // Store it now; sendPromptTurn reads it when composing each prompt.
-      if (specialistPrefix) {
-        this.sessionSpecialistPrefixes.set(session.sessionId, specialistPrefix)
-      }
-      if (request.specialistId)
-        this.sessionSpecialistIds.set(session.sessionId, request.specialistId)
-
       log.info('createSession: configurePermissionProfile', this.diagnosticContext())
+      let permissionState: SessionPermissionProfileState
       try {
-        await this.configurePermissionProfile(
+        permissionState = await this.configurePermissionProfile(
           session.sessionId,
           session,
-          normalizePermissionProfile(request.permissionProfile)
+          normalizePermissionProfile(request.permissionProfile),
+          false
         )
       } catch (error) {
         safeLogError('createSession: configurePermissionProfile failed', {
@@ -1582,18 +1604,37 @@ class AcpRuntime {
       }
 
       log.info('createSession: applySessionModel', this.diagnosticContext())
-      const updatedConfigOptions = await this.applySessionModel(session)
-      await this.applySessionEffort(session, updatedConfigOptions)
+      const modelApplication = await this.applySessionModel(session)
+      await this.applySessionEffort(session, modelApplication.configOptions)
 
       this.assertPrimarySessionIdentityReservation(primaryIdentityReservation)
+      // Commit app-owned projections only after the reservation is known to still own this id. No
+      // await separates this assertion from publication, so an invalidated startup cannot overwrite a
+      // same-id successor's Specialist, Permission, or model state.
+      if (specialistPrefix) {
+        this.sessionSpecialistPrefixes.set(session.sessionId, specialistPrefix)
+      } else {
+        this.sessionSpecialistPrefixes.delete(session.sessionId)
+      }
+      if (request.specialistId) {
+        this.sessionSpecialistIds.set(session.sessionId, request.specialistId)
+      } else {
+        this.sessionSpecialistIds.delete(session.sessionId)
+      }
+      this.permissionProfiles.set(session.sessionId, permissionState)
+      this.commitAppliedSessionModel(
+        session.sessionId,
+        session.sessionId,
+        modelApplication.appliedModel
+      )
       this.sessions.set(session.sessionId, session)
       provisionalSession = undefined
       this.releasePrimarySessionIdentityReservation(primaryIdentityReservation)
       primaryIdentityReservation = undefined
       // Committed only now: the options map must never hold an entry for a session that failed to
       // attach (a throw between apply and registration would orphan it).
-      if (updatedConfigOptions) {
-        this.latestSessionConfigOptions.set(session.sessionId, updatedConfigOptions)
+      if (modelApplication.configOptions) {
+        this.latestSessionConfigOptions.set(session.sessionId, modelApplication.configOptions)
       }
       this.sessionCwds.set(session.sessionId, sessionCwd)
       this.sessionMcpServerNames.set(session.sessionId, this.mcpServerNamesOf(mcpServers))
@@ -1623,6 +1664,14 @@ class AcpRuntime {
         ...(this.backendId ? { backendId: this.backendId } : {})
       }
     } catch (error) {
+      let startupError = error
+      if (primaryIdentityReservation) {
+        try {
+          this.assertPrimarySessionIdentityReservation(primaryIdentityReservation)
+        } catch (supersededError) {
+          startupError = supersededError
+        }
+      }
       if (provisionalSession) {
         this.disposeSessionAfterFailure(
           provisionalSession,
@@ -1633,10 +1682,10 @@ class AcpRuntime {
         this.releaseNotebookSessionCapabilities(provisionalNotebookSessionId)
       }
       safeLogError('createSession: failed', {
-        ...diagnosticErrorFields(error),
+        ...diagnosticErrorFields(startupError),
         ...this.diagnosticContext()
       })
-      throw error
+      throw startupError
     } finally {
       if (primaryIdentityReservation) {
         this.releasePrimarySessionIdentityReservation(primaryIdentityReservation)
@@ -1647,18 +1696,30 @@ class AcpRuntime {
   // Registers a freshly-built agent session under an app-facing id (used when adopting a conversation
   // onto a replaced agent after a provider switch). Remaps the agent's own id so later updates and
   // permission requests relabel into the same conversation.
+  private commitAppliedSessionModel(
+    appSessionId: string,
+    providerSessionId: string,
+    appliedModel: string | undefined
+  ): void {
+    if (appliedModel) {
+      this.appliedSessionModels.set(providerSessionId, appliedModel)
+      this.appliedSessionModels.set(appSessionId, appliedModel)
+      return
+    }
+    this.appliedSessionModels.delete(providerSessionId)
+    this.appliedSessionModels.delete(appSessionId)
+  }
+
   private adoptSession(
     appSessionId: string,
     session: ActiveSession,
     cwd: string,
     projectName: string,
-    mcpServerNames: string[]
+    mcpServerNames: string[],
+    appliedModel: string | undefined
   ): void {
     this.sessions.set(appSessionId, session)
-
-    const appliedModel = this.appliedSessionModels.get(session.sessionId)
-    if (appliedModel) this.appliedSessionModels.set(appSessionId, appliedModel)
-    else this.appliedSessionModels.delete(appSessionId)
+    this.commitAppliedSessionModel(appSessionId, session.sessionId, appliedModel)
 
     if (session.sessionId !== appSessionId) {
       this.agentToAppSessionId.set(session.sessionId, appSessionId)
@@ -1684,7 +1745,6 @@ class AcpRuntime {
   private async resumeSessionOperation(
     request: AcpResumeSessionRequest
   ): Promise<AcpCreateSessionResponse> {
-    if (request.specialistId) this.sessionSpecialistIds.set(request.sessionId, request.specialistId)
     const sessionCwd = resolve(request.cwd || this.snapshotOwner.cwd || this.options.defaultCwd)
     const projectName = this.normalizeProjectName(request.projectName)
 
@@ -1692,6 +1752,9 @@ class AcpRuntime {
     const attachedSession = this.sessions.get(request.sessionId)
 
     if (attachedSession) {
+      if (request.specialistId) {
+        this.sessionSpecialistIds.set(request.sessionId, request.specialistId)
+      }
       await this.configurePermissionProfile(
         request.sessionId,
         attachedSession,
@@ -2184,7 +2247,10 @@ class AcpRuntime {
           mcpServers,
           ...this.buildSessionMetaArg(
             [],
-            await this.resolveCurrentSpecialistSkills(request.sessionId)
+            await this.resolveCurrentSpecialistSkills(
+              request.sessionId,
+              request.specialistId ?? this.sessionSpecialistIds.get(request.sessionId)
+            )
           )
         })
       } catch (error) {
@@ -2227,20 +2293,30 @@ class AcpRuntime {
         throw reservationResult.collision
       }
 
-      await this.configurePermissionProfile(
+      const permissionState = await this.configurePermissionProfile(
         request.sessionId,
         session,
-        normalizePermissionProfile(request.permissionProfile)
+        normalizePermissionProfile(request.permissionProfile),
+        false
       )
 
-      const updatedConfigOptions = await this.applySessionModel(session)
-      await this.applySessionEffort(session, updatedConfigOptions)
+      const modelApplication = await this.applySessionModel(session)
+      await this.applySessionEffort(session, modelApplication.configOptions)
 
       this.assertPrimarySessionIdentityReservation(primaryIdentityReservation)
+      if (request.specialistId) {
+        this.sessionSpecialistIds.set(request.sessionId, request.specialistId)
+      }
+      this.permissionProfiles.set(request.sessionId, permissionState)
+      this.commitAppliedSessionModel(
+        request.sessionId,
+        session.sessionId,
+        modelApplication.appliedModel
+      )
       this.sessions.set(request.sessionId, session)
       this.releasePrimarySessionIdentityReservation(primaryIdentityReservation)
-      if (updatedConfigOptions) {
-        this.latestSessionConfigOptions.set(request.sessionId, updatedConfigOptions)
+      if (modelApplication.configOptions) {
+        this.latestSessionConfigOptions.set(request.sessionId, modelApplication.configOptions)
       }
       this.sessionCwds.set(request.sessionId, sessionCwd)
       this.sessionMcpServerNames.set(request.sessionId, this.mcpServerNamesOf(mcpServers))
@@ -2268,11 +2344,17 @@ class AcpRuntime {
         ...(this.backendId ? { backendId: this.backendId } : {})
       }
     } catch (error) {
+      let startupError = error
+      try {
+        this.assertPrimarySessionIdentityReservation(primaryIdentityReservation)
+      } catch (supersededError) {
+        startupError = supersededError
+      }
       session?.dispose()
       if (notebookCapabilityProvisional) {
         this.releaseNotebookSessionCapabilities(request.sessionId)
       }
-      throw error
+      throw startupError
     }
   }
 
@@ -2303,7 +2385,12 @@ class AcpRuntime {
       // A freshly adopted session carries no prior _meta, so the specialist identity append (Claude)
       // must be re-resolved from the live binding. Without this, a context reset or specialist switch
       // would silently drop the session's specialist identity.
-      const specialistAppend = await this.resolveCurrentSpecialistIdentityAppend(request.sessionId)
+      const stagedSpecialistId =
+        request.specialistId ?? this.sessionSpecialistIds.get(request.sessionId)
+      const specialistAppend = await this.resolveCurrentSpecialistIdentityAppend(
+        request.sessionId,
+        stagedSpecialistId
+      )
       const handoffAppend = this.pendingClaudeCodeHandoffAppends.get(request.sessionId)
       adopted = await connection.agent
         .buildSession({
@@ -2311,7 +2398,7 @@ class AcpRuntime {
           mcpServers,
           ...this.buildSessionMetaArg(
             [specialistAppend, handoffAppend].filter((append): append is string => Boolean(append)),
-            await this.resolveCurrentSpecialistSkills(request.sessionId)
+            await this.resolveCurrentSpecialistSkills(request.sessionId, stagedSpecialistId)
           )
         })
         .start()
@@ -2327,28 +2414,34 @@ class AcpRuntime {
       }
       primaryIdentityReservation = reservationResult.reservation
 
-      await this.configurePermissionProfile(
+      const permissionState = await this.configurePermissionProfile(
         request.sessionId,
         adopted,
-        normalizePermissionProfile(request.permissionProfile)
+        normalizePermissionProfile(request.permissionProfile),
+        false
       )
 
-      const updatedConfigOptions = await this.applySessionModel(adopted)
-      await this.applySessionEffort(adopted, updatedConfigOptions)
+      const modelApplication = await this.applySessionModel(adopted)
+      await this.applySessionEffort(adopted, modelApplication.configOptions)
       this.assertPrimarySessionIdentityReservation(primaryIdentityReservation)
+      if (request.specialistId) {
+        this.sessionSpecialistIds.set(request.sessionId, request.specialistId)
+      }
+      this.permissionProfiles.set(request.sessionId, permissionState)
       this.adoptSession(
         request.sessionId,
         adopted,
         sessionCwd,
         projectName,
-        this.mcpServerNamesOf(mcpServers)
+        this.mcpServerNamesOf(mcpServers),
+        modelApplication.appliedModel
       )
       this.pendingClaudeCodeHandoffAppends.delete(request.sessionId)
       this.releasePrimarySessionIdentityReservation(primaryIdentityReservation)
       // Keyed by the agent session id, matching the live-effort lookup over this.sessions values:
       // an adopted session's agent id differs from the app id it is registered under.
-      if (updatedConfigOptions) {
-        this.latestSessionConfigOptions.set(adopted.sessionId, updatedConfigOptions)
+      if (modelApplication.configOptions) {
+        this.latestSessionConfigOptions.set(adopted.sessionId, modelApplication.configOptions)
       }
       this.emitState()
       notebookCapabilityProvisional = false
@@ -2361,11 +2454,17 @@ class AcpRuntime {
         contextReset: true
       }
     } catch (error) {
+      let startupError = error
+      try {
+        this.assertPrimarySessionIdentityReservation(primaryIdentityReservation)
+      } catch (supersededError) {
+        startupError = supersededError
+      }
       adopted?.dispose()
       if (notebookCapabilityProvisional) {
         this.releaseNotebookSessionCapabilities(request.sessionId)
       }
-      throw error
+      throw startupError
     }
   }
 
@@ -2404,17 +2503,18 @@ class AcpRuntime {
 
   // Tears down every local session route and closes the underlying agent process.
   async disconnect(emitClosedStatus = true): Promise<AcpStateSnapshot> {
-    this.nextConnectionGeneration()
+    const teardownGeneration = this.nextConnectionGeneration()
+    const reconnectBarrierGeneration = this.reconnectBarrierGeneration
     this.invalidatePendingSessionStartups()
     this.connectInFlight = undefined
 
     try {
-      return await this.disconnectCurrent(emitClosedStatus)
+      return await this.disconnectCurrent(emitClosedStatus, teardownGeneration)
     } finally {
       try {
         await this.closeMcpHttpHost()
       } finally {
-        this.completePendingReconnectTeardown()
+        this.completePendingReconnectTeardown(reconnectBarrierGeneration)
       }
     }
   }
@@ -2553,6 +2653,7 @@ class AcpRuntime {
   // Tears down the connection for a deferred provider/skills reconnect, always releasing the
   // reconnect barrier — even if the disconnect rejects — and never leaking an unhandled rejection.
   private async disconnectForDeferredReconnect(): Promise<void> {
+    const reconnectBarrierGeneration = this.reconnectBarrierGeneration
     try {
       await this.disconnect()
     } catch (error) {
@@ -2573,7 +2674,9 @@ class AcpRuntime {
         safeLogError('emitState after failed deferred disconnect failed', errorLogFields(emitError))
       }
     } finally {
-      this.resolveReconnectBarrier()
+      // Tests and embedders may replace disconnect(), and a newer provider intent can arrive while
+      // this one is settling. Complete only the barrier generation this teardown was started for.
+      this.completePendingReconnectTeardown(reconnectBarrierGeneration)
     }
   }
 
@@ -2587,7 +2690,6 @@ class AcpRuntime {
     } catch (error) {
       safeLogError('retired runtime disconnect failed', errorLogFields(error))
     } finally {
-      this.resolveReconnectBarrier()
       try {
         this.callbacks.onRetired?.()
       } catch (error) {
@@ -2636,6 +2738,7 @@ class AcpRuntime {
 
   // Creates the reconnect barrier promise if one is not already pending.
   private armReconnectBarrier(): void {
+    this.reconnectBarrierGeneration += 1
     if (!this.reconnectBarrier) {
       this.reconnectBarrier = new Promise<void>((resolve) => {
         this.reconnectBarrierResolve = resolve
@@ -2651,69 +2754,110 @@ class AcpRuntime {
     resolve?.()
   }
 
-  private completePendingReconnectTeardown(): void {
+  private completePendingReconnectTeardown(expectedBarrierGeneration?: number): void {
+    if (
+      expectedBarrierGeneration !== undefined &&
+      expectedBarrierGeneration !== this.reconnectBarrierGeneration
+    ) {
+      return
+    }
     this.pendingProviderReconnect = false
     this.pendingSkillsReload = false
     this.resolveReconnectBarrier()
   }
 
-  private async disconnectCurrent(emitClosedStatus = true): Promise<AcpStateSnapshot> {
-    try {
-      for (const timer of this.cancelTimers.values()) this.clearTimer(timer)
-      this.cancelTimers.clear()
-      for (const controller of this.skillSelectorAbortControllers.values()) controller.abort()
-      this.skillSelectorAbortControllers.clear()
-      this.permissionContext.dispose()
-      this.clearReviewerSessionState()
-      this.promptInFlightSessionIds.clear()
-      this.contextCompactionInFlightSessionIds.clear()
-      // Context usage belongs to this live agent-context generation. Invalidate it before teardown,
-      // including when a later session.dispose throws. A reconnect may resume the native context or
-      // replay history into a fresh one; only that generation's own usage_update can repopulate it.
-      this.contextUsageTracker.clear()
-      this.contextUsageUpdatedPromptTurnsBySession.clear()
-      this.appliedSessionModels.clear()
-
-      this.releaseAllNotebookSessionCapabilities()
-
-      for (const session of this.sessions.values()) {
-        session.dispose()
+  private async disconnectCurrent(
+    emitClosedStatus = true,
+    teardownGeneration = this.connectionGeneration
+  ): Promise<AcpStateSnapshot> {
+    let teardownFailed = false
+    let teardownFailure: unknown
+    const recordFailure = (stage: string, error: unknown): void => {
+      if (!teardownFailed) {
+        teardownFailed = true
+        teardownFailure = error
+        return
       }
-
-      this.sessions.clear()
-      this.sessionCwds.clear()
-      this.sessionInlineImageBytes.clear()
-      this.currentPromptTurnBySession.clear()
-      this.currentPromptIdentityBySession.clear()
-      this.claudeTurnCountsBySession.clear()
-      this.latestSessionConfigOptions.clear()
-      this.sessionMcpServerNames.clear()
-      this.codexSkillActivity.clear()
-      this.cancelledPromptTurnsBySession.clear()
-      this.sessionProjectNames.clear()
-      this.permissionProfiles.clear()
-      this.artifactSessionIds.clear()
-      this.notebookRoutingIds.clear()
-      this.skillImportRoutingIds.clear()
-      this.skillImportTurnTokens.clear()
-      this.mcpHttpHost?.clear()
-      this.agentToAppSessionId.clear()
-      this.currentSessionId = undefined
-      this.supportsSessionClose = false
-      this.supportsSessionDelete = false
-      this.supportsSessionResume = false
-      this.connection?.close()
-      this.connection = undefined
-
-      await this.killAgentProcessTree()
-    } finally {
-      await this.releaseResponsesBridgeLease()
+      safeLogError('secondary ACP disconnect cleanup failed', {
+        ...diagnosticErrorFields(error),
+        stage
+      })
+    }
+    const runCleanup = (stage: string, cleanup: () => void): void => {
+      try {
+        cleanup()
+      } catch (error) {
+        recordFailure(stage, error)
+      }
     }
 
-    if (emitClosedStatus) {
-      this.setStatus('closed')
+    for (const timer of this.cancelTimers.values()) this.clearTimer(timer)
+    this.cancelTimers.clear()
+    for (const controller of this.skillSelectorAbortControllers.values()) controller.abort()
+    this.skillSelectorAbortControllers.clear()
+    runCleanup('permission-context', () => this.permissionContext.dispose())
+    runCleanup('reviewer-state', () => this.clearReviewerSessionState())
+    this.promptInFlightSessionIds.clear()
+    this.contextCompactionInFlightSessionIds.clear()
+    // Context usage belongs to this live agent-context generation. Invalidate it before teardown,
+    // including when a later session.dispose throws. A reconnect may resume the native context or
+    // replay history into a fresh one; only that generation's own usage_update can repopulate it.
+    this.contextUsageTracker.clear()
+    this.contextUsageUpdatedPromptTurnsBySession.clear()
+    this.appliedSessionModels.clear()
+
+    this.releaseAllNotebookSessionCapabilities()
+
+    for (const session of this.sessions.values()) {
+      runCleanup('primary-session', () => session.dispose())
     }
 
+    this.sessions.clear()
+    this.sessionCwds.clear()
+    this.sessionInlineImageBytes.clear()
+    this.currentPromptTurnBySession.clear()
+    this.currentPromptIdentityBySession.clear()
+    this.claudeTurnCountsBySession.clear()
+    this.latestSessionConfigOptions.clear()
+    this.sessionMcpServerNames.clear()
+    this.codexSkillActivity.clear()
+    this.cancelledPromptTurnsBySession.clear()
+    this.sessionProjectNames.clear()
+    this.permissionProfiles.clear()
+    this.artifactSessionIds.clear()
+    this.notebookRoutingIds.clear()
+    this.skillImportRoutingIds.clear()
+    this.skillImportTurnTokens.clear()
+    runCleanup('MCP HTTP routes', () => this.mcpHttpHost?.clear())
+    this.agentToAppSessionId.clear()
+    this.currentSessionId = undefined
+    this.supportsSessionClose = false
+    this.supportsSessionDelete = false
+    this.supportsSessionResume = false
+
+    // Detach generation-owned resources before the first teardown await. A newer connect may publish
+    // replacements while process/lease cleanup is still settling; the old teardown must never close or
+    // release those replacements when it resumes.
+    const connection = this.connection
+    this.connection = undefined
+    runCleanup('connection', () => connection?.close())
+    const agentProcess = this.agentProcess
+    if (this.agentProcess === agentProcess) this.agentProcess = undefined
+    const responsesBridgeLease = this.responsesBridgeLease
+    if (this.responsesBridgeLease === responsesBridgeLease) this.responsesBridgeLease = undefined
+
+    try {
+      await this.killAgentProcessTree(agentProcess)
+    } catch (error) {
+      recordFailure('agent-process', error)
+    }
+    await this.releaseResponsesBridgeLease(responsesBridgeLease)
+
+    if (emitClosedStatus && teardownGeneration === this.connectionGeneration) {
+      runCleanup('closed-status', () => this.setStatus('closed'))
+    }
+
+    if (teardownFailed) throw teardownFailure
     return this.getSnapshot()
   }
 
@@ -2736,9 +2880,10 @@ class AcpRuntime {
   // Awaitable tree teardown for the async disconnect path: marks the exit expected, then hands the
   // whole process tree to terminateProcessTree so a Windows grandchild (taskkill /T) is reaped before
   // the caller (before-quit shutdownBackends) proceeds to app.exit.
-  private async killAgentProcessTree(): Promise<void> {
-    const child = this.agentProcess
-    this.agentProcess = undefined
+  private async killAgentProcessTree(
+    child: ChildProcessWithoutNullStreams | undefined = this.agentProcess
+  ): Promise<void> {
+    if (this.agentProcess === child) this.agentProcess = undefined
     if (!child) return
     this.expectedProcessExits.add(child)
     const result = await terminateProcessTree(child, undefined, log)
@@ -2838,9 +2983,10 @@ class AcpRuntime {
     this.responsesBridgeLease = backend.responsesBridgeLease
   }
 
-  private async releaseResponsesBridgeLease(): Promise<void> {
-    const lease = this.responsesBridgeLease
-    this.responsesBridgeLease = undefined
+  private async releaseResponsesBridgeLease(
+    lease: ResolvedAgentBackend['responsesBridgeLease'] = this.responsesBridgeLease
+  ): Promise<void> {
+    if (this.responsesBridgeLease === lease) this.responsesBridgeLease = undefined
     try {
       await lease?.release()
     } catch (error) {
@@ -4658,9 +4804,9 @@ class AcpRuntime {
   }
 
   private async resolveCurrentSpecialistSkills(
-    sessionId: string
+    sessionId: string,
+    specialistId = this.sessionSpecialistIds.get(sessionId)
   ): Promise<EffectiveSpecialistSkills | undefined> {
-    const specialistId = this.sessionSpecialistIds.get(sessionId)
     if (!specialistId || !this.options.resolveSpecialistSkills) return undefined
     try {
       return await this.options.resolveSpecialistSkills(specialistId)
@@ -4673,9 +4819,9 @@ class AcpRuntime {
   // meaningful for Claude (append mode); returns undefined for Codex/OpenCode (prefix mode) or when
   // no specialist is bound. Used by adoptFreshSession so a context reset re-bakes the identity.
   private async resolveCurrentSpecialistIdentityAppend(
-    sessionId: string
+    sessionId: string,
+    specialistId = this.sessionSpecialistIds.get(sessionId)
   ): Promise<string | undefined> {
-    const specialistId = this.sessionSpecialistIds.get(sessionId)
     if (!specialistId || !this.options.resolveSpecialistIdentity) return undefined
     try {
       const identity = await this.options.resolveSpecialistIdentity(specialistId, this.framework.id)
@@ -5753,7 +5899,9 @@ class AcpRuntime {
       this.sessionFrameworks.delete(sessionId)
     }
     this.reviewerSessionDirectories.clear()
+    this.reviewerSessionOwners.clear()
     this.reviewerSessionIds.clear()
+    this.reviewerRejectedToolCalls.clear()
   }
 
   private removeReviewerDirectory(reviewerCwd: string): void {
@@ -5868,7 +6016,7 @@ class AcpRuntime {
 
         // No await separates the pending -> active transition: protocol routing always sees exactly
         // one identity state. Bridge authority is granted only after the active reviewer route exists.
-        this.activateReviewerSessionIdentity(identityReservation)
+        this.activateReviewerSessionIdentity(identityReservation, session, reviewerCwd)
         identityActivated = true
         this.responsesBridgeLease?.registerReviewerSession(session.sessionId)
         this.reviewerSessionDirectories.set(session.sessionId, reviewerCwd)
@@ -5877,8 +6025,21 @@ class AcpRuntime {
 
         return { session, promptPrefix: setup.promptPrefix }
       } catch (error) {
+        let startupError = error
+        if (!identityActivated) {
+          try {
+            this.assertReviewerSessionIdentityReservation(identityReservation)
+          } catch (supersededError) {
+            startupError = supersededError
+          }
+        }
         this.releaseReviewerSessionIdentityReservation(identityReservation)
-        if (identityActivated && this.reviewerSessionIds.delete(session.sessionId)) {
+        const activeOwner = this.reviewerSessionOwners.get(session.sessionId)
+        if (identityActivated && activeOwner?.session === session) {
+          this.reviewerSessionOwners.delete(session.sessionId)
+          this.reviewerSessionOwnersBySession.delete(session)
+          this.reviewerSessionIds.delete(session.sessionId)
+          this.reviewerRejectedToolCalls.delete(session.sessionId)
           try {
             this.responsesBridgeLease?.unregisterReviewerSession(session.sessionId)
           } catch (cleanupError) {
@@ -5889,7 +6050,7 @@ class AcpRuntime {
           }
         }
         this.disposeSessionAfterFailure(session, 'reviewer startup session disposal failed')
-        throw error
+        throw startupError
       }
     } catch (error) {
       this.removeReviewerDirectory(reviewerCwd)
@@ -5925,17 +6086,36 @@ class AcpRuntime {
     return { reservation }
   }
 
-  private activateReviewerSessionIdentity(reservation: ReviewerSessionIdentityReservation): void {
+  private activateReviewerSessionIdentity(
+    reservation: ReviewerSessionIdentityReservation,
+    session: ActiveSession,
+    cwd: string
+  ): void {
+    this.assertReviewerSessionIdentityReservation(reservation)
+
+    this.pendingReviewerSessionIds.delete(reservation.sessionId)
+    this.pendingSessionStartupBlockers.delete(reservation.token)
+    const owner = {
+      cwd,
+      session,
+      sessionId: reservation.sessionId,
+      token: reservation.token
+    } satisfies ReviewerSessionOwner
+    this.reviewerSessionOwners.set(reservation.sessionId, owner)
+    this.reviewerSessionOwnersBySession.set(session, owner)
+    this.reviewerRejectedToolCalls.delete(reservation.sessionId)
+    this.reviewerSessionIds.add(reservation.sessionId)
+  }
+
+  private assertReviewerSessionIdentityReservation(
+    reservation: ReviewerSessionIdentityReservation
+  ): void {
     if (
       reservation.generation !== this.sessionStartupGeneration ||
       this.pendingReviewerSessionIds.get(reservation.sessionId) !== reservation.token
     ) {
       throw new Error('ACP session startup was superseded.')
     }
-
-    this.pendingReviewerSessionIds.delete(reservation.sessionId)
-    this.pendingSessionStartupBlockers.delete(reservation.token)
-    this.reviewerSessionIds.add(reservation.sessionId)
   }
 
   private releaseReviewerSessionIdentityReservation(
@@ -6091,19 +6271,29 @@ class AcpRuntime {
       }
     }
 
-    const rejectedToolCalls = this.reviewerRejectedToolCalls.get(session.sessionId) ?? 0
-    this.reviewerSessionIds.delete(session.sessionId)
-    const reviewerBridgeScoped = runCleanup('bridge', () =>
-      this.unregisterReviewerBridgeSession(session.sessionId)
-    )
-    this.sessionMcpServerNames.delete(session.sessionId)
-    runCleanup('permission-correlations', () =>
-      this.permissionContext.clearCorrelationsForSession(session.sessionId)
-    )
-    this.sessionFrameworks.delete(session.sessionId)
-    this.reviewerRejectedToolCalls.delete(session.sessionId)
-    const reviewerCwd = this.reviewerSessionDirectories.get(session.sessionId)
-    this.reviewerSessionDirectories.delete(session.sessionId)
+    const owner = this.reviewerSessionOwnersBySession.get(session)
+    this.reviewerSessionOwnersBySession.delete(session)
+    const ownsActiveIdentity =
+      owner !== undefined && this.reviewerSessionOwners.get(owner.sessionId)?.token === owner.token
+    const rejectedToolCalls = ownsActiveIdentity
+      ? (this.reviewerRejectedToolCalls.get(session.sessionId) ?? 0)
+      : 0
+    let reviewerBridgeScoped: boolean | undefined
+    if (ownsActiveIdentity) {
+      this.reviewerSessionOwners.delete(session.sessionId)
+      this.reviewerSessionIds.delete(session.sessionId)
+      reviewerBridgeScoped = runCleanup('bridge', () =>
+        this.unregisterReviewerBridgeSession(session.sessionId)
+      )
+      this.sessionMcpServerNames.delete(session.sessionId)
+      runCleanup('permission-correlations', () =>
+        this.permissionContext.clearCorrelationsForSession(session.sessionId)
+      )
+      this.sessionFrameworks.delete(session.sessionId)
+      this.reviewerRejectedToolCalls.delete(session.sessionId)
+      this.reviewerSessionDirectories.delete(session.sessionId)
+    }
+    const reviewerCwd = owner?.cwd
 
     let disposeFailed = false
     let disposeFailure: unknown
@@ -6115,7 +6305,9 @@ class AcpRuntime {
     }
 
     if (reviewerCwd) this.removeReviewerDirectory(reviewerCwd)
-    runCleanup('reconnect-retirement', () => this.maybeApplyPendingProviderReconnect())
+    if (ownsActiveIdentity) {
+      runCleanup('reconnect-retirement', () => this.maybeApplyPendingProviderReconnect())
+    }
 
     // Session disposal is the primary lifecycle failure. Every authority/resource cleanup above still
     // runs, and any secondary failure is reported without replacing the error the caller must handle.
