@@ -30,6 +30,7 @@ import type {
   AcpResumeSessionRequest,
   AcpRevokePermissionGrantRequest,
   AcpContextUsage,
+  AcpTurnTokenUsage,
   AcpSetPermissionProfileRequest,
   AcpStateSnapshot
 } from '../../shared/acp'
@@ -543,10 +544,6 @@ class AcpRuntime {
   // Forced skill state belongs to this runtime generation. It is passed explicitly into backend
   // provisioning so concurrent old/new generations cannot overwrite a SettingsService singleton.
   private readonly turnForcedSkillIds = new Set<string>()
-  private readonly claudeTurnCountsBySession = new Map<
-    string,
-    { promptTurn: number; count: number }
-  >()
   // The newest user-owned request is retained while a completion handoff may replace the agent
   // session. A Claude continuation reuses this trusted task/provenance context without asking the
   // renderer to manufacture a second user message.
@@ -2948,7 +2945,6 @@ class AcpRuntime {
       entry.aggregate.setPermissionProfile(undefined)
     }
     this.promptContentOwner.clear()
-    this.claudeTurnCountsBySession.clear()
     this.codexSkillActivity.clear()
     runCleanup('MCP HTTP routes', () => this.sessionCapabilities.clearHttpRoutes())
     this.sessionRegistry.select(undefined)
@@ -3319,7 +3315,6 @@ class AcpRuntime {
     const promptEventIdentity = promptInteraction.promptMessageId
       ? { promptMessageId: promptInteraction.promptMessageId }
       : {}
-    this.claudeTurnCountsBySession.delete(request.sessionId)
     try {
       this.callbacks.onPromptStarted?.(request.sessionId, skillImportTurnToken, promptAttemptId)
     } catch (error) {
@@ -3338,6 +3333,35 @@ class AcpRuntime {
     let revokeReferencedUploadGrant: (() => void) | undefined
     let contextUsageCheckpoint: ReturnType<ContextUsageTracker['checkpointSession']> | undefined
     let contextUsageEstimateCommitted = false
+    let observedPromptStop:
+      | {
+          response: PromptResponse
+          turnUsage?: AcpTurnTokenUsage
+          modelTurnCount?: number
+        }
+      | undefined
+    const publishObservedPromptStop = (): boolean => {
+      if (!observedPromptStop) return false
+      const terminal = this.sessionInteractions.settle(promptInteraction, {
+        ...(observedPromptStop.turnUsage ? { turnUsage: observedPromptStop.turnUsage } : {}),
+        ...(observedPromptStop.modelTurnCount === undefined
+          ? {}
+          : { modelTurnCount: observedPromptStop.modelTurnCount })
+      })
+      if (!terminal) return false
+      this.pushEvent({
+        kind: 'stop',
+        level: 'info',
+        sessionId: request.sessionId,
+        ...promptEventIdentity,
+        timestamp: terminal.timestamp,
+        title: 'Prompt stopped',
+        text: observedPromptStop.response.stopReason,
+        turnUsage: terminal.turnUsage,
+        raw: observedPromptStop.response
+      })
+      return true
+    }
 
     try {
       // Create a fresh run context before prompting so MCP writes can be attributed to this turn.
@@ -3362,23 +3386,19 @@ class AcpRuntime {
         })
       }
       const finishCancelledBeforePrompt = async (): Promise<PromptResponse> => {
+        const response: PromptResponse = { stopReason: 'cancelled' }
+        observedPromptStop = { response }
+        if (!this.sessionInteractions.captureTerminal(promptInteraction, 'cancelled')) {
+          return response
+        }
         emitUserMessage()
         await this.emitArtifactRunEvent(request.sessionId, artifactRun)
         artifactEmitted = true
-        const response: PromptResponse = { stopReason: 'cancelled' }
         log.info('prompt stopped', {
           sessionId: request.sessionId,
           stopReason: response.stopReason
         })
-        this.pushEvent({
-          kind: 'stop',
-          level: 'info',
-          sessionId: request.sessionId,
-          ...promptEventIdentity,
-          title: 'Prompt stopped',
-          text: response.stopReason,
-          raw: response
-        })
+        publishObservedPromptStop()
         return response
       }
       if (
@@ -3554,6 +3574,27 @@ class AcpRuntime {
         }
 
         if (message.kind === 'stop') {
+          const codexTurnCount = message.response._meta?.[ACP_MODEL_TURN_COUNT_META_KEY]
+          const reportedTurnCount =
+            promptFramework === 'codex' &&
+            Number.isSafeInteger(codexTurnCount) &&
+            (codexTurnCount as number) > 0
+              ? (codexTurnCount as number)
+              : undefined
+          observedPromptStop = {
+            response: message.response,
+            turnUsage:
+              promptFramework === 'codex'
+                ? (toCodexTurnTokenUsage(message.response._meta?.[ACP_TURN_TOKEN_USAGE_META_KEY]) ??
+                  toCodexTurnTokenUsage(message.response.usage))
+                : toAcpTurnTokenUsage(message.response.usage),
+            ...(reportedTurnCount === undefined ? {} : { modelTurnCount: reportedTurnCount })
+          }
+          // Freeze provider-terminal time before artifact work and provider-specific usage fetching.
+          // The outcome remains authoritative through close/reset while usage facts are finalized.
+          if (!this.sessionInteractions.captureTerminal(promptInteraction, 'stop')) {
+            return message.response
+          }
           contextUsageEstimateCommitted = true
           this.recordCodexPromptResponseContextUsage(
             request.sessionId,
@@ -3589,39 +3630,13 @@ class AcpRuntime {
                   )
                 )
               : undefined
-          // Codex ACP exposes only the latest request in PromptResponse.usage. Prefer the managed
-          // adapter's app-owned whole-turn total, but retain the standard usage as a compatibility
-          // fallback so a bridge response never loses token accounting entirely when metadata is absent.
-          const reportedTurnUsage =
-            promptFramework === 'codex'
-              ? (toCodexTurnTokenUsage(message.response._meta?.[ACP_TURN_TOKEN_USAGE_META_KEY]) ??
-                toCodexTurnTokenUsage(message.response.usage))
-              : (opencodeTurnUsage ?? toAcpTurnTokenUsage(message.response.usage))
-          const claudeTurnCount = this.claudeTurnCountsBySession.get(request.sessionId)
-          const codexTurnCount = message.response._meta?.[ACP_MODEL_TURN_COUNT_META_KEY]
-          const reportedTurnCount =
-            promptFramework === 'claude-code' && claudeTurnCount?.promptTurn === promptTurn
-              ? claudeTurnCount.count
-              : promptFramework === 'codex' &&
-                  Number.isSafeInteger(codexTurnCount) &&
-                  (codexTurnCount as number) > 0
-                ? (codexTurnCount as number)
-                : undefined
-          const turnUsage =
-            reportedTurnUsage && reportedTurnCount !== undefined
-              ? { ...reportedTurnUsage, turnCount: reportedTurnCount }
-              : reportedTurnUsage
-          this.pushEvent({
-            kind: 'stop',
-            level: 'info',
-            sessionId: request.sessionId,
-            ...promptEventIdentity,
-            title: 'Prompt stopped',
-            text: message.stopReason,
-            turnUsage,
-            raw: message.response
-          })
-          if (this.shouldAutoCompactContext(request.sessionId)) {
+          if (opencodeTurnUsage) observedPromptStop.turnUsage = opencodeTurnUsage
+          publishObservedPromptStop()
+          if (
+            this.sessionInteractions.current(request.sessionId) === promptInteraction &&
+            this.activeSessionFor(request.sessionId) === activeSession &&
+            this.shouldAutoCompactContext(request.sessionId)
+          ) {
             try {
               await this.performNativeContextCompaction(
                 activeSession,
@@ -3645,25 +3660,24 @@ class AcpRuntime {
         this.handleSessionUpdate(message.notification, request.sessionId)
       }
     } catch (error) {
-      if (this.sessionInteractions.current(request.sessionId) !== promptInteraction) {
-        // Connection teardown releases every interaction before the provider rejection reaches this
-        // catch. Preserve the existing terminal failure event for an interrupted visible prompt, but
-        // skip all turn-owned state rollback; reset/replacement stays silent and cannot target its
-        // successor's prompt identity.
-        if (this.snapshotOwner.status === 'closed') {
-          log.error('prompt failed', { sessionId: request.sessionId, ...errorLogFields(error) })
-          this.pushEvent({
-            kind: 'error',
-            level: 'error',
-            providerError: isProviderPromptError(error),
+      if (observedPromptStop) {
+        // Provider stop/cancellation already won the outcome race. App-side finalization failure,
+        // reset, or connection teardown cannot rewrite it as a prompt failure.
+        if (publishObservedPromptStop()) {
+          log.warn('prompt terminal finalization failed', {
             sessionId: request.sessionId,
-            ...promptEventIdentity,
-            title: ACP_PROMPT_FAILED_EVENT_TITLE,
-            text: describePromptError(error, { model: this.pendingSessionModel })
+            ...errorLogFields(error)
           })
         }
         throw error
       }
+      if (this.sessionInteractions.current(request.sessionId) !== promptInteraction) {
+        // Reset/replacement is silent. Unexpected connection teardown settles and publishes every
+        // visible prompt in handleConnectionClosed before releasing its interaction scope.
+        throw error
+      }
+      // A fresh provider failure captures its terminal outcome before rollback work can add latency.
+      if (!this.sessionInteractions.captureTerminal(promptInteraction, 'error')) throw error
       if (
         contextUsageCheckpoint &&
         !contextUsageEstimateCommitted &&
@@ -3705,6 +3719,8 @@ class AcpRuntime {
         isMediaOverflowError(acpErrorKind(error))
           ? 'context-overflow'
           : undefined
+      const terminal = this.sessionInteractions.settle(promptInteraction, {})
+      if (!terminal) throw error
       this.pushEvent({
         kind: 'error',
         level: 'error',
@@ -3715,6 +3731,7 @@ class AcpRuntime {
         providerError: isProviderPromptError(error),
         sessionId: request.sessionId,
         ...promptEventIdentity,
+        timestamp: terminal.timestamp,
         title: ACP_PROMPT_FAILED_EVENT_TITLE,
         text
       })
@@ -3751,7 +3768,6 @@ class AcpRuntime {
         this.sessionInteractions.current(request.sessionId) === promptInteraction
       if (ownsInteraction) {
         this.permissionContext.clearCorrelationsForSession(request.sessionId)
-        this.claudeTurnCountsBySession.delete(request.sessionId)
         if (this.contextUsageUpdatedPromptTurnsBySession.get(request.sessionId) === promptTurn) {
           this.contextUsageUpdatedPromptTurnsBySession.delete(request.sessionId)
         }
@@ -3874,7 +3890,6 @@ class AcpRuntime {
     this.handoffPromptRequests.delete(request.sessionId)
     this.handoffUserTasks.delete(request.sessionId)
     this.pendingClaudeCodeHandoffAppends.delete(request.sessionId)
-    this.claudeTurnCountsBySession.delete(request.sessionId)
     this.contextUsageTracker.deleteSession(request.sessionId)
     this.contextUsageUpdatedPromptTurnsBySession.delete(request.sessionId)
 
@@ -4124,16 +4139,7 @@ class AcpRuntime {
     const appSessionId = this.sessionRegistry.resolveAppSessionId(params.sessionId)
     const promptInteraction = this.currentPromptInteraction(appSessionId)
     if (!promptInteraction) return
-    const promptTurn = promptInteraction.sequence
-
-    const current = this.claudeTurnCountsBySession.get(appSessionId)
-    const count =
-      current?.promptTurn === promptTurn
-        ? current.count + (message.num_turns as number)
-        : (message.num_turns as number)
-    if (!Number.isSafeInteger(count)) return
-
-    this.claudeTurnCountsBySession.set(appSessionId, { promptTurn, count })
+    this.sessionInteractions.observeModelTurns(promptInteraction, message.num_turns as number)
   }
 
   // Looks up the workspace root bound to a session for filesystem operations.
@@ -4862,6 +4868,7 @@ class AcpRuntime {
   // Clears local state after the protocol connection closes unexpectedly.
   private handleConnectionClosed(): void {
     const teardownGeneration = this.connectionGeneration
+    const interruptedPrompts = this.sessionInteractions.settleActivePrompts()
     this.invalidatePendingSessionStartups()
     const orphanedProcess = this.agentProcess
     if (orphanedProcess) {
@@ -4879,7 +4886,6 @@ class AcpRuntime {
     this.handoffPromptRequests.clear()
     this.handoffUserTasks.clear()
     this.pendingClaudeCodeHandoffAppends.clear()
-    this.claudeTurnCountsBySession.clear()
     this.codexSkillActivity.clear()
     this.contextUsageTracker.clear()
     this.contextUsageUpdatedPromptTurnsBySession.clear()
@@ -4900,6 +4906,22 @@ class AcpRuntime {
     try {
       this.setStatus('closed')
     } finally {
+      for (const { scope, terminal } of interruptedPrompts) {
+        try {
+          this.pushEvent({
+            kind: 'error',
+            level: 'error',
+            providerError: false,
+            sessionId: scope.sessionId,
+            ...(scope.promptMessageId ? { promptMessageId: scope.promptMessageId } : {}),
+            timestamp: terminal.timestamp,
+            title: ACP_PROMPT_FAILED_EVENT_TITLE,
+            text: 'ACP connection closed'
+          })
+        } catch (error) {
+          safeLogError('connection-close prompt event failed', errorLogFields(error))
+        }
+      }
       // An unexpected close satisfies any pending reconnect, but retirement remains terminal. Re-run
       // its evaluator now and again when outstanding operation/activity leases drain.
       this.maybeApplyPendingProviderReconnect()

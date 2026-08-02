@@ -11602,6 +11602,148 @@ describe('ACP runtime session management', () => {
     }
   )
 
+  it('publishes a prompt terminal event exactly once when its callback throws', async () => {
+    const process = new FakeAgentProcess()
+    startFakeAgent(process, ['s1'])
+    const runtime = new AcpRuntime({
+      appVersion: '0.1.0',
+      defaultCwd: '/workspace',
+      spawnAgent: () => asAgentProcess(process),
+      callbacks: {
+        onEvent: (event) => {
+          if (event.kind === 'stop') throw new Error('stop callback failed')
+        }
+      }
+    })
+
+    await runtime.createSession({ cwd: '/workspace' })
+    await expect(runtime.sendPrompt({ sessionId: 's1', text: 'hi' })).rejects.toThrow(
+      'stop callback failed'
+    )
+
+    expect(
+      runtime
+        .getSnapshot()
+        .events.filter((event) => event.kind === 'stop' || event.kind === 'error')
+        .map((event) => event.kind)
+    ).toEqual(['stop'])
+  })
+
+  it.each(['connection close', 'context reset'] as const)(
+    'keeps an observed OpenCode stop authoritative through %s during usage collection',
+    async (disruption) => {
+      const process = new FakeAgentProcess()
+      const replacementStarted = createDeferred()
+      const releaseReplacement = createDeferred<PromptResponse>()
+      let runtime!: AcpRuntime
+      const fakeAgent = startFakeAgent(process, ['s1', 's2'], {
+        onPrompt: ({ text }) => {
+          if (!text.includes('replacement prompt')) return undefined
+          replacementStarted.resolve()
+          return releaseReplacement.promise
+        }
+      })
+      const finalUsageStarted = createDeferred()
+      const releaseFinalUsage = createDeferred()
+      let usageFetchCount = 0
+      const opencodeUsageFetch = vi.fn(async () => {
+        usageFetchCount += 1
+        if (usageFetchCount === 2) {
+          finalUsageStarted.resolve()
+          await releaseFinalUsage.promise
+        }
+        return new Response(JSON.stringify([]), {
+          headers: { 'content-type': 'application/json' }
+        })
+      })
+      const framework = { ...opencodeFramework, spawn: () => asAgentProcess(process) }
+      const now = vi.spyOn(Date, 'now').mockReturnValue(1000)
+      try {
+        runtime = new AcpRuntime({
+          appVersion: '0.1.0',
+          defaultCwd: '/workspace',
+          resolveBackend: () => ({
+            framework,
+            executablePath: '/bin/opencode',
+            env: {},
+            opencodeUsageApi: {
+              baseUrl: 'http://127.0.0.1:4242',
+              authorization: 'Basic test'
+            }
+          }),
+          framework,
+          opencodeUsageFetch
+        })
+
+        await runtime.createSession({ cwd: '/workspace' })
+        now.mockReturnValue(1234)
+        const prompt = runtime.sendPrompt({
+          sessionId: 's1',
+          text: 'hi',
+          suppressUserMessage: true,
+          provenanceContext: { promptMessageId: 'terminal-race-prompt' }
+        })
+        await finalUsageStarted.promise
+
+        if (disruption === 'connection close') {
+          process.stdout.end()
+          await vi.waitFor(() => expect(runtime.getSnapshot().status).toBe('closed'))
+        } else {
+          const reset = runtime.resetSessionContext({ sessionId: 's1', cwd: '/workspace' })
+          await vi.waitFor(() => expect(fakeAgent.newSessions).toHaveLength(2))
+          await reset
+        }
+
+        const replacement =
+          disruption === 'context reset'
+            ? runtime.sendPrompt({ sessionId: 's1', text: 'replacement prompt' })
+            : undefined
+        if (replacement) {
+          await vi.waitFor(() =>
+            expect(runtime.getSnapshot().promptInFlightSessionIds).toContain('s1')
+          )
+          handleSessionUpdate(runtime, {
+            sessionId: 's2',
+            update: { sessionUpdate: 'usage_update', used: 95, size: 100 }
+          })
+        }
+
+        now.mockReturnValue(5678)
+        releaseFinalUsage.resolve()
+        await vi.waitFor(() =>
+          expect(
+            runtime
+              .getSnapshot()
+              .events.some(
+                (event) => event.promptMessageId === 'terminal-race-prompt' && event.kind === 'stop'
+              )
+          ).toBe(true)
+        )
+        await prompt
+
+        expect(
+          runtime
+            .getSnapshot()
+            .events.filter(
+              (event) =>
+                event.promptMessageId === 'terminal-race-prompt' &&
+                (event.kind === 'stop' || event.kind === 'error')
+            )
+            .map((event) => ({ kind: event.kind, timestamp: event.timestamp }))
+        ).toEqual([{ kind: 'stop', timestamp: 1234 }])
+
+        if (replacement) {
+          await replacementStarted.promise
+          expect(fakeAgent.prompts.some((sent) => sent.text === '/compact')).toBe(false)
+          releaseReplacement.resolve({ stopReason: 'end_turn' })
+          await replacement
+        }
+      } finally {
+        now.mockRestore()
+      }
+    }
+  )
+
   it('uses the latest Claude model request instead of accumulating the agent turn', async () => {
     const process = new FakeAgentProcess()
     const firstUsageSent = createDeferred()

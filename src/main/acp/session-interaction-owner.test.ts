@@ -18,6 +18,118 @@ const createDeferred = <T>(): {
 }
 
 describe('AcpSessionInteractionOwner', () => {
+  it('keeps model-turn observations on the current prompt generation', () => {
+    const owner = new AcpSessionInteractionOwner()
+    const first = owner.claim({ sessionId: 'session-1', kind: 'prompt' })
+
+    owner.observeModelTurns(first, 2)
+    owner.observeModelTurns(first, 0)
+    owner.observeModelTurns(first, -1)
+    owner.observeModelTurns(first, 1.5)
+    expect(owner.captureTerminal(first, 'stop')).toBe(true)
+    expect(
+      owner.settle(first, {
+        turnUsage: { inputTokens: 1, cacheTokens: 0, outputTokens: 1 }
+      })?.turnUsage?.turnCount
+    ).toBe(2)
+
+    owner.release(first)
+    const replacement = owner.claim({ sessionId: 'session-1', kind: 'prompt' })
+    owner.observeModelTurns(first, 100)
+    owner.observeModelTurns(replacement, 1)
+
+    expect(owner.captureTerminal(replacement, 'stop')).toBe(true)
+    expect(
+      owner.settle(replacement, {
+        turnUsage: { inputTokens: 1, cacheTokens: 0, outputTokens: 1 }
+      })?.turnUsage?.turnCount
+    ).toBe(1)
+    owner.release(replacement)
+  })
+
+  it('captures one immutable terminal timestamp and settles only once', () => {
+    let currentTime = 1234
+    const now = vi.fn(() => currentTime)
+    const owner = new AcpSessionInteractionOwner({ now })
+    const scope = owner.claim({ sessionId: 'session-1', kind: 'prompt' })
+
+    owner.observeModelTurns(scope, 2)
+    owner.observeModelTurns(scope, 3)
+    expect(owner.captureTerminal(scope, 'stop')).toBe(true)
+    currentTime = 5678
+    owner.release(scope)
+    expect(owner.captureTerminal(scope, 'stop')).toBe(true)
+    expect(owner.captureTerminal(scope, 'error')).toBe(false)
+    const terminal = owner.settle(scope, {
+      turnUsage: { inputTokens: 11, cacheTokens: 2, outputTokens: 4 }
+    })
+
+    expect(terminal).toEqual({
+      timestamp: 1234,
+      turnUsage: { inputTokens: 11, cacheTokens: 2, outputTokens: 4, turnCount: 5 }
+    })
+    expect(Object.isFrozen(terminal)).toBe(true)
+    expect(Object.isFrozen(terminal?.turnUsage)).toBe(true)
+    expect(
+      owner.settle(scope, {
+        turnUsage: { inputTokens: 99, cacheTokens: 0, outputTokens: 0 },
+        modelTurnCount: 99
+      })
+    ).toBeUndefined()
+    expect(owner.captureTerminal(scope, 'stop')).toBe(false)
+    expect(now).toHaveBeenCalledOnce()
+  })
+
+  it('uses an explicit model count only when terminal usage exists', () => {
+    const owner = new AcpSessionInteractionOwner({ now: () => 7 })
+    const withoutUsage = owner.claim({ sessionId: 'session-1', kind: 'prompt' })
+
+    expect(owner.captureTerminal(withoutUsage, 'stop')).toBe(true)
+    expect(owner.settle(withoutUsage, { modelTurnCount: 2 })).toEqual({ timestamp: 7 })
+    owner.release(withoutUsage)
+
+    const withUsage = owner.claim({ sessionId: 'session-1', kind: 'prompt' })
+    expect(owner.captureTerminal(withUsage, 'stop')).toBe(true)
+    expect(
+      owner.settle(withUsage, {
+        turnUsage: { inputTokens: 5, cacheTokens: 1, outputTokens: 2 },
+        modelTurnCount: 4
+      })
+    ).toEqual({
+      timestamp: 7,
+      turnUsage: { inputTokens: 5, cacheTokens: 1, outputTokens: 2, turnCount: 4 }
+    })
+  })
+
+  it('rejects stale terminal settlement', () => {
+    const owner = new AcpSessionInteractionOwner()
+    const superseded = owner.claim({ sessionId: 'session-1', kind: 'prompt' })
+    owner.supersede(superseded)
+    const replacement = owner.claim({ sessionId: 'session-1', kind: 'prompt' })
+
+    expect(owner.settle(superseded, {})).toBeUndefined()
+    owner.release(replacement)
+  })
+
+  it('settles every active prompt once while leaving compaction alone', () => {
+    const owner = new AcpSessionInteractionOwner({ now: () => 9 })
+    const first = owner.claim({ sessionId: 'session-1', kind: 'prompt' })
+    const second = owner.claim({ sessionId: 'session-2', kind: 'prompt' })
+    const compaction = owner.claim({ sessionId: 'session-3', kind: 'compaction' })
+
+    expect(owner.settleActivePrompts()).toEqual([
+      { scope: first, terminal: { timestamp: 9 } },
+      { scope: second, terminal: { timestamp: 9 } }
+    ])
+    expect(owner.settleActivePrompts()).toEqual([])
+    expect(owner.current('session-3')).toBe(compaction)
+
+    owner.supersedeAll()
+    expect(first.signal.aborted).toBe(true)
+    expect(second.signal.aborted).toBe(true)
+    expect(compaction.signal.aborted).toBe(true)
+  })
+
   it('publishes cancellation before notify settles and keeps the interaction active', async () => {
     const owner = new AcpSessionInteractionOwner()
     const scope = owner.claim({ sessionId: 'session-1', kind: 'prompt' })

@@ -1,5 +1,7 @@
 import { randomUUID } from 'node:crypto'
 
+import type { AcpTurnTokenUsage } from '../../shared/acp'
+
 export type AcpSessionInteractionKind = 'prompt' | 'compaction'
 
 export interface AcpPromptSessionInteractionRequest {
@@ -58,12 +60,33 @@ export interface AcpSessionInteractionOwnerOptions {
   readonly cancelTimeoutMs?: number
   readonly setTimer?: (fn: () => void, ms: number) => ReturnType<typeof setTimeout>
   readonly clearTimer?: (handle: ReturnType<typeof setTimeout>) => void
+  readonly now?: () => number
+}
+
+type AcpSessionInteractionTerminalKind = 'stop' | 'cancelled' | 'error'
+
+interface AcpSessionInteractionTerminalInput {
+  readonly turnUsage?: AcpTurnTokenUsage
+  readonly modelTurnCount?: number
+}
+
+interface AcpSessionInteractionTerminalFacts {
+  readonly timestamp: number
+  readonly turnUsage?: Readonly<AcpTurnTokenUsage>
 }
 
 interface ActiveSessionInteraction {
   readonly scope: AcpSessionInteractionScope
   readonly abortController: AbortController
   cancelled: boolean
+  modelTurnCount: number
+}
+
+interface TerminalSettlement {
+  readonly kind: AcpSessionInteractionTerminalKind
+  readonly timestamp: number
+  readonly modelTurnCount: number
+  settled: boolean
 }
 
 interface CancellationAttempt {
@@ -81,15 +104,21 @@ export class AcpSessionInteractionOwner {
   private readonly pendingPromptReservations = new Map<string, ActiveSessionInteraction>()
   private readonly pendingCancellations = new Map<string, CancellationAttempt>()
   private readonly cancellationTimers = new Map<string, CancellationTimer>()
+  private readonly terminalSettlements = new WeakMap<
+    AcpPromptSessionInteractionScope,
+    TerminalSettlement
+  >()
   private readonly cancelTimeoutMs: number
   private readonly setTimer: (fn: () => void, ms: number) => ReturnType<typeof setTimeout>
   private readonly clearTimer: (handle: ReturnType<typeof setTimeout>) => void
+  private readonly now: () => number
   private sequence = 0
 
   constructor(options: AcpSessionInteractionOwnerOptions = {}) {
     this.cancelTimeoutMs = options.cancelTimeoutMs ?? 5_000
     this.setTimer = options.setTimer ?? ((fn, ms) => setTimeout(fn, ms))
     this.clearTimer = options.clearTimer ?? ((handle) => clearTimeout(handle))
+    this.now = options.now ?? Date.now
   }
 
   current(sessionId: string): AcpSessionInteractionScope | undefined {
@@ -105,6 +134,81 @@ export class AcpSessionInteractionOwner {
         })
       )
     )
+  }
+
+  observeModelTurns(scope: AcpPromptSessionInteractionScope, delta: number): void {
+    if (!Number.isSafeInteger(delta) || delta <= 0) return
+    const active = this.activeInteractions.get(scope.sessionId)
+    if (active?.scope !== scope) return
+    const count = active.modelTurnCount + delta
+    if (Number.isSafeInteger(count)) active.modelTurnCount = count
+  }
+
+  // Freezes the provider-terminal observation time before provider-specific usage collection or
+  // artifact publication can add latency. Repeated capture is allowed until one outcome settles.
+  captureTerminal(
+    scope: AcpPromptSessionInteractionScope,
+    kind: AcpSessionInteractionTerminalKind
+  ): boolean {
+    const terminal = this.terminalSettlements.get(scope)
+    if (terminal) return terminal.kind === kind && !terminal.settled
+
+    const active = this.activeInteractions.get(scope.sessionId)
+    if (active?.scope !== scope) return false
+    this.terminalSettlements.set(scope, {
+      kind,
+      timestamp: this.now(),
+      modelTurnCount: active.modelTurnCount,
+      settled: false
+    })
+    return true
+  }
+
+  settle(
+    scope: AcpPromptSessionInteractionScope,
+    input: AcpSessionInteractionTerminalInput
+  ): AcpSessionInteractionTerminalFacts | undefined {
+    const terminal = this.terminalSettlements.get(scope)
+    if (!terminal || terminal.settled) return undefined
+    terminal.settled = true
+
+    const requestedModelTurnCount = input.modelTurnCount ?? terminal.modelTurnCount
+    const modelTurnCount =
+      Number.isSafeInteger(requestedModelTurnCount) && requestedModelTurnCount > 0
+        ? requestedModelTurnCount
+        : undefined
+    const turnUsage = input.turnUsage
+      ? Object.freeze({
+          ...input.turnUsage,
+          ...(modelTurnCount === undefined ? {} : { turnCount: modelTurnCount })
+        })
+      : undefined
+    return Object.freeze({
+      timestamp: terminal.timestamp,
+      ...(turnUsage ? { turnUsage } : {})
+    })
+  }
+
+  // Unexpected protocol closure has no provider response to route through sendPrompt. Settle every
+  // visible prompt here so teardown can publish one owner-timestamped failure per App Session.
+  settleActivePrompts(): ReadonlyArray<{
+    readonly scope: AcpPromptSessionInteractionScope
+    readonly terminal: AcpSessionInteractionTerminalFacts
+  }> {
+    const settled: Array<{
+      scope: AcpPromptSessionInteractionScope
+      terminal: AcpSessionInteractionTerminalFacts
+    }> = []
+    for (const active of this.activeInteractions.values()) {
+      if (active.scope.kind !== 'prompt') continue
+      // A provider stop/cancellation already observed by sendPrompt owns the outcome even if
+      // connection teardown releases its public activity lock before usage finalization completes.
+      if (this.terminalSettlements.has(active.scope)) continue
+      if (!this.captureTerminal(active.scope, 'error')) continue
+      const terminal = this.settle(active.scope, {})
+      if (terminal) settled.push({ scope: active.scope, terminal })
+    }
+    return settled
   }
 
   isCancellationAccepted(scope: AcpSessionInteractionScope): boolean {
@@ -210,7 +314,8 @@ export class AcpSessionInteractionOwner {
     this.pendingPromptReservations.set(request.sessionId, {
       scope,
       abortController,
-      cancelled: false
+      cancelled: false,
+      modelTurnCount: 0
     })
 
     return scope
@@ -252,7 +357,12 @@ export class AcpSessionInteractionOwner {
           }
         : { ...base, kind: request.kind }
     )
-    this.activeInteractions.set(request.sessionId, { scope, abortController, cancelled: false })
+    this.activeInteractions.set(request.sessionId, {
+      scope,
+      abortController,
+      cancelled: false,
+      modelTurnCount: 0
+    })
 
     return scope as ScopeFor<Request>
   }
