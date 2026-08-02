@@ -264,6 +264,15 @@ export type ReviewerSessionDisposition = {
   reviewerBridgeScoped: boolean | undefined
 }
 
+type PrimarySessionIdentityReservation = {
+  token: symbol
+  sessionIds: string[]
+}
+
+type PrimarySessionIdentityReservationResult =
+  | { reservation: PrimarySessionIdentityReservation; collision?: never }
+  | { reservation?: never; collision: Error }
+
 type AcpRuntimeArtifactOptions = {
   // Config root: where the app-owned claude config dir lives (never relocated).
   configRoot: string
@@ -622,6 +631,10 @@ class AcpRuntime {
   // that identity across the async mode switch so a concurrent reviewer cannot claim the same protocol
   // route before either session has authority.
   private readonly pendingReviewerSessionIds = new Set<string>()
+  // A primary startup can know both its stable app id and its provider protocol id before it is ready
+  // for publication. Tokens make multi-id reservations owner-aware so one concurrent startup can never
+  // release another startup's identity.
+  private readonly pendingPrimarySessionIds = new Map<string, symbol>()
   private readonly reviewerSessionDirectories = new Map<string, string>()
   // Per reviewer session: count of tool calls the strict allowlist rejected. Lets the orchestrator
   // distinguish "reviewer never called its tools" from "the gate blocked them" when a review ends
@@ -1454,6 +1467,7 @@ class AcpRuntime {
     request: AcpCreateSessionRequest = {}
   ): Promise<AcpCreateSessionResponse> {
     let provisionalNotebookSessionId: string | undefined
+    let primaryIdentityReservation: PrimarySessionIdentityReservation | undefined
     try {
       log.info('createSession: starting', this.diagnosticContext())
       const sessionCwd = resolve(request.cwd || this.snapshotOwner.cwd || this.options.defaultCwd)
@@ -1509,11 +1523,12 @@ class AcpRuntime {
         })
         .start()
 
-      const pendingReviewerCollision = this.pendingReviewerSessionCollisionError(session.sessionId)
-      if (pendingReviewerCollision) {
+      const reservationResult = this.reservePrimarySessionIds(session.sessionId)
+      if (reservationResult.collision) {
         this.disposeSessionAfterFailure(session, 'primary collision session disposal failed')
-        throw pendingReviewerCollision
+        throw reservationResult.collision
       }
+      primaryIdentityReservation = reservationResult.reservation
 
       // For Codex / OpenCode the specialist identity rides every prompt turn as a prefix.
       // Store it now; sendPromptTurn reads it when composing each prompt.
@@ -1544,6 +1559,8 @@ class AcpRuntime {
       await this.applySessionEffort(session, updatedConfigOptions)
 
       this.sessions.set(session.sessionId, session)
+      this.releasePrimarySessionIdentityReservation(primaryIdentityReservation)
+      primaryIdentityReservation = undefined
       // Committed only now: the options map must never hold an entry for a session that failed to
       // attach (a throw between apply and registration would orphan it).
       if (updatedConfigOptions) {
@@ -1585,6 +1602,10 @@ class AcpRuntime {
         ...this.diagnosticContext()
       })
       throw error
+    } finally {
+      if (primaryIdentityReservation) {
+        this.releasePrimarySessionIdentityReservation(primaryIdentityReservation)
+      }
     }
   }
 
@@ -2039,6 +2060,7 @@ class AcpRuntime {
     // later setup failure must revoke it so an unattached Agent cannot retain host.mcp/compute access.
     let notebookCapabilityProvisional = Boolean(this.notebookOptions)
     let session: ActiveSession | undefined
+    let primaryIdentityReservation: PrimarySessionIdentityReservation | undefined
     try {
       // Resumed sessions already have stable ids, so the artifact session mirrors the runtime session
       // id.
@@ -2085,15 +2107,13 @@ class AcpRuntime {
         ...resumeResponse
       })
 
-      const pendingReviewerCollision = this.pendingReviewerSessionCollisionError(
-        request.sessionId,
-        session.sessionId
-      )
-      if (pendingReviewerCollision) {
+      const reservationResult = this.reservePrimarySessionIds(request.sessionId, session.sessionId)
+      if (reservationResult.collision) {
         this.disposeSessionAfterFailure(session, 'primary collision session disposal failed')
         session = undefined
-        throw pendingReviewerCollision
+        throw reservationResult.collision
       }
+      primaryIdentityReservation = reservationResult.reservation
 
       await this.configurePermissionProfile(
         request.sessionId,
@@ -2105,6 +2125,8 @@ class AcpRuntime {
       await this.applySessionEffort(session, updatedConfigOptions)
 
       this.sessions.set(request.sessionId, session)
+      this.releasePrimarySessionIdentityReservation(primaryIdentityReservation)
+      primaryIdentityReservation = undefined
       if (updatedConfigOptions) {
         this.latestSessionConfigOptions.set(request.sessionId, updatedConfigOptions)
       }
@@ -2139,6 +2161,10 @@ class AcpRuntime {
         this.releaseNotebookSessionCapabilities(request.sessionId)
       }
       throw error
+    } finally {
+      if (primaryIdentityReservation) {
+        this.releasePrimarySessionIdentityReservation(primaryIdentityReservation)
+      }
     }
   }
 
@@ -2157,6 +2183,7 @@ class AcpRuntime {
     // partially-created Agent session.
     let notebookCapabilityProvisional = Boolean(this.notebookOptions)
     let adopted: ActiveSession | undefined
+    let primaryIdentityReservation: PrimarySessionIdentityReservation | undefined
     try {
       const mcpServers = await this.createMcpServers({
         artifactSessionId: request.sessionId,
@@ -2181,15 +2208,13 @@ class AcpRuntime {
         })
         .start()
 
-      const pendingReviewerCollision = this.pendingReviewerSessionCollisionError(
-        request.sessionId,
-        adopted.sessionId
-      )
-      if (pendingReviewerCollision) {
+      const reservationResult = this.reservePrimarySessionIds(request.sessionId, adopted.sessionId)
+      if (reservationResult.collision) {
         this.disposeSessionAfterFailure(adopted, 'primary collision session disposal failed')
         adopted = undefined
-        throw pendingReviewerCollision
+        throw reservationResult.collision
       }
+      primaryIdentityReservation = reservationResult.reservation
 
       await this.configurePermissionProfile(
         request.sessionId,
@@ -2207,6 +2232,8 @@ class AcpRuntime {
         this.mcpServerNamesOf(mcpServers)
       )
       this.pendingClaudeCodeHandoffAppends.delete(request.sessionId)
+      this.releasePrimarySessionIdentityReservation(primaryIdentityReservation)
+      primaryIdentityReservation = undefined
       // Keyed by the agent session id, matching the live-effort lookup over this.sessions values:
       // an adopted session's agent id differs from the app id it is registered under.
       if (updatedConfigOptions) {
@@ -2228,6 +2255,10 @@ class AcpRuntime {
         this.releaseNotebookSessionCapabilities(request.sessionId)
       }
       throw error
+    } finally {
+      if (primaryIdentityReservation) {
+        this.releasePrimarySessionIdentityReservation(primaryIdentityReservation)
+      }
     }
   }
 
@@ -5714,7 +5745,8 @@ class AcpRuntime {
       this.sessions.has(sessionId) ||
       this.agentToAppSessionId.has(sessionId) ||
       this.reviewerSessionIds.has(sessionId) ||
-      this.pendingReviewerSessionIds.has(sessionId)
+      this.pendingReviewerSessionIds.has(sessionId) ||
+      this.pendingPrimarySessionIds.has(sessionId)
     ) {
       return false
     }
@@ -5723,13 +5755,60 @@ class AcpRuntime {
     return true
   }
 
-  private pendingReviewerSessionCollisionError(...sessionIds: string[]): Error | undefined {
-    const collisionId = sessionIds.find((sessionId) =>
+  private reservePrimarySessionIds(
+    ...sessionIds: string[]
+  ): PrimarySessionIdentityReservationResult {
+    const uniqueSessionIds = [...new Set(sessionIds)]
+    const pendingReviewerCollision = uniqueSessionIds.find((sessionId) =>
       this.pendingReviewerSessionIds.has(sessionId)
     )
-    return collisionId
-      ? new Error(`Primary session id collision with pending reviewer: ${collisionId}`)
-      : undefined
+    if (pendingReviewerCollision) {
+      return {
+        collision: new Error(
+          `Primary session id collision with pending reviewer: ${pendingReviewerCollision}`
+        )
+      }
+    }
+
+    const activeReviewerCollision = uniqueSessionIds.find((sessionId) =>
+      this.reviewerSessionIds.has(sessionId)
+    )
+    if (activeReviewerCollision) {
+      return {
+        collision: new Error(
+          `Primary session id collision with reviewer: ${activeReviewerCollision}`
+        )
+      }
+    }
+
+    const primaryCollision = uniqueSessionIds.find(
+      (sessionId) =>
+        this.pendingPrimarySessionIds.has(sessionId) ||
+        this.sessions.has(sessionId) ||
+        this.agentToAppSessionId.has(sessionId)
+    )
+    if (primaryCollision) {
+      return { collision: new Error(`Primary session id collision: ${primaryCollision}`) }
+    }
+
+    const reservation: PrimarySessionIdentityReservation = {
+      token: Symbol('primary-session-identity'),
+      sessionIds: uniqueSessionIds
+    }
+    for (const sessionId of uniqueSessionIds) {
+      this.pendingPrimarySessionIds.set(sessionId, reservation.token)
+    }
+    return { reservation }
+  }
+
+  private releasePrimarySessionIdentityReservation(
+    reservation: PrimarySessionIdentityReservation
+  ): void {
+    for (const sessionId of reservation.sessionIds) {
+      if (this.pendingPrimarySessionIds.get(sessionId) === reservation.token) {
+        this.pendingPrimarySessionIds.delete(sessionId)
+      }
+    }
   }
 
   private disposeSessionAfterFailure(session: ActiveSession, logMessage: string): void {

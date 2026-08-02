@@ -483,6 +483,70 @@ const startPendingReviewerRace = async (
   }
 }
 
+type StartPrimarySession = (runtime: AcpRuntime) => ReturnType<AcpRuntime['createSession']>
+
+const startPendingPrimaryRace = async (
+  sessionIds: string[],
+  startPrimary: StartPrimarySession
+): Promise<{
+  fakeAgent: ReturnType<typeof startFakeAgent>
+  lease: NonNullable<ResolvedAgentBackend['responsesBridgeLease']>
+  runtime: AcpRuntime
+  primary: ReturnType<AcpRuntime['createSession']>
+  reviewer: ReturnType<AcpRuntime['buildReviewerSession']>
+  releasePrimaryMode: Deferred
+  modeRequestCount: () => number
+}> => {
+  const process = new FakeAgentProcess()
+  const primaryModeStarted = createDeferred()
+  const releasePrimaryMode = createDeferred()
+  let modeRequestCount = 0
+  const fakeAgent = startFakeAgent(process, sessionIds, {
+    modes: createModes(['read-only', 'agent', 'agent-full-access'], 'agent'),
+    onSetMode: async () => {
+      modeRequestCount += 1
+      if (modeRequestCount === 1) {
+        primaryModeStarted.resolve()
+        await releasePrimaryMode.promise
+      }
+    }
+  })
+  const { lease } = createBackendLeaseHarness()
+  const runtime = new AcpRuntime({
+    appVersion: '0.1.0',
+    defaultCwd: '/workspace',
+    resolveBackend: () => ({
+      framework: { ...codexFramework, spawn: () => asAgentProcess(process) },
+      executablePath: '/bin/codex-acp',
+      env: {},
+      responsesBridgeLease: lease
+    })
+  })
+  const primary = startPrimary(runtime)
+  await primaryModeStarted.promise
+  const reviewer = runtime.buildReviewerSession({
+    cwd: '/workspace',
+    mcpServers: [
+      {
+        type: 'http',
+        name: 'open-science-reviewer',
+        url: 'http://127.0.0.1:1/mcp',
+        headers: []
+      }
+    ]
+  })
+
+  return {
+    fakeAgent,
+    lease,
+    runtime,
+    primary,
+    reviewer,
+    releasePrimaryMode,
+    modeRequestCount: () => modeRequestCount
+  }
+}
+
 let temporaryRoot: string | undefined
 const temporaryDisconnections: Array<() => Promise<void>> = []
 
@@ -710,6 +774,9 @@ const reviewerSessionIds = (runtime: AcpRuntime): Set<string> =>
 
 const pendingReviewerSessionIds = (runtime: AcpRuntime): Set<string> =>
   (runtime as unknown as { pendingReviewerSessionIds: Set<string> }).pendingReviewerSessionIds
+
+const pendingPrimarySessionIds = (runtime: AcpRuntime): Map<string, symbol> =>
+  (runtime as unknown as { pendingPrimarySessionIds: Map<string, symbol> }).pendingPrimarySessionIds
 
 const permissionContext = (runtime: AcpRuntime): AcpPermissionContext =>
   (runtime as unknown as { permissionContext: AcpPermissionContext }).permissionContext
@@ -6363,6 +6430,196 @@ describe('ACP runtime session management', () => {
     }
   })
 
+  it('reserves a new primary session id while its permission mode is still starting', async () => {
+    const { fakeAgent, lease, runtime, primary, reviewer, releasePrimaryMode, modeRequestCount } =
+      await startPendingPrimaryRace(['shared-session', 'shared-session'], (runtime) =>
+        runtime.createSession({ cwd: '/workspace' })
+      )
+
+    try {
+      await expect(reviewer).rejects.toThrow('Reviewer session id collision: shared-session')
+      expect(modeRequestCount()).toBe(1)
+      expect(lease.registerReviewerSession).not.toHaveBeenCalled()
+      expect([...pendingPrimarySessionIds(runtime).keys()]).toEqual(['shared-session'])
+
+      const duplicateCwd = fakeAgent.newSessions[1]?.cwd
+      expect(duplicateCwd).toMatch(/open-science-reviewer-/)
+      await expect(stat(duplicateCwd!)).rejects.toMatchObject({ code: 'ENOENT' })
+
+      releasePrimaryMode.resolve()
+      const winner = await primary
+      expect(pendingPrimarySessionIds(runtime).size).toBe(0)
+      expect(runtime.getSnapshot()).toMatchObject({
+        sessionIds: ['shared-session'],
+        permissionProfiles: {
+          'shared-session': {
+            selectedProfile: 'ask',
+            effectiveProfile: 'ask',
+            currentModeId: 'read-only'
+          }
+        }
+      })
+      await runtime.sendPrompt({
+        sessionId: winner.sessionId,
+        text: 'primary keeps normal authority'
+      })
+      expect(fakeAgent.prompts).toHaveLength(1)
+      expect(fakeAgent.prompts[0]).toMatchObject({ sessionId: 'shared-session' })
+      expect(fakeAgent.prompts[0]?.text).toContain('primary keeps normal authority')
+    } finally {
+      releasePrimaryMode.resolve()
+      await reviewer.then(
+        ({ session }) => runtime.disposeReviewerSession(session),
+        () => undefined
+      )
+      await primary.then(
+        ({ sessionId }) => runtime.deleteSession({ sessionId }),
+        () => undefined
+      )
+    }
+  })
+
+  it('reserves a resumed primary session id while its permission mode is still starting', async () => {
+    const sessionId = '123e4567-e89b-42d3-a456-426614174000'
+    const { fakeAgent, runtime, primary, reviewer, releasePrimaryMode, modeRequestCount } =
+      await startPendingPrimaryRace([sessionId], (runtime) =>
+        runtime.resumeSession({ sessionId, cwd: '/workspace' })
+      )
+
+    try {
+      await expect(reviewer).rejects.toThrow(
+        'Reviewer session id collision: 123e4567-e89b-42d3-a456-426614174000'
+      )
+      expect(modeRequestCount()).toBe(1)
+      expect([...pendingPrimarySessionIds(runtime).keys()]).toEqual([sessionId])
+
+      const duplicateCwd = fakeAgent.newSessions[0]?.cwd
+      expect(duplicateCwd).toMatch(/open-science-reviewer-/)
+      await expect(stat(duplicateCwd!)).rejects.toMatchObject({ code: 'ENOENT' })
+
+      releasePrimaryMode.resolve()
+      await expect(primary).resolves.toMatchObject({ sessionId })
+      expect(pendingPrimarySessionIds(runtime).size).toBe(0)
+      expect(runtime.getSnapshot().sessionIds).toEqual([sessionId])
+      await runtime.sendPrompt({ sessionId, text: 'resumed primary remains active' })
+      expect(fakeAgent.prompts).toHaveLength(1)
+      expect(fakeAgent.prompts[0]).toMatchObject({ sessionId })
+      expect(fakeAgent.prompts[0]?.text).toContain('resumed primary remains active')
+    } finally {
+      releasePrimaryMode.resolve()
+      await reviewer.then(
+        ({ session }) => runtime.disposeReviewerSession(session),
+        () => undefined
+      )
+      await primary.then(
+        ({ sessionId: resumedSessionId }) => runtime.deleteSession({ sessionId: resumedSessionId }),
+        () => undefined
+      )
+    }
+  })
+
+  it('reserves a fresh adoption app-facing id while its permission mode is still starting', async () => {
+    const { fakeAgent, runtime, primary, reviewer, releasePrimaryMode, modeRequestCount } =
+      await startPendingPrimaryRace(['new-provider-session', 'stable-app-session'], (runtime) =>
+        runtime.resumeSession({
+          sessionId: 'stable-app-session',
+          cwd: '/workspace'
+        })
+      )
+
+    try {
+      await expect(reviewer).rejects.toThrow('Reviewer session id collision: stable-app-session')
+      expect(modeRequestCount()).toBe(1)
+      expect([...pendingPrimarySessionIds(runtime).keys()]).toEqual([
+        'stable-app-session',
+        'new-provider-session'
+      ])
+
+      const duplicateCwd = fakeAgent.newSessions[1]?.cwd
+      expect(duplicateCwd).toMatch(/open-science-reviewer-/)
+      await expect(stat(duplicateCwd!)).rejects.toMatchObject({ code: 'ENOENT' })
+
+      releasePrimaryMode.resolve()
+      await expect(primary).resolves.toMatchObject({
+        sessionId: 'stable-app-session',
+        contextReset: true
+      })
+      expect(pendingPrimarySessionIds(runtime).size).toBe(0)
+      expect(runtime.getSnapshot().sessionIds).toEqual(['stable-app-session'])
+      await runtime.sendPrompt({
+        sessionId: 'stable-app-session',
+        text: 'adopted primary remains active'
+      })
+      expect(fakeAgent.prompts).toHaveLength(1)
+      expect(fakeAgent.prompts[0]).toMatchObject({ sessionId: 'new-provider-session' })
+      expect(fakeAgent.prompts[0]?.text).toContain('adopted primary remains active')
+    } finally {
+      releasePrimaryMode.resolve()
+      await reviewer.then(
+        ({ session }) => runtime.disposeReviewerSession(session),
+        () => undefined
+      )
+      await primary.then(
+        ({ sessionId }) => runtime.deleteSession({ sessionId }),
+        () => undefined
+      )
+    }
+  })
+
+  it('reserves a fresh adoption provider id while its permission mode is still starting', async () => {
+    const { fakeAgent, runtime, primary, reviewer, releasePrimaryMode, modeRequestCount } =
+      await startPendingPrimaryRace(
+        ['reserved-provider-session', 'reserved-provider-session'],
+        (runtime) =>
+          runtime.resumeSession({
+            sessionId: 'stable-app-session',
+            cwd: '/workspace'
+          })
+      )
+
+    try {
+      await expect(reviewer).rejects.toThrow(
+        'Reviewer session id collision: reserved-provider-session'
+      )
+      expect(modeRequestCount()).toBe(1)
+      expect([...pendingPrimarySessionIds(runtime).keys()]).toEqual([
+        'stable-app-session',
+        'reserved-provider-session'
+      ])
+
+      const duplicateCwd = fakeAgent.newSessions[1]?.cwd
+      expect(duplicateCwd).toMatch(/open-science-reviewer-/)
+      await expect(stat(duplicateCwd!)).rejects.toMatchObject({ code: 'ENOENT' })
+
+      releasePrimaryMode.resolve()
+      await expect(primary).resolves.toMatchObject({
+        sessionId: 'stable-app-session',
+        contextReset: true
+      })
+      expect(pendingPrimarySessionIds(runtime).size).toBe(0)
+      expect(runtime.getSnapshot().sessionIds).toEqual(['stable-app-session'])
+      await runtime.sendPrompt({
+        sessionId: 'stable-app-session',
+        text: 'provider-owned primary remains active'
+      })
+      expect(fakeAgent.prompts).toHaveLength(1)
+      expect(fakeAgent.prompts[0]).toMatchObject({
+        sessionId: 'reserved-provider-session'
+      })
+      expect(fakeAgent.prompts[0]?.text).toContain('provider-owned primary remains active')
+    } finally {
+      releasePrimaryMode.resolve()
+      await reviewer.then(
+        ({ session }) => runtime.disposeReviewerSession(session),
+        () => undefined
+      )
+      await primary.then(
+        ({ sessionId }) => runtime.deleteSession({ sessionId }),
+        () => undefined
+      )
+    }
+  })
+
   it.each([
     {
       operation: 'new primary session',
@@ -7154,6 +7411,7 @@ describe('ACP runtime session management', () => {
 
     expect(releaseSessionCapabilities).toHaveBeenCalledOnce()
     expect(releaseSessionCapabilities).toHaveBeenCalledWith('restored-session')
+    expect(pendingPrimarySessionIds(runtime).size).toBe(0)
   })
 
   it('releases the notebook RPC capability when fresh-session adoption fails', async () => {
@@ -7190,6 +7448,7 @@ describe('ACP runtime session management', () => {
 
     expect(releaseSessionCapabilities).toHaveBeenCalledOnce()
     expect(releaseSessionCapabilities).toHaveBeenCalledWith('switched-session')
+    expect(pendingPrimarySessionIds(runtime).size).toBe(0)
   })
 
   it('replaces a failed resume capability without revoking the adopted session capability', async () => {
@@ -12671,6 +12930,7 @@ describe('ACP runtime — session-creation and spawn diagnostics', () => {
     ).mockRejectedValueOnce(boom)
 
     await expect(runtime.createSession({ cwd: '/workspace' })).rejects.toBe(boom)
+    expect(pendingPrimarySessionIds(runtime).size).toBe(0)
 
     const call = errorLogSpy.mock.calls.find(
       ([message]) => message === 'createSession: configurePermissionProfile failed'
