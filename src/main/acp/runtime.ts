@@ -618,6 +618,10 @@ class AcpRuntime {
   // handled by a strict allowlist: only the scope-bounded reviewer MCP is approved; every built-in tool is
   // rejected. Each session also gets an empty temporary cwd so ungated read-only tools see no project data.
   private readonly reviewerSessionIds = new Set<string>()
+  // Session/new returns an agent-owned id before the reviewer permission baseline has finished. Reserve
+  // that identity across the async mode switch so a concurrent reviewer cannot claim the same protocol
+  // route before either session has authority.
+  private readonly pendingReviewerSessionIds = new Set<string>()
   private readonly reviewerSessionDirectories = new Map<string, string>()
   // Per reviewer session: count of tool calls the strict allowlist rejected. Lets the orchestrator
   // distinguish "reviewer never called its tools" from "the gate blocked them" when a review ends
@@ -1505,6 +1509,12 @@ class AcpRuntime {
         })
         .start()
 
+      const pendingReviewerCollision = this.pendingReviewerSessionCollisionError(session.sessionId)
+      if (pendingReviewerCollision) {
+        this.disposeSessionAfterFailure(session, 'primary collision session disposal failed')
+        throw pendingReviewerCollision
+      }
+
       // For Codex / OpenCode the specialist identity rides every prompt turn as a prefix.
       // Store it now; sendPromptTurn reads it when composing each prompt.
       if (specialistPrefix) {
@@ -2075,6 +2085,16 @@ class AcpRuntime {
         ...resumeResponse
       })
 
+      const pendingReviewerCollision = this.pendingReviewerSessionCollisionError(
+        request.sessionId,
+        session.sessionId
+      )
+      if (pendingReviewerCollision) {
+        this.disposeSessionAfterFailure(session, 'primary collision session disposal failed')
+        session = undefined
+        throw pendingReviewerCollision
+      }
+
       await this.configurePermissionProfile(
         request.sessionId,
         session,
@@ -2160,6 +2180,16 @@ class AcpRuntime {
           )
         })
         .start()
+
+      const pendingReviewerCollision = this.pendingReviewerSessionCollisionError(
+        request.sessionId,
+        adopted.sessionId
+      )
+      if (pendingReviewerCollision) {
+        this.disposeSessionAfterFailure(adopted, 'primary collision session disposal failed')
+        adopted = undefined
+        throw pendingReviewerCollision
+      }
 
       await this.configurePermissionProfile(
         request.sessionId,
@@ -5641,16 +5671,9 @@ class AcpRuntime {
       // Reviewer ids share protocol routing with primary/adopted sessions. An agent-provided
       // collision must fail before the reviewer receives permission authority, bridge scope, or a
       // prompt; otherwise its strict reviewer identity could overwrite state owned by a conversation.
-      if (
-        this.sessions.has(session.sessionId) ||
-        this.agentToAppSessionId.has(session.sessionId) ||
-        this.reviewerSessionIds.has(session.sessionId)
-      ) {
+      if (!this.reserveReviewerSessionId(session.sessionId)) {
         const collision = new Error(`Reviewer session id collision: ${session.sessionId}`)
-        this.disposeReviewerSessionAfterFailure(
-          session,
-          'reviewer collision session disposal failed'
-        )
+        this.disposeSessionAfterFailure(session, 'reviewer collision session disposal failed')
         throw collision
       }
 
@@ -5664,25 +5687,52 @@ class AcpRuntime {
             modeId: permission.modeId
           })
         }
+
+        this.responsesBridgeLease?.registerReviewerSession(session.sessionId)
+        this.reviewerSessionDirectories.set(session.sessionId, reviewerCwd)
+        this.sessionMcpServerNames.set(session.sessionId, mcpServerNames)
+        this.sessionFrameworks.set(session.sessionId, this.framework.id)
+        // No await separates release from activation: protocol routing always sees exactly one of the
+        // pending or active identities, and reviewer permission authority appears only on success.
+        this.pendingReviewerSessionIds.delete(session.sessionId)
+        this.reviewerSessionIds.add(session.sessionId)
+
+        return { session, promptPrefix: setup.promptPrefix }
       } catch (error) {
-        this.disposeReviewerSessionAfterFailure(session, 'reviewer startup session disposal failed')
+        this.pendingReviewerSessionIds.delete(session.sessionId)
+        this.disposeSessionAfterFailure(session, 'reviewer startup session disposal failed')
         throw error
       }
-
-      this.reviewerSessionIds.add(session.sessionId)
-      this.responsesBridgeLease?.registerReviewerSession(session.sessionId)
-      this.reviewerSessionDirectories.set(session.sessionId, reviewerCwd)
-      this.sessionMcpServerNames.set(session.sessionId, mcpServerNames)
-      this.sessionFrameworks.set(session.sessionId, this.framework.id)
-
-      return { session, promptPrefix: setup.promptPrefix }
     } catch (error) {
       this.removeReviewerDirectory(reviewerCwd)
       throw error
     }
   }
 
-  private disposeReviewerSessionAfterFailure(session: ActiveSession, logMessage: string): void {
+  private reserveReviewerSessionId(sessionId: string): boolean {
+    if (
+      this.sessions.has(sessionId) ||
+      this.agentToAppSessionId.has(sessionId) ||
+      this.reviewerSessionIds.has(sessionId) ||
+      this.pendingReviewerSessionIds.has(sessionId)
+    ) {
+      return false
+    }
+
+    this.pendingReviewerSessionIds.add(sessionId)
+    return true
+  }
+
+  private pendingReviewerSessionCollisionError(...sessionIds: string[]): Error | undefined {
+    const collisionId = sessionIds.find((sessionId) =>
+      this.pendingReviewerSessionIds.has(sessionId)
+    )
+    return collisionId
+      ? new Error(`Primary session id collision with pending reviewer: ${collisionId}`)
+      : undefined
+  }
+
+  private disposeSessionAfterFailure(session: ActiveSession, logMessage: string): void {
     try {
       session.dispose()
     } catch (cleanupError) {

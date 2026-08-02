@@ -131,11 +131,13 @@ const createBackendLeaseHarness = (): {
 }
 
 // Creates a manually controlled promise for ordering async protocol steps.
-const createDeferred = <Value = void>(): {
+type Deferred<Value = void> = {
   promise: Promise<Value>
   resolve: (value: Value) => void
   reject: (error: unknown) => void
-} => {
+}
+
+const createDeferred = <Value = void>(): Deferred<Value> => {
   let resolve!: (value: Value) => void
   let reject!: (error: unknown) => void
   const promise = new Promise<Value>((promiseResolve, promiseReject) => {
@@ -420,6 +422,67 @@ const createModes = (
   availableModes: ids.map((id) => ({ id, name: id }))
 })
 
+const startPendingReviewerRace = async (
+  sessionIds: string[]
+): Promise<{
+  fakeAgent: ReturnType<typeof startFakeAgent>
+  lease: NonNullable<ResolvedAgentBackend['responsesBridgeLease']>
+  runtime: AcpRuntime
+  reviewer: ReturnType<AcpRuntime['buildReviewerSession']>
+  request: Parameters<AcpRuntime['buildReviewerSession']>[0]
+  releaseReviewerMode: Deferred
+  modeRequestCount: () => number
+}> => {
+  const process = new FakeAgentProcess()
+  const reviewerModeStarted = createDeferred()
+  const releaseReviewerMode = createDeferred()
+  let modeRequestCount = 0
+  const fakeAgent = startFakeAgent(process, sessionIds, {
+    modes: createModes(['read-only', 'agent', 'agent-full-access'], 'agent'),
+    onSetMode: async () => {
+      modeRequestCount += 1
+      if (modeRequestCount === 1) {
+        reviewerModeStarted.resolve()
+        await releaseReviewerMode.promise
+      }
+    }
+  })
+  const { lease } = createBackendLeaseHarness()
+  const runtime = new AcpRuntime({
+    appVersion: '0.1.0',
+    defaultCwd: '/workspace',
+    resolveBackend: () => ({
+      framework: { ...codexFramework, spawn: () => asAgentProcess(process) },
+      executablePath: '/bin/codex-acp',
+      env: {},
+      responsesBridgeLease: lease
+    })
+  })
+  const request = {
+    cwd: '/workspace',
+    mcpServers: [
+      {
+        type: 'http' as const,
+        name: 'open-science-reviewer',
+        url: 'http://127.0.0.1:1/mcp',
+        headers: []
+      }
+    ]
+  }
+  const reviewer = runtime.buildReviewerSession(request)
+  await reviewerModeStarted.promise
+
+  return {
+    fakeAgent,
+    lease,
+    runtime,
+    reviewer,
+    request,
+    releaseReviewerMode,
+    modeRequestCount: () => modeRequestCount
+  }
+}
+
 let temporaryRoot: string | undefined
 const temporaryDisconnections: Array<() => Promise<void>> = []
 
@@ -644,6 +707,9 @@ const handleSessionUpdate = (runtime: AcpRuntime, notification: SessionNotificat
 
 const reviewerSessionIds = (runtime: AcpRuntime): Set<string> =>
   (runtime as unknown as { reviewerSessionIds: Set<string> }).reviewerSessionIds
+
+const pendingReviewerSessionIds = (runtime: AcpRuntime): Set<string> =>
+  (runtime as unknown as { pendingReviewerSessionIds: Set<string> }).pendingReviewerSessionIds
 
 const permissionContext = (runtime: AcpRuntime): AcpPermissionContext =>
   (runtime as unknown as { permissionContext: AcpPermissionContext }).permissionContext
@@ -6255,6 +6321,123 @@ describe('ACP runtime session management', () => {
     expect(spawnAgent).not.toHaveBeenCalled()
   })
 
+  it('reserves a reviewer session id while its permission mode is still starting', async () => {
+    const {
+      fakeAgent,
+      lease,
+      runtime,
+      reviewer: first,
+      request,
+      releaseReviewerMode,
+      modeRequestCount
+    } = await startPendingReviewerRace(['shared-reviewer', 'shared-reviewer'])
+    const second = runtime.buildReviewerSession(request)
+
+    try {
+      await expect(second).rejects.toThrow('Reviewer session id collision: shared-reviewer')
+      expect(modeRequestCount()).toBe(1)
+      expect(lease.registerReviewerSession).not.toHaveBeenCalled()
+
+      const duplicateCwd = fakeAgent.newSessions[1]?.cwd
+      expect(duplicateCwd).toMatch(/open-science-reviewer-/)
+      await expect(stat(duplicateCwd!)).rejects.toMatchObject({ code: 'ENOENT' })
+
+      releaseReviewerMode.resolve()
+      const winner = await first
+      expect(lease.registerReviewerSession).toHaveBeenCalledOnce()
+      expect(lease.registerReviewerSession).toHaveBeenCalledWith('shared-reviewer')
+      await winner.session.prompt([{ type: 'text', text: 'winner keeps reviewer authority' }])
+      expect(fakeAgent.prompts).toEqual([
+        { sessionId: 'shared-reviewer', text: 'winner keeps reviewer authority' }
+      ])
+    } finally {
+      releaseReviewerMode.resolve()
+      await first.then(
+        ({ session }) => runtime.disposeReviewerSession(session),
+        () => undefined
+      )
+      await second.then(
+        ({ session }) => runtime.disposeReviewerSession(session),
+        () => undefined
+      )
+    }
+  })
+
+  it.each([
+    {
+      operation: 'new primary session',
+      agentSessionIds: ['shared-session', 'shared-session'],
+      collisionId: 'shared-session',
+      disposalFailure: 'primary collision dispose failed',
+      start: (runtime: AcpRuntime) => runtime.createSession({ cwd: '/workspace' })
+    },
+    {
+      operation: 'fresh adoption app-facing id',
+      agentSessionIds: ['stable-app-session', 'new-provider-session'],
+      collisionId: 'stable-app-session',
+      start: (runtime: AcpRuntime) =>
+        runtime.resumeSession({ sessionId: 'stable-app-session', cwd: '/workspace' })
+    },
+    {
+      operation: 'fresh adoption provider id',
+      agentSessionIds: ['reserved-provider-session', 'reserved-provider-session'],
+      collisionId: 'reserved-provider-session',
+      disposalFailure: 'adoption collision dispose failed',
+      start: (runtime: AcpRuntime) =>
+        runtime.resumeSession({ sessionId: 'stable-app-session', cwd: '/workspace' })
+    },
+    {
+      operation: 'resumed primary session',
+      agentSessionIds: ['123e4567-e89b-42d3-a456-426614174000'],
+      collisionId: '123e4567-e89b-42d3-a456-426614174000',
+      start: (runtime: AcpRuntime) =>
+        runtime.resumeSession({
+          sessionId: '123e4567-e89b-42d3-a456-426614174000',
+          cwd: '/workspace'
+        })
+    }
+  ])(
+    'rejects a pending reviewer identity collision from a $operation',
+    async ({ agentSessionIds, collisionId, disposalFailure, start }) => {
+      errorLogSpy.mockClear()
+      const { runtime, reviewer, releaseReviewerMode, modeRequestCount } =
+        await startPendingReviewerRace(agentSessionIds)
+      const disposeSpy = vi.spyOn(acp.ActiveSession.prototype, 'dispose')
+      if (disposalFailure) {
+        disposeSpy.mockImplementationOnce(() => {
+          throw new Error(disposalFailure)
+        })
+      }
+      const primary = start(runtime)
+
+      try {
+        await expect(primary).rejects.toThrow(
+          'Primary session id collision with pending reviewer: ' + collisionId
+        )
+        expect(disposeSpy).toHaveBeenCalledOnce()
+        expect(modeRequestCount()).toBe(1)
+        expect(runtime.getSnapshot().sessionIds).toEqual([])
+        if (disposalFailure) {
+          expect(errorLogSpy).toHaveBeenCalledWith('primary collision session disposal failed', {
+            errorCategory: 'error',
+            sessionId: collisionId
+          })
+        }
+      } finally {
+        disposeSpy.mockRestore()
+        await primary.then(
+          ({ sessionId }) => runtime.deleteSession({ sessionId }),
+          () => undefined
+        )
+        releaseReviewerMode.resolve()
+        await reviewer.then(
+          ({ session }) => runtime.disposeReviewerSession(session),
+          () => undefined
+        )
+      }
+    }
+  )
+
   it('rejects a reviewer session id that collides with a primary session before authority setup', async () => {
     const process = new FakeAgentProcess()
     const fakeAgent = startFakeAgent(process, ['shared-session', 'shared-session'])
@@ -6434,6 +6617,7 @@ describe('ACP runtime session management', () => {
     expect(reviewerCwd).toMatch(/open-science-reviewer-/)
     await expect(stat(reviewerCwd)).rejects.toMatchObject({ code: 'ENOENT' })
     expect(reviewerSessionIds(runtime).size).toBe(0)
+    expect(pendingReviewerSessionIds(runtime).size).toBe(0)
     expect(mcpServerNamesMap(runtime).has('reviewer-session-1')).toBe(false)
   })
 
