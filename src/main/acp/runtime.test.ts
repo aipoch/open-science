@@ -180,6 +180,8 @@ const startFakeAgent = (
     supportsClose?: boolean
     rejectModeChange?: boolean
     newSessionError?: unknown
+    onNewSession?: (context: { sessionId: string; index: number }) => Promise<void> | void
+    onResume?: (sessionId: string) => Promise<void> | void
     onSetMode?: (context: { sessionId: string; modeId: string }) => Promise<void> | void
     onClose?: (sessionId: string) => Promise<void> | void
     onPrompt?: (context: {
@@ -246,7 +248,7 @@ const startFakeAgent = (
       providerConfigurations.push(ctx.params)
       return {}
     })
-    .onRequest(acp.methods.agent.session.new, (ctx) => {
+    .onRequest(acp.methods.agent.session.new, async (ctx) => {
       if (options.newSessionError !== undefined) throw options.newSessionError
 
       newSessions.push({
@@ -255,8 +257,11 @@ const startFakeAgent = (
         ...(ctx.params._meta === undefined ? {} : { _meta: ctx.params._meta })
       })
       // Return deterministic ids so the tests can assert exact routing.
+      const index = sessionIndex
       const sessionId = sessionIds[sessionIndex]
       sessionIndex += 1
+
+      await options.onNewSession?.({ sessionId, index })
 
       return {
         sessionId,
@@ -264,7 +269,7 @@ const startFakeAgent = (
         ...(options.configOptions ? { configOptions: options.configOptions } : {})
       }
     })
-    .onRequest(acp.methods.agent.session.resume, (ctx) => {
+    .onRequest(acp.methods.agent.session.resume, async (ctx) => {
       if (options.resumeNotFound) {
         throw acp.RequestError.resourceNotFound(ctx.params.sessionId)
       }
@@ -294,6 +299,8 @@ const startFakeAgent = (
         mcpServers: ctx.params.mcpServers ?? [],
         ...(ctx.params._meta === undefined ? {} : { _meta: ctx.params._meta })
       })
+
+      await options.onResume?.(ctx.params.sessionId)
 
       return { modes: options.modes }
     })
@@ -6430,6 +6437,153 @@ describe('ACP runtime session management', () => {
     }
   })
 
+  it('activates reviewer routing before granting responses bridge authority', async () => {
+    const process = new FakeAgentProcess()
+    startFakeAgent(process, ['reviewer-session-1'], {
+      modes: createModes(['read-only', 'agent', 'agent-full-access'], 'read-only')
+    })
+    const routingObservedByBridge: Array<{ active: boolean; pending: boolean }> = []
+    const { lease } = createBackendLeaseHarness()
+    lease.registerReviewerSession = vi.fn((sessionId: string) => {
+      routingObservedByBridge.push({
+        active: reviewerSessionIds(runtime).has(sessionId),
+        pending: pendingReviewerSessionIds(runtime).has(sessionId)
+      })
+    })
+    const runtime = new AcpRuntime({
+      appVersion: '0.1.0',
+      defaultCwd: '/workspace',
+      resolveBackend: () => ({
+        framework: { ...codexFramework, spawn: () => asAgentProcess(process) },
+        executablePath: '/bin/codex-acp',
+        env: {},
+        responsesBridgeLease: lease
+      })
+    })
+
+    const { session } = await runtime.buildReviewerSession({
+      cwd: '/workspace',
+      mcpServers: [
+        {
+          type: 'http',
+          name: 'open-science-reviewer',
+          url: 'http://127.0.0.1:1/mcp',
+          headers: []
+        }
+      ]
+    })
+
+    expect(routingObservedByBridge).toEqual([{ active: true, pending: false }])
+    runtime.disposeReviewerSession(session)
+  })
+
+  it('rolls back reviewer activation when responses bridge registration throws', async () => {
+    const process = new FakeAgentProcess()
+    const fakeAgent = startFakeAgent(process, ['reviewer-session-1'], {
+      modes: createModes(['read-only', 'agent', 'agent-full-access'], 'read-only')
+    })
+    const { lease } = createBackendLeaseHarness()
+    lease.registerReviewerSession = vi.fn(() => {
+      throw new Error('reviewer bridge registration failed')
+    })
+    const runtime = new AcpRuntime({
+      appVersion: '0.1.0',
+      defaultCwd: '/workspace',
+      resolveBackend: () => ({
+        framework: { ...codexFramework, spawn: () => asAgentProcess(process) },
+        executablePath: '/bin/codex-acp',
+        env: {},
+        responsesBridgeLease: lease
+      })
+    })
+
+    await expect(
+      runtime.buildReviewerSession({
+        cwd: '/workspace',
+        mcpServers: [
+          {
+            type: 'http',
+            name: 'open-science-reviewer',
+            url: 'http://127.0.0.1:1/mcp',
+            headers: []
+          }
+        ]
+      })
+    ).rejects.toThrow('reviewer bridge registration failed')
+
+    expect(reviewerSessionIds(runtime).size).toBe(0)
+    expect(pendingReviewerSessionIds(runtime).size).toBe(0)
+    expect(lease.unregisterReviewerSession).toHaveBeenCalledWith('reviewer-session-1')
+    await expect(stat(fakeAgent.newSessions[0]!.cwd)).rejects.toMatchObject({ code: 'ENOENT' })
+  })
+
+  it('lets the first known create identity reservation win while another start is unresolved', async () => {
+    const process = new FakeAgentProcess()
+    const primaryStartReachedAgent = createDeferred()
+    const releasePrimaryStart = createDeferred()
+    const fakeAgent = startFakeAgent(process, ['shared-session', 'shared-session'], {
+      modes: createModes(['read-only', 'agent', 'agent-full-access'], 'read-only'),
+      onNewSession: async ({ index }) => {
+        if (index === 0) {
+          primaryStartReachedAgent.resolve()
+          await releasePrimaryStart.promise
+        }
+      }
+    })
+    const { lease } = createBackendLeaseHarness()
+    const runtime = new AcpRuntime({
+      appVersion: '0.1.0',
+      defaultCwd: '/workspace',
+      resolveBackend: () => ({
+        framework: { ...codexFramework, spawn: () => asAgentProcess(process) },
+        executablePath: '/bin/codex-acp',
+        env: {},
+        responsesBridgeLease: lease
+      })
+    })
+    await runtime.connect({ cwd: '/workspace' })
+
+    const primary = runtime.createSession({ cwd: '/workspace' })
+    await primaryStartReachedAgent.promise
+    const reviewer = runtime.buildReviewerSession({
+      cwd: '/workspace',
+      mcpServers: [
+        {
+          type: 'http',
+          name: 'open-science-reviewer',
+          url: 'http://127.0.0.1:1/mcp',
+          headers: []
+        }
+      ]
+    })
+
+    try {
+      const winner = await reviewer
+      expect(reviewerSessionIds(runtime)).toEqual(new Set(['shared-session']))
+      expect(lease.registerReviewerSession).toHaveBeenCalledWith('shared-session')
+
+      releasePrimaryStart.resolve()
+      await expect(primary).rejects.toThrow(
+        'Primary session id collision with reviewer: shared-session'
+      )
+      expect(runtime.getSnapshot().sessionIds).toEqual([])
+      await winner.session.prompt([{ type: 'text', text: 'first reservation keeps authority' }])
+      expect(fakeAgent.prompts).toEqual([
+        { sessionId: 'shared-session', text: 'first reservation keeps authority' }
+      ])
+    } finally {
+      releasePrimaryStart.resolve()
+      await reviewer.then(
+        ({ session }) => runtime.disposeReviewerSession(session),
+        () => undefined
+      )
+      await primary.then(
+        ({ sessionId }) => runtime.deleteSession({ sessionId }),
+        () => undefined
+      )
+    }
+  })
+
   it('reserves a new primary session id while its permission mode is still starting', async () => {
     const { fakeAgent, lease, runtime, primary, reviewer, releasePrimaryMode, modeRequestCount } =
       await startPendingPrimaryRace(['shared-session', 'shared-session'], (runtime) =>
@@ -6518,6 +6672,176 @@ describe('ACP runtime session management', () => {
     }
   })
 
+  it('reserves a known resumed app id before provider attach completes', async () => {
+    const sessionId = '123e4567-e89b-42d3-a456-426614174000'
+    const process = new FakeAgentProcess()
+    const resumeStarted = createDeferred()
+    const releaseResume = createDeferred()
+    const fakeAgent = startFakeAgent(process, [sessionId], {
+      modes: createModes(['read-only', 'agent', 'agent-full-access'], 'read-only'),
+      onResume: async () => {
+        resumeStarted.resolve()
+        await releaseResume.promise
+      }
+    })
+    const { lease } = createBackendLeaseHarness()
+    const runtime = new AcpRuntime({
+      appVersion: '0.1.0',
+      defaultCwd: '/workspace',
+      resolveBackend: () => ({
+        framework: { ...codexFramework, spawn: () => asAgentProcess(process) },
+        executablePath: '/bin/codex-acp',
+        env: {},
+        responsesBridgeLease: lease
+      })
+    })
+    await runtime.connect({ cwd: '/workspace' })
+
+    const primary = runtime.resumeSession({ sessionId, cwd: '/workspace' })
+    await resumeStarted.promise
+    const reviewer = runtime.buildReviewerSession({
+      cwd: '/workspace',
+      mcpServers: [
+        {
+          type: 'http',
+          name: 'open-science-reviewer',
+          url: 'http://127.0.0.1:1/mcp',
+          headers: []
+        }
+      ]
+    })
+
+    try {
+      await expect(reviewer).rejects.toThrow(`Reviewer session id collision: ${sessionId}`)
+      expect([...pendingPrimarySessionIds(runtime).keys()]).toEqual([sessionId])
+      await expect(stat(fakeAgent.newSessions[0]!.cwd)).rejects.toMatchObject({ code: 'ENOENT' })
+
+      releaseResume.resolve()
+      await expect(primary).resolves.toMatchObject({ sessionId })
+      expect(pendingPrimarySessionIds(runtime).size).toBe(0)
+    } finally {
+      releaseResume.resolve()
+      await reviewer.then(
+        ({ session }) => runtime.disposeReviewerSession(session),
+        () => undefined
+      )
+      await primary.then(
+        ({ sessionId: resumedSessionId }) => runtime.deleteSession({ sessionId: resumedSessionId }),
+        () => undefined
+      )
+    }
+  })
+
+  it('rejects a second primary owner for a pending stable app id', async () => {
+    const sessionId = '123e4567-e89b-42d3-a456-426614174000'
+    const process = new FakeAgentProcess()
+    const resumeStarted = createDeferred()
+    const releaseResume = createDeferred()
+    const fakeAgent = startFakeAgent(process, [], {
+      modes: createModes(['read-only', 'agent', 'agent-full-access'], 'read-only'),
+      onResume: async () => {
+        resumeStarted.resolve()
+        await releaseResume.promise
+      }
+    })
+    const runtime = new AcpRuntime({
+      appVersion: '0.1.0',
+      defaultCwd: '/workspace',
+      resolveBackend: () => ({
+        framework: { ...codexFramework, spawn: () => asAgentProcess(process) },
+        executablePath: '/bin/codex-acp',
+        env: {}
+      })
+    })
+    await runtime.connect({ cwd: '/workspace' })
+
+    const first = runtime.resumeSession({ sessionId, cwd: '/workspace' })
+    await resumeStarted.promise
+
+    try {
+      await expect(runtime.resumeSession({ sessionId, cwd: '/workspace' })).rejects.toThrow(
+        `Primary session id collision: ${sessionId}`
+      )
+      expect(fakeAgent.resumedSessions).toHaveLength(1)
+
+      releaseResume.resolve()
+      await expect(first).resolves.toMatchObject({ sessionId })
+    } finally {
+      releaseResume.resolve()
+      await first.then(
+        ({ sessionId: resumedSessionId }) => runtime.deleteSession({ sessionId: resumedSessionId }),
+        () => undefined
+      )
+    }
+  })
+
+  it('reserves a fresh adoption app id before the provider session starts', async () => {
+    const process = new FakeAgentProcess()
+    const adoptionStarted = createDeferred()
+    const releaseAdoption = createDeferred()
+    const fakeAgent = startFakeAgent(process, ['new-provider-session', 'stable-app-session'], {
+      modes: createModes(['read-only', 'agent', 'agent-full-access'], 'read-only'),
+      onNewSession: async ({ index }) => {
+        if (index === 0) {
+          adoptionStarted.resolve()
+          await releaseAdoption.promise
+        }
+      }
+    })
+    const { lease } = createBackendLeaseHarness()
+    const runtime = new AcpRuntime({
+      appVersion: '0.1.0',
+      defaultCwd: '/workspace',
+      resolveBackend: () => ({
+        framework: { ...codexFramework, spawn: () => asAgentProcess(process) },
+        executablePath: '/bin/codex-acp',
+        env: {},
+        responsesBridgeLease: lease
+      })
+    })
+    await runtime.connect({ cwd: '/workspace' })
+
+    const primary = runtime.resumeSession({
+      sessionId: 'stable-app-session',
+      cwd: '/workspace'
+    })
+    await adoptionStarted.promise
+    const reviewer = runtime.buildReviewerSession({
+      cwd: '/workspace',
+      mcpServers: [
+        {
+          type: 'http',
+          name: 'open-science-reviewer',
+          url: 'http://127.0.0.1:1/mcp',
+          headers: []
+        }
+      ]
+    })
+
+    try {
+      await expect(reviewer).rejects.toThrow('Reviewer session id collision: stable-app-session')
+      expect([...pendingPrimarySessionIds(runtime).keys()]).toEqual(['stable-app-session'])
+      await expect(stat(fakeAgent.newSessions[1]!.cwd)).rejects.toMatchObject({ code: 'ENOENT' })
+
+      releaseAdoption.resolve()
+      await expect(primary).resolves.toMatchObject({
+        sessionId: 'stable-app-session',
+        contextReset: true
+      })
+      expect(pendingPrimarySessionIds(runtime).size).toBe(0)
+    } finally {
+      releaseAdoption.resolve()
+      await reviewer.then(
+        ({ session }) => runtime.disposeReviewerSession(session),
+        () => undefined
+      )
+      await primary.then(
+        ({ sessionId }) => runtime.deleteSession({ sessionId }),
+        () => undefined
+      )
+    }
+  })
+
   it('reserves a fresh adoption app-facing id while its permission mode is still starting', async () => {
     const { fakeAgent, runtime, primary, reviewer, releasePrimaryMode, modeRequestCount } =
       await startPendingPrimaryRace(['new-provider-session', 'stable-app-session'], (runtime) =>
@@ -6534,6 +6858,7 @@ describe('ACP runtime session management', () => {
         'stable-app-session',
         'new-provider-session'
       ])
+      expect(new Set(pendingPrimarySessionIds(runtime).values()).size).toBe(1)
 
       const duplicateCwd = fakeAgent.newSessions[1]?.cwd
       expect(duplicateCwd).toMatch(/open-science-reviewer-/)
@@ -6586,6 +6911,7 @@ describe('ACP runtime session management', () => {
         'stable-app-session',
         'reserved-provider-session'
       ])
+      expect(new Set(pendingPrimarySessionIds(runtime).values()).size).toBe(1)
 
       const duplicateCwd = fakeAgent.newSessions[1]?.cwd
       expect(duplicateCwd).toMatch(/open-science-reviewer-/)
@@ -6620,11 +6946,88 @@ describe('ACP runtime session management', () => {
     }
   })
 
+  it('keeps the stable app id reserved while context reset starts a replacement provider session', async () => {
+    const process = new FakeAgentProcess()
+    const replacementStarted = createDeferred()
+    const releaseReplacement = createDeferred()
+    const fakeAgent = startFakeAgent(
+      process,
+      ['stable-app-session', 'replacement-provider-session', 'stable-app-session'],
+      {
+        modes: createModes(['read-only', 'agent', 'agent-full-access'], 'read-only'),
+        onNewSession: async ({ index }) => {
+          if (index === 1) {
+            replacementStarted.resolve()
+            await releaseReplacement.promise
+          }
+        }
+      }
+    )
+    const { lease } = createBackendLeaseHarness()
+    const runtime = new AcpRuntime({
+      appVersion: '0.1.0',
+      defaultCwd: '/workspace',
+      resolveBackend: () => ({
+        framework: { ...codexFramework, spawn: () => asAgentProcess(process) },
+        executablePath: '/bin/codex-acp',
+        env: {},
+        responsesBridgeLease: lease
+      })
+    })
+    await runtime.createSession({ cwd: '/workspace' })
+
+    const reset = runtime.resetSessionContext({
+      sessionId: 'stable-app-session',
+      cwd: '/workspace'
+    })
+    await replacementStarted.promise
+    const reviewer = runtime.buildReviewerSession({
+      cwd: '/workspace',
+      mcpServers: [
+        {
+          type: 'http',
+          name: 'open-science-reviewer',
+          url: 'http://127.0.0.1:1/mcp',
+          headers: []
+        }
+      ]
+    })
+
+    try {
+      await expect(reviewer).rejects.toThrow('Reviewer session id collision: stable-app-session')
+      expect([...pendingPrimarySessionIds(runtime).keys()]).toEqual(['stable-app-session'])
+      await expect(stat(fakeAgent.newSessions[2]!.cwd)).rejects.toMatchObject({ code: 'ENOENT' })
+
+      releaseReplacement.resolve()
+      await expect(reset).resolves.toMatchObject({
+        sessionId: 'stable-app-session',
+        contextReset: true
+      })
+      expect(pendingPrimarySessionIds(runtime).size).toBe(0)
+      await runtime.sendPrompt({
+        sessionId: 'stable-app-session',
+        text: 'replacement primary remains active'
+      })
+      expect(fakeAgent.prompts.at(-1)).toMatchObject({
+        sessionId: 'replacement-provider-session'
+      })
+    } finally {
+      releaseReplacement.resolve()
+      await reviewer.then(
+        ({ session }) => runtime.disposeReviewerSession(session),
+        () => undefined
+      )
+      await reset.catch(() => undefined)
+      await runtime.deleteSession({ sessionId: 'stable-app-session' }).catch(() => undefined)
+    }
+  })
+
   it.each([
     {
       operation: 'new primary session',
       agentSessionIds: ['shared-session', 'shared-session'],
       collisionId: 'shared-session',
+      expectedDisposals: 1,
       disposalFailure: 'primary collision dispose failed',
       start: (runtime: AcpRuntime) => runtime.createSession({ cwd: '/workspace' })
     },
@@ -6632,6 +7035,7 @@ describe('ACP runtime session management', () => {
       operation: 'fresh adoption app-facing id',
       agentSessionIds: ['stable-app-session', 'new-provider-session'],
       collisionId: 'stable-app-session',
+      expectedDisposals: 0,
       start: (runtime: AcpRuntime) =>
         runtime.resumeSession({ sessionId: 'stable-app-session', cwd: '/workspace' })
     },
@@ -6639,6 +7043,7 @@ describe('ACP runtime session management', () => {
       operation: 'fresh adoption provider id',
       agentSessionIds: ['reserved-provider-session', 'reserved-provider-session'],
       collisionId: 'reserved-provider-session',
+      expectedDisposals: 1,
       disposalFailure: 'adoption collision dispose failed',
       start: (runtime: AcpRuntime) =>
         runtime.resumeSession({ sessionId: 'stable-app-session', cwd: '/workspace' })
@@ -6647,6 +7052,7 @@ describe('ACP runtime session management', () => {
       operation: 'resumed primary session',
       agentSessionIds: ['123e4567-e89b-42d3-a456-426614174000'],
       collisionId: '123e4567-e89b-42d3-a456-426614174000',
+      expectedDisposals: 0,
       start: (runtime: AcpRuntime) =>
         runtime.resumeSession({
           sessionId: '123e4567-e89b-42d3-a456-426614174000',
@@ -6655,7 +7061,7 @@ describe('ACP runtime session management', () => {
     }
   ])(
     'rejects a pending reviewer identity collision from a $operation',
-    async ({ agentSessionIds, collisionId, disposalFailure, start }) => {
+    async ({ agentSessionIds, collisionId, expectedDisposals, disposalFailure, start }) => {
       errorLogSpy.mockClear()
       const { runtime, reviewer, releaseReviewerMode, modeRequestCount } =
         await startPendingReviewerRace(agentSessionIds)
@@ -6671,7 +7077,7 @@ describe('ACP runtime session management', () => {
         await expect(primary).rejects.toThrow(
           'Primary session id collision with pending reviewer: ' + collisionId
         )
-        expect(disposeSpy).toHaveBeenCalledOnce()
+        expect(disposeSpy).toHaveBeenCalledTimes(expectedDisposals)
         expect(modeRequestCount()).toBe(1)
         expect(runtime.getSnapshot().sessionIds).toEqual([])
         if (disposalFailure) {

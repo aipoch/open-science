@@ -266,7 +266,7 @@ export type ReviewerSessionDisposition = {
 
 type PrimarySessionIdentityReservation = {
   token: symbol
-  sessionIds: string[]
+  sessionIds: Set<string>
 }
 
 type PrimarySessionIdentityReservationResult =
@@ -1523,7 +1523,9 @@ class AcpRuntime {
         })
         .start()
 
-      const reservationResult = this.reservePrimarySessionIds(session.sessionId)
+      // New-session requests have no app id on their interface: the provider-returned id becomes the
+      // stable app id. Reserve that first known identity synchronously before any later setup awaits.
+      const reservationResult = this.reservePrimarySessionIds(undefined, [session.sessionId])
       if (reservationResult.collision) {
         this.disposeSessionAfterFailure(session, 'primary collision session disposal failed')
         throw reservationResult.collision
@@ -1700,6 +1702,35 @@ class AcpRuntime {
   ): Promise<AcpCreateSessionResponse> {
     const sessionCwd = resolve(request.cwd || this.snapshotOwner.cwd || this.options.defaultCwd)
     const projectName = this.normalizeProjectName(request.projectName)
+    const publishedAppSessionId = this.sessions.has(request.sessionId)
+      ? request.sessionId
+      : undefined
+    const reservationResult = this.reservePrimarySessionIds(
+      undefined,
+      [request.sessionId],
+      publishedAppSessionId
+    )
+    if (reservationResult.collision) throw reservationResult.collision
+    const reservation = reservationResult.reservation
+
+    try {
+      return await this.resetReservedSessionContextOperation(
+        request,
+        sessionCwd,
+        projectName,
+        reservation
+      )
+    } finally {
+      this.releasePrimarySessionIdentityReservation(reservation)
+    }
+  }
+
+  private async resetReservedSessionContextOperation(
+    request: AcpResumeSessionRequest,
+    sessionCwd: string,
+    projectName: string,
+    primaryIdentityReservation: PrimarySessionIdentityReservation
+  ): Promise<AcpCreateSessionResponse> {
     const connection = await this.ensureConnected(sessionCwd)
 
     // Tear down the currently attached agent session (if any) before adopting a replacement, dropping
@@ -1734,7 +1765,13 @@ class AcpRuntime {
     this.promptInFlightSessionIds.delete(request.sessionId)
     this.contextCompactionInFlightSessionIds.delete(request.sessionId)
 
-    return this.adoptFreshSession(connection, request, sessionCwd, projectName)
+    return this.adoptFreshSession(
+      connection,
+      request,
+      sessionCwd,
+      projectName,
+      primaryIdentityReservation
+    )
   }
 
   // Hot-switches the specialist bound to a live session. Updates the per-session skills and identity
@@ -2004,6 +2041,25 @@ class AcpRuntime {
     sessionCwd: string,
     projectName: string
   ): Promise<AcpCreateSessionResponse> {
+    // request.sessionId is the known stable app identity. Reserve it synchronously, before connection
+    // setup can await, then let the network path extend the same owner with the provider protocol id.
+    const reservationResult = this.reservePrimarySessionIds(undefined, [request.sessionId])
+    if (reservationResult.collision) throw reservationResult.collision
+    const reservation = reservationResult.reservation
+
+    try {
+      return await this.resumeReservedSessionNetwork(request, sessionCwd, projectName, reservation)
+    } finally {
+      this.releasePrimarySessionIdentityReservation(reservation)
+    }
+  }
+
+  private async resumeReservedSessionNetwork(
+    request: AcpResumeSessionRequest,
+    sessionCwd: string,
+    projectName: string,
+    primaryIdentityReservation: PrimarySessionIdentityReservation
+  ): Promise<AcpCreateSessionResponse> {
     const connection = await this.ensureConnected(sessionCwd)
     // A session created under a different framework can never be resumed by the current agent — each
     // framework keeps its own session store, so the request is guaranteed to fail and only makes the
@@ -2025,7 +2081,13 @@ class AcpRuntime {
         toBackend: this.backendId
       })
 
-      return this.adoptFreshSession(connection, request, sessionCwd, projectName)
+      return this.adoptFreshSession(
+        connection,
+        request,
+        sessionCwd,
+        projectName,
+        primaryIdentityReservation
+      )
     }
 
     // A conversation adopted from another framework keeps its app-facing id. After restart the
@@ -2036,7 +2098,13 @@ class AcpRuntime {
       log.info('skipping invalid Codex session resume; adopting a fresh session', {
         sessionId: request.sessionId
       })
-      return this.adoptFreshSession(connection, request, sessionCwd, projectName)
+      return this.adoptFreshSession(
+        connection,
+        request,
+        sessionCwd,
+        projectName,
+        primaryIdentityReservation
+      )
     }
 
     // Persisted sessions created before framework provenance was recorded may restore without a
@@ -2060,7 +2128,6 @@ class AcpRuntime {
     // later setup failure must revoke it so an unattached Agent cannot retain host.mcp/compute access.
     let notebookCapabilityProvisional = Boolean(this.notebookOptions)
     let session: ActiveSession | undefined
-    let primaryIdentityReservation: PrimarySessionIdentityReservation | undefined
     try {
       // Resumed sessions already have stable ids, so the artifact session mirrors the runtime session
       // id.
@@ -2098,7 +2165,13 @@ class AcpRuntime {
           ...errorLogFields(error)
         })
 
-        return await this.adoptFreshSession(connection, request, sessionCwd, projectName)
+        return await this.adoptFreshSession(
+          connection,
+          request,
+          sessionCwd,
+          projectName,
+          primaryIdentityReservation
+        )
       }
       // The SDK exposes public helpers for new sessions only. The runtime keeps this adapter
       // narrow so resume can reuse the same update routing surface as newly-created sessions.
@@ -2107,13 +2180,14 @@ class AcpRuntime {
         ...resumeResponse
       })
 
-      const reservationResult = this.reservePrimarySessionIds(request.sessionId, session.sessionId)
+      const reservationResult = this.reservePrimarySessionIds(primaryIdentityReservation, [
+        session.sessionId
+      ])
       if (reservationResult.collision) {
         this.disposeSessionAfterFailure(session, 'primary collision session disposal failed')
         session = undefined
         throw reservationResult.collision
       }
-      primaryIdentityReservation = reservationResult.reservation
 
       await this.configurePermissionProfile(
         request.sessionId,
@@ -2126,7 +2200,6 @@ class AcpRuntime {
 
       this.sessions.set(request.sessionId, session)
       this.releasePrimarySessionIdentityReservation(primaryIdentityReservation)
-      primaryIdentityReservation = undefined
       if (updatedConfigOptions) {
         this.latestSessionConfigOptions.set(request.sessionId, updatedConfigOptions)
       }
@@ -2161,10 +2234,6 @@ class AcpRuntime {
         this.releaseNotebookSessionCapabilities(request.sessionId)
       }
       throw error
-    } finally {
-      if (primaryIdentityReservation) {
-        this.releasePrimarySessionIdentityReservation(primaryIdentityReservation)
-      }
     }
   }
 
@@ -2176,14 +2245,14 @@ class AcpRuntime {
     connection: ClientConnection,
     request: AcpResumeSessionRequest,
     sessionCwd: string,
-    projectName: string
+    projectName: string,
+    primaryIdentityReservation: PrimarySessionIdentityReservation
   ): Promise<AcpCreateSessionResponse> {
     // Fresh adoption also receives a provisional Notebook bearer token. Transfer ownership only after
     // adoptSession has registered the replacement; every earlier failure revokes it and disposes any
     // partially-created Agent session.
     let notebookCapabilityProvisional = Boolean(this.notebookOptions)
     let adopted: ActiveSession | undefined
-    let primaryIdentityReservation: PrimarySessionIdentityReservation | undefined
     try {
       const mcpServers = await this.createMcpServers({
         artifactSessionId: request.sessionId,
@@ -2208,7 +2277,10 @@ class AcpRuntime {
         })
         .start()
 
-      const reservationResult = this.reservePrimarySessionIds(request.sessionId, adopted.sessionId)
+      const reservationResult = this.reservePrimarySessionIds(primaryIdentityReservation, [
+        request.sessionId,
+        adopted.sessionId
+      ])
       if (reservationResult.collision) {
         this.disposeSessionAfterFailure(adopted, 'primary collision session disposal failed')
         adopted = undefined
@@ -2233,7 +2305,6 @@ class AcpRuntime {
       )
       this.pendingClaudeCodeHandoffAppends.delete(request.sessionId)
       this.releasePrimarySessionIdentityReservation(primaryIdentityReservation)
-      primaryIdentityReservation = undefined
       // Keyed by the agent session id, matching the live-effort lookup over this.sessions values:
       // an adopted session's agent id differs from the app id it is registered under.
       if (updatedConfigOptions) {
@@ -2255,10 +2326,6 @@ class AcpRuntime {
         this.releaseNotebookSessionCapabilities(request.sessionId)
       }
       throw error
-    } finally {
-      if (primaryIdentityReservation) {
-        this.releasePrimarySessionIdentityReservation(primaryIdentityReservation)
-      }
     }
   }
 
@@ -5719,18 +5786,28 @@ class AcpRuntime {
           })
         }
 
+        // No await separates the pending -> active transition: protocol routing always sees exactly
+        // one identity state. Bridge authority is granted only after the active reviewer route exists.
+        this.pendingReviewerSessionIds.delete(session.sessionId)
+        this.reviewerSessionIds.add(session.sessionId)
         this.responsesBridgeLease?.registerReviewerSession(session.sessionId)
         this.reviewerSessionDirectories.set(session.sessionId, reviewerCwd)
         this.sessionMcpServerNames.set(session.sessionId, mcpServerNames)
         this.sessionFrameworks.set(session.sessionId, this.framework.id)
-        // No await separates release from activation: protocol routing always sees exactly one of the
-        // pending or active identities, and reviewer permission authority appears only on success.
-        this.pendingReviewerSessionIds.delete(session.sessionId)
-        this.reviewerSessionIds.add(session.sessionId)
 
         return { session, promptPrefix: setup.promptPrefix }
       } catch (error) {
         this.pendingReviewerSessionIds.delete(session.sessionId)
+        if (this.reviewerSessionIds.delete(session.sessionId)) {
+          try {
+            this.responsesBridgeLease?.unregisterReviewerSession(session.sessionId)
+          } catch (cleanupError) {
+            safeLogError('reviewer bridge registration rollback failed', {
+              ...diagnosticErrorFields(cleanupError),
+              sessionId: session.sessionId
+            })
+          }
+        }
         this.disposeSessionAfterFailure(session, 'reviewer startup session disposal failed')
         throw error
       }
@@ -5756,7 +5833,9 @@ class AcpRuntime {
   }
 
   private reservePrimarySessionIds(
-    ...sessionIds: string[]
+    reservation: PrimarySessionIdentityReservation | undefined,
+    sessionIds: string[],
+    publishedAppSessionId?: string
   ): PrimarySessionIdentityReservationResult {
     const uniqueSessionIds = [...new Set(sessionIds)]
     const pendingReviewerCollision = uniqueSessionIds.find((sessionId) =>
@@ -5783,22 +5862,26 @@ class AcpRuntime {
 
     const primaryCollision = uniqueSessionIds.find(
       (sessionId) =>
-        this.pendingPrimarySessionIds.has(sessionId) ||
-        this.sessions.has(sessionId) ||
+        (this.pendingPrimarySessionIds.has(sessionId) &&
+          this.pendingPrimarySessionIds.get(sessionId) !== reservation?.token) ||
+        (this.sessions.has(sessionId) && sessionId !== publishedAppSessionId) ||
         this.agentToAppSessionId.has(sessionId)
     )
     if (primaryCollision) {
       return { collision: new Error(`Primary session id collision: ${primaryCollision}`) }
     }
 
-    const reservation: PrimarySessionIdentityReservation = {
-      token: Symbol('primary-session-identity'),
-      sessionIds: uniqueSessionIds
-    }
+    const owner =
+      reservation ??
+      ({
+        token: Symbol('primary-session-identity'),
+        sessionIds: new Set<string>()
+      } satisfies PrimarySessionIdentityReservation)
     for (const sessionId of uniqueSessionIds) {
-      this.pendingPrimarySessionIds.set(sessionId, reservation.token)
+      owner.sessionIds.add(sessionId)
+      this.pendingPrimarySessionIds.set(sessionId, owner.token)
     }
-    return { reservation }
+    return { reservation: owner }
   }
 
   private releasePrimarySessionIdentityReservation(
