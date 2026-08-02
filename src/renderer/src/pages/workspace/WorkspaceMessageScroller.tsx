@@ -273,6 +273,30 @@ const WorkspaceMessageScrollerImpl = ({
       ),
     [activeSession, handoffEvents]
   )
+  // Assistant text can be split into several messages around tool calls. All fragments share the
+  // prompt they respond to, but only the last visible fragment in that turn owns whole-turn metadata.
+  // Legacy unlinked messages remain independent so older transcripts do not lose their timestamps.
+  const assistantFooterMessageIds = useMemo(() => {
+    const footerIds = new Set<string>()
+    const footerIdByPromptMessageId = new Map<string, string>()
+
+    for (const item of conversationItems) {
+      if (item.type !== 'message' || item.message.role !== 'agent') continue
+
+      const promptMessageId = item.message.responseToMessageId
+      if (!promptMessageId) {
+        footerIds.add(item.message.id)
+        continue
+      }
+
+      const previousFooterId = footerIdByPromptMessageId.get(promptMessageId)
+      if (previousFooterId) footerIds.delete(previousFooterId)
+      footerIdByPromptMessageId.set(promptMessageId, item.message.id)
+      footerIds.add(item.message.id)
+    }
+
+    return footerIds
+  }, [conversationItems])
   const showAgentLoadingMessage = shouldShowAgentLoadingMessage(activeSession)
   const messageCreatedAtById = new Map(
     activeSession?.messages.map((message) => [message.id, message.createdAt]) ?? []
@@ -575,6 +599,9 @@ const WorkspaceMessageScrollerImpl = ({
                       turnStartedAt: item.message.responseToMessageId
                         ? messageCreatedAtById.get(item.message.responseToMessageId)
                         : undefined,
+                      showAssistantFooter:
+                        item.message.role !== 'agent' ||
+                        assistantFooterMessageIds.has(item.message.id),
                       subsequentTurns: subsequentTurnCountByMessageId.get(item.message.id) ?? 0,
                       revisionNavigation:
                         revisionIndex >= 0 && revisions.length > 1

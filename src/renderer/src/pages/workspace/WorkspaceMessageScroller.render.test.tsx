@@ -297,6 +297,76 @@ describe('WorkspaceMessageScroller loading render', () => {
     expect(html).not.toContain('Input</dt>')
   })
 
+  it('renders completion metadata once after the final assistant message fragment in a tool turn', async () => {
+    const html = await renderScroller(
+      createSession({
+        status: 'idle',
+        messages: [
+          createMessage({ id: 'prompt-1', createdAt: 1710000000000, sortIndex: 1 }),
+          createMessage({
+            id: 'reply-1',
+            role: 'agent',
+            content: 'I loaded the skill.',
+            responseToMessageId: 'prompt-1',
+            createdAt: 1710000030000,
+            completedAt: 1710000125000,
+            sortIndex: 2
+          }),
+          createMessage({
+            id: 'reply-2',
+            role: 'agent',
+            content: 'I found the baseline count.',
+            responseToMessageId: 'prompt-1',
+            createdAt: 1710000060000,
+            completedAt: 1710000125000,
+            sortIndex: 4
+          }),
+          createMessage({
+            id: 'reply-3',
+            role: 'agent',
+            content: 'Here is the final answer.',
+            responseToMessageId: 'prompt-1',
+            createdAt: 1710000090000,
+            completedAt: 1710000125000,
+            sortIndex: 6
+          })
+        ],
+        activities: [
+          createActivity({
+            id: 'activity-1',
+            title: 'First tool action',
+            sortIndex: 3,
+            createdAt: 1710000045000,
+            updatedAt: 1710000045000
+          }),
+          createActivity({
+            id: 'activity-2',
+            title: 'Second tool action',
+            sortIndex: 5,
+            createdAt: 1710000075000,
+            updatedAt: 1710000075000
+          })
+        ]
+      })
+    )
+
+    const timelineContent = [
+      'I loaded the skill.',
+      'data-message-id="activity-group-activity-1"',
+      'I found the baseline count.',
+      'data-message-id="activity-group-activity-2"',
+      'Here is the final answer.'
+    ]
+    const timelinePositions = timelineContent.map((content) => html.indexOf(content))
+
+    expect(timelinePositions.every((position) => position >= 0)).toBe(true)
+    expect(timelinePositions).toEqual([...timelinePositions].sort((left, right) => left - right))
+    expect(html.match(/data-slot="assistant-message-footer"/g)).toHaveLength(1)
+    expect(html.indexOf('data-slot="assistant-message-footer"')).toBeGreaterThan(
+      html.indexOf('Here is the final answer.')
+    )
+  })
+
   it('keeps the loading row during permission waits and hides it without an active run', async () => {
     const runningSession = createSession({
       activeRun: {

@@ -62,6 +62,9 @@ type WorkspaceMessageItemProps = {
   onSendEditedMessage?: (messageId: string, doc: ComposerDoc) => void
   // Prompt send time for an Agent response; paired with its completion time for elapsed duration.
   turnStartedAt?: number
+  // A tool-calling turn can contain several assistant fragments; only its final fragment owns the
+  // whole-turn completion/elapsed/usage footer. Other transcript surfaces default to showing it.
+  showAssistantFooter?: boolean
   // Number of user turns after this message; drives the destructive-resend warning threshold.
   subsequentTurns?: number
   revisionNavigation?: {
@@ -661,6 +664,7 @@ const WorkspaceMessageItem = ({
   contentPaddingClassName,
   onSendEditedMessage,
   turnStartedAt,
+  showAssistantFooter = true,
   subsequentTurns = 0,
   revisionNavigation,
   artifacts = [],
@@ -894,7 +898,8 @@ const WorkspaceMessageItem = ({
             ) : null}
             <MessageImageList images={message.images ?? []} />
             <MessageArtifactList onPreviewArtifact={onPreviewArtifact} artifacts={artifacts} />
-            {terminalDate || (terminalTimestamp !== undefined && hasTurnUsage) ? (
+            {showAssistantFooter &&
+            (terminalDate || (terminalTimestamp !== undefined && hasTurnUsage)) ? (
               <div
                 data-slot="assistant-message-footer"
                 className="mt-3 flex items-center gap-x-3 whitespace-nowrap text-[11px] leading-4 text-text-000/70 tabular-nums"
