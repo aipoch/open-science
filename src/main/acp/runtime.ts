@@ -2728,7 +2728,7 @@ class AcpRuntime {
       return await this.disconnectCurrent(emitClosedStatus, teardownGeneration)
     } finally {
       try {
-        await this.closeMcpHttpHost()
+        await this.closeMcpHttpHost(teardownGeneration)
       } finally {
         this.completePendingReconnectTeardown(reconnectBarrierGeneration)
       }
@@ -3217,7 +3217,13 @@ class AcpRuntime {
     }
   }
 
-  private async closeMcpHttpHost(): Promise<void> {
+  private async closeMcpHttpHost(expectedGeneration?: number): Promise<void> {
+    // The host instance is shared across reconnects. An older disconnect may finish after a successor
+    // has already registered routes on it, so only the generation that initiated teardown may close it.
+    // shutdown() omits the guard because it latches the runtime terminal before calling this helper.
+    if (expectedGeneration !== undefined && expectedGeneration !== this.connectionGeneration) {
+      return
+    }
     try {
       await this.mcpHttpHost?.close()
     } catch (error) {
@@ -6151,6 +6157,7 @@ class AcpRuntime {
 
   // Clears local state after the protocol connection closes unexpectedly.
   private handleConnectionClosed(): void {
+    const teardownGeneration = this.connectionGeneration
     this.invalidatePendingSessionStartups()
     const orphanedProcess = this.agentProcess
     if (orphanedProcess) {
@@ -6198,7 +6205,7 @@ class AcpRuntime {
     // and pick up the new backend from resolveBackend. A fresh spawn re-provisions
     // skills too, so clear both pending flags to avoid a spurious later reconnect.
     this.completePendingReconnectTeardown()
-    void this.closeMcpHttpHost()
+    void this.closeMcpHttpHost(teardownGeneration)
     void this.releaseResponsesBridgeLease()
     try {
       this.setStatus('closed')

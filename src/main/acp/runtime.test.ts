@@ -7956,6 +7956,100 @@ describe('ACP runtime session management', () => {
     }
   })
 
+  it('does not let an older disconnect close a successor HTTP MCP host', async () => {
+    const oldProcess = new FakeAgentProcess()
+    const newProcess = new FakeAgentProcess()
+    startFakeAgent(oldProcess, ['old-http-session'])
+    startFakeAgent(newProcess, ['new-http-session'])
+    const routes = new Set<string>()
+    const close = vi.fn(async () => {
+      routes.clear()
+    })
+    const httpHost = {
+      ensureStarted: vi.fn(async () => ({
+        endpoint: 'http://127.0.0.1:4321',
+        token: 'host-token'
+      })),
+      registerNotebook: vi.fn((routingId: string) => {
+        routes.add(routingId)
+      }),
+      urlFor: vi.fn(
+        (kind: string, routingId: string) =>
+          `http://127.0.0.1:4321/mcp/${kind}/${encodeURIComponent(routingId)}`
+      ),
+      unregister: vi.fn((routingId: string) => {
+        routes.delete(routingId)
+      }),
+      clear: vi.fn(() => routes.clear()),
+      close
+    } as unknown as AgentMcpHttpHost
+    let spawnCount = 0
+    const runtime = new AcpRuntime({
+      appVersion: '0.1.0',
+      defaultCwd: '/workspace',
+      resolveBackend: () => {
+        const process = spawnCount === 0 ? oldProcess : newProcess
+        spawnCount += 1
+        return {
+          framework: {
+            ...opencodeFramework,
+            acceptsStdioMcp: false,
+            spawn: () => asAgentProcess(process)
+          },
+          executablePath: '/bin/agent',
+          env: {}
+        }
+      },
+      mcpHttpHost: httpHost,
+      notebook: {
+        projectName: 'default-project',
+        mcpEntryPath: '/app/out/main/index.js',
+        getRpcConnection: async () => ({
+          endpoint: 'http://127.0.0.1:4567',
+          token: 'notebook-token'
+        })
+      }
+    })
+    const first = await runtime.createSession({ cwd: '/workspace' })
+    const firstRoutingId = [...routes][0]
+    expect(first.sessionId).toBe('old-http-session')
+    expect(firstRoutingId).toBeDefined()
+    const oldKillStarted = createDeferred()
+    const releaseOldKill = createDeferred()
+    vi.mocked(terminateProcessTree).mockImplementationOnce(async (child) => {
+      oldKillStarted.resolve()
+      await releaseOldKill.promise
+      child?.kill()
+      return { reaped: true }
+    })
+    const oldDisconnect = runtime.disconnect()
+    await oldKillStarted.promise
+
+    try {
+      const successor = await runtime.createSession({ cwd: '/workspace' })
+      const successorRoutingId = [...routes][0]
+      expect(successor.sessionId).toBe('new-http-session')
+      expect(successorRoutingId).toBeDefined()
+      expect(successorRoutingId).not.toBe(firstRoutingId)
+      expect(routes.size).toBe(1)
+
+      releaseOldKill.resolve()
+      await oldDisconnect
+
+      expect(close).not.toHaveBeenCalled()
+      expect(routes).toContain(successorRoutingId)
+      expect(runtime.getSnapshot()).toMatchObject({
+        status: 'connected',
+        sessionIds: ['new-http-session']
+      })
+    } finally {
+      releaseOldKill.resolve()
+      await oldDisconnect.catch(() => undefined)
+      await runtime.disconnect().catch(() => undefined)
+      expect(close).toHaveBeenCalledOnce()
+    }
+  })
+
   it('releases an armed reconnect barrier during synchronous shutdown', async () => {
     const oldProcess = new FakeAgentProcess()
     const abandonedProcess = new FakeAgentProcess()
