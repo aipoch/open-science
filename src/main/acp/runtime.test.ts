@@ -1013,7 +1013,8 @@ describe('ACP runtime migration write-gate', () => {
         providerConfiguration: {
           providerId: 'custom-gateway',
           apiType: 'openai',
-          baseUrl: 'http://127.0.0.1:1234/v1'
+          baseUrl: 'http://127.0.0.1:1234/v1',
+          headers: {}
         }
       }),
       callbacks: {
@@ -15739,7 +15740,11 @@ describe('ACP runtime — connect failure logging', () => {
         framework: {
           ...claudeCodeFramework,
           spawn: () => {
-            ;(runtime as unknown as { connectionGeneration: number }).connectionGeneration += 1
+            ;(
+              runtime as unknown as {
+                connectionResources: { supersede: () => number }
+              }
+            ).connectionResources.supersede()
             return asAgentProcess(process)
           }
         },
@@ -16963,7 +16968,11 @@ describe('ACP runtime — failure-path robustness (errorMessage coercion + sync-
       appVersion: '0.1.0',
       defaultCwd: '/workspace',
       spawnAgent: () => {
-        ;(runtime as unknown as { connectionGeneration: number }).connectionGeneration += 1
+        ;(
+          runtime as unknown as {
+            connectionResources: { supersede: () => number }
+          }
+        ).connectionResources.supersede()
         return asAgentProcess(process)
       }
     })
