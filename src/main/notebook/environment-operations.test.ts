@@ -251,4 +251,53 @@ describe('NotebookEnvironmentOperations', () => {
       recovery: { readiness: 'not-started' }
     })
   })
+
+  it('returns defensive progress and diagnostic snapshots', async () => {
+    const { owner } = await createOwner()
+    owner.setDefaultEnvProvisioner({
+      provisionPython: async (report) => {
+        report({
+          phase: 'download',
+          message: 'downloading',
+          progress: 0.5,
+          language: 'python',
+          download: {
+            phase: 'downloading',
+            transferred: 50,
+            total: 100,
+            percent: 50,
+            bytesPerSecond: 10,
+            attempt: 1
+          }
+        })
+      },
+      provisionR: async () => undefined
+    })
+    await owner.ensureDefaultEnvironmentReady({
+      language: 'python',
+      environment: 'default-python',
+      runtimeRoot: join(storageRoot!, 'runtime'),
+      sessionId: 'session-1',
+      ensureRecovered: async () => undefined,
+      assertRecoverable: () => undefined
+    })
+    owner.logPackageResult({
+      operationId: 'operation-1',
+      operation: 'install',
+      language: 'python',
+      environmentName: 'default-python',
+      runtimeSource: 'managed',
+      packages: ['numpy'],
+      result: { ok: true, needsRestart: false, log: 'installed' },
+      durationMs: 10
+    })
+
+    const snapshot = owner.snapshot()
+    snapshot.progress!.download!.transferred = 999
+    const diagnosticLog = snapshot.diagnostic!.fields.installerLog as { text: string }
+    diagnosticLog.text = 'changed'
+
+    expect(owner.snapshot().progress?.download?.transferred).toBe(50)
+    expect(owner.snapshot().diagnostic?.fields.installerLog).toMatchObject({ text: 'installed' })
+  })
 })

@@ -115,6 +115,17 @@ const runEnvironment = (
   return defaultEnvironment(language)
 }
 
+const cloneDiagnosticValue = (value: unknown): unknown => {
+  if (Array.isArray(value)) return value.map(cloneDiagnosticValue)
+  if (value === null || typeof value !== 'object') return value
+  return Object.fromEntries(
+    Object.entries(value).map(([key, nested]) => [key, cloneDiagnosticValue(nested)])
+  )
+}
+
+const cloneDiagnosticFields = (fields: Record<string, unknown>): Record<string, unknown> =>
+  cloneDiagnosticValue(fields) as Record<string, unknown>
+
 /** Owns process-global Notebook environment operation admission and transient operation state. */
 export class NotebookEnvironmentOperations {
   private readonly leases = new EnvironmentLeaseManager()
@@ -351,12 +362,17 @@ export class NotebookEnvironmentOperations {
       active: Array.from(this.active.values(), (operation) => ({ ...operation })).sort(
         (left, right) => left.startedAt - right.startedAt
       ),
-      progress: this.progress ? { ...this.progress } : undefined,
+      progress: this.progress
+        ? {
+            ...this.progress,
+            download: this.progress.download ? { ...this.progress.download } : undefined
+          }
+        : undefined,
       restartRecommendedEnvironments: Array.from(this.restartRecommendations).sort(),
       revocationDrains: this.revocationDrains.size,
       repairBlockedEnvironments: Array.from(this.repairBlocks).sort(),
       diagnostic: this.diagnostic
-        ? { ...this.diagnostic, fields: { ...this.diagnostic.fields } }
+        ? { ...this.diagnostic, fields: cloneDiagnosticFields(this.diagnostic.fields) }
         : undefined,
       leases: this.leases.snapshot(),
       recovery: this.options.recovery.snapshot()
