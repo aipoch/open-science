@@ -3,7 +3,6 @@ import type {
   ActiveSession,
   ClientConnection,
   ContentBlock,
-  McpServer,
   PromptResponse,
   RequestPermissionRequest,
   RequestPermissionResponse,
@@ -60,11 +59,7 @@ import {
   type AgentFramework,
   type ResolvedAgentBackend
 } from '../agent-framework'
-import {
-  canonicalAppMcpServerName,
-  modelFacingAppMcpServerName,
-  resolveCanonicalMcpToolIdentity
-} from '../agent-framework/app-mcp-names'
+import { resolveCanonicalMcpToolIdentity } from '../agent-framework/app-mcp-names'
 import { createLogger, diagnosticErrorFields, errorLogFields } from '../logger'
 import { terminateProcessTree } from '../process-tree'
 import {
@@ -99,27 +94,13 @@ import { ConversationPermissionGrantStore } from './permission-broker'
 import { isMcpToolName } from './permission-policy'
 import { AcpPermissionContext, HUMAN_PERMISSION_ACTION_ORIGIN } from './permission-context'
 import { applyCurrentModeUpdate } from './permission-profile-controller'
-import {
-  ARTIFACT_MCP_SERVER_NAME,
-  createArtifactMcpServerConfig,
-  type ArtifactMcpEnvironment,
-  type ArtifactRunContext
-} from '../artifacts/mcp-server'
+import { type ArtifactRunContext } from '../artifacts/mcp-server'
 import { AgentMcpHttpHost } from './mcp-http-host'
 import { ArtifactRepository, getArtifactCurrentRunFilePath } from '../artifacts/repository'
 import { ArtifactRunRegistry } from '../artifacts/run-registry'
+import { NOTEBOOK_SYSTEM_PROMPT_APPEND, type NotebookRpcConnection } from '../notebook/mcp-server'
 import {
-  NOTEBOOK_MCP_SERVER_NAME,
-  NOTEBOOK_SYSTEM_PROMPT_APPEND,
-  createNotebookMcpServerConfig,
-  type NotebookMcpEnvironment,
-  type NotebookRpcConnection
-} from '../notebook/mcp-server'
-import {
-  SKILL_IMPORT_MCP_SERVER_NAME,
   SKILL_IMPORT_SYSTEM_PROMPT_APPEND,
-  createSkillImportMcpServerConfig,
-  type SkillImportMcpEnvironment,
   type SkillImportRpcConnection
 } from '../skills/mcp-server'
 import { isImportableSkillArchivePath } from '../skills/skill-archive-sniffer'
@@ -153,6 +134,11 @@ import {
   type ReviewerSessionRequest,
   type ReviewerSessionResult
 } from './reviewer-session-owner'
+import {
+  AcpSessionCapabilityOwner,
+  CURRENT_PRIMARY_SESSION_CAPABILITY_POLICY,
+  type SessionCapabilityRoutingIds
+} from './session-capability-owner'
 import {
   buildImageContentData,
   canInlineImageInSession,
@@ -594,12 +580,9 @@ class AcpRuntime {
   // compaction with `media_unstrippable`. Cleared after successful native compaction, on session
   // delete, and on disconnect.
   private readonly sessionInlineImageBytes = new Map<string, number>()
-  // Per-session canonical names of the MCP servers the agent was actually given (from
-  // createMcpServers), so MCP-originated tool calls can be recognized across frameworks (Claude's
-  // mcp__<server>__<tool> vs
-  // opencode's <server>_<tool>) and never conservatively auto-approved. Derived per session rather
-  // than hardcoded so it can't drift from what createMcpServers wires up.
-  private readonly sessionMcpServerNames = new Map<string, string[]>()
+  // App-owned MCP construction, routing aliases, and bearer lease ownership are kept behind one
+  // explicit role policy. Connection/process lifetime remains with this runtime.
+  private readonly sessionCapabilities: AcpSessionCapabilityOwner
   private readonly cancelledPromptTurnsBySession = new Map<string, number>()
   // Ephemeral Reviewer identity, isolation, permission, and resource state lives behind one owner.
   // Primary session registries remain here and collaborate through narrow collision/blocker ports.
@@ -741,22 +724,9 @@ class AcpRuntime {
   private readonly artifactRunRegistry: ArtifactRunRegistry | undefined
   private readonly uploadRepository: UploadRepository | undefined
   private readonly fileReferenceResolver: FileReferenceResolver
-  private readonly artifactSessionIds = new Map<string, string>()
-  // app session id -> the notebook routing id registered with the http MCP host, so it can be
-  // unregistered on session delete (the artifact routing id is tracked in artifactSessionIds).
-  private readonly notebookRoutingIds = new Map<string, string>()
-  // Concrete bearer releases committed with their app Session. This preserves cleanup even if an
-  // optional alias callback fails, and prevents broad same-id revocation from crossing generations.
-  private readonly notebookCapabilityReleases = new Map<string, () => void>()
-  private readonly skillImportRoutingIds = new Map<string, string>()
   private readonly skillImportTurnTokens = new Map<string, string>()
-  // Refreshed before every session build. Defaults on for callers/tests that predate the preference.
-  private skillImportEnabled = true
-  private artifactSessionSequence = 0
   private artifactRunSequence = 0
   private readonly runtimeInstanceId = randomUUID()
-  private notebookSessionSequence = 0
-  private skillImportSessionSequence = 0
   // The in-flight artifact run keyed by app session id, so app-side tools (e.g. molecule preview)
   // attach a generated file to the run of the session that triggered the call. Parallel sessions each
   // keep their own entry — a single global field would let one session's turn capture another's write.
@@ -780,6 +750,12 @@ class AcpRuntime {
     this.artifactOptions = options.artifacts
     this.notebookOptions = options.notebook
     this.skillImportOptions = options.skillImport
+    this.sessionCapabilities = new AcpSessionCapabilityOwner({
+      artifacts: options.artifacts,
+      notebook: options.notebook,
+      skillImport: options.skillImport,
+      mcpHttpHost: options.mcpHttpHost
+    })
     this.artifactRepository = options.artifacts
       ? (options.artifacts.repository ?? new ArtifactRepository(options.artifacts.dataRoot))
       : undefined
@@ -1520,9 +1496,7 @@ class AcpRuntime {
   private async createSessionOperation(
     request: AcpCreateSessionRequest = {}
   ): Promise<AcpCreateSessionResponse> {
-    let provisionalArtifactSessionId: string | undefined
-    let provisionalNotebookSessionId: string | undefined
-    let provisionalSkillImportSessionId: string | undefined
+    let provisionalRoutingIds: SessionCapabilityRoutingIds | undefined
     let releaseProvisionalNotebookConnection: (() => void) | undefined
     let primaryIdentityReservation: PrimarySessionIdentityReservation | undefined
     let provisionalSession: ActiveSession | undefined
@@ -1535,12 +1509,8 @@ class AcpRuntime {
       const connection = await this.ensureConnected(sessionCwd)
       this.assertCurrentConnectedConnection(connection)
       const sessionStartupGeneration = this.sessionStartupGeneration
-      const artifactSessionId = this.createArtifactSessionId()
-      provisionalArtifactSessionId = artifactSessionId || undefined
-      const notebookSessionId = this.createNotebookSessionId()
-      provisionalNotebookSessionId = notebookSessionId || undefined
-      const skillImportSessionId = this.createSkillImportSessionId()
-      provisionalSkillImportSessionId = skillImportSessionId || undefined
+      const routingIds = this.sessionCapabilities.createRoutingIds()
+      provisionalRoutingIds = routingIds
 
       // Resolve specialist identity before starting the ACP session so the identity append is
       // included in session/new. Main process reads the latest Profile — renderer only sends the UUID.
@@ -1570,16 +1540,19 @@ class AcpRuntime {
 
       log.info('createSession: createMcpServers', this.diagnosticContext())
       provisionalHttpMcpRoutes = !this.framework.acceptsStdioMcp
-      const mcpServers = await this.createMcpServers({
-        artifactSessionId,
-        notebookSessionId,
-        skillImportSessionId,
+      const builtCapabilities = await this.sessionCapabilities.build({
+        framework: this.framework,
+        nativeMcpEnabled: this.nativeMcpEnabled,
+        bridgeMcpAliasesEnabled: this.bridgeMcpAliasesEnabled,
+        policy: CURRENT_PRIMARY_SESSION_CAPABILITY_POLICY,
+        routingIds,
         sessionCwd,
         projectName,
         onNotebookConnection: (connection) => {
           releaseProvisionalNotebookConnection = connection.release
         }
       })
+      const { mcpServers } = builtCapabilities
       log.info('createSession: buildSession', this.diagnosticContext())
       const extraAppends = specialistAppend ? [specialistAppend] : []
       const session = await connection.agent
@@ -1658,20 +1631,19 @@ class AcpRuntime {
         this.latestSessionConfigOptions.set(session.sessionId, modelApplication.configOptions)
       }
       this.sessionCwds.set(session.sessionId, sessionCwd)
-      this.sessionMcpServerNames.set(session.sessionId, this.mcpServerNamesOf(mcpServers))
       this.sessionProjectNames.set(session.sessionId, projectName)
       this.sessionFrameworks.set(session.sessionId, this.framework.id)
       if (this.backendId) this.sessionBackendIds.set(session.sessionId, this.backendId)
-      this.rememberArtifactSession(session.sessionId, artifactSessionId)
-      this.rememberNotebookSession(session.sessionId, notebookSessionId)
-      this.rememberSkillImportSession(session.sessionId, skillImportSessionId)
-      this.commitNotebookCapabilityRelease(session.sessionId, releaseProvisionalNotebookConnection)
+      this.sessionCapabilities.commit({
+        appSessionId: session.sessionId,
+        routingIds,
+        descriptor: builtCapabilities.descriptor,
+        notebookRelease: releaseProvisionalNotebookConnection
+      })
       // Route and bearer ownership is now represented by the committed app-session maps. End the
       // provisional rollback window before invoking external observers so their failures cannot tear
       // down a Session that has already been published.
-      provisionalArtifactSessionId = undefined
-      provisionalNotebookSessionId = undefined
-      provisionalSkillImportSessionId = undefined
+      provisionalRoutingIds = undefined
       releaseProvisionalNotebookConnection = undefined
       try {
         this.notebookOptions?.registerSessionSpecialist?.(session.sessionId, request.specialistId)
@@ -1728,19 +1700,19 @@ class AcpRuntime {
           'primary startup session disposal failed'
         )
       }
-      this.unregisterProvisionalHttpMcpRoutes(
-        [
-          provisionalArtifactSessionId,
-          provisionalNotebookSessionId,
-          provisionalSkillImportSessionId
-        ],
-        provisionalHttpMcpRoutes
-      )
-      this.releaseProvisionalNotebookCapability(
-        provisionalNotebookSessionId,
-        releaseProvisionalNotebookConnection,
-        true
-      )
+      this.sessionCapabilities.revokeProvisional({
+        routingIds: provisionalRoutingIds
+          ? [
+              provisionalRoutingIds.artifact,
+              provisionalRoutingIds.notebook,
+              provisionalRoutingIds.skillImport
+            ]
+          : [],
+        usedHttpTransport: provisionalHttpMcpRoutes,
+        notebookSessionId: provisionalRoutingIds?.notebook || undefined,
+        notebookRelease: releaseProvisionalNotebookConnection,
+        ownsStableIdentity: true
+      })
       safeLogError('createSession: failed', {
         ...diagnosticErrorFields(startupError),
         ...this.diagnosticContext()
@@ -1775,7 +1747,6 @@ class AcpRuntime {
     session: ActiveSession,
     cwd: string,
     projectName: string,
-    mcpServerNames: string[],
     appliedModel: string | undefined
   ): void {
     this.sessions.set(appSessionId, session)
@@ -1786,13 +1757,9 @@ class AcpRuntime {
     }
 
     this.sessionCwds.set(appSessionId, cwd)
-    this.sessionMcpServerNames.set(appSessionId, mcpServerNames)
     this.sessionProjectNames.set(appSessionId, projectName)
     this.sessionFrameworks.set(appSessionId, this.framework.id)
     if (this.backendId) this.sessionBackendIds.set(appSessionId, this.backendId)
-    this.rememberArtifactSession(appSessionId, appSessionId)
-    this.rememberNotebookSession(appSessionId, appSessionId)
-    this.rememberSkillImportSession(appSessionId, appSessionId)
     this.currentSessionId = appSessionId
     this.snapshotOwner.updateCwd(cwd)
   }
@@ -2311,20 +2278,24 @@ class AcpRuntime {
     let releaseProvisionalNotebookConnection: (() => void) | undefined
     let session: ActiveSession | undefined
     let provisionalHttpMcpRoutes = false
+    const routingIds = this.sessionCapabilities.createRoutingIds(request.sessionId)
     try {
       // Resumed sessions already have stable ids, so the artifact session mirrors the runtime session
       // id.
       provisionalHttpMcpRoutes = !this.framework.acceptsStdioMcp
-      const mcpServers = await this.createMcpServers({
-        artifactSessionId: request.sessionId,
-        notebookSessionId: request.sessionId,
-        skillImportSessionId: request.sessionId,
+      const builtCapabilities = await this.sessionCapabilities.build({
+        framework: this.framework,
+        nativeMcpEnabled: this.nativeMcpEnabled,
+        bridgeMcpAliasesEnabled: this.bridgeMcpAliasesEnabled,
+        policy: CURRENT_PRIMARY_SESSION_CAPABILITY_POLICY,
+        routingIds,
         sessionCwd,
         projectName,
         onNotebookConnection: (connection) => {
           releaseProvisionalNotebookConnection = connection.release
         }
       })
+      const { mcpServers } = builtCapabilities
       let resumeResponse
       try {
         resumeResponse = await connection.agent.request(acp.methods.agent.session.resume, {
@@ -2349,11 +2320,13 @@ class AcpRuntime {
           this.assertPrimarySessionIdentityReservation(primaryIdentityReservation)
         } catch (supersededError) {
           if (notebookCapabilityProvisional) {
-            this.releaseProvisionalNotebookCapability(
-              request.sessionId,
-              releaseProvisionalNotebookConnection,
-              false
-            )
+            this.sessionCapabilities.revokeProvisional({
+              routingIds: [routingIds.artifact, routingIds.notebook, routingIds.skillImport],
+              usedHttpTransport: false,
+              notebookSessionId: routingIds.notebook || undefined,
+              notebookRelease: releaseProvisionalNotebookConnection,
+              ownsStableIdentity: false
+            })
             notebookCapabilityProvisional = false
             releaseProvisionalNotebookConnection = undefined
           }
@@ -2365,11 +2338,13 @@ class AcpRuntime {
         // the token handed to that failed attempt before adopting a brand-new agent session under the
         // SAME app id; adoptFreshSession owns the replacement token's lifecycle.
         if (notebookCapabilityProvisional) {
-          this.releaseProvisionalNotebookCapability(
-            request.sessionId,
-            releaseProvisionalNotebookConnection,
-            true
-          )
+          this.sessionCapabilities.revokeProvisional({
+            routingIds: [routingIds.artifact, routingIds.notebook, routingIds.skillImport],
+            usedHttpTransport: false,
+            notebookSessionId: routingIds.notebook || undefined,
+            notebookRelease: releaseProvisionalNotebookConnection,
+            ownsStableIdentity: true
+          })
           notebookCapabilityProvisional = false
           releaseProvisionalNotebookConnection = undefined
         }
@@ -2429,14 +2404,15 @@ class AcpRuntime {
         this.latestSessionConfigOptions.set(request.sessionId, modelApplication.configOptions)
       }
       this.sessionCwds.set(request.sessionId, sessionCwd)
-      this.sessionMcpServerNames.set(request.sessionId, this.mcpServerNamesOf(mcpServers))
       this.sessionProjectNames.set(request.sessionId, projectName)
       this.sessionFrameworks.set(request.sessionId, this.framework.id)
       if (this.backendId) this.sessionBackendIds.set(request.sessionId, this.backendId)
-      this.rememberArtifactSession(request.sessionId, request.sessionId)
-      this.rememberNotebookSession(request.sessionId, request.sessionId)
-      this.rememberSkillImportSession(request.sessionId, request.sessionId)
-      this.commitNotebookCapabilityRelease(request.sessionId, releaseProvisionalNotebookConnection)
+      this.sessionCapabilities.commit({
+        appSessionId: request.sessionId,
+        routingIds,
+        descriptor: builtCapabilities.descriptor,
+        notebookRelease: releaseProvisionalNotebookConnection
+      })
       notebookCapabilityProvisional = false
       releaseProvisionalNotebookConnection = undefined
       this.currentSessionId = request.sessionId
@@ -2480,17 +2456,28 @@ class AcpRuntime {
         ownsProvisionalHttpRoutes = false
       }
       if (ownsProvisionalHttpRoutes) {
-        this.unregisterProvisionalHttpMcpRoutes([request.sessionId], provisionalHttpMcpRoutes)
+        this.sessionCapabilities.revokeProvisional({
+          routingIds: [routingIds.artifact, routingIds.notebook, routingIds.skillImport],
+          usedHttpTransport: provisionalHttpMcpRoutes,
+          notebookSessionId: routingIds.notebook || undefined,
+          notebookRelease: notebookCapabilityProvisional
+            ? releaseProvisionalNotebookConnection
+            : undefined,
+          ownsStableIdentity: notebookCapabilityProvisional
+        })
+        notebookCapabilityProvisional = false
       }
       if (session) {
         this.disposeSessionAfterFailure(session, 'resumed startup session disposal failed')
       }
       if (notebookCapabilityProvisional) {
-        this.releaseProvisionalNotebookCapability(
-          request.sessionId,
-          releaseProvisionalNotebookConnection,
-          ownsProvisionalHttpRoutes
-        )
+        this.sessionCapabilities.revokeProvisional({
+          routingIds: [],
+          usedHttpTransport: false,
+          notebookSessionId: routingIds.notebook || undefined,
+          notebookRelease: releaseProvisionalNotebookConnection,
+          ownsStableIdentity: ownsProvisionalHttpRoutes
+        })
       }
       throw startupError
     }
@@ -2514,18 +2501,22 @@ class AcpRuntime {
     let releaseProvisionalNotebookConnection: (() => void) | undefined
     let adopted: ActiveSession | undefined
     let provisionalHttpMcpRoutes = false
+    const routingIds = this.sessionCapabilities.createRoutingIds(request.sessionId)
     try {
       provisionalHttpMcpRoutes = !this.framework.acceptsStdioMcp
-      const mcpServers = await this.createMcpServers({
-        artifactSessionId: request.sessionId,
-        notebookSessionId: request.sessionId,
-        skillImportSessionId: request.sessionId,
+      const builtCapabilities = await this.sessionCapabilities.build({
+        framework: this.framework,
+        nativeMcpEnabled: this.nativeMcpEnabled,
+        bridgeMcpAliasesEnabled: this.bridgeMcpAliasesEnabled,
+        policy: CURRENT_PRIMARY_SESSION_CAPABILITY_POLICY,
+        routingIds,
         sessionCwd,
         projectName,
         onNotebookConnection: (connection) => {
           releaseProvisionalNotebookConnection = connection.release
         }
       })
+      const { mcpServers } = builtCapabilities
       // A freshly adopted session carries no prior _meta, so the specialist identity append (Claude)
       // must be re-resolved from the live binding. Without this, a context reset or specialist switch
       // would silently drop the session's specialist identity.
@@ -2578,7 +2569,6 @@ class AcpRuntime {
         adopted,
         sessionCwd,
         projectName,
-        this.mcpServerNamesOf(mcpServers),
         modelApplication.appliedModel
       )
       this.pendingClaudeCodeHandoffAppends.delete(request.sessionId)
@@ -2588,7 +2578,12 @@ class AcpRuntime {
       if (modelApplication.configOptions) {
         this.latestSessionConfigOptions.set(adopted.sessionId, modelApplication.configOptions)
       }
-      this.commitNotebookCapabilityRelease(request.sessionId, releaseProvisionalNotebookConnection)
+      this.sessionCapabilities.commit({
+        appSessionId: request.sessionId,
+        routingIds,
+        descriptor: builtCapabilities.descriptor,
+        notebookRelease: releaseProvisionalNotebookConnection
+      })
       notebookCapabilityProvisional = false
       releaseProvisionalNotebookConnection = undefined
       try {
@@ -2617,17 +2612,28 @@ class AcpRuntime {
         ownsProvisionalHttpRoutes = false
       }
       if (ownsProvisionalHttpRoutes) {
-        this.unregisterProvisionalHttpMcpRoutes([request.sessionId], provisionalHttpMcpRoutes)
+        this.sessionCapabilities.revokeProvisional({
+          routingIds: [routingIds.artifact, routingIds.notebook, routingIds.skillImport],
+          usedHttpTransport: provisionalHttpMcpRoutes,
+          notebookSessionId: routingIds.notebook || undefined,
+          notebookRelease: notebookCapabilityProvisional
+            ? releaseProvisionalNotebookConnection
+            : undefined,
+          ownsStableIdentity: notebookCapabilityProvisional
+        })
+        notebookCapabilityProvisional = false
       }
       if (adopted) {
         this.disposeSessionAfterFailure(adopted, 'adopted startup session disposal failed')
       }
       if (notebookCapabilityProvisional) {
-        this.releaseProvisionalNotebookCapability(
-          request.sessionId,
-          releaseProvisionalNotebookConnection,
-          ownsProvisionalHttpRoutes
-        )
+        this.sessionCapabilities.revokeProvisional({
+          routingIds: [],
+          usedHttpTransport: false,
+          notebookSessionId: routingIds.notebook || undefined,
+          notebookRelease: releaseProvisionalNotebookConnection,
+          ownsStableIdentity: ownsProvisionalHttpRoutes
+        })
       }
       throw startupError
     }
@@ -2971,7 +2977,7 @@ class AcpRuntime {
     this.contextUsageUpdatedPromptTurnsBySession.clear()
     this.appliedSessionModels.clear()
 
-    this.releaseAllNotebookSessionCapabilities()
+    this.sessionCapabilities.dispose(this.sessions.keys())
 
     for (const session of this.sessions.values()) {
       runCleanup('primary-session', () => session.dispose())
@@ -2984,16 +2990,12 @@ class AcpRuntime {
     this.currentPromptIdentityBySession.clear()
     this.claudeTurnCountsBySession.clear()
     this.latestSessionConfigOptions.clear()
-    this.sessionMcpServerNames.clear()
     this.codexSkillActivity.clear()
     this.cancelledPromptTurnsBySession.clear()
     this.sessionProjectNames.clear()
     this.permissionProfiles.clear()
-    this.artifactSessionIds.clear()
-    this.notebookRoutingIds.clear()
-    this.skillImportRoutingIds.clear()
     this.skillImportTurnTokens.clear()
-    runCleanup('MCP HTTP routes', () => this.mcpHttpHost?.clear())
+    runCleanup('MCP HTTP routes', () => this.sessionCapabilities.clearHttpRoutes())
     this.agentToAppSessionId.clear()
     this.currentSessionId = undefined
     this.supportsSessionClose = false
@@ -3877,8 +3879,8 @@ class AcpRuntime {
     this.cancelTimers.delete(request.sessionId)
     this.skillSelectorAbortControllers.get(request.sessionId)?.abort()
     this.skillSelectorAbortControllers.delete(request.sessionId)
-    // Drop this session's http MCP host registrations (no-op when no host / stdio framework).
-    this.unregisterHttpMcpSession(request.sessionId)
+    // Drop this session's MCP routes, aliases, and bearer ownership (idempotent for detached deletes).
+    this.sessionCapabilities.revokeSession(request.sessionId)
     this.sessions.delete(request.sessionId)
     this.sessionCwds.delete(request.sessionId)
     this.sessionInlineImageBytes.delete(request.sessionId)
@@ -3890,7 +3892,6 @@ class AcpRuntime {
     this.claudeTurnCountsBySession.delete(request.sessionId)
     this.cancelledPromptTurnsBySession.delete(request.sessionId)
     this.latestSessionConfigOptions.delete(request.sessionId)
-    this.sessionMcpServerNames.delete(request.sessionId)
     this.sessionProjectNames.delete(request.sessionId)
     this.sessionFrameworks.delete(request.sessionId)
     this.sessionBackendIds.delete(request.sessionId)
@@ -3898,17 +3899,11 @@ class AcpRuntime {
     this.contextUsageUpdatedPromptTurnsBySession.delete(request.sessionId)
     this.appliedSessionModels.delete(request.sessionId)
     this.permissionProfiles.delete(request.sessionId)
-    this.artifactSessionIds.delete(request.sessionId)
-    this.notebookRoutingIds.delete(request.sessionId)
-    this.skillImportRoutingIds.delete(request.sessionId)
     this.skillImportTurnTokens.delete(request.sessionId)
     this.promptInFlightSessionIds.delete(request.sessionId)
     this.contextCompactionInFlightSessionIds.delete(request.sessionId)
     this.sessionSpecialistPrefixes.delete(request.sessionId)
     this.sessionSpecialistIds.delete(request.sessionId)
-
-    this.releaseCommittedNotebookCapability(request.sessionId)
-    this.releaseNotebookSessionCapabilities(request.sessionId)
 
     // Only announce a deletion and shift the current session when something was actually attached; a
     // detached cleanup (post-switch) must not emit a spurious event or move currentSessionId.
@@ -4186,7 +4181,7 @@ class AcpRuntime {
     sessionId: string,
     references: FileReference[]
   ): Promise<(() => void) | undefined> {
-    if (!this.skillImportEnabled) return undefined
+    if (!this.sessionCapabilities.isSkillImportEnabled()) return undefined
 
     const authorize = this.skillImportOptions?.authorizeReferencedUploads
     if (!authorize) return undefined
@@ -4304,7 +4299,7 @@ class AcpRuntime {
       ].join('\n')
     })
     if (
-      this.skillImportEnabled &&
+      this.sessionCapabilities.isSkillImportEnabled() &&
       allowSkillImportReference &&
       (await this.isSkillPackageFile(name, absolutePath))
     ) {
@@ -4604,514 +4599,30 @@ class AcpRuntime {
     ]
   }
 
-  // Creates an app-owned artifact session id so new ACP sessions never decide their storage directory.
-  private createArtifactSessionId(): string {
-    if (!this.artifactOptions) return ''
-
-    this.artifactSessionSequence += 1
-
-    return `artifact-session-${Date.now()}-${this.artifactSessionSequence}`
-  }
-
-  // Maps protocol session ids to artifact session ids for later prompt turns and cleanup.
-  private rememberArtifactSession(sessionId: string, artifactSessionId: string): void {
-    if (!artifactSessionId) return
-
-    this.artifactSessionIds.set(sessionId, artifactSessionId)
-  }
-
-  // Builds the artifact MCP environment for one session, shared by the stdio config and the http host.
-  private async buildArtifactEnvironment(
-    artifactSessionId: string,
-    sessionCwd: string,
-    projectName: string
-  ): Promise<ArtifactMcpEnvironment | undefined> {
-    if (!this.artifactOptions || !artifactSessionId) return undefined
-
-    const connection = this.artifactOptions.getRpcConnection
-      ? await this.artifactOptions.getRpcConnection()
-      : undefined
-
-    // Only the session workspace is a static import root. The notebook session root is intentionally
-    // NOT added here: at session creation we only hold the pre-start alias, and authorizing the alias
-    // dir would let stale-alias absolute paths pass the allow-root check. The authoritative notebook
-    // root (keyed by the final ACP session id) is supplied per turn via the current-run.json handoff.
-    return {
-      storageRoot: this.artifactOptions.dataRoot,
-      projectName,
-      sessionId: artifactSessionId,
-      currentRunFile: this.getArtifactCurrentRunFile(artifactSessionId, projectName),
-      allowedImportRoots: [sessionCwd],
-      rpcEndpoint: connection?.endpoint
-    }
-  }
-
-  // Provides the agent with exactly one artifact MCP server scoped to this session's storage context.
-  private async createArtifactMcpServers(
-    artifactSessionId: string,
-    sessionCwd: string,
-    projectName: string
-  ): Promise<McpServer[]> {
-    const environment = await this.buildArtifactEnvironment(
-      artifactSessionId,
-      sessionCwd,
-      projectName
-    )
-
-    if (!environment || !this.artifactOptions) return []
-
-    return [
-      createArtifactMcpServerConfig({
-        command: this.artifactOptions.mcpCommand ?? process.execPath,
-        entryPath: this.artifactOptions.mcpEntryPath,
-        ...environment
-      })
-    ]
-  }
-
-  // Creates an app-owned notebook session alias for new ACP sessions whose real id is not known yet.
-  private createNotebookSessionId(): string {
-    if (!this.notebookOptions) return ''
-
-    this.notebookSessionSequence += 1
-
-    return `notebook-session-${Date.now()}-${this.notebookSessionSequence}`
-  }
-
-  // Lets the local notebook RPC layer map pre-start aliases to the final ACP session id.
-  private rememberNotebookSession(sessionId: string, notebookSessionId: string): void {
-    if (!this.notebookOptions || !notebookSessionId) return
-
-    // Record the routing id the http MCP host was registered under, for later unregister.
-    this.notebookRoutingIds.set(sessionId, notebookSessionId)
-
-    if (notebookSessionId === sessionId) return
-
-    try {
-      this.notebookOptions.registerSessionAlias?.(notebookSessionId, sessionId)
-    } catch (error) {
-      safeLogError('register notebook session alias failed', {
-        ...diagnosticErrorFields(error),
-        aliasSessionId: notebookSessionId,
-        sessionId
-      })
-    }
-  }
-
-  // Capability cleanup is best-effort and must never replace the session lifecycle error that caused
-  // it. The production callback only mutates local maps, while this guard keeps injected/test adapters
-  // from masking the original failure.
-  private releaseNotebookSessionCapabilities(sessionId: string): void {
-    try {
-      this.notebookOptions?.releaseSessionCapabilities?.(sessionId)
-    } catch (error) {
-      safeLogError('release notebook session capabilities failed', {
-        ...diagnosticErrorFields(error),
-        ...this.diagnosticContext()
-      })
-    }
-  }
-
-  private releaseAllNotebookSessionCapabilities(): void {
-    const sessionIds = new Set([
-      ...this.sessions.keys(),
-      ...this.notebookRoutingIds.keys(),
-      ...this.notebookCapabilityReleases.keys()
-    ])
-    for (const sessionId of sessionIds) {
-      this.releaseCommittedNotebookCapability(sessionId)
-      this.releaseNotebookSessionCapabilities(sessionId)
-    }
-    this.notebookCapabilityReleases.clear()
-  }
-
-  private createSkillImportSessionId(): string {
-    if (!this.skillImportOptions) return ''
-
-    this.skillImportSessionSequence += 1
-    return `skill-import-session-${Date.now()}-${this.skillImportSessionSequence}`
-  }
-
-  private rememberSkillImportSession(sessionId: string, routingSessionId: string): void {
-    if (!this.skillImportOptions || !this.skillImportEnabled || !routingSessionId) return
-
-    this.skillImportRoutingIds.set(sessionId, routingSessionId)
-
-    if (routingSessionId !== sessionId) {
-      try {
-        this.skillImportOptions.registerSessionAlias?.(routingSessionId, sessionId)
-      } catch (error) {
-        safeLogError('register skill import session alias failed', {
-          ...diagnosticErrorFields(error),
-          aliasSessionId: routingSessionId,
-          sessionId
-        })
-      }
-    }
-  }
-
-  // Builds the notebook MCP environment for one session, shared by the stdio config and the http host.
-  private async buildNotebookEnvironment(
-    notebookSessionId: string,
-    sessionCwd: string,
-    projectName: string,
-    onConnection?: (connection: NotebookRpcConnection) => void
-  ): Promise<NotebookMcpEnvironment | undefined> {
-    if (!this.notebookOptions || !notebookSessionId) return undefined
-
-    const connection = await this.resolveNotebookRpcConnection(notebookSessionId, projectName)
-    onConnection?.(connection)
-
-    return {
-      endpoint: connection.endpoint,
-      token: connection.token,
-      projectName,
-      sessionId: notebookSessionId,
-      workspaceCwd: sessionCwd
-    }
-  }
-
-  // Provides the agent with a notebook MCP server scoped to this session's runtime route.
-  private async createNotebookMcpServers(
-    notebookSessionId: string,
-    sessionCwd: string,
-    projectName: string,
-    onConnection?: (connection: NotebookRpcConnection) => void
-  ): Promise<McpServer[]> {
-    const environment = await this.buildNotebookEnvironment(
-      notebookSessionId,
-      sessionCwd,
-      projectName,
-      onConnection
-    )
-
-    if (!environment || !this.notebookOptions) return []
-
-    return [
-      createNotebookMcpServerConfig({
-        command: this.notebookOptions.mcpCommand ?? process.execPath,
-        entryPath: this.notebookOptions.mcpEntryPath,
-        ...environment
-      })
-    ]
-  }
-
-  // Resolves either a static test connection or the real app-local RPC server connection.
-  private async resolveNotebookRpcConnection(
-    sessionId: string,
-    projectId: string
-  ): Promise<NotebookRpcConnection> {
-    if (!this.notebookOptions) {
-      throw new Error('Notebook runtime is not configured.')
-    }
-
-    if (this.notebookOptions.getRpcConnection) {
-      return this.notebookOptions.getRpcConnection({ sessionId, projectId })
-    }
-
-    throw new Error('Notebook runtime RPC connection is not configured.')
-  }
-
-  private async buildSkillImportEnvironment(
-    routingSessionId: string
-  ): Promise<SkillImportMcpEnvironment | undefined> {
-    if (!this.skillImportOptions || !routingSessionId) return undefined
-
-    this.skillImportEnabled = (await this.skillImportOptions.isEnabled?.()) ?? true
-    if (!this.skillImportEnabled) return undefined
-
-    const connection = await this.skillImportOptions.getRpcConnection()
-    return { ...connection, sessionId: routingSessionId }
-  }
-
-  private async createSkillImportMcpServers(routingSessionId: string): Promise<McpServer[]> {
-    const environment = await this.buildSkillImportEnvironment(routingSessionId)
-    if (!environment || !this.skillImportOptions) return []
-
-    return [
-      createSkillImportMcpServerConfig({
-        command: this.skillImportOptions.mcpCommand ?? process.execPath,
-        entryPath: this.skillImportOptions.mcpEntryPath,
-        ...environment
-      })
-    ]
-  }
-
-  // Combines every MCP config that should be visible to the agent for one session.
-  private async createMcpServers({
-    artifactSessionId,
-    notebookSessionId,
-    skillImportSessionId,
-    sessionCwd,
-    projectName,
-    onNotebookConnection
-  }: {
-    artifactSessionId: string
-    notebookSessionId: string
-    skillImportSessionId: string
-    sessionCwd: string
-    projectName: string
-    onNotebookConnection?: (connection: NotebookRpcConnection) => void
-  }): Promise<McpServer[]> {
-    // Bridge-backed Codex receives the app-owned notebook schemas as namespaced Chat aliases while the
-    // actual tool remains attached here as MCP. Codex therefore keeps ownership of dispatch, approval,
-    // and execution. The artifact server stays gated on native Responses; non-bridge sessions get both.
-    const artifactEnabled = this.nativeMcpEnabled || this.bridgeMcpAliasesEnabled
-
-    // App-owned session servers use stdio when supported. A framework that only accepts http/sse MCP
-    // gets them over the http host when one is wired; without a host it gets none so a basic turn still
-    // runs instead of failing on an unsupported stdio server config.
-    const servers = this.framework.acceptsStdioMcp
-      ? [
-          ...(artifactEnabled
-            ? await this.createArtifactMcpServers(artifactSessionId, sessionCwd, projectName)
-            : []),
-          ...(await this.createNotebookMcpServers(
-            notebookSessionId,
-            sessionCwd,
-            projectName,
-            onNotebookConnection
-          )),
-          ...(await this.createSkillImportMcpServers(skillImportSessionId))
-        ]
-      : await this.createHttpMcpServers(
-          artifactSessionId,
-          notebookSessionId,
-          skillImportSessionId,
-          sessionCwd,
-          projectName,
-          onNotebookConnection
-        )
-
-    if (!artifactEnabled) {
-      log.info(
-        'artifact MCP server disabled for Responses bridge; notebook server kept for host.mcp'
-      )
-    }
-
-    // Keep only the count plus lifecycle context. MCP launch specs can contain local paths or provider
-    // details and are not safe session-creation diagnostics.
-    log.info('session MCP servers', {
-      ...this.diagnosticContext(),
-      count: servers.length
-    })
-
-    return servers.map((server) => {
-      const name = (server as { name?: unknown }).name
-      if (typeof name !== 'string') return server
-
-      const modelFacingName = modelFacingAppMcpServerName(this.framework.id, name)
-      return modelFacingName === name ? server : { ...server, name: modelFacingName }
-    })
-  }
-
-  // Extracts canonical names from the MCP servers handed to a session so MCP-origin tool calls can be
-  // recognized later (see sessionMcpServerNames). Both stdio and http McpServer configs carry a name.
-  private mcpServerNamesOf(servers: McpServer[]): string[] {
-    return servers
-      .map((server) => (server as { name?: unknown }).name)
-      .filter((name): name is string => typeof name === 'string')
-      .map(canonicalAppMcpServerName)
-  }
-
-  // Drops one session's app-tool registrations from the http MCP host (no-op without a host).
-  private unregisterHttpMcpSession(appSessionId: string): void {
-    if (!this.mcpHttpHost) return
-
-    const artifactRoutingId = this.artifactSessionIds.get(appSessionId)
-    if (artifactRoutingId) this.mcpHttpHost.unregister(artifactRoutingId)
-
-    const notebookRoutingId = this.notebookRoutingIds.get(appSessionId)
-    if (notebookRoutingId) this.mcpHttpHost.unregister(notebookRoutingId)
-
-    const skillImportRoutingId = this.skillImportRoutingIds.get(appSessionId)
-    if (skillImportRoutingId) this.mcpHttpHost.unregister(skillImportRoutingId)
-  }
-
-  // Failed startups have not committed their routing ids to the app-session maps used by
-  // unregisterHttpMcpSession. Drop their direct HTTP-host registrations while the startup still owns
-  // its identity. A superseded resume/adoption skips this cleanup because teardown already cleared the
-  // old generation and the same routing id may now belong to its successor.
-  private unregisterProvisionalHttpMcpRoutes(
-    routingIds: readonly (string | undefined)[],
-    usedHttpTransport: boolean
-  ): void {
-    if (!this.mcpHttpHost || !usedHttpTransport) return
-
-    for (const routingId of new Set(routingIds)) {
-      if (!routingId) continue
-      try {
-        this.mcpHttpHost.unregister(routingId)
-      } catch (error) {
-        safeLogError('provisional http MCP route cleanup failed', {
-          ...diagnosticErrorFields(error),
-          routingId,
-          ...this.diagnosticContext()
-        })
-      }
-    }
-  }
-
-  // Prefer the concrete connection lease so a stale startup can revoke only its own bearer. Injected
-  // adapters predating leases fall back to broad app-id cleanup only while this startup still owns that
-  // identity; broad cleanup after supersession could revoke the successor's Notebook/Compute token.
-  private releaseProvisionalNotebookCapability(
-    sessionId: string | undefined,
-    release: (() => void) | undefined,
-    ownsStableIdentity: boolean
-  ): void {
-    if (release) {
-      try {
-        release()
-      } catch (error) {
-        safeLogError('provisional notebook capability cleanup failed', {
-          ...diagnosticErrorFields(error),
-          sessionId
-        })
-      }
-    }
-
-    if (sessionId && ownsStableIdentity) {
-      this.releaseNotebookSessionCapabilities(sessionId)
-    }
-  }
-
-  private commitNotebookCapabilityRelease(
-    sessionId: string,
-    release: (() => void) | undefined
-  ): void {
-    const previousRelease = this.notebookCapabilityReleases.get(sessionId)
-    if (previousRelease === release) return
-
-    // Publish the replacement ownership before retiring the previous generation. If old cleanup
-    // throws, the new Session must still retain a reachable release handle for delete/disconnect.
-    if (release) {
-      this.notebookCapabilityReleases.set(sessionId, release)
-    } else {
-      this.notebookCapabilityReleases.delete(sessionId)
-    }
-    if (!previousRelease) return
-
-    try {
-      previousRelease()
-    } catch (error) {
-      safeLogError('replaced notebook capability cleanup failed', {
-        ...diagnosticErrorFields(error),
-        sessionId
-      })
-    }
-  }
-
-  private releaseCommittedNotebookCapability(sessionId: string): void {
-    const release = this.notebookCapabilityReleases.get(sessionId)
-    this.notebookCapabilityReleases.delete(sessionId)
-    if (!release) return
-
-    try {
-      release()
-    } catch (error) {
-      safeLogError('committed notebook capability cleanup failed', {
-        ...diagnosticErrorFields(error),
-        sessionId
-      })
-    }
-  }
-
-  // Serves app-owned session MCP over the local http host for frameworks that reject stdio MCP.
-  // Registers each session's environment under its app-owned id and returns http McpServer configs
-  // pointing at the host, authenticated with the host token. No host wired ⇒ no servers (basic turn).
-  private async createHttpMcpServers(
-    artifactSessionId: string,
-    notebookSessionId: string,
-    skillImportSessionId: string,
-    sessionCwd: string,
-    projectName: string,
-    onNotebookConnection?: (connection: NotebookRpcConnection) => void
-  ): Promise<McpServer[]> {
-    if (!this.mcpHttpHost) return []
-
-    const { token } = await this.mcpHttpHost.ensureStarted()
-    const authHeader = { name: 'authorization', value: `Bearer ${token}` }
-    const servers: McpServer[] = []
-
-    const artifactEnvironment = await this.buildArtifactEnvironment(
-      artifactSessionId,
-      sessionCwd,
-      projectName
-    )
-
-    if (artifactEnvironment) {
-      this.mcpHttpHost.registerArtifact(artifactSessionId, artifactEnvironment)
-      servers.push({
-        type: 'http',
-        name: ARTIFACT_MCP_SERVER_NAME,
-        url: this.mcpHttpHost.urlFor('artifact', artifactSessionId),
-        headers: [authHeader]
-      })
-    }
-
-    const notebookEnvironment = await this.buildNotebookEnvironment(
-      notebookSessionId,
-      sessionCwd,
-      projectName,
-      onNotebookConnection
-    )
-
-    if (notebookEnvironment) {
-      this.mcpHttpHost.registerNotebook(notebookSessionId, notebookEnvironment)
-      servers.push({
-        type: 'http',
-        name: NOTEBOOK_MCP_SERVER_NAME,
-        url: this.mcpHttpHost.urlFor('notebook', notebookSessionId),
-        headers: [authHeader]
-      })
-    }
-
-    const skillImportEnvironment = await this.buildSkillImportEnvironment(skillImportSessionId)
-
-    if (skillImportEnvironment) {
-      this.mcpHttpHost.registerSkillImport(skillImportSessionId, skillImportEnvironment)
-      servers.push({
-        type: 'http',
-        name: SKILL_IMPORT_MCP_SERVER_NAME,
-        url: this.mcpHttpHost.urlFor('skill-import', skillImportSessionId),
-        headers: [authHeader]
-      })
-    }
-
-    return servers
-  }
-
   // Collects the system-prompt guidance appended to every session, plus app tooling
   // instructions when those services are wired. Skill privacy is enforced at the presentation layer;
   // agent prompts must not block native progressive loading of a selected SKILL.md.
-  // Whether the local MCP transport can carry app tooling at all: the framework takes stdio MCP
-  // directly (Claude, Codex) or an http host is wired (opencode). Must match createMcpServers so the
-  // guidance is only sent for tools actually wired.
-  private mcpTransportAvailable(): boolean {
-    return this.framework.acceptsStdioMcp || Boolean(this.mcpHttpHost)
-  }
-
-  // Notebook tooling is wired even for bridge-backed Codex (see createMcpServers), so its guidance is
-  // gated only on the transport + notebook config, not on full native MCP.
   private notebookToolingAvailable(): boolean {
-    return this.mcpTransportAvailable() && Boolean(this.notebookOptions)
+    return this.currentCapabilityAvailability().notebook
   }
 
   private skillImportToolingAvailable(): boolean {
-    return (
-      this.skillImportEnabled && this.mcpTransportAvailable() && Boolean(this.skillImportOptions)
-    )
+    return this.currentCapabilityAvailability().skillImport
   }
 
-  // The artifact write tool is only wired when full native MCP is enabled (off for the bridge), so its
-  // guidance follows that flag.
   private artifactToolingAvailable(): boolean {
-    return (
-      (this.nativeMcpEnabled || this.bridgeMcpAliasesEnabled) &&
-      this.mcpTransportAvailable() &&
-      Boolean(this.artifactOptions)
-    )
+    return this.currentCapabilityAvailability().artifacts
+  }
+
+  private currentCapabilityAvailability(): ReturnType<
+    AcpSessionCapabilityOwner['toolingAvailability']
+  > {
+    return this.sessionCapabilities.toolingAvailability({
+      framework: this.framework,
+      nativeMcpEnabled: this.nativeMcpEnabled,
+      bridgeMcpAliasesEnabled: this.bridgeMcpAliasesEnabled,
+      policy: CURRENT_PRIMARY_SESSION_CAPABILITY_POLICY
+    })
   }
 
   private getSystemPromptAppends(skillGuidance?: string): string[] {
@@ -5254,7 +4765,7 @@ class AcpRuntime {
     if (!this.artifactOptions || !this.artifactRepository) return undefined
 
     this.artifactRunSequence += 1
-    const artifactSessionId = this.artifactSessionIds.get(sessionId) ?? sessionId
+    const artifactSessionId = this.sessionCapabilities.artifactRoutingIdFor(sessionId) ?? sessionId
     const projectName = this.resolveSessionProjectName(sessionId)
     const currentRunFile = this.getArtifactCurrentRunFile(artifactSessionId, projectName)
     const runId = `artifact-run-${Date.now()}-${this.artifactRunSequence}`
@@ -5551,7 +5062,7 @@ class AcpRuntime {
     const appSessionId = this.agentToAppSessionId.get(params.sessionId) ?? params.sessionId
     const reviewerContext = this.reviewerSessions.contextFor(params.sessionId)
     const mcpServerNames =
-      reviewerContext?.mcpServerNames ?? this.sessionMcpServerNames.get(appSessionId) ?? []
+      reviewerContext?.mcpServerNames ?? this.sessionCapabilities.mcpServerNamesFor(appSessionId)
     const promptTurn = this.currentPromptTurnBySession.get(appSessionId)
     const framework = reviewerContext?.frameworkId ?? this.sessionFrameworks.get(appSessionId)
     const isPermissionContextCancelled = (): boolean =>
@@ -5649,7 +5160,7 @@ class AcpRuntime {
       sessionId,
       framework,
       mcpServerNames:
-        reviewerContext?.mcpServerNames ?? this.sessionMcpServerNames.get(sessionId) ?? []
+        reviewerContext?.mcpServerNames ?? this.sessionCapabilities.mcpServerNamesFor(sessionId)
     })
   }
 
@@ -5816,7 +5327,7 @@ class AcpRuntime {
         routed.update.sessionUpdate === 'tool_call' ||
         routed.update.sessionUpdate === 'tool_call_update'
       ) {
-        const mcpServerNames = this.sessionMcpServerNames.get(routed.sessionId) ?? []
+        const mcpServerNames = this.sessionCapabilities.mcpServerNamesFor(routed.sessionId)
         const providerToolName = extractProviderToolName(routed.update)
         const isMcp =
           isMcpToolName(routed.update.title, mcpServerNames) ||
@@ -5918,7 +5429,7 @@ class AcpRuntime {
     return (
       resolveCanonicalMcpToolIdentity(
         providerToolName,
-        this.sessionMcpServerNames.get(sessionId) ?? []
+        this.sessionCapabilities.mcpServerNamesFor(sessionId)
       ) ?? providerToolName
     )
   }
@@ -6027,7 +5538,7 @@ class AcpRuntime {
     this.skillSelectorAbortControllers.clear()
     this.permissionContext.dispose()
     this.reviewerSessions.clear()
-    this.releaseAllNotebookSessionCapabilities()
+    this.sessionCapabilities.dispose(this.sessions.keys())
     this.sessions.clear()
     this.sessionCwds.clear()
     this.sessionInlineImageBytes.clear()
@@ -6038,17 +5549,13 @@ class AcpRuntime {
     this.pendingClaudeCodeHandoffAppends.clear()
     this.claudeTurnCountsBySession.clear()
     this.latestSessionConfigOptions.clear()
-    this.sessionMcpServerNames.clear()
     this.codexSkillActivity.clear()
     this.cancelledPromptTurnsBySession.clear()
     this.sessionProjectNames.clear()
     this.contextUsageTracker.clear()
     this.contextUsageUpdatedPromptTurnsBySession.clear()
     this.appliedSessionModels.clear()
-    this.artifactSessionIds.clear()
-    this.notebookRoutingIds.clear()
-    this.skillImportRoutingIds.clear()
-    this.mcpHttpHost?.clear()
+    this.sessionCapabilities.clearHttpRoutes()
     this.agentToAppSessionId.clear()
     this.currentSessionId = undefined
     this.supportsSessionClose = false

@@ -754,10 +754,24 @@ const startPermissionProbeAgent = (
     )
 }
 
-// White-box view of the per-session MCP name map so cleanup paths (no black-box signal) can be
-// asserted directly.
-const mcpServerNamesMap = (runtime: AcpRuntime): Map<string, string[]> =>
-  (runtime as unknown as { sessionMcpServerNames: Map<string, string[]> }).sessionMcpServerNames
+// Read-only owner snapshot for cleanup paths that have no black-box signal.
+const mcpServerNamesMap = (runtime: AcpRuntime): Map<string, readonly string[]> => {
+  const owner = (
+    runtime as unknown as {
+      sessionCapabilities: {
+        snapshot: () => readonly {
+          sessionId: string
+          descriptor: { canonicalMcpServerNames: readonly string[] }
+        }[]
+      }
+    }
+  ).sessionCapabilities
+  return new Map(
+    owner
+      .snapshot()
+      .map(({ sessionId, descriptor }) => [sessionId, descriptor.canonicalMcpServerNames] as const)
+  )
+}
 
 const agentToAppSessionMap = (runtime: AcpRuntime): Map<string, string> =>
   (runtime as unknown as { agentToAppSessionId: Map<string, string> }).agentToAppSessionId
@@ -1330,11 +1344,7 @@ describe('ACP runtime session management', () => {
 
       expect(
         fakeAgent.newSessions[0].mcpServers.map((server) => (server as { name: string }).name)
-      ).toEqual([
-        'open-science-artifacts',
-        'open-science-notebook',
-        'open-science-skills'
-      ])
+      ).toEqual(['open-science-artifacts', 'open-science-notebook', 'open-science-skills'])
       expect(fakeAgent.newSessions[1].mcpServers).toEqual([reviewerServer])
       expect(reviewer.role).toBe('reviewer')
 
