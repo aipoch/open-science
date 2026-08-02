@@ -2,6 +2,7 @@ import { chmod, cp, lstat, mkdir, readFile, readdir, rm, writeFile } from 'node:
 import { join } from 'node:path'
 
 import { createLogger } from '../logger'
+import { COMPUTE_SKILL_ID, preserveComputeHostProjection } from '../compute/skill-doc'
 import type { BundledSkill } from './registry'
 
 const log = createLogger('skills')
@@ -109,6 +110,15 @@ class ClaudeCodeSkillMaterializer implements SkillMaterializer {
     const skillsDir = join(configDir, 'skills')
     await mkdir(skillsDir, { recursive: true })
 
+    // Before this Skill became application-managed it was materialized in the bare public-name
+    // directory. That exact directory is now the only known obsolete duplicate; never inspect or
+    // remove any other unprefixed directory because those can be user-owned Skills.
+    const legacyComputeDir = join(skillsDir, COMPUTE_SKILL_ID)
+    await chmodTree(legacyComputeDir, 'writable')
+    await rm(legacyComputeDir, { recursive: true, force: true }).catch((error) =>
+      log.warn('failed to remove legacy Compute Skill directory', { error })
+    )
+
     const wanted = new Map(enabled.map((skill) => [`${OS_SKILL_PREFIX}${skill.id}`, skill]))
 
     let existing: string[] = []
@@ -144,6 +154,10 @@ class ClaudeCodeSkillMaterializer implements SkillMaterializer {
 
       const target = join(skillsDir, name)
       try {
+        const priorComputeDocument =
+          skill.id === COMPUTE_SKILL_ID
+            ? await readFile(join(target, 'SKILL.md'), 'utf8').catch(() => undefined)
+            : undefined
         // Restore write bits before removal in case a prior sync left the dir read-only.
         await chmodTree(target, 'writable')
         await rm(target, { recursive: true, force: true })
@@ -157,6 +171,14 @@ class ClaudeCodeSkillMaterializer implements SkillMaterializer {
             return true
           }
         })
+        if (priorComputeDocument !== undefined) {
+          const current = await readFile(join(target, 'SKILL.md'), 'utf8')
+          await writeFile(
+            join(target, 'SKILL.md'),
+            preserveComputeHostProjection(current, priorComputeDocument),
+            'utf8'
+          )
+        }
         // Skills whose model tooling needs a compute backend this app lacks get an up-front notice so
         // the agent reports cleanly instead of failing through the model commands. Done before the
         // read-only chmod, which would otherwise block the rewrite.

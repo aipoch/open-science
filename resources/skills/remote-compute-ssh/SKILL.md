@@ -15,9 +15,13 @@ the sandbox workspace); calling it from a python/r cell will fail with `host.com
 
 ## Registered hosts
 
+<!-- open-science:compute-hosts:start -->
+
 Run `await host.compute.list()` to see all registered hosts.
+<!-- open-science:compute-hosts:end -->
 
 Each host entry shows:
+
 - Display name
 - Provider ID (e.g., `ssh:biowulf`, `ssh:192.168.1.100`)
 - Shape (e.g., `direct_ssh`, `slurm`, `pbs`)
@@ -49,8 +53,8 @@ const c = host.compute.create('ssh:<alias>')
 
 // Run a short remote command (throws on approval_denied / host_unreachable / timeout)
 const result = await c.call_command('<shell command>', '<one-line intent for the approval card>', {
-  login_shell: true,   // default: true — runs login profiles, then readable ~/.bashrc, before this command
-  timeout_seconds: 60  // optional — the host applies its own default (60s) when omitted
+  login_shell: true, // default: true — runs login profiles, then readable ~/.bashrc, before this command
+  timeout_seconds: 60 // optional — the host applies its own default (60s) when omitted
 })
 // result → { exit_code, stdout, stderr, truncated }
 
@@ -58,13 +62,16 @@ const result = await c.call_command('<shell command>', '<one-line intent for the
 const info = await host.compute.details('ssh:<alias>', { mode: 'read' })
 
 // Append a note to the host knowledge doc (agent writes; 32 KB cap enforced)
-await host.compute.details('ssh:<alias>', { mode: 'append', text: '\n## Note\nlearned X on <date>' })
+await host.compute.details('ssh:<alias>', {
+  mode: 'append',
+  text: '\n## Note\nlearned X on <date>'
+})
 
 // Replace the entire host knowledge doc (old_text must match the current doc exactly)
 await host.compute.details('ssh:<alias>', {
   mode: 'replace',
   text: '<new full doc>',
-  old_text: info.doc   // from the read above
+  old_text: info.doc // from the read above
 })
 ```
 
@@ -88,29 +95,29 @@ const activeHosts = await host.compute.list_compute()
 // Submit a non-blocking job — returns immediately after the user approves
 const c = host.compute.create('ssh:<alias>')
 const job = await c.submit_job(
-  '<one-line intent for the approval card>',  // shown in the approval card
-  '<shell command>',                           // command to run remotely
+  '<one-line intent for the approval card>', // shown in the approval card
+  '<shell command>', // command to run remotely
   {
-    timeout_seconds: 3600,  // optional; default 24 h, max 7 days
+    timeout_seconds: 3600, // optional; default 24 h, max 7 days
     inputs: [
-      { src: 'in.dat', dst_filename: 'in.dat' },          // stage a workspace file
-      { remote_path: 'ssh:<alias>/<abs_path>' }            // link a remote file (no transfer)
+      { src: 'in.dat', dst_filename: 'in.dat' }, // stage a workspace file
+      { remote_path: 'ssh:<alias>/<abs_path>' } // link a remote file (no transfer)
     ],
     outputs: [
-      '*.result',                                           // featured (default visibility)
-      { glob: '*.json', visibility: 'featured' },          // explicitly featured
-      { glob: '*.log',  visibility: 'hidden' },            // hidden (diagnostic, not shown in card)
-      { glob: 'checkpoints/**', residency: 'remote' }      // leave on remote — recorded in left_on_remote
+      '*.result', // featured (default visibility)
+      { glob: '*.json', visibility: 'featured' }, // explicitly featured
+      { glob: '*.log', visibility: 'hidden' }, // hidden (diagnostic, not shown in card)
+      { glob: 'checkpoints/**', residency: 'remote' } // leave on remote — recorded in left_on_remote
     ],
     harvest: {
-      exclude: ['work/**'],      // never harvest these paths
-      max_file_mb: 100,          // single-file cap (default 100 MB)
-      max_total_mb: 500          // total-harvest cap (default 500 MB)
+      exclude: ['work/**'], // never harvest these paths
+      max_file_mb: 100, // single-file cap (default 100 MB)
+      max_total_mb: 500 // total-harvest cap (default 500 MB)
     }
   }
 )
 // job → { job_id, provider_id, status: 'submitted', remote_workdir }
-print(job.job_id)   // end the cell — kernel never blocks on compute
+print(job.job_id) // end the cell — kernel never blocks on compute
 ```
 
 **End the cell here. Do NOT write a polling loop.** The app runs the poller and harvest in the
@@ -139,14 +146,14 @@ const s = await handle.status()
 
 ### submit_job status values
 
-| status | meaning |
-|--------|---------|
-| `submitted` | accepted; background dispatch in progress |
-| `running` | remote process confirmed alive (pid recorded) |
-| `success` | exit code 0 |
-| `failed` | non-zero exit (`job_failed`) or process vanished (`process_vanished`) |
-| `timeout` | exceeded `timeout_seconds` |
-| `error` | never reached the remote host (`host_unreachable` / `dispatch_failed`) |
+| status      | meaning                                                                |
+| ----------- | ---------------------------------------------------------------------- |
+| `submitted` | accepted; background dispatch in progress                              |
+| `running`   | remote process confirmed alive (pid recorded)                          |
+| `success`   | exit code 0                                                            |
+| `failed`    | non-zero exit (`job_failed`) or process vanished (`process_vanished`)  |
+| `timeout`   | exceeded `timeout_seconds`                                             |
+| `error`     | never reached the remote host (`host_unreachable` / `dispatch_failed`) |
 
 ## Workflow: the analysis turn
 
@@ -210,14 +217,14 @@ inputs to the next job — no local round-trip:
 
 ```javascript
 // In the analysis turn — chain a left_on_remote output into the next job
-const big_output_uri = r.left_on_remote[0].uri  // e.g. 'ssh:biowulf//scratch/jobs/<id>/big.h5'
+const big_output_uri = r.left_on_remote[0].uri // e.g. 'ssh:biowulf//scratch/jobs/<id>/big.h5'
 
 const job2 = await c.submit_job(
   'process big.h5 output from job 1',
   'python process.py --input big.h5 --out summary.csv',
   {
     inputs: [
-      { remote_path: big_output_uri }  // symlinked in job workdir, no transfer
+      { remote_path: big_output_uri } // symlinked in job workdir, no transfer
     ],
     outputs: ['summary.csv']
   }
@@ -239,14 +246,14 @@ for (const seed of [0, 1, 2, 3, 4]) {
     `AlphaFold seed ${seed}`,
     `python fold.py --seed ${seed} --in input.fasta --out ranked.pdb`,
     {
-      inputs:  [{ src: 'input.fasta', dst_filename: 'input.fasta' }],
+      inputs: [{ src: 'input.fasta', dst_filename: 'input.fasta' }],
       outputs: [{ glob: '*.pdb', visibility: 'featured' }],
       timeout_seconds: 3600
     }
   )
   jobs.push(job.job_id)
 }
-print(jobs)   // end the cell — no waiting, no loop
+print(jobs) // end the cell — no waiting, no loop
 ```
 
 The app triggers one analysis turn per job completion (or a merged turn for simultaneous
@@ -304,6 +311,7 @@ try {
 ## What to record in the knowledge doc
 
 The knowledge doc is the only state that survives across sessions. Record:
+
 - Scheduler type and any known partition/account combinations that worked.
 - Environment activation commands (e.g. `module load X/<ver>`, `conda activate <env>`).
 - Verified invocations tagged `verified <date>`; user-provided info tagged `per user <date>`.

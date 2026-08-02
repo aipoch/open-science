@@ -33,6 +33,9 @@ import { getProjectDbClient } from '../projects/prisma-client'
 import { createLogger, errorLogFields } from '../logger'
 import { resolveDataRoot, resolveStorageRoot } from '../storage-root'
 import { SettingsRepository } from '../settings/repository'
+import { getAppClaudeConfigDir } from '../settings/provider-env'
+import { codexStorageDir, codexSubscriptionStorageDir } from '../agent-framework/codex'
+import { opencodeConfigDir } from '../agent-framework/opencode'
 import { broadcastToRenderers } from '../renderer-broadcast'
 import type { TaskNotificationService } from '../notifications/task-notifications'
 import { buildComputeApprovalBroadcast } from '../notifications/electron-wiring'
@@ -50,6 +53,7 @@ import { getJobHarvestDir } from './harvest-engine'
 import { workspaceRelativePath } from './workspace-path'
 import type { PermissionGrantRegistry } from '../permission-grants/registry'
 import { createComputePermissionGrantAdapter } from './permission-grant-adapter'
+import { hasCanonicalComputeSkillDoc, syncComputeSkillDoc } from './skill-doc'
 
 // IPC channel names for the renderer job feed (Phase 3d, issue 05).
 export const COMPUTE_JOBS_LIST_CHANNEL = 'compute:jobs:list'
@@ -199,7 +203,8 @@ const createComputeHandlers = (
   artifactResolver?: ArtifactResolver,
   storageRoot?: string,
   taskNotifications?: Pick<TaskNotificationService, 'handleComputeApproval'>,
-  permissionGrantRegistry?: PermissionGrantRegistry
+  permissionGrantRegistry?: PermissionGrantRegistry,
+  syncComputeSkillDocument?: () => Promise<void>
 ): ComputeHandlers => {
   const permissionGrants = permissionGrantRegistry
     ? createComputePermissionGrantAdapter(permissionGrantRegistry, settingsRepository)
@@ -319,7 +324,9 @@ const createComputeHandlers = (
             await permissionGrantRegistry.prune({ kind: 'compute_provider', providerId })
           }
         }
-        return repository.create(request)
+        const host = await repository.create(request)
+        await syncComputeSkillDocument?.()
+        return host
       }),
     delete: (providerId) =>
       runHostLifecycleMutation(async () => {
@@ -336,6 +343,7 @@ const createComputeHandlers = (
         try {
           await repository.delete(providerId)
           await permissionGrantRegistry?.prune({ kind: 'compute_provider', providerId })
+          await syncComputeSkillDocument?.()
         } finally {
           broker.completeProviderInvalidation(providerId)
         }
@@ -394,6 +402,28 @@ const createDefaultComputeHostRepository = (): ComputeHostRepository =>
 
 const createDefaultComputeJobRepository = (): ComputeJobRepository =>
   new ComputeJobRepository(() => getProjectDbClient(resolveStorageRoot()))
+
+const syncCurrentComputeSkillDocuments = async (
+  storageRoot: string,
+  repository: ComputeHostRepository
+): Promise<void> => {
+  const skillsDirs = [
+    join(getAppClaudeConfigDir(storageRoot), 'skills'),
+    join(opencodeConfigDir(storageRoot), 'skills'),
+    join(codexStorageDir(storageRoot), 'skills'),
+    join(codexSubscriptionStorageDir(storageRoot), 'skills')
+  ]
+  const existing = await Promise.all(
+    skillsDirs.map((skillsDir) => hasCanonicalComputeSkillDoc(skillsDir))
+  )
+  if (!existing.some(Boolean)) return
+  const hosts = await repository.list()
+  await Promise.all(
+    skillsDirs.map((skillsDir, index) =>
+      existing[index] ? syncComputeSkillDoc(skillsDir, hosts) : undefined
+    )
+  )
+}
 
 // Broadcasts a job summary to all renderer windows. Called by the JobPoller onJobUpdated hook
 // and by the job dispatcher on status transitions (Phase 3d, design.md §9).
@@ -464,7 +494,8 @@ const createComputeIpcModule = (
     artifactResolver,
     dataRoot,
     taskNotifications,
-    permissionGrantRegistry
+    permissionGrantRegistry,
+    () => syncCurrentComputeSkillDocuments(storageRoot, repository)
   )
 
   return {

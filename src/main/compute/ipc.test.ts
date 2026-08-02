@@ -129,6 +129,31 @@ describe('compute handlers', () => {
     expect(del).toHaveBeenCalledWith('ssh:biowulf')
   })
 
+  it('refreshes the canonical Compute Skill after host create and delete', async () => {
+    const create = vi.fn(() => Promise.resolve(sampleHost()))
+    const del = vi.fn(() => Promise.resolve())
+    const syncComputeSkill = vi.fn(() => Promise.resolve())
+    const handlers = createComputeHandlers(
+      mockRepository({ create, delete: del }),
+      undefined,
+      undefined,
+      undefined,
+      undefined,
+      undefined,
+      undefined,
+      undefined,
+      undefined,
+      undefined,
+      undefined,
+      syncComputeSkill
+    )
+
+    await handlers.create({ sshAlias: 'biowulf' })
+    await handlers.delete('ssh:biowulf')
+
+    expect(syncComputeSkill).toHaveBeenCalledTimes(2)
+  })
+
   it('sshConfigAliases uses the injected alias lister', async () => {
     const lister = vi.fn(() => Promise.resolve(['biowulf', 'lab-gpu']))
     const handlers = createComputeHandlers(mockRepository({}), lister)

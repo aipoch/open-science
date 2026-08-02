@@ -27,6 +27,9 @@ import {
 } from '../agent-framework'
 import type { AgentConfigFile } from '../agent-framework/types'
 import { syncConnectorSkillDocs } from '../connectors/provision'
+import { ComputeHostRepository } from '../compute/repository'
+import { getProjectDbClient } from '../projects/prisma-client'
+import { hasCanonicalComputeSkillDoc, syncComputeSkillDoc } from '../compute/skill-doc'
 import { writeAgentConfigFiles } from './agent-config-files'
 import { createDefaultDetectDeps, detectClaude, type ClaudeDetectDeps } from './claude-detect'
 import {
@@ -218,6 +221,7 @@ export type AgentRuntimeManagerOptions = {
     options: InstallManagedCodexOptions
   ) => Promise<ManagedCodexInstallOutcome>
   resolveCodexProxyEnvironment?: () => Promise<SystemProxyEnvironment | undefined>
+  syncComputeSkillDocument?: (skillsDir: string) => Promise<void>
 }
 
 // Owns host runtime discovery, installation, executable preparation, and runtime-specific filesystem
@@ -245,6 +249,7 @@ export class AgentRuntimeManager {
     options: InstallManagedCodexOptions
   ) => Promise<ManagedCodexInstallOutcome>
   private readonly resolveProxyEnvironment: () => Promise<SystemProxyEnvironment | undefined>
+  private readonly syncComputeSkillDocument: (skillsDir: string) => Promise<void>
 
   constructor(options: AgentRuntimeManagerOptions) {
     this.repository = options.repository
@@ -289,6 +294,15 @@ export class AgentRuntimeManager {
     this.installManagedCodexImpl = options.installManagedCodexImpl ?? installManagedCodex
     this.resolveProxyEnvironment =
       options.resolveCodexProxyEnvironment ?? resolveSystemProxyEnvironment
+    this.syncComputeSkillDocument =
+      options.syncComputeSkillDocument ??
+      (async (skillsDir) => {
+        if (!(await hasCanonicalComputeSkillDoc(skillsDir))) return
+        const hosts = await new ComputeHostRepository(() =>
+          getProjectDbClient(this.storageRoot)
+        ).list()
+        await syncComputeSkillDoc(skillsDir, hosts)
+      })
   }
 
   async getPreflight(providers: ProviderPreflightAccess): Promise<Preflight> {
@@ -596,6 +610,7 @@ export class AgentRuntimeManager {
       join(configRoot, 'skills'),
       this.connectors.enabledConnectorIds(connectors)
     )
+    await this.syncComputeSkillDocument(join(configRoot, 'skills'))
   }
 
   async materializeAgentConfigFiles(files: AgentConfigFile[] | undefined): Promise<void> {
@@ -616,6 +631,7 @@ export class AgentRuntimeManager {
       join(configDir, 'skills'),
       this.connectors.enabledConnectorIds(connectors)
     )
+    await this.syncComputeSkillDocument(join(configDir, 'skills'))
     return configDir
   }
 

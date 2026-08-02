@@ -426,6 +426,21 @@ describe('AgentRuntimeManager', () => {
     )
   })
 
+  it('synchronizes the Compute host projection after each Skill provisioning path', async () => {
+    const syncComputeSkillDocument = vi.fn().mockResolvedValue(undefined)
+    manager = createManager({ syncComputeSkillDocument })
+    const settings = await repository.getSettings()
+    const agentRoot = join(storageRoot, 'codex')
+
+    await manager.materializeAgentSkills(settings, agentRoot, new Set())
+    await manager.provisionClaudeRuntimeConfig(settings)
+
+    expect(syncComputeSkillDocument).toHaveBeenCalledWith(join(agentRoot, 'skills'))
+    expect(syncComputeSkillDocument).toHaveBeenCalledWith(
+      join(getAppClaudeConfigDir(storageRoot), 'skills')
+    )
+  })
+
   it.each([
     {
       name: 'timeout',
