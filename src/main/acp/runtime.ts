@@ -2261,7 +2261,13 @@ class AcpRuntime {
       log.info('skipping OpenCode session id for Claude resume; adopting a fresh session', {
         sessionId: request.sessionId
       })
-      return this.adoptFreshSession(connection, request, sessionCwd, projectName)
+      return this.adoptFreshSession(
+        connection,
+        request,
+        sessionCwd,
+        projectName,
+        primaryIdentityReservation
+      )
     }
 
     // Resume is optional in ACP. A cross-framework session was handled above and can always be
