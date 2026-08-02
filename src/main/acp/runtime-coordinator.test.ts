@@ -38,6 +38,7 @@ const createFakeRuntime = (options: {
   callbacks: AcpRuntimeCallbacks
   permissionGrantStore?: ConversationPermissionGrantStore
   beforePromptStart?: () => Promise<void>
+  beforeProviderPromptAccepted?: () => Promise<void>
   beforeResume?: () => Promise<void>
   afterResumeAttached?: () => Promise<void>
   eligibleAttachmentUri?: string
@@ -56,6 +57,7 @@ const createFakeRuntime = (options: {
   requestRetirement: ReturnType<typeof vi.fn>
   requestProviderReconnect: ReturnType<typeof vi.fn>
   sendPrompt: ReturnType<typeof vi.fn>
+  sendAppContinuation: ReturnType<typeof vi.fn>
   applyReasoningEffortChange: ReturnType<typeof vi.fn>
   respondToPermission: ReturnType<typeof vi.fn>
   emitEvent: (event: AcpRuntimeEvent) => void
@@ -120,42 +122,48 @@ const createFakeRuntime = (options: {
   const shutdown = vi.fn()
   const shutdownForQuit = vi.fn(async () => ({ reaped: true }))
   const shutdownForUpdateGate = vi.fn(async () => ({ reaped: true }))
-  const sendPrompt = vi.fn(
-    async ({ sessionId }: { sessionId: string }, promptAttemptId?: string) => {
-      await options.beforePromptStart?.()
-      const turnToken = `turn-${++turnSequence}`
+  const runPrompt = async (
+    { sessionId }: { sessionId: string },
+    promptAttemptId?: string
+  ): Promise<unknown> => {
+    await options.beforePromptStart?.()
+    const turnToken = `turn-${++turnSequence}`
+    snapshot = {
+      ...snapshot,
+      promptInFlight: true,
+      promptInFlightSessionIds: [...snapshot.promptInFlightSessionIds, sessionId]
+    }
+    options.callbacks.onPromptStarted?.(sessionId, turnToken, promptAttemptId)
+    if (options.eligibleAttachmentUri) {
+      options.callbacks.onSkillImportAttachmentEligible?.(
+        sessionId,
+        turnToken,
+        options.eligibleAttachmentUri
+      )
+    }
+    options.callbacks.onStateChanged?.(snapshot)
+
+    try {
+      const prompt = options.prompt
+        ? options.prompt(sessionId)
+        : Promise.resolve({ stopReason: 'end_turn' })
+      await options.beforeProviderPromptAccepted?.()
+      options.callbacks.onProviderPromptAccepted?.(sessionId, promptAttemptId)
+      return await prompt
+    } finally {
+      options.callbacks.onPromptEnded?.(sessionId, turnToken)
       snapshot = {
         ...snapshot,
-        promptInFlight: true,
-        promptInFlightSessionIds: [...snapshot.promptInFlightSessionIds, sessionId]
-      }
-      options.callbacks.onPromptStarted?.(sessionId, turnToken, promptAttemptId)
-      if (options.eligibleAttachmentUri) {
-        options.callbacks.onSkillImportAttachmentEligible?.(
-          sessionId,
-          turnToken,
-          options.eligibleAttachmentUri
+        promptInFlight: false,
+        promptInFlightSessionIds: snapshot.promptInFlightSessionIds.filter(
+          (candidate) => candidate !== sessionId
         )
       }
       options.callbacks.onStateChanged?.(snapshot)
-
-      try {
-        return await (options.prompt
-          ? options.prompt(sessionId)
-          : Promise.resolve({ stopReason: 'end_turn' }))
-      } finally {
-        options.callbacks.onPromptEnded?.(sessionId, turnToken)
-        snapshot = {
-          ...snapshot,
-          promptInFlight: false,
-          promptInFlightSessionIds: snapshot.promptInFlightSessionIds.filter(
-            (candidate) => candidate !== sessionId
-          )
-        }
-        options.callbacks.onStateChanged?.(snapshot)
-      }
     }
-  )
+  }
+  const sendPrompt = vi.fn(runPrompt)
+  const sendAppContinuation = vi.fn(runPrompt)
   const runtime = {
     getSnapshot: () => snapshot,
     getActivePromptSessions: () => [],
@@ -178,6 +186,7 @@ const createFakeRuntime = (options: {
       }
     ),
     sendPrompt,
+    sendAppContinuation,
     withActivity: vi.fn(
       async (_activityOptions: unknown, work: (scopedRuntime: AcpRuntime) => Promise<unknown>) =>
         work(runtime)
@@ -213,6 +222,7 @@ const createFakeRuntime = (options: {
     requestRetirement,
     requestProviderReconnect,
     sendPrompt,
+    sendAppContinuation,
     applyReasoningEffortChange,
     respondToPermission,
     emitEvent: (event) => {
@@ -237,6 +247,53 @@ const createFakeRuntime = (options: {
 }
 
 describe('AcpRuntimeCoordinator', () => {
+  it('retains a sanitized app-visible Specialist handoff failure until session deletion', async () => {
+    const forwardedEvents: AcpRuntimeEvent[] = []
+    const created: ReturnType<typeof createFakeRuntime>[] = []
+    const coordinator = new AcpRuntimeCoordinator(
+      (callbacks) => {
+        const fake = createFakeRuntime({
+          frameworkId: 'codex',
+          sessionIds: ['session-1'],
+          callbacks
+        })
+        created.push(fake)
+        return fake.runtime
+      },
+      { onEvent: (event) => forwardedEvents.push(event) }
+    )
+    const session = await coordinator.createSession()
+
+    coordinator.publishHandoffFailure({
+      sessionId: session.sessionId,
+      targetName: 'New Specialist',
+      generation: 3,
+      failedPhase: 'continuation-startup'
+    })
+
+    expect(forwardedEvents).toEqual([
+      expect.objectContaining({
+        kind: 'error',
+        level: 'error',
+        sessionId: 'session-1',
+        title: 'Specialist handoff failed',
+        status: 'failed',
+        handoffFailure: {
+          targetName: 'New Specialist',
+          generation: 3,
+          failedPhase: 'continuation-startup',
+          retryable: true
+        }
+      })
+    ])
+    expect(forwardedEvents[0].raw).toBeUndefined()
+    expect(coordinator.getSnapshot().events).toContainEqual(forwardedEvents[0])
+
+    await coordinator.deleteSession({ sessionId: session.sessionId })
+
+    expect(coordinator.getSnapshot().events).not.toContainEqual(forwardedEvents[0])
+  })
+
   it('recognizes a live session only under its owning project', async () => {
     const coordinator = new AcpRuntimeCoordinator(
       (callbacks) =>
@@ -272,6 +329,111 @@ describe('AcpRuntimeCoordinator', () => {
 
     expect(created[0].switchSpecialist).toHaveBeenCalledWith(session.sessionId, 'sp-b')
     expect(result).toEqual({ contextReset: false })
+  })
+
+  it('routes app-owned continuations through the dedicated runtime operation', async () => {
+    const created: ReturnType<typeof createFakeRuntime>[] = []
+    const coordinator = new AcpRuntimeCoordinator((callbacks) => {
+      const fake = createFakeRuntime({
+        frameworkId: 'claude-code',
+        sessionIds: ['session-1'],
+        callbacks
+      })
+      created.push(fake)
+      return fake.runtime
+    })
+    const session = await coordinator.createSession()
+    const request = {
+      sessionId: session.sessionId,
+      text: 'internal continuation',
+      provenanceContext: { promptMessageId: 'origin-message-1' }
+    }
+
+    await coordinator.sendAppContinuation(request)
+
+    expect(created[0].sendAppContinuation).toHaveBeenCalledWith(request, 'prompt-attempt-1')
+    expect(created[0].sendPrompt).not.toHaveBeenCalled()
+  })
+
+  it('acknowledges prompt ownership release only after the owning runtime publishes drain', async () => {
+    const promptResult = createDeferred<{ stopReason: 'end_turn' }>()
+    const coordinator = new AcpRuntimeCoordinator(
+      (callbacks) =>
+        createFakeRuntime({
+          frameworkId: 'codex',
+          sessionIds: ['session-1'],
+          callbacks,
+          prompt: () => promptResult.promise
+        }).runtime
+    )
+    const session = await coordinator.createSession()
+    const prompt = coordinator.sendPrompt({ sessionId: session.sessionId, text: 'original task' })
+    await vi.waitFor(() =>
+      expect(coordinator.getSnapshot().promptInFlightSessionIds).toContain(session.sessionId)
+    )
+    let released = false
+    const ownershipRelease = coordinator
+      .waitForPromptOwnershipRelease(session.sessionId)
+      .then(() => {
+        released = true
+      })
+    await Promise.resolve()
+    expect(released).toBe(false)
+
+    promptResult.resolve({ stopReason: 'end_turn' })
+    await prompt
+    await ownershipRelease
+    expect(released).toBe(true)
+  })
+
+  it('keeps the active original prompt available until its runtime releases ownership', async () => {
+    const releasePrompt = createDeferred()
+    const coordinator = new AcpRuntimeCoordinator(
+      (callbacks) =>
+        createFakeRuntime({
+          frameworkId: 'codex',
+          sessionIds: ['session-1'],
+          callbacks,
+          prompt: async () => releasePrompt.promise
+        }).runtime
+    )
+    const session = await coordinator.createSession()
+    const original = { sessionId: session.sessionId, text: 'analyse these samples' }
+    const pending = coordinator.sendPrompt(original)
+    await Promise.resolve()
+
+    expect(coordinator.capturePromptForHandoff(session.sessionId)).toMatchObject({
+      prompt: expect.objectContaining(original),
+      originatingTurnToken: 'turn-1'
+    })
+    releasePrompt.resolve()
+    await pending
+    expect(coordinator.capturePromptForHandoff(session.sessionId)).toBeUndefined()
+  })
+
+  it('reports continuation startup only after the provider accepts it', async () => {
+    const acceptProviderPrompt = createDeferred()
+    const coordinator = new AcpRuntimeCoordinator(
+      (callbacks) =>
+        createFakeRuntime({
+          frameworkId: 'codex',
+          sessionIds: ['session-1'],
+          callbacks,
+          beforeProviderPromptAccepted: async () => acceptProviderPrompt.promise
+        }).runtime
+    )
+    const session = await coordinator.createSession()
+    let started = false
+    const starting = coordinator
+      .startContinuation({ sessionId: session.sessionId, text: 'continue original task' })
+      .then(() => {
+        started = true
+      })
+    await Promise.resolve()
+    expect(started).toBe(false)
+    acceptProviderPrompt.resolve()
+    await starting
+    expect(started).toBe(true)
   })
 
   it('routes native compaction to the session owner and publishes only owned capabilities', async () => {
@@ -468,6 +630,88 @@ describe('AcpRuntimeCoordinator', () => {
     await coordinator.sendPrompt({ sessionId: session.sessionId, text: 'next turn' })
     expect(onSessionTurnStarted).toHaveBeenCalledOnce()
     expect(onSessionTurnStarted).toHaveBeenCalledWith('session-1', 'turn-2')
+  })
+
+  it('acknowledges prompt ownership release only after the owning prompt promise settles', async () => {
+    const prompt = createDeferred<unknown>()
+    const coordinator = new AcpRuntimeCoordinator(
+      (callbacks) =>
+        createFakeRuntime({
+          frameworkId: 'claude-code',
+          sessionIds: ['session-1'],
+          callbacks,
+          prompt: () => prompt.promise
+        }).runtime
+    )
+    const session = await coordinator.createSession({ cwd: '/workspace' })
+    const running = coordinator.sendPrompt({ sessionId: session.sessionId, text: 'handoff' })
+    await Promise.resolve()
+
+    let released = false
+    const release = coordinator
+      .waitForSessionInteractionRelease(session.sessionId)
+      .then(() => (released = true))
+    await Promise.resolve()
+    expect(released).toBe(false)
+
+    prompt.resolve({ stopReason: 'cancelled' })
+    await running
+    await release
+    expect(released).toBe(true)
+  })
+
+  it('blocks user prompts on startup admission while allowing recovery continuations through', async () => {
+    const admission = createDeferred<void>()
+    let createdRuntime!: ReturnType<typeof createFakeRuntime>
+    const coordinator = new AcpRuntimeCoordinator((callbacks) => {
+      createdRuntime = createFakeRuntime({
+        frameworkId: 'claude-code',
+        sessionIds: ['session-1'],
+        callbacks
+      })
+      return createdRuntime.runtime
+    })
+    const session = await coordinator.createSession({ cwd: '/workspace' })
+    coordinator.setPromptAdmissionGuard(async () => admission.promise)
+
+    const userPrompt = coordinator.sendPrompt({ sessionId: session.sessionId, text: 'user turn' })
+    await Promise.resolve()
+    expect(createdRuntime.sendPrompt).not.toHaveBeenCalled()
+
+    await coordinator.sendPromptForHandoff({
+      sessionId: session.sessionId,
+      text: 'approved recovery continuation'
+    })
+    expect(createdRuntime.sendAppContinuation).toHaveBeenCalledOnce()
+
+    admission.resolve()
+    await userPrompt
+    expect(createdRuntime.sendPrompt).toHaveBeenCalledOnce()
+    expect(createdRuntime.sendAppContinuation).toHaveBeenCalledOnce()
+  })
+
+  it('stops a prompt for handoff without reporting a user generation cancellation', async () => {
+    const onSessionCancellationRequested = vi.fn()
+    const fake = createFakeRuntime({
+      frameworkId: 'claude-code',
+      sessionIds: ['session-1'],
+      callbacks: {}
+    })
+    const coordinator = new AcpRuntimeCoordinator(
+      () => fake.runtime,
+      {},
+      '',
+      undefined,
+      undefined,
+      undefined,
+      { onSessionCancellationRequested }
+    )
+    const session = await coordinator.createSession({ cwd: '/workspace' })
+
+    await coordinator.stopPromptForHandoff(session.sessionId)
+
+    expect(fake.cancelPrompt).toHaveBeenCalledWith({ sessionId: 'session-1' })
+    expect(onSessionCancellationRequested).not.toHaveBeenCalled()
   })
 
   it('matches out-of-order prompt starts to their exact coordinator attempts', async () => {
@@ -1417,10 +1661,10 @@ describe('AcpRuntimeCoordinator', () => {
 
     expect(vi.mocked(created[0].runtime.sendPrompt)).not.toHaveBeenCalled()
     expect(vi.mocked(created[1].runtime.sendPrompt)).toHaveBeenCalledWith(
-      {
+      expect.objectContaining({
         sessionId: 'session-1',
         text: 'continue on new runtime'
-      },
+      }),
       expect.any(String)
     )
     expect(onSessionUnavailable).not.toHaveBeenCalled()
@@ -1555,10 +1799,10 @@ describe('AcpRuntimeCoordinator', () => {
       previousFrameworkId: 'claude-code'
     })
     expect(vi.mocked(created[1].runtime.sendPrompt)).toHaveBeenCalledWith(
-      {
+      expect.objectContaining({
         sessionId: 'old-session',
         text: 'continue on Codex'
-      },
+      }),
       expect.any(String)
     )
   })

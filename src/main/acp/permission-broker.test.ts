@@ -127,6 +127,39 @@ const createCodexMcpPermissionRequest = (sessionId = 'session-1'): RequestPermis
 })
 
 describe('ACP permission broker', () => {
+  it('routes an app-owned Specialist card through the existing approve and decline responder', async () => {
+    const emitted: EmittedPermissionRequest[] = []
+    const broker = new AcpPermissionBroker((request) => emitted.push(request))
+
+    const approved = broker.requestAppApproval({
+      sessionId: 'session-specialist',
+      title: 'Switch to Data Analyst?',
+      rawInput: { specialistApproval: { kind: 'switch', targetName: 'Data Analyst' } }
+    })
+    expect(emitted).toHaveLength(1)
+    expect(emitted[0]).toMatchObject({
+      sessionId: 'session-specialist',
+      title: 'Switch to Data Analyst?',
+      rawInput: { specialistApproval: { kind: 'switch', targetName: 'Data Analyst' } }
+    })
+    await broker.respond({
+      requestId: emitted[0].requestId,
+      optionId: emitted[0].options.find((option) => option.kind === 'allow_once')?.optionId
+    })
+    await expect(approved).resolves.toBe(true)
+
+    const declined = broker.requestAppApproval({
+      sessionId: 'session-specialist',
+      title: 'Switch to Data Analyst?',
+      rawInput: { specialistApproval: { kind: 'switch', targetName: 'Data Analyst' } }
+    })
+    await broker.respond({
+      requestId: emitted[1].requestId,
+      optionId: emitted[1].options.find((option) => option.kind === 'reject_once')?.optionId
+    })
+    await expect(declined).resolves.toBe(false)
+  })
+
   it('keeps session grants app-owned while the Agent receives one-shot approvals', async () => {
     const emitted: EmittedPermissionRequest[] = []
     const broker = new AcpPermissionBroker((request) => emitted.push(request))

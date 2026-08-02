@@ -30,8 +30,9 @@ import type { ApprovalGateway, ApprovalResult } from '../../shared/agents-contra
 // SwitchNotifier broadcast, and the catalog-invalidation callback.
 //
 // Coverage (design.md §15 / acceptance criteria 1, 4, 6):
-//  - a name-changing update (privileged) committed atomically through host.agents.update, returning
-//    real post-write read-back (not echoed input);
+//  - a name-changing update committed atomically through host.agents.update, returning real post-write
+//    read-back (not echoed input) and BYPASSING the approval gateway (renames are ordinary
+//    chat-reviewed mutations, not privileged);
 //  - delete through the pass-through gateway: bound conversations are left unavailable (bindings are
 //    NOT silently cleared);
 //  - switch through the pass-through gateway: the trusted calling session is the only session that
@@ -39,8 +40,8 @@ import type { ApprovalGateway, ApprovalResult } from '../../shared/agents-contra
 //    notification is broadcast;
 //  - a structured DECLINE on a configurable approval gateway returns a non-error result for both
 //    delete and switch, with no mutation/persist/notify;
-//  - optimistic concurrency: a stale revision fails for both an ordinary update and a privileged
-//    (name-changing) update, without merge or retry.
+//  - optimistic concurrency: a stale revision fails for both an ordinary update and a name-changing
+//    update, without merge or retry.
 //
 // Notes on what this milestone ships vs. what is deferred:
 //  - The pass-through approval gateway always approves; it is the milestone substitution seam
@@ -159,8 +160,9 @@ const composeService = (opts: {
   }
 }
 
-// One-line JS body that calls `agentsCall` over the same transport the SDK uses. `sessionId` is an
-// intentionally untrusted legacy field: the server must ignore it and use the capability binding.
+// One-line JS body that calls `agentsCall` over the same transport the SDK uses. The trusted calling
+// session (`sessionId`) is forwarded in `params.session_id`, exactly as the loop does for every
+// host.agents call (it is captured from the spawn env and forwarded on the wire).
 const agentsCallFetch = (
   endpoint: string,
   token: string,
@@ -176,6 +178,8 @@ const agentsCallFetch = (
 
 gate('host.agents repl privileged integration', () => {
   let rpcServer: NotebookLocalRpcServer
+  let endpoint: string
+  let token: string
   let profileStorage: string
   let runtimeStorage: string
   let agentsService: AgentsService
@@ -216,7 +220,9 @@ gate('host.agents repl privileged integration', () => {
       token: 'integration-token',
       agentsService
     })
-    await rpcServer.ensureStarted()
+    const connection = await rpcServer.ensureStarted()
+    endpoint = connection.endpoint
+    token = connection.token
   })
 
   afterAll(async () => {
@@ -229,25 +235,17 @@ gate('host.agents repl privileged integration', () => {
   // trusted-session identity and in-memory binding state never bleed across assertions.
   const withLoop = async <T>(
     sessionId: string | undefined,
-    run: (
-      send: (code: string) => Promise<KernelLoopResponse>,
-      connection: { endpoint: string; token: string }
-    ) => Promise<T>
+    run: (send: (code: string) => Promise<KernelLoopResponse>) => Promise<T>
   ): Promise<T> => {
-    const connection = await rpcServer.issueControlConnection(
-      sessionId ?? 'session-control',
-      'default-project'
-    )
     const { child, send } = startLoop({
-      OPEN_SCIENCE_MCP_RPC_ENDPOINT: connection.endpoint,
-      OPEN_SCIENCE_MCP_RPC_TOKEN: connection.token,
+      OPEN_SCIENCE_MCP_RPC_ENDPOINT: endpoint,
+      OPEN_SCIENCE_MCP_RPC_TOKEN: token,
       ...(sessionId ? { OPEN_SCIENCE_NOTEBOOK_SESSION_ID: sessionId } : {})
     })
     try {
-      return await run(send, connection)
+      return await run(send)
     } finally {
       child.kill()
-      connection.release()
     }
   }
 
@@ -327,7 +325,7 @@ gate('host.agents repl privileged integration', () => {
     expect(invalidateCount()).toBeGreaterThan(invalidatedBefore)
   })
 
-  it('a name-changing update is privileged: routes through the pass-through gateway, commits the whole patch atomically, and returns real read-back', async () => {
+  it('a name-changing update is an ordinary mutation: no approval gateway, atomic single-profile commit, real read-back', async () => {
     await withLoop(undefined, async (send) => {
       const created = JSON.parse(
         (
@@ -336,18 +334,17 @@ gate('host.agents repl privileged integration', () => {
           )
         ).result ?? '{}'
       )
-      // A patch that changes the public `name` makes the WHOLE patch privileged and atomic.
+      // A patch that changes the public `name` applies like any other update field (renames are
+      // chat-reviewed, not privileged): the SDK returns the real camelCase profile read-back.
       const r = await send(
         `return JSON.stringify(await host.agents.update('ATOM_PROBE', { name: 'ATOM_ANALYZER', description: 'after', revision: ${created.revision} }))`
       )
       expect(r.error).toBeNull()
       const updated = JSON.parse(r.result ?? '{}')
-      // Real read-back: the privileged module returns { status: 'updated', agent: <camelCase profile> }.
-      expect(updated.status).toBe('updated')
-      expect(updated.agent.name).toBe('ATOM_ANALYZER')
-      expect(updated.agent.description).toBe('after')
+      expect(updated.name).toBe('ATOM_ANALYZER')
+      expect(updated.description).toBe('after')
       // Revision was bumped by the authoritative ProfileService, not echoed.
-      expect(updated.agent.revision).toBe(created.revision + 1)
+      expect(updated.revision).toBe(created.revision + 1)
     })
   })
 
@@ -359,7 +356,7 @@ gate('host.agents repl privileged integration', () => {
   // the structured-decline wire envelope / no-retry dispatch over a custom decline gateway.
 
   it('switch cannot forge a different calling session: reserved identity keys are dropped, only the trusted session is bound', async () => {
-    await withLoop('session-real', async (send, connection) => {
+    await withLoop('session-real', async (send) => {
       const created = JSON.parse(
         (await send("return JSON.stringify(await host.agents.create({ name: 'GUARD_TARGET' }))"))
           .result ?? '{}'
@@ -368,7 +365,7 @@ gate('host.agents repl privileged integration', () => {
       // reconfigure flag) alongside the trusted session. The dispatcher strips every reserved key;
       // the switch binds ONLY the trusted calling session.
       const r = await send(
-        agentsCallFetch(connection.endpoint, connection.token, 'forged-session', {
+        agentsCallFetch(endpoint, token, 'session-real', {
           op: 'switch',
           name: 'GUARD_TARGET',
           sessionId: 'forged-camel',
@@ -432,15 +429,14 @@ gate('host.agents repl privileged integration', () => {
       const before = await sessionBinding.resolve('session-bound-rename')
       expect(before.kind).toBe('bound')
 
-      // Privileged name-changing update.
+      // Name-changing update (ordinary chat-reviewed mutation).
       const r = await send(
         `return JSON.stringify(await host.agents.update('RENAME_OLD', { name: 'RENAME_NEW', revision: ${created.revision} }))`
       )
       const updated = JSON.parse(r.result ?? '{}')
-      expect(updated.status).toBe('updated')
-      expect(updated.agent.name).toBe('RENAME_NEW')
+      expect(updated.name).toBe('RENAME_NEW')
       // The UUID is unchanged across the rename.
-      expect(updated.agent.id).toBe(created.id)
+      expect(updated.id).toBe(created.id)
 
       // The bound conversation STILL resolves the SAME profile (now under its new name) — the binding
       // follows the profile (UUID), not the public name. No integration code rewrites it.
@@ -486,7 +482,7 @@ gate('host.agents repl privileged integration', () => {
       }),
       { token: 'decline-token', agentsService: composed.agentsService }
     )
-    const conn = await declineRpc.issueControlConnection('session-decline', 'decline-project')
+    const conn = await declineRpc.ensureStarted()
     try {
       const { child, send } = startLoop({
         OPEN_SCIENCE_MCP_RPC_ENDPOINT: conn.endpoint,
@@ -512,7 +508,6 @@ gate('host.agents repl privileged integration', () => {
         child.kill()
       }
     } finally {
-      conn.release()
       await declineRpc.close()
     }
   })
@@ -547,10 +542,7 @@ gate('host.agents repl privileged integration', () => {
       }),
       { token: 'decline-del-token', agentsService: composed.agentsService }
     )
-    const conn = await declineRpc.issueControlConnection(
-      'session-decline-del',
-      'decline-del-project'
-    )
+    const conn = await declineRpc.ensureStarted()
     try {
       const { child, send } = startLoop({
         OPEN_SCIENCE_MCP_RPC_ENDPOINT: conn.endpoint,
@@ -586,7 +578,6 @@ gate('host.agents repl privileged integration', () => {
         child.kill()
       }
     } finally {
-      conn.release()
       await declineRpc.close()
     }
   })
@@ -601,30 +592,28 @@ gate('host.agents repl privileged integration', () => {
     })
   })
 
-  it('optimistic concurrency: a stale revision on a privileged (name-changing) update fails without merge or retry', async () => {
+  it('optimistic concurrency: a stale revision on a name-changing update fails without merge or retry', async () => {
     await withLoop(undefined, async (send) => {
       await send("return JSON.stringify(await host.agents.create({ name: 'STALE_PRIV' }))")
       const r = await send(
         "try { await host.agents.update('STALE_PRIV', { name: 'STALE_PRIV_RENAMED', revision: 999 }); return 'no-throw' } catch (e) { return e.message }"
       )
-      // The privileged module fails closed on revision drift with a sanitized host.agents.update: error.
+      // The ordinary update path fails closed on revision drift with a sanitized host.agents.update: error.
       expect(r.result).toMatch(/host\.agents\.update:/)
     })
   })
 
-  it('a name-changing update denial leaves EVERY field unchanged (atomicity: not partially applied)', async () => {
-    const declineGateway: ApprovalGateway = {
-      decide: vi.fn(async (): Promise<ApprovalResult> => ({
-        status: 'declined',
-        operation: 'update'
-      }))
-    }
-    const composed = composeService({ profileStorage, gateway: declineGateway })
+  it('a name-changing update bypasses the approval gateway entirely (renames are not privileged)', async () => {
+    const decide = vi.fn(async (): Promise<ApprovalResult> => ({
+      status: 'declined',
+      operation: 'delete'
+    }))
+    const composed = composeService({ profileStorage, gateway: { decide } })
     const declineRpc = new NotebookLocalRpcServer(
       new NotebookRuntimeService({
         configRoot: runtimeStorage,
         dataRoot: runtimeStorage,
-        projectName: 'decline-upd-project',
+        projectName: 'no-approval-upd-project',
         repository: new NotebookRunRepository(runtimeStorage),
         executorFactory: () => ({
           execute: async () => ({
@@ -639,17 +628,14 @@ gate('host.agents repl privileged integration', () => {
           shutdown: async () => ({ reaped: true })
         })
       }),
-      { token: 'decline-upd-token', agentsService: composed.agentsService }
+      { token: 'no-approval-upd-token', agentsService: composed.agentsService }
     )
-    const conn = await declineRpc.issueControlConnection(
-      'session-decline-upd',
-      'decline-upd-project'
-    )
+    const conn = await declineRpc.ensureStarted()
     try {
       const { child, send } = startLoop({
         OPEN_SCIENCE_MCP_RPC_ENDPOINT: conn.endpoint,
         OPEN_SCIENCE_MCP_RPC_TOKEN: conn.token,
-        OPEN_SCIENCE_NOTEBOOK_SESSION_ID: 'session-decline-upd'
+        OPEN_SCIENCE_NOTEBOOK_SESSION_ID: 'session-no-approval-upd'
       })
       try {
         const created = JSON.parse(
@@ -660,23 +646,17 @@ gate('host.agents repl privileged integration', () => {
           ).result ?? '{}'
         )
         const r = await send(
-          `return JSON.stringify(await host.agents.update('ATOMIC_OLD', { name: 'ATOMIC_NEW', description: 'should-not-apply', revision: ${created.revision} }))`
+          `return JSON.stringify(await host.agents.update('ATOMIC_OLD', { name: 'ATOMIC_NEW', description: 'applied', revision: ${created.revision} }))`
         )
         const result = JSON.parse(r.result ?? '{}')
-        // Structured decline (non-error): the WHOLE patch was rejected, not partially applied.
-        expect(result).toEqual({ status: 'declined', operation: 'update' })
-        // Read-back confirms the original identity + description survived untouched.
-        const after = JSON.parse(
-          (await send("return JSON.stringify(await host.agents.get('ATOMIC_OLD'))")).result ?? '{}'
-        )
-        expect(after.name).toBe('ATOMIC_OLD')
-        expect(after.description).toBe('keep-me')
-        expect(after.revision).toBe(created.revision)
+        // Rename applied directly; even a decline-configured gateway is never consulted.
+        expect(result.name).toBe('ATOMIC_NEW')
+        expect(result.description).toBe('applied')
+        expect(decide).not.toHaveBeenCalled()
       } finally {
         child.kill()
       }
     } finally {
-      conn.release()
       await declineRpc.close()
     }
   })
@@ -710,7 +690,7 @@ gate('host.agents repl privileged integration', () => {
       }),
       { token: 'no-retry-token', agentsService: composed.agentsService }
     )
-    const conn = await declineRpc.issueControlConnection('session-no-retry', 'no-retry-project')
+    const conn = await declineRpc.ensureStarted()
     try {
       const { child, send } = startLoop({
         OPEN_SCIENCE_MCP_RPC_ENDPOINT: conn.endpoint,
@@ -731,7 +711,6 @@ gate('host.agents repl privileged integration', () => {
         child.kill()
       }
     } finally {
-      conn.release()
       await declineRpc.close()
     }
   })

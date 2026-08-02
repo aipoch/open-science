@@ -528,6 +528,39 @@ class AcpPermissionBroker {
     this.conversationGrants.revoke(sessionId, categoryKey)
   }
 
+  // Parks an application-owned approval on the same renderer permission surface used for provider
+  // tool calls. This deliberately reuses the broker's pending map, cancellation, and response
+  // validation instead of creating a second Specialist approval state machine.
+  requestAppApproval(input: {
+    sessionId: string
+    title: string
+    rawInput: unknown
+  }): Promise<boolean> {
+    const requestId = randomUUID()
+    const approveOptionId = `${requestId}:approve`
+    const request: AcpPermissionRequest = {
+      requestId,
+      sessionId: input.sessionId,
+      toolCallId: `app-approval:${requestId}`,
+      title: input.title,
+      providerToolName: 'Open Science',
+      rawInput: input.rawInput,
+      options: [
+        { optionId: approveOptionId, name: 'Approve', kind: 'allow_once', scope: 'once' },
+        { optionId: `${requestId}:decline`, name: 'Decline', kind: 'reject_once' }
+      ]
+    }
+
+    return this.enqueuePermissionRequest({
+      requestId,
+      request,
+      providerAllowOnceOptionId: approveOptionId
+    }).then(
+      (response) =>
+        response.outcome.outcome === 'selected' && response.outcome.optionId === approveOptionId
+    )
+  }
+
   // Stores a permission request and resolves it later from a renderer response.
   requestPermission(
     params: RequestPermissionRequest,

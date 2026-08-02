@@ -187,7 +187,7 @@ export const preferAtomicUpdate = (
 export const explainSwitch = (currentName: string | null, targetName: string | null): string =>
   `About to switch this conversation from ${currentName ?? 'Main Agent'} to ${
     targetName ?? 'Main Agent'
-  }. This takes effect on your next message; the current reply continues unchanged.`
+  }. If approved, the current control tool finishes and the conversation continues automatically under the approved identity.`
 
 export const explainNameChange = (oldName: string, newName: string): string =>
   `About to rename "${oldName}" to "${newName}" and apply the rest of the reviewed changes in one ` +
@@ -201,11 +201,9 @@ export const explainDelete = (name: string): string =>
 // Reporting (design.md §8 read-back, §9 switch timing, §10 delete)
 // ---------------------------------------------------------------------------
 
-// Switch reporting: the current reply continues and the approved target applies to the next message.
+// Switch reporting: approval lets the current control tool finish, then continues the same task.
 export const reportSwitch = (targetName: string | null): string =>
-  `This reply continues under the current specialist. The approved target (${
-    targetName ?? 'Main Agent'
-  }) takes effect on your next message.`
+  `The approved target (${targetName ?? 'Main Agent'}) will continue this task automatically after the current control tool finishes.`
 
 // Delete reporting: bound conversations become unavailable, NOT switched to Main Agent.
 export const reportDelete = (name: string): string =>

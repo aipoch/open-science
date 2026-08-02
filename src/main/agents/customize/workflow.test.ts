@@ -574,9 +574,9 @@ describe('customize Skill: declined privileged operations', () => {
 })
 
 describe('customize Skill: reporting', () => {
-  it('switch reports current reply continues and target applies next message', () => {
-    expect(reportSwitch('Bio Expert')).toMatch(/reply continues/i)
-    expect(reportSwitch('Bio Expert')).toMatch(/next message/i)
+  it('switch reports automatic continuation after the current control tool', () => {
+    expect(reportSwitch('Bio Expert')).toMatch(/continue this task automatically/i)
+    expect(reportSwitch('Bio Expert')).toMatch(/current control tool/i)
   })
 
   it('switch to Main reports Main Agent as the target', () => {
@@ -590,7 +590,7 @@ describe('customize Skill: reporting', () => {
   })
 
   it('privileged explanations name the impending action', () => {
-    expect(explainSwitch('Bio Expert', 'Other')).toMatch(/next message/i)
+    expect(explainSwitch('Bio Expert', 'Other')).toMatch(/continues automatically/i)
     expect(explainNameChange('A', 'B')).toMatch(/rename.*A.*B/i)
     expect(explainDelete('A')).toMatch(/delete.*A/i)
     expect(explainDelete('A')).toMatch(/unavailable/i)

@@ -124,8 +124,16 @@ export function parseLoopResponse(line: string): KernelLoopResponse | null {
 
 // One JSON line + newline for the Python loop's stdin protocol; key order is stable so the wire
 // format is deterministic across runs.
-export function framePythonRequest(reqId: string, code: string): string {
-  return `${JSON.stringify({ req_id: reqId, code })}\n`
+export function framePythonRequest(
+  reqId: string,
+  code: string,
+  controlInvocationId?: string
+): string {
+  return `${JSON.stringify({
+    req_id: reqId,
+    code,
+    ...(controlInvocationId ? { control_invocation_id: controlInvocationId } : {})
+  })}\n`
 }
 
 // R length-prefixed frame: a "<reqId> <codeByteLength>\n" header followed by the exact UTF-8 code

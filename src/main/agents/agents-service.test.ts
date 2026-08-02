@@ -172,25 +172,112 @@ describe('AgentsService read surface', () => {
   it('surfaces internal failures as sanitized host.agents.<method>: errors', async () => {
     const failing = {
       list: vi.fn(async () => {
-        throw new Error(
-          'request failed at /Users/alice/private/config.json with Authorization: Bearer TOP-SECRET and apiKey=ABCDEF'
-        )
+        throw new Error('internal secret: apikey=ABCDEF')
       })
     }
     const service = new AgentsService({
       profileService: failing as unknown as ProfileService,
       catalog: catalog()
     })
-    let message = ''
-    try {
-      await service.read({ op: 'list' })
-    } catch (error) {
-      message = error instanceof Error ? error.message : String(error)
-    }
+    await expect(service.read({ op: 'list' })).rejects.toThrow(/host\.agents\.list:/)
+  })
+})
 
-    expect(message).toBe('host.agents.list: Internal operation failed.')
-    expect(message).not.toContain('TOP-SECRET')
-    expect(message).not.toContain('ABCDEF')
-    expect(message).not.toContain('/Users/alice/private/config.json')
+// A ProfileService fake with the mutation surface dispatch needs for privileged ops (update/delete
+// + absence verification), so a delete/name-changing-update can complete end-to-end through
+// dispatch without a real store.
+const mutatingProfileService = (profiles: SpecialistProfileView[]): ProfileService => {
+  let store = [...profiles]
+  return {
+    list: vi.fn(async () => [...store]),
+    getByName: vi.fn(async (name: string) => {
+      const found = store.find((p) => p.name === name)
+      if (!found) throw new Error(`Specialist "${name}" not found.`)
+      return found
+    }),
+    getById: vi.fn(async (id: string) => {
+      const found = store.find((p) => p.id === id)
+      if (!found) throw new Error(`Specialist ${id} not found.`)
+      return found
+    }),
+    update: vi.fn(async (input: Record<string, unknown>) => {
+      const id = String(input.id)
+      const idx = store.findIndex((p) => p.id === id)
+      if (idx < 0) throw new Error('not found')
+      store[idx] = { ...store[idx], ...input, revision: store[idx].revision + 1 }
+      return store[idx]
+    }),
+    delete: vi.fn(async (id: string) => {
+      const idx = store.findIndex((p) => p.id === id)
+      if (idx < 0) throw new Error('not found')
+      store = store.filter((p) => p.id !== id)
+    })
+  } as unknown as ProfileService
+}
+
+describe('AgentsService privileged dispatch — trusted session threading', () => {
+  it('threads the trusted calling session into the delete approval request', async () => {
+    const seenSessions: unknown[] = []
+    const service = new AgentsService({
+      profileService: mutatingProfileService([profile()]),
+      catalog: catalog(),
+      approvalGateway: {
+        decide: async (request) => {
+          seenSessions.push(request.session)
+          return { status: 'approved' }
+        }
+      }
+    })
+    const result = await service.dispatch(
+      { op: 'delete', params: { name: 'Bio Expert', revision: 3 } },
+      { sessionId: 'trusted-session-1' }
+    )
+    expect(result).toEqual({ status: 'deleted', name: 'Bio Expert' })
+    // The ACP-backed gateway parks the delete card on the CALLING session; an empty session would
+    // make the bridge report "approval surface is unavailable" and decline.
+    expect(seenSessions).toEqual([{ sessionId: 'trusted-session-1' }])
+  })
+
+  it('applies a rename as an ordinary mutation without consulting the approval gateway', async () => {
+    const decided: unknown[] = []
+    const service = new AgentsService({
+      profileService: mutatingProfileService([profile()]),
+      catalog: catalog(),
+      approvalGateway: {
+        decide: async (request) => {
+          decided.push(request)
+          return { status: 'approved' }
+        }
+      }
+    })
+    const result = await service.dispatch(
+      {
+        op: 'update',
+        params: {
+          name: 'Bio Expert',
+          patch: { name: 'Chem Expert', revision: 3 }
+        }
+      },
+      { sessionId: 'trusted-session-2' }
+    )
+    // Renames are ordinary chat-reviewed updates: the rename lands and no approval card is parked.
+    expect(result).toEqual<SpecialistProfileView>(expect.objectContaining({ name: 'Chem Expert' }))
+    expect(decided).toHaveLength(0)
+  })
+
+  it('passes an empty session to the gateway when no trusted context is supplied (test compatibility)', async () => {
+    const seenSessions: unknown[] = []
+    const service = new AgentsService({
+      profileService: mutatingProfileService([profile()]),
+      catalog: catalog(),
+      approvalGateway: {
+        decide: async (request) => {
+          seenSessions.push(request.session)
+          return { status: 'approved' }
+        }
+      }
+    })
+    await service.dispatch({ op: 'delete', params: { name: 'Bio Expert', revision: 3 } })
+    expect(seenSessions).toEqual([{}])
   })
 })

@@ -5,7 +5,7 @@ import { afterEach, describe, expect, it, vi } from 'vitest'
 
 import type { NotebookRunInputFile } from '../../shared/notebook'
 import { NotebookLocalRpcServer } from './local-rpc-server'
-import { NotebookRuntimeService } from './runtime-service'
+import { NotebookControlCompletionCapturedError, NotebookRuntimeService } from './runtime-service'
 import { NotebookRunRepository, getRuntimeRoot } from './repository'
 import type { NotebookInputRunLease } from './input-registry'
 import {
@@ -259,6 +259,7 @@ describe('notebook local RPC server', () => {
   it('revokes session RPC capabilities and removes aliases when their session is released', async () => {
     const root = await createStorageRoot()
     const connectorCall = vi.fn(async () => ({ ok: true }))
+    const onSessionReleased = vi.fn()
     const service = new NotebookRuntimeService({
       configRoot: root,
       dataRoot: root,
@@ -267,6 +268,7 @@ describe('notebook local RPC server', () => {
     })
     const server = new NotebookLocalRpcServer(service, {
       token: 'secret-token',
+      onSessionReleased,
       connectorService: { call: connectorCall }
     })
     const connection = await server.issueSessionConnection('notebook-session-1', 'default-project')
@@ -291,6 +293,7 @@ describe('notebook local RPC server', () => {
       expect(response.status).toBe(401)
       expect(payload.error).toMatch(/invalid notebook rpc token/i)
       expect(connectorCall).not.toHaveBeenCalled()
+      expect(onSessionReleased).toHaveBeenCalledWith('real-session-1')
       expect(
         (
           server as unknown as {
@@ -341,6 +344,142 @@ describe('notebook local RPC server', () => {
       expect(connectorCall).toHaveBeenCalledTimes(2)
     } finally {
       control.release()
+      await server.close()
+    }
+  })
+
+  it('allows agentsCall through a session-bound control capability and derives its trusted context', async () => {
+    const root = await createStorageRoot()
+    const agentsRead = vi.fn(async () => ({ status: 'approved' }))
+    const service = new NotebookRuntimeService({
+      configRoot: root,
+      dataRoot: root,
+      projectName: 'default-project',
+      repository: new NotebookRunRepository(root)
+    })
+    const server = new NotebookLocalRpcServer(service, {
+      token: 'secret-token',
+      agentsService: { read: agentsRead },
+      inputRegistry: {
+        registerTurn: vi.fn(async () => undefined),
+        getTurnInputs: vi.fn(() => [
+          {
+            inputFileVersionId: 'upload-version-1',
+            sourceKind: 'upload-version' as const,
+            sourceFileId: 'upload-1',
+            sourceProjectId: 'default-project',
+            sourceSessionId: 'trusted-session',
+            filename: 'sample.csv',
+            sizeBytes: 10,
+            checksum: 'upload-checksum',
+            storageKey: 'upload-key',
+            association: 'turn-attached' as const
+          },
+          {
+            inputFileVersionId: 'artifact-version-1',
+            sourceKind: 'artifact-version' as const,
+            sourceFileId: 'artifact-1',
+            sourceProjectId: 'default-project',
+            sourceSessionId: 'trusted-session',
+            filename: 'prior.csv',
+            sizeBytes: 20,
+            checksum: 'artifact-checksum',
+            storageKey: 'artifact-key',
+            association: 'turn-attached' as const
+          }
+        ]),
+        clearSession: vi.fn()
+      }
+    })
+    const control = await server.issueControlConnection('trusted-session', 'default-project')
+    server.setArtifactProvenanceContext('trusted-session', {
+      rootFrameId: 'root-1',
+      agentFrameId: 'agent-1',
+      messageBranchId: 'branch-1',
+      runtimeSegmentId: 'runtime-1',
+      promptMessageId: 'prompt-1'
+    })
+    await server.registerNotebookTurnInputs({
+      projectId: 'default-project',
+      appSessionId: 'trusted-session',
+      promptMessageId: 'prompt-1',
+      uploads: [],
+      references: []
+    })
+    const releaseInvocation = control.beginControlInvocation({
+      turnId: 'trusted-turn-1',
+      controlInvocationGeneration: 7,
+      toolInvocationId: 'trusted-tool-1'
+    })
+
+    try {
+      const response = await fetch(control.endpoint, {
+        method: 'POST',
+        headers: {
+          authorization: `Bearer ${control.token}`,
+          'content-type': 'application/json'
+        },
+        body: JSON.stringify({
+          method: 'agentsCall',
+          params: {
+            op: 'switch',
+            session_id: 'forged-session',
+            turn_id: 'forged-turn',
+            generation: 999,
+            control_invocation_generation: 999,
+            control_invocation_id: 'forged-tool',
+            name: 'Approved Specialist'
+          }
+        })
+      })
+
+      expect(response.status).toBe(200)
+      expect(agentsRead).toHaveBeenCalledWith(
+        { op: 'switch', params: { name: 'Approved Specialist' } },
+        {
+          sessionId: 'trusted-session',
+          turnId: 'trusted-turn-1',
+          controlInvocationGeneration: 7,
+          toolInvocationId: 'trusted-tool-1',
+          originatingTurnId: 'prompt-1',
+          originatingUserMessageId: 'prompt-1',
+          attachmentIds: ['upload-1'],
+          artifactIds: ['artifact-1']
+        }
+      )
+    } finally {
+      releaseInvocation()
+      control.release()
+      await server.close()
+    }
+  })
+
+  it('closes a captured control completion transport without serializing a legacy tool result', async () => {
+    const server = new NotebookLocalRpcServer(
+      {
+        executeControl: async () => {
+          throw new NotebookControlCompletionCapturedError()
+        }
+      } as unknown as NotebookRuntimeService,
+      { token: 'secret-token' }
+    )
+    const connection = await server.ensureStarted()
+
+    try {
+      await expect(
+        fetch(connection.endpoint, {
+          method: 'POST',
+          headers: {
+            authorization: `Bearer ${connection.token}`,
+            'content-type': 'application/json'
+          },
+          body: JSON.stringify({
+            method: 'executeControl',
+            params: { sessionId: 'session-1', workspaceCwd: '/workspace', code: 'return 1' }
+          })
+        })
+      ).rejects.toThrow()
+    } finally {
       await server.close()
     }
   })

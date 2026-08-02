@@ -165,6 +165,7 @@ type AcpIpcOptions = AcpIpcArtifacts & {
   onSessionCancellationRequested?: (sessionId: string) => void
   onSessionUnavailable?: (sessionId: string) => void
   onAllSessionsCancellationRequested?: () => void
+  onDisconnected?: () => void
   beforeSessionDelete?: (sessionId: string) => Promise<void>
   // Provides fresh Specialist Profiles for first-turn identity injection. Optional so existing
   // tests and headless setups that construct the runtime without specialist support are unaffected.
@@ -203,6 +204,7 @@ const createAcpRuntime = ({
   onSessionCancellationRequested,
   onSessionUnavailable,
   onAllSessionsCancellationRequested,
+  onDisconnected,
   beforeSessionDelete,
   profileService
 }: AcpIpcOptions): AcpRuntimeCoordinator => {
@@ -352,7 +354,7 @@ const createAcpRuntime = ({
     callbacks,
     defaultCwd,
     initializationBarrier,
-    undefined,
+    onDisconnected,
     onSessionUnavailable,
     {
       onSessionTurnStarted,
@@ -437,15 +439,18 @@ const registerAcpIpcHandlerSet = (
   )
   // Prompt calls wait for the turn to stop, then return the latest snapshot.
   ipcMainHandle('acp:send-prompt', async (_event, request: AcpPromptRequest) => {
+    // Continuations are main-process-owned. A renderer-supplied marker must never suppress a visible
+    // user message or impersonate the handoff path.
+    const rendererRequest = { ...request, continuation: undefined }
     // Remember the prompt's first line so a completion/failure notification can name the task.
     // If the runtime rejects before the turn starts (unknown session, another prompt in flight),
     // revert so a still-running turn keeps its own prompt's name.
-    const tracked = taskNotifications?.trackPrompt(request)
+    const tracked = taskNotifications?.trackPrompt(rendererRequest)
 
     try {
-      await runtime.sendPrompt(request)
+      await runtime.sendPrompt(rendererRequest)
     } catch (error) {
-      if (tracked) taskNotifications?.untrackPrompt(request.sessionId, tracked)
+      if (tracked) taskNotifications?.untrackPrompt(rendererRequest.sessionId, tracked)
       throw error
     }
 

@@ -202,6 +202,8 @@ const SettingsPage = ({ open, onClose, onOpenSession }: SettingsPageProps): Reac
   const refreshProviderModels = useSettingsStore((state) => state.refreshProviderModels)
   const pendingSkillId = useSettingsStore((state) => state.pendingSkillId)
   const consumePendingSkill = useSettingsStore((state) => state.consumePendingSkill)
+  const pendingSpecialistId = useSettingsStore((state) => state.pendingSpecialistId)
+  const consumePendingSpecialist = useSettingsStore((state) => state.consumePendingSpecialist)
   const pendingSettingsPanel = useSettingsStore((state) => state.pendingSettingsPanel)
   const consumePendingSettingsPanel = useSettingsStore((state) => state.consumePendingSettingsPanel)
   const settingsWriteError = useSettingsStore((state) => state.settingsWriteError)
@@ -272,6 +274,26 @@ const SettingsPage = ({ open, onClose, onOpenSession }: SettingsPageProps): Reac
     setSeededSettingsPanel(undefined)
   }
 
+  // When opened from the specialist switch approval card, seed the history straight onto that
+  // specialist's editor. Same derive-during-render pattern as the skill seed above; the
+  // Specialists panel resolves the profile from the catalog once it mounts.
+  const [seededSpecialistId, setSeededSpecialistId] = useState<string | undefined>(undefined)
+  if (open && pendingSpecialistId !== undefined && pendingSpecialistId !== seededSpecialistId) {
+    setSeededSpecialistId(pendingSpecialistId)
+    setHistory([
+      {
+        panel: 'specialists',
+        specialists: { kind: 'edit', id: pendingSpecialistId },
+        skills: { kind: 'list' },
+        model: { kind: 'list' }
+      }
+    ])
+    setHistoryIndex(0)
+  }
+  if (!open && seededSpecialistId !== undefined) {
+    setSeededSpecialistId(undefined)
+  }
+
   useEffect(() => {
     if (pendingSettingsPanel !== undefined) consumePendingSettingsPanel()
   }, [pendingSettingsPanel, consumePendingSettingsPanel])
@@ -279,6 +301,9 @@ const SettingsPage = ({ open, onClose, onOpenSession }: SettingsPageProps): Reac
   useEffect(() => {
     if (pendingSkillId !== undefined) consumePendingSkill()
   }, [pendingSkillId, consumePendingSkill])
+  useEffect(() => {
+    if (pendingSpecialistId !== undefined) consumePendingSpecialist()
+  }, [pendingSpecialistId, consumePendingSpecialist])
 
   // Auto-detect opencode the first time its detection card is shown without a known path, so the card
   // reflects reality without a manual re-detect. Guarded on path + in-flight to run at most once.

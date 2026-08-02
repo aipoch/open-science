@@ -1086,6 +1086,23 @@ describe('settings store: openSettingsToSkill', () => {
   })
 })
 
+describe('settings store: openSettingsToSpecialist', () => {
+  it('opens the dialog on a specialist; consume and close both clear the pending id', () => {
+    useSettingsStore.getState().openSettingsToSpecialist('spc-1')
+    expect(useSettingsStore.getState().isSettingsOpen).toBe(true)
+    expect(useSettingsStore.getState().pendingSpecialistId).toBe('spc-1')
+
+    useSettingsStore.getState().consumePendingSpecialist()
+    expect(useSettingsStore.getState().pendingSpecialistId).toBeUndefined()
+
+    // Closing after a fresh open-to-specialist clears the pending id so a later open starts fresh.
+    useSettingsStore.getState().openSettingsToSpecialist('spc-2')
+    useSettingsStore.getState().closeSettings()
+    expect(useSettingsStore.getState().isSettingsOpen).toBe(false)
+    expect(useSettingsStore.getState().pendingSpecialistId).toBeUndefined()
+  })
+})
+
 describe('settings store: openSettingsToPanel', () => {
   it('opens the requested panel and clears an unconsumed target on close', () => {
     useSettingsStore.getState().openSettingsToPanel('storage')

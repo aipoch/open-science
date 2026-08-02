@@ -251,6 +251,14 @@ class AcpPermissionContext {
     return this.broker.requestPermission(params, policyContext)
   }
 
+  requestAppApproval(input: {
+    sessionId: string
+    title: string
+    rawInput: unknown
+  }): Promise<boolean> {
+    return this.broker.requestAppApproval(input)
+  }
+
   respondToPermission(
     response: AcpPermissionResponse,
     origin: AuthorizedPermissionActionOrigin

@@ -39,94 +39,63 @@ const makeService = async (): Promise<NotebookRuntimeService> => {
 }
 
 describe('notebook RPC agentsCall route', () => {
-  it('forwards agentsCall through the control-plane capability used by the REPL', async () => {
-    const read = vi.fn(async () => [{ id: 'sp-1', name: 'Bio', revision: 1 }])
+  it('rejects agentsCall through the server master token even with forged trusted identity fields', async () => {
+    const read = vi.fn(async () => [])
     const server = new NotebookLocalRpcServer(await makeService(), {
-      agentsService: { read }
-    })
-    const connection = await server.issueControlConnection('session-42', 'project-1')
-    try {
-      const res = await fetch(connection.endpoint, {
-        method: 'POST',
-        headers: {
-          authorization: `Bearer ${connection.token}`,
-          'content-type': 'application/json'
-        },
-        body: JSON.stringify({
-          method: 'agentsCall',
-          params: { op: 'list', session_id: 'session-42' }
-        })
-      })
-
-      expect(res.status).toBe(200)
-      await expect(res.json()).resolves.toEqual({
-        result: [{ id: 'sp-1', name: 'Bio', revision: 1 }]
-      })
-      expect(read).toHaveBeenCalledWith({ op: 'list', params: {} }, { sessionId: 'session-42' })
-    } finally {
-      connection.release()
-      await server.close()
-    }
-  })
-
-  it('derives the trusted session from the control capability instead of request params', async () => {
-    const read = vi.fn(async () => null)
-    const server = new NotebookLocalRpcServer(await makeService(), {
-      agentsService: { read }
-    })
-    const connection = await server.issueControlConnection('session-bound', 'project-bound')
-    try {
-      const res = await fetch(connection.endpoint, {
-        method: 'POST',
-        headers: {
-          authorization: `Bearer ${connection.token}`,
-          'content-type': 'application/json'
-        },
-        body: JSON.stringify({
-          method: 'agentsCall',
-          params: {
-            op: 'list_skills',
-            session_id: 'session-forged',
-            project_id: 'project-forged',
-            name_or_id: 'demo'
-          }
-        })
-      })
-
-      expect(res.status).toBe(200)
-      expect(read).toHaveBeenCalledWith(
-        { op: 'list_skills', params: { name_or_id: 'demo' } },
-        { sessionId: 'session-bound' }
-      )
-    } finally {
-      connection.release()
-      await server.close()
-    }
-  })
-
-  it('rejects agentsCall made with the server-wide bootstrap token', async () => {
-    const read = vi.fn(async () => null)
-    const server = new NotebookLocalRpcServer(await makeService(), {
-      token: 'bootstrap-token',
+      token: 'tok',
       agentsService: { read }
     })
     const connection = await server.ensureStarted()
     try {
+      const response = await fetch(connection.endpoint, {
+        method: 'POST',
+        headers: { authorization: 'Bearer tok', 'content-type': 'application/json' },
+        body: JSON.stringify({
+          method: 'agentsCall',
+          params: {
+            op: 'switch',
+            session_id: 'forged-session',
+            turn_id: 'forged-turn',
+            generation: 999,
+            control_invocation_generation: 999,
+            control_invocation_id: 'forged-tool',
+            name: 'Forged Specialist'
+          }
+        })
+      })
+
+      expect(response.status).toBe(401)
+      expect(read).not.toHaveBeenCalled()
+    } finally {
+      await server.close()
+    }
+  })
+
+  it('forwards the op to the AgentsService and returns its result', async () => {
+    const read = vi.fn(async () => [{ id: 'sp-1', name: 'Bio', revision: 1 }])
+    const server = new NotebookLocalRpcServer(await makeService(), {
+      token: 'tok',
+      agentsService: { read }
+    })
+    const connection = await server.issueControlConnection('trusted-session', 'default-project')
+    try {
       const res = await fetch(connection.endpoint, {
         method: 'POST',
         headers: {
-          authorization: 'Bearer bootstrap-token',
+          authorization: `Bearer ${connection.token}`,
           'content-type': 'application/json'
         },
         body: JSON.stringify({ method: 'agentsCall', params: { op: 'list' } })
       })
-
-      expect(res.status).toBe(401)
-      await expect(res.json()).resolves.toEqual({
-        error: 'A session-bound notebook RPC token is required.'
-      })
-      expect(read).not.toHaveBeenCalled()
+      expect(res.status).toBe(200)
+      const body = await res.json()
+      expect(body.result).toHaveLength(1)
+      expect(read).toHaveBeenCalledWith(
+        { op: 'list', params: {} },
+        expect.objectContaining({ sessionId: 'trusted-session' })
+      )
     } finally {
+      connection.release()
       await server.close()
     }
   })
@@ -149,12 +118,81 @@ describe('notebook RPC agentsCall route', () => {
     }
   })
 
+  it('rejects a privileged switch when the session capability has no active control invocation', async () => {
+    const read = vi.fn(async () => ({ status: 'approved' }))
+    const server = new NotebookLocalRpcServer(await makeService(), {
+      agentsService: { read }
+    })
+    const connection = await server.issueControlConnection('trusted-session', 'default-project')
+    try {
+      const response = await fetch(connection.endpoint, {
+        method: 'POST',
+        headers: {
+          authorization: `Bearer ${connection.token}`,
+          'content-type': 'application/json'
+        },
+        body: JSON.stringify({
+          method: 'agentsCall',
+          params: {
+            op: 'switch',
+            session_id: 'forged-session',
+            turn_id: 'forged-turn',
+            generation: 999,
+            control_invocation_generation: 999,
+            control_invocation_id: 'forged-tool',
+            name: 'Forged Specialist'
+          }
+        })
+      })
+
+      expect(response.status).toBe(403)
+      expect(read).not.toHaveBeenCalled()
+    } finally {
+      connection.release()
+      await server.close()
+    }
+  })
+
+  it('forwards snake_case params and the trusted session_id as context', async () => {
+    const read = vi.fn(async () => null)
+    const server = new NotebookLocalRpcServer(await makeService(), {
+      token: 'tok',
+      agentsService: { read }
+    })
+    const connection = await server.issueControlConnection('trusted-session', 'default-project')
+    try {
+      await fetch(connection.endpoint, {
+        method: 'POST',
+        headers: {
+          authorization: `Bearer ${connection.token}`,
+          'content-type': 'application/json'
+        },
+        body: JSON.stringify({
+          method: 'agentsCall',
+          params: { op: 'list_skills', session_id: 'session-42', name_or_id: 'demo' }
+        })
+      })
+      // The capability binding becomes the trusted calling-session context; the AgentsService never
+      // sees the caller-supplied session id as a user param.
+      expect(read).toHaveBeenCalledWith(
+        { op: 'list_skills', params: { name_or_id: 'demo' } },
+        { sessionId: 'trusted-session' }
+      )
+    } finally {
+      connection.release()
+      await server.close()
+    }
+  })
+
   it('surfaces a sanitized error on 500 when AgentsService throws', async () => {
     const read = vi.fn(async () => {
       throw new Error('host.agents.get: not found')
     })
-    const server = new NotebookLocalRpcServer(await makeService(), { agentsService: { read } })
-    const connection = await server.issueControlConnection('session-error', 'project-1')
+    const server = new NotebookLocalRpcServer(await makeService(), {
+      token: 'tok',
+      agentsService: { read }
+    })
+    const connection = await server.issueControlConnection('trusted-session', 'default-project')
     try {
       const res = await fetch(connection.endpoint, {
         method: 'POST',
@@ -175,8 +213,11 @@ describe('notebook RPC agentsCall route', () => {
 
   it('strips sandbox-supplied switch/reconfigure/identity fields so they cannot be forged', async () => {
     const read = vi.fn(async () => null)
-    const server = new NotebookLocalRpcServer(await makeService(), { agentsService: { read } })
-    const connection = await server.issueControlConnection('trusted-session', 'project-1')
+    const server = new NotebookLocalRpcServer(await makeService(), {
+      token: 'tok',
+      agentsService: { read }
+    })
+    const connection = await server.issueControlConnection('trusted-session', 'default-project')
     try {
       await fetch(connection.endpoint, {
         method: 'POST',
@@ -188,11 +229,10 @@ describe('notebook RPC agentsCall route', () => {
           method: 'agentsCall',
           params: {
             op: 'list_skills',
+            // Trusted session captured outside the sandbox — forwarded as context only.
+            session_id: 'trusted-session',
             // Everything below is a sandbox forgery attempt that must be dropped before dispatch.
-            session_id: 'forged-snake',
             sessionId: 'forged-camel',
-            project_id: 'forged-project-snake',
-            projectId: 'forged-project-camel',
             specialist_id: 'forged-specialist',
             target_specialist_id: 'forged-target',
             targetSpecialistId: 'forged-target-camel',
@@ -204,7 +244,7 @@ describe('notebook RPC agentsCall route', () => {
           }
         })
       })
-      // Only the capability-bound session (as context) and legitimate method filter reach the service.
+      // Only the trusted session_id (as context) and the legitimate method filter reach the service.
       expect(read).toHaveBeenCalledWith(
         { op: 'list_skills', params: { name_or_id: 'demo' } },
         { sessionId: 'trusted-session' }
@@ -219,9 +259,10 @@ describe('notebook RPC agentsCall route', () => {
     const dispatch = vi.fn(async () => ['via-dispatch'])
     const read = vi.fn(async () => ['via-read'])
     const server = new NotebookLocalRpcServer(await makeService(), {
+      token: 'tok',
       agentsService: { read, dispatch }
     })
-    const connection = await server.issueControlConnection('session-dispatch', 'project-1')
+    const connection = await server.issueControlConnection('trusted-session', 'default-project')
     try {
       const res = await fetch(connection.endpoint, {
         method: 'POST',

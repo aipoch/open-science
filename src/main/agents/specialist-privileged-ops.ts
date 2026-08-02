@@ -1,18 +1,15 @@
-// Standalone privileged Specialist Profile operations: name-changing update + delete (issue 04).
+// Standalone privileged Specialist Profile operation: delete (issue 04).
 //
 // This module is the privileged-mutation branch of the conversational Specialist management flow.
-// It is deliberately standalone and independently testable: it consumes ONLY issue 02's
-// ApprovalGateway contract, the presentation mapper, and the existing ProfileService. It does NOT
-// import issue 03 (ordinary mutation) or issue 05 (switch) implementation modules. Issue 08 composes
-// it into the dispatcher.
+// host.agents.update (including renames) is an ordinary chat-reviewed mutation handled by the issue
+// 03 module; only DELETE passes through this approval-gated module (issue 04). It is deliberately
+// standalone and independently testable: it consumes ONLY issue 02's ApprovalGateway contract and
+// the existing ProfileService. It does NOT import issue 03 (ordinary mutation) or issue 05 (switch)
+// implementation modules. Issue 08 composes it into the dispatcher.
 //
-// Design rules mirrored from design.md §7/§8/§10 and the issue 04 acceptance criteria:
-//  - `update(currentName, patch)` is privileged ONLY when the validated patch changes `name`. There
-//    is NO public rename() method; name-changing update is classified inside update().
+// Design rules mirrored from design.md §8/§10 and the issue 04 acceptance criteria:
 //  - Approval re-resolves the PUBLIC NAME to the UUID and verifies the REVIEWED REVISION immediately
 //    before committing. Pre-card resolution is never mutation authority.
-//  - An approved name-changing update commits the COMPLETE patch atomically through ProfileService
-//    and returns actual camelCase read-back.
 //  - A stale, renamed, deleted, or otherwise changed target after card creation FAILS CLOSED
 //    without applying any part of the patch (sanitized `host.agents.<method>:` error).
 //  - Delete verifies ABSENCE and returns `{ status: "deleted", name }` WITHOUT clearing or rewriting
@@ -21,15 +18,24 @@
 //    and produces NO mutation, invalidation, binding, runtime, or renderer state change.
 //  - Catalog invalidation occurs ONLY after a successful mutation.
 
-import type { ApprovalGateway, ApprovalResult } from '../../shared/agents-contract'
-import type { SpecialistProfileView, UpdateSpecialistInput } from '../../shared/specialist'
+import type {
+  ApprovalGateway,
+  ApprovalResult,
+  TrustedCallingSession
+} from '../../shared/agents-contract'
+import type { SpecialistProfileView } from '../../shared/specialist'
 import type { ProfileService } from '../specialist/service'
-import type { SpecialistUpdatePatch } from './specialist-approval-presentation'
-import { AgentsSafeError, agentsPublicError, formatAgentsError } from './agents-error'
 
-class PrivilegedOpError extends AgentsSafeError {
+const METHOD_PREFIX = 'host.agents'
+
+// Sanitizes an error into a stable, method-scoped message. System instructions, connector args,
+// credentials, and stack detail must never reach the sandbox. We keep only the top-level message.
+const sanitizeError = (value: unknown): string =>
+  value instanceof Error ? value.message : String(value)
+
+class PrivilegedOpError extends Error {
   constructor(method: string, cause: unknown) {
-    super(formatAgentsError(method, cause))
+    super(`${METHOD_PREFIX}.${method}: ${sanitizeError(cause)}`)
     this.name = 'PrivilegedOpError'
   }
 }
@@ -38,11 +44,6 @@ class PrivilegedOpError extends AgentsSafeError {
 // Result shapes (camelCase, returned to the SDK / Skill)
 // ---------------------------------------------------------------------------
 
-export type AgentUpdatedResult = {
-  status: 'updated'
-  agent: SpecialistProfileView
-}
-
 export type AgentDeletedResult = {
   status: 'deleted'
   name: string
@@ -50,21 +51,11 @@ export type AgentDeletedResult = {
 
 export type AgentDeclinedResult = {
   status: 'declined'
-  operation: 'update' | 'delete'
+  operation: 'delete'
   reason?: string
 }
 
-export type NameChangingUpdateResult = AgentUpdatedResult | AgentDeclinedResult
 export type DeleteResult = AgentDeletedResult | AgentDeclinedResult
-
-// ---------------------------------------------------------------------------
-// Classification: name-changing update is privileged ONLY when name changes
-// ---------------------------------------------------------------------------
-
-// True only when the validated patch carries a new `name`. An omitted/undefined name is not a rename
-// intent. There is no public rename() — this classifier is what update() uses to decide privilege.
-export const isNameChangingPatch = (patch: SpecialistUpdatePatch): boolean =>
-  patch.name !== undefined && patch.name.trim().length > 0
 
 // ---------------------------------------------------------------------------
 // Shared re-resolution: name -> UUID + revision verification immediately before mutation
@@ -90,9 +81,7 @@ const reResolveForMutation = async (
   if (current.revision !== reviewedRevision) {
     throw new PrivilegedOpError(
       method,
-      agentsPublicError(
-        `reviewed revision ${reviewedRevision} no longer matches current revision ${current.revision}`
-      )
+      `reviewed revision ${reviewedRevision} no longer matches current revision ${current.revision}`
     )
   }
   return current
@@ -107,79 +96,14 @@ export type PrivilegedOpDeps = {
   // The injected approval gateway (issue 02 contract). Real production wiring is the ACP-backed
   // gateway; tests pass fakes. A decline is a normal result, never a thrown error.
   decide: (request: Parameters<ApprovalGateway['decide']>[0]) => Promise<ApprovalResult>
+  // The trusted calling-session identity, threaded from server context by the dispatcher (mirroring
+  // runSwitch). The ACP-backed gateway parks the approval card on THIS session; an empty session
+  // makes the bridge report "approval surface is unavailable" and decline. Optional for test
+  // compatibility — production wiring always supplies it.
+  session?: TrustedCallingSession
   // Invalidates the runtime catalog (Settings/picker/runtime capability resolution). Invoked ONLY
   // after a successful mutation; never on decline or failure.
   invalidateCatalog?: () => Promise<void> | void
-}
-
-// ---------------------------------------------------------------------------
-// Name-changing update (atomic, privileged)
-// ---------------------------------------------------------------------------
-
-export type ApplyNameChangingUpdateDeps = PrivilegedOpDeps & {
-  currentName: string
-  reviewedRevision: number
-  patch: SpecialistUpdatePatch
-}
-
-// Converts the host.agents.update patch (snake/camel) into the UpdateSpecialistInput shape the
-// ProfileService expects. The mapper's SpecialistUpdatePatch already mirrors the service fields, so
-// this is a typed pass-through that pins id + revision from the re-resolved record.
-const toServiceUpdate = (
-  id: string,
-  revision: number,
-  patch: SpecialistUpdatePatch
-): UpdateSpecialistInput => ({
-  id,
-  revision,
-  name: patch.name,
-  displayName: patch.displayName,
-  description: patch.description,
-  systemPrompt: patch.systemPrompt,
-  iconKey: patch.iconKey,
-  colorKey: patch.colorKey,
-  enabled: patch.enabled,
-  capabilityMode: patch.capabilityMode,
-  fullAccess: patch.fullAccess,
-  selectedCapabilities: patch.selectedCapabilities
-})
-
-// Approves and atomically commits a name-changing update. On approval, re-resolves name -> UUID,
-// verifies the reviewed revision, commits the COMPLETE patch through ProfileService, invalidates the
-// catalog, and returns actual camelCase read-back. On decline, returns a structured declined result
-// with NO mutation. On drift/failure, throws a sanitized `host.agents.update:` error and applies no
-// part of the patch.
-export const applyNameChangingUpdate = async (
-  deps: ApplyNameChangingUpdateDeps
-): Promise<NameChangingUpdateResult> => {
-  const { profileService, currentName, reviewedRevision, patch } = deps
-
-  const decision = await deps.decide({
-    operation: 'update',
-    summary: { name: currentName, newName: patch.name },
-    session: {}
-  })
-  if (decision.status === 'declined') {
-    return { status: 'declined', operation: 'update', reason: decision.reason }
-  }
-
-  // Re-resolve public name -> UUID and verify the reviewed revision IMMEDIATELY before mutation.
-  const current = await reResolveForMutation(
-    'update',
-    profileService,
-    currentName,
-    reviewedRevision
-  )
-
-  let updated: SpecialistProfileView
-  try {
-    updated = await profileService.update(toServiceUpdate(current.id, current.revision, patch))
-  } catch (error) {
-    throw new PrivilegedOpError('update', error)
-  }
-
-  if (deps.invalidateCatalog) await deps.invalidateCatalog()
-  return { status: 'updated', agent: updated }
 }
 
 // ---------------------------------------------------------------------------
@@ -207,7 +131,7 @@ export const applyDelete = async (deps: ApplyDeleteDeps): Promise<DeleteResult> 
   const decision = await deps.decide({
     operation: 'delete',
     summary: { name: currentName },
-    session: {}
+    session: deps.session ?? {}
   })
   if (decision.status === 'declined') {
     return { status: 'declined', operation: 'delete', reason: decision.reason }
@@ -247,10 +171,7 @@ export const applyDelete = async (deps: ApplyDeleteDeps): Promise<DeleteResult> 
     // Expected: getByName threw "not found" — absence verified.
   }
   if (stillPresent) {
-    throw new PrivilegedOpError(
-      'delete',
-      agentsPublicError(`specialist "${currentName}" still present after delete`)
-    )
+    throw new PrivilegedOpError('delete', `specialist "${currentName}" still present after delete`)
   }
 
   if (deps.invalidateCatalog) await deps.invalidateCatalog()

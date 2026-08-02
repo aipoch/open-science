@@ -241,6 +241,75 @@ describe('workspace runtime events', () => {
     expect(useSessionStore.getState().sessions[0].errorReportable).toBe(true)
   })
 
+  it('reattaches a post-stop app continuation and its activity and usage to the originating turn', async () => {
+    const originMessageId = useSessionStore.getState().sessions[0].messages[0].id
+    useSessionStore.getState().finishRun('transport-session-1')
+    expect(useSessionStore.getState().sessions[0].activeRun).toBeUndefined()
+
+    await applyWorkspaceRuntimeEvent(
+      createEvent({
+        id: 'continuation-group',
+        kind: 'tool',
+        promptMessageId: originMessageId,
+        toolCallId: 'continuation-group',
+        providerToolName: 'mcp__open-science-activity__begin_activity_group',
+        rawInput: { title: 'Continue after handoff' },
+        status: 'pending'
+      })
+    )
+    await applyWorkspaceRuntimeEvent(
+      createEvent({
+        id: 'continuation-tool',
+        kind: 'tool',
+        promptMessageId: originMessageId,
+        toolCallId: 'continuation-tool',
+        providerToolName: 'Read',
+        toolKind: 'read',
+        status: 'completed'
+      })
+    )
+    await applyWorkspaceRuntimeEvent(
+      createEvent({
+        id: 'continuation-message',
+        role: 'assistant',
+        messageId: 'continuation-stream',
+        promptMessageId: originMessageId,
+        text: 'The handoff analysis is complete.'
+      })
+    )
+    await applyWorkspaceRuntimeEvent(
+      createEvent({
+        id: 'continuation-stop',
+        kind: 'stop',
+        promptMessageId: originMessageId,
+        text: 'end_turn',
+        turnUsage: { inputTokens: 31, cacheTokens: 10, outputTokens: 7 }
+      })
+    )
+
+    const session = useSessionStore.getState().sessions[0]
+    expect(session.messages.at(-1)).toMatchObject({
+      role: 'agent',
+      content: 'The handoff analysis is complete.',
+      responseToMessageId: originMessageId,
+      status: 'complete',
+      turnUsage: { inputTokens: 31, cacheTokens: 10, outputTokens: 7 }
+    })
+    expect(session.activities).toEqual([
+      expect.objectContaining({
+        id: 'continuation-tool',
+        promptMessageId: originMessageId,
+        activityGroupId: 'continuation-group'
+      })
+    ])
+    expect(session.conversationGraph?.activities).toEqual([
+      expect.objectContaining({
+        id: 'continuation-tool',
+        promptMessageId: originMessageId
+      })
+    ])
+  })
+
   it('tracks native context compaction without adding chat messages', async () => {
     useSessionStore.getState().finishRun('transport-session-1')
     const messageCount = useSessionStore.getState().sessions[0].messages.length

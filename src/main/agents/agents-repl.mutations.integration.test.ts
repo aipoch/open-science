@@ -93,7 +93,6 @@ gate('host.agents repl mutation integration', () => {
   let rpcServer: NotebookLocalRpcServer
   let endpoint: string
   let token: string
-  let releaseConnection: (() => void) | undefined
   let profileStorage: string
   let runtimeStorage: string
 
@@ -124,17 +123,12 @@ gate('host.agents repl mutation integration', () => {
       token: 'integration-token',
       agentsService
     })
-    const connection = await rpcServer.issueControlConnection(
-      'session-mutations',
-      'default-project'
-    )
+    const connection = await rpcServer.ensureStarted()
     endpoint = connection.endpoint
     token = connection.token
-    releaseConnection = connection.release
   })
 
   afterAll(async () => {
-    releaseConnection?.()
     await rpcServer?.close()
     await rm(profileStorage, { recursive: true, force: true })
     await rm(runtimeStorage, { recursive: true, force: true })

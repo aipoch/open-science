@@ -86,6 +86,13 @@ export type AcpRuntimeEventKind =
 
 export type AcpRuntimeEventLevel = 'info' | 'warning' | 'error'
 
+export type AcpHandoffFailure = {
+  targetName: string | null
+  generation: number
+  failedPhase: 'stop-or-reconfigure' | 'continuation-startup'
+  retryable: true
+}
+
 // Title of the error event marking a genuinely failed prompt turn. Shared between the runtime
 // producer and consumers (e.g. desktop notifications) that must distinguish turn failures from
 // ancillary session-scoped errors (artifact cleanup, cancel timeout) — a copy edit here updates
@@ -238,6 +245,10 @@ export type AcpRuntimeEvent = {
   // Set on an error event the app can auto-recover from, so the renderer compacts-and-retries instead
   // of surfacing a dead-end error.
   recoverable?: AcpRecoverableFailure
+  // App-owned, fail-closed Specialist handoff failures are visible to the renderer but use a
+  // separate recovery path from automatic context-overflow compaction. Completion contents and
+  // prompt text deliberately remain in the main-process recovery store, not this event.
+  handoffFailure?: AcpHandoffFailure
   // Set on an error event whose failure originates upstream of the app — the agent relayed a
   // model/provider error (bad key, rate limit, quota, provider 5xx/overloaded, wrong model id). The
   // renderer uses this to withhold the "Report error" affordance: a provider-side problem is the user's
@@ -263,7 +274,8 @@ export type AcpRuntimeEvent = {
   // Terminal metadata carries Bash stdout/stderr and exit code when terminal output is streamed.
   terminalOutput?: string
   terminalExitCode?: number | null
-  // Artifact events use these ids to bridge runtime-owned runs to renderer-owned messages.
+  // Prompt identity scopes chat, tool/activity, stop/error, and Artifact events to the originating
+  // user turn. App-owned continuations retain it after the renderer's ordinary active run has settled.
   runId?: string
   promptMessageId?: string
   artifactSessionId?: string
@@ -404,6 +416,17 @@ export type AcpSetPermissionProfileRequest = {
 export type AcpPromptRequest = {
   sessionId: string
   text: string
+  // An application-owned continuation retains the originating user request but must not create a
+  // second visible user-message event. It is never accepted from renderer IPC.
+  continuation?: {
+    kind: 'specialist-handoff'
+    originatingTurnToken: string
+    targetName: string | null
+    completion: { kind: 'returned'; value: unknown } | { kind: 'threw'; errorMessage: string }
+  }
+  // Application-owned continuations may send provider context without projecting a second user
+  // message. The original user turn remains the visible/provenance owner.
+  suppressUserMessage?: boolean
   // Immutable conversation-graph binding for Artifact Provenance. Older callers may omit it; the
   // runtime supplies a root-frame/root-branch compatibility binding during the Session JSON v2
   // rollout.

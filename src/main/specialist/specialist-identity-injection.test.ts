@@ -474,6 +474,102 @@ describe('specialist hot-switch — Claude Code', () => {
     )
     expect(registerSessionSpecialist).toHaveBeenLastCalledWith('session-claude2', undefined)
   })
+
+  it('replays persisted and live user tasks after a resumed session is replaced without projecting a second user message', async () => {
+    const process = new FakeAgentProcess()
+    const fakeAgent = startFakeAgent(process, ['session-claude-replacement'])
+    const profileA = makeProfile({ id: 'sp-a', name: 'Specialist A' })
+    const profileB = makeProfile({ id: 'sp-b', name: 'Specialist B' })
+    const userMessages: string[] = []
+    const runtime = new AcpRuntime({
+      appVersion: '0.1.0',
+      defaultCwd: '/workspace',
+      callbacks: {
+        onEvent: (event) => {
+          if (event.kind === 'message' && event.role === 'user' && event.text) {
+            userMessages.push(event.text)
+          }
+        }
+      },
+      resolveBackend: () => ({
+        framework: { ...claudeCodeFramework, spawn: () => asAgentProcess(process) },
+        executablePath: '/bin/agent',
+        env: {}
+      }),
+      resolveSpecialistIdentity: async (specialistId: string) =>
+        specialistId === 'sp-a'
+          ? { append: buildSpecialistIdentityAppend(profileA), prefix: '' }
+          : { append: buildSpecialistIdentityAppend(profileB), prefix: '' }
+    })
+
+    await runtime.resumeSession({
+      sessionId: 'session-claude-replay',
+      cwd: '/workspace',
+      specialistId: 'sp-a'
+    })
+    await runtime.sendPrompt({
+      sessionId: 'session-claude-replay',
+      text: 'Load the experiment',
+      provenanceContext: { promptMessageId: 'live-user-1' },
+      historyPreamble: '**User:** Earlier task\n\n**Assistant:** Earlier answer'
+    })
+    await runtime.sendPrompt({
+      sessionId: 'session-claude-replay',
+      text: 'Analyse the experiment',
+      provenanceContext: { promptMessageId: 'live-user-2' }
+    })
+
+    runtime.prepareClaudeCodeHandoffReplay({
+      sessionId: 'session-claude-replay',
+      capturedCompletion: { kind: 'returned', value: { afterAwait: 'complete' } },
+      supportedTaskContext: [
+        { messageId: 'persisted-user-1', text: 'Open the project saved before restart' },
+        { messageId: 'live-user-1', text: 'Load the experiment' }
+      ],
+      switchReadBack: {
+        status: 'approved',
+        operation: 'switch',
+        binding: {
+          sessionId: 'session-claude-replay',
+          specialistId: 'sp-b',
+          targetName: 'Specialist B',
+          revision: 4
+        }
+      }
+    })
+    await runtime.switchSpecialist('session-claude-replay', 'sp-b')
+    const continuation = runtime.createClaudeCodeContinuationRequest({
+      sessionId: 'session-claude-replay',
+      switchReadBack: {
+        status: 'approved',
+        operation: 'switch',
+        binding: {
+          sessionId: 'session-claude-replay',
+          specialistId: 'sp-b',
+          targetName: 'Specialist B',
+          revision: 4
+        }
+      }
+    })
+    await runtime.sendPrompt(continuation)
+
+    const replacementMeta = fakeAgent.newSessions[0]._meta as {
+      systemPrompt?: { append?: string }
+    }
+    const replacementAppend = replacementMeta.systemPrompt?.append ?? ''
+    expect(replacementAppend).toContain('Specialist B')
+    expect(replacementAppend).toContain('Open the project saved before restart')
+    expect(replacementAppend).toContain('Load the experiment')
+    expect(replacementAppend).toContain('Analyse the experiment')
+    expect(replacementAppend).toContain('"revision":4')
+    expect(replacementAppend).toContain('"afterAwait":"complete"')
+    expect(replacementAppend).not.toContain('Earlier answer')
+    expect(fakeAgent.prompts[2]).toEqual({
+      sessionId: 'session-claude-replacement',
+      text: expect.not.stringContaining('Analyse the experiment')
+    })
+    expect(userMessages).toEqual(['Load the experiment', 'Analyse the experiment'])
+  })
 })
 
 describe('specialist hot-switch — Codex', () => {

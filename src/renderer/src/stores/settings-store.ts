@@ -147,6 +147,9 @@ type SettingsStoreData = {
   pendingSettingsPanel?: SettingsPanelId
   // Skill to land on when the dialog opens from a skill mention; consumed once its detail is seeded.
   pendingSkillId?: string
+  // Specialist to land on when the dialog opens from the switch approval card; consumed once its
+  // editor is seeded. Uses the stable profile id, never the renameable public name.
+  pendingSpecialistId?: string
   // Configured package mirror (conda/pip); undefined means public hosts (unconfigured).
   packageMirror?: PackageMirror
   // Reasoning-effort preference applied to agent requests; 'default' leaves the agent's own default.
@@ -238,12 +241,15 @@ type SettingsStore = SettingsStoreData & {
   closeSettings: () => void
   // Opens the dialog straight onto a skill's detail page (used by clickable skill mentions).
   openSettingsToSkill: (skillId: string) => void
+  // Opens the dialog straight onto one specialist's editor (used by the switch approval card).
+  openSettingsToSpecialist: (specialistId: string) => void
   // Opens the dialog straight to the Compute panel (used by Files panel "Add SSH host…" link).
   openSettingsToCompute: () => void
   // Clears the requested panel after Settings has seeded its local navigation history.
   consumePendingSettingsPanel: () => void
   // Clears the pending skill once its detail view has been seeded, so a later open starts fresh.
   consumePendingSkill: () => void
+  consumePendingSpecialist: () => void
   // Loads the bundled-skill list (enabled state included) from the main process.
   loadSkills: () => Promise<void>
   // Toggles one skill; optimistic, then reconciled with the authoritative list from main.
@@ -375,6 +381,7 @@ export const createInitialSettingsState = (): SettingsStoreData => ({
   isSettingsOpen: false,
   pendingSettingsPanel: undefined,
   pendingSkillId: undefined,
+  pendingSpecialistId: undefined,
   packageMirror: undefined,
   reasoningEffort: DEFAULT_REASONING_EFFORT,
   notificationsEnabled: DEFAULT_NOTIFICATIONS_ENABLED,
@@ -1336,22 +1343,53 @@ export const useSettingsStore = create<SettingsStore>((set, get) => ({
   openSettings: () => set({ isSettingsOpen: true }),
 
   openSettingsToPanel: (panel) =>
-    set({ isSettingsOpen: true, pendingSettingsPanel: panel, pendingSkillId: undefined }),
+    set({
+      isSettingsOpen: true,
+      pendingSettingsPanel: panel,
+      pendingSkillId: undefined,
+      pendingSpecialistId: undefined
+    }),
 
-  // Clearing the pending skill on close stops a later normal open from jumping back to a stale skill.
+  // Clearing the pending targets on close stops a later normal open from jumping back to stale state.
   closeSettings: () =>
-    set({ isSettingsOpen: false, pendingSkillId: undefined, pendingSettingsPanel: undefined }),
+    set({
+      isSettingsOpen: false,
+      pendingSkillId: undefined,
+      pendingSpecialistId: undefined,
+      pendingSettingsPanel: undefined
+    }),
 
   openSettingsToSkill: (skillId) =>
-    set({ isSettingsOpen: true, pendingSkillId: skillId, pendingSettingsPanel: undefined }),
+    set({
+      isSettingsOpen: true,
+      pendingSkillId: skillId,
+      pendingSpecialistId: undefined,
+      pendingSettingsPanel: undefined
+    }),
+
+  // Deep-link straight to one specialist's editor (used by the specialist switch approval card).
+  openSettingsToSpecialist: (specialistId) =>
+    set({
+      isSettingsOpen: true,
+      pendingSpecialistId: specialistId,
+      pendingSkillId: undefined,
+      pendingSettingsPanel: undefined
+    }),
 
   // Keep the domain-specific caller API while routing it through the shared panel target.
   openSettingsToCompute: () =>
-    set({ isSettingsOpen: true, pendingSettingsPanel: 'compute', pendingSkillId: undefined }),
+    set({
+      isSettingsOpen: true,
+      pendingSettingsPanel: 'compute',
+      pendingSkillId: undefined,
+      pendingSpecialistId: undefined
+    }),
 
   consumePendingSettingsPanel: () => set({ pendingSettingsPanel: undefined }),
 
   consumePendingSkill: () => set({ pendingSkillId: undefined }),
+
+  consumePendingSpecialist: () => set({ pendingSpecialistId: undefined }),
 
   loadSkills: async () => {
     const skills = await window.api.settings.listSkills()

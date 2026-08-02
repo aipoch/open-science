@@ -26,21 +26,10 @@ import {
   type SwitchNotifier,
   type TrustedCallingSession
 } from '../../shared/agents-contract'
-import {
-  executeAgentsMutation,
-  projectCapabilityFields,
-  rejectUnknownKeys,
-  UPDATE_ALLOWED_KEYS,
-  type AgentsMutationCatalog
-} from './agents-mutations'
+import { executeAgentsMutation, type AgentsMutationCatalog } from './agents-mutations'
 import { SwitchOperation, SwitchCommitSequencer, type SwitchParams } from './switch-operation'
-import {
-  applyDelete,
-  applyNameChangingUpdate,
-  isNameChangingPatch
-} from './specialist-privileged-ops'
-import type { SpecialistUpdatePatch } from './specialist-approval-presentation'
-import { AgentsSafeError, agentsPublicError, formatAgentsError } from './agents-error'
+import { applyDelete } from './specialist-privileged-ops'
+import type { HandoffApprovalContext } from '../../shared/handoff-lifecycle'
 
 // The minimal read surface this adapter needs from the settings/connectors catalog. Keeping it
 // narrow avoids pulling the whole SettingsService into the SDK contract and lets tests stub it.
@@ -72,6 +61,10 @@ export type AgentsServiceDeps = {
   // — never reachable from sandbox request params (the RPC route strips reserved keys first).
   approvalGateway?: ApprovalGateway
   switchNotifier?: SwitchNotifier
+  approvalLifecycle?: {
+    onAwaitingApproval(context: HandoffApprovalContext): void
+    settleApproval(context: HandoffApprovalContext, approved: boolean): void
+  }
   // The durable switch lifecycle (issue 05) reuses the EXISTING SessionBindingService (in-memory
   // binding) and the EXISTING durable session-file persistence seam — there is no parallel switch
   // service. They are optional so the read slice and its tests can omit them; the dispatcher fails
@@ -79,9 +72,9 @@ export type AgentsServiceDeps = {
   sessionBinding?: SessionBindingService
   persistSessionSpecialist?: (sessionId: string, specialistId: string | undefined) => Promise<void>
   // Invalidates the runtime catalog (Settings/picker/runtime capability resolution) after a successful
-  // privileged mutation (delete or name-changing update). Ordinary mutations already invalidate via
-  // the existing ProfileService/catalog-change broadcast path; privileged ops run through a dedicated
-  // module that calls this only on success. Wired in issue 08.
+  // privileged mutation (delete). Ordinary mutations (including renames) already invalidate via the
+  // existing ProfileService/catalog-change broadcast path; the privileged delete runs through a
+  // dedicated module that calls this only on success. Wired in issue 08.
   invalidateCatalog?: () => Promise<void> | void
 }
 
@@ -140,9 +133,19 @@ export type AgentsReadOp =
   | { op: 'list_skills'; params: { name_or_id?: unknown } }
   | { op: 'list_connectors'; params: { name_or_id?: unknown } }
 
-class AgentsCallError extends AgentsSafeError {
+const METHOD_PREFIX = 'host.agents'
+
+// Sanitizes an arbitrary error into a stable message. Connector args, credentials, headers,
+// environment values, and internal stack detail must never reach the sandbox. We keep only the
+// top-level message and strip anything that looks like a secret-bearing JSON blob.
+const sanitizeError = (value: unknown): string => {
+  const raw = value instanceof Error ? value.message : String(value)
+  return raw
+}
+
+class AgentsCallError extends Error {
   constructor(method: string, cause: unknown) {
-    super(formatAgentsError(method, cause))
+    super(`${METHOD_PREFIX}.${method}: ${sanitizeError(cause)}`)
     this.name = 'AgentsCallError'
   }
 }
@@ -203,12 +206,10 @@ export class AgentsService {
       if (opName === 'get') return await this.get(params)
       if (opName === 'list_skills') return await this.listSkills(params)
       if (opName === 'list_connectors') return await this.listConnectors(params)
-      // Ordinary mutations (issue 03): create, non-name update, and whole-Skill/whole-Connector
+      // Ordinary mutations (issue 03): create, update (including renames — update is an ordinary
+      // chat-reviewed mutation for every field, no approval card), and whole-Skill/whole-Connector
       // attach/detach. Routed to the standalone mutation module, which delegates to ProfileService,
       // resolves name/id references, gates unavailable connectors, and returns a real read-back.
-      // `update` is privileged ONLY when the validated patch changes the public `name` (design.md §7);
-      // a name-changing update routes through the issue-04 privileged-op module (approval gateway +
-      // atomic patch) via runPrivilegedUpdate below. Non-name updates stay ordinary.
       if (
         opName === 'create' ||
         opName === 'update' ||
@@ -217,10 +218,6 @@ export class AgentsService {
         opName === 'attach_connector' ||
         opName === 'detach_connector'
       ) {
-        if (opName === 'update') {
-          const privileged = await this.runPrivilegedUpdate(params)
-          if (privileged.handled) return privileged.result
-        }
         return projectAgent(
           await executeAgentsMutation(
             { op: opName, params } as Parameters<typeof executeAgentsMutation>[0],
@@ -232,17 +229,17 @@ export class AgentsService {
           )
         )
       }
-      // host.agents.switch(nameOrNull) — durable next-message switch (issue 05). Delegates to the
+      // host.agents.switch(nameOrNull) — durable immediate-handoff switch. Delegates to the
       // standalone SwitchOperation via runSwitch below.
       if (opName === 'switch') return await this.runSwitch(params, context)
       // host.agents.delete(name, { revision }) — privileged (issue 04). Routes through the injected
       // approval gateway, re-resolves name -> UUID, verifies the reviewed revision, deletes via
       // ProfileService, verifies absence, invalidates the catalog, and returns the read-back. Bound
       // conversations are NOT silently switched to Main Agent (design.md §10).
-      if (opName === 'delete') return await this.runDelete(params)
+      if (opName === 'delete') return await this.runDelete(params, context)
       // The dispatcher covers every operation the contract names. An unrecognized op was already
       // rejected as unknown above, so this branch is unreachable for a validated op name.
-      throw agentsPublicError(`Operation "${opName}" is not implemented yet`)
+      throw new Error(`Operation "${opName}" is not implemented yet`)
     } catch (error) {
       throw new AgentsCallError(opName, error)
     }
@@ -266,7 +263,7 @@ export class AgentsService {
     return this.dispatch(op, context)
   }
 
-  // host.agents.switch(nameOrNull) — the durable next-message switch lifecycle (issue 05). Delegates
+  // host.agents.switch(nameOrNull) — the durable immediate-handoff lifecycle. Delegates
   // to the standalone SwitchOperation, which reuses the existing SessionBindingService + durable
   // persistence seam and broadcasts the pending-reconfigure notification through the injected
   // SwitchNotifier. Fail closed if the durable/binding seams are not configured. The trusted calling
@@ -277,7 +274,7 @@ export class AgentsService {
   ): Promise<unknown> {
     const { approvalGateway, switchNotifier, sessionBinding, persistSessionSpecialist } = this.deps
     if (!approvalGateway || !switchNotifier || !sessionBinding || !persistSessionSpecialist) {
-      throw agentsPublicError(
+      throw new Error(
         'Operation "switch" is not configured (approval/binding/persistence seams missing)'
       )
     }
@@ -286,6 +283,7 @@ export class AgentsService {
       sessionBinding,
       approvalGateway,
       switchNotifier,
+      ...(this.deps.approvalLifecycle ? { approvalLifecycle: this.deps.approvalLifecycle } : {}),
       persistBinding: persistSessionSpecialist,
       sequencer: this.switchSequencer
     })
@@ -297,128 +295,23 @@ export class AgentsService {
     return operation.run(switchParams, context)
   }
 
-  // Classifies a host.agents.update request and, when the validated patch changes the public `name`,
-  // routes it through the issue-04 privileged-op module (approval gateway + atomic patch). A non-name
-  // update returns `{ handled: false }` so the ordinary-mutation module handles it (chat review is the
-  // only confirmation). design.md §7: there is no public rename(); a name-changing patch makes the
-  // WHOLE patch privileged and atomic.
-  private async runPrivilegedUpdate(
-    params: Record<string, unknown>
-  ): Promise<{ handled: boolean; result?: unknown }> {
-    const patch = params.patch
-    if (!patch || typeof patch !== 'object' || Array.isArray(patch)) {
-      // Malformed patch — let the ordinary module's validation surface the sanitized error.
-      return { handled: false }
-    }
-    const patchRecord = patch as Record<string, unknown>
-    // Reject unknown keys with the SAME allowed-keys view the ordinary update path uses (defect #5).
-    // The privileged path must not silently ignore a forged/malicious field the ordinary path would
-    // reject. This runs BEFORE the name-changing short-circuit so an unknown field is rejected even
-    // when the patch also changes `name`. Allowed keys include the capability fields
-    // (skill_names/connector_names/unrestricted) since this path projects and applies them too.
-    rejectUnknownKeys(patchRecord, UPDATE_ALLOWED_KEYS, 'update')
-    // Build the camelCase SpecialistUpdatePatch the issue-04 module consumes (snake_case wire fields
-    // -> camelCase service fields), then classify with the module's own isNameChangingPatch so the
-    // privilege decision is owned by exactly one rule. The privileged module commits the COMPLETE
-    // patch atomically through ProfileService — including capabilityMode/fullAccess/
-    // selectedCapabilities — so a name-changing patch that ALSO edits skill_names/connector_names (or
-    // switches to unrestricted full access) carries those fields and they are applied in the same
-    // atomic commit. Capability refs are resolved to stable ids via the SAME projection the ordinary
-    // update path uses (no duplicated validation/plumbing).
-    const mapStr = (value: unknown): string | undefined =>
-      typeof value === 'string' ? value : undefined
-    const specialistPatch: SpecialistUpdatePatch = {}
-    const mappedName = mapStr(patchRecord.name)
-    if (mappedName !== undefined) specialistPatch.name = mappedName
-    const displayName = mapStr(patchRecord.display_name) ?? mapStr(patchRecord.displayName)
-    if (displayName !== undefined) specialistPatch.displayName = displayName
-    const description = mapStr(patchRecord.description)
-    if (description !== undefined) specialistPatch.description = description
-    const systemPrompt = mapStr(patchRecord.system_prompt)
-    if (systemPrompt !== undefined) specialistPatch.systemPrompt = systemPrompt
-    const iconKey = mapStr(patchRecord.icon_key)
-    if (iconKey !== undefined) specialistPatch.iconKey = iconKey
-    const colorKey = mapStr(patchRecord.color_key)
-    if (colorKey !== undefined) specialistPatch.colorKey = colorKey
-
-    // `enabled` is accepted on the name-changing patch too (defect #1): validate it is a boolean
-    // here (matching the ordinary path's `enabled must be a boolean.` error) and carry it onto the
-    // complete atomic ProfileService.update patch. There is no snake_case variant — the contract
-    // uses `enabled` on both create and update.
-    if (patchRecord.enabled !== undefined) {
-      if (typeof patchRecord.enabled !== 'boolean') {
-        throw agentsPublicError('enabled must be a boolean.')
-      }
-      specialistPatch.enabled = patchRecord.enabled
-    }
-
-    if (!isNameChangingPatch(specialistPatch)) {
-      return { handled: false }
-    }
-
-    const currentName = typeof params.name === 'string' ? params.name : undefined
-    if (!currentName) throw agentsPublicError('name is required')
-    const revision = patchRecord.revision
-    if (
-      typeof revision !== 'number' ||
-      !Number.isFinite(revision) ||
-      !Number.isInteger(revision) ||
-      revision <= 0
-    ) {
-      throw agentsPublicError('revision must be a positive integer.')
-    }
-
-    // Project capability fields (skill_names/connector_names/unrestricted) so a rename coinciding
-    // with a capability edit applies BOTH atomically. We resolve against the CURRENT profile so an
-    // omitted collection is preserved (matching ordinary partial-patch semantics); the privileged
-    // module re-resolves name -> UUID + revision immediately before committing, so atomicity and the
-    // stale-revision guard still hold. When the patch carries no capability fields, the projection is
-    // empty and we leave the capability fields UNSET (do not force full-access).
-    const current = await this.deps.profileService.getByName(currentName)
-    const capability = await projectCapabilityFields(
-      patchRecord,
-      current,
-      this.mutationCatalog(),
-      'update'
-    )
-    if (capability.capabilityMode !== undefined) {
-      specialistPatch.capabilityMode = capability.capabilityMode
-    }
-    if (capability.fullAccess !== undefined) {
-      specialistPatch.fullAccess = capability.fullAccess
-    }
-    if (capability.selectedCapabilities !== undefined) {
-      specialistPatch.selectedCapabilities = capability.selectedCapabilities
-    }
-
-    const { approvalGateway, invalidateCatalog } = this.deps
-    if (!approvalGateway) {
-      throw agentsPublicError('Operation "update" is not configured (approval gateway missing)')
-    }
-    const result = await applyNameChangingUpdate({
-      profileService: this.deps.profileService,
-      decide: (request) => approvalGateway.decide(request),
-      currentName,
-      reviewedRevision: revision,
-      patch: specialistPatch,
-      ...(invalidateCatalog ? { invalidateCatalog } : {})
-    })
-    // A privileged decline is a normal camelCase result (no mutation). An approval returns the actual
-    // post-write Profile read-back; both are returned as-is to the SDK without re-projection.
-    return { handled: true, result }
-  }
-
   // host.agents.delete(name, { revision }) — privileged (issue 04). Approves via the injected gateway,
   // re-resolves name -> UUID, verifies the reviewed revision, deletes via ProfileService, verifies
   // absence, invalidates the catalog, and returns `{ status: "deleted", name }`. Session UUID bindings
   // are NEVER cleared or rewritten — bound conversations resolve unavailable later (design.md §10).
-  private async runDelete(params: Record<string, unknown>): Promise<unknown> {
+  // The trusted calling session is threaded from server context (mirroring runSwitch) so the
+  // ACP-backed approval gateway can park the delete card on the CALLING session — without it the
+  // bridge reports "approval surface is unavailable" and declines.
+  private async runDelete(
+    params: Record<string, unknown>,
+    context: TrustedCallingSession
+  ): Promise<unknown> {
     const { approvalGateway, invalidateCatalog } = this.deps
     if (!approvalGateway) {
-      throw agentsPublicError('Operation "delete" is not configured (approval gateway missing)')
+      throw new Error('Operation "delete" is not configured (approval gateway missing)')
     }
     const currentName = typeof params.name === 'string' ? params.name : undefined
-    if (!currentName) throw agentsPublicError('name is required')
+    if (!currentName) throw new Error('name is required')
     const revision = params.revision
     if (
       typeof revision !== 'number' ||
@@ -426,13 +319,14 @@ export class AgentsService {
       !Number.isInteger(revision) ||
       revision <= 0
     ) {
-      throw agentsPublicError('revision must be a positive integer.')
+      throw new Error('revision must be a positive integer.')
     }
     return applyDelete({
       profileService: this.deps.profileService,
       decide: (request) => approvalGateway.decide(request),
       currentName,
       reviewedRevision: revision,
+      session: context,
       ...(invalidateCatalog ? { invalidateCatalog } : {})
     })
   }
@@ -447,7 +341,7 @@ export class AgentsService {
   // read model including stable id and revision.
   async get(params: { name?: unknown }): Promise<AgentReadModel> {
     const name = asString(params.name)
-    if (!name) throw agentsPublicError('name is required')
+    if (!name) throw new Error('name is required')
     const profile = await this.deps.profileService.getByName(name)
     return projectAgent(profile)
   }
@@ -553,14 +447,14 @@ export function applyNameOrIdFilter<T extends Nameable>(
   // 2. Otherwise match a unique public name (name, then display name).
   const byName = entries.filter((entry) => entry.name === ref || entry.displayName === ref)
   if (byName.length === 0) {
-    throw agentsPublicError(
+    throw new Error(
       `No catalog entry matches "${ref}". Use the stable id from list_skills/list_connectors.`
     )
   }
   if (byName.length > 1) {
     // Ambiguous public name: instruct the caller to use the stable id instead of guessing.
     const ids = byName.map((entry) => entry.id).join(', ')
-    throw agentsPublicError(
+    throw new Error(
       `Multiple catalog entries match name "${ref}" (${ids}). Use the stable id from ${method} instead.`
     )
   }

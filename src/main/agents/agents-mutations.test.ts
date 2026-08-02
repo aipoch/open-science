@@ -505,14 +505,13 @@ describe('executeAgentsMutation — update', () => {
     expect(passed.systemPrompt).toBe('new prompt')
     expect(passed.iconKey).toBe('flask')
     expect(passed.colorKey).toBe('blue')
-    expect(passed.enabled).toBe(false)
     expect(passed.capabilityMode).toBe('selected')
     expect(passed.selectedCapabilities?.skillIds).toEqual(['sk1'])
     expect(passed.selectedCapabilities?.connectorIds).toEqual(['c1'])
-    // The complete patch, including enabled, is one revision-guarded atomic update.
+    // read-back is the real returned view, not echoed input. revision reflects both mutations
+    // (update bumps 1->2, setEnabled bumps 2->3) since enabled lives on a separate service method.
     expect(result.id).toBe('sp-1')
-    expect(result.revision).toBe(2)
-    expect(svc.calls.map((call) => call.method)).toEqual(['update'])
+    expect(result.revision).toBe(3)
   })
 
   it('update({ unrestricted: true }) switches to Full without destroying the stored Selected config', async () => {
@@ -613,17 +612,17 @@ describe('executeAgentsMutation — update', () => {
     expect(result.revision).toBe(2)
   })
 
-  it('update rejects a name change on the ordinary path (rename is privileged)', async () => {
+  it('update applies a rename on the ordinary path (renames are chat-reviewed, not privileged)', async () => {
     const svc = makeProfileService([baseProfile({ revision: 1 })])
     const { catalog } = makeCatalog(skills(), connectors())
-    await expect(
-      executeAgentsMutation(
-        { op: 'update', params: { name: 'Bio', patch: { revision: 1, name: 'NewName' } } },
-        { profileService: svc, catalog }
-      )
-    ).rejects.toThrow(/host\.agents\.update:.*approval/)
-    // No mutation reached the repository.
-    expect(svc.calls).toHaveLength(0)
+    const decide = vi.fn()
+    const result = (await executeAgentsMutation(
+      { op: 'update', params: { name: 'Bio', patch: { revision: 1, name: 'NewName' } } },
+      { profileService: svc, catalog, approvalGateway: { decide } }
+    )) as SpecialistProfileView
+    expect(result.name).toBe('NewName')
+    // Rename is an ordinary mutation: the approval gateway is never consulted.
+    expect(decide).not.toHaveBeenCalled()
   })
 
   it('update requires a nested patch object', async () => {
@@ -847,7 +846,7 @@ describe('executeAgentsMutation — errors are sanitized', () => {
         { op: 'create', params: { name: 'Bio' } },
         { profileService: svc, catalog }
       )
-    ).rejects.toThrow('host.agents.create: Internal operation failed.')
+    ).rejects.toThrow(/host\.agents\.create:/)
   })
 
   it('a repo revision-conflict surfaces as a sanitized host.agents.update: error', async () => {

@@ -39,7 +39,8 @@ camelCase; write-side fields use snake_case. Methods:
 - `host.agents.get(name)` — one Specialist by public name (returns stable `id` and `revision`, but you
   do not show those to the user).
 - `host.agents.create(input)` — object form (see below).
-- `host.agents.update(name, patch)` — may include a new `name` (see Privileged operations).
+- `host.agents.update(name, patch)` — may include a new `name`; renames are ordinary chat-reviewed
+  updates, not privileged.
 - `host.agents.switch(nameOrNull)` — switches the **current conversation** only; `null` returns to Main
   Agent. Does not accept a caller-supplied session id.
 - `host.agents.delete(name, { revision })`.
@@ -129,19 +130,18 @@ move.
 
 ## Confirmation boundaries
 
-- **Create and ordinary (non-name) update:** show the complete target state and wait for the user's
+- **Create and update (including renames):** show the complete target state and wait for the user's
   explicit confirmation (for example "yes", "confirm", "ok") before executing. The initial `/customize`
-  entry and the composer prefill are **not** confirmation.
-- **Name-changing update, delete, switch:** describe the impending action, then execute it directly.
-  These operations are privileged: the whole patch is applied atomically, and if any field cannot be
-  applied, nothing changes.
+  entry and the composer prefill are **not** confirmation. A rename is an ordinary update field: the
+  whole patch is applied atomically by the service, and a stale revision fails without merge or retry.
+- **Delete, switch:** describe the impending action, then execute it directly. These operations are
+  privileged and pass through the app's approval card.
 
 When you describe one of these privileged actions, explain:
 
 - **Switch:** current Specialist, target Specialist or Main Agent, the current conversation, and that
-  it takes effect on the next message.
-- **Name-changing update:** old name, new name, the other fields changed in the same atomic patch, and
-  that stable conversation bindings do not change.
+  approval lets the current control tool finish before execution automatically continues under the
+  approved identity.
 - **Delete:** the Specialist name, and that conversations still bound to it become unavailable (they are
   NOT switched to Main Agent).
 
@@ -161,8 +161,9 @@ Report it as a **user decision** and stop. Do not retry it.
 
 - After a successful create/update, re-read with `get`/`list` and report the actual state. Never assume
   success from the call alone.
-- After `switch`, report that the **current reply continues** under the existing Specialist and the
-  approved target applies to the **next message**. The binding survives app restart.
+- After `switch`, report that approval lets the **current control tool finish**, then automatically
+  continues the same task under the approved target. A decline leaves the current Agent unchanged.
+  The binding survives app restart.
 - After `delete`, report that existing conversations bound to the deleted Specialist become
   **unavailable** — they are not switched to Main Agent; the user must explicitly choose another
   Specialist or Main Agent.

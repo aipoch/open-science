@@ -113,8 +113,30 @@ import type { WindowSettingsCapabilities } from './settings/service-capabilities
 import { createSettingsWorkflows } from './settings/workflows'
 import { createProfileService } from './specialist/service'
 import { AgentsService } from './agents/agents-service'
+import {
+  CompletionGateCoordinator,
+  CompletionGateRuntimeRegistry,
+  createCompletionGatedControlToolInterceptor,
+  createCompletionGateSwitchNotifier
+} from './agents/completion-gate'
+import { createProductionAppHandoffRuntime } from './agents/app-handoff-runtime'
+import {
+  AcpSpecialistApprovalGateway,
+  createAcpBackedSpecialistBridge
+} from './agents/specialist-approval-gateway'
+import {
+  CompletionHandoffLifecycle,
+  FileCompletionHandoffRepository
+} from './agents/completion-handoff-lifecycle'
+import { registerCompletionHandoffIpcHandlers } from './agents/completion-handoff-ipc'
+import {
+  registerClaudeCodeCompletionGateRuntime,
+  selectPersistedUserTaskContext
+} from './agents/claude-code-handoff'
+import { installCompletionGateDiagnostics } from './agents/completion-gate-diagnostics'
 import { PendingSessionSpecialistBindings } from './agents/pending-session-specialist-bindings'
-import { passthroughApprovalGateway } from './agents/passthrough-approval-gateway'
+import { createCodexCompletionGateRuntime } from './acp/codex-completion-handoff'
+import { createOpenCodeImmediateHandoffRuntime } from './acp/opencode-immediate-handoff'
 import { registerSpecialistIpcHandlers } from './specialist/ipc'
 import { SessionBindingService } from './specialist/session-binding'
 import { SPECIALIST_IPC } from '../shared/specialist'
@@ -154,6 +176,8 @@ type IpcRegistrationOptions = {
   onAppIconVariantChanged?: (variant: AppIconVariant) => void
   // Renders the built-in icon variants to preview data URLs for the Appearance picker.
   listAppIconPreviews?: () => AppIconPreview[]
+  // Retained as an explicit startup marker while the app owns the only handoff composition.
+  handoffRuntime?: 'production'
 }
 
 export type ApplicationRuntimeInterfaces = {
@@ -426,7 +450,9 @@ const createApplicationModules = async (
         capability: notebook,
         disposeTimeoutMs: QUIT_SHUTDOWN_BUDGET_MS,
         rollback: () =>
-          backendTeardownOwnedByCoordinator ? undefined : notebook.dispose().then(() => undefined)
+          backendTeardownOwnedByCoordinator
+            ? undefined
+            : notebook.shutdownAll().then(() => undefined)
       }
     }
   )
@@ -436,6 +462,44 @@ const createApplicationModules = async (
   // Per-session specialist binding store. Shared between the SET_SESSION_SPECIALIST barrier
   // (validate + record) and the runtime switch so a hot-switch lands on the same source of truth.
   const sessionBindingService = new SessionBindingService(profileService)
+  // Compose the interceptor before ACP because Notebook construction precedes runtime construction.
+  // Startup registers the complete production adapter below before any IPC surface becomes callable.
+  const completionGateRuntimeRegistry = new CompletionGateRuntimeRegistry()
+  const completionHandoffLifecycle = new CompletionHandoffLifecycle(
+    new FileCompletionHandoffRepository(join(resolveStorageRoot(), 'specialist-handoffs')),
+    completionGateRuntimeRegistry,
+    Date.now,
+    (event) => broadcastToRenderers(SPECIALIST_IPC.HANDOFF_LIFECYCLE_CHANGED, event),
+    async ({ targetName }) => {
+      if (targetName === null) return undefined
+      const profile = await profileService.getByName(targetName)
+      return { specialistId: profile.id, revision: profile.revision }
+    }
+  )
+  registerCompletionHandoffIpcHandlers(completionHandoffLifecycle)
+  const completionGateCoordinator = new CompletionGateCoordinator(
+    completionGateRuntimeRegistry,
+    completionHandoffLifecycle
+  )
+  await modules.add({ completionGateCoordinator }, ({ completionGateCoordinator: coordinator }) => {
+    let disposeDiagnostics: (() => void) | undefined
+    return {
+      name: 'completion-handoff-diagnostics',
+      capability: undefined,
+      start: () => {
+        disposeDiagnostics = installCompletionGateDiagnostics(coordinator, {
+          log: createLogger('completion-handoff'),
+          broadcast: (event) => broadcastToRenderers(SPECIALIST_IPC.HANDOFF_LIFECYCLE, event)
+        })
+      },
+      dispose: () => disposeDiagnostics?.()
+    }
+  })
+  // The delivery callback is intentionally a no-op: the Notebook runtime itself returns a normal
+  // disposition to the existing repl_execute caller. Captured dispositions never return that value.
+  notebookService.setControlCompletionInterceptor(
+    createCompletionGatedControlToolInterceptor(completionGateCoordinator, async () => undefined)
+  )
   // Desktop notifications for finished/failed agent tasks and approval waits. Delivery is
   // Electron's Notification (Notification Center on macOS, toasts on Windows, libnotify on Linux);
   // the service itself stays Electron-free so its filtering rules are unit-testable. The click
@@ -601,13 +665,37 @@ const createApplicationModules = async (
   // Must preserve ComputeService's prototype methods (list/getDetails/submitJob/...) — see the helper.
   const computeServiceWithRegistry = attachEnabledComputeHosts(computeService, hostsRegistry)
   // host.agents control-plane SDK (issue 02/05): read Specialist/catalog surface plus the durable
-  // next-message switch lifecycle. The catalog adapter delegates to the authoritative
+  // immediate-handoff lifecycle. The catalog adapter delegates to the authoritative
   // SettingsService + ProfileService; switch() reuses the SAME SessionBindingService and durable
   // session-file persistence seam the SET_SESSION_SPECIALIST IPC handler uses (no parallel switch
   // service). The runtime reconfigure callback is intentionally NOT wired here — it runs at the safe
-  // next-message boundary, not inside the SDK call. Issue 08 composes the pass-through approval
-  // gateway + SwitchNotifier + catalog invalidation here so delete/name-change/switch reach
-  // ProfileService end-to-end; the standard ACP permission card is a separate later issue.
+  // next-message boundary, not inside the SDK call. Privileged operations use the existing ACP
+  // permission broker/card; its response is the only approve/decline authority.
+  const specialistApprovalGateway = new AcpSpecialistApprovalGateway({
+    bridge: createAcpBackedSpecialistBridge({
+      request: async (payload, session) => {
+        const sessionId = session.sessionId
+        const runtime = runtimeRef.current
+        if (!sessionId || !runtime) {
+          return { outcome: 'declined', reason: 'The approval surface is unavailable.' }
+        }
+        const target = payload.kind === 'switch' ? payload.targetName : undefined
+        const approved = await runtime.requestAppApproval({
+          sessionId,
+          title:
+            payload.kind === 'switch'
+              ? target === null
+                ? 'Switch to Main Agent?'
+                : `Switch to ${target}?`
+              : payload.kind === 'delete'
+                ? `Delete ${payload.name}?`
+                : `Rename ${payload.name} to ${payload.newName}?`,
+          rawInput: { specialistApproval: payload }
+        })
+        return approved ? { outcome: 'approved' } : { outcome: 'declined' }
+      }
+    })
+  })
   const agentsService = new AgentsService({
     profileService,
     catalog: {
@@ -615,20 +703,12 @@ const createApplicationModules = async (
       getConnectors: () => settingsService.getConnectors()
     },
     sessionBinding: sessionBindingService,
-    // Pass-through approval gateway (issue 08a milestone). Privileged Specialist operations
-    // (name-changing update, delete, switch) route THROUGH this seam; in this milestone the
-    // user-facing confirmation is the /customize Skill's chat-text review, so the gateway always
-    // approves. Swapping in the future standard-card ACP gateway requires no dispatcher/Skill/contract
-    // change — only this injected implementation. It holds no pending state (no second approval store).
-    approvalGateway: passthroughApprovalGateway,
-    // SwitchNotifier broadcasts ONLY the session id + target public name (null = Main Agent) over the
-    // existing specialist:pending-switch channel — never system instructions, UUIDs, secrets, or tokens.
-    // The renderer closure (issue 08b) subscribes; main-side broadcast is owned by this slice.
-    switchNotifier: {
-      notify: (pending) => {
-        broadcastToRenderers(SPECIALIST_IPC.PENDING_SWITCH, pending)
-      }
-    },
+    approvalGateway: specialistApprovalGateway,
+    approvalLifecycle: completionHandoffLifecycle,
+    // The completion gate is the sole execution authority. The legacy pending-switch renderer
+    // broadcast is intentionally not emitted: lifecycle events are a read-only projection and can
+    // neither delay nor re-run the approved continuation.
+    switchNotifier: createCompletionGateSwitchNotifier(completionGateCoordinator),
     // Catalog invalidation after a successful privileged mutation: reconnect live sessions so the
     // agent respawns (re-provisioning skills) and re-applies the updated Specialist whitelist. The
     // ProfileService already broadcasts specialist:catalog-changed on update/delete; this refreshes the
@@ -657,6 +737,7 @@ const createApplicationModules = async (
     }
   })
   const notebookRpcServer = new NotebookLocalRpcServer(notebookService, {
+    onSessionReleased: (sessionId) => completionGateCoordinator.releaseSession(sessionId),
     connectorService,
     computeService: computeServiceWithRegistry,
     skillImporter: conversationSkillImporter,
@@ -786,6 +867,78 @@ const createApplicationModules = async (
   )
   surfaceAdapters = afterAcpAdapters
   runtimeRef.current = runtime
+  {
+    // Framework-specific adapters declare their own session selector. The registry resolves those
+    // selectors before its generic fallback, so registration order cannot route a Codex/OpenCode
+    // completion through the wrong continuation path.
+    completionGateRuntimeRegistry.register(
+      createCodexCompletionGateRuntime({
+        runtime,
+        resolveApprovedSpecialistId: (sessionId) => sessionBindingService.getBinding(sessionId)
+      })
+    )
+    completionGateRuntimeRegistry.register(
+      createOpenCodeImmediateHandoffRuntime({
+        runtime,
+        resolveSpecialistId: (sessionId) => sessionBindingService.getBinding(sessionId),
+        reportHandoffFailure: async (failure) =>
+          runtime.reportApprovedHandoffFailure(failure.sessionId)
+      })
+    )
+    completionGateRuntimeRegistry.register(
+      createProductionAppHandoffRuntime({
+        runtime,
+        sessionBinding: sessionBindingService
+      })
+    )
+  }
+  // Claude's Specialist identity is baked into agent session creation. Its selector joins the Codex
+  // and OpenCode selectors above; the generic runtime remains fallback-only.
+  registerClaudeCodeCompletionGateRuntime(completionGateRuntimeRegistry, {
+    sessionFramework: (sessionId) => runtime.getSessionFramework(sessionId),
+    cancelPrompt: (request) => runtime.cancelPrompt(request),
+    waitForPromptOwnershipRelease: (sessionId) => runtime.waitForPromptOwnershipRelease(sessionId),
+    resolveSpecialistId: (sessionId) => sessionBindingService.getBinding(sessionId),
+    resolveSwitchReadBack: async (sessionId, targetName) => {
+      const specialistId = sessionBindingService.getBinding(sessionId)
+      const revision = specialistId
+        ? (await profileService.getById(specialistId)).revision
+        : undefined
+      return {
+        status: 'approved',
+        operation: 'switch',
+        binding: {
+          sessionId,
+          specialistId,
+          targetName,
+          ...(revision === undefined ? {} : { revision })
+        }
+      }
+    },
+    prepareReplayContext: async (input) => {
+      const persisted = (await sessionRepository.loadAll()).sessions.find(
+        (session) => session.id === input.sessionId
+      )
+      runtime.prepareClaudeCodeHandoffReplay({
+        ...input,
+        supportedTaskContext: selectPersistedUserTaskContext(persisted?.messages ?? [])
+      })
+    },
+    discardReplayContext: async (sessionId) => runtime.discardClaudeCodeHandoffReplay(sessionId),
+    switchSpecialist: (sessionId, specialistId) =>
+      runtime.switchSpecialist(sessionId, specialistId),
+    createContinuationRequest: (input) => runtime.createClaudeCodeContinuationRequest(input),
+    sendAppContinuation: (request) => runtime.sendPromptForHandoff(request),
+    reportHandoffFailure: async (_error, _handoff, context) => {
+      runtime.reportApprovedHandoffFailure(context.sessionId)
+    }
+  })
+  void completionHandoffLifecycle.recover().catch((error: unknown) => {
+    createLogger('completion-handoff').error(
+      'failed to recover approved handoffs',
+      errorLogFields(error)
+    )
+  })
   permissionGrantRegistry.subscribe(() => runtime.notifyPermissionGrantsChanged())
   // Single shared teardown owner for both the before-quit handler (index.ts) and the pre-update-install
   // gate. Update handling is deliberately constructed below, after this dependency is complete.
@@ -913,7 +1066,7 @@ const createApplicationModules = async (
   )
   declareElectronAdapter('managed-preview', () => {
     registerManagedPreviewIpcHandlers(previewResources)
-    return registerManagedPreviewProtocol(previewResources)
+    registerManagedPreviewProtocol(previewResources)
   })
   declareElectronAdapter('office-preview-runtime', () =>
     registerOfficePreviewRuntimeProtocol(

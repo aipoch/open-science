@@ -1,4 +1,5 @@
 import type { AcpPermissionRequest, AcpRuntimeEvent, AcpStateSnapshot } from '../shared/acp'
+import type { CompletionGateLifecycleEvent } from './agents/completion-gate'
 import type { ComputeApprovalRequest, JobSummary } from '../shared/compute'
 import type { DownloadProgress } from '../shared/download-progress'
 import type {
@@ -20,7 +21,7 @@ import type {
   ConnectorApprovalRequest,
   ConversationSkillImportApprovalRequest
 } from '../shared/settings'
-import type { PendingSwitchBroadcast } from '../shared/specialist'
+import type { CompletionHandoffLifecycleEvent, PendingSwitchBroadcast } from '../shared/specialist'
 import type { MigrationProgress } from '../shared/storage'
 import type { UpdateStatus } from '../shared/update'
 
@@ -48,6 +49,8 @@ export type ApplicationEventMap = {
   'compute:job-updated': JobSummary
   'specialist:catalog-changed': undefined
   'specialist:pending-switch': PendingSwitchBroadcast
+  'specialist:handoff-lifecycle-changed': CompletionHandoffLifecycleEvent
+  'specialist:handoff-lifecycle': CompletionGateLifecycleEvent
   'settings:install-log': ClaudeInstallEvent
   'storage:migrate-progress': MigrationProgress
   'reviewer:updated': ReviewUpdateEvent

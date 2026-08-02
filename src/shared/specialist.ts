@@ -13,16 +13,56 @@ export const SPECIALIST_IPC = {
   // Session switching (issue 07): per-session mutable binding.
   SET_SESSION_SPECIALIST: 'specialist:set-session-specialist',
   RESOLVE_SESSION_SPECIALIST: 'specialist:resolve-session-specialist',
-  // host.agents.switch() durable next-message switch (issue 05/08): main broadcasts a pending-switch
-  // intent to the renderer so the composer shows the "takes effect on the next message" state and the
-  // next-send barrier reconfigures the live agent. Payload carries only the session id and the target
-  // Specialist public name (null = Main Agent) — never system instructions, UUIDs, or secrets.
-  PENDING_SWITCH: 'specialist:pending-switch'
+  // Compatibility-only pending selection channel. Approved host.agents.switch() handoffs use the
+  // durable lifecycle channel below; this channel carries no authority to resume or reconfigure a
+  // prompt. Payload contains only a session id and public target name.
+  PENDING_SWITCH: 'specialist:pending-switch',
+  HANDOFF_LIFECYCLE_CHANGED: 'specialist:handoff-lifecycle-changed',
+  GET_HANDOFF_EVENTS: 'specialist:get-handoff-events',
+  RETRY_HANDOFF: 'specialist:retry-handoff',
+  CANCEL_HANDOFF: 'specialist:cancel-handoff',
+  // Sanitized application-owned handoff ordering metadata. This channel never carries completion
+  // envelopes, transcript/history text, connector arguments, credentials, tokens, or raw errors.
+  HANDOFF_LIFECYCLE: 'specialist:handoff-lifecycle'
 } as const
 
-// The pending-switch broadcast payload (design.md §9 / PRD §8). Mirrors the shared PendingSwitch
-// contract but lives here so the preload + renderer consume one type without importing
-// src/shared/agents-contract's pending-switch/reconfigure seam.
+export type CompletionHandoffPhase =
+  | 'awaiting-approval'
+  | 'switching'
+  | 'reconfiguring'
+  | 'continuation-start'
+  | 'continued'
+  | 'failed'
+
+export type CompletionHandoffRetryFrom = 'switching' | 'reconfiguring' | 'continuation-start'
+
+export type CompletionHandoffLifecycleEvent = {
+  id: string
+  sessionId: string
+  sequence: number
+  // Repository-assigned global commit order. Optional only for records written before the field
+  // existed; all current lifecycle transitions persist it atomically.
+  commitOrder?: number
+  observedAt: number
+  phase: CompletionHandoffPhase
+  target: string | null
+  provenance: {
+    originatingTurnId: string
+    originatingUserMessageId?: string
+    attachmentIds: string[]
+    artifactIds: string[]
+  }
+  continuation?: { outcome: string; switchReadback?: unknown }
+  failure?: { retryFrom: CompletionHandoffRetryFrom; message: string }
+  // A rejected/cancelled approval removes its pre-approval projection. It carries the same safe
+  // identity fields as the prior upsert so renderers can remove only that card.
+  removed?: true
+}
+
+export type CompletionHandoffCommand = { id: string; sessionId: string }
+
+// Compatibility payload for explicit UI selections. The durable completion lifecycle remains the
+// source of truth for approved SDK handoffs.
 export type PendingSwitchBroadcast = {
   sessionId: string
   // Target Specialist public name, or null to revert to Main Agent. Display-only; never a secret.

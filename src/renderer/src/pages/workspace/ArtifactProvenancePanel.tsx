@@ -335,6 +335,10 @@ const ProvenanceMessagesTimeline = ({
                   )
                 }
 
+                // Artifact provenance builds its immutable transcript from persisted messages and
+                // activities only, so no live coordinator lifecycle rows are supplied here.
+                if (conversationItem.type === 'handoff') return null
+
                 return (
                   <WorkspaceActivityGroup
                     key={conversationItem.id}

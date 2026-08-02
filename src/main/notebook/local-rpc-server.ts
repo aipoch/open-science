@@ -10,7 +10,10 @@ import type {
   RunNotebookCellRequest
 } from '../../shared/notebook'
 import type { NotebookRpcConnection } from './mcp-server'
-import type { NotebookRuntimeService } from './runtime-service'
+import {
+  NotebookControlCompletionCapturedError,
+  type NotebookRuntimeService
+} from './runtime-service'
 import type {
   NotebookInputRegistry,
   NotebookInputRunLease,
@@ -27,12 +30,17 @@ import type {
   CreateArtifactVersionRequest,
   ReplayArtifactVersionRequest
 } from '../../shared/artifact-provenance'
-import { stripAgentsReservedParams } from '../../shared/agents-contract'
+import {
+  stripAgentsReservedParams,
+  type TrustedCallingSession,
+  type TrustedControlInvocationIdentity
+} from '../../shared/agents-contract'
 
 type NotebookLocalRpcServerOptions = {
   token?: string
   host?: string
   now?: () => number
+  onSessionReleased?: (sessionId: string) => void
   connectorService?: {
     call(
       server: string,
@@ -109,8 +117,8 @@ type NotebookLocalRpcServerOptions = {
   // (added later) cannot be forged. `read` is kept for backward compatibility and delegates to the
   // same dispatcher; the route calls it so existing wiring and tests stay green.
   agentsService?: {
-    read(op: unknown, context: { sessionId?: string }): Promise<unknown>
-    dispatch?(op: unknown, context: { sessionId?: string }): Promise<unknown>
+    read(op: unknown, context: TrustedCallingSession): Promise<unknown>
+    dispatch?(op: unknown, context: TrustedCallingSession): Promise<unknown>
   }
 }
 
@@ -130,6 +138,7 @@ type NotebookRpcSessionBinding = {
   sessionId: string
   projectId: string
   allowedMethods?: ReadonlySet<string>
+  activeControlInvocation?: TrustedControlInvocationIdentity
 }
 
 class RpcHttpError extends Error {
@@ -187,6 +196,7 @@ class NotebookLocalRpcServer {
   private readonly token: string
   private readonly host: string
   private readonly now: () => number
+  private readonly onSessionReleased: NotebookLocalRpcServerOptions['onSessionReleased']
   private readonly connectorService: NotebookLocalRpcServerOptions['connectorService']
   private readonly computeService: NotebookLocalRpcServerOptions['computeService']
   private readonly skillImporter: NotebookLocalRpcServerOptions['skillImporter']
@@ -216,6 +226,7 @@ class NotebookLocalRpcServer {
     this.token = options.token ?? randomUUID()
     this.host = options.host ?? '127.0.0.1'
     this.now = options.now ?? Date.now
+    this.onSessionReleased = options.onSessionReleased
     this.connectorService = options.connectorService
     this.computeService = options.computeService
     this.skillImporter = options.skillImporter
@@ -374,6 +385,7 @@ class NotebookLocalRpcServer {
         this.sessionAliases.delete(aliasSessionId)
       }
     }
+    this.onSessionReleased?.(sessionId)
   }
 
   async issueSessionConnection(
@@ -398,18 +410,32 @@ class NotebookLocalRpcServer {
   async issueControlConnection(
     sessionId: string,
     projectId: string
-  ): Promise<NotebookRpcConnection & { release: () => void }> {
+  ): Promise<
+    NotebookRpcConnection & {
+      beginControlInvocation(context: TrustedControlInvocationIdentity): () => void
+      release: () => void
+    }
+  > {
     const connection = await this.ensureStarted()
     const token = randomUUID()
-    this.sessionRpcCapabilities.set(token, {
+    const binding: NotebookRpcSessionBinding = {
       sessionId,
       projectId,
       allowedMethods: CONTROL_RPC_METHODS
-    })
+    }
+    this.sessionRpcCapabilities.set(token, binding)
 
     return {
       endpoint: connection.endpoint,
       token,
+      beginControlInvocation: (context) => {
+        binding.activeControlInvocation = context
+        return () => {
+          if (binding.activeControlInvocation === context) {
+            delete binding.activeControlInvocation
+          }
+        }
+      },
       release: () => {
         this.sessionRpcCapabilities.delete(token)
       }
@@ -550,18 +576,37 @@ class NotebookLocalRpcServer {
           if (sessionBinding.allowedMethods && !sessionBinding.allowedMethods.has(method)) {
             throw new RpcHttpError(403, `Notebook RPC capability does not allow ${method}.`)
           }
+          if (
+            method === 'agentsCall' &&
+            params.op === 'switch' &&
+            !sessionBinding.activeControlInvocation
+          ) {
+            throw new RpcHttpError(
+              403,
+              'host.agents.switch requires an active trusted control invocation.'
+            )
+          }
           // The request body is agent-controlled. Owner fields always come from the unforgeable,
           // per-session capability issued while building this session's Notebook environment.
           params = {
             ...params,
             sessionId: sessionBinding.sessionId,
-            projectId: sessionBinding.projectId
+            projectId: sessionBinding.projectId,
+            ...(method === 'agentsCall'
+              ? {
+                  session_id: sessionBinding.sessionId,
+                  turn_id: sessionBinding.activeControlInvocation?.turnId,
+                  control_invocation_generation:
+                    sessionBinding.activeControlInvocation?.controlInvocationGeneration,
+                  control_invocation_id: sessionBinding.activeControlInvocation?.toolInvocationId
+                }
+              : {})
           }
         } else {
           if (authorization !== `Bearer ${this.token}`) {
             throw new RpcHttpError(401, 'Invalid notebook RPC token.')
           }
-          if (method === 'mcpCall' || method === 'computeCall' || method === 'agentsCall') {
+          if (CONTROL_RPC_METHODS.has(method)) {
             throw new RpcHttpError(401, 'A session-bound notebook RPC token is required.')
           }
         }
@@ -571,6 +616,13 @@ class NotebookLocalRpcServer {
 
       writeJson(response, 200, { result })
     } catch (error) {
+      // A captured control completion belongs to the approved handoff, not to this legacy RPC
+      // caller. Do not serialize it as a tool error (or any result): cancellation of the old prompt
+      // closes this request, at which point the transport ownership has been released.
+      if (error instanceof NotebookControlCompletionCapturedError) {
+        response.destroy()
+        return
+      }
       const message = error instanceof Error ? error.message : String(error)
 
       writeJson(response, error instanceof RpcHttpError ? error.statusCode : 500, {
@@ -836,10 +888,10 @@ class NotebookLocalRpcServer {
     // agentsCall: host.agents control-plane SDK (issue 02). Routes operations to the AgentsService
     // dispatcher.
     //
-    // TRUSTED CALLING-SESSION IDENTITY: handleRequest derives `sessionId` from the per-session
-    // control capability and overwrites any request-body value before dispatch. The snake_case
-    // `session_id` field is reserved and stripped below, so sandbox code cannot target another
-    // conversation even if it forges raw agentsCall params.
+    // TRUSTED CONTROL IDENTITY: handleRequest authenticates a dedicated session-bound capability,
+    // replaces request-body session/turn/control-generation/tool fields from that capability's active
+    // executeControl binding, and rejects this method through the server master token. The fields
+    // read below are therefore application-owned metadata rather than sandbox parameters.
     //
     // DISPATCH SEPARATION: this route owns ONLY auth + sandbox injection. It strips every reserved
     // routing/identity/switch key (AGENTS_RESERVED_PARAM_KEYS in src/shared/agents-contract.ts) and
@@ -848,16 +900,73 @@ class NotebookLocalRpcServer {
     // AgentsService.dispatch's extension-point comment.
     if (method === 'agentsCall') {
       if (!this.agentsService) throw new Error('Agents service is not configured.')
-      const sessionId = typeof params.sessionId === 'string' ? params.sessionId : undefined
+      const sessionId = typeof params.session_id === 'string' ? params.session_id : undefined
+      const toolInvocationId =
+        typeof params.control_invocation_id === 'string' ? params.control_invocation_id : undefined
+      const resolvedSessionId = sessionId
+        ? (this.sessionAliases.get(sessionId) ?? sessionId)
+        : undefined
+      const provenanceContext = resolvedSessionId
+        ? this.artifactProvenanceContexts.get(resolvedSessionId)
+        : undefined
+      const projectId = resolvedSessionId
+        ? this.activeTurnProjectIds.get(resolvedSessionId)
+        : undefined
+      const registeredInputs =
+        provenanceContext && projectId && resolvedSessionId
+          ? this.inputRegistry?.getTurnInputs({
+              projectId,
+              appSessionId: resolvedSessionId,
+              promptMessageId: provenanceContext.promptMessageId
+            })
+          : undefined
+      const turnId = typeof params.turn_id === 'string' ? params.turn_id : undefined
+      const controlInvocationGeneration =
+        typeof params.control_invocation_generation === 'number'
+          ? params.control_invocation_generation
+          : undefined
       const op = typeof params.op === 'string' ? params.op : ''
       // Strip every reserved routing/identity/switch key before forwarding. The AgentsService and
       // its injected approval/switch seams only ever see the op + their own snake_case params; the
       // trusted session identity stays in the server context (NOT taken from the forwarded params).
       // Sandbox-supplied values for specialist_id, target_specialist_id, reconfigure, etc. are
-      // provably ignored. The trusted session identity comes from the capability-bound camelCase
-      // field injected by handleRequest, not from sandbox-supplied snake_case params.
-      const rest = stripAgentsReservedParams(params)
-      return this.agentsService.read({ op, params: rest }, { sessionId })
+      // provably ignored — note that session_id above is intentionally read from the request as the
+      // trusted identity, not from the forwarded op-params.
+      const strippedParams = stripAgentsReservedParams(params)
+      const {
+        provenanceContext: _provenanceContext,
+        registeredInputFiles: _registeredInputFiles,
+        inputRunLeaseId: _inputRunLeaseId,
+        ...rest
+      } = strippedParams
+      void _provenanceContext
+      void _registeredInputFiles
+      void _inputRunLeaseId
+      return this.agentsService.read(
+        { op, params: rest },
+        turnId && controlInvocationGeneration !== undefined && toolInvocationId
+          ? {
+              sessionId: resolvedSessionId,
+              turnId,
+              controlInvocationGeneration,
+              toolInvocationId,
+              ...(provenanceContext
+                ? {
+                    originatingTurnId: provenanceContext.promptMessageId,
+                    originatingUserMessageId: provenanceContext.promptMessageId
+                  }
+                : {}),
+              attachmentIds:
+                registeredInputs
+                  ?.filter((input) => input.sourceKind === 'upload-version')
+                  .map((input) => input.sourceFileId) ?? [],
+              artifactIds:
+                registeredInputs
+                  ?.filter((input) => input.sourceKind === 'artifact-version')
+                  .map((input) => input.sourceFileId) ?? []
+            }
+          : { sessionId: resolvedSessionId }
+      )
     }
 
     assertSessionParams(params)

@@ -37,6 +37,11 @@ const COMPUTE_PROJECT_NAME = process.env.OPEN_SCIENCE_NOTEBOOK_PROJECT_NAME
 delete process.env.OPEN_SCIENCE_NOTEBOOK_SESSION_ID
 delete process.env.OPEN_SCIENCE_NOTEBOOK_PROJECT_NAME
 
+// Updated only by the trusted kernel request frame while one serialized control invocation is
+// running. It is never exposed to sandbox code; host.agents forwards it as server context so an
+// approved switch can capture only this invocation's outer completion.
+let ACTIVE_CONTROL_INVOCATION_ID
+
 // Private reference to the real fetch, captured before user code runs. host.mcp MUST use this, not the
 // global `fetch`: a vm sandbox is not a security boundary, so sandbox code can reach the outer realm
 // via `host.mcp.constructor('return globalThis')()` and reassign the outer `globalThis.fetch` to a
@@ -961,16 +966,23 @@ async function computeRpc(params) {
 // (list/get/list_skills/list_connectors); mutation/switch land in later issues. Routed over the SAME
 // loopback RPC endpoint as host.mcp/host.compute but as its own `agentsCall` method — never through
 // host.mcp(). Uses the captured RPC_ENDPOINT/TOKEN + capturedFetch for the same token-isolation
-// reasons. The trusted calling session identity is derived by the server from the session-bound
-// capability; it is never accepted from sandbox-controlled request params.
-async function agentsRpc(op, params = {}) {
+// reasons. The trusted calling session identity is the COMPUTE_SESSION_ID captured at spawn time
+// (above), forwarded on every call so switch() cannot be forged from sandbox user code.
+async function agentsRpc(op, params = {}, sessionId = COMPUTE_SESSION_ID) {
   if (!RPC_ENDPOINT) throw new Error('host.agents is unavailable: connector RPC endpoint not set')
   const res = await capturedFetch(RPC_ENDPOINT, {
     method: 'POST',
     headers: { 'content-type': 'application/json', authorization: 'Bearer ' + (RPC_TOKEN || '') },
     body: JSON.stringify({
       method: 'agentsCall',
-      params: { op, ...(params || {}) }
+      params: {
+        op,
+        ...(sessionId ? { session_id: sessionId } : {}),
+        ...(ACTIVE_CONTROL_INVOCATION_ID
+          ? { control_invocation_id: ACTIVE_CONTROL_INVOCATION_ID }
+          : {}),
+        ...(params || {})
+      }
     })
   })
   const body = await res.json().catch(() => ({}))
@@ -1026,8 +1038,8 @@ const hostAgents = {
   async detach_connector(name, connectorRef, options) {
     return agentsRpc('detach_connector', { name, connector_ref: connectorRef, ...(options || {}) })
   },
-  // Privileged: switch binds only the trusted calling session (server-captured) and takes effect on
-  // the next message; nameOrNull === null (or omitted) reverts the session to Main Agent.
+  // Privileged: switch binds only the trusted calling session (server-captured). After approval the
+  // outer control tool finishes, then the same task continues under the target; null reverts to Main.
   async switch(nameOrNull) {
     return agentsRpc('switch', { name: nameOrNull === undefined ? null : nameOrNull })
   },
@@ -1265,8 +1277,13 @@ rl.on('line', (line) => {
     return
   }
   chain = chain.then(async () => {
-    const resp = await run(request.code || '')
-    resp.req_id = request.req_id
-    emit(resp)
+    ACTIVE_CONTROL_INVOCATION_ID = request.control_invocation_id
+    try {
+      const resp = await run(request.code || '')
+      resp.req_id = request.req_id
+      emit(resp)
+    } finally {
+      ACTIVE_CONTROL_INVOCATION_ID = undefined
+    }
   })
 })

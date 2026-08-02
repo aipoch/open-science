@@ -12,6 +12,7 @@ import type {
   NotebookWriteLock
 } from '../../shared/notebook'
 import type { NotebookRuntimeBinding } from '../../shared/notebook-runtime'
+import type { TrustedControlInvocationIdentity } from '../../shared/agents-contract'
 
 export type NotebookSessionResolvedInterpreter = {
   command: string
@@ -41,6 +42,9 @@ export type NotebookSessionExecutionRequest = {
   sessionId?: string
   projectName?: string
   inputRunLeaseId?: string
+  // Opaque per-control invocation identity forwarded through the REPL request frame. It binds a
+  // host.agents.switch approval to this exact outer repl_execute completion.
+  controlInvocationId?: string
 }
 
 export type NotebookSessionExecutionResult = {
@@ -80,6 +84,7 @@ export type NotebookSessionOwnedExecutor<
 export type NotebookSessionMcpRpcConnection = {
   endpoint: string
   token: string
+  beginControlInvocation?: (context: TrustedControlInvocationIdentity) => () => void
   release?: () => void
 }
 

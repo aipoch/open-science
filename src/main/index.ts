@@ -236,6 +236,7 @@ async function startElectronApp(mainEntryPath: string): Promise<void> {
         dispose: disposeApplicationRuntime
       } = await registerIpcHandlers({
         mainEntryPath,
+        handoffRuntime: 'production',
         headless: webMode.headless,
         onAppIconVariantChanged: (variant) => appIconControllerBox.current?.setVariant(variant),
         listAppIconPreviews: () => buildAppIconPreviews(nativeImage, iconVariantPaths)

@@ -142,7 +142,7 @@ describe('AcpSpecialistApprovalGateway — switch card', () => {
     expect(payload.kind).toBe('switch')
     expect(payload.currentName).toBe('Data Analyst')
     expect(payload.targetName).toBe('SQL Wrangler')
-    expect(payload.takesEffectOnNextMessage).toBe(true)
+    expect(payload.takesEffectAfterCurrentTool).toBe(true)
   })
 
   it('maps target null to Main Agent', async () => {

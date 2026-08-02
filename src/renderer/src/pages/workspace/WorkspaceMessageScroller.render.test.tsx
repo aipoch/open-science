@@ -3,6 +3,10 @@ import type { JSX, PropsWithChildren } from 'react'
 import type { ChatMessage, ChatSession, ToolActivity } from '@/stores/session-store'
 import type { UploadedAttachment } from '../../../../shared/uploads'
 import type { JobSummary } from '../../../../shared/compute'
+import type {
+  HandoffLifecycleEvent,
+  HandoffLifecycleEventSource
+} from '../../../../shared/handoff-lifecycle'
 import { describe, expect, it, vi } from 'vitest'
 
 import type { ToolActivityDetails } from './workspace-tool-activity-details'
@@ -173,6 +177,53 @@ const renderScroller = async (session: ChatSession): Promise<string> => {
 }
 
 describe('WorkspaceMessageScroller loading render', () => {
+  it('renders a coordinator-owned handoff status in the original turn timeline', async () => {
+    const source: HandoffLifecycleEventSource = {
+      getEvents: (): readonly HandoffLifecycleEvent[] => [
+        {
+          id: 'handoff-1',
+          sessionId: 'session-1',
+          sequence: 2,
+          observedAt: 1710000000100,
+          phase: 'reconfiguring',
+          target: { kind: 'specialist', name: 'Data analyst' },
+          provenance: {
+            originatingTurnId: 'turn-1',
+            originatingUserMessageId: 'prompt-1',
+            attachmentIds: ['upload-1'],
+            artifactIds: ['artifact-1']
+          }
+        }
+      ],
+      subscribe: () => () => undefined
+    }
+    const { WorkspaceMessageScroller } = await import('./WorkspaceMessageScroller')
+    const html = renderToStaticMarkup(
+      <WorkspaceMessageScroller
+        activeSession={createSession({
+          messages: [
+            createMessage({ id: 'prompt-1', createdAt: 1710000000000 }),
+            createMessage({
+              id: 'pre-handoff-output',
+              role: 'agent',
+              content: 'I will inspect the input first.',
+              responseToMessageId: 'prompt-1',
+              createdAt: 1710000000200
+            })
+          ]
+        })}
+        onSendEditedMessage={vi.fn()}
+        handoffLifecycleSource={source}
+      />
+    )
+
+    expect(html).toContain('Reconfiguring Data analyst')
+    expect(html).toContain('data-originating-user-message-id="prompt-1"')
+    expect(html.indexOf('Reconfiguring Data analyst')).toBeLessThan(
+      html.indexOf('I will inspect the input first.')
+    )
+  })
+
   it('renders an accessible agent loading row before streamed text arrives', async () => {
     const html = await renderScroller(
       createSession({

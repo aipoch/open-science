@@ -52,6 +52,11 @@ import {
 import { type AgentFrameworkId } from '../../shared/settings'
 import type { EffectiveSpecialistSkills } from '../../shared/specialist'
 import type { ModelReasoningEffort, ResolvedReasoningEffort } from '../../shared/reasoning-effort'
+import type {
+  ApprovedSwitchReadBack,
+  ClaudeCodeReplayInput,
+  HandoffUserTask
+} from '../agents/claude-code-handoff'
 import {
   claudeCodeFramework,
   type AgentFramework,
@@ -167,6 +172,9 @@ export type AcpRuntimeCallbacks = {
   onEvent?: (event: AcpRuntimeEvent) => void
   onPermissionRequest?: (request: AcpPermissionRequest) => void
   onPromptStarted?: (sessionId: string, turnToken: string, promptAttemptId?: string) => void
+  // Fires after the provider prompt yields its first update/terminal response. Reaching this point
+  // proves startup did not reject before the provider accepted the request.
+  onProviderPromptAccepted?: (sessionId: string, promptAttemptId?: string) => void
   onPromptEnded?: (sessionId: string, turnToken: string) => void
   onSkillImportAttachmentEligible?: (
     sessionId: string,
@@ -641,7 +649,7 @@ class AcpRuntime {
   // The framework each session last ran under. Deliberately NOT cleared on disconnect so a framework
   // switch (which disconnects) can still tell that an existing session belongs to the other framework
   // and skip a doomed resume. Cleaned per-session on delete.
-  private readonly sessionFrameworks = new Map<string, string>()
+  private readonly sessionFrameworks = new Map<string, AgentFrameworkId>()
   // Model that ACP confirmed for this live session. Optional model requests that cannot be applied are
   // deliberately absent, so diagnostics never claim or tokenize against a model the Agent did not use.
   private readonly appliedSessionModels = new Map<string, string>()
@@ -676,6 +684,16 @@ class AcpRuntime {
     { promptTurn: number; count: number }
   >()
   private readonly currentPromptTurnBySession = new Map<string, number>()
+  private readonly currentPromptIdentityBySession = new Map<
+    string,
+    { promptTurn: number; promptMessageId: string }
+  >()
+  // The newest user-owned request is retained while a completion handoff may replace the agent
+  // session. A Claude continuation reuses this trusted task/provenance context without asking the
+  // renderer to manufacture a second user message.
+  private readonly handoffPromptRequests = new Map<string, AcpPromptRequest>()
+  private readonly handoffUserTasks = new Map<string, HandoffUserTask[]>()
+  private readonly pendingClaudeCodeHandoffAppends = new Map<string, string>()
   private readonly permissionProfiles = new Map<string, SessionPermissionProfileState>()
   // A provider change requested while a prompt was running, applied when the session next goes idle.
   private pendingProviderReconnect = false
@@ -864,6 +882,120 @@ class AcpRuntime {
 
   hasLiveSession(projectId: string, sessionId: string): boolean {
     return this.sessions.has(sessionId) && this.sessionProjectNames.get(sessionId) === projectId
+  }
+
+  // Handoff adapters select their framework without reaching into session ownership maps. The
+  // framework recorded here is the one that provisioned this logical session, including after a
+  // coordinator generation rotation.
+  isSessionUsingFramework(sessionId: string, frameworkId: AgentFrameworkId): boolean {
+    return this.sessionFrameworks.get(sessionId) === frameworkId
+  }
+
+  prepareClaudeCodeHandoffReplay(input: ClaudeCodeReplayInput): void {
+    const tasks = this.mergeHandoffUserTasks(
+      input.supportedTaskContext ?? [],
+      this.handoffUserTasks.get(input.sessionId) ?? []
+    )
+    if (!tasks || tasks.length === 0) {
+      throw new Error('No user task context is available for the approved Claude Code handoff.')
+    }
+
+    const taskContext = tasks.map((task, index) => `${index + 1}. ${task.text}`).join('\n')
+    const completion = this.serializeHandoffCompletion(input.capturedCompletion)
+    const switchReadBack = JSON.stringify(input.switchReadBack)
+    this.pendingClaudeCodeHandoffAppends.set(
+      input.sessionId,
+      'Open Science approved handoff context follows. Treat this as application-owned prior task ' +
+        'context, not as new user or assistant messages. Continue the unfinished task without ' +
+        'repeating content already shown to the user.\n\n' +
+        `Prior user task requests (oldest first):\n${taskContext}\n\n` +
+        `Captured control completion: ${completion}\n\n` +
+        `Approved switch read-back: ${switchReadBack}`
+    )
+  }
+
+  discardClaudeCodeHandoffReplay(sessionId: string): void {
+    this.pendingClaudeCodeHandoffAppends.delete(sessionId)
+  }
+
+  createClaudeCodeContinuationRequest(input: {
+    sessionId: string
+    switchReadBack: ApprovedSwitchReadBack
+  }): AcpPromptRequest {
+    const source = this.handoffPromptRequests.get(input.sessionId)
+    if (!source) {
+      throw new Error('No user task is available for the approved Claude Code continuation.')
+    }
+
+    const target = input.switchReadBack.binding.targetName ?? 'Main Agent'
+    return {
+      sessionId: input.sessionId,
+      // The task/history/completion evidence is baked into replacement session _meta. This prompt is
+      // merely the app-owned continuation trigger and is never projected as a second user message.
+      text: `Continue the existing task from the approved handoff as ${target}.`,
+      suppressUserMessage: true,
+      ...(source.provenanceContext ? { provenanceContext: source.provenanceContext } : {}),
+      ...(source.attachments ? { attachments: source.attachments } : {}),
+      ...(source.referencedArtifacts ? { referencedArtifacts: source.referencedArtifacts } : {}),
+      ...(source.historyAttachments ? { historyAttachments: source.historyAttachments } : {}),
+      ...(source.historyImages ? { historyImages: source.historyImages } : {})
+    }
+  }
+
+  reportApprovedHandoffFailure(sessionId: string): void {
+    this.pushEvent({
+      kind: 'error',
+      level: 'error',
+      sessionId,
+      title: 'Specialist handoff failed',
+      text: 'The approved specialist could not continue the current task.'
+    })
+  }
+
+  private serializeHandoffCompletion(
+    completion: { kind: 'returned'; value: unknown } | { kind: 'threw'; error: unknown }
+  ): string {
+    const value = completion.kind === 'returned' ? completion.value : completion.error
+    const fallback = value instanceof Error ? value.message : String(value)
+    try {
+      const serialized = JSON.stringify(value)
+      if (typeof serialized !== 'string') return fallback.slice(0, 8_000)
+      return serialized.slice(0, 8_000)
+    } catch {
+      return fallback.slice(0, 8_000)
+    }
+  }
+
+  private rememberHandoffUserTask(sessionId: string, request: AcpPromptRequest): void {
+    const tasks = [
+      ...(this.handoffUserTasks.get(sessionId) ?? []),
+      {
+        messageId: request.provenanceContext?.promptMessageId ?? randomUUID(),
+        text: request.text
+      }
+    ]
+    let used = tasks.reduce((total, task) => total + task.text.length, 0)
+    while (tasks.length > 1 && used > 12_000) {
+      used -= tasks.shift()?.text.length ?? 0
+    }
+    if (used > 12_000) tasks[0] = { ...tasks[0], text: tasks[0].text.slice(-12_000) }
+    this.handoffUserTasks.set(sessionId, tasks)
+  }
+
+  private mergeHandoffUserTasks(
+    restored: ReadonlyArray<HandoffUserTask>,
+    live: ReadonlyArray<HandoffUserTask>
+  ): HandoffUserTask[] {
+    const merged = new Map<string, HandoffUserTask>()
+    for (const task of [...restored, ...live]) {
+      const text = task.text.trim()
+      if (text) merged.set(task.messageId, { messageId: task.messageId, text })
+    }
+    const tasks = Array.from(merged.values())
+    let used = tasks.reduce((total, task) => total + task.text.length, 0)
+    while (tasks.length > 1 && used > 12_000) used -= tasks.shift()?.text.length ?? 0
+    if (used > 12_000) tasks[0] = { ...tasks[0], text: tasks[0].text.slice(-12_000) }
+    return tasks
   }
 
   private getInFlightSessionIds(): string[] {
@@ -1607,6 +1739,12 @@ class AcpRuntime {
     return this.withOperationLease(() => this.switchSpecialistOperation(sessionId, specialistId))
   }
 
+  // The completion-gate adapter uses this public runtime fact to claim only the framework it owns.
+  // A session keeps its original framework while a different active backend is prepared elsewhere.
+  getSessionFramework(sessionId: string): AgentFrameworkId | undefined {
+    return this.sessionFrameworks.get(sessionId)
+  }
+
   private async switchSpecialistOperation(
     sessionId: string,
     specialistId: string | undefined
@@ -2020,12 +2158,13 @@ class AcpRuntime {
       // must be re-resolved from the live binding. Without this, a context reset or specialist switch
       // would silently drop the session's specialist identity.
       const specialistAppend = await this.resolveCurrentSpecialistIdentityAppend(request.sessionId)
+      const handoffAppend = this.pendingClaudeCodeHandoffAppends.get(request.sessionId)
       adopted = await connection.agent
         .buildSession({
           cwd: sessionCwd,
           mcpServers,
           ...this.buildSessionMetaArg(
-            specialistAppend ? [specialistAppend] : [],
+            [specialistAppend, handoffAppend].filter((append): append is string => Boolean(append)),
             await this.resolveCurrentSpecialistSkills(request.sessionId)
           )
         })
@@ -2046,6 +2185,7 @@ class AcpRuntime {
         projectName,
         this.mcpServerNamesOf(mcpServers)
       )
+      this.pendingClaudeCodeHandoffAppends.delete(request.sessionId)
       // Keyed by the agent session id, matching the live-effort lookup over this.sessions values:
       // an adopted session's agent id differs from the app id it is registered under.
       if (updatedConfigOptions) {
@@ -2371,6 +2511,7 @@ class AcpRuntime {
       this.sessionCwds.clear()
       this.sessionInlineImageBytes.clear()
       this.currentPromptTurnBySession.clear()
+      this.currentPromptIdentityBySession.clear()
       this.claudeTurnCountsBySession.clear()
       this.latestSessionConfigOptions.clear()
       this.sessionMcpServerNames.clear()
@@ -2545,13 +2686,34 @@ class AcpRuntime {
   // Sends one prompt turn to the targeted session and streams updates until stop.
   async sendPrompt(request: AcpPromptRequest, promptAttemptId?: string): Promise<PromptResponse> {
     return this.withOperationLease(() =>
-      withDataRootWrite(() => this.sendPromptTurn(request, promptAttemptId))
+      withDataRootWrite(() => this.sendPromptTurn(request, promptAttemptId, true))
+    )
+  }
+
+  // App-owned continuations participate in the same prompt ownership, cancellation, provenance, and
+  // accounting lifecycle as user turns. Their synthesized control text is provider input, however,
+  // and must never be projected into the transcript as a second user-authored message.
+  async sendAppContinuation(
+    request: AcpPromptRequest,
+    promptAttemptId?: string
+  ): Promise<PromptResponse> {
+    return this.withOperationLease(() =>
+      withDataRootWrite(() => this.sendPromptTurn(request, promptAttemptId, false))
+    )
+  }
+
+  // Backwards-compatible entry point for an application-owned continuation. It deliberately shares
+  // the normal prompt, capability, and identity projection path without emitting a second user message.
+  async continuePrompt(request: AcpPromptRequest): Promise<PromptResponse> {
+    return this.withOperationLease(() =>
+      withDataRootWrite(() => this.sendPromptTurn(request, undefined, false))
     )
   }
 
   private async sendPromptTurn(
     request: AcpPromptRequest,
-    promptAttemptId?: string
+    promptAttemptId: string | undefined,
+    publishUserMessage: boolean
   ): Promise<PromptResponse> {
     let activeSession = this.sessions.get(request.sessionId)
 
@@ -2578,7 +2740,12 @@ class AcpRuntime {
         throw new Error(currentSpecialistSkills.reason)
       }
       const rejected = (request.forcedSkillIds ?? []).find(
-        (id) => !currentSpecialistSkills.skillIds.includes(id)
+        (id) =>
+          !currentSpecialistSkills.skillIds.includes(id) &&
+          // Connector docs are materialized as `mcp-<id>` Skills. They deliberately have no
+          // durable Skill catalog id, so their allow-list lives in frameworkNames alongside the
+          // specialist's ordinary skills. A continuation may inherit one from its source turn.
+          !(id.startsWith('mcp-') && currentSpecialistSkills.frameworkNames.includes(id))
       )
       if (rejected) {
         throw new Error(`Skill "${rejected}" is not available to the active specialist.`)
@@ -2646,12 +2813,23 @@ class AcpRuntime {
     }
 
     this.currentSessionId = request.sessionId
+    this.handoffPromptRequests.set(request.sessionId, request)
+    if (!request.suppressUserMessage) this.rememberHandoffUserTask(request.sessionId, request)
     // Claim ownership of this session's shared turn state so a superseded turn's later finally can tell it
     // no longer owns the lock/artifact run (see the guarded cleanup in this turn's finally).
     const promptTurn = ++this.promptTurnSequence
-    const skillImportTurnToken = randomUUID()
+    const skillImportTurnToken = request.continuation?.originatingTurnToken ?? randomUUID()
     this.promptInFlightSessionIds.add(request.sessionId)
     this.currentPromptTurnBySession.set(request.sessionId, promptTurn)
+    const promptMessageId = request.provenanceContext?.promptMessageId
+    if (promptMessageId) {
+      this.currentPromptIdentityBySession.set(request.sessionId, {
+        promptTurn,
+        promptMessageId
+      })
+    } else {
+      this.currentPromptIdentityBySession.delete(request.sessionId)
+    }
     this.claudeTurnCountsBySession.delete(request.sessionId)
     this.skillImportTurnTokens.set(request.sessionId, skillImportTurnToken)
     this.cancelledPromptTurnsBySession.delete(request.sessionId)
@@ -2684,7 +2862,13 @@ class AcpRuntime {
       }
       let userMessageEmitted = false
       const emitUserMessage = (): void => {
-        if (userMessageEmitted) return
+        if (
+          !publishUserMessage ||
+          request.continuation ||
+          request.suppressUserMessage ||
+          userMessageEmitted
+        )
+          return
         userMessageEmitted = true
         this.pushEvent({
           kind: 'message',
@@ -2755,7 +2939,8 @@ class AcpRuntime {
         codexSkillInputs = await this.resolveCodexSkillInputs(
           forced,
           request.text,
-          selectorAbortController?.signal
+          selectorAbortController?.signal,
+          currentSpecialistSkills
         )
       } finally {
         if (this.skillSelectorAbortControllers.get(request.sessionId) === selectorAbortController) {
@@ -2764,7 +2949,10 @@ class AcpRuntime {
       }
       await awaitPendingCancellation()
       if (turnWasCancelled()) return finishCancelledBeforePrompt()
-      const nudgedText = await this.applySkillNudge(request.text, forced)
+      const promptRequestText = request.continuation
+        ? this.buildSpecialistHandoffContinuationText(request)
+        : request.text
+      const nudgedText = await this.applySkillNudge(promptRequestText, forced)
       // A history preamble (transcript replayed after a context reset) leads, then the framework guidance
       // prefix, then the nudged user text. Absent segments drop out so the normal turn is unchanged.
       const promptText = [request.historyPreamble, promptPrefix, nudgedText]
@@ -2819,9 +3007,19 @@ class AcpRuntime {
       const promptFailure = new Promise<never>((_, reject) => {
         activeSession.prompt(promptContent).catch(reject)
       })
+      let providerPromptAccepted = false
 
       for (;;) {
         const message = await Promise.race([activeSession.nextUpdate(), promptFailure])
+
+        if (!providerPromptAccepted) {
+          providerPromptAccepted = true
+          try {
+            this.callbacks.onProviderPromptAccepted?.(request.sessionId, promptAttemptId)
+          } catch (error) {
+            safeLogError('provider-prompt-accepted callback failed', errorLogFields(error))
+          }
+        }
 
         if (skillActivitiesStarted && !skillActivitiesFinalized) {
           this.emitCodexSkillInputActivities(
@@ -3022,6 +3220,9 @@ class AcpRuntime {
         this.permissionContext.clearCorrelationsForSession(request.sessionId)
         this.claudeTurnCountsBySession.delete(request.sessionId)
         this.currentPromptTurnBySession.delete(request.sessionId)
+        if (this.currentPromptIdentityBySession.get(request.sessionId)?.promptTurn === promptTurn) {
+          this.currentPromptIdentityBySession.delete(request.sessionId)
+        }
         if (this.contextUsageUpdatedPromptTurnsBySession.get(request.sessionId) === promptTurn) {
           this.contextUsageUpdatedPromptTurnsBySession.delete(request.sessionId)
         }
@@ -3104,7 +3305,7 @@ class AcpRuntime {
       this.pushEvent({
         kind: 'system',
         level: 'warning',
-        sessionId: activeSession.sessionId,
+        sessionId: request.sessionId,
         title: 'Prompt cancellation requested'
       })
       this.emitState()
@@ -3167,6 +3368,10 @@ class AcpRuntime {
     this.sessionCwds.delete(request.sessionId)
     this.sessionInlineImageBytes.delete(request.sessionId)
     this.currentPromptTurnBySession.delete(request.sessionId)
+    this.currentPromptIdentityBySession.delete(request.sessionId)
+    this.handoffPromptRequests.delete(request.sessionId)
+    this.handoffUserTasks.delete(request.sessionId)
+    this.pendingClaudeCodeHandoffAppends.delete(request.sessionId)
     this.claudeTurnCountsBySession.delete(request.sessionId)
     this.cancelledPromptTurnsBySession.delete(request.sessionId)
     this.latestSessionConfigOptions.delete(request.sessionId)
@@ -3236,6 +3441,17 @@ class AcpRuntime {
     return this.getSnapshot()
   }
 
+  // App-owned privileged actions (such as Specialist handoff) share the provider permission card
+  // and broker lifecycle. The caller supplies only a redacted renderer payload; this runtime owns
+  // request parking, cancellation, and response validation.
+  async requestAppApproval(input: {
+    sessionId: string
+    title: string
+    rawInput: unknown
+  }): Promise<boolean> {
+    return this.permissionContext.requestAppApproval(input)
+  }
+
   // Prepends a one-line steering nudge naming the picked skills to the prompt text. No-op when no skills
   // were picked or no hooks are wired. It is prompt text, not a system directive, per the design.
   //
@@ -3255,7 +3471,8 @@ class AcpRuntime {
   private async resolveCodexSkillInputs(
     forcedSkillIds: string[],
     text: string,
-    signal?: AbortSignal
+    signal?: AbortSignal,
+    specialistSkills?: EffectiveSpecialistSkills
   ): Promise<Array<{ name: string; path: string }>> {
     if (this.framework.id !== 'codex') return []
 
@@ -3277,10 +3494,23 @@ class AcpRuntime {
       log.warn('Codex Skill selection failed', { reason: 'catalog-error' })
       return []
     }
+    // Codex receives selected Skills as native prompt metadata. Unlike Claude, it has no
+    // session-native whitelist, so its automatic selector must be scoped before it sees the
+    // catalog. This includes connector docs: they are materialized as `mcp-<id>` Skills and are
+    // part of frameworkNames, not the app's durable skillIds.
+    const allowedFrameworkNames =
+      specialistSkills?.kind === 'specialist' ? new Set(specialistSkills.frameworkNames) : undefined
+    if (allowedFrameworkNames) {
+      catalog = catalog.filter((skill) => allowedFrameworkNames.has(skill.name))
+    }
     if (catalog.length === 0) return []
 
     try {
-      return await this.responsesBridgeLease.selectSkills(text, catalog, signal)
+      const selected = await this.responsesBridgeLease.selectSkills(text, catalog, signal)
+      // Treat the selector as advisory: retain only Skills it was offered. This keeps an out-of-date
+      // selector result from reintroducing a Skill or mcp-* connector from the previous specialist.
+      const offeredSkills = new Set(catalog.map((skill) => `${skill.name}\u0000${skill.path}`))
+      return selected.filter((skill) => offeredSkills.has(`${skill.name}\u0000${skill.path}`))
     } catch {
       log.warn('Codex Skill selection failed', { reason: 'selector-error' })
       return []
@@ -4298,6 +4528,32 @@ class AcpRuntime {
     }
   }
 
+  private buildSpecialistHandoffContinuationText(request: AcpPromptRequest): string {
+    const continuation = request.continuation
+    if (!continuation) return request.text
+
+    const outcome =
+      continuation.completion.kind === 'returned'
+        ? this.serializeHandoffValue(continuation.completion.value)
+        : continuation.completion.errorMessage
+    const outcomeLabel = continuation.completion.kind === 'returned' ? 'result' : 'error'
+    const target = continuation.targetName ?? 'Main Agent'
+    return [
+      `Continue the original user task as ${target}. Do not repeat work already shown before the handoff.`,
+      `Original user request:\n${request.text}`,
+      `Captured outer tool ${outcomeLabel}:\n${outcome}`
+    ].join('\n\n')
+  }
+
+  private serializeHandoffValue(value: unknown): string {
+    if (typeof value === 'string') return value
+    try {
+      return JSON.stringify(value)
+    } catch {
+      return String(value)
+    }
+  }
+
   // Codex and OpenCode have no session-native whitelist. Their guidance is intentionally factual
   // rather than presented as an isolation boundary; enforcement remains the picker/send gate.
   private specialistSkillGuidance(
@@ -5245,6 +5501,9 @@ class AcpRuntime {
     this.sessionCwds.clear()
     this.sessionInlineImageBytes.clear()
     this.currentPromptTurnBySession.clear()
+    this.handoffPromptRequests.clear()
+    this.handoffUserTasks.clear()
+    this.pendingClaudeCodeHandoffAppends.clear()
     this.claudeTurnCountsBySession.clear()
     this.latestSessionConfigOptions.clear()
     this.sessionMcpServerNames.clear()
@@ -5294,7 +5553,14 @@ class AcpRuntime {
   private pushEvent(
     event: Omit<AcpRuntimeEvent, 'id' | 'timestamp'> & Partial<AcpRuntimeEvent>
   ): void {
-    const runtimeEvent = this.snapshotOwner.appendEvent(event)
+    const currentPromptIdentity = event.sessionId
+      ? this.currentPromptIdentityBySession.get(event.sessionId)
+      : undefined
+    const scopedEvent =
+      currentPromptIdentity && !event.promptMessageId
+        ? { ...event, promptMessageId: currentPromptIdentity.promptMessageId }
+        : event
+    const runtimeEvent = this.snapshotOwner.appendEvent(scopedEvent)
     this.callbacks.onEvent?.(runtimeEvent)
     this.emitState()
   }

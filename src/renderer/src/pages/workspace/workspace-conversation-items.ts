@@ -1,5 +1,10 @@
 import type { ChatMessage, ChatSession, ToolActivity } from '@/stores/session-store'
+import type { HandoffLifecycleEvent } from '../../../../shared/handoff-lifecycle'
 
+import {
+  projectHandoffLifecycle,
+  type HandoffTranscriptProjection
+} from './handoff-lifecycle-projection'
 import { getLoadedSkillName, isSkillActivity } from './workspace-tool-activity-details'
 
 type ConversationMessageItem = {
@@ -18,7 +23,15 @@ type ConversationActivityItem = {
   activity: ToolActivity
 }
 
-type ConversationItem = ConversationMessageItem | ConversationActivityItem
+// A lifecycle row is a read-only annotation on its originating user turn. It is not another user
+// message and cannot own a separate continuation identity.
+type ConversationHandoffItem = HandoffTranscriptProjection & {
+  type: 'handoff'
+  createdAt: number
+  sortIndex: number
+}
+
+type ConversationItem = ConversationMessageItem | ConversationActivityItem | ConversationHandoffItem
 
 const KNOWN_TITLE_TOOL_NAMES = new Set(['ToolSearch'])
 
@@ -119,7 +132,10 @@ const formatActivityTitle = (activity: ToolActivity): string => {
 }
 
 // Projects persisted chat messages and transient tool activities into one sortable transcript list.
-const createConversationItems = (session: ChatSession | undefined): ConversationItem[] => {
+const createConversationItems = (
+  session: ChatSession | undefined,
+  handoffEvents: readonly HandoffLifecycleEvent[] = []
+): ConversationItem[] => {
   const messages: ConversationItem[] =
     session?.messages.map((message, index) => ({
       id: message.id,
@@ -136,9 +152,17 @@ const createConversationItems = (session: ChatSession | undefined): Conversation
       sortIndex: activity.sortIndex,
       activity
     })) ?? []
+  const handoffs: ConversationItem[] = projectHandoffLifecycle(handoffEvents).map((handoff) => ({
+    ...handoff,
+    type: 'handoff',
+    createdAt: handoff.timelineAt,
+    // Runtime messages and coordinator lifecycle events use independent sequences. Timestamp is
+    // authoritative across the two streams; this only makes exact ties deterministic.
+    sortIndex: Number.MAX_SAFE_INTEGER
+  }))
 
   // Runtime events and chat chunks use separate sequences, so sorting uses timestamps first.
-  return [...messages, ...activities].sort((left, right) => {
+  return [...messages, ...activities, ...handoffs].sort((left, right) => {
     if (left.createdAt !== right.createdAt) return left.createdAt - right.createdAt
     if (left.sortIndex !== right.sortIndex) return left.sortIndex - right.sortIndex
     return left.id.localeCompare(right.id)

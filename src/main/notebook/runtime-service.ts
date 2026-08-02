@@ -215,6 +215,31 @@ type NotebookControlResult = {
   workingFiles?: NotebookWorkingFile[]
 }
 
+// Application-owned interceptor for the outer repl_execute completion boundary. It runs after the
+// REPL has completed JavaScript but before executeControl returns that outcome to the caller.
+type NotebookControlCompletionInterceptor = {
+  intercept<T>(options: {
+    context: {
+      sessionId: string
+      turnId: string
+      controlInvocationGeneration: number
+      toolInvocationId: string
+      originatingTurnId?: string
+      originatingUserMessageId?: string
+      attachmentIds?: string[]
+      artifactIds?: string[]
+    }
+    execute(): Promise<T>
+  }): Promise<{ kind: 'deliver'; result: T } | { kind: 'captured' }>
+}
+
+export class NotebookControlCompletionCapturedError extends Error {
+  constructor() {
+    super('Control tool completion was captured for specialist handoff.')
+    this.name = 'NotebookControlCompletionCapturedError'
+  }
+}
+
 // Result of one stateless bash_execute run. No status/traceback classification: the shell is
 // expected to fail non-zero sometimes, so the caller inspects exitCode directly instead of a
 // completed/failed status flag.
@@ -896,6 +921,7 @@ class NotebookRuntimeService {
   private runSequence = 0
   private mcpRpcConnectionResolver:
     ((binding: McpRpcConnectionBinding) => Promise<McpRpcConnection>) | undefined
+  private controlCompletionInterceptor: NotebookControlCompletionInterceptor | undefined
   private readonly packageMirrorResolver:
     (() => PackageMirror | undefined | Promise<PackageMirror | undefined>) | undefined
   private readonly runtimeEnablementResolver:
@@ -1465,6 +1491,15 @@ class NotebookRuntimeService {
     this.mcpRpcConnectionResolver = resolver
   }
 
+  // Composes the app-owned completion gate into the actual repl_execute return path. The adapter is
+  // injected because concrete provider cancellation/reconfiguration/continuation belongs to later
+  // framework-specific work, while this service owns the provider-neutral timing boundary now.
+  setControlCompletionInterceptor(
+    interceptor: NotebookControlCompletionInterceptor | undefined
+  ): void {
+    this.controlCompletionInterceptor = interceptor
+  }
+
   // Starts an exclusive agent/user write stream into a cell and locks notebook editing.
   async beginCodeCell(request: BeginNotebookCodeCellRequest): Promise<{
     sessionId: string
@@ -1874,7 +1909,51 @@ class NotebookRuntimeService {
   // repl_execute calls run one at a time on the single control process.
   async executeControl(request: ExecuteNotebookControlRequest): Promise<NotebookControlResult> {
     const session = await this.ensureSession(request)
-    return session.enqueueControl(() => this.executeControlExclusive(session, request))
+    this.runSequence += 1
+    const controlInvocationGeneration = this.runSequence
+    const controlInvocationId = `notebook-run-${Date.now()}-${this.runSequence}`
+    const execute = (): Promise<NotebookControlResult> =>
+      this.executeControlExclusive(
+        session,
+        request,
+        controlInvocationId,
+        controlInvocationGeneration
+      )
+    // Only raw REPL execution holds the per-session control slot. The interceptor may start the
+    // approved continuation, which is allowed to re-enter executeControl for this session; awaiting it
+    // while this outer call owns the control queue would deadlock that continuation behind itself.
+    // enqueueControl settles the queue tail before the handoff completes, so an approved continuation
+    // can re-enter safely.
+    const rawRun = session.enqueueControl(execute)
+
+    const interceptor = this.controlCompletionInterceptor
+    if (!interceptor) return rawRun
+
+    const outcome = await interceptor.intercept({
+      context: {
+        sessionId: session.sessionId,
+        turnId: controlInvocationId,
+        toolInvocationId: controlInvocationId,
+        controlInvocationGeneration,
+        ...(request.provenanceContext
+          ? {
+              originatingTurnId: request.provenanceContext.promptMessageId,
+              originatingUserMessageId: request.provenanceContext.promptMessageId
+            }
+          : {}),
+        attachmentIds:
+          request.registeredInputFiles
+            ?.filter((input) => input.sourceKind === 'upload-version')
+            .map((input) => input.sourceFileId) ?? [],
+        artifactIds:
+          request.registeredInputFiles
+            ?.filter((input) => input.sourceKind === 'artifact-version')
+            .map((input) => input.sourceFileId) ?? []
+      },
+      execute: () => rawRun
+    })
+    if (outcome.kind === 'captured') throw new NotebookControlCompletionCapturedError()
+    return outcome.result
   }
 
   // Runs one control-plane request to completion while holding the session's single control slot.
@@ -1882,11 +1961,11 @@ class NotebookRuntimeService {
   // shape is unchanged, so repl_execute's contract to the agent stays the same.
   private async executeControlExclusive(
     session: RuntimeSession,
-    request: ExecuteNotebookControlRequest
+    request: ExecuteNotebookControlRequest,
+    runId: string,
+    controlInvocationGeneration: number
   ): Promise<NotebookControlResult> {
     this.notifyNotebookAvailable(session, 'agent')
-    this.runSequence += 1
-    const runId = `notebook-run-${Date.now()}-${this.runSequence}`
     const runningRun: NotebookRunRecord = {
       runId,
       cellId: `repl-${runId}`,
@@ -1937,23 +2016,33 @@ class NotebookRuntimeService {
               session.cwd
             )
           )
-        : session.execute({
-            code: request.code,
-            kind: 'repl',
-            cwd: session.cwd,
-            notebookSessionRoot: session.notebookSessionRoot,
-            dataRoot: session.dataRoot,
-            runtimeRoot: session.runtimeRoot,
-            protectedDirs: [getAppClaudeConfigDir(this.options.configRoot)],
-            timeoutMs: request.timeoutMs,
-            mcpRpcEndpoint: mcpRpc?.endpoint,
-            mcpRpcToken: mcpRpc?.token,
-            // Grant-scope identity for host.compute (This conversation / This project). The executor
-            // forwards these into the repl kernel's spawn env; only the control path carries them.
-            sessionId: session.sessionId,
-            projectName: session.projectName,
-            inputRunLeaseId: request.inputRunLeaseId
-          })
+        : (() => {
+            const releaseControlInvocation = mcpRpc?.beginControlInvocation?.({
+              turnId: runId,
+              controlInvocationGeneration,
+              toolInvocationId: runId
+            })
+            return session
+              .execute({
+                code: request.code,
+                kind: 'repl',
+                cwd: session.cwd,
+                notebookSessionRoot: session.notebookSessionRoot,
+                dataRoot: session.dataRoot,
+                runtimeRoot: session.runtimeRoot,
+                protectedDirs: [getAppClaudeConfigDir(this.options.configRoot)],
+                timeoutMs: request.timeoutMs,
+                mcpRpcEndpoint: mcpRpc?.endpoint,
+                mcpRpcToken: mcpRpc?.token,
+                // Grant-scope identity for host.compute (This conversation / This project). The executor
+                // forwards these into the repl kernel's spawn env; only the control path carries them.
+                sessionId: session.sessionId,
+                projectName: session.projectName,
+                inputRunLeaseId: request.inputRunLeaseId,
+                controlInvocationId: runId
+              })
+              .finally(() => releaseControlInvocation?.())
+          })()
       ).catch((error: unknown) => {
         executedOnLiveKernel = false
         return errorToExecutionResult(error, session.cwd)

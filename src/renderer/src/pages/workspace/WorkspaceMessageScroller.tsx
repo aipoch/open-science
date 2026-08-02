@@ -38,10 +38,19 @@ import type { ActivityExpansionOverrides } from './workspace-tool-activity-group
 import { useSessionJobStore } from '@/stores/session-job-store'
 import type { GoToTranscriptIntent, ReviewWithChecks } from '../../../../shared/reviewer'
 import type { ComposerDoc } from './composer/composer-doc'
+import type {
+  HandoffLifecycleEventSource,
+  HandoffRetryRequest
+} from '../../../../shared/handoff-lifecycle'
+import { HandoffLifecycleStatus } from './HandoffLifecycleStatus'
+import { useHandoffLifecycleEvents } from './useHandoffLifecycleEvents'
 
 type WorkspaceMessageScrollerProps = {
   activeSession: ChatSession | undefined
   onSendEditedMessage: (messageId: string, doc: ComposerDoc) => void
+  // Events are read-only projections; retry sends an intent that main validates against its state.
+  handoffLifecycleSource?: HandoffLifecycleEventSource
+  onRetryHandoff?: (request: HandoffRetryRequest) => Promise<void>
 }
 
 type SessionScopedActivityGroupState = {
@@ -175,10 +184,13 @@ const EditableWorkspaceMessageItem = (
 // Owns transcript scrolling and session-scoped expansion state for activity groups.
 const WorkspaceMessageScrollerImpl = ({
   activeSession,
-  onSendEditedMessage
+  onSendEditedMessage,
+  handoffLifecycleSource,
+  onRetryHandoff
 }: WorkspaceMessageScrollerProps): React.JSX.Element => {
   const currentSessionId = activeSession?.id
   const currentProjectId = activeSession?.projectId
+  const handoffEvents = useHandoffLifecycleEvents(handoffLifecycleSource, currentSessionId)
   // The whole-window find bar is an Electron overlay owned by main; the Workspace only needs to tell
   // main it is mounted and searchable so Cmd/Ctrl+F is intercepted (and re-arm UNREADY on unmount).
   useEffect(() => {
@@ -255,8 +267,11 @@ const WorkspaceMessageScrollerImpl = ({
       : {}
   const conversationItems = useMemo(
     () =>
-      groupConversationItems(createConversationItems(activeSession), activeSession?.activityGroups),
-    [activeSession]
+      groupConversationItems(
+        createConversationItems(activeSession, handoffEvents),
+        activeSession?.activityGroups
+      ),
+    [activeSession, handoffEvents]
   )
   const showAgentLoadingMessage = shouldShowAgentLoadingMessage(activeSession)
   const messageCreatedAtById = new Map(
@@ -604,6 +619,29 @@ const WorkspaceMessageScrollerImpl = ({
                           />
                         ) : null}
                       </div>
+                    )
+                  }
+
+                  if (item.type === 'handoff') {
+                    return (
+                      <MessageScrollerItem key={item.id} messageId={item.id} className="min-w-0">
+                        <div className="px-4 pb-1 pt-3 md:px-6">
+                          <div className="mx-auto w-full max-w-[56rem]">
+                            <HandoffLifecycleStatus
+                              handoff={item}
+                              onRetry={
+                                item.phase === 'failed' && onRetryHandoff
+                                  ? async () =>
+                                      onRetryHandoff({
+                                        sessionId: item.sessionId,
+                                        originatingTurnId: item.originatingTurnId
+                                      })
+                                  : undefined
+                              }
+                            />
+                          </div>
+                        </div>
+                      </MessageScrollerItem>
                     )
                   }
 

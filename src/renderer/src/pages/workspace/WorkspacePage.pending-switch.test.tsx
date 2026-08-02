@@ -24,7 +24,10 @@ import {
 import { useSpecialistStore } from '@/stores/specialist-store'
 
 import { type ComposerDoc } from './composer/composer-doc'
-import type { SpecialistListItem } from '../../../../shared/specialist'
+import type {
+  CompletionHandoffLifecycleEvent,
+  SpecialistListItem
+} from '../../../../shared/specialist'
 
 ;(globalThis as { IS_REACT_ACT_ENVIRONMENT?: boolean }).IS_REACT_ACT_ENVIRONMENT = true
 
@@ -130,9 +133,11 @@ let root: Root
 // Captured pending-switch listener; the test fires it to simulate the host.agents.switch() broadcast.
 let pendingSwitchListener:
   ((pending: { sessionId: string; targetName: string | null }) => void) | undefined
+let handoffLifecycleListener: ((event: CompletionHandoffLifecycleEvent) => void) | undefined
 
 const apiStub = (specialistOverrides?: Record<string, unknown>): typeof window.api => {
   pendingSwitchListener = undefined
+  handoffLifecycleListener = undefined
   return {
     notebook: {
       onAvailable: vi.fn(() => vi.fn()),
@@ -159,6 +164,15 @@ const apiStub = (specialistOverrides?: Record<string, unknown>): typeof window.a
           pendingSwitchListener = undefined
         }
       }),
+      getHandoffEvents: vi.fn(() => Promise.resolve([])),
+      onHandoffLifecycleEvent: vi.fn((listener) => {
+        handoffLifecycleListener = listener
+        return () => {
+          handoffLifecycleListener = undefined
+        }
+      }),
+      retryHandoff: vi.fn(() => Promise.resolve()),
+      cancelHandoff: vi.fn(() => Promise.resolve()),
       setSessionSpecialist: vi.fn(() => Promise.resolve({ contextReset: false })),
       resolveSessionSpecialist: vi.fn(() => Promise.resolve({ kind: 'main' as const })),
       ...specialistOverrides
@@ -206,6 +220,133 @@ afterEach(async () => {
 // ---------------------------------------------------------------------------
 
 describe('WorkspacePage pending-switch broadcast', () => {
+  it('does not duplicate an approved handoff failure in the composer recovery banner', async () => {
+    setupBase()
+    useSessionStore.setState({
+      ...createInitialSessionState(),
+      sessions: [createSession()],
+      selectedSessionId: 'sess-a'
+    })
+    useSpecialistStore.setState({ items: [], isLoaded: true, load: vi.fn() })
+    window.api = apiStub()
+    await renderPage(root)
+
+    await act(async () => {
+      handoffLifecycleListener?.({
+        id: 'handoff-1',
+        sessionId: 'sess-a',
+        sequence: 4,
+        observedAt: 1234,
+        phase: 'failed',
+        target: 'SQL Wrangler',
+        provenance: {
+          originatingTurnId: 'turn-1',
+          attachmentIds: [],
+          artifactIds: []
+        },
+        failure: { retryFrom: 'reconfiguring', message: 'target unavailable' }
+      })
+    })
+
+    // The handoff transcript owns this error and its Retry action. The composer banner is reserved
+    // for a user-initiated pre-send reconfiguration failure, otherwise one failure renders twice.
+    expect(conversationProps.reconfigureError).toBeNull()
+  })
+
+  it('syncs the menu binding after a completed handoff, including a return to Main Agent', async () => {
+    setupBase()
+    useSessionStore.setState({
+      ...createInitialSessionState(),
+      sessions: [createSession({ specialistId: 'spec-a' })],
+      selectedSessionId: 'sess-a'
+    })
+    const sqlWrangler = makeSpecialist('spec-b', 'SQL Wrangler')
+    useSpecialistStore.setState({
+      items: [makeSpecialist('spec-a', 'Data Analyst'), sqlWrangler],
+      isLoaded: true,
+      load: vi.fn()
+    })
+    const resolveSessionSpecialist = vi
+      .fn()
+      .mockResolvedValueOnce({ kind: 'bound' as const, profile: sqlWrangler })
+      .mockResolvedValueOnce({ kind: 'main' as const })
+    window.api = apiStub({ resolveSessionSpecialist })
+    await renderPage(root)
+
+    await act(async () => {
+      handoffLifecycleListener?.({
+        id: 'handoff-specialist',
+        sessionId: 'sess-a',
+        sequence: 4,
+        observedAt: 1234,
+        phase: 'continuation-start',
+        target: 'SQL Wrangler',
+        provenance: { originatingTurnId: 'turn-1', attachmentIds: [], artifactIds: [] }
+      })
+      await Promise.resolve()
+    })
+
+    expect(resolveSessionSpecialist).toHaveBeenLastCalledWith({ sessionId: 'sess-a' })
+    expect(useSessionStore.getState().sessions[0].specialistId).toBe('spec-b')
+    expect(conversationProps.specialistId).toBe('spec-b')
+
+    await act(async () => {
+      handoffLifecycleListener?.({
+        id: 'handoff-main',
+        sessionId: 'sess-a',
+        sequence: 5,
+        observedAt: 1235,
+        phase: 'continuation-start',
+        target: null,
+        provenance: { originatingTurnId: 'turn-2', attachmentIds: [], artifactIds: [] }
+      })
+      await Promise.resolve()
+    })
+
+    expect(resolveSessionSpecialist).toHaveBeenLastCalledWith({ sessionId: 'sess-a' })
+    expect(useSessionStore.getState().sessions[0].specialistId).toBeUndefined()
+    expect(conversationProps.specialistId).toBeUndefined()
+  })
+
+  it('does not create a composer recovery banner when replaying failed handoffs', async () => {
+    setupBase()
+    useSessionStore.setState({
+      ...createInitialSessionState(),
+      sessions: [createSession()],
+      selectedSessionId: 'sess-a'
+    })
+    useSpecialistStore.setState({ items: [], isLoaded: true, load: vi.fn() })
+    const event = (
+      id: string,
+      sequence: number,
+      commitOrder: number,
+      message: string
+    ): CompletionHandoffLifecycleEvent => ({
+      id,
+      sessionId: 'sess-a',
+      sequence,
+      commitOrder,
+      observedAt: 100,
+      phase: 'failed',
+      target: 'SQL Wrangler',
+      provenance: { originatingTurnId: 'turn-1', attachmentIds: [], artifactIds: [] },
+      failure: { retryFrom: 'reconfiguring', message }
+    })
+    window.api = apiStub({
+      getHandoffEvents: vi.fn(() =>
+        Promise.resolve([
+          event('older-high-sequence', 99, 1, 'older'),
+          event('newer', 2, 2, 'newer')
+        ])
+      )
+    })
+
+    await renderPage(root)
+    await act(async () => Promise.resolve())
+
+    expect(conversationProps.reconfigureError).toBeNull()
+  })
+
   it('mirrors the pending target WITHOUT calling setSessionSpecialist mid-reply', async () => {
     setupBase()
     useSessionStore.setState({

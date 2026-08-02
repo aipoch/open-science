@@ -63,6 +63,12 @@ import type {
   SessionUpsertEvent
 } from '../shared/lifecycle-events'
 import type {
+  HandoffEventsRequest,
+  HandoffLifecycleChange,
+  HandoffLifecycleEvent,
+  HandoffRetryRequest
+} from '../shared/handoff-lifecycle'
+import type {
   PermissionGrantMutationView,
   PermissionGrantRestoreRequest,
   PermissionGrantRevokeRequest,
@@ -252,7 +258,9 @@ import type {
   SetSessionSpecialistResponse,
   ResolveSessionSpecialistRequest,
   SessionSpecialistResolution,
-  PendingSwitchBroadcast
+  PendingSwitchBroadcast,
+  CompletionHandoffLifecycleEvent,
+  CompletionHandoffCommand
 } from '../shared/specialist'
 import type {
   CloseConfirmRequest,
@@ -418,8 +426,12 @@ interface OpenScienceAPI {
     delete(request: DeleteSpecialistRequest): Promise<void>
     duplicate(request: DuplicateSpecialistRequest): Promise<CreateSpecialistRequest>
     onCatalogChanged(listener: () => void): RemoveListener
-    // host.agents.switch() durable next-message switch broadcast (issue 08b).
+    // Compatibility-only pending-selection broadcast; approved SDK handoffs use lifecycle events.
     onPendingSwitch(listener: AcpListener<PendingSwitchBroadcast>): RemoveListener
+    getHandoffEvents(sessionId: string): Promise<CompletionHandoffLifecycleEvent[]>
+    onHandoffLifecycleEvent(listener: AcpListener<CompletionHandoffLifecycleEvent>): RemoveListener
+    retryHandoff(request: CompletionHandoffCommand): Promise<unknown>
+    cancelHandoff(request: CompletionHandoffCommand): Promise<void>
     // Session switching (issue 07).
     setSessionSpecialist(
       request: SetSessionSpecialistRequest
@@ -427,6 +439,11 @@ interface OpenScienceAPI {
     resolveSessionSpecialist(
       request: ResolveSessionSpecialistRequest
     ): Promise<SessionSpecialistResolution>
+  }
+  handoff: {
+    list(request: HandoffEventsRequest): Promise<readonly HandoffLifecycleEvent[]>
+    retry(request: HandoffRetryRequest): Promise<void>
+    onChanged(listener: AcpListener<HandoffLifecycleChange>): RemoveListener
   }
   logs: {
     getPath(): Promise<string | null>

@@ -32,6 +32,7 @@ import {
 } from '@/lib/acp/workspace-events'
 import type { UploadedAttachment } from '../../../../shared/uploads'
 import type { ConversationExportFormat } from '../../../../shared/conversation-export'
+import type { CompletionHandoffLifecycleEvent } from '../../../../shared/specialist'
 
 import { planComposerAttachmentIntake } from './composer-attachment-intake'
 import { stageComposerFile, type ComposerUploadTransfer } from './composer-upload-transfer'
@@ -65,6 +66,20 @@ type WorkspacePageProps = {
 // Converts unknown async failures into composer-visible text.
 const getErrorMessage = (error: unknown): string =>
   error instanceof Error ? error.message : String(error)
+
+const compareHandoffEventOrder = (
+  left: Pick<CompletionHandoffLifecycleEvent, 'commitOrder' | 'observedAt' | 'sequence' | 'id'>,
+  right: Pick<CompletionHandoffLifecycleEvent, 'commitOrder' | 'observedAt' | 'sequence' | 'id'>
+): number =>
+  (left.commitOrder !== undefined || right.commitOrder !== undefined
+    ? left.commitOrder === undefined
+      ? -1
+      : right.commitOrder === undefined
+        ? 1
+        : left.commitOrder - right.commitOrder
+    : left.observedAt - right.observedAt) ||
+  left.sequence - right.sequence ||
+  left.id.localeCompare(right.id)
 
 // Stable draft-map key for the "new conversation" composer, which has no selected session id.
 const NEW_CONVERSATION_DRAFT_KEY = '__new_conversation__'
@@ -523,8 +538,9 @@ const WorkspacePage = ({
   // broadcast arrives. Set in an effect (never during render) to comply with the react-hooks/refs rule.
   const specialistItemsRef = useRef(specialistItems)
 
-  // Reconfigure failure state: set when a pre-send dispose/resume fails.
-  // Keeps the draft intact, shows the recovery banner above the composer.
+  // Reconfigure failure state: set when a user-initiated pre-send dispose/resume fails.
+  // Approved handoff failures belong solely to their transcript lifecycle row, which owns Retry.
+  // This keeps a single handoff failure from rendering a second composer banner.
   const [reconfigureError, setReconfigureError] = useState<{
     sessionId: string
     specialistName: string
@@ -1718,11 +1734,9 @@ const WorkspacePage = ({
     specialistItemsRef.current = specialistItems
   }, [specialistItems])
 
-  // Subscribe to durable next-message switch broadcasts from host.agents.switch() (issue 08b/08a).
-  // An approved switch ALREADY persisted the binding on main and is running inside the current reply's
-  // Agent; the renderer only mirrors the pending target so the composer shows the "takes effect on the
-  // next message" state and the next-send reconfigure barrier applies the approved identity. The live
-  // agent is NOT switched here — setSessionSpecialist runs only at the next sendMessage barrier.
+  // Compatibility-only pending-selection subscription. Production approved SDK switches no longer
+  // emit this channel: their durable lifecycle row is read-only and their continuation is owned by
+  // the completion gate, never by a renderer send barrier.
   useEffect(() => {
     if (!window.api?.specialist?.onPendingSwitch) return
     const remove = window.api.specialist.onPendingSwitch((pending) => {
@@ -1768,6 +1782,59 @@ const WorkspacePage = ({
     })
     return remove
   }, [])
+
+  // An approved SDK handoff reconfigures the runtime on main, without using the legacy pending
+  // switch broadcast. Once reconfiguration has succeeded, read the authoritative binding back so
+  // the session store (and therefore the specialist menu) reflects the live identity. A completed
+  // lifecycle replay uses the same path after the renderer reconnects.
+  const syncCompletedHandoffSpecialist = useCallback(
+    (event: CompletionHandoffLifecycleEvent): void => {
+      if (event.phase !== 'continuation-start' && event.phase !== 'continued') return
+      const resolver = window.api?.specialist?.resolveSessionSpecialist
+      if (!resolver) return
+      void resolver
+        .call(window.api.specialist, { sessionId: event.sessionId })
+        .then((resolution) => {
+          if (resolution.kind === 'bound') {
+            setSessionSpecialistId(event.sessionId, resolution.profile.id)
+          } else if (resolution.kind === 'main') {
+            setSessionSpecialistId(event.sessionId, undefined)
+          }
+        })
+        .catch(() => {
+          // The lifecycle projection is observational; a transient readback failure must not affect
+          // the already-authorized runtime handoff or turn into a misleading composer error.
+        })
+    },
+    [setSessionSpecialistId]
+  )
+
+  const applyHandoffLifecycleEvent = useCallback(
+    (event: CompletionHandoffLifecycleEvent): void => {
+      syncCompletedHandoffSpecialist(event)
+    },
+    [syncCompletedHandoffSpecialist]
+  )
+
+  // The renderer is a read-only lifecycle projection. Replay catches failures persisted before a
+  // reload; subscription follows later transitions. Neither route grants execution authority.
+  useEffect(() => {
+    const specialistApi = window.api?.specialist
+    if (!specialistApi?.onHandoffLifecycleEvent) return
+    return specialistApi.onHandoffLifecycleEvent(applyHandoffLifecycleEvent)
+  }, [applyHandoffLifecycleEvent])
+
+  useEffect(() => {
+    const specialistApi = window.api?.specialist
+    if (!activeSessionId || !specialistApi?.getHandoffEvents) return
+    void specialistApi
+      .getHandoffEvents(activeSessionId)
+      .then((events) => {
+        const latest = events.sort(compareHandoffEventOrder).at(-1)
+        if (latest) applyHandoffLifecycleEvent(latest)
+      })
+      .catch(() => undefined)
+  }, [activeSessionId, applyHandoffLifecycleEvent])
 
   const toggleSidebarPanel = (): void => {
     setSidebarPanelState((state) => (state === 'collapsed' ? 'open' : 'collapsed'))

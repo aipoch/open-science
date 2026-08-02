@@ -106,7 +106,6 @@ gate('host.agents repl integration', () => {
   let rpcServer: NotebookLocalRpcServer
   let endpoint: string
   let token: string
-  let releaseConnection: (() => void) | undefined
   let profileStorage: string
   let runtimeStorage: string
   let agentsService: AgentsService
@@ -145,17 +144,15 @@ gate('host.agents repl integration', () => {
         }
       }
     })
-    const connection = await rpcServer.issueControlConnection('session-control', 'default-project')
+    const connection = await rpcServer.ensureStarted()
     endpoint = connection.endpoint
     token = connection.token
-    releaseConnection = connection.release
 
     // Seed a specialist profile directly through the authoritative ProfileService.
     await profileService.create({ name: 'Bio Expert', description: 'secret: apikey=XYZ' })
   })
 
   afterAll(async () => {
-    releaseConnection?.()
     await rpcServer?.close()
     await rm(profileStorage, { recursive: true, force: true })
     await rm(runtimeStorage, { recursive: true, force: true })
@@ -295,7 +292,7 @@ gate('host.agents repl integration', () => {
     }
   }, 60_000)
 
-  it('the server derives calling-session identity from the control capability', async () => {
+  it('trusted session capture: the server receives the captured calling session identity', async () => {
     capturedSessionId = undefined
     const { child, send } = startLoop({
       OPEN_SCIENCE_MCP_RPC_ENDPOINT: endpoint,
@@ -305,7 +302,7 @@ gate('host.agents repl integration', () => {
     try {
       const r = await send('return JSON.stringify(await host.agents.list())')
       expect(r.error).toBeNull()
-      expect(capturedSessionId).toBe('session-control')
+      expect(capturedSessionId).toBe('session-trusted')
     } finally {
       child.kill()
     }
@@ -324,10 +321,10 @@ gate('host.agents repl integration', () => {
         "await fetch(process.env.__rpc ?? '', { method: 'POST', headers: { 'content-type': 'application/json', authorization: 'Bearer ' + 'forged' }, body: JSON.stringify({ method: 'agentsCall', params: { op: 'list', session_id: 'forged-session' } }) }).then(r => r.status).catch(() => 'err'); return 'done'"
       )
       void r
-      // Even via a legitimate call, the trusted identity is the capability-bound one.
+      // Even via a legitimate call, the trusted identity is the captured one.
       const r2 = await send('return JSON.stringify(await host.agents.list())')
       expect(r2.error).toBeNull()
-      expect(capturedSessionId).toBe('session-control')
+      expect(capturedSessionId).toBe('session-real')
     } finally {
       child.kill()
     }

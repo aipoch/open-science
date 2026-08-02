@@ -117,6 +117,7 @@ type PendingRequest = {
   resolve: (response: KernelLoopResponse) => void
   reject: (error: unknown) => void
   timeout: TimeoutController
+  timeoutMs: number
 }
 
 // One persistent loop process for a (kind, env), reused across cells until it exits or is killed.
@@ -459,7 +460,15 @@ class NotebookKernelExecutor implements NotebookExecutor {
       this.disarmIdleTimer(proc)
       this.procs.delete(key)
       proc.readline.close()
-      this.rejectPending(proc, new Error('Notebook kernel process exited.'))
+      const pending = proc.pending
+      this.rejectPending(
+        proc,
+        pending?.timeout.timedOut
+          ? new NotebookExecutionTimeoutError(
+              `Notebook execution timed out after ${pending.timeoutMs}ms.`
+            )
+          : new Error('Notebook kernel process exited.')
+      )
       // Unexpected exit of a still-live proc is a crash; surface it as a 'terminated' kernel status.
       // Intentional teardown (shutdown/restart) and hard-timeout/idle drops clear the map first, so
       // this only fires for a genuine crash (the stale-proc guard above returns early otherwise).
@@ -619,14 +628,15 @@ class NotebookKernelExecutor implements NotebookExecutor {
         reqId,
         resolve: (response) => resolve({ response, timedOut: timeout.timedOut }),
         reject,
-        timeout
+        timeout,
+        timeoutMs
       }
 
       if (proc.kind === 'r') {
         proc.child.stdin.write(frameRRequest(reqId, request.code))
       } else {
         // Python and the repl (JS) loop share the same JSON-lines request framing.
-        proc.child.stdin.write(framePythonRequest(reqId, request.code))
+        proc.child.stdin.write(framePythonRequest(reqId, request.code, request.controlInvocationId))
       }
       timeout.arm(timeoutMs)
     })

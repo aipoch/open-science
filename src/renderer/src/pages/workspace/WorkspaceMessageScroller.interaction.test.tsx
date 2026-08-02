@@ -11,6 +11,12 @@ import {
 import { createUploadVersionReference, type UploadedAttachment } from '../../../../shared/uploads'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import type { ReviewWithChecks } from '../../../../shared/reviewer'
+import type {
+  HandoffLifecycleEvent,
+  HandoffLifecycleEventSource
+} from '../../../../shared/handoff-lifecycle'
+
+;(globalThis as { IS_REACT_ACT_ENVIRONMENT?: boolean }).IS_REACT_ACT_ENVIRONMENT = true
 
 import type { ComposerDoc } from './composer/composer-doc'
 
@@ -109,6 +115,45 @@ const createUpload = (overrides: Partial<UploadedAttachment> = {}): UploadedAtta
   mimeType: 'image/png',
   size: 2048,
   ...overrides
+})
+
+class FakeHandoffLifecycleSource implements HandoffLifecycleEventSource {
+  private events: readonly HandoffLifecycleEvent[] = []
+  private readonly listeners = new Set<() => void>()
+
+  getEvents(sessionId: string): readonly HandoffLifecycleEvent[] {
+    return sessionId === 'session-1' ? this.events : EMPTY_HANDOFF_EVENTS
+  }
+
+  subscribe(listener: () => void): () => void {
+    this.listeners.add(listener)
+    return () => this.listeners.delete(listener)
+  }
+
+  emit(event: HandoffLifecycleEvent): void {
+    this.events = [...this.events, event]
+    for (const listener of this.listeners) listener()
+  }
+}
+
+const EMPTY_HANDOFF_EVENTS: readonly HandoffLifecycleEvent[] = []
+
+const createHandoffEvent = (
+  sequence: number,
+  phase: HandoffLifecycleEvent['phase']
+): HandoffLifecycleEvent => ({
+  id: `handoff-${sequence}`,
+  sessionId: 'session-1',
+  sequence,
+  observedAt: 1710000000150,
+  phase,
+  target: { kind: 'specialist', name: 'Data analyst' },
+  provenance: {
+    originatingTurnId: 'turn-1',
+    originatingUserMessageId: 'prompt-1',
+    attachmentIds: ['upload-1'],
+    artifactIds: ['artifact-1']
+  }
 })
 
 describe('WorkspaceMessageScroller artifact click behavior', () => {
@@ -265,6 +310,85 @@ describe('WorkspaceMessageScroller artifact click behavior', () => {
     // Reviewer pushes should update only the card. Re-rendering the complete rich transcript here made
     // large 0.9 sessions repeatedly rebuild every Markdown tree at end_turn on Windows.
     expect(agentMarkdownRenderMock).not.toHaveBeenCalled()
+  })
+
+  it('keeps streamed output and continuation in one real transcript turn across session updates', async () => {
+    const { WorkspaceMessageScroller } = await import('./WorkspaceMessageScroller')
+    const handoffSource = new FakeHandoffLifecycleSource()
+    const originalMessages = [
+      createMessage({
+        id: 'prompt-1',
+        role: 'user',
+        content: 'Analyze the sample',
+        createdAt: 1710000000000
+      }),
+      createMessage({
+        id: 'reply-before-handoff',
+        role: 'agent',
+        content: 'I inspected the input first.',
+        responseToMessageId: 'prompt-1',
+        createdAt: 1710000000100
+      })
+    ]
+    const session = createSession({ status: 'running', messages: originalMessages })
+
+    root = createRoot(container)
+    await act(async () => {
+      root.render(
+        <WorkspaceMessageScroller
+          activeSession={session}
+          onSendEditedMessage={vi.fn()}
+          handoffLifecycleSource={handoffSource}
+        />
+      )
+      handoffSource.emit(createHandoffEvent(1, 'switching'))
+    })
+
+    expect(container.textContent).toContain('Switching to Data analyst')
+
+    await act(async () => {
+      // A retained snapshot may skip intermediate broadcasts; coordinator execution is already done.
+      handoffSource.emit({
+        ...createHandoffEvent(4, 'continued'),
+        continuation: {
+          outcome: 'returned',
+          switchReadback: { target: { kind: 'specialist', name: 'Data analyst' } }
+        }
+      })
+      root.render(
+        <WorkspaceMessageScroller
+          activeSession={createSession({
+            status: 'idle',
+            messages: [
+              ...originalMessages,
+              createMessage({
+                id: 'reply-after-handoff',
+                role: 'agent',
+                content: 'Continuing with the approved specialist.',
+                responseToMessageId: 'prompt-1',
+                createdAt: 1710000000200
+              })
+            ]
+          })}
+          onSendEditedMessage={vi.fn()}
+          handoffLifecycleSource={handoffSource}
+        />
+      )
+    })
+
+    const lifecycle = container.querySelector<HTMLElement>('[data-handoff-lifecycle]')
+    expect(lifecycle?.dataset.originatingTurnId).toBe('turn-1')
+    expect(lifecycle?.dataset.originatingUserMessageId).toBe('prompt-1')
+    expect(lifecycle?.textContent).toContain('Continued with Data analyst')
+    expect(container.textContent?.match(/Analyze the sample/gu)).toHaveLength(1)
+    expect(container.textContent?.match(/I inspected the input first\./gu)).toHaveLength(1)
+    expect(
+      container.textContent?.match(/Continuing with the approved specialist\./gu)
+    ).toHaveLength(1)
+    expect(container.querySelectorAll('[data-handoff-lifecycle]')).toHaveLength(1)
+
+    await act(async () => handoffSource.emit(createHandoffEvent(2, 'reconfiguring')))
+    expect(lifecycle?.textContent).toContain('Continued with Data analyst')
   })
 
   it('upserts and activates the clicked artifact in the preview store, scoped to the active session', async () => {

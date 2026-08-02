@@ -262,9 +262,18 @@ import type {
   SetSessionSpecialistResponse,
   ResolveSessionSpecialistRequest,
   SessionSpecialistResolution,
-  PendingSwitchBroadcast
+  PendingSwitchBroadcast,
+  CompletionHandoffLifecycleEvent,
+  CompletionHandoffCommand
 } from '../shared/specialist'
 import { SPECIALIST_IPC } from '../shared/specialist'
+import {
+  HANDOFF_LIFECYCLE_IPC,
+  type HandoffEventsRequest,
+  type HandoffLifecycleChange,
+  type HandoffLifecycleEvent,
+  type HandoffRetryRequest
+} from '../shared/handoff-lifecycle'
 import {
   announceWindowFindReady,
   subscribeCloseActivePane,
@@ -462,6 +471,12 @@ type OpenScienceAPI = {
     // binding and notifies the renderer so it mirrors the pending target WITHOUT switching the live
     // agent mid-reply; the next-send barrier applies the approved identity.
     onPendingSwitch: (listener: AcpListener<PendingSwitchBroadcast>) => RemoveListener
+    getHandoffEvents: (sessionId: string) => Promise<CompletionHandoffLifecycleEvent[]>
+    onHandoffLifecycleEvent: (
+      listener: AcpListener<CompletionHandoffLifecycleEvent>
+    ) => RemoveListener
+    retryHandoff: (request: CompletionHandoffCommand) => Promise<unknown>
+    cancelHandoff: (request: CompletionHandoffCommand) => Promise<void>
     // Session switching (issue 07).
     setSessionSpecialist: (
       request: SetSessionSpecialistRequest
@@ -469,6 +484,11 @@ type OpenScienceAPI = {
     resolveSessionSpecialist: (
       request: ResolveSessionSpecialistRequest
     ) => Promise<SessionSpecialistResolution>
+  }
+  handoff: {
+    list: (request: HandoffEventsRequest) => Promise<readonly HandoffLifecycleEvent[]>
+    retry: (request: HandoffRetryRequest) => Promise<void>
+    onChanged: (listener: AcpListener<HandoffLifecycleChange>) => RemoveListener
   }
   logs: {
     getPath: () => Promise<string | null>
@@ -1072,8 +1092,18 @@ const api: OpenScienceAPI = {
       ipcRenderer.invoke(SPECIALIST_IPC.DUPLICATE, request) as Promise<CreateSpecialistRequest>,
     onCatalogChanged: (listener: () => void) =>
       onIpcMessage(SPECIALIST_IPC.CATALOG_CHANGED, listener),
-    // host.agents.switch() durable next-message switch broadcast (issue 08b).
+    // Compatibility-only pending-selection broadcast; approved SDK handoffs use lifecycle events.
     onPendingSwitch: (listener) => onIpcMessage(SPECIALIST_IPC.PENDING_SWITCH, listener),
+    getHandoffEvents: (sessionId: string) =>
+      ipcRenderer.invoke(SPECIALIST_IPC.GET_HANDOFF_EVENTS, sessionId) as Promise<
+        CompletionHandoffLifecycleEvent[]
+      >,
+    onHandoffLifecycleEvent: (listener) =>
+      onIpcMessage(SPECIALIST_IPC.HANDOFF_LIFECYCLE_CHANGED, listener),
+    retryHandoff: (request: CompletionHandoffCommand) =>
+      ipcRenderer.invoke(SPECIALIST_IPC.RETRY_HANDOFF, request) as Promise<unknown>,
+    cancelHandoff: (request: CompletionHandoffCommand) =>
+      ipcRenderer.invoke(SPECIALIST_IPC.CANCEL_HANDOFF, request) as Promise<void>,
     // Session switching (issue 07).
     setSessionSpecialist: (request: SetSessionSpecialistRequest) =>
       ipcRenderer.invoke(
@@ -1085,6 +1115,15 @@ const api: OpenScienceAPI = {
         SPECIALIST_IPC.RESOLVE_SESSION_SPECIALIST,
         request
       ) as Promise<SessionSpecialistResolution>
+  },
+  handoff: {
+    list: (request: HandoffEventsRequest) =>
+      ipcRenderer.invoke(HANDOFF_LIFECYCLE_IPC.LIST, request) as Promise<
+        readonly HandoffLifecycleEvent[]
+      >,
+    retry: (request: HandoffRetryRequest) =>
+      ipcRenderer.invoke(HANDOFF_LIFECYCLE_IPC.RETRY, request) as Promise<void>,
+    onChanged: (listener) => onIpcMessage(HANDOFF_LIFECYCLE_IPC.CHANGED, listener)
   },
   logs: {
     getPath: () => ipcRenderer.invoke('logs:get-path') as Promise<string | null>,

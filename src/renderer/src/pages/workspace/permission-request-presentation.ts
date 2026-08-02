@@ -147,6 +147,74 @@ const providerToolName = (request: AcpPermissionRequest): string | undefined =>
 // spellings are ambiguous without the configured-server context available to the broker.
 const isMcpPermissionRequest = (request: AcpPermissionRequest): boolean => request.isMcp === true
 
+// Specialist approvals are app-owned requests parked on the ACP permission broker. Their payload is
+// already redacted in main; recognize it here so the standard permission card names the requested
+// operation (switch / delete) rather than presenting it as an opaque tool call.
+const specialistApprovalPayload = (
+  request: AcpPermissionRequest
+): Record<string, unknown> | undefined => {
+  const input = getRequestInput(request)
+  const approval = input?.specialistApproval
+  if (!approval || typeof approval !== 'object' || Array.isArray(approval)) return undefined
+  return approval as Record<string, unknown>
+}
+
+const specialistSwitchPayload = (
+  request: AcpPermissionRequest
+): Record<string, unknown> | undefined => {
+  const payload = specialistApprovalPayload(request)
+  if (!payload || payload.kind !== 'switch') return undefined
+  return payload
+}
+
+// Shared with the approval card so the switch request renders its friendly specialist detail
+// block (never the raw redacted payload) exactly when this presentation applies.
+const isSpecialistSwitchRequest = (request: AcpPermissionRequest): boolean =>
+  specialistSwitchPayload(request) !== undefined
+
+const specialistDeletePayload = (
+  request: AcpPermissionRequest
+): Record<string, unknown> | undefined => {
+  const payload = specialistApprovalPayload(request)
+  if (!payload || payload.kind !== 'delete') return undefined
+  return payload
+}
+
+// Shared with the approval card so the delete request renders its friendly specialist detail
+// block (never the raw redacted payload) exactly when this presentation applies.
+const isSpecialistDeleteRequest = (request: AcpPermissionRequest): boolean =>
+  specialistDeletePayload(request) !== undefined
+
+const specialistHandoffPresentation = (
+  request: AcpPermissionRequest
+): PermissionPresentation | undefined => {
+  const payload = specialistSwitchPayload(request)
+  if (!payload) return undefined
+  const targetName = typeof payload.targetName === 'string' ? payload.targetName : undefined
+  const isMain = payload.targetName === null
+  return {
+    actionTitle: isMain ? 'Switch to Main Agent?' : `Switch to ${targetName ?? 'Specialist'}?`,
+    categoryLabel: 'Specialist handoff',
+    description: 'Approval changes the active Specialist after the current control tool completes.',
+    hideToolIdentity: true
+  }
+}
+
+const specialistDeletePresentation = (
+  request: AcpPermissionRequest
+): PermissionPresentation | undefined => {
+  const payload = specialistDeletePayload(request)
+  if (!payload) return undefined
+  const name = typeof payload.name === 'string' ? payload.name : undefined
+  return {
+    actionTitle: `Delete ${name ?? 'Specialist'}?`,
+    categoryLabel: 'Specialist delete',
+    description:
+      'Permanently removes the Specialist. Conversations still bound to it become unavailable and are not switched to Main Agent automatically.',
+    hideToolIdentity: true
+  }
+}
+
 const ARTIFACT_SERVER_SEGMENT = 'open-science-artifacts'
 const ARTIFACT_WRITE_TOOL = 'write_artifact_file'
 
@@ -207,6 +275,10 @@ const isNetworkTool = (request: AcpPermissionRequest): boolean => {
 }
 
 const describePermissionRequest = (request: AcpPermissionRequest): PermissionPresentation => {
+  const deletePresentation = specialistDeletePresentation(request)
+  if (deletePresentation) return deletePresentation
+  const specialistPresentation = specialistHandoffPresentation(request)
+  if (specialistPresentation) return specialistPresentation
   const isMcp = isMcpPermissionRequest(request)
   const notebookToolName = isMcp ? resolveNotebookRunToolName(request.mcpIdentity) : undefined
   if (notebookToolName) {
@@ -291,5 +363,11 @@ const describePermissionRequest = (request: AcpPermissionRequest): PermissionPre
   }
 }
 
-export { describePermissionRequest, isArtifactWriteRequest, isMcpPermissionRequest }
+export {
+  describePermissionRequest,
+  isArtifactWriteRequest,
+  isMcpPermissionRequest,
+  isSpecialistDeleteRequest,
+  isSpecialistSwitchRequest
+}
 export type { NotebookRuntime, PermissionPresentation }

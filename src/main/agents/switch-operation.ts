@@ -1,10 +1,10 @@
 // host.agents.switch(nameOrNull) operation module (issue 05).
 //
-// This is the standalone, durable next-message switch lifecycle for the trusted calling conversation.
+// This is the durable approved-switch operation for the trusted calling conversation.
 // It resolves the target, requests the injected issue-02 approval gateway, and — on approval —
 // persists the binding immediately and broadcasts a pending-reconfigure notification. The runtime
-// reconfigure happens at the SAFE next-message boundary, so the Agent executing this SDK call is
-// never destroyed before `agentsCall` returns (design.md §9 / PRD §8).
+// The completion gate reconfigures at the outer control-tool boundary, so the Agent executing this
+// SDK call can finish before the old prompt is stopped (design.md §9 / PRD §8).
 //
 // BOUNDARIES (design.md §9, cross-cutting requirements):
 //  - Reuses the EXISTING SessionBindingService (in-memory binding) + the EXISTING durable
@@ -19,23 +19,29 @@
 //  - Switch NEVER broadens to Main Agent on target or reconfigure failure (fail closed).
 
 import type {
+  ApprovedSwitchReadback,
   ApprovalGateway,
   PendingSwitch,
   SwitchNotifier,
   TrustedCallingSession
 } from '../../shared/agents-contract'
+import type { HandoffApprovalContext } from '../../shared/handoff-lifecycle'
 import type { SpecialistProfileView } from '../../shared/specialist'
 import type { ProfileService } from '../specialist/service'
 import type { SessionBindingService } from '../specialist/session-binding'
-import { AgentsSafeError, agentsPublicError, formatAgentsError } from './agents-error'
 
 // The method name used to prefix sanitized errors and to echo in structured results.
 export const SWITCH_METHOD = 'switch' as const
 
-class SwitchError extends AgentsSafeError {
+// Sanitizes an arbitrary cause into a top-level message. System instructions, connector args,
+// credentials, headers, environment values, and stack detail must never leak to the sandbox.
+const sanitizeCause = (cause: unknown): string =>
+  cause instanceof Error ? cause.message : String(cause)
+
+class SwitchError extends Error {
   constructor(cause: unknown) {
-    super(formatAgentsError(SWITCH_METHOD, cause))
-    this.name = 'SwitchError'
+    super(`host.agents.${SWITCH_METHOD}: ${sanitizeCause(cause)}`)
+    this.name = 'AgentsCallError'
   }
 }
 
@@ -48,17 +54,23 @@ export type SwitchOperationDeps = {
   sessionBinding: SessionBindingService
   approvalGateway: ApprovalGateway
   switchNotifier: SwitchNotifier
+  approvalLifecycle?: {
+    onAwaitingApproval(context: HandoffApprovalContext): Promise<void> | void
+    settleApproval(context: HandoffApprovalContext, approved: boolean): Promise<void> | void
+  }
   // Persists only the specialist UUID (or cleared Main binding) to the durable session file so the
   // approved binding survives application restart. Reuses the existing persistence seam.
   persistBinding: (sessionId: string, specialistId: string | undefined) => Promise<void>
   // Long-lived, session-keyed sequencer for the last-write-wins guard. The dispatcher supplies ONE
-  // shared instance (held on AgentsService) so the commit queue survives per-call instantiation;
-  // tests omit it to get a per-instance queue.
+  // shared instance (held on AgentsService) so generation state survives the per-call instantiation;
+  // tests omit it to get a per-instance sequencer.
   sequencer?: SwitchCommitSequencer
 }
 
 // Public-name-or-null params after the dispatcher strips reserved routing/identity keys. `revision`
-// optionally carries the reviewed revision so approval-time drift fails closed (PRD §8:267).
+// may carry an explicit reviewed revision. When omitted by the public switch(nameOrNull) SDK, the
+// pre-approval profile snapshot supplies the approved UUID/revision so approval-time drift still
+// fails closed.
 export type SwitchParams = {
   name?: string | null
   revision?: number
@@ -88,31 +100,49 @@ export type SwitchResult =
     }
   | { status: 'declined'; operation: typeof SWITCH_METHOD }
 
-type SwitchCommit = {
+// Internal bookkeeping for last-write-wins across interleaved approved switches. Each approved run
+// captures the monotonic generation it observed at approval time; a completion whose generation is
+// older than the newest committed generation is a stale write and is discarded.
+type PendingCommit = {
+  generation: number
   specialistId: string | undefined
   targetName: string | null
   revision?: number
 }
 
-// Long-lived, session-keyed exclusive commit queue. The dispatcher creates a fresh SwitchOperation
-// per call, so the queue lives on AgentsService and is shared by those instances. Serializing the
-// complete durable commit prevents an older slow persistence call from landing after a newer one;
-// different sessions retain independent queues.
+// Long-lived, session-keyed commit sequencer for the switch last-write-wins guard. The dispatcher
+// (agents-service.ts runSwitch) creates a FRESH SwitchOperation per host.agents.switch call, so the
+// generation counters CANNOT live on the per-call instance — they would reset to 0 every call and
+// the interleaving guard would never fire (only the single-instance unit test would pass). This
+// sequencer is held by the long-lived AgentsService and shared across every SwitchOperation it
+// spawns, keyed by sessionId so concurrent switches in different sessions never collide.
 export class SwitchCommitSequencer {
-  private readonly tails = new Map<string, Promise<void>>()
+  // Per session: highest generation CLAIMED at commit-start, and highest COMMITTED (broadcast done).
+  private readonly claimed = new Map<string, number>()
+  private readonly committed = new Map<string, number>()
 
-  enqueue<T>(sessionId: string, commit: () => Promise<T>): Promise<T> {
-    const previous = this.tails.get(sessionId) ?? Promise.resolve()
-    const result = previous.then(commit)
-    const tail = result.then(
-      () => undefined,
-      () => undefined
-    )
-    this.tails.set(sessionId, tail)
-    void tail.finally(() => {
-      if (this.tails.get(sessionId) === tail) this.tails.delete(sessionId)
-    })
-    return result
+  // Claim the next generation for this session's commit attempt. Returns whether a newer commit has
+  // already completed — if so, this attempt is stale before it persists and is discarded.
+  claim(sessionId: string): { generation: number; staleBecauseNewerCommitted: boolean } {
+    const generation = (this.claimed.get(sessionId) ?? 0) + 1
+    this.claimed.set(sessionId, generation)
+    return {
+      generation,
+      staleBecauseNewerCommitted: generation <= (this.committed.get(sessionId) ?? 0)
+    }
+  }
+
+  // After persisting, check whether a newer commit was claimed during the await. If so, this
+  // completion must not overwrite the newer target.
+  supersededByNewerClaim(sessionId: string, generation: number): boolean {
+    return generation < (this.claimed.get(sessionId) ?? 0)
+  }
+
+  // Record this generation as the newest committed for this session (monotonic; stale completions
+  // return before reaching here, so this only advances).
+  markCommitted(sessionId: string, generation: number): void {
+    const current = this.committed.get(sessionId) ?? 0
+    if (generation > current) this.committed.set(sessionId, generation)
   }
 }
 
@@ -133,7 +163,7 @@ export class SwitchOperation {
     // session id fields are already stripped by the dispatcher; we read neither here.
     const sessionId = trustedSession.sessionId
     if (!sessionId) {
-      throw new SwitchError(agentsPublicError('Missing trusted calling-session identity'))
+      throw new SwitchError('Missing trusted calling-session identity')
     }
 
     // Phase 1 — pre-approval resolution. Resolve the exact public name to the live profile so the
@@ -143,49 +173,136 @@ export class SwitchOperation {
 
     // Phase 2 — request the injected approval gateway. The summary carries ONLY the target public
     // name (or null for Main) — never system instructions, credentials, or runtime configuration.
-    const approval = await this.requestApproval(targetName, sessionId)
+    const turnId = trustedSession.turnId
+    const originatingTurnId = trustedSession.originatingTurnId ?? turnId
+    const toolInvocationId = trustedSession.toolInvocationId
+    const approvalContext: HandoffApprovalContext | undefined =
+      turnId &&
+      trustedSession.controlInvocationGeneration !== undefined &&
+      originatingTurnId &&
+      toolInvocationId
+        ? {
+            sessionId,
+            turnId,
+            controlInvocationGeneration: trustedSession.controlInvocationGeneration,
+            originatingTurnId,
+            originatingUserMessageId: trustedSession.originatingUserMessageId ?? originatingTurnId,
+            toolInvocationId,
+            target:
+              targetName === null ? { kind: 'main' } : { kind: 'specialist', name: targetName },
+            attachmentIds: trustedSession.attachmentIds ?? [],
+            artifactIds: trustedSession.artifactIds ?? []
+          }
+        : undefined
+    if (approvalContext) await this.deps.approvalLifecycle?.onAwaitingApproval(approvalContext)
+
+    let approval: Awaited<ReturnType<SwitchOperation['requestApproval']>>
+    try {
+      approval = await this.requestApproval(targetName, sessionId)
+    } catch (error) {
+      if (approvalContext) await this.deps.approvalLifecycle?.settleApproval(approvalContext, false)
+      throw error
+    }
     if (approval.status === 'declined') {
+      if (approvalContext) await this.deps.approvalLifecycle?.settleApproval(approvalContext, false)
       // Decline changes no binding, runtime, persisted session, or renderer state.
       return { status: 'declined', operation: SWITCH_METHOD }
     }
+    // Phase 3 — approval-time re-validation. Re-resolve target name → UUID and verify current
+    // enabled state and (when carried) the reviewed revision. Rename, disable, delete, or revision
+    // drift while approval was pending causes the approved call to fail closed (PRD §8:267). A Main
+    // switch (null target) needs no re-validation — clearing a binding cannot drift.
+    let committed: Awaited<ReturnType<SwitchOperation['resolveForCommit']>>
+    try {
+      committed = await this.resolveForCommit(preResolved, params.revision)
+    } catch (error) {
+      if (approvalContext) await this.deps.approvalLifecycle?.settleApproval(approvalContext, false)
+      throw error
+    }
 
-    return this.sequencer.enqueue(sessionId, async () => {
-      // Revalidate inside the exclusive commit queue so drift is checked immediately before the
-      // mutation, including time spent waiting behind an earlier commit for this session.
-      const committed = await this.resolveForCommit(preResolved, params.revision)
+    // Phase 4 — last-write-wins guard. Claim a generation (session-scoped, shared across calls via
+    // the sequencer) before the await so a newer approved switch interleaved during
+    // persistence/broadcast can supersede this completion.
+    const { generation, staleBecauseNewerCommitted } = this.sequencer.claim(sessionId)
+    if (staleBecauseNewerCommitted) {
+      if (approvalContext) await this.deps.approvalLifecycle?.settleApproval(approvalContext, false)
+      // An even newer commit already completed; this stale completion is discarded.
+      return this.readBackStale(sessionId, committed)
+    }
 
-      // Durable persistence comes first. The runtime identity changes only at the safe next-message
-      // boundary, after the approved binding has survived application restart.
-      try {
-        await this.deps.persistBinding(sessionId, committed.specialistId)
-      } catch (error) {
-        throw new SwitchError(error)
-      }
+    // Phase 5 — durable persistence FIRST. The binding survives restart immediately; runtime
+    // identity changes only at the safe next-message boundary (distinct durable vs runtime state).
+    try {
+      await this.deps.persistBinding(sessionId, committed.specialistId)
+    } catch (error) {
+      if (approvalContext) await this.deps.approvalLifecycle?.settleApproval(approvalContext, false)
+      throw new SwitchError(error)
+    }
 
-      this.deps.sessionBinding.setBinding(sessionId, committed.specialistId)
+    // A newer approved switch may have interleaved while persisting. If so, this completion is
+    // stale: do not overwrite the newer target. The newer run owns the final persisted state.
+    if (this.sequencer.supersededByNewerClaim(sessionId, generation)) {
+      if (approvalContext) await this.deps.approvalLifecycle?.settleApproval(approvalContext, false)
+      return this.readBackStale(sessionId, committed)
+    }
 
-      const pendingReconfigure: PendingSwitch = {
+    // Expose the durable binding to the live in-memory resolver (reuses SessionBindingService).
+    this.deps.sessionBinding.setBinding(sessionId, committed.specialistId)
+
+    // Broadcast the pending-reconfigure notification. The renderer renders the "takes effect next
+    // message" state; the runtime reconfigure barrier applies the approved binding at the next send.
+    // PendingSwitch carries ONLY sessionId + targetName — no system instructions or secrets. The
+    // broadcast is a BEST-EFFORT renderer mirror: the persisted binding is authoritative and applies
+    // at the next send regardless, so a notify failure must NOT surface as a thrown error to the
+    // caller — the switch has already committed. Swallow the failure and continue so this run still
+    // reaches markCommitted and reports approved.
+    const pendingReconfigure: PendingSwitch = {
+      sessionId,
+      targetName: committed.targetName,
+      ...(trustedSession.turnId ? { turnId: trustedSession.turnId } : {}),
+      ...(trustedSession.controlInvocationGeneration !== undefined
+        ? { controlInvocationGeneration: trustedSession.controlInvocationGeneration }
+        : {}),
+      ...(trustedSession.toolInvocationId
+        ? { toolInvocationId: trustedSession.toolInvocationId }
+        : {}),
+      ...(trustedSession.originatingTurnId
+        ? { originatingTurnId: trustedSession.originatingTurnId }
+        : {}),
+      ...(trustedSession.originatingUserMessageId
+        ? { originatingUserMessageId: trustedSession.originatingUserMessageId }
+        : {}),
+      ...(trustedSession.attachmentIds ? { attachmentIds: trustedSession.attachmentIds } : {}),
+      ...(trustedSession.artifactIds ? { artifactIds: trustedSession.artifactIds } : {})
+    }
+    const readback: ApprovedSwitchReadback = {
+      status: 'approved',
+      operation: SWITCH_METHOD,
+      binding: {
         sessionId,
-        targetName: committed.targetName
-      }
-      try {
+        specialistId: committed.specialistId,
+        targetName: committed.targetName,
+        ...(committed.revision !== undefined ? { revision: committed.revision } : {})
+      },
+      pendingReconfigure
+    }
+    try {
+      if (this.deps.switchNotifier.notifyApproved) {
+        await this.deps.switchNotifier.notifyApproved(pendingReconfigure, readback)
+      } else {
         await this.deps.switchNotifier.notify(pendingReconfigure)
-      } catch {
-        // Best-effort mirror; the durable binding already took effect. Do not throw.
       }
+    } catch (error) {
+      if (this.deps.switchNotifier.authority === 'completion-gate') throw error
+      // Best-effort mirror; the durable binding already took effect. Do not throw.
+    }
+    if (approvalContext) await this.deps.approvalLifecycle?.settleApproval(approvalContext, true)
 
-      return {
-        status: 'approved' as const,
-        operation: SWITCH_METHOD,
-        binding: {
-          sessionId,
-          specialistId: committed.specialistId,
-          targetName: committed.targetName,
-          ...(committed.revision !== undefined ? { revision: committed.revision } : {})
-        },
-        pendingReconfigure
-      }
-    })
+    // If an even newer switch interleaved during broadcast, the newest target still wins; this run
+    // reports its own commit but does not clobber the newer persisted state.
+    this.sequencer.markCommitted(sessionId, generation)
+
+    return readback
   }
 
   // Resolves the target public name to the live profile (pre-approval). null selects Main Agent
@@ -202,7 +319,7 @@ export class SwitchOperation {
       throw new SwitchError(error)
     }
     if (!profile.enabled) {
-      throw new SwitchError(agentsPublicError(`Specialist "${targetName}" is not enabled`))
+      throw new SwitchError(`Specialist "${targetName}" is not enabled`)
     }
     return { kind: 'specialist', profile }
   }
@@ -253,14 +370,16 @@ export class SwitchOperation {
   }
 
   // Approval-time re-resolution + drift check. Re-resolves name → UUID, verifies enabled state, and
-  // (when a reviewed revision was carried) verifies the revision still matches. Failure fails closed
-  // and never broadens to Main Agent. Returns the commit descriptor (specialistId/revision or Main).
+  // verifies that both UUID and revision still match the identity shown for approval. An explicit
+  // reviewed revision wins when carried; otherwise the pre-approval snapshot is authoritative.
+  // Failure fails closed and never broadens to Main Agent. Returns the commit descriptor
+  // (specialistId/revision or Main).
   private async resolveForCommit(
     preResolved: { kind: 'main' } | { kind: 'specialist'; profile: SpecialistProfileView },
     reviewedRevision: number | undefined
-  ): Promise<SwitchCommit> {
+  ): Promise<PendingCommit> {
     if (preResolved.kind === 'main') {
-      return { specialistId: undefined, targetName: null }
+      return { generation: 0, specialistId: undefined, targetName: null }
     }
     const name = preResolved.profile.name
     let profile: SpecialistProfileView
@@ -271,21 +390,51 @@ export class SwitchOperation {
       throw new SwitchError(error)
     }
     if (!profile.enabled) {
-      throw new SwitchError(
-        agentsPublicError(`Specialist "${name}" was disabled before the switch committed`)
-      )
+      throw new SwitchError(`Specialist "${name}" was disabled before the switch committed`)
     }
-    if (reviewedRevision !== undefined && profile.revision !== reviewedRevision) {
+    if (profile.id !== preResolved.profile.id) {
+      throw new SwitchError(`Specialist "${name}" identity changed before the switch committed`)
+    }
+    const approvedRevision = reviewedRevision ?? preResolved.profile.revision
+    if (profile.revision !== approvedRevision) {
       throw new SwitchError(
-        agentsPublicError(
-          `Specialist "${name}" revision changed (${reviewedRevision} → ${profile.revision}) before the switch committed`
-        )
+        `Specialist "${name}" revision changed (${approvedRevision} → ${profile.revision}) before the switch committed`
       )
     }
     return {
+      generation: 0,
       specialistId: profile.id,
       targetName: profile.name,
       revision: profile.revision
+    }
+  }
+
+  // Read-back for a stale completion. The stale run returns its own observed target so the caller
+  // sees a coherent result, but it has NOT overwritten the newer persisted target (it returned
+  // before persistence/broadcast). Main-targeted stale reads report a cleared binding.
+  private readBackStale(
+    sessionId: string,
+    committed: PendingCommit
+  ): {
+    status: 'approved'
+    operation: typeof SWITCH_METHOD
+    binding: SwitchBindingReadBack
+    pendingReconfigure: PendingSwitch
+  } {
+    const pendingReconfigure: PendingSwitch = {
+      sessionId,
+      targetName: committed.targetName
+    }
+    return {
+      status: 'approved',
+      operation: SWITCH_METHOD,
+      binding: {
+        sessionId,
+        specialistId: committed.specialistId,
+        targetName: committed.targetName,
+        ...(committed.revision !== undefined ? { revision: committed.revision } : {})
+      },
+      pendingReconfigure
     }
   }
 }

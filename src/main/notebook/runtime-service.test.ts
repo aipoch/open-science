@@ -42,6 +42,10 @@ import type { EnvironmentInfo } from '../../shared/notebook-env'
 import type { NotebookEnvironmentManifest, NotebookEnvironmentStatus } from '../../shared/notebook'
 import type { DiscoveredInterpreter, RuntimeEnablement } from '../../shared/notebook-runtime'
 import {
+  CompletionGateCoordinator,
+  createCompletionGatedControlToolInterceptor
+} from '../agents/completion-gate'
+import {
   addRepairRequired,
   DEFAULT_ENV_VERSION,
   DEFAULT_PY_ENV,
@@ -940,13 +944,193 @@ describe('notebook runtime service', () => {
     })
   })
 
-  it('caches a session-bound control connection and releases it with the runtime session', async () => {
+  it('intercepts an approved control completion before repl_execute can return it to the old prompt', async () => {
+    const root = await createStorageRoot()
+    const calls: string[] = []
+    const service = new NotebookRuntimeService({
+      configRoot: root,
+      dataRoot: root,
+      projectName: 'default-project',
+      repository: new NotebookRunRepository(root),
+      executorFactory: () => ({
+        execute: async (request): Promise<NotebookExecutionResult> => ({
+          status: 'completed',
+          stdout: 'after switch\n',
+          stderr: '',
+          traceback: '',
+          cwdAfter: request.cwd,
+          outputs: []
+        }),
+        shutdown: async () => ({ reaped: true })
+      })
+    })
+    const continuationContexts: unknown[] = []
+    const coordinator = new CompletionGateCoordinator({
+      stopOldPrompt: async () => {
+        calls.push('stop-old-prompt')
+      },
+      waitForOwnershipRelease: async () => {
+        calls.push('ownership-released')
+      },
+      reconfigure: async () => {
+        calls.push('reconfigure')
+      },
+      continueAsApproved: async (_handoff, _context, continuationContext) => {
+        calls.push('continue-approved')
+        continuationContexts.push(continuationContext)
+      },
+      reportHandoffFailure: async () => undefined
+    })
+    const deliverToOldPrompt = vi.fn(async () => undefined)
+    const now = vi.spyOn(Date, 'now').mockReturnValue(1)
+    coordinator.arm(
+      {
+        sessionId: 'session-1',
+        turnId: 'notebook-run-1-1',
+        controlInvocationGeneration: 1,
+        toolInvocationId: 'notebook-run-1-1'
+      },
+      'Approved Specialist'
+    )
+
+    service.setControlCompletionInterceptor(
+      createCompletionGatedControlToolInterceptor(coordinator, deliverToOldPrompt)
+    )
+
+    await expect(
+      service.executeControl({
+        sessionId: 'session-1',
+        workspaceCwd: root,
+        code: 'await host.agents.switch({ specialist: "Approved Specialist" })',
+        provenanceContext: {
+          rootFrameId: 'root-1',
+          agentFrameId: 'agent-1',
+          messageBranchId: 'branch-1',
+          runtimeSegmentId: 'runtime-1',
+          promptMessageId: 'prompt-1'
+        },
+        registeredInputFiles: [
+          {
+            inputFileVersionId: 'upload-version-1',
+            sourceKind: 'upload-version',
+            sourceFileId: 'upload-1',
+            sourceProjectId: 'project-1',
+            sourceSessionId: 'session-1',
+            filename: 'sample.csv',
+            sizeBytes: 10,
+            checksum: 'sha256:upload',
+            storageKey: 'upload-key',
+            association: 'turn-attached'
+          },
+          {
+            inputFileVersionId: 'artifact-version-1',
+            sourceKind: 'artifact-version',
+            sourceFileId: 'artifact-1',
+            sourceProjectId: 'project-1',
+            sourceSessionId: 'session-1',
+            filename: 'prior.csv',
+            sizeBytes: 20,
+            checksum: 'sha256:artifact',
+            storageKey: 'artifact-key',
+            association: 'turn-attached'
+          }
+        ]
+      })
+    ).rejects.toThrow('captured for specialist handoff')
+
+    expect(deliverToOldPrompt).not.toHaveBeenCalled()
+    expect(calls).toEqual([
+      'stop-old-prompt',
+      'ownership-released',
+      'reconfigure',
+      'continue-approved'
+    ])
+    expect(continuationContexts).toEqual([
+      expect.objectContaining({
+        originatingTurnId: 'prompt-1',
+        originatingUserMessageId: 'prompt-1',
+        attachmentIds: ['upload-1'],
+        artifactIds: ['artifact-1']
+      })
+    ])
+    now.mockRestore()
+  })
+
+  it('releases the control queue before an approved continuation re-enters executeControl', async () => {
+    const root = await createStorageRoot()
+    const executedCodes: string[] = []
+    const calls: string[] = []
+    const service = new NotebookRuntimeService({
+      configRoot: root,
+      dataRoot: root,
+      projectName: 'default-project',
+      repository: new NotebookRunRepository(root),
+      executorFactory: () => ({
+        execute: async (request): Promise<NotebookExecutionResult> => {
+          executedCodes.push(request.code)
+          return {
+            status: 'completed',
+            stdout: request.code,
+            stderr: '',
+            traceback: '',
+            cwdAfter: request.cwd,
+            outputs: []
+          }
+        },
+        shutdown: async () => ({ reaped: true })
+      })
+    })
+    const coordinator = new CompletionGateCoordinator({
+      stopOldPrompt: async () => undefined,
+      waitForOwnershipRelease: async () => undefined,
+      reconfigure: async () => undefined,
+      continueAsApproved: async () => {
+        const continuation = await service.executeControl({
+          sessionId: 'session-1',
+          workspaceCwd: root,
+          code: 'approved continuation'
+        })
+        calls.push(continuation.stdout)
+      },
+      reportHandoffFailure: async () => undefined
+    })
+    const now = vi.spyOn(Date, 'now').mockReturnValue(2)
+    coordinator.arm(
+      {
+        sessionId: 'session-1',
+        turnId: 'notebook-run-2-1',
+        controlInvocationGeneration: 1,
+        toolInvocationId: 'notebook-run-2-1'
+      },
+      'Approved Specialist'
+    )
+    service.setControlCompletionInterceptor(
+      createCompletionGatedControlToolInterceptor(coordinator, async () => undefined)
+    )
+
+    await expect(
+      service.executeControl({
+        sessionId: 'session-1',
+        workspaceCwd: root,
+        code: 'outer control tool'
+      })
+    ).rejects.toThrow('captured for specialist handoff')
+
+    expect(executedCodes).toEqual(['outer control tool', 'approved continuation'])
+    expect(calls).toEqual(['approved continuation'])
+    now.mockRestore()
+  })
+
+  it('binds each executeControl generation to the cached session capability and releases both lifetimes', async () => {
     const root = await createStorageRoot()
     const executions: NotebookExecutionRequest[] = []
     const release = vi.fn()
+    const releaseInvocation = vi.fn()
+    const beginControlInvocation = vi.fn(() => releaseInvocation)
     const resolveConnection = vi.fn(async (binding: { sessionId: string; projectId: string }) => ({
       endpoint: 'http://127.0.0.1:1/x',
       token: 'session-token',
+      beginControlInvocation,
       release,
       binding
     }))
@@ -972,13 +1156,18 @@ describe('notebook runtime service', () => {
     })
     service.setMcpRpcConnectionResolver(resolveConnection)
 
-    for (const code of ['return 1', 'return 2']) {
-      await service.executeControl({
-        projectName: 'default-project',
-        sessionId: 'session-1',
-        workspaceCwd: root,
-        code
-      })
+    const now = vi.spyOn(Date, 'now').mockReturnValue(42)
+    try {
+      for (const code of ['return 1', 'return 2']) {
+        await service.executeControl({
+          projectName: 'default-project',
+          sessionId: 'session-1',
+          workspaceCwd: root,
+          code
+        })
+      }
+    } finally {
+      now.mockRestore()
     }
 
     expect(resolveConnection).toHaveBeenCalledOnce()
@@ -990,6 +1179,17 @@ describe('notebook runtime service', () => {
       'session-token',
       'session-token'
     ])
+    expect(beginControlInvocation).toHaveBeenNthCalledWith(1, {
+      turnId: 'notebook-run-42-1',
+      controlInvocationGeneration: 1,
+      toolInvocationId: 'notebook-run-42-1'
+    })
+    expect(beginControlInvocation).toHaveBeenNthCalledWith(2, {
+      turnId: 'notebook-run-42-2',
+      controlInvocationGeneration: 2,
+      toolInvocationId: 'notebook-run-42-2'
+    })
+    expect(releaseInvocation).toHaveBeenCalledTimes(2)
 
     await service.shutdown({ sessionId: 'session-1', workspaceCwd: root })
     expect(release).toHaveBeenCalledOnce()

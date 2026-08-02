@@ -5,6 +5,8 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 
 import { SettingsPage } from './SettingsPage'
 import { clickRadixMenuItem, openRadixMenu } from './test-utils'
+import type { SpecialistProfileView } from '../../../../shared/specialist'
+import { useSpecialistStore } from '@/stores/specialist-store'
 import { createInitialSettingsState, useSettingsStore } from '@/stores/settings-store'
 
 if (!Element.prototype.hasPointerCapture) {
@@ -1643,6 +1645,49 @@ describe('SettingsPage layout', () => {
 
     expect(navButton('Storage')?.getAttribute('aria-current')).toBe('page')
     expect(useSettingsStore.getState().pendingSettingsPanel).toBeUndefined()
+  })
+
+  it('opens directly on a specialist editor when the store has a pending specialist', async () => {
+    // The switch approval card deep-links to one specialist's editor: the pending id is set
+    // before the dialog opens, and the catalog resolves that profile.
+    const researcher: SpecialistProfileView = {
+      id: 'spc-1',
+      name: 'RESEARCHER',
+      displayName: 'Researcher',
+      description: 'Conducts systematic literature reviews.',
+      systemPrompt: 'You are a literature review specialist.',
+      iconKey: 'search',
+      colorKey: 'blue',
+      enabled: true,
+      capabilityMode: 'full',
+      fullAccess: { excludedSkillIds: [], excludedConnectorIds: [], connectorTools: [] },
+      selectedCapabilities: { skillIds: [], connectorIds: [], connectorTools: [] },
+      revision: 1
+    }
+    ;(window.api.specialist.list as ReturnType<typeof vi.fn>).mockResolvedValue([
+      { kind: 'custom', ...researcher }
+    ])
+    useSpecialistStore.setState({ items: [{ kind: 'custom', ...researcher }], isLoaded: true })
+    useSettingsStore.setState({ pendingSpecialistId: researcher.id })
+
+    await act(async () => {
+      root.render(<SettingsPage open onClose={vi.fn()} />)
+    })
+    // Flush the seeding effect, the specialists-list load, and the editor mount.
+    await act(async () => {
+      await Promise.resolve()
+    })
+    await act(async () => {
+      await Promise.resolve()
+    })
+
+    // Landed on the specialist's editor (name input prefilled with the public name), not the
+    // default Model panel.
+    const name = document.body.querySelector<HTMLInputElement>('#sp-name')
+    expect(name?.value).toBe('RESEARCHER')
+    expect(document.body.querySelector('section[aria-label="Providers"]')).toBeNull()
+    // The pending id is consumed so a later normal open won't jump back to it.
+    expect(useSettingsStore.getState().pendingSpecialistId).toBeUndefined()
   })
 
   it('opens the specialist creation form from Write from scratch', async () => {

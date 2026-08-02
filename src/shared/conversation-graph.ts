@@ -380,7 +380,9 @@ export const synchronizeActiveConversationActivities = (
   const byActivityId = indexById(next.activities)
 
   for (const activity of activities) {
-    const prompt = promptForTime(activity.createdAt)
+    const prompt = activity.promptMessageId
+      ? userMessages.find((message) => message.id === activity.promptMessageId)
+      : promptForTime(activity.createdAt)
     if (!prompt) continue
     const runtimeSegmentId =
       prompt.runtimeSegmentId ??
@@ -406,9 +408,11 @@ export const synchronizeActiveConversationActivities = (
     const firstActivity = group.activityIds
       .map((id) => byActivityId.get(id))
       .find((activity) => activity !== undefined)
-    const prompt = firstActivity
-      ? path.find((message) => message.id === firstActivity.promptMessageId)
-      : promptForTime(group.createdAt)
+    const prompt = group.promptMessageId
+      ? userMessages.find((message) => message.id === group.promptMessageId)
+      : firstActivity
+        ? path.find((message) => message.id === firstActivity.promptMessageId)
+        : promptForTime(group.createdAt)
     if (!prompt) continue
     const scoped: PersistedBranchActivityGroup = {
       ...group,

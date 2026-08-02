@@ -1,6 +1,7 @@
 import { describe, expect, it } from 'vitest'
 
 import type { ChatSession, ToolActivity } from '@/stores/session-store'
+import type { HandoffLifecycleEvent } from '../../../../shared/handoff-lifecycle'
 import {
   createConversationItems,
   formatActivityTitle,
@@ -41,9 +42,7 @@ describe('workspace conversation items', () => {
 
   it('keeps the projected Codex Skill name when a load fails', () => {
     expect(
-      formatActivityTitle(
-        createActivity({ title: 'Loading skill: mcp-pubmed', status: 'failed' })
-      )
+      formatActivityTitle(createActivity({ title: 'Loading skill: mcp-pubmed', status: 'failed' }))
     ).toBe('Skill failed: mcp-pubmed')
   })
 
@@ -87,6 +86,77 @@ describe('workspace conversation items', () => {
       'activity-tool-web-1',
       'message-2'
     ])
+  })
+
+  it('anchors a handoff lifecycle row to the original user turn without inventing another user message', () => {
+    const session: ChatSession = {
+      ...baseSession,
+      messages: [
+        {
+          id: 'user-1',
+          role: 'user',
+          content: 'Analyze the sample',
+          status: 'complete',
+          eventIds: [],
+          sortIndex: 1,
+          createdAt: 1_000,
+          updatedAt: 1_000
+        },
+        {
+          id: 'assistant-1',
+          role: 'agent',
+          content: 'I will inspect the input first.',
+          status: 'complete',
+          responseToMessageId: 'user-1',
+          eventIds: [],
+          sortIndex: 3,
+          createdAt: 1_200,
+          updatedAt: 1_200
+        },
+        {
+          id: 'assistant-2',
+          role: 'agent',
+          content: 'Continuing with the approved specialist.',
+          status: 'streaming',
+          responseToMessageId: 'user-1',
+          eventIds: [],
+          sortIndex: 4,
+          createdAt: 1_300,
+          updatedAt: 1_300
+        }
+      ]
+    }
+    const handoff: HandoffLifecycleEvent = {
+      id: 'handoff-1',
+      sessionId: 'session-1',
+      sequence: 2,
+      observedAt: 1_100,
+      phase: 'reconfiguring',
+      target: { kind: 'specialist', name: 'Data analyst' },
+      provenance: {
+        originatingTurnId: 'turn-1',
+        originatingUserMessageId: 'user-1',
+        attachmentIds: ['upload-1'],
+        artifactIds: ['artifact-1']
+      }
+    }
+
+    const items = createConversationItems(session, [handoff])
+
+    expect(items.map((item) => item.id)).toEqual([
+      'user-1',
+      'handoff:session-1:turn-1',
+      'assistant-1',
+      'assistant-2'
+    ])
+    expect(
+      items.filter((item) => item.type === 'message' && item.message.role === 'user')
+    ).toHaveLength(1)
+    expect(items.find((item) => item.type === 'handoff')).toMatchObject({
+      originatingUserMessageId: 'user-1',
+      phase: 'reconfiguring',
+      provenance: { attachmentIds: ['upload-1'], artifactIds: ['artifact-1'] }
+    })
   })
 
   it('formats activities by tool identity without exposing title details', () => {

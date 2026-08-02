@@ -14,6 +14,8 @@ import {
   describePermissionRequest,
   isArtifactWriteRequest,
   isMcpPermissionRequest,
+  isSpecialistDeleteRequest,
+  isSpecialistSwitchRequest,
   type PermissionPresentation,
   type NotebookRuntime
 } from './permission-request-presentation'
@@ -22,6 +24,8 @@ import {
   type BroadPermissionScope,
   type PermissionScopeConfirmation
 } from './PermissionScopeConfirmationDialog'
+import { SpecialistDeleteDetail } from './SpecialistDeleteDetail'
+import { SpecialistSwitchDetail } from './SpecialistSwitchDetail'
 import { WorkspaceToolCodeBlock } from './WorkspaceToolCodeBlock'
 
 type PermissionApprovalControlsProps = {
@@ -655,6 +659,9 @@ const PermissionApprovalControls = ({
 
   const isMcp = isMcpPermissionRequest(request)
   const isShell = !isMcp && (request.toolKind === 'execute' || request.providerToolName === 'Bash')
+  // Specialist deletes render the primary action as a destructive Delete (prototype scene 8) — the
+  // only request kind that re-words and recolors the Allow control.
+  const isDeleteRequest = isSpecialistDeleteRequest(request)
 
   // Most identity details stay in the impact tip. When no path or preview exists, retain the only
   // actionable target inline so the approval is reviewable without relying on hover.
@@ -731,9 +738,13 @@ const PermissionApprovalControls = ({
         <p className="break-all text-xs text-muted-foreground">{titleDetail}</p>
       ) : null}
 
-      {/* Activity-style card showing the code that will run.
-          Keyed by requestId so the collapsed/expanded state never carries over between prompts. */}
-      {permCode && (
+      {/* Specialist switch/delete requests show a friendly detail block instead of the raw
+          redacted payload; all other requests keep the activity-style code preview. */}
+      {isSpecialistSwitchRequest(request) ? (
+        <SpecialistSwitchDetail request={request} />
+      ) : isSpecialistDeleteRequest(request) ? (
+        <SpecialistDeleteDetail request={request} />
+      ) : permCode ? (
         <PermissionCodeSection
           key={requestId}
           title={getPermissionActionTitle(
@@ -743,7 +754,7 @@ const PermissionApprovalControls = ({
           code={permCode.code}
           language={permCode.language}
         />
-      )}
+      ) : null}
 
       {/* Allow / Deny button row; wraps so long provider-supplied option labels can never
           push the primary Allow/Deny controls out of view. */}
@@ -766,19 +777,35 @@ const PermissionApprovalControls = ({
               ref={allowPrimaryRef}
               type="button"
               data-testid="allow-primary"
-              className="inline-flex h-8 select-none items-center justify-center gap-1 whitespace-nowrap bg-primary px-3 text-sm text-primary-foreground outline-none transition-colors hover:bg-primary/80 focus-visible:ring-3 focus-visible:ring-ring/50 disabled:opacity-50"
+              className={cn(
+                'inline-flex h-8 select-none items-center justify-center gap-1 whitespace-nowrap px-3 text-sm outline-none transition-colors focus-visible:ring-3 focus-visible:ring-ring/50 disabled:opacity-50',
+                isDeleteRequest
+                  ? 'bg-destructive text-destructive-foreground hover:bg-destructive/80'
+                  : 'bg-primary text-primary-foreground hover:bg-primary/80'
+              )}
               disabled={!allowOptionId || isSubmitting}
               onClick={() => {
                 if (!allowOptionId) return
                 respondOnce(allowOptionId)
               }}
             >
-              <span className="font-semibold">Allow</span>{' '}
-              <span className="font-normal">{scopeLabel[effectiveScope]}</span>
+              {isDeleteRequest ? (
+                <span className="font-semibold">Delete</span>
+              ) : (
+                <>
+                  <span className="font-semibold">Allow</span>{' '}
+                  <span className="font-normal">{scopeLabel[effectiveScope]}</span>
+                </>
+              )}
             </button>
             {hasScopePicker ? (
               <>
-                <div className="w-px bg-primary-foreground/25" />
+                <div
+                  className={cn(
+                    'w-px',
+                    isDeleteRequest ? 'bg-destructive-foreground/25' : 'bg-primary-foreground/25'
+                  )}
+                />
                 <button
                   ref={scopeTriggerRef}
                   type="button"
@@ -786,7 +813,12 @@ const PermissionApprovalControls = ({
                   aria-label="Choose authorization scope"
                   aria-expanded={scopeOpen}
                   aria-haspopup="menu"
-                  className="inline-flex h-8 select-none items-center justify-center bg-primary px-2 text-primary-foreground outline-none transition-colors hover:bg-primary/80 focus-visible:ring-3 focus-visible:ring-ring/50"
+                  className={cn(
+                    'inline-flex h-8 select-none items-center justify-center px-2 outline-none transition-colors focus-visible:ring-3 focus-visible:ring-ring/50',
+                    isDeleteRequest
+                      ? 'bg-destructive text-destructive-foreground hover:bg-destructive/80'
+                      : 'bg-primary text-primary-foreground hover:bg-primary/80'
+                  )}
                   disabled={isSubmitting}
                   onClick={(e) => {
                     // Stop propagation so this click doesn't reach the dropdown's document

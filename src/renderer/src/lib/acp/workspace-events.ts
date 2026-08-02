@@ -395,11 +395,12 @@ const applyWorkspaceRuntimeEvent = async (
       return true
     }
 
-    store.completeActivityGroup(event.sessionId)
+    store.completeActivityGroup(event.sessionId, event.promptMessageId)
     store.appendAgentMessageChunk({
       sessionId: event.sessionId,
       streamId: createRuntimeStreamId(event),
       eventId: event.id,
+      promptMessageId: event.promptMessageId,
       content,
       image
     })
@@ -410,7 +411,9 @@ const applyWorkspaceRuntimeEvent = async (
   if (event.kind === 'tool' && event.sessionId && event.toolCallId) {
     if (isActivityGroupControlEvent(event)) {
       const title = getActivityGroupTitleFromToolEvent(event)
-      if (title) store.beginActivityGroup(event.sessionId, event.toolCallId, title)
+      if (title) {
+        store.beginActivityGroup(event.sessionId, event.toolCallId, title, event.promptMessageId)
+      }
       return true
     }
 
@@ -418,6 +421,7 @@ const applyWorkspaceRuntimeEvent = async (
       sessionId: event.sessionId,
       toolCallId: event.toolCallId,
       eventId: event.id,
+      promptMessageId: event.promptMessageId,
       title: event.title,
       status: event.status,
       providerToolName: event.providerToolName,
@@ -436,7 +440,8 @@ const applyWorkspaceRuntimeEvent = async (
     activityGroupToolCallIdsBySession.delete(event.sessionId)
     const deferredArtifacts = deferredArtifactEventsBySession.get(event.sessionId)
     const activeSession = store.sessions.find((session) => session.id === event.sessionId)
-    const terminalPromptMessageId = activeSession?.activeRun?.promptMessageId
+    const terminalPromptMessageId =
+      event.promptMessageId ?? activeSession?.activeRun?.promptMessageId
     let deferredAttachmentError: unknown
     let deferredAttachmentFailed = false
 
@@ -455,7 +460,7 @@ const applyWorkspaceRuntimeEvent = async (
       }
     }
 
-    store.finishRun(event.sessionId, event.turnUsage)
+    store.finishRun(event.sessionId, event.turnUsage, event.promptMessageId)
 
     const terminalSession = useSessionStore
       .getState()

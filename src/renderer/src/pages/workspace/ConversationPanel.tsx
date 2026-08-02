@@ -62,6 +62,7 @@ import { SessionInterruptedBanner } from './SessionInterruptedBanner'
 import { ExtensionPreservingFileName } from './ExtensionPreservingFileName'
 import { WorkspaceMessageScroller } from './WorkspaceMessageScroller'
 import { WorkspaceMessageEditStateProvider } from './workspace-message-edit-state'
+import { workspaceHandoffLifecycleClient } from './handoff-lifecycle-source'
 
 const composerInteractiveTransitionClassName = 'transition-colors duration-200 ease-out'
 
@@ -160,7 +161,11 @@ type ConversationPanelProps = {
   specialistHasPendingSwitch?: boolean
   onSpecialistChange?: (specialistId: string | undefined) => void
   // Reconfigure failure recovery callbacks.
-  reconfigureError?: { sessionId: string; specialistName: string; message: string } | null
+  reconfigureError?: {
+    sessionId: string
+    specialistName: string
+    message: string
+  } | null
   onReconfigureRetry?: () => void
   onReconfigureChooseOther?: () => void
   onReconfigureUseNone?: () => void
@@ -351,6 +356,8 @@ const ConversationPanel = ({
           <WorkspaceMessageScroller
             activeSession={activeSession}
             onSendEditedMessage={onSendEditedMessage}
+            handoffLifecycleSource={workspaceHandoffLifecycleClient}
+            onRetryHandoff={(request) => workspaceHandoffLifecycleClient.retry(request)}
           />
         </WorkspaceMessageEditStateProvider>
 
@@ -479,7 +486,7 @@ const ConversationPanel = ({
                       />
                       <div className="min-w-0 flex-1">
                         <div className="text-[12px] font-medium leading-5 text-red-300">
-                          Could not switch to {reconfigureError.specialistName}
+                          {`Could not switch to ${reconfigureError.specialistName}`}
                         </div>
                         <div className="text-[11px] leading-4 text-red-400/80">
                           The agent session could not be reconfigured. Your draft has been
@@ -728,17 +735,16 @@ const ConversationPanel = ({
                           onSpecialistChange={onSpecialistChange}
                         />
 
-                        {/* Pending-switch chip: appears to the right of the specialist badge when
-                            the user picked a different specialist during a running turn. The badge
-                            still shows the currently-effective specialist; this chip signals the
-                            next message will use the newly selected one. */}
+                        {/* Compatibility indicator for an explicit user selection while a turn is
+                            running. Approved SDK switches are represented by the durable lifecycle
+                            row and never wait for another user message. */}
                         {specialistHasPendingSwitch ? (
                           <span
                             className="flex shrink-0 items-center gap-1.5 whitespace-nowrap rounded-full border border-blue-500/25 bg-blue-500/10 px-2 py-0.5 text-[11px] italic text-blue-400"
                             data-testid="specialist-pending-switch-chip"
                             aria-label="Specialist switch pending"
                           >
-                            Switches after this response
+                            Switching in this turn
                           </span>
                         ) : null}
 

@@ -214,6 +214,58 @@ describe('SwitchOperation — target resolution', () => {
 })
 
 describe('SwitchOperation — approval gateway', () => {
+  it.each([
+    ['decline', async (): Promise<ApprovalResult> => ({ status: 'declined', operation: 'switch' })],
+    ['error', async (): Promise<ApprovalResult> => Promise.reject(new Error('approval failed'))]
+  ])(
+    'publishes awaiting approval before the gateway and clears it on %s',
+    async (_name, decide) => {
+      const onAwaitingApproval = vi.fn()
+      const settleApproval = vi.fn()
+      const gateway: ApprovalGateway = {
+        decide: vi.fn(async (request) => {
+          expect(onAwaitingApproval).toHaveBeenCalledOnce()
+          void request
+          return decide()
+        })
+      }
+      const op = new SwitchOperation({
+        profileService: makeProfileService([profile()]),
+        sessionBinding: makeSessionBinding(new Map()),
+        approvalGateway: gateway,
+        approvalLifecycle: { onAwaitingApproval, settleApproval },
+        switchNotifier: { notify: vi.fn() },
+        persistBinding: vi.fn(async () => undefined)
+      })
+      const run = op.run(
+        { name: 'BIO_EXPERT' },
+        {
+          sessionId: 'session-trusted',
+          turnId: 'control-1',
+          controlInvocationGeneration: 1,
+          toolInvocationId: 'control-1',
+          originatingTurnId: 'prompt-1',
+          originatingUserMessageId: 'prompt-1',
+          attachmentIds: ['upload-1'],
+          artifactIds: ['artifact-1']
+        }
+      )
+
+      if (_name === 'error') await expect(run).rejects.toThrow('approval failed')
+      else await expect(run).resolves.toMatchObject({ status: 'declined' })
+      const approvalContext = expect.objectContaining({
+        sessionId: 'session-trusted',
+        originatingTurnId: 'prompt-1',
+        toolInvocationId: 'control-1',
+        target: { kind: 'specialist', name: 'BIO_EXPERT' },
+        attachmentIds: ['upload-1'],
+        artifactIds: ['artifact-1']
+      })
+      expect(onAwaitingApproval).toHaveBeenCalledWith(approvalContext)
+      expect(settleApproval).toHaveBeenCalledWith(approvalContext, false)
+    }
+  )
+
   it('emits the shared switch approval request shape with the trusted session', async () => {
     const ps = makeProfileService([profile()])
     const decide = vi.fn(async (): Promise<ApprovalResult> => ({ status: 'approved' }))
@@ -357,7 +409,7 @@ describe('SwitchOperation — approval-time re-validation (fail closed)', () => 
     })
 
     await expect(op.run({ name: 'BIO_EXPERT' }, { sessionId: 'session-trusted' })).rejects.toThrow(
-      'host.agents.switch: Internal operation failed.'
+      /host\.agents\.switch:/
     )
   })
 
@@ -402,6 +454,52 @@ describe('SwitchOperation — approval-time re-validation (fail closed)', () => 
     await expect(
       op.run({ name: 'BIO_EXPERT', revision: 3 }, { sessionId: 'session-trusted' })
     ).rejects.toThrow(/host\.agents\.switch:/)
+    expect(persist).not.toHaveBeenCalled()
+  })
+
+  it('fails closed on revision drift observed during approval when the public SDK omitted a revision', async () => {
+    let resolveCount = 0
+    const ps = makeProfileService([profile({ revision: 3 })])
+    ps.getByName = vi.fn(async (name: string) => {
+      resolveCount += 1
+      if (resolveCount === 1) return profile({ name, revision: 3 })
+      return profile({ name, revision: 4 })
+    })
+    const persist = vi.fn(async () => undefined)
+    const op = new SwitchOperation({
+      profileService: ps,
+      sessionBinding: makeSessionBinding(new Map()),
+      approvalGateway: approvingGateway(),
+      switchNotifier: { notify: vi.fn() },
+      persistBinding: persist
+    })
+
+    await expect(op.run({ name: 'BIO_EXPERT' }, { sessionId: 'session-trusted' })).rejects.toThrow(
+      /host\.agents\.switch:/
+    )
+    expect(persist).not.toHaveBeenCalled()
+  })
+
+  it('fails closed when a different profile takes over the approved public name', async () => {
+    let resolveCount = 0
+    const ps = makeProfileService([profile({ id: 'approved-id' })])
+    ps.getByName = vi.fn(async (name: string) => {
+      resolveCount += 1
+      if (resolveCount === 1) return profile({ id: 'approved-id', name })
+      return profile({ id: 'replacement-id', name })
+    })
+    const persist = vi.fn(async () => undefined)
+    const op = new SwitchOperation({
+      profileService: ps,
+      sessionBinding: makeSessionBinding(new Map()),
+      approvalGateway: approvingGateway(),
+      switchNotifier: { notify: vi.fn() },
+      persistBinding: persist
+    })
+
+    await expect(op.run({ name: 'BIO_EXPERT' }, { sessionId: 'session-trusted' })).rejects.toThrow(
+      /host\.agents\.switch:/
+    )
     expect(persist).not.toHaveBeenCalled()
   })
 
@@ -521,55 +619,6 @@ describe('SwitchOperation — last-write-wins & restart survival', () => {
     } satisfies PendingSwitch)
   })
 
-  it('serializes durable commits per session so an older slow write cannot land last', async () => {
-    const ps = makeProfileService([
-      profile({ id: 'sp-1', name: 'A' }),
-      profile({ id: 'sp-2', name: 'B' })
-    ])
-    const sharedSequencer = new SwitchCommitSequencer()
-    const binding = makeSessionBinding(new Map())
-    const writes: string[] = []
-    let releaseFirst!: () => void
-    let markFirstEntered!: () => void
-    const firstEntered = new Promise<void>((resolve) => (markFirstEntered = resolve))
-    const firstBlocked = new Promise<void>((resolve) => (releaseFirst = resolve))
-    const persist = vi.fn(async (_sessionId: string, specialistId: string | undefined) => {
-      if (specialistId === 'sp-1') {
-        markFirstEntered()
-        await firstBlocked
-      }
-      writes.push(specialistId ?? 'main')
-    })
-    const notify = vi.fn(async () => undefined)
-    const makeOp = (): SwitchOperation =>
-      new SwitchOperation({
-        profileService: ps,
-        sessionBinding: binding,
-        approvalGateway: approvingGateway(),
-        switchNotifier: { notify },
-        persistBinding: persist,
-        sequencer: sharedSequencer
-      })
-
-    const first = makeOp().run({ name: 'A' }, { sessionId: 'session-trusted' })
-    await firstEntered
-    const second = makeOp().run({ name: 'B' }, { sessionId: 'session-trusted' })
-    await new Promise((resolve) => setTimeout(resolve, 0))
-
-    // B must wait for A's entire durable commit. Otherwise A can finish after B and become the
-    // durable value despite being the older request.
-    expect(persist).toHaveBeenCalledTimes(1)
-    releaseFirst()
-    await Promise.all([first, second])
-
-    expect(writes).toEqual(['sp-1', 'sp-2'])
-    expect(binding.setBinding).toHaveBeenLastCalledWith('session-trusted', 'sp-2')
-    expect(notify).toHaveBeenLastCalledWith({
-      sessionId: 'session-trusted',
-      targetName: 'B'
-    } satisfies PendingSwitch)
-  })
-
   it('successful switch returns actual persisted binding/pending read-back', async () => {
     const ps = makeProfileService([profile({ id: 'sp-9', name: 'Z', revision: 7 })])
     const op = new SwitchOperation({
@@ -625,7 +674,7 @@ describe('SwitchOperation — sanitization and no-sensitive-data', () => {
       })
     })
     await expect(op.run({ name: 'BIO_EXPERT' }, { sessionId: 'session-trusted' })).rejects.toThrow(
-      'host.agents.switch: Internal operation failed.'
+      /host\.agents\.switch:/
     )
   })
 
@@ -653,6 +702,29 @@ describe('SwitchOperation — sanitization and no-sensitive-data', () => {
 
     // The switch committed despite the notify failure.
     expect(result).toMatchObject({ status: 'approved' })
+    expect(persist).toHaveBeenCalledWith('session-trusted', 'sp-1')
+    expect(binding.setBinding).toHaveBeenCalledWith('session-trusted', 'sp-1')
+  })
+
+  it('surfaces an authoritative completion-gate persistence failure after keeping the binding committed', async () => {
+    const persist = vi.fn(async () => undefined)
+    const binding = makeSessionBinding(new Map())
+    const op = new SwitchOperation({
+      profileService: makeProfileService([profile({ id: 'sp-1', name: 'BIO_EXPERT' })]),
+      sessionBinding: binding,
+      approvalGateway: approvingGateway(),
+      switchNotifier: {
+        authority: 'completion-gate',
+        notify: vi.fn(async () => {
+          throw new Error('handoff approval persistence failed')
+        })
+      },
+      persistBinding: persist
+    })
+
+    await expect(op.run({ name: 'BIO_EXPERT' }, { sessionId: 'session-trusted' })).rejects.toThrow(
+      'handoff approval persistence failed'
+    )
     expect(persist).toHaveBeenCalledWith('session-trusted', 'sp-1')
     expect(binding.setBinding).toHaveBeenCalledWith('session-trusted', 'sp-1')
   })

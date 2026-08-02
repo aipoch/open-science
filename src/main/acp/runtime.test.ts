@@ -189,6 +189,7 @@ const startFakeAgent = (
       text: string
       prompt: ContentBlock[]
     }) => Promise<PromptResponse | void> | PromptResponse | void
+    toolForPrompt?: (text: string) => { toolCallId: string; title: string } | undefined
     replyForPrompt?: (text: string) => string
     usageForPrompt?: (text: string) => { used: number; size: number } | undefined
     claudeTurnCountForPrompt?: (text: string) => number | undefined
@@ -335,6 +336,18 @@ const startFakeAgent = (
         text,
         prompt: ctx.params.prompt
       })
+      const tool = options.toolForPrompt?.(text)
+      if (tool) {
+        await ctx.client.notify(acp.methods.client.session.update, {
+          sessionId: ctx.params.sessionId,
+          update: {
+            sessionUpdate: 'tool_call',
+            toolCallId: tool.toolCallId,
+            title: tool.title,
+            status: 'completed'
+          }
+        })
+      }
       const usage = options.usageForPrompt?.(text)
       if (usage) {
         await ctx.client.notify(acp.methods.client.session.update, {
@@ -6999,6 +7012,92 @@ describe('ACP runtime session management', () => {
     expect(messageEvents).toEqual([{ role: 'user', text: 'keep going' }])
   })
 
+  it('sends an app-owned continuation without publishing its synthetic text as a user message', async () => {
+    const process = new FakeAgentProcess()
+    const fakeAgent = startFakeAgent(process, ['session-1'], {
+      onPrompt: ({ text }) =>
+        text.includes('Captured outer tool completion')
+          ? {
+              stopReason: 'end_turn',
+              usage: {
+                totalTokens: 48,
+                inputTokens: 31,
+                cachedReadTokens: 8,
+                cachedWriteTokens: 2,
+                outputTokens: 7
+              }
+            }
+          : undefined,
+      toolForPrompt: (text) =>
+        text.includes('Captured outer tool completion')
+          ? { toolCallId: 'continuation-tool-1', title: 'Read continuation input' }
+          : undefined
+    })
+    const messageEvents: Array<{ role?: string; text?: string }> = []
+    const runtimeEvents: AcpRuntimeEvent[] = []
+    const promptStarts: string[] = []
+    const runtime = new AcpRuntime({
+      appVersion: '0.1.0',
+      defaultCwd: '/workspace',
+      spawnAgent: () => asAgentProcess(process),
+      callbacks: {
+        onEvent: (event) => {
+          runtimeEvents.push(event)
+          if (event.kind === 'message') {
+            messageEvents.push({ role: event.role, text: event.text })
+          }
+        },
+        onPromptStarted: (_sessionId, turnToken) => promptStarts.push(turnToken)
+      }
+    })
+    const session = await runtime.createSession({ cwd: '/workspace' })
+
+    await runtime.sendPrompt({ sessionId: session.sessionId, text: 'analyze the dataset' })
+    const userEventCount = messageEvents.filter(({ role }) => role === 'user').length
+    const syntheticCompletion =
+      'Continue after handoff. Captured outer tool completion returned: { rows: 42 }'
+    const continuationEventStart = runtimeEvents.length
+    await runtime.sendAppContinuation({
+      sessionId: session.sessionId,
+      text: syntheticCompletion,
+      provenanceContext: { promptMessageId: 'originating-user-message-1' }
+    })
+
+    expect(fakeAgent.prompts).toEqual([
+      { sessionId: session.sessionId, text: 'analyze the dataset' },
+      { sessionId: session.sessionId, text: syntheticCompletion }
+    ])
+    expect(messageEvents.filter(({ role }) => role === 'user')).toEqual([
+      { role: 'user', text: 'analyze the dataset' }
+    ])
+    expect(messageEvents.filter(({ role }) => role === 'user')).toHaveLength(userEventCount)
+    expect(messageEvents).not.toContainEqual({ role: 'user', text: syntheticCompletion })
+    expect(promptStarts).toHaveLength(2)
+    const continuationEvents = runtimeEvents.slice(continuationEventStart)
+    expect(
+      continuationEvents.filter((event) => event.kind === 'message' && event.role === 'assistant')
+    ).toEqual([
+      expect.objectContaining({
+        promptMessageId: 'originating-user-message-1',
+        text: 'reply for session-1'
+      })
+    ])
+    expect(continuationEvents.find((event) => event.kind === 'tool')).toMatchObject({
+      promptMessageId: 'originating-user-message-1',
+      toolCallId: 'continuation-tool-1'
+    })
+    expect(continuationEvents.find((event) => event.kind === 'stop')).toMatchObject({
+      promptMessageId: 'originating-user-message-1',
+      turnUsage: {
+        inputTokens: 31,
+        cacheTokens: 10,
+        cachedReadTokens: 8,
+        cachedWriteTokens: 2,
+        outputTokens: 7
+      }
+    })
+  })
+
   it('adopts a fresh session when the agent returns a generic Internal error on resume', async () => {
     const process = new FakeAgentProcess()
     const fakeAgent = startFakeAgent(process, ['adopted-session-1'], { resumeInternalError: true })
@@ -12751,6 +12850,70 @@ describe('Specialist Skill scoping', () => {
     expect(agent.prompts).toHaveLength(0)
   })
 
+  it('allows a forced mcp-* connector Skill when the active specialist grants that connector', async () => {
+    const process = new FakeAgentProcess()
+    const agent = startFakeAgent(process, ['specialist-connector-session'])
+    const runtime = new AcpRuntime({
+      appVersion: '0.1.0',
+      defaultCwd: '/workspace',
+      spawnAgent: () => asAgentProcess(process),
+      framework: claudeCodeFramework,
+      resolveSpecialistIdentity: async () => ({ append: 'Specialist identity', prefix: '' }),
+      resolveSpecialistSkills: async () => ({
+        kind: 'specialist' as const,
+        skillIds: [],
+        frameworkNames: ['mcp-biomart'],
+        missingSkillIds: []
+      })
+    })
+
+    const session = await runtime.createSession({ cwd: '/workspace', specialistId: 'sp-1' })
+    await runtime.sendPrompt({
+      sessionId: session.sessionId,
+      text: 'continue with BioMart',
+      forcedSkillIds: ['mcp-biomart']
+    })
+
+    expect(agent.prompts).toHaveLength(1)
+  })
+
+  it('does not carry source forced Skills into a Claude handoff continuation', async () => {
+    const process = new FakeAgentProcess()
+    startFakeAgent(process, ['continuation-source-session'])
+    const runtime = new AcpRuntime({
+      appVersion: '0.1.0',
+      defaultCwd: '/workspace',
+      spawnAgent: () => asAgentProcess(process),
+      framework: claudeCodeFramework,
+      skills: {
+        needForceLoad: vi.fn(async () => []),
+        namesForIds: vi.fn(async (ids: string[]) => ids)
+      }
+    })
+
+    const session = await runtime.createSession({ cwd: '/workspace' })
+    await runtime.sendPrompt({
+      sessionId: session.sessionId,
+      text: 'switch to a specialist',
+      forcedSkillIds: ['customize']
+    })
+
+    const continuation = runtime.createClaudeCodeContinuationRequest({
+      sessionId: session.sessionId,
+      switchReadBack: {
+        status: 'approved',
+        operation: 'switch',
+        binding: {
+          sessionId: session.sessionId,
+          specialistId: 'target-specialist',
+          targetName: 'Target Specialist'
+        }
+      }
+    })
+
+    expect(continuation).not.toHaveProperty('forcedSkillIds')
+  })
+
   it.each([codexFramework, opencodeFramework])(
     'adds allowed-Skill guidance on every %s turn',
     async (framework) => {
@@ -12775,6 +12938,140 @@ describe('Specialist Skill scoping', () => {
       expect(agent.prompts[1]?.text).toContain('Allowed Specialist Skills for this session')
     }
   )
+
+  it('projects a switched OpenCode Specialist on an app-owned continuation without a second user event', async () => {
+    const process = new FakeAgentProcess()
+    const agent = startFakeAgent(process, ['opencode-handoff'], {
+      modes: createModes(['read-only', 'agent', 'agent-full-access'], 'agent')
+    })
+    const events: AcpRuntimeEvent[] = []
+    const notebookSpecialists: Array<string | undefined> = []
+    const startedTurnTokens: string[] = []
+    const runtime = new AcpRuntime({
+      appVersion: '0.1.0',
+      defaultCwd: '/workspace',
+      spawnAgent: () => asAgentProcess(process),
+      framework: opencodeFramework,
+      callbacks: {
+        onEvent: (event) => events.push(event),
+        onPromptStarted: (_sessionId, turnToken) => startedTurnTokens.push(turnToken)
+      },
+      notebook: {
+        projectName: 'Artifacts',
+        mcpEntryPath: '/bin/mcp',
+        getRpcConnection: async () => ({ endpoint: 'http://127.0.0.1:4567', token: 'nb' }),
+        registerSessionSpecialist: (_sessionId, specialistId) => {
+          notebookSpecialists.push(specialistId)
+        }
+      },
+      resolveSpecialistIdentity: async (specialistId) => ({
+        append: '',
+        prefix: specialistId === 'new' ? 'New Specialist identity' : 'Old Specialist identity'
+      }),
+      resolveSpecialistSkills: async (specialistId) => ({
+        kind: 'specialist',
+        skillIds: [`${specialistId}-skill`],
+        frameworkNames: [`${specialistId} Skill`, `${specialistId} Connector`],
+        missingSkillIds: []
+      })
+    })
+    const session = await runtime.createSession({ cwd: '/workspace', specialistId: 'old' })
+    await runtime.sendPrompt({ sessionId: session.sessionId, text: 'analyse these samples' })
+
+    await runtime.switchSpecialist(session.sessionId, 'new')
+    events.length = 0
+    await runtime.sendPrompt({
+      sessionId: session.sessionId,
+      text: 'analyse these samples',
+      continuation: {
+        kind: 'specialist-handoff',
+        originatingTurnToken: startedTurnTokens[0],
+        targetName: 'New Specialist',
+        completion: { kind: 'returned', value: { switched: true, afterAwait: 'complete' } }
+      }
+    })
+
+    expect(agent.prompts[1]?.text).toContain('New Specialist identity')
+    expect(agent.prompts[1]?.text).toContain('new Skill')
+    expect(agent.prompts[1]?.text).toContain('new Connector')
+    expect(agent.prompts[1]?.text).toContain('Captured outer tool result')
+    expect(agent.prompts[1]?.text).toContain('"afterAwait":"complete"')
+    expect(events.some((event) => event.kind === 'message' && event.role === 'user')).toBe(false)
+    expect(notebookSpecialists.at(-1)).toBe('new')
+    expect(startedTurnTokens).toEqual([startedTurnTokens[0], startedTurnTokens[0]])
+  })
+
+  it('updates Codex native Skill selection to the switched specialist, including mcp-* connectors', async () => {
+    const process = new FakeAgentProcess()
+    let receivedPrompt: ContentBlock[] = []
+    startFakeAgent(process, ['codex-specialist-session'], {
+      modes: createModes(['read-only', 'agent', 'agent-full-access'], 'agent'),
+      onPrompt: ({ prompt }) => {
+        receivedPrompt = prompt
+      }
+    })
+    const oldConnector = {
+      name: 'mcp-old-connector',
+      description: 'Old specialist connector.',
+      path: '/data/codex/skills/mcp-old-connector/SKILL.md'
+    }
+    const newConnector = {
+      name: 'mcp-new-connector',
+      description: 'New specialist connector.',
+      path: '/data/codex/skills/mcp-new-connector/SKILL.md'
+    }
+    const catalog = [oldConnector, newConnector]
+    // Model a stale selector result that still contains the old connector. The runtime must offer
+    // only the new scope and must reject any result outside that offered catalog.
+    const selectSkills = vi.fn(async () => catalog)
+    const runtime = new AcpRuntime({
+      appVersion: '0.1.0',
+      defaultCwd: '/workspace',
+      resolveBackend: () => ({
+        framework: { ...codexFramework, spawn: () => asAgentProcess(process) },
+        executablePath: '/bin/codex-acp',
+        env: { CODEX_HOME: '/data/codex' },
+        responsesBridgeLease: {
+          selectSkills,
+          registerReviewerSession: vi.fn(),
+          unregisterReviewerSession: vi.fn(() => false),
+          release: vi.fn(async () => undefined)
+        }
+      }),
+      skills: {
+        needForceLoad: vi.fn(async () => []),
+        namesForIds: vi.fn(async (ids: string[]) => ids),
+        descriptorsForIds: vi.fn(async () => []),
+        catalogForCodexHome: vi.fn(async () => catalog)
+      },
+      resolveSpecialistIdentity: async () => ({ append: '', prefix: '' }),
+      resolveSpecialistSkills: async (specialistId) => ({
+        kind: 'specialist' as const,
+        skillIds: [],
+        frameworkNames: specialistId === 'new' ? ['mcp-new-connector'] : ['mcp-old-connector'],
+        missingSkillIds: []
+      })
+    })
+
+    const session = await runtime.createSession({ cwd: '/workspace', specialistId: 'old' })
+    await runtime.switchSpecialist(session.sessionId, 'new')
+    await runtime.sendPrompt({ sessionId: session.sessionId, text: 'use the new connector' })
+
+    expect(selectSkills).toHaveBeenCalledWith(
+      'use the new connector',
+      [newConnector],
+      expect.any(AbortSignal)
+    )
+    expect(receivedPrompt).toEqual([
+      {
+        type: 'text',
+        text: expect.stringContaining('mcp-new-connector'),
+        _meta: {
+          'open-science/skill-inputs': [newConnector]
+        }
+      }
+    ])
+  })
 
   it('sends the current whitelist on ACP resume, with empty Specialist distinct from Main', async () => {
     const process = new FakeAgentProcess()

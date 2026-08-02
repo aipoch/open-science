@@ -64,6 +64,7 @@ export type ToolActivity = {
   kind: 'tool'
   title: string
   activityGroupId?: string
+  promptMessageId?: string
   status: ToolActivityStatus
   eventIds: string[]
   sortIndex: number
@@ -162,6 +163,7 @@ type AppendAgentMessageChunkInput = {
   sessionId: string
   streamId: string
   eventId: string
+  promptMessageId?: string
   content?: string
   image?: AcpMessageImage
 }
@@ -170,6 +172,7 @@ type UpsertToolActivityInput = {
   sessionId: string
   toolCallId: string
   eventId: string
+  promptMessageId?: string
   title?: string
   status?: string
   providerToolName?: string
@@ -240,7 +243,7 @@ type SessionStore = SessionStoreData & {
   ) => void
   upsertPersistedSession: (session: PersistedChatSession) => void
   applyDurableSessionProjection: (input: ApplyDurableSessionProjectionInput) => void
-  finishRun: (sessionId: string, turnUsage?: AcpTurnTokenUsage) => void
+  finishRun: (sessionId: string, turnUsage?: AcpTurnTokenUsage, promptMessageId?: string) => void
   // opts.reportable overrides the report-affordance decision: pass false for a model-provider failure
   // (the agent relayed an upstream LLM/HTTP error), true to force it, or omit to let the store derive it
   // from the message (an app-crafted reminder → not reportable; anything else → reportable).
@@ -268,8 +271,13 @@ type SessionStore = SessionStoreData & {
   markSpecialistSwitchResetRequired: (sessionId: string) => void
   clearSpecialistSwitchResetRequired: (sessionId: string) => void
   upsertToolActivity: (input: UpsertToolActivityInput) => void
-  beginActivityGroup: (sessionId: string, groupId: string, title: string) => void
-  completeActivityGroup: (sessionId: string) => void
+  beginActivityGroup: (
+    sessionId: string,
+    groupId: string,
+    title: string,
+    promptMessageId?: string
+  ) => void
+  completeActivityGroup: (sessionId: string, promptMessageId?: string) => void
   setPermissionPending: (sessionId: string) => void
   clearPermissionPending: (sessionId: string) => void
   setPermissionProfile: (sessionId: string, profile: PermissionProfileId) => void
@@ -740,6 +748,13 @@ const appendUniqueStrings = (
 const isArtifactFinalizationError = (error: string | undefined): boolean =>
   error?.startsWith(ARTIFACT_ERROR_PREFIX) ?? false
 
+// Explicit prompt identity lets app-owned continuations mutate their originating turn after the
+// ordinary activeRun has settled. Legacy events retain the active-run fallback.
+const hasKnownPrompt = (session: ChatSession, promptMessageId: string | undefined): boolean =>
+  promptMessageId
+    ? session.messages.some((message) => message.id === promptMessageId && message.role === 'user')
+    : Boolean(session.activeRun)
+
 // Marks open streams complete and attaches whole-turn usage to the final Agent message responding to
 // the active prompt. A turn can emit multiple message ids, so only its last response owns the footer.
 const completeStreamingMessages = (
@@ -1196,7 +1211,14 @@ export const useSessionStore = create<SessionStore>((set, get) => ({
   },
 
   // Appends or extends a streamed agent message using a stable stream id.
-  appendAgentMessageChunk: ({ sessionId, streamId, eventId, content = '', image }) => {
+  appendAgentMessageChunk: ({
+    sessionId,
+    streamId,
+    eventId,
+    promptMessageId,
+    content = '',
+    image
+  }) => {
     let sanitizedImage = sanitizeAcpMessageImage(image)
 
     if (!sessionId || !streamId || !eventId || (content.length === 0 && !sanitizedImage)) {
@@ -1224,7 +1246,7 @@ export const useSessionStore = create<SessionStore>((set, get) => ({
       (message) => message.role === 'agent' && message.streamId === streamId
     )
     const messageId = existingMessage?.id ?? createMessageId()
-    const responseToMessageId = session.activeRun?.promptMessageId
+    const responseToMessageId = promptMessageId ?? session.activeRun?.promptMessageId
     const now = Date.now()
 
     set({
@@ -1644,6 +1666,7 @@ export const useSessionStore = create<SessionStore>((set, get) => ({
     sessionId,
     toolCallId,
     eventId,
+    promptMessageId,
     title,
     status,
     providerToolName,
@@ -1680,6 +1703,7 @@ export const useSessionStore = create<SessionStore>((set, get) => ({
               activity.id === toolCallId
                 ? {
                     ...activity,
+                    promptMessageId: promptMessageId ?? activity.promptMessageId,
                     title: title?.trim() || activity.title,
                     status: mergeToolActivityStatus(activity.status, nextStatus),
                     providerToolName: providerToolName ?? activity.providerToolName,
@@ -1699,12 +1723,14 @@ export const useSessionStore = create<SessionStore>((set, get) => ({
           }
         }
 
-        if (!session.activeRun) {
+        if (!hasKnownPrompt(session, promptMessageId)) {
           return session
         }
 
         const activeGroup = session.activityGroups?.findLast(
-          (group) => group.completedAt === undefined
+          (group) =>
+            group.completedAt === undefined &&
+            (!promptMessageId || group.promptMessageId === promptMessageId)
         )
 
         // New tool calls are transient activity rows, not persisted chat messages.
@@ -1716,6 +1742,7 @@ export const useSessionStore = create<SessionStore>((set, get) => ({
           eventIds: [eventId],
           sortIndex: createSortIndex(),
           activityGroupId: activeGroup?.id,
+          promptMessageId: promptMessageId ?? session.activeRun?.promptMessageId,
           providerToolName,
           toolKind,
           toolContent,
@@ -1749,13 +1776,14 @@ export const useSessionStore = create<SessionStore>((set, get) => ({
     }))
   },
 
-  beginActivityGroup: (sessionId, groupId, title) => {
+  beginActivityGroup: (sessionId, groupId, title, promptMessageId) => {
     const groupTitle = sanitizeActivityGroupTitle(title)
     if (!sessionId || !groupId || !groupTitle) return
 
     set((state) => ({
       sessions: state.sessions.map((session) => {
-        if (session.id !== sessionId || !session.activeRun) return session
+        if (session.id !== sessionId) return session
+        if (!hasKnownPrompt(session, promptMessageId)) return session
         if (session.activityGroups?.some((group) => group.id === groupId)) return session
 
         const now = Date.now()
@@ -1768,6 +1796,7 @@ export const useSessionStore = create<SessionStore>((set, get) => ({
             {
               id: groupId,
               title: groupTitle,
+              promptMessageId: promptMessageId ?? session.activeRun?.promptMessageId,
               sortIndex: createSortIndex(),
               activityIds: [],
               createdAt: now,
@@ -1780,14 +1809,17 @@ export const useSessionStore = create<SessionStore>((set, get) => ({
     }))
   },
 
-  completeActivityGroup: (sessionId) => {
+  completeActivityGroup: (sessionId, promptMessageId) => {
     if (!sessionId) return
 
     const now = Date.now()
     set((state) => {
       const target = state.sessions.find((session) => session.id === sessionId)
       const hasStartedOpenGroup = target?.activityGroups?.some(
-        (group) => group.completedAt === undefined && group.activityIds.length > 0
+        (group) =>
+          group.completedAt === undefined &&
+          group.activityIds.length > 0 &&
+          (!promptMessageId || group.promptMessageId === promptMessageId)
       )
       if (!hasStartedOpenGroup) return state
 
@@ -1796,7 +1828,13 @@ export const useSessionStore = create<SessionStore>((set, get) => ({
           session.id === sessionId
             ? {
                 ...session,
-                activityGroups: completeOpenActivityGroups(session.activityGroups, now),
+                activityGroups: session.activityGroups?.map((group) =>
+                  group.completedAt === undefined &&
+                  group.activityIds.length > 0 &&
+                  (!promptMessageId || group.promptMessageId === promptMessageId)
+                    ? { ...group, completedAt: now, updatedAt: now }
+                    : group
+                ),
                 updatedAt: now
               }
             : session
@@ -1806,7 +1844,7 @@ export const useSessionStore = create<SessionStore>((set, get) => ({
   },
 
   // Completes the active run and any streamed messages for the session.
-  finishRun: (sessionId, turnUsage) => {
+  finishRun: (sessionId, turnUsage, promptMessageId) => {
     set((state) => ({
       sessions: state.sessions.map((session) => {
         if (session.id !== sessionId) return session
@@ -1817,7 +1855,7 @@ export const useSessionStore = create<SessionStore>((set, get) => ({
         const now = Math.max(Date.now(), session.updatedAt + 1)
         const messages = completeStreamingMessages(
           session.messages,
-          session.activeRun?.promptMessageId,
+          promptMessageId ?? session.activeRun?.promptMessageId,
           turnUsage,
           now
         )

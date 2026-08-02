@@ -120,6 +120,7 @@ export type PersistedToolActivity = {
   kind: 'tool'
   title: string
   activityGroupId?: string
+  promptMessageId?: string
   status: PersistedToolActivityStatus
   sortIndex: number
   eventIds: string[]
@@ -141,6 +142,7 @@ export type PersistedActivityGroup = {
   title: string
   sortIndex: number
   activityIds: string[]
+  promptMessageId?: string
   createdAt: number
   updatedAt: number
   completedAt?: number
@@ -557,6 +559,7 @@ export const sanitizeToolActivity = (activity: unknown): PersistedToolActivity |
   }
   const providerToolName = asString(activity.providerToolName)
   const activityGroupId = asString(activity.activityGroupId)
+  const promptMessageId = asString(activity.promptMessageId)
   const toolKind = asString(activity.toolKind)
   const toolContent = sanitizeToolContent(activity.toolContent)
   const toolLocations = sanitizeToolLocations(activity.toolLocations)
@@ -567,6 +570,7 @@ export const sanitizeToolActivity = (activity: unknown): PersistedToolActivity |
 
   if (providerToolName) sanitized.providerToolName = providerToolName
   if (activityGroupId) sanitized.activityGroupId = activityGroupId
+  if (promptMessageId) sanitized.promptMessageId = promptMessageId
   if (toolKind) sanitized.toolKind = toolKind
   if (toolContent) sanitized.toolContent = toolContent
   if (toolLocations) sanitized.toolLocations = toolLocations
@@ -593,11 +597,13 @@ export const sanitizeActivityGroup = (group: unknown): PersistedActivityGroup | 
 
   const updatedAt = asNumber(group.updatedAt) ?? 0
   const completedAt = asNumber(group.completedAt)
+  const promptMessageId = asString(group.promptMessageId)
   return {
     id,
     title,
     sortIndex: asNumber(group.sortIndex) ?? 0,
     activityIds: asStringArray(group.activityIds),
+    ...(promptMessageId ? { promptMessageId } : {}),
     createdAt: asNumber(group.createdAt) ?? 0,
     updatedAt,
     ...(completedAt === undefined ? {} : { completedAt })

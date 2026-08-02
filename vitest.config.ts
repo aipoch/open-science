@@ -8,6 +8,7 @@ const VITEST_EXCLUDE_PATTERNS = [
   ...configDefaults.exclude,
   'e2e/**',
   '**/.claude/**',
+  '**/.codex/**',
   '**/.pnpm-store/**',
   '**/tmp/**',
   '**/.worktrees/**',

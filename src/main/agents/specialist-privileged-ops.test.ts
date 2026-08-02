@@ -1,16 +1,7 @@
 import { describe, expect, it, vi } from 'vitest'
 
-import {
-  applyDelete,
-  applyNameChangingUpdate,
-  isNameChangingPatch
-} from './specialist-privileged-ops'
-import type { SpecialistUpdatePatch } from './specialist-approval-presentation'
-import type {
-  AgentDeletedResult,
-  AgentDeclinedResult,
-  AgentUpdatedResult
-} from './specialist-privileged-ops'
+import { applyDelete } from './specialist-privileged-ops'
+import type { AgentDeletedResult, AgentDeclinedResult } from './specialist-privileged-ops'
 import type { ApprovalResult } from '../../shared/agents-contract'
 import type { SpecialistProfileView } from '../../shared/specialist'
 import type { ProfileService } from '../specialist/service'
@@ -106,128 +97,6 @@ const makeService = (opts: {
   }
 }
 
-describe('isNameChangingPatch — update classification', () => {
-  it('is privileged when the validated patch changes name', () => {
-    expect(isNameChangingPatch({ name: 'NEW_NAME' })).toBe(true)
-    expect(isNameChangingPatch({ name: 'NEW_NAME', description: 'x' })).toBe(true)
-  })
-  it('is NOT privileged when the patch leaves name unchanged', () => {
-    expect(isNameChangingPatch({ description: 'x' })).toBe(false)
-    expect(isNameChangingPatch({ enabled: false })).toBe(false)
-    expect(isNameChangingPatch({})).toBe(false)
-  })
-  it('ignores a name that equals undefined (omitted), not an empty rename intent', () => {
-    expect(isNameChangingPatch({ name: undefined })).toBe(false)
-  })
-})
-
-describe('applyNameChangingUpdate — approved atomic update', () => {
-  it('re-resolves public name to UUID, verifies the reviewed revision, commits, returns camelCase read-back', async () => {
-    const { service, calls } = makeService({ initial: [profile()] })
-    const patch: SpecialistUpdatePatch = {
-      name: 'DATA_SCIENTIST',
-      description: 'updated desc',
-      systemPrompt: 'new instructions',
-      enabled: false
-    }
-    const result = await applyNameChangingUpdate({
-      profileService: service,
-      decide: async () => fakeApproved(),
-      currentName: 'DATA_ANALYST',
-      reviewedRevision: 3,
-      patch
-    })
-    // Returned actual camelCase read-back, not the input patch.
-    expect(result).toEqual<AgentUpdatedResult>({
-      status: 'updated',
-      agent: expect.objectContaining({
-        id: 'sp-1',
-        name: 'DATA_SCIENTIST',
-        enabled: false,
-        revision: 4
-      })
-    })
-    // Re-resolved by public name immediately before mutation.
-    expect(calls.getByName).toContain('DATA_ANALYST')
-    // One atomic update carrying the COMPLETE patch, revision verified.
-    expect(calls.update).toHaveLength(1)
-    expect(calls.update[0]).toEqual({
-      id: 'sp-1',
-      revision: 3,
-      patch: expect.objectContaining({
-        id: 'sp-1',
-        revision: 3,
-        name: 'DATA_SCIENTIST',
-        description: 'updated desc',
-        enabled: false
-      })
-    })
-  })
-
-  it('returns a structured declined result and applies NO part of the patch', async () => {
-    const { service, calls } = makeService({ initial: [profile()] })
-    const result = await applyNameChangingUpdate({
-      profileService: service,
-      decide: async () => fakeDeclined('update'),
-      currentName: 'DATA_ANALYST',
-      reviewedRevision: 3,
-      patch: { name: 'DATA_SCIENTIST', description: 'should not apply' }
-    })
-    expect(result).toEqual<AgentDeclinedResult>({ status: 'declined', operation: 'update' })
-    expect(calls.update).toHaveLength(0)
-  })
-})
-
-describe('applyNameChangingUpdate — post-approval revision drift fails closed', () => {
-  it('does not apply any part of the patch when revision changed after card creation', async () => {
-    const { service, calls } = makeService({
-      initial: [profile({ revision: 3 })],
-      // Simulate drift: someone bumped revision to 4 while the card was pending.
-      onUpdate: (_id, patch) => ({ ...profile({ revision: 3 }), ...patch, revision: 4 })
-    })
-    // Pre-mutate so the stored revision is now 4 (drifted from the reviewed 3).
-    await service.update({ id: 'sp-1', revision: 3, description: 'concurrent change' })
-    calls.update.length = 0
-
-    await expect(
-      applyNameChangingUpdate({
-        profileService: service,
-        decide: async () => fakeApproved(),
-        currentName: 'DATA_ANALYST',
-        reviewedRevision: 3,
-        patch: { name: 'DATA_SCIENTIST' }
-      })
-    ).rejects.toThrow(/host\.agents\.update:/)
-    expect(calls.update).toHaveLength(0)
-  })
-
-  it('fails closed when the target was renamed after card creation', async () => {
-    const { service } = makeService({ initial: [profile({ name: 'OTHER_NAME', revision: 3 })] })
-    await expect(
-      applyNameChangingUpdate({
-        profileService: service,
-        decide: async () => fakeApproved(),
-        currentName: 'DATA_ANALYST',
-        reviewedRevision: 3,
-        patch: { name: 'DATA_SCIENTIST' }
-      })
-    ).rejects.toThrow(/host\.agents\.update:/)
-  })
-
-  it('fails closed when the target was deleted after card creation', async () => {
-    const { service } = makeService({ initial: [] })
-    await expect(
-      applyNameChangingUpdate({
-        profileService: service,
-        decide: async () => fakeApproved(),
-        currentName: 'DATA_ANALYST',
-        reviewedRevision: 3,
-        patch: { name: 'DATA_SCIENTIST' }
-      })
-    ).rejects.toThrow(/host\.agents\.update:/)
-  })
-})
-
 describe('applyDelete — approved delete', () => {
   it('re-resolves name, verifies absence, returns {status:"deleted", name} without clearing bindings', async () => {
     const bindingClearCalls: string[] = []
@@ -291,7 +160,7 @@ describe('applyDelete — approved delete', () => {
         currentName: 'DATA_ANALYST',
         reviewedRevision: 3
       })
-    ).rejects.toThrow('host.agents.delete: Internal operation failed.')
+    ).rejects.toThrow(/host\.agents\.delete:.*I\/O error/)
   })
 
   it('fails closed with a sanitized error when revision drifted before approval', async () => {
@@ -305,24 +174,28 @@ describe('applyDelete — approved delete', () => {
       })
     ).rejects.toThrow(/host\.agents\.delete:/)
   })
+
+  it('threads the trusted calling session into the approval request', async () => {
+    const { service } = makeService({ initial: [profile()] })
+    const seen: unknown[] = []
+    await applyDelete({
+      profileService: service,
+      decide: async (request) => {
+        seen.push(request.session)
+        return fakeApproved()
+      },
+      currentName: 'DATA_ANALYST',
+      reviewedRevision: 3,
+      // The dispatcher threads the trusted session from server context (mirroring runSwitch); the
+      // ACP-backed gateway parks the card on THIS session, so an empty session would decline.
+      session: { sessionId: 'session-9', turnId: 'turn-1' }
+    })
+    expect(seen).toHaveLength(1)
+    expect(seen[0]).toEqual({ sessionId: 'session-9', turnId: 'turn-1' })
+  })
 })
 
 describe('no-state-change guarantees on decline', () => {
-  it('declined update touches no mutation, no binding, no invalidation', async () => {
-    const invalidated = vi.fn()
-    const { service, calls } = makeService({ initial: [profile()] })
-    await applyNameChangingUpdate({
-      profileService: service,
-      decide: async () => fakeDeclined('update'),
-      currentName: 'DATA_ANALYST',
-      reviewedRevision: 3,
-      patch: { name: 'X' },
-      invalidateCatalog: invalidated
-    })
-    expect(calls.update).toHaveLength(0)
-    expect(invalidated).not.toHaveBeenCalled()
-  })
-
   it('declined delete touches no mutation, no invalidation', async () => {
     const invalidated = vi.fn()
     const { service, calls } = makeService({ initial: [profile()] })
@@ -340,12 +213,11 @@ describe('no-state-change guarantees on decline', () => {
   it('catalog invalidation runs ONLY after a successful mutation', async () => {
     const invalidated = vi.fn()
     const { service } = makeService({ initial: [profile()] })
-    await applyNameChangingUpdate({
+    await applyDelete({
       profileService: service,
       decide: async () => fakeApproved(),
       currentName: 'DATA_ANALYST',
       reviewedRevision: 3,
-      patch: { name: 'DATA_SCIENTIST' },
       invalidateCatalog: invalidated
     })
     expect(invalidated).toHaveBeenCalledTimes(1)

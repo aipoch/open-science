@@ -331,6 +331,41 @@ describe('ProfileService.update', () => {
     expect(listener).toHaveBeenCalledOnce()
   })
 
+  it('follows an uncustomized display name across a rename so the settings list shows the new name', async () => {
+    // No displayName at create: it is snapshotted to the name (service.ts create defaulting).
+    const created = await service.create({ name: 'Old Name' })
+    const renamed = await service.update({
+      id: created.id,
+      revision: created.revision,
+      name: 'New Name'
+    })
+    // The settings list shows displayName ?? name; an uncustomized display name must follow the
+    // rename (host.agents.update rename path), not keep showing the stale snapshot.
+    expect(renamed.displayName).toBe('New Name')
+  })
+
+  it('keeps a custom display name across a rename when displayName is left unset', async () => {
+    const created = await service.create({ name: 'Old Name', displayName: 'Friendly Name' })
+    const renamed = await service.update({
+      id: created.id,
+      revision: created.revision,
+      name: 'New Name'
+    })
+    expect(renamed.name).toBe('New Name')
+    expect(renamed.displayName).toBe('Friendly Name')
+  })
+
+  it('explicitly setting displayName in the same rename patch still wins over the follow-along default', async () => {
+    const created = await service.create({ name: 'Old Name' })
+    const renamed = await service.update({
+      id: created.id,
+      revision: created.revision,
+      name: 'New Name',
+      displayName: 'Explicit Label'
+    })
+    expect(renamed.displayName).toBe('Explicit Label')
+  })
+
   it('rejects an update missing revision', async () => {
     const created = await service.create({ name: 'My Bot' })
     await expect(service.update({ id: created.id } as never)).rejects.toThrow(/id and revision/i)

@@ -13,6 +13,24 @@ const request = (overrides: Partial<AcpPermissionRequest>): AcpPermissionRequest
 })
 
 describe('describePermissionRequest', () => {
+  it('renders the app-owned Specialist switch approval on the standard permission card', () => {
+    expect(
+      describePermissionRequest(
+        request({
+          title: 'Switch to Data Analyst?',
+          providerToolName: 'Open Science',
+          rawInput: {
+            specialistApproval: { kind: 'switch', targetName: 'Data Analyst' }
+          }
+        })
+      )
+    ).toMatchObject({
+      actionTitle: 'Switch to Data Analyst?',
+      categoryLabel: 'Specialist handoff',
+      hideToolIdentity: true
+    })
+  })
+
   it.each([
     ['python', 'notebook_execute', { kernelKind: 'python', code: 'print(1)' }, 'Python execution'],
     ['r', 'notebook_execute', { code: 'library(ggplot2)' }, 'R execution'],

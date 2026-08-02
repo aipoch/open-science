@@ -254,7 +254,22 @@ export class ProfileService {
 
     const patch: Partial<StoredSpecialist> = {}
     if (input.name !== undefined) patch.name = input.name
-    if (input.displayName !== undefined) patch.displayName = input.displayName
+    // A rename that leaves displayName unset keeps a CUSTOM display name (the settings list shows
+    // displayName ?? name), but an UNcustomized one (snapshotted to the old name at create) must
+    // follow the rename — otherwise the settings list keeps showing the old name after a
+    // host.agents.update rename. Mirrors create()'s `displayName ?? name` defaulting.
+    if (input.displayName !== undefined) {
+      patch.displayName = input.displayName
+    } else if (input.name !== undefined) {
+      const current = doc.specialists.find((s) => s.id === input.id)
+      if (
+        current &&
+        (current.displayName ?? current.name) === current.name &&
+        current.name !== input.name
+      ) {
+        patch.displayName = input.name
+      }
+    }
     if (input.description !== undefined) patch.description = input.description
     if (input.systemPrompt !== undefined) patch.systemPrompt = input.systemPrompt
     if (input.iconKey !== undefined) patch.iconKey = input.iconKey

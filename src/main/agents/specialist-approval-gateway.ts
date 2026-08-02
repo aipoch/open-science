@@ -92,7 +92,7 @@ const toCardPayload = (request: ApprovalRequest): SpecialistPermissionCardPayloa
     currentName: summary.name ?? null,
     // summary.target is the TARGET specialist, or null to revert to Main Agent.
     targetName: summary.target ?? null,
-    takesEffectOnNextMessage: true
+    takesEffectAfterCurrentTool: true
   }
 }
 
