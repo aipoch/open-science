@@ -9786,7 +9786,7 @@ describe('ACP runtime session management', () => {
     expect(runtime.getSnapshot().sessionIds).toEqual([])
   })
 
-  it('cleans up sessionFrameworks when deleting a detached session (post framework-switch)', async () => {
+  it('retains only resume affinity after disconnect and removes it on detached delete', async () => {
     const process = new FakeAgentProcess()
     const fakeAgent = startFakeAgent(process, ['remote-session-1'])
     const runtime = new AcpRuntime({
@@ -9795,20 +9795,30 @@ describe('ACP runtime session management', () => {
       spawnAgent: () => asAgentProcess(process)
     })
 
-    const session = await runtime.createSession({ cwd: '/workspace' })
-    // createSession records the session's framework; a framework switch disconnects (clearing
-    // this.sessions) but deliberately KEEPS sessionFrameworks so a later resume can detect the switch.
-    expect(sessionFrameworksMap(runtime).has(session.sessionId)).toBe(true)
-    await runtime.disconnect()
-    expect(runtime.getSnapshot().sessionIds).toEqual([])
-    // The framework entry survives the disconnect (by design).
-    expect(sessionFrameworksMap(runtime).has(session.sessionId)).toBe(true)
+    const session = await runtime.createSession({
+      cwd: '/workspace',
+      projectName: 'project-1',
+      permissionProfile: 'ask'
+    })
+    // Live routing, Permission projection, and framework affinity are all present while attached.
+    expect(runtime.hasLiveSession('project-1', session.sessionId)).toBe(true)
+    expect(runtime.isSessionUsingFramework(session.sessionId, 'claude-code')).toBe(true)
+    expect(runtime.getSnapshot().permissionProfiles[session.sessionId]).toMatchObject({
+      selectedProfile: 'ask'
+    })
 
-    // Deleting the now-detached session must not throw or talk to a torn-down agent, but must still
-    // drop the leaked framework entry so it cannot later mislead the cross-framework-resume check.
+    await runtime.disconnect()
+    // Connection-owned metadata is gone, while framework affinity survives so a later resume can
+    // detect a framework switch without attempting an incompatible provider resume.
+    expect(runtime.getSnapshot()).toMatchObject({ sessionIds: [], permissionProfiles: {} })
+    expect(runtime.hasLiveSession('project-1', session.sessionId)).toBe(false)
+    expect(runtime.isSessionUsingFramework(session.sessionId, 'claude-code')).toBe(true)
+
+    // Deleting the now-detached session must not talk to a torn-down agent and must remove the final
+    // affinity record so it cannot later mislead the cross-framework resume check.
     await runtime.deleteSession({ sessionId: session.sessionId })
 
-    expect(sessionFrameworksMap(runtime).has(session.sessionId)).toBe(false)
+    expect(runtime.isSessionUsingFramework(session.sessionId, 'claude-code')).toBe(false)
     expect(fakeAgent.closedSessions).toEqual([])
     expect(fakeAgent.cancelledSessions).toEqual([])
   })
