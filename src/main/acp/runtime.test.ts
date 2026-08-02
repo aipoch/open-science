@@ -936,6 +936,64 @@ describe('ACP runtime migration write-gate', () => {
     ])
   })
 
+  it.each(['initialize', 'authenticate'] as const)(
+    'clears one-shot connection intents when %s fails',
+    async (failureStage) => {
+      const process = new FakeAgentProcess()
+      const providerSet = vi.fn()
+      acp
+        .agent({ name: `failing-${failureStage}-agent` })
+        .onRequest(acp.methods.agent.initialize, () => {
+          if (failureStage === 'initialize') throw new Error('initialize failed')
+          return {
+            protocolVersion: acp.PROTOCOL_VERSION,
+            agentCapabilities: { loadSession: false },
+            authMethods: []
+          }
+        })
+        .onRequest(acp.methods.agent.authenticate, () => {
+          throw new Error('authenticate failed')
+        })
+        .onRequest(acp.methods.agent.providers.set, providerSet)
+        .connect(
+          acp.ndJsonStream(
+            Writable.toWeb(process.stdout) as WritableStream<Uint8Array>,
+            Readable.toWeb(process.stdin) as ReadableStream<Uint8Array>
+          )
+        )
+
+      const runtime = new AcpRuntime({
+        appVersion: '0.1.0',
+        defaultCwd: '/workspace',
+        resolveBackend: () => ({
+          framework: { ...claudeCodeFramework, spawn: () => asAgentProcess(process) },
+          executablePath: '/bin/agent',
+          env: {},
+          authentication: {
+            methodId: 'api-key',
+            _meta: { 'api-key': { apiKey: 'test-only-key' } }
+          },
+          providerConfiguration: {
+            providerId: 'custom-gateway',
+            apiType: 'openai',
+            baseUrl: 'http://127.0.0.1:1234/v1',
+            headers: { authorization: 'Bearer test-only-token' }
+          }
+        })
+      })
+
+      await expect(runtime.connect({ cwd: '/workspace' })).rejects.toThrow()
+
+      const internal = runtime as unknown as {
+        pendingAuthentication?: unknown
+        pendingProviderConfiguration?: unknown
+      }
+      expect(internal.pendingAuthentication).toBeUndefined()
+      expect(internal.pendingProviderConfiguration).toBeUndefined()
+      expect(providerSet).not.toHaveBeenCalled()
+    }
+  )
+
   it('rejects session creation when a required subscription model is unavailable', async () => {
     const process = new FakeAgentProcess()
     startFakeAgent(process, ['subscription-session'], {
@@ -4750,6 +4808,36 @@ describe('ACP runtime session management', () => {
     })
   })
 
+  it('does not commit connected after an initialized-event callback disconnects', async () => {
+    const process = new FakeAgentProcess()
+    startFakeAgent(process, ['reentrant-disconnect-session'])
+    const statuses: string[] = []
+    let disconnect: Promise<unknown> | undefined
+    const callbacks: { disconnectRuntime?: () => Promise<unknown> } = {}
+    const runtime = new AcpRuntime({
+      appVersion: '0.1.0',
+      defaultCwd: '/workspace',
+      spawnAgent: () => asAgentProcess(process),
+      callbacks: {
+        onEvent: (event) => {
+          if (event.title === 'Agent initialized') disconnect = callbacks.disconnectRuntime?.()
+        },
+        onStateChanged: (snapshot) => statuses.push(snapshot.status)
+      }
+    })
+    callbacks.disconnectRuntime = () => runtime.disconnect()
+
+    await expect(runtime.connect({ cwd: '/workspace' })).rejects.toThrow(
+      'ACP connection was superseded.'
+    )
+    expect(disconnect).toBeDefined()
+    await disconnect
+
+    expect(runtime.getSnapshot()).toMatchObject({ status: 'closed', sessionIds: [] })
+    expect(statuses.at(-1)).toBe('closed')
+    expect(statuses).not.toContain('connected')
+  })
+
   it('rejects filesystem callbacks for unknown sessions instead of falling back to global cwd', async () => {
     const workspaceRoot = await mkdtemp(join(tmpdir(), 'open-science-acp-runtime-'))
     const filePath = join(workspaceRoot, 'notes.txt')
@@ -7457,6 +7545,74 @@ describe('ACP runtime session management', () => {
       releaseStaleMode.resolve()
       await stale.catch(() => undefined)
       disconnectCurrentSpy.mockRestore()
+      if (successor) await runtime.deleteSession({ sessionId: successor.sessionId })
+      await runtime.disconnect().catch(() => undefined)
+    }
+  })
+
+  it('does not let stale permission setup target a same-id successor connection', async () => {
+    const oldProcess = new FakeAgentProcess()
+    const newProcess = new FakeAgentProcess()
+    startFakeAgent(oldProcess, ['shared-primary'], {
+      modes: createModes(['read-only', 'agent', 'agent-full-access'], 'agent')
+    })
+    const newAgent = startFakeAgent(newProcess, ['shared-primary'], {
+      modes: createModes(['read-only', 'agent', 'agent-full-access'], 'agent')
+    })
+    let spawnCount = 0
+    const runtime = new AcpRuntime({
+      appVersion: '0.1.0',
+      defaultCwd: '/workspace',
+      resolveBackend: () => {
+        spawnCount += 1
+        return {
+          framework: {
+            ...codexFramework,
+            spawn: () => asAgentProcess(spawnCount === 1 ? oldProcess : newProcess)
+          },
+          executablePath: '/bin/codex-acp',
+          env: {}
+        }
+      }
+    })
+    const permissionSetupStarted = createDeferred()
+    const releasePermissionSetup = createDeferred()
+    const internal = runtime as unknown as {
+      configurePermissionProfile: (...args: unknown[]) => Promise<unknown>
+    }
+    const configurePermissionProfile = internal.configurePermissionProfile.bind(runtime)
+    vi.spyOn(internal, 'configurePermissionProfile').mockImplementationOnce(async (...args) => {
+      permissionSetupStarted.resolve()
+      await releasePermissionSetup.promise
+      return configurePermissionProfile(...args)
+    })
+
+    const stale = runtime.createSession({
+      cwd: '/workspace',
+      permissionProfile: 'full'
+    })
+    await permissionSetupStarted.promise
+    let successor: Awaited<ReturnType<AcpRuntime['createSession']>> | undefined
+
+    try {
+      await runtime.disconnect()
+      successor = await runtime.createSession({
+        cwd: '/workspace',
+        permissionProfile: 'ask'
+      })
+      expect(newAgent.modeChanges).toEqual([{ sessionId: 'shared-primary', modeId: 'read-only' }])
+
+      releasePermissionSetup.resolve()
+      await expect(stale).rejects.toThrow('ACP session startup was superseded.')
+      expect(newAgent.modeChanges).toEqual([{ sessionId: 'shared-primary', modeId: 'read-only' }])
+      expect(runtime.getSnapshot().permissionProfiles['shared-primary']).toMatchObject({
+        selectedProfile: 'ask',
+        effectiveProfile: 'ask',
+        currentModeId: 'read-only'
+      })
+    } finally {
+      releasePermissionSetup.resolve()
+      await stale.catch(() => undefined)
       if (successor) await runtime.deleteSession({ sessionId: successor.sessionId })
       await runtime.disconnect().catch(() => undefined)
     }
@@ -15579,6 +15735,42 @@ describe('ACP runtime — failure-path robustness (errorMessage coercion + sync-
 
     await expect(runtime.createSession({ cwd: '/workspace' })).rejects.toBe(spawnError)
   }
+
+  it('does not overwrite a reentrant failure-event disconnect with error status', async () => {
+    const spawnError = new Error('spawn failed before disconnect')
+    const statuses: string[] = []
+    let disconnect: Promise<unknown> | undefined
+    const callbacks: { disconnectRuntime?: () => Promise<unknown> } = {}
+    const runtime = new AcpRuntime({
+      appVersion: '0.1.0',
+      defaultCwd: '/workspace',
+      callbacks: {
+        onEvent: (event) => {
+          if (event.title === 'Connection failed') disconnect = callbacks.disconnectRuntime?.()
+        },
+        onStateChanged: (snapshot) => statuses.push(snapshot.status)
+      },
+      resolveBackend: () => ({
+        framework: {
+          ...claudeCodeFramework,
+          spawn: () => {
+            throw spawnError
+          }
+        },
+        executablePath: '/bin/agent',
+        env: {}
+      })
+    })
+    callbacks.disconnectRuntime = () => runtime.disconnect()
+
+    await expect(runtime.connect({ cwd: '/workspace' })).rejects.toBe(spawnError)
+    expect(disconnect).toBeDefined()
+    await disconnect
+
+    expect(runtime.getSnapshot().status).toBe('closed')
+    expect(statuses.at(-1)).toBe('closed')
+    expect(statuses).not.toContain('error')
+  })
 
   it('propagates the spawn cause even when onEvent throws synchronously', async () => {
     const spawnError = new Error('spawn failed A')

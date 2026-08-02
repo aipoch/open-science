@@ -1069,14 +1069,16 @@ class AcpRuntime {
   // the conservative fallback reviewer.
   private async applyPermissionProfileMode(
     session: ActiveSession,
-    profile: PermissionProfileId
+    profile: PermissionProfileId,
+    connection: ClientConnection | undefined = this.connection
   ): Promise<SessionPermissionProfileState> {
     const application = this.framework.mapPermissionProfile(profile, session.modes)
 
     if (application.modeId && application.modeId !== session.modes?.currentModeId) {
-      if (!this.connection) throw new Error('ACP connection is not available.')
+      if (!connection) throw new Error('ACP connection is not available.')
+      this.assertCurrentConnectedConnection(connection)
 
-      await this.connection.agent.request(acp.methods.agent.session.setMode, {
+      await connection.agent.request(acp.methods.agent.session.setMode, {
         sessionId: session.sessionId,
         modeId: application.modeId
       })
@@ -1090,10 +1092,17 @@ class AcpRuntime {
     appSessionId: string,
     session: ActiveSession,
     profile: PermissionProfileId,
-    commit = true
+    commit = true,
+    connection: ClientConnection | undefined = this.connection
   ): Promise<SessionPermissionProfileState> {
-    const state = await this.applyPermissionProfileMode(session, profile)
-    if (commit) this.permissionProfiles.set(appSessionId, state)
+    const state = await this.applyPermissionProfileMode(session, profile, connection)
+    if (commit) {
+      if (this.sessions.get(appSessionId) !== session) {
+        throw new Error('ACP session startup was superseded.')
+      }
+      if (connection) this.assertCurrentConnectedConnection(connection)
+      this.permissionProfiles.set(appSessionId, state)
+    }
     return state
   }
 
@@ -1103,8 +1112,11 @@ class AcpRuntime {
   // exists or application fails; required selections fail visibly rather than silently running another
   // model. Returns the agent's post-application configOptions when it reports them — effort levels are
   // model-dependent, so callers resolving further options must use the set from AFTER the model switch.
-  private async applySessionModel(session: ActiveSession): Promise<SessionModelApplication> {
-    if (!this.pendingSessionModel || !this.connection) {
+  private async applySessionModel(
+    session: ActiveSession,
+    connection: ClientConnection | undefined = this.connection
+  ): Promise<SessionModelApplication> {
+    if (!this.pendingSessionModel || !connection) {
       return { appliedModel: undefined, configOptions: undefined }
     }
 
@@ -1132,15 +1144,13 @@ class AcpRuntime {
       return { appliedModel: selection.value, configOptions: configOptions ?? null }
     }
 
+    this.assertCurrentConnectedConnection(connection)
     try {
-      const response = (await this.connection.agent.request(
-        acp.methods.agent.session.setConfigOption,
-        {
-          sessionId: session.sessionId,
-          configId: selection.configId,
-          value: selection.value
-        }
-      )) as { configOptions?: SessionConfigOption[] | null }
+      const response = (await connection.agent.request(acp.methods.agent.session.setConfigOption, {
+        sessionId: session.sessionId,
+        configId: selection.configId,
+        value: selection.value
+      })) as { configOptions?: SessionConfigOption[] | null }
       log.info('session model applied', this.diagnosticContext())
       // The model switch rebuilds the agent's options (effort rungs are model-dependent). The
       // caller commits the fresh set to latestSessionConfigOptions once the session is registered,
@@ -1173,9 +1183,10 @@ class AcpRuntime {
   // never fatal to the session.
   private async applySessionEffort(
     session: ActiveSession,
-    configOptions?: SessionConfigOption[] | null
+    configOptions?: SessionConfigOption[] | null,
+    connection: ClientConnection | undefined = this.connection
   ): Promise<void> {
-    if (!this.pendingSessionEffort || !this.connection) return
+    if (!this.pendingSessionEffort || !connection) return
 
     const effectiveOptions =
       configOptions ??
@@ -1188,7 +1199,8 @@ class AcpRuntime {
       return
     }
 
-    await this.sendSessionEffort(session, selection)
+    this.assertCurrentConnectedConnection(connection)
+    await this.sendSessionEffort(session, selection, connection)
   }
 
   // Live-applies a reasoning-effort change to every open session — the ACP equivalent of a model
@@ -1209,7 +1221,8 @@ class AcpRuntime {
 
     this.pendingSessionEffort = effort === 'default' ? undefined : effort
     this.responsesBridgeLease?.setReasoningEffort?.(this.pendingSessionEffort)
-    if (!this.connection) return true
+    const connection = this.connection
+    if (!connection) return true
 
     let allApplied = true
     let appliedToAny = false
@@ -1226,7 +1239,7 @@ class AcpRuntime {
         continue
       }
 
-      if (!(await this.sendSessionEffort(session, selection))) {
+      if (!(await this.sendSessionEffort(session, selection, connection))) {
         allApplied = false
       } else {
         appliedToAny = true
@@ -1247,10 +1260,11 @@ class AcpRuntime {
   // non-fatal.
   private async sendSessionEffort(
     session: ActiveSession,
-    selection: SessionModelSelection
+    selection: SessionModelSelection,
+    connection: ClientConnection | undefined = this.connection
   ): Promise<boolean> {
     try {
-      await this.connection?.agent.request(acp.methods.agent.session.setConfigOption, {
+      await connection?.agent.request(acp.methods.agent.session.setConfigOption, {
         sessionId: session.sessionId,
         configId: selection.configId,
         value: selection.value
@@ -1300,6 +1314,8 @@ class AcpRuntime {
     // Captured at function scope so the catch can clean up the spawned child on every failure path —
     // including "superseded during spawn", where it is never assigned to this.agentProcess.
     let agentProcess: ChildProcessWithoutNullStreams | undefined
+    let connectionAuthentication: ResolvedAgentBackend['authentication']
+    let connectionProviderConfiguration: ResolvedAgentBackend['providerConfiguration']
     // The framework THIS connect spawned under, bound atomically to the spawn (spawnAgentProcess returns
     // it alongside the process, and tags a spawn-throw with it) rather than re-read from the mutable
     // this.framework, which an overlapping reconnect can move before the failure log is written. Seeded
@@ -1320,6 +1336,8 @@ class AcpRuntime {
       const spawned = await this.spawnAgentProcess()
       agentProcess = spawned.process
       spawnedFramework = spawned.framework
+      connectionAuthentication = spawned.backend.authentication
+      connectionProviderConfiguration = spawned.backend.providerConfiguration
 
       // spawnAgentProcess resolves the provider config asynchronously, so the connection may have been
       // torn down or superseded during the spawn: a quit latched shuttingDown, or any teardown/reconnect
@@ -1353,8 +1371,9 @@ class AcpRuntime {
         Readable.toWeb(this.agentProcess.stdout) as ReadableStream<Uint8Array>
       )
 
-      this.connection = this.createClientConnection(stream)
-      this.connection.closed.then(() => {
+      const connection = this.createClientConnection(stream)
+      this.connection = connection
+      connection.closed.then(() => {
         if (
           this.connectionGeneration === generation &&
           (this.snapshotOwner.status === 'connected' || this.snapshotOwner.status === 'connecting')
@@ -1364,7 +1383,7 @@ class AcpRuntime {
       })
 
       // Initialization tells the agent which client-side services this app can handle.
-      const initResult = await this.connection.agent.request(acp.methods.agent.initialize, {
+      const initResult = await connection.agent.request(acp.methods.agent.initialize, {
         protocolVersion: acp.PROTOCOL_VERSION,
         clientInfo: {
           name: 'open-science',
@@ -1383,15 +1402,22 @@ class AcpRuntime {
           plan: {}
         }
       })
+      this.assertCurrentConnectionOwner(connection, generation)
       if (this.pendingAuthentication) {
         const authentication = this.pendingAuthentication
-        this.pendingAuthentication = undefined
-        await this.connection.agent.request(acp.methods.agent.authenticate, authentication)
+        await connection.agent.request(acp.methods.agent.authenticate, authentication)
+        this.assertCurrentConnectionOwner(connection, generation)
+        if (this.pendingAuthentication === authentication) {
+          this.pendingAuthentication = undefined
+        }
       }
       if (this.pendingProviderConfiguration) {
         const providerConfiguration = this.pendingProviderConfiguration
-        this.pendingProviderConfiguration = undefined
-        await this.connection.agent.request(acp.methods.agent.providers.set, providerConfiguration)
+        await connection.agent.request(acp.methods.agent.providers.set, providerConfiguration)
+        this.assertCurrentConnectionOwner(connection, generation)
+        if (this.pendingProviderConfiguration === providerConfiguration) {
+          this.pendingProviderConfiguration = undefined
+        }
       }
       this.supportsSessionClose = Boolean(initResult.agentCapabilities?.sessionCapabilities?.close)
       this.supportsSessionDelete = Boolean(
@@ -1400,7 +1426,7 @@ class AcpRuntime {
       this.supportsSessionResume = Boolean(
         initResult.agentCapabilities?.sessionCapabilities?.resume
       )
-      this.assertCurrentConnectionGeneration(generation)
+      this.assertCurrentConnectionOwner(connection, generation)
 
       log.info('agent initialized', {
         protocolVersion: initResult.protocolVersion,
@@ -1415,6 +1441,9 @@ class AcpRuntime {
         title: 'Agent initialized',
         text: `ACP protocol ${initResult.protocolVersion}`
       })
+      // Event/state listeners are external and may synchronously disconnect or replace the runtime.
+      // Re-check the concrete owner after callbacks return before committing the connected snapshot.
+      this.assertCurrentConnectionOwner(connection, generation)
       this.setStatus('connected')
     } catch (thrown) {
       // A spawn failure arrives wrapped so it can name the framework it targeted without mutating the
@@ -1429,6 +1458,18 @@ class AcpRuntime {
         spawnFailure = undefined
       }
       const cause = spawnFailure ? spawnFailure.cause : thrown
+
+      // This connect owns the one-shot credential/config intent only while its generation is current.
+      // Clear every unconsumed value on a same-generation failure (including initialize/auth failure),
+      // but leave a successor generation's possibly identity-equal configuration untouched.
+      if (generation === this.connectionGeneration) {
+        if (this.pendingAuthentication === connectionAuthentication) {
+          this.pendingAuthentication = undefined
+        }
+        if (this.pendingProviderConfiguration === connectionProviderConfiguration) {
+          this.pendingProviderConfiguration = undefined
+        }
+      }
 
       // The entire failure-handling body is best-effort: logging, notification sinks (pushEvent/
       // emitState), and cleanup are each isolated so that whatever throws — a hostile error value, a
@@ -1476,22 +1517,28 @@ class AcpRuntime {
           }
           // Cleanup must not mask the original failure: a throw from session.dispose(),
           // connection.close(), or a teardown hook is logged with context but never replaces `cause`.
-          try {
-            await this.disconnectCurrent(false)
-          } catch (cleanupError) {
-            safeLogError('agent connection cleanup failed', {
-              ...diagnosticErrorFields(cleanupError),
-              ...processFields
-            })
+          if (generation === this.connectionGeneration) {
+            try {
+              await this.disconnectCurrent(false, generation)
+            } catch (cleanupError) {
+              safeLogError('agent connection cleanup failed', {
+                ...diagnosticErrorFields(cleanupError),
+                ...processFields
+              })
+            }
           }
-          this.snapshotOwner.transitionStatus('error')
-          try {
-            this.emitState()
-          } catch (notifyError) {
-            safeLogError('agent connection emitState failed', {
-              ...diagnosticErrorFields(notifyError),
-              ...processFields
-            })
+          // Cleanup and external callbacks both yield or re-enter. A newer generation owns the status
+          // once either happens, so the failed connect may commit `error` only while still current.
+          if (generation === this.connectionGeneration) {
+            this.snapshotOwner.transitionStatus('error')
+            try {
+              this.emitState()
+            } catch (notifyError) {
+              safeLogError('agent connection emitState failed', {
+                ...diagnosticErrorFields(notifyError),
+                ...processFields
+              })
+            }
           }
         }
       } catch (handlingError) {
@@ -1617,7 +1664,8 @@ class AcpRuntime {
           session.sessionId,
           session,
           normalizePermissionProfile(request.permissionProfile),
-          false
+          false,
+          connection
         )
       } catch (error) {
         safeLogError('createSession: configurePermissionProfile failed', {
@@ -1628,8 +1676,8 @@ class AcpRuntime {
       }
 
       log.info('createSession: applySessionModel', this.diagnosticContext())
-      const modelApplication = await this.applySessionModel(session)
-      await this.applySessionEffort(session, modelApplication.configOptions)
+      const modelApplication = await this.applySessionModel(session, connection)
+      await this.applySessionEffort(session, modelApplication.configOptions, connection)
 
       this.assertPrimarySessionIdentityReservation(primaryIdentityReservation)
       // Commit app-owned projections only after the reservation is known to still own this id. No
@@ -2409,11 +2457,12 @@ class AcpRuntime {
         request.sessionId,
         session,
         normalizePermissionProfile(request.permissionProfile),
-        false
+        false,
+        connection
       )
 
-      const modelApplication = await this.applySessionModel(session)
-      await this.applySessionEffort(session, modelApplication.configOptions)
+      const modelApplication = await this.applySessionModel(session, connection)
+      await this.applySessionEffort(session, modelApplication.configOptions, connection)
 
       this.assertPrimarySessionIdentityReservation(primaryIdentityReservation)
       if (request.specialistId) {
@@ -2564,11 +2613,12 @@ class AcpRuntime {
         request.sessionId,
         adopted,
         normalizePermissionProfile(request.permissionProfile),
-        false
+        false,
+        connection
       )
 
-      const modelApplication = await this.applySessionModel(adopted)
-      await this.applySessionEffort(adopted, modelApplication.configOptions)
+      const modelApplication = await this.applySessionModel(adopted, connection)
+      await this.applySessionEffort(adopted, modelApplication.configOptions, connection)
       this.assertPrimarySessionIdentityReservation(primaryIdentityReservation)
       if (request.specialistId) {
         this.sessionSpecialistIds.set(request.sessionId, request.specialistId)
@@ -3064,6 +3114,13 @@ class AcpRuntime {
 
   private assertCurrentConnectionGeneration(generation: number): void {
     if (generation !== this.connectionGeneration) {
+      throw new Error('ACP connection was superseded.')
+    }
+  }
+
+  private assertCurrentConnectionOwner(connection: ClientConnection, generation: number): void {
+    this.assertCurrentConnectionGeneration(generation)
+    if (this.connection !== connection) {
       throw new Error('ACP connection was superseded.')
     }
   }
