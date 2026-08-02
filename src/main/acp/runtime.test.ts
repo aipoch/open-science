@@ -975,6 +975,96 @@ describe('ACP runtime migration write-gate', () => {
     ])
   })
 
+  it('publishes connected only after initialize, authentication, and provider configuration', async () => {
+    const process = new FakeAgentProcess()
+    const actions: string[] = []
+    acp
+      .agent({ name: 'connection-order-agent' })
+      .onRequest(acp.methods.agent.initialize, () => {
+        actions.push('initialize')
+        return {
+          protocolVersion: acp.PROTOCOL_VERSION,
+          agentCapabilities: { loadSession: false },
+          authMethods: []
+        }
+      })
+      .onRequest(acp.methods.agent.authenticate, () => {
+        actions.push('authenticate')
+        return {}
+      })
+      .onRequest(acp.methods.agent.providers.set, () => {
+        actions.push('configure-provider')
+        return {}
+      })
+      .connect(
+        acp.ndJsonStream(
+          Writable.toWeb(process.stdout) as WritableStream<Uint8Array>,
+          Readable.toWeb(process.stdin) as ReadableStream<Uint8Array>
+        )
+      )
+    const runtime = new AcpRuntime({
+      appVersion: '0.1.0',
+      defaultCwd: '/workspace',
+      resolveBackend: () => ({
+        framework: { ...claudeCodeFramework, spawn: () => asAgentProcess(process) },
+        executablePath: '/bin/agent',
+        env: {},
+        authentication: { methodId: 'api-key' },
+        providerConfiguration: {
+          providerId: 'custom-gateway',
+          apiType: 'openai',
+          baseUrl: 'http://127.0.0.1:1234/v1'
+        }
+      }),
+      callbacks: {
+        onEvent: (event) => {
+          if (event.title === 'Agent initialized') actions.push('initialized-event')
+        },
+        onStateChanged: (snapshot) => {
+          if (snapshot.status === 'connected') actions.push('publish-connected')
+        }
+      }
+    })
+
+    await runtime.connect({ cwd: '/workspace' })
+
+    expect(actions).toEqual([
+      'initialize',
+      'authenticate',
+      'configure-provider',
+      'initialized-event',
+      'publish-connected'
+    ])
+    await runtime.disconnect()
+  })
+
+  it('ignores a detached connection closing after its replacement is connected', async () => {
+    const oldProcess = new FakeAgentProcess()
+    const replacementProcess = new FakeAgentProcess()
+    startFakeAgent(oldProcess, ['old-session'])
+    startFakeAgent(replacementProcess, ['replacement-session'])
+    let spawnCount = 0
+    const runtime = new AcpRuntime({
+      appVersion: '0.1.0',
+      defaultCwd: '/workspace',
+      spawnAgent: () => asAgentProcess(spawnCount++ === 0 ? oldProcess : replacementProcess)
+    })
+
+    await runtime.createSession({ cwd: '/workspace' })
+    await runtime.disconnect()
+    await runtime.createSession({ cwd: '/workspace' })
+
+    oldProcess.stdout.end()
+    await new Promise((resolvePromise) => setTimeout(resolvePromise, 0))
+
+    expect(runtime.getSnapshot()).toMatchObject({
+      status: 'connected',
+      sessionIds: ['replacement-session']
+    })
+    expect(replacementProcess.killed).toBe(false)
+    await runtime.disconnect()
+  })
+
   it.each(['initialize', 'authenticate'] as const)(
     'clears one-shot connection intents when %s fails',
     async (failureStage) => {
