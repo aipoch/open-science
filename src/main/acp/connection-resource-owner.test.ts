@@ -47,6 +47,7 @@ describe('AcpConnectionResourceOwner', () => {
     })
 
     const first = owner.connect(operation)
+    expect(operation).toHaveBeenCalledOnce()
     const secondOperation = vi.fn(async (attempt: AcpConnectionResourceAttempt) =>
       attachAndPublish(attempt, 'unexpected')
     )
@@ -60,6 +61,32 @@ describe('AcpConnectionResourceOwner', () => {
     expect(secondOperation).not.toHaveBeenCalled()
     expect(secondHandle).toBe(firstHandle)
     expect(owner.connection).toBe(firstHandle.connection)
+  })
+
+  it('keeps an attached resource provisional until publication', async () => {
+    const owner = new AcpConnectionResourceOwner()
+    const attached = createDeferred()
+    const canPublish = createDeferred()
+    const pending = owner.connect(async (attempt) => {
+      attempt.attach({
+        process: process('provisional'),
+        connection: connection('provisional'),
+        framework: 'opencode',
+        bridgeLease: undefined
+      })
+      attached.resolve()
+      await canPublish.promise
+      return attempt.publish({ close: false, delete: false, resume: true })
+    })
+
+    await attached.promise
+    expect(owner.connection).toBeUndefined()
+    expect(owner.capabilities).toEqual({ close: false, delete: false, resume: false })
+
+    canPublish.resolve()
+    const handle = await pending
+    expect(owner.connection).toBe(handle.connection)
+    expect(owner.capabilities.resume).toBe(true)
   })
 
   it('prevents a superseded attempt from publishing its attached resource', async () => {
@@ -90,6 +117,7 @@ describe('AcpConnectionResourceOwner', () => {
     const owner = new AcpConnectionResourceOwner()
     const first = await owner.connect(async (attempt) => attachAndPublish(attempt, 'first'))
     const firstTeardownEpoch = owner.supersede()
+    expect(owner.connection).toBeUndefined()
     const detachedFirst = owner.detach(firstTeardownEpoch)
     expect(detachedFirst?.connection).toBe(first.connection)
     expect(owner.detach(firstTeardownEpoch)).toBeUndefined()

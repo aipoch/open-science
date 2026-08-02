@@ -54,6 +54,7 @@ const EMPTY_CAPABILITIES: AcpConnectionCapabilities = Object.freeze({
 // second mutable owner while those effects move behind this module in A9.1a2.
 export class AcpConnectionResourceOwner {
   private resourceEpoch = 0
+  private provisional: CurrentResource | undefined
   private current: CurrentResource | undefined
   private connectInFlight: Promise<AcpConnectionResourceReadyHandle> | undefined
 
@@ -62,11 +63,11 @@ export class AcpConnectionResourceOwner {
   }
 
   get connection(): ClientConnection | undefined {
-    return this.current?.connection
+    return this.currentResource()?.connection
   }
 
   get capabilities(): AcpConnectionCapabilities {
-    return this.current?.capabilities ?? EMPTY_CAPABILITIES
+    return this.currentResource()?.capabilities ?? EMPTY_CAPABILITIES
   }
 
   get inFlight(): Promise<AcpConnectionResourceReadyHandle> | undefined {
@@ -74,7 +75,7 @@ export class AcpConnectionResourceOwner {
   }
 
   get bridgeSkillsAvailable(): boolean {
-    return Boolean(this.current?.bridgeLease?.selectSkills)
+    return Boolean(this.currentResource()?.bridgeLease?.selectSkills)
   }
 
   connect(
@@ -86,12 +87,22 @@ export class AcpConnectionResourceOwner {
 
     const epoch = this.supersede()
     const attempt = this.createAttempt(epoch)
-    const connect = Promise.resolve().then(() => operation(attempt))
+    let resolveConnect!: (handle: AcpConnectionResourceReadyHandle) => void
+    let rejectConnect!: (error: unknown) => void
+    const connect = new Promise<AcpConnectionResourceReadyHandle>((resolve, reject) => {
+      resolveConnect = resolve
+      rejectConnect = reject
+    })
     this.connectInFlight = connect
     const clear = (): void => {
       if (this.connectInFlight === connect) this.connectInFlight = undefined
     }
     void connect.then(clear, clear)
+    try {
+      void operation(attempt).then(resolveConnect, rejectConnect)
+    } catch (error) {
+      rejectConnect(error)
+    }
     return connect
   }
 
@@ -103,7 +114,8 @@ export class AcpConnectionResourceOwner {
 
   detach(expectedEpoch = this.resourceEpoch): AcpDetachedConnectionResource | undefined {
     if (expectedEpoch !== this.resourceEpoch) return undefined
-    const resource = this.current
+    const resource = this.provisional ?? this.current
+    this.provisional = undefined
     this.current = undefined
     if (!resource) return undefined
     return resource
@@ -116,7 +128,7 @@ export class AcpConnectionResourceOwner {
   }
 
   registerBridgeReviewerSession(sessionId: string): void {
-    this.current?.bridgeLease?.registerReviewerSession(sessionId)
+    this.currentResource()?.bridgeLease?.registerReviewerSession(sessionId)
   }
 
   unregisterBridgeReviewerSession(sessionId: string): boolean | undefined {
@@ -128,7 +140,7 @@ export class AcpConnectionResourceOwner {
       NonNullable<NonNullable<ResponsesBridgeLease>['setReasoningEffort']>
     >[0]
   ): void {
-    this.current?.bridgeLease?.setReasoningEffort?.(effort)
+    this.currentResource()?.bridgeLease?.setReasoningEffort?.(effort)
   }
 
   async selectBridgeSkills(
@@ -136,7 +148,11 @@ export class AcpConnectionResourceOwner {
     catalog: Parameters<NonNullable<ResponsesBridgeLease>['selectSkills']>[1],
     signal?: Parameters<NonNullable<ResponsesBridgeLease>['selectSkills']>[2]
   ): Promise<Awaited<ReturnType<NonNullable<ResponsesBridgeLease>['selectSkills']>> | undefined> {
-    return this.current?.bridgeLease?.selectSkills(text, catalog, signal)
+    return this.currentResource()?.bridgeLease?.selectSkills(text, catalog, signal)
+  }
+
+  private currentResource(): CurrentResource | undefined {
+    return this.current?.epoch === this.resourceEpoch ? this.current : undefined
   }
 
   private createAttempt(epoch: number): AcpConnectionResourceAttempt {
@@ -149,15 +165,19 @@ export class AcpConnectionResourceOwner {
       assertCurrent,
       attach: (resource) => {
         assertCurrent()
-        if (this.current) throw new Error('ACP connection resource is already attached.')
-        this.current = { ...resource, epoch, capabilities: EMPTY_CAPABILITIES }
+        if (this.provisional || this.current) {
+          throw new Error('ACP connection resource is already attached.')
+        }
+        this.provisional = { ...resource, epoch, capabilities: EMPTY_CAPABILITIES }
       },
       publish: (capabilities) => {
         assertCurrent()
-        const resource = this.current
+        const resource = this.provisional
         if (!resource || resource.epoch !== epoch) {
           throw new Error('ACP connection resource is not attached.')
         }
+        this.provisional = undefined
+        this.current = resource
         resource.capabilities = Object.freeze({ ...capabilities })
         const handle: AcpConnectionResourceReadyHandle = Object.freeze({
           epoch,
@@ -172,7 +192,8 @@ export class AcpConnectionResourceOwner {
         return handle
       },
       owns: (connection) =>
-        epoch === this.resourceEpoch && this.current?.connection === connection
+        epoch === this.resourceEpoch &&
+        (this.provisional?.connection === connection || this.current?.connection === connection)
     })
   }
 }

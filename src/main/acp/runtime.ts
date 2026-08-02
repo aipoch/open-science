@@ -1207,12 +1207,14 @@ class AcpRuntime {
     attempt: AcpConnectionResourceAttempt
   ): Promise<AcpConnectionResourceReadyHandle> {
     const generation = attempt.epoch
+    attempt.assertCurrent()
     // Resolve up front rather than reading this.cwd after the pre-connect teardown, which may still be
     // mutating runtime state.
     const cwd = resolve(request.cwd || this.options.defaultCwd)
     // Captured at function scope so the catch can clean up the spawned child on every failure path —
     // including "superseded during spawn", before it can be attached to the resource owner.
     let agentProcess: ChildProcessWithoutNullStreams | undefined
+    let unattachedConnection: ClientConnection | undefined
     let unattachedBridgeLease: ResolvedAgentBackend['responsesBridgeLease']
     let resourceAttached = false
     let connectionAuthentication: ResolvedAgentBackend['authentication']
@@ -1276,6 +1278,7 @@ class AcpRuntime {
       )
 
       const connection = this.createClientConnection(stream)
+      unattachedConnection = connection
       attempt.attach({
         process: agentProcess,
         connection,
@@ -1283,6 +1286,7 @@ class AcpRuntime {
         bridgeLease: spawned.backend.responsesBridgeLease
       })
       resourceAttached = true
+      unattachedConnection = undefined
       unattachedBridgeLease = undefined
       connection.closed.then(() => {
         if (
@@ -1370,8 +1374,17 @@ class AcpRuntime {
 
       // Before attach(), the owner cannot detach the candidate for failure cleanup. Keep that
       // pre-publication resource local and transfer-or-release it exactly once.
-      if (!resourceAttached && agentProcess && generation === this.connectionGeneration) {
+      if (!resourceAttached && agentProcess) {
         this.expectedProcessExits.add(agentProcess)
+        try {
+          unattachedConnection?.close()
+        } catch (cleanupError) {
+          safeLogError('unattached ACP connection cleanup failed', {
+            ...diagnosticErrorFields(cleanupError),
+            ...this.diagnosticContext(spawnedFramework, generation)
+          })
+        }
+        unattachedConnection = undefined
         try {
           const result = await terminateProcessTree(agentProcess, undefined, log)
           this.lastTreeKillReaped = this.lastTreeKillReaped && result.reaped

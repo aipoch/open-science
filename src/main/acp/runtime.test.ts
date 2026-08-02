@@ -5311,6 +5311,64 @@ describe('ACP runtime session management', () => {
     expect(runtime.getSnapshot().sessionIds).toEqual(['remote-session-1', 'remote-session-2'])
   })
 
+  it('does not reuse a superseded connection while its replacement connect is starting', async () => {
+    const oldProcess = new FakeAgentProcess()
+    const replacementProcess = new FakeAgentProcess()
+    const oldAgent = startFakeAgent(oldProcess, ['old-session', 'wrong-old-session'])
+    const replacementAgent = startFakeAgent(replacementProcess, ['replacement-session'])
+    let spawnCount = 0
+    const runtime = new AcpRuntime({
+      appVersion: '0.1.0',
+      defaultCwd: '/workspace',
+      spawnAgent: () => asAgentProcess(spawnCount++ === 0 ? oldProcess : replacementProcess)
+    })
+    await runtime.createSession({ cwd: '/workspace' })
+
+    const reconnect = runtime.connect({ cwd: '/workspace' })
+    const successor = runtime.createSession({ cwd: '/workspace' })
+    const [, session] = await Promise.all([reconnect, successor])
+
+    expect(session.sessionId).toBe('replacement-session')
+    expect(oldAgent.newSessions).toHaveLength(1)
+    expect(replacementAgent.newSessions).toHaveLength(1)
+    expect(spawnCount).toBe(2)
+  })
+
+  it('releases a spawned resource superseded immediately before owner attach', async () => {
+    const process = new FakeAgentProcess()
+    startFakeAgent(process, [])
+    const { lease, release } = createBackendLeaseHarness()
+    const runtime = new AcpRuntime({
+      appVersion: '0.1.0',
+      defaultCwd: '/workspace',
+      resolveBackend: () => ({
+        framework: { ...claudeCodeFramework, spawn: () => asAgentProcess(process) },
+        executablePath: '/bin/agent',
+        env: {},
+        responsesBridgeLease: lease
+      })
+    })
+    const internal = runtime as unknown as {
+      createClientConnection: (
+        stream: acp.Stream
+      ) => import('@agentclientprotocol/sdk').ClientConnection
+    }
+    const createConnection = internal.createClientConnection.bind(runtime)
+    let disconnect: Promise<unknown> | undefined
+    vi.spyOn(internal, 'createClientConnection').mockImplementation((stream) => {
+      const connection = createConnection(stream)
+      disconnect = runtime.disconnect()
+      return connection
+    })
+
+    await expect(runtime.connect({ cwd: '/workspace' })).rejects.toThrow(/superseded/i)
+    await disconnect
+
+    expect(process.killed).toBe(true)
+    expect(release).toHaveBeenCalledOnce()
+    expect(runtime.getSnapshot().sessionIds).toEqual([])
+  })
+
   it('invalidates an in-flight connection when disconnect is requested before initialization finishes', async () => {
     const initializeStarted = createDeferred()
     const firstInitializeCanFinish = createDeferred()
