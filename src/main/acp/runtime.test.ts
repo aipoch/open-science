@@ -800,7 +800,6 @@ type ReviewerOwnerProbe = {
         role: 'reviewer'
       }
     | undefined
-  rejectedToolCalls: Map<string, number>
   snapshot: () => Array<{
     lifecycle: 'pending' | 'active'
     role: 'reviewer'
@@ -7266,7 +7265,6 @@ describe('ACP runtime session management', () => {
     }
     await runtime.buildReviewerSession(reviewerRequest)
     await runtime.buildReviewerSession(reviewerRequest)
-    reviewerOwnerProbe(runtime).rejectedToolCalls.set('reviewer-one', 2)
     const reviewerCwds = fakeAgent.newSessions.map(({ cwd }) => cwd)
     await runtime.requestProviderReconnect()
     const handleConnectionClosed = (
@@ -7278,7 +7276,6 @@ describe('ACP runtime session management', () => {
       expect(lease.unregisterReviewerSession).toHaveBeenCalledWith('reviewer-one')
       expect(lease.unregisterReviewerSession).toHaveBeenCalledWith('reviewer-two')
       expect(reviewerSessionIds(runtime).size).toBe(0)
-      expect(reviewerOwnerProbe(runtime).rejectedToolCalls.size).toBe(0)
       expect(
         (runtime as unknown as { reconnectBarrier?: Promise<void> }).reconnectBarrier
       ).toBeUndefined()

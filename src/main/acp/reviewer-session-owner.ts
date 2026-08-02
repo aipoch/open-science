@@ -56,6 +56,14 @@ const safeLogError = (message: string, data?: unknown): void => {
   }
 }
 
+const safeLogWarn = (message: string, data?: unknown): void => {
+  try {
+    log.warn(message, data)
+  } catch {
+    /* logging must never interrupt lifecycle cleanup */
+  }
+}
+
 export type ReviewerSessionRole = typeof REVIEWER_SESSION_ROLE
 
 export type ReviewerSessionRequest = {
@@ -539,7 +547,7 @@ export class ReviewerSessionOwner {
     try {
       rmSync(reviewerCwd, { recursive: true, force: true })
     } catch (error) {
-      log.warn('failed to remove temporary reviewer directory', {
+      safeLogWarn('failed to remove temporary reviewer directory', {
         reviewerCwd,
         error: errorMessage(error)
       })
