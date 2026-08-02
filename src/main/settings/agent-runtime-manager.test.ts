@@ -1,6 +1,6 @@
 import { chmod, mkdir, mkdtemp, readFile, rm, writeFile } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
-import { dirname, join } from 'node:path'
+import { dirname, join, posix } from 'node:path'
 
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 
@@ -141,17 +141,19 @@ describe('AgentRuntimeManager', () => {
   })
 
   it('persists successful detection for all three runtime storage shapes', async () => {
-    const claudePath = join(storageRoot, 'detected', 'claude')
-    const opencodePath = join(storageRoot, 'detected', 'opencode')
+    // The injected detector platform is Linux, so keep these virtual inventory paths POSIX on every
+    // host. Using the host path helpers makes the Windows keys disagree with the detector probes.
+    const claudePath = posix.join('/detected', 'claude')
+    const opencodePath = posix.join('/detected', 'opencode')
     inventory.claude.set(claudePath, '2.1.0')
     inventory.opencode.set(opencodePath, '1.19.0')
     inventory.codexAdapter.set(managedAdapterPath, 'codex-acp 1.1.4')
     inventory.codexNative.set(managedCodexPath, 'codex-cli 0.144.6')
     manager = createManager({
-      detectDeps: { ...createClaudeDeps(inventory), env: { PATH: dirname(claudePath) } },
+      detectDeps: { ...createClaudeDeps(inventory), env: { PATH: posix.dirname(claudePath) } },
       opencodeDetectDeps: {
         ...createOpencodeDeps(inventory),
-        env: { PATH: dirname(opencodePath) }
+        env: { PATH: posix.dirname(opencodePath) }
       }
     })
 
