@@ -15,6 +15,31 @@ const createDeferred = <T>() => {
 }
 
 describe('AcpSessionInteractionOwner', () => {
+  it('supports explicit claim and release while run uses the same lifecycle', async () => {
+    const owner = new AcpSessionInteractionOwner()
+    const first = owner.claim({ sessionId: 'session-1', kind: 'prompt' })
+
+    expect(owner.current('session-1')).toBe(first)
+    expect(() => owner.claim({ sessionId: 'session-1', kind: 'compaction' })).toThrow(
+      /already running/
+    )
+
+    owner.release(first)
+    const replacement = owner.claim({ sessionId: 'session-1', kind: 'compaction' })
+    owner.release(first)
+    expect(owner.current('session-1')).toBe(replacement)
+    owner.release(replacement)
+
+    const claim = vi.spyOn(owner, 'claim')
+    const release = vi.spyOn(owner, 'release')
+    await expect(
+      owner.run({ sessionId: 'session-2', kind: 'prompt' }, async () => 'run-result')
+    ).resolves.toBe('run-result')
+    expect(claim).toHaveBeenCalledOnce()
+    expect(release).toHaveBeenCalledOnce()
+    expect(release).toHaveBeenCalledWith(claim.mock.results[0].value)
+  })
+
   it('claims a session before work reaches its first await and rejects overlapping work', async () => {
     const owner = new AcpSessionInteractionOwner()
     const release = createDeferred<void>()
@@ -158,6 +183,30 @@ describe('AcpSessionInteractionOwner', () => {
     await expect(
       owner.run({ sessionId: 'session-1', kind: 'prompt' }, async () => 'next-result')
     ).resolves.toBe('next-result')
+  })
+
+  it('authoritatively supersedes the current session or every active session', () => {
+    const owner = new AcpSessionInteractionOwner()
+    const first = owner.claim({ sessionId: 'session-1', kind: 'prompt' })
+    const other = owner.claim({ sessionId: 'session-2', kind: 'compaction' })
+
+    owner.supersedeCurrent('missing-session')
+    expect(first.signal.aborted).toBe(false)
+    expect(other.signal.aborted).toBe(false)
+
+    owner.supersedeCurrent('session-1')
+    expect(first.signal.aborted).toBe(true)
+    expect(owner.current('session-1')).toBeUndefined()
+
+    const replacement = owner.claim({ sessionId: 'session-1', kind: 'prompt' })
+    owner.supersede(first)
+    expect(owner.current('session-1')).toBe(replacement)
+    expect(replacement.signal.aborted).toBe(false)
+
+    owner.supersedeAll()
+    expect(replacement.signal.aborted).toBe(true)
+    expect(other.signal.aborted).toBe(true)
+    expect(owner.snapshot()).toEqual([])
   })
 
   it.each([

@@ -80,13 +80,21 @@ export class AcpSessionInteractionOwner {
     if (active?.scope !== scope) return
 
     active.abortController.abort()
-    this.activeInteractions.delete(scope.sessionId)
+    this.release(scope)
   }
 
-  async run<T, Request extends AcpSessionInteractionRequest>(
-    request: Request,
-    work: (scope: ScopeFor<Request>) => Promise<T>
-  ): Promise<T> {
+  supersedeCurrent(sessionId: string): void {
+    const scope = this.current(sessionId)
+    if (scope) this.supersede(scope)
+  }
+
+  supersedeAll(): void {
+    for (const { scope } of Array.from(this.activeInteractions.values())) {
+      this.supersede(scope)
+    }
+  }
+
+  claim<Request extends AcpSessionInteractionRequest>(request: Request): ScopeFor<Request> {
     if (this.activeInteractions.has(request.sessionId)) {
       throw new Error('An ACP interaction is already running for this session')
     }
@@ -107,15 +115,27 @@ export class AcpSessionInteractionOwner {
           }
         : { ...base, kind: request.kind }
     )
-    const active = { scope, abortController }
-    this.activeInteractions.set(request.sessionId, active)
+    this.activeInteractions.set(request.sessionId, { scope, abortController })
+
+    return scope as ScopeFor<Request>
+  }
+
+  release(scope: AcpSessionInteractionScope): void {
+    if (this.activeInteractions.get(scope.sessionId)?.scope === scope) {
+      this.activeInteractions.delete(scope.sessionId)
+    }
+  }
+
+  async run<T, Request extends AcpSessionInteractionRequest>(
+    request: Request,
+    work: (scope: ScopeFor<Request>) => Promise<T>
+  ): Promise<T> {
+    const scope = this.claim(request)
 
     try {
-      return await work(scope as ScopeFor<Request>)
+      return await work(scope)
     } finally {
-      if (this.activeInteractions.get(request.sessionId) === active) {
-        this.activeInteractions.delete(request.sessionId)
-      }
+      this.release(scope)
     }
   }
 }
