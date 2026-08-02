@@ -258,6 +258,16 @@ type ReviewerSessionResult = {
   promptPrefix?: string
 }
 
+type ReviewerSessionIdentityReservation = {
+  generation: number
+  sessionId: string
+  token: symbol
+}
+
+type ReviewerSessionIdentityReservationResult =
+  | { reservation: ReviewerSessionIdentityReservation; collision?: never }
+  | { reservation?: never; collision: Error }
+
 export type ReviewerSessionDisposition = {
   rejectedToolCalls: number
   // Undefined for frameworks/providers that do not traverse the Responses bridge.
@@ -265,6 +275,7 @@ export type ReviewerSessionDisposition = {
 }
 
 type PrimarySessionIdentityReservation = {
+  generation: number
   token: symbol
   sessionIds: Set<string>
 }
@@ -603,6 +614,7 @@ class AcpRuntime {
   private connection: ClientConnection | undefined
   private connectInFlight: Promise<AcpStateSnapshot> | undefined
   private connectionGeneration = 0
+  private sessionStartupGeneration = 0
   private currentSessionId: string | undefined
   private supportsSessionClose = false
   private supportsSessionDelete = false
@@ -630,11 +642,15 @@ class AcpRuntime {
   // Session/new returns an agent-owned id before the reviewer permission baseline has finished. Reserve
   // that identity across the async mode switch so a concurrent reviewer cannot claim the same protocol
   // route before either session has authority.
-  private readonly pendingReviewerSessionIds = new Set<string>()
+  private readonly pendingReviewerSessionIds = new Map<string, symbol>()
   // A primary startup can know both its stable app id and its provider protocol id before it is ready
   // for publication. Tokens make multi-id reservations owner-aware so one concurrent startup can never
   // release another startup's identity.
   private readonly pendingPrimarySessionIds = new Map<string, symbol>()
+  // A startup that begins while a reconnect barrier is already armed must not block the reconnect it
+  // is waiting for. Once it reaches the replacement connection, renewal adds its token here so any
+  // later reconnect waits for publication or rollback.
+  private readonly pendingSessionStartupBlockers = new Set<symbol>()
   private readonly reviewerSessionDirectories = new Map<string, string>()
   // Per reviewer session: count of tool calls the strict allowlist rejected. Lets the orchestrator
   // distinguish "reviewer never called its tools" from "the gate blocked them" when a review ends
@@ -1474,6 +1490,7 @@ class AcpRuntime {
       const projectName = this.normalizeProjectName(request.projectName)
       log.info('createSession: ensureConnected', this.diagnosticContext())
       const connection = await this.ensureConnected(sessionCwd)
+      const sessionStartupGeneration = this.sessionStartupGeneration
       const artifactSessionId = this.createArtifactSessionId()
       const notebookSessionId = this.createNotebookSessionId()
       provisionalNotebookSessionId = notebookSessionId || undefined
@@ -1525,7 +1542,12 @@ class AcpRuntime {
 
       // New-session requests have no app id on their interface: the provider-returned id becomes the
       // stable app id. Reserve that first known identity synchronously before any later setup awaits.
-      const reservationResult = this.reservePrimarySessionIds(undefined, [session.sessionId])
+      const reservationResult = this.reservePrimarySessionIds(
+        undefined,
+        [session.sessionId],
+        undefined,
+        sessionStartupGeneration
+      )
       if (reservationResult.collision) {
         this.disposeSessionAfterFailure(session, 'primary collision session disposal failed')
         throw reservationResult.collision
@@ -1560,6 +1582,7 @@ class AcpRuntime {
       const updatedConfigOptions = await this.applySessionModel(session)
       await this.applySessionEffort(session, updatedConfigOptions)
 
+      this.assertPrimarySessionIdentityReservation(primaryIdentityReservation)
       this.sessions.set(session.sessionId, session)
       this.releasePrimarySessionIdentityReservation(primaryIdentityReservation)
       primaryIdentityReservation = undefined
@@ -1732,6 +1755,10 @@ class AcpRuntime {
     primaryIdentityReservation: PrimarySessionIdentityReservation
   ): Promise<AcpCreateSessionResponse> {
     const connection = await this.ensureConnected(sessionCwd)
+    this.renewPrimarySessionIdentityReservation(
+      primaryIdentityReservation,
+      this.sessions.has(request.sessionId) ? request.sessionId : undefined
+    )
 
     // Tear down the currently attached agent session (if any) before adopting a replacement, dropping
     // its reverse routing so late events from the old agent session can no longer target this app id.
@@ -2061,6 +2088,7 @@ class AcpRuntime {
     primaryIdentityReservation: PrimarySessionIdentityReservation
   ): Promise<AcpCreateSessionResponse> {
     const connection = await this.ensureConnected(sessionCwd)
+    this.renewPrimarySessionIdentityReservation(primaryIdentityReservation)
     // A session created under a different framework can never be resumed by the current agent — each
     // framework keeps its own session store, so the request is guaranteed to fail and only makes the
     // agent log a scary internal error. Skip straight to adopting a fresh session (context still
@@ -2198,6 +2226,7 @@ class AcpRuntime {
       const updatedConfigOptions = await this.applySessionModel(session)
       await this.applySessionEffort(session, updatedConfigOptions)
 
+      this.assertPrimarySessionIdentityReservation(primaryIdentityReservation)
       this.sessions.set(request.sessionId, session)
       this.releasePrimarySessionIdentityReservation(primaryIdentityReservation)
       if (updatedConfigOptions) {
@@ -2296,6 +2325,7 @@ class AcpRuntime {
 
       const updatedConfigOptions = await this.applySessionModel(adopted)
       await this.applySessionEffort(adopted, updatedConfigOptions)
+      this.assertPrimarySessionIdentityReservation(primaryIdentityReservation)
       this.adoptSession(
         request.sessionId,
         adopted,
@@ -2365,6 +2395,7 @@ class AcpRuntime {
   // Tears down every local session route and closes the underlying agent process.
   async disconnect(emitClosedStatus = true): Promise<AcpStateSnapshot> {
     this.nextConnectionGeneration()
+    this.invalidatePendingSessionStartups()
     this.connectInFlight = undefined
 
     try {
@@ -2381,6 +2412,7 @@ class AcpRuntime {
   shutdown(): void {
     this.shuttingDown = true
     this.nextConnectionGeneration()
+    this.invalidatePendingSessionStartups()
     this.connectInFlight = undefined
     this.connection?.close()
     this.connection = undefined
@@ -2578,6 +2610,7 @@ class AcpRuntime {
       this.promptInFlightSessionIds.size > 0 ||
       this.contextCompactionInFlightSessionIds.size > 0 ||
       this.reviewerSessionIds.size > 0 ||
+      this.pendingSessionStartupBlockers.size > 0 ||
       this.activityLeaseCount > 0
     )
   }
@@ -5581,6 +5614,7 @@ class AcpRuntime {
 
   // Clears local state after the protocol connection closes unexpectedly.
   private handleConnectionClosed(): void {
+    this.invalidatePendingSessionStartups()
     const orphanedProcess = this.agentProcess
     if (orphanedProcess) {
       this.expectedProcessExits.add(orphanedProcess)
@@ -5730,6 +5764,7 @@ class AcpRuntime {
     }
 
     const connection = await this.ensureConnected(request.cwd)
+    const sessionStartupGeneration = this.sessionStartupGeneration
     const reviewerCwd = await mkdtemp(join(tmpdir(), 'open-science-reviewer-'))
 
     const setup = this.framework.buildSessionSetup({
@@ -5769,11 +5804,15 @@ class AcpRuntime {
       // Reviewer ids share protocol routing with primary/adopted sessions. An agent-provided
       // collision must fail before the reviewer receives permission authority, bridge scope, or a
       // prompt; otherwise its strict reviewer identity could overwrite state owned by a conversation.
-      if (!this.reserveReviewerSessionId(session.sessionId)) {
-        const collision = new Error(`Reviewer session id collision: ${session.sessionId}`)
+      const reservationResult = this.reserveReviewerSessionId(
+        session.sessionId,
+        sessionStartupGeneration
+      )
+      if (reservationResult.collision) {
         this.disposeSessionAfterFailure(session, 'reviewer collision session disposal failed')
-        throw collision
+        throw reservationResult.collision
       }
+      const identityReservation = reservationResult.reservation
 
       try {
         // Apply the framework's Ask baseline before prompting. The dedicated reviewer MCP is
@@ -5788,8 +5827,7 @@ class AcpRuntime {
 
         // No await separates the pending -> active transition: protocol routing always sees exactly
         // one identity state. Bridge authority is granted only after the active reviewer route exists.
-        this.pendingReviewerSessionIds.delete(session.sessionId)
-        this.reviewerSessionIds.add(session.sessionId)
+        this.activateReviewerSessionIdentity(identityReservation)
         this.responsesBridgeLease?.registerReviewerSession(session.sessionId)
         this.reviewerSessionDirectories.set(session.sessionId, reviewerCwd)
         this.sessionMcpServerNames.set(session.sessionId, mcpServerNames)
@@ -5797,7 +5835,7 @@ class AcpRuntime {
 
         return { session, promptPrefix: setup.promptPrefix }
       } catch (error) {
-        this.pendingReviewerSessionIds.delete(session.sessionId)
+        this.releaseReviewerSessionIdentityReservation(identityReservation)
         if (this.reviewerSessionIds.delete(session.sessionId)) {
           try {
             this.responsesBridgeLease?.unregisterReviewerSession(session.sessionId)
@@ -5817,7 +5855,14 @@ class AcpRuntime {
     }
   }
 
-  private reserveReviewerSessionId(sessionId: string): boolean {
+  private reserveReviewerSessionId(
+    sessionId: string,
+    generation: number
+  ): ReviewerSessionIdentityReservationResult {
+    if (generation !== this.sessionStartupGeneration) {
+      return { collision: new Error('ACP session startup was superseded.') }
+    }
+
     if (
       this.sessions.has(sessionId) ||
       this.agentToAppSessionId.has(sessionId) ||
@@ -5825,18 +5870,61 @@ class AcpRuntime {
       this.pendingReviewerSessionIds.has(sessionId) ||
       this.pendingPrimarySessionIds.has(sessionId)
     ) {
-      return false
+      return { collision: new Error(`Reviewer session id collision: ${sessionId}`) }
     }
 
-    this.pendingReviewerSessionIds.add(sessionId)
-    return true
+    const reservation = {
+      generation,
+      sessionId,
+      token: Symbol('reviewer-session-identity')
+    } satisfies ReviewerSessionIdentityReservation
+    this.pendingReviewerSessionIds.set(sessionId, reservation.token)
+    this.pendingSessionStartupBlockers.add(reservation.token)
+    return { reservation }
+  }
+
+  private activateReviewerSessionIdentity(
+    reservation: ReviewerSessionIdentityReservation
+  ): void {
+    if (
+      reservation.generation !== this.sessionStartupGeneration ||
+      this.pendingReviewerSessionIds.get(reservation.sessionId) !== reservation.token
+    ) {
+      throw new Error('ACP session startup was superseded.')
+    }
+
+    this.pendingReviewerSessionIds.delete(reservation.sessionId)
+    this.pendingSessionStartupBlockers.delete(reservation.token)
+    this.reviewerSessionIds.add(reservation.sessionId)
+  }
+
+  private releaseReviewerSessionIdentityReservation(
+    reservation: ReviewerSessionIdentityReservation
+  ): void {
+    this.pendingSessionStartupBlockers.delete(reservation.token)
+    if (this.pendingReviewerSessionIds.get(reservation.sessionId) === reservation.token) {
+      this.pendingReviewerSessionIds.delete(reservation.sessionId)
+    }
+  }
+
+  private invalidatePendingSessionStartups(): void {
+    this.sessionStartupGeneration += 1
+    this.pendingReviewerSessionIds.clear()
+    this.pendingPrimarySessionIds.clear()
+    this.pendingSessionStartupBlockers.clear()
   }
 
   private reservePrimarySessionIds(
     reservation: PrimarySessionIdentityReservation | undefined,
     sessionIds: string[],
-    publishedAppSessionId?: string
+    publishedAppSessionId?: string,
+    startupGeneration = reservation?.generation ?? this.sessionStartupGeneration
   ): PrimarySessionIdentityReservationResult {
+    const generation = reservation?.generation ?? startupGeneration
+    if (generation !== this.sessionStartupGeneration) {
+      return { collision: new Error('ACP session startup was superseded.') }
+    }
+
     const uniqueSessionIds = [...new Set(sessionIds)]
     const pendingReviewerCollision = uniqueSessionIds.find((sessionId) =>
       this.pendingReviewerSessionIds.has(sessionId)
@@ -5874,9 +5962,13 @@ class AcpRuntime {
     const owner =
       reservation ??
       ({
+        generation,
         token: Symbol('primary-session-identity'),
         sessionIds: new Set<string>()
       } satisfies PrimarySessionIdentityReservation)
+    if (!reservation && !this.reconnectBarrier) {
+      this.pendingSessionStartupBlockers.add(owner.token)
+    }
     for (const sessionId of uniqueSessionIds) {
       owner.sessionIds.add(sessionId)
       this.pendingPrimarySessionIds.set(sessionId, owner.token)
@@ -5884,9 +5976,41 @@ class AcpRuntime {
     return { reservation: owner }
   }
 
+  private renewPrimarySessionIdentityReservation(
+    reservation: PrimarySessionIdentityReservation,
+    publishedAppSessionId?: string
+  ): void {
+    const previousGeneration = reservation.generation
+    reservation.generation = this.sessionStartupGeneration
+    const result = this.reservePrimarySessionIds(
+      reservation,
+      [...reservation.sessionIds],
+      publishedAppSessionId
+    )
+    if (result.collision) {
+      reservation.generation = previousGeneration
+      throw result.collision
+    }
+    this.pendingSessionStartupBlockers.add(reservation.token)
+  }
+
+  private assertPrimarySessionIdentityReservation(
+    reservation: PrimarySessionIdentityReservation
+  ): void {
+    if (
+      reservation.generation !== this.sessionStartupGeneration ||
+      [...reservation.sessionIds].some(
+        (sessionId) => this.pendingPrimarySessionIds.get(sessionId) !== reservation.token
+      )
+    ) {
+      throw new Error('ACP session startup was superseded.')
+    }
+  }
+
   private releasePrimarySessionIdentityReservation(
     reservation: PrimarySessionIdentityReservation
   ): void {
+    this.pendingSessionStartupBlockers.delete(reservation.token)
     for (const sessionId of reservation.sessionIds) {
       if (this.pendingPrimarySessionIds.get(sessionId) === reservation.token) {
         this.pendingPrimarySessionIds.delete(sessionId)
