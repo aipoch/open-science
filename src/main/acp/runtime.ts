@@ -516,7 +516,7 @@ class AcpRuntime {
   // arbitration share one owner. The runtime retains only protocol/resource orchestration.
   private readonly sessionRegistry: AcpSessionRegistry
   // App-owned MCP construction, routing aliases, and bearer lease ownership are kept behind one
-  // explicit role policy. Connection/process lifetime remains with this runtime.
+  // explicit role policy. Connection/process lifetime remains with the connection resource owner.
   private readonly sessionCapabilities: AcpSessionCapabilityOwner
   private readonly sessionInteractions: AcpSessionInteractionOwner
   // Ephemeral Reviewer identity, isolation, permission, and resource state lives behind one owner.
