@@ -43,6 +43,9 @@ const NOTEBOOK_SYSTEM_PROMPT_APPEND = [
 type NotebookRpcConnection = {
   endpoint: string
   token: string
+  // Optional owner-scoped cleanup for provisional startup connections. Releasing an older connection
+  // must not revoke a newer token issued under the same stable app Session id.
+  release?: () => void
 }
 
 type NotebookMcpEnvironment = NotebookRpcConnection & {

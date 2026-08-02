@@ -1582,6 +1582,47 @@ describe('ACP runtime session management', () => {
     promptGate.resolve()
   })
 
+  it('does not attribute a resumed session event to a prompt from a closed connection', async () => {
+    const sessionId = '123e4567-e89b-42d3-a456-426614174000'
+    const oldProcess = new FakeAgentProcess()
+    const newProcess = new FakeAgentProcess()
+    const oldPromptGate = createDeferred()
+    const oldAgent = startFakeAgent(oldProcess, [sessionId], {
+      onPrompt: () => oldPromptGate.promise
+    })
+    startFakeAgent(newProcess, [])
+    const events: AcpRuntimeEvent[] = []
+    let spawnCount = 0
+    const runtime = new AcpRuntime({
+      appVersion: '0.2.0',
+      defaultCwd: '/workspace',
+      spawnAgent: () => asAgentProcess(spawnCount++ === 0 ? oldProcess : newProcess),
+      callbacks: { onEvent: (event) => events.push(event) }
+    })
+
+    const session = await runtime.createSession({ cwd: '/workspace' })
+    const prompt = runtime
+      .sendPrompt({
+        sessionId: session.sessionId,
+        text: 'stay pending',
+        provenanceContext: { promptMessageId: 'closed-prompt-message' }
+      })
+      .catch(() => undefined)
+    await vi.waitFor(() => expect(oldAgent.prompts).toHaveLength(1))
+
+    oldProcess.stdout.end()
+    await vi.waitFor(() => expect(runtime.getSnapshot().status).toBe('closed'))
+
+    await runtime.resumeSession({ sessionId, cwd: '/workspace' })
+    const resumedEvent = events.filter((event) => event.title === 'Session resumed').at(-1)
+    expect(resumedEvent).toMatchObject({ kind: 'system', sessionId })
+    expect(resumedEvent?.promptMessageId).toBeUndefined()
+
+    oldPromptGate.resolve()
+    await prompt
+    await runtime.disconnect()
+  })
+
   it('shutdownForQuit latches shutting-down so a later connect is refused', async () => {
     const process = new FakeAgentProcess()
     startFakeAgent(process, ['quit-latch-session'])
@@ -2379,6 +2420,58 @@ describe('ACP runtime session management', () => {
     await expect(callConnector(replacementToken)).resolves.toMatchObject({ status: 200 })
     expect(connectorCall).toHaveBeenCalledOnce()
   })
+
+  it.each([true, false])(
+    'releases each Notebook capability generation exactly once across context reset and delete (replacement release: %s)',
+    async (replacementProvidesRelease) => {
+      const process = new FakeAgentProcess()
+      startFakeAgent(process, ['remote-session-1', 'remote-session-2'])
+      const capabilityReleases: Array<ReturnType<typeof vi.fn> | undefined> = []
+      const runtime = new AcpRuntime({
+        appVersion: '0.1.0',
+        defaultCwd: '/workspace',
+        spawnAgent: () => asAgentProcess(process),
+        notebook: {
+          projectName: 'default-project',
+          mcpEntryPath: '/app/out/main/index.js',
+          getRpcConnection: async () => {
+            const release =
+              capabilityReleases.length === 0 || replacementProvidesRelease ? vi.fn() : undefined
+            capabilityReleases.push(release)
+            return {
+              endpoint: 'http://127.0.0.1:4567',
+              token: `notebook-token-${capabilityReleases.length}`,
+              ...(release ? { release } : {})
+            }
+          }
+        }
+      })
+
+      try {
+        const session = await runtime.createSession({ cwd: '/workspace' })
+        expect(capabilityReleases).toHaveLength(1)
+        expect(capabilityReleases[0]).toBeDefined()
+        expect(capabilityReleases[0]).not.toHaveBeenCalled()
+
+        await runtime.resetSessionContext({ sessionId: session.sessionId, cwd: '/workspace' })
+        expect(capabilityReleases).toHaveLength(2)
+        expect(capabilityReleases[0]).toHaveBeenCalledOnce()
+        if (replacementProvidesRelease) {
+          expect(capabilityReleases[1]).not.toHaveBeenCalled()
+        } else {
+          expect(capabilityReleases[1]).toBeUndefined()
+        }
+
+        await runtime.deleteSession({ sessionId: session.sessionId })
+        expect(capabilityReleases[0]).toHaveBeenCalledOnce()
+        if (replacementProvidesRelease) {
+          expect(capabilityReleases[1]).toHaveBeenCalledOnce()
+        }
+      } finally {
+        await runtime.disconnect().catch(() => undefined)
+      }
+    }
+  )
 
   it('uses the framework native command to compact without adding command output to chat events', async () => {
     const process = new FakeAgentProcess()
@@ -4129,6 +4222,288 @@ describe('ACP runtime session management', () => {
       await httpHost.close()
     }
   })
+
+  it('cleans provisional http MCP routes when fresh adoption collides', async () => {
+    const root = await createTemporaryRoot()
+    const httpHost = {
+      ensureStarted: vi.fn(async () => ({
+        endpoint: 'http://127.0.0.1:4321',
+        token: 'host-token'
+      })),
+      registerArtifact: vi.fn(),
+      registerNotebook: vi.fn(),
+      registerSkillImport: vi.fn(),
+      urlFor: vi.fn(
+        (kind: string, routingId: string) =>
+          `http://127.0.0.1:4321/mcp/${kind}/${encodeURIComponent(routingId)}`
+      ),
+      unregister: vi.fn(),
+      clear: vi.fn(),
+      close: vi.fn(async () => undefined)
+    } as unknown as AgentMcpHttpHost
+    const process = new FakeAgentProcess()
+    const reviewerModeStarted = createDeferred()
+    const releaseReviewerMode = createDeferred()
+    const fakeAgent = startFakeAgent(
+      process,
+      ['reserved-provider-session', 'reserved-provider-session'],
+      {
+        modes: createModes(['read-only', 'agent', 'agent-full-access'], 'agent'),
+        onSetMode: async () => {
+          reviewerModeStarted.resolve()
+          await releaseReviewerMode.promise
+        }
+      }
+    )
+    const runtime = new AcpRuntime({
+      appVersion: '0.1.0',
+      defaultCwd: '/workspace',
+      resolveBackend: () => ({
+        framework: {
+          ...codexFramework,
+          acceptsStdioMcp: false,
+          spawn: () => asAgentProcess(process)
+        },
+        executablePath: '/bin/codex-acp',
+        env: {}
+      }),
+      mcpHttpHost: httpHost,
+      artifacts: {
+        configRoot: root,
+        dataRoot: root,
+        projectName: 'default-project',
+        mcpEntryPath: '/app/out/main/index.js'
+      },
+      notebook: {
+        projectName: 'default-project',
+        mcpEntryPath: '/app/out/main/index.js',
+        getRpcConnection: async () => ({ endpoint: 'http://127.0.0.1:4567', token: 'nb' })
+      },
+      skillImport: {
+        mcpEntryPath: '/app/out/main/index.js',
+        getRpcConnection: async () => ({
+          endpoint: 'http://127.0.0.1:4568',
+          token: 'skill'
+        })
+      }
+    })
+    const reviewer = runtime.buildReviewerSession({
+      cwd: '/workspace',
+      mcpServers: [
+        {
+          type: 'http',
+          name: 'open-science-reviewer',
+          url: 'http://127.0.0.1:1/mcp',
+          headers: []
+        }
+      ]
+    })
+    await reviewerModeStarted.promise
+
+    try {
+      await expect(
+        runtime.resumeSession({ sessionId: 'stable-app-session', cwd: '/workspace' })
+      ).rejects.toThrow(
+        'Primary session id collision with pending reviewer: reserved-provider-session'
+      )
+      expect(fakeAgent.newSessions).toHaveLength(2)
+      expect(httpHost.registerArtifact).toHaveBeenCalledWith(
+        'stable-app-session',
+        expect.any(Object)
+      )
+      expect(httpHost.registerNotebook).toHaveBeenCalledWith(
+        'stable-app-session',
+        expect.any(Object)
+      )
+      expect(httpHost.registerSkillImport).toHaveBeenCalledWith(
+        'stable-app-session',
+        expect.any(Object)
+      )
+      expect(httpHost.unregister).toHaveBeenCalledOnce()
+      expect(httpHost.unregister).toHaveBeenCalledWith('stable-app-session')
+    } finally {
+      releaseReviewerMode.resolve()
+      await reviewer.then(
+        ({ session }) => runtime.disposeReviewerSession(session),
+        () => undefined
+      )
+      await runtime.disconnect().catch(() => undefined)
+    }
+  })
+
+  it('continues partial provisional route cleanup without replacing the startup error', async () => {
+    const root = await createTemporaryRoot()
+    const startupFailure = new Error('notebook capability setup failed')
+    let unregisterAttempt = 0
+    const unregister = vi.fn((routingId: string) => {
+      void routingId
+      unregisterAttempt += 1
+      if (unregisterAttempt === 1) {
+        throw new Error('first provisional route cleanup failed')
+      }
+    })
+    const httpHost = {
+      ensureStarted: vi.fn(async () => ({
+        endpoint: 'http://127.0.0.1:4321',
+        token: 'host-token'
+      })),
+      registerArtifact: vi.fn(),
+      registerNotebook: vi.fn(),
+      registerSkillImport: vi.fn(),
+      urlFor: vi.fn(
+        (kind: string, routingId: string) =>
+          `http://127.0.0.1:4321/mcp/${kind}/${encodeURIComponent(routingId)}`
+      ),
+      unregister,
+      clear: vi.fn(),
+      close: vi.fn(async () => undefined)
+    } as unknown as AgentMcpHttpHost
+    const process = new FakeAgentProcess()
+    startFakeAgent(process, [])
+    const runtime = new AcpRuntime({
+      appVersion: '0.1.0',
+      defaultCwd: '/workspace',
+      spawnAgent: () => asAgentProcess(process),
+      framework: { ...opencodeFramework, acceptsStdioMcp: false },
+      mcpHttpHost: httpHost,
+      artifacts: {
+        configRoot: root,
+        dataRoot: root,
+        projectName: 'default-project',
+        mcpEntryPath: '/app/out/main/index.js'
+      },
+      notebook: {
+        projectName: 'default-project',
+        mcpEntryPath: '/app/out/main/index.js',
+        getRpcConnection: async () => {
+          throw startupFailure
+        }
+      },
+      skillImport: {
+        mcpEntryPath: '/app/out/main/index.js',
+        getRpcConnection: async () => ({
+          endpoint: 'http://127.0.0.1:4568',
+          token: 'skill'
+        })
+      }
+    })
+
+    await expect(runtime.createSession({ cwd: '/workspace' })).rejects.toBe(startupFailure)
+
+    expect(httpHost.registerArtifact).toHaveBeenCalledOnce()
+    expect(httpHost.registerNotebook).not.toHaveBeenCalled()
+    expect(httpHost.registerSkillImport).not.toHaveBeenCalled()
+    expect(unregister).toHaveBeenCalledTimes(3)
+    expect(new Set(unregister.mock.calls.map(([routingId]) => routingId)).size).toBe(3)
+  })
+
+  it.each(['notebook alias', 'skill alias', 'specialist registration', 'event', 'state'] as const)(
+    'keeps published http MCP ownership when the %s callback throws',
+    async (failingCallback) => {
+      const httpHost = {
+        ensureStarted: vi.fn(async () => ({
+          endpoint: 'http://127.0.0.1:4321',
+          token: 'host-token'
+        })),
+        registerNotebook: vi.fn(),
+        registerSkillImport: vi.fn(),
+        urlFor: vi.fn(
+          (kind: string, routingId: string) =>
+            `http://127.0.0.1:4321/mcp/${kind}/${encodeURIComponent(routingId)}`
+        ),
+        unregister: vi.fn(),
+        clear: vi.fn(),
+        close: vi.fn(async () => undefined)
+      } as unknown as AgentMcpHttpHost
+      const release = vi.fn()
+      const process = new FakeAgentProcess()
+      const fakeAgent = startFakeAgent(process, ['published-session'])
+      let observerFailurePending = true
+      const runtime = new AcpRuntime({
+        appVersion: '0.1.0',
+        defaultCwd: '/workspace',
+        spawnAgent: () => asAgentProcess(process),
+        framework: { ...opencodeFramework, acceptsStdioMcp: false },
+        mcpHttpHost: httpHost,
+        callbacks: {
+          onEvent: (event) => {
+            if (
+              observerFailurePending &&
+              failingCallback === 'event' &&
+              event.sessionId === 'published-session'
+            ) {
+              observerFailurePending = false
+              throw new Error('event callback failed')
+            }
+          },
+          onStateChanged: (snapshot) => {
+            if (
+              observerFailurePending &&
+              failingCallback === 'state' &&
+              snapshot.sessionIds.includes('published-session')
+            ) {
+              observerFailurePending = false
+              throw new Error('state callback failed')
+            }
+          }
+        },
+        notebook: {
+          projectName: 'default-project',
+          mcpEntryPath: '/app/out/main/index.js',
+          getRpcConnection: async () => ({
+            endpoint: 'http://127.0.0.1:4567',
+            token: 'notebook-token',
+            release
+          }),
+          registerSessionAlias: () => {
+            if (failingCallback === 'notebook alias') {
+              throw new Error('notebook alias callback failed')
+            }
+          },
+          registerSessionSpecialist: () => {
+            if (failingCallback === 'specialist registration') {
+              throw new Error('specialist registration callback failed')
+            }
+          }
+        },
+        skillImport: {
+          mcpEntryPath: '/app/out/main/index.js',
+          getRpcConnection: async () => ({
+            endpoint: 'http://127.0.0.1:4568',
+            token: 'skill-import-token'
+          }),
+          registerSessionAlias: () => {
+            if (failingCallback === 'skill alias') {
+              throw new Error('skill alias callback failed')
+            }
+          }
+        }
+      })
+
+      try {
+        await expect(runtime.createSession({ cwd: '/workspace' })).resolves.toMatchObject({
+          sessionId: 'published-session'
+        })
+        expect(runtime.getSnapshot().sessionIds).toEqual(['published-session'])
+        expect(httpHost.unregister).not.toHaveBeenCalled()
+        expect(release).not.toHaveBeenCalled()
+
+        await runtime.sendPrompt({ sessionId: 'published-session', text: 'still usable' })
+        expect(fakeAgent.prompts.at(-1)).toMatchObject({
+          sessionId: 'published-session',
+          text: expect.stringContaining('still usable')
+        })
+
+        await runtime.deleteSession({ sessionId: 'published-session' })
+        expect(release).toHaveBeenCalledOnce()
+      } finally {
+        if (runtime.getSnapshot().sessionIds.includes('published-session')) {
+          await runtime.deleteSession({ sessionId: 'published-session' }).catch(() => undefined)
+        }
+        await runtime.disconnect().catch(() => undefined)
+      }
+    }
+  )
 
   it('allows prompts from different sessions to run concurrently', async () => {
     const process = new FakeAgentProcess()
@@ -7511,6 +7886,7 @@ describe('ACP runtime session management', () => {
       const process = new FakeAgentProcess()
       const staleModeStarted = createDeferred()
       const releaseStaleMode = createDeferred()
+      const capabilityReleases: ReturnType<typeof vi.fn>[] = []
       startFakeAgent(process, ['stale-provider', 'successor-provider'], {
         modes: createModes(['read-only', 'agent', 'agent-full-access'], 'agent'),
         onSetMode: async ({ modeId }) => {
@@ -7524,10 +7900,41 @@ describe('ACP runtime session management', () => {
         appVersion: '0.1.0',
         defaultCwd: '/workspace',
         resolveBackend: () => ({
-          framework: { ...codexFramework, spawn: () => asAgentProcess(process) },
+          framework: {
+            ...codexFramework,
+            acceptsStdioMcp: false,
+            spawn: () => asAgentProcess(process)
+          },
           executablePath: '/bin/codex-acp',
           env: {}
         }),
+        mcpHttpHost: {
+          ensureStarted: vi.fn(async () => ({
+            endpoint: 'http://127.0.0.1:4321',
+            token: 'host-token'
+          })),
+          registerNotebook: vi.fn(),
+          urlFor: vi.fn(
+            (kind: string, routingId: string) =>
+              `http://127.0.0.1:4321/mcp/${kind}/${encodeURIComponent(routingId)}`
+          ),
+          unregister: vi.fn(),
+          clear: vi.fn(),
+          close: vi.fn(async () => undefined)
+        } as unknown as AgentMcpHttpHost,
+        notebook: {
+          projectName: 'default-project',
+          mcpEntryPath: '/app/out/main/index.js',
+          getRpcConnection: async () => {
+            const release = vi.fn()
+            capabilityReleases.push(release)
+            return {
+              endpoint: 'http://127.0.0.1:4567',
+              token: `notebook-token-${capabilityReleases.length}`,
+              release
+            }
+          }
+        },
         resolveSpecialistIdentity: async (specialistId) => ({
           append: '',
           prefix: `${specialistId} prefix`
@@ -7578,6 +7985,12 @@ describe('ACP runtime session management', () => {
         expect(sessionSpecialistIds(runtime).has(sessionId)).toBe(false)
         expect(sessionSpecialistPrefixes(runtime).has(sessionId)).toBe(false)
         expect(runtime.getSnapshot().sessionIds).toEqual([sessionId])
+        expect(
+          (runtime as unknown as { mcpHttpHost: AgentMcpHttpHost }).mcpHttpHost.unregister
+        ).not.toHaveBeenCalled()
+        expect(capabilityReleases).toHaveLength(2)
+        expect(capabilityReleases[0]).toHaveBeenCalledOnce()
+        expect(capabilityReleases[1]).not.toHaveBeenCalled()
       } finally {
         releaseStaleMode.resolve()
         await staleOutcome
@@ -8790,6 +9203,123 @@ describe('ACP runtime session management', () => {
       disposeSpy.mockRestore()
     }
   })
+
+  it.each([
+    {
+      path: 'resume event',
+      failingObserver: 'event' as const,
+      previousFrameworkId: undefined,
+      contextReset: undefined,
+      providerSessionIds: []
+    },
+    {
+      path: 'resume state',
+      failingObserver: 'state' as const,
+      previousFrameworkId: undefined,
+      contextReset: undefined,
+      providerSessionIds: []
+    },
+    {
+      path: 'fresh-adoption state',
+      failingObserver: 'state' as const,
+      previousFrameworkId: 'opencode' as const,
+      contextReset: true,
+      providerSessionIds: ['adopted-provider-session']
+    }
+  ])(
+    'keeps a published $path session usable when its observer throws',
+    async ({ failingObserver, previousFrameworkId, contextReset, providerSessionIds }) => {
+      const sessionId =
+        previousFrameworkId === undefined
+          ? '123e4567-e89b-42d3-a456-426614174000'
+          : 'stable-app-session'
+      const httpHost = {
+        ensureStarted: vi.fn(async () => ({
+          endpoint: 'http://127.0.0.1:4321',
+          token: 'host-token'
+        })),
+        registerNotebook: vi.fn(),
+        urlFor: vi.fn(
+          (kind: string, routingId: string) =>
+            `http://127.0.0.1:4321/mcp/${kind}/${encodeURIComponent(routingId)}`
+        ),
+        unregister: vi.fn(),
+        clear: vi.fn(),
+        close: vi.fn(async () => undefined)
+      } as unknown as AgentMcpHttpHost
+      const release = vi.fn()
+      const process = new FakeAgentProcess()
+      const fakeAgent = startFakeAgent(process, [...providerSessionIds], {
+        modes: createModes(['read-only', 'agent', 'agent-full-access'], 'read-only')
+      })
+      let observerFailurePending = true
+      const runtime = new AcpRuntime({
+        appVersion: '0.1.0',
+        defaultCwd: '/workspace',
+        spawnAgent: () => asAgentProcess(process),
+        framework: { ...codexFramework, acceptsStdioMcp: false },
+        mcpHttpHost: httpHost,
+        callbacks: {
+          onEvent: (event) => {
+            if (
+              observerFailurePending &&
+              failingObserver === 'event' &&
+              event.sessionId === sessionId
+            ) {
+              observerFailurePending = false
+              throw new Error('resume event callback failed')
+            }
+          },
+          onStateChanged: (snapshot) => {
+            if (
+              observerFailurePending &&
+              failingObserver === 'state' &&
+              snapshot.sessionIds.includes(sessionId)
+            ) {
+              observerFailurePending = false
+              throw new Error('session state callback failed')
+            }
+          }
+        },
+        notebook: {
+          projectName: 'default-project',
+          mcpEntryPath: '/app/out/main/index.js',
+          getRpcConnection: async () => ({
+            endpoint: 'http://127.0.0.1:4567',
+            token: 'notebook-token',
+            release
+          })
+        }
+      })
+
+      try {
+        await expect(
+          runtime.resumeSession({
+            sessionId,
+            cwd: '/workspace',
+            ...(previousFrameworkId ? { previousFrameworkId } : {})
+          })
+        ).resolves.toMatchObject({ sessionId, ...(contextReset ? { contextReset } : {}) })
+        expect(runtime.getSnapshot().sessionIds).toEqual([sessionId])
+        expect(httpHost.unregister).not.toHaveBeenCalled()
+        expect(release).not.toHaveBeenCalled()
+
+        await runtime.sendPrompt({ sessionId, text: 'still usable' })
+        expect(fakeAgent.prompts.at(-1)).toMatchObject({
+          sessionId: previousFrameworkId ? 'adopted-provider-session' : sessionId,
+          text: expect.stringContaining('still usable')
+        })
+
+        await runtime.deleteSession({ sessionId })
+        expect(release).toHaveBeenCalledOnce()
+      } finally {
+        if (runtime.getSnapshot().sessionIds.includes(sessionId)) {
+          await runtime.deleteSession({ sessionId }).catch(() => undefined)
+        }
+        await runtime.disconnect().catch(() => undefined)
+      }
+    }
+  )
 
   it('replaces a failed resume capability without revoking the adopted session capability', async () => {
     const process = new FakeAgentProcess()

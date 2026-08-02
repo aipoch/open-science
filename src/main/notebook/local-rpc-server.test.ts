@@ -484,6 +484,45 @@ describe('notebook local RPC server', () => {
     }
   })
 
+  it('does not revoke a replacement capability when the prior connection releases late', async () => {
+    const root = await createStorageRoot()
+    const connectorCall = vi.fn(async () => ({ ok: true }))
+    const service = new NotebookRuntimeService({
+      configRoot: root,
+      dataRoot: root,
+      projectName: 'default-project',
+      repository: new NotebookRunRepository(root)
+    })
+    const server = new NotebookLocalRpcServer(service, {
+      token: 'secret-token',
+      connectorService: { call: connectorCall }
+    })
+    const prior = await server.issueSessionConnection('stable-session', 'default-project')
+    const replacement = await server.issueSessionConnection('stable-session', 'default-project')
+
+    try {
+      expect(prior.release).toBeTypeOf('function')
+      prior.release?.()
+
+      const response = await fetch(replacement.endpoint, {
+        method: 'POST',
+        headers: {
+          authorization: `Bearer ${replacement.token}`,
+          'content-type': 'application/json'
+        },
+        body: JSON.stringify({
+          method: 'mcpCall',
+          params: { server: 'pubmed', method: 'search', args: {} }
+        })
+      })
+
+      expect(response.status).toBe(200)
+      expect(connectorCall).toHaveBeenCalledOnce()
+    } finally {
+      await server.close()
+    }
+  })
+
   it('dispatches Artifact Version creation through the authenticated main-process bridge', async () => {
     const root = await createStorageRoot()
     const service = new NotebookRuntimeService({

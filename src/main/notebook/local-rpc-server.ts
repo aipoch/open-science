@@ -396,7 +396,18 @@ class NotebookLocalRpcServer {
     const token = randomUUID()
     this.sessionRpcTokens.set(sessionId, token)
     this.sessionRpcCapabilities.set(token, { sessionId, projectId })
-    return { endpoint: connection.endpoint, token }
+    return {
+      endpoint: connection.endpoint,
+      token,
+      release: () => {
+        // A stale startup may release after a same-ID successor has rotated the current token. Revoke
+        // only this concrete capability and clear the owner projection only while it still points here.
+        if (this.sessionRpcTokens.get(sessionId) === token) {
+          this.sessionRpcTokens.delete(sessionId)
+        }
+        this.sessionRpcCapabilities.delete(token)
+      }
+    }
   }
 
   // Issues a dedicated capability for the persistent control-plane REPL. Unlike the Agent-facing
