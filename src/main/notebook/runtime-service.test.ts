@@ -528,6 +528,117 @@ describe('notebook runtime service', () => {
     })
   })
 
+  it('does not invoke the executor when the initial running record cannot be persisted', async () => {
+    const root = await createStorageRoot()
+    const repository = new NotebookRunRepository(root)
+    const appendError = new Error('could not append running run')
+    vi.spyOn(repository, 'appendRun').mockRejectedValue(appendError)
+    const execute = vi.fn(async (request: NotebookExecutionRequest) => ({
+      status: 'completed' as const,
+      stdout: '',
+      stderr: '',
+      traceback: '',
+      cwdAfter: request.cwd,
+      outputs: []
+    }))
+    const service = new NotebookRuntimeService({
+      configRoot: root,
+      dataRoot: root,
+      projectName: 'default-project',
+      repository,
+      executorFactory: () => ({
+        execute,
+        shutdown: async () => ({ reaped: true })
+      })
+    })
+    const begin = await service.beginCodeCell({ sessionId: 'session-1', workspaceCwd: root })
+    await service.appendCodeCell({
+      sessionId: 'session-1',
+      workspaceCwd: root,
+      cellId: begin.cellId,
+      writeId: begin.writeId,
+      delta: '1 + 1'
+    })
+    await service.finishCodeCell({
+      sessionId: 'session-1',
+      workspaceCwd: root,
+      cellId: begin.cellId,
+      writeId: begin.writeId
+    })
+
+    await expect(
+      service.runCell({ sessionId: 'session-1', workspaceCwd: root, cellId: begin.cellId })
+    ).rejects.toBe(appendError)
+
+    expect(execute).not.toHaveBeenCalled()
+    const state = await service.state({ sessionId: 'session-1', workspaceCwd: root })
+    expect(state.runs).toEqual([])
+    expect(state.activeRunId).toMatch(/^notebook-run-/)
+  })
+
+  it('leaves the running record recoverable when its terminal update cannot be persisted', async () => {
+    const root = await createStorageRoot()
+    const repository = new NotebookRunRepository(root)
+    const updateError = new Error('could not persist terminal run')
+    vi.spyOn(repository, 'updateRun').mockRejectedValue(updateError)
+    const execute = vi.fn(async (request: NotebookExecutionRequest) => ({
+      status: 'completed' as const,
+      stdout: 'done\n',
+      stderr: '',
+      traceback: '',
+      cwdAfter: request.cwd,
+      outputs: [{ type: 'stream' as const, name: 'stdout' as const, text: 'done\n' }]
+    }))
+    const service = new NotebookRuntimeService({
+      configRoot: root,
+      dataRoot: root,
+      projectName: 'default-project',
+      repository,
+      environmentStateTracker: {
+        ...verifiedPackageMutationTracker(),
+        prepareRun: vi.fn().mockResolvedValue(undefined),
+        captureCompletedRun: vi.fn().mockRejectedValue(new Error('capture unavailable'))
+      },
+      executorFactory: () => ({
+        execute,
+        shutdown: async () => ({ reaped: true })
+      })
+    })
+    const begin = await service.beginCodeCell({ sessionId: 'session-1', workspaceCwd: root })
+    await service.appendCodeCell({
+      sessionId: 'session-1',
+      workspaceCwd: root,
+      cellId: begin.cellId,
+      writeId: begin.writeId,
+      delta: 'print("done")'
+    })
+    await service.finishCodeCell({
+      sessionId: 'session-1',
+      workspaceCwd: root,
+      cellId: begin.cellId,
+      writeId: begin.writeId
+    })
+
+    await expect(
+      service.runCell({ sessionId: 'session-1', workspaceCwd: root, cellId: begin.cellId })
+    ).rejects.toBe(updateError)
+
+    expect(execute).toHaveBeenCalledOnce()
+    const document = await repository.loadOrCreate({
+      projectName: 'default-project',
+      sessionId: 'session-1',
+      workspaceCwd: root
+    })
+    expect(document.runs).toHaveLength(1)
+    expect(document.runs[0]).toMatchObject({
+      runId: expect.stringMatching(/^notebook-run-/),
+      status: 'running',
+      script: 'print("done")'
+    })
+    const state = await service.state({ sessionId: 'session-1', workspaceCwd: root })
+    expect(state.activeRunId).toBe(document.runs[0]?.runId)
+  })
+
   it('rejects install.packages in an R cell before the managed kernel executes it', async () => {
     const root = await createStorageRoot()
     const execute = vi.fn(async () => ({
