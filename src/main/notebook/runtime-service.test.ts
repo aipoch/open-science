@@ -7024,25 +7024,31 @@ describe('v4 runtime bindings & agent tools', () => {
       projectName: 'default-project',
       repository: new NotebookRunRepository(root)
     })
-    const leaseManager = (
+    const operationOwner = (
       service as unknown as {
-        environmentLeases: {
-          acquire: (
-            environment: string,
-            mode: 'shared' | 'exclusive'
-          ) => { granted: Promise<{ release(): boolean }> }
+        environmentOperations: {
+          runMutation: <T>(environment: string, operation: () => Promise<T>) => Promise<T>
           snapshot: () => { disposed: boolean }
         }
       }
-    ).environmentLeases
-    const held = await leaseManager.acquire('default', 'exclusive').granted
-    const queued = leaseManager.acquire('default', 'exclusive').granted
+    ).environmentOperations
+    let releaseHeld!: () => void
+    const held = operationOwner.runMutation(
+      'default',
+      () =>
+        new Promise<void>((resolve) => {
+          releaseHeld = resolve
+        })
+    )
+    await vi.waitFor(() => expect(releaseHeld).toBeTypeOf('function'))
+    const queued = operationOwner.runMutation('default', async () => undefined)
 
     const disposal = service.dispose()
 
     await expect(queued).rejects.toThrow(/disposed/)
-    expect(leaseManager.snapshot().disposed).toBe(true)
-    expect(held.release()).toBe(false)
+    expect(operationOwner.snapshot().disposed).toBe(true)
+    releaseHeld()
+    await held
     await expect(disposal).resolves.toEqual({ reaped: true })
   })
 

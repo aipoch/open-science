@@ -1,0 +1,254 @@
+import { mkdtemp, rm } from 'node:fs/promises'
+import { tmpdir } from 'node:os'
+import { join } from 'node:path'
+import { afterEach, describe, expect, it, vi } from 'vitest'
+
+import type { NotebookLanguage } from '../../shared/notebook'
+import type { NotebookSessionRuntimeBinding } from './session-aggregate'
+import { NotebookEnvironmentOperations } from './environment-operations'
+import { NotebookRecoveryCoordinator } from './recovery-coordinator'
+
+let storageRoot: string | undefined
+
+afterEach(async () => {
+  if (storageRoot) {
+    await rm(storageRoot, { recursive: true, force: true })
+    storageRoot = undefined
+  }
+})
+
+const createRoot = async (): Promise<string> => {
+  storageRoot = await mkdtemp(join(tmpdir(), 'open-science-environment-operations-'))
+  return storageRoot
+}
+
+type TestSession = {
+  projectName: string
+  sessionId: string
+  bindings: Partial<Record<NotebookLanguage, NotebookSessionRuntimeBinding>>
+  statuses: Map<string, 'idle' | 'running' | 'terminated'>
+  runtimeBinding(language: NotebookLanguage): NotebookSessionRuntimeBinding | undefined
+  setRuntimeBinding(language: NotebookLanguage, binding: NotebookSessionRuntimeBinding): void
+  kernelStatus(processKey: string): 'idle' | 'running' | 'terminated' | undefined
+  markForceStopped(processKey: string): void
+  drainExecution(processKey: string): Promise<void>
+  terminateExecutor(kind: 'python' | 'r', environment: string): Promise<void>
+  clearProcessState(processKey: string): void
+}
+
+const createOwner = async (
+  sessions: TestSession[] = []
+): Promise<{
+  owner: NotebookEnvironmentOperations
+  notifyChanged: ReturnType<typeof vi.fn>
+}> => {
+  const recovery = new NotebookRecoveryCoordinator(join(await createRoot(), 'runtime'))
+  const notifyChanged = vi.fn()
+  const bindings = {
+    runWrites: async <T>(_sessionIds: Iterable<string>, operation: () => Promise<T>): Promise<T> =>
+      operation(),
+    revoke: async <Context>(
+      session: TestSession,
+      language: NotebookLanguage,
+      runtimeId: string,
+      beforeRevoke: (binding: NotebookSessionRuntimeBinding) => Context
+    ): Promise<Context | undefined> => {
+      const binding = session.runtimeBinding(language)
+      if (!binding || binding.runtimeId !== runtimeId || binding.status === 'unavailable') {
+        return undefined
+      }
+      const context = beforeRevoke(binding)
+      session.setRuntimeBinding(language, {
+        ...binding,
+        status: 'unavailable',
+        reason: 'disabled'
+      })
+      return context
+    }
+  }
+  const owner = new NotebookEnvironmentOperations({
+    recovery,
+    bindings,
+    sessions: () => sessions,
+    notifyChanged,
+    now: () => 123
+  })
+  return { owner, notifyChanged }
+}
+
+describe('NotebookEnvironmentOperations', () => {
+  it('owns operation admission and releases a failed mutation before the next waiter', async () => {
+    const { owner } = await createOwner()
+    let releaseFirst!: () => void
+    const first = owner.runMutation(
+      'analysis',
+      () =>
+        new Promise<void>((resolve) => {
+          releaseFirst = resolve
+        })
+    )
+    await vi.waitFor(() => expect(releaseFirst).toBeTypeOf('function'))
+
+    const queued = owner.runMutation('analysis', async () => 'second')
+    expect(owner.snapshot()).toMatchObject({
+      active: [{ kind: 'mutation', environment: 'analysis', startedAt: 123 }],
+      leases: {
+        disposed: false,
+        environments: [
+          {
+            environment: 'analysis',
+            holders: { shared: 0, exclusive: 1 },
+            waiters: { shared: 0, exclusive: 1 }
+          }
+        ]
+      }
+    })
+
+    releaseFirst()
+    await first
+    await expect(queued).resolves.toBe('second')
+    await expect(
+      owner.runMutation('analysis', async () => {
+        throw new Error('failed mutation')
+      })
+    ).rejects.toThrow('failed mutation')
+    await expect(owner.runMutation('analysis', async () => 'after failure')).resolves.toBe(
+      'after failure'
+    )
+    expect(owner.snapshot()).toMatchObject({ active: [], leases: { environments: [] } })
+  })
+
+  it('retains scoped provisioning progress and the terminal diagnostic after failure', async () => {
+    const { owner } = await createOwner()
+    const forwarded: unknown[] = []
+    owner.setDefaultEnvProvisioner(
+      {
+        provisionPython: async (report) => {
+          report({ phase: 'extract', message: 'extracting', progress: 0.5, language: 'python' })
+          throw new Error('bundle corrupt')
+        },
+        provisionR: async () => undefined
+      },
+      (progress) => forwarded.push(progress)
+    )
+
+    await expect(
+      owner.ensureDefaultEnvironmentReady({
+        language: 'python',
+        environment: 'default-python',
+        runtimeRoot: join(storageRoot!, 'runtime'),
+        sessionId: 'session-1',
+        ensureRecovered: async () => undefined,
+        assertRecoverable: () => undefined
+      })
+    ).rejects.toThrow('Could not prepare default-python: bundle corrupt')
+
+    expect(forwarded).toEqual([
+      expect.objectContaining({ phase: 'extract', scope: 'python', sessionId: 'session-1' }),
+      expect.objectContaining({
+        phase: 'error',
+        language: 'python',
+        scope: 'python',
+        sessionId: 'session-1'
+      })
+    ])
+    expect(owner.snapshot()).toMatchObject({
+      active: [],
+      progress: {
+        phase: 'error',
+        language: 'python',
+        scope: 'python',
+        sessionId: 'session-1'
+      }
+    })
+  })
+
+  it('marks a binding unavailable before tracking its background revocation drain', async () => {
+    let releaseDrain!: () => void
+    const terminations: string[] = []
+    const session: TestSession = {
+      projectName: 'project',
+      sessionId: 'session-1',
+      bindings: {
+        python: {
+          language: 'python',
+          runtimeId: '/env/python',
+          source: 'external',
+          provenance: 'user-own',
+          interpreterPath: '/env/python',
+          label: 'Python',
+          status: 'active'
+        }
+      },
+      statuses: new Map([['python:default-python', 'running']]),
+      runtimeBinding(language) {
+        return this.bindings[language]
+      },
+      setRuntimeBinding(language, binding) {
+        this.bindings[language] = binding
+      },
+      kernelStatus(processKey) {
+        return this.statuses.get(processKey)
+      },
+      markForceStopped: vi.fn(),
+      drainExecution: async () =>
+        new Promise<void>((resolve) => {
+          releaseDrain = resolve
+        }),
+      terminateExecutor: async (kind, environment) => {
+        terminations.push(`${kind}:${environment}`)
+      },
+      clearProcessState(processKey) {
+        this.statuses.delete(processKey)
+      }
+    }
+    const { owner, notifyChanged } = await createOwner([session])
+
+    await owner.revokeRuntime('python', '/env/python')
+
+    expect(session.bindings.python).toMatchObject({ status: 'unavailable', reason: 'disabled' })
+    await vi.waitFor(() => expect(releaseDrain).toBeTypeOf('function'))
+    expect(owner.snapshot().revocationDrains).toBe(1)
+    expect(terminations).toEqual([])
+
+    releaseDrain()
+    await owner.waitForRevocationDrains()
+    expect(terminations).toEqual(['python:default-python'])
+    expect(owner.snapshot().revocationDrains).toBe(0)
+    expect(notifyChanged).toHaveBeenCalledTimes(2)
+  })
+
+  it('keeps restart, repair, recovery, and redacted diagnostics in one snapshot', async () => {
+    const { owner } = await createOwner()
+
+    owner.recommendRestart('r', 'analysis')
+    owner.blockRepair('r:analysis')
+    owner.logPackageResult({
+      operationId: 'operation-1',
+      operation: 'install',
+      language: 'r',
+      environmentName: 'analysis',
+      runtimeSource: 'managed',
+      packages: ['secret-package'],
+      result: { ok: true, needsRestart: true, log: 'installed' },
+      durationMs: 15
+    })
+
+    expect(owner.snapshot()).toMatchObject({
+      restartRecommendedEnvironments: ['r:analysis'],
+      repairBlockedEnvironments: ['r:analysis'],
+      diagnostic: {
+        level: 'info',
+        message: 'package installer completed',
+        fields: {
+          operationId: 'operation-1',
+          language: 'r',
+          environmentName: 'analysis',
+          ok: true,
+          needsRestart: true
+        }
+      },
+      recovery: { readiness: 'not-started' }
+    })
+  })
+})
