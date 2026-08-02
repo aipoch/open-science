@@ -516,8 +516,7 @@ describe('AgentBackendResolver bridge predicates', () => {
 
   it('bypasses loopback without disabling inherited proxies for native Responses compatibility', async () => {
     vi.stubEnv('HTTPS_PROXY', 'http://proxy.example.test:3128')
-    vi.stubEnv('NO_PROXY', 'metadata.example.test')
-    vi.stubEnv('no_proxy', 'existing.internal')
+    vi.stubEnv('NO_PROXY', 'metadata.example.test,existing.internal')
     try {
       const harness = makeHarness({
         targetOverride: () => ({ needsNativeResponsesCompatibility: true })
