@@ -9,6 +9,13 @@ type ResponsesBridgeLease = ResolvedAgentBackend['responsesBridgeLease']
 type CleanupFailure = (stage: 'connection' | 'agent-process', error: unknown) => void
 
 const log = createLogger('acp')
+const safeLogCleanupError = (message: string, error: unknown): void => {
+  try {
+    log.error(message, errorLogFields(error))
+  } catch {
+    // Physical cleanup and the original failure take precedence over diagnostic sinks.
+  }
+}
 
 export type AcpConnectionCapabilities = Readonly<{
   close: boolean
@@ -142,7 +149,7 @@ export class AcpConnectionResourceOwner {
   async teardown(
     expectedEpoch: number,
     onFailure: CleanupFailure = (stage, error) =>
-      log.error(`ACP ${stage} cleanup failed`, errorLogFields(error))
+      safeLogCleanupError(`ACP ${stage} cleanup failed`, error)
   ): Promise<void> {
     // Ownership transfers synchronously before the first cleanup await, so a successor may attach
     // without an older process or lease remaining reachable through this owner.
@@ -167,7 +174,7 @@ export class AcpConnectionResourceOwner {
   async cleanupUnattached(
     resource: AcpUnattachedConnectionResource,
     onFailure: CleanupFailure = (stage, error) =>
-      log.error(`unattached ACP ${stage} cleanup failed`, errorLogFields(error))
+      safeLogCleanupError(`unattached ACP ${stage} cleanup failed`, error)
   ): Promise<void> {
     if (resource.process) this.expectedProcessExits.add(resource.process)
     try {
@@ -191,7 +198,7 @@ export class AcpConnectionResourceOwner {
     if (!resource) return
     this.expectedProcessExits.add(resource.process)
     void this.reapProcessTree(resource.process).catch((error) => {
-      log.error('agent process cleanup after unexpected close failed', errorLogFields(error))
+      safeLogCleanupError('agent process cleanup after unexpected close failed', error)
     })
     void this.releaseBridgeLease(resource.bridgeLease)
   }
@@ -207,13 +214,13 @@ export class AcpConnectionResourceOwner {
       try {
         resource?.connection.close()
       } catch (error) {
-        log.error('ACP connection close during shutdown failed', errorLogFields(error))
+        safeLogCleanupError('ACP connection close during shutdown failed', error)
       }
       if (resource?.process) {
         try {
           if (!resource.process.killed) resource.process.kill()
         } catch (error) {
-          log.error('agent process kill during shutdown failed', errorLogFields(error))
+          safeLogCleanupError('agent process kill during shutdown failed', error)
         }
       }
       void this.releaseBridgeLease(resource?.bridgeLease)
@@ -253,7 +260,7 @@ export class AcpConnectionResourceOwner {
     try {
       await this.options.closeMcpHost?.()
     } catch (error) {
-      log.error('MCP HTTP host close failed', errorLogFields(error))
+      safeLogCleanupError('MCP HTTP host close failed', error)
     }
   }
 
@@ -306,7 +313,7 @@ export class AcpConnectionResourceOwner {
     try {
       await lease.release()
     } catch (error) {
-      log.error('responses bridge lease release failed', errorLogFields(error))
+      safeLogCleanupError('responses bridge lease release failed', error)
     }
   }
 
@@ -318,7 +325,7 @@ export class AcpConnectionResourceOwner {
     try {
       onFailure(stage, error)
     } catch (callbackError) {
-      log.error('ACP connection cleanup failure callback failed', errorLogFields(callbackError))
+      safeLogCleanupError('ACP connection cleanup failure callback failed', callbackError)
     }
   }
 

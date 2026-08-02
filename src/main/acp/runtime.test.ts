@@ -16745,7 +16745,7 @@ describe('ACP runtime — session-creation and spawn diagnostics', () => {
     })
   })
 
-  it('does not let a bridge release rejection mask the original spawn error', async () => {
+  it('does not let bridge release and logger failures mask the original spawn error', async () => {
     const release = vi.fn().mockRejectedValue(new Error('bridge release failed'))
     const runtime = new AcpRuntime({
       appVersion: '0.1.0',
@@ -16768,14 +16768,17 @@ describe('ACP runtime — session-creation and spawn diagnostics', () => {
       })
     })
 
-    await expect(runtime.createSession({ cwd: '/workspace' })).rejects.toThrow(
-      'primary spawn failed'
-    )
-    expect(release).toHaveBeenCalledOnce()
-    expect(errorLogSpy).toHaveBeenCalledWith(
-      'responses bridge lease release failed',
-      expect.objectContaining({ error: 'bridge release failed' })
-    )
+    errorLogSpy.mockImplementation(() => {
+      throw new Error('cleanup logger failed')
+    })
+    try {
+      await expect(runtime.createSession({ cwd: '/workspace' })).rejects.toThrow(
+        'primary spawn failed'
+      )
+      expect(release).toHaveBeenCalledOnce()
+    } finally {
+      errorLogSpy.mockReset()
+    }
   })
 
   it('survives a hostile Error (throwing message getter) through the real connectFresh path', async () => {

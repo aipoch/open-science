@@ -13,7 +13,15 @@ const terminateProcessTree = vi.hoisted(() =>
     return { reaped: true }
   })
 )
+const ownerErrorLog = vi.hoisted(() => vi.fn())
 vi.mock('../process-tree', () => ({ terminateProcessTree }))
+vi.mock('../logger', async (importOriginal) => {
+  const actual = await importOriginal<typeof import('../logger')>()
+  return {
+    ...actual,
+    createLogger: () => ({ ...actual.createLogger('acp'), error: ownerErrorLog })
+  }
+})
 
 afterEach(() => {
   vi.clearAllMocks()
@@ -274,12 +282,19 @@ describe('AcpConnectionResourceOwner', () => {
       return attempt.publish({ close: true, delete: false, resume: true })
     })
 
-    expect(() => owner.shutdownSynchronously(vi.fn())).not.toThrow()
-    await vi.waitFor(() => expect(release).toHaveBeenCalledOnce())
-    expect(close).toHaveBeenCalledOnce()
-    expect(kill).toHaveBeenCalledOnce()
-    expect(owner.isShuttingDown).toBe(true)
-    expect(owner.connection).toBeUndefined()
+    ownerErrorLog.mockImplementation(() => {
+      throw new Error('logger failed')
+    })
+    try {
+      expect(() => owner.shutdownSynchronously(vi.fn())).not.toThrow()
+      await vi.waitFor(() => expect(release).toHaveBeenCalledOnce())
+      expect(close).toHaveBeenCalledOnce()
+      expect(kill).toHaveBeenCalledOnce()
+      expect(owner.isShuttingDown).toBe(true)
+      expect(owner.connection).toBeUndefined()
+    } finally {
+      ownerErrorLog.mockReset()
+    }
   })
 
   it('marks detached processes expected before async and synchronous connection close', async () => {
