@@ -316,13 +316,17 @@ function textAtRevision(revision, path, cwd) {
 }
 
 export function ciIntegrityFilesFromRevisions(base, head, { cwd = process.cwd() } = {}) {
-  const diff = execFileSync('git', ['diff', '--name-status', '-z', base, head], { cwd })
+  const mergeBase = execFileSync('git', ['merge-base', base, head], {
+    cwd,
+    encoding: 'utf8'
+  }).trim()
+  const diff = execFileSync('git', ['diff', '--name-status', '-z', mergeBase, head], { cwd })
   return parseNameStatus(diff.toString('utf8'))
     .filter(({ path, previousPath }) => [path, previousPath].filter(Boolean).some(isGuardedPath))
     .map(({ path, previousPath }) => ({
       path,
       previousPath,
-      baseText: textAtRevision(base, previousPath ?? path, cwd),
+      baseText: textAtRevision(mergeBase, previousPath ?? path, cwd),
       headText: textAtRevision(head, path, cwd)
     }))
 }

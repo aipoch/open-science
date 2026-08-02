@@ -111,6 +111,56 @@ jobs:
     }
   })
 
+  it('ignores protected target-branch changes that are absent from a divergent PR head', () => {
+    const root = mkdtempSync(join(tmpdir(), 'ci-integrity-divergent-pr-'))
+
+    try {
+      execFileSync('git', ['init', '--quiet'], { cwd: root })
+      execFileSync('git', ['config', 'user.email', 'ci@example.com'], { cwd: root })
+      execFileSync('git', ['config', 'user.name', 'CI Test'], { cwd: root })
+      mkdirSync(join(root, '.github', 'workflows'), { recursive: true })
+      writeFileSync(
+        join(root, '.github', 'workflows', 'pr-gate.yml'),
+        'jobs:\n  gate:\n    name: PR Gate\n    steps:\n      - uses: actions/checkout@v7\n'
+      )
+      execFileSync('git', ['add', '.github/workflows/pr-gate.yml'], { cwd: root })
+      execFileSync('git', ['commit', '--quiet', '-m', 'initial gate'], { cwd: root })
+      const branchPoint = execFileSync('git', ['rev-parse', 'HEAD'], {
+        cwd: root,
+        encoding: 'utf8'
+      }).trim()
+
+      execFileSync('git', ['checkout', '--quiet', '-b', 'feature'], { cwd: root })
+      mkdirSync(join(root, 'src'), { recursive: true })
+      writeFileSync(join(root, 'src', 'feature.ts'), 'export const feature = true\n')
+      execFileSync('git', ['add', 'src/feature.ts'], { cwd: root })
+      execFileSync('git', ['commit', '--quiet', '-m', 'change product code'], { cwd: root })
+      const head = execFileSync('git', ['rev-parse', 'HEAD'], {
+        cwd: root,
+        encoding: 'utf8'
+      }).trim()
+
+      execFileSync('git', ['checkout', '--quiet', '-b', 'target', branchPoint], { cwd: root })
+      writeFileSync(
+        join(root, '.github', 'workflows', 'pr-gate.yml'),
+        'jobs:\n  gate:\n    name: PR Gate\n    steps:\n      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1\n'
+      )
+      execFileSync('git', ['add', '.github/workflows/pr-gate.yml'], { cwd: root })
+      execFileSync('git', ['commit', '--quiet', '-m', 'harden target gate'], { cwd: root })
+      const target = execFileSync('git', ['rev-parse', 'HEAD'], {
+        cwd: root,
+        encoding: 'utf8'
+      }).trim()
+
+      const files = ciIntegrityFilesFromRevisions(target, head, { cwd: root })
+
+      expect(files).toEqual([])
+      expect(checkCiIntegrityChanges(files)).toMatchObject({ ok: true, violations: [] })
+    } finally {
+      rmSync(root, { force: true, recursive: true })
+    }
+  })
+
   it('rejects a newly introduced mutable third-party action reference', () => {
     const result = checkCiIntegrityChanges([
       {
