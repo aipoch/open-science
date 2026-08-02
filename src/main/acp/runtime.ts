@@ -2859,8 +2859,10 @@ class AcpRuntime {
   // The main-process turn can already be terminal while its renderer event is still queued, so even an
   // otherwise idle reconnect must not expose that race as a false interruption.
   private async disconnectForPlannedReconnect(): Promise<void> {
-    await this.disconnect(false)
-    this.setStatus('idle')
+    const disconnect = this.disconnect(false)
+    const teardownGeneration = this.connectionGeneration
+    await disconnect
+    if (teardownGeneration === this.connectionGeneration) this.setStatus('idle')
   }
 
   // Retirement is terminal for this runtime generation. Swallow teardown failures just like deferred

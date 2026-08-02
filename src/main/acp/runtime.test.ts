@@ -12670,6 +12670,50 @@ describe('ACP runtime session management', () => {
     expect(states).not.toContain('closed')
   })
 
+  it('does not let a stale planned reconnect overwrite a newer connection status', async () => {
+    const oldProcess = new FakeAgentProcess()
+    const newProcess = new FakeAgentProcess()
+    startFakeAgent(oldProcess, ['s1'])
+    startFakeAgent(newProcess, ['s2'])
+    const teardownStarted = createDeferred()
+    const releaseTeardown = createDeferred()
+    let spawnCount = 0
+    const runtime = new AcpRuntime({
+      appVersion: '0.1.0',
+      defaultCwd: '/workspace',
+      resolveBackend: () => ({
+        framework: {
+          ...claudeCodeFramework,
+          spawn: () => asAgentProcess(spawnCount++ === 0 ? oldProcess : newProcess)
+        },
+        executablePath: '/bin/agent',
+        env: {}
+      })
+    })
+
+    await runtime.createSession({ cwd: '/workspace' })
+    vi.mocked(terminateProcessTree).mockImplementationOnce(async (child) => {
+      child?.kill()
+      teardownStarted.resolve()
+      await releaseTeardown.promise
+      return { reaped: true }
+    })
+    const reconnect = runtime.requestProviderReconnect()
+    await teardownStarted.promise
+
+    try {
+      await expect(runtime.createSession({ cwd: '/workspace' })).resolves.toMatchObject({
+        sessionId: 's2'
+      })
+      expect(runtime.getSnapshot().status).toBe('connected')
+    } finally {
+      releaseTeardown.resolve()
+      await reconnect
+    }
+
+    expect(runtime.getSnapshot().status).toBe('connected')
+  })
+
   it('passes the artifact MCP server to new and resumed sessions', async () => {
     const process = new FakeAgentProcess()
     const fakeAgent = startFakeAgent(process, ['remote-session-1'])
