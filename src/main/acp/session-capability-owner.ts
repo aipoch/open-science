@@ -411,6 +411,14 @@ export class AcpSessionCapabilityOwner {
     return this.skillImportEnabled
   }
 
+  // Skill-import enablement is preference-backed and may change between connections. Refresh it
+  // before projecting tooling guidance into backend-native instructions, which happens before the
+  // concrete session capability set is built.
+  async refreshDynamicAvailability(): Promise<void> {
+    if (!this.options.skillImport) return
+    this.skillImportEnabled = (await this.options.skillImport.isEnabled?.()) ?? true
+  }
+
   toolingAvailability(input: {
     framework: Pick<AgentFramework, 'acceptsStdioMcp'>
     nativeMcpEnabled: boolean
@@ -492,7 +500,7 @@ export class AcpSessionCapabilityOwner {
     routingId: string
   ): Promise<SkillImportMcpEnvironment | undefined> {
     if (!this.options.skillImport || !routingId) return undefined
-    this.skillImportEnabled = (await this.options.skillImport.isEnabled?.()) ?? true
+    await this.refreshDynamicAvailability()
     if (!this.skillImportEnabled) return undefined
     const connection = await this.options.skillImport.getRpcConnection()
     return { ...connection, sessionId: routingId }

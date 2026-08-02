@@ -369,6 +369,8 @@ export const createCodexFramework = ({
   },
 
   prepareModelConfig(provider, ctx: ModelConfigContext): AgentModelConfig {
+    const persistentSystemPrompt =
+      ctx.systemPromptAppends?.filter(Boolean).join('\n\n') || undefined
     if (isCodexSubscriptionProvider(provider.type)) {
       // Every Open Science subscription session uses the same app-owned home. `codex-shared` is
       // accepted only as a legacy Provider discriminator; it must never select the user's global
@@ -378,14 +380,19 @@ export const createCodexFramework = ({
         model: provider.model,
         reasoningEffort: ctx.reasoningEffort
       })
+      const codexConfig = {
+        ...modelOptions,
+        ...(persistentSystemPrompt ? { developer_instructions: persistentSystemPrompt } : {})
+      }
       const codexConfigJson =
-        Object.keys(modelOptions).length > 0 ? JSON.stringify(modelOptions) : undefined
+        Object.keys(codexConfig).length > 0 ? JSON.stringify(codexConfig) : undefined
       const codexHome = codexSubscriptionStorageDir(ctx.storageRoot)
       return {
         env: {
           ...isolatedCodexHomeEnv(codexHome, platform),
           ...(codexConfigJson ? { CODEX_CONFIG: codexConfigJson } : {})
-        }
+        },
+        ...(persistentSystemPrompt ? { persistentSystemPrompt } : {})
       }
     }
 
@@ -443,7 +450,8 @@ export const createCodexFramework = ({
         key: useLocalResponsesEndpoint ? undefined : provider.key,
         reasoningEffort: ctx.reasoningEffort
       }),
-      ...(modelCatalogPath ? { model_catalog_json: modelCatalogPath } : {})
+      ...(modelCatalogPath ? { model_catalog_json: modelCatalogPath } : {}),
+      ...(persistentSystemPrompt ? { developer_instructions: persistentSystemPrompt } : {})
     }
     return {
       env: {
@@ -480,14 +488,19 @@ export const createCodexFramework = ({
             } satisfies AgentProviderConfiguration
           }
         : {}),
-      ...(useChatBridge ? { sessionModel: CODEX_BRIDGE_MODEL } : {})
+      ...(useChatBridge ? { sessionModel: CODEX_BRIDGE_MODEL } : {}),
+      ...(persistentSystemPrompt ? { persistentSystemPrompt } : {})
     }
   },
 
   buildSessionSetup(ctx: SessionSetupContext): SessionSetup {
+    // Production backends pass no stable appends here because developer_instructions owns them.
+    // Keep the fallback for injected/legacy backends and ephemeral reviewer sessions.
+    const promptPrefix = [...ctx.systemPromptAppends, ...(ctx.turnPromptReminders ?? [])]
+      .filter(Boolean)
+      .join('\n\n')
     return {
-      promptPrefix:
-        ctx.systemPromptAppends.length > 0 ? ctx.systemPromptAppends.join('\n\n') : undefined
+      ...(promptPrefix ? { promptPrefix } : {})
     }
   },
 

@@ -69,6 +69,7 @@ export type AgentBackendSelection = Readonly<{
 
 export type AgentBackendResolutionContext = {
   forcedSkillIds?: string[]
+  systemPromptAppends?: string[]
 }
 
 export type ExplicitAgentBackendTarget = Readonly<{
@@ -376,6 +377,9 @@ export class AgentBackendResolver {
       ? [...new Set(target.reasoningEffortProfile.slots)]
       : undefined
     const forcedSkillIds = new Set(context.forcedSkillIds ?? [])
+    const connectorInstructions = renderConnectorInstructions(
+      this.connectors.enabledConnectorIds(settings.connectors)
+    )
 
     if (framework.id === 'claude-code') {
       const { envOverrides, executablePath, sessionOptions, contextWindow } =
@@ -388,7 +392,8 @@ export class AgentBackendResolver {
         sessionOptions,
         sessionEffort,
         contextWindow,
-        contextUsageModel: target.effectiveModel
+        contextUsageModel: target.effectiveModel,
+        ...(connectorInstructions ? { systemPromptAppends: [connectorInstructions] } : {})
       }
     }
 
@@ -419,9 +424,6 @@ export class AgentBackendResolver {
         : opencodeConfigDir(this.storageRoot)
     await this.runtime.materializeAgentSkills(settings, skillsRoot, forcedSkillIds)
 
-    const connectorInstructions = renderConnectorInstructions(
-      this.connectors.enabledConnectorIds(settings.connectors)
-    )
     const responsesBridge = target.needsChatResponsesBridge
       ? await this.ensureResponsesBridge(
           provider,
@@ -431,6 +433,10 @@ export class AgentBackendResolver {
       : target.needsNativeResponsesCompatibility
         ? await this.ensureNativeResponsesCompatibility(provider)
         : undefined
+    const persistentSystemPromptAppends = [
+      ...(context.systemPromptAppends ?? []),
+      ...(framework.id === 'codex' && connectorInstructions ? [connectorInstructions] : [])
+    ]
 
     try {
       const modelConfig = framework.prepareModelConfig(provider, {
@@ -440,7 +446,10 @@ export class AgentBackendResolver {
         responsesBridge,
         reasoningEffort: sessionEffort,
         reasoningEfforts: supportedReasoningEfforts,
-        instructions: connectorInstructions
+        instructions: connectorInstructions,
+        ...(persistentSystemPromptAppends.length > 0
+          ? { systemPromptAppends: persistentSystemPromptAppends }
+          : {})
       })
       await this.runtime.materializeAgentConfigFiles(modelConfig.configFiles)
       const opencodeUsagePort =
@@ -494,6 +503,7 @@ export class AgentBackendResolver {
         contextUsageModel: provider.model,
         authentication: modelConfig.authentication,
         providerConfiguration: modelConfig.providerConfiguration,
+        persistentSystemPrompt: modelConfig.persistentSystemPrompt,
         ...(opencodeUsagePort === undefined || !opencodeUsagePassword
           ? {}
           : {

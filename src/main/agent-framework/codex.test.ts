@@ -206,12 +206,14 @@ describe('codexFramework', () => {
       {
         storageRoot: '/data',
         executablePath: '/runtime/codex-acp',
-        responsesBridge: { baseUrl: 'http://127.0.0.1:43123/v1', token: 'local-token' }
+        responsesBridge: { baseUrl: 'http://127.0.0.1:43123/v1', token: 'local-token' },
+        systemPromptAppends: ['Stable bridge guidance.']
       }
     )
 
     expect(JSON.parse(config.env?.CODEX_CONFIG ?? '')).toMatchObject({
       model: CODEX_BRIDGE_MODEL,
+      developer_instructions: 'Stable bridge guidance.',
       model_context_window: 128_000,
       model_auto_compact_token_limit: 121_600,
       model_provider: 'open-science',
@@ -234,6 +236,7 @@ describe('codexFramework', () => {
       headers: { authorization: 'Bearer local-token' }
     })
     expect(config.env?.CODEX_CONFIG).not.toContain('upstream-secret')
+    expect(config.persistentSystemPrompt).toBe('Stable bridge guidance.')
   })
 
   it('drives a native-Responses vendor directly on its OpenAI /v1 base, ignoring the bridge', () => {
@@ -569,12 +572,51 @@ describe('codexFramework', () => {
     })
   })
 
-  it('delivers Open Science session guidance as a prompt prefix', () => {
+  it('delivers Open Science session guidance as persistent developer instructions', () => {
     const framework = createCodexFramework()
 
-    expect(framework.buildSessionSetup({ systemPromptAppends: ['one', 'two'] })).toEqual({
-      promptPrefix: 'one\n\ntwo'
+    const config = framework.prepareModelConfig(
+      {
+        type: 'custom',
+        apiEndpoints: ['responses'],
+        baseUrl: 'https://api.openai.com/v1',
+        model: 'gpt-5.6-sol'
+      },
+      {
+        storageRoot: '/data',
+        executablePath: '/runtime/codex-acp',
+        systemPromptAppends: ['one', 'two']
+      }
+    )
+
+    expect(JSON.parse(config.env?.CODEX_CONFIG ?? '{}').developer_instructions).toBe('one\n\ntwo')
+    expect(config.persistentSystemPrompt).toBe('one\n\ntwo')
+    expect(
+      framework.buildSessionSetup({
+        systemPromptAppends: [],
+        turnPromptReminders: ['turn-only reminder']
+      })
+    ).toEqual({
+      promptPrefix: 'turn-only reminder'
     })
+  })
+
+  it('persists app guidance for a subscription backend', () => {
+    const framework = createCodexFramework()
+    const config = framework.prepareModelConfig(
+      { type: 'codex-isolated', apiEndpoints: ['responses'], model: 'gpt-5.6-terra' },
+      {
+        storageRoot: '/data',
+        executablePath: '/runtime/codex-acp',
+        systemPromptAppends: ['Stable subscription guidance.']
+      }
+    )
+
+    expect(JSON.parse(config.env?.CODEX_CONFIG ?? '{}')).toMatchObject({
+      model: 'gpt-5.6-terra',
+      developer_instructions: 'Stable subscription guidance.'
+    })
+    expect(config.persistentSystemPrompt).toBe('Stable subscription guidance.')
   })
 
   it.each([

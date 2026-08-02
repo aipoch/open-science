@@ -71,20 +71,26 @@ describe('claudeCodeFramework', () => {
     expect(setup.persistentSystemPrompt).toBe(systemPrompt.append)
   })
 
-  it('keeps generic MCP tool references unchanged for Codex', () => {
+  it('keeps turn-only MCP tool references unchanged for Codex', () => {
     const append = 'Use `notebook_execute` and then `write_artifact_file`.'
 
-    expect(codexFramework.buildSessionSetup({ systemPromptAppends: [append] }).promptPrefix).toBe(
-      append
-    )
+    expect(
+      codexFramework.buildSessionSetup({
+        systemPromptAppends: [],
+        turnPromptReminders: [append]
+      }).promptPrefix
+    ).toBe(append)
   })
 
-  it('renders generic MCP tool references as OpenCode callable names', () => {
+  it('renders turn-only MCP tool references as OpenCode callable names', () => {
     const append =
       'Use `notebook_execute` from `open-science-notebook`, then `write_artifact_file`.'
 
     expect(
-      opencodeFramework.buildSessionSetup({ systemPromptAppends: [append] }).promptPrefix
+      opencodeFramework.buildSessionSetup({
+        systemPromptAppends: [],
+        turnPromptReminders: [append]
+      }).promptPrefix
     ).toBe(
       'Use `open_science_notebook_notebook_execute` from `open_science_notebook`, then `open_science_artifacts_write_artifact_file`.'
     )

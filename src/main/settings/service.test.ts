@@ -1133,7 +1133,16 @@ describe('SettingsService: providers', () => {
     ).providers[0]
     await service.setActiveProvider(provider.id)
 
-    await service.resolveActiveAgentBackend()
+    const backend = await service.resolveActiveAgentBackend({
+      systemPromptAppends: ['Stable Open Science app guidance.']
+    })
+
+    expect(backend.persistentSystemPrompt).toContain('Stable Open Science app guidance.')
+    const appInstructions = await readFile(
+      join(storageRoot, 'opencode', 'config', 'opencode', 'instructions', 'open-science.md'),
+      'utf8'
+    )
+    expect(appInstructions).toBe('Stable Open Science app guidance.')
 
     const baseline = await readFile(
       join(storageRoot, 'opencode', 'config', 'opencode', 'instructions', 'connectors.md'),
@@ -1141,7 +1150,10 @@ describe('SettingsService: providers', () => {
     )
     expect(baseline).toContain('host.mcp')
     expect(baseline).toContain('mcp-*')
+    expect(baseline).toContain('Load the matching `mcp-*` skill before the first `host.mcp` call')
+    expect(baseline).toContain('Never guess a connector server or method name')
     expect(baseline).not.toContain('pubchem_get_compounds')
+    expect(baseline).not.toContain('search_articles')
     expect(baseline).not.toContain('```json')
     expect(baseline.length).toBeLessThan(2_500)
 
@@ -2087,7 +2099,9 @@ describe('SettingsService: preflight & spawn config', () => {
     await service.setActiveProvider(provider.id)
     vi.stubEnv('OPEN_SCIENCE_AGENT_FRAMEWORK', 'codex')
 
-    const backend = await service.resolveActiveAgentBackend()
+    const backend = await service.resolveActiveAgentBackend({
+      systemPromptAppends: ['Stable Open Science developer guidance.']
+    })
     const selection = await service.captureActiveAgentBackendSelection()
 
     expect(backend.framework.id).toBe('codex')
@@ -2100,13 +2114,20 @@ describe('SettingsService: preflight & spawn config', () => {
       NO_BROWSER: '1'
     })
     expect(backend.env.CODEX_API_KEY).toBeUndefined()
+    const developerInstructions = JSON.parse(backend.env.CODEX_CONFIG ?? '{}')
+      .developer_instructions as string
+    expect(developerInstructions).toContain('Stable Open Science developer guidance.')
+    expect(developerInstructions).toContain(
+      'Load the matching `mcp-*` skill before the first `host.mcp` call'
+    )
+    expect(developerInstructions).not.toContain('search_articles')
+    expect(backend.persistentSystemPrompt).toBe(developerInstructions)
     expect(backend.authentication).toEqual({
       methodId: 'api-key',
       _meta: { 'api-key': { apiKey: 'test-key' } }
     })
-    // Codex discovers the Connector through its native Skill catalog. Supplying the connector
-    // calling convention as a global prompt lets bridged models skip progressive Skill loading and
-    // guess method names directly.
+    // Stable guidance only tells Codex to load the matching Skill; exact connector methods remain
+    // progressive content and must not be copied into the baseline.
     expect(backend.systemPromptAppends).toBeUndefined()
 
     expect(selection).toEqual({ frameworkId: 'codex' })
@@ -2436,7 +2457,15 @@ describe('SettingsService: preflight & spawn config', () => {
     expect(backend.authentication).toBeUndefined()
     expect(backend.providerConfiguration).toBeUndefined()
     expect(backend.env.CODEX_API_KEY).toBeUndefined()
-    expect(JSON.parse(backend.env.CODEX_CONFIG ?? '{}')).toEqual({ model: 'gpt-5.6-terra' })
+    const codexConfig = JSON.parse(backend.env.CODEX_CONFIG ?? '{}') as {
+      model?: string
+      developer_instructions?: string
+    }
+    expect(codexConfig.model).toBe('gpt-5.6-terra')
+    expect(codexConfig.developer_instructions).toContain(
+      'Load the matching `mcp-*` skill before the first `host.mcp` call'
+    )
+    expect(codexConfig.developer_instructions).not.toContain('search_articles')
     expect(backend.env.MODEL_PROVIDER).toBeUndefined()
     expect(backend.env.NO_BROWSER).toBeUndefined()
     expect(backend.env.CODEX_PATH).toBe('/data/codex-managed/native/codex')
@@ -2620,6 +2649,14 @@ describe('SettingsService: preflight & spawn config', () => {
     })
     expect(backend.env.CODEX_CONFIG).toContain('"wire_api":"responses"')
     expect(backend.env.CODEX_CONFIG).not.toContain('test-key')
+    const developerInstructions = JSON.parse(backend.env.CODEX_CONFIG ?? '{}')
+      .developer_instructions as string
+    expect(developerInstructions).toContain(
+      'Load the matching `mcp-*` skill before the first `host.mcp` call'
+    )
+    expect(developerInstructions).toContain('Never guess a connector server or method name')
+    expect(developerInstructions).not.toContain('search_articles')
+    expect(backend.persistentSystemPrompt).toBe(developerInstructions)
 
     const bridgeResponse = await localFetch(`${backend.providerConfiguration?.baseUrl}/responses`, {
       method: 'POST',
@@ -3635,6 +3672,7 @@ describe('SettingsService: skills', () => {
     const managedSkillFile = join(managedSkillDir, 'SKILL.md')
     try {
       const config = await service.resolveActiveSpawnConfig()
+      const backend = await service.resolveActiveAgentBackend()
 
       expect(config.envOverrides.CLAUDE_CONFIG_DIR).toBe(userClaudeDir)
       expect(config.sessionOptions).toEqual({
@@ -3660,6 +3698,9 @@ describe('SettingsService: skills', () => {
       expect(appSettings.permissions.deny).toEqual(
         expect.arrayContaining([expect.stringMatching(/^Read/)])
       )
+      expect(backend.systemPromptAppends).toEqual([
+        expect.stringContaining('Load the matching `mcp-*` skill before the first `host.mcp` call')
+      ])
     } finally {
       await chmod(managedSkillFile, 0o644).catch(() => undefined)
       await chmod(managedSkillDir, 0o755).catch(() => undefined)
@@ -4645,7 +4686,10 @@ describe('SettingsService: reasoning effort', () => {
 
     expect(backend.framework.id).toBe('claude-code')
     expect(backend.sessionEffort).toBe('low')
-    expect(backend.systemPromptAppends).toBeUndefined()
+    expect(backend.systemPromptAppends).toEqual([
+      expect.stringContaining('Load the matching `mcp-*` skill before the first `host.mcp` call')
+    ])
+    expect(backend.systemPromptAppends?.join('\n')).not.toContain('search_articles')
   })
 
   it("leaves sessionEffort undefined when the level is 'default' or unset", async () => {

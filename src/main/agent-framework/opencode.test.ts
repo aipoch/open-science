@@ -23,6 +23,36 @@ describe('opencodeFramework.prepareModelConfig', () => {
     expect(parsed.instructions).toContain(instructionsFile?.path)
   })
 
+  it('writes stable app guidance to native instructions instead of a user prompt', () => {
+    const config = opencodeFramework.prepareModelConfig(
+      { type: 'custom', baseUrl: 'https://gw/v1', model: 'm', key: 'k' },
+      {
+        storageRoot: '/data',
+        executablePath: '/bin/opencode',
+        systemPromptAppends: [
+          'Use `notebook_execute` from `open-science-notebook`.',
+          'Then call `write_artifact_file`.'
+        ]
+      }
+    )
+
+    const instructionsFile = config.configFiles?.find((file) =>
+      file.path.endsWith('open-science.md')
+    )
+    expect(instructionsFile?.content).toBe(
+      'Use `open_science_notebook_notebook_execute` from `open_science_notebook`.\n\nThen call `open_science_artifacts_write_artifact_file`.'
+    )
+    const opencodeJson = config.configFiles?.find((file) => file.path.endsWith('opencode.json'))
+    expect(JSON.parse(opencodeJson?.content ?? '{}').instructions).toContain(instructionsFile?.path)
+    expect(config.persistentSystemPrompt).toBe(instructionsFile?.content)
+    expect(
+      opencodeFramework.buildSessionSetup({
+        systemPromptAppends: [],
+        turnPromptReminders: ['turn-only reminder']
+      })
+    ).toEqual({ promptPrefix: 'turn-only reminder' })
+  })
+
   it('omits instructions when none are provided', () => {
     const config = opencodeFramework.prepareModelConfig(
       { type: 'custom', baseUrl: 'https://gw/v1', model: 'm', key: 'k' },

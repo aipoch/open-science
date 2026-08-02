@@ -25,7 +25,7 @@ import { renderAppMcpToolReferences } from './app-mcp-names'
 
 // opencode speaks ACP over `opencode acp` (stdio JSON-RPC). Only the shapes that differ from Claude
 // are implemented here: model config (a generated opencode.json, not ANTHROPIC_* env), system-prompt
-// delivery (a prompt prefix, since opencode has no preset), and skills (materialized into opencode's
+// delivery (generated native instructions), and skills (materialized into opencode's
 // config dir, which its native skill tool discovers). Everything else reuses the generic runtime.
 // See docs/internal/pluggable-agent-framework-feasibility.md.
 
@@ -361,13 +361,27 @@ export const opencodeFramework: AgentFramework = {
     const configPath = join(opencodeDir, 'opencode.json')
     const configFiles = [{ path: configPath, content: '' }]
 
-    // Compact connector conventions, wired via opencode's `instructions` config so the agent uses
-    // host.mcp instead of raw HTTP. Detailed schemas remain in on-demand `mcp-*` skills. Absolute path
-    // keeps the baseline independent of the session cwd.
+    // Stable app guidance belongs in OpenCode's native instructions layer, never ordinary user prompt
+    // history. Keep connector conventions separate so their independent lifecycle remains explicit;
+    // both absolute paths are backend-scoped and independent of the session cwd.
     const instructionPaths: string[] = []
+    const persistentInstructions: string[] = []
+    if (ctx.systemPromptAppends?.length) {
+      const instructions = ctx.systemPromptAppends
+        .map((append) => renderAppMcpToolReferences('opencode', append))
+        .filter(Boolean)
+        .join('\n\n')
+      if (instructions) {
+        const instructionsPath = join(opencodeDir, 'instructions', 'open-science.md')
+        instructionPaths.push(instructionsPath)
+        persistentInstructions.push(instructions)
+        configFiles.push({ path: instructionsPath, content: instructions })
+      }
+    }
     if (ctx.instructions) {
       const instructionsPath = join(opencodeDir, 'instructions', 'connectors.md')
       instructionPaths.push(instructionsPath)
+      persistentInstructions.push(ctx.instructions)
       configFiles.push({ path: instructionsPath, content: ctx.instructions })
     }
 
@@ -413,19 +427,22 @@ export const opencodeFramework: AgentFramework = {
         // Pass the decrypted key ONLY via the environment; the config references it as `{env:...}`.
         ...(provider.key ? { [OPENCODE_API_KEY_ENV]: provider.key } : {})
       },
-      configFiles
+      configFiles,
+      ...(persistentInstructions.length > 0
+        ? { persistentSystemPrompt: persistentInstructions.join('\n\n') }
+        : {})
     }
   },
 
   buildSessionSetup(ctx: SessionSetupContext): SessionSetup {
-    // No claude_code preset here; deliver appends as a prompt prefix instead of session meta.
+    // Production backends pass no stable appends here because they are already installed in native
+    // instructions. Retain the append fallback for injected/legacy backends and ephemeral reviewers.
+    const promptPrefix = [...ctx.systemPromptAppends, ...(ctx.turnPromptReminders ?? [])]
+      .map((append) => renderAppMcpToolReferences('opencode', append))
+      .filter(Boolean)
+      .join('\n\n')
     return {
-      promptPrefix:
-        ctx.systemPromptAppends.length > 0
-          ? ctx.systemPromptAppends
-              .map((append) => renderAppMcpToolReferences('opencode', append))
-              .join('\n\n')
-          : undefined
+      ...(promptPrefix ? { promptPrefix } : {})
     }
   },
 

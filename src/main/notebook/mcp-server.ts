@@ -11,32 +11,13 @@ const NOTEBOOK_MCP_SERVER_NAME = 'open-science-notebook'
 const NOTEBOOK_SYSTEM_PROMPT_APPEND = [
   '<open_science_notebook_instructions>',
   'Notebook tool instructions (only applies when using open-science-notebook tools).',
-  'Use the `open-science-notebook` tools when you need to write or run Python code in the shared local notebook interpreter.',
   'Notebook preview is only for code and execution results; keep chat, explanation, and diagnosis in the chat area.',
-  'To write and run code, use the `notebook_execute` tool: it writes one Python code cell and runs it in the shared interpreter in a single step. Treat each `notebook_execute` call as one notebook cell, and use several calls for several cells. Reuse a `cellId` to overwrite and rerun that cell.',
-  'The python and r data cells run `notebook_execute` writes and have NO outbound connector (host.mcp) access. To call an MCP connector, use the `repl_execute` tool — the control-plane REPL is the only kernel with connector access (`await host.mcp(server, method, args)`). Do NOT try to call host.mcp, urllib/requests, or fetch a connector from a python/r cell; it will fail.',
-  'Hand connector results to the python/r data cells through the shared workspace channel: have `repl_execute` write files into the directory given by the `$OPEN_SCIENCE_HANDOFF_DIR` env var (read it at runtime — every kernel kind sees the same path there) and have the data cell read them back, not by pasting large data through the chat.',
-  'Read input or preprocessed data from `./data/` (split into `./data/raw` and `./data/processed`; also reachable via the `OPEN_SCIENCE_NOTEBOOK_DATA_DIR` env var or the returned `dataRoot`) instead of guessing a path.',
-  'Write intermediate or working analysis outputs into `./outputs/`; that is separate from final user-facing artifacts, which still must be saved with `write_artifact_file` before telling the user they are available.',
-  'The python/r kernel is PERSISTENT across calls: variables, imports, and definitions from one `notebook_execute` call stay available to later calls on the SAME environment. Reuse them directly — do NOT re-read a file or recompute data that is already held in a variable from an earlier call this session.',
-  'That in-memory state is lost not only on `notebook_restart` (whose result already says so) but also on closing/reopening the app — only run history and on-disk files survive. So checkpoint an expensive result you may need again (a large fetch, a slow computation, a trained model) to `./data`, `./handoff`, or `./outputs` and re-load it after a restart/reopen instead of recomputing.',
-  'After each run, inspect the returned run summary, including stdout, stderr, traceback, outputs, artifacts, workingFiles, cwdBefore, and cwdAfter.',
-  'If the result is not the expected user outcome, analyze the returned facts, modify code or environment, and run again.',
-  'If you decide a missing package, dependency, Python executable, executor, interpreter, kernel, or runtime component must be installed, place installation contents under the directory given by the `OPEN_SCIENCE_RUNTIME_DIR` env var (read it at runtime) and continue with that runtime.',
-  'Do not install runtime dependencies into the project repository, workspace, system Python, or the user existing global environment unless the user explicitly asks.',
-  'The notebook already runs inside a writable session workspace — its current working directory — so create files with plain relative paths (Python: `plt.savefig("plot.png")`, `df.to_csv("out.csv")`; R: `png("plot.png", width=800, height=500); plot(...); dev.off()`, `write.csv(df, "out.csv")`). Do NOT construct or guess absolute paths under a home directory; if you need an absolute path, read it at runtime (`os.getcwd()` / R `getwd()`, `os.path.abspath("plot.png")` / R `normalizePath("plot.png")`, or the returned `dataRoot` / env var `OPEN_SCIENCE_NOTEBOOK_DATA_DIR`).',
-  'The working directory already IS the session data dir: `os.getcwd()` / R `getwd()` equals `$OPEN_SCIENCE_NOTEBOOK_DATA_DIR`. So a relative save like `png("plot.png"); ...; dev.off()` already writes the file INTO that dir and it is captured — save it once and stop. Do NOT then copy or move it to `$OPEN_SCIENCE_NOTEBOOK_DATA_DIR` (or to an absolute rebuild of the same name): the source and destination are the identical path, and R `file.copy(src, dst, overwrite=TRUE)` (or a shell `cp`) will TRUNCATE the file to 0 bytes.',
-  'You may read user-provided existing data files in place, but do not move, overwrite, or delete original files; write derived files into the working directory.',
-  'Treat notebook MCP results as execution facts only. The notebook runtime does not classify files for you; you decide whether each generated file is an intermediate working file or a final user-facing artifact.',
-  'If a notebook run creates a final user-facing output such as a chart, image, report, PDF, HTML page, document, CSV export, or archive, save that final output through the `write_artifact_file` tool from `open-science-artifacts` before telling the user it is available. Do NOT copy a generated notebook output into the workspace with a shell command; the artifact tool performs the cross-platform copy.',
-  'Pass the file to `write_artifact_file` as `source: { "kind": "localPath", "path": "plot.png" }` — use the SAME relative filename you saved with. The artifact tool resolves a relative path (or a bare filename) against the notebook session data dir, so no absolute path is needed; do NOT rebuild an absolute path from `OPEN_SCIENCE_NOTEBOOK_DATA_DIR` or a home dir.',
-  'When `notebook_execute`, `repl_execute`, or `bash_execute` produced the file, call `write_artifact_file` with `producerRunId` set to the exact `runId` returned by the execution that created or last modified that file. Do not substitute the Artifact run ID or guess another Notebook run.',
-  'Use inline `content` only for small generated text that is already in memory.',
-  'Artifact file paths are returned in `artifacts[]`; notebook working file paths are returned in `workingFiles[]`.',
-  'The user does not need to click a button to send results back; use MCP return values and notebook state as the execution facts.',
-  'When the user asks whether a Python/R package is installed or which version is present in an app-managed runtime, or when code depends on a specific package version, use the `inspect_packages` tool. It reads distribution metadata without importing or changing packages. It does not provision a missing default runtime; use `notebook_execute` to prepare that runtime under execution approval, then retry. For a user-owned external runtime, use `notebook_execute` so running that interpreter receives execution approval. Do NOT call inspection as a mandatory preflight after a clear missing-package error.',
-  'When a run fails on a missing package, dependency, or module (ImportError / ModuleNotFoundError / "there is no package called"), install it with the `manage_packages` tool — Python vs R by language — and do NOT install packages from inside a cell (%pip, !pip, install.packages()) or with OS installers.',
-  'A named environment is a SEPARATE persistent conda environment (its own process + namespace) from the default python/r environment and from every other named environment. Create one with manage_environments, then BIND it with notebook_bind_runtime to run in it — one runtime per language per session, with no shared variables/imports across environments. Move data between environments through ./handoff/ just like between kernels.',
+  'Use `notebook_execute` for one persistent Python/R cell per call; reuse `cellId` to rerun a cell. Python/R data kernels cannot call connectors. Use `repl_execute` for `host.mcp`/`host.compute`, and exchange large data through `$OPEN_SCIENCE_HANDOFF_DIR` (`./handoff/`).',
+  'Each runtime is a separate persistent namespace. Create named runtimes with `manage_environments`, select them with the bind/switch tools, and use files to move data across runtimes. Memory is lost on restart or app reopen; run history and files survive.',
+  'The notebook already runs inside a writable session workspace. Use plain relative paths: inputs in `./data/`, intermediate results in `./outputs/`, and connector handoff in `./handoff/`. The cwd is already the session data dir; never copy a saved file onto the same path. Do not modify original user files.',
+  'Use `inspect_packages` for version checks and `manage_packages` for installs. Never install inside a cell or shell. App-managed runtime contents belong under `$OPEN_SCIENCE_RUNTIME_DIR`, never the project, workspace, system Python, or a user global environment.',
+  'MCP execution replies are bounded summaries; full output remains in the notebook preview. Inspect stdout, stderr, traceback, outputs, and workingFiles, then revise and rerun if needed. The notebook runtime does not classify files for you.',
+  'For a final user-facing file, call `open-science-artifacts.write_artifact_file` before announcing it. Use `source: { "kind": "localPath", "path": "plot.png" }` with the SAME relative filename you saved with and `producerRunId` set to the exact `runId` returned by the execution that last wrote it. Use inline content only for small text.',
   '</open_science_notebook_instructions>'
 ].join('\n')
 
@@ -110,65 +91,46 @@ const bindRuntimeToolSchema = {
 // Install contract embedded as the manage_packages description so the agent always sees it (spec §8.2).
 // Soft constraint this phase; the hard guarantee is the phase-3 network-isolation sandbox.
 const INSPECT_PACKAGES_DOC = [
-  "Inspect installed package metadata in the session's bound app-managed runtime without changing the environment or importing the packages.",
-  'Pass Python distribution names or R package names. Each result reports installed, missing, or unknown and includes the installed version when available.',
-  'Use this when the user asks which version is installed or when code depends on a specific package version. Do NOT make it a mandatory preflight after a clear missing-package error — call manage_packages directly in that recovery path.',
-  "There is NO per-call environment argument. The query uses the session's bound app-managed runtime, or the app-managed default when nothing is bound.",
-  'Inspection never provisions a missing default runtime. If the default is not ready, use notebook_execute to prepare it under notebook execution approval, then retry inspection.',
-  'A user-owned external runtime is intentionally rejected because collecting its metadata executes that interpreter. Use notebook_execute there so the execution receives notebook approval.',
-  'Installed metadata does not prove that an import/library() call will succeed; use notebook_execute when importability itself must be tested.'
+  "Read installed/missing/version metadata from the session's bound app-managed Python/R runtime without importing or changing packages.",
+  'Use for requested version checks, not as a mandatory preflight after a clear missing-package error. Use notebook_execute to test actual importability.',
+  'There is no per-call environment. A missing default is prepared by notebook_execute; an external runtime must also be inspected through notebook_execute so execution receives approval.'
 ].join('\n')
 
 const MANAGE_PACKAGES_DOC = [
-  'Install packages into the shared notebook environment through THIS tool only — it runs the install in the trusted main process, never in the kernel.',
-  'Route by language: Python packages → manage_packages(language="python"); R packages → manage_packages(language="r"). For a PyPI-only Python package pass usePip=true; pass channels only when a package needs a non-default conda channel.',
+  'Install packages in the session-bound runtime through this trusted tool only. Select with language="python" or language="r", usePip=true only for PyPI-only packages, and pass channels only when needed.',
   'conda installs resolve conda-forge + bioconda by default. A CRAN R package is installed by its plain name (e.g. "dplyr" → r-dplyr); a Bioconductor R package must be named by its bioconda package id "bioconductor-<name>" in lowercase (e.g. DESeq2 → "bioconductor-deseq2"), which is left as-is (not r- prefixed).',
-  "Installs go to the session's bound runtime (notebook_bind_runtime), or the app-managed default when nothing is bound — there is NO per-call environment argument. To install into a different named environment, bind or switch to it first with notebook_bind_runtime / notebook_switch_runtime. Installs persist across cells and sessions.",
-  'The DEFAULT environments (default-python / default-r) are ADDITIVE-ONLY: they accept only a bare package name or an exact "name==version" pin, and REFUSE uninstall, version ranges, git/URL specs, extras, and flags. If you need to remove/downgrade a package or use richer specs (ranges, git+https, wheels), create a named environment with manage_environments(action:"create") and install there.',
-  "If the default runtime is the user's OWN interpreter (BYO/external), package installs may be read-only: an install can come back refused with an actionable message — surface it to the user rather than retrying, and do not try to install another way.",
-  'Pass operation:"uninstall" to remove the listed packages (default operation is install); uninstall is only allowed on a named/created env (not the additive-only defaults), is env-scoped, and never touches system/global packages.',
-  'The result includes verified packageChanges for the packages you requested, with installed/updated/unchanged/removed state and observed before/after versions when available. Dependencies remain in provenance instead of bloating the tool result.',
-  'After a successful install you can import/library()-load the package in the SAME kernel right away — the running kernel picks up a newly-installed package on its next import (no restart needed). Only call notebook_restart if you installed a newer version of a package that was ALREADY imported/loaded this session and you need the running kernel to use the new version.',
-  'Do NOT install any other way: no apt / brew / yum, no sudo, no curl | bash, no downloading installers, no subprocess hand-rolled installs, and no in-cell %pip / !pip / install.packages() (those run in the kernel and bypass this gate).',
-  'Do NOT route around a missing package by swapping in a different library that does roughly the same thing; install the package the task actually needs.',
-  'If a package needs a system/OS dependency, stop and report the limitation to the user; do NOT try to self-install it.'
+  'There is no per-call environment: bind/switch first. Default runtimes are additive-only (bare name or exact name==version); uninstall, ranges, URLs, extras, and downgrades require a named environment. External runtimes may refuse writes; surface that result.',
+  'operation defaults to install; use operation:"uninstall" only in a named environment. The concise result reports verified requested-package changes. New packages import immediately; use notebook_restart only to reload a newer version already imported.',
+  'Never use apt, brew, sudo, curl | bash, subprocess installs, %pip, !pip, or install.packages(), and never substitute another library. Report required OS dependencies to the user instead of installing them.'
 ].join('\n')
 
 const MANAGE_ENVIRONMENTS_DOC = [
-  'Create, list, and remove named persistent python/r environments. One conda environment = one process = one persistent namespace, separate from the default-python / default-r environments and from every other named environment.',
-  'action:"create" — provision a new environment: pass language ("python" or "r") and name. It starts from a minimal base (just enough to run the loop protocol), plus any packages[] you pass. Use manage_packages afterwards to add more.',
-  'action:"list" — return the environments already provisioned (name, language, readiness, whether it is a default).',
-  'action:"remove" — delete a named environment by name. The defaults (default-python / default-r) cannot be removed. An environment with a running kernel is refused — restart or shut down its kernel first.',
-  "A named environment must be created here before it can be selected with notebook_bind_runtime / notebook_switch_runtime; notebook_execute and manage_packages then act on the session's bound runtime.",
-  'Named environments have NO outbound connector (host.mcp) access, same as the default data kernels — only repl_execute (the control-plane REPL) can call connectors.',
-  'action:"remove" only deletes environments YOU created with action:"create" (agent-created). The app-managed defaults and any app-managed versioned env are refused, and a user\'s own external interpreter is never a named environment here so it can never be removed.'
+  'Create, list, or remove named persistent Python/R environments. Each is a separate process and namespace.',
+  'action:"create" needs language and name (optional initial packages); action:"list" reports provisioned environments; action:"remove" accepts a name.',
+  'Create before bind/switch. Removal is limited to agent-created, idle named environments; defaults, app-managed versioned environments, and external interpreters cannot be removed.',
+  'Named data kernels cannot call connectors; use repl_execute and ./handoff/.'
 ].join('\n')
 
 const LIST_NOTEBOOK_RUNTIMES_DOC = [
-  "List the notebook runtimes you may run code on, per language (python / r). Returns the app-managed default environment plus any of the user's own interpreters they have ENABLED in Settings — disabled interpreters are never listed and cannot be used.",
-  'Each entry has: runtimeId (the stable id you pass to notebook_bind_runtime / notebook_switch_runtime), language, source ("managed" = app-owned, "external" = the user\'s own interpreter), label, version, runnable, and bound (whether it is this session\'s current runtime for that language).',
-  "You do NOT need to bind a runtime to run code: with no binding, notebook_execute uses the app-managed default. Bind only to run on one of the user's own listed interpreters."
+  'List enabled managed/external Python/R runtimes and their runtimeId, source, version, runnable, and bound status. Disabled runtimes are omitted.',
+  'No binding is required for the app-managed default; bind only to select another listed runtime.'
 ].join('\n')
 
 const BIND_RUNTIME_DOC = [
-  'Bind a language (python or r) to one of the runtimes from list_notebook_runtimes for the REST of this session — pass its runtimeId. This is the first-time choice for a language; there is ONE runtime per language per session.',
-  'Only enabled runtimes can be bound: a disabled or unknown runtimeId is refused (the enable gate is enforced in the trusted main process, so a guessed interpreter path cannot bypass it).',
-  'To CHANGE an already-bound language use notebook_switch_runtime instead (bind refuses re-binding a different runtime). After binding, notebook_execute for that language runs on the bound runtime automatically — do not pass a runtime per call.'
+  'Bind a language to one enabled runtimeId for the rest of this session (one runtime per language). Disabled/unknown IDs are refused.',
+  'Use switch to change an existing binding. notebook_execute then uses the binding automatically; no per-call runtime is accepted.'
 ].join('\n')
 
 const SWITCH_RUNTIME_DOC = [
-  'Switch a language (python or r) to a different runtime from list_notebook_runtimes — pass its runtimeId. This TEARS DOWN the current kernel for that language and clears its in-memory state (variables, imports), then rebinds; the other language and the control-plane REPL are unaffected.',
-  'Only enabled runtimes can be switched to (a disabled or unknown runtimeId is refused in the main process). Switching is explicit and per-session: there is never more than one runtime per language at a time, and notebook_execute keeps using the newly-bound runtime with no per-call runtime argument.'
+  'Switch a language to another enabled runtimeId. This tears down that language kernel and clears its memory; other kernels are unaffected.',
+  'The new per-session binding is used automatically by notebook_execute; disabled/unknown IDs are refused.'
 ].join('\n')
 
 // Control-plane REPL contract, embedded as the repl_execute description so the agent always sees it.
 const REPL_EXECUTE_DOC = [
-  'Run JavaScript on the persistent control-plane REPL kernel — a Node process separate from the python/r data kernels.',
-  'This is the ONLY kernel with outbound connector access: call `await host.mcp(server, method, args)` to reach MCP connectors. The python/r data kernels have none, so do connector fetches here.',
-  'Remote compute (`host.compute`: list / create / call_command / details of SSH compute hosts) is likewise available ONLY here — the python/r data kernels have no `host.compute`. Load the `remote-compute-ssh` skill for its API.',
-  'Code runs in a persistent context (globals declared in one call persist to the next). A trailing expression is echoed like a REPL — its value comes back as the result — or use `console.log(...)` / `return <expr>`. Do NOT echo a large result (many records / big JSON); it is truncated. Write large data to ./handoff/ instead.',
-  'To hand data to the python/r kernels, write files into ./handoff/ (the shared workspace channel every kernel sees) and have the data cell read them back; this tool does not itself run data-analysis code.',
-  'Distinct from notebook_execute: use notebook_execute for python/r data cells, and this tool for connector calls and control-plane orchestration.'
+  'Run JavaScript in the persistent control-plane REPL, separate from notebook_execute Python/R data kernels.',
+  'Only this kernel can call connectors (`await host.mcp(server, method, args)`) and remote compute (`host.compute`; load its skill for the API).',
+  'Globals persist and a trailing expression is returned. Do not echo large data; write it to ./handoff/ for Python/R. Use notebook_execute for analysis code.'
 ].join('\n')
 
 // Stateless shell contract, embedded as the bash_execute description so the agent always sees it.
@@ -182,7 +144,7 @@ const buildShellExecuteDoc = (platform: NodeJS.Platform = process.platform): str
     platform === 'win32' ? '$env:OPEN_SCIENCE_HANDOFF_DIR' : '$OPEN_SCIENCE_HANDOFF_DIR'
   const platformContract =
     platform === 'win32'
-      ? 'Target Windows PowerShell 5.1 syntax. PowerShell aliases such as cp/ls/mv/rm are not POSIX utilities: do not pass POSIX-only flags. `&&` is unavailable in Windows PowerShell 5.1; use `if ($?) { ... }` when the next command depends on success.'
+      ? 'Target Windows PowerShell 5.1; aliases are not POSIX utilities and `&&` is unavailable. Use `if ($?) { ... }` for dependent commands.'
       : undefined
   const exitCodeContract =
     platform === 'win32'
@@ -192,13 +154,10 @@ const buildShellExecuteDoc = (platform: NodeJS.Platform = process.platform): str
   return [
     shellDescription,
     ...(platformContract ? [platformContract] : []),
-    'Stateless: every call spawns a fresh process, so shell state (cwd changes, exported variables, background jobs, shell functions) does NOT persist between calls — write files if you need results to carry over.',
-    `Runs in the same workspace directory the python/r data kernels start in, and can read/write ./handoff/ (also at ${handoffVariable}), the same shared channel repl_execute uses to hand data to the data kernels.`,
+    `Stateless: each call is a fresh process, so cwd, variables, jobs, and functions do not persist. It starts in the data-kernel workspace and shares ./handoff/ (${handoffVariable}).`,
     exitCodeContract,
-    'Distinct from notebook_execute and repl_execute: those run on persistent python/r/control-plane kernels with state that survives across calls; this tool is for one-off command-line inspection and package CLI probes, not for anything relying on shell state persisting.',
     'Do NOT copy a generated notebook output into the workspace with this tool. For a final chart, image, report, CSV, or other user-facing file, call `write_artifact_file` with the same relative filename you saved with (it resolves against the notebook session data dir); it copies the file safely on every platform.',
-    'Do NOT use this to run analysis code: never write a python/R script to disk and execute it with `python`/`Rscript`/`node`, and never pipe code via `-e`/`-c`/a heredoc. Run python via notebook_execute (language:"python"), R via notebook_execute (language:"r"), and JavaScript via repl_execute — those kernels persist state, capture figures and outputs into the notebook, and install packages via manage_packages. A shell escape hatch bypasses all of that and its results are lost to the notebook.',
-    'To install packages use manage_packages, not `pip install` / `Rscript -e install.packages(...)` here.'
+    'Use only for one-off command inspection. Run Python/R with notebook_execute, JavaScript with repl_execute, and installs with manage_packages; never execute analysis scripts, inline code, or installers here.'
   ].join('\n')
 }
 
@@ -225,6 +184,7 @@ type NotebookRpcToolDefinition = {
   // Optional projection of the raw RPC result before it is serialized for the agent. Used to keep
   // a verbose result (e.g. restart returning the whole session state) compact and to-the-point.
   mapResult?: (raw: unknown) => unknown
+  resultLimitChars?: number
 }
 
 // Creates the ACP MCP-server declaration that launches this app bundle in notebook stdio mode.
@@ -307,143 +267,309 @@ const callNotebookRpc = async (
   return payload.result
 }
 
-// Per-stream cap for the run summary returned to the agent. The full output is always kept in
-// run.json and the notebook preview; only this agent-facing copy is bounded so a single large
-// result (e.g. a connector call dumping many records to stdout) cannot overflow the tool result.
-const NOTEBOOK_MCP_OUTPUT_FIELD_LIMIT = 8_000
+// Approximate 4k/2k-token budgets for ordinary English/JSON. The final serialized character caps are
+// deliberately conservative; full values stay in run.json and the notebook preview.
+const NOTEBOOK_MCP_EXECUTION_RESULT_LIMIT = 12_000
+const NOTEBOOK_MCP_STATE_RESULT_LIMIT = 6_000
+const NOTEBOOK_MCP_STREAM_PREVIEW_LIMIT = 2_500
+const NOTEBOOK_MCP_STATE_OUTPUT_PREVIEW_LIMIT = 600
+const MIME_INLINE_LIMIT = 768
+const MAX_EXECUTION_OUTPUTS = 6
+const MAX_EXECUTION_FILES = 10
+const MAX_STATE_CELLS = 20
+const MAX_STATE_RUNS = 10
 
-// Clips one output stream to the field limit, appending a marker that points at the full copy.
-const clipStream = (text: string): { text: string; clipped: boolean } => {
-  if (text.length <= NOTEBOOK_MCP_OUTPUT_FIELD_LIMIT) return { text, clipped: false }
+const isImageMime = (mime: string): boolean => mime.startsWith('image/')
 
-  const removed = text.length - NOTEBOOK_MCP_OUTPUT_FIELD_LIMIT
+const clipAgentText = (text: string, limit: number): { text: string; clipped: boolean } => {
+  if (text.length <= limit) return { text, clipped: false }
   return {
-    text: `${text.slice(0, NOTEBOOK_MCP_OUTPUT_FIELD_LIMIT)}\n…[truncated ${removed} chars; full output in notebook preview]`,
+    text: `${text.slice(0, limit)}\n…[${text.length - limit} chars omitted; full output in notebook preview]`,
     clipped: true
   }
 }
 
-// Bounds the agent-facing run summary by clipping oversized stdout/stderr/traceback in place. Only
-// touches values shaped like a run summary (a `text` object with string streams); every other RPC
-// payload (state/restart/shutdown) is returned untouched. Never clips the serialized JSON string,
-// which would produce invalid JSON.
-// A single inline base64 image (matplotlib/ggplot figure) or other rich payload easily overflows the
-// tool-result token budget, and the agent only needs to know the output exists — the full data lives
-// in run.json and the notebook preview. Image mimes and any oversized payload are replaced with a
-// marker; small text mimes stay inline.
-const MIME_INLINE_LIMIT = 1_024
-const isImageMime = (mime: string): boolean => mime.startsWith('image/')
+const asRecord = (value: unknown): Record<string, unknown> | undefined =>
+  typeof value === 'object' && value !== null ? (value as Record<string, unknown>) : undefined
 
-// Elides image/oversized display payloads and clips oversized stream/error text inside one run's
-// structured `outputs` array; returns whether anything was clipped.
-const elideOutputs = (outputs: unknown): { outputs: unknown; clipped: boolean } => {
-  if (!Array.isArray(outputs)) return { outputs, clipped: false }
-  let clipped = false
-  const next = outputs.map((output) => {
-    if (typeof output !== 'object' || output === null) return output
-    const record = output as Record<string, unknown>
+const pickDefined = (
+  record: Record<string, unknown>,
+  fields: readonly string[]
+): Record<string, unknown> => {
+  const picked: Record<string, unknown> = {}
+  for (const field of fields) {
+    if (record[field] !== undefined) picked[field] = record[field]
+  }
+  return picked
+}
 
-    if (record.type === 'display' && typeof record.data === 'object' && record.data !== null) {
-      const data = record.data as Record<string, unknown>
-      const nextData: Record<string, unknown> = {}
-      for (const [mime, payload] of Object.entries(data)) {
-        const asString = typeof payload === 'string' ? payload : JSON.stringify(payload)
-        if (isImageMime(mime) || asString.length > MIME_INLINE_LIMIT) {
-          nextData[mime] = `[${mime}: ${asString.length} chars omitted; shown in notebook preview]`
-          clipped = true
+const compactWorkingFiles = (value: unknown): unknown[] => {
+  if (!Array.isArray(value)) return []
+  return value.slice(0, MAX_EXECUTION_FILES).flatMap((file) => {
+    const record = asRecord(file)
+    if (!record) return []
+    return [pickDefined(record, ['relativePath', 'kind', 'size', 'createdByRunId'])]
+  })
+}
+
+const compactArtifacts = (value: unknown): unknown[] => {
+  if (!Array.isArray(value)) return []
+  return value.slice(0, MAX_EXECUTION_FILES).flatMap((artifact) => {
+    const record = asRecord(artifact)
+    if (!record) return []
+    return [
+      pickDefined(record, [
+        'artifactId',
+        'versionId',
+        'versionNumber',
+        'id',
+        'name',
+        'mimeType',
+        'size',
+        'producerRunId'
+      ])
+    ]
+  })
+}
+
+const compactExecutionOutputs = (
+  value: unknown,
+  canonicalTraceback: string
+): { outputs: unknown[]; truncated: boolean; omitted: number } => {
+  if (!Array.isArray(value)) return { outputs: [], truncated: false, omitted: 0 }
+
+  let truncated = false
+  let omitted = 0
+  const outputs: unknown[] = []
+  for (const output of value) {
+    const record = asRecord(output)
+    if (!record) continue
+
+    // stdout/stderr already have canonical top-level fields in the compact result.
+    if (record.type === 'stream') {
+      continue
+    }
+    if (outputs.length >= MAX_EXECUTION_OUTPUTS) {
+      omitted += 1
+      truncated = true
+      continue
+    }
+
+    if (record.type === 'display' && asRecord(record.data)) {
+      const data: Record<string, unknown> = {}
+      for (const [mime, payload] of Object.entries(asRecord(record.data) ?? {})) {
+        const serialized =
+          typeof payload === 'string' ? payload : (JSON.stringify(payload) ?? 'null')
+        if (isImageMime(mime) || serialized.length > MIME_INLINE_LIMIT) {
+          data[mime] = `[${mime}: ${serialized.length} chars omitted; shown in notebook preview]`
+          truncated = true
         } else {
-          nextData[mime] = payload
+          data[mime] = payload
         }
       }
-      return { ...record, data: nextData }
+      outputs.push({ type: 'display', data })
+      continue
     }
 
-    for (const field of ['text', 'traceback'] as const) {
-      const value = record[field]
-      if (typeof value !== 'string') continue
-      const { text: clippedText, clipped: didClip } = clipStream(value)
-      if (didClip) {
-        clipped = true
-        return { ...record, [field]: clippedText }
+    if (record.type === 'text' && typeof record.text === 'string') {
+      const clipped = clipAgentText(record.text, MIME_INLINE_LIMIT)
+      outputs.push({ type: 'text', text: clipped.text })
+      truncated = truncated || clipped.clipped
+      continue
+    }
+
+    if (record.type === 'json') {
+      const serialized = JSON.stringify(record.data) ?? 'null'
+      if (serialized.length > MIME_INLINE_LIMIT) {
+        outputs.push({
+          type: 'json',
+          data: `[JSON: ${serialized.length} chars omitted; shown in notebook preview]`
+        })
+        truncated = true
+      } else {
+        outputs.push({ type: 'json', data: record.data })
       }
+      continue
     }
 
-    return output
-  })
-  return { outputs: next, clipped }
+    if (record.type === 'error') {
+      const error = pickDefined(record, ['type', 'name', 'message', 'line'])
+      if (typeof record.traceback === 'string' && record.traceback !== canonicalTraceback) {
+        const clipped = clipAgentText(record.traceback, MIME_INLINE_LIMIT)
+        error.traceback = clipped.text
+        truncated = truncated || clipped.clipped
+      }
+      outputs.push(error)
+      continue
+    }
+
+    outputs.push(pickDefined(record, ['type']))
+  }
+
+  return { outputs, truncated, omitted }
 }
 
-// Clips oversized stdout/stderr/traceback and elides image/large `outputs` on one run-shaped record
-// (an execute summary, or one entry from a state result's run history).
-const truncateRunLike = (value: unknown): unknown => {
-  if (typeof value !== 'object' || value === null) return value
-  const record = value as Record<string, unknown>
-  let clippedAny = false
-  let next: Record<string, unknown> = record
-
-  const text = record.text
-  if (typeof text === 'object' && text !== null) {
-    const streams = text as Record<string, unknown>
-    const nextText: Record<string, unknown> = { ...streams }
-    let textClipped = false
-    for (const field of ['stdout', 'stderr', 'traceback'] as const) {
-      const stream = streams[field]
-      if (typeof stream !== 'string') continue
-      const { text: clippedText, clipped } = clipStream(stream)
-      nextText[field] = clippedText
-      textClipped = textClipped || clipped
-    }
-    if (textClipped) {
-      next = { ...next, text: nextText }
-      clippedAny = true
-    }
+// Projects one immediate execution result for the next model step. Code, roots, provenance, and
+// duplicated stream outputs remain durable but are not echoed into every later inference.
+const compactNotebookExecutionResult = (raw: unknown): unknown => {
+  const record = asRecord(raw)
+  if (!record) return raw
+  const text = asRecord(record.text)
+  const stream = (field: 'stdout' | 'stderr' | 'traceback'): string => {
+    const value = record[field] ?? text?.[field]
+    return typeof value === 'string' ? value : ''
   }
+  const stdout = clipAgentText(stream('stdout'), NOTEBOOK_MCP_STREAM_PREVIEW_LIMIT)
+  const stderr = clipAgentText(stream('stderr'), NOTEBOOK_MCP_STREAM_PREVIEW_LIMIT)
+  const traceback = clipAgentText(stream('traceback'), NOTEBOOK_MCP_STREAM_PREVIEW_LIMIT)
+  const compactOutputs = compactExecutionOutputs(record.outputs, stream('traceback'))
+  const workingFiles = compactWorkingFiles(record.workingFiles)
+  const artifacts = compactArtifacts(record.artifacts)
+  const filesOmitted =
+    (Array.isArray(record.workingFiles) && record.workingFiles.length > workingFiles.length) ||
+    (Array.isArray(record.artifacts) && record.artifacts.length > artifacts.length)
+  const truncated =
+    stdout.clipped ||
+    stderr.clipped ||
+    traceback.clipped ||
+    compactOutputs.truncated ||
+    filesOmitted
 
-  // Top-level streams: repl_execute/bash_execute control-plane results carry stdout/stderr/traceback
-  // on the record itself (not under `text`). A large host.mcp result dumped into stdout here would
-  // otherwise overflow the tool-result budget exactly like an untruncated run summary.
-  for (const field of ['stdout', 'stderr', 'traceback'] as const) {
-    const stream = record[field]
-    if (typeof stream !== 'string') continue
-    const { text: clippedText, clipped } = clipStream(stream)
-    if (clipped) {
-      next = { ...next, [field]: clippedText }
-      clippedAny = true
-    }
+  return {
+    ...pickDefined(record, [
+      'runId',
+      'cellId',
+      'kernelKind',
+      'status',
+      'executionCount',
+      'environment',
+      'startedAt',
+      'endedAt',
+      'exitCode'
+    ]),
+    ...(stdout.text ? { stdout: stdout.text } : {}),
+    ...(stderr.text ? { stderr: stderr.text } : {}),
+    ...(traceback.text ? { traceback: traceback.text } : {}),
+    ...(compactOutputs.outputs.length ? { outputs: compactOutputs.outputs } : {}),
+    ...(compactOutputs.omitted > 0 ? { omittedOutputCount: compactOutputs.omitted } : {}),
+    ...(workingFiles.length ? { workingFiles } : {}),
+    ...(artifacts.length ? { artifacts } : {}),
+    ...(record.cwdBefore !== record.cwdAfter && record.cwdAfter !== undefined
+      ? { cwdAfter: record.cwdAfter }
+      : {}),
+    ...(truncated
+      ? {
+          truncated: true,
+          note: 'Agent-facing result shortened; full output remains in the notebook preview.'
+        }
+      : {})
   }
-
-  const { outputs, clipped: outputsClipped } = elideOutputs(record.outputs)
-  if (outputsClipped) {
-    next = { ...next, outputs }
-    clippedAny = true
-  }
-
-  return clippedAny ? { ...next, truncated: true } : value
 }
 
-// Bounds the agent-facing result: clips oversized text streams and replaces image/large display
-// outputs with markers — on a single run summary AND on every run inside a state result's
-// `runs`/`recentRuns` history. run.json and the notebook preview keep the full data untouched.
-const truncateNotebookRunResult = (value: unknown): unknown => {
-  if (typeof value !== 'object' || value === null) return value
-  const record = value as Record<string, unknown>
+const compactStateRun = (value: unknown, includeOutputPreview: boolean): unknown => {
+  const record = asRecord(value)
+  if (!record) return value
+  const text = asRecord(record.text)
+  const output = ['traceback', 'stderr', 'stdout']
+    .map((field) => text?.[field])
+    .find((candidate) => typeof candidate === 'string' && candidate.length > 0)
+  const outputPreview =
+    includeOutputPreview && typeof output === 'string'
+      ? clipAgentText(output, NOTEBOOK_MCP_STATE_OUTPUT_PREVIEW_LIMIT).text
+      : undefined
+  const workingFiles = compactWorkingFiles(record.workingFiles)
 
-  // State result: a run-history document with runs/recentRuns arrays.
-  if (Array.isArray(record.runs) || Array.isArray(record.recentRuns)) {
-    const next = { ...record }
-    if (Array.isArray(record.runs)) next.runs = record.runs.map(truncateRunLike)
-    if (Array.isArray(record.recentRuns)) next.recentRuns = record.recentRuns.map(truncateRunLike)
-    return next
+  return {
+    ...pickDefined(record, [
+      'runId',
+      'cellId',
+      'kernelKind',
+      'status',
+      'executionCount',
+      'environment',
+      'startedAt',
+      'endedAt',
+      'interruptionReason'
+    ]),
+    ...(workingFiles.length ? { workingFiles } : {}),
+    ...(outputPreview ? { outputPreview } : {})
   }
-
-  // Single run summary (execute result).
-  return truncateRunLike(value)
 }
 
-// Serializes notebook RPC results exactly as execution facts for the agent to analyze, bounding the
-// per-stream output size so one large run cannot overflow the tool result.
-const toToolText = (value: unknown): string =>
-  JSON.stringify(truncateNotebookRunResult(value), null, 2)
+// notebook_state is a recovery/inspection summary, not a second transport for the full run.json.
+// Keep stable cell/run identities, age old output down to metadata, and include only the latest
+// run's short diagnostic preview.
+const compactNotebookStateResult = (raw: unknown): unknown => {
+  const record = asRecord(raw)
+  if (!record) return raw
+  const runs = Array.isArray(record.runs) ? record.runs : []
+  const recentSource = Array.isArray(record.recentRuns) ? record.recentRuns : runs
+  const recentRuns = recentSource.slice(-MAX_STATE_RUNS)
+  const cells = Array.isArray(record.cells)
+    ? record.cells.slice(-MAX_STATE_CELLS).flatMap((cell) => {
+        const cellRecord = asRecord(cell)
+        return cellRecord
+          ? [pickDefined(cellRecord, ['id', 'language', 'status', 'executionCount', 'latestRunId'])]
+          : []
+      })
+    : []
+
+  return {
+    ...pickDefined(record, [
+      'sessionId',
+      'cwd',
+      'dataRoot',
+      'kernelStatus',
+      'activeRunId',
+      'runtimeBindings'
+    ]),
+    cellCount: Array.isArray(record.cells) ? record.cells.length : 0,
+    ...(cells.length ? { cells } : {}),
+    runCount: runs.length || recentSource.length,
+    recentRuns: recentRuns.map((run, index) =>
+      compactStateRun(run, index === recentRuns.length - 1)
+    ),
+    ...(Array.isArray(record.environments) ? { environments: record.environments } : {}),
+    historyCompacted: true,
+    note: 'Only recent run metadata and the latest output preview are returned; full history remains in the notebook preview.'
+  }
+}
+
+// The specialized projections normally fit. This last serialization guard handles adversarial IDs,
+// JSON, or runtime metadata while keeping a valid JSON receipt with the most useful identities.
+const serializeNotebookToolResult = (value: unknown, limitChars?: number): string => {
+  const serialized = JSON.stringify(value, null, 2) ?? 'null'
+  if (limitChars === undefined || serialized.length <= limitChars) return serialized
+
+  const record = asRecord(value) ?? {}
+  const identity = pickDefined(record, ['status', 'runId', 'sessionId', 'kernelStatus', 'exitCode'])
+  for (const [key, fieldValue] of Object.entries(identity)) {
+    if (typeof fieldValue === 'string') identity[key] = clipAgentText(fieldValue, 256).text
+  }
+  const base = {
+    ...identity,
+    truncated: true,
+    note: `Agent-facing result exceeded the ${limitChars}-character budget; full output remains in the notebook preview.`
+  }
+  let low = 0
+  let high = serialized.length
+  let best = JSON.stringify(base, null, 2)
+  while (low <= high) {
+    const midpoint = Math.floor((low + high) / 2)
+    const candidate = JSON.stringify(
+      { ...base, preview: `${serialized.slice(0, midpoint)}\n…[preview truncated]` },
+      null,
+      2
+    )
+    if (candidate.length <= limitChars) {
+      best = candidate
+      low = midpoint + 1
+    } else {
+      high = midpoint - 1
+    }
+  }
+  return best
+}
 
 // Registers one MCP tool that forwards its validated input to a matching notebook RPC method.
 const registerNotebookRpcTool = (
@@ -465,7 +591,7 @@ const registerNotebookRpcTool = (
         content: [
           {
             type: 'text',
-            text: toToolText(result)
+            text: serializeNotebookToolResult(result, definition.resultLimitChars)
           }
         ]
       }
@@ -511,31 +637,39 @@ const NOTEBOOK_RPC_TOOLS: NotebookRpcToolDefinition[] = [
     name: 'notebook_execute',
     title: 'Execute notebook code',
     description:
-      'Write one code cell and run it in the shared local interpreter, returning the full run summary. Each call is one notebook cell; reuse a cellId to overwrite and rerun that cell. Keep the returned runId: if this execution creates or last modifies a final file, pass that exact value as producerRunId to write_artifact_file. Pass language: "python" (default) or "r" to select the interpreter for the cell. Do NOT pass a runtime or environment here — the cell runs in the session\'s bound runtime (see notebook_bind_runtime), or the app-managed default when nothing is bound; there is no per-call runtime switching. Each bound runtime is a SEPARATE namespace (variables/imports do NOT carry across runtimes); change it with notebook_switch_runtime, and create a named environment first with manage_environments before binding to it.',
+      'Write and run one persistent Python/R cell; reuse cellId to rerun it. The session binding selects the runtime (no per-call runtime/environment). Keep runId as producerRunId when this run last writes a final artifact.',
     method: 'execute',
-    inputSchema: executeToolSchema
+    inputSchema: executeToolSchema,
+    mapResult: compactNotebookExecutionResult,
+    resultLimitChars: NOTEBOOK_MCP_EXECUTION_RESULT_LIMIT
   },
   {
     name: 'repl_execute',
     title: 'Execute control-plane REPL code',
     description: REPL_EXECUTE_DOC,
     method: 'executeControl',
-    inputSchema: replExecuteToolSchema
+    inputSchema: replExecuteToolSchema,
+    mapResult: compactNotebookExecutionResult,
+    resultLimitChars: NOTEBOOK_MCP_EXECUTION_RESULT_LIMIT
   },
   {
     name: 'bash_execute',
     title: 'Execute a stateless shell command',
     description: BASH_EXECUTE_DOC,
     method: 'executeShell',
-    inputSchema: bashExecuteToolSchema
+    inputSchema: bashExecuteToolSchema,
+    mapResult: compactNotebookExecutionResult,
+    resultLimitChars: NOTEBOOK_MCP_EXECUTION_RESULT_LIMIT
   },
   {
     name: 'notebook_state',
     title: 'Get notebook state',
     description:
-      "Return current notebook cells, recent runs, notebookSessionRoot, dataRoot, runtimeRoot, cwd, kernel status, and the session's current python/r runtime bindings (runtimeBindings).",
+      'Return compact session state: cell identities, latest run metadata/output preview, cwd/dataRoot, kernel status, and runtime bindings. Full run history stays in the notebook preview.',
     method: 'state',
-    inputSchema: {}
+    inputSchema: {},
+    mapResult: compactNotebookStateResult,
+    resultLimitChars: NOTEBOOK_MCP_STATE_RESULT_LIMIT
   },
   {
     name: 'list_notebook_runtimes',
@@ -630,18 +764,21 @@ export {
   REPL_EXECUTE_DOC,
   BASH_EXECUTE_DOC,
   buildShellExecuteDoc,
-  NOTEBOOK_MCP_OUTPUT_FIELD_LIMIT,
+  NOTEBOOK_MCP_EXECUTION_RESULT_LIMIT,
+  NOTEBOOK_MCP_STATE_RESULT_LIMIT,
   NOTEBOOK_MCP_SERVER_ARG,
   NOTEBOOK_MCP_SERVER_NAME,
   NOTEBOOK_RPC_TOOLS,
   NOTEBOOK_SYSTEM_PROMPT_APPEND,
   callNotebookRpc,
+  compactNotebookExecutionResult,
+  compactNotebookStateResult,
   compactManagePackagesResult,
   compactRestartResult,
   createNotebookMcpEnvironmentFromProcess,
   createNotebookMcpServer,
   createNotebookMcpServerConfig,
   runNotebookMcpServer,
-  truncateNotebookRunResult
+  serializeNotebookToolResult
 }
 export type { NotebookMcpEnvironment, NotebookMcpServerConfigRequest, NotebookRpcConnection }

@@ -453,16 +453,20 @@ const toWriteArtifactToolResult = (
         version_id: artifact.versionId,
         version_number: artifact.versionNumber,
         filename: artifact.name,
-        content_type: artifact.mimeType,
         size_bytes: artifact.size,
-        checksum: artifact.checksum,
-        producer_run_id: artifact.producerRunId,
-        environment: artifact.environment
+        producer_run_id: artifact.producerRunId
       }
     }
   }
 
-  return { artifact }
+  return {
+    artifact: {
+      artifact_id: artifact.id,
+      filename: artifact.name,
+      size_bytes: artifact.size,
+      producer_run_id: artifact.producerRunId
+    }
+  }
 }
 
 // Builds the stdio MCP server exposed to the agent for managed artifact writes.

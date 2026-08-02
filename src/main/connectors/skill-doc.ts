@@ -104,7 +104,7 @@ export function renderConnectorInstructions(connectorIds: string[]): string {
 
   return (
     `# Open Science data connector conventions\n\n` +
-    `Detailed instructions, tool schemas, return shapes, and examples are available through the matching \`mcp-*\` skill. Load that skill before using a connector.\n\n` +
+    `Detailed instructions, exact server/method names, schemas, return shapes, and examples are available through the matching \`mcp-*\` skill. Load the matching \`mcp-*\` skill before the first \`host.mcp\` call. Never guess a connector server or method name; if the matching skill is not loaded, do not call the connector.\n\n` +
     CONVENTIONS
   )
 }

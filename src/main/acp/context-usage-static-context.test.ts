@@ -1,5 +1,8 @@
 import { describe, expect, it } from 'vitest'
+import { Tiktoken } from 'js-tiktoken/lite'
+import cl100kBase from 'js-tiktoken/ranks/cl100k_base'
 
+import { NOTEBOOK_SYSTEM_PROMPT_APPEND } from '../notebook/mcp-server'
 import { contextUsageMcpSections } from './context-usage-static-context'
 
 describe('contextUsageMcpSections', () => {
@@ -32,6 +35,20 @@ describe('contextUsageMcpSections', () => {
     const text = sections.map((section) => section.text).join('\n')
     expect(text).toContain('mcp.open-science-notebook.notebook_execute')
     expect(text).not.toContain('mcp__open_science_notebook__notebook_execute')
+  })
+
+  it('keeps the notebook schema plus scoped guidance within the static context budget', () => {
+    const [{ text: schema }] = contextUsageMcpSections('codex', {
+      artifacts: false,
+      notebook: true,
+      skillImport: false
+    })
+    const tokenizer = new Tiktoken(cl100kBase)
+
+    // Baseline before deduplication was about 5.2k cl100k tokens (3.6k schema + 1.6k prompt).
+    expect(
+      tokenizer.encode(`${NOTEBOOK_SYSTEM_PROMPT_APPEND}\n${schema}`).length
+    ).toBeLessThanOrEqual(3_200)
   })
 
   it('uses bridge aliases for Codex MCP tools delivered through a compatibility proxy', () => {

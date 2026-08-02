@@ -1,4 +1,6 @@
 import { describe, expect, it } from 'vitest'
+import { Tiktoken } from 'js-tiktoken/lite'
+import cl100kBase from 'js-tiktoken/ranks/cl100k_base'
 import { z } from 'zod'
 
 import {
@@ -7,16 +9,21 @@ import {
   INSPECT_PACKAGES_DOC,
   MANAGE_ENVIRONMENTS_DOC,
   MANAGE_PACKAGES_DOC,
-  NOTEBOOK_MCP_OUTPUT_FIELD_LIMIT,
+  NOTEBOOK_MCP_EXECUTION_RESULT_LIMIT,
+  NOTEBOOK_MCP_STATE_RESULT_LIMIT,
   REPL_EXECUTE_DOC,
   NOTEBOOK_RPC_TOOLS,
   NOTEBOOK_SYSTEM_PROMPT_APPEND,
   callNotebookRpc,
+  compactNotebookExecutionResult,
+  compactNotebookStateResult,
   compactManagePackagesResult,
   compactRestartResult,
   createNotebookMcpServerConfig,
-  truncateNotebookRunResult
+  serializeNotebookToolResult
 } from './mcp-server'
+
+const tokenizer = new Tiktoken(cl100kBase)
 
 describe('notebook MCP server config', () => {
   it('builds an ACP stdio MCP server config scoped to the notebook runtime RPC endpoint', () => {
@@ -553,7 +560,7 @@ describe('manage_environments tool', () => {
   })
 })
 
-describe('truncateNotebookRunResult', () => {
+describe('compactNotebookExecutionResult', () => {
   const runSummary = (text: {
     stdout?: string
     stderr?: string
@@ -567,142 +574,163 @@ describe('truncateNotebookRunResult', () => {
     workingFiles: []
   })
 
-  it('returns a run summary untouched when every stream is under the limit', () => {
-    const result = runSummary({ stdout: 'small output' })
-
-    const truncated = truncateNotebookRunResult(result)
-
-    expect(truncated).toBe(result)
-    expect(truncated).not.toHaveProperty('truncated')
+  it('applies the compact projection and global budget to every execution tool', () => {
+    for (const name of ['notebook_execute', 'repl_execute', 'bash_execute']) {
+      const tool = NOTEBOOK_RPC_TOOLS.find((entry) => entry.name === name)
+      expect(tool?.mapResult).toBe(compactNotebookExecutionResult)
+      expect(tool?.resultLimitChars).toBe(NOTEBOOK_MCP_EXECUTION_RESULT_LIMIT)
+    }
   })
 
-  it('clips an oversized stream, marks it truncated, and keeps the JSON parseable', () => {
-    const oversized = 'x'.repeat(NOTEBOOK_MCP_OUTPUT_FIELD_LIMIT + 5_000)
-    const result = runSummary({ stdout: oversized })
-
-    const truncated = truncateNotebookRunResult(result) as {
-      truncated?: boolean
-      text: { stdout: string; stderr: string }
+  it('keeps diagnostic streams once and removes duplicated structured stream outputs', () => {
+    const result = {
+      ...runSummary({ stdout: 'answer\n', stderr: 'warning\n' }),
+      script: 'print("answer")',
+      roots: { dataRoot: '/private/data' },
+      outputs: [
+        { type: 'stream', name: 'stdout', text: 'answer\n' },
+        { type: 'stream', name: 'stderr', text: 'warning\n' },
+        { type: 'display', data: { 'text/plain': '42' } }
+      ]
     }
 
-    expect(truncated.truncated).toBe(true)
-    expect(truncated.text.stdout.length).toBeLessThan(oversized.length)
-    expect(truncated.text.stdout).toContain('truncated 5000 chars')
-    // Streams under the limit are left alone.
-    expect(truncated.text.stderr).toBe('')
-    // The serialized payload the agent receives is still valid JSON.
-    expect(() => JSON.parse(JSON.stringify(truncated))).not.toThrow()
-    // The original object is not mutated.
-    expect((result.text as { stdout: string }).stdout).toBe(oversized)
+    const compact = compactNotebookExecutionResult(result) as Record<string, unknown>
+
+    expect(compact).toMatchObject({ stdout: 'answer\n', stderr: 'warning\n' })
+    expect(compact).not.toHaveProperty('text')
+    expect(compact).not.toHaveProperty('script')
+    expect(compact).not.toHaveProperty('roots')
+    expect(compact.outputs).toEqual([{ type: 'display', data: { 'text/plain': '42' } }])
   })
 
-  it('clips each oversized stream independently', () => {
-    const oversized = 'y'.repeat(NOTEBOOK_MCP_OUTPUT_FIELD_LIMIT + 1)
-    const result = runSummary({ stdout: oversized, traceback: oversized })
-
-    const truncated = truncateNotebookRunResult(result) as {
-      truncated?: boolean
-      text: { stdout: string; traceback: string }
-    }
-
-    expect(truncated.truncated).toBe(true)
-    expect(truncated.text.stdout).toContain('truncated')
-    expect(truncated.text.traceback).toContain('truncated')
-  })
-
-  it('elides an image display output to a marker and marks the run truncated', () => {
+  it('elides an image display output while preserving its notebook-preview marker', () => {
     const base64 = 'A'.repeat(60_000)
     const result = {
       ...runSummary({ stdout: 'done' }),
       outputs: [{ type: 'display', data: { 'image/png': base64, 'text/plain': 'small' } }]
     }
 
-    const truncated = truncateNotebookRunResult(result) as {
-      truncated?: boolean
+    const compact = compactNotebookExecutionResult(result) as {
       outputs: { data: Record<string, string> }[]
     }
 
-    expect(truncated.truncated).toBe(true)
-    // The base64 image is replaced with a compact marker...
-    expect(truncated.outputs[0].data['image/png']).toContain('image/png')
-    expect(truncated.outputs[0].data['image/png']).toContain('omitted')
-    expect(truncated.outputs[0].data['image/png'].length).toBeLessThan(200)
-    // ...while a small text mime stays inline.
-    expect(truncated.outputs[0].data['text/plain']).toBe('small')
-    // The serialized payload the agent receives is tiny and valid JSON.
-    const serialized = JSON.stringify(truncated)
+    expect(compact.outputs[0].data['image/png']).toContain('image/png')
+    expect(compact.outputs[0].data['image/png']).toContain('omitted')
+    expect(compact.outputs[0].data['image/png'].length).toBeLessThan(200)
+    expect(compact.outputs[0].data['text/plain']).toBe('small')
+    const serialized = JSON.stringify(compact)
     expect(serialized.length).toBeLessThan(2_000)
     expect(() => JSON.parse(serialized)).not.toThrow()
-    // The original object is not mutated.
     expect(result.outputs[0].data['image/png'].length).toBe(60_000)
   })
 
-  it('elides image outputs inside a state result run history', () => {
-    const base64 = 'B'.repeat(60_000)
-    const state = {
-      kernelStatus: 'idle',
-      runs: [
-        {
-          runId: 'r1',
-          text: { stdout: '', stderr: '', traceback: '', plain: [] },
-          outputs: [{ type: 'display', data: { 'image/png': base64 } }]
-        }
-      ],
-      recentRuns: []
-    }
-
-    const truncated = truncateNotebookRunResult(state) as {
-      runs: { outputs: { data: Record<string, string> }[] }[]
-    }
-
-    expect(truncated.runs[0].outputs[0].data['image/png']).toContain('omitted')
-    expect(JSON.stringify(truncated).length).toBeLessThan(2_000)
-  })
-
-  it('clips a top-level stdout on a repl_execute/bash control result and its outputs', () => {
-    const oversized = 'z'.repeat(NOTEBOOK_MCP_OUTPUT_FIELD_LIMIT + 90_000)
-    // The control-plane result shape: stdout/stderr/traceback are top-level (no `text` object).
+  it('applies a global execution-result budget to multiple large fields', () => {
+    const oversized = Array.from({ length: 100_000 }, (_, index) => `${index % 10}`).join('')
     const result = {
       status: 'completed',
+      environment: oversized,
       stdout: oversized,
-      stderr: '',
-      traceback: '',
-      outputs: [{ type: 'stream', name: 'stdout', text: oversized }]
+      stderr: oversized,
+      traceback: oversized,
+      outputs: [
+        { type: 'stream', name: 'stdout', text: oversized },
+        { type: 'json', data: { value: oversized } }
+      ]
     }
 
-    const truncated = truncateNotebookRunResult(result) as {
-      truncated?: boolean
-      stdout: string
-      outputs: { text: string }[]
-    }
+    const serialized = serializeNotebookToolResult(
+      compactNotebookExecutionResult(result),
+      NOTEBOOK_MCP_EXECUTION_RESULT_LIMIT
+    )
 
-    expect(truncated.truncated).toBe(true)
-    expect(truncated.stdout.length).toBeLessThan(oversized.length)
-    expect(truncated.stdout).toContain('truncated')
-    // The duplicated stream output is clipped too.
-    expect(truncated.outputs[0].text.length).toBeLessThan(oversized.length)
-    // The whole serialized payload is now well under the tool-result budget.
-    expect(JSON.stringify(truncated).length).toBeLessThan(NOTEBOOK_MCP_OUTPUT_FIELD_LIMIT * 3)
-    // Original not mutated.
+    expect(serialized.length).toBeLessThanOrEqual(NOTEBOOK_MCP_EXECUTION_RESULT_LIMIT)
+    expect(tokenizer.encode(serialized).length).toBeLessThanOrEqual(4_000)
+    expect(JSON.parse(serialized)).toMatchObject({ status: 'completed', truncated: true })
     expect(result.stdout.length).toBe(oversized.length)
   })
 
-  it('clips a bash_execute result with a large stdout and no `text` object', () => {
-    const oversized = 'w'.repeat(NOTEBOOK_MCP_OUTPUT_FIELD_LIMIT + 1)
-    const result = { stdout: oversized, stderr: '', exitCode: 0 }
+  it('passes through payloads that are neither run summaries nor state', () => {
+    expect(compactNotebookExecutionResult(null)).toBeNull()
+    expect(compactNotebookExecutionResult('plain')).toBe('plain')
+  })
+})
 
-    const truncated = truncateNotebookRunResult(result) as { truncated?: boolean; stdout: string }
-
-    expect(truncated.truncated).toBe(true)
-    expect(truncated.stdout).toContain('truncated')
+describe('compactNotebookStateResult', () => {
+  it('applies the state projection and smaller global budget to notebook_state', () => {
+    const tool = NOTEBOOK_RPC_TOOLS.find((entry) => entry.name === 'notebook_state')
+    expect(tool?.mapResult).toBe(compactNotebookStateResult)
+    expect(tool?.resultLimitChars).toBe(NOTEBOOK_MCP_STATE_RESULT_LIMIT)
   })
 
-  it('passes through payloads that are neither run summaries nor state', () => {
-    const other = { cells: [], kernelStatus: 'idle' }
+  it('returns bounded recent metadata without duplicating the complete run history', () => {
+    const runs = Array.from({ length: 20 }, (_, index) => ({
+      runId: `run-${index}`,
+      cellId: `cell-${index}`,
+      kernelKind: 'python',
+      status: 'completed',
+      startedAt: index,
+      endedAt: index + 1,
+      script: 'print(1)'.repeat(10_000),
+      text: {
+        stdout: `output-${index}`.repeat(10_000),
+        stderr: '',
+        traceback: '',
+        plain: []
+      },
+      outputs: [{ type: 'stream', name: 'stdout', text: `output-${index}`.repeat(10_000) }]
+    }))
+    const state = {
+      sessionId: 'session-1',
+      kernelStatus: 'idle',
+      cwd: '/workspace',
+      dataRoot: '/workspace/data',
+      cells: [
+        { id: 'cell-19', language: 'python', code: 'x'.repeat(100_000), status: 'completed' }
+      ],
+      runs,
+      recentRuns: runs,
+      environments: [],
+      runtimeBindings: {}
+    }
 
-    expect(truncateNotebookRunResult(other)).toBe(other)
-    expect(truncateNotebookRunResult(null)).toBeNull()
-    expect(truncateNotebookRunResult('plain')).toBe('plain')
+    const compact = compactNotebookStateResult(state) as Record<string, unknown>
+    const serialized = serializeNotebookToolResult(compact, NOTEBOOK_MCP_STATE_RESULT_LIMIT)
+    const parsed = JSON.parse(serialized) as Record<string, unknown>
+
+    expect(serialized.length).toBeLessThanOrEqual(NOTEBOOK_MCP_STATE_RESULT_LIMIT)
+    expect(tokenizer.encode(serialized).length).toBeLessThanOrEqual(2_000)
+    expect(parsed).not.toHaveProperty('runs')
+    expect(parsed).toHaveProperty('runCount', 20)
+    expect((parsed.recentRuns as unknown[]).length).toBe(10)
+    expect(serialized).not.toContain('print(1)')
+    expect(serialized).not.toContain('outputs')
+    expect(serialized).not.toContain('code')
+    expect(serialized).toContain('output-19')
+  })
+
+  it('passes through non-object state results', () => {
+    expect(compactNotebookStateResult(null)).toBeNull()
+    expect(compactNotebookStateResult('plain')).toBe('plain')
+  })
+
+  it('enforces the state budget when runtime metadata is unexpectedly large', () => {
+    const state = compactNotebookStateResult({
+      sessionId: 'session-1',
+      kernelStatus: 'idle',
+      cells: [],
+      runs: [],
+      recentRuns: [],
+      runtimeBindings: { python: { runtimeId: 'x'.repeat(100_000) } }
+    })
+    const serialized = serializeNotebookToolResult(state, NOTEBOOK_MCP_STATE_RESULT_LIMIT)
+
+    expect(serialized.length).toBeLessThanOrEqual(NOTEBOOK_MCP_STATE_RESULT_LIMIT)
+    expect(tokenizer.encode(serialized).length).toBeLessThanOrEqual(2_000)
+    expect(JSON.parse(serialized)).toMatchObject({
+      sessionId: 'session-1',
+      kernelStatus: 'idle',
+      truncated: true
+    })
   })
 })
 

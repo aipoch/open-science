@@ -106,6 +106,7 @@ const makeNativeResponsesProxyDouble = (
 type HarnessOptions = {
   settings?: StoredSettings
   frameworkOverride?: string
+  connectorIds?: string[]
   rejectRequiredModels?: ReadonlySet<string>
   targetOverride?: (
     provider: StoredProvider,
@@ -187,7 +188,7 @@ const makeHarness = (options: HarnessOptions = {}) => {
     resolveCodexProxyEnvironment: vi.fn(async () => undefined)
   } satisfies AgentBackendRuntimePort
   const connectors = {
-    enabledConnectorIds: vi.fn(() => [])
+    enabledConnectorIds: vi.fn(() => options.connectorIds ?? [])
   } satisfies AgentBackendConnectorPort
 
   const responsesBridges: ResponsesBridgeDouble[] = []
@@ -475,6 +476,44 @@ describe('AgentBackendResolver runtime delegation', () => {
 })
 
 describe('AgentBackendResolver bridge predicates', () => {
+  it.each([
+    { name: 'direct Responses', chat: false, native: false, apiEndpoints: ['responses'] as const },
+    { name: 'Chat bridge', chat: true, native: false, apiEndpoints: ['openai'] as const },
+    {
+      name: 'Responses compatibility',
+      chat: false,
+      native: true,
+      apiEndpoints: ['responses'] as const
+    }
+  ])('persists skill-first connector guidance for Codex $name', async (testCase) => {
+    const harness = makeHarness({
+      connectorIds: ['pubmed'],
+      targetOverride: () => ({
+        needsChatResponsesBridge: testCase.chat,
+        needsNativeResponsesCompatibility: testCase.native,
+        provider: { apiEndpoints: [...testCase.apiEndpoints] }
+      })
+    })
+
+    const backend = await harness.resolver.resolveExplicitTarget({
+      frameworkId: 'codex',
+      providerId: 'provider-a',
+      model: { kind: 'provider-default' },
+      reasoningEffort: 'high'
+    })
+    const developerInstructions = JSON.parse(backend.env.CODEX_CONFIG ?? '{}')
+      .developer_instructions as string | undefined
+
+    expect(developerInstructions).toContain(
+      'Load the matching `mcp-*` skill before the first `host.mcp` call'
+    )
+    expect(developerInstructions).toContain('Never guess a connector server or method name')
+    expect(developerInstructions).not.toContain('search_articles')
+    expect(backend.persistentSystemPrompt).toBe(developerInstructions)
+    expect(backend.systemPromptAppends).toBeUndefined()
+    await backend.responsesBridgeLease?.release()
+  })
+
   it.each([
     { name: 'direct', chat: false, native: false, responseCalls: 0, nativeCalls: 0 },
     {

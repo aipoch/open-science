@@ -31,6 +31,30 @@ const createOwner = (
   })
 
 describe('ACP session capability owner', () => {
+  it('refreshes preference-backed availability before backend guidance is projected', async () => {
+    let skillImportEnabled = false
+    const owner = createOwner({
+      skillImport: {
+        mcpEntryPath: '/app/main.js',
+        isEnabled: async () => skillImportEnabled,
+        getRpcConnection: async () => ({ endpoint: 'http://127.0.0.1:2', token: 'skill' })
+      }
+    })
+    const input = {
+      framework: opencodeFramework,
+      nativeMcpEnabled: true,
+      bridgeMcpAliasesEnabled: false,
+      policy: CURRENT_PRIMARY_SESSION_CAPABILITY_POLICY
+    }
+
+    await owner.refreshDynamicAvailability()
+    expect(owner.toolingAvailability(input).skillImport).toBe(false)
+
+    skillImportEnabled = true
+    await owner.refreshDynamicAvailability()
+    expect(owner.toolingAvailability(input).skillImport).toBe(true)
+  })
+
   it('derives the exact current primary set while reviewer and unknown capabilities fail closed', async () => {
     const owner = createOwner()
     const routingIds = owner.createRoutingIds('session-1')

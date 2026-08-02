@@ -23,6 +23,13 @@ describe('renderConnectorInstructions', () => {
     expect(renderConnectorInstructions([])).toBe('')
     expect(renderConnectorInstructions(['nope'])).toBe('')
   })
+
+  it('forbids connector calls until the matching skill supplies the exact method name', () => {
+    const md = renderConnectorInstructions(['pubmed'])
+
+    expect(md).toContain('Load the matching `mcp-*` skill before the first `host.mcp` call')
+    expect(md).toContain('Never guess a connector server or method name')
+  })
 })
 
 describe('renderSkillDoc', () => {

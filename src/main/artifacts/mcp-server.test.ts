@@ -530,14 +530,39 @@ describe('artifact MCP server', () => {
         version_id: 'version-1',
         version_number: 1,
         filename: 'sin.png',
-        content_type: 'image/png',
         size_bytes: 4,
-        checksum: 'a'.repeat(64),
-        producer_run_id: 'notebook-run-17',
-        environment: 'analysis-python'
+        producer_run_id: 'notebook-run-17'
       }
     })
     expect(JSON.stringify(toWriteArtifactToolResult(result))).not.toContain(root)
+    expect(JSON.stringify(toWriteArtifactToolResult(result))).not.toContain('checksum')
+    expect(JSON.stringify(toWriteArtifactToolResult(result))).not.toContain('environment')
+  })
+
+  it('returns a compact legacy artifact receipt without echoing local paths', () => {
+    const result = toWriteArtifactToolResult({
+      id: 'legacy-artifact-1',
+      projectName: 'default-project',
+      sessionId: 'session-1',
+      runId: 'artifact-run-1',
+      name: 'table.csv',
+      path: '/private/session/artifacts/table.csv',
+      fileUrl: 'file:///private/session/artifacts/table.csv',
+      mimeType: 'text/csv',
+      size: 42,
+      mtimeMs: 1,
+      producerRunId: 'notebook-run-1'
+    })
+
+    expect(result).toEqual({
+      artifact: {
+        artifact_id: 'legacy-artifact-1',
+        filename: 'table.csv',
+        size_bytes: 42,
+        producer_run_id: 'notebook-run-1'
+      }
+    })
+    expect(JSON.stringify(result)).not.toContain('/private/session')
   })
 
   it('restores the previous pending file when a durable Version RPC rejects the write', async () => {

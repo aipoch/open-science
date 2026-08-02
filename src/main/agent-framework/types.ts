@@ -53,6 +53,10 @@ export type AgentModelConfig = {
   // Framework-specific model id used for local metadata/configuration. A bridge may keep this
   // separate from the provider's upstream model id.
   sessionModel?: string
+  // Exact stable app guidance delivered through framework-native backend configuration rather than
+  // ordinary ACP prompt content. The runtime uses this for context accounting and to avoid copying
+  // the same text into every user message.
+  persistentSystemPrompt?: string
 }
 
 // Inputs for translating a provider; paths differ per framework (Claude wants its executable + config
@@ -69,6 +73,9 @@ export type ModelConfigContext = {
   // Compact connector conventions for frameworks that need host.mcp guidance in their baseline
   // instructions. Detailed connector schemas live in on-demand `mcp-*` skills. Empty ⇒ omitted.
   instructions?: string
+  // Stable app guidance that must live at system/developer scope for the backend generation. Claude
+  // delivers the same appends through session metadata instead and may ignore this field.
+  systemPromptAppends?: string[]
   // The active model's already-resolved API effort. Undefined means don't override. Frameworks encode
   // this into their valid transport vocabulary without changing the persisted user intent.
   reasoningEffort?: ModelReasoningEffort
@@ -193,6 +200,8 @@ export type ResolvedAgentBackend = {
   // Backend-resolved guidance appended to every session. Connector conventions use this channel for
   // Claude and Codex; OpenCode keeps the same guidance in its generated instructions config.
   systemPromptAppends?: string[]
+  // Exact stable text already installed in the backend's native instructions configuration.
+  persistentSystemPrompt?: string
   // Model to apply per session via the ACP `model` configOption, for frameworks that select the model
   // over the protocol rather than via env (opencode). Undefined ⇒ the framework's env/config drives it
   // (Claude uses ANTHROPIC_MODEL). Applied best-effort: skipped when the agent advertises no match.
