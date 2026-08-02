@@ -90,6 +90,7 @@ type ArtifactTurnOwnerOptions = {
   issueRpcCapability?: (binding: ArtifactRpcCapabilityBinding) => string
   revokeRpcCapability?: (token: string) => Promise<void> | void
   provenance?: ArtifactTurnProvenance
+  writeHandoffFile?: (filePath: string, content: string) => Promise<void>
   notebook?: {
     setArtifactProvenanceContext?: (
       sessionId: string,
@@ -131,6 +132,7 @@ type ArtifactTurn = {
 
 class ArtifactTurnOwner {
   private readonly activeTurnsBySession = new Map<string, ArtifactTurn>()
+  private readonly sessionHandoffQueues = new Map<string, Promise<void>>()
   private readonly turnsByHandle = new WeakMap<ArtifactTurnHandle, ArtifactTurn>()
   private readonly runtimeInstanceId: string
   private readonly now: () => number
@@ -144,64 +146,66 @@ class ArtifactTurnOwner {
   async open(request: OpenArtifactTurnRequest): Promise<ArtifactTurnHandle> {
     const turn = this.createTurn(request)
     const runContext = this.createRunContext(turn)
-    let handoffWritten = false
+    return this.withSessionHandoffLock(turn.appSessionId, async () => {
+      let handoffWritten = false
 
-    turn.rpcCapabilityToken = this.options.issueRpcCapability?.({
-      projectId: turn.projectId,
-      appSessionId: turn.appSessionId,
-      artifactStorageSessionId: turn.artifactStorageSessionId,
-      artifactRunId: turn.runId,
-      rootFrameId: turn.rootFrameId,
-      agentFrameId: turn.agentFrameId,
-      messageBranchId: turn.messageBranchId,
-      messageBranchAncestry: turn.messageBranchAncestry,
-      messageAncestry: turn.messageAncestry,
-      runtimeSegmentId: turn.runtimeSegmentId,
-      promptMessageId: turn.promptMessageId,
-      agentName: turn.agentName,
-      ...(this.options.notebook ? { notebookSessionId: turn.appSessionId } : {}),
-      allowedMethods: ['artifactCreateVersion', 'artifactReplayVersion']
-    })
-    if (turn.rpcCapabilityToken) runContext.rpcCapabilityToken = turn.rpcCapabilityToken
-
-    try {
-      await mkdir(dirname(turn.currentRunFile), { recursive: true })
-      await writeFile(turn.currentRunFile, `${JSON.stringify(runContext)}\n`, 'utf8')
-      handoffWritten = true
-      this.options.notebook?.setArtifactProvenanceContext?.(turn.appSessionId, {
+      turn.rpcCapabilityToken = this.options.issueRpcCapability?.({
+        projectId: turn.projectId,
+        appSessionId: turn.appSessionId,
+        artifactStorageSessionId: turn.artifactStorageSessionId,
+        artifactRunId: turn.runId,
         rootFrameId: turn.rootFrameId,
         agentFrameId: turn.agentFrameId,
         messageBranchId: turn.messageBranchId,
+        messageBranchAncestry: turn.messageBranchAncestry,
+        messageAncestry: turn.messageAncestry,
         runtimeSegmentId: turn.runtimeSegmentId,
-        promptMessageId: turn.promptMessageId
+        promptMessageId: turn.promptMessageId,
+        agentName: turn.agentName,
+        ...(this.options.notebook ? { notebookSessionId: turn.appSessionId } : {}),
+        allowedMethods: ['artifactCreateVersion', 'artifactReplayVersion']
       })
-    } catch (error) {
-      if (turn.rpcCapabilityToken) {
-        try {
-          await this.options.revokeRpcCapability?.(turn.rpcCapabilityToken)
-        } catch {
-          // Preserve the activation failure while still attempting every remaining cleanup stage.
-        }
-      }
-      if (handoffWritten) {
-        try {
-          await writeFile(turn.currentRunFile, `${JSON.stringify({})}\n`, 'utf8')
-        } catch {
-          // The original activation failure remains the caller-visible error.
-        }
-        try {
-          this.options.notebook?.setArtifactProvenanceContext?.(turn.appSessionId, undefined)
-        } catch {
-          // The original activation failure remains the caller-visible error.
-        }
-      }
-      throw error
-    }
+      if (turn.rpcCapabilityToken) runContext.rpcCapabilityToken = turn.rpcCapabilityToken
 
-    this.activeTurnsBySession.set(turn.appSessionId, turn)
-    const handle: ArtifactTurnHandle = { [artifactTurnHandleKey]: Symbol(turn.runId) }
-    this.turnsByHandle.set(handle, turn)
-    return handle
+      try {
+        await mkdir(dirname(turn.currentRunFile), { recursive: true })
+        await this.writeHandoffFile(turn.currentRunFile, runContext)
+        handoffWritten = true
+        this.options.notebook?.setArtifactProvenanceContext?.(turn.appSessionId, {
+          rootFrameId: turn.rootFrameId,
+          agentFrameId: turn.agentFrameId,
+          messageBranchId: turn.messageBranchId,
+          runtimeSegmentId: turn.runtimeSegmentId,
+          promptMessageId: turn.promptMessageId
+        })
+      } catch (error) {
+        if (turn.rpcCapabilityToken) {
+          try {
+            await this.options.revokeRpcCapability?.(turn.rpcCapabilityToken)
+          } catch {
+            // Preserve the activation failure while still attempting every remaining cleanup stage.
+          }
+        }
+        if (handoffWritten) {
+          try {
+            await this.writeHandoffFile(turn.currentRunFile, {})
+          } catch {
+            // The original activation failure remains the caller-visible error.
+          }
+          try {
+            this.options.notebook?.setArtifactProvenanceContext?.(turn.appSessionId, undefined)
+          } catch {
+            // The original activation failure remains the caller-visible error.
+          }
+        }
+        throw error
+      }
+
+      this.activeTurnsBySession.set(turn.appSessionId, turn)
+      const handle: ArtifactTurnHandle = { [artifactTurnHandleKey]: Symbol(turn.runId) }
+      this.turnsByHandle.set(handle, turn)
+      return handle
+    })
   }
 
   activeRunIds(): string[] {
@@ -473,29 +477,54 @@ class ArtifactTurnOwner {
       cleanupErrors.push(error)
     }
 
-    const activeTurn = this.activeTurnsBySession.get(turn.appSessionId)
-    const ownsActiveTurn = activeTurn === turn
-    const ownsDistinctHandoff = activeTurn?.currentRunFile !== turn.currentRunFile
-    try {
-      if (ownsActiveTurn || ownsDistinctHandoff) {
-        await writeFile(turn.currentRunFile, `${JSON.stringify({})}\n`, 'utf8')
+    await this.withSessionHandoffLock(turn.appSessionId, async () => {
+      const activeTurn = this.activeTurnsBySession.get(turn.appSessionId)
+      const ownsActiveTurn = activeTurn === turn
+      const ownsDistinctHandoff = activeTurn?.currentRunFile !== turn.currentRunFile
+      try {
+        if (ownsActiveTurn || ownsDistinctHandoff) {
+          await this.writeHandoffFile(turn.currentRunFile, {})
+        }
+      } catch (error) {
+        cleanupErrors.push(error)
       }
-    } catch (error) {
-      cleanupErrors.push(error)
-    }
-    try {
-      if (ownsActiveTurn) {
-        this.options.notebook?.setArtifactProvenanceContext?.(turn.appSessionId, undefined)
+      try {
+        if (ownsActiveTurn) {
+          this.options.notebook?.setArtifactProvenanceContext?.(turn.appSessionId, undefined)
+        }
+      } catch (error) {
+        cleanupErrors.push(error)
+      } finally {
+        if (this.activeTurnsBySession.get(turn.appSessionId) === turn) {
+          this.activeTurnsBySession.delete(turn.appSessionId)
+        }
+        turn.phase = 'disposed'
       }
-    } catch (error) {
-      cleanupErrors.push(error)
-    } finally {
-      if (this.activeTurnsBySession.get(turn.appSessionId) === turn) {
-        this.activeTurnsBySession.delete(turn.appSessionId)
-      }
-      turn.phase = 'disposed'
-    }
+    })
     if (cleanupErrors.length > 0) throw cleanupErrors[0]
+  }
+
+  private writeHandoffFile(filePath: string, value: ArtifactRunContext | object): Promise<void> {
+    const content = `${JSON.stringify(value)}\n`
+    return this.options.writeHandoffFile
+      ? this.options.writeHandoffFile(filePath, content)
+      : writeFile(filePath, content, 'utf8')
+  }
+
+  private withSessionHandoffLock<T>(sessionId: string, operation: () => Promise<T>): Promise<T> {
+    const previous = this.sessionHandoffQueues.get(sessionId) ?? Promise.resolve()
+    const current = previous.then(operation)
+    const tail = current.then(
+      () => undefined,
+      () => undefined
+    )
+    this.sessionHandoffQueues.set(sessionId, tail)
+    void tail.then(() => {
+      if (this.sessionHandoffQueues.get(sessionId) === tail) {
+        this.sessionHandoffQueues.delete(sessionId)
+      }
+    })
+    return current
   }
 
   private resolve(handle: ArtifactTurnHandle): ArtifactTurn {

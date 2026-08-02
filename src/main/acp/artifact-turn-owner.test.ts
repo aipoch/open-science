@@ -322,6 +322,51 @@ describe('ArtifactTurnOwner', () => {
     expect(revoked).toEqual(['capability-1', 'capability-2'])
   })
 
+  it('serializes stale cleanup with a replacement opening the same handoff', async () => {
+    const dataRoot = await createRoot()
+    const cleanupWriteStarted = createDeferred()
+    const releaseCleanupWrite = createDeferred()
+    let writeCount = 0
+    const owner = new ArtifactTurnOwner({
+      dataRoot,
+      repository: new ArtifactRepository(dataRoot),
+      runRegistry: new ArtifactRunRegistry(),
+      writeHandoffFile: async (filePath, content) => {
+        writeCount += 1
+        if (writeCount === 2) {
+          cleanupWriteStarted.resolve()
+          await releaseCleanupWrite.promise
+        }
+        await writeFile(filePath, content, 'utf8')
+      }
+    })
+    const first = await owner.open({
+      appSessionId: 'session-1',
+      artifactStorageSessionId: 'session-1',
+      projectId: 'project-1',
+      agentName: 'Codex'
+    })
+
+    const staleDisposal = owner.dispose(first)
+    await cleanupWriteStarted.promise
+    const replacementOpening = owner.open({
+      appSessionId: 'session-1',
+      artifactStorageSessionId: 'session-1',
+      projectId: 'project-1',
+      agentName: 'Codex'
+    })
+    await Promise.resolve()
+    expect(writeCount).toBe(2)
+
+    releaseCleanupWrite.resolve()
+    await staleDisposal
+    const replacement = await replacementOpening
+    const currentRunFile = getArtifactCurrentRunFilePath(dataRoot, 'project-1', 'session-1')
+    await expect(readFile(currentRunFile, 'utf8')).resolves.toContain('artifact-run-')
+    expect(owner.activeRunIds()).toHaveLength(1)
+    await owner.dispose(replacement)
+  })
+
   it('clears active ownership even when capability revocation fails', async () => {
     const dataRoot = await createRoot()
     const notebookContexts: unknown[] = []
