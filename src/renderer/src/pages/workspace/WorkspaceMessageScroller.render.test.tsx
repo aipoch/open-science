@@ -3,6 +3,7 @@ import type { JSX, PropsWithChildren } from 'react'
 import type { ChatMessage, ChatSession, ToolActivity } from '@/stores/session-store'
 import type { UploadedAttachment } from '../../../../shared/uploads'
 import type { JobSummary } from '../../../../shared/compute'
+import { createLinearConversationGraph } from '../../../../shared/conversation-graph'
 import type {
   HandoffLifecycleEvent,
   HandoffLifecycleEventSource
@@ -295,6 +296,32 @@ describe('WorkspaceMessageScroller loading render', () => {
     expect(html).toContain('Elapsed 2m 5s')
     expect(html).toContain('>Usage</button>')
     expect(html).not.toContain('Input</dt>')
+  })
+
+  it('does not expose the fallback framework from a synthesized legacy graph', async () => {
+    const messages = [
+      createMessage({ id: 'prompt-1' }),
+      createMessage({
+        id: 'reply-1',
+        role: 'agent',
+        content: 'Legacy answer',
+        completedAt: 1710000001000
+      })
+    ]
+    const html = await renderScroller(
+      createSession({
+        status: 'idle',
+        messages,
+        conversationGraph: createLinearConversationGraph({
+          sessionId: 'session-1',
+          messages,
+          createdAt: 1710000000000,
+          updatedAt: 1710000001000
+        })
+      })
+    )
+
+    expect(html).not.toContain('>Usage</button>')
   })
 
   it('renders completion metadata once after the final assistant message fragment in a tool turn', async () => {

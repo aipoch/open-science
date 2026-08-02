@@ -451,6 +451,22 @@ describe('WorkspaceMessageItem turn token usage', () => {
     const details = document.body.querySelector('[data-slot="turn-runtime-details"]')
     expect(details?.textContent).toContain('Agent: Codex')
     expect(details?.textContent).toContain('Model: gpt-test')
+
+    await act(async () => {
+      useSettingsStore.setState({
+        agentFrameworks: [
+          {
+            id: 'codex',
+            displayName: 'Codex CLI',
+            supportedApiTypes: ['responses'],
+            supportsSkills: true
+          }
+        ]
+      })
+      await Promise.resolve()
+    })
+
+    expect(details?.textContent).toContain('Agent: Codex CLI')
   })
 
   it('omits historical runtime metadata that no longer resolves to displayable values', async () => {

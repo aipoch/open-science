@@ -50,7 +50,9 @@ type MessageArtifact = NonNullable<ChatSession['artifacts']>[number]
 type MessageUploadAttachment = NonNullable<ChatMessage['uploads']>[number]
 type MessageImage = NonNullable<ChatMessage['images']>[number]
 type ArtifactMentionPart = Extract<MessagePart, { type: 'artifact' }>
-type MessageRuntimeIdentity = Pick<PersistedRuntimeSegment, 'frameworkId' | 'backendId' | 'model'>
+type MessageRuntimeIdentity = Partial<
+  Pick<PersistedRuntimeSegment, 'frameworkId' | 'backendId' | 'model'>
+>
 type WorkspaceMessageItemProps = {
   message: ChatMessage
   onPreviewArtifact: (artifact: MessageArtifact) => void
@@ -144,12 +146,17 @@ const TurnTokenUsage = ({
   runtimeIdentity?: MessageRuntimeIdentity
 }): React.JSX.Element => {
   const [open, setOpen] = useState(false)
-  const settings = open && runtimeIdentity ? useSettingsStore.getState() : undefined
-  const frameworkName = settings?.agentFrameworks.find(
+  const frameworks = useSettingsStore((state) =>
+    open && runtimeIdentity ? state.agentFrameworks : undefined
+  )
+  const providers = useSettingsStore((state) =>
+    open && runtimeIdentity ? state.providers : undefined
+  )
+  const frameworkName = frameworks?.find(
     (framework) => framework.id === runtimeIdentity?.frameworkId
   )?.displayName
   const providerId = resolveSessionProviderId(runtimeIdentity?.backendId)
-  const provider = settings?.providers.find((candidate) => candidate.id === providerId)
+  const provider = providers?.find((candidate) => candidate.id === providerId)
   const kindKey = provider ? providerKindKey(provider.type, provider.vendorId) : undefined
   const model = runtimeIdentity?.model?.trim()
   const contentId = useId()
@@ -266,7 +273,7 @@ const TurnTokenUsage = ({
             <div className="text-[13px] font-medium">Usage</div>
             {frameworkName || provider ? (
               <div data-slot="turn-runtime-icons" className="flex items-center gap-1">
-                {frameworkName && runtimeIdentity ? (
+                {frameworkName && runtimeIdentity?.frameworkId ? (
                   <span
                     data-slot="turn-runtime-framework"
                     role="img"
