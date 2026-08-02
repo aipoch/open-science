@@ -4769,6 +4769,8 @@ describe('v4 runtime bindings & agent tools', () => {
       executions?: NotebookExecutionRequest[]
       terminations?: string[]
       platform?: NodeJS.Platform
+      repository?: NotebookRunRepository
+      discoverRuntimes?: (language: 'python' | 'r') => Promise<DiscoveredInterpreter[]>
       installPackagesImpl?: (
         request: InstallRequestForTest,
         deps?: Partial<InstallDepsForTest>
@@ -4779,12 +4781,21 @@ describe('v4 runtime bindings & agent tools', () => {
       configRoot: root,
       dataRoot: root,
       projectName: 'default-project',
-      repository: new NotebookRunRepository(root),
-      discoverRuntimes: async (language) =>
-        (options.discovered ?? [managedPy, userPyA, userPyB]).filter(
-          (env) => env.language === language
-        ),
-      getRuntimeEnablement: async () => options.enablement,
+      repository: options.repository ?? new NotebookRunRepository(root),
+      discoverRuntimes:
+        options.discoverRuntimes ??
+        (async (language) =>
+          (options.discovered ?? [managedPy, userPyA, userPyB]).filter(
+            (env) => env.language === language
+          )),
+      notebookRuntimeSettings: {
+        getSnapshot: async (language) => ({
+          language,
+          runtimeEnablement: options.enablement ?? { enabled: {}, installAuthorized: {} },
+          manualInterpreters: [],
+          packageMirror: {}
+        })
+      },
       platform: options.platform,
       installPackagesImpl: options.installPackagesImpl,
       // A fake installer must have a fake inventory refresh too. Mixing the fake installer with a
@@ -4993,6 +5004,311 @@ describe('v4 runtime bindings & agent tools', () => {
     // Subsequent runs use the newly-bound interpreter.
     await service.execute({ sessionId: 's', workspaceCwd: root, code: '2', language: 'python' })
     expect(executions.at(-1)?.resolvedInterpreter?.command).toBe(userPyB.interpreterPath)
+  })
+
+  it('preserves a switched and revoked binding across a replacement session generation', async () => {
+    const root = await createStorageRoot()
+    const discovered = [managedPy, userPyA, userPyB]
+    const enablement: RuntimeEnablement = {
+      enabled: { [userPyA.envId]: true, [userPyB.envId]: true },
+      installAuthorized: {}
+    }
+    const service = bindingService(root, { discovered, enablement })
+
+    await service.bindRuntime({
+      sessionId: 's',
+      workspaceCwd: root,
+      language: 'python',
+      runtimeId: userPyA.envId
+    })
+    await service.switchRuntime({
+      sessionId: 's',
+      workspaceCwd: root,
+      language: 'python',
+      runtimeId: userPyB.envId
+    })
+
+    const persistedAfterSwitch = await new NotebookRunRepository(root).findExisting(
+      'default-project',
+      's'
+    )
+    expect(persistedAfterSwitch?.runtimeBindings).toEqual({
+      python: {
+        language: 'python',
+        runtimeId: userPyB.envId,
+        source: 'external',
+        provenance: 'user-own',
+        interpreterPath: userPyB.interpreterPath,
+        label: userPyB.label,
+        version: userPyB.version,
+        status: 'active'
+      }
+    })
+
+    enablement.enabled[userPyB.envId] = false
+    await service.revokeRuntime('python', userPyB.envId)
+    await service.shutdownAll()
+
+    const reloaded = await service.state({ sessionId: 's', workspaceCwd: root })
+    expect(reloaded.runtimeBindings).toEqual({
+      python: {
+        language: 'python',
+        runtimeId: userPyB.envId,
+        source: 'external',
+        provenance: 'user-own',
+        interpreterPath: userPyB.interpreterPath,
+        label: userPyB.label,
+        version: userPyB.version,
+        status: 'unavailable',
+        reason: 'disabled'
+      },
+      r: undefined
+    })
+  })
+
+  it('finishes a binding persistence commit before replacing the session generation', async () => {
+    const root = await createStorageRoot()
+    const repository = new NotebookRunRepository(root)
+    const persistRuntimeBindings = repository.setRuntimeBindings.bind(repository)
+    let releasePersistence!: () => void
+    const persistenceGate = new Promise<void>((resolve) => {
+      releasePersistence = resolve
+    })
+    let markPersistenceStarted!: () => void
+    const persistenceStarted = new Promise<void>((resolve) => {
+      markPersistenceStarted = resolve
+    })
+    vi.spyOn(repository, 'setRuntimeBindings').mockImplementation(async (...args) => {
+      markPersistenceStarted()
+      await persistenceGate
+      return persistRuntimeBindings(...args)
+    })
+    const service = new NotebookRuntimeService({
+      configRoot: root,
+      dataRoot: root,
+      projectName: 'default-project',
+      repository,
+      discoverRuntimes: async (language) => (language === 'python' ? [userPyA] : []),
+      notebookRuntimeSettings: {
+        getSnapshot: async (language) => ({
+          language,
+          runtimeEnablement: {
+            enabled: { [userPyA.envId]: true },
+            installAuthorized: {}
+          },
+          manualInterpreters: [],
+          packageMirror: {}
+        })
+      },
+      executorFactory: () => ({
+        execute: async (request): Promise<NotebookExecutionResult> => ({
+          status: 'completed',
+          stdout: '',
+          stderr: '',
+          traceback: '',
+          cwdAfter: request.cwd,
+          outputs: []
+        }),
+        shutdown: async () => ({ reaped: true })
+      })
+    })
+    const request = { sessionId: 's', workspaceCwd: root }
+    await service.state(request)
+
+    const bind = service.bindRuntime({
+      ...request,
+      language: 'python',
+      runtimeId: userPyA.envId
+    })
+    await persistenceStarted
+
+    let shutdownSettled = false
+    let replacementSettled = false
+    const shutdown = service.shutdownAll().then((result) => {
+      shutdownSettled = true
+      return result
+    })
+    const replacement = service.state(request).then((state) => {
+      replacementSettled = true
+      return state
+    })
+
+    await new Promise<void>((resolve) => setImmediate(resolve))
+    const shutdownSettledBeforeCommit = shutdownSettled
+    const replacementSettledBeforeCommit = replacementSettled
+    releasePersistence()
+
+    await expect(bind).resolves.toEqual(
+      expect.objectContaining({ bound: expect.objectContaining({ runtimeId: userPyA.envId }) })
+    )
+    await expect(shutdown).resolves.toEqual({ reaped: true })
+    await expect(replacement).resolves.toEqual(
+      expect.objectContaining({
+        runtimeBindings: expect.objectContaining({
+          python: expect.objectContaining({ runtimeId: userPyA.envId })
+        })
+      })
+    )
+    expect(shutdownSettledBeforeCommit).toBe(false)
+    expect(replacementSettledBeforeCommit).toBe(false)
+  })
+
+  it.each(['shutdown', 'dispose'] as const)(
+    'starts fresh-session binding creation before an immediate %s teardown',
+    async (teardown) => {
+      const root = await createStorageRoot()
+      const service = bindingService(root, {
+        discovered: [userPyA],
+        enablement: { enabled: { [userPyA.envId]: true }, installAuthorized: {} }
+      })
+
+      const bind = service.bindRuntime({
+        sessionId: 'fresh',
+        workspaceCwd: root,
+        language: 'python',
+        runtimeId: userPyA.envId
+      })
+      const close = teardown === 'shutdown' ? service.shutdownAll() : service.dispose()
+      let timeout: ReturnType<typeof setTimeout> | undefined
+      const outcome = await Promise.race([
+        Promise.all([bind, close]).then(
+          () => 'completed' as const,
+          () => 'rejected' as const
+        ),
+        new Promise<'timed-out'>((resolve) => {
+          timeout = setTimeout(() => resolve('timed-out'), 250)
+        })
+      ])
+      if (timeout) clearTimeout(timeout)
+
+      expect(outcome).toBe('completed')
+    }
+  )
+
+  it('does not let another session runtime listing delay a session shutdown', async () => {
+    const root = await createStorageRoot()
+    let releaseDiscovery!: () => void
+    const discoveryGate = new Promise<void>((resolve) => {
+      releaseDiscovery = resolve
+    })
+    let markDiscoveryStarted!: () => void
+    const discoveryStarted = new Promise<void>((resolve) => {
+      markDiscoveryStarted = resolve
+    })
+    const service = bindingService(root, {
+      discoverRuntimes: async (language) => {
+        if (language !== 'python') return []
+        markDiscoveryStarted()
+        await discoveryGate
+        return [managedPy]
+      }
+    })
+    await service.state({ sessionId: 'a', workspaceCwd: root })
+
+    const listing = service.listRuntimes({ sessionId: 'b', workspaceCwd: root })
+    await discoveryStarted
+    let shutdownSettled = false
+    const shutdown = service.shutdownSession('a').then((result) => {
+      shutdownSettled = true
+      return result
+    })
+
+    await new Promise<void>((resolve) => setImmediate(resolve))
+    const shutdownSettledBeforeDiscovery = shutdownSettled
+    releaseDiscovery()
+
+    await expect(shutdown).resolves.toEqual({ sessionId: 'a', status: 'shutdown' })
+    await expect(listing).resolves.toEqual(expect.objectContaining({ runtimes: expect.any(Array) }))
+    expect(shutdownSettledBeforeDiscovery).toBe(true)
+  })
+
+  it('does not let another session binding write delay a session shutdown', async () => {
+    const root = await createStorageRoot()
+    const repository = new NotebookRunRepository(root)
+    const persistRuntimeBindings = repository.setRuntimeBindings.bind(repository)
+    let releasePersistence!: () => void
+    const persistenceGate = new Promise<void>((resolve) => {
+      releasePersistence = resolve
+    })
+    let markPersistenceStarted!: () => void
+    const persistenceStarted = new Promise<void>((resolve) => {
+      markPersistenceStarted = resolve
+    })
+    vi.spyOn(repository, 'setRuntimeBindings').mockImplementation(async (...args) => {
+      if (args[1] === 'b') {
+        markPersistenceStarted()
+        await persistenceGate
+      }
+      return persistRuntimeBindings(...args)
+    })
+    const service = bindingService(root, {
+      repository,
+      discovered: [userPyA],
+      enablement: { enabled: { [userPyA.envId]: true }, installAuthorized: {} }
+    })
+    await Promise.all([
+      service.state({ sessionId: 'a', workspaceCwd: root }),
+      service.state({ sessionId: 'b', workspaceCwd: root })
+    ])
+
+    const bind = service.bindRuntime({
+      sessionId: 'b',
+      workspaceCwd: root,
+      language: 'python',
+      runtimeId: userPyA.envId
+    })
+    await persistenceStarted
+    let shutdownSettled = false
+    const shutdown = service.shutdownSession('a').then((result) => {
+      shutdownSettled = true
+      return result
+    })
+
+    await new Promise<void>((resolve) => setImmediate(resolve))
+    const shutdownSettledBeforeCommit = shutdownSettled
+    releasePersistence()
+
+    await expect(shutdown).resolves.toEqual({ sessionId: 'a', status: 'shutdown' })
+    await expect(bind).resolves.toEqual(
+      expect.objectContaining({ bound: expect.objectContaining({ runtimeId: userPyA.envId }) })
+    )
+    expect(shutdownSettledBeforeCommit).toBe(true)
+  })
+
+  it('does not let read-only runtime discovery delay terminal disposal', async () => {
+    const root = await createStorageRoot()
+    let releaseDiscovery!: () => void
+    const discoveryGate = new Promise<void>((resolve) => {
+      releaseDiscovery = resolve
+    })
+    let markDiscoveryStarted!: () => void
+    const discoveryStarted = new Promise<void>((resolve) => {
+      markDiscoveryStarted = resolve
+    })
+    const service = bindingService(root, {
+      discoverRuntimes: async (language) => {
+        if (language !== 'python') return []
+        markDiscoveryStarted()
+        await discoveryGate
+        return [managedPy]
+      }
+    })
+
+    const listing = service.listRuntimes({ sessionId: 'b', workspaceCwd: root })
+    await discoveryStarted
+    let disposalSettled = false
+    const disposal = service.dispose().then((result) => {
+      disposalSettled = true
+      return result
+    })
+
+    await new Promise<void>((resolve) => setImmediate(resolve))
+    const disposalSettledBeforeDiscovery = disposalSettled
+    releaseDiscovery()
+
+    await expect(disposal).resolves.toEqual({ reaped: true })
+    await expect(listing).resolves.toEqual(expect.objectContaining({ runtimes: expect.any(Array) }))
+    expect(disposalSettledBeforeDiscovery).toBe(true)
   })
 
   it('refuses switching to a disabled runtime', async () => {
@@ -7063,11 +7379,11 @@ describe('v4 runtime bindings & agent tools', () => {
     expect(removed).toEqual(['my-analysis'])
   })
 
-  // End-to-end constructor wiring of getManualInterpreters: a Settings-added interpreter is folded into the
-  // service's REAL default discovery (NOT an injected discoverRuntimes), so it becomes discoverable,
-  // enable-able, and bindable — and survives a restart (a fresh service with the same resolver still
-  // resolves it active, not 'missing'). Exercises the actual manualInterpretersResolver seam with a real
-  // executable interpreter so the version probe + runnability classification run for real. POSIX-only:
+  // End-to-end constructor wiring of NotebookRuntimeSettings: a Settings-added interpreter is folded
+  // into the service's REAL default discovery (NOT an injected discoverRuntimes), so it becomes
+  // discoverable, enable-able, and bindable — and survives a restart (a fresh service with the same
+  // capability still resolves it active, not 'missing'). Uses a real executable interpreter so the
+  // version probe + runnability classification run for real. POSIX-only:
   // it relies on a chmod-executable shell shim, which Windows can't run as `<path> --version`.
   it.skipIf(process.platform === 'win32')(
     'discovers, binds, and (across a restart) keeps a constructor-injected manual interpreter',
@@ -7106,8 +7422,14 @@ describe('v4 runtime bindings & agent tools', () => {
           dataRoot: root,
           projectName: 'default-project',
           repository: new NotebookRunRepository(root),
-          getRuntimeEnablement: async () => enablement,
-          getManualInterpreters: resolver,
+          notebookRuntimeSettings: {
+            getSnapshot: async (language) => ({
+              language,
+              runtimeEnablement: enablement,
+              manualInterpreters: await resolver(language),
+              packageMirror: {}
+            })
+          },
           executorFactory: () => ({
             execute: async (request): Promise<NotebookExecutionResult> => {
               executions.push(request)
