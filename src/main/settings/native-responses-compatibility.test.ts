@@ -459,7 +459,14 @@ describe('native Responses compatibility', () => {
         body: JSON.stringify({ model: 'private-model', input: 'private prompt' })
       })
       expect(response.status).toBe(400)
-      await response.text()
+      const errorResponse = await response.json()
+      expect(errorResponse).toEqual({
+        error: {
+          type: 'invalid_request_error',
+          message: 'Native Responses compatibility request failed'
+        }
+      })
+      expect(JSON.stringify(errorResponse)).not.toContain('private-gateway.example.test')
       expect(fetchImpl).toHaveBeenCalledOnce()
 
       expect(logSpies.warn.mock.calls).toContainEqual([

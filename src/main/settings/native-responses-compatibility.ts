@@ -468,13 +468,13 @@ export class NativeResponsesCompatibilityProxy {
     if (this.connection) return this.connection
     const token = randomBytes(24).toString('hex')
     const server = createServer((request, response) => {
-      void this.handle(request, response).catch((error: unknown) => {
+      void this.handle(request, response).catch(() => {
         if (response.destroyed || response.writableEnded) return
         if (!response.headersSent) {
           json(response, 400, {
             error: {
               type: 'invalid_request_error',
-              message: error instanceof Error ? error.message : String(error)
+              message: 'Native Responses compatibility request failed'
             }
           })
         } else {
