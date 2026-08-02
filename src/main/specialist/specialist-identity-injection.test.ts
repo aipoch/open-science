@@ -393,6 +393,67 @@ describe('specialist identity injection — OpenCode', () => {
   })
 })
 
+describe('specialist identity injection — fresh provider adoption', () => {
+  it.each([
+    {
+      path: 'Codex non-UUID adoption',
+      framework: codexFramework,
+      previousFrameworkId: 'codex' as const,
+      appSessionId: 'ses_0458258b7ffeH2DeqPYBPk6fh2',
+      providerSessionId: '019fb8c8-6c66-7f22-9653-17b5b287dbbb',
+      modes: CODEX_MODES
+    },
+    {
+      path: 'OpenCode cross-framework adoption',
+      framework: opencodeFramework,
+      previousFrameworkId: 'claude-code' as const,
+      appSessionId: 'stable-app-session',
+      providerSessionId: 'provider-session',
+      modes: undefined
+    }
+  ])(
+    'keeps the Specialist prefix after $path',
+    async ({ framework, previousFrameworkId, appSessionId, providerSessionId, modes }) => {
+      const process = new FakeAgentProcess()
+      const fakeAgent = startFakeAgentWithModes(process, [providerSessionId], modes)
+      const profile = makeProfile()
+      const runtime = new AcpRuntime({
+        appVersion: '0.1.0',
+        defaultCwd: '/workspace',
+        resolveBackend: () => ({
+          framework: { ...framework, spawn: () => asAgentProcess(process) },
+          executablePath: '/bin/agent-acp',
+          env: {}
+        }),
+        framework,
+        resolveSpecialistIdentity: async (specialistId, frameworkId) => {
+          expect(specialistId).toBe(profile.id)
+          expect(frameworkId).toBe(framework.id)
+          return { append: '', prefix: buildSpecialistIdentityPrefix(profile) }
+        }
+      })
+
+      const resumed = await runtime.resumeSession({
+        sessionId: appSessionId,
+        cwd: '/workspace',
+        previousFrameworkId,
+        specialistId: profile.id
+      })
+      expect(resumed).toMatchObject({ sessionId: appSessionId, contextReset: true })
+
+      await runtime.sendPrompt({
+        sessionId: appSessionId,
+        text: 'Continue the analysis',
+        historyPreamble: 'PRIOR CONTEXT: the last result was incomplete.'
+      })
+
+      expect(fakeAgent.prompts[0]).toMatchObject({ sessionId: providerSessionId })
+      expect(fakeAgent.prompts[0].text).toContain('PRIOR CONTEXT: the last result was incomplete.')
+      expect(fakeAgent.prompts[0].text).toContain(SPECIALIST_IDENTITY_TAG)
+    }
+  )
+})
+
 // ---------------------------------------------------------------------------
 // Tests: Hot-switching specialist on a live session
 // ---------------------------------------------------------------------------

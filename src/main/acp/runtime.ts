@@ -2477,7 +2477,7 @@ class AcpRuntime {
       const stagedSpecialistId =
         request.specialistId ??
         this.sessionRegistry.lookup(request.sessionId)?.aggregate.snapshot().specialistId
-      const specialistAppend = await this.resolveCurrentSpecialistIdentityAppend(
+      const specialistIdentity = await this.resolveCurrentSpecialistIdentity(
         request.sessionId,
         stagedSpecialistId
       )
@@ -2487,7 +2487,9 @@ class AcpRuntime {
           cwd: sessionCwd,
           mcpServers,
           ...this.buildSessionMetaArg(
-            [specialistAppend, handoffAppend].filter((append): append is string => Boolean(append)),
+            [specialistIdentity?.append, handoffAppend].filter((append): append is string =>
+              Boolean(append)
+            ),
             await this.resolveCurrentSpecialistSkills(request.sessionId, stagedSpecialistId)
           )
         })
@@ -2525,6 +2527,11 @@ class AcpRuntime {
         modelApplication.appliedModel,
         modelApplication.configOptions
       )
+      if (specialistIdentity) {
+        aggregate.setSpecialistPrefix(specialistIdentity.prefix || undefined)
+      } else if (!stagedSpecialistId) {
+        aggregate.setSpecialistPrefix(undefined)
+      }
       if (request.specialistId) {
         aggregate.setSpecialistId(request.specialistId)
       }
@@ -4224,17 +4231,16 @@ class AcpRuntime {
     }
   }
 
-  // Resolves the session-meta identity APPEND for the session's current specialist binding. Only
-  // meaningful for Claude (append mode); returns undefined for Codex/OpenCode (prefix mode) or when
-  // no specialist is bound. Used by adoptFreshSession so a context reset re-bakes the identity.
-  private async resolveCurrentSpecialistIdentityAppend(
+  // Re-resolves the current Specialist identity when a stable app Session adopts a fresh provider
+  // Session. Claude re-bakes the append into Session metadata; Codex/OpenCode retain the prefix for
+  // subsequent prompts.
+  private async resolveCurrentSpecialistIdentity(
     sessionId: string,
     specialistId = this.sessionRegistry.lookup(sessionId)?.aggregate.snapshot().specialistId
-  ): Promise<string | undefined> {
+  ): Promise<{ append: string; prefix: string } | undefined> {
     if (!specialistId || !this.options.resolveSpecialistIdentity) return undefined
     try {
-      const identity = await this.options.resolveSpecialistIdentity(specialistId, this.framework.id)
-      return identity?.append || undefined
+      return await this.options.resolveSpecialistIdentity(specialistId, this.framework.id)
     } catch {
       return undefined
     }
