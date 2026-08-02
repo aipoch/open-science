@@ -30,10 +30,10 @@ describe('renderCustomSkillDoc', () => {
     expect(md).not.toContain('name: mcp-myserver')
     expect(md).toContain('source: connector')
     expect(md).toMatch(/description: ".*Use when.*"/)
-    expect(md).toContain('## When to Use')
+    expect(md.match(/Use when/g)).toHaveLength(1)
     expect(md).toContain('search')
     expect(md).toContain('fetch')
-    expect(md).toContain('"type": "object"')
+    expect(md).toContain('"type":"object"')
     // Runtime routing still uses the display name (the key McpClientManager registers under).
     // No-arg tools render without a third argument (a literal ... would reach the bridge as Ellipsis).
     expect(md).toContain('host.mcp("myserver", "search")')

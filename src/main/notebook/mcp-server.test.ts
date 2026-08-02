@@ -9,6 +9,7 @@ import {
   INSPECT_PACKAGES_DOC,
   MANAGE_ENVIRONMENTS_DOC,
   MANAGE_PACKAGES_DOC,
+  NOTEBOOK_MCP_CONTROL_RESULT_LIMIT,
   NOTEBOOK_MCP_EXECUTION_RESULT_LIMIT,
   NOTEBOOK_MCP_STATE_RESULT_LIMIT,
   REPL_EXECUTE_DOC,
@@ -18,6 +19,11 @@ import {
   compactNotebookExecutionResult,
   compactNotebookStateResult,
   compactManagePackagesResult,
+  compactInspectPackagesResult,
+  compactListRuntimesResult,
+  compactManageEnvironmentsResult,
+  compactRuntimeBindingResult,
+  compactShutdownResult,
   compactRestartResult,
   createNotebookMcpServerConfig,
   serializeNotebookToolResult
@@ -413,6 +419,37 @@ describe('inspect_packages tool', () => {
       packages: ['dplyr']
     })
   })
+
+  it('returns only actionable package status fields with a bounded item count', () => {
+    const packages = Array.from({ length: 80 }, (_, index) => ({
+      requested: `pkg-${index}`,
+      name: `pkg-${index}`,
+      status: 'installed',
+      version: '1.0.0',
+      versionStatus: 'known',
+      ecosystem: 'python',
+      evidenceSources: ['python-importlib-metadata'],
+      libraryRank: index
+    }))
+
+    const compact = compactInspectPackagesResult({
+      language: 'python',
+      environmentName: 'default-python',
+      runtimeSource: 'managed',
+      runtimeId: '/private/runtime/python',
+      runtimeLabel: 'Managed Python',
+      inventory: { capturedAt: 'now', source: 'full-scan', validation: 'full-scan' },
+      packages,
+      warnings: ['x'.repeat(10_000)]
+    }) as Record<string, unknown>
+
+    expect(compact).not.toHaveProperty('runtimeId')
+    expect(compact.packages as unknown[]).toHaveLength(50)
+    expect(compact).toHaveProperty('omittedPackageCount', 30)
+    expect(JSON.stringify(compact)).not.toContain('evidenceSources')
+    expect(JSON.stringify(compact)).not.toContain('libraryRank')
+    expect(JSON.stringify(compact).length).toBeLessThanOrEqual(NOTEBOOK_MCP_CONTROL_RESULT_LIMIT)
+  })
 })
 
 describe('compactManagePackagesResult', () => {
@@ -454,7 +491,6 @@ describe('compactManagePackagesResult', () => {
       ok: true,
       needsRestart: true,
       method: 'conda',
-      prefix: '/runtime/envs/default-r',
       fallbackUsed: false,
       packageChanges: [
         {
@@ -486,6 +522,91 @@ describe('compactManagePackagesResult', () => {
     })
     expect(compactManagePackagesResult(null)).toBeNull()
     expect(compactManagePackagesResult('x')).toBe('x')
+  })
+})
+
+describe('notebook control tool results', () => {
+  it('gives every notebook tool a purpose-specific projection and a global result budget', () => {
+    for (const tool of NOTEBOOK_RPC_TOOLS) {
+      expect(tool.mapResult, tool.name).toBeTypeOf('function')
+      expect(tool.resultLimitChars, tool.name).toBeGreaterThan(0)
+    }
+  })
+
+  it('lists selectable runtimes without interpreter paths or duplicate full bindings', () => {
+    const compact = compactListRuntimesResult({
+      runtimes: [
+        {
+          language: 'python',
+          runtimeId: 'managed-python',
+          source: 'managed',
+          provenance: 'app-managed',
+          interpreterPath: '/private/runtime/bin/python',
+          label: 'Managed Python',
+          version: '3.13',
+          runnable: true,
+          bound: true
+        }
+      ],
+      bindings: {
+        python: {
+          language: 'python',
+          runtimeId: 'managed-python',
+          source: 'managed',
+          provenance: 'app-managed',
+          interpreterPath: '/private/runtime/bin/python',
+          label: 'Managed Python'
+        }
+      }
+    })
+
+    expect(compact).toMatchObject({ runtimeCount: 1 })
+    expect(JSON.stringify(compact)).not.toContain('interpreterPath')
+    expect(JSON.stringify(compact)).not.toContain('/private/runtime')
+  })
+
+  it('projects bind, shutdown, and environment receipts to their next-step fields', () => {
+    expect(
+      compactRuntimeBindingResult({
+        bound: {
+          language: 'r',
+          runtimeId: 'managed-r',
+          source: 'managed',
+          provenance: 'app-managed',
+          interpreterPath: '/private/runtime/bin/R',
+          label: 'Managed R',
+          status: 'active'
+        },
+        bindings: { r: { interpreterPath: '/private/runtime/bin/R' } }
+      })
+    ).toEqual({
+      bound: {
+        language: 'r',
+        runtimeId: 'managed-r',
+        source: 'managed',
+        provenance: 'app-managed',
+        label: 'Managed R',
+        status: 'active'
+      }
+    })
+    expect(
+      compactShutdownResult({ sessionId: 'session-1', status: 'shutdown', cells: [] })
+    ).toEqual({
+      sessionId: 'session-1',
+      status: 'shutdown'
+    })
+    expect(
+      compactManageEnvironmentsResult({
+        environments: Array.from({ length: 40 }, (_, index) => ({
+          name: `env-${index}`,
+          language: 'python',
+          ready: true,
+          isDefault: false,
+          sizeBytes: 10,
+          internalPath: `/private/env-${index}`
+        }))
+      })
+    ).toMatchObject({ environmentCount: 40, omittedEnvironmentCount: 10 })
   })
 })
 

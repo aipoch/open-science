@@ -911,7 +911,7 @@ export const PROTEIN_ANNOTATION_TOOLS: ToolDescriptor[] = [
     returns:
       '`{ "count": int, "results": [ { "accession": str, "name": str, "source_database": str, "length": int, "tax_id": int, "organism": str } ] | null }` — `results` is null in count_only mode; otherwise sorted by accession.',
     example:
-      'const result = await host.mcp("protein_annotation", "get_pfam_family_proteins", {"pfam_accession": "PF00069", "count_only": True})',
+      'const result = await host.mcp("protein_annotation", "get_pfam_family_proteins", {"pfam_accession": "PF00069", "count_only": true})',
     run: async (ctx, a) => {
       const acc = String(a.pfam_accession).trim().toUpperCase()
       const db = a.reviewed_only ? 'reviewed' : 'uniprot'

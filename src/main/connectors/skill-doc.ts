@@ -10,6 +10,11 @@ const CONVENTIONS = [
   'To use a result in a python or r cell, have the REPL write it to `./handoff/<name>.json` (the shared `$OPEN_SCIENCE_HANDOFF_DIR`), then read that file from the data cell — not through the model context.'
 ].join('\n')
 
+// A Skill may be loaded outside the bundled-connector baseline (notably for custom MCP servers), so
+// keep the minimum calling and reuse contract local without copying the full shared policy block.
+const SKILL_CONVENTIONS =
+  'Use from `repl_execute` as `const result = await host.mcp(server, method, {...})`. Results are native JavaScript in a persistent REPL; save reusable values on `globalThis` instead of running the call again, and never re-issue the same upstream call.'
+
 // Placeholder value for one JSON-Schema field in a call example: an enum's first choice or the field's
 // own default when present, otherwise a type-keyed stand-in. Rendered as a JSON literal.
 function sampleValue(spec: { type?: unknown; default?: unknown; enum?: unknown }): string {
@@ -57,17 +62,23 @@ function exampleArgs(schema: unknown): string | undefined {
   return entries.length ? `{${entries.join(', ')}}` : undefined
 }
 
+const inlineCode = (value: string): string => {
+  const longestFence = Math.max(0, ...(value.match(/`+/g) ?? []).map((match) => match.length))
+  const fence = '`'.repeat(longestFence + 1)
+  return `${fence}${value}${fence}`
+}
+
 // Renders one tool's usage example as a copyable repl_execute (JS) cell. Prefers the descriptor's
 // hand-authored `example` (a single `await host.mcp(...)` call with realistic args); otherwise builds a
 // bare call from the schema. A tool with no concrete args renders as `await host.mcp(server, method)`
 // (no third argument) — passing a literal `...` there would reach the bridge and raise, so it's omitted.
 function renderExample(server: string, tool: string, schema: unknown, example?: string): string {
-  if (example) return `Example:\n\n\`\`\`js\n${example}\n\`\`\`\n`
+  if (example) return `**Example:** ${inlineCode(example)}\n`
   const args = exampleArgs(schema)
   const call = args
     ? `host.mcp("${server}", "${tool}", ${args})`
     : `host.mcp("${server}", "${tool}")`
-  return `Example:\n\n\`\`\`js\nconst result = await ${call}\n\`\`\`\n`
+  return `**Example:** ${inlineCode(`const result = await ${call}`)}\n`
 }
 
 // Renders one connector's tools as a searchable skill document (frontmatter + conventions + methods).
@@ -81,14 +92,14 @@ export function renderSkillDoc(connectorId: string): string {
   const methods = tools
     .map(
       (t) =>
-        `### ${t.id}\n\n${t.description}\n\n\`\`\`json\n${JSON.stringify(t.input, null, 2)}\n\`\`\`\n\n` +
+        `### ${t.id}\n\n${t.description}\n\n**Input:** ${inlineCode(JSON.stringify(t.input))}\n\n` +
         (t.returns ? `**Returns:** ${t.returns}\n\n` : '') +
         renderExample(connectorId, t.id, t.input, t.example)
     )
     .join('\n')
   return (
-    `${header}\n## When to Use\n\n${meta.useWhen}\n\n` +
-    `> This connector is rate-limited at the upstream API.\n\n${CONVENTIONS}\n\n## Tools\n\n${methods}`
+    `${header}\n> This connector is rate-limited at the upstream API.\n\n` +
+    `${SKILL_CONVENTIONS}\n\n## Tools\n\n${methods}`
   )
 }
 
@@ -130,12 +141,12 @@ export function renderCustomSkillDoc(
   const methods = tools
     .map(
       (t) =>
-        `### ${t.name}\n\n${t.description ?? ''}\n\n\`\`\`json\n${JSON.stringify(t.inputSchema ?? {}, null, 2)}\n\`\`\`\n\n` +
+        `### ${t.name}\n\n${t.description ?? ''}\n\n**Input:** ${inlineCode(JSON.stringify(t.inputSchema ?? {}))}\n\n` +
         renderExample(server.name, t.name, t.inputSchema)
     )
     .join('\n')
   return (
-    `${header}\n## When to Use\n\n${useWhen}\n\n` +
-    `> This connector is rate-limited at the upstream API.\n\n${CONVENTIONS}\n\n## Tools\n\n${methods}`
+    `${header}\n> This connector is rate-limited at the upstream API.\n\n` +
+    `${SKILL_CONVENTIONS}\n\n## Tools\n\n${methods}`
   )
 }

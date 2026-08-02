@@ -448,7 +448,7 @@ export const STRUCTURES_INTACT_TOOLS: ToolDescriptor[] = [
     returns:
       "`{ interaction_ac, short_label, type: {name, mi}, detection_method: {name, mi}, host_organism, negative, publication: {pubmed_id, title, journal, publication_date, authors}, xrefs: [{database, database_mi, identifier, qualifier}], annotations: [{topic, topic_mi, description}], parameters, confidences, participants?: [{participant_ac, short_label, identifier, identifier_database, description, type, species, taxid, biological_role, experimental_role, detection_methods}], n_participants? }`. Unknown AC -> `{ interaction_ac, error: 'not_found' }`.",
     example:
-      'const result = await host.mcp("structures", "intact_get_interaction_details", {"interaction_ac": "EBI-15635490", "include_participants": True})',
+      'const result = await host.mcp("structures", "intact_get_interaction_details", {"interaction_ac": "EBI-15635490", "include_participants": true})',
     run: async (ctx, a): Promise<Record<string, unknown>> => {
       const interactionAc = String(a.interaction_ac)
       const includeParticipants = a.include_participants !== false

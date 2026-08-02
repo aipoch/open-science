@@ -1333,7 +1333,7 @@ export const OMICS_ARCHIVES_TOOLS: ToolDescriptor[] = [
     returns:
       '`{ "n_requested": int, "records": [ { "accession", "title", "description", "study_status", "release_year", "submission_year", "organisms": [{organism,organism_part}], "organism_names": [str], "assays": [{assay_number,measurement,technology,platform,filename}], "assay_count", "technologies": [str], "factors": [str], "descriptors": [str], "sample_count", "protocols": [{name,description}], "sample_table"? } ], "not_found": [str] }` — records sorted by numeric accession.',
     example:
-      'const result = await host.mcp("omics_archives", "metabolights_get_studies", {"accessions": ["MTBLS1"], "include_samples": False})',
+      'const result = await host.mcp("omics_archives", "metabolights_get_studies", {"accessions": ["MTBLS1"], "include_samples": false})',
     run: async (ctx, a) => {
       const unique = sortMtbls(asArr(a.accessions).map(String))
       const includeSamples = Boolean(a.include_samples)
@@ -1507,7 +1507,7 @@ export const OMICS_ARCHIVES_TOOLS: ToolDescriptor[] = [
     returns:
       '`{ "studies": [ { "accession", "secondary_accession", "bioproject", "study_name", "biome_lineages": [str], "samples_count", "centre_name", "data_origination", "is_private", "last_update", "analyses_total"?, "analyses_by_pipeline_version"?, "analyses_by_experiment_type"? } ], "missing": [str], "analyses"?: {acc: [record]} }` — studies sorted by accession.',
     example:
-      'const result = await host.mcp("omics_archives", "mgnify_get_studies", {"accessions": ["MGYS00000410"], "include_analyses": False})',
+      'const result = await host.mcp("omics_archives", "mgnify_get_studies", {"accessions": ["MGYS00000410"], "include_analyses": false})',
     run: async (ctx, a) => {
       const includeAnalyses = Boolean(a.include_analyses)
       const unique = [...new Set(asArr(a.accessions).map(String))].sort()

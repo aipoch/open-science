@@ -1661,7 +1661,7 @@ describe('Responses bridge Skill selector', () => {
       upstreamFetch
     )
 
-    const selected = await bridge.selectSkills('用 PubMed 搜索肿瘤免疫文章', catalog)
+    const selected = await bridge.selectSkills('查找肿瘤免疫相关的生物医学文献', catalog)
 
     expect(selected).toEqual(catalog.slice(0, 3).map(({ name, path }) => ({ name, path })))
     expect(upstreamUrl).toBe('https://vendor.example/v1/chat/completions')
@@ -1673,7 +1673,7 @@ describe('Responses bridge Skill selector', () => {
       max_tokens: 512,
       messages: [
         expect.objectContaining({ role: 'system' }),
-        { role: 'user', content: '用 PubMed 搜索肿瘤免疫文章' }
+        { role: 'user', content: '查找肿瘤免疫相关的生物医学文献' }
       ],
       tools: [
         {
@@ -1692,8 +1692,22 @@ describe('Responses bridge Skill selector', () => {
     expect(upstreamBody).not.toHaveProperty('tool_choice')
     const serialized = JSON.stringify(upstreamBody)
     expect(serialized).toContain('Search biomedical literature.')
+    expect(serialized.match(/mcp-pubmed/g)).toHaveLength(1)
     expect(serialized).not.toContain('/private/')
     expect(serialized).not.toContain('secret-key')
+  })
+
+  it('selects an explicitly named connector Skill locally without an upstream request', async () => {
+    const upstreamFetch = vi.fn<typeof fetch>()
+    const bridge = new ResponsesBridge(
+      { baseUrl: 'https://vendor.example/v1', model: 'deepseek-v4-flash' },
+      upstreamFetch
+    )
+
+    await expect(bridge.selectSkills('用 PubMed 搜索肿瘤免疫文章', catalog)).resolves.toEqual([
+      { name: 'mcp-pubmed', path: '/private/pubmed/SKILL.md' }
+    ])
+    expect(upstreamFetch).not.toHaveBeenCalled()
   })
 
   it.each([
@@ -1749,12 +1763,18 @@ describe('Responses bridge Skill selector', () => {
     const request = JSON.parse(upstreamBody) as {
       messages: Array<{ content: string }>
       tools: Array<{
-        function: { parameters: { properties: { skill_names: { items: { enum: string[] } } } } }
+        function: {
+          parameters: { properties: { skill_names: { items: Record<string, unknown> } } }
+        }
       }>
     }
-    const names = request.tools[0].function.parameters.properties.skill_names.items.enum
+    const catalogJson = request.messages[0].content.split('Skill catalog:\n')[1]
+    const names = (JSON.parse(catalogJson) as Array<{ name: string }>).map(({ name }) => name)
     expect(names).toHaveLength(128)
     expect(names).not.toContain('oversized')
+    expect(request.tools[0].function.parameters.properties.skill_names.items).toEqual({
+      type: 'string'
+    })
     expect(request.messages[0].content).not.toContain('x'.repeat(10_000))
     expect(Buffer.byteLength(upstreamBody, 'utf8')).toBeLessThan(300 * 1024)
   })

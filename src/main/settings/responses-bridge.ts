@@ -9,6 +9,12 @@ import type {
   CustomReasoningEffortTransport,
   ModelReasoningEffort
 } from '../../shared/reasoning-effort'
+import {
+  boundedSkillSelectorCatalog,
+  renderSkillSelectorCatalog,
+  resolveSelectedSkills,
+  selectExplicitSkills
+} from './skill-selector-routing'
 
 // The bridge deliberately keeps protocol payloads open-ended; validation rejects unsupported shapes
 // at the boundary before values reach the upstream request.
@@ -67,36 +73,6 @@ type ResponsesBridgeOptions = {
 }
 
 type BridgeFetch = typeof fetch
-
-const MAX_SKILL_SELECTOR_CANDIDATES = 128
-const MAX_SKILL_SELECTOR_NAME_BYTES = 128
-const MAX_SKILL_SELECTOR_DESCRIPTION_BYTES = 2 * 1024
-const MAX_SKILL_SELECTOR_CATALOG_BYTES = 256 * 1024
-
-const boundedSkillSelectorCatalog = (
-  catalog: ResponsesBridgeSkillCandidate[]
-): ResponsesBridgeSkillCandidate[] => {
-  const bounded: ResponsesBridgeSkillCandidate[] = []
-  let catalogBytes = 2 // JSON array brackets
-  for (const candidate of catalog) {
-    if (bounded.length === MAX_SKILL_SELECTOR_CANDIDATES) break
-    if (
-      !candidate.name ||
-      Buffer.byteLength(candidate.name, 'utf8') > MAX_SKILL_SELECTOR_NAME_BYTES ||
-      Buffer.byteLength(candidate.description, 'utf8') > MAX_SKILL_SELECTOR_DESCRIPTION_BYTES
-    ) {
-      continue
-    }
-    const projectedBytes = Buffer.byteLength(
-      JSON.stringify({ name: candidate.name, description: candidate.description }),
-      'utf8'
-    )
-    if (catalogBytes + projectedBytes + 1 > MAX_SKILL_SELECTOR_CATALOG_BYTES) continue
-    catalogBytes += projectedBytes + 1
-    bounded.push(candidate)
-  }
-  return bounded
-}
 
 class BridgeHttpError extends Error {
   constructor(
@@ -1085,6 +1061,8 @@ export class ResponsesBridge {
     if (!text.trim() || catalog.length === 0 || signal?.aborted) return []
     const selectorCatalog = boundedSkillSelectorCatalog(catalog)
     if (selectorCatalog.length === 0) return []
+    const explicit = selectExplicitSkills(text, selectorCatalog)
+    if (explicit.length > 0) return explicit
 
     const timeout = new AbortController()
     let timedOut = false
@@ -1112,9 +1090,7 @@ export class ResponsesBridge {
               role: 'system',
               content:
                 'You are a Skill routing classifier. Select only the Skills needed to execute the current user request. Do not perform the task. Call select_skills exactly once. Use only catalog names. Return an empty list when no Skill applies.\n\nSkill catalog:\n' +
-                JSON.stringify(
-                  selectorCatalog.map(({ name, description }) => ({ name, description }))
-                )
+                renderSkillSelectorCatalog(selectorCatalog)
             },
             { role: 'user', content: text }
           ],
@@ -1130,7 +1106,7 @@ export class ResponsesBridge {
                     skill_names: {
                       type: 'array',
                       maxItems: 3,
-                      items: { type: 'string', enum: selectorCatalog.map(({ name }) => name) }
+                      items: { type: 'string' }
                     }
                   },
                   required: ['skill_names'],
@@ -1166,19 +1142,7 @@ export class ResponsesBridge {
 
       const args = JSON.parse(call.function.arguments) as JsonObject
       const requested = Array.isArray(args.skill_names) ? args.skill_names : []
-      const byName = new Map(
-        selectorCatalog.map((candidate) => [candidate.name, candidate] as const)
-      )
-      const selected: ResponsesBridgeSkillInput[] = []
-      const seen = new Set<string>()
-      for (const name of requested) {
-        if (typeof name !== 'string' || seen.has(name)) continue
-        const candidate = byName.get(name)
-        if (!candidate) continue
-        seen.add(name)
-        selected.push({ name: candidate.name, path: candidate.path })
-        if (selected.length === 3) break
-      }
+      const selected = resolveSelectedSkills(requested, selectorCatalog)
       log.info('bridge skill selection completed', {
         model: this.target.model,
         catalogCount: catalog.length,

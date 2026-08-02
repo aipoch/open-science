@@ -202,7 +202,7 @@ describe('native Responses compatibility', () => {
       { name: 'mcp-chemistry', description: 'Search chemistry.', path: '/skills/chem/SKILL.md' }
     ]
 
-    await expect(proxy.selectSkills('用 PubMed 搜索肿瘤免疫文章', catalog)).resolves.toEqual([
+    await expect(proxy.selectSkills('查找肿瘤免疫相关的生物医学文献', catalog)).resolves.toEqual([
       { name: 'mcp-pubmed', path: '/skills/pubmed/SKILL.md' }
     ])
     expect(fetchImpl).toHaveBeenCalledOnce()
@@ -216,8 +216,25 @@ describe('native Responses compatibility', () => {
       tools: [expect.objectContaining({ type: 'function', name: 'select_skills' })]
     })
     const serializedLogs = JSON.stringify(Object.values(logSpies).flatMap((spy) => spy.mock.calls))
-    expect(serializedLogs).not.toContain('用 PubMed 搜索肿瘤免疫文章')
+    expect(serializedLogs).not.toContain('查找肿瘤免疫相关的生物医学文献')
     expect(serializedLogs).not.toContain('mcp-pubmed')
+  })
+
+  it('selects an explicitly named connector Skill locally without an upstream request', async () => {
+    const fetchImpl = vi.fn<typeof fetch>()
+    const proxy = new NativeResponsesCompatibilityProxy(
+      { baseUrl: 'https://api.minimaxi.com/v1', model: 'MiniMax-M3' },
+      fetchImpl
+    )
+    const catalog = [
+      { name: 'mcp-pubmed', description: 'Search PubMed.', path: '/skills/pubmed/SKILL.md' },
+      { name: 'mcp-chemistry', description: 'Search chemistry.', path: '/skills/chem/SKILL.md' }
+    ]
+
+    await expect(proxy.selectSkills('用 PubMed 搜索肿瘤免疫文章', catalog)).resolves.toEqual([
+      { name: 'mcp-pubmed', path: '/skills/pubmed/SKILL.md' }
+    ])
+    expect(fetchImpl).not.toHaveBeenCalled()
   })
 
   it('continues scanning for smaller Skills after a candidate exceeds the catalog byte budget', async () => {
@@ -225,10 +242,12 @@ describe('native Responses compatibility', () => {
       async (_url: Parameters<typeof fetch>[0], init?: Parameters<typeof fetch>[1]) => {
         const request = JSON.parse(String(init?.body)) as {
           tools: Array<{
-            parameters: { properties: { skill_names: { items: { enum: string[] } } } }
+            parameters: { properties: { skill_names: { items: Record<string, unknown> } } }
           }>
+          instructions: string
         }
-        expect(request.tools[0].parameters.properties.skill_names.items.enum).toContain('mcp-late')
+        expect(request.tools[0].parameters.properties.skill_names.items).toEqual({ type: 'string' })
+        expect(request.instructions).toContain('mcp-late')
         return new Response(
           JSON.stringify({
             output: [
@@ -261,9 +280,9 @@ describe('native Responses compatibility', () => {
       { name: 'mcp-late', description: 'Relevant small Skill.', path: '/skills/late/SKILL.md' }
     ]
 
-    await expect(proxy.selectSkills('use the late Skill', catalog)).resolves.toEqual([
-      { name: 'mcp-late', path: '/skills/late/SKILL.md' }
-    ])
+    await expect(
+      proxy.selectSkills('route this request to a delayed capability', catalog)
+    ).resolves.toEqual([{ name: 'mcp-late', path: '/skills/late/SKILL.md' }])
   })
 
   it('replaces reviewer-session tools with only the scope-bounded reviewer surface', async () => {

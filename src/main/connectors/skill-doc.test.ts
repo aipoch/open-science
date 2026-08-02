@@ -1,5 +1,10 @@
 import { describe, it, expect } from 'vitest'
+import { Tiktoken } from 'js-tiktoken/lite'
+import cl100kBase from 'js-tiktoken/ranks/cl100k_base'
 import { renderConnectorInstructions, renderSkillDoc, renderCustomSkillDoc } from './skill-doc'
+import { CONNECTOR_CATALOG } from './catalog'
+
+const tokenizer = new Tiktoken(cl100kBase)
 
 describe('renderConnectorInstructions', () => {
   it('keeps only shared host.mcp conventions in opencode baseline instructions', () => {
@@ -33,25 +38,26 @@ describe('renderConnectorInstructions', () => {
 })
 
 describe('renderSkillDoc', () => {
-  it('renders frontmatter, conventions, and each tool', () => {
+  it('renders a compact self-contained catalog without repeating the shared conventions', () => {
     const md = renderSkillDoc('chemistry')
     expect(md).toContain('name: mcp-chemistry')
     expect(md).toContain('source: connector')
     expect(md).toContain('host.mcp(')
     expect(md).toContain('pubchem_get_compounds')
     expect(md).toContain('rate-limited') // rate warning present
+    expect(md).not.toContain('Do NOT reimplement these calls with raw HTTP')
   })
   it('uses the trigger-style useWhen as the frontmatter description for auto-discovery', () => {
     const md = renderSkillDoc('chemistry')
     // The frontmatter description is what Claude Code matches a plain user question against.
     const frontmatter = md.slice(0, md.indexOf('---', 3))
     expect(frontmatter).toMatch(/description: ".*Use when.*"/)
-    expect(md).toContain('## When to Use')
+    expect(md.match(/Use when/g)).toHaveLength(1)
   })
   it('throws for an unknown connector', () => {
     expect(() => renderSkillDoc('nope')).toThrow()
   })
-  it('renders a tool-authored example as a single realistic call, with no per-tool prose', () => {
+  it('renders a tool-authored example as a single compact realistic call', () => {
     // The example carries only realistic args (better than schema placeholders). General guidance
     // (reuse across cells, return shape) lives once in the shared conventions template — it must NOT
     // be duplicated into each tool's example.
@@ -60,13 +66,10 @@ describe('renderSkillDoc', () => {
       md.indexOf('### search_articles'),
       md.indexOf('### get_article_metadata')
     )
-    const code = block
-      .slice(block.indexOf('```js\n') + '```js\n'.length, block.lastIndexOf('```'))
-      .trim()
-    expect(code).toBe(
+    expect(block).toContain(
       'const result = await host.mcp("pubmed", "search_articles", {"query": "CRISPR gene editing", "max_results": 10})'
     )
-    expect(code).not.toContain('#') // no per-tool comment/prose
+    expect(block).not.toContain('```')
   })
   it('does not hardcode a processing/display method in the doc', () => {
     // Requirement: the skill doc states facts (shape lives in Returns, result is a Python value) but
@@ -123,12 +126,26 @@ describe('renderSkillDoc', () => {
     expect(md).toMatch(/never re-(issue|call)/i)
   })
   it('gives custom MCP servers the same reuse guidance', () => {
-    // renderCustomSkillDoc shares the CONVENTIONS block, so the fix must reach custom servers too.
+    // Custom servers do not always receive the bundled connector baseline, so their compact Skill
+    // still carries the minimum persistence rule without copying the full shared conventions.
     const md = renderCustomSkillDoc(
       { id: 'acme-id', name: 'acme', description: 'Use when you need acme tools.' },
       [{ name: 'do_thing', inputSchema: { type: 'object', properties: { q: { type: 'string' } } } }]
     )
     expect(md).toContain('persistent')
     expect(md).toMatch(/instead of running the call again/)
+  })
+
+  it('keeps the PubMed Skill under a 2.3k-token on-demand budget', () => {
+    const md = renderSkillDoc('pubmed')
+
+    expect(tokenizer.encode(md).length).toBeLessThan(2_300)
+  })
+
+  it('keeps every authored connector example valid for the JavaScript REPL', () => {
+    for (const connector of CONNECTOR_CATALOG) {
+      const md = renderSkillDoc(connector.id)
+      expect(md, connector.id).not.toMatch(/host\.mcp\([^\n]*\b(?:True|False|None)\b/)
+    }
   })
 })

@@ -8,6 +8,12 @@ import type {
   ResponsesBridgeSkillCandidate,
   ResponsesBridgeSkillInput
 } from './responses-bridge'
+import {
+  boundedSkillSelectorCatalog,
+  renderSkillSelectorCatalog,
+  resolveSelectedSkills,
+  selectExplicitSkills
+} from './skill-selector-routing'
 
 // Responses payloads are intentionally open-ended across providers. Keep the compatibility boundary
 // permissive, then validate the fields this module rewrites before touching them.
@@ -40,10 +46,6 @@ type NativeFetch = typeof fetch
 // replayed history, and tool declarations. Match the app's 64 MiB local request envelope so those
 // valid multimodal turns fit while this authenticated loopback boundary remains memory-bounded.
 const MAX_REQUEST_BODY_BYTES = 64 * 1024 * 1024
-const MAX_SKILL_SELECTOR_CANDIDATES = 128
-const MAX_SKILL_SELECTOR_NAME_BYTES = 128
-const MAX_SKILL_SELECTOR_DESCRIPTION_BYTES = 2 * 1024
-const MAX_SKILL_SELECTOR_CATALOG_BYTES = 256 * 1024
 const log = createLogger('native-responses-compatibility')
 const SAFE_NETWORK_ERROR_CODES = new Set([
   'EAI_AGAIN',
@@ -302,31 +304,6 @@ const streamResponse = async (
   response.end()
 }
 
-const boundedSkillCatalog = (
-  catalog: ResponsesBridgeSkillCandidate[]
-): ResponsesBridgeSkillCandidate[] => {
-  const bounded: ResponsesBridgeSkillCandidate[] = []
-  let totalBytes = 2
-  for (const candidate of catalog) {
-    if (bounded.length === MAX_SKILL_SELECTOR_CANDIDATES) break
-    if (
-      !candidate.name ||
-      Buffer.byteLength(candidate.name, 'utf8') > MAX_SKILL_SELECTOR_NAME_BYTES ||
-      Buffer.byteLength(candidate.description, 'utf8') > MAX_SKILL_SELECTOR_DESCRIPTION_BYTES
-    ) {
-      continue
-    }
-    const candidateBytes = Buffer.byteLength(
-      JSON.stringify({ name: candidate.name, description: candidate.description }),
-      'utf8'
-    )
-    if (totalBytes + candidateBytes + 1 > MAX_SKILL_SELECTOR_CATALOG_BYTES) continue
-    totalBytes += candidateBytes + 1
-    bounded.push(candidate)
-  }
-  return bounded
-}
-
 const namespaceToolDeclarations = (tools: ResponsesBridgeNamespacedTool[]): JsonObject[] => {
   const byNamespace = new Map<string, JsonObject[]>()
   for (const tool of tools) {
@@ -364,9 +341,12 @@ export class NativeResponsesCompatibilityProxy {
     catalog: ResponsesBridgeSkillCandidate[],
     signal?: AbortSignal
   ): Promise<ResponsesBridgeSkillInput[]> {
-    if (!text.trim() || catalog.length === 0 || signal?.aborted || !this.target.model) return []
-    const selectorCatalog = boundedSkillCatalog(catalog)
+    if (!text.trim() || catalog.length === 0 || signal?.aborted) return []
+    const selectorCatalog = boundedSkillSelectorCatalog(catalog)
     if (selectorCatalog.length === 0) return []
+    const explicit = selectExplicitSkills(text, selectorCatalog)
+    if (explicit.length > 0) return explicit
+    if (!this.target.model) return []
 
     const timeout = new AbortController()
     let timedOut = false
@@ -389,7 +369,7 @@ export class NativeResponsesCompatibilityProxy {
           stream: false,
           instructions:
             'Select only the Skills needed to execute the current user request. Do not perform the task. Call select_skills exactly once using only catalog names. Return an empty list when no Skill applies.\n\nSkill catalog:\n' +
-            JSON.stringify(selectorCatalog.map(({ name, description }) => ({ name, description }))),
+            renderSkillSelectorCatalog(selectorCatalog),
           input: text,
           tools: [
             {
@@ -402,7 +382,7 @@ export class NativeResponsesCompatibilityProxy {
                   skill_names: {
                     type: 'array',
                     maxItems: 3,
-                    items: { type: 'string', enum: selectorCatalog.map(({ name }) => name) }
+                    items: { type: 'string' }
                   }
                 },
                 required: ['skill_names'],
@@ -433,19 +413,7 @@ export class NativeResponsesCompatibilityProxy {
       const argumentsValue = JSON.parse(call.arguments) as unknown
       if (!isObject(argumentsValue) || !Array.isArray(argumentsValue.skill_names)) return []
 
-      const byName = new Map(
-        selectorCatalog.map((candidate) => [candidate.name, candidate] as const)
-      )
-      const selected: ResponsesBridgeSkillInput[] = []
-      const seen = new Set<string>()
-      for (const name of argumentsValue.skill_names) {
-        if (typeof name !== 'string' || seen.has(name)) continue
-        const candidate = byName.get(name)
-        if (!candidate) continue
-        seen.add(name)
-        selected.push({ name: candidate.name, path: candidate.path })
-        if (selected.length === 3) break
-      }
+      const selected = resolveSelectedSkills(argumentsValue.skill_names, selectorCatalog)
       log.info('native Responses Skill selection completed', {
         model: this.target.model,
         catalogCount: catalog.length,

@@ -769,7 +769,7 @@ export const CHEMBL_TOOLS: ToolDescriptor[] = [
     returns:
       '`{ count, total (distinct parents, or filtered count when a post-filter is set), truncated, indication_query: { term, match_field, only_approved }, total_indication_rows, drugs: [ { molecule_chembl_id, pref_name, molecule_type, max_phase, first_approval, oral, parenteral, therapeutic_flag, black_box_warning (0/1), topical (0/1), withdrawn_flag, molecule_properties, molecule_structures, molecule_synonyms, best_phase_for_ind, efo_terms: [str], indication_rows: [drugind_id], warning_summary: [ { warning_type, warning_class, warning_country, warning_year } ], ... } ] }`.',
     example:
-      'const result = await host.mcp("chembl", "drug_search", {"indication": "hypertension", "only_approved": True, "limit": 10})',
+      'const result = await host.mcp("chembl", "drug_search", {"indication": "hypertension", "only_approved": true, "limit": 10})',
     run: async (ctx, a) => {
       const limit = clampLimit(a.limit)
       // Post-filters need the full parent set joined; otherwise bound the join to the first page.
