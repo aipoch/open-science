@@ -146,6 +146,9 @@ const unwrapIpcErrorDetail = (message: string): string =>
     .replace(/^Error:\s*/i, '')
     .trim()
 
+const RESUME_INTERNAL_ERROR_MESSAGE =
+  'The agent could not restore this conversation. Try Resume again; if it still fails, switch back to the original agent or start a new conversation.'
+
 // Turns a createSession (conversation-start) failure into the message persisted on the session. The
 // error crosses IPC wrapped, so it is unwrapped first — this keeps the app-authored setup guidance
 // (settings/service.ts: model-incompat, no provider, Codex bridge, missing Claude executable) matching
@@ -192,6 +195,13 @@ const getResumeFailureMessage = (error: unknown): string => {
   }
 
   const detail = unwrapIpcErrorDetail(message)
+
+  // Electron preserves the custom RequestError name/message but drops its structured `data.details`
+  // while crossing IPC. Do not expose that opaque implementation label as if it were actionable;
+  // keep specific non-Internal errors visible below so unexpected failures remain diagnosable.
+  if (detail === 'RequestError: Internal error') {
+    return RESUME_INTERNAL_ERROR_MESSAGE
+  }
 
   return detail ? `Agent session resume failed: ${detail}` : 'Agent session resume failed'
 }

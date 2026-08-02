@@ -212,6 +212,28 @@ describe('workspace agent runtime event processing', () => {
 })
 
 describe('resume failure classification', () => {
+  it('replaces an opaque ACP Internal error with actionable recovery guidance', () => {
+    const message = getResumeFailureMessage(
+      new Error("Error invoking remote method 'acp:resume-session': RequestError: Internal error")
+    )
+
+    expect(message).toBe(
+      'The agent could not restore this conversation. Try Resume again; if it still fails, switch back to the original agent or start a new conversation.'
+    )
+  })
+
+  it('keeps a specific RequestError cause visible', () => {
+    const message = getResumeFailureMessage(
+      new Error(
+        "Error invoking remote method 'acp:resume-session': RequestError: Internal error while loading provider configuration"
+      )
+    )
+
+    expect(message).toBe(
+      'Agent session resume failed: RequestError: Internal error while loading provider configuration'
+    )
+  })
+
   it('rewrites a genuine model↔framework incompatibility into the actionable settings message', () => {
     // Verbatim error thrown by settings/service.ts when the active provider cannot drive the framework.
     const message = getResumeFailureMessage(
