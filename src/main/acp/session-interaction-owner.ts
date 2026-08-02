@@ -15,8 +15,7 @@ export interface AcpCompactionSessionInteractionRequest {
 }
 
 export type AcpSessionInteractionRequest =
-  | AcpPromptSessionInteractionRequest
-  | AcpCompactionSessionInteractionRequest
+  AcpPromptSessionInteractionRequest | AcpCompactionSessionInteractionRequest
 
 interface AcpSessionInteractionScopeBase {
   readonly sessionId: string
@@ -35,8 +34,7 @@ export interface AcpCompactionSessionInteractionScope extends AcpSessionInteract
 }
 
 export type AcpSessionInteractionScope =
-  | AcpPromptSessionInteractionScope
-  | AcpCompactionSessionInteractionScope
+  AcpPromptSessionInteractionScope | AcpCompactionSessionInteractionScope
 
 type ScopeFor<Request extends AcpSessionInteractionRequest> = Request extends {
   readonly kind: 'prompt'
@@ -56,6 +54,7 @@ interface ActiveSessionInteraction {
 
 export class AcpSessionInteractionOwner {
   private readonly activeInteractions = new Map<string, ActiveSessionInteraction>()
+  private readonly pendingPromptReservations = new Map<string, ActiveSessionInteraction>()
   private sequence = 0
 
   current(sessionId: string): AcpSessionInteractionScope | undefined {
@@ -77,21 +76,61 @@ export class AcpSessionInteractionOwner {
   // later cleanup remains guarded by scope identity and cannot clear a replacement interaction.
   supersede(scope: AcpSessionInteractionScope): void {
     const active = this.activeInteractions.get(scope.sessionId)
-    if (active?.scope !== scope) return
+    const pending = this.pendingPromptReservations.get(scope.sessionId)
+    const owned = active?.scope === scope ? active : pending?.scope === scope ? pending : undefined
+    if (!owned) return
 
-    active.abortController.abort()
+    owned.abortController.abort()
     this.release(scope)
   }
 
   supersedeCurrent(sessionId: string): void {
-    const scope = this.current(sessionId)
-    if (scope) this.supersede(scope)
+    const activeScope = this.activeInteractions.get(sessionId)?.scope
+    const pendingScope = this.pendingPromptReservations.get(sessionId)?.scope
+    if (activeScope) this.supersede(activeScope)
+    if (pendingScope) this.supersede(pendingScope)
   }
 
   supersedeAll(): void {
-    for (const { scope } of Array.from(this.activeInteractions.values())) {
+    const owned = [...this.activeInteractions.values(), ...this.pendingPromptReservations.values()]
+    for (const { scope } of owned) {
       this.supersede(scope)
     }
+  }
+
+  reservePrompt(request: AcpPromptSessionInteractionRequest): AcpPromptSessionInteractionScope {
+    if (this.activeInteractions.has(request.sessionId)) {
+      throw new Error('An ACP interaction is already running for this session')
+    }
+
+    const abortController = new AbortController()
+    const scope: AcpPromptSessionInteractionScope = Object.freeze({
+      sessionId: request.sessionId,
+      kind: 'prompt',
+      promptMessageId: request.promptMessageId,
+      turnToken: request.turnToken ?? randomUUID(),
+      sequence: ++this.sequence,
+      signal: abortController.signal
+    })
+    this.pendingPromptReservations.get(request.sessionId)?.abortController.abort()
+    this.pendingPromptReservations.set(request.sessionId, { scope, abortController })
+
+    return scope
+  }
+
+  activatePrompt(scope: AcpPromptSessionInteractionScope): AcpPromptSessionInteractionScope {
+    if (this.activeInteractions.has(scope.sessionId)) {
+      throw new Error('An ACP interaction is already running for this session')
+    }
+
+    const pending = this.pendingPromptReservations.get(scope.sessionId)
+    if (pending?.scope !== scope) {
+      throw new Error('ACP prompt reservation was superseded')
+    }
+
+    this.pendingPromptReservations.delete(scope.sessionId)
+    this.activeInteractions.set(scope.sessionId, pending)
+    return scope
   }
 
   claim<Request extends AcpSessionInteractionRequest>(request: Request): ScopeFor<Request> {
@@ -123,6 +162,11 @@ export class AcpSessionInteractionOwner {
   release(scope: AcpSessionInteractionScope): void {
     if (this.activeInteractions.get(scope.sessionId)?.scope === scope) {
       this.activeInteractions.delete(scope.sessionId)
+      return
+    }
+
+    if (this.pendingPromptReservations.get(scope.sessionId)?.scope === scope) {
+      this.pendingPromptReservations.delete(scope.sessionId)
     }
   }
 

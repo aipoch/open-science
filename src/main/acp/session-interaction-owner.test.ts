@@ -5,7 +5,10 @@ import {
   type AcpPromptSessionInteractionScope
 } from './session-interaction-owner'
 
-const createDeferred = <T>() => {
+const createDeferred = <T>(): {
+  promise: Promise<T>
+  resolve: (value: T | PromiseLike<T>) => void
+} => {
   let resolve!: (value: T | PromiseLike<T>) => void
   const promise = new Promise<T>((resolvePromise) => {
     resolve = resolvePromise
@@ -15,6 +18,78 @@ const createDeferred = <T>() => {
 }
 
 describe('AcpSessionInteractionOwner', () => {
+  it('keeps a synchronous prompt reservation private until activation', () => {
+    const owner = new AcpSessionInteractionOwner()
+    const active = owner.claim({ sessionId: 'session-1', kind: 'compaction' })
+
+    expect(() => owner.reservePrompt({ sessionId: 'session-1', kind: 'prompt' })).toThrow(
+      /already running/
+    )
+    owner.release(active)
+
+    const reservation = owner.reservePrompt({
+      sessionId: 'session-1',
+      kind: 'prompt',
+      promptMessageId: 'prompt-message-1'
+    })
+    expect(reservation.signal.aborted).toBe(false)
+    expect(owner.current('session-1')).toBeUndefined()
+    expect(owner.snapshot()).toEqual([])
+
+    expect(owner.activatePrompt(reservation)).toBe(reservation)
+    expect(owner.current('session-1')).toBe(reservation)
+    owner.release(reservation)
+  })
+
+  it('lets a newer reservation replace an older pending scope without stale interference', () => {
+    const owner = new AcpSessionInteractionOwner()
+    const first = owner.reservePrompt({ sessionId: 'session-1', kind: 'prompt' })
+    const replacement = owner.reservePrompt({ sessionId: 'session-1', kind: 'prompt' })
+
+    expect(first.signal.aborted).toBe(true)
+    expect(replacement.signal.aborted).toBe(false)
+    expect(() => owner.activatePrompt(first)).toThrow(/superseded/)
+    owner.release(first)
+
+    expect(owner.activatePrompt(replacement)).toBe(replacement)
+    owner.release(first)
+    expect(owner.current('session-1')).toBe(replacement)
+    owner.release(replacement)
+  })
+
+  it('releases an abandoned preflight reservation without leaking ownership', () => {
+    const owner = new AcpSessionInteractionOwner()
+    const abandoned = owner.reservePrompt({ sessionId: 'session-1', kind: 'prompt' })
+
+    owner.release(abandoned)
+    expect(() => owner.activatePrompt(abandoned)).toThrow(/superseded/)
+
+    const next = owner.reservePrompt({ sessionId: 'session-1', kind: 'prompt' })
+    expect(owner.activatePrompt(next)).toBe(next)
+    owner.release(next)
+  })
+
+  it('supersedes pending and active ownership for one session or all sessions', () => {
+    const owner = new AcpSessionInteractionOwner()
+    const pendingReset = owner.reservePrompt({ sessionId: 'session-1', kind: 'prompt' })
+    const activeReset = owner.claim({ sessionId: 'session-1', kind: 'compaction' })
+
+    owner.supersedeCurrent('session-1')
+    expect(pendingReset.signal.aborted).toBe(true)
+    expect(activeReset.signal.aborted).toBe(true)
+    expect(owner.current('session-1')).toBeUndefined()
+    expect(() => owner.activatePrompt(pendingReset)).toThrow(/superseded/)
+
+    const pendingAll = owner.reservePrompt({ sessionId: 'session-2', kind: 'prompt' })
+    const activeAll = owner.claim({ sessionId: 'session-3', kind: 'compaction' })
+    owner.supersedeAll()
+
+    expect(pendingAll.signal.aborted).toBe(true)
+    expect(activeAll.signal.aborted).toBe(true)
+    expect(owner.snapshot()).toEqual([])
+    expect(() => owner.activatePrompt(pendingAll)).toThrow(/superseded/)
+  })
+
   it('supports explicit claim and release while run uses the same lifecycle', async () => {
     const owner = new AcpSessionInteractionOwner()
     const first = owner.claim({ sessionId: 'session-1', kind: 'prompt' })
@@ -64,7 +139,7 @@ describe('AcpSessionInteractionOwner', () => {
     const owner = new AcpSessionInteractionOwner()
     const bothStarted = createDeferred<void>()
     let started = 0
-    const work = async (result: string) => {
+    const work = async (result: string): Promise<string> => {
       started += 1
       if (started === 2) {
         bothStarted.resolve()
@@ -226,9 +301,9 @@ describe('AcpSessionInteractionOwner', () => {
   ])('releases a session after a work %s', async (_name, work) => {
     const owner = new AcpSessionInteractionOwner()
 
-    await expect(
-      owner.run({ sessionId: 'session-1', kind: 'prompt' }, work)
-    ).rejects.toThrow('work failed')
+    await expect(owner.run({ sessionId: 'session-1', kind: 'prompt' }, work)).rejects.toThrow(
+      'work failed'
+    )
     await expect(
       owner.run({ sessionId: 'session-1', kind: 'prompt' }, async () => 'next-result')
     ).resolves.toBe('next-result')

@@ -2927,6 +2927,16 @@ describe('ACP runtime session management', () => {
     const first = await runtime.createSession({ cwd: '/workspace' })
     const second = await runtime.createSession({ cwd: '/workspace' })
 
+    // Claim compaction first to retain the public snapshot's historical grouping: prompt sessions
+    // precede compaction sessions regardless of the cross-kind claim order.
+    const compacting = runtime.compactSession({ sessionId: second.sessionId })
+    await vi.waitFor(() =>
+      expect(agent.prompts).toContainEqual({ sessionId: 'remote-session-2', text: '/compact' })
+    )
+    await expect(
+      runtime.sendPrompt({ sessionId: second.sessionId, text: 'blocked prompt' })
+    ).rejects.toThrow(/already running/)
+
     const prompting = runtime.sendPrompt({ sessionId: first.sessionId, text: 'first prompt' })
     await vi.waitFor(() =>
       expect(agent.prompts).toContainEqual({
@@ -2937,14 +2947,6 @@ describe('ACP runtime session management', () => {
     await expect(runtime.compactSession({ sessionId: first.sessionId })).rejects.toThrow(
       /already running/
     )
-
-    const compacting = runtime.compactSession({ sessionId: second.sessionId })
-    await vi.waitFor(() =>
-      expect(agent.prompts).toContainEqual({ sessionId: 'remote-session-2', text: '/compact' })
-    )
-    await expect(
-      runtime.sendPrompt({ sessionId: second.sessionId, text: 'blocked prompt' })
-    ).rejects.toThrow(/already running/)
     expect(runtime.getSnapshot().promptInFlightSessionIds).toEqual([
       first.sessionId,
       second.sessionId
@@ -3058,31 +3060,72 @@ describe('ACP runtime session management', () => {
   })
 
   it('keeps overflow-recovery compaction locked while the failed prompt finishes unwinding', async () => {
+    const root = await createTemporaryRoot()
+    const repository = new ArtifactRepository(root)
+    const releaseFailedCleanup = createDeferred()
+    vi.spyOn(repository, 'listPendingRunFiles').mockImplementation(async () => {
+      await releaseFailedCleanup.promise
+      return []
+    })
     const process = new FakeAgentProcess()
     const compactTurn = createDeferred<PromptResponse>()
     const retryTurn = createDeferred<PromptResponse>()
+    const overflowObserved = createDeferred()
+    let cancelTimer:
+      | {
+          active: boolean
+          fire: () => void
+        }
+      | undefined
     const agent = startFakeAgent(process, ['remote-session-1'], {
-      onPrompt: ({ text }) =>
-        text === '/compact'
-          ? compactTurn.promise
-          : text === 'retry after overflow'
-            ? retryTurn.promise
-            : undefined
+      onPrompt: ({ text }) => {
+        if (text === '/compact') return compactTurn.promise
+        if (text === 'retry after overflow') return retryTurn.promise
+        throw acp.RequestError.internalError({ errorKind: 'request_too_large' }, 'Internal error')
+      }
     })
     const runtime = new AcpRuntime({
       appVersion: '0.1.0',
       defaultCwd: '/workspace',
       spawnAgent: () => asAgentProcess(process),
       framework: claudeCodeFramework,
-      cancelTimeoutMs: 5
+      cancelTimeoutMs: 5,
+      setTimer: (callback) => {
+        const timer = {
+          active: true,
+          fire: (): void => {
+            if (timer.active) callback()
+          }
+        }
+        cancelTimer = timer
+        return timer as unknown as ReturnType<typeof setTimeout>
+      },
+      clearTimer: (handle) => {
+        const timer = handle as unknown as { active: boolean }
+        timer.active = false
+      },
+      artifacts: {
+        configRoot: root,
+        dataRoot: root,
+        projectName: 'default-project',
+        mcpEntryPath: '/app/out/main/index.js',
+        repository
+      },
+      callbacks: {
+        onEvent: (event) => {
+          if (event.kind === 'error' && event.recoverable === 'context-overflow') {
+            overflowObserved.resolve()
+          }
+        }
+      }
     })
     const session = await runtime.createSession({ cwd: '/workspace' })
-    const internals = runtime as unknown as {
-      promptInFlightSessionIds: Set<string>
-    }
-    // Mirrors the short window after a failed prompt emitted its overflow event but before its
-    // artifact/finally cleanup released the normal turn lock.
-    internals.promptInFlightSessionIds.add(session.sessionId)
+    const failedPrompt = runtime.sendPrompt({
+      sessionId: session.sessionId,
+      text: 'oversized prompt'
+    })
+    void failedPrompt.catch(() => undefined)
+    await overflowObserved.promise
 
     await expect(runtime.compactSession({ sessionId: session.sessionId })).rejects.toThrow(
       /already running/
@@ -3095,7 +3138,6 @@ describe('ACP runtime session management', () => {
 
     // Ownership moved away from the failed prompt, but native compaction still keeps the session
     // unavailable to another user turn until the framework control turn stops.
-    expect(internals.promptInFlightSessionIds.has(session.sessionId)).toBe(false)
     expect(runtime.getSnapshot().promptInFlightSessionIds).toEqual([session.sessionId])
     await runtime.cancelPrompt({ sessionId: session.sessionId })
     expect(agent.cancelledSessions).toEqual([session.sessionId])
@@ -3103,10 +3145,19 @@ describe('ACP runtime session management', () => {
     compactTurn.resolve({ stopReason: 'end_turn' })
     await compacting
     expect(runtime.getSnapshot().promptInFlightSessionIds).toEqual([])
+    expect(cancelTimer?.active).toBe(false)
     const retry = runtime.sendPrompt({ sessionId: session.sessionId, text: 'retry after overflow' })
     await vi.waitFor(() => expect(agent.prompts.at(-1)?.text).toBe('retry after overflow'))
-    await new Promise((resolve) => setTimeout(resolve, 20))
+
+    cancelTimer?.fire()
     expect(runtime.getSnapshot().status).toBe('connected')
+
+    // The failed prompt can finish cleanup only after the retry owns the same stable App Session.
+    // Its stale finally must not clear the replacement interaction.
+    releaseFailedCleanup.resolve()
+    await expect(failedPrompt).rejects.toThrow()
+    expect(runtime.getSnapshot().promptInFlightSessionIds).toEqual([session.sessionId])
+
     retryTurn.resolve({ stopReason: 'end_turn' })
     await expect(retry).resolves.toMatchObject({ stopReason: 'end_turn' })
   })
@@ -3437,10 +3488,12 @@ describe('ACP runtime session management', () => {
         return gateB.promise
       }
     })
+    const events: AcpRuntimeEvent[] = []
     const runtime = new AcpRuntime({
       appVersion: '0.1.0',
       defaultCwd: '/workspace',
       spawnAgent: () => asAgentProcess(process),
+      callbacks: { onEvent: (event) => events.push(event) },
       artifacts: {
         configRoot: root,
         dataRoot: root,
@@ -3453,7 +3506,11 @@ describe('ACP runtime session management', () => {
     const session = await runtime.createSession({ cwd: '/workspace' })
     // The lock is claimed synchronously at turn start, so no polling is needed to observe it.
     const failedTurn = runtime
-      .sendPrompt({ sessionId: session.sessionId, text: 'oversized turn' })
+      .sendPrompt({
+        sessionId: session.sessionId,
+        text: 'oversized turn',
+        provenanceContext: { promptMessageId: 'old-prompt-message' }
+      })
       .catch(() => undefined)
     expect(runtime.getSnapshot().promptInFlightSessionIds).toContain(session.sessionId)
 
@@ -3465,7 +3522,11 @@ describe('ACP runtime session management', () => {
     // The replay turn re-claims the lock for the same app session id while the abandoned turn's finally is
     // still parked in listPendingRunFiles.
     const replayTurn = runtime
-      .sendPrompt({ sessionId: session.sessionId, text: 'replayed turn' })
+      .sendPrompt({
+        sessionId: session.sessionId,
+        text: 'replayed turn',
+        provenanceContext: { promptMessageId: 'replacement-prompt-message' }
+      })
       .catch(() => undefined)
     expect(runtime.getSnapshot().promptInFlightSessionIds).toContain(session.sessionId)
 
@@ -3480,6 +3541,14 @@ describe('ACP runtime session management', () => {
     gateA.resolve()
     gateB.resolve()
     await replayTurn
+    expect(
+      events
+        .filter((event) => event.kind === 'error' || event.kind === 'stop')
+        .map((event) => ({
+          kind: event.kind,
+          promptMessageId: event.promptMessageId
+        }))
+    ).toEqual([{ kind: 'stop', promptMessageId: 'replacement-prompt-message' }])
   })
 
   it('sends PDFs as extracted text, never as an inlined base64 file', async () => {
@@ -16764,6 +16833,53 @@ describe('Specialist Skill scoping', () => {
       })
     ).rejects.toThrow('not available to the active specialist')
     expect(agent.prompts).toHaveLength(0)
+  })
+
+  it('invalidates a Specialist preflight when context reset replaces the provider session', async () => {
+    const process = new FakeAgentProcess()
+    const agent = startFakeAgent(process, ['specialist-session-1', 'specialist-session-2'])
+    const promptPreflightEntered = createDeferred()
+    const releasePromptPreflight = createDeferred()
+    let resolutionCount = 0
+    const runtime = new AcpRuntime({
+      appVersion: '0.1.0',
+      defaultCwd: '/workspace',
+      spawnAgent: () => asAgentProcess(process),
+      framework: claudeCodeFramework,
+      resolveSpecialistIdentity: async () => ({ append: 'Specialist identity', prefix: '' }),
+      resolveSpecialistSkills: async () => {
+        resolutionCount += 1
+        if (resolutionCount === 2) {
+          promptPreflightEntered.resolve()
+          await releasePromptPreflight.promise
+        }
+        return {
+          kind: 'specialist' as const,
+          skillIds: ['allowed'],
+          frameworkNames: ['Allowed Skill'],
+          missingSkillIds: []
+        }
+      }
+    })
+
+    const session = await runtime.createSession({ cwd: '/workspace', specialistId: 'sp-1' })
+    const stalePrompt = runtime.sendPrompt({ sessionId: session.sessionId, text: 'stale prompt' })
+    void stalePrompt.catch(() => undefined)
+    await promptPreflightEntered.promise
+
+    await runtime.resetSessionContext({ sessionId: session.sessionId, cwd: '/workspace' })
+    releasePromptPreflight.resolve()
+
+    await expect(stalePrompt).rejects.toThrow(/superseded/)
+    expect(agent.prompts).toEqual([])
+
+    await runtime.sendPrompt({ sessionId: session.sessionId, text: 'replacement prompt' })
+    expect(agent.prompts).toEqual([
+      {
+        sessionId: 'specialist-session-2',
+        text: expect.stringContaining('replacement prompt')
+      }
+    ])
   })
 
   it('allows a forced mcp-* connector Skill when the active specialist grants that connector', async () => {
