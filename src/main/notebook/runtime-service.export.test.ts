@@ -65,11 +65,13 @@ describe('NotebookRuntimeService exportIpynb', () => {
     expect(repository.findExisting).toHaveBeenCalledWith('default-project', '12345678-abcd')
     expect(saveIpynb).toHaveBeenCalledOnce()
     expect(saveIpynb.mock.calls[0][0]).toBe('session-12345678-python.ipynb')
-    const exported = JSON.parse(saveIpynb.mock.calls[0][1]) as {
+    const serialized = saveIpynb.mock.calls[0][1] as string
+    const exported = JSON.parse(serialized) as {
       nbformat: number
       metadata: { open_science: { appVersion: string } }
       cells: Array<{ source: string[] }>
     }
+    expect(serialized).toBe(`${JSON.stringify(exported, null, 2)}\n`)
     expect(exported).toMatchObject({
       nbformat: 4,
       metadata: { open_science: { appVersion: '1.2.3' } }
@@ -95,6 +97,83 @@ describe('NotebookRuntimeService exportIpynb', () => {
       service.exportIpynb({ sessionId: 'missing', workspaceCwd: '/workspace', kernel: 'python' })
     ).rejects.toThrow('Notebook session not found: missing')
     expect(saveIpynb).not.toHaveBeenCalled()
+  })
+
+  it('keeps the existing no-data-kernel error and does not open the save dialog', async () => {
+    const repository = {
+      findExisting: vi.fn().mockResolvedValue({
+        ...document,
+        runs: [{ ...document.runs[0], kernelKind: 'repl' }]
+      })
+    } as unknown as NotebookRunRepository
+    const saveIpynb = vi.fn()
+    const service = new NotebookRuntimeService({
+      configRoot: '/config',
+      dataRoot: '/storage',
+      projectName: 'default-project',
+      repository,
+      saveIpynb
+    })
+
+    await expect(
+      service.exportIpynb({
+        sessionId: '12345678-abcd',
+        workspaceCwd: '/workspace',
+        kernel: 'repl'
+      })
+    ).rejects.toThrow('No data-kernel runs in this session. Run a Python or R cell first.')
+    expect(saveIpynb).not.toHaveBeenCalled()
+  })
+
+  it('keeps multi-kernel filenames, byte serialization, and control-run attribution', async () => {
+    const run = document.runs[0]!
+    const mixedDocument: NotebookRunDocument = {
+      ...document,
+      runs: [
+        { ...run, runId: 'bash-before', cellId: 'bash-before', kernelKind: 'bash', script: 'pwd' },
+        { ...run, runId: 'python', cellId: 'python', kernelKind: 'python', script: 'print(1)' },
+        { ...run, runId: 'repl', cellId: 'repl', kernelKind: 'repl', script: 'await task()' },
+        { ...run, runId: 'r', cellId: 'r', kernelKind: 'r', script: 'print(2)' },
+        { ...run, runId: 'bash-after', cellId: 'bash-after', kernelKind: 'bash', script: 'ls' }
+      ]
+    }
+    const repository = {
+      findExisting: vi.fn().mockResolvedValue(mixedDocument)
+    } as unknown as NotebookRunRepository
+    const saveIpynbAll = vi.fn().mockResolvedValue({ saved: true, filePaths: [] })
+    const service = new NotebookRuntimeService({
+      configRoot: '/config',
+      dataRoot: '/storage',
+      projectName: 'default-project',
+      repository,
+      saveIpynbAll
+    })
+
+    await service.exportIpynbAll({
+      sessionId: '12345678-abcd',
+      workspaceCwd: '/workspace'
+    })
+
+    const files = saveIpynbAll.mock.calls[0][0] as Array<{
+      kernel: 'python' | 'r'
+      name: string
+      data: string
+    }>
+    expect(files.map(({ kernel, name }) => ({ kernel, name }))).toEqual([
+      { kernel: 'python', name: 'session-12345678-python.ipynb' },
+      { kernel: 'r', name: 'session-12345678-r.ipynb' }
+    ])
+
+    const python = JSON.parse(files[0]!.data) as { cells: Array<{ source: string[] }> }
+    const r = JSON.parse(files[1]!.data) as { cells: Array<{ source: string[] }> }
+    expect(files[0]!.data).toBe(`${JSON.stringify(python, null, 2)}\n`)
+    expect(files[1]!.data).toBe(`${JSON.stringify(r, null, 2)}\n`)
+    expect(python.cells.map((cell) => cell.source.join(''))).toEqual([
+      '%%bash\npwd',
+      'print(1)',
+      '%%javascript\nawait task()'
+    ])
+    expect(r.cells.map((cell) => cell.source.join(''))).toEqual(['print(2)', '%%bash\nls'])
   })
 
   describe('artifact inlining', () => {
@@ -162,7 +241,11 @@ describe('NotebookRuntimeService exportIpynb', () => {
         ...(options.resolveArtifactPath ? { resolveArtifactPath: options.resolveArtifactPath } : {})
       })
 
-      await service.exportIpynb({ sessionId: '12345678-abcd', workspaceCwd: '/workspace', kernel: 'python' })
+      await service.exportIpynb({
+        sessionId: '12345678-abcd',
+        workspaceCwd: '/workspace',
+        kernel: 'python'
+      })
 
       const json = saveIpynb.mock.calls[0][1] as string
       const notebook = JSON.parse(json) as {
@@ -287,6 +370,90 @@ describe('NotebookRuntimeService exportIpynb', () => {
         output_type: 'stream',
         name: 'stderr',
         text: ['[Open Science] Could not inline artifact: plot.png\n']
+      })
+    })
+
+    it('does not resolve an artifact whose persisted identity does not match the document', async () => {
+      const root = await createSessionRoot()
+      const resolveArtifactPath = vi.fn(async (request: { path: string }) => request.path)
+
+      const result = await exportWithArtifact(
+        root,
+        makeArtifact({ path: '/managed/plot.png', projectName: 'other-project' }),
+        { resolveArtifactPath }
+      )
+
+      expect(resolveArtifactPath).not.toHaveBeenCalled()
+      expect(result.outputs.some((output) => output.output_type === 'display_data')).toBe(false)
+    })
+
+    it('uses artifactSessionId as the fail-closed artifact identity when present', async () => {
+      const root = await createSessionRoot()
+      const managedRoot = await mkdtemp(join(tmpdir(), 'open-science-ipynb-identity-'))
+      try {
+        const managedPath = join(managedRoot, 'managed-artifact.png')
+        await writeFile(managedPath, Buffer.from([0x89, 0x50, 0x4e, 0x47]))
+        const resolveArtifactPath = vi.fn(async () => managedPath)
+        const documentWithArtifactSession: NotebookRunDocument = {
+          ...document,
+          artifactSessionId: 'artifact-session',
+          notebookSessionRoot: root,
+          runs: [
+            {
+              ...document.runs[0],
+              artifacts: [
+                makeArtifact({
+                  path: managedPath,
+                  sessionId: 'artifact-session',
+                  size: 4
+                })
+              ]
+            }
+          ]
+        }
+        const repository = {
+          findExisting: vi.fn().mockResolvedValue(documentWithArtifactSession)
+        } as unknown as NotebookRunRepository
+        const saveIpynb = vi.fn().mockResolvedValue({ saved: true, filePath: '/out/session.ipynb' })
+        const service = new NotebookRuntimeService({
+          configRoot: '/config',
+          dataRoot: '/storage',
+          projectName: 'default-project',
+          repository,
+          saveIpynb,
+          resolveArtifactPath
+        })
+
+        await service.exportIpynb({
+          sessionId: '12345678-abcd',
+          workspaceCwd: '/workspace',
+          kernel: 'python'
+        })
+
+        expect(resolveArtifactPath).toHaveBeenCalledWith({
+          path: managedPath,
+          projectName: 'default-project',
+          sessionId: 'artifact-session'
+        })
+      } finally {
+        await rm(managedRoot, { recursive: true, force: true })
+      }
+    })
+
+    it('degrades malformed JSON artifacts to the existing stderr marker', async () => {
+      const root = await createSessionRoot()
+      const jsonPath = join(root, 'broken.json')
+      await writeFile(jsonPath, '{broken')
+
+      const result = await exportWithArtifact(
+        root,
+        makeArtifact({ name: 'broken.json', path: jsonPath, mimeType: 'application/json' })
+      )
+
+      expect(result.outputs).toContainEqual({
+        output_type: 'stream',
+        name: 'stderr',
+        text: ['[Open Science] Could not inline artifact: broken.json\n']
       })
     })
   })
