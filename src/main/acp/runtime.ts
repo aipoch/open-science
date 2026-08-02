@@ -121,7 +121,8 @@ import {
 } from './session-capability-owner'
 import { ArtifactTurnOwner, type ArtifactTurnHandle } from './artifact-turn-owner'
 import { AcpPromptContentOwner } from './prompt-content-owner'
-import { AcpSessionAggregate, type AcpSessionAggregateAttachInput } from './session-aggregate'
+import type { AcpSessionAggregate, AcpSessionAggregateAttachInput } from './session-aggregate'
+import { AcpSessionRegistry } from './session-registry'
 
 export type AcpRuntimeCallbacks = {
   onStateChanged?: (state: AcpStateSnapshot) => void
@@ -522,20 +523,17 @@ class AcpRuntime {
   private connectInFlight: Promise<AcpStateSnapshot> | undefined
   private connectionGeneration = 0
   private sessionStartupGeneration = 0
-  private currentSessionId: string | undefined
   private supportsSessionClose = false
   private supportsSessionDelete = false
   private supportsSessionResume = false
-  // A7.1 keeps collection lifecycle in the runtime while one Aggregate owns the correlated mutable
-  // state for each stable app Session ID. A7.2 will move this collection and its reservations behind
-  // the Session Registry without changing the Aggregate interface.
-  private readonly sessionAggregates = new Map<string, AcpSessionAggregate>()
+  // Stable app identities, provider aliases, publication order, and current selection share one owner.
+  private readonly sessionRegistry = new AcpSessionRegistry()
   // App-owned MCP construction, routing aliases, and bearer lease ownership are kept behind one
   // explicit role policy. Connection/process lifetime remains with this runtime.
   private readonly sessionCapabilities: AcpSessionCapabilityOwner
   private readonly cancelledPromptTurnsBySession = new Map<string, number>()
   // Ephemeral Reviewer identity, isolation, permission, and resource state lives behind one owner.
-  // Primary session registries remain here and collaborate through narrow collision/blocker ports.
+  // Primary identity arbitration remains here and collaborates through narrow collision ports.
   private readonly reviewerSessions: ReviewerSessionOwner
   // A primary startup can know both its stable app id and its provider protocol id before it is ready
   // for publication. Tokens make multi-id reservations owner-aware so one concurrent startup can never
@@ -551,9 +549,6 @@ class AcpRuntime {
   // is waiting for. Once it reaches the replacement connection, renewal adds its token here so any
   // later reconnect waits for publication or rollback.
   private readonly pendingSessionStartupBlockers = new Set<symbol>()
-  // A replaced agent's own session id -> the app-facing id it was adopted under (after a provider
-  // switch), so agent-origin events/permissions relabel into the conversation the renderer tracks.
-  private readonly agentToAppSessionId = new Map<string, string>()
   private readonly promptInFlightSessionIds = new Set<string>()
   // Framework control turns use a separate lock so an overflowed prompt's late `finally` can release
   // only its own prompt lock without making an in-progress native compaction look idle.
@@ -712,7 +707,7 @@ class AcpRuntime {
     this.permissionContext = new AcpPermissionContext({
       emitPermissionRequest: (request) => {
         // Relabel to the app-facing id when this session was adopted onto a replaced agent.
-        const sessionId = this.agentToAppSessionId.get(request.sessionId) ?? request.sessionId
+        const sessionId = this.sessionRegistry.resolveAppSessionId(request.sessionId)
         const routed = sessionId === request.sessionId ? request : { ...request, sessionId }
 
         this.pushEvent({
@@ -742,7 +737,7 @@ class AcpRuntime {
       currentStartupGeneration: () => this.sessionStartupGeneration,
       isPrimarySessionIdClaimed: (sessionId) =>
         this.activeSessionFor(sessionId) !== undefined ||
-        this.agentToAppSessionId.has(sessionId) ||
+        this.sessionRegistry.hasProviderAlias(sessionId) ||
         this.pendingPrimarySessionIds.has(sessionId),
       onActiveSessionReleased: () => this.maybeApplyPendingProviderReconnect(),
       registerBridgeSession: (sessionId) =>
@@ -754,37 +749,24 @@ class AcpRuntime {
   }
 
   private getOrCreateSessionAggregate(appSessionId: string): AcpSessionAggregate {
-    const existing = this.sessionAggregates.get(appSessionId)
-    if (existing) return existing
-    const aggregate = new AcpSessionAggregate(appSessionId)
-    this.sessionAggregates.set(appSessionId, aggregate)
-    return aggregate
+    return this.sessionRegistry.ensureAffinity(appSessionId).aggregate
   }
 
   private attachSessionAggregate(
     appSessionId: string,
     input: AcpSessionAggregateAttachInput
   ): void {
-    const aggregate = this.getOrCreateSessionAggregate(appSessionId)
-    const wasAttached = aggregate.activeSession() !== undefined
-    aggregate.attach(input)
-    if (wasAttached) return
-
-    // Detached Aggregate entries retain cross-provider affinity, but active session ordering still
-    // follows publication order just as Map#set did before extraction.
-    this.sessionAggregates.delete(appSessionId)
-    this.sessionAggregates.set(appSessionId, aggregate)
+    this.sessionRegistry.publish(appSessionId, input)
   }
 
   private activeSessionFor(appSessionId: string): ActiveSession | undefined {
-    return this.sessionAggregates.get(appSessionId)?.activeSession()
+    return this.sessionRegistry.lookup(appSessionId)?.attachment?.session
   }
 
   private activeSessionEntries(): Array<readonly [string, ActiveSession]> {
     const entries: Array<readonly [string, ActiveSession]> = []
-    for (const [appSessionId, aggregate] of this.sessionAggregates) {
-      const session = aggregate.activeSession()
-      if (session) entries.push([appSessionId, session])
+    for (const { appSessionId, attachment } of this.sessionRegistry.entries(true)) {
+      if (attachment) entries.push([appSessionId, attachment.session])
     }
     return entries
   }
@@ -798,7 +780,7 @@ class AcpRuntime {
   }
 
   private clearAppliedSessionModels(): void {
-    for (const aggregate of this.sessionAggregates.values()) aggregate.clearAppliedModel()
+    this.sessionRegistry.clearAppliedModels()
   }
 
   // Boundary-safe context for session-creation and process-spawn diagnostics. Keep this list explicit:
@@ -816,14 +798,14 @@ class AcpRuntime {
     const sessionIds = this.activeSessionIds()
     const promptInFlightSessionIds = this.getInFlightSessionIds()
     const permissionProfiles: Record<string, SessionPermissionProfileState> = {}
-    for (const [sessionId, aggregate] of this.sessionAggregates) {
+    for (const { appSessionId: sessionId, aggregate } of this.sessionRegistry.entries()) {
       const profile = aggregate.snapshot().permissionProfile
       // getSnapshot() is an immutable projection even though the legacy shared shape is mutable.
       if (profile) permissionProfiles[sessionId] = profile as SessionPermissionProfileState
     }
 
     return this.snapshotOwner.snapshot({
-      sessionId: this.currentSessionId,
+      sessionId: this.sessionRegistry.currentSessionId,
       sessionIds,
       pendingPermissions: this.permissionContext.getPendingRequests(),
       permissionProfiles,
@@ -849,7 +831,7 @@ class AcpRuntime {
   hasLiveSession(projectId: string, sessionId: string): boolean {
     return (
       this.activeSessionFor(sessionId) !== undefined &&
-      this.sessionAggregates.get(sessionId)?.snapshot().projectName === projectId
+      this.sessionRegistry.lookup(sessionId)?.aggregate.snapshot().projectName === projectId
     )
   }
 
@@ -857,7 +839,7 @@ class AcpRuntime {
   // framework recorded here is the one that provisioned this logical session, including after a
   // coordinator generation rotation.
   isSessionUsingFramework(sessionId: string, frameworkId: AgentFrameworkId): boolean {
-    return this.sessionAggregates.get(sessionId)?.snapshot().frameworkId === frameworkId
+    return this.sessionRegistry.lookup(sessionId)?.aggregate.snapshot().frameworkId === frameworkId
   }
 
   prepareClaudeCodeHandoffReplay(input: ClaudeCodeReplayInput): void {
@@ -1153,7 +1135,7 @@ class AcpRuntime {
     const activeEntries = this.activeSessionEntries()
     for (const [appSessionId, session] of activeEntries) {
       const configOptions =
-        (this.sessionAggregates.get(appSessionId)?.snapshot().configOptions as
+        (this.sessionRegistry.lookup(appSessionId)?.aggregate.snapshot().configOptions as
           readonly SessionConfigOption[] | undefined) ??
         (session as { newSessionResponse?: { configOptions?: SessionConfigOption[] | null } })
           .newSessionResponse?.configOptions
@@ -1648,7 +1630,7 @@ class AcpRuntime {
           sessionId: session.sessionId
         })
       }
-      this.currentSessionId = session.sessionId
+      this.sessionRegistry.select(session.sessionId)
       this.snapshotOwner.updateCwd(sessionCwd)
       try {
         this.pushEvent({
@@ -1743,11 +1725,7 @@ class AcpRuntime {
       configOptions
     })
 
-    if (session.sessionId !== appSessionId) {
-      this.agentToAppSessionId.set(session.sessionId, appSessionId)
-    }
-
-    this.currentSessionId = appSessionId
+    this.sessionRegistry.select(appSessionId)
     this.snapshotOwner.updateCwd(cwd)
   }
 
@@ -1779,7 +1757,7 @@ class AcpRuntime {
             DEFAULT_PERMISSION_PROFILE
         )
       )
-      this.currentSessionId = request.sessionId
+      this.sessionRegistry.select(request.sessionId)
       this.snapshotOwner.updateCwd(sessionCwd)
       aggregate.updateLocation(sessionCwd, projectName)
       this.emitState()
@@ -1862,7 +1840,8 @@ class AcpRuntime {
 
     // Tear down the currently attached agent session (if any) before adopting a replacement, dropping
     // its reverse routing so late events from the old agent session can no longer target this app id.
-    const attached = this.activeSessionFor(request.sessionId)
+    const attachedEntry = this.sessionRegistry.lookup(request.sessionId)
+    const attached = attachedEntry?.attachment
 
     // A context reset replaces only the provider-side history; the app conversation continues under
     // the same id, so retain its visible/revocable grants while cancelling requests owned by the old
@@ -1870,9 +1849,8 @@ class AcpRuntime {
     this.cancelPermissionFlowForSession(request.sessionId)
 
     if (attached) {
-      attached.dispose()
-      this.agentToAppSessionId.delete(attached.sessionId)
-      this.sessionAggregates.get(request.sessionId)?.detachProvider()
+      attached.session.dispose()
+      this.sessionRegistry.detach(attached, 'provider')
     }
 
     // The fresh agent session holds no history, so the accumulated media is gone; start its budget clean.
@@ -1881,7 +1859,7 @@ class AcpRuntime {
     // previous context size into the fresh conversation before its first usage_update arrives.
     this.contextUsageTracker.deleteSession(request.sessionId)
     this.contextUsageUpdatedPromptTurnsBySession.delete(request.sessionId)
-    this.sessionAggregates.get(request.sessionId)?.clearAppliedModel()
+    this.sessionRegistry.lookup(request.sessionId)?.aggregate.clearAppliedModel()
 
     // Release the failed turn's in-flight lock now. Its own `finally` clears it too, but that runs only
     // after async artifact cleanup, so the recovery resend that follows this reset would otherwise race
@@ -1914,7 +1892,7 @@ class AcpRuntime {
   // The completion-gate adapter uses this public runtime fact to claim only the framework it owns.
   // A session keeps its original framework while a different active backend is prepared elsewhere.
   getSessionFramework(sessionId: string): AgentFrameworkId | undefined {
-    return this.sessionAggregates.get(sessionId)?.snapshot().frameworkId
+    return this.sessionRegistry.lookup(sessionId)?.aggregate.snapshot().frameworkId
   }
 
   private async switchSpecialistOperation(
@@ -2190,7 +2168,7 @@ class AcpRuntime {
     // framework keeps its own session store, so the request is guaranteed to fail and only makes the
     // agent log a scary internal error. Skip straight to adopting a fresh session (context still
     // resets, so the caller replays the transcript) when we know it last ran under another framework.
-    const priorAffinity = this.sessionAggregates.get(request.sessionId)?.snapshot()
+    const priorAffinity = this.sessionRegistry.lookup(request.sessionId)?.aggregate.snapshot()
     const priorFramework = priorAffinity?.frameworkId ?? request.previousFrameworkId
     const priorBackend = priorAffinity?.backendId ?? request.previousBackendId
 
@@ -2395,7 +2373,7 @@ class AcpRuntime {
       })
       notebookCapabilityProvisional = false
       releaseProvisionalNotebookConnection = undefined
-      this.currentSessionId = request.sessionId
+      this.sessionRegistry.select(request.sessionId)
       this.snapshotOwner.updateCwd(sessionCwd)
       try {
         this.pushEvent({
@@ -2502,7 +2480,7 @@ class AcpRuntime {
       // would silently drop the session's specialist identity.
       const stagedSpecialistId =
         request.specialistId ??
-        this.sessionAggregates.get(request.sessionId)?.snapshot().specialistId
+        this.sessionRegistry.lookup(request.sessionId)?.aggregate.snapshot().specialistId
       const specialistAppend = await this.resolveCurrentSpecialistIdentityAppend(
         request.sessionId,
         stagedSpecialistId
@@ -2975,9 +2953,10 @@ class AcpRuntime {
       runCleanup('primary-session', () => session.dispose())
     }
 
-    for (const aggregate of this.sessionAggregates.values()) {
-      aggregate.detachConnection()
-      aggregate.setPermissionProfile(undefined)
+    for (const entry of this.sessionRegistry.entries()) {
+      if (entry.attachment) this.sessionRegistry.detach(entry.attachment, 'connection')
+      else entry.aggregate.detachConnection()
+      entry.aggregate.setPermissionProfile(undefined)
     }
     this.promptContentOwner.clear()
     this.currentPromptTurnBySession.clear()
@@ -2987,8 +2966,7 @@ class AcpRuntime {
     this.cancelledPromptTurnsBySession.clear()
     this.skillImportTurnTokens.clear()
     runCleanup('MCP HTTP routes', () => this.sessionCapabilities.clearHttpRoutes())
-    this.agentToAppSessionId.clear()
-    this.currentSessionId = undefined
+    this.sessionRegistry.select(undefined)
     this.supportsSessionClose = false
     this.supportsSessionDelete = false
     this.supportsSessionResume = false
@@ -3226,7 +3204,7 @@ class AcpRuntime {
     // before it has registered ownership. Specialist sessions still await their authoritative scope
     // resolution before dispatch, preserving the fail-closed validation path.
     const currentSpecialistSkills =
-      this.sessionAggregates.get(request.sessionId)?.snapshot().specialistId &&
+      this.sessionRegistry.lookup(request.sessionId)?.aggregate.snapshot().specialistId &&
       this.options.resolveSpecialistSkills
         ? await this.resolveCurrentSpecialistSkills(request.sessionId)
         : undefined
@@ -3267,7 +3245,9 @@ class AcpRuntime {
 
         if (toForce.length > 0) {
           // Capture routing before disconnect clears it, so resume lands on the same conversation.
-          const aggregateSnapshot = this.sessionAggregates.get(request.sessionId)?.snapshot()
+          const aggregateSnapshot = this.sessionRegistry
+            .lookup(request.sessionId)
+            ?.aggregate.snapshot()
           const sessionCwd = aggregateSnapshot?.cwd ?? this.snapshotOwner.cwd
           const projectName = this.resolveSessionProjectName(request.sessionId)
           const permissionProfile =
@@ -3307,7 +3287,7 @@ class AcpRuntime {
       throw new Error('An ACP prompt is already running for this session')
     }
 
-    this.currentSessionId = request.sessionId
+    this.sessionRegistry.select(request.sessionId)
     this.handoffPromptRequests.set(request.sessionId, request)
     if (!request.suppressUserMessage) this.rememberHandoffUserTask(request.sessionId, request)
     // Claim ownership of this session's shared turn state so a superseded turn's later finally can tell it
@@ -3410,9 +3390,9 @@ class AcpRuntime {
       })
       // For Codex/OpenCode, prepend the per-session specialist identity prefix (set at createSession).
       // Claude carries its identity in session-level _meta; no per-turn prefix needed there.
-      const sessionSpecialistPrefix = this.sessionAggregates
-        .get(request.sessionId)
-        ?.snapshot().specialistPrefix
+      const sessionSpecialistPrefix = this.sessionRegistry
+        .lookup(request.sessionId)
+        ?.aggregate.snapshot().specialistPrefix
       const promptPrefix =
         [sessionSpecialistPrefix, frameworkPromptPrefix]
           .filter((segment): segment is string => Boolean(segment))
@@ -3514,7 +3494,9 @@ class AcpRuntime {
         skillActivitiesStarted = true
       }
 
-      const promptSessionSnapshot = this.sessionAggregates.get(request.sessionId)?.snapshot()
+      const promptSessionSnapshot = this.sessionRegistry
+        .lookup(request.sessionId)
+        ?.aggregate.snapshot()
       const promptFramework = promptSessionSnapshot?.frameworkId ?? this.framework.id
       const opencodeUsageBefore =
         promptFramework === 'opencode' && this.opencodeUsageApi
@@ -3586,7 +3568,7 @@ class AcpRuntime {
                   await fetchOpenCodeUsageSnapshot(
                     this.opencodeUsageApi,
                     activeSession.sessionId,
-                    this.sessionAggregates.get(request.sessionId)?.snapshot().cwd ??
+                    this.sessionRegistry.lookup(request.sessionId)?.aggregate.snapshot().cwd ??
                       this.snapshotOwner.cwd,
                     this.options.opencodeUsageFetch
                   )
@@ -3861,8 +3843,8 @@ class AcpRuntime {
   private async deleteSessionOperation(
     request: AcpDeleteSessionRequest
   ): Promise<AcpStateSnapshot> {
-    const aggregate = this.sessionAggregates.get(request.sessionId)
-    const session = aggregate?.activeSession()
+    const target = this.sessionRegistry.lookup(request.sessionId)
+    const session = target?.attachment?.session
 
     this.cancelPermissionFlowForSession(request.sessionId)
 
@@ -3884,10 +3866,7 @@ class AcpRuntime {
       }
 
       session.dispose()
-      // Drop the reverse (underlying agent id -> app id) mapping an adopted session registered, so a
-      // reused agent id or a late agent event can no longer route to this deleted app session.
-      this.agentToAppSessionId.delete(session.sessionId)
-      aggregate?.detachProvider()
+      if (target?.attachment) this.sessionRegistry.detach(target.attachment, 'provider')
     }
 
     // App-session-keyed cleanup runs whether or not a live session is attached. A framework switch
@@ -3901,7 +3880,7 @@ class AcpRuntime {
     this.skillSelectorAbortControllers.delete(request.sessionId)
     // Drop this session's MCP routes, aliases, and bearer ownership (idempotent for detached deletes).
     this.sessionCapabilities.revokeSession(request.sessionId)
-    this.sessionAggregates.delete(request.sessionId)
+    if (target) this.sessionRegistry.remove(target)
     this.promptContentOwner.resetSession(request.sessionId)
     this.currentPromptTurnBySession.delete(request.sessionId)
     this.currentPromptIdentityBySession.delete(request.sessionId)
@@ -3916,13 +3895,9 @@ class AcpRuntime {
     this.promptInFlightSessionIds.delete(request.sessionId)
     this.contextCompactionInFlightSessionIds.delete(request.sessionId)
 
-    // Only announce a deletion and shift the current session when something was actually attached; a
-    // detached cleanup (post-switch) must not emit a spurious event or move currentSessionId.
+    // Only announce a deletion when something was actually attached; detached cleanup after a switch
+    // must not emit a spurious event or move the current selection.
     if (session) {
-      this.currentSessionId =
-        this.currentSessionId === request.sessionId
-          ? this.activeSessionIds()[0]
-          : this.currentSessionId
       this.pushEvent({
         kind: 'system',
         level: 'info',
@@ -4163,7 +4138,7 @@ class AcpRuntime {
     if (typeof origin === 'string' && CLAUDE_AUTONOMOUS_RESULT_ORIGINS.has(origin)) return
     if (!Number.isSafeInteger(message.num_turns) || (message.num_turns as number) <= 0) return
 
-    const appSessionId = this.agentToAppSessionId.get(params.sessionId) ?? params.sessionId
+    const appSessionId = this.sessionRegistry.resolveAppSessionId(params.sessionId)
     const promptTurn = this.currentPromptTurnBySession.get(appSessionId)
     if (promptTurn === undefined) return
 
@@ -4179,7 +4154,7 @@ class AcpRuntime {
 
   // Looks up the workspace root bound to a session for filesystem operations.
   private resolveSessionCwd(sessionId: string): string {
-    const sessionCwd = this.sessionAggregates.get(sessionId)?.snapshot().cwd
+    const sessionCwd = this.sessionRegistry.lookup(sessionId)?.aggregate.snapshot().cwd
 
     if (!this.activeSessionFor(sessionId) || !sessionCwd) {
       throw new Error(`Unknown ACP session: ${sessionId}`)
@@ -4256,7 +4231,7 @@ class AcpRuntime {
 
   private async resolveCurrentSpecialistSkills(
     sessionId: string,
-    specialistId = this.sessionAggregates.get(sessionId)?.snapshot().specialistId
+    specialistId = this.sessionRegistry.lookup(sessionId)?.aggregate.snapshot().specialistId
   ): Promise<EffectiveSpecialistSkills | undefined> {
     if (!specialistId || !this.options.resolveSpecialistSkills) return undefined
     try {
@@ -4271,7 +4246,7 @@ class AcpRuntime {
   // no specialist is bound. Used by adoptFreshSession so a context reset re-bakes the identity.
   private async resolveCurrentSpecialistIdentityAppend(
     sessionId: string,
-    specialistId = this.sessionAggregates.get(sessionId)?.snapshot().specialistId
+    specialistId = this.sessionRegistry.lookup(sessionId)?.aggregate.snapshot().specialistId
   ): Promise<string | undefined> {
     if (!specialistId || !this.options.resolveSpecialistIdentity) return undefined
     try {
@@ -4344,7 +4319,7 @@ class AcpRuntime {
   // Resolves the artifact/notebook storage project for a session, defaulting to the runtime constant.
   private resolveSessionProjectName(sessionId: string): string {
     return (
-      this.sessionAggregates.get(sessionId)?.snapshot().projectName ??
+      this.sessionRegistry.lookup(sessionId)?.aggregate.snapshot().projectName ??
       this.artifactOptions?.projectName ??
       DEFAULT_UPLOAD_PROJECT_NAME
     )
@@ -4432,12 +4407,12 @@ class AcpRuntime {
     // runs without this appearing, the agent never asked (e.g. an un-gated permission config). Log the
     // tool identity (name/kind) and whether it looks like MCP — never the title (a WebFetch title is the
     // full URL with query params, i.e. user data).
-    const appSessionId = this.agentToAppSessionId.get(params.sessionId) ?? params.sessionId
+    const appSessionId = this.sessionRegistry.resolveAppSessionId(params.sessionId)
     const reviewerContext = this.reviewerSessions.contextFor(params.sessionId)
     const mcpServerNames =
       reviewerContext?.mcpServerNames ?? this.sessionCapabilities.mcpServerNamesFor(appSessionId)
     const promptTurn = this.currentPromptTurnBySession.get(appSessionId)
-    const aggregateSnapshot = this.sessionAggregates.get(appSessionId)?.snapshot()
+    const aggregateSnapshot = this.sessionRegistry.lookup(appSessionId)?.aggregate.snapshot()
     const framework = reviewerContext?.frameworkId ?? aggregateSnapshot?.frameworkId
     const isPermissionContextCancelled = (): boolean =>
       framework === 'opencode' &&
@@ -4525,10 +4500,11 @@ class AcpRuntime {
   // Reviewer updates are consumed outside handleSessionUpdate, so this shared boundary is the only
   // place where a preceding tool_call can reliably enrich a later sparse permission request.
   private observePermissionToolContext(notification: SessionNotification): void {
-    const sessionId = this.agentToAppSessionId.get(notification.sessionId) ?? notification.sessionId
+    const sessionId = this.sessionRegistry.resolveAppSessionId(notification.sessionId)
     const reviewerContext = this.reviewerSessions.contextFor(notification.sessionId)
     const framework =
-      reviewerContext?.frameworkId ?? this.sessionAggregates.get(sessionId)?.snapshot().frameworkId
+      reviewerContext?.frameworkId ??
+      this.sessionRegistry.lookup(sessionId)?.aggregate.snapshot().frameworkId
     this.permissionContext.observeToolCall(notification, {
       sessionId,
       framework,
@@ -4581,7 +4557,7 @@ class AcpRuntime {
     contextWindow?: number
   } {
     const appliedModel = sessionId
-      ? this.sessionAggregates.get(sessionId)?.snapshot().appliedModel
+      ? this.sessionRegistry.lookup(sessionId)?.aggregate.snapshot().appliedModel
       : undefined
     // OpenCode applies the requested provider model through the optional ACP model config. If the
     // option was absent or rejected, the agent kept its own default and the requested model is unsafe
@@ -4733,7 +4709,7 @@ class AcpRuntime {
     }
 
     if (routed.update.sessionUpdate === 'current_mode_update') {
-      const aggregate = this.sessionAggregates.get(routed.sessionId)
+      const aggregate = this.sessionRegistry.lookup(routed.sessionId)?.aggregate
       const profileState = aggregate?.snapshot().permissionProfile
 
       if (profileState) {
@@ -4913,7 +4889,10 @@ class AcpRuntime {
     this.permissionContext.dispose()
     this.reviewerSessions.clear()
     this.sessionCapabilities.dispose(this.activeSessionIds())
-    for (const aggregate of this.sessionAggregates.values()) aggregate.detachConnection()
+    for (const entry of this.sessionRegistry.entries()) {
+      if (entry.attachment) this.sessionRegistry.detach(entry.attachment, 'connection')
+      else entry.aggregate.detachConnection()
+    }
     this.promptContentOwner.clear()
     this.currentPromptTurnBySession.clear()
     this.currentPromptIdentityBySession.clear()
@@ -4926,8 +4905,7 @@ class AcpRuntime {
     this.contextUsageTracker.clear()
     this.contextUsageUpdatedPromptTurnsBySession.clear()
     this.sessionCapabilities.clearHttpRoutes()
-    this.agentToAppSessionId.clear()
-    this.currentSessionId = undefined
+    this.sessionRegistry.select(undefined)
     this.supportsSessionClose = false
     this.supportsSessionDelete = false
     this.connection = undefined
@@ -4983,7 +4961,7 @@ class AcpRuntime {
   }
 
   // Creates an ephemeral reviewer ACP session using the existing agent connection. The reviewer
-  // session is isolated from main agent sessions: it is not tracked in sessionAggregates, does not
+  // session is isolated from primary session registry state, does not
   // appear in the snapshot, and callers are responsible for disposing it. This allows background
   // review to run in parallel with the main session without affecting the main state machine.
   async buildReviewerSession(request: ReviewerSessionRequest): Promise<ReviewerSessionResult> {
@@ -5057,7 +5035,7 @@ class AcpRuntime {
         (this.pendingPrimarySessionIds.has(sessionId) &&
           this.pendingPrimarySessionIds.get(sessionId) !== reservation?.token) ||
         (this.activeSessionFor(sessionId) !== undefined && sessionId !== publishedAppSessionId) ||
-        this.agentToAppSessionId.has(sessionId)
+        this.sessionRegistry.hasProviderAlias(sessionId)
     )
     if (primaryCollision) {
       return { collision: new Error(`Primary session id collision: ${primaryCollision}`) }
