@@ -2,6 +2,7 @@ export type SkillSelectorCandidate = {
   name: string
   description: string
   path: string
+  source?: 'connector'
 }
 
 export type SkillSelectorInput = Pick<SkillSelectorCandidate, 'name' | 'path'>
@@ -65,6 +66,7 @@ export const selectExplicitConnectorSkills = <T extends SkillSelectorCandidate>(
   const normalizedText = normalize(text)
   const selected: SkillSelectorInput[] = []
   for (const candidate of catalog) {
+    if (candidate.source !== 'connector') continue
     const matches = connectorAliasesFor(candidate.name).some((alias) => {
       if (!alias) return false
       return new RegExp(`(?:^|[^a-z0-9])${escapeRegExp(alias)}(?:$|[^a-z0-9])`, 'i').test(

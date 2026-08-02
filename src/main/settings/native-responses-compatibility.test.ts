@@ -198,8 +198,18 @@ describe('native Responses compatibility', () => {
       fetchImpl
     )
     const catalog = [
-      { name: 'mcp-pubmed', description: 'Search PubMed.', path: '/skills/pubmed/SKILL.md' },
-      { name: 'mcp-chemistry', description: 'Search chemistry.', path: '/skills/chem/SKILL.md' }
+      {
+        name: 'mcp-pubmed',
+        description: 'Search PubMed.',
+        path: '/skills/pubmed/SKILL.md',
+        source: 'connector' as const
+      },
+      {
+        name: 'mcp-chemistry',
+        description: 'Search chemistry.',
+        path: '/skills/chem/SKILL.md',
+        source: 'connector' as const
+      }
     ]
 
     await expect(proxy.selectSkills('查找肿瘤免疫相关的生物医学文献', catalog)).resolves.toEqual([
@@ -227,8 +237,18 @@ describe('native Responses compatibility', () => {
       fetchImpl
     )
     const catalog = [
-      { name: 'mcp-pubmed', description: 'Search PubMed.', path: '/skills/pubmed/SKILL.md' },
-      { name: 'mcp-chemistry', description: 'Search chemistry.', path: '/skills/chem/SKILL.md' }
+      {
+        name: 'mcp-pubmed',
+        description: 'Search PubMed.',
+        path: '/skills/pubmed/SKILL.md',
+        source: 'connector' as const
+      },
+      {
+        name: 'mcp-chemistry',
+        description: 'Search chemistry.',
+        path: '/skills/chem/SKILL.md',
+        source: 'connector' as const
+      }
     ]
 
     await expect(proxy.selectSkills('用 PubMed 搜索肿瘤免疫文章', catalog)).resolves.toEqual([
@@ -249,7 +269,12 @@ describe('native Responses compatibility', () => {
         description: `Description ${index}`,
         path: `/skills/${index}/SKILL.md`
       })),
-      { name: 'mcp-pubmed', description: 'Search PubMed.', path: '/skills/pubmed/SKILL.md' }
+      {
+        name: 'mcp-pubmed',
+        description: 'Search PubMed.',
+        path: '/skills/pubmed/SKILL.md',
+        source: 'connector' as const
+      }
     ]
 
     await expect(proxy.selectSkills('用 PubMed 搜索文章', catalog)).resolves.toEqual([

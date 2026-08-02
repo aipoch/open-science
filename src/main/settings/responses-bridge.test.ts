@@ -11,6 +11,7 @@ import {
   toolsToChat,
   upstreamErrorMessage
 } from './responses-bridge'
+import { selectExplicitConnectorSkills } from './skill-selector-routing'
 
 describe('Responses-compatible bridge conversion', () => {
   const legacyReviewerMarker = '<open_science_reviewer_session>'
@@ -1608,7 +1609,8 @@ describe('Responses bridge Skill selector', () => {
     {
       name: 'mcp-pubmed',
       description: 'Search biomedical literature.',
-      path: '/private/pubmed/SKILL.md'
+      path: '/private/pubmed/SKILL.md',
+      source: 'connector' as const
     },
     {
       name: 'literature-review',
@@ -1747,6 +1749,18 @@ describe('Responses bridge Skill selector', () => {
     expect(upstreamFetch).toHaveBeenCalledOnce()
   })
 
+  it('does not infer connector provenance from a user-controlled mcp-* name', () => {
+    expect(
+      selectExplicitConnectorSkills('use personal for this task', [
+        {
+          name: 'mcp-personal',
+          description: 'A user-authored Skill.',
+          path: '/skills/personal/SKILL.md'
+        }
+      ])
+    ).toEqual([])
+  })
+
   it('finds an explicitly named connector before bounding the inference catalog', async () => {
     const upstreamFetch = vi.fn<typeof fetch>()
     const bridge = new ResponsesBridge(
@@ -1759,7 +1773,12 @@ describe('Responses bridge Skill selector', () => {
         description: `Description ${index}`,
         path: `/skills/${index}/SKILL.md`
       })),
-      { name: 'mcp-pubmed', description: 'Search PubMed.', path: '/skills/pubmed/SKILL.md' }
+      {
+        name: 'mcp-pubmed',
+        description: 'Search PubMed.',
+        path: '/skills/pubmed/SKILL.md',
+        source: 'connector' as const
+      }
     ]
 
     await expect(bridge.selectSkills('用 PubMed 搜索文章', largeCatalog)).resolves.toEqual([

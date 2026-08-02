@@ -64,6 +64,7 @@ export type ResponsesBridgeSkillCandidate = {
   name: string
   description: string
   path: string
+  source?: 'connector'
 }
 
 export type ResponsesBridgeSkillInput = Pick<ResponsesBridgeSkillCandidate, 'name' | 'path'>

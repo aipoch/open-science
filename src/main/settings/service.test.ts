@@ -3778,7 +3778,8 @@ describe('SettingsService: skills', () => {
           expect.objectContaining({
             name: 'mcp-pubmed',
             description: expect.stringContaining('biomedical literature'),
-            path: join(storageRoot, 'codex', 'skills', 'mcp-pubmed', 'SKILL.md')
+            path: join(storageRoot, 'codex', 'skills', 'mcp-pubmed', 'SKILL.md'),
+            source: 'connector'
           })
         ])
       )

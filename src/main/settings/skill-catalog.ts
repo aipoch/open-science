@@ -41,7 +41,12 @@ import { provisionAppClaudeConfigDir } from './claude-config-provision'
 import type { SettingsRepository } from './repository'
 import type { StoredSettings } from './types'
 
-type SkillCatalogEntry = { name: string; description: string; path: string }
+type SkillCatalogEntry = {
+  name: string
+  description: string
+  path: string
+  source?: 'connector'
+}
 type AdditionalSkillCatalogEntry = Omit<SkillCatalogEntry, 'path'> & { directory: string }
 type AdditionalSkillCatalogEntries =
   | readonly AdditionalSkillCatalogEntry[]
@@ -178,7 +183,7 @@ class SkillCatalogModule {
         ? await additionalEntries(settings)
         : additionalEntries
     const disabled = new Set(settings.disabledSkillIds ?? [])
-    const enabled = [
+    const enabled: AdditionalSkillCatalogEntry[] = [
       ...skills
         .filter((skill) => !disabled.has(skill.id))
         .map((skill) => ({
@@ -196,7 +201,12 @@ class SkillCatalogModule {
       const filePath = join(skillsRoot, item.directory, 'SKILL.md')
       const realFile = await realpath(filePath).catch(() => undefined)
       if (!realFile || !realFile.startsWith(rootWithSep)) continue
-      result.push({ name: item.name, description: item.description, path: filePath })
+      result.push({
+        name: item.name,
+        description: item.description,
+        path: filePath,
+        ...(item.source ? { source: item.source } : {})
+      })
     }
     return result.sort((a, b) => a.name.localeCompare(b.name))
   }

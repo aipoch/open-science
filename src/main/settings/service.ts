@@ -495,7 +495,7 @@ class SettingsService {
 
   async codexSkillCatalog(
     codexHome: string | undefined
-  ): Promise<Array<{ name: string; description: string; path: string }>> {
+  ): Promise<Array<{ name: string; description: string; path: string; source?: 'connector' }>> {
     return this.skills.codexSkillCatalog(codexHome, (settings) => {
       return this.connectors.enabledConnectorIds(settings.connectors).flatMap((id) => {
         const connector = CONNECTOR_CATALOG.find((candidate) => candidate.id === id)
@@ -504,7 +504,8 @@ class SettingsService {
               {
                 directory: `mcp-${id}`,
                 name: `mcp-${id}`,
-                description: connector.useWhen
+                description: connector.useWhen,
+                source: 'connector' as const
               }
             ]
           : []
