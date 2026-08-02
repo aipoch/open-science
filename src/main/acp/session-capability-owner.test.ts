@@ -176,4 +176,57 @@ describe('ACP session capability owner', () => {
     expect(unregister).toHaveBeenCalledTimes(3)
     expect(close).not.toHaveBeenCalled()
   })
+
+  it('finishes bearer and owner cleanup when a committed HTTP route unregister throws', async () => {
+    const notebookRelease = vi.fn()
+    const releaseSessionCapabilities = vi.fn()
+    const unregister = vi.fn(() => {
+      throw new Error('route cleanup failed')
+    })
+    const host = {
+      ensureStarted: vi.fn(async () => ({ endpoint: 'http://127.0.0.1:3', token: 'host' })),
+      registerNotebook: vi.fn(),
+      urlFor: vi.fn((kind: string, routingId: string) => `http://127.0.0.1:3/${kind}/${routingId}`),
+      unregister,
+      clear: vi.fn(),
+      close: vi.fn()
+    } as unknown as AgentMcpHttpHost
+    const owner = createOwner({
+      artifacts: undefined,
+      skillImport: undefined,
+      mcpHttpHost: host,
+      notebook: {
+        projectName: 'project',
+        mcpEntryPath: '/app/main.js',
+        getRpcConnection: async () => ({ endpoint: 'http://127.0.0.1:1', token: 'notebook' }),
+        releaseSessionCapabilities
+      }
+    })
+    const routingIds = owner.createRoutingIds('session-1')
+    const built = await owner.build({
+      framework: { ...opencodeFramework, acceptsStdioMcp: false },
+      nativeMcpEnabled: true,
+      bridgeMcpAliasesEnabled: false,
+      policy: CURRENT_PRIMARY_SESSION_CAPABILITY_POLICY,
+      routingIds,
+      sessionCwd: '/workspace',
+      projectName: 'project'
+    })
+    owner.commit({
+      appSessionId: 'session-1',
+      routingIds,
+      descriptor: built.descriptor,
+      notebookRelease
+    })
+
+    expect(() => owner.revokeSession('session-1')).not.toThrow()
+    expect(unregister).toHaveBeenCalledOnce()
+    expect(notebookRelease).toHaveBeenCalledOnce()
+    expect(releaseSessionCapabilities).toHaveBeenCalledOnce()
+    expect(owner.mcpServerNamesFor('session-1')).toEqual([])
+
+    owner.revokeSession('session-1')
+    expect(notebookRelease).toHaveBeenCalledOnce()
+    expect(releaseSessionCapabilities).toHaveBeenCalledOnce()
+  })
 })

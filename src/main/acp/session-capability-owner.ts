@@ -351,7 +351,16 @@ export class AcpSessionCapabilityOwner {
         this.skillImportRoutingIds.get(appSessionId)
       ]
       for (const routingId of routingIds) {
-        if (routingId) this.options.mcpHttpHost.unregister(routingId)
+        if (!routingId) continue
+        try {
+          this.options.mcpHttpHost.unregister(routingId)
+        } catch (error) {
+          safeLogError('committed http MCP route cleanup failed', {
+            ...diagnosticErrorFields(error),
+            routingId,
+            sessionId: appSessionId
+          })
+        }
       }
     }
 
@@ -392,21 +401,6 @@ export class AcpSessionCapabilityOwner {
 
   artifactRoutingIdFor(appSessionId: string): string | undefined {
     return this.artifactRoutingIds.get(appSessionId)
-  }
-
-  descriptorFor(appSessionId: string): EffectiveSessionCapabilityDescriptor | undefined {
-    return this.descriptors.get(appSessionId)
-  }
-
-  snapshot(): readonly Readonly<{
-    sessionId: string
-    descriptor: EffectiveSessionCapabilityDescriptor
-  }>[] {
-    return Object.freeze(
-      [...this.descriptors].map(([sessionId, descriptor]) =>
-        Object.freeze({ sessionId, descriptor })
-      )
-    )
   }
 
   mcpServerNamesFor(appSessionId: string): readonly string[] {
