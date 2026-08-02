@@ -70,6 +70,9 @@ describe('notebook MCP server config', () => {
     )
     expect(NOTEBOOK_SYSTEM_PROMPT_APPEND).toContain('write_artifact_file')
     expect(NOTEBOOK_SYSTEM_PROMPT_APPEND).toContain('open-science-artifacts')
+    expect(NOTEBOOK_SYSTEM_PROMPT_APPEND).not.toContain(
+      '`open-science-artifacts.write_artifact_file`'
+    )
     expect(NOTEBOOK_SYSTEM_PROMPT_APPEND).toContain('"kind": "localPath"')
     expect(NOTEBOOK_SYSTEM_PROMPT_APPEND).not.toContain(
       'for binary final outputs, read base64 content'

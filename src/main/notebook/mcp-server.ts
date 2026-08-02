@@ -17,7 +17,7 @@ const NOTEBOOK_SYSTEM_PROMPT_APPEND = [
   'The notebook already runs inside a writable session workspace. Use plain relative paths: inputs in `./data/`, intermediate results in `./outputs/`, and connector handoff in `./handoff/`. The cwd is already the session data dir; never copy a saved file onto the same path. Do not modify original user files.',
   'Use `inspect_packages` for version checks and `manage_packages` for installs. Never install inside a cell or shell. App-managed runtime contents belong under `$OPEN_SCIENCE_RUNTIME_DIR`, never the project, workspace, system Python, or a user global environment.',
   'MCP execution replies are bounded summaries; full output remains in the notebook preview. Inspect stdout, stderr, traceback, outputs, and workingFiles, then revise and rerun if needed. The notebook runtime does not classify files for you.',
-  'For a final user-facing file, call `open-science-artifacts.write_artifact_file` before announcing it. Use `source: { "kind": "localPath", "path": "plot.png" }` with the SAME relative filename you saved with and `producerRunId` set to the exact `runId` returned by the execution that last wrote it. Use inline content only for small text.',
+  'For a final user-facing file, call `write_artifact_file` from the `open-science-artifacts` server before announcing it. Use `source: { "kind": "localPath", "path": "plot.png" }` with the SAME relative filename you saved with and `producerRunId` set to the exact `runId` returned by the execution that last wrote it. Use inline content only for small text.',
   '</open_science_notebook_instructions>'
 ].join('\n')
 
