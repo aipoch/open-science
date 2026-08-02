@@ -338,6 +338,7 @@ describe('WorkspaceMessageItem turn token usage', () => {
     expect(separator).toBeNull()
     expect(usage?.textContent).toBe('Usage')
     expect(usageTrigger?.getAttribute('aria-label')).toBe('Token usage for this response')
+    expect(usageTrigger?.querySelector('[data-slot="turn-token-usage-icon"]')).not.toBeNull()
     expect(usageTrigger?.className).toContain('border-dashed')
     expect(usageTrigger?.className).toContain('focus-visible:ring-[3px]')
     expect(usageTrigger?.className).toContain('focus-visible:ring-ring/50')

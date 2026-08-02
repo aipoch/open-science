@@ -10,6 +10,7 @@ import {
   Check,
   ChevronLeft,
   ChevronRight,
+  CircleGauge,
   Copy,
   FileText,
   Image as ImageIcon,
@@ -228,7 +229,7 @@ const TurnTokenUsage = ({
             aria-haspopup="dialog"
             aria-expanded={open}
             aria-controls={open ? contentId : undefined}
-            className="touch-manipulation border-b border-dashed border-current pb-px leading-none transition-colors duration-150 motion-reduce:transition-none hover:text-text-100 focus-visible:outline-none focus-visible:ring-[3px] focus-visible:ring-ring/50"
+            className="inline-flex touch-manipulation items-center gap-1 border-b border-dashed border-current pb-px leading-none transition-colors duration-150 motion-reduce:transition-none hover:text-text-100 focus-visible:outline-none focus-visible:ring-[3px] focus-visible:ring-ring/50"
             onPointerEnter={() => {
               openedFromPointerRef.current = true
               keepOpen()
@@ -247,6 +248,12 @@ const TurnTokenUsage = ({
               setOpen(true)
             }}
           >
+            <CircleGauge
+              data-slot="turn-token-usage-icon"
+              className="size-3 shrink-0"
+              strokeWidth={2}
+              aria-hidden="true"
+            />
             Usage
           </button>
         </span>
