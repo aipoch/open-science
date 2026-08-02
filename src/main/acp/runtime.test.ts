@@ -950,10 +950,19 @@ describe('ACP runtime migration write-gate', () => {
       }),
       framework: codexFramework
     })
+    const disposeSpy = vi
+      .spyOn(acp.ActiveSession.prototype, 'dispose')
+      .mockImplementationOnce(() => {
+        throw new Error('unavailable-model disposal failed')
+      })
 
-    await expect(runtime.createSession({ cwd: '/workspace' })).rejects.toThrow(
-      'The selected model "gpt-subscription" is not available for this Codex account.'
-    )
+    try {
+      await expect(runtime.createSession({ cwd: '/workspace' })).rejects.toThrow(
+        'The selected model "gpt-subscription" is not available for this Codex account.'
+      )
+    } finally {
+      disposeSpy.mockRestore()
+    }
   })
 
   it('does not tokenize against an optional model that the Agent could not apply', async () => {
@@ -1065,10 +1074,19 @@ describe('ACP runtime migration write-gate', () => {
       }),
       framework: codexFramework
     })
+    const disposeSpy = vi
+      .spyOn(acp.ActiveSession.prototype, 'dispose')
+      .mockImplementationOnce(() => {
+        throw new Error('required-model disposal failed')
+      })
 
-    await expect(runtime.createSession({ cwd: '/workspace' })).rejects.toThrow(
-      'The selected model "gpt-subscription" could not be applied'
-    )
+    try {
+      await expect(runtime.createSession({ cwd: '/workspace' })).rejects.toThrow(
+        'The selected model "gpt-subscription" could not be applied'
+      )
+    } finally {
+      disposeSpy.mockRestore()
+    }
   })
 
   it('skips set_config_option when a required subscription model already matches currentValue', async () => {
@@ -8708,14 +8726,23 @@ describe('ACP runtime session management', () => {
       runtime as unknown as { configurePermissionProfile: () => Promise<void> },
       'configurePermissionProfile'
     ).mockRejectedValueOnce(failure)
+    const disposeSpy = vi
+      .spyOn(acp.ActiveSession.prototype, 'dispose')
+      .mockImplementationOnce(() => {
+        throw new Error('resumed-session disposal failed')
+      })
 
-    await expect(
-      runtime.resumeSession({ sessionId: 'restored-session', cwd: '/workspace' })
-    ).rejects.toBe(failure)
+    try {
+      await expect(
+        runtime.resumeSession({ sessionId: 'restored-session', cwd: '/workspace' })
+      ).rejects.toBe(failure)
 
-    expect(releaseSessionCapabilities).toHaveBeenCalledOnce()
-    expect(releaseSessionCapabilities).toHaveBeenCalledWith('restored-session')
-    expect(pendingPrimarySessionIds(runtime).size).toBe(0)
+      expect(releaseSessionCapabilities).toHaveBeenCalledOnce()
+      expect(releaseSessionCapabilities).toHaveBeenCalledWith('restored-session')
+      expect(pendingPrimarySessionIds(runtime).size).toBe(0)
+    } finally {
+      disposeSpy.mockRestore()
+    }
   })
 
   it('releases the notebook RPC capability when fresh-session adoption fails', async () => {
@@ -8741,18 +8768,27 @@ describe('ACP runtime session management', () => {
       runtime as unknown as { configurePermissionProfile: () => Promise<void> },
       'configurePermissionProfile'
     ).mockRejectedValueOnce(failure)
-
-    await expect(
-      runtime.resumeSession({
-        sessionId: 'switched-session',
-        cwd: '/workspace',
-        previousFrameworkId: 'codex'
+    const disposeSpy = vi
+      .spyOn(acp.ActiveSession.prototype, 'dispose')
+      .mockImplementationOnce(() => {
+        throw new Error('adopted-session disposal failed')
       })
-    ).rejects.toBe(failure)
 
-    expect(releaseSessionCapabilities).toHaveBeenCalledOnce()
-    expect(releaseSessionCapabilities).toHaveBeenCalledWith('switched-session')
-    expect(pendingPrimarySessionIds(runtime).size).toBe(0)
+    try {
+      await expect(
+        runtime.resumeSession({
+          sessionId: 'switched-session',
+          cwd: '/workspace',
+          previousFrameworkId: 'codex'
+        })
+      ).rejects.toBe(failure)
+
+      expect(releaseSessionCapabilities).toHaveBeenCalledOnce()
+      expect(releaseSessionCapabilities).toHaveBeenCalledWith('switched-session')
+      expect(pendingPrimarySessionIds(runtime).size).toBe(0)
+    } finally {
+      disposeSpy.mockRestore()
+    }
   })
 
   it('replaces a failed resume capability without revoking the adopted session capability', async () => {

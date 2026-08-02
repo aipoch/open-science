@@ -1101,7 +1101,6 @@ class AcpRuntime {
     if (!selection) {
       log.info('no matching session model option', this.diagnosticContext())
       if (this.pendingSessionModelRequired) {
-        session.dispose()
         throw new Error(
           `The selected model "${this.pendingSessionModel}" is not available for this Codex account.`
         )
@@ -1142,7 +1141,6 @@ class AcpRuntime {
         ...this.diagnosticContext()
       })
       if (this.pendingSessionModelRequired) {
-        session.dispose()
         throw new Error(
           `The selected model "${this.pendingSessionModel}" could not be applied: ${message}`
         )
@@ -2350,7 +2348,9 @@ class AcpRuntime {
       } catch (supersededError) {
         startupError = supersededError
       }
-      session?.dispose()
+      if (session) {
+        this.disposeSessionAfterFailure(session, 'resumed startup session disposal failed')
+      }
       if (notebookCapabilityProvisional) {
         this.releaseNotebookSessionCapabilities(request.sessionId)
       }
@@ -2460,7 +2460,9 @@ class AcpRuntime {
       } catch (supersededError) {
         startupError = supersededError
       }
-      adopted?.dispose()
+      if (adopted) {
+        this.disposeSessionAfterFailure(adopted, 'adopted startup session disposal failed')
+      }
       if (notebookCapabilityProvisional) {
         this.releaseNotebookSessionCapabilities(request.sessionId)
       }
