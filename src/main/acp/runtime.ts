@@ -525,8 +525,7 @@ class AcpRuntime {
   // App-owned MCP construction, routing aliases, and bearer lease ownership are kept behind one
   // explicit role policy. Connection/process lifetime remains with this runtime.
   private readonly sessionCapabilities: AcpSessionCapabilityOwner
-  private readonly sessionInteractions = new AcpSessionInteractionOwner()
-  private readonly cancelledPromptTurnsBySession = new Map<string, number>()
+  private readonly sessionInteractions: AcpSessionInteractionOwner
   // Ephemeral Reviewer identity, isolation, permission, and resource state lives behind one owner.
   private readonly reviewerSessions: ReviewerSessionOwner
   // A startup that begins while a reconnect barrier is already armed must not block the reconnect it
@@ -601,14 +600,10 @@ class AcpRuntime {
   private pendingProviderConfiguration: ResolvedAgentBackend['providerConfiguration']
   private opencodeUsageApi: ResolvedAgentBackend['opencodeUsageApi']
   private responsesBridgeLease: ResolvedAgentBackend['responsesBridgeLease']
-  private readonly skillSelectorAbortControllers = new Map<string, AbortController>()
-  private readonly pendingPromptCancellations = new Map<string, Promise<void>>()
   // Bounded resume network timeout + injectable timers (defaults to real setTimeout/clearTimeout).
   private readonly resumeTimeoutMs: number
-  private readonly cancelTimeoutMs: number
   private readonly setTimer: (fn: () => void, ms: number) => ReturnType<typeof setTimeout>
   private readonly clearTimer: (handle: ReturnType<typeof setTimeout>) => void
-  private readonly cancelTimers = new Map<string, ReturnType<typeof setTimeout>>()
   private readonly artifactOptions: AcpRuntimeArtifactOptions | undefined
   private readonly notebookOptions: AcpRuntimeNotebookOptions | undefined
   private readonly skillImportOptions: AcpRuntimeSkillImportOptions | undefined
@@ -626,10 +621,14 @@ class AcpRuntime {
     this.framework = options.framework ?? claudeCodeFramework
     this.mcpHttpHost = options.mcpHttpHost
     this.resumeTimeoutMs = options.resumeTimeoutMs ?? 30_000
-    this.cancelTimeoutMs = options.cancelTimeoutMs ?? 5_000
     this.contextUsageTracker = options.contextUsageTracker ?? new ContextUsageTracker()
     this.setTimer = options.setTimer ?? ((fn, ms) => setTimeout(fn, ms))
     this.clearTimer = options.clearTimer ?? ((handle) => clearTimeout(handle))
+    this.sessionInteractions = new AcpSessionInteractionOwner({
+      cancelTimeoutMs: options.cancelTimeoutMs,
+      setTimer: this.setTimer,
+      clearTimer: this.clearTimer
+    })
     this.artifactOptions = options.artifacts
     this.notebookOptions = options.notebook
     this.skillImportOptions = options.skillImport
@@ -1974,9 +1973,6 @@ class AcpRuntime {
         request.reason ?? 'manual'
       )
     } finally {
-      const cancelTimer = this.cancelTimers.get(request.sessionId)
-      if (cancelTimer) this.clearTimer(cancelTimer)
-      this.cancelTimers.delete(request.sessionId)
       this.sessionInteractions.release(compactionInteraction)
       this.emitState()
     }
@@ -2928,10 +2924,6 @@ class AcpRuntime {
       }
     }
 
-    for (const timer of this.cancelTimers.values()) this.clearTimer(timer)
-    this.cancelTimers.clear()
-    for (const controller of this.skillSelectorAbortControllers.values()) controller.abort()
-    this.skillSelectorAbortControllers.clear()
     runCleanup('permission-context', () => this.permissionContext.dispose())
     runCleanup('reviewer-state', () => this.reviewerSessions.clear())
     this.sessionInteractions.supersedeAll()
@@ -2958,7 +2950,6 @@ class AcpRuntime {
     this.promptContentOwner.clear()
     this.claudeTurnCountsBySession.clear()
     this.codexSkillActivity.clear()
-    this.cancelledPromptTurnsBySession.clear()
     runCleanup('MCP HTTP routes', () => this.sessionCapabilities.clearHttpRoutes())
     this.sessionRegistry.select(undefined)
     this.supportsSessionClose = false
@@ -3329,7 +3320,6 @@ class AcpRuntime {
       ? { promptMessageId: promptInteraction.promptMessageId }
       : {}
     this.claudeTurnCountsBySession.delete(request.sessionId)
-    this.cancelledPromptTurnsBySession.delete(request.sessionId)
     try {
       this.callbacks.onPromptStarted?.(request.sessionId, skillImportTurnToken, promptAttemptId)
     } catch (error) {
@@ -3391,14 +3381,11 @@ class AcpRuntime {
         })
         return response
       }
-      const turnWasCancelled = (): boolean =>
-        this.cancelledPromptTurnsBySession.get(request.sessionId) === promptTurn
-      const awaitPendingCancellation = async (): Promise<void> => {
-        await this.pendingPromptCancellations.get(request.sessionId)
+      if (
+        (await this.sessionInteractions.cancellationCheckpoint(promptInteraction)) === 'cancelled'
+      ) {
+        return finishCancelledBeforePrompt()
       }
-
-      await awaitPendingCancellation()
-      if (turnWasCancelled()) return finishCancelledBeforePrompt()
 
       // Prepend a short steering nudge naming the picked skills. It goes only into the content sent to
       // the agent; the user-facing message event keeps the original text (which already shows /Name).
@@ -3421,30 +3408,23 @@ class AcpRuntime {
         [sessionSpecialistPrefix, frameworkPromptPrefix]
           .filter((segment): segment is string => Boolean(segment))
           .join('\n\n') || undefined
-      const selectorAbortController =
+      const selectorSignal =
         this.framework.id === 'codex' &&
         forced.length === 0 &&
         this.responsesBridgeLease?.selectSkills
-          ? new AbortController()
+          ? promptInteraction.signal
           : undefined
-      if (selectorAbortController) {
-        this.skillSelectorAbortControllers.set(request.sessionId, selectorAbortController)
+      const codexSkillInputs = await this.resolveCodexSkillInputs(
+        forced,
+        request.text,
+        selectorSignal,
+        currentSpecialistSkills
+      )
+      if (
+        (await this.sessionInteractions.cancellationCheckpoint(promptInteraction)) === 'cancelled'
+      ) {
+        return finishCancelledBeforePrompt()
       }
-      let codexSkillInputs: Array<{ name: string; path: string }>
-      try {
-        codexSkillInputs = await this.resolveCodexSkillInputs(
-          forced,
-          request.text,
-          selectorAbortController?.signal,
-          currentSpecialistSkills
-        )
-      } finally {
-        if (this.skillSelectorAbortControllers.get(request.sessionId) === selectorAbortController) {
-          this.skillSelectorAbortControllers.delete(request.sessionId)
-        }
-      }
-      await awaitPendingCancellation()
-      if (turnWasCancelled()) return finishCancelledBeforePrompt()
       const promptRequestText = request.continuation
         ? this.buildSpecialistHandoffContinuationText(request)
         : request.text
@@ -3531,8 +3511,11 @@ class AcpRuntime {
               this.options.opencodeUsageFetch
             )
           : undefined
-      await awaitPendingCancellation()
-      if (turnWasCancelled()) return finishCancelledBeforePrompt()
+      if (
+        (await this.sessionInteractions.cancellationCheckpoint(promptInteraction)) === 'cancelled'
+      ) {
+        return finishCancelledBeforePrompt()
+      }
 
       // Start the prompt and race it against routed updates from the active session queue.
       const promptFailure = new Promise<never>((_, reject) => {
@@ -3662,7 +3645,25 @@ class AcpRuntime {
         this.handleSessionUpdate(message.notification, request.sessionId)
       }
     } catch (error) {
-      if (this.sessionInteractions.current(request.sessionId) !== promptInteraction) throw error
+      if (this.sessionInteractions.current(request.sessionId) !== promptInteraction) {
+        // Connection teardown releases every interaction before the provider rejection reaches this
+        // catch. Preserve the existing terminal failure event for an interrupted visible prompt, but
+        // skip all turn-owned state rollback; reset/replacement stays silent and cannot target its
+        // successor's prompt identity.
+        if (this.snapshotOwner.status === 'closed') {
+          log.error('prompt failed', { sessionId: request.sessionId, ...errorLogFields(error) })
+          this.pushEvent({
+            kind: 'error',
+            level: 'error',
+            providerError: isProviderPromptError(error),
+            sessionId: request.sessionId,
+            ...promptEventIdentity,
+            title: ACP_PROMPT_FAILED_EVENT_TITLE,
+            text: describePromptError(error, { model: this.pendingSessionModel })
+          })
+        }
+        throw error
+      }
       if (
         contextUsageCheckpoint &&
         !contextUsageEstimateCommitted &&
@@ -3749,9 +3750,6 @@ class AcpRuntime {
       const ownsInteraction =
         this.sessionInteractions.current(request.sessionId) === promptInteraction
       if (ownsInteraction) {
-        const cancelTimer = this.cancelTimers.get(request.sessionId)
-        if (cancelTimer) this.clearTimer(cancelTimer)
-        this.cancelTimers.delete(request.sessionId)
         this.permissionContext.clearCorrelationsForSession(request.sessionId)
         this.claudeTurnCountsBySession.delete(request.sessionId)
         if (this.contextUsageUpdatedPromptTurnsBySession.get(request.sessionId) === promptTurn) {
@@ -3788,24 +3786,27 @@ class AcpRuntime {
 
   // Requests cancellation without clearing in-flight state before the agent stops.
   async cancelPrompt(request: AcpCancelPromptRequest): Promise<AcpStateSnapshot> {
+    const connection = this.connection
     const activeSession = this.activeSessionFor(request.sessionId)
 
-    if (this.connection && activeSession) {
-      // Publish the cancellation attempt before the first await so a selector completing concurrently
-      // waits for the protocol outcome instead of submitting a prompt in the gap. Abort the compatibility
-      // request immediately; its own timeout is only a backstop and must not delay cancellation.
-      let settleCancellation!: () => void
-      const pendingCancellation = new Promise<void>((resolve) => {
-        settleCancellation = resolve
-      })
-      this.pendingPromptCancellations.set(request.sessionId, pendingCancellation)
-      this.skillSelectorAbortControllers.get(request.sessionId)?.abort()
-      const priorTimer = this.cancelTimers.get(request.sessionId)
-      if (priorTimer) this.clearTimer(priorTimer)
-      this.cancelTimers.set(
-        request.sessionId,
-        this.setTimer(() => {
-          if (!this.hasSessionInteractionInFlight(request.sessionId)) return
+    if (connection && activeSession) {
+      await this.sessionInteractions.cancelPrompt({
+        sessionId: request.sessionId,
+        notify: () =>
+          connection.agent.notify(acp.methods.agent.session.cancel, {
+            sessionId: activeSession.sessionId
+          }),
+        onAccepted: () => {
+          this.cancelPermissionFlowForSession(request.sessionId)
+          this.pushEvent({
+            kind: 'system',
+            level: 'warning',
+            sessionId: request.sessionId,
+            title: 'Prompt cancellation requested'
+          })
+          this.emitState()
+        },
+        onTimeout: () => {
           this.pushEvent({
             kind: 'error',
             level: 'error',
@@ -3814,31 +3815,8 @@ class AcpRuntime {
             text: 'The agent did not stop, so its process was stopped and will restart on the next prompt.'
           })
           void this.disconnect()
-        }, this.cancelTimeoutMs)
-      )
-      try {
-        await this.connection.agent.notify(acp.methods.agent.session.cancel, {
-          sessionId: activeSession.sessionId
-        })
-      } catch (error) {
-        const timer = this.cancelTimers.get(request.sessionId)
-        if (timer) this.clearTimer(timer)
-        this.cancelTimers.delete(request.sessionId)
-        throw error
-      } finally {
-        settleCancellation()
-        if (this.pendingPromptCancellations.get(request.sessionId) === pendingCancellation) {
-          this.pendingPromptCancellations.delete(request.sessionId)
         }
-      }
-      this.cancelPermissionFlowForSession(request.sessionId)
-      this.pushEvent({
-        kind: 'system',
-        level: 'warning',
-        sessionId: request.sessionId,
-        title: 'Prompt cancellation requested'
       })
-      this.emitState()
     }
 
     return this.getSnapshot()
@@ -3888,11 +3866,6 @@ class AcpRuntime {
     // A disconnect detaches the provider but deliberately keeps framework/backend affinity, so deleting
     // a session that was never re-adopted must remove its remaining Aggregate as well.
     this.permissionContext.clearSession(request.sessionId)
-    const cancelTimer = this.cancelTimers.get(request.sessionId)
-    if (cancelTimer) this.clearTimer(cancelTimer)
-    this.cancelTimers.delete(request.sessionId)
-    this.skillSelectorAbortControllers.get(request.sessionId)?.abort()
-    this.skillSelectorAbortControllers.delete(request.sessionId)
     this.sessionInteractions.supersedeCurrent(request.sessionId)
     // Drop this session's MCP routes, aliases, and bearer ownership (idempotent for detached deletes).
     this.sessionCapabilities.revokeSession(request.sessionId)
@@ -3902,7 +3875,6 @@ class AcpRuntime {
     this.handoffUserTasks.delete(request.sessionId)
     this.pendingClaudeCodeHandoffAppends.delete(request.sessionId)
     this.claudeTurnCountsBySession.delete(request.sessionId)
-    this.cancelledPromptTurnsBySession.delete(request.sessionId)
     this.contextUsageTracker.deleteSession(request.sessionId)
     this.contextUsageUpdatedPromptTurnsBySession.delete(request.sessionId)
 
@@ -4431,7 +4403,8 @@ class AcpRuntime {
       (promptTurn === undefined
         ? this.activeSessionFor(appSessionId) !== undefined
         : this.currentPromptInteraction(appSessionId)?.sequence !== promptTurn ||
-          this.cancelledPromptTurnsBySession.get(appSessionId) === promptTurn)
+          (promptInteraction !== undefined &&
+            this.sessionInteractions.isCancellationAccepted(promptInteraction)))
     const restoreContext = {
       sessionId: appSessionId,
       framework,
@@ -4526,10 +4499,6 @@ class AcpRuntime {
   }
 
   private cancelPermissionFlowForSession(sessionId: string): void {
-    const promptInteraction = this.currentPromptInteraction(sessionId)
-    if (promptInteraction) {
-      this.cancelledPromptTurnsBySession.set(sessionId, promptInteraction.sequence)
-    }
     this.permissionContext.cancelForSession(sessionId)
   }
 
@@ -4899,10 +4868,6 @@ class AcpRuntime {
       this.expectedProcessExits.add(orphanedProcess)
       void terminateProcessTree(orphanedProcess, undefined, log)
     }
-    for (const timer of this.cancelTimers.values()) this.clearTimer(timer)
-    this.cancelTimers.clear()
-    for (const controller of this.skillSelectorAbortControllers.values()) controller.abort()
-    this.skillSelectorAbortControllers.clear()
     this.permissionContext.dispose()
     this.reviewerSessions.clear()
     this.sessionCapabilities.dispose(this.activeSessionIds())
@@ -4916,7 +4881,6 @@ class AcpRuntime {
     this.pendingClaudeCodeHandoffAppends.clear()
     this.claudeTurnCountsBySession.clear()
     this.codexSkillActivity.clear()
-    this.cancelledPromptTurnsBySession.clear()
     this.contextUsageTracker.clear()
     this.contextUsageUpdatedPromptTurnsBySession.clear()
     this.sessionCapabilities.clearHttpRoutes()

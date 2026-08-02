@@ -18,6 +18,137 @@ const createDeferred = <T>(): {
 }
 
 describe('AcpSessionInteractionOwner', () => {
+  it('publishes cancellation before notify settles and keeps the interaction active', async () => {
+    const owner = new AcpSessionInteractionOwner()
+    const scope = owner.claim({ sessionId: 'session-1', kind: 'prompt' })
+    const releaseNotify = createDeferred<void>()
+    const onAccepted = vi.fn()
+    const cancelling = owner.cancelPrompt({
+      sessionId: 'session-1',
+      notify: () => releaseNotify.promise,
+      onAccepted,
+      onTimeout: vi.fn()
+    })
+    let checkpointSettled = false
+    const checkpoint = owner.cancellationCheckpoint(scope).then((status) => {
+      checkpointSettled = true
+      return status
+    })
+
+    expect(scope.signal.aborted).toBe(true)
+    expect(owner.current('session-1')).toBe(scope)
+    await Promise.resolve()
+    expect(checkpointSettled).toBe(false)
+    expect(onAccepted).not.toHaveBeenCalled()
+
+    releaseNotify.resolve()
+    await cancelling
+    await expect(checkpoint).resolves.toBe('cancelled')
+    expect(owner.isCancellationAccepted(scope)).toBe(true)
+    expect(onAccepted).toHaveBeenCalledOnce()
+    expect(owner.current('session-1')).toBe(scope)
+  })
+
+  it('keeps cancellation inactive and clears its timer when notify fails', async () => {
+    const clearTimer = vi.fn()
+    const owner = new AcpSessionInteractionOwner({
+      cancelTimeoutMs: 1,
+      setTimer: () => 1 as unknown as ReturnType<typeof setTimeout>,
+      clearTimer
+    })
+    const scope = owner.claim({ sessionId: 'session-1', kind: 'prompt' })
+    const onAccepted = vi.fn()
+
+    await expect(
+      owner.cancelPrompt({
+        sessionId: 'session-1',
+        notify: async () => {
+          throw new Error('cancel write failed')
+        },
+        onAccepted,
+        onTimeout: vi.fn()
+      })
+    ).rejects.toThrow('cancel write failed')
+
+    await expect(owner.cancellationCheckpoint(scope)).resolves.toBe('active')
+    expect(owner.isCancellationAccepted(scope)).toBe(false)
+    expect(onAccepted).not.toHaveBeenCalled()
+    expect(clearTimer).toHaveBeenCalledOnce()
+  })
+
+  it('scopes cancellation timeouts to the captured interaction generation', async () => {
+    type TestTimer = { active: boolean; fire: () => void }
+    const timers: TestTimer[] = []
+    const owner = new AcpSessionInteractionOwner({
+      cancelTimeoutMs: 1,
+      setTimer: (callback) => {
+        const timer: TestTimer = {
+          active: true,
+          fire: () => {
+            if (timer.active) callback()
+          }
+        }
+        timers.push(timer)
+        return timer as unknown as ReturnType<typeof setTimeout>
+      },
+      clearTimer: (handle) => {
+        const timer = handle as unknown as TestTimer
+        timer.active = false
+      }
+    })
+    const onTimeout = vi.fn()
+    const first = owner.claim({ sessionId: 'session-1', kind: 'prompt' })
+
+    await owner.cancelPrompt({
+      sessionId: 'session-1',
+      notify: async () => undefined,
+      onAccepted: vi.fn(),
+      onTimeout
+    })
+    expect(timers[0].active).toBe(true)
+    owner.release(first)
+    expect(timers[0].active).toBe(false)
+
+    const replacement = owner.claim({ sessionId: 'session-1', kind: 'prompt' })
+    timers[0].fire()
+    expect(onTimeout).not.toHaveBeenCalled()
+
+    await owner.cancelPrompt({
+      sessionId: 'session-1',
+      notify: async () => undefined,
+      onAccepted: vi.fn(),
+      onTimeout
+    })
+    timers[1].fire()
+    expect(onTimeout).toHaveBeenCalledOnce()
+    owner.release(replacement)
+  })
+
+  it('does not let a cancellation without an active interaction time out a later turn', async () => {
+    let fireTimeout: (() => void) | undefined
+    const owner = new AcpSessionInteractionOwner({
+      cancelTimeoutMs: 1,
+      setTimer: (callback) => {
+        fireTimeout = callback
+        return 1 as unknown as ReturnType<typeof setTimeout>
+      }
+    })
+    const onTimeout = vi.fn()
+
+    await owner.cancelPrompt({
+      sessionId: 'session-1',
+      notify: async () => undefined,
+      onAccepted: vi.fn(),
+      onTimeout
+    })
+    const scope = owner.claim({ sessionId: 'session-1', kind: 'prompt' })
+    fireTimeout?.()
+
+    expect(onTimeout).not.toHaveBeenCalled()
+    expect(owner.current('session-1')).toBe(scope)
+    owner.release(scope)
+  })
+
   it('keeps a synchronous prompt reservation private until activation', () => {
     const owner = new AcpSessionInteractionOwner()
     const active = owner.claim({ sessionId: 'session-1', kind: 'compaction' })

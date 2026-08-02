@@ -47,15 +47,50 @@ export interface AcpSessionInteractionSnapshotEntry {
   readonly kind: AcpSessionInteractionKind
 }
 
+export interface AcpSessionInteractionCancellationRequest {
+  readonly sessionId: string
+  readonly notify: () => Promise<void>
+  readonly onAccepted: () => void
+  readonly onTimeout: () => void
+}
+
+export interface AcpSessionInteractionOwnerOptions {
+  readonly cancelTimeoutMs?: number
+  readonly setTimer?: (fn: () => void, ms: number) => ReturnType<typeof setTimeout>
+  readonly clearTimer?: (handle: ReturnType<typeof setTimeout>) => void
+}
+
 interface ActiveSessionInteraction {
   readonly scope: AcpSessionInteractionScope
   readonly abortController: AbortController
+  cancelled: boolean
+}
+
+interface CancellationAttempt {
+  readonly promise: Promise<void>
+  readonly settle: () => void
+}
+
+interface CancellationTimer {
+  readonly scope: AcpSessionInteractionScope | undefined
+  handle?: ReturnType<typeof setTimeout>
 }
 
 export class AcpSessionInteractionOwner {
   private readonly activeInteractions = new Map<string, ActiveSessionInteraction>()
   private readonly pendingPromptReservations = new Map<string, ActiveSessionInteraction>()
+  private readonly pendingCancellations = new Map<string, CancellationAttempt>()
+  private readonly cancellationTimers = new Map<string, CancellationTimer>()
+  private readonly cancelTimeoutMs: number
+  private readonly setTimer: (fn: () => void, ms: number) => ReturnType<typeof setTimeout>
+  private readonly clearTimer: (handle: ReturnType<typeof setTimeout>) => void
   private sequence = 0
+
+  constructor(options: AcpSessionInteractionOwnerOptions = {}) {
+    this.cancelTimeoutMs = options.cancelTimeoutMs ?? 5_000
+    this.setTimer = options.setTimer ?? ((fn, ms) => setTimeout(fn, ms))
+    this.clearTimer = options.clearTimer ?? ((handle) => clearTimeout(handle))
+  }
 
   current(sessionId: string): AcpSessionInteractionScope | undefined {
     return this.activeInteractions.get(sessionId)?.scope
@@ -70,6 +105,62 @@ export class AcpSessionInteractionOwner {
         })
       )
     )
+  }
+
+  isCancellationAccepted(scope: AcpSessionInteractionScope): boolean {
+    const active = this.activeInteractions.get(scope.sessionId)
+    return active?.scope === scope && active.cancelled
+  }
+
+  async cancellationCheckpoint(scope: AcpSessionInteractionScope): Promise<'active' | 'cancelled'> {
+    for (;;) {
+      const attempt = this.pendingCancellations.get(scope.sessionId)
+      if (!attempt) return this.isCancellationAccepted(scope) ? 'cancelled' : 'active'
+      await attempt.promise
+    }
+  }
+
+  async cancelPrompt(request: AcpSessionInteractionCancellationRequest): Promise<void> {
+    let settle!: () => void
+    const attempt: CancellationAttempt = {
+      promise: new Promise<void>((resolve) => {
+        settle = resolve
+      }),
+      settle: () => settle()
+    }
+    this.pendingCancellations.set(request.sessionId, attempt)
+
+    const active = this.activeInteractions.get(request.sessionId)
+    const scope = active?.scope
+    active?.abortController.abort()
+    this.clearCancellationTimer(request.sessionId)
+
+    const timer: CancellationTimer = { scope }
+    timer.handle = this.setTimer(() => {
+      if (this.cancellationTimers.get(request.sessionId) !== timer) return
+      this.cancellationTimers.delete(request.sessionId)
+      if (scope && this.current(request.sessionId) === scope) request.onTimeout()
+    }, this.cancelTimeoutMs)
+    this.cancellationTimers.set(request.sessionId, timer)
+
+    let accepted = false
+    try {
+      await request.notify()
+      if (active && this.activeInteractions.get(request.sessionId) === active) {
+        active.cancelled = true
+      }
+      accepted = true
+    } catch (error) {
+      this.clearCancellationTimer(request.sessionId, timer)
+      throw error
+    } finally {
+      attempt.settle()
+      if (this.pendingCancellations.get(request.sessionId) === attempt) {
+        this.pendingCancellations.delete(request.sessionId)
+      }
+    }
+
+    if (accepted) request.onAccepted()
   }
 
   // Signals the displaced work and releases the slot immediately. The work may still unwind, so every
@@ -96,6 +187,9 @@ export class AcpSessionInteractionOwner {
     for (const { scope } of owned) {
       this.supersede(scope)
     }
+    for (const sessionId of Array.from(this.cancellationTimers.keys())) {
+      this.clearCancellationTimer(sessionId)
+    }
   }
 
   reservePrompt(request: AcpPromptSessionInteractionRequest): AcpPromptSessionInteractionScope {
@@ -113,7 +207,11 @@ export class AcpSessionInteractionOwner {
       signal: abortController.signal
     })
     this.pendingPromptReservations.get(request.sessionId)?.abortController.abort()
-    this.pendingPromptReservations.set(request.sessionId, { scope, abortController })
+    this.pendingPromptReservations.set(request.sessionId, {
+      scope,
+      abortController,
+      cancelled: false
+    })
 
     return scope
   }
@@ -154,13 +252,17 @@ export class AcpSessionInteractionOwner {
           }
         : { ...base, kind: request.kind }
     )
-    this.activeInteractions.set(request.sessionId, { scope, abortController })
+    this.activeInteractions.set(request.sessionId, { scope, abortController, cancelled: false })
 
     return scope as ScopeFor<Request>
   }
 
   release(scope: AcpSessionInteractionScope): void {
     if (this.activeInteractions.get(scope.sessionId)?.scope === scope) {
+      const timer = this.cancellationTimers.get(scope.sessionId)
+      if (!timer?.scope || timer.scope === scope) {
+        this.clearCancellationTimer(scope.sessionId, timer)
+      }
       this.activeInteractions.delete(scope.sessionId)
       return
     }
@@ -168,6 +270,13 @@ export class AcpSessionInteractionOwner {
     if (this.pendingPromptReservations.get(scope.sessionId)?.scope === scope) {
       this.pendingPromptReservations.delete(scope.sessionId)
     }
+  }
+
+  private clearCancellationTimer(sessionId: string, expected?: CancellationTimer): void {
+    const timer = this.cancellationTimers.get(sessionId)
+    if (!timer || (expected && timer !== expected)) return
+    if (timer.handle !== undefined) this.clearTimer(timer.handle)
+    this.cancellationTimers.delete(sessionId)
   }
 
   async run<T, Request extends AcpSessionInteractionRequest>(
