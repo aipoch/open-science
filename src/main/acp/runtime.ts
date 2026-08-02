@@ -1236,6 +1236,7 @@ class AcpRuntime {
     }
 
     const generation = this.nextConnectionGeneration()
+    this.invalidatePendingSessionStartups()
     const connectPromise = this.connectFresh(request, generation)
     this.connectInFlight = connectPromise
 
@@ -1484,6 +1485,7 @@ class AcpRuntime {
   ): Promise<AcpCreateSessionResponse> {
     let provisionalNotebookSessionId: string | undefined
     let primaryIdentityReservation: PrimarySessionIdentityReservation | undefined
+    let provisionalSession: ActiveSession | undefined
     try {
       log.info('createSession: starting', this.diagnosticContext())
       const sessionCwd = resolve(request.cwd || this.snapshotOwner.cwd || this.options.defaultCwd)
@@ -1539,6 +1541,7 @@ class AcpRuntime {
           ...this.buildSessionMetaArg(extraAppends, specialistSkills)
         })
         .start()
+      provisionalSession = session
 
       // New-session requests have no app id on their interface: the provider-returned id becomes the
       // stable app id. Reserve that first known identity synchronously before any later setup awaits.
@@ -1550,6 +1553,7 @@ class AcpRuntime {
       )
       if (reservationResult.collision) {
         this.disposeSessionAfterFailure(session, 'primary collision session disposal failed')
+        provisionalSession = undefined
         throw reservationResult.collision
       }
       primaryIdentityReservation = reservationResult.reservation
@@ -1574,7 +1578,6 @@ class AcpRuntime {
           ...diagnosticErrorFields(error),
           ...this.diagnosticContext()
         })
-        session.dispose()
         throw error
       }
 
@@ -1584,6 +1587,7 @@ class AcpRuntime {
 
       this.assertPrimarySessionIdentityReservation(primaryIdentityReservation)
       this.sessions.set(session.sessionId, session)
+      provisionalSession = undefined
       this.releasePrimarySessionIdentityReservation(primaryIdentityReservation)
       primaryIdentityReservation = undefined
       // Committed only now: the options map must never hold an entry for a session that failed to
@@ -1619,6 +1623,12 @@ class AcpRuntime {
         ...(this.backendId ? { backendId: this.backendId } : {})
       }
     } catch (error) {
+      if (provisionalSession) {
+        this.disposeSessionAfterFailure(
+          provisionalSession,
+          'primary startup session disposal failed'
+        )
+      }
       if (provisionalNotebookSessionId) {
         this.releaseNotebookSessionCapabilities(provisionalNotebookSessionId)
       }
@@ -2401,7 +2411,11 @@ class AcpRuntime {
     try {
       return await this.disconnectCurrent(emitClosedStatus)
     } finally {
-      await this.closeMcpHttpHost()
+      try {
+        await this.closeMcpHttpHost()
+      } finally {
+        this.completePendingReconnectTeardown()
+      }
     }
   }
 
@@ -2416,6 +2430,7 @@ class AcpRuntime {
     this.connectInFlight = undefined
     this.connection?.close()
     this.connection = undefined
+    this.completePendingReconnectTeardown()
     this.killAgentProcess()
     this.contextUsageTracker.clear()
     this.contextUsageUpdatedPromptTurnsBySession.clear()
@@ -2634,6 +2649,12 @@ class AcpRuntime {
     this.reconnectBarrier = undefined
     this.reconnectBarrierResolve = undefined
     resolve?.()
+  }
+
+  private completePendingReconnectTeardown(): void {
+    this.pendingProviderReconnect = false
+    this.pendingSkillsReload = false
+    this.resolveReconnectBarrier()
   }
 
   private async disconnectCurrent(emitClosedStatus = true): Promise<AcpStateSnapshot> {
@@ -5659,9 +5680,7 @@ class AcpRuntime {
     // the reconnect barrier must unblock now — it will fall through to connect()
     // and pick up the new backend from resolveBackend. A fresh spawn re-provisions
     // skills too, so clear both pending flags to avoid a spurious later reconnect.
-    this.pendingProviderReconnect = false
-    this.pendingSkillsReload = false
-    this.resolveReconnectBarrier()
+    this.completePendingReconnectTeardown()
     void this.closeMcpHttpHost()
     void this.releaseResponsesBridgeLease()
     try {
@@ -5707,9 +5726,30 @@ class AcpRuntime {
 
   private clearReviewerSessionState(): void {
     for (const [sessionId, reviewerCwd] of this.reviewerSessionDirectories) {
-      this.unregisterReviewerBridgeSession(sessionId)
-      this.removeReviewerDirectory(reviewerCwd)
-      this.permissionContext.clearCorrelationsForSession(sessionId)
+      try {
+        this.unregisterReviewerBridgeSession(sessionId)
+      } catch (error) {
+        safeLogError('reviewer bridge cleanup after connection close failed', {
+          ...diagnosticErrorFields(error),
+          sessionId
+        })
+      }
+      try {
+        this.removeReviewerDirectory(reviewerCwd)
+      } catch (error) {
+        safeLogError('reviewer directory cleanup after connection close failed', {
+          ...diagnosticErrorFields(error),
+          sessionId
+        })
+      }
+      try {
+        this.permissionContext.clearCorrelationsForSession(sessionId)
+      } catch (error) {
+        safeLogError('reviewer permission cleanup after connection close failed', {
+          ...diagnosticErrorFields(error),
+          sessionId
+        })
+      }
       this.sessionFrameworks.delete(sessionId)
     }
     this.reviewerSessionDirectories.clear()
@@ -5813,6 +5853,7 @@ class AcpRuntime {
         throw reservationResult.collision
       }
       const identityReservation = reservationResult.reservation
+      let identityActivated = false
 
       try {
         // Apply the framework's Ask baseline before prompting. The dedicated reviewer MCP is
@@ -5828,6 +5869,7 @@ class AcpRuntime {
         // No await separates the pending -> active transition: protocol routing always sees exactly
         // one identity state. Bridge authority is granted only after the active reviewer route exists.
         this.activateReviewerSessionIdentity(identityReservation)
+        identityActivated = true
         this.responsesBridgeLease?.registerReviewerSession(session.sessionId)
         this.reviewerSessionDirectories.set(session.sessionId, reviewerCwd)
         this.sessionMcpServerNames.set(session.sessionId, mcpServerNames)
@@ -5836,7 +5878,7 @@ class AcpRuntime {
         return { session, promptPrefix: setup.promptPrefix }
       } catch (error) {
         this.releaseReviewerSessionIdentityReservation(identityReservation)
-        if (this.reviewerSessionIds.delete(session.sessionId)) {
+        if (identityActivated && this.reviewerSessionIds.delete(session.sessionId)) {
           try {
             this.responsesBridgeLease?.unregisterReviewerSession(session.sessionId)
           } catch (cleanupError) {
@@ -5883,9 +5925,7 @@ class AcpRuntime {
     return { reservation }
   }
 
-  private activateReviewerSessionIdentity(
-    reservation: ReviewerSessionIdentityReservation
-  ): void {
+  private activateReviewerSessionIdentity(reservation: ReviewerSessionIdentityReservation): void {
     if (
       reservation.generation !== this.sessionStartupGeneration ||
       this.pendingReviewerSessionIds.get(reservation.sessionId) !== reservation.token
