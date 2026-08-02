@@ -501,7 +501,7 @@ const registerAcpIpcHandlers = (options: AcpIpcOptions): AcpRuntimeCoordinator =
 // Creates the shared notebook runtime used by both renderer IPC and agent MCP calls.
 type DefaultNotebookRuntimeServiceDeps = Pick<
   NotebookRuntimeServiceOptions,
-  'getPackageMirror' | 'getRuntimeEnablement' | 'getManualInterpreters'
+  'getPackageMirror' | 'notebookRuntimeSettings'
 >
 
 const createDefaultNotebookRuntimeService = (

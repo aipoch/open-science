@@ -86,13 +86,7 @@ import type {
   RuntimeEnablement,
   RuntimeUsage
 } from '../../shared/notebook-runtime'
-import { isEnvEnabled } from '../../shared/notebook-runtime'
-import {
-  discoverInterpreters,
-  defaultDiscoveryDeps,
-  rscriptFor,
-  windowsCondaPrefixForR
-} from './environment-discovery'
+import type { NotebookRuntimeSettings } from '../settings/capabilities'
 import {
   operationJournalPath,
   recordOperationChildSync,
@@ -128,6 +122,7 @@ import {
   type PackageMutationVerification
 } from './environment-state-tracker'
 import { startWorkingFileObservation } from './working-file-observer'
+import { NotebookRuntimeBindingOwner } from './runtime-binding'
 import {
   boundedRuntimeDiagnostic,
   redactRuntimeDiagnosticValue,
@@ -322,6 +317,10 @@ type NotebookRuntimeServiceOptions = {
   // Resolves the user-configured package mirror (settings). Optional/async so a synchronous test
   // double works just as well as the real disk-backed settings service.
   getPackageMirror?: () => PackageMirror | undefined | Promise<PackageMirror | undefined>
+  // Stable, detached Settings capability used by runtime discovery and binding policy. Production
+  // injects this named capability; the raw resolvers below remain compatibility seams for isolated
+  // callers and tests that predate the Settings capability split.
+  notebookRuntimeSettings?: Pick<NotebookRuntimeSettings, 'getSnapshot'>
   // Resolves the v4 per-language enablement (enabled/install-authorized maps) used to gate which
   // discovered runtimes the agent may bind. Undefined / returning undefined -> the provenance defaults
   // (app-managed enabled; user-own disabled), so an omitted resolver can never enable a BYO env — the
@@ -926,11 +925,7 @@ class NotebookRuntimeService {
     (() => PackageMirror | undefined | Promise<PackageMirror | undefined>) | undefined
   private readonly runtimeEnablementResolver:
     ((language: NotebookLanguage) => Promise<RuntimeEnablement | undefined>) | undefined
-  // Manually-added interpreter paths (Settings catalog) folded into discovery so a picked interpreter
-  // that is NOT on PATH / in a conda root is still discovered here — and therefore bindable and not
-  // reported 'missing' after a restart. Fixed at construction with the other Settings dependencies.
-  private readonly manualInterpretersResolver:
-    ((language: NotebookLanguage) => Promise<string[]>) | undefined
+  private readonly runtimeBindingOwner: NotebookRuntimeBindingOwner
   // Owns startup-recovery promises, journal reconciliation, fail-closed block decisions, Reset
   // allowlisting, and same-process live-unconfirmed tracking. The service retains its public recovery
   // facade so Electron, Web, CLI, and IPC adapters keep the same contract.
@@ -938,9 +933,6 @@ class NotebookRuntimeService {
   // Immediate in-process gate for a protected-identity failure. It is armed before kernel termination
   // and before the durable registry write, so disk-full/permission errors cannot reopen the damaged env.
   private readonly repairBlockedEnvs = new Set<string>()
-  private readonly runtimeDiscoveryImpl: (
-    language: NotebookLanguage
-  ) => Promise<DiscoveredInterpreter[]>
   private readonly installPackagesImpl: (
     request: InstallRequest,
     deps?: Partial<InstallDeps>
@@ -964,26 +956,25 @@ class NotebookRuntimeService {
     this.sessions = new NotebookSessionRegistry({
       beforeTeardown: async () => {
         await Promise.all(Array.from(this.revocationDrains)).catch(() => undefined)
+        await this.runtimeBindingOwner.waitForWrites()
       }
     })
     this.recoveryCoordinator = new NotebookRecoveryCoordinator(getRuntimeRoot(options.dataRoot))
     this.mcpRpcConnectionResolver = options.getMcpRpcConnection
     this.packageMirrorResolver = options.getPackageMirror
-    this.runtimeEnablementResolver = options.getRuntimeEnablement
-    this.manualInterpretersResolver = options.getManualInterpreters
-    this.runtimeDiscoveryImpl =
-      options.discoverRuntimes ??
-      (async (language) => {
-        // Resolve the manual catalog for this language (async), then hand discovery a sync getter for
-        // it — mirroring runtime-ipc, so the service and the Settings survey discover the same set.
-        const manual = this.manualInterpretersResolver
-          ? await this.manualInterpretersResolver(language).catch(() => [])
-          : []
-        return discoverInterpreters(
-          language,
-          defaultDiscoveryDeps(getRuntimeRoot(this.options.dataRoot), () => manual)
-        )
-      })
+    this.runtimeEnablementResolver = options.notebookRuntimeSettings
+      ? async (language) =>
+          (await options.notebookRuntimeSettings?.getSnapshot(language))?.runtimeEnablement
+      : options.getRuntimeEnablement
+    const runtimeSettings =
+      options.notebookRuntimeSettings ?? this.legacyRuntimeSettingsCapability(options)
+    this.runtimeBindingOwner = new NotebookRuntimeBindingOwner({
+      dataRoot: options.dataRoot,
+      repository: this.repository,
+      runtimeSettings,
+      discoverRuntimes: options.discoverRuntimes,
+      platform: options.platform
+    })
     this.installPackagesImpl = options.installPackagesImpl ?? installPackagesDefault
     this.runtimeLogger =
       options.logger ?? (getLogFilePath() ? createLogger('notebook:runtime') : undefined)
@@ -995,6 +986,37 @@ class NotebookRuntimeService {
         logger: this.runtimeLogger
       })
     this.environmentManager = options.environmentManager
+  }
+
+  private legacyRuntimeSettingsCapability(
+    options: NotebookRuntimeServiceOptions
+  ): Pick<NotebookRuntimeSettings, 'getSnapshot'> {
+    return {
+      getSnapshot: async (language) => {
+        const [runtimeEnablement, manualInterpreters] = await Promise.all([
+          options.getRuntimeEnablement?.(language).catch(() => undefined),
+          options.getManualInterpreters?.(language).catch(() => [])
+        ])
+        return {
+          language,
+          runtimeEnablement: runtimeEnablement ?? { enabled: {}, installAuthorized: {} },
+          manualInterpreters: manualInterpreters ?? [],
+          packageMirror: {}
+        }
+      }
+    }
+  }
+
+  private async resolveRuntimeEnablement(
+    language: NotebookLanguage
+  ): Promise<RuntimeEnablement | undefined> {
+    const resolver = this.runtimeEnablementResolver
+    if (!resolver) return undefined
+    try {
+      return await resolver(language)
+    } catch {
+      return undefined
+    }
   }
 
   // Wires the provisioner-backed environment manager after construction (the provisioner is built in
@@ -1135,110 +1157,6 @@ class NotebookRuntimeService {
     }
   }
 
-  // Discovers a language's interpreters (best-effort; a discovery failure yields an empty list so the
-  // tools degrade to "only the app-managed default is available" rather than throwing at the agent).
-  private async runtimeDiscovery(language: NotebookLanguage): Promise<DiscoveredInterpreter[]> {
-    try {
-      return await this.runtimeDiscoveryImpl(language)
-    } catch {
-      return []
-    }
-  }
-
-  // The persisted enablement for a language; undefined (unwired or a read failure) -> isEnvEnabled
-  // falls back to the provenance defaults, keeping the enable gate closed for BYO envs.
-  private async resolveRuntimeEnablement(
-    language: NotebookLanguage
-  ): Promise<RuntimeEnablement | undefined> {
-    if (!this.runtimeEnablementResolver) return undefined
-    try {
-      return await this.runtimeEnablementResolver(language)
-    } catch {
-      return undefined
-    }
-  }
-
-  // Projects a discovered interpreter into the wire binding. An app-managed env is 'managed' (the
-  // executor keeps its managed-prefix lookup); everything else is 'external' (run its interpreter).
-  private toInternalBinding(env: DiscoveredInterpreter): InternalRuntimeBinding {
-    // A conda env WE own (app-managed default OR an agent-created named env) is 'managed': the executor
-    // resolves it by env NAME (managed-prefix lookup + conda activation). Only the USER'S OWN
-    // interpreter is 'external' — run its binary directly.
-    const source = env.provenance === 'user-own' ? 'external' : 'managed'
-    const externalRCondaPrefix =
-      source === 'external' && env.language === 'r'
-        ? windowsCondaPrefixForR(env.interpreterPath, this.options.platform ?? process.platform)
-        : undefined
-    return {
-      language: env.language,
-      runtimeId: env.envId,
-      source,
-      provenance: env.provenance,
-      interpreterPath: env.interpreterPath,
-      label: env.label,
-      version: env.version,
-      status: 'active',
-      // Managed runs in its conda env by NAME (default-python, or the agent-created env's condaEnv);
-      // external runs the user's own interpreter directly. External R must launch via Rscript (the R
-      // kernel loop needs Rscript, not the R binary), matching the managed path's rScriptBin.
-      resolvedInterpreter:
-        source === 'external'
-          ? {
-              command: env.language === 'r' ? rscriptFor(env.interpreterPath) : env.interpreterPath,
-              ...(externalRCondaPrefix ? { condaPrefix: externalRCondaPrefix } : {})
-            }
-          : undefined,
-      envName:
-        source === 'managed' ? (env.condaEnv ?? this.defaultEnvNameFor(env.language)) : undefined
-    }
-  }
-
-  // The ENABLED interpreters for a language: app-managed + user-enabled external, never disabled.
-  private async listEnabledInterpreters(
-    language: NotebookLanguage
-  ): Promise<DiscoveredInterpreter[]> {
-    const [discovered, enablement] = await Promise.all([
-      this.runtimeDiscovery(language),
-      this.resolveRuntimeEnablement(language)
-    ])
-    return discovered.filter((env) => isEnvEnabled(env, enablement))
-  }
-
-  // Resolves a runtimeId to an ENABLED runtime for a language, refusing in the MAIN process when it is
-  // disabled or unknown — a guessed interpreter path can never bypass the Settings enable gate.
-  private async resolveEnabledRuntime(
-    language: NotebookLanguage,
-    runtimeId: string
-  ): Promise<InternalRuntimeBinding> {
-    const enabled = await this.listEnabledInterpreters(language)
-    const match = enabled.find((env) => env.envId === runtimeId)
-    if (!match) {
-      throw new Error(
-        `"${runtimeId}" is not an enabled ${language} runtime. Use list_notebook_runtimes to see the ` +
-          'available runtimes, or enable it in Settings → Runtimes first (disabled and unknown ' +
-          'runtimes are refused).'
-      )
-    }
-    const binding = this.toInternalBinding(match)
-    // An interrupted install left this runtime possibly half-applied (crash recovery flagged it): mark
-    // the binding repair-required so execution refuses rather than silently trusting it. A completed
-    // re-install of this runtime clears the flag (see managePackages).
-    const repairKey =
-      binding.source === 'external'
-        ? binding.runtimeId
-        : (binding.envName ?? this.defaultEnvNameFor(language))
-    const runtimeRoot = getRuntimeRoot(this.options.dataRoot)
-    const repairRequired =
-      isRepairRequired(runtimeRoot, repairKey) ||
-      (binding.source === 'managed' &&
-        isRepairRequired(runtimeRoot, managedRepairRegistryKey(repairKey, language))) ||
-      (binding.source === 'managed' && isRepairRequired(runtimeRoot, binding.runtimeId))
-    if (repairRequired) {
-      return { ...binding, status: 'unavailable', reason: 'repair-required' }
-    }
-    return binding
-  }
-
   // list_notebook_runtimes: the enabled runtimes for both languages, each flagged with whether it is
   // this session's current binding. Never returns a disabled runtime.
   async listRuntimes(request: NotebookSessionRequest): Promise<{
@@ -1246,26 +1164,7 @@ class NotebookRuntimeService {
     bindings: NotebookRuntimeBindings
   }> {
     const session = await this.ensureSession(request)
-    const runtimes: NotebookRuntimeListing[] = []
-    for (const language of ['python', 'r'] as const) {
-      const bound = session.runtimeBinding(language)
-      for (const env of await this.listEnabledInterpreters(language)) {
-        const binding = this.toInternalBinding(env)
-        runtimes.push({
-          language: binding.language,
-          runtimeId: binding.runtimeId,
-          source: binding.source,
-          provenance: binding.provenance,
-          interpreterPath: binding.interpreterPath,
-          label: binding.label,
-          version: binding.version,
-          runnable: env.runnable,
-          detail: env.detail,
-          bound: bound?.runtimeId === binding.runtimeId
-        })
-      }
-    }
-    return { runtimes, bindings: this.buildRuntimeBindings(session) }
+    return this.runtimeBindingOwner.list(session)
   }
 
   // notebook_bind_runtime: the FIRST binding of a language for the session. Refuses a disabled/unknown
@@ -1273,18 +1172,10 @@ class NotebookRuntimeService {
   async bindRuntime(
     request: NotebookSessionRequest & { language: NotebookLanguage; runtimeId: string }
   ): Promise<{ bound: NotebookRuntimeBinding; bindings: NotebookRuntimeBindings }> {
-    const session = await this.ensureSession(request)
-    const binding = await this.resolveEnabledRuntime(request.language, request.runtimeId)
-    const existing = session.runtimeBinding(request.language)
-    if (existing && existing.runtimeId !== binding.runtimeId) {
-      throw new Error(
-        `A ${request.language} runtime is already bound for this session. Use ` +
-          'notebook_switch_runtime to change it (it tears down the current kernel first).'
-      )
-    }
-    session.setRuntimeBinding(request.language, binding)
-    await this.persistRuntimeBindings(session)
-    return { bound: this.toWireBinding(binding), bindings: this.buildRuntimeBindings(session) }
+    return this.runtimeBindingOwner.runWrite(request.sessionId, async () => {
+      const session = await this.ensureSession(request)
+      return this.runtimeBindingOwner.bind(session, request.language, request.runtimeId)
+    })
   }
 
   // notebook_switch_runtime: an EXPLICIT switch — tear down the old kernel + clear that language's
@@ -1292,19 +1183,24 @@ class NotebookRuntimeService {
   async switchRuntime(
     request: NotebookSessionRequest & { language: NotebookLanguage; runtimeId: string }
   ): Promise<{ bound: NotebookRuntimeBinding; bindings: NotebookRuntimeBindings }> {
-    const session = await this.ensureSession(request)
-    const binding = await this.resolveEnabledRuntime(request.language, request.runtimeId)
-    // PHYSICALLY tear down the CURRENT runtime's kernel for this language BEFORE rebinding, so the new
-    // runtime starts fresh and two same-language interpreters never coexist. Resolve the OLD env first
-    // (from the outgoing binding), kill its kernel process via the executor, then clear its state.
-    const oldEnv = this.resolveRunEnv(session, request.language)
-    const kind = request.language === 'r' ? 'r' : 'python'
-    await session.terminateExecutor(kind, oldEnv)
-    this.tearDownLanguageBinding(session, request.language, oldEnv)
-    session.setRuntimeBinding(request.language, binding)
-    await this.persistRuntimeBindings(session)
-    this.notifyNotebookChanged(session)
-    return { bound: this.toWireBinding(binding), bindings: this.buildRuntimeBindings(session) }
+    return this.runtimeBindingOwner.runWrite(request.sessionId, async () => {
+      const session = await this.ensureSession(request)
+      const result = await this.runtimeBindingOwner.switch(
+        session,
+        request.language,
+        request.runtimeId,
+        async () => {
+          // PHYSICALLY tear down the CURRENT runtime's kernel for this language BEFORE rebinding, so the
+          // new runtime starts fresh and two same-language interpreters never coexist.
+          const oldEnv = this.resolveRunEnv(session, request.language)
+          const kind = request.language === 'r' ? 'r' : 'python'
+          await session.terminateExecutor(kind, oldEnv)
+          this.tearDownLanguageBinding(session, request.language, oldEnv)
+        }
+      )
+      this.notifyNotebookChanged(session)
+      return result
+    })
   }
 
   // WS11: how many live sessions are bound to a runtime, split by kernel state, so Settings can warn
@@ -1335,43 +1231,54 @@ class NotebookRuntimeService {
     runtimeId: string,
     options: { force?: boolean } = {}
   ): Promise<void> {
-    for (const session of this.sessions.values()) {
+    const targetSessions = Array.from(this.sessions.values()).filter((session) => {
       const binding = session.runtimeBinding(language)
-      if (binding && binding.runtimeId === runtimeId && binding.status !== 'unavailable') {
-        // 1. Block new leases NOW: an unavailable binding makes further execute/install reject.
-        const env = this.resolveRunEnv(session, language)
-        const processKey = dataProcessKey(language, env)
-        session.setRuntimeBinding(language, {
-          ...binding,
-          status: 'unavailable',
-          reason: 'disabled'
-        })
-        await this.persistRuntimeBindings(session)
-        this.notifyNotebookChanged(session)
+      return binding?.runtimeId === runtimeId && binding.status !== 'unavailable'
+    })
+    await this.runtimeBindingOwner.runWrites(
+      targetSessions.map((session) => session.sessionId),
+      async () => {
+        for (const session of targetSessions) {
+          if (this.sessions.get(session.sessionId) !== session) continue
+          const revocation = await this.runtimeBindingOwner.revoke(
+            session,
+            language,
+            runtimeId,
+            () => {
+              const env = this.resolveRunEnv(session, language)
+              return { env, processKey: dataProcessKey(language, env) }
+            }
+          )
+          if (!revocation) continue
 
-        if (options.force) {
-          // FORCE-STOP ("stop running work and disable"): abort a running cell now — flag its process
-          // key so the killed run records 'cancelled' (not 'failed'), then physically terminate the
-          // kernel and clear its state. Only flag when a cell is actually running, so the one-shot flag
-          // can't leak onto a later run of an idle/dormant kernel.
-          const kind = language === 'r' ? 'r' : 'python'
-          if (session.kernelStatus(processKey) === 'running') {
-            session.markForceStopped(processKey)
-          }
-          await session.terminateExecutor(kind, env)
-          this.tearDownLanguageBinding(session, language, env)
+          // 1. Block new leases NOW: an unavailable binding makes further execute/install reject.
+          const { env, processKey } = revocation
           this.notifyNotebookChanged(session)
-          continue
-        }
 
-        // 2. Default (drain): close in the BACKGROUND so the disable toggle doesn't block on a
-        //    long-running cell — let the in-flight run finish, then tear the kernel down. Tracked so
-        //    shutdown awaits it.
-        const drain = this.drainAndCloseRuntime(session, language, env)
-        this.revocationDrains.add(drain)
-        void drain.finally(() => this.revocationDrains.delete(drain))
+          if (options.force) {
+            // FORCE-STOP ("stop running work and disable"): abort a running cell now — flag its process
+            // key so the killed run records 'cancelled' (not 'failed'), then physically terminate the
+            // kernel and clear its state. Only flag when a cell is actually running, so the one-shot flag
+            // can't leak onto a later run of an idle/dormant kernel.
+            const kind = language === 'r' ? 'r' : 'python'
+            if (session.kernelStatus(processKey) === 'running') {
+              session.markForceStopped(processKey)
+            }
+            await session.terminateExecutor(kind, env)
+            this.tearDownLanguageBinding(session, language, env)
+            this.notifyNotebookChanged(session)
+            continue
+          }
+
+          // 2. Default (drain): close in the BACKGROUND so the disable toggle doesn't block on a
+          //    long-running cell — let the in-flight run finish, then tear the kernel down. Tracked so
+          //    shutdown awaits it.
+          const drain = this.drainAndCloseRuntime(session, language, env)
+          this.revocationDrains.add(drain)
+          void drain.finally(() => this.revocationDrains.delete(drain))
+        }
       }
-    }
+    )
   }
 
   // Drain-and-close for a revoked (disabled) runtime: wait out the in-flight run on this env (never a
@@ -1393,81 +1300,6 @@ class NotebookRuntimeService {
       this.notifyNotebookChanged(session)
     } catch (error) {
       console.error('[notebook] Failed to drain/close a revoked runtime', error)
-    }
-  }
-
-  // Drops the wire-only fields of an internal binding (never leaks the interpreter override shape).
-  private toWireBinding(binding: InternalRuntimeBinding): NotebookRuntimeBinding {
-    return {
-      language: binding.language,
-      runtimeId: binding.runtimeId,
-      source: binding.source,
-      provenance: binding.provenance,
-      interpreterPath: binding.interpreterPath,
-      label: binding.label,
-      version: binding.version,
-      status: binding.status ?? 'active',
-      reason: binding.reason
-    }
-  }
-
-  // The session's current per-language bindings in wire shape (for notebook_state / the tools).
-  private buildRuntimeBindings(session: RuntimeSession): NotebookRuntimeBindings {
-    const python = session.runtimeBinding('python')
-    const r = session.runtimeBinding('r')
-    return {
-      python: python ? this.toWireBinding(python) : undefined,
-      r: r ? this.toWireBinding(r) : undefined
-    }
-  }
-
-  // Persists the session's bindings so they survive a restart (best-effort; a persistence failure must
-  // not fail the bind/switch/revoke operation itself). Reloaded + revalidated by reloadPersistedBindings.
-  private async persistRuntimeBindings(session: RuntimeSession): Promise<void> {
-    try {
-      await this.repository.setRuntimeBindings(
-        session.projectName,
-        session.sessionId,
-        this.buildRuntimeBindings(session)
-      )
-    } catch (error) {
-      console.error('[notebook] Failed to persist runtime bindings', error)
-    }
-  }
-
-  // On session (re)load, rehydrate persisted bindings and REVALIDATE each against current discovery +
-  // enablement: a binding that still resolves to an enabled+runnable runtime is restored active (its
-  // kernel is terminated after a restart — memory is gone, but the binding stands); one that no longer
-  // resolves is kept as unavailable (NO silent fallback) so the next execute rejects and the agent
-  // switches — 'disabled' when the runtime is still detected but turned off, 'missing' when it is gone.
-  private async reloadPersistedBindings(
-    session: RuntimeSession,
-    persisted: NotebookRuntimeBindings | undefined
-  ): Promise<void> {
-    if (!persisted) return
-    for (const language of ['python', 'r'] as const) {
-      const wire = persisted[language]
-      if (!wire) continue
-      try {
-        session.setRuntimeBinding(
-          language,
-          await this.resolveEnabledRuntime(language, wire.runtimeId)
-        )
-      } catch {
-        const discovered = await this.runtimeDiscovery(language)
-        const stillDetected = discovered.some((env) => env.envId === wire.runtimeId)
-        session.setRuntimeBinding(language, {
-          language,
-          runtimeId: wire.runtimeId,
-          source: wire.source,
-          provenance: wire.provenance,
-          interpreterPath: wire.interpreterPath,
-          label: wire.label,
-          version: wire.version,
-          status: 'unavailable',
-          reason: stillDetected ? 'disabled' : 'missing'
-        })
-      }
     }
   }
 
@@ -2192,7 +2024,7 @@ class NotebookRuntimeService {
       recentRuns: document.runs.slice(-20).map((run) => this.toPublicRunRecord(run)),
       environments: this.buildEnvironmentStatuses(session),
       // v4 session runtime bindings (notebook_state surfaces the current python/r bindings).
-      runtimeBindings: this.buildRuntimeBindings(session)
+      runtimeBindings: this.runtimeBindingOwner.snapshot(session)
     }
   }
 
@@ -3121,7 +2953,10 @@ class NotebookRuntimeService {
   }
 
   async shutdownSession(sessionId: string): Promise<{ sessionId: string; status: 'shutdown' }> {
-    await this.sessions.remove(sessionId)
+    await this.runtimeBindingOwner.withSessionTeardown(sessionId, async () => {
+      await this.runtimeBindingOwner.waitForWrites(sessionId)
+      await this.sessions.remove(sessionId)
+    })
     return { sessionId, status: 'shutdown' }
   }
 
@@ -3293,7 +3128,7 @@ class NotebookRuntimeService {
   // when every kernel tree was cleanly reaped, so the update-install gate can refuse to trigger the
   // NSIS uninstall while a kernel may still hold file handles under the install dir.
   shutdownAll(): Promise<{ reaped: boolean }> {
-    return this.sessions.shutdownAll()
+    return this.runtimeBindingOwner.withGlobalTeardown(() => this.sessions.shutdownAll())
   }
 
   // Permanently closes process-owned recovery work before the final kernel teardown. Unlike
@@ -3310,7 +3145,7 @@ class NotebookRuntimeService {
     // quit budget before kernel teardown even starts. Await both so non-quit module disposal still leaves
     // no recovery work behind once this terminal operation resolves.
     const recoveryDisposal = this.recoveryCoordinator.dispose()
-    const shutdown = this.sessions.dispose()
+    const shutdown = this.runtimeBindingOwner.withGlobalTeardown(() => this.sessions.dispose())
     const disposal = Promise.allSettled([shutdown, recoveryDisposal]).then(
       ([shutdownResult, recoveryResult]) => {
         const failures = [shutdownResult, recoveryResult]
@@ -3378,7 +3213,7 @@ class NotebookRuntimeService {
         // is restored active; one whose runtime is now disabled/missing is kept as unavailable (no
         // silent fallback). Publish only after this initialization completes so same-ID callers cannot
         // observe a partially hydrated aggregate.
-        await this.reloadPersistedBindings(session, document.runtimeBindings)
+        await this.runtimeBindingOwner.reload(session, document.runtimeBindings)
         return session
       } catch (error) {
         // Initialization failures stay retryable. Best-effort cleanup must not replace the repository /
@@ -3663,31 +3498,43 @@ class NotebookRuntimeService {
     managedRepair: boolean,
     crossLanguageRepair = false
   ): Promise<void> {
-    const changedSessions: RuntimeSession[] = []
-    for (const session of this.sessions.values()) {
-      let changed = false
-      for (const [language, binding] of session.runtimeBindingEntries()) {
+    const targetSessions = Array.from(this.sessions.values()).filter((session) =>
+      Array.from(session.runtimeBindingEntries()).some(([language, binding]) => {
         const targetMatches =
           binding.source === 'external'
             ? !managedRepair && language === repairedLanguage && binding.runtimeId === runtimeId
             : managedRepair &&
               (crossLanguageRepair || language === repairedLanguage) &&
               this.resolveRunEnv(session, language) === envName
-        if (targetMatches && binding.reason === 'repair-required') {
-          session.setRuntimeBinding(language, {
-            ...binding,
-            status: 'active',
-            reason: undefined
-          })
-          changed = true
+        return targetMatches && binding.reason === 'repair-required'
+      })
+    )
+    await this.runtimeBindingOwner.runWrites(
+      targetSessions.map((session) => session.sessionId),
+      async () => {
+        const changedSessions: RuntimeSession[] = []
+        for (const session of targetSessions) {
+          if (this.sessions.get(session.sessionId) !== session) continue
+          let changed = false
+          for (const [language, binding] of session.runtimeBindingEntries()) {
+            const targetMatches =
+              binding.source === 'external'
+                ? !managedRepair && language === repairedLanguage && binding.runtimeId === runtimeId
+                : managedRepair &&
+                  (crossLanguageRepair || language === repairedLanguage) &&
+                  this.resolveRunEnv(session, language) === envName
+            if (targetMatches && binding.reason === 'repair-required') {
+              changed = this.runtimeBindingOwner.markAvailable(session, language) || changed
+            }
+          }
+          if (changed) changedSessions.push(session)
+        }
+        for (const session of changedSessions) {
+          await this.runtimeBindingOwner.persist(session)
+          this.notifyNotebookChanged(session)
         }
       }
-      if (changed) changedSessions.push(session)
-    }
-    for (const session of changedSessions) {
-      await this.persistRuntimeBindings(session)
-      this.notifyNotebookChanged(session)
-    }
+    )
   }
 
   // A protected interpreter identity changed after an installer transaction despite the approved
@@ -3701,54 +3548,71 @@ class NotebookRuntimeService {
     runtimeRoot: string,
     managedRuntime: boolean
   ): Promise<void> {
-    const affectedBindings = new Set<RuntimeSession>()
     const affectedLanguages: readonly NotebookLanguage[] = managedRuntime
       ? ['python', 'r']
       : [language]
-    if (managedRuntime) {
-      for (const affectedLanguage of affectedLanguages) {
-        this.repairBlockedEnvs.add(dataProcessKey(affectedLanguage, envName))
-      }
-    } else {
-      this.repairBlockedEnvs.add(externalRepairBlockKey(language, runtimeId))
-    }
-    try {
-      for (const session of this.sessions.values()) {
-        for (const affectedLanguage of affectedLanguages) {
-          const binding = session.runtimeBinding(affectedLanguage)
-          const sessionEnv = this.resolveRunEnv(session, affectedLanguage)
-          const targetMatches = managedRuntime
-            ? binding?.source !== 'external' && sessionEnv === envName
-            : binding?.source === 'external' && binding.runtimeId === runtimeId
-          if (!targetMatches) continue
-
-          if (binding) {
-            session.setRuntimeBinding(affectedLanguage, {
-              ...binding,
-              status: 'unavailable',
-              reason: 'repair-required'
-            })
-            affectedBindings.add(session)
+    const targetSessions = Array.from(this.sessions.values()).filter((session) =>
+      affectedLanguages.some((affectedLanguage) => {
+        const binding = session.runtimeBinding(affectedLanguage)
+        const sessionEnv = this.resolveRunEnv(session, affectedLanguage)
+        return managedRuntime
+          ? binding?.source !== 'external' && sessionEnv === envName
+          : binding?.source === 'external' && binding.runtimeId === runtimeId
+      })
+    )
+    await this.runtimeBindingOwner.runWrites(
+      targetSessions.map((session) => session.sessionId),
+      async () => {
+        const affectedBindings = new Set<RuntimeSession>()
+        if (managedRuntime) {
+          for (const affectedLanguage of affectedLanguages) {
+            this.repairBlockedEnvs.add(dataProcessKey(affectedLanguage, envName))
           }
-          const kind = affectedLanguage === 'r' ? 'r' : 'python'
-          await session.terminateExecutor(kind, sessionEnv)
-          this.tearDownLanguageBinding(session, affectedLanguage, sessionEnv)
-          this.notifyNotebookChanged(session)
+        } else {
+          this.repairBlockedEnvs.add(externalRepairBlockKey(language, runtimeId))
+        }
+        try {
+          for (const session of targetSessions) {
+            if (this.sessions.get(session.sessionId) !== session) continue
+            for (const affectedLanguage of affectedLanguages) {
+              const binding = session.runtimeBinding(affectedLanguage)
+              const sessionEnv = this.resolveRunEnv(session, affectedLanguage)
+              const targetMatches = managedRuntime
+                ? binding?.source !== 'external' && sessionEnv === envName
+                : binding?.source === 'external' && binding.runtimeId === runtimeId
+              if (!targetMatches) continue
+
+              if (
+                binding &&
+                this.runtimeBindingOwner.markUnavailable(
+                  session,
+                  affectedLanguage,
+                  'repair-required'
+                )
+              ) {
+                affectedBindings.add(session)
+              }
+              const kind = affectedLanguage === 'r' ? 'r' : 'python'
+              await session.terminateExecutor(kind, sessionEnv)
+              this.tearDownLanguageBinding(session, affectedLanguage, sessionEnv)
+              this.notifyNotebookChanged(session)
+            }
+          }
+
+          // The operation journal stays live until both the durable repair registry and the binding state
+          // are committed. A tagged failure makes the caller retain journal + sidecar evidence for startup
+          // recovery, while the process-local gate above continues blocking execution immediately.
+          addRepairRequired(runtimeRoot, runtimeId, 'protected-identity-change')
+          for (const session of affectedBindings) await this.runtimeBindingOwner.persist(session)
+        } catch (error) {
+          throw new Error(
+            `${REPAIR_QUARANTINE_FAILED}: could not durably quarantine the runtime after its protected ` +
+              `interpreter changed. ${error instanceof Error ? error.message : String(error)}`,
+            { cause: error }
+          )
         }
       }
-
-      // The operation journal stays live until both the durable repair registry and the binding state
-      // are committed. A tagged failure makes the caller retain journal + sidecar evidence for startup
-      // recovery, while the process-local gate above continues blocking execution immediately.
-      addRepairRequired(runtimeRoot, runtimeId, 'protected-identity-change')
-      for (const session of affectedBindings) await this.persistRuntimeBindings(session)
-    } catch (error) {
-      throw new Error(
-        `${REPAIR_QUARANTINE_FAILED}: could not durably quarantine the runtime after its protected ` +
-          `interpreter changed. ${error instanceof Error ? error.message : String(error)}`,
-        { cause: error }
-      )
-    }
+    )
   }
 
   // Adds notebook roots and kernel metadata to the run returned to MCP callers.

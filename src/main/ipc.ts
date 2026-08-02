@@ -109,6 +109,7 @@ import { tryDecryptKey } from './settings/crypto'
 import { registerSettingsIpcHandlers } from './settings/ipc'
 import { getAppClaudeConfigDir } from './settings/provider-env'
 import { createDefaultSettingsService } from './settings/service'
+import type { NotebookRuntimeSettings } from './settings/capabilities'
 import type { WindowSettingsCapabilities } from './settings/service-capabilities'
 import { createSettingsWorkflows } from './settings/workflows'
 import { createProfileService } from './specialist/service'
@@ -435,13 +436,28 @@ const createApplicationModules = async (
     }
   }
   let backendTeardownOwnedByCoordinator = false
+  const notebookRuntimeSettings: Pick<NotebookRuntimeSettings, 'getSnapshot'> = {
+    getSnapshot: async (language) => {
+      const [runtimeSelection, runtimeEnablement, manualInterpreters, packageMirror] =
+        await Promise.all([
+          settingsService.getRuntimeSelection(language),
+          settingsService.getRuntimeEnablement(language),
+          settingsService.getManualInterpreters(language),
+          settingsService.getPackageMirror()
+        ])
+      return {
+        language,
+        runtimeSelection,
+        runtimeEnablement,
+        manualInterpreters,
+        packageMirror
+      }
+    }
+  }
   const notebookService = await modules.add(
     {
       getPackageMirror: () => settingsService.getPackageMirror(),
-      getRuntimeEnablement: (language: NotebookLanguage) =>
-        settingsService.getRuntimeEnablement(language),
-      getManualInterpreters: (language: NotebookLanguage) =>
-        settingsService.getManualInterpreters(language)
+      notebookRuntimeSettings
     },
     (settings) => {
       const notebook = createDefaultNotebookRuntimeService(settings)
