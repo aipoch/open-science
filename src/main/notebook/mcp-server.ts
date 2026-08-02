@@ -6,6 +6,8 @@ import { z } from 'zod'
 import { NOTEBOOK_MCP_SERVER_ARG } from '../mcp-server-args'
 
 const NOTEBOOK_MCP_SERVER_NAME = 'open-science-notebook'
+const MAX_RUNTIME_RESULTS = 40
+const MAX_ENVIRONMENT_RESULTS = 30
 
 // Scoped prompt addendum that only applies when the agent is given notebook tools.
 const NOTEBOOK_SYSTEM_PROMPT_APPEND = [
@@ -78,10 +80,15 @@ const manageEnvironmentsToolSchema = {
   action: z.enum(['create', 'list', 'remove']),
   language: z.enum(['python', 'r']).optional(),
   name: z.string().optional(),
-  packages: z.array(z.string().min(1)).optional()
+  packages: z.array(z.string().min(1)).optional(),
+  offset: z.number().int().nonnegative().optional(),
+  limit: z.number().int().positive().max(MAX_ENVIRONMENT_RESULTS).optional()
 }
 
-const listRuntimesToolSchema = {}
+const listRuntimesToolSchema = {
+  offset: z.number().int().nonnegative().optional(),
+  limit: z.number().int().positive().max(MAX_RUNTIME_RESULTS).optional()
+}
 
 const bindRuntimeToolSchema = {
   language: z.enum(['python', 'r']),
@@ -106,13 +113,13 @@ const MANAGE_PACKAGES_DOC = [
 
 const MANAGE_ENVIRONMENTS_DOC = [
   'Create, list, or remove named persistent Python/R environments. Each is a separate process and namespace.',
-  'action:"create" needs language and name (optional initial packages); action:"list" reports provisioned environments; action:"remove" accepts a name.',
+  `action:"create" needs language and name (optional initial packages); action:"list" reports provisioned environments in pages of at most ${MAX_ENVIRONMENT_RESULTS} using optional offset/limit and nextOffset; action:"remove" accepts a name.`,
   'Create before bind/switch. Removal is limited to agent-created, idle named environments; defaults, app-managed versioned environments, and external interpreters cannot be removed.',
   'Named data kernels cannot call connectors; use repl_execute and ./handoff/.'
 ].join('\n')
 
 const LIST_NOTEBOOK_RUNTIMES_DOC = [
-  'List enabled managed/external Python/R runtimes and their runtimeId, source, version, runnable, and bound status. Disabled runtimes are omitted.',
+  `List enabled managed/external Python/R runtimes and their runtimeId, source, version, runnable, and bound status in pages of at most ${MAX_RUNTIME_RESULTS} using optional offset/limit and nextOffset. Disabled runtimes are omitted.`,
   'No binding is required for the app-managed default; bind only to select another listed runtime.'
 ].join('\n')
 
@@ -183,7 +190,7 @@ type NotebookRpcToolDefinition = {
   inputSchema: NotebookToolSchema
   // Optional projection of the raw RPC result before it is serialized for the agent. Used to keep
   // a verbose result (e.g. restart returning the whole session state) compact and to-the-point.
-  mapResult?: (raw: unknown) => unknown
+  mapResult?: (raw: unknown, input: unknown) => unknown
   resultLimitChars?: number
 }
 
@@ -279,9 +286,7 @@ const MAX_EXECUTION_OUTPUTS = 6
 const MAX_EXECUTION_FILES = 10
 const MAX_STATE_CELLS = 20
 const MAX_STATE_RUNS = 10
-const MAX_RUNTIME_RESULTS = 40
 const MAX_PACKAGE_RESULTS = 50
-const MAX_ENVIRONMENT_RESULTS = 30
 
 const isImageMime = (mime: string): boolean => mime.startsWith('image/')
 
@@ -292,6 +297,11 @@ const clipAgentText = (text: string, limit: number): { text: string; clipped: bo
     clipped: true
   }
 }
+
+const clipToolDiagnostic = (text: string, limit: number): string =>
+  text.length <= limit
+    ? text
+    : `${text.slice(0, limit)}\n…[${text.length - limit} chars omitted from this tool response]`
 
 const asRecord = (value: unknown): Record<string, unknown> | undefined =>
   typeof value === 'object' && value !== null ? (value as Record<string, unknown>) : undefined
@@ -582,7 +592,11 @@ const compactNotebookStateResult = (raw: unknown): unknown => {
     recentRuns: recentRuns.map((run, index) =>
       compactStateRun(run, index === recentRuns.length - 1)
     ),
+    environmentCount: Array.isArray(record.environments) ? record.environments.length : 0,
     ...(environments.length ? { environments } : {}),
+    ...(Array.isArray(record.environments) && record.environments.length > environments.length
+      ? { omittedEnvironmentCount: record.environments.length - environments.length }
+      : {}),
     historyCompacted: true,
     note: 'Only recent run metadata and the latest output preview are returned; full history remains in the notebook preview.'
   }
@@ -595,7 +609,17 @@ const serializeNotebookToolResult = (value: unknown, limitChars?: number): strin
   if (limitChars === undefined || serialized.length <= limitChars) return serialized
 
   const record = asRecord(value) ?? {}
-  const identity = pickDefined(record, ['status', 'runId', 'sessionId', 'kernelStatus', 'exitCode'])
+  const identity = pickDefined(record, [
+    'status',
+    'runId',
+    'sessionId',
+    'kernelStatus',
+    'exitCode',
+    'offset',
+    'nextOffset',
+    'runtimeCount',
+    'environmentCount'
+  ])
   for (const [key, fieldValue] of Object.entries(identity)) {
     if (typeof fieldValue === 'string') identity[key] = clipAgentText(fieldValue, 256).text
   }
@@ -639,7 +663,7 @@ const registerNotebookRpcTool = (
     },
     async (input) => {
       const raw = await callNotebookRpc(environment, definition.method, input)
-      const result = definition.mapResult ? definition.mapResult(raw) : raw
+      const result = definition.mapResult ? definition.mapResult(raw, input) : raw
       return {
         content: [
           {
@@ -667,11 +691,26 @@ const compactRestartResult = (raw: unknown): unknown => {
   }
 }
 
-const compactListRuntimesResult = (raw: unknown): unknown => {
+const resultPage = (input: unknown, defaultLimit: number): { offset: number; limit: number } => {
+  const record = asRecord(input)
+  const offset =
+    typeof record?.offset === 'number' && Number.isInteger(record.offset) && record.offset >= 0
+      ? record.offset
+      : 0
+  const requestedLimit =
+    typeof record?.limit === 'number' && Number.isInteger(record.limit) && record.limit > 0
+      ? record.limit
+      : defaultLimit
+  return { offset, limit: Math.min(requestedLimit, defaultLimit) }
+}
+
+const compactListRuntimesResult = (raw: unknown, input: unknown = {}): unknown => {
   const record = asRecord(raw)
   if (!record) return raw
   const source = Array.isArray(record.runtimes) ? record.runtimes : []
-  const runtimes = source.slice(0, MAX_RUNTIME_RESULTS).flatMap((runtime) => {
+  const { offset, limit } = resultPage(input, MAX_RUNTIME_RESULTS)
+  const pageSource = source.slice(offset, offset + limit)
+  const runtimes = pageSource.flatMap((runtime) => {
     const item = asRecord(runtime)
     return item
       ? [
@@ -694,9 +733,10 @@ const compactListRuntimesResult = (raw: unknown): unknown => {
   const bindings = compactRuntimeBindings(record.bindings)
   return {
     runtimeCount: source.length,
+    offset,
     runtimes,
-    ...(source.length > runtimes.length
-      ? { omittedRuntimeCount: source.length - runtimes.length }
+    ...(offset + pageSource.length < source.length
+      ? { nextOffset: offset + pageSource.length }
       : {}),
     ...(bindings ? { bindings } : {})
   }
@@ -740,7 +780,7 @@ const compactInspectPackagesResult = (raw: unknown): unknown => {
     ? record.warnings
         .filter((warning): warning is string => typeof warning === 'string')
         .slice(0, 5)
-        .map((warning) => clipAgentText(warning, 500).text)
+        .map((warning) => clipToolDiagnostic(warning, 500))
     : []
   return {
     ...pickDefined(record, ['language', 'environmentName', 'runtimeSource', 'runtimeLabel']),
@@ -751,23 +791,29 @@ const compactInspectPackagesResult = (raw: unknown): unknown => {
     ...(source.length > packages.length
       ? { omittedPackageCount: source.length - packages.length }
       : {}),
-    ...(warnings.length ? { warnings } : {})
+    ...(warnings.length ? { warnings } : {}),
+    ...(Array.isArray(record.warnings) && record.warnings.length > warnings.length
+      ? { omittedWarningCount: record.warnings.length - warnings.length }
+      : {})
   }
 }
 
-const compactManageEnvironmentsResult = (raw: unknown): unknown => {
+const compactManageEnvironmentsResult = (raw: unknown, input: unknown = {}): unknown => {
   const record = asRecord(raw)
   if (!record) return raw
   const source = Array.isArray(record.environments) ? record.environments : []
-  const environments = source.slice(0, MAX_ENVIRONMENT_RESULTS).flatMap((environment) => {
+  const { offset, limit } = resultPage(input, MAX_ENVIRONMENT_RESULTS)
+  const pageSource = source.slice(offset, offset + limit)
+  const environments = pageSource.flatMap((environment) => {
     const item = asRecord(environment)
     return item ? [pickDefined(item, ['name', 'language', 'ready', 'isDefault', 'sizeBytes'])] : []
   })
   return {
     environmentCount: source.length,
+    offset,
     environments,
-    ...(source.length > environments.length
-      ? { omittedEnvironmentCount: source.length - environments.length }
+    ...(offset + pageSource.length < source.length
+      ? { nextOffset: offset + pageSource.length }
       : {})
   }
 }
@@ -806,7 +852,7 @@ const compactManagePackagesResult = (raw: unknown): unknown => {
       ? { omittedPackageChangeCount: result.packageChanges.length - (packageChanges?.length ?? 0) }
       : {}),
     ...(typeof result.error === 'string'
-      ? { error: clipAgentText(result.error, 2_000).text }
+      ? { error: clipToolDiagnostic(result.error, 2_000) }
       : result.error !== undefined
         ? { error: result.error }
         : {})

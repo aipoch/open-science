@@ -134,6 +134,8 @@ describe('renderSkillDoc', () => {
     )
     expect(md).toContain('persistent')
     expect(md).toMatch(/instead of running the call again/)
+    expect(md).toContain('Do not bypass `host.mcp` with raw HTTP')
+    expect(md).toContain('approval')
   })
 
   it('keeps the PubMed Skill under a 2.3k-token on-demand budget', () => {

@@ -12,7 +12,7 @@ import {
   boundedSkillSelectorCatalog,
   renderSkillSelectorCatalog,
   resolveSelectedSkills,
-  selectExplicitSkills
+  selectExplicitConnectorSkills
 } from './skill-selector-routing'
 
 // Responses payloads are intentionally open-ended across providers. Keep the compatibility boundary
@@ -342,10 +342,10 @@ export class NativeResponsesCompatibilityProxy {
     signal?: AbortSignal
   ): Promise<ResponsesBridgeSkillInput[]> {
     if (!text.trim() || catalog.length === 0 || signal?.aborted) return []
+    const explicit = selectExplicitConnectorSkills(text, catalog)
+    if (explicit.length > 0) return explicit
     const selectorCatalog = boundedSkillSelectorCatalog(catalog)
     if (selectorCatalog.length === 0) return []
-    const explicit = selectExplicitSkills(text, selectorCatalog)
-    if (explicit.length > 0) return explicit
     if (!this.target.model) return []
 
     const timeout = new AbortController()

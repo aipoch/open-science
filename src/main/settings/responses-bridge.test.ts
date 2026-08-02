@@ -1710,6 +1710,64 @@ describe('Responses bridge Skill selector', () => {
     expect(upstreamFetch).not.toHaveBeenCalled()
   })
 
+  it('does not treat an ordinary Skill name in natural text as an explicit local selection', async () => {
+    const upstreamFetch = vi.fn(
+      async () =>
+        new Response(
+          JSON.stringify({
+            choices: [
+              {
+                message: {
+                  tool_calls: [
+                    {
+                      function: {
+                        name: 'select_skills',
+                        arguments: JSON.stringify({ skill_names: ['research'] })
+                      }
+                    }
+                  ]
+                }
+              }
+            ]
+          })
+        )
+    )
+    const bridge = new ResponsesBridge(
+      { baseUrl: 'https://vendor.example/v1', model: 'model-a' },
+      upstreamFetch
+    )
+    const mixedCatalog = [
+      ...catalog,
+      { name: 'research', description: 'Research a topic.', path: '/skills/research/SKILL.md' }
+    ]
+
+    await expect(bridge.selectSkills('research cancer treatments', mixedCatalog)).resolves.toEqual([
+      { name: 'research', path: '/skills/research/SKILL.md' }
+    ])
+    expect(upstreamFetch).toHaveBeenCalledOnce()
+  })
+
+  it('finds an explicitly named connector before bounding the inference catalog', async () => {
+    const upstreamFetch = vi.fn<typeof fetch>()
+    const bridge = new ResponsesBridge(
+      { baseUrl: 'https://vendor.example/v1', model: 'model-a' },
+      upstreamFetch
+    )
+    const largeCatalog = [
+      ...Array.from({ length: 140 }, (_, index) => ({
+        name: `skill-${index}`,
+        description: `Description ${index}`,
+        path: `/skills/${index}/SKILL.md`
+      })),
+      { name: 'mcp-pubmed', description: 'Search PubMed.', path: '/skills/pubmed/SKILL.md' }
+    ]
+
+    await expect(bridge.selectSkills('用 PubMed 搜索文章', largeCatalog)).resolves.toEqual([
+      { name: 'mcp-pubmed', path: '/skills/pubmed/SKILL.md' }
+    ])
+    expect(upstreamFetch).not.toHaveBeenCalled()
+  })
+
   it.each([
     ['an upstream error', new Response('provider unavailable', { status: 503 })],
     ['a malformed function result', new Response(JSON.stringify({ choices: [{ message: {} }] }))]

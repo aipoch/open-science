@@ -46,26 +46,26 @@ const normalize = (value: string): string =>
 
 const escapeRegExp = (value: string): string => value.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')
 
-const aliasesFor = (name: string): string[] => {
+const connectorAliasesFor = (name: string): string[] => {
   const normalized = normalize(name).trim()
+  if (!normalized.startsWith('mcp ')) return []
   const aliases = [normalized]
-  if (normalized.startsWith('mcp ')) {
-    const connectorName = normalized.slice('mcp '.length).trim()
-    if (connectorName.length >= 4) aliases.push(connectorName)
-  }
+  const connectorName = normalized.slice('mcp '.length).trim()
+  if (connectorName.length >= 4) aliases.push(connectorName)
   return aliases
 }
 
-// Exact Skill names (and the familiar connector name without `mcp-`) need no model inference. The
-// ASCII boundary guards prevent names such as `r` or `write` from matching inside ordinary words.
-export const selectExplicitSkills = <T extends SkillSelectorCandidate>(
+// Exact connector Skill names (and the familiar connector name without `mcp-`) need no model
+// inference. Ordinary Skill names still use semantic routing because words such as "research" are
+// often request content rather than an explicit selection. ASCII guards prevent substring matches.
+export const selectExplicitConnectorSkills = <T extends SkillSelectorCandidate>(
   text: string,
   catalog: T[]
 ): SkillSelectorInput[] => {
   const normalizedText = normalize(text)
   const selected: SkillSelectorInput[] = []
   for (const candidate of catalog) {
-    const matches = aliasesFor(candidate.name).some((alias) => {
+    const matches = connectorAliasesFor(candidate.name).some((alias) => {
       if (!alias) return false
       return new RegExp(`(?:^|[^a-z0-9])${escapeRegExp(alias)}(?:$|[^a-z0-9])`, 'i').test(
         normalizedText

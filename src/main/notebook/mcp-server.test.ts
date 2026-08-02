@@ -448,6 +448,8 @@ describe('inspect_packages tool', () => {
     expect(compact).toHaveProperty('omittedPackageCount', 30)
     expect(JSON.stringify(compact)).not.toContain('evidenceSources')
     expect(JSON.stringify(compact)).not.toContain('libraryRank')
+    expect(JSON.stringify(compact)).not.toContain('full output in notebook preview')
+    expect(JSON.stringify(compact)).toContain('omitted from this tool response')
     expect(JSON.stringify(compact).length).toBeLessThanOrEqual(NOTEBOOK_MCP_CONTROL_RESULT_LIMIT)
   })
 })
@@ -533,34 +535,38 @@ describe('notebook control tool results', () => {
     }
   })
 
-  it('lists selectable runtimes without interpreter paths or duplicate full bindings', () => {
-    const compact = compactListRuntimesResult({
-      runtimes: [
-        {
+  it('pages selectable runtimes without making omitted runtime IDs undiscoverable', () => {
+    const compact = compactListRuntimesResult(
+      {
+        runtimes: Array.from({ length: 45 }, (_, index) => ({
           language: 'python',
-          runtimeId: 'managed-python',
+          runtimeId: `managed-python-${index}`,
           source: 'managed',
           provenance: 'app-managed',
           interpreterPath: '/private/runtime/bin/python',
-          label: 'Managed Python',
+          label: `Managed Python ${index}`,
           version: '3.13',
           runnable: true,
           bound: true
+        })),
+        bindings: {
+          python: {
+            language: 'python',
+            runtimeId: 'managed-python',
+            source: 'managed',
+            provenance: 'app-managed',
+            interpreterPath: '/private/runtime/bin/python',
+            label: 'Managed Python'
+          }
         }
-      ],
-      bindings: {
-        python: {
-          language: 'python',
-          runtimeId: 'managed-python',
-          source: 'managed',
-          provenance: 'app-managed',
-          interpreterPath: '/private/runtime/bin/python',
-          label: 'Managed Python'
-        }
-      }
-    })
+      },
+      { offset: 40, limit: 5 }
+    ) as Record<string, unknown>
 
-    expect(compact).toMatchObject({ runtimeCount: 1 })
+    expect(compact).toMatchObject({ runtimeCount: 45, offset: 40 })
+    expect(compact.runtimes).toHaveLength(5)
+    expect(compact).not.toHaveProperty('nextOffset')
+    expect(JSON.stringify(compact)).toContain('managed-python-44')
     expect(JSON.stringify(compact)).not.toContain('interpreterPath')
     expect(JSON.stringify(compact)).not.toContain('/private/runtime')
   })
@@ -595,8 +601,8 @@ describe('notebook control tool results', () => {
       sessionId: 'session-1',
       status: 'shutdown'
     })
-    expect(
-      compactManageEnvironmentsResult({
+    const environments = compactManageEnvironmentsResult(
+      {
         environments: Array.from({ length: 40 }, (_, index) => ({
           name: `env-${index}`,
           language: 'python',
@@ -605,8 +611,13 @@ describe('notebook control tool results', () => {
           sizeBytes: 10,
           internalPath: `/private/env-${index}`
         }))
-      })
-    ).toMatchObject({ environmentCount: 40, omittedEnvironmentCount: 10 })
+      },
+      { offset: 30, limit: 10 }
+    ) as Record<string, unknown>
+    expect(environments).toMatchObject({ environmentCount: 40, offset: 30 })
+    expect(environments.environments).toHaveLength(10)
+    expect(environments).not.toHaveProperty('nextOffset')
+    expect(JSON.stringify(environments)).toContain('env-39')
   })
 })
 
@@ -617,7 +628,7 @@ describe('manage_environments tool', () => {
     expect(tool).toBeDefined()
     expect(tool?.method).toBe('manageEnvironments')
     expect(Object.keys(tool?.inputSchema ?? {})).toEqual(
-      expect.arrayContaining(['action', 'language', 'name', 'packages'])
+      expect.arrayContaining(['action', 'language', 'name', 'packages', 'offset', 'limit'])
     )
   })
 

@@ -237,6 +237,27 @@ describe('native Responses compatibility', () => {
     expect(fetchImpl).not.toHaveBeenCalled()
   })
 
+  it('finds a named connector outside the bounded inference catalog', async () => {
+    const fetchImpl = vi.fn<typeof fetch>()
+    const proxy = new NativeResponsesCompatibilityProxy(
+      { baseUrl: 'https://api.minimaxi.com/v1', model: 'MiniMax-M3' },
+      fetchImpl
+    )
+    const catalog = [
+      ...Array.from({ length: 140 }, (_, index) => ({
+        name: `skill-${index}`,
+        description: `Description ${index}`,
+        path: `/skills/${index}/SKILL.md`
+      })),
+      { name: 'mcp-pubmed', description: 'Search PubMed.', path: '/skills/pubmed/SKILL.md' }
+    ]
+
+    await expect(proxy.selectSkills('用 PubMed 搜索文章', catalog)).resolves.toEqual([
+      { name: 'mcp-pubmed', path: '/skills/pubmed/SKILL.md' }
+    ])
+    expect(fetchImpl).not.toHaveBeenCalled()
+  })
+
   it('continues scanning for smaller Skills after a candidate exceeds the catalog byte budget', async () => {
     const fetchImpl = vi.fn(
       async (_url: Parameters<typeof fetch>[0], init?: Parameters<typeof fetch>[1]) => {

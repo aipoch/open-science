@@ -13,7 +13,7 @@ import {
   boundedSkillSelectorCatalog,
   renderSkillSelectorCatalog,
   resolveSelectedSkills,
-  selectExplicitSkills
+  selectExplicitConnectorSkills
 } from './skill-selector-routing'
 
 // The bridge deliberately keeps protocol payloads open-ended; validation rejects unsupported shapes
@@ -1059,10 +1059,10 @@ export class ResponsesBridge {
     signal?: AbortSignal
   ): Promise<ResponsesBridgeSkillInput[]> {
     if (!text.trim() || catalog.length === 0 || signal?.aborted) return []
+    const explicit = selectExplicitConnectorSkills(text, catalog)
+    if (explicit.length > 0) return explicit
     const selectorCatalog = boundedSkillSelectorCatalog(catalog)
     if (selectorCatalog.length === 0) return []
-    const explicit = selectExplicitSkills(text, selectorCatalog)
-    if (explicit.length > 0) return explicit
 
     const timeout = new AbortController()
     let timedOut = false

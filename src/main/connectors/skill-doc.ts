@@ -15,6 +15,10 @@ const CONVENTIONS = [
 const SKILL_CONVENTIONS =
   'Use from `repl_execute` as `const result = await host.mcp(server, method, {...})`. Results are native JavaScript in a persistent REPL; save reusable values on `globalThis` instead of running the call again, and never re-issue the same upstream call.'
 
+const CUSTOM_SKILL_CONVENTIONS =
+  `${SKILL_CONVENTIONS} Do not bypass \`host.mcp\` with raw HTTP or calls from Python/R: ` +
+  'the host path enforces approval, tool policy, credentials, and rate limits.'
+
 // Placeholder value for one JSON-Schema field in a call example: an enum's first choice or the field's
 // own default when present, otherwise a type-keyed stand-in. Rendered as a JSON literal.
 function sampleValue(spec: { type?: unknown; default?: unknown; enum?: unknown }): string {
@@ -147,6 +151,6 @@ export function renderCustomSkillDoc(
     .join('\n')
   return (
     `${header}\n> This connector is rate-limited at the upstream API.\n\n` +
-    `${SKILL_CONVENTIONS}\n\n## Tools\n\n${methods}`
+    `${CUSTOM_SKILL_CONVENTIONS}\n\n## Tools\n\n${methods}`
   )
 }
