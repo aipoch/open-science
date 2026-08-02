@@ -366,18 +366,13 @@ class NotebookLocalRpcServer {
     }
   }
 
-  // Revokes every bearer capability owned by one app session, including capabilities issued under
-  // the pre-start alias used before ACP returns the final session id. Control-plane capabilities are
-  // discovered by their binding rather than sessionRpcTokens because they intentionally do not rotate
-  // the Agent-facing token.
+  // Releases ACP-owned session state without revoking the persistent control-plane capability. The
+  // Notebook RuntimeSession owns that capability and revokes it through connection.release().
   releaseSessionCapabilities(sessionId: string): void {
     const ownedSessionIds = this.resolveSessionCapabilityOwners(sessionId)
 
-    for (const [token, binding] of this.sessionRpcCapabilities) {
-      if (ownedSessionIds.has(binding.sessionId)) this.sessionRpcCapabilities.delete(token)
-    }
+    this.revokeAgentSessionCapabilities(sessionId)
     for (const ownedSessionId of ownedSessionIds) {
-      this.sessionRpcTokens.delete(ownedSessionId)
       this.sessionSpecialists.delete(ownedSessionId)
     }
     for (const [aliasSessionId, targetSessionId] of this.sessionAliases) {

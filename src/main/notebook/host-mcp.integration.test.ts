@@ -47,7 +47,7 @@ const baseRequest = (
 })
 
 gate('repl kernel host.mcp', () => {
-  it('uses a session-bound control capability to reach the real connector route', async () => {
+  it('keeps the persistent control capability across ACP session cleanup', async () => {
     const rpcServer = new NotebookLocalRpcServer({ execute: async () => ({}) } as never, {
       connectorService: {
         call: async (server, method, args, context) => ({ server, method, args, context })
@@ -57,26 +57,31 @@ gate('repl kernel host.mcp', () => {
     const exec = makeExecutor()
 
     try {
-      const result = await exec.execute(
-        baseRequest({
-          code: `
+      const request = baseRequest({
+        code: `
             const result = await host.mcp('pubmed', 'search_articles', { query: 'tumor immunology' })
             console.log(JSON.stringify(result))
           `,
-          mcpRpcEndpoint: connection.endpoint,
-          mcpRpcToken: connection.token,
-          sessionId: 'session-42',
-          projectName: 'project-1'
-        })
-      )
-
-      expect(result.status).toBe('completed')
-      expect(JSON.parse(result.stdout.trim())).toEqual({
-        server: 'pubmed',
-        method: 'search_articles',
-        args: { query: 'tumor immunology' },
-        context: { sessionId: 'session-42', projectId: 'project-1', origin: 'agent' }
+        mcpRpcEndpoint: connection.endpoint,
+        mcpRpcToken: connection.token,
+        sessionId: 'session-42',
+        projectName: 'project-1'
       })
+      const first = await exec.execute(request)
+
+      rpcServer.releaseSessionCapabilities('session-42')
+
+      const second = await exec.execute(request)
+
+      for (const result of [first, second]) {
+        expect(result.status).toBe('completed')
+        expect(JSON.parse(result.stdout.trim())).toEqual({
+          server: 'pubmed',
+          method: 'search_articles',
+          args: { query: 'tumor immunology' },
+          context: { sessionId: 'session-42', projectId: 'project-1', origin: 'agent' }
+        })
+      }
     } finally {
       await exec.shutdown()
       connection.release()
