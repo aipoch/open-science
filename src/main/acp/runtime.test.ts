@@ -1066,6 +1066,37 @@ describe('ACP runtime migration write-gate', () => {
     await runtime.disconnect()
   })
 
+  it('ignores detached process events after a replacement connection is published', async () => {
+    const oldProcess = new FakeAgentProcess()
+    const replacementProcess = new FakeAgentProcess()
+    startFakeAgent(oldProcess, ['old-session'])
+    startFakeAgent(replacementProcess, ['replacement-session'])
+    const events: AcpRuntimeEvent[] = []
+    let spawnCount = 0
+    const runtime = new AcpRuntime({
+      appVersion: '0.1.0',
+      defaultCwd: '/workspace',
+      callbacks: { onEvent: (event) => events.push(event) },
+      spawnAgent: () => asAgentProcess(spawnCount++ === 0 ? oldProcess : replacementProcess)
+    })
+
+    await runtime.createSession({ cwd: '/workspace' })
+    await runtime.disconnect()
+    await runtime.createSession({ cwd: '/workspace' })
+    events.length = 0
+
+    oldProcess.stderr.emit('data', Buffer.from('late detached stderr'))
+    oldProcess.emit('error', new Error('late detached error'))
+    oldProcess.emit('exit', 1, null)
+
+    expect(runtime.getSnapshot()).toMatchObject({
+      status: 'connected',
+      sessionIds: ['replacement-session']
+    })
+    expect(events).toEqual([])
+    await runtime.disconnect()
+  })
+
   it('keeps using a published connection when teardown fails before resource detach', async () => {
     const process = new FakeAgentProcess()
     const fakeAgent = startFakeAgent(process, ['first-session', 'successor-session'])
@@ -1863,6 +1894,29 @@ describe('ACP runtime session management', () => {
 
     runtime.shutdown()
     expect(release).toHaveBeenCalledOnce()
+  })
+
+  it('releases the backend lease once when synchronous shutdown overlaps protocol close', async () => {
+    const process = new FakeAgentProcess()
+    const { lease, release } = createBackendLeaseHarness()
+    startFakeAgent(process, ['overlapping-close-session'])
+    const runtime = new AcpRuntime({
+      appVersion: '0.2.0',
+      defaultCwd: '/workspace',
+      resolveBackend: () => ({
+        framework: { ...claudeCodeFramework, spawn: () => asAgentProcess(process) },
+        executablePath: '/bin/agent',
+        env: {},
+        responsesBridgeLease: lease
+      })
+    })
+
+    await runtime.createSession({ cwd: '/workspace' })
+    process.stdout.end()
+    runtime.shutdown()
+
+    await vi.waitFor(() => expect(release).toHaveBeenCalledOnce())
+    expect(process.killed).toBe(true)
   })
 
   it('releases notebook RPC capabilities after an unexpected protocol close', async () => {
