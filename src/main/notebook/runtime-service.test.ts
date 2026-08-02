@@ -2914,6 +2914,26 @@ describe('notebook runtime service', () => {
       expect(events).toEqual(['first:start', 'first:end', 'second:start'])
     })
 
+    it('releases environment mutation admission after a failed operation', async () => {
+      const root = await createStorageRoot()
+      const service = new NotebookRuntimeService({
+        configRoot: root,
+        dataRoot: root,
+        projectName: 'default-project',
+        repository: new NotebookRunRepository(root)
+      })
+
+      await expect(
+        service.withEnvLock('analysis', async () => {
+          throw new Error('mutation failed')
+        })
+      ).rejects.toThrow('mutation failed')
+
+      await expect(
+        service.withEnvLock('analysis', async () => 'next mutation admitted')
+      ).resolves.toBe('next mutation admitted')
+    })
+
     it('allows environment mutations for different environments to proceed concurrently', async () => {
       const root = await createStorageRoot()
       const service = new NotebookRuntimeService({
