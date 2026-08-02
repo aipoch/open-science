@@ -1707,6 +1707,23 @@ describe('ACP runtime session management', () => {
     expect(runtime.getSnapshot().sessionIds).toEqual(['session-b', 'session-a'])
   })
 
+  it('keeps active ordering stable when resume only refreshes metadata', async () => {
+    const process = new FakeAgentProcess()
+    const fakeAgent = startFakeAgent(process, ['session-a', 'session-b'])
+    const runtime = new AcpRuntime({
+      appVersion: '0.2.0',
+      defaultCwd: '/workspace',
+      spawnAgent: () => asAgentProcess(process)
+    })
+
+    await runtime.createSession({ cwd: '/workspace' })
+    await runtime.createSession({ cwd: '/workspace' })
+    await runtime.resumeSession({ sessionId: 'session-a', cwd: '/updated-workspace' })
+
+    expect(runtime.getSnapshot().sessionIds).toEqual(['session-a', 'session-b'])
+    expect(fakeAgent.resumedSessions).toEqual([])
+  })
+
   it('releases the backend lease exactly once after an unexpected protocol close', async () => {
     const process = new FakeAgentProcess()
     const { lease, release } = createBackendLeaseHarness()
