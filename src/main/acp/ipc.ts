@@ -1,7 +1,5 @@
 import { createHmac, randomBytes, randomUUID } from 'node:crypto'
-import { mkdir, rm } from 'node:fs/promises'
 import { homedir } from 'node:os'
-import { join } from 'node:path'
 
 import { app } from 'electron'
 
@@ -29,6 +27,10 @@ import type {
 import { DEFAULT_ARTIFACT_PROJECT_NAME } from '../../shared/artifacts'
 import { AcpRuntime, type AcpRuntimeCallbacks } from './runtime'
 import { AcpRuntimeCoordinator } from './runtime-coordinator'
+import {
+  createAcpCreateSessionWorkflow,
+  type AcpCreateSessionWorkflow
+} from './create-session-workflow'
 import { installAgentShutdownGuard } from './shutdown-guard'
 import { AgentMcpHttpHost } from './mcp-http-host'
 import { ArtifactRepository } from '../artifacts/repository'
@@ -50,7 +52,6 @@ import type { UploadRepository } from '../uploads/repository'
 import type { PermissionGrantRegistry } from '../permission-grants/registry'
 import { projectRegistrySessionGrants } from './permission-broker'
 import { broadcastToRenderers } from '../renderer-broadcast'
-import { withDataRootWrite } from '../storage/migration-state'
 import { createLogger, diagnosticErrorFields, errorLogFields } from '../logger'
 import type { ProfileService } from '../specialist/service'
 import {
@@ -174,15 +175,6 @@ type AcpIpcOptions = AcpIpcArtifacts & {
 
 // Sends one runtime payload through the typed application-event compatibility facade.
 const broadcast = broadcastToRenderers
-
-// Gives every new conversation an isolated working directory under the relocatable data root.
-// Persisted sessions keep this returned path as their cwd, so resumes return to the same workspace.
-const createManagedSessionWorkspace = async (): Promise<string> => {
-  const workspace = join(resolveDataRoot(), 'workspaces', randomUUID())
-
-  await mkdir(workspace, { recursive: true })
-  return workspace
-}
 
 // Creates the runtime coordinator used by all ACP IPC handlers and artifact claims. Each child runtime
 // captures one framework generation so sessions on different frameworks can remain live concurrently.
@@ -371,6 +363,7 @@ const createAcpRuntime = ({
 
 const registerAcpIpcHandlerSet = (
   runtime: AcpRuntimeCoordinator,
+  createSessionWorkflow: AcpCreateSessionWorkflow,
   taskNotifications?: TaskNotificationService
 ): void => {
   ipcMainHandle('acp:get-state', () => runtime.getSnapshot())
@@ -378,20 +371,7 @@ const registerAcpIpcHandlerSet = (
   ipcMainHandle('acp:disconnect', () => runtime.disconnect())
   ipcMainHandle('acp:create-session', async (_event, request: AcpCreateSessionRequest) => {
     try {
-      const explicitCwd = request.cwd?.trim()
-      if (explicitCwd) {
-        return await runtime.createSession({ ...request, cwd: explicitCwd })
-      }
-
-      return await withDataRootWrite(async () => {
-        const managedCwd = await createManagedSessionWorkspace()
-        try {
-          return await runtime.createSession({ ...request, cwd: managedCwd })
-        } catch (error) {
-          await rm(managedCwd, { recursive: true, force: true }).catch(() => undefined)
-          throw error
-        }
-      })
+      return await createSessionWorkflow.create(request)
     } catch (error) {
       // Route through the file logger (rotating main.log) so the failure survives in a packaged build,
       // not just the dev console. errorLogFields keeps the message + stack out of a `{}`. Guarded so a
@@ -477,11 +457,12 @@ const registerAcpIpcHandlerSet = (
 // Installs the renderer-callable Electron adapter over an already-constructed ACP coordinator.
 const installAcpIpcHandlers = (
   runtime: AcpRuntimeCoordinator,
+  createSessionWorkflow: AcpCreateSessionWorkflow,
   taskNotifications?: TaskNotificationService
 ): IpcHandlerInstallation => {
   const scope = createIpcHandlerInstallationScope()
   try {
-    registerAcpIpcHandlerSet(runtime, taskNotifications)
+    registerAcpIpcHandlerSet(runtime, createSessionWorkflow, taskNotifications)
     // Kill the agent child on quit so it never outlives the app as an orphaned process.
     return scope.complete(installAgentShutdownGuard(app, runtime))
   } catch (error) {
@@ -493,7 +474,7 @@ const installAcpIpcHandlers = (
 // Compatibility wrapper for isolated callers; application composition uses the two-phase seam above.
 const registerAcpIpcHandlers = (options: AcpIpcOptions): AcpRuntimeCoordinator => {
   const runtime = createAcpRuntime(options)
-  installAcpIpcHandlers(runtime, options.taskNotifications)
+  installAcpIpcHandlers(runtime, createAcpCreateSessionWorkflow(runtime), options.taskNotifications)
   return runtime
 }
 

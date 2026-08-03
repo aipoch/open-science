@@ -120,6 +120,7 @@ vi.mock('../storage-root', () => ({
 }))
 
 const { createAcpRuntime, installAcpIpcHandlers, registerAcpIpcHandlers } = await import('./ipc')
+const { createAcpCreateSessionWorkflow } = await import('./create-session-workflow')
 type AcpTestOptions = Parameters<typeof registerAcpIpcHandlers>[0]
 
 // Minimal options — createRuntime just forwards them into the mocked AcpRuntime constructor.
@@ -203,7 +204,11 @@ describe('ACP module transport seam', () => {
 
     expect(handlers.size).toBe(0)
 
-    installAcpIpcHandlers(runtime, options.taskNotifications)
+    installAcpIpcHandlers(
+      runtime,
+      createAcpCreateSessionWorkflow(runtime),
+      options.taskNotifications
+    )
 
     expect(handlers.has('acp:get-state')).toBe(true)
     expect(handlers.has('acp:respond-permission')).toBe(true)

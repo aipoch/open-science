@@ -12,6 +12,7 @@ import {
 import { createApplicationEventModule, type ApplicationEventSource } from './application-events'
 
 import { createAcpRuntime, createDefaultNotebookRuntimeService } from './acp/ipc'
+import { createAcpCreateSessionWorkflow } from './acp/create-session-workflow'
 import { createDefaultArtifactRepository, registerArtifactIpcHandlers } from './artifacts/ipc'
 import { ArtifactProvenanceRepository } from './artifacts/provenance-repository'
 import { ProvenanceMessageSnapshotRepository } from './artifacts/provenance-message-snapshot'
@@ -883,6 +884,7 @@ const createApplicationModules = async (
   )
   surfaceAdapters = afterAcpAdapters
   runtimeRef.current = runtime
+  const createSessionWorkflow = createAcpCreateSessionWorkflow(runtime)
   {
     // Framework-specific adapters declare their own session selector. The registry resolves those
     // selectors before its generic fallback, so registration order cannot route a Codex/OpenCode
@@ -1337,7 +1339,7 @@ const createApplicationModules = async (
       beforeCompute: beforeComputeAdapters,
       compute: computeIpcModule,
       beforeAcp: beforeAcpAdapters,
-      acp: { runtime, taskNotifications },
+      acp: { runtime, createSessionWorkflow, taskNotifications },
       afterAcp: afterAcpAdapters
     }
   }

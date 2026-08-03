@@ -32,6 +32,7 @@ describe('production Electron runtime wiring', () => {
   it('installs the constructed Compute and ACP modules before remaining surfaces', async () => {
     const compute = { handlers: {}, enabledComputeHostsRegistry: {} } as never
     const runtime = {} as never
+    const createSessionWorkflow = {} as never
     const taskNotifications = {} as never
 
     await installElectronRuntimeAdapters({
@@ -54,7 +55,7 @@ describe('production Electron runtime wiring', () => {
           }
         }
       ],
-      acp: { runtime, taskNotifications },
+      acp: { runtime, createSessionWorkflow, taskNotifications },
       afterAcp: [
         {
           name: 'settings',
@@ -67,7 +68,11 @@ describe('production Electron runtime wiring', () => {
     })
 
     expect(installComputeIpcHandlers).toHaveBeenCalledWith(compute)
-    expect(installAcpIpcHandlers).toHaveBeenCalledWith(runtime, taskNotifications)
+    expect(installAcpIpcHandlers).toHaveBeenCalledWith(
+      runtime,
+      createSessionWorkflow,
+      taskNotifications
+    )
     expect(order).toEqual(['notifications', 'compute', 'connectors', 'acp', 'settings'])
   })
 
@@ -75,6 +80,7 @@ describe('production Electron runtime wiring', () => {
     const rollbackOrder: string[] = []
     const compute = { handlers: {}, enabledComputeHostsRegistry: {} } as never
     const runtime = {} as never
+    const createSessionWorkflow = {} as never
     const taskNotifications = {} as never
     installComputeIpcHandlers.mockReturnValueOnce({
       uninstall: vi.fn(() => {
@@ -103,7 +109,7 @@ describe('production Electron runtime wiring', () => {
             }
           }
         ],
-        acp: { runtime, taskNotifications },
+        acp: { runtime, createSessionWorkflow, taskNotifications },
         afterAcp: []
       })
     ).rejects.toThrow('adapter install failed')
