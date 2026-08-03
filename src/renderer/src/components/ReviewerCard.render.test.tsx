@@ -75,6 +75,29 @@ afterEach(() => {
   document.body.innerHTML = ''
 })
 
+describe('ReviewerCard — running state', () => {
+  it('mounts the branded indicator only while the review is running', async () => {
+    const runningReview = makeReview({ lifecycle: 'running', outcome: null })
+    await act(async () => {
+      root.render(<ReviewerCard review={runningReview} />)
+    })
+
+    expect(container.textContent).toContain('Reviewing…')
+    expect(
+      container.querySelector('[data-testid="open-science-thinking-indicator"]')
+    ).not.toBeNull()
+
+    await act(async () => {
+      root.render(
+        <ReviewerCard review={{ ...runningReview, lifecycle: 'complete', outcome: 'pass' }} />
+      )
+    })
+
+    expect(container.textContent).toContain('No issues found')
+    expect(container.querySelector('[data-testid="open-science-thinking-indicator"]')).toBeNull()
+  })
+})
+
 describe('ReviewerCard — pass card', () => {
   it('renders "No issues found" when complete with no warn/fail checks', async () => {
     const review = makeReview({ outcome: 'pass', checks: [] })

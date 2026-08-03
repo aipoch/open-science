@@ -13,6 +13,7 @@
 import { useState } from 'react'
 import { ChevronDown, ChevronRight, ShieldCheck, AlertTriangle, Loader } from 'lucide-react'
 import { cn } from '@/lib/utils'
+import { OpenScienceThinkingIndicator } from '@/components/OpenScienceThinkingIndicator'
 
 import type { ReviewWithChecks, ReviewCheck, GoToTranscriptIntent } from '../../../shared/reviewer'
 
@@ -232,7 +233,7 @@ export const ReviewerCard = ({
   // Status icon. A stale complete review always shows the warning icon (amber), even a stale pass —
   // the point is "this verdict may not reflect the turn anymore", not the original outcome.
   const statusIcon = ((): React.JSX.Element => {
-    if (isRunning) return <Loader className="h-3 w-3 animate-spin text-text-400" />
+    if (isRunning) return <OpenScienceThinkingIndicator />
     if (isError) return <AlertTriangle className="h-3 w-3 text-yellow-500" />
     if (isStale) return <AlertTriangle className="h-3 w-3 text-amber-500" />
     if (isComplete && !hasWarnOrFail)
