@@ -1,12 +1,27 @@
-import { describe, expect, it, vi } from 'vitest'
+import { describe, expect, it, type Mock, vi } from 'vitest'
 
-import type { AcpCreateSessionRequest } from '../../shared/acp'
+import type { AcpCreateSessionRequest, AcpCreateSessionResponse } from '../../shared/acp'
 import { createAcpCreateSessionWorkflow } from './create-session-workflow'
 import type { ManagedSessionWorkspaceLease } from './managed-session-workspace'
 
-const createHarness = (createSessionResult: 'success' | Error = 'success') => {
+type AcpCreateSessionWorkflowHarness = {
+  workflow: ReturnType<typeof createAcpCreateSessionWorkflow>
+  createSession: Mock<(request: AcpCreateSessionRequest) => Promise<AcpCreateSessionResponse>>
+  lease: ManagedSessionWorkspaceLease
+  workspaces: {
+    acquire: Mock<() => Promise<ManagedSessionWorkspaceLease>>
+  }
+  dataRootWriteCalls: () => number
+  events: string[]
+}
+
+const createHarness = (
+  createSessionResult: 'success' | Error = 'success'
+): AcpCreateSessionWorkflowHarness => {
   const events: string[] = []
-  const createSession = vi.fn(async (request: AcpCreateSessionRequest) => {
+  const createSession = vi.fn<
+    (request: AcpCreateSessionRequest) => Promise<AcpCreateSessionResponse>
+  >(async (request) => {
     events.push('session')
     if (createSessionResult instanceof Error) throw createSessionResult
     return { sessionId: 'session-1', cwd: request.cwd }
@@ -18,8 +33,8 @@ const createHarness = (createSessionResult: 'success' | Error = 'success') => {
       events.push('release')
     })
   }
-  const workspaces = {
-    acquire: vi.fn(async () => {
+  const workspaces: AcpCreateSessionWorkflowHarness['workspaces'] = {
+    acquire: vi.fn<() => Promise<ManagedSessionWorkspaceLease>>(async () => {
       events.push('acquire')
       return lease
     })

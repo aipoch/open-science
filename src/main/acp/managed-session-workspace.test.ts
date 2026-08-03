@@ -1,12 +1,18 @@
 import { join } from 'node:path'
 
-import { describe, expect, it, vi } from 'vitest'
+import { describe, expect, it, type Mock, vi } from 'vitest'
 
 import { createManagedSessionWorkspaceCapability } from './managed-session-workspace'
 
-const createCapability = () => {
-  const createDirectory = vi.fn().mockResolvedValue(undefined)
-  const removeDirectory = vi.fn().mockResolvedValue(undefined)
+type ManagedSessionWorkspaceHarness = {
+  capability: ReturnType<typeof createManagedSessionWorkspaceCapability>
+  createDirectory: Mock<(path: string) => Promise<void>>
+  removeDirectory: Mock<(path: string) => Promise<void>>
+}
+
+const createCapability = (): ManagedSessionWorkspaceHarness => {
+  const createDirectory = vi.fn<(path: string) => Promise<void>>().mockResolvedValue(undefined)
+  const removeDirectory = vi.fn<(path: string) => Promise<void>>().mockResolvedValue(undefined)
   const capability = createManagedSessionWorkspaceCapability({
     resolveRoot: () => '/relocatable/data',
     createId: () => 'workspace-id',
