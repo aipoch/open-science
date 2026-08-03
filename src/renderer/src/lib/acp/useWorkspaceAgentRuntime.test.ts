@@ -181,9 +181,12 @@ describe('workspace agent runtime event processing', () => {
     expect(processedEventIds.has('stop-event-1')).toBe(true)
   })
 
-  it('serializes overlapping snapshots so stop waits for an in-flight artifact event', async () => {
-    const artifactEvent = createEvent({ id: 'artifact-event-1', kind: 'artifact' })
-    const stopEvent = createEvent({ id: 'stop-event-1', kind: 'stop' })
+  it.each([
+    ['one session', 'transport-session-1'],
+    ['unscoped events', undefined]
+  ] as const)('serializes overlapping snapshots for %s', async (_scope, sessionId) => {
+    const artifactEvent = createEvent({ id: 'artifact-event-1', kind: 'artifact', sessionId })
+    const stopEvent = createEvent({ id: 'stop-event-1', kind: 'stop', sessionId })
     let finishArtifact: ((wasApplied: boolean) => void) | undefined
     const applyEvent = vi.fn<(runtimeEvent: AcpRuntimeEvent) => Promise<boolean>>((event) => {
       if (event.id === 'artifact-event-1') {
@@ -210,6 +213,241 @@ describe('workspace agent runtime event processing', () => {
       'artifact-event-1',
       'stop-event-1'
     ])
+  })
+
+  it('processes another session while an earlier session event is still in flight', async () => {
+    const artifactEvent = createEvent({
+      id: 'artifact-event-1',
+      kind: 'artifact',
+      sessionId: 'transport-session-1'
+    })
+    const messageEvent = createEvent({
+      id: 'message-event-2',
+      sessionId: 'transport-session-2'
+    })
+    const artifact = createDeferred<boolean>()
+    const applyEvent = vi.fn<(runtimeEvent: AcpRuntimeEvent) => Promise<boolean>>((event) =>
+      event.id === artifactEvent.id ? artifact.promise : Promise.resolve(true)
+    )
+    const processor = createWorkspaceRuntimeEventProcessor(applyEvent)
+
+    const firstDrain = processor.process([artifactEvent])
+    const secondDrain = processor.process([artifactEvent, messageEvent])
+
+    await Promise.resolve()
+
+    expect(applyEvent.mock.calls.map(([event]) => event.id)).toEqual([
+      'artifact-event-1',
+      'message-event-2'
+    ])
+
+    artifact.resolve(true)
+    await Promise.all([firstDrain, secondDrain])
+  })
+
+  it('keeps an accepted session event when a newer snapshot no longer contains it', async () => {
+    const artifactEvent = createEvent({ id: 'artifact-event-1', kind: 'artifact' })
+    const stopEvent = createEvent({ id: 'stop-event-1', kind: 'stop' })
+    const artifact = createDeferred<boolean>()
+    const applyEvent = vi.fn<(runtimeEvent: AcpRuntimeEvent) => Promise<boolean>>((event) =>
+      event.id === artifactEvent.id ? artifact.promise : Promise.resolve(true)
+    )
+    const processor = createWorkspaceRuntimeEventProcessor(applyEvent)
+
+    const firstDrain = processor.process([artifactEvent])
+    const secondDrain = processor.process([artifactEvent, stopEvent])
+    const emptySnapshotDrain = processor.process([])
+
+    artifact.resolve(true)
+    await Promise.all([firstDrain, secondDrain, emptySnapshotDrain])
+
+    expect(applyEvent.mock.calls.map(([event]) => event.id)).toEqual([
+      'artifact-event-1',
+      'stop-event-1'
+    ])
+  })
+
+  it('retries an accepted event that fails after a newer snapshot evicts it', async () => {
+    const artifactEvent = createEvent({ id: 'artifact-event-1', kind: 'artifact' })
+    let rejectFirstAttempt!: (reason: Error) => void
+    const firstAttempt = new Promise<boolean>((_resolve, reject) => {
+      rejectFirstAttempt = reject
+    })
+    const retryStarted = createDeferred<void>()
+    const applyEvent = vi
+      .fn<(runtimeEvent: AcpRuntimeEvent) => Promise<boolean>>()
+      .mockImplementationOnce(() => firstAttempt)
+      .mockImplementationOnce(async () => {
+        retryStarted.resolve()
+        return true
+      })
+    const processor = createWorkspaceRuntimeEventProcessor(applyEvent)
+
+    const firstDrain = processor.process([artifactEvent])
+    void processor.process([])
+    rejectFirstAttempt(new Error('move failed'))
+    await firstDrain
+
+    void processor.process([])
+    const didRetry = await Promise.race([
+      retryStarted.promise.then(() => true),
+      new Promise<false>((resolve) => setTimeout(() => resolve(false), 0))
+    ])
+
+    expect(didRetry).toBe(true)
+    expect(applyEvent).toHaveBeenCalledTimes(2)
+  })
+
+  it('releases an evicted event after its deferred retry also fails', async () => {
+    const artifactEvent = createEvent({ id: 'artifact-event-1', kind: 'artifact' })
+    let rejectFirstAttempt!: (reason: Error) => void
+    let rejectRetry!: (reason: Error) => void
+    const firstAttempt = new Promise<boolean>((_resolve, reject) => {
+      rejectFirstAttempt = reject
+    })
+    const retry = new Promise<boolean>((_resolve, reject) => {
+      rejectRetry = reject
+    })
+    const applyEvent = vi
+      .fn<(runtimeEvent: AcpRuntimeEvent) => Promise<boolean>>()
+      .mockImplementationOnce(() => firstAttempt)
+      .mockImplementationOnce(() => retry)
+      .mockResolvedValue(true)
+    const processor = createWorkspaceRuntimeEventProcessor(applyEvent)
+
+    const firstDrain = processor.process([artifactEvent])
+    void processor.process([])
+    rejectFirstAttempt(new Error('move failed'))
+    await vi.waitFor(() => expect(applyEvent).toHaveBeenCalledTimes(2))
+    rejectRetry(new Error('move still failing'))
+    await firstDrain
+
+    await processor.process([])
+    await processor.drain()
+
+    expect(applyEvent).toHaveBeenCalledTimes(2)
+  })
+
+  it('resolves a snapshot without waiting for an in-flight lane that is no longer visible', async () => {
+    const artifactEvent = createEvent({
+      id: 'artifact-event-1',
+      kind: 'artifact',
+      sessionId: 'transport-session-1'
+    })
+    const messageEvent = createEvent({
+      id: 'message-event-2',
+      sessionId: 'transport-session-2'
+    })
+    const artifact = createDeferred<boolean>()
+    const applyEvent = vi.fn<(runtimeEvent: AcpRuntimeEvent) => Promise<boolean>>((event) =>
+      event.id === artifactEvent.id ? artifact.promise : Promise.resolve(true)
+    )
+    const processor = createWorkspaceRuntimeEventProcessor(applyEvent)
+
+    const firstDrain = processor.process([artifactEvent])
+    const secondDrain = processor.process([messageEvent])
+    const secondDrainFinished = await Promise.race([
+      secondDrain.then(() => true),
+      new Promise<false>((resolve) => setTimeout(() => resolve(false), 0))
+    ])
+
+    expect(applyEvent.mock.calls.map(([event]) => event.id)).toEqual([
+      'artifact-event-1',
+      'message-event-2'
+    ])
+    expect(secondDrainFinished).toBe(true)
+
+    artifact.resolve(true)
+    await Promise.all([firstDrain, secondDrain])
+  })
+
+  it('waits for every accepted lane at an explicit persistence barrier', async () => {
+    const artifactEvent = createEvent({
+      id: 'artifact-event-1',
+      kind: 'artifact',
+      sessionId: 'transport-session-1'
+    })
+    const artifact = createDeferred<boolean>()
+    const processor = createWorkspaceRuntimeEventProcessor(() => artifact.promise)
+
+    const firstDrain = processor.process([artifactEvent])
+    await processor.process([])
+    const persistenceDrain = processor.drain()
+    let persistenceFinished = false
+    void persistenceDrain.then(() => (persistenceFinished = true))
+
+    await Promise.resolve()
+    expect(persistenceFinished).toBe(false)
+
+    artifact.resolve(true)
+    await Promise.all([firstDrain, persistenceDrain])
+    expect(persistenceFinished).toBe(true)
+  })
+
+  it('waits for a lane accepted while the persistence barrier is in progress', async () => {
+    const firstSessionEvent = createEvent({
+      id: 'artifact-event-1',
+      kind: 'artifact',
+      sessionId: 'transport-session-1'
+    })
+    const secondSessionEvent = createEvent({
+      id: 'artifact-event-2',
+      kind: 'artifact',
+      sessionId: 'transport-session-2'
+    })
+    const firstArtifact = createDeferred<boolean>()
+    const secondArtifact = createDeferred<boolean>()
+    const applyEvent = vi.fn<(runtimeEvent: AcpRuntimeEvent) => Promise<boolean>>((event) =>
+      event.sessionId === firstSessionEvent.sessionId
+        ? firstArtifact.promise
+        : secondArtifact.promise
+    )
+    const processor = createWorkspaceRuntimeEventProcessor(applyEvent)
+
+    const firstDrain = processor.process([firstSessionEvent])
+    const persistenceDrain = processor.drain()
+    let persistenceFinished = false
+    void persistenceDrain.then(() => (persistenceFinished = true))
+    const secondDrain = processor.process([secondSessionEvent])
+
+    firstArtifact.resolve(true)
+    await firstDrain
+    await Promise.resolve()
+    expect(persistenceFinished).toBe(false)
+
+    secondArtifact.resolve(true)
+    await Promise.all([persistenceDrain, secondDrain])
+  })
+
+  it('waits only for the requested session at an explicit resume barrier', async () => {
+    const firstSessionEvent = createEvent({
+      id: 'artifact-event-1',
+      kind: 'artifact',
+      sessionId: 'transport-session-1'
+    })
+    const secondSessionEvent = createEvent({
+      id: 'artifact-event-2',
+      kind: 'artifact',
+      sessionId: 'transport-session-2'
+    })
+    const firstArtifact = createDeferred<boolean>()
+    const secondArtifact = createDeferred<boolean>()
+    const applyEvent = vi.fn<(runtimeEvent: AcpRuntimeEvent) => Promise<boolean>>((event) =>
+      event.sessionId === firstSessionEvent.sessionId
+        ? firstArtifact.promise
+        : secondArtifact.promise
+    )
+    const processor = createWorkspaceRuntimeEventProcessor(applyEvent)
+
+    const visibleDrain = processor.process([firstSessionEvent, secondSessionEvent])
+    const firstSessionDrain = processor.drain('transport-session-1')
+    firstArtifact.resolve(true)
+
+    await firstSessionDrain
+    expect(applyEvent).toHaveBeenCalledTimes(2)
+
+    secondArtifact.resolve(true)
+    await visibleDrain
   })
 })
 
@@ -666,6 +904,7 @@ describe('workspace agent message sending', () => {
     )
 
     expect(drainRuntimeEvents).toHaveBeenCalledOnce()
+    expect(drainRuntimeEvents).toHaveBeenCalledWith('transport-session-1')
     expect(sendPrompt.mock.calls[0]?.[5]).toContain('Accepted final answer')
     expect(useSessionStore.getState().sessions[0]).toMatchObject({
       status: 'running',

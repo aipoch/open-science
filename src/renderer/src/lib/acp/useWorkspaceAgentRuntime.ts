@@ -86,7 +86,7 @@ type SendWorkspaceMessageResult = {
 }
 
 type SendPreparationStateChange = (sessionId: string, inFlight: boolean) => void
-type RuntimeEventDrain = () => Promise<void>
+type RuntimeEventDrain = (sessionId?: string) => Promise<void>
 
 // Payload of an inline edit resend: the adjusted prompt text plus the mentions it carries. The
 // session/message ids stay separate because they address the truncation point, not the prompt.
@@ -130,6 +130,7 @@ type RuntimeEventApplier = (event: AcpRuntimeEvent) => Promise<boolean>
 
 type WorkspaceRuntimeEventProcessor = {
   process: (events: AcpRuntimeEvent[]) => Promise<void>
+  drain: (sessionId?: string) => Promise<void>
 }
 
 // Runtime adoption and Branch reset intentionally complete before appendUserMessage creates the next
@@ -361,42 +362,149 @@ const processVisibleWorkspaceRuntimeEvents = async (
 const createWorkspaceRuntimeEventProcessor = (
   applyEvent: RuntimeEventApplier = applyWorkspaceRuntimeEvent
 ): WorkspaceRuntimeEventProcessor => {
-  const processedEventIds = new Set<string>()
-  const processingEventIds = new Set<string>()
-  let latestEvents: AcpRuntimeEvent[] = []
-  let drainInFlight: Promise<void> | undefined
-  let drainAgain = false
+  type EventLane = {
+    acceptedEvents: Map<string, AcpRuntimeEvent>
+    failedEventIds: Set<string>
+    processedEventIds: Set<string>
+    processingEventIds: Set<string>
+    drainInFlight?: Promise<void>
+    drainAgain: boolean
+  }
 
-  // Coalesces rapid runtime snapshots while preserving a single ordered drain loop.
-  const drain = async (): Promise<void> => {
-    if (drainInFlight) {
-      drainAgain = true
-      return drainInFlight
+  const unscopedEventLane = Symbol('unscoped-workspace-runtime-events')
+  const eventLanes = new Map<string | symbol, EventLane>()
+  let latestEvents: AcpRuntimeEvent[] = []
+  let acceptedEventVersion = 0
+
+  const getEventLaneKey = (event: AcpRuntimeEvent): string | symbol =>
+    event.sessionId ?? unscopedEventLane
+
+  const getEventLane = (laneKey: string | symbol): EventLane => {
+    let lane = eventLanes.get(laneKey)
+    if (!lane) {
+      lane = {
+        acceptedEvents: new Map<string, AcpRuntimeEvent>(),
+        failedEventIds: new Set<string>(),
+        processedEventIds: new Set<string>(),
+        processingEventIds: new Set<string>(),
+        drainAgain: false
+      }
+      eventLanes.set(laneKey, lane)
     }
 
-    drainInFlight = (async () => {
+    return lane
+  }
+
+  const cleanEventLane = (laneKey: string | symbol, lane: EventLane): void => {
+    const visibleEventIds = new Set(
+      latestEvents.filter((event) => getEventLaneKey(event) === laneKey).map((event) => event.id)
+    )
+
+    for (const eventId of lane.acceptedEvents.keys()) {
+      if (!visibleEventIds.has(eventId) && lane.processedEventIds.has(eventId)) {
+        lane.acceptedEvents.delete(eventId)
+        lane.failedEventIds.delete(eventId)
+        lane.processedEventIds.delete(eventId)
+        lane.processingEventIds.delete(eventId)
+      }
+    }
+
+    if (lane.acceptedEvents.size === 0 && !lane.drainInFlight) {
+      eventLanes.delete(laneKey)
+    }
+  }
+
+  const drainLane = async (laneKey: string | symbol): Promise<void> => {
+    const lane = getEventLane(laneKey)
+
+    if (lane.drainInFlight) {
+      lane.drainAgain = true
+      return lane.drainInFlight
+    }
+
+    lane.drainInFlight = (async () => {
       do {
-        drainAgain = false
+        lane.drainAgain = false
         await processVisibleWorkspaceRuntimeEvents(
-          latestEvents,
-          processedEventIds,
-          applyEvent,
-          processingEventIds
+          [...lane.acceptedEvents.values()],
+          lane.processedEventIds,
+          async (event) => {
+            const hadFailed = lane.failedEventIds.has(event.id)
+            try {
+              const applied = await applyEvent(event)
+              lane.failedEventIds.delete(event.id)
+              return applied
+            } catch (error) {
+              const isVisible = latestEvents.some(
+                (candidate) => candidate.id === event.id && getEventLaneKey(candidate) === laneKey
+              )
+              if (hadFailed && !isVisible) {
+                lane.acceptedEvents.delete(event.id)
+                lane.failedEventIds.delete(event.id)
+              } else {
+                lane.failedEventIds.add(event.id)
+              }
+              throw error
+            }
+          },
+          lane.processingEventIds
         )
-      } while (drainAgain)
+      } while (lane.drainAgain)
     })()
 
     try {
-      await drainInFlight
+      await lane.drainInFlight
     } finally {
-      drainInFlight = undefined
+      lane.drainInFlight = undefined
+      cleanEventLane(laneKey, lane)
     }
   }
 
   return {
     process: (events) => {
       latestEvents = events
-      return drain()
+      const visibleLaneKeys = new Set<string | symbol>()
+
+      for (const event of events) {
+        const laneKey = getEventLaneKey(event)
+        const lane = getEventLane(laneKey)
+        visibleLaneKeys.add(laneKey)
+
+        if (
+          !lane.processedEventIds.has(event.id) &&
+          !lane.processingEventIds.has(event.id) &&
+          !lane.acceptedEvents.has(event.id)
+        ) {
+          // A bounded source snapshot may evict this event before a slow predecessor finishes.
+          lane.acceptedEvents.set(event.id, event)
+          acceptedEventVersion += 1
+        }
+      }
+
+      for (const [laneKey, lane] of eventLanes) {
+        cleanEventLane(laneKey, lane)
+      }
+
+      const drains = [...visibleLaneKeys].map((laneKey) => drainLane(laneKey))
+      for (const [laneKey, lane] of eventLanes) {
+        if (!visibleLaneKeys.has(laneKey) && lane.acceptedEvents.size > 0) {
+          void drainLane(laneKey)
+        }
+      }
+
+      return Promise.all(drains).then(() => undefined)
+    },
+    drain: async (sessionId) => {
+      if (sessionId !== undefined) {
+        if (eventLanes.has(sessionId)) await drainLane(sessionId)
+        return
+      }
+
+      let drainedVersion: number
+      do {
+        drainedVersion = acceptedEventVersion
+        await Promise.all([...eventLanes.keys()].map((laneKey) => drainLane(laneKey)))
+      } while (drainedVersion !== acceptedEventVersion)
     }
   }
 }
@@ -695,7 +803,7 @@ const sendWorkspaceMessage = async (
         // The coordinator waits for the prior owner to stop before committing adoption, but its
         // retained events still cross the asynchronous renderer bridge. Apply the latest accepted
         // snapshot before opening the new optimistic run so a terminal event cannot settle that run.
-        await drainRuntimeEvents?.()
+        await drainRuntimeEvents?.(targetSessionId)
       }
     } catch (error) {
       useSessionStore.getState().failRun(targetSessionId, getResumeFailureMessage(error))
@@ -1393,9 +1501,10 @@ const syncWorkspaceContextUsage = (
   }
 }
 
-const drainWorkspaceRuntimeEventsForPersistence = async (): Promise<void> => {
+const drainWorkspaceRuntimeEventsForPersistence = async (sessionId?: string): Promise<void> => {
   const snapshot = await window.api.acp.getState()
-  await liveWorkspaceRuntimeEventProcessor.process(snapshot.events)
+  void liveWorkspaceRuntimeEventProcessor.process(snapshot.events)
+  await liveWorkspaceRuntimeEventProcessor.drain(sessionId)
   syncWorkspaceContextUsage(snapshot.sessionIds, snapshot.contextUsageBySession)
 }
 
