@@ -1,4 +1,4 @@
-import type { ChatMessage, ChatSession } from '@/stores/session-store'
+import type { ChatMessage, ChatSession, ToolActivity } from '@/stores/session-store'
 import { describe, expect, it } from 'vitest'
 
 const createMessage = (overrides: Partial<ChatMessage>): ChatMessage => ({
@@ -21,6 +21,19 @@ const createSession = (overrides: Partial<ChatSession>): ChatSession => ({
   messages: [],
   createdAt: 1710000000000,
   updatedAt: 1710000000000,
+  ...overrides
+})
+
+const createActivity = (overrides: Partial<ToolActivity> = {}): ToolActivity => ({
+  id: 'tool-1',
+  kind: 'tool',
+  title: 'Saved a file',
+  status: 'completed',
+  eventIds: ['tool-event-1'],
+  sortIndex: 2,
+  promptMessageId: 'prompt-1',
+  createdAt: 1710000000200,
+  updatedAt: 1710000000300,
   ...overrides
 })
 
@@ -85,6 +98,41 @@ describe('agent loading message state', () => {
     })
 
     expect(shouldShowAgentLoadingMessage(session)).toBe(false)
+  })
+
+  it('tracks the latest tool or token update when one stream spans a tool call', async () => {
+    const { shouldShowAgentLoadingMessage } = await loadAgentLoadingMessageModule()
+    const session = createSession({
+      activeRun: {
+        promptMessageId: 'prompt-1',
+        startedAt: 1710000000100
+      },
+      messages: [
+        createMessage({ id: 'prompt-1', sortIndex: 1 }),
+        createMessage({
+          id: 'reply-1',
+          role: 'agent',
+          content: 'I saved the file.',
+          status: 'streaming',
+          streamId: 'assistant-message-1',
+          responseToMessageId: 'prompt-1',
+          sortIndex: 3,
+          createdAt: 1710000000250,
+          updatedAt: 1710000000250
+        })
+      ],
+      activities: [createActivity()]
+    })
+
+    expect(shouldShowAgentLoadingMessage(session)).toBe(true)
+    expect(
+      shouldShowAgentLoadingMessage({
+        ...session,
+        messages: session.messages.map((message) =>
+          message.id === 'reply-1' ? { ...message, updatedAt: 1710000000400 } : message
+        )
+      })
+    ).toBe(false)
   })
 
   it('hides loading once an image-only agent response arrives', async () => {

@@ -51,7 +51,7 @@ const WorkspaceActivityGroup = ({
 
   return (
     <MessageScrollerItem key={group.id} messageId={group.id} className="min-w-0">
-      <div className={cn('px-4 pb-1 pt-5 md:px-6', contentPaddingClassName)}>
+      <div className={cn('px-4 pb-0.5 pt-2.5 md:px-6', contentPaddingClassName)}>
         <div
           className="w-full overflow-hidden rounded-[14px] bg-bg-200/70 px-1.5 py-1"
           data-testid="tool-group"

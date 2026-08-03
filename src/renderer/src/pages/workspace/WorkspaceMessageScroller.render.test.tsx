@@ -264,6 +264,39 @@ describe('WorkspaceMessageScroller loading render', () => {
     expect(html).toContain('Thinking')
   })
 
+  it('restores the loading row after a completed tool while the next agent token is pending', async () => {
+    const html = await renderScroller(
+      createSession({
+        activeRun: {
+          promptMessageId: 'prompt-1',
+          startedAt: 1710000000100
+        },
+        messages: [
+          createMessage({ id: 'prompt-1', sortIndex: 1 }),
+          createMessage({
+            id: 'reply-before-tool',
+            role: 'agent',
+            content: 'I will save the file now.',
+            responseToMessageId: 'prompt-1',
+            sortIndex: 2
+          })
+        ],
+        activities: [
+          createActivity({
+            id: 'tool-write-1',
+            title: 'Saved a file',
+            status: 'completed',
+            promptMessageId: 'prompt-1',
+            sortIndex: 3
+          })
+        ]
+      })
+    )
+
+    expect(html).toContain('data-testid="open-science-thinking-indicator"')
+    expect(html).toContain('Thinking')
+  })
+
   it('does not render loading after current-run agent text arrives', async () => {
     const html = await renderScroller(
       createSession({
@@ -805,6 +838,7 @@ describe('WorkspaceMessageScroller loading render', () => {
     )
 
     expect(html).toContain('data-testid="tool-group"')
+    expect(html).toContain('class="px-4 pb-0.5 pt-2.5 md:px-6"')
     expect(html).toContain('data-testid="tool-group-header"')
     expect(html).toContain('aria-expanded="true"')
     expect(html).toContain('Ran 2 searches')

@@ -1,17 +1,23 @@
 import type { ChatSession } from '@/stores/session-store'
 
-const hasVisibleAgentMessageAfterPrompt = (session: ChatSession, promptIndex: number): boolean =>
-  session.messages
-    .slice(promptIndex + 1)
-    .some(
-      (message) =>
-        message.role === 'agent' &&
-        message.responseToMessageId === session.activeRun?.promptMessageId &&
-        (message.content.trim().length > 0 || Boolean(message.images?.length))
-    )
+type TimelinePosition = {
+  updatedAt: number
+  sortIndex?: number
+}
 
-// The loading row is derived UI state: it belongs to the active run, not persisted history. Tool and
-// permission activity keeps it visible only until the current run emits its first visible output.
+const isLaterThan = (candidate: TimelinePosition, reference: TimelinePosition): boolean => {
+  if (candidate.updatedAt !== reference.updatedAt) return candidate.updatedAt > reference.updatedAt
+  return (candidate.sortIndex ?? -1) > (reference.sortIndex ?? -1)
+}
+
+const findLatest = <T extends TimelinePosition>(items: T[]): T | undefined =>
+  items.reduce<T | undefined>(
+    (latest, item) => (!latest || isLaterThan(item, latest) ? item : latest),
+    undefined
+  )
+
+// The loading row belongs to the active run, not persisted history. Each tool starts a fresh wait
+// phase: visible Agent output hides the row until a later tool leaves the Agent working again.
 const shouldShowAgentLoadingMessage = (session: ChatSession | undefined): boolean => {
   if (session?.awaitingFirstAgentOutput) return true
   if (!session || !session.activeRun) return false
@@ -23,7 +29,30 @@ const shouldShowAgentLoadingMessage = (session: ChatSession | undefined): boolea
 
   if (promptIndex === -1) return false
 
-  return !hasVisibleAgentMessageAfterPrompt(session, promptIndex)
+  const prompt = session.messages[promptIndex]
+  const promptMessageId = session.activeRun.promptMessageId
+  const latestVisibleOutput = findLatest(
+    session.messages
+      .slice(promptIndex + 1)
+      .filter(
+        (message) =>
+          message.role === 'agent' &&
+          message.responseToMessageId === promptMessageId &&
+          (message.content.trim().length > 0 || Boolean(message.images?.length))
+      )
+  )
+
+  if (!latestVisibleOutput) return true
+
+  const latestTool = findLatest(
+    (session.activities ?? []).filter((activity) =>
+      activity.promptMessageId
+        ? activity.promptMessageId === promptMessageId
+        : isLaterThan(activity, prompt)
+    )
+  )
+
+  return Boolean(latestTool && isLaterThan(latestTool, latestVisibleOutput))
 }
 
 export { shouldShowAgentLoadingMessage }
