@@ -154,6 +154,11 @@ describe('createElectronSessionPersistenceFlush', () => {
     const responseHandler = responseRegistration?.[1] as
       ((event: { sender: unknown }, response: { requestId: string }) => void) | undefined
     expect(responseHandler).toBeTypeOf('function')
+    const rendererGoneRegistration = webContents.on.mock.calls.find(
+      ([event]) => event === 'render-process-gone'
+    )
+    const rendererGoneListener = rendererGoneRegistration?.[1] as (() => void) | undefined
+    expect(rendererGoneListener).toBeTypeOf('function')
 
     responseHandler?.({ sender: {} }, { requestId: sentRequest.requestId })
     await Promise.resolve()
@@ -171,7 +176,7 @@ describe('createElectronSessionPersistenceFlush', () => {
     )
     expect(webContents.removeListener).toHaveBeenCalledWith(
       'render-process-gone',
-      expect.any(Function)
+      rendererGoneListener
     )
   })
 })
