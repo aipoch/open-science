@@ -342,6 +342,29 @@ describe('installAppLifecycle', () => {
     expect(app.exit).toHaveBeenCalledWith(0)
   })
 
+  it('keeps the renderer alive when the window is closed again during quit cleanup', async () => {
+    let release: (() => void) | undefined
+    const prepareForQuit = vi.fn(
+      () =>
+        new Promise<void>((resolve) => {
+          release = resolve
+        })
+    )
+    const { app, closeOpts } = setup({
+      platform: 'linux',
+      trayHost: false,
+      prepareForQuit
+    })
+    closeOpts[0].requestQuit()
+
+    app.emit('before-quit')
+
+    expect(closeOpts[0].classifyClose()).toBe('quit')
+
+    release?.()
+    await flush()
+  })
+
   it('waits for ACP cancellation and Session persistence before backend teardown', async () => {
     const calls: string[] = []
     const { app, closeOpts } = setup({

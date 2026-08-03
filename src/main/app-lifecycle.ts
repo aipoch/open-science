@@ -81,12 +81,14 @@ export const installAppLifecycle = (
 
   const confirmClose = deps.createConfirmClose(() => mainWindow)
 
-  // Synchronous close classification, evaluated at close time. darwin keeps its dock convention (real
-  // close); a mid-quit proceeds; no-tray hosts retain the renderer while requesting app quit; Windows
-  // asks (confirm); Linux keeps silent hide-to-tray.
+  // Synchronous close classification, evaluated at close time. A mid-quit close is held so the
+  // renderer survives persistence flushing; otherwise darwin keeps its dock convention (real close),
+  // no-tray hosts retain the renderer while requesting app quit, Windows asks (confirm), and Linux
+  // keeps silent hide-to-tray.
   const classifyClose = (): CloseClassification => {
+    if (shutdownStarted) return 'quit'
     if (platform === 'darwin') return 'close'
-    if (shutdownStarted || quitConfirmed) return 'close'
+    if (quitConfirmed) return 'close'
     if (!trayBox.current) return 'quit'
     if (platform === 'win32') return 'confirm'
     return 'hide'
