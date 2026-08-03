@@ -2,7 +2,7 @@ import { join } from 'node:path'
 
 import { describe, expect, it } from 'vitest'
 
-import { runShellCommand } from './runtime-service'
+import { runShellCommand } from './shell-process'
 
 const POWERSHELL_PROCESS_TIMEOUT_MS = 30_000
 const POWERSHELL_TEST_TIMEOUT_MS = POWERSHELL_PROCESS_TIMEOUT_MS + 5_000

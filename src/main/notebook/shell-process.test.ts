@@ -1,7 +1,7 @@
 import type { ChildProcess } from 'node:child_process'
 import { join } from 'node:path'
 
-import { describe, expect, it, vi } from 'vitest'
+import { afterEach, describe, expect, it, vi } from 'vitest'
 
 import {
   buildShellEnv,
@@ -9,7 +9,9 @@ import {
   resolveShellInvocation,
   runShellCommand,
   terminateShellOnTimeout
-} from './runtime-service'
+} from './shell-process'
+
+afterEach(() => vi.unstubAllEnvs())
 
 describe('notebook shell process behavior', () => {
   describe('invocation', () => {
@@ -163,7 +165,7 @@ describe('notebook shell process behavior', () => {
   })
 
   describe.runIf(process.platform !== 'win32')('process results', () => {
-    const execute = (command: string, timeoutMs = 5_000) =>
+    const execute = (command: string, timeoutMs = 5_000): ReturnType<typeof runShellCommand> =>
       runShellCommand({
         command,
         cwd: process.cwd(),
@@ -174,9 +176,11 @@ describe('notebook shell process behavior', () => {
       })
 
     it('preserves stdout, stderr, and a non-zero exit code as one ordinary result', async () => {
-      await expect(
-        execute("printf 'visible'; printf 'warning' >&2; exit 7")
-      ).resolves.toEqual({ stdout: 'visible', stderr: 'warning', exitCode: 7 })
+      await expect(execute("printf 'visible'; printf 'warning' >&2; exit 7")).resolves.toEqual({
+        stdout: 'visible',
+        stderr: 'warning',
+        exitCode: 7
+      })
     })
 
     it('classifies a timeout with a null exit code and appends its diagnostic after stderr', async () => {

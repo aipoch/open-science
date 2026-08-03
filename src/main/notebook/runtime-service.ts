@@ -1,8 +1,7 @@
-import { spawn, type ChildProcess } from 'node:child_process'
 import { randomUUID } from 'node:crypto'
 import { existsSync, realpathSync } from 'node:fs'
 import { writeFile } from 'node:fs/promises'
-import { join, win32 } from 'node:path'
+import { join } from 'node:path'
 
 import type {
   NotebookCell,
@@ -48,7 +47,7 @@ import {
   type InstallRequest,
   type InstallResult
 } from './package-manager'
-import { detectManagedRuntimeMutation, protectManagedRuntimeWrites } from './managed-runtime-guard'
+import { detectManagedRuntimeMutation } from './managed-runtime-guard'
 import { NotebookRunRepository, getNotebookRunJsonPath, getRuntimeRoot } from './repository'
 import {
   addRepairRequired,
@@ -102,9 +101,7 @@ import {
 } from './session-aggregate'
 import { NotebookSessionRegistry } from './session-registry'
 import { getAppClaudeConfigDir } from '../settings/provider-env'
-import { terminateProcessTree } from '../process-tree'
 import { createLogger, getLogFilePath } from '../logger'
-import { resolveWindowsPowerShellExecutable } from '../windows-powershell'
 import {
   EnvironmentManifestPublicationError,
   EnvironmentStateTracker,
@@ -116,15 +113,16 @@ import { startWorkingFileObservation } from './working-file-observer'
 import { NotebookRuntimeBindingOwner } from './runtime-binding'
 import type { RuntimeDiagnosticLogger } from './runtime-diagnostics'
 import { NotebookRunTerminalizationOwner } from './run-terminalization'
+import {
+  NotebookShellProcessAdapter,
+  type NotebookShellProcess,
+  type NotebookShellResult
+} from './shell-process'
 
 // Locale fallback when no explicit locale is injected (see shared/mirror.ts: non-CN locales resolve
 // to public hosts, so this default never silently forces a CN mirror).
 const DEFAULT_LOCALE = 'en-US'
 
-// Default bash_execute timeout, matching the data/repl kernels' own default.
-const DEFAULT_SHELL_TIMEOUT_MS = 120_000
-// Grace period between SIGTERM and SIGKILL when a timed-out shell command ignores the polite signal.
-const SHELL_KILL_GRACE_MS = 2_000
 const REPAIR_QUARANTINE_FAILED = 'REPAIR_QUARANTINE_FAILED'
 
 const isRepairQuarantineError = (error: unknown): boolean =>
@@ -222,15 +220,6 @@ export class NotebookControlCompletionCapturedError extends Error {
   }
 }
 
-// Result of one stateless bash_execute run. No status/traceback classification: the shell is
-// expected to fail non-zero sometimes, so the caller inspects exitCode directly instead of a
-// completed/failed status flag.
-type NotebookShellResult = {
-  stdout: string
-  stderr: string
-  exitCode: number | null
-}
-
 type InspectPackagesRequest = NotebookSessionRequest & {
   language: NotebookLanguage
   packages: string[]
@@ -315,6 +304,9 @@ type NotebookRuntimeServiceOptions = {
   // Platform seam for path-layout decisions. Production uses process.platform; tests can verify that
   // a Windows-shaped string alone never activates Windows conda behavior on another platform.
   platform?: NodeJS.Platform
+  // Stateless shell child-process port. The production adapter owns platform invocation, encoding,
+  // environment projection, and timeout teardown; tests inject a fake without crossing IPC/shared.
+  shellProcess?: NotebookShellProcess
   // Latency-probe deps for the fastest-mirror auto-selection, injectable so tests stay hermetic (the
   // real probe does live HEAD requests). Undefined in production → effectiveMirrorAsync's real probe.
   mirrorProbe?: ProbeDeps
@@ -417,299 +409,6 @@ const cancelledExecutionResult = (cwd: string): NotebookExecutionResult => ({
   outputs: [{ type: 'error', message: CANCELLED_MESSAGE, traceback: CANCELLED_MESSAGE }]
 })
 
-// Benign environment variables the stateless shell is allowed to inherit. Everything else from the host
-// process.env is dropped (default-deny) — see buildShellEnv.
-const SHELL_ENV_ALLOWLIST = [
-  'PATH',
-  'HOME',
-  'USER',
-  'LOGNAME',
-  'SHELL',
-  'LANG',
-  'LC_ALL',
-  'LC_CTYPE',
-  'TERM',
-  'TZ',
-  'TMPDIR',
-  'TEMP',
-  'TMP'
-]
-
-// PowerShell and child processes on Windows need these OS-location variables to locate built-in tools.
-// They contain paths rather than credentials, so they remain safe to inherit into the scrubbed shell env.
-const WINDOWS_SHELL_ENV_ALLOWLIST = ['ComSpec', 'PATHEXT', 'SystemRoot', 'WINDIR', 'USERPROFILE']
-
-// Builds a minimal, secret-free environment for the stateless shell. It runs arbitrary commands
-// and — unlike the python kernel's protected-dir audit hook — cannot enforce read restrictions in
-// process, so it previously inherited the FULL host process.env, including the connector RPC token and
-// any proxy/API credentials the app process holds; a shell command could read or exfiltrate those.
-// Pass only an allowlist of benign vars plus the shared workspace channel, so the shell cannot reach the
-// connector RPC or read host secrets from its environment. (Full filesystem/network egress isolation
-// for shell commands is a tracked follow-up; this closes the environment-based leak.)
-const buildShellEnv = (
-  handoffDir: string,
-  platform: NodeJS.Platform = process.platform,
-  sourceEnv: NodeJS.ProcessEnv = process.env
-): NodeJS.ProcessEnv => {
-  const env: NodeJS.ProcessEnv = {}
-  const keys =
-    platform === 'win32'
-      ? [...SHELL_ENV_ALLOWLIST, ...WINDOWS_SHELL_ENV_ALLOWLIST]
-      : SHELL_ENV_ALLOWLIST
-  for (const key of keys) {
-    const value = sourceEnv[key]
-    if (value !== undefined) env[key] = value
-  }
-  if (platform === 'win32') {
-    const modulePaths: string[] = []
-    const programFiles = sourceEnv.ProgramFiles
-    if (programFiles) {
-      modulePaths.push(win32.join(programFiles, 'WindowsPowerShell', 'Modules'))
-    }
-    const windowsRoot = sourceEnv.SystemRoot ?? sourceEnv.WINDIR
-    if (windowsRoot) {
-      // PowerShell's built-in cmdlets are module-backed. Supplying no PSModulePath makes Windows
-      // PowerShell perform extremely slow first-use discovery on hosted machines, while inheriting
-      // the host value would expose arbitrary user/third-party modules. Preserve only the standard
-      // AllUsers and in-box module locations, excluding CurrentUser and host-specific additions.
-      modulePaths.push(win32.join(windowsRoot, 'System32', 'WindowsPowerShell', 'v1.0', 'Modules'))
-    }
-    if (modulePaths.length > 0) {
-      const controlledModulePath = modulePaths.join(win32.delimiter)
-      env.PSModulePath = controlledModulePath
-      // Windows PowerShell reconstructs PSModulePath at startup and can reinsert CurrentUser paths.
-      // Carry the controlled value through startup so the wrapper can restore it before user code.
-      env.OPEN_SCIENCE_PSMODULEPATH = controlledModulePath
-    }
-  }
-  env.OPEN_SCIENCE_HANDOFF_DIR = handoffDir
-  return env
-}
-
-const POWERSHELL_CLIXML_BLOCK = /#< CLIXML\r?\n<Objs\b[\s\S]*?<\/Objs>(?:\r?\n)?/gu
-
-const isPowerShellProgressClixml = (block: string): boolean => {
-  const xmlStart = block.indexOf('<Objs')
-  if (xmlStart === -1) return false
-
-  const xml = block.slice(xmlStart)
-  const objectStreamPattern = /<Obj\b[^>]*\bS=(["'])(.*?)\1/giu
-  let sawObject = false
-  let match: RegExpExecArray | null
-
-  while ((match = objectStreamPattern.exec(xml)) !== null) {
-    sawObject = true
-    if (match[2].toLowerCase() !== 'progress') return false
-  }
-
-  return sawObject
-}
-
-const skipOneLineBreak = (text: string, index: number): number => {
-  if (text.startsWith('\r\n', index)) return index + 2
-  if (text[index] === '\n' || text[index] === '\r') return index + 1
-  return index
-}
-
-const normalizePowerShellStderr = (
-  stderr: string,
-  platform: NodeJS.Platform = process.platform
-): string => {
-  if (platform !== 'win32' || !stderr.includes('#< CLIXML')) return stderr
-
-  let normalized = ''
-  let cursor = 0
-  let match: RegExpExecArray | null
-  POWERSHELL_CLIXML_BLOCK.lastIndex = 0
-
-  while ((match = POWERSHELL_CLIXML_BLOCK.exec(stderr)) !== null) {
-    if (!isPowerShellProgressClixml(match[0])) continue
-
-    normalized += stderr.slice(cursor, match.index)
-    cursor = match.index + match[0].length
-    if (normalized.endsWith('\n')) cursor = skipOneLineBreak(stderr, cursor)
-  }
-
-  if (cursor === 0) return stderr
-  return normalized + stderr.slice(cursor)
-}
-
-type ShellInvocation = {
-  executable: string
-  args: string[]
-}
-
-// Windows PowerShell expects -EncodedCommand payloads as UTF-16LE. The user command is separately
-// encoded as UTF-8 and parsed as a script block so trailing continuations, comments, and here-strings
-// cannot consume the wrapper's exit-code logic. The wrapper also normalizes output to UTF-8 and
-// converts PowerShell's two failure channels into a real process exit code: $? for cmdlets and
-// $LASTEXITCODE for native programs.
-const encodePowerShellCommand = (command: string): string => {
-  const encodedCommand = Buffer.from(command, 'utf8').toString('base64')
-  const script = [
-    'if ($env:OPEN_SCIENCE_PSMODULEPATH) {',
-    '  $env:PSModulePath = $env:OPEN_SCIENCE_PSMODULEPATH',
-    // Import the common in-box command modules by absolute path so their first use does not scan
-    // the larger AllUsers tree. Keep AllUsers first in PSModulePath so updated or additional
-    // machine modules retain Windows PowerShell's standard precedence for every other command.
-    '  Import-Module "$PSHOME\\Modules\\Microsoft.PowerShell.Management\\Microsoft.PowerShell.Management.psd1" -ErrorAction Stop',
-    '  Import-Module "$PSHOME\\Modules\\Microsoft.PowerShell.Utility\\Microsoft.PowerShell.Utility.psd1" -ErrorAction Stop',
-    "  [System.Environment]::SetEnvironmentVariable('OPEN_SCIENCE_PSMODULEPATH', $null, [System.EnvironmentVariableTarget]::Process)",
-    '}',
-    '$openScienceUtf8 = [System.Text.UTF8Encoding]::new($false)',
-    '[Console]::OutputEncoding = $openScienceUtf8',
-    '$OutputEncoding = $openScienceUtf8',
-    `$openScienceCommandBase64 = '${encodedCommand}'`,
-    '$global:LASTEXITCODE = 0',
-    "$ProgressPreference = 'SilentlyContinue'",
-    "$ErrorActionPreference = 'Stop'",
-    'try {',
-    '$openScienceCommandText = [System.Text.Encoding]::UTF8.GetString([Convert]::FromBase64String($openScienceCommandBase64))',
-    '$openScienceCommand = [ScriptBlock]::Create($openScienceCommandText)',
-    '& $openScienceCommand',
-    '$openScienceSucceeded = $?',
-    '$openScienceNativeExitCode = $LASTEXITCODE',
-    'if ($openScienceNativeExitCode -is [int] -and $openScienceNativeExitCode -ne 0) { exit $openScienceNativeExitCode }',
-    'if ($openScienceSucceeded) { exit 0 }',
-    '} catch {',
-    '[Console]::Error.WriteLine($_.ToString())',
-    '}',
-    'exit 1'
-  ].join('\n')
-
-  return Buffer.from(script, 'utf16le').toString('base64')
-}
-
-// Resolve the command interpreter explicitly instead of using shell:true. Node's Windows default is
-// cmd.exe, whose command language cannot run the POSIX-style commands agents commonly emit.
-const resolveShellInvocation = (
-  command: string,
-  platform: NodeJS.Platform = process.platform
-): ShellInvocation =>
-  platform === 'win32'
-    ? {
-        executable: resolveWindowsPowerShellExecutable(),
-        args: [
-          '-NoLogo',
-          '-NoProfile',
-          '-NonInteractive',
-          '-EncodedCommand',
-          encodePowerShellCommand(command)
-        ]
-      }
-    : { executable: 'sh', args: ['-c', command] }
-
-// Returns true after the Windows-specific tree terminator settles. Waiting prevents the service from
-// reporting completion while taskkill still holds workspace files open. The dependency is injectable
-// to keep this platform boundary covered without needing a Windows host in unit tests.
-const terminateShellOnTimeout = async (
-  child: ChildProcess,
-  platform: NodeJS.Platform = process.platform,
-  terminateTree: (process: ChildProcess) => Promise<unknown> = terminateProcessTree
-): Promise<boolean> => {
-  if (platform !== 'win32') return false
-  try {
-    await terminateTree(child)
-  } catch {
-    // Preserve runShellCommand's never-reject contract even when the best-effort terminator fails.
-  }
-  return true
-}
-
-// Runs one shell command in a brand-new platform-native process — no persistent proc, no kernel executor
-// involvement. cwd/env mirror where the data kernels start (session cwd + the handoff dir), so the shell
-// can read/write files the same shared workspace channel the other kernels see. The env is scrubbed to
-// an allowlist (buildShellEnv) so host secrets never reach the shell. Never rejects: a spawn failure, a
-// non-zero exit, and a timeout are all resolved as ordinary results for the agent to inspect, matching
-// the other kernels' "don't throw on failure" contract.
-const runShellCommand = (options: {
-  command: string
-  cwd: string
-  handoffDir: string
-  runtimeRoot: string
-  platform?: NodeJS.Platform
-  timeoutMs?: number
-}): Promise<NotebookShellResult> =>
-  new Promise((resolve) => {
-    const timeoutMs = options.timeoutMs ?? DEFAULT_SHELL_TIMEOUT_MS
-    const platform = options.platform ?? process.platform
-    const invocation = protectManagedRuntimeWrites(
-      resolveShellInvocation(options.command, platform),
-      options.runtimeRoot,
-      platform
-    )
-    const child = spawn(invocation.executable, invocation.args, {
-      cwd: options.cwd,
-      env: buildShellEnv(options.handoffDir)
-    })
-
-    let stdout = ''
-    let stderr = ''
-    let settled = false
-    // True once the process has actually exited. child.killed is unreliable here: Node sets it as
-    // soon as a signal is *delivered*, not when the process dies, so it cannot distinguish a still-
-    // running (e.g. SIGTERM-ignoring) process from a killed one — gate the SIGKILL escalation below
-    // on this instead.
-    let exited = false
-    // Once the timer fires, the timeout result owns settlement. In particular, taskkill causes an
-    // exit event before its promise resolves on Windows; that event must not be persisted as a normal
-    // failed exit instead of the timeout that initiated termination.
-    let timedOut = false
-
-    const finish = (result: NotebookShellResult): void => {
-      if (settled) return
-      settled = true
-      clearTimeout(timeoutTimer)
-      resolve({ ...result, stderr: normalizePowerShellStderr(result.stderr) })
-    }
-
-    const timeoutTimer = setTimeout(() => {
-      timedOut = true
-      const timeoutResult: NotebookShellResult = {
-        stdout,
-        stderr:
-          stderr +
-          `${stderr && !stderr.endsWith('\n') ? '\n' : ''}Shell command timed out after ${timeoutMs}ms and was killed.`,
-        exitCode: null
-      }
-
-      void terminateShellOnTimeout(child).then((usedWindowsTerminator) => {
-        if (usedWindowsTerminator) {
-          // child.kill() only reaches the PowerShell parent on Windows; taskkill /T /F reaps the
-          // full tree. Settle only after it completes so callers can safely inspect or remove cwd.
-          finish(timeoutResult)
-          return
-        }
-
-        // Escalate SIGTERM -> SIGKILL if the process ignores the polite signal; the promise itself
-        // settles immediately so a wedged process can never hang the caller past the timeout.
-        child.kill('SIGTERM')
-        const killTimer = setTimeout(() => {
-          if (!exited) child.kill('SIGKILL')
-        }, SHELL_KILL_GRACE_MS)
-        child.once('exit', () => clearTimeout(killTimer))
-
-        finish(timeoutResult)
-      })
-    }, timeoutMs)
-
-    child.stdout.setEncoding('utf8')
-    child.stderr.setEncoding('utf8')
-    child.stdout.on('data', (chunk: string) => {
-      stdout += chunk
-    })
-    child.stderr.on('data', (chunk: string) => {
-      stderr += chunk
-    })
-    child.once('error', (error) => {
-      if (!timedOut) finish({ stdout, stderr: stderr || error.message, exitCode: null })
-    })
-    child.once('exit', (code) => {
-      exited = true
-      if (!timedOut) finish({ stdout, stderr, exitCode: code })
-    })
-  })
-
 // Resolves the on-disk locations of the Python/R exec-loop scripts without depending on Electron
 // (mirrors micromamba.ts's electron-free resolution). resources/** ships via electron-builder's
 // asarUnpack, so a packaged build's loop scripts land beside app.asar under app.asar.unpacked rather
@@ -775,6 +474,7 @@ class NotebookRuntimeService {
   private readonly repository: NotebookRunRepository
   private readonly exportReader: NotebookExportReader
   private readonly runTerminalization: NotebookRunTerminalizationOwner
+  private readonly shellProcess: NotebookShellProcess
   private readonly sessions: NotebookSessionRegistry<RuntimeSession>
   private readonly announcedAgentSessionIds = new Set<string>()
   // Owns process-global operation admission, provisioning progress, restart recommendations,
@@ -861,6 +561,7 @@ class NotebookRuntimeService {
       repository: this.repository,
       notifyChanged: (session) => this.notifyNotebookChanged(session as RuntimeSession)
     })
+    this.shellProcess = options.shellProcess ?? new NotebookShellProcessAdapter(options.platform)
   }
 
   private legacyRuntimeSettingsCapability(
@@ -1728,12 +1429,11 @@ class NotebookRuntimeService {
                 stderr: `MANAGED_RUNTIME_MUTATION_BLOCKED: ${blockedMutation.message}`,
                 exitCode: 1
               })
-            : runShellCommand({
+            : this.shellProcess.execute({
                 command: request.command,
                 cwd: session.cwd,
                 handoffDir: join(session.notebookSessionRoot, 'handoff'),
                 runtimeRoot: session.runtimeRoot,
-                platform: this.options.platform,
                 timeoutMs: request.timeoutMs
               })
         ).finally(async () => {
@@ -3223,16 +2923,7 @@ class NotebookRuntimeService {
   }
 }
 
-export {
-  NotebookRuntimeService,
-  buildShellEnv,
-  normalizePowerShellStderr,
-  resolveDefaultExecutorOptions,
-  resolveLoopScriptPaths,
-  resolveShellInvocation,
-  runShellCommand,
-  terminateShellOnTimeout
-}
+export { NotebookRuntimeService, resolveDefaultExecutorOptions, resolveLoopScriptPaths }
 export type {
   NotebookExecutionRequest,
   NotebookExecutionResult,

@@ -55,6 +55,7 @@ import {
   writeReadyMarker,
   writeRReadyMarker
 } from './runtime-paths'
+import type { NotebookShellProcess } from './shell-process'
 
 let storageRoot: string | undefined
 
@@ -1386,6 +1387,47 @@ describe('notebook runtime service', () => {
         source: 'agent'
       })
       expect(state.runs[0].text.stdout).toContain('hi')
+    })
+
+    it('routes one unqueued call through the shell process port and preserves its public result', async () => {
+      const root = await createStorageRoot()
+      const execute = vi.fn<NotebookShellProcess['execute']>().mockResolvedValue({
+        stdout: 'partial output',
+        stderr: 'command failed',
+        exitCode: 9
+      })
+      const service = new NotebookRuntimeService({
+        configRoot: root,
+        dataRoot: root,
+        projectName: 'default-project',
+        repository: new NotebookRunRepository(root),
+        shellProcess: { execute }
+      })
+
+      const result = await service.executeShell({
+        sessionId: 'session-1',
+        workspaceCwd: root,
+        command: 'opaque command',
+        timeoutMs: 321
+      })
+
+      expect(execute).toHaveBeenCalledWith({
+        command: 'opaque command',
+        cwd: join(root, 'notebooks', 'default-project', 'session-1', 'data'),
+        handoffDir: join(root, 'notebooks', 'default-project', 'session-1', 'handoff'),
+        runtimeRoot: getRuntimeRoot(root),
+        timeoutMs: 321
+      })
+      expect(result).toEqual({
+        stdout: 'partial output',
+        stderr: 'command failed',
+        exitCode: 9
+      })
+      const state = await service.state({ sessionId: 'session-1', workspaceCwd: root })
+      expect(state.runs[0]).toMatchObject({
+        status: 'failed',
+        text: { stdout: 'partial output', stderr: 'command failed' }
+      })
     })
 
     it('rejects a direct micromamba install before spawning the shell command', async () => {
