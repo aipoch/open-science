@@ -255,7 +255,7 @@ describe('ElectronUpdaterStrategy', () => {
     expect(status.error).toBe('boom')
   })
 
-  it('apply installs silently and relaunches (quitAndInstall(true, true))', async () => {
+  it('apply shows installer progress and relaunches (quitAndInstall(false, true))', async () => {
     const updater = new FakeUpdater()
     const strategy = new ElectronUpdaterStrategy({
       updater,
@@ -264,7 +264,7 @@ describe('ElectronUpdaterStrategy', () => {
     })
     await strategy.apply()
     expect(updater.quitAndInstall).toHaveBeenCalledTimes(1)
-    expect(updater.quitAndInstall).toHaveBeenCalledWith(true, true)
+    expect(updater.quitAndInstall).toHaveBeenCalledWith(false, true)
   })
 
   it('apply runs the install gate before quitAndInstall when the teardown is clean', async () => {
@@ -283,6 +283,38 @@ describe('ElectronUpdaterStrategy', () => {
     expect(updater.quitAndInstall).toHaveBeenCalledTimes(1)
   })
 
+  it('reports preparation immediately and ignores a repeat apply while teardown is pending', async () => {
+    const updater = new FakeUpdater()
+    const broadcast = vi.fn()
+    let finishGate: (() => void) | undefined
+    const gate = vi.fn(
+      () =>
+        new Promise<{ completed: true; reaped: true }>((resolve) => {
+          finishGate = () => resolve({ completed: true, reaped: true })
+        })
+    )
+    const strategy = new ElectronUpdaterStrategy({
+      updater,
+      currentVersion: '0.2.0',
+      broadcast,
+      installGate: gate
+    })
+
+    const applying = strategy.apply()
+    expect(strategy.getStatus().state).toBe('applying')
+    expect(broadcast).toHaveBeenCalledWith(
+      'update:status',
+      expect.objectContaining({ state: 'applying' })
+    )
+
+    await strategy.apply()
+    expect(gate).toHaveBeenCalledTimes(1)
+
+    finishGate?.()
+    await applying
+    expect(updater.quitAndInstall).toHaveBeenCalledTimes(1)
+  })
+
   it('apply refuses to install and reports an error when the teardown times out', async () => {
     const updater = new FakeUpdater()
     const gate = vi.fn(async () => ({ completed: false, reaped: false }))
@@ -297,6 +329,22 @@ describe('ElectronUpdaterStrategy', () => {
 
     expect(updater.quitAndInstall).not.toHaveBeenCalled()
     expect(status.state).toBe('error')
+  })
+
+  it('restores an actionable error when the install gate throws', async () => {
+    const updater = new FakeUpdater()
+    const strategy = new ElectronUpdaterStrategy({
+      updater,
+      currentVersion: '0.2.0',
+      broadcast: vi.fn(),
+      installGate: vi.fn(async () => Promise.reject(new Error('teardown failed')))
+    })
+
+    const status = await strategy.apply()
+
+    expect(updater.quitAndInstall).not.toHaveBeenCalled()
+    expect(status.state).toBe('error')
+    expect(status.error).toContain('Please try again')
   })
 
   it('apply refuses to install when the teardown completed but a tree was not cleanly reaped', async () => {

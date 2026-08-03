@@ -377,11 +377,16 @@ export class ElectronUpdaterStrategy implements UpdateStrategy {
     return this.status
   }
 
-  // Triggered by the user's "Restart to update" click once the download is ready. On win/linux,
-  // isSilent=true keeps the assisted NSIS installer from showing its wizard and isForceRunAfter=true
-  // relaunches into the new version (per-user install = no UAC prompt). On macOS Squirrel.Mac swaps
-  // the .app and relaunches; it ignores isSilent, so the same call is correct there too.
+  // Triggered by the user's "Restart to update" click once the download is ready. On Windows,
+  // isSilent=false keeps the assisted NSIS progress page visible while the app files are unavailable;
+  // isForceRunAfter=true relaunches into the new version. Other updaters ignore isSilent.
   async apply(): Promise<UpdateStatus> {
+    // Claim the update synchronously so repeat clicks or concurrent renderers cannot start a second
+    // teardown/install. The broadcast also gives the renderer immediate feedback during the shutdown
+    // gate, which can take up to 15 seconds on Windows.
+    if (this.status.state === 'applying') return this.status
+    this.setStatus({ ...this.status, state: 'applying' })
+
     // Stop the agent + notebook process trees BEFORE handing off to the installer. Its uninstall step
     // deletes the running app's files, and on Windows an executable/DLL still mapped by a background
     // child (agent CLI, python kernel, conda) is locked — the classic "Failed to uninstall old
@@ -389,7 +394,17 @@ export class ElectronUpdaterStrategy implements UpdateStrategy {
     // may have left grandchildren), refuse the install rather than fail mid-uninstall: the gate is
     // non-latching, so the app stays usable and the user can retry (fewer live processes next time).
     if (this.installGate) {
-      const readiness = await this.installGate()
+      let readiness: Awaited<ReturnType<InstallGate>>
+      try {
+        readiness = await this.installGate()
+      } catch (error) {
+        this.log.error('update install gate failed', error)
+        this.setStatus({
+          state: 'error',
+          error: 'Could not stop background processes before updating. Please try again.'
+        })
+        return this.status
+      }
       if (!readiness.completed || !readiness.reaped) {
         this.log.error('update install gate refused: backend teardown degraded', readiness)
         this.setStatus({
@@ -401,7 +416,7 @@ export class ElectronUpdaterStrategy implements UpdateStrategy {
       this.log.info('update install gate cleared; proceeding to quitAndInstall')
     }
 
-    this.updater.quitAndInstall(true, true)
+    this.updater.quitAndInstall(false, true)
     return this.status
   }
 }
