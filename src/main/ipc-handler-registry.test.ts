@@ -257,6 +257,85 @@ describe('createIpcHandlerRegistry', () => {
     registry.webRpc.dispose()
   })
 
+  it('starts fresh Web and Task lease epochs when handlers are registered after disposal', async () => {
+    const registry = createIpcHandlerRegistry({ handle: vi.fn() } as never)
+    registry.ipcMainHandle('projects:list', (event) => callerLeaseForEvent(event))
+
+    const disposedWebLease = (await registry.webRpc.invoke(
+      'projects:list',
+      createWebCallerContext('browser-1'),
+      []
+    )) as ApplicationCallerLease
+    const disposedTaskLease = (await registry.webRpc.invoke(
+      'projects:list',
+      createTaskCallerContext(),
+      []
+    )) as ApplicationCallerLease
+    registry.webRpc.dispose()
+
+    expect(disposedWebLease.signal.aborted).toBe(true)
+    expect(disposedWebLease.isCurrent()).toBe(false)
+    expect(disposedTaskLease.signal.aborted).toBe(true)
+    expect(disposedTaskLease.isCurrent()).toBe(false)
+
+    registry.ipcMainHandle('projects:list', (event) => callerLeaseForEvent(event))
+    const replacementWebLease = (await registry.webRpc.invoke(
+      'projects:list',
+      createWebCallerContext('browser-1'),
+      []
+    )) as ApplicationCallerLease
+    const replacementTaskLease = (await registry.webRpc.invoke(
+      'projects:list',
+      createTaskCallerContext(),
+      []
+    )) as ApplicationCallerLease
+
+    expect(replacementWebLease).not.toBe(disposedWebLease)
+    expect(replacementWebLease.signal).not.toBe(disposedWebLease.signal)
+    expect(replacementWebLease.signal.aborted).toBe(false)
+    expect(replacementWebLease.isCurrent()).toBe(true)
+    expect(replacementTaskLease).not.toBe(disposedTaskLease)
+    expect(replacementTaskLease.signal).not.toBe(disposedTaskLease.signal)
+    expect(replacementTaskLease.signal.aborted).toBe(false)
+    expect(replacementTaskLease.isCurrent()).toBe(true)
+
+    registry.webRpc.releaseClient('browser-1')
+    expect(replacementWebLease.signal.aborted).toBe(true)
+    expect(replacementTaskLease.signal.aborted).toBe(false)
+  })
+
+  it('keeps disposed native handler epochs terminal after later registrations', () => {
+    const nativeHandlers = new Map<string, (...args: unknown[]) => unknown>()
+    const registry = createIpcHandlerRegistry({
+      handle: (channel: string, handler: (...args: unknown[]) => unknown) =>
+        nativeHandlers.set(channel, handler)
+    } as never)
+    const initialHandler = vi.fn((event) => callerLeaseForEvent(event))
+    registry.ipcMainHandle('projects:list', initialHandler)
+    const disposedWrapper = nativeHandlers.get('projects:list')
+    const sender = { id: 42 }
+
+    const disposedLease = disposedWrapper?.({ sender }) as ApplicationCallerLease
+    registry.webRpc.dispose()
+
+    expect(() => disposedWrapper?.({ sender })).toThrow('registry is disposed')
+    expect(initialHandler).toHaveBeenCalledOnce()
+
+    const replacementHandler = vi.fn((event) => callerLeaseForEvent(event))
+    registry.ipcMainHandle('projects:list', replacementHandler)
+    const replacementLease = nativeHandlers.get('projects:list')?.({
+      sender
+    }) as ApplicationCallerLease
+
+    expect(() => disposedWrapper?.({ sender })).toThrow('registry is disposed')
+    expect(initialHandler).toHaveBeenCalledOnce()
+    expect(replacementHandler).toHaveBeenCalledOnce()
+    expect(disposedLease.signal.aborted).toBe(true)
+    expect(disposedLease.isCurrent()).toBe(false)
+    expect(replacementLease.signal.aborted).toBe(false)
+    expect(replacementLease.isCurrent()).toBe(true)
+  })
+
   it('lets in-flight Web work observe final client release without cancelling its result', async () => {
     const registry = createIpcHandlerRegistry({ handle: vi.fn() } as never)
     let resolve!: (value: string) => void
