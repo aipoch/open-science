@@ -352,8 +352,8 @@ export const LocalFileBrowser = ({
   // relative form of the same dir) snaps the field back to the canonical path instead.
   const handleAddressSubmit = (e: React.FormEvent): void => {
     e.preventDefault()
-    const resolved = resolveLocalPath(currentPath, addressInput.trim())
-    const invalid = validateLocalPath(resolved)
+    const resolved = resolveLocalPath(currentPath, addressInput.trim(), window.api.platform)
+    const invalid = validateLocalPath(resolved, window.api.platform)
     if (invalid) {
       setState({
         kind: 'error',
@@ -376,7 +376,7 @@ export const LocalFileBrowser = ({
   // Directory → navigate in; file → open a preview-workbench tab. Sensitive paths (credential dirs
   // like .ssh, private keys, dotenv files) warn first, whether entering or opening.
   const handleOpenEntry = (entry: LocalDirEntry): void => {
-    const path = resolveLocalPath(currentPath, entry.name)
+    const path = resolveLocalPath(currentPath, entry.name, window.api.platform)
     if (isSensitiveLocalPath(path)) {
       const prompt = entry.isDirectory
         ? `"${entry.name}" may contain credentials or secrets. Open this folder anyway?`

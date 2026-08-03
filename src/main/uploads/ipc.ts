@@ -240,7 +240,7 @@ const registerUploadIpcHandlers = (
       typeof request.sourcePath !== 'string' ||
       // The renderer hands over a raw host path, so it gets the same shape checks the local-fs
       // browser applies — absolute, no control characters — before stat() or any copy sees it.
-      validateLocalPath(request.sourcePath) !== undefined
+      validateLocalPath(request.sourcePath, process.platform) !== undefined
     ) {
       throw new Error('Invalid local path upload request.')
     }

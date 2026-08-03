@@ -44,14 +44,19 @@ export const LOCAL_DIR_ENTRY_CAP = 5000
 // The security model is "Home start, full-disk navigable": we do NOT restrict to a root, but we
 // reject non-absolute paths and paths containing ASCII control characters (which are never valid
 // path components and would indicate a crafted/garbled input).
-export const validateLocalPath = (path: string): 'not_absolute' | 'control_chars' | undefined => {
+export const validateLocalPath = (
+  path: string,
+  platform: string
+): 'not_absolute' | 'control_chars' | undefined => {
   if (typeof path !== 'string' || path.length === 0) return 'not_absolute'
   // eslint-disable-next-line no-control-regex
   if (/[\x00-\x1f]/.test(path)) return 'control_chars'
   const isPosixAbsolute = path.startsWith('/')
   const isWindowsDriveAbsolute = /^[A-Za-z]:[\\/]/.test(path)
   const isWindowsUncAbsolute = /^\\\\[^\\/]+[\\/][^\\/]+/.test(path)
-  if (!isPosixAbsolute && !isWindowsDriveAbsolute && !isWindowsUncAbsolute) return 'not_absolute'
+  const isAbsolute =
+    platform === 'win32' ? isWindowsDriveAbsolute || isWindowsUncAbsolute : isPosixAbsolute
+  if (!isAbsolute) return 'not_absolute'
   return undefined
 }
 
@@ -122,8 +127,8 @@ export const describeLocalListingError = (
 
 // Resolves an address-bar input to an absolute path, lexically joining relative input onto cwd.
 // The main process still calls realpath to canonicalize '..' and symlinks.
-export const resolveLocalPath = (cwd: string, input: string): string => {
-  if (validateLocalPath(input) === undefined) return input
+export const resolveLocalPath = (cwd: string, input: string, platform: string): string => {
+  if (validateLocalPath(input, platform) === undefined) return input
   if (input === '') return cwd
   const separator = /^[A-Za-z]:[\\/]|^\\\\/.test(cwd) ? '\\' : '/'
   const base = cwd.replace(/[\\/]+$/, '')

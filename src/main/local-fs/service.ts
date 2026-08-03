@@ -24,7 +24,7 @@ const buildMachineName = (): string => {
 
 // Throws a tagged error when the path fails the shared validation (non-absolute / control chars).
 const assertValidLocalPath = (path: string): void => {
-  const problem = validateLocalPath(path)
+  const problem = validateLocalPath(path, process.platform)
   if (problem === 'not_absolute') throw new Error('Local path must be absolute.')
   if (problem === 'control_chars') throw new Error('Local path contains invalid characters.')
 }
