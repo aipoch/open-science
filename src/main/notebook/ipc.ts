@@ -10,19 +10,10 @@ import type {
   NotebookSessionRequest,
   RunNotebookCellRequest
 } from '../../shared/notebook'
-import {
-  createNotebookCommandWorkflows,
-  type NotebookCommandRuntime,
-  type NotebookCommandWorkflows
-} from './notebook-workflows'
-
-// Builds a small delegating surface so tests can validate IPC behavior without Electron wiring.
-const createNotebookHandlers = createNotebookCommandWorkflows
+import type { NotebookCommandWorkflows } from './notebook-workflows'
 
 // Registers renderer-callable notebook commands on the main-process IPC bus.
-const registerNotebookIpcHandlers = (runtime: NotebookCommandRuntime): void => {
-  const handlers = createNotebookHandlers(runtime)
-
+const registerNotebookIpcHandlers = (handlers: NotebookCommandWorkflows): void => {
   ipcMainHandle('notebook:state', (_event, request: NotebookSessionRequest) =>
     handlers.state(request)
   )
@@ -58,5 +49,5 @@ const registerNotebookIpcHandlers = (runtime: NotebookCommandRuntime): void => {
   )
 }
 
-export { createNotebookHandlers, registerNotebookIpcHandlers }
+export { registerNotebookIpcHandlers }
 export type { NotebookCommandWorkflows as NotebookHandlers }

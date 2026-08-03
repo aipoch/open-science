@@ -151,6 +151,9 @@ describe('OpenScienceClient', () => {
     expect(client).not.toHaveProperty('permissions')
     expect(client).not.toHaveProperty('specialists')
     expect(client).not.toHaveProperty('compute')
+    expect(client).not.toHaveProperty('notebook')
+    expect(client).not.toHaveProperty('notebookEnv')
+    expect(client).not.toHaveProperty('runtime')
   })
 
   it('surfaces stable API errors without including the authentication token', async () => {

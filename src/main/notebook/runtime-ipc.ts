@@ -4,21 +4,19 @@ import { ipcMainHandle } from '../ipc-handler-registry'
 
 import type { NotebookLanguage } from '../../shared/notebook'
 import type { RuntimeSelection } from '../../shared/notebook-runtime'
-import {
-  createRuntimeSelectionWorkflows,
-  type RuntimeSelectionWorkflowDeps
-} from './runtime-selection-workflows'
+import type { RuntimeSelectionWorkflows } from './runtime-selection-workflows'
 
-export type RuntimeIpcDeps = RuntimeSelectionWorkflowDeps & {
+export type RuntimeIpcOptions = {
   // Injectable for tests; production defaults to the Electron native open-file dialog.
   showOpenDialog?: () => Promise<string | null>
 }
 
 // Registers renderer-callable runtime-selection commands while keeping native host interaction in
 // the Electron adapter. Application ordering and state ownership live behind the workflow interface.
-const registerRuntimeIpcHandlers = (deps: RuntimeIpcDeps): void => {
-  const workflows = createRuntimeSelectionWorkflows(deps)
-
+const registerRuntimeIpcHandlers = (
+  workflows: RuntimeSelectionWorkflows,
+  options: RuntimeIpcOptions = {}
+): void => {
   ipcMainHandle('runtime:survey', () => workflows.survey())
 
   ipcMainHandle('runtime:list-environments', () => workflows.listEnvironments())
@@ -65,7 +63,7 @@ const registerRuntimeIpcHandlers = (deps: RuntimeIpcDeps): void => {
 
   ipcMainHandle('runtime:pick-interpreter', async (): Promise<string | null> => {
     try {
-      if (deps.showOpenDialog) return await deps.showOpenDialog()
+      if (options.showOpenDialog) return await options.showOpenDialog()
       const result = await dialog.showOpenDialog({ properties: ['openFile'] })
       return result.filePaths[0] ?? null
     } catch (err) {

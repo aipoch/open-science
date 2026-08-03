@@ -705,6 +705,64 @@ describe('startWebHttpServer', () => {
     expect(rpc.invoke).toHaveBeenCalledOnce()
   })
 
+  it('pins the remote Web Notebook capability matrix', () => {
+    const channelsFor = (prefix: string): string[] =>
+      Object.entries(WEB_INVOKE_CHANNELS)
+        .filter(([path]) => path.startsWith(prefix))
+        .map(([, channel]) => channel)
+
+    const notebookChannels = channelsFor('notebook.')
+    const environmentChannels = channelsFor('notebookEnv.')
+    const runtimeChannels = channelsFor('runtime.')
+    const localOnly = (channels: string[]): string[] =>
+      channels.filter((channel) => REMOTE_LOCAL_ONLY_RPC_CHANNELS.has(channel))
+
+    expect(localOnly(notebookChannels)).toEqual([
+      'notebook:export-ipynb',
+      'notebook:export-ipynb-all'
+    ])
+    expect(
+      notebookChannels.filter((channel) => !localOnly(notebookChannels).includes(channel))
+    ).toEqual([
+      'notebook:append-code-cell',
+      'notebook:begin-code-cell',
+      'notebook:execute',
+      'notebook:finish-code-cell',
+      'notebook:reference',
+      'notebook:read-input-preview',
+      'notebook:restart',
+      'notebook:run-cell',
+      'notebook:shutdown',
+      'notebook:state'
+    ])
+    expect(localOnly(environmentChannels)).toEqual([
+      'notebook-env:cancel',
+      'notebook-env:provision',
+      'notebook-env:repair'
+    ])
+    expect(
+      environmentChannels.filter((channel) => !localOnly(environmentChannels).includes(channel))
+    ).toEqual(['notebook-env:status'])
+    expect(localOnly(runtimeChannels)).toEqual([
+      'runtime:pick-interpreter',
+      'runtime:register-interpreter',
+      'runtime:set-environment-enabled',
+      'runtime:set-install-authorized',
+      'runtime:set-selection',
+      'runtime:unregister-interpreter'
+    ])
+    expect(
+      runtimeChannels.filter((channel) => !localOnly(runtimeChannels).includes(channel))
+    ).toEqual([
+      'runtime:describe-usage',
+      'runtime:get-enablement',
+      'runtime:list-environments',
+      'runtime:list-package-counts',
+      'runtime:list-packages',
+      'runtime:survey'
+    ])
+  })
+
   it.each([
     ['one-time', accessOnlyExternalAccess],
     ['trusted', authorizedExternalAccess]

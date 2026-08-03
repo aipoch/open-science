@@ -24,7 +24,11 @@ vi.mock('electron', () => ({
   }
 }))
 
-import { registerNotebookEnvIpcHandlers } from './env-ipc'
+import { broadcastNotebookEnvProgress, registerNotebookEnvIpcHandlers } from './env-ipc'
+import {
+  createNotebookEnvironmentLifecycle,
+  type NotebookEnvironmentLifecycle
+} from './environment-lifecycle-workflows'
 
 const fakeProvisioner = (over: Partial<RuntimeProvisioner> = {}): RuntimeProvisioner => ({
   status: vi
@@ -39,6 +43,15 @@ const fakeProvisioner = (over: Partial<RuntimeProvisioner> = {}): RuntimeProvisi
   ...over
 })
 
+const createLifecycle = (
+  provisioner: RuntimeProvisioner | undefined
+): NotebookEnvironmentLifecycle =>
+  createNotebookEnvironmentLifecycle({
+    provisioner,
+    root: '/runtime',
+    projectProgress: broadcastNotebookEnvProgress
+  })
+
 describe('registerNotebookEnvIpcHandlers', () => {
   beforeEach(() => {
     registered.clear()
@@ -47,7 +60,7 @@ describe('registerNotebookEnvIpcHandlers', () => {
   })
 
   it('registers the exact four channels even when the backend is unavailable', async () => {
-    registerNotebookEnvIpcHandlers(undefined, '/runtime')
+    registerNotebookEnvIpcHandlers(createLifecycle(undefined))
 
     expect([...registered.keys()].sort()).toEqual([
       'notebook-env:cancel',
@@ -74,7 +87,7 @@ describe('registerNotebookEnvIpcHandlers', () => {
         report({ phase: 'repair', message: 'Repairing Python', progress: 0.2 })
       })
     })
-    registerNotebookEnvIpcHandlers(provisioner, '/runtime')
+    registerNotebookEnvIpcHandlers(createLifecycle(provisioner))
 
     await registered.get('notebook-env:provision')?.({}, 'r')
     await registered.get('notebook-env:repair')?.({}, 'python')
@@ -102,7 +115,10 @@ describe('registerNotebookEnvIpcHandlers', () => {
       )
     })
 
-    registerNotebookEnvIpcHandlers(provisioner, '/runtime')
+    const lifecycle = createLifecycle(provisioner)
+    registerNotebookEnvIpcHandlers(lifecycle)
+    expect(provisioner.restoreRelocatedEnvs).not.toHaveBeenCalled()
+    void lifecycle.startup()
     const operation = registered.get('notebook-env:provision')?.({}, 'r') as Promise<void>
     registered.get('notebook-env:cancel')?.({}, 'r')
 

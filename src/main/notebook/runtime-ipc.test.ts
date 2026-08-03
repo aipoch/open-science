@@ -8,7 +8,10 @@ import type {
   RuntimeSelection
 } from '../../shared/notebook-runtime'
 import type { DiscoveredInterpreter } from './environment-discovery'
-import type { RuntimeIpcDeps } from './runtime-ipc'
+import {
+  createRuntimeSelectionWorkflows,
+  type RuntimeSelectionWorkflowDeps
+} from './runtime-selection-workflows'
 
 const handlers = new Map<string, (event: unknown, payload?: unknown) => unknown>()
 const showOpenDialog = vi.fn()
@@ -34,7 +37,7 @@ vi.mock('./environment-discovery', () => ({
 
 const { registerRuntimeIpcHandlers } = await import('./runtime-ipc')
 
-type SettingsPort = RuntimeIpcDeps['settingsService']
+type SettingsPort = RuntimeSelectionWorkflowDeps['settingsService']
 
 const readiness = (
   language: NotebookLanguage,
@@ -48,7 +51,7 @@ const readiness = (
   packageMutable: source === 'managed'
 })
 
-const fakeRegistry = (): NonNullable<RuntimeIpcDeps['registry']> => ({
+const fakeRegistry = (): NonNullable<RuntimeSelectionWorkflowDeps['registry']> => ({
   survey: async (language) => ({
     managed: readiness(language, 'managed'),
     external: readiness(language, 'external')
@@ -113,7 +116,9 @@ const fakeSettingsService = (): SettingsPort & {
   }
 }
 
-const fakeDeps = (overrides: Partial<RuntimeIpcDeps> = {}): RuntimeIpcDeps => ({
+const fakeDeps = (
+  overrides: Partial<RuntimeSelectionWorkflowDeps> = {}
+): RuntimeSelectionWorkflowDeps => ({
   settingsService: fakeSettingsService(),
   runtimeRoot: () => '/data/runtime',
   registry: fakeRegistry(),
@@ -122,6 +127,11 @@ const fakeDeps = (overrides: Partial<RuntimeIpcDeps> = {}): RuntimeIpcDeps => ({
 
 const invoke = (channel: string, payload?: unknown): Promise<unknown> =>
   Promise.resolve(handlers.get(channel)!(undefined, payload))
+
+const registerRuntime = (
+  deps: RuntimeSelectionWorkflowDeps,
+  options?: { showOpenDialog?: () => Promise<string | null> }
+): void => registerRuntimeIpcHandlers(createRuntimeSelectionWorkflows(deps), options)
 
 beforeEach(() => {
   handlers.clear()
@@ -132,7 +142,7 @@ beforeEach(() => {
 
 describe('runtime IPC adapter', () => {
   it('registers the exact runtime command surface', () => {
-    registerRuntimeIpcHandlers(fakeDeps())
+    registerRuntime(fakeDeps())
 
     expect([...handlers.keys()]).toEqual([
       'runtime:survey',
@@ -164,7 +174,7 @@ describe('runtime IPC adapter', () => {
         runnable: true
       }
     ]
-    registerRuntimeIpcHandlers(
+    registerRuntime(
       fakeDeps({
         settingsService,
         describeRuntimeUsage: () => usage,
@@ -221,29 +231,27 @@ describe('runtime IPC adapter', () => {
     const settingsService = fakeSettingsService()
     const failure = new Error('settings unavailable')
     settingsService.getRuntimeEnablement = vi.fn().mockRejectedValue(failure)
-    registerRuntimeIpcHandlers(fakeDeps({ settingsService }))
+    registerRuntime(fakeDeps({ settingsService }))
 
     await expect(invoke('runtime:get-enablement', { language: 'python' })).rejects.toBe(failure)
   })
 
   it('returns an injected interpreter path', async () => {
-    registerRuntimeIpcHandlers(fakeDeps({ showOpenDialog: async () => '/opt/python/bin/python3' }))
+    registerRuntime(fakeDeps(), { showOpenDialog: async () => '/opt/python/bin/python3' })
 
     await expect(invoke('runtime:pick-interpreter')).resolves.toBe('/opt/python/bin/python3')
   })
 
   it('returns null when the picker is cancelled or fails', async () => {
     const log = vi.spyOn(console, 'error').mockImplementation(() => undefined)
-    registerRuntimeIpcHandlers(fakeDeps({ showOpenDialog: async () => null }))
+    registerRuntime(fakeDeps(), { showOpenDialog: async () => null })
     await expect(invoke('runtime:pick-interpreter')).resolves.toBeNull()
 
-    registerRuntimeIpcHandlers(
-      fakeDeps({
-        showOpenDialog: async () => {
-          throw new Error('dialog blew up')
-        }
-      })
-    )
+    registerRuntime(fakeDeps(), {
+      showOpenDialog: async () => {
+        throw new Error('dialog blew up')
+      }
+    })
 
     await expect(invoke('runtime:pick-interpreter')).resolves.toBeNull()
     expect(log).toHaveBeenCalled()
@@ -252,7 +260,7 @@ describe('runtime IPC adapter', () => {
 
   it('uses the Electron open-file picker when no override is injected', async () => {
     showOpenDialog.mockResolvedValue({ filePaths: ['/usr/local/bin/python3'] })
-    registerRuntimeIpcHandlers(fakeDeps())
+    registerRuntime(fakeDeps())
 
     await expect(invoke('runtime:pick-interpreter')).resolves.toBe('/usr/local/bin/python3')
     expect(showOpenDialog).toHaveBeenCalledWith({ properties: ['openFile'] })
@@ -270,7 +278,7 @@ describe('runtime IPC adapter', () => {
       }
     ]
     const packages: EnvPackage[] = [{ name: 'numpy', version: '2.1.3', build: 'b0' }]
-    registerRuntimeIpcHandlers(fakeDeps({ listPackages: async () => packages }))
+    registerRuntime(fakeDeps({ listPackages: async () => packages }))
 
     await expect(
       invoke('runtime:list-packages', { language: 'python', envId: '/managed/a' })

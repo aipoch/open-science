@@ -18,21 +18,9 @@ import type {
   AcpRevokePermissionGrantRequest,
   AcpSetPermissionProfileRequest
 } from '../../shared/acp'
-import { DEFAULT_ARTIFACT_PROJECT_NAME } from '../../shared/artifacts'
 import { AcpRuntimeCoordinator } from './runtime-coordinator'
 import type { AcpHandlerWorkflows } from './handler-workflows'
 import { installAgentShutdownGuard } from './shutdown-guard'
-import { ArtifactRepository } from '../artifacts/repository'
-import { NotebookRunRepository } from '../notebook/repository'
-import {
-  NotebookRuntimeService,
-  type NotebookRuntimeServiceOptions
-} from '../notebook/runtime-service'
-import { resolveConfigRoot, resolveDataRoot } from '../storage-root'
-import { broadcastToRenderers } from '../renderer-broadcast'
-
-// Sends one runtime payload through the typed application-event compatibility facade.
-const broadcast = broadcastToRenderers
 
 const registerAcpIpcHandlerSet = (
   runtime: AcpRuntimeCoordinator,
@@ -95,38 +83,4 @@ const installAcpIpcHandlers = (
   }
 }
 
-// Creates the shared notebook runtime used by both renderer IPC and agent MCP calls.
-type DefaultNotebookRuntimeServiceDeps = Pick<
-  NotebookRuntimeServiceOptions,
-  'getPackageMirror' | 'notebookRuntimeSettings'
->
-
-const createDefaultNotebookRuntimeService = (
-  deps: DefaultNotebookRuntimeServiceDeps = {}
-): NotebookRuntimeService => {
-  const dataRoot = resolveDataRoot()
-  const artifactRepository = new ArtifactRepository(dataRoot)
-
-  return new NotebookRuntimeService({
-    configRoot: resolveConfigRoot(),
-    dataRoot,
-    projectName: DEFAULT_ARTIFACT_PROJECT_NAME,
-    repository: new NotebookRunRepository(dataRoot),
-    ...deps,
-    // Region default for manage_packages when no mirror is configured.
-    locale: app.getLocale(),
-    appVersion: app.getVersion(),
-    resolveArtifactPath: (request) =>
-      artifactRepository.resolveSessionArtifactFilePath(
-        request.projectName,
-        request.sessionId,
-        request.path
-      ),
-    callbacks: {
-      onNotebookAvailable: (event) => broadcast('notebook:available', event),
-      onNotebookChanged: (event) => broadcast('notebook:changed', event)
-    }
-  })
-}
-
-export { createDefaultNotebookRuntimeService, installAcpIpcHandlers }
+export { installAcpIpcHandlers }

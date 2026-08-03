@@ -11,7 +11,6 @@ import {
 } from './application-runtime'
 import { createApplicationEventModule, type ApplicationEventSource } from './application-events'
 
-import { createDefaultNotebookRuntimeService } from './acp/ipc'
 import { createAcpRuntime } from './acp/runtime-composition'
 import { createAcpCreateSessionWorkflow } from './acp/create-session-workflow'
 import { createAcpHandlerWorkflows } from './acp/handler-workflows'
@@ -53,11 +52,14 @@ import {
 } from './notifications/electron-wiring'
 import { createLogger, diagnosticErrorFields, errorLogFields } from './logger'
 import { startDiagnosticOperation } from './diagnostics/operation'
+import { broadcastNotebookEnvProgress, registerNotebookEnvIpcHandlers } from './notebook/env-ipc'
 import {
-  broadcastNotebookEnvProgress,
-  registerNotebookEnvIpcHandlers,
-  serializeProvisioner
-} from './notebook/env-ipc'
+  createNotebookApplicationModule,
+  createNotebookLocalRpcModule,
+  installNotebookEnvironmentSurface
+} from './notebook/application'
+import { serializeProvisioner } from './notebook/environment-operation-foundation'
+import { createNotebookEnvironmentLifecycle } from './notebook/environment-lifecycle-workflows'
 import { registerManagedPreviewIpcHandlers } from './managed-preview-ipc'
 import { registerManagedPreviewProtocol } from './managed-preview-protocol'
 import { ManagedPreviewResources } from './managed-preview-resources'
@@ -74,11 +76,12 @@ import {
 import { OfficePreviewSupervisor } from './office-preview/office-preview-supervisor'
 import { registerNotebookIpcHandlers } from './notebook/ipc'
 import { registerRuntimeIpcHandlers } from './notebook/runtime-ipc'
-import { getRuntimeRoot } from './notebook/repository'
+import { NotebookRunRepository, getRuntimeRoot } from './notebook/repository'
 import { NotebookLocalRpcServer } from './notebook/local-rpc-server'
 import { NotebookInputRegistry } from './notebook/input-registry'
 import { effectiveMirrorAsync } from './notebook/mirror-probe'
 import { createProductionProvisioner, type RuntimeProvisioner } from './notebook/provisioner'
+import { createRuntimeSelectionWorkflows } from './notebook/runtime-selection-workflows'
 import { runtimeRoot } from './notebook/runtime-paths'
 import type { NotebookEnvironmentManager } from './notebook/runtime-service'
 import { parseArtifactVersionLocator } from '../shared/artifact-provenance'
@@ -158,6 +161,7 @@ import { detectActiveSessions } from './storage/detect-active'
 import {
   computeDefaultDataRoot,
   initDataRoot,
+  resolveConfigRoot,
   resolveDataRoot,
   resolveStorageRoot,
   samePath
@@ -482,24 +486,33 @@ const createApplicationModules = async (
       }
     }
   }
-  const notebookService = await modules.add(
+  const notebookApplication = await modules.add(
     {
+      configRoot: resolveConfigRoot(),
+      dataRoot: resolveDataRoot(),
+      projectName: DEFAULT_ARTIFACT_PROJECT_NAME,
+      repository: new NotebookRunRepository(resolveDataRoot()),
       getPackageMirror: () => settingsService.getPackageMirror(),
-      notebookRuntimeSettings
+      notebookRuntimeSettings,
+      locale: app.getLocale(),
+      appVersion: app.getVersion(),
+      resolveArtifactPath: (request: { projectName: string; sessionId: string; path: string }) =>
+        artifactRepository.resolveSessionArtifactFilePath(
+          request.projectName,
+          request.sessionId,
+          request.path
+        ),
+      events: applicationEvents,
+      disposeTimeoutMs: QUIT_SHUTDOWN_BUDGET_MS,
+      isBackendTeardownOwned: () => backendTeardownOwnedByCoordinator
     },
-    (settings) => {
-      const notebook = createDefaultNotebookRuntimeService(settings)
-      return {
-        name: 'notebook-runtime',
-        capability: notebook,
-        disposeTimeoutMs: QUIT_SHUTDOWN_BUDGET_MS,
-        rollback: () =>
-          backendTeardownOwnedByCoordinator
-            ? undefined
-            : notebook.shutdownAll().then(() => undefined)
-      }
-    }
+    createNotebookApplicationModule
   )
+  const {
+    runtime: notebookService,
+    commands: notebookCommands,
+    localRpc: notebookLocalRpc
+  } = notebookApplication
 
   // Resolved lazily per connector call so dispatch always sees the latest persisted Specialist profile.
   const profileService = createProfileService(resolveStorageRoot())
@@ -780,28 +793,34 @@ const createApplicationModules = async (
       await sessionPersistenceCoordinator.saveSessionSpecialistBinding(session, specialistId)
     }
   })
-  const notebookRpcServer = new NotebookLocalRpcServer(notebookService, {
-    onSessionReleased: (sessionId) => completionGateCoordinator.releaseSession(sessionId),
-    connectorService,
-    computeService: computeServiceWithRegistry,
-    skillImporter: conversationSkillImporter,
-    artifactProvenance: {
-      createVersion: (request) =>
-        sessionPersistenceCoordinator.runSessionMutation(
-          request.projectId,
-          request.appSessionId,
-          () => artifactProvenanceRepository.createVersion(request)
-        ),
-      replayVersion: (request) =>
-        sessionPersistenceCoordinator.runSessionMutation(
-          request.projectId,
-          request.appSessionId,
-          () => artifactProvenanceRepository.replayVersion(request)
-        )
-    },
-    inputRegistry: notebookInputRegistry,
-    agentsService
-  })
+  const notebookRpcServer = await modules.add(
+    new NotebookLocalRpcServer(notebookLocalRpc, {
+      onSessionReleased: (sessionId) => completionGateCoordinator.releaseSession(sessionId),
+      connectorService,
+      computeService: computeServiceWithRegistry,
+      skillImporter: conversationSkillImporter,
+      artifactProvenance: {
+        createVersion: (request) =>
+          sessionPersistenceCoordinator.runSessionMutation(
+            request.projectId,
+            request.appSessionId,
+            () => artifactProvenanceRepository.createVersion(request)
+          ),
+        replayVersion: (request) =>
+          sessionPersistenceCoordinator.runSessionMutation(
+            request.projectId,
+            request.appSessionId,
+            () => artifactProvenanceRepository.replayVersion(request)
+          )
+      },
+      inputRegistry: notebookInputRegistry,
+      agentsService
+    }),
+    createNotebookLocalRpcModule
+  )
+  // Register ownership before ACP construction. Reverse disposal therefore drains ACP + Notebook
+  // through the coordinator first, then releases the local bridge without creating a second runtime
+  // shutdown owner; rollback also closes a server started during partial composition.
   // The RPC server needs the runtime service to dispatch to, and the runtime service needs the RPC
   // server's (lazily-started) connection for host.mcp() env injection — wire the second half here to
   // avoid a construction cycle.
@@ -1044,7 +1063,7 @@ const createApplicationModules = async (
       listAppIconPreviews
     })
   )
-  declareElectronAdapter('notebook', () => registerNotebookIpcHandlers(notebookService))
+  declareElectronAdapter('notebook', () => registerNotebookIpcHandlers(notebookCommands))
   // Wire session deletion to the binding store so stale in-memory bindings do not accumulate.
   // The renderer calls sessions:delete-session (via sessionPersistenceBackend) and acp:delete-session
   // separately; both paths should clear the binding. Override the backend deleteSession callback here
@@ -1095,25 +1114,26 @@ const createApplicationModules = async (
   // Runtime selection UI (Settings/Onboarding): survey managed+external per language, persist the
   // choice, and pick an interpreter file. The runtime root MUST match the executor/service's
   // (getRuntimeRoot(<dataRoot>)); read lazily so a data-root switch is reflected without re-register.
+  const runtimeSelectionWorkflows = createRuntimeSelectionWorkflows({
+    settingsService,
+    runtimeRoot: () => getRuntimeRoot(resolveDataRoot()),
+    // WS10: revoke a disabled runtime from any live session bound to it (mark binding unavailable).
+    onRuntimeDisabled: (language, envId, force) =>
+      notebookService.revokeRuntime(language, envId, { force }),
+    // WS11: live-session usage of a runtime, for the disable-impact warning.
+    describeRuntimeUsage: (language, envId) =>
+      notebookService.describeRuntimeUsage(language, envId),
+    prepareExternalPython: async (selection, root) => {
+      const configuredMirror = await settingsService.getPackageMirror()
+      const mirror = await effectiveMirrorAsync(configuredMirror, app.getLocale())
+      await prepareExternalPythonRuntime(selection, root, {
+        pypiIndex: mirror.pypiIndex,
+        caBundle: mirror.caBundle
+      })
+    }
+  })
   declareElectronAdapter('notebook-runtime', () =>
-    registerRuntimeIpcHandlers({
-      settingsService,
-      runtimeRoot: () => getRuntimeRoot(resolveDataRoot()),
-      // WS10: revoke a disabled runtime from any live session bound to it (mark binding unavailable).
-      onRuntimeDisabled: (language, envId, force) =>
-        notebookService.revokeRuntime(language, envId, { force }),
-      // WS11: live-session usage of a runtime, for the disable-impact warning.
-      describeRuntimeUsage: (language, envId) =>
-        notebookService.describeRuntimeUsage(language, envId),
-      prepareExternalPython: async (selection, root) => {
-        const configuredMirror = await settingsService.getPackageMirror()
-        const mirror = await effectiveMirrorAsync(configuredMirror, app.getLocale())
-        await prepareExternalPythonRuntime(selection, root, {
-          pypiIndex: mirror.pypiIndex,
-          caBundle: mirror.caBundle
-        })
-      }
-    })
+    registerRuntimeIpcHandlers(runtimeSelectionWorkflows)
   )
   declareElectronAdapter('managed-preview', () => {
     registerManagedPreviewIpcHandlers(previewResources)
@@ -1228,17 +1248,20 @@ const createApplicationModules = async (
     }
   }
 
-  // Always register the handlers (serialized is undefined when the provisioner could not be built). The
-  // recovery barrier is threaded in so the startup gate and UI provision/repair await recovery first.
-  declareElectronAdapter('notebook-environment', () =>
-    registerNotebookEnvIpcHandlers(
-      serialized,
-      provisioningRoot,
-      waitForRecovery,
-      assertProvisionAllowed,
-      (language) => notebookService.completeRuntimeRepair(language)
-    )
-  )
+  const notebookEnvironmentLifecycle = createNotebookEnvironmentLifecycle({
+    provisioner: serialized,
+    root: provisioningRoot,
+    projectProgress: broadcastNotebookEnvProgress,
+    waitForRecovery,
+    assertProvisionAllowed,
+    onRepairCompleted: (language) => notebookService.completeRuntimeRepair(language)
+  })
+  // Always register the handlers (serialized is undefined when the provisioner could not be built).
+  // Start maintenance only after all four Electron channels exist, preserving the previous startup
+  // ordering while construction remains application-owned and single-instance.
+  declareElectronAdapter('notebook-environment', () => {
+    installNotebookEnvironmentSurface(notebookEnvironmentLifecycle, registerNotebookEnvIpcHandlers)
+  })
   if (provisioner && serialized) {
     // Back the notebook service's manage_environments tool with the same provisioner that owns the env
     // gate (it is a DefaultRuntimeProvisioner, which implements createNamedEnvironment/listEnvironments/

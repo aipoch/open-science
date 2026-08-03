@@ -5,6 +5,7 @@ import {
   parseCliArgs,
   reportCliError,
   rollbackCommand,
+  runCli,
   runTaskCommand
 } from './cli.mjs'
 
@@ -466,13 +467,16 @@ describe('task CLI', () => {
     expect(client).not.toHaveProperty('cancelRun')
   })
 
-  it('keeps permission approval, Specialist, and Compute management outside the CLI', async () => {
-    const connect = vi.fn().mockResolvedValue({})
-
-    for (const command of ['permission', 'specialist', 'compute']) {
-      await expect(
-        runTaskCommand({ command, options: { json: false } }, { connect, stdinIsTTY: true })
-      ).rejects.toThrow(`Unknown command: ${command}`)
+  it('keeps capability management surfaces outside the CLI', async () => {
+    for (const command of [
+      'permission',
+      'specialist',
+      'compute',
+      'notebook',
+      'notebook-env',
+      'runtime'
+    ]) {
+      await expect(runCli([command])).rejects.toThrow(`Unknown command: ${command}`)
     }
   })
 
