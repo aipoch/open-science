@@ -1,9 +1,68 @@
 import { describe, expect, it, vi } from 'vitest'
 
+import { callerLeaseForEvent } from './caller-lifecycle'
 import { createWebCallerContext } from './caller-context'
 import { createIpcHandlerRegistry } from './ipc-handler-registry'
 
 describe('createIpcHandlerRegistry', () => {
+  it('aborts a native surface lease before a destroyed sender can dispatch again', () => {
+    const nativeHandlers = new Map<string, (...args: unknown[]) => unknown>()
+    const registry = createIpcHandlerRegistry({
+      handle: (channel: string, handler: (...args: unknown[]) => unknown) =>
+        nativeHandlers.set(channel, handler)
+    } as never)
+    const listeners = new Map<string, () => void>()
+    const sender = {
+      id: 42,
+      once: (name: string, listener: () => void) => listeners.set(name, listener)
+    }
+    const handler = vi.fn((event) => callerLeaseForEvent(event))
+    registry.ipcMainHandle('projects:list', handler)
+
+    const lease = nativeHandlers.get('projects:list')?.({ sender })
+    expect(lease).toMatchObject({ leaseId: 'electron:42', generation: 1 })
+
+    listeners.get('destroyed')?.()
+    expect((lease as { signal: AbortSignal }).signal.aborted).toBe(true)
+    expect(() => nativeHandlers.get('projects:list')?.({ sender })).toThrow(
+      'Caller lease is no longer current.'
+    )
+    expect(handler).toHaveBeenCalledOnce()
+  })
+
+  it('keeps a replacement Electron generation isolated from stale teardown callbacks', () => {
+    const nativeHandlers = new Map<string, (...args: unknown[]) => unknown>()
+    const registry = createIpcHandlerRegistry({
+      handle: (channel: string, handler: (...args: unknown[]) => unknown) =>
+        nativeHandlers.set(channel, handler)
+    } as never)
+    const sender = (
+      listeners: Map<string, () => void>
+    ): { id: number; once: (name: string, listener: () => void) => void } => ({
+      id: 7,
+      once: (name: string, listener: () => void) => {
+        listeners.set(name, listener)
+      }
+    })
+    registry.ipcMainHandle('projects:list', (event) => callerLeaseForEvent(event))
+
+    const firstListeners = new Map<string, () => void>()
+    const first = nativeHandlers.get('projects:list')?.({ sender: sender(firstListeners) }) as {
+      generation: number
+      signal: AbortSignal
+    }
+    firstListeners.get('destroyed')?.()
+
+    const replacementListeners = new Map<string, () => void>()
+    const replacement = nativeHandlers.get('projects:list')?.({
+      sender: sender(replacementListeners)
+    }) as typeof first
+    firstListeners.get('render-process-gone')?.()
+
+    expect(replacement.generation).toBeGreaterThan(first.generation)
+    expect(replacement.signal.aborted).toBe(false)
+  })
+
   it('registers every native handler but routes only allowlisted Web RPC channels', async () => {
     const nativeHandlers = new Map<string, (...args: unknown[]) => unknown>()
     const handle = vi.fn((channel: string, handler: (...args: unknown[]) => unknown) => {
@@ -70,6 +129,32 @@ describe('createIpcHandlerRegistry', () => {
     expect(reconnected.lifecycleClientId).toBe(first.lifecycleClientId)
     expect(handle).toHaveBeenCalledTimes(1)
     registry.webRpc.dispose()
+  })
+
+  it('lets in-flight Web work observe final client release without cancelling its result', async () => {
+    const registry = createIpcHandlerRegistry({ handle: vi.fn() } as never)
+    let resolve!: (value: string) => void
+    const pending = new Promise<string>((complete) => (resolve = complete))
+    const observedRelease = vi.fn()
+    registry.ipcMainHandle('projects:list', (event: unknown) => {
+      callerLeaseForEvent(event as { sender: object }).signal.addEventListener(
+        'abort',
+        observedRelease,
+        { once: true }
+      )
+      return pending
+    })
+
+    const invocation = registry.webRpc.invoke(
+      'projects:list',
+      createWebCallerContext('browser-1'),
+      []
+    )
+    registry.webRpc.releaseClient('browser-1')
+    resolve('complete')
+
+    await expect(invocation).resolves.toBe('complete')
+    expect(observedRelease).toHaveBeenCalledOnce()
   })
 
   it('scopes remote pairing authority to the current Web RPC invocation', async () => {

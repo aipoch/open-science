@@ -1,5 +1,7 @@
 import { type IpcMainInvokeEvent } from 'electron'
 
+import type { ApplicationCallerLease } from './application-command-router'
+import { callerLeaseForEvent } from './caller-lifecycle'
 import { ipcMainHandle } from './ipc-handler-registry'
 
 import type {
@@ -26,54 +28,67 @@ type ManagedPreviewHandlers = {
   releaseOwner: (ownerId: number) => void
 }
 
-type OwnerTicket = { ownerId: number; generation: number }
+type OwnerTicket = { ownerId: number; leaseId: string; generation: number }
 type ManagedPreviewOwnerRegistry = {
   acquire: (
-    event: IpcMainInvokeEvent,
+    lease: ApplicationCallerLease,
     request: AcquireManagedPreviewRequest,
     prepareOptions?: () => Promise<AcquireManagedPreviewOptions>
   ) => Promise<ManagedPreviewResource>
-  register: (event: IpcMainInvokeEvent) => OwnerTicket
+  register: (lease: ApplicationCallerLease) => OwnerTicket
 }
 
-// Couples every capability to the renderer process that acquired it.
+// Couples every capability to the current surface-owned caller lease.
 const createManagedPreviewOwnerRegistry = (
   handlers: ManagedPreviewHandlers
 ): ManagedPreviewOwnerRegistry => {
-  const activeGenerations = new Map<number, number>()
-  let nextGeneration = 0
+  const active = new Map<string, OwnerTicket>()
+  let nextOwnerId = 0
 
-  // Generations prevent a stale crash listener from releasing resources after an owner id is reused.
-  const register = (event: IpcMainInvokeEvent): OwnerTicket => {
-    const ownerId = event.sender.id
-    const activeGeneration = activeGenerations.get(ownerId)
-    if (activeGeneration !== undefined) return { ownerId, generation: activeGeneration }
-
-    const ticket = { ownerId, generation: ++nextGeneration }
-    activeGenerations.set(ownerId, ticket.generation)
-    const releaseOwner = (): void => {
-      if (activeGenerations.get(ownerId) !== ticket.generation) return
-      activeGenerations.delete(ownerId)
-      handlers.releaseOwner(ownerId)
+  // Preview resources use opaque negative handles; renderer ids remain transport details.
+  const register = (lease: ApplicationCallerLease): OwnerTicket => {
+    const current = active.get(lease.leaseId)
+    if (current?.generation === lease.generation && lease.isCurrent()) return current
+    if (current) {
+      active.delete(lease.leaseId)
+      handlers.releaseOwner(current.ownerId)
     }
-    event.sender.once('destroyed', releaseOwner)
-    event.sender.once('render-process-gone', releaseOwner)
+    if (lease.signal.aborted || !lease.isCurrent()) {
+      throw new Error('Managed preview owner is no longer available.')
+    }
+
+    const ticket = {
+      ownerId: --nextOwnerId,
+      leaseId: lease.leaseId,
+      generation: lease.generation
+    }
+    active.set(lease.leaseId, ticket)
+    const releaseOwner = (): void => {
+      if (active.get(lease.leaseId) !== ticket) return
+      active.delete(lease.leaseId)
+      handlers.releaseOwner(ticket.ownerId)
+    }
+    lease.signal.addEventListener('abort', releaseOwner, { once: true })
+    if (lease.signal.aborted || !lease.isCurrent()) {
+      releaseOwner()
+      throw new Error('Managed preview owner is no longer available.')
+    }
     return ticket
   }
 
-  const isActive = (ticket: OwnerTicket): boolean =>
-    activeGenerations.get(ticket.ownerId) === ticket.generation
+  const isActive = (ticket: OwnerTicket, lease: ApplicationCallerLease): boolean =>
+    active.get(ticket.leaseId) === ticket && !lease.signal.aborted && lease.isCurrent()
 
   const acquire = async (
-    event: IpcMainInvokeEvent,
+    lease: ApplicationCallerLease,
     request: AcquireManagedPreviewRequest,
     prepareOptions?: () => Promise<AcquireManagedPreviewOptions>
   ): Promise<ManagedPreviewResource> => {
-    const ticket = register(event)
+    const ticket = register(lease)
     let resource: ManagedPreviewResource
     if (prepareOptions) {
       const options = await prepareOptions()
-      if (!isActive(ticket)) {
+      if (!isActive(ticket, lease)) {
         throw new Error('Managed preview owner is no longer available.')
       }
       resource = await handlers.acquire(ticket.ownerId, request, options)
@@ -82,7 +97,7 @@ const createManagedPreviewOwnerRegistry = (
     }
 
     // Acquisition may finish after renderer teardown; immediately revoke that late capability.
-    if (!isActive(ticket)) {
+    if (!isActive(ticket, lease)) {
       handlers.release(ticket.ownerId, { resourceId: resource.id })
       throw new Error('Managed preview owner is no longer available.')
     }
@@ -95,17 +110,20 @@ const createManagedPreviewOwnerRegistry = (
 
 const registerManagedPreviewIpcHandlers = (resources: ManagedPreviewResources): void => {
   const owners = createManagedPreviewOwnerRegistry(resources)
-  const ownerId = (event: IpcMainInvokeEvent): number => owners.register(event).ownerId
+  const callerLease = (event: IpcMainInvokeEvent): ApplicationCallerLease =>
+    callerLeaseForEvent(event)
+  const ownerId = (event: IpcMainInvokeEvent): number => owners.register(callerLease(event)).ownerId
 
   ipcMainHandle(
     'preview-resources:acquire',
     async (event, { maxBytes, ...request }: AcquireManagedPreviewRequest) => {
-      if (maxBytes === undefined) return owners.acquire(event, request)
+      const lease = callerLease(event)
+      if (maxBytes === undefined) return owners.acquire(lease, request)
       if (!Number.isSafeInteger(maxBytes) || maxBytes <= 0) {
         throw new Error('Invalid managed preview byte limit.')
       }
 
-      return owners.acquire(event, request, async () => ({
+      return owners.acquire(lease, request, async () => ({
         snapshot: await resources.inspect(request),
         maxBytes
       }))

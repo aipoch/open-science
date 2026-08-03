@@ -3,6 +3,7 @@ import type { IpcMainInvokeEvent } from 'electron'
 import { describe, expect, it, vi } from 'vitest'
 
 import type { ManagedPreviewResource } from '../shared/preview-resources'
+import { ApplicationCallerLeaseRegistry } from './caller-lifecycle'
 import type { ManagedPreviewResources } from './managed-preview-resources'
 import {
   createManagedPreviewOwnerRegistry,
@@ -37,279 +38,217 @@ const createFakeEvent = (
   }
 }
 
+const previewResource = (id: string): ManagedPreviewResource => ({
+  id,
+  url: `open-science-preview://${id}/report.pdf`,
+  size: 8,
+  mimeType: 'application/pdf',
+  version: 1
+})
+
+const createResources = (
+  overrides: Partial<ManagedPreviewResources> = {}
+): ManagedPreviewResources =>
+  ({
+    acquire: vi.fn(),
+    readRange: vi.fn(),
+    release: vi.fn(),
+    releaseOwner: vi.fn(),
+    ...overrides
+  }) as unknown as ManagedPreviewResources
+
 describe('managed preview IPC handlers', () => {
-  it('releases owner resources once when the renderer process exits', () => {
-    const resources = {
-      acquire: vi.fn(),
-      readRange: vi.fn(),
-      release: vi.fn(),
-      releaseOwner: vi.fn()
-    } as unknown as ManagedPreviewResources
-    const { event, listeners } = createFakeEvent(42)
+  it('uses an opaque negative owner scoped to the caller lease', () => {
+    const resources = createResources()
+    const lifecycle = new ApplicationCallerLeaseRegistry()
+    const caller = lifecycle.acquire('electron:42')
     const owners = createManagedPreviewOwnerRegistry(resources)
 
-    expect(owners.register(event as never).ownerId).toBe(42)
-    expect(event.sender.once).toHaveBeenCalledWith('destroyed', expect.any(Function))
-    expect(event.sender.once).toHaveBeenCalledWith('render-process-gone', expect.any(Function))
+    const ticket = owners.register(caller.lease)
+    expect(ticket.ownerId).toBeLessThan(0)
 
-    listeners.get('render-process-gone')?.()
-    listeners.get('destroyed')?.()
-    expect(resources.releaseOwner).toHaveBeenCalledTimes(1)
-    expect(resources.releaseOwner).toHaveBeenCalledWith(42)
+    caller.release()
+    caller.release()
+    expect(resources.releaseOwner).toHaveBeenCalledOnce()
+    expect(resources.releaseOwner).toHaveBeenCalledWith(ticket.ownerId)
   })
 
-  it('releases a resource acquired after its owner process has exited', async () => {
+  it('releases a resource acquired after its caller lease ends', async () => {
     let resolveAcquire: ((resource: ManagedPreviewResource) => void) | undefined
-    const resource = {
-      id: 'late-resource',
-      url: 'open-science-preview://late-resource/report.pdf',
-      size: 8,
-      mimeType: 'application/pdf',
-      version: 1
-    }
-    const resources = {
+    const resource = previewResource('late-resource')
+    const resources = createResources({
       acquire: vi.fn(
         () =>
           new Promise<ManagedPreviewResource>((resolve) => {
             resolveAcquire = resolve
           })
-      ),
-      readRange: vi.fn(),
-      release: vi.fn(),
-      releaseOwner: vi.fn()
-    } as unknown as ManagedPreviewResources
-    const { event, listeners } = createFakeEvent(42)
+      )
+    })
+    const lifecycle = new ApplicationCallerLeaseRegistry()
+    const caller = lifecycle.acquire('electron:42')
     const owners = createManagedPreviewOwnerRegistry(resources)
 
-    const acquire = owners.acquire(event as never, {
+    const acquire = owners.acquire(caller.lease, {
       source: 'artifact',
       path: '/managed/report.pdf'
     })
-    listeners.get('render-process-gone')?.()
+    const ownerId = (resources.acquire as ReturnType<typeof vi.fn>).mock.calls[0]?.[0] as number
+    caller.release()
     resolveAcquire?.(resource)
 
     await expect(acquire).rejects.toThrow(/owner is no longer available/i)
-    expect(resources.release).toHaveBeenCalledWith(42, { resourceId: 'late-resource' })
+    expect(resources.release).toHaveBeenCalledWith(ownerId, { resourceId: 'late-resource' })
   })
 
-  it('returns the capability when the owner is still active when the acquire resolves', async () => {
-    const resource: ManagedPreviewResource = {
-      id: 'fresh-resource',
-      url: 'open-science-preview://fresh-resource/report.pdf',
-      size: 12,
-      mimeType: 'application/pdf',
-      version: 1
-    }
-    const resources = {
-      acquire: vi.fn().mockResolvedValue(resource),
-      readRange: vi.fn(),
-      release: vi.fn(),
-      releaseOwner: vi.fn()
-    } as unknown as ManagedPreviewResources
-    const { event } = createFakeEvent(99)
+  it('returns the capability while the caller lease is current', async () => {
+    const resource = previewResource('fresh-resource')
+    const resources = createResources({ acquire: vi.fn().mockResolvedValue(resource) })
+    const lifecycle = new ApplicationCallerLeaseRegistry()
+    const caller = lifecycle.acquire('electron:99')
     const owners = createManagedPreviewOwnerRegistry(resources)
 
     await expect(
-      owners.acquire(event as never, { source: 'artifact', path: '/managed/report.pdf' })
+      owners.acquire(caller.lease, { source: 'artifact', path: '/managed/report.pdf' })
     ).resolves.toEqual(resource)
     expect(resources.release).not.toHaveBeenCalled()
   })
 
-  it('reuses the active generation when the same owner is re-registered', () => {
-    const resources = {
-      acquire: vi.fn(),
-      readRange: vi.fn(),
-      release: vi.fn(),
-      releaseOwner: vi.fn()
-    } as unknown as ManagedPreviewResources
-    const first = createFakeEvent(7)
-    const second = createFakeEvent(7)
+  it('reuses one preview owner for the same active caller generation', () => {
+    const resources = createResources()
+    const lifecycle = new ApplicationCallerLeaseRegistry()
+    const caller = lifecycle.acquire('electron:7')
     const owners = createManagedPreviewOwnerRegistry(resources)
 
-    const ticketA = owners.register(first.event as never)
-    const ticketB = owners.register(second.event as never)
+    const ticketA = owners.register(caller.lease)
+    const ticketB = owners.register(caller.lease)
 
-    expect(ticketA.generation).toBe(ticketB.generation)
-    expect(ticketA.ownerId).toBe(7)
-    // Re-registering an already-tracked owner must not attach new lifetime listeners.
-    expect(second.event.sender.once).not.toHaveBeenCalled()
+    expect(ticketB).toBe(ticketA)
+    expect(resources.releaseOwner).not.toHaveBeenCalled()
   })
 
-  it('increments the generation once a previous owner has been fully released', () => {
-    const resources = {
-      acquire: vi.fn(),
-      readRange: vi.fn(),
-      release: vi.fn(),
-      releaseOwner: vi.fn()
-    } as unknown as ManagedPreviewResources
+  it('isolates a replacement generation from a stale release', () => {
+    const resources = createResources()
+    const lifecycle = new ApplicationCallerLeaseRegistry()
     const owners = createManagedPreviewOwnerRegistry(resources)
+    const first = lifecycle.acquire('electron:13')
+    const initialTicket = owners.register(first.lease)
 
-    const first = createFakeEvent(11)
-    const ticketA = owners.register(first.event as never)
-    first.listeners.get('destroyed')?.()
-
-    const second = createFakeEvent(11)
-    const ticketB = owners.register(second.event as never)
-
-    expect(ticketB.generation).toBeGreaterThan(ticketA.generation)
-    expect(resources.releaseOwner).toHaveBeenCalledTimes(1)
-    expect(resources.releaseOwner).toHaveBeenCalledWith(11)
-  })
-
-  it('releases owner resources at most once when multiple teardown events fire', () => {
-    const resources = {
-      acquire: vi.fn(),
-      readRange: vi.fn(),
-      release: vi.fn(),
-      releaseOwner: vi.fn()
-    } as unknown as ManagedPreviewResources
-    const { event, listeners } = createFakeEvent(5)
-    const owners = createManagedPreviewOwnerRegistry(resources)
-    owners.register(event as never)
-
-    listeners.get('destroyed')?.()
-    listeners.get('render-process-gone')?.()
-    listeners.get('destroyed')?.()
-
-    expect(resources.releaseOwner).toHaveBeenCalledTimes(1)
-  })
-
-  it('ignores late teardown listeners from a stale registration', () => {
-    const resources = {
-      acquire: vi.fn(),
-      readRange: vi.fn(),
-      release: vi.fn(),
-      releaseOwner: vi.fn()
-    } as unknown as ManagedPreviewResources
-    const owners = createManagedPreviewOwnerRegistry(resources)
-    const first = createFakeEvent(13)
-    const initialTicket = owners.register(first.event as never)
-    // Fire teardown so the active generation entry is cleared.
-    first.listeners.get('render-process-gone')?.()
-
-    const replacement = createFakeEvent(13)
-    const replacementTicket = owners.register(replacement.event as never)
+    const replacement = lifecycle.acquire('electron:13')
+    const replacementTicket = owners.register(replacement.lease)
+    first.release()
 
     expect(replacementTicket.generation).toBeGreaterThan(initialTicket.generation)
-    // The original listener must not retroactively revoke the replacement registration.
-    first.listeners.get('destroyed')?.()
-    expect(resources.releaseOwner).toHaveBeenCalledTimes(1)
-    expect(resources.releaseOwner).toHaveBeenCalledWith(13)
+    expect(replacementTicket.ownerId).not.toBe(initialTicket.ownerId)
+    expect(resources.releaseOwner).toHaveBeenCalledOnce()
+    expect(resources.releaseOwner).toHaveBeenCalledWith(initialTicket.ownerId)
+
+    replacement.release()
+    expect(resources.releaseOwner).toHaveBeenLastCalledWith(replacementTicket.ownerId)
   })
 
-  it('propagates backend errors without triggering a late release when the owner has torn down', async () => {
+  it('propagates backend errors after the caller lease ends without releasing a nonexistent resource', async () => {
     let rejectAcquire: ((reason: Error) => void) | undefined
     const pendingAcquire = new Promise<ManagedPreviewResource>((_resolve, reject) => {
       rejectAcquire = reject
     })
-    const resources = {
-      acquire: vi.fn().mockImplementation(() => pendingAcquire),
-      readRange: vi.fn(),
-      release: vi.fn(),
-      releaseOwner: vi.fn()
-    } as unknown as ManagedPreviewResources
-    const { event, listeners } = createFakeEvent(31)
+    const resources = createResources({ acquire: vi.fn().mockImplementation(() => pendingAcquire) })
+    const lifecycle = new ApplicationCallerLeaseRegistry()
+    const caller = lifecycle.acquire('electron:31')
     const owners = createManagedPreviewOwnerRegistry(resources)
 
-    const acquire = owners.acquire(event as never, {
+    const acquire = owners.acquire(caller.lease, {
       source: 'artifact',
       path: '/managed/report.pdf'
     })
-    // Backend rejects before any resolution: the original error must propagate as-is.
     rejectAcquire?.(new Error('backend exploded'))
-    listeners.get('destroyed')?.()
+    caller.release()
 
     await expect(acquire).rejects.toThrow('backend exploded')
-    // We never resolved a resource, so no idempotent release call is issued either.
     expect(resources.release).not.toHaveBeenCalled()
-    expect(resources.releaseOwner).toHaveBeenCalledTimes(1)
+    expect(resources.releaseOwner).toHaveBeenCalledOnce()
   })
 
-  it('wires ipcMain handlers with owner-scoped acquire, readRange, and release', async () => {
+  it('wires acquire, read, and release to one lease-owned preview handle', async () => {
     handlers.clear()
-    const resource: ManagedPreviewResource = {
-      id: 'wired-resource',
-      url: 'open-science-preview://wired-resource/report.html',
-      size: 4,
-      mimeType: 'text/html; charset=utf-8',
-      version: 1
-    }
+    const resource = previewResource('wired-resource')
     const rangeResult = {
       begin: 0,
       end: 1,
       total: 4,
       data: new Uint8Array([104, 105])
     }
-    const resources = {
+    const resources = createResources({
       acquire: vi.fn().mockResolvedValue(resource),
-      readRange: vi.fn().mockResolvedValue(rangeResult),
-      release: vi.fn(),
-      releaseOwner: vi.fn()
-    } as unknown as ManagedPreviewResources
-
+      readRange: vi.fn().mockResolvedValue(rangeResult)
+    })
     registerManagedPreviewIpcHandlers(resources)
 
-    expect(handlers.has('preview-resources:acquire')).toBe(true)
-    expect(handlers.has('preview-resources:read-range')).toBe(true)
-    expect(handlers.has('preview-resources:release')).toBe(true)
-
-    const { event: acquireEvent, listeners: acquireListeners } = createFakeEvent(91)
+    const { event, listeners } = createFakeEvent(91)
     const acquireHandler = handlers.get('preview-resources:acquire') as (
       event: unknown,
       payload: unknown
     ) => Promise<ManagedPreviewResource>
     await expect(
-      acquireHandler(acquireEvent, { source: 'artifact', path: '/managed/report.html' })
+      acquireHandler(event, { source: 'artifact', path: '/managed/report.html' })
     ).resolves.toEqual(resource)
-    expect(resources.acquire).toHaveBeenCalledWith(91, {
-      source: 'artifact',
-      path: '/managed/report.html'
-    })
+    const ownerId = (resources.acquire as ReturnType<typeof vi.fn>).mock.calls[0]?.[0] as number
+    expect(ownerId).toBeLessThan(0)
 
-    const { event: readEvent } = createFakeEvent(92)
     const readHandler = handlers.get('preview-resources:read-range') as (
       event: unknown,
       payload: unknown
     ) => Promise<unknown>
-    await readHandler(readEvent, { resourceId: 'wired-resource', begin: 0, end: 1 })
-    expect(resources.readRange).toHaveBeenCalledWith(92, {
+    await readHandler(event, { resourceId: 'wired-resource', begin: 0, end: 1 })
+    expect(resources.readRange).toHaveBeenCalledWith(ownerId, {
       resourceId: 'wired-resource',
       begin: 0,
       end: 1
     })
 
-    const { event: releaseEvent } = createFakeEvent(93)
     const releaseHandler = handlers.get('preview-resources:release') as (
       event: unknown,
       payload: unknown
     ) => unknown
-    releaseHandler(releaseEvent, { resourceId: 'wired-resource' })
-    expect(resources.release).toHaveBeenCalledWith(93, { resourceId: 'wired-resource' })
+    releaseHandler(event, { resourceId: 'wired-resource' })
+    expect(resources.release).toHaveBeenCalledWith(ownerId, { resourceId: 'wired-resource' })
 
-    // Releasing the ipcMain-registered acquire owner must trigger a single releaseOwner call.
-    acquireListeners.get('render-process-gone')?.()
-    expect(resources.releaseOwner).toHaveBeenCalledTimes(1)
-    expect(resources.releaseOwner).toHaveBeenCalledWith(91)
+    listeners.get('render-process-gone')?.()
+    listeners.get('destroyed')?.()
+    expect(resources.releaseOwner).toHaveBeenCalledOnce()
+    expect(resources.releaseOwner).toHaveBeenCalledWith(ownerId)
+  })
+
+  it('assigns distinct preview owners to distinct callers', async () => {
+    handlers.clear()
+    const resources = createResources({
+      readRange: vi.fn().mockResolvedValue({ begin: 0, end: 0, total: 1, data: new Uint8Array() })
+    })
+    registerManagedPreviewIpcHandlers(resources)
+    const readHandler = handlers.get('preview-resources:read-range') as (
+      event: unknown,
+      payload: unknown
+    ) => Promise<unknown>
+
+    await readHandler(createFakeEvent(92).event, { resourceId: 'resource', begin: 0, end: 0 })
+    await readHandler(createFakeEvent(93).event, { resourceId: 'resource', begin: 0, end: 0 })
+
+    const [firstOwner] = (resources.readRange as ReturnType<typeof vi.fn>).mock.calls[0] as [number]
+    const [secondOwner] = (resources.readRange as ReturnType<typeof vi.fn>).mock.calls[1] as [
+      number
+    ]
+    expect(firstOwner).toBeLessThan(0)
+    expect(secondOwner).toBeLessThan(0)
+    expect(secondOwner).not.toBe(firstOwner)
   })
 
   it('uses a strict inspected snapshot when acquire specifies a byte limit', async () => {
     handlers.clear()
-    const resource: ManagedPreviewResource = {
-      id: 'strict-resource',
-      url: 'open-science-preview://strict-resource/chart.tiff',
-      size: 128,
-      mimeType: 'image/tiff',
-      version: 7
-    }
-    const resources = {
-      inspect: vi
-        .fn()
-        .mockResolvedValue({ size: 128, version: 7, dev: 8n, ino: 9n, mtimeNs: 7_000_000n }),
-      acquire: vi.fn().mockResolvedValue(resource),
-      readRange: vi.fn(),
-      release: vi.fn(),
-      releaseOwner: vi.fn()
-    } as unknown as ManagedPreviewResources
+    const resource = previewResource('strict-resource')
+    const snapshot = { size: 128, version: 7, dev: 8n, ino: 9n, mtimeNs: 7_000_000n }
+    const resources = createResources({
+      inspect: vi.fn().mockResolvedValue(snapshot),
+      acquire: vi.fn().mockResolvedValue(resource)
+    })
     registerManagedPreviewIpcHandlers(resources)
     const { event } = createFakeEvent(101)
     const acquireHandler = handlers.get('preview-resources:acquire') as (
@@ -331,22 +270,17 @@ describe('managed preview IPC handlers', () => {
       path: '/managed/chart.tiff',
       mimeType: 'image/tiff'
     }
+    const ownerId = (resources.acquire as ReturnType<typeof vi.fn>).mock.calls[0]?.[0] as number
     expect(resources.inspect).toHaveBeenCalledWith(request)
-    expect(resources.acquire).toHaveBeenCalledWith(101, request, {
-      snapshot: { size: 128, version: 7, dev: 8n, ino: 9n, mtimeNs: 7_000_000n },
+    expect(resources.acquire).toHaveBeenCalledWith(ownerId, request, {
+      snapshot,
       maxBytes: 40 * 1024 * 1024
     })
   })
 
   it('rejects an invalid strict byte limit before inspecting the file', async () => {
     handlers.clear()
-    const resources = {
-      inspect: vi.fn(),
-      acquire: vi.fn(),
-      readRange: vi.fn(),
-      release: vi.fn(),
-      releaseOwner: vi.fn()
-    } as unknown as ManagedPreviewResources
+    const resources = createResources({ inspect: vi.fn() })
     registerManagedPreviewIpcHandlers(resources)
     const { event } = createFakeEvent(102)
     const acquireHandler = handlers.get('preview-resources:acquire') as (
