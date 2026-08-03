@@ -1,8 +1,9 @@
-import { describe, expect, it, vi } from 'vitest'
+import { describe, expect, it, vi, type MockedFunction } from 'vitest'
 
 import type { AcpRuntimeEvent } from '../../shared/acp'
 import type { PersistedChatSession } from '../../shared/session-persistence'
 import { createTaskCallerContext, type CallerContext } from '../caller-context'
+import type { TaskAgentPort } from '../tasks/task-runner'
 import { HeadlessTaskApi } from './task-api'
 
 const project = {
@@ -23,14 +24,20 @@ const taskCallerContext = (): ReturnType<typeof expect.objectContaining> =>
     actionOrigin: 'automation'
   })
 
-const createAgent = (overrides: Record<string, unknown> = {}) => ({
-  listAttachedSessionIds: vi.fn(async () => [] as string[]),
-  createSession: vi.fn(async () => ({ sessionId: 'session-created' })),
-  resumeSession: vi.fn(async (request: { sessionId: string }) => ({
+type TaskAgentMock = {
+  [Method in keyof TaskAgentPort]: MockedFunction<TaskAgentPort[Method]>
+}
+
+const createAgent = (overrides: Partial<TaskAgentMock> = {}): TaskAgentMock => ({
+  listAttachedSessionIds: vi.fn<TaskAgentPort['listAttachedSessionIds']>(async () => []),
+  createSession: vi.fn<TaskAgentPort['createSession']>(async () => ({
+    sessionId: 'session-created'
+  })),
+  resumeSession: vi.fn<TaskAgentPort['resumeSession']>(async (request) => ({
     sessionId: request.sessionId
   })),
-  setPermissionProfile: vi.fn(async () => undefined),
-  prompt: vi.fn(async () => undefined),
+  setPermissionProfile: vi.fn<TaskAgentPort['setPermissionProfile']>(async () => undefined),
+  prompt: vi.fn<TaskAgentPort['prompt']>(async () => undefined),
   ...overrides
 })
 
