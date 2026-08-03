@@ -64,15 +64,18 @@ const emptyArtifactState: ArtifactState = {
 const getErrorMessage = (error: unknown): string =>
   error instanceof Error ? error.message : 'Could not load artifacts.'
 
+const pluralizeTime = (value: number, unit: string): string =>
+  `${value} ${unit}${value === 1 ? '' : 's'} ago`
+
 const formatRelativeTime = (timestamp: number): string => {
   const elapsed = Math.max(0, Date.now() - timestamp)
   const minutes = Math.floor(elapsed / 60_000)
   if (minutes < 1) return 'just now'
-  if (minutes < 60) return `${minutes}m ago`
+  if (minutes < 60) return pluralizeTime(minutes, 'minute')
   const hours = Math.floor(minutes / 60)
-  if (hours < 24) return `${hours}h ago`
+  if (hours < 24) return pluralizeTime(hours, 'hour')
   const days = Math.floor(hours / 24)
-  return days < 7 ? `${days}d ago` : `${Math.floor(days / 7)}w ago`
+  return days < 7 ? pluralizeTime(days, 'day') : pluralizeTime(Math.floor(days / 7), 'week')
 }
 
 const artifactToPreviewItem = (
@@ -154,6 +157,23 @@ export const GlobalSearchDialog = ({
     () => new Map(projects.map((project) => [project.id, project.name])),
     [projects]
   )
+  const sessionTitles = useMemo(
+    () =>
+      new Map(
+        sessions.map((session) => [`${session.projectId}:${session.id}`, session.title] as const)
+      ),
+    [sessions]
+  )
+  const sessionMessageCreatedTimes = useMemo(() => {
+    const createdTimes = new Map<string, number>()
+    for (const session of sessions) {
+      const messages = [...(session.conversationGraph?.messages ?? []), ...session.messages]
+      for (const message of messages) {
+        createdTimes.set(`${session.projectId}:${session.id}:${message.id}`, message.createdAt)
+      }
+    }
+    return createdTimes
+  }, [sessions])
   const trimmedQuery = query.trim()
   const isSearchMode = trimmedQuery.length > 0
   const otherProjectIds = useMemo(
@@ -491,6 +511,13 @@ export const GlobalSearchDialog = ({
 
   const renderArtifactRow = (artifact: ProjectFileItem, rowIndex: number): React.JSX.Element => {
     const active = rowIndex === activeRowIndex
+    const createdAt = artifact.sourceVersionId
+      ? artifact.sortAtMs
+      : artifact.messageId
+        ? sessionMessageCreatedTimes.get(
+            `${artifact.projectId}:${artifact.sessionId}:${artifact.messageId}`
+          )
+        : undefined
     const isCurrentWorkspaceArtifact =
       view === 'workspace' && activeProjectId === artifact.projectId
     const canMention =
@@ -528,8 +555,11 @@ export const GlobalSearchDialog = ({
             {artifact.projectId !== primaryProject?.id
               ? `${projectNames.get(artifact.projectId) ?? 'Unknown project'} · `
               : ''}
-            {artifact.originSession?.title ?? 'Unknown session'} ·{' '}
-            {formatRelativeTime(artifact.sortAtMs)}
+            {artifact.originSession?.title ??
+              sessionTitles.get(`${artifact.projectId}:${artifact.sessionId}`) ??
+              'Unknown session'}{' '}
+            ·{' '}
+            {createdAt === undefined ? 'Creation time unavailable' : formatRelativeTime(createdAt)}
           </span>
         </span>
         {active ? (

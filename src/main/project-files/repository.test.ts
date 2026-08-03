@@ -305,6 +305,25 @@ describe('ManagedFileIndexRepository', () => {
         }
       ]
     })
+    await expect(
+      repository.searchArtifacts({
+        primaryProjectId: PROJECT_ID,
+        otherProjectIds: [],
+        filenameContains: 'sin.png',
+        primaryLimit: 8,
+        otherLimit: 0
+      })
+    ).resolves.toMatchObject({
+      primary: {
+        items: [
+          {
+            sourceFileId: lineageId,
+            sourceVersionId: versionTwoId,
+            sortAtMs: new Date('2026-07-28T00:00:02.000Z').getTime()
+          }
+        ]
+      }
+    })
   })
 
   it('exposes immutable uploads as project-and-session-scoped Version references', async () => {

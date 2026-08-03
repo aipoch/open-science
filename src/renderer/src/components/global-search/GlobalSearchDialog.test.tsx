@@ -27,8 +27,8 @@ const artifact = {
   name: 'sin.png',
   path: 'artifact-version:project-a/session-a/artifact-1/version-1',
   size: 12,
-  sortAtMs: Date.now(),
-  originSession: { state: 'active' as const, title: 'Draw sin' }
+  sortAtMs: Date.now() - 3 * 24 * 60 * 60 * 1_000,
+  originSession: { state: 'active' as const }
 }
 
 beforeEach(() => {
@@ -142,6 +142,7 @@ describe('GlobalSearchDialog', () => {
     expect(
       artifactRow.querySelector<HTMLImageElement>('img[alt="Preview of sin.png"]')
     ).not.toBeNull()
+    expect(artifactRow.textContent).toContain('Python 绘制 sin 函数图 · 3 days ago')
     act(() => artifactRow.dispatchEvent(new MouseEvent('mouseenter', { bubbles: true })))
     const mention = document.body.querySelector<HTMLElement>('[aria-label="Mention sin.png"]')
     expect(mention).not.toBeNull()
@@ -169,6 +170,57 @@ describe('GlobalSearchDialog', () => {
     expect(footer?.classList).toContain('grid-cols-2')
     expect(footer?.querySelectorAll('kbd')).toHaveLength(4)
     expect(results?.contains(footer ?? null)).toBe(false)
+  })
+
+  it('uses the source message creation time for a legacy artifact', async () => {
+    const createdAt = Date.now() - 4 * 24 * 60 * 60 * 1_000
+    useSessionStore.setState((state) => ({
+      sessions: state.sessions.map((session) =>
+        session.id === 'session-a'
+          ? {
+              ...session,
+              messages: [
+                {
+                  id: 'message-a',
+                  role: 'agent',
+                  content: 'Created legacy artifact',
+                  status: 'complete',
+                  eventIds: [],
+                  artifactIds: ['artifact-1'],
+                  createdAt,
+                  updatedAt: Date.now()
+                }
+              ]
+            }
+          : session
+      )
+    }))
+    vi.mocked(window.api.projectFiles.searchArtifacts).mockResolvedValueOnce({
+      primary: {
+        items: [
+          {
+            ...artifact,
+            sourceVersionId: undefined,
+            messageId: 'message-a',
+            path: '/workspace/sin.png',
+            sortAtMs: Date.now()
+          }
+        ],
+        totalCount: 1
+      },
+      other: [],
+      isIndexComplete: true
+    })
+
+    await act(async () => {
+      root.render(<GlobalSearchDialog open onOpenChange={vi.fn()} isSessionPersistenceReady />)
+      await new Promise((resolve) => window.setTimeout(resolve, 20))
+    })
+
+    const artifactRow = [...document.body.querySelectorAll('[role="option"]')].find((element) =>
+      element.textContent?.includes('sin.png')
+    )
+    expect(artifactRow?.textContent).toContain('Python 绘制 sin 函数图 · 4 days ago')
   })
 
   it('disables the current-Project mention action when the composer cannot accept another Artifact', async () => {
