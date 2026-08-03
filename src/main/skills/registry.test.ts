@@ -64,6 +64,18 @@ describe('SkillRegistry', () => {
     expect(await registry.body('demo')).toContain('# Demo body')
   })
 
+  it('derives a stable compatibility identity from bundled Skill content', async () => {
+    const root = await seedRoot()
+    const before = (await new SkillRegistry(root).list())[0]?.compatibility
+
+    expect(before).toMatch(/^sha256:[a-f0-9]{64}$/)
+
+    await writeFile(join(root, 'demo', 'SKILL.md'), '# Changed bundled Skill\n', 'utf8')
+    const after = (await new SkillRegistry(root).list())[0]?.compatibility
+    expect(after).toMatch(/^sha256:[a-f0-9]{64}$/)
+    expect(after).not.toBe(before)
+  })
+
   it('skips manifest entries whose SKILL.md is missing', async () => {
     const root = await seedRoot()
     await writeFile(

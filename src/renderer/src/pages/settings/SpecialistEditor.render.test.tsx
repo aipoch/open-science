@@ -368,6 +368,101 @@ describe('SpecialistEditor', () => {
     expect(document.body.querySelector('#sp-name-err')).toBeNull()
   })
 
+  it('completes pending import setup only when Save changes succeeds', async () => {
+    const onCancel = vi.fn()
+    const onSaveEdit = vi.fn().mockResolvedValue(undefined)
+    await act(async () => {
+      root.render(
+        <SpecialistEditor
+          editSpecialist={{
+            id: 'imported-draft',
+            name: 'Imported Draft',
+            description: '',
+            systemPrompt: '',
+            enabled: false,
+            setupPending: true,
+            origin: 'imported',
+            capabilityMode: 'selected',
+            fullAccess: { excludedSkillIds: [], excludedConnectorIds: [], connectorTools: [] },
+            selectedCapabilities: {
+              skillIds: ['bundled-analysis'],
+              connectorIds: [],
+              connectorTools: []
+            },
+            revision: 1
+          }}
+          onCancel={onCancel}
+          onSave={vi.fn()}
+          onSaveEdit={onSaveEdit}
+        />
+      )
+    })
+
+    expect(document.body.textContent).toContain('Setup incomplete')
+    expect(document.body.textContent).toContain('saved but disabled')
+    await act(async () => {
+      Array.from(document.body.querySelectorAll<HTMLButtonElement>('button'))
+        .find((button) => button.textContent === 'Cancel')
+        ?.click()
+    })
+    expect(onCancel).toHaveBeenCalledOnce()
+    expect(onSaveEdit).not.toHaveBeenCalled()
+
+    await act(async () => {
+      Array.from(document.body.querySelectorAll<HTMLButtonElement>('button'))
+        .find((button) => button.textContent === 'Save changes')
+        ?.click()
+    })
+    expect(onSaveEdit).toHaveBeenCalledWith(
+      expect.objectContaining({
+        id: 'imported-draft',
+        revision: 1,
+        completeSetup: true,
+        capabilityMode: 'selected',
+        selectedCapabilities: expect.objectContaining({ skillIds: ['bundled-analysis'] })
+      })
+    )
+  })
+
+  it('lets a custom specialist explicitly bump its package version', async () => {
+    const onSaveEdit = vi.fn().mockResolvedValue(undefined)
+    await act(async () => {
+      root.render(
+        <SpecialistEditor
+          editSpecialist={{
+            id: 'versioned-bot',
+            name: 'Versioned Bot',
+            description: '',
+            systemPrompt: '',
+            enabled: true,
+            capabilityMode: 'full',
+            fullAccess: { excludedSkillIds: [], excludedConnectorIds: [], connectorTools: [] },
+            selectedCapabilities: { skillIds: [], connectorIds: [], connectorTools: [] },
+            revision: 4,
+            packageVersion: '1.2.0',
+            origin: 'local'
+          }}
+          onCancel={vi.fn()}
+          onSave={vi.fn()}
+          onSaveEdit={onSaveEdit}
+        />
+      )
+    })
+
+    const version = document.body.querySelector<HTMLInputElement>('#sp-package-version')
+    expect(version?.value).toBe('1.2.0')
+    await act(async () => {
+      fireEvent.change(version!, { target: { value: '2.0.0' } })
+      Array.from(document.body.querySelectorAll<HTMLButtonElement>('button'))
+        .find((button) => button.textContent === 'Save changes')
+        ?.click()
+    })
+
+    expect(onSaveEdit).toHaveBeenCalledWith(
+      expect.objectContaining({ id: 'versioned-bot', revision: 4, packageVersion: '2.0.0' })
+    )
+  })
+
   it('renders a live preview avatar reflecting the selected icon', async () => {
     await act(async () => {
       root.render(

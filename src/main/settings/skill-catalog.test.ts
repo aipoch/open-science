@@ -43,6 +43,14 @@ const createCatalog = async (): Promise<SkillCatalogModule> => {
 }
 
 describe('SkillCatalogModule', () => {
+  it('exposes the stable compatibility identity for builtin Specialist dependencies', async () => {
+    const catalog = await createCatalog()
+
+    expect((await catalog.listSpecialistSkillCatalog())[0]?.compatibility).toMatch(
+      /^sha256:[a-f0-9]{64}$/
+    )
+  })
+
   it('owns catalog projection, enablement, detail, and personal CRUD', async () => {
     const catalog = await createCatalog()
 
@@ -57,7 +65,8 @@ describe('SkillCatalogModule', () => {
         displayName: 'Demo',
         source: 'featured',
         mainEnabled: false,
-        available: true
+        available: true,
+        compatibility: expect.stringMatching(/^sha256:[a-f0-9]{64}$/)
       }
     ])
     expect((await catalog.getSkillDetail('demo')).body).toContain('demo body')

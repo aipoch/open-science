@@ -105,6 +105,7 @@ class SkillCatalogModule {
       source: SkillSource
       mainEnabled: boolean
       available: boolean
+      compatibility?: string
     }>
   > {
     const [skills, settings] = await Promise.all([
@@ -119,7 +120,8 @@ class SkillCatalogModule {
       source: skill.source,
       mainEnabled: !disabled.has(skill.id),
       // Catalog entries are installed skills, so they resolve to a present entry at dispatch time.
-      available: true
+      available: true,
+      ...(skill.compatibility ? { compatibility: skill.compatibility } : {})
     }))
   }
 
@@ -250,8 +252,11 @@ class SkillCatalogModule {
     return this.listSkills()
   }
 
-  async deleteSkill(request: DeleteSkillRequest): Promise<SkillView[]> {
-    await this.userSkills.delete(request.id)
+  async deleteSkill(
+    request: DeleteSkillRequest,
+    guard?: (skillId: string) => Promise<void>
+  ): Promise<SkillView[]> {
+    await this.userSkills.delete(request.id, guard)
     await this.options.repository.setSkillEnabled(request.id, true)
     return this.listSkills()
   }

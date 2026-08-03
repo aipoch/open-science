@@ -137,7 +137,7 @@ const registerWithFakes = (overrides?: {
   onSessionUnavailable?: (sessionId: string) => void
   onAllSessionsCancellationRequested?: () => void
   beforeSessionDelete?: (sessionId: string) => Promise<void>
-  profileService?: { getById: (id: string) => Promise<unknown> }
+  profileService?: { resolveRunnableById: (id: string) => Promise<unknown> }
   specialistSkillCatalog?: Array<{ id: string; frameworkName: string; displayName: string }>
   provisionedConnectorSkillNames?: string[]
 }): AcpTestOptions => {
@@ -261,7 +261,7 @@ describe('ACP runtime composition — Specialist identity resolver', () => {
       systemPrompt: 'Review RNA-seq quality.',
       enabled: true
     }
-    const profileService = { getById: vi.fn().mockResolvedValue(profile) }
+    const profileService = { resolveRunnableById: vi.fn().mockResolvedValue(profile) }
 
     registerWithFakes({ profileService })
 
@@ -275,12 +275,12 @@ describe('ACP runtime composition — Specialist identity resolver', () => {
       append: expect.stringContaining('RNA-seq Reviewer'),
       prefix: ''
     })
-    expect(profileService.getById).toHaveBeenCalledWith('uuid-1')
+    expect(profileService.resolveRunnableById).toHaveBeenCalledWith('uuid-1')
   })
 
   it('wires the production ProfileService and live catalog into the Specialist Skill resolver', async () => {
     const profileService = {
-      getById: vi.fn().mockResolvedValue({
+      resolveRunnableById: vi.fn().mockResolvedValue({
         enabled: true,
         capabilityMode: 'selected',
         fullAccess: { excludedSkillIds: [], excludedConnectorIds: [], connectorTools: [] },
@@ -306,7 +306,7 @@ describe('ACP runtime composition — Specialist identity resolver', () => {
 
   it('merges only the specialist-allowed connector skills into the whitelist (selected mode)', async () => {
     const profileService = {
-      getById: vi.fn().mockResolvedValue({
+      resolveRunnableById: vi.fn().mockResolvedValue({
         enabled: true,
         capabilityMode: 'selected',
         fullAccess: { excludedSkillIds: [], excludedConnectorIds: [], connectorTools: [] },
@@ -334,7 +334,7 @@ describe('ACP runtime composition — Specialist identity resolver', () => {
 
   it('excludes full-access blocked connectors from the whitelist (full mode)', async () => {
     const profileService = {
-      getById: vi.fn().mockResolvedValue({
+      resolveRunnableById: vi.fn().mockResolvedValue({
         enabled: true,
         capabilityMode: 'full',
         fullAccess: {

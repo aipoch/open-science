@@ -33,13 +33,17 @@ import type {
 import type {
   CompletionHandoffCommand,
   CreateSpecialistRequest,
-  DeleteSpecialistRequest,
   DuplicateSpecialistRequest,
   ResolveSessionSpecialistRequest,
   SetSessionSpecialistRequest,
   SetSpecialistEnabledRequest,
   UpdateSpecialistRequest
 } from '../shared/specialist'
+import type {
+  SpecialistDeleteRequest,
+  SpecialistExportRequest,
+  SpecialistPackageInstallRequest
+} from '../shared/specialist-package'
 import type {
   ReviewRunRequest,
   ReviewSessionRequest,
@@ -285,10 +289,25 @@ const api: OpenScienceAPI = {
       electronRendererContracts.invoke('specialist.update', request),
     setEnabled: (request: SetSpecialistEnabledRequest) =>
       electronRendererContracts.invoke('specialist.setEnabled', request),
-    delete: (request: DeleteSpecialistRequest) =>
+    previewDelete: (request: { id: string }) =>
+      electronRendererContracts.invoke('specialist.previewDelete', request),
+    delete: (request: SpecialistDeleteRequest) =>
       electronRendererContracts.invoke('specialist.delete', request),
     duplicate: (request: DuplicateSpecialistRequest) =>
       electronRendererContracts.invoke('specialist.duplicate', request),
+    exportContributionTemplate: () =>
+      electronRendererContracts.invoke('specialist.exportContributionTemplate'),
+    previewExport: (request: { specialistId: string }) =>
+      electronRendererContracts.invoke('specialist.previewExport', request),
+    exportSpecialist: (request: SpecialistExportRequest) =>
+      electronRendererContracts.invoke('specialist.exportSpecialist', request),
+    selectPackage: () => electronRendererContracts.invoke('specialist.selectPackage'),
+    installPackage: (request: SpecialistPackageInstallRequest) =>
+      electronRendererContracts.invoke('specialist.installPackage', request),
+    cancelPackage: (request: SpecialistPackageInstallRequest) =>
+      electronRendererContracts.invoke('specialist.cancelPackage', request),
+    savePackageReport: (request: SpecialistPackageInstallRequest) =>
+      electronRendererContracts.invoke('specialist.savePackageReport', request),
     onCatalogChanged: (listener: () => void) =>
       electronRendererContracts.subscribe('specialist.onCatalogChanged', listener),
     // Compatibility-only pending-selection broadcast; approved SDK handoffs use lifecycle events.

@@ -330,11 +330,14 @@ export const RENDERER_CONTRACT_GROUPS = Object.freeze([
     ['updateSkill', 'settings:update-skill'], ['upsertProvider', 'settings:upsert-provider'], ['validateProvider', 'settings:validate-provider'],
   ]),
   group('specialist', 'specialist', [
-    ['cancelHandoff', 'specialist:cancel-handoff', ELECTRON], ['create', 'specialist:create', ELECTRON], ['delete', 'specialist:delete', ELECTRON],
-    ['duplicate', 'specialist:duplicate', ELECTRON], ['getHandoffEvents', 'specialist:get-handoff-events', ELECTRON], ['list', 'specialist:list', ELECTRON],
+    ['cancelHandoff', 'specialist:cancel-handoff', ELECTRON], ['cancelPackage', 'specialist:package-cancel', ELECTRON], ['create', 'specialist:create', ELECTRON], ['delete', 'specialist:delete', ELECTRON],
+    ['duplicate', 'specialist:duplicate', ELECTRON], ['exportContributionTemplate', 'specialist:export-contribution-template', ELECTRON], ['exportSpecialist', 'specialist:export-save', ELECTRON],
+    ['getHandoffEvents', 'specialist:get-handoff-events', ELECTRON], ['installPackage', 'specialist:package-install', ELECTRON], ['list', 'specialist:list', ELECTRON],
     ['onCatalogChanged', 'specialist:catalog-changed', ELECTRON_EVENT], ['onHandoffLifecycleEvent', 'specialist:handoff-lifecycle-changed', ELECTRON_EVENT],
-    ['onPendingSwitch', 'specialist:pending-switch', ELECTRON_EVENT], ['resolveSessionSpecialist', 'specialist:resolve-session-specialist', ELECTRON],
+    ['onPendingSwitch', 'specialist:pending-switch', ELECTRON_EVENT], ['previewDelete', 'specialist:delete-preview', ELECTRON], ['previewExport', 'specialist:export-preview', ELECTRON],
+    ['resolveSessionSpecialist', 'specialist:resolve-session-specialist', ELECTRON],
     ['retryHandoff', 'specialist:retry-handoff', ELECTRON], ['setEnabled', 'specialist:set-enabled', ELECTRON],
+    ['savePackageReport', 'specialist:package-report-save', ELECTRON], ['selectPackage', 'specialist:package-select', ELECTRON],
     ['setSessionSpecialist', 'specialist:set-session-specialist', ELECTRON], ['update', 'specialist:update', ELECTRON],
   ]),
   group('storage', 'storage', [

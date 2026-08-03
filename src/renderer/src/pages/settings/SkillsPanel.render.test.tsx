@@ -275,6 +275,23 @@ describe('SkillsPanel (list view)', () => {
     expect(useSettingsStore.getState().deleteSkill).toHaveBeenCalledWith('personal-mine')
   })
 
+  it('shows the shared Specialist reference guard when direct deletion is rejected', async () => {
+    useSettingsStore.setState({
+      deleteSkill: vi.fn().mockRejectedValue(new Error('Skill is referenced by rna-reviewer.'))
+    })
+    await act(async () => {
+      root.render(<SkillsPanel view={{ kind: 'list' }} onNavigate={vi.fn()} />)
+    })
+
+    await act(async () => {
+      document.body.querySelector<HTMLButtonElement>('[aria-label="Delete Mine"]')?.click()
+    })
+
+    expect(document.body.querySelector('[role="alert"]')?.textContent).toContain(
+      'Skill is referenced by rna-reviewer.'
+    )
+  })
+
   it('always offers installed-skill import, including for other frameworks', () => {
     useSettingsStore.setState({ agentFrameworkId: 'opencode' })
     act(() => {

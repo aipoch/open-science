@@ -104,6 +104,15 @@ type PreloadApi = {
   }
   specialist: {
     list: () => unknown
+    previewDelete: (request: unknown) => unknown
+    delete: (request: unknown) => unknown
+    exportContributionTemplate: () => unknown
+    previewExport: (request: unknown) => unknown
+    exportSpecialist: (request: unknown) => unknown
+    selectPackage: () => unknown
+    installPackage: (request: unknown) => unknown
+    cancelPackage: (request: unknown) => unknown
+    savePackageReport: (request: unknown) => unknown
     onPendingSwitch: (listener: (payload: unknown) => void) => () => void
   }
   cli: {
@@ -437,16 +446,24 @@ describe('preload bridge — public surface inventory', () => {
       'settings.upsertProvider',
       'settings.validateProvider',
       'specialist.cancelHandoff',
+      'specialist.cancelPackage',
       'specialist.create',
       'specialist.delete',
       'specialist.duplicate',
+      'specialist.exportContributionTemplate',
+      'specialist.exportSpecialist',
       'specialist.getHandoffEvents',
+      'specialist.installPackage',
       'specialist.list',
       'specialist.onCatalogChanged',
       'specialist.onHandoffLifecycleEvent',
       'specialist.onPendingSwitch',
+      'specialist.previewDelete',
+      'specialist.previewExport',
       'specialist.resolveSessionSpecialist',
       'specialist.retryHandoff',
+      'specialist.savePackageReport',
+      'specialist.selectPackage',
       'specialist.setEnabled',
       'specialist.setSessionSpecialist',
       'specialist.update',
@@ -500,10 +517,10 @@ describe('preload bridge — public surface inventory', () => {
 })
 
 describe('preload bridge — runtime renderer contract catalog', () => {
-  it('routes all 163 owned methods through their cataloged Electron channels', async () => {
+  it('routes all 171 owned methods through their cataloged Electron channels', async () => {
     const requestContracts = runtimeContracts.filter(({ kind }) => kind === 'method')
 
-    expect(runtimeContracts).toHaveLength(163)
+    expect(runtimeContracts).toHaveLength(171)
 
     for (const contract of requestContracts) {
       invokeMock.mockClear()
@@ -848,6 +865,58 @@ const sampleSessionArtifactSelection = {
 }
 
 const cases: ForwardingCase[] = [
+  {
+    name: 'specialist.previewDelete → specialist:delete-preview',
+    invoke: (a) => a.specialist.previewDelete({ id: 'research-synth' }),
+    channel: 'specialist:delete-preview',
+    args: [{ id: 'research-synth' }]
+  },
+  {
+    name: 'specialist.delete → specialist:delete',
+    invoke: (a) =>
+      a.specialist.delete({
+        id: 'research-synth',
+        expectedRevision: 3,
+        deleteSkillIds: ['analysis-tools']
+      }),
+    channel: 'specialist:delete',
+    args: [
+      {
+        id: 'research-synth',
+        expectedRevision: 3,
+        deleteSkillIds: ['analysis-tools']
+      }
+    ]
+  },
+  {
+    name: 'specialist.previewExport → specialist:export-preview',
+    invoke: (a) => a.specialist.previewExport({ specialistId: 'research-synth' }),
+    channel: 'specialist:export-preview',
+    args: [{ specialistId: 'research-synth' }]
+  },
+  {
+    name: 'specialist.exportSpecialist → specialist:export-save',
+    invoke: (a) =>
+      a.specialist.exportSpecialist({
+        specialistId: 'research-synth',
+        expectedRevision: 3,
+        includedSkillIds: ['analysis-tools']
+      }),
+    channel: 'specialist:export-save',
+    args: [
+      {
+        specialistId: 'research-synth',
+        expectedRevision: 3,
+        includedSkillIds: ['analysis-tools']
+      }
+    ]
+  },
+  {
+    name: 'specialist.exportContributionTemplate → specialist:export-contribution-template',
+    invoke: (a) => a.specialist.exportContributionTemplate(),
+    channel: 'specialist:export-contribution-template',
+    args: []
+  },
   {
     name: 'saveSessionArtifacts → file:save-session-artifacts',
     invoke: (a) => a.saveSessionArtifacts(sampleSessionArtifactSelection),

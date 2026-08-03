@@ -11,13 +11,23 @@ const noopCatalog = (): AgentsCatalogSource => ({
   getConnectors: vi.fn(async () => ({ enabledIds: [], autoAllowIds: [] }))
 })
 
+const withExplicitResolvers = (service: ProfileService): ProfileService => {
+  service.resolveRunnableByName = vi.fn(async (name: string) => service.getByName(name))
+  service.resolveRunnableById = vi.fn(async (id: string) => service.getById(id))
+  service.resolveCustomMutationByName = vi.fn(async (name: string) => service.getByName(name))
+  return service
+}
+
 const noopProfileService = (): ProfileService =>
-  ({
+  withExplicitResolvers({
     list: vi.fn(async () => []),
     getByName: vi.fn(async () => {
       throw new Error('not found')
+    }),
+    getById: vi.fn(async () => {
+      throw new Error('not found')
     })
-  }) as unknown as ProfileService
+  } as unknown as ProfileService)
 
 describe('AgentsService.dispatch — extensible operation dispatcher', () => {
   it('routes a read op identically to read()', async () => {
@@ -194,14 +204,19 @@ describe('AgentsService.dispatch — switch op routing (issue 05)', () => {
     decision?: ApprovalResult
   }): BuildServiceResult => {
     const profiles = opts.profiles ?? [specialist()]
-    const profileService = {
+    const profileService = withExplicitResolvers({
       list: vi.fn(async () => profiles),
       getByName: vi.fn(async (name: string) => {
         const found = profiles.find((p) => p.name === name)
         if (!found) throw new Error(`Specialist "${name}" not found.`)
         return found
+      }),
+      getById: vi.fn(async (id: string) => {
+        const found = profiles.find((p) => p.id === id)
+        if (!found) throw new Error(`Specialist ${id} not found.`)
+        return found
       })
-    } as unknown as ProfileService
+    } as unknown as ProfileService)
     const sessionBinding = {
       setBinding: vi.fn(),
       getBinding: vi.fn()
@@ -302,7 +317,7 @@ describe('AgentsService.dispatch — mutation routing (privileged delete + ordin
     invalidateCatalog: ReturnType<typeof vi.fn>
   } => {
     const profiles = opts.profiles ?? [specialist()]
-    const profileService = {
+    const profileService = withExplicitResolvers({
       list: vi.fn(async () => profiles),
       getByName: vi.fn(async (name: string) => {
         const found = profiles.find((p) => p.name === name)
@@ -313,7 +328,7 @@ describe('AgentsService.dispatch — mutation routing (privileged delete + ordin
         throw new Error('unexpected')
       }),
       delete: vi.fn(async () => undefined)
-    } as unknown as ProfileService
+    } as unknown as ProfileService)
     const gateway: ApprovalGateway = {
       decide: vi.fn(async (): Promise<ApprovalResult> => opts.decision ?? { status: 'approved' })
     }
@@ -355,11 +370,11 @@ describe('AgentsService.dispatch — mutation routing (privileged delete + ordin
 
   it('a non-name update stays on the ordinary-mutation path (not the privileged module)', async () => {
     const ordinaryReturn = specialist({ description: 'edited', revision: 4 })
-    const profileService = {
+    const profileService = withExplicitResolvers({
       ...noopProfileService(),
       getByName: vi.fn(async () => specialist()),
       update: vi.fn(async () => ordinaryReturn)
-    } as unknown as ProfileService
+    } as unknown as ProfileService)
     const gateway: ApprovalGateway = {
       decide: vi.fn(async (): Promise<ApprovalResult> => ({ status: 'approved' }))
     }
@@ -470,7 +485,7 @@ describe('AgentsService.dispatch — mutation routing (privileged delete + ordin
     gateway: ApprovalGateway
     invalidateCatalog: ReturnType<typeof vi.fn>
   } => {
-    const profileService = {
+    const profileService = withExplicitResolvers({
       list: vi.fn(async () => opts.profiles),
       getByName: vi.fn(async (name: string) => {
         const found = opts.profiles.find((p) => p.name === name)
@@ -481,7 +496,7 @@ describe('AgentsService.dispatch — mutation routing (privileged delete + ordin
         throw new Error('unexpected')
       }),
       delete: vi.fn(async () => undefined)
-    } as unknown as ProfileService
+    } as unknown as ProfileService)
     const gateway: ApprovalGateway = {
       decide: vi.fn(async (): Promise<ApprovalResult> => opts.decision ?? { status: 'approved' })
     }

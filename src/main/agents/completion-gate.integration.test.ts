@@ -995,6 +995,8 @@ describe('completion gate tracer bullet', () => {
     const agents = new AgentsService({
       profileService: {
         getByName: vi.fn(async () => specialist),
+        resolveRunnableByName: vi.fn(async () => specialist),
+        resolveRunnableById: vi.fn(async () => specialist),
         list: vi.fn(async () => [specialist])
       } as unknown as ProfileService,
       catalog,

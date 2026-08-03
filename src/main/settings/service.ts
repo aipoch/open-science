@@ -166,6 +166,7 @@ class SettingsService {
   private readonly backendResolver: AgentBackendResolver
   private readonly storageRoot: string
   private readonly userClaudeDir: string
+  private skillDeletionGuard?: (skillId: string) => Promise<void>
   constructor(options: SettingsServiceOptions = {}) {
     this.storageRoot = options.storageRoot ?? resolveStorageRoot()
     this.repository = options.repository ?? new SettingsRepository(this.storageRoot)
@@ -459,6 +460,7 @@ class SettingsService {
       source: SkillSource
       mainEnabled: boolean
       available: boolean
+      compatibility?: string
     }>
   > {
     return this.skills.listSpecialistSkillCatalog()
@@ -535,7 +537,11 @@ class SettingsService {
 
   // Deletes a personal or imported skill, returning the refreshed list.
   async deleteSkill(request: DeleteSkillRequest): Promise<SkillView[]> {
-    return this.skills.deleteSkill(request)
+    return this.skills.deleteSkill(request, this.skillDeletionGuard)
+  }
+
+  setSkillDeletionGuard(guard: (skillId: string) => Promise<void>): void {
+    this.skillDeletionGuard = guard
   }
 
   // Imports a skill from a public GitHub URL (deduplicated), returning the outcome + refreshed list.

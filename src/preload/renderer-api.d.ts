@@ -42,6 +42,13 @@ import type {
   SaveSessionArtifactsResult
 } from '../shared/file-save'
 import type {
+  ContributionTemplateExportResult,
+  SpecialistPackageReportSaveResult,
+  SpecialistExportPreview,
+  SpecialistExportRequest,
+  SpecialistExportSaveResult
+} from '../shared/specialist-package'
+import type {
   ComputeApprovalDecision,
   ComputeApprovalRequest,
   ComputeHost,
@@ -260,7 +267,6 @@ import type {
   CreateSpecialistRequest,
   UpdateSpecialistRequest,
   SetSpecialistEnabledRequest,
-  DeleteSpecialistRequest,
   DuplicateSpecialistRequest,
   SpecialistListItem,
   SpecialistProfileView,
@@ -272,6 +278,14 @@ import type {
   CompletionHandoffLifecycleEvent,
   CompletionHandoffCommand
 } from '../shared/specialist'
+import type {
+  SpecialistPackageCandidatePreview,
+  SpecialistPackageInstallRequest,
+  SpecialistPackageInstallResult,
+  SpecialistDeletePreview,
+  SpecialistDeleteRequest,
+  SpecialistDeleteResult
+} from '../shared/specialist-package'
 import type {
   CloseConfirmRequest,
   CloseConfirmResponse,
@@ -438,8 +452,20 @@ export interface OpenScienceAPI {
     create(request: CreateSpecialistRequest): Promise<SpecialistProfileView>
     update(request: UpdateSpecialistRequest): Promise<SpecialistProfileView>
     setEnabled(request: SetSpecialistEnabledRequest): Promise<SpecialistProfileView>
-    delete(request: DeleteSpecialistRequest): Promise<void>
+    previewDelete(request: { id: string }): Promise<SpecialistDeletePreview>
+    delete(request: SpecialistDeleteRequest): Promise<SpecialistDeleteResult>
     duplicate(request: DuplicateSpecialistRequest): Promise<CreateSpecialistRequest>
+    exportContributionTemplate(): Promise<ContributionTemplateExportResult>
+    previewExport(request: { specialistId: string }): Promise<SpecialistExportPreview>
+    exportSpecialist(request: SpecialistExportRequest): Promise<SpecialistExportSaveResult>
+    selectPackage(): Promise<{ cancelled: true } | SpecialistPackageCandidatePreview>
+    installPackage(
+      request: SpecialistPackageInstallRequest
+    ): Promise<SpecialistPackageInstallResult>
+    cancelPackage(request: SpecialistPackageInstallRequest): Promise<void>
+    savePackageReport(
+      request: SpecialistPackageInstallRequest
+    ): Promise<SpecialistPackageReportSaveResult>
     onCatalogChanged(listener: () => void): RemoveListener
     // Compatibility-only pending-selection broadcast; approved SDK handoffs use lifecycle events.
     onPendingSwitch(listener: AcpListener<PendingSwitchBroadcast>): RemoveListener

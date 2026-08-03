@@ -67,16 +67,24 @@ const GENERATED_SOURCE_OMISSIONS = [
   'sessions.onFlushRequest',
   'sessions.sendFlushResponse',
   'specialist.cancelHandoff',
+  'specialist.cancelPackage',
   'specialist.create',
   'specialist.delete',
   'specialist.duplicate',
+  'specialist.exportContributionTemplate',
+  'specialist.exportSpecialist',
   'specialist.getHandoffEvents',
+  'specialist.installPackage',
   'specialist.list',
   'specialist.onCatalogChanged',
   'specialist.onHandoffLifecycleEvent',
   'specialist.onPendingSwitch',
+  'specialist.previewDelete',
+  'specialist.previewExport',
   'specialist.resolveSessionSpecialist',
   'specialist.retryHandoff',
+  'specialist.savePackageReport',
+  'specialist.selectPackage',
   'specialist.setEnabled',
   'specialist.setSessionSpecialist',
   'specialist.update',
@@ -198,7 +206,7 @@ describe('renderer surface inventory', () => {
       ...Object.keys(WEB_EVENT_CHANNELS)
     ])
 
-    expect(electronPaths).toHaveLength(291)
+    expect(electronPaths).toHaveLength(299)
     expectSameSet(
       electronPaths,
       RENDERER_CONTRACT_CATALOG.map(({ publicPath }) => publicPath)

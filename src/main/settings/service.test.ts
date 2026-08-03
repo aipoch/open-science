@@ -47,6 +47,7 @@ const { SkillRegistry } = await import('../skills/registry')
 const { managedClaudeDir } = await import('./managed-claude')
 const { managedOpencodeDir } = await import('./managed-opencode')
 const { netFetch } = await import('../skills/net-fetch')
+const { UserSkillSpecialistPackageAdapter } = await import('../skills/specialist-package-adapter')
 const { net: mockedNet } = (await import('electron')) as unknown as {
   net: { fetch: ReturnType<typeof vi.fn> }
 }
@@ -3580,6 +3581,49 @@ describe('SettingsService: skills', () => {
 
     skills = await service.deleteSkill({ id: 'personal-my-skill' })
     expect(skills.map((skill) => skill.id)).toEqual(['demo'])
+  })
+
+  it('runs the shared live-reference guard before direct Skill deletion', async () => {
+    const service = await createSkillService()
+    await service.createSkill({ name: 'My Skill', description: 'Mine.', body: '# Mine' })
+    const guard = vi.fn().mockRejectedValue(
+      Object.assign(new Error('Skill is referenced by specialist-1.'), {
+        code: 'protected-skill'
+      })
+    )
+    service.setSkillDeletionGuard(guard)
+
+    await expect(service.deleteSkill({ id: 'personal-my-skill' })).rejects.toMatchObject({
+      code: 'protected-skill'
+    })
+    expect(guard).toHaveBeenCalledWith('personal-my-skill')
+    await expect(service.getSkillDetail('personal-my-skill')).resolves.toBeDefined()
+  })
+
+  it('checks live Specialist references atomically with direct Skill deletion', async () => {
+    const service = await createSkillService()
+    await service.createSkill({ name: 'My Skill', description: 'Mine.', body: '# Mine' })
+    const packageSkills = new UserSkillSpecialistPackageAdapter(storageRoot)
+    await packageSkills.beginMutation('tx-delete-race', 'research-synth', [])
+
+    let referenced = false
+    const guard = vi.fn(async () => {
+      if (referenced) {
+        throw Object.assign(new Error('Skill is referenced by research-synth.'), {
+          code: 'protected-skill'
+        })
+      }
+    })
+    service.setSkillDeletionGuard(guard)
+    const deletion = service.deleteSkill({ id: 'personal-my-skill' })
+    await new Promise((resolve) => setImmediate(resolve))
+    expect(guard).not.toHaveBeenCalled()
+
+    referenced = true
+    await packageSkills.endMutation('tx-delete-race')
+
+    await expect(deletion).rejects.toMatchObject({ code: 'protected-skill' })
+    await expect(service.getSkillDetail('personal-my-skill')).resolves.toBeDefined()
   })
 
   it('creates with a custom slug and reconciles references reported by the detail view', async () => {

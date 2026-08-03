@@ -17,7 +17,9 @@ import {
 import { cn } from '@/lib/utils'
 import { useSettingsStore } from '@/stores/settings-store'
 import { useSpecialistStore } from '@/stores/specialist-store'
-import type { SpecialistProfileView } from '../../../../shared/specialist'
+import type { SpecialistListItem, SpecialistProfileView } from '../../../../shared/specialist'
+
+type RunnableSpecialistItem = Exclude<SpecialistListItem, { kind: 'reviewer' }>
 
 type SpecialistSubmenuProps = {
   // Undefined means None (no specialist selected).
@@ -68,8 +70,7 @@ const SpecialistSubmenu = ({
   }, [load])
 
   const enabledSpecialists = items.filter(
-    (item): item is { kind: 'custom' } & SpecialistProfileView =>
-      item.kind === 'custom' && item.enabled
+    (item): item is RunnableSpecialistItem => item.kind !== 'reviewer' && item.enabled
   )
 
   const selected = enabledSpecialists.find((s) => s.id === selectedId)
@@ -83,9 +84,9 @@ const SpecialistSubmenu = ({
   // profile; other disabled profiles stay out of the picker as normal.
   const unavailableItem =
     unavailable && selectedId
-      ? items.find((item) => item.kind === 'custom' && item.id === selectedId)
+      ? items.find((item) => item.kind !== 'reviewer' && item.id === selectedId)
       : undefined
-  const unavailableProfile = unavailableItem?.kind === 'custom' ? unavailableItem : undefined
+  const unavailableProfile = unavailableItem?.kind !== 'reviewer' ? unavailableItem : undefined
 
   return (
     <DropdownMenuSub>

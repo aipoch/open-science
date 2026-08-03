@@ -1,0 +1,5 @@
+{
+  "name": "Fixture Specialist",
+  "description": "A valid adapter fixture.",
+  "systemPrompt": "Fixture prompt that must stay out of previews and diagnostics."
+}

@@ -1,5 +1,6 @@
 import { join } from 'node:path'
 import { randomUUID } from 'node:crypto'
+import { readFile, stat, writeFile } from 'node:fs/promises'
 
 import {
   app,
@@ -149,7 +150,17 @@ import { createDefaultSettingsService } from './settings/service'
 import type { NotebookRuntimeSettings } from './settings/capabilities'
 import type { WindowSettingsCapabilities } from './settings/service-capabilities'
 import { createSettingsWorkflows } from './settings/workflows'
-import { createProfileService } from './specialist/service'
+import { ProfileService } from './specialist/service'
+import { SpecialistRepository } from './specialist/repository'
+import { BuiltinSpecialistRegistry } from './specialist/builtin-registry'
+import { composeBuiltinSkillCatalog } from './specialist/package/builtin-skill-catalog'
+import { SpecialistPackageService } from './specialist/package/service'
+import {
+  saveSpecialistExport,
+  saveSpecialistPackageReport,
+  selectSpecialistArchive
+} from './specialist/package/electron-adapter'
+import { UserSkillSpecialistPackageAdapter } from './skills/specialist-package-adapter'
 import { AgentsService } from './agents/agents-service'
 import {
   CompletionGateCoordinator,
@@ -176,6 +187,10 @@ import { PendingSessionSpecialistBindings } from './agents/pending-session-speci
 import { createCodexCompletionGateRuntime } from './acp/codex-completion-handoff'
 import { createOpenCodeImmediateHandoffRuntime } from './acp/opencode-immediate-handoff'
 import { registerSpecialistIpcHandlers } from './specialist/ipc'
+import {
+  createContributionTemplateExporter,
+  resolveContributionTemplateReadmePath
+} from './specialist/package/contribution-template'
 import { SessionBindingService } from './specialist/session-binding'
 import { SPECIALIST_IPC } from '../shared/specialist'
 import type { AppIconPreview, AppIconVariant, RespondApprovalRequest } from '../shared/settings'
@@ -554,8 +569,81 @@ const createApplicationModules = async (
     localRpc: notebookLocalRpc
   } = notebookApplication
 
-  // Resolved lazily per connector call so dispatch always sees the latest persisted Specialist profile.
-  const profileService = createProfileService(resolveStorageRoot())
+  // Builtins are validated once at startup from read-only repository resources. Package imports use
+  // the same repository while keeping their dynamic Connector/custom-Skill catalog separate.
+  const specialistRepository = new SpecialistRepository(resolveStorageRoot())
+  const appVersion = app.getVersion()
+  const specialistSkills = await settingsService.listSpecialistSkillCatalog()
+  const specialistPackageSkillAdapter = new UserSkillSpecialistPackageAdapter(resolveStorageRoot())
+  const packageSkills = await specialistPackageSkillAdapter.snapshot()
+  const builtinRegistry = new BuiltinSpecialistRegistry({
+    appVersion,
+    builtinSkills: composeBuiltinSkillCatalog(appVersion, specialistSkills),
+    skills: specialistSkills.map((skill) => {
+      const packageSkill = packageSkills.find((candidate) => candidate.id === skill.id)
+      return { id: skill.id, builtin: skill.source === 'featured', ...(packageSkill ?? {}) }
+    }),
+    connectorIds: ALL_CONNECTOR_IDS,
+    protectedSpecialistIds: ['reviewer'],
+    protectedSpecialistNames: ['Reviewer']
+  })
+  const profileService = new ProfileService(specialistRepository, builtinRegistry)
+  await profileService.ensureBuiltinCatalogReady()
+  const specialistPackageService = new SpecialistPackageService({
+    storageDir: resolveStorageRoot(),
+    repository: specialistRepository,
+    readPackageGuide: () =>
+      readFile(resolveContributionTemplateReadmePath(app.getAppPath()), 'utf8'),
+    catalog: async () => {
+      const appVersion = app.getVersion()
+      const [skills, packageSkills, connectorSettings] = await Promise.all([
+        settingsService.listSpecialistSkillCatalog(),
+        specialistPackageSkillAdapter.snapshot(),
+        settingsService.getConnectors()
+      ])
+      const baseCatalog = {
+        appVersion,
+        builtinSkills: composeBuiltinSkillCatalog(appVersion, skills),
+        skills: skills.map((skill) => {
+          const packageSkill = packageSkills.find((candidate) => candidate.id === skill.id)
+          return {
+            id: skill.id,
+            builtin: skill.source === 'featured',
+            ...(packageSkill ?? {})
+          }
+        }),
+        connectorIds: [
+          ...ALL_CONNECTOR_IDS,
+          ...(connectorSettings?.customMcpServers ?? []).map((server) => server.id)
+        ],
+        protectedSpecialistIds: ['reviewer'],
+        protectedSpecialistNames: ['Reviewer']
+      }
+      const builtinSpecialists = await new BuiltinSpecialistRegistry(baseCatalog).load()
+      return {
+        ...baseCatalog,
+        protectedSpecialistIds: [
+          ...baseCatalog.protectedSpecialistIds,
+          ...builtinSpecialists.entries.map((entry) => entry.id)
+        ],
+        protectedSpecialistNames: [
+          ...(baseCatalog.protectedSpecialistNames ?? []),
+          ...builtinSpecialists.entries.flatMap((entry) => [
+            entry.name,
+            entry.displayName ?? entry.name
+          ])
+        ]
+      }
+    },
+    skillPort: specialistPackageSkillAdapter,
+    onCommitted: () => {
+      broadcastToRenderers(SPECIALIST_IPC.CATALOG_CHANGED, undefined)
+      void runtime.requestSkillsReload()
+    }
+  })
+  settingsService.setSkillDeletionGuard((skillId) =>
+    specialistPackageService.assertSkillDeletionAllowed(skillId)
+  )
   // Per-session specialist binding store. Shared between the SET_SESSION_SPECIALIST barrier
   // (validate + record) and the runtime switch so a hot-switch lands on the same source of truth.
   const sessionBindingService = new SessionBindingService(profileService)
@@ -569,7 +657,7 @@ const createApplicationModules = async (
     (event) => broadcastToRenderers(SPECIALIST_IPC.HANDOFF_LIFECYCLE_CHANGED, event),
     async ({ targetName }) => {
       if (targetName === null) return undefined
-      const profile = await profileService.getByName(targetName)
+      const profile = await profileService.resolveRunnableByName(targetName)
       return { specialistId: profile.id, revision: profile.revision }
     }
   )
@@ -714,7 +802,7 @@ const createApplicationModules = async (
       }),
     resolveSpecialistProfile: async (specialistId) => {
       try {
-        return await profileService.getById(specialistId)
+        return await profileService.resolveRunnableById(specialistId)
       } catch {
         return undefined
       }
@@ -810,6 +898,7 @@ const createApplicationModules = async (
     // broadcast is intentionally not emitted: lifecycle events are a read-only projection and can
     // neither delay nor re-run the approved continuation.
     switchNotifier: createCompletionGateSwitchNotifier(completionGateCoordinator),
+    deleteSpecialist: (request) => specialistPackageService.deleteSpecialist(request),
     // Catalog invalidation after a successful privileged mutation: reconnect live sessions so the
     // agent respawns (re-provisioning skills) and re-applies the updated Specialist whitelist. The
     // ProfileService already broadcasts specialist:catalog-changed on update/delete; this refreshes the
@@ -1019,7 +1108,7 @@ const createApplicationModules = async (
     resolveSwitchReadBack: async (sessionId, targetName) => {
       const specialistId = sessionBindingService.getBinding(sessionId)
       const revision = specialistId
-        ? (await profileService.getById(specialistId)).revision
+        ? (await profileService.resolveRunnableById(specialistId)).revision
         : undefined
       return {
         status: 'approved',
@@ -1192,7 +1281,38 @@ const createApplicationModules = async (
       // A specialist capability edit (skills/connectors/enabled) must reach live sessions on the next
       // turn: reconnect so the agent respawns (re-provisioning skills) and resumes with the updated
       // specialist whitelist in the session _meta.
-      () => void runtime.requestSkillsReload()
+      () => void runtime.requestSkillsReload(),
+      createContributionTemplateExporter({
+        appVersion: app.getVersion(),
+        showSaveDialog: (options) => dialog.showSaveDialog(options),
+        readReadme: () => readFile(resolveContributionTemplateReadmePath(app.getAppPath()), 'utf8'),
+        writeFile: (filePath, bytes) => writeFile(filePath, bytes)
+      }),
+      {
+        service: specialistPackageService,
+        selectArchive: () =>
+          selectSpecialistArchive({
+            showOpenDialog: (options) => dialog.showOpenDialog(options),
+            readFile,
+            getFileSize: async (filePath) => (await stat(filePath)).size
+          }),
+        saveReport: (report) =>
+          saveSpecialistPackageReport(
+            {
+              showSaveDialog: (options) => dialog.showSaveDialog(options),
+              writeFile: (filePath, contents) => writeFile(filePath, contents, 'utf8')
+            },
+            report
+          ),
+        saveExport: (archive) =>
+          saveSpecialistExport(
+            {
+              showSaveDialog: (options) => dialog.showSaveDialog(options),
+              writeFile: (filePath, bytes) => writeFile(filePath, bytes)
+            },
+            archive
+          )
+      }
     )
   )
   // Runtime selection UI (Settings/Onboarding): survey managed+external per language, persist the

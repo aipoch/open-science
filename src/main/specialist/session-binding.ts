@@ -58,7 +58,7 @@ export class SessionBindingService {
 
     let profile: SpecialistProfileView | undefined
     try {
-      profile = await this.profileService.getById(specialistId)
+      profile = await this.profileService.resolveRunnableById(specialistId)
     } catch (error) {
       // Distinguish a genuine not-found (profile deleted) from a transient I/O failure (corrupt
       // store, permission error). getById throws "Specialist <id> not found." for missing profiles;

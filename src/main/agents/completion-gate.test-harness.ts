@@ -94,6 +94,18 @@ export const createCompletionGateAgentHarness = (
       }
       return currentProfile
     }),
+    resolveRunnableByName: vi.fn(async (name: string) => {
+      if (!currentProfile || currentProfile.name !== name) {
+        throw new Error(`Runnable Specialist "${name}" not found.`)
+      }
+      return currentProfile
+    }),
+    resolveRunnableById: vi.fn(async (id: string) => {
+      if (!currentProfile || currentProfile.id !== id) {
+        throw new Error(`Runnable Specialist "${id}" not found.`)
+      }
+      return currentProfile
+    }),
     list: vi.fn(async () => (currentProfile ? [currentProfile] : []))
   } as unknown as ProfileService
   const defaultApprovalGateway: ApprovalGateway = {

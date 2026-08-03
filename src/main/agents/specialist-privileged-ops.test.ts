@@ -89,6 +89,7 @@ const makeService = (opts: {
       store = store.filter((p) => p.id !== id)
     })
   } as unknown as ProfileService
+  service.resolveCustomMutationByName = vi.fn(async (name: string) => service.getByName(name))
   return {
     service,
     calls,
