@@ -281,6 +281,18 @@ describe('PreviewPanel', () => {
     await act(async () => {
       dialog
         ?.querySelector<HTMLButtonElement>(`[aria-label="Close preview of ${name}"]`)
+        ?.dispatchEvent(new MouseEvent('pointermove', { bubbles: true }))
+      await new Promise((resolve) => setTimeout(resolve, 300))
+    })
+    // The full-screen dialog floats at z-[61]; header tooltips must layer above it. Radix puts
+    // role="tooltip" on a visually-hidden span, so assert on the styled content div instead.
+    expect(
+      document.body.querySelector('[data-radix-popper-content-wrapper] [data-state]')?.className
+    ).toContain('z-[70]')
+
+    await act(async () => {
+      dialog
+        ?.querySelector<HTMLButtonElement>(`[aria-label="Close preview of ${name}"]`)
         ?.dispatchEvent(new MouseEvent('click', { bubbles: true }))
     })
 

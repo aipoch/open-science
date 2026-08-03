@@ -165,6 +165,37 @@ export const createPreviewFileItemFromUpload = (
   })
 }
 
+// Sentinel session id for local ("This computer") preview tabs. Local files belong to no chat
+// session, so they use a stable non-session key (mirrors the project-files tool's sentinel) — this
+// keeps them out of removeSessionItems cleanup when a real session is deleted.
+export const LOCAL_PREVIEW_SESSION_ID = '__local_files__'
+
+// Builds a preview tab for a local ("This computer") file. The path is an absolute filesystem
+// path; the id is namespaced by path so re-opening the same file re-activates its tab. sessionId
+// scopes the tab to the active session like every other preview item.
+export const createPreviewFileItemFromLocal = ({
+  sessionId,
+  path,
+  name,
+  size,
+  mtimeMs
+}: {
+  sessionId: string
+  path: string
+  name: string
+  size?: number
+  mtimeMs?: number
+}): PreviewFileItem =>
+  createPreviewFileItem({
+    id: `local:${path}`,
+    sessionId,
+    source: 'local',
+    path,
+    name,
+    size,
+    mtimeMs
+  })
+
 // Converts a sent-message artifact mention into the same preview shape used by its source panel.
 export const createPreviewFileItemFromMention = (
   part: ManagedArtifactMentionPart,

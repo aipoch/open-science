@@ -385,6 +385,8 @@ const PreviewFilePanel = ({
         <PreviewFileSurface
           item={item}
           contentKey={contentKey}
+          // Full-screen mode floats above the modal panel (z-[61]); tooltips must follow.
+          tooltipClassName={isFullScreenOpen ? 'z-[70]' : undefined}
           onClose={isFullScreenOpen ? closeFullScreen : () => onClose(item.id)}
           onOpenFullScreen={isFullScreenOpen ? undefined : openFullScreen}
           provenanceEntry={isFullScreenOpen ? 'trailing' : 'menu'}
@@ -502,7 +504,12 @@ const PreviewPanelSurface = ({ className }: PreviewPanelSurfaceProps): React.JSX
                 id={getPreviewPanelId(item.id)}
                 aria-labelledby={getPreviewTabId(item.id)}
                 hidden
-              />
+              >
+                {/* Keep tool panels mounted so component state (e.g. the local file
+                    browser's current directory) survives switching to a file preview and back.
+                    File panels re-create on activation anyway (key encodes path+mtime). */}
+                {item.type === 'tool' ? <PreviewActiveContent key={item.id} item={item} /> : null}
+              </section>
             )
           }
 

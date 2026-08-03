@@ -1353,7 +1353,7 @@ describe('ProjectFilesView', () => {
     expect(container.querySelectorAll('[data-testid="project-files-end"]')).toHaveLength(1)
   })
 
-  it('opens a filter menu without This computer entries', async () => {
+  it('opens a filter menu with a "this computer" entry', async () => {
     await renderView([
       createSession({
         title: 'Session A',
@@ -1388,7 +1388,8 @@ describe('ProjectFilesView', () => {
     expect(document.body.textContent).toContain('All artifacts')
     expect(document.body.textContent).toContain('Your uploads')
     expect(document.body.textContent).toContain('Session A')
-    expect(document.body.textContent).not.toContain('This computer')
+    // localFs is absent in this environment, so the entry falls back to its default label.
+    expect(document.body.textContent).toContain('This computer')
     expect(document.body.querySelector('[data-filter-id="all"] .lucide-boxes')).not.toBeNull()
   })
 
@@ -3360,7 +3361,7 @@ const createHost = (overrides: Partial<ComputeHost> = {}): ComputeHost => ({
   ...overrides
 })
 
-describe('ProjectFilesView — REMOTE section in source dropdown', () => {
+describe('ProjectFilesView — Remote section in source dropdown', () => {
   let container: HTMLDivElement
   let root: Root
 
@@ -3413,6 +3414,17 @@ describe('ProjectFilesView — REMOTE section in source dropdown', () => {
         bookmarksGet: vi.fn().mockResolvedValue([]),
         bookmarksSet: vi.fn().mockResolvedValue(undefined)
       },
+      localFs: {
+        getRoots: vi.fn().mockResolvedValue({ home: '/Users/roxi', machineName: 'TychoStation' }),
+        listDir: vi.fn().mockResolvedValue({
+          entries: [
+            { name: 'Projects', isDirectory: true, size: 0, mtimeMs: 1710000000000 },
+            { name: 'notes.md', isDirectory: false, size: 2048, mtimeMs: 1710000001000 }
+          ],
+          resolvedPath: '/Users/roxi',
+          truncated: false
+        })
+      },
       projectFiles: {
         getOverview: vi.fn().mockResolvedValue({
           totalCount: 0,
@@ -3452,7 +3464,7 @@ describe('ProjectFilesView — REMOTE section in source dropdown', () => {
     })
   }
 
-  it('shows REMOTE section label in source dropdown when hosts are present', async () => {
+  it('shows the Remote section label in source dropdown when hosts are present', async () => {
     useComputeStore.setState({
       ...createInitialComputeState(),
       isLoaded: true,
@@ -3473,11 +3485,154 @@ describe('ProjectFilesView — REMOTE section in source dropdown', () => {
       filterButton?.dispatchEvent(new MouseEvent('click', { bubbles: true }))
     })
 
-    expect(document.body.textContent).toContain('REMOTE')
+    expect(document.body.textContent).toContain('Remote')
     expect(document.body.textContent).toContain('biowulf')
   })
 
-  it('disables unreachable hosts in the REMOTE section', async () => {
+  it('swaps the artifacts list for the local browser when the device is picked', async () => {
+    await renderFilesView()
+
+    // Starts on the artifacts container, labelled with the resolved device name in the dropdown.
+    expect(container.querySelector('[data-testid="project-files-scroll"]')).not.toBeNull()
+    expect(container.querySelector('[aria-label="Local file browser"]')).toBeNull()
+
+    const openMenu = async (): Promise<void> => {
+      const filterButton = container.querySelector<HTMLButtonElement>(
+        '[aria-label="Filter project files"]'
+      )
+      await act(async () => {
+        filterButton?.dispatchEvent(new MouseEvent('pointerdown', { bubbles: true, button: 0 }))
+        filterButton?.dispatchEvent(new MouseEvent('click', { bubbles: true }))
+      })
+    }
+
+    await openMenu()
+    const deviceItem = Array.from(
+      document.querySelectorAll<HTMLElement>('[role="menuitemradio"]')
+    ).find((el) => el.textContent?.includes('TychoStation'))
+    await act(async () => {
+      deviceItem?.dispatchEvent(new MouseEvent('click', { bubbles: true }))
+    })
+
+    // The local browser replaces the artifacts list inside the same Files tab.
+    expect(container.querySelector('[aria-label="Local file browser"]')).not.toBeNull()
+    expect(container.querySelector('[data-testid="project-files-scroll"]')).toBeNull()
+    expect(window.api.localFs.listDir).toHaveBeenCalledWith('/Users/roxi')
+    expect(container.textContent).toContain('Projects')
+    expect(container.textContent).toContain('notes.md')
+    // Header count follows the visible container.
+    expect(container.textContent).toContain('2 files')
+
+    // Picking an artifact scope returns the body to the artifacts list.
+    await openMenu()
+    const allArtifacts = document.querySelector<HTMLElement>('[data-filter-id="all"]')
+    await act(async () => {
+      allArtifacts?.dispatchEvent(new MouseEvent('click', { bubbles: true }))
+    })
+
+    expect(container.querySelector('[data-testid="project-files-scroll"]')).not.toBeNull()
+    expect(container.querySelector('[aria-label="Local file browser"]')).toBeNull()
+  })
+
+  it('closes the local browser Go-to menu on an outside click', async () => {
+    await renderFilesView()
+
+    const filterButton = container.querySelector<HTMLButtonElement>(
+      '[aria-label="Filter project files"]'
+    )
+    await act(async () => {
+      filterButton?.dispatchEvent(new MouseEvent('pointerdown', { bubbles: true, button: 0 }))
+      filterButton?.dispatchEvent(new MouseEvent('click', { bubbles: true }))
+    })
+    const deviceItem = Array.from(
+      document.querySelectorAll<HTMLElement>('[role="menuitemradio"]')
+    ).find((el) => el.textContent?.includes('TychoStation'))
+    await act(async () => {
+      deviceItem?.dispatchEvent(new MouseEvent('click', { bubbles: true }))
+    })
+
+    const goTo = Array.from(container.querySelectorAll<HTMLButtonElement>('button')).find((el) =>
+      el.textContent?.includes('Go to')
+    )
+    await act(async () => {
+      goTo?.dispatchEvent(new MouseEvent('pointerdown', { bubbles: true, button: 0 }))
+      goTo?.dispatchEvent(new MouseEvent('click', { bubbles: true }))
+    })
+    expect(document.querySelector('[role="menu"]')).not.toBeNull()
+    expect(document.body.textContent).toContain('Home')
+
+    // Radix dismisses on pointerdown-then-click outside the content.
+    await act(async () => {
+      document.body.dispatchEvent(new MouseEvent('pointerdown', { bubbles: true, button: 0 }))
+      document.body.dispatchEvent(new MouseEvent('click', { bubbles: true }))
+    })
+    expect(document.querySelector('[role="menu"]')).toBeNull()
+  })
+
+  it('only re-lists the directory when the address bar path actually changes', async () => {
+    await renderFilesView()
+
+    const filterButton = container.querySelector<HTMLButtonElement>(
+      '[aria-label="Filter project files"]'
+    )
+    await act(async () => {
+      filterButton?.dispatchEvent(new MouseEvent('pointerdown', { bubbles: true, button: 0 }))
+      filterButton?.dispatchEvent(new MouseEvent('click', { bubbles: true }))
+    })
+    const deviceItem = Array.from(
+      document.querySelectorAll<HTMLElement>('[role="menuitemradio"]')
+    ).find((el) => el.textContent?.includes('TychoStation'))
+    await act(async () => {
+      deviceItem?.dispatchEvent(new MouseEvent('click', { bubbles: true }))
+    })
+
+    const listDir = window.api.localFs.listDir as ReturnType<typeof vi.fn>
+    const callsAfterLanding = listDir.mock.calls.length
+    const address = container.querySelector<HTMLInputElement>('[aria-label="Directory path"]')
+    expect(address?.value).toBe('/Users/roxi')
+
+    // React tracks the value setter, so drive it natively to make onChange fire.
+    const typePath = async (next: string): Promise<void> => {
+      await act(async () => {
+        if (!address) return
+        const setter = Object.getOwnPropertyDescriptor(
+          HTMLInputElement.prototype,
+          'value'
+        )?.set?.bind(address)
+        setter?.(next)
+        address.dispatchEvent(new Event('input', { bubbles: true }))
+      })
+    }
+
+    // Blurring an untouched path, and a no-op edit (trailing slash), both skip the listing call.
+    await act(async () => {
+      address?.dispatchEvent(new FocusEvent('focusout', { bubbles: true }))
+    })
+    expect(listDir.mock.calls.length).toBe(callsAfterLanding)
+
+    await typePath('/Users/roxi/')
+    await act(async () => {
+      address?.dispatchEvent(new FocusEvent('focusout', { bubbles: true }))
+    })
+    expect(listDir.mock.calls.length).toBe(callsAfterLanding)
+    // The field snaps back to the canonical path rather than keeping the equivalent spelling.
+    expect(address?.value).toBe('/Users/roxi')
+
+    // A genuinely different path does re-read.
+    listDir.mockResolvedValueOnce({
+      entries: [],
+      resolvedPath: '/Users/roxi/Projects',
+      truncated: false
+    })
+    await typePath('/Users/roxi/Projects')
+    await act(async () => {
+      address?.dispatchEvent(new FocusEvent('focusout', { bubbles: true }))
+    })
+    expect(listDir).toHaveBeenLastCalledWith('/Users/roxi/Projects')
+    expect(listDir.mock.calls.length).toBe(callsAfterLanding + 1)
+  })
+
+  it('disables unreachable hosts in the Remote section', async () => {
     useComputeStore.setState({
       ...createInitialComputeState(),
       isLoaded: true,

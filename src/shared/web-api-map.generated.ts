@@ -49,6 +49,11 @@ export const WEB_INVOKE_CHANNELS = {
   'compute.sshConfigAliases': 'compute:ssh-config-aliases',
   'github.getStars': 'github:get-stars',
   'lifecycle.getClientId': 'lifecycle:client-id',
+  'localFs.getRoots': 'local-fs:get-roots',
+  'localFs.listDir': 'local-fs:list-dir',
+  'localFs.openPath': 'local-fs:open-path',
+  'localFs.readPreview': 'local-fs:read-preview',
+  'localFs.reveal': 'local-fs:reveal',
   'logs.getPath': 'logs:get-path',
   'logs.openFile': 'logs:open-file',
   'logs.revealInFolder': 'logs:reveal-in-folder',
@@ -213,6 +218,7 @@ export const WEB_INVOKE_CHANNELS = {
   'uploads.getTransferStatus': 'uploads:transfer-status',
   'uploads.readPreview': 'uploads:read-preview',
   'uploads.stageLocalFile': 'uploads:stage-local-file',
+  'uploads.stageLocalPath': 'uploads:stage-local-path',
   'window.close': 'window:close'
 } as const
 

@@ -405,3 +405,153 @@ describe('PreviewFileSurface Provenance entry', () => {
     expect(zIndexFromClassName(menu!)).toBeGreaterThan(zIndexFromClassName(dialog!))
   })
 })
+
+const localItem: PreviewFileItem = {
+  id: 'local:/Users/example/logs/proxy.log',
+  sessionId: '__local_files__',
+  type: 'file',
+  title: 'proxy.log',
+  name: 'proxy.log',
+  path: '/Users/example/logs/proxy.log',
+  format: 'text',
+  source: 'local'
+}
+
+const setupLocalApi = (): void => {
+  window.api.localFs = {
+    reveal: vi.fn(),
+    openPath: vi.fn()
+  } as unknown as typeof window.api.localFs
+  window.api.saveManagedFile = vi.fn().mockResolvedValue({ saved: true })
+  window.api.uploads = {
+    stageLocalPath: vi
+      .fn()
+      .mockResolvedValue({ id: 'attachment-1', path: '/managed/.pending/proxy.log' })
+  } as unknown as typeof window.api.uploads
+}
+
+const clickMenuItem = async (label: string): Promise<void> => {
+  const menuItem = [...document.body.querySelectorAll<HTMLElement>('[role="menuitem"]')].find(
+    (element) => element.textContent?.includes(label)
+  )
+  if (!menuItem) throw new Error(`menu item not found: ${label}`)
+  await click(menuItem)
+}
+
+describe('PreviewFileSurface local file header', () => {
+  beforeEach(() => {
+    setupLocalApi()
+  })
+
+  it('shows a This computer pill before the file path in a light style', async () => {
+    await act(async () => {
+      root.render(<PreviewFileSurface item={localItem} onClose={vi.fn()} />)
+    })
+
+    const pathLine = container.querySelector('[data-testid="local-file-path"]')
+    expect(pathLine?.textContent).toBe('This computer/Users/example/logs/proxy.log')
+    expect(pathLine?.className).toContain('text-text-100')
+    expect(pathLine?.querySelector('span')?.className).toContain('rounded-full')
+  })
+
+  it('offers a reload button instead of a standalone reveal button', async () => {
+    await act(async () => {
+      root.render(<PreviewFileSurface item={localItem} onClose={vi.fn()} />)
+    })
+
+    expect(container.querySelector('[aria-label="Reveal in Finder"]')).toBeNull()
+    previewContentSpy.mockClear()
+
+    await click(container.querySelector('[aria-label="Reload file"]'))
+
+    // Reload remounts the content tree so the preview is re-read from disk.
+    expect(previewContentSpy).toHaveBeenCalled()
+  })
+
+  it('groups the menu per the local-file design: identity header, Copy path, On this machine', async () => {
+    await act(async () => {
+      root.render(<PreviewFileSurface item={localItem} onClose={vi.fn()} />)
+    })
+    await openMenu(container.querySelector('[aria-label="More actions"]'))
+
+    const menu = document.body.querySelector('[role="menu"]')
+    // The menu opens with the file identity: name above the full path in a light tone.
+    expect(menu?.textContent).toContain('proxy.log')
+    expect(menu?.textContent).toContain('/Users/example/logs/proxy.log')
+    expect(menu?.textContent).toContain('Copy path')
+    expect(menu?.textContent).toContain('On this machine')
+    expect(menu?.textContent).toContain('Download')
+    expect(menu?.textContent).toContain('Save as artifact')
+    expect(menu?.textContent).not.toContain('Reveal in Finder')
+    expect(menu?.textContent).not.toContain('Open with default app')
+    expect(menu?.textContent).not.toContain('Annotate')
+    expect(menu?.textContent).not.toContain('Delete')
+
+    await clickMenuItem('Download')
+
+    expect(window.api.saveManagedFile).toHaveBeenCalledWith({
+      source: 'local',
+      path: '/Users/example/logs/proxy.log',
+      suggestedName: 'proxy.log'
+    })
+  })
+
+  it('opens its menu above an expanded preview modal', async () => {
+    await act(async () => {
+      root.render(
+        <section role="dialog" className="z-[61]">
+          <PreviewFileSurface item={localItem} onClose={vi.fn()} />
+        </section>
+      )
+    })
+
+    await openMenu(container.querySelector('[aria-label="More actions"]'))
+
+    const dialog = container.querySelector('[role="dialog"]')
+    const menu = document.body.querySelector('[role="menu"]')
+    expect(menu).not.toBeNull()
+    expect(menu?.textContent).toContain('Save as artifact')
+    expect(zIndexFromClassName(menu!)).toBeGreaterThan(zIndexFromClassName(dialog!))
+  })
+
+  it('shows no tooltip for the More actions trigger', async () => {
+    await act(async () => {
+      root.render(<PreviewFileSurface item={localItem} onClose={vi.fn()} />)
+    })
+    const trigger = container.querySelector('[aria-label="More actions"]')!
+
+    await act(async () => {
+      trigger.dispatchEvent(new MouseEvent('pointermove', { bubbles: true }))
+      await new Promise((resolve) => setTimeout(resolve, 300))
+    })
+
+    // Tooltip content carries bg-text-000; the dropdown menu content (bg-popover) must not match.
+    expect(
+      document.body.querySelector('[data-radix-popper-content-wrapper] .bg-text-000')
+    ).toBeNull()
+  })
+
+  it('saves as artifact, then swaps the menu item for a saved chip', async () => {
+    await act(async () => {
+      root.render(<PreviewFileSurface item={localItem} onClose={vi.fn()} />)
+    })
+    await openMenu(container.querySelector('[aria-label="More actions"]'))
+    await clickMenuItem('Save as artifact')
+
+    expect(window.api.uploads.stageLocalPath).toHaveBeenCalledWith({
+      transferId: expect.any(String),
+      name: 'proxy.log',
+      sourcePath: '/Users/example/logs/proxy.log'
+    })
+    const chip = container.querySelector('[data-testid="saved-as-artifact"]')
+    expect(chip).not.toBeNull()
+    // The Saved chip leads the local action cluster, ahead of the reload button.
+    const reload = container.querySelector('[aria-label="Reload file"]')
+    expect(chip!.compareDocumentPosition(reload!) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy()
+
+    await openMenu(container.querySelector('[aria-label="More actions"]'))
+    expect(document.body.querySelector('[role="menu"]')?.textContent).not.toContain(
+      'Save as artifact'
+    )
+  })
+})

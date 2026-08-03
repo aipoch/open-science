@@ -1,5 +1,5 @@
 // Remote file browser modal (compute-file-preview, issue 02 + issue 03).
-// Opened from the ComputePanel host card folder-icon button (and later from the Files panel REMOTE
+// Opened from the ComputePanel host card folder-icon button (and later from the Files panel Remote
 // dropdown, issue 05). Presents a listbox-style directory listing with navigation, a detail panel for
 // selected files, and a Go-to dropdown with Scratch / Home / Pin / bookmarks.
 //

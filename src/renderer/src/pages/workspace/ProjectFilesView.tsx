@@ -8,6 +8,7 @@ import {
   List,
   Maximize2,
   Minimize2,
+  Monitor,
   Paperclip,
   Plus,
   Search,
@@ -57,6 +58,7 @@ import { ManagedFileDownloadButton } from './ManagedFileDownloadButton'
 import { createPreviewFileItem } from './preview-file-item'
 import type { MessageArtifact } from './preview-file-item'
 import { FileBrowserModal } from '../settings/FileBrowserModal'
+import { LocalFileBrowser } from './LocalFileBrowser'
 import { getPreviewThumbnailReadEncoding } from './preview-support'
 import { createKeyedRequestReader } from './project-file-preview-queue'
 import { isUnavailableFileError, FILE_MISSING_TAG } from './previews/preview-errors'
@@ -776,7 +778,10 @@ const ProjectFilesFilterMenu = ({
   canLoadMoreOptions,
   optionsLoadError,
   onLoadMoreOptions,
-  onBrowseRemoteHost
+  onBrowseRemoteHost,
+  onBrowseLocal,
+  localMachineName,
+  isLocalSelected
 }: {
   label: string
   options: ProjectFilesFilterOption[]
@@ -789,6 +794,9 @@ const ProjectFilesFilterMenu = ({
   optionsLoadError?: string
   onLoadMoreOptions: () => void
   onBrowseRemoteHost: (providerId: string) => void
+  onBrowseLocal: () => void
+  localMachineName: string | undefined
+  isLocalSelected: boolean
 }): React.JSX.Element => {
   const hosts = useComputeStore((state) => state.hosts)
   const openSettingsToCompute = useSettingsStore((state) => state.openSettingsToCompute)
@@ -814,10 +822,18 @@ const ProjectFilesFilterMenu = ({
           className="max-w-[220px] gap-1.5"
           aria-label="Filter project files"
         >
-          <ProjectFilesFilterIcon
-            kind={selectedOptionKind}
-            className="size-3.5 shrink-0 text-text-300"
-          />
+          {isLocalSelected ? (
+            <Monitor
+              className="size-3.5 shrink-0 text-text-300"
+              strokeWidth={1.8}
+              aria-hidden="true"
+            />
+          ) : (
+            <ProjectFilesFilterIcon
+              kind={selectedOptionKind}
+              className="size-3.5 shrink-0 text-text-300"
+            />
+          )}
           <span className="min-w-0 truncate">{label}</span>
           <ChevronDown
             className="size-3.5 shrink-0 text-text-300"
@@ -875,9 +891,36 @@ const ProjectFilesFilterMenu = ({
           ) : null}
         </DropdownMenuGroup>
 
-        {/* REMOTE section: SSH compute hosts */}
+        {/* "This computer" section: browse files on the machine Kiro runs on */}
         <DropdownMenuSeparator />
-        <DropdownMenuLabel>REMOTE</DropdownMenuLabel>
+        <DropdownMenuLabel>This computer</DropdownMenuLabel>
+        <DropdownMenuGroup>
+          <DropdownMenuItem
+            role="menuitemradio"
+            aria-checked={isLocalSelected}
+            className="gap-2"
+            onSelect={() => onBrowseLocal()}
+          >
+            <Monitor
+              className="size-4 shrink-0 text-text-300"
+              strokeWidth={1.8}
+              aria-hidden="true"
+            />
+            <span className="min-w-0 flex-1 truncate">{localMachineName || 'This computer'}</span>
+            {isLocalSelected ? (
+              <Check className="size-4 shrink-0 text-primary" strokeWidth={2} aria-hidden="true" />
+            ) : null}
+          </DropdownMenuItem>
+          <DropdownMenuItem disabled className="gap-2 text-muted-foreground">
+            <Plus className="size-4 shrink-0" strokeWidth={1.8} aria-hidden="true" />
+            <span>Add local folder…</span>
+            <span className="ml-auto shrink-0 text-[11px]">Soon</span>
+          </DropdownMenuItem>
+        </DropdownMenuGroup>
+
+        {/* Remote section: SSH compute hosts */}
+        <DropdownMenuSeparator />
+        <DropdownMenuLabel>Remote</DropdownMenuLabel>
         <DropdownMenuGroup>
           {hosts.map((host) => {
             const reachable = host.probeResult?.ok === true
@@ -1054,6 +1097,30 @@ const ProjectFilesViewContent = ({
 
   // Remote file browser modal state — set to a providerId when a REMOTE host is selected.
   const [browseProviderId, setBrowseProviderId] = useState<string | undefined>(undefined)
+  // Device name for the "this computer" source entry; undefined until roots resolve.
+  const [localMachineName, setLocalMachineName] = useState<string | undefined>(undefined)
+  // Which container the tab body shows: the artifacts list or the local ("this computer") browser.
+  const [sourceMode, setSourceMode] = useState<'artifacts' | 'local'>('artifacts')
+  // Entry count reported by the local browser, so the header count tracks the visible container.
+  const [localEntryCount, setLocalEntryCount] = useState<number | undefined>(undefined)
+
+  // Resolve the device name once so the dropdown entry reads as the machine it browses.
+  // localFs is absent in non-Electron test/build contexts, so guard the surface before calling it.
+  useEffect(() => {
+    let cancelled = false
+    void (async () => {
+      try {
+        const fetchedRoots = await window.api?.localFs?.getRoots()
+        if (!cancelled && fetchedRoots) setLocalMachineName(fetchedRoots.machineName)
+      } catch {
+        // Leave the name undefined; the entry falls back to "This computer".
+      }
+    })()
+    return () => {
+      cancelled = true
+    }
+  }, [])
+
   const handleIndexChanged = useCallback(
     (event: ProjectFilesChangedEvent): void => {
       const currentSessions = useSessionStore.getState().sessions
@@ -1385,10 +1452,12 @@ const ProjectFilesViewContent = ({
     })
   }
 
+  // Picking any artifact scope also returns the body to the artifacts container.
   const selectFilter = (filterId: string): void => {
     setSelectedFilterId(filterId)
     const option = filterOptions.find((item) => item.id === filterId)
     setSelectedSessionFallback(option?.kind === 'session' ? option : undefined)
+    setSourceMode('artifacts')
   }
 
   const revealNextAllPage = (
@@ -1468,6 +1537,7 @@ const ProjectFilesViewContent = ({
   const showsUploadsSection =
     (isAllFilter || isUploadsFilter) &&
     (index.uploads.totalCount > 0 || Boolean(index.uploads.error))
+  const isLocalMode = sourceMode === 'local'
 
   return (
     <div data-testid="files-view" className="flex h-full min-h-0 w-full flex-col bg-bg-10">
@@ -1479,7 +1549,13 @@ const ProjectFilesViewContent = ({
         )}
       >
         <ProjectFilesFilterMenu
-          label={isAllFilter ? 'Artifacts' : selectedFilterOption.label}
+          label={
+            isLocalMode
+              ? localMachineName || 'This computer'
+              : isAllFilter
+                ? 'Artifacts'
+                : selectedFilterOption.label
+          }
           options={filterOptions}
           selectedOptionId={effectiveFilterId}
           onSelect={selectFilter}
@@ -1494,43 +1570,53 @@ const ProjectFilesViewContent = ({
           optionsLoadError={sessionOptionsIndex.groups.error}
           onLoadMoreOptions={() => void sessionOptionsIndex.loadMoreGroups()}
           onBrowseRemoteHost={(providerId) => setBrowseProviderId(providerId)}
+          onBrowseLocal={() => setSourceMode('local')}
+          localMachineName={localMachineName}
+          isLocalSelected={isLocalMode}
         />
         <TooltipProvider delayDuration={200}>
           <div className="flex shrink-0 items-center gap-1.5">
-            <ToggleGroup.Root
-              type="single"
-              value={viewMode}
-              aria-label="File view"
-              className="flex h-8 shrink-0 items-center rounded-lg border border-border bg-card p-0.5"
-              onValueChange={(value) => {
-                if (value === 'grid' || value === 'list') setViewMode(value)
-              }}
-            >
-              <Tooltip>
-                <TooltipTrigger asChild>
-                  <ToggleGroup.Item
-                    value="grid"
-                    aria-label="Grid view"
-                    className="flex size-7 items-center justify-center rounded-md text-text-300 outline-none hover:bg-muted hover:text-text-000 focus-visible:ring-3 focus-visible:ring-ring/50 aria-checked:bg-bg-400 aria-checked:text-text-000 aria-checked:shadow-sm aria-checked:hover:bg-bg-400"
-                  >
-                    <LayoutGrid className="size-3.5" strokeWidth={1.8} aria-hidden="true" />
-                  </ToggleGroup.Item>
-                </TooltipTrigger>
-                <TooltipContent className="z-[70]">Grid view</TooltipContent>
-              </Tooltip>
-              <Tooltip>
-                <TooltipTrigger asChild>
-                  <ToggleGroup.Item
-                    value="list"
-                    aria-label="List view"
-                    className="flex size-7 items-center justify-center rounded-md text-text-300 outline-none hover:bg-muted hover:text-text-000 focus-visible:ring-3 focus-visible:ring-ring/50 aria-checked:bg-bg-400 aria-checked:text-text-000 aria-checked:shadow-sm aria-checked:hover:bg-bg-400"
-                  >
-                    <List className="size-3.5" strokeWidth={1.8} aria-hidden="true" />
-                  </ToggleGroup.Item>
-                </TooltipTrigger>
-                <TooltipContent className="z-[70]">List view</TooltipContent>
-              </Tooltip>
-            </ToggleGroup.Root>
+            {/* Local mode has no search row, so its file count stays in the header. */}
+            {isLocalMode ? (
+              <div className="text-[11px] tabular-nums text-text-300">
+                {formatFileCount(localEntryCount ?? 0)}
+              </div>
+            ) : (
+              <ToggleGroup.Root
+                type="single"
+                value={viewMode}
+                aria-label="File view"
+                className="flex h-8 shrink-0 items-center rounded-lg border border-border bg-card p-0.5"
+                onValueChange={(value) => {
+                  if (value === 'grid' || value === 'list') setViewMode(value)
+                }}
+              >
+                <Tooltip>
+                  <TooltipTrigger asChild>
+                    <ToggleGroup.Item
+                      value="grid"
+                      aria-label="Grid view"
+                      className="flex size-7 items-center justify-center rounded-md text-text-300 outline-none hover:bg-muted hover:text-text-000 focus-visible:ring-3 focus-visible:ring-ring/50 aria-checked:bg-bg-400 aria-checked:text-text-000 aria-checked:shadow-sm aria-checked:hover:bg-bg-400"
+                    >
+                      <LayoutGrid className="size-3.5" strokeWidth={1.8} aria-hidden="true" />
+                    </ToggleGroup.Item>
+                  </TooltipTrigger>
+                  <TooltipContent className="z-[70]">Grid view</TooltipContent>
+                </Tooltip>
+                <Tooltip>
+                  <TooltipTrigger asChild>
+                    <ToggleGroup.Item
+                      value="list"
+                      aria-label="List view"
+                      className="flex size-7 items-center justify-center rounded-md text-text-300 outline-none hover:bg-muted hover:text-text-000 focus-visible:ring-3 focus-visible:ring-ring/50 aria-checked:bg-bg-400 aria-checked:text-text-000 aria-checked:shadow-sm aria-checked:hover:bg-bg-400"
+                    >
+                      <List className="size-3.5" strokeWidth={1.8} aria-hidden="true" />
+                    </ToggleGroup.Item>
+                  </TooltipTrigger>
+                  <TooltipContent className="z-[70]">List view</TooltipContent>
+                </Tooltip>
+              </ToggleGroup.Root>
+            )}
             <Tooltip>
               <TooltipTrigger asChild>
                 <Button
@@ -1557,193 +1643,208 @@ const ProjectFilesViewContent = ({
           </div>
         </TooltipProvider>
       </div>
-      <div className="flex shrink-0 items-center gap-3 border-y border-border-300/60 px-4 py-2">
-        <div className="relative min-w-0 flex-1">
-          <Search
-            className="pointer-events-none absolute left-2.5 top-1/2 size-3.5 -translate-y-1/2 text-text-300"
-            strokeWidth={1.8}
-            aria-hidden="true"
-          />
-          <Input
-            type="search"
-            aria-label="Search project files"
-            placeholder="Search artifacts..."
-            value={searchQuery}
-            maxLength={256}
-            className="h-[30px] border-0 bg-transparent pl-8 pr-8 shadow-none [&::-webkit-search-cancel-button]:hidden"
-            onChange={(event) => setSearchQuery(event.target.value)}
-          />
-          {searchQuery ? (
-            <TooltipProvider delayDuration={200}>
-              <Tooltip>
-                <TooltipTrigger asChild>
+
+      {/* The search row filters managed artifacts, so local mode hides it. */}
+      {!isLocalMode ? (
+        <div className="flex shrink-0 items-center gap-3 border-y border-border-300/60 px-4 py-2">
+          <div className="relative min-w-0 flex-1">
+            <Search
+              className="pointer-events-none absolute left-2.5 top-1/2 size-3.5 -translate-y-1/2 text-text-300"
+              strokeWidth={1.8}
+              aria-hidden="true"
+            />
+            <Input
+              type="search"
+              aria-label="Search project files"
+              placeholder="Search artifacts..."
+              value={searchQuery}
+              maxLength={256}
+              className="h-[30px] border-0 bg-transparent pl-8 pr-8 shadow-none [&::-webkit-search-cancel-button]:hidden"
+              onChange={(event) => setSearchQuery(event.target.value)}
+            />
+            {searchQuery ? (
+              <TooltipProvider delayDuration={200}>
+                <Tooltip>
+                  <TooltipTrigger asChild>
+                    <Button
+                      type="button"
+                      variant="ghost"
+                      size="icon-xs"
+                      aria-label="Clear file search"
+                      className="absolute right-1 top-1/2 -translate-y-1/2 text-text-100 hover:bg-bg-200 hover:text-text-100"
+                      onMouseDown={(event) => event.preventDefault()}
+                      onClick={() => setSearchQuery('')}
+                    >
+                      <X className="size-3.5" strokeWidth={2} aria-hidden="true" />
+                    </Button>
+                  </TooltipTrigger>
+                  <TooltipContent className="z-[70]">Clear search</TooltipContent>
+                </Tooltip>
+              </TooltipProvider>
+            ) : null}
+          </div>
+          <div className="shrink-0 text-[11px] tabular-nums text-text-300">
+            {formatFileCount(visibleFileCount)}
+          </div>
+        </div>
+      ) : null}
+
+      {isLocalMode ? (
+        <LocalFileBrowser onEntryCountChange={setLocalEntryCount} />
+      ) : (
+        <div data-testid="project-files-scroll" className="min-h-0 flex-1 overflow-y-auto pb-4">
+          {!catalogIndex.overview.isIndexComplete ? (
+            <div className="mx-4 mb-2 flex items-center justify-between gap-3 border-l-2 border-warning-000 px-3 py-2 text-[11px] text-text-200">
+              <span className="min-w-0 flex-1">
+                {catalogIndex.repairError ?? 'Some files could not be indexed yet.'}
+              </span>
+              <Button
+                type="button"
+                variant="outline"
+                size="xs"
+                aria-label="Retry indexing project files"
+                disabled={catalogIndex.isRepairing}
+                onClick={() => void catalogIndex.repairIndex()}
+              >
+                {catalogIndex.isRepairing ? 'Retrying...' : 'Retry'}
+              </Button>
+            </div>
+          ) : null}
+
+          {catalogIndex.overviewError ? (
+            <PageLoadError message={catalogIndex.overviewError} onRetry={catalogIndex.reload} />
+          ) : null}
+
+          {isSearchActive && isAllFilter && index.overviewError ? (
+            <PageLoadError message={index.overviewError} onRetry={index.reload} />
+          ) : null}
+
+          {hasLoadedInitialPages &&
+          catalogIndex.overview.isIndexComplete &&
+          visibleFileCount === 0 &&
+          !hasPageError ? (
+            <div className="flex h-full items-center justify-center px-6 text-center text-[12px] text-text-300">
+              {isSearchActive ? `No files match “${debouncedSearchQuery}”` : 'No files yet'}
+            </div>
+          ) : null}
+
+          {showsUploadsSection ? (
+            <section>
+              <SectionHeader
+                id="uploads"
+                title="Your uploads"
+                countLabel={`${index.uploads.totalCount}`}
+                isCollapsed={uploadsCollapsed}
+                hideTopBorder
+                onToggle={toggleSection}
+              />
+              {!uploadsCollapsed ? (
+                <>
+                  {visibleUploadFiles.length > 0 ? (
+                    <ProjectFileItems
+                      files={visibleUploadFiles}
+                      viewMode={viewMode}
+                      previewById={currentFilePreviewById}
+                      onPreview={previewFile}
+                    />
+                  ) : null}
+                  <div
+                    ref={uploadSentinelRef}
+                    data-testid="upload-page-sentinel"
+                    className="h-px"
+                  />
+                  {index.uploads.error ? (
+                    <PageLoadError
+                      message={index.uploads.error}
+                      onRetry={() => void index.loadMoreUploads()}
+                    />
+                  ) : null}
+                  <FilePageFooter
+                    page={index.uploads}
+                    mode={isAllFilter || !supportsIntersectionObserver ? 'manual' : 'scroll'}
+                    visibleItemCount={visibleUploadFiles.length}
+                    loadMoreLabel="Load more uploaded files"
+                    onLoadMore={() =>
+                      isAllFilter
+                        ? revealNextAllPage(
+                            'uploads',
+                            allUploadVisibleItemLimit,
+                            index.uploads,
+                            index.loadMoreUploads
+                          )
+                        : void index.loadMoreUploads()
+                    }
+                  />
+                </>
+              ) : null}
+            </section>
+          ) : null}
+
+          {isAllFilter && index.groups.error ? (
+            <PageLoadError
+              message={index.groups.error}
+              onRetry={() => void index.loadMoreGroups()}
+            />
+          ) : null}
+
+          {visibleArtifactGroups.length > 0 ? (
+            <section>
+              {isAllFilter ? (
+                <div className="px-4 pb-1 pt-3 text-[11px] font-medium uppercase tracking-normal text-text-300">
+                  Generated files
+                </div>
+              ) : null}
+              {visibleArtifactGroups.map((group, groupIndex) => (
+                <ProjectArtifactGroupSection
+                  key={group.sessionId}
+                  group={group}
+                  title={getArtifactGroupTitle(group)}
+                  page={index.artifactsBySession[group.sessionId]}
+                  loadMode={isAllFilter ? 'manual' : 'scroll'}
+                  manualVisibleItemLimit={
+                    allVisibleItemLimits[`session:${group.sessionId}`] ?? FILE_PAGE_SIZE
+                  }
+                  isCollapsed={collapsedSectionIds.has(`session:${group.sessionId}`)}
+                  hideTopBorder={!showsUploadsSection && groupIndex === 0}
+                  onToggle={toggleSection}
+                  loadMore={index.loadMoreArtifacts}
+                  onManualLoadMore={() => {
+                    const sectionId = `session:${group.sessionId}`
+                    const visibleItemLimit = allVisibleItemLimits[sectionId] ?? FILE_PAGE_SIZE
+                    revealNextAllPage(
+                      sectionId,
+                      visibleItemLimit,
+                      index.artifactsBySession[group.sessionId],
+                      () => index.loadMoreArtifacts(group.sessionId)
+                    )
+                  }}
+                  viewMode={viewMode}
+                  previewById={currentFilePreviewById}
+                  onPreview={previewFile}
+                />
+              ))}
+              <div ref={groupsSentinelRef} data-testid="group-page-sentinel" className="h-px" />
+              {!supportsIntersectionObserver &&
+              isAllFilter &&
+              index.groups.nextCursor &&
+              !index.groups.isLoading &&
+              !index.groups.error ? (
+                <div className="flex justify-center px-4 py-2">
                   <Button
                     type="button"
                     variant="ghost"
-                    size="icon-xs"
-                    aria-label="Clear file search"
-                    className="absolute right-1 top-1/2 -translate-y-1/2 text-text-100 hover:bg-bg-200 hover:text-text-100"
-                    onMouseDown={(event) => event.preventDefault()}
-                    onClick={() => setSearchQuery('')}
+                    size="xs"
+                    className={loadMoreButtonClassName}
+                    onClick={() => void index.loadMoreGroups()}
                   >
-                    <X className="size-3.5" strokeWidth={2} aria-hidden="true" />
+                    Load more sessions
                   </Button>
-                </TooltipTrigger>
-                <TooltipContent className="z-[70]">Clear search</TooltipContent>
-              </Tooltip>
-            </TooltipProvider>
+                </div>
+              ) : null}
+            </section>
           ) : null}
         </div>
-        <div className="shrink-0 text-[11px] tabular-nums text-text-300">
-          {formatFileCount(visibleFileCount)}
-        </div>
-      </div>
-
-      <div data-testid="project-files-scroll" className="min-h-0 flex-1 overflow-y-auto pb-4">
-        {!catalogIndex.overview.isIndexComplete ? (
-          <div className="mx-4 mb-2 flex items-center justify-between gap-3 border-l-2 border-warning-000 px-3 py-2 text-[11px] text-text-200">
-            <span className="min-w-0 flex-1">
-              {catalogIndex.repairError ?? 'Some files could not be indexed yet.'}
-            </span>
-            <Button
-              type="button"
-              variant="outline"
-              size="xs"
-              aria-label="Retry indexing project files"
-              disabled={catalogIndex.isRepairing}
-              onClick={() => void catalogIndex.repairIndex()}
-            >
-              {catalogIndex.isRepairing ? 'Retrying...' : 'Retry'}
-            </Button>
-          </div>
-        ) : null}
-
-        {catalogIndex.overviewError ? (
-          <PageLoadError message={catalogIndex.overviewError} onRetry={catalogIndex.reload} />
-        ) : null}
-
-        {isSearchActive && isAllFilter && index.overviewError ? (
-          <PageLoadError message={index.overviewError} onRetry={index.reload} />
-        ) : null}
-
-        {hasLoadedInitialPages &&
-        catalogIndex.overview.isIndexComplete &&
-        visibleFileCount === 0 &&
-        !hasPageError ? (
-          <div className="flex h-full items-center justify-center px-6 text-center text-[12px] text-text-300">
-            {isSearchActive ? `No files match “${debouncedSearchQuery}”` : 'No files yet'}
-          </div>
-        ) : null}
-
-        {showsUploadsSection ? (
-          <section>
-            <SectionHeader
-              id="uploads"
-              title="Your uploads"
-              countLabel={`${index.uploads.totalCount}`}
-              isCollapsed={uploadsCollapsed}
-              hideTopBorder
-              onToggle={toggleSection}
-            />
-            {!uploadsCollapsed ? (
-              <>
-                {visibleUploadFiles.length > 0 ? (
-                  <ProjectFileItems
-                    files={visibleUploadFiles}
-                    viewMode={viewMode}
-                    previewById={currentFilePreviewById}
-                    onPreview={previewFile}
-                  />
-                ) : null}
-                <div ref={uploadSentinelRef} data-testid="upload-page-sentinel" className="h-px" />
-                {index.uploads.error ? (
-                  <PageLoadError
-                    message={index.uploads.error}
-                    onRetry={() => void index.loadMoreUploads()}
-                  />
-                ) : null}
-                <FilePageFooter
-                  page={index.uploads}
-                  mode={isAllFilter || !supportsIntersectionObserver ? 'manual' : 'scroll'}
-                  visibleItemCount={visibleUploadFiles.length}
-                  loadMoreLabel="Load more uploaded files"
-                  onLoadMore={() =>
-                    isAllFilter
-                      ? revealNextAllPage(
-                          'uploads',
-                          allUploadVisibleItemLimit,
-                          index.uploads,
-                          index.loadMoreUploads
-                        )
-                      : void index.loadMoreUploads()
-                  }
-                />
-              </>
-            ) : null}
-          </section>
-        ) : null}
-
-        {isAllFilter && index.groups.error ? (
-          <PageLoadError message={index.groups.error} onRetry={() => void index.loadMoreGroups()} />
-        ) : null}
-
-        {visibleArtifactGroups.length > 0 ? (
-          <section>
-            {isAllFilter ? (
-              <div className="px-4 pb-1 pt-3 text-[11px] font-medium uppercase tracking-normal text-text-300">
-                Generated files
-              </div>
-            ) : null}
-            {visibleArtifactGroups.map((group, groupIndex) => (
-              <ProjectArtifactGroupSection
-                key={group.sessionId}
-                group={group}
-                title={getArtifactGroupTitle(group)}
-                page={index.artifactsBySession[group.sessionId]}
-                loadMode={isAllFilter ? 'manual' : 'scroll'}
-                manualVisibleItemLimit={
-                  allVisibleItemLimits[`session:${group.sessionId}`] ?? FILE_PAGE_SIZE
-                }
-                isCollapsed={collapsedSectionIds.has(`session:${group.sessionId}`)}
-                hideTopBorder={!showsUploadsSection && groupIndex === 0}
-                onToggle={toggleSection}
-                loadMore={index.loadMoreArtifacts}
-                onManualLoadMore={() => {
-                  const sectionId = `session:${group.sessionId}`
-                  const visibleItemLimit = allVisibleItemLimits[sectionId] ?? FILE_PAGE_SIZE
-                  revealNextAllPage(
-                    sectionId,
-                    visibleItemLimit,
-                    index.artifactsBySession[group.sessionId],
-                    () => index.loadMoreArtifacts(group.sessionId)
-                  )
-                }}
-                viewMode={viewMode}
-                previewById={currentFilePreviewById}
-                onPreview={previewFile}
-              />
-            ))}
-            <div ref={groupsSentinelRef} data-testid="group-page-sentinel" className="h-px" />
-            {!supportsIntersectionObserver &&
-            isAllFilter &&
-            index.groups.nextCursor &&
-            !index.groups.isLoading &&
-            !index.groups.error ? (
-              <div className="flex justify-center px-4 py-2">
-                <Button
-                  type="button"
-                  variant="ghost"
-                  size="xs"
-                  className={loadMoreButtonClassName}
-                  onClick={() => void index.loadMoreGroups()}
-                >
-                  Load more sessions
-                </Button>
-              </div>
-            ) : null}
-          </section>
-        ) : null}
-      </div>
+      )}
       <FileBrowserModal
         open={browseProviderId !== undefined}
         onClose={() => setBrowseProviderId(undefined)}

@@ -15,6 +15,7 @@ import {
 } from '@/components/ui/dropdown-menu'
 
 import { ExtensionPreservingFileName } from './ExtensionPreservingFileName'
+import { LocalFileHeaderActions } from './LocalFileHeaderActions'
 import { ManagedFileDownloadButton } from './ManagedFileDownloadButton'
 import {
   createPreviewFileItemForArtifactVersion,
@@ -31,6 +32,7 @@ type PreviewFileSurfaceProps = {
   onClose: () => void
   onOpenFullScreen?: () => void
   onOpenProvenance?: () => void
+  onReload?: () => void
   provenanceEntry?: 'menu' | 'leading' | 'trailing'
 }
 
@@ -69,6 +71,7 @@ const PreviewFileHeader = ({
   onClose,
   onOpenFullScreen,
   onOpenProvenance,
+  onReload,
   provenanceEntry = 'menu',
   tooltipClassName
 }: Pick<
@@ -77,12 +80,16 @@ const PreviewFileHeader = ({
   | 'onClose'
   | 'onOpenFullScreen'
   | 'onOpenProvenance'
+  | 'onReload'
   | 'provenanceEntry'
   | 'tooltipClassName'
 >): React.JSX.Element => (
   <header
     data-testid="preview-card-header"
-    className="flex h-8 shrink-0 items-center gap-1 border-b border-border-300/50 px-2"
+    className={`flex shrink-0 items-center gap-1 border-b border-border-300/50 px-2 ${
+      // The local header carries the file path on a second line, so it grows past one row.
+      item.source === 'local' ? 'min-h-8 py-0.5' : 'h-8'
+    }`}
   >
     {onOpenProvenance && provenanceEntry === 'leading' ? (
       <PreviewProvenanceButton
@@ -96,53 +103,77 @@ const PreviewFileHeader = ({
         <TooltipTrigger asChild>
           <span className="min-w-0 flex-1 text-[12px] font-medium text-text-000">
             <ExtensionPreservingFileName name={item.name} className="flex-1" />
+            {item.source === 'local' ? (
+              <span
+                data-testid="local-file-path"
+                className="flex min-w-0 items-center gap-1 text-[10px] font-normal leading-tight text-text-100"
+              >
+                <span className="shrink-0 rounded-full bg-muted px-1.5 py-px">This computer</span>
+                <span className="truncate">{item.path}</span>
+              </span>
+            ) : null}
           </span>
         </TooltipTrigger>
-        <TooltipContent className={tooltipClassName}>{item.title}</TooltipContent>
+        <TooltipContent className={tooltipClassName}>
+          {item.source === 'local' ? item.path : item.title}
+        </TooltipContent>
       </Tooltip>
     </TooltipProvider>
-    {onOpenProvenance && provenanceEntry === 'trailing' ? (
-      <PreviewProvenanceButton
-        item={item}
-        onOpenProvenance={onOpenProvenance}
+    {/* A local file has no managed provenance or origin Session, so it takes the reload/copy/open
+        actions in place of the whole managed action row. */}
+    {item.source === 'local' ? (
+      <LocalFileHeaderActions
+        path={item.path}
+        name={item.name}
+        onReload={onReload}
         tooltipClassName={tooltipClassName}
       />
-    ) : null}
-    <ManagedFileDownloadButton
-      source={item.source ?? 'artifact'}
-      path={item.path}
-      suggestedName={item.name}
-      className="bg-transparent shadow-none"
-    />
-    {item.originSession?.state === 'deleted' ? (
-      <span
-        data-testid="deleted-origin-session"
-        className="shrink-0 rounded bg-warning-100 px-1.5 py-0.5 text-[10px] text-warning-900"
-      >
-        Source session deleted
-      </span>
-    ) : null}
-    {onOpenProvenance && provenanceEntry === 'menu' ? (
-      <DropdownMenu>
-        <DropdownMenuTrigger asChild>
-          <Button
-            type="button"
-            variant="ghost"
-            size="icon-xs"
-            className="text-text-100 hover:text-text-000"
-            aria-label={`File actions for ${item.title}`}
+    ) : (
+      <>
+        {onOpenProvenance && provenanceEntry === 'trailing' ? (
+          <PreviewProvenanceButton
+            item={item}
+            onOpenProvenance={onOpenProvenance}
+            tooltipClassName={tooltipClassName}
+          />
+        ) : null}
+        <ManagedFileDownloadButton
+          source={item.source ?? 'artifact'}
+          path={item.path}
+          suggestedName={item.name}
+          className="bg-transparent shadow-none"
+        />
+        {item.originSession?.state === 'deleted' ? (
+          <span
+            data-testid="deleted-origin-session"
+            className="shrink-0 rounded bg-warning-100 px-1.5 py-0.5 text-[10px] text-warning-900"
           >
-            <MoreHorizontal aria-hidden="true" />
-          </Button>
-        </DropdownMenuTrigger>
-        <DropdownMenuContent align="end" className="z-[70] min-w-36">
-          <DropdownMenuItem onSelect={onOpenProvenance}>
-            <GitBranch className="mr-2 size-4" aria-hidden="true" />
-            Provenance
-          </DropdownMenuItem>
-        </DropdownMenuContent>
-      </DropdownMenu>
-    ) : null}
+            Source session deleted
+          </span>
+        ) : null}
+        {onOpenProvenance && provenanceEntry === 'menu' ? (
+          <DropdownMenu>
+            <DropdownMenuTrigger asChild>
+              <Button
+                type="button"
+                variant="ghost"
+                size="icon-xs"
+                className="text-text-100 hover:text-text-000"
+                aria-label={`File actions for ${item.title}`}
+              >
+                <MoreHorizontal aria-hidden="true" />
+              </Button>
+            </DropdownMenuTrigger>
+            <DropdownMenuContent align="end" className="z-[70] min-w-36">
+              <DropdownMenuItem onSelect={onOpenProvenance}>
+                <GitBranch className="mr-2 size-4" aria-hidden="true" />
+                Provenance
+              </DropdownMenuItem>
+            </DropdownMenuContent>
+          </DropdownMenu>
+        ) : null}
+      </>
+    )}
     {onOpenFullScreen ? (
       <TooltipProvider delayDuration={200}>
         <Tooltip>
@@ -246,6 +277,8 @@ const PreviewFileSurface = ({
   provenanceEntry = 'menu'
 }: PreviewFileSurfaceProps): React.JSX.Element => {
   const [provenanceTarget, setProvenanceTarget] = useState<string>()
+  // Bumping this token remounts the content tree so a local file is re-read from disk.
+  const [reloadToken, setReloadToken] = useState(0)
   const [versionOverride, setVersionOverride] = useState<{
     key: string
     item: PreviewFileItem
@@ -352,6 +385,7 @@ const PreviewFileSurface = ({
         item={resolvedPreviewItem}
         onClose={onClose}
         onOpenFullScreen={onOpenFullScreen}
+        onReload={() => setReloadToken((token) => token + 1)}
         provenanceEntry={provenanceEntry}
         onOpenProvenance={
           previewItem.source !== 'upload' && previewItem.artifactId && projectId
@@ -377,7 +411,7 @@ const PreviewFileSurface = ({
           />
         ) : renderContent ? (
           <PreviewFileContent
-            key={`${contentKey ?? ''}:${previewItem.selectedVersionId ?? ''}`}
+            key={`${contentKey ?? ''}:${previewItem.selectedVersionId ?? ''}:${reloadToken}`}
             item={resolvedPreviewItem}
           />
         ) : null}

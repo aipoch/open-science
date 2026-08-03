@@ -4,6 +4,7 @@ import type { LucideIcon } from 'lucide-react'
 import { Button } from '@/components/ui/button'
 import type { PreviewFileFormat, PreviewFileSource } from '@/stores/preview-workbench-store'
 
+import { LocalFileFallbackAction } from '../LocalFileHeaderActions'
 import { ManagedFileDownloadButton } from '../ManagedFileDownloadButton'
 import { getFileExtension } from '../preview-support'
 import {
@@ -249,13 +250,17 @@ export const PreviewUnsupportedContent = ({
           <p className="mt-0.5 text-[10px] leading-4 text-text-300">
             This file type isn&apos;t supported for preview
           </p>
-          <ManagedFileDownloadButton
-            source={source}
-            path={path}
-            suggestedName={name}
-            appearance="primary"
-            wrapperClassName="mt-3"
-          />
+          {source === 'local' ? (
+            <LocalFileFallbackAction path={path} className="mt-3" />
+          ) : (
+            <ManagedFileDownloadButton
+              source={source}
+              path={path}
+              suggestedName={name}
+              appearance="primary"
+              wrapperClassName="mt-3"
+            />
+          )}
           <span className="sr-only">{name}</span>
         </div>
       </div>

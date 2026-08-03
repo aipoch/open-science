@@ -4,6 +4,8 @@ import { DEFAULT_ARTIFACT_PROJECT_NAME } from './artifacts'
 export const DEFAULT_UPLOAD_PROJECT_NAME = DEFAULT_ARTIFACT_PROJECT_NAME
 // New-conversation uploads are staged here until the runtime returns a durable session id.
 export const PENDING_UPLOAD_SESSION_ID = '.pending'
+// Local-file "Save as artifact" uploads without an associated conversation session.
+export const STANDALONE_UPLOAD_SESSION_ID = 'standalone-uploads'
 
 // Per-file storage cap. Content sent to the model has separate, much smaller inline/read limits.
 export const MAX_UPLOAD_FILE_BYTES = 10 * 1024 * 1024 * 1024
@@ -42,6 +44,14 @@ export type UploadTransferProgress = {
 }
 
 export type BeginUploadTransferRequest = Omit<StageLocalUploadRequest, 'sourcePath'>
+
+// Save-as-artifact from the local-file preview: the renderer already knows the native path, and
+// main stats the file itself so neither a stale renderer-side size nor a guessed mime type can
+// reach the staging pipeline. The renderer passes its active project id so the upload lands in the
+// correct project bucket; falls back to DEFAULT_UPLOAD_PROJECT_NAME when absent.
+export type StageLocalPathUploadRequest = Omit<StageLocalUploadRequest, 'size' | 'mimeType'> & {
+  projectId?: string
+}
 
 export type AppendUploadTransferRequest = {
   transferId: string
