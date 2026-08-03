@@ -1,7 +1,13 @@
-import { describe, expect, it, vi } from 'vitest'
+import { afterEach, describe, expect, it, vi } from 'vitest'
 
 import { installAppLifecycle, type AppLifecycleDeps, type TrayHandlers } from './app-lifecycle'
+import {
+  clearApplicationShutdownTrigger,
+  markApplicationShutdownTrigger
+} from './application-shutdown-trigger'
 import type { ActiveSessionInfo } from '../shared/storage'
+import type { RendererSessionPersistenceFlushOutcome } from './session-persistence/renderer-flush'
+import type { ShutdownStepOutcome } from './lifecycle-shutdown'
 import type {
   CloseClassification,
   CloseConfirmChoice,
@@ -10,6 +16,8 @@ import type {
 
 type QuitEvent = { preventDefault: () => void; defaultPrevented: boolean }
 type Handler = (event: QuitEvent) => void
+
+afterEach(() => clearApplicationShutdownTrigger())
 
 type FakeApp = {
   on: (event: string, handler: Handler) => void
@@ -110,9 +118,9 @@ type Harness = {
   windows: FakeWindow[]
   tray: { destroy: ReturnType<typeof vi.fn> } | undefined
   trayHandlers: TrayHandlers | undefined
-  shutdownBackends: () => Promise<void>
-  prepareForQuit: () => Promise<void>
-  flushSessionPersistence: () => Promise<void>
+  shutdownBackends: () => Promise<ShutdownStepOutcome | void>
+  prepareForQuit: () => Promise<ShutdownStepOutcome | void>
+  flushSessionPersistence: () => Promise<RendererSessionPersistenceFlushOutcome | void>
   quit: ReturnType<typeof vi.fn>
   showMainWindow: () => void
   getMainWindow: () => import('electron').BrowserWindow | undefined
@@ -128,6 +136,10 @@ const setup = (
       | 'shutdownBackends'
       | 'prepareForQuit'
       | 'flushSessionPersistence'
+      | 'log'
+      | 'flushLogs'
+      | 'logFlushTimeoutMs'
+      | 'shutdownTrigger'
       | 'isMigrationInProgress'
       | 'platform'
       | 'createInitialWindow'
@@ -148,7 +160,8 @@ const setup = (
   let trayHandlers: TrayHandlers | undefined
   const shutdownBackends = overrides.shutdownBackends ?? vi.fn(async () => undefined)
   const prepareForQuit = overrides.prepareForQuit ?? vi.fn(async () => undefined)
-  const flushSessionPersistence = overrides.flushSessionPersistence ?? vi.fn(async () => undefined)
+  const flushSessionPersistence =
+    overrides.flushSessionPersistence ?? vi.fn(async () => 'completed' as const)
   const quit = vi.fn()
   const closeOpts: CapturedCloseOpts[] = []
   const confirmClose = vi.fn(
@@ -171,6 +184,10 @@ const setup = (
     shutdownBackends,
     prepareForQuit,
     flushSessionPersistence,
+    log: overrides.log,
+    flushLogs: overrides.flushLogs,
+    logFlushTimeoutMs: overrides.logFlushTimeoutMs,
+    shutdownTrigger: overrides.shutdownTrigger,
     isMigrationInProgress: overrides.isMigrationInProgress ?? ((): boolean => false),
     quit,
     countWindows: () => windows.filter((w) => !w.destroyed).length,
@@ -385,6 +402,98 @@ describe('installAppLifecycle', () => {
 
     expect(calls).toEqual(['prepare', 'flush', 'shutdown'])
     expect(app.exit).toHaveBeenCalledWith(0)
+  })
+
+  it('records a degraded renderer persistence flush and drains terminal logs before exit', async () => {
+    const log = { debug: vi.fn(), info: vi.fn(), warn: vi.fn(), error: vi.fn() }
+    const flushLogs = vi.fn(async () => undefined)
+    const { app, closeOpts } = setup({
+      log,
+      flushLogs,
+      flushSessionPersistence: vi.fn(async () => 'timeout' as const)
+    })
+    closeOpts[0].requestQuit()
+
+    app.emit('before-quit')
+    await flush()
+
+    expect(log.info).toHaveBeenCalledWith(
+      'operation completed',
+      expect.objectContaining({
+        operation: 'application-shutdown',
+        outcome: 'completed',
+        degraded: true,
+        usageDrainResult: 'completed',
+        rendererFlushResult: 'timeout',
+        backendTeardownResult: 'completed'
+      })
+    )
+    expect(flushLogs).toHaveBeenCalledOnce()
+    expect(flushLogs.mock.invocationCallOrder[0]).toBeLessThan(app.exit.mock.invocationCallOrder[0])
+  })
+
+  it.each(['migration-relaunch', 'update'] as const)(
+    'classifies a %s handoff without changing shutdown ordering',
+    async (trigger) => {
+      const log = { debug: vi.fn(), info: vi.fn(), warn: vi.fn(), error: vi.fn() }
+      markApplicationShutdownTrigger(trigger)
+      const { app, confirmClose } = setup({
+        log,
+        detectActiveSessions: () => [
+          { projectId: 'project-1', sessionId: 'session-1', kind: 'agent' }
+        ]
+      })
+
+      app.emit('before-quit')
+      await flush()
+
+      expect(confirmClose).not.toHaveBeenCalled()
+      expect(log.info).toHaveBeenCalledWith(
+        'operation completed',
+        expect.objectContaining({
+          operation: 'application-shutdown',
+          trigger,
+          outcome: 'completed'
+        })
+      )
+    }
+  )
+
+  it('records fixed outcomes for every shutdown step and never reports a degraded shutdown as clean', async () => {
+    const log = { debug: vi.fn(), info: vi.fn(), warn: vi.fn(), error: vi.fn() }
+    const { app, closeOpts } = setup({
+      log,
+      prepareForQuit: vi.fn(async () => 'timeout' as const),
+      flushSessionPersistence: vi.fn(async () => 'send-failed' as const),
+      shutdownBackends: vi.fn(async () => 'degraded' as const)
+    })
+    closeOpts[0].requestQuit()
+
+    app.emit('before-quit')
+    await flush()
+
+    expect(log.info).toHaveBeenCalledWith(
+      'operation phase',
+      expect.objectContaining({ phase: 'usage-drain', result: 'timeout' })
+    )
+    expect(log.info).toHaveBeenCalledWith(
+      'operation phase',
+      expect.objectContaining({ phase: 'renderer-session-flush', result: 'failed' })
+    )
+    expect(log.info).toHaveBeenCalledWith(
+      'operation phase',
+      expect.objectContaining({ phase: 'backend-teardown', result: 'degraded' })
+    )
+    expect(log.info).toHaveBeenCalledWith(
+      'operation completed',
+      expect.objectContaining({
+        operation: 'application-shutdown',
+        degraded: true,
+        usageDrainResult: 'timeout',
+        rendererFlushResult: 'failed',
+        backendTeardownResult: 'degraded'
+      })
+    )
   })
 
   it('quits on window-all-closed only when non-darwin and no tray host', () => {

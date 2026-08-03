@@ -55,6 +55,7 @@ import type {
 } from '../shared/compute'
 import type { DirListing, DownloadDest, LocalFile } from '../shared/remote-fs'
 import type { LocalDirListing, LocalRoots } from '../shared/local-fs'
+import { RENDERER_FAILURE_CHANNEL, type RendererFailureReport } from '../shared/diagnostics'
 import type { OpenLogFileResult, RevealLogFileResult } from '../shared/logs'
 import type {
   OpenSessionFromNotificationRequest,
@@ -336,6 +337,9 @@ type OpenScienceAPI = {
   }
   lifecycle: {
     getClientId: () => Promise<string>
+  }
+  diagnostics?: {
+    reportRendererFailure: (report: RendererFailureReport) => void
   }
   acp: {
     getState: () => Promise<AcpStateSnapshot>
@@ -857,6 +861,9 @@ const api: OpenScienceAPI = {
   }),
   lifecycle: {
     getClientId: () => ipcRenderer.invoke('lifecycle:client-id') as Promise<string>
+  },
+  diagnostics: {
+    reportRendererFailure: (report) => ipcRenderer.send(RENDERER_FAILURE_CHANNEL, report)
   },
   acp: {
     getState: () => ipcRenderer.invoke('acp:get-state') as Promise<AcpStateSnapshot>,

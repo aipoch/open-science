@@ -2,8 +2,16 @@ import { beforeEach, describe, expect, it, vi } from 'vitest'
 
 const spawnSync = vi.hoisted(() => vi.fn())
 const quitAndInstall = vi.hoisted(() => vi.fn())
+const loggerMocks = vi.hoisted(() => {
+  const log = { debug: vi.fn(), info: vi.fn(), warn: vi.fn(), error: vi.fn() }
+  return { log, createLogger: vi.fn(() => log) }
+})
 
 vi.mock('node:child_process', () => ({ spawnSync }))
+vi.mock('../logger', async (importOriginal) => ({
+  ...(await importOriginal<typeof import('../logger')>()),
+  createLogger: loggerMocks.createLogger
+}))
 
 // createUpdateStrategy constructs a concrete strategy per platform. Both strategies touch native
 // modules at construction (UpdateService reads app.getVersion(); ElectronUpdaterStrategy subscribes to
@@ -14,7 +22,8 @@ vi.mock('electron', () => ({
     getVersion: () => '0.0.0',
     isPackaged: false
   },
-  BrowserWindow: { getAllWindows: () => [] }
+  BrowserWindow: { getAllWindows: () => [] },
+  shell: { openExternal: vi.fn(async () => {}), openPath: vi.fn(async () => '') }
 }))
 vi.mock('electron-updater', () => ({
   autoUpdater: {
@@ -33,6 +42,8 @@ describe('createUpdateStrategy', () => {
   beforeEach(() => {
     spawnSync.mockReset()
     quitAndInstall.mockReset()
+    loggerMocks.createLogger.mockClear()
+    for (const log of Object.values(loggerMocks.log)) log.mockClear()
     spawnSync.mockReturnValue({
       status: 0,
       stdout: '',
@@ -47,6 +58,24 @@ describe('createUpdateStrategy', () => {
   it('uses ElectronUpdaterStrategy on linux', () => {
     expect(createUpdateStrategy('linux')).toBeInstanceOf(ElectronUpdaterStrategy)
   })
+
+  it.each([
+    ['in-place', 'win32', { isPackaged: true }],
+    ['manifest', 'darwin', { isPackaged: false }]
+  ] as const)(
+    'injects the production update logger into the %s strategy',
+    async (_, platform, opts) => {
+      const strategy = createUpdateStrategy(platform, opts)
+
+      await strategy.apply()
+
+      expect(loggerMocks.createLogger).toHaveBeenCalledWith('update')
+      expect(loggerMocks.log.info).toHaveBeenCalledWith(
+        'operation completed',
+        expect.objectContaining({ operation: 'update-apply', outcome: 'completed' })
+      )
+    }
+  )
 
   it('constructs the in-place strategy with its install gate', async () => {
     const installGate = vi.fn(async () => ({ completed: true, reaped: true }))

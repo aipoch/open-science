@@ -2,7 +2,9 @@ import { existsSync } from 'node:fs'
 import { mkdir, mkdtemp, rm, writeFile } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
-import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
+import { afterEach, beforeEach, describe, expect, it, type Mock, vi } from 'vitest'
+
+import type { Logger } from '../logger'
 
 // Capture ipcMain.handle registrations; stub dialog/BrowserWindow/app so handlers can be invoked
 // directly without a real Electron runtime. isPackaged: true means dataFolderName() === 'OpenScience'.
@@ -14,6 +16,7 @@ const sentWindows: {
 }[] = []
 const appRelaunch = vi.fn()
 const appExit = vi.fn()
+const appQuit = vi.fn()
 const openPath = vi.fn<(path: string) => Promise<string>>().mockResolvedValue('')
 // Home is mutable so a few tests can point it at a real temp dir (legacy-in-place detection reads
 // the config root under home); it defaults to /home/user so every other test is unaffected.
@@ -28,13 +31,21 @@ vi.mock('electron', () => ({
   BrowserWindow: { getAllWindows: () => sentWindows },
   dialog: { showOpenDialog: (...args: unknown[]) => showOpenDialog(...args) },
   shell: { openPath: (path: string) => openPath(path) },
-  app: { getPath: () => electronHome.path, isPackaged: true, relaunch: appRelaunch, exit: appExit }
+  app: {
+    getPath: () => electronHome.path,
+    isPackaged: true,
+    relaunch: appRelaunch,
+    exit: appExit,
+    quit: appQuit
+  }
 }))
 
 const { initDataRoot } = await import('../storage-root')
 const { registerStorageIpcHandlers } = await import('./ipc')
 const { clearMigrationPending, isMigrationPending } = await import('./migration-state')
-const { writeMigrationMarker } = await import('./migration-marker')
+const { clearApplicationShutdownTrigger, currentApplicationShutdownTrigger } =
+  await import('../application-shutdown-trigger')
+const { readMigrationMarker, writeMigrationMarker } = await import('./migration-marker')
 
 // Writes the verified staging marker a completed copy phase would leave, so commit/discard gates pass.
 const seedVerifiedMarker = async (targetDir: string, source: string): Promise<void> => {
@@ -56,7 +67,7 @@ const seedVerifiedMarker = async (targetDir: string, source: string): Promise<vo
 }
 
 const invoke = (channel: string, payload?: unknown): Promise<unknown> =>
-  Promise.resolve(handlers.get(channel)!(undefined, payload))
+  Promise.resolve(handlers.get(channel)!({ sender: { id: 1 } }, payload))
 
 // Real fs calls inside validateNewDataRoot/classifyDataRoot need an actual event-loop turn, not
 // just a microtask flush, before the mocked runtime.disconnect() (the next await) is reached.
@@ -85,6 +96,18 @@ const fakeDeps = (overrides: Partial<FakeDeps> = {}): FakeDeps => ({
   ...overrides
 })
 
+const fakeDiagnosticLogger = (): Logger => ({
+  debug: vi.fn(),
+  info: vi.fn(),
+  warn: vi.fn(),
+  error: vi.fn()
+})
+
+const diagnosticRecords = (logger: Logger): Record<string, unknown>[] =>
+  [logger.debug, logger.info, logger.warn, logger.error].flatMap((method) =>
+    (method as Mock).mock.calls.map((call) => call[1] as Record<string, unknown>)
+  )
+
 // Data folder name mirrors dataFolderName() for a packaged build (see the electron mock above).
 const dataRootFor = (parent: string): string => join(parent, 'OpenScience')
 
@@ -98,6 +121,7 @@ beforeEach(async () => {
   showOpenDialog.mockReset()
   appRelaunch.mockClear()
   appExit.mockClear()
+  appQuit.mockClear()
   openPath.mockClear()
   sentWindows.length = 0
   currentParent = await mkdtemp(join(tmpdir(), 'ds-storage-ipc-current-'))
@@ -111,6 +135,7 @@ afterEach(async () => {
   initDataRoot(undefined)
   // migration-state is a module singleton; reset it so a pending write-gate can't leak between tests.
   clearMigrationPending()
+  clearApplicationShutdownTrigger()
   await rm(currentParent, { recursive: true, force: true })
   await rm(targetParent, { recursive: true, force: true })
 })
@@ -384,13 +409,38 @@ describe('storage IPC handlers', () => {
   })
 
   it('pick-directory returns null when the injected showOpenDialog throws', async () => {
+    const logger = fakeDiagnosticLogger()
     const deps = fakeDeps({
-      showOpenDialog: vi.fn().mockRejectedValue(new Error('picker failed'))
+      showOpenDialog: vi.fn().mockRejectedValue(new Error('picker-secret')),
+      logger
     })
     registerStorageIpcHandlers(deps)
 
     await expect(invoke('storage:pick-directory')).resolves.toBeNull()
     expect(showOpenDialog).not.toHaveBeenCalled()
+    expect(logger.warn).toHaveBeenCalledWith('directory picker failed', {
+      errorCategory: 'error'
+    })
+    expect(JSON.stringify(diagnosticRecords(logger))).not.toContain('picker-secret')
+  })
+
+  it('keeps the picker fallback authoritative when the diagnostic sink throws', async () => {
+    const sinkFailure = (): never => {
+      throw new Error('sink unavailable')
+    }
+    registerStorageIpcHandlers(
+      fakeDeps({
+        showOpenDialog: vi.fn().mockRejectedValue(new Error('picker failed')),
+        logger: {
+          debug: sinkFailure,
+          info: sinkFailure,
+          warn: sinkFailure,
+          error: sinkFailure
+        }
+      })
+    )
+
+    await expect(invoke('storage:pick-directory')).resolves.toBeNull()
   })
 
   it('migrate copies into the target without committing (no setDataRoot, no relaunch)', async () => {
@@ -406,6 +456,31 @@ describe('storage IPC handlers', () => {
     // clicks "Restart now" (storage:commit-and-relaunch).
     expect(deps.settingsService.setDataRoot).not.toHaveBeenCalled()
     expect(deps.relaunch).not.toHaveBeenCalled()
+  })
+
+  it('correlates production copy and commit diagnostics without logging the marker token', async () => {
+    initDataRoot(dataRoot)
+    const logger = fakeDiagnosticLogger()
+    const deps = fakeDeps({ logger })
+    registerStorageIpcHandlers(deps)
+
+    await expect(invoke('storage:migrate', { parent: targetParent })).resolves.toEqual({ ok: true })
+    const markerToken = (await readMigrationMarker(target))?.token
+    expect(markerToken).toBeTruthy()
+
+    await expect(invoke('storage:commit-and-relaunch', { parent: targetParent })).resolves.toEqual({
+      ok: true
+    })
+
+    const completed = diagnosticRecords(logger).filter((record) => record.outcome === 'completed')
+    expect(completed.map((record) => record.operation)).toEqual([
+      'data-root-copy',
+      'data-root-commit'
+    ])
+    expect(new Set(completed.map((record) => record.operationId)).size).toBe(2)
+    expect(new Set(completed.map((record) => record.correlationId)).size).toBe(1)
+    expect(completed[0]?.correlationId).toEqual(expect.any(String))
+    expect(JSON.stringify(diagnosticRecords(logger))).not.toContain(markerToken)
   })
 
   it('commit-and-relaunch refuses a verified marker not staged by this process', async () => {
@@ -436,17 +511,19 @@ describe('storage IPC handlers', () => {
     expect(deps.relaunch).not.toHaveBeenCalled()
   })
 
-  it('commit-and-relaunch runs the production cleanup (shutdown backends, then relaunch+exit) with no relaunch override', async () => {
+  it('commit-and-relaunch delegates production cleanup to the orderly app quit lifecycle', async () => {
     initDataRoot(dataRoot)
-    // No injected relaunch: exercise the real cleanRelaunch path (shutdownBackends -> app.relaunch ->
-    // app.exit) instead of the test short-circuit.
+    // No injected relaunch: exercise the real app.relaunch -> app.quit handoff.
     const cleanupRuntimeCache = vi.fn()
     const deps = fakeDeps({ relaunch: undefined, cleanupRuntimeCache })
+    appQuit.mockImplementationOnce(() => {
+      expect(currentApplicationShutdownTrigger()).toBe('migration-relaunch')
+    })
     registerStorageIpcHandlers(deps)
 
     // Stage a verified copy first (two-phase flow) so the commit actually switches over and relaunches.
-    // migrate itself interrupts the notebook (shutdownAll), so clear the mocks to isolate the commit's
-    // own cleanup below.
+    // migrate itself interrupts the notebook (shutdownAll), so clear the mocks to prove the commit
+    // leaves terminal cleanup to app-lifecycle.
     await invoke('storage:migrate', { parent: targetParent })
     vi.mocked(deps.notebook.shutdownAll).mockClear()
     vi.mocked(deps.runtime.shutdownForQuit).mockClear()
@@ -455,19 +532,16 @@ describe('storage IPC handlers', () => {
       ok: true
     })
 
-    expect(deps.runtime.shutdownForQuit).toHaveBeenCalledTimes(1)
-    expect(deps.notebook.dispose).toHaveBeenCalledTimes(1)
+    expect(deps.runtime.shutdownForQuit).not.toHaveBeenCalled()
+    expect(deps.notebook.dispose).not.toHaveBeenCalled()
     expect(deps.notebook.shutdownAll).not.toHaveBeenCalled()
     expect(appRelaunch).toHaveBeenCalledTimes(1)
-    expect(appExit).toHaveBeenCalledWith(0)
+    expect(appQuit).toHaveBeenCalledTimes(1)
+    expect(appExit).not.toHaveBeenCalled()
     expect(cleanupRuntimeCache).toHaveBeenCalledWith(join(dataRoot, 'runtime'))
-    // Backends are torn down before the relaunch is triggered.
-    expect(vi.mocked(deps.runtime.shutdownForQuit).mock.invocationCallOrder[0]).toBeLessThan(
-      appRelaunch.mock.invocationCallOrder[0]
-    )
   })
 
-  it('set-data-root-and-relaunch runs the production cleanup before relaunch+exit with no relaunch override', async () => {
+  it('set-data-root-and-relaunch delegates production cleanup to the orderly app quit lifecycle', async () => {
     initDataRoot(dataRoot)
     const deps = fakeDeps({ relaunch: undefined })
     registerStorageIpcHandlers(deps)
@@ -476,11 +550,12 @@ describe('storage IPC handlers', () => {
       invoke('storage:set-data-root-and-relaunch', { parent: targetParent })
     ).resolves.toEqual({ ok: true })
 
-    expect(deps.runtime.shutdownForQuit).toHaveBeenCalledTimes(1)
-    expect(deps.notebook.dispose).toHaveBeenCalledTimes(1)
+    expect(deps.runtime.shutdownForQuit).not.toHaveBeenCalled()
+    expect(deps.notebook.dispose).not.toHaveBeenCalled()
     expect(deps.notebook.shutdownAll).not.toHaveBeenCalled()
     expect(appRelaunch).toHaveBeenCalledTimes(1)
-    expect(appExit).toHaveBeenCalledWith(0)
+    expect(appQuit).toHaveBeenCalledTimes(1)
+    expect(appExit).not.toHaveBeenCalled()
   })
 
   it('commit-and-relaunch returns switchoverFailed and does NOT relaunch when setDataRoot throws', async () => {
@@ -917,6 +992,26 @@ describe('storage IPC handlers', () => {
     ).resolves.toEqual({ ok: true })
     expect(deps.settingsService.setDataRoot).toHaveBeenCalledWith(target)
     expect(deps.relaunch).toHaveBeenCalledTimes(1)
+  })
+
+  it('diagnoses an adopted data root without retaining its path', async () => {
+    initDataRoot(dataRoot)
+    await mkdir(join(target, 'artifacts'), { recursive: true })
+    const logger = fakeDiagnosticLogger()
+    registerStorageIpcHandlers(fakeDeps({ logger }))
+
+    await expect(
+      invoke('storage:set-data-root-and-relaunch', { parent: targetParent })
+    ).resolves.toEqual({ ok: true })
+
+    expect(diagnosticRecords(logger)).toContainEqual(
+      expect.objectContaining({
+        operation: 'data-root-selection',
+        mode: 'adopt',
+        outcome: 'completed'
+      })
+    )
+    expect(JSON.stringify(diagnosticRecords(logger))).not.toContain(target)
   })
 
   it('set-data-root-and-relaunch marks onboarding complete only when markOnboarding is true', async () => {

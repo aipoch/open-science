@@ -9,6 +9,7 @@ import type {
 } from '../../shared/session-persistence'
 import { LIFECYCLE_CHANNELS } from '../../shared/lifecycle-events'
 import { broadcastLifecycleEvent, getLifecycleClientId } from '../lifecycle-broadcast'
+import { createLogger, diagnosticErrorFields, type Logger } from '../logger'
 import { resolveStorageRoot } from '../storage-root'
 import { SessionRepository } from './repository'
 import { ReviewRepository } from '../reviewer/repository'
@@ -77,12 +78,22 @@ const loadSessionMetadataAfterProjectRecovery = async (
 // without allowing partially recovered Project authority to drive cleanup or derived-state writes.
 const loadSessionsAfterProjectRecovery = async (
   projectRecovery: ProjectDeletionRecoveryBackend,
-  sessionLoader: SessionStartupLoader
+  sessionLoader: SessionStartupLoader,
+  log: Pick<Logger, 'warn'> = createLogger('session-persistence')
 ): Promise<LoadAllSessionsResult> => {
   try {
     await projectRecovery.recoverPendingDeletions()
   } catch (error) {
-    console.error('[session-persistence] Project deletion recovery failed', error)
+    try {
+      log.warn('project deletion recovery failed', {
+        operation: 'session-hydration',
+        phase: 'recover-project-deletions',
+        outcome: 'degraded',
+        ...diagnosticErrorFields(error)
+      })
+    } catch {
+      // Diagnostics must never prevent the explicit read-only recovery path.
+    }
     return withProjectDeletionRecoveryStatus(await sessionLoader.loadAllReadOnly(), false)
   }
 

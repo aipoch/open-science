@@ -33,6 +33,9 @@ vi.mock('electron', () => ({
 // The subset of the bridge these tests exercise. Args are unknown — forwarding, not shape, is asserted.
 type PreloadApi = {
   saveSessionArtifacts: (request: unknown) => unknown
+  diagnostics: {
+    reportRendererFailure: (report: unknown) => void
+  }
   lifecycle: {
     getClientId: () => unknown
   }
@@ -200,6 +203,7 @@ describe('preload bridge — public surface inventory', () => {
       'compute.revealInFolder',
       'compute.scratchSet',
       'compute.sshConfigAliases',
+      'diagnostics.reportRendererFailure',
       'getRuntimeVersions',
       'github.getStars',
       'handoff.list',
@@ -439,6 +443,21 @@ describe('preload bridge — public surface inventory', () => {
       'window.onWindowFindAppearance',
       'window.sendCloseConfirmResponse'
     ])
+  })
+})
+
+describe('preload bridge — renderer diagnostics', () => {
+  it('sends the bounded renderer failure report over its one-way channel', () => {
+    const report = {
+      source: 'window-error',
+      surface: 'workspace',
+      errorCategory: 'type',
+      fingerprint: 'a1b2c3d4'
+    }
+
+    api.diagnostics.reportRendererFailure(report)
+
+    expect(sendMock).toHaveBeenCalledWith('diagnostics:renderer-failure', report)
   })
 })
 

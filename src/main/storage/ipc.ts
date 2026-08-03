@@ -1,5 +1,6 @@
 import { existsSync } from 'node:fs'
 import { mkdir } from 'node:fs/promises'
+import { randomUUID } from 'node:crypto'
 import { join } from 'node:path'
 
 import { app, dialog, shell } from 'electron'
@@ -27,7 +28,6 @@ import { removeMicromambaCacheForRoot } from '../notebook/micromamba-cache'
 import { detectActiveSessions } from './detect-active'
 import { isDataRootMissing } from './path-presence'
 import { beginMigration, clearMigrationPending, endMigrationCopy } from './migration-state'
-import { shutdownBackends } from '../lifecycle-shutdown'
 import {
   classifyDataRoot,
   commitDataRootSwitch,
@@ -39,6 +39,9 @@ import {
 import { availableBytes, computeStorageUsage } from './usage'
 import { broadcastToRenderers } from '../renderer-broadcast'
 import { RELOCATABLE_DATA_DIRS } from './data-directories'
+import { createLogger, diagnosticErrorFields, type Logger } from '../logger'
+import { startDiagnosticOperation } from '../diagnostics/operation'
+import { markApplicationShutdownTrigger } from '../application-shutdown-trigger'
 
 type SessionSource = { projectName: string; sessionId: string }
 
@@ -75,6 +78,7 @@ type StorageIpcDeps = {
   relaunch?: () => void
   broadcastProgress?: (progress: MigrationProgress) => void
   cleanupRuntimeCache?: (runtimeRoot: string) => void
+  logger?: Logger
 }
 
 // Pushes migration progress to every live window, mirroring the acp/update broadcast pattern.
@@ -89,9 +93,23 @@ const registerStorageIpcHandlers = (deps: StorageIpcDeps): void => {
   let activeMigration: AbortController | undefined
   // The token + target of the copy THIS session staged (set when a copy verifies, cleared when the
   // migration resolves). commit/discard require it so a stale renderer call can't act on a foreign copy.
-  let activeStaged: { token: string; target: string } | undefined
+  let activeStaged: { token: string; target: string; correlationId: string } | undefined
   let resolutionInProgress = false
   const cleanupRuntimeCache = deps.cleanupRuntimeCache ?? removeMicromambaCacheForRoot
+  const unsafeLogger = deps.logger ?? createLogger('storage:ipc')
+  const emitSafely = (level: keyof Logger, message: string, data?: unknown): void => {
+    try {
+      unsafeLogger[level](message, data)
+    } catch {
+      // Storage behavior and return values remain authoritative when diagnostics are unavailable.
+    }
+  }
+  const logger: Logger = {
+    debug: (message, data) => emitSafely('debug', message, data),
+    info: (message, data) => emitSafely('info', message, data),
+    warn: (message, data) => emitSafely('warn', message, data),
+    error: (message, data) => emitSafely('error', message, data)
+  }
 
   ipcMainHandle('storage:get-info', async () => {
     const dataRoot = resolveDataRoot()
@@ -99,7 +117,7 @@ const registerStorageIpcHandlers = (deps: StorageIpcDeps): void => {
     try {
       available = await availableBytes(dataRoot)
     } catch (err) {
-      console.error('[storage-ipc] availableBytes failed', err)
+      logger.warn('available storage lookup failed', diagnosticErrorFields(err))
     }
 
     // Only an explicitly-configured-but-now-gone root counts as "missing"; a fresh install's unset
@@ -123,7 +141,7 @@ const registerStorageIpcHandlers = (deps: StorageIpcDeps): void => {
       legacyDataMovePrompt =
         legacyInPlace && hasUserData && storedSettings.legacyDataMovePromptDismissedAt === undefined
     } catch (err) {
-      console.error('[storage-ipc] dataRootMissing/legacy detection failed', err)
+      logger.warn('data root status detection failed', diagnosticErrorFields(err))
     }
 
     return {
@@ -142,8 +160,10 @@ const registerStorageIpcHandlers = (deps: StorageIpcDeps): void => {
     // The renderer supplies no path: main resolves the single trusted config root at invocation time.
     try {
       const error = await shell.openPath(resolveConfigRoot())
+      if (error) logger.warn('application storage reveal failed', { errorCategory: 'shell' })
       return error ? { revealed: false, error } : { revealed: true }
     } catch (error) {
+      logger.warn('application storage reveal failed', diagnosticErrorFields(error))
       return {
         revealed: false,
         error: error instanceof Error ? error.message : 'Could not reveal application storage.'
@@ -158,7 +178,7 @@ const registerStorageIpcHandlers = (deps: StorageIpcDeps): void => {
     try {
       await deps.settingsService.dismissLegacyDataMovePrompt()
     } catch (err) {
-      console.error('[storage-ipc] dismiss-legacy-move-prompt failed', err)
+      logger.warn('legacy move prompt dismissal failed', diagnosticErrorFields(err))
     }
   })
 
@@ -182,7 +202,7 @@ const registerStorageIpcHandlers = (deps: StorageIpcDeps): void => {
     } catch (err) {
       // Never let a picker failure surface as a raw rejection to the renderer; Browse
       // becomes a no-op instead.
-      console.error('[storage-ipc] pick-directory failed', err)
+      logger.warn('directory picker failed', diagnosticErrorFields(err))
       return null
     }
   })
@@ -201,6 +221,7 @@ const registerStorageIpcHandlers = (deps: StorageIpcDeps): void => {
       }
 
       const controller = new AbortController()
+      const correlationId = randomUUID()
       activeMigration = controller
       // Flag the copy: sets both the quit guard (Cmd+Q warning) and the write-gate (blocks ACP/notebook
       // writes to the old root for the whole copy→commit window).
@@ -212,6 +233,8 @@ const registerStorageIpcHandlers = (deps: StorageIpcDeps): void => {
         const result = await runDataRootMigration(
           {
             currentDataRoot: resolveDataRoot(),
+            logger,
+            diagnosticCorrelationId: correlationId,
             runtime: deps.runtime,
             notebook: deps.notebook,
             // Preserve the runtime across the move by exporting each env to an offline lock at the
@@ -227,7 +250,7 @@ const registerStorageIpcHandlers = (deps: StorageIpcDeps): void => {
             signal: controller.signal,
             onProgress: (progress) => (deps.broadcastProgress ?? defaultBroadcast)(progress),
             onVerified: (staged) => {
-              activeStaged = staged
+              activeStaged = { ...staged, correlationId }
             }
           }
         )
@@ -240,7 +263,7 @@ const registerStorageIpcHandlers = (deps: StorageIpcDeps): void => {
       } catch (err) {
         // runDataRootMigration never rejects; guard the IPC boundary anyway so a renderer call
         // never sees a raw thrown error. Nothing was committed, so lift the write-gate.
-        console.error('[storage-ipc] migrate failed unexpectedly', err)
+        logger.error('data root copy boundary failed', diagnosticErrorFields(err))
         clearMigrationPending()
         activeStaged = undefined
         return { ok: false, error: err instanceof Error ? err.message : String(err) }
@@ -270,11 +293,11 @@ const registerStorageIpcHandlers = (deps: StorageIpcDeps): void => {
     async (_event, request: { parent: string }): Promise<void> => {
       if (activeMigration || resolutionInProgress) {
         // A copy is still running; discarding would race the writer. Ignore the (stale) request.
-        console.error('[storage-ipc] discard-migrated-copy ignored: a copy is in progress')
+        logger.warn('staged data root discard ignored', { reason: 'copy-in-progress' })
         return
       }
       if (!activeStaged || !samePath(activeStaged.target, dataRootForPicked(request.parent))) {
-        console.error('[storage-ipc] discard-migrated-copy ignored: no matching staged copy')
+        logger.warn('staged data root discard ignored', { reason: 'no-matching-copy' })
         return
       }
       const staged = activeStaged
@@ -288,28 +311,32 @@ const registerStorageIpcHandlers = (deps: StorageIpcDeps): void => {
           clearMigrationPending()
           activeStaged = undefined
         } else {
-          console.error('[storage-ipc] discard-migrated-copy refused', { error: result.error })
+          logger.warn('staged data root discard refused', { reason: 'validation-failed' })
         }
       } catch (err) {
-        console.error('[storage-ipc] discard-migrated-copy failed', err)
+        logger.error('staged data root discard failed', diagnosticErrorFields(err))
       } finally {
         resolutionInProgress = false
       }
     }
   )
 
-  // Shuts the backends down (agent process tree + notebook kernels) before relaunching, so a data-root
-  // switch never leaves an orphaned backend from the old process attached to the app it relaunches into.
-  // The injected deps.relaunch (tests) replaces the whole relaunch+exit, so it short-circuits ahead of
-  // any real shutdown. shutdownBackends is bounded and never throws, so relaunch always makes progress.
+  // Production relaunches through app.quit(), allowing the single application lifecycle owner to
+  // drain usage, flush renderer persistence, stop backends, write a terminal diagnostic, and flush
+  // main.log before exit. The injected callback remains a narrow test seam.
   const cleanRelaunch = async (): Promise<void> => {
     if (deps.relaunch) {
       deps.relaunch()
       return
     }
-    await shutdownBackends({ runtime: deps.runtime, notebook: deps.notebook })
     app.relaunch()
-    app.exit(0)
+    const rollbackTrigger = markApplicationShutdownTrigger('migration-relaunch')
+    try {
+      app.quit()
+    } catch (error) {
+      rollbackTrigger()
+      throw error
+    }
   }
 
   // Phase 2 (commit): invoked by the modal's "Restart now" once the copy is done. Flips
@@ -340,12 +367,14 @@ const registerStorageIpcHandlers = (deps: StorageIpcDeps): void => {
             // Arrow-wrapped so setDataRoot is called as a method (it reads `this.repository`).
             setDataRoot: (path) => deps.settingsService.setDataRoot(path),
             // Prove the on-disk copy is the one this session staged (guards against a stale marker).
-            expectedToken: staged.token
+            expectedToken: staged.token,
+            logger,
+            diagnosticCorrelationId: staged.correlationId
           },
           request.parent
         )
       } catch (err) {
-        console.error('[storage-ipc] commit-and-relaunch failed unexpectedly', err)
+        logger.error('data root commit boundary failed', diagnosticErrorFields(err))
         // The commit didn't complete; keep the app usable on the old root by lifting the write-gate.
         clearMigrationPending()
         activeStaged = undefined
@@ -387,7 +416,7 @@ const registerStorageIpcHandlers = (deps: StorageIpcDeps): void => {
       try {
         return await validateNewDataRoot(request.parent, resolveDataRoot())
       } catch (err) {
-        console.error('[storage-ipc] validate-data-root failed unexpectedly', err)
+        logger.warn('data root validation boundary failed', diagnosticErrorFields(err))
         return { ok: false, error: err instanceof Error ? err.message : String(err) }
       }
     }
@@ -405,7 +434,7 @@ const registerStorageIpcHandlers = (deps: StorageIpcDeps): void => {
         const result = await classifyDataRoot(request.parent, resolveDataRoot())
         return { ...result, dataRoot }
       } catch (err) {
-        console.error('[storage-ipc] inspect-data-root failed unexpectedly', err)
+        logger.warn('data root inspection boundary failed', diagnosticErrorFields(err))
         return {
           kind: 'invalid',
           dataRoot,
@@ -435,9 +464,15 @@ const registerStorageIpcHandlers = (deps: StorageIpcDeps): void => {
       _event,
       request: { parent: string; markOnboarding?: boolean }
     ): Promise<ValidateResult> => {
+      const operation = startDiagnosticOperation(logger, {
+        operation: 'data-root-selection',
+        fields: { onboarding: request.markOnboarding === true }
+      })
+      operation.phase('classify-target')
       try {
         const classification = await classifyDataRoot(request.parent, resolveDataRoot())
         if (classification.kind === 'invalid') {
+          operation.fail(new Error(classification.error ?? 'invalid target'), { mode: 'invalid' })
           return { ok: false, error: classification.error ?? 'The selected folder is not usable.' }
         }
 
@@ -448,16 +483,21 @@ const registerStorageIpcHandlers = (deps: StorageIpcDeps): void => {
         // read that explicitly-configured-but-absent root as deleted and wrongly show "Data folder not
         // found". For an 'adopt' target the folder already exists, so this is a no-op. classifyDataRoot
         // has already proven the parent writable, so failure here is genuinely unexpected.
+        operation.phase('prepare-target', { mode: classification.kind })
         await mkdir(target, { recursive: true })
+        operation.phase('persist-pointer', { mode: classification.kind })
         await deps.settingsService.setDataRoot(target)
         if (request.markOnboarding) {
           await deps.settingsService.markOnboardingComplete()
         }
+        operation.phase('request-relaunch', { mode: classification.kind })
         await cleanRelaunch()
+        operation.complete({ mode: classification.kind })
 
         return { ok: true }
       } catch (err) {
-        console.error('[storage-ipc] set-data-root-and-relaunch failed unexpectedly', err)
+        operation.fail(err)
+        logger.error('data root selection boundary failed', diagnosticErrorFields(err))
         return { ok: false, error: err instanceof Error ? err.message : String(err) }
       }
     }

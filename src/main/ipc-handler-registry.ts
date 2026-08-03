@@ -4,6 +4,11 @@ import { ipcMain, type IpcMain, type IpcMainInvokeEvent } from 'electron'
 
 import { isWebRpcChannel } from '../shared/web-rpc-contract'
 import { callerContextForEvent, hasCallerAuthority, type CallerContext } from './caller-context'
+import {
+  invokeWithIpcRejectionDiagnostics,
+  type IpcRejectionLogger
+} from './diagnostics/ipc-rejection'
+import { createLogger } from './logger'
 
 type IpcHandler = Parameters<IpcMain['handle']>[1]
 
@@ -65,9 +70,35 @@ type IpcHandlerRegistry = {
   createInstallationScope(): IpcHandlerInstallationScope
 }
 
+type IpcHandlerRegistryDiagnostics = {
+  log?: IpcRejectionLogger
+  now?: () => number
+}
+
+const diagnosticCallerContextForEvent = (
+  event: IpcMainInvokeEvent
+): Pick<CallerContext, 'surface' | 'location' | 'principalKind' | 'actionOrigin'> => {
+  try {
+    return callerContextForEvent(event)
+  } catch {
+    return {
+      surface: 'electron',
+      location: 'local',
+      principalKind: 'human',
+      actionOrigin: 'human'
+    }
+  }
+}
+
 const createIpcHandlerRegistry = (
-  target: Pick<IpcMain, 'handle'> & Partial<Pick<IpcMain, 'removeHandler'>>
+  target: Pick<IpcMain, 'handle'> & Partial<Pick<IpcMain, 'removeHandler'>>,
+  diagnostics: IpcHandlerRegistryDiagnostics = {}
 ): IpcHandlerRegistry => {
+  const diagnosticLog =
+    diagnostics.log ??
+    ({
+      warn: (message, data) => createLogger('ipc').warn(message, data)
+    } satisfies IpcRejectionLogger)
   const webHandlers = new Map<string, IpcHandler>()
   const registeredChannels = new Set<string>()
   const clients = new Map<string, { id: number; lifecycle: EventEmitter }>()
@@ -91,7 +122,15 @@ const createIpcHandlerRegistry = (
   }
 
   const ipcMainHandle: IpcMain['handle'] = (channel, listener) => {
-    target.handle(channel, listener)
+    target.handle(channel, (event, ...args) =>
+      invokeWithIpcRejectionDiagnostics({
+        channel,
+        callerContext: diagnosticCallerContextForEvent(event),
+        invoke: () => listener(event, ...args),
+        log: diagnosticLog,
+        now: diagnostics.now
+      })
+    )
     registeredChannels.add(channel)
     if (isWebRpcChannel(channel)) webHandlers.set(channel, listener)
   }
@@ -146,7 +185,13 @@ const createIpcHandlerRegistry = (
         }
         const sender = senderFor(callerContext)
         const event = { sender } as unknown as IpcMainInvokeEvent
-        return handler(event, ...args)
+        return invokeWithIpcRejectionDiagnostics({
+          channel,
+          callerContext,
+          invoke: () => handler(event, ...args),
+          log: diagnosticLog,
+          now: diagnostics.now
+        })
       },
       releaseClient: destroyClient,
       dispose: () => {
@@ -175,4 +220,4 @@ export {
   isRemotePairingManagerSender,
   webRpc
 }
-export type { IpcHandlerInstallation, IpcHandlerInstallationScope }
+export type { IpcHandlerInstallation, IpcHandlerInstallationScope, IpcHandlerRegistryDiagnostics }

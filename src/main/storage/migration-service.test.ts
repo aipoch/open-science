@@ -32,6 +32,7 @@ import {
 } from './migration-marker'
 import { withDataRootWrite } from './migration-state'
 import { operationJournalPath, RuntimeOperationJournal } from '../notebook/operation-journal'
+import type { Logger } from '../logger'
 
 // Writes a verified staging marker for `<parent>/OpenScience`, as a completed copy phase would have.
 const seedVerifiedMarker = async (
@@ -450,9 +451,150 @@ const runOpts = (): { signal: AbortSignal; onProgress: (p: MigrationProgress) =>
   onProgress: () => {}
 })
 
+const fakeDiagnosticLogger = (): Logger => ({
+  debug: vi.fn(),
+  info: vi.fn(),
+  warn: vi.fn(),
+  error: vi.fn()
+})
+
+const diagnosticRecords = (logger: Logger): Record<string, unknown>[] =>
+  [logger.debug, logger.info, logger.warn, logger.error].flatMap((method) =>
+    (method as Mock).mock.calls.map((call) => call[1] as Record<string, unknown>)
+  )
+
 type DeleteResult = { deleted: string[]; failed: { dir: string; error: string }[] }
 
 describe('runDataRootMigration (copy phase)', () => {
+  it('diagnoses target validation failure without changing the result or retaining sensitive values', async () => {
+    const deps = fakeDeps()
+    const logger = fakeDiagnosticLogger()
+
+    const result = await runDataRootMigration(
+      { ...deps, currentDataRoot, logger },
+      currentParent,
+      runOpts()
+    )
+
+    const validationError = 'The new location is the same as the current one.'
+    expect(result).toEqual({
+      ok: false,
+      error: validationError
+    })
+    expect(diagnosticRecords(logger)).toContainEqual(
+      expect.objectContaining({
+        operation: 'data-root-copy',
+        phase: 'validate-target',
+        outcome: 'failed',
+        errorCategory: 'error'
+      })
+    )
+    const serializedDiagnostics = JSON.stringify(diagnosticRecords(logger))
+    expect(serializedDiagnostics).not.toContain(currentDataRoot)
+    expect(serializedDiagnostics).not.toContain(currentParent)
+    expect(serializedDiagnostics).not.toContain(validationError)
+  })
+
+  it('records the successful copy lifecycle through staging verification', async () => {
+    const deps = fakeDeps()
+    const logger = fakeDiagnosticLogger()
+    const copyAndVerify = vi.fn(async (): Promise<MigrationResult> => ({ ok: true }))
+
+    const result = await runDataRootMigration(
+      { ...deps, currentDataRoot, copyAndVerify, logger },
+      emptyParent,
+      runOpts()
+    )
+
+    expect(result).toEqual({ ok: true })
+    const records = diagnosticRecords(logger)
+    expect(
+      records.filter((record) => record.phase && !record.outcome).map((record) => record.phase)
+    ).toEqual([
+      'validate-target',
+      'prepare-staging',
+      'pause-writers',
+      'validate-source',
+      'preserve-runtime',
+      'copy',
+      'verify-target'
+    ])
+    expect(records).toContainEqual(
+      expect.objectContaining({
+        operation: 'data-root-copy',
+        phase: 'verify-target',
+        outcome: 'completed',
+        preservedEnvironmentCount: 0
+      })
+    )
+  })
+
+  it('records bounded copy quartiles without retaining the current file path', async () => {
+    const deps = fakeDeps()
+    const logger = fakeDiagnosticLogger()
+    const onProgress = vi.fn()
+    const copyAndVerify = vi.fn(
+      async (opts: { onProgress: (progress: MigrationProgress) => void }) => {
+        opts.onProgress({ phase: 'scan', copiedBytes: 0, totalBytes: 400 })
+        opts.onProgress({
+          phase: 'copy',
+          copiedBytes: 110,
+          totalBytes: 400,
+          currentPath: 'secret/project-name.txt'
+        })
+        opts.onProgress({ phase: 'copy', copiedBytes: 400, totalBytes: 400 })
+        return { ok: true } as const
+      }
+    )
+
+    await runDataRootMigration({ ...deps, currentDataRoot, copyAndVerify, logger }, emptyParent, {
+      ...runOpts(),
+      onProgress
+    })
+
+    expect(onProgress).toHaveBeenCalledTimes(3)
+    expect(
+      diagnosticRecords(logger)
+        .filter((record) => record.progressPercent !== undefined)
+        .map((record) => record.progressPercent)
+    ).toEqual([0, 25, 50, 75, 100])
+    expect(JSON.stringify(diagnosticRecords(logger))).not.toContain('secret/project-name.txt')
+  })
+
+  it.skipIf(process.platform === 'win32')(
+    'diagnoses staging preparation failure without retaining the target path',
+    async () => {
+      const deps = fakeDeps()
+      const logger = fakeDiagnosticLogger()
+      const target = dataRootFor(emptyParent)
+      await mkdir(join(target, 'runtime'), { recursive: true })
+      await chmod(target, 0o500)
+
+      try {
+        const result = await runDataRootMigration(
+          { ...deps, currentDataRoot, logger },
+          emptyParent,
+          runOpts()
+        )
+
+        expect(result).toEqual({
+          ok: false,
+          error: 'Could not prepare the new data location. Please try again.'
+        })
+        expect(diagnosticRecords(logger)).toContainEqual(
+          expect.objectContaining({
+            operation: 'data-root-copy',
+            phase: 'prepare-staging',
+            outcome: 'failed'
+          })
+        )
+        expect(JSON.stringify(diagnosticRecords(logger))).not.toContain(target)
+      } finally {
+        if (existsSync(target)) await chmod(target, 0o700)
+      }
+    }
+  )
+
   it('interrupts sessions then copies+verifies into the target, committing nothing', async () => {
     const order: string[] = []
     const deps = fakeDeps()
@@ -539,20 +681,56 @@ describe('runDataRootMigration (copy phase)', () => {
 
   it('returns the copy failure untouched', async () => {
     const deps = fakeDeps()
+    const logger = fakeDiagnosticLogger()
     const copyAndVerify = vi.fn(async (): Promise<MigrationResult> => ({ ok: false, error: 'x' }))
 
     const result = await runDataRootMigration(
-      { currentDataRoot, runtime: deps.runtime, notebook: deps.notebook, copyAndVerify },
+      { currentDataRoot, runtime: deps.runtime, notebook: deps.notebook, copyAndVerify, logger },
       emptyParent,
       runOpts()
     )
 
     expect(result).toEqual({ ok: false, error: 'x' })
     expect(deps.setDataRoot).not.toHaveBeenCalled()
+    expect(diagnosticRecords(logger)).toContainEqual(
+      expect.objectContaining({
+        operation: 'data-root-copy',
+        phase: 'copy',
+        outcome: 'failed',
+        errorCategory: 'error'
+      })
+    )
+    expect(JSON.stringify(diagnosticRecords(logger))).not.toContain('"x"')
+  })
+
+  it('diagnoses an unexpected copy engine rejection without exposing its error', async () => {
+    const deps = fakeDeps()
+    const logger = fakeDiagnosticLogger()
+    const copyAndVerify = vi.fn(async (): Promise<MigrationResult> => {
+      throw new Error('copy-secret')
+    })
+
+    const result = await runDataRootMigration(
+      { currentDataRoot, runtime: deps.runtime, notebook: deps.notebook, copyAndVerify, logger },
+      emptyParent,
+      runOpts()
+    )
+
+    expect(result).toEqual({ ok: false, error: 'Could not copy your data. Please try again.' })
+    expect(diagnosticRecords(logger)).toContainEqual(
+      expect.objectContaining({
+        operation: 'data-root-copy',
+        phase: 'copy',
+        outcome: 'failed',
+        errorCategory: 'error'
+      })
+    )
+    expect(JSON.stringify(diagnosticRecords(logger))).not.toContain('copy-secret')
   })
 
   it('refuses to stage a migration when the frozen source has unresolved durable provenance', async () => {
     const deps = fakeDeps()
+    const logger = fakeDiagnosticLogger()
     const copyAndVerify = vi.fn(async (): Promise<MigrationResult> => ({ ok: true }))
     const validateProvenanceState = vi.fn(async () => {
       throw new Error('unfinished Artifact staging')
@@ -564,7 +742,8 @@ describe('runDataRootMigration (copy phase)', () => {
         runtime: deps.runtime,
         notebook: deps.notebook,
         copyAndVerify,
-        validateProvenanceState
+        validateProvenanceState,
+        logger
       },
       emptyParent,
       runOpts()
@@ -576,6 +755,53 @@ describe('runDataRootMigration (copy phase)', () => {
     })
     expect(validateProvenanceState).toHaveBeenCalledWith(currentDataRoot)
     expect(copyAndVerify).not.toHaveBeenCalled()
+    expect(diagnosticRecords(logger)).toContainEqual(
+      expect.objectContaining({
+        operation: 'data-root-copy',
+        phase: 'validate-source',
+        outcome: 'failed',
+        errorCategory: 'error'
+      })
+    )
+    expect(JSON.stringify(diagnosticRecords(logger))).not.toContain('unfinished Artifact staging')
+  })
+
+  it('diagnoses target provenance verification failure without retaining its error', async () => {
+    const deps = fakeDeps()
+    const logger = fakeDiagnosticLogger()
+    const copyAndVerify = vi.fn(async (): Promise<MigrationResult> => ({ ok: true }))
+    let validationCount = 0
+    const validateProvenanceState = vi.fn(async () => {
+      validationCount += 1
+      if (validationCount === 2) throw new Error('target-provenance-secret')
+    })
+
+    const result = await runDataRootMigration(
+      {
+        currentDataRoot,
+        runtime: deps.runtime,
+        notebook: deps.notebook,
+        copyAndVerify,
+        validateProvenanceState,
+        logger
+      },
+      emptyParent,
+      runOpts()
+    )
+
+    expect(result).toEqual({
+      ok: false,
+      error: 'Could not verify provenance data: target-provenance-secret'
+    })
+    expect(diagnosticRecords(logger)).toContainEqual(
+      expect.objectContaining({
+        operation: 'data-root-copy',
+        phase: 'verify-target',
+        outcome: 'failed',
+        errorCategory: 'error'
+      })
+    )
+    expect(JSON.stringify(diagnosticRecords(logger))).not.toContain('target-provenance-secret')
   })
 
   it('refuses to copy while the source runtime recovery journal has a pending operation', async () => {
@@ -693,8 +919,86 @@ describe('runDataRootMigration (copy phase)', () => {
     })
   })
 
+  it('diagnoses staged-copy finalization failure without retaining callback error details', async () => {
+    const deps = fakeDeps()
+    const logger = fakeDiagnosticLogger()
+    const copyAndVerify = vi.fn(async (): Promise<MigrationResult> => ({ ok: true }))
+
+    const result = await runDataRootMigration(
+      { currentDataRoot, runtime: deps.runtime, notebook: deps.notebook, copyAndVerify, logger },
+      emptyParent,
+      {
+        signal: new AbortController().signal,
+        onProgress: () => {},
+        onVerified: () => {
+          throw new Error('verification-callback-secret')
+        }
+      }
+    )
+
+    expect(result).toEqual({
+      ok: false,
+      error: 'Could not finalize the copied data. Please run the move again.'
+    })
+    expect(diagnosticRecords(logger)).toContainEqual(
+      expect.objectContaining({
+        operation: 'data-root-copy',
+        phase: 'verify-target',
+        outcome: 'failed',
+        errorCategory: 'error'
+      })
+    )
+    expect(JSON.stringify(diagnosticRecords(logger))).not.toContain('verification-callback-secret')
+  })
+
+  it.skipIf(process.platform === 'win32')(
+    'diagnoses staged inventory failure at target verification',
+    async () => {
+      const deps = fakeDeps()
+      const logger = fakeDiagnosticLogger()
+      const target = dataRootFor(emptyParent)
+      const unreadableDir = join(target, 'artifacts')
+      const copyAndVerify = vi.fn(async (): Promise<MigrationResult> => {
+        await mkdir(unreadableDir, { recursive: true })
+        await writeFile(join(unreadableDir, 'private.txt'), 'private')
+        await chmod(unreadableDir, 0o000)
+        return { ok: true }
+      })
+
+      try {
+        const result = await runDataRootMigration(
+          {
+            currentDataRoot,
+            runtime: deps.runtime,
+            notebook: deps.notebook,
+            copyAndVerify,
+            validateProvenanceState: async () => undefined,
+            logger
+          },
+          emptyParent,
+          runOpts()
+        )
+
+        expect(result).toEqual({
+          ok: false,
+          error: 'Could not verify the copied data. Please run the move again.'
+        })
+        expect(diagnosticRecords(logger)).toContainEqual(
+          expect.objectContaining({
+            operation: 'data-root-copy',
+            phase: 'verify-target',
+            outcome: 'failed'
+          })
+        )
+      } finally {
+        if (existsSync(unreadableDir)) await chmod(unreadableDir, 0o700)
+      }
+    }
+  )
+
   it('removes the marker and cleans up the empty target on copy failure/cancel', async () => {
     const deps = fakeDeps()
+    const logger = fakeDiagnosticLogger()
     const target = dataRootFor(emptyParent)
     const copyAndVerify = vi.fn(async (): Promise<MigrationResult> => ({
       ok: false,
@@ -703,7 +1007,7 @@ describe('runDataRootMigration (copy phase)', () => {
     }))
 
     await runDataRootMigration(
-      { currentDataRoot, runtime: deps.runtime, notebook: deps.notebook, copyAndVerify },
+      { currentDataRoot, runtime: deps.runtime, notebook: deps.notebook, copyAndVerify, logger },
       emptyParent,
       runOpts()
     )
@@ -711,6 +1015,40 @@ describe('runDataRootMigration (copy phase)', () => {
     // No marker, and the empty staging shell is gone — a cancelled move leaves no trace.
     expect(await readMigrationMarker(target)).toBeNull()
     expect(existsSync(target)).toBe(false)
+    expect(diagnosticRecords(logger)).toContainEqual(
+      expect.objectContaining({
+        operation: 'data-root-copy',
+        phase: 'copy',
+        outcome: 'cancelled',
+        cancelRequested: true
+      })
+    )
+  })
+
+  it('records cancellation requested while the copy engine is finishing as cancelled', async () => {
+    const deps = fakeDeps()
+    const logger = fakeDiagnosticLogger()
+    const controller = new AbortController()
+    const copyAndVerify = vi.fn(async (): Promise<MigrationResult> => {
+      controller.abort()
+      return { ok: true }
+    })
+
+    const result = await runDataRootMigration(
+      { currentDataRoot, runtime: deps.runtime, notebook: deps.notebook, copyAndVerify, logger },
+      emptyParent,
+      { signal: controller.signal, onProgress: () => {} }
+    )
+
+    expect(result).toEqual({ ok: false, error: 'migration cancelled', cancelled: true })
+    expect(diagnosticRecords(logger)).toContainEqual(
+      expect.objectContaining({
+        operation: 'data-root-copy',
+        phase: 'copy',
+        outcome: 'cancelled',
+        cancelRequested: true
+      })
+    )
   })
 
   it('short-circuits on validation failure without interrupting or copying', async () => {
@@ -735,11 +1073,12 @@ describe('runDataRootMigration (copy phase)', () => {
 
   it('aborts (and does not copy) when a writer cannot be paused', async () => {
     const deps = fakeDeps()
+    const logger = fakeDiagnosticLogger()
     deps.runtime.disconnect.mockRejectedValue(new Error('disconnect boom'))
     const copyAndVerify = vi.fn(async (): Promise<MigrationResult> => ({ ok: true }))
 
     const result = await runDataRootMigration(
-      { currentDataRoot, runtime: deps.runtime, notebook: deps.notebook, copyAndVerify },
+      { currentDataRoot, runtime: deps.runtime, notebook: deps.notebook, copyAndVerify, logger },
       emptyParent,
       runOpts()
     )
@@ -749,10 +1088,74 @@ describe('runDataRootMigration (copy phase)', () => {
     expect(copyAndVerify).not.toHaveBeenCalled()
     // The staging dir (marker) we created is cleaned up on abort.
     expect(existsSync(dataRootFor(emptyParent))).toBe(false)
+    expect(diagnosticRecords(logger)).toContainEqual(
+      expect.objectContaining({
+        operation: 'data-root-copy',
+        phase: 'pause-writers',
+        outcome: 'failed',
+        errorCategory: 'error'
+      })
+    )
+    expect(JSON.stringify(diagnosticRecords(logger))).not.toContain('disconnect boom')
   })
 })
 
 describe('commitDataRootSwitch (commit phase)', () => {
+  it('correlates distinct copy and commit operations without reusing the marker token', async () => {
+    const deps = fakeDeps()
+    const logger = fakeDiagnosticLogger()
+    const diagnosticCorrelationId = 'diagnostic-migration-id'
+    let markerToken = ''
+
+    await runDataRootMigration(
+      {
+        currentDataRoot,
+        runtime: deps.runtime,
+        notebook: deps.notebook,
+        copyAndVerify: async () => ({ ok: true }),
+        validateProvenanceState: async () => undefined,
+        logger,
+        diagnosticCorrelationId
+      },
+      emptyParent,
+      {
+        ...runOpts(),
+        onVerified: ({ token }) => {
+          markerToken = token
+        }
+      }
+    )
+
+    const result = await commitDataRootSwitch(
+      {
+        currentDataRoot,
+        setDataRoot: deps.setDataRoot,
+        deleteSources: async () => ({ deleted: [], failed: [] }),
+        validateProvenanceState: async () => undefined,
+        expectedToken: markerToken,
+        logger,
+        diagnosticCorrelationId
+      },
+      emptyParent
+    )
+
+    expect(result).toEqual({ ok: true })
+    const terminalRecords = diagnosticRecords(logger).filter(
+      (record) => record.outcome === 'completed'
+    )
+    expect(terminalRecords).toHaveLength(2)
+    expect(terminalRecords.map((record) => record.operation)).toEqual([
+      'data-root-copy',
+      'data-root-commit'
+    ])
+    expect(
+      terminalRecords.every((record) => record.correlationId === diagnosticCorrelationId)
+    ).toBe(true)
+    expect(new Set(terminalRecords.map((record) => record.operationId)).size).toBe(2)
+    expect(markerToken).not.toBe(diagnosticCorrelationId)
+    expect(JSON.stringify(diagnosticRecords(logger))).not.toContain(markerToken)
+  })
+
   it('keeps the fixed config-root SQLite authority out of the relocatable data set', async () => {
     const deps = fakeDeps()
     const copyAndVerify = vi.fn(async (): Promise<MigrationResult> => ({ ok: true }))
@@ -774,6 +1177,7 @@ describe('commitDataRootSwitch (commit phase)', () => {
     const target = await seedVerifiedMarker(emptyParent, currentDataRoot)
     const order: string[] = []
     const deps = fakeDeps()
+    const logger = fakeDiagnosticLogger()
     deps.setDataRoot.mockImplementation(async () => {
       order.push('setDataRoot')
     })
@@ -783,7 +1187,13 @@ describe('commitDataRootSwitch (commit phase)', () => {
     })
 
     const result = await commitDataRootSwitch(
-      { currentDataRoot, setDataRoot: deps.setDataRoot, deleteSources, expectedToken: 'tok-test' },
+      {
+        currentDataRoot,
+        setDataRoot: deps.setDataRoot,
+        deleteSources,
+        expectedToken: 'tok-test',
+        logger
+      },
       emptyParent
     )
 
@@ -795,21 +1205,52 @@ describe('commitDataRootSwitch (commit phase)', () => {
     expect(deleteSources).toHaveBeenCalledWith(currentDataRoot, [...MIGRATED_DIRS])
     // The committed (now-live) root must carry NO marker.
     expect(existsSync(join(target, MIGRATION_MARKER_FILENAME))).toBe(false)
+    const records = diagnosticRecords(logger)
+    expect(
+      records.filter((record) => record.phase && !record.outcome).map((record) => record.phase)
+    ).toEqual(['recheck-inventory', 'validate-provenance', 'persist-pointer', 'cleanup-source'])
+    expect(records).toContainEqual(
+      expect.objectContaining({
+        operation: 'data-root-commit',
+        phase: 'cleanup-source',
+        outcome: 'completed',
+        cleanupDegraded: false,
+        cleanupFailureCount: 0
+      })
+    )
+    expect(JSON.stringify(records)).not.toContain(currentDataRoot)
+    expect(JSON.stringify(records)).not.toContain(target)
+    expect(JSON.stringify(records)).not.toContain('tok-test')
   })
 
   it('refuses to commit when no marker is present (setDataRoot and delete never run)', async () => {
     await mkdir(dataRootFor(emptyParent), { recursive: true }) // staging dir, but no marker
     const deps = fakeDeps()
+    const logger = fakeDiagnosticLogger()
     const deleteSources = vi.fn(async (): Promise<DeleteResult> => ({ deleted: [], failed: [] }))
 
     const result = await commitDataRootSwitch(
-      { currentDataRoot, setDataRoot: deps.setDataRoot, deleteSources, expectedToken: 'tok-test' },
+      {
+        currentDataRoot,
+        setDataRoot: deps.setDataRoot,
+        deleteSources,
+        expectedToken: 'tok-test',
+        logger
+      },
       emptyParent
     )
 
     expect(result).toEqual({ ok: false, error: 'No completed migration copy was found to commit.' })
     expect(deps.setDataRoot).not.toHaveBeenCalled()
     expect(deleteSources).not.toHaveBeenCalled()
+    expect(diagnosticRecords(logger)).toContainEqual(
+      expect.objectContaining({
+        operation: 'data-root-commit',
+        phase: 'recheck-inventory',
+        outcome: 'failed',
+        errorCategory: 'error'
+      })
+    )
   })
 
   it("refuses to commit a marker that is only 'copying' (not verified)", async () => {
@@ -867,11 +1308,18 @@ describe('commitDataRootSwitch (commit phase)', () => {
   it('returns switchoverFailed, skips delete, and KEEPS the marker when setDataRoot fails', async () => {
     const target = await seedVerifiedMarker(emptyParent, currentDataRoot)
     const deps = fakeDeps()
+    const logger = fakeDiagnosticLogger()
     deps.setDataRoot.mockRejectedValue(new Error('disk full'))
     const deleteSources = vi.fn(async (): Promise<DeleteResult> => ({ deleted: [], failed: [] }))
 
     const result = await commitDataRootSwitch(
-      { currentDataRoot, setDataRoot: deps.setDataRoot, deleteSources, expectedToken: 'tok-test' },
+      {
+        currentDataRoot,
+        setDataRoot: deps.setDataRoot,
+        deleteSources,
+        expectedToken: 'tok-test',
+        logger
+      },
       emptyParent
     )
 
@@ -883,22 +1331,152 @@ describe('commitDataRootSwitch (commit phase)', () => {
     expect(deleteSources).not.toHaveBeenCalled()
     // The copy stays discardable/retryable, so the marker must survive a failed switchover.
     expect(existsSync(join(target, MIGRATION_MARKER_FILENAME))).toBe(true)
+    expect(diagnosticRecords(logger)).toContainEqual(
+      expect.objectContaining({
+        operation: 'data-root-commit',
+        phase: 'persist-pointer',
+        outcome: 'failed',
+        switchoverFailed: true,
+        errorCategory: 'error'
+      })
+    )
+    expect(JSON.stringify(diagnosticRecords(logger))).not.toContain('disk full')
+    expect(JSON.stringify(diagnosticRecords(logger))).not.toContain(target)
+  })
+
+  it('diagnoses commit provenance validation failure without retaining its error', async () => {
+    await seedVerifiedMarker(emptyParent, currentDataRoot)
+    const deps = fakeDeps()
+    const logger = fakeDiagnosticLogger()
+    const validateProvenanceState = vi.fn(async () => {
+      throw new Error('commit-provenance-secret')
+    })
+
+    const result = await commitDataRootSwitch(
+      {
+        currentDataRoot,
+        setDataRoot: deps.setDataRoot,
+        expectedToken: 'tok-test',
+        validateProvenanceState,
+        logger
+      },
+      emptyParent
+    )
+
+    expect(result).toEqual({
+      ok: false,
+      error: 'Could not verify provenance data: commit-provenance-secret'
+    })
+    expect(deps.setDataRoot).not.toHaveBeenCalled()
+    expect(diagnosticRecords(logger)).toContainEqual(
+      expect.objectContaining({
+        operation: 'data-root-commit',
+        phase: 'validate-provenance',
+        outcome: 'failed',
+        errorCategory: 'error'
+      })
+    )
+    expect(JSON.stringify(diagnosticRecords(logger))).not.toContain('commit-provenance-secret')
   })
 
   it('still succeeds when deleteSources reports per-dir failures (harmless leftovers)', async () => {
     await seedVerifiedMarker(emptyParent, currentDataRoot)
     const deps = fakeDeps()
+    const logger = fakeDiagnosticLogger()
     const deleteSources = vi.fn(async (): Promise<DeleteResult> => ({
       deleted: ['artifacts'],
       failed: [{ dir: 'uploads', error: 'EACCES' }]
     }))
 
     const result = await commitDataRootSwitch(
-      { currentDataRoot, setDataRoot: deps.setDataRoot, deleteSources, expectedToken: 'tok-test' },
+      {
+        currentDataRoot,
+        setDataRoot: deps.setDataRoot,
+        deleteSources,
+        expectedToken: 'tok-test',
+        logger
+      },
       emptyParent
     )
 
     expect(result).toEqual({ ok: true })
+    expect(diagnosticRecords(logger)).toContainEqual(
+      expect.objectContaining({
+        operation: 'data-root-commit',
+        phase: 'cleanup-source',
+        outcome: 'completed',
+        cleanupDegraded: true,
+        cleanupFailureCount: 1
+      })
+    )
+    expect(JSON.stringify(diagnosticRecords(logger))).not.toContain('uploads')
+    expect(JSON.stringify(diagnosticRecords(logger))).not.toContain('EACCES')
+  })
+
+  it.skipIf(process.platform === 'win32')(
+    'reports marker cleanup failure as degraded success after pointer persistence',
+    async () => {
+      const target = await seedVerifiedMarker(emptyParent, currentDataRoot)
+      const logger = fakeDiagnosticLogger()
+      const setDataRoot = vi.fn(async () => {
+        await chmod(target, 0o500)
+      })
+      const deleteSources = vi.fn(async (): Promise<DeleteResult> => ({
+        deleted: [...MIGRATED_DIRS],
+        failed: []
+      }))
+
+      try {
+        const result = await commitDataRootSwitch(
+          { currentDataRoot, setDataRoot, deleteSources, expectedToken: 'tok-test', logger },
+          emptyParent
+        )
+
+        expect(result).toEqual({ ok: true })
+        expect(diagnosticRecords(logger)).toContainEqual(
+          expect.objectContaining({
+            operation: 'data-root-commit',
+            phase: 'cleanup-source',
+            outcome: 'completed',
+            cleanupDegraded: true,
+            cleanupFailureCount: 0
+          })
+        )
+      } finally {
+        await chmod(target, 0o700)
+      }
+    }
+  )
+
+  it('preserves an unexpected cleanup rejection while diagnosing its phase', async () => {
+    await seedVerifiedMarker(emptyParent, currentDataRoot)
+    const deps = fakeDeps()
+    const logger = fakeDiagnosticLogger()
+    const deleteSources = vi.fn(async (): Promise<DeleteResult> => {
+      throw new Error('cleanup-secret')
+    })
+
+    await expect(
+      commitDataRootSwitch(
+        {
+          currentDataRoot,
+          setDataRoot: deps.setDataRoot,
+          deleteSources,
+          expectedToken: 'tok-test',
+          logger
+        },
+        emptyParent
+      )
+    ).rejects.toThrow('cleanup-secret')
+    expect(diagnosticRecords(logger)).toContainEqual(
+      expect.objectContaining({
+        operation: 'data-root-commit',
+        phase: 'cleanup-source',
+        outcome: 'failed',
+        errorCategory: 'error'
+      })
+    )
+    expect(JSON.stringify(diagnosticRecords(logger))).not.toContain('cleanup-secret')
   })
   it('refuses when the marker token does not match the session token', async () => {
     await seedVerifiedMarker(emptyParent, currentDataRoot) // token 'tok-test'
@@ -966,6 +1544,7 @@ describe('commitDataRootSwitch (commit phase)', () => {
     await writeFile(join(target, 'artifacts', 'keep.txt'), 'hello')
     await writeFile(join(currentDataRoot, 'artifacts', 'late.txt'), 'late write')
     const setDataRoot = vi.fn(async () => {})
+    const logger = fakeDiagnosticLogger()
     const deleteSources = vi.fn(async (): Promise<DeleteResult> => ({
       deleted: [...MIGRATED_DIRS],
       failed: []
@@ -976,7 +1555,8 @@ describe('commitDataRootSwitch (commit phase)', () => {
         currentDataRoot,
         setDataRoot,
         deleteSources,
-        expectedToken: 'tok-test'
+        expectedToken: 'tok-test',
+        logger
       },
       emptyParent
     )
@@ -987,6 +1567,14 @@ describe('commitDataRootSwitch (commit phase)', () => {
     })
     expect(setDataRoot).not.toHaveBeenCalled()
     expect(deleteSources).not.toHaveBeenCalled()
+    expect(diagnosticRecords(logger)).toContainEqual(
+      expect.objectContaining({
+        operation: 'data-root-commit',
+        phase: 'recheck-inventory',
+        outcome: 'failed',
+        errorCategory: 'error'
+      })
+    )
   })
 })
 
@@ -1118,6 +1706,7 @@ describe('runtime preservation + old-runtime cleanup', () => {
 
   it('still copies user data when exportRuntimeLocks throws (best-effort)', async () => {
     const deps = fakeDeps()
+    const logger = fakeDiagnosticLogger()
     const exportRuntimeLocks = vi.fn(async () => {
       throw new Error('micromamba boom')
     })
@@ -1129,7 +1718,8 @@ describe('runtime preservation + old-runtime cleanup', () => {
         runtime: deps.runtime,
         notebook: deps.notebook,
         exportRuntimeLocks,
-        copyAndVerify
+        copyAndVerify,
+        logger
       },
       emptyParent,
       runOpts()
@@ -1141,6 +1731,16 @@ describe('runtime preservation + old-runtime cleanup', () => {
         dirs: [...MIGRATED_DIRS, RUNTIME_ENVIRONMENT_MANIFESTS_DIR]
       })
     )
+    expect(diagnosticRecords(logger)).toContainEqual(
+      expect.objectContaining({
+        operation: 'data-root-copy',
+        phase: 'verify-target',
+        outcome: 'completed',
+        preservedEnvironmentCount: 0,
+        runtimePreservationDegraded: true
+      })
+    )
+    expect(JSON.stringify(diagnosticRecords(logger))).not.toContain('micromamba boom')
   })
 
   it('deletes the old runtime too when the new root has a reconstructable bundle', async () => {

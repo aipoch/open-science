@@ -35,9 +35,11 @@ import { createSessionArtifactFileResolver } from './session-artifact-file-resol
 import { registerCliInstallIpcHandlers } from './cli-install/ipc'
 import { registerGithubIpcHandlers } from './github-ipc'
 import {
+  BackendShutdownOutcomeError,
   BackendShutdownCoordinator,
   QUIT_SHUTDOWN_BUDGET_MS,
-  UPDATE_SHUTDOWN_BUDGET_MS
+  UPDATE_SHUTDOWN_BUDGET_MS,
+  type ShutdownStepOutcome
 } from './lifecycle-shutdown'
 import { registerLifecycleIpcHandlers } from './lifecycle-broadcast'
 import { registerLogsIpcHandlers } from './logs-ipc'
@@ -49,7 +51,8 @@ import {
   buildConnectorApprovalBroadcast,
   buildTaskNotificationShow
 } from './notifications/electron-wiring'
-import { createLogger, errorLogFields } from './logger'
+import { createLogger, diagnosticErrorFields, errorLogFields } from './logger'
+import { startDiagnosticOperation } from './diagnostics/operation'
 import {
   broadcastNotebookEnvProgress,
   registerNotebookEnvIpcHandlers,
@@ -199,7 +202,7 @@ export type ApplicationRuntimeInterfaces = {
   taskAgent: TaskAgentPort
   sessionDeletionCapability: Pick<SessionPersistenceCoordinator, 'setSessionDeletionHandlers'>
   detectActiveSessions: () => ReturnType<typeof detectActiveSessions>
-  prepareForQuit: () => Promise<void>
+  prepareForQuit: () => Promise<Extract<ShutdownStepOutcome, 'completed' | 'timeout' | 'failed'>>
 }
 
 type ApplicationModuleInterfaces = ApplicationRuntimeInterfaces & {
@@ -260,15 +263,14 @@ const createApplicationModules = async (
     capability: createDefaultSettingsService()
   }))
   const storedSettings = await settingsService.getStoredSettings()
+  const storageLog = createLogger('storage')
   // Prime the data-root cache from settings before any data repository is constructed below. A change
   // to this value only takes effect after a restart, so reading it once here is sufficient.
   initDataRoot(storedSettings.dataRoot)
-  // Recovery breadcrumb: if settings.json is ever lost/corrupted, the resolved dataRoot from the
-  // last successful launch is still findable in the logs, so a user with data at a non-default
-  // location isn't left guessing where it went.
-  createLogger('storage').info('data root resolved', {
-    dataRoot: resolveDataRoot(),
-    isDefault: samePath(resolveDataRoot(), computeDefaultDataRoot())
+  // Record only the location class. Absolute paths (including reversible code-point renderings) can
+  // expose usernames and folder names in a support bundle.
+  storageLog.info('data root resolved', {
+    location: samePath(resolveDataRoot(), computeDefaultDataRoot()) ? 'default' : 'custom'
   })
 
   // Constructed once here (rather than left to each register*IpcHandlers' own default) so the
@@ -279,9 +281,9 @@ const createApplicationModules = async (
   } catch (error) {
     // Ready bytes remain fail-closed; keep startup available so Files can surface unaffected rows and
     // the next launch can retry any recoverable staging Version.
-    createLogger('storage').error(
+    storageLog.error(
       'staging upload recovery incomplete; will retry next launch',
-      error
+      diagnosticErrorFields(error)
     )
   }
   const sessionRepository = createDefaultSessionRepository()
@@ -293,6 +295,11 @@ const createApplicationModules = async (
   // startup on failure: an error is logged and the marker stays unset, so the pass simply retries on
   // the next launch.
   if (!storedSettings.pathsNormalizedAt) {
+    const normalizationOperation = startDiagnosticOperation(storageLog, {
+      operation: 'legacy-data-root-normalization',
+      fields: { mode: 'legacy-normalize' }
+    })
+    normalizationOperation.phase('rewrite-paths')
     try {
       await normalizeLegacyDataPaths({
         sessionRepository,
@@ -301,12 +308,11 @@ const createApplicationModules = async (
         projectRepository,
         dataRoot: resolveDataRoot()
       })
+      normalizationOperation.phase('persist-marker')
       await settingsService.markPathsNormalized()
+      normalizationOperation.complete()
     } catch (error) {
-      createLogger('storage').error(
-        'legacy path normalization failed; will retry next launch',
-        error
-      )
+      normalizationOperation.fail(error)
     }
   }
 
@@ -1363,7 +1369,7 @@ const createApplicationModules = async (
     name: 'backend-shutdown-coordinator',
     capability: undefined,
     disposeTimeoutMs: QUIT_SHUTDOWN_BUDGET_MS + APPLICATION_MODULE_DISPOSAL_BUDGET_MS,
-    dispose: () => coordinator.runForQuit().then(() => undefined)
+    dispose: async () => BackendShutdownOutcomeError.assertClean(await coordinator.runForQuit())
   }))
   backendTeardownOwnedByCoordinator = true
 

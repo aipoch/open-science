@@ -709,7 +709,7 @@ describe('AcpRuntimeCoordinator', () => {
     const running = coordinator.sendPrompt({ sessionId: session.sessionId, text: 'never stops' })
     await Promise.resolve()
 
-    await expect(coordinator.prepareForQuit(0)).resolves.toBeUndefined()
+    await expect(coordinator.prepareForQuit(0)).resolves.toBe('timeout')
     expect(created.cancelPrompt).toHaveBeenCalledWith({ sessionId: 'session-1' })
 
     prompt.resolve({ stopReason: 'cancelled' })
@@ -728,7 +728,7 @@ describe('AcpRuntimeCoordinator', () => {
     })
     const session = await coordinator.createSession({ cwd: '/workspace' })
 
-    await coordinator.prepareForQuit()
+    await expect(coordinator.prepareForQuit()).resolves.toBe('completed')
 
     await expect(
       coordinator.sendPrompt({ sessionId: session.sessionId, text: 'late user turn' })

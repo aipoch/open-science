@@ -4,6 +4,10 @@
 // that refuses to settle, and reports { reaped } so the update-install gate can tell a clean teardown
 // (all process trees gone, file handles released) from a degraded one (taskkill fell back to the parent).
 
+import { diagnosticErrorFields, type Logger } from './logger'
+
+export type ShutdownStepOutcome = 'completed' | 'timeout' | 'failed' | 'degraded'
+
 export type ShutdownOutcome = {
   // The two backend teardowns settled within the budget (false = the deadline elapsed first).
   completed: boolean
@@ -11,7 +15,20 @@ export type ShutdownOutcome = {
   reaped: boolean
 }
 
-type ShutdownLogger = { error: (msg: string, err?: unknown) => void }
+export class BackendShutdownOutcomeError extends Error {
+  readonly name = 'BackendShutdownOutcomeError'
+
+  constructor(readonly outcome: Extract<ShutdownStepOutcome, 'timeout' | 'degraded'>) {
+    super('Backend shutdown did not complete cleanly.')
+  }
+
+  static assertClean(outcome: ShutdownOutcome): void {
+    if (!outcome.completed) throw new BackendShutdownOutcomeError('timeout')
+    if (!outcome.reaped) throw new BackendShutdownOutcomeError('degraded')
+  }
+}
+
+type ShutdownLogger = Pick<Logger, 'error'>
 
 // Deps for the quit/relaunch helper: only the latching teardown is needed. Kept narrow so the migration
 // relaunch path (storage/ipc.ts) does not have to expose the non-latching gate method it never uses.
@@ -58,15 +75,25 @@ const runBounded = async (
   log?: BackendShutdownDeps['log']
 ): Promise<ShutdownOutcome> => {
   let reaped = false
+  const logFailure = (backend: 'runtime' | 'notebook', error: unknown): void => {
+    try {
+      log?.error('backend shutdown failed', {
+        backend,
+        ...diagnosticErrorFields(error)
+      })
+    } catch {
+      // Shutdown progress is authoritative; diagnostics are best-effort.
+    }
+  }
 
   // allSettled ensures one rejection never short-circuits the other.
   const settleAll = Promise.allSettled([runtimeTeardown, notebookTeardown]).then(
     ([runtimeResult, notebookResult]) => {
       if (runtimeResult.status === 'rejected') {
-        log?.error('runtime shutdown failed during shutdown', runtimeResult.reason)
+        logFailure('runtime', runtimeResult.reason)
       }
       if (notebookResult.status === 'rejected') {
-        log?.error('notebook shutdown failed during shutdown', notebookResult.reason)
+        logFailure('notebook', notebookResult.reason)
       }
 
       // Optional chaining keeps the never-throw invariant even if a teardown resolves a malformed value.

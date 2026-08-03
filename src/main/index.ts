@@ -1,8 +1,7 @@
 import { fileURLToPath } from 'node:url'
 
-// Only the lightweight argv flags are imported statically here. The MCP server modules (and their heavy
-// SDK graph) are imported lazily inside the matching branch, and the Electron backend is imported only
-// after the single-instance lock is held — so no backend module loads before the lock in UI mode.
+// Only lightweight, Electron-free diagnostics and argv flags are imported statically here. The MCP
+// server modules (and their heavy SDK graph) remain lazy inside the matching execution branch.
 import {
   ARTIFACT_MCP_SERVER_ARG,
   NOTEBOOK_MCP_SERVER_ARG,
@@ -10,12 +9,24 @@ import {
 } from './mcp-server-args'
 import { withApplicationRuntimeShutdown } from './application-runtime'
 import { installChildProcessGoneLogging, startLocalCrashReporting } from './crash-diagnostics'
+import type { DiagnosticOperation } from './diagnostics/operation'
+import {
+  initializeApplicationDiagnostics,
+  reportApplicationStartupFailure
+} from './diagnostics/startup'
+import { createLogger, diagnosticErrorFields, flushLogs } from './logger'
+import {
+  createRendererFailureReporter,
+  registerRendererDiagnosticsIpc
+} from './renderer-diagnostics'
 
 const APP_NAME = 'Open Science'
 const APP_USER_MODEL_ID = 'com.aipoch.open-science'
 const shouldRunArtifactMcpServer = process.argv.includes(ARTIFACT_MCP_SERVER_ARG)
 const shouldRunNotebookMcpServer = process.argv.includes(NOTEBOOK_MCP_SERVER_ARG)
 const shouldRunSkillImportMcpServer = process.argv.includes(SKILL_IMPORT_MCP_SERVER_ARG)
+let startupDiagnostics: DiagnosticOperation | undefined
+let startupFlush = flushLogs
 
 if (shouldRunArtifactMcpServer) {
   // Reuse the packaged entry point as a Node stdio MCP server; import it only in this mode.
@@ -41,7 +52,12 @@ if (shouldRunArtifactMcpServer) {
       process.exitCode = 1
     })
 } else {
-  void startElectronApp(fileURLToPath(import.meta.url)).catch((error: unknown) => {
+  void startElectronApp(fileURLToPath(import.meta.url)).catch(async (error: unknown) => {
+    await reportApplicationStartupFailure({
+      operation: startupDiagnostics,
+      error,
+      flush: startupFlush
+    })
     console.error(error)
     process.exitCode = 1
   })
@@ -49,8 +65,41 @@ if (shouldRunArtifactMcpServer) {
 
 // Boots the Electron app only in normal UI mode, keeping artifact MCP mode free of Electron imports.
 async function startElectronApp(mainEntryPath: string): Promise<void> {
+  const { app, BrowserWindow, crashReporter, ipcMain, nativeImage, protocol } =
+    await import('electron')
+
+  // Establish the app identity and file sink before loading the backend graph. This captures failures
+  // in asset/module loading and app.whenReady instead of leaving packaged startup failures console-only.
+  app.setName(app.isPackaged ? APP_NAME : `${APP_NAME} (DEV)`)
+  const diagnostics = initializeApplicationDiagnostics({
+    logDir: app.getPath('logs'),
+    version: app.getVersion(),
+    isPackaged: app.isPackaged,
+    platform: process.platform,
+    arch: process.arch,
+    electronVersion: process.versions.electron,
+    nodeVersion: process.versions.node
+  })
+  const { log } = diagnostics
+  startupDiagnostics = diagnostics.operation
+  startupFlush = diagnostics.flush
+
+  // Register process-level failure capture before loading the application modules. Keep renderer
+  // diagnostics on a separate, one-way channel while the central IPC registry is being refactored.
+  installChildProcessGoneLogging((listener) => app.on('child-process-gone', listener), log)
+  process.on('uncaughtException', (error) =>
+    log.error('uncaughtException', diagnosticErrorFields(error))
+  )
+  process.on('unhandledRejection', (reason) =>
+    log.error('unhandledRejection', diagnosticErrorFields(reason))
+  )
+  registerRendererDiagnosticsIpc(
+    ipcMain,
+    createRendererFailureReporter({ log: createLogger('renderer') })
+  )
+
+  startupDiagnostics.phase('load-bootstrap-modules')
   const [
-    { app, BrowserWindow, crashReporter, nativeImage, protocol },
     { electronApp },
     { default: icon },
     { default: iconDark },
@@ -62,7 +111,6 @@ async function startElectronApp(mainEntryPath: string): Promise<void> {
     { acquireSingleInstanceLock },
     { orchestrateAppStartup }
   ] = await Promise.all([
-    import('electron'),
     import('@electron-toolkit/utils'),
     import('../../resources/icon.png?asset'),
     import('../../resources/icon-dark.png?asset'),
@@ -91,6 +139,7 @@ async function startElectronApp(mainEntryPath: string): Promise<void> {
   // lifecycle so its before-quit runs first. A second launch that arrives mid-startup is recorded by the
   // relay and surfaced once the window exists.
   await orchestrateAppStartup({
+    diagnostics: startupDiagnostics,
     acquireSingleInstanceLock: (opts) => acquireSingleInstanceLock(opts),
     quit: () => app.quit(),
     prepare: async () => {
@@ -105,7 +154,9 @@ async function startElectronApp(mainEntryPath: string): Promise<void> {
         appVersion: app.getVersion(),
         start: (options) => crashReporter.start(options)
       })
+      startupDiagnostics?.phase('crash-reporting', { enabled: crashReporting.enabled })
 
+      startupDiagnostics?.phase('load-application-modules')
       const [
         { registerIpcHandlers },
         { createMainWindow },
@@ -156,44 +207,14 @@ async function startElectronApp(mainEntryPath: string): Promise<void> {
         import('./storage-root')
       ])
 
-      // Dev runs get a "(DEV)" suffix so the app name, macOS menu, and per-app paths (logs, userData)
-      // are visibly distinct from an installed build — and don't collide with it.
-      app.setName(app.isPackaged ? APP_NAME : `${APP_NAME} (DEV)`)
-
       protocol.registerSchemesAsPrivileged([
         MANAGED_PREVIEW_SCHEME,
         OFFICE_PREVIEW_RUNTIME_SCHEME_CONFIG
       ])
 
+      startupDiagnostics?.phase('electron-ready')
       await app.whenReady()
-
-      // Initialize file logging as early as possible so startup and agent-spawn issues are captured for
-      // later troubleshooting (especially in packaged builds where console output is not visible).
-      const { createLogger, getLogFilePath, initLogger } = await import('./logger')
-      initLogger({ logDir: app.getPath('logs') })
-      const log = createLogger('main')
-
-      log.info('app starting', {
-        version: app.getVersion(),
-        isPackaged: app.isPackaged,
-        platform: process.platform,
-        electron: process.versions.electron,
-        node: process.versions.node,
-        execPath: process.execPath,
-        logFile: getLogFilePath(),
-        crashReporting: crashReporting.enabled
-          ? { ...crashReporting, dumpsDirectory: app.getPath('crashDumps') }
-          : crashReporting
-      })
-
-      // Renderer exits are logged by each BrowserWindow. This complementary app-level event catches
-      // GPU and utility-process failures, which can also leave a window blank but are otherwise absent
-      // from main.log. Keep only Electron lifecycle vocabulary and numeric exit metadata.
-      installChildProcessGoneLogging((listener) => app.on('child-process-gone', listener), log)
-
-      // Capture otherwise-silent crashes so a hang or unexpected exit leaves a trail in the log file.
-      process.on('uncaughtException', (error) => log.error('uncaughtException', error))
-      process.on('unhandledRejection', (reason) => log.error('unhandledRejection', reason))
+      startupDiagnostics?.phase('compose-runtime')
 
       // Set app user model id for windows
       electronApp.setAppUserModelId(APP_USER_MODEL_ID)
@@ -390,7 +411,9 @@ async function startElectronApp(mainEntryPath: string): Promise<void> {
             flushSessionPersistence: ctx.createSessionPersistenceFlush(() =>
               ctx.mainWindowGetterBox.current?.()
             ),
-            createConfirmClose: ctx.createConfirmClose
+            createConfirmClose: ctx.createConfirmClose,
+            log: ctx.log,
+            flushLogs
           },
           {
             // Application composition owns the one bounded ACP/Notebook shutdown. Remaining surfaces

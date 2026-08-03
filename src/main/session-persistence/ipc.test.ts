@@ -1,6 +1,7 @@
 import { afterEach, beforeEach, describe, expect, expectTypeOf, it, vi } from 'vitest'
 
 import type { PersistedChatSession } from '../../shared/session-persistence'
+import type { Logger } from '../logger'
 import type { ReviewRepository } from '../reviewer/repository'
 
 const { broadcastLifecycleEvent, ipcHandlers } = vi.hoisted(() => ({
@@ -92,8 +93,8 @@ describe('session persistence IPC handlers', () => {
   })
 
   it('hydrates a read-only Session snapshot when Project deletion recovery fails', async () => {
-    const failure = new Error('Project deletion journal is locked')
-    const consoleError = vi.spyOn(console, 'error').mockImplementation(() => undefined)
+    const failure = new Error('Project deletion journal is locked at /private/sessions')
+    const warn = vi.fn<Logger['warn']>()
     const degraded = {
       sessions: [createSession()],
       manifest: { version: 1 as const },
@@ -111,23 +112,26 @@ describe('session persistence IPC handlers', () => {
       loadAllReadOnly: vi.fn().mockResolvedValue(degraded)
     }
 
-    await expect(loadSessionsAfterProjectRecovery(projectRecovery, sessionLoader)).resolves.toEqual(
-      {
-        ...degraded,
-        diagnostics: {
-          ...degraded.diagnostics,
-          isProjectDeletionRecoveryComplete: false
-        }
+    await expect(
+      loadSessionsAfterProjectRecovery(projectRecovery, sessionLoader, { warn })
+    ).resolves.toEqual({
+      ...degraded,
+      diagnostics: {
+        ...degraded.diagnostics,
+        isProjectDeletionRecoveryComplete: false
       }
-    )
+    })
 
     expect(sessionLoader.loadAll).not.toHaveBeenCalled()
     expect(sessionLoader.loadAllReadOnly).toHaveBeenCalledOnce()
-    expect(consoleError).toHaveBeenCalledWith(
-      '[session-persistence] Project deletion recovery failed',
-      failure
-    )
-    consoleError.mockRestore()
+    expect(warn).toHaveBeenCalledWith('project deletion recovery failed', {
+      operation: 'session-hydration',
+      phase: 'recover-project-deletions',
+      outcome: 'degraded',
+      errorCategory: 'error'
+    })
+    expect(JSON.stringify(warn.mock.calls)).not.toContain('journal is locked')
+    expect(JSON.stringify(warn.mock.calls)).not.toContain('/private/sessions')
   })
 
   it('runs ordinary startup loading after Project deletion recovery succeeds', async () => {

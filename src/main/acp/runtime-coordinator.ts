@@ -23,6 +23,7 @@ import { AcpRuntime, type AcpRuntimeCallbacks } from './runtime'
 import type { AcpRuntimeActivity, AcpRuntimeActivityOptions } from './runtime-activity'
 import { ConversationPermissionGrantStore } from './permission-broker'
 import type { ApprovedSwitchReadBack, ClaudeCodeReplayInput } from '../agents/claude-code-handoff'
+import type { ShutdownStepOutcome } from '../lifecycle-shutdown'
 
 const MAX_EVENTS = 500
 const QUIT_PREPARATION_TIMEOUT_MS = 4_000
@@ -285,7 +286,9 @@ class AcpRuntimeCoordinator {
   // Gives active agents a bounded chance to return their terminal stop response before process-tree
   // teardown. Those responses carry the final usage available from Claude Code/OpenCode/managed Codex;
   // an unresponsive agent cannot hold app quit indefinitely.
-  async prepareForQuit(timeoutMs = QUIT_PREPARATION_TIMEOUT_MS): Promise<void> {
+  async prepareForQuit(
+    timeoutMs = QUIT_PREPARATION_TIMEOUT_MS
+  ): Promise<Extract<ShutdownStepOutcome, 'completed' | 'timeout' | 'failed'>> {
     this.promptAdmissionClosedForQuit = true
     const sessionIds = Array.from(
       new Set([
@@ -294,7 +297,7 @@ class AcpRuntimeCoordinator {
         ...this.getSnapshot().promptInFlightSessionIds
       ])
     )
-    if (sessionIds.length === 0) return
+    if (sessionIds.length === 0) return 'completed'
 
     const cancelAndDrain = async (): Promise<void> => {
       await Promise.allSettled(
@@ -305,16 +308,19 @@ class AcpRuntimeCoordinator {
       )
     }
 
-    await new Promise<void>((resolve) => {
+    return new Promise<'completed' | 'timeout' | 'failed'>((resolve) => {
       let settled = false
-      const finish = (): void => {
+      const finish = (outcome: 'completed' | 'timeout' | 'failed'): void => {
         if (settled) return
         settled = true
         clearTimeout(timer)
-        resolve()
+        resolve(outcome)
       }
-      const timer = setTimeout(finish, Math.max(0, timeoutMs))
-      void cancelAndDrain().then(finish, finish)
+      const timer = setTimeout(() => finish('timeout'), Math.max(0, timeoutMs))
+      void cancelAndDrain().then(
+        () => finish('completed'),
+        () => finish('failed')
+      )
     })
   }
 

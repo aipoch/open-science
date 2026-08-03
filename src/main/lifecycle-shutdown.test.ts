@@ -1,5 +1,6 @@
 import { afterEach, describe, expect, it, vi } from 'vitest'
 import {
+  BackendShutdownOutcomeError,
   BackendShutdownCoordinator,
   shutdownBackends,
   UPDATE_SHUTDOWN_BUDGET_MS,
@@ -44,7 +45,13 @@ describe('shutdownBackends', () => {
     })
     await expect(shutdownBackends(deps)).resolves.toBeUndefined()
     expect(deps.notebook.dispose).toHaveBeenCalledTimes(1)
-    expect(deps.log?.error).toHaveBeenCalledWith(expect.any(String), err)
+    expect(deps.log?.error).toHaveBeenCalledWith('backend shutdown failed', {
+      backend: 'runtime',
+      errorCategory: 'error'
+    })
+    const errorLog = deps.log?.error
+    if (!errorLog) throw new Error('Expected a shutdown logger.')
+    expect(JSON.stringify(vi.mocked(errorLog).mock.calls)).not.toContain('runtime boom')
   })
 
   it('resolves and logs even when notebook shutdown rejects', async () => {
@@ -57,7 +64,30 @@ describe('shutdownBackends', () => {
     })
     await expect(shutdownBackends(deps)).resolves.toBeUndefined()
     expect(deps.runtime.shutdownForQuit).toHaveBeenCalledTimes(1)
-    expect(deps.log?.error).toHaveBeenCalledWith(expect.any(String), err)
+    expect(deps.log?.error).toHaveBeenCalledWith('backend shutdown failed', {
+      backend: 'notebook',
+      errorCategory: 'error'
+    })
+    const errorLog = deps.log?.error
+    if (!errorLog) throw new Error('Expected a shutdown logger.')
+    expect(JSON.stringify(vi.mocked(errorLog).mock.calls)).not.toContain('notebook boom')
+  })
+
+  it('still resolves when backend teardown and the diagnostic sink both fail', async () => {
+    const deps = makeDeps({
+      runtime: {
+        shutdownForQuit: vi.fn(async () => Promise.reject(new Error('runtime boom'))),
+        shutdownForUpdateGate: vi.fn(async () => ({ reaped: true }))
+      },
+      log: {
+        error: () => {
+          throw new Error('sink unavailable')
+        }
+      }
+    })
+
+    await expect(shutdownBackends(deps)).resolves.toBeUndefined()
+    expect(deps.notebook.dispose).toHaveBeenCalledOnce()
   })
 
   it('resolves via the timeout when a backend never settles', async () => {
@@ -148,4 +178,16 @@ describe('BackendShutdownCoordinator', () => {
 
     await expect(pending).resolves.toEqual({ completed: false, reaped: false })
   })
+
+  it.each([
+    ['timeout', { completed: false, reaped: false }],
+    ['degraded', { completed: true, reaped: false }]
+  ] as const)(
+    'converts a non-clean quit result into the fixed %s category',
+    (expected, outcome) => {
+      expect(() => BackendShutdownOutcomeError.assertClean(outcome)).toThrowError(
+        expect.objectContaining({ outcome: expected })
+      )
+    }
+  )
 })

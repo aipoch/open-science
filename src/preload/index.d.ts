@@ -53,6 +53,7 @@ import type {
 } from '../shared/compute'
 import type { DirListing, DownloadDest, LocalFile } from '../shared/remote-fs'
 import type { LocalDirListing, LocalRoots } from '../shared/local-fs'
+import type { RendererFailureReport } from '../shared/diagnostics'
 import type { OpenLogFileResult, RevealLogFileResult } from '../shared/logs'
 import type {
   OpenSessionFromNotificationRequest,
@@ -295,6 +296,9 @@ interface OpenScienceAPI {
   }
   lifecycle: {
     getClientId(): Promise<string>
+  }
+  diagnostics?: {
+    reportRendererFailure(report: RendererFailureReport): void
   }
   acp: {
     getState(): Promise<AcpStateSnapshot>

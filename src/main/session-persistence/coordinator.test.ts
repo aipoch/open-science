@@ -11,6 +11,7 @@ import {
 } from '../../shared/session-persistence'
 import type { ArtifactProjectReconciliationSnapshot } from '../artifacts/provenance-repository'
 import { FinalizedArtifactBindingConflictError } from '../artifacts/provenance-message-snapshot'
+import type { Logger } from '../logger'
 import { createProjectDbClient, ensureProjectSchema } from '../projects/prisma-client'
 import {
   OrphanLegacyUploadAuthorityMissingError,
@@ -413,33 +414,73 @@ describe('SessionPersistenceCoordinator', () => {
   })
 
   it('keeps JSON-first durability when pre-save provenance lookup is unavailable', async () => {
-    const validationError = new Error('artifact database unavailable')
+    const validationError = new Error('artifact database unavailable at /private/session.json')
     const repository = createSessionRepository()
     const provenance = createProvenancePersistence({
       validateFinalizedMessageBindings: vi.fn().mockRejectedValue(validationError)
     })
-    const warn = vi.spyOn(console, 'warn').mockImplementation(() => undefined)
+    const log = createTestLogger()
     const coordinator = new SessionPersistenceCoordinator(
       repository,
       createFileIndex(),
       undefined,
-      provenance
+      provenance,
+      undefined,
+      undefined,
+      undefined,
+      log
     )
 
-    try {
-      await expect(coordinator.saveSession(createSession())).resolves.toMatchObject({
-        id: 'session-1'
-      })
-      await expect(
-        coordinator.saveSession(createSession({ title: 'Retry validation' }))
-      ).resolves.toMatchObject({ id: 'session-1' })
-    } finally {
-      warn.mockRestore()
-    }
+    await expect(
+      coordinator.saveSession(createSession({ title: 'Private research' }))
+    ).resolves.toMatchObject({
+      id: 'session-1'
+    })
+    await expect(
+      coordinator.saveSession(createSession({ title: 'Retry validation' }))
+    ).resolves.toMatchObject({ id: 'session-1' })
 
     expect(provenance.validateFinalizedMessageBindings).toHaveBeenCalledTimes(2)
     expect(repository.saveSession).toHaveBeenCalledTimes(2)
     expect(provenance.captureFinalizedMessages).toHaveBeenCalledTimes(2)
+    expect(log.warn).toHaveBeenCalledTimes(2)
+    expect(log.warn).toHaveBeenCalledWith('pre-save provenance validation unavailable', {
+      operation: 'session-save',
+      phase: 'validate-provenance',
+      outcome: 'degraded',
+      errorCategory: 'error'
+    })
+    expect(JSON.stringify(log.warn.mock.calls)).not.toContain('artifact database unavailable')
+    expect(JSON.stringify(log.warn.mock.calls)).not.toContain('Private research')
+    expect(JSON.stringify(log.warn.mock.calls)).not.toContain('/private/session.json')
+  })
+
+  it('keeps JSON-first durability when degraded diagnostics cannot be emitted', async () => {
+    const repository = createSessionRepository()
+    const provenance = createProvenancePersistence({
+      validateFinalizedMessageBindings: vi.fn().mockRejectedValue(new Error('lookup unavailable'))
+    })
+    const log = createTestLogger()
+    log.warn.mockImplementation(() => {
+      throw new Error('diagnostic sink unavailable')
+    })
+    const coordinator = new SessionPersistenceCoordinator(
+      repository,
+      createFileIndex(),
+      undefined,
+      provenance,
+      undefined,
+      undefined,
+      undefined,
+      log
+    )
+
+    await expect(coordinator.saveSession(createSession())).resolves.toMatchObject({
+      id: 'session-1'
+    })
+
+    expect(repository.saveSession).toHaveBeenCalledOnce()
+    expect(provenance.captureFinalizedMessages).toHaveBeenCalledOnce()
   })
 
   it('revalidates finalized bindings only when topology or artifact bindings change', async () => {
@@ -929,8 +970,142 @@ describe('SessionPersistenceCoordinator', () => {
     expect(fileIndex.reconcileActiveSessions).toHaveBeenCalledWith([session])
   })
 
+  it('records a phased terminal aggregate for complete Session hydration', async () => {
+    const session = createSession({ title: 'Private analysis', cwd: '/private/workspace' })
+    const result = { sessions: [session], manifest: { version: 1 as const } }
+    const repository = createSessionRepository({
+      loadAllWithDiagnostics: vi.fn().mockResolvedValue({ result, isComplete: true })
+    })
+    const log = createTestLogger()
+    const coordinator = new SessionPersistenceCoordinator(
+      repository,
+      createFileIndex(),
+      undefined,
+      undefined,
+      undefined,
+      undefined,
+      undefined,
+      log
+    )
+
+    await expect(coordinator.loadAll()).resolves.toBe(result)
+
+    expect(log.info.mock.calls.map(([message]) => message)).toEqual([
+      'operation started',
+      'operation phase',
+      'operation phase',
+      'operation phase',
+      'operation completed'
+    ])
+    expect(
+      log.info.mock.calls
+        .map(([, fields]) => (fields as { phase?: string } | undefined)?.phase)
+        .filter(Boolean)
+    ).toEqual([
+      'load-authority',
+      'reconcile-unread-deletions',
+      'reconcile-derived-state',
+      'reconcile-derived-state'
+    ])
+    expect(log.info).toHaveBeenLastCalledWith(
+      'operation completed',
+      expect.objectContaining({
+        operation: 'session-hydration',
+        operationId: expect.any(String),
+        mode: 'reconcile',
+        startupCleanupEligible: true,
+        phase: 'reconcile-derived-state',
+        outcome: 'completed',
+        status: 'ready',
+        sessionCount: 1,
+        warningCount: 0,
+        durationMs: expect.any(Number)
+      })
+    )
+    const diagnosticPayload = JSON.stringify(log.info.mock.calls)
+    expect(diagnosticPayload).not.toContain('Private analysis')
+    expect(diagnosticPayload).not.toContain('/private/workspace')
+  })
+
+  it('records a terminal failure when the Session authority scan rejects', async () => {
+    const repository = createSessionRepository({
+      loadAllWithDiagnostics: vi
+        .fn()
+        .mockRejectedValue(new Error('Session authority unavailable at /private/sessions'))
+    })
+    const log = createTestLogger()
+    const coordinator = new SessionPersistenceCoordinator(
+      repository,
+      createFileIndex(),
+      undefined,
+      undefined,
+      undefined,
+      undefined,
+      undefined,
+      log
+    )
+
+    await expect(coordinator.loadAll()).rejects.toThrow('Session authority unavailable')
+
+    expect(log.error).toHaveBeenCalledWith(
+      'operation failed',
+      expect.objectContaining({
+        operation: 'session-hydration',
+        phase: 'load-authority',
+        outcome: 'failed',
+        status: 'failed',
+        hydrationAvailable: false,
+        errorCategory: 'error'
+      })
+    )
+    expect(JSON.stringify(log.error.mock.calls)).not.toContain('Session authority unavailable')
+    expect(JSON.stringify(log.error.mock.calls)).not.toContain('/private/sessions')
+  })
+
+  it('keeps hydration available and records unread deletion reconciliation degradation', async () => {
+    const session = createSession({ title: 'Private analysis' })
+    const result = { sessions: [session], manifest: { version: 1 as const } }
+    const repository = createSessionRepository({
+      loadAllWithDiagnostics: vi.fn().mockResolvedValue({ result, isComplete: true })
+    })
+    const log = createTestLogger()
+    const coordinator = new SessionPersistenceCoordinator(
+      repository,
+      createFileIndex(),
+      undefined,
+      undefined,
+      undefined,
+      undefined,
+      undefined,
+      log
+    )
+    coordinator.setSessionDeletionHandlers(
+      createSessionDeletionHandlers({
+        reconcile: vi
+          .fn()
+          .mockRejectedValue(new Error('unread database unavailable at /private/unread.sqlite'))
+      })
+    )
+
+    await expect(coordinator.loadAll()).resolves.toBe(result)
+
+    expect(log.warn).toHaveBeenCalledWith('unread deletion reconciliation failed', {
+      operation: 'session-hydration',
+      phase: 'reconcile-unread-deletions',
+      outcome: 'degraded',
+      errorCategory: 'error'
+    })
+    expect(JSON.stringify(log.warn.mock.calls)).not.toContain('Private analysis')
+    expect(JSON.stringify(log.warn.mock.calls)).not.toContain('unread database unavailable')
+    expect(JSON.stringify(log.warn.mock.calls)).not.toContain('/private/unread.sqlite')
+    expect(log.info).toHaveBeenLastCalledWith(
+      'operation completed',
+      expect.objectContaining({ status: 'degraded', degradedReconciliationCount: 1 })
+    )
+  })
+
   it('hydrates a read-only snapshot without running startup reconciliation', async () => {
-    const session = createSession()
+    const session = createSession({ title: 'Private analysis', cwd: '/private/workspace' })
     const result = { sessions: [session], manifest: { version: 1 as const } }
     const repository = createSessionRepository({
       loadAllWithDiagnostics: vi.fn().mockResolvedValue({
@@ -953,13 +1128,16 @@ describe('SessionPersistenceCoordinator', () => {
       prepareProjectReconciliation: vi.fn(),
       reconcileSession: vi.fn()
     }
+    const log = createTestLogger()
     const coordinator = new SessionPersistenceCoordinator(
       repository,
       fileIndex,
       undefined,
       provenance,
       uploads,
-      artifactStorage
+      artifactStorage,
+      undefined,
+      log
     )
 
     await expect(coordinator.loadAllReadOnly()).resolves.toEqual({
@@ -980,6 +1158,28 @@ describe('SessionPersistenceCoordinator', () => {
     expect(uploads.upgradeLegacySessionUploads).not.toHaveBeenCalled()
     expect(artifactStorage.prepareProjectReconciliation).not.toHaveBeenCalled()
     expect(artifactStorage.reconcileSession).not.toHaveBeenCalled()
+    expect(log.info.mock.calls.map(([message]) => message)).toEqual([
+      'operation started',
+      'operation phase',
+      'operation completed'
+    ])
+    expect(log.info).toHaveBeenLastCalledWith(
+      'operation completed',
+      expect.objectContaining({
+        operation: 'session-hydration',
+        operationId: expect.any(String),
+        mode: 'read-only',
+        phase: 'load-authority',
+        outcome: 'completed',
+        status: 'degraded',
+        sessionCount: 1,
+        warningCount: 0,
+        durationMs: expect.any(Number)
+      })
+    )
+    const diagnosticPayload = JSON.stringify(log.info.mock.calls)
+    expect(diagnosticPayload).not.toContain('Private analysis')
+    expect(diagnosticPayload).not.toContain('/private/workspace')
   })
 
   it('reconciles durable Session grants only on the first complete startup scan', async () => {
@@ -1006,6 +1206,44 @@ describe('SessionPersistenceCoordinator', () => {
     expect(reconcileSessions).toHaveBeenCalledWith([
       { projectId: 'project-1', sessionId: 'session-1' }
     ])
+  })
+
+  it('keeps hydration available and records permission grant reconciliation degradation', async () => {
+    const session = createSession({ title: 'Private analysis' })
+    const result = { sessions: [session], manifest: { version: 1 as const } }
+    const repository = createSessionRepository({
+      loadAllWithDiagnostics: vi.fn().mockResolvedValue({ result, isComplete: true })
+    })
+    const log = createTestLogger()
+    const coordinator = new SessionPersistenceCoordinator(
+      repository,
+      createFileIndex(),
+      undefined,
+      undefined,
+      undefined,
+      undefined,
+      {
+        reconcileSessions: vi
+          .fn()
+          .mockRejectedValue(new Error('permission registry unavailable for Private analysis'))
+      },
+      log
+    )
+
+    await expect(coordinator.loadAll()).resolves.toBe(result)
+
+    expect(log.warn).toHaveBeenCalledWith('permission grant reconciliation failed', {
+      operation: 'session-hydration',
+      phase: 'reconcile-permission-grants',
+      outcome: 'degraded',
+      errorCategory: 'error'
+    })
+    expect(JSON.stringify(log.warn.mock.calls)).not.toContain('Private analysis')
+    expect(JSON.stringify(log.warn.mock.calls)).not.toContain('permission registry unavailable')
+    expect(log.info).toHaveBeenLastCalledWith(
+      'operation completed',
+      expect.objectContaining({ status: 'degraded', degradedReconciliationCount: 1 })
+    )
   })
 
   it('does not prune durable Session grants from a partial startup scan', async () => {
@@ -2046,7 +2284,7 @@ describe('SessionPersistenceCoordinator', () => {
   })
 
   it('marks startup reconciliation incomplete when a Session file-index sync fails', async () => {
-    const session = createSession()
+    const session = createSession({ title: 'Private analysis', cwd: '/private/workspace' })
     const result = { sessions: [session], manifest: { version: 1 as const } }
     const repository = createSessionRepository({
       loadAllWithDiagnostics: vi.fn().mockResolvedValue({ result, isComplete: true })
@@ -2054,9 +2292,21 @@ describe('SessionPersistenceCoordinator', () => {
     const markReconciliationIncomplete = vi.fn()
     const fileIndex = createFileIndex({
       markReconciliationIncomplete,
-      syncSession: vi.fn().mockRejectedValue(new Error('file index database is locked'))
+      syncSession: vi
+        .fn()
+        .mockRejectedValue(new Error('file index database is locked at /private/files.sqlite'))
     })
-    const coordinator = new SessionPersistenceCoordinator(repository, fileIndex)
+    const log = createTestLogger()
+    const coordinator = new SessionPersistenceCoordinator(
+      repository,
+      fileIndex,
+      undefined,
+      undefined,
+      undefined,
+      undefined,
+      undefined,
+      log
+    )
 
     await expect(coordinator.loadAll()).resolves.toMatchObject({
       diagnostics: {
@@ -2065,10 +2315,31 @@ describe('SessionPersistenceCoordinator', () => {
       }
     })
     await expect(coordinator.sessionMetadataSnapshot()).resolves.toEqual({
-      sessions: [{ id: 'session-1', projectId: 'project-1', title: 'Session' }],
+      sessions: [{ id: 'session-1', projectId: 'project-1', title: 'Private analysis' }],
       isComplete: false
     })
     expect(markReconciliationIncomplete).toHaveBeenCalledOnce()
+    expect(log.error).toHaveBeenCalledWith(
+      'operation failed',
+      expect.objectContaining({
+        operation: 'session-hydration',
+        operationId: expect.any(String),
+        mode: 'reconcile',
+        startupCleanupEligible: true,
+        phase: 'reconcile-derived-state',
+        outcome: 'failed',
+        status: 'degraded',
+        hydrationAvailable: true,
+        sessionCount: 1,
+        warningCount: 0,
+        errorCategory: 'error',
+        durationMs: expect.any(Number)
+      })
+    )
+    const diagnosticPayload = JSON.stringify(log.error.mock.calls)
+    expect(diagnosticPayload).not.toContain('Private analysis')
+    expect(diagnosticPayload).not.toContain('file index database is locked')
+    expect(diagnosticPayload).not.toContain('/private/files.sqlite')
   })
 
   it('retries surviving project sessions after deleting a collision owner', async () => {
@@ -2110,13 +2381,13 @@ describe('SessionPersistenceCoordinator', () => {
   })
 
   it('marks the index incomplete when the sessions scan is partial', async () => {
-    const session = createSession()
+    const session = createSession({ title: 'Private analysis' })
     const result = { sessions: [session], manifest: { version: 1 as const } }
     const warnings = [
       {
         kind: 'unreadable' as const,
         projectId: 'project-1',
-        fileName: 'session-2.json',
+        fileName: 'private-session-2.json',
         recovered: false
       }
     ]
@@ -2125,7 +2396,17 @@ describe('SessionPersistenceCoordinator', () => {
     })
     const markReconciliationIncomplete = vi.fn()
     const fileIndex = createFileIndex({ markReconciliationIncomplete })
-    const coordinator = new SessionPersistenceCoordinator(repository, fileIndex)
+    const log = createTestLogger()
+    const coordinator = new SessionPersistenceCoordinator(
+      repository,
+      fileIndex,
+      undefined,
+      undefined,
+      undefined,
+      undefined,
+      undefined,
+      log
+    )
     const reconcile = vi.fn(async () => undefined)
     coordinator.setSessionDeletionHandlers(createSessionDeletionHandlers({ reconcile }))
 
@@ -2136,6 +2417,20 @@ describe('SessionPersistenceCoordinator', () => {
     expect(markReconciliationIncomplete).toHaveBeenCalledOnce()
     expect(fileIndex.reconcileActiveSessions).not.toHaveBeenCalled()
     expect(reconcile).not.toHaveBeenCalled()
+    expect(log.info).toHaveBeenLastCalledWith(
+      'operation completed',
+      expect.objectContaining({
+        operation: 'session-hydration',
+        phase: 'load-authority',
+        outcome: 'completed',
+        status: 'partial',
+        sessionCount: 1,
+        warningCount: 1
+      })
+    )
+    const diagnosticPayload = JSON.stringify(log.info.mock.calls)
+    expect(diagnosticPayload).not.toContain('Private analysis')
+    expect(diagnosticPayload).not.toContain('private-session-2.json')
   })
 
   it('marks reconciliation incomplete when startup Provenance recovery fails', async () => {
@@ -2959,6 +3254,18 @@ const createDeferred = <T>(): { promise: Promise<T>; resolve: (value: T) => void
   })
   return { promise, resolve }
 }
+
+type TestLogger = Logger & {
+  [Method in keyof Logger]: ReturnType<typeof vi.fn<Logger[Method]>>
+}
+
+const createTestLogger = (): TestLogger =>
+  ({
+    debug: vi.fn<Logger['debug']>(),
+    info: vi.fn<Logger['info']>(),
+    warn: vi.fn<Logger['warn']>(),
+    error: vi.fn<Logger['error']>()
+  }) satisfies Logger
 
 const flushMicrotasks = async (): Promise<void> => {
   await Promise.resolve()

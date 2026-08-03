@@ -67,6 +67,34 @@ describe('logger: formatLine', () => {
   })
 })
 
+describe('logger: process run context', () => {
+  it('adds the configured run ID to every emitted JSONL record without changing existing keys', async () => {
+    logDir = await mkdtemp(join(tmpdir(), 'os-logger-run-'))
+    initLogger({
+      logDir,
+      fileName: 'main.log',
+      mirrorToConsole: false,
+      runId: 'test-run-id'
+    })
+
+    createLogger('startup').info('ready', { phase: 'ready' })
+    await flushLogs()
+
+    const record = JSON.parse(await readFile(join(logDir, 'main.log'), 'utf8')) as Record<
+      string,
+      unknown
+    >
+    expect(record).toMatchObject({
+      level: 'info',
+      runId: 'test-run-id',
+      scope: 'startup',
+      msg: 'ready',
+      data: { phase: 'ready' }
+    })
+    expect(typeof record.t).toBe('string')
+  })
+})
+
 describe('logger: diagnosticErrorFields', () => {
   it('classifies a provider request error without retaining its payload', () => {
     const secret = 'provider-secret-value'
@@ -938,7 +966,7 @@ describe('logger: errorLogFields', () => {
 })
 
 describe('logger: application shutdown diagnostics', () => {
-  it('persists every aggregate cause with the timed-out module name and budget', async () => {
+  it('persists fixed surface outcomes without aggregate error details', async () => {
     logDir = await mkdtemp(join(tmpdir(), 'os-logger-shutdown-'))
     initLogger({ logDir, fileName: 'main.log', mirrorToConsole: false })
     const log = createLogger('shutdown')
@@ -948,7 +976,7 @@ describe('logger: application shutdown diagnostics', () => {
         Promise.reject(
           new AggregateError([
             new ApplicationModuleDisposalTimeoutError('mcp-client-manager', 1000),
-            new Error('compute poller stop failed')
+            new Error('compute poller stop failed at /private/project')
           ])
         ),
       shutdownRemoteAccess: () => undefined,
@@ -961,13 +989,37 @@ describe('logger: application shutdown diagnostics', () => {
     const records = (await readFile(join(logDir, 'main.log'), 'utf8'))
       .trim()
       .split('\n')
-      .map((line) => JSON.parse(line) as { msg: string })
+      .map(
+        (line) =>
+          JSON.parse(line) as {
+            msg: string
+            data: { surface: string; result: string; errorCategory: string }
+          }
+      )
 
-    expect(records.map((record) => record.msg)).toEqual([
-      expect.stringContaining('mcp-client-manager'),
-      expect.stringContaining('compute poller stop failed')
+    expect(records).toEqual([
+      expect.objectContaining({
+        msg: 'application surface shutdown failed',
+        data: {
+          surface: 'application-runtime',
+          result: 'timeout',
+          errorCategory: 'object'
+        }
+      }),
+      expect.objectContaining({
+        msg: 'application surface shutdown failed',
+        data: {
+          surface: 'application-runtime',
+          result: 'failed',
+          errorCategory: 'error'
+        }
+      })
     ])
-    expect(records[0].msg).toContain('1000ms')
+    const json = JSON.stringify(records)
+    expect(json).not.toContain('mcp-client-manager')
+    expect(json).not.toContain('1000ms')
+    expect(json).not.toContain('compute poller stop failed')
+    expect(json).not.toContain('/private/project')
   })
 })
 

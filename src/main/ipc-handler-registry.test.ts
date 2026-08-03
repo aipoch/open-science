@@ -173,4 +173,74 @@ describe('createIpcHandlerRegistry', () => {
 
     expect(removeHandler).toHaveBeenCalledWith('test:partial')
   })
+
+  it('records a rejected native handler once without retaining its payload', async () => {
+    const nativeHandlers = new Map<string, (...args: unknown[]) => unknown>()
+    const handle = vi.fn((channel: string, handler: (...args: unknown[]) => unknown) => {
+      nativeHandlers.set(channel, handler)
+    })
+    const warn = vi.fn()
+    const now = vi.fn().mockReturnValueOnce(100).mockReturnValueOnce(125)
+    const registry = createIpcHandlerRegistry({ handle } as never, { log: { warn }, now })
+    const rejection = new Error('private native failure')
+    registry.ipcMainHandle('projects:list', async () => {
+      throw rejection
+    })
+
+    await expect(
+      nativeHandlers.get('projects:list')?.(
+        { sender: { id: 42 } },
+        { token: 'native-secret', path: '/private/native.txt' }
+      )
+    ).rejects.toBe(rejection)
+    expect(warn).toHaveBeenCalledOnce()
+    expect(warn).toHaveBeenCalledWith('ipc handler rejected', {
+      channel: 'projects:list',
+      surface: 'electron',
+      location: 'local',
+      principalKind: 'human',
+      actionOrigin: 'human',
+      durationMs: 25,
+      errorCategory: 'error'
+    })
+    expect(JSON.stringify(warn.mock.calls)).not.toContain('native-secret')
+    expect(JSON.stringify(warn.mock.calls)).not.toContain('/private/native.txt')
+    expect(JSON.stringify(warn.mock.calls)).not.toContain('private native failure')
+    expect(JSON.stringify(warn.mock.calls)).not.toContain('42')
+  })
+
+  it('records a rejected Web RPC handler once using the supplied caller vocabulary', async () => {
+    const warn = vi.fn()
+    const now = vi.fn().mockReturnValueOnce(10).mockReturnValueOnce(18)
+    const registry = createIpcHandlerRegistry({ handle: vi.fn() } as never, { log: { warn }, now })
+    const rejection = new TypeError('private Web failure')
+    registry.ipcMainHandle('projects:list', async () => {
+      throw rejection
+    })
+
+    await expect(
+      registry.webRpc.invoke(
+        'projects:list',
+        createWebCallerContext('secret-client-id', {
+          location: 'remote',
+          principalKind: 'automation',
+          actionOrigin: 'agent-session'
+        }),
+        [{ token: 'web-secret' }]
+      )
+    ).rejects.toBe(rejection)
+    expect(warn).toHaveBeenCalledOnce()
+    expect(warn).toHaveBeenCalledWith('ipc handler rejected', {
+      channel: 'projects:list',
+      surface: 'web',
+      location: 'remote',
+      principalKind: 'automation',
+      actionOrigin: 'agent-session',
+      durationMs: 8,
+      errorCategory: 'type'
+    })
+    expect(JSON.stringify(warn.mock.calls)).not.toContain('secret-client-id')
+    expect(JSON.stringify(warn.mock.calls)).not.toContain('web-secret')
+    expect(JSON.stringify(warn.mock.calls)).not.toContain('private Web failure')
+  })
 })
