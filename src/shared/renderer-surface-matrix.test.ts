@@ -85,7 +85,7 @@ const projectThroughRendererAdapters = (
   const electronPort = {
     invoke: vi.fn().mockResolvedValue(undefined),
     send: vi.fn(),
-    on: vi.fn((_channel, listener) => (electronIpcListener = listener)),
+    on: vi.fn((ch, listener) => (electronIpcListener = ch === channel ? listener : undefined)),
     removeListener: vi.fn(),
     getPathForFile: vi.fn(() => '')
   }
