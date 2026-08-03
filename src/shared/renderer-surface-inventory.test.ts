@@ -2,6 +2,7 @@ import { beforeAll, describe, expect, it, vi } from 'vitest'
 
 import type { ApplicationEventChannel } from '../main/application-events'
 import { REMOTE_LOCAL_ONLY_RPC_CHANNELS } from '../main/web-service/http-server'
+import { RENDERER_CONTRACT_CATALOG } from './renderer-contract-catalog'
 import { WEB_EVENT_CHANNELS, WEB_INVOKE_CHANNELS } from './web-api-map.generated'
 import { WEB_RPC_ALLOWED_CHANNELS, WEB_RPC_UNAVAILABLE_CHANNELS } from './web-rpc-contract'
 
@@ -198,6 +199,10 @@ describe('renderer surface inventory', () => {
     ])
 
     expect(electronPaths).toHaveLength(291)
+    expectSameSet(
+      electronPaths,
+      RENDERER_CONTRACT_CATALOG.map(({ publicPath }) => publicPath)
+    )
     expect(Object.keys(WEB_INVOKE_CHANNELS)).toHaveLength(222)
     expect(Object.keys(WEB_EVENT_CHANNELS)).toHaveLength(32)
     expectSameSet(
