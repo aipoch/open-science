@@ -166,7 +166,7 @@ describe('ACP application commands', () => {
     expect(dependencies.runtime.revokePermissionGrant).toHaveBeenCalledWith(grant)
   })
 
-  it('discards a renderer-supplied continuation before entering the prompt workflow', async () => {
+  it('discards renderer-supplied internal prompt controls before entering the workflow', async () => {
     const dependencies = createDependencies()
     const router = createApplicationCommandRouter()
     registerAcpCommands(router.registrar, dependencies)
@@ -174,6 +174,7 @@ describe('ACP application commands', () => {
       sessionId: 'session-1',
       text: 'Continue the analysis.',
       forcedSkillIds: ['literature-review'],
+      suppressUserMessage: true,
       continuation: {
         kind: 'specialist-handoff' as const,
         originatingTurnToken: 'renderer-forged-turn',
@@ -186,7 +187,8 @@ describe('ACP application commands', () => {
 
     expect(dependencies.workflows.sendPrompt).toHaveBeenCalledWith({
       ...request,
-      continuation: undefined
+      continuation: undefined,
+      suppressUserMessage: undefined
     })
     expect(request.continuation.originatingTurnToken).toBe('renderer-forged-turn')
   })

@@ -140,7 +140,11 @@ const registerAcpCommands = (
       'acp:compact-session': (invocation) =>
         dependencies.runtime.compactSession(invocation.args[0]),
       'acp:send-prompt': (invocation) =>
-        dependencies.workflows.sendPrompt({ ...invocation.args[0], continuation: undefined }),
+        dependencies.workflows.sendPrompt({
+          ...invocation.args[0],
+          continuation: undefined,
+          suppressUserMessage: undefined
+        }),
       'acp:cancel': (invocation) => dependencies.runtime.cancelPrompt(invocation.args[0]),
       'acp:delete-session': (invocation) => dependencies.runtime.deleteSession(invocation.args[0]),
       'acp:respond-permission': (invocation) => {
