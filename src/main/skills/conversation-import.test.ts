@@ -93,35 +93,42 @@ const createActiveCancellationGuard = (): { isCancelled: () => boolean } => ({
 })
 
 describe('ConversationSkillImporter', () => {
-  it('imports a public GitHub Skill after the user confirms the conversation preview', async () => {
+  it('scans and imports selected GitHub Skills after the user confirms the conversation preview', async () => {
     const root = await mkdtemp(join(tmpdir(), 'conversation-skill-import-'))
     roots.push(root)
-    const githubUrl = 'https://github.com/acme/skills/tree/main/slide-master'
+    const githubUrl = 'https://github.com/acme/skills'
+    const slideMasterUrl = 'https://github.com/acme/skills/tree/main/slide-master'
+    const chartMasterUrl = 'https://github.com/acme/skills/tree/main/chart-master'
     const onSkillsChanged = vi.fn()
     const broker = new SkillImportApprovalBroker({
       generateId: () => 'approval-github',
       broadcast: (request) => {
-        expect(request.attachmentName).toBe('github.com/acme/skills@main/slide-master')
+        expect(request.source).toEqual({ kind: 'github', label: githubUrl })
         expect(request.previews).toEqual([
-          expect.objectContaining({ name: 'Slide Master', subPath: 'Slide Master' })
+          expect.objectContaining({
+            name: 'Slide Master',
+            subPath: 'slide-master',
+            githubUrl: slideMasterUrl
+          }),
+          expect.objectContaining({
+            name: 'Chart Master',
+            subPath: 'chart-master',
+            githubUrl: chartMasterUrl
+          })
         ])
         broker.respond({
           id: request.id,
-          items: [{ subPath: request.previews[0].subPath }]
+          items: [{ subPath: 'chart-master' }]
         })
       }
     })
-    const previewGitHub = vi.fn().mockResolvedValue({
-      name: 'Slide Master',
-      description: 'Creates polished presentations.',
-      sourceLabel: 'github.com/acme/skills@main/slide-master',
-      metadata: {},
-      body: 'Follow the presentation workflow.',
-      files: ['SKILL.md']
-    })
+    const scanGitHub = vi.fn().mockResolvedValue([
+      { name: 'Slide Master', path: 'slide-master', url: slideMasterUrl, alreadyImported: false },
+      { name: 'Chart Master', path: 'chart-master', url: chartMasterUrl, alreadyImported: false }
+    ])
     const importGitHub = vi.fn().mockResolvedValue({
       status: 'imported',
-      id: 'imported-slide-master',
+      id: 'imported-chart-master',
       skills: []
     })
     const importer = new ConversationSkillImporter({
@@ -132,7 +139,7 @@ describe('ConversationSkillImporter', () => {
         broker.createSessionCancellationGuard(sessionId),
       previewBundle: async () => ({ previews: [], skipped: [] }),
       importBundle: async () => [],
-      previewGitHub,
+      scanGitHub,
       importGitHub,
       requestApproval: (request, cancellation) => broker.request(request, cancellation),
       onSkillsChanged
@@ -141,10 +148,56 @@ describe('ConversationSkillImporter', () => {
 
     await expect(importer.request({ sessionId: 'session-1', githubUrl })).resolves.toEqual({
       status: 'imported',
-      skills: [{ id: 'imported-slide-master', name: 'Slide Master', status: 'imported' }]
+      skills: [{ id: 'imported-chart-master', name: 'Chart Master', status: 'imported' }]
     })
-    expect(previewGitHub).toHaveBeenCalledWith(githubUrl)
-    expect(importGitHub).toHaveBeenCalledWith(githubUrl)
+    expect(scanGitHub).toHaveBeenCalledWith(githubUrl)
+    expect(importGitHub).toHaveBeenCalledOnce()
+    expect(importGitHub).toHaveBeenCalledWith(chartMasterUrl)
+    expect(onSkillsChanged).toHaveBeenCalledOnce()
+  })
+
+  it('reports a partial GitHub batch when one selected Skill fails to import', async () => {
+    const root = await mkdtemp(join(tmpdir(), 'conversation-skill-import-'))
+    roots.push(root)
+    const firstUrl = 'https://github.com/acme/skills/tree/main/first'
+    const secondUrl = 'https://github.com/acme/skills/tree/main/second'
+    const onSkillsChanged = vi.fn()
+    const broker = new SkillImportApprovalBroker({
+      generateId: () => 'approval-github-partial',
+      broadcast: (request) =>
+        broker.respond({
+          id: request.id,
+          items: request.previews.map((candidate) => ({ subPath: candidate.subPath }))
+        })
+    })
+    const importer = new ConversationSkillImporter({
+      uploads: new UploadRepository(root),
+      createCancellationGuard: (sessionId, turnToken, attachmentUri) =>
+        broker.createCancellationGuard(sessionId, turnToken, attachmentUri),
+      createSessionCancellationGuard: (sessionId) =>
+        broker.createSessionCancellationGuard(sessionId),
+      previewBundle: async () => ({ previews: [], skipped: [] }),
+      importBundle: async () => [],
+      scanGitHub: async () => [
+        { name: 'First', path: 'first', url: firstUrl, alreadyImported: false },
+        { name: 'Second', path: 'second', url: secondUrl, alreadyImported: false }
+      ],
+      importGitHub: vi.fn(async (url: string) => {
+        if (url === secondUrl) throw new Error('GitHub unavailable')
+        return { status: 'imported' as const, id: 'imported-first', skills: [] }
+      }),
+      requestApproval: (request, cancellation) => broker.request(request, cancellation),
+      onSkillsChanged
+    })
+    broker.beginSessionTurn('session-1', 'turn-1')
+
+    await expect(
+      importer.request({ sessionId: 'session-1', githubUrl: 'https://github.com/acme/skills' })
+    ).resolves.toEqual({
+      status: 'partial',
+      skills: [{ id: 'imported-first', name: 'First', status: 'imported' }],
+      errors: [{ name: 'Second', error: 'GitHub unavailable' }]
+    })
     expect(onSkillsChanged).toHaveBeenCalledOnce()
   })
 
@@ -176,7 +229,7 @@ describe('ConversationSkillImporter', () => {
     const broker = new SkillImportApprovalBroker({
       generateId: () => 'approval-1',
       broadcast: (request) => {
-        expect(request.attachmentName).toBe('paper-finder.skill')
+        expect(request.source).toEqual({ kind: 'attachment', label: 'paper-finder.skill' })
         expect(request.previews.map((preview) => preview.name)).toEqual(['Paper Finder'])
         broker.respond({
           id: request.id,
@@ -662,7 +715,7 @@ describe('ConversationSkillImporter', () => {
 describe('SkillImportApprovalBroker lifecycle', () => {
   const approvalInfo = (sessionId: string): SkillImportApprovalInfo => ({
     sessionId,
-    attachmentName: 'demo.skill',
+    source: { kind: 'attachment', label: 'demo.skill' },
     previews: [],
     skipped: []
   })

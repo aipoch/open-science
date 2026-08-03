@@ -644,7 +644,7 @@ const createApplicationModules = async (
       skillImportApprovalBroker.createSessionCancellationGuard(sessionId),
     previewBundle: (bundle) => settingsService.previewSkillArchive(bundle),
     importBundle: (bundle, items) => settingsService.importSkillArchiveBatch(bundle, items),
-    previewGitHub: (url) => settingsService.previewGitHubSkill({ url }),
+    scanGitHub: async (url) => (await settingsService.scanRepoSkills({ repo: url })).skills,
     importGitHub: (url) => settingsService.importSkill({ url }),
     requestApproval: (request, cancellation) =>
       skillImportApprovalBroker.request(request, cancellation),

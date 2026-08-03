@@ -10,12 +10,21 @@ import { createInitialSkillImportState, useSkillImportStore } from '@/stores/ski
 let container: HTMLDivElement
 let root: Root
 const respond = vi.fn().mockResolvedValue(undefined)
+const previewGitHubSkill = vi.fn().mockResolvedValue({
+  name: 'Slide Master',
+  description: 'Creates polished presentations.',
+  sourceLabel: 'github.com/acme/skills@main/slide-master',
+  metadata: {},
+  body: 'Follow the workflow.',
+  files: ['SKILL.md']
+})
 
 beforeEach(() => {
   window.api = {
-    settings: { respondSkillImportApproval: respond }
+    settings: { respondSkillImportApproval: respond, previewGitHubSkill }
   } as unknown as Window['api']
   respond.mockClear()
+  previewGitHubSkill.mockClear()
   useSkillImportStore.setState(createInitialSkillImportState())
   container = document.createElement('div')
   document.body.appendChild(container)
@@ -48,7 +57,7 @@ describe('SkillImportApprovalDialog', () => {
     useSkillImportStore.getState().enqueue({
       id: 'approval-1',
       sessionId: 'session-1',
-      attachmentName: 'paper-finder.skill',
+      source: { kind: 'attachment', label: 'paper-finder.skill' },
       previews: [
         {
           subPath: 'paper-finder',
@@ -80,11 +89,48 @@ describe('SkillImportApprovalDialog', () => {
     })
   })
 
+  it('shows scanned GitHub candidates and preselects only skills not already imported', async () => {
+    useSkillImportStore.getState().enqueue({
+      id: 'approval-github',
+      sessionId: 'session-1',
+      source: { kind: 'github', label: 'https://github.com/acme/skills' },
+      previews: [
+        {
+          ...importCandidate('slide-master', 'Slide Master'),
+          githubUrl: 'https://github.com/acme/skills/tree/main/slide-master'
+        },
+        {
+          ...importCandidate('already-there', 'Already There'),
+          githubUrl: 'https://github.com/acme/skills/tree/main/already-there',
+          alreadyImported: true
+        }
+      ],
+      skipped: []
+    })
+
+    await act(async () => root.render(<SkillImportApprovalDialog />))
+
+    expect(document.body.textContent).toContain('Import Skills from GitHub?')
+    expect(
+      document.body.querySelector<HTMLInputElement>('[aria-label="Select Slide Master"]')?.checked
+    ).toBe(true)
+    expect(
+      document.body.querySelector<HTMLInputElement>('[aria-label="Select Already There"]')?.checked
+    ).toBe(false)
+    expect(document.body.textContent).toContain('Imported')
+    expect(button('Import selected (1)')?.className).toContain('border')
+
+    await act(async () => button('Preview')?.click())
+    expect(previewGitHubSkill).toHaveBeenCalledWith({
+      url: 'https://github.com/acme/skills/tree/main/slide-master'
+    })
+  })
+
   it('requires an explicit choice when a package contains multiple candidates', () => {
     useSkillImportStore.getState().enqueue({
       id: 'approval-2',
       sessionId: 'session-1',
-      attachmentName: 'many.zip',
+      source: { kind: 'attachment', label: 'many.zip' },
       previews: [
         importCandidate('first', 'First Skill'),
         importCandidate('second', 'Second Skill')
@@ -101,7 +147,7 @@ describe('SkillImportApprovalDialog', () => {
     useSkillImportStore.getState().enqueue({
       id: 'approval-select-all',
       sessionId: 'session-1',
-      attachmentName: 'many.zip',
+      source: { kind: 'attachment', label: 'many.zip' },
       previews: [
         importCandidate('first', 'First Skill'),
         importCandidate('second', 'Second Skill')
@@ -133,7 +179,7 @@ describe('SkillImportApprovalDialog', () => {
     useSkillImportStore.getState().enqueue({
       id: 'approval-invert',
       sessionId: 'session-1',
-      attachmentName: 'many.zip',
+      source: { kind: 'attachment', label: 'many.zip' },
       previews: [
         importCandidate('first', 'First Skill'),
         importCandidate('second', 'Second Skill')
@@ -168,7 +214,7 @@ describe('SkillImportApprovalDialog', () => {
     useSkillImportStore.getState().enqueue({
       id: 'approval-3',
       sessionId: 'session-1',
-      attachmentName: 'paper-finder.skill',
+      source: { kind: 'attachment', label: 'paper-finder.skill' },
       previews: [],
       skipped: []
     })
@@ -191,14 +237,14 @@ describe('SkillImportApprovalDialog', () => {
     useSkillImportStore.getState().enqueue({
       id: 'stale',
       sessionId: 'session-1',
-      attachmentName: 'stale.skill',
+      source: { kind: 'attachment', label: 'stale.skill' },
       previews: [candidate],
       skipped: []
     })
     useSkillImportStore.getState().enqueue({
       id: 'next',
       sessionId: 'session-2',
-      attachmentName: 'next.skill',
+      source: { kind: 'attachment', label: 'next.skill' },
       previews: [{ ...candidate, name: 'Next Skill' }],
       skipped: []
     })

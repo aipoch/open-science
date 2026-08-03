@@ -9,8 +9,8 @@ import type {
   ConversationSkillImportResult,
   ConversationSkillImportSelection,
   ImportSkillResult,
-  SkillBundlePreviewResult,
-  SkillImportPreviewContent
+  ScannedSkillView,
+  SkillBundlePreviewResult
 } from '../../shared/settings'
 import type { UploadRepository } from '../uploads/repository'
 import { SKILL_IMPORT_LIMITS } from './import-limits'
@@ -172,7 +172,7 @@ type ConversationSkillImporterOptions = {
       error?: string
     }>
   >
-  previewGitHub?: (url: string) => Promise<SkillImportPreviewContent>
+  scanGitHub?: (url: string) => Promise<ScannedSkillView[]>
   importGitHub?: (url: string) => Promise<ImportSkillResult>
   createSessionCancellationGuard?: (sessionId: string) => SkillImportCancellationGuard
   requestApproval: (
@@ -320,7 +320,7 @@ class ConversationSkillImporter {
     const approval = await this.options.requestApproval(
       {
         sessionId: request.sessionId,
-        attachmentName,
+        source: { kind: 'attachment', label: attachmentName },
         ...preview
       },
       cancellation
@@ -374,33 +374,35 @@ class ConversationSkillImporter {
     request: ConversationSkillGitHubImportRequest
   ): Promise<ConversationSkillImportResult> {
     const createCancellation = this.options.createSessionCancellationGuard
-    const previewGitHub = this.options.previewGitHub
+    const scanGitHub = this.options.scanGitHub
     const importGitHub = this.options.importGitHub
-    if (!createCancellation || !previewGitHub || !importGitHub) {
+    if (!createCancellation || !scanGitHub || !importGitHub) {
       throw new Error('Conversation GitHub Skill import is not configured.')
     }
 
     const cancellation = createCancellation(request.sessionId)
     if (cancellation.isCancelled()) return { status: 'cancelled', skills: [] }
-    const githubPreview = await previewGitHub(request.githubUrl)
+    const scanned = await scanGitHub(request.githubUrl)
+    if (scanned.length === 0) {
+      throw new Error('No importable Skills were found in that GitHub repo.')
+    }
     const preview: SkillBundlePreviewResult = {
-      previews: [
-        {
-          subPath: githubPreview.name,
-          name: githubPreview.name,
-          description: githubPreview.description,
-          metadata: githubPreview.metadata,
-          body: githubPreview.body,
-          files: githubPreview.files,
-          alreadyImported: false
-        }
-      ],
+      previews: scanned.map((candidate) => ({
+        subPath: candidate.path || '.',
+        name: candidate.name,
+        description: candidate.path || 'Repository root',
+        metadata: {},
+        body: '',
+        files: [],
+        alreadyImported: candidate.alreadyImported,
+        githubUrl: candidate.url
+      })),
       skipped: []
     }
     const approval = await this.options.requestApproval(
       {
         sessionId: request.sessionId,
-        attachmentName: githubPreview.sourceLabel,
+        source: { kind: 'github', label: request.githubUrl },
         ...preview
       },
       cancellation
@@ -408,15 +410,33 @@ class ConversationSkillImporter {
     if (cancellation.isCancelled() || approval.cancelled || approval.items.length === 0) {
       return { status: 'cancelled', skills: [] }
     }
-    validateSelections(preview, approval.items)
+    const items = validateSelections(preview, approval.items)
     if (cancellation.isCancelled()) return { status: 'cancelled', skills: [] }
 
-    const outcome = await importGitHub(request.githubUrl)
-    const changed = outcome.status === 'imported' || outcome.status === 'updated'
+    const candidates = new Map(scanned.map((candidate) => [candidate.path || '.', candidate]))
+    const skills: ConversationSkillImportResult['skills'] = []
+    const errors: NonNullable<ConversationSkillImportResult['errors']> = []
+    for (const item of items) {
+      const candidate = candidates.get(item.subPath)!
+      try {
+        const outcome = await importGitHub(candidate.url)
+        skills.push({ id: outcome.id, name: candidate.name, status: outcome.status })
+      } catch (error) {
+        errors.push({
+          name: candidate.name,
+          error: error instanceof Error ? error.message : 'Import failed.'
+        })
+      }
+    }
+
+    const changed = skills.some(
+      (skill) => skill.status === 'imported' || skill.status === 'updated'
+    )
     if (changed) this.options.onSkillsChanged?.()
     return {
-      status: changed ? 'imported' : 'unchanged',
-      skills: [{ id: outcome.id, name: githubPreview.name, status: outcome.status }]
+      status: errors.length > 0 ? 'partial' : changed ? 'imported' : 'unchanged',
+      skills,
+      ...(errors.length > 0 ? { errors } : {})
     }
   }
 }

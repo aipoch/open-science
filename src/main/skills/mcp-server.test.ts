@@ -69,6 +69,8 @@ describe('Skill import MCP server', () => {
     expect(SKILL_IMPORT_SYSTEM_PROMPT_APPEND).toContain(
       'Do not download GitHub content into a temporary attachment'
     )
+    expect(SKILL_IMPORT_SYSTEM_PROMPT_APPEND).toContain('install-skill-from-github.py')
+    expect(SKILL_IMPORT_SYSTEM_PROMPT_APPEND).toContain('do not write to codex/skills')
     expect(SKILL_IMPORT_MCP_SERVER_NAME).toBe('open-science-skills')
 
     await client.close()

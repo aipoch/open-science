@@ -916,6 +916,9 @@ export type SkillBundlePreview = {
   files: string[]
   alreadyImported: boolean
   replaceableId?: string
+  // Present only for candidates discovered from a public GitHub repo. The approval dialog uses it
+  // to load the same lazy candidate preview as Settings; the main process still owns import URLs.
+  githubUrl?: string
 }
 
 // One skill the bundle contained but that couldn't be imported (too large, no SKILL.md, no name, an
@@ -939,7 +942,10 @@ export type SkillBundlePreviewResult = {
 export type ConversationSkillImportApprovalRequest = SkillBundlePreviewResult & {
   id: string
   sessionId: string
-  attachmentName: string
+  source: {
+    kind: 'attachment' | 'github'
+    label: string
+  }
 }
 
 export type ConversationSkillImportSelection = {

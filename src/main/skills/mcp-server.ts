@@ -39,6 +39,7 @@ const SKILL_IMPORT_SYSTEM_PROMPT_APPEND = [
   'When the user supplies an exact public github.com Skill directory or SKILL.md URL, call request_skill_import with that URL as github_url.',
   'When the user supplies only a Skill name or keywords, first use available web search to find its public github.com Skill directory or SKILL.md URL. Call request_skill_import only when one candidate is unambiguous; otherwise show the candidates and ask the user to choose.',
   'Do not download GitHub content into a temporary attachment. The application fetches the validated GitHub URL and owns preview, confirmation, and import.',
+  'Do not invoke an external Skill installer, including skill-installer or install-skill-from-github.py, and do not write to codex/skills. Use request_skill_import so the application owns the import.',
   'The tool opens an application-owned preview and confirmation dialog. Never unpack or copy a Skill into a Skill directory yourself.',
   'An <attached_local_archive> is an ordinary ZIP reference, not an eligible Skill package. Do not call request_skill_import for it.',
   'A newly imported Skill becomes available on the next user turn after the agent runtime reloads.',

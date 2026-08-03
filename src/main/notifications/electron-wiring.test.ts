@@ -258,7 +258,7 @@ describe('approval notification broadcasts', () => {
     const request: ConversationSkillImportApprovalRequest = {
       id: 'skill-1',
       sessionId: 'session-42',
-      attachmentName: 'analysis-tools.skill',
+      source: { kind: 'attachment', label: 'analysis-tools.skill' },
       previews: [],
       skipped: []
     }
