@@ -44,9 +44,10 @@ const TRUSTED_TOOL_CATEGORIES: Readonly<Record<string, string>> = {
 const SECRET_BEARING_INPUT_PATTERNS = [
   /\b(?:authorization|proxy-authorization|x-api-key|api-key|x-auth-token|x-amz-security-token|cookie)\s*:/i,
   /\b(?:token|access[_-]?token|api[_-]?key|secret|password|passwd|credential)s?\s*=/i,
-  /--(?:[a-z0-9]+[-_])*(?:access[-_]?(?:key|token)|api[-_]?key|auth[-_]?token|authorization|bearer(?:[-_]?token)?|client[-_]?secret|cookie|credentials?|pass|passwd|password|pat|private[-_]?key|secret(?:[-_]?access[-_]?key)?|tokens?)(?:[-_]?(?:file|path))?(?:=|[ \t]+)/i,
+  /(?:^|[ \t'"])--?(?:[a-z0-9]+[-_])*(?:access[-_]?(?:key|token)|api[-_]?key|auth[-_]?token|authorization|bearer(?:[-_]?token)?|client[-_]?secret|cookie|credentials?|pass|passwd|password|pat|private[-_]?key|secret(?:[-_]?access[-_]?key)?|tokens?)(?:[-_]?(?:file|path))?(?:=|:|[ \t]+)/i,
   /\b[A-Z0-9_]*(?:TOKEN|API_KEY|SECRET|PASSWORD|PASSWD|CREDENTIALS?|PAT|ACCESS_KEY(?:_ID)?|SECRET_ACCESS_KEY|CLIENT_SECRET|PRIVATE_KEY)\s*=/,
   /(?:^|\s)(?:-u|--(?:proxy-)?user)(?:=|\s+)['"]?[^\s:'"]+:[^\s'"]+/i,
+  /\bcurl(?:\.exe)?\b[^\r\n]*?[ \t]-u=?['"]?[^\s:'"]+:[^\s'"]+/i,
   /\b(?:github_pat_|gh[pousr]_|AKIA[0-9A-Z]{16}|sk-[A-Za-z0-9_-]{16,})[A-Za-z0-9_-]*/,
   /\b[a-z][a-z0-9+.-]*:\/\/[^\s/@:]+:[^\s/@]+@/i,
   /[?&](?:token|access_token|api_key|key|secret|password|signature)=[^&#\s]+/i

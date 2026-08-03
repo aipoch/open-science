@@ -224,20 +224,23 @@ describe('ACP permission broker with durable grants', () => {
   })
 
   it.each([
-    ['python upload.py --token secret', ['python', 'upload.py']],
-    ['curl --auth-token secret https://example.com', ['curl']],
-    ['curl --bearer secret https://example.com', ['curl']],
-    ['curl --oauth2-bearer secret https://example.com', ['curl']],
-    ['curl --cookie session=secret https://example.com', ['curl']],
-    ['oauth login --client-secret secret', ['oauth', 'login']],
-    ['deploy --github-token secret', ['deploy']],
-    ['deploy --client_secret=secret', ['deploy']],
-    ['deploy --x-api-key secret', ['deploy']],
-    ['deploy --aws-secret-access-key secret', ['deploy']],
-    ['deploy --credentials credentials.json', ['deploy']]
+    ['posix', 'python upload.py --token secret', ['python', 'upload.py']],
+    ['posix', 'curl --auth-token secret https://example.com', ['curl']],
+    ['posix', 'curl --bearer secret https://example.com', ['curl']],
+    ['posix', 'curl --oauth2-bearer secret https://example.com', ['curl']],
+    ['posix', 'curl --cookie session=secret https://example.com', ['curl']],
+    ['posix', 'curl -uuser:secret https://example.com', ['curl']],
+    ['posix', 'oauth login --client-secret secret', ['oauth', 'login']],
+    ['posix', 'deploy --github-token secret', ['deploy']],
+    ['posix', 'deploy --client_secret=secret', ['deploy']],
+    ['posix', 'deploy --x-api-key secret', ['deploy']],
+    ['posix', 'deploy --aws-secret-access-key secret', ['deploy']],
+    ['posix', 'deploy --credentials credentials.json', ['deploy']],
+    ['powershell', 'Invoke-RestMethod -Credential secret', ['Invoke-RestMethod']],
+    ['powershell', 'Invoke-RestMethod -ClientSecret:secret', ['Invoke-RestMethod']]
   ] as const)(
-    'offers only provider Once for a credential-bearing Codex command group: %s',
-    async (command, commandPrefix) => {
+    'offers only provider Once for a credential-bearing Codex %s command group: %s',
+    async (shellDialect, command, commandPrefix) => {
       storageRoot = await mkdtemp(join(tmpdir(), 'open-science-broker-secret-'))
       client = createProjectDbClient(storageRoot)
       await ensureProjectSchema(client)
@@ -265,7 +268,7 @@ describe('ACP permission broker with durable grants', () => {
       const pending = broker.requestPermission(request, {
         profile: 'ask',
         frameworkId: 'codex',
-        shellDialect: 'posix',
+        shellDialect,
         projectId: 'project-1'
       })
       await new Promise<void>((resolve) => setImmediate(resolve))

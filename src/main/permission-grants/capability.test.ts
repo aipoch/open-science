@@ -14,6 +14,9 @@ describe('containsSecretBearingMaterial', () => {
     'curl --oauth2-bearer secret https://example.com',
     'curl --cookie session=secret https://example.com',
     'curl --proxy-user user:secret https://example.com',
+    'curl -uuser:secret https://example.com',
+    "curl -u'user:secret' https://example.com",
+    'curl -u="user:secret" https://example.com',
     'oauth login --client-secret secret',
     'oauth login --clientSecret secret',
     'oauth login --authorization "Bearer secret"',
@@ -28,7 +31,13 @@ describe('containsSecretBearingMaterial', () => {
     'deploy --credentials-file credentials.json',
     'deploy --token-path .token',
     'deploy --pat secret',
-    'redis-cli --pass secret'
+    'redis-cli --pass secret',
+    'Invoke-RestMethod -Credential secret',
+    'Invoke-RestMethod -Credential:secret',
+    'Invoke-RestMethod -AuthToken secret',
+    'Invoke-RestMethod -ApiKey secret',
+    'Invoke-RestMethod -ClientSecret:secret',
+    'Invoke-RestMethod -BearerToken secret'
   ])('detects a credential-bearing CLI option: %s', (command) => {
     expect(containsSecretBearingMaterial(command)).toBe(true)
   })
@@ -38,7 +47,11 @@ describe('containsSecretBearingMaterial', () => {
     'docker login --password-stdin',
     'tool --tokenize input.txt',
     'tool --secretary Alice',
-    'tool --bearer-format jwt'
+    'tool --bearer-format jwt',
+    'tool -Unit:test',
+    'tool -CredentialProvider local',
+    'tool -PasswordPolicy strict',
+    'tool -CookieJar cookies.txt'
   ])('keeps a non-credential option eligible: %s', (command) => {
     expect(containsSecretBearingMaterial(command)).toBe(false)
   })
@@ -101,6 +114,8 @@ describe('capabilityFromLegacyCategory', () => {
     'python',
     ['python', ''],
     ['python', 'upload.py', '--token', 'secret'],
+    ['curl', '-uuser:secret'],
+    ['Invoke-RestMethod', '-Credential', 'secret'],
     ['TOKEN=secret', 'python', 'upload.py'],
     ['python\nupload.py']
   ])('rejects an invalid or secret-bearing proposed command group: %j', (tokens) => {

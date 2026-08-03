@@ -534,6 +534,7 @@ describe('ACP permission broker', () => {
     ['./g* --version', ['./g*']],
     ['curl --auth-token secret https://example.com', ['curl']],
     ['curl --cookie session=secret https://example.com', ['curl']],
+    ['curl -uuser:secret https://example.com', ['curl']],
     ['oauth login --client-secret secret', ['oauth', 'login']]
   ] as const)(
     'keeps an unsafe Codex command group Once-only in the legacy broker: %s',
