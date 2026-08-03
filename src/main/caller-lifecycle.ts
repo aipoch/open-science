@@ -16,6 +16,10 @@ type CallerLeaseEvent = Readonly<{ sender: object }>
 const eventLeases = new WeakMap<object, ApplicationCallerLease>()
 const leaseOwnershipKeys = new WeakMap<ApplicationCallerLease, string>()
 
+const callerLeaseOwnershipKeyForContext = (
+  identity: Pick<CallerContext, 'leaseId' | 'surface'>
+): string => `${identity.surface}\u0000${identity.leaseId}`
+
 const bindCallerLeaseToEvent = (event: CallerLeaseEvent, lease: ApplicationCallerLease): void => {
   eventLeases.set(event, lease)
 }
@@ -41,8 +45,8 @@ class ApplicationCallerLeaseRegistry {
 
   acquire(identity: Pick<CallerContext, 'leaseId' | 'surface'>): OwnedApplicationCallerLease {
     if (this.disposed) throw new Error('Application caller lease registry is disposed.')
-    const { leaseId, surface } = identity
-    const ownershipKey = `${surface}\u0000${leaseId}`
+    const { leaseId } = identity
+    const ownershipKey = callerLeaseOwnershipKeyForContext(identity)
 
     const previous = this.active.get(ownershipKey)
     if (previous) {
@@ -86,6 +90,7 @@ export {
   ApplicationCallerLeaseRegistry,
   bindCallerLeaseToEvent,
   callerLeaseForEvent,
-  callerLeaseOwnershipKey
+  callerLeaseOwnershipKey,
+  callerLeaseOwnershipKeyForContext
 }
 export type { OwnedApplicationCallerLease }

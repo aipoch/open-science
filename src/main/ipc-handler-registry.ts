@@ -7,6 +7,7 @@ import { callerContextForEvent, type CallerContext } from './caller-context'
 import {
   ApplicationCallerLeaseRegistry,
   bindCallerLeaseToEvent,
+  callerLeaseOwnershipKeyForContext,
   type OwnedApplicationCallerLease
 } from './caller-lifecycle'
 import {
@@ -108,7 +109,13 @@ const createIpcHandlerRegistry = (
   const registeredChannels = new Set<string>()
   const clients = new Map<
     string,
-    { id: number; lifecycle: EventEmitter; callerLease: OwnedApplicationCallerLease }
+    {
+      id: number
+      clientId: string
+      surface: CallerContext['surface']
+      lifecycle: EventEmitter
+      callerLease: OwnedApplicationCallerLease
+    }
   >()
   const callerLeases = new ApplicationCallerLeaseRegistry()
   const nativeCallers = new WeakMap<object, OwnedApplicationCallerLease>()
@@ -145,14 +152,17 @@ const createIpcHandlerRegistry = (
   const senderFor = (
     callerContext: CallerContext
   ): { sender: WebIpcSender; lease: OwnedApplicationCallerLease['lease'] } => {
-    let client = clients.get(callerContext.clientId)
+    const ownershipKey = callerLeaseOwnershipKeyForContext(callerContext)
+    let client = clients.get(ownershipKey)
     if (!client) {
       client = {
         id: nextSenderId--,
+        clientId: callerContext.clientId,
+        surface: callerContext.surface,
         lifecycle: new EventEmitter(),
         callerLease: callerLeases.acquire(callerContext)
       }
-      clients.set(callerContext.clientId, client)
+      clients.set(ownershipKey, client)
     }
     return {
       sender: new WebIpcSender(client.id, callerContext, client.lifecycle),
@@ -160,13 +170,19 @@ const createIpcHandlerRegistry = (
     }
   }
 
-  const destroyClient = (clientId: string): void => {
-    const client = clients.get(clientId)
+  const destroyClient = (ownershipKey: string): void => {
+    const client = clients.get(ownershipKey)
     if (!client) return
-    clients.delete(clientId)
+    clients.delete(ownershipKey)
     client.callerLease.release()
     client.lifecycle.emit('destroyed')
     client.lifecycle.removeAllListeners()
+  }
+
+  const releaseWebClient = (clientId: string): void => {
+    for (const [ownershipKey, client] of clients) {
+      if (client.surface === 'web' && client.clientId === clientId) destroyClient(ownershipKey)
+    }
   }
 
   const ipcMainHandle: IpcMain['handle'] = (channel, listener) => {
@@ -248,9 +264,9 @@ const createIpcHandlerRegistry = (
           now: diagnostics.now
         })
       },
-      releaseClient: destroyClient,
+      releaseClient: releaseWebClient,
       dispose: () => {
-        for (const clientId of [...clients.keys()]) destroyClient(clientId)
+        for (const ownershipKey of [...clients.keys()]) destroyClient(ownershipKey)
         callerLeases.dispose()
         webHandlers.clear()
       },

@@ -1,8 +1,10 @@
 import { describe, expect, it, vi } from 'vitest'
 
+import type { ApplicationCallerLease } from './application-command-router'
 import { callerLeaseForEvent } from './caller-lifecycle'
-import { createWebCallerContext } from './caller-context'
+import { createTaskCallerContext, createWebCallerContext } from './caller-context'
 import { createIpcHandlerRegistry } from './ipc-handler-registry'
+import { createManagedPreviewOwnerRegistry } from './managed-preview-ipc'
 
 describe('createIpcHandlerRegistry', () => {
   it('aborts a native surface lease before a destroyed sender can dispatch again', () => {
@@ -131,6 +133,47 @@ describe('createIpcHandlerRegistry', () => {
     expect(electronLease.signal.aborted).toBe(false)
     expect(electronLease.isCurrent()).toBe(true)
     expect(webLease.isCurrent()).toBe(true)
+  })
+
+  it('keeps colliding Web and Task callers isolated when the Web client is released', async () => {
+    const registry = createIpcHandlerRegistry({ handle: vi.fn() } as never)
+    registry.ipcMainHandle('projects:list', (event) => callerLeaseForEvent(event))
+
+    const webLease = (await registry.webRpc.invoke(
+      'projects:list',
+      createWebCallerContext('headless-task-api'),
+      []
+    )) as ApplicationCallerLease
+    const taskLease = (await registry.webRpc.invoke(
+      'projects:list',
+      createTaskCallerContext(),
+      []
+    )) as ApplicationCallerLease
+    const resources = {
+      acquire: vi.fn(),
+      readRange: vi.fn(),
+      release: vi.fn(),
+      releaseOwner: vi.fn()
+    }
+    const owners = createManagedPreviewOwnerRegistry(resources as never)
+    const webOwner = owners.register(webLease)
+    const taskOwner = owners.register(taskLease)
+
+    expect(taskLease).not.toBe(webLease)
+    expect(taskLease.signal).not.toBe(webLease.signal)
+    expect(taskOwner.ownerId).not.toBe(webOwner.ownerId)
+
+    registry.webRpc.releaseClient('headless-task-api')
+
+    expect(webLease.signal.aborted).toBe(true)
+    expect(taskLease.signal.aborted).toBe(false)
+    expect(taskLease.isCurrent()).toBe(true)
+    expect(resources.releaseOwner).toHaveBeenCalledOnce()
+    expect(resources.releaseOwner).toHaveBeenCalledWith(webOwner.ownerId)
+    expect(owners.register(taskLease)).toBe(taskOwner)
+
+    registry.webRpc.dispose()
+    expect(taskLease.signal.aborted).toBe(true)
   })
 
   it('registers every native handler but routes only allowlisted Web RPC channels', async () => {
