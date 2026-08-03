@@ -41,7 +41,7 @@ vi.mock('electron', () => ({
 }))
 
 const { initDataRoot } = await import('../storage-root')
-const { registerStorageIpcHandlers } = await import('./ipc')
+const { createStorageCommandOwner, registerStorageIpcHandlers } = await import('./ipc')
 const { clearMigrationPending, isMigrationPending } = await import('./migration-state')
 const { clearApplicationShutdownTrigger, currentApplicationShutdownTrigger } =
   await import('../application-shutdown-trigger')
@@ -141,6 +141,19 @@ afterEach(async () => {
 })
 
 describe('storage IPC handlers', () => {
+  it('shares migration state between legacy IPC and direct owner calls', async () => {
+    initDataRoot(dataRoot)
+    const deps = fakeDeps()
+    const owner = createStorageCommandOwner(deps)
+    registerStorageIpcHandlers(deps, owner)
+
+    await expect(invoke('storage:migrate', { parent: targetParent })).resolves.toEqual({ ok: true })
+    await expect(owner.commitAndRelaunch({ parent: targetParent })).resolves.toEqual({ ok: true })
+
+    expect(deps.settingsService.setDataRoot).toHaveBeenCalledWith(target)
+    expect(deps.relaunch).toHaveBeenCalledTimes(1)
+  })
+
   it('registers every storage channel', () => {
     registerStorageIpcHandlers(fakeDeps())
 
