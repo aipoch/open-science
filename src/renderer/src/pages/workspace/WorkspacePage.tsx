@@ -52,6 +52,7 @@ import { ConversationPanel } from './ConversationPanel'
 import { DeleteSessionDialog } from './DeleteSessionDialog'
 import { MobilePreviewSheet } from './MobilePreviewSheet'
 import { DownloadSessionArtifactsDialog } from './DownloadSessionArtifactsDialog'
+import { FilePreviewDialog } from './FilePreviewDialog'
 import { PreviewPanel } from './PreviewPanel'
 import { RenameSessionDialog } from './RenameSessionDialog'
 import { SessionNotebookDialog } from './SessionNotebookDialog'
@@ -442,8 +443,8 @@ const WorkspacePage = ({
   )
   const activePreviewItemId = usePreviewWorkbenchStore((state) => state.activeItemId)
   const previewOpenRequestVersion = usePreviewWorkbenchStore((state) => state.openRequestVersion)
-  const previewProjectId = usePreviewWorkbenchStore((state) => state.activeProjectId)
   const fileDialogItem = usePreviewWorkbenchStore((state) => state.fileDialogItem)
+  const closeFileDialog = usePreviewWorkbenchStore((state) => state.closeFileDialog)
   const upsertPreviewItem = usePreviewWorkbenchStore((state) => state.upsertItem)
   const upsertAndActivatePreviewItem = usePreviewWorkbenchStore(
     (state) => state.upsertAndActivateItem
@@ -852,19 +853,6 @@ const WorkspacePage = ({
   // Switches the preview panel to the active project's own tabs (never another project's stale
   // previews) and persists/restores each project's panel state across switches and restarts.
   usePreviewPersistence(activeProjectId, isSessionPersistenceReady)
-
-  // A global Artifact open may arrive before a cross-Project navigation has activated that Project's
-  // preview slice. Once this workspace owns the target Project, reveal Files so its shared dialog can
-  // consume the already-validated immutable preview item.
-  useEffect(() => {
-    if (
-      !fileDialogItem ||
-      fileDialogItem.projectId !== activeProjectId ||
-      previewProjectId !== activeProjectId
-    )
-      return
-    upsertAndActivatePreviewItem(createProjectFilesPreviewItem())
-  }, [activeProjectId, fileDialogItem, previewProjectId, upsertAndActivatePreviewItem])
 
   // Clear the consumed `Chat with agent` prefill intent from the store once it has been applied in the
   // render phase above, so a later normal open starts fresh. (Calling a store action — not a React
@@ -2253,6 +2241,11 @@ const WorkspacePage = ({
       <DownloadSessionArtifactsDialog
         session={sessionToDownloadArtifacts}
         onClose={() => setSessionToDownloadArtifacts(undefined)}
+      />
+
+      <FilePreviewDialog
+        item={fileDialogItem?.projectId === activeProjectId ? fileDialogItem : undefined}
+        onClose={closeFileDialog}
       />
 
       <SessionNotebookDialog

@@ -55,7 +55,6 @@ import {
 } from './artifact-preview-utils'
 import { ManagedFileDownloadButton } from './ManagedFileDownloadButton'
 import { createPreviewFileItem } from './preview-file-item'
-import { FilePreviewDialog } from './FilePreviewDialog'
 import type { MessageArtifact } from './preview-file-item'
 import { FileBrowserModal } from '../settings/FileBrowserModal'
 import { getPreviewThumbnailReadEncoding } from './preview-support'
@@ -1034,8 +1033,6 @@ const ProjectFilesViewContent = ({
   const [viewMode, setViewMode] = useState<ProjectFilesViewMode>('grid')
   const [showAllSessionOptions, setShowAllSessionOptions] = useState(false)
   const openFileDialog = usePreviewWorkbenchStore((state) => state.openFileDialog)
-  const fileDialogItem = usePreviewWorkbenchStore((state) => state.fileDialogItem)
-  const closeFileDialog = usePreviewWorkbenchStore((state) => state.closeFileDialog)
   const fileDialogCleanupState = useRef({ version: 0 })
 
   useEffect(() => {
@@ -1747,7 +1744,6 @@ const ProjectFilesViewContent = ({
           </section>
         ) : null}
       </div>
-      <FilePreviewDialog item={fileDialogItem} onClose={closeFileDialog} />
       <FileBrowserModal
         open={browseProviderId !== undefined}
         onClose={() => setBrowseProviderId(undefined)}

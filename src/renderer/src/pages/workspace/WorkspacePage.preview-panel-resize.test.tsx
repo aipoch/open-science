@@ -7,7 +7,7 @@ import type { PanelImperativeHandle, PanelSize } from 'react-resizable-panels'
 
 import {
   createInitialPreviewWorkbenchState,
-  PROJECT_FILES_PREVIEW_ID,
+  type PreviewFileItem,
   usePreviewWorkbenchStore
 } from '@/stores/preview-workbench-store'
 import { useNavigationStore } from '@/stores/navigation-store'
@@ -71,6 +71,10 @@ const motionHarness = vi.hoisted(() => ({
       stop: vi.fn()
     })
   )
+}))
+
+const filePreviewDialogHarness = vi.hoisted(() => ({
+  item: undefined as PreviewFileItem | undefined
 }))
 
 vi.mock('motion', () => ({
@@ -191,6 +195,13 @@ vi.mock('./MobilePreviewSheet', () => ({
   )
 }))
 
+vi.mock('./FilePreviewDialog', () => ({
+  FilePreviewDialog: ({ item }: { item: PreviewFileItem | undefined }): React.JSX.Element => {
+    filePreviewDialogHarness.item = item
+    return <div data-testid="file-preview-dialog" data-open={item ? 'true' : 'false'} />
+  }
+}))
+
 vi.mock('./PreviewPanel', () => ({
   PreviewPanel: ({
     panelRef,
@@ -249,6 +260,7 @@ describe('WorkspacePage preview panel resize sync', () => {
     workspacePageHarness.previewPanelMinSize = undefined
     workspacePageHarness.previewOnResize = undefined
     workspacePageHarness.previewPanelRef = undefined
+    filePreviewDialogHarness.item = undefined
     vi.clearAllMocks()
     vi.spyOn(window, 'requestAnimationFrame').mockImplementation((callback) => {
       callback(0)
@@ -467,7 +479,7 @@ describe('WorkspacePage preview panel resize sync', () => {
     expect(usePreviewWorkbenchStore.getState().panelState).toBe('collapsed')
   })
 
-  it('waits for the target preview slice before consuming a cross-Project file dialog', async () => {
+  it('hosts a cross-Project file dialog without creating or activating a Files tab', async () => {
     const fileDialogItem = {
       id: 'artifact-b',
       projectId: 'project-b',
@@ -487,16 +499,19 @@ describe('WorkspacePage preview panel resize sync', () => {
     await renderPage(false)
 
     expect(usePreviewWorkbenchStore.getState().items).toEqual([])
+    expect(filePreviewDialogHarness.item).toEqual(fileDialogItem)
 
     act(() => usePreviewWorkbenchStore.getState().activateProject('project-b'))
     expect(usePreviewWorkbenchStore.getState()).toMatchObject({
       activeProjectId: 'project-b',
-      activeItemId: PROJECT_FILES_PREVIEW_ID,
+      activeItemId: undefined,
+      items: [],
       fileDialogItem
     })
 
     act(() => usePreviewWorkbenchStore.getState().activateProject('project-c'))
     expect(usePreviewWorkbenchStore.getState().fileDialogItem).toBeUndefined()
+    expect(filePreviewDialogHarness.item).toBeUndefined()
   })
 
   it('uses only background treatment to show the expanded preview toggle state', async () => {

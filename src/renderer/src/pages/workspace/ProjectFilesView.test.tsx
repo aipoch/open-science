@@ -3131,7 +3131,7 @@ describe('ProjectFilesView', () => {
     expect(previewSurface?.className).toContain('h-[82px]')
   })
 
-  it('opens an uploaded file in a large dialog without adding a workbench tab', async () => {
+  it('queues an uploaded file dialog without adding a workbench tab', async () => {
     await renderView([
       createSession({
         id: 'session-1',
@@ -3150,27 +3150,23 @@ describe('ProjectFilesView', () => {
         ?.dispatchEvent(new MouseEvent('click', { bubbles: true }))
     })
 
-    const dialog = document.body.querySelector<HTMLElement>('[role="dialog"]')
-    expect(dialog).not.toBeNull()
-    expect(dialog?.className).toContain('h-[90vh]')
-    expect(dialog?.className).toContain('w-[90vw]')
-    expect(dialog?.querySelector('[aria-label="Download user upload.png"]')).not.toBeNull()
-    expect(
-      dialog?.querySelector('[aria-label="Open full screen preview of user upload.png"]')
-    ).toBeNull()
+    expect(usePreviewWorkbenchStore.getState().fileDialogItem).toMatchObject({
+      projectId: 'default',
+      sessionId: 'session-1',
+      source: 'upload',
+      name: 'user upload.png'
+    })
     expect(usePreviewWorkbenchStore.getState().items).toEqual([])
 
     await act(async () => {
-      dialog
-        ?.querySelector<HTMLButtonElement>('[aria-label="Close preview of user upload.png"]')
-        ?.dispatchEvent(new MouseEvent('click', { bubbles: true }))
+      usePreviewWorkbenchStore.getState().closeFileDialog()
     })
 
-    expect(document.body.querySelector('[role="dialog"]')).toBeNull()
+    expect(usePreviewWorkbenchStore.getState().fileDialogItem).toBeUndefined()
     expect(container.querySelector('[data-testid="files-view"]')).not.toBeNull()
   })
 
-  it('opens a generated file in a large dialog without adding a workbench tab', async () => {
+  it('queues a generated file dialog without adding a workbench tab', async () => {
     await renderView([
       createSession({
         id: 'session-1',
@@ -3196,10 +3192,11 @@ describe('ProjectFilesView', () => {
         ?.dispatchEvent(new MouseEvent('click', { bubbles: true }))
     })
 
-    const dialog = document.body.querySelector<HTMLElement>('[role="dialog"]')
-    expect(dialog).not.toBeNull()
-    expect(dialog?.querySelector('[aria-label="Download tree.png"]')).not.toBeNull()
-    expect(dialog?.querySelector('[aria-label="Open full screen preview of tree.png"]')).toBeNull()
+    expect(usePreviewWorkbenchStore.getState().fileDialogItem).toMatchObject({
+      projectId: 'default',
+      sessionId: 'session-1',
+      name: 'tree.png'
+    })
     expect(usePreviewWorkbenchStore.getState().items).toEqual([])
   })
 
