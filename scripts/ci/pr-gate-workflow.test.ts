@@ -345,6 +345,7 @@ describe('PR Gate workflow', () => {
       'src/shared/renderer-contract.test.ts',
       'src/shared/renderer-contract-catalog.test.ts',
       'src/shared/renderer-surface-inventory.test.ts',
+      'src/shared/renderer-surface-matrix.test.ts',
       'src/shared/web-rpc-contract.test.ts'
     ]) {
       expect(step?.run).toContain(testFile)
