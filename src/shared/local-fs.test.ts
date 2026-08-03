@@ -2,8 +2,11 @@ import { describe, expect, it } from 'vitest'
 
 import {
   describeLocalListingError,
+  isLocalPathRoot,
   isSensitiveLocalPath,
+  parentLocalPath,
   resolveLocalPath,
+  sameLocalDirectory,
   sortLocalEntries,
   validateLocalPath,
   type LocalDirEntry
@@ -41,6 +44,7 @@ describe('isSensitiveLocalPath', () => {
     expect(isSensitiveLocalPath('/Users/roxi/.env.local')).toBe(true)
     expect(isSensitiveLocalPath('/etc/ssl/private/server.key')).toBe(true)
     expect(isSensitiveLocalPath('/Users/roxi/cert.pem')).toBe(true)
+    expect(isSensitiveLocalPath('C:\\Users\\roxi\\.ssh')).toBe(true)
   })
 
   it('flags suffix-less secret files (SSH keys, cloud credentials)', () => {
@@ -104,6 +108,33 @@ describe('resolveLocalPath', () => {
 
   it('returns cwd for empty input', () => {
     expect(resolveLocalPath('/Users/roxi', '')).toBe('/Users/roxi')
+  })
+
+  it('resolves Windows drive and UNC paths', () => {
+    expect(resolveLocalPath('C:\\Users\\roxi', 'Documents')).toBe('C:\\Users\\roxi\\Documents')
+    expect(resolveLocalPath('C:\\Users\\roxi', 'D:\\Data')).toBe('D:\\Data')
+    expect(resolveLocalPath('\\\\server\\share', 'Documents')).toBe('\\\\server\\share\\Documents')
+  })
+})
+
+describe('local path navigation', () => {
+  it('finds parents and roots with host path semantics', () => {
+    expect(parentLocalPath('/Users/roxi/Documents')).toBe('/Users/roxi')
+    expect(parentLocalPath('/')).toBe('/')
+    expect(parentLocalPath('C:\\Users\\roxi')).toBe('C:\\Users')
+    expect(parentLocalPath('C:\\')).toBe('C:\\')
+    expect(parentLocalPath('\\\\server\\share\\Documents')).toBe('\\\\server\\share')
+    expect(parentLocalPath('\\\\server\\share')).toBe('\\\\server\\share')
+    expect(isLocalPathRoot('C:\\')).toBe(true)
+    expect(isLocalPathRoot('\\\\server\\share\\')).toBe(true)
+    expect(isLocalPathRoot('C:\\Users')).toBe(false)
+  })
+
+  it('compares Windows directories case-insensitively and ignores trailing separators', () => {
+    expect(sameLocalDirectory('/Users/roxi/', '/Users/roxi')).toBe(true)
+    expect(sameLocalDirectory('C:\\Users\\Roxi\\', 'c:\\users\\roxi')).toBe(true)
+    expect(sameLocalDirectory('C:/Users/Roxi', 'c:\\users\\roxi')).toBe(true)
+    expect(sameLocalDirectory('C:\\Users', 'D:\\Users')).toBe(false)
   })
 })
 

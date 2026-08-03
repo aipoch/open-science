@@ -13,9 +13,12 @@ import { useCallback, useEffect, useRef, useState } from 'react'
 import type { LocalDirEntry, LocalListingProblem, LocalRoots } from '../../../../shared/local-fs'
 import {
   describeLocalListingError,
+  isLocalPathRoot,
   isSensitiveLocalPath,
   LOCAL_BOOKMARKS_KEY,
+  parentLocalPath,
   resolveLocalPath,
+  sameLocalDirectory,
   validateLocalPath
 } from '../../../../shared/local-fs'
 import { Button } from '@/components/ui/button'
@@ -30,13 +33,6 @@ import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from '@/comp
 import { usePreviewWorkbenchStore } from '@/stores/preview-workbench-store'
 
 import { createPreviewFileItemFromLocal, LOCAL_PREVIEW_SESSION_ID } from './preview-file-item'
-
-// True when two paths name the same directory, so equivalent spellings ("/a/b" vs "/a/b/") don't
-// trigger a redundant listing call. Root stays "/".
-const sameDirectory = (a: string, b: string): boolean => {
-  const strip = (path: string): string => (path.length > 1 ? path.replace(/\/+$/, '') : path)
-  return strip(a) === strip(b)
-}
 
 // Formats a byte count as a short human-readable string.
 const formatSize = (bytes: number): string => {
@@ -55,13 +51,6 @@ const relativeTime = (mtimeMs: number): string => {
   if (sec < 3600) return `${Math.round(sec / 60)}m`
   if (sec < 86400) return `${Math.round(sec / 3600)}h`
   return `${Math.round(sec / 86400)}d`
-}
-
-// Parent path (removes the last component); returns '/' at the root.
-const parentPath = (p: string): string => {
-  if (p === '/') return '/'
-  const idx = p.replace(/\/$/, '').lastIndexOf('/')
-  return idx <= 0 ? '/' : p.slice(0, idx)
 }
 
 // Shared look for the three icon-only toolbar buttons. They sit above a dense listing, so they read
@@ -356,7 +345,7 @@ export const LocalFileBrowser = ({
 
   const listing = state.kind === 'ok' ? state : null
   const currentPath = listing?.resolvedPath ?? cwd
-  const isAtRoot = currentPath === '/'
+  const isAtRoot = isLocalPathRoot(currentPath)
 
   // Submit/blur only re-reads the directory when the typed path actually resolves somewhere new, so
   // tabbing out of an untouched address bar costs no listing call. A no-op edit (trailing slash,
@@ -377,7 +366,7 @@ export const LocalFileBrowser = ({
       })
       return
     }
-    if (sameDirectory(resolved, currentPath)) {
+    if (sameLocalDirectory(resolved, currentPath)) {
       setAddressInput(currentPath)
       return
     }
@@ -387,7 +376,7 @@ export const LocalFileBrowser = ({
   // Directory → navigate in; file → open a preview-workbench tab. Sensitive paths (credential dirs
   // like .ssh, private keys, dotenv files) warn first, whether entering or opening.
   const handleOpenEntry = (entry: LocalDirEntry): void => {
-    const path = `${currentPath.replace(/\/$/, '')}/${entry.name}`
+    const path = resolveLocalPath(currentPath, entry.name)
     if (isSensitiveLocalPath(path)) {
       const prompt = entry.isDirectory
         ? `"${entry.name}" may contain credentials or secrets. Open this folder anyway?`
@@ -442,7 +431,7 @@ export const LocalFileBrowser = ({
               size="icon-sm"
               className={TOOLBAR_ICON_BUTTON}
               disabled={isAtRoot}
-              onClick={() => void navigate(parentPath(currentPath))}
+              onClick={() => void navigate(parentLocalPath(currentPath))}
               aria-label="Go to parent directory"
             >
               <ArrowLeft className="size-4" strokeWidth={TOOLBAR_ICON_STROKE} />

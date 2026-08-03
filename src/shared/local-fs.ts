@@ -79,7 +79,7 @@ const SENSITIVE_SUFFIXES = ['.pem', '.key', '.env', '.p12', '.pfx']
 // Returns true when a path's basename looks security-sensitive (keys, credentials, dotenv). Pure
 // so both the browser listing and the preview open path can share one definition.
 export const isSensitiveLocalPath = (path: string): boolean => {
-  const base = (path.split('/').pop() ?? '').toLowerCase()
+  const base = (path.split(/[\\/]/).pop() ?? '').toLowerCase()
   if (!base) return false
   if (SENSITIVE_BASENAMES.has(base)) return true
   if (base.startsWith('.env')) return true
@@ -123,8 +123,37 @@ export const describeLocalListingError = (
 // Resolves an address-bar input to an absolute path, lexically joining relative input onto cwd.
 // The main process still calls realpath to canonicalize '..' and symlinks.
 export const resolveLocalPath = (cwd: string, input: string): string => {
-  if (input.startsWith('/')) return input
+  if (validateLocalPath(input) === undefined) return input
   if (input === '') return cwd
-  const base = cwd.endsWith('/') ? cwd.slice(0, -1) : cwd
-  return `${base}/${input}`
+  const separator = /^[A-Za-z]:[\\/]|^\\\\/.test(cwd) ? '\\' : '/'
+  const base = cwd.replace(/[\\/]+$/, '')
+  return `${base}${separator}${input}`
 }
+
+const localPathRoot = (path: string): string => {
+  if (/^[A-Za-z]:[\\/]/.test(path)) return path.slice(0, 3)
+  return path.match(/^\\\\[^\\/]+[\\/][^\\/]+/)?.[0] ?? '/'
+}
+
+const withoutTrailingSeparators = (path: string): string => {
+  const root = localPathRoot(path)
+  return path.length > root.length ? path.replace(/[\\/]+$/, '') : root
+}
+
+export const sameLocalDirectory = (a: string, b: string): boolean => {
+  const left = withoutTrailingSeparators(a)
+  const right = withoutTrailingSeparators(b)
+  if (!/^[A-Za-z]:[\\/]|^\\\\/.test(left)) return left === right
+  return left.replace(/\//g, '\\').toLowerCase() === right.replace(/\//g, '\\').toLowerCase()
+}
+
+export const parentLocalPath = (path: string): string => {
+  const root = localPathRoot(path)
+  const normalized = withoutTrailingSeparators(path)
+  if (sameLocalDirectory(normalized, root)) return root
+  const separator = Math.max(normalized.lastIndexOf('/'), normalized.lastIndexOf('\\'))
+  return separator < root.length ? root : normalized.slice(0, separator)
+}
+
+export const isLocalPathRoot = (path: string): boolean =>
+  sameLocalDirectory(path, localPathRoot(path))
