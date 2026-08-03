@@ -131,7 +131,7 @@ type ArtifactRpcCapability = Omit<ArtifactRpcCapabilityBinding, 'allowedMethods'
 
 type NotebookRpcSessionBinding = {
   sessionId: string
-  projectId: string
+  projectId?: string
   allowedMethods?: ReadonlySet<string>
   activeControlInvocation?: TrustedControlInvocationIdentity
 }
@@ -154,6 +154,7 @@ const ARTIFACT_RPC_METHODS = new Set<ArtifactRpcMethod>([
 // it must comfortably exceed long notebook executions that remain inside one active turn.
 const DEFAULT_ARTIFACT_RPC_CAPABILITY_TTL_MS = 2 * 60 * 60 * 1_000
 const CONTROL_RPC_METHODS = new Set(['mcpCall', 'computeCall', 'agentsCall'])
+const SKILL_IMPORT_RPC_METHODS = new Set(['skillImport'])
 
 const isArtifactRpcMethod = (method: string): method is ArtifactRpcMethod =>
   ARTIFACT_RPC_METHODS.has(method as ArtifactRpcMethod)
@@ -196,6 +197,7 @@ class NotebookLocalRpcServer {
   private readonly sessionAliases = new Map<string, string>()
   private readonly sessionRpcCapabilities = new Map<string, NotebookRpcSessionBinding>()
   private readonly sessionRpcTokens = new Map<string, string>()
+  private readonly skillImportRpcTokens = new Map<string, string>()
   // The session → Specialist relationship is established by the ACP runtime, not supplied by the
   // notebook process. Keeping it here prevents an agent from selecting another Specialist's scope
   // by forging an RPC parameter.
@@ -306,6 +308,7 @@ class NotebookLocalRpcServer {
     this.artifactRpcCapabilities.clear()
     this.sessionRpcCapabilities.clear()
     this.sessionRpcTokens.clear()
+    this.skillImportRpcTokens.clear()
 
     if (!server) return
 
@@ -354,12 +357,21 @@ class NotebookLocalRpcServer {
     }
   }
 
+  private revokeSkillImportSessionCapabilities(sessionId: string): void {
+    for (const ownedSessionId of this.resolveSessionCapabilityOwners(sessionId)) {
+      const token = this.skillImportRpcTokens.get(ownedSessionId)
+      if (token) this.sessionRpcCapabilities.delete(token)
+      this.skillImportRpcTokens.delete(ownedSessionId)
+    }
+  }
+
   // Releases ACP-owned session state without revoking the persistent control-plane capability. The
   // Notebook RuntimeSession owns that capability and revokes it through connection.release().
   releaseSessionCapabilities(sessionId: string): void {
     const ownedSessionIds = this.resolveSessionCapabilityOwners(sessionId)
 
     this.revokeAgentSessionCapabilities(sessionId)
+    this.revokeSkillImportSessionCapabilities(sessionId)
     for (const ownedSessionId of ownedSessionIds) {
       this.sessionSpecialists.delete(ownedSessionId)
     }
@@ -392,6 +404,28 @@ class NotebookLocalRpcServer {
         // only this concrete capability and clear the owner projection only while it still points here.
         if (this.sessionRpcTokens.get(sessionId) === token) {
           this.sessionRpcTokens.delete(sessionId)
+        }
+        this.sessionRpcCapabilities.delete(token)
+      }
+    }
+  }
+
+  async issueSkillImportConnection(sessionId: string): Promise<NotebookRpcConnection> {
+    const connection = await this.ensureStarted()
+    this.revokeSkillImportSessionCapabilities(sessionId)
+
+    const token = randomUUID()
+    this.skillImportRpcTokens.set(sessionId, token)
+    this.sessionRpcCapabilities.set(token, {
+      sessionId,
+      allowedMethods: SKILL_IMPORT_RPC_METHODS
+    })
+    return {
+      endpoint: connection.endpoint,
+      token,
+      release: () => {
+        if (this.skillImportRpcTokens.get(sessionId) === token) {
+          this.skillImportRpcTokens.delete(sessionId)
         }
         this.sessionRpcCapabilities.delete(token)
       }
@@ -585,7 +619,7 @@ class NotebookLocalRpcServer {
           params = {
             ...params,
             sessionId: sessionBinding.sessionId,
-            projectId: sessionBinding.projectId,
+            ...(sessionBinding.projectId ? { projectId: sessionBinding.projectId } : {}),
             ...(method === 'agentsCall'
               ? {
                   session_id: sessionBinding.sessionId,
@@ -600,7 +634,7 @@ class NotebookLocalRpcServer {
           if (authorization !== `Bearer ${this.token}`) {
             throw new RpcHttpError(401, 'Invalid notebook RPC token.')
           }
-          if (CONTROL_RPC_METHODS.has(method)) {
+          if (CONTROL_RPC_METHODS.has(method) || SKILL_IMPORT_RPC_METHODS.has(method)) {
             throw new RpcHttpError(401, 'A session-bound notebook RPC token is required.')
           }
         }

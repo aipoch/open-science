@@ -170,9 +170,12 @@ const createAcpRuntime = ({
         skillImport: {
           mcpEntryPath,
           isEnabled: () => settingsService.getConversationSkillImportEnabled(),
-          getRpcConnection: () => notebookRpcServer.ensureStarted(),
+          getRpcConnection: ({ sessionId }) =>
+            notebookRpcServer.issueSkillImportConnection(sessionId),
           registerSessionAlias: (aliasSessionId, sessionId) =>
             notebookRpcServer.registerSessionAlias(aliasSessionId, sessionId),
+          releaseSessionCapabilities: (sessionId) =>
+            notebookRpcServer.releaseSessionCapabilities(sessionId),
           authorizeReferencedUploads: authorizeSkillImportReferencedUploads
         },
         callbacks: runtimeCallbacks,

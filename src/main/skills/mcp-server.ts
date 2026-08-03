@@ -51,6 +51,7 @@ const SKILL_IMPORT_SYSTEM_PROMPT_APPEND = [
 type SkillImportRpcConnection = {
   endpoint: string
   token: string
+  release?: () => void
 }
 
 type SkillImportMcpEnvironment = SkillImportRpcConnection & {

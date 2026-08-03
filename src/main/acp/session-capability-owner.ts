@@ -103,8 +103,9 @@ export type SessionCapabilitySkillImportOptions = {
   mcpEntryPath: string
   mcpCommand?: string
   isEnabled?: () => Promise<boolean>
-  getRpcConnection: () => Promise<SkillImportRpcConnection>
+  getRpcConnection: (binding: { sessionId: string }) => Promise<SkillImportRpcConnection>
   registerSessionAlias?: (aliasSessionId: string, sessionId: string) => void
+  releaseSessionCapabilities?: (sessionId: string) => void
 }
 
 export type BuildSessionCapabilitiesRequest = {
@@ -116,6 +117,7 @@ export type BuildSessionCapabilitiesRequest = {
   sessionCwd: string
   projectName: string
   onNotebookConnection?: (connection: NotebookRpcConnection) => void
+  onSkillImportConnection?: (connection: SkillImportRpcConnection) => void
 }
 
 export type BuiltSessionCapabilities = Readonly<{
@@ -128,6 +130,7 @@ type CommitSessionCapabilitiesRequest = {
   routingIds: SessionCapabilityRoutingIds
   descriptor: EffectiveSessionCapabilityDescriptor
   notebookRelease?: () => void
+  skillImportRelease?: () => void
 }
 
 type RevokeProvisionalSessionCapabilitiesRequest = {
@@ -135,6 +138,7 @@ type RevokeProvisionalSessionCapabilitiesRequest = {
   usedHttpTransport: boolean
   notebookSessionId?: string
   notebookRelease?: () => void
+  skillImportRelease?: () => void
   ownsStableIdentity: boolean
 }
 
@@ -177,6 +181,7 @@ export class AcpSessionCapabilityOwner {
   private readonly notebookRoutingIds = new Map<string, string>()
   private readonly notebookCapabilityReleases = new Map<string, () => void>()
   private readonly skillImportRoutingIds = new Map<string, string>()
+  private readonly skillImportCapabilityReleases = new Map<string, () => void>()
   private readonly descriptors = new Map<string, EffectiveSessionCapabilityDescriptor>()
   private readonly committedSessionIds = new Set<string>()
   private artifactSessionSequence = 0
@@ -309,6 +314,7 @@ export class AcpSessionCapabilityOwner {
     this.descriptors.set(appSessionId, descriptor)
     this.committedSessionIds.add(appSessionId)
     this.commitNotebookRelease(appSessionId, request.notebookRelease)
+    this.commitSkillImportRelease(appSessionId, request.skillImportRelease)
   }
 
   revokeProvisional(request: RevokeProvisionalSessionCapabilitiesRequest): void {
@@ -336,8 +342,17 @@ export class AcpSessionCapabilityOwner {
         })
       }
     }
+    if (request.skillImportRelease) {
+      try {
+        request.skillImportRelease()
+      } catch (error) {
+        safeLogError('provisional Skill import capability cleanup failed', {
+          ...diagnosticErrorFields(error)
+        })
+      }
+    }
     if (request.notebookSessionId && request.ownsStableIdentity) {
-      this.releaseNotebookSessionCapabilities(request.notebookSessionId)
+      this.releaseSessionCapabilities(request.notebookSessionId)
     }
   }
 
@@ -370,7 +385,8 @@ export class AcpSessionCapabilityOwner {
     this.descriptors.delete(appSessionId)
     this.committedSessionIds.delete(appSessionId)
     this.releaseCommittedNotebookCapability(appSessionId)
-    this.releaseNotebookSessionCapabilities(appSessionId)
+    this.releaseCommittedSkillImportCapability(appSessionId)
+    this.releaseSessionCapabilities(appSessionId)
   }
 
   dispose(sessionIds: Iterable<string> = []): void {
@@ -380,17 +396,20 @@ export class AcpSessionCapabilityOwner {
       ...this.notebookRoutingIds.keys(),
       ...this.skillImportRoutingIds.keys(),
       ...this.notebookCapabilityReleases.keys(),
+      ...this.skillImportCapabilityReleases.keys(),
       ...this.descriptors.keys(),
       ...this.committedSessionIds
     ])
     for (const sessionId of ownedSessionIds) {
       this.releaseCommittedNotebookCapability(sessionId)
-      this.releaseNotebookSessionCapabilities(sessionId)
+      this.releaseCommittedSkillImportCapability(sessionId)
+      this.releaseSessionCapabilities(sessionId)
     }
     this.artifactRoutingIds.clear()
     this.notebookRoutingIds.clear()
     this.skillImportRoutingIds.clear()
     this.notebookCapabilityReleases.clear()
+    this.skillImportCapabilityReleases.clear()
     this.descriptors.clear()
     this.committedSessionIds.clear()
   }
@@ -497,12 +516,14 @@ export class AcpSessionCapabilityOwner {
   }
 
   private async buildSkillImportEnvironment(
-    routingId: string
+    routingId: string,
+    onConnection?: (connection: SkillImportRpcConnection) => void
   ): Promise<SkillImportMcpEnvironment | undefined> {
     if (!this.options.skillImport || !routingId) return undefined
     await this.refreshDynamicAvailability()
     if (!this.skillImportEnabled) return undefined
-    const connection = await this.options.skillImport.getRpcConnection()
+    const connection = await this.options.skillImport.getRpcConnection({ sessionId: routingId })
+    onConnection?.(connection)
     return { ...connection, sessionId: routingId }
   }
 
@@ -545,7 +566,10 @@ export class AcpSessionCapabilityOwner {
       }
     }
     if (enabled.skillImport) {
-      const environment = await this.buildSkillImportEnvironment(request.routingIds.skillImport)
+      const environment = await this.buildSkillImportEnvironment(
+        request.routingIds.skillImport,
+        request.onSkillImportConnection
+      )
       if (environment && this.options.skillImport) {
         servers.push(
           createSkillImportMcpServerConfig({
@@ -603,7 +627,10 @@ export class AcpSessionCapabilityOwner {
       }
     }
     if (enabled.skillImport) {
-      const environment = await this.buildSkillImportEnvironment(request.routingIds.skillImport)
+      const environment = await this.buildSkillImportEnvironment(
+        request.routingIds.skillImport,
+        request.onSkillImportConnection
+      )
       if (environment) {
         host.registerSkillImport(request.routingIds.skillImport, environment)
         servers.push({
@@ -665,11 +692,44 @@ export class AcpSessionCapabilityOwner {
     }
   }
 
-  private releaseNotebookSessionCapabilities(sessionId: string): void {
+  private commitSkillImportRelease(sessionId: string, release: (() => void) | undefined): void {
+    const previousRelease = this.skillImportCapabilityReleases.get(sessionId)
+    if (previousRelease === release) return
+    if (release) this.skillImportCapabilityReleases.set(sessionId, release)
+    else this.skillImportCapabilityReleases.delete(sessionId)
+    if (!previousRelease) return
     try {
-      this.options.notebook?.releaseSessionCapabilities?.(sessionId)
+      previousRelease()
     } catch (error) {
-      safeLogError('release notebook session capabilities failed', {
+      safeLogError('replaced Skill import capability cleanup failed', {
+        ...diagnosticErrorFields(error),
+        sessionId
+      })
+    }
+  }
+
+  private releaseCommittedSkillImportCapability(sessionId: string): void {
+    const release = this.skillImportCapabilityReleases.get(sessionId)
+    this.skillImportCapabilityReleases.delete(sessionId)
+    if (!release) return
+    try {
+      release()
+    } catch (error) {
+      safeLogError('committed Skill import capability cleanup failed', {
+        ...diagnosticErrorFields(error),
+        sessionId
+      })
+    }
+  }
+
+  private releaseSessionCapabilities(sessionId: string): void {
+    try {
+      const release =
+        this.options.notebook?.releaseSessionCapabilities ??
+        this.options.skillImport?.releaseSessionCapabilities
+      release?.(sessionId)
+    } catch (error) {
+      safeLogError('release session capabilities failed', {
         ...diagnosticErrorFields(error),
         sessionId
       })

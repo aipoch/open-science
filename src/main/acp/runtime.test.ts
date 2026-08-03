@@ -13706,6 +13706,10 @@ describe('ACP runtime session management', () => {
     const process = new FakeAgentProcess()
     const fakeAgent = startFakeAgent(process, ['remote-session-1'])
     const aliases: Array<{ aliasSessionId: string; sessionId: string }> = []
+    const getRpcConnection = vi.fn(async () => ({
+      endpoint: 'http://127.0.0.1:4567',
+      token: 'secret-token'
+    }))
     const runtime = new AcpRuntime({
       appVersion: '0.1.0',
       defaultCwd: '/workspace',
@@ -13713,10 +13717,7 @@ describe('ACP runtime session management', () => {
       skillImport: {
         mcpEntryPath: '/app/out/main/index.js',
         mcpCommand: '/Applications/Open Science.app/Contents/MacOS/Open Science',
-        getRpcConnection: async () => ({
-          endpoint: 'http://127.0.0.1:4567',
-          token: 'secret-token'
-        }),
+        getRpcConnection,
         registerSessionAlias: (aliasSessionId, sessionId) => {
           aliases.push({ aliasSessionId, sessionId })
         }
@@ -13736,6 +13737,7 @@ describe('ACP runtime session management', () => {
       'OPEN_SCIENCE_SKILL_IMPORT_SESSION_ID'
     )
     expect(aliasSessionId).toMatch(/^skill-import-session-/)
+    expect(getRpcConnection).toHaveBeenCalledWith({ sessionId: aliasSessionId })
     expect(aliases).toEqual([{ aliasSessionId, sessionId: createdSession.sessionId }])
     expect(JSON.stringify(fakeAgent.newSessions[0]._meta)).toContain(
       'mcp__open-science-skills__request_skill_import'
