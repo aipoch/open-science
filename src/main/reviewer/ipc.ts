@@ -87,13 +87,16 @@ type ReviewerIpcOptions = {
   ) => Promise<Result>
 }
 
-// Registers the reviewer IPC handlers on the Electron main process. Returns a function that can
-// be called directly to trigger a review (e.g., from the finishRun hook path).
-const registerReviewerIpcHandlers = (
-  options: ReviewerIpcOptions
-): {
+type ReviewerCommandOwner = Readonly<{
+  run: (request: ReviewRunRequest) => Promise<ReviewRunResult>
   triggerReview: (request: ReviewRunRequest) => Promise<ReviewRunResult>
-} => {
+  getForSession: (request: ReviewSessionRequest) => Promise<ReviewWithChecks[]>
+  abortFixLoop: (request: ReviewSessionRequest) => void
+}>
+
+// Owns reviewer arbitration and fix-loop cancellation independently from any command transport.
+// The triggerReview alias preserves the existing direct-call result returned by IPC registration.
+const createReviewerCommandOwner = (options: ReviewerIpcOptions): ReviewerCommandOwner => {
   const storageRoot = options.storageRoot ?? resolveStorageRoot()
   const dataRoot = options.dataRoot ?? resolveDataRoot()
   const reviewRepository = createDefaultReviewRepository(storageRoot, dataRoot)
@@ -115,14 +118,10 @@ const registerReviewerIpcHandlers = (
   // The renderer also disables its button, but this is the authoritative guard.
   const inFlightReviewKeys = new Set<string>()
 
-  // reviewer:run — trigger a review for a completed turn. Fire-and-forget: the renderer does
-  // not await this; it receives reviewer:updated events as the lifecycle progresses.
-  ipcMainHandle(REVIEWER_IPC.RUN, (_event, request: ReviewRunRequest) => triggerReview(request))
-
-  // reviewer:get-for-session — load persisted reviews for a session at startup, flagging any whose
+  // Loads persisted reviews for a session at startup, flagging any whose
   // audited turn has since changed (e.g. an artifact was edited after the review completed) so the UI
   // does not present a stale verdict as current.
-  ipcMainHandle(REVIEWER_IPC.GET_FOR_SESSION, async (_event, request: ReviewSessionRequest) => {
+  const getForSession = async (request: ReviewSessionRequest): Promise<ReviewWithChecks[]> => {
     const reviews = await reviewRepository.getReviewsForProjectSession(
       request.projectId,
       request.appSessionId
@@ -136,11 +135,9 @@ const registerReviewerIpcHandlers = (
     return flagStaleReviews(reviews, session, dataRoot, (versionRequest) =>
       artifactProvenanceRepository.resolveVersionContent(versionRequest)
     )
-  })
+  }
 
-  // reviewer:abort-fix-loop — renderer requests that the active fix loop for a session be aborted.
-  // This is triggered when the user presses the cancel button during a fix loop.
-  ipcMainHandle(REVIEWER_IPC.ABORT_FIX_LOOP, (_event, request: ReviewSessionRequest) => {
+  const abortFixLoop = (request: ReviewSessionRequest): void => {
     const key = `${request.projectId}\0${request.appSessionId}`
     const controller = fixLoopAbortControllers.get(key)
     if (controller) {
@@ -149,7 +146,7 @@ const registerReviewerIpcHandlers = (
     } else {
       log.warn('abort-fix-loop: no active fix loop found for session', request)
     }
-  })
+  }
 
   // Returns whether a review actually STARTED. The session is loaded up front (not in the background)
   // so a load failure — or an already-in-flight run for this turn — is reported as started:false with
@@ -336,7 +333,24 @@ const registerReviewerIpcHandlers = (
     })
   }
 
-  return { triggerReview }
+  return { run: triggerReview, triggerReview, getForSession, abortFixLoop }
 }
 
-export { registerReviewerIpcHandlers, createDefaultReviewRepository }
+// Registers the legacy Electron adapter against an injectable owner. A future Host command
+// registrar can receive the same owner instance without duplicating arbitration state.
+const registerReviewerIpcHandlers = (
+  options: ReviewerIpcOptions,
+  owner: ReviewerCommandOwner = createReviewerCommandOwner(options)
+): ReviewerCommandOwner => {
+  ipcMainHandle(REVIEWER_IPC.RUN, (_event, request: ReviewRunRequest) => owner.run(request))
+  ipcMainHandle(REVIEWER_IPC.GET_FOR_SESSION, (_event, request: ReviewSessionRequest) =>
+    owner.getForSession(request)
+  )
+  ipcMainHandle(REVIEWER_IPC.ABORT_FIX_LOOP, (_event, request: ReviewSessionRequest) =>
+    owner.abortFixLoop(request)
+  )
+  return owner
+}
+
+export type { ReviewerCommandOwner, ReviewerIpcOptions }
+export { registerReviewerIpcHandlers, createReviewerCommandOwner, createDefaultReviewRepository }

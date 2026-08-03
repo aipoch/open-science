@@ -32,7 +32,10 @@ import {
   type ApplicationCommandRegistrar
 } from './application-command-router'
 import type { CallerContext } from './caller-context'
+import type { CliCommandOwner } from './cli-install/ipc'
+import type { GithubCommandOwner } from './github-ipc'
 import type { LocalFsService } from './local-fs/service'
+import type { LogsCommandOwner } from './logs-ipc'
 import {
   canManagePairing,
   isDesktopCaller,
@@ -40,6 +43,8 @@ import {
   requirePairingManager
 } from './remote-access/ipc'
 import type { RemoteAccessService } from './remote-access/service'
+import type { ReviewerCommandOwner } from './reviewer/ipc'
+import type { UpdateCommandOwner } from './update/ipc'
 
 type StorageParentRequest = Readonly<{ parent: string }>
 type StorageRootRequest = Readonly<{ parent: string; markOnboarding?: boolean }>
@@ -252,21 +257,13 @@ const hostApplicationCommandGroups = Object.freeze([
 ] as const)
 
 type HostApplicationCommandDependencies = Readonly<{
-  cli: Readonly<{
-    getStatus: () => Promise<CliLauncherStatus>
-    install: () => Promise<CliLauncherStatus>
-    uninstall: () => Promise<CliLauncherStatus>
-  }>
-  github: Readonly<{ getStars: () => Promise<number | null> }>
+  cli: CliCommandOwner
+  github: GithubCommandOwner
   localFs: Pick<
     LocalFsService,
     'getRoots' | 'listDir' | 'openPath' | 'readPreview' | 'revealInFolder'
   >
-  logs: Readonly<{
-    getPath: () => string | null
-    openFile: () => Promise<OpenLogFileResult>
-    revealInFolder: () => RevealLogFileResult
-  }>
+  logs: LogsCommandOwner
   notifications: Readonly<{
     peekPendingOpenSession: () => OpenSessionFromNotificationRequest | null
     takePendingOpenSession: (expectedToken: number) => OpenSessionFromNotificationRequest | null
@@ -275,11 +272,7 @@ type HostApplicationCommandDependencies = Readonly<{
     RemoteAccessService,
     'snapshot' | 'detect' | 'setMode' | 'disable' | 'approve' | 'reject' | 'revoke'
   >
-  reviewer: Readonly<{
-    run: (request: ReviewRunRequest) => Promise<ReviewRunResult>
-    getForSession: (request: ReviewSessionRequest) => Promise<ReviewWithChecks[]>
-    abortFixLoop: (request: ReviewSessionRequest) => void
-  }>
+  reviewer: Pick<ReviewerCommandOwner, 'run' | 'getForSession' | 'abortFixLoop'>
   storage: Readonly<{
     getInfo: () => Promise<StorageInfo>
     revealAppStorage: () => Promise<RevealAppStorageResult>
@@ -294,14 +287,7 @@ type HostApplicationCommandDependencies = Readonly<{
     discardMigratedCopy: (request: StorageParentRequest) => Promise<void>
     dismissLegacyMovePrompt: () => Promise<void>
   }>
-  update: Readonly<{
-    getAppInfo: () => AppInfo
-    getStatus: () => UpdateStatus
-    check: () => Promise<UpdateStatus>
-    download: () => Promise<UpdateStatus>
-    cancel: () => Promise<UpdateStatus>
-    apply: () => Promise<UpdateStatus>
-  }>
+  update: UpdateCommandOwner
 }>
 
 const localCommand = <Result>(
