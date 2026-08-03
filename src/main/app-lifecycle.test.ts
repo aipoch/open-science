@@ -102,7 +102,7 @@ const asWindow = (w: FakeWindow): import('electron').BrowserWindow =>
 type CapturedCloseOpts = {
   classifyClose: () => CloseClassification
   resolveCloseAction: () => Promise<CloseConfirmChoice>
-  requestQuit: () => void
+  requestQuit: (confirmed?: boolean) => void
 }
 
 type Harness = {
@@ -111,6 +111,8 @@ type Harness = {
   tray: { destroy: ReturnType<typeof vi.fn> } | undefined
   trayHandlers: TrayHandlers | undefined
   shutdownBackends: () => Promise<void>
+  prepareForQuit: () => Promise<void>
+  flushSessionPersistence: () => Promise<void>
   quit: ReturnType<typeof vi.fn>
   showMainWindow: () => void
   getMainWindow: () => import('electron').BrowserWindow | undefined
@@ -123,7 +125,12 @@ const setup = (
   overrides: Partial<
     Pick<
       AppLifecycleDeps,
-      'shutdownBackends' | 'isMigrationInProgress' | 'platform' | 'createInitialWindow'
+      | 'shutdownBackends'
+      | 'prepareForQuit'
+      | 'flushSessionPersistence'
+      | 'isMigrationInProgress'
+      | 'platform'
+      | 'createInitialWindow'
     >
   > & {
     trayHost?: boolean
@@ -140,6 +147,8 @@ const setup = (
   const tray = trayHost ? { destroy: vi.fn() } : undefined
   let trayHandlers: TrayHandlers | undefined
   const shutdownBackends = overrides.shutdownBackends ?? vi.fn(async () => undefined)
+  const prepareForQuit = overrides.prepareForQuit ?? vi.fn(async () => undefined)
+  const flushSessionPersistence = overrides.flushSessionPersistence ?? vi.fn(async () => undefined)
   const quit = vi.fn()
   const closeOpts: CapturedCloseOpts[] = []
   const confirmClose = vi.fn(
@@ -160,6 +169,8 @@ const setup = (
       return tray as unknown as import('electron').Tray | undefined
     },
     shutdownBackends,
+    prepareForQuit,
+    flushSessionPersistence,
     isMigrationInProgress: overrides.isMigrationInProgress ?? ((): boolean => false),
     quit,
     countWindows: () => windows.filter((w) => !w.destroyed).length,
@@ -174,6 +185,8 @@ const setup = (
     tray,
     trayHandlers,
     shutdownBackends,
+    prepareForQuit,
+    flushSessionPersistence,
     quit,
     showMainWindow,
     getMainWindow,
@@ -291,6 +304,8 @@ describe('installAppLifecycle', () => {
       createMainWindow: () => asWindow(makeFakeWindow()),
       createTray: () => ({ destroy: vi.fn() }) as unknown as import('electron').Tray,
       shutdownBackends,
+      prepareForQuit: async () => undefined,
+      flushSessionPersistence: async () => undefined,
       isMigrationInProgress: (): boolean => false,
       quit: vi.fn(),
       countWindows: (): number => 1,
@@ -319,10 +334,56 @@ describe('installAppLifecycle', () => {
     app.emit('before-quit') // starts cleanup (pending)
     const second = app.emit('before-quit') // re-issued while running
     expect(second.defaultPrevented).toBe(true)
+    await flush()
     expect(shutdownBackends).toHaveBeenCalledTimes(1)
 
     release?.()
     await flush()
+    expect(app.exit).toHaveBeenCalledWith(0)
+  })
+
+  it('keeps the renderer alive when the window is closed again during quit cleanup', async () => {
+    let release: (() => void) | undefined
+    const prepareForQuit = vi.fn(
+      () =>
+        new Promise<void>((resolve) => {
+          release = resolve
+        })
+    )
+    const { app, closeOpts } = setup({
+      platform: 'linux',
+      trayHost: false,
+      prepareForQuit
+    })
+    closeOpts[0].requestQuit()
+
+    app.emit('before-quit')
+
+    expect(closeOpts[0].classifyClose()).toBe('quit')
+
+    release?.()
+    await flush()
+  })
+
+  it('waits for ACP cancellation and Session persistence before backend teardown', async () => {
+    const calls: string[] = []
+    const { app, closeOpts } = setup({
+      prepareForQuit: vi.fn(async () => {
+        calls.push('prepare')
+      }),
+      flushSessionPersistence: vi.fn(async () => {
+        calls.push('flush')
+      }),
+      shutdownBackends: vi.fn(async () => {
+        calls.push('shutdown')
+      })
+    })
+    closeOpts[0].requestQuit()
+
+    app.emit('before-quit')
+    await flush()
+
+    expect(calls).toEqual(['prepare', 'flush', 'shutdown'])
     expect(app.exit).toHaveBeenCalledWith(0)
   })
 
@@ -399,9 +460,9 @@ describe('installAppLifecycle', () => {
     expect(captured.classifyClose()).toBe('hide')
   })
 
-  it('classifyClose returns "close" when no tray', () => {
+  it('classifyClose returns "quit" when no tray so the renderer survives through flush', () => {
     const captured = installWithCapturedOpts({ platform: 'win32', hasTray: false })
-    expect(captured.classifyClose()).toBe('close')
+    expect(captured.classifyClose()).toBe('quit')
   })
 
   it('resolveCloseAction resolves via confirmClose("close-to-tray", sessions)', async () => {
@@ -418,6 +479,22 @@ describe('installAppLifecycle', () => {
     const { closeOpts, quit } = setup()
     closeOpts[0].requestQuit()
     expect(quit).toHaveBeenCalledTimes(1)
+  })
+
+  it('keeps a no-tray close unconfirmed so active work still prompts before quit', async () => {
+    const sessions: ActiveSessionInfo[] = [{ projectId: 'demo', sessionId: 's1', kind: 'agent' }]
+    const confirmClose = vi.fn(async (): Promise<CloseConfirmChoice> => 'cancel')
+    const { app, closeOpts } = setup({
+      trayHost: false,
+      detectActiveSessions: () => sessions,
+      confirmClose
+    })
+
+    closeOpts[0].requestQuit(false)
+    app.emit('before-quit')
+    await flush()
+
+    expect(confirmClose).toHaveBeenCalledWith('quit', sessions)
   })
 
   it('before-quit with no active work proceeds to shutdown (confirmClose resolves quit)', async () => {

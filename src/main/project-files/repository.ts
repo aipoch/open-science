@@ -13,7 +13,9 @@ import type {
   ProjectFilesOverview,
   ProjectFilesPage,
   ProjectFileSource,
-  ProjectFileOriginSession
+  ProjectFileOriginSession,
+  SearchArtifactsRequest,
+  SearchArtifactsResult
 } from '../../shared/project-files'
 import { createArtifactVersionLocator } from '../../shared/artifact-provenance'
 import type { PersistedChatSession } from '../../shared/session-persistence'
@@ -82,6 +84,15 @@ type GroupCursor = {
   queryKey: string
   groupSortAtMs: string
   sessionId: string
+}
+
+type SearchArtifactCursor = {
+  version: 2
+  kind: 'globalArtifacts'
+  primaryProjectId: string
+  queryKey: string
+  sortAtMs: string
+  seq: number
 }
 
 type NormalizedSearch = {
@@ -735,6 +746,87 @@ class ManagedFileIndexRepository {
     }
   }
 
+  // Global search keeps its cross-project scope deliberately bounded: the primary project is
+  // independently paged while every other project shares a single latest-artifact sample.
+  async searchArtifacts(request: SearchArtifactsRequest): Promise<SearchArtifactsResult> {
+    requireIdentifier(request.primaryProjectId, 'primaryProjectId')
+    if (!Array.isArray(request.otherProjectIds)) {
+      throw new Error('Project files otherProjectIds must be an array.')
+    }
+    const otherProjectIds = [...new Set(request.otherProjectIds)]
+      .filter((projectId) => projectId !== request.primaryProjectId)
+      .map((projectId) => {
+        requireIdentifier(projectId, 'otherProjectId')
+        return projectId
+      })
+    if (request.otherLimit !== 0 && request.otherLimit !== 1) {
+      throw new Error('Project files otherLimit must be 0 or 1.')
+    }
+
+    const primaryLimit = normalizeLimit(request.primaryLimit)
+    const search =
+      request.filenameContains === undefined
+        ? undefined
+        : normalizeSearch({ filenameContains: request.filenameContains })
+    const cursor = request.primaryCursor
+      ? decodeSearchArtifactCursor(request.primaryCursor, request.primaryProjectId, search)
+      : undefined
+    const client = await this.getClient()
+    const [primaryRows, primaryTotalCount, otherRows] = await Promise.all([
+      listMatchingArtifacts(client, request.primaryProjectId, search, cursor, primaryLimit),
+      countMatchingArtifacts(client, request.primaryProjectId, search),
+      request.otherLimit === 1 && otherProjectIds.length > 0
+        ? listOtherProjectArtifacts(client, otherProjectIds, search)
+        : Promise.resolve([])
+    ])
+    const primaryPageRows = primaryRows.slice(0, primaryLimit)
+    const lastPrimaryRow = primaryPageRows.at(-1)
+    const rows = [...primaryPageRows, ...otherRows]
+    const origins =
+      rows.length === 0
+        ? []
+        : await client.fileOriginSession.findMany({
+            where: {
+              OR: [
+                ...new Map(rows.map((row) => [`${row.projectId}:${row.sessionId}`, row])).values()
+              ].map((row) => ({ projectId: row.projectId, sessionId: row.sessionId }))
+            }
+          })
+    const originsBySession = new Map(
+      origins.map((origin) => [`${origin.projectId}:${origin.sessionId}`, origin])
+    )
+    const toItem = (row: ManagedFile): ProjectFileItem =>
+      toProjectFileItem(
+        row,
+        this.dataRoot,
+        originsBySession.get(`${row.projectId}:${row.sessionId}`)
+      )
+
+    return {
+      primary: {
+        items: primaryPageRows.map(toItem),
+        totalCount: primaryTotalCount,
+        nextCursor:
+          primaryRows.length > primaryLimit && lastPrimaryRow
+            ? encodeCursor({
+                version: 2,
+                kind: 'globalArtifacts',
+                primaryProjectId: request.primaryProjectId,
+                queryKey: search?.queryKey ?? '',
+                sortAtMs: lastPrimaryRow.sortAtMs.toString(),
+                seq: lastPrimaryRow.seq
+              })
+            : undefined
+      },
+      other: otherRows.map(toItem),
+      isIndexComplete: [request.primaryProjectId, ...otherProjectIds].every(
+        (projectId) =>
+          !this.isReconciliationIncomplete &&
+          ![...this.incompleteSessions.keys()].some((key) => key.startsWith(`${projectId}:`))
+      )
+    }
+  }
+
   // Pages session headers independently from files. groupSortAtMs is changed only by artifact
   // mutations, while sessionId provides deterministic ordering when timestamps collide.
   async listArtifactGroups(request: ListArtifactGroupsRequest): Promise<ArtifactGroupPage> {
@@ -1274,6 +1366,83 @@ const countMatchingFiles = async (
   return toSafeCount(rows[0]?.count ?? 0n, 'search result count')
 }
 
+// The global-search projection is intentionally Artifact-only. Keep its predicate and keyset local
+// instead of widening listFiles' collections, whose cursor contract serves the Files surface.
+const listMatchingArtifacts = async (
+  client: ProjectFilesClient,
+  projectId: string,
+  search: NormalizedSearch | undefined,
+  cursor: SearchArtifactCursor | undefined,
+  limit: number
+): Promise<ManagedFile[]> => {
+  const filenamePredicate = search
+    ? Prisma.sql`AND ${filenameContainsPredicate(Prisma.sql`"displayName"`, search)}`
+    : Prisma.empty
+  const cursorPredicate = cursor
+    ? Prisma.sql`AND ("sortAtMs" < ${BigInt(cursor.sortAtMs)} OR ("sortAtMs" = ${BigInt(cursor.sortAtMs)} AND "seq" < ${cursor.seq}))`
+    : Prisma.empty
+
+  return client.$queryRaw<ManagedFile[]>(Prisma.sql`
+    SELECT
+      "seq", "source", "sourceFileId", "sourceVersionId", "checksum",
+      "projectId", "sessionId", "messageId",
+      "displayName", "storageKey", "mimeType", "sizeBytes", "mtimeMs", "sortAtMs",
+      "createdAt", "updatedAt", "deletedAt", "deleteOperationId"
+    FROM "ManagedFile"
+    WHERE "projectId" = ${projectId}
+      AND "source" = 'artifact'
+      AND "deletedAt" IS NULL
+      ${filenamePredicate}
+      ${cursorPredicate}
+    ORDER BY "sortAtMs" DESC, "seq" DESC
+    LIMIT ${limit + 1}
+  `)
+}
+
+const countMatchingArtifacts = async (
+  client: ProjectFilesClient,
+  projectId: string,
+  search: NormalizedSearch | undefined
+): Promise<number> => {
+  const filenamePredicate = search
+    ? Prisma.sql`AND ${filenameContainsPredicate(Prisma.sql`"displayName"`, search)}`
+    : Prisma.empty
+  const rows = await client.$queryRaw<Array<{ count: bigint }>>(Prisma.sql`
+    SELECT COUNT(*) AS "count"
+    FROM "ManagedFile"
+    WHERE "projectId" = ${projectId}
+      AND "source" = 'artifact'
+      AND "deletedAt" IS NULL
+      ${filenamePredicate}
+  `)
+  return toSafeCount(rows[0]?.count ?? 0n, 'artifact search result count')
+}
+
+const listOtherProjectArtifacts = async (
+  client: ProjectFilesClient,
+  projectIds: string[],
+  search: NormalizedSearch | undefined
+): Promise<ManagedFile[]> => {
+  const filenamePredicate = search
+    ? Prisma.sql`AND ${filenameContainsPredicate(Prisma.sql`"displayName"`, search)}`
+    : Prisma.empty
+
+  return client.$queryRaw<ManagedFile[]>(Prisma.sql`
+    SELECT
+      "seq", "source", "sourceFileId", "sourceVersionId", "checksum",
+      "projectId", "sessionId", "messageId",
+      "displayName", "storageKey", "mimeType", "sizeBytes", "mtimeMs", "sortAtMs",
+      "createdAt", "updatedAt", "deletedAt", "deleteOperationId"
+    FROM "ManagedFile"
+    WHERE "projectId" IN (${Prisma.join(projectIds)})
+      AND "source" = 'artifact'
+      AND "deletedAt" IS NULL
+      ${filenamePredicate}
+    ORDER BY "sortAtMs" DESC, "seq" DESC
+    LIMIT 1
+  `)
+}
+
 // Counts only session groups that still own at least one active artifact matching the search.
 const countMatchingArtifactGroups = async (
   client: ProjectFilesClient,
@@ -1416,7 +1585,7 @@ const describeError = (error: unknown): string =>
 
 // Cursors are opaque transport tokens, not security credentials; decoders below provide the required
 // collection and shape validation before any value reaches Prisma.
-const encodeCursor = (cursor: FileCursor | GroupCursor): string =>
+const encodeCursor = (cursor: FileCursor | GroupCursor | SearchArtifactCursor): string =>
   Buffer.from(JSON.stringify(cursor), 'utf8').toString('base64url')
 
 const parseCursor = (cursor: string): unknown => {
@@ -1477,6 +1646,34 @@ const decodeGroupCursor = (cursor: string, request: ListArtifactGroupsRequest): 
   }
 
   return value as GroupCursor
+}
+
+const decodeSearchArtifactCursor = (
+  cursor: string,
+  primaryProjectId: string,
+  search: NormalizedSearch | undefined
+): SearchArtifactCursor => {
+  const value = parseCursor(cursor)
+  const expectedQueryKey = search?.queryKey ?? ''
+
+  if (
+    !isRecord(value) ||
+    value.version !== 2 ||
+    value.kind !== 'globalArtifacts' ||
+    value.primaryProjectId !== primaryProjectId ||
+    typeof value.queryKey !== 'string' ||
+    typeof value.sortAtMs !== 'string' ||
+    !/^-?\d+$/.test(value.sortAtMs) ||
+    typeof value.seq !== 'number' ||
+    !Number.isInteger(value.seq)
+  ) {
+    throw new Error('Project files cursor does not match the global artifact search.')
+  }
+  if (value.queryKey !== expectedQueryKey) {
+    throw new Error('Project files cursor does not match the requested search.')
+  }
+
+  return value as SearchArtifactCursor
 }
 
 const isRecord = (value: unknown): value is Record<string, unknown> =>

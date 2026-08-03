@@ -55,7 +55,8 @@ const projectVisibleSessionId = (isSessionContentVisible: boolean): string | und
     !isBlockingOverlayOpen() &&
     navigationState.view === 'workspace' &&
     navigationState.activeProjectId !== undefined &&
-    selectedSession?.projectId === navigationState.activeProjectId
+    selectedSession !== undefined &&
+    selectedSession.projectId === navigationState.activeProjectId
     ? selectedSession.id
     : undefined
 }

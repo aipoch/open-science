@@ -20,12 +20,16 @@ export type AppLifecycleDeps = {
   createMainWindow: (opts: {
     classifyClose: () => CloseClassification
     resolveCloseAction: () => Promise<CloseConfirmChoice>
-    requestQuit: () => void
+    requestQuit: (confirmed?: boolean) => void
   }) => BrowserWindow
   // Builds the tray; returns undefined on hosts without a tray (e.g. some Linux desktops).
   createTray: (handlers: TrayHandlers) => Tray | undefined
   // Bounded, best-effort backend teardown (agent tree + notebook kernels); never throws.
   shutdownBackends: () => Promise<void>
+  // Requests active ACP turns to cancel, then waits a bounded interval for terminal usage events.
+  prepareForQuit: () => Promise<void>
+  // Drains renderer runtime events and its ordered Session write queue before the window disappears.
+  flushSessionPersistence: () => Promise<void>
   // True while a data-root migration is copying; a quit during it is owned by the migration guard.
   isMigrationInProgress: () => boolean
   // Requests an app quit (app.quit); the before-quit handler below turns it into an awaited teardown.
@@ -77,11 +81,15 @@ export const installAppLifecycle = (
 
   const confirmClose = deps.createConfirmClose(() => mainWindow)
 
-  // Synchronous close classification, evaluated at close time. darwin keeps its dock convention (real
-  // close); a mid-quit or no-tray close proceeds; Windows asks (confirm); Linux keeps silent hide-to-tray.
+  // Synchronous close classification, evaluated at close time. A mid-quit close is held so the
+  // renderer survives persistence flushing; otherwise darwin keeps its dock convention (real close),
+  // no-tray hosts retain the renderer while requesting app quit, Windows asks (confirm), and Linux
+  // keeps silent hide-to-tray.
   const classifyClose = (): CloseClassification => {
+    if (shutdownStarted) return 'quit'
     if (platform === 'darwin') return 'close'
-    if (!trayBox.current || shutdownStarted || quitConfirmed) return 'close'
+    if (quitConfirmed) return 'close'
+    if (!trayBox.current) return 'quit'
     if (platform === 'win32') return 'confirm'
     return 'hide'
   }
@@ -102,8 +110,8 @@ export const installAppLifecycle = (
     const window = deps.createMainWindow({
       classifyClose,
       resolveCloseAction,
-      requestQuit: () => {
-        quitConfirmed = true
+      requestQuit: (confirmed = true) => {
+        quitConfirmed = confirmed
         deps.quit()
       }
     })
@@ -197,6 +205,8 @@ export const installAppLifecycle = (
     shutdownStarted = true
     void (async () => {
       try {
+        await deps.prepareForQuit().catch(() => undefined)
+        await deps.flushSessionPersistence().catch(() => undefined)
         await deps.shutdownBackends()
       } finally {
         trayBox.current?.destroy()

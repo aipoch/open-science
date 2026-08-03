@@ -15027,7 +15027,15 @@ describe('ACP runtime session management', () => {
         if (prompts.length === 1) {
           promptStarted.resolve()
           await promptCanStop.promise
-          return { stopReason: 'cancelled' }
+          return {
+            stopReason: 'cancelled',
+            usage: {
+              totalTokens: 27,
+              inputTokens: 19,
+              cachedReadTokens: 5,
+              outputTokens: 3
+            }
+          }
         }
 
         return { stopReason: 'end_turn' }
@@ -15067,6 +15075,9 @@ describe('ACP runtime session management', () => {
 
     expect(runtime.getSnapshot().promptInFlightSessionIds).toEqual([])
     expect(prompts).toEqual(['first prompt'])
+    expect(runtime.getSnapshot().events.find((event) => event.kind === 'stop')).toMatchObject({
+      turnUsage: { inputTokens: 19, cacheTokens: 5, outputTokens: 3 }
+    })
   })
 })
 

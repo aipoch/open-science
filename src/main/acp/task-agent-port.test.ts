@@ -1,0 +1,128 @@
+import { describe, expect, expectTypeOf, it, vi } from 'vitest'
+
+import type { TaskAgentPort } from '../tasks/task-runner'
+import { createAcpTaskAgentPort } from './task-agent-port'
+
+describe('ACP Task Agent port', () => {
+  it('exposes only the Task execution capabilities', () => {
+    expectTypeOf<keyof TaskAgentPort>().toEqualTypeOf<
+      | 'listAttachedSessionIds'
+      | 'createSession'
+      | 'resumeSession'
+      | 'setPermissionProfile'
+      | 'prompt'
+    >()
+  })
+
+  it('translates only the Task execution contract to ACP session operations', async () => {
+    const create = vi.fn(async () => ({
+      sessionId: 'session-created',
+      cwd: '/workspace/created',
+      frameworkId: 'codex' as const,
+      backendId: 'codex:shared'
+    }))
+    const runtime = {
+      getSnapshot: vi.fn(() => ({ sessionIds: ['session-attached'] })),
+      resumeSession: vi.fn(async () => ({
+        sessionId: 'session-resumed',
+        cwd: '/workspace/resumed',
+        frameworkId: 'opencode' as const,
+        backendId: 'opencode:shared',
+        contextReset: true
+      })),
+      setPermissionProfile: vi.fn(async () => undefined),
+      sendPrompt: vi.fn(async () => undefined)
+    }
+    const port = createAcpTaskAgentPort(runtime, { create })
+
+    await expect(port.listAttachedSessionIds()).resolves.toEqual(['session-attached'])
+    await expect(
+      port.createSession({ projectId: 'project-1', permissionProfile: 'auto' })
+    ).resolves.toMatchObject({
+      sessionId: 'session-created',
+      frameworkId: 'codex',
+      backendId: 'codex:shared'
+    })
+    await expect(
+      port.resumeSession({
+        sessionId: 'session-stable',
+        cwd: '/workspace/stable',
+        projectId: 'project-1',
+        permissionProfile: 'ask',
+        previousFrameworkId: 'codex',
+        previousBackendId: 'codex:shared'
+      })
+    ).resolves.toMatchObject({
+      sessionId: 'session-resumed',
+      contextReset: true
+    })
+    await port.setPermissionProfile('session-stable', 'full')
+    await port.prompt({
+      sessionId: 'session-stable',
+      text: 'Continue the research.',
+      skillIds: ['literature-review'],
+      historyPreamble: 'Previous conversation.',
+      resumeFallback: { historyPreamble: 'Fallback conversation.' }
+    })
+
+    expect(create).toHaveBeenCalledWith({
+      projectName: 'project-1',
+      permissionProfile: 'auto'
+    })
+    expect(runtime.resumeSession).toHaveBeenCalledWith({
+      sessionId: 'session-stable',
+      cwd: '/workspace/stable',
+      projectName: 'project-1',
+      permissionProfile: 'ask',
+      previousFrameworkId: 'codex',
+      previousBackendId: 'codex:shared'
+    })
+    expect(runtime.setPermissionProfile).toHaveBeenCalledWith({
+      sessionId: 'session-stable',
+      profile: 'full'
+    })
+    expect(runtime.sendPrompt).toHaveBeenCalledWith({
+      sessionId: 'session-stable',
+      text: 'Continue the research.',
+      forcedSkillIds: ['literature-review'],
+      historyPreamble: 'Previous conversation.',
+      resumeFallback: { historyPreamble: 'Fallback conversation.' }
+    })
+  })
+
+  it('keeps Task prompt notification tracking equivalent on success and failure', async () => {
+    const prompt = {
+      sessionId: 'session-1',
+      text: 'Research this.',
+      skillIds: ['literature-review']
+    }
+    const sendPrompt = vi.fn(async () => undefined)
+    const trackedPrompt = { token: 1 }
+    const trackPrompt = vi.fn(() => trackedPrompt)
+    const untrackPrompt = vi.fn()
+    const port = createAcpTaskAgentPort(
+      {
+        getSnapshot: () => ({ sessionIds: [] }),
+        resumeSession: vi.fn(),
+        setPermissionProfile: vi.fn(),
+        sendPrompt
+      },
+      { create: vi.fn() },
+      { trackPrompt, untrackPrompt }
+    )
+
+    await port.prompt(prompt)
+
+    expect(trackPrompt).toHaveBeenCalledWith({
+      sessionId: 'session-1',
+      text: 'Research this.',
+      forcedSkillIds: ['literature-review']
+    })
+    expect(untrackPrompt).not.toHaveBeenCalled()
+
+    const failure = new Error('prompt failed')
+    sendPrompt.mockRejectedValueOnce(failure)
+    await expect(port.prompt(prompt)).rejects.toBe(failure)
+    expect(untrackPrompt).toHaveBeenCalledWith('session-1', trackedPrompt)
+  })
+})

@@ -11,6 +11,7 @@ import { LifecycleToast } from '@/components/LifecycleToast'
 import { PermissionUndoSnackbar } from '@/components/PermissionUndoSnackbar'
 import { SessionPersistenceAlert } from '@/components/SessionPersistenceAlert'
 import { UpdateDialog } from '@/components/UpdateDialog'
+import { GlobalSearchDialog } from '@/components/global-search/GlobalSearchDialog'
 import { Button } from '@/components/ui/button'
 import { HomePage } from '@/pages/home/HomePage'
 import { OnboardingWizard } from '@/pages/onboarding/OnboardingWizard'
@@ -23,6 +24,7 @@ import { EnvStatusBanner } from '@/pages/workspace/EnvStatusBanner'
 import { WorkspacePage } from '@/pages/workspace/WorkspacePage'
 import { useCloseActivePaneShortcut } from '@/hooks/useCloseActivePaneShortcut'
 import { useLifecycleSync } from '@/hooks/useLifecycleSync'
+import { useQuitPersistenceFlush } from '@/hooks/useQuitPersistenceFlush'
 import { useUnreadTaskViewSync } from '@/hooks/useUnreadTaskViewSync'
 import { useWindowFindAppearanceSync } from '@/hooks/useWindowFindAppearanceSync'
 import { useNavigationStore } from '@/stores/navigation-store'
@@ -35,6 +37,7 @@ import { useSessionJobStore } from '@/stores/session-job-store'
 import { useSkillImportStore } from '@/stores/skill-import-store'
 import { useUpdateStore } from '@/stores/update-store'
 import { usePermissionGrantsStore } from '@/stores/permission-grants-store'
+import { usePreviewWorkbenchStore } from '@/stores/preview-workbench-store'
 
 type NotificationOpenIntent = {
   generation: number
@@ -44,6 +47,7 @@ type NotificationOpenIntent = {
 const App = (): React.JSX.Element | null => {
   // Persistence is started once at the top so sessions stay loaded for both Home and Workspace.
   const sessionPersistence = useSessionPersistence()
+  useQuitPersistenceFlush()
   const isSessionPersistenceHydrated = sessionPersistence.isHydrated
   const isSessionPersistenceLoading = sessionPersistence.isLoading
   const isSessionPersistenceReady = sessionPersistence.isReady
@@ -75,6 +79,7 @@ const App = (): React.JSX.Element | null => {
   const applyJobUpdate = useSessionJobStore((state) => state.applyUpdate)
   const initUpdates = useUpdateStore((state) => state.init)
   const isUpdateDialogOpen = useUpdateStore((state) => state.isDialogOpen)
+  const isFilePreviewOpen = usePreviewWorkbenchStore((state) => state.fileDialogItem !== undefined)
   const initEnv = useNotebookEnvStore((state) => state.init)
   const envUi = useNotebookEnvStore((state) => state.ui)
   const listenForPermissionChanges = usePermissionGrantsStore((state) => state.listen)
@@ -105,6 +110,7 @@ const App = (): React.JSX.Element | null => {
     userNavigationRevision: useNavigationStore.getState().userNavigationRevision
   })
   const [isCloseConfirmOpen, setIsCloseConfirmOpen] = useState(false)
+  const [isGlobalSearchOpen, setIsGlobalSearchOpen] = useState(false)
   const startupView = isSettingsLoaded
     ? resolveStartupView({ onboardingDone: onboardingCompletedAt !== undefined })
     : undefined
@@ -130,6 +136,49 @@ const App = (): React.JSX.Element | null => {
     legacyMove === undefined
 
   useUnreadTaskViewSync({ isSessionContentVisible })
+
+  useEffect(() => {
+    const toggleGlobalSearch = (event: KeyboardEvent): void => {
+      if (
+        event.defaultPrevented ||
+        event.isComposing ||
+        event.key.toLowerCase() !== 'k' ||
+        !(event.metaKey || event.ctrlKey) ||
+        !isSettingsLoaded ||
+        startupView !== 'app' ||
+        !isSessionPersistenceHydrated ||
+        isSettingsOpen ||
+        hasConnectorApproval ||
+        hasComputeApproval ||
+        hasSkillImportApproval ||
+        isUpdateDialogOpen ||
+        isFilePreviewOpen ||
+        isCloseConfirmOpen ||
+        missingDataRoot !== undefined ||
+        legacyMove !== undefined
+      ) {
+        return
+      }
+      event.preventDefault()
+      setIsGlobalSearchOpen((current) => !current)
+    }
+
+    window.addEventListener('keydown', toggleGlobalSearch)
+    return () => window.removeEventListener('keydown', toggleGlobalSearch)
+  }, [
+    hasComputeApproval,
+    hasConnectorApproval,
+    hasSkillImportApproval,
+    isCloseConfirmOpen,
+    isSessionPersistenceHydrated,
+    isFilePreviewOpen,
+    isSettingsLoaded,
+    isSettingsOpen,
+    isUpdateDialogOpen,
+    legacyMove,
+    missingDataRoot,
+    startupView
+  ])
 
   // Load app info and subscribe to update-status broadcasts once at startup.
   useEffect(() => {
@@ -443,6 +492,12 @@ const App = (): React.JSX.Element | null => {
       <ComputeApprovalDialog />
       <UpdateDialog />
       <CloseConfirmModal onOpenChange={setIsCloseConfirmOpen} />
+      <GlobalSearchDialog
+        key={String(isGlobalSearchOpen)}
+        open={isGlobalSearchOpen}
+        onOpenChange={setIsGlobalSearchOpen}
+        isSessionPersistenceReady={isSessionPersistenceReady}
+      />
       <DataRootMissingDialog
         open={missingDataRoot !== undefined}
         dataRoot={missingDataRoot ?? ''}

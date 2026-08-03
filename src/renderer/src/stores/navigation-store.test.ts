@@ -33,7 +33,9 @@ beforeEach(() => {
     activeProjectId: undefined,
     userNavigationRevision: 0,
     explicitNavigationRevision: 0,
-    pendingCustomizePrefill: undefined
+    pendingCustomizePrefill: undefined,
+    pendingArtifactMention: undefined,
+    artifactMentionAvailability: undefined
   })
   vi.mocked(recordLastOpenedProject).mockClear()
 })
@@ -180,5 +182,32 @@ describe('navigation store customize conversation', () => {
 
     useNavigationStore.getState().consumeCustomizePrefill()
     expect(useNavigationStore.getState().pendingCustomizePrefill).toBeUndefined()
+  })
+})
+
+describe('navigation store global Artifact actions', () => {
+  it('accepts an Artifact mention only for the active workspace project and clears it after consumption', () => {
+    useNavigationStore.getState().openProject('project-a', 'user')
+    const file = {
+      id: 'artifact-1',
+      source: 'artifact' as const,
+      sourceFileId: 'artifact-1',
+      sourceVersionId: 'version-1',
+      projectId: 'project-a',
+      sessionId: 'session-1',
+      name: 'sin.png',
+      path: 'artifact-version:project-a/session-1/artifact-1/version-1',
+      size: 12,
+      sortAtMs: 1
+    }
+
+    useNavigationStore.getState().requestArtifactMention(file)
+    expect(useNavigationStore.getState().pendingArtifactMention).toMatchObject(file)
+
+    expect(useNavigationStore.getState().consumeArtifactMention()).toMatchObject(file)
+    expect(useNavigationStore.getState().pendingArtifactMention).toBeUndefined()
+
+    useNavigationStore.getState().requestArtifactMention({ ...file, projectId: 'project-b' })
+    expect(useNavigationStore.getState().pendingArtifactMention).toBeUndefined()
   })
 })

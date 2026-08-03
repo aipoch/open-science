@@ -42,6 +42,8 @@ type PreloadApi = {
     deleteSession: (request: unknown) => unknown
     saveManifest: (request: unknown) => unknown
     exportConversation: (request: unknown) => unknown
+    onFlushRequest: (listener: (request: { requestId: string }) => void) => unknown
+    sendFlushResponse: (response: { requestId: string }) => void
   }
   settings: {
     detectOpencode: () => unknown
@@ -252,6 +254,7 @@ describe('preload bridge — public surface inventory', () => {
       'projectFiles.listFiles',
       'projectFiles.onChanged',
       'projectFiles.repairIndex',
+      'projectFiles.searchArtifacts',
       'projects.create',
       'projects.delete',
       'projects.get',
@@ -295,9 +298,11 @@ describe('preload bridge — public surface inventory', () => {
       'sessions.loadAll',
       'sessions.onCreated',
       'sessions.onDeleted',
+      'sessions.onFlushRequest',
       'sessions.onUpdated',
       'sessions.saveManifest',
       'sessions.saveSession',
+      'sessions.sendFlushResponse',
       'settings.addCustomServer',
       'settings.cancelClaudeLogin',
       'settings.cancelCodexLogin',
@@ -781,6 +786,21 @@ describe('preload bridge — sessions + agent-framework IPC channels', () => {
 
   it('does not expose the legacy half-delete project-session command', () => {
     expect(api.sessions).not.toHaveProperty('deleteProjectSessions')
+  })
+
+  it('bridges the bounded Session flush request and acknowledgement channels', () => {
+    const listener = vi.fn()
+    const response = { requestId: 'flush-1' }
+
+    api.sessions.onFlushRequest(listener)
+    expect(onMock).toHaveBeenCalledWith('sessions:flush-request', expect.any(Function))
+    const wrappedListener = onMock.mock.calls.at(-1)?.[1] as
+      ((_event: unknown, request: { requestId: string }) => void) | undefined
+    wrappedListener?.({}, response)
+    expect(listener).toHaveBeenCalledWith(response)
+
+    api.sessions.sendFlushResponse(response)
+    expect(sendMock).toHaveBeenCalledWith('sessions:flush-response', response)
   })
 
   it.each(cases)('$name', ({ invoke, channel, args }) => {

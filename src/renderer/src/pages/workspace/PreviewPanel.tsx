@@ -397,7 +397,7 @@ const PreviewFilePanel = ({
 // Tool tabs (files/notebook/reviewer) reuse the same panel/modal layout switch as file previews.
 // The expanded state lives in the workbench store because the expand button is rendered by the
 // tool content itself (ProjectFilesView), not by this chrome. Overlay/panel stay below z-[60] so
-// dialogs opened from inside the tool content (FilePreviewDialog) stack above the modal.
+// workspace-level dialogs such as FilePreviewDialog stack above the modal.
 const PreviewToolPanel = ({ item }: { item: PreviewToolItem }): React.JSX.Element => {
   const isExpanded = usePreviewWorkbenchStore((state) => state.expandedToolItemId === item.id)
   const setToolItemExpanded = usePreviewWorkbenchStore((state) => state.setToolItemExpanded)

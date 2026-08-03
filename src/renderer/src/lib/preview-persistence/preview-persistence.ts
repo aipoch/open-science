@@ -157,7 +157,7 @@ export const usePreviewPersistence = (
     }
   }, [activeProjectId, isSessionPersistenceReady])
 
-  // Flush the active project when the workspace unmounts (navigating Home does not change the id).
+  // Flush the active project and close its transient dialog when the workspace unmounts.
   useEffect(
     () => () => {
       const state = usePreviewWorkbenchStore.getState()
@@ -167,6 +167,7 @@ export const usePreviewPersistence = (
           .save({ projectId: state.activeProjectId, state: toPersistedPreviewState(state) })
           .catch(reportPersistenceError)
       }
+      state.closeFileDialog()
     },
     []
   )

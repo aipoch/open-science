@@ -5,6 +5,7 @@ import { app } from 'electron'
 import type { WebRpcRouter } from '../ipc-handler-registry'
 import { createLogger } from '../logger'
 import type { ApplicationEventSource } from '../application-events'
+import type { TaskAgentPort } from '../tasks/task-runner'
 import { resolveConfigRoot } from '../storage-root'
 import { loadOrCreateWebToken } from './auth'
 import { startWebHttpServer, type ExternalWebAccess, type RunningWebServer } from './http-server'
@@ -64,12 +65,14 @@ const createWebServiceController = (
     rpc,
     requestQuit,
     externalAccess,
-    applicationEvents
+    applicationEvents,
+    taskAgent
   }: {
     rpc: WebRpcRouter
     requestQuit: () => void
     externalAccess?: ExternalWebAccess
     applicationEvents: ApplicationEventSource
+    taskAgent: TaskAgentPort
   },
   deps: Partial<WebServiceControllerDeps> = {}
 ): WebServiceController => {
@@ -91,13 +94,16 @@ const createWebServiceController = (
       },
       pid: process.pid
     }))
-  const tasks = new HeadlessTaskApi(rpc, {
-    subscribeEvents: (listener) =>
-      applicationEvents.subscribe((event) => {
-        const runtimeEvent = projectTaskRuntimeEvent(event)
-        if (runtimeEvent) listener(runtimeEvent)
-      })
-  })
+  const tasks = new HeadlessTaskApi(
+    { rpc, agent: taskAgent },
+    {
+      subscribeEvents: (listener) =>
+        applicationEvents.subscribe((event) => {
+          const runtimeEvent = projectTaskRuntimeEvent(event)
+          if (runtimeEvent) listener(runtimeEvent)
+        })
+    }
+  )
 
   let running:
     | {

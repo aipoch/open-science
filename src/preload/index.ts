@@ -139,7 +139,9 @@ import type {
   ListProjectFilesRequest,
   ProjectFilesChangedEvent,
   ProjectFilesOverview,
-  ProjectFilesPage
+  ProjectFilesPage,
+  SearchArtifactsRequest,
+  SearchArtifactsResult
 } from '../shared/project-files'
 import type {
   DeleteSessionRequest,
@@ -148,6 +150,12 @@ import type {
   SaveSessionOptions,
   SaveSessionManifestRequest
 } from '../shared/session-persistence'
+import {
+  SESSION_PERSISTENCE_FLUSH_REQUEST_CHANNEL,
+  SESSION_PERSISTENCE_FLUSH_RESPONSE_CHANNEL,
+  type SessionPersistenceFlushRequest,
+  type SessionPersistenceFlushResponse
+} from '../shared/session-persistence-flush'
 import type {
   ExportConversationRequest,
   ExportConversationResult
@@ -363,6 +371,8 @@ type OpenScienceAPI = {
     deleteSession: (request: DeleteSessionRequest) => Promise<void>
     saveManifest: (request: SaveSessionManifestRequest) => Promise<void>
     exportConversation: (request: ExportConversationRequest) => Promise<ExportConversationResult>
+    onFlushRequest?: (listener: AcpListener<SessionPersistenceFlushRequest>) => RemoveListener
+    sendFlushResponse?: (response: SessionPersistenceFlushResponse) => void
     onCreated: (listener: AcpListener<SessionUpsertEvent>) => RemoveListener
     onUpdated: (listener: AcpListener<SessionUpsertEvent>) => RemoveListener
     onDeleted: (listener: AcpListener<SessionDeletedEvent>) => RemoveListener
@@ -545,6 +555,7 @@ type OpenScienceAPI = {
     getOverview: (request: GetProjectFilesOverviewRequest) => Promise<ProjectFilesOverview>
     listFiles: (request: ListProjectFilesRequest) => Promise<ProjectFilesPage>
     listArtifactGroups: (request: ListArtifactGroupsRequest) => Promise<ArtifactGroupPage>
+    searchArtifacts: (request: SearchArtifactsRequest) => Promise<SearchArtifactsResult>
     repairIndex: (request: { projectId: string }) => Promise<void>
     onChanged: (listener: AcpListener<ProjectFilesChangedEvent>) => RemoveListener
   }
@@ -891,6 +902,9 @@ const api: OpenScienceAPI = {
         'sessions:export-conversation',
         request
       ) as Promise<ExportConversationResult>,
+    onFlushRequest: (listener) => onIpcMessage(SESSION_PERSISTENCE_FLUSH_REQUEST_CHANNEL, listener),
+    sendFlushResponse: (response) =>
+      ipcRenderer.send(SESSION_PERSISTENCE_FLUSH_RESPONSE_CHANNEL, response),
     onCreated: (listener) => onIpcMessage('session:created', listener),
     onUpdated: (listener) => onIpcMessage('session:updated', listener),
     onDeleted: (listener) => onIpcMessage('session:deleted', listener)
@@ -1193,6 +1207,11 @@ const api: OpenScienceAPI = {
         'project-files:list-artifact-groups',
         request
       ) as Promise<ArtifactGroupPage>,
+    searchArtifacts: (request) =>
+      ipcRenderer.invoke(
+        'project-files:search-artifacts',
+        request
+      ) as Promise<SearchArtifactsResult>,
     repairIndex: (request) =>
       ipcRenderer.invoke('project-files:repair-index', request) as Promise<void>,
     onChanged: (listener) => onIpcMessage('project-files:changed', listener)

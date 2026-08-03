@@ -2979,14 +2979,6 @@ class AcpRuntime {
     )
   }
 
-  // Backwards-compatible entry point for an application-owned continuation. It deliberately shares
-  // the normal prompt, capability, and identity projection path without emitting a second user message.
-  async continuePrompt(request: AcpPromptRequest): Promise<PromptResponse> {
-    return this.withOperationLease(() =>
-      withDataRootWrite(() => this.sendPromptTurn(request, undefined, false))
-    )
-  }
-
   private async sendPromptTurn(
     request: AcpPromptRequest,
     promptAttemptId: string | undefined,

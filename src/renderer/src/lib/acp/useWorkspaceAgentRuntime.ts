@@ -401,6 +401,8 @@ const createWorkspaceRuntimeEventProcessor = (
   }
 }
 
+const liveWorkspaceRuntimeEventProcessor = createWorkspaceRuntimeEventProcessor()
+
 // Finishes the ACP session handshake for a prompt that is already visible locally.
 const startPendingSessionPrompt = (
   runtime: WorkspaceMessageRuntime,
@@ -1391,6 +1393,12 @@ const syncWorkspaceContextUsage = (
   }
 }
 
+const drainWorkspaceRuntimeEventsForPersistence = async (): Promise<void> => {
+  const snapshot = await window.api.acp.getState()
+  await liveWorkspaceRuntimeEventProcessor.process(snapshot.events)
+  syncWorkspaceContextUsage(snapshot.sessionIds, snapshot.contextUsageBySession)
+}
+
 // Deletes in three ordered ownership layers: agent runtime, durable JSON/DB coordinator, then renderer
 // state. A failure in either authoritative layer leaves the session visible with an actionable error.
 const deleteWorkspaceSession = async (
@@ -1466,11 +1474,7 @@ const useWorkspaceAgentRuntime = (): {
     },
     []
   )
-  const eventProcessor = useRef(createWorkspaceRuntimeEventProcessor())
-  const drainRuntimeEvents = useCallback(async (): Promise<void> => {
-    const snapshot = await window.api.acp.getState()
-    await eventProcessor.current.process(snapshot.events)
-  }, [])
+  const drainRuntimeEvents = drainWorkspaceRuntimeEventsForPersistence
   // Tracks the last connection status so the disconnect effect fires only on a transition, not on
   // every unrelated snapshot re-render.
   const previousStatusRef = useRef(runtime.state.status)
@@ -1509,7 +1513,7 @@ const useWorkspaceAgentRuntime = (): {
 
   // Applies each visible runtime event once and trims ids that fell out of the runtime window.
   useEffect(() => {
-    void eventProcessor.current.process(runtime.state.events)
+    void liveWorkspaceRuntimeEventProcessor.process(runtime.state.events)
   }, [runtime.state.events])
 
   // Mirrors pending permission requests into per-session store status.
@@ -1695,6 +1699,7 @@ export {
   cancelWorkspaceRun,
   compactWorkspaceSession,
   createWorkspaceRuntimeEventProcessor,
+  drainWorkspaceRuntimeEventsForPersistence,
   getResumeFailureMessage,
   deleteWorkspaceSession,
   markRunningSessionsDisconnectedOnDrop,

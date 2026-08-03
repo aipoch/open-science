@@ -1,8 +1,9 @@
-import { describe, expect, it, vi } from 'vitest'
+import { describe, expect, it, vi, type MockedFunction } from 'vitest'
 
 import type { AcpRuntimeEvent } from '../../shared/acp'
 import type { PersistedChatSession } from '../../shared/session-persistence'
 import { createTaskCallerContext, type CallerContext } from '../caller-context'
+import type { TaskAgentPort } from '../tasks/task-runner'
 import { HeadlessTaskApi } from './task-api'
 
 const project = {
@@ -22,6 +23,23 @@ const taskCallerContext = (): ReturnType<typeof expect.objectContaining> =>
     principalKind: 'automation',
     actionOrigin: 'automation'
   })
+
+type TaskAgentMock = {
+  [Method in keyof TaskAgentPort]: MockedFunction<TaskAgentPort[Method]>
+}
+
+const createAgent = (overrides: Partial<TaskAgentMock> = {}): TaskAgentMock => ({
+  listAttachedSessionIds: vi.fn<TaskAgentPort['listAttachedSessionIds']>(async () => []),
+  createSession: vi.fn<TaskAgentPort['createSession']>(async () => ({
+    sessionId: 'session-created'
+  })),
+  resumeSession: vi.fn<TaskAgentPort['resumeSession']>(async (request) => ({
+    sessionId: request.sessionId
+  })),
+  setPermissionProfile: vi.fn<TaskAgentPort['setPermissionProfile']>(async () => undefined),
+  prompt: vi.fn<TaskAgentPort['prompt']>(async () => undefined),
+  ...overrides
+})
 
 describe('HeadlessTaskApi adapter', () => {
   it('maps public query and artifact commands to the compatibility façade', async () => {
@@ -64,7 +82,7 @@ describe('HeadlessTaskApi adapter', () => {
       if (channel === 'preview-resources:release') return undefined
       throw new Error(`Unexpected RPC channel: ${channel}`)
     })
-    const api = new HeadlessTaskApi({ invoke })
+    const api = new HeadlessTaskApi({ rpc: { invoke }, agent: createAgent() })
 
     await expect(api.createProject({ name: 'Created' })).resolves.toMatchObject({
       id: 'project-created',
@@ -93,7 +111,7 @@ describe('HeadlessTaskApi adapter', () => {
     ])
   })
 
-  it('maps attached-session and artifact-finalization ports to façade channels', async () => {
+  it('uses the direct Agent port for an attached session and keeps artifact finalization on the façade', async () => {
     let emitEvent: ((event: AcpRuntimeEvent) => void) | undefined
     const existing: PersistedChatSession = {
       id: 'session-attached',
@@ -110,10 +128,13 @@ describe('HeadlessTaskApi adapter', () => {
       void callerContext
       if (channel === 'projects:list') return [project]
       if (channel === 'sessions:load-all') return { sessions: [existing], manifest: { version: 1 } }
-      if (channel === 'acp:get-state') return { sessionIds: [existing.id] }
-      if (channel === 'acp:set-permission-profile') return undefined
       if (channel === 'sessions:save-session') return undefined
-      if (channel === 'acp:send-prompt') {
+      if (channel === 'artifacts:finalize-run') return { ok: true, artifacts: [] }
+      throw new Error(`Unexpected RPC channel: ${channel} ${JSON.stringify(args)}`)
+    })
+    const agent = createAgent({
+      listAttachedSessionIds: vi.fn(async () => [existing.id]),
+      prompt: vi.fn(async () => {
         emitEvent?.({
           id: 'artifact-event',
           timestamp: 10,
@@ -123,14 +144,11 @@ describe('HeadlessTaskApi adapter', () => {
           artifactClaimId: 'artifact-claim',
           artifacts: []
         })
-        return undefined
-      }
-      if (channel === 'artifacts:finalize-run') return { ok: true, artifacts: [] }
-      throw new Error(`Unexpected RPC channel: ${channel} ${JSON.stringify(args)}`)
+      })
     })
     const ids = ['attached-user', 'attached-run', 'attached-agent']
     const api = new HeadlessTaskApi(
-      { invoke },
+      { rpc: { invoke }, agent },
       {
         createId: () => ids.shift() ?? 'generated-id',
         subscribeEvents: (listener) => {
@@ -148,16 +166,19 @@ describe('HeadlessTaskApi adapter', () => {
     })
     await api.waitForRun(run.id)
 
-    expect(invoke).toHaveBeenCalledWith('acp:get-state', taskCallerContext(), [])
-    expect(invoke).toHaveBeenCalledWith('acp:set-permission-profile', taskCallerContext(), [
-      { sessionId: existing.id, profile: 'auto' }
-    ])
+    expect(agent.listAttachedSessionIds).toHaveBeenCalledOnce()
+    expect(agent.setPermissionProfile).toHaveBeenCalledWith(existing.id, 'auto')
+    expect(agent.prompt).toHaveBeenCalledWith({
+      sessionId: existing.id,
+      text: 'Continue research.'
+    })
+    expect(invoke.mock.calls.every(([channel]) => !String(channel).startsWith('acp:'))).toBe(true)
     expect(invoke).toHaveBeenCalledWith('artifacts:finalize-run', taskCallerContext(), [
       { claimId: 'artifact-claim', messageId: 'attached-agent' }
     ])
   })
 
-  it('maps detached-session resume to the façade with its durable Agent binding', async () => {
+  it('resumes a detached session through the direct Agent port with its durable binding', async () => {
     const existing: PersistedChatSession = {
       id: 'session-detached',
       projectId: project.id,
@@ -175,15 +196,17 @@ describe('HeadlessTaskApi adapter', () => {
       void callerContext
       if (channel === 'projects:list') return [project]
       if (channel === 'sessions:load-all') return { sessions: [existing], manifest: { version: 1 } }
-      if (channel === 'acp:get-state') return { sessionIds: [] }
-      if (channel === 'acp:resume-session') {
-        return { sessionId: existing.id, cwd: existing.cwd }
-      }
-      if (channel === 'sessions:save-session' || channel === 'acp:send-prompt') return undefined
+      if (channel === 'sessions:save-session') return undefined
       throw new Error(`Unexpected RPC channel: ${channel} ${JSON.stringify(args)}`)
     })
+    const agent = createAgent({
+      resumeSession: vi.fn(async () => ({ sessionId: existing.id, cwd: existing.cwd }))
+    })
     const ids = ['detached-user', 'detached-run', 'detached-agent']
-    const api = new HeadlessTaskApi({ invoke }, { createId: () => ids.shift() ?? 'generated-id' })
+    const api = new HeadlessTaskApi(
+      { rpc: { invoke }, agent },
+      { createId: () => ids.shift() ?? 'generated-id' }
+    )
 
     const run = await api.startRun({
       project: project.id,
@@ -192,16 +215,15 @@ describe('HeadlessTaskApi adapter', () => {
     })
     await api.waitForRun(run.id)
 
-    expect(invoke).toHaveBeenCalledWith('acp:resume-session', taskCallerContext(), [
-      {
-        sessionId: existing.id,
-        cwd: existing.cwd,
-        projectName: project.id,
-        permissionProfile: 'ask',
-        previousFrameworkId: 'codex',
-        previousBackendId: 'codex:shared'
-      }
-    ])
+    expect(agent.resumeSession).toHaveBeenCalledWith({
+      sessionId: existing.id,
+      cwd: existing.cwd,
+      projectId: project.id,
+      permissionProfile: 'ask',
+      previousFrameworkId: 'codex',
+      previousBackendId: 'codex:shared'
+    })
+    expect(invoke.mock.calls.every(([channel]) => !String(channel).startsWith('acp:'))).toBe(true)
   })
 
   it('keeps the captured request caller across asynchronous run façade calls', async () => {
@@ -214,15 +236,18 @@ describe('HeadlessTaskApi adapter', () => {
       void args
       if (channel === 'projects:list') return [project]
       if (channel === 'sessions:load-all') return { sessions: [], manifest: { version: 1 } }
-      if (channel === 'acp:create-session') {
-        return { sessionId: 'session-context', cwd: '/workspace/context' }
-      }
-      if (channel === 'acp:send-prompt') return promptGate
       if (channel === 'sessions:save-session') return undefined
       if (channel === 'preview-resources:release') return undefined
       throw new Error(`Unexpected RPC channel: ${channel}`)
     })
-    const api = new HeadlessTaskApi({ invoke })
+    const agent = createAgent({
+      createSession: vi.fn(async () => ({
+        sessionId: 'session-context',
+        cwd: '/workspace/context'
+      })),
+      prompt: vi.fn(async () => promptGate)
+    })
+    const api = new HeadlessTaskApi({ rpc: { invoke }, agent })
     let authorizationCurrent = true
     const context = createTaskCallerContext({
       location: 'remote',
@@ -238,6 +263,14 @@ describe('HeadlessTaskApi adapter', () => {
 
     expect(invoke).toHaveBeenCalled()
     expect(invoke.mock.calls.every(([, callerContext]) => callerContext === context)).toBe(true)
+    expect(agent.createSession).toHaveBeenCalledWith({
+      projectId: project.id,
+      permissionProfile: 'ask'
+    })
+    expect(agent.prompt).toHaveBeenCalledWith({
+      sessionId: 'session-context',
+      text: 'Research with remote context.'
+    })
     expect(context.isAuthorizationCurrent()).toBe(false)
 
     await api.runWithCallerContext(context, () => api.releaseArtifact('resource-context'))
@@ -247,5 +280,32 @@ describe('HeadlessTaskApi adapter', () => {
       [{ resourceId: 'resource-context' }]
     )
     expect(invoke.mock.calls.at(-1)?.[1].isAuthorizationCurrent()).toBe(true)
+  })
+
+  it('does not enter the direct Agent port after captured remote authorization expires', async () => {
+    let authorizationCurrent = true
+    const invoke = vi.fn(async (channel: string) => {
+      if (channel === 'projects:list') return [project]
+      if (channel === 'sessions:load-all') {
+        authorizationCurrent = false
+        return { sessions: [], manifest: { version: 1 } }
+      }
+      throw new Error(`Unexpected RPC channel: ${channel}`)
+    })
+    const agent = createAgent()
+    const api = new HeadlessTaskApi({ rpc: { invoke }, agent })
+    const context = createTaskCallerContext({
+      location: 'remote',
+      isAuthorizationCurrent: () => authorizationCurrent
+    })
+
+    await expect(
+      api.runWithCallerContext(context, () =>
+        api.startRun({ project: project.id, prompt: 'Research after revocation.' })
+      )
+    ).rejects.toThrow('Caller authorization is no longer current.')
+    expect(agent.listAttachedSessionIds).not.toHaveBeenCalled()
+    expect(agent.createSession).not.toHaveBeenCalled()
+    expect(agent.prompt).not.toHaveBeenCalled()
   })
 })

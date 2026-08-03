@@ -37,11 +37,14 @@ import type { CompletionHandoffLifecycleEvent } from '../../../../shared/special
 import { planComposerAttachmentIntake } from './composer-attachment-intake'
 import { stageComposerFile, type ComposerUploadTransfer } from './composer-upload-transfer'
 import {
+  appendArtifactMention,
+  docArtifactCount,
   docIsEmpty,
   docToArtifactRefs,
   docToSkillIds,
   docToText,
   emptyDoc,
+  MAX_COMPOSER_ARTIFACT_MENTIONS,
   type ComposerDoc
 } from './composer/composer-doc'
 import { buildCustomizePrefillDoc } from '@/lib/customize-chat'
@@ -49,6 +52,7 @@ import { ConversationPanel } from './ConversationPanel'
 import { DeleteSessionDialog } from './DeleteSessionDialog'
 import { MobilePreviewSheet } from './MobilePreviewSheet'
 import { DownloadSessionArtifactsDialog } from './DownloadSessionArtifactsDialog'
+import { FilePreviewDialog } from './FilePreviewDialog'
 import { PreviewPanel } from './PreviewPanel'
 import { RenameSessionDialog } from './RenameSessionDialog'
 import { SessionNotebookDialog } from './SessionNotebookDialog'
@@ -393,7 +397,12 @@ const WorkspacePage = ({
   // matches no session and triggers the redirect below.
   const activeProjectId = useNavigationStore((state) => state.activeProjectId)
   const pendingCustomizePrefill = useNavigationStore((state) => state.pendingCustomizePrefill)
+  const pendingArtifactMention = useNavigationStore((state) => state.pendingArtifactMention)
   const consumeCustomizePrefill = useNavigationStore((state) => state.consumeCustomizePrefill)
+  const consumeArtifactMention = useNavigationStore((state) => state.consumeArtifactMention)
+  const setArtifactMentionAvailability = useNavigationStore(
+    (state) => state.setArtifactMentionAvailability
+  )
   const goHome = useNavigationStore((state) => state.goHome)
   const openSettings = useSettingsStore((state) => state.openSettings)
   const activeProviderId = useSettingsStore((state) => state.activeProviderId)
@@ -434,6 +443,8 @@ const WorkspacePage = ({
   )
   const activePreviewItemId = usePreviewWorkbenchStore((state) => state.activeItemId)
   const previewOpenRequestVersion = usePreviewWorkbenchStore((state) => state.openRequestVersion)
+  const fileDialogItem = usePreviewWorkbenchStore((state) => state.fileDialogItem)
+  const closeFileDialog = usePreviewWorkbenchStore((state) => state.closeFileDialog)
   const upsertPreviewItem = usePreviewWorkbenchStore((state) => state.upsertItem)
   const upsertAndActivatePreviewItem = usePreviewWorkbenchStore(
     (state) => state.upsertAndActivateItem
@@ -583,14 +594,17 @@ const WorkspacePage = ({
   // Tracks user-authored mutations separately from optimistic send clearing and conversation switches.
   // A failed prepared send may restore its captured draft only if this version has not advanced.
   const composerDraftVersionsRef = useRef<Record<string, number>>({})
-  const markComposerDraftChanged = (draftKey = previousDraftKeyRef.current): void => {
+  const markComposerDraftChanged = useCallback((draftKey = previousDraftKeyRef.current): void => {
     composerDraftVersionsRef.current[draftKey] =
       (composerDraftVersionsRef.current[draftKey] ?? 0) + 1
-  }
-  const changeComposerDraftDoc = (doc: ComposerDoc): void => {
-    markComposerDraftChanged()
-    setDraftDoc(doc)
-  }
+  }, [])
+  const changeComposerDraftDoc = useCallback(
+    (doc: ComposerDoc): void => {
+      markComposerDraftChanged()
+      setDraftDoc(doc)
+    },
+    [markComposerDraftChanged]
+  )
   const [attachments, setAttachments] = useState<UploadedAttachment[]>([])
   const [attachmentTransfers, setAttachmentTransfers] = useState<ComposerUploadTransfer[]>([])
   const attachmentTransfersRef = useRef<ComposerUploadTransfer[]>([])
@@ -740,6 +754,48 @@ const WorkspacePage = ({
     // Block while the reconfigure barrier is running (async, between Enter and sendMessage). This
     // prevents a second Enter press from racing the first one through the same pending-switch barrier.
     !barrierInFlightSessions.has(activeSession?.id ?? '')
+
+  // Make the composer-owned mention capability available to Global Search without exposing its draft.
+  // The value is transient and Project-scoped; cleanup prevents a stale Project from accepting an
+  // Artifact after navigation.
+  useEffect(() => {
+    if (!activeProjectId) {
+      setArtifactMentionAvailability(undefined)
+      return
+    }
+    setArtifactMentionAvailability({
+      projectId: activeProjectId,
+      canMention: canEditDraft && docArtifactCount(draftDoc) < MAX_COMPOSER_ARTIFACT_MENTIONS
+    })
+    return () => setArtifactMentionAvailability(undefined)
+  }, [activeProjectId, canEditDraft, draftDoc, setArtifactMentionAvailability])
+
+  // Global Search can only request a same-Project mention. Consume it once in the composer owner so
+  // a palette never reaches into this page's local draft state or carries a reference across routing.
+  useEffect(() => {
+    if (!pendingArtifactMention) return
+    const file = consumeArtifactMention()
+    if (!file || file.projectId !== activeProjectId || !canEditDraft) return
+
+    // eslint-disable-next-line react-hooks/set-state-in-effect -- consume a one-shot user intent in its state owner.
+    changeComposerDraftDoc(
+      appendArtifactMention(draftDoc, {
+        id: file.id,
+        name: file.name,
+        path: file.path,
+        source: file.source,
+        mimeType: file.mimeType,
+        versionId: file.sourceVersionId
+      })
+    )
+  }, [
+    activeProjectId,
+    canEditDraft,
+    changeComposerDraftDoc,
+    consumeArtifactMention,
+    draftDoc,
+    pendingArtifactMention
+  ])
   // Re-editing a sent prompt is allowed under the same settled-run conditions as sending, so the
   // resent prompt can never overlap an in-flight turn, permission wait, fix loop, or compaction.
   const canEditMessage =
@@ -2185,6 +2241,11 @@ const WorkspacePage = ({
       <DownloadSessionArtifactsDialog
         session={sessionToDownloadArtifacts}
         onClose={() => setSessionToDownloadArtifacts(undefined)}
+      />
+
+      <FilePreviewDialog
+        item={fileDialogItem?.projectId === activeProjectId ? fileDialogItem : undefined}
+        onClose={closeFileDialog}
       />
 
       <SessionNotebookDialog

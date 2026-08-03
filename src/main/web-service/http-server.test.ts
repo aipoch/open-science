@@ -12,6 +12,7 @@ vi.mock('electron', () => ({
   net: { fetch: vi.fn() }
 }))
 
+import { WEB_INVOKE_CHANNELS } from '../../shared/web-api-map.generated'
 import { WEB_RPC_PROTOCOL_VERSION } from '../../shared/web-rpc-contract'
 import { ApplicationEventHub } from '../application-events'
 import type { CallerContext } from '../caller-context'
@@ -501,7 +502,7 @@ describe('startWebHttpServer', () => {
       }
     })
     const rpc = {
-      channels: () => ['projects:list'],
+      channels: () => ['acp:get-state'],
       invoke: vi.fn(async () => ({ ok: true })),
       releaseClient: vi.fn(),
       dispose: vi.fn()
@@ -588,7 +589,7 @@ describe('startWebHttpServer', () => {
 
     expect(
       await postAfterExpiringAuthorization(
-        '/rpc/projects%3Alist',
+        '/rpc/acp%3Aget-state',
         { protocolVersion: WEB_RPC_PROTOCOL_VERSION, args: [] },
         1
       )
@@ -705,10 +706,12 @@ describe('startWebHttpServer', () => {
     const staticRoot = await mkdtemp(join(tmpdir(), 'open-science-web-static-'))
     roots.push(staticRoot)
     await writeFile(join(staticRoot, 'index.html'), '<!doctype html>')
+    const acpChannels = Object.entries(WEB_INVOKE_CHANNELS)
+      .filter(([path]) => path.startsWith('acp.'))
+      .map(([, channel]) => channel)
+      .sort()
+    expect(acpChannels).toHaveLength(13)
     const permissionChannels = [
-      'acp:respond-permission',
-      'acp:set-permission-profile',
-      'acp:revoke-permission-grant',
       'permissions:extend-undo',
       'permissions:list',
       'permissions:restore',
@@ -739,10 +742,16 @@ describe('startWebHttpServer', () => {
     ]
     const remoteDeniedComputeChannels = ['compute:download', 'compute:reveal-in-folder']
     const remoteAllowedChannels = [
+      ...acpChannels,
       ...permissionChannels,
       ...computeChannels.filter((channel) => !remoteDeniedComputeChannels.includes(channel))
     ]
-    const rpcChannels = ['specialist:list', ...permissionChannels, ...computeChannels]
+    const rpcChannels = [
+      'specialist:list',
+      ...acpChannels,
+      ...permissionChannels,
+      ...computeChannels
+    ]
     const rpc = {
       channels: () => rpcChannels,
       invoke: vi.fn(async (channel: string) => ({ channel })),
@@ -806,7 +815,11 @@ describe('startWebHttpServer', () => {
       rpcChannels: string[]
       restrictedRpcChannels: string[]
     }
-    expect(localBootstrapBody.rpcChannels).toEqual([...permissionChannels, ...computeChannels])
+    expect(localBootstrapBody.rpcChannels).toEqual([
+      ...acpChannels,
+      ...permissionChannels,
+      ...computeChannels
+    ])
     expect(localBootstrapBody.restrictedRpcChannels).toEqual([])
 
     expect((await invoke('specialist:list')).status).toBe(404)

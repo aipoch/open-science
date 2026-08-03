@@ -54,6 +54,23 @@ export type ProjectFilesPage = {
   totalCount: number
 }
 
+// Bounded global-search projection. The primary Project is independently paged; Other Projects
+// deliberately return only a small combined sample so the command palette remains responsive.
+export type SearchArtifactsRequest = {
+  primaryProjectId: string
+  otherProjectIds: string[]
+  filenameContains?: string
+  primaryLimit: number
+  primaryCursor?: string
+  otherLimit: 0 | 1
+}
+
+export type SearchArtifactsResult = {
+  primary: ProjectFilesPage
+  other: ProjectFileItem[]
+  isIndexComplete: boolean
+}
+
 export type ListArtifactGroupsRequest = {
   projectId: string
   search?: ProjectFilesSearch

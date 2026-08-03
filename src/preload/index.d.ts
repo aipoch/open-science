@@ -136,7 +136,9 @@ import type {
   ListProjectFilesRequest,
   ProjectFilesChangedEvent,
   ProjectFilesOverview,
-  ProjectFilesPage
+  ProjectFilesPage,
+  SearchArtifactsRequest,
+  SearchArtifactsResult
 } from '../shared/project-files'
 import type {
   DeleteSessionRequest,
@@ -145,6 +147,10 @@ import type {
   SaveSessionOptions,
   SaveSessionManifestRequest
 } from '../shared/session-persistence'
+import type {
+  SessionPersistenceFlushRequest,
+  SessionPersistenceFlushResponse
+} from '../shared/session-persistence-flush'
 import type {
   ExportConversationRequest,
   ExportConversationResult
@@ -324,6 +330,8 @@ interface OpenScienceAPI {
     deleteSession(request: DeleteSessionRequest): Promise<void>
     saveManifest(request: SaveSessionManifestRequest): Promise<void>
     exportConversation(request: ExportConversationRequest): Promise<ExportConversationResult>
+    onFlushRequest?(listener: AcpListener<SessionPersistenceFlushRequest>): RemoveListener
+    sendFlushResponse?(response: SessionPersistenceFlushResponse): void
     onCreated(listener: AcpListener<SessionUpsertEvent>): RemoveListener
     onUpdated(listener: AcpListener<SessionUpsertEvent>): RemoveListener
     onDeleted(listener: AcpListener<SessionDeletedEvent>): RemoveListener
@@ -493,6 +501,7 @@ interface OpenScienceAPI {
     getOverview(request: GetProjectFilesOverviewRequest): Promise<ProjectFilesOverview>
     listFiles(request: ListProjectFilesRequest): Promise<ProjectFilesPage>
     listArtifactGroups(request: ListArtifactGroupsRequest): Promise<ArtifactGroupPage>
+    searchArtifacts(request: SearchArtifactsRequest): Promise<SearchArtifactsResult>
     repairIndex(request: { projectId: string }): Promise<void>
     onChanged(listener: AcpListener<ProjectFilesChangedEvent>): RemoveListener
   }

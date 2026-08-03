@@ -34,6 +34,7 @@ const mocks = vi.hoisted(() => {
       init: vi.fn().mockResolvedValue(undefined),
       retry: vi.fn().mockResolvedValue(undefined)
     },
+    preview: { fileDialogItem: undefined as unknown | undefined },
     loadProjects: vi.fn().mockResolvedValue(undefined),
     deepLinkNavigation: vi.fn(),
     lifecycleSync: vi.fn(() => ({
@@ -69,7 +70,8 @@ const mocks = vi.hoisted(() => {
     startupView: 'app' as 'app' | 'onboarding',
     getInfo: vi.fn(),
     syncWindowFindAppearance: vi.fn(),
-    syncUnreadTaskView: vi.fn()
+    syncUnreadTaskView: vi.fn(),
+    globalSearch: { props: undefined as { open: boolean } | undefined }
   }
 })
 
@@ -90,6 +92,12 @@ vi.mock('@/hooks/useWindowFindAppearanceSync', () => ({
 }))
 vi.mock('@/hooks/useUnreadTaskViewSync', () => ({
   useUnreadTaskViewSync: mocks.syncUnreadTaskView
+}))
+vi.mock('@/components/global-search/GlobalSearchDialog', () => ({
+  GlobalSearchDialog: (props: { open: boolean }) => {
+    mocks.globalSearch.props = props
+    return null
+  }
 }))
 vi.mock('@/stores/navigation-store', () => ({
   useNavigationStore: Object.assign(
@@ -112,6 +120,10 @@ vi.mock('@/stores/session-store', () => ({
 vi.mock('@/stores/notebook-env-store', () => ({
   useNotebookEnvStore: <T,>(selector: (state: typeof mocks.environment) => T): T =>
     selector(mocks.environment)
+}))
+vi.mock('@/stores/preview-workbench-store', () => ({
+  usePreviewWorkbenchStore: <T,>(selector: (state: typeof mocks.preview) => T): T =>
+    selector(mocks.preview)
 }))
 vi.mock('@/stores/compute-store', () => ({
   useComputeStore: <T,>(selector: (state: typeof mocks.compute) => T): T => selector(mocks.compute)
@@ -258,6 +270,7 @@ describe('App startup routing', () => {
     mocks.settings.pendingApprovals = []
     mocks.compute.pendingApprovals = []
     mocks.skillImport.pending = []
+    mocks.preview.fileDialogItem = undefined
     mocks.deepLinkNavigation.mockClear()
     mocks.lifecycleSync.mockClear()
     mocks.syncWindowFindAppearance.mockClear()
@@ -293,6 +306,7 @@ describe('App startup routing', () => {
     mocks.notifications.peekPendingOpenSession.mockReset().mockResolvedValue(null)
     mocks.notifications.takePendingOpenSession.mockReset().mockResolvedValue(null)
     mocks.notificationNudgeBox.current = undefined
+    mocks.globalSearch.props = undefined
   })
 
   afterEach(async () => {
@@ -304,6 +318,40 @@ describe('App startup routing', () => {
     root = createRoot(container)
     await act(async () => root.render(<App />))
   }
+
+  it('toggles global search with Cmd/Ctrl+K after startup is interactive', async () => {
+    mocks.settings.isLoaded = true
+    await render()
+
+    expect(mocks.globalSearch.props?.open).toBe(false)
+    await act(async () => {
+      window.dispatchEvent(
+        new KeyboardEvent('keydown', { key: 'k', metaKey: true, cancelable: true })
+      )
+    })
+    expect(mocks.globalSearch.props?.open).toBe(true)
+
+    await act(async () => {
+      window.dispatchEvent(
+        new KeyboardEvent('keydown', { key: 'k', ctrlKey: true, cancelable: true })
+      )
+    })
+    expect(mocks.globalSearch.props?.open).toBe(false)
+  })
+
+  it('does not open global search while a file preview modal is open', async () => {
+    mocks.settings.isLoaded = true
+    mocks.preview.fileDialogItem = { id: 'previewed-file' }
+    await render()
+
+    await act(async () => {
+      window.dispatchEvent(
+        new KeyboardEvent('keydown', { key: 'k', metaKey: true, cancelable: true })
+      )
+    })
+
+    expect(mocks.globalSearch.props?.open).toBe(false)
+  })
 
   it('shows startup progress until settings have loaded', async () => {
     await render()

@@ -36,7 +36,8 @@ const makeController = (
     {
       rpc: {} as WebRpcRouter,
       requestQuit,
-      applicationEvents: new ApplicationEventHub()
+      applicationEvents: new ApplicationEventHub(),
+      taskAgent: {} as never
     },
     {
       startServer,
