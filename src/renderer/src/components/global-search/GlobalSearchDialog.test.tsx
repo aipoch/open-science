@@ -168,14 +168,37 @@ describe('GlobalSearchDialog', () => {
     expect(dialog?.classList).toContain('h-[calc(100dvh_-_1rem)]')
     expect(input?.classList).toContain('focus-visible:ring-0')
     expect(input?.classList).not.toContain('focus-visible:outline-ring')
-    expect(searchHeader?.classList).toContain('focus-within:ring-[3px]')
-    expect(searchHeader?.classList).toContain('focus-within:ring-inset')
+    expect(searchHeader?.classList).not.toContain('focus-within:ring-[3px]')
+    expect(searchHeader?.classList).not.toContain('focus-within:ring-inset')
     expect(results?.classList).toContain('min-h-0')
     expect(results?.classList).toContain('flex-1')
     expect(footer?.classList).toContain('shrink-0')
     expect(footer?.classList).toContain('grid-cols-2')
     expect(footer?.querySelectorAll('kbd')).toHaveLength(4)
     expect(results?.contains(footer ?? null)).toBe(false)
+  })
+
+  it('closes with Escape when an artifact row action holds focus', async () => {
+    const onOpenChange = vi.fn()
+    await act(async () => {
+      root.render(<GlobalSearchDialog open onOpenChange={onOpenChange} isSessionPersistenceReady />)
+      await new Promise((resolve) => window.setTimeout(resolve, 20))
+    })
+
+    const artifactRow = [...document.body.querySelectorAll('[role="option"]')].find((element) =>
+      element.textContent?.includes('sin.png')
+    ) as HTMLElement
+    act(() => artifactRow.dispatchEvent(new MouseEvent('mouseenter', { bubbles: true })))
+    const mention = document.body.querySelector<HTMLButtonElement>('[aria-label="Mention sin.png"]')
+    mention?.focus()
+
+    await act(async () => {
+      mention?.dispatchEvent(
+        new KeyboardEvent('keydown', { key: 'Escape', bubbles: true, cancelable: true })
+      )
+    })
+
+    expect(onOpenChange).toHaveBeenCalledWith(false)
   })
 
   it('uses the source message creation time for a legacy artifact', async () => {

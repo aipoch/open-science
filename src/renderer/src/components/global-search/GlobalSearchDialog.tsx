@@ -634,7 +634,7 @@ export const GlobalSearchDialog = ({
           )}
         >
           <Dialog.Title className="sr-only">Command palette</Dialog.Title>
-          <div className="flex min-h-16 shrink-0 items-center gap-3 border-b border-border px-4 py-3 transition-shadow duration-150 focus-within:ring-[3px] focus-within:ring-inset focus-within:ring-ring/50 motion-reduce:transition-none">
+          <div className="flex min-h-16 shrink-0 items-center gap-3 border-b border-border px-4 py-3">
             <Search className="size-5 shrink-0 text-muted-foreground" aria-hidden="true" />
             <Input
               ref={inputRef}
