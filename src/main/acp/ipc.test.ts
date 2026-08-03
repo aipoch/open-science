@@ -825,7 +825,7 @@ describe('installAcpIpcHandlers — resume-session diagnostics', () => {
       cwd: request.cwd,
       frameworkId: 'codex' as const
     }
-    infoLogSpy.mockImplementation(() => {
+    infoLogSpy.mockImplementationOnce(() => {
       throw new Error('diagnostic sink failed')
     })
     resumeSession.mockResolvedValueOnce(result)
@@ -833,8 +833,7 @@ describe('installAcpIpcHandlers — resume-session diagnostics', () => {
     await expect(handlers.get('acp:resume-session')?.({}, request)).resolves.toBe(result)
 
     const failure = new Error('resume failed')
-    infoLogSpy.mockReset()
-    errorLogSpy.mockImplementation(() => {
+    errorLogSpy.mockImplementationOnce(() => {
       throw new Error('diagnostic sink failed')
     })
     resumeSession.mockRejectedValueOnce(failure)
@@ -894,7 +893,7 @@ describe('installAcpIpcHandlers — create-session failure logging', () => {
 })
 
 // Pins the IPC send-prompt → notification-tracking wire-up. TaskNotificationService has its own
-// unit tests for the token/untrack primitives, but the orchestration in `acp/ipc.ts` — calling
+// unit tests for the token/untrack primitives, but the orchestration in `acp/handler-workflows.ts` — calling
 // trackPrompt before sendPrompt and reverting via untrackPrompt if the runtime rejects before the
 // turn starts — is what protects a still-running turn's notification name from being overwritten
 // by a rejected prompt's tracking. An earlier spec review flagged exactly this kind of seam as the
