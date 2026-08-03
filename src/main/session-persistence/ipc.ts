@@ -140,13 +140,14 @@ const registerSessionPersistenceIpcHandlers = (
   ipcMainHandle(
     'sessions:save-session',
     async (event, session: PersistedChatSession, options?: SaveSessionOptions) => {
+      const originClientId = getLifecycleClientId(event)
       return withDataRootWrite(async () => {
         const result = await handlers.saveSession(session, options)
         broadcastLifecycleEvent(
           result.created ? LIFECYCLE_CHANNELS.sessionCreated : LIFECYCLE_CHANNELS.sessionUpdated,
           {
             session: result.session,
-            originClientId: getLifecycleClientId(event)
+            originClientId
           }
         )
         return result.session

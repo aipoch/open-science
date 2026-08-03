@@ -7,6 +7,19 @@ import { createIpcHandlerRegistry } from './ipc-handler-registry'
 import { createManagedPreviewOwnerRegistry } from './managed-preview-ipc'
 
 describe('createIpcHandlerRegistry', () => {
+  it('keeps injected handler registrars callable without an Electron event', () => {
+    const nativeHandlers = new Map<string, (...args: unknown[]) => unknown>()
+    const registry = createIpcHandlerRegistry({
+      handle: (channel: string, handler: (...args: unknown[]) => unknown) =>
+        nativeHandlers.set(channel, handler)
+    } as never)
+    const handler = vi.fn(() => 'complete')
+    registry.ipcMainHandle('test:direct-handler', handler)
+
+    expect(nativeHandlers.get('test:direct-handler')?.(undefined)).toBe('complete')
+    expect(handler).toHaveBeenCalledWith(undefined)
+  })
+
   it('aborts a native surface lease before a destroyed sender can dispatch again', () => {
     const nativeHandlers = new Map<string, (...args: unknown[]) => unknown>()
     const registry = createIpcHandlerRegistry({

@@ -191,10 +191,16 @@ const createIpcHandlerRegistry = (
         channel,
         callerContext: diagnosticCallerContextForEvent(event),
         invoke: () => {
-          const { lease } = nativeCallerLease(event)
-          bindCallerLeaseToEvent(event, lease)
+          // Electron always supplies an invoke event. Isolated handler registrars historically call
+          // their injected target without Electron, so keep that pure test seam lease-neutral.
+          const invokedEvent = event as IpcMainInvokeEvent | undefined
+          if (!invokedEvent?.sender || typeof invokedEvent.sender !== 'object') {
+            return listener(event, ...args)
+          }
+          const { lease } = nativeCallerLease(invokedEvent)
+          bindCallerLeaseToEvent(invokedEvent, lease)
           assertCurrentLease(lease)
-          return listener(event, ...args)
+          return listener(invokedEvent, ...args)
         },
         log: diagnosticLog,
         now: diagnostics.now

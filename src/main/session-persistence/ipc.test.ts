@@ -4,8 +4,12 @@ import type { PersistedChatSession } from '../../shared/session-persistence'
 import type { Logger } from '../logger'
 import type { ReviewRepository } from '../reviewer/repository'
 
-const { broadcastLifecycleEvent, ipcHandlers } = vi.hoisted(() => ({
+const { broadcastLifecycleEvent, getLifecycleClientId, ipcHandlers } = vi.hoisted(() => ({
   broadcastLifecycleEvent: vi.fn(),
+  getLifecycleClientId: vi.fn(
+    (event: { sender: { id: number; lifecycleClientId?: string } }) =>
+      event.sender.lifecycleClientId ?? `electron:${event.sender.id}`
+  ),
   ipcHandlers: new Map<string, (...args: unknown[]) => unknown>()
 }))
 
@@ -17,8 +21,7 @@ vi.mock('electron', () => ({
 }))
 vi.mock('../lifecycle-broadcast', () => ({
   broadcastLifecycleEvent,
-  getLifecycleClientId: (event: { sender: { id: number; lifecycleClientId?: string } }) =>
-    event.sender.lifecycleClientId ?? `electron:${event.sender.id}`
+  getLifecycleClientId
 }))
 
 import {
@@ -33,6 +36,7 @@ import { beginMigration, clearMigrationPending } from '../storage/migration-stat
 beforeEach(() => {
   ipcHandlers.clear()
   broadcastLifecycleEvent.mockClear()
+  getLifecycleClientId.mockClear()
 })
 afterEach(() => clearMigrationPending())
 
@@ -355,6 +359,34 @@ describe('session persistence IPC handlers', () => {
       )
     ).rejects.toBe(failure)
     expect(broadcastLifecycleEvent).not.toHaveBeenCalled()
+  })
+
+  it('captures the lifecycle origin before awaiting a durable save', async () => {
+    const session = createSession()
+    let completeSave!: () => void
+    const savePending = new Promise<void>((resolve) => {
+      completeSave = resolve
+    })
+    const repository: SessionPersistenceBackend = {
+      loadAll: vi.fn().mockResolvedValue({ sessions: [], manifest: { version: 1 as const } }),
+      saveSession: vi.fn(async () => {
+        await savePending
+        return { created: false, session }
+      }),
+      deleteSession: vi.fn().mockResolvedValue(undefined),
+      saveManifest: vi.fn().mockResolvedValue(undefined)
+    }
+    registerSessionPersistenceIpcHandlers(repository, createMockReviewRepository())
+
+    const save = ipcHandlers.get('sessions:save-session')?.(
+      { sender: { id: 1, lifecycleClientId: 'electron:origin' } },
+      session
+    )
+
+    expect(getLifecycleClientId).toHaveBeenCalledOnce()
+    expect(getLifecycleClientId).toHaveReturnedWith('electron:origin')
+    completeSave()
+    await expect(save).resolves.toBe(session)
   })
 
   it('publishes a lifecycle event only after the durable Session transition is readable', async () => {
