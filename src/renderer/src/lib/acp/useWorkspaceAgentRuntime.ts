@@ -1474,7 +1474,7 @@ const useWorkspaceAgentRuntime = (): {
     },
     []
   )
-  const drainRuntimeEvents = useCallback(drainWorkspaceRuntimeEventsForPersistence, [])
+  const drainRuntimeEvents = drainWorkspaceRuntimeEventsForPersistence
   // Tracks the last connection status so the disconnect effect fires only on a transition, not on
   // every unrelated snapshot re-render.
   const previousStatusRef = useRef(runtime.state.status)
