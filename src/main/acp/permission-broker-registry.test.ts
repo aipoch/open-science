@@ -288,7 +288,12 @@ describe('ACP permission broker with durable grants', () => {
     await expect(registry.list()).resolves.toEqual([])
   })
 
-  it.each(['rm -rf build', 'git status && rm -rf build'])(
+  it.each([
+    'rm -rf build',
+    'git status && rm -rf build',
+    'git status "$(rm -rf build)"',
+    'git status "`rm -rf build`"'
+  ])(
     'offers only provider Once when a Codex command group does not safely prefix %s',
     async (command) => {
       storageRoot = await mkdtemp(join(tmpdir(), 'open-science-broker-mismatched-command-group-'))

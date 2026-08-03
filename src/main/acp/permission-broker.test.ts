@@ -449,6 +449,28 @@ describe('ACP permission broker', () => {
     expect(emitted[0].commandPrefix).toEqual(['powershell', '-Command', 'Get-ChildItem'])
   })
 
+  it.each([
+    "git worktree add '$(literal)'",
+    'git worktree add "\\$(literal)"',
+    "git worktree add '`literal`'"
+  ])('keeps a Codex command group for a shell-literal argument: %s', (command) => {
+    const emitted: EmittedPermissionRequest[] = []
+    const broker = new AcpPermissionBroker((request) => emitted.push(request))
+    const request = createCodexCommandPermissionRequest()
+    request.toolCall.rawInput = { command }
+    const amendmentOption = request.options.find(
+      (option) => option.optionId === 'accept_execpolicy_amendment'
+    )
+    if (!amendmentOption) throw new Error('Expected a Codex exec-policy amendment option')
+    amendmentOption._meta = {
+      codex: { execpolicyAmendment: ['git', 'worktree', 'add'] }
+    }
+
+    void broker.requestPermission(request, { profile: 'ask', frameworkId: 'codex' })
+
+    expect(emitted[0].commandPrefix).toEqual(['git', 'worktree', 'add'])
+  })
+
   it('removes Codex policy amendments when execute metadata is absent', () => {
     const emitted: EmittedPermissionRequest[] = []
     const broker = new AcpPermissionBroker((request) => emitted.push(request))

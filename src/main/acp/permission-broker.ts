@@ -124,6 +124,12 @@ const commandHasComposition = (command: string): boolean => {
       continue
     }
     if (quote) {
+      if (
+        quote === '"' &&
+        (character === '`' || (character === '$' && command[index + 1] === '('))
+      ) {
+        return true
+      }
       if (character === quote) quote = undefined
       continue
     }
