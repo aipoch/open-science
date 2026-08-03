@@ -1,5 +1,8 @@
 import { RENDERER_CONTRACT_CATALOG } from '../shared/renderer-contract-catalog'
-import type { RendererParameterCodec } from '../shared/renderer-contract'
+import type {
+  RendererContractDescriptor,
+  RendererParameterCodec
+} from '../shared/renderer-contract'
 
 type ElectronIpcListener = (event: unknown, payload: unknown) => void
 
@@ -9,11 +12,21 @@ export type ElectronRendererContractPort = Readonly<{
   removeListener: (channel: string, listener: ElectronIpcListener) => void
 }>
 
+export type ElectronRendererContractAdapter = Readonly<{
+  invoke: <Result>(publicPath: string, ...args: unknown[]) => Promise<Result>
+  subscribe: <Payload>(publicPath: string, listener: (payload: Payload) => void) => () => void
+}>
+
+type ElectronRendererRequestContract = Readonly<{
+  contract: RendererContractDescriptor
+  channel: string
+}>
+
 const contractsByPath = new Map(
   RENDERER_CONTRACT_CATALOG.map((contract) => [contract.publicPath, contract] as const)
 )
 
-const requireRequestContract = (publicPath: string) => {
+const requireRequestContract = (publicPath: string): ElectronRendererRequestContract => {
   const contract = contractsByPath.get(publicPath)
   const channel = contract?.channel
   if (
@@ -27,7 +40,7 @@ const requireRequestContract = (publicPath: string) => {
   return { contract, channel }
 }
 
-const requireEventContract = (publicPath: string) => {
+const requireEventContract = (publicPath: string): string => {
   const contract = contractsByPath.get(publicPath)
   const channel = contract?.channel
   if (
@@ -66,7 +79,9 @@ const encodeRequestArguments = (codec: RendererParameterCodec, args: unknown[]):
   }
 }
 
-export const createElectronRendererContractAdapter = (port: ElectronRendererContractPort) => ({
+export const createElectronRendererContractAdapter = (
+  port: ElectronRendererContractPort
+): ElectronRendererContractAdapter => ({
   invoke: async <Result>(publicPath: string, ...args: unknown[]): Promise<Result> => {
     const { contract, channel } = requireRequestContract(publicPath)
     const encodedArgs = encodeRequestArguments(contract.parameterCodec.electron, args)

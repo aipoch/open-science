@@ -1,11 +1,22 @@
-import { describe, expect, it, vi } from 'vitest'
+import { describe, expect, it, vi, type Mock } from 'vitest'
 
 import { createElectronRendererContractAdapter } from './electron-renderer-contract-adapter'
 
-const createPort = () => ({
-  invoke: vi.fn().mockResolvedValue(undefined),
-  on: vi.fn(),
-  removeListener: vi.fn()
+type MockPort = Readonly<{
+  invoke: Mock<(channel: string, ...args: unknown[]) => Promise<unknown>>
+  on: Mock<(channel: string, listener: (event: unknown, payload: unknown) => void) => void>
+  removeListener: Mock<
+    (channel: string, listener: (event: unknown, payload: unknown) => void) => void
+  >
+}>
+
+const createPort = (): MockPort => ({
+  invoke: vi
+    .fn<(channel: string, ...args: unknown[]) => Promise<unknown>>()
+    .mockResolvedValue(undefined),
+  on: vi.fn<(channel: string, listener: (event: unknown, payload: unknown) => void) => void>(),
+  removeListener:
+    vi.fn<(channel: string, listener: (event: unknown, payload: unknown) => void) => void>()
 })
 
 describe('electron renderer contract adapter', () => {
