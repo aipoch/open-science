@@ -5,8 +5,6 @@ import { join } from 'node:path'
 
 import { app, dialog, shell } from 'electron'
 
-import { ipcMainHandle } from '../ipc-handler-registry'
-
 import type {
   ActiveSessionInfo,
   DataRootInspection,
@@ -47,7 +45,7 @@ import { markApplicationShutdownTrigger } from '../application-shutdown-trigger'
 
 type SessionSource = { projectName: string; sessionId: string }
 
-type StorageIpcDeps = {
+type StorageCommandOwnerDeps = {
   // disconnect/shutdownAll drive the reusable migration session-interrupt; shutdownForQuit/dispose are
   // the terminal teardown used by cleanRelaunch (via shutdownBackends).
   runtime: {
@@ -82,8 +80,6 @@ type StorageIpcDeps = {
   cleanupRuntimeCache?: (runtimeRoot: string) => void
   logger?: Logger
 }
-
-type StorageCommandOwnerDeps = StorageIpcDeps
 
 type StorageParentRequest = Readonly<{ parent: string }>
 type StorageRootRequest = Readonly<{ parent: string; markOnboarding?: boolean }>
@@ -507,29 +503,5 @@ const createStorageCommandOwner = (deps: StorageCommandOwnerDeps) => {
 
 type StorageCommandOwner = ReturnType<typeof createStorageCommandOwner>
 
-const registerStorageIpcHandlers = (
-  deps: StorageIpcDeps,
-  owner: StorageCommandOwner = createStorageCommandOwner(deps)
-): void => {
-  ipcMainHandle('storage:get-info', () => owner.getInfo())
-  ipcMainHandle('storage:reveal-app-storage', () => owner.revealAppStorage())
-  ipcMainHandle('storage:dismiss-legacy-move-prompt', () => owner.dismissLegacyMovePrompt())
-  ipcMainHandle('storage:detect-active', () => owner.detectActive())
-  ipcMainHandle('storage:pick-directory', () => owner.pickDirectory())
-  ipcMainHandle('storage:migrate', (_event, request) => owner.migrate(request))
-  ipcMainHandle('storage:cancel-migrate', () => owner.cancelMigrate())
-  ipcMainHandle('storage:discard-migrated-copy', (_event, request) =>
-    owner.discardMigratedCopy(request)
-  )
-  ipcMainHandle('storage:commit-and-relaunch', (_event, request) =>
-    owner.commitAndRelaunch(request)
-  )
-  ipcMainHandle('storage:validate-data-root', (_event, request) => owner.validateDataRoot(request))
-  ipcMainHandle('storage:inspect-data-root', (_event, request) => owner.inspectDataRoot(request))
-  ipcMainHandle('storage:set-data-root-and-relaunch', (_event, request) =>
-    owner.setDataRootAndRelaunch(request)
-  )
-}
-
-export { createStorageCommandOwner, registerStorageIpcHandlers }
-export type { StorageCommandOwner, StorageCommandOwnerDeps, StorageIpcDeps }
+export { createStorageCommandOwner }
+export type { StorageCommandOwner, StorageCommandOwnerDeps }

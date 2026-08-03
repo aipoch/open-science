@@ -41,7 +41,8 @@ vi.mock('electron', () => ({
 }))
 
 const { initDataRoot } = await import('../storage-root')
-const { createStorageCommandOwner, registerStorageIpcHandlers } = await import('./ipc')
+const { createStorageCommandOwner } = await import('./command-owner')
+const { registerStorageIpcHandlers } = await import('./electron-ipc')
 const { clearMigrationPending, isMigrationPending } = await import('./migration-state')
 const { clearApplicationShutdownTrigger, currentApplicationShutdownTrigger } =
   await import('../application-shutdown-trigger')

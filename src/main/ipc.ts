@@ -155,7 +155,7 @@ import { registerSpecialistIpcHandlers } from './specialist/ipc'
 import { SessionBindingService } from './specialist/session-binding'
 import { SPECIALIST_IPC } from '../shared/specialist'
 import type { AppIconPreview, AppIconVariant, RespondApprovalRequest } from '../shared/settings'
-import { registerStorageIpcHandlers } from './storage/ipc'
+import { registerStorageIpcHandlers } from './storage/electron-ipc'
 import { normalizeLegacyDataPaths } from './storage/normalize-legacy-paths'
 import { detectActiveSessions } from './storage/detect-active'
 import {

@@ -31,7 +31,8 @@ export class BackendShutdownOutcomeError extends Error {
 type ShutdownLogger = Pick<Logger, 'error'>
 
 // Deps for the quit/relaunch helper: only the latching teardown is needed. Kept narrow so the migration
-// relaunch path (storage/ipc.ts) does not have to expose the non-latching gate method it never uses.
+// relaunch path (storage/command-owner.ts) does not have to expose the non-latching gate method it
+// never uses.
 export type QuitShutdownDeps = {
   runtime: {
     // Latching quit teardown: sets the runtime's shutting-down flag so a mid-spawn connect self-aborts
@@ -121,7 +122,8 @@ const runBounded = async (
 }
 
 // Quit/relaunch helper (latching teardown). Kept as a standalone function for the data-root migration
-// relaunch path (storage/ipc.ts); the app-quit path goes through BackendShutdownCoordinator instead.
+// relaunch path (storage/command-owner.ts); the app-quit path goes through
+// BackendShutdownCoordinator instead.
 // Returns void for backward compatibility — that caller only needs the bounded, never-throwing await.
 export const shutdownBackends = async (deps: QuitShutdownDeps): Promise<void> => {
   await runBounded(
