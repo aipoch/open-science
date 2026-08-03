@@ -13,6 +13,7 @@ const hasVisibleAgentMessageAfterPrompt = (session: ChatSession, promptIndex: nu
 // The loading row is derived UI state: it belongs to the active run, not persisted history. Tool and
 // permission activity keeps it visible only until the current run emits its first visible output.
 const shouldShowAgentLoadingMessage = (session: ChatSession | undefined): boolean => {
+  if (session?.awaitingFirstAgentOutput) return true
   if (!session || !session.activeRun) return false
   if (session.status !== 'running' && session.status !== 'waiting-permission') return false
 

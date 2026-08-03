@@ -18,6 +18,7 @@ import { saveSessionInOrder } from '../session-persistence/session-persistence'
 import {
   applyWorkspaceRuntimeEvent,
   assembleReviewRunRequest,
+  syncWorkspaceAgentFirstOutputState,
   syncWorkspacePermissionState,
   suppressNextAutoReview,
   clearSuppressNextAutoReview,
@@ -611,6 +612,64 @@ describe('workspace runtime events', () => {
     syncWorkspacePermissionState([])
 
     expect(useSessionStore.getState().sessions[0].status).toBe('running')
+  })
+
+  it('syncs first-output waiting only for known foreground workspace sessions', () => {
+    syncWorkspaceAgentFirstOutputState(['transport-session-1', 'reviewer-session-1'])
+    expect(useSessionStore.getState().sessions[0].awaitingFirstAgentOutput).toBe(true)
+
+    syncWorkspaceAgentFirstOutputState([])
+    expect(useSessionStore.getState().sessions[0].awaitingFirstAgentOutput).toBeUndefined()
+  })
+
+  it('does not rearm first-output waiting from repeated in-flight snapshots after output', async () => {
+    syncWorkspaceAgentFirstOutputState(['transport-session-1'])
+    await applyWorkspaceRuntimeEvent(
+      createEvent({
+        id: 'event-first-output',
+        role: 'assistant',
+        messageId: 'assistant-message-1',
+        text: 'First visible token'
+      })
+    )
+    expect(useSessionStore.getState().sessions[0].awaitingFirstAgentOutput).toBeUndefined()
+
+    syncWorkspaceAgentFirstOutputState(['transport-session-1'])
+    expect(useSessionStore.getState().sessions[0].awaitingFirstAgentOutput).toBeUndefined()
+
+    syncWorkspaceAgentFirstOutputState([])
+    syncWorkspaceAgentFirstOutputState(['transport-session-1'])
+    expect(useSessionStore.getState().sessions[0].awaitingFirstAgentOutput).toBe(true)
+  })
+
+  it('keeps first-output waiting through tools and filtered Agent diagnostics', async () => {
+    useSessionStore.setState((state) => ({
+      sessions: state.sessions.map((session) => ({
+        ...session,
+        agentFrameworkId: 'codex'
+      }))
+    }))
+    syncWorkspaceAgentFirstOutputState(['transport-session-1'])
+
+    await applyWorkspaceRuntimeEvent(
+      createEvent({
+        id: 'event-tool-before-output',
+        kind: 'tool',
+        toolCallId: 'tool-before-output',
+        title: 'Inspect files',
+        status: 'in_progress'
+      })
+    )
+    await applyWorkspaceRuntimeEvent(
+      createEvent({
+        id: 'event-filtered-diagnostic',
+        role: 'assistant',
+        messageId: 'assistant-diagnostic',
+        text: 'Warning: Falling back from WebSockets to HTTPS transport. request timed out'
+      })
+    )
+
+    expect(useSessionStore.getState().sessions[0].awaitingFirstAgentOutput).toBe(true)
   })
 
   it('does not route tool events into preview state', async () => {

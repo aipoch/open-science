@@ -36,7 +36,11 @@ import { useSessionStore, type ChatMessage, type ChatSession } from '../../store
 import { useSettingsStore } from '../../stores/settings-store'
 import { useAcpRuntime } from './useAcpRuntime'
 import { buildHistoryPreamble, buildHistoryReplayMedia } from './history-preamble'
-import { applyWorkspaceRuntimeEvent, syncWorkspacePermissionState } from './workspace-events'
+import {
+  applyWorkspaceRuntimeEvent,
+  syncWorkspaceAgentFirstOutputState,
+  syncWorkspacePermissionState
+} from './workspace-events'
 
 type SendWorkspaceMessageInput = {
   sessionId?: string
@@ -1511,6 +1515,11 @@ const useWorkspaceAgentRuntime = (): {
   useEffect(() => {
     void eventProcessor.current.process(runtime.state.events)
   }, [runtime.state.events])
+
+  // Runtime prompt ownership also covers foreground app continuations with no new user message.
+  useEffect(() => {
+    syncWorkspaceAgentFirstOutputState(runtime.state.promptInFlightSessionIds)
+  }, [runtime.state.promptInFlightSessionIds])
 
   // Mirrors pending permission requests into per-session store status.
   useEffect(() => {

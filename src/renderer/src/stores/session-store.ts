@@ -101,6 +101,9 @@ export type ChatSession = Omit<
   // Transient: latest agent status/stderr line for the in-flight turn, shown in the waiting indicator
   // so a long silent wait (e.g. the agent retrying a slow request) isn't a blank spinner. Not persisted.
   agentStatus?: string
+  // Transient: the runtime owns a foreground prompt that has not emitted visible assistant output.
+  // This also covers app-owned continuations that do not append another user message.
+  awaitingFirstAgentOutput?: boolean
   // Transient: the durable active Branch changed while the Agent/Notebook still hold the previous
   // Branch's volatile state. The next continuation must rebuild both contexts before prompting.
   branchContextResetRequired?: boolean
@@ -232,6 +235,7 @@ type SessionStore = SessionStoreData & {
   ) => AppendMessageResult | undefined
   bindPendingSession: (input: BindPendingSessionInput) => AppendMessageResult | undefined
   appendAgentMessageChunk: (input: AppendAgentMessageChunkInput) => AppendMessageResult | undefined
+  setAwaitingFirstAgentOutput: (sessionId: string, waiting: boolean) => void
   attachRunArtifacts: (input: AttachRunArtifactsInput) => AppendMessageResult | undefined
   replaceMessageArtifacts: (input: ReplaceMessageArtifactsInput) => void
   replaceMessageUploads: (input: ReplaceMessageUploadsInput) => void
@@ -340,6 +344,7 @@ const stripTransientSessionState = (session: ChatSession): PersistedChatSession 
     fixLoopActive,
     compacting,
     agentStatus,
+    awaitingFirstAgentOutput,
     branchContextResetRequired,
     specialistSwitchResetRequired,
     branchSwitchBlocked,
@@ -353,6 +358,7 @@ const stripTransientSessionState = (session: ChatSession): PersistedChatSession 
   void fixLoopActive
   void compacting
   void agentStatus
+  void awaitingFirstAgentOutput
   void branchContextResetRequired
   void specialistSwitchResetRequired
   void branchSwitchBlocked
@@ -1243,6 +1249,7 @@ export const useSessionStore = create<SessionStore>((set, get) => ({
       sanitizedImage = undefined
       if (content.length === 0) return undefined
     }
+    const hasVisibleOutput = content.trim().length > 0 || Boolean(sanitizedImage)
 
     const existingMessage = session.messages.find(
       (message) => message.role === 'agent' && message.streamId === streamId
@@ -1266,6 +1273,7 @@ export const useSessionStore = create<SessionStore>((set, get) => ({
           return {
             ...item,
             status: item.status === 'waiting-permission' ? 'waiting-permission' : 'running',
+            awaitingFirstAgentOutput: hasVisibleOutput ? undefined : item.awaitingFirstAgentOutput,
             messages: item.messages.map((message) =>
               message.id === existingMessage.id
                 ? {
@@ -1304,6 +1312,7 @@ export const useSessionStore = create<SessionStore>((set, get) => ({
         return {
           ...item,
           status: item.status === 'waiting-permission' ? 'waiting-permission' : 'running',
+          awaitingFirstAgentOutput: hasVisibleOutput ? undefined : item.awaitingFirstAgentOutput,
           messages: [...item.messages, agentMessage],
           updatedAt: now
         }
@@ -1311,6 +1320,20 @@ export const useSessionStore = create<SessionStore>((set, get) => ({
     })
 
     return { sessionId, messageId }
+  },
+
+  // Tracks runtime prompt ownership until the first visible assistant chunk is appended.
+  setAwaitingFirstAgentOutput: (sessionId, waiting) => {
+    set((state) => ({
+      sessions: state.sessions.map((session) =>
+        session.id === sessionId
+          ? {
+              ...session,
+              awaitingFirstAgentOutput: waiting ? true : undefined
+            }
+          : session
+      )
+    }))
   },
 
   // Attaches a runtime artifact event to the best local assistant message before file finalization.
@@ -1888,6 +1911,7 @@ export const useSessionStore = create<SessionStore>((set, get) => ({
           status: keepArtifactError ? 'error' : 'idle',
           activeRun: undefined,
           agentStatus: undefined,
+          awaitingFirstAgentOutput: undefined,
           compacting: undefined,
           error: keepArtifactError ? session.error : undefined,
           errorReportable: keepArtifactError ? session.errorReportable : undefined,
@@ -1944,6 +1968,7 @@ export const useSessionStore = create<SessionStore>((set, get) => ({
           status: 'error',
           activeRun: undefined,
           agentStatus: undefined,
+          awaitingFirstAgentOutput: undefined,
           compacting: undefined,
           error: message,
           errorReportable,
@@ -1986,6 +2011,7 @@ export const useSessionStore = create<SessionStore>((set, get) => ({
               status: 'idle',
               activeRun: undefined,
               agentStatus: undefined,
+              awaitingFirstAgentOutput: undefined,
               error: undefined,
               errorReportable: undefined,
               compacting: true,
@@ -2066,6 +2092,7 @@ export const useSessionStore = create<SessionStore>((set, get) => ({
               ...session,
               status: 'error',
               activeRun: undefined,
+              awaitingFirstAgentOutput: undefined,
               interrupted: true,
               compacting: undefined,
               error,

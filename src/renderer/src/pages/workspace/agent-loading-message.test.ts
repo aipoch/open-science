@@ -48,6 +48,18 @@ describe('agent loading message state', () => {
     expect(shouldShowAgentLoadingMessage(session)).toBe(true)
   })
 
+  it('shows loading when the foreground runtime owns a request without a local active run', async () => {
+    const { shouldShowAgentLoadingMessage } = await loadAgentLoadingMessageModule()
+    const session = createSession({
+      status: 'idle',
+      activeRun: undefined,
+      awaitingFirstAgentOutput: true,
+      messages: [createMessage({ id: 'prompt-1' })]
+    })
+
+    expect(shouldShowAgentLoadingMessage(session)).toBe(true)
+  })
+
   it('hides loading once the active prompt has an agent response', async () => {
     const { shouldShowAgentLoadingMessage } = await loadAgentLoadingMessageModule()
     const session = createSession({

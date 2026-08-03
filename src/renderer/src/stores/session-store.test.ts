@@ -56,6 +56,127 @@ describe('session store', () => {
     expect(useSessionStore.getState().selectedSessionId).toBeUndefined()
   })
 
+  it('tracks the first Agent output wait as transient session state', () => {
+    useSessionStore.getState().appendUserMessage({
+      sessionId: 'transport-session-1',
+      content: 'Continue the foreground request'
+    })
+    useSessionStore.getState().setAwaitingFirstAgentOutput('transport-session-1', true)
+    expect(useSessionStore.getState().sessions[0].awaitingFirstAgentOutput).toBe(true)
+
+    useSessionStore.getState().setAwaitingFirstAgentOutput('transport-session-1', false)
+    expect(useSessionStore.getState().sessions[0].awaitingFirstAgentOutput).toBeUndefined()
+  })
+
+  it('clears the first Agent output wait atomically with a visible chunk', () => {
+    useSessionStore.getState().appendUserMessage({
+      sessionId: 'transport-session-1',
+      content: 'Continue the foreground request'
+    })
+    useSessionStore.setState((state) => ({
+      sessions: state.sessions.map((session) => ({
+        ...session,
+        awaitingFirstAgentOutput: true
+      }))
+    }))
+
+    useSessionStore.getState().appendAgentMessageChunk({
+      sessionId: 'transport-session-1',
+      streamId: 'assistant-message-1',
+      eventId: 'event-1',
+      content: 'First visible token'
+    })
+
+    expect(useSessionStore.getState().sessions[0].awaitingFirstAgentOutput).toBeUndefined()
+  })
+
+  it('keeps waiting through whitespace-only Agent chunks', () => {
+    useSessionStore.getState().appendUserMessage({
+      sessionId: 'transport-session-1',
+      content: 'Continue the foreground request'
+    })
+    useSessionStore.getState().setAwaitingFirstAgentOutput('transport-session-1', true)
+
+    useSessionStore.getState().appendAgentMessageChunk({
+      sessionId: 'transport-session-1',
+      streamId: 'assistant-message-1',
+      eventId: 'event-whitespace',
+      content: '   '
+    })
+    expect(useSessionStore.getState().sessions[0].awaitingFirstAgentOutput).toBe(true)
+
+    useSessionStore.getState().appendAgentMessageChunk({
+      sessionId: 'transport-session-1',
+      streamId: 'assistant-message-1',
+      eventId: 'event-visible',
+      content: 'First visible token'
+    })
+    expect(useSessionStore.getState().sessions[0].awaitingFirstAgentOutput).toBeUndefined()
+  })
+
+  it('does not persist the first Agent output wait', () => {
+    useSessionStore.getState().appendUserMessage({
+      sessionId: 'transport-session-1',
+      content: 'Continue the foreground request'
+    })
+    const session = {
+      ...useSessionStore.getState().sessions[0],
+      awaitingFirstAgentOutput: true
+    }
+
+    expect(toPersistedSession(session)).not.toHaveProperty('awaitingFirstAgentOutput')
+  })
+
+  it('clears the first Agent output wait when the request settles without output', () => {
+    useSessionStore.getState().appendUserMessage({
+      sessionId: 'transport-session-1',
+      content: 'Continue the foreground request'
+    })
+    useSessionStore.setState((state) => ({
+      sessions: state.sessions.map((session) => ({
+        ...session,
+        awaitingFirstAgentOutput: true
+      }))
+    }))
+
+    useSessionStore.getState().finishRun('transport-session-1')
+    expect(useSessionStore.getState().sessions[0].awaitingFirstAgentOutput).toBeUndefined()
+
+    useSessionStore.getState().appendUserMessage({
+      sessionId: 'transport-session-1',
+      content: 'Retry the request'
+    })
+    useSessionStore.setState((state) => ({
+      sessions: state.sessions.map((session) => ({
+        ...session,
+        awaitingFirstAgentOutput: true
+      }))
+    }))
+    useSessionStore.getState().failRun('transport-session-1', 'Provider failed')
+
+    expect(useSessionStore.getState().sessions[0].awaitingFirstAgentOutput).toBeUndefined()
+  })
+
+  it('clears the first Agent output wait when disconnect or compaction takes ownership', () => {
+    useSessionStore.getState().appendUserMessage({
+      sessionId: 'transport-session-1',
+      content: 'Continue the foreground request'
+    })
+    useSessionStore.getState().setAwaitingFirstAgentOutput('transport-session-1', true)
+
+    useSessionStore.getState().markDisconnected('transport-session-1')
+    expect(useSessionStore.getState().sessions[0].awaitingFirstAgentOutput).toBeUndefined()
+
+    useSessionStore.getState().appendUserMessage({
+      sessionId: 'transport-session-1',
+      content: 'Retry after reconnect'
+    })
+    useSessionStore.getState().setAwaitingFirstAgentOutput('transport-session-1', true)
+    useSessionStore.getState().beginCompaction('transport-session-1', { supersedeActiveRun: true })
+
+    expect(useSessionStore.getState().sessions[0].awaitingFirstAgentOutput).toBeUndefined()
+  })
+
   it('uses the provided session id when the first user message creates a session', () => {
     const result = useSessionStore.getState().appendUserMessage({
       sessionId: 'transport-session-1',
