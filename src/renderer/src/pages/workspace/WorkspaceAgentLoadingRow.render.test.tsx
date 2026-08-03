@@ -50,6 +50,21 @@ describe('WorkspaceAgentLoadingRow', () => {
     act(() => root.render(<AgentLoadingIndicator sessionId="s1" />))
 
     expect(container.textContent).toContain('0:05')
+    expect(container.textContent).toContain('Thinking')
+    const indicator = container.querySelector('[data-testid="open-science-thinking-indicator"]')
+    expect(indicator).not.toBeNull()
+    expect(
+      container.querySelectorAll(
+        '[data-testid="open-science-thinking-indicator"] .open-science-thinking-indicator__dot'
+      )
+    ).toHaveLength(5)
+    expect(indicator?.getAttribute('aria-hidden')).toBe('true')
+    expect(indicator?.classList.contains('text-text-300')).toBe(true)
+    const status = container.querySelector('[role="status"]')
+    const thinkingLabel = Array.from(status?.querySelectorAll('span') ?? []).find(
+      (element) => element.textContent === 'Thinking'
+    )
+    expect(thinkingLabel?.getAttribute('aria-hidden')).toBeNull()
     expect(container.textContent).not.toContain('taking longer than usual')
     const statusRow = container.querySelector('[role="status"] > div')
     expect(statusRow?.classList.contains('text-text-000/70')).toBe(true)

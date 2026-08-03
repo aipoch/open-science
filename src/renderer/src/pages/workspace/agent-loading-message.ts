@@ -10,13 +10,11 @@ const hasVisibleAgentMessageAfterPrompt = (session: ChatSession, promptIndex: nu
         (message.content.trim().length > 0 || Boolean(message.images?.length))
     )
 
-// The loading row is derived UI state: it belongs to the active run, not persisted history. A
-// permission wait pauses the run on a user decision rather than ending it, so the row stays visible
-// alongside the approval controls — even when the agent already streamed visible content.
+// The loading row is derived UI state: it belongs to the active run, not persisted history. Tool and
+// permission activity keeps it visible only until the current run emits its first visible output.
 const shouldShowAgentLoadingMessage = (session: ChatSession | undefined): boolean => {
   if (!session || !session.activeRun) return false
-  if (session.status === 'waiting-permission') return true
-  if (session.status !== 'running') return false
+  if (session.status !== 'running' && session.status !== 'waiting-permission') return false
 
   const promptIndex = session.messages.findIndex(
     (message) => message.id === session.activeRun?.promptMessageId

@@ -1,5 +1,6 @@
 import { useEffect, useState } from 'react'
 
+import { OpenScienceThinkingIndicator } from '@/components/OpenScienceThinkingIndicator'
 import { MessageScrollerItem } from '@/components/ui/message-scroller'
 import { cn } from '@/lib/utils'
 import { useSessionStore } from '@/stores/session-store'
@@ -24,15 +25,7 @@ const formatElapsed = (ms: number): string => {
   return `${minutes}:${seconds.toString().padStart(2, '0')}`
 }
 
-const AgentLoadingDots = (): React.JSX.Element => (
-  <span className="flex items-center gap-1.5" aria-hidden="true">
-    <span className="size-1.5 animate-pulse rounded-full bg-text-300 opacity-80" />
-    <span className="size-1.5 animate-pulse rounded-full bg-text-300 opacity-80 [animation-delay:150ms]" />
-    <span className="size-1.5 animate-pulse rounded-full bg-text-300 opacity-80 [animation-delay:300ms]" />
-  </span>
-)
-
-// Interim assistant row shown before the first streamed chunk. Beyond the bare animated dots it shows
+// Interim assistant row shown before the first streamed chunk. Beyond the brand indicator it shows
 // how long the turn has been running (ticking) and the latest agent status line when one exists, so a
 // long wait reads as "still working" instead of a frozen spinner.
 const AgentLoadingIndicator = ({ sessionId }: WorkspaceAgentLoadingRowProps): React.JSX.Element => {
@@ -57,8 +50,8 @@ const AgentLoadingIndicator = ({ sessionId }: WorkspaceAgentLoadingRowProps): Re
   return (
     <div className="flex min-h-5 flex-col gap-1" role="status" aria-live="polite">
       <div className="flex items-center gap-2 text-xs text-text-000/70">
-        <span className="sr-only">Agent is responding</span>
-        <AgentLoadingDots />
+        <OpenScienceThinkingIndicator />
+        <span>Thinking</span>
         {startedAt ? (
           <span className="tabular-nums" aria-hidden="true">
             {formatElapsed(elapsedMs)}

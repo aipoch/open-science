@@ -267,4 +267,79 @@
   .install-progress-indeterminate {
     animation: install-progress-indeterminate 1.2s ease-in-out infinite;
   }
+
+  @keyframes open-science-thinking-spin {
+    to {
+      transform: rotate(360deg);
+    }
+  }
+
+  @keyframes open-science-thinking-breathe {
+    0%,
+    100% {
+      opacity: 0.55;
+      transform: scale(0.82);
+    }
+    45% {
+      opacity: 0.95;
+      transform: scale(1.08);
+    }
+  }
+
+  @keyframes open-science-thinking-orbit {
+    0%,
+    100% {
+      opacity: calc(var(--os-dot-alpha) * 0.48);
+      transform: rotate(var(--os-dot-angle)) translateX(calc(18px * var(--os-dot-distance) * 0.72))
+        scale(0.72);
+    }
+    44% {
+      opacity: var(--os-dot-alpha);
+      transform: rotate(var(--os-dot-angle)) translateX(calc(18px * var(--os-dot-distance)))
+        scale(1);
+    }
+  }
+
+  .open-science-thinking-indicator {
+    position: relative;
+    width: 18px;
+    height: 18px;
+    flex: 0 0 18px;
+    color: currentColor;
+    animation: open-science-thinking-spin 3.8s linear infinite;
+  }
+
+  .open-science-thinking-indicator::before {
+    position: absolute;
+    inset: 28%;
+    border-radius: 999px;
+    background: currentColor;
+    content: '';
+    transform-origin: center;
+    animation: open-science-thinking-breathe 1.8s ease-in-out infinite;
+  }
+
+  .open-science-thinking-indicator__dot {
+    position: absolute;
+    top: 50%;
+    left: 50%;
+    width: calc(18px * var(--os-dot-radius));
+    height: calc(18px * var(--os-dot-radius));
+    margin-top: calc(18px * var(--os-dot-radius) / -2);
+    margin-left: calc(18px * var(--os-dot-radius) / -2);
+    border-radius: 999px;
+    background: currentColor;
+    opacity: var(--os-dot-alpha);
+    transform: rotate(var(--os-dot-angle)) translateX(calc(18px * var(--os-dot-distance)));
+    animation: open-science-thinking-orbit 1.8s ease-in-out infinite;
+    animation-delay: var(--os-dot-delay);
+  }
+
+  @media (prefers-reduced-motion: reduce) {
+    .open-science-thinking-indicator,
+    .open-science-thinking-indicator::before,
+    .open-science-thinking-indicator__dot {
+      animation: none;
+    }
+  }
 }

@@ -243,8 +243,25 @@ describe('WorkspaceMessageScroller loading render', () => {
 
     expect(html).toContain('role="status"')
     expect(html).toContain('aria-live="polite"')
-    expect(html).toContain('Agent is responding')
+    expect(html).toContain('data-testid="open-science-thinking-indicator"')
+    expect(html).toContain('Thinking')
     expect(html).toContain('data-message-id="session-1-agent-loading"')
+  })
+
+  it('keeps the loading row while tools run before the first agent token', async () => {
+    const html = await renderScroller(
+      createSession({
+        activeRun: {
+          promptMessageId: 'prompt-1',
+          startedAt: 1710000000100
+        },
+        messages: [createMessage({ id: 'prompt-1' })],
+        activities: [createActivity({ status: 'in_progress' })]
+      })
+    )
+
+    expect(html).toContain('data-testid="open-science-thinking-indicator"')
+    expect(html).toContain('Thinking')
   })
 
   it('does not render loading after current-run agent text arrives', async () => {
@@ -403,8 +420,7 @@ describe('WorkspaceMessageScroller loading render', () => {
       messages: [createMessage({ id: 'prompt-1' })]
     })
 
-    // A permission wait is still mid-run, so the transcript keeps the working indicator — even
-    // when the agent already streamed visible text before asking.
+    // A permission wait stays in the waiting state until the first visible token arrives.
     await expect(
       renderScroller({ ...runningSession, status: 'waiting-permission' })
     ).resolves.toContain('role="status"')
@@ -424,7 +440,7 @@ describe('WorkspaceMessageScroller loading render', () => {
           })
         ]
       })
-    ).resolves.toContain('role="status"')
+    ).resolves.not.toContain('role="status"')
     await expect(
       renderScroller({ ...runningSession, activeRun: undefined })
     ).resolves.not.toContain('role="status"')
@@ -455,7 +471,7 @@ describe('WorkspaceMessageScroller loading render', () => {
     )
 
     expect(html).toContain('role="status"')
-    expect(html).toContain('Agent is responding')
+    expect(html).toContain('Thinking')
   })
 
   it('renders generated artifact gallery cards under agent messages', async () => {

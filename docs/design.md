@@ -347,6 +347,7 @@ Workspace-only tokens without a shadcn counterpart, plus shadow tokens. For shar
 - Dialog close: `data-[state=closed]:animate-out data-[state=closed]:fade-out-0 data-[state=closed]:zoom-out-95`.
 - Overlay: `fade-in-0 / fade-out-0`; the light scrim is `rgb(0 0 0 / 0.5)`.
 - Transform motion is limited to dialogs, sheets, collapsible content, and subtle button feedback, and must respect `motion-reduce`.
+- Brand loading indicators may use fixed-geometry transform and opacity motion for orbiting or gathering particles; they must become static under `prefers-reduced-motion`.
 
 ## Component Guidelines
 
@@ -462,7 +463,7 @@ Workspace-only tokens without a shadcn counterpart, plus shadow tokens. For shar
 - Assistant wrapper: `w-full max-w-[56rem] text-sm md:text-[15px] leading-relaxed text-text-000`.
 - Message metadata uses `text-[11px] text-text-000/70 tabular-nums` below the content so timestamps and elapsed status meet WCAG contrast on workspace surfaces. The visible timestamp format is fixed to English `MMM D, h:mm AM/PM`: User Messages show `Sent ...`, completed Agent Messages show `Completed ...`, and failed Agent Messages show `Failed ...`. Terminal timestamps are persisted separately from mutable record update times. Agent footers keep terminal time, elapsed time, and `Usage` on one line without a separator (`Completed ... Elapsed 2m 5s Usage`). `Usage` uses a dashed underline and reveals a compact Context-window-style popover on pointer hover or keyboard focus. The popover has a proportional color bar above its token rows and a divided `Total` row below them. When an adapter reports a reliable agentic model-turn count, show `1 turn` or `N turns` as smaller muted text aligned to the right of the popover title; omit it rather than estimating when unavailable. Show Input, Cache, and Output when only aggregate cache data is available; split Cache into Cache read and Cache write, with distinct colors and bar segments, only when the agent reports both categories. The displayed categories are mutually exclusive and `Total` is their sum.
 - User Message Branch navigation, copy, and edit actions sit immediately left of the bubble, outside the metadata footer. Keep the sent time independently right-aligned below the bubble so action visibility never shifts it; reveal the actions on row hover or keyboard focus using the standard inline-action opacity transition.
-- Agent loading surface uses `rounded-2xl bg-bg-200`; elapsed and status text use `text-text-000/70`, while animated dots use `bg-text-300`.
+- Agent loading surface uses `rounded-2xl bg-bg-200`; elapsed and status text use `text-text-000/70`, while the brand thinking indicator uses `text-text-300`.
 - Tool row: `h-8 rounded-lg px-2 text-[13px] hover:bg-foreground/[0.04]`.
 - Tool row metadata: `text-[12.5px] text-muted-foreground tabular-nums`.
 - Link: `text-primary underline-offset-4 hover:underline`.

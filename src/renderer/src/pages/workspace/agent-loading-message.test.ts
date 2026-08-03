@@ -220,11 +220,11 @@ describe('agent loading message state', () => {
     ).toBe(false)
   })
 
-  it('keeps loading during a permission wait even after visible agent content arrives', async () => {
+  it('hides loading during a permission wait once visible agent content arrives', async () => {
     const { shouldShowAgentLoadingMessage } = await loadAgentLoadingMessageModule()
 
-    // The agent streamed text, then paused on a tool permission: the wait is on the user's
-    // decision, not on agent output, so the indicator stays.
+    // The first visible token owns the transcript from this point onward, even if a tool
+    // permission pauses the active run immediately afterwards.
     expect(
       shouldShowAgentLoadingMessage(
         createSession({
@@ -246,6 +246,6 @@ describe('agent loading message state', () => {
           ]
         })
       )
-    ).toBe(true)
+    ).toBe(false)
   })
 })
