@@ -489,6 +489,57 @@ describe('notebook runtime service', () => {
     expect(state.activeRunId).toBe(document.runs[0]?.runId)
   })
 
+  it('persists a fail-closed default-runtime admission without dispatching or capturing evidence', async () => {
+    const root = await createStorageRoot()
+    const defaultInterpreter = pythonBin(envPrefix(getRuntimeRoot(root), DEFAULT_PY_ENV))
+    const execute = vi.fn(
+      async (request: NotebookExecutionRequest): Promise<NotebookExecutionResult> => ({
+        status: 'completed',
+        stdout: '',
+        stderr: '',
+        traceback: '',
+        cwdAfter: request.cwd,
+        outputs: []
+      })
+    )
+    const environmentStateTracker = verifiedPackageMutationTracker()
+    const service = new NotebookRuntimeService({
+      configRoot: root,
+      dataRoot: root,
+      projectName: 'default-project',
+      repository: new NotebookRunRepository(root),
+      getRuntimeEnablement: async () => ({
+        enabled: { [defaultInterpreter]: false },
+        installAuthorized: {}
+      }),
+      environmentStateTracker,
+      executorFactory: () => ({ execute, shutdown: async () => ({ reaped: true }) })
+    })
+
+    const summary = await service.execute({
+      sessionId: 'session-1',
+      workspaceCwd: root,
+      language: 'python',
+      code: 'print(1)'
+    })
+    const state = await service.state({ sessionId: 'session-1', workspaceCwd: root })
+
+    expect(summary).toMatchObject({
+      status: 'failed',
+      environment: DEFAULT_PY_ENV,
+      text: { traceback: expect.stringMatching(/No enabled python runtime/i) }
+    })
+    expect(state.runs).toHaveLength(1)
+    expect(state.runs[0]).toMatchObject({
+      runId: summary.runId,
+      status: 'failed',
+      environment: DEFAULT_PY_ENV
+    })
+    expect(execute).not.toHaveBeenCalled()
+    expect(environmentStateTracker.prepareRun).not.toHaveBeenCalled()
+    expect(environmentStateTracker.captureCompletedRun).not.toHaveBeenCalled()
+  })
+
   it('rejects install.packages in an R cell before the managed kernel executes it', async () => {
     const root = await createStorageRoot()
     const execute = vi.fn(async () => ({
