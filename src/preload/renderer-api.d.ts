@@ -283,7 +283,7 @@ import type {
 type RemoveListener = () => void
 type AcpListener<Payload> = (payload: Payload) => void
 
-interface OpenScienceAPI {
+export interface OpenScienceAPI {
   saveBlobFile(request: SaveBlobFileRequest): Promise<SaveBlobFileResult>
   saveManagedFile(request: SaveManagedFileRequest): Promise<SaveManagedFileResult>
   saveSessionArtifacts(request: SaveSessionArtifactsRequest): Promise<SaveSessionArtifactsResult>
