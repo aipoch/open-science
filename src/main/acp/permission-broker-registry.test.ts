@@ -40,14 +40,6 @@ const shellRequest = (sessionId: string): RequestPermissionRequest => ({
   ]
 })
 
-const secretShellRequest = (sessionId: string): RequestPermissionRequest => ({
-  ...shellRequest(sessionId),
-  toolCall: {
-    ...shellRequest(sessionId).toolCall,
-    rawInput: { command: 'TOKEN=secret python upload.py' }
-  }
-})
-
 const registeredToolRequest = (toolName: string): RequestPermissionRequest => ({
   sessionId: 'session-registered',
   toolCall: {
@@ -231,7 +223,7 @@ describe('ACP permission broker with durable grants', () => {
     expect(emitted).toHaveLength(1)
   })
 
-  it('offers only provider Once for a secret-bearing exact request', async () => {
+  it('offers only provider Once for a secret-bearing Codex command group', async () => {
     storageRoot = await mkdtemp(join(tmpdir(), 'open-science-broker-secret-'))
     client = createProjectDbClient(storageRoot)
     await ensureProjectSchema(client)
@@ -239,14 +231,15 @@ describe('ACP permission broker with durable grants', () => {
     const registry = await createPermissionGrantRegistry({ getClient: async () => client! })
     const emitted: Parameters<ConstructorParameters<typeof AcpPermissionBroker>[0]>[0][] = []
     const broker = new AcpPermissionBroker((request) => emitted.push(request), undefined, registry)
-    const request = secretShellRequest('session-1')
+    const request = shellRequest('session-1')
+    request.toolCall.rawInput = { command: 'python upload.py --token secret' }
     request.options.splice(2, 0, {
       optionId: 'accept_execpolicy_amendment',
-      name: 'Allow Commands Starting With a secret',
+      name: 'Allow Commands Starting With `python upload.py`',
       kind: 'allow_always',
       _meta: {
         codex: {
-          execpolicyAmendment: ['TOKEN=secret', 'python', 'upload.py']
+          execpolicyAmendment: ['python', 'upload.py']
         }
       }
     })

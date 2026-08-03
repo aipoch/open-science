@@ -26,7 +26,8 @@ import {
 import {
   capabilityFromLegacyCategory,
   categoryFromTrustedToolName,
-  commandPrefixPermissionCategory
+  commandPrefixPermissionCategory,
+  containsSecretBearingMaterial
 } from '../permission-grants/capability'
 import { projectPermissionGrantSnapshot } from '../permission-grants/catalog'
 import type { PermissionGrantRegistry } from '../permission-grants/registry'
@@ -168,7 +169,13 @@ const codexCommandGroup = (params: RequestPermissionRequest): CodexCommandGroup 
 
   const commandPrefix = amendment.filter((token): token is string => typeof token === 'string')
   const command = commandFromRawInput(params.toolCall.rawInput)
-  if (!command || !commandStartsWithArgvPrefix(command, commandPrefix)) return undefined
+  if (
+    !command ||
+    containsSecretBearingMaterial(command) ||
+    !commandStartsWithArgvPrefix(command, commandPrefix)
+  ) {
+    return undefined
+  }
 
   return {
     categoryKey,
