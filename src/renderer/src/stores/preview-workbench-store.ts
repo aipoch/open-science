@@ -273,7 +273,9 @@ export const usePreviewWorkbenchStore = create<PreviewWorkbenchStore>((set, get)
         panelState: targetSlice.items.length > 0 ? targetSlice.panelState : 'collapsed',
         activeProjectId: projectId,
         byProject,
-        expandedToolItemId: null
+        expandedToolItemId: null,
+        fileDialogItem:
+          state.fileDialogItem?.projectId === projectId ? state.fileDialogItem : undefined
       }
     })
   },

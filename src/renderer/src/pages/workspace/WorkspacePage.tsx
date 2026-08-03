@@ -442,6 +442,7 @@ const WorkspacePage = ({
   )
   const activePreviewItemId = usePreviewWorkbenchStore((state) => state.activeItemId)
   const previewOpenRequestVersion = usePreviewWorkbenchStore((state) => state.openRequestVersion)
+  const previewProjectId = usePreviewWorkbenchStore((state) => state.activeProjectId)
   const fileDialogItem = usePreviewWorkbenchStore((state) => state.fileDialogItem)
   const upsertPreviewItem = usePreviewWorkbenchStore((state) => state.upsertItem)
   const upsertAndActivatePreviewItem = usePreviewWorkbenchStore(
@@ -856,9 +857,14 @@ const WorkspacePage = ({
   // preview slice. Once this workspace owns the target Project, reveal Files so its shared dialog can
   // consume the already-validated immutable preview item.
   useEffect(() => {
-    if (!fileDialogItem || fileDialogItem.projectId !== activeProjectId) return
+    if (
+      !fileDialogItem ||
+      fileDialogItem.projectId !== activeProjectId ||
+      previewProjectId !== activeProjectId
+    )
+      return
     upsertAndActivatePreviewItem(createProjectFilesPreviewItem())
-  }, [activeProjectId, fileDialogItem, upsertAndActivatePreviewItem])
+  }, [activeProjectId, fileDialogItem, previewProjectId, upsertAndActivatePreviewItem])
 
   // Clear the consumed `Chat with agent` prefill intent from the store once it has been applied in the
   // render phase above, so a later normal open starts fresh. (Calling a store action — not a React

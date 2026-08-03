@@ -7,8 +7,10 @@ import type { PanelImperativeHandle, PanelSize } from 'react-resizable-panels'
 
 import {
   createInitialPreviewWorkbenchState,
+  PROJECT_FILES_PREVIEW_ID,
   usePreviewWorkbenchStore
 } from '@/stores/preview-workbench-store'
+import { useNavigationStore } from '@/stores/navigation-store'
 import { createInitialSessionState, useSessionStore } from '@/stores/session-store'
 
 const workspacePageHarness = vi.hoisted(() => ({
@@ -136,6 +138,10 @@ vi.mock('@/lib/session-persistence/session-persistence', () => ({
   useSessionPersistence: () => true
 }))
 
+vi.mock('@/lib/preview-persistence/preview-persistence', () => ({
+  usePreviewPersistence: vi.fn()
+}))
+
 vi.mock('@/lib/acp/useWorkspaceAgentRuntime', () => ({
   useWorkspaceAgentRuntime: () => ({
     actionError: null,
@@ -230,6 +236,7 @@ describe('WorkspacePage preview panel resize sync', () => {
 
   beforeEach(() => {
     usePreviewWorkbenchStore.setState(createInitialPreviewWorkbenchState())
+    useNavigationStore.setState({ view: 'home', activeProjectId: undefined })
     useSessionStore.setState(createInitialSessionState())
     workspacePageHarness.sidebarSize = 16
     workspacePageHarness.sidebarPanelDefaultSize = undefined
@@ -458,6 +465,38 @@ describe('WorkspacePage preview panel resize sync', () => {
     expect(container.querySelector('[data-testid="workspace-preview-toggle"]')).toBeNull()
     expect(workspacePageHarness.previewPanelDefaultSize).toBe('0%')
     expect(usePreviewWorkbenchStore.getState().panelState).toBe('collapsed')
+  })
+
+  it('waits for the target preview slice before consuming a cross-Project file dialog', async () => {
+    const fileDialogItem = {
+      id: 'artifact-b',
+      projectId: 'project-b',
+      sessionId: 'session-b',
+      type: 'file' as const,
+      title: 'result.png',
+      path: 'artifact-version:project-b/session-b/artifact-b/version-1',
+      format: 'image' as const,
+      name: 'result.png'
+    }
+    useNavigationStore.setState({ view: 'workspace', activeProjectId: 'project-b' })
+    usePreviewWorkbenchStore.setState({
+      activeProjectId: 'project-a',
+      fileDialogItem
+    })
+
+    await renderPage(false)
+
+    expect(usePreviewWorkbenchStore.getState().items).toEqual([])
+
+    act(() => usePreviewWorkbenchStore.getState().activateProject('project-b'))
+    expect(usePreviewWorkbenchStore.getState()).toMatchObject({
+      activeProjectId: 'project-b',
+      activeItemId: PROJECT_FILES_PREVIEW_ID,
+      fileDialogItem
+    })
+
+    act(() => usePreviewWorkbenchStore.getState().activateProject('project-c'))
+    expect(usePreviewWorkbenchStore.getState().fileDialogItem).toBeUndefined()
   })
 
   it('uses only background treatment to show the expanded preview toggle state', async () => {
