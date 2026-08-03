@@ -317,13 +317,6 @@ export const OFFICIAL_VENDORS: OfficialVendor[] = [
         reasoningEffort: 'high-max'
       }
     ],
-    responsesModels: [
-      'qwen3.8-max',
-      'qwen3.8-max-preview',
-      'qwen3.7-max',
-      'qwen3.7-plus',
-      'qwen3.6-flash'
-    ],
     multimodal: {
       multimodalModels: ['qwen3.8-max', 'qwen3.8-max-preview', 'qwen3.7-plus', 'qwen3.6-flash']
     }

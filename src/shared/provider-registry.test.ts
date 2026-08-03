@@ -352,7 +352,7 @@ describe('provider registry', () => {
     expect(resolveVendorModelsUrl(bailianId)).toBeUndefined()
   })
 
-  it('routes Bailian for Plan Responses only for its documented Qwen models', () => {
+  it('does not advertise Responses support for Bailian for Plan', () => {
     const planId = 'bailianplan' as OfficialVendorId
 
     expect(isOfficialVendorId('bailianplan')).toBe(true)
@@ -383,11 +383,11 @@ describe('provider registry', () => {
     expect(defaultVendorModel(planId)).toBe('qwen3.8-max')
     expect(resolveVendorModelsUrl(planId)).toBeUndefined()
 
-    expect(isVendorModelResponsesSupported(planId, 'qwen3.8-max')).toBe(true)
-    expect(isVendorModelResponsesSupported(planId, 'qwen3.8-max-preview')).toBe(true)
-    expect(isVendorModelResponsesSupported(planId, 'qwen3.7-max')).toBe(true)
-    expect(isVendorModelResponsesSupported(planId, 'qwen3.7-plus')).toBe(true)
-    expect(isVendorModelResponsesSupported(planId, 'qwen3.6-flash')).toBe(true)
+    expect(isVendorModelResponsesSupported(planId, 'qwen3.8-max')).toBe(false)
+    expect(isVendorModelResponsesSupported(planId, 'qwen3.8-max-preview')).toBe(false)
+    expect(isVendorModelResponsesSupported(planId, 'qwen3.7-max')).toBe(false)
+    expect(isVendorModelResponsesSupported(planId, 'qwen3.7-plus')).toBe(false)
+    expect(isVendorModelResponsesSupported(planId, 'qwen3.6-flash')).toBe(false)
     expect(isVendorModelResponsesSupported(planId, 'glm-5.2')).toBe(false)
     expect(isVendorModelResponsesSupported(planId, 'deepseek-v4-pro')).toBe(false)
     expect(isVendorModelResponsesSupported(planId, 'deepseek-v4-flash-0731')).toBe(false)
