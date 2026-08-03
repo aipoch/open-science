@@ -10,13 +10,17 @@
 
 import { afterEach, beforeAll, describe, expect, it, vi } from 'vitest'
 
-const { invokeMock, sendMock, exposeMock, getPathForFileMock, onMock } = vi.hoisted(() => ({
-  invokeMock: vi.fn(),
-  sendMock: vi.fn(),
-  exposeMock: vi.fn(),
-  getPathForFileMock: vi.fn(),
-  onMock: vi.fn()
-}))
+import { RENDERER_CONTRACT_GROUPS } from '../shared/renderer-contract-catalog'
+
+const { invokeMock, sendMock, exposeMock, getPathForFileMock, onMock, removeListenerMock } =
+  vi.hoisted(() => ({
+    invokeMock: vi.fn(),
+    sendMock: vi.fn(),
+    exposeMock: vi.fn(),
+    getPathForFileMock: vi.fn(),
+    onMock: vi.fn(),
+    removeListenerMock: vi.fn()
+  }))
 
 vi.mock('electron', () => ({
   contextBridge: { exposeInMainWorld: exposeMock },
@@ -26,7 +30,7 @@ vi.mock('electron', () => ({
     on: onMock,
     off: vi.fn(),
     send: sendMock,
-    removeListener: vi.fn()
+    removeListener: removeListenerMock
   }
 }))
 
@@ -76,9 +80,13 @@ type PreloadApi = {
     previewAgentHomeSkill: (request: unknown) => unknown
   }
   acp: {
+    connect: (request?: unknown) => unknown
     resumeSession: (request: unknown) => unknown
     resetSessionContext: (request: unknown) => unknown
     compactSession: (request: unknown) => unknown
+  }
+  notebookEnv: {
+    cancel: (language?: unknown) => unknown
   }
   notifications: {
     peekPendingOpenSession: () => unknown
@@ -150,7 +158,34 @@ afterEach(() => {
   sendMock.mockClear()
   getPathForFileMock.mockReset()
   onMock.mockClear()
+  removeListenerMock.mockClear()
 })
+
+const runtimeContractCapabilities = new Set([
+  'acp',
+  'permissions',
+  'settings',
+  'specialist',
+  'handoff',
+  'compute',
+  'notebook',
+  'notebook-environment',
+  'runtime'
+])
+
+const runtimeContracts = RENDERER_CONTRACT_GROUPS.filter(({ capability }) =>
+  runtimeContractCapabilities.has(capability)
+).flatMap(({ contracts }) => contracts)
+
+const getApiCallable = (publicPath: string): ((...args: unknown[]) => unknown) => {
+  const callable = publicPath
+    .split('.')
+    .reduce<unknown>((value, member) => (value as Record<string, unknown>)[member], api)
+  if (typeof callable !== 'function') {
+    throw new Error(`window.api path is not callable: ${publicPath}`)
+  }
+  return callable as (...args: unknown[]) => unknown
+}
 
 describe('preload bridge — public surface inventory', () => {
   it('pins every callable path exposed through window.api', () => {
@@ -447,6 +482,61 @@ describe('preload bridge — public surface inventory', () => {
       'window.onWindowFindAppearance',
       'window.sendCloseConfirmResponse'
     ])
+  })
+})
+
+describe('preload bridge — runtime renderer contract catalog', () => {
+  it('routes all 163 owned methods through their cataloged Electron channels', async () => {
+    const requestContracts = runtimeContracts.filter(({ kind }) => kind === 'method')
+
+    expect(runtimeContracts).toHaveLength(163)
+
+    for (const contract of requestContracts) {
+      invokeMock.mockClear()
+
+      await getApiCallable(contract.publicPath)()
+
+      expect(invokeMock, contract.publicPath).toHaveBeenCalledTimes(1)
+      expect(invokeMock, contract.publicPath).toHaveBeenCalledWith(
+        contract.channel,
+        ...invokeMock.mock.calls[0].slice(1)
+      )
+    }
+  })
+
+  it('strips event metadata and removes each cataloged listener by exact identity', () => {
+    const eventContracts = runtimeContracts.filter(({ kind }) => kind === 'event')
+
+    for (const contract of eventContracts) {
+      onMock.mockClear()
+      removeListenerMock.mockClear()
+      const listener = vi.fn()
+      const unsubscribe = getApiCallable(contract.publicPath)(listener) as () => void
+      const wrappedListener = onMock.mock.calls[0]?.[1]
+      const payload = { publicPath: contract.publicPath }
+
+      wrappedListener?.({ sender: 'electron' }, payload)
+      unsubscribe()
+
+      expect(onMock, contract.publicPath).toHaveBeenCalledWith(contract.channel, wrappedListener)
+      expect(listener, contract.publicPath).toHaveBeenCalledWith(payload)
+      expect(removeListenerMock, contract.publicPath).toHaveBeenCalledWith(
+        contract.channel,
+        wrappedListener
+      )
+    }
+  })
+
+  it('preserves ACP defaults and the notebook cancellation argument slot', async () => {
+    await api.acp.connect()
+    await api.acp.connect(undefined)
+    await api.notebookEnv.cancel()
+    await api.notebookEnv.cancel(undefined)
+
+    expect(invokeMock).toHaveBeenNthCalledWith(1, 'acp:connect', {})
+    expect(invokeMock).toHaveBeenNthCalledWith(2, 'acp:connect', {})
+    expect(invokeMock).toHaveBeenNthCalledWith(3, 'notebook-env:cancel', undefined)
+    expect(invokeMock).toHaveBeenNthCalledWith(4, 'notebook-env:cancel', undefined)
   })
 })
 
