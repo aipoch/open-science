@@ -11,6 +11,7 @@ import type {
   PermissionGrantRecord,
   PermissionGrantScope
 } from '../../shared/permission-grants'
+import type { CommandShellDialect } from '../agent-framework/types'
 import { extractProviderToolName } from './runtime-events'
 import {
   isMcpToolName,
@@ -115,55 +116,116 @@ const commandFromRawInput = (rawInput: unknown): string | undefined => {
   return typeof command === 'string' && command.trim() ? command : undefined
 }
 
-const commandHasComposition = (command: string): boolean => {
+const simpleCommandArgv = (
+  command: string,
+  shellDialect: CommandShellDialect
+): string[] | undefined => {
+  const argv: string[] = []
+  let token = ''
+  let tokenStarted = false
   let quote: "'" | '"' | undefined
+
+  const pushToken = (): void => {
+    if (!tokenStarted) return
+    argv.push(token)
+    token = ''
+    tokenStarted = false
+  }
+
   for (let index = 0; index < command.length; index += 1) {
     const character = command[index]
-    if (character === '\\') {
-      index += 1
+
+    if (quote === "'") {
+      if (character !== "'") {
+        token += character
+        tokenStarted = true
+        continue
+      }
+      if (shellDialect === 'powershell' && command[index + 1] === "'") {
+        token += "'"
+        tokenStarted = true
+        index += 1
+      } else {
+        quote = undefined
+      }
       continue
     }
-    if (quote) {
-      if (
-        quote === '"' &&
-        (character === '`' || (character === '$' && command[index + 1] === '('))
-      ) {
-        return true
+
+    if (quote === '"') {
+      const escape = shellDialect === 'powershell' ? '`' : '\\'
+      if (character === escape) {
+        const escaped = command[index + 1]
+        if (escaped === undefined || /[\r\n]/u.test(escaped)) return undefined
+        token +=
+          shellDialect === 'posix' && !/[$`"\\]/u.test(escaped) ? `${character}${escaped}` : escaped
+        tokenStarted = true
+        index += 1
+        continue
       }
-      if (character === quote) quote = undefined
+      if (character === '"') {
+        quote = undefined
+        continue
+      }
+      if (
+        (shellDialect === 'posix' && character === '`') ||
+        (character === '$' && command[index + 1] === '(')
+      ) {
+        return undefined
+      }
+      token += character
+      tokenStarted = true
+      continue
+    }
+
+    if (/\s/u.test(character)) {
+      pushToken()
       continue
     }
     if (character === "'" || character === '"') {
       quote = character
+      tokenStarted = true
       continue
     }
-    if (/[;&|<>`\r\n]/u.test(character) || (character === '$' && command[index + 1] === '(')) {
-      return true
+
+    const escape = shellDialect === 'powershell' ? '`' : '\\'
+    if (character === escape) {
+      const escaped = command[index + 1]
+      if (escaped === undefined || /[\r\n]/u.test(escaped)) return undefined
+      token += escaped
+      tokenStarted = true
+      index += 1
+      continue
     }
+
+    if (
+      /[;&|<>\r\n]/u.test(character) ||
+      (shellDialect === 'posix' && /[`()]/u.test(character)) ||
+      (shellDialect === 'powershell' && /[(){}]/u.test(character)) ||
+      (character === '$' && command[index + 1] === '(')
+    ) {
+      return undefined
+    }
+    token += character
+    tokenStarted = true
   }
-  return quote !== undefined
-}
 
-const commandStartsWithArgvPrefix = (command: string, prefix: string[]): boolean => {
-  if (commandHasComposition(command)) return false
-
-  // ponytail: accept only simple argv text; use adapter-supplied argv if ACP exposes it later.
-  const words = command.match(/(?:"(?:\\.|[^"\\])*"|'(?:\\.|[^'\\])*'|\\.|[^\s])+/gu) ?? []
-  const argv = words.map((word) =>
-    word.replace(/^(["'])([\s\S]*)\1$/u, '$2').replace(/\\([\\\s"'])/gu, '$1')
-  )
-  return prefix.every((token, index) => argv[index] === token)
+  if (quote) return undefined
+  pushToken()
+  return argv
 }
 
 // Reads Codex's structured argv-prefix proposal only when the provider offers the matching native
 // policy amendment. Some codex-acp shapes repeat the prefix on the request instead of the option.
-const codexCommandGroup = (params: RequestPermissionRequest): CodexCommandGroup | undefined => {
+const codexCommandGroup = (
+  params: RequestPermissionRequest,
+  shellDialect: CommandShellDialect | undefined
+): CodexCommandGroup | undefined => {
   const option = params.options.find(
     (candidate) =>
       candidate.optionId === CODEX_EXEC_POLICY_AMENDMENT_OPTION_ID &&
       candidate.kind.toLowerCase() === ALLOW_ALWAYS_OPTION_KIND
   )
-  if (!option) return undefined
+  if (!option || !shellDialect) return undefined
 
   const optionCodex = metadataRecord(option._meta?.codex)
   const requestCodex = metadataRecord(params._meta?.codex)
@@ -175,10 +237,12 @@ const codexCommandGroup = (params: RequestPermissionRequest): CodexCommandGroup 
 
   const commandPrefix = amendment.filter((token): token is string => typeof token === 'string')
   const command = commandFromRawInput(params.toolCall.rawInput)
+  const commandArgv = command ? simpleCommandArgv(command, shellDialect) : undefined
   if (
     !command ||
     containsSecretBearingMaterial(command) ||
-    !commandStartsWithArgvPrefix(command, commandPrefix)
+    !commandArgv ||
+    !commandPrefix.every((token, index) => commandArgv[index] === token)
   ) {
     return undefined
   }
@@ -661,7 +725,9 @@ class AcpPermissionBroker {
     const mcpServerNames = policyContext?.mcpServerNames ?? []
     const isMcp = isMcpPermission(params, mcpServerNames)
     const codexGroup =
-      policyContext?.frameworkId === 'codex' && !isMcp ? codexCommandGroup(params) : undefined
+      policyContext?.frameworkId === 'codex' && !isMcp
+        ? codexCommandGroup(params, policyContext.shellDialect)
+        : undefined
     const categoryKey =
       codexGroup?.categoryKey ??
       resolveCategoryKey(params, mcpServerNames, !this.permissionGrantRegistry)

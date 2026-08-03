@@ -247,6 +247,7 @@ describe('ACP permission broker with durable grants', () => {
     const pending = broker.requestPermission(request, {
       profile: 'ask',
       frameworkId: 'codex',
+      shellDialect: 'posix',
       projectId: 'project-1'
     })
     await new Promise<void>((resolve) => setImmediate(resolve))
@@ -276,6 +277,7 @@ describe('ACP permission broker with durable grants', () => {
     const pending = broker.requestPermission(request, {
       profile: 'ask',
       frameworkId: 'codex',
+      shellDialect: 'posix',
       projectId: 'project-1'
     })
     await new Promise<void>((resolve) => setImmediate(resolve))
@@ -289,13 +291,18 @@ describe('ACP permission broker with durable grants', () => {
   })
 
   it.each([
-    'rm -rf build',
-    'git status && rm -rf build',
-    'git status "$(rm -rf build)"',
-    'git status "`rm -rf build`"'
-  ])(
-    'offers only provider Once when a Codex command group does not safely prefix %s',
-    async (command) => {
+    ['posix', 'rm -rf build'],
+    ['posix', 'git status && rm -rf build'],
+    ['posix', 'git status "$(rm -rf build)"'],
+    ['posix', 'git status "`rm -rf build`"'],
+    ['posix', '"g\\it" status'],
+    ['powershell', 'git status (Remove-Item build)'],
+    ['powershell', 'git status \\(Remove-Item build)'],
+    ['powershell', 'git status "$(Remove-Item build)"'],
+    ['powershell', 'git status { Remove-Item build }']
+  ] as const)(
+    'offers only provider Once when a Codex %s command group does not safely prefix %s',
+    async (shellDialect, command) => {
       storageRoot = await mkdtemp(join(tmpdir(), 'open-science-broker-mismatched-command-group-'))
       client = createProjectDbClient(storageRoot)
       await ensureProjectSchema(client)
@@ -319,6 +326,7 @@ describe('ACP permission broker with durable grants', () => {
       const pending = broker.requestPermission(request, {
         profile: 'ask',
         frameworkId: 'codex',
+        shellDialect,
         projectId: 'project-1'
       })
       await new Promise<void>((resolve) => setImmediate(resolve))
@@ -358,6 +366,7 @@ describe('ACP permission broker with durable grants', () => {
     const pending = broker.requestPermission(request, {
       profile: 'ask',
       frameworkId: 'codex',
+      shellDialect: 'posix',
       projectId: 'project-1'
     })
     await new Promise<void>((resolve) => setImmediate(resolve))
@@ -407,6 +416,7 @@ describe('ACP permission broker with durable grants', () => {
       broker.requestPermission(nextRequest, {
         profile: 'ask',
         frameworkId: 'codex',
+        shellDialect: 'posix',
         projectId: 'project-1'
       })
     ).resolves.toEqual({

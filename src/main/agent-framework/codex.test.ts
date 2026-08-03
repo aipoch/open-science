@@ -15,6 +15,13 @@ import { CODEX_VERSION } from '../settings/managed-codex'
 const fakeChild = {} as ChildProcessWithoutNullStreams
 
 describe('codexFramework', () => {
+  it.each([
+    ['darwin', 'posix'],
+    ['win32', 'powershell']
+  ] as const)('reports the %s command shell as %s', (platform, shellDialect) => {
+    expect(createCodexFramework({ platform }).commandShellDialect).toBe(shellDialect)
+  })
+
   it('configures an isolated Responses provider without serializing its key', () => {
     const framework = createCodexFramework()
     const config = framework.prepareModelConfig(

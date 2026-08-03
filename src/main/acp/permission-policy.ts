@@ -6,6 +6,7 @@ import type {
   PermissionProfileId
 } from '../../shared/permission-profiles'
 import type { AgentFrameworkId } from '../../shared/settings'
+import type { CommandShellDialect } from '../agent-framework/types'
 import {
   ACTIVITY_GROUP_MCP_SERVER_NAME,
   isActivityGroupToolEvent
@@ -21,6 +22,7 @@ type PermissionPolicyContext = {
   profile: PermissionProfileId
   projectId?: string
   frameworkId?: AgentFrameworkId
+  shellDialect?: CommandShellDialect
   autoReviewStrategy?: PermissionAutoReviewStrategy
   cwd?: string
   // Canonical MCP server names, so framework-visible tools can resolve to stable policy identities.

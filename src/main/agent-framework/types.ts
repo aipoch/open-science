@@ -139,11 +139,17 @@ export type ContextCompactionStrategy =
     }
   | { kind: 'framework-managed' }
 
+export type CommandShellDialect = 'posix' | 'powershell'
+
 // One switchable agent backend. The ACP runtime stays generic and delegates only the framework-coupled
 // decisions to this interface. See docs/internal/pluggable-agent-framework-feasibility.md.
 export interface AgentFramework {
   readonly id: AgentFrameworkId
   readonly displayName: string
+
+  // The shell grammar used for provider-native command tools. The permission Broker consumes this
+  // fact when validating remembered command groups; the framework does not make permission decisions.
+  readonly commandShellDialect?: CommandShellDialect
 
   // Keeps slash-command details at the framework seam so the generic runtime only asks for native
   // compaction and never branches on framework ids.
