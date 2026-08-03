@@ -345,7 +345,7 @@ export const LocalFileBrowser = ({
 
   const listing = state.kind === 'ok' ? state : null
   const currentPath = listing?.resolvedPath ?? cwd
-  const isAtRoot = isLocalPathRoot(currentPath)
+  const isAtRoot = isLocalPathRoot(currentPath, window.api.platform)
 
   // Submit/blur only re-reads the directory when the typed path actually resolves somewhere new, so
   // tabbing out of an untouched address bar costs no listing call. A no-op edit (trailing slash,
@@ -366,7 +366,7 @@ export const LocalFileBrowser = ({
       })
       return
     }
-    if (sameLocalDirectory(resolved, currentPath)) {
+    if (sameLocalDirectory(resolved, currentPath, window.api.platform)) {
       setAddressInput(currentPath)
       return
     }
@@ -377,7 +377,7 @@ export const LocalFileBrowser = ({
   // like .ssh, private keys, dotenv files) warn first, whether entering or opening.
   const handleOpenEntry = (entry: LocalDirEntry): void => {
     const path = resolveLocalPath(currentPath, entry.name, window.api.platform)
-    if (isSensitiveLocalPath(path)) {
+    if (isSensitiveLocalPath(path, window.api.platform)) {
       const prompt = entry.isDirectory
         ? `"${entry.name}" may contain credentials or secrets. Open this folder anyway?`
         : `"${entry.name}" may contain credentials or secrets. Open it anyway?`
@@ -431,7 +431,7 @@ export const LocalFileBrowser = ({
               size="icon-sm"
               className={TOOLBAR_ICON_BUTTON}
               disabled={isAtRoot}
-              onClick={() => void navigate(parentLocalPath(currentPath))}
+              onClick={() => void navigate(parentLocalPath(currentPath, window.api.platform))}
               aria-label="Go to parent directory"
             >
               <ArrowLeft className="size-4" strokeWidth={TOOLBAR_ICON_STROKE} />

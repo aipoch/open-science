@@ -19,6 +19,7 @@ describe('validateLocalPath', () => {
     expect(validateLocalPath('C:\\Users\\roxi\\Documents', 'win32')).toBeUndefined()
     expect(validateLocalPath('C:/Users/roxi/Documents', 'win32')).toBeUndefined()
     expect(validateLocalPath('\\\\server\\share\\Documents', 'win32')).toBeUndefined()
+    expect(validateLocalPath('//server/share/Documents', 'win32')).toBeUndefined()
   })
 
   it('rejects non-absolute or empty input', () => {
@@ -41,34 +42,34 @@ describe('validateLocalPath', () => {
 
 describe('isSensitiveLocalPath', () => {
   it('flags credential dirs and files', () => {
-    expect(isSensitiveLocalPath('/Users/roxi/.ssh')).toBe(true)
-    expect(isSensitiveLocalPath('/Users/roxi/project/.env')).toBe(true)
-    expect(isSensitiveLocalPath('/Users/roxi/.env.local')).toBe(true)
-    expect(isSensitiveLocalPath('/etc/ssl/private/server.key')).toBe(true)
-    expect(isSensitiveLocalPath('/Users/roxi/cert.pem')).toBe(true)
-    expect(isSensitiveLocalPath('C:\\Users\\roxi\\.ssh')).toBe(true)
+    expect(isSensitiveLocalPath('/Users/roxi/.ssh', 'linux')).toBe(true)
+    expect(isSensitiveLocalPath('/Users/roxi/project/.env', 'linux')).toBe(true)
+    expect(isSensitiveLocalPath('/Users/roxi/.env.local', 'linux')).toBe(true)
+    expect(isSensitiveLocalPath('/etc/ssl/private/server.key', 'linux')).toBe(true)
+    expect(isSensitiveLocalPath('/Users/roxi/cert.pem', 'linux')).toBe(true)
+    expect(isSensitiveLocalPath('C:\\Users\\roxi\\.ssh', 'win32')).toBe(true)
   })
 
   it('flags suffix-less secret files (SSH keys, cloud credentials)', () => {
-    expect(isSensitiveLocalPath('/Users/roxi/.ssh/id_rsa')).toBe(true)
-    expect(isSensitiveLocalPath('/Users/roxi/.ssh/id_ed25519')).toBe(true)
-    expect(isSensitiveLocalPath('/Users/roxi/.aws/credentials')).toBe(true)
-    expect(isSensitiveLocalPath('/Users/roxi/.pgpass')).toBe(true)
-    expect(isSensitiveLocalPath('/Users/roxi/keystore.p12')).toBe(true)
+    expect(isSensitiveLocalPath('/Users/roxi/.ssh/id_rsa', 'linux')).toBe(true)
+    expect(isSensitiveLocalPath('/Users/roxi/.ssh/id_ed25519', 'linux')).toBe(true)
+    expect(isSensitiveLocalPath('/Users/roxi/.aws/credentials', 'linux')).toBe(true)
+    expect(isSensitiveLocalPath('/Users/roxi/.pgpass', 'linux')).toBe(true)
+    expect(isSensitiveLocalPath('/Users/roxi/keystore.p12', 'linux')).toBe(true)
     // case-insensitive on the basename
-    expect(isSensitiveLocalPath('/Users/roxi/.ssh/ID_RSA')).toBe(true)
+    expect(isSensitiveLocalPath('/Users/roxi/.ssh/ID_RSA', 'linux')).toBe(true)
   })
 
   it('does not flag lookalikes that are not secrets', () => {
-    expect(isSensitiveLocalPath('/Users/roxi/.ssh/id_rsa.pub')).toBe(false)
-    expect(isSensitiveLocalPath('/Users/roxi/credentials.md')).toBe(false)
+    expect(isSensitiveLocalPath('/Users/roxi/.ssh/id_rsa.pub', 'linux')).toBe(false)
+    expect(isSensitiveLocalPath('/Users/roxi/credentials.md', 'linux')).toBe(false)
   })
 
   it('treats ordinary files as non-sensitive', () => {
-    expect(isSensitiveLocalPath('/Users/roxi/Documents/notes.md')).toBe(false)
-    expect(isSensitiveLocalPath('/Users/roxi/data.csv')).toBe(false)
-    expect(isSensitiveLocalPath('/')).toBe(false)
-    expect(isSensitiveLocalPath('/tmp/folder\\.ssh')).toBe(false)
+    expect(isSensitiveLocalPath('/Users/roxi/Documents/notes.md', 'linux')).toBe(false)
+    expect(isSensitiveLocalPath('/Users/roxi/data.csv', 'linux')).toBe(false)
+    expect(isSensitiveLocalPath('/', 'linux')).toBe(false)
+    expect(isSensitiveLocalPath('/tmp/folder\\.ssh', 'linux')).toBe(false)
   })
 })
 
@@ -121,29 +122,32 @@ describe('resolveLocalPath', () => {
     expect(resolveLocalPath('\\\\server\\share', 'Documents', 'win32')).toBe(
       '\\\\server\\share\\Documents'
     )
+    expect(resolveLocalPath('C:\\Users\\roxi', '//server/share', 'win32')).toBe('//server/share')
   })
 })
 
 describe('local path navigation', () => {
   it('finds parents and roots with host path semantics', () => {
-    expect(parentLocalPath('/Users/roxi/Documents')).toBe('/Users/roxi')
-    expect(parentLocalPath('/tmp/folder\\name')).toBe('/tmp')
-    expect(parentLocalPath('/')).toBe('/')
-    expect(parentLocalPath('C:\\Users\\roxi')).toBe('C:\\Users')
-    expect(parentLocalPath('C:\\')).toBe('C:\\')
-    expect(parentLocalPath('\\\\server\\share\\Documents')).toBe('\\\\server\\share')
-    expect(parentLocalPath('\\\\server\\share')).toBe('\\\\server\\share')
-    expect(isLocalPathRoot('C:\\')).toBe(true)
-    expect(isLocalPathRoot('\\\\server\\share\\')).toBe(true)
-    expect(isLocalPathRoot('C:\\Users')).toBe(false)
+    expect(parentLocalPath('/Users/roxi/Documents', 'linux')).toBe('/Users/roxi')
+    expect(parentLocalPath('/tmp/folder\\name', 'linux')).toBe('/tmp')
+    expect(parentLocalPath('/', 'linux')).toBe('/')
+    expect(parentLocalPath('C:\\Users\\roxi', 'win32')).toBe('C:\\Users')
+    expect(parentLocalPath('C:\\', 'win32')).toBe('C:\\')
+    expect(parentLocalPath('\\\\server\\share\\Documents', 'win32')).toBe('\\\\server\\share')
+    expect(parentLocalPath('//server/share/Documents', 'win32')).toBe('//server/share')
+    expect(parentLocalPath('\\\\server\\share', 'win32')).toBe('\\\\server\\share')
+    expect(isLocalPathRoot('C:\\', 'win32')).toBe(true)
+    expect(isLocalPathRoot('//server/share/', 'win32')).toBe(true)
+    expect(isLocalPathRoot('C:\\Users', 'win32')).toBe(false)
   })
 
   it('compares Windows directories case-insensitively and ignores trailing separators', () => {
-    expect(sameLocalDirectory('/Users/roxi/', '/Users/roxi')).toBe(true)
-    expect(sameLocalDirectory('/tmp/folder\\', '/tmp/folder')).toBe(false)
-    expect(sameLocalDirectory('C:\\Users\\Roxi\\', 'c:\\users\\roxi')).toBe(true)
-    expect(sameLocalDirectory('C:/Users/Roxi', 'c:\\users\\roxi')).toBe(true)
-    expect(sameLocalDirectory('C:\\Users', 'D:\\Users')).toBe(false)
+    expect(sameLocalDirectory('/Users/roxi/', '/Users/roxi', 'linux')).toBe(true)
+    expect(sameLocalDirectory('/tmp/folder\\', '/tmp/folder', 'linux')).toBe(false)
+    expect(sameLocalDirectory('C:\\Users\\Roxi\\', 'c:\\users\\roxi', 'win32')).toBe(true)
+    expect(sameLocalDirectory('C:/Users/Roxi', 'c:\\users\\roxi', 'win32')).toBe(true)
+    expect(sameLocalDirectory('//server/share', '\\\\SERVER\\share\\', 'win32')).toBe(true)
+    expect(sameLocalDirectory('C:\\Users', 'D:\\Users', 'win32')).toBe(false)
   })
 })
 
