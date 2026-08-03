@@ -201,6 +201,55 @@ describe('ConversationSkillImporter', () => {
     expect(onSkillsChanged).toHaveBeenCalledOnce()
   })
 
+  it('stops a selected GitHub batch when its conversation is cancelled', async () => {
+    const root = await mkdtemp(join(tmpdir(), 'conversation-skill-import-'))
+    roots.push(root)
+    const firstUrl = 'https://github.com/acme/skills/tree/commit/first'
+    const secondUrl = 'https://github.com/acme/skills/tree/commit/second'
+    const broker = new SkillImportApprovalBroker({
+      generateId: () => 'approval-github-cancelled',
+      broadcast: (request) =>
+        broker.respond({
+          id: request.id,
+          items: request.previews.map((candidate) => ({ subPath: candidate.subPath }))
+        })
+    })
+    const importGitHub = vi.fn(async (url: string) => {
+      broker.cancelSession('session-1')
+      return {
+        status: 'imported' as const,
+        id: `imported-${url === firstUrl ? 'first' : 'second'}`,
+        skills: []
+      }
+    })
+    const importer = new ConversationSkillImporter({
+      uploads: new UploadRepository(root),
+      createCancellationGuard: (sessionId, turnToken, attachmentUri) =>
+        broker.createCancellationGuard(sessionId, turnToken, attachmentUri),
+      createSessionCancellationGuard: (sessionId) =>
+        broker.createSessionCancellationGuard(sessionId),
+      previewBundle: async () => ({ previews: [], skipped: [] }),
+      importBundle: async () => [],
+      scanGitHub: async () => [
+        { name: 'First', path: 'first', url: firstUrl, alreadyImported: false },
+        { name: 'Second', path: 'second', url: secondUrl, alreadyImported: false }
+      ],
+      importGitHub,
+      requestApproval: (request, cancellation) => broker.request(request, cancellation)
+    })
+    broker.beginSessionTurn('session-1', 'turn-1')
+
+    await expect(
+      importer.request({ sessionId: 'session-1', githubUrl: 'https://github.com/acme/skills' })
+    ).resolves.toEqual({
+      status: 'imported',
+      skills: [{ id: 'imported-first', name: 'First', status: 'imported' }]
+    })
+    expect(importGitHub).toHaveBeenCalledOnce()
+    expect(importGitHub).toHaveBeenCalledWith(firstUrl)
+    expect(importGitHub).not.toHaveBeenCalledWith(secondUrl)
+  })
+
   it('imports a session-owned Skill attachment after the user confirms its preview', async () => {
     const root = await mkdtemp(join(tmpdir(), 'conversation-skill-import-'))
     roots.push(root)

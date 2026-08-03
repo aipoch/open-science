@@ -417,6 +417,7 @@ class ConversationSkillImporter {
     const skills: ConversationSkillImportResult['skills'] = []
     const errors: NonNullable<ConversationSkillImportResult['errors']> = []
     for (const item of items) {
+      if (cancellation.isCancelled()) break
       const candidate = candidates.get(item.subPath)!
       try {
         const outcome = await importGitHub(candidate.url)

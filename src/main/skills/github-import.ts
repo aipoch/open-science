@@ -302,7 +302,7 @@ const parseGitHubRepo = (input: string): GitHubRepoRef | null => {
 }
 
 // Scans a repo's git tree for every directory containing a SKILL.md, returning an importable URL for
-// each. Uses the public Git Trees API (recursive); resolves the default branch when no ref is given.
+// each. Resolve branch/tag refs to a commit first so a later preview and import read the same snapshot.
 const scanRepoForSkills = async (
   repo: GitHubRepoRef,
   fetchImpl: FetchLike
@@ -316,8 +316,16 @@ const scanRepoForSkills = async (
     ref = ((await meta.json()) as { default_branch?: string }).default_branch ?? 'main'
   }
 
+  const commitResponse = await fetchImpl(
+    `https://api.github.com/repos/${repo.owner}/${repo.repo}/commits/${encodeURIComponent(ref)}`,
+    { headers: GITHUB_HEADERS }
+  )
+  if (!commitResponse.ok) throw new Error(`GitHub API request failed (${commitResponse.status}).`)
+  const commitSha = ((await commitResponse.json()) as { sha?: string }).sha
+  if (!commitSha) throw new Error('GitHub did not return a commit SHA for that ref.')
+
   const treeResponse = await fetchImpl(
-    `https://api.github.com/repos/${repo.owner}/${repo.repo}/git/trees/${encodeURIComponent(ref)}?recursive=1`,
+    `https://api.github.com/repos/${repo.owner}/${repo.repo}/git/trees/${encodeURIComponent(commitSha)}?recursive=1`,
     { headers: GITHUB_HEADERS }
   )
   if (!treeResponse.ok) throw new Error(`GitHub API request failed (${treeResponse.status}).`)
@@ -330,7 +338,7 @@ const scanRepoForSkills = async (
       const dir = entry.path.replace(/\/?SKILL\.md$/i, '')
       const name = dir.split('/').filter(Boolean).pop() ?? repo.repo
       // Percent-encode each segment so the url round-trips when later imported (e.g. spaces in dir names).
-      const encodedRef = encodeURIComponent(ref)
+      const encodedRef = encodeURIComponent(commitSha)
       const encodedDir = dir.split('/').map(encodeURIComponent).join('/')
       const url = dir
         ? `https://github.com/${repo.owner}/${repo.repo}/tree/${encodedRef}/${encodedDir}`
