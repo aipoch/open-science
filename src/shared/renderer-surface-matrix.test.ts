@@ -13,8 +13,9 @@ import {
   projectWebRendererEvent
 } from '../main/web-service/application-event-projections'
 import { REMOTE_LOCAL_ONLY_RPC_CHANNELS } from '../main/web-service/http-server'
-import { installWebInvokeChannels } from '../renderer/web/api-installer'
+import { installWebRendererContracts } from '../renderer/web/api-installer'
 import type { AcpRuntimeEvent } from './acp'
+import { RENDERER_CONTRACT_CATALOG } from './renderer-contract-catalog'
 import { SPECIALIST_IPC } from './specialist'
 import type { StartTaskRunRequest } from './task-api'
 import { WEB_EVENT_CHANNELS, WEB_INVOKE_CHANNELS } from './web-api-map.generated'
@@ -70,6 +71,18 @@ const pathsWithPrefix = (paths: readonly string[], prefix: string): string[] =>
   paths.filter((path) => path.startsWith(prefix)).sort()
 
 describe('renderer surface compatibility matrix', () => {
+  it('derives remote Web rejecting channels from the renderer catalog', () => {
+    const expected = RENDERER_CONTRACT_CATALOG.flatMap(({ channel, surfaceInstallation }) =>
+      channel !== null &&
+      surfaceInstallation.localWeb === 'web-rpc' &&
+      surfaceInstallation.remoteWeb === 'rejecting-stub'
+        ? [channel]
+        : []
+    ).sort()
+
+    expect([...REMOTE_LOCAL_ONLY_RPC_CHANNELS].sort()).toEqual(expected)
+  })
+
   it('keeps Specialist management and pending-switch delivery Electron-only', () => {
     const invokePaths = Object.keys(WEB_INVOKE_CHANNELS)
     const eventPaths = Object.keys(WEB_EVENT_CHANNELS)
@@ -176,16 +189,13 @@ describe('renderer surface compatibility matrix', () => {
     expect(remoteRestrictedCompute).toEqual(['compute:download', 'compute:reveal-in-folder'])
 
     const remoteApi: Record<string, unknown> = {}
-    installWebInvokeChannels(
-      remoteApi,
-      {
-        'compute.download': WEB_INVOKE_CHANNELS['compute.download'],
-        'compute.revealInFolder': WEB_INVOKE_CHANNELS['compute.revealInFolder']
-      },
-      new Set(),
-      new Set(remoteRestrictedCompute),
-      () => async () => undefined
-    )
+    installWebRendererContracts(remoteApi, {
+      availableRpcChannels: new Set(),
+      restrictedRpcChannels: new Set(remoteRestrictedCompute),
+      invoke: async () => undefined,
+      subscribe: () => () => undefined,
+      nativeAdapters: {}
+    })
     const remoteCompute = remoteApi.compute as {
       download(): Promise<unknown>
       revealInFolder(): Promise<unknown>

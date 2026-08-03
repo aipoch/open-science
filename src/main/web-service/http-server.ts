@@ -23,6 +23,7 @@ import {
   WEB_RPC_PROTOCOL_VERSION,
   webRpcRequestSchema
 } from '../../shared/web-rpc-contract'
+import { RENDERER_CONTRACT_CATALOG } from '../../shared/renderer-contract-catalog'
 import { projectPublicTaskEvent, projectWebRendererEvent } from './application-event-projections'
 import { authenticateRequest, persistAuthCookie } from './auth'
 import type { StartTaskRunRequest } from '../../shared/task-api'
@@ -33,68 +34,16 @@ const MIN_GZIP_BYTES = 1_024
 const gzipAsync = promisify(gzip)
 
 // Remote Browser access is an application session, not authority over native host lifecycle and
-// shell integration. Keep these channels available to the loopback-token Web client while rejecting
-// them when authentication came from the external access adapter.
-export const REMOTE_LOCAL_ONLY_RPC_CHANNELS = new Set([
-  'artifacts:open-file',
-  'cli:install',
-  'cli:uninstall',
-  'compute:download',
-  'compute:reveal-in-folder',
-  // The "This computer" browser reads and opens the host filesystem, so it stays with the local app.
-  'local-fs:get-roots',
-  'local-fs:list-dir',
-  'local-fs:open-path',
-  'local-fs:read-preview',
-  'local-fs:reveal',
-  'logs:open-file',
-  'logs:reveal-in-folder',
-  'notebook-env:cancel',
-  'notebook-env:provision',
-  'notebook-env:repair',
-  'notebook:export-ipynb',
-  'notebook:export-ipynb-all',
-  'runtime:pick-interpreter',
-  'runtime:register-interpreter',
-  'runtime:set-environment-enabled',
-  'runtime:set-install-authorized',
-  'runtime:set-selection',
-  'runtime:unregister-interpreter',
-  'settings:cancel-claude-login',
-  'settings:cancel-codex-login',
-  'settings:cancel-isolated-claude-login',
-  'settings:install-claude',
-  'settings:install-codex',
-  'settings:install-opencode',
-  'settings:login-isolated-claude',
-  'settings:login-isolated-claude-browser',
-  'settings:login-isolated-codex',
-  'settings:login-shared-claude',
-  'settings:logout-isolated-claude',
-  'settings:logout-isolated-codex',
-  'settings:logout-shared-claude',
-  'settings:set-app-icon-variant',
-  'settings:set-close-preference',
-  'settings:set-notifications-enabled',
-  'settings:set-package-mirror',
-  'settings:uninstall-claude',
-  'settings:uninstall-codex',
-  'settings:uninstall-opencode',
-  'storage:cancel-migrate',
-  'storage:commit-and-relaunch',
-  'storage:discard-migrated-copy',
-  'storage:inspect-data-root',
-  'storage:migrate',
-  'storage:pick-directory',
-  'storage:reveal-app-storage',
-  'storage:set-data-root-and-relaunch',
-  'storage:validate-data-root',
-  'update:apply',
-  'update:cancel',
-  'update:download',
-  // Copies bytes from an arbitrary host path; the sibling stage-local-file is web-unavailable.
-  'uploads:stage-local-path'
-])
+// shell integration. The catalog keeps that authority decision aligned with renderer installation.
+export const REMOTE_LOCAL_ONLY_RPC_CHANNELS = new Set(
+  RENDERER_CONTRACT_CATALOG.flatMap(({ channel, surfaceInstallation }) =>
+    channel !== null &&
+    surfaceInstallation.localWeb === 'web-rpc' &&
+    surfaceInstallation.remoteWeb === 'rejecting-stub'
+      ? [channel]
+      : []
+  )
+)
 
 const MIME_TYPES: Record<string, string> = {
   '.css': 'text/css; charset=utf-8',
