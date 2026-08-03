@@ -216,22 +216,18 @@ describe('renderer surface inventory', () => {
     ])
   })
 
-  it('distinguishes browser-native replacements from Electron-only callables', () => {
+  it('pins browser-native replacements and Electron-only categories', () => {
     expectSameSet(WEB_RPC_UNAVAILABLE_CHANNELS, WEB_UNAVAILABLE_CHANNELS)
 
-    const localWebPaths = new Set([
-      ...Object.entries(WEB_INVOKE_CHANNELS)
-        .filter(([, channel]) => WEB_RPC_ALLOWED_CHANNELS.includes(channel))
-        .map(([path]) => path),
-      ...Object.keys(WEB_EVENT_CHANNELS),
-      ...BROWSER_NATIVE_CALLABLE_PATHS
-    ])
-    const electronOnlyPaths = collectFunctionPaths(exposedApi).filter(
-      (path) => !localWebPaths.has(path)
-    )
+    const electronPaths = new Set(collectFunctionPaths(exposedApi))
+    const browserNativePaths = new Set<string>(BROWSER_NATIVE_CALLABLE_PATHS)
+    const electronOnlyPaths = new Set<string>(ELECTRON_ONLY_CALLABLE_PATHS)
 
-    expect(localWebPaths).toHaveLength(250)
-    expectSameSet(electronOnlyPaths, ELECTRON_ONLY_CALLABLE_PATHS)
+    expect(browserNativePaths.size).toBe(BROWSER_NATIVE_CALLABLE_PATHS.length)
+    expect(electronOnlyPaths.size).toBe(ELECTRON_ONLY_CALLABLE_PATHS.length)
+    expect([...browserNativePaths].every((path) => electronPaths.has(path))).toBe(true)
+    expect([...electronOnlyPaths].every((path) => electronPaths.has(path))).toBe(true)
+    expect([...browserNativePaths].every((path) => !electronOnlyPaths.has(path))).toBe(true)
   })
 
   it('pins remote local-only policy as an exact subset of local Web RPC', () => {

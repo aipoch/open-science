@@ -86,6 +86,10 @@ type PreloadApi = {
     syncViewState: (state: unknown) => void
     onViewProbe: (listener: (challengeId: number) => void) => () => void
   }
+  specialist: {
+    list: () => unknown
+    onPendingSwitch: (listener: (payload: unknown) => void) => () => void
+  }
   cli: {
     getStatus: () => unknown
     install: () => unknown
@@ -826,6 +830,21 @@ describe('preload bridge — sessions + agent-framework IPC channels', () => {
 
     api.sessions.sendFlushResponse(response)
     expect(sendMock).toHaveBeenCalledWith('sessions:flush-response', response)
+  })
+
+  it('keeps Specialist management and pending-switch delivery on the Electron bridge', () => {
+    const listener = vi.fn()
+    const payload = { sessionId: 'session-1', targetName: 'ANALYST' }
+
+    api.specialist.list()
+    expect(invokeMock).toHaveBeenCalledWith('specialist:list')
+
+    api.specialist.onPendingSwitch(listener)
+    expect(onMock).toHaveBeenCalledWith('specialist:pending-switch', expect.any(Function))
+    const wrappedListener = onMock.mock.calls.at(-1)?.[1] as
+      ((_event: unknown, value: unknown) => void) | undefined
+    wrappedListener?.({}, payload)
+    expect(listener).toHaveBeenCalledWith(payload)
   })
 
   it.each(cases)('$name', ({ invoke, channel, args }) => {

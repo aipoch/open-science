@@ -2,8 +2,8 @@
 
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 
-import { WEB_INVOKE_CHANNELS } from '../../shared/web-api-map.generated'
-import { WEB_RPC_PROTOCOL_VERSION } from '../../shared/web-rpc-contract'
+import { WEB_EVENT_CHANNELS, WEB_INVOKE_CHANNELS } from '../../shared/web-api-map.generated'
+import { WEB_RPC_ALLOWED_CHANNELS, WEB_RPC_PROTOCOL_VERSION } from '../../shared/web-rpc-contract'
 
 const electronMocks = vi.hoisted(() => ({
   exposeInMainWorld: vi.fn(),
@@ -52,28 +52,12 @@ type CapturedInvocation = {
   args: unknown[]
 }
 
-const characterizedPaths = [
-  'acp.connect',
-  'acp.createSession',
-  'runtime.describeUsage',
-  'runtime.getEnablement',
-  'runtime.listPackageCounts',
-  'runtime.listPackages',
-  'runtime.registerInterpreter',
-  'runtime.setEnvironmentEnabled',
-  'runtime.setInstallAuthorized',
-  'runtime.setSelection',
-  'runtime.unregisterInterpreter',
-  'sessions.saveSession',
-  'storage.commitAndRelaunch',
-  'storage.discardMigratedCopy',
-  'storage.inspectDataRoot',
-  'storage.migrate',
-  'storage.setDataRootAndRelaunch',
-  'storage.validateDataRoot'
+const BROWSER_NATIVE_CALLABLE_PATHS = [
+  'getRuntimeVersions',
+  'saveBlobFile',
+  'saveManagedFile',
+  'window.close'
 ] as const
-
-const rpcChannels = characterizedPaths.map((path) => WEB_INVOKE_CHANNELS[path])
 
 const webInvocations: CapturedInvocation[] = []
 
@@ -82,6 +66,15 @@ const methodAt = (api: ApiRoot, path: string): ((...args: unknown[]) => Promise<
   for (const part of path.split('.')) value = (value as ApiRoot)[part]
   if (typeof value !== 'function') throw new Error(`Missing API method: ${path}`)
   return value as (...args: unknown[]) => Promise<unknown>
+}
+
+const collectFunctionPaths = (value: unknown, prefix = ''): string[] => {
+  if (typeof value === 'function') return [prefix]
+  if (!value || typeof value !== 'object') return []
+
+  return Object.entries(value).flatMap(([key, child]) =>
+    collectFunctionPaths(child, prefix ? `${prefix}.${key}` : key)
+  )
 }
 
 const loadElectronApi = async (): Promise<ApiRoot> => {
@@ -142,7 +135,7 @@ beforeEach(async () => {
             platform: 'test',
             versions: { electron: '1', chrome: '1', node: '1' },
             rpcProtocolVersion: WEB_RPC_PROTOCOL_VERSION,
-            rpcChannels
+            rpcChannels: WEB_RPC_ALLOWED_CHANNELS
           }),
           { status: 200, headers: { 'content-type': 'application/json' } }
         )
@@ -176,6 +169,21 @@ afterEach(() => {
 })
 
 describe('renderer argument-shape characterization', () => {
+  it('loads the complete local Web callable surface from the real bootstrap', () => {
+    const expectedPaths = [
+      ...Object.entries(WEB_INVOKE_CHANNELS)
+        .filter(([, channel]) => WEB_RPC_ALLOWED_CHANNELS.includes(channel))
+        .map(([path]) => path),
+      ...Object.keys(WEB_EVENT_CHANNELS),
+      ...BROWSER_NATIVE_CALLABLE_PATHS
+    ].sort()
+    const actualPaths = collectFunctionPaths(webApi).sort()
+
+    expect(new Set(actualPaths).size).toBe(actualPaths.length)
+    expect(actualPaths).toHaveLength(250)
+    expect(actualPaths).toEqual(expectedPaths)
+  })
+
   it('records the nine known Runtime deviations without treating them as equivalences', async () => {
     const selection = { kind: 'interpreter', path: '/opt/python' }
     const cases = [
@@ -300,5 +308,21 @@ describe('renderer argument-shape characterization', () => {
         electron
       )
     }
+  })
+
+  it('keeps projectFiles.searchArtifacts request forwarding equivalent', async () => {
+    const request = {
+      projectId: 'project-1',
+      query: 'analysis',
+      limit: 24
+    }
+    const electron = await invokeElectron(electronApi, 'projectFiles.searchArtifacts', [request])
+    const web = await invokeWeb(webApi, 'projectFiles.searchArtifacts', [request])
+
+    expect(electron).toEqual({
+      channel: 'project-files:search-artifacts',
+      args: [request]
+    })
+    expect(web).toEqual(electron)
   })
 })

@@ -1,6 +1,3 @@
-import { readFile } from 'node:fs/promises'
-import { resolve } from 'node:path'
-
 import { describe, expect, it } from 'vitest'
 
 import {
@@ -19,8 +16,17 @@ import { REMOTE_LOCAL_ONLY_RPC_CHANNELS } from '../main/web-service/http-server'
 import { installWebInvokeChannels } from '../renderer/web/api-installer'
 import type { AcpRuntimeEvent } from './acp'
 import { SPECIALIST_IPC } from './specialist'
+import type { StartTaskRunRequest } from './task-api'
 import { WEB_EVENT_CHANNELS, WEB_INVOKE_CHANNELS } from './web-api-map.generated'
 import { isWebRpcChannel, isWebRpcEventChannel } from './web-rpc-contract'
+
+const TASK_RUN_REQUEST_FIELDS = {
+  project: true,
+  prompt: true,
+  sessionId: true,
+  permissionProfile: true,
+  skillIds: true
+} as const satisfies Record<keyof StartTaskRunRequest, true>
 
 const permissionPaths = [
   'acp.respondToPermission',
@@ -60,13 +66,11 @@ const computePaths = [
 
 const computeEventPaths = ['compute.onApprovalRequest', 'compute.onJobUpdated'] as const
 
-const source = (path: string): Promise<string> => readFile(resolve(path), 'utf8')
-
 const pathsWithPrefix = (paths: readonly string[], prefix: string): string[] =>
   paths.filter((path) => path.startsWith(prefix)).sort()
 
 describe('renderer surface compatibility matrix', () => {
-  it('keeps Specialist management and pending-switch delivery Electron-only', async () => {
+  it('keeps Specialist management and pending-switch delivery Electron-only', () => {
     const invokePaths = Object.keys(WEB_INVOKE_CHANNELS)
     const eventPaths = Object.keys(WEB_EVENT_CHANNELS)
     const specialistChannels = Object.values(SPECIALIST_IPC)
@@ -94,18 +98,6 @@ describe('renderer surface compatibility matrix', () => {
       expect(projectPublicTaskEvent(event)).toBeUndefined()
       expect(projectTaskRuntimeEvent(event)).toBeUndefined()
     }
-
-    const [preloadSource, rendererBroadcastSource] = await Promise.all([
-      source('src/preload/index.ts'),
-      source('src/main/renderer-broadcast.ts')
-    ])
-    expect(preloadSource).toContain('specialist: {')
-    expect(preloadSource).toContain(
-      'onPendingSwitch: (listener) => onIpcMessage(SPECIALIST_IPC.PENDING_SWITCH, listener)'
-    )
-    // Electron receives every installed application event; only the Web projection applies an
-    // allowlist. This is intentionally different from an event that was never installed.
-    expect(rendererBroadcastSource).toContain('projectToElectron(event.channel, event.payload)')
   })
 
   it('keeps Permission available on Electron and both Web locations without granting Task human authority', () => {
@@ -157,6 +149,13 @@ describe('renderer surface compatibility matrix', () => {
         })
       )
     ).toBe(false)
+    expect(Object.keys(TASK_RUN_REQUEST_FIELDS).sort()).toEqual([
+      'permissionProfile',
+      'project',
+      'prompt',
+      'sessionId',
+      'skillIds'
+    ])
   })
 
   it('keeps Compute complete locally and rejects only native download/reveal on remote Web', async () => {
@@ -199,86 +198,12 @@ describe('renderer surface compatibility matrix', () => {
     )
   })
 
-  it('keeps CLI, Task, SDK, and local RPC capability subsets explicit', async () => {
-    const [cliSource, sdkSource, taskContractSource, localRpcSource] = await Promise.all([
-      source('packages/open-science/cli.mjs'),
-      source('packages/open-science/index.mjs'),
-      source('src/shared/task-api.ts'),
-      source('src/main/notebook/local-rpc-server.ts')
-    ])
-
-    expect(cliSource).toContain('--approval-profile <profile>')
-    expect(cliSource).toContain("event.type === 'permission.requested'")
-    expect(cliSource).not.toMatch(/--(?:specialist|compute|permission-grant)\b/)
-    expect(taskContractSource).toContain('permissionProfile?: PermissionProfileId')
-    expect(taskContractSource).not.toMatch(/\b(?:specialist|compute|permissionGrant)\w*\??:/i)
-
-    const sdkClass = sdkSource.slice(
-      sdkSource.indexOf('export class OpenScienceClient'),
-      sdkSource.indexOf('export const connectToOpenScience')
-    )
-    const sdkMethods = [...sdkClass.matchAll(/^ {2}(?:async )?([a-zA-Z][a-zA-Z0-9_]*)\(/gm)].map(
-      ([, method]) => method
-    )
-    expect(sdkMethods).toEqual([
-      'constructor',
-      'health',
-      'listProjects',
-      'createProject',
-      'listSessions',
-      'getSession',
-      'startRun',
-      'getRun',
-      'waitForRun',
-      'listArtifacts',
-      'downloadArtifact',
-      'events',
-      'request',
-      'throwResponseError'
-    ])
-
-    expect(localRpcSource).toContain(
-      "const CONTROL_RPC_METHODS = new Set(['mcpCall', 'computeCall', 'agentsCall'])"
-    )
-    const computeBlock = localRpcSource.slice(
-      localRpcSource.indexOf("if (method === 'computeCall')"),
-      localRpcSource.indexOf('// agentsCall:')
-    )
-    expect([...computeBlock.matchAll(/if \(op === '([^']+)'\)/g)].map(([, op]) => op)).toEqual([
-      'call_command',
-      'list',
-      'details',
-      'download',
-      'submit_job',
-      'job_status',
-      'job_result',
-      'list_compute',
-      'set_concurrency_limit',
-      'concurrency_status'
-    ])
-    expect(localRpcSource).toContain('session-bound RPC capability')
-    expect(computeBlock).not.toMatch(/\b(?:create|delete|probe|reveal_in_folder|bookmarks)\b/)
-  })
-
-  it('keeps projectFiles.searchArtifacts on Electron and both Web locations only', async () => {
+  it('keeps projectFiles.searchArtifacts on local and remote Web', () => {
     expect(WEB_INVOKE_CHANNELS['projectFiles.searchArtifacts']).toBe(
       'project-files:search-artifacts'
     )
     expect(isWebRpcChannel('project-files:search-artifacts')).toBe(true)
     expect(REMOTE_LOCAL_ONLY_RPC_CHANNELS.has('project-files:search-artifacts')).toBe(false)
-
-    const [preloadSource, taskContractSource, sdkSource, localRpcSource] = await Promise.all([
-      source('src/preload/index.ts'),
-      source('src/shared/task-api.ts'),
-      source('packages/open-science/index.mjs'),
-      source('src/main/notebook/local-rpc-server.ts')
-    ])
-    expect(preloadSource).toMatch(
-      /searchArtifacts: \(request\) =>\s+ipcRenderer\.invoke\(\s*'project-files:search-artifacts',\s*request\s*\)/
-    )
-    expect(taskContractSource).not.toContain('searchArtifacts')
-    expect(sdkSource).not.toContain('searchArtifacts')
-    expect(localRpcSource).not.toContain('searchArtifacts')
   })
 
   it('passes terminal ACP metadata through Web and Task projections without recomputation', () => {

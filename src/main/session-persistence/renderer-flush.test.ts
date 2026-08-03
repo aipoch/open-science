@@ -1,7 +1,26 @@
 import { describe, expect, it, vi } from 'vitest'
 
-import { requestRendererSessionPersistenceFlush } from './renderer-flush'
+import {
+  SESSION_PERSISTENCE_FLUSH_REQUEST_CHANNEL,
+  SESSION_PERSISTENCE_FLUSH_RESPONSE_CHANNEL
+} from '../../shared/session-persistence-flush'
+import {
+  createElectronSessionPersistenceFlush,
+  requestRendererSessionPersistenceFlush
+} from './renderer-flush'
 import type { RendererSessionPersistenceFlushOutcome } from './renderer-flush'
+
+const electronMocks = vi.hoisted(() => ({
+  on: vi.fn(),
+  removeListener: vi.fn()
+}))
+
+vi.mock('electron', () => ({
+  ipcMain: {
+    on: electronMocks.on,
+    removeListener: electronMocks.removeListener
+  }
+}))
 
 type Listener = (requestId: string) => void
 
@@ -99,5 +118,60 @@ describe('requestRendererSessionPersistenceFlush', () => {
     })
 
     await expect(harness.request()).resolves.toBe('send-failed')
+  })
+})
+
+describe('createElectronSessionPersistenceFlush', () => {
+  it('accepts only the target renderer acknowledgement with the matching request ID', async () => {
+    electronMocks.on.mockClear()
+    electronMocks.removeListener.mockClear()
+
+    const webContents = {
+      isDestroyed: vi.fn(() => false),
+      send: vi.fn(),
+      on: vi.fn(),
+      removeListener: vi.fn()
+    }
+    const window = {
+      isDestroyed: vi.fn(() => false),
+      webContents
+    }
+    const flush = createElectronSessionPersistenceFlush(() => window as never, 1_000)
+    const request = flush()
+    let settled = false
+    void request.then(() => {
+      settled = true
+    })
+
+    expect(webContents.send).toHaveBeenCalledWith(
+      SESSION_PERSISTENCE_FLUSH_REQUEST_CHANNEL,
+      expect.objectContaining({ requestId: expect.any(String) })
+    )
+    const sentRequest = webContents.send.mock.calls[0][1] as { requestId: string }
+    const responseRegistration = electronMocks.on.mock.calls.find(
+      ([channel]) => channel === SESSION_PERSISTENCE_FLUSH_RESPONSE_CHANNEL
+    )
+    const responseHandler = responseRegistration?.[1] as
+      ((event: { sender: unknown }, response: { requestId: string }) => void) | undefined
+    expect(responseHandler).toBeTypeOf('function')
+
+    responseHandler?.({ sender: {} }, { requestId: sentRequest.requestId })
+    await Promise.resolve()
+    expect(settled).toBe(false)
+
+    responseHandler?.({ sender: webContents }, { requestId: 'other-request' })
+    await Promise.resolve()
+    expect(settled).toBe(false)
+
+    responseHandler?.({ sender: webContents }, { requestId: sentRequest.requestId })
+    await expect(request).resolves.toBe('completed')
+    expect(electronMocks.removeListener).toHaveBeenCalledWith(
+      SESSION_PERSISTENCE_FLUSH_RESPONSE_CHANNEL,
+      responseHandler
+    )
+    expect(webContents.removeListener).toHaveBeenCalledWith(
+      'render-process-gone',
+      expect.any(Function)
+    )
   })
 })
