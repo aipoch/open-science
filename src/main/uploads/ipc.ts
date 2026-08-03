@@ -1,6 +1,9 @@
 import { type Event as ElectronEvent, type IpcMainInvokeEvent } from 'electron'
 import { stat } from 'node:fs/promises'
 
+import type { ApplicationCallerLease } from '../application-command-router'
+import { callerContextForEvent } from '../caller-context'
+import { callerLeaseForEvent } from '../caller-lifecycle'
 import { ipcMainHandle } from '../ipc-handler-registry'
 
 import type { ReadArtifactPreviewRequest } from '../../shared/artifacts'
@@ -45,7 +48,7 @@ const registerUploadIpcHandlers = (
   // A chunk transfer spans several IPC calls but is one logical write. Holding the writer lease from
   // begin through finish/abort makes data-root migration wait across the gaps between chunks.
   type UploadOwner = {
-    senderId: number
+    lease: ApplicationCallerLease
     transferIds: Set<string>
   }
   type ChunkWriter = {
@@ -65,7 +68,7 @@ const registerUploadIpcHandlers = (
     attachment?: UploadedAttachment
     cleanup?: Promise<void>
   }
-  const uploadOwners = new Map<number, UploadOwner>()
+  const uploadOwners = new WeakMap<ApplicationCallerLease, UploadOwner>()
   const chunkWriters = new Map<string, ChunkWriter>()
   const localWriters = new Map<string, LocalWriter>()
   const releaseChunkWriter = (transferId: string, writer: ChunkWriter): void => {
@@ -113,17 +116,22 @@ const registerUploadIpcHandlers = (
     return writer.cleanup
   }
   const registerUploadOwner = (event: IpcMainInvokeEvent): UploadOwner => {
-    const existing = uploadOwners.get(event.sender.id)
+    const lease = callerLeaseForEvent(event)
+    const existing = uploadOwners.get(lease)
     if (existing) return existing
+    if (lease.signal.aborted || !lease.isCurrent()) {
+      throw new Error('Upload renderer is no longer available.')
+    }
 
-    const owner: UploadOwner = { senderId: event.sender.id, transferIds: new Set() }
-    uploadOwners.set(owner.senderId, owner)
+    const releaseOnNavigation = callerContextForEvent(event).surface === 'electron'
+    const owner: UploadOwner = { lease, transferIds: new Set() }
     const releaseOwner = (): void => {
-      if (uploadOwners.get(owner.senderId) !== owner) return
-      uploadOwners.delete(owner.senderId)
-      event.sender.removeListener('destroyed', releaseOwner)
-      event.sender.removeListener('render-process-gone', releaseOwner)
-      event.sender.removeListener('did-start-navigation', releaseOnMainFrameNavigation)
+      if (uploadOwners.get(lease) !== owner) return
+      uploadOwners.delete(lease)
+      lease.signal.removeEventListener('abort', releaseOwner)
+      if (releaseOnNavigation) {
+        event.sender.removeListener('did-start-navigation', releaseOnMainFrameNavigation)
+      }
       for (const transferId of [...owner.transferIds]) {
         const chunkWriter = chunkWriters.get(transferId)
         if (chunkWriter?.owner === owner && !chunkWriter.settling) {
@@ -141,9 +149,15 @@ const registerUploadIpcHandlers = (
     ): void => {
       if (isMainFrame) releaseOwner()
     }
-    event.sender.once('destroyed', releaseOwner)
-    event.sender.once('render-process-gone', releaseOwner)
-    event.sender.on('did-start-navigation', releaseOnMainFrameNavigation)
+    uploadOwners.set(lease, owner)
+    lease.signal.addEventListener('abort', releaseOwner, { once: true })
+    if (releaseOnNavigation) {
+      event.sender.on('did-start-navigation', releaseOnMainFrameNavigation)
+    }
+    if (lease.signal.aborted || !lease.isCurrent()) {
+      releaseOwner()
+      throw new Error('Upload renderer is no longer available.')
+    }
     return owner
   }
   const getOwnedChunkWriter = (

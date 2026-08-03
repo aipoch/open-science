@@ -27,15 +27,18 @@ import {
   clearMigrationPending,
   waitForDataRootWriters
 } from '../storage/migration-state'
+import { createWebCallerContext, type CallerContext } from '../caller-context'
 import { createDefaultUploadRepository, registerUploadIpcHandlers } from './ipc'
 import type { UploadRepository } from './repository'
 import { stageUploadFixtures } from './repository.test-utils'
 
 const createIpcEvent = (
-  id: number = 1
+  id: number = 1,
+  callerContext?: CallerContext
 ): {
   event: unknown
   emit: (channel: string, ...args: unknown[]) => void
+  send: ReturnType<typeof vi.fn>
 } => {
   const listeners = new Map<string, Set<(...args: unknown[]) => void>>()
   const on = (channel: string, listener: (...args: unknown[]) => void): void => {
@@ -46,9 +49,11 @@ const createIpcEvent = (
   const removeListener = (channel: string, listener: (...args: unknown[]) => void): void => {
     listeners.get(channel)?.delete(listener)
   }
+  const send = vi.fn()
   const sender = {
     id,
-    send: vi.fn(),
+    callerContext,
+    send,
     on: vi.fn(on),
     once: vi.fn((channel: string, listener: (...args: unknown[]) => void) => {
       const onceListener = (...args: unknown[]): void => {
@@ -62,6 +67,7 @@ const createIpcEvent = (
 
   return {
     event: { sender },
+    send,
     emit: (channel, ...args) => {
       for (const listener of [...(listeners.get(channel) ?? [])]) listener(...args)
     }
@@ -250,6 +256,80 @@ describe('default upload repository', () => {
     expect(repository.abortTransfer).toHaveBeenCalledWith({ transferId: 'transfer-3' })
   })
 
+  it('isolates a same-ID replacement from the stale renderer lifecycle', async () => {
+    const repository = {
+      beginTransfer: vi.fn(async (request: { transferId: string; name: string; size: number }) => ({
+        transferId: request.transferId,
+        name: request.name,
+        receivedBytes: 0,
+        totalBytes: request.size
+      })),
+      finishTransfer: vi.fn(async () => undefined),
+      abortTransfer: vi.fn(async () => undefined)
+    } as unknown as UploadRepository
+    registerUploadIpcHandlers(repository)
+    const begin = ipcHandlers.get('uploads:begin-transfer')!
+    const finish = ipcHandlers.get('uploads:finish-transfer')!
+    const staleRenderer = createIpcEvent(17)
+    const replacement = createIpcEvent(17)
+
+    await begin(staleRenderer.event, {
+      transferId: 'stale-generation',
+      name: 'old.csv',
+      size: 5
+    })
+    await begin(replacement.event, {
+      transferId: 'replacement-generation',
+      name: 'new.csv',
+      size: 7
+    })
+    await new Promise((resolve) => setImmediate(resolve))
+
+    expect(repository.abortTransfer).toHaveBeenCalledTimes(1)
+    expect(repository.abortTransfer).toHaveBeenCalledWith({ transferId: 'stale-generation' })
+
+    staleRenderer.emit('destroyed')
+    await new Promise((resolve) => setImmediate(resolve))
+    expect(repository.abortTransfer).not.toHaveBeenCalledWith({
+      transferId: 'replacement-generation'
+    })
+
+    await expect(
+      finish(replacement.event, { transferId: 'replacement-generation' })
+    ).resolves.toBeUndefined()
+    expect(repository.finishTransfer).toHaveBeenCalledWith({
+      transferId: 'replacement-generation'
+    })
+  })
+
+  it('releases a crashed caller generation exactly once', async () => {
+    const repository = {
+      beginTransfer: vi.fn(async () => ({
+        transferId: 'crashed-transfer',
+        name: 'data.csv',
+        receivedBytes: 0,
+        totalBytes: 10
+      })),
+      abortTransfer: vi.fn(async () => undefined)
+    } as unknown as UploadRepository
+    registerUploadIpcHandlers(repository)
+    const begin = ipcHandlers.get('uploads:begin-transfer')!
+    const caller = createIpcEvent(23)
+
+    await begin(caller.event, {
+      transferId: 'crashed-transfer',
+      name: 'data.csv',
+      size: 10
+    })
+    caller.emit('render-process-gone')
+    caller.emit('destroyed')
+
+    await vi.waitFor(() => {
+      expect(repository.abortTransfer).toHaveBeenCalledTimes(1)
+    })
+    expect(repository.abortTransfer).toHaveBeenCalledWith({ transferId: 'crashed-transfer' })
+  })
+
   it('keeps the teardown lease until an in-flight append has settled', async () => {
     let finishAppend: ((status: unknown) => void) | undefined
     const repository = {
@@ -329,6 +409,31 @@ describe('default upload repository', () => {
     sender.emit('did-start-navigation', {}, 'http://localhost/', false, true)
     await drainPromise
     expect(repository.abortTransfer).toHaveBeenCalledWith({ transferId: 'transfer-4' })
+  })
+
+  it('does not compose Electron navigation cleanup into Web callers', async () => {
+    const repository = {
+      beginTransfer: vi.fn(async () => ({
+        transferId: 'web-transfer',
+        name: 'data.csv',
+        receivedBytes: 0,
+        totalBytes: 10
+      })),
+      abortTransfer: vi.fn(async () => undefined)
+    } as unknown as UploadRepository
+    registerUploadIpcHandlers(repository)
+    const begin = ipcHandlers.get('uploads:begin-transfer')!
+    const caller = createIpcEvent(-1, createWebCallerContext('browser-1'))
+
+    await begin(caller.event, { transferId: 'web-transfer', name: 'data.csv', size: 10 })
+    caller.emit('did-start-navigation', {}, 'http://localhost/', false, true)
+    await new Promise((resolve) => setImmediate(resolve))
+    expect(repository.abortTransfer).not.toHaveBeenCalled()
+
+    caller.emit('destroyed')
+    await vi.waitFor(() => {
+      expect(repository.abortTransfer).toHaveBeenCalledWith({ transferId: 'web-transfer' })
+    })
   })
 
   it('aborts a native-path upload and releases its migration lease when its renderer is destroyed', async () => {
@@ -488,6 +593,44 @@ describe('default upload repository', () => {
     sender.emit('destroyed')
 
     expect(repository.deleteUpload).not.toHaveBeenCalled()
+  })
+
+  it('routes native-path progress through the owning caller sender', async () => {
+    const progress = {
+      transferId: 'local-transfer-progress',
+      receivedBytes: 4,
+      totalBytes: 10
+    }
+    const attachment = {
+      id: 'attachment-progress',
+      sessionId: '.pending',
+      name: 'data.csv',
+      originalName: 'data.csv',
+      path: '/managed/.pending/data.csv',
+      size: 10
+    }
+    const repository = {
+      stageLocalFile: vi.fn(async (_request, onProgress: (value: typeof progress) => void) => {
+        onProgress(progress)
+        return attachment
+      }),
+      abortTransfer: vi.fn(async () => undefined),
+      deleteUpload: vi.fn(async () => undefined)
+    } as unknown as UploadRepository
+    registerUploadIpcHandlers(repository)
+    const stageLocalFile = ipcHandlers.get('uploads:stage-local-file')!
+    const claim = ipcHandlers.get('uploads:claim-local-file')!
+    const caller = createIpcEvent(29)
+
+    await stageLocalFile(caller.event, {
+      transferId: 'local-transfer-progress',
+      sourcePath: '/fixtures/data.csv',
+      name: 'data.csv',
+      size: 10
+    })
+
+    expect(caller.send).toHaveBeenCalledWith('uploads:transfer-progress', progress)
+    await claim(caller.event, { transferId: 'local-transfer-progress' })
   })
 
   it('does not let another renderer cancel an active native-path upload', async () => {
