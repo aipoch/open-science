@@ -18,10 +18,35 @@ concurrency:
   cancel-in-progress: true
 
 jobs:
+  release-preflight:
+    name: Release preflight
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+    steps:
+      - name: Checkout
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+        with:
+          fetch-depth: 0
+
+      - name: Validate desktop release tag
+        if: github.event_name == 'push' && startsWith(github.ref, 'refs/tags/')
+        run: |
+          expected_tag="v$(node -p "require('./package.json').version")"
+          if [ "$GITHUB_REF_NAME" != "$expected_tag" ]; then
+            echo "Release tag $GITHUB_REF_NAME does not match $expected_tag." >&2
+            exit 1
+          fi
+
+      - name: Verify release commit is on main
+        if: github.event_name == 'push' && startsWith(github.ref, 'refs/tags/')
+        run: git merge-base --is-ancestor "$GITHUB_SHA" origin/main
+
   # Build the platform matrix (macOS arm64/x64 + Linux + Windows x64) via the reusable workflow.
   # secrets: inherit forwards the optional signing/notarization secrets. macOS is signed but NOT
   # notarized here — notarization is decoupled into the notarize-mac job below.
   build:
+    needs: release-preflight
     uses: ./.github/workflows/build.yml
     secrets: inherit
 
@@ -31,7 +56,7 @@ jobs:
   # time-capped and re-runnable (see notarize-mac.yml). No-ops when signing secrets aren't configured.
   notarize-mac:
     needs: build
-    if: startsWith(github.ref, 'refs/tags/')
+    if: github.event_name == 'push' && startsWith(github.ref, 'refs/tags/')
     uses: ./.github/workflows/notarize-mac.yml
     secrets: inherit
 
@@ -40,22 +65,22 @@ jobs:
   # macOS notarization, so its few minutes normally do not extend the release critical path.
   windows-upgrade-smoke:
     needs: build
-    if: startsWith(github.ref, 'refs/tags/')
+    if: github.event_name == 'push' && startsWith(github.ref, 'refs/tags/')
     runs-on: windows-latest
     timeout-minutes: 20
     permissions:
       contents: read
     steps:
       - name: Checkout
-        uses: actions/checkout@v7
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
 
       - name: Setup Node
-        uses: actions/setup-node@v7
+        uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7
         with:
           node-version: 22
 
       - name: Download current Windows installer
-        uses: actions/download-artifact@v8
+        uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8
         with:
           name: windows-x64
           path: current
@@ -92,7 +117,7 @@ jobs:
   # notarize-mac so the mac dmg/zip it downloads are the stapled versions.
   publish:
     needs: [build, notarize-mac, windows-upgrade-smoke]
-    if: startsWith(github.ref, 'refs/tags/')
+    if: github.event_name == 'push' && startsWith(github.ref, 'refs/tags/')
     runs-on: ubuntu-latest
     # Job-level permissions fully override the workflow-level block, so contents:write is restated
     # alongside the two scopes the SLSA attestation needs: id-token to sign via Sigstore OIDC, and
@@ -105,10 +130,10 @@ jobs:
       # Checkout first (before downloading artifacts): the mac-feed merge step runs a repo script, and
       # actions/checkout cleans the working dir, which would wipe a pre-downloaded artifacts/.
       - name: Checkout (for the mac-feed merge script)
-        uses: actions/checkout@v7
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
 
       - name: Download all build artifacts
-        uses: actions/download-artifact@v8
+        uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8
         with:
           path: artifacts
           merge-multiple: true # flatten every platform's files into one directory
@@ -135,7 +160,7 @@ jobs:
       # digest list, not a build product. The attestation lives in the repo's Attestations, not as a
       # Release asset, so it doesn't clutter the download list.
       - name: Attest build provenance
-        uses: actions/attest-build-provenance@v4
+        uses: actions/attest-build-provenance@0f67c3f4856b2e3261c31976d6725780e5e4c373 # v4
         with:
           subject-path: |
             artifacts/*.dmg
@@ -151,7 +176,7 @@ jobs:
       # arm64/x64-mac.yml intermediates it was built from. Blockmaps are win/linux only (mac does
       # full-zip updates in v1).
       - name: Publish GitHub Release
-        uses: softprops/action-gh-release@v3
+        uses: softprops/action-gh-release@3d0d9888cb7fd7b750713d6e236d1fcb99157228 # v3
         with:
           draft: false
           prerelease: false

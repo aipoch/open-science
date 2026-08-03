@@ -18,6 +18,7 @@ type WorkflowJob = {
   'continue-on-error'?: boolean
   if?: string
   needs?: string | string[]
+  permissions?: Record<string, string>
   'runs-on'?: string
   steps?: WorkflowStep[]
   strategy?: { matrix?: Record<string, unknown> }
@@ -83,11 +84,11 @@ describe('post-merge Windows validation', () => {
     expect(upgrade.needs).toBe('build')
     expect(upgrade['timeout-minutes']).toBe(20)
     expect(findStep(upgrade, 'Setup Node')).toMatchObject({
-      uses: 'actions/setup-node@v7',
+      uses: 'actions/setup-node@820762786026740c76f36085b0efc47a31fe5020',
       with: { 'node-version': 22 }
     })
     expect(findStep(upgrade, 'Download current Windows installer').uses).toBe(
-      'actions/download-artifact@v8'
+      'actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c'
     )
     const previous = findStep(upgrade, 'Download previous stable Windows installer')
     expect(previous.env?.CURRENT_TAG).toBe('${{ github.ref_name }}')
@@ -99,4 +100,34 @@ describe('post-merge Windows validation', () => {
     )
     expect(release.jobs.publish.needs).toEqual(['build', 'notarize-mac', 'windows-upgrade-smoke'])
   })
+
+  it('validates stable desktop tags on main before starting platform builds', () => {
+    const release = readWorkflow('release.yml')
+    const preflight = release.jobs['release-preflight']
+    const checkout = findStep(preflight, 'Checkout')
+    const validateTag = findStep(preflight, 'Validate desktop release tag')
+    const verifyMain = findStep(preflight, 'Verify release commit is on main')
+    const stableTagCondition = "github.event_name == 'push' && startsWith(github.ref, 'refs/tags/')"
+
+    expect(preflight).toMatchObject({
+      permissions: { contents: 'read' },
+      'runs-on': 'ubuntu-latest'
+    })
+    expect(checkout).toMatchObject({
+      uses: 'actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1',
+      with: { 'fetch-depth': 0 }
+    })
+    expect(validateTag.if).toBe(stableTagCondition)
+    expect(validateTag.run).toContain("require('./package.json').version")
+    expect(validateTag.run).toContain('$GITHUB_REF_NAME')
+    expect(verifyMain).toMatchObject({
+      if: stableTagCondition,
+      run: 'git merge-base --is-ancestor "$GITHUB_SHA" origin/main'
+    })
+    expect(release.jobs.build.needs).toBe('release-preflight')
+    expect(release.jobs['notarize-mac'].if).toBe(stableTagCondition)
+    expect(release.jobs['windows-upgrade-smoke'].if).toBe(stableTagCondition)
+    expect(release.jobs.publish.if).toBe(stableTagCondition)
+  })
+
 })
