@@ -45,9 +45,13 @@ export const LOCAL_DIR_ENTRY_CAP = 5000
 // reject non-absolute paths and paths containing ASCII control characters (which are never valid
 // path components and would indicate a crafted/garbled input).
 export const validateLocalPath = (path: string): 'not_absolute' | 'control_chars' | undefined => {
-  if (typeof path !== 'string' || path.length === 0 || !path.startsWith('/')) return 'not_absolute'
+  if (typeof path !== 'string' || path.length === 0) return 'not_absolute'
   // eslint-disable-next-line no-control-regex
   if (/[\x00-\x1f]/.test(path)) return 'control_chars'
+  const isPosixAbsolute = path.startsWith('/')
+  const isWindowsDriveAbsolute = /^[A-Za-z]:[\\/]/.test(path)
+  const isWindowsUncAbsolute = /^\\\\[^\\/]+[\\/][^\\/]+/.test(path)
+  if (!isPosixAbsolute && !isWindowsDriveAbsolute && !isWindowsUncAbsolute) return 'not_absolute'
   return undefined
 }
 

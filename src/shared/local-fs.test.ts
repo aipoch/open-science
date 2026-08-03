@@ -13,10 +13,16 @@ describe('validateLocalPath', () => {
   it('accepts absolute paths', () => {
     expect(validateLocalPath('/Users/roxi/Documents')).toBeUndefined()
     expect(validateLocalPath('/')).toBeUndefined()
+    expect(validateLocalPath('C:\\Users\\roxi\\Documents')).toBeUndefined()
+    expect(validateLocalPath('C:/Users/roxi/Documents')).toBeUndefined()
+    expect(validateLocalPath('\\\\server\\share\\Documents')).toBeUndefined()
   })
 
   it('rejects non-absolute or empty input', () => {
     expect(validateLocalPath('relative/path')).toBe('not_absolute')
+    expect(validateLocalPath('C:relative\\path')).toBe('not_absolute')
+    expect(validateLocalPath('\\root-relative')).toBe('not_absolute')
+    expect(validateLocalPath('\\\\server')).toBe('not_absolute')
     expect(validateLocalPath('')).toBe('not_absolute')
     // @ts-expect-error runtime guard for non-string IPC input
     expect(validateLocalPath(undefined)).toBe('not_absolute')

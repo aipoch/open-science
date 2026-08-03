@@ -40,9 +40,9 @@ describe('packageListingVia', () => {
 describe('condaPrefixFromInterpreter', () => {
   it('derives the prefix from a Unix interpreter two levels up', () => {
     expect(
-      condaPrefixFromInterpreter('/data/runtime/envs/default-python/bin/python', 'python')
+      condaPrefixFromInterpreter('/data/runtime/envs/default-python/bin/python', 'python', 'linux')
     ).toBe('/data/runtime/envs/default-python')
-    expect(condaPrefixFromInterpreter('/data/runtime/envs/default-r/bin/R', 'r')).toBe(
+    expect(condaPrefixFromInterpreter('/data/runtime/envs/default-r/bin/R', 'r', 'linux')).toBe(
       '/data/runtime/envs/default-r'
     )
   })
@@ -135,7 +135,8 @@ describe('listEnvPackages dispatch', () => {
     const packages = await listEnvPackages(target, {
       exec,
       micromamba: '/mm',
-      runtimeRoot: '/data/runtime'
+      runtimeRoot: '/data/runtime',
+      platform: 'linux'
     })
 
     expect(packages).toEqual([
