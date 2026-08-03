@@ -310,10 +310,19 @@ describe('ACP permission broker with durable grants', () => {
     ['powershell', 'git status $env:API_KEY'],
     ['powershell', 'git status "${env:API_KEY}"'],
     ['powershell', 'git status @arguments'],
-    ['powershell', 'git status\r\nRemove-Item build']
+    ['powershell', 'git status\r\nRemove-Item build'],
+    ['posix', './g* --version', ['./g*']],
+    ['posix', 'g?t status', ['g?t', 'status']],
+    ['posix', '[g]it status', ['[g]it', 'status']],
+    ['posix', '{git,gh} status', ['{git,gh}', 'status']],
+    ['posix', '~/bin/git status', ['~/bin/git', 'status']],
+    ['posix', '=git status', ['=git', 'status']],
+    ['powershell', '~/bin/git status', ['~/bin/git', 'status']]
   ] as const)(
     'offers only provider Once when a Codex %s command group does not safely prefix %s',
-    async (shellDialect, command) => {
+    async (...args) => {
+      const [shellDialect, command] = args
+      const proposedPrefix = args.length === 3 ? args[2] : undefined
       storageRoot = await mkdtemp(join(tmpdir(), 'open-science-broker-mismatched-command-group-'))
       client = createProjectDbClient(storageRoot)
       await ensureProjectSchema(client)
@@ -329,9 +338,9 @@ describe('ACP permission broker with durable grants', () => {
       request.toolCall.rawInput = { command }
       request.options.splice(2, 0, {
         optionId: 'accept_execpolicy_amendment',
-        name: 'Allow Commands Starting With `git status`',
+        name: `Allow Commands Starting With \`${(proposedPrefix ?? ['git', 'status']).join(' ')}\``,
         kind: 'allow_always',
-        _meta: { codex: { execpolicyAmendment: ['git', 'status'] } }
+        _meta: { codex: { execpolicyAmendment: [...(proposedPrefix ?? ['git', 'status'])] } }
       })
 
       const pending = broker.requestPermission(request, {

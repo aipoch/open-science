@@ -107,6 +107,9 @@ const metadataRecord = (value: unknown): Record<string, unknown> | undefined =>
     : undefined
 
 type CodexCommandGroup = { categoryKey: string; commandPrefix: string[] }
+type CodexCommandGroupMatch =
+  { kind: 'group'; group: CodexCommandGroup } | { kind: 'unsafe-prefix-expansion' }
+type SimpleCommandToken = { value: string; hasPathnameExpansion: boolean }
 
 const commandFromRawInput = (rawInput: unknown): string | undefined => {
   if (!rawInput || typeof rawInput !== 'object' || Array.isArray(rawInput)) return undefined
@@ -137,17 +140,19 @@ const startsVariableExpansion = (
 const simpleCommandArgv = (
   command: string,
   shellDialect: CommandShellDialect
-): string[] | undefined => {
-  const argv: string[] = []
+): SimpleCommandToken[] | undefined => {
+  const argv: SimpleCommandToken[] = []
   let token = ''
   let tokenStarted = false
+  let tokenHasPathnameExpansion = false
   let quote: "'" | '"' | undefined
 
   const pushToken = (): void => {
     if (!tokenStarted) return
-    argv.push(token)
+    argv.push({ value: token, hasPathnameExpansion: tokenHasPathnameExpansion })
     token = ''
     tokenStarted = false
+    tokenHasPathnameExpansion = false
   }
 
   for (let index = 0; index < command.length; index += 1) {
@@ -226,6 +231,16 @@ const simpleCommandArgv = (
     ) {
       return undefined
     }
+    if (
+      (character === '~' &&
+        (!tokenStarted ||
+          (shellDialect === 'posix' &&
+            (token.endsWith('=') || (token.includes('=') && token.endsWith(':')))))) ||
+      (shellDialect === 'posix' &&
+        (/[?*[{]/u.test(character) || (character === '=' && !tokenStarted)))
+    ) {
+      tokenHasPathnameExpansion = true
+    }
     token += character
     tokenStarted = true
   }
@@ -240,7 +255,7 @@ const simpleCommandArgv = (
 const codexCommandGroup = (
   params: RequestPermissionRequest,
   shellDialect: CommandShellDialect | undefined
-): CodexCommandGroup | undefined => {
+): CodexCommandGroupMatch | undefined => {
   const option = params.options.find(
     (candidate) =>
       candidate.optionId === CODEX_EXEC_POLICY_AMENDMENT_OPTION_ID &&
@@ -261,16 +276,19 @@ const codexCommandGroup = (
   const commandArgv = command ? simpleCommandArgv(command, shellDialect) : undefined
   if (
     !command ||
-    containsSecretBearingMaterial(command) ||
     !commandArgv ||
-    !commandPrefix.every((token, index) => commandArgv[index] === token)
+    !commandPrefix.every((token, index) => commandArgv[index]?.value === token)
   ) {
     return undefined
   }
+  if (commandPrefix.some((_, index) => commandArgv[index]?.hasPathnameExpansion)) {
+    return { kind: 'unsafe-prefix-expansion' }
+  }
+  if (containsSecretBearingMaterial(command)) return undefined
 
   return {
-    categoryKey,
-    commandPrefix
+    kind: 'group',
+    group: { categoryKey, commandPrefix }
   }
 }
 
@@ -745,13 +763,16 @@ class AcpPermissionBroker {
     const requestId = randomUUID()
     const mcpServerNames = policyContext?.mcpServerNames ?? []
     const isMcp = isMcpPermission(params, mcpServerNames)
-    const codexGroup =
+    const codexGroupMatch =
       policyContext?.frameworkId === 'codex' && !isMcp
         ? codexCommandGroup(params, policyContext.shellDialect)
         : undefined
+    const codexGroup = codexGroupMatch?.kind === 'group' ? codexGroupMatch.group : undefined
     const categoryKey =
       codexGroup?.categoryKey ??
-      resolveCategoryKey(params, mcpServerNames, !this.permissionGrantRegistry)
+      (codexGroupMatch?.kind === 'unsafe-prefix-expansion'
+        ? undefined
+        : resolveCategoryKey(params, mcpServerNames, !this.permissionGrantRegistry))
     const capability = categoryKey ? capabilityFromLegacyCategory(categoryKey) : undefined
     const mcpIdentity = isMcp
       ? (resolveTrustedMcpToolIdentity(params, mcpServerNames) ??

@@ -466,6 +466,9 @@ describe('ACP permission broker', () => {
     ['posix', 'git worktree add "\\$API_KEY"'],
     ['posix', 'git\tworktree\tadd path'],
     ['posix', 'git worktree add file\u00a0name'],
+    ['posix', 'git worktree add *.tmp'],
+    ['posix', 'git worktree add {one,two}'],
+    ['posix', 'git worktree add ~/destination'],
     ['powershell', "git worktree add '$(literal)'"],
     ['powershell', 'git worktree add `(literal`)'],
     ['powershell', 'git worktree add "`$(literal)"'],
@@ -496,6 +499,57 @@ describe('ACP permission broker', () => {
       expect(emitted[0].commandPrefix).toEqual(['git', 'worktree', 'add'])
     }
   )
+
+  it.each([
+    ["'./g*' --version", ['./g*']],
+    ['./g\\* --version', ['./g*']],
+    ["'~/bin/git' status", ['~/bin/git', 'status']],
+    ['\\~/bin/git status', ['~/bin/git', 'status']]
+  ] as const)(
+    'keeps a Codex command group for a literal pathname prefix: %s',
+    (command, commandPrefix) => {
+      const emitted: EmittedPermissionRequest[] = []
+      const broker = new AcpPermissionBroker((request) => emitted.push(request))
+      const request = createCodexCommandPermissionRequest()
+      request.toolCall.rawInput = { command }
+      const amendmentOption = request.options.find(
+        (option) => option.optionId === 'accept_execpolicy_amendment'
+      )
+      if (!amendmentOption) throw new Error('Expected a Codex exec-policy amendment option')
+      amendmentOption._meta = {
+        codex: { execpolicyAmendment: [...commandPrefix] }
+      }
+
+      void broker.requestPermission(request, {
+        profile: 'ask',
+        frameworkId: 'codex',
+        shellDialect: 'posix'
+      })
+
+      expect(emitted[0].commandPrefix).toEqual(commandPrefix)
+    }
+  )
+
+  it('keeps an active pathname prefix Once-only in the legacy broker', () => {
+    const emitted: EmittedPermissionRequest[] = []
+    const broker = new AcpPermissionBroker((request) => emitted.push(request))
+    const request = createCodexCommandPermissionRequest()
+    request.toolCall.rawInput = { command: './g* --version' }
+    const amendmentOption = request.options.find(
+      (option) => option.optionId === 'accept_execpolicy_amendment'
+    )
+    if (!amendmentOption) throw new Error('Expected a Codex exec-policy amendment option')
+    amendmentOption._meta = { codex: { execpolicyAmendment: ['./g*'] } }
+
+    void broker.requestPermission(request, {
+      profile: 'ask',
+      frameworkId: 'codex',
+      shellDialect: 'posix'
+    })
+
+    expect(emitted[0].options.map((option) => option.scope).filter(Boolean)).toEqual(['once'])
+    expect(emitted[0].commandPrefix).toBeUndefined()
+  })
 
   it('removes Codex policy amendments when execute metadata is absent', () => {
     const emitted: EmittedPermissionRequest[] = []
