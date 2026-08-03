@@ -104,6 +104,29 @@ describe('permission grant IPC', () => {
     expect(broadcast).toHaveBeenLastCalledWith('permissions:changed', { revision: 2 })
   })
 
+  it('owns one Registry subscription and releases that subscription on disposal', () => {
+    const unsubscribe = vi.fn()
+    const registry = {
+      subscribe: vi.fn(() => unsubscribe)
+    } as unknown as PermissionGrantRegistry
+    const broadcast = vi.fn()
+
+    const controller = registerPermissionGrantIpcHandlers({
+      registry,
+      projects: { list: vi.fn().mockResolvedValue([]) },
+      sessions: { metadataSnapshot: vi.fn().mockResolvedValue({ sessions: [], isComplete: true }) },
+      broadcast
+    })
+
+    expect(registry.subscribe).toHaveBeenCalledOnce()
+    controller.invalidateProjection()
+    expect(broadcast).toHaveBeenCalledOnce()
+    expect(broadcast).toHaveBeenCalledWith('permissions:changed', { revision: 1 })
+
+    controller.dispose()
+    expect(unsubscribe).toHaveBeenCalledOnce()
+  })
+
   it('rejects an empty revoke request at the IPC boundary', async () => {
     const registry = {
       subscribe: vi.fn(() => () => undefined)
