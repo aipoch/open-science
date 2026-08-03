@@ -347,7 +347,7 @@ Workspace-only tokens without a shadcn counterpart, plus shadow tokens. For shar
 - Dialog close: `data-[state=closed]:animate-out data-[state=closed]:fade-out-0 data-[state=closed]:zoom-out-95`.
 - Overlay: `fade-in-0 / fade-out-0`; the light scrim is `rgb(0 0 0 / 0.5)`.
 - Transform motion is limited to dialogs, sheets, collapsible content, and subtle button feedback, and must respect `motion-reduce`.
-- Brand loading indicators may use fixed-geometry transform and opacity motion for orbiting or gathering particles; they must become static under `prefers-reduced-motion`.
+- Brand loading indicators may use fixed-geometry transform and opacity motion for orbiting or gathering particles; they must become static under `prefers-reduced-motion`, and the full-canvas startup logo is capped at 30 drawn frames per second.
 
 ## Component Guidelines
 

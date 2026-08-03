@@ -1,11 +1,12 @@
 // @vitest-environment jsdom
 
-import { act } from 'react'
+import { act, type JSX } from 'react'
 import { createRoot, type Root } from 'react-dom/client'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 
 import type { AcpStateSnapshot } from '../../../../shared/acp'
 import { createInitialSessionState, useSessionStore } from '../../stores/session-store'
+import { shouldShowAgentLoadingMessage } from '../../pages/workspace/agent-loading-message'
 import { resetDeferredArtifactEventsForTests } from './workspace-events'
 
 ;(globalThis as { IS_REACT_ACT_ENVIRONMENT?: boolean }).IS_REACT_ACT_ENVIRONMENT = true
@@ -29,6 +30,7 @@ const createSnapshot = (overrides: Partial<AcpStateSnapshot> = {}): AcpStateSnap
   contextUsageBySession: {},
   promptInFlight: false,
   promptInFlightSessionIds: [],
+  agentPromptInFlightSessionIds: [],
   ...overrides
 })
 
@@ -48,9 +50,13 @@ const createRuntime = (state: AcpStateSnapshot): Record<string, unknown> => ({
   revokePermissionGrant: vi.fn()
 })
 
-const Probe = (): null => {
+const Probe = (): JSX.Element | null => {
   useWorkspaceAgentRuntime()
-  return null
+  const activeSession = useSessionStore((state) =>
+    state.sessions.find((session) => session.id === state.selectedSessionId)
+  )
+
+  return shouldShowAgentLoadingMessage(activeSession) ? <div>Thinking</div> : null
 }
 
 describe('workspace Agent first-output runtime sync', () => {
@@ -83,12 +89,135 @@ describe('workspace Agent first-output runtime sync', () => {
     runtimeMock.current = createRuntime(
       createSnapshot({
         promptInFlight: true,
-        promptInFlightSessionIds: ['session-1']
+        promptInFlightSessionIds: ['session-1'],
+        agentPromptInFlightSessionIds: ['session-1']
       })
     )
     await act(async () => root.render(<Probe />))
 
     expect(useSessionStore.getState().sessions[0].activeRun).toBeUndefined()
     expect(useSessionStore.getState().sessions[0].awaitingFirstAgentOutput).toBe(true)
+    expect(container.textContent).toBe('Thinking')
+  })
+
+  it('does not rearm waiting when prompt ownership and the first visible output share a snapshot', async () => {
+    await act(async () => root.render(<Probe />))
+
+    runtimeMock.current = createRuntime(
+      createSnapshot({
+        promptInFlight: true,
+        promptInFlightSessionIds: ['session-1'],
+        agentPromptInFlightSessionIds: ['session-1'],
+        events: [
+          {
+            id: 'event-first-output',
+            timestamp: 1710000000000,
+            kind: 'message',
+            level: 'info',
+            sessionId: 'session-1',
+            role: 'assistant',
+            messageId: 'assistant-message-1',
+            text: 'First visible token'
+          }
+        ]
+      })
+    )
+    await act(async () => root.render(<Probe />))
+
+    expect(useSessionStore.getState().sessions[0].messages.at(-1)).toMatchObject({
+      role: 'agent',
+      content: 'First visible token'
+    })
+    expect(useSessionStore.getState().sessions[0].awaitingFirstAgentOutput).toBeUndefined()
+    expect(container.textContent).toBe('')
+  })
+
+  it('unmounts runtime-owned waiting after the first visible image without an active run', async () => {
+    await act(async () => root.render(<Probe />))
+
+    runtimeMock.current = createRuntime(
+      createSnapshot({
+        promptInFlight: true,
+        promptInFlightSessionIds: ['session-1'],
+        agentPromptInFlightSessionIds: ['session-1'],
+        events: [
+          {
+            id: 'event-first-image',
+            timestamp: 1710000000000,
+            kind: 'message',
+            level: 'info',
+            sessionId: 'session-1',
+            role: 'assistant',
+            messageId: 'assistant-image-1',
+            image: { mimeType: 'image/png', data: 'AQID', byteLength: 3 }
+          }
+        ]
+      })
+    )
+    await act(async () => root.render(<Probe />))
+
+    expect(useSessionStore.getState().sessions[0].messages.at(-1)?.images).toHaveLength(1)
+    expect(useSessionStore.getState().sessions[0].awaitingFirstAgentOutput).toBeUndefined()
+    expect(container.textContent).toBe('')
+  })
+
+  it('keeps runtime-owned waiting while permission input is pending', async () => {
+    await act(async () => root.render(<Probe />))
+
+    runtimeMock.current = createRuntime(
+      createSnapshot({
+        promptInFlight: true,
+        promptInFlightSessionIds: ['session-1'],
+        agentPromptInFlightSessionIds: ['session-1'],
+        pendingPermissions: [
+          {
+            requestId: 'permission-1',
+            sessionId: 'session-1',
+            toolCallId: 'tool-1',
+            title: 'Allow edit?',
+            options: []
+          }
+        ]
+      })
+    )
+    await act(async () => root.render(<Probe />))
+
+    expect(useSessionStore.getState().sessions[0]).toMatchObject({
+      status: 'waiting-permission',
+      awaitingFirstAgentOutput: true
+    })
+    expect(container.textContent).toBe('Thinking')
+  })
+
+  it('does not start waiting for a compaction-only runtime interaction', async () => {
+    await act(async () => root.render(<Probe />))
+
+    runtimeMock.current = createRuntime(
+      createSnapshot({
+        promptInFlight: true,
+        promptInFlightSessionIds: ['session-1'],
+        agentPromptInFlightSessionIds: []
+      })
+    )
+    await act(async () => root.render(<Probe />))
+
+    expect(useSessionStore.getState().sessions[0].awaitingFirstAgentOutput).toBeUndefined()
+    expect(container.textContent).toBe('')
+  })
+
+  it('does not infer foreground prompt ownership when the prompt-only field is absent', async () => {
+    await act(async () => root.render(<Probe />))
+
+    runtimeMock.current = createRuntime(
+      createSnapshot({
+        promptInFlight: true,
+        promptInFlightSessionIds: ['session-1'],
+        agentPromptInFlightSessionIds: undefined
+      })
+    )
+    await act(async () => root.render(<Probe />))
+
+    expect(useSessionStore.getState().sessions[0].awaitingFirstAgentOutput).toBeUndefined()
+    expect(container.textContent).toBe('')
   })
 })

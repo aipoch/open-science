@@ -15,6 +15,8 @@ type OpenScienceLogoLoaderProps = {
 }
 
 const LOOP_DURATION_MS = 4800
+const MAX_ANIMATION_FPS = 30
+const MIN_FRAME_INTERVAL_MS = 1000 / MAX_ANIMATION_FPS
 // The startup surface is short-lived; 2x keeps the logo crisp without allocating a 3x/4x canvas.
 const MAX_DEVICE_PIXEL_RATIO = 2
 const FALLBACK_CANVAS_SIZE = 448
@@ -36,6 +38,7 @@ const OpenScienceLogoLoader = ({ className }: OpenScienceLogoLoaderProps): React
     let particles: LogoParticle[] = []
     let color = getComputedStyle(canvas).color
     let animationStartedAt = performance.now()
+    let lastDrawnAt: number | undefined
 
     const draw = (time: number): void => {
       drawOpenScienceLogoFrame(
@@ -49,7 +52,10 @@ const OpenScienceLogoLoader = ({ className }: OpenScienceLogoLoaderProps): React
     }
 
     const animate = (now: number): void => {
-      draw(now - animationStartedAt)
+      if (lastDrawnAt === undefined || now - lastDrawnAt >= MIN_FRAME_INTERVAL_MS) {
+        draw(now - animationStartedAt)
+        lastDrawnAt = now
+      }
       animationFrame = requestAnimationFrame(animate)
     }
 
@@ -58,6 +64,7 @@ const OpenScienceLogoLoader = ({ className }: OpenScienceLogoLoaderProps): React
 
       animationFrame = undefined
       animationStartedAt = performance.now()
+      lastDrawnAt = undefined
 
       if (prefersReducedMotion) draw(0)
       else animationFrame = requestAnimationFrame(animate)

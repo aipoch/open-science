@@ -253,6 +253,27 @@ describe('renderer session persistence bridge', () => {
     )
   })
 
+  it('preserves first-output waiting when a durable conflict projection replaces the session', async () => {
+    const persisted = createPersistedSession({
+      projectId: 'project-a',
+      title: 'Original'
+    })
+    const durable = createPersistedSession({
+      projectId: 'project-a',
+      title: 'Local rename',
+      updatedAt: persisted.updatedAt + 1
+    })
+    useSessionStore.getState().hydrateSessions([persisted])
+    const api = createApi({ saveSession: vi.fn().mockResolvedValue(durable) })
+    const save = createStoreSaver(api, useSessionStore.getState())
+
+    useSessionStore.getState().renameSession('session-1', 'Local rename')
+    useSessionStore.getState().setAwaitingFirstAgentOutput('session-1', true)
+    await save(useSessionStore.getState())
+
+    expect(useSessionStore.getState().sessions[0].awaitingFirstAgentOutput).toBe(true)
+  })
+
   it('retains safe-field rebase intent for a forced retry after a failed write', async () => {
     const persisted = createPersistedSession({ projectId: 'project-a', title: 'Original' })
     useSessionStore.getState().hydrateSessions([persisted])

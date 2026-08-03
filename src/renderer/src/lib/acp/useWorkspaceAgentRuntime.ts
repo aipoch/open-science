@@ -151,6 +151,7 @@ const unwrapIpcErrorDetail = (message: string): string =>
     .trim()
 
 const RESUME_UNKNOWN_ERROR_MESSAGE = 'Agent session resume failed: Unknown error'
+const EMPTY_AGENT_PROMPT_IN_FLIGHT_SESSION_IDS: string[] = []
 
 // Turns a createSession (conversation-start) failure into the message persisted on the session. The
 // error crosses IPC wrapped, so it is unwrapped first — this keeps the app-authored setup guidance
@@ -1511,15 +1512,15 @@ const useWorkspaceAgentRuntime = (): {
     // eslint-disable-next-line react-hooks/exhaustive-deps -- runtime is read fresh; fire on new events.
   }, [runtime.state.events])
 
-  // Applies each visible runtime event once and trims ids that fell out of the runtime window.
-  useEffect(() => {
-    void eventProcessor.current.process(runtime.state.events)
-  }, [runtime.state.events])
+  const agentPromptInFlightSessionIds =
+    runtime.state.agentPromptInFlightSessionIds ?? EMPTY_AGENT_PROMPT_IN_FLIGHT_SESSION_IDS
 
-  // Runtime prompt ownership also covers foreground app continuations with no new user message.
+  // Publish ownership before processing the same snapshot's events. A first visible chunk then clears
+  // the wait monotonically instead of a later effect rearming it from that snapshot.
   useEffect(() => {
-    syncWorkspaceAgentFirstOutputState(runtime.state.promptInFlightSessionIds)
-  }, [runtime.state.promptInFlightSessionIds])
+    syncWorkspaceAgentFirstOutputState(agentPromptInFlightSessionIds)
+    void eventProcessor.current.process(runtime.state.events)
+  }, [agentPromptInFlightSessionIds, runtime.state.events])
 
   // Mirrors pending permission requests into per-session store status.
   useEffect(() => {

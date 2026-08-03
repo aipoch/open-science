@@ -419,6 +419,7 @@ const withTransientSessionState = (
     fixLoopActive: source.fixLoopActive,
     compacting: source.compacting,
     agentStatus: source.agentStatus,
+    awaitingFirstAgentOutput: source.awaitingFirstAgentOutput,
     branchContextResetRequired: source.branchContextResetRequired,
     specialistSwitchResetRequired: source.specialistSwitchResetRequired,
     branchSwitchBlocked: source.branchSwitchBlocked,
@@ -545,6 +546,16 @@ const synchronizeSessionGraph = (
   return synchronizeActiveConversationActivities(withMessages, persistedActivities, persistedGroups)
 }
 
+const CLEARED_AGENT_RUN_STATE = {
+  activeRun: undefined,
+  agentStatus: undefined,
+  awaitingFirstAgentOutput: undefined,
+  compacting: undefined
+} satisfies Pick<
+  ChatSession,
+  'activeRun' | 'agentStatus' | 'awaitingFirstAgentOutput' | 'compacting'
+>
+
 const settleConversationGraphSyncFailure = (
   session: ChatSession,
   input: {
@@ -564,9 +575,7 @@ const settleConversationGraphSyncFailure = (
   return {
     ...session,
     status: 'error',
-    activeRun: undefined,
-    agentStatus: undefined,
-    compacting: undefined,
+    ...CLEARED_AGENT_RUN_STATE,
     error: input.runError
       ? `${input.runError}\n\n${CONVERSATION_GRAPH_SYNC_ERROR}`
       : CONVERSATION_GRAPH_SYNC_ERROR,
@@ -1908,11 +1917,8 @@ export const useSessionStore = create<SessionStore>((set, get) => ({
 
         return {
           ...session,
+          ...CLEARED_AGENT_RUN_STATE,
           status: keepArtifactError ? 'error' : 'idle',
-          activeRun: undefined,
-          agentStatus: undefined,
-          awaitingFirstAgentOutput: undefined,
-          compacting: undefined,
           error: keepArtifactError ? session.error : undefined,
           errorReportable: keepArtifactError ? session.errorReportable : undefined,
           messages,
@@ -1965,11 +1971,8 @@ export const useSessionStore = create<SessionStore>((set, get) => ({
 
         return {
           ...session,
+          ...CLEARED_AGENT_RUN_STATE,
           status: 'error',
-          activeRun: undefined,
-          agentStatus: undefined,
-          awaitingFirstAgentOutput: undefined,
-          compacting: undefined,
           error: message,
           errorReportable,
           messages,
@@ -2008,10 +2011,8 @@ export const useSessionStore = create<SessionStore>((set, get) => ({
         session.id === sessionId && (!session.activeRun || options?.supersedeActiveRun)
           ? {
               ...session,
+              ...CLEARED_AGENT_RUN_STATE,
               status: 'idle',
-              activeRun: undefined,
-              agentStatus: undefined,
-              awaitingFirstAgentOutput: undefined,
               error: undefined,
               errorReportable: undefined,
               compacting: true,
@@ -2090,11 +2091,9 @@ export const useSessionStore = create<SessionStore>((set, get) => ({
         session.id === sessionId
           ? {
               ...session,
+              ...CLEARED_AGENT_RUN_STATE,
               status: 'error',
-              activeRun: undefined,
-              awaitingFirstAgentOutput: undefined,
               interrupted: true,
-              compacting: undefined,
               error,
               // Cleared so a prior run's report flag can't bleed onto this disconnect (the interrupted
               // banner owns this path anyway; the report button never shows for it).

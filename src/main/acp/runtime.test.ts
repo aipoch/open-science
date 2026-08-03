@@ -3127,11 +3127,13 @@ describe('ACP runtime session management', () => {
       first.sessionId,
       second.sessionId
     ])
+    expect(runtime.getSnapshot().agentPromptInFlightSessionIds).toEqual([first.sessionId])
 
     firstPromptGate.resolve({ stopReason: 'end_turn' })
     secondCompactionGate.resolve({ stopReason: 'end_turn' })
     await expect(Promise.all([prompting, compacting])).resolves.toHaveLength(2)
     expect(runtime.getSnapshot().promptInFlightSessionIds).toEqual([])
+    expect(runtime.getSnapshot().agentPromptInFlightSessionIds).toEqual([])
   })
 
   it('drops estimated pre-compaction categories when no fresh usage update arrives', async () => {

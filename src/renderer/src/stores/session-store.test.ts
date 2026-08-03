@@ -2229,6 +2229,7 @@ describe('truncateSessionFromMessage', () => {
           ? {
               ...session,
               status: 'running',
+              awaitingFirstAgentOutput: true,
               activeRun: { promptMessageId: 'user-2', startedAt: baseTime + 400 },
               messages: [...session.messages, createMessage('user-2', 'user', baseTime + 200)]
             }
@@ -2242,6 +2243,7 @@ describe('truncateSessionFromMessage', () => {
     expect(settled).toMatchObject({
       status: 'error',
       activeRun: undefined,
+      awaitingFirstAgentOutput: undefined,
       errorReportable: true,
       conversationGraphSyncBlocked: true
     })

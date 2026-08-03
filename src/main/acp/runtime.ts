@@ -800,6 +800,7 @@ class AcpRuntime {
   getSnapshot(): AcpStateSnapshot {
     const sessionIds = this.activeSessionIds()
     const promptInFlightSessionIds = this.getInFlightSessionIds()
+    const agentPromptInFlightSessionIds = this.getAgentPromptInFlightSessionIds()
     const permissionProfiles: Record<string, SessionPermissionProfileState> = {}
     for (const { appSessionId: sessionId, aggregate } of this.sessionRegistry.entries()) {
       const profile = aggregate.snapshot().permissionProfile
@@ -819,6 +820,7 @@ class AcpRuntime {
       nativeContextCompactionSessionIds:
         this.framework.contextCompaction.kind === 'native-command' ? sessionIds : [],
       promptInFlight: promptInFlightSessionIds.length > 0,
+      agentPromptInFlightSessionIds,
       promptInFlightSessionIds
     })
   }
@@ -958,6 +960,13 @@ class AcpRuntime {
       ...interactions.filter(({ kind }) => kind === 'prompt'),
       ...interactions.filter(({ kind }) => kind === 'compaction')
     ].map(({ sessionId }) => sessionId)
+  }
+
+  private getAgentPromptInFlightSessionIds(): string[] {
+    return this.sessionInteractions
+      .snapshot()
+      .filter(({ kind }) => kind === 'prompt')
+      .map(({ sessionId }) => sessionId)
   }
 
   private hasSessionInteractionInFlight(sessionId: string): boolean {

@@ -165,6 +165,15 @@ class AcpRuntimeCoordinator {
         )
       )
     )
+    const agentPromptInFlightSessionIds = Array.from(
+      new Set(
+        snapshots.flatMap(({ runtime, snapshot }) =>
+          (snapshot.agentPromptInFlightSessionIds ?? []).filter(
+            (sessionId) => this.sessionRuntimes.get(sessionId) === runtime
+          )
+        )
+      )
+    )
     const contextUsageBySession = Object.fromEntries(
       snapshots.flatMap(({ runtime, snapshot }) =>
         // A framework selection takes effect immediately even when the prior generation must finish
@@ -208,6 +217,7 @@ class AcpRuntimeCoordinator {
       contextUsageBySession,
       nativeContextCompactionSessionIds,
       promptInFlight: promptInFlightSessionIds.length > 0,
+      agentPromptInFlightSessionIds,
       promptInFlightSessionIds
     }
   }

@@ -161,6 +161,21 @@ describe('OpenScienceLogoLoader', () => {
     expect(context.clearRect).toHaveBeenCalled()
     expect(context.fillStyle).toBe(computedColor)
 
+    const clearCountAfterFirstFrame = vi.mocked(context.clearRect).mock.calls.length
+    const earlyFrame = animationFrames.entries().next().value as
+      [number, FrameRequestCallback] | undefined
+    if (earlyFrame) animationFrames.delete(earlyFrame[0])
+    act(() => earlyFrame?.[1](1010))
+    expect(vi.mocked(context.clearRect)).toHaveBeenCalledTimes(clearCountAfterFirstFrame)
+
+    const budgetedFrame = animationFrames.entries().next().value as
+      [number, FrameRequestCallback] | undefined
+    if (budgetedFrame) animationFrames.delete(budgetedFrame[0])
+    act(() => budgetedFrame?.[1](1034))
+    expect(vi.mocked(context.clearRect).mock.calls.length).toBeGreaterThan(
+      clearCountAfterFirstFrame
+    )
+
     // Reduced motion cancels the loop and immediately draws the complete static mark.
     const clearCountBeforeReducedMotion = vi.mocked(context.clearRect).mock.calls.length
     const arcCountBeforeReducedMotion = vi.mocked(context.arc).mock.calls.length
