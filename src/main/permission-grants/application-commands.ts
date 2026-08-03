@@ -12,19 +12,11 @@ import {
   type ApplicationCommandInstallation,
   type ApplicationCommandRegistrar
 } from '../application-command-router'
+import type { PermissionGrantProjection } from './projection-controller'
 
 // Composition injects one projection owner. Command registration deliberately does not subscribe,
 // publish permissions:changed, or dispose the owner, so Electron and application adapters cannot
 // create competing revision controllers.
-type PermissionGrantCommandOwner = Readonly<{
-  list(): Promise<PermissionGrantSnapshot>
-  revoke(request: PermissionGrantRevokeRequest): Promise<PermissionGrantMutationView>
-  extendUndo(
-    request: PermissionGrantUndoExtendRequest
-  ): Promise<PermissionGrantUndoReceipt | undefined>
-  restore(request: PermissionGrantRestoreRequest): Promise<PermissionGrantMutationView>
-}>
-
 const permissionGrantApplicationCommands = Object.freeze({
   list: defineApplicationCommand<'permissions:list', readonly [], PermissionGrantSnapshot>(
     'permissions:list'
@@ -55,7 +47,7 @@ const permissionGrantApplicationCommandGroup = defineApplicationCommandGroup('pe
 
 const registerPermissionGrantApplicationCommands = (
   registrar: ApplicationCommandRegistrar,
-  owner: PermissionGrantCommandOwner
+  owner: PermissionGrantProjection
 ): ApplicationCommandInstallation => {
   const scope = registrar.createScope()
   try {
@@ -77,4 +69,3 @@ export {
   permissionGrantApplicationCommands,
   registerPermissionGrantApplicationCommands
 }
-export type { PermissionGrantCommandOwner }

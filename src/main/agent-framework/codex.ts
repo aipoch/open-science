@@ -338,6 +338,7 @@ export const createCodexFramework = ({
 }: CodexFrameworkDeps = {}): AgentFramework => ({
   id: 'codex',
   displayName: 'Codex',
+  commandShellDialect: platform === 'win32' ? 'powershell' : 'posix',
   // codex-acp exposes `/compact` as a built-in command backed by `thread/compact/start`. Codex still
   // owns automatic compaction, so no host trigger threshold is declared here.
   contextCompaction: { kind: 'native-command', command: '/compact' },

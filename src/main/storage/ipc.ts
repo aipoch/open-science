@@ -8,10 +8,12 @@ import { app, dialog, shell } from 'electron'
 import { ipcMainHandle } from '../ipc-handler-registry'
 
 import type {
+  ActiveSessionInfo,
   DataRootInspection,
   MigrationOutcome,
   MigrationProgress,
-  RevealAppStorageResult
+  RevealAppStorageResult,
+  StorageInfo
 } from '../../shared/storage'
 import {
   computeDefaultDataRoot,
@@ -81,15 +83,21 @@ type StorageIpcDeps = {
   logger?: Logger
 }
 
+type StorageCommandOwnerDeps = StorageIpcDeps
+
+type StorageParentRequest = Readonly<{ parent: string }>
+type StorageRootRequest = Readonly<{ parent: string; markOnboarding?: boolean }>
+
 // Pushes migration progress to every live window, mirroring the acp/update broadcast pattern.
 const defaultBroadcast = (progress: MigrationProgress): void => {
   broadcastToRenderers('storage:migrate-progress', progress)
 }
 
-// Registers the renderer-callable data-root storage commands: info/usage, active-session
-// detection, folder picker, and migrate/cancel. Only one migration may run at a time; the
-// in-flight AbortController is held in this closure so cancel can reach it.
-const registerStorageIpcHandlers = (deps: StorageIpcDeps): void => {
+// Owns the renderer-callable data-root storage commands and their migration state. One instance can
+// serve both legacy IPC and the Host command router, so cancellation and staged-copy resolution use
+// the same AbortController, token, and transition gates regardless of the caller surface.
+// eslint-disable-next-line @typescript-eslint/explicit-function-return-type
+const createStorageCommandOwner = (deps: StorageCommandOwnerDeps) => {
   let activeMigration: AbortController | undefined
   // The token + target of the copy THIS session staged (set when a copy verifies, cleared when the
   // migration resolves). commit/discard require it so a stale renderer call can't act on a foreign copy.
@@ -111,7 +119,7 @@ const registerStorageIpcHandlers = (deps: StorageIpcDeps): void => {
     error: (message, data) => emitSafely('error', message, data)
   }
 
-  ipcMainHandle('storage:get-info', async () => {
+  const getInfo = async (): Promise<StorageInfo> => {
     const dataRoot = resolveDataRoot()
     let available = 0
     try {
@@ -154,9 +162,9 @@ const registerStorageIpcHandlers = (deps: StorageIpcDeps): void => {
       usage: await computeStorageUsage(dataRoot),
       availableBytes: available
     }
-  })
+  }
 
-  ipcMainHandle('storage:reveal-app-storage', async (): Promise<RevealAppStorageResult> => {
+  const revealAppStorage = async (): Promise<RevealAppStorageResult> => {
     // The renderer supplies no path: main resolves the single trusted config root at invocation time.
     try {
       const error = await shell.openPath(resolveConfigRoot())
@@ -169,20 +177,20 @@ const registerStorageIpcHandlers = (deps: StorageIpcDeps): void => {
         error: error instanceof Error ? error.message : 'Could not reveal application storage.'
       }
     }
-  })
+  }
 
   // The user answered the one-time legacy-data-move prompt without moving (declined, or chose "keep
   // it here"). Persist that so getInfo's legacyDataMovePrompt stays false and it's never shown again.
   // (Moving/relocating instead sets settings.dataRoot, which already disqualifies the prompt.)
-  ipcMainHandle('storage:dismiss-legacy-move-prompt', async (): Promise<void> => {
+  const dismissLegacyMovePrompt = async (): Promise<void> => {
     try {
       await deps.settingsService.dismissLegacyDataMovePrompt()
     } catch (err) {
       logger.warn('legacy move prompt dismissal failed', diagnosticErrorFields(err))
     }
-  })
+  }
 
-  ipcMainHandle('storage:detect-active', () =>
+  const detectActive = (): ActiveSessionInfo[] =>
     detectActiveSessions({
       runtime: { getActivePromptSessions: deps.getActivePromptSessions },
       // Call as a method (arrow wrapper), never a bare reference: the real notebook service is a
@@ -190,9 +198,8 @@ const registerStorageIpcHandlers = (deps: StorageIpcDeps): void => {
       // drop `this` and throw "Cannot read properties of undefined (reading 'values')".
       notebook: { getActiveNotebookSessions: () => deps.notebook.getActiveNotebookSessions() }
     })
-  )
 
-  ipcMainHandle('storage:pick-directory', async (): Promise<string | null> => {
+  const pickDirectory = async (): Promise<string | null> => {
     try {
       if (deps.showOpenDialog) return await deps.showOpenDialog()
       const result = await dialog.showOpenDialog({
@@ -205,121 +212,115 @@ const registerStorageIpcHandlers = (deps: StorageIpcDeps): void => {
       logger.warn('directory picker failed', diagnosticErrorFields(err))
       return null
     }
-  })
+  }
 
-  ipcMainHandle(
-    'storage:migrate',
-    async (_event, request: { parent: string }): Promise<MigrationOutcome> => {
-      if (activeStaged || resolutionInProgress) {
-        return {
-          ok: false,
-          error: 'A completed migration is waiting to be committed or discarded.'
-        }
-      }
-      if (activeMigration) {
-        return { ok: false, error: 'A migration is already in progress.' }
-      }
-
-      const controller = new AbortController()
-      const correlationId = randomUUID()
-      activeMigration = controller
-      // Flag the copy: sets both the quit guard (Cmd+Q warning) and the write-gate (blocks ACP/notebook
-      // writes to the old root for the whole copy→commit window).
-      beginMigration()
-      try {
-        // Phase 1 only: copy+verify into the new root. Nothing is committed (no setDataRoot, no
-        // delete) — the old root and settings.dataRoot stay intact, so this is fully reversible.
-        // Commit happens later, on the user's "Restart now" (storage:commit-and-relaunch).
-        const result = await runDataRootMigration(
-          {
-            currentDataRoot: resolveDataRoot(),
-            logger,
-            diagnosticCorrelationId: correlationId,
-            runtime: deps.runtime,
-            notebook: deps.notebook,
-            // Preserve the runtime across the move by exporting each env to an offline lock at the
-            // new root; the copied pkgs cache lets the provisioner rebuild them offline on relaunch.
-            exportRuntimeLocks: (fromDataRoot, toDataRoot) =>
-              exportRuntimeLocks(fromDataRoot, toDataRoot, {
-                mm: resolveMicromamba({ resourcesPath: process.resourcesPath }),
-                capture: captureMicromamba
-              })
-          },
-          request.parent,
-          {
-            signal: controller.signal,
-            onProgress: (progress) => (deps.broadcastProgress ?? defaultBroadcast)(progress),
-            onVerified: (staged) => {
-              activeStaged = { ...staged, correlationId }
-            }
-          }
-        )
-        if (!result.ok) {
-          // A failed/cancelled copy leaves the app on the old root, so clear the write-gate now.
-          clearMigrationPending()
-          activeStaged = undefined
-        }
-        return result
-      } catch (err) {
-        // runDataRootMigration never rejects; guard the IPC boundary anyway so a renderer call
-        // never sees a raw thrown error. Nothing was committed, so lift the write-gate.
-        logger.error('data root copy boundary failed', diagnosticErrorFields(err))
-        clearMigrationPending()
-        activeStaged = undefined
-        return { ok: false, error: err instanceof Error ? err.message : String(err) }
-      } finally {
-        activeMigration = undefined
-        // Relax the quit guard now the copy is done; `pending` (write-gate) persists on success.
-        endMigrationCopy()
+  const migrate = async (request: StorageParentRequest): Promise<MigrationOutcome> => {
+    if (activeStaged || resolutionInProgress) {
+      return {
+        ok: false,
+        error: 'A completed migration is waiting to be committed or discarded.'
       }
     }
-  )
+    if (activeMigration) {
+      return { ok: false, error: 'A migration is already in progress.' }
+    }
 
-  ipcMainHandle('storage:cancel-migrate', () => {
+    const controller = new AbortController()
+    const correlationId = randomUUID()
+    activeMigration = controller
+    // Flag the copy: sets both the quit guard (Cmd+Q warning) and the write-gate (blocks ACP/notebook
+    // writes to the old root for the whole copy→commit window).
+    beginMigration()
+    try {
+      // Phase 1 only: copy+verify into the new root. Nothing is committed (no setDataRoot, no
+      // delete) — the old root and settings.dataRoot stay intact, so this is fully reversible.
+      // Commit happens later, on the user's "Restart now" (storage:commit-and-relaunch).
+      const result = await runDataRootMigration(
+        {
+          currentDataRoot: resolveDataRoot(),
+          logger,
+          diagnosticCorrelationId: correlationId,
+          runtime: deps.runtime,
+          notebook: deps.notebook,
+          // Preserve the runtime across the move by exporting each env to an offline lock at the
+          // new root; the copied pkgs cache lets the provisioner rebuild them offline on relaunch.
+          exportRuntimeLocks: (fromDataRoot, toDataRoot) =>
+            exportRuntimeLocks(fromDataRoot, toDataRoot, {
+              mm: resolveMicromamba({ resourcesPath: process.resourcesPath }),
+              capture: captureMicromamba
+            })
+        },
+        request.parent,
+        {
+          signal: controller.signal,
+          onProgress: (progress) => (deps.broadcastProgress ?? defaultBroadcast)(progress),
+          onVerified: (staged) => {
+            activeStaged = { ...staged, correlationId }
+          }
+        }
+      )
+      if (!result.ok) {
+        // A failed/cancelled copy leaves the app on the old root, so clear the write-gate now.
+        clearMigrationPending()
+        activeStaged = undefined
+      }
+      return result
+    } catch (err) {
+      // runDataRootMigration never rejects; guard the IPC boundary anyway so a renderer call
+      // never sees a raw thrown error. Nothing was committed, so lift the write-gate.
+      logger.error('data root copy boundary failed', diagnosticErrorFields(err))
+      clearMigrationPending()
+      activeStaged = undefined
+      return { ok: false, error: err instanceof Error ? err.message : String(err) }
+    } finally {
+      activeMigration = undefined
+      // Relax the quit guard now the copy is done; `pending` (write-gate) persists on success.
+      endMigrationCopy()
+    }
+  }
+
+  const cancelMigrate = (): void => {
     // Once a copy has completed (activeStaged set), only commit/discard may resolve it: a late cancel
     // (renderer still showing Cancel during the copy→done transition) must NOT clear the gate/token and
     // leave a committable-but-unfrozen copy behind.
     if (activeStaged) return
     activeMigration?.abort()
-  })
+  }
 
   // Discards a completed-but-uncommitted copy at `<parent>/OpenScience` when the user picks "Keep
   // current location" on the done stage. Since the copy phase never touched settings.dataRoot or the
   // old root, this just removes the new copy and leaves the app on its current root. discardStagedCopy
   // refuses anything that isn't a marker-confirmed staging copy for the current root, so a misrouted
   // parent can't delete live data. On a successful discard the write-gate is lifted. Never throws.
-  ipcMainHandle(
-    'storage:discard-migrated-copy',
-    async (_event, request: { parent: string }): Promise<void> => {
-      if (activeMigration || resolutionInProgress) {
-        // A copy is still running; discarding would race the writer. Ignore the (stale) request.
-        logger.warn('staged data root discard ignored', { reason: 'copy-in-progress' })
-        return
-      }
-      if (!activeStaged || !samePath(activeStaged.target, dataRootForPicked(request.parent))) {
-        logger.warn('staged data root discard ignored', { reason: 'no-matching-copy' })
-        return
-      }
-      const staged = activeStaged
-      resolutionInProgress = true
-      try {
-        const result = await discardStagedCopy(
-          { currentDataRoot: resolveDataRoot(), expectedToken: staged.token },
-          request.parent
-        )
-        if (result.ok) {
-          clearMigrationPending()
-          activeStaged = undefined
-        } else {
-          logger.warn('staged data root discard refused', { reason: 'validation-failed' })
-        }
-      } catch (err) {
-        logger.error('staged data root discard failed', diagnosticErrorFields(err))
-      } finally {
-        resolutionInProgress = false
-      }
+  const discardMigratedCopy = async (request: StorageParentRequest): Promise<void> => {
+    if (activeMigration || resolutionInProgress) {
+      // A copy is still running; discarding would race the writer. Ignore the (stale) request.
+      logger.warn('staged data root discard ignored', { reason: 'copy-in-progress' })
+      return
     }
-  )
+    if (!activeStaged || !samePath(activeStaged.target, dataRootForPicked(request.parent))) {
+      logger.warn('staged data root discard ignored', { reason: 'no-matching-copy' })
+      return
+    }
+    const staged = activeStaged
+    resolutionInProgress = true
+    try {
+      const result = await discardStagedCopy(
+        { currentDataRoot: resolveDataRoot(), expectedToken: staged.token },
+        request.parent
+      )
+      if (result.ok) {
+        clearMigrationPending()
+        activeStaged = undefined
+      } else {
+        logger.warn('staged data root discard refused', { reason: 'validation-failed' })
+      }
+    } catch (err) {
+      logger.error('staged data root discard failed', diagnosticErrorFields(err))
+    } finally {
+      resolutionInProgress = false
+    }
+  }
 
   // Production relaunches through app.quit(), allowing the single application lifecycle owner to
   // drain usage, flush renderer persistence, stop backends, write a terminal diagnostic, and flush
@@ -344,105 +345,96 @@ const registerStorageIpcHandlers = (deps: StorageIpcDeps): void => {
   // interruption during the delete only orphans the old root (never data loss); see
   // commitDataRootSwitch. On switchoverFailed it returns without relaunching so the modal can show
   // the error (copy intact, old root untouched).
-  ipcMainHandle(
-    'storage:commit-and-relaunch',
-    async (_event, request: { parent: string }): Promise<MigrationOutcome> => {
-      if (activeMigration) {
-        return { ok: false, error: 'A migration copy is still in progress.' }
-      }
-      if (!activeStaged || !samePath(activeStaged.target, dataRootForPicked(request.parent))) {
-        return { ok: false, error: 'No completed migration from this app session was found.' }
-      }
-      if (resolutionInProgress) {
-        return { ok: false, error: 'A migration is already being resolved.' }
-      }
-      const staged = activeStaged
-      resolutionInProgress = true
-      const previousDataRoot = resolveDataRoot()
-      let outcome: MigrationOutcome
-      try {
-        outcome = await commitDataRootSwitch(
-          {
-            currentDataRoot: resolveDataRoot(),
-            // Arrow-wrapped so setDataRoot is called as a method (it reads `this.repository`).
-            setDataRoot: (path) => deps.settingsService.setDataRoot(path),
-            // Prove the on-disk copy is the one this session staged (guards against a stale marker).
-            expectedToken: staged.token,
-            logger,
-            diagnosticCorrelationId: staged.correlationId
-          },
-          request.parent
-        )
-      } catch (err) {
-        logger.error('data root commit boundary failed', diagnosticErrorFields(err))
-        // The commit didn't complete; keep the app usable on the old root by lifting the write-gate.
-        clearMigrationPending()
-        activeStaged = undefined
-        resolutionInProgress = false
-        return { ok: false, error: err instanceof Error ? err.message : String(err) }
-      }
-
-      if (outcome.ok) {
-        // On success the write-gate stays set through relaunch: the fresh process starts with
-        // pending=false, so writes naturally resume against the now-live new root.
-        activeStaged = undefined
-        cleanupRuntimeCache(join(previousDataRoot, 'runtime'))
-        await cleanRelaunch()
-      } else {
-        // The commit did not switch over (switchoverFailed, or a no-op refusal: no verified copy /
-        // mismatch). The UI's error stage offers no retry, so never leave the app soft-locked: on a
-        // switchover failure discard the now-orphan staged copy (best-effort), then lift the write-gate
-        // in every case. The old root is untouched and immediately usable.
-        if ('switchoverFailed' in outcome) {
-          await discardStagedCopy(
-            { currentDataRoot: resolveDataRoot(), expectedToken: staged.token },
-            request.parent
-          ).catch(() => undefined)
-        }
-        clearMigrationPending()
-        activeStaged = undefined
-        resolutionInProgress = false
-      }
-      return outcome
+  const commitAndRelaunch = async (request: StorageParentRequest): Promise<MigrationOutcome> => {
+    if (activeMigration) {
+      return { ok: false, error: 'A migration copy is still in progress.' }
     }
-  )
+    if (!activeStaged || !samePath(activeStaged.target, dataRootForPicked(request.parent))) {
+      return { ok: false, error: 'No completed migration from this app session was found.' }
+    }
+    if (resolutionInProgress) {
+      return { ok: false, error: 'A migration is already being resolved.' }
+    }
+    const staged = activeStaged
+    resolutionInProgress = true
+    const previousDataRoot = resolveDataRoot()
+    let outcome: MigrationOutcome
+    try {
+      outcome = await commitDataRootSwitch(
+        {
+          currentDataRoot: resolveDataRoot(),
+          // Arrow-wrapped so setDataRoot is called as a method (it reads `this.repository`).
+          setDataRoot: (path) => deps.settingsService.setDataRoot(path),
+          // Prove the on-disk copy is the one this session staged (guards against a stale marker).
+          expectedToken: staged.token,
+          logger,
+          diagnosticCorrelationId: staged.correlationId
+        },
+        request.parent
+      )
+    } catch (err) {
+      logger.error('data root commit boundary failed', diagnosticErrorFields(err))
+      // The commit didn't complete; keep the app usable on the old root by lifting the write-gate.
+      clearMigrationPending()
+      activeStaged = undefined
+      resolutionInProgress = false
+      return { ok: false, error: err instanceof Error ? err.message : String(err) }
+    }
+
+    if (outcome.ok) {
+      // On success the write-gate stays set through relaunch: the fresh process starts with
+      // pending=false, so writes naturally resume against the now-live new root.
+      activeStaged = undefined
+      cleanupRuntimeCache(join(previousDataRoot, 'runtime'))
+      await cleanRelaunch()
+    } else {
+      // The commit did not switch over (switchoverFailed, or a no-op refusal: no verified copy /
+      // mismatch). The UI's error stage offers no retry, so never leave the app soft-locked: on a
+      // switchover failure discard the now-orphan staged copy (best-effort), then lift the write-gate
+      // in every case. The old root is untouched and immediately usable.
+      if ('switchoverFailed' in outcome) {
+        await discardStagedCopy(
+          { currentDataRoot: resolveDataRoot(), expectedToken: staged.token },
+          request.parent
+        ).catch(() => undefined)
+      }
+      clearMigrationPending()
+      activeStaged = undefined
+      resolutionInProgress = false
+    }
+    return outcome
+  }
 
   // Onboarding's first-run location step: check a candidate parent before letting the user commit
   // to it. Never throws: validateNewDataRoot already guards fs errors, this catch only covers
   // anything unexpected escaping that contract.
-  ipcMainHandle(
-    'storage:validate-data-root',
-    async (_event, request: { parent: string }): Promise<ValidateResult> => {
-      try {
-        return await validateNewDataRoot(request.parent, resolveDataRoot())
-      } catch (err) {
-        logger.warn('data root validation boundary failed', diagnosticErrorFields(err))
-        return { ok: false, error: err instanceof Error ? err.message : String(err) }
-      }
+  const validateDataRoot = async (request: StorageParentRequest): Promise<ValidateResult> => {
+    try {
+      return await validateNewDataRoot(request.parent, resolveDataRoot())
+    } catch (err) {
+      logger.warn('data root validation boundary failed', diagnosticErrorFields(err))
+      return { ok: false, error: err instanceof Error ? err.message : String(err) }
     }
-  )
+  }
 
   // Settings + onboarding recovery: classify a candidate parent without committing to it, so the
   // caller can route to the right UI (migrate confirm for 'move', adopt confirm for 'adopt',
   // inline error for 'invalid') and display the derived `<parent>/OpenScience` path regardless of
   // kind. Never throws.
-  ipcMainHandle(
-    'storage:inspect-data-root',
-    async (_event, request: { parent: string }): Promise<DataRootInspection> => {
-      const dataRoot = dataRootForPicked(request.parent)
-      try {
-        const result = await classifyDataRoot(request.parent, resolveDataRoot())
-        return { ...result, dataRoot }
-      } catch (err) {
-        logger.warn('data root inspection boundary failed', diagnosticErrorFields(err))
-        return {
-          kind: 'invalid',
-          dataRoot,
-          error: err instanceof Error ? err.message : String(err)
-        }
+  const inspectDataRoot = async (request: StorageParentRequest): Promise<DataRootInspection> => {
+    const dataRoot = dataRootForPicked(request.parent)
+    try {
+      const result = await classifyDataRoot(request.parent, resolveDataRoot())
+      return { ...result, dataRoot }
+    } catch (err) {
+      logger.warn('data root inspection boundary failed', diagnosticErrorFields(err))
+      return {
+        kind: 'invalid',
+        dataRoot,
+        error: err instanceof Error ? err.message : String(err)
       }
     }
-  )
+  }
 
   // A no-move pointer switch: sets dataRoot and relaunches, without invoking the migration engine
   // - used both for onboarding's first-run apply (no data exists yet to move) and for adopting an
@@ -458,51 +450,86 @@ const registerStorageIpcHandlers = (deps: StorageIpcDeps): void => {
   // swap the wizard for Home (showing the OLD data root, and burying any failure below). Settings-
   // adopt omits it (onboarding has already completed). Order is load-bearing: classify -> mkdir ->
   // setDataRoot -> [markOnboardingComplete] -> relaunch. On an invalid parent, none of these run.
-  ipcMainHandle(
-    'storage:set-data-root-and-relaunch',
-    async (
-      _event,
-      request: { parent: string; markOnboarding?: boolean }
-    ): Promise<ValidateResult> => {
-      const operation = startDiagnosticOperation(logger, {
-        operation: 'data-root-selection',
-        fields: { onboarding: request.markOnboarding === true }
-      })
-      operation.phase('classify-target')
-      try {
-        const classification = await classifyDataRoot(request.parent, resolveDataRoot())
-        if (classification.kind === 'invalid') {
-          operation.fail(new Error(classification.error ?? 'invalid target'), { mode: 'invalid' })
-          return { ok: false, error: classification.error ?? 'The selected folder is not usable.' }
-        }
-
-        const target = dataRootForPicked(request.parent)
-        // Create the data root now, before persisting the pointer. Unlike storage:migrate there is no
-        // copy phase to mkdir it, so a fresh onboarding folder ('move') would be recorded in
-        // settings.dataRoot without ever existing on disk - and the next launch's startup guard would
-        // read that explicitly-configured-but-absent root as deleted and wrongly show "Data folder not
-        // found". For an 'adopt' target the folder already exists, so this is a no-op. classifyDataRoot
-        // has already proven the parent writable, so failure here is genuinely unexpected.
-        operation.phase('prepare-target', { mode: classification.kind })
-        await mkdir(target, { recursive: true })
-        operation.phase('persist-pointer', { mode: classification.kind })
-        await deps.settingsService.setDataRoot(target)
-        if (request.markOnboarding) {
-          await deps.settingsService.markOnboardingComplete()
-        }
-        operation.phase('request-relaunch', { mode: classification.kind })
-        await cleanRelaunch()
-        operation.complete({ mode: classification.kind })
-
-        return { ok: true }
-      } catch (err) {
-        operation.fail(err)
-        logger.error('data root selection boundary failed', diagnosticErrorFields(err))
-        return { ok: false, error: err instanceof Error ? err.message : String(err) }
+  const setDataRootAndRelaunch = async (request: StorageRootRequest): Promise<ValidateResult> => {
+    const operation = startDiagnosticOperation(logger, {
+      operation: 'data-root-selection',
+      fields: { onboarding: request.markOnboarding === true }
+    })
+    operation.phase('classify-target')
+    try {
+      const classification = await classifyDataRoot(request.parent, resolveDataRoot())
+      if (classification.kind === 'invalid') {
+        operation.fail(new Error(classification.error ?? 'invalid target'), { mode: 'invalid' })
+        return { ok: false, error: classification.error ?? 'The selected folder is not usable.' }
       }
+
+      const target = dataRootForPicked(request.parent)
+      // Create the data root now, before persisting the pointer. Unlike storage:migrate there is no
+      // copy phase to mkdir it, so a fresh onboarding folder ('move') would be recorded in
+      // settings.dataRoot without ever existing on disk - and the next launch's startup guard would
+      // read that explicitly-configured-but-absent root as deleted and wrongly show "Data folder not
+      // found". For an 'adopt' target the folder already exists, so this is a no-op. classifyDataRoot
+      // has already proven the parent writable, so failure here is genuinely unexpected.
+      operation.phase('prepare-target', { mode: classification.kind })
+      await mkdir(target, { recursive: true })
+      operation.phase('persist-pointer', { mode: classification.kind })
+      await deps.settingsService.setDataRoot(target)
+      if (request.markOnboarding) {
+        await deps.settingsService.markOnboardingComplete()
+      }
+      operation.phase('request-relaunch', { mode: classification.kind })
+      await cleanRelaunch()
+      operation.complete({ mode: classification.kind })
+
+      return { ok: true }
+    } catch (err) {
+      operation.fail(err)
+      logger.error('data root selection boundary failed', diagnosticErrorFields(err))
+      return { ok: false, error: err instanceof Error ? err.message : String(err) }
     }
+  }
+
+  return Object.freeze({
+    getInfo,
+    revealAppStorage,
+    dismissLegacyMovePrompt,
+    detectActive,
+    pickDirectory,
+    migrate,
+    cancelMigrate,
+    discardMigratedCopy,
+    commitAndRelaunch,
+    validateDataRoot,
+    inspectDataRoot,
+    setDataRootAndRelaunch
+  })
+}
+
+type StorageCommandOwner = ReturnType<typeof createStorageCommandOwner>
+
+const registerStorageIpcHandlers = (
+  deps: StorageIpcDeps,
+  owner: StorageCommandOwner = createStorageCommandOwner(deps)
+): void => {
+  ipcMainHandle('storage:get-info', () => owner.getInfo())
+  ipcMainHandle('storage:reveal-app-storage', () => owner.revealAppStorage())
+  ipcMainHandle('storage:dismiss-legacy-move-prompt', () => owner.dismissLegacyMovePrompt())
+  ipcMainHandle('storage:detect-active', () => owner.detectActive())
+  ipcMainHandle('storage:pick-directory', () => owner.pickDirectory())
+  ipcMainHandle('storage:migrate', (_event, request) => owner.migrate(request))
+  ipcMainHandle('storage:cancel-migrate', () => owner.cancelMigrate())
+  ipcMainHandle('storage:discard-migrated-copy', (_event, request) =>
+    owner.discardMigratedCopy(request)
+  )
+  ipcMainHandle('storage:commit-and-relaunch', (_event, request) =>
+    owner.commitAndRelaunch(request)
+  )
+  ipcMainHandle('storage:validate-data-root', (_event, request) => owner.validateDataRoot(request))
+  ipcMainHandle('storage:inspect-data-root', (_event, request) => owner.inspectDataRoot(request))
+  ipcMainHandle('storage:set-data-root-and-relaunch', (_event, request) =>
+    owner.setDataRootAndRelaunch(request)
   )
 }
 
-export { registerStorageIpcHandlers }
-export type { StorageIpcDeps }
+export { createStorageCommandOwner, registerStorageIpcHandlers }
+export type { StorageCommandOwner, StorageCommandOwnerDeps, StorageIpcDeps }

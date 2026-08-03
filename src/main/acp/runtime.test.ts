@@ -6979,8 +6979,11 @@ describe('ACP runtime session management', () => {
 
   it('strips Codex policy amendments using the session framework after this.framework moves', async () => {
     const process = new FakeAgentProcess()
-    const permissionRequests: Array<{ requestId: string; options: Array<{ optionId: string }> }> =
-      []
+    const permissionRequests: Array<{
+      requestId: string
+      options: Array<{ optionId: string }>
+      commandPrefix?: string[]
+    }> = []
 
     acp
       .agent({ name: 'codex-amendment-reconnect-agent' })
@@ -7009,7 +7012,8 @@ describe('ACP runtime session management', () => {
             {
               optionId: 'accept_execpolicy_amendment',
               name: 'Allow Commands Starting With `./deploy`',
-              kind: 'allow_always'
+              kind: 'allow_always',
+              _meta: { codex: { execpolicyAmendment: ['./deploy'] } }
             },
             { optionId: 'decline', name: 'Decline', kind: 'reject_once' }
           ]
@@ -7051,6 +7055,7 @@ describe('ACP runtime session management', () => {
       'decline',
       expect.stringContaining('open-science:allow-session:')
     ])
+    expect(permissionRequests[0].commandPrefix).toEqual(['./deploy'])
   })
 
   it('bounds pending Codex MCP identities and clears unmatched entries when the turn stops', async () => {

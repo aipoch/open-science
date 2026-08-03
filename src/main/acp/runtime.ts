@@ -56,6 +56,7 @@ import type {
 } from '../agents/claude-code-handoff'
 import {
   claudeCodeFramework,
+  getAgentFramework,
   type AgentFramework,
   type ResolvedAgentBackend
 } from '../agent-framework'
@@ -4313,6 +4314,11 @@ class AcpRuntime {
       }
 
       const profileState = aggregateSnapshot?.permissionProfile
+      const permissionFrameworkId = aggregateSnapshot?.frameworkId ?? this.framework.id
+      const permissionFramework =
+        permissionFrameworkId === this.framework.id
+          ? this.framework
+          : getAgentFramework(permissionFrameworkId)
 
       return await this.permissionContext.requestPermission(
         appSessionId === normalizedParams.sessionId
@@ -4322,7 +4328,8 @@ class AcpRuntime {
           profile: profileState?.selectedProfile ?? DEFAULT_PERMISSION_PROFILE,
           // Source the framework from the per-session map, not mutable this.framework — an overlapping
           // reconnect can move this.framework off codex mid-request and leak the amendment options.
-          frameworkId: aggregateSnapshot?.frameworkId ?? this.framework.id,
+          frameworkId: permissionFrameworkId,
+          shellDialect: permissionFramework.commandShellDialect,
           autoReviewStrategy: profileState?.autoReviewStrategy,
           cwd: aggregateSnapshot?.cwd,
           mcpServerNames,

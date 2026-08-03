@@ -11,6 +11,7 @@ import type {
   PermissionGrantRecord,
   PermissionGrantScope
 } from '../../shared/permission-grants'
+import type { CommandShellDialect } from '../agent-framework/types'
 import { extractProviderToolName } from './runtime-events'
 import {
   isMcpToolName,
@@ -25,7 +26,9 @@ import {
 } from '../agent-framework/app-mcp-names'
 import {
   capabilityFromLegacyCategory,
-  categoryFromTrustedToolName
+  categoryFromTrustedToolName,
+  commandPrefixPermissionCategory,
+  containsSecretBearingMaterial
 } from '../permission-grants/capability'
 import { projectPermissionGrantSnapshot } from '../permission-grants/catalog'
 import type { PermissionGrantRegistry } from '../permission-grants/registry'
@@ -96,6 +99,16 @@ const CODEX_POLICY_AMENDMENT_OPTION_ID_PATTERN = /^accept_.*policy_amendment$/
 // this option ID; the session-scoped one uses 'allow_session'. Keying on the persistent ID (not
 // position) is robust to option reordering — tests pin this contract.
 const CODEX_MCP_PERSISTENT_ALLOW_OPTION_ID = 'allow_always'
+const CODEX_EXEC_POLICY_AMENDMENT_OPTION_ID = 'accept_execpolicy_amendment'
+
+const metadataRecord = (value: unknown): Record<string, unknown> | undefined =>
+  value && typeof value === 'object' && !Array.isArray(value)
+    ? (value as Record<string, unknown>)
+    : undefined
+
+type CodexCommandGroup = { categoryKey: string; commandPrefix: string[] }
+type CodexCommandGroupMatch = { kind: 'group'; group: CodexCommandGroup } | { kind: 'unsafe' }
+type SimpleCommandToken = { value: string; hasPathnameExpansion: boolean }
 
 const commandFromRawInput = (rawInput: unknown): string | undefined => {
   if (!rawInput || typeof rawInput !== 'object' || Array.isArray(rawInput)) return undefined
@@ -103,6 +116,180 @@ const commandFromRawInput = (rawInput: unknown): string | undefined => {
   const command = (rawInput as Record<string, unknown>).command
 
   return typeof command === 'string' && command.trim() ? command : undefined
+}
+
+const startsVariableExpansion = (
+  command: string,
+  index: number,
+  shellDialect: CommandShellDialect
+): boolean => {
+  const character = command[index]
+  const next = command[index + 1]
+  if (!next) return false
+
+  if (character === '$') {
+    return shellDialect === 'posix'
+      ? /[A-Za-z0-9_@*#?$!{(-]/u.test(next)
+      : /[\p{L}\p{N}_?^$:{(]/u.test(next)
+  }
+
+  return shellDialect === 'powershell' && character === '@' && /[\p{L}\p{N}_?^$]/u.test(next)
+}
+
+const simpleCommandArgv = (
+  command: string,
+  shellDialect: CommandShellDialect
+): SimpleCommandToken[] | undefined => {
+  const argv: SimpleCommandToken[] = []
+  let token = ''
+  let tokenStarted = false
+  let tokenHasPathnameExpansion = false
+  let quote: "'" | '"' | undefined
+
+  const pushToken = (): void => {
+    if (!tokenStarted) return
+    argv.push({ value: token, hasPathnameExpansion: tokenHasPathnameExpansion })
+    token = ''
+    tokenStarted = false
+    tokenHasPathnameExpansion = false
+  }
+
+  for (let index = 0; index < command.length; index += 1) {
+    const character = command[index]
+    if (character === '\r' || character === '\n') return undefined
+
+    if (quote === "'") {
+      if (character !== "'") {
+        token += character
+        tokenStarted = true
+        continue
+      }
+      if (shellDialect === 'powershell' && command[index + 1] === "'") {
+        token += "'"
+        tokenStarted = true
+        index += 1
+      } else {
+        quote = undefined
+      }
+      continue
+    }
+
+    if (quote === '"') {
+      const escape = shellDialect === 'powershell' ? '`' : '\\'
+      if (character === escape) {
+        const escaped = command[index + 1]
+        if (escaped === undefined || /[\r\n]/u.test(escaped)) return undefined
+        token +=
+          shellDialect === 'posix' && !/[$`"\\]/u.test(escaped) ? `${character}${escaped}` : escaped
+        tokenStarted = true
+        index += 1
+        continue
+      }
+      if (character === '"') {
+        quote = undefined
+        continue
+      }
+      if (
+        (shellDialect === 'posix' && character === '`') ||
+        (character === '$' && startsVariableExpansion(command, index, shellDialect))
+      ) {
+        return undefined
+      }
+      token += character
+      tokenStarted = true
+      continue
+    }
+
+    const isWordSeparator =
+      shellDialect === 'posix' ? character === ' ' || character === '\t' : /\s/u.test(character)
+    if (isWordSeparator) {
+      pushToken()
+      continue
+    }
+    if (character === "'" || character === '"') {
+      quote = character
+      tokenStarted = true
+      continue
+    }
+
+    const escape = shellDialect === 'powershell' ? '`' : '\\'
+    if (character === escape) {
+      const escaped = command[index + 1]
+      if (escaped === undefined || /[\r\n]/u.test(escaped)) return undefined
+      token += escaped
+      tokenStarted = true
+      index += 1
+      continue
+    }
+
+    if (
+      /[;&|<>\r\n]/u.test(character) ||
+      (shellDialect === 'posix' && /[`()]/u.test(character)) ||
+      (shellDialect === 'powershell' && /[(){}]/u.test(character)) ||
+      startsVariableExpansion(command, index, shellDialect)
+    ) {
+      return undefined
+    }
+    if (
+      (character === '~' &&
+        (!tokenStarted ||
+          (shellDialect === 'posix' &&
+            (token.endsWith('=') || (token.includes('=') && token.endsWith(':')))))) ||
+      /[?*[]/u.test(character) ||
+      (shellDialect === 'posix' && (character === '{' || (character === '=' && !tokenStarted)))
+    ) {
+      tokenHasPathnameExpansion = true
+    }
+    token += character
+    tokenStarted = true
+  }
+
+  if (quote) return undefined
+  pushToken()
+  return argv
+}
+
+// Reads Codex's structured argv-prefix proposal only when the provider offers the matching native
+// policy amendment. Some codex-acp shapes repeat the prefix on the request instead of the option.
+const codexCommandGroup = (
+  params: RequestPermissionRequest,
+  shellDialect: CommandShellDialect | undefined
+): CodexCommandGroupMatch | undefined => {
+  const option = params.options.find(
+    (candidate) =>
+      candidate.optionId === CODEX_EXEC_POLICY_AMENDMENT_OPTION_ID &&
+      candidate.kind.toLowerCase() === ALLOW_ALWAYS_OPTION_KIND
+  )
+  if (!option || !shellDialect) return undefined
+
+  const optionCodex = metadataRecord(option._meta?.codex)
+  const requestCodex = metadataRecord(params._meta?.codex)
+  const requestParams = metadataRecord(requestCodex?.params)
+
+  const amendment = optionCodex?.execpolicyAmendment ?? requestParams?.proposedExecpolicyAmendment
+  if (!Array.isArray(amendment)) return undefined
+  const command = commandFromRawInput(params.toolCall.rawInput)
+  if (command && containsSecretBearingMaterial(command)) return { kind: 'unsafe' }
+  const categoryKey = commandPrefixPermissionCategory(amendment)
+  if (!categoryKey) return undefined
+
+  const commandPrefix = amendment.filter((token): token is string => typeof token === 'string')
+  const commandArgv = command ? simpleCommandArgv(command, shellDialect) : undefined
+  if (
+    !command ||
+    !commandArgv ||
+    !commandPrefix.every((token, index) => commandArgv[index]?.value === token)
+  ) {
+    return undefined
+  }
+  if (commandPrefix.some((_, index) => commandArgv[index]?.hasPathnameExpansion)) {
+    return { kind: 'unsafe' }
+  }
+
+  return {
+    kind: 'group',
+    group: { categoryKey, commandPrefix }
+  }
 }
 
 const reportedPermissionTitle = (params: RequestPermissionRequest): string =>
@@ -371,6 +558,10 @@ const resolveCategoryKey = (
 
 // Projects an opaque category key into the display grant shown in the composer.
 const describeGrant = (categoryKey: string): AcpPermissionGrant => {
+  if (categoryKey.startsWith('shell-group:')) {
+    return { categoryKey, kind: 'shell', label: 'Command group', scope: 'session' }
+  }
+
   if (categoryKey.startsWith('shell:')) {
     return {
       categoryKey,
@@ -571,9 +762,18 @@ class AcpPermissionBroker {
       this.sessionCancellationGenerations.get(params.sessionId) ?? 0
     const requestId = randomUUID()
     const mcpServerNames = policyContext?.mcpServerNames ?? []
-    const categoryKey = resolveCategoryKey(params, mcpServerNames, !this.permissionGrantRegistry)
-    const capability = categoryKey ? capabilityFromLegacyCategory(categoryKey) : undefined
     const isMcp = isMcpPermission(params, mcpServerNames)
+    const codexGroupMatch =
+      policyContext?.frameworkId === 'codex' && !isMcp
+        ? codexCommandGroup(params, policyContext.shellDialect)
+        : undefined
+    const codexGroup = codexGroupMatch?.kind === 'group' ? codexGroupMatch.group : undefined
+    const categoryKey =
+      codexGroup?.categoryKey ??
+      (codexGroupMatch?.kind === 'unsafe'
+        ? undefined
+        : resolveCategoryKey(params, mcpServerNames, !this.permissionGrantRegistry))
+    const capability = categoryKey ? capabilityFromLegacyCategory(categoryKey) : undefined
     const mcpIdentity = isMcp
       ? (resolveTrustedMcpToolIdentity(params, mcpServerNames) ??
         resolveMcpToolIdentity(params.toolCall.title, mcpServerNames) ??
@@ -643,6 +843,7 @@ class AcpPermissionBroker {
       ...(mcpIdentity ? { mcpIdentity } : {}),
       toolKind: params.toolCall.kind ?? undefined,
       toolLocations: params.toolCall.locations ?? undefined,
+      ...(codexGroup ? { commandPrefix: codexGroup.commandPrefix } : {}),
       rawInput: params.toolCall.rawInput,
       options: permissionOptions
     }

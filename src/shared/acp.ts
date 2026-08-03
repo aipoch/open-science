@@ -407,6 +407,9 @@ export type AcpPermissionRequest = {
   mcpIdentity?: string
   toolKind?: ToolKind
   toolLocations?: ToolCallLocation[]
+  // Structured argv prefix whose remembered scopes authorize a command group. This is transient
+  // approval context only; permission grants persist an opaque digest instead of these tokens.
+  commandPrefix?: string[]
   rawInput?: unknown
   options: AcpPermissionOption[]
 }

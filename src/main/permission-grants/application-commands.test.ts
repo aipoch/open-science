@@ -11,9 +11,9 @@ import { createWebCallerContext } from '../caller-context'
 import {
   permissionGrantApplicationCommandGroup,
   permissionGrantApplicationCommands,
-  registerPermissionGrantApplicationCommands,
-  type PermissionGrantCommandOwner
+  registerPermissionGrantApplicationCommands
 } from './application-commands'
+import type { PermissionGrantProjection } from './projection-controller'
 
 const snapshot: PermissionGrantSnapshot = {
   version: 4,
@@ -22,7 +22,7 @@ const snapshot: PermissionGrantSnapshot = {
   counts: { all: 0, global: 0, project: 0, session: 0 }
 }
 
-const createOwner = (): PermissionGrantCommandOwner => ({
+const createOwner = (): PermissionGrantProjection => ({
   list: vi.fn(async () => snapshot),
   revoke: vi.fn(async () => ({ ...snapshot, receipt: undefined, conflicts: [] })),
   extendUndo: vi.fn(async () => ({ undoToken: 'undo-1', expiresAt: 10, revokedCount: 1 })),

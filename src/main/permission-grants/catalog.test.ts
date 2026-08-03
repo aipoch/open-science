@@ -37,6 +37,25 @@ describe('permission grant renderer projection', () => {
     expect(JSON.stringify(snapshot)).not.toContain(digest)
   })
 
+  it('labels a command group without exposing its qualifier digest', () => {
+    const digest = `argv-prefix:sha256:v1:${'a'.repeat(64)}`
+    const snapshot = projectPermissionGrantSnapshot([
+      {
+        id: 'grant-command-group',
+        revision: 1,
+        capability: {
+          kind: 'execution',
+          key: 'exec:agent/shell',
+          qualifier: { mode: 'category', value: digest }
+        },
+        scope: { kind: 'global' }
+      }
+    ])
+
+    expect(snapshot.grants[0]).toMatchObject({ qualifierLabel: 'Command group' })
+    expect(JSON.stringify(snapshot)).not.toContain(digest)
+  })
+
   it('discloses when a broader grant still covers a revocable row', () => {
     const capability = { kind: 'execution' as const, key: 'exec:local/python' }
     const snapshot = projectPermissionGrantSnapshot([

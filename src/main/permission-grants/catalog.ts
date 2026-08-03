@@ -75,6 +75,12 @@ const qualifierLabelFor = (record: PermissionGrantRecord): string | undefined =>
   if (!qualifier) return undefined
   if (qualifier.mode === 'any') return 'Any call'
   if (qualifier.mode === 'exact') return 'Specific input'
+  if (
+    record.capability.kind === 'execution' &&
+    qualifier.value.startsWith('argv-prefix:sha256:v1:')
+  ) {
+    return 'Command group'
+  }
   return qualifier.value
 }
 
