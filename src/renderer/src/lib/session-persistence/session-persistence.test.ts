@@ -665,6 +665,8 @@ describe('renderer session persistence bridge', () => {
       cwd: '/workspace/project'
     })
     void save(useSessionStore.getState())
+    await flushMicrotasks()
+    expect(saveSession).toHaveBeenCalledTimes(1)
 
     useSessionStore.getState().appendUserMessage({
       sessionId: 'session-1',
@@ -682,6 +684,46 @@ describe('renderer session persistence bridge', () => {
 
     secondSave.resolve(saveSession.mock.calls[1][0])
     await flushMicrotasks()
+  })
+
+  it('coalesces backpressured Store writes to the latest Session snapshot', async () => {
+    const firstSave = createDeferred<void>()
+    const saveSession = vi.fn<SessionPersistenceApi['saveSession']>(async (submitted) => {
+      if (submitted.title === 'First queued') await firstSave.promise
+      return submitted
+    })
+    const api = createApi({ saveSession })
+
+    useSessionStore.getState().appendUserMessage({
+      sessionId: 'session-1',
+      content: 'First',
+      cwd: '/workspace/project',
+      projectId: 'project-a'
+    })
+    const save = createStoreSaver(api, useSessionStore.getState())
+
+    useSessionStore.getState().renameSession('session-1', 'First queued')
+    const first = save(useSessionStore.getState())
+    await flushMicrotasks()
+
+    useSessionStore.getState().renameSession('session-1', 'Latest')
+    const renamed = save(useSessionStore.getState())
+    useSessionStore.getState().appendUserMessage({
+      sessionId: 'session-1',
+      content: 'Keep only this pending snapshot',
+      cwd: '/workspace/project'
+    })
+    const latest = save(useSessionStore.getState())
+
+    await flushMicrotasks()
+    expect(saveSession).toHaveBeenCalledOnce()
+
+    firstSave.resolve()
+    await Promise.all([first, renamed, latest])
+
+    expect(saveSession).toHaveBeenCalledTimes(2)
+    expect(saveSession.mock.calls[1][0].title).toBe('Latest')
+    expect(saveSession.mock.calls[1][1]).toEqual({ conflictRebaseFields: ['title'] })
   })
 
   it('reports an earlier failed write even when a later queued write succeeds', async () => {
@@ -724,6 +766,7 @@ describe('renderer session persistence bridge', () => {
 
     useSessionStore.getState().renameSession('session-1', 'Queued first')
     const queuedFirst = save(useSessionStore.getState())
+    await flushMicrotasks()
     useSessionStore.getState().renameSession('session-1', 'Queued stale')
     const queuedStale = save(useSessionStore.getState())
     useSessionStore.getState().renameSession('session-1', 'Artifact latest')
@@ -740,8 +783,9 @@ describe('renderer session persistence bridge', () => {
     expect(durableTitle).toBe('Artifact latest')
   })
 
-  it('flushes only after every previously queued Session write settles', async () => {
+  it('flushes only after explicit and coalesced queued writes settle', async () => {
     const firstSave = createDeferred<PersistedChatSession>()
+    const latestSave = createDeferred<PersistedChatSession>()
     const api = createApi({
       saveSession: vi.fn(() => firstSave.promise)
     })
@@ -749,6 +793,7 @@ describe('renderer session persistence bridge', () => {
     const session = createPersistedSession()
 
     const saving = persistence.saveSession(session)
+    const savingLatest = persistence.saveLatestSession('session-1', () => latestSave.promise)
     let flushed = false
     const flushing = persistence.flush().then(() => {
       flushed = true
@@ -758,6 +803,11 @@ describe('renderer session persistence bridge', () => {
     expect(flushed).toBe(false)
     firstSave.resolve(session)
     await saving
+    await flushMicrotasks()
+    expect(flushed).toBe(false)
+
+    latestSave.resolve(session)
+    await savingLatest
     await flushing
     expect(flushed).toBe(true)
   })

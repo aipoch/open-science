@@ -1,8 +1,7 @@
 import { installAcpIpcHandlers } from './acp/ipc'
-import type { AcpCreateSessionWorkflow } from './acp/create-session-workflow'
+import type { AcpHandlerWorkflows } from './acp/handler-workflows'
 import type { AcpRuntimeCoordinator } from './acp/runtime-coordinator'
 import { installComputeIpcHandlers, type ComputeIpcModule } from './compute/ipc'
-import type { TaskNotificationService } from './notifications/task-notifications'
 
 type Awaitable<T> = T | Promise<T>
 
@@ -21,8 +20,7 @@ export type ElectronRuntimeAdapterInterfaces = {
   readonly beforeAcp: readonly NamedElectronSurfaceAdapter[]
   readonly acp: {
     runtime: AcpRuntimeCoordinator
-    createSessionWorkflow: AcpCreateSessionWorkflow
-    taskNotifications: TaskNotificationService
+    workflows: AcpHandlerWorkflows
   }
   readonly afterAcp: readonly NamedElectronSurfaceAdapter[]
 }
@@ -62,9 +60,7 @@ export const installElectronRuntimeAdapters = async ({
     for (const surface of beforeCompute) await install(surface.name, () => surface.install())
     await install('compute', () => installComputeIpcHandlers(compute))
     for (const surface of beforeAcp) await install(surface.name, () => surface.install())
-    await install('acp', () =>
-      installAcpIpcHandlers(acp.runtime, acp.createSessionWorkflow, acp.taskNotifications)
-    )
+    await install('acp', () => installAcpIpcHandlers(acp.runtime, acp.workflows))
     for (const surface of afterAcp) await install(surface.name, () => surface.install())
   } catch (error) {
     try {
