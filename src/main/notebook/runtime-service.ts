@@ -18,16 +18,13 @@ import type {
   NotebookEnvironmentStatus,
   NotebookKernelMetadata,
   NotebookLanguage,
-  NotebookOutput,
   NotebookRunRecord,
   NotebookRunSource,
-  NotebookRunStatus,
   NotebookRunSummary,
   NotebookSessionRequest,
   NotebookSessionReference,
   NotebookSessionState,
-  RunNotebookCellRequest,
-  NotebookWorkingFile
+  RunNotebookCellRequest
 } from '../../shared/notebook'
 import type {
   EnvironmentInfo,
@@ -109,15 +106,15 @@ import {
   type PackageInspectionResult,
   type PackageMutationVerification
 } from './environment-state-tracker'
-import { startWorkingFileObservation } from './working-file-observer'
 import { NotebookRuntimeBindingOwner } from './runtime-binding'
 import type { RuntimeDiagnosticLogger } from './runtime-diagnostics'
 import { NotebookRunTerminalizationOwner } from './run-terminalization'
+import type { NotebookShellProcess, NotebookShellResult } from './shell-process'
 import {
-  NotebookShellProcessAdapter,
-  type NotebookShellProcess,
-  type NotebookShellResult
-} from './shell-process'
+  NotebookExecutionOwner,
+  type NotebookControlCompletionInterceptor,
+  type NotebookControlResult
+} from './execution-owner'
 
 // Locale fallback when no explicit locale is injected (see shared/mirror.ts: non-CN locales resolve
 // to public hosts, so this default never silently forces a CN mirror).
@@ -181,44 +178,6 @@ const namedEnvProvenance = (name: string): EnvProvenance =>
 type ResolvedInterpreter = NotebookSessionResolvedInterpreter
 type NotebookExecutionRequest = NotebookSessionExecutionRequest
 type NotebookExecutionResult = NotebookSessionExecutionResult
-
-// Result of a control-plane REPL run. The mapped outputs (mapLoopOutputs) carry the returned value
-// (text/plain display) and any error, and stdout/stderr/traceback are returned inline for the agent
-// to inspect. Recording a run-history entry for this call is a side effect (see executeControlExclusive)
-// that does not change this returned shape — the repl_execute contract to the agent stays the same.
-type NotebookControlResult = {
-  status: Extract<NotebookRunStatus, 'completed' | 'failed' | 'timeout' | 'cancelled'>
-  stdout: string
-  stderr: string
-  traceback: string
-  outputs: NotebookOutput[]
-  workingFiles?: NotebookWorkingFile[]
-}
-
-// Application-owned interceptor for the outer repl_execute completion boundary. It runs after the
-// REPL has completed JavaScript but before executeControl returns that outcome to the caller.
-type NotebookControlCompletionInterceptor = {
-  intercept<T>(options: {
-    context: {
-      sessionId: string
-      turnId: string
-      controlInvocationGeneration: number
-      toolInvocationId: string
-      originatingTurnId?: string
-      originatingUserMessageId?: string
-      attachmentIds?: string[]
-      artifactIds?: string[]
-    }
-    execute(): Promise<T>
-  }): Promise<{ kind: 'deliver'; result: T } | { kind: 'captured' }>
-}
-
-export class NotebookControlCompletionCapturedError extends Error {
-  constructor() {
-    super('Control tool completion was captured for specialist handoff.')
-    this.name = 'NotebookControlCompletionCapturedError'
-  }
-}
 
 type InspectPackagesRequest = NotebookSessionRequest & {
   language: NotebookLanguage
@@ -474,7 +433,7 @@ class NotebookRuntimeService {
   private readonly repository: NotebookRunRepository
   private readonly exportReader: NotebookExportReader
   private readonly runTerminalization: NotebookRunTerminalizationOwner
-  private readonly shellProcess: NotebookShellProcess
+  private readonly executionOwner: NotebookExecutionOwner
   private readonly sessions: NotebookSessionRegistry<RuntimeSession>
   private readonly announcedAgentSessionIds = new Set<string>()
   // Owns process-global operation admission, provisioning progress, restart recommendations,
@@ -483,7 +442,6 @@ class NotebookRuntimeService {
   private readonly environmentOperations: NotebookEnvironmentOperations
   private mcpRpcConnectionResolver:
     ((binding: McpRpcConnectionBinding) => Promise<McpRpcConnection>) | undefined
-  private controlCompletionInterceptor: NotebookControlCompletionInterceptor | undefined
   private readonly packageMirrorResolver:
     (() => PackageMirror | undefined | Promise<PackageMirror | undefined>) | undefined
   private readonly runtimeEnablementResolver:
@@ -561,7 +519,15 @@ class NotebookRuntimeService {
       repository: this.repository,
       notifyChanged: (session) => this.notifyNotebookChanged(session as RuntimeSession)
     })
-    this.shellProcess = options.shellProcess ?? new NotebookShellProcessAdapter(options.platform)
+    this.executionOwner = new NotebookExecutionOwner({
+      configRoot: options.configRoot,
+      repository: this.repository,
+      runTerminalization: this.runTerminalization,
+      getMcpRpcConnectionResolver: () => this.mcpRpcConnectionResolver,
+      notifyAvailable: (session) => this.notifyNotebookAvailable(session, 'agent'),
+      platform: options.platform,
+      shellProcess: options.shellProcess
+    })
   }
 
   private legacyRuntimeSettingsCapability(
@@ -806,7 +772,7 @@ class NotebookRuntimeService {
   setControlCompletionInterceptor(
     interceptor: NotebookControlCompletionInterceptor | undefined
   ): void {
-    this.controlCompletionInterceptor = interceptor
+    this.executionOwner.setControlCompletionInterceptor(interceptor)
   }
 
   // Starts an exclusive agent/user write stream into a cell and locks notebook editing.
@@ -1211,267 +1177,18 @@ class NotebookRuntimeService {
     })
   }
 
-  // Runs code on the control-plane REPL kernel (kind 'repl'). This is a distinct call from data cells:
-  // it creates no cell, no run-history record, and uses no NotebookLanguage. The REPL is the only
-  // kernel with host.mcp connector access; the connector RPC connection is threaded into its spawn env
-  // exactly as data cells get it. Serialized per session behind controlQueue so overlapping
-  // repl_execute calls run one at a time on the single control process.
+  // Compatibility facade for the control-plane REPL. Admission, capability lifetime, dispatch,
+  // terminalization, and completion interception belong to NotebookExecutionOwner.
   async executeControl(request: ExecuteNotebookControlRequest): Promise<NotebookControlResult> {
     const session = await this.ensureSession(request)
-    const { runId: controlInvocationId, sequence: controlInvocationGeneration } =
-      this.runTerminalization.allocateRunIdentity()
-    const execute = (): Promise<NotebookControlResult> =>
-      this.executeControlExclusive(
-        session,
-        request,
-        controlInvocationId,
-        controlInvocationGeneration
-      )
-    // Only raw REPL execution holds the per-session control slot. The interceptor may start the
-    // approved continuation, which is allowed to re-enter executeControl for this session; awaiting it
-    // while this outer call owns the control queue would deadlock that continuation behind itself.
-    // enqueueControl settles the queue tail before the handoff completes, so an approved continuation
-    // can re-enter safely.
-    const rawRun = session.enqueueControl(execute)
-
-    const interceptor = this.controlCompletionInterceptor
-    if (!interceptor) return rawRun
-
-    const outcome = await interceptor.intercept({
-      context: {
-        sessionId: session.sessionId,
-        turnId: controlInvocationId,
-        toolInvocationId: controlInvocationId,
-        controlInvocationGeneration,
-        ...(request.provenanceContext
-          ? {
-              originatingTurnId: request.provenanceContext.promptMessageId,
-              originatingUserMessageId: request.provenanceContext.promptMessageId
-            }
-          : {}),
-        attachmentIds:
-          request.registeredInputFiles
-            ?.filter((input) => input.sourceKind === 'upload-version')
-            .map((input) => input.sourceFileId) ?? [],
-        artifactIds:
-          request.registeredInputFiles
-            ?.filter((input) => input.sourceKind === 'artifact-version')
-            .map((input) => input.sourceFileId) ?? []
-      },
-      execute: () => rawRun
-    })
-    if (outcome.kind === 'captured') throw new NotebookControlCompletionCapturedError()
-    return outcome.result
+    return this.executionOwner.executeControl(session, request)
   }
 
-  // Runs one control-plane request to completion while holding the session's single control slot.
-  // Records a run-history entry (kernelKind 'repl') as a side effect; the returned NotebookControlResult
-  // shape is unchanged, so repl_execute's contract to the agent stays the same.
-  private async executeControlExclusive(
-    session: RuntimeSession,
-    request: ExecuteNotebookControlRequest,
-    runId: string,
-    controlInvocationGeneration: number
-  ): Promise<NotebookControlResult> {
-    this.notifyNotebookAvailable(session, 'agent')
-    const runningRun: NotebookRunRecord = {
-      runId,
-      cellId: `repl-${runId}`,
-      source: 'agent',
-      inputKind: 'cell',
-      kernelKind: 'repl',
-      script: request.code,
-      status: 'running',
-      startedAt: Date.now(),
-      cwdBefore: session.cwd,
-      ...request.provenanceContext,
-      text: {
-        stdout: '',
-        stderr: '',
-        traceback: '',
-        plain: []
-      },
-      outputs: [],
-      artifacts: [],
-      workingFiles: [],
-      inputFiles: request.provenanceContext ? (request.registeredInputFiles ?? []) : []
-    }
-
-    // Resolve once per RuntimeSession: the persistent repl captures this dedicated capability when
-    // it starts, and the service releases it with the session.
-    const mcpRpc = await session.resolveMcpRpcConnection(this.mcpRpcConnectionResolver)
-
-    const blockedMutation = detectManagedRuntimeMutation({
-      source: request.code,
-      surface: 'repl',
-      runtimeRoot: session.runtimeRoot,
-      cwd: session.cwd
-    })
-    // Only a request that reaches the live control process may transition its kernel to `running`.
-    // A source-policy rejection still records a failed run below, but must leave the live kernel state
-    // untouched (including a prior `terminated` status).
-    if (!blockedMutation) {
-      session.clearKernelTerminated('repl')
-      await this.persistKernelStatus(session, 'running', 'repl')
-    }
-
-    let executedOnLiveKernel = !blockedMutation
-    const { result } = await this.runTerminalization.run({
-      session,
-      runningRun,
-      invoke: () =>
-        (blockedMutation
-          ? Promise.resolve(
-              errorToExecutionResult(
-                new Error(`MANAGED_RUNTIME_MUTATION_BLOCKED: ${blockedMutation.message}`),
-                session.cwd
-              )
-            )
-          : (() => {
-              const releaseControlInvocation = mcpRpc?.beginControlInvocation?.({
-                turnId: runId,
-                controlInvocationGeneration,
-                toolInvocationId: runId
-              })
-              return session
-                .execute({
-                  code: request.code,
-                  kind: 'repl',
-                  cwd: session.cwd,
-                  notebookSessionRoot: session.notebookSessionRoot,
-                  dataRoot: session.dataRoot,
-                  runtimeRoot: session.runtimeRoot,
-                  protectedDirs: [getAppClaudeConfigDir(this.options.configRoot)],
-                  timeoutMs: request.timeoutMs,
-                  mcpRpcEndpoint: mcpRpc?.endpoint,
-                  mcpRpcToken: mcpRpc?.token,
-                  // Grant-scope identity for host.compute (This conversation / This project). The executor
-                  // forwards these into the repl kernel's spawn env; only the control path carries them.
-                  sessionId: session.sessionId,
-                  projectName: session.projectName,
-                  inputRunLeaseId: request.inputRunLeaseId,
-                  controlInvocationId: runId
-                })
-                .finally(() => releaseControlInvocation?.())
-            })()
-        ).catch((error: unknown) => {
-          executedOnLiveKernel = false
-          return errorToExecutionResult(error, session.cwd)
-        })
-    })
-
-    // Same live-kernel signal as runCellExclusive: a control run that reached the executor settles the
-    // kernel back to 'idle', unless it was lost mid-flight (then 'terminated' survives to the next run).
-    if (executedOnLiveKernel && !session.isKernelTerminated('repl')) {
-      await this.markKernelStatusIdle(session, 'repl')
-    }
-
-    return {
-      status: result.status,
-      stdout: result.stdout,
-      stderr: result.stderr,
-      traceback: result.traceback,
-      outputs: result.outputs,
-      workingFiles: result.workingFiles
-    }
-  }
-
-  // Runs one shell command in a brand-new stateless process — distinct from every persistent kernel:
-  // no proc map entry, no serialization queue (each call is independent and spawns immediately).
-  // cwd matches where the data kernels start (the session's data dir); env carries the handoff dir so
-  // the shell can read/write the same cross-kernel channel repl_execute uses. Each call still records its
-  // own run-history entry (kernelKind 'bash'); a fresh runId per call plus the repository's own
-  // write-serialization (see NotebookRunRepository.writeDocument) keep overlapping calls from
-  // colliding, even though there is no serialization queue here.
+  // Compatibility facade for stateless shell execution. The owner deliberately admits calls without
+  // a per-Session queue while the repository continues to serialize durable run writes.
   async executeShell(request: ExecuteShellRequest): Promise<NotebookShellResult> {
     const session = await this.ensureSession(request)
-
-    const { runId } = this.runTerminalization.allocateRunIdentity()
-    const runningRun: NotebookRunRecord = {
-      runId,
-      cellId: `bash-${runId}`,
-      source: 'agent',
-      inputKind: 'cell',
-      kernelKind: 'bash',
-      script: request.command,
-      status: 'running',
-      startedAt: Date.now(),
-      cwdBefore: session.cwd,
-      ...request.provenanceContext,
-      text: {
-        stdout: '',
-        stderr: '',
-        traceback: '',
-        plain: []
-      },
-      outputs: [],
-      artifacts: [],
-      workingFiles: [],
-      inputFiles: request.provenanceContext ? (request.registeredInputFiles ?? []) : []
-    }
-
-    const { result } = await this.runTerminalization.run({
-      session,
-      runningRun,
-      invoke: async () => {
-        const workingFileObservation = await startWorkingFileObservation(session)
-        let workingFiles: NotebookWorkingFile[] = []
-        const blockedMutation = detectManagedRuntimeMutation({
-          source: request.command,
-          surface: this.options.platform === 'win32' ? 'powershell' : 'bash',
-          runtimeRoot: session.runtimeRoot,
-          cwd: session.cwd
-        })
-        const shellResult = await (
-          blockedMutation
-            ? Promise.resolve<NotebookShellResult>({
-                stdout: '',
-                stderr: `MANAGED_RUNTIME_MUTATION_BLOCKED: ${blockedMutation.message}`,
-                exitCode: 1
-              })
-            : this.shellProcess.execute({
-                command: request.command,
-                cwd: session.cwd,
-                handoffDir: join(session.notebookSessionRoot, 'handoff'),
-                runtimeRoot: session.runtimeRoot,
-                timeoutMs: request.timeoutMs
-              })
-        ).finally(async () => {
-          workingFiles = await workingFileObservation.finish()
-        })
-        // No status/traceback classification for the caller-facing NotebookShellResult (the shell is
-        // expected to fail non-zero sometimes), but the run-history record still needs one: exitCode 0
-        // is 'completed', a null exitCode means runShellCommand hit its own timeout, and anything else
-        // (including a signal-kill) is 'failed'.
-        const status: NotebookRunStatus =
-          shellResult.exitCode === 0
-            ? 'completed'
-            : shellResult.exitCode === null
-              ? 'timeout'
-              : 'failed'
-        const outputs: NotebookOutput[] = [
-          ...(shellResult.stdout
-            ? [{ type: 'stream' as const, name: 'stdout' as const, text: shellResult.stdout }]
-            : []),
-          ...(shellResult.stderr
-            ? [{ type: 'stream' as const, name: 'stderr' as const, text: shellResult.stderr }]
-            : [])
-        ]
-
-        return {
-          status,
-          stdout: shellResult.stdout,
-          stderr: shellResult.stderr,
-          traceback: '',
-          cwdAfter: session.cwd,
-          outputs,
-          workingFiles,
-          exitCode: shellResult.exitCode
-        }
-      }
-    })
-
-    return { stdout: result.stdout, stderr: result.stderr, exitCode: result.exitCode }
+    return this.executionOwner.executeShell(session, request)
   }
 
   // Returns the current in-memory cells plus the complete persisted run history.
@@ -2924,6 +2641,7 @@ class NotebookRuntimeService {
 }
 
 export { NotebookRuntimeService, resolveDefaultExecutorOptions, resolveLoopScriptPaths }
+export { NotebookControlCompletionCapturedError } from './execution-owner'
 export type {
   NotebookExecutionRequest,
   NotebookExecutionResult,
