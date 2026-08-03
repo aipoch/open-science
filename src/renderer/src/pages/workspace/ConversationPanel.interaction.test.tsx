@@ -215,6 +215,22 @@ afterEach(() => {
 })
 
 describe('ConversationPanel composer intake', () => {
+  it.each([
+    ['darwin', '⌘K'],
+    ['win32', 'Ctrl+K'],
+    ['linux', 'Ctrl+K']
+  ])('shows the %s global-search shortcut in the placeholder', (platform, shortcut) => {
+    const previousApi = window.api
+    window.api = { platform } as Window['api']
+
+    renderPanel()
+
+    expect(getComposerEditor().getAttribute('data-placeholder')).toBe(
+      `Ask anything — / for skills, @ for files, ${shortcut} to search`
+    )
+    window.api = previousApi
+  })
+
   it('shows file type and per-file size behavior before selection', () => {
     renderPanel()
 
