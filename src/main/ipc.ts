@@ -356,7 +356,12 @@ const createApplicationModules = async (
         .resolvePreviewKey(request.path)
         .then((target) => target.absolutePath)
     }
-    return localFsService.resolveFilePath(request)
+    // 'local' is the only remaining source, and it is the one that resolves an arbitrary host path.
+    // Falling through to it by default would silently widen any future source added to the union, so
+    // name it and reject anything unknown.
+    if (source === 'local') return localFsService.resolveFilePath(request)
+    const unhandled: never = source
+    return Promise.reject(new Error(`Unsupported managed preview source: ${String(unhandled)}`))
   }
   const resolveSessionArtifactFilePath = createSessionArtifactFileResolver({
     compatibilityProjectName: DEFAULT_ARTIFACT_PROJECT_NAME,
