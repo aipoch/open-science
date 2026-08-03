@@ -396,7 +396,7 @@ describe('ElectronUpdaterStrategy', () => {
         expect.objectContaining({
           operation: 'update-apply',
           outcome: 'completed',
-          result: 'restart-triggered'
+          result: 'handoff-requested'
         })
       ])
     )
@@ -559,17 +559,31 @@ describe('ElectronUpdaterStrategy', () => {
 
   it('restores an actionable error after the installer handoff starts', async () => {
     const updater = new FakeUpdater()
+    const log = createLogSpy()
     const strategy = new ElectronUpdaterStrategy({
       updater,
       currentVersion: '0.2.0',
-      broadcast: vi.fn()
+      broadcast: vi.fn(),
+      log
     })
 
     await strategy.apply()
+    expect(currentApplicationShutdownTrigger()).toBe('update')
     updater.emit('error', new Error('installer failed'))
 
     expect(strategy.getStatus().state).toBe('error')
     expect(strategy.getStatus().error).toBe('installer failed')
+    expect(currentApplicationShutdownTrigger()).toBe('quit')
+    expect(diagnosticRecords(log)).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({
+          operation: 'update-installer',
+          outcome: 'failed',
+          phase: 'handoff',
+          errorCategory: 'error'
+        })
+      ])
+    )
   })
 
   it('restores an actionable error when quitAndInstall throws', async () => {

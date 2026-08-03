@@ -68,9 +68,24 @@ async function startElectronApp(mainEntryPath: string): Promise<void> {
   const { app, BrowserWindow, crashReporter, ipcMain, nativeImage, protocol } =
     await import('electron')
 
-  // Establish the app identity and file sink before loading the backend graph. This captures failures
-  // in asset/module loading and app.whenReady instead of leaving packaged startup failures console-only.
+  // Establish identity and single-writer ownership before opening main.log. A secondary launch must
+  // never rotate or append to the primary process's file sink. These two modules are lightweight; all
+  // backend imports remain behind the lock.
   app.setName(app.isPackaged ? APP_NAME : `${APP_NAME} (DEV)`)
+  const [{ acquireSingleInstanceLock }, { createSecondInstanceRelay, orchestrateAppStartup }] =
+    await Promise.all([import('./single-instance'), import('./app-startup')])
+  const preStartupSecondInstanceRelay = createSecondInstanceRelay()
+  if (
+    !acquireSingleInstanceLock({
+      onSecondInstance: (argv) => preStartupSecondInstanceRelay.signal(argv)
+    })
+  ) {
+    app.quit()
+    return
+  }
+
+  // Initialize the file sink after the primary lock but before assets, the backend graph, and
+  // app.whenReady so packaged startup failures remain locally diagnosable.
   const diagnostics = initializeApplicationDiagnostics({
     logDir: app.getPath('logs'),
     version: app.getVersion(),
@@ -107,9 +122,7 @@ async function startElectronApp(mainEntryPath: string): Promise<void> {
     { default: iconDarkWindows },
     { default: trayMacTemplate },
     { default: trayWindows },
-    { default: trayLinux },
-    { acquireSingleInstanceLock },
-    { orchestrateAppStartup }
+    { default: trayLinux }
   ] = await Promise.all([
     import('@electron-toolkit/utils'),
     import('../../resources/icon.png?asset'),
@@ -118,9 +131,7 @@ async function startElectronApp(mainEntryPath: string): Promise<void> {
     import('../../resources/icon-dark.ico?asset'),
     import('../../resources/trayTemplate.png?asset'),
     import('../../resources/tray.ico?asset'),
-    import('../../resources/tray.png?asset'),
-    import('./single-instance'),
-    import('./app-startup')
+    import('../../resources/tray.png?asset')
   ])
 
   // Windows gets multi-resolution ICOs for title-bar and Alt-Tab fidelity; macOS Dock and Linux use
@@ -140,7 +151,12 @@ async function startElectronApp(mainEntryPath: string): Promise<void> {
   // relay and surfaced once the window exists.
   await orchestrateAppStartup({
     diagnostics: startupDiagnostics,
-    acquireSingleInstanceLock: (opts) => acquireSingleInstanceLock(opts),
+    // The OS lock is already held. Bind the orchestrator's relay to the pre-logger relay so any
+    // second-instance signal received during bootstrap is preserved until the lifecycle is ready.
+    acquireSingleInstanceLock: ({ onSecondInstance }) => {
+      preStartupSecondInstanceRelay.bind(onSecondInstance)
+      return true
+    },
     quit: () => app.quit(),
     prepare: async () => {
       // Start Windows Crashpad after the single-instance lock but before any BrowserWindow can create

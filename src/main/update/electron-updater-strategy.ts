@@ -188,6 +188,7 @@ export class ElectronUpdaterStrategy implements UpdateStrategy {
   private status: UpdateStatus
   private applying = false
   private installerStarted = false
+  private pendingInstallRollback?: () => void
   // In-flight manifest notes fetch for the current update, awaited by check() so the returned
   // status reflects the hydrated notes.
   private notesHydration?: Promise<void>
@@ -284,6 +285,16 @@ export class ElectronUpdaterStrategy implements UpdateStrategy {
     })
     this.updater.on('error', (err) => {
       if (this.applying && !this.installerStarted) return
+      if (this.installerStarted) {
+        this.pendingInstallRollback?.()
+        this.pendingInstallRollback = undefined
+        const operation = startDiagnosticOperation(this.log, {
+          operation: 'update-installer',
+          fields: { strategy: 'in-place' }
+        })
+        operation.phase('handoff')
+        operation.fail(err, { result: 'error' })
+      }
       this.applying = false
       this.installerStarted = false
       this.setStatus({
@@ -494,11 +505,13 @@ export class ElectronUpdaterStrategy implements UpdateStrategy {
 
     operation.phase('install')
     const rollbackTrigger = this.markUpdateShutdown()
+    this.pendingInstallRollback = rollbackTrigger
     this.installerStarted = true
     try {
       this.updater.quitAndInstall(false, true)
     } catch (error) {
       rollbackTrigger()
+      this.pendingInstallRollback = undefined
       this.applying = false
       this.installerStarted = false
       this.setStatus({
@@ -509,7 +522,7 @@ export class ElectronUpdaterStrategy implements UpdateStrategy {
       operation.fail(error, { result: 'error' })
       return this.status
     }
-    operation.complete({ result: 'restart-triggered' })
+    operation.complete({ result: 'handoff-requested' })
     return this.status
   }
 }
