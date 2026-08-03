@@ -152,6 +152,44 @@ describe('GlobalSearchDialog', () => {
     expect(useNavigationStore.getState().pendingArtifactMention).toMatchObject({ id: 'artifact-1' })
   })
 
+  it('prioritizes Artifacts and selects the first Artifact for a keyword search', async () => {
+    await act(async () => {
+      root.render(<GlobalSearchDialog open onOpenChange={vi.fn()} isSessionPersistenceReady />)
+      await new Promise((resolve) => window.setTimeout(resolve, 20))
+    })
+
+    const input = document.body.querySelector<HTMLInputElement>('input[role="combobox"]')
+    const valueSetter = Object.getOwnPropertyDescriptor(
+      window.HTMLInputElement.prototype,
+      'value'
+    )?.set
+    await act(async () => {
+      valueSetter?.call(input, 'sin')
+      input?.dispatchEvent(new Event('input', { bubbles: true }))
+      await new Promise((resolve) => window.setTimeout(resolve, 180))
+    })
+
+    const groupHeadings = [...document.body.querySelectorAll('[role="group"] h2')].map(
+      (heading) => heading.textContent
+    )
+    const selectedOption = document.body.querySelector<HTMLElement>(
+      '[role="option"][aria-selected="true"]'
+    )
+
+    expect(groupHeadings.slice(0, 2)).toEqual(['Artifacts', 'Sessions'])
+    expect(selectedOption?.textContent).toContain('sin.png')
+
+    await act(async () => {
+      input?.dispatchEvent(
+        new KeyboardEvent('keydown', { key: 'Enter', bubbles: true, cancelable: true })
+      )
+    })
+    expect(usePreviewWorkbenchStore.getState().fileDialogItem).toMatchObject({
+      artifactId: 'artifact-1',
+      projectId: 'project-a'
+    })
+  })
+
   it('keeps the result list scrollable and the shortcut footer outside the scroll viewport', async () => {
     await act(async () => {
       root.render(<GlobalSearchDialog open onOpenChange={vi.fn()} isSessionPersistenceReady />)

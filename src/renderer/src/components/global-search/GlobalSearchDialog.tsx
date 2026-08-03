@@ -324,13 +324,13 @@ export const GlobalSearchDialog = ({
       ]
     }
     return [
-      ...(sessionGroups?.primary.map((session) => ({ kind: 'session' as const, session })) ?? []),
-      ...(sessionMoreCount > 0 ? [{ kind: 'more-sessions' as const }] : []),
       ...artifacts.items.map((artifact) => ({ kind: 'artifact' as const, artifact })),
       ...(artifactError ? [{ kind: 'retry-artifacts' as const }] : []),
       ...(canLoadMoreArtifacts ? [{ kind: 'more-artifacts' as const }] : []),
-      ...(sessionGroups?.other.map((session) => ({ kind: 'session' as const, session })) ?? []),
-      ...artifacts.other.map((artifact) => ({ kind: 'artifact' as const, artifact }))
+      ...(sessionGroups?.primary.map((session) => ({ kind: 'session' as const, session })) ?? []),
+      ...(sessionMoreCount > 0 ? [{ kind: 'more-sessions' as const }] : []),
+      ...artifacts.other.map((artifact) => ({ kind: 'artifact' as const, artifact })),
+      ...(sessionGroups?.other.map((session) => ({ kind: 'session' as const, session })) ?? [])
     ]
   }, [
     canLoadMoreArtifacts,
@@ -718,31 +718,6 @@ export const GlobalSearchDialog = ({
                 </>
               ) : (
                 <>
-                  {sessionGroups?.primary.length ? (
-                    <section role="group" aria-label="Sessions">
-                      <h2 className={sectionTitleClassName}>Sessions</h2>
-                      {sessionGroups.primary.map((session) =>
-                        renderSessionRow(session, nextIndex())
-                      )}
-                      {sessionMoreCount > 0 ? (
-                        <Button
-                          id={`global-search-option-${nextIndex()}`}
-                          type="button"
-                          role="option"
-                          aria-selected={activeRowIndex === rowIndex - 1}
-                          variant="ghost"
-                          className={cn(
-                            'flex h-11 w-full cursor-pointer select-none items-center justify-start px-4 text-left text-sm font-medium text-primary outline-none',
-                            activeRowIndex === rowIndex - 1 && 'bg-bg-200'
-                          )}
-                          onMouseEnter={() => setActiveIndex(rowIndex - 1)}
-                          onClick={() => activate({ kind: 'more-sessions' })}
-                        >
-                          +{sessionMoreCount} more matches — show more
-                        </Button>
-                      ) : null}
-                    </section>
-                  ) : null}
                   {artifacts.items.length || artifactStatus === 'loading' || artifactError ? (
                     <section role="group" aria-label="Artifacts">
                       <h2 className={sectionTitleClassName}>Artifacts</h2>
@@ -788,13 +763,38 @@ export const GlobalSearchDialog = ({
                       ) : null}
                     </section>
                   ) : null}
+                  {sessionGroups?.primary.length ? (
+                    <section role="group" aria-label="Sessions">
+                      <h2 className={sectionTitleClassName}>Sessions</h2>
+                      {sessionGroups.primary.map((session) =>
+                        renderSessionRow(session, nextIndex())
+                      )}
+                      {sessionMoreCount > 0 ? (
+                        <Button
+                          id={`global-search-option-${nextIndex()}`}
+                          type="button"
+                          role="option"
+                          aria-selected={activeRowIndex === rowIndex - 1}
+                          variant="ghost"
+                          className={cn(
+                            'flex h-11 w-full cursor-pointer select-none items-center justify-start px-4 text-left text-sm font-medium text-primary outline-none',
+                            activeRowIndex === rowIndex - 1 && 'bg-bg-200'
+                          )}
+                          onMouseEnter={() => setActiveIndex(rowIndex - 1)}
+                          onClick={() => activate({ kind: 'more-sessions' })}
+                        >
+                          +{sessionMoreCount} more matches — show more
+                        </Button>
+                      ) : null}
+                    </section>
+                  ) : null}
                   {sessionGroups?.other.length || artifacts.other.length ? (
                     <section role="group" aria-label="Other projects">
                       <h2 className={sectionTitleClassName}>Other projects</h2>
+                      {artifacts.other.map((artifact) => renderArtifactRow(artifact, nextIndex()))}
                       {sessionGroups?.other.map((session) =>
                         renderSessionRow(session, nextIndex())
                       )}
-                      {artifacts.other.map((artifact) => renderArtifactRow(artifact, nextIndex()))}
                     </section>
                   ) : null}
                   {selectableRows.length === 0 && artifactStatus !== 'loading' ? (
