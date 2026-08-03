@@ -363,6 +363,13 @@ export const GlobalSearchDialog = ({
       ),
     [activeProjectId, selectedSessionId, sessions, view]
   )
+  const canMentionArtifact = useCallback(
+    (artifact: ProjectFileItem): boolean =>
+      isArtifactMentionTarget(artifact) &&
+      artifactMentionAvailability?.projectId === artifact.projectId &&
+      artifactMentionAvailability.canMention,
+    [artifactMentionAvailability, isArtifactMentionTarget]
+  )
   const previewArtifact = useCallback(
     (artifact: ProjectFileItem): void => {
       if (activeProjectId !== artifact.projectId || view !== 'workspace') {
@@ -375,17 +382,11 @@ export const GlobalSearchDialog = ({
   )
   const mentionArtifact = useCallback(
     (artifact: ProjectFileItem): void => {
-      if (
-        !isArtifactMentionTarget(artifact) ||
-        artifactMentionAvailability?.projectId !== artifact.projectId ||
-        !artifactMentionAvailability.canMention
-      ) {
-        return
-      }
+      if (!canMentionArtifact(artifact)) return
       requestArtifactMention(artifact)
       close()
     },
-    [artifactMentionAvailability, close, isArtifactMentionTarget, requestArtifactMention]
+    [canMentionArtifact, close, requestArtifactMention]
   )
   const activate = useCallback(
     (row: SelectableRow | undefined, action?: 'mention' | 'preview'): void => {
@@ -406,7 +407,7 @@ export const GlobalSearchDialog = ({
         return
       }
       if (row.kind === 'artifact') {
-        if (action === 'mention' && isArtifactMentionTarget(row.artifact)) {
+        if (action === 'mention' && canMentionArtifact(row.artifact)) {
           mentionArtifact(row.artifact)
         } else previewArtifact(row.artifact)
         return
@@ -431,10 +432,10 @@ export const GlobalSearchDialog = ({
     },
     [
       artifacts.nextCursor,
+      canMentionArtifact,
       close,
       failedArtifactCursor,
       isSessionPersistenceReady,
-      isArtifactMentionTarget,
       mentionArtifact,
       openProject,
       openSession,
@@ -530,10 +531,7 @@ export const GlobalSearchDialog = ({
           )
         : undefined
     const isCurrentSessionArtifact = isArtifactMentionTarget(artifact)
-    const canMention =
-      isCurrentSessionArtifact &&
-      artifactMentionAvailability?.projectId === artifact.projectId &&
-      artifactMentionAvailability.canMention
+    const canMention = canMentionArtifact(artifact)
     return (
       <div
         id={`global-search-option-${rowIndex}`}

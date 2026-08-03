@@ -286,6 +286,36 @@ describe('GlobalSearchDialog', () => {
     expect(onOpenChange).toHaveBeenCalledWith(false)
   })
 
+  it('opens the active Artifact on Shift+Enter when the current Session cannot accept a mention', async () => {
+    useNavigationStore.setState({
+      artifactMentionAvailability: { projectId: 'project-a', canMention: false }
+    })
+    const onOpenChange = vi.fn()
+    await act(async () => {
+      root.render(<GlobalSearchDialog open onOpenChange={onOpenChange} isSessionPersistenceReady />)
+      await new Promise((resolve) => window.setTimeout(resolve, 20))
+    })
+
+    const input = document.body.querySelector<HTMLInputElement>('input[role="combobox"]')
+    await act(async () => {
+      input?.dispatchEvent(
+        new KeyboardEvent('keydown', {
+          key: 'Enter',
+          shiftKey: true,
+          bubbles: true,
+          cancelable: true
+        })
+      )
+    })
+
+    expect(useNavigationStore.getState().pendingArtifactMention).toBeUndefined()
+    expect(usePreviewWorkbenchStore.getState().fileDialogItem).toMatchObject({
+      artifactId: 'artifact-1',
+      projectId: 'project-a'
+    })
+    expect(onOpenChange).toHaveBeenCalledWith(false)
+  })
+
   it('opens a cross-Project Artifact on Shift+Enter instead of mentioning it', async () => {
     vi.mocked(window.api.projectFiles.searchArtifacts).mockResolvedValue({
       primary: { items: [], totalCount: 0 },
