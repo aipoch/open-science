@@ -1,4 +1,3 @@
-import { randomUUID } from 'node:crypto'
 import { existsSync } from 'node:fs'
 
 import { BrowserWindow } from 'electron'
@@ -6,8 +5,12 @@ import { BrowserWindow } from 'electron'
 import { ipcMainHandle } from '../ipc-handler-registry'
 
 import type { NotebookLanguage } from '../../shared/notebook'
-import { createLogger, errorLogFields } from '../logger'
 import { withDataRootWrite } from '../storage/migration-state'
+import {
+  logStartupGateFailure,
+  runLoggedRuntimeOperation,
+  serializeProvisioner
+} from './environment-operation-foundation'
 import {
   planStartupAction,
   type ProvisionProgress,
@@ -21,199 +24,12 @@ import {
 // (out of this task's scope).
 import { DEFAULT_ENV_VERSION, DEFAULT_PY_ENV, envPrefix, readReadyMarker } from './runtime-paths'
 
-const log = createLogger('notebook-env')
-
-type LoggedRuntimeOperation = 'provision' | 'repair'
-
-type RuntimeLogContext = {
-  operation: LoggedRuntimeOperation
-  language: NotebookLanguage
-  root: string
-  operationId: string
-}
-
-const redactRuntimeLogText = (value: string): string =>
-  value
-    .replace(/https?:\/\/[^\s"'<>]+/gi, (rawUrl) => {
-      try {
-        const url = new URL(rawUrl)
-        url.username = ''
-        url.password = ''
-        url.pathname = url.pathname.replace(
-          /\/(t|token|auth|api[_-]?key|secret|password)\/[^/]+/gi,
-          '/$1/[redacted]'
-        )
-        for (const key of [...url.searchParams.keys()]) url.searchParams.set(key, '[redacted]')
-        url.hash = ''
-        return url.toString()
-      } catch {
-        return rawUrl
-      }
-    })
-    .replace(/\bBearer\s+[^\s"']+/gi, 'Bearer [redacted]')
-    .replace(/\b(api[_-]?key|token|secret|password)\b(\s*[:=]\s*)[^\s,"'&]+/gi, '$1$2[redacted]')
-    .replace(/\bsk-[A-Za-z0-9_-]{8,}\b/g, '[redacted]')
-
-const redactRuntimeLogValue = (value: unknown): unknown => {
-  if (typeof value === 'string') return redactRuntimeLogText(value)
-  if (Array.isArray(value)) return value.map(redactRuntimeLogValue)
-  if (value === null || typeof value !== 'object') return value
-  return Object.fromEntries(
-    Object.entries(value).map(([key, nested]) => [key, redactRuntimeLogValue(nested)])
-  )
-}
-
-const runtimeErrorLogFields = (error: unknown): Record<string, unknown> =>
-  redactRuntimeLogValue(errorLogFields(error)) as Record<string, unknown>
-
-const logRuntimeInfo = (message: string, fields: Record<string, unknown>): void => {
-  try {
-    log.info(message, redactRuntimeLogValue(fields) as Record<string, unknown>)
-  } catch {
-    // Diagnostics are best-effort and must not interrupt provisioning or progress delivery.
-  }
-}
-
-const logRuntimeFailure = (context: RuntimeLogContext, startedAt: number, error: unknown): void => {
-  try {
-    log.error('runtime operation failed', {
-      ...runtimeErrorLogFields(error),
-      ...context,
-      durationMs: Date.now() - startedAt
-    })
-  } catch {
-    // Diagnostics must never replace the provisioning error returned to the renderer.
-  }
-}
-
-const runLoggedRuntimeOperation = async (
-  operation: LoggedRuntimeOperation,
-  language: NotebookLanguage,
-  root: string,
-  run: (onProgress: (progress: ProvisionProgress) => void) => Promise<void>,
-  broadcast: (progress: ProvisionProgress) => void
-): Promise<void> => {
-  const context: RuntimeLogContext = { operation, language, root, operationId: randomUUID() }
-  const startedAt = Date.now()
-  let lastPhase: string | undefined
-  let lastReconnectAttempt: number | undefined
-  logRuntimeInfo('runtime operation started', context)
-
-  const onProgress = (progress: ProvisionProgress): void => {
-    broadcast(progress)
-    const reconnectAttempt =
-      progress.download?.phase === 'reconnecting' ? progress.download.attempt : undefined
-    const phaseChanged = progress.phase !== lastPhase
-    const reconnectChanged =
-      reconnectAttempt !== undefined && reconnectAttempt !== lastReconnectAttempt
-    lastPhase = progress.phase
-    if (reconnectAttempt !== undefined) lastReconnectAttempt = reconnectAttempt
-    if (!phaseChanged && !reconnectChanged) return
-
-    logRuntimeInfo('runtime operation progress', {
-      ...context,
-      phase: progress.phase,
-      message: progress.message,
-      progress: progress.progress,
-      ...(progress.download ? { download: progress.download } : {})
-    })
-  }
-
-  try {
-    await run(onProgress)
-    logRuntimeInfo('runtime operation completed', {
-      ...context,
-      durationMs: Date.now() - startedAt,
-      lastPhase
-    })
-  } catch (error) {
-    logRuntimeFailure(context, startedAt, error)
-    throw error
-  }
-}
-
 // A small delegating surface so IPC behavior tests run without Electron wiring.
 export type NotebookEnvHandlers = {
   status: () => Promise<ProvisionStatus>
   provision: (lang: NotebookLanguage, onProgress: (p: ProvisionProgress) => void) => Promise<void>
   repair: (lang: NotebookLanguage, onProgress: (p: ProvisionProgress) => void) => Promise<void>
   cancel: (language?: NotebookLanguage) => void
-}
-
-// The provisioner shares a single `provisioning` flag across python/R (A3 review carry-forward), so
-// two concurrent provision/upgrade/repair calls would race that flag. Wraps a RuntimeProvisioner so
-// every provisioning-affecting call is chained behind an in-flight promise: a call that arrives while
-// one is still running waits for it to settle (success or failure) before starting its own run,
-// instead of firing a conflicting run in parallel. `status` passes through unserialized (read-only).
-// Brands a serialized wrapper so serializeProvisioner is IDEMPOTENT. The provisioner is wrapped at
-// three sites (main/ipc.ts, registerNotebookEnvIpcHandlers, createNotebookEnvHandlers); without this,
-// each layer would own a SEPARATE queue + pending map, and a request queued at the OUTERMOST layer
-// would not yet exist in an inner layer's pending set — so cancel() routed inward would be dropped as
-// "idle" and never reach the provisioner. Collapsing to one wrapper gives one queue and one pending
-// map, so cancel(lang) sees the same in-flight state the provision was enqueued into.
-const SERIALIZED = Symbol('serializedProvisioner')
-
-export const serializeProvisioner = (provisioner: RuntimeProvisioner): RuntimeProvisioner => {
-  // Already serialized (wrapped by an outer call): return as-is so re-wrapping is a no-op and there is
-  // exactly one queue + one pending map for the whole chain.
-  if ((provisioner as { [SERIALIZED]?: true })[SERIALIZED]) return provisioner
-
-  let inFlight: Promise<void> = Promise.resolve()
-  // Per-language COUNT of in-flight provisions (running OR queued behind the chain). A count, not a Set:
-  // two same-language requests must both be tracked, or the first to settle would delete the language
-  // while the second is still pending and a later cancel would be wrongly dropped as idle. This is the
-  // only layer that sees the queue, so it's where "No-op when idle" lives: cancel(lang) forwards only
-  // when count>0. Incremented synchronously when a language provision is requested (before it queues),
-  // decremented when that run settles.
-  const pending = new Map<NotebookLanguage, number>()
-  const retain = (language: NotebookLanguage): void => {
-    pending.set(language, (pending.get(language) ?? 0) + 1)
-  }
-  const release = (language: NotebookLanguage): void => {
-    const next = (pending.get(language) ?? 0) - 1
-    if (next <= 0) pending.delete(language)
-    else pending.set(language, next)
-  }
-
-  const serialize = (run: () => Promise<void>): Promise<void> => {
-    const next = inFlight.then(run, run)
-    // Swallow rejections in the chain tracker itself (each caller still awaits `next` and sees the real
-    // error) so one failed run doesn't permanently poison the queue for later callers.
-    inFlight = next.catch(() => undefined)
-    return next
-  }
-
-  const serializeLanguage = (
-    language: NotebookLanguage,
-    run: () => Promise<void>
-  ): Promise<void> => {
-    retain(language)
-    return serialize(() => run().finally(() => release(language)))
-  }
-
-  const wrapped: RuntimeProvisioner = {
-    status: () => provisioner.status(),
-    provisionPython: (onProgress) =>
-      serializeLanguage('python', () => provisioner.provisionPython(onProgress)),
-    provisionR: (onProgress) => serializeLanguage('r', () => provisioner.provisionR(onProgress)),
-    upgradeIfNeeded: (onProgress) => serialize(() => provisioner.upgradeIfNeeded(onProgress)),
-    // repair runs per-LANGUAGE (serializeLanguage, not plain serialize) so it bumps the pending count
-    // and cancel(lang) — the Cancel button shown during a Reset — actually forwards instead of being
-    // dropped as idle. A Reset that can't be cancelled would be a locked, un-abortable state.
-    repair: (lang, onProgress, opts) =>
-      serializeLanguage(lang, () => provisioner.repair(lang, onProgress, opts)),
-    restoreRelocatedEnvs: (onProgress) =>
-      serialize(() => provisioner.restoreRelocatedEnvs(onProgress)),
-    // cancel is NOT serialized — it must interrupt the in-flight run immediately, not queue behind it.
-    // No-op when the language is idle (count 0); otherwise forward so the provisioner aborts a running
-    // run or arms a one-shot skip for a queued one. `undefined` (global cancel) always forwards.
-    cancel: (language) => {
-      if (language !== undefined && (pending.get(language) ?? 0) === 0) return
-      provisioner.cancel(language)
-    }
-  }
-  ;(wrapped as { [SERIALIZED]?: true })[SERIALIZED] = true
-  return wrapped
 }
 
 export const createNotebookEnvHandlers = (
@@ -317,11 +133,7 @@ export const runStartupGate = async (
     // This is the automatic (no per-op logging) path, so record the FULL diagnostics here — including
     // the structured micromamba tails on `error.data` — before broadcasting only the short UI message.
     // Otherwise a launch-time restore/upgrade/repair failure would leave nothing but a truncated excerpt.
-    try {
-      log.error('startup gate failed', runtimeErrorLogFields(error))
-    } catch {
-      // Diagnostics are best-effort and must never suppress the progress broadcast below.
-    }
+    logStartupGateFailure(error)
     broadcast({
       phase: 'error',
       message: `Environment preparation failed: ${(error as Error).message}`,
@@ -416,3 +228,6 @@ export const registerNotebookEnvIpcHandlers = (
   if (serialized)
     void runStartupGate(serialized, root, broadcastNotebookEnvProgress, waitForRecovery)
 }
+
+// Preserve the composition-root import until N7e owns construction at the application seam.
+export { serializeProvisioner }
