@@ -544,6 +544,8 @@ describe('ACP permission broker', () => {
     ['mysql -psecret app', ['mysql']],
     ['npm config set //registry.npmjs.org/:_authToken=secret', ['npm', 'config', 'set']],
     ['aws configure set aws_secret_access_key secret', ['aws', 'configure', 'set']],
+    ['gpg --passphrase secret --decrypt payload.gpg', ['gpg']],
+    ['gpg --passphrase-file=credentials.txt --decrypt payload.gpg', ['gpg']],
     [
       'gcloud auth activate-service-account --key-file credentials.json',
       ['gcloud', 'auth', 'activate-service-account']

@@ -240,6 +240,8 @@ describe('ACP permission broker with durable grants', () => {
     ['posix', 'mysqldump -psecret app', ['mysqldump']],
     ['posix', 'npm config set //registry.npmjs.org/:_authToken=secret', ['npm', 'config', 'set']],
     ['posix', 'aws configure set aws_secret_access_key secret', ['aws', 'configure', 'set']],
+    ['posix', 'gpg --passphrase secret --decrypt payload.gpg', ['gpg']],
+    ['posix', 'gpg --passphrase-file=credentials.txt --decrypt payload.gpg', ['gpg']],
     [
       'posix',
       'gcloud auth activate-service-account --key-file credentials.json',
