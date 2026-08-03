@@ -1,4 +1,4 @@
-import { describe, expect, it, vi } from 'vitest'
+import { describe, expect, expectTypeOf, it, vi } from 'vitest'
 
 import { createCallerContext, type CallerContext } from './caller-context'
 import {
@@ -76,6 +76,17 @@ describe('application command router', () => {
     expect(read).toHaveBeenCalledWith(expect.objectContaining({ args: ['one'] }))
   })
 
+  it('exposes an immutable copy of a mutable command list', () => {
+    const mutableCommands = [readValue]
+    const group = defineApplicationCommandGroup('mutable-input', mutableCommands)
+    type CommandsAreMutable = typeof group.commands extends unknown[] ? true : false
+
+    expectTypeOf<CommandsAreMutable>().toEqualTypeOf<false>()
+    mutableCommands.push(writeValue as never)
+    expect(group.commands).toEqual([readValue])
+    expect(Object.isFrozen(group.commands)).toBe(true)
+  })
+
   it('preflights an entire group before rejecting a duplicate or missing handler', () => {
     const router = createApplicationCommandRouter()
     const first = router.registrar.createScope()
@@ -99,6 +110,35 @@ describe('application command router', () => {
       )
     ).toThrow('Application command handler is missing: sample.write')
     expect(router.dispatcher.commandNames()).toEqual(['sample.read'])
+  })
+
+  it('rejects inherited handlers and retains the handler validated during preflight', async () => {
+    const router = createApplicationCommandRouter()
+    const inherited = router.registrar.createScope()
+    const inheritedHandlers = Object.create({ 'sample.write': vi.fn() })
+
+    expect(() =>
+      inherited.registerGroup(
+        defineApplicationCommandGroup('inherited', [writeValue] as const),
+        inheritedHandlers
+      )
+    ).toThrow('Application command handler is missing: sample.write')
+
+    const validatedHandler = vi.fn(() => 'value')
+    const handlers: Record<string, unknown> = {}
+    const readHandler = vi.fn(() => validatedHandler)
+    Object.defineProperty(handlers, 'sample.read', { enumerable: true, get: readHandler })
+    const registered = router.registrar.createScope()
+    registered.registerGroup(
+      defineApplicationCommandGroup('validated', [readValue] as const),
+      handlers as never
+    )
+
+    await expect(router.dispatcher.invoke(readValue, invocation(['one'] as const))).resolves.toBe(
+      'value'
+    )
+    expect(readHandler).toHaveBeenCalledOnce()
+    expect(validatedHandler).toHaveBeenCalledOnce()
   })
 
   it('keeps scopes isolated across rollback, uninstall, and concurrent late registration', () => {

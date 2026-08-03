@@ -43,7 +43,7 @@ export type ApplicationCommandGroup<
   Commands extends readonly AnyApplicationCommand[]
 > = Readonly<{
   name: Name
-  commands: Commands
+  commands: Readonly<Commands>
 }>
 
 export type ApplicationCommandHandlers<Commands extends readonly AnyApplicationCommand[]> = {
@@ -134,7 +134,7 @@ export const defineApplicationCommandGroup = <
   name: Name,
   commands: Commands
 ): ApplicationCommandGroup<Name, Commands> =>
-  Object.freeze({ name, commands: Object.freeze([...commands]) as unknown as Commands })
+  Object.freeze({ name, commands: Object.freeze([...commands]) as unknown as Readonly<Commands> })
 
 export const createApplicationCommandRouter = (
   onDiagnostic?: (diagnostic: ApplicationCommandDiagnostic) => void
@@ -180,24 +180,32 @@ export const createApplicationCommandRouter = (
         if (disposed) throw new Error('Application command router is disposed.')
         if (state.settled) throw new Error('Application command registration scope is settled.')
 
+        const registrations: Array<
+          Readonly<{ command: AnyApplicationCommand; handler: RegisteredHandler }>
+        > = []
         const groupNames = new Set<string>()
         const runtimeHandlers = handlers as unknown as Readonly<Record<string, RegisteredHandler>>
         for (const command of group.commands) {
           if (groupNames.has(command.name) || commands.has(command.name)) {
             throw new Error(`Application command is already registered: ${command.name}`)
           }
-          if (typeof runtimeHandlers[command.name] !== 'function') {
+          if (!Object.hasOwn(runtimeHandlers, command.name)) {
+            throw new Error(`Application command handler is missing: ${command.name}`)
+          }
+          const handler = runtimeHandlers[command.name]
+          if (typeof handler !== 'function') {
             throw new Error(`Application command handler is missing: ${command.name}`)
           }
           groupNames.add(command.name)
+          registrations.push({ command, handler })
         }
 
-        for (const command of group.commands) {
+        for (const { command, handler } of registrations) {
           const registrationToken = Symbol(`${group.name}:${command.name}`)
           commands.set(command.name, {
             command,
             registrationToken,
-            handler: runtimeHandlers[command.name]
+            handler
           })
           state.registrations.push({ commandName: command.name, registrationToken })
         }
