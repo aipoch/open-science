@@ -347,7 +347,10 @@ describe('ACP permission broker with durable grants', () => {
     ['posix', '{git,gh} status', ['{git,gh}', 'status']],
     ['posix', '~/bin/git status', ['~/bin/git', 'status']],
     ['posix', '=git status', ['=git', 'status']],
-    ['powershell', '~/bin/git status', ['~/bin/git', 'status']]
+    ['powershell', '~/bin/git status', ['~/bin/git', 'status']],
+    ['powershell', 'Remove-Item *.tmp', ['Remove-Item', '*.tmp']],
+    ['powershell', 'Remove-Item file?.tmp', ['Remove-Item', 'file?.tmp']],
+    ['powershell', 'Remove-Item [ab].tmp', ['Remove-Item', '[ab].tmp']]
   ] as const)(
     'offers only provider Once when a Codex %s command group does not safely prefix %s',
     async (...args) => {

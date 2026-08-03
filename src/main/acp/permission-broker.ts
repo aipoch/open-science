@@ -235,8 +235,8 @@ const simpleCommandArgv = (
         (!tokenStarted ||
           (shellDialect === 'posix' &&
             (token.endsWith('=') || (token.includes('=') && token.endsWith(':')))))) ||
-      (shellDialect === 'posix' &&
-        (/[?*[{]/u.test(character) || (character === '=' && !tokenStarted)))
+      /[?*[]/u.test(character) ||
+      (shellDialect === 'posix' && (character === '{' || (character === '=' && !tokenStarted)))
     ) {
       tokenHasPathnameExpansion = true
     }
