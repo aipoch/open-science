@@ -6,7 +6,7 @@ import { expect, it } from 'vitest'
 
 const execFileAsync = promisify(execFile)
 
-it('keeps the generated web API map synchronized with preload', async () => {
+it('keeps the generated web API map synchronized with the renderer contract catalog', async () => {
   await expect(
     execFileAsync(process.execPath, [resolve('scripts/generate-web-api-map.mjs'), '--check'])
   ).resolves.toBeDefined()
