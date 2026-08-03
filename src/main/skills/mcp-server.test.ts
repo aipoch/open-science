@@ -15,7 +15,11 @@ describe('Skill import MCP server', () => {
       status: 'imported',
       skills: [{ id: 'imported-demo', name: 'Demo', status: 'imported' }]
     })
-    const server = createSkillImportMcpServer({ requestImport })
+    const requestGitHubImport = vi.fn().mockResolvedValue({
+      status: 'imported',
+      skills: [{ id: 'imported-slide-master', name: 'Slide Master', status: 'imported' }]
+    })
+    const server = createSkillImportMcpServer({ requestImport, requestGitHubImport })
     const client = new Client({ name: 'skill-import-test', version: '1.0.0' })
     const [clientTransport, serverTransport] = InMemoryTransport.createLinkedPair()
 
@@ -28,9 +32,9 @@ describe('Skill import MCP server', () => {
         inputSchema: expect.objectContaining({
           properties: expect.objectContaining({
             attachment_uri: expect.any(Object),
-            turn_token: expect.any(Object)
-          }),
-          required: ['attachment_uri', 'turn_token']
+            turn_token: expect.any(Object),
+            github_url: expect.any(Object)
+          })
         })
       })
     ])
@@ -46,6 +50,16 @@ describe('Skill import MCP server', () => {
     expect(requestImport).toHaveBeenCalledWith('file:///managed/session/demo.skill', turnToken)
     expect(result).toMatchObject({
       content: [{ type: 'text', text: expect.stringContaining('imported-demo') }]
+    })
+
+    const githubUrl = 'https://github.com/acme/skills/tree/main/slide-master'
+    const githubResult = await client.callTool({
+      name: REQUEST_SKILL_IMPORT_TOOL_NAME,
+      arguments: { github_url: githubUrl }
+    })
+    expect(requestGitHubImport).toHaveBeenCalledWith(githubUrl)
+    expect(githubResult).toMatchObject({
+      content: [{ type: 'text', text: expect.stringContaining('imported-slide-master') }]
     })
     expect(SKILL_IMPORT_MCP_SERVER_NAME).toBe('open-science-skills')
 

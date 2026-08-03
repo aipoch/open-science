@@ -93,6 +93,61 @@ const createActiveCancellationGuard = (): { isCancelled: () => boolean } => ({
 })
 
 describe('ConversationSkillImporter', () => {
+  it('imports a public GitHub Skill after the user confirms the conversation preview', async () => {
+    const root = await mkdtemp(join(tmpdir(), 'conversation-skill-import-'))
+    roots.push(root)
+    const githubUrl = 'https://github.com/acme/skills/tree/main/slide-master'
+    const onSkillsChanged = vi.fn()
+    const broker = new SkillImportApprovalBroker({
+      generateId: () => 'approval-github',
+      broadcast: (request) => {
+        expect(request.attachmentName).toBe('github.com/acme/skills@main/slide-master')
+        expect(request.previews).toEqual([
+          expect.objectContaining({ name: 'Slide Master', subPath: 'Slide Master' })
+        ])
+        broker.respond({
+          id: request.id,
+          items: [{ subPath: request.previews[0].subPath }]
+        })
+      }
+    })
+    const previewGitHub = vi.fn().mockResolvedValue({
+      name: 'Slide Master',
+      description: 'Creates polished presentations.',
+      sourceLabel: 'github.com/acme/skills@main/slide-master',
+      metadata: {},
+      body: 'Follow the presentation workflow.',
+      files: ['SKILL.md']
+    })
+    const importGitHub = vi.fn().mockResolvedValue({
+      status: 'imported',
+      id: 'imported-slide-master',
+      skills: []
+    })
+    const importer = new ConversationSkillImporter({
+      uploads: new UploadRepository(root),
+      createCancellationGuard: (sessionId, turnToken, attachmentUri) =>
+        broker.createCancellationGuard(sessionId, turnToken, attachmentUri),
+      createSessionCancellationGuard: (sessionId) =>
+        broker.createSessionCancellationGuard(sessionId),
+      previewBundle: async () => ({ previews: [], skipped: [] }),
+      importBundle: async () => [],
+      previewGitHub,
+      importGitHub,
+      requestApproval: (request, cancellation) => broker.request(request, cancellation),
+      onSkillsChanged
+    })
+    broker.beginSessionTurn('session-1', 'turn-1')
+
+    await expect(importer.request({ sessionId: 'session-1', githubUrl })).resolves.toEqual({
+      status: 'imported',
+      skills: [{ id: 'imported-slide-master', name: 'Slide Master', status: 'imported' }]
+    })
+    expect(previewGitHub).toHaveBeenCalledWith(githubUrl)
+    expect(importGitHub).toHaveBeenCalledWith(githubUrl)
+    expect(onSkillsChanged).toHaveBeenCalledOnce()
+  })
+
   it('imports a session-owned Skill attachment after the user confirms its preview', async () => {
     const root = await mkdtemp(join(tmpdir(), 'conversation-skill-import-'))
     roots.push(root)

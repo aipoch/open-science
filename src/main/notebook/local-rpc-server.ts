@@ -650,12 +650,25 @@ class NotebookLocalRpcServer {
     if (method === 'skillImport') {
       if (!this.skillImporter) throw new Error('Conversation Skill import is not configured.')
       if (
+        typeof params.sessionId === 'string' &&
+        typeof params.githubUrl === 'string' &&
+        params.turnToken === undefined &&
+        params.attachmentUri === undefined
+      ) {
+        const request: ConversationSkillImportRequest = {
+          sessionId: params.sessionId,
+          githubUrl: params.githubUrl
+        }
+        return this.skillImporter.request(request)
+      }
+      if (
         typeof params.sessionId !== 'string' ||
+        params.githubUrl !== undefined ||
         typeof params.turnToken !== 'string' ||
         typeof params.attachmentUri !== 'string'
       ) {
         throw new Error(
-          'Skill import RPC params must include sessionId, turnToken and attachmentUri.'
+          'Skill import RPC params must include sessionId and exactly one supported source.'
         )
       }
       const request: ConversationSkillImportRequest = {

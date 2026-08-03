@@ -640,8 +640,12 @@ const createApplicationModules = async (
     uploads: uploadRepository,
     createCancellationGuard: (sessionId, turnToken, attachmentUri) =>
       skillImportApprovalBroker.createCancellationGuard(sessionId, turnToken, attachmentUri),
+    createSessionCancellationGuard: (sessionId) =>
+      skillImportApprovalBroker.createSessionCancellationGuard(sessionId),
     previewBundle: (bundle) => settingsService.previewSkillArchive(bundle),
     importBundle: (bundle, items) => settingsService.importSkillArchiveBatch(bundle, items),
+    previewGitHub: (url) => settingsService.previewGitHubSkill({ url }),
+    importGitHub: (url) => settingsService.importSkill({ url }),
     requestApproval: (request, cancellation) =>
       skillImportApprovalBroker.request(request, cancellation),
     // If a prompt is active the coordinator defers the reconnect until its terminal event, making the
