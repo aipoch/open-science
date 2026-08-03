@@ -20,7 +20,7 @@ export type AppLifecycleDeps = {
   createMainWindow: (opts: {
     classifyClose: () => CloseClassification
     resolveCloseAction: () => Promise<CloseConfirmChoice>
-    requestQuit: () => void
+    requestQuit: (confirmed?: boolean) => void
   }) => BrowserWindow
   // Builds the tray; returns undefined on hosts without a tray (e.g. some Linux desktops).
   createTray: (handlers: TrayHandlers) => Tray | undefined
@@ -82,10 +82,12 @@ export const installAppLifecycle = (
   const confirmClose = deps.createConfirmClose(() => mainWindow)
 
   // Synchronous close classification, evaluated at close time. darwin keeps its dock convention (real
-  // close); a mid-quit or no-tray close proceeds; Windows asks (confirm); Linux keeps silent hide-to-tray.
+  // close); a mid-quit proceeds; no-tray hosts retain the renderer while requesting app quit; Windows
+  // asks (confirm); Linux keeps silent hide-to-tray.
   const classifyClose = (): CloseClassification => {
     if (platform === 'darwin') return 'close'
-    if (!trayBox.current || shutdownStarted || quitConfirmed) return 'close'
+    if (shutdownStarted || quitConfirmed) return 'close'
+    if (!trayBox.current) return 'quit'
     if (platform === 'win32') return 'confirm'
     return 'hide'
   }
@@ -106,8 +108,8 @@ export const installAppLifecycle = (
     const window = deps.createMainWindow({
       classifyClose,
       resolveCloseAction,
-      requestQuit: () => {
-        quitConfirmed = true
+      requestQuit: (confirmed = true) => {
+        quitConfirmed = confirmed
         deps.quit()
       }
     })

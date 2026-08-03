@@ -27,8 +27,8 @@ export const completeQuitPersistenceFlush = async (
 
 export const useQuitPersistenceFlush = (): void => {
   useEffect(() => {
-    const onFlushRequest = window.api.sessions.onFlushRequest
-    const sendFlushResponse = window.api.sessions.sendFlushResponse
+    const onFlushRequest = window.api.sessions?.onFlushRequest
+    const sendFlushResponse = window.api.sessions?.sendFlushResponse
     // Web/headless renderers do not participate in Electron's before-quit handshake.
     if (!onFlushRequest || !sendFlushResponse) return
 
