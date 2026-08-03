@@ -6,7 +6,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 
 import type { AcpStateSnapshot } from '../../../../shared/acp'
 import { createInitialSessionState, useSessionStore } from '../../stores/session-store'
-import { shouldShowAgentLoadingMessage } from '../../pages/workspace/agent-loading-message'
+import { getAgentLoadingPhase } from '../../pages/workspace/agent-loading-message'
 import { resetDeferredArtifactEventsForTests } from './workspace-events'
 
 ;(globalThis as { IS_REACT_ACT_ENVIRONMENT?: boolean }).IS_REACT_ACT_ENVIRONMENT = true
@@ -56,7 +56,9 @@ const Probe = (): JSX.Element | null => {
     state.sessions.find((session) => session.id === state.selectedSessionId)
   )
 
-  return shouldShowAgentLoadingMessage(activeSession) ? <div>Thinking</div> : null
+  const phase = getAgentLoadingPhase(activeSession)
+
+  return phase === 'hidden' ? null : <div>{phase}</div>
 }
 
 describe('workspace Agent first-output runtime sync', () => {
@@ -95,9 +97,12 @@ describe('workspace Agent first-output runtime sync', () => {
     )
     await act(async () => root.render(<Probe />))
 
-    expect(useSessionStore.getState().sessions[0].activeRun).toBeUndefined()
-    expect(useSessionStore.getState().sessions[0].awaitingFirstAgentOutput).toBe(true)
-    expect(container.textContent).toBe('Thinking')
+    expect(useSessionStore.getState().sessions[0]).toMatchObject({
+      activeRun: undefined,
+      agentPromptInFlight: true,
+      awaitingFirstAgentOutput: true
+    })
+    expect(container.textContent).toBe('thinking')
   })
 
   it('does not rearm waiting when prompt ownership and the first visible output share a snapshot', async () => {
@@ -128,8 +133,83 @@ describe('workspace Agent first-output runtime sync', () => {
       role: 'agent',
       content: 'First visible token'
     })
+    expect(useSessionStore.getState().sessions[0].agentPromptInFlight).toBe(true)
     expect(useSessionStore.getState().sessions[0].awaitingFirstAgentOutput).toBeUndefined()
     expect(container.textContent).toBe('')
+  })
+
+  it('restarts runtime-owned waiting only after an active tool completes', async () => {
+    await act(async () => root.render(<Probe />))
+    const promptMessageId = useSessionStore.getState().sessions[0].messages[0].id
+    const firstOutputEvent = {
+      id: 'event-output-before-tool',
+      timestamp: 1710000000000,
+      kind: 'message' as const,
+      level: 'info' as const,
+      sessionId: 'session-1',
+      role: 'assistant' as const,
+      messageId: 'assistant-message-1',
+      promptMessageId,
+      text: 'I will inspect the file.'
+    }
+
+    runtimeMock.current = createRuntime(
+      createSnapshot({
+        promptInFlight: true,
+        promptInFlightSessionIds: ['session-1'],
+        agentPromptInFlightSessionIds: ['session-1'],
+        events: [firstOutputEvent]
+      })
+    )
+    await act(async () => root.render(<Probe />))
+    expect(container.textContent).toBe('')
+
+    const runningToolEvent = {
+      id: 'event-tool-running',
+      timestamp: 1710000000100,
+      kind: 'tool' as const,
+      level: 'info' as const,
+      sessionId: 'session-1',
+      promptMessageId,
+      toolCallId: 'tool-1',
+      title: 'Read file',
+      status: 'in_progress' as const
+    }
+    runtimeMock.current = createRuntime(
+      createSnapshot({
+        promptInFlight: true,
+        promptInFlightSessionIds: ['session-1'],
+        agentPromptInFlightSessionIds: ['session-1'],
+        events: [firstOutputEvent, runningToolEvent]
+      })
+    )
+    await act(async () => root.render(<Probe />))
+    expect(container.textContent).toBe('interacting-with-tools')
+
+    runtimeMock.current = createRuntime(
+      createSnapshot({
+        promptInFlight: true,
+        promptInFlightSessionIds: ['session-1'],
+        agentPromptInFlightSessionIds: ['session-1'],
+        events: [
+          firstOutputEvent,
+          runningToolEvent,
+          {
+            ...runningToolEvent,
+            id: 'event-tool-completed',
+            timestamp: 1710000000200,
+            status: 'completed'
+          }
+        ]
+      })
+    )
+    await act(async () => root.render(<Probe />))
+
+    expect(useSessionStore.getState().sessions[0]).toMatchObject({
+      activeRun: undefined,
+      agentPromptInFlight: true
+    })
+    expect(container.textContent).toBe('thinking')
   })
 
   it('unmounts runtime-owned waiting after the first visible image without an active run', async () => {
@@ -161,7 +241,7 @@ describe('workspace Agent first-output runtime sync', () => {
     expect(container.textContent).toBe('')
   })
 
-  it('keeps runtime-owned waiting while permission input is pending', async () => {
+  it('shows runtime-owned tool interaction while permission input is pending', async () => {
     await act(async () => root.render(<Probe />))
 
     runtimeMock.current = createRuntime(
@@ -186,7 +266,7 @@ describe('workspace Agent first-output runtime sync', () => {
       status: 'waiting-permission',
       awaitingFirstAgentOutput: true
     })
-    expect(container.textContent).toBe('Thinking')
+    expect(container.textContent).toBe('interacting-with-tools')
   })
 
   it('does not start waiting for a compaction-only runtime interaction', async () => {

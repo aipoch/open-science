@@ -616,10 +616,16 @@ describe('workspace runtime events', () => {
 
   it('syncs first-output waiting only for known foreground workspace sessions', () => {
     syncWorkspaceAgentFirstOutputState(['transport-session-1', 'reviewer-session-1'])
-    expect(useSessionStore.getState().sessions[0].awaitingFirstAgentOutput).toBe(true)
+    expect(useSessionStore.getState().sessions[0]).toMatchObject({
+      agentPromptInFlight: true,
+      awaitingFirstAgentOutput: true
+    })
 
     syncWorkspaceAgentFirstOutputState([])
-    expect(useSessionStore.getState().sessions[0].awaitingFirstAgentOutput).toBeUndefined()
+    expect(useSessionStore.getState().sessions[0]).toMatchObject({
+      agentPromptInFlight: undefined,
+      awaitingFirstAgentOutput: undefined
+    })
   })
 
   it('does not rearm first-output waiting from repeated in-flight snapshots after output', async () => {
@@ -670,6 +676,122 @@ describe('workspace runtime events', () => {
     )
 
     expect(useSessionStore.getState().sessions[0].awaitingFirstAgentOutput).toBe(true)
+  })
+
+  it('does not rearm waiting from a terminal tool event for an older prompt', async () => {
+    const oldPromptMessageId = useSessionStore.getState().sessions[0].activeRun?.promptMessageId
+    useSessionStore.getState().finishRun('transport-session-1')
+    useSessionStore.getState().appendUserMessage({
+      sessionId: 'transport-session-1',
+      content: 'Current request'
+    })
+    syncWorkspaceAgentFirstOutputState(['transport-session-1'])
+    await applyWorkspaceRuntimeEvent(
+      createEvent({
+        id: 'event-current-output',
+        role: 'assistant',
+        messageId: 'assistant-message-current',
+        text: 'Current response started'
+      })
+    )
+
+    await applyWorkspaceRuntimeEvent(
+      createEvent({
+        id: 'event-old-tool-completed',
+        kind: 'tool',
+        toolCallId: 'old-tool',
+        promptMessageId: oldPromptMessageId,
+        status: 'completed'
+      })
+    )
+
+    expect(useSessionStore.getState().sessions[0].awaitingFirstAgentOutput).toBeUndefined()
+  })
+
+  it('does not rearm waiting or reorder a tool for repeated terminal updates', async () => {
+    const promptMessageId = useSessionStore.getState().sessions[0].activeRun?.promptMessageId
+    syncWorkspaceAgentFirstOutputState(['transport-session-1'])
+    await applyWorkspaceRuntimeEvent(
+      createEvent({
+        id: 'event-tool-running',
+        kind: 'tool',
+        toolCallId: 'tool-1',
+        promptMessageId,
+        status: 'in_progress'
+      })
+    )
+    vi.setSystemTime(new Date('2026-07-04T08:00:01.000Z'))
+    await applyWorkspaceRuntimeEvent(
+      createEvent({
+        id: 'event-tool-completed',
+        kind: 'tool',
+        toolCallId: 'tool-1',
+        promptMessageId,
+        status: 'completed'
+      })
+    )
+    const completedAt = useSessionStore.getState().sessions[0].activities?.[0].updatedAt
+    vi.setSystemTime(new Date('2026-07-04T08:00:02.000Z'))
+    await applyWorkspaceRuntimeEvent(
+      createEvent({
+        id: 'event-output-after-tool',
+        role: 'assistant',
+        messageId: 'assistant-message-1',
+        promptMessageId,
+        text: 'Tool result received'
+      })
+    )
+
+    vi.setSystemTime(new Date('2026-07-04T08:00:03.000Z'))
+    await applyWorkspaceRuntimeEvent(
+      createEvent({
+        id: 'event-tool-completed-metadata',
+        kind: 'tool',
+        toolCallId: 'tool-1',
+        promptMessageId,
+        status: 'completed',
+        rawOutput: { result: 'ok' }
+      })
+    )
+
+    const session = useSessionStore.getState().sessions[0]
+    expect(session.awaitingFirstAgentOutput).toBeUndefined()
+    expect(session.activities?.[0]).toMatchObject({
+      updatedAt: completedAt,
+      rawOutput: { result: 'ok' }
+    })
+  })
+
+  it('ignores a terminal tool event that arrives after the run stops', async () => {
+    const promptMessageId = useSessionStore.getState().sessions[0].activeRun?.promptMessageId
+    syncWorkspaceAgentFirstOutputState(['transport-session-1'])
+    await applyWorkspaceRuntimeEvent(
+      createEvent({
+        id: 'event-tool-running-before-stop',
+        kind: 'tool',
+        toolCallId: 'tool-before-stop',
+        promptMessageId,
+        status: 'in_progress'
+      })
+    )
+    await applyWorkspaceRuntimeEvent(
+      createEvent({ id: 'event-stop-before-tool-terminal', kind: 'stop', promptMessageId })
+    )
+
+    await applyWorkspaceRuntimeEvent(
+      createEvent({
+        id: 'event-tool-terminal-after-stop',
+        kind: 'tool',
+        toolCallId: 'tool-before-stop',
+        promptMessageId,
+        status: 'completed'
+      })
+    )
+
+    expect(useSessionStore.getState().sessions[0]).toMatchObject({
+      agentPromptInFlight: undefined,
+      awaitingFirstAgentOutput: undefined
+    })
   })
 
   it('does not route tool events into preview state', async () => {

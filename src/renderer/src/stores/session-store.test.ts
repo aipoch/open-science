@@ -127,6 +127,29 @@ describe('session store', () => {
     expect(toPersistedSession(session)).not.toHaveProperty('awaitingFirstAgentOutput')
   })
 
+  it('tracks runtime prompt ownership as transient state and clears it when the run settles', () => {
+    useSessionStore.getState().appendUserMessage({
+      sessionId: 'transport-session-1',
+      content: 'Continue the foreground request'
+    })
+    useSessionStore.getState().setAgentPromptInFlight('transport-session-1', true)
+
+    const running = useSessionStore.getState().sessions[0]
+    expect(running.agentPromptInFlight).toBe(true)
+    expect(toPersistedSession(running)).not.toHaveProperty('agentPromptInFlight')
+
+    useSessionStore.getState().finishRun('transport-session-1')
+    expect(useSessionStore.getState().sessions[0].agentPromptInFlight).toBeUndefined()
+
+    useSessionStore.getState().appendUserMessage({
+      sessionId: 'transport-session-1',
+      content: 'Retry the foreground request'
+    })
+    useSessionStore.getState().setAgentPromptInFlight('transport-session-1', true)
+    useSessionStore.getState().failRun('transport-session-1', 'Provider failed')
+    expect(useSessionStore.getState().sessions[0].agentPromptInFlight).toBeUndefined()
+  })
+
   it('clears the first Agent output wait when the request settles without output', () => {
     useSessionStore.getState().appendUserMessage({
       sessionId: 'transport-session-1',
@@ -852,6 +875,34 @@ describe('session store', () => {
         eventIds: ['event-1', 'event-2']
       })
     ])
+  })
+
+  it('preserves the terminal tool timestamp when later metadata arrives', () => {
+    useSessionStore.getState().appendUserMessage({
+      sessionId: 'transport-session-1',
+      content: 'Search the literature'
+    })
+    useSessionStore.getState().upsertToolActivity({
+      sessionId: 'transport-session-1',
+      toolCallId: 'tool-web-1',
+      eventId: 'event-1',
+      status: 'completed'
+    })
+    const completedAt = useSessionStore.getState().sessions[0].activities?.[0].updatedAt
+    vi.setSystemTime(new Date(Date.now() + 1_000))
+
+    useSessionStore.getState().upsertToolActivity({
+      sessionId: 'transport-session-1',
+      toolCallId: 'tool-web-1',
+      eventId: 'event-2',
+      status: 'completed',
+      rawOutput: { result: 'ok' }
+    })
+
+    expect(useSessionStore.getState().sessions[0].activities?.[0]).toMatchObject({
+      updatedAt: completedAt,
+      rawOutput: { result: 'ok' }
+    })
   })
 
   it('assigns real tool activities to the declared activity group and persists the group', () => {
