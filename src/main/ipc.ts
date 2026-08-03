@@ -13,6 +13,7 @@ import { createApplicationEventModule, type ApplicationEventSource } from './app
 
 import { createAcpRuntime, createDefaultNotebookRuntimeService } from './acp/ipc'
 import { createAcpCreateSessionWorkflow } from './acp/create-session-workflow'
+import { createAcpTaskAgentPort } from './acp/task-agent-port'
 import { createDefaultArtifactRepository, registerArtifactIpcHandlers } from './artifacts/ipc'
 import { ArtifactProvenanceRepository } from './artifacts/provenance-repository'
 import { ProvenanceMessageSnapshotRepository } from './artifacts/provenance-message-snapshot'
@@ -165,6 +166,7 @@ import {
 } from './runtime-electron-wiring'
 import { ConversationSkillImporter, SkillImportApprovalBroker } from './skills/conversation-import'
 import type { ConversationSkillImportApprovalResponse } from '../shared/settings'
+import type { TaskAgentPort } from './tasks/task-runner'
 
 const permissionGrantsLog = createLogger('permission-grants')
 
@@ -189,6 +191,7 @@ export type ApplicationRuntimeInterfaces = {
     'setActivationHandler' | 'setAttentionHandlers' | 'setPendingOpenSession' | 'setUnreadHandler'
   >
   settingsService: WindowSettingsCapabilities
+  taskAgent: TaskAgentPort
   sessionDeletionCapability: Pick<SessionPersistenceCoordinator, 'setSessionDeletionHandlers'>
   detectActiveSessions: () => ReturnType<typeof detectActiveSessions>
 }
@@ -885,6 +888,7 @@ const createApplicationModules = async (
   surfaceAdapters = afterAcpAdapters
   runtimeRef.current = runtime
   const createSessionWorkflow = createAcpCreateSessionWorkflow(runtime)
+  const taskAgent = createAcpTaskAgentPort(runtime, createSessionWorkflow, taskNotifications)
   {
     // Framework-specific adapters declare their own session selector. The registry resolves those
     // selectors before its generic fallback, so registration order cannot route a Codex/OpenCode
@@ -1333,6 +1337,7 @@ const createApplicationModules = async (
     applicationEvents,
     taskNotifications,
     settingsService,
+    taskAgent,
     sessionDeletionCapability: sessionPersistenceCoordinator,
     detectActiveSessions: () => detectActiveSessions({ runtime, notebook: notebookService }),
     electronAdapters: {

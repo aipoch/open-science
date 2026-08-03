@@ -1,14 +1,7 @@
 import { AsyncLocalStorage } from 'node:async_hooks'
 import { randomUUID } from 'node:crypto'
 
-import type {
-  AcpCreateSessionRequest,
-  AcpCreateSessionResponse,
-  AcpPromptRequest,
-  AcpResumeSessionRequest,
-  AcpRuntimeEvent,
-  AcpSetPermissionProfileRequest
-} from '../../shared/acp'
+import type { AcpRuntimeEvent } from '../../shared/acp'
 import type {
   FinalizeRunArtifactsRequest,
   FinalizeRunArtifactsResult
@@ -27,6 +20,7 @@ import {
   TaskRunnerError,
   summarizeSession,
   type CreateTaskProjectRequest,
+  type TaskAgentPort,
   type TaskRunnerDependencies
 } from '../tasks/task-runner'
 
@@ -34,6 +28,11 @@ const TASK_CALLER_CONTEXT = createTaskCallerContext()
 
 type TaskRpc = {
   invoke(channel: string, callerContext: CallerContext, args: unknown[]): Promise<unknown>
+}
+
+type TaskApiPorts = {
+  rpc: TaskRpc
+  agent: TaskAgentPort
 }
 
 type TaskApiDependencies = {
@@ -47,12 +46,12 @@ class HeadlessTaskApi {
   private readonly runner: TaskRunner
 
   constructor(
-    private readonly rpc: TaskRpc,
+    private readonly ports: TaskApiPorts,
     dependencies: Partial<TaskApiDependencies> = {}
   ) {
     const subscribeEvents = dependencies.subscribeEvents ?? (() => () => undefined)
-    // Compatibility removal target: A6/T2 replace these façade channel mappings with direct owner
-    // adapters while TaskRunner keeps the same narrow ports.
+    // Non-Agent compatibility channels remain temporary façade adapters. Agent execution crosses a
+    // direct, narrow port so Task never impersonates an Electron caller for runtime operations.
     this.runner = new TaskRunner({
       projects: {
         list: () => this.invoke('projects:list') as Promise<Project[]>,
@@ -70,20 +69,15 @@ class HeadlessTaskApi {
         }
       },
       agent: {
-        listAttachedSessionIds: async () => {
-          const state = (await this.invoke('acp:get-state')) as { sessionIds?: string[] }
-          return state.sessionIds ?? []
-        },
-        createSession: (request: AcpCreateSessionRequest) =>
-          this.invoke('acp:create-session', request) as Promise<AcpCreateSessionResponse>,
-        resumeSession: (request: AcpResumeSessionRequest) =>
-          this.invoke('acp:resume-session', request) as Promise<AcpCreateSessionResponse>,
-        setPermissionProfile: async (request: AcpSetPermissionProfileRequest) => {
-          await this.invoke('acp:set-permission-profile', request)
-        },
-        sendPrompt: async (request: AcpPromptRequest) => {
-          await this.invoke('acp:send-prompt', request)
-        }
+        listAttachedSessionIds: () =>
+          this.withCurrentCaller(() => this.ports.agent.listAttachedSessionIds()),
+        createSession: (request) =>
+          this.withCurrentCaller(() => this.ports.agent.createSession(request)),
+        resumeSession: (request) =>
+          this.withCurrentCaller(() => this.ports.agent.resumeSession(request)),
+        setPermissionProfile: (sessionId, profile) =>
+          this.withCurrentCaller(() => this.ports.agent.setPermissionProfile(sessionId, profile)),
+        prompt: (request) => this.withCurrentCaller(() => this.ports.agent.prompt(request))
       },
       artifacts: {
         finalizeRun: (request: FinalizeRunArtifactsRequest) =>
@@ -100,7 +94,9 @@ class HeadlessTaskApi {
         // Capability cleanup must remain available if request authorization is revoked while a
         // response stream drains. The fixed local automation context grants no new access.
         release: async (resourceId) => {
-          await this.rpc.invoke('preview-resources:release', TASK_CALLER_CONTEXT, [{ resourceId }])
+          await this.ports.rpc.invoke('preview-resources:release', TASK_CALLER_CONTEXT, [
+            { resourceId }
+          ])
         }
       },
       runtimeEvents: { subscribe: subscribeEvents },
@@ -158,9 +154,20 @@ class HeadlessTaskApi {
   }
 
   private invoke(channel: string, ...args: unknown[]): Promise<unknown> {
-    return this.rpc.invoke(channel, this.callerContexts.getStore() ?? TASK_CALLER_CONTEXT, args)
+    return this.ports.rpc.invoke(channel, this.currentCallerContext(), args)
+  }
+
+  private currentCallerContext(): CallerContext {
+    return this.callerContexts.getStore() ?? TASK_CALLER_CONTEXT
+  }
+
+  private withCurrentCaller<Result>(operation: () => Promise<Result>): Promise<Result> {
+    if (!this.currentCallerContext().isAuthorizationCurrent()) {
+      return Promise.reject(new Error('Caller authorization is no longer current.'))
+    }
+    return operation()
   }
 }
 
 export { HeadlessTaskApi, TaskRunnerError as TaskApiError, summarizeSession }
-export type { TaskApiDependencies, TaskRpc }
+export type { TaskApiDependencies, TaskApiPorts, TaskRpc }

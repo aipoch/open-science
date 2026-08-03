@@ -1,0 +1,64 @@
+import type {
+  AcpCreateSessionResponse,
+  AcpPromptRequest,
+  AcpResumeSessionRequest,
+  AcpSetPermissionProfileRequest
+} from '../../shared/acp'
+import type { TaskNotificationService } from '../notifications/task-notifications'
+import type { TaskAgentPort, TaskAgentPromptRequest } from '../tasks/task-runner'
+import type { AcpCreateSessionWorkflow } from './create-session-workflow'
+
+type AcpTaskAgentRuntime = {
+  getSnapshot(): { sessionIds: string[] }
+  resumeSession(request: AcpResumeSessionRequest): Promise<AcpCreateSessionResponse>
+  setPermissionProfile(request: AcpSetPermissionProfileRequest): Promise<unknown>
+  sendPrompt(request: AcpPromptRequest): Promise<unknown>
+}
+
+type TaskPromptNotifications = Pick<TaskNotificationService, 'trackPrompt' | 'untrackPrompt'>
+
+const toAcpPromptRequest = (request: TaskAgentPromptRequest): AcpPromptRequest => ({
+  sessionId: request.sessionId,
+  text: request.text,
+  ...(request.skillIds?.length ? { forcedSkillIds: request.skillIds } : {}),
+  ...(request.historyPreamble ? { historyPreamble: request.historyPreamble } : {}),
+  ...(request.resumeFallback ? { resumeFallback: request.resumeFallback } : {})
+})
+
+// Adapts the provider-neutral Task seam to the existing ACP owner without exposing the coordinator,
+// renderer commands, Specialist controls, or Compute management to Task automation.
+const createAcpTaskAgentPort = (
+  runtime: AcpTaskAgentRuntime,
+  createSessionWorkflow: AcpCreateSessionWorkflow,
+  notifications?: TaskPromptNotifications
+): TaskAgentPort => ({
+  listAttachedSessionIds: async () => [...runtime.getSnapshot().sessionIds],
+  createSession: (request) =>
+    createSessionWorkflow.create({
+      projectName: request.projectId,
+      permissionProfile: request.permissionProfile
+    }),
+  resumeSession: (request) =>
+    runtime.resumeSession({
+      sessionId: request.sessionId,
+      cwd: request.cwd,
+      projectName: request.projectId,
+      permissionProfile: request.permissionProfile,
+      previousFrameworkId: request.previousFrameworkId,
+      previousBackendId: request.previousBackendId
+    }),
+  setPermissionProfile: (sessionId, profile) =>
+    runtime.setPermissionProfile({ sessionId, profile }).then(() => undefined),
+  prompt: async (request) => {
+    const acpRequest = toAcpPromptRequest(request)
+    const tracked = notifications?.trackPrompt(acpRequest)
+    try {
+      await runtime.sendPrompt(acpRequest)
+    } catch (error) {
+      if (tracked) notifications?.untrackPrompt(acpRequest.sessionId, tracked)
+      throw error
+    }
+  }
+})
+
+export { createAcpTaskAgentPort }

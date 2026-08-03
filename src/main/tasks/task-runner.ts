@@ -1,11 +1,4 @@
-import type {
-  AcpCreateSessionRequest,
-  AcpCreateSessionResponse,
-  AcpPromptRequest,
-  AcpResumeSessionRequest,
-  AcpRuntimeEvent,
-  AcpSetPermissionProfileRequest
-} from '../../shared/acp'
+import type { AcpRuntimeEvent } from '../../shared/acp'
 import { getAcpRuntimeEventImage, getAcpRuntimeEventText } from '../../shared/acp'
 import type {
   ArtifactFile,
@@ -14,7 +7,9 @@ import type {
 } from '../../shared/artifacts'
 import { ARTIFACT_OWNERSHIP_PERSISTENCE_RACE } from '../../shared/artifacts'
 import { DEFAULT_PERMISSION_PROFILE } from '../../shared/permission-profiles'
+import type { PermissionProfileId } from '../../shared/permission-profiles'
 import type { Project } from '../../shared/projects'
+import type { AgentFrameworkId } from '../../shared/settings'
 import type {
   PersistedArtifact,
   PersistedChatMessage,
@@ -54,12 +49,42 @@ type TaskPreviewResourcePort = {
   release(resourceId: string): Promise<void>
 }
 
+type TaskAgentSession = {
+  sessionId: string
+  cwd?: string
+  frameworkId?: AgentFrameworkId
+  backendId?: string
+  contextReset?: boolean
+}
+
+type TaskAgentCreateSessionRequest = {
+  projectId: string
+  permissionProfile: PermissionProfileId
+}
+
+type TaskAgentResumeSessionRequest = {
+  sessionId: string
+  cwd: string
+  projectId: string
+  permissionProfile: PermissionProfileId
+  previousFrameworkId?: AgentFrameworkId
+  previousBackendId?: string
+}
+
+type TaskAgentPromptRequest = {
+  sessionId: string
+  text: string
+  skillIds?: string[]
+  historyPreamble?: string
+  resumeFallback?: { historyPreamble?: string }
+}
+
 type TaskAgentPort = {
   listAttachedSessionIds(): Promise<string[]>
-  createSession(request: AcpCreateSessionRequest): Promise<AcpCreateSessionResponse>
-  resumeSession(request: AcpResumeSessionRequest): Promise<AcpCreateSessionResponse>
-  setPermissionProfile(request: AcpSetPermissionProfileRequest): Promise<void>
-  sendPrompt(request: AcpPromptRequest): Promise<void>
+  createSession(request: TaskAgentCreateSessionRequest): Promise<TaskAgentSession>
+  resumeSession(request: TaskAgentResumeSessionRequest): Promise<TaskAgentSession>
+  setPermissionProfile(sessionId: string, profile: PermissionProfileId): Promise<void>
+  prompt(request: TaskAgentPromptRequest): Promise<void>
 }
 
 type TaskArtifactPort = {
@@ -357,21 +382,18 @@ class TaskRunner {
   ): Promise<{
     session: PersistedChatSession
     historyPreamble?: string
-    resumeFallback?: AcpPromptRequest['resumeFallback']
+    resumeFallback?: TaskAgentPromptRequest['resumeFallback']
   }> {
     const now = this.dependencies.now()
     const permissionProfile =
       request.permissionProfile ?? existing?.permissionProfile ?? DEFAULT_PERMISSION_PROFILE
-    let sessionInfo: AcpCreateSessionResponse
+    let sessionInfo: TaskAgentSession
 
     if (existing) {
       const attachedSessionIds = await this.dependencies.agent.listAttachedSessionIds()
       if (attachedSessionIds.includes(existing.id)) {
         if (request.permissionProfile && request.permissionProfile !== existing.permissionProfile) {
-          await this.dependencies.agent.setPermissionProfile({
-            sessionId: existing.id,
-            profile: request.permissionProfile
-          })
+          await this.dependencies.agent.setPermissionProfile(existing.id, request.permissionProfile)
         }
         sessionInfo = {
           sessionId: existing.id,
@@ -383,7 +405,7 @@ class TaskRunner {
         sessionInfo = await this.dependencies.agent.resumeSession({
           sessionId: existing.id,
           cwd: existing.cwd,
-          projectName: project.id,
+          projectId: project.id,
           permissionProfile,
           previousFrameworkId: existing.agentFrameworkId,
           previousBackendId: existing.agentBackendId
@@ -391,7 +413,7 @@ class TaskRunner {
       }
     } else {
       sessionInfo = await this.dependencies.agent.createSession({
-        projectName: project.id,
+        projectId: project.id,
         permissionProfile
       })
     }
@@ -443,14 +465,14 @@ class TaskRunner {
     request: StartTaskRunRequest,
     prompt: string,
     historyPreamble?: string,
-    resumeFallback?: AcpPromptRequest['resumeFallback']
+    resumeFallback?: TaskAgentPromptRequest['resumeFallback']
   ): Promise<void> {
     let promptError: unknown
     try {
-      await this.dependencies.agent.sendPrompt({
+      await this.dependencies.agent.prompt({
         sessionId: session.id,
         text: prompt,
-        ...(request.skillIds?.length ? { forcedSkillIds: request.skillIds } : {}),
+        ...(request.skillIds?.length ? { skillIds: request.skillIds } : {}),
         ...(historyPreamble ? { historyPreamble } : {}),
         ...(resumeFallback ? { resumeFallback } : {})
       })
@@ -693,7 +715,11 @@ class TaskRunner {
 export { TaskRunner, TaskRunnerError, summarizeSession }
 export type {
   CreateTaskProjectRequest,
+  TaskAgentCreateSessionRequest,
   TaskAgentPort,
+  TaskAgentPromptRequest,
+  TaskAgentResumeSessionRequest,
+  TaskAgentSession,
   TaskArtifactPort,
   TaskProjectPort,
   TaskPreviewResourcePort,

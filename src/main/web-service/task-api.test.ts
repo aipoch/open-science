@@ -274,4 +274,31 @@ describe('HeadlessTaskApi adapter', () => {
     )
     expect(invoke.mock.calls.at(-1)?.[1].isAuthorizationCurrent()).toBe(true)
   })
+
+  it('does not enter the direct Agent port after captured remote authorization expires', async () => {
+    let authorizationCurrent = true
+    const invoke = vi.fn(async (channel: string) => {
+      if (channel === 'projects:list') return [project]
+      if (channel === 'sessions:load-all') {
+        authorizationCurrent = false
+        return { sessions: [], manifest: { version: 1 } }
+      }
+      throw new Error(`Unexpected RPC channel: ${channel}`)
+    })
+    const agent = createAgent()
+    const api = new HeadlessTaskApi({ rpc: { invoke }, agent })
+    const context = createTaskCallerContext({
+      location: 'remote',
+      isAuthorizationCurrent: () => authorizationCurrent
+    })
+
+    await expect(
+      api.runWithCallerContext(context, () =>
+        api.startRun({ project: project.id, prompt: 'Research after revocation.' })
+      )
+    ).rejects.toThrow('Caller authorization is no longer current.')
+    expect(agent.listAttachedSessionIds).not.toHaveBeenCalled()
+    expect(agent.createSession).not.toHaveBeenCalled()
+    expect(agent.prompt).not.toHaveBeenCalled()
+  })
 })

@@ -1,8 +1,19 @@
-import { describe, expect, it, vi } from 'vitest'
+import { describe, expect, expectTypeOf, it, vi } from 'vitest'
 
+import type { TaskAgentPort } from '../tasks/task-runner'
 import { createAcpTaskAgentPort } from './task-agent-port'
 
 describe('ACP Task Agent port', () => {
+  it('exposes only the Task execution capabilities', () => {
+    expectTypeOf<keyof TaskAgentPort>().toEqualTypeOf<
+      | 'listAttachedSessionIds'
+      | 'createSession'
+      | 'resumeSession'
+      | 'setPermissionProfile'
+      | 'prompt'
+    >()
+  })
+
   it('translates only the Task execution contract to ACP session operations', async () => {
     const create = vi.fn(async () => ({
       sessionId: 'session-created',
@@ -86,7 +97,8 @@ describe('ACP Task Agent port', () => {
       skillIds: ['literature-review']
     }
     const sendPrompt = vi.fn(async () => undefined)
-    const trackPrompt = vi.fn(() => 'tracked-prompt')
+    const trackedPrompt = { token: 1 }
+    const trackPrompt = vi.fn(() => trackedPrompt)
     const untrackPrompt = vi.fn()
     const port = createAcpTaskAgentPort(
       {
@@ -111,6 +123,6 @@ describe('ACP Task Agent port', () => {
     const failure = new Error('prompt failed')
     sendPrompt.mockRejectedValueOnce(failure)
     await expect(port.prompt(prompt)).rejects.toBe(failure)
-    expect(untrackPrompt).toHaveBeenCalledWith('session-1', 'tracked-prompt')
+    expect(untrackPrompt).toHaveBeenCalledWith('session-1', trackedPrompt)
   })
 })
