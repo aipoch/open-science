@@ -43,7 +43,7 @@ const TRUSTED_TOOL_CATEGORIES: Readonly<Record<string, string>> = {
 // digest protects display/storage privacy; it does not make a secret reusable authority.
 const SECRET_BEARING_INPUT_PATTERNS = [
   /\b(?:authorization|proxy-authorization|x-api-key|api-key|x-auth-token|x-amz-security-token|cookie)\s*:/i,
-  /\b(?:token|access[_-]?token|api[_-]?key|secret|password|passwd|credential)s?\s*=/i,
+  /\b_?[a-z0-9_-]*(?:auth(?:entication)?(?:[_-]?(?:key|token))?|access[_-]?token|api[_-]?key|bearer[_-]?token|client[_-]?secret|private[_-]?key|secret(?:[_-]?access[_-]?key)?|token|password|passwd|credential)s?\s*=/i,
   /(?:^|[ \t'"])--?(?:[a-z0-9]+[-_])*(?:access[-_]?(?:key|token)|api[-_]?key|auth[-_]?token|authorization|bearer(?:[-_]?token)?|client[-_]?secret|cookie|credentials?|pass|passwd|password|pat|private[-_]?key|secret(?:[-_]?access[-_]?key)?|tokens?)(?:[-_]?(?:file|path))?(?:=|:|[ \t]+)/i,
   /\b[A-Z0-9_]*(?:TOKEN|API_KEY|SECRET|PASSWORD|PASSWD|CREDENTIALS?|PAT|ACCESS_KEY(?:_ID)?|SECRET_ACCESS_KEY|CLIENT_SECRET|PRIVATE_KEY)\s*=/,
   /(?:^|\s)(?:-u|--(?:proxy-)?user)(?:=|\s+)['"]?[^\s:'"]+:[^\s'"]+/i,

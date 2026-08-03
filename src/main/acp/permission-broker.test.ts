@@ -542,6 +542,7 @@ describe('ACP permission broker', () => {
     ['sshpass -psecret ssh user@example.com', ['sshpass']],
     ['redis-cli -asecret ping', ['redis-cli']],
     ['mysql -psecret app', ['mysql']],
+    ['npm config set //registry.npmjs.org/:_authToken=secret', ['npm', 'config', 'set']],
     ['oauth login --client-secret secret', ['oauth', 'login']]
   ] as const)(
     'keeps an unsafe Codex command group Once-only in the legacy broker: %s',
