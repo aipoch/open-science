@@ -30,6 +30,50 @@ describe('createIpcHandlerRegistry', () => {
     expect(handler).toHaveBeenCalledOnce()
   })
 
+  it('renews a crashed WebContents lease but keeps destroyed terminal', () => {
+    const nativeHandlers = new Map<string, (...args: unknown[]) => unknown>()
+    const registry = createIpcHandlerRegistry({
+      handle: (channel: string, handler: (...args: unknown[]) => unknown) =>
+        nativeHandlers.set(channel, handler)
+    } as never)
+    const listeners = new Map<string, Array<() => void>>()
+    const sender = {
+      id: 42,
+      once: (name: string, listener: () => void): void => {
+        const registered = listeners.get(name) ?? []
+        registered.push(listener)
+        listeners.set(name, registered)
+      }
+    }
+    const dispatchedEvents: Array<{ sender: object }> = []
+    const handler = vi.fn((event: { sender: object }) => {
+      dispatchedEvents.push(event)
+      return callerLeaseForEvent(event)
+    })
+    registry.ipcMainHandle('projects:list', handler)
+
+    const first = nativeHandlers.get('projects:list')?.({ sender }) as {
+      generation: number
+      signal: AbortSignal
+    }
+    listeners.get('render-process-gone')?.[0]?.()
+    const replacement = nativeHandlers.get('projects:list')?.({ sender }) as typeof first
+
+    expect(replacement.generation).toBeGreaterThan(first.generation)
+    expect(replacement.signal.aborted).toBe(false)
+    expect(callerLeaseForEvent(dispatchedEvents[0])).toBe(first)
+    expect(callerLeaseForEvent(dispatchedEvents[1])).toBe(replacement)
+    listeners.get('render-process-gone')?.[0]?.()
+    expect(replacement.signal.aborted).toBe(false)
+
+    for (const destroyed of listeners.get('destroyed') ?? []) destroyed()
+    expect(replacement.signal.aborted).toBe(true)
+    expect(() => nativeHandlers.get('projects:list')?.({ sender })).toThrow(
+      'Caller lease is no longer current.'
+    )
+    expect(handler).toHaveBeenCalledTimes(2)
+  })
+
   it('keeps a replacement Electron generation isolated from stale teardown callbacks', () => {
     const nativeHandlers = new Map<string, (...args: unknown[]) => unknown>()
     const registry = createIpcHandlerRegistry({
@@ -61,6 +105,32 @@ describe('createIpcHandlerRegistry', () => {
 
     expect(replacement.generation).toBeGreaterThan(first.generation)
     expect(replacement.signal.aborted).toBe(false)
+  })
+
+  it('keeps caller-controlled Web lease ids isolated from Electron ownership', async () => {
+    const nativeHandlers = new Map<string, (...args: unknown[]) => unknown>()
+    const registry = createIpcHandlerRegistry({
+      handle: (channel: string, handler: (...args: unknown[]) => unknown) =>
+        nativeHandlers.set(channel, handler)
+    } as never)
+    registry.ipcMainHandle('projects:list', (event) => callerLeaseForEvent(event))
+
+    const electronLease = nativeHandlers.get('projects:list')?.({ sender: { id: 7 } }) as {
+      leaseId: string
+      signal: AbortSignal
+      isCurrent: () => boolean
+    }
+    const webLease = (await registry.webRpc.invoke(
+      'projects:list',
+      createWebCallerContext('electron:7'),
+      []
+    )) as typeof electronLease
+
+    expect(electronLease.leaseId).toBe('electron:7')
+    expect(webLease.leaseId).toBe('electron:7')
+    expect(electronLease.signal.aborted).toBe(false)
+    expect(electronLease.isCurrent()).toBe(true)
+    expect(webLease.isCurrent()).toBe(true)
   })
 
   it('registers every native handler but routes only allowlisted Web RPC channels', async () => {

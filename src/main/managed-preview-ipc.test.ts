@@ -3,6 +3,7 @@ import type { IpcMainInvokeEvent } from 'electron'
 import { describe, expect, it, vi } from 'vitest'
 
 import type { ManagedPreviewResource } from '../shared/preview-resources'
+import { createElectronCallerContext, createWebCallerContext } from './caller-context'
 import { ApplicationCallerLeaseRegistry } from './caller-lifecycle'
 import type { ManagedPreviewResources } from './managed-preview-resources'
 import {
@@ -61,7 +62,7 @@ describe('managed preview IPC handlers', () => {
   it('uses an opaque negative owner scoped to the caller lease', () => {
     const resources = createResources()
     const lifecycle = new ApplicationCallerLeaseRegistry()
-    const caller = lifecycle.acquire('electron:42')
+    const caller = lifecycle.acquire(createElectronCallerContext(42))
     const owners = createManagedPreviewOwnerRegistry(resources)
 
     const ticket = owners.register(caller.lease)
@@ -85,7 +86,7 @@ describe('managed preview IPC handlers', () => {
       )
     })
     const lifecycle = new ApplicationCallerLeaseRegistry()
-    const caller = lifecycle.acquire('electron:42')
+    const caller = lifecycle.acquire(createElectronCallerContext(42))
     const owners = createManagedPreviewOwnerRegistry(resources)
 
     const acquire = owners.acquire(caller.lease, {
@@ -104,7 +105,7 @@ describe('managed preview IPC handlers', () => {
     const resource = previewResource('fresh-resource')
     const resources = createResources({ acquire: vi.fn().mockResolvedValue(resource) })
     const lifecycle = new ApplicationCallerLeaseRegistry()
-    const caller = lifecycle.acquire('electron:99')
+    const caller = lifecycle.acquire(createElectronCallerContext(99))
     const owners = createManagedPreviewOwnerRegistry(resources)
 
     await expect(
@@ -116,7 +117,7 @@ describe('managed preview IPC handlers', () => {
   it('reuses one preview owner for the same active caller generation', () => {
     const resources = createResources()
     const lifecycle = new ApplicationCallerLeaseRegistry()
-    const caller = lifecycle.acquire('electron:7')
+    const caller = lifecycle.acquire(createElectronCallerContext(7))
     const owners = createManagedPreviewOwnerRegistry(resources)
 
     const ticketA = owners.register(caller.lease)
@@ -126,14 +127,30 @@ describe('managed preview IPC handlers', () => {
     expect(resources.releaseOwner).not.toHaveBeenCalled()
   })
 
+  it('keeps preview owners distinct when public lease ids collide across surfaces', () => {
+    const resources = createResources()
+    const lifecycle = new ApplicationCallerLeaseRegistry()
+    const owners = createManagedPreviewOwnerRegistry(resources)
+    const electron = lifecycle.acquire(createElectronCallerContext(7))
+    const web = lifecycle.acquire(createWebCallerContext('electron:7'))
+
+    const electronTicket = owners.register(electron.lease)
+    const webTicket = owners.register(web.lease)
+
+    expect(webTicket.ownerId).not.toBe(electronTicket.ownerId)
+    expect(owners.register(electron.lease)).toBe(electronTicket)
+    expect(resources.releaseOwner).not.toHaveBeenCalled()
+  })
+
   it('isolates a replacement generation from a stale release', () => {
     const resources = createResources()
     const lifecycle = new ApplicationCallerLeaseRegistry()
     const owners = createManagedPreviewOwnerRegistry(resources)
-    const first = lifecycle.acquire('electron:13')
+    const context = createElectronCallerContext(13)
+    const first = lifecycle.acquire(context)
     const initialTicket = owners.register(first.lease)
 
-    const replacement = lifecycle.acquire('electron:13')
+    const replacement = lifecycle.acquire(context)
     const replacementTicket = owners.register(replacement.lease)
     first.release()
 
@@ -141,6 +158,10 @@ describe('managed preview IPC handlers', () => {
     expect(replacementTicket.ownerId).not.toBe(initialTicket.ownerId)
     expect(resources.releaseOwner).toHaveBeenCalledOnce()
     expect(resources.releaseOwner).toHaveBeenCalledWith(initialTicket.ownerId)
+
+    expect(() => owners.register(first.lease)).toThrow(/owner is no longer available/i)
+    expect(owners.register(replacement.lease)).toBe(replacementTicket)
+    expect(resources.releaseOwner).toHaveBeenCalledOnce()
 
     replacement.release()
     expect(resources.releaseOwner).toHaveBeenLastCalledWith(replacementTicket.ownerId)
@@ -153,7 +174,7 @@ describe('managed preview IPC handlers', () => {
     })
     const resources = createResources({ acquire: vi.fn().mockImplementation(() => pendingAcquire) })
     const lifecycle = new ApplicationCallerLeaseRegistry()
-    const caller = lifecycle.acquire('electron:31')
+    const caller = lifecycle.acquire(createElectronCallerContext(31))
     const owners = createManagedPreviewOwnerRegistry(resources)
 
     const acquire = owners.acquire(caller.lease, {

@@ -1,4 +1,5 @@
 import type { ApplicationCallerLease } from './application-command-router'
+import type { CallerContext } from './caller-context'
 
 type OwnedApplicationCallerLease = Readonly<{
   lease: ApplicationCallerLease
@@ -13,51 +14,60 @@ type LeaseState = Readonly<{
 type CallerLeaseEvent = Readonly<{ sender: object }>
 
 const eventLeases = new WeakMap<object, ApplicationCallerLease>()
+const leaseOwnershipKeys = new WeakMap<ApplicationCallerLease, string>()
 
 const bindCallerLeaseToEvent = (event: CallerLeaseEvent, lease: ApplicationCallerLease): void => {
-  eventLeases.set(event.sender, lease)
+  eventLeases.set(event, lease)
 }
 
 const callerLeaseForEvent = (event: CallerLeaseEvent): ApplicationCallerLease => {
-  const lease = eventLeases.get(event.sender)
+  const lease = eventLeases.get(event)
   if (!lease) throw new Error('Application caller lease is not bound to this event.')
   return lease
+}
+
+const callerLeaseOwnershipKey = (lease: ApplicationCallerLease): string => {
+  const ownershipKey = leaseOwnershipKeys.get(lease)
+  if (!ownershipKey) throw new Error('Application caller lease has no ownership key.')
+  return ownershipKey
 }
 
 // Owns disconnect state for application callers. Surface adapters retain the release capability;
 // command handlers receive only the immutable lease and its read-only AbortSignal.
 class ApplicationCallerLeaseRegistry {
   private readonly active = new Map<string, LeaseState>()
-  private readonly generations = new Map<string, number>()
+  private nextGeneration = 0
   private disposed = false
 
-  acquire(leaseId: string): OwnedApplicationCallerLease {
+  acquire(identity: Pick<CallerContext, 'leaseId' | 'surface'>): OwnedApplicationCallerLease {
     if (this.disposed) throw new Error('Application caller lease registry is disposed.')
+    const { leaseId, surface } = identity
+    const ownershipKey = `${surface}\u0000${leaseId}`
 
-    const previous = this.active.get(leaseId)
+    const previous = this.active.get(ownershipKey)
     if (previous) {
-      this.active.delete(leaseId)
+      this.active.delete(ownershipKey)
       previous.controller.abort()
     }
 
-    const generation = (this.generations.get(leaseId) ?? 0) + 1
-    this.generations.set(leaseId, generation)
+    const generation = ++this.nextGeneration
     const controller = new AbortController()
     const token = Object.freeze({})
     const lease: ApplicationCallerLease = Object.freeze({
       leaseId,
       generation,
       signal: controller.signal,
-      isCurrent: () => this.active.get(leaseId)?.token === token && !controller.signal.aborted
+      isCurrent: () => this.active.get(ownershipKey)?.token === token && !controller.signal.aborted
     })
+    leaseOwnershipKeys.set(lease, ownershipKey)
     const state: LeaseState = { token, controller }
-    this.active.set(leaseId, state)
+    this.active.set(ownershipKey, state)
 
     return Object.freeze({
       lease,
       release: () => {
-        if (this.active.get(leaseId) !== state) return
-        this.active.delete(leaseId)
+        if (this.active.get(ownershipKey) !== state) return
+        this.active.delete(ownershipKey)
         controller.abort()
       }
     })
@@ -72,5 +82,10 @@ class ApplicationCallerLeaseRegistry {
   }
 }
 
-export { ApplicationCallerLeaseRegistry, bindCallerLeaseToEvent, callerLeaseForEvent }
+export {
+  ApplicationCallerLeaseRegistry,
+  bindCallerLeaseToEvent,
+  callerLeaseForEvent,
+  callerLeaseOwnershipKey
+}
 export type { OwnedApplicationCallerLease }

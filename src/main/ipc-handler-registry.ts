@@ -112,19 +112,26 @@ const createIpcHandlerRegistry = (
   >()
   const callerLeases = new ApplicationCallerLeaseRegistry()
   const nativeCallers = new WeakMap<object, OwnedApplicationCallerLease>()
+  const destroyedNativeCallers = new WeakSet<object>()
   let nextSenderId = -1
 
   const nativeCallerLease = (event: IpcMainInvokeEvent): OwnedApplicationCallerLease => {
     const sender = event.sender as object
+    if (destroyedNativeCallers.has(sender)) {
+      throw new Error('Caller lease is no longer current.')
+    }
     const existing = nativeCallers.get(sender)
-    if (existing) return existing
+    if (existing && !existing.lease.signal.aborted && existing.lease.isCurrent()) return existing
 
-    const ownedLease = callerLeases.acquire(callerContextForEvent(event).leaseId)
+    const ownedLease = callerLeases.acquire(callerContextForEvent(event))
     nativeCallers.set(sender, ownedLease)
     const lifecycleSender = event.sender as typeof event.sender & {
       once?: (name: string, listener: () => void) => unknown
     }
-    lifecycleSender.once?.('destroyed', ownedLease.release)
+    lifecycleSender.once?.('destroyed', () => {
+      destroyedNativeCallers.add(sender)
+      ownedLease.release()
+    })
     lifecycleSender.once?.('render-process-gone', ownedLease.release)
     return ownedLease
   }
@@ -143,7 +150,7 @@ const createIpcHandlerRegistry = (
       client = {
         id: nextSenderId--,
         lifecycle: new EventEmitter(),
-        callerLease: callerLeases.acquire(callerContext.leaseId)
+        callerLease: callerLeases.acquire(callerContext)
       }
       clients.set(callerContext.clientId, client)
     }

@@ -1,7 +1,7 @@
 import { type IpcMainInvokeEvent } from 'electron'
 
 import type { ApplicationCallerLease } from './application-command-router'
-import { callerLeaseForEvent } from './caller-lifecycle'
+import { callerLeaseForEvent, callerLeaseOwnershipKey } from './caller-lifecycle'
 import { ipcMainHandle } from './ipc-handler-registry'
 
 import type {
@@ -28,7 +28,7 @@ type ManagedPreviewHandlers = {
   releaseOwner: (ownerId: number) => void
 }
 
-type OwnerTicket = { ownerId: number; leaseId: string; generation: number }
+type OwnerTicket = { ownerId: number; ownershipKey: string; generation: number }
 type ManagedPreviewOwnerRegistry = {
   acquire: (
     lease: ApplicationCallerLease,
@@ -47,25 +47,25 @@ const createManagedPreviewOwnerRegistry = (
 
   // Preview resources use opaque negative handles; renderer ids remain transport details.
   const register = (lease: ApplicationCallerLease): OwnerTicket => {
-    const current = active.get(lease.leaseId)
-    if (current?.generation === lease.generation && lease.isCurrent()) return current
-    if (current) {
-      active.delete(lease.leaseId)
-      handlers.releaseOwner(current.ownerId)
-    }
     if (lease.signal.aborted || !lease.isCurrent()) {
       throw new Error('Managed preview owner is no longer available.')
     }
-
+    const ownershipKey = callerLeaseOwnershipKey(lease)
+    const current = active.get(ownershipKey)
+    if (current?.generation === lease.generation) return current
+    if (current) {
+      active.delete(ownershipKey)
+      handlers.releaseOwner(current.ownerId)
+    }
     const ticket = {
       ownerId: --nextOwnerId,
-      leaseId: lease.leaseId,
+      ownershipKey,
       generation: lease.generation
     }
-    active.set(lease.leaseId, ticket)
+    active.set(ownershipKey, ticket)
     const releaseOwner = (): void => {
-      if (active.get(lease.leaseId) !== ticket) return
-      active.delete(lease.leaseId)
+      if (active.get(ownershipKey) !== ticket) return
+      active.delete(ownershipKey)
       handlers.releaseOwner(ticket.ownerId)
     }
     lease.signal.addEventListener('abort', releaseOwner, { once: true })
@@ -77,7 +77,7 @@ const createManagedPreviewOwnerRegistry = (
   }
 
   const isActive = (ticket: OwnerTicket, lease: ApplicationCallerLease): boolean =>
-    active.get(ticket.leaseId) === ticket && !lease.signal.aborted && lease.isCurrent()
+    active.get(ticket.ownershipKey) === ticket && !lease.signal.aborted && lease.isCurrent()
 
   const acquire = async (
     lease: ApplicationCallerLease,
