@@ -11,6 +11,7 @@ import { ArtifactOwnershipPersistenceRaceError } from './artifacts/provenance-re
 import type { ProjectFilesHandlers } from './project-files/ipc'
 import type { ProjectHandlers } from './projects/ipc'
 import type { SessionPersistenceHandlers } from './session-persistence/ipc'
+import type { ManagedPreviewOwnerRegistry } from './managed-preview-ipc'
 
 import * as Artifacts from '../shared/artifacts'
 import type * as ConversationExport from '../shared/conversation-export'
@@ -86,15 +87,7 @@ type ElectronDataContentApplicationCommandAdapter = InvocationOwner<{
   ) => Promise<Uploads.UploadedAttachment>
 }>
 
-type ManagedPreviewApplicationCommandOwner = InvocationOwner<{
-  acquire: (
-    request: PreviewResources.AcquireManagedPreviewRequest
-  ) => Promise<PreviewResources.ManagedPreviewResource>
-  readRange: (
-    request: PreviewResources.ReadManagedPreviewRangeRequest
-  ) => Promise<PreviewResources.ManagedPreviewRangeResult>
-  release: (request: PreviewResources.ReleaseManagedPreviewRequest) => void
-}>
+type ManagedPreviewApplicationCommandOwner = ManagedPreviewOwnerRegistry
 
 type UploadApplicationCommandOwner = InvocationOwner<{
   claimLocalFile: (request: Uploads.UploadTransferRequest) => void
@@ -142,7 +135,6 @@ const projectFilesCommand = commandFor<ProjectFilesHandlers>()
 const projectCommand = commandFor<ProjectHandlers>()
 const sessionCommand = commandFor<SessionApplicationCommandOwner>()
 const electronCommand = invocationCommandFor<ElectronDataContentApplicationCommandAdapter>()
-const managedPreviewCommand = invocationCommandFor<ManagedPreviewApplicationCommandOwner>()
 const uploadCommand = invocationCommandFor<UploadApplicationCommandOwner>()
 
 const dataContentApplicationCommands = Object.freeze({
@@ -178,9 +170,21 @@ const dataContentApplicationCommands = Object.freeze({
   previewDelete: previewCommand('preview:delete', 'delete'),
   previewLoad: previewCommand('preview:load', 'load'),
   previewSave: previewCommand('preview:save', 'save'),
-  previewResourceAcquire: managedPreviewCommand('preview-resources:acquire', 'acquire'),
-  previewResourceReadRange: managedPreviewCommand('preview-resources:read-range', 'readRange'),
-  previewResourceRelease: managedPreviewCommand('preview-resources:release', 'release'),
+  previewResourceAcquire: defineApplicationCommand<
+    'preview-resources:acquire',
+    readonly [request: PreviewResources.AcquireManagedPreviewRequest],
+    PreviewResources.ManagedPreviewResource
+  >('preview-resources:acquire'),
+  previewResourceReadRange: defineApplicationCommand<
+    'preview-resources:read-range',
+    readonly [request: PreviewResources.ReadManagedPreviewRangeRequest],
+    PreviewResources.ManagedPreviewRangeResult
+  >('preview-resources:read-range'),
+  previewResourceRelease: defineApplicationCommand<
+    'preview-resources:release',
+    readonly [request: PreviewResources.ReleaseManagedPreviewRequest],
+    void
+  >('preview-resources:release'),
   projectFilesGetOverview: projectFilesCommand('project-files:get-overview', 'getOverview'),
   projectFilesListArtifactGroups: projectFilesCommand(
     'project-files:list-artifact-groups',
@@ -376,10 +380,12 @@ const registerDataContentApplicationCommands = (
       'preview:save': ({ args }) => dependencies.preview.save(args[0])
     })
     scope.registerGroup(dataContentApplicationCommandGroups[3], {
-      'preview-resources:acquire': (invocation) => dependencies.managedPreview.acquire(invocation),
-      'preview-resources:read-range': (invocation) =>
-        dependencies.managedPreview.readRange(invocation),
-      'preview-resources:release': (invocation) => dependencies.managedPreview.release(invocation)
+      'preview-resources:acquire': ({ args, callerLease }) =>
+        dependencies.managedPreview.acquire(callerLease, args[0]),
+      'preview-resources:read-range': ({ args, callerLease }) =>
+        dependencies.managedPreview.readRange(callerLease, args[0]),
+      'preview-resources:release': ({ args, callerLease }) =>
+        dependencies.managedPreview.release(callerLease, args[0])
     })
     scope.registerGroup(dataContentApplicationCommandGroups[4], {
       'project-files:get-overview': ({ args }) => dependencies.projectFiles.getOverview(args[0]),

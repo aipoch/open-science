@@ -3,6 +3,10 @@ import { type IpcMainInvokeEvent } from 'electron'
 import type { ApplicationCallerLease } from './application-command-router'
 import { callerLeaseForEvent, callerLeaseOwnershipKey } from './caller-lifecycle'
 import { ipcMainHandle } from './ipc-handler-registry'
+import {
+  registerManagedPreviewProtocol,
+  type PreviewProtocolRegistrar
+} from './managed-preview-protocol'
 
 import type {
   AcquireManagedPreviewRequest,
@@ -15,6 +19,9 @@ import type { ManagedPreviewResources } from './managed-preview-resources'
 import type { AcquireManagedPreviewOptions } from './managed-preview-resources'
 
 type ManagedPreviewHandlers = {
+  inspect: (
+    request: AcquireManagedPreviewRequest
+  ) => Promise<AcquireManagedPreviewOptions['snapshot']>
   acquire: (
     ownerId: number,
     request: AcquireManagedPreviewRequest,
@@ -32,14 +39,21 @@ type OwnerTicket = { ownerId: number; ownershipKey: string; generation: number }
 type ManagedPreviewOwnerRegistry = {
   acquire: (
     lease: ApplicationCallerLease,
-    request: AcquireManagedPreviewRequest,
-    prepareOptions?: () => Promise<AcquireManagedPreviewOptions>
+    request: AcquireManagedPreviewRequest
   ) => Promise<ManagedPreviewResource>
+  readRange: (
+    lease: ApplicationCallerLease,
+    request: ReadManagedPreviewRangeRequest
+  ) => Promise<ManagedPreviewRangeResult>
+  release: (lease: ApplicationCallerLease, request: ReleaseManagedPreviewRequest) => void
   register: (lease: ApplicationCallerLease) => OwnerTicket
 }
 
+// All adapters for one resource authority must share owner ids and lease teardown state.
+const ownerRegistries = new WeakMap<ManagedPreviewHandlers, ManagedPreviewOwnerRegistry>()
+
 // Couples every capability to the current surface-owned caller lease.
-const createManagedPreviewOwnerRegistry = (
+const buildManagedPreviewOwnerRegistry = (
   handlers: ManagedPreviewHandlers
 ): ManagedPreviewOwnerRegistry => {
   const active = new Map<string, OwnerTicket>()
@@ -81,19 +95,23 @@ const createManagedPreviewOwnerRegistry = (
 
   const acquire = async (
     lease: ApplicationCallerLease,
-    request: AcquireManagedPreviewRequest,
-    prepareOptions?: () => Promise<AcquireManagedPreviewOptions>
+    request: AcquireManagedPreviewRequest
   ): Promise<ManagedPreviewResource> => {
+    const { maxBytes, ...resourceRequest } = request
+    if (maxBytes !== undefined && (!Number.isSafeInteger(maxBytes) || maxBytes <= 0)) {
+      throw new Error('Invalid managed preview byte limit.')
+    }
+
     const ticket = register(lease)
     let resource: ManagedPreviewResource
-    if (prepareOptions) {
-      const options = await prepareOptions()
+    if (maxBytes !== undefined) {
+      const snapshot = await handlers.inspect(resourceRequest)
       if (!isActive(ticket, lease)) {
         throw new Error('Managed preview owner is no longer available.')
       }
-      resource = await handlers.acquire(ticket.ownerId, request, options)
+      resource = await handlers.acquire(ticket.ownerId, resourceRequest, { snapshot, maxBytes })
     } else {
-      resource = await handlers.acquire(ticket.ownerId, request)
+      resource = await handlers.acquire(ticket.ownerId, resourceRequest)
     }
 
     // Acquisition may finish after renderer teardown; immediately revoke that late capability.
@@ -105,37 +123,82 @@ const createManagedPreviewOwnerRegistry = (
     return resource
   }
 
-  return { acquire, register }
+  const readRange = (
+    lease: ApplicationCallerLease,
+    request: ReadManagedPreviewRangeRequest
+  ): Promise<ManagedPreviewRangeResult> => handlers.readRange(register(lease).ownerId, request)
+
+  const release = (lease: ApplicationCallerLease, request: ReleaseManagedPreviewRequest): void =>
+    handlers.release(register(lease).ownerId, request)
+
+  return { acquire, readRange, register, release }
 }
 
-const registerManagedPreviewIpcHandlers = (resources: ManagedPreviewResources): void => {
-  const owners = createManagedPreviewOwnerRegistry(resources)
+const createManagedPreviewOwnerRegistry = (
+  handlers: ManagedPreviewHandlers
+): ManagedPreviewOwnerRegistry => {
+  const existing = ownerRegistries.get(handlers)
+  if (existing) return existing
+
+  const registry = buildManagedPreviewOwnerRegistry(handlers)
+  ownerRegistries.set(handlers, registry)
+  return registry
+}
+
+const registerManagedPreviewIpcHandlers = (
+  resources: ManagedPreviewResources,
+  injectedOwners?: ManagedPreviewOwnerRegistry
+): (() => void) => {
+  const existingOwners = ownerRegistries.get(resources)
+  if (injectedOwners && existingOwners && existingOwners !== injectedOwners) {
+    throw new Error('Managed preview resources already have a different owner registry.')
+  }
+  const owners = injectedOwners ?? existingOwners ?? buildManagedPreviewOwnerRegistry(resources)
+  const bindsOwners = existingOwners === undefined
+
   const callerLease = (event: IpcMainInvokeEvent): ApplicationCallerLease =>
     callerLeaseForEvent(event)
-  const ownerId = (event: IpcMainInvokeEvent): number => owners.register(callerLease(event)).ownerId
 
-  ipcMainHandle(
-    'preview-resources:acquire',
-    async (event, { maxBytes, ...request }: AcquireManagedPreviewRequest) => {
-      const lease = callerLease(event)
-      if (maxBytes === undefined) return owners.acquire(lease, request)
-      if (!Number.isSafeInteger(maxBytes) || maxBytes <= 0) {
-        throw new Error('Invalid managed preview byte limit.')
-      }
-
-      return owners.acquire(lease, request, async () => ({
-        snapshot: await resources.inspect(request),
-        maxBytes
-      }))
-    }
+  ipcMainHandle('preview-resources:acquire', (event, request: AcquireManagedPreviewRequest) =>
+    owners.acquire(callerLease(event), request)
   )
   ipcMainHandle('preview-resources:read-range', (event, request: ReadManagedPreviewRangeRequest) =>
-    resources.readRange(ownerId(event), request)
+    owners.readRange(callerLease(event), request)
   )
   ipcMainHandle('preview-resources:release', (event, request: ReleaseManagedPreviewRequest) =>
-    resources.release(ownerId(event), request)
+    owners.release(callerLease(event), request)
   )
+  ownerRegistries.set(resources, owners)
+  return () => {
+    if (bindsOwners && ownerRegistries.get(resources) === owners) {
+      ownerRegistries.delete(resources)
+    }
+  }
 }
 
-export { createManagedPreviewOwnerRegistry, registerManagedPreviewIpcHandlers }
-export type { ManagedPreviewHandlers }
+const installManagedPreviewElectronAdapter = (
+  resources: ManagedPreviewResources,
+  targetProtocol?: PreviewProtocolRegistrar
+): (() => void) => {
+  const cleanupOwners = registerManagedPreviewIpcHandlers(resources)
+  try {
+    const unregisterProtocol = registerManagedPreviewProtocol(resources, targetProtocol)
+    return () => {
+      try {
+        unregisterProtocol()
+      } finally {
+        cleanupOwners()
+      }
+    }
+  } catch (error) {
+    cleanupOwners()
+    throw error
+  }
+}
+
+export {
+  createManagedPreviewOwnerRegistry,
+  installManagedPreviewElectronAdapter,
+  registerManagedPreviewIpcHandlers
+}
+export type { ManagedPreviewHandlers, ManagedPreviewOwnerRegistry }

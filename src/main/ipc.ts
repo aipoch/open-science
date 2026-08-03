@@ -60,8 +60,7 @@ import {
 } from './notebook/application'
 import { serializeProvisioner } from './notebook/environment-operation-foundation'
 import { createNotebookEnvironmentLifecycle } from './notebook/environment-lifecycle-workflows'
-import { registerManagedPreviewIpcHandlers } from './managed-preview-ipc'
-import { registerManagedPreviewProtocol } from './managed-preview-protocol'
+import { installManagedPreviewElectronAdapter } from './managed-preview-ipc'
 import { ManagedPreviewResources } from './managed-preview-resources'
 import type { ManagedPreviewSource } from '../shared/preview-resources'
 import {
@@ -1144,10 +1143,9 @@ const createApplicationModules = async (
   declareElectronAdapter('notebook-runtime', () =>
     registerRuntimeIpcHandlers(runtimeSelectionWorkflows)
   )
-  declareElectronAdapter('managed-preview', () => {
-    registerManagedPreviewIpcHandlers(previewResources)
-    registerManagedPreviewProtocol(previewResources)
-  })
+  declareElectronAdapter('managed-preview', () =>
+    installManagedPreviewElectronAdapter(previewResources)
+  )
   declareElectronAdapter('office-preview-runtime', () =>
     registerOfficePreviewRuntimeProtocol(
       {

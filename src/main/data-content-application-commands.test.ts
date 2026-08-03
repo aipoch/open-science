@@ -88,7 +88,13 @@ const createDependencies = () => {
       mimeType: 'text/plain',
       version: 1
     })),
-    readRange: vi.fn(async () => ({ begin: 0, end: 1, total: 1, data: new Uint8Array([1]) })),
+    readRange: vi.fn(async () => ({
+      begin: 0,
+      end: 1,
+      total: 1,
+      data: new Uint8Array([1])
+    })),
+    register: vi.fn(),
     release: vi.fn()
   }
   const preview = { load: vi.fn(), save: vi.fn(), delete: vi.fn() }
@@ -347,19 +353,19 @@ describe('Data and content application commands', () => {
         key: 'previewResourceAcquire',
         args: [request('preview-resource-acquire')],
         owner: deps.managedPreview.acquire,
-        passInvocation: true
+        passCallerLease: true
       },
       {
         key: 'previewResourceReadRange',
         args: [request('preview-resource-read')],
         owner: deps.managedPreview.readRange,
-        passInvocation: true
+        passCallerLease: true
       },
       {
         key: 'previewResourceRelease',
         args: [request('preview-resource-release')],
         owner: deps.managedPreview.release,
-        passInvocation: true
+        passCallerLease: true
       },
       {
         key: 'projectFilesGetOverview',
@@ -447,7 +453,12 @@ describe('Data and content application commands', () => {
     for (const testCase of cases) {
       const dispatched = dispatchCommand(router, testCase.key, testCase.args)
       await dispatched.result
-      const expectedArgs = 'passInvocation' in testCase ? [dispatched.invocation] : testCase.args
+      const expectedArgs =
+        'passInvocation' in testCase
+          ? [dispatched.invocation]
+          : 'passCallerLease' in testCase
+            ? [dispatched.invocation.callerLease, ...testCase.args]
+            : testCase.args
       expect(testCase.owner, testCase.key).toHaveBeenCalledWith(...expectedArgs)
     }
 
@@ -490,7 +501,10 @@ describe('Data and content application commands', () => {
       invocation([{ projectId: 'project-1' }] as const)
     )
 
-    expect(deps.managedPreview.acquire).toHaveBeenCalledWith(managedInvocation)
+    expect(deps.managedPreview.acquire).toHaveBeenCalledWith(
+      managedInvocation.callerLease,
+      managedInvocation.args[0]
+    )
     expect(deps.uploads.appendTransfer).toHaveBeenCalledWith(uploadInvocation)
     expect(deps.projectFiles.repairIndex).toHaveBeenCalledWith({ projectId: 'project-1' })
     expect(deps.preview.load).toHaveBeenCalledWith({ projectId: 'project-1' })

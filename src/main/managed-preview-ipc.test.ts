@@ -8,16 +8,26 @@ import { ApplicationCallerLeaseRegistry } from './caller-lifecycle'
 import type { ManagedPreviewResources } from './managed-preview-resources'
 import {
   createManagedPreviewOwnerRegistry,
-  registerManagedPreviewIpcHandlers
+  installManagedPreviewElectronAdapter,
+  registerManagedPreviewIpcHandlers,
+  type ManagedPreviewOwnerRegistry
 } from './managed-preview-ipc'
 
 // Vitest hoists vi.mock(...) above the rest of the module body, so anything the factory closes over
 // has to exist before the factory runs. vi.hoisted guarantees that.
-const handlers = vi.hoisted(() => new Map<string, (event: unknown, payload: unknown) => unknown>())
+const testIpc = vi.hoisted(() => ({
+  failingChannel: undefined as string | undefined,
+  handlers: new Map<string, (event: unknown, payload: unknown) => unknown>()
+}))
+const { handlers } = testIpc
 
 vi.mock('electron', () => ({
   ipcMain: {
     handle: (channel: string, handler: (event: unknown, payload: unknown) => unknown) => {
+      if (testIpc.failingChannel === channel) {
+        testIpc.failingChannel = undefined
+        throw new Error('IPC handler registration failed.')
+      }
       handlers.set(channel, handler)
     }
   }
@@ -59,6 +69,18 @@ const createResources = (
   }) as unknown as ManagedPreviewResources
 
 describe('managed preview IPC handlers', () => {
+  it('reuses one owner registry per resource authority and isolates different authorities', () => {
+    const resources = createResources()
+    const otherResources = createResources()
+
+    expect(createManagedPreviewOwnerRegistry(resources)).toBe(
+      createManagedPreviewOwnerRegistry(resources)
+    )
+    expect(createManagedPreviewOwnerRegistry(otherResources)).not.toBe(
+      createManagedPreviewOwnerRegistry(resources)
+    )
+  })
+
   it('uses an opaque negative owner scoped to the caller lease', () => {
     const resources = createResources()
     const lifecycle = new ApplicationCallerLeaseRegistry()
@@ -112,6 +134,65 @@ describe('managed preview IPC handlers', () => {
       owners.acquire(caller.lease, { source: 'artifact', path: '/managed/report.pdf' })
     ).resolves.toEqual(resource)
     expect(resources.release).not.toHaveBeenCalled()
+  })
+
+  it('owns acquire, range read, and release behind one caller-lease interface', async () => {
+    const resource = previewResource('owned-resource')
+    const rangeResult = {
+      begin: 0,
+      end: 1,
+      total: 4,
+      data: new Uint8Array([104])
+    }
+    const resources = createResources({
+      acquire: vi.fn().mockResolvedValue(resource),
+      readRange: vi.fn().mockResolvedValue(rangeResult)
+    })
+    const lifecycle = new ApplicationCallerLeaseRegistry()
+    const caller = lifecycle.acquire(createWebCallerContext('preview-client'))
+    const owners = createManagedPreviewOwnerRegistry(resources)
+
+    await expect(
+      owners.acquire(caller.lease, { source: 'artifact', path: '/managed/report.pdf' })
+    ).resolves.toEqual(resource)
+    await expect(
+      owners.readRange(caller.lease, { resourceId: resource.id, begin: 0, end: 1 })
+    ).resolves.toEqual(rangeResult)
+    owners.release(caller.lease, { resourceId: resource.id })
+
+    const ownerId = (resources.acquire as ReturnType<typeof vi.fn>).mock.calls[0]?.[0] as number
+    expect(resources.readRange).toHaveBeenCalledWith(ownerId, {
+      resourceId: resource.id,
+      begin: 0,
+      end: 1
+    })
+    expect(resources.release).toHaveBeenCalledWith(ownerId, { resourceId: resource.id })
+  })
+
+  it('applies strict byte admission inside the shared owner for every adapter', async () => {
+    const resource = previewResource('strict-owner-resource')
+    const snapshot = { size: 128, version: 7, dev: 8n, ino: 9n, mtimeNs: 7_000_000n }
+    const resources = createResources({
+      inspect: vi.fn().mockResolvedValue(snapshot),
+      acquire: vi.fn().mockResolvedValue(resource)
+    })
+    const lifecycle = new ApplicationCallerLeaseRegistry()
+    const caller = lifecycle.acquire(createWebCallerContext('preview-client'))
+    const owners = createManagedPreviewOwnerRegistry(resources)
+
+    await owners.acquire(caller.lease, {
+      source: 'artifact',
+      path: '/managed/report.pdf',
+      maxBytes: 1024
+    })
+
+    const request = { source: 'artifact' as const, path: '/managed/report.pdf' }
+    const ownerId = (resources.acquire as ReturnType<typeof vi.fn>).mock.calls[0]?.[0] as number
+    expect(resources.inspect).toHaveBeenCalledWith(request)
+    expect(resources.acquire).toHaveBeenCalledWith(ownerId, request, {
+      snapshot,
+      maxBytes: 1024
+    })
   })
 
   it('reuses one preview owner for the same active caller generation', () => {
@@ -260,6 +341,217 @@ describe('managed preview IPC handlers', () => {
     expect(firstOwner).toBeLessThan(0)
     expect(secondOwner).toBeLessThan(0)
     expect(secondOwner).not.toBe(firstOwner)
+  })
+
+  it('uses an explicitly injected owner registry instead of creating adapter-local state', async () => {
+    handlers.clear()
+    const resources = createResources({
+      readRange: vi.fn().mockResolvedValue({ begin: 0, end: 0, total: 1, data: new Uint8Array() })
+    })
+    const register = vi.fn<ManagedPreviewOwnerRegistry['register']>(() => ({
+      ownerId: -37,
+      ownershipKey: 'injected',
+      generation: 1
+    }))
+    const injectedOwners = {
+      acquire: vi.fn<ManagedPreviewOwnerRegistry['acquire']>(),
+      readRange: vi.fn((lease, request) => resources.readRange(register(lease).ownerId, request)),
+      register,
+      release: vi.fn<ManagedPreviewOwnerRegistry['release']>()
+    } satisfies ManagedPreviewOwnerRegistry
+
+    registerManagedPreviewIpcHandlers(resources, injectedOwners)
+    const readHandler = handlers.get('preview-resources:read-range') as (
+      event: unknown,
+      payload: unknown
+    ) => Promise<unknown>
+    await readHandler(createFakeEvent(94).event, { resourceId: 'resource', begin: 0, end: 0 })
+
+    expect(injectedOwners.readRange).toHaveBeenCalledOnce()
+    expect(injectedOwners.register).toHaveBeenCalledOnce()
+    expect(resources.readRange).toHaveBeenCalledWith(-37, {
+      resourceId: 'resource',
+      begin: 0,
+      end: 0
+    })
+  })
+
+  it('binds an explicitly injected owner registry to its resource authority', () => {
+    handlers.clear()
+    const resources = createResources()
+    const injectedOwners = {
+      acquire: vi.fn<ManagedPreviewOwnerRegistry['acquire']>(),
+      readRange: vi.fn<ManagedPreviewOwnerRegistry['readRange']>(),
+      register: vi.fn<ManagedPreviewOwnerRegistry['register']>(),
+      release: vi.fn<ManagedPreviewOwnerRegistry['release']>()
+    } satisfies ManagedPreviewOwnerRegistry
+
+    registerManagedPreviewIpcHandlers(resources, injectedOwners)
+
+    expect(createManagedPreviewOwnerRegistry(resources)).toBe(injectedOwners)
+  })
+
+  it('rejects a conflicting owner registry before registering any handlers', () => {
+    handlers.clear()
+    const resources = createResources()
+    const existingOwners = createManagedPreviewOwnerRegistry(resources)
+    const conflictingOwners = {
+      acquire: vi.fn<ManagedPreviewOwnerRegistry['acquire']>(),
+      readRange: vi.fn<ManagedPreviewOwnerRegistry['readRange']>(),
+      register: vi.fn<ManagedPreviewOwnerRegistry['register']>(),
+      release: vi.fn<ManagedPreviewOwnerRegistry['release']>()
+    } satisfies ManagedPreviewOwnerRegistry
+
+    expect(() => registerManagedPreviewIpcHandlers(resources, conflictingOwners)).toThrow(
+      'Managed preview resources already have a different owner registry.'
+    )
+
+    expect(handlers.size).toBe(0)
+    expect(createManagedPreviewOwnerRegistry(resources)).toBe(existingOwners)
+  })
+
+  it('leaves an authority unbound when explicit IPC registration fails', () => {
+    handlers.clear()
+    const resources = createResources()
+    const injectedOwners = {
+      acquire: vi.fn<ManagedPreviewOwnerRegistry['acquire']>(),
+      readRange: vi.fn<ManagedPreviewOwnerRegistry['readRange']>(),
+      register: vi.fn<ManagedPreviewOwnerRegistry['register']>(),
+      release: vi.fn<ManagedPreviewOwnerRegistry['release']>()
+    } satisfies ManagedPreviewOwnerRegistry
+    testIpc.failingChannel = 'preview-resources:read-range'
+
+    expect(() => registerManagedPreviewIpcHandlers(resources, injectedOwners)).toThrow(
+      'IPC handler registration failed.'
+    )
+
+    expect(createManagedPreviewOwnerRegistry(resources)).not.toBe(injectedOwners)
+  })
+
+  it('allows a fresh owner registry after default IPC registration fails', () => {
+    handlers.clear()
+    const resources = createResources()
+    const retryOwners = {
+      acquire: vi.fn<ManagedPreviewOwnerRegistry['acquire']>(),
+      readRange: vi.fn<ManagedPreviewOwnerRegistry['readRange']>(),
+      register: vi.fn<ManagedPreviewOwnerRegistry['register']>(),
+      release: vi.fn<ManagedPreviewOwnerRegistry['release']>()
+    } satisfies ManagedPreviewOwnerRegistry
+    testIpc.failingChannel = 'preview-resources:read-range'
+
+    expect(() => registerManagedPreviewIpcHandlers(resources)).toThrow(
+      'IPC handler registration failed.'
+    )
+    expect(() => registerManagedPreviewIpcHandlers(resources, retryOwners)).not.toThrow()
+    expect(createManagedPreviewOwnerRegistry(resources)).toBe(retryOwners)
+  })
+
+  it('does not let stale registration cleanup remove a replacement owner registry', () => {
+    handlers.clear()
+    const resources = createResources()
+    const firstCleanup = registerManagedPreviewIpcHandlers(resources)
+    const firstOwners = createManagedPreviewOwnerRegistry(resources)
+    const replacementOwners = {
+      acquire: vi.fn<ManagedPreviewOwnerRegistry['acquire']>(),
+      readRange: vi.fn<ManagedPreviewOwnerRegistry['readRange']>(),
+      register: vi.fn<ManagedPreviewOwnerRegistry['register']>(),
+      release: vi.fn<ManagedPreviewOwnerRegistry['release']>()
+    } satisfies ManagedPreviewOwnerRegistry
+
+    firstCleanup()
+    const replacementCleanup = registerManagedPreviewIpcHandlers(resources, replacementOwners)
+    firstCleanup()
+
+    expect(createManagedPreviewOwnerRegistry(resources)).toBe(replacementOwners)
+    expect(createManagedPreviewOwnerRegistry(resources)).not.toBe(firstOwners)
+    replacementCleanup()
+  })
+
+  it('does not let IPC cleanup remove an owner registry that predated registration', () => {
+    handlers.clear()
+    const resources = createResources()
+    const existingOwners = createManagedPreviewOwnerRegistry(resources)
+
+    const cleanup = registerManagedPreviewIpcHandlers(resources)
+    cleanup()
+
+    expect(createManagedPreviewOwnerRegistry(resources)).toBe(existingOwners)
+  })
+
+  it('releases a newly bound owner when protocol registration fails', () => {
+    handlers.clear()
+    const resources = createResources()
+    const targetProtocol = {
+      handle: vi.fn(() => {
+        throw new Error('Protocol registration failed.')
+      }),
+      unhandle: vi.fn()
+    }
+    const retryOwners = {
+      acquire: vi.fn<ManagedPreviewOwnerRegistry['acquire']>(),
+      readRange: vi.fn<ManagedPreviewOwnerRegistry['readRange']>(),
+      register: vi.fn<ManagedPreviewOwnerRegistry['register']>(),
+      release: vi.fn<ManagedPreviewOwnerRegistry['release']>()
+    } satisfies ManagedPreviewOwnerRegistry
+
+    expect(() => installManagedPreviewElectronAdapter(resources, targetProtocol)).toThrow(
+      'Protocol registration failed.'
+    )
+    expect(() => registerManagedPreviewIpcHandlers(resources, retryOwners)).not.toThrow()
+  })
+
+  it('releases a newly bound owner when protocol teardown fails', () => {
+    handlers.clear()
+    const resources = createResources()
+    const targetProtocol = {
+      handle: vi.fn(),
+      unhandle: vi.fn(() => {
+        throw new Error('Protocol teardown failed.')
+      })
+    }
+    const retryOwners = {
+      acquire: vi.fn<ManagedPreviewOwnerRegistry['acquire']>(),
+      readRange: vi.fn<ManagedPreviewOwnerRegistry['readRange']>(),
+      register: vi.fn<ManagedPreviewOwnerRegistry['register']>(),
+      release: vi.fn<ManagedPreviewOwnerRegistry['release']>()
+    } satisfies ManagedPreviewOwnerRegistry
+    const cleanup = installManagedPreviewElectronAdapter(resources, targetProtocol)
+
+    expect(cleanup).toThrow('Protocol teardown failed.')
+    expect(() => registerManagedPreviewIpcHandlers(resources, retryOwners)).not.toThrow()
+  })
+
+  it('shares owner state between the default legacy path and explicit owner injection', async () => {
+    handlers.clear()
+    const resources = createResources({
+      readRange: vi.fn().mockResolvedValue({ begin: 0, end: 0, total: 1, data: new Uint8Array() })
+    })
+
+    registerManagedPreviewIpcHandlers(resources)
+    await handlers.get('preview-resources:read-range')?.call(undefined, createFakeEvent(95).event, {
+      resourceId: 'first-resource',
+      begin: 0,
+      end: 0
+    })
+
+    const owners = createManagedPreviewOwnerRegistry(resources)
+    registerManagedPreviewIpcHandlers(resources, owners)
+    await handlers.get('preview-resources:read-range')?.call(undefined, createFakeEvent(96).event, {
+      resourceId: 'second-resource',
+      begin: 0,
+      end: 0
+    })
+
+    expect(resources.readRange).toHaveBeenNthCalledWith(1, -1, {
+      resourceId: 'first-resource',
+      begin: 0,
+      end: 0
+    })
+    expect(resources.readRange).toHaveBeenNthCalledWith(2, -2, {
+      resourceId: 'second-resource',
+      begin: 0,
+      end: 0
+    })
   })
 
   it('uses a strict inspected snapshot when acquire specifies a byte limit', async () => {
