@@ -10,6 +10,7 @@ import {
   SKILL_IMPORT_MCP_SERVER_NAME
 } from '../../shared/skill-import'
 import { SKILL_IMPORT_MCP_SERVER_ARG } from '../mcp-server-args'
+import { parseGitHubSkillUrl } from './github-import'
 
 const requestSkillImportToolSchema = {
   attachment_uri: z
@@ -25,6 +26,7 @@ const requestSkillImportToolSchema = {
   github_url: z
     .string()
     .url()
+    .refine((url) => parseGitHubSkillUrl(url) !== null, 'Must be an HTTPS github.com Skill URL.')
     .optional()
     .describe('Exact public github.com URL of the Skill directory or its SKILL.md file.')
 }

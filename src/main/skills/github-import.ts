@@ -87,20 +87,27 @@ const readBounded = async (
 // Parses a GitHub URL into the repo + skill directory it points at. Accepts tree/blob URLs and trims a
 // trailing SKILL.md so a link to the file resolves to its directory. Returns null when unrecognizable.
 const parseGitHubSkillUrl = (input: string): GitHubSkillLocation | null => {
-  const match =
-    /github\.com\/([^/\s]+)\/([^/\s]+)(?:\/(?:tree|blob)\/([^/\s]+)((?:\/[^?#]*)?))?/.exec(
-      input.trim()
-    )
-  if (!match) return null
+  try {
+    const url = new URL(input.trim())
+    if (url.protocol !== 'https:' || url.host !== 'github.com' || url.username || url.password) {
+      return null
+    }
 
-  const owner = match[1]
-  const repo = match[2].replace(/\.git$/, '')
-  const ref = match[3]
-  // Decode so a pasted %20 and a literal space both normalize to a real space; the path may contain spaces.
-  let path = decodeURIComponent(match[4] ?? '').replace(/^\/+|\/+$/g, '')
-  path = path.replace(/\/?SKILL\.md$/i, '')
+    const segments = url.pathname.split('/').filter(Boolean).map(decodeURIComponent)
+    if (segments.length < 2) return null
+    const owner = segments[0]
+    const repo = segments[1].replace(/\.git$/, '')
+    if (!owner || !repo || owner === '.' || owner === '..' || repo === '.' || repo === '..')
+      return null
+    if (segments.length === 2) return { owner, repo, ref: undefined, path: '' }
 
-  return { owner, repo, ref, path }
+    const [kind, ref, ...pathSegments] = segments.slice(2)
+    if ((kind !== 'tree' && kind !== 'blob') || !ref) return null
+    const path = pathSegments.join('/').replace(/\/?SKILL\.md$/i, '')
+    return { owner, repo, ref, path }
+  } catch {
+    return null
+  }
 }
 
 // Builds the GitHub contents API URL for a path within a repo. Percent-encodes each path segment

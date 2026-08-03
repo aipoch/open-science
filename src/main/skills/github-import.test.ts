@@ -50,8 +50,13 @@ describe('parseGitHubSkillUrl', () => {
     ).toBe('scientific-skills/Academic Writing/citation-formatter')
   })
 
-  it('returns null for non-GitHub input', () => {
+  it('returns null unless the URL is an HTTPS github.com repository', () => {
     expect(parseGitHubSkillUrl('https://example.com/foo')).toBeNull()
+    expect(parseGitHubSkillUrl('http://github.com/acme/skills')).toBeNull()
+    expect(parseGitHubSkillUrl('https://example.invalid/github.com/acme/skills')).toBeNull()
+    expect(parseGitHubSkillUrl('https://github.com.evil/acme/skills')).toBeNull()
+    expect(parseGitHubSkillUrl('https://github.com/acme')).toBeNull()
+    expect(parseGitHubSkillUrl('https://github.com/acme/skills/issues')).toBeNull()
   })
 })
 

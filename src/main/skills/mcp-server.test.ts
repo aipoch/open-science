@@ -62,6 +62,12 @@ describe('Skill import MCP server', () => {
     expect(githubResult).toMatchObject({
       content: [{ type: 'text', text: expect.stringContaining('imported-slide-master') }]
     })
+    const invalidGitHubResult = await client.callTool({
+      name: REQUEST_SKILL_IMPORT_TOOL_NAME,
+      arguments: { github_url: 'https://example.invalid/github.com/acme/skills' }
+    })
+    expect(invalidGitHubResult).toMatchObject({ isError: true })
+    expect(requestGitHubImport).toHaveBeenCalledOnce()
     expect(SKILL_IMPORT_SYSTEM_PROMPT_APPEND).toContain(
       'When the user supplies only a Skill name or keywords'
     )
