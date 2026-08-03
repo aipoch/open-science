@@ -4,6 +4,7 @@ import { stat } from 'node:fs/promises'
 import { ipcMainHandle } from '../ipc-handler-registry'
 
 import type { ReadArtifactPreviewRequest } from '../../shared/artifacts'
+import { validateLocalPath } from '../../shared/local-fs'
 import type {
   AppendUploadTransferRequest,
   BeginUploadTransferRequest,
@@ -237,7 +238,9 @@ const registerUploadIpcHandlers = (
       typeof request.transferId !== 'string' ||
       typeof request.name !== 'string' ||
       typeof request.sourcePath !== 'string' ||
-      request.sourcePath.trim().length === 0
+      // The renderer hands over a raw host path, so it gets the same shape checks the local-fs
+      // browser applies — absolute, no control characters — before stat() or any copy sees it.
+      validateLocalPath(request.sourcePath) !== undefined
     ) {
       throw new Error('Invalid local path upload request.')
     }
@@ -253,13 +256,21 @@ const registerUploadIpcHandlers = (
     // publishAttachment inside finalizePendingSessionUploads) writes ManagedFile with
     // source='upload', which is what listFiles({ collection: 'uploads' }) queries.
     const projectId = request.projectId ?? DEFAULT_UPLOAD_PROJECT_NAME
-    await withDataRootWrite(() =>
-      repository.finalizePendingSessionUploads(
-        STANDALONE_UPLOAD_SESSION_ID,
-        [attachment],
-        projectId
+    try {
+      await withDataRootWrite(() =>
+        repository.finalizePendingSessionUploads(
+          STANDALONE_UPLOAD_SESSION_ID,
+          [attachment],
+          projectId
+        )
       )
-    )
+    } catch (error) {
+      // Staging already committed its bytes into .pending/ and the writer lease is gone, so a failed
+      // publish would leave a file with no Version row and nothing to sweep it. Drop the copy and
+      // surface the original failure.
+      await repository.deleteUpload({ path: attachment.path }).catch(() => undefined)
+      throw error
+    }
     options.onStandaloneUploadSaved?.(projectId, STANDALONE_UPLOAD_SESSION_ID)
     return attachment
   })

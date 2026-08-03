@@ -648,6 +648,62 @@ describe('default upload repository', () => {
     expect(repository.stageLocalFile).not.toHaveBeenCalled()
   })
 
+  it.each([
+    ['relative', 'relative/notes.txt'],
+    ['control characters', '/Users/example/notes .txt']
+  ])('rejects a local path upload with %s before touching the filesystem', async (_label, path) => {
+    const repository = { stageLocalFile: vi.fn() } as unknown as UploadRepository
+    registerUploadIpcHandlers(repository)
+    const stageLocalPath = ipcHandlers.get('uploads:stage-local-path')!
+
+    await expect(
+      stageLocalPath(createIpcEvent().event, {
+        transferId: 'local-path-transfer-invalid',
+        name: 'notes.txt',
+        sourcePath: path
+      })
+    ).rejects.toThrow('Invalid local path upload request.')
+    expect(repository.stageLocalFile).not.toHaveBeenCalled()
+  })
+
+  it('discards the staged copy when publishing a local path upload fails', async () => {
+    homeRoot = await mkdtemp(join(tmpdir(), 'open-science-upload-ipc-'))
+    const sourcePath = join(homeRoot, 'orphan.txt')
+    await writeFile(sourcePath, 'orphan candidate')
+    const attachment = {
+      id: 'attachment-orphan',
+      sessionId: '.pending',
+      name: 'orphan.txt',
+      originalName: 'orphan.txt',
+      path: '/managed/.pending/orphan.txt',
+      size: 16
+    }
+    const repository = {
+      stageLocalFile: vi.fn(async () => attachment),
+      // Staging committed its bytes, then the SQLite publish fails.
+      finalizePendingSessionUploads: vi.fn(async () => {
+        throw new Error('publish failed')
+      }),
+      abortTransfer: vi.fn(async () => undefined),
+      deleteUpload: vi.fn(async () => undefined)
+    } as unknown as UploadRepository
+    const onStandaloneUploadSaved = vi.fn()
+    registerUploadIpcHandlers(repository, { onStandaloneUploadSaved })
+    const stageLocalPath = ipcHandlers.get('uploads:stage-local-path')!
+
+    await expect(
+      stageLocalPath(createIpcEvent().event, {
+        transferId: 'local-path-orphan',
+        sourcePath,
+        name: 'orphan.txt'
+      })
+    ).rejects.toThrow('publish failed')
+
+    // Without this the .pending/ copy survives with no Version row and no sweep to reclaim it.
+    expect(repository.deleteUpload).toHaveBeenCalledWith({ path: attachment.path })
+    expect(onStandaloneUploadSaved).not.toHaveBeenCalled()
+  })
+
   it('does not expose the removed whole-file base64 staging channel', () => {
     registerUploadIpcHandlers({} as UploadRepository)
 
