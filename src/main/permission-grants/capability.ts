@@ -89,7 +89,7 @@ const commandPrefixPermissionCategory = (value: unknown): string | undefined => 
 // interpreter, test runner, and shell-script invocation remains provider Once-only.
 const isPersistableExactCommand = (command: string): boolean => {
   if (containsSecretBearingMaterial(command) || /[\r\n;&|<>`$\\'"=]/.test(command)) return false
-  const tokens = command.trim().split(/\s+/)
+  const tokens = command.replace(/^[ \t]+|[ \t]+$/gu, '').split(/[ \t]+/u)
   // Only the PATH-resolved system command is stable enough for V1. A path-qualified executable can
   // be replaced after approval while leaving the stored command digest unchanged.
   const executable = tokens.shift()

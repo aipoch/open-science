@@ -77,6 +77,7 @@ describe('capabilityFromLegacyCategory', () => {
     'git push',
     './git status',
     '/tmp/git status',
+    'git\u00a0status',
     'git.exe status',
     'Git status',
     'python analyze.py',

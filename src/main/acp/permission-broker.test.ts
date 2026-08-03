@@ -464,6 +464,8 @@ describe('ACP permission broker', () => {
     ['posix', 'git worktree add \\(literal\\)'],
     ['posix', "git worktree add '$API_KEY'"],
     ['posix', 'git worktree add "\\$API_KEY"'],
+    ['posix', 'git\tworktree\tadd path'],
+    ['posix', 'git worktree add file\u00a0name'],
     ['powershell', "git worktree add '$(literal)'"],
     ['powershell', 'git worktree add `(literal`)'],
     ['powershell', 'git worktree add "`$(literal)"'],

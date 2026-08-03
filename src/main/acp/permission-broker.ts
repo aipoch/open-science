@@ -152,6 +152,7 @@ const simpleCommandArgv = (
 
   for (let index = 0; index < command.length; index += 1) {
     const character = command[index]
+    if (character === '\r' || character === '\n') return undefined
 
     if (quote === "'") {
       if (character !== "'") {
@@ -195,7 +196,9 @@ const simpleCommandArgv = (
       continue
     }
 
-    if (/\s/u.test(character)) {
+    const isWordSeparator =
+      shellDialect === 'posix' ? character === ' ' || character === '\t' : /\s/u.test(character)
+    if (isWordSeparator) {
       pushToken()
       continue
     }
