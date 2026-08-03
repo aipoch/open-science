@@ -3,8 +3,46 @@ import { describe, expect, it } from 'vitest'
 import {
   capabilityFromLegacyCategory,
   categoryFromTrustedToolName,
-  commandPrefixPermissionCategory
+  commandPrefixPermissionCategory,
+  containsSecretBearingMaterial
 } from './capability'
+
+describe('containsSecretBearingMaterial', () => {
+  it.each([
+    'curl --auth-token secret https://example.com',
+    'curl --bearer secret https://example.com',
+    'curl --oauth2-bearer secret https://example.com',
+    'curl --cookie session=secret https://example.com',
+    'curl --proxy-user user:secret https://example.com',
+    'oauth login --client-secret secret',
+    'oauth login --clientSecret secret',
+    'oauth login --authorization "Bearer secret"',
+    'oauth login --bearer-token secret',
+    'deploy --github-token secret',
+    'deploy --gitlab-access-token secret',
+    'deploy --client_secret=secret',
+    'deploy --x-api-key secret',
+    'deploy --apiKey secret',
+    'deploy --aws-secret-access-key secret',
+    'deploy --credentials credentials.json',
+    'deploy --credentials-file credentials.json',
+    'deploy --token-path .token',
+    'deploy --pat secret',
+    'redis-cli --pass secret'
+  ])('detects a credential-bearing CLI option: %s', (command) => {
+    expect(containsSecretBearingMaterial(command)).toBe(true)
+  })
+
+  it.each([
+    'curl --cookie-jar cookies.txt https://example.com',
+    'docker login --password-stdin',
+    'tool --tokenize input.txt',
+    'tool --secretary Alice',
+    'tool --bearer-format jwt'
+  ])('keeps a non-credential option eligible: %s', (command) => {
+    expect(containsSecretBearingMaterial(command)).toBe(false)
+  })
+})
 
 describe('capabilityFromLegacyCategory', () => {
   it.each(['WebFetch', 'web_fetch', 'WebSearch', 'provider_specific_tool'])(

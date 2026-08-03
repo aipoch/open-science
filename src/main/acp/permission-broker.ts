@@ -107,8 +107,7 @@ const metadataRecord = (value: unknown): Record<string, unknown> | undefined =>
     : undefined
 
 type CodexCommandGroup = { categoryKey: string; commandPrefix: string[] }
-type CodexCommandGroupMatch =
-  { kind: 'group'; group: CodexCommandGroup } | { kind: 'unsafe-prefix-expansion' }
+type CodexCommandGroupMatch = { kind: 'group'; group: CodexCommandGroup } | { kind: 'unsafe' }
 type SimpleCommandToken = { value: string; hasPathnameExpansion: boolean }
 
 const commandFromRawInput = (rawInput: unknown): string | undefined => {
@@ -268,11 +267,13 @@ const codexCommandGroup = (
   const requestParams = metadataRecord(requestCodex?.params)
 
   const amendment = optionCodex?.execpolicyAmendment ?? requestParams?.proposedExecpolicyAmendment
+  if (!Array.isArray(amendment)) return undefined
+  const command = commandFromRawInput(params.toolCall.rawInput)
+  if (command && containsSecretBearingMaterial(command)) return { kind: 'unsafe' }
   const categoryKey = commandPrefixPermissionCategory(amendment)
-  if (!categoryKey || !Array.isArray(amendment)) return undefined
+  if (!categoryKey) return undefined
 
   const commandPrefix = amendment.filter((token): token is string => typeof token === 'string')
-  const command = commandFromRawInput(params.toolCall.rawInput)
   const commandArgv = command ? simpleCommandArgv(command, shellDialect) : undefined
   if (
     !command ||
@@ -282,9 +283,8 @@ const codexCommandGroup = (
     return undefined
   }
   if (commandPrefix.some((_, index) => commandArgv[index]?.hasPathnameExpansion)) {
-    return { kind: 'unsafe-prefix-expansion' }
+    return { kind: 'unsafe' }
   }
-  if (containsSecretBearingMaterial(command)) return undefined
 
   return {
     kind: 'group',
@@ -770,7 +770,7 @@ class AcpPermissionBroker {
     const codexGroup = codexGroupMatch?.kind === 'group' ? codexGroupMatch.group : undefined
     const categoryKey =
       codexGroup?.categoryKey ??
-      (codexGroupMatch?.kind === 'unsafe-prefix-expansion'
+      (codexGroupMatch?.kind === 'unsafe'
         ? undefined
         : resolveCategoryKey(params, mcpServerNames, !this.permissionGrantRegistry))
     const capability = categoryKey ? capabilityFromLegacyCategory(categoryKey) : undefined

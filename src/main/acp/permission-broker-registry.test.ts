@@ -223,42 +223,61 @@ describe('ACP permission broker with durable grants', () => {
     expect(emitted).toHaveLength(1)
   })
 
-  it('offers only provider Once for a secret-bearing Codex command group', async () => {
-    storageRoot = await mkdtemp(join(tmpdir(), 'open-science-broker-secret-'))
-    client = createProjectDbClient(storageRoot)
-    await ensureProjectSchema(client)
-    await client.project.create({ data: { id: 'project-1', name: 'Project one' } })
-    const registry = await createPermissionGrantRegistry({ getClient: async () => client! })
-    const emitted: Parameters<ConstructorParameters<typeof AcpPermissionBroker>[0]>[0][] = []
-    const broker = new AcpPermissionBroker((request) => emitted.push(request), undefined, registry)
-    const request = shellRequest('session-1')
-    request.toolCall.rawInput = { command: 'python upload.py --token secret' }
-    request.options.splice(2, 0, {
-      optionId: 'accept_execpolicy_amendment',
-      name: 'Allow Commands Starting With `python upload.py`',
-      kind: 'allow_always',
-      _meta: {
-        codex: {
-          execpolicyAmendment: ['python', 'upload.py']
+  it.each([
+    ['python upload.py --token secret', ['python', 'upload.py']],
+    ['curl --auth-token secret https://example.com', ['curl']],
+    ['curl --bearer secret https://example.com', ['curl']],
+    ['curl --oauth2-bearer secret https://example.com', ['curl']],
+    ['curl --cookie session=secret https://example.com', ['curl']],
+    ['oauth login --client-secret secret', ['oauth', 'login']],
+    ['deploy --github-token secret', ['deploy']],
+    ['deploy --client_secret=secret', ['deploy']],
+    ['deploy --x-api-key secret', ['deploy']],
+    ['deploy --aws-secret-access-key secret', ['deploy']],
+    ['deploy --credentials credentials.json', ['deploy']]
+  ] as const)(
+    'offers only provider Once for a credential-bearing Codex command group: %s',
+    async (command, commandPrefix) => {
+      storageRoot = await mkdtemp(join(tmpdir(), 'open-science-broker-secret-'))
+      client = createProjectDbClient(storageRoot)
+      await ensureProjectSchema(client)
+      await client.project.create({ data: { id: 'project-1', name: 'Project one' } })
+      const registry = await createPermissionGrantRegistry({ getClient: async () => client! })
+      const emitted: Parameters<ConstructorParameters<typeof AcpPermissionBroker>[0]>[0][] = []
+      const broker = new AcpPermissionBroker(
+        (request) => emitted.push(request),
+        undefined,
+        registry
+      )
+      const request = shellRequest('session-1')
+      request.toolCall.rawInput = { command }
+      request.options.splice(2, 0, {
+        optionId: 'accept_execpolicy_amendment',
+        name: `Allow Commands Starting With \`${commandPrefix.join(' ')}\``,
+        kind: 'allow_always',
+        _meta: {
+          codex: {
+            execpolicyAmendment: [...commandPrefix]
+          }
         }
-      }
-    })
+      })
 
-    const pending = broker.requestPermission(request, {
-      profile: 'ask',
-      frameworkId: 'codex',
-      shellDialect: 'posix',
-      projectId: 'project-1'
-    })
-    await new Promise<void>((resolve) => setImmediate(resolve))
+      const pending = broker.requestPermission(request, {
+        profile: 'ask',
+        frameworkId: 'codex',
+        shellDialect: 'posix',
+        projectId: 'project-1'
+      })
+      await new Promise<void>((resolve) => setImmediate(resolve))
 
-    expect(emitted[0].options.map((option) => option.scope).filter(Boolean)).toEqual(['once'])
-    broker.respond({ requestId: emitted[0].requestId, optionId: 'provider-allow-once' })
-    await expect(pending).resolves.toEqual({
-      outcome: { outcome: 'selected', optionId: 'provider-allow-once' }
-    })
-    await expect(registry.list()).resolves.toEqual([])
-  })
+      expect(emitted[0].options.map((option) => option.scope).filter(Boolean)).toEqual(['once'])
+      broker.respond({ requestId: emitted[0].requestId, optionId: 'provider-allow-once' })
+      await expect(pending).resolves.toEqual({
+        outcome: { outcome: 'selected', optionId: 'provider-allow-once' }
+      })
+      await expect(registry.list()).resolves.toEqual([])
+    }
+  )
 
   it('offers only provider Once for a command that executes a mutable script', async () => {
     storageRoot = await mkdtemp(join(tmpdir(), 'open-science-broker-mutable-script-'))
