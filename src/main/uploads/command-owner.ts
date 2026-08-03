@@ -67,7 +67,8 @@ type UploadCommandOwner = Readonly<{
   ): Promise<UploadedAttachment>
   claimLocalFile(invocation: ApplicationInvocation<readonly [UploadTransferRequest]>): void
   stageLocalPath(
-    invocation: ApplicationInvocation<readonly [StageLocalPathUploadRequest]>
+    invocation: ApplicationInvocation<readonly [StageLocalPathUploadRequest]>,
+    progressTarget?: UploadProgressTarget
   ): Promise<UploadedAttachment>
   beginTransfer(
     invocation: ApplicationInvocation<readonly [BeginUploadTransferRequest]>
@@ -255,7 +256,7 @@ const createUploadCommandOwner = (
       }
       releaseLocalWriter(request.transferId, writer)
     },
-    stageLocalPath: async (invocation) => {
+    stageLocalPath: async (invocation, progressTarget = { report: () => undefined }) => {
       const request = invocation.args[0]
       if (
         typeof request !== 'object' ||
@@ -270,7 +271,7 @@ const createUploadCommandOwner = (
       const sourceInfo = await stat(request.sourcePath)
       const attachment = await runLocalStaging(
         { ...invocation, args: [{ ...request, size: sourceInfo.size }] },
-        { report: () => undefined },
+        progressTarget,
         true
       )
       const projectId = request.projectId ?? DEFAULT_UPLOAD_PROJECT_NAME

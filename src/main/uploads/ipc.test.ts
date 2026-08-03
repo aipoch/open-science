@@ -27,8 +27,16 @@ import {
   clearMigrationPending,
   waitForDataRootWriters
 } from '../storage/migration-state'
-import { createWebCallerContext, type CallerContext } from '../caller-context'
-import { createDefaultUploadRepository, registerUploadIpcHandlers } from './ipc'
+import {
+  createElectronCallerContext,
+  createWebCallerContext,
+  type CallerContext
+} from '../caller-context'
+import { createUploadCommandOwner } from './command-owner'
+import {
+  createDefaultUploadRepository,
+  registerUploadIpcHandlers as registerUploadOwnerIpcHandlers
+} from './ipc'
 import type { UploadRepository } from './repository'
 import { stageUploadFixtures } from './repository.test-utils'
 
@@ -72,6 +80,25 @@ const createIpcEvent = (
       for (const listener of [...(listeners.get(channel) ?? [])]) listener(...args)
     }
   }
+}
+
+const registerUploadIpcHandlers = (
+  repository: UploadRepository,
+  options: {
+    withSessionMutation?: <Result>(
+      projectId: string,
+      sessionId: string,
+      mutation: () => Promise<Result>
+    ) => Promise<Result>
+    onStandaloneUploadSaved?: (projectId: string, sessionId: string) => void
+  } = {}
+): void => {
+  const owner = createUploadCommandOwner(repository, {
+    withSessionMutation: options.withSessionMutation
+  })
+  registerUploadOwnerIpcHandlers(owner, {
+    onStandaloneUploadSaved: options.onStandaloneUploadSaved
+  })
 }
 
 describe('default upload repository', () => {
@@ -158,6 +185,47 @@ describe('default upload repository', () => {
     expect(drained).toBe(true)
     expect(repository.appendTransfer).toHaveBeenCalledOnce()
     expect(repository.finishTransfer).toHaveBeenCalledOnce()
+  })
+
+  it('shares transfer ownership between legacy IPC and the injected command owner', async () => {
+    const repository = {
+      beginTransfer: vi.fn(async () => ({
+        transferId: 'shared-ipc-transfer',
+        name: 'data.csv',
+        receivedBytes: 0,
+        totalBytes: 10
+      })),
+      finishTransfer: vi.fn(async () => undefined)
+    } as unknown as UploadRepository
+    const owner = createUploadCommandOwner(repository)
+    registerUploadOwnerIpcHandlers(owner)
+    const begin = ipcHandlers.get('uploads:begin-transfer')!
+    const finish = ipcHandlers.get('uploads:finish-transfer')!
+    const caller = createIpcEvent(1)
+
+    await begin(caller.event, {
+      transferId: 'shared-ipc-transfer',
+      name: 'data.csv',
+      size: 10
+    })
+
+    const otherContext = createElectronCallerContext(2)
+    const otherController = new AbortController()
+    await expect(
+      owner.finishTransfer({
+        callerContext: otherContext,
+        callerLease: {
+          leaseId: otherContext.leaseId,
+          generation: 1,
+          signal: otherController.signal,
+          isCurrent: () => true
+        },
+        args: [{ transferId: 'shared-ipc-transfer' }]
+      })
+    ).rejects.toThrow(/another renderer/i)
+    expect(repository.finishTransfer).not.toHaveBeenCalled()
+
+    await finish(caller.event, { transferId: 'shared-ipc-transfer' })
   })
 
   it('finalizes Upload Versions inside the shared Session mutation boundary', async () => {
@@ -631,6 +699,45 @@ describe('default upload repository', () => {
 
     expect(caller.send).toHaveBeenCalledWith('uploads:transfer-progress', progress)
     await claim(caller.event, { transferId: 'local-transfer-progress' })
+  })
+
+  it('routes standalone local-path progress only through the invoking caller sender', async () => {
+    homeRoot = await mkdtemp(join(tmpdir(), 'open-science-upload-ipc-'))
+    const sourcePath = join(homeRoot, 'standalone-progress.csv')
+    await writeFile(sourcePath, 'event,count\nheadache,4\n')
+    const progress = {
+      transferId: 'local-path-progress',
+      receivedBytes: 8,
+      totalBytes: 23
+    }
+    const attachment = {
+      id: 'standalone-progress-attachment',
+      sessionId: '.pending',
+      name: 'standalone-progress.csv',
+      originalName: 'standalone-progress.csv',
+      path: '/managed/.pending/standalone-progress.csv',
+      size: 23
+    }
+    const repository = {
+      stageLocalFile: vi.fn(async (_request, report: (value: typeof progress) => void) => {
+        report(progress)
+        return attachment
+      }),
+      finalizePendingSessionUploads: vi.fn(async () => [attachment])
+    } as unknown as UploadRepository
+    registerUploadIpcHandlers(repository)
+    const stageLocalPath = ipcHandlers.get('uploads:stage-local-path')!
+    const caller = createIpcEvent(31)
+    const otherCaller = createIpcEvent(32)
+
+    await stageLocalPath(caller.event, {
+      transferId: 'local-path-progress',
+      sourcePath,
+      name: 'standalone-progress.csv'
+    })
+
+    expect(caller.send).toHaveBeenCalledWith('uploads:transfer-progress', progress)
+    expect(otherCaller.send).not.toHaveBeenCalled()
   })
 
   it('does not let another renderer cancel an active native-path upload', async () => {

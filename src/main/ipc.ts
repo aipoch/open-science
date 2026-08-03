@@ -170,6 +170,7 @@ import { registerUpdateIpcHandlers } from './update/ipc'
 import { createUpdateStrategy } from './update/create-strategy'
 import { startUpdateScheduler } from './update/scheduler'
 import { createDefaultUploadRepository, registerUploadIpcHandlers } from './uploads/ipc'
+import { createUploadCommandOwner } from './uploads/command-owner'
 import { broadcastToRenderers, installRendererBroadcastEventHub } from './renderer-broadcast'
 import {
   installElectronRuntimeAdapters,
@@ -423,6 +424,10 @@ const createApplicationModules = async (
         reconcilePermissionGrantOwners(permissionGrantRegistry, { sessions })
     }
   )
+  const uploadCommandOwner = createUploadCommandOwner(uploadRepository, {
+    withSessionMutation: (projectId, sessionId, mutation) =>
+      sessionPersistenceCoordinator.runSessionMutation(projectId, sessionId, mutation)
+  })
   const reviewRepository = createDefaultReviewRepository()
   const projectDeletionCoordinator = new ProjectDeletionCoordinator(
     projectRepository,
@@ -1297,9 +1302,7 @@ const createApplicationModules = async (
     )
   )
   declareElectronAdapter('uploads', () =>
-    registerUploadIpcHandlers(uploadRepository, {
-      withSessionMutation: (projectId, sessionId, mutation) =>
-        sessionPersistenceCoordinator.runSessionMutation(projectId, sessionId, mutation),
+    registerUploadIpcHandlers(uploadCommandOwner, {
       // Standalone "Save as artifact" uploads have no session mutation to piggyback on, so the
       // Files panel only learns about them through this broadcast.
       onStandaloneUploadSaved: (projectId, sessionId) =>
