@@ -68,6 +68,7 @@ describe('isSensitiveLocalPath', () => {
     expect(isSensitiveLocalPath('/Users/roxi/Documents/notes.md')).toBe(false)
     expect(isSensitiveLocalPath('/Users/roxi/data.csv')).toBe(false)
     expect(isSensitiveLocalPath('/')).toBe(false)
+    expect(isSensitiveLocalPath('/tmp/folder\\.ssh')).toBe(false)
   })
 })
 
@@ -126,6 +127,7 @@ describe('resolveLocalPath', () => {
 describe('local path navigation', () => {
   it('finds parents and roots with host path semantics', () => {
     expect(parentLocalPath('/Users/roxi/Documents')).toBe('/Users/roxi')
+    expect(parentLocalPath('/tmp/folder\\name')).toBe('/tmp')
     expect(parentLocalPath('/')).toBe('/')
     expect(parentLocalPath('C:\\Users\\roxi')).toBe('C:\\Users')
     expect(parentLocalPath('C:\\')).toBe('C:\\')
@@ -138,6 +140,7 @@ describe('local path navigation', () => {
 
   it('compares Windows directories case-insensitively and ignores trailing separators', () => {
     expect(sameLocalDirectory('/Users/roxi/', '/Users/roxi')).toBe(true)
+    expect(sameLocalDirectory('/tmp/folder\\', '/tmp/folder')).toBe(false)
     expect(sameLocalDirectory('C:\\Users\\Roxi\\', 'c:\\users\\roxi')).toBe(true)
     expect(sameLocalDirectory('C:/Users/Roxi', 'c:\\users\\roxi')).toBe(true)
     expect(sameLocalDirectory('C:\\Users', 'D:\\Users')).toBe(false)

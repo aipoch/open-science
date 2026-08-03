@@ -40,6 +40,11 @@ export const LOCAL_BOOKMARKS_KEY = 'local'
 // renderer responsive on huge directories (e.g. node_modules).
 export const LOCAL_DIR_ENTRY_CAP = 5000
 
+const isWindowsDrivePath = (path: string): boolean => /^[A-Za-z]:[\\/]/.test(path)
+const isWindowsUncPath = (path: string): boolean => /^\\\\[^\\/]+[\\/][^\\/]+/.test(path)
+const isWindowsLocalPath = (path: string): boolean =>
+  isWindowsDrivePath(path) || isWindowsUncPath(path)
+
 // Validates a local path before touching the filesystem. Returns an error kind or undefined.
 // The security model is "Home start, full-disk navigable": we do NOT restrict to a root, but we
 // reject non-absolute paths and paths containing ASCII control characters (which are never valid
@@ -52,10 +57,7 @@ export const validateLocalPath = (
   // eslint-disable-next-line no-control-regex
   if (/[\x00-\x1f]/.test(path)) return 'control_chars'
   const isPosixAbsolute = path.startsWith('/')
-  const isWindowsDriveAbsolute = /^[A-Za-z]:[\\/]/.test(path)
-  const isWindowsUncAbsolute = /^\\\\[^\\/]+[\\/][^\\/]+/.test(path)
-  const isAbsolute =
-    platform === 'win32' ? isWindowsDriveAbsolute || isWindowsUncAbsolute : isPosixAbsolute
+  const isAbsolute = platform === 'win32' ? isWindowsLocalPath(path) : isPosixAbsolute
   if (!isAbsolute) return 'not_absolute'
   return undefined
 }
@@ -84,7 +86,7 @@ const SENSITIVE_SUFFIXES = ['.pem', '.key', '.env', '.p12', '.pfx']
 // Returns true when a path's basename looks security-sensitive (keys, credentials, dotenv). Pure
 // so both the browser listing and the preview open path can share one definition.
 export const isSensitiveLocalPath = (path: string): boolean => {
-  const base = (path.split(/[\\/]/).pop() ?? '').toLowerCase()
+  const base = (path.split(isWindowsLocalPath(path) ? /[\\/]/ : '/').pop() ?? '').toLowerCase()
   if (!base) return false
   if (SENSITIVE_BASENAMES.has(base)) return true
   if (base.startsWith('.env')) return true
@@ -130,25 +132,27 @@ export const describeLocalListingError = (
 export const resolveLocalPath = (cwd: string, input: string, platform: string): string => {
   if (validateLocalPath(input, platform) === undefined) return input
   if (input === '') return cwd
-  const separator = /^[A-Za-z]:[\\/]|^\\\\/.test(cwd) ? '\\' : '/'
-  const base = cwd.replace(/[\\/]+$/, '')
+  const windows = isWindowsLocalPath(cwd)
+  const separator = windows ? '\\' : '/'
+  const base = cwd.replace(windows ? /[\\/]+$/ : /\/+$/, '')
   return `${base}${separator}${input}`
 }
 
 const localPathRoot = (path: string): string => {
-  if (/^[A-Za-z]:[\\/]/.test(path)) return path.slice(0, 3)
+  if (isWindowsDrivePath(path)) return path.slice(0, 3)
   return path.match(/^\\\\[^\\/]+[\\/][^\\/]+/)?.[0] ?? '/'
 }
 
 const withoutTrailingSeparators = (path: string): string => {
   const root = localPathRoot(path)
-  return path.length > root.length ? path.replace(/[\\/]+$/, '') : root
+  if (path.length <= root.length) return root
+  return path.replace(isWindowsLocalPath(path) ? /[\\/]+$/ : /\/+$/, '')
 }
 
 export const sameLocalDirectory = (a: string, b: string): boolean => {
   const left = withoutTrailingSeparators(a)
   const right = withoutTrailingSeparators(b)
-  if (!/^[A-Za-z]:[\\/]|^\\\\/.test(left)) return left === right
+  if (!isWindowsLocalPath(left)) return left === right
   return left.replace(/\//g, '\\').toLowerCase() === right.replace(/\//g, '\\').toLowerCase()
 }
 
@@ -156,7 +160,9 @@ export const parentLocalPath = (path: string): string => {
   const root = localPathRoot(path)
   const normalized = withoutTrailingSeparators(path)
   if (sameLocalDirectory(normalized, root)) return root
-  const separator = Math.max(normalized.lastIndexOf('/'), normalized.lastIndexOf('\\'))
+  const separator = isWindowsLocalPath(normalized)
+    ? Math.max(normalized.lastIndexOf('/'), normalized.lastIndexOf('\\'))
+    : normalized.lastIndexOf('/')
   return separator < root.length ? root : normalized.slice(0, separator)
 }
 
