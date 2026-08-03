@@ -239,6 +239,12 @@ describe('ACP permission broker with durable grants', () => {
     ['posix', 'mysql -psecret app', ['mysql']],
     ['posix', 'mysqldump -psecret app', ['mysqldump']],
     ['posix', 'npm config set //registry.npmjs.org/:_authToken=secret', ['npm', 'config', 'set']],
+    ['posix', 'aws configure set aws_secret_access_key secret', ['aws', 'configure', 'set']],
+    [
+      'posix',
+      'gcloud auth activate-service-account --key-file credentials.json',
+      ['gcloud', 'auth', 'activate-service-account']
+    ],
     ['posix', 'oauth login --client-secret secret', ['oauth', 'login']],
     ['posix', 'deploy --github-token secret', ['deploy']],
     ['posix', 'deploy --client_secret=secret', ['deploy']],

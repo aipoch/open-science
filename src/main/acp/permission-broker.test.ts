@@ -543,6 +543,11 @@ describe('ACP permission broker', () => {
     ['redis-cli -asecret ping', ['redis-cli']],
     ['mysql -psecret app', ['mysql']],
     ['npm config set //registry.npmjs.org/:_authToken=secret', ['npm', 'config', 'set']],
+    ['aws configure set aws_secret_access_key secret', ['aws', 'configure', 'set']],
+    [
+      'gcloud auth activate-service-account --key-file credentials.json',
+      ['gcloud', 'auth', 'activate-service-account']
+    ],
     ['oauth login --client-secret secret', ['oauth', 'login']]
   ] as const)(
     'keeps an unsafe Codex command group Once-only in the legacy broker: %s',
