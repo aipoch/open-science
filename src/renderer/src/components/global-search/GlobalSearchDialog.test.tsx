@@ -104,6 +104,14 @@ beforeEach(() => {
           other: [],
           isIndexComplete: true
         })
+      },
+      previewResources: {
+        acquire: vi.fn().mockResolvedValue({
+          id: 'preview-resource-1',
+          url: 'open-science-preview://preview-resource-1',
+          mimeType: 'image/png'
+        }),
+        release: vi.fn().mockResolvedValue(undefined)
       }
     }
   })
@@ -129,12 +137,38 @@ describe('GlobalSearchDialog', () => {
     const artifactRow = [...document.body.querySelectorAll('[role="option"]')].find((element) =>
       element.textContent?.includes('sin.png')
     ) as HTMLElement
+    expect(artifactRow.classList).toContain('cursor-pointer')
+    expect(artifactRow.classList).toContain('select-none')
+    expect(
+      artifactRow.querySelector<HTMLImageElement>('img[alt="Preview of sin.png"]')
+    ).not.toBeNull()
     act(() => artifactRow.dispatchEvent(new MouseEvent('mouseenter', { bubbles: true })))
     const mention = document.body.querySelector<HTMLElement>('[aria-label="Mention sin.png"]')
     expect(mention).not.toBeNull()
     act(() => mention?.dispatchEvent(new MouseEvent('click', { bubbles: true })))
 
     expect(useNavigationStore.getState().pendingArtifactMention).toMatchObject({ id: 'artifact-1' })
+  })
+
+  it('keeps the result list scrollable and the shortcut footer outside the scroll viewport', async () => {
+    await act(async () => {
+      root.render(<GlobalSearchDialog open onOpenChange={vi.fn()} isSessionPersistenceReady />)
+      await new Promise((resolve) => window.setTimeout(resolve, 20))
+    })
+
+    const dialog = document.body.querySelector<HTMLElement>('[data-testid="global-search-dialog"]')
+    const results = document.body.querySelector<HTMLElement>(
+      '[data-testid="global-search-results"]'
+    )
+    const footer = document.body.querySelector<HTMLElement>('[data-testid="global-search-footer"]')
+
+    expect(dialog?.classList).toContain('h-[calc(100dvh_-_1rem)]')
+    expect(results?.classList).toContain('min-h-0')
+    expect(results?.classList).toContain('flex-1')
+    expect(footer?.classList).toContain('shrink-0')
+    expect(footer?.classList).toContain('grid-cols-2')
+    expect(footer?.querySelectorAll('kbd')).toHaveLength(4)
+    expect(results?.contains(footer ?? null)).toBe(false)
   })
 
   it('disables the current-Project mention action when the composer cannot accept another Artifact', async () => {

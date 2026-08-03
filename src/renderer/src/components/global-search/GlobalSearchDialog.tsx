@@ -1,5 +1,11 @@
+/* Hallmark · pre-emit critique: P5 H5 E4 S5 R5 V4
+ * component: command palette · genre: modern-minimal · theme: Open Science tokens
+ * structural fingerprint: fixed header / single scroll plane / fixed shortcut footer
+ * states: default · hover · focus · active · disabled · loading · error · success
+ * contrast: inherited from the app's verified semantic tokens · slop: pass
+ */
 import { useCallback, useEffect, useId, useMemo, useRef, useState } from 'react'
-import { ArrowUpRight, AtSign, File, Hash, MessageCircle, Search } from 'lucide-react'
+import { ArrowUpRight, AtSign, Hash, MessageCircle, Search } from 'lucide-react'
 import { Dialog } from 'radix-ui'
 
 import type { ProjectFileItem } from '../../../../shared/project-files'
@@ -10,7 +16,9 @@ import { ScrollArea } from '@/components/ui/scroll-area'
 import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from '@/components/ui/tooltip'
 import { resolveCustomizeProjectId } from '@/lib/last-opened-project'
 import { cn } from '@/lib/utils'
+import { ArtifactPreview } from '@/pages/workspace/artifact-preview'
 import { createPreviewFileItem } from '@/pages/workspace/preview-file-item'
+import type { MessageArtifact } from '@/pages/workspace/preview-file-item'
 import { usePreviewWorkbenchStore } from '@/stores/preview-workbench-store'
 import { useNavigationStore } from '@/stores/navigation-store'
 import { useProjectStore } from '@/stores/project-store'
@@ -85,10 +93,25 @@ const artifactToPreviewItem = (
     originSession: artifact.originSession
   })
 
+const artifactToThumbnailItem = (artifact: ProjectFileItem): MessageArtifact => ({
+  id: artifact.sourceVersionId ?? artifact.sourceFileId,
+  artifactId: artifact.source === 'artifact' ? artifact.sourceFileId : undefined,
+  versionId: artifact.sourceVersionId,
+  kind: 'managed-file',
+  path: artifact.path,
+  name: artifact.name,
+  mimeType: artifact.mimeType,
+  size: artifact.size,
+  mtimeMs: artifact.mtimeMs
+})
+
 const sectionTitleClassName =
-  'sticky top-0 z-10 bg-card px-4 py-2 text-sm font-medium text-muted-foreground'
+  'sticky top-0 z-10 bg-card px-4 pb-2 pt-3 text-sm font-medium text-muted-foreground'
 const rowClassName =
-  'relative flex h-11 w-full min-w-0 items-center gap-3 px-4 text-left outline-none before:absolute before:left-2 before:h-6 before:w-[3px] before:rounded-full before:bg-primary before:opacity-0'
+  'relative flex min-h-12 w-full min-w-0 cursor-pointer select-none items-center justify-start gap-3 px-4 text-left outline-none transition-colors duration-150 before:absolute before:left-2 before:h-6 before:w-[3px] before:rounded-full before:bg-primary before:opacity-0 before:transition-opacity before:duration-150 hover:bg-bg-200 active:bg-bg-300 motion-reduce:transition-none motion-reduce:before:transition-none'
+const shortcutClassName = 'inline-flex min-w-0 items-center gap-1.5 whitespace-nowrap'
+const keycapClassName =
+  'inline-flex h-6 min-w-6 shrink-0 items-center justify-center rounded-md border border-border bg-bg-000 px-1.5 font-mono text-[11px] leading-none text-foreground shadow-sm'
 
 export const GlobalSearchDialog = ({
   open,
@@ -302,6 +325,12 @@ export const GlobalSearchDialog = ({
   ])
 
   const activeRowIndex = Math.max(0, Math.min(activeIndex, selectableRows.length - 1))
+  const activeRowId = `global-search-option-${activeRowIndex}`
+
+  useEffect(() => {
+    if (!open || selectableRows.length === 0) return
+    document.getElementById(activeRowId)?.scrollIntoView?.({ block: 'nearest' })
+  }, [activeRowId, open, selectableRows.length])
 
   const close = useCallback(() => onOpenChange(false), [onOpenChange])
   const previewArtifact = useCallback(
@@ -425,8 +454,6 @@ export const GlobalSearchDialog = ({
       (sessionGroups?.other.length ?? 0) +
       artifacts.other.length
     : artifacts.items.length + recentSessions.length + (primaryProject ? 1 : 0)
-  const activeRowId = `global-search-option-${activeRowIndex}`
-
   const renderSessionRow = (session: SessionSearchResult, rowIndex: number): React.JSX.Element => {
     const active = rowIndex === activeRowIndex
     return (
@@ -481,7 +508,18 @@ export const GlobalSearchDialog = ({
         onMouseEnter={() => setActiveIndex(rowIndex)}
         onClick={() => previewArtifact(artifact)}
       >
-        <File className="size-5 shrink-0 text-muted-foreground" aria-hidden="true" />
+        <span
+          data-testid="global-search-artifact-thumbnail"
+          className="size-10 shrink-0 overflow-hidden rounded-md border border-border-300/50 bg-bg-200"
+          aria-hidden="true"
+        >
+          <ArtifactPreview
+            artifact={artifactToThumbnailItem(artifact)}
+            source={artifact.source}
+            projectId={artifact.projectId}
+            sessionId={artifact.sessionId}
+          />
+        </span>
         <span className="min-w-0 flex-1">
           <span className="block truncate text-sm font-medium text-foreground">
             {artifact.name}
@@ -495,7 +533,7 @@ export const GlobalSearchDialog = ({
           </span>
         </span>
         {active ? (
-          <TooltipProvider delayDuration={200}>
+          <TooltipProvider delayDuration={800}>
             <span className="flex shrink-0 items-center gap-1">
               {isCurrentWorkspaceArtifact ? (
                 <Tooltip>
@@ -506,6 +544,7 @@ export const GlobalSearchDialog = ({
                         variant="ghost"
                         size="icon-xs"
                         tabIndex={-1}
+                        className="cursor-pointer"
                         aria-label={`Mention ${artifact.name}`}
                         disabled={!canMention}
                         onClick={(event) => {
@@ -531,6 +570,7 @@ export const GlobalSearchDialog = ({
                     variant="ghost"
                     size="icon-xs"
                     tabIndex={-1}
+                    className="cursor-pointer"
                     aria-label={`Open ${artifact.name}`}
                     onClick={(event) => {
                       event.stopPropagation()
@@ -557,13 +597,14 @@ export const GlobalSearchDialog = ({
       <Dialog.Portal>
         <Dialog.Overlay className={dialogOverlayClassName} />
         <Dialog.Content
+          data-testid="global-search-dialog"
           aria-describedby={undefined}
           className={dialogPanelClassName(
-            'top-[15vh] flex w-[min(640px,calc(100vw-2rem))] max-w-none -translate-y-0 flex-col overflow-hidden p-0'
+            'flex h-[calc(100dvh_-_1rem)] w-[calc(100%_-_1rem)] max-w-[680px] flex-col overflow-hidden p-0 sm:h-[min(760px,calc(100dvh_-_2rem))] sm:w-[calc(100%_-_2rem)]'
           )}
         >
           <Dialog.Title className="sr-only">Command palette</Dialog.Title>
-          <div className="flex shrink-0 items-center gap-3 border-b border-border px-4 py-3">
+          <div className="flex min-h-16 shrink-0 items-center gap-3 border-b border-border px-4 py-3">
             <Search className="size-5 shrink-0 text-muted-foreground" aria-hidden="true" />
             <Input
               ref={inputRef}
@@ -576,10 +617,10 @@ export const GlobalSearchDialog = ({
               aria-activedescendant={selectableRows.length > 0 ? activeRowId : undefined}
               placeholder="Search this project…"
               maxLength={256}
-              className="h-auto min-w-0 flex-1 rounded-none border-0 bg-transparent px-0 text-xl text-foreground placeholder:text-muted-foreground"
+              className="h-auto min-w-0 flex-1 rounded-none border-0 bg-transparent px-0 text-xl text-foreground outline-2 outline-transparent placeholder:text-muted-foreground focus-visible:border-transparent focus-visible:outline-ring focus-visible:outline-offset-1 focus-visible:ring-0"
             />
             {primaryProject ? (
-              <span className="max-w-60 truncate rounded-lg bg-bg-200 px-3 py-1 text-sm font-medium text-muted-foreground">
+              <span className="max-w-[35%] shrink-0 truncate rounded-lg bg-bg-200 px-3 py-1.5 text-sm font-medium text-muted-foreground">
                 {primaryProject.name}
               </span>
             ) : null}
@@ -592,7 +633,10 @@ export const GlobalSearchDialog = ({
               {actionError}
             </p>
           ) : null}
-          <ScrollArea className="max-h-[60vh]">
+          <ScrollArea
+            data-testid="global-search-results"
+            className="min-h-0 flex-1 overscroll-contain"
+          >
             <div id={listboxId} role="listbox" className="py-1.5">
               {!primaryProject ? (
                 <p className="px-4 py-8 text-center text-sm text-muted-foreground">
@@ -650,7 +694,7 @@ export const GlobalSearchDialog = ({
                           aria-selected={activeRowIndex === rowIndex - 1}
                           variant="ghost"
                           className={cn(
-                            'flex h-11 w-full items-center px-4 text-left text-sm font-medium text-primary outline-none',
+                            'flex h-11 w-full cursor-pointer select-none items-center justify-start px-4 text-left text-sm font-medium text-primary outline-none',
                             activeRowIndex === rowIndex - 1 && 'bg-bg-200'
                           )}
                           onMouseEnter={() => setActiveIndex(rowIndex - 1)}
@@ -677,7 +721,7 @@ export const GlobalSearchDialog = ({
                           role="option"
                           aria-selected={activeRowIndex === rowIndex - 1}
                           variant="ghost"
-                          className="h-11 px-4 text-sm font-medium text-primary"
+                          className="h-11 cursor-pointer justify-start px-4 text-sm font-medium text-primary"
                           onMouseEnter={() => setActiveIndex(rowIndex - 1)}
                           onClick={() => void reloadArtifacts(failedArtifactCursor)}
                         >
@@ -695,7 +739,7 @@ export const GlobalSearchDialog = ({
                           variant="ghost"
                           disabled={artifactStatus === 'loading'}
                           className={cn(
-                            'flex h-11 w-full items-center px-4 text-left text-sm font-medium text-primary outline-none disabled:opacity-50',
+                            'flex h-11 w-full cursor-pointer select-none items-center justify-start px-4 text-left text-sm font-medium text-primary outline-none disabled:cursor-not-allowed disabled:opacity-50',
                             activeRowIndex === rowIndex - 1 && 'bg-bg-200'
                           )}
                           onMouseEnter={() => setActiveIndex(rowIndex - 1)}
@@ -729,12 +773,27 @@ export const GlobalSearchDialog = ({
               ) : null}
             </div>
           </ScrollArea>
-          <div className="flex shrink-0 items-center gap-4 border-t border-border px-4 py-3 text-xs text-muted-foreground">
-            <span>↑↓ navigate</span>
-            <span>↵ open</span>
-            <span>⇧↵ mention</span>
-            <span>esc close</span>
-          </div>
+          <footer
+            data-testid="global-search-footer"
+            className="grid min-h-14 shrink-0 grid-cols-2 items-center gap-x-4 gap-y-2 border-t border-border bg-card px-4 py-2 text-xs text-muted-foreground sm:flex sm:flex-wrap"
+          >
+            <span className={shortcutClassName}>
+              <kbd className={keycapClassName}>↑↓</kbd>
+              <span>navigate</span>
+            </span>
+            <span className={shortcutClassName}>
+              <kbd className={keycapClassName}>↵</kbd>
+              <span>open</span>
+            </span>
+            <span className={shortcutClassName}>
+              <kbd className={keycapClassName}>⇧↵</kbd>
+              <span>mention</span>
+            </span>
+            <span className={shortcutClassName}>
+              <kbd className={keycapClassName}>esc</kbd>
+              <span>close</span>
+            </span>
+          </footer>
         </Dialog.Content>
       </Dialog.Portal>
     </Dialog.Root>

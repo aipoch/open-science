@@ -84,6 +84,7 @@ export const WEB_INVOKE_CHANNELS = {
   'projectFiles.listArtifactGroups': 'project-files:list-artifact-groups',
   'projectFiles.listFiles': 'project-files:list-files',
   'projectFiles.repairIndex': 'project-files:repair-index',
+  'projectFiles.searchArtifacts': 'project-files:search-artifacts',
   'projects.create': 'projects:create',
   'projects.delete': 'projects:delete',
   'projects.get': 'projects:get',
