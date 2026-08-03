@@ -11,7 +11,8 @@ import {
 } from './application-runtime'
 import { createApplicationEventModule, type ApplicationEventSource } from './application-events'
 
-import { createAcpRuntime, createDefaultNotebookRuntimeService } from './acp/ipc'
+import { createDefaultNotebookRuntimeService } from './acp/ipc'
+import { createAcpRuntime } from './acp/runtime-composition'
 import { createAcpCreateSessionWorkflow } from './acp/create-session-workflow'
 import { createAcpTaskAgentPort } from './acp/task-agent-port'
 import { createDefaultArtifactRepository, registerArtifactIpcHandlers } from './artifacts/ipc'
@@ -950,7 +951,7 @@ const createApplicationModules = async (
     switchSpecialist: (sessionId, specialistId) =>
       runtime.switchSpecialist(sessionId, specialistId),
     createContinuationRequest: (input) => runtime.createClaudeCodeContinuationRequest(input),
-    sendAppContinuation: (request) => runtime.sendPromptForHandoff(request),
+    sendAppContinuation: (request) => runtime.sendAppContinuation(request),
     reportHandoffFailure: async (_error, _handoff, context) => {
       runtime.reportApprovedHandoffFailure(context.sessionId)
     }
@@ -1054,8 +1055,8 @@ const createApplicationModules = async (
         }
         await sessionPersistenceCoordinator.saveSessionSpecialistBinding(session, specialistId)
       },
-      // Apply the switch to the live agent runtime. `runtime` is assigned above (registerAcpIpcHandlers),
-      // but the closure is invoked per-request so a late-bound reference is unnecessary.
+      // Apply the switch to the live agent runtime. The closure is invoked per-request, so a
+      // late-bound reference is unnecessary.
       (sessionId, specialistId) => runtime.switchSpecialist(sessionId, specialistId),
       // A specialist capability edit (skills/connectors/enabled) must reach live sessions on the next
       // turn: reconnect so the agent respawns (re-provisioning skills) and resumes with the updated

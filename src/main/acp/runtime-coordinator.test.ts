@@ -678,7 +678,7 @@ describe('AcpRuntimeCoordinator', () => {
     await Promise.resolve()
     expect(createdRuntime.sendPrompt).not.toHaveBeenCalled()
 
-    await coordinator.sendPromptForHandoff({
+    await coordinator.sendAppContinuation({
       sessionId: session.sessionId,
       text: 'approved recovery continuation'
     })

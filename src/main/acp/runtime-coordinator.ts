@@ -482,10 +482,6 @@ class AcpRuntimeCoordinator {
     return this.dispatchPrompt(request, undefined, 'sendAppContinuation')
   }
 
-  sendPromptForHandoff(request: AcpPromptRequest): ReturnType<AcpRuntime['sendAppContinuation']> {
-    return this.dispatchPrompt(request, undefined, 'sendAppContinuation')
-  }
-
   // Starts an app-owned continuation and resolves only once the provider produces its first update.
   // A rejection before that point remains a handoff-start failure owned by CompletionGateCoordinator.
   startContinuation(request: AcpPromptRequest): Promise<void> {

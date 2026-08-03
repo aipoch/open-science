@@ -120,9 +120,10 @@ vi.mock('../storage-root', () => ({
   resolveDataRoot: () => '/tmp/data'
 }))
 
-const { createAcpRuntime, installAcpIpcHandlers, registerAcpIpcHandlers } = await import('./ipc')
+const { installAcpIpcHandlers } = await import('./ipc')
+const { createAcpRuntime } = await import('./runtime-composition')
 const { createAcpCreateSessionWorkflow } = await import('./create-session-workflow')
-type AcpTestOptions = Parameters<typeof registerAcpIpcHandlers>[0]
+type AcpTestOptions = Parameters<typeof createAcpRuntime>[0]
 
 // Minimal options — createRuntime just forwards them into the mocked AcpRuntime constructor.
 const registerWithFakes = (overrides?: {
@@ -172,7 +173,8 @@ const registerWithFakes = (overrides?: {
     profileService: overrides?.profileService as never
   }
 
-  registerAcpIpcHandlers(options)
+  const runtime = createAcpRuntime(options)
+  installAcpIpcHandlers(runtime, createAcpCreateSessionWorkflow(runtime), options.taskNotifications)
   return options as AcpTestOptions
 }
 
@@ -247,7 +249,7 @@ describe('ACP module transport seam', () => {
   })
 })
 
-describe('registerAcpIpcHandlers — Specialist identity resolver', () => {
+describe('ACP runtime composition — Specialist identity resolver', () => {
   it('passes a ProfileService-backed resolver into each runtime', async () => {
     const profile = {
       name: 'RNA-seq Reviewer',
@@ -354,7 +356,7 @@ describe('registerAcpIpcHandlers — Specialist identity resolver', () => {
   })
 })
 
-describe('registerAcpIpcHandlers — Skill import cancellation lifecycle', () => {
+describe('installAcpIpcHandlers — Skill import cancellation lifecycle', () => {
   it('invalidates a stopped prompt and deleted session before runtime teardown starts', async () => {
     const onSessionCancellationRequested = vi.fn()
     const onSessionUnavailable = vi.fn()
@@ -452,7 +454,7 @@ describe('registerAcpIpcHandlers — Skill import cancellation lifecycle', () =>
   })
 })
 
-describe('registerAcpIpcHandlers — managed session workspace', () => {
+describe('installAcpIpcHandlers — managed session workspace', () => {
   it('registers immediately but waits for initialization before creating the first session', async () => {
     let finishInitialization: (() => void) | undefined
     const initializationBarrier = new Promise<void>((resolve) => {
@@ -680,7 +682,7 @@ describe('registerAcpIpcHandlers — managed session workspace', () => {
   })
 })
 
-describe('registerAcpIpcHandlers — reset-session-context bridge', () => {
+describe('installAcpIpcHandlers — reset-session-context bridge', () => {
   it('registers the acp:reset-session-context channel', () => {
     registerWithFakes()
     expect(handlers.has('acp:reset-session-context')).toBe(true)
@@ -700,7 +702,7 @@ describe('registerAcpIpcHandlers — reset-session-context bridge', () => {
   })
 })
 
-describe('registerAcpIpcHandlers — resume-session diagnostics', () => {
+describe('installAcpIpcHandlers — resume-session diagnostics', () => {
   it('logs a privacy-safe correlated lifecycle on success', async () => {
     registerWithFakes()
     const request: AcpResumeSessionRequest = {
@@ -808,7 +810,7 @@ describe('registerAcpIpcHandlers — resume-session diagnostics', () => {
   })
 })
 
-describe('registerAcpIpcHandlers — native context compaction bridge', () => {
+describe('installAcpIpcHandlers — native context compaction bridge', () => {
   it('forwards the session to its runtime and returns the refreshed snapshot', async () => {
     registerWithFakes()
     const request: AcpCompactSessionRequest = { sessionId: 's-1' }
@@ -821,7 +823,7 @@ describe('registerAcpIpcHandlers — native context compaction bridge', () => {
   })
 })
 
-describe('registerAcpIpcHandlers — create-session failure logging', () => {
+describe('installAcpIpcHandlers — create-session failure logging', () => {
   it('logs the failure via the file logger and re-throws so the renderer still sees the error', async () => {
     registerWithFakes()
     const failure = Object.assign(new Error('Internal error'), { code: -32603 })
@@ -864,7 +866,7 @@ describe('registerAcpIpcHandlers — create-session failure logging', () => {
 // turn starts — is what protects a still-running turn's notification name from being overwritten
 // by a rejected prompt's tracking. An earlier spec review flagged exactly this kind of seam as the
 // gap that let a connector-sessionId regression slip through green.
-describe('registerAcpIpcHandlers — acp:send-prompt notification tracking', () => {
+describe('installAcpIpcHandlers — acp:send-prompt notification tracking', () => {
   it('reverts the tracked prompt when the runtime rejects the send', async () => {
     const trackPrompt = vi.fn().mockReturnValue({ token: 1 })
     const untrackPrompt = vi.fn()
