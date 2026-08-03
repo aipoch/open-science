@@ -8,12 +8,15 @@ type ElectronIpcListener = (event: unknown, payload: unknown) => void
 
 export type ElectronRendererContractPort = Readonly<{
   invoke: (channel: string, ...args: unknown[]) => Promise<unknown>
+  send: (channel: string, ...args: unknown[]) => void
   on: (channel: string, listener: ElectronIpcListener) => void
   removeListener: (channel: string, listener: ElectronIpcListener) => void
+  getPathForFile: (file: unknown) => string
 }>
 
 export type ElectronRendererContractAdapter = Readonly<{
   invoke: <Result>(publicPath: string, ...args: unknown[]) => Promise<Result>
+  send: (publicPath: string, ...args: unknown[]) => void
   subscribe: <Payload>(publicPath: string, listener: (payload: Payload) => void) => () => void
 }>
 
@@ -25,6 +28,17 @@ type ElectronRendererRequestContract = Readonly<{
 const contractsByPath = new Map(
   RENDERER_CONTRACT_CATALOG.map((contract) => [contract.publicPath, contract] as const)
 )
+
+const rejectLifecycleDispatch = (
+  contract: RendererContractDescriptor | undefined,
+  publicPath: string
+): void => {
+  if (contract?.lifecycleDispatch != null) {
+    throw new Error(
+      `Renderer contract requires dedicated Electron lifecycle dispatch: ${publicPath}`
+    )
+  }
+}
 
 const requireRequestContract = (publicPath: string): ElectronRendererRequestContract => {
   const contract = contractsByPath.get(publicPath)
@@ -42,6 +56,7 @@ const requireRequestContract = (publicPath: string): ElectronRendererRequestCont
 
 const requireEventContract = (publicPath: string): string => {
   const contract = contractsByPath.get(publicPath)
+  rejectLifecycleDispatch(contract, publicPath)
   const channel = contract?.channel
   if (
     contract?.surfaceInstallation.electron !== 'preload' ||
@@ -54,7 +69,26 @@ const requireEventContract = (publicPath: string): string => {
   return channel
 }
 
-const encodeRequestArguments = (codec: RendererParameterCodec, args: unknown[]): unknown[] => {
+const requireSendContract = (publicPath: string): string => {
+  const contract = contractsByPath.get(publicPath)
+  rejectLifecycleDispatch(contract, publicPath)
+  const channel = contract?.channel
+  if (
+    contract?.surfaceInstallation.electron !== 'preload' ||
+    contract.kind !== 'method' ||
+    contract.dispatchPolicy.electron !== 'electron-ipc-send' ||
+    channel == null
+  ) {
+    throw new Error(`Renderer contract is not an Electron IPC send: ${publicPath}`)
+  }
+  return channel
+}
+
+const encodeRequestArguments = (
+  codec: RendererParameterCodec,
+  args: unknown[],
+  getPathForFile: (file: unknown) => string
+): unknown[] | null => {
   switch (codec) {
     case 'positional':
       return args
@@ -62,6 +96,16 @@ const encodeRequestArguments = (codec: RendererParameterCodec, args: unknown[]):
       return args[0] === undefined ? [{}] : args
     case 'optional-argument-slot':
       return args.length === 0 ? [undefined] : args
+    case 'session-save-optional-argument':
+      return args[1] ? args : args.slice(0, 1)
+    case 'storage-parent-object':
+      return [{ parent: args[0] }]
+    case 'storage-data-root-object':
+      return [{ parent: args[0], markOnboarding: args[1] }]
+    case 'native-file-upload-request': {
+      const sourcePath = getPathForFile(args[0])
+      return sourcePath ? [{ ...(args[1] as object), sourcePath }] : null
+    }
     case 'runtime-selection-object':
       return [{ language: args[0], selection: args[1] }]
     case 'runtime-language-environment-object':
@@ -84,8 +128,16 @@ export const createElectronRendererContractAdapter = (
 ): ElectronRendererContractAdapter => ({
   invoke: async <Result>(publicPath: string, ...args: unknown[]): Promise<Result> => {
     const { contract, channel } = requireRequestContract(publicPath)
-    const encodedArgs = encodeRequestArguments(contract.parameterCodec.electron, args)
+    const encodedArgs = encodeRequestArguments(
+      contract.parameterCodec.electron,
+      args,
+      port.getPathForFile
+    )
+    if (encodedArgs === null) return null as Result
     return (await port.invoke(channel, ...encodedArgs)) as Result
+  },
+  send: (publicPath: string, ...args: unknown[]): void => {
+    port.send(requireSendContract(publicPath), ...args)
   },
   subscribe: <Payload>(publicPath: string, listener: (payload: Payload) => void): (() => void) => {
     const channel = requireEventContract(publicPath)
