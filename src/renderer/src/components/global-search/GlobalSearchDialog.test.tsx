@@ -60,6 +60,7 @@ beforeEach(() => {
   })
   useSessionStore.setState({
     ...createInitialSessionState(),
+    selectedSessionId: 'session-a',
     sessions: [
       {
         id: 'session-a',
@@ -198,6 +199,146 @@ describe('GlobalSearchDialog', () => {
       )
     })
 
+    expect(onOpenChange).toHaveBeenCalledWith(false)
+  })
+
+  it('opens the active Artifact on Shift+Enter when no Session is active', async () => {
+    window.localStorage.setItem('open-science:last-opened-project', 'project-a')
+    useNavigationStore.setState({ view: 'home', activeProjectId: undefined })
+    const onOpenChange = vi.fn()
+    await act(async () => {
+      root.render(<GlobalSearchDialog open onOpenChange={onOpenChange} isSessionPersistenceReady />)
+      await new Promise((resolve) => window.setTimeout(resolve, 20))
+    })
+
+    const input = document.body.querySelector<HTMLInputElement>('input[role="combobox"]')
+    await act(async () => {
+      input?.dispatchEvent(
+        new KeyboardEvent('keydown', {
+          key: 'Enter',
+          shiftKey: true,
+          bubbles: true,
+          cancelable: true
+        })
+      )
+    })
+
+    expect(useNavigationStore.getState().pendingArtifactMention).toBeUndefined()
+    expect(usePreviewWorkbenchStore.getState().fileDialogItem).toMatchObject({
+      artifactId: 'artifact-1',
+      projectId: 'project-a'
+    })
+    expect(onOpenChange).toHaveBeenCalledWith(false)
+  })
+
+  it('opens the active Artifact on Shift+Enter from a Project draft without a Session', async () => {
+    useSessionStore.setState({ selectedSessionId: undefined })
+    const onOpenChange = vi.fn()
+    await act(async () => {
+      root.render(<GlobalSearchDialog open onOpenChange={onOpenChange} isSessionPersistenceReady />)
+      await new Promise((resolve) => window.setTimeout(resolve, 20))
+    })
+
+    const input = document.body.querySelector<HTMLInputElement>('input[role="combobox"]')
+    await act(async () => {
+      input?.dispatchEvent(
+        new KeyboardEvent('keydown', {
+          key: 'Enter',
+          shiftKey: true,
+          bubbles: true,
+          cancelable: true
+        })
+      )
+    })
+
+    expect(useNavigationStore.getState().pendingArtifactMention).toBeUndefined()
+    expect(usePreviewWorkbenchStore.getState().fileDialogItem).toMatchObject({
+      artifactId: 'artifact-1',
+      projectId: 'project-a'
+    })
+    expect(onOpenChange).toHaveBeenCalledWith(false)
+  })
+
+  it('mentions the active Artifact on Shift+Enter inside the current Session', async () => {
+    const onOpenChange = vi.fn()
+    await act(async () => {
+      root.render(<GlobalSearchDialog open onOpenChange={onOpenChange} isSessionPersistenceReady />)
+      await new Promise((resolve) => window.setTimeout(resolve, 20))
+    })
+
+    const input = document.body.querySelector<HTMLInputElement>('input[role="combobox"]')
+    await act(async () => {
+      input?.dispatchEvent(
+        new KeyboardEvent('keydown', {
+          key: 'Enter',
+          shiftKey: true,
+          bubbles: true,
+          cancelable: true
+        })
+      )
+    })
+
+    expect(useNavigationStore.getState().pendingArtifactMention).toMatchObject({
+      id: 'artifact-1',
+      projectId: 'project-a'
+    })
+    expect(usePreviewWorkbenchStore.getState().fileDialogItem).toBeUndefined()
+    expect(onOpenChange).toHaveBeenCalledWith(false)
+  })
+
+  it('opens a cross-Project Artifact on Shift+Enter instead of mentioning it', async () => {
+    vi.mocked(window.api.projectFiles.searchArtifacts).mockResolvedValue({
+      primary: { items: [], totalCount: 0 },
+      other: [
+        {
+          ...artifact,
+          id: 'artifact-2',
+          sourceFileId: 'artifact-2',
+          sourceVersionId: 'version-2',
+          projectId: 'project-b',
+          sessionId: 'session-b',
+          name: 'other.png',
+          path: 'artifact-version:project-b/session-b/artifact-2/version-2'
+        }
+      ],
+      isIndexComplete: true
+    })
+    const onOpenChange = vi.fn()
+    await act(async () => {
+      root.render(<GlobalSearchDialog open onOpenChange={onOpenChange} isSessionPersistenceReady />)
+      await new Promise((resolve) => window.setTimeout(resolve, 20))
+    })
+
+    const input = document.body.querySelector<HTMLInputElement>('input[role="combobox"]')
+    const valueSetter = Object.getOwnPropertyDescriptor(
+      window.HTMLInputElement.prototype,
+      'value'
+    )?.set
+    await act(async () => {
+      valueSetter?.call(input, 'other.png')
+      input?.dispatchEvent(new Event('input', { bubbles: true }))
+      await new Promise((resolve) => window.setTimeout(resolve, 180))
+    })
+    await act(async () => {
+      input?.dispatchEvent(
+        new KeyboardEvent('keydown', {
+          key: 'Enter',
+          shiftKey: true,
+          bubbles: true,
+          cancelable: true
+        })
+      )
+    })
+
+    expect(useNavigationStore.getState()).toMatchObject({
+      view: 'workspace',
+      activeProjectId: 'project-b',
+      pendingArtifactMention: undefined
+    })
+    expect(usePreviewWorkbenchStore.getState().fileDialogItem).toMatchObject({
+      artifactId: 'artifact-2',
+      projectId: 'project-b'
+    })
     expect(onOpenChange).toHaveBeenCalledWith(false)
   })
 

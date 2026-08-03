@@ -135,6 +135,7 @@ export const GlobalSearchDialog = ({
 
   const projects = useProjectStore((state) => state.projects)
   const sessions = useSessionStore((state) => state.sessions)
+  const selectedSessionId = useSessionStore((state) => state.selectedSessionId)
   const activeProjectId = useNavigationStore((state) => state.activeProjectId)
   const view = useNavigationStore((state) => state.view)
   const openProject = useNavigationStore((state) => state.openProject)
@@ -353,6 +354,15 @@ export const GlobalSearchDialog = ({
   }, [activeRowId, open, selectableRows.length])
 
   const close = useCallback(() => onOpenChange(false), [onOpenChange])
+  const isArtifactMentionTarget = useCallback(
+    (artifact: ProjectFileItem): boolean =>
+      view === 'workspace' &&
+      activeProjectId === artifact.projectId &&
+      sessions.some(
+        (session) => session.id === selectedSessionId && session.projectId === artifact.projectId
+      ),
+    [activeProjectId, selectedSessionId, sessions, view]
+  )
   const previewArtifact = useCallback(
     (artifact: ProjectFileItem): void => {
       if (activeProjectId !== artifact.projectId || view !== 'workspace') {
@@ -366,8 +376,7 @@ export const GlobalSearchDialog = ({
   const mentionArtifact = useCallback(
     (artifact: ProjectFileItem): void => {
       if (
-        activeProjectId !== artifact.projectId ||
-        view !== 'workspace' ||
+        !isArtifactMentionTarget(artifact) ||
         artifactMentionAvailability?.projectId !== artifact.projectId ||
         !artifactMentionAvailability.canMention
       ) {
@@ -376,7 +385,7 @@ export const GlobalSearchDialog = ({
       requestArtifactMention(artifact)
       close()
     },
-    [activeProjectId, artifactMentionAvailability, close, requestArtifactMention, view]
+    [artifactMentionAvailability, close, isArtifactMentionTarget, requestArtifactMention]
   )
   const activate = useCallback(
     (row: SelectableRow | undefined, action?: 'mention' | 'preview'): void => {
@@ -397,8 +406,9 @@ export const GlobalSearchDialog = ({
         return
       }
       if (row.kind === 'artifact') {
-        if (action === 'mention') mentionArtifact(row.artifact)
-        else previewArtifact(row.artifact)
+        if (action === 'mention' && isArtifactMentionTarget(row.artifact)) {
+          mentionArtifact(row.artifact)
+        } else previewArtifact(row.artifact)
         return
       }
       if (row.kind === 'more-sessions') {
@@ -424,6 +434,7 @@ export const GlobalSearchDialog = ({
       close,
       failedArtifactCursor,
       isSessionPersistenceReady,
+      isArtifactMentionTarget,
       mentionArtifact,
       openProject,
       openSession,
@@ -518,10 +529,9 @@ export const GlobalSearchDialog = ({
             `${artifact.projectId}:${artifact.sessionId}:${artifact.messageId}`
           )
         : undefined
-    const isCurrentWorkspaceArtifact =
-      view === 'workspace' && activeProjectId === artifact.projectId
+    const isCurrentSessionArtifact = isArtifactMentionTarget(artifact)
     const canMention =
-      isCurrentWorkspaceArtifact &&
+      isCurrentSessionArtifact &&
       artifactMentionAvailability?.projectId === artifact.projectId &&
       artifactMentionAvailability.canMention
     return (
@@ -565,7 +575,7 @@ export const GlobalSearchDialog = ({
         {active ? (
           <TooltipProvider delayDuration={800}>
             <span className="flex shrink-0 items-center gap-1">
-              {isCurrentWorkspaceArtifact ? (
+              {isCurrentSessionArtifact ? (
                 <Tooltip>
                   <TooltipTrigger asChild>
                     <span>
