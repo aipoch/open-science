@@ -347,7 +347,7 @@ describe('provider registry', () => {
     expect(resolveVendorModelsUrl(bailianId)).toBeUndefined()
   })
 
-  it('routes Bailian for Plan through its fixed endpoints and model-specific Responses catalog', () => {
+  it('routes Bailian for Plan through its fixed endpoints without Responses support', () => {
     const planId = 'bailianplan' as OfficialVendorId
 
     expect(isOfficialVendorId('bailianplan')).toBe(true)
@@ -378,9 +378,9 @@ describe('provider registry', () => {
     expect(defaultVendorModel(planId)).toBe('qwen3.8-max')
     expect(resolveVendorModelsUrl(planId)).toBeUndefined()
 
-    expect(isVendorModelResponsesSupported(planId, 'qwen3.8-max')).toBe(true)
-    expect(isVendorModelResponsesSupported(planId, 'glm-5.2')).toBe(true)
-    expect(isVendorModelResponsesSupported(planId, 'deepseek-v4-pro')).toBe(true)
+    expect(isVendorModelResponsesSupported(planId, 'qwen3.8-max')).toBe(false)
+    expect(isVendorModelResponsesSupported(planId, 'glm-5.2')).toBe(false)
+    expect(isVendorModelResponsesSupported(planId, 'deepseek-v4-pro')).toBe(false)
     expect(isVendorModelResponsesSupported(planId, 'deepseek-v4-flash-0731')).toBe(false)
   })
 

@@ -273,9 +273,6 @@ export const OFFICIAL_VENDORS: OfficialVendor[] = [
     id: 'bailianplan',
     label: 'Bailian for Plan',
     reasoningEffort: 'unsupported',
-    // The mainland-China Token Plan has fixed subscription endpoints rather than the regional
-    // pay-as-you-go hosts. Its versioned OpenAI base serves both Chat Completions and supported
-    // Responses models.
     apiEndpoints: ['anthropic', 'openai'],
     baseUrl: 'https://token-plan.cn-beijing.maas.aliyuncs.com/apps/anthropic',
     openaiBaseUrl: 'https://token-plan.cn-beijing.maas.aliyuncs.com/compatible-mode/v1',
@@ -289,16 +286,6 @@ export const OFFICIAL_VENDORS: OfficialVendor[] = [
       { id: 'glm-5.2', contextWindow: 1_000_000 },
       { id: 'deepseek-v4-pro', contextWindow: 1_000_000 },
       { id: 'deepseek-v4-flash-0731', contextWindow: 1_000_000 }
-    ],
-    // The Plan docs explicitly exclude only the dated DeepSeek Flash build from Responses.
-    responsesModels: [
-      'qwen3.8-max',
-      'qwen3.8-max-preview',
-      'qwen3.7-max',
-      'qwen3.7-plus',
-      'qwen3.6-flash',
-      'glm-5.2',
-      'deepseek-v4-pro'
     ],
     multimodal: {
       multimodalModels: ['qwen3.8-max', 'qwen3.8-max-preview', 'qwen3.7-plus', 'qwen3.6-flash']
