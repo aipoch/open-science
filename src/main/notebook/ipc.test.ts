@@ -132,6 +132,7 @@ describe('notebook IPC handlers', () => {
       runCell: vi.fn().mockResolvedValue({ runId: 'run-1', status: 'completed' }),
       execute: vi.fn().mockResolvedValue({ runId: 'run-2', status: 'completed' }),
       exportIpynb: vi.fn().mockResolvedValue({ saved: false }),
+      exportIpynbAll: vi.fn().mockResolvedValue({ saved: false }),
       restart: vi.fn().mockResolvedValue({ sessionId: 'session-1' }),
       shutdown: vi.fn().mockResolvedValue({ sessionId: 'session-1', status: 'shutdown' })
     } as unknown as NotebookRuntimeService
@@ -165,7 +166,8 @@ describe('notebook IPC handlers', () => {
         runtimeSegmentId: 'forged-runtime',
         promptMessageId: 'forged-prompt'
       },
-      registeredInputFiles: []
+      registeredInputFiles: [],
+      inputRunLeaseId: 'forged-input-run-lease'
     }
     const run = { ...publicRun, ...forgedTurnContext }
     const execute = { ...publicExecute, ...forgedTurnContext }
@@ -178,6 +180,7 @@ describe('notebook IPC handlers', () => {
     await ipcHandlers.get('notebook:run-cell')?.(undefined, run)
     await ipcHandlers.get('notebook:execute')?.(undefined, execute)
     await ipcHandlers.get('notebook:export-ipynb')?.(undefined, session)
+    await ipcHandlers.get('notebook:export-ipynb-all')?.(undefined, session)
     await ipcHandlers.get('notebook:restart')?.(undefined, session)
     await ipcHandlers.get('notebook:shutdown')?.(undefined, session)
 
@@ -189,6 +192,7 @@ describe('notebook IPC handlers', () => {
     expect(service.runCell).toHaveBeenCalledWith(publicRun)
     expect(service.execute).toHaveBeenCalledWith(publicExecute)
     expect(service.exportIpynb).toHaveBeenCalledWith(session)
+    expect(service.exportIpynbAll).toHaveBeenCalledWith(session)
     expect(service.restart).toHaveBeenCalledWith(session)
     expect(service.shutdown).toHaveBeenCalledWith(session)
   })

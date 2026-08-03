@@ -5,69 +5,23 @@ import type {
   BeginNotebookCodeCellRequest,
   ExecuteNotebookCodeRequest,
   ExportNotebookAllRequest,
-  ExportNotebookAllResult,
   ExportNotebookKernelRequest,
-  ExportNotebookResult,
   FinishNotebookCodeCellRequest,
-  NotebookRunSummary,
-  NotebookSessionReference,
   NotebookSessionRequest,
-  NotebookSessionState,
   RunNotebookCellRequest
 } from '../../shared/notebook'
-import type { NotebookRuntimeService } from './runtime-service'
-import { withDataRootWrite } from '../storage/migration-state'
-
-type NotebookHandlers = {
-  state: (request: NotebookSessionRequest) => Promise<NotebookSessionState>
-  reference: (request: NotebookSessionRequest) => Promise<NotebookSessionReference | null>
-  beginCodeCell: (
-    request: BeginNotebookCodeCellRequest
-  ) => ReturnType<NotebookRuntimeService['beginCodeCell']>
-  appendCodeCell: (
-    request: AppendNotebookCodeCellRequest
-  ) => ReturnType<NotebookRuntimeService['appendCodeCell']>
-  finishCodeCell: (
-    request: FinishNotebookCodeCellRequest
-  ) => ReturnType<NotebookRuntimeService['finishCodeCell']>
-  runCell: (request: RunNotebookCellRequest) => ReturnType<NotebookRuntimeService['runCell']>
-  execute: (request: ExecuteNotebookCodeRequest) => Promise<NotebookRunSummary>
-  exportIpynb: (request: ExportNotebookKernelRequest) => Promise<ExportNotebookResult>
-  exportIpynbAll: (request: ExportNotebookAllRequest) => Promise<ExportNotebookAllResult>
-  restart: (request: NotebookSessionRequest) => Promise<NotebookSessionState>
-  shutdown: (request: NotebookSessionRequest) => ReturnType<NotebookRuntimeService['shutdown']>
-}
-
-const withoutTrustedTurnContext = <Request extends NotebookSessionRequest>(
-  request: Request
-): Request => {
-  const { provenanceContext, registeredInputFiles, inputRunLeaseId, ...publicRequest } = request
-  void provenanceContext
-  void registeredInputFiles
-  void inputRunLeaseId
-  return publicRequest as Request
-}
+import {
+  createNotebookCommandWorkflows,
+  type NotebookCommandRuntime,
+  type NotebookCommandWorkflows
+} from './notebook-workflows'
 
 // Builds a small delegating surface so tests can validate IPC behavior without Electron wiring.
-const createNotebookHandlers = (service: NotebookRuntimeService): NotebookHandlers => ({
-  state: (request) => service.state(request),
-  reference: (request) => service.getSessionReference(request),
-  beginCodeCell: (request) => withDataRootWrite(() => service.beginCodeCell(request)),
-  appendCodeCell: (request) => withDataRootWrite(() => service.appendCodeCell(request)),
-  finishCodeCell: (request) => withDataRootWrite(() => service.finishCodeCell(request)),
-  runCell: (request) =>
-    withDataRootWrite(() => service.runCell(withoutTrustedTurnContext(request))),
-  execute: (request) =>
-    withDataRootWrite(() => service.execute(withoutTrustedTurnContext(request))),
-  exportIpynb: (request) => service.exportIpynb(request),
-  exportIpynbAll: (request) => service.exportIpynbAll(request),
-  restart: (request) => withDataRootWrite(() => service.restart(request)),
-  shutdown: (request) => withDataRootWrite(() => service.shutdown(request))
-})
+const createNotebookHandlers = createNotebookCommandWorkflows
 
 // Registers renderer-callable notebook commands on the main-process IPC bus.
-const registerNotebookIpcHandlers = (service: NotebookRuntimeService): void => {
-  const handlers = createNotebookHandlers(service)
+const registerNotebookIpcHandlers = (runtime: NotebookCommandRuntime): void => {
+  const handlers = createNotebookHandlers(runtime)
 
   ipcMainHandle('notebook:state', (_event, request: NotebookSessionRequest) =>
     handlers.state(request)
@@ -105,4 +59,4 @@ const registerNotebookIpcHandlers = (service: NotebookRuntimeService): void => {
 }
 
 export { createNotebookHandlers, registerNotebookIpcHandlers }
-export type { NotebookHandlers }
+export type { NotebookCommandWorkflows as NotebookHandlers }
