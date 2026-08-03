@@ -177,6 +177,7 @@ export class ElectronUpdaterStrategy implements UpdateStrategy {
   private downloadGeneration = 0
   private status: UpdateStatus
   private applying = false
+  private installerStarted = false
   // In-flight manifest notes fetch for the current update, awaited by check() so the returned
   // status reflects the hydrated notes.
   private notesHydration?: Promise<void>
@@ -269,7 +270,9 @@ export class ElectronUpdaterStrategy implements UpdateStrategy {
       this.setStatus({ ...this.status, state: 'ready', progress: 100 })
     })
     this.updater.on('error', (err) => {
+      if (this.applying && !this.installerStarted) return
       this.applying = false
+      this.installerStarted = false
       this.setStatus({
         ...this.status,
         state: 'error',
@@ -328,7 +331,7 @@ export class ElectronUpdaterStrategy implements UpdateStrategy {
     // An active download is in flight; ignore repeat clicks / concurrent renderers. Starting a second
     // would overwrite downloadToken and orphan the first (cancel() could no longer stop it). This guard
     // and the token claim below are synchronous so a racing download()/cancel() sees a consistent slot.
-    if (this.downloadToken) return this.status
+    if (this.applying || this.downloadToken) return this.status
 
     // A just-cancelled download may still be settling: cancel() returns before electron-updater's
     // underlying downloadPromise rejects. downloadUpdate() reuses that live promise and ignores a fresh
@@ -377,6 +380,7 @@ export class ElectronUpdaterStrategy implements UpdateStrategy {
   // download() awaits it so it never reuses the still-settling (cancelled) downloadPromise. No-op when
   // nothing is downloading.
   async cancel(): Promise<UpdateStatus> {
+    if (this.applying) return this.status
     this.downloadToken?.cancel()
     this.downloadToken = undefined
     if (this.status.state === 'downloading') {
@@ -394,6 +398,7 @@ export class ElectronUpdaterStrategy implements UpdateStrategy {
     // gate, which can take up to 15 seconds on Windows.
     if (this.applying) return this.status
     this.applying = true
+    this.installerStarted = false
     this.setStatus({ ...this.status, state: 'applying' })
 
     // Stop the agent + notebook process trees BEFORE handing off to the installer. Its uninstall step
@@ -430,10 +435,12 @@ export class ElectronUpdaterStrategy implements UpdateStrategy {
       this.log.info('update install gate cleared; proceeding to quitAndInstall')
     }
 
+    this.installerStarted = true
     try {
       this.updater.quitAndInstall(false, true)
     } catch (error) {
       this.applying = false
+      this.installerStarted = false
       this.setStatus({
         ...this.status,
         state: 'error',

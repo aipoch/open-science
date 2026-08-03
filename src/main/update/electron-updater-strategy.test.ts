@@ -312,7 +312,9 @@ describe('ElectronUpdaterStrategy', () => {
 
     updater.emit('checking-for-update')
     await strategy.check()
+    await strategy.download()
     expect(updater.checkForUpdates).not.toHaveBeenCalled()
+    expect(updater.downloadUpdate).not.toHaveBeenCalled()
     expect(strategy.getStatus().state).toBe('applying')
 
     finishGate?.()
@@ -336,7 +338,7 @@ describe('ElectronUpdaterStrategy', () => {
     expect(status.state).toBe('error')
   })
 
-  it('restores an actionable error when the updater fails during preparation', async () => {
+  it('ignores stale updater errors during preparation', async () => {
     const updater = new FakeUpdater()
     let finishGate: (() => void) | undefined
     const strategy = new ElectronUpdaterStrategy({
@@ -350,13 +352,28 @@ describe('ElectronUpdaterStrategy', () => {
     })
 
     const applying = strategy.apply()
-    updater.emit('error', new Error('installer failed'))
+    updater.emit('error', new Error('stale download failure'))
+    expect(strategy.getStatus().state).toBe('applying')
     finishGate?.()
     const status = await applying
 
-    expect(status.state).toBe('error')
-    expect(status.error).toBe('installer failed')
-    expect(updater.quitAndInstall).not.toHaveBeenCalled()
+    expect(status.state).toBe('applying')
+    expect(updater.quitAndInstall).toHaveBeenCalledTimes(1)
+  })
+
+  it('restores an actionable error after the installer handoff starts', async () => {
+    const updater = new FakeUpdater()
+    const strategy = new ElectronUpdaterStrategy({
+      updater,
+      currentVersion: '0.2.0',
+      broadcast: vi.fn()
+    })
+
+    await strategy.apply()
+    updater.emit('error', new Error('installer failed'))
+
+    expect(strategy.getStatus().state).toBe('error')
+    expect(strategy.getStatus().error).toBe('installer failed')
   })
 
   it('restores an actionable error when quitAndInstall throws', async () => {
