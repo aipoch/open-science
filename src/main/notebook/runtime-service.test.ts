@@ -7331,21 +7331,25 @@ describe('v4 runtime bindings & agent tools', () => {
     const root = await createStorageRoot()
     // A blocking executor: execute() stays pending until terminate() rejects it (a killed kernel).
     let rejectRun: ((error: unknown) => void) | undefined
+    let executionCount = 0
     const service = new NotebookRuntimeService({
       configRoot: root,
       dataRoot: root,
       projectName: 'default-project',
       repository: new NotebookRunRepository(root),
-      discoverRuntimes: async (language) => (language === 'python' ? [userPyA] : []),
+      discoverRuntimes: async (language) => (language === 'python' ? [userPyA, userPyB] : []),
       getRuntimeEnablement: async () => ({
-        enabled: { [userPyA.envId]: true },
+        enabled: { [userPyA.envId]: true, [userPyB.envId]: true },
         installAuthorized: {}
       }),
       executorFactory: () => ({
-        execute: () =>
-          new Promise<NotebookExecutionResult>((_resolve, reject) => {
+        execute: () => {
+          executionCount += 1
+          if (executionCount > 1) return Promise.reject(new Error('ordinary kernel failure'))
+          return new Promise<NotebookExecutionResult>((_resolve, reject) => {
             rejectRun = reject
-          }),
+          })
+        },
         shutdown: async () => ({ reaped: true }),
         terminate: async () => {
           rejectRun?.(new Error('kernel killed'))
@@ -7372,6 +7376,25 @@ describe('v4 runtime bindings & agent tools', () => {
     await service.revokeRuntime('python', userPyA.envId, { force: true })
     const summary = await runPromise
     expect(summary.status).toBe('cancelled')
+
+    // The force-stop marker is one-shot even though external runtimes share the default-python key.
+    // A later ordinary executor rejection must not inherit the earlier cancellation classification.
+    await service.switchRuntime({
+      sessionId: 's',
+      workspaceCwd: root,
+      language: 'python',
+      runtimeId: userPyB.envId
+    })
+    const laterSummary = await service.execute({
+      sessionId: 's',
+      workspaceCwd: root,
+      code: 'fail_later()',
+      language: 'python'
+    })
+    expect(laterSummary).toMatchObject({
+      status: 'failed',
+      text: { traceback: 'ordinary kernel failure' }
+    })
   })
 
   it('persists a binding and restores it active on a fresh service (WS1-rest/WS12 boot revalidation)', async () => {
