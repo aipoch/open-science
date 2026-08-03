@@ -57,7 +57,7 @@ import type {
 } from '../shared/compute'
 import type { DirListing, DownloadDest, LocalFile } from '../shared/remote-fs'
 import type { LocalDirListing, LocalRoots } from '../shared/local-fs'
-import { RENDERER_FAILURE_CHANNEL, type RendererFailureReport } from '../shared/diagnostics'
+import type { RendererFailureReport } from '../shared/diagnostics'
 import type { OpenLogFileResult, RevealLogFileResult } from '../shared/logs'
 import type {
   OpenSessionFromNotificationRequest,
@@ -116,13 +116,6 @@ import type {
   OfficePreviewOpenResult,
   OfficePreviewRuntimeState
 } from '../shared/office-preview'
-import {
-  OFFICE_PREVIEW_ATTACH_FRAME_CHANNEL,
-  OFFICE_PREVIEW_CLOSE_CHANNEL,
-  OFFICE_PREVIEW_OPEN_CHANNEL,
-  OFFICE_PREVIEW_REPORT_STATE_CHANNEL,
-  OFFICE_PREVIEW_STATE_CHANNEL
-} from '../shared/office-preview'
 import type {
   AcquireManagedPreviewRequest,
   ManagedPreviewRangeResult,
@@ -154,11 +147,9 @@ import type {
   SaveSessionOptions,
   SaveSessionManifestRequest
 } from '../shared/session-persistence'
-import {
-  SESSION_PERSISTENCE_FLUSH_REQUEST_CHANNEL,
-  SESSION_PERSISTENCE_FLUSH_RESPONSE_CHANNEL,
-  type SessionPersistenceFlushRequest,
-  type SessionPersistenceFlushResponse
+import type {
+  SessionPersistenceFlushRequest,
+  SessionPersistenceFlushResponse
 } from '../shared/session-persistence-flush'
 import type {
   ExportConversationRequest,
@@ -256,7 +247,6 @@ import type {
   ReviewSuppressionEvent,
   ReviewUpdateEvent
 } from '../shared/reviewer'
-import { REVIEWER_IPC } from '../shared/reviewer'
 import type {
   ApproveRemotePairingRequest,
   RemoteAccessSnapshot,
@@ -289,16 +279,6 @@ import {
 import {
   announceWindowFindReady,
   subscribeCloseActivePane,
-  WINDOW_CLOSE_CHANNEL,
-  WINDOW_CLOSE_CONFIRM_REQUEST_CHANNEL,
-  WINDOW_CLOSE_CONFIRM_RESPONSE_CHANNEL,
-  WINDOW_FIND_CLEAR_CHANNEL,
-  WINDOW_FIND_CLOSE_CHANNEL,
-  WINDOW_FIND_APPEARANCE_CHANNEL,
-  WINDOW_FIND_APPEARANCE_CHANGED_CHANNEL,
-  WINDOW_FIND_REQUEST_CHANNEL,
-  WINDOW_FIND_RESULT_CHANNEL,
-  WINDOW_FIND_SHOW_CHANNEL,
   type CloseConfirmRequest,
   type CloseConfirmResponse,
   type WindowFindAppearance,
@@ -322,8 +302,10 @@ const onIpcMessage = <Payload>(channel: string, listener: AcpListener<Payload>):
 
 const electronRendererContracts = createElectronRendererContractAdapter({
   invoke: (channel, ...args) => ipcRenderer.invoke(channel, ...args),
+  send: (channel, ...args) => ipcRenderer.send(channel, ...args),
   on: (channel, listener) => ipcRenderer.on(channel, listener),
-  removeListener: (channel, listener) => ipcRenderer.removeListener(channel, listener)
+  removeListener: (channel, listener) => ipcRenderer.removeListener(channel, listener),
+  getPathForFile: (file) => webUtils.getPathForFile(file as File)
 })
 
 // Custom APIs for renderer
@@ -850,15 +832,10 @@ type OpenScienceAPI = {
 
 // Exposes the small, typed bridge surface available to renderer code.
 const api: OpenScienceAPI = {
-  saveBlobFile: (request) =>
-    ipcRenderer.invoke('file:save-blob', request) as Promise<SaveBlobFileResult>,
-  saveManagedFile: (request) =>
-    ipcRenderer.invoke('file:save-managed', request) as Promise<SaveManagedFileResult>,
+  saveBlobFile: (request) => electronRendererContracts.invoke('saveBlobFile', request),
+  saveManagedFile: (request) => electronRendererContracts.invoke('saveManagedFile', request),
   saveSessionArtifacts: (request) =>
-    ipcRenderer.invoke(
-      'file:save-session-artifacts',
-      request
-    ) as Promise<SaveSessionArtifactsResult>,
+    electronRendererContracts.invoke('saveSessionArtifacts', request),
   platform: process.platform,
   getRuntimeVersions: () => ({
     electron: process.versions.electron,
@@ -866,10 +843,11 @@ const api: OpenScienceAPI = {
     node: process.versions.node
   }),
   lifecycle: {
-    getClientId: () => ipcRenderer.invoke('lifecycle:client-id') as Promise<string>
+    getClientId: () => electronRendererContracts.invoke('lifecycle.getClientId')
   },
   diagnostics: {
-    reportRendererFailure: (report) => ipcRenderer.send(RENDERER_FAILURE_CHANNEL, report)
+    reportRendererFailure: (report) =>
+      electronRendererContracts.send('diagnostics.reportRendererFailure', report)
   },
   acp: {
     getState: () => electronRendererContracts.invoke('acp.getState'),
@@ -903,30 +881,24 @@ const api: OpenScienceAPI = {
   },
   sessions: {
     // Loads every per-session file plus the last-open manifest from the main process.
-    loadAll: () => ipcRenderer.invoke('sessions:load-all') as Promise<LoadAllSessionsResult>,
+    loadAll: () => electronRendererContracts.invoke('sessions.loadAll'),
     // Persists a single sanitized session file.
     saveSession: (session, options) =>
-      (options
-        ? ipcRenderer.invoke('sessions:save-session', session, options)
-        : ipcRenderer.invoke('sessions:save-session', session)) as Promise<PersistedChatSession>,
+      electronRendererContracts.invoke('sessions.saveSession', session, options),
     // Removes one session file.
-    deleteSession: (request) =>
-      ipcRenderer.invoke('sessions:delete-session', request) as Promise<void>,
+    deleteSession: (request) => electronRendererContracts.invoke('sessions.deleteSession', request),
     // Persists the last-open project/session pointer.
-    saveManifest: (request) =>
-      ipcRenderer.invoke('sessions:save-manifest', request) as Promise<void>,
+    saveManifest: (request) => electronRendererContracts.invoke('sessions.saveManifest', request),
     // Exports the authoritative persisted active branch through a main-owned Save As flow.
     exportConversation: (request) =>
-      ipcRenderer.invoke(
-        'sessions:export-conversation',
-        request
-      ) as Promise<ExportConversationResult>,
-    onFlushRequest: (listener) => onIpcMessage(SESSION_PERSISTENCE_FLUSH_REQUEST_CHANNEL, listener),
+      electronRendererContracts.invoke('sessions.exportConversation', request),
+    onFlushRequest: (listener) =>
+      electronRendererContracts.subscribe('sessions.onFlushRequest', listener),
     sendFlushResponse: (response) =>
-      ipcRenderer.send(SESSION_PERSISTENCE_FLUSH_RESPONSE_CHANNEL, response),
-    onCreated: (listener) => onIpcMessage('session:created', listener),
-    onUpdated: (listener) => onIpcMessage('session:updated', listener),
-    onDeleted: (listener) => onIpcMessage('session:deleted', listener)
+      electronRendererContracts.send('sessions.sendFlushResponse', response),
+    onCreated: (listener) => electronRendererContracts.subscribe('sessions.onCreated', listener),
+    onUpdated: (listener) => electronRendererContracts.subscribe('sessions.onUpdated', listener),
+    onDeleted: (listener) => electronRendererContracts.subscribe('sessions.onDeleted', listener)
   },
   settings: {
     // Model-settings/onboarding surface: secrets stay in main, the renderer only sees masked views.
@@ -1054,19 +1026,16 @@ const api: OpenScienceAPI = {
       electronRendererContracts.subscribe('settings.onInstallLog', listener)
   },
   remoteAccess: {
-    getSnapshot: () =>
-      ipcRenderer.invoke('remote-access:get-snapshot') as Promise<RemoteAccessSnapshot>,
-    detect: () => ipcRenderer.invoke('remote-access:detect') as Promise<RemoteAccessSnapshot>,
-    disable: () => ipcRenderer.invoke('remote-access:disable') as Promise<RemoteAccessSnapshot>,
-    setMode: (request) =>
-      ipcRenderer.invoke('remote-access:set-mode', request) as Promise<RemoteAccessSnapshot>,
-    approve: (request) =>
-      ipcRenderer.invoke('remote-access:approve', request) as Promise<RemoteAccessSnapshot>,
-    reject: (request) =>
-      ipcRenderer.invoke('remote-access:reject', request) as Promise<RemoteAccessSnapshot>,
+    getSnapshot: () => electronRendererContracts.invoke('remoteAccess.getSnapshot'),
+    detect: () => electronRendererContracts.invoke('remoteAccess.detect'),
+    disable: () => electronRendererContracts.invoke('remoteAccess.disable'),
+    setMode: (request) => electronRendererContracts.invoke('remoteAccess.setMode', request),
+    approve: (request) => electronRendererContracts.invoke('remoteAccess.approve', request),
+    reject: (request) => electronRendererContracts.invoke('remoteAccess.reject', request),
     revokeBrowser: (request) =>
-      ipcRenderer.invoke('remote-access:revoke-browser', request) as Promise<RemoteAccessSnapshot>,
-    onChanged: (listener) => onIpcMessage('remote-access:changed', () => listener())
+      electronRendererContracts.invoke('remoteAccess.revokeBrowser', request),
+    onChanged: (listener) =>
+      electronRendererContracts.subscribe('remoteAccess.onChanged', () => listener())
   },
   specialist: {
     list: () => electronRendererContracts.invoke('specialist.list'),
@@ -1107,75 +1076,62 @@ const api: OpenScienceAPI = {
     onChanged: (listener) => electronRendererContracts.subscribe('handoff.onChanged', listener)
   },
   logs: {
-    getPath: () => ipcRenderer.invoke('logs:get-path') as Promise<string | null>,
-    openFile: () => ipcRenderer.invoke('logs:open-file') as Promise<OpenLogFileResult>,
-    revealInFolder: () =>
-      ipcRenderer.invoke('logs:reveal-in-folder') as Promise<RevealLogFileResult>
+    getPath: () => electronRendererContracts.invoke('logs.getPath'),
+    openFile: () => electronRendererContracts.invoke('logs.openFile'),
+    revealInFolder: () => electronRendererContracts.invoke('logs.revealInFolder')
   },
   notifications: {
     // Main-process task notifications route their click through this channel.
-    onOpenSession: (listener) => onIpcMessage('notifications:open-session', listener),
+    onOpenSession: (listener) =>
+      electronRendererContracts.subscribe('notifications.onOpenSession', listener),
     peekPendingOpenSession: () =>
-      ipcRenderer.invoke(
-        'notifications:peek-pending-open-session'
-      ) as Promise<OpenSessionFromNotificationRequest | null>,
+      electronRendererContracts.invoke('notifications.peekPendingOpenSession'),
     takePendingOpenSession: (expectedToken) =>
-      ipcRenderer.invoke(
-        'notifications:take-pending-open-session',
-        expectedToken
-      ) as Promise<OpenSessionFromNotificationRequest | null>,
-    syncViewState: (state) => ipcRenderer.send('notifications:sync-unread-view', state),
-    onViewProbe: (listener) => onIpcMessage('notifications:probe-unread-view', listener)
+      electronRendererContracts.invoke('notifications.takePendingOpenSession', expectedToken),
+    syncViewState: (state) => electronRendererContracts.send('notifications.syncViewState', state),
+    onViewProbe: (listener) =>
+      electronRendererContracts.subscribe('notifications.onViewProbe', listener)
   },
   github: {
-    getStars: () => ipcRenderer.invoke('github:get-stars') as Promise<number | null>
+    getStars: () => electronRendererContracts.invoke('github.getStars')
   },
   cli: {
-    getStatus: () => ipcRenderer.invoke('cli:get-status') as Promise<CliLauncherStatus>,
-    install: () => ipcRenderer.invoke('cli:install') as Promise<CliLauncherStatus>,
-    uninstall: () => ipcRenderer.invoke('cli:uninstall') as Promise<CliLauncherStatus>
+    getStatus: () => electronRendererContracts.invoke('cli.getStatus'),
+    install: () => electronRendererContracts.invoke('cli.install'),
+    uninstall: () => electronRendererContracts.invoke('cli.uninstall')
   },
   update: {
-    getAppInfo: () => ipcRenderer.invoke('update:get-app-info') as Promise<AppInfo>,
-    getStatus: () => ipcRenderer.invoke('update:get-status') as Promise<UpdateStatus>,
-    check: () => ipcRenderer.invoke('update:check') as Promise<UpdateStatus>,
-    download: () => ipcRenderer.invoke('update:download') as Promise<UpdateStatus>,
-    cancel: () => ipcRenderer.invoke('update:cancel') as Promise<UpdateStatus>,
-    apply: () => ipcRenderer.invoke('update:apply') as Promise<UpdateStatus>,
-    onStatus: (listener) => onIpcMessage('update:status', listener),
-    onProgress: (listener) => onIpcMessage('update:progress', listener)
+    getAppInfo: () => electronRendererContracts.invoke('update.getAppInfo'),
+    getStatus: () => electronRendererContracts.invoke('update.getStatus'),
+    check: () => electronRendererContracts.invoke('update.check'),
+    download: () => electronRendererContracts.invoke('update.download'),
+    cancel: () => electronRendererContracts.invoke('update.cancel'),
+    apply: () => electronRendererContracts.invoke('update.apply'),
+    onStatus: (listener) => electronRendererContracts.subscribe('update.onStatus', listener),
+    onProgress: (listener) => electronRendererContracts.subscribe('update.onProgress', listener)
   },
   projects: {
     // Project CRUD backed by the SQLite/Prisma layer (scope: projects only).
-    list: () => ipcRenderer.invoke('projects:list') as Promise<Project[]>,
-    get: (id) => ipcRenderer.invoke('projects:get', id) as Promise<Project | null>,
-    create: (request) => ipcRenderer.invoke('projects:create', request) as Promise<Project>,
-    update: (request) => ipcRenderer.invoke('projects:update', request) as Promise<Project>,
-    delete: (request) => ipcRenderer.invoke('projects:delete', request) as Promise<void>,
-    onCreated: (listener) => onIpcMessage('project:created', listener),
-    onUpdated: (listener) => onIpcMessage('project:updated', listener),
-    onDeleted: (listener) => onIpcMessage('project:deleted', listener)
+    list: () => electronRendererContracts.invoke('projects.list'),
+    get: (id) => electronRendererContracts.invoke('projects.get', id),
+    create: (request) => electronRendererContracts.invoke('projects.create', request),
+    update: (request) => electronRendererContracts.invoke('projects.update', request),
+    delete: (request) => electronRendererContracts.invoke('projects.delete', request),
+    onCreated: (listener) => electronRendererContracts.subscribe('projects.onCreated', listener),
+    onUpdated: (listener) => electronRendererContracts.subscribe('projects.onUpdated', listener),
+    onDeleted: (listener) => electronRendererContracts.subscribe('projects.onDeleted', listener)
   },
   // Files exposes metadata pages only. Thumbnail/full-preview bytes continue through the existing
   // artifact/upload APIs after a visible item has been selected or rendered.
   projectFiles: {
-    getOverview: (request) =>
-      ipcRenderer.invoke('project-files:get-overview', request) as Promise<ProjectFilesOverview>,
-    listFiles: (request) =>
-      ipcRenderer.invoke('project-files:list-files', request) as Promise<ProjectFilesPage>,
+    getOverview: (request) => electronRendererContracts.invoke('projectFiles.getOverview', request),
+    listFiles: (request) => electronRendererContracts.invoke('projectFiles.listFiles', request),
     listArtifactGroups: (request) =>
-      ipcRenderer.invoke(
-        'project-files:list-artifact-groups',
-        request
-      ) as Promise<ArtifactGroupPage>,
+      electronRendererContracts.invoke('projectFiles.listArtifactGroups', request),
     searchArtifacts: (request) =>
-      ipcRenderer.invoke(
-        'project-files:search-artifacts',
-        request
-      ) as Promise<SearchArtifactsResult>,
-    repairIndex: (request) =>
-      ipcRenderer.invoke('project-files:repair-index', request) as Promise<void>,
-    onChanged: (listener) => onIpcMessage('project-files:changed', listener)
+      electronRendererContracts.invoke('projectFiles.searchArtifacts', request),
+    repairIndex: (request) => electronRendererContracts.invoke('projectFiles.repairIndex', request),
+    onChanged: (listener) => electronRendererContracts.subscribe('projectFiles.onChanged', listener)
   },
   compute: {
     // SSH compute host record CRUD, backed by the same SQLite/Prisma layer as projects.
@@ -1237,117 +1193,79 @@ const api: OpenScienceAPI = {
   },
   preview: {
     // Per-project preview panel state, persisted alongside projects in SQLite.
-    load: (request) =>
-      ipcRenderer.invoke('preview:load', request) as Promise<PersistedPreviewState | null>,
-    save: (request) => ipcRenderer.invoke('preview:save', request) as Promise<void>,
-    delete: (request) => ipcRenderer.invoke('preview:delete', request) as Promise<void>
+    load: (request) => electronRendererContracts.invoke('preview.load', request),
+    save: (request) => electronRendererContracts.invoke('preview.save', request),
+    delete: (request) => electronRendererContracts.invoke('preview.delete', request)
   },
   previewResources: {
-    acquire: (request) =>
-      ipcRenderer.invoke('preview-resources:acquire', request) as Promise<ManagedPreviewResource>,
-    readRange: (request) =>
-      ipcRenderer.invoke(
-        'preview-resources:read-range',
-        request
-      ) as Promise<ManagedPreviewRangeResult>,
-    release: (request) => ipcRenderer.invoke('preview-resources:release', request) as Promise<void>
+    acquire: (request) => electronRendererContracts.invoke('previewResources.acquire', request),
+    readRange: (request) => electronRendererContracts.invoke('previewResources.readRange', request),
+    release: (request) => electronRendererContracts.invoke('previewResources.release', request)
   },
   officePreview: {
-    open: (request) =>
-      ipcRenderer.invoke(OFFICE_PREVIEW_OPEN_CHANNEL, request) as Promise<OfficePreviewOpenResult>,
+    open: (request) => electronRendererContracts.invoke('officePreview.open', request),
     attachFrame: (sessionId) =>
-      ipcRenderer.invoke(OFFICE_PREVIEW_ATTACH_FRAME_CHANNEL, sessionId) as Promise<
-        OfficePreviewAttachResult | undefined
-      >,
+      electronRendererContracts.invoke('officePreview.attachFrame', sessionId),
     // Runtime phases are one-way notifications relayed from the sandboxed child frame.
     reportState: (sessionId, state) =>
-      ipcRenderer.send(OFFICE_PREVIEW_REPORT_STATE_CHANNEL, sessionId, state),
-    close: (sessionId) =>
-      ipcRenderer.invoke(OFFICE_PREVIEW_CLOSE_CHANNEL, sessionId) as Promise<void>,
-    onState: (listener) => onIpcMessage(OFFICE_PREVIEW_STATE_CHANNEL, listener)
+      electronRendererContracts.send('officePreview.reportState', sessionId, state),
+    close: (sessionId) => electronRendererContracts.invoke('officePreview.close', sessionId),
+    onState: (listener) => electronRendererContracts.subscribe('officePreview.onState', listener)
   },
   artifacts: {
     // Keep generated file movement in the main process where filesystem trust checks live.
     finalizeRunArtifacts: (request) =>
-      ipcRenderer.invoke('artifacts:finalize-run', request) as Promise<FinalizeRunArtifactsResult>,
+      electronRendererContracts.invoke('artifacts.finalizeRunArtifacts', request),
     // Lists every on-disk artifact for a project so orphaned files (owning session deleted) still show.
     listProjectFiles: (request) =>
-      ipcRenderer.invoke('artifacts:list-project-files', request) as Promise<ArtifactFile[]>,
+      electronRendererContracts.invoke('artifacts.listProjectFiles', request),
     // Re-finalizes crash-orphaned pending artifacts so the renderer can replace stale pending paths.
     reconcilePendingArtifacts: (request) =>
-      ipcRenderer.invoke('artifacts:reconcile-pending', request) as Promise<ArtifactFile[]>,
-    openFile: (request) => ipcRenderer.invoke('artifacts:open-file', request) as Promise<void>,
+      electronRendererContracts.invoke('artifacts.reconcilePendingArtifacts', request),
+    openFile: (request) => electronRendererContracts.invoke('artifacts.openFile', request),
     // Keep preview reads on the same managed-file trust path as opening files.
-    readPreview: (request) =>
-      ipcRenderer.invoke('artifacts:read-preview', request) as Promise<ArtifactPreviewResult>,
-    getLineage: (request) =>
-      ipcRenderer.invoke('artifacts:get-lineage', request) as Promise<
-        ArtifactLineageProvenance | undefined
-      >,
+    readPreview: (request) => electronRendererContracts.invoke('artifacts.readPreview', request),
+    getLineage: (request) => electronRendererContracts.invoke('artifacts.getLineage', request),
     getVersionProvenance: (request) =>
-      ipcRenderer.invoke(
-        'artifacts:get-version-provenance',
-        request
-      ) as Promise<ArtifactVersionProvenance>,
+      electronRendererContracts.invoke('artifacts.getVersionProvenance', request),
     getVersionExecution: (request) =>
-      ipcRenderer.invoke(
-        'artifacts:get-version-execution',
-        request
-      ) as Promise<ArtifactVersionExecutionProvenance>,
+      electronRendererContracts.invoke('artifacts.getVersionExecution', request),
     getVersionMessages: (request) =>
-      ipcRenderer.invoke(
-        'artifacts:get-version-messages',
-        request
-      ) as Promise<ArtifactVersionMessagesProvenance>,
+      electronRendererContracts.invoke('artifacts.getVersionMessages', request),
     getVersionReview: (request) =>
-      ipcRenderer.invoke(
-        'artifacts:get-version-review',
-        request
-      ) as Promise<ArtifactVersionReviewProvenance>
+      electronRendererContracts.invoke('artifacts.getVersionReview', request)
   },
   uploads: {
     // Upload IPC remains behind the preload bridge so renderer code never receives raw fs access.
-    stageLocalFile: async (file, request) => {
-      const sourcePath = webUtils.getPathForFile(file)
-      if (!sourcePath) return null
-      return (await ipcRenderer.invoke('uploads:stage-local-file', {
-        ...request,
-        sourcePath
-      })) as UploadedAttachment
-    },
+    stageLocalFile: (file, request) =>
+      electronRendererContracts.invoke('uploads.stageLocalFile', file, request),
     claimLocalFile: (request) =>
-      ipcRenderer.invoke('uploads:claim-local-file', request) as Promise<void>,
+      electronRendererContracts.invoke('uploads.claimLocalFile', request),
     // Save-as-artifact from the local-file preview; the renderer supplies the path directly.
     stageLocalPath: (request) =>
-      ipcRenderer.invoke('uploads:stage-local-path', request) as Promise<UploadedAttachment>,
-    beginTransfer: (request) =>
-      ipcRenderer.invoke('uploads:begin-transfer', request) as Promise<UploadTransferStatus>,
+      electronRendererContracts.invoke('uploads.stageLocalPath', request),
+    beginTransfer: (request) => electronRendererContracts.invoke('uploads.beginTransfer', request),
     appendTransfer: (request) =>
-      ipcRenderer.invoke('uploads:append-transfer', request) as Promise<UploadTransferStatus>,
+      electronRendererContracts.invoke('uploads.appendTransfer', request),
     getTransferStatus: (request) =>
-      ipcRenderer.invoke(
-        'uploads:transfer-status',
-        request
-      ) as Promise<UploadTransferStatus | null>,
+      electronRendererContracts.invoke('uploads.getTransferStatus', request),
     finishTransfer: (request) =>
-      ipcRenderer.invoke('uploads:finish-transfer', request) as Promise<UploadedAttachment>,
-    abortTransfer: (request) =>
-      ipcRenderer.invoke('uploads:abort-transfer', request) as Promise<void>,
-    onTransferProgress: (listener) => onIpcMessage('uploads:transfer-progress', listener),
-    deleteUpload: (request) => ipcRenderer.invoke('uploads:delete', request) as Promise<void>,
+      electronRendererContracts.invoke('uploads.finishTransfer', request),
+    abortTransfer: (request) => electronRendererContracts.invoke('uploads.abortTransfer', request),
+    onTransferProgress: (listener) =>
+      electronRendererContracts.subscribe('uploads.onTransferProgress', listener),
+    deleteUpload: (request) => electronRendererContracts.invoke('uploads.deleteUpload', request),
     finalizeSession: (request) =>
-      ipcRenderer.invoke('uploads:finalize-session', request) as Promise<UploadedAttachment[]>,
-    readPreview: (request) =>
-      ipcRenderer.invoke('uploads:read-preview', request) as Promise<ArtifactPreviewResult>
+      electronRendererContracts.invoke('uploads.finalizeSession', request),
+    readPreview: (request) => electronRendererContracts.invoke('uploads.readPreview', request)
   },
   localFs: {
     // Local-fs IPC stays behind the preload bridge so renderer code never receives raw fs access.
-    listDir: (path) => ipcRenderer.invoke('local-fs:list-dir', path) as Promise<LocalDirListing>,
-    readPreview: (request) =>
-      ipcRenderer.invoke('local-fs:read-preview', request) as Promise<ArtifactPreviewResult>,
-    getRoots: () => ipcRenderer.invoke('local-fs:get-roots') as Promise<LocalRoots>,
-    reveal: (path) => ipcRenderer.invoke('local-fs:reveal', path) as Promise<void>,
-    openPath: (path) => ipcRenderer.invoke('local-fs:open-path', path) as Promise<string>
+    listDir: (path) => electronRendererContracts.invoke('localFs.listDir', path),
+    readPreview: (request) => electronRendererContracts.invoke('localFs.readPreview', request),
+    getRoots: () => electronRendererContracts.invoke('localFs.getRoots'),
+    reveal: (path) => electronRendererContracts.invoke('localFs.reveal', path),
+    openPath: (path) => electronRendererContracts.invoke('localFs.openPath', path)
   },
   notebook: {
     // Notebook commands stay behind typed IPC so renderer code never talks to local RPC directly.
@@ -1436,52 +1354,44 @@ const api: OpenScienceAPI = {
       electronRendererContracts.invoke('runtime.unregisterInterpreter', language, path)
   },
   storage: {
-    getInfo: () => ipcRenderer.invoke('storage:get-info') as Promise<StorageInfo>,
-    revealAppStorage: () =>
-      ipcRenderer.invoke('storage:reveal-app-storage') as Promise<RevealAppStorageResult>,
-    detectActive: () => ipcRenderer.invoke('storage:detect-active') as Promise<ActiveSessionInfo[]>,
-    pickDirectory: () => ipcRenderer.invoke('storage:pick-directory') as Promise<string | null>,
+    getInfo: () => electronRendererContracts.invoke('storage.getInfo'),
+    revealAppStorage: () => electronRendererContracts.invoke('storage.revealAppStorage'),
+    detectActive: () => electronRendererContracts.invoke('storage.detectActive'),
+    pickDirectory: () => electronRendererContracts.invoke('storage.pickDirectory'),
     validateDataRoot: (parent) =>
-      ipcRenderer.invoke('storage:validate-data-root', {
-        parent
-      }) as Promise<DataRootValidationResult>,
+      electronRendererContracts.invoke('storage.validateDataRoot', parent),
     inspectDataRoot: (parent) =>
-      ipcRenderer.invoke('storage:inspect-data-root', { parent }) as Promise<DataRootInspection>,
-    migrate: (parent) =>
-      ipcRenderer.invoke('storage:migrate', { parent }) as Promise<MigrationOutcome>,
+      electronRendererContracts.invoke('storage.inspectDataRoot', parent),
+    migrate: (parent) => electronRendererContracts.invoke('storage.migrate', parent),
     setDataRootAndRelaunch: (parent, markOnboarding) =>
-      ipcRenderer.invoke('storage:set-data-root-and-relaunch', {
-        parent,
-        markOnboarding
-      }) as Promise<DataRootValidationResult>,
-    cancelMigrate: () => ipcRenderer.invoke('storage:cancel-migrate') as Promise<void>,
+      electronRendererContracts.invoke('storage.setDataRootAndRelaunch', parent, markOnboarding),
+    cancelMigrate: () => electronRendererContracts.invoke('storage.cancelMigrate'),
     commitAndRelaunch: (parent) =>
-      ipcRenderer.invoke('storage:commit-and-relaunch', { parent }) as Promise<MigrationOutcome>,
+      electronRendererContracts.invoke('storage.commitAndRelaunch', parent),
     discardMigratedCopy: (parent) =>
-      ipcRenderer.invoke('storage:discard-migrated-copy', { parent }) as Promise<void>,
+      electronRendererContracts.invoke('storage.discardMigratedCopy', parent),
     dismissLegacyMovePrompt: () =>
-      ipcRenderer.invoke('storage:dismiss-legacy-move-prompt') as Promise<void>,
-    onProgress: (listener) => onIpcMessage('storage:migrate-progress', listener)
+      electronRendererContracts.invoke('storage.dismissLegacyMovePrompt'),
+    onProgress: (listener) => electronRendererContracts.subscribe('storage.onProgress', listener)
   },
   reviewer: {
-    run: (request: ReviewRunRequest) =>
-      ipcRenderer.invoke(REVIEWER_IPC.RUN, request) as Promise<ReviewRunResult>,
+    run: (request: ReviewRunRequest) => electronRendererContracts.invoke('reviewer.run', request),
     getForSession: (request: ReviewSessionRequest) =>
-      ipcRenderer.invoke(REVIEWER_IPC.GET_FOR_SESSION, request) as Promise<ReviewWithChecks[]>,
-    onUpdated: (listener) => onIpcMessage(REVIEWER_IPC.UPDATED, listener),
+      electronRendererContracts.invoke('reviewer.getForSession', request),
+    onUpdated: (listener) => electronRendererContracts.subscribe('reviewer.onUpdated', listener),
     onSuppressNextAutoReview: (listener: AcpListener<ReviewSuppressionEvent>) =>
-      onIpcMessage(REVIEWER_IPC.SUPPRESS_NEXT_AUTO_REVIEW, listener),
+      electronRendererContracts.subscribe('reviewer.onSuppressNextAutoReview', listener),
     // Fix loop lock: fired when the loop starts (lock composer) / ends or is aborted (unlock).
     onFixLoopStart: (listener: AcpListener<ReviewSessionRequest>) =>
-      onIpcMessage(REVIEWER_IPC.FIX_LOOP_START, listener),
+      electronRendererContracts.subscribe('reviewer.onFixLoopStart', listener),
     onFixLoopEnd: (listener: AcpListener<ReviewSessionRequest>) =>
-      onIpcMessage(REVIEWER_IPC.FIX_LOOP_END, listener),
+      electronRendererContracts.subscribe('reviewer.onFixLoopEnd', listener),
     // Sends an abort request to the main process to stop the running fix loop for a session.
     abortFixLoop: (request: ReviewSessionRequest) =>
-      ipcRenderer.invoke(REVIEWER_IPC.ABORT_FIX_LOOP, request) as Promise<void>
+      electronRendererContracts.invoke('reviewer.abortFixLoop', request)
   },
   window: {
-    close: () => ipcRenderer.invoke(WINDOW_CLOSE_CHANNEL) as Promise<void>,
+    close: () => electronRendererContracts.invoke('window.close'),
     // The shared helper announces READY on subscribe (so main forwards the chord here) and UNREADY on
     // teardown (so main re-arms its direct close). Reload remounts the hook, re-running the handshake.
     onCloseActivePane: (listener) =>
@@ -1492,24 +1402,27 @@ const api: OpenScienceAPI = {
         },
         listener
       ),
-    findInPage: (request) => ipcRenderer.send(WINDOW_FIND_REQUEST_CHANNEL, request),
-    clearFind: () => ipcRenderer.send(WINDOW_FIND_CLEAR_CHANNEL),
+    findInPage: (request) => electronRendererContracts.send('window.findInPage', request),
+    clearFind: () => electronRendererContracts.send('window.clearFind'),
     // The Workspace announces it is mounted and searchable so main knows whether to intercept
     // Cmd/Ctrl+F. Returns a teardown that announces UNREADY on unmount.
     announceWindowFindReady: () =>
       announceWindowFindReady({ send: (channel) => ipcRenderer.send(channel) }),
-    onFindInPageResult: (listener) => onIpcMessage(WINDOW_FIND_RESULT_CHANNEL, listener),
+    onFindInPageResult: (listener) =>
+      electronRendererContracts.subscribe('window.onFindInPageResult', listener),
     // Overlay-only surface: main signals the bar was shown (focus + restore remembered query), and the
     // overlay asks main to hide it. The localhost Web UI never loads this overlay, so both stay optional.
-    onShowWindowFind: (listener) => onIpcMessage(WINDOW_FIND_SHOW_CHANNEL, listener),
-    onWindowFindAppearance: (listener) => onIpcMessage(WINDOW_FIND_APPEARANCE_CHANNEL, listener),
+    onShowWindowFind: (listener) =>
+      electronRendererContracts.subscribe('window.onShowWindowFind', listener),
+    onWindowFindAppearance: (listener) =>
+      electronRendererContracts.subscribe('window.onWindowFindAppearance', listener),
     announceWindowFindAppearance: (appearance) =>
-      ipcRenderer.send(WINDOW_FIND_APPEARANCE_CHANGED_CHANNEL, appearance),
-    closeFind: () => ipcRenderer.send(WINDOW_FIND_CLOSE_CHANNEL),
+      electronRendererContracts.send('window.announceWindowFindAppearance', appearance),
+    closeFind: () => electronRendererContracts.send('window.closeFind'),
     onCloseConfirmRequest: (listener) =>
-      onIpcMessage(WINDOW_CLOSE_CONFIRM_REQUEST_CHANNEL, listener),
+      electronRendererContracts.subscribe('window.onCloseConfirmRequest', listener),
     sendCloseConfirmResponse: (payload) =>
-      ipcRenderer.send(WINDOW_CLOSE_CONFIRM_RESPONSE_CHANNEL, payload)
+      electronRendererContracts.send('window.sendCloseConfirmResponse', payload)
   }
 }
 

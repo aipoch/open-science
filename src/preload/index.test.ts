@@ -37,6 +37,7 @@ vi.mock('electron', () => ({
 // The subset of the bridge these tests exercise. Args are unknown — forwarding, not shape, is asserted.
 type PreloadApi = {
   saveSessionArtifacts: (request: unknown) => unknown
+  getRuntimeVersions: () => { electron: string; chrome: string; node: string }
   diagnostics: {
     reportRendererFailure: (report: unknown) => void
   }
@@ -45,12 +46,19 @@ type PreloadApi = {
   }
   sessions: {
     loadAll: () => unknown
-    saveSession: (session: unknown) => unknown
+    saveSession: (session: unknown, options?: unknown) => unknown
     deleteSession: (request: unknown) => unknown
     saveManifest: (request: unknown) => unknown
     exportConversation: (request: unknown) => unknown
     onFlushRequest: (listener: (request: { requestId: string }) => void) => unknown
     sendFlushResponse: (response: { requestId: string }) => void
+  }
+  remoteAccess: {
+    onChanged: (listener: () => void) => () => void
+  }
+  storage: {
+    validateDataRoot: (parent: string) => unknown
+    setDataRootAndRelaunch: (parent: string, markOnboarding?: boolean) => unknown
   }
   settings: {
     detectOpencode: () => unknown
@@ -126,6 +134,7 @@ type PreloadApi = {
       followsSystem: boolean
     }) => void
     announceWindowFindReady?: () => unknown
+    onCloseActivePane: (listener: () => void) => () => void
   }
 }
 
@@ -176,6 +185,11 @@ const runtimeContractCapabilities = new Set([
 const runtimeContracts = RENDERER_CONTRACT_GROUPS.filter(({ capability }) =>
   runtimeContractCapabilities.has(capability)
 ).flatMap(({ contracts }) => contracts)
+
+const coreContractGroups = RENDERER_CONTRACT_GROUPS.filter(
+  ({ capability }) => !runtimeContractCapabilities.has(capability)
+)
+const coreContracts = coreContractGroups.flatMap(({ contracts }) => contracts)
 
 const getApiCallable = (publicPath: string): ((...args: unknown[]) => unknown) => {
   const callable = publicPath
@@ -540,6 +554,179 @@ describe('preload bridge — runtime renderer contract catalog', () => {
   })
 })
 
+describe('preload bridge — core renderer contract catalog', () => {
+  it('pins the exact 21-group, 128-callable T1d complement', () => {
+    expect(coreContractGroups.map(({ capability }) => capability)).toEqual([
+      'artifacts',
+      'cli',
+      'diagnostics',
+      'github',
+      'lifecycle',
+      'local-fs',
+      'logs',
+      'notifications',
+      'office-preview',
+      'platform-file-save',
+      'preview',
+      'preview-resources',
+      'project-files',
+      'projects',
+      'remote-access',
+      'reviewer',
+      'sessions',
+      'storage',
+      'update',
+      'uploads',
+      'window'
+    ])
+    expect(coreContracts).toHaveLength(128)
+    expect({
+      requests: coreContracts.filter(
+        ({ dispatchPolicy }) => dispatchPolicy.electron === 'electron-ipc-request'
+      ).length,
+      events: coreContracts.filter(({ kind }) => kind === 'event').length,
+      sends: coreContracts.filter(
+        ({ dispatchPolicy }) => dispatchPolicy.electron === 'electron-ipc-send'
+      ).length,
+      surfaceNative: coreContracts.filter(
+        ({ dispatchPolicy }) => dispatchPolicy.electron === 'surface-native'
+      ).length
+    }).toEqual({ requests: 92, events: 25, sends: 10, surfaceNative: 1 })
+  })
+
+  it('routes all 92 request methods through their cataloged Electron channels', async () => {
+    const requestContracts = coreContracts.filter(
+      ({ dispatchPolicy }) => dispatchPolicy.electron === 'electron-ipc-request'
+    )
+    const localFile = { name: 'catalog.csv' } as File
+
+    expect(requestContracts).toHaveLength(92)
+
+    for (const contract of requestContracts) {
+      invokeMock.mockClear()
+      getPathForFileMock.mockReturnValue('/data/catalog.csv')
+      const args = contract.publicPath === 'uploads.stageLocalFile' ? [localFile, {}] : []
+
+      await getApiCallable(contract.publicPath)(...args)
+
+      expect(invokeMock, contract.publicPath).toHaveBeenCalledTimes(1)
+      expect(invokeMock, contract.publicPath).toHaveBeenCalledWith(
+        contract.channel,
+        ...invokeMock.mock.calls[0].slice(1)
+      )
+    }
+  })
+
+  it('routes all generic events and removes each wrapped listener by exact identity', () => {
+    const eventContracts = coreContracts.filter(({ kind }) => kind === 'event')
+    const genericEventContracts = eventContracts.filter(
+      ({ lifecycleDispatch }) => lifecycleDispatch == null
+    )
+
+    expect(eventContracts).toHaveLength(25)
+    expect(genericEventContracts).toHaveLength(24)
+
+    for (const contract of genericEventContracts) {
+      onMock.mockClear()
+      removeListenerMock.mockClear()
+      const listener = vi.fn()
+      const unsubscribe = getApiCallable(contract.publicPath)(listener) as () => void
+      const wrappedListener = onMock.mock.calls[0]?.[1]
+      const payload = { publicPath: contract.publicPath }
+
+      wrappedListener?.({ sender: 'electron' }, payload)
+      unsubscribe()
+
+      expect(onMock, contract.publicPath).toHaveBeenCalledWith(contract.channel, wrappedListener)
+      if (contract.publicPath === 'remoteAccess.onChanged') {
+        expect(listener, contract.publicPath).toHaveBeenCalledWith()
+      } else {
+        expect(listener, contract.publicPath).toHaveBeenCalledWith(payload)
+      }
+      expect(removeListenerMock, contract.publicPath).toHaveBeenCalledWith(
+        contract.channel,
+        wrappedListener
+      )
+    }
+  })
+
+  it('routes all nine generic one-way sends through their cataloged Electron channels', () => {
+    const sendContracts = coreContracts.filter(
+      ({ dispatchPolicy }) => dispatchPolicy.electron === 'electron-ipc-send'
+    )
+    const genericSendContracts = sendContracts.filter(
+      ({ lifecycleDispatch }) => lifecycleDispatch == null
+    )
+
+    expect(sendContracts).toHaveLength(10)
+    expect(genericSendContracts).toHaveLength(9)
+
+    for (const contract of genericSendContracts) {
+      sendMock.mockClear()
+
+      getApiCallable(contract.publicPath)()
+
+      expect(sendMock, contract.publicPath).toHaveBeenCalledTimes(1)
+      expect(sendMock, contract.publicPath).toHaveBeenCalledWith(
+        contract.channel,
+        ...sendMock.mock.calls[0].slice(1)
+      )
+    }
+  })
+
+  it('keeps runtime versions surface-native', () => {
+    expect(api.getRuntimeVersions()).toEqual({
+      electron: process.versions.electron,
+      chrome: process.versions.chrome,
+      node: process.versions.node
+    })
+    expect(invokeMock).not.toHaveBeenCalled()
+    expect(sendMock).not.toHaveBeenCalled()
+  })
+
+  it('preserves Session, Storage, and native-upload request argument shapes', async () => {
+    const session = { id: 'session-1' }
+    const options = { expectedRevision: 4 }
+    const file = { name: 'large.csv' } as File
+    const request = { transferId: 'transfer-1' }
+    getPathForFileMock.mockReturnValue('/data/large.csv')
+
+    await api.sessions.saveSession(session)
+    await api.sessions.saveSession(session, undefined)
+    await api.sessions.saveSession(session, null)
+    await api.sessions.saveSession(session, options)
+    await api.storage.validateDataRoot('/data/open-science')
+    await api.storage.setDataRootAndRelaunch('/data/open-science', true)
+    await api.uploads.stageLocalFile(file, request)
+
+    expect(invokeMock).toHaveBeenNthCalledWith(1, 'sessions:save-session', session)
+    expect(invokeMock).toHaveBeenNthCalledWith(2, 'sessions:save-session', session)
+    expect(invokeMock).toHaveBeenNthCalledWith(3, 'sessions:save-session', session)
+    expect(invokeMock).toHaveBeenNthCalledWith(4, 'sessions:save-session', session, options)
+    expect(invokeMock).toHaveBeenNthCalledWith(5, 'storage:validate-data-root', {
+      parent: '/data/open-science'
+    })
+    expect(invokeMock).toHaveBeenNthCalledWith(6, 'storage:set-data-root-and-relaunch', {
+      parent: '/data/open-science',
+      markOnboarding: true
+    })
+    expect(invokeMock).toHaveBeenNthCalledWith(7, 'uploads:stage-local-file', {
+      ...request,
+      sourcePath: '/data/large.csv'
+    })
+  })
+
+  it('returns null without IPC when native upload path extraction fails', async () => {
+    const file = { name: 'clipboard.csv' } as File
+    getPathForFileMock.mockReturnValue('')
+
+    await expect(api.uploads.stageLocalFile(file, { transferId: 'transfer-1' })).resolves.toBeNull()
+
+    expect(getPathForFileMock).toHaveBeenCalledWith(file)
+    expect(invokeMock).not.toHaveBeenCalled()
+  })
+})
+
 describe('preload bridge — renderer diagnostics', () => {
   it('sends the bounded renderer failure report over its one-way channel', () => {
     const report = {
@@ -556,6 +743,29 @@ describe('preload bridge — renderer diagnostics', () => {
 })
 
 describe('preload bridge — window find IPC channels', () => {
+  it('subscribes before READY and removes the listener before UNREADY for close-pane lifecycle', () => {
+    const listener = vi.fn()
+
+    const unsubscribe = api.window.onCloseActivePane(listener)
+
+    expect(onMock).toHaveBeenCalledWith('shortcut:close-active-pane', expect.any(Function))
+    expect(sendMock).toHaveBeenCalledWith('shortcut:close-active-pane-ready')
+    expect(onMock.mock.invocationCallOrder[0]).toBeLessThan(sendMock.mock.invocationCallOrder[0])
+
+    const wrappedListener = onMock.mock.calls[0]?.[1] as
+      ((_event: unknown, payload: unknown) => void) | undefined
+    wrappedListener?.({}, undefined)
+    expect(listener).toHaveBeenCalledTimes(1)
+
+    unsubscribe()
+
+    expect(removeListenerMock).toHaveBeenCalledWith('shortcut:close-active-pane', wrappedListener)
+    expect(sendMock).toHaveBeenLastCalledWith('shortcut:close-active-pane-unready')
+    expect(removeListenerMock.mock.invocationCallOrder[0]).toBeLessThan(
+      sendMock.mock.invocationCallOrder[1]
+    )
+  })
+
   it('forwards find and clear requests without exposing a raw Electron object', () => {
     const request = { requestId: 1, text: 'protein', findNext: true, forward: true }
 
@@ -591,10 +801,14 @@ describe('preload bridge — window find IPC channels', () => {
     expect(appearanceListener).toHaveBeenCalledWith(appearance)
   })
 
-  it('announces Workspace find readiness to main on mount', () => {
-    api.window.announceWindowFindReady?.()
+  it('announces Workspace find readiness on mount and unready on cleanup', () => {
+    const dispose = api.window.announceWindowFindReady?.() as (() => void) | undefined
 
     expect(sendMock).toHaveBeenCalledWith('shortcut:window-find-ready')
+
+    dispose?.()
+
+    expect(sendMock).toHaveBeenNthCalledWith(2, 'shortcut:window-find-unready')
   })
 
   it('forwards renderer theme changes to main as a typed appearance payload', () => {
