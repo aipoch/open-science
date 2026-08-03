@@ -8,6 +8,7 @@ import { join } from 'node:path'
 import { afterEach, describe, expect, it, vi } from 'vitest'
 
 import type { AcpCompactSessionRequest, AcpResumeSessionRequest } from '../../shared/acp'
+import { WEB_EVENT_CHANNELS, WEB_INVOKE_CHANNELS } from '../../shared/web-api-map.generated'
 import {
   beginMigration,
   clearMigrationPending,
@@ -196,6 +197,37 @@ afterEach(() => {
 })
 
 describe('ACP module transport seam', () => {
+  it('pins the complete ACP call and event inventory shared by Electron and Web', () => {
+    registerWithFakes()
+
+    const invokeChannels = Object.entries(WEB_INVOKE_CHANNELS)
+      .filter(([path]) => path.startsWith('acp.'))
+      .map(([, channel]) => channel)
+      .sort()
+    const eventChannels = Object.entries(WEB_EVENT_CHANNELS)
+      .filter(([path]) => path.startsWith('acp.'))
+      .map(([, channel]) => channel)
+      .sort()
+
+    expect([...handlers.keys()].sort()).toEqual([
+      'acp:cancel',
+      'acp:compact-session',
+      'acp:connect',
+      'acp:create-session',
+      'acp:delete-session',
+      'acp:disconnect',
+      'acp:get-state',
+      'acp:reset-session-context',
+      'acp:respond-permission',
+      'acp:resume-session',
+      'acp:revoke-permission-grant',
+      'acp:send-prompt',
+      'acp:set-permission-profile'
+    ])
+    expect(invokeChannels).toEqual([...handlers.keys()].sort())
+    expect(eventChannels).toEqual(['acp:event', 'acp:permission-request', 'acp:state'])
+  })
+
   it('constructs the coordinator before installing Electron handlers', () => {
     const options = registerWithFakes()
     handlers.clear()
