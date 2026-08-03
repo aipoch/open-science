@@ -27,7 +27,15 @@ type SessionPersistenceApi = {
   saveManifest: (request: SaveSessionManifestRequest) => Promise<void>
 }
 
-type OrderedSessionPersistence = Pick<SessionPersistenceApi, 'saveSession' | 'saveManifest'>
+type LatestSessionSaveTask = (options?: SaveSessionOptions) => Promise<PersistedChatSession>
+
+type OrderedSessionPersistence = Pick<SessionPersistenceApi, 'saveSession' | 'saveManifest'> & {
+  saveLatestSession: (
+    target: string,
+    task: LatestSessionSaveTask,
+    options?: SaveSessionOptions
+  ) => Promise<PersistedChatSession>
+}
 
 const SESSION_CONFLICT_REBASE_FIELDS = [
   'title',
@@ -52,15 +60,35 @@ const conflictRebaseFieldChanged = (
   )
 }
 
-// Serializes every renderer-originated Session write through one ordering seam. Callers enqueue the
-// snapshot immediately, so a later explicit Artifact save cannot be overtaken by an older store save
-// that was still waiting behind an in-flight write.
+const mergeSaveSessionOptions = (
+  previous: SaveSessionOptions | undefined,
+  next: SaveSessionOptions | undefined
+): SaveSessionOptions | undefined => {
+  const conflictRebaseFields = [
+    ...new Set([...(previous?.conflictRebaseFields ?? []), ...(next?.conflictRebaseFields ?? [])])
+  ]
+  return conflictRebaseFields.length > 0 ? { conflictRebaseFields } : undefined
+}
+
+// Serializes every renderer-originated Session write through one ordering seam. Store snapshots at
+// the queue tail use latest-wins coalescing; explicit Session and Manifest writes remain barriers, so
+// Artifact finalization cannot be overtaken by an older store snapshot.
 const createOrderedSessionPersistence = (
-  api: OrderedSessionPersistence
+  api: Pick<SessionPersistenceApi, 'saveSession' | 'saveManifest'>
 ): OrderedSessionPersistence => {
   let queue: Promise<unknown> = Promise.resolve()
+  let pendingLatest:
+    | {
+        target: string
+        task: LatestSessionSaveTask
+        options: SaveSessionOptions | undefined
+      }
+    | undefined
+  let pendingLatestPromise: Promise<PersistedChatSession> | undefined
 
   const enqueue = <Result>(task: () => Promise<Result>): Promise<Result> => {
+    pendingLatest = undefined
+    pendingLatestPromise = undefined
     const run = queue.then(task, task)
     queue = run.then(
       () => undefined,
@@ -69,7 +97,37 @@ const createOrderedSessionPersistence = (
     return run
   }
 
+  const saveLatestSession = (
+    target: string,
+    task: LatestSessionSaveTask,
+    options?: SaveSessionOptions
+  ): Promise<PersistedChatSession> => {
+    if (pendingLatest?.target === target && pendingLatestPromise) {
+      pendingLatest.task = task
+      pendingLatest.options = mergeSaveSessionOptions(pendingLatest.options, options)
+      return pendingLatestPromise
+    }
+
+    const entry = { target, task, options }
+    const runTask = (): Promise<PersistedChatSession> => {
+      if (pendingLatest === entry) {
+        pendingLatest = undefined
+        pendingLatestPromise = undefined
+      }
+      return entry.task(entry.options)
+    }
+    const run = queue.then(runTask, runTask)
+    pendingLatest = entry
+    pendingLatestPromise = run
+    queue = run.then(
+      () => undefined,
+      () => undefined
+    )
+    return run
+  }
+
   return {
+    saveLatestSession,
     saveSession: (session, options) =>
       enqueue(() => (options ? api.saveSession(session, options) : api.saveSession(session))),
     saveManifest: (request) => enqueue(() => api.saveManifest(request))
@@ -270,7 +328,6 @@ const createStoreSaver = (
         // is no longer proven to match the immutable Branch graph. Preserve the last durable copy.
         !session.conversationGraphSyncBlocked
       ) {
-        const persisted = toPersistedSession(session)
         const previousSession = previousById.get(session.id)
         const changedConflictRebaseFields = previousSession
           ? SESSION_CONFLICT_REBASE_FIELDS.filter((field) =>
@@ -284,23 +341,45 @@ const createStoreSaver = (
           ])
         ]
 
+        const saveOptions = conflictRebaseFields.length > 0 ? { conflictRebaseFields } : undefined
+        const applyDurableSession = (
+          durableSession: PersistedChatSession,
+          options: SaveSessionOptions | undefined
+        ): void => {
+          useSessionStore.getState().applyDurableSessionProjection({
+            source: session,
+            session: durableSession,
+            mode:
+              (options?.conflictRebaseFields?.length ?? 0) > 0
+                ? 'replace-persisted-if-current'
+                : 'merge-upload-identities'
+          })
+        }
+
         tasks.push({
           target,
           failureContext: { conflictRebaseFields },
-          run: async () => {
-            const durableSession = await persistence.saveSession(
-              persisted,
-              conflictRebaseFields.length > 0 ? { conflictRebaseFields } : undefined
-            )
-            useSessionStore.getState().applyDurableSessionProjection({
-              source: session,
-              session: durableSession,
-              mode:
-                conflictRebaseFields.length > 0
-                  ? 'replace-persisted-if-current'
-                  : 'merge-upload-identities'
-            })
-          }
+          run: isForced
+            ? async () => {
+                const durableSession = await persistence.saveSession(
+                  toPersistedSession(session),
+                  saveOptions
+                )
+                applyDurableSession(durableSession, saveOptions)
+              }
+            : () =>
+                persistence.saveLatestSession(
+                  target,
+                  async (coalescedOptions) => {
+                    const persisted = toPersistedSession(session)
+                    const durableSession = await (coalescedOptions
+                      ? api.saveSession(persisted, coalescedOptions)
+                      : api.saveSession(persisted))
+                    applyDurableSession(durableSession, coalescedOptions)
+                    return durableSession
+                  },
+                  saveOptions
+                )
         })
       }
     }
