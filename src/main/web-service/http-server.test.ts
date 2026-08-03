@@ -660,7 +660,13 @@ describe('startWebHttpServer', () => {
       'settings:login-shared-claude',
       'settings:logout-shared-claude',
       'storage:inspect-data-root',
-      'storage:validate-data-root'
+      'storage:validate-data-root',
+      'local-fs:get-roots',
+      'local-fs:list-dir',
+      'local-fs:open-path',
+      'local-fs:read-preview',
+      'local-fs:reveal',
+      'uploads:stage-local-path'
     ]) {
       expect(REMOTE_LOCAL_ONLY_RPC_CHANNELS, channel).toContain(channel)
     }
