@@ -403,6 +403,7 @@ describe('ProjectFilesView', () => {
     })
 
     window.api.projectFiles = {
+      searchArtifacts: vi.fn(),
       getOverview: vi.fn(async (request) => {
         const library = getLibrary()
         const query = request.search

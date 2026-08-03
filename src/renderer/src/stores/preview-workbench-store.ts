@@ -89,6 +89,9 @@ type PreviewWorkbenchStoreData = PreviewSlice & {
   byProject: Record<string, PreviewSlice>
   // Tool tab currently shown as a large modal instead of inline panel content (files tab only).
   expandedToolItemId: string | null
+  // A one-off file preview stays outside the tab list so Files and Global Search can open the same
+  // dialog without creating a durable workbench tab.
+  fileDialogItem: PreviewFileItem | undefined
 }
 
 type PreviewWorkbenchStore = PreviewWorkbenchStoreData & {
@@ -100,6 +103,8 @@ type PreviewWorkbenchStore = PreviewWorkbenchStoreData & {
   removeItem: (itemId: string) => void
   removeSessionItems: (sessionId: string) => void
   setToolItemExpanded: (itemId: string | null) => void
+  openFileDialog: (item: PreviewFileItem) => void
+  closeFileDialog: () => void
   openPanel: () => void
   collapsePanel: () => void
   togglePanel: () => void
@@ -114,7 +119,8 @@ export const createInitialPreviewWorkbenchState = (): PreviewWorkbenchStoreData 
   openRequestVersion: 0,
   activeProjectId: undefined,
   byProject: {},
-  expandedToolItemId: null
+  expandedToolItemId: null,
+  fileDialogItem: undefined
 })
 
 // The empty slice a project starts from before any preview tabs are opened.
@@ -397,6 +403,10 @@ export const usePreviewWorkbenchStore = create<PreviewWorkbenchStore>((set, get)
   setToolItemExpanded: (itemId) => {
     set({ expandedToolItemId: itemId })
   },
+
+  openFileDialog: (item) => set({ fileDialogItem: item }),
+
+  closeFileDialog: () => set({ fileDialogItem: undefined }),
 
   // Records an explicit open request so the resizable panel can expand even if it is already open.
   openPanel: () => {

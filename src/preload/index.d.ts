@@ -135,7 +135,9 @@ import type {
   ListProjectFilesRequest,
   ProjectFilesChangedEvent,
   ProjectFilesOverview,
-  ProjectFilesPage
+  ProjectFilesPage,
+  SearchArtifactsRequest,
+  SearchArtifactsResult
 } from '../shared/project-files'
 import type {
   DeleteSessionRequest,
@@ -492,6 +494,7 @@ interface OpenScienceAPI {
     getOverview(request: GetProjectFilesOverviewRequest): Promise<ProjectFilesOverview>
     listFiles(request: ListProjectFilesRequest): Promise<ProjectFilesPage>
     listArtifactGroups(request: ListArtifactGroupsRequest): Promise<ArtifactGroupPage>
+    searchArtifacts(request: SearchArtifactsRequest): Promise<SearchArtifactsResult>
     repairIndex(request: { projectId: string }): Promise<void>
     onChanged(listener: AcpListener<ProjectFilesChangedEvent>): RemoveListener
   }

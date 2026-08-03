@@ -31,7 +31,6 @@ import { Input } from '@/components/ui/input'
 import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from '@/components/ui/tooltip'
 import { cn, formatByteSize } from '@/lib/utils'
 import { useNavigationStore } from '@/stores/navigation-store'
-import type { PreviewFileItem } from '@/stores/preview-workbench-store'
 import {
   PROJECT_FILES_PREVIEW_ID,
   usePreviewWorkbenchStore
@@ -56,8 +55,8 @@ import {
 } from './artifact-preview-utils'
 import { ManagedFileDownloadButton } from './ManagedFileDownloadButton'
 import { createPreviewFileItem } from './preview-file-item'
-import type { MessageArtifact } from './preview-file-item'
 import { FilePreviewDialog } from './FilePreviewDialog'
+import type { MessageArtifact } from './preview-file-item'
 import { FileBrowserModal } from '../settings/FileBrowserModal'
 import { getPreviewThumbnailReadEncoding } from './preview-support'
 import { createKeyedRequestReader } from './project-file-preview-queue'
@@ -1034,8 +1033,9 @@ const ProjectFilesViewContent = ({
   const [debouncedSearchQuery, setDebouncedSearchQuery] = useState('')
   const [viewMode, setViewMode] = useState<ProjectFilesViewMode>('grid')
   const [showAllSessionOptions, setShowAllSessionOptions] = useState(false)
-  // Files-tab previews are transient dialog state; opening a file must not create a workbench tab.
-  const [dialogItem, setDialogItem] = useState<PreviewFileItem | undefined>(undefined)
+  const openFileDialog = usePreviewWorkbenchStore((state) => state.openFileDialog)
+  const fileDialogItem = usePreviewWorkbenchStore((state) => state.fileDialogItem)
+  const closeFileDialog = usePreviewWorkbenchStore((state) => state.closeFileDialog)
 
   // Remote file browser modal state — set to a providerId when a REMOTE host is selected.
   const [browseProviderId, setBrowseProviderId] = useState<string | undefined>(undefined)
@@ -1397,7 +1397,7 @@ const ProjectFilesViewContent = ({
 
   const previewFile = (file: ProjectFileItem): void => {
     // Keep the indexed file identity and source so the dialog uses the same bounded preview IPC path.
-    setDialogItem(
+    openFileDialog(
       createPreviewFileItem({
         id: file.id,
         projectId: activeProjectId,
@@ -1729,7 +1729,7 @@ const ProjectFilesViewContent = ({
           </section>
         ) : null}
       </div>
-      <FilePreviewDialog item={dialogItem} onClose={() => setDialogItem(undefined)} />
+      <FilePreviewDialog item={fileDialogItem} onClose={closeFileDialog} />
       <FileBrowserModal
         open={browseProviderId !== undefined}
         onClose={() => setBrowseProviderId(undefined)}

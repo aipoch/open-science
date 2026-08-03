@@ -2,6 +2,7 @@
 import { describe, expect, it } from 'vitest'
 
 import {
+  appendArtifactMention,
   applyDocToDom,
   docArtifactCount,
   docFromMessageParts,
@@ -151,6 +152,51 @@ describe('docArtifactCount', () => {
       ]
     }
     expect(docArtifactCount(doc)).toBe(2)
+  })
+})
+
+describe('appendArtifactMention', () => {
+  it('appends one separating space only when the preceding node is not whitespace', () => {
+    const reference = {
+      id: 'artifact-1',
+      name: 'sin.png',
+      path: 'artifact-version:project-a/session-a/artifact-1/version-1',
+      source: 'artifact' as const,
+      versionId: 'version-1'
+    }
+
+    expect(appendArtifactMention(docFromText('plot'), reference)).toEqual({
+      nodes: [
+        { type: 'text', text: 'plot' },
+        { type: 'text', text: ' ' },
+        { type: 'artifact', ...reference }
+      ]
+    })
+    expect(appendArtifactMention(docFromText('plot '), reference).nodes).toEqual([
+      { type: 'text', text: 'plot ' },
+      { type: 'artifact', ...reference }
+    ])
+  })
+
+  it('does not exceed the Artifact mention cap', () => {
+    const fullDoc: ComposerDoc = {
+      nodes: Array.from({ length: 10 }, (_, index) => ({
+        type: 'artifact' as const,
+        id: `artifact-${index}`,
+        name: `${index}.png`,
+        path: `/artifact-${index}`,
+        source: 'artifact' as const
+      }))
+    }
+
+    expect(
+      appendArtifactMention(fullDoc, {
+        id: 'extra',
+        name: 'extra.png',
+        path: '/extra',
+        source: 'artifact'
+      })
+    ).toBe(fullDoc)
   })
 })
 

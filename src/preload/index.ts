@@ -138,7 +138,9 @@ import type {
   ListProjectFilesRequest,
   ProjectFilesChangedEvent,
   ProjectFilesOverview,
-  ProjectFilesPage
+  ProjectFilesPage,
+  SearchArtifactsRequest,
+  SearchArtifactsResult
 } from '../shared/project-files'
 import type {
   DeleteSessionRequest,
@@ -544,6 +546,7 @@ type OpenScienceAPI = {
     getOverview: (request: GetProjectFilesOverviewRequest) => Promise<ProjectFilesOverview>
     listFiles: (request: ListProjectFilesRequest) => Promise<ProjectFilesPage>
     listArtifactGroups: (request: ListArtifactGroupsRequest) => Promise<ArtifactGroupPage>
+    searchArtifacts: (request: SearchArtifactsRequest) => Promise<SearchArtifactsResult>
     repairIndex: (request: { projectId: string }) => Promise<void>
     onChanged: (listener: AcpListener<ProjectFilesChangedEvent>) => RemoveListener
   }
@@ -1187,6 +1190,11 @@ const api: OpenScienceAPI = {
         'project-files:list-artifact-groups',
         request
       ) as Promise<ArtifactGroupPage>,
+    searchArtifacts: (request) =>
+      ipcRenderer.invoke(
+        'project-files:search-artifacts',
+        request
+      ) as Promise<SearchArtifactsResult>,
     repairIndex: (request) =>
       ipcRenderer.invoke('project-files:repair-index', request) as Promise<void>,
     onChanged: (listener) => onIpcMessage('project-files:changed', listener)

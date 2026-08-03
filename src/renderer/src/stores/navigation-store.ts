@@ -3,9 +3,17 @@ import { create } from 'zustand'
 import { recordLastOpenedProject } from '@/lib/last-opened-project'
 
 import { useSessionStore } from './session-store'
+import type { ProjectFileItem } from '../../../shared/project-files'
 
 export type NavigationView = 'home' | 'workspace'
 export type NavigationOrigin = 'user' | 'notification' | 'automatic'
+
+// Workspace owns the mutable composer draft. It projects only the capability Global Search needs,
+// avoiding a second draft model or cross-Project mention handoff.
+export type ArtifactMentionAvailability = {
+  projectId: string
+  canMention: boolean
+}
 
 type NavigationStore = {
   view: NavigationView
@@ -19,6 +27,11 @@ type NavigationStore = {
   // Project id targeted by a pending `Chat with agent` prefill, consumed once by WorkspacePage when it
   // opens that project's New Conversation draft. Undefined means no prefill is pending.
   pendingCustomizePrefill: string | undefined
+  // A same-Project Artifact selected from global search. WorkspacePage consumes it once and appends
+  // its immutable Version reference to the currently active composer draft.
+  pendingArtifactMention: ProjectFileItem | undefined
+  // The active Workspace composer publishes whether it can currently accept one more Artifact.
+  artifactMentionAvailability: ArtifactMentionAvailability | undefined
   recordUserNavigation: () => void
   goHome: (origin: NavigationOrigin) => void
   openProject: (projectId: string, origin: NavigationOrigin) => void
@@ -31,6 +44,9 @@ type NavigationStore = {
   // prefill once and clears it.
   startCustomizeConversation: (projectId: string) => void
   consumeCustomizePrefill: () => void
+  requestArtifactMention: (file: ProjectFileItem) => void
+  consumeArtifactMention: () => ProjectFileItem | undefined
+  setArtifactMentionAvailability: (availability: ArtifactMentionAvailability | undefined) => void
 }
 
 const navigationState = (
@@ -67,6 +83,8 @@ export const useNavigationStore = create<NavigationStore>((set) => ({
   userNavigationRevision: 0,
   explicitNavigationRevision: 0,
   pendingCustomizePrefill: undefined,
+  pendingArtifactMention: undefined,
+  artifactMentionAvailability: undefined,
 
   // Records user-owned navigation that changes another store (for example, opening the local New
   // Conversation draft clears Session selection without changing the top-level view).
@@ -143,5 +161,23 @@ export const useNavigationStore = create<NavigationStore>((set) => ({
   },
 
   // Clears the consumed prefill intent so a later normal open starts fresh.
-  consumeCustomizePrefill: () => set({ pendingCustomizePrefill: undefined })
+  consumeCustomizePrefill: () => set({ pendingCustomizePrefill: undefined }),
+
+  // Mentions never route between Projects. Keeping this guard at the Navigation boundary prevents a
+  // dialog caller from leaking an Artifact locator into whichever composer happens to mount next.
+  requestArtifactMention: (file) =>
+    set((state) =>
+      state.view === 'workspace' && state.activeProjectId === file.projectId
+        ? { pendingArtifactMention: file }
+        : state
+    ),
+
+  consumeArtifactMention: () => {
+    const file = useNavigationStore.getState().pendingArtifactMention
+    set({ pendingArtifactMention: undefined })
+    return file
+  },
+
+  setArtifactMentionAvailability: (availability) =>
+    set({ artifactMentionAvailability: availability })
 }))
