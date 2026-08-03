@@ -19,6 +19,7 @@ import {
   applyWorkspaceRuntimeEvent,
   assembleReviewRunRequest,
   syncWorkspacePermissionState,
+  suppressAutoReviewsForQuit,
   suppressNextAutoReview,
   clearSuppressNextAutoReview,
   resetDeferredArtifactEventsForTests
@@ -1791,6 +1792,29 @@ describe('workspace runtime events', () => {
   })
 
   describe('auto-review gate on stop event', () => {
+    it('cancels pending and future auto-reviews once quit begins', async () => {
+      const reviewerRun = vi.fn().mockResolvedValue(undefined)
+
+      vi.stubGlobal('window', { api: { reviewer: { run: reviewerRun } } })
+      useSessionStore.getState().setAutoReviewEnabled('transport-session-1', true)
+      useSessionStore.getState().appendAgentMessageChunk({
+        sessionId: 'transport-session-1',
+        streamId: 'stream-1',
+        eventId: 'event-agent-1',
+        content: 'Analysis complete'
+      })
+
+      await applyWorkspaceRuntimeEvent(createEvent({ id: 'stop-1', kind: 'stop' }))
+      suppressAutoReviewsForQuit()
+      await vi.runAllTimersAsync()
+
+      await applyWorkspaceRuntimeEvent(createEvent({ id: 'stop-2', kind: 'stop' }))
+      await vi.runAllTimersAsync()
+
+      expect(reviewerRun).not.toHaveBeenCalled()
+      vi.unstubAllGlobals()
+    })
+
     it('triggers a review via window.api.reviewer.run when autoReviewEnabled is true', async () => {
       const reviewerRun = vi.fn().mockResolvedValue(undefined)
 

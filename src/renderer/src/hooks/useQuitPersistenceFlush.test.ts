@@ -9,6 +9,9 @@ describe('completeQuitPersistenceFlush', () => {
     await completeQuitPersistenceFlush(
       { requestId: 'flush-1' },
       {
+        suppressAutoReviews: () => {
+          calls.push('suppress-auto-reviews')
+        },
         drainRuntimeEvents: async () => {
           calls.push('drain')
         },
@@ -21,7 +24,7 @@ describe('completeQuitPersistenceFlush', () => {
       }
     )
 
-    expect(calls).toEqual(['drain', 'flush', 'acknowledge'])
+    expect(calls).toEqual(['suppress-auto-reviews', 'drain', 'flush', 'acknowledge'])
   })
 
   it('always acknowledges so a failed renderer flush cannot strand app quit', async () => {
@@ -31,6 +34,7 @@ describe('completeQuitPersistenceFlush', () => {
       completeQuitPersistenceFlush(
         { requestId: 'flush-1' },
         {
+          suppressAutoReviews: () => undefined,
           drainRuntimeEvents: async () => {
             throw new Error('renderer unavailable')
           },

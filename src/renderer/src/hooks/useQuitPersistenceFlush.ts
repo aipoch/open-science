@@ -4,10 +4,12 @@ import type {
   SessionPersistenceFlushRequest,
   SessionPersistenceFlushResponse
 } from '../../../shared/session-persistence-flush'
+import { suppressAutoReviewsForQuit } from '../lib/acp/workspace-events'
 import { drainWorkspaceRuntimeEventsForPersistence } from '../lib/acp/useWorkspaceAgentRuntime'
 import { flushSessionPersistence } from '../lib/session-persistence/session-persistence'
 
 type QuitPersistenceFlushDeps = {
+  suppressAutoReviews: () => void
   drainRuntimeEvents: () => Promise<void>
   flushPersistence: () => Promise<void>
   acknowledge: (response: SessionPersistenceFlushResponse) => void
@@ -18,6 +20,7 @@ export const completeQuitPersistenceFlush = async (
   deps: QuitPersistenceFlushDeps
 ): Promise<void> => {
   try {
+    deps.suppressAutoReviews()
     await deps.drainRuntimeEvents()
     await deps.flushPersistence()
   } finally {
@@ -34,6 +37,7 @@ export const useQuitPersistenceFlush = (): void => {
 
     return onFlushRequest((request) => {
       void completeQuitPersistenceFlush(request, {
+        suppressAutoReviews: suppressAutoReviewsForQuit,
         drainRuntimeEvents: drainWorkspaceRuntimeEventsForPersistence,
         flushPersistence: flushSessionPersistence,
         acknowledge: sendFlushResponse

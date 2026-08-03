@@ -58,6 +58,7 @@ const deferredArtifactEventsBySession = new Map<string, DeferredArtifactEvent[]>
 const pendingArtifactTurnUsageBySession = new Map<string, Map<string, PendingArtifactTurnUsage>>()
 const MAX_PENDING_ARTIFACT_TURNS_PER_SESSION = 16
 const scheduledAutoReviewsBySession = new Map<string, ReturnType<typeof setTimeout>>()
+let autoReviewsSuppressedForQuit = false
 const AUTO_REVIEW_ARTIFACT_SETTLE_DELAY_MS = 100
 
 const resetDeferredArtifactEventsForTests = (): void => {
@@ -65,6 +66,7 @@ const resetDeferredArtifactEventsForTests = (): void => {
   pendingArtifactTurnUsageBySession.clear()
   for (const timer of scheduledAutoReviewsBySession.values()) clearTimeout(timer)
   scheduledAutoReviewsBySession.clear()
+  autoReviewsSuppressedForQuit = false
 }
 
 const isActivityGroupControlEvent = (event: AcpRuntimeEvent): boolean => {
@@ -314,6 +316,8 @@ const delay = (ms: number): Promise<void> => new Promise((resolve) => setTimeout
 // Fire-and-forget: errors are caught and silently dropped so the main session is never blocked.
 const triggerAutoReview = async (sessionId: string): Promise<void> => {
   try {
+    if (autoReviewsSuppressedForQuit) return
+
     // Loop guard: if this session's next review was suppressed (e.g. because the stop comes from
     // the [Auditor] correction turn), skip exactly this one call and clear the flag.
     if (suppressAutoReviewOnceFor.has(sessionId)) {
@@ -344,6 +348,7 @@ const triggerAutoReview = async (sessionId: string): Promise<void> => {
     // main and comes back 'already-reviewed' rather than launching a duplicate. A renderer-local store
     // check could only race that cross-process window, so we rely on main's verdict.
     for (let attempt = 0; attempt < AUTO_REVIEW_START_ATTEMPTS; attempt++) {
+      if (autoReviewsSuppressedForQuit) return
       const result = await window.api.reviewer.run({ ...request, origin: 'auto' })
       if (result?.started !== false) return
       if (!result.reason || !RETRYABLE_START_FAILURE_REASONS.has(result.reason)) return
@@ -360,10 +365,17 @@ const cancelScheduledAutoReview = (sessionId: string): void => {
   scheduledAutoReviewsBySession.delete(sessionId)
 }
 
+const suppressAutoReviewsForQuit = (): void => {
+  autoReviewsSuppressedForQuit = true
+  for (const timer of scheduledAutoReviewsBySession.values()) clearTimeout(timer)
+  scheduledAutoReviewsBySession.clear()
+}
+
 // Stop and artifact events normally arrive together, but some providers publish the Artifact just
 // after stop. A short debounced barrier lets that claim finalize before Reviewer freezes its scope.
 // A post-stop Artifact cancels this timer immediately and schedules a fresh review after finalization.
 const scheduleAutoReview = (sessionId: string): void => {
+  if (autoReviewsSuppressedForQuit) return
   cancelScheduledAutoReview(sessionId)
   const timer = setTimeout(() => {
     scheduledAutoReviewsBySession.delete(sessionId)
@@ -663,6 +675,7 @@ export {
   applyWorkspaceRuntimeEvent,
   assembleReviewRunRequest,
   syncWorkspacePermissionState,
+  suppressAutoReviewsForQuit,
   suppressNextAutoReview,
   clearSuppressNextAutoReview,
   resetDeferredArtifactEventsForTests
