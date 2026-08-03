@@ -121,7 +121,8 @@ async function startElectronApp(mainEntryPath: string): Promise<void> {
     { default: iconWindows },
     { default: iconDarkWindows },
     { default: trayMacTemplate },
-    { default: trayWindows },
+    { default: trayLightWindows },
+    { default: trayDarkWindows },
     { default: trayLinux }
   ] = await Promise.all([
     import('@electron-toolkit/utils'),
@@ -130,7 +131,8 @@ async function startElectronApp(mainEntryPath: string): Promise<void> {
     import('../../resources/icon-light.ico?asset'),
     import('../../resources/icon-dark.ico?asset'),
     import('../../resources/trayTemplate.png?asset'),
-    import('../../resources/tray.ico?asset'),
+    import('../../resources/tray-light.ico?asset'),
+    import('../../resources/tray-dark.ico?asset'),
     import('../../resources/tray.png?asset')
   ])
 
@@ -140,8 +142,14 @@ async function startElectronApp(mainEntryPath: string): Promise<void> {
     process.platform === 'win32'
       ? { light: iconWindows, dark: iconDarkWindows }
       : { light: icon, dark: iconDark }
+  // The static fallback on Windows stays the dark tile: it is byte-identical to the legacy tray.ico,
+  // so a missing/unreadable variant asset degrades to the pre-change appearance.
   const trayIconPath =
-    process.platform === 'win32' ? trayWindows : process.platform === 'linux' ? trayLinux : icon
+    process.platform === 'win32' ? trayDarkWindows : process.platform === 'linux' ? trayLinux : icon
+  // Windows keeps one tray tile per app-icon variant so the tray glyph can follow the variant the
+  // user picks in settings (setTrayIconVariant); other platforms use a single static tray icon.
+  const trayVariantIconPaths =
+    process.platform === 'win32' ? { light: trayLightWindows, dark: trayDarkWindows } : undefined
 
   // Ordered startup: the single-instance lock is acquired FIRST (UI path only — the MCP stdio server
   // modes never reach startElectronApp), so a secondary launch quits before prepare() imports any
@@ -179,7 +187,7 @@ async function startElectronApp(mainEntryPath: string): Promise<void> {
         { MANAGED_PREVIEW_SCHEME },
         { OFFICE_PREVIEW_RUNTIME_SCHEME_CONFIG },
         { installMigrationQuitGuard, isMigrationInProgress },
-        { createAppTray },
+        { createAppTray, setTrayIconVariant },
         { installAppLifecycle },
         { webRpc },
         { parseWebModeOptions, createWebServiceController, buildAuthenticatedWebUrl },
@@ -249,6 +257,10 @@ async function startElectronApp(mainEntryPath: string): Promise<void> {
       const appIconControllerBox: {
         current: ReturnType<typeof createAppIconController> | undefined
       } = { current: undefined }
+      // Late-bound tray handle so the settings IPC below can restyle the tray when the user switches
+      // the app icon variant — the tray only exists once the lifecycle is installed (assigned in the
+      // createTray callback). Mirrors the trayBox late-binding pattern in app-lifecycle.ts.
+      const appTrayBox: { current: ReturnType<typeof createAppTray> } = { current: undefined }
       // Unread state restores before the main-window lifecycle is installed. Late-bind its getter so
       // restoration remains window-independent while later badge/probe calls always target the live window.
       const mainWindowGetterBox: {
@@ -270,7 +282,14 @@ async function startElectronApp(mainEntryPath: string): Promise<void> {
         mainEntryPath,
         handoffRuntime: 'production',
         headless: webMode.headless,
-        onAppIconVariantChanged: (variant) => appIconControllerBox.current?.setVariant(variant),
+        onAppIconVariantChanged: (variant) => {
+          appIconControllerBox.current?.setVariant(variant)
+          // Keep the tray glyph on the same variant as the window icon. No-op before the lifecycle
+          // installs the tray, or off Windows (single static tray asset there).
+          if (appTrayBox.current && trayVariantIconPaths) {
+            setTrayIconVariant(appTrayBox.current, trayVariantIconPaths, variant)
+          }
+        },
         listAppIconPreviews: () => buildAppIconPreviews(nativeImage, iconVariantPaths)
       })
 
@@ -359,6 +378,10 @@ async function startElectronApp(mainEntryPath: string): Promise<void> {
         unreadTaskController,
         mainWindowGetterBox,
         settingsService,
+        appTrayBox,
+        // Read through the controller (not a snapshot) so a tray created after a settings change —
+        // e.g. a headless web client flipping the variant mid-startup — starts on the live value.
+        getAppIconVariant: () => appIconControllerBox.current?.getVariant() ?? initialVariant,
         disposeApplicationRuntime,
         detectActiveSessions,
         prepareForQuit,
@@ -399,8 +422,10 @@ async function startElectronApp(mainEntryPath: string): Promise<void> {
             createTray: (handlers) => {
               const webPort = ctx.webController.runningPort()
               const headlessWeb = ctx.webMode.headless && webPort !== undefined
-              return ctx.createAppTray({
+              const tray = ctx.createAppTray({
                 iconPath: trayIconPath,
+                variantIconPaths: trayVariantIconPaths,
+                initialVariant: ctx.getAppIconVariant(),
                 templateIconPath: process.platform === 'darwin' ? trayMacTemplate : undefined,
                 ...handlers,
                 ...(headlessWeb
@@ -417,6 +442,9 @@ async function startElectronApp(mainEntryPath: string): Promise<void> {
                     }
                   : {})
               })
+              // Publish the tray so a later settings change can restyle it (onAppIconVariantChanged).
+              ctx.appTrayBox.current = tray
+              return tray
             },
             isMigrationInProgress: ctx.isMigrationInProgress,
             quit: () => app.quit(),

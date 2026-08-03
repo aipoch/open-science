@@ -323,9 +323,9 @@ export const isReasoningEffort = (value: unknown): value is ReasoningEffort =>
   typeof value === 'string' && (REASONING_EFFORTS as readonly string[]).includes(value)
 
 // The selectable app-icon look. 'light' is the shipped default; 'dark' is its matching dark variant.
-// Both are built-in assets; the choice is applied at runtime to the app window icon (all platforms)
-// and the macOS Dock (the static installed icon in Finder/Explorer/taskbar is baked into the build and
-// never changes).
+// Both are built-in assets; the choice is applied at runtime to the app window icon (all platforms),
+// the macOS Dock, and the Windows tray glyph (the static installed icon in Finder/Explorer/taskbar is
+// baked into the build and never changes).
 export type AppIconVariant = 'light' | 'dark'
 
 export const DEFAULT_APP_ICON_VARIANT: AppIconVariant = 'light'

@@ -187,8 +187,8 @@ type IpcRegistrationOptions = {
   // Headless web-serve launches (--serve) have no local desktop user; task notifications are
   // disabled there by contract, not just incidentally via Notification.isSupported().
   headless?: boolean
-  // Applies a newly-selected app-icon variant to the window + dock/taskbar. Supplied by the desktop
-  // startup path; absent in web/headless mode (no local window to re-skin).
+  // Applies a newly-selected app-icon variant to the window + dock/taskbar and the Windows tray.
+  // Supplied by the desktop startup path; absent in web/headless mode (no local window to re-skin).
   onAppIconVariantChanged?: (variant: AppIconVariant) => void
   // Renders the built-in icon variants to preview data URLs for the Appearance picker.
   listAppIconPreviews?: () => AppIconPreview[]
