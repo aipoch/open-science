@@ -1,5 +1,7 @@
 import { contextBridge, ipcRenderer, webUtils, type IpcRendererEvent } from 'electron'
 
+import { createElectronRendererContractAdapter } from './electron-renderer-contract-adapter'
+
 import type {
   AcpCancelPromptRequest,
   AcpCompactSessionRequest,
@@ -278,9 +280,7 @@ import type {
   CompletionHandoffLifecycleEvent,
   CompletionHandoffCommand
 } from '../shared/specialist'
-import { SPECIALIST_IPC } from '../shared/specialist'
 import {
-  HANDOFF_LIFECYCLE_IPC,
   type HandoffEventsRequest,
   type HandoffLifecycleChange,
   type HandoffLifecycleEvent,
@@ -319,6 +319,12 @@ const onIpcMessage = <Payload>(channel: string, listener: AcpListener<Payload>):
     ipcRenderer.removeListener(channel, wrappedListener)
   }
 }
+
+const electronRendererContracts = createElectronRendererContractAdapter({
+  invoke: (channel, ...args) => ipcRenderer.invoke(channel, ...args),
+  on: (channel, listener) => ipcRenderer.on(channel, listener),
+  removeListener: (channel, listener) => ipcRenderer.removeListener(channel, listener)
+})
 
 // Custom APIs for renderer
 type OpenScienceAPI = {
@@ -866,44 +872,34 @@ const api: OpenScienceAPI = {
     reportRendererFailure: (report) => ipcRenderer.send(RENDERER_FAILURE_CHANNEL, report)
   },
   acp: {
-    getState: () => ipcRenderer.invoke('acp:get-state') as Promise<AcpStateSnapshot>,
-    connect: (request = {}) =>
-      ipcRenderer.invoke('acp:connect', request) as Promise<AcpStateSnapshot>,
-    disconnect: () => ipcRenderer.invoke('acp:disconnect') as Promise<AcpStateSnapshot>,
-    createSession: (request = {}) =>
-      ipcRenderer.invoke('acp:create-session', request) as Promise<AcpCreateSessionResponse>,
-    resumeSession: (request) =>
-      ipcRenderer.invoke('acp:resume-session', request) as Promise<AcpCreateSessionResponse>,
+    getState: () => electronRendererContracts.invoke('acp.getState'),
+    connect: (request) => electronRendererContracts.invoke('acp.connect', request),
+    disconnect: () => electronRendererContracts.invoke('acp.disconnect'),
+    createSession: (request) => electronRendererContracts.invoke('acp.createSession', request),
+    resumeSession: (request) => electronRendererContracts.invoke('acp.resumeSession', request),
     resetSessionContext: (request) =>
-      ipcRenderer.invoke('acp:reset-session-context', request) as Promise<AcpCreateSessionResponse>,
-    sendPrompt: (request) =>
-      ipcRenderer.invoke('acp:send-prompt', request) as Promise<AcpStateSnapshot>,
-    compactSession: (request) =>
-      ipcRenderer.invoke('acp:compact-session', request) as Promise<AcpStateSnapshot>,
-    cancel: (request) => ipcRenderer.invoke('acp:cancel', request) as Promise<AcpStateSnapshot>,
-    deleteSession: (request) =>
-      ipcRenderer.invoke('acp:delete-session', request) as Promise<AcpStateSnapshot>,
+      electronRendererContracts.invoke('acp.resetSessionContext', request),
+    sendPrompt: (request) => electronRendererContracts.invoke('acp.sendPrompt', request),
+    compactSession: (request) => electronRendererContracts.invoke('acp.compactSession', request),
+    cancel: (request) => electronRendererContracts.invoke('acp.cancel', request),
+    deleteSession: (request) => electronRendererContracts.invoke('acp.deleteSession', request),
     respondToPermission: (response) =>
-      ipcRenderer.invoke('acp:respond-permission', response) as Promise<AcpStateSnapshot>,
+      electronRendererContracts.invoke('acp.respondToPermission', response),
     setPermissionProfile: (request) =>
-      ipcRenderer.invoke('acp:set-permission-profile', request) as Promise<AcpStateSnapshot>,
+      electronRendererContracts.invoke('acp.setPermissionProfile', request),
     revokePermissionGrant: (request) =>
-      ipcRenderer.invoke('acp:revoke-permission-grant', request) as Promise<AcpStateSnapshot>,
-    onState: (listener) => onIpcMessage('acp:state', listener),
-    onEvent: (listener) => onIpcMessage('acp:event', listener),
-    onPermissionRequest: (listener) => onIpcMessage('acp:permission-request', listener)
+      electronRendererContracts.invoke('acp.revokePermissionGrant', request),
+    onState: (listener) => electronRendererContracts.subscribe('acp.onState', listener),
+    onEvent: (listener) => electronRendererContracts.subscribe('acp.onEvent', listener),
+    onPermissionRequest: (listener) =>
+      electronRendererContracts.subscribe('acp.onPermissionRequest', listener)
   },
   permissions: {
-    list: () => ipcRenderer.invoke('permissions:list') as Promise<PermissionGrantSnapshot>,
-    revoke: (request) =>
-      ipcRenderer.invoke('permissions:revoke', request) as Promise<PermissionGrantMutationView>,
-    extendUndo: (request) =>
-      ipcRenderer.invoke('permissions:extend-undo', request) as Promise<
-        PermissionGrantUndoReceipt | undefined
-      >,
-    restore: (request) =>
-      ipcRenderer.invoke('permissions:restore', request) as Promise<PermissionGrantMutationView>,
-    onChanged: (listener) => onIpcMessage('permissions:changed', listener)
+    list: () => electronRendererContracts.invoke('permissions.list'),
+    revoke: (request) => electronRendererContracts.invoke('permissions.revoke', request),
+    extendUndo: (request) => electronRendererContracts.invoke('permissions.extendUndo', request),
+    restore: (request) => electronRendererContracts.invoke('permissions.restore', request),
+    onChanged: (listener) => electronRendererContracts.subscribe('permissions.onChanged', listener)
   },
   sessions: {
     // Loads every per-session file plus the last-open manifest from the main process.
@@ -934,177 +930,128 @@ const api: OpenScienceAPI = {
   },
   settings: {
     // Model-settings/onboarding surface: secrets stay in main, the renderer only sees masked views.
-    getPreflight: () => ipcRenderer.invoke('settings:get-preflight') as Promise<Preflight>,
-    getSettings: () => ipcRenderer.invoke('settings:get-settings') as Promise<SettingsSnapshot>,
-    isEncryptionAvailable: () =>
-      ipcRenderer.invoke('settings:encryption-available') as Promise<boolean>,
-    isNpmAvailable: () => ipcRenderer.invoke('settings:npm-available') as Promise<boolean>,
-    checkEnvironment: () =>
-      ipcRenderer.invoke('settings:check-environment') as Promise<EnvironmentCheckResult>,
-    detectClaude: () => ipcRenderer.invoke('settings:detect-claude') as Promise<ClaudeDetectResult>,
-    detectOpencode: () =>
-      ipcRenderer.invoke('settings:detect-opencode') as Promise<SettingsSnapshot>,
-    detectCodex: () => ipcRenderer.invoke('settings:detect-codex') as Promise<SettingsSnapshot>,
-    installClaude: (request) =>
-      ipcRenderer.invoke('settings:install-claude', request) as Promise<ClaudeInstallResult>,
+    getPreflight: () => electronRendererContracts.invoke('settings.getPreflight'),
+    getSettings: () => electronRendererContracts.invoke('settings.getSettings'),
+    isEncryptionAvailable: () => electronRendererContracts.invoke('settings.isEncryptionAvailable'),
+    isNpmAvailable: () => electronRendererContracts.invoke('settings.isNpmAvailable'),
+    checkEnvironment: () => electronRendererContracts.invoke('settings.checkEnvironment'),
+    detectClaude: () => electronRendererContracts.invoke('settings.detectClaude'),
+    detectOpencode: () => electronRendererContracts.invoke('settings.detectOpencode'),
+    detectCodex: () => electronRendererContracts.invoke('settings.detectCodex'),
+    installClaude: (request) => electronRendererContracts.invoke('settings.installClaude', request),
     installOpencode: (request) =>
-      ipcRenderer.invoke('settings:install-opencode', request) as Promise<ClaudeInstallResult>,
+      electronRendererContracts.invoke('settings.installOpencode', request),
     installCodex: (request: InstallCodexRequest) =>
-      ipcRenderer.invoke('settings:install-codex', request) as Promise<ClaudeInstallResult>,
-    uninstallClaude: () =>
-      ipcRenderer.invoke('settings:uninstall-claude') as Promise<SettingsSnapshot>,
-    uninstallOpencode: () =>
-      ipcRenderer.invoke('settings:uninstall-opencode') as Promise<SettingsSnapshot>,
-    uninstallCodex: () =>
-      ipcRenderer.invoke('settings:uninstall-codex') as Promise<SettingsSnapshot>,
+      electronRendererContracts.invoke('settings.installCodex', request),
+    uninstallClaude: () => electronRendererContracts.invoke('settings.uninstallClaude'),
+    uninstallOpencode: () => electronRendererContracts.invoke('settings.uninstallOpencode'),
+    uninstallCodex: () => electronRendererContracts.invoke('settings.uninstallCodex'),
     upsertProvider: (request) =>
-      ipcRenderer.invoke('settings:upsert-provider', request) as Promise<SettingsSnapshot>,
+      electronRendererContracts.invoke('settings.upsertProvider', request),
     deleteProvider: (request) =>
-      ipcRenderer.invoke('settings:delete-provider', request) as Promise<SettingsSnapshot>,
+      electronRendererContracts.invoke('settings.deleteProvider', request),
     setActiveProvider: (request) =>
-      ipcRenderer.invoke('settings:set-active-provider', request) as Promise<SettingsSnapshot>,
+      electronRendererContracts.invoke('settings.setActiveProvider', request),
     setAgentFramework: (request) =>
-      ipcRenderer.invoke('settings:set-agent-framework', request) as Promise<SettingsSnapshot>,
+      electronRendererContracts.invoke('settings.setAgentFramework', request),
     setReasoningEffort: (request) =>
-      ipcRenderer.invoke('settings:set-reasoning-effort', request) as Promise<SettingsSnapshot>,
+      electronRendererContracts.invoke('settings.setReasoningEffort', request),
     setNotificationsEnabled: (request) =>
-      ipcRenderer.invoke(
-        'settings:set-notifications-enabled',
-        request
-      ) as Promise<SettingsSnapshot>,
+      electronRendererContracts.invoke('settings.setNotificationsEnabled', request),
     setConversationSkillImportEnabled: (request) =>
-      ipcRenderer.invoke(
-        'settings:set-conversation-skill-import-enabled',
-        request
-      ) as Promise<SettingsSnapshot>,
+      electronRendererContracts.invoke('settings.setConversationSkillImportEnabled', request),
     setClosePreference: (request) =>
-      ipcRenderer.invoke('settings:set-close-preference', request) as Promise<SettingsSnapshot>,
+      electronRendererContracts.invoke('settings.setClosePreference', request),
     setAppIconVariant: (request) =>
-      ipcRenderer.invoke('settings:set-app-icon-variant', request) as Promise<SettingsSnapshot>,
-    listAppIcons: () => ipcRenderer.invoke('settings:list-app-icons') as Promise<AppIconPreview[]>,
+      electronRendererContracts.invoke('settings.setAppIconVariant', request),
+    listAppIcons: () => electronRendererContracts.invoke('settings.listAppIcons'),
     validateProvider: (request) =>
-      ipcRenderer.invoke('settings:validate-provider', request) as Promise<ValidateProviderResult>,
-    cancelCodexLogin: () => ipcRenderer.invoke('settings:cancel-codex-login') as Promise<void>,
-    cancelClaudeLogin: () => ipcRenderer.invoke('settings:cancel-claude-login') as Promise<void>,
-    loginIsolatedCodex: () =>
-      ipcRenderer.invoke('settings:login-isolated-codex') as Promise<ValidateProviderResult>,
-    logoutIsolatedCodex: () =>
-      ipcRenderer.invoke('settings:logout-isolated-codex') as Promise<ValidateProviderResult>,
-    loginSharedClaude: () =>
-      ipcRenderer.invoke('settings:login-shared-claude') as Promise<ValidateProviderResult>,
-    logoutSharedClaude: () =>
-      ipcRenderer.invoke('settings:logout-shared-claude') as Promise<ValidateProviderResult>,
+      electronRendererContracts.invoke('settings.validateProvider', request),
+    cancelCodexLogin: () => electronRendererContracts.invoke('settings.cancelCodexLogin'),
+    cancelClaudeLogin: () => electronRendererContracts.invoke('settings.cancelClaudeLogin'),
+    loginIsolatedCodex: () => electronRendererContracts.invoke('settings.loginIsolatedCodex'),
+    logoutIsolatedCodex: () => electronRendererContracts.invoke('settings.logoutIsolatedCodex'),
+    loginSharedClaude: () => electronRendererContracts.invoke('settings.loginSharedClaude'),
+    logoutSharedClaude: () => electronRendererContracts.invoke('settings.logoutSharedClaude'),
     // The Claude subscription's setup-token paste. Same shape as the codex login, but the renderer
     // supplies the token (no browser flow), so the payload is the plaintext string itself.
     loginIsolatedClaude: (token: string) =>
-      ipcRenderer.invoke(
-        'settings:login-isolated-claude',
-        token
-      ) as Promise<ValidateProviderResult>,
+      electronRendererContracts.invoke('settings.loginIsolatedClaude', token),
     loginIsolatedClaudeBrowser: () =>
-      ipcRenderer.invoke(
-        'settings:login-isolated-claude-browser'
-      ) as Promise<ValidateProviderResult>,
+      electronRendererContracts.invoke('settings.loginIsolatedClaudeBrowser'),
     cancelIsolatedClaudeLogin: () =>
-      ipcRenderer.invoke('settings:cancel-isolated-claude-login') as Promise<void>,
-    logoutIsolatedClaude: () =>
-      ipcRenderer.invoke('settings:logout-isolated-claude') as Promise<ValidateProviderResult>,
+      electronRendererContracts.invoke('settings.cancelIsolatedClaudeLogin'),
+    logoutIsolatedClaude: () => electronRendererContracts.invoke('settings.logoutIsolatedClaude'),
     refreshProviderModels: (request) =>
-      ipcRenderer.invoke(
-        'settings:refresh-provider-models',
-        request
-      ) as Promise<RefreshProviderModelsResult>,
+      electronRendererContracts.invoke('settings.refreshProviderModels', request),
     markOnboardingComplete: () =>
-      ipcRenderer.invoke('settings:mark-onboarding-complete') as Promise<SettingsSnapshot>,
-    getPackageMirror: () =>
-      ipcRenderer.invoke('settings:get-package-mirror') as Promise<PackageMirror>,
+      electronRendererContracts.invoke('settings.markOnboardingComplete'),
+    getPackageMirror: () => electronRendererContracts.invoke('settings.getPackageMirror'),
     setPackageMirror: (request) =>
-      ipcRenderer.invoke('settings:set-package-mirror', request) as Promise<PackageMirror>,
-    listSkills: () => ipcRenderer.invoke('settings:list-skills') as Promise<SkillView[]>,
-    getSkillDetail: (id: string) =>
-      ipcRenderer.invoke('settings:get-skill-detail', id) as Promise<SkillDetailView>,
+      electronRendererContracts.invoke('settings.setPackageMirror', request),
+    listSkills: () => electronRendererContracts.invoke('settings.listSkills'),
+    getSkillDetail: (id: string) => electronRendererContracts.invoke('settings.getSkillDetail', id),
     setSkillEnabled: (request: SetSkillEnabledRequest) =>
-      ipcRenderer.invoke('settings:set-skill-enabled', request) as Promise<SkillView[]>,
+      electronRendererContracts.invoke('settings.setSkillEnabled', request),
     createSkill: (request: CreateSkillRequest) =>
-      ipcRenderer.invoke('settings:create-skill', request) as Promise<SkillView[]>,
+      electronRendererContracts.invoke('settings.createSkill', request),
     updateSkill: (request: UpdateSkillRequest) =>
-      ipcRenderer.invoke('settings:update-skill', request) as Promise<SkillView[]>,
+      electronRendererContracts.invoke('settings.updateSkill', request),
     deleteSkill: (request: DeleteSkillRequest) =>
-      ipcRenderer.invoke('settings:delete-skill', request) as Promise<SkillView[]>,
+      electronRendererContracts.invoke('settings.deleteSkill', request),
     importSkill: (request: ImportSkillRequest) =>
-      ipcRenderer.invoke('settings:import-skill', request) as Promise<ImportSkillResult>,
+      electronRendererContracts.invoke('settings.importSkill', request),
     importSkillZip: (request: ImportSkillZipRequest) =>
-      ipcRenderer.invoke('settings:import-skill-zip', request) as Promise<ImportSkillResult>,
+      electronRendererContracts.invoke('settings.importSkillZip', request),
     importSkillZipBatch: (request: ImportSkillZipBatchRequest) =>
-      ipcRenderer.invoke(
-        'settings:import-skill-zip-batch',
-        request
-      ) as Promise<ImportSkillZipBatchResult>,
+      electronRendererContracts.invoke('settings.importSkillZipBatch', request),
     previewSkillZip: (request: PreviewSkillZipRequest) =>
-      ipcRenderer.invoke(
-        'settings:preview-skill-zip',
-        request
-      ) as Promise<SkillBundlePreviewResult>,
+      electronRendererContracts.invoke('settings.previewSkillZip', request),
     previewGitHubSkill: (request: PreviewGitHubSkillRequest) =>
-      ipcRenderer.invoke(
-        'settings:preview-github-skill',
-        request
-      ) as Promise<SkillImportPreviewContent>,
+      electronRendererContracts.invoke('settings.previewGitHubSkill', request),
     scanRepoSkills: (request: ScanRepoRequest) =>
-      ipcRenderer.invoke('settings:scan-repo-skills', request) as Promise<ScanRepoResult>,
+      electronRendererContracts.invoke('settings.scanRepoSkills', request),
     // Lists installed skills from the shared global source plus the active framework's source.
-    listAgentHomeSkills: () =>
-      ipcRenderer.invoke('settings:list-agent-home-skills') as Promise<AgentHomeSkillView[]>,
+    listAgentHomeSkills: () => electronRendererContracts.invoke('settings.listAgentHomeSkills'),
     previewAgentHomeSkill: (request: PreviewAgentHomeSkillRequest) =>
-      ipcRenderer.invoke(
-        'settings:preview-agent-home-skill',
-        request
-      ) as Promise<SkillImportPreviewContent>,
+      electronRendererContracts.invoke('settings.previewAgentHomeSkill', request),
     importAgentHomeSkills: (request: ImportAgentHomeSkillsRequest) =>
-      ipcRenderer.invoke(
-        'settings:import-agent-home-skills',
-        request
-      ) as Promise<ImportAgentHomeSkillsResult>,
-    listConnectors: () =>
-      ipcRenderer.invoke('settings:list-connectors') as Promise<ConnectorsSnapshot>,
+      electronRendererContracts.invoke('settings.importAgentHomeSkills', request),
+    listConnectors: () => electronRendererContracts.invoke('settings.listConnectors'),
     getConnectorDetail: (id: string) =>
-      ipcRenderer.invoke('settings:get-connector-detail', id) as Promise<ConnectorDetailView>,
+      electronRendererContracts.invoke('settings.getConnectorDetail', id),
     setConnectorEnabled: (request: SetConnectorEnabledRequest) =>
-      ipcRenderer.invoke('settings:set-connector-enabled', request) as Promise<ConnectorsSnapshot>,
+      electronRendererContracts.invoke('settings.setConnectorEnabled', request),
     setConnectorAutoAllow: (request: SetConnectorAutoAllowRequest) =>
-      ipcRenderer.invoke(
-        'settings:set-connector-auto-allow',
-        request
-      ) as Promise<ConnectorsSnapshot>,
+      electronRendererContracts.invoke('settings.setConnectorAutoAllow', request),
     setToolPermission: (request: SetToolPermissionRequest) =>
-      ipcRenderer.invoke('settings:set-tool-permission', request) as Promise<ConnectorDetailView>,
+      electronRendererContracts.invoke('settings.setToolPermission', request),
     setNcbiCredentials: (request: SetNcbiCredentialsRequest) =>
-      ipcRenderer.invoke('settings:set-ncbi-credentials', request) as Promise<ConnectorsSnapshot>,
+      electronRendererContracts.invoke('settings.setNcbiCredentials', request),
     addCustomServer: (request: AddCustomServerRequest) =>
-      ipcRenderer.invoke('settings:add-custom-server', request) as Promise<ConnectorsSnapshot>,
+      electronRendererContracts.invoke('settings.addCustomServer', request),
     setCustomServerEnabled: (request: SetCustomServerEnabledRequest) =>
-      ipcRenderer.invoke(
-        'settings:set-custom-server-enabled',
-        request
-      ) as Promise<ConnectorsSnapshot>,
+      electronRendererContracts.invoke('settings.setCustomServerEnabled', request),
     removeCustomServer: (request: RemoveCustomServerRequest) =>
-      ipcRenderer.invoke('settings:remove-custom-server', request) as Promise<ConnectorsSnapshot>,
+      electronRendererContracts.invoke('settings.removeCustomServer', request),
     updateCustomServer: (request: UpdateCustomServerRequest) =>
-      ipcRenderer.invoke('settings:update-custom-server', request) as Promise<ConnectorsSnapshot>,
+      electronRendererContracts.invoke('settings.updateCustomServer', request),
     // Fires when a connector call needs the user's approval (external data-egress gate).
-    onConnectorApprovalRequest: (listener) => onIpcMessage('connectors:approval-request', listener),
+    onConnectorApprovalRequest: (listener) =>
+      electronRendererContracts.subscribe('settings.onConnectorApprovalRequest', listener),
     onSkillImportApprovalRequest: (listener) =>
-      onIpcMessage('skills:conversation-import-request', listener),
+      electronRendererContracts.subscribe('settings.onSkillImportApprovalRequest', listener),
     onSkillImportApprovalSettled: (listener) =>
-      onIpcMessage('skills:conversation-import-settled', listener),
+      electronRendererContracts.subscribe('settings.onSkillImportApprovalSettled', listener),
     replayPendingSkillImportApprovals: () =>
-      ipcRenderer.invoke('skills:conversation-import-replay-pending') as Promise<void>,
+      electronRendererContracts.invoke('settings.replayPendingSkillImportApprovals'),
     respondSkillImportApproval: (response) =>
-      ipcRenderer.invoke('skills:conversation-import-respond', response) as Promise<void>,
+      electronRendererContracts.invoke('settings.respondSkillImportApproval', response),
     respondConnectorApproval: (request: RespondApprovalRequest) =>
-      ipcRenderer.invoke('connectors:approval-respond', request) as Promise<void>,
+      electronRendererContracts.invoke('settings.respondConnectorApproval', request),
     // Streams live installer output while a one-click install runs.
-    onInstallLog: (listener) => onIpcMessage('settings:install-log', listener)
+    onInstallLog: (listener) =>
+      electronRendererContracts.subscribe('settings.onInstallLog', listener)
   },
   remoteAccess: {
     getSnapshot: () =>
@@ -1122,51 +1069,42 @@ const api: OpenScienceAPI = {
     onChanged: (listener) => onIpcMessage('remote-access:changed', () => listener())
   },
   specialist: {
-    list: () => ipcRenderer.invoke(SPECIALIST_IPC.LIST) as Promise<SpecialistListItem[]>,
+    list: () => electronRendererContracts.invoke('specialist.list'),
     create: (request: CreateSpecialistRequest) =>
-      ipcRenderer.invoke(SPECIALIST_IPC.CREATE, request) as Promise<SpecialistProfileView>,
+      electronRendererContracts.invoke('specialist.create', request),
     update: (request: UpdateSpecialistRequest) =>
-      ipcRenderer.invoke(SPECIALIST_IPC.UPDATE, request) as Promise<SpecialistProfileView>,
+      electronRendererContracts.invoke('specialist.update', request),
     setEnabled: (request: SetSpecialistEnabledRequest) =>
-      ipcRenderer.invoke(SPECIALIST_IPC.SET_ENABLED, request) as Promise<SpecialistProfileView>,
+      electronRendererContracts.invoke('specialist.setEnabled', request),
     delete: (request: DeleteSpecialistRequest) =>
-      ipcRenderer.invoke(SPECIALIST_IPC.DELETE, request) as Promise<void>,
+      electronRendererContracts.invoke('specialist.delete', request),
     duplicate: (request: DuplicateSpecialistRequest) =>
-      ipcRenderer.invoke(SPECIALIST_IPC.DUPLICATE, request) as Promise<CreateSpecialistRequest>,
+      electronRendererContracts.invoke('specialist.duplicate', request),
     onCatalogChanged: (listener: () => void) =>
-      onIpcMessage(SPECIALIST_IPC.CATALOG_CHANGED, listener),
+      electronRendererContracts.subscribe('specialist.onCatalogChanged', listener),
     // Compatibility-only pending-selection broadcast; approved SDK handoffs use lifecycle events.
-    onPendingSwitch: (listener) => onIpcMessage(SPECIALIST_IPC.PENDING_SWITCH, listener),
+    onPendingSwitch: (listener) =>
+      electronRendererContracts.subscribe('specialist.onPendingSwitch', listener),
     getHandoffEvents: (sessionId: string) =>
-      ipcRenderer.invoke(SPECIALIST_IPC.GET_HANDOFF_EVENTS, sessionId) as Promise<
-        CompletionHandoffLifecycleEvent[]
-      >,
+      electronRendererContracts.invoke('specialist.getHandoffEvents', sessionId),
     onHandoffLifecycleEvent: (listener) =>
-      onIpcMessage(SPECIALIST_IPC.HANDOFF_LIFECYCLE_CHANGED, listener),
+      electronRendererContracts.subscribe('specialist.onHandoffLifecycleEvent', listener),
     retryHandoff: (request: CompletionHandoffCommand) =>
-      ipcRenderer.invoke(SPECIALIST_IPC.RETRY_HANDOFF, request) as Promise<unknown>,
+      electronRendererContracts.invoke('specialist.retryHandoff', request),
     cancelHandoff: (request: CompletionHandoffCommand) =>
-      ipcRenderer.invoke(SPECIALIST_IPC.CANCEL_HANDOFF, request) as Promise<void>,
+      electronRendererContracts.invoke('specialist.cancelHandoff', request),
     // Session switching (issue 07).
     setSessionSpecialist: (request: SetSessionSpecialistRequest) =>
-      ipcRenderer.invoke(
-        SPECIALIST_IPC.SET_SESSION_SPECIALIST,
-        request
-      ) as Promise<SetSessionSpecialistResponse>,
+      electronRendererContracts.invoke('specialist.setSessionSpecialist', request),
     resolveSessionSpecialist: (request: ResolveSessionSpecialistRequest) =>
-      ipcRenderer.invoke(
-        SPECIALIST_IPC.RESOLVE_SESSION_SPECIALIST,
-        request
-      ) as Promise<SessionSpecialistResolution>
+      electronRendererContracts.invoke('specialist.resolveSessionSpecialist', request)
   },
   handoff: {
     list: (request: HandoffEventsRequest) =>
-      ipcRenderer.invoke(HANDOFF_LIFECYCLE_IPC.LIST, request) as Promise<
-        readonly HandoffLifecycleEvent[]
-      >,
+      electronRendererContracts.invoke('handoff.list', request),
     retry: (request: HandoffRetryRequest) =>
-      ipcRenderer.invoke(HANDOFF_LIFECYCLE_IPC.RETRY, request) as Promise<void>,
-    onChanged: (listener) => onIpcMessage(HANDOFF_LIFECYCLE_IPC.CHANGED, listener)
+      electronRendererContracts.invoke('handoff.retry', request),
+    onChanged: (listener) => electronRendererContracts.subscribe('handoff.onChanged', listener)
   },
   logs: {
     getPath: () => ipcRenderer.invoke('logs:get-path') as Promise<string | null>,
@@ -1241,62 +1179,61 @@ const api: OpenScienceAPI = {
   },
   compute: {
     // SSH compute host record CRUD, backed by the same SQLite/Prisma layer as projects.
-    list: () => ipcRenderer.invoke('compute:list') as Promise<ComputeHost[]>,
-    get: (providerId) =>
-      ipcRenderer.invoke('compute:get', providerId) as Promise<ComputeHost | null>,
-    create: (request) => ipcRenderer.invoke('compute:create', request) as Promise<ComputeHost>,
-    delete: (request) => ipcRenderer.invoke('compute:delete', request) as Promise<void>,
-    sshConfigAliases: () => ipcRenderer.invoke('compute:ssh-config-aliases') as Promise<string[]>,
-    probe: (providerId) => ipcRenderer.invoke('compute:probe', providerId) as Promise<ProbeResult>,
+    list: () => electronRendererContracts.invoke('compute.list'),
+    get: (providerId) => electronRendererContracts.invoke('compute.get', providerId),
+    create: (request) => electronRendererContracts.invoke('compute.create', request),
+    delete: (request) => electronRendererContracts.invoke('compute.delete', request),
+    sshConfigAliases: () => electronRendererContracts.invoke('compute.sshConfigAliases'),
+    probe: (providerId) => electronRendererContracts.invoke('compute.probe', providerId),
     detailsGet: (providerId) =>
-      ipcRenderer.invoke('compute:details:get', providerId) as Promise<{
+      electronRendererContracts.invoke('compute.detailsGet', providerId) as Promise<{
         doc: string
         isSkeleton: boolean
       }>,
     detailsSave: (providerId, text, oldText, author) =>
-      ipcRenderer.invoke(
-        'compute:details:save',
+      electronRendererContracts.invoke(
+        'compute.detailsSave',
         providerId,
         text,
         oldText,
         author
       ) as Promise<void>,
     scratchSet: (providerId, path) =>
-      ipcRenderer.invoke('compute:scratch:set', providerId, path) as Promise<void>,
+      electronRendererContracts.invoke('compute.scratchSet', providerId, path),
     concurrencySet: (providerId, limit) =>
-      ipcRenderer.invoke('compute:concurrency:set', providerId, limit) as Promise<void>,
+      electronRendererContracts.invoke('compute.concurrencySet', providerId, limit),
     download: (providerId, remotePath, dest) =>
-      ipcRenderer.invoke('compute:download', providerId, remotePath, dest) as Promise<LocalFile>,
+      electronRendererContracts.invoke('compute.download', providerId, remotePath, dest),
     revealInFolder: (filePath) =>
-      ipcRenderer.invoke('compute:reveal-in-folder', filePath) as Promise<void>,
+      electronRendererContracts.invoke('compute.revealInFolder', filePath),
     // Fires when a compute call needs user approval (runs before any SSH is made).
     onApprovalRequest: (listener: (request: ComputeApprovalRequest) => void) =>
-      onIpcMessage<ComputeApprovalRequest>('compute:approval-request', listener),
+      electronRendererContracts.subscribe('compute.onApprovalRequest', listener),
     // Renderer sends back the user's decision (once / conversation / project / deny).
     respondApproval: (request: { id: string; decision: ComputeApprovalDecision }) =>
-      ipcRenderer.invoke('compute:approval-respond', request) as Promise<void>,
+      electronRendererContracts.invoke('compute.respondApproval', request),
     listDir: (providerId, path) =>
-      ipcRenderer.invoke('compute:list-dir', providerId, path) as Promise<DirListing>,
+      electronRendererContracts.invoke('compute.listDir', providerId, path),
     bookmarksGet: (providerId) =>
-      ipcRenderer.invoke('compute:bookmarks:get', providerId) as Promise<string[]>,
+      electronRendererContracts.invoke('compute.bookmarksGet', providerId),
     bookmarksSet: (providerId, folders) =>
-      ipcRenderer.invoke('compute:bookmarks:set', providerId, folders) as Promise<void>,
+      electronRendererContracts.invoke('compute.bookmarksSet', providerId, folders),
     // Returns all jobs for a session as JobSummary[], optionally filtered by status (Phase 3d).
     jobsList: (filter: { sessionId: string; status?: string[] }) =>
-      ipcRenderer.invoke('compute:jobs:list', filter) as Promise<JobSummary[]>,
+      electronRendererContracts.invoke('compute.jobsList', filter),
     // Returns jobs pending analysis turn (notifiedAt set, notificationConsumedAt null).
     jobsPendingNotification: (sessionId) =>
-      ipcRenderer.invoke('compute:jobs:pending-notification', sessionId) as Promise<JobSummary[]>,
+      electronRendererContracts.invoke('compute.jobsPendingNotification', sessionId),
     // Marks job ids as notification-consumed after a successful analysis turn (issue 05).
     jobsMarkConsumed: (sessionId, jobIds) =>
-      ipcRenderer.invoke('compute:jobs:mark-consumed', sessionId, jobIds) as Promise<void>,
+      electronRendererContracts.invoke('compute.jobsMarkConsumed', sessionId, jobIds),
     // Fires when a job's status or tail changes (broadcast from the main-process poller).
     onJobUpdated: (listener: (job: JobSummary) => void) =>
-      onIpcMessage<JobSummary>('compute:job-updated', listener),
+      electronRendererContracts.subscribe('compute.onJobUpdated', listener),
     enabledHostsGet: (sessionId) =>
-      ipcRenderer.invoke('compute:enabled-hosts:get', sessionId) as Promise<string[]>,
+      electronRendererContracts.invoke('compute.enabledHostsGet', sessionId),
     enabledHostsSet: (sessionId, providerIds) =>
-      ipcRenderer.invoke('compute:enabled-hosts:set', sessionId, providerIds) as Promise<void>
+      electronRendererContracts.invoke('compute.enabledHostsSet', sessionId, providerIds)
   },
   preview: {
     // Per-project preview panel state, persisted alongside projects in SQLite.
@@ -1414,99 +1351,89 @@ const api: OpenScienceAPI = {
   },
   notebook: {
     // Notebook commands stay behind typed IPC so renderer code never talks to local RPC directly.
-    state: (request) =>
-      ipcRenderer.invoke('notebook:state', request) as Promise<NotebookSessionState>,
+    state: (request) => electronRendererContracts.invoke('notebook.state', request),
     readInputPreview: (request) =>
-      ipcRenderer.invoke('notebook:read-input-preview', request) as Promise<ArtifactPreviewResult>,
-    getReference: (request) =>
-      ipcRenderer.invoke('notebook:reference', request) as Promise<NotebookSessionReference | null>,
+      electronRendererContracts.invoke('notebook.readInputPreview', request),
+    getReference: (request) => electronRendererContracts.invoke('notebook.getReference', request),
     beginCodeCell: (request) =>
-      ipcRenderer.invoke('notebook:begin-code-cell', request) as Promise<{
+      electronRendererContracts.invoke('notebook.beginCodeCell', request) as Promise<{
         sessionId: string
         cellId: string
         writeId: string
         status: string
       }>,
     appendCodeCell: (request) =>
-      ipcRenderer.invoke('notebook:append-code-cell', request) as Promise<{
+      electronRendererContracts.invoke('notebook.appendCodeCell', request) as Promise<{
         sessionId: string
         cellId: string
         writeId: string
         receivedBytes: number
       }>,
     finishCodeCell: (request) =>
-      ipcRenderer.invoke('notebook:finish-code-cell', request) as Promise<{
+      electronRendererContracts.invoke('notebook.finishCodeCell', request) as Promise<{
         sessionId: string
         cellId: string
         code: string
         status: string
       }>,
-    runCell: (request) =>
-      ipcRenderer.invoke('notebook:run-cell', request) as Promise<NotebookRunSummary>,
-    execute: (request) =>
-      ipcRenderer.invoke('notebook:execute', request) as Promise<NotebookRunSummary>,
-    exportIpynb: (request) =>
-      ipcRenderer.invoke('notebook:export-ipynb', request) as Promise<ExportNotebookResult>,
+    runCell: (request) => electronRendererContracts.invoke('notebook.runCell', request),
+    execute: (request) => electronRendererContracts.invoke('notebook.execute', request),
+    exportIpynb: (request) => electronRendererContracts.invoke('notebook.exportIpynb', request),
     exportIpynbAll: (request) =>
-      ipcRenderer.invoke('notebook:export-ipynb-all', request) as Promise<ExportNotebookAllResult>,
-    restart: (request) =>
-      ipcRenderer.invoke('notebook:restart', request) as Promise<NotebookSessionState>,
+      electronRendererContracts.invoke('notebook.exportIpynbAll', request),
+    restart: (request) => electronRendererContracts.invoke('notebook.restart', request),
     shutdown: (request) =>
-      ipcRenderer.invoke('notebook:shutdown', request) as Promise<{
+      electronRendererContracts.invoke('notebook.shutdown', request) as Promise<{
         sessionId: string
         status: 'shutdown'
       }>,
-    onAvailable: (listener) => onIpcMessage('notebook:available', listener),
-    onChanged: (listener) => onIpcMessage('notebook:changed', listener)
+    onAvailable: (listener) =>
+      electronRendererContracts.subscribe('notebook.onAvailable', listener),
+    onChanged: (listener) => electronRendererContracts.subscribe('notebook.onChanged', listener)
   },
   notebookEnv: {
-    getStatus: () => ipcRenderer.invoke('notebook-env:status') as Promise<ProvisionStatus>,
-    provision: (lang) => ipcRenderer.invoke('notebook-env:provision', lang) as Promise<void>,
-    repair: (lang) => ipcRenderer.invoke('notebook-env:repair', lang) as Promise<void>,
+    getStatus: () => electronRendererContracts.invoke('notebookEnv.getStatus'),
+    provision: (lang) => electronRendererContracts.invoke('notebookEnv.provision', lang),
+    repair: (lang) => electronRendererContracts.invoke('notebookEnv.repair', lang),
     cancel: (lang?: NotebookLanguage) =>
-      ipcRenderer.invoke('notebook-env:cancel', lang) as Promise<void>,
-    onProgress: (listener) => onIpcMessage('notebook-env:progress', listener)
+      electronRendererContracts.invoke('notebookEnv.cancel', lang),
+    onProgress: (listener) =>
+      electronRendererContracts.subscribe('notebookEnv.onProgress', listener)
   },
   runtime: {
-    survey: () => ipcRenderer.invoke('runtime:survey') as Promise<RuntimeSurvey[]>,
+    survey: () => electronRendererContracts.invoke('runtime.survey'),
     setSelection: (language, selection) =>
-      ipcRenderer.invoke('runtime:set-selection', {
-        language,
-        selection
-      }) as Promise<RuntimeSurvey>,
-    pickInterpreter: () => ipcRenderer.invoke('runtime:pick-interpreter') as Promise<string | null>,
+      electronRendererContracts.invoke('runtime.setSelection', language, selection),
+    pickInterpreter: () => electronRendererContracts.invoke('runtime.pickInterpreter'),
     listEnvironments: () =>
-      ipcRenderer.invoke('runtime:list-environments') as Promise<{
+      electronRendererContracts.invoke('runtime.listEnvironments') as Promise<{
         python: DiscoveredInterpreter[]
         r: DiscoveredInterpreter[]
       }>,
     listPackages: (language, envId) =>
-      ipcRenderer.invoke('runtime:list-packages', { language, envId }) as Promise<EnvPackage[]>,
+      electronRendererContracts.invoke('runtime.listPackages', language, envId),
     listPackageCounts: (language) =>
-      ipcRenderer.invoke('runtime:list-package-counts', { language }) as Promise<
+      electronRendererContracts.invoke('runtime.listPackageCounts', language) as Promise<
         Record<string, number | null>
       >,
     getEnablement: (language) =>
-      ipcRenderer.invoke('runtime:get-enablement', { language }) as Promise<RuntimeEnablement>,
+      electronRendererContracts.invoke('runtime.getEnablement', language),
     describeUsage: (language, envId) =>
-      ipcRenderer.invoke('runtime:describe-usage', { language, envId }) as Promise<RuntimeUsage>,
+      electronRendererContracts.invoke('runtime.describeUsage', language, envId),
     setEnvironmentEnabled: (language, envId, enabled, force) =>
-      ipcRenderer.invoke('runtime:set-environment-enabled', {
+      electronRendererContracts.invoke(
+        'runtime.setEnvironmentEnabled',
         language,
         envId,
         enabled,
         force
-      }) as Promise<RuntimeEnablement>,
+      ),
     setInstallAuthorized: (language, envId, authorized) =>
-      ipcRenderer.invoke('runtime:set-install-authorized', {
-        language,
-        envId,
-        authorized
-      }) as Promise<RuntimeEnablement>,
+      electronRendererContracts.invoke('runtime.setInstallAuthorized', language, envId, authorized),
     registerInterpreter: (language, path) =>
-      ipcRenderer.invoke('runtime:register-interpreter', { language, path }) as Promise<string[]>,
+      electronRendererContracts.invoke('runtime.registerInterpreter', language, path),
     unregisterInterpreter: (language, path) =>
-      ipcRenderer.invoke('runtime:unregister-interpreter', { language, path }) as Promise<string[]>
+      electronRendererContracts.invoke('runtime.unregisterInterpreter', language, path)
   },
   storage: {
     getInfo: () => ipcRenderer.invoke('storage:get-info') as Promise<StorageInfo>,
