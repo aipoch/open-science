@@ -5,6 +5,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 
 import {
   createInitialPreviewWorkbenchState,
+  type PreviewFileItem,
   usePreviewWorkbenchStore
 } from '@/stores/preview-workbench-store'
 import { createInitialComputeState, useComputeStore } from '@/stores/compute-store'
@@ -356,7 +357,11 @@ describe('ProjectFilesView', () => {
     vi.unstubAllGlobals()
   })
 
-  const renderView = async (sessions: ChatSession[], strict = false): Promise<void> => {
+  const renderView = async (
+    sessions: ChatSession[],
+    strict = false,
+    beforeRender?: () => void
+  ): Promise<void> => {
     const { useSessionStore } = await import('@/stores/session-store')
     const { useNavigationStore } = await import('@/stores/navigation-store')
     const { ProjectFilesView } = await import('./ProjectFilesView')
@@ -466,6 +471,7 @@ describe('ProjectFilesView', () => {
     // The view lists only the active project's files; test sessions use the 'default' projectId.
     useNavigationStore.setState({ view: 'workspace', activeProjectId: 'default' })
     root = createRoot(container)
+    beforeRender?.()
     await act(async () => {
       root.render(strict ? <StrictMode>{<ProjectFilesView />}</StrictMode> : <ProjectFilesView />)
       await Promise.resolve()
@@ -2186,6 +2192,45 @@ describe('ProjectFilesView', () => {
     ).toContain('Artifacts')
     expect(nextScrollContainer).not.toBe(scrollContainer)
     expect(nextScrollContainer?.scrollTop).toBe(0)
+  })
+
+  it('preserves queued dialogs and clears only the one owned by the unmounting Files surface', async () => {
+    const otherProjectFile: PreviewFileItem = {
+      id: 'other-artifact',
+      type: 'file',
+      source: 'artifact',
+      projectId: 'other-project',
+      sessionId: 'other-session',
+      title: 'other.png',
+      name: 'other.png',
+      path: '/workspace/other.png',
+      format: 'image',
+      mimeType: 'image/png',
+      size: 1024
+    }
+    const currentProjectFile = { ...otherProjectFile, projectId: 'default' }
+
+    await renderView([], true, () => {
+      usePreviewWorkbenchStore.getState().openFileDialog(currentProjectFile)
+    })
+    expect(usePreviewWorkbenchStore.getState().fileDialogItem).toEqual(currentProjectFile)
+
+    await act(async () => {
+      usePreviewWorkbenchStore.getState().openFileDialog(otherProjectFile)
+    })
+
+    const { useNavigationStore } = await import('@/stores/navigation-store')
+    await act(async () => {
+      useNavigationStore.setState({ activeProjectId: 'other-project' })
+      await Promise.resolve()
+    })
+    expect(usePreviewWorkbenchStore.getState().fileDialogItem).toEqual(otherProjectFile)
+
+    await act(async () => {
+      root.render(<div />)
+      await Promise.resolve()
+    })
+    expect(usePreviewWorkbenchStore.getState().fileDialogItem).toBeUndefined()
   })
 
   it('drops queued thumbnail reads from the previous project during a project switch', async () => {

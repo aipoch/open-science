@@ -1036,6 +1036,24 @@ const ProjectFilesViewContent = ({
   const openFileDialog = usePreviewWorkbenchStore((state) => state.openFileDialog)
   const fileDialogItem = usePreviewWorkbenchStore((state) => state.fileDialogItem)
   const closeFileDialog = usePreviewWorkbenchStore((state) => state.closeFileDialog)
+  const fileDialogCleanupState = useRef({ version: 0 })
+
+  useEffect(() => {
+    const cleanupState = fileDialogCleanupState.current
+    const cleanupVersion = ++cleanupState.version
+
+    return () => {
+      // StrictMode immediately remounts effects; defer so that pass can cancel this cleanup.
+      queueMicrotask(() => {
+        if (cleanupState.version !== cleanupVersion) return
+
+        const workbench = usePreviewWorkbenchStore.getState()
+        if (workbench.fileDialogItem?.projectId === activeProjectId) {
+          workbench.closeFileDialog()
+        }
+      })
+    }
+  }, [activeProjectId])
 
   // Remote file browser modal state — set to a providerId when a REMOTE host is selected.
   const [browseProviderId, setBrowseProviderId] = useState<string | undefined>(undefined)
