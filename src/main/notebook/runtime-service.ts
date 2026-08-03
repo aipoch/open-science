@@ -33,6 +33,7 @@ import type {
   ProvisionProgress
 } from '../../shared/notebook-env'
 import type { PackageMirror } from '../../shared/mirror'
+import { NotebookDataExecutionAdmissionOwner } from './data-execution-admission'
 import { NotebookExportReader } from './export-reader'
 import { NotebookKernelExecutor, type NotebookKernelExecutorOptions } from './kernel-executor'
 import { saveIpynbAll } from './save-ipynb-all'
@@ -44,7 +45,6 @@ import {
   type InstallRequest,
   type InstallResult
 } from './package-manager'
-import { detectManagedRuntimeMutation } from './managed-runtime-guard'
 import { NotebookRunRepository, getNotebookRunJsonPath, getRuntimeRoot } from './repository'
 import {
   addRepairRequired,
@@ -54,7 +54,6 @@ import {
   DEFAULT_PY_ENV,
   DEFAULT_R_ENV,
   envPrefix,
-  isRepairRequired,
   managedRepairRegistryKey,
   pythonBin,
   pythonReady,
@@ -434,6 +433,7 @@ class NotebookRuntimeService {
   private readonly exportReader: NotebookExportReader
   private readonly runTerminalization: NotebookRunTerminalizationOwner
   private readonly executionOwner: NotebookExecutionOwner
+  private readonly dataExecutionAdmission: NotebookDataExecutionAdmissionOwner
   private readonly sessions: NotebookSessionRegistry<RuntimeSession>
   private readonly announcedAgentSessionIds = new Set<string>()
   // Owns process-global operation admission, provisioning progress, restart recommendations,
@@ -514,6 +514,13 @@ class NotebookRuntimeService {
         platform: options.platform,
         logger: this.runtimeLogger
       })
+    this.dataExecutionAdmission = new NotebookDataExecutionAdmissionOwner({
+      runtimeRoot: getRuntimeRoot(options.dataRoot),
+      environmentOperations: this.environmentOperations,
+      recovery: this.recoveryCoordinator,
+      ensureRecovered: () => this.ensureRecovered(),
+      resolveRuntimeEnablement: (language) => this.resolveRuntimeEnablement(language)
+    })
     this.environmentManager = options.environmentManager
     this.runTerminalization = new NotebookRunTerminalizationOwner({
       repository: this.repository,
@@ -600,24 +607,6 @@ class NotebookRuntimeService {
       // Not on disk yet — keep the raw path.
     }
     return enablement.enabled[envId] === false || enablement.enabled[interp] === false
-  }
-
-  // A provision failure is broadcast and rethrown so the run path records the actionable root cause
-  // as a failed run rather than spawning the executor against a missing prefix.
-  private async ensureDefaultEnvReady(
-    language: NotebookLanguage,
-    env: string,
-    runtimeRootDir: string,
-    sessionId: string
-  ): Promise<void> {
-    return this.environmentOperations.ensureDefaultEnvironmentReady({
-      language,
-      environment: env,
-      runtimeRoot: runtimeRootDir,
-      sessionId,
-      ensureRecovered: () => this.ensureRecovered(),
-      assertRecoverable: () => this.assertPrefixRecoverable(envPrefix(runtimeRootDir, env))
-    })
   }
 
   // The DEFAULT env name / process key for a language, matching resolveEnvName / dataProcessKey.
@@ -846,8 +835,10 @@ class NotebookRuntimeService {
     // after any in-flight run on the SAME (kind, env) so that env's kernel processes one cell at a
     // time, while a different env or language (e.g. python:my-analysis vs python:default-python vs r)
     // proceeds on its own independent chain (§5/D4, generalizes G5's per-kind queue to per-env).
-    const processKey = dataProcessKey(cell.language, this.resolveRunEnv(session, cell.language))
-    return session.enqueueExecution(processKey, () => this.runCellExclusive(session, cell, request))
+    const route = this.dataExecutionAdmission.route(session, cell.language)
+    return session.enqueueExecution(route.processKey, () =>
+      this.runCellExclusive(session, cell, request)
+    )
   }
 
   // Runs one cell to completion while holding its (kind, env) execution slot. Only ever invoked through
@@ -863,122 +854,12 @@ class NotebookRuntimeService {
     const startedAt = Date.now()
     const executionCount = session.nextExecutionCount()
     const cwdBefore = session.cwd
-    // Resolve the env at the run boundary from the SESSION BINDING (not a per-call argument): the run
-    // uses this env's process/queue/lock and it is recorded on the run so history/replay and the UI
-    // know which env produced it (D1/D6).
-    const env = this.resolveRunEnv(session, cell.language)
-    const processKey = dataProcessKey(cell.language, env)
-
-    // Resolve which interpreter backs this run. v4 unified model: the session BINDING decides. A
-    // MANAGED binding (app-managed default OR an agent-created named env) runs via the executor's
-    // managed-prefix lookup for `env` (resolved above from the binding). An EXTERNAL binding runs the
-    // user's own interpreter directly. No binding -> the app-managed default. There is no implicit
-    // external default and no per-call env override anymore.
-    let resolvedInterpreter: ResolvedInterpreter | undefined
-    // Deferred so a first-use overlay-build failure (bad base interpreter, ensurepip failure, an
-    // interpreter moved after selection) is normalized into a FAILED run record with a traceback below,
-    // exactly like an executor spawn/crash — rather than throwing raw out of the run path and leaving no
-    // run history for the agent to inspect.
-    let interpreterResolveError: unknown
-    // Recovery starts before IPC registration but completes asynchronously. Wait before consulting its
-    // block sets so an external or named run cannot start while an unknown orphan is still being found.
-    await this.ensureRecovered()
-    const binding = session.runtimeBinding(cell.language)
-    // A managed/default run is gated by its real prefix via isPrefixRecoveryBlocked, which folds in the
-    // corrupt-journal barrier AND honours a force Reset's per-prefix allowlist — so a reset (allowlisted)
-    // env runs cells again without a restart. An EXTERNAL run has no managed prefix, so it keeps the raw
-    // corrupt catch-all (plus its runtimeId block). resolveRunEnv gave us the env name above.
-    const isExternal = binding?.source === 'external'
-    const prefixBlocked =
-      !isExternal &&
-      this.isPrefixRecoveryBlocked(envPrefix(getRuntimeRoot(this.options.dataRoot), env))
-    // Managed repair state is keyed by the canonical conda env name, so an explicit binding and an
-    // unbound/default session cannot refer to the same prefix under two different registry keys.
-    // External runtimes have no app-owned prefix and remain keyed by their discovered runtime id.
-    const repairRegistryRoot = getRuntimeRoot(this.options.dataRoot)
-    const repairKeys = this.repairRegistryKeys(cell.language, env, binding, repairRegistryRoot)
-    const repairRequired =
-      this.environmentOperations.isRepairBlocked(repairBlockKey(cell.language, env, binding)) ||
-      repairKeys.some((key) => isRepairRequired(repairRegistryRoot, key))
-    if (
-      (binding?.runtimeId && this.recoveryCoordinator.isRuntimeIdBlocked(binding.runtimeId)) ||
-      prefixBlocked ||
-      (isExternal && this.recoveryCoordinator.isGloballyBlocked())
-    ) {
-      // Recovery flagged this BOUND runtime possibly-live after an interrupted install (external or a
-      // managed named env) — OR its managed prefix is recovery-blocked (per-prefix block or a not-yet-
-      // reset corrupt journal) — OR an external run under a corrupt journal we can't enumerate.
-      // ensureDefaultEnvReady only guards the DEFAULT prefix, so without this check a named/external run
-      // would proceed over an env a survivor may still be writing. Fail with the actionable message.
-      interpreterResolveError = new Error(
-        `RUNTIME_RECOVERY_BLOCKED: the bound ${cell.language} runtime is recovering from an interrupted ` +
-          'operation whose worker process could not be confirmed stopped, so running it now could ' +
-          'corrupt it. Restart the app to re-check and recover it before running cells.'
-      )
-    } else if (repairRequired) {
-      interpreterResolveError = new Error(
-        `RUNTIME_REPAIR_REQUIRED: the bound ${cell.language} runtime failed a protected-package ` +
-          'integrity check. Run the runtime Repair workflow before executing another cell.'
-      )
-    } else if (binding && (binding.status ?? 'active') !== 'active') {
-      // No silent fallback: a disabled/unavailable bound runtime FAILS the run with an actionable
-      // message rather than quietly running a different interpreter (the user would wrongly assume
-      // their vars/packages/interpreter are unchanged). The agent recovers via list → switch. See
-      // [[notebook-runtime-disable-binding-lifecycle]] / [[notebook-runtime-crash-recovery]].
-      interpreterResolveError = new Error(
-        `RUNTIME_BINDING_UNAVAILABLE: the bound ${cell.language} runtime is ${binding.status}` +
-          (binding.reason ? ` (${binding.reason})` : '') +
-          '. Call list_notebook_runtimes then notebook_switch_runtime to choose another runtime ' +
-          '(an unspecified choice falls back to the app-managed default). Any prior kernel memory ' +
-          '(variables, imports) for this language was lost.'
-      )
-    } else if (binding?.resolvedInterpreter) {
-      // An ENABLED external binding runs the user's own interpreter directly.
-      resolvedInterpreter = binding.resolvedInterpreter
-    } else {
-      // No binding, or an app-managed MANAGED binding (default or an agent-created named env): build the
-      // default env from the offline bundle on first use (R is lazy) before dispatching, so the agent
-      // doesn't hit "still being prepared" and go create its own env. No-op for named envs and for an
-      // already-materialized default.
-      try {
-        // No silent fallback (same guarantee as the binding path above): if the app-managed default is
-        // explicitly DISABLED, refuse rather than provision + run it. Otherwise disabling the last
-        // runtime in Settings would leave "no available runtime" showing there while notebook_execute
-        // still ran the disabled default.
-        //
-        // But ONLY gate on the default's enablement when this run actually targets the default env. A
-        // managed binding to an agent-created NAMED env (my-analysis) also lands here (no
-        // resolvedInterpreter), and its `env` is that named env — disabling `default-python` must not
-        // block it. The named env has its own enablement, checked where it is disabled/revoked (the
-        // status branch above), so here we guard the default only.
-        const isDefaultEnvRun = env === this.defaultEnvNameFor(cell.language)
-        if (
-          isDefaultEnvRun &&
-          (await this.isDefaultEnvDisabled(cell.language, session.runtimeRoot))
-        ) {
-          throw new Error(
-            `No enabled ${cell.language} runtime: the app-managed default is disabled and no runtime ` +
-              'is bound. Enable a runtime in Settings → Runtimes, or bind one with ' +
-              'list_notebook_runtimes then notebook_bind_runtime, before running cells.'
-          )
-        }
-        await this.ensureDefaultEnvReady(cell.language, env, session.runtimeRoot, session.sessionId)
-      } catch (error) {
-        interpreterResolveError = error
-      }
-    }
-
-    const blockedMutation = detectManagedRuntimeMutation({
-      source: cell.code,
-      surface: cell.language,
-      runtimeRoot: session.runtimeRoot,
-      cwd: session.cwd
-    })
-    if (blockedMutation && interpreterResolveError === undefined) {
-      interpreterResolveError = new Error(
-        `MANAGED_RUNTIME_MUTATION_BLOCKED: ${blockedMutation.message}`
-      )
-    }
+    // Admission re-resolves at the exclusive run boundary, matching the former façade behavior while
+    // the pre-queue route above continues to choose the serialization slot. A binding switch while
+    // queued therefore retains the legacy dual-resolution behavior rather than hardening this refactor.
+    const admission = await this.dataExecutionAdmission.admit(session, cell)
+    const { environment: env, processKey } = admission.route
+    const { binding, resolvedInterpreter } = admission
 
     // Mark the cell as running before execution so the preview can show immediate progress.
     session.markCellRunning(cell.id, runId, executionCount)
@@ -1019,7 +900,7 @@ class NotebookRuntimeService {
     // lifecycle status instead of briefly publishing a false 'running'. For a viable dispatch, clear
     // any stale terminated flag so a completing run can settle back to 'idle'. No notify: the run
     // terminalization owner's append notification surfaces the fresh status to the renderer.
-    const kernelMarkedRunning = interpreterResolveError === undefined
+    const kernelMarkedRunning = admission.rejection === undefined
     if (kernelMarkedRunning) {
       session.clearKernelTerminated(processKey)
       await this.persistKernelStatus(session, 'running', processKey)
@@ -1036,29 +917,10 @@ class NotebookRuntimeService {
       session,
       runningRun,
       invoke: () =>
-        this.environmentOperations.runShared('execution', env, async () => {
-          // The run may have waited behind an installer after computing interpreterResolveError above.
-          // Re-read the repair gate only after the shared run lease is acquired so a transaction that
-          // quarantined this env while we waited cannot release the lock and let a stale decision spawn it.
-          const repairRequiredAfterLock =
-            this.environmentOperations.isRepairBlocked(
-              repairBlockKey(cell.language, env, binding)
-            ) || repairKeys.some((key) => isRepairRequired(repairRegistryRoot, key))
-          if (repairRequiredAfterLock) {
+        this.dataExecutionAdmission.runShared(admission, async (rejection) => {
+          if (rejection !== undefined) {
             executedOnLiveKernel = false
-            return errorToExecutionResult(
-              new Error(
-                `RUNTIME_REPAIR_REQUIRED: the bound ${cell.language} runtime failed a protected-package ` +
-                  'integrity check. Run the runtime Repair workflow before executing another cell.'
-              ),
-              cwdBefore
-            )
-          }
-          // A failed interpreter resolve (external overlay build) never reached a live kernel; surface
-          // it through the same normalization the executor uses so it becomes a failed run, not a throw.
-          if (interpreterResolveError !== undefined) {
-            executedOnLiveKernel = false
-            return Promise.resolve(errorToExecutionResult(interpreterResolveError, cwdBefore))
+            return errorToExecutionResult(rejection, cwdBefore)
           }
           const environmentTarget = this.environmentCaptureTarget(
             cell.language,
