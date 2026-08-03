@@ -913,6 +913,7 @@ describe('installAcpIpcHandlers — acp:send-prompt notification tracking', () =
         {
           sessionId: 'session-1',
           text: 'Plot the curve',
+          suppressUserMessage: true,
           continuation: {
             kind: 'specialist-handoff',
             originatingTurnToken: 'renderer-forged-turn',
@@ -927,8 +928,18 @@ describe('installAcpIpcHandlers — acp:send-prompt notification tracking', () =
     expect(trackPrompt).toHaveBeenCalledWith({
       sessionId: 'session-1',
       text: 'Plot the curve',
-      continuation: undefined
+      continuation: undefined,
+      suppressUserMessage: undefined
     })
+    expect(sendPrompt).toHaveBeenCalledWith(
+      expect.objectContaining({
+        sessionId: 'session-1',
+        text: 'Plot the curve',
+        continuation: undefined,
+        suppressUserMessage: undefined
+      }),
+      expect.any(String)
+    )
     expect(trackPrompt.mock.invocationCallOrder[0]).toBeLessThan(
       sendPrompt.mock.invocationCallOrder[0]
     )

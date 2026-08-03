@@ -43,9 +43,13 @@ const registerAcpIpcHandlerSet = (
   )
   // Prompt calls wait for the turn to stop, then return the latest snapshot.
   ipcMainHandle('acp:send-prompt', (_event, request: AcpPromptRequest) => {
-    // Continuations are main-process-owned. A renderer-supplied marker must never suppress a visible
+    // Continuation controls are main-process-owned. Renderer input must never suppress a visible
     // user message or impersonate the handoff path.
-    const rendererRequest = { ...request, continuation: undefined }
+    const rendererRequest = {
+      ...request,
+      continuation: undefined,
+      suppressUserMessage: undefined
+    }
     return workflows.sendPrompt(rendererRequest)
   })
   ipcMainHandle('acp:cancel', (_event, request: AcpCancelPromptRequest) =>
