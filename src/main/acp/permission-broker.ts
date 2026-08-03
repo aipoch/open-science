@@ -404,6 +404,10 @@ const resolveCategoryKey = (
 
 // Projects an opaque category key into the display grant shown in the composer.
 const describeGrant = (categoryKey: string): AcpPermissionGrant => {
+  if (categoryKey.startsWith('shell-group:')) {
+    return { categoryKey, kind: 'shell', label: 'Command group', scope: 'session' }
+  }
+
   if (categoryKey.startsWith('shell:')) {
     return {
       categoryKey,

@@ -127,6 +127,17 @@ const createCodexMcpPermissionRequest = (sessionId = 'session-1'): RequestPermis
 })
 
 describe('ACP permission broker', () => {
+  it('projects legacy command-group grants as readable shell grants', () => {
+    const store = new ConversationPermissionGrantStore()
+    const categoryKey = `shell-group:argv-prefix:sha256:v1:${'a'.repeat(64)}`
+
+    store.remember('session-1', categoryKey)
+
+    expect(store.snapshot()).toEqual({
+      'session-1': [{ categoryKey, kind: 'shell', label: 'Command group', scope: 'session' }]
+    })
+  })
+
   it('routes an app-owned Specialist card through the existing approve and decline responder', async () => {
     const emitted: EmittedPermissionRequest[] = []
     const broker = new AcpPermissionBroker((request) => emitted.push(request))
