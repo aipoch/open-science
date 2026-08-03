@@ -672,7 +672,53 @@ describe('ProjectFilesView', () => {
       '[aria-label="Preview generated file result.txt"]'
     )
     expect(listRowButton?.className).toContain('focus-visible:outline-none')
-    expect(listRow?.className).toContain('focus-within:ring-3')
+    expect(listRowButton?.className).toContain('cursor-pointer')
+    expect(listRow?.className).toContain('has-[:focus-visible]:ring-3')
+  })
+
+  it('uses matching two-button file actions in grid and list views', async () => {
+    await renderView([
+      createSession({
+        artifacts: [
+          {
+            id: 'artifact-1',
+            kind: 'managed-file',
+            path: '/workspace/result.txt',
+            name: 'result.txt'
+          }
+        ]
+      })
+    ])
+
+    const expectFileActions = (): void => {
+      const buttons = [
+        container.querySelector<HTMLButtonElement>('[aria-label="Download result.txt"]'),
+        container.querySelector<HTMLButtonElement>(
+          '[aria-label="Open result.txt in split view beside the session"]'
+        )
+      ]
+
+      expect(buttons.every(Boolean)).toBe(true)
+      expect(buttons.every((button) => button?.dataset.size === 'icon-sm')).toBe(true)
+      expect(buttons.every((button) => button?.className.includes('cursor-pointer'))).toBe(true)
+      expect(container.querySelector('[aria-label="More actions for result.txt"]')).toBeNull()
+      expect(buttons[1]?.parentElement?.className).toContain('flex')
+    }
+
+    expectFileActions()
+    await act(async () => {
+      container
+        .querySelector<HTMLButtonElement>(
+          '[aria-label="Open result.txt in split view beside the session"]'
+        )
+        ?.focus()
+    })
+    expect(document.body.textContent).toContain('Open in split view beside the session')
+
+    await act(async () => {
+      container.querySelector<HTMLButtonElement>('[aria-label="List view"]')?.click()
+    })
+    expectFileActions()
   })
 
   it('removes the divider only from the first visible file group', async () => {
@@ -745,8 +791,8 @@ describe('ProjectFilesView', () => {
     expect(metadata?.className).toContain('group-hover:invisible')
     expect(metadata?.className).not.toContain('w-16')
     expect(metadata?.className).not.toContain('w-20')
-    expect(downloadWrapper?.className).toContain('absolute')
-    expect(downloadWrapper?.className).toContain('right-2')
+    expect(downloadWrapper?.parentElement?.className).toContain('absolute')
+    expect(downloadWrapper?.parentElement?.className).toContain('right-2')
   })
 
   it('uses a dark neutral clear button with a light neutral hover surface', async () => {
@@ -942,10 +988,14 @@ describe('ProjectFilesView', () => {
     expect(container.textContent).toContain('iso621_bridge_recombinase.fasta')
     expect(container.querySelector('[title="iso621_bridge_recombinase.fasta"]')).not.toBeNull()
     expect(container.textContent).not.toContain('Hidden session title')
-    expect(
-      container.querySelector('[data-testid="project-file-preview"]')?.parentElement?.parentElement
-        ?.className
-    ).toContain('focus-within:ring')
+    const tileClassName = container.querySelector('[data-testid="project-file-preview"]')
+      ?.parentElement?.parentElement?.className
+    const tileButtonClassName = container.querySelector<HTMLButtonElement>(
+      '[aria-label="Preview uploaded file iso621_bridge_recombinase.fasta"]'
+    )?.className
+    expect(tileClassName).toContain('has-[:focus-visible]:ring-2')
+    expect(tileClassName).not.toContain('focus-within:ring')
+    expect(tileButtonClassName).toContain('cursor-pointer')
   })
 
   it('downloads an uploaded file without opening its preview', async () => {
@@ -961,7 +1011,7 @@ describe('ProjectFilesView', () => {
     )
     expect(downloadButton).not.toBeNull()
     expect(
-      downloadButton?.closest('[data-testid="download-tooltip-trigger"]')?.className
+      downloadButton?.closest('[data-testid="download-tooltip-trigger"]')?.parentElement?.className
     ).toContain('absolute')
 
     await act(async () => {
@@ -3199,6 +3249,46 @@ describe('ProjectFilesView', () => {
       name: 'tree.png'
     })
     expect(usePreviewWorkbenchStore.getState().items).toEqual([])
+  })
+
+  it('opens a generated file directly in the preview panel', async () => {
+    await renderView([
+      createSession({
+        id: 'session-1',
+        title: 'Generated session',
+        artifacts: [
+          {
+            id: 'artifact-1',
+            kind: 'managed-file',
+            path: '/workspace/tree.png',
+            fileUrl: 'file:///workspace/tree.png',
+            name: 'tree.png',
+            mimeType: 'image/png',
+            size: 4096,
+            mtimeMs: 1710000002000
+          }
+        ]
+      })
+    ])
+
+    await act(async () => {
+      container
+        .querySelector<HTMLButtonElement>(
+          '[aria-label="Open tree.png in split view beside the session"]'
+        )
+        ?.click()
+    })
+
+    expect(usePreviewWorkbenchStore.getState()).toMatchObject({
+      activeItemId: expect.any(String),
+      panelState: 'open',
+      fileDialogItem: undefined
+    })
+    expect(usePreviewWorkbenchStore.getState().items[0]).toMatchObject({
+      projectId: 'default',
+      sessionId: 'session-1',
+      name: 'tree.png'
+    })
   })
 
   it('does not acquire a TIFF thumbnail until its grid tile is near the viewport', async () => {

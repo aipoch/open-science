@@ -1,4 +1,6 @@
+// Hallmark · pre-emit critique: P5 H5 E4 S5 R5 V4
 import {
+  ArrowUpRight,
   Boxes,
   Check,
   ChevronDown,
@@ -520,6 +522,58 @@ const FilePageFooter = ({
   )
 }
 
+// Hallmark · component: file-actions · genre: modern-minimal · theme: workspace tokens
+// states: default · hover · focus · active · disabled · download loading/error/success
+const FileActionButtons = ({
+  source,
+  path,
+  name,
+  disabled,
+  className,
+  onOpenInPanel
+}: {
+  source: 'artifact' | 'upload'
+  path: string
+  name: string
+  disabled: boolean
+  className: string
+  onOpenInPanel: () => void
+}): React.JSX.Element => (
+  <div
+    className={cn(
+      'absolute z-10 flex items-center gap-1 opacity-0 transition-opacity duration-150 group-hover:opacity-100 focus-within:opacity-100 motion-reduce:transition-none [@media(hover:none)]:opacity-100',
+      className
+    )}
+  >
+    <ManagedFileDownloadButton
+      source={source}
+      path={path}
+      suggestedName={name}
+      disabled={disabled}
+      iconSize="icon-sm"
+      className="cursor-pointer border-border bg-bg-000/95 shadow-sm"
+    />
+    <TooltipProvider delayDuration={200}>
+      <Tooltip>
+        <TooltipTrigger asChild>
+          <Button
+            type="button"
+            variant="outline"
+            size="icon-sm"
+            className="cursor-pointer bg-bg-000/95 text-text-100 shadow-sm"
+            aria-label={`Open ${name} in split view beside the session`}
+            disabled={disabled}
+            onClick={onOpenInPanel}
+          >
+            <ArrowUpRight aria-hidden="true" />
+          </Button>
+        </TooltipTrigger>
+        <TooltipContent>Open in split view beside the session</TooltipContent>
+      </Tooltip>
+    </TooltipProvider>
+  </div>
+)
+
 const FileTile = ({
   name,
   previewArtifact,
@@ -530,7 +584,8 @@ const FileTile = ({
   size,
   timestamp,
   previewLabel,
-  onPreview
+  onPreview,
+  onOpenInPanel
 }: {
   name: string
   previewArtifact: MessageArtifact
@@ -542,6 +597,7 @@ const FileTile = ({
   timestamp?: number
   previewLabel: string
   onPreview: () => void
+  onOpenInPanel: () => void
 }): React.JSX.Element => {
   const sizeLabel = formatByteSize(size)
   const relativeTimeLabel = formatRelativeFileTime(timestamp)
@@ -555,11 +611,11 @@ const FileTile = ({
   })
 
   return (
-    <div className="group relative h-[128px] min-w-0 overflow-hidden rounded-lg border border-border-300/50 bg-bg-000 shadow-sm hover:border-border-200 hover:bg-bg-100 focus-within:ring-2 focus-within:ring-ring/50 focus-within:ring-inset">
+    <div className="group relative h-[128px] min-w-0 overflow-hidden rounded-lg border border-border-300/50 bg-bg-000 shadow-sm hover:border-border-200 hover:bg-bg-100 has-[:focus-visible]:ring-2 has-[:focus-visible]:ring-ring/50 has-[:focus-visible]:ring-inset">
       <button
         ref={setTileElement}
         type="button"
-        className="flex h-[128px] w-full min-w-0 flex-col text-left"
+        className="flex h-[128px] w-full min-w-0 cursor-pointer flex-col text-left"
         aria-label={previewLabel}
         title={name}
         onClick={onPreview}
@@ -606,13 +662,13 @@ const FileTile = ({
           ) : null}
         </span>
       </button>
-      <ManagedFileDownloadButton
+      <FileActionButtons
         source={source}
         path={previewArtifact.path}
-        suggestedName={name}
+        name={name}
         disabled={missing}
-        revealOnParentHover
-        wrapperClassName="absolute right-1.5 top-1.5 z-10"
+        className="right-1.5 top-1.5"
+        onOpenInPanel={onOpenInPanel}
       />
     </div>
   )
@@ -623,11 +679,13 @@ const FileTile = ({
 const FileListRow = ({
   file,
   previewLabel,
-  onPreview
+  onPreview,
+  onOpenInPanel
 }: {
   file: ProjectFileItem
   previewLabel: string
   onPreview: () => void
+  onOpenInPanel: () => void
 }): React.JSX.Element => {
   const [setRowElement, isNearViewport] = useNearViewport<HTMLButtonElement>()
   const missing = useUnavailablePreviewProbe({
@@ -641,11 +699,11 @@ const FileListRow = ({
   const relativeTimeLabel = formatRelativeFileTime(file.mtimeMs ?? file.sortAtMs)
 
   return (
-    <div className="group relative flex h-9 min-w-0 items-center rounded-md text-text-000 transition-colors duration-150 hover:bg-bg-200 focus-within:ring-3 focus-within:ring-ring/50 focus-within:ring-inset motion-reduce:transition-none">
+    <div className="group relative flex h-9 min-w-0 items-center rounded-md text-text-000 transition-colors duration-150 hover:bg-bg-200 has-[:focus-visible]:ring-3 has-[:focus-visible]:ring-ring/50 has-[:focus-visible]:ring-inset motion-reduce:transition-none">
       <button
         ref={setRowElement}
         type="button"
-        className="flex h-full min-w-0 flex-1 items-center gap-2.5 px-2 text-left focus-visible:outline-none"
+        className="flex h-full min-w-0 flex-1 cursor-pointer items-center gap-2.5 px-2 text-left focus-visible:outline-none"
         aria-label={previewLabel}
         title={file.name}
         onClick={onPreview}
@@ -673,13 +731,13 @@ const FileListRow = ({
           </span>
         ) : null}
       </button>
-      <ManagedFileDownloadButton
+      <FileActionButtons
         source={file.source}
         path={file.path}
-        suggestedName={file.name}
+        name={file.name}
         disabled={missing}
-        revealOnParentHover
-        wrapperClassName="absolute right-2 top-1/2 z-10 -translate-y-1/2"
+        className="right-2 top-1/2 -translate-y-1/2"
+        onOpenInPanel={onOpenInPanel}
       />
     </div>
   )
@@ -691,12 +749,14 @@ const ProjectFileItems = ({
   files,
   viewMode,
   previewById,
-  onPreview
+  onPreview,
+  onOpenInPanel
 }: {
   files: ProjectFileItem[]
   viewMode: ProjectFilesViewMode
   previewById: Map<string, ArtifactPreviewResult | undefined>
   onPreview: (file: ProjectFileItem) => void
+  onOpenInPanel: (file: ProjectFileItem) => void
 }): React.JSX.Element => (
   <div
     data-view-mode={viewMode}
@@ -715,6 +775,7 @@ const ProjectFileItems = ({
             file={file}
             previewLabel={previewLabel}
             onPreview={() => onPreview(file)}
+            onOpenInPanel={() => onOpenInPanel(file)}
           />
         )
       }
@@ -732,6 +793,7 @@ const ProjectFileItems = ({
           timestamp={file.mtimeMs ?? file.sortAtMs}
           previewLabel={previewLabel}
           onPreview={() => onPreview(file)}
+          onOpenInPanel={() => onOpenInPanel(file)}
         />
       )
     })}
@@ -980,7 +1042,8 @@ const ProjectArtifactGroupSection = ({
   onManualLoadMore,
   viewMode,
   previewById,
-  onPreview
+  onPreview,
+  onOpenInPanel
 }: {
   group: ArtifactGroupItem
   title: string
@@ -995,6 +1058,7 @@ const ProjectArtifactGroupSection = ({
   viewMode: ProjectFilesViewMode
   previewById: Map<string, ArtifactPreviewResult | undefined>
   onPreview: (file: ProjectFileItem) => void
+  onOpenInPanel: (file: ProjectFileItem) => void
 }): React.JSX.Element => {
   const sectionId = `session:${group.sessionId}`
   const loadPage = useCallback(() => loadMore(group.sessionId), [group.sessionId, loadMore])
@@ -1030,6 +1094,7 @@ const ProjectArtifactGroupSection = ({
               viewMode={viewMode}
               previewById={previewById}
               onPreview={onPreview}
+              onOpenInPanel={onOpenInPanel}
             />
           ) : null}
           {page?.error ? (
@@ -1479,24 +1544,29 @@ const ProjectFilesViewContent = ({
     }
   }
 
-  const previewFile = (file: ProjectFileItem): void => {
-    // Keep the indexed file identity and source so the dialog uses the same bounded preview IPC path.
-    openFileDialog(
-      createPreviewFileItem({
-        id: file.id,
-        projectId: activeProjectId,
-        sessionId: file.sessionId,
-        path: file.path,
-        name: file.name,
-        mimeType: file.mimeType,
-        source: file.source === 'upload' ? 'upload' : undefined,
-        size: file.size,
-        mtimeMs: file.mtimeMs,
-        artifactId: file.source === 'artifact' ? file.sourceFileId : undefined,
-        selectedVersionId: file.source === 'artifact' ? file.sourceVersionId : undefined,
-        originSession: file.originSession
-      })
-    )
+  // Keep the indexed file identity and source so both destinations use the same bounded preview path.
+  const toPreviewFile = (file: ProjectFileItem): ReturnType<typeof createPreviewFileItem> =>
+    createPreviewFileItem({
+      id: file.id,
+      projectId: activeProjectId,
+      sessionId: file.sessionId,
+      path: file.path,
+      name: file.name,
+      mimeType: file.mimeType,
+      source: file.source === 'upload' ? 'upload' : undefined,
+      size: file.size,
+      mtimeMs: file.mtimeMs,
+      artifactId: file.source === 'artifact' ? file.sourceFileId : undefined,
+      selectedVersionId: file.source === 'artifact' ? file.sourceVersionId : undefined,
+      originSession: file.originSession
+    })
+
+  const previewFile = (file: ProjectFileItem): void => openFileDialog(toPreviewFile(file))
+
+  const openFileInPanel = (file: ProjectFileItem): void => {
+    const workbench = usePreviewWorkbenchStore.getState()
+    workbench.upsertAndActivateItem(toPreviewFile(file))
+    workbench.openPanel()
   }
 
   const supportsIntersectionObserver = typeof IntersectionObserver !== 'undefined'
@@ -1746,6 +1816,7 @@ const ProjectFilesViewContent = ({
                       viewMode={viewMode}
                       previewById={currentFilePreviewById}
                       onPreview={previewFile}
+                      onOpenInPanel={openFileInPanel}
                     />
                   ) : null}
                   <div
@@ -1821,6 +1892,7 @@ const ProjectFilesViewContent = ({
                   viewMode={viewMode}
                   previewById={currentFilePreviewById}
                   onPreview={previewFile}
+                  onOpenInPanel={openFileInPanel}
                 />
               ))}
               <div ref={groupsSentinelRef} data-testid="group-page-sentinel" className="h-px" />
