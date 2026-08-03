@@ -303,11 +303,16 @@ describe('provider registry', () => {
     expect(defaultVendorModel('stepfun')).toBe('step-3.7-flash')
   })
 
-  it('routes Bailian through all three APIs per region with the curated 1M catalog', () => {
+  it('routes Bailian Responses only for the documented Qwen models', () => {
     const bailianId = 'bailian' as OfficialVendorId
 
     expect(isOfficialVendorId('bailian')).toBe(true)
-    expect(resolveVendorApiEndpoints(bailianId)).toEqual(['anthropic', 'openai', 'responses'])
+    expect(resolveVendorApiEndpoints(bailianId)).toEqual(['anthropic', 'openai'])
+    expect(isVendorModelResponsesSupported(bailianId, 'qwen3.8-max')).toBe(true)
+    expect(isVendorModelResponsesSupported(bailianId, 'qwen3.7-max')).toBe(true)
+    expect(isVendorModelResponsesSupported(bailianId, 'qwen3.6-flash')).toBe(true)
+    expect(isVendorModelResponsesSupported(bailianId, 'deepseek-v4-pro')).toBe(false)
+    expect(isVendorModelResponsesSupported(bailianId, 'deepseek-v4-flash')).toBe(false)
     expect(vendorHasRegions(bailianId)).toBe(true)
 
     // Mainland China is the default; the overseas region swaps only the DashScope host.
@@ -330,24 +335,24 @@ describe('provider registry', () => {
       'https://modelstudio.console.alibabacloud.com/us-east-1?tab=model#/api-key'
     )
 
-    expect(getOfficialVendor(bailianId)?.models).toEqual(
-      [
-        'qwen3.8-max',
-        'qwen3.7-plus',
-        'qwen3.7-max',
-        'qwen3.7-flash',
-        'qwen3.6-plus',
-        'qwen3.6-flash',
-        'deepseek-v4-flash-0731',
-        'deepseek-v4-pro',
-        'deepseek-v4-flash'
-      ].map((id) => ({ id, contextWindow: 1_000_000 }))
-    )
+    expect(
+      getOfficialVendor(bailianId)?.models.map(({ id, contextWindow }) => ({ id, contextWindow }))
+    ).toEqual([
+      { id: 'qwen3.8-max', contextWindow: 983_616 },
+      { id: 'qwen3.7-plus', contextWindow: 1_000_000 },
+      { id: 'qwen3.7-max', contextWindow: 1_000_000 },
+      { id: 'qwen3.7-flash', contextWindow: 1_000_000 },
+      { id: 'qwen3.6-plus', contextWindow: 1_000_000 },
+      { id: 'qwen3.6-flash', contextWindow: 1_000_000 },
+      { id: 'deepseek-v4-flash-0731', contextWindow: 1_000_000 },
+      { id: 'deepseek-v4-pro', contextWindow: 1_000_000 },
+      { id: 'deepseek-v4-flash', contextWindow: 1_000_000 }
+    ])
     expect(defaultVendorModel(bailianId)).toBe('qwen3.8-max')
     expect(resolveVendorModelsUrl(bailianId)).toBeUndefined()
   })
 
-  it('routes Bailian for Plan through its fixed endpoints without Responses support', () => {
+  it('routes Bailian for Plan Responses only for its documented Qwen models', () => {
     const planId = 'bailianplan' as OfficialVendorId
 
     expect(isOfficialVendorId('bailianplan')).toBe(true)
@@ -363,25 +368,73 @@ describe('provider registry', () => {
       'https://bailian.console.aliyun.com/cn-beijing?tab=plan#/efm/subscription/overview'
     )
 
-    expect(getOfficialVendor(planId)?.models).toEqual(
-      [
-        'qwen3.8-max',
-        'qwen3.8-max-preview',
-        'qwen3.7-max',
-        'qwen3.7-plus',
-        'qwen3.6-flash',
-        'glm-5.2',
-        'deepseek-v4-pro',
-        'deepseek-v4-flash-0731'
-      ].map((id) => ({ id, contextWindow: 1_000_000 }))
-    )
+    expect(
+      getOfficialVendor(planId)?.models.map(({ id, contextWindow }) => ({ id, contextWindow }))
+    ).toEqual([
+      { id: 'qwen3.8-max', contextWindow: 983_616 },
+      { id: 'qwen3.8-max-preview', contextWindow: 983_616 },
+      { id: 'qwen3.7-max', contextWindow: 1_000_000 },
+      { id: 'qwen3.7-plus', contextWindow: 1_000_000 },
+      { id: 'qwen3.6-flash', contextWindow: 1_000_000 },
+      { id: 'glm-5.2', contextWindow: 1_000_000 },
+      { id: 'deepseek-v4-pro', contextWindow: 1_000_000 },
+      { id: 'deepseek-v4-flash-0731', contextWindow: 1_000_000 }
+    ])
     expect(defaultVendorModel(planId)).toBe('qwen3.8-max')
     expect(resolveVendorModelsUrl(planId)).toBeUndefined()
 
-    expect(isVendorModelResponsesSupported(planId, 'qwen3.8-max')).toBe(false)
+    expect(isVendorModelResponsesSupported(planId, 'qwen3.8-max')).toBe(true)
+    expect(isVendorModelResponsesSupported(planId, 'qwen3.8-max-preview')).toBe(true)
+    expect(isVendorModelResponsesSupported(planId, 'qwen3.7-max')).toBe(true)
+    expect(isVendorModelResponsesSupported(planId, 'qwen3.7-plus')).toBe(true)
+    expect(isVendorModelResponsesSupported(planId, 'qwen3.6-flash')).toBe(true)
     expect(isVendorModelResponsesSupported(planId, 'glm-5.2')).toBe(false)
     expect(isVendorModelResponsesSupported(planId, 'deepseek-v4-pro')).toBe(false)
     expect(isVendorModelResponsesSupported(planId, 'deepseek-v4-flash-0731')).toBe(false)
+  })
+
+  it('exposes the documented qwen3.8 reasoning effort levels for both Bailian plans', () => {
+    const expectedProfile = {
+      supported: true,
+      slots: ['low', 'medium', 'xhigh', 'xhigh', 'xhigh']
+    }
+
+    expect(resolveVendorModelReasoningEffort('bailian', 'qwen3.8-max')).toEqual(expectedProfile)
+    expect(resolveVendorModelReasoningEffort('bailianplan', 'qwen3.8-max')).toEqual(expectedProfile)
+    expect(resolveVendorModelReasoningEffort('bailianplan', 'qwen3.8-max-preview')).toEqual(
+      expectedProfile
+    )
+  })
+
+  it('limits Bailian Chat reasoning effort to the documented model families', () => {
+    const highMaxProfile = {
+      supported: true,
+      slots: ['high', 'max', 'max', 'max', 'max']
+    }
+
+    expect(resolveVendorModelReasoningEffort('bailian', 'deepseek-v4-pro')).toEqual(highMaxProfile)
+    expect(resolveVendorModelReasoningEffort('bailian', 'deepseek-v4-flash')).toEqual(
+      highMaxProfile
+    )
+    expect(resolveVendorModelReasoningEffort('bailian', 'deepseek-v4-flash-0731')).toEqual(
+      highMaxProfile
+    )
+    expect(resolveVendorModelReasoningEffort('bailianplan', 'glm-5.2')).toEqual(highMaxProfile)
+    expect(resolveVendorModelReasoningEffort('bailianplan', 'deepseek-v4-pro')).toEqual(
+      highMaxProfile
+    )
+    expect(resolveVendorModelReasoningEffort('bailianplan', 'deepseek-v4-flash-0731')).toEqual(
+      highMaxProfile
+    )
+    expect(resolveVendorModelReasoningEffort('bailian', 'qwen3.7-plus')).toEqual({
+      supported: false
+    })
+  })
+
+  it('uses the qwen3.8 context window published for Codex integrations', () => {
+    expect(resolveModelContextWindow('bailian', 'qwen3.8-max')).toBe(983_616)
+    expect(resolveModelContextWindow('bailianplan', 'qwen3.8-max')).toBe(983_616)
+    expect(resolveModelContextWindow('bailianplan', 'qwen3.8-max-preview')).toBe(983_616)
   })
 
   it('routes Step Plan over Anthropic and OpenAI under /step_plan, no live model list', () => {
