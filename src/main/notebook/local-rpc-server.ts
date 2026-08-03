@@ -1,19 +1,14 @@
 import { randomUUID } from 'node:crypto'
 import { createServer, type IncomingMessage, type Server, type ServerResponse } from 'node:http'
 
-import type {
-  AppendNotebookCodeCellRequest,
-  BeginNotebookCodeCellRequest,
-  ExecuteNotebookCodeRequest,
-  FinishNotebookCodeCellRequest,
-  NotebookRunProvenanceContext,
-  RunNotebookCellRequest
-} from '../../shared/notebook'
+import type { NotebookRunProvenanceContext } from '../../shared/notebook'
 import type { NotebookRpcConnection } from './mcp-server'
+import { NotebookControlCompletionCapturedError } from './execution-owner'
 import {
-  NotebookControlCompletionCapturedError,
-  type NotebookRuntimeService
-} from './runtime-service'
+  opensNotebookInputRun,
+  resolveNotebookLocalRpcHandler,
+  type NotebookLocalRpcCapability
+} from './local-rpc-notebook-adapter'
 import type {
   NotebookInputRegistry,
   NotebookInputRunLease,
@@ -184,13 +179,6 @@ const writeJson = (response: ServerResponse, statusCode: number, payload: unknow
   response.end(`${JSON.stringify(payload)}\n`)
 }
 
-// Ensures every runtime command carries the session routing fields the service needs.
-const assertSessionParams = (params: Record<string, unknown>): void => {
-  if (typeof params.sessionId !== 'string' || typeof params.workspaceCwd !== 'string') {
-    throw new Error('Notebook RPC params must include sessionId and workspaceCwd.')
-  }
-}
-
 // Hosts an app-local authenticated HTTP bridge between MCP stdio tools and the runtime service.
 class NotebookLocalRpcServer {
   private readonly token: string
@@ -220,7 +208,7 @@ class NotebookLocalRpcServer {
   private readonly drainingArtifactRpcCapabilities = new Map<string, Promise<void>>()
 
   constructor(
-    private readonly service: NotebookRuntimeService,
+    private readonly service: NotebookLocalRpcCapability,
     options: NotebookLocalRpcServerOptions = {}
   ) {
     this.token = options.token ?? randomUUID()
@@ -975,67 +963,14 @@ class NotebookLocalRpcServer {
       )
     }
 
-    assertSessionParams(params)
-
-    const handlers: Record<string, (request: Record<string, unknown>) => Promise<unknown>> = {
-      beginCodeCell: (request) =>
-        this.service.beginCodeCell(request as unknown as BeginNotebookCodeCellRequest),
-      appendCodeCell: (request) =>
-        this.service.appendCodeCell(request as unknown as AppendNotebookCodeCellRequest),
-      finishCodeCell: (request) =>
-        this.service.finishCodeCell(request as unknown as FinishNotebookCodeCellRequest),
-      runCell: (request) => this.service.runCell(request as unknown as RunNotebookCellRequest),
-      execute: (request) => this.service.execute(request as unknown as ExecuteNotebookCodeRequest),
-      executeControl: (request) =>
-        this.service.executeControl(
-          request as unknown as Parameters<NotebookRuntimeService['executeControl']>[0]
-        ),
-      executeShell: (request) =>
-        this.service.executeShell(
-          request as unknown as Parameters<NotebookRuntimeService['executeShell']>[0]
-        ),
-      state: (request) =>
-        this.service.state(request as Parameters<NotebookRuntimeService['state']>[0]),
-      restart: (request) =>
-        this.service.restart(request as Parameters<NotebookRuntimeService['restart']>[0]),
-      shutdown: (request) =>
-        this.service.shutdown(request as Parameters<NotebookRuntimeService['shutdown']>[0]),
-      inspectPackages: (request) =>
-        this.service.inspectPackages(
-          request as unknown as Parameters<NotebookRuntimeService['inspectPackages']>[0]
-        ),
-      managePackages: (request) =>
-        this.service.managePackages(
-          request as unknown as Parameters<NotebookRuntimeService['managePackages']>[0]
-        ),
-      manageEnvironments: (request) =>
-        this.service.manageEnvironments(
-          request as unknown as Parameters<NotebookRuntimeService['manageEnvironments']>[0]
-        ),
-      listRuntimes: (request) =>
-        this.service.listRuntimes(request as Parameters<NotebookRuntimeService['listRuntimes']>[0]),
-      bindRuntime: (request) =>
-        this.service.bindRuntime(
-          request as unknown as Parameters<NotebookRuntimeService['bindRuntime']>[0]
-        ),
-      switchRuntime: (request) =>
-        this.service.switchRuntime(
-          request as unknown as Parameters<NotebookRuntimeService['switchRuntime']>[0]
-        )
-    }
-
-    const handler = handlers[method]
-
-    if (!handler) {
-      throw new Error(`Unknown notebook RPC method: ${method}`)
-    }
+    const handler = resolveNotebookLocalRpcHandler(this.service, method, params)
 
     const projectId =
       typeof params.sessionId === 'string'
         ? this.activeTurnProjectIds.get(params.sessionId)
         : undefined
     const provenanceContext = params.provenanceContext
-    const opensInputRun = ['runCell', 'execute', 'executeControl', 'executeShell'].includes(method)
+    const opensInputRun = opensNotebookInputRun(method)
     if (
       opensInputRun &&
       projectId &&
