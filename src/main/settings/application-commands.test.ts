@@ -224,8 +224,15 @@ describe('Settings core application commands', () => {
       stream: 'system' as const,
       chunk: 'started'
     }
+    const installProgressEvent = {
+      kind: 'progress' as const,
+      installId: 'install-1',
+      phase: 'download' as const,
+      percent: 50
+    }
     serviceMethod('installClaude').mockImplementation(async (_request, onEvent) => {
       onEvent(installEvent)
+      onEvent(installProgressEvent)
       return { installId: 'install-1', ok: true }
     })
     const router = createApplicationCommandRouter()
@@ -285,7 +292,12 @@ describe('Settings core application commands', () => {
       { source: 'official-script' },
       emitInstallEvent
     )
-    expect(emitInstallEvent).toHaveBeenCalledWith(installEvent)
+    expect(emitInstallEvent.mock.calls.map(([event]) => event)).toEqual([
+      installEvent,
+      installProgressEvent
+    ])
+    expect(emitInstallEvent.mock.calls[0]?.[0]).toBe(installEvent)
+    expect(emitInstallEvent.mock.calls[1]?.[0]).toBe(installProgressEvent)
     expect(appearance).toHaveBeenCalledWith('dark')
     expect(serviceMethod('setClosePreference')).toHaveBeenCalledWith(undefined)
     expect(serviceMethod('setNotificationsEnabled')).toHaveBeenCalledWith(false)
