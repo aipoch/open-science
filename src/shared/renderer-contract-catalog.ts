@@ -11,12 +11,15 @@ const WEB = 'web'
 const LOCAL = 'local'
 const EVENT = 'event'
 const DORMANT_EVENT = 'dormant-event'
+const CLOSE_PANE_EVENT = 'close-pane-event'
 const ELECTRON = 'electron'
 const MAPPED_ELECTRON = 'mapped-electron'
 const SEND = 'send'
+const WINDOW_FIND_READY = 'window-find-ready'
 const ELECTRON_EVENT = 'electron-event'
 const NATIVE = 'native'
 const MAPPED_NATIVE = 'mapped-native'
+const DELEGATED_NATIVE = 'delegated-native'
 
 const POSITIONAL = 'positional'
 const DEFAULT_EMPTY = 'default-empty-object'
@@ -28,28 +31,20 @@ const RUNTIME_LANGUAGE = 'runtime-language-object'
 const RUNTIME_ENABLEMENT = 'runtime-enablement-object'
 const RUNTIME_INSTALL_AUTH = 'runtime-install-authorization-object'
 const RUNTIME_INTERPRETER = 'runtime-interpreter-path-object'
+const NATIVE_FILE_UPLOAD = 'native-file-upload-request'
 const SESSION_SAVE = 'session-save-optional-argument'
 const SESSION_SAVE_JSON = 'session-save-json-undefined'
 
-type ContractProfile =
-  | typeof WEB
-  | typeof LOCAL
-  | typeof EVENT
-  | typeof DORMANT_EVENT
-  | typeof ELECTRON
-  | typeof MAPPED_ELECTRON
-  | typeof SEND
-  | typeof ELECTRON_EVENT
-  | typeof NATIVE
-  | typeof MAPPED_NATIVE
+// prettier-ignore
+type ContractProfile = typeof WEB | typeof LOCAL | typeof EVENT | typeof DORMANT_EVENT | typeof CLOSE_PANE_EVENT | typeof ELECTRON | typeof MAPPED_ELECTRON | typeof SEND | typeof WINDOW_FIND_READY | typeof ELECTRON_EVENT | typeof NATIVE | typeof MAPPED_NATIVE | typeof DELEGATED_NATIVE
 
-type ContractEntry = readonly [
-  member: string,
-  channel: string | null,
-  profile?: ContractProfile,
-  electronCodec?: RendererParameterCodec,
-  webCodec?: RendererParameterCodec
-]
+// prettier-ignore
+type ContractEntry = readonly [member: string, channel: string | null, profile?: ContractProfile, electronCodec?: RendererParameterCodec, webCodec?: RendererParameterCodec]
+
+// prettier-ignore
+const CLOSE_PANE_LIFECYCLE = { activateChannel: 'shortcut:close-active-pane-ready', activate: 'after-subscribe', deactivateChannel: 'shortcut:close-active-pane-unready', deactivate: 'after-unsubscribe' } as const
+// prettier-ignore
+const WINDOW_FIND_LIFECYCLE = { activateChannel: 'shortcut:window-find-ready', activate: 'on-call', deactivateChannel: 'shortcut:window-find-unready', deactivate: 'on-dispose' } as const
 
 const surface = <Value>(
   electron: Value,
@@ -62,9 +57,10 @@ const expandEntry = (
   [member, channel, profile = WEB, electronCodec, webCodec]: ContractEntry
 ): RendererContractSeed => {
   const isWebRequest = profile === WEB || profile === LOCAL
-  const isWebEvent = profile === EVENT || profile === DORMANT_EVENT
+  const isDormantEvent = profile === DORMANT_EVENT || profile === CLOSE_PANE_EVENT
+  const isWebEvent = profile === EVENT || isDormantEvent
   const isElectronEvent = profile === ELECTRON_EVENT
-  const isNative = profile === NATIVE || profile === MAPPED_NATIVE
+  const isNative = profile === NATIVE || profile === MAPPED_NATIVE || profile === DELEGATED_NATIVE
   const kind = isWebEvent || isElectronEvent ? 'event' : 'method'
   const defaultElectronCodec =
     kind === 'event' ? 'event-listener' : profile === NATIVE ? 'surface-native' : POSITIONAL
@@ -80,11 +76,13 @@ const expandEntry = (
     ? 'captured-ipc-request'
     : isWebEvent
       ? 'web-event-subscription'
-      : isNative
-        ? 'surface-native'
-        : 'none'
+      : profile === DELEGATED_NATIVE
+        ? 'browser-native-with-captured-ipc'
+        : isNative
+          ? 'surface-native'
+          : 'none'
   const electronDispatch =
-    profile === SEND
+    profile === SEND || profile === WINDOW_FIND_READY
       ? 'electron-ipc-send'
       : kind === 'event'
         ? 'electron-ipc-subscription'
@@ -114,14 +112,14 @@ const expandEntry = (
       kind === 'event' ? 'electron-ipc' : 'not-event',
       profile === EVENT
         ? 'application-event'
-        : profile === DORMANT_EVENT
+        : isDormantEvent
           ? 'installed-undelivered'
           : kind === 'event'
             ? 'unavailable'
             : 'not-event',
       profile === EVENT
         ? 'application-event'
-        : profile === DORMANT_EVENT
+        : isDormantEvent
           ? 'installed-undelivered'
           : kind === 'event'
             ? 'unavailable'
@@ -129,11 +127,20 @@ const expandEntry = (
     ),
     authorityFlow: surface(
       kind === 'event' || profile === NATIVE ? 'none' : 'electron-sender',
-      isWebRequest ? 'caller-context' : 'none',
-      profile === WEB ? 'caller-context' : 'none'
+      isWebRequest || profile === DELEGATED_NATIVE ? 'caller-context' : 'none',
+      profile === WEB || profile === DELEGATED_NATIVE ? 'caller-context' : 'none'
     ),
+    lifecycleDispatch:
+      profile === CLOSE_PANE_EVENT
+        ? CLOSE_PANE_LIFECYCLE
+        : profile === WINDOW_FIND_READY
+          ? WINDOW_FIND_LIFECYCLE
+          : undefined,
     mapProjection:
-      isWebRequest || profile === MAPPED_ELECTRON || profile === MAPPED_NATIVE
+      isWebRequest ||
+      profile === MAPPED_ELECTRON ||
+      profile === MAPPED_NATIVE ||
+      profile === DELEGATED_NATIVE
         ? 'invoke'
         : isWebEvent
           ? 'event'
@@ -223,7 +230,7 @@ export const RENDERER_CONTRACT_GROUPS = Object.freeze([
     ['revoke', 'permissions:revoke'],
   ]),
   group('platform-file-save', '', [
-    ['getRuntimeVersions', null, NATIVE], ['saveBlobFile', 'file:save-blob', MAPPED_NATIVE], ['saveManagedFile', 'file:save-managed', MAPPED_NATIVE],
+    ['getRuntimeVersions', null, NATIVE], ['saveBlobFile', 'file:save-blob', MAPPED_NATIVE], ['saveManagedFile', 'file:save-managed', DELEGATED_NATIVE],
     ['saveSessionArtifacts', 'file:save-session-artifacts', MAPPED_ELECTRON],
   ]),
   group('preview', 'preview', [
@@ -346,12 +353,12 @@ export const RENDERER_CONTRACT_GROUPS = Object.freeze([
     ['claimLocalFile', 'uploads:claim-local-file'], ['deleteUpload', 'uploads:delete'], ['finalizeSession', 'uploads:finalize-session'],
     ['finishTransfer', 'uploads:finish-transfer'], ['getTransferStatus', 'uploads:transfer-status'],
     ['onTransferProgress', 'uploads:transfer-progress', DORMANT_EVENT], ['readPreview', 'uploads:read-preview'],
-    ['stageLocalFile', 'uploads:stage-local-file', MAPPED_ELECTRON], ['stageLocalPath', 'uploads:stage-local-path', LOCAL],
+    ['stageLocalFile', 'uploads:stage-local-file', MAPPED_ELECTRON, NATIVE_FILE_UPLOAD], ['stageLocalPath', 'uploads:stage-local-path', LOCAL],
   ]),
   group('window', 'window', [
-    ['announceWindowFindAppearance', 'window:find-appearance-changed', SEND], ['announceWindowFindReady', 'shortcut:window-find-ready', SEND],
+    ['announceWindowFindAppearance', 'window:find-appearance-changed', SEND], ['announceWindowFindReady', 'shortcut:window-find-ready', WINDOW_FIND_READY],
     ['clearFind', 'window:clear-find-in-page', SEND], ['close', 'window:close', MAPPED_NATIVE], ['closeFind', 'window:find-close', SEND],
-    ['findInPage', 'window:find-in-page', SEND], ['onCloseActivePane', 'shortcut:close-active-pane', DORMANT_EVENT],
+    ['findInPage', 'window:find-in-page', SEND], ['onCloseActivePane', 'shortcut:close-active-pane', CLOSE_PANE_EVENT],
     ['onCloseConfirmRequest', 'window:close-confirm-request', ELECTRON_EVENT], ['onFindInPageResult', 'window:find-in-page-result', ELECTRON_EVENT],
     ['onShowWindowFind', 'window:find-show', ELECTRON_EVENT], ['onWindowFindAppearance', 'window:find-appearance', ELECTRON_EVENT],
     ['sendCloseConfirmResponse', 'window:close-confirm-response', SEND],

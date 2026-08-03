@@ -4,8 +4,9 @@ import { WEB_EVENT_CHANNELS, WEB_INVOKE_CHANNELS } from './web-api-map.generated
 import { RENDERER_CONTRACT_CATALOG, RENDERER_CONTRACT_GROUPS } from './renderer-contract-catalog'
 import { projectRendererContractMaps } from './renderer-contract'
 
-const paths = (predicate: (contract: (typeof RENDERER_CONTRACT_CATALOG)[number]) => boolean) =>
-  RENDERER_CONTRACT_CATALOG.filter(predicate).map(({ publicPath }) => publicPath)
+const paths = (
+  predicate: (contract: (typeof RENDERER_CONTRACT_CATALOG)[number]) => boolean
+): string[] => RENDERER_CONTRACT_CATALOG.filter(predicate).map(({ publicPath }) => publicPath)
 
 describe('renderer contract catalog', () => {
   it('pins the complete capability-owned inventory and legacy map projection', () => {
@@ -28,7 +29,7 @@ describe('renderer contract catalog', () => {
     ).toEqual(['getRuntimeVersions', 'saveBlobFile', 'saveManagedFile', 'window.close'])
     expect(
       RENDERER_CONTRACT_CATALOG.filter(({ publicPath }) =>
-        ['saveBlobFile', 'saveManagedFile', 'window.close'].includes(publicPath)
+        ['saveBlobFile', 'window.close'].includes(publicPath)
       ).every(
         ({ dispatchPolicy, authorityFlow }) =>
           dispatchPolicy.electron === 'electron-ipc-request' &&
@@ -36,6 +37,20 @@ describe('renderer contract catalog', () => {
           authorityFlow.electron === 'electron-sender'
       )
     ).toBe(true)
+    expect(
+      RENDERER_CONTRACT_CATALOG.find(({ publicPath }) => publicPath === 'saveManagedFile')
+    ).toMatchObject({
+      dispatchPolicy: {
+        electron: 'electron-ipc-request',
+        localWeb: 'browser-native-with-captured-ipc',
+        remoteWeb: 'browser-native-with-captured-ipc'
+      },
+      authorityFlow: {
+        electron: 'electron-sender',
+        localWeb: 'caller-context',
+        remoteWeb: 'caller-context'
+      }
+    })
     expect(
       paths(({ surfaceInstallation }) => surfaceInstallation.localWeb === 'unavailable')
     ).toHaveLength(41)
@@ -56,6 +71,11 @@ describe('renderer contract catalog', () => {
   })
 
   it('records every intentional and known-deviating argument codec without normalizing it', () => {
+    expect(
+      RENDERER_CONTRACT_CATALOG.find(({ publicPath }) => publicPath === 'uploads.stageLocalFile')
+        ?.parameterCodec
+    ).toEqual({ electron: 'native-file-upload-request', web: 'native-file-upload-request' })
+
     expect(
       paths(
         ({ parameterCodec, surfaceInstallation }) =>
@@ -90,7 +110,8 @@ describe('renderer contract catalog', () => {
       'storage.inspectDataRoot',
       'storage.migrate',
       'storage.setDataRootAndRelaunch',
-      'storage.validateDataRoot'
+      'storage.validateDataRoot',
+      'uploads.stageLocalFile'
     ])
   })
 
@@ -135,5 +156,24 @@ describe('renderer contract catalog', () => {
         .filter(({ surfaceInstallation }) => surfaceInstallation.remoteWeb === 'rejecting-stub')
         .map(({ publicPath }) => publicPath)
     ).toEqual(['compute.download', 'compute.revealInFolder'])
+  })
+
+  it('records the paired window lifecycle channels and teardown ordering', () => {
+    const lifecycleFor = (publicPath: string): unknown =>
+      RENDERER_CONTRACT_CATALOG.find((contract) => contract.publicPath === publicPath)
+        ?.lifecycleDispatch
+
+    expect(lifecycleFor('window.onCloseActivePane')).toEqual({
+      activateChannel: 'shortcut:close-active-pane-ready',
+      activate: 'after-subscribe',
+      deactivateChannel: 'shortcut:close-active-pane-unready',
+      deactivate: 'after-unsubscribe'
+    })
+    expect(lifecycleFor('window.announceWindowFindReady')).toEqual({
+      activateChannel: 'shortcut:window-find-ready',
+      activate: 'on-call',
+      deactivateChannel: 'shortcut:window-find-unready',
+      deactivate: 'on-dispose'
+    })
   })
 })

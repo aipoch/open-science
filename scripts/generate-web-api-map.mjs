@@ -16,9 +16,11 @@ const stringLiteral = (node, label) => {
   throw new Error(`Renderer contract ${label} must be a string literal.`)
 }
 
-const invokeProfiles = new Set(['WEB', 'LOCAL', 'MAPPED_ELECTRON', 'MAPPED_NATIVE'])
-const eventProfiles = new Set(['EVENT', 'DORMANT_EVENT'])
-const unprojectedProfiles = new Set(['ELECTRON', 'SEND', 'ELECTRON_EVENT', 'NATIVE'])
+// prettier-ignore
+const invokeProfiles = new Set(['WEB', 'LOCAL', 'MAPPED_ELECTRON', 'MAPPED_NATIVE', 'DELEGATED_NATIVE'])
+const eventProfiles = new Set(['EVENT', 'DORMANT_EVENT', 'CLOSE_PANE_EVENT'])
+// prettier-ignore
+const unprojectedProfiles = new Set(['ELECTRON', 'SEND', 'WINDOW_FIND_READY', 'ELECTRON_EVENT', 'NATIVE'])
 
 const projectionFor = (node) => {
   if (!node) return 'invoke'

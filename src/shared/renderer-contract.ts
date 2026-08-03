@@ -1,39 +1,22 @@
 export type RendererContractKind = 'method' | 'event'
 
-export type RendererParameterCodec =
-  | 'positional'
-  | 'default-empty-object'
-  | 'storage-parent-object'
-  | 'storage-data-root-object'
-  | 'runtime-selection-object'
-  | 'runtime-language-environment-object'
-  | 'runtime-language-object'
-  | 'runtime-enablement-object'
-  | 'runtime-install-authorization-object'
-  | 'runtime-interpreter-path-object'
-  | 'session-save-optional-argument'
-  | 'session-save-json-undefined'
-  | 'event-listener'
-  | 'surface-native'
+// prettier-ignore
+export type RendererParameterCodec = 'positional' | 'default-empty-object' | 'storage-parent-object' | 'storage-data-root-object' | 'runtime-selection-object' | 'runtime-language-environment-object' | 'runtime-language-object' | 'runtime-enablement-object' | 'runtime-install-authorization-object' | 'runtime-interpreter-path-object' | 'native-file-upload-request' | 'session-save-optional-argument' | 'session-save-json-undefined' | 'event-listener' | 'surface-native'
 
 export type RendererSurfaceInstallation =
   'preload' | 'web-rpc' | 'web-event' | 'browser-native' | 'rejecting-stub' | 'unavailable'
 
-export type RendererDispatchPolicy =
-  | 'electron-ipc-request'
-  | 'electron-ipc-send'
-  | 'electron-ipc-subscription'
-  | 'captured-ipc-request'
-  | 'web-event-subscription'
-  | 'surface-native'
-  | 'rejecting-stub'
-  | 'none'
+// prettier-ignore
+export type RendererDispatchPolicy = 'electron-ipc-request' | 'electron-ipc-send' | 'electron-ipc-subscription' | 'captured-ipc-request' | 'browser-native-with-captured-ipc' | 'web-event-subscription' | 'surface-native' | 'rejecting-stub' | 'none'
 
 export type RendererEventDeliverability =
   'not-event' | 'electron-ipc' | 'application-event' | 'installed-undelivered' | 'unavailable'
 
 export type RendererAuthorityFlow = 'electron-sender' | 'caller-context' | 'none'
 export type RendererMapProjection = 'invoke' | 'event' | 'none'
+
+// prettier-ignore
+export type RendererLifecycleDispatch = Readonly<{ activateChannel: string; activate: 'after-subscribe' | 'on-call'; deactivateChannel: string; deactivate: 'after-unsubscribe' | 'on-dispose' }>
 
 export type RendererSurfaceProfile<Value> = Readonly<{
   electron: Value
@@ -55,6 +38,7 @@ export type RendererContractSeed = Readonly<{
   dispatchPolicy: RendererSurfaceProfile<RendererDispatchPolicy>
   eventDeliverability: RendererSurfaceProfile<RendererEventDeliverability>
   authorityFlow: RendererSurfaceProfile<RendererAuthorityFlow>
+  lifecycleDispatch?: RendererLifecycleDispatch
   mapProjection: RendererMapProjection
 }>
 
@@ -79,7 +63,10 @@ const freezeContract = (
     surfaceInstallation: Object.freeze({ ...seed.surfaceInstallation }),
     dispatchPolicy: Object.freeze({ ...seed.dispatchPolicy }),
     eventDeliverability: Object.freeze({ ...seed.eventDeliverability }),
-    authorityFlow: Object.freeze({ ...seed.authorityFlow })
+    authorityFlow: Object.freeze({ ...seed.authorityFlow }),
+    lifecycleDispatch: seed.lifecycleDispatch
+      ? Object.freeze({ ...seed.lifecycleDispatch })
+      : undefined
   })
 
 export const defineRendererContractGroup = (
@@ -110,14 +97,23 @@ export const composeRendererContractCatalog = (
       if (paths.has(contract.publicPath)) {
         throw new Error(`Duplicate renderer contract path: ${contract.publicPath}`)
       }
-      if (contract.channel !== null && channels.has(contract.channel)) {
-        throw new Error(`Duplicate renderer contract channel: ${contract.channel}`)
+      const contractChannels = new Set(
+        [
+          contract.channel,
+          contract.lifecycleDispatch?.activateChannel,
+          contract.lifecycleDispatch?.deactivateChannel
+        ].filter((channel): channel is string => channel != null)
+      )
+      for (const channel of contractChannels) {
+        if (channels.has(channel)) {
+          throw new Error(`Duplicate renderer contract channel: ${channel}`)
+        }
+        channels.add(channel)
       }
       if (contract.mapProjection !== 'none' && contract.channel === null) {
         throw new Error(`Projected renderer contract has no channel: ${contract.publicPath}`)
       }
       paths.add(contract.publicPath)
-      if (contract.channel !== null) channels.add(contract.channel)
       catalog.push(contract)
     }
   }

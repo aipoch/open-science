@@ -34,7 +34,17 @@ const seed = (publicPath: string, channel: string): RendererContractSeed => ({
 describe('renderer contract composition', () => {
   it('builds a deterministic deeply immutable catalog and projections', () => {
     const second = defineRendererContractGroup('projects', [seed('projects.list', 'projects:list')])
-    const first = defineRendererContractGroup('acp', [seed('acp.cancel', 'acp:cancel')])
+    const first = defineRendererContractGroup('acp', [
+      {
+        ...seed('acp.cancel', 'acp:cancel'),
+        lifecycleDispatch: {
+          activateChannel: 'acp:ready',
+          activate: 'after-subscribe',
+          deactivateChannel: 'acp:unready',
+          deactivate: 'after-unsubscribe'
+        }
+      }
+    ])
     const catalog = composeRendererContractCatalog([second, first])
     const projection = projectRendererContractMaps(catalog)
 
@@ -48,6 +58,7 @@ describe('renderer contract composition', () => {
     expect(Object.isFrozen(first.contracts)).toBe(true)
     expect(Object.isFrozen(first.contracts[0])).toBe(true)
     expect(Object.isFrozen(first.contracts[0].surfaceInstallation)).toBe(true)
+    expect(Object.isFrozen(first.contracts[0].lifecycleDispatch)).toBe(true)
     expect(Object.isFrozen(catalog)).toBe(true)
     expect(Object.isFrozen(projection.invoke)).toBe(true)
   })
@@ -73,18 +84,46 @@ describe('renderer contract composition', () => {
         defineRendererContractGroup('second', [seed('second.path', 'shared:channel')])
       ])
     ).toThrow('Duplicate renderer contract channel: shared:channel')
+
+    expect(() =>
+      composeRendererContractCatalog([
+        defineRendererContractGroup('first', [
+          {
+            ...seed('first.path', 'first:channel'),
+            lifecycleDispatch: {
+              activateChannel: 'shared:lifecycle-channel',
+              activate: 'on-call',
+              deactivateChannel: 'first:unready',
+              deactivate: 'on-dispose'
+            }
+          }
+        ]),
+        defineRendererContractGroup('second', [seed('second.path', 'shared:lifecycle-channel')])
+      ])
+    ).toThrow('Duplicate renderer contract channel: shared:lifecycle-channel')
   })
 
   it('copies nested profiles before freezing declarations', () => {
-    const mutable = seed('projects.list', 'projects:list') as {
+    const mutable = {
+      ...seed('projects.list', 'projects:list'),
+      lifecycleDispatch: {
+        activateChannel: 'projects:ready',
+        activate: 'on-call' as const,
+        deactivateChannel: 'projects:unready',
+        deactivate: 'on-dispose' as const
+      }
+    } as {
       publicPath: string
       surfaceInstallation: { localWeb: string }
+      lifecycleDispatch: { activateChannel: string }
     }
     const group = defineRendererContractGroup('projects', [mutable as RendererContractSeed])
     mutable.publicPath = 'projects.changed'
     mutable.surfaceInstallation.localWeb = 'changed'
+    mutable.lifecycleDispatch.activateChannel = 'changed'
 
     expect(group.contracts[0].publicPath).toBe('projects.list')
     expect(group.contracts[0].surfaceInstallation.localWeb).toBe('web-rpc')
+    expect(group.contracts[0].lifecycleDispatch?.activateChannel).toBe('projects:ready')
   })
 })
