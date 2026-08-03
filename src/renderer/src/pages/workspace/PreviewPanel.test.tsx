@@ -582,6 +582,37 @@ describe('PreviewPanel', () => {
     expect(container.querySelector('[data-testid="tool-content"]')).toBe(inlineContent)
   })
 
+  const panelId = (itemId: string): string => `preview-panel-${encodeURIComponent(itemId)}`
+
+  it('keeps a tool panel mounted while a file tab is active', async () => {
+    usePreviewWorkbenchStore.getState().upsertAndActivateItem(createToolItem({}))
+    usePreviewWorkbenchStore.getState().upsertItem(createFileItem({}))
+
+    await renderPanel()
+
+    // Node identity is the signal: a remount replaces the DOM node and loses component state such
+    // as the local file browser's current directory.
+    const toolContent = container.querySelector('[data-testid="tool-content"]')
+    expect(toolContent).not.toBeNull()
+    const toolPanel = container.querySelector(`#${panelId('tool-1')}`)
+    expect(toolPanel?.hasAttribute('hidden')).toBe(false)
+
+    await act(async () => {
+      usePreviewWorkbenchStore.getState().activateItem('item-1')
+    })
+
+    expect(container.querySelector('[data-testid="file-content"]')).not.toBeNull()
+    expect(container.querySelector(`#${panelId('tool-1')}`)?.hasAttribute('hidden')).toBe(true)
+    expect(container.querySelector('[data-testid="tool-content"]')).toBe(toolContent)
+
+    await act(async () => {
+      usePreviewWorkbenchStore.getState().activateItem('tool-1')
+    })
+
+    expect(container.querySelector(`#${panelId('tool-1')}`)?.hasAttribute('hidden')).toBe(false)
+    expect(container.querySelector('[data-testid="tool-content"]')).toBe(toolContent)
+  })
+
   it('activates a different tab on click and swaps the rendered content', async () => {
     usePreviewWorkbenchStore.getState().upsertAndActivateItem(createFileItem({}))
     usePreviewWorkbenchStore.getState().upsertItem(

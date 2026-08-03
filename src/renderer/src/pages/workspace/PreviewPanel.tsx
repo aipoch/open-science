@@ -400,8 +400,19 @@ const PreviewFilePanel = ({
 // The expanded state lives in the workbench store because the expand button is rendered by the
 // tool content itself (ProjectFilesView), not by this chrome. Overlay/panel stay below z-[60] so
 // workspace-level dialogs such as FilePreviewDialog stack above the modal.
-const PreviewToolPanel = ({ item }: { item: PreviewToolItem }): React.JSX.Element => {
-  const isExpanded = usePreviewWorkbenchStore((state) => state.expandedToolItemId === item.id)
+// Rendered for every tool tab, active or not, so component state (e.g. the local file browser's
+// current directory) survives switching to another tab and back. Inactive panels only get `hidden`;
+// returning a different element from this map position would let React unmount the subtree.
+const PreviewToolPanel = ({
+  item,
+  isActive
+}: {
+  item: PreviewToolItem
+  isActive: boolean
+}): React.JSX.Element => {
+  const isExpanded = usePreviewWorkbenchStore(
+    (state) => state.expandedToolItemId === item.id && isActive
+  )
   const setToolItemExpanded = usePreviewWorkbenchStore((state) => state.setToolItemExpanded)
   const surfaceRef = useRef<HTMLElement | null>(null)
 
@@ -434,6 +445,7 @@ const PreviewToolPanel = ({ item }: { item: PreviewToolItem }): React.JSX.Elemen
         id={isExpanded ? undefined : getPreviewPanelId(item.id)}
         aria-labelledby={isExpanded ? undefined : getPreviewTabId(item.id)}
         tabIndex={isExpanded ? -1 : 0}
+        hidden={!isActive && !isExpanded}
         data-state={isExpanded ? 'open' : undefined}
         className={
           isExpanded
@@ -496,24 +508,14 @@ const PreviewPanelSurface = ({ className }: PreviewPanelSurfaceProps): React.JSX
         {!activeItem ? <PreviewActiveContent key={activeContentKey} item={activeItem} /> : null}
         {items.map((item) => {
           const isActivePanel = item.id === activeItemId && panelState === 'open'
-          if (!isActivePanel) {
-            return (
-              <section
-                key={item.id}
-                role="tabpanel"
-                id={getPreviewPanelId(item.id)}
-                aria-labelledby={getPreviewTabId(item.id)}
-                hidden
-              >
-                {/* Keep tool panels mounted so component state (e.g. the local file
-                    browser's current directory) survives switching to a file preview and back.
-                    File panels re-create on activation anyway (key encodes path+mtime). */}
-                {item.type === 'tool' ? <PreviewActiveContent key={item.id} item={item} /> : null}
-              </section>
-            )
+          // Tool panels render at this map position whether active or not, so React keeps the
+          // subtree mounted across tab switches. File panels re-create on activation anyway
+          // (contentKey encodes path+mtime), so an inactive one collapses to an empty region.
+          if (item.type === 'tool') {
+            return <PreviewToolPanel key={item.id} item={item} isActive={isActivePanel} />
           }
 
-          return item.type === 'file' ? (
+          return isActivePanel ? (
             <PreviewFilePanel
               key={item.id}
               item={item}
@@ -521,7 +523,13 @@ const PreviewPanelSurface = ({ className }: PreviewPanelSurfaceProps): React.JSX
               onClose={removeItem}
             />
           ) : (
-            <PreviewToolPanel key={item.id} item={item} />
+            <section
+              key={item.id}
+              role="tabpanel"
+              id={getPreviewPanelId(item.id)}
+              aria-labelledby={getPreviewTabId(item.id)}
+              hidden
+            />
           )
         })}
       </div>
