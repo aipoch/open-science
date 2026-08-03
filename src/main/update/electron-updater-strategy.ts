@@ -176,6 +176,7 @@ export class ElectronUpdaterStrategy implements UpdateStrategy {
   // latest, so an older (drained) download can't clear a newer one's lifecycle.
   private downloadGeneration = 0
   private status: UpdateStatus
+  private applying = false
   // In-flight manifest notes fetch for the current update, awaited by check() so the returned
   // status reflects the hydrated notes.
   private notesHydration?: Promise<void>
@@ -275,6 +276,7 @@ export class ElectronUpdaterStrategy implements UpdateStrategy {
   // Always re-stamps current + applyKind so every broadcast status is self-consistent regardless of
   // which event produced it.
   private setStatus(partial: Partial<UpdateStatus>): void {
+    if (this.applying && partial.state !== 'applying') return
     this.status = {
       ...partial,
       state: partial.state ?? this.status.state,
@@ -303,6 +305,7 @@ export class ElectronUpdaterStrategy implements UpdateStrategy {
   }
 
   async check(): Promise<UpdateStatus> {
+    if (this.applying) return this.status
     try {
       await this.updater.checkForUpdates()
     } catch (error) {
@@ -384,7 +387,8 @@ export class ElectronUpdaterStrategy implements UpdateStrategy {
     // Claim the update synchronously so repeat clicks or concurrent renderers cannot start a second
     // teardown/install. The broadcast also gives the renderer immediate feedback during the shutdown
     // gate, which can take up to 15 seconds on Windows.
-    if (this.status.state === 'applying') return this.status
+    if (this.applying) return this.status
+    this.applying = true
     this.setStatus({ ...this.status, state: 'applying' })
 
     // Stop the agent + notebook process trees BEFORE handing off to the installer. Its uninstall step
@@ -399,7 +403,9 @@ export class ElectronUpdaterStrategy implements UpdateStrategy {
         readiness = await this.installGate()
       } catch (error) {
         this.log.error('update install gate failed', error)
+        this.applying = false
         this.setStatus({
+          ...this.status,
           state: 'error',
           error: 'Could not stop background processes before updating. Please try again.'
         })
@@ -407,7 +413,9 @@ export class ElectronUpdaterStrategy implements UpdateStrategy {
       }
       if (!readiness.completed || !readiness.reaped) {
         this.log.error('update install gate refused: backend teardown degraded', readiness)
+        this.applying = false
         this.setStatus({
+          ...this.status,
           state: 'error',
           error: 'Could not fully stop background processes before updating. Please try again.'
         })

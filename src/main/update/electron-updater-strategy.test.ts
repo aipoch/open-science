@@ -310,6 +310,11 @@ describe('ElectronUpdaterStrategy', () => {
     await strategy.apply()
     expect(gate).toHaveBeenCalledTimes(1)
 
+    updater.emit('checking-for-update')
+    await strategy.check()
+    expect(updater.checkForUpdates).not.toHaveBeenCalled()
+    expect(strategy.getStatus().state).toBe('applying')
+
     finishGate?.()
     await applying
     expect(updater.quitAndInstall).toHaveBeenCalledTimes(1)
@@ -337,13 +342,16 @@ describe('ElectronUpdaterStrategy', () => {
       updater,
       currentVersion: '0.2.0',
       broadcast: vi.fn(),
+      fetchImpl: offlineFetch(),
       installGate: vi.fn(async () => Promise.reject(new Error('teardown failed')))
     })
+    await strategy.check()
 
     const status = await strategy.apply()
 
     expect(updater.quitAndInstall).not.toHaveBeenCalled()
     expect(status.state).toBe('error')
+    expect(status.latest).toBe('0.3.0')
     expect(status.error).toContain('Please try again')
   })
 
