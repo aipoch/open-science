@@ -115,3 +115,4 @@ export {
   createProjectHandlers,
   registerProjectIpcHandlers
 }
+export type { ProjectHandlers }

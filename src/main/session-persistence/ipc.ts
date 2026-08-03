@@ -173,4 +173,4 @@ export {
   loadSessionsAfterProjectRecovery,
   registerSessionPersistenceIpcHandlers
 }
-export type { SessionPersistenceBackend }
+export type { SessionPersistenceBackend, SessionPersistenceHandlers }
