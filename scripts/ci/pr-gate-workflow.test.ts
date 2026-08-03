@@ -339,5 +339,17 @@ describe('PR Gate workflow', () => {
     )
 
     expect(step).toBeDefined()
+    for (const testFile of [
+      'src/preload/index.test.ts',
+      'src/preload/electron-renderer-contract-adapter.test.ts',
+      'src/shared/renderer-contract.test.ts',
+      'src/shared/renderer-contract-catalog.test.ts',
+      'src/shared/renderer-surface-inventory.test.ts',
+      'src/shared/web-rpc-contract.test.ts'
+    ]) {
+      expect(step?.run).toContain(testFile)
+    }
+    expect(manifest.laneOrder).not.toContain('unit_preload_contracts')
+    expect(workflow.jobs).not.toHaveProperty('preload_contracts')
   })
 })
