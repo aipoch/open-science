@@ -269,7 +269,12 @@ export class ElectronUpdaterStrategy implements UpdateStrategy {
       this.setStatus({ ...this.status, state: 'ready', progress: 100 })
     })
     this.updater.on('error', (err) => {
-      this.setStatus({ state: 'error', error: err instanceof Error ? err.message : 'Update error' })
+      this.applying = false
+      this.setStatus({
+        ...this.status,
+        state: 'error',
+        error: err instanceof Error ? err.message : 'Update error'
+      })
     })
   }
 
@@ -411,6 +416,7 @@ export class ElectronUpdaterStrategy implements UpdateStrategy {
         })
         return this.status
       }
+      if (!this.applying) return this.status
       if (!readiness.completed || !readiness.reaped) {
         this.log.error('update install gate refused: backend teardown degraded', readiness)
         this.applying = false
@@ -424,7 +430,16 @@ export class ElectronUpdaterStrategy implements UpdateStrategy {
       this.log.info('update install gate cleared; proceeding to quitAndInstall')
     }
 
-    this.updater.quitAndInstall(false, true)
+    try {
+      this.updater.quitAndInstall(false, true)
+    } catch (error) {
+      this.applying = false
+      this.setStatus({
+        ...this.status,
+        state: 'error',
+        error: error instanceof Error ? error.message : 'Could not start the update installer.'
+      })
+    }
     return this.status
   }
 }

@@ -336,6 +336,46 @@ describe('ElectronUpdaterStrategy', () => {
     expect(status.state).toBe('error')
   })
 
+  it('restores an actionable error when the updater fails during preparation', async () => {
+    const updater = new FakeUpdater()
+    let finishGate: (() => void) | undefined
+    const strategy = new ElectronUpdaterStrategy({
+      updater,
+      currentVersion: '0.2.0',
+      broadcast: vi.fn(),
+      installGate: () =>
+        new Promise((resolve) => {
+          finishGate = () => resolve({ completed: true, reaped: true })
+        })
+    })
+
+    const applying = strategy.apply()
+    updater.emit('error', new Error('installer failed'))
+    finishGate?.()
+    const status = await applying
+
+    expect(status.state).toBe('error')
+    expect(status.error).toBe('installer failed')
+    expect(updater.quitAndInstall).not.toHaveBeenCalled()
+  })
+
+  it('restores an actionable error when quitAndInstall throws', async () => {
+    const updater = new FakeUpdater()
+    updater.quitAndInstall.mockImplementationOnce(() => {
+      throw new Error('installer launch failed')
+    })
+    const strategy = new ElectronUpdaterStrategy({
+      updater,
+      currentVersion: '0.2.0',
+      broadcast: vi.fn()
+    })
+
+    const status = await strategy.apply()
+
+    expect(status.state).toBe('error')
+    expect(status.error).toBe('installer launch failed')
+  })
+
   it('restores an actionable error when the install gate throws', async () => {
     const updater = new FakeUpdater()
     const strategy = new ElectronUpdaterStrategy({
