@@ -295,6 +295,46 @@ describe('ACP permission broker with durable grants', () => {
     await expect(registry.list()).resolves.toEqual([])
   })
 
+  it.each(['rm -rf build', 'git status && rm -rf build'])(
+    'offers only provider Once when a Codex command group does not safely prefix %s',
+    async (command) => {
+      storageRoot = await mkdtemp(join(tmpdir(), 'open-science-broker-mismatched-command-group-'))
+      client = createProjectDbClient(storageRoot)
+      await ensureProjectSchema(client)
+      await client.project.create({ data: { id: 'project-1', name: 'Project one' } })
+      const registry = await createPermissionGrantRegistry({ getClient: async () => client! })
+      const emitted: Parameters<ConstructorParameters<typeof AcpPermissionBroker>[0]>[0][] = []
+      const broker = new AcpPermissionBroker(
+        (request) => emitted.push(request),
+        undefined,
+        registry
+      )
+      const request = shellRequest('session-1')
+      request.toolCall.rawInput = { command }
+      request.options.splice(2, 0, {
+        optionId: 'accept_execpolicy_amendment',
+        name: 'Allow Commands Starting With `git status`',
+        kind: 'allow_always',
+        _meta: { codex: { execpolicyAmendment: ['git', 'status'] } }
+      })
+
+      const pending = broker.requestPermission(request, {
+        profile: 'ask',
+        frameworkId: 'codex',
+        projectId: 'project-1'
+      })
+      await new Promise<void>((resolve) => setImmediate(resolve))
+
+      expect(emitted[0].options.map((option) => option.scope).filter(Boolean)).toEqual(['once'])
+      expect(emitted[0].commandPrefix).toBeUndefined()
+      broker.respond({ requestId: emitted[0].requestId, optionId: 'provider-allow-once' })
+      await expect(pending).resolves.toEqual({
+        outcome: { outcome: 'selected', optionId: 'provider-allow-once' }
+      })
+      await expect(registry.list()).resolves.toEqual([])
+    }
+  )
+
   it('offers durable scopes for a Codex-proposed command group', async () => {
     storageRoot = await mkdtemp(join(tmpdir(), 'open-science-broker-codex-command-group-'))
     client = createProjectDbClient(storageRoot)

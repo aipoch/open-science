@@ -106,6 +106,48 @@ const metadataRecord = (value: unknown): Record<string, unknown> | undefined =>
 
 type CodexCommandGroup = { categoryKey: string; commandPrefix: string[] }
 
+const commandFromRawInput = (rawInput: unknown): string | undefined => {
+  if (!rawInput || typeof rawInput !== 'object' || Array.isArray(rawInput)) return undefined
+
+  const command = (rawInput as Record<string, unknown>).command
+
+  return typeof command === 'string' && command.trim() ? command : undefined
+}
+
+const commandHasComposition = (command: string): boolean => {
+  let quote: "'" | '"' | undefined
+  for (let index = 0; index < command.length; index += 1) {
+    const character = command[index]
+    if (character === '\\') {
+      index += 1
+      continue
+    }
+    if (quote) {
+      if (character === quote) quote = undefined
+      continue
+    }
+    if (character === "'" || character === '"') {
+      quote = character
+      continue
+    }
+    if (/[;&|<>`\r\n]/u.test(character) || (character === '$' && command[index + 1] === '(')) {
+      return true
+    }
+  }
+  return quote !== undefined
+}
+
+const commandStartsWithArgvPrefix = (command: string, prefix: string[]): boolean => {
+  if (commandHasComposition(command)) return false
+
+  // ponytail: accept only simple argv text; use adapter-supplied argv if ACP exposes it later.
+  const words = command.match(/(?:"(?:\\.|[^"\\])*"|'(?:\\.|[^'\\])*'|\\.|[^\s])+/gu) ?? []
+  const argv = words.map((word) =>
+    word.replace(/^(["'])([\s\S]*)\1$/u, '$2').replace(/\\([\\\s"'])/gu, '$1')
+  )
+  return prefix.every((token, index) => argv[index] === token)
+}
+
 // Reads Codex's structured argv-prefix proposal only when the provider offers the matching native
 // policy amendment. Some codex-acp shapes repeat the prefix on the request instead of the option.
 const codexCommandGroup = (params: RequestPermissionRequest): CodexCommandGroup | undefined => {
@@ -124,18 +166,14 @@ const codexCommandGroup = (params: RequestPermissionRequest): CodexCommandGroup 
   const categoryKey = commandPrefixPermissionCategory(amendment)
   if (!categoryKey || !Array.isArray(amendment)) return undefined
 
+  const commandPrefix = amendment.filter((token): token is string => typeof token === 'string')
+  const command = commandFromRawInput(params.toolCall.rawInput)
+  if (!command || !commandStartsWithArgvPrefix(command, commandPrefix)) return undefined
+
   return {
     categoryKey,
-    commandPrefix: amendment.filter((token): token is string => typeof token === 'string')
+    commandPrefix
   }
-}
-
-const commandFromRawInput = (rawInput: unknown): string | undefined => {
-  if (!rawInput || typeof rawInput !== 'object' || Array.isArray(rawInput)) return undefined
-
-  const command = (rawInput as Record<string, unknown>).command
-
-  return typeof command === 'string' && command.trim() ? command : undefined
 }
 
 const reportedPermissionTitle = (params: RequestPermissionRequest): string =>

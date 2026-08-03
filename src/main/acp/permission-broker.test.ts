@@ -394,12 +394,21 @@ describe('ACP permission broker', () => {
     const broker = new AcpPermissionBroker((request) => emitted.push(request))
     const context = { profile: 'ask' as const, frameworkId: 'codex' as const }
 
-    const firstResponse = broker.requestPermission(createCodexCommandPermissionRequest(), context)
+    const firstRequest = createCodexCommandPermissionRequest()
+    const amendmentOption = firstRequest.options.find(
+      (option) => option.optionId === 'accept_execpolicy_amendment'
+    )
+    if (!amendmentOption) throw new Error('Expected a Codex exec-policy amendment option')
+    amendmentOption._meta = {
+      codex: { execpolicyAmendment: ['git', 'worktree', 'add'] }
+    }
+    const firstResponse = broker.requestPermission(firstRequest, context)
 
     expect(emitted[0].options.map((option) => option.scope).filter(Boolean)).toEqual([
       'once',
       'session'
     ])
+    expect(emitted[0].commandPrefix).toEqual(['git', 'worktree', 'add'])
     expect(emitted[0].options.map((option) => option.optionId)).not.toContain('allow_always')
 
     broker.respond({ requestId: emitted[0].requestId, optionId: getSessionOptionId(emitted[0]) })
@@ -407,9 +416,9 @@ describe('ACP permission broker', () => {
       outcome: { outcome: 'selected', optionId: 'allow_once' }
     })
 
-    await expect(
-      broker.requestPermission(createCodexCommandPermissionRequest(), context)
-    ).resolves.toEqual({ outcome: { outcome: 'selected', optionId: 'allow_once' } })
+    await expect(broker.requestPermission(firstRequest, context)).resolves.toEqual({
+      outcome: { outcome: 'selected', optionId: 'allow_once' }
+    })
 
     const otherSessionResponse = broker.requestPermission(
       createCodexCommandPermissionRequest('session-2'),
@@ -418,6 +427,26 @@ describe('ACP permission broker', () => {
     expect(emitted).toHaveLength(2)
     broker.cancelForSession('session-2')
     await expect(otherSessionResponse).resolves.toEqual({ outcome: { outcome: 'cancelled' } })
+  })
+
+  it('validates a PowerShell command group against the current command', () => {
+    const emitted: EmittedPermissionRequest[] = []
+    const broker = new AcpPermissionBroker((request) => emitted.push(request))
+    const request = createCodexCommandPermissionRequest()
+    request.toolCall.rawInput = {
+      command: 'powershell -Command Get-ChildItem -Path C:\\Users\\Public'
+    }
+    const amendmentOption = request.options.find(
+      (option) => option.optionId === 'accept_execpolicy_amendment'
+    )
+    if (!amendmentOption) throw new Error('Expected a Codex exec-policy amendment option')
+    amendmentOption._meta = {
+      codex: { execpolicyAmendment: ['powershell', '-Command', 'Get-ChildItem'] }
+    }
+
+    void broker.requestPermission(request, { profile: 'ask', frameworkId: 'codex' })
+
+    expect(emitted[0].commandPrefix).toEqual(['powershell', '-Command', 'Get-ChildItem'])
   })
 
   it('removes Codex policy amendments when execute metadata is absent', () => {
