@@ -453,12 +453,17 @@ describe('usePreviewPersistence per-project save/restore', () => {
       root.render(<PersistenceHarness projectId="project-a" />)
     })
 
+    const fileDialogItem = createStoredFileItem()
+    if (fileDialogItem.type !== 'file') throw new Error('expected a file preview fixture')
     act(() => {
       usePreviewWorkbenchStore.setState({
         panelState: 'open',
         activeItemId: 'file:session-1:/workspace/project/report.md',
-        items: [createStoredFileItem()]
+        items: [fileDialogItem]
       })
+      usePreviewWorkbenchStore
+        .getState()
+        .openFileDialog({ ...fileDialogItem, projectId: 'project-a' })
     })
 
     save.mockClear()
@@ -487,5 +492,6 @@ describe('usePreviewPersistence per-project save/restore', () => {
         ]
       }
     })
+    expect(usePreviewWorkbenchStore.getState().fileDialogItem).toBeUndefined()
   })
 })

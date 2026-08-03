@@ -414,9 +414,20 @@ describe('preview workbench store', () => {
     expect(usePreviewWorkbenchStore.getState().expandedToolItemId).toBeNull()
 
     usePreviewWorkbenchStore.getState().setToolItemExpanded(PROJECT_FILES_PREVIEW_ID)
+    usePreviewWorkbenchStore.getState().openFileDialog({
+      id: 'artifact-1',
+      projectId: 'project-a',
+      sessionId: 'session-1',
+      type: 'file',
+      title: 'result.png',
+      path: 'artifact-version:project-a/session-1/artifact-1/version-1',
+      format: 'image',
+      name: 'result.png'
+    })
     usePreviewWorkbenchStore.getState().removeItem(PROJECT_FILES_PREVIEW_ID)
 
     expect(usePreviewWorkbenchStore.getState().expandedToolItemId).toBeNull()
+    expect(usePreviewWorkbenchStore.getState().fileDialogItem).toBeUndefined()
   })
 
   it('clears the expanded tool item when its session is removed', () => {
