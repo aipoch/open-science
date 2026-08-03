@@ -660,6 +660,60 @@ describe('AcpRuntimeCoordinator', () => {
     expect(released).toBe(true)
   })
 
+  it('cancels active prompts and waits for their terminal responses before quit teardown', async () => {
+    const prompt = createDeferred<unknown>()
+    let created!: ReturnType<typeof createFakeRuntime>
+    const coordinator = new AcpRuntimeCoordinator((callbacks) => {
+      created = createFakeRuntime({
+        frameworkId: 'claude-code',
+        sessionIds: ['session-1'],
+        callbacks,
+        prompt: () => prompt.promise
+      })
+      return created.runtime
+    })
+    const session = await coordinator.createSession({ cwd: '/workspace' })
+    const running = coordinator.sendPrompt({ sessionId: session.sessionId, text: 'keep usage' })
+    await Promise.resolve()
+
+    let prepared = false
+    const preparing = coordinator.prepareForQuit(1_000).then(() => {
+      prepared = true
+    })
+    await Promise.resolve()
+
+    expect(created.cancelPrompt).toHaveBeenCalledWith({ sessionId: 'session-1' })
+    expect(prepared).toBe(false)
+
+    prompt.resolve({ stopReason: 'cancelled' })
+    await running
+    await preparing
+    expect(prepared).toBe(true)
+  })
+
+  it('bounds quit preparation when an agent never returns a terminal response', async () => {
+    const prompt = createDeferred<unknown>()
+    let created!: ReturnType<typeof createFakeRuntime>
+    const coordinator = new AcpRuntimeCoordinator((callbacks) => {
+      created = createFakeRuntime({
+        frameworkId: 'codex',
+        sessionIds: ['session-1'],
+        callbacks,
+        prompt: () => prompt.promise
+      })
+      return created.runtime
+    })
+    const session = await coordinator.createSession({ cwd: '/workspace' })
+    const running = coordinator.sendPrompt({ sessionId: session.sessionId, text: 'never stops' })
+    await Promise.resolve()
+
+    await expect(coordinator.prepareForQuit(0)).resolves.toBeUndefined()
+    expect(created.cancelPrompt).toHaveBeenCalledWith({ sessionId: 'session-1' })
+
+    prompt.resolve({ stopReason: 'cancelled' })
+    await running
+  })
+
   it('blocks user prompts on startup admission while allowing recovery continuations through', async () => {
     const admission = createDeferred<void>()
     let createdRuntime!: ReturnType<typeof createFakeRuntime>

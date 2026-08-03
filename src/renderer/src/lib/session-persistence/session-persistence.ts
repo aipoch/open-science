@@ -27,7 +27,11 @@ type SessionPersistenceApi = {
   saveManifest: (request: SaveSessionManifestRequest) => Promise<void>
 }
 
-type OrderedSessionPersistence = Pick<SessionPersistenceApi, 'saveSession' | 'saveManifest'>
+type SessionWriteApi = Pick<SessionPersistenceApi, 'saveSession' | 'saveManifest'>
+
+type OrderedSessionPersistence = SessionWriteApi & {
+  flush: () => Promise<void>
+}
 
 const SESSION_CONFLICT_REBASE_FIELDS = [
   'title',
@@ -55,9 +59,7 @@ const conflictRebaseFieldChanged = (
 // Serializes every renderer-originated Session write through one ordering seam. Callers enqueue the
 // snapshot immediately, so a later explicit Artifact save cannot be overtaken by an older store save
 // that was still waiting behind an in-flight write.
-const createOrderedSessionPersistence = (
-  api: OrderedSessionPersistence
-): OrderedSessionPersistence => {
+const createOrderedSessionPersistence = (api: SessionWriteApi): OrderedSessionPersistence => {
   let queue: Promise<unknown> = Promise.resolve()
 
   const enqueue = <Result>(task: () => Promise<Result>): Promise<Result> => {
@@ -72,7 +74,8 @@ const createOrderedSessionPersistence = (
   return {
     saveSession: (session, options) =>
       enqueue(() => (options ? api.saveSession(session, options) : api.saveSession(session))),
-    saveManifest: (request) => enqueue(() => api.saveManifest(request))
+    saveManifest: (request) => enqueue(() => api.saveManifest(request)),
+    flush: () => queue.then(() => undefined)
   }
 }
 
@@ -88,6 +91,8 @@ const liveSessionPersistence = createOrderedSessionPersistence({
 
 const saveSessionInOrder = (session: PersistedChatSession): Promise<PersistedChatSession> =>
   liveSessionPersistence.saveSession(session)
+
+const flushSessionPersistence = (): Promise<void> => liveSessionPersistence.flush()
 
 // The one artifact command startup reconciliation needs; kept narrow so it is trivial to fake in tests.
 type ArtifactReconcileApi = {
@@ -596,6 +601,7 @@ const useSessionPersistence = (): SessionPersistenceState => {
 export {
   createOrderedSessionPersistence,
   createStoreSaver,
+  flushSessionPersistence,
   loadPersistedSessions,
   reconcilePendingArtifacts,
   saveSessionInOrder,

@@ -26,6 +26,10 @@ export type AppLifecycleDeps = {
   createTray: (handlers: TrayHandlers) => Tray | undefined
   // Bounded, best-effort backend teardown (agent tree + notebook kernels); never throws.
   shutdownBackends: () => Promise<void>
+  // Requests active ACP turns to cancel, then waits a bounded interval for terminal usage events.
+  prepareForQuit: () => Promise<void>
+  // Drains renderer runtime events and its ordered Session write queue before the window disappears.
+  flushSessionPersistence: () => Promise<void>
   // True while a data-root migration is copying; a quit during it is owned by the migration guard.
   isMigrationInProgress: () => boolean
   // Requests an app quit (app.quit); the before-quit handler below turns it into an awaited teardown.
@@ -197,6 +201,8 @@ export const installAppLifecycle = (
     shutdownStarted = true
     void (async () => {
       try {
+        await deps.prepareForQuit().catch(() => undefined)
+        await deps.flushSessionPersistence().catch(() => undefined)
         await deps.shutdownBackends()
       } finally {
         trayBox.current?.destroy()

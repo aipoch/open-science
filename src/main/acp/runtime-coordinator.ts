@@ -25,6 +25,7 @@ import { ConversationPermissionGrantStore } from './permission-broker'
 import type { ApprovedSwitchReadBack, ClaudeCodeReplayInput } from '../agents/claude-code-handoff'
 
 const MAX_EVENTS = 500
+const QUIT_PREPARATION_TIMEOUT_MS = 4_000
 
 const isOwnershipScopedControlEvent = (event: AcpRuntimeEvent): boolean =>
   event.kind === 'compaction' || event.recoverable === 'context-overflow'
@@ -278,6 +279,41 @@ class AcpRuntimeCoordinator {
     this.invalidateAllSessionTurns()
     this.supersedeInitializationRequests()
     return this.shutdownAll((runtime) => runtime.shutdownForQuit())
+  }
+
+  // Gives active agents a bounded chance to return their terminal stop response before process-tree
+  // teardown. Those responses carry the final usage available from Claude Code/OpenCode/managed Codex;
+  // an unresponsive agent cannot hold app quit indefinitely.
+  async prepareForQuit(timeoutMs = QUIT_PREPARATION_TIMEOUT_MS): Promise<void> {
+    const sessionIds = Array.from(
+      new Set([
+        ...this.activePromptRequests.keys(),
+        ...this.pendingPromptStarts.keys(),
+        ...this.getSnapshot().promptInFlightSessionIds
+      ])
+    )
+    if (sessionIds.length === 0) return
+
+    const cancelAndDrain = async (): Promise<void> => {
+      await Promise.allSettled(
+        sessionIds.map((sessionId) => this.cancelPrompt({ sessionId }).then(() => undefined))
+      )
+      await Promise.all(
+        sessionIds.map((sessionId) => this.waitForSessionInteractionRelease(sessionId))
+      )
+    }
+
+    await new Promise<void>((resolve) => {
+      let settled = false
+      const finish = (): void => {
+        if (settled) return
+        settled = true
+        clearTimeout(timer)
+        resolve()
+      }
+      const timer = setTimeout(finish, Math.max(0, timeoutMs))
+      void cancelAndDrain().then(finish, finish)
+    })
   }
 
   async shutdownForUpdateGate(): Promise<{ reaped: boolean }> {

@@ -147,6 +147,12 @@ import type {
   SaveSessionOptions,
   SaveSessionManifestRequest
 } from '../shared/session-persistence'
+import {
+  SESSION_PERSISTENCE_FLUSH_REQUEST_CHANNEL,
+  SESSION_PERSISTENCE_FLUSH_RESPONSE_CHANNEL,
+  type SessionPersistenceFlushRequest,
+  type SessionPersistenceFlushResponse
+} from '../shared/session-persistence-flush'
 import type {
   ExportConversationRequest,
   ExportConversationResult
@@ -362,6 +368,8 @@ type OpenScienceAPI = {
     deleteSession: (request: DeleteSessionRequest) => Promise<void>
     saveManifest: (request: SaveSessionManifestRequest) => Promise<void>
     exportConversation: (request: ExportConversationRequest) => Promise<ExportConversationResult>
+    onFlushRequest?: (listener: AcpListener<SessionPersistenceFlushRequest>) => RemoveListener
+    sendFlushResponse?: (response: SessionPersistenceFlushResponse) => void
     onCreated: (listener: AcpListener<SessionUpsertEvent>) => RemoveListener
     onUpdated: (listener: AcpListener<SessionUpsertEvent>) => RemoveListener
     onDeleted: (listener: AcpListener<SessionDeletedEvent>) => RemoveListener
@@ -885,6 +893,9 @@ const api: OpenScienceAPI = {
         'sessions:export-conversation',
         request
       ) as Promise<ExportConversationResult>,
+    onFlushRequest: (listener) => onIpcMessage(SESSION_PERSISTENCE_FLUSH_REQUEST_CHANNEL, listener),
+    sendFlushResponse: (response) =>
+      ipcRenderer.send(SESSION_PERSISTENCE_FLUSH_RESPONSE_CHANNEL, response),
     onCreated: (listener) => onIpcMessage('session:created', listener),
     onUpdated: (listener) => onIpcMessage('session:updated', listener),
     onDeleted: (listener) => onIpcMessage('session:deleted', listener)

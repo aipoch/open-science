@@ -118,6 +118,7 @@ async function startElectronApp(mainEntryPath: string): Promise<void> {
         { parseWebModeOptions, createWebServiceController, buildAuthenticatedWebUrl },
         { routeSecondInstance },
         { createElectronCloseConfirm },
+        { createElectronSessionPersistenceFlush },
         { installWindowShortcuts },
         { createAppIconController, buildAppIconPreviews },
         { RemoteAccessService, registerRemoteAccessIpcHandlers },
@@ -141,6 +142,7 @@ async function startElectronApp(mainEntryPath: string): Promise<void> {
         import('./web-service'),
         import('./second-instance-router'),
         import('./window-close-confirm'),
+        import('./session-persistence/renderer-flush'),
         import('./window-shortcuts'),
         import('./app-icon'),
         import('./remote-access'),
@@ -225,6 +227,7 @@ async function startElectronApp(mainEntryPath: string): Promise<void> {
         taskAgent,
         sessionDeletionCapability,
         detectActiveSessions,
+        prepareForQuit,
         dispose: disposeApplicationRuntime
       } = await registerIpcHandlers({
         mainEntryPath,
@@ -321,6 +324,10 @@ async function startElectronApp(mainEntryPath: string): Promise<void> {
         settingsService,
         disposeApplicationRuntime,
         detectActiveSessions,
+        prepareForQuit,
+        createSessionPersistenceFlush: (
+          getWindow: () => InstanceType<typeof BrowserWindow> | undefined
+        ) => createElectronSessionPersistenceFlush(getWindow),
         createConfirmClose: (getWindow: () => InstanceType<typeof BrowserWindow> | undefined) =>
           createElectronCloseConfirm(getWindow, {
             get: () => settingsService.getClosePreference(),
@@ -379,6 +386,10 @@ async function startElectronApp(mainEntryPath: string): Promise<void> {
             countWindows: () => BrowserWindow.getAllWindows().length,
             createInitialWindow: !ctx.webMode.headless,
             detectActiveSessions: ctx.detectActiveSessions,
+            prepareForQuit: ctx.prepareForQuit,
+            flushSessionPersistence: ctx.createSessionPersistenceFlush(() =>
+              ctx.mainWindowGetterBox.current?.()
+            ),
             createConfirmClose: ctx.createConfirmClose
           },
           {
