@@ -130,4 +130,36 @@ describe('post-merge Windows validation', () => {
     expect(release.jobs.publish.if).toBe(stableTagCondition)
   })
 
+  it('locks mirror dependencies and completes local transforms before configuring credentials', () => {
+    const mirror = readWorkflow('mirror-to-website.yml').jobs.mirror
+    const stepNames = mirror.steps?.map(({ name }) => name) ?? []
+    const install = findStep(mirror, 'Install manifest dependencies')
+    const configureIndex = stepNames.indexOf('Configure AWS credentials')
+
+    expect(install.run).toBe(
+      'npm ci --ignore-scripts --omit=dev --omit=optional --no-audit --no-fund'
+    )
+    expect(mirror.steps?.filter(({ run }) => run?.includes('npm install'))).toEqual([])
+    expect(configureIndex).toBeGreaterThan(stepNames.indexOf('Install manifest dependencies'))
+    expect(configureIndex).toBeGreaterThan(stepNames.indexOf('Generate version.json'))
+    expect(configureIndex).toBeGreaterThan(stepNames.indexOf('Rewrite update feed paths'))
+    expect(configureIndex).toBeGreaterThan(
+      stepNames.indexOf('Inject release notes into update feeds')
+    )
+    expect(stepNames.indexOf('Sync installers to versioned path')).toBeGreaterThan(configureIndex)
+    expect(stepNames.indexOf('Upload version.json')).toBeGreaterThan(configureIndex)
+    expect(stepNames.indexOf('Upload update feed to channel root')).toBeGreaterThan(configureIndex)
+  })
+
+  it('pins external actions in every changed release workflow', () => {
+    for (const workflowName of ['release.yml', 'mirror-to-website.yml']) {
+      const workflow = readWorkflow(workflowName)
+      const references = Object.values(workflow.jobs).flatMap((job) =>
+        (job.steps ?? []).flatMap(({ uses }) => (uses?.startsWith('./') || !uses ? [] : [uses]))
+      )
+
+      expect(references.length).toBeGreaterThan(0)
+      expect(references.every((reference) => /@[0-9a-f]{40}$/i.test(reference))).toBe(true)
+    }
+  })
 })
