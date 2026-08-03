@@ -52,11 +52,11 @@ const SECRET_BEARING_INPUT_PATTERNS = [
   /\bcurl(?:\.exe)?\b[^\r\n]*?[ \t]-u=?['"]?[^\s:'"]+:[^\s'"]+/i,
   // Short flags are overloaded across CLIs, so reject only credential-bearing meanings for the
   // command that owns them instead of making every -a, -b, or -p command Once-only.
-  /\bcurl(?:\.exe)?\b[^\r\n]*?[ \t]-b(?:=?['"]?[^\s'"]+|[ \t]+['"]?[^\s'"]+)/,
-  /\bdocker(?:\.exe)?\b[^\r\n]*?\blogin\b[^\r\n]*?[ \t]-p(?:=?['"]?[^\s'"]+|[ \t]+['"]?[^\s'"]+)/,
-  /\bsshpass(?:\.exe)?\b[^\r\n]*?[ \t]-p(?:=?['"]?[^\s'"]+|[ \t]+['"]?[^\s'"]+)/,
-  /\bredis-cli(?:\.exe)?\b[^\r\n]*?[ \t]-a(?:=?['"]?[^\s'"]+|[ \t]+['"]?[^\s'"]+)/,
-  /\b(?:mysql|mysqldump)(?:\.exe)?\b[^\r\n]*?[ \t]-p=?['"]?[^\s'"]+/,
+  /\b[Cc][Uu][Rr][Ll](?:\.[Ee][Xx][Ee])?\b[^\r\n]*?[ \t]-b(?:=?['"]?[^\s'"]+|[ \t]+['"]?[^\s'"]+)/,
+  /\b[Dd][Oo][Cc][Kk][Ee][Rr](?:\.[Ee][Xx][Ee])?\b[^\r\n]*?\blogin\b[^\r\n]*?[ \t]-p(?:=?['"]?[^\s'"]+|[ \t]+['"]?[^\s'"]+)/,
+  /\b[Ss][Ss][Hh][Pp][Aa][Ss][Ss](?:\.[Ee][Xx][Ee])?\b[^\r\n]*?[ \t]-p(?:=?['"]?[^\s'"]+|[ \t]+['"]?[^\s'"]+)/,
+  /\b[Rr][Ee][Dd][Ii][Ss]-[Cc][Ll][Ii](?:\.[Ee][Xx][Ee])?\b[^\r\n]*?[ \t]-a(?:=?['"]?[^\s'"]+|[ \t]+['"]?[^\s'"]+)/,
+  /\b(?:[Mm][Yy][Ss][Qq][Ll]|[Mm][Yy][Ss][Qq][Ll][Dd][Uu][Mm][Pp])(?:\.[Ee][Xx][Ee])?\b[^\r\n]*?[ \t]-p=?['"]?[^\s'"]+/,
   /\b(?:github_pat_|gh[pousr]_|AKIA[0-9A-Z]{16}|sk-[A-Za-z0-9_-]{16,})[A-Za-z0-9_-]*/,
   /\b[a-z][a-z0-9+.-]*:\/\/[^\s/@:]+:[^\s/@]+@/i,
   /[?&](?:token|access_token|api_key|key|secret|password|signature)=[^&#\s]+/i
