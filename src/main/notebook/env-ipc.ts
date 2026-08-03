@@ -1,146 +1,10 @@
-import { existsSync } from 'node:fs'
-
 import { BrowserWindow } from 'electron'
 
-import { ipcMainHandle } from '../ipc-handler-registry'
-
 import type { NotebookLanguage } from '../../shared/notebook'
-import { withDataRootWrite } from '../storage/migration-state'
-import {
-  logStartupGateFailure,
-  runLoggedRuntimeOperation,
-  serializeProvisioner
-} from './environment-operation-foundation'
-import {
-  planStartupAction,
-  type ProvisionProgress,
-  type ProvisionStatus,
-  type RuntimeProvisioner
-} from './provisioner'
-// NOTE: DEFAULT_ENV_VERSION is imported into provisioner.ts but not re-exported from it (brief's
-// example code imports it `from './provisioner'`, which resolves to `undefined` at runtime under
-// vitest's transpile-only mode — a real type error under `tsc` that transpile-only silently allows
-// through). Sourcing it from its actual home, runtime-paths.ts, instead of touching provisioner.ts
-// (out of this task's scope).
-import { DEFAULT_ENV_VERSION, DEFAULT_PY_ENV, envPrefix, readReadyMarker } from './runtime-paths'
-
-// A small delegating surface so IPC behavior tests run without Electron wiring.
-export type NotebookEnvHandlers = {
-  status: () => Promise<ProvisionStatus>
-  provision: (lang: NotebookLanguage, onProgress: (p: ProvisionProgress) => void) => Promise<void>
-  repair: (lang: NotebookLanguage, onProgress: (p: ProvisionProgress) => void) => Promise<void>
-  cancel: (language?: NotebookLanguage) => void
-}
-
-export const createNotebookEnvHandlers = (
-  provisioner: RuntimeProvisioner,
-  // Awaited before a UI-triggered provision/repair so recovery's prefix cleanup can't race a rebuild
-  // the user just kicked off. Optional so existing behavior tests construct handlers unchanged.
-  waitForRecovery?: () => Promise<void>,
-  // Throws if the default env for a language is recovery-blocked (an unknown-liveness orphan may still
-  // be writing its prefix), so a UI provision/repair refuses instead of materializing over a live env.
-  // Checked AFTER waitForRecovery, so the blocked set is populated. Optional for existing tests.
-  assertProvisionAllowed?: (language: NotebookLanguage) => void,
-  // Called only after the provisioner has rebuilt and verified an explicit UI Repair. The runtime
-  // service owns its separate durable repair marker, process-local execution gate, and bindings; this
-  // handoff lets it release those states only at the verified Reset boundary.
-  onRepairCompleted?: (language: NotebookLanguage) => Promise<void> | void
-): NotebookEnvHandlers => {
-  const serialized = serializeProvisioner(provisioner)
-  const afterRecovery = async (
-    language: NotebookLanguage,
-    run: () => Promise<void>
-  ): Promise<void> => {
-    await withDataRootWrite(async () => {
-      if (waitForRecovery) await waitForRecovery()
-      assertProvisionAllowed?.(language)
-      await run()
-    })
-  }
-  return {
-    // AWAIT recovery before reading status: recovery populates the blocked-prefix set (and hence
-    // status.*RecoveryBlocked) asynchronously. A renderer that reads status before recovery settles
-    // would see blocked=false and never surface Reset — the startup gate produces no progress event for
-    // an already-ready env, so there is no other signal that would later correct it.
-    status: () =>
-      withDataRootWrite(async () => {
-        if (waitForRecovery) await waitForRecovery()
-        return serialized.status()
-      }),
-    provision: (lang, onProgress) =>
-      afterRecovery(lang, () =>
-        lang === 'r' ? serialized.provisionR(onProgress) : serialized.provisionPython(onProgress)
-      ),
-    // A UI-triggered repair is the EXPLICIT user recovery / Reset: it awaits recovery for ordering but
-    // does NOT assertProvisionAllowed (that would refuse a blocked runtime — the whole point of Reset is
-    // to clear the block), and it force-clears the quarantine before rebuilding. Auto/startup repair
-    // (runStartupGate) calls the provisioner directly without force and stays gated by the block.
-    repair: async (lang, onProgress) => {
-      await withDataRootWrite(async () => {
-        if (waitForRecovery) await waitForRecovery()
-        await serialized.repair(lang, onProgress, { force: true })
-        await onRepairCompleted?.(lang)
-      })
-    },
-    cancel: (language) => serialized.cancel(language)
-  }
-}
-
-// The app-usable gate: on startup, maintain an already-existing managed python env (restore relocated
-// envs, upgrade/repair) but do NOT eagerly provision a fresh one — that is detect-only, built lazily
-// on first notebook use. R stays lazy. Never throws — a failure leaves the app usable (non-notebook
-// features) and is reported via progress/status (spec §6.4).
-export const runStartupGate = async (
-  provisioner: RuntimeProvisioner,
-  root: string,
-  broadcast: (p: ProvisionProgress) => void,
-  // Awaited BEFORE any prefix-touching maintenance (restore/upgrade/repair) so crash recovery has
-  // finished reconciling first. Otherwise recovery could delete a prefix this gate is mid-rebuild on
-  // (or vice-versa). Optional: when unset (tests) the gate runs as before.
-  waitForRecovery?: () => Promise<void>
-): Promise<void> => {
-  try {
-    await withDataRootWrite(async () => {
-      // Let crash recovery settle under the same lease as subsequent prefix maintenance; recovery
-      // itself may clear journals or quarantines under the old data root.
-      if (waitForRecovery) await waitForRecovery()
-      // Rebuild any envs a data-root relocation left as offline locks BEFORE planning: a restored
-      // default-python stamps the ready marker, so the plan below then reads 'ready' instead of
-      // re-provisioning the pristine defaults (which would drop the user's relocated packages).
-      await provisioner.restoreRelocatedEnvs(broadcast)
-
-      const action = planStartupAction(root, DEFAULT_ENV_VERSION)
-      if (action === 'ready') return
-      if (action === 'upgrade') return void (await provisioner.upgradeIfNeeded(broadcast))
-      if (action === 'repair') {
-        // `needsRepair` also fires from a residual default-r dir with NO Python at all (an R-first user
-        // whose lazy R build left default-r behind; provisionR never writes the Python marker). Repair
-        // (an eager rebuild) only when Python was genuinely provisioned before — a ready marker exists,
-        // or the default-python prefix is on disk (present-but-corrupt). Otherwise this is effectively a
-        // first-time Python and must stay detect-only (built lazily on first use).
-        const pythonWasProvisioned =
-          readReadyMarker(root) !== undefined || existsSync(envPrefix(root, DEFAULT_PY_ENV))
-        if (pythonWasProvisioned) {
-          return void (await provisioner.repair('python', broadcast))
-        }
-        return
-      }
-      // Fresh case: detect-only — do NOT eagerly provision. upgrade/repair above still maintain an
-      // already-existing managed env; a first-time env is built lazily on first notebook use
-      // (ensureDefaultEnvReady), so there is nothing to provision here.
-    })
-  } catch (error) {
-    // This is the automatic (no per-op logging) path, so record the FULL diagnostics here — including
-    // the structured micromamba tails on `error.data` — before broadcasting only the short UI message.
-    // Otherwise a launch-time restore/upgrade/repair failure would leave nothing but a truncated excerpt.
-    logStartupGateFailure(error)
-    broadcast({
-      phase: 'error',
-      message: `Environment preparation failed: ${(error as Error).message}`,
-      progress: 0
-    })
-  }
-}
+import { ipcMainHandle } from '../ipc-handler-registry'
+import { serializeProvisioner } from './environment-operation-foundation'
+import { createNotebookEnvironmentLifecycle } from './environment-lifecycle-workflows'
+import type { ProvisionProgress, RuntimeProvisioner } from './provisioner'
 
 // Broadcasts a progress event to every live renderer window.
 export const broadcastNotebookEnvProgress = (progress: ProvisionProgress): void => {
@@ -149,84 +13,35 @@ export const broadcastNotebookEnvProgress = (progress: ProvisionProgress): void 
   }
 }
 
-// Shown when the runtime backend could not be constructed (e.g. micromamba missing — common in dev
-// without a staged binary). Actionable so the renderer surfaces a real reason instead of a raw
-// "No handler registered" IPC crash.
-const RUNTIME_UNAVAILABLE_MESSAGE =
-  'The notebook runtime is unavailable: micromamba was not found. In a packaged build it ships with the app; for development, set OPEN_SCIENCE_MICROMAMBA_BIN to a micromamba binary and restart.'
-
-// Handlers used when no provisioner could be built: status reports "not ready, not provisioning" so the
-// UI shows an actionable setup state, and provision/repair reject with a clear reason rather than the
-// channel being absent entirely (which would surface as a "No handler registered" crash in the renderer).
-const createUnavailableHandlers = (): NotebookEnvHandlers => ({
-  status: () =>
-    Promise.resolve({
-      pythonReady: false,
-      rReady: false,
-      version: DEFAULT_ENV_VERSION,
-      provisioning: false
-    }),
-  provision: () => Promise.reject(new Error(RUNTIME_UNAVAILABLE_MESSAGE)),
-  repair: () => Promise.reject(new Error(RUNTIME_UNAVAILABLE_MESSAGE)),
-  cancel: () => undefined // unavailable backend: no in-flight run to cancel (language ignored)
-})
-
-// Registers the notebook-env IPC surface and kicks off the startup readiness gate. Both the gate and
-// the IPC-triggered provision/repair calls share ONE serialized provisioner instance, so a renderer
-// calling notebook-env:provision while the startup gate is still running queues behind it instead of
-// racing the provisioner's shared `provisioning` flag.
-//
-// The handlers are ALWAYS registered, even when `provisioner` is undefined (the backend could not be
-// built): a missing handler would make every renderer call throw "No handler registered", turning a
-// recoverable "runtime not set up" state into a hard crash. With no provisioner we register the
-// unavailable stubs and skip the startup gate instead.
+// Registers the stable renderer surface while lifecycle ordering and state stay behind the workflow
+// interface. An unavailable provisioner still yields registered handlers with actionable results.
 export const registerNotebookEnvIpcHandlers = (
   provisioner: RuntimeProvisioner | undefined,
   root: string,
-  // Awaited before the startup gate and any UI provision/repair touches a prefix, so crash recovery
-  // (kicked off in the caller BEFORE this registration) finishes reconciling first. Optional so the
-  // "no provisioner" path and existing tests keep their signatures.
   waitForRecovery?: () => Promise<void>,
-  // Throws if the default env for a language is recovery-blocked, so UI provision/repair refuses rather
-  // than materializing over a prefix an unknown-liveness orphan may still hold.
   assertProvisionAllowed?: (language: NotebookLanguage) => void,
   onRepairCompleted?: (language: NotebookLanguage) => Promise<void> | void
 ): void => {
-  const serialized = provisioner ? serializeProvisioner(provisioner) : undefined
-  const handlers = serialized
-    ? createNotebookEnvHandlers(
-        serialized,
-        waitForRecovery,
-        assertProvisionAllowed,
-        onRepairCompleted
-      )
-    : createUnavailableHandlers()
-  ipcMainHandle('notebook-env:status', () => handlers.status())
-  ipcMainHandle('notebook-env:provision', (_event, lang: NotebookLanguage) =>
-    runLoggedRuntimeOperation(
-      'provision',
-      lang,
-      root,
-      (onProgress) => handlers.provision(lang, onProgress),
-      (progress) => broadcastNotebookEnvProgress({ ...progress, scope: lang })
-    )
+  const lifecycle = createNotebookEnvironmentLifecycle({
+    provisioner,
+    root,
+    projectProgress: broadcastNotebookEnvProgress,
+    waitForRecovery,
+    assertProvisionAllowed,
+    onRepairCompleted
+  })
+
+  ipcMainHandle('notebook-env:status', () => lifecycle.status())
+  ipcMainHandle('notebook-env:provision', (_event, language: NotebookLanguage) =>
+    lifecycle.provision(language)
   )
-  ipcMainHandle('notebook-env:repair', (_event, lang: NotebookLanguage) =>
-    runLoggedRuntimeOperation(
-      'repair',
-      lang,
-      root,
-      (onProgress) => handlers.repair(lang, onProgress),
-      (progress) => broadcastNotebookEnvProgress({ ...progress, scope: lang })
-    )
+  ipcMainHandle('notebook-env:repair', (_event, language: NotebookLanguage) =>
+    lifecycle.repair(language)
   )
-  // Synchronous best-effort abort of an in-flight provision; returns immediately (the aborted run
-  // settles on its own and broadcasts its terminal progress).
   ipcMainHandle('notebook-env:cancel', (_event, language?: NotebookLanguage) =>
-    handlers.cancel(language)
+    lifecycle.cancel(language)
   )
-  if (serialized)
-    void runStartupGate(serialized, root, broadcastNotebookEnvProgress, waitForRecovery)
+  void lifecycle.startup()
 }
 
 // Preserve the composition-root import until N7e owns construction at the application seam.
