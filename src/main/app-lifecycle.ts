@@ -7,6 +7,7 @@ import { flushDiagnosticsWithTimeout } from './diagnostics/flush'
 import { diagnosticErrorFields, type Logger } from './logger'
 import { startDiagnosticOperation } from './diagnostics/operation'
 import {
+  clearApplicationShutdownTrigger,
   currentApplicationShutdownTrigger,
   type ApplicationShutdownTrigger
 } from './application-shutdown-trigger'
@@ -200,8 +201,9 @@ export const installAppLifecycle = (
     }
     if (event.defaultPrevented || deps.isMigrationInProgress()) {
       // This quit is being aborted (e.g. the migration guard cancelled it). Clear any prior
-      // confirmation so it doesn't leak into a later close: otherwise classifyClose would return
-      // 'close' and the next Windows X would bypass the dialog and destroy the window.
+      // confirmation and shutdown trigger so neither leaks into a later close: otherwise a later
+      // ordinary quit could bypass its active-session confirmation.
+      clearApplicationShutdownTrigger()
       quitConfirmed = false
       return
     }
@@ -246,10 +248,10 @@ export const installAppLifecycle = (
             fields: { trigger }
           })
         : undefined
-      let usageDrainResult: ShutdownStepOutcome = 'completed'
-      let rendererFlushOutcome: RendererSessionPersistenceFlushOutcome = 'unavailable'
-      let rendererFlushResult: ShutdownStepOutcome = 'completed'
-      let backendTeardownResult: ShutdownStepOutcome = 'completed'
+      let usageDrainResult: ShutdownStepOutcome
+      let rendererFlushOutcome: RendererSessionPersistenceFlushOutcome
+      let rendererFlushResult: ShutdownStepOutcome
+      let backendTeardownResult: ShutdownStepOutcome
       try {
         diagnostics?.phase('usage-drain')
         try {

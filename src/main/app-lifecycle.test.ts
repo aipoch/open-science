@@ -3,6 +3,7 @@ import { afterEach, describe, expect, it, vi } from 'vitest'
 import { installAppLifecycle, type AppLifecycleDeps, type TrayHandlers } from './app-lifecycle'
 import {
   clearApplicationShutdownTrigger,
+  currentApplicationShutdownTrigger,
   markApplicationShutdownTrigger
 } from './application-shutdown-trigger'
 import type { ActiveSessionInfo } from '../shared/storage'
@@ -746,6 +747,19 @@ describe('installAppLifecycle', () => {
     expect(event.defaultPrevented).toBe(false)
     expect(confirmClose).not.toHaveBeenCalled()
     expect(quit).not.toHaveBeenCalled()
+    expect(shutdownBackends).not.toHaveBeenCalled()
+  })
+
+  it('clears an update shutdown trigger when migration aborts the quit', async () => {
+    markApplicationShutdownTrigger('update')
+    const { app, shutdownBackends } = setup({
+      isMigrationInProgress: (): boolean => true
+    })
+
+    app.emit('before-quit')
+    await flush()
+
+    expect(currentApplicationShutdownTrigger()).toBe('quit')
     expect(shutdownBackends).not.toHaveBeenCalled()
   })
 

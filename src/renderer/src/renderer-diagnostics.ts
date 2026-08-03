@@ -78,7 +78,7 @@ export const installRendererFailureDiagnostics = (
   const reportFailure = (source: RendererFailureSource, readValue: () => unknown): void => {
     if (reporting) return
     let value: unknown
-    let surface: RendererFailureSurface = 'unknown'
+    let surface: RendererFailureSurface
     try {
       value = readValue()
     } catch {
