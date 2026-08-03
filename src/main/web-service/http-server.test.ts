@@ -12,6 +12,7 @@ vi.mock('electron', () => ({
   net: { fetch: vi.fn() }
 }))
 
+import { WEB_INVOKE_CHANNELS } from '../../shared/web-api-map.generated'
 import { WEB_RPC_PROTOCOL_VERSION } from '../../shared/web-rpc-contract'
 import { ApplicationEventHub } from '../application-events'
 import type { CallerContext } from '../caller-context'
@@ -705,21 +706,11 @@ describe('startWebHttpServer', () => {
     const staticRoot = await mkdtemp(join(tmpdir(), 'open-science-web-static-'))
     roots.push(staticRoot)
     await writeFile(join(staticRoot, 'index.html'), '<!doctype html>')
-    const acpChannels = [
-      'acp:cancel',
-      'acp:compact-session',
-      'acp:connect',
-      'acp:create-session',
-      'acp:delete-session',
-      'acp:disconnect',
-      'acp:get-state',
-      'acp:reset-session-context',
-      'acp:respond-permission',
-      'acp:resume-session',
-      'acp:revoke-permission-grant',
-      'acp:send-prompt',
-      'acp:set-permission-profile'
-    ]
+    const acpChannels = Object.entries(WEB_INVOKE_CHANNELS)
+      .filter(([path]) => path.startsWith('acp.'))
+      .map(([, channel]) => channel)
+      .sort()
+    expect(acpChannels).toHaveLength(13)
     const permissionChannels = [
       'permissions:extend-undo',
       'permissions:list',
