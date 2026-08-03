@@ -203,6 +203,7 @@ describe('PermissionApprovalControls interactions', () => {
     const onRespond = vi.fn()
     const scopedRequest: AcpPermissionRequest = {
       ...baseRequest,
+      commandPrefix: ['python', 'analyze.py'],
       options: [
         { optionId: 'scope-once', name: 'Once', kind: 'allow_once', scope: 'once' },
         {
@@ -245,7 +246,7 @@ describe('PermissionApprovalControls interactions', () => {
       (container.querySelector('[data-testid="allow-primary"]') as HTMLButtonElement).click()
     )
     expect(onRespond).not.toHaveBeenCalled()
-    expect(document.body.textContent).toContain('Allow this command for this project?')
+    expect(document.body.textContent).toContain('Allow this command group for this project?')
     expect(document.body.textContent).toContain(
       'Code will run without preview for every session in this project.'
     )
@@ -308,7 +309,7 @@ describe('PermissionApprovalControls interactions', () => {
       (container.querySelector('[data-testid="allow-primary"]') as HTMLButtonElement).click()
     )
     expect(onRespond).toHaveBeenCalledTimes(1)
-    expect(document.body.textContent).toContain('Allow this command globally?')
+    expect(document.body.textContent).toContain('Allow this command group globally?')
     expect(document.body.textContent).toContain(
       'Code will run without preview for every session in every project.'
     )

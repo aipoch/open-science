@@ -1,6 +1,10 @@
 import { describe, expect, it } from 'vitest'
 
-import { capabilityFromLegacyCategory, categoryFromTrustedToolName } from './capability'
+import {
+  capabilityFromLegacyCategory,
+  categoryFromTrustedToolName,
+  commandPrefixPermissionCategory
+} from './capability'
 
 describe('capabilityFromLegacyCategory', () => {
   it.each(['WebFetch', 'web_fetch', 'WebSearch', 'provider_specific_tool'])(
@@ -33,6 +37,40 @@ describe('capabilityFromLegacyCategory', () => {
       key: 'exec:agent/shell',
       qualifier: { mode: 'exact', value: expect.stringMatching(/^sha256:v1:/) }
     })
+  })
+
+  it.each([
+    ['python', 'analyze.py'],
+    ['git', 'worktree', 'add'],
+    ['powershell', '-Command', 'Get-ChildItem']
+  ])('persists the proposed command group without storing its tokens: %j', (...tokens) => {
+    const category = commandPrefixPermissionCategory(tokens)
+
+    expect(category).toMatch(/^shell-group:argv-prefix:sha256:v1:[a-f0-9]{64}$/)
+    expect(tokens.every((token) => !category?.includes(token))).toBe(true)
+    expect(capabilityFromLegacyCategory(category!)).toMatchObject({
+      kind: 'execution',
+      key: 'exec:agent/shell',
+      qualifier: {
+        mode: 'category',
+        value: expect.stringMatching(/^argv-prefix:sha256:v1:[a-f0-9]{64}$/)
+      }
+    })
+  })
+
+  it.each([
+    [],
+    'python',
+    ['python', ''],
+    ['python', 'upload.py', '--token', 'secret'],
+    ['TOKEN=secret', 'python', 'upload.py'],
+    ['python\nupload.py']
+  ])('rejects an invalid or secret-bearing proposed command group: %j', (tokens) => {
+    expect(commandPrefixPermissionCategory(tokens)).toBeUndefined()
+  })
+
+  it('keeps a malformed command group category Once-only', () => {
+    expect(capabilityFromLegacyCategory('shell-group:argv-prefix:python')).toBeUndefined()
   })
 
   it.each([

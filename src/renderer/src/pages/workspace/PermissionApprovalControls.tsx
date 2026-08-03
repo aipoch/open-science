@@ -149,7 +149,10 @@ const getScopeConfirmationSubject = (
 
   switch (presentation.categoryLabel) {
     case 'Command execution':
-      return { subject: 'this command', codeExecution: true }
+      return {
+        subject: request.commandPrefix?.length ? 'this command group' : 'this command',
+        codeExecution: true
+      }
     case 'File access':
       return { subject: 'this file read', codeExecution: false }
     case 'File change':
@@ -736,6 +739,15 @@ const PermissionApprovalControls = ({
 
       {showInlineDetail ? (
         <p className="break-all text-xs text-muted-foreground">{titleDetail}</p>
+      ) : null}
+
+      {request.commandPrefix?.length ? (
+        <p className="break-all text-xs text-muted-foreground">
+          Remembered scopes apply to commands starting with:{' '}
+          <code className="rounded-md bg-accent/50 px-1.5 py-0.5 font-mono text-sm text-primary">
+            {JSON.stringify(request.commandPrefix)}
+          </code>
+        </p>
       ) : null}
 
       {/* Specialist switch/delete requests show a friendly detail block instead of the raw

@@ -53,9 +53,35 @@ const SECRET_BEARING_INPUT_PATTERNS = [
 ] as const
 
 const PERSISTABLE_GIT_SUBCOMMANDS = new Set(['status'])
+const COMMAND_PREFIX_QUALIFIER_PATTERN = /^argv-prefix:sha256:v1:[a-f0-9]{64}$/
 
 const containsSecretBearingMaterial = (value: string): boolean =>
   SECRET_BEARING_INPUT_PATTERNS.some((pattern) => pattern.test(value))
+
+// Command groups retain only a digest of Codex's structured argv prefix. The category qualifier
+// distinguishes them from exact full-command grants without persisting command arguments.
+const commandPrefixPermissionCategory = (value: unknown): string | undefined => {
+  if (
+    !Array.isArray(value) ||
+    value.length === 0 ||
+    !value.every(
+      (token): token is string =>
+        typeof token === 'string' &&
+        token.length > 0 &&
+        [...token].every((character) => {
+          const codePoint = character.codePointAt(0)
+          return codePoint !== undefined && codePoint > 0x1f && codePoint !== 0x7f
+        })
+    )
+  ) {
+    return undefined
+  }
+
+  if (containsSecretBearingMaterial(value.join(' '))) return undefined
+
+  const digest = createHash('sha256').update(JSON.stringify(value)).digest('hex')
+  return `shell-group:argv-prefix:sha256:v1:${digest}`
+}
 
 // Exact-command memory is deliberately opt-in. A command digest proves only that the command text is
 // unchanged; it cannot prove that a referenced script or local executable still has the same content.
@@ -114,6 +140,16 @@ const capabilityFromLegacyCategory = (categoryKey: string): PermissionCapability
     }
   }
 
+  if (categoryKey.startsWith('shell-group:')) {
+    const qualifier = categoryKey.slice('shell-group:'.length)
+    if (!COMMAND_PREFIX_QUALIFIER_PATTERN.test(qualifier)) return undefined
+    return {
+      kind: 'execution',
+      key: 'exec:agent/shell',
+      qualifier: { mode: 'category', value: qualifier }
+    }
+  }
+
   if (categoryKey.startsWith('mcp:')) {
     const descriptor = categoryKey.slice('mcp:'.length)
     const separator = descriptor.lastIndexOf(':')
@@ -155,6 +191,7 @@ const capabilityFromLegacyCategory = (categoryKey: string): PermissionCapability
 export {
   capabilityFromLegacyCategory,
   categoryFromTrustedToolName,
+  commandPrefixPermissionCategory,
   containsSecretBearingMaterial,
   exactPermissionQualifier
 }

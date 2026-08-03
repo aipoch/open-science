@@ -25,7 +25,8 @@ import {
 } from '../agent-framework/app-mcp-names'
 import {
   capabilityFromLegacyCategory,
-  categoryFromTrustedToolName
+  categoryFromTrustedToolName,
+  commandPrefixPermissionCategory
 } from '../permission-grants/capability'
 import { projectPermissionGrantSnapshot } from '../permission-grants/catalog'
 import type { PermissionGrantRegistry } from '../permission-grants/registry'
@@ -96,6 +97,38 @@ const CODEX_POLICY_AMENDMENT_OPTION_ID_PATTERN = /^accept_.*policy_amendment$/
 // this option ID; the session-scoped one uses 'allow_session'. Keying on the persistent ID (not
 // position) is robust to option reordering — tests pin this contract.
 const CODEX_MCP_PERSISTENT_ALLOW_OPTION_ID = 'allow_always'
+const CODEX_EXEC_POLICY_AMENDMENT_OPTION_ID = 'accept_execpolicy_amendment'
+
+const metadataRecord = (value: unknown): Record<string, unknown> | undefined =>
+  value && typeof value === 'object' && !Array.isArray(value)
+    ? (value as Record<string, unknown>)
+    : undefined
+
+type CodexCommandGroup = { categoryKey: string; commandPrefix: string[] }
+
+// Reads Codex's structured argv-prefix proposal only when the provider offers the matching native
+// policy amendment. Some codex-acp shapes repeat the prefix on the request instead of the option.
+const codexCommandGroup = (params: RequestPermissionRequest): CodexCommandGroup | undefined => {
+  const option = params.options.find(
+    (candidate) =>
+      candidate.optionId === CODEX_EXEC_POLICY_AMENDMENT_OPTION_ID &&
+      candidate.kind.toLowerCase() === ALLOW_ALWAYS_OPTION_KIND
+  )
+  if (!option) return undefined
+
+  const optionCodex = metadataRecord(option._meta?.codex)
+  const requestCodex = metadataRecord(params._meta?.codex)
+  const requestParams = metadataRecord(requestCodex?.params)
+
+  const amendment = optionCodex?.execpolicyAmendment ?? requestParams?.proposedExecpolicyAmendment
+  const categoryKey = commandPrefixPermissionCategory(amendment)
+  if (!categoryKey || !Array.isArray(amendment)) return undefined
+
+  return {
+    categoryKey,
+    commandPrefix: amendment.filter((token): token is string => typeof token === 'string')
+  }
+}
 
 const commandFromRawInput = (rawInput: unknown): string | undefined => {
   if (!rawInput || typeof rawInput !== 'object' || Array.isArray(rawInput)) return undefined
@@ -571,9 +604,13 @@ class AcpPermissionBroker {
       this.sessionCancellationGenerations.get(params.sessionId) ?? 0
     const requestId = randomUUID()
     const mcpServerNames = policyContext?.mcpServerNames ?? []
-    const categoryKey = resolveCategoryKey(params, mcpServerNames, !this.permissionGrantRegistry)
-    const capability = categoryKey ? capabilityFromLegacyCategory(categoryKey) : undefined
     const isMcp = isMcpPermission(params, mcpServerNames)
+    const codexGroup =
+      policyContext?.frameworkId === 'codex' && !isMcp ? codexCommandGroup(params) : undefined
+    const categoryKey =
+      codexGroup?.categoryKey ??
+      resolveCategoryKey(params, mcpServerNames, !this.permissionGrantRegistry)
+    const capability = categoryKey ? capabilityFromLegacyCategory(categoryKey) : undefined
     const mcpIdentity = isMcp
       ? (resolveTrustedMcpToolIdentity(params, mcpServerNames) ??
         resolveMcpToolIdentity(params.toolCall.title, mcpServerNames) ??
@@ -643,6 +680,7 @@ class AcpPermissionBroker {
       ...(mcpIdentity ? { mcpIdentity } : {}),
       toolKind: params.toolCall.kind ?? undefined,
       toolLocations: params.toolCall.locations ?? undefined,
+      ...(codexGroup ? { commandPrefix: codexGroup.commandPrefix } : {}),
       rawInput: params.toolCall.rawInput,
       options: permissionOptions
     }

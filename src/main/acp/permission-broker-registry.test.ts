@@ -239,9 +239,21 @@ describe('ACP permission broker with durable grants', () => {
     const registry = await createPermissionGrantRegistry({ getClient: async () => client! })
     const emitted: Parameters<ConstructorParameters<typeof AcpPermissionBroker>[0]>[0][] = []
     const broker = new AcpPermissionBroker((request) => emitted.push(request), undefined, registry)
+    const request = secretShellRequest('session-1')
+    request.options.splice(2, 0, {
+      optionId: 'accept_execpolicy_amendment',
+      name: 'Allow Commands Starting With a secret',
+      kind: 'allow_always',
+      _meta: {
+        codex: {
+          execpolicyAmendment: ['TOKEN=secret', 'python', 'upload.py']
+        }
+      }
+    })
 
-    const pending = broker.requestPermission(secretShellRequest('session-1'), {
+    const pending = broker.requestPermission(request, {
       profile: 'ask',
+      frameworkId: 'codex',
       projectId: 'project-1'
     })
     await new Promise<void>((resolve) => setImmediate(resolve))
@@ -264,9 +276,13 @@ describe('ACP permission broker with durable grants', () => {
     const broker = new AcpPermissionBroker((request) => emitted.push(request), undefined, registry)
     const request = shellRequest('session-1')
     request.toolCall.rawInput = { command: 'python analyze.py --input data.csv' }
+    request._meta = {
+      codex: { params: { proposedExecpolicyAmendment: ['python', 'analyze.py'] } }
+    }
 
     const pending = broker.requestPermission(request, {
       profile: 'ask',
+      frameworkId: 'codex',
       projectId: 'project-1'
     })
     await new Promise<void>((resolve) => setImmediate(resolve))
@@ -277,6 +293,88 @@ describe('ACP permission broker with durable grants', () => {
       outcome: { outcome: 'selected', optionId: 'provider-allow-once' }
     })
     await expect(registry.list()).resolves.toEqual([])
+  })
+
+  it('offers durable scopes for a Codex-proposed command group', async () => {
+    storageRoot = await mkdtemp(join(tmpdir(), 'open-science-broker-codex-command-group-'))
+    client = createProjectDbClient(storageRoot)
+    await ensureProjectSchema(client)
+    await client.project.create({ data: { id: 'project-1', name: 'Project one' } })
+    const registry = await createPermissionGrantRegistry({ getClient: async () => client! })
+    const emitted: Parameters<ConstructorParameters<typeof AcpPermissionBroker>[0]>[0][] = []
+    const broker = new AcpPermissionBroker((request) => emitted.push(request), undefined, registry)
+    const request = shellRequest('session-1')
+    request.toolCall.rawInput = { command: 'python analyze.py --input data.csv' }
+    request.options.splice(2, 0, {
+      optionId: 'accept_execpolicy_amendment',
+      name: 'Allow Commands Starting With `python analyze.py`',
+      kind: 'allow_always',
+      _meta: {
+        codex: {
+          decision: 'acceptWithExecpolicyAmendment',
+          execpolicyAmendment: ['python', 'analyze.py']
+        }
+      }
+    })
+
+    const pending = broker.requestPermission(request, {
+      profile: 'ask',
+      frameworkId: 'codex',
+      projectId: 'project-1'
+    })
+    await new Promise<void>((resolve) => setImmediate(resolve))
+
+    expect(emitted[0].options.map((option) => option.scope).filter(Boolean)).toEqual([
+      'once',
+      'session',
+      'project',
+      'global'
+    ])
+    expect(emitted[0].commandPrefix).toEqual(['python', 'analyze.py'])
+    await broker.respond({
+      requestId: emitted[0].requestId,
+      optionId: emitted[0].options.find((option) => option.scope === 'session')?.optionId
+    })
+    await expect(pending).resolves.toEqual({
+      outcome: { outcome: 'selected', optionId: 'provider-allow-once' }
+    })
+
+    const [grant] = await registry.list()
+    expect(grant).toMatchObject({
+      capability: {
+        kind: 'execution',
+        key: 'exec:agent/shell',
+        qualifier: {
+          mode: 'category',
+          value: expect.stringMatching(/^argv-prefix:sha256:v1:[a-f0-9]{64}$/)
+        }
+      },
+      scope: { kind: 'session', projectId: 'project-1', sessionId: 'session-1' }
+    })
+    expect(JSON.stringify(grant)).not.toContain('python')
+    expect(JSON.stringify(grant)).not.toContain('analyze.py')
+
+    const nextRequest = shellRequest('session-1')
+    nextRequest.toolCall.rawInput = { command: 'python analyze.py --output results.csv' }
+    nextRequest.options.splice(2, 0, {
+      optionId: 'accept_execpolicy_amendment',
+      name: 'Allow Commands Starting With `python analyze.py`',
+      kind: 'allow_always'
+    })
+    nextRequest._meta = {
+      codex: { params: { proposedExecpolicyAmendment: ['python', 'analyze.py'] } }
+    }
+
+    await expect(
+      broker.requestPermission(nextRequest, {
+        profile: 'ask',
+        frameworkId: 'codex',
+        projectId: 'project-1'
+      })
+    ).resolves.toEqual({
+      outcome: { outcome: 'selected', optionId: 'provider-allow-once' }
+    })
+    expect(emitted).toHaveLength(1)
   })
 
   it.each(['WebFetch', 'WebSearch'] as const)(
