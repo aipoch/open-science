@@ -14,6 +14,7 @@ import { createApplicationEventModule, type ApplicationEventSource } from './app
 import { createDefaultNotebookRuntimeService } from './acp/ipc'
 import { createAcpRuntime } from './acp/runtime-composition'
 import { createAcpCreateSessionWorkflow } from './acp/create-session-workflow'
+import { createAcpHandlerWorkflows } from './acp/handler-workflows'
 import { createAcpTaskAgentPort } from './acp/task-agent-port'
 import { createDefaultArtifactRepository, registerArtifactIpcHandlers } from './artifacts/ipc'
 import { ArtifactProvenanceRepository } from './artifacts/provenance-repository'
@@ -889,6 +890,11 @@ const createApplicationModules = async (
   surfaceAdapters = afterAcpAdapters
   runtimeRef.current = runtime
   const createSessionWorkflow = createAcpCreateSessionWorkflow(runtime)
+  const acpHandlerWorkflows = createAcpHandlerWorkflows(
+    runtime,
+    createSessionWorkflow,
+    taskNotifications
+  )
   const taskAgent = createAcpTaskAgentPort(runtime, createSessionWorkflow, taskNotifications)
   {
     // Framework-specific adapters declare their own session selector. The registry resolves those
@@ -1345,7 +1351,7 @@ const createApplicationModules = async (
       beforeCompute: beforeComputeAdapters,
       compute: computeIpcModule,
       beforeAcp: beforeAcpAdapters,
-      acp: { runtime, createSessionWorkflow, taskNotifications },
+      acp: { runtime, workflows: acpHandlerWorkflows },
       afterAcp: afterAcpAdapters
     }
   }
