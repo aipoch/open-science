@@ -1,4 +1,9 @@
-import { describe, expect, it } from 'vitest'
+import { describe, expect, it, vi } from 'vitest'
+
+import {
+  SKILL_IMPORT_APPROVAL_FIXTURE,
+  TERMINAL_EVENT_FIXTURE
+} from '../../test/fixtures/renderer-contract-certification'
 
 import {
   canSatisfyHumanApproval,
@@ -13,8 +18,8 @@ import {
   projectWebRendererEvent
 } from '../main/web-service/application-event-projections'
 import { REMOTE_LOCAL_ONLY_RPC_CHANNELS } from '../main/web-service/http-server'
+import { createElectronRendererContractAdapter } from '../preload/electron-renderer-contract-adapter'
 import { installWebRendererContracts } from '../renderer/web/api-installer'
-import type { AcpRuntimeEvent } from './acp'
 import { RENDERER_CONTRACT_CATALOG } from './renderer-contract-catalog'
 import { SPECIALIST_IPC } from './specialist'
 import type { StartTaskRunRequest } from './task-api'
@@ -69,6 +74,50 @@ const computeEventPaths = ['compute.onApprovalRequest', 'compute.onJobUpdated'] 
 
 const pathsWithPrefix = (paths: readonly string[], prefix: string): string[] =>
   paths.filter((path) => path.startsWith(prefix)).sort()
+
+const projectThroughRendererAdapters = (
+  publicPath: string,
+  channel: string,
+  payload: unknown
+): { electronPayload: unknown; webPayload: unknown } => {
+  let electronIpcListener: ((event: unknown, payload: unknown) => void) | undefined
+  let electronPayload: unknown
+  const electronPort = {
+    invoke: vi.fn().mockResolvedValue(undefined),
+    send: vi.fn(),
+    on: vi.fn((_channel, listener) => (electronIpcListener = listener)),
+    removeListener: vi.fn(),
+    getPathForFile: vi.fn(() => '')
+  }
+  createElectronRendererContractAdapter(electronPort).subscribe(
+    publicPath,
+    (value) => (electronPayload = value)
+  )
+  electronIpcListener?.({}, payload)
+
+  let webIpcListener: ((payload: unknown) => void) | undefined
+  let webPayload: unknown
+  const webApi: Record<string, unknown> = {}
+  installWebRendererContracts(webApi, {
+    availableRpcChannels: new Set(),
+    restrictedRpcChannels: new Set(),
+    invoke: vi.fn(),
+    subscribe: (installedChannel, listener) => {
+      if (installedChannel === channel) webIpcListener = listener
+      return vi.fn()
+    },
+    nativeAdapters: {}
+  })
+  const webSubscribe = publicPath
+    .split('.')
+    .reduce<unknown>((value, member) => (value as Record<string, unknown>)[member], webApi) as (
+    listener: (value: unknown) => void
+  ) => void
+  webSubscribe((value) => (webPayload = value))
+  webIpcListener?.(payload)
+
+  return { electronPayload, webPayload }
+}
 
 describe('renderer surface compatibility matrix', () => {
   it('derives remote Web rejecting channels from the renderer catalog', () => {
@@ -216,32 +265,39 @@ describe('renderer surface compatibility matrix', () => {
     expect(REMOTE_LOCAL_ONLY_RPC_CHANNELS.has('project-files:search-artifacts')).toBe(false)
   })
 
-  it('passes terminal ACP metadata through Web and Task projections without recomputation', () => {
-    const payload: AcpRuntimeEvent = {
-      id: 'terminal-1',
-      timestamp: 1_700_000_000_123,
-      kind: 'stop',
-      level: 'info',
-      sessionId: 'session-1',
-      promptMessageId: 'prompt-1',
-      terminalOutput: 'complete',
-      terminalExitCode: 0,
-      turnUsage: {
-        inputTokens: 17,
-        cacheTokens: 5,
-        cachedReadTokens: 3,
-        cachedWriteTokens: 2,
-        outputTokens: 9,
-        turnCount: 4
-      },
-      raw: { providerSessionId: 'provider-session' }
+  it('passes complete terminal metadata through Electron, Web, and Task without recomputation', () => {
+    const event: ApplicationEvent<'acp:event'> = {
+      channel: 'acp:event',
+      payload: TERMINAL_EVENT_FIXTURE
     }
-    const event: ApplicationEvent<'acp:event'> = { channel: 'acp:event', payload }
-
-    expect(projectTaskRuntimeEvent(event)).toBe(payload)
-    expect(projectPublicTaskEvent(event)).toEqual({ type: 'run.event', data: payload })
     const webEvent = projectWebRendererEvent(event)
     expect(webEvent).toMatchObject({ protocolVersion: 1, channel: 'acp:event' })
-    expect(webEvent?.payload).toBe(payload)
+    const projected = projectThroughRendererAdapters('acp.onEvent', 'acp:event', webEvent?.payload)
+
+    expect(projected.electronPayload).toEqual(TERMINAL_EVENT_FIXTURE)
+    expect(projected.webPayload).toEqual(TERMINAL_EVENT_FIXTURE)
+    expect(projectTaskRuntimeEvent(event)).toEqual(TERMINAL_EVENT_FIXTURE)
+    expect(projectPublicTaskEvent(event)).toEqual({
+      type: 'run.event',
+      data: TERMINAL_EVENT_FIXTURE
+    })
+  })
+
+  it('preserves Skill import approval identity on Electron/Web and excludes Task', () => {
+    const event: ApplicationEvent<'skills:conversation-import-request'> = {
+      channel: 'skills:conversation-import-request',
+      payload: SKILL_IMPORT_APPROVAL_FIXTURE
+    }
+    const webEvent = projectWebRendererEvent(event)
+    const projected = projectThroughRendererAdapters(
+      'settings.onSkillImportApprovalRequest',
+      'skills:conversation-import-request',
+      webEvent?.payload
+    )
+
+    expect(projected.electronPayload).toBe(SKILL_IMPORT_APPROVAL_FIXTURE)
+    expect(projected.webPayload).toBe(SKILL_IMPORT_APPROVAL_FIXTURE)
+    expect(projectTaskRuntimeEvent(event)).toBeUndefined()
+    expect(projectPublicTaskEvent(event)).toBeUndefined()
   })
 })

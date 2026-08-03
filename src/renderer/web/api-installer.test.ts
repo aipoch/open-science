@@ -1,4 +1,13 @@
 import { describe, expect, it, vi } from 'vitest'
+
+import {
+  composeRendererContractCatalog,
+  defineRendererContractGroup
+} from '../../shared/renderer-contract'
+import {
+  RENDERER_CONTRACT_CATALOG,
+  RENDERER_CONTRACT_GROUPS
+} from '../../shared/renderer-contract-catalog'
 import { installWebRendererContracts } from './api-installer'
 
 const methodAt = (
@@ -11,6 +20,11 @@ const methodAt = (
     value = (value as Record<string, unknown>)[part]
   }
   return typeof value === 'function' ? (value as (...args: unknown[]) => unknown) : undefined
+}
+
+type Surface<Electron, Web> = { electron: Electron; localWeb: Web; remoteWeb: Web }
+function surface<Electron, Web>(electron: Electron, web: Web): Surface<Electron, Web> {
+  return { electron, localWeb: web, remoteWeb: web }
 }
 
 describe('installWebRendererContracts', () => {
@@ -98,5 +112,66 @@ describe('installWebRendererContracts', () => {
     )
     expect(methodAt(api, 'compute.revealInFolder')).toBeUndefined()
     expect(methodAt(api, 'projects.list')).toBeUndefined()
+  })
+
+  it('accepts one test-local neutral descriptor in both renderer adapters', async () => {
+    const productionPaths = RENDERER_CONTRACT_CATALOG.map(({ publicPath }) => publicPath)
+    const injectedCatalog = composeRendererContractCatalog([
+      ...RENDERER_CONTRACT_GROUPS,
+      defineRendererContractGroup('sample-extension', [
+        {
+          publicPath: 'sampleExtension.echo',
+          channel: 'sample-extension:echo',
+          kind: 'method',
+          parameterCodec: { electron: 'positional', web: 'positional' },
+          surfaceInstallation: surface('preload', 'web-rpc'),
+          dispatchPolicy: surface('electron-ipc-request', 'captured-ipc-request'),
+          eventDeliverability: surface('not-event', 'not-event'),
+          authorityFlow: surface('electron-sender', 'caller-context'),
+          mapProjection: 'invoke'
+        }
+      ])
+    ])
+
+    vi.resetModules()
+    vi.doMock('../../shared/renderer-contract-catalog', () => ({
+      RENDERER_CONTRACT_CATALOG: injectedCatalog
+    }))
+    const [{ createElectronRendererContractAdapter }, { installWebRendererContracts }] =
+      await Promise.all([
+        import('../../preload/electron-renderer-contract-adapter'),
+        import('./api-installer')
+      ])
+    const payload = { value: 'sample' }
+    const electronInvoke = vi.fn().mockResolvedValue(payload)
+    const electronPort = {
+      invoke: electronInvoke,
+      send: vi.fn(),
+      on: vi.fn(),
+      removeListener: vi.fn(),
+      getPathForFile: vi.fn(() => '')
+    }
+    await createElectronRendererContractAdapter(electronPort).invoke(
+      'sampleExtension.echo',
+      payload
+    )
+
+    const webInvoke = vi.fn().mockResolvedValue(payload)
+    const webApi: Record<string, unknown> = {}
+    installWebRendererContracts(webApi, {
+      availableRpcChannels: new Set(['sample-extension:echo']),
+      restrictedRpcChannels: new Set(),
+      invoke: webInvoke,
+      subscribe: vi.fn(),
+      nativeAdapters: {}
+    })
+    await methodAt(webApi, 'sampleExtension.echo')?.(payload)
+
+    expect(electronInvoke).toHaveBeenCalledWith('sample-extension:echo', payload)
+    expect(webInvoke).toHaveBeenCalledWith('sample-extension:echo', [payload])
+    expect(RENDERER_CONTRACT_CATALOG.map(({ publicPath }) => publicPath)).toEqual(productionPaths)
+    expect(productionPaths).not.toContain('sampleExtension.echo')
+    vi.doUnmock('../../shared/renderer-contract-catalog')
+    vi.resetModules()
   })
 })

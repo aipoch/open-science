@@ -4,6 +4,7 @@ import { join } from 'node:path'
 
 import { afterEach, describe, expect, it, vi } from 'vitest'
 
+import { PUBLIC_TERMINAL_FIXTURE } from '../../test/fixtures/renderer-contract-certification'
 import { connectToOpenScience, OpenScienceClient } from './index.mjs'
 
 const response = (status: number, payload: unknown): Response =>
@@ -274,7 +275,7 @@ describe('OpenScienceClient', () => {
     FakeWebSocket.instance.emit('open')
     const first = events.next()
     FakeWebSocket.instance.emit('message', {
-      data: JSON.stringify({ type: 'run.event', data: { sessionId: 'session-1' } })
+      data: JSON.stringify(PUBLIC_TERMINAL_FIXTURE)
     })
     const second = events.next()
     FakeWebSocket.instance.emit('message', {
@@ -285,7 +286,7 @@ describe('OpenScienceClient', () => {
     })
 
     await expect(first).resolves.toEqual({
-      value: { type: 'run.event', data: { sessionId: 'session-1' } },
+      value: PUBLIC_TERMINAL_FIXTURE,
       done: false
     })
     await expect(second).resolves.toEqual({
