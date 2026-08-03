@@ -116,6 +116,24 @@ const commandFromRawInput = (rawInput: unknown): string | undefined => {
   return typeof command === 'string' && command.trim() ? command : undefined
 }
 
+const startsVariableExpansion = (
+  command: string,
+  index: number,
+  shellDialect: CommandShellDialect
+): boolean => {
+  const character = command[index]
+  const next = command[index + 1]
+  if (!next) return false
+
+  if (character === '$') {
+    return shellDialect === 'posix'
+      ? /[A-Za-z0-9_@*#?$!{(-]/u.test(next)
+      : /[\p{L}\p{N}_?^$:{(]/u.test(next)
+  }
+
+  return shellDialect === 'powershell' && character === '@' && /[\p{L}\p{N}_?^$]/u.test(next)
+}
+
 const simpleCommandArgv = (
   command: string,
   shellDialect: CommandShellDialect
@@ -168,7 +186,7 @@ const simpleCommandArgv = (
       }
       if (
         (shellDialect === 'posix' && character === '`') ||
-        (character === '$' && command[index + 1] === '(')
+        (character === '$' && startsVariableExpansion(command, index, shellDialect))
       ) {
         return undefined
       }
@@ -201,7 +219,7 @@ const simpleCommandArgv = (
       /[;&|<>\r\n]/u.test(character) ||
       (shellDialect === 'posix' && /[`()]/u.test(character)) ||
       (shellDialect === 'powershell' && /[(){}]/u.test(character)) ||
-      (character === '$' && command[index + 1] === '(')
+      startsVariableExpansion(command, index, shellDialect)
     ) {
       return undefined
     }

@@ -295,11 +295,17 @@ describe('ACP permission broker with durable grants', () => {
     ['posix', 'git status && rm -rf build'],
     ['posix', 'git status "$(rm -rf build)"'],
     ['posix', 'git status "`rm -rf build`"'],
+    ['posix', 'git status "$API_KEY"'],
+    ['posix', 'git status ${ARGUMENTS}'],
+    ['posix', 'git status "$?"'],
     ['posix', '"g\\it" status'],
     ['powershell', 'git status (Remove-Item build)'],
     ['powershell', 'git status \\(Remove-Item build)'],
     ['powershell', 'git status "$(Remove-Item build)"'],
-    ['powershell', 'git status { Remove-Item build }']
+    ['powershell', 'git status { Remove-Item build }'],
+    ['powershell', 'git status $env:API_KEY'],
+    ['powershell', 'git status "${env:API_KEY}"'],
+    ['powershell', 'git status @arguments']
   ] as const)(
     'offers only provider Once when a Codex %s command group does not safely prefix %s',
     async (shellDialect, command) => {

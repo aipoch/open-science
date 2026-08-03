@@ -462,9 +462,14 @@ describe('ACP permission broker', () => {
     ['posix', 'git worktree add "\\$(literal)"'],
     ['posix', "git worktree add '`literal`'"],
     ['posix', 'git worktree add \\(literal\\)'],
+    ['posix', "git worktree add '$API_KEY'"],
+    ['posix', 'git worktree add "\\$API_KEY"'],
     ['powershell', "git worktree add '$(literal)'"],
     ['powershell', 'git worktree add `(literal`)'],
-    ['powershell', 'git worktree add "`$(literal)"']
+    ['powershell', 'git worktree add "`$(literal)"'],
+    ['powershell', "git worktree add '$env:API_KEY'"],
+    ['powershell', 'git worktree add `$env:API_KEY'],
+    ['powershell', 'git worktree add "@arguments"']
   ] as const)(
     'keeps a Codex %s command group for a shell-literal argument: %s',
     (shellDialect, command) => {
