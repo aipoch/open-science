@@ -6,7 +6,8 @@ import type {
   OfficePreviewErrorCode,
   OfficePreviewHostMessage,
   OfficePreviewRequestedExtension,
-  OfficePreviewRuntimeState
+  OfficePreviewRuntimeState,
+  OfficePreviewSource
 } from '../../../../../../shared/office-preview'
 import {
   isOfficePreviewRuntimeMessage,
@@ -15,6 +16,7 @@ import {
   OFFICE_PREVIEW_RUNTIME_ORIGIN
 } from '../../../../../../shared/office-preview'
 
+import { LocalFileFallbackAction } from '../../LocalFileHeaderActions'
 import { ManagedFileDownloadButton } from '../../ManagedFileDownloadButton'
 import { PreviewFallbackCard, PreviewLoadingContent } from '../PreviewFallback'
 import { usePreviewRuntime } from '../preview-runtime-context'
@@ -64,7 +66,7 @@ const OfficeDownloadFallback = ({
   message
 }: {
   item: PreviewFileItem
-  source: PreviewFileSource
+  source: OfficePreviewSource
   title: string
   message: string
 }): React.JSX.Element => (
@@ -103,12 +105,14 @@ type OfficePreviewFrame = {
 }
 
 // Owns isolated iframe coordination; Office bytes and vendor libraries stay in the child runtime.
-export const OfficePreviewContent = ({
+// Only artifact/upload sources flow here — local files never reach the LibreOffice pipeline (see
+// the OfficePreviewContent wrapper below).
+const RemoteOfficePreviewContent = ({
   item,
-  source = 'artifact'
+  source
 }: {
   item: PreviewFileItem
-  source?: PreviewFileSource
+  source: OfficePreviewSource
 }): React.JSX.Element => {
   const hostId = useId()
   const frameRef = useRef<HTMLIFrameElement | null>(null)
@@ -324,6 +328,28 @@ export const OfficePreviewContent = ({
       ) : null}
     </div>
   )
+}
+
+// Source-aware entry: local Office files skip the in-app LibreOffice pipeline (which resolves only
+// managed artifact/upload paths) and offer to open in the OS default app instead.
+export const OfficePreviewContent = ({
+  item,
+  source = 'artifact'
+}: {
+  item: PreviewFileItem
+  source?: PreviewFileSource
+}): React.JSX.Element => {
+  if (source === 'local') {
+    return (
+      <PreviewFallbackCard
+        icon={FileWarning}
+        name={item.name}
+        message="Open this Office file in your default app to view it."
+        action={<LocalFileFallbackAction path={item.path} className="mt-3" />}
+      />
+    )
+  }
+  return <RemoteOfficePreviewContent item={item} source={source} />
 }
 
 export const OfficePreviewRenderer = ({ item }: PreviewFileRendererProps): React.JSX.Element => (

@@ -1,18 +1,22 @@
 import { type Event as ElectronEvent, type IpcMainInvokeEvent } from 'electron'
+import { stat } from 'node:fs/promises'
 
 import { ipcMainHandle } from '../ipc-handler-registry'
 
 import type { ReadArtifactPreviewRequest } from '../../shared/artifacts'
+import { validateLocalPath } from '../../shared/local-fs'
 import type {
   AppendUploadTransferRequest,
   BeginUploadTransferRequest,
   DeleteUploadRequest,
   FinalizeUploadSessionRequest,
+  StageLocalPathUploadRequest,
   StageLocalUploadRequest,
   UploadTransferRequest,
   UploadTransferStatus,
   UploadedAttachment
 } from '../../shared/uploads'
+import { DEFAULT_UPLOAD_PROJECT_NAME, STANDALONE_UPLOAD_SESSION_ID } from '../../shared/uploads'
 import { getProjectDbClient } from '../projects/prisma-client'
 import { resolveDataRoot, resolveStorageRoot } from '../storage-root'
 import { acquireDataRootWriter, withDataRootWrite } from '../storage/migration-state'
@@ -33,6 +37,9 @@ const registerUploadIpcHandlers = (
       sessionId: string,
       mutation: () => Promise<Result>
     ) => Promise<Result>
+    // Called after a standalone "Save as artifact" upload has been persisted to SQLite so
+    // the caller can broadcast a project-files:changed event to the renderer.
+    onStandaloneUploadSaved?: (projectId: string, sessionId: string) => void
   } = {}
 ): void => {
   // A chunk transfer spans several IPC calls but is one logical write. Holding the writer lease from
@@ -162,8 +169,13 @@ const registerUploadIpcHandlers = (
     return writer
   }
 
-  // Uploads write/mutate under the data root, so block them during the data-root copy→commit window.
-  ipcMainHandle('uploads:stage-local-file', async (event, request: StageLocalUploadRequest) => {
+  // Shared skeleton for native-path staging: one owner/writer lifecycle, with the renderer-facing
+  // handlers keeping only their differences (request validation, size source, claim vs. release).
+  const runLocalStaging = async (
+    event: IpcMainInvokeEvent,
+    request: StageLocalUploadRequest,
+    options: { releaseOnCommit: boolean }
+  ): Promise<UploadedAttachment> => {
     const owner = registerUploadOwner(event)
     const existing = localWriters.get(request.transferId) ?? chunkWriters.get(request.transferId)
     if (existing) {
@@ -190,13 +202,20 @@ const registerUploadIpcHandlers = (
         await writer.cleanup
         throw new Error(`Upload renderer is no longer available: ${request.transferId}`)
       }
+      if (options.releaseOnCommit) releaseLocalWriter(request.transferId, writer)
       return attachment
     } catch (error) {
       if (writer.cancelled) await writer.cleanup
       else releaseLocalWriter(request.transferId, writer)
       throw error
     }
-  })
+  }
+
+  // Uploads write/mutate under the data root, so block them during the data-root copy→commit window.
+  ipcMainHandle('uploads:stage-local-file', async (event, request: StageLocalUploadRequest) =>
+    // The composer claims the committed transfer later, so the writer lease stays held.
+    runLocalStaging(event, request, { releaseOnCommit: false })
+  )
   ipcMainHandle('uploads:claim-local-file', (event, request: UploadTransferRequest) => {
     const writer = getOwnedLocalWriter(event, request.transferId)
     // Chunk/Web transfers have no local ownership record, so claiming them is an idempotent no-op.
@@ -208,6 +227,52 @@ const registerUploadIpcHandlers = (
       throw new Error(`Upload renderer is no longer available: ${request.transferId}`)
     }
     releaseLocalWriter(request.transferId, writer)
+  })
+  // Save-as-artifact from the local-file preview follows the composer upload pipeline, but the
+  // renderer supplies a path instead of a File and no composer will claim the transfer, so the
+  // writer lease is released as soon as the staged upload commits.
+  ipcMainHandle('uploads:stage-local-path', async (event, request: StageLocalPathUploadRequest) => {
+    if (
+      typeof request !== 'object' ||
+      request === null ||
+      typeof request.transferId !== 'string' ||
+      typeof request.name !== 'string' ||
+      typeof request.sourcePath !== 'string' ||
+      // The renderer hands over a raw host path, so it gets the same shape checks the local-fs
+      // browser applies — absolute, no control characters — before stat() or any copy sees it.
+      validateLocalPath(request.sourcePath) !== undefined
+    ) {
+      throw new Error('Invalid local path upload request.')
+    }
+    // Stat before registering the writer so a stale renderer-side size can never reach staging.
+    const sourceInfo = await stat(request.sourcePath)
+    const attachment = await runLocalStaging(
+      event,
+      { ...request, size: sourceInfo.size },
+      { releaseOnCommit: true }
+    )
+    // Publish to SQLite (uploadFile + uploadVersion + ManagedFile) so the file shows up in
+    // "Your uploads" without an active conversation session. completeStagingUpload (called from
+    // publishAttachment inside finalizePendingSessionUploads) writes ManagedFile with
+    // source='upload', which is what listFiles({ collection: 'uploads' }) queries.
+    const projectId = request.projectId ?? DEFAULT_UPLOAD_PROJECT_NAME
+    try {
+      await withDataRootWrite(() =>
+        repository.finalizePendingSessionUploads(
+          STANDALONE_UPLOAD_SESSION_ID,
+          [attachment],
+          projectId
+        )
+      )
+    } catch (error) {
+      // Staging already committed its bytes into .pending/ and the writer lease is gone, so a failed
+      // publish would leave a file with no Version row and nothing to sweep it. Drop the copy and
+      // surface the original failure.
+      await repository.deleteUpload({ path: attachment.path }).catch(() => undefined)
+      throw error
+    }
+    options.onStandaloneUploadSaved?.(projectId, STANDALONE_UPLOAD_SESSION_ID)
+    return attachment
   })
   ipcMainHandle('uploads:begin-transfer', async (event, request: BeginUploadTransferRequest) => {
     const owner = registerUploadOwner(event)

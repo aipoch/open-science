@@ -41,6 +41,12 @@ export const REMOTE_LOCAL_ONLY_RPC_CHANNELS = new Set([
   'cli:uninstall',
   'compute:download',
   'compute:reveal-in-folder',
+  // The "This computer" browser reads and opens the host filesystem, so it stays with the local app.
+  'local-fs:get-roots',
+  'local-fs:list-dir',
+  'local-fs:open-path',
+  'local-fs:read-preview',
+  'local-fs:reveal',
   'logs:open-file',
   'logs:reveal-in-folder',
   'notebook-env:cancel',
@@ -85,7 +91,9 @@ export const REMOTE_LOCAL_ONLY_RPC_CHANNELS = new Set([
   'storage:validate-data-root',
   'update:apply',
   'update:cancel',
-  'update:download'
+  'update:download',
+  // Copies bytes from an arbitrary host path; the sibling stage-local-file is web-unavailable.
+  'uploads:stage-local-path'
 ])
 
 const MIME_TYPES: Record<string, string> = {

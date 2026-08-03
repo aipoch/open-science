@@ -24,6 +24,16 @@ const registerRuntimeIpcHandlers = (deps: RuntimeIpcDeps): void => {
   ipcMainHandle('runtime:list-environments', () => workflows.listEnvironments())
 
   ipcMainHandle(
+    'runtime:list-packages',
+    (_event, request: { language: NotebookLanguage; envId: string }) =>
+      workflows.listPackages(request)
+  )
+
+  ipcMainHandle('runtime:list-package-counts', (_event, request: { language: NotebookLanguage }) =>
+    workflows.listPackageCounts(request)
+  )
+
+  ipcMainHandle(
     'runtime:set-selection',
     (_event, request: { language: NotebookLanguage; selection: RuntimeSelection | null }) =>
       workflows.setSelection(request)

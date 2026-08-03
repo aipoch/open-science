@@ -2,6 +2,7 @@ import { beforeEach, describe, expect, it, vi } from 'vitest'
 
 import type { NotebookLanguage } from '../../shared/notebook'
 import type {
+  EnvPackage,
   RuntimeEnablement,
   RuntimeReadiness,
   RuntimeSelection
@@ -136,6 +137,8 @@ describe('runtime IPC adapter', () => {
     expect([...handlers.keys()]).toEqual([
       'runtime:survey',
       'runtime:list-environments',
+      'runtime:list-packages',
+      'runtime:list-package-counts',
       'runtime:set-selection',
       'runtime:get-enablement',
       'runtime:describe-usage',
@@ -253,5 +256,27 @@ describe('runtime IPC adapter', () => {
 
     await expect(invoke('runtime:pick-interpreter')).resolves.toBe('/usr/local/bin/python3')
     expect(showOpenDialog).toHaveBeenCalledWith({ properties: ['openFile'] })
+  })
+
+  it('routes the package-listing commands through their payloads', async () => {
+    discoveryState.python = [
+      {
+        language: 'python',
+        provenance: 'app-managed',
+        envId: '/managed/a',
+        interpreterPath: '/managed/a',
+        label: '/managed/a',
+        runnable: true
+      }
+    ]
+    const packages: EnvPackage[] = [{ name: 'numpy', version: '2.1.3', build: 'b0' }]
+    registerRuntimeIpcHandlers(fakeDeps({ listPackages: async () => packages }))
+
+    await expect(
+      invoke('runtime:list-packages', { language: 'python', envId: '/managed/a' })
+    ).resolves.toBe(packages)
+    await expect(invoke('runtime:list-package-counts', { language: 'python' })).resolves.toEqual({
+      '/managed/a': 1
+    })
   })
 })

@@ -1,4 +1,4 @@
-import { mkdtemp, rm } from 'node:fs/promises'
+import { mkdtemp, rm, writeFile } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 
@@ -534,6 +534,174 @@ describe('default upload repository', () => {
     finishStage?.(attachment)
     await expect(stagePromise).resolves.toEqual(attachment)
     await claim(owner.event, { transferId: 'local-transfer-owned' })
+  })
+
+  it('stages a local path upload with a main-side size and releases its lease immediately', async () => {
+    homeRoot = await mkdtemp(join(tmpdir(), 'open-science-upload-ipc-'))
+    const sourcePath = join(homeRoot, 'proxy.log')
+    await writeFile(sourcePath, 'local preview bytes')
+    const attachment = {
+      id: 'attachment-local-path',
+      sessionId: '.pending',
+      name: 'proxy.log',
+      originalName: 'proxy.log',
+      path: '/managed/.pending/proxy.log',
+      size: 19
+    }
+    const repository = {
+      stageLocalFile: vi.fn(async () => attachment),
+      finalizePendingSessionUploads: vi.fn(async () => [attachment]),
+      abortTransfer: vi.fn(async () => undefined),
+      deleteUpload: vi.fn(async () => undefined)
+    } as unknown as UploadRepository
+    registerUploadIpcHandlers(repository)
+    const stageLocalPath = ipcHandlers.get('uploads:stage-local-path')!
+    const sender = createIpcEvent()
+
+    await expect(
+      stageLocalPath(sender.event, {
+        transferId: 'local-path-transfer-1',
+        sourcePath,
+        name: 'proxy.log'
+      })
+    ).resolves.toEqual(attachment)
+
+    expect(repository.stageLocalFile).toHaveBeenCalledWith(
+      expect.objectContaining({
+        transferId: 'local-path-transfer-1',
+        sourcePath,
+        name: 'proxy.log',
+        size: 19
+      }),
+      expect.any(Function)
+    )
+    // Finalization publishes the upload to SQLite so it appears in "Your uploads".
+    expect(repository.finalizePendingSessionUploads).toHaveBeenCalledWith(
+      'standalone-uploads',
+      [attachment],
+      'default-project'
+    )
+
+    // No claim arrives for this transfer: the lease is already released, so migration is not
+    // blocked and renderer teardown does not delete the staged upload.
+    beginMigration()
+    await waitForDataRootWriters()
+    sender.emit('destroyed')
+    await new Promise((resolve) => setImmediate(resolve))
+    expect(repository.deleteUpload).not.toHaveBeenCalled()
+  })
+
+  it('calls onStandaloneUploadSaved after publishing a local path upload to SQLite', async () => {
+    homeRoot = await mkdtemp(join(tmpdir(), 'open-science-upload-ipc-'))
+    const sourcePath = join(homeRoot, 'notes.txt')
+    await writeFile(sourcePath, 'standalone upload content')
+    const attachment = {
+      id: 'attachment-standalone',
+      sessionId: '.pending',
+      name: 'notes.txt',
+      originalName: 'notes.txt',
+      path: '/managed/.pending/notes.txt',
+      size: 24
+    }
+    const onStandaloneUploadSaved = vi.fn()
+    const repository = {
+      stageLocalFile: vi.fn(async () => attachment),
+      finalizePendingSessionUploads: vi.fn(async () => [attachment]),
+      abortTransfer: vi.fn(async () => undefined),
+      deleteUpload: vi.fn(async () => undefined)
+    } as unknown as UploadRepository
+    registerUploadIpcHandlers(repository, { onStandaloneUploadSaved })
+    const stageLocalPath = ipcHandlers.get('uploads:stage-local-path')!
+    const sender = createIpcEvent()
+
+    await stageLocalPath(sender.event, {
+      transferId: 'local-path-standalone',
+      sourcePath,
+      name: 'notes.txt'
+    })
+
+    // finalizePendingSessionUploads writes uploadFile + uploadVersion + ManagedFile rows so
+    // the file appears in "Your uploads" without an active conversation session.
+    expect(repository.finalizePendingSessionUploads).toHaveBeenCalledWith(
+      'standalone-uploads',
+      [attachment],
+      'default-project'
+    )
+    // The callback lets ipc.ts broadcast project-files:changed to the renderer.
+    expect(onStandaloneUploadSaved).toHaveBeenCalledWith('default-project', 'standalone-uploads')
+  })
+
+  it('rejects a malformed local path upload request before staging', async () => {
+    const repository = {
+      stageLocalFile: vi.fn()
+    } as unknown as UploadRepository
+    registerUploadIpcHandlers(repository)
+    const stageLocalPath = ipcHandlers.get('uploads:stage-local-path')!
+
+    await expect(
+      stageLocalPath(createIpcEvent().event, {
+        transferId: 'local-path-transfer-bad',
+        name: 'proxy.log',
+        sourcePath: '   '
+      })
+    ).rejects.toThrow('Invalid local path upload request.')
+    expect(repository.stageLocalFile).not.toHaveBeenCalled()
+  })
+
+  it.each([
+    ['relative', 'relative/notes.txt'],
+    ['control characters', '/Users/example/notes .txt']
+  ])('rejects a local path upload with %s before touching the filesystem', async (_label, path) => {
+    const repository = { stageLocalFile: vi.fn() } as unknown as UploadRepository
+    registerUploadIpcHandlers(repository)
+    const stageLocalPath = ipcHandlers.get('uploads:stage-local-path')!
+
+    await expect(
+      stageLocalPath(createIpcEvent().event, {
+        transferId: 'local-path-transfer-invalid',
+        name: 'notes.txt',
+        sourcePath: path
+      })
+    ).rejects.toThrow('Invalid local path upload request.')
+    expect(repository.stageLocalFile).not.toHaveBeenCalled()
+  })
+
+  it('discards the staged copy when publishing a local path upload fails', async () => {
+    homeRoot = await mkdtemp(join(tmpdir(), 'open-science-upload-ipc-'))
+    const sourcePath = join(homeRoot, 'orphan.txt')
+    await writeFile(sourcePath, 'orphan candidate')
+    const attachment = {
+      id: 'attachment-orphan',
+      sessionId: '.pending',
+      name: 'orphan.txt',
+      originalName: 'orphan.txt',
+      path: '/managed/.pending/orphan.txt',
+      size: 16
+    }
+    const repository = {
+      stageLocalFile: vi.fn(async () => attachment),
+      // Staging committed its bytes, then the SQLite publish fails.
+      finalizePendingSessionUploads: vi.fn(async () => {
+        throw new Error('publish failed')
+      }),
+      abortTransfer: vi.fn(async () => undefined),
+      deleteUpload: vi.fn(async () => undefined)
+    } as unknown as UploadRepository
+    const onStandaloneUploadSaved = vi.fn()
+    registerUploadIpcHandlers(repository, { onStandaloneUploadSaved })
+    const stageLocalPath = ipcHandlers.get('uploads:stage-local-path')!
+
+    await expect(
+      stageLocalPath(createIpcEvent().event, {
+        transferId: 'local-path-orphan',
+        sourcePath,
+        name: 'orphan.txt'
+      })
+    ).rejects.toThrow('publish failed')
+
+    // Without this the .pending/ copy survives with no Version row and no sweep to reclaim it.
+    expect(repository.deleteUpload).toHaveBeenCalledWith({ path: attachment.path })
+    expect(onStandaloneUploadSaved).not.toHaveBeenCalled()
   })
 
   it('does not expose the removed whole-file base64 staging channel', () => {

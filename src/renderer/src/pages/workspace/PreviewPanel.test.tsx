@@ -281,6 +281,18 @@ describe('PreviewPanel', () => {
     await act(async () => {
       dialog
         ?.querySelector<HTMLButtonElement>(`[aria-label="Close preview of ${name}"]`)
+        ?.dispatchEvent(new MouseEvent('pointermove', { bubbles: true }))
+      await new Promise((resolve) => setTimeout(resolve, 300))
+    })
+    // The full-screen dialog floats at z-[61]; header tooltips must layer above it. Radix puts
+    // role="tooltip" on a visually-hidden span, so assert on the styled content div instead.
+    expect(
+      document.body.querySelector('[data-radix-popper-content-wrapper] [data-state]')?.className
+    ).toContain('z-[70]')
+
+    await act(async () => {
+      dialog
+        ?.querySelector<HTMLButtonElement>(`[aria-label="Close preview of ${name}"]`)
         ?.dispatchEvent(new MouseEvent('click', { bubbles: true }))
     })
 
@@ -568,6 +580,37 @@ describe('PreviewPanel', () => {
     expect(usePreviewWorkbenchStore.getState().expandedToolItemId).toBeNull()
     expect(document.body.querySelector('[role="dialog"]')).toBeNull()
     expect(container.querySelector('[data-testid="tool-content"]')).toBe(inlineContent)
+  })
+
+  const panelId = (itemId: string): string => `preview-panel-${encodeURIComponent(itemId)}`
+
+  it('keeps a tool panel mounted while a file tab is active', async () => {
+    usePreviewWorkbenchStore.getState().upsertAndActivateItem(createToolItem({}))
+    usePreviewWorkbenchStore.getState().upsertItem(createFileItem({}))
+
+    await renderPanel()
+
+    // Node identity is the signal: a remount replaces the DOM node and loses component state such
+    // as the local file browser's current directory.
+    const toolContent = container.querySelector('[data-testid="tool-content"]')
+    expect(toolContent).not.toBeNull()
+    const toolPanel = container.querySelector(`#${panelId('tool-1')}`)
+    expect(toolPanel?.hasAttribute('hidden')).toBe(false)
+
+    await act(async () => {
+      usePreviewWorkbenchStore.getState().activateItem('item-1')
+    })
+
+    expect(container.querySelector('[data-testid="file-content"]')).not.toBeNull()
+    expect(container.querySelector(`#${panelId('tool-1')}`)?.hasAttribute('hidden')).toBe(true)
+    expect(container.querySelector('[data-testid="tool-content"]')).toBe(toolContent)
+
+    await act(async () => {
+      usePreviewWorkbenchStore.getState().activateItem('tool-1')
+    })
+
+    expect(container.querySelector(`#${panelId('tool-1')}`)?.hasAttribute('hidden')).toBe(false)
+    expect(container.querySelector('[data-testid="tool-content"]')).toBe(toolContent)
   })
 
   it('activates a different tab on click and swaps the rendered content', async () => {

@@ -116,9 +116,7 @@ const SpecialistSubmenu = ({
             'flex shrink-0 items-center gap-1 whitespace-nowrap rounded-full px-2 py-0.5 text-[11px] font-medium leading-4',
             unavailable
               ? 'bg-amber-500/10 text-amber-600 dark:text-amber-400'
-              : showValue
-                ? 'bg-bg-200 text-text-100'
-                : 'text-text-300'
+              : 'bg-bg-200 text-text-100'
           )}
         >
           <span className="max-w-[120px] truncate">{label}</span>

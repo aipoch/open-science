@@ -58,6 +58,7 @@ import {
 import { registerManagedPreviewIpcHandlers } from './managed-preview-ipc'
 import { registerManagedPreviewProtocol } from './managed-preview-protocol'
 import { ManagedPreviewResources } from './managed-preview-resources'
+import type { ManagedPreviewSource } from '../shared/preview-resources'
 import {
   createOfficePreviewFrameProcessResolver,
   createOfficePreviewProcessMemoryReader
@@ -111,6 +112,8 @@ import { SessionPersistenceCoordinator } from './session-persistence/coordinator
 import { type SessionPersistenceBackend } from './session-persistence/ipc'
 import { tryDecryptKey } from './settings/crypto'
 import { registerSettingsIpcHandlers } from './settings/ipc'
+import { registerLocalFsIpcHandlers } from './local-fs/ipc'
+import { LocalFsService } from './local-fs/service'
 import { getAppClaudeConfigDir } from './settings/provider-env'
 import { createDefaultSettingsService } from './settings/service'
 import type { NotebookRuntimeSettings } from './settings/capabilities'
@@ -326,28 +329,40 @@ const createApplicationModules = async (
     storageRoot: resolveDataRoot(),
     getClient: () => getProjectDbClient(resolveStorageRoot())
   })
+  // Shared local-fs service backs both the "This computer" browser IPC and the managed-preview
+  // resolver below, so path validation stays identical across both entry points.
+  const localFsService = new LocalFsService()
   // One source-neutral resolver keeps previews and user-requested exports on identical trust checks.
   const resolveManagedFilePath = (
-    source: 'artifact' | 'upload' | 'notebook-input',
+    source: ManagedPreviewSource,
     request: { path: string; projectId?: string; sessionId?: string }
-  ): Promise<string> =>
-    source === 'artifact'
-      ? (() => {
-          const versionIdentity = parseArtifactVersionLocator(request.path)
-          return versionIdentity
-            ? artifactProvenanceRepository
-                .resolveVersionContent(versionIdentity)
-                .then((resolved) => resolved.path)
-            : artifactRepository.resolveManagedFilePath(request)
-        })()
-      : source === 'upload'
-        ? uploadRepository.resolveManagedUploadPath(request, {
-            projectId: request.projectId,
-            sessionId: request.sessionId
-          })
-        : notebookInputRegistry
-            .resolvePreviewKey(request.path)
-            .then((target) => target.absolutePath)
+  ): Promise<string> => {
+    if (source === 'artifact') {
+      const versionIdentity = parseArtifactVersionLocator(request.path)
+      return versionIdentity
+        ? artifactProvenanceRepository
+            .resolveVersionContent(versionIdentity)
+            .then((resolved) => resolved.path)
+        : artifactRepository.resolveManagedFilePath(request)
+    }
+    if (source === 'upload') {
+      return uploadRepository.resolveManagedUploadPath(request, {
+        projectId: request.projectId,
+        sessionId: request.sessionId
+      })
+    }
+    if (source === 'notebook-input') {
+      return notebookInputRegistry
+        .resolvePreviewKey(request.path)
+        .then((target) => target.absolutePath)
+    }
+    // 'local' is the only remaining source, and it is the one that resolves an arbitrary host path.
+    // Falling through to it by default would silently widen any future source added to the union, so
+    // name it and reject anything unknown.
+    if (source === 'local') return localFsService.resolveFilePath(request)
+    const unhandled: never = source
+    return Promise.reject(new Error(`Unsupported managed preview source: ${String(unhandled)}`))
+  }
   const resolveSessionArtifactFilePath = createSessionArtifactFileResolver({
     compatibilityProjectName: DEFAULT_ARTIFACT_PROJECT_NAME,
     resolveVersionContent: (identity) =>
@@ -1251,7 +1266,16 @@ const createApplicationModules = async (
   declareElectronAdapter('uploads', () =>
     registerUploadIpcHandlers(uploadRepository, {
       withSessionMutation: (projectId, sessionId, mutation) =>
-        sessionPersistenceCoordinator.runSessionMutation(projectId, sessionId, mutation)
+        sessionPersistenceCoordinator.runSessionMutation(projectId, sessionId, mutation),
+      // Standalone "Save as artifact" uploads have no session mutation to piggyback on, so the
+      // Files panel only learns about them through this broadcast.
+      onStandaloneUploadSaved: (projectId, sessionId) =>
+        broadcastToRenderers('project-files:changed', {
+          projectId,
+          sessionId,
+          sources: ['upload'],
+          kind: 'upsert'
+        })
     })
   )
   declareElectronAdapter('notebook-input-preview', () => {
@@ -1308,6 +1332,8 @@ const createApplicationModules = async (
       projectDeletionCoordinator
     )
   )
+  // Backs the "This computer" browser; shares localFsService with the managed-preview resolver.
+  declareElectronAdapter('local-fs', () => registerLocalFsIpcHandlers(localFsService))
   declareElectronAdapter('projects', () =>
     registerProjectIpcHandlers(
       projectRepository,
