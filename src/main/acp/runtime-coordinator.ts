@@ -154,25 +154,21 @@ class AcpRuntimeCoordinator {
         snapshots.flatMap(({ runtime, snapshot }) => this.visibleSessionIds(runtime, snapshot))
       )
     )
-    const promptInFlightSessionIds = Array.from(
-      new Set(
-        snapshots.flatMap(({ runtime, snapshot }) =>
-          snapshot.promptInFlightSessionIds.filter(
-            // A retired generation may keep draining after the same logical session was resumed by
-            // a fresh runtime. Only its current owner may keep renderer interactions locked.
-            (sessionId) => this.sessionRuntimes.get(sessionId) === runtime
+    // A retired generation may keep draining after the same logical session was resumed by a fresh
+    // runtime. Only its current owner may publish interaction state to the renderer.
+    const ownedSessionIds = (select: (snapshot: AcpStateSnapshot) => readonly string[]): string[] =>
+      Array.from(
+        new Set(
+          snapshots.flatMap(({ runtime, snapshot }) =>
+            select(snapshot).filter((sessionId) => this.sessionRuntimes.get(sessionId) === runtime)
           )
         )
       )
+    const promptInFlightSessionIds = ownedSessionIds(
+      (snapshot) => snapshot.promptInFlightSessionIds
     )
-    const agentPromptInFlightSessionIds = Array.from(
-      new Set(
-        snapshots.flatMap(({ runtime, snapshot }) =>
-          (snapshot.agentPromptInFlightSessionIds ?? []).filter(
-            (sessionId) => this.sessionRuntimes.get(sessionId) === runtime
-          )
-        )
-      )
+    const agentPromptInFlightSessionIds = ownedSessionIds(
+      (snapshot) => snapshot.agentPromptInFlightSessionIds ?? []
     )
     const contextUsageBySession = Object.fromEntries(
       snapshots.flatMap(({ runtime, snapshot }) =>

@@ -1,11 +1,5 @@
 import type { CSSProperties } from 'react'
 
-import { cn } from '@/lib/utils'
-
-type OpenScienceThinkingIndicatorProps = {
-  className?: string
-}
-
 type IndicatorDotStyle = CSSProperties & {
   '--os-dot-angle': string
   '--os-dot-distance': string
@@ -52,12 +46,10 @@ const DOT_STYLES: IndicatorDotStyle[] = [
   }
 ]
 
-const OpenScienceThinkingIndicator = ({
-  className
-}: OpenScienceThinkingIndicatorProps): React.JSX.Element => (
+const OpenScienceThinkingIndicator = (): React.JSX.Element => (
   <span
     data-testid="open-science-thinking-indicator"
-    className={cn('open-science-thinking-indicator text-text-300', className)}
+    className="open-science-thinking-indicator text-text-300"
     aria-hidden="true"
   >
     {DOT_STYLES.map((style) => (

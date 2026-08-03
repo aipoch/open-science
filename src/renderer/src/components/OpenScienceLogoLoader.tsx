@@ -1,7 +1,5 @@
 import { useEffect, useRef } from 'react'
 
-import { cn } from '@/lib/utils'
-
 import {
   createLogoParticles,
   drawOpenScienceLogoFrame,
@@ -10,10 +8,6 @@ import {
   type LogoParticle
 } from './open-science-logo-motion'
 
-type OpenScienceLogoLoaderProps = {
-  className?: string
-}
-
 const LOOP_DURATION_MS = 4800
 const MAX_ANIMATION_FPS = 30
 const MIN_FRAME_INTERVAL_MS = 1000 / MAX_ANIMATION_FPS
@@ -21,7 +15,7 @@ const MIN_FRAME_INTERVAL_MS = 1000 / MAX_ANIMATION_FPS
 const MAX_DEVICE_PIXEL_RATIO = 2
 const FALLBACK_CANVAS_SIZE = 448
 
-const OpenScienceLogoLoader = ({ className }: OpenScienceLogoLoaderProps): React.JSX.Element => {
+const OpenScienceLogoLoader = (): React.JSX.Element => {
   const canvasRef = useRef<HTMLCanvasElement>(null)
 
   useEffect(() => {
@@ -135,7 +129,7 @@ const OpenScienceLogoLoader = ({ className }: OpenScienceLogoLoaderProps): React
   }, [])
 
   return (
-    <div className={cn('relative size-56 shrink-0', className)} aria-hidden="true">
+    <div className="relative size-56 shrink-0" aria-hidden="true">
       <canvas
         ref={canvasRef}
         data-testid="open-science-logo-loader"
