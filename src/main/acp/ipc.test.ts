@@ -464,6 +464,7 @@ describe('registerAcpIpcHandlers — managed session workspace', () => {
     expect(secondRequest.cwd).not.toBe(firstRequest.cwd)
     expect(mkdir).toHaveBeenNthCalledWith(1, firstRequest.cwd, { recursive: true })
     expect(mkdir).toHaveBeenNthCalledWith(2, secondRequest.cwd, { recursive: true })
+    expect(rm).not.toHaveBeenCalled()
     expect(firstResult).toEqual({ sessionId: 's-new', cwd: firstRequest.cwd })
     expect(secondResult).toEqual({ sessionId: 's-new', cwd: secondRequest.cwd })
   })
@@ -576,6 +577,69 @@ describe('registerAcpIpcHandlers — managed session workspace', () => {
     const request = createSession.mock.calls[0][0]
     expect(mkdir).toHaveBeenCalledWith(request.cwd, { recursive: true })
     expect(rm).toHaveBeenCalledWith(request.cwd, { recursive: true, force: true })
+  })
+
+  it('removes a managed workspace when session creation is superseded', async () => {
+    registerWithFakes()
+    const superseded = new Error('ACP session startup was superseded')
+    createSession.mockRejectedValueOnce(superseded)
+
+    await expect(
+      handlers.get('acp:create-session')?.(
+        {},
+        { projectName: 'project-1', permissionProfile: 'ask' }
+      )
+    ).rejects.toBe(superseded)
+
+    const request = createSession.mock.calls[0][0]
+    expect(rm).toHaveBeenCalledWith(request.cwd, { recursive: true, force: true })
+  })
+
+  it('keeps the data-root writer until failed-session workspace rollback finishes', async () => {
+    registerWithFakes()
+    const failure = new Error('session creation failed')
+    createSession.mockRejectedValueOnce(failure)
+    let finishRollback!: () => void
+    rm.mockImplementationOnce(
+      () =>
+        new Promise<void>((resolve) => {
+          finishRollback = resolve
+        })
+    )
+
+    const createPromise = handlers.get('acp:create-session')?.(
+      {},
+      { projectName: 'project-1', permissionProfile: 'ask' }
+    )
+    await vi.waitFor(() => expect(rm).toHaveBeenCalledTimes(1))
+
+    beginMigration()
+    let drained = false
+    const drainPromise = waitForDataRootWriters().then(() => {
+      drained = true
+    })
+    await Promise.resolve()
+
+    expect(drained).toBe(false)
+
+    finishRollback()
+    await expect(createPromise).rejects.toBe(failure)
+    await drainPromise
+    expect(drained).toBe(true)
+  })
+
+  it('keeps the session creation error when managed workspace rollback also fails', async () => {
+    registerWithFakes()
+    const failure = new Error('session creation failed')
+    createSession.mockRejectedValueOnce(failure)
+    rm.mockRejectedValueOnce(new Error('workspace rollback failed'))
+
+    await expect(
+      handlers.get('acp:create-session')?.(
+        {},
+        { projectName: 'project-1', permissionProfile: 'ask' }
+      )
+    ).rejects.toBe(failure)
   })
 })
 
