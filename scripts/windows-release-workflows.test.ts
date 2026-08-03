@@ -76,6 +76,19 @@ describe('post-merge Windows validation', () => {
     expect(uploadIndex).toBeGreaterThan(smokeIndex)
   })
 
+  it('builds every platform without repeating the verified typecheck', () => {
+    const workflow = readWorkflow('build.yml')
+    const verifyTypecheck = findStep(workflow.jobs.verify, 'Typecheck')
+    const build = findStep(workflow.jobs.build, 'Build & package')
+    const commands = build.run?.split('\n').map((line) => line.trim()) ?? []
+
+    expect(verifyTypecheck.run).toBe('npm run typecheck')
+    expect(commands).toContain('npm run build:e2e')
+    expect(commands).toContain('npm run build:web')
+    expect(commands).not.toContain('npm run build')
+    expect(commands.some((command) => command.startsWith('npm run typecheck'))).toBe(false)
+  })
+
   it('runs the previous-stable upgrade smoke alongside notarization before publishing', () => {
     const release = readWorkflow('release.yml')
     const upgrade = release.jobs['windows-upgrade-smoke']

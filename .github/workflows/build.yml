@@ -175,7 +175,8 @@ jobs:
           node scripts/fetch-micromamba.mjs "${{ matrix.subdir }}" \
             "resources/bin/${{ matrix.bin_os }}/${{ matrix.bin_arch }}/$name"
 
-      # Build the renderer + main (incl. typecheck), then package with electron-builder.
+      # Build the renderer + main and Web bundles, then package with electron-builder. The verify
+      # job already typechecks this exact checkout once, so the four platform jobs must not repeat it.
       #
       # macOS signing: this step only SIGNS (Developer ID), it never notarizes. Notarization +
       # stapling is decoupled into notarize-mac.yml so the build never blocks on Apple's servers
@@ -191,7 +192,8 @@ jobs:
           CSC_LINK: ${{ secrets.MAC_CSC_LINK }}
           CSC_KEY_PASSWORD: ${{ secrets.MAC_CSC_KEY_PASSWORD }}
         run: |
-          npm run build
+          npm run build:e2e
+          npm run build:web
           # Nightly: override the packaged version with `<base>-nightly.<short-sha>` (valid semver
           # prerelease). Every artifactName template uses ${version}, so this alone makes nightly
           # filenames distinct from stable ones and ties each build to its commit.
