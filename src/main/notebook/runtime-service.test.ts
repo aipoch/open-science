@@ -905,6 +905,65 @@ describe('notebook runtime service', () => {
     })
   })
 
+  it('serializes only the raw control executions for one session', async () => {
+    const root = await createStorageRoot()
+    const entered: string[] = []
+    let releaseFirst: (() => void) | undefined
+    const firstBlocked = new Promise<void>((resolve) => {
+      releaseFirst = resolve
+    })
+    let announceFirst: (() => void) | undefined
+    const firstEntered = new Promise<void>((resolve) => {
+      announceFirst = resolve
+    })
+    const service = new NotebookRuntimeService({
+      configRoot: root,
+      dataRoot: root,
+      projectName: 'default-project',
+      repository: new NotebookRunRepository(root),
+      executorFactory: () => ({
+        execute: async (request): Promise<NotebookExecutionResult> => {
+          entered.push(request.code)
+          if (request.code === 'first') {
+            announceFirst?.()
+            await firstBlocked
+          }
+          return {
+            status: 'completed',
+            stdout: request.code,
+            stderr: '',
+            traceback: '',
+            cwdAfter: request.cwd,
+            outputs: []
+          }
+        },
+        shutdown: async () => ({ reaped: true })
+      })
+    })
+
+    const first = service.executeControl({
+      sessionId: 'session-1',
+      workspaceCwd: root,
+      code: 'first'
+    })
+    await firstEntered
+    const second = service.executeControl({
+      sessionId: 'session-1',
+      workspaceCwd: root,
+      code: 'second'
+    })
+
+    await new Promise((resolve) => setTimeout(resolve, 0))
+    expect(entered).toEqual(['first'])
+
+    releaseFirst?.()
+    await expect(Promise.all([first, second])).resolves.toMatchObject([
+      { stdout: 'first' },
+      { stdout: 'second' }
+    ])
+    expect(entered).toEqual(['first', 'second'])
+  })
+
   it('intercepts an approved control completion before repl_execute can return it to the old prompt', async () => {
     const root = await createStorageRoot()
     const calls: string[] = []
@@ -1428,6 +1487,52 @@ describe('notebook runtime service', () => {
         status: 'failed',
         text: { stdout: 'partial output', stderr: 'command failed' }
       })
+    })
+
+    it('admits overlapping shell calls without a per-session execution queue', async () => {
+      const root = await createStorageRoot()
+      const entered: string[] = []
+      const releases = new Map<string, () => void>()
+      const execute = vi.fn<NotebookShellProcess['execute']>(
+        ({ command }) =>
+          new Promise((resolve) => {
+            entered.push(command)
+            releases.set(command, () => resolve({ stdout: command, stderr: '', exitCode: 0 }))
+          })
+      )
+      const service = new NotebookRuntimeService({
+        configRoot: root,
+        dataRoot: root,
+        projectName: 'default-project',
+        repository: new NotebookRunRepository(root),
+        shellProcess: { execute }
+      })
+
+      const first = service.executeShell({
+        sessionId: 'session-1',
+        workspaceCwd: root,
+        command: 'first'
+      })
+      const second = service.executeShell({
+        sessionId: 'session-1',
+        workspaceCwd: root,
+        command: 'second'
+      })
+
+      await vi.waitFor(() => {
+        expect(entered).toHaveLength(2)
+        expect(entered).toEqual(expect.arrayContaining(['first', 'second']))
+      })
+      releases.get('second')?.()
+      releases.get('first')?.()
+
+      await expect(Promise.all([first, second])).resolves.toEqual([
+        { stdout: 'first', stderr: '', exitCode: 0 },
+        { stdout: 'second', stderr: '', exitCode: 0 }
+      ])
+      const state = await service.state({ sessionId: 'session-1', workspaceCwd: root })
+      expect(state.runs).toHaveLength(2)
+      expect(state.runs.every((run) => run.status === 'completed')).toBe(true)
     })
 
     it('rejects a direct micromamba install before spawning the shell command', async () => {
