@@ -299,7 +299,7 @@ describe('conversation message scroller integration', () => {
     expect(workspaceMessageScrollerSource).toContain('mx-auto w-full max-w-4xl')
   })
 
-  it('matches the reference page chat background and assistant progress surfaces', () => {
+  it('matches the reference page chat background and transparent assistant progress', () => {
     if (!existsSync(workspaceMessageScrollerPath)) {
       expect(existsSync(workspaceMessageScrollerPath)).toBe(true)
       return
@@ -319,7 +319,10 @@ describe('conversation message scroller integration', () => {
     expect(workspaceMessageScrollerSource).toContain('bg-bg-10')
     expect(workspaceMessageScrollerSource).toContain('pb-[56px]')
     expect(workspaceMessageScrollerSource).toContain('bg-gradient-to-b from-bg-10 to-bg-10/0')
-    expect(workspaceAgentLoadingRowSource).toContain('rounded-2xl bg-bg-200 px-3 py-2')
+    expect(workspaceAgentLoadingRowSource).toContain(
+      "cn(assistantMessageSurfaceClassName, 'px-3 py-2')"
+    )
+    expect(workspaceAgentLoadingRowSource).not.toContain('rounded-2xl bg-bg-200')
   })
 
   it('uses compact prose spacing for agent markdown', () => {

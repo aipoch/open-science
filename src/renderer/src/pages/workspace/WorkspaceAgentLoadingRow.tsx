@@ -78,7 +78,7 @@ const WorkspaceAgentLoadingRow = ({
     className="min-w-0"
   >
     <div className="px-4 pb-1 pt-5 md:px-6">
-      <div className={cn(assistantMessageSurfaceClassName, 'rounded-2xl bg-bg-200 px-3 py-2')}>
+      <div className={cn(assistantMessageSurfaceClassName, 'px-3 py-2')}>
         <AgentLoadingIndicator sessionId={sessionId} />
       </div>
     </div>
