@@ -32,6 +32,7 @@ import {
 import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
 import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from '@/components/ui/tooltip'
+import { formatRelativeTime } from '@/lib/format-relative-time'
 import { cn, formatByteSize } from '@/lib/utils'
 import { useNavigationStore } from '@/stores/navigation-store'
 import {
@@ -440,6 +441,7 @@ const SectionHeader = ({
     data-testid="project-file-section-header"
     className={cn(
       'flex w-full min-w-0 items-center gap-1.5 px-4 py-2 text-left text-sm text-text-000 hover:bg-bg-100',
+      id.startsWith('session:') && 'cursor-default',
       !hideTopBorder && 'border-t border-border-300/40'
     )}
     aria-expanded={!isCollapsed}
@@ -1032,6 +1034,7 @@ const ProjectFilesFilterMenu = ({
 const ProjectArtifactGroupSection = ({
   group,
   title,
+  timestamp,
   page,
   loadMode,
   manualVisibleItemLimit,
@@ -1047,6 +1050,7 @@ const ProjectArtifactGroupSection = ({
 }: {
   group: ArtifactGroupItem
   title: string
+  timestamp: number | undefined
   page: PageState<ProjectFileItem> | undefined
   loadMode: FilePageLoadMode
   manualVisibleItemLimit: number
@@ -1061,6 +1065,7 @@ const ProjectArtifactGroupSection = ({
   onOpenInPanel: (file: ProjectFileItem) => void
 }): React.JSX.Element => {
   const sectionId = `session:${group.sessionId}`
+  const relativeTimeLabel = timestamp === undefined ? undefined : formatRelativeTime(timestamp)
   const loadPage = useCallback(() => loadMore(group.sessionId), [group.sessionId, loadMore])
   const supportsIntersectionObserver = typeof IntersectionObserver !== 'undefined'
   const effectiveLoadMode =
@@ -1081,7 +1086,11 @@ const ProjectArtifactGroupSection = ({
       <SectionHeader
         id={sectionId}
         title={title}
-        countLabel={formatFileCount(group.artifactCount)}
+        countLabel={
+          relativeTimeLabel
+            ? `${group.artifactCount} · ${relativeTimeLabel}${relativeTimeLabel === 'now' ? '' : ' ago'}`
+            : formatFileCount(group.artifactCount)
+        }
         isCollapsed={isCollapsed}
         hideTopBorder={hideTopBorder}
         onToggle={onToggle}
@@ -1236,19 +1245,19 @@ const ProjectFilesViewContent = ({
     { kind: 'artifactGroups' }
   )
   const isSearchActive = debouncedSearchQuery.length > 0
-  const sessionTitleById = useMemo(
+  const sessionById = useMemo(
     () =>
       new Map(
         allSessions
           .filter((session) => session.projectId === activeProjectId)
-          .map((session) => [session.id, session.title] as const)
+          .map((session) => [session.id, session] as const)
       ),
     [activeProjectId, allSessions]
   )
   const getSessionTitle = useCallback(
     (sessionId: string): string =>
-      sessionTitleById.get(sessionId) ?? `Session ${sessionId.slice(0, 8)}`,
-    [sessionTitleById]
+      sessionById.get(sessionId)?.title ?? `Session ${sessionId.slice(0, 8)}`,
+    [sessionById]
   )
   const filterGroupItems =
     showAllSessionOptions && sessionOptionsIndex.groups.items.length > 0
@@ -1870,6 +1879,7 @@ const ProjectFilesViewContent = ({
                   key={group.sessionId}
                   group={group}
                   title={getArtifactGroupTitle(group)}
+                  timestamp={sessionById.get(group.sessionId)?.updatedAt}
                   page={index.artifactsBySession[group.sessionId]}
                   loadMode={isAllFilter ? 'manual' : 'scroll'}
                   manualVisibleItemLimit={

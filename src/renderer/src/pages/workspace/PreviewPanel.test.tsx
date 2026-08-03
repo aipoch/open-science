@@ -148,6 +148,7 @@ describe('PreviewPanel', () => {
     expect(chromeRow).not.toBeNull()
     expect(chromeRow?.contains(tabBar)).toBe(true)
     expect(tabBar?.parentElement).toBe(chromeRow)
+    expect(chromeRow?.className).toContain('pl-2')
     expect(chromeRow?.className).toContain('pr-14')
     expect(tabBar?.className).toContain('flex-1')
     expect(container.querySelector('[data-testid="preview-panel-toggle-slot"]')).toBeNull()

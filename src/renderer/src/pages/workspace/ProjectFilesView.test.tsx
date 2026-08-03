@@ -758,6 +758,53 @@ describe('ProjectFilesView', () => {
     expect(sectionHeaders[1]?.className).toContain('border-t')
   })
 
+  it('shows the Session artifact count and update age with the default cursor in list view', async () => {
+    const now = 1710061200000
+    vi.spyOn(Date, 'now').mockReturnValue(now)
+    await renderView([
+      createSession({
+        title: 'Recent analysis',
+        updatedAt: now,
+        artifacts: [
+          {
+            id: 'artifact-now',
+            kind: 'managed-file',
+            path: '/workspace/current.txt',
+            name: 'current.txt'
+          }
+        ]
+      }),
+      createSession({
+        id: 'session-older',
+        title: 'Earlier analysis',
+        updatedAt: now - 15 * 60 * 60 * 1000,
+        artifacts: [
+          {
+            id: 'artifact-older',
+            kind: 'managed-file',
+            path: '/workspace/earlier.txt',
+            name: 'earlier.txt'
+          }
+        ]
+      })
+    ])
+
+    await act(async () => {
+      container.querySelector<HTMLButtonElement>('[aria-label="List view"]')?.click()
+    })
+
+    const headers = Array.from(
+      container.querySelectorAll<HTMLButtonElement>('[data-testid="project-file-section-header"]')
+    )
+    const recentHeader = headers.find((header) => header.textContent?.includes('Recent analysis'))
+    const earlierHeader = headers.find((header) => header.textContent?.includes('Earlier analysis'))
+
+    expect(recentHeader?.lastElementChild?.textContent).toBe('1 · now')
+    expect(earlierHeader?.lastElementChild?.textContent).toBe('1 · 15h ago')
+    expect(recentHeader?.className).toContain('cursor-default')
+    expect(recentHeader?.getAttribute('aria-expanded')).toBe('true')
+  })
+
   it('replaces compact list metadata with the row action on hover', async () => {
     vi.spyOn(Date, 'now').mockReturnValue(1710007202000)
     await renderView([

@@ -494,7 +494,7 @@ const PreviewPanelSurface = ({ className }: PreviewPanelSurfaceProps): React.JSX
       {items.length > 0 ? (
         <div
           data-testid="preview-panel-top-bar"
-          className="flex min-w-0 w-full shrink-0 items-start pr-14"
+          className="flex min-w-0 w-full shrink-0 items-start pl-2 pr-14"
         >
           <PreviewTabBar
             tabs={items}
