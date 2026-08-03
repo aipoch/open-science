@@ -98,6 +98,7 @@ import type {
 import type { ProvisionProgress, ProvisionStatus } from '../shared/notebook-env'
 import type {
   DiscoveredInterpreter,
+  EnvPackage,
   RuntimeEnablement,
   RuntimeUsage,
   RuntimeSelection,
@@ -651,6 +652,11 @@ interface OpenScienceAPI {
     pickInterpreter(): Promise<string | null>
     // v4: every detected interpreter per language (Settings cards).
     listEnvironments(): Promise<{ python: DiscoveredInterpreter[]; r: DiscoveredInterpreter[] }>
+    // Read-only installed-package inventory for one env (Settings "Packages" dialog).
+    listPackages(language: NotebookLanguage, envId: string): Promise<EnvPackage[]>
+    // Bulk per-env package counts for the card badges (one discovery sweep per language; null = the
+    // listing failed, so the card omits its badge).
+    listPackageCounts(language: NotebookLanguage): Promise<Record<string, number | null>>
     // v4: the persisted per-language enablement, so cards reflect the saved state on load.
     getEnablement(language: NotebookLanguage): Promise<RuntimeEnablement>
     // WS11: live-session usage of a runtime (running/idle/dormant), for the disable-impact warning.

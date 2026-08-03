@@ -1,6 +1,6 @@
-import { CheckCircle2, FolderInput, RefreshCw } from 'lucide-react'
-import { AlertDialog } from 'radix-ui'
-import { useEffect, useState } from 'react'
+import { CheckCircle2, FolderInput, Package, RefreshCw, Search } from 'lucide-react'
+import { AlertDialog, Dialog } from 'radix-ui'
+import { useEffect, useRef, useState } from 'react'
 
 import { Badge } from '@/components/ui/badge'
 import { Button } from '@/components/ui/button'
@@ -10,6 +10,7 @@ import {
   dialogPanelClassName,
   dialogTitleClassName
 } from '@/components/ui/dialog-chrome'
+import { Input } from '@/components/ui/input'
 import { useRetainedDialogValue } from '@/components/ui/use-retained-dialog-value'
 import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from '@/components/ui/tooltip'
 import { cn } from '@/lib/utils'
@@ -17,6 +18,7 @@ import { useNotebookEnvStore } from '@/stores/notebook-env-store'
 import {
   isEnvEnabled,
   type DiscoveredInterpreter,
+  type EnvPackage,
   type RuntimeEnablement,
   type RuntimeUsage
 } from '../../../../shared/notebook-runtime'
@@ -78,6 +80,21 @@ const RuntimesPanel = ({ title, description }: RuntimesPanelProps): React.JSX.El
     usage: RuntimeUsage
   } | null>(null)
   const dialogDisableImpact = useRetainedDialogValue(disableImpact)
+  // The env whose installed-packages dialog is open (null = closed).
+  const [packagesEnv, setPackagesEnv] = useState<DiscoveredInterpreter | null>(null)
+  const dialogPackagesEnv = useRetainedDialogValue(packagesEnv)
+  // Dialog content: the fetched list, or a load error with a Retry affordance. retryNonce re-runs
+  // the fetch effect without closing/reopening the dialog.
+  const [packages, setPackages] = useState<EnvPackage[] | null>(null)
+  const [packagesError, setPackagesError] = useState<string | null>(null)
+  const [packagesRetryNonce, setPackagesRetryNonce] = useState(0)
+  const [packagesFilter, setPackagesFilter] = useState('')
+  // Per-env package counts for the card button badges, fetched lazily AFTER the panel loads.
+  // countsRef is the source of truth (readable inside effects without re-triggering them); the
+  // state mirror drives rendering. A present null entry means "fetch attempted, unavailable" —
+  // the card simply omits the badge (a count failure is never surfaced as card-level error UI).
+  const countsRef = useRef<Record<string, number | null>>({})
+  const [packageCounts, setPackageCounts] = useState<Record<string, number | null>>({})
   const initEnv = useNotebookEnvStore((state) => state.init)
   const provisionEnv = useNotebookEnvStore((state) => state.provision)
   const cancelEnv = useNotebookEnvStore((state) => state.cancel)
@@ -112,11 +129,65 @@ const RuntimesPanel = ({ title, description }: RuntimesPanelProps): React.JSX.El
     void fetchAll().then(applyAll)
   }, [])
 
+  // Lazy package-count fetch: runs AFTER the env list lands (never blocks fetchAll). One bulk
+  // listPackageCounts call per language (the main process does ONE discovery sweep per call and
+  // bounds listing concurrency itself), so filling N badges costs 2 IPC calls — not N per-env calls
+  // that each re-run full discovery. A failed bulk call (or a null per-env count) simply leaves the
+  // badge absent; Recheck clears countsRef so the badges refetch against the new env list.
+  useEffect(() => {
+    if (envs === null) return
+    let cancelled = false
+    for (const language of LANGUAGES) {
+      // No runnable envs for the language -> nothing to count; skip the IPC call entirely.
+      if (!envs[language.id].some((env) => env.runnable)) continue
+      void window.api.runtime
+        .listPackageCounts(language.id)
+        .then((counts) => {
+          if (cancelled) return
+          Object.assign(countsRef.current, counts)
+          setPackageCounts({ ...countsRef.current })
+        })
+        .catch(() => {
+          // Best-effort badges: a bulk failure is not surfaced as card-level error UI.
+        })
+    }
+    return () => {
+      cancelled = true
+    }
+  }, [envs])
+
+  // Fetches the open dialog's package list; re-runs on Retry via packagesRetryNonce. A successful
+  // fetch also refreshes the card's count badge (the dialog shows the same truth). The loading/error
+  // reset happens in the open/retry click handlers, not synchronously here (react-hooks lint).
+  useEffect(() => {
+    if (packagesEnv === null) return
+    const env = packagesEnv
+    let cancelled = false
+    window.api.runtime
+      .listPackages(env.language, env.envId)
+      .then((list) => {
+        if (cancelled) return
+        setPackages(list)
+        countsRef.current[env.envId] = list.length
+        setPackageCounts({ ...countsRef.current })
+      })
+      .catch((e: unknown) => {
+        if (cancelled) return
+        setPackagesError(e instanceof Error ? e.message : 'Could not list packages.')
+      })
+    return () => {
+      cancelled = true
+    }
+  }, [packagesEnv, packagesRetryNonce])
+
   // Recheck refreshes both halves of the runtime registry together for the same reason as initial
-  // loading: cards and their permissions must describe one coherent backend snapshot.
+  // loading: cards and their permissions must describe one coherent backend snapshot. Counts are
+  // cleared too so every badge refetches against the new env list.
   const recheck = async (): Promise<void> => {
     setBusy(true)
     setError(null)
+    countsRef.current = {}
+    setPackageCounts({})
     try {
       applyAll(await fetchAll())
     } catch (e) {
@@ -320,6 +391,31 @@ const RuntimesPanel = ({ title, description }: RuntimesPanelProps): React.JSX.El
           />
         </div>
 
+        {env.runnable ? (
+          <div className="mt-2">
+            <Button
+              type="button"
+              variant="outline"
+              size="sm"
+              data-testid="runtime-packages-button"
+              onClick={() => {
+                setPackages(null)
+                setPackagesError(null)
+                setPackagesFilter('')
+                setPackagesEnv(env)
+              }}
+            >
+              <Package aria-hidden="true" />
+              Packages
+              {typeof packageCounts[env.envId] === 'number' ? (
+                <Badge variant="secondary" data-testid="runtime-packages-count">
+                  {packageCounts[env.envId]}
+                </Badge>
+              ) : null}
+            </Button>
+          </div>
+        ) : null}
+
         {external && enabled ? (
           <div className="mt-3 border-t border-border pt-3">
             <SettingsRow
@@ -343,6 +439,18 @@ const RuntimesPanel = ({ title, description }: RuntimesPanelProps): React.JSX.El
   }
 
   const loading = !loaded || envs === null
+
+  // Dialog table derivations. Build/Channel columns appear only for conda-style listings (any
+  // package carrying build/channel); pip/CRAN listings get just Name/Version.
+  const visiblePackages = (packages ?? []).filter((pkg) =>
+    pkg.name.toLowerCase().includes(packagesFilter.trim().toLowerCase())
+  )
+  const hasCondaFields = (packages ?? []).some(
+    (pkg) => pkg.build !== undefined || pkg.channel !== undefined
+  )
+  const condaPackageCount = (packages ?? []).filter(
+    (pkg) => pkg.build !== undefined || pkg.channel !== undefined
+  ).length
 
   return (
     <div className="p-5" data-testid="runtimes-panel">
@@ -589,6 +697,163 @@ const RuntimesPanel = ({ title, description }: RuntimesPanelProps): React.JSX.El
           </AlertDialog.Content>
         </AlertDialog.Portal>
       </AlertDialog.Root>
+
+      <Dialog.Root
+        open={packagesEnv !== null}
+        onOpenChange={(open) => {
+          if (!open) setPackagesEnv(null)
+        }}
+      >
+        <Dialog.Portal>
+          <Dialog.Overlay className={dialogOverlayClassName} />
+          <Dialog.Content
+            data-testid="runtime-packages-dialog"
+            className={dialogPanelClassName(
+              'flex max-h-[85vh] w-[min(760px,calc(100vw-2rem))] flex-col'
+            )}
+          >
+            {dialogPackagesEnv ? (
+              <>
+                <Dialog.Title className={dialogTitleClassName}>
+                  Packages in {dialogPackagesEnv.label}
+                  {dialogPackagesEnv.version ? ` · ${dialogPackagesEnv.version}` : ''}
+                </Dialog.Title>
+                <Dialog.Description className={dialogDescriptionClassName}>
+                  Installed packages in this environment.
+                </Dialog.Description>
+
+                <div className="mt-2 flex flex-wrap items-center gap-2 text-[13px] text-muted-foreground">
+                  <Badge variant="secondary">{providerType(dialogPackagesEnv)}</Badge>
+                  {/* Conda env name badge — but only when the provenance badge doesn't already carry
+                      it: providerType() returns `Conda: <name>` for user-own conda envs, so the name
+                      badge is added just for app-owned (app-managed/agent-created) conda envs. */}
+                  {dialogPackagesEnv.condaEnv &&
+                  providerType(dialogPackagesEnv) !== `Conda: ${dialogPackagesEnv.condaEnv}` ? (
+                    <Badge variant="secondary">Conda: {dialogPackagesEnv.condaEnv}</Badge>
+                  ) : null}
+                  <Badge variant={dialogPackagesEnv.runnable ? 'secondary' : 'destructive'}>
+                    {dialogPackagesEnv.runnable ? 'Ready' : 'Not runnable'}
+                  </Badge>
+                  <code className="truncate text-xs">{dialogPackagesEnv.interpreterPath}</code>
+                </div>
+
+                <div className="mt-3 flex items-center gap-3">
+                  <div className="relative max-w-sm flex-1">
+                    <Search
+                      aria-hidden="true"
+                      className="pointer-events-none absolute left-2.5 top-1/2 size-3.5 -translate-y-1/2 text-muted-foreground"
+                    />
+                    <Input
+                      value={packagesFilter}
+                      onChange={(event) => setPackagesFilter(event.target.value)}
+                      placeholder="Filter packages…"
+                      aria-label="Filter packages"
+                      data-testid="runtime-packages-filter"
+                      className="pl-8"
+                    />
+                  </div>
+                  {packages !== null ? (
+                    <span className="text-xs text-muted-foreground">
+                      {visiblePackages.length} of {packages.length}
+                      {hasCondaFields
+                        ? ` · ${condaPackageCount} conda, ${packages.length - condaPackageCount} pypi`
+                        : ''}
+                    </span>
+                  ) : null}
+                </div>
+
+                <div className="mt-2 min-h-0 flex-1 overflow-y-auto rounded-md border border-border">
+                  {packagesError !== null ? (
+                    <div className="flex flex-col items-center gap-2 px-3 py-6">
+                      <p role="alert" className="text-sm text-destructive">
+                        {packagesError}
+                      </p>
+                      <Button
+                        type="button"
+                        variant="outline"
+                        size="sm"
+                        onClick={() => {
+                          setPackages(null)
+                          setPackagesError(null)
+                          setPackagesRetryNonce((nonce) => nonce + 1)
+                        }}
+                      >
+                        Retry
+                      </Button>
+                    </div>
+                  ) : packages === null ? (
+                    <p className="px-3 py-6 text-center text-sm text-muted-foreground">
+                      Listing packages…
+                    </p>
+                  ) : (
+                    <table className="w-full border-collapse text-[13px]">
+                      <thead className="sticky top-0 bg-card">
+                        <tr className="border-b border-border text-left text-xs text-muted-foreground">
+                          <th className="py-2 pl-3 pr-3 font-medium">Name</th>
+                          <th className="py-2 pr-3 font-medium">Version</th>
+                          {hasCondaFields ? (
+                            <>
+                              <th className="py-2 pr-3 font-medium">Build</th>
+                              <th className="py-2 pr-3 font-medium">Channel</th>
+                            </>
+                          ) : null}
+                        </tr>
+                      </thead>
+                      <tbody>
+                        {visiblePackages.map((pkg) => (
+                          <tr
+                            key={pkg.name}
+                            data-testid="runtime-package-row"
+                            className="border-b border-border last:border-b-0"
+                          >
+                            <td className="py-1.5 pl-3 pr-3 text-foreground">{pkg.name}</td>
+                            <td className="py-1.5 pr-3">
+                              <code className="text-xs text-muted-foreground">{pkg.version}</code>
+                            </td>
+                            {hasCondaFields ? (
+                              <>
+                                <td className="py-1.5 pr-3">
+                                  <code className="text-xs text-muted-foreground">
+                                    {pkg.build ?? '—'}
+                                  </code>
+                                </td>
+                                <td className="py-1.5 pr-3 text-xs text-muted-foreground">
+                                  {pkg.channel ?? '—'}
+                                </td>
+                              </>
+                            ) : null}
+                          </tr>
+                        ))}
+                      </tbody>
+                    </table>
+                  )}
+                  {packages !== null &&
+                  packagesError === null &&
+                  packages.length > 0 &&
+                  visiblePackages.length === 0 ? (
+                    <p className="px-3 py-6 text-center text-sm text-muted-foreground">
+                      No packages match “{packagesFilter}”.
+                    </p>
+                  ) : null}
+                  {packages !== null && packagesError === null && packages.length === 0 ? (
+                    <p className="px-3 py-6 text-center text-sm text-muted-foreground">
+                      No packages installed.
+                    </p>
+                  ) : null}
+                </div>
+
+                <div className="mt-4 flex justify-end">
+                  <Dialog.Close asChild>
+                    <Button type="button" variant="outline" size="sm">
+                      Close
+                    </Button>
+                  </Dialog.Close>
+                </div>
+              </>
+            ) : null}
+          </Dialog.Content>
+        </Dialog.Portal>
+      </Dialog.Root>
     </div>
   )
 }

@@ -5,6 +5,7 @@ import type {
   RuntimeSelection,
   RuntimeSource
 } from '../../shared/notebook-runtime'
+import { packageToolFor } from '../../shared/notebook-runtime'
 
 // The single seam every runtime consumer (Settings, Onboarding, executor, manage_packages) goes
 // through, so managed and external environments are handled uniformly instead of the executor and
@@ -55,10 +56,10 @@ export const computePackageMutability = (
   if (!selection) {
     return { mutable: false, reason: 'No runtime is selected for this language yet.' }
   }
+  const via = packageToolFor(language, selection.source === 'managed')
   if (selection.source === 'managed') {
-    return { mutable: true, via: 'micromamba' }
+    return { mutable: true, via }
   }
-  const via = language === 'r' ? 'r-library' : 'pip'
   // App-created overlay: Open Science owns this venv, so installs are always allowed.
   if (selection.appOwnedOverlay) {
     return { mutable: true, via }

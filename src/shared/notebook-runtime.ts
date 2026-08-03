@@ -37,6 +37,18 @@ export type RuntimeSelection =
 export type PackageMutability =
   { mutable: true; via: 'micromamba' | 'pip' | 'r-library' } | { mutable: false; reason: string }
 
+// The ONE mapping from who owns an env to which tool reads/writes its packages (the `via` in
+// PackageMutability): app-owned conda envs (managed OR agent-created, both under the app runtime
+// root) go through the bundled micromamba; the user's own envs are handled by their own interpreter's
+// pip (Python) or their own R library (R) — never the bundled micromamba against a foreign env.
+// Shared by the mutability policy (runtime-registry, writes) and the Settings package listing
+// (package-listing, read-only inventory) so the two call sites can never drift.
+export const packageToolFor = (
+  language: NotebookLanguage,
+  appOwned: boolean
+): 'micromamba' | 'pip' | 'r-library' =>
+  appOwned ? 'micromamba' : language === 'r' ? 'r-library' : 'pip'
+
 // One language's full runtime picture for the Settings/Onboarding UI: the persisted choice plus a
 // survey of BOTH sources so the UI can offer "use your detected Python at <path>" vs "managed env".
 // `selection` undefined => nothing chosen yet (resolves to the managed default at run time).
@@ -88,6 +100,16 @@ export type DiscoveredInterpreter = {
   runnable: boolean
   condaEnv?: string
   detail?: string
+}
+
+// One installed package in a discovered environment, surfaced by the Settings "Packages" dialog.
+// `build`/`channel` are present only for conda-tracked entries (a micromamba listing); pip and CRAN
+// listings carry name + version only.
+export type EnvPackage = {
+  name: string
+  version: string
+  build?: string
+  channel?: string
 }
 
 // The v4 per-language enablement state, keyed by `envId` (the interpreter's real path). `enabled` is

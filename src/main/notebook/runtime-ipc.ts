@@ -4,6 +4,7 @@ import { ipcMainHandle } from '../ipc-handler-registry'
 
 import type { NotebookLanguage } from '../../shared/notebook'
 import type {
+  EnvPackage,
   RuntimeEnablement,
   RuntimeSelection,
   RuntimeSurvey,
@@ -19,6 +20,7 @@ import {
   discoverInterpreters,
   type DiscoveredInterpreter
 } from './environment-discovery'
+import { listEnvPackages } from './package-listing'
 import { RuntimeRegistry } from './runtime-registry'
 import { prepareExternalPythonRuntime, type AppOwnedExternalSelection } from './venv-overlay'
 
@@ -73,6 +75,9 @@ export type RuntimeIpcDeps = {
   // WS11: how many live sessions are bound to a runtime (running/idle/dormant), so the disable
   // affordance can warn about impact before revoking. Optional; defaults to all-zero when unwired.
   describeRuntimeUsage?: (language: NotebookLanguage, envId: string) => RuntimeUsage
+  // Injectable for tests so the packages handler never spawns micromamba/pip/Rscript; production
+  // defaults to listEnvPackages against the real env.
+  listPackages?: (env: DiscoveredInterpreter) => Promise<EnvPackage[]>
 }
 
 // Registers the renderer-callable runtime-selection commands: survey both languages, persist a
@@ -107,25 +112,87 @@ const registerRuntimeIpcHandlers = (deps: RuntimeIpcDeps): void => {
     Promise.all(RUNTIME_LANGUAGES.map(buildSurvey))
   )
 
+  // One language's discovered envs: the manual-interpreter catalog snapshot merged into discovery
+  // as a sync getter, so a manually-added interpreter is probed + surfaced alongside detected ones.
+  const discoverLanguageEnvs = async (
+    language: NotebookLanguage
+  ): Promise<DiscoveredInterpreter[]> => {
+    const manual = await deps.settingsService.getManualInterpreters(language)
+    return discoverInterpreters(
+      language,
+      defaultDiscoveryDeps(deps.runtimeRoot(), () => manual)
+    )
+  }
+
   // v4 environment discovery: every detected interpreter (PATH / common dirs / pyenv / conda / app
   // envs) per language, for the Settings cards. Standard-location-only enumeration (no disk walk).
   ipcMainHandle(
     'runtime:list-environments',
     async (): Promise<{ python: DiscoveredInterpreter[]; r: DiscoveredInterpreter[] }> => {
-      // Snapshot the manual-interpreter catalog for both languages, then feed it into discovery as a
-      // sync getter so a manually-added interpreter is probed + surfaced alongside detected ones.
-      const [manualPy, manualR] = await Promise.all([
-        deps.settingsService.getManualInterpreters('python'),
-        deps.settingsService.getManualInterpreters('r')
-      ])
-      const discovery = defaultDiscoveryDeps(deps.runtimeRoot(), (language) =>
-        language === 'python' ? manualPy : manualR
-      )
       const [python, r] = await Promise.all([
-        discoverInterpreters('python', discovery),
-        discoverInterpreters('r', discovery)
+        discoverLanguageEnvs('python'),
+        discoverLanguageEnvs('r')
       ])
       return { python, r }
+    }
+  )
+
+  // The validated listing path shared by both package handlers: only ever called with a DISCOVERED
+  // env (see the envId lookup in runtime:list-packages), never with renderer-supplied paths.
+  const listPackagesFor = (env: DiscoveredInterpreter): Promise<EnvPackage[]> => {
+    const list =
+      deps.listPackages ??
+      ((target: DiscoveredInterpreter) =>
+        listEnvPackages(target, { runtimeRoot: deps.runtimeRoot() }))
+    return list(env)
+  }
+
+  // Read-only installed-package inventory for one env (Settings "Packages" dialog). The envId is
+  // validated against a FRESH discovery result — the renderer only names the env; the interpreter
+  // path / provenance used for dispatch come from discovery, so an arbitrary renderer-supplied path
+  // can never be probed.
+  ipcMainHandle(
+    'runtime:list-packages',
+    async (
+      _event,
+      request: { language: NotebookLanguage; envId: string }
+    ): Promise<EnvPackage[]> => {
+      const env = (await discoverLanguageEnvs(request.language)).find(
+        (candidate) => candidate.envId === request.envId
+      )
+      if (!env) {
+        throw new Error(`Unknown ${request.language} environment: ${request.envId}`)
+      }
+      return listPackagesFor(env)
+    }
+  )
+
+  // Bulk per-env package counts for the Settings card badges. ONE discovery sweep for the language
+  // (not one per env — each sweep spawns probe subprocesses), then a listing per runnable env with
+  // bounded concurrency so a machine with many envs doesn't spawn a burst of subprocesses. A failed
+  // listing maps to null (the card simply omits its badge); non-runnable envs get no entry at all.
+  const PACKAGE_COUNT_CONCURRENCY = 4
+  ipcMainHandle(
+    'runtime:list-package-counts',
+    async (
+      _event,
+      request: { language: NotebookLanguage }
+    ): Promise<Record<string, number | null>> => {
+      const runnable = (await discoverLanguageEnvs(request.language)).filter((env) => env.runnable)
+      const counts: Record<string, number | null> = {}
+      let next = 0
+      const worker = async (): Promise<void> => {
+        for (let i = next++; i < runnable.length; i = next++) {
+          const env = runnable[i]
+          counts[env.envId] = await listPackagesFor(env)
+            .then((packages) => packages.length)
+            .catch(() => null)
+        }
+      }
+      await Promise.all(
+        Array.from({ length: Math.min(PACKAGE_COUNT_CONCURRENCY, runnable.length) }, () => worker())
+      )
+      return counts
     }
   )
 

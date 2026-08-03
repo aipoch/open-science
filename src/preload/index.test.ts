@@ -278,6 +278,8 @@ describe('preload bridge — public surface inventory', () => {
       'runtime.describeUsage',
       'runtime.getEnablement',
       'runtime.listEnvironments',
+      'runtime.listPackageCounts',
+      'runtime.listPackages',
       'runtime.pickInterpreter',
       'runtime.registerInterpreter',
       'runtime.setEnvironmentEnabled',

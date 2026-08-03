@@ -4,6 +4,7 @@ import type { NotebookLanguage } from '../../shared/notebook'
 import type { DetectionResult, EnvironmentAdapter, RuntimeRegistryDeps } from './runtime-registry'
 import type {
   DiscoveredInterpreter,
+  EnvPackage,
   RuntimeEnablement,
   RuntimeSelection,
   RuntimeSurvey
@@ -24,14 +25,19 @@ vi.mock('electron', () => ({
 }))
 
 // Controllable discovery so the enablement-invariant handler never enumerates the real machine.
+// `calls` records every discoverInterpreters invocation so tests can assert on sweep counts.
 const discoveryState = vi.hoisted(() => ({
   python: [] as unknown[],
-  r: [] as unknown[]
+  r: [] as unknown[],
+  calls: [] as Array<'python' | 'r'>
 }))
 
 vi.mock('./environment-discovery', () => ({
   defaultDiscoveryDeps: () => ({}),
-  discoverInterpreters: async (language: 'python' | 'r') => discoveryState[language]
+  discoverInterpreters: async (language: 'python' | 'r') => {
+    discoveryState.calls.push(language)
+    return discoveryState[language]
+  }
 }))
 
 const fakeEnv = (
@@ -175,6 +181,7 @@ beforeEach(() => {
   showOpenDialog.mockReset()
   discoveryState.python = []
   discoveryState.r = []
+  discoveryState.calls = []
 })
 
 describe('runtime IPC handlers', () => {
@@ -440,6 +447,104 @@ describe('runtime enablement handlers', () => {
 
     expect(result.installAuthorized['/usr/bin/python3']).toBe(true)
     expect(result.enabled).toEqual({})
+  })
+})
+
+describe('runtime:list-packages', () => {
+  beforeEach(() => {
+    handlers.clear()
+  })
+
+  it('lists packages for a DISCOVERED env, passing the discovery env (not renderer data) through', async () => {
+    discoveryState.python = [fakeEnv('app-managed', '/managed/a')]
+    const listed: DiscoveredInterpreter[] = []
+    registerRuntimeIpcHandlers(
+      fakeDeps({
+        listPackages: async (env) => {
+          listed.push(env)
+          return [{ name: 'numpy', version: '2.1.3', build: 'b0', channel: 'conda-forge' }]
+        }
+      })
+    )
+
+    const result = (await invoke('runtime:list-packages', {
+      language: 'python',
+      envId: '/managed/a'
+    })) as EnvPackage[]
+
+    expect(result).toEqual([
+      { name: 'numpy', version: '2.1.3', build: 'b0', channel: 'conda-forge' }
+    ])
+    expect(listed).toEqual([fakeEnv('app-managed', '/managed/a')])
+  })
+
+  it('rejects an envId that discovery does not know, so arbitrary paths cannot be probed', async () => {
+    discoveryState.python = [fakeEnv('app-managed', '/managed/a')]
+    const listPackages = vi.fn()
+    registerRuntimeIpcHandlers(fakeDeps({ listPackages }))
+
+    await expect(
+      invoke('runtime:list-packages', { language: 'python', envId: '/etc/passwd' })
+    ).rejects.toThrow(/Unknown python environment/)
+    expect(listPackages).not.toHaveBeenCalled()
+  })
+})
+
+describe('runtime:list-package-counts', () => {
+  beforeEach(() => {
+    handlers.clear()
+  })
+
+  it('runs ONE discovery sweep for the language, then counts every runnable env', async () => {
+    discoveryState.python = [
+      fakeEnv('app-managed', '/managed/a'),
+      fakeEnv('user-own', '/usr/bin/python3'),
+      { ...fakeEnv('user-own', '/broken/python'), runnable: false }
+    ]
+    const listed: string[] = []
+    registerRuntimeIpcHandlers(
+      fakeDeps({
+        listPackages: async (env) => {
+          listed.push(env.envId)
+          return env.envId === '/managed/a'
+            ? [
+                { name: 'numpy', version: '2.1.3' },
+                { name: 'pandas', version: '2.2.3' }
+              ]
+            : [{ name: 'requests', version: '2.32.3' }]
+        }
+      })
+    )
+
+    const counts = (await invoke('runtime:list-package-counts', {
+      language: 'python'
+    })) as Record<string, number | null>
+
+    // One sweep regardless of env count; non-runnable envs are never listed.
+    expect(discoveryState.calls).toEqual(['python'])
+    expect(listed.sort()).toEqual(['/managed/a', '/usr/bin/python3'])
+    expect(counts).toEqual({ '/managed/a': 2, '/usr/bin/python3': 1 })
+  })
+
+  it('maps a failed listing to null (badge omitted) without failing the other envs', async () => {
+    discoveryState.python = [
+      fakeEnv('app-managed', '/managed/a'),
+      fakeEnv('user-own', '/usr/bin/python3')
+    ]
+    registerRuntimeIpcHandlers(
+      fakeDeps({
+        listPackages: async (env) => {
+          if (env.envId === '/usr/bin/python3') throw new Error('pip failed')
+          return [{ name: 'numpy', version: '2.1.3' }]
+        }
+      })
+    )
+
+    const counts = (await invoke('runtime:list-package-counts', {
+      language: 'python'
+    })) as Record<string, number | null>
+
+    expect(counts).toEqual({ '/managed/a': 1, '/usr/bin/python3': null })
   })
 })
 

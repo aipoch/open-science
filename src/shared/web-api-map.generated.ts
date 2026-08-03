@@ -102,6 +102,8 @@ export const WEB_INVOKE_CHANNELS = {
   'runtime.describeUsage': 'runtime:describe-usage',
   'runtime.getEnablement': 'runtime:get-enablement',
   'runtime.listEnvironments': 'runtime:list-environments',
+  'runtime.listPackageCounts': 'runtime:list-package-counts',
+  'runtime.listPackages': 'runtime:list-packages',
   'runtime.pickInterpreter': 'runtime:pick-interpreter',
   'runtime.registerInterpreter': 'runtime:register-interpreter',
   'runtime.setEnvironmentEnabled': 'runtime:set-environment-enabled',
