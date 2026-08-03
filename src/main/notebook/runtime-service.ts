@@ -96,10 +96,8 @@ import {
   type NotebookSessionRuntimeBinding
 } from './session-aggregate'
 import { NotebookSessionRegistry } from './session-registry'
-import { getAppClaudeConfigDir } from '../settings/provider-env'
 import { createLogger, getLogFilePath } from '../logger'
 import {
-  EnvironmentManifestPublicationError,
   EnvironmentStateTracker,
   type EnvironmentCaptureTarget,
   type PackageInspectionResult,
@@ -334,39 +332,6 @@ const saveIpynbWithDialog = async (
 // orchestration (directory picker, conflict check, partial-write cleanup) lives in save-ipynb-all
 // so tests can exercise the real path with a mocked electron instead of bypassing via the seam.
 
-// Turns unexpected executor exceptions into ordinary run results for the agent to inspect.
-const errorToExecutionResult = (error: unknown, cwd: string): NotebookExecutionResult => {
-  const message = error instanceof Error ? error.message : String(error)
-
-  return {
-    status: 'failed',
-    stdout: '',
-    stderr: message,
-    traceback: message,
-    cwdAfter: cwd,
-    outputs: [
-      {
-        type: 'error',
-        message,
-        traceback: message
-      }
-    ]
-  }
-}
-
-// Result for a run whose kernel was deliberately FORCE-STOPPED (a "stop running work and disable"):
-// recorded 'cancelled', not 'failed', so history reflects a user action rather than an error.
-const CANCELLED_MESSAGE =
-  'Run cancelled: the runtime was disabled (stop running work) while this cell was executing.'
-const cancelledExecutionResult = (cwd: string): NotebookExecutionResult => ({
-  status: 'cancelled',
-  stdout: '',
-  stderr: CANCELLED_MESSAGE,
-  traceback: CANCELLED_MESSAGE,
-  cwdAfter: cwd,
-  outputs: [{ type: 'error', message: CANCELLED_MESSAGE, traceback: CANCELLED_MESSAGE }]
-})
-
 // Resolves the on-disk locations of the Python/R exec-loop scripts without depending on Electron
 // (mirrors micromamba.ts's electron-free resolution). resources/** ships via electron-builder's
 // asarUnpack, so a packaged build's loop scripts land beside app.asar under app.asar.unpacked rather
@@ -530,8 +495,13 @@ class NotebookRuntimeService {
       configRoot: options.configRoot,
       repository: this.repository,
       runTerminalization: this.runTerminalization,
+      dataExecutionAdmission: this.dataExecutionAdmission,
+      environmentStateTracker: this.environmentStateTracker,
+      createEnvironmentCaptureTarget: (...args) => this.environmentCaptureTarget(...args),
+      persistKernelStatus: (session, status, processKey) =>
+        this.persistKernelStatus(session, status, processKey),
       getMcpRpcConnectionResolver: () => this.mcpRpcConnectionResolver,
-      notifyAvailable: (session) => this.notifyNotebookAvailable(session, 'agent'),
+      notifyAvailable: (session, source) => this.notifyNotebookAvailable(session, source),
       platform: options.platform,
       shellProcess: options.shellProcess
     })
@@ -822,198 +792,10 @@ class NotebookRuntimeService {
     return { sessionId: session.sessionId, cellId: cell.id, code: cell.code, status: cell.status }
   }
 
-  // Persists a running run, executes the cell, then updates the same history entry with results.
+  // Compatibility facade: Session lookup and public summary projection stay here; lifecycle is owned.
   async runCell(request: RunNotebookCellRequest): Promise<NotebookRunSummary> {
     const session = await this.ensureSession(request)
-    const cell = session.cellView(request.cellId)
-
-    if (session.isCellReceiving(cell.id)) {
-      throw new Error(`Notebook cell is still receiving code: ${cell.id}`)
-    }
-
-    // Serialize execution PER process key (`${kind}:${env}`) on its own interpreter: chain this run
-    // after any in-flight run on the SAME (kind, env) so that env's kernel processes one cell at a
-    // time, while a different env or language (e.g. python:my-analysis vs python:default-python vs r)
-    // proceeds on its own independent chain (§5/D4, generalizes G5's per-kind queue to per-env).
-    const route = this.dataExecutionAdmission.route(session, cell.language)
-    return session.enqueueExecution(route.processKey, () =>
-      this.runCellExclusive(session, cell, request)
-    )
-  }
-
-  // Runs one cell to completion while holding its (kind, env) execution slot. Only ever invoked through
-  // the per-process-key executionQueues chain so activeRunId, execution counts, and each shared
-  // interpreter stay consistent across overlapping run requests on that env.
-  private async runCellExclusive(
-    session: RuntimeSession,
-    cell: Readonly<NotebookCell>,
-    request: RunNotebookCellRequest
-  ): Promise<NotebookRunSummary> {
-    this.notifyNotebookAvailable(session, request.source ?? 'agent')
-    const { runId } = this.runTerminalization.allocateRunIdentity()
-    const startedAt = Date.now()
-    const executionCount = session.nextExecutionCount()
-    const cwdBefore = session.cwd
-    // Admission re-resolves at the exclusive run boundary, matching the former façade behavior while
-    // the pre-queue route above continues to choose the serialization slot. A binding switch while
-    // queued therefore retains the legacy dual-resolution behavior rather than hardening this refactor.
-    const admission = await this.dataExecutionAdmission.admit(session, cell)
-    const { environment: env, processKey } = admission.route
-    const { binding, resolvedInterpreter } = admission
-
-    // Mark the cell as running before execution so the preview can show immediate progress.
-    session.markCellRunning(cell.id, runId, executionCount)
-    const runningRun: NotebookRunRecord = {
-      runId,
-      cellId: cell.id,
-      source: request.source ?? 'agent',
-      inputKind: request.inputKind ?? 'cell',
-      kernelKind: cell.language,
-      script: cell.code,
-      status: 'running',
-      startedAt,
-      cwdBefore,
-      executionCount,
-      environment: env,
-      ...request.provenanceContext,
-      text: {
-        stdout: '',
-        stderr: '',
-        traceback: '',
-        plain: []
-      },
-      outputs: [],
-      artifacts: [],
-      workingFiles: [],
-      inputFiles: request.provenanceContext ? (request.registeredInputFiles ?? []) : []
-    }
-
-    // Surfaces (rather than silently substituting) a missing cwd instead of letting the executor's
-    // spawn fall back to the OS default cwd on ENOENT and run the kernel somewhere unexpected.
-    if (!existsSync(cwdBefore)) {
-      console.error(
-        `[notebook] Session cwd is missing before execution, the kernel may run in an unexpected directory: ${cwdBefore}`
-      )
-    }
-
-    // A policy/binding/interpreter rejection never reaches the kernel, so preserve its current
-    // lifecycle status instead of briefly publishing a false 'running'. For a viable dispatch, clear
-    // any stale terminated flag so a completing run can settle back to 'idle'. No notify: the run
-    // terminalization owner's append notification surfaces the fresh status to the renderer.
-    const kernelMarkedRunning = admission.rejection === undefined
-    if (kernelMarkedRunning) {
-      session.clearKernelTerminated(processKey)
-      await this.persistKernelStatus(session, 'running', processKey)
-    }
-
-    // Every execution result, including errors, is normalized into data for agent analysis. The
-    // connector RPC connection is NOT threaded here: data kernels (python/r) have no host.mcp and no
-    // outbound connector access. Connector fetches run on the control-plane REPL (executeControl) and
-    // hand data to python/r through the ./handoff channel. The execute runs as a shared reader of the
-    // per-ENV lock, so it can never overlap an install into that same env (§5, G2/D5).
-    let executedOnLiveKernel = true
-    let reachedExecutor = false
-    const { run } = await this.runTerminalization.run({
-      session,
-      runningRun,
-      invoke: () =>
-        this.dataExecutionAdmission.runShared(admission, async (rejection) => {
-          if (rejection !== undefined) {
-            executedOnLiveKernel = false
-            return errorToExecutionResult(rejection, cwdBefore)
-          }
-          const environmentTarget = this.environmentCaptureTarget(
-            cell.language,
-            env,
-            binding,
-            resolvedInterpreter,
-            session.runtimeRoot
-          )
-          let environmentRunStart
-          try {
-            // A dirty generation may represent a crashed installer. Reconcile it before any new
-            // Notebook code executes, then retain the cheap start fingerprint so completion can
-            // detect out-of-band package changes made while the cell was running.
-            environmentRunStart = await this.environmentStateTracker.prepareRun(environmentTarget)
-          } catch (error) {
-            executedOnLiveKernel = false
-            return errorToExecutionResult(error, cwdBefore)
-          }
-          reachedExecutor = true
-          const result = await session
-            .execute({
-              code: cell.code,
-              cwd: cwdBefore,
-              language: cell.language,
-              // v4: the env comes from the session binding (resolveRunEnv), not a per-call argument.
-              environment: env,
-              notebookSessionRoot: session.notebookSessionRoot,
-              dataRoot: session.dataRoot,
-              runtimeRoot: session.runtimeRoot,
-              protectedDirs: [getAppClaudeConfigDir(this.options.configRoot)],
-              timeoutMs: request.timeoutMs,
-              resolvedInterpreter,
-              inputRunLeaseId: request.inputRunLeaseId
-            })
-            .catch((error: unknown) => {
-              executedOnLiveKernel = false
-              // A force-stop (disable "stop running work") kills the kernel mid-run: record the run as
-              // 'cancelled' (a user action), not 'failed' (an error). Consume the one-shot flag.
-              if (session.consumeForceStopped(processKey)) {
-                return cancelledExecutionResult(cwdBefore)
-              }
-              return errorToExecutionResult(error, cwdBefore)
-            })
-          if (result.status !== 'completed') return result
-          try {
-            const capture = await this.environmentStateTracker.captureCompletedRun(
-              environmentTarget,
-              result.environmentOverlay,
-              environmentRunStart
-            )
-            return {
-              ...result,
-              environmentCapture: {
-                state: capture.manifest.captureStatus === 'complete' ? 'available' : 'partial',
-                manifestChecksum: capture.checksum,
-                ...(capture.manifest.warnings?.length
-                  ? { warnings: [...capture.manifest.warnings] }
-                  : {})
-              },
-              environmentManifest: capture.manifest,
-              environmentManifestChecksum: capture.checksum
-            }
-          } catch (error) {
-            // Environment evidence is best-effort; a valid Notebook result remains usable when the
-            // local cache/manifest store is unavailable.
-            return {
-              ...result,
-              environmentCapture: {
-                state: 'unavailable',
-                reason:
-                  error instanceof EnvironmentManifestPublicationError
-                    ? 'environment-manifest-publication-failed'
-                    : 'environment-capture-failed'
-              }
-            }
-          }
-        }),
-      postCommit: (result) => {
-        // The next run starts in whatever directory the shared interpreter ended in.
-        session.completeCellRun(cell.id, result.status, result.cwdAfter ?? cwdBefore)
-      }
-    })
-
-    // A run that completed through the executor proves the kernel is alive. A dispatch that was
-    // marked running but failed during a post-lock preflight never touched the kernel and must also
-    // settle back to idle. Preserve a mid-flight crash/hard-timeout's explicit terminated status.
-    if (
-      !session.isKernelTerminated(processKey) &&
-      (executedOnLiveKernel || (kernelMarkedRunning && !reachedExecutor))
-    ) {
-      await this.markKernelStatusIdle(session, processKey)
-    }
-
+    const run = await this.executionOwner.executeDataCell(session, request)
     return this.toRunSummary(session, run)
   }
 
@@ -2270,14 +2052,6 @@ class NotebookRuntimeService {
     } catch {
       return
     }
-  }
-
-  // Persists 'idle' once a run actually completes on a live kernel, clearing a stale 'terminated'
-  // (idle-shutdown) or 'restarting' status without a full status state machine — mirrors the
-  // self-clearing 'restarting' -> 'idle' transition restart() already performs in its finally block.
-  // Best-effort: a persistence failure here must not surface as a run failure.
-  private async markKernelStatusIdle(session: RuntimeSession, processKey: string): Promise<void> {
-    await this.persistKernelStatus(session, 'idle', processKey)
   }
 
   // Records a kernel-level lifecycle status for one process key. Always updates the in-memory per-env

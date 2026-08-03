@@ -1,21 +1,34 @@
+import { existsSync } from 'node:fs'
 import { join } from 'node:path'
 
 import type {
   ExecuteNotebookControlRequest,
   ExecuteShellRequest,
+  NotebookCell,
+  NotebookLanguage,
   NotebookOutput,
   NotebookRunRecord,
+  NotebookRunSource,
   NotebookRunStatus,
-  NotebookWorkingFile
+  NotebookWorkingFile,
+  RunNotebookCellRequest
 } from '../../shared/notebook'
 import { getAppClaudeConfigDir } from '../settings/provider-env'
+import { NotebookDataExecutionAdmissionOwner } from './data-execution-admission'
+import {
+  EnvironmentManifestPublicationError,
+  EnvironmentStateTracker,
+  type EnvironmentCaptureTarget
+} from './environment-state-tracker'
 import { detectManagedRuntimeMutation } from './managed-runtime-guard'
 import type { NotebookRunRepository } from './repository'
 import { NotebookRunTerminalizationOwner } from './run-terminalization'
 import type {
   NotebookSessionAggregate,
   NotebookSessionExecutionResult,
-  NotebookSessionMcpRpcConnection
+  NotebookSessionMcpRpcConnection,
+  NotebookSessionResolvedInterpreter,
+  NotebookSessionRuntimeBinding
 } from './session-aggregate'
 import {
   NotebookShellProcessAdapter,
@@ -61,8 +74,22 @@ type NotebookExecutionOwnerOptions = {
   configRoot: string
   repository: Pick<NotebookRunRepository, 'updateKernelStatus'>
   runTerminalization: NotebookRunTerminalizationOwner
+  dataExecutionAdmission: NotebookDataExecutionAdmissionOwner
+  environmentStateTracker: Pick<EnvironmentStateTracker, 'prepareRun' | 'captureCompletedRun'>
+  createEnvironmentCaptureTarget: (
+    language: NotebookLanguage,
+    environment: string,
+    binding: NotebookSessionRuntimeBinding | undefined,
+    resolvedInterpreter: NotebookSessionResolvedInterpreter | undefined,
+    runtimeRoot: string
+  ) => EnvironmentCaptureTarget
+  persistKernelStatus: (
+    session: NotebookSessionAggregate,
+    status: 'running' | 'idle',
+    processKey: string
+  ) => Promise<void>
   getMcpRpcConnectionResolver: () => McpRpcConnectionResolver | undefined
-  notifyAvailable: (session: NotebookSessionAggregate) => void
+  notifyAvailable: (session: NotebookSessionAggregate, source: NotebookRunSource) => void
   platform?: NodeJS.Platform
   shellProcess?: NotebookShellProcess
 }
@@ -80,6 +107,12 @@ const errorToExecutionResult = (error: unknown, cwd: string): NotebookSessionExe
   }
 }
 
+const CANCELLED_MESSAGE =
+  'Run cancelled: the runtime was disabled (stop running work) while this cell was executing.'
+const cancelledExecutionResult = (cwd: string): NotebookSessionExecutionResult => ({
+  ...errorToExecutionResult(new Error(CANCELLED_MESSAGE), cwd),
+  status: 'cancelled'
+})
 class NotebookExecutionOwner {
   private readonly shellProcess: NotebookShellProcess
   private controlCompletionInterceptor: NotebookControlCompletionInterceptor | undefined
@@ -93,7 +126,152 @@ class NotebookExecutionOwner {
   ): void {
     this.controlCompletionInterceptor = interceptor
   }
-
+  async executeDataCell(
+    session: NotebookSessionAggregate,
+    request: RunNotebookCellRequest
+  ): Promise<NotebookRunRecord> {
+    const cell = session.cellView(request.cellId)
+    if (session.isCellReceiving(cell.id)) {
+      throw new Error(`Notebook cell is still receiving code: ${cell.id}`)
+    }
+    const route = this.options.dataExecutionAdmission.route(session, cell.language)
+    return session.enqueueExecution(route.processKey, () =>
+      this.executeDataCellExclusive(session, cell, request)
+    )
+  }
+  private async executeDataCellExclusive(
+    session: NotebookSessionAggregate,
+    cell: Readonly<NotebookCell>,
+    request: RunNotebookCellRequest
+  ): Promise<NotebookRunRecord> {
+    this.options.notifyAvailable(session, request.source ?? 'agent')
+    const { runId } = this.options.runTerminalization.allocateRunIdentity()
+    const startedAt = Date.now()
+    const executionCount = session.nextExecutionCount()
+    const cwdBefore = session.cwd
+    const admission = await this.options.dataExecutionAdmission.admit(session, cell)
+    const { environment, processKey } = admission.route
+    const { binding, resolvedInterpreter } = admission
+    session.markCellRunning(cell.id, runId, executionCount)
+    const runningRun: NotebookRunRecord = {
+      runId,
+      cellId: cell.id,
+      source: request.source ?? 'agent',
+      inputKind: request.inputKind ?? 'cell',
+      kernelKind: cell.language,
+      script: cell.code,
+      status: 'running',
+      startedAt,
+      cwdBefore,
+      executionCount,
+      environment,
+      ...request.provenanceContext,
+      text: { stdout: '', stderr: '', traceback: '', plain: [] },
+      outputs: [],
+      artifacts: [],
+      workingFiles: [],
+      inputFiles: request.provenanceContext ? (request.registeredInputFiles ?? []) : []
+    }
+    if (!existsSync(cwdBefore)) {
+      console.error(
+        `[notebook] Session cwd is missing before execution, the kernel may run in an unexpected directory: ${cwdBefore}`
+      )
+    }
+    const kernelMarkedRunning = admission.rejection === undefined
+    if (kernelMarkedRunning) {
+      session.clearKernelTerminated(processKey)
+      await this.options.persistKernelStatus(session, 'running', processKey)
+    }
+    let executedOnLiveKernel = true
+    let reachedExecutor = false
+    const { run } = await this.options.runTerminalization.run({
+      session,
+      runningRun,
+      invoke: () =>
+        this.options.dataExecutionAdmission.runShared(admission, async (rejection) => {
+          if (rejection !== undefined) {
+            executedOnLiveKernel = false
+            return errorToExecutionResult(rejection, cwdBefore)
+          }
+          const target = this.options.createEnvironmentCaptureTarget(
+            cell.language,
+            environment,
+            binding,
+            resolvedInterpreter,
+            session.runtimeRoot
+          )
+          let environmentRunStart
+          try {
+            environmentRunStart = await this.options.environmentStateTracker.prepareRun(target)
+          } catch (error) {
+            executedOnLiveKernel = false
+            return errorToExecutionResult(error, cwdBefore)
+          }
+          reachedExecutor = true
+          const result = await session
+            .execute({
+              code: cell.code,
+              cwd: cwdBefore,
+              language: cell.language,
+              environment,
+              notebookSessionRoot: session.notebookSessionRoot,
+              dataRoot: session.dataRoot,
+              runtimeRoot: session.runtimeRoot,
+              protectedDirs: [getAppClaudeConfigDir(this.options.configRoot)],
+              timeoutMs: request.timeoutMs,
+              resolvedInterpreter,
+              inputRunLeaseId: request.inputRunLeaseId
+            })
+            .catch((error: unknown) => {
+              executedOnLiveKernel = false
+              return session.consumeForceStopped(processKey)
+                ? cancelledExecutionResult(cwdBefore)
+                : errorToExecutionResult(error, cwdBefore)
+            })
+          if (result.status !== 'completed') return result
+          try {
+            const capture = await this.options.environmentStateTracker.captureCompletedRun(
+              target,
+              result.environmentOverlay,
+              environmentRunStart
+            )
+            return {
+              ...result,
+              environmentCapture: {
+                state: capture.manifest.captureStatus === 'complete' ? 'available' : 'partial',
+                manifestChecksum: capture.checksum,
+                ...(capture.manifest.warnings?.length
+                  ? { warnings: [...capture.manifest.warnings] }
+                  : {})
+              },
+              environmentManifest: capture.manifest,
+              environmentManifestChecksum: capture.checksum
+            }
+          } catch (error) {
+            return {
+              ...result,
+              environmentCapture: {
+                state: 'unavailable',
+                reason:
+                  error instanceof EnvironmentManifestPublicationError
+                    ? 'environment-manifest-publication-failed'
+                    : 'environment-capture-failed'
+              }
+            }
+          }
+        }),
+      postCommit: (result) => {
+        session.completeCellRun(cell.id, result.status, result.cwdAfter ?? cwdBefore)
+      }
+    })
+    if (
+      !session.isKernelTerminated(processKey) &&
+      (executedOnLiveKernel || (kernelMarkedRunning && !reachedExecutor))
+    ) {
+      await this.options.persistKernelStatus(session, 'idle', processKey)
+    }
+    return run
+  }
   async executeControl(
     session: NotebookSessionAggregate,
     request: ExecuteNotebookControlRequest
@@ -147,7 +325,7 @@ class NotebookExecutionOwner {
     runId: string,
     controlInvocationGeneration: number
   ): Promise<NotebookControlResult> {
-    this.options.notifyAvailable(session)
+    this.options.notifyAvailable(session, 'agent')
     const runningRun: NotebookRunRecord = {
       runId,
       cellId: `repl-${runId}`,
