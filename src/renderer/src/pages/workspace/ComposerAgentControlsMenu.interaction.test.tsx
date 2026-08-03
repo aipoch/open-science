@@ -36,11 +36,13 @@ vi.mock('@/components/ui/dropdown-menu', () => ({
     <div data-testid="dropdown-group">{children}</div>
   ),
   DropdownMenuSub: ({ children }: PropsWithChildren): React.JSX.Element => <div>{children}</div>,
+  // testids let tests tell a hover submenu trigger/content apart from an inline label/group,
+  // so a regression that flattens a submenu into the primary panel is caught.
   DropdownMenuSubTrigger: ({ children }: PropsWithChildren): React.JSX.Element => (
-    <div>{children}</div>
+    <div data-testid="submenu-trigger">{children}</div>
   ),
   DropdownMenuSubContent: ({ children }: PropsWithChildren): React.JSX.Element => (
-    <div>{children}</div>
+    <div data-testid="submenu-content">{children}</div>
   ),
   DropdownMenuItem: ({
     children,
@@ -755,6 +757,60 @@ describe('ComposerAgentControlsMenu', () => {
     // SSH hosts + Manage compute stay nested under that single Compute submenu.
     expect(container.textContent).toContain('SSH')
     expect(container.textContent).toContain('Manage compute...')
+  })
+
+  it('folds Compute into a hover submenu that holds the SSH hosts and Manage compute', () => {
+    // Regression guard (#545 flattened Compute into the primary panel): Compute must be a
+    // single hover-expandable row whose content holds the host list, and the top-level order
+    // stays permission mode -> auto-review -> specialist -> compute.
+    act(() => {
+      root.render(
+        <ComposerAgentControlsMenu
+          profile="ask"
+          autoReviewEnabled={false}
+          enabledComputeHosts={[]}
+          showSpecialist
+          onProfileChange={vi.fn()}
+          onAutoReviewChange={vi.fn()}
+          onComputeHostToggle={vi.fn()}
+        />
+      )
+    })
+
+    // The Compute row is a hover submenu trigger, never a static label in the primary panel.
+    const computeTriggers = Array.from(
+      container.querySelectorAll('[data-testid="submenu-trigger"]')
+    ).filter((el) => el.textContent?.includes('Compute'))
+    expect(computeTriggers).toHaveLength(1)
+
+    // SSH hosts and Manage compute live inside that submenu's content, reached on hover.
+    const computeSubContents = Array.from(
+      container.querySelectorAll('[data-testid="submenu-content"]')
+    ).filter((el) => el.textContent?.includes('cluster-1'))
+    expect(computeSubContents).toHaveLength(1)
+    expect(computeSubContents[0]?.textContent).toContain('Manage compute...')
+
+    // Top-level order: permission mode -> auto-review -> specialist -> compute.
+    const orderAnchor = (needle: string): Element => {
+      const match = Array.from(container.querySelectorAll('[data-testid="submenu-trigger"]')).find(
+        (el) => el.textContent?.includes(needle)
+      )
+      if (!match) throw new Error(`submenu trigger not found: ${needle}`)
+      return match
+    }
+    const permissionTrigger = orderAnchor('Permission mode')
+    const computeTrigger = computeTriggers[0] as Element
+    const autoReviewRow = findButton(
+      'Auto-reviewA reviewer agent checks every change before it lands.'
+    )
+    const specialistStub = container.querySelector('[data-testid="specialist-submenu-stub"]')
+    expect(specialistStub).not.toBeNull()
+
+    const precedes = (a: Element, b: Element): boolean =>
+      (a.compareDocumentPosition(b) & Node.DOCUMENT_POSITION_FOLLOWING) !== 0
+    expect(precedes(permissionTrigger, autoReviewRow)).toBe(true)
+    expect(precedes(autoReviewRow, specialistStub as Element)).toBe(true)
+    expect(precedes(specialistStub as Element, computeTrigger)).toBe(true)
   })
 
   it('does not render the specialist submenu when showSpecialist is false', () => {
