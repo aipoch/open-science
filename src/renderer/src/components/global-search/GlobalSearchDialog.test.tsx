@@ -162,8 +162,14 @@ describe('GlobalSearchDialog', () => {
       '[data-testid="global-search-results"]'
     )
     const footer = document.body.querySelector<HTMLElement>('[data-testid="global-search-footer"]')
+    const input = dialog?.querySelector<HTMLInputElement>('input[role="combobox"]')
+    const searchHeader = input?.parentElement
 
     expect(dialog?.classList).toContain('h-[calc(100dvh_-_1rem)]')
+    expect(input?.classList).toContain('focus-visible:ring-0')
+    expect(input?.classList).not.toContain('focus-visible:outline-ring')
+    expect(searchHeader?.classList).toContain('focus-within:ring-[3px]')
+    expect(searchHeader?.classList).toContain('focus-within:ring-inset')
     expect(results?.classList).toContain('min-h-0')
     expect(results?.classList).toContain('flex-1')
     expect(footer?.classList).toContain('shrink-0')

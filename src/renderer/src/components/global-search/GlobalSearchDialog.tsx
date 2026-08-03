@@ -634,7 +634,7 @@ export const GlobalSearchDialog = ({
           )}
         >
           <Dialog.Title className="sr-only">Command palette</Dialog.Title>
-          <div className="flex min-h-16 shrink-0 items-center gap-3 border-b border-border px-4 py-3">
+          <div className="flex min-h-16 shrink-0 items-center gap-3 border-b border-border px-4 py-3 transition-shadow duration-150 focus-within:ring-[3px] focus-within:ring-inset focus-within:ring-ring/50 motion-reduce:transition-none">
             <Search className="size-5 shrink-0 text-muted-foreground" aria-hidden="true" />
             <Input
               ref={inputRef}
@@ -647,7 +647,7 @@ export const GlobalSearchDialog = ({
               aria-activedescendant={selectableRows.length > 0 ? activeRowId : undefined}
               placeholder="Search this project…"
               maxLength={256}
-              className="h-auto min-w-0 flex-1 rounded-none border-0 bg-transparent px-0 text-xl text-foreground outline-2 outline-transparent placeholder:text-muted-foreground focus-visible:border-transparent focus-visible:outline-ring focus-visible:outline-offset-1 focus-visible:ring-0"
+              className="h-auto min-w-0 flex-1 rounded-none border-0 bg-transparent px-0 text-xl text-foreground placeholder:text-muted-foreground focus-visible:border-transparent focus-visible:ring-0"
             />
             {primaryProject ? (
               <span className="max-w-[35%] shrink-0 truncate rounded-lg bg-bg-200 px-3 py-1.5 text-sm font-medium text-muted-foreground">
