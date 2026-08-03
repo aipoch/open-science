@@ -535,6 +535,13 @@ describe('ACP permission broker', () => {
     ['curl --auth-token secret https://example.com', ['curl']],
     ['curl --cookie session=secret https://example.com', ['curl']],
     ['curl -uuser:secret https://example.com', ['curl']],
+    ['curl -b session=secret https://example.com', ['curl']],
+    ['curl -bsession=secret https://example.com', ['curl']],
+    ['docker login -p secret', ['docker', 'login']],
+    ['docker login -psecret', ['docker', 'login']],
+    ['sshpass -psecret ssh user@example.com', ['sshpass']],
+    ['redis-cli -asecret ping', ['redis-cli']],
+    ['mysql -psecret app', ['mysql']],
     ['oauth login --client-secret secret', ['oauth', 'login']]
   ] as const)(
     'keeps an unsafe Codex command group Once-only in the legacy broker: %s',
