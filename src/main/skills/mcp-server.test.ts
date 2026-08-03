@@ -5,6 +5,7 @@ import { describe, expect, it, vi } from 'vitest'
 import {
   REQUEST_SKILL_IMPORT_TOOL_NAME,
   SKILL_IMPORT_MCP_SERVER_NAME,
+  SKILL_IMPORT_SYSTEM_PROMPT_APPEND,
   createSkillImportMcpServer
 } from './mcp-server'
 
@@ -61,6 +62,13 @@ describe('Skill import MCP server', () => {
     expect(githubResult).toMatchObject({
       content: [{ type: 'text', text: expect.stringContaining('imported-slide-master') }]
     })
+    expect(SKILL_IMPORT_SYSTEM_PROMPT_APPEND).toContain(
+      'When the user supplies only a Skill name or keywords'
+    )
+    expect(SKILL_IMPORT_SYSTEM_PROMPT_APPEND).toContain('first use available web search')
+    expect(SKILL_IMPORT_SYSTEM_PROMPT_APPEND).toContain(
+      'Do not download GitHub content into a temporary attachment'
+    )
     expect(SKILL_IMPORT_MCP_SERVER_NAME).toBe('open-science-skills')
 
     await client.close()
