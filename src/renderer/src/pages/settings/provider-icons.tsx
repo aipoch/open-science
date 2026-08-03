@@ -9,6 +9,7 @@ import { cn } from '@/lib/utils'
 import anthropicLogo from '@/assets/provider-icons/anthropic.svg'
 import claudeLogo from '@/assets/provider-icons/claude.svg'
 import grokLogo from '@/assets/provider-icons/grok.svg'
+import bailianLogo from '@/assets/provider-icons/bailian.svg'
 import deepseekLogo from '@/assets/provider-icons/deepseek.svg'
 import minimaxLogo from '@/assets/provider-icons/minimax.svg'
 import stepfunLogo from '@/assets/provider-icons/stepfun.svg'
@@ -39,16 +40,17 @@ export const AgentFrameworkIcon = ({
   return <Codex size={size} className={cn('text-foreground', className)} />
 }
 
-// Official vendor brand marks, bundled as assets. Both Kimi providers (the general Moonshot platform
-// and Kimi For Coding) share the one Kimi mark, both GLM providers (pay-as-you-go Zhipu and the GLM
-// Coding Plan) share the one GLM mark, and both StepFun providers (pay-as-you-go StepFun and the Step
-// Plan subscription) share the one StepFun mark. Any vendor without an entry falls back to a neutral glyph
-// rather than a made-up logo. Custom uses a plus-in-circle.
+// Official vendor brand marks, bundled as assets. Providers from the same vendor share one mark:
+// Bailian and Bailian for Plan, Kimi and Kimi For Coding, Zhipu and GLM Coding Plan, and StepFun and
+// Step Plan. Any vendor without an entry falls back to a neutral glyph rather than a made-up logo.
+// Custom uses a plus-in-circle.
 const VENDOR_LOGO: Partial<Record<OfficialVendorId, string>> = {
   openai: openaiLogo,
   anthropic: anthropicLogo,
   xai: grokLogo,
   deepseek: deepseekLogo,
+  bailian: bailianLogo,
+  bailianplan: bailianLogo,
   minimax: minimaxLogo,
   stepfun: stepfunLogo,
   stepplan: stepfunLogo,

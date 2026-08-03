@@ -15,7 +15,8 @@ import {
   resolveVendorModelsUrl,
   resolveVendorModelReasoningEffort,
   resolveVendorOpenAiBaseUrl,
-  vendorHasRegions
+  vendorHasRegions,
+  type OfficialVendorId
 } from './provider-registry'
 
 describe('provider registry', () => {
@@ -302,6 +303,87 @@ describe('provider registry', () => {
     expect(defaultVendorModel('stepfun')).toBe('step-3.7-flash')
   })
 
+  it('routes Bailian through all three APIs per region with the curated 1M catalog', () => {
+    const bailianId = 'bailian' as OfficialVendorId
+
+    expect(isOfficialVendorId('bailian')).toBe(true)
+    expect(resolveVendorApiEndpoints(bailianId)).toEqual(['anthropic', 'openai', 'responses'])
+    expect(vendorHasRegions(bailianId)).toBe(true)
+
+    // Mainland China is the default; the overseas region swaps only the DashScope host.
+    expect(resolveVendorBaseUrl(bailianId)).toBe(
+      'https://dashscope.aliyuncs.com/apps/anthropic/v1/messages'
+    )
+    expect(resolveVendorOpenAiBaseUrl(bailianId)).toBe(
+      'https://dashscope.aliyuncs.com/compatible-mode/v1'
+    )
+    expect(resolveVendorBaseUrl(bailianId, 'global')).toBe(
+      'https://dashscope-us.aliyuncs.com/apps/anthropic/v1/messages'
+    )
+    expect(resolveVendorOpenAiBaseUrl(bailianId, 'global')).toBe(
+      'https://dashscope-us.aliyuncs.com/compatible-mode/v1'
+    )
+    expect(resolveVendorApiKeyUrl(bailianId)).toBe(
+      'https://bailian.console.aliyun.com/cn-beijing?tab=model#/api-key'
+    )
+    expect(resolveVendorApiKeyUrl(bailianId, 'global')).toBe(
+      'https://modelstudio.console.alibabacloud.com/us-east-1?tab=model#/api-key'
+    )
+
+    expect(getOfficialVendor(bailianId)?.models).toEqual(
+      [
+        'qwen3.8-max',
+        'qwen3.7-plus',
+        'qwen3.7-max',
+        'qwen3.7-flash',
+        'qwen3.6-plus',
+        'qwen3.6-flash',
+        'deepseek-v4-flash-0731',
+        'deepseek-v4-pro',
+        'deepseek-v4-flash'
+      ].map((id) => ({ id, contextWindow: 1_000_000 }))
+    )
+    expect(defaultVendorModel(bailianId)).toBe('qwen3.8-max')
+    expect(resolveVendorModelsUrl(bailianId)).toBeUndefined()
+  })
+
+  it('routes Bailian for Plan through its fixed endpoints and model-specific Responses catalog', () => {
+    const planId = 'bailianplan' as OfficialVendorId
+
+    expect(isOfficialVendorId('bailianplan')).toBe(true)
+    expect(resolveVendorApiEndpoints(planId)).toEqual(['anthropic', 'openai'])
+    expect(vendorHasRegions(planId)).toBe(false)
+    expect(resolveVendorBaseUrl(planId)).toBe(
+      'https://token-plan.cn-beijing.maas.aliyuncs.com/apps/anthropic'
+    )
+    expect(resolveVendorOpenAiBaseUrl(planId)).toBe(
+      'https://token-plan.cn-beijing.maas.aliyuncs.com/compatible-mode/v1'
+    )
+    expect(resolveVendorApiKeyUrl(planId)).toBe(
+      'https://bailian.console.aliyun.com/cn-beijing?tab=plan#/efm/subscription/overview'
+    )
+
+    expect(getOfficialVendor(planId)?.models).toEqual(
+      [
+        'qwen3.8-max',
+        'qwen3.8-max-preview',
+        'qwen3.7-max',
+        'qwen3.7-plus',
+        'qwen3.6-flash',
+        'glm-5.2',
+        'deepseek-v4-pro',
+        'deepseek-v4-flash-0731'
+      ].map((id) => ({ id, contextWindow: 1_000_000 }))
+    )
+    expect(defaultVendorModel(planId)).toBe('qwen3.8-max')
+    expect(resolveVendorModelsUrl(planId)).toBeUndefined()
+
+    expect(isVendorModelResponsesSupported(planId, 'qwen3.8-max')).toBe(true)
+    expect(isVendorModelResponsesSupported(planId, 'glm-5.2')).toBe(true)
+    expect(isVendorModelResponsesSupported(planId, 'deepseek-v4-pro')).toBe(true)
+    expect(isVendorModelResponsesSupported(planId, 'deepseek-v4-flash-0731')).toBe(false)
+  })
+
   it('routes Step Plan over Anthropic and OpenAI under /step_plan, no live model list', () => {
     expect(resolveVendorApiEndpoints('stepplan')).toEqual(['anthropic', 'openai'])
     expect(vendorHasRegions('stepplan')).toBe(false)
@@ -362,6 +444,30 @@ describe('provider registry', () => {
     it('returns false for DeepSeek models (no vision support)', () => {
       expect(isVendorModelMultimodal('deepseek', 'deepseek-v4-pro')).toBe(false)
       expect(isVendorModelMultimodal('deepseek', 'deepseek-v4-flash')).toBe(false)
+    })
+
+    it('matches the multimodal Qwen models in the Bailian catalog', () => {
+      const bailianId = 'bailian' as OfficialVendorId
+
+      expect(isVendorModelMultimodal(bailianId, 'qwen3.8-max')).toBe(true)
+      expect(isVendorModelMultimodal(bailianId, 'qwen3.7-plus')).toBe(true)
+      expect(isVendorModelMultimodal(bailianId, 'qwen3.7-flash')).toBe(true)
+      expect(isVendorModelMultimodal(bailianId, 'qwen3.6-plus')).toBe(true)
+      expect(isVendorModelMultimodal(bailianId, 'qwen3.6-flash')).toBe(true)
+      expect(isVendorModelMultimodal(bailianId, 'qwen3.7-max')).toBe(false)
+      expect(isVendorModelMultimodal(bailianId, 'deepseek-v4-pro')).toBe(false)
+    })
+
+    it('matches the visual-understanding models in the Bailian for Plan catalog', () => {
+      const planId = 'bailianplan' as OfficialVendorId
+
+      expect(isVendorModelMultimodal(planId, 'qwen3.8-max')).toBe(true)
+      expect(isVendorModelMultimodal(planId, 'qwen3.8-max-preview')).toBe(true)
+      expect(isVendorModelMultimodal(planId, 'qwen3.7-plus')).toBe(true)
+      expect(isVendorModelMultimodal(planId, 'qwen3.6-flash')).toBe(true)
+      expect(isVendorModelMultimodal(planId, 'qwen3.7-max')).toBe(false)
+      expect(isVendorModelMultimodal(planId, 'glm-5.2')).toBe(false)
+      expect(isVendorModelMultimodal(planId, 'deepseek-v4-pro')).toBe(false)
     })
 
     it('matches Zhipu vision variants by pattern, including future `Nv` ids', () => {

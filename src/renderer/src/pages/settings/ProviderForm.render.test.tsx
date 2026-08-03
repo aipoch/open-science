@@ -108,6 +108,46 @@ describe('ProviderForm field switching', () => {
     expect(container.textContent).toContain('grok-4.5')
   })
 
+  it('renders the bundled Bailian brand mark and regional catalog', () => {
+    render(
+      createEmptyProviderFormValue({
+        type: 'official',
+        name: 'Bailian',
+        vendorId: 'bailian',
+        region: 'china',
+        apiEndpoint: 'responses'
+      })
+    )
+
+    const providerType = container.querySelector('[aria-label="Provider type"]')
+    const icon = providerType?.querySelector('img')
+
+    expect(providerType?.textContent).toContain('Bailian')
+    expect(icon?.getAttribute('src')).toMatch(/^data:image\/svg\+xml/)
+    expect(decodeURIComponent(icon?.getAttribute('src') ?? '')).toContain('<title>BaiLian</title>')
+    expect(container.querySelector('[aria-label="Endpoint"]')?.textContent).toContain('China')
+    expect(container.textContent).toContain('qwen3.8-max')
+  })
+
+  it('reuses the bundled Bailian brand mark for Bailian for Plan', () => {
+    render(
+      createEmptyProviderFormValue({
+        type: 'official',
+        name: 'Bailian for Plan',
+        vendorId: 'bailianplan',
+        apiEndpoint: 'openai'
+      })
+    )
+
+    const providerType = container.querySelector('[aria-label="Provider type"]')
+    const icon = providerType?.querySelector('img')
+
+    expect(providerType?.textContent).toContain('Bailian for Plan')
+    expect(icon?.getAttribute('src')).toMatch(/^data:image\/svg\+xml/)
+    expect(decodeURIComponent(icon?.getAttribute('src') ?? '')).toContain('<title>BaiLian</title>')
+    expect(container.textContent).toContain('qwen3.8-max-preview')
+  })
+
   it('allows a custom gateway to select the Responses endpoint', () => {
     render(
       createEmptyProviderFormValue({
