@@ -2,6 +2,7 @@
 
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 
+import { RENDERER_CONTRACT_CATALOG } from '../../shared/renderer-contract-catalog'
 import { WEB_EVENT_CHANNELS, WEB_INVOKE_CHANNELS } from '../../shared/web-api-map.generated'
 import { WEB_RPC_ALLOWED_CHANNELS, WEB_RPC_PROTOCOL_VERSION } from '../../shared/web-rpc-contract'
 
@@ -60,6 +61,12 @@ const BROWSER_NATIVE_CALLABLE_PATHS = [
 ] as const
 
 const webInvocations: CapturedInvocation[] = []
+
+const codecAt = (path: string): (typeof RENDERER_CONTRACT_CATALOG)[number]['parameterCodec'] => {
+  const contract = RENDERER_CONTRACT_CATALOG.find(({ publicPath }) => publicPath === path)
+  if (!contract) throw new Error(`Missing renderer contract: ${path}`)
+  return contract.parameterCodec
+}
 
 const methodAt = (api: ApiRoot, path: string): ((...args: unknown[]) => Promise<unknown>) => {
   let value: unknown = api
@@ -288,10 +295,53 @@ describe('renderer argument-shape characterization', () => {
     })
   })
 
-  it('keeps every explicit Web transform equivalent to its Electron wrapper', async () => {
+  it('records ACP optional requests by call absence instead of normalizing explicit undefined', async () => {
+    for (const { path, channel } of [
+      { path: 'acp.connect', channel: 'acp:connect' },
+      { path: 'acp.createSession', channel: 'acp:create-session' }
+    ]) {
+      const electronWithoutArgument = await invokeElectron(electronApi, path, [])
+      const webWithoutArgument = await invokeWeb(webApi, path, [])
+      const electronWithUndefined = await invokeElectron(electronApi, path, [undefined])
+      const webWithUndefined = await invokeWeb(webApi, path, [undefined])
+
+      expect(electronWithoutArgument).toEqual({ channel, args: [{}] })
+      expect(webWithoutArgument).toEqual({ channel, args: [{}] })
+      expect(electronWithUndefined).toEqual({ channel, args: [{}] })
+      expect(webWithUndefined).toEqual({ channel, args: [null] })
+      expect(codecAt(path)).toEqual({
+        electron: 'default-empty-object',
+        web: 'default-empty-object-absent-only'
+      })
+    }
+  })
+
+  it('records the Electron-only optional notebook environment argument slot', async () => {
+    const electronWithoutArgument = await invokeElectron(electronApi, 'notebookEnv.cancel', [])
+    const webWithoutArgument = await invokeWeb(webApi, 'notebookEnv.cancel', [])
+    const electronWithUndefined = await invokeElectron(electronApi, 'notebookEnv.cancel', [
+      undefined
+    ])
+    const webWithUndefined = await invokeWeb(webApi, 'notebookEnv.cancel', [undefined])
+
+    expect(electronWithoutArgument).toEqual({
+      channel: 'notebook-env:cancel',
+      args: [undefined]
+    })
+    expect(webWithoutArgument).toEqual({ channel: 'notebook-env:cancel', args: [] })
+    expect(electronWithUndefined).toEqual({
+      channel: 'notebook-env:cancel',
+      args: [undefined]
+    })
+    expect(webWithUndefined).toEqual({ channel: 'notebook-env:cancel', args: [null] })
+    expect(codecAt('notebookEnv.cancel')).toEqual({
+      electron: 'optional-argument-slot',
+      web: 'positional'
+    })
+  })
+
+  it('keeps storage Web transforms equivalent to their Electron wrappers', async () => {
     const cases = [
-      { path: 'acp.connect', args: [] },
-      { path: 'acp.createSession', args: [] },
       { path: 'storage.validateDataRoot', args: ['/data'] },
       { path: 'storage.inspectDataRoot', args: ['/data'] },
       { path: 'storage.migrate', args: ['/data'] },

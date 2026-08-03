@@ -77,12 +77,41 @@ describe('renderer contract catalog', () => {
     ).toEqual({ electron: 'native-file-upload-request', web: 'native-file-upload-request' })
 
     expect(
+      RENDERER_CONTRACT_CATALOG.filter(({ publicPath }) =>
+        ['acp.connect', 'acp.createSession'].includes(publicPath)
+      ).map(({ publicPath, parameterCodec }) => ({ publicPath, parameterCodec }))
+    ).toEqual([
+      {
+        publicPath: 'acp.connect',
+        parameterCodec: {
+          electron: 'default-empty-object',
+          web: 'default-empty-object-absent-only'
+        }
+      },
+      {
+        publicPath: 'acp.createSession',
+        parameterCodec: {
+          electron: 'default-empty-object',
+          web: 'default-empty-object-absent-only'
+        }
+      }
+    ])
+
+    expect(
+      RENDERER_CONTRACT_CATALOG.find(({ publicPath }) => publicPath === 'notebookEnv.cancel')
+        ?.parameterCodec
+    ).toEqual({ electron: 'optional-argument-slot', web: 'positional' })
+
+    expect(
       paths(
         ({ parameterCodec, surfaceInstallation }) =>
           surfaceInstallation.localWeb === 'web-rpc' &&
           parameterCodec.electron !== parameterCodec.web
       )
     ).toEqual([
+      'acp.connect',
+      'acp.createSession',
+      'notebookEnv.cancel',
       'runtime.describeUsage',
       'runtime.getEnablement',
       'runtime.listPackageCounts',
@@ -103,8 +132,6 @@ describe('renderer contract catalog', () => {
         parameterCodec.web !== 'surface-native'
     )
     expect(explicitEquivalentTransforms).toEqual([
-      'acp.connect',
-      'acp.createSession',
       'storage.commitAndRelaunch',
       'storage.discardMigratedCopy',
       'storage.inspectDataRoot',

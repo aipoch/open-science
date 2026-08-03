@@ -23,6 +23,8 @@ const DELEGATED_NATIVE = 'delegated-native'
 
 const POSITIONAL = 'positional'
 const DEFAULT_EMPTY = 'default-empty-object'
+const DEFAULT_EMPTY_ABSENT_ONLY = 'default-empty-object-absent-only'
+const OPTIONAL_ARGUMENT_SLOT = 'optional-argument-slot'
 const STORAGE_PARENT = 'storage-parent-object'
 const STORAGE_ROOT = 'storage-data-root-object'
 const RUNTIME_SELECTION = 'runtime-selection-object'
@@ -163,7 +165,7 @@ const group = (
 export const RENDERER_CONTRACT_GROUPS = Object.freeze([
   group('acp', 'acp', [
     ['onEvent', 'acp:event', EVENT], ['onPermissionRequest', 'acp:permission-request', EVENT], ['onState', 'acp:state', EVENT], ['cancel', 'acp:cancel'],
-    ['compactSession', 'acp:compact-session'], ['connect', 'acp:connect', WEB, DEFAULT_EMPTY], ['createSession', 'acp:create-session', WEB, DEFAULT_EMPTY],
+    ['compactSession', 'acp:compact-session'], ['connect', 'acp:connect', WEB, DEFAULT_EMPTY, DEFAULT_EMPTY_ABSENT_ONLY], ['createSession', 'acp:create-session', WEB, DEFAULT_EMPTY, DEFAULT_EMPTY_ABSENT_ONLY],
     ['deleteSession', 'acp:delete-session'], ['disconnect', 'acp:disconnect'], ['getState', 'acp:get-state'],
     ['resetSessionContext', 'acp:reset-session-context'], ['respondToPermission', 'acp:respond-permission'], ['resumeSession', 'acp:resume-session'],
     ['revokePermissionGrant', 'acp:revoke-permission-grant'], ['sendPrompt', 'acp:send-prompt'], ['setPermissionProfile', 'acp:set-permission-profile'],
@@ -213,7 +215,7 @@ export const RENDERER_CONTRACT_GROUPS = Object.freeze([
     ['state', 'notebook:state'],
   ]),
   group('notebook-environment', 'notebookEnv', [
-    ['onProgress', 'notebook-env:progress', DORMANT_EVENT], ['cancel', 'notebook-env:cancel', LOCAL], ['getStatus', 'notebook-env:status'],
+    ['onProgress', 'notebook-env:progress', DORMANT_EVENT], ['cancel', 'notebook-env:cancel', LOCAL, OPTIONAL_ARGUMENT_SLOT, POSITIONAL], ['getStatus', 'notebook-env:status'],
     ['provision', 'notebook-env:provision', LOCAL], ['repair', 'notebook-env:repair', LOCAL],
   ]),
   group('notifications', 'notifications', [
