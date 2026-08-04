@@ -77,7 +77,8 @@ const createDependencies = () => {
     getVersionProvenance: vi.fn(),
     getVersionExecution: vi.fn(),
     getVersionMessages: vi.fn(),
-    getVersionReview: vi.fn()
+    getVersionReview: vi.fn(),
+    resolveVersionDescriptors: vi.fn(async () => [])
   }
   const events = { publish: vi.fn() }
   const managedPreview = {
@@ -230,7 +231,7 @@ const dispatchCommand = (
 }
 
 describe('Data and content application commands', () => {
-  it('owns exactly the 43 current data and content invoke channels', () => {
+  it('owns exactly the 44 current data and content invoke channels', () => {
     expect(registeredCommands()).toEqual(
       [
         'artifacts:finalize-run',
@@ -243,6 +244,7 @@ describe('Data and content application commands', () => {
         'artifacts:open-file',
         'artifacts:read-preview',
         'artifacts:reconcile-pending',
+        'artifacts:resolve-version-descriptors',
         'lifecycle:client-id',
         'preview:delete',
         'preview:load',
@@ -345,6 +347,11 @@ describe('Data and content application commands', () => {
         key: 'artifactReconcilePending',
         args: [request('artifact-reconcile')],
         owner: deps.artifacts.reconcilePendingArtifacts
+      },
+      {
+        key: 'artifactResolveVersionDescriptors',
+        args: [request('artifact-version-descriptors')],
+        owner: deps.artifacts.resolveVersionDescriptors
       },
       { key: 'previewDelete', args: [request('preview-delete')], owner: deps.preview.delete },
       { key: 'previewLoad', args: [request('preview-load')], owner: deps.preview.load },

@@ -492,7 +492,9 @@ const api: OpenScienceAPI = {
     getVersionMessages: (request) =>
       electronRendererContracts.invoke('artifacts.getVersionMessages', request),
     getVersionReview: (request) =>
-      electronRendererContracts.invoke('artifacts.getVersionReview', request)
+      electronRendererContracts.invoke('artifacts.getVersionReview', request),
+    resolveVersionDescriptors: (request) =>
+      electronRendererContracts.invoke('artifacts.resolveVersionDescriptors', request)
   },
   uploads: {
     // Upload IPC remains behind the preload bridge so renderer code never receives raw fs access.

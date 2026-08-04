@@ -22,10 +22,12 @@ import type {
   ListProjectArtifactsRequest,
   OpenArtifactFileRequest,
   ReadArtifactPreviewRequest,
-  ReconcilePendingArtifactsRequest
+  ReconcilePendingArtifactsRequest,
+  ResolveArtifactVersionDescriptorsRequest
 } from '../shared/artifacts'
 import type {
   ArtifactLineageProvenance,
+  ArtifactVersionDescriptor,
   ArtifactVersionExecutionProvenance,
   ArtifactVersionMessagesProvenance,
   ArtifactVersionProvenance,
@@ -621,6 +623,9 @@ export interface OpenScienceAPI {
     getVersionReview(
       request: GetArtifactVersionProvenanceRequest
     ): Promise<ArtifactVersionReviewProvenance>
+    resolveVersionDescriptors(
+      request: ResolveArtifactVersionDescriptorsRequest
+    ): Promise<ArtifactVersionDescriptor[]>
   }
   uploads: {
     // Desktop-only path fast path; omitted by the Web capability map.

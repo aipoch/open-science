@@ -18,8 +18,10 @@ import {
   AlertTriangle,
   ArrowUp,
   BookOpen,
+  ChevronDown,
   FileText,
   Flag,
+  GitBranch,
   Image as ImageIcon,
   Loader2,
   Menu,
@@ -34,6 +36,7 @@ import { resolveEffectiveSpecialistSkills } from '../../../../shared/specialist'
 
 import { FileDropOverlay } from '@/components/FileDropOverlay'
 import { RemoteJobBadge } from '@/components/RemoteJobBadge'
+import { Button } from '@/components/ui/button'
 import { ResizablePanel } from '@/components/ui/resizable'
 import {
   DropdownMenu,
@@ -42,6 +45,7 @@ import {
   DropdownMenuSeparator,
   DropdownMenuTrigger
 } from '@/components/ui/dropdown-menu'
+import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from '@/components/ui/tooltip'
 import { useFileDropZone } from '@/hooks/useFileDropZone'
 import { cn } from '@/lib/utils'
 import type { ChatSession } from '@/stores/session-store'
@@ -73,6 +77,16 @@ const composerIconButtonClassName = cn(
 
 const composerSendButtonClassName = cn(
   'flex h-8 w-8 shrink-0 items-center justify-center rounded-md bg-primary text-primary-foreground hover:bg-primary/80 disabled:cursor-not-allowed disabled:opacity-50 disabled:hover:bg-primary',
+  composerInteractiveTransitionClassName
+)
+
+const composerSplitSendPrimaryButtonClassName = cn(
+  "relative h-8 w-8 rounded-l-md rounded-r-none border-0 bg-transparent bg-clip-border text-primary-foreground hover:bg-primary-foreground/10 hover:text-primary-foreground focus-visible:outline-none focus-visible:ring-[3px] focus-visible:ring-ring/50 disabled:cursor-not-allowed disabled:opacity-100 disabled:hover:bg-transparent [@media(pointer:coarse)]:before:absolute [@media(pointer:coarse)]:before:-inset-y-1.5 [@media(pointer:coarse)]:before:-left-3 [@media(pointer:coarse)]:before:right-0 [@media(pointer:coarse)]:before:content-['']",
+  composerInteractiveTransitionClassName
+)
+
+const composerSplitSendMenuButtonClassName = cn(
+  "relative h-8 w-8 rounded-l-none rounded-r-md border-0 bg-transparent bg-clip-border text-primary-foreground after:pointer-events-none after:absolute after:inset-y-1 after:left-0 after:w-px after:bg-primary-foreground/20 after:content-[''] hover:bg-primary-foreground/10 hover:text-primary-foreground active:translate-y-px aria-expanded:bg-primary-foreground/10 aria-expanded:text-primary-foreground focus-visible:outline-none focus-visible:ring-[3px] focus-visible:ring-ring/50 motion-reduce:active:translate-y-0 disabled:cursor-not-allowed disabled:opacity-100 disabled:hover:bg-transparent [@media(pointer:coarse)]:before:absolute [@media(pointer:coarse)]:before:-inset-y-1.5 [@media(pointer:coarse)]:before:left-0 [@media(pointer:coarse)]:before:-right-3 [@media(pointer:coarse)]:before:content-['']",
   composerInteractiveTransitionClassName
 )
 
@@ -128,6 +142,9 @@ type ConversationPanelProps = {
   autoReviewEnabled: boolean
   onDraftDocChange: (doc: ComposerDoc) => void
   onSendMessage: (forcedSkillIds: string[]) => void
+  // Starts a new session from this session's visible branch, then sends the current draft there.
+  // Optional while callers migrate to the split send affordance.
+  onBranchInNewSession?: (forcedSkillIds: string[]) => void
   onStageAttachmentFiles: (files: File[]) => void
   onRemoveAttachment: (attachment: UploadedAttachment) => void
   onCancelAttachmentTransfer: (transfer: ComposerUploadTransfer) => void
@@ -196,6 +213,7 @@ const ConversationPanel = ({
   autoReviewEnabled,
   onDraftDocChange,
   onSendMessage,
+  onBranchInNewSession,
   onStageAttachmentFiles,
   onRemoveAttachment,
   onCancelAttachmentTransfer,
@@ -291,6 +309,11 @@ const ConversationPanel = ({
   const handleSubmit = (): void => {
     if (!canEditDraft) return
     onSendMessage(docToSkillIds(draftDoc))
+  }
+
+  const handleBranchInNewSession = (): void => {
+    if (!canSendMessage || !onBranchInNewSession) return
+    onBranchInNewSession(docToSkillIds(draftDoc))
   }
 
   // Converts the hidden file input selection into the shared staging callback.
@@ -773,14 +796,93 @@ const ConversationPanel = ({
                           // During a fix loop the main agent may be idle (the reviewer-review sub-phase runs
                           // in a separate ACP session), so fixLoopActive keeps the cancel affordance
                           // reachable across the whole loop, not just the agent-fix running turn.
-                          <button
-                            type="button"
-                            onClick={onCancelRun}
-                            className={composerCancelButtonClassName}
-                            aria-label="Cancel run"
+                          <div
+                            data-testid="composer-running-control-slot"
+                            className={cn(
+                              'flex shrink-0 justify-end',
+                              onBranchInNewSession ? 'w-16 [@media(pointer:coarse)]:mx-3' : 'w-8'
+                            )}
                           >
-                            <Square className="size-3.5" strokeWidth={2.2} aria-hidden="true" />
-                          </button>
+                            <button
+                              type="button"
+                              onClick={onCancelRun}
+                              className={composerCancelButtonClassName}
+                              aria-label="Cancel run"
+                            >
+                              <Square className="size-3.5" strokeWidth={2.2} aria-hidden="true" />
+                            </button>
+                          </div>
+                        ) : onBranchInNewSession ? (
+                          <TooltipProvider delayDuration={200}>
+                            <div
+                              role="group"
+                              aria-label="Send message options"
+                              className={cn(
+                                'flex rounded-md bg-primary text-primary-foreground [@media(pointer:coarse)]:mx-3',
+                                !canSendMessage && 'opacity-50'
+                              )}
+                            >
+                              <Tooltip>
+                                <TooltipTrigger asChild>
+                                  <Button
+                                    type="button"
+                                    variant="ghost"
+                                    size="icon"
+                                    onClick={handleSubmit}
+                                    disabled={!canSendMessage}
+                                    className={composerSplitSendPrimaryButtonClassName}
+                                    aria-label="Send message"
+                                  >
+                                    <ArrowUp
+                                      className="size-4"
+                                      strokeWidth={2.2}
+                                      aria-hidden="true"
+                                    />
+                                  </Button>
+                                </TooltipTrigger>
+                                <TooltipContent side="top">Send message</TooltipContent>
+                              </Tooltip>
+                              <DropdownMenu>
+                                <Tooltip>
+                                  <TooltipTrigger asChild>
+                                    <DropdownMenuTrigger asChild>
+                                      <Button
+                                        type="button"
+                                        variant="ghost"
+                                        size="icon"
+                                        disabled={!canSendMessage}
+                                        className={composerSplitSendMenuButtonClassName}
+                                        aria-label="More send options"
+                                        aria-haspopup="menu"
+                                        data-testid="branch-send-menu-trigger"
+                                      >
+                                        <ChevronDown
+                                          className="size-3.5"
+                                          strokeWidth={2.2}
+                                          aria-hidden="true"
+                                        />
+                                      </Button>
+                                    </DropdownMenuTrigger>
+                                  </TooltipTrigger>
+                                  <TooltipContent side="top">More send options</TooltipContent>
+                                </Tooltip>
+                                <DropdownMenuContent side="top" align="end" className="w-56">
+                                  <DropdownMenuItem
+                                    data-testid="menu-branch-in-new-session"
+                                    disabled={!canSendMessage}
+                                    onSelect={handleBranchInNewSession}
+                                    className="whitespace-nowrap [@media(pointer:coarse)]:min-h-11"
+                                  >
+                                    <GitBranch
+                                      className="mr-2 size-4 text-text-300"
+                                      aria-hidden="true"
+                                    />
+                                    Branch in new session
+                                  </DropdownMenuItem>
+                                </DropdownMenuContent>
+                              </DropdownMenu>
+                            </div>
+                          </TooltipProvider>
                         ) : (
                           <button
                             type="button"

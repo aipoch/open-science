@@ -164,6 +164,10 @@ const dataContentApplicationCommands = Object.freeze({
     'artifacts:reconcile-pending',
     'reconcilePendingArtifacts'
   ),
+  artifactResolveVersionDescriptors: artifactCommand(
+    'artifacts:resolve-version-descriptors',
+    'resolveVersionDescriptors'
+  ),
   lifecycleClientId: defineApplicationCommand<'lifecycle:client-id', readonly [], string>(
     'lifecycle:client-id'
   ),
@@ -244,7 +248,8 @@ const dataContentApplicationCommandGroups = Object.freeze([
     dataContentApplicationCommands.artifactListProjectFiles,
     dataContentApplicationCommands.artifactOpenFile,
     dataContentApplicationCommands.artifactReadPreview,
-    dataContentApplicationCommands.artifactReconcilePending
+    dataContentApplicationCommands.artifactReconcilePending,
+    dataContentApplicationCommands.artifactResolveVersionDescriptors
   ] as const),
   defineApplicationCommandGroup('lifecycle', [
     dataContentApplicationCommands.lifecycleClientId
@@ -369,7 +374,9 @@ const registerDataContentApplicationCommands = (
       },
       'artifacts:read-preview': ({ args }) => dependencies.artifacts.readPreview(args[0]),
       'artifacts:reconcile-pending': ({ args }) =>
-        dependencies.artifacts.reconcilePendingArtifacts(args[0])
+        dependencies.artifacts.reconcilePendingArtifacts(args[0]),
+      'artifacts:resolve-version-descriptors': ({ args }) =>
+        dependencies.artifacts.resolveVersionDescriptors(args[0])
     })
     scope.registerGroup(dataContentApplicationCommandGroups[1], {
       'lifecycle:client-id': ({ callerContext }) => callerContext.lifecycleClientId

@@ -6,10 +6,12 @@ import {
   ARTIFACT_OWNERSHIP_PERSISTENCE_RACE,
   type ArtifactFile,
   type ArtifactPreviewResult,
-  type FinalizeRunArtifactsResult
+  type FinalizeRunArtifactsResult,
+  type ResolveArtifactVersionDescriptorsRequest
 } from '../../shared/artifacts'
 import type {
   ArtifactLineageProvenance,
+  ArtifactVersionDescriptor,
   ArtifactVersionExecutionProvenance,
   ArtifactVersionMessagesProvenance,
   ArtifactVersionProvenance,
@@ -58,6 +60,9 @@ type ArtifactHandlers = {
   getVersionReview: (
     request: GetArtifactVersionProvenanceRequest
   ) => Promise<ArtifactVersionReviewProvenance>
+  resolveVersionDescriptors: (
+    request: ResolveArtifactVersionDescriptorsRequest
+  ) => Promise<ArtifactVersionDescriptor[]>
 }
 
 type ArtifactHandlerDependencies = {
@@ -80,6 +85,7 @@ type ArtifactHandlerDependencies = {
     | 'getVersionExecution'
     | 'getVersionMessages'
     | 'getVersionReview'
+    | 'resolveVersionDescriptors'
     | 'resolveVersionContent'
   >
 }
@@ -193,6 +199,10 @@ const createArtifactHandlers = (
     getVersionReview: (request) => {
       if (!dependencies.provenance) throw new Error('Artifact Provenance is not configured.')
       return dependencies.provenance.getVersionReview(request)
+    },
+    resolveVersionDescriptors: (request) => {
+      if (!dependencies.provenance) throw new Error('Artifact Provenance is not configured.')
+      return dependencies.provenance.resolveVersionDescriptors(request)
     }
   }
 }
@@ -339,6 +349,7 @@ const registerArtifactIpcHandlers = (
     | 'getVersionExecution'
     | 'getVersionMessages'
     | 'getVersionReview'
+    | 'resolveVersionDescriptors'
     | 'resolveVersionContent'
   >,
   withSessionMutation?: ArtifactHandlerDependencies['withSessionMutation'],
@@ -395,6 +406,11 @@ const registerArtifactIpcHandlers = (
   ipcMainHandle(
     'artifacts:get-version-review',
     (_event, request: GetArtifactVersionProvenanceRequest) => handlers.getVersionReview(request)
+  )
+  ipcMainHandle(
+    'artifacts:resolve-version-descriptors',
+    (_event, request: ResolveArtifactVersionDescriptorsRequest) =>
+      handlers.resolveVersionDescriptors(request)
   )
 }
 

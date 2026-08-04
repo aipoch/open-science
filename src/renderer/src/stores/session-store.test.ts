@@ -1836,6 +1836,372 @@ describe('session store', () => {
   })
 })
 
+describe('branchInNewSession', () => {
+  beforeEach(() => {
+    vi.useFakeTimers()
+    vi.setSystemTime(new Date('2026-07-04T08:00:00.000Z'))
+    useSessionStore.setState(createInitialSessionState())
+  })
+
+  it('copies only the active path into a fresh pending graph without mutating the source', () => {
+    const first = useSessionStore.getState().appendUserMessage({
+      sessionId: 'source-session',
+      content: 'first question',
+      cwd: '/workspace/project',
+      projectId: 'default-project'
+    })
+    useSessionStore.getState().appendAgentMessageChunk({
+      sessionId: 'source-session',
+      streamId: 'first-stream',
+      eventId: 'first-event',
+      content: 'first answer'
+    })
+    useSessionStore.getState().finishRun('source-session')
+
+    const originalSecond = useSessionStore.getState().appendUserMessage({
+      sessionId: 'source-session',
+      content: 'original second question'
+    })
+    useSessionStore.getState().appendAgentMessageChunk({
+      sessionId: 'source-session',
+      streamId: 'original-second-stream',
+      eventId: 'original-second-event',
+      content: 'original second answer'
+    })
+    useSessionStore.getState().finishRun('source-session')
+
+    useSessionStore
+      .getState()
+      .truncateSessionFromMessage('source-session', originalSecond?.messageId ?? '')
+    const edited = useSessionStore.getState().appendUserMessage({
+      sessionId: 'source-session',
+      content: 'edited second question'
+    })
+    useSessionStore
+      .getState()
+      .beginActivityGroup('source-session', 'tool-group', 'Inspect files', edited?.messageId)
+    useSessionStore.getState().upsertToolActivity({
+      sessionId: 'source-session',
+      toolCallId: 'tool-call',
+      eventId: 'tool-event',
+      promptMessageId: edited?.messageId,
+      title: 'Read package.json',
+      status: 'completed',
+      rawInput: { path: 'package.json' },
+      rawOutput: { content: '{}' }
+    })
+    const editedAnswer = useSessionStore.getState().appendAgentMessageChunk({
+      sessionId: 'source-session',
+      streamId: 'edited-stream',
+      eventId: 'edited-event',
+      content: 'edited second answer'
+    })
+    useSessionStore.getState().finishRun('source-session')
+
+    useSessionStore.setState((state) => ({
+      sessions: state.sessions.map((session) =>
+        session.id === 'source-session'
+          ? {
+              ...session,
+              status: 'error',
+              error: 'old failure',
+              errorReportable: false,
+              interrupted: true,
+              agentStatus: 'stale status',
+              branchContextResetRequired: true,
+              specialistSwitchResetRequired: true,
+              contextUsage: { used: 500, size: 1_000 },
+              pinned: true,
+              autoReviewEnabled: true,
+              enabledComputeHosts: ['ssh:build'],
+              filesRevision: 7,
+              artifacts: [
+                {
+                  id: 'artifact-version-1',
+                  kind: 'managed-file',
+                  path: '/workspace/project/result.txt',
+                  name: 'result.txt'
+                }
+              ],
+              messages: session.messages.map((message) =>
+                message.id === editedAnswer?.messageId
+                  ? { ...message, artifactIds: ['artifact-version-1'] }
+                  : message
+              ),
+              conversationGraph: session.conversationGraph
+                ? {
+                    ...session.conversationGraph,
+                    messages: session.conversationGraph.messages.map((message) =>
+                      message.id === editedAnswer?.messageId
+                        ? { ...message, artifactIds: ['artifact-version-1'] }
+                        : message
+                    )
+                  }
+                : undefined
+            }
+          : session
+      )
+    }))
+
+    const sourceBefore = structuredClone(useSessionStore.getState().sessions[0])
+    const result = useSessionStore.getState().branchInNewSession({
+      sourceSessionId: 'source-session',
+      content: '  continue from the edited answer\nwith this request  ',
+      permissionProfile: 'full',
+      agentFrameworkId: 'codex',
+      agentBackendId: 'codex:shared',
+      agentModel: 'gpt-5.4'
+    })
+
+    expect(result?.sessionId).toMatch(/^pending-session-/)
+    expect(useSessionStore.getState().selectedSessionId).toBe(result?.sessionId)
+    expect(useSessionStore.getState().sessions[1]).toEqual(sourceBefore)
+
+    const branched = useSessionStore.getState().sessions[0]
+    expect(branched).toMatchObject({
+      id: result?.sessionId,
+      isPending: true,
+      title: 'continue from the edited answer with this request',
+      projectId: 'default-project',
+      cwd: '/workspace/project',
+      status: 'running',
+      permissionProfile: 'full',
+      agentFrameworkId: 'codex',
+      agentBackendId: 'codex:shared',
+      agentModel: 'gpt-5.4',
+      autoReviewEnabled: true,
+      enabledComputeHosts: ['ssh:build'],
+      activeRun: { promptMessageId: result?.messageId, startedAt: Date.now() }
+    })
+    expect(branched.messages.map((message) => message.content)).toEqual([
+      'first question',
+      'first answer',
+      'edited second question',
+      'edited second answer',
+      'continue from the edited answer\nwith this request'
+    ])
+    expect(branched.messages.map((message) => message.id)).toEqual([
+      first?.messageId,
+      sourceBefore.messages[1].id,
+      edited?.messageId,
+      editedAnswer?.messageId,
+      result?.messageId
+    ])
+    expect(branched.messages.slice(0, -1).every((message) => message.eventIds.length === 0)).toBe(
+      true
+    )
+    expect(branched.messages.slice(0, -1).every((message) => message.streamId === undefined)).toBe(
+      true
+    )
+    expect(branched.messages.at(-2)?.artifactIds).toEqual(['artifact-version-1'])
+    const copiedActivity = branched.activities?.[0]
+    const copiedGroup = branched.activityGroups?.[0]
+    expect(copiedActivity).toMatchObject({
+      eventIds: [],
+      rawInput: { path: 'package.json' }
+    })
+    expect(copiedActivity?.id).not.toBe('tool-call')
+    expect(copiedGroup?.id).not.toBe('tool-group')
+    expect(copiedActivity?.activityGroupId).toBe(copiedGroup?.id)
+    expect(copiedGroup?.activityIds).toEqual([copiedActivity?.id])
+    expect(branched.messages[2].sortIndex).toBeLessThan(copiedActivity?.sortIndex ?? 0)
+    expect(copiedActivity?.sortIndex).toBeLessThan(branched.messages[3].sortIndex ?? 0)
+    expect(branched.conversationGraph?.branches).toHaveLength(1)
+    expect(branched.conversationGraph?.frames).toHaveLength(1)
+    expect(branched.conversationGraph?.messages.map((message) => message.id)).toEqual(
+      branched.messages.map((message) => message.id)
+    )
+    expect(branched).not.toHaveProperty('artifacts')
+    expect(branched).not.toHaveProperty('filesRevision')
+    expect(branched).not.toHaveProperty('contextUsage')
+    expect(branched).not.toHaveProperty('pinned')
+    expect(branched).not.toHaveProperty('interrupted')
+    expect(branched).not.toHaveProperty('error')
+    expect(branched).not.toHaveProperty('agentStatus')
+    expect(branched).not.toHaveProperty('branchContextResetRequired')
+    expect(branched).not.toHaveProperty('specialistSwitchResetRequired')
+  })
+
+  it('namespaces copied activity relationships away from fresh runtime ids', () => {
+    const sourcePrompt = useSessionStore.getState().appendUserMessage({
+      sessionId: 'source-session',
+      content: 'inspect the source',
+      cwd: '/workspace/project'
+    })
+    useSessionStore
+      .getState()
+      .beginActivityGroup('source-session', 'tool-group', 'Source tools', sourcePrompt?.messageId)
+    useSessionStore.getState().upsertToolActivity({
+      sessionId: 'source-session',
+      toolCallId: 'tool-call',
+      eventId: 'source-tool-event',
+      promptMessageId: sourcePrompt?.messageId,
+      title: 'Read source file',
+      status: 'completed'
+    })
+    useSessionStore.getState().finishRun('source-session')
+
+    const branched = useSessionStore.getState().branchInNewSession({
+      sourceSessionId: 'source-session',
+      content: 'continue in a new session'
+    })
+    const childBeforeRuntimeCall = useSessionStore.getState().sessions[0]
+    const copiedActivity = childBeforeRuntimeCall.activities?.[0]
+    const copiedGroup = childBeforeRuntimeCall.activityGroups?.[0]
+
+    expect(copiedActivity?.id).not.toBe('tool-call')
+    expect(copiedGroup?.id).not.toBe('tool-group')
+    expect(copiedActivity?.activityGroupId).toBe(copiedGroup?.id)
+    expect(copiedGroup?.activityIds).toEqual([copiedActivity?.id])
+
+    useSessionStore
+      .getState()
+      .beginActivityGroup(branched?.sessionId ?? '', 'tool-group', 'New tools', branched?.messageId)
+    useSessionStore.getState().upsertToolActivity({
+      sessionId: branched?.sessionId ?? '',
+      toolCallId: 'tool-call',
+      eventId: 'new-tool-event',
+      promptMessageId: branched?.messageId,
+      title: 'Read new file',
+      status: 'completed'
+    })
+
+    const childAfterRuntimeCall = useSessionStore.getState().sessions[0]
+    expect(childAfterRuntimeCall.activities).toHaveLength(2)
+    expect(childAfterRuntimeCall.activities?.map((activity) => activity.id)).toEqual([
+      copiedActivity?.id,
+      'tool-call'
+    ])
+    expect(childAfterRuntimeCall.activityGroups?.map((group) => group.id)).toEqual([
+      copiedGroup?.id,
+      'tool-group'
+    ])
+  })
+
+  it('uses the attachment-only title fallback and leaves a running source untouched', () => {
+    const source = useSessionStore.getState().appendUserMessage({
+      sessionId: 'source-session',
+      content: 'existing source'
+    })
+    useSessionStore.getState().finishRun('source-session')
+
+    const attachmentOnly = useSessionStore.getState().branchInNewSession({
+      sourceSessionId: 'source-session',
+      content: ' ',
+      attachments: [createUploadAttachment()]
+    })
+    expect(useSessionStore.getState().sessions[0]).toMatchObject({
+      id: attachmentOnly?.sessionId,
+      title: 'Attached first.png',
+      messages: [
+        expect.objectContaining({ id: source?.messageId }),
+        expect.objectContaining({
+          id: attachmentOnly?.messageId,
+          uploads: [expect.objectContaining({ id: 'upload-1' })]
+        })
+      ]
+    })
+
+    const running = useSessionStore.getState().appendUserMessage({
+      sessionId: 'running-source',
+      content: 'still running'
+    })
+    const before = useSessionStore.getState()
+    expect(
+      useSessionStore.getState().branchInNewSession({
+        sourceSessionId: 'running-source',
+        content: 'do not branch'
+      })
+    ).toBeUndefined()
+    expect(useSessionStore.getState()).toBe(before)
+    expect(running).toBeDefined()
+  })
+
+  it('clears a pending replay marker when its prompt is removed or already missing', () => {
+    useSessionStore.getState().appendUserMessage({
+      sessionId: 'source-session',
+      content: 'stable source'
+    })
+    useSessionStore.getState().finishRun('source-session')
+
+    const removed = useSessionStore.getState().branchInNewSession({
+      sourceSessionId: 'source-session',
+      content: 'resume this branch'
+    })
+    useSessionStore.getState().failRun(removed?.sessionId ?? '', 'creation failed')
+    useSessionStore.getState().removeMessage(removed?.sessionId ?? '', removed?.messageId ?? '')
+    expect(
+      useSessionStore.getState().sessions.find((session) => session.id === removed?.sessionId)
+        ?.pendingContextReplayMessageId
+    ).toBeUndefined()
+
+    const truncated = useSessionStore.getState().branchInNewSession({
+      sourceSessionId: 'source-session',
+      content: 'edit this branch'
+    })
+    useSessionStore.getState().failRun(truncated?.sessionId ?? '', 'creation failed')
+    useSessionStore
+      .getState()
+      .truncateSessionFromMessage(truncated?.sessionId ?? '', truncated?.messageId ?? '')
+    expect(
+      useSessionStore.getState().sessions.find((session) => session.id === truncated?.sessionId)
+        ?.pendingContextReplayMessageId
+    ).toBeUndefined()
+
+    const stale = useSessionStore.getState().branchInNewSession({
+      sourceSessionId: 'source-session',
+      content: 'missing branch prompt'
+    })
+    if (!stale) throw new Error('Expected a pending branched Session.')
+    useSessionStore.setState((state) => ({
+      sessions: state.sessions.map((session) =>
+        session.id === stale.sessionId
+          ? {
+              ...session,
+              messages: session.messages.filter((message) => message.id !== stale.messageId)
+            }
+          : session
+      )
+    }))
+    useSessionStore.getState().appendUserMessage({
+      sessionId: stale.sessionId,
+      content: 'replacement branch prompt'
+    })
+
+    const retried = useSessionStore
+      .getState()
+      .sessions.find((session) => session.id === stale.sessionId)
+    expect(retried?.pendingContextReplayMessageId).toBeUndefined()
+    expect(
+      retried?.messages.filter((message) => message.content === 'replacement branch prompt')
+    ).toHaveLength(1)
+  })
+
+  it('refuses a source whose conversation graph has failed synchronization', () => {
+    useSessionStore.getState().appendUserMessage({
+      sessionId: 'source-session',
+      content: 'stable source'
+    })
+    useSessionStore.getState().finishRun('source-session')
+    useSessionStore.setState((state) => ({
+      sessions: state.sessions.map((session) =>
+        session.id === 'source-session'
+          ? { ...session, conversationGraphSyncBlocked: true }
+          : session
+      )
+    }))
+    const sourceBefore = structuredClone(useSessionStore.getState().sessions[0])
+
+    expect(
+      useSessionStore.getState().branchInNewSession({
+        sourceSessionId: 'source-session',
+        content: 'must not snapshot an invalid graph'
+      })
+    ).toBeUndefined()
+    expect(useSessionStore.getState().sessions).toEqual([sourceBefore])
+  })
+})
+
 describe('truncateSessionFromMessage', () => {
   const baseTime = 1710000000000
 

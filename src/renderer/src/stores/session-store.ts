@@ -115,6 +115,9 @@ export type ChatSession = Omit<
   // Transient: terminal graph synchronization failed, so the in-memory run is settled as an explicit
   // error while persistence keeps the last valid durable graph. Restarting restores that safe copy.
   conversationGraphSyncBlocked?: boolean
+  // Transient: identifies the unsent current prompt of a branched pending Session. A creation retry
+  // replaces this prompt and rebuilds its copied history replay instead of appending a duplicate turn.
+  pendingContextReplayMessageId?: string
 }
 
 type SessionStoreData = {
@@ -150,6 +153,21 @@ type AppendPendingUserMessageInput = {
   agentModel?: string
   // Immutable Specialist UUID forwarded from the new-conversation draft picker.
   specialistId?: string
+}
+
+// Starts a fresh pending Session from the selected source's visible active path. Runtime settings
+// may be supplied by the normal-send path; omitted values retain the source Session's setting.
+export type BranchInNewSessionInput = {
+  sourceSessionId: string
+  content: string
+  attachments?: PersistedUploadedAttachment[]
+  parts?: MessagePart[]
+  permissionProfile?: PermissionProfileId
+  agentFrameworkId?: PersistedChatSession['agentFrameworkId']
+  agentBackendId?: PersistedChatSession['agentBackendId']
+  agentModel?: string
+  // `undefined` inherits the source binding; `null` deliberately chooses the Main Agent.
+  specialistId?: string | null
 }
 
 type BindPendingSessionInput = {
@@ -230,7 +248,9 @@ type SessionStore = SessionStoreData & {
   appendPendingUserMessage: (
     input: AppendPendingUserMessageInput
   ) => AppendMessageResult | undefined
+  branchInNewSession: (input: BranchInNewSessionInput) => AppendMessageResult | undefined
   bindPendingSession: (input: BindPendingSessionInput) => AppendMessageResult | undefined
+  clearPendingContextReplay: (sessionId: string, messageId: string) => void
   appendAgentMessageChunk: (input: AppendAgentMessageChunkInput) => AppendMessageResult | undefined
   attachRunArtifacts: (input: AttachRunArtifactsInput) => AppendMessageResult | undefined
   replaceMessageArtifacts: (input: ReplaceMessageArtifactsInput) => void
@@ -344,6 +364,7 @@ const stripTransientSessionState = (session: ChatSession): PersistedChatSession 
     specialistSwitchResetRequired,
     branchSwitchBlocked,
     conversationGraphSyncBlocked,
+    pendingContextReplayMessageId,
     messages,
     ...persistedSession
   } = session
@@ -357,6 +378,7 @@ const stripTransientSessionState = (session: ChatSession): PersistedChatSession 
   void specialistSwitchResetRequired
   void branchSwitchBlocked
   void conversationGraphSyncBlocked
+  void pendingContextReplayMessageId
 
   // Persist a bounded projection of tool activities so the transcript survives restarts.
   const persistedActivities = activities
@@ -416,7 +438,8 @@ const withTransientSessionState = (
     branchContextResetRequired: source.branchContextResetRequired,
     specialistSwitchResetRequired: source.specialistSwitchResetRequired,
     branchSwitchBlocked: source.branchSwitchBlocked,
-    conversationGraphSyncBlocked: source.conversationGraphSyncBlocked
+    conversationGraphSyncBlocked: source.conversationGraphSyncBlocked,
+    pendingContextReplayMessageId: source.pendingContextReplayMessageId
   }
 }
 
@@ -594,6 +617,11 @@ const createTitleFromMessage = (content: string): string => {
   return normalizedTitle.length > 48 ? `${normalizedTitle.slice(0, 48)}...` : normalizedTitle
 }
 
+// A branch's title identifies the new request, so unlike the sidebar's first-message default it
+// keeps the complete normalized prompt. Sidebar truncation remains a presentation concern.
+const createBranchTitleFromMessage = (content: string): string =>
+  content.replace(/\s+/g, ' ').trim()
+
 // Provides a readable conversation title when the first prompt contains only attachments.
 const createTitleFromUploads = (uploads: PersistedUploadedAttachment[]): string => {
   if (uploads.length === 1) return `Attached ${uploads[0].originalName || uploads[0].name}`
@@ -621,6 +649,16 @@ const createPersistedUpload = (
   ...(!attachment.versionId && attachment.sessionId === PENDING_UPLOAD_SESSION_ID && attachment.path
     ? { path: attachment.path }
     : {})
+})
+
+// A path-only legacy Upload still needs its source-owned capability long enough for the branch send
+// path to publish it as an immutable Version. The child remains pending until that reconciliation
+// finishes, so this path is transient and never reaches a newly written Session JSON.
+const copySnapshotUpload = (
+  attachment: PersistedUploadedAttachment
+): PersistedUploadedAttachment => ({
+  ...createPersistedUpload(attachment),
+  ...(!attachment.versionId && attachment.path ? { path: attachment.path } : {})
 })
 
 // Normalizes message timestamps, ids, stream linkage, and status.
@@ -652,6 +690,54 @@ const createMessage = (
     updatedAt: now
   }
 }
+
+// Copies the visible transcript without carrying event/stream correlations into the fresh runtime.
+const copySnapshotMessage = (message: PersistedChatMessage, sortIndex: number): ChatMessage => ({
+  ...message,
+  streamId: undefined,
+  eventIds: [],
+  artifactIds: message.artifactIds ? [...message.artifactIds] : undefined,
+  uploads: message.uploads?.map(copySnapshotUpload),
+  images: message.images?.map((image) => ({ ...image })),
+  parts: message.parts?.map((part) => ({ ...part })),
+  turnUsage: message.turnUsage ? { ...message.turnUsage } : undefined,
+  sortIndex
+})
+
+// Tool rows are rendered as historical transcript only; provider event ids must not be reused by a
+// new Session's runtime. The bounded payload is otherwise preserved for the existing detail views.
+const createSnapshotActivityId = (sessionId: string, id: string): string =>
+  `history:${sessionId}:${id}`
+
+const copySnapshotActivity = (activity: PersistedToolActivity, sessionId: string): ToolActivity =>
+  hydrateToolActivity({
+    ...activity,
+    id: createSnapshotActivityId(sessionId, activity.id),
+    activityGroupId: activity.activityGroupId
+      ? createSnapshotActivityId(sessionId, activity.activityGroupId)
+      : undefined,
+    eventIds: [],
+    toolContent: activity.toolContent ? [...activity.toolContent] : undefined,
+    toolLocations: activity.toolLocations?.map((location) => ({ ...location }))
+  })
+
+const copySnapshotActivityGroup = (
+  group: PersistedActivityGroup,
+  sessionId: string
+): PersistedActivityGroup => ({
+  ...group,
+  id: createSnapshotActivityId(sessionId, group.id),
+  activityIds: group.activityIds.map((id) => createSnapshotActivityId(sessionId, id))
+})
+
+const canBranchInNewSession = (session: ChatSession): boolean =>
+  !session.activeRun &&
+  session.status !== 'running' &&
+  session.status !== 'waiting-permission' &&
+  !session.fixLoopActive &&
+  !session.compacting &&
+  !session.branchSwitchBlocked &&
+  !session.conversationGraphSyncBlocked
 
 // Converts main-process artifact metadata into the compact persisted renderer reference shape.
 const createPersistedArtifact = (artifact: ArtifactFile): PersistedArtifact => {
@@ -937,7 +1023,17 @@ export const useSessionStore = create<SessionStore>((set, get) => ({
 
     // Existing sessions keep their message history and restart their active run.
     if (existingSession) {
-      const nextMessages = [...existingSession.messages, userMessage]
+      const replayPromptIndex = existingSession.pendingContextReplayMessageId
+        ? existingSession.messages.findIndex(
+            (message) => message.id === existingSession.pendingContextReplayMessageId
+          )
+        : -1
+      const nextMessages =
+        replayPromptIndex >= 0
+          ? existingSession.messages.map((message, index) =>
+              index === replayPromptIndex ? userMessage : message
+            )
+          : [...existingSession.messages, userMessage]
       set({
         selectedSessionId: sessionId,
         sessions: state.sessions.map((session) =>
@@ -960,8 +1056,11 @@ export const useSessionStore = create<SessionStore>((set, get) => ({
                 errorReportable: undefined,
                 compacting: undefined,
                 messages: nextMessages,
+                pendingContextReplayMessageId: replayPromptIndex >= 0 ? userMessage.id : undefined,
                 conversationGraph: synchronizeSessionGraph(
-                  session,
+                  replayPromptIndex >= 0
+                    ? { ...session, messages: nextMessages, conversationGraph: undefined }
+                    : session,
                   nextMessages,
                   now,
                   agentFrameworkId ?? session.agentFrameworkId ?? 'claude-code',
@@ -1040,6 +1139,110 @@ export const useSessionStore = create<SessionStore>((set, get) => ({
     })
   },
 
+  // Creates/selects a fresh pending Session from only the source's current visible Branch. The
+  // runtime binds this local id before replaying the bounded history into a new ACP Session.
+  branchInNewSession: ({
+    sourceSessionId,
+    content,
+    attachments = [],
+    parts,
+    permissionProfile,
+    agentFrameworkId,
+    agentBackendId,
+    agentModel,
+    specialistId
+  }) => {
+    const trimmedContent = content.trim()
+    const uploads = attachments.map(createPersistedUpload)
+    if (!sourceSessionId || (!trimmedContent && uploads.length === 0)) return undefined
+
+    const state = get()
+    const source = state.sessions.find((session) => session.id === sourceSessionId)
+    if (!source || !canBranchInNewSession(source)) return undefined
+
+    // `messages`/activities are the store's active-Branch compatibility projection. Reading this
+    // single source snapshot keeps message and activity relationships aligned without traversing
+    // inactive Graph siblings.
+    const sourceMessages = source.messages.map((message, index) => ({
+      message: stripTransientMessageState(message),
+      // Match the timeline projection fallback so exact-timestamp tool rows keep their position.
+      sortIndex: message.sortIndex ?? index
+    }))
+    const sourceActivities = (source.activities ?? [])
+      .map(sanitizeToolActivity)
+      .filter((activity): activity is PersistedToolActivity => Boolean(activity))
+    const sourceActivityGroups = (source.activityGroups ?? [])
+      .map(sanitizeActivityGroup)
+      .filter((group): group is PersistedActivityGroup => Boolean(group))
+
+    const now = Date.now()
+    const sessionId = createPendingSessionId()
+    const userMessage = createMessage(
+      'user',
+      trimmedContent,
+      'complete',
+      undefined,
+      [],
+      uploads,
+      parts
+    )
+    const messages = [
+      ...sourceMessages.map(({ message, sortIndex }) => copySnapshotMessage(message, sortIndex)),
+      userMessage
+    ]
+    const normalizedAgentBackendId = agentBackendId?.trim() || source.agentBackendId
+    const normalizedAgentModel = agentModel?.trim() || source.agentModel
+    const normalizedFrameworkId = agentFrameworkId ?? source.agentFrameworkId
+    const nextSpecialistId =
+      specialistId === undefined ? source.specialistId : specialistId || undefined
+    const newSession: ChatSession = {
+      id: sessionId,
+      projectId: source.projectId,
+      isPending: true,
+      title: trimmedContent
+        ? createBranchTitleFromMessage(trimmedContent)
+        : createTitleFromUploads(uploads),
+      cwd: source.cwd,
+      status: 'running',
+      permissionProfile:
+        permissionProfile ?? source.permissionProfile ?? DEFAULT_PERMISSION_PROFILE,
+      agentFrameworkId: normalizedFrameworkId,
+      agentBackendId: normalizedAgentBackendId,
+      agentModel: normalizedAgentModel,
+      ...(source.autoReviewEnabled !== undefined
+        ? { autoReviewEnabled: source.autoReviewEnabled }
+        : {}),
+      ...(source.enabledComputeHosts
+        ? { enabledComputeHosts: [...source.enabledComputeHosts] }
+        : {}),
+      ...(nextSpecialistId ? { specialistId: nextSpecialistId } : {}),
+      messages,
+      activities: sourceActivities.map((activity) => copySnapshotActivity(activity, sessionId)),
+      activityGroups: sourceActivityGroups.map((group) =>
+        copySnapshotActivityGroup(group, sessionId)
+      ),
+      pendingContextReplayMessageId: userMessage.id,
+      activeRun: { promptMessageId: userMessage.id, startedAt: now },
+      createdAt: now,
+      updatedAt: now
+    }
+    newSession.conversationGraph = synchronizeSessionGraph(
+      newSession,
+      messages,
+      now,
+      normalizedFrameworkId ?? 'claude-code',
+      normalizedAgentBackendId,
+      normalizedAgentModel
+    )
+
+    set({
+      selectedSessionId: sessionId,
+      sessions: [newSession, ...state.sessions]
+    })
+
+    return { sessionId, messageId: userMessage.id }
+  },
+
   // Replaces the temporary renderer id once ACP returns the real protocol session id.
   bindPendingSession: ({ pendingSessionId, sessionId, cwd, agentFrameworkId, agentBackendId }) => {
     if (!pendingSessionId || !sessionId) return undefined
@@ -1075,6 +1278,16 @@ export const useSessionStore = create<SessionStore>((set, get) => ({
       sessionId,
       messageId: pendingSession.activeRun.promptMessageId
     }
+  },
+
+  clearPendingContextReplay: (sessionId, messageId) => {
+    set((state) => ({
+      sessions: state.sessions.map((session) =>
+        session.id === sessionId && session.pendingContextReplayMessageId === messageId
+          ? { ...session, pendingContextReplayMessageId: undefined }
+          : session
+      )
+    }))
   },
 
   // Replaces renderer state with the per-session files loaded by the main process. Sessions arrive in
@@ -2122,6 +2335,11 @@ export const useSessionStore = create<SessionStore>((set, get) => ({
           ...session,
           messages: session.messages.slice(0, cutIndex),
           conversationGraph,
+          pendingContextReplayMessageId: removedMessages.some(
+            (message) => message.id === session.pendingContextReplayMessageId
+          )
+            ? undefined
+            : session.pendingContextReplayMessageId,
           filesRevision: hasFiles ? (session.filesRevision ?? 0) + 1 : session.filesRevision,
           updatedAt: now
         }
@@ -2178,6 +2396,11 @@ export const useSessionStore = create<SessionStore>((set, get) => ({
           errorReportable: undefined,
           interrupted: undefined,
           branchContextResetRequired: true,
+          pendingContextReplayMessageId: removed.some(
+            (message) => message.id === session.pendingContextReplayMessageId
+          )
+            ? undefined
+            : session.pendingContextReplayMessageId,
           filesRevision: hasFiles ? (session.filesRevision ?? 0) + 1 : session.filesRevision,
           updatedAt: now
         }

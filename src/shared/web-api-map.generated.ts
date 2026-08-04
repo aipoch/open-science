@@ -23,6 +23,7 @@ export const WEB_INVOKE_CHANNELS = {
   'artifacts.openFile': 'artifacts:open-file',
   'artifacts.readPreview': 'artifacts:read-preview',
   'artifacts.reconcilePendingArtifacts': 'artifacts:reconcile-pending',
+  'artifacts.resolveVersionDescriptors': 'artifacts:resolve-version-descriptors',
   'cli.getStatus': 'cli:get-status',
   'cli.install': 'cli:install',
   'cli.uninstall': 'cli:uninstall',

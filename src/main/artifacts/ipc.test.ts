@@ -688,6 +688,44 @@ describe('artifact IPC handlers', () => {
     expect('listMessageFiles' in handlers).toBe(false)
   })
 
+  it('resolves copied-message Version descriptors through Provenance only', async () => {
+    const descriptors = [
+      {
+        id: 'version-1',
+        artifactId: 'artifact-1',
+        versionId: 'version-1',
+        versionNumber: 1,
+        checksum: 'a'.repeat(64),
+        createdAt: '2026-08-04T00:00:00.000Z',
+        projectName: 'project-1',
+        sessionId: 'source-session-1',
+        runId: 'run-1',
+        name: 'sin.png',
+        mimeType: 'image/png',
+        size: 12,
+        mtimeMs: 1,
+        state: 'finalized' as const
+      }
+    ]
+    const resolveVersionDescriptors = vi.fn().mockResolvedValue(descriptors)
+    const handlers = createArtifactHandlers({} as ArtifactRepository, new ArtifactRunRegistry(), {
+      provenance: { resolveVersionDescriptors }
+    } as never)
+
+    await expect(
+      handlers.resolveVersionDescriptors({
+        projectId: 'project-1',
+        appSessionId: 'branched-session',
+        versionIds: ['version-1', 'version-1']
+      })
+    ).resolves.toEqual(descriptors)
+    expect(resolveVersionDescriptors).toHaveBeenCalledWith({
+      projectId: 'project-1',
+      appSessionId: 'branched-session',
+      versionIds: ['version-1', 'version-1']
+    })
+  })
+
   it('excludes both prompt-active runs and unfinalized claims from the orphan scan', async () => {
     const listProjectArtifacts = vi.fn().mockResolvedValue([])
     const repository = { listProjectArtifacts } as unknown as ArtifactRepository
@@ -761,7 +799,8 @@ describe('artifact IPC handler registration', () => {
       'artifacts:list-project-files',
       'artifacts:open-file',
       'artifacts:read-preview',
-      'artifacts:reconcile-pending'
+      'artifacts:reconcile-pending',
+      'artifacts:resolve-version-descriptors'
     ])
   })
 
@@ -810,7 +849,8 @@ describe('artifact IPC handler registration', () => {
       getVersionProvenance: vi.fn(),
       getVersionExecution: vi.fn(),
       getVersionMessages: vi.fn(),
-      getVersionReview: vi.fn()
+      getVersionReview: vi.fn(),
+      resolveVersionDescriptors: vi.fn()
     }
     registrationFailure.channel = 'artifacts:finalize-run'
     registrationFailure.error = failure

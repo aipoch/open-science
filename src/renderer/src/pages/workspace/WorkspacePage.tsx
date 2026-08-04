@@ -1286,8 +1286,11 @@ const WorkspacePage = ({
   // dispose + resume the Claude ACP session with the new specialist identity. On failure, the
   // draft is preserved, no user turn is created, and a recovery banner is shown (fail-closed —
   // never silently fall back to Main Agent).
-  const sendCurrentMessage = (forcedSkillIds: string[]): void => {
+  const sendCurrentMessage = (forcedSkillIds: string[], branchInNewSession = false): void => {
     if (!canSendMessage) return
+    // A blank New conversation has no source transcript to snapshot; ordinary Send already creates the
+    // fresh Session for that case.
+    if (branchInNewSession && !activeSession) return
     // Secondary synchronous guard: blocks a second Enter press that arrives before the state update
     // from the first barrier start triggers a re-render and disables canSendMessage.
     if (activeSession && barrierInFlightRef.current.has(activeSession.id)) return
@@ -1335,20 +1338,29 @@ const WorkspacePage = ({
     const wasNewConversation = !activeSession
     const draftAutoReviewEnabled = newConversationAutoReviewEnabled
     const draftEnabledComputeHosts = newConversationEnabledComputeHosts
-    // Capture the final specialist selection (last change wins before first send).
-    const draftSpecialistId = wasNewConversation ? newConversationSpecialistId : undefined
-    // Capture pending specialist for existing sessions (last change wins).
+    // Capture pending specialist for existing sessions (last change wins). `undefined` is a valid
+    // pending choice meaning Main Agent, so ownership—not truthiness—distinguishes it from no choice.
+    const hasStoredPendingSpecialist =
+      activeSession !== undefined && Object.hasOwn(pendingSessionSpecialist, activeSession.id)
     const pendingSpecialistId = activeSession
       ? pendingSessionSpecialist[activeSession.id]
       : undefined
-    const hasPendingSwitch =
-      activeSession !== undefined && Object.hasOwn(pendingSessionSpecialist, activeSession.id)
+    // Capture the final specialist selection (last change wins before first send).
+    const draftSpecialistId = branchInNewSession
+      ? hasStoredPendingSpecialist
+        ? (pendingSpecialistId ?? null)
+        : activeSession?.specialistId
+      : wasNewConversation
+        ? newConversationSpecialistId
+        : undefined
+    const hasPendingSwitch = !branchInNewSession && hasStoredPendingSpecialist
 
     // Dispatches the final send after draft/attachment state has been cleared.
     // Shared by the normal send path and the Retry recovery action so the logic stays in sync.
     const dispatchSend = (sessionId: string | undefined): void => {
       void sendMessage({
         sessionId,
+        ...(branchInNewSession && activeSession ? { branchSourceSessionId: activeSession.id } : {}),
         text: docToText(doc),
         attachments: attachmentsForSend,
         // Existing files the user referenced via `@`; the runtime attaches each as a content block.
@@ -1499,7 +1511,11 @@ const WorkspacePage = ({
     setAttachments([])
     setAttachmentError(null)
 
-    dispatchSend(activeSession?.id)
+    dispatchSend(branchInNewSession ? undefined : activeSession?.id)
+  }
+
+  const branchCurrentMessage = (forcedSkillIds: string[]): void => {
+    sendCurrentMessage(forcedSkillIds, true)
   }
 
   // Opens the rename dialog with the current title prefilled.
@@ -2061,6 +2077,7 @@ const WorkspacePage = ({
             autoReviewEnabled={activeAutoReviewEnabled}
             onDraftDocChange={changeComposerDraftDoc}
             onSendMessage={sendCurrentMessage}
+            onBranchInNewSession={activeSession ? branchCurrentMessage : undefined}
             onStageAttachmentFiles={stageAttachmentFiles}
             onRemoveAttachment={removeComposerAttachment}
             onCancelAttachmentTransfer={cancelAttachmentTransfer}

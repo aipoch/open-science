@@ -156,6 +156,19 @@ export type ListProjectArtifactsRequest = {
   projectName: string
 }
 
+// A copied conversation stores native generated-file Version ids in its messages, not paths or a
+// second file-library entry. Keep this query small because it is issued while historical messages
+// mount in the renderer.
+export const MAX_ARTIFACT_VERSION_DESCRIPTOR_IDS = 100
+
+// Renderer input for resolving immutable native Artifact Versions referenced by one visible Session.
+// Main validates the Session's persisted project ownership before applying this project scope.
+export type ResolveArtifactVersionDescriptorsRequest = {
+  projectId: string
+  appSessionId: string
+  versionIds: string[]
+}
+
 // Renderer request to re-finalize pending artifacts a crash left behind: the persisted message still
 // references `.pending/<run>/<file>` paths whose in-memory finalize claim was lost on restart. Returns
 // the message's finalized files so the renderer can replace the stale pending references.

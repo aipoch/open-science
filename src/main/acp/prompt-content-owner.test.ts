@@ -103,7 +103,7 @@ describe('AcpPromptContentOwner', () => {
       [referencePending],
       'default-project'
     )
-    const [historyUpload] = await stageUploadFixtures(uploads, {
+    const [historyPending] = await stageUploadFixtures(uploads, {
       files: [
         {
           name: 'history.txt',
@@ -112,6 +112,12 @@ describe('AcpPromptContentOwner', () => {
         }
       ]
     })
+    const [historyUpload] = await uploads.finalizePendingSessionUploads(
+      'source-session',
+      [historyPending],
+      'default-project'
+    )
+    const immutableHistoryUpload = { ...historyUpload, versionId: 'history-version-1' }
     const [currentUpload] = await stageUploadFixtures(uploads, {
       files: [
         {
@@ -133,6 +139,7 @@ describe('AcpPromptContentOwner', () => {
       fileReferenceResolver: createManagedFileReferenceResolver({ uploads }),
       inlineImageBudgetBytes: 1_024
     })
+    const finalizeUploads = vi.spyOn(uploads, 'finalizePendingSessionUploads')
 
     const result = await owner.prepare({
       appSessionId: 'target-session',
@@ -145,7 +152,7 @@ describe('AcpPromptContentOwner', () => {
           byteLength: Buffer.byteLength('history-image')
         }
       ],
-      historyUploads: [historyUpload],
+      historyUploads: [immutableHistoryUpload],
       currentUploads: [currentUpload],
       references: [reference],
       codexSkillInputs: [],
@@ -180,7 +187,101 @@ describe('AcpPromptContentOwner', () => {
       'history.txt',
       'current.txt'
     ])
+    expect(result.turnInputs?.uploads.map((upload) => upload.sessionId)).toEqual([
+      'source-session',
+      'target-session'
+    ])
+    expect(finalizeUploads).toHaveBeenCalledOnce()
+    expect(finalizeUploads).toHaveBeenCalledWith(
+      'target-session',
+      [currentUpload],
+      'default-project'
+    )
     expect(result.turnInputs?.references).toEqual([reference])
+  })
+
+  it('finalizes a genuinely staged history upload for the target Session', async () => {
+    const root = await createRoot()
+    const uploads = new UploadRepository(root)
+    const [stagedHistory] = await stageUploadFixtures(uploads, {
+      files: [
+        {
+          name: 'history.txt',
+          mimeType: 'text/plain',
+          content: Buffer.from('history body').toString('base64')
+        }
+      ]
+    })
+    const owner = new AcpPromptContentOwner({
+      uploadRepository: uploads,
+      fileReferenceResolver: createManagedFileReferenceResolver({ uploads })
+    })
+
+    const result = await owner.prepare({
+      appSessionId: 'target-session',
+      projectId: 'default-project',
+      text: 'continue',
+      historyImages: [],
+      historyUploads: [stagedHistory],
+      currentUploads: [],
+      references: [],
+      codexSkillInputs: [],
+      skillImportEnabled: false
+    })
+
+    expect(result.turnInputs?.uploads).toEqual([
+      expect.objectContaining({ sessionId: 'target-session', id: stagedHistory.id })
+    ])
+    expect(contentBlocks(result.content)).toContainEqual(
+      expect.objectContaining({
+        type: 'resource',
+        resource: expect.objectContaining({ text: 'history body' })
+      })
+    )
+  })
+
+  it('resolves source-owned legacy history without re-finalizing it for the target Session', async () => {
+    const root = await createRoot()
+    const uploads = new UploadRepository(root)
+    const [stagedHistory] = await stageUploadFixtures(uploads, {
+      files: [
+        {
+          name: 'history.txt',
+          mimeType: 'text/plain',
+          content: Buffer.from('history body').toString('base64')
+        }
+      ]
+    })
+    const [legacyHistory] = await uploads.finalizePendingSessionUploads(
+      'source-session',
+      [stagedHistory],
+      'default-project'
+    )
+    const finalizeUploads = vi.spyOn(uploads, 'finalizePendingSessionUploads')
+    const owner = new AcpPromptContentOwner({
+      uploadRepository: uploads,
+      fileReferenceResolver: createManagedFileReferenceResolver({ uploads })
+    })
+
+    const result = await owner.prepare({
+      appSessionId: 'target-session',
+      projectId: 'default-project',
+      text: 'continue',
+      historyImages: [],
+      historyUploads: [legacyHistory],
+      currentUploads: [],
+      references: [],
+      codexSkillInputs: [],
+      skillImportEnabled: false
+    })
+
+    expect(contentBlocks(result.content)).toContainEqual(
+      expect.objectContaining({
+        type: 'resource',
+        resource: expect.objectContaining({ text: 'history body' })
+      })
+    )
+    expect(finalizeUploads).not.toHaveBeenCalled()
   })
 
   it('owns cumulative image budget per Session and releases it on resetSession and clear', async () => {

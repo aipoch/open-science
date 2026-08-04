@@ -1,5 +1,6 @@
 import type { AcpRuntimeEvent, AcpStateSnapshot } from '../../../../shared/acp'
 import type { UploadedAttachment } from '../../../../shared/uploads'
+import { IMAGE_REPLAY_UNSUPPORTED_MESSAGE } from '../../../../shared/run-error-classification'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 
 import {
@@ -1127,6 +1128,523 @@ describe('workspace agent message sending', () => {
       undefined,
       expect.objectContaining({ promptMessageId: expect.any(String) })
     )
+  })
+
+  it('creates and selects a branched Session before replaying its active history into a fresh ACP session', async () => {
+    useSessionStore.getState().appendUserMessage({
+      sessionId: 'source-session',
+      content: 'Inspect the original data',
+      cwd: '/workspace/project',
+      projectId: 'project-1'
+    })
+    useSessionStore.getState().appendAgentMessageChunk({
+      sessionId: 'source-session',
+      streamId: 'source-stream',
+      eventId: 'source-event',
+      content: 'The original analysis is complete.'
+    })
+    useSessionStore.getState().finishRun('source-session')
+    const sourceBeforeBranch = useSessionStore.getState().sessions[0]
+    const created = createDeferred<{ sessionId: string; cwd?: string }>()
+    const runtime = {
+      state: createSnapshot(['source-session']),
+      createSession: vi.fn(() => created.promise),
+      resumeSession: vi.fn(),
+      resetSessionContext: vi.fn(),
+      sendPrompt: vi.fn().mockResolvedValue(createSnapshot(['branched-runtime-session']))
+    }
+
+    const branched = await sendWorkspaceMessage(runtime, {
+      branchSourceSessionId: 'source-session',
+      text: 'Try a different interpretation',
+      cwd: '/ignored-by-source-snapshot',
+      projectId: 'wrong-project',
+      projectName: 'wrong-project'
+    })
+
+    expect(branched).toBeDefined()
+    expect(runtime.createSession).toHaveBeenCalledWith(
+      '/workspace/project',
+      'project-1',
+      'ask',
+      undefined
+    )
+    expect(useSessionStore.getState().selectedSessionId).toBe(branched?.sessionId)
+    expect(useSessionStore.getState().sessions).toHaveLength(2)
+    expect(
+      useSessionStore.getState().sessions.find((session) => session.id === 'source-session')
+    ).toEqual(sourceBeforeBranch)
+    expect(
+      useSessionStore.getState().sessions.find((session) => session.id === branched?.sessionId)
+    ).toMatchObject({
+      id: branched?.sessionId,
+      isPending: true,
+      title: 'Try a different interpretation',
+      messages: [
+        expect.objectContaining({ content: 'Inspect the original data' }),
+        expect.objectContaining({ content: 'The original analysis is complete.' }),
+        expect.objectContaining({ content: 'Try a different interpretation' })
+      ]
+    })
+    expect(runtime.sendPrompt).not.toHaveBeenCalled()
+
+    created.resolve({ sessionId: 'branched-runtime-session', cwd: '/workspace/project' })
+    await flushRuntimeTasks()
+
+    expect(useSessionStore.getState().selectedSessionId).toBe('branched-runtime-session')
+    expect(runtime.sendPrompt).toHaveBeenCalledWith(
+      'branched-runtime-session',
+      'Try a different interpretation',
+      [],
+      undefined,
+      undefined,
+      expect.stringContaining('Inspect the original data'),
+      [],
+      [],
+      undefined,
+      expect.objectContaining({ promptMessageId: branched?.messageId })
+    )
+  })
+
+  it('keeps the immediately created branched Session in an error state when history images cannot replay', async () => {
+    useSessionStore.getState().appendUserMessage({
+      sessionId: 'source-session',
+      content: 'Inspect this chart',
+      cwd: '/workspace/project',
+      projectId: 'project-1'
+    })
+    useSessionStore.getState().appendAgentMessageChunk({
+      sessionId: 'source-session',
+      streamId: 'source-stream',
+      eventId: 'source-image-event',
+      image: { mimeType: 'image/png', data: 'aGVsbG8=', byteLength: 5 }
+    })
+    useSessionStore.getState().finishRun('source-session')
+    const sourceBeforeBranch = useSessionStore.getState().sessions[0]
+    const runtime = {
+      state: createSnapshot(['source-session']),
+      createSession: vi.fn(),
+      resumeSession: vi.fn(),
+      resetSessionContext: vi.fn(),
+      sendPrompt: vi.fn()
+    }
+
+    const branched = await sendWorkspaceMessage(runtime, {
+      branchSourceSessionId: 'source-session',
+      text: 'Try another chart explanation',
+      supportsImageInput: false
+    })
+
+    expect(branched).toBeDefined()
+    expect(runtime.createSession).not.toHaveBeenCalled()
+    expect(runtime.sendPrompt).not.toHaveBeenCalled()
+    expect(
+      useSessionStore.getState().sessions.find((session) => session.id === 'source-session')
+    ).toEqual(sourceBeforeBranch)
+    expect(useSessionStore.getState().selectedSessionId).toBe(branched?.sessionId)
+    expect(
+      useSessionStore.getState().sessions.find((session) => session.id === branched?.sessionId)
+    ).toMatchObject({
+      id: branched?.sessionId,
+      status: 'error',
+      error: IMAGE_REPLAY_UNSUPPORTED_MESSAGE,
+      messages: expect.arrayContaining([
+        expect.objectContaining({ content: 'Try another chart explanation' })
+      ])
+    })
+  })
+
+  it('publishes a path-only legacy history upload under the source Session before replay', async () => {
+    const finalizedHistory = createAttachment({
+      id: 'legacy-upload-1',
+      sessionId: 'source-session',
+      path: 'upload-version:project-1/source-session/legacy-version-1',
+      mimeType: 'image/png',
+      versionId: 'legacy-version-1',
+      versionNumber: 1
+    })
+    const finalizeSession = vi.fn().mockResolvedValue([finalizedHistory])
+    vi.stubGlobal('window', { api: { uploads: { finalizeSession } } })
+    useSessionStore.getState().appendUserMessage({
+      sessionId: 'source-session',
+      content: 'Inspect this legacy chart',
+      cwd: '/workspace/project',
+      projectId: 'project-1'
+    })
+    useSessionStore.getState().finishRun('source-session')
+    useSessionStore.setState((state) => ({
+      sessions: state.sessions.map((session) =>
+        session.id === 'source-session'
+          ? {
+              ...session,
+              messages: session.messages.map((message) => ({
+                ...message,
+                uploads: [
+                  {
+                    id: 'legacy-upload-1',
+                    sessionId: 'source-session',
+                    name: 'legacy.png',
+                    originalName: 'legacy.png',
+                    path: '/legacy/uploads/source-session/legacy.png',
+                    mimeType: 'image/png',
+                    size: 12
+                  }
+                ]
+              }))
+            }
+          : session
+      )
+    }))
+    const runtime = {
+      state: createSnapshot(['source-session']),
+      createSession: vi.fn().mockResolvedValue({
+        sessionId: 'branched-runtime-session',
+        cwd: '/workspace/project'
+      }),
+      resumeSession: vi.fn(),
+      resetSessionContext: vi.fn(),
+      sendPrompt: vi.fn().mockResolvedValue(createSnapshot(['branched-runtime-session']))
+    }
+
+    const branched = await sendWorkspaceMessage(runtime, {
+      branchSourceSessionId: 'source-session',
+      text: 'Try another chart explanation'
+    })
+    await flushRuntimeTasks()
+
+    expect(branched).toBeDefined()
+    expect(finalizeSession).toHaveBeenCalledWith({
+      projectId: 'project-1',
+      sessionId: 'source-session',
+      attachments: [
+        expect.objectContaining({
+          id: 'legacy-upload-1',
+          sessionId: 'source-session',
+          path: '/legacy/uploads/source-session/legacy.png'
+        })
+      ]
+    })
+    const source = useSessionStore
+      .getState()
+      .sessions.find((session) => session.id === 'source-session')
+    const child = useSessionStore
+      .getState()
+      .sessions.find((session) => session.id === 'branched-runtime-session')
+    expect(source?.messages[0].uploads).toEqual([
+      expect.objectContaining({ versionId: 'legacy-version-1' })
+    ])
+    expect(child?.messages[0].uploads).toEqual(source?.messages[0].uploads)
+    expect(runtime.sendPrompt).toHaveBeenCalledWith(
+      'branched-runtime-session',
+      'Try another chart explanation',
+      [],
+      undefined,
+      undefined,
+      expect.stringContaining('Inspect this legacy chart'),
+      [finalizedHistory],
+      [],
+      undefined,
+      expect.objectContaining({ promptMessageId: branched?.messageId })
+    )
+  })
+
+  it('does not create or prompt an ACP Session when a pending branch is cancelled during history reconciliation', async () => {
+    const stagedHistory = createAttachment({ id: 'history-upload-1', mimeType: 'image/png' })
+    const finalizedHistory = createAttachment({
+      id: stagedHistory.id,
+      sessionId: 'source-session',
+      path: 'upload-version:project-1/source-session/history-version-1',
+      mimeType: 'image/png',
+      versionId: 'history-version-1',
+      versionNumber: 1
+    })
+    const finalization = createDeferred<UploadedAttachment[]>()
+    const finalizeSession = vi.fn(() => finalization.promise)
+    vi.stubGlobal('window', { api: { uploads: { finalizeSession } } })
+    useSessionStore.getState().appendUserMessage({
+      sessionId: 'source-session',
+      content: 'Inspect the staged data',
+      attachments: [stagedHistory],
+      cwd: '/workspace/project',
+      projectId: 'project-1'
+    })
+    useSessionStore.getState().finishRun('source-session')
+    const runtime = {
+      state: createSnapshot(['source-session']),
+      createSession: vi.fn().mockResolvedValue({
+        sessionId: 'branched-runtime-session',
+        cwd: '/workspace/project'
+      }),
+      resumeSession: vi.fn(),
+      resetSessionContext: vi.fn(),
+      sendPrompt: vi.fn(),
+      cancel: vi.fn()
+    }
+
+    const branching = sendWorkspaceMessage(runtime, {
+      branchSourceSessionId: 'source-session',
+      text: 'Continue with the staged data'
+    })
+    await flushRuntimeTasks()
+
+    const pending = useSessionStore.getState().sessions[0]
+    expect(pending).toMatchObject({ isPending: true, status: 'running' })
+    await cancelWorkspaceRun(runtime, pending.id)
+    expect(runtime.cancel).not.toHaveBeenCalled()
+
+    finalization.resolve([finalizedHistory])
+    await expect(branching).resolves.toEqual({
+      sessionId: pending.id,
+      messageId: pending.activeRun?.promptMessageId
+    })
+    await flushRuntimeTasks()
+
+    expect(runtime.createSession).not.toHaveBeenCalled()
+    expect(runtime.sendPrompt).not.toHaveBeenCalled()
+    expect(useSessionStore.getState().sessions[0]).toMatchObject({
+      id: pending.id,
+      isPending: true,
+      status: 'idle',
+      activeRun: undefined
+    })
+  })
+
+  it('publishes staged branch history under the source Session before replay', async () => {
+    const stagedHistory = createAttachment({ id: 'history-upload-1', mimeType: 'image/png' })
+    const finalizedHistory = createAttachment({
+      id: stagedHistory.id,
+      sessionId: 'source-session',
+      path: 'upload-version:project-1/source-session/history-version-1',
+      mimeType: 'image/png',
+      versionId: 'history-version-1',
+      versionNumber: 1
+    })
+    const finalizeSession = vi.fn().mockResolvedValue([finalizedHistory])
+    vi.stubGlobal('window', { api: { uploads: { finalizeSession } } })
+    useSessionStore.getState().appendUserMessage({
+      sessionId: 'source-session',
+      content: 'Inspect the staged data',
+      attachments: [stagedHistory],
+      cwd: '/workspace/project',
+      projectId: 'project-1'
+    })
+    useSessionStore.getState().finishRun('source-session')
+    const runtime = {
+      state: createSnapshot(['source-session']),
+      createSession: vi.fn().mockResolvedValue({
+        sessionId: 'branched-runtime-session',
+        cwd: '/workspace/project'
+      }),
+      resumeSession: vi.fn(),
+      resetSessionContext: vi.fn(),
+      sendPrompt: vi.fn().mockResolvedValue(createSnapshot(['branched-runtime-session']))
+    }
+
+    const branched = await sendWorkspaceMessage(runtime, {
+      branchSourceSessionId: 'source-session',
+      text: 'Continue with the staged data'
+    })
+    await flushRuntimeTasks()
+
+    expect(finalizeSession).toHaveBeenCalledOnce()
+    expect(finalizeSession).toHaveBeenCalledWith({
+      projectId: 'project-1',
+      sessionId: 'source-session',
+      attachments: [stagedHistory]
+    })
+    const source = useSessionStore
+      .getState()
+      .sessions.find((session) => session.id === 'source-session')
+    const child = useSessionStore
+      .getState()
+      .sessions.find((session) => session.id === 'branched-runtime-session')
+    expect(source?.messages[0].uploads).toEqual([
+      expect.objectContaining({ sessionId: 'source-session', versionId: 'history-version-1' })
+    ])
+    expect(child?.messages[0].uploads).toEqual(source?.messages[0].uploads)
+    expect(runtime.sendPrompt).toHaveBeenCalledWith(
+      'branched-runtime-session',
+      'Continue with the staged data',
+      [],
+      undefined,
+      undefined,
+      expect.stringContaining('Inspect the staged data'),
+      [finalizedHistory],
+      [],
+      undefined,
+      expect.objectContaining({ promptMessageId: branched?.messageId })
+    )
+  })
+
+  it('retries a failed branched Session with the copied history and one current prompt', async () => {
+    const attachment = createAttachment()
+    const finalizedAttachment = createAttachment({
+      sessionId: 'branched-runtime-session',
+      path: 'upload-version:project-1/branched-runtime-session/upload-version-1',
+      versionId: 'upload-version-1',
+      versionNumber: 1
+    })
+    const finalizeSession = vi.fn().mockResolvedValue([finalizedAttachment])
+    vi.stubGlobal('window', { api: { uploads: { finalizeSession } } })
+    useSessionStore.getState().appendUserMessage({
+      sessionId: 'source-session',
+      content: 'Inspect the original data',
+      cwd: '/workspace/project',
+      projectId: 'project-1'
+    })
+    useSessionStore.getState().appendAgentMessageChunk({
+      sessionId: 'source-session',
+      streamId: 'source-stream',
+      eventId: 'source-event',
+      content: 'The original analysis is complete.'
+    })
+    useSessionStore.getState().finishRun('source-session')
+    const runtime = {
+      state: createSnapshot(['source-session']),
+      createSession: vi
+        .fn()
+        .mockRejectedValueOnce(new Error('Provider unavailable'))
+        .mockResolvedValueOnce({
+          sessionId: 'branched-runtime-session',
+          cwd: '/workspace/project'
+        }),
+      resumeSession: vi.fn(),
+      resetSessionContext: vi.fn(),
+      sendPrompt: vi.fn().mockResolvedValue(createSnapshot(['branched-runtime-session']))
+    }
+
+    const branched = await sendWorkspaceMessage(runtime, {
+      branchSourceSessionId: 'source-session',
+      text: 'Try a different interpretation',
+      attachments: [attachment]
+    })
+    await flushRuntimeTasks()
+
+    expect(useSessionStore.getState().sessions[0]).toMatchObject({
+      id: branched?.sessionId,
+      isPending: true,
+      status: 'error',
+      messages: [
+        expect.objectContaining({ content: 'Inspect the original data' }),
+        expect.objectContaining({ content: 'The original analysis is complete.' }),
+        expect.objectContaining({
+          content: 'Try a different interpretation',
+          uploads: [expect.objectContaining({ id: attachment.id, path: attachment.path })]
+        })
+      ]
+    })
+
+    const retried = await sendWorkspaceMessage(runtime, {
+      sessionId: branched?.sessionId,
+      text: 'Try a different interpretation'
+    })
+    await flushRuntimeTasks()
+
+    const child = useSessionStore.getState().sessions[0]
+    expect(child.id).toBe('branched-runtime-session')
+    expect(child.messages).toHaveLength(3)
+    expect(child.messages.at(-1)).toMatchObject({
+      id: retried?.messageId,
+      content: 'Try a different interpretation'
+    })
+    expect(runtime.sendPrompt).toHaveBeenCalledTimes(1)
+    const promptCall = runtime.sendPrompt.mock.calls[0]
+    expect(promptCall[1]).toBe('Try a different interpretation')
+    expect(promptCall[2]).toEqual([finalizedAttachment])
+    expect(promptCall[5]).toContain('Inspect the original data')
+    expect(promptCall[5]).toContain('The original analysis is complete.')
+    expect(promptCall[5]).not.toContain('Try a different interpretation')
+    expect(finalizeSession).toHaveBeenCalledWith({
+      projectId: 'project-1',
+      sessionId: 'branched-runtime-session',
+      attachments: [attachment]
+    })
+    expect(child.messages.at(-1)?.uploads).toEqual([
+      expect.objectContaining({ versionId: 'upload-version-1' })
+    ])
+  })
+
+  it('replays copied history when the first branched prompt fails after session binding', async () => {
+    const attachment = createAttachment()
+    const finalizedAttachment = createAttachment({
+      sessionId: 'branched-runtime-session',
+      path: 'upload-version:project-1/branched-runtime-session/upload-version-1',
+      versionId: 'upload-version-1',
+      versionNumber: 1
+    })
+    const finalizeSession = vi.fn().mockResolvedValue([finalizedAttachment])
+    vi.stubGlobal('window', {
+      api: {
+        uploads: { finalizeSession },
+        acp: { getState: vi.fn().mockResolvedValue(createSnapshot(['branched-runtime-session'])) }
+      }
+    })
+    useSessionStore.getState().appendUserMessage({
+      sessionId: 'source-session',
+      content: 'Inspect the original data',
+      cwd: '/workspace/project',
+      projectId: 'project-1'
+    })
+    useSessionStore.getState().appendAgentMessageChunk({
+      sessionId: 'source-session',
+      streamId: 'source-stream',
+      eventId: 'source-event',
+      content: 'The original analysis is complete.'
+    })
+    useSessionStore.getState().finishRun('source-session')
+    const runtime = {
+      state: createSnapshot(['source-session', 'branched-runtime-session']),
+      createSession: vi.fn().mockResolvedValue({
+        sessionId: 'branched-runtime-session',
+        cwd: '/workspace/project'
+      }),
+      resumeSession: vi.fn(),
+      resetSessionContext: vi.fn(),
+      sendPrompt: vi
+        .fn()
+        .mockRejectedValueOnce(new Error('Provider unavailable'))
+        .mockResolvedValueOnce(createSnapshot(['branched-runtime-session']))
+    }
+
+    const branched = await sendWorkspaceMessage(runtime, {
+      branchSourceSessionId: 'source-session',
+      text: 'Try a different interpretation',
+      attachments: [attachment]
+    })
+    await flushRuntimeTasks()
+    await flushRuntimeTasks()
+
+    expect(useSessionStore.getState().sessions[0]).toMatchObject({
+      id: 'branched-runtime-session',
+      isPending: false,
+      status: 'error',
+      pendingContextReplayMessageId: branched?.messageId
+    })
+
+    const retried = await sendWorkspaceMessage(runtime, {
+      sessionId: 'branched-runtime-session',
+      text: 'Try a different interpretation'
+    })
+    await flushRuntimeTasks()
+
+    const child = useSessionStore.getState().sessions[0]
+    expect(child.messages).toHaveLength(3)
+    expect(child.messages.at(-1)).toMatchObject({
+      id: retried?.messageId,
+      content: 'Try a different interpretation'
+    })
+    expect(child.pendingContextReplayMessageId).toBeUndefined()
+    expect(runtime.createSession).toHaveBeenCalledTimes(1)
+    expect(runtime.sendPrompt).toHaveBeenCalledTimes(2)
+    const retryPromptCall = runtime.sendPrompt.mock.calls[1]
+    expect(retryPromptCall[2]).toEqual([finalizedAttachment])
+    expect(retryPromptCall[5]).toContain('Inspect the original data')
+    expect(retryPromptCall[5]).toContain('The original analysis is complete.')
+    expect(retryPromptCall[5]).not.toContain('Try a different interpretation')
+    expect(finalizeSession).toHaveBeenCalledTimes(2)
+    expect(child.messages.at(-1)?.uploads).toEqual([
+      expect.objectContaining({ versionId: 'upload-version-1' })
+    ])
   })
 
   it('leaves a new conversation cwd unset so main can allocate a managed workspace', async () => {

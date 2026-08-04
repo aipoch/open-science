@@ -11,6 +11,7 @@ import {
 import { createUploadVersionReference, type UploadedAttachment } from '../../../../shared/uploads'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import type { ReviewWithChecks } from '../../../../shared/reviewer'
+import type { ArtifactVersionDescriptor } from '../../../../shared/artifact-provenance'
 import type {
   HandoffLifecycleEvent,
   HandoffLifecycleEventSource
@@ -40,6 +41,13 @@ vi.mock('pdfjs-dist', () => {
 })
 
 const { agentMarkdownRenderMock } = vi.hoisted(() => ({ agentMarkdownRenderMock: vi.fn() }))
+const { flushSessionPersistenceMock } = vi.hoisted(() => ({
+  flushSessionPersistenceMock: vi.fn(async (): Promise<void> => undefined)
+}))
+
+vi.mock('@/lib/session-persistence/session-persistence', () => ({
+  flushSessionPersistence: flushSessionPersistenceMock
+}))
 
 vi.mock('@/components/streamdown/AgentMarkdown', () => ({
   AgentMarkdown: ({ content }: { content: string }) => {
@@ -117,6 +125,17 @@ const createUpload = (overrides: Partial<UploadedAttachment> = {}): UploadedAtta
   ...overrides
 })
 
+const createDeferred = <Value,>(): {
+  promise: Promise<Value>
+  resolve: (value: Value) => void
+} => {
+  let resolve!: (value: Value) => void
+  const promise = new Promise<Value>((nextResolve) => {
+    resolve = nextResolve
+  })
+  return { promise, resolve }
+}
+
 class FakeHandoffLifecycleSource implements HandoffLifecycleEventSource {
   private events: readonly HandoffLifecycleEvent[] = []
   private readonly listeners = new Set<() => void>()
@@ -163,6 +182,7 @@ describe('WorkspaceMessageScroller artifact click behavior', () => {
   beforeEach(() => {
     upsertAndActivateItem.mockClear()
     announceWindowFindReady.mockClear()
+    flushSessionPersistenceMock.mockReset().mockResolvedValue(undefined)
     useReviewStore.setState(createInitialReviewState())
     container = document.createElement('div')
     document.body.appendChild(container)
@@ -449,6 +469,275 @@ describe('WorkspaceMessageScroller artifact click behavior', () => {
       size: 2048,
       mtimeMs: 1710000000100
     })
+  })
+
+  it('resolves copied generated Version metadata and previews the source Version owner', async () => {
+    const { WorkspaceMessageScroller } = await import('./WorkspaceMessageScroller')
+    const descriptor: ArtifactVersionDescriptor = {
+      id: 'artifact-version-1',
+      projectName: 'origin-project',
+      sessionId: 'origin-session',
+      name: 'sin.png',
+      mimeType: 'image/png',
+      size: 48128,
+      mtimeMs: 1710000000100,
+      artifactId: 'artifact-lineage-1',
+      versionId: 'artifact-version-1',
+      versionNumber: 2,
+      checksum: 'a'.repeat(64),
+      createdAt: '2026-08-03T14:43:07.000Z',
+      state: 'finalized'
+    }
+    const resolveVersionDescriptors = vi.fn().mockResolvedValue([descriptor])
+    window.api.artifacts.resolveVersionDescriptors = resolveVersionDescriptors
+    const session = createSession({
+      id: 'branched-session',
+      status: 'idle',
+      messages: [
+        createMessage({ id: 'prompt-1' }),
+        createMessage({
+          id: 'reply-1',
+          role: 'agent',
+          content: 'Created the chart',
+          artifactIds: ['artifact-version-1']
+        })
+      ]
+    })
+
+    root = createRoot(container)
+    await act(async () => {
+      root.render(
+        <WorkspaceMessageScroller activeSession={session} onSendEditedMessage={vi.fn()} />
+      )
+      await Promise.resolve()
+      await Promise.resolve()
+    })
+
+    expect(resolveVersionDescriptors).toHaveBeenCalledWith({
+      projectId: 'default',
+      appSessionId: 'branched-session',
+      versionIds: ['artifact-version-1']
+    })
+    const card = container.querySelector<HTMLButtonElement>(
+      '[aria-label="Preview generated file sin.png"]'
+    )
+    expect(card).not.toBeNull()
+
+    await act(async () => {
+      card?.dispatchEvent(new MouseEvent('click', { bubbles: true }))
+    })
+
+    expect(upsertAndActivateItem).toHaveBeenCalledWith({
+      id: 'artifact-lineage-1',
+      projectId: 'origin-project',
+      sessionId: 'origin-session',
+      title: 'sin.png',
+      type: 'file',
+      path: 'artifact-version:origin-project/origin-session/artifact-lineage-1/artifact-version-1',
+      name: 'sin.png',
+      format: 'image',
+      mimeType: 'image/png',
+      size: 48128,
+      mtimeMs: 1710000000100,
+      artifactId: 'artifact-lineage-1',
+      selectedVersionId: 'artifact-version-1',
+      versionNumber: 2
+    })
+  })
+
+  it('shows a resolved copied generated card after the active Session updates during lookup', async () => {
+    const { WorkspaceMessageScroller } = await import('./WorkspaceMessageScroller')
+    const descriptor: ArtifactVersionDescriptor = {
+      id: 'artifact-version-1',
+      projectName: 'origin-project',
+      sessionId: 'origin-session',
+      name: 'sin.png',
+      mimeType: 'image/png',
+      size: 48128,
+      mtimeMs: 1710000000100,
+      artifactId: 'artifact-lineage-1',
+      versionId: 'artifact-version-1',
+      versionNumber: 2,
+      checksum: 'a'.repeat(64),
+      createdAt: '2026-08-03T14:43:07.000Z',
+      state: 'finalized'
+    }
+    const deferred = createDeferred<ArtifactVersionDescriptor[]>()
+    const resolveVersionDescriptors = vi.fn(() => deferred.promise)
+    window.api.artifacts.resolveVersionDescriptors = resolveVersionDescriptors
+    const session = createSession({
+      id: 'branched-session',
+      status: 'idle',
+      messages: [
+        createMessage({ id: 'prompt-1' }),
+        createMessage({
+          id: 'reply-1',
+          role: 'agent',
+          content: 'Created the chart',
+          artifactIds: ['artifact-version-1']
+        })
+      ]
+    })
+
+    root = createRoot(container)
+    await act(async () => {
+      root.render(
+        <WorkspaceMessageScroller activeSession={session} onSendEditedMessage={vi.fn()} />
+      )
+      await Promise.resolve()
+    })
+    await act(async () => {
+      root.render(
+        <WorkspaceMessageScroller
+          activeSession={{ ...session, updatedAt: session.updatedAt + 1 }}
+          onSendEditedMessage={vi.fn()}
+        />
+      )
+      await Promise.resolve()
+    })
+
+    deferred.resolve([descriptor])
+    await act(async () => {
+      await deferred.promise
+      await Promise.resolve()
+    })
+
+    expect(resolveVersionDescriptors).toHaveBeenCalledTimes(1)
+    expect(container.querySelector('[aria-label="Preview generated file sin.png"]')).not.toBeNull()
+  })
+
+  it('retries copied generated Version metadata after pending Session persistence settles', async () => {
+    const { WorkspaceMessageScroller } = await import('./WorkspaceMessageScroller')
+    const descriptor: ArtifactVersionDescriptor = {
+      id: 'artifact-version-1',
+      projectName: 'origin-project',
+      sessionId: 'origin-session',
+      name: 'sin.png',
+      mimeType: 'image/png',
+      size: 48128,
+      mtimeMs: 1710000000100,
+      artifactId: 'artifact-lineage-1',
+      versionId: 'artifact-version-1',
+      versionNumber: 2,
+      checksum: 'a'.repeat(64),
+      createdAt: '2026-08-03T14:43:07.000Z',
+      state: 'finalized'
+    }
+    const resolveVersionDescriptors = vi
+      .fn()
+      .mockRejectedValueOnce(new Error('Session has not been persisted yet'))
+      .mockResolvedValueOnce([descriptor])
+    const persisted = createDeferred<void>()
+    flushSessionPersistenceMock.mockReturnValueOnce(persisted.promise)
+    window.api.artifacts.resolveVersionDescriptors = resolveVersionDescriptors
+    const session = createSession({
+      id: 'branched-session',
+      status: 'running',
+      messages: [
+        createMessage({
+          id: 'reply-1',
+          role: 'agent',
+          content: 'Created the chart',
+          artifactIds: ['artifact-version-1']
+        })
+      ]
+    })
+
+    root = createRoot(container)
+    await act(async () => {
+      root.render(
+        <WorkspaceMessageScroller activeSession={session} onSendEditedMessage={vi.fn()} />
+      )
+      await Promise.resolve()
+      await Promise.resolve()
+    })
+    expect(resolveVersionDescriptors).toHaveBeenCalledTimes(1)
+    expect(flushSessionPersistenceMock).toHaveBeenCalledTimes(1)
+
+    persisted.resolve()
+    await act(async () => {
+      await persisted.promise
+      await Promise.resolve()
+      await Promise.resolve()
+    })
+
+    expect(resolveVersionDescriptors).toHaveBeenCalledTimes(2)
+    expect(container.querySelector('[aria-label="Preview generated file sin.png"]')).not.toBeNull()
+  })
+
+  it('ignores an older artifact lookup after switching away from and back to a Session', async () => {
+    const { WorkspaceMessageScroller } = await import('./WorkspaceMessageScroller')
+    const descriptor: ArtifactVersionDescriptor = {
+      id: 'artifact-version-1',
+      projectName: 'origin-project',
+      sessionId: 'origin-session',
+      name: 'sin.png',
+      mimeType: 'image/png',
+      size: 48128,
+      mtimeMs: 1710000000100,
+      artifactId: 'artifact-lineage-1',
+      versionId: 'artifact-version-1',
+      versionNumber: 2,
+      checksum: 'a'.repeat(64),
+      createdAt: '2026-08-03T14:43:07.000Z',
+      state: 'finalized'
+    }
+    const firstLookup = createDeferred<ArtifactVersionDescriptor[]>()
+    const secondLookup = createDeferred<ArtifactVersionDescriptor[]>()
+    const resolveVersionDescriptors = vi
+      .fn()
+      .mockImplementationOnce(() => firstLookup.promise)
+      .mockImplementationOnce(() => secondLookup.promise)
+    window.api.artifacts.resolveVersionDescriptors = resolveVersionDescriptors
+    const sessionA = createSession({
+      id: 'session-a',
+      status: 'idle',
+      messages: [
+        createMessage({
+          id: 'reply-a',
+          role: 'agent',
+          content: 'Created the chart',
+          artifactIds: ['artifact-version-1']
+        })
+      ]
+    })
+    const sessionB = createSession({ id: 'session-b', status: 'idle', messages: [] })
+
+    root = createRoot(container)
+    await act(async () => {
+      root.render(
+        <WorkspaceMessageScroller activeSession={sessionA} onSendEditedMessage={vi.fn()} />
+      )
+      await Promise.resolve()
+    })
+    await act(async () => {
+      root.render(
+        <WorkspaceMessageScroller activeSession={sessionB} onSendEditedMessage={vi.fn()} />
+      )
+      await Promise.resolve()
+    })
+    await act(async () => {
+      root.render(
+        <WorkspaceMessageScroller activeSession={sessionA} onSendEditedMessage={vi.fn()} />
+      )
+      await Promise.resolve()
+    })
+
+    secondLookup.resolve([descriptor])
+    await act(async () => {
+      await secondLookup.promise
+      await Promise.resolve()
+    })
+    expect(container.querySelector('[aria-label="Preview generated file sin.png"]')).not.toBeNull()
+
+    firstLookup.resolve([])
+    await act(async () => {
+      await firstLookup.promise
+      await Promise.resolve()
+    })
+
+    expect(resolveVersionDescriptors).toHaveBeenCalledTimes(2)
+    expect(container.querySelector('[aria-label="Preview generated file sin.png"]')).not.toBeNull()
   })
 
   it('announces whole-window find readiness to main when the Workspace mounts', async () => {

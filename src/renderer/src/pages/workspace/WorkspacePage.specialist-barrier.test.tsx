@@ -343,6 +343,50 @@ describe('WorkspacePage fail-closed send gate', () => {
     expect(useSessionStore.getState().sessions[0].specialistId).toBeUndefined()
     expect(runtime.sendMessage).toHaveBeenCalledOnce()
   })
+
+  it('uses an existing pending specialist for a branched child without reconfiguring the source', async () => {
+    setupBase()
+    const setSessionSpecialist = vi.fn(() => Promise.resolve({ contextReset: false }))
+    useSessionStore.setState({
+      ...createInitialSessionState(),
+      sessions: [createSession({ specialistId: 'spec-a', status: 'running' })],
+      selectedSessionId: 'sess-a'
+    })
+    useSpecialistStore.setState({
+      items: [makeSpecialist('spec-a', 'Debugger'), makeSpecialist('spec-b', 'Researcher')],
+      isLoaded: true,
+      load: vi.fn()
+    })
+    window.api = apiStub({ setSessionSpecialist })
+
+    await renderPage(root)
+    await act(async () => {
+      ;(conversationProps.onSpecialistChange as (id: string | undefined) => void)('spec-b')
+    })
+    await act(async () => {
+      useSessionStore.getState().finishRun('sess-a')
+    })
+    await act(async () => {
+      ;(conversationProps.onDraftDocChange as (doc: ComposerDoc) => void)(
+        textDoc('branch this work')
+      )
+    })
+    expect(conversationProps.canSendMessage).toBe(true)
+    expect(conversationProps.onBranchInNewSession).toBeTypeOf('function')
+    await act(async () => {
+      ;(conversationProps.onBranchInNewSession as (ids: string[]) => void)([])
+    })
+
+    expect(setSessionSpecialist).not.toHaveBeenCalled()
+    expect(runtime.sendMessage).toHaveBeenCalledWith(
+      expect.objectContaining({
+        branchSourceSessionId: 'sess-a',
+        sessionId: undefined,
+        specialistId: 'spec-b'
+      })
+    )
+    expect(useSessionStore.getState().sessions[0].specialistId).toBe('spec-a')
+  })
 })
 
 // ---------------------------------------------------------------------------

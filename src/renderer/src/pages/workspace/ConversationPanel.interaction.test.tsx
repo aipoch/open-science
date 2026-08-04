@@ -339,6 +339,88 @@ describe('ConversationPanel composer intake', () => {
     expect(onSendMessage).toHaveBeenCalledWith([])
   })
 
+  it('adds a branch option beside Send only when a branch handler is available', () => {
+    const onBranchInNewSession = vi.fn()
+    renderPanel({ canSendMessage: true, onBranchInNewSession })
+
+    const trigger = container.querySelector(
+      '[data-testid="branch-send-menu-trigger"]'
+    ) as HTMLButtonElement
+    const send = container.querySelector('button[aria-label="Send message"]') as HTMLButtonElement
+    const branchItem = container.querySelector(
+      '[data-testid="menu-branch-in-new-session"]'
+    ) as HTMLButtonElement
+
+    expect(send.getAttribute('data-slot')).toBe('button')
+    expect(trigger.getAttribute('data-slot')).toBe('button')
+    expect(send.className.split(' ')).toEqual(
+      expect.arrayContaining([
+        'h-8',
+        'w-8',
+        '[@media(pointer:coarse)]:before:-inset-y-1.5',
+        '[@media(pointer:coarse)]:before:-left-3',
+        '[@media(pointer:coarse)]:before:right-0'
+      ])
+    )
+    expect(trigger.className.split(' ')).toEqual(
+      expect.arrayContaining([
+        'h-8',
+        'w-8',
+        '[@media(pointer:coarse)]:before:-inset-y-1.5',
+        '[@media(pointer:coarse)]:before:left-0',
+        '[@media(pointer:coarse)]:before:-right-3'
+      ])
+    )
+    expect(send.parentElement?.className.split(' ')).toEqual(
+      expect.arrayContaining([
+        'rounded-md',
+        'bg-primary',
+        'text-primary-foreground',
+        '[@media(pointer:coarse)]:mx-3'
+      ])
+    )
+    expect(send.className.split(' ')).toEqual(
+      expect.arrayContaining(['border-0', 'bg-transparent', 'hover:bg-primary-foreground/10'])
+    )
+    expect(trigger.className.split(' ')).toEqual(
+      expect.arrayContaining([
+        'border-0',
+        'bg-transparent',
+        'after:left-0',
+        'after:bg-primary-foreground/20',
+        'active:translate-y-px',
+        'motion-reduce:active:translate-y-0'
+      ])
+    )
+    expect(trigger.getAttribute('aria-label')).toBe('More send options')
+    expect(trigger.getAttribute('aria-haspopup')).toBe('menu')
+    expect(branchItem.textContent).toContain('Branch in new session')
+
+    act(() => branchItem.click())
+
+    expect(onBranchInNewSession).toHaveBeenCalledWith([])
+  })
+
+  it('disables the branch option whenever Send is disabled', () => {
+    const onBranchInNewSession = vi.fn()
+    renderPanel({ canSendMessage: false, onBranchInNewSession })
+
+    const trigger = container.querySelector(
+      '[data-testid="branch-send-menu-trigger"]'
+    ) as HTMLButtonElement
+    const branchItem = container.querySelector(
+      '[data-testid="menu-branch-in-new-session"]'
+    ) as HTMLButtonElement
+
+    expect(trigger.disabled).toBe(true)
+    expect(branchItem.disabled).toBe(true)
+
+    act(() => {
+      branchItem.dispatchEvent(new MouseEvent('click', { bubbles: true }))
+    })
+    expect(onBranchInNewSession).not.toHaveBeenCalled()
+  })
+
   it('persists typed text as a doc via onDraftDocChange', () => {
     const onDraftDocChange = vi.fn()
     renderPanel({ onDraftDocChange })
@@ -537,6 +619,27 @@ describe('ConversationPanel fix loop lock', () => {
     })
 
     expect(onCancelRun).toHaveBeenCalledTimes(1)
+  })
+
+  it('keeps the split-send width while running so adjacent hover controls do not shift', () => {
+    const runningSession: ChatSession = {
+      ...idleSession,
+      status: 'running',
+      activeRun: { promptMessageId: 'msg-1', startedAt: Date.now() }
+    }
+    renderPanel({
+      activeSession: runningSession,
+      canSendMessage: false,
+      onBranchInNewSession: vi.fn()
+    })
+
+    const slot = container.querySelector(
+      '[data-testid="composer-running-control-slot"]'
+    ) as HTMLDivElement
+    expect(slot.className.split(' ')).toEqual(
+      expect.arrayContaining(['w-16', 'justify-end', '[@media(pointer:coarse)]:mx-3'])
+    )
+    expect(slot.querySelector('[aria-label="Cancel run"]')).not.toBeNull()
   })
 
   it('cancel button during fix loop calls onCancelRun which unlocks the composer', () => {

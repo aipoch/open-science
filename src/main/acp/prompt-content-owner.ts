@@ -4,7 +4,7 @@ import { pathToFileURL } from 'node:url'
 
 import type { AcpMessageImage } from '../../shared/acp'
 import type { FileReference } from '../../shared/artifacts'
-import type { UploadedAttachment } from '../../shared/uploads'
+import { PENDING_UPLOAD_SESSION_ID, type UploadedAttachment } from '../../shared/uploads'
 import { readBoundedManagedFilePreview } from '../managed-file-preview'
 import {
   buildImageContentData,
@@ -99,15 +99,11 @@ class AcpPromptContentOwner {
   }
 
   async prepare(input: PrepareAcpPromptContentInput): Promise<PreparedAcpPromptContent> {
-    const attachments = [...input.historyUploads, ...input.currentUploads]
-    let finalizedPromptUploads: UploadedAttachment[] = []
+    const hasUploads = input.historyUploads.length > 0 || input.currentUploads.length > 0
+    let promptUploads: UploadedAttachment[] = []
 
     let content: string | ContentBlock[]
-    if (
-      attachments.length === 0 &&
-      input.references.length === 0 &&
-      input.historyImages.length === 0
-    ) {
+    if (!hasUploads && input.references.length === 0 && input.historyImages.length === 0) {
       content = input.text
     } else {
       const contentBlocks: ContentBlock[] = input.text.trim()
@@ -142,19 +138,37 @@ class AcpPromptContentOwner {
         this.sessionInlineImageBytes.set(input.appSessionId, imageBudget.base64Bytes)
       }
 
-      // Staged uploads own the durable Session id here, so finalize before turning them into blocks.
-      if (attachments.length > 0) {
+      if (hasUploads) {
         if (!this.options.uploadRepository) throw new Error('Upload storage is not configured.')
 
-        finalizedPromptUploads = await this.options.uploadRepository.finalizePendingSessionUploads(
-          input.appSessionId,
-          attachments,
-          input.projectId
+        // Historical Versions retain their immutable source ownership. Branch reconciles its staged
+        // history first; other callers may still supply a genuine pending capability for this target.
+        const stagedHistoryUploads = input.historyUploads.filter(
+          (upload) => !upload.versionId && upload.sessionId === PENDING_UPLOAD_SESSION_ID
         )
+        const uploadsToFinalize = [...stagedHistoryUploads, ...input.currentUploads]
+        const finalizedUploads =
+          uploadsToFinalize.length > 0
+            ? await this.options.uploadRepository.finalizePendingSessionUploads(
+                input.appSessionId,
+                uploadsToFinalize,
+                input.projectId
+              )
+            : []
+        const finalizedById = new Map(finalizedUploads.map((upload) => [upload.id, upload]))
+        promptUploads = [
+          ...input.historyUploads.map((upload) => finalizedById.get(upload.id) ?? upload),
+          ...input.currentUploads.map((upload) => finalizedById.get(upload.id) ?? upload)
+        ]
 
         // Preserve the existing order: history uploads, current uploads, then explicit references.
-        for (const attachment of finalizedPromptUploads) {
-          const blocks = await this.createAttachmentContentBlocks(input, attachment)
+        for (let index = 0; index < promptUploads.length; index += 1) {
+          const attachment = promptUploads[index]
+          const blocks = await this.createAttachmentContentBlocks(
+            input,
+            attachment,
+            index < input.historyUploads.length
+          )
           for (const block of blocks) {
             appendBlock(
               block,
@@ -175,14 +189,14 @@ class AcpPromptContentOwner {
     }
 
     const preparedContent = this.attachCodexSkillInputs(content, input.codexSkillInputs)
-    const hasTurnInputs = finalizedPromptUploads.length > 0 || input.references.length > 0
+    const hasTurnInputs = promptUploads.length > 0 || input.references.length > 0
 
     return {
       content: preparedContent,
       ...(hasTurnInputs
         ? {
             turnInputs: {
-              uploads: finalizedPromptUploads,
+              uploads: promptUploads,
               references: [...input.references]
             }
           }
@@ -229,13 +243,17 @@ class AcpPromptContentOwner {
 
   private async createAttachmentContentBlocks(
     input: PrepareAcpPromptContentInput,
-    attachment: UploadedAttachment
+    attachment: UploadedAttachment,
+    isHistoryUpload: boolean
   ): Promise<ContentBlock[]> {
     if (!this.options.uploadRepository) throw new Error('Upload storage is not configured.')
 
     const filePath = await this.options.uploadRepository.resolveManagedUploadPath(
       { path: attachment.path },
-      { projectId: input.projectId, sessionId: input.appSessionId }
+      {
+        projectId: input.projectId,
+        ...(isHistoryUpload ? {} : { sessionId: input.appSessionId })
+      }
     )
     const { size } = await stat(filePath)
 

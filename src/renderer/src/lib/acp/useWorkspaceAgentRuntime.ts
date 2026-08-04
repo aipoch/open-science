@@ -40,6 +40,9 @@ import { applyWorkspaceRuntimeEvent, syncWorkspacePermissionState } from './work
 
 type SendWorkspaceMessageInput = {
   sessionId?: string
+  // Branch in New Session creates a fresh app/ACP Session from this source Session's active path.
+  // It is mutually exclusive with `sessionId`, which continues an existing app Session.
+  branchSourceSessionId?: string
   text: string
   attachments?: UploadedAttachment[]
   cwd?: string
@@ -77,12 +80,18 @@ type SendWorkspaceMessageInput = {
   // Immutable Specialist UUID from the new-conversation draft picker. Only used when creating a new
   // ACP session (sessionId === undefined). The renderer sends only the UUID; the main process reads
   // the latest Profile. Never passed for existing sessions (specialist binding is immutable).
-  specialistId?: string
+  specialistId?: string | null
 }
 
 type SendWorkspaceMessageResult = {
   sessionId: string
   messageId: string
+}
+
+type HistoryReplayContext = {
+  historyPreamble?: string
+  historyAttachments?: UploadedAttachment[]
+  historyImages?: AcpMessageImage[]
 }
 
 type SendPreparationStateChange = (sessionId: string, inFlight: boolean) => void
@@ -301,6 +310,57 @@ const finalizeWorkspaceAttachments = async (
   return finalizedAttachments
 }
 
+// Publishes copied staged history under its source Session before the child reuses the Version refs.
+const reconcileBranchedHistoryAttachments = async (
+  sourceSessionId: string,
+  childSessionId: string,
+  historyMessages: ChatMessage[],
+  projectId: string | undefined
+): Promise<void> => {
+  const stagedById = new Map<string, UploadedAttachment>()
+  for (const message of historyMessages) {
+    for (const upload of message.uploads ?? []) {
+      if (!upload.versionId && !stagedById.has(upload.id)) {
+        stagedById.set(upload.id, toRuntimeUploadedAttachment(upload, projectId))
+      }
+    }
+  }
+  if (stagedById.size === 0) return
+
+  const finalized = await window.api.uploads.finalizeSession({
+    projectId,
+    sessionId: sourceSessionId,
+    attachments: [...stagedById.values()]
+  })
+  const finalizedById = new Map(finalized.map((upload) => [upload.id, upload]))
+
+  for (const stagedId of stagedById.keys()) {
+    if (!finalizedById.has(stagedId)) {
+      throw new Error(`Upload finalization did not return the staged attachment: ${stagedId}`)
+    }
+  }
+
+  for (const message of historyMessages) {
+    if (!message.uploads?.some((upload) => stagedById.has(upload.id))) continue
+    const uploads = message.uploads.map((upload) => {
+      const finalizedUpload = finalizedById.get(upload.id)
+      return finalizedUpload ? toPersistedUploadedAttachment(finalizedUpload) : upload
+    })
+    useSessionStore.getState().replaceMessageUploads({
+      sessionId: sourceSessionId,
+      messageId: message.id,
+      uploads
+    })
+    useSessionStore.getState().replaceMessageUploads({
+      sessionId: childSessionId,
+      messageId: message.id,
+      uploads
+    })
+  }
+
+  usePreviewWorkbenchStore.getState().reconcileFinalizedUploads(finalized)
+}
+
 const getPromptProvenanceContext = (
   sessionId: string,
   promptMessageId: string
@@ -511,6 +571,13 @@ const createWorkspaceRuntimeEventProcessor = (
 
 const liveWorkspaceRuntimeEventProcessor = createWorkspaceRuntimeEventProcessor()
 
+const sessionOwnsActivePrompt = (sessionId: string, messageId: string): boolean => {
+  const session = useSessionStore
+    .getState()
+    .sessions.find((candidate) => candidate.id === sessionId)
+  return session?.status === 'running' && session.activeRun?.promptMessageId === messageId
+}
+
 // Finishes the ACP session handshake for a prompt that is already visible locally.
 const startPendingSessionPrompt = (
   runtime: WorkspaceMessageRuntime,
@@ -522,9 +589,12 @@ const startPendingSessionPrompt = (
   permissionProfile: PermissionProfileId,
   forcedSkillIds: string[] | undefined,
   referencedArtifacts: FileReference[] | undefined,
-  specialistId: string | undefined
+  specialistId: string | undefined,
+  historyReplay?: HistoryReplayContext
 ): void => {
   void (async () => {
+    if (!sessionOwnsActivePrompt(pending.sessionId, pending.messageId)) return
+
     let createdSession
 
     try {
@@ -537,9 +607,13 @@ const startPendingSessionPrompt = (
     } catch (error) {
       // Unwrap the IPC wrapper so an app-authored setup failure (model-incompat / no provider / Codex
       // bridge / missing executable) is recognized by the classifier and hides the report button.
-      useSessionStore.getState().failRun(pending.sessionId, getCreateSessionFailureMessage(error))
+      if (sessionOwnsActivePrompt(pending.sessionId, pending.messageId)) {
+        useSessionStore.getState().failRun(pending.sessionId, getCreateSessionFailureMessage(error))
+      }
       return
     }
+
+    if (!sessionOwnsActivePrompt(pending.sessionId, pending.messageId)) return
 
     const runtimeSessionId = createdSession?.sessionId
 
@@ -565,6 +639,7 @@ const startPendingSessionPrompt = (
     })
 
     if (!bound) return
+    if (!sessionOwnsActivePrompt(runtimeSessionId, bound.messageId)) return
 
     let promptAttachments = attachments
 
@@ -583,6 +658,8 @@ const startPendingSessionPrompt = (
       return
     }
 
+    if (!sessionOwnsActivePrompt(runtimeSessionId, bound.messageId)) return
+
     // Baseline the newest prompt-failure event before dispatch so the rejection path can tell this
     // turn's error event from a stale one when it derives the report affordance.
     const priorErrorEventId = latestPromptFailureEventId(runtime.state.events, runtimeSessionId)
@@ -593,12 +670,16 @@ const startPendingSessionPrompt = (
         promptAttachments,
         forcedSkillIds,
         referencedArtifacts,
-        undefined,
-        undefined,
-        undefined,
+        historyReplay?.historyPreamble,
+        historyReplay?.historyAttachments,
+        historyReplay?.historyImages,
         undefined,
         getPromptProvenanceContext(runtimeSessionId, bound.messageId)
       )
+      .then((snapshot) => {
+        useSessionStore.getState().clearPendingContextReplay(runtimeSessionId, bound.messageId)
+        return snapshot
+      })
       .catch((error) => {
         // A rejected prompt surfaces as a Resume banner if the connection dropped, otherwise a
         // visible session error, instead of being swallowed as an unhandled rejection.
@@ -613,6 +694,7 @@ const sendWorkspaceMessage = async (
   runtime: WorkspaceMessageRuntime,
   {
     sessionId,
+    branchSourceSessionId,
     text,
     attachments = [],
     cwd,
@@ -636,12 +718,116 @@ const sendWorkspaceMessage = async (
   drainRuntimeEvents?: RuntimeEventDrain
 ): Promise<SendWorkspaceMessageResult | undefined> => {
   const content = text.trim()
+  const targetSessionId = sessionId
+  const replaySession = targetSessionId
+    ? useSessionStore.getState().sessions.find((session) => session.id === targetSessionId)
+    : undefined
+  const replayPrompt = replaySession?.pendingContextReplayMessageId
+    ? replaySession.messages.find(
+        (message) => message.id === replaySession.pendingContextReplayMessageId
+      )
+    : undefined
+  const effectiveAttachments =
+    attachments.length > 0 || !replayPrompt?.uploads?.length
+      ? attachments
+      : replayPrompt.uploads.map((upload) =>
+          toRuntimeUploadedAttachment(upload, replaySession?.projectId)
+        )
 
   // Empty drafts are allowed only when the user attached at least one file.
-  if (!content && attachments.length === 0) return undefined
+  if (!content && effectiveAttachments.length === 0) return undefined
 
-  const targetSessionId = sessionId
   const targetCwd = cwd
+
+  if (branchSourceSessionId) {
+    // The store snapshot is the transaction boundary: it selects precisely the source active path,
+    // appends the new prompt once, and makes the pending child Session visible before any async ACP work.
+    const pending = useSessionStore.getState().branchInNewSession({
+      sourceSessionId: branchSourceSessionId,
+      content,
+      attachments,
+      parts,
+      permissionProfile,
+      agentFrameworkId,
+      agentBackendId,
+      agentModel,
+      specialistId
+    })
+
+    if (!pending) return undefined
+
+    const pendingSession = useSessionStore
+      .getState()
+      .sessions.find((session) => session.id === pending.sessionId)
+    if (!pendingSession) return undefined
+
+    // The new prompt is already in the snapshot. Replay only the copied prior path so the agent sees
+    // this user request exactly once.
+    let historyMessages = pendingSession.messages.filter(
+      (message) => message.id !== pending.messageId
+    )
+    // The snapshot owns the child Session's project. Do not let a stale workspace selection route a
+    // branched conversation's fresh runtime (or its replayed uploads) to a different project.
+    const sessionProjectName = pendingSession.projectId
+    try {
+      await reconcileBranchedHistoryAttachments(
+        branchSourceSessionId,
+        pending.sessionId,
+        historyMessages,
+        sessionProjectName
+      )
+      const reconciledSession = useSessionStore
+        .getState()
+        .sessions.find((session) => session.id === pending.sessionId)
+      if (!reconciledSession) return undefined
+      if (!sessionOwnsActivePrompt(pending.sessionId, pending.messageId)) return pending
+      historyMessages = reconciledSession.messages.filter(
+        (message) => message.id !== pending.messageId
+      )
+    } catch (error) {
+      useSessionStore.getState().failRun(pending.sessionId, getErrorMessage(error))
+      return pending
+    }
+    const historyReplay: HistoryReplayContext = {
+      historyPreamble: buildHistoryPreamble(historyMessages)
+    }
+    let replayMedia: ReturnType<typeof buildHistoryReplayMedia>
+    try {
+      replayMedia = buildHistoryReplayMedia(historyMessages, sessionProjectName)
+    } catch (error) {
+      useSessionStore.getState().failRun(pending.sessionId, getErrorMessage(error))
+      return pending
+    }
+
+    // Branch creation is intentionally immediate. A model incompatibility remains a recoverable error
+    // on the selected pending Session and must never silently dispatch the new prompt without history.
+    if (
+      supportsImageInput === false &&
+      (replayMedia.images.length > 0 || replayMedia.attachments.length > 0)
+    ) {
+      useSessionStore.getState().failRun(pending.sessionId, IMAGE_REPLAY_UNSUPPORTED_MESSAGE)
+      return pending
+    }
+
+    historyReplay.historyAttachments = replayMedia.attachments
+    historyReplay.historyImages = replayMedia.images
+
+    startPendingSessionPrompt(
+      runtime,
+      pending,
+      content,
+      attachments,
+      pendingSession.cwd || targetCwd,
+      sessionProjectName,
+      pendingSession.permissionProfile ?? DEFAULT_PERMISSION_PROFILE,
+      forcedSkillIds,
+      referencedArtifacts,
+      pendingSession.specialistId,
+      historyReplay
+    )
+
+    return pending
+  }
 
   if (targetSessionId) {
     const currentSession = useSessionStore
@@ -665,10 +851,46 @@ const sendWorkspaceMessage = async (
 
     if (currentSession?.isPending) {
       const retryCwd = targetCwd || currentSession.cwd || undefined
+      let historyReplay: HistoryReplayContext | undefined
+
+      if (currentSession.pendingContextReplayMessageId) {
+        const historyMessages = currentSession.messages.filter(
+          (message) => message.id !== currentSession.pendingContextReplayMessageId
+        )
+        let replayMedia: ReturnType<typeof buildHistoryReplayMedia>
+        try {
+          replayMedia = buildHistoryReplayMedia(historyMessages, sessionProjectName)
+        } catch (error) {
+          useSessionStore.getState().failRun(currentSession.id, getErrorMessage(error))
+          return {
+            sessionId: currentSession.id,
+            messageId: currentSession.pendingContextReplayMessageId
+          }
+        }
+
+        // Keep the original pending prompt intact until the selected model can accept its history.
+        if (
+          supportsImageInput === false &&
+          (replayMedia.images.length > 0 || replayMedia.attachments.length > 0)
+        ) {
+          useSessionStore.getState().failRun(currentSession.id, IMAGE_REPLAY_UNSUPPORTED_MESSAGE)
+          return {
+            sessionId: currentSession.id,
+            messageId: currentSession.pendingContextReplayMessageId
+          }
+        }
+
+        historyReplay = {
+          historyPreamble: buildHistoryPreamble(historyMessages),
+          historyAttachments: replayMedia.attachments,
+          historyImages: replayMedia.images
+        }
+      }
+
       const appended = useSessionStore.getState().appendUserMessage({
         sessionId: currentSession.id,
         content,
-        attachments,
+        attachments: effectiveAttachments,
         parts,
         cwd: retryCwd,
         projectId: projectId ?? currentSession.projectId,
@@ -683,13 +905,14 @@ const sendWorkspaceMessage = async (
         runtime,
         appended,
         content,
-        attachments,
+        effectiveAttachments,
         retryCwd,
         sessionProjectName,
         currentSession.permissionProfile ?? DEFAULT_PERMISSION_PROFILE,
         forcedSkillIds,
         referencedArtifacts,
-        undefined // existing pending sessions do not re-apply specialistId
+        currentSession.pendingContextReplayMessageId ? currentSession.specialistId : undefined,
+        historyReplay
       )
       return appended
     }
@@ -836,10 +1059,11 @@ const sendWorkspaceMessage = async (
         ? preparedSession.messages.findIndex((message) => message.id === historyCutMessageId)
         : -1
     if (truncateFromMessageId && historyCutIndex < 0) return undefined
-    const historyMessages =
+    const historyMessages = (
       preparedSession && historyCutIndex >= 0
         ? preparedSession.messages.slice(0, historyCutIndex)
         : preparedSession?.messages
+    )?.filter((message) => message.id !== preparedSession?.pendingContextReplayMessageId)
 
     // Resume before creating the optimistic run. A draining runtime can emit its terminal event while
     // adoption is in flight; keeping the old Runtime Segment active until resume succeeds lets that
@@ -855,7 +1079,7 @@ const sendWorkspaceMessage = async (
     const appended = useSessionStore.getState().appendUserMessage({
       sessionId: targetSessionId,
       content,
-      attachments,
+      attachments: effectiveAttachments,
       parts,
       cwd: targetCwd,
       projectId: projectId ?? preparedSession?.projectId,
@@ -877,7 +1101,8 @@ const sendWorkspaceMessage = async (
       (branchContextResetPerformed ||
         contextResetFromResume ||
         forceHistoryReplay ||
-        specialistSwitchReplay) &&
+        specialistSwitchReplay ||
+        preparedSession?.pendingContextReplayMessageId) &&
       historyMessages
     ) {
       historyPreamble = buildHistoryPreamble(historyMessages)
@@ -898,15 +1123,15 @@ const sendWorkspaceMessage = async (
           })()
         : undefined
 
-    let promptAttachments = attachments
+    let promptAttachments = effectiveAttachments
 
     try {
       // Existing sessions can finalize immediately because their durable id is already known.
-      if (attachments.length > 0) {
+      if (effectiveAttachments.length > 0) {
         promptAttachments = await finalizeWorkspaceAttachments(
           targetSessionId,
           appended.messageId,
-          attachments,
+          effectiveAttachments,
           sessionProjectName
         )
       }
@@ -937,6 +1162,9 @@ const sendWorkspaceMessage = async (
         if (branchContextResetPerformed) {
           useSessionStore.getState().clearBranchContextReset(targetSessionId)
         }
+        if (preparedSession?.pendingContextReplayMessageId) {
+          useSessionStore.getState().clearPendingContextReplay(targetSessionId, appended.messageId)
+        }
         return snapshot
       })
       .catch((error) => {
@@ -960,7 +1188,7 @@ const sendWorkspaceMessage = async (
     agentFrameworkId,
     agentBackendId,
     agentModel,
-    specialistId
+    specialistId: specialistId ?? undefined
   })
 
   if (!pending) return undefined
@@ -976,7 +1204,7 @@ const sendWorkspaceMessage = async (
     permissionProfile ?? DEFAULT_PERMISSION_PROFILE,
     forcedSkillIds,
     referencedArtifacts,
-    specialistId
+    specialistId ?? undefined
   )
 
   return pending
@@ -1309,9 +1537,17 @@ const cancelWorkspaceRun = async (
   sessionId: string,
   cancelledSessionIds?: Set<string>
 ): Promise<void> => {
-  const wasCompacting =
-    useSessionStore.getState().sessions.find((session) => session.id === sessionId)?.compacting ===
-    true
+  const session = useSessionStore
+    .getState()
+    .sessions.find((candidate) => candidate.id === sessionId)
+  // Pending Sessions have no ACP identity yet. Settle their local run immediately; every startup
+  // await revalidates activeRun before it may create, bind, or prompt a runtime Session.
+  if (session?.isPending) {
+    useSessionStore.getState().finishRun(sessionId, undefined, session.activeRun?.promptMessageId)
+    return
+  }
+
+  const wasCompacting = session?.compacting === true
   if (wasCompacting) cancelledSessionIds?.add(sessionId)
   const snapshot = await runtime.cancel(sessionId)
 

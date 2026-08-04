@@ -28,6 +28,7 @@ let conversationProps: {
   canResumeSession: boolean
   onDraftDocChange: (doc: ComposerDoc) => void
   onSendMessage: (forcedSkillIds: string[]) => void
+  onBranchInNewSession?: (forcedSkillIds: string[]) => void
   onStageAttachmentFiles: (files: File[]) => void
   onResumeSession: () => Promise<void>
 }
@@ -410,6 +411,28 @@ describe('WorkspacePage draft preservation', () => {
     expect(conversationProps.attachments).toEqual([])
     // The runtime consumes (moves) the staged files, so the page must not delete them itself.
     expect(deleteUpload).not.toHaveBeenCalled()
+  })
+
+  it('routes the split-send branch action to a fresh Session snapshot instead of continuing the source', async () => {
+    await renderPage()
+
+    await act(async () => {
+      conversationProps.onDraftDocChange(textDoc('try a different approach'))
+    })
+    await act(async () => {
+      conversationProps.onBranchInNewSession?.([])
+    })
+
+    expect(runtime.sendMessage).toHaveBeenCalledWith(
+      expect.objectContaining({
+        sessionId: undefined,
+        branchSourceSessionId: 'sess-a',
+        text: 'try a different approach',
+        projectId: 'proj-1',
+        projectName: 'proj-1'
+      })
+    )
+    expect(conversationProps.draftDoc).toEqual(emptyDoc)
   })
 
   it('preserves a different draft submitted while the first send is preparing', async () => {
