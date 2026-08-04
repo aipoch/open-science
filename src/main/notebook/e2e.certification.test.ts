@@ -166,6 +166,7 @@ const makeHarness = async (opts: { idleTimeoutMs?: number } = {}): Promise<Harne
 
   const env: NotebookMcpEnvironment = {
     endpoint: conn.endpoint,
+    socketPath: conn.socketPath,
     token: conn.token,
     projectName: PROJECT,
     sessionId: SESSION,

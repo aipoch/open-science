@@ -21,6 +21,7 @@ const baseRequest = (
   overrides: Partial<{
     code: string
     mcpRpcEndpoint: string
+    mcpRpcSocketPath: string
     mcpRpcToken: string
     sessionId: string
     projectName: string
@@ -33,6 +34,7 @@ const baseRequest = (
   dataRoot: string
   runtimeRoot: string
   mcpRpcEndpoint?: string
+  mcpRpcSocketPath?: string
   mcpRpcToken?: string
   sessionId?: string
   projectName?: string
@@ -63,6 +65,7 @@ gate('repl kernel host.mcp', () => {
             console.log(JSON.stringify(result))
           `,
         mcpRpcEndpoint: connection.endpoint,
+        mcpRpcSocketPath: connection.socketPath,
         mcpRpcToken: connection.token,
         sessionId: 'session-42',
         projectName: 'project-1'

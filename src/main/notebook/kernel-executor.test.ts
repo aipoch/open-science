@@ -1271,6 +1271,7 @@ type BuildEnvFn = (
   request: ReturnType<typeof baseRequest> & {
     code: string
     mcpRpcEndpoint?: string
+    mcpRpcSocketPath?: string
     mcpRpcToken?: string
   },
   figuresDir: string
@@ -1294,6 +1295,7 @@ describe('NotebookKernelExecutor spawn env', () => {
       ...baseRequest('/tmp/os-repl-env'),
       code: 'x',
       mcpRpcEndpoint: 'http://127.0.0.1:9/x',
+      mcpRpcSocketPath: '\\\\.\\pipe\\open-science-notebook',
       mcpRpcToken: 'tok'
     }
     const buildEnv = (executor as unknown as { buildEnv: BuildEnvFn }).buildEnv.bind(executor)
@@ -1301,6 +1303,7 @@ describe('NotebookKernelExecutor spawn env', () => {
     const replEnv = buildEnv('repl', request, '/tmp/figs')
     expect(replEnv.ELECTRON_RUN_AS_NODE).toBe('1')
     expect(replEnv.OPEN_SCIENCE_MCP_RPC_ENDPOINT).toBe('http://127.0.0.1:9/x')
+    expect(replEnv.OPEN_SCIENCE_MCP_RPC_SOCKET_PATH).toBe('\\\\.\\pipe\\open-science-notebook')
     expect(replEnv.OPEN_SCIENCE_MCP_RPC_TOKEN).toBe('tok')
   })
 
@@ -1310,6 +1313,7 @@ describe('NotebookKernelExecutor spawn env', () => {
       ...baseRequest('/tmp/os-repl-env'),
       code: 'x',
       mcpRpcEndpoint: 'http://127.0.0.1:9/x',
+      mcpRpcSocketPath: '\\\\.\\pipe\\open-science-notebook',
       mcpRpcToken: 'tok'
     }
     const buildEnv = (executor as unknown as { buildEnv: BuildEnvFn }).buildEnv.bind(executor)
@@ -1319,6 +1323,7 @@ describe('NotebookKernelExecutor spawn env', () => {
       // Defense-in-depth: even if a data request carried the RPC connection, the data kernel never
       // receives it, so python/r have no outbound connector (host.mcp) access.
       expect(env.OPEN_SCIENCE_MCP_RPC_ENDPOINT).toBeUndefined()
+      expect(env.OPEN_SCIENCE_MCP_RPC_SOCKET_PATH).toBeUndefined()
       expect(env.OPEN_SCIENCE_MCP_RPC_TOKEN).toBeUndefined()
       // Only the repl kernel runs the app binary as plain Node.
       expect(env.ELECTRON_RUN_AS_NODE).toBeUndefined()

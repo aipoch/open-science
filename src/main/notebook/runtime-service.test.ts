@@ -882,6 +882,7 @@ describe('notebook runtime service', () => {
 
     service.setMcpRpcConnectionResolver(async () => ({
       endpoint: 'http://127.0.0.1:1/x',
+      socketPath: '\\\\.\\pipe\\open-science-notebook',
       token: 'tok'
     }))
 
@@ -894,6 +895,7 @@ describe('notebook runtime service', () => {
 
     // Data kernels (python/r) have no host.mcp; the RPC connection stays with the control-plane repl.
     expect(executions[0].mcpRpcEndpoint).toBeUndefined()
+    expect(executions[0].mcpRpcSocketPath).toBeUndefined()
     expect(executions[0].mcpRpcToken).toBeUndefined()
   })
 
@@ -923,6 +925,7 @@ describe('notebook runtime service', () => {
 
     service.setMcpRpcConnectionResolver(async () => ({
       endpoint: 'http://127.0.0.1:1/x',
+      socketPath: '\\\\.\\pipe\\open-science-notebook',
       token: 'tok'
     }))
 
@@ -941,6 +944,7 @@ describe('notebook runtime service', () => {
     expect(executions[0]).toMatchObject({
       code: 'return 1',
       mcpRpcEndpoint: 'http://127.0.0.1:1/x',
+      mcpRpcSocketPath: '\\\\.\\pipe\\open-science-notebook',
       mcpRpcToken: 'tok'
     })
 

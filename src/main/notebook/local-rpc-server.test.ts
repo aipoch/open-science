@@ -4,6 +4,7 @@ import { dirname, join } from 'node:path'
 import { afterEach, describe, expect, it, vi } from 'vitest'
 
 import type { NotebookRunInputFile } from '../../shared/notebook'
+import { fetchLocalRpc } from '../local-rpc-transport'
 import { NotebookLocalRpcServer } from './local-rpc-server'
 import { NotebookControlCompletionCapturedError, NotebookRuntimeService } from './runtime-service'
 import { NotebookRunRepository, getRuntimeRoot } from './repository'
@@ -72,6 +73,46 @@ afterEach(async () => {
 })
 
 describe('notebook local RPC server', () => {
+  it('propagates a local socket through every issued capability connection', async () => {
+    const root = await createStorageRoot()
+    const service = new NotebookRuntimeService({
+      configRoot: root,
+      dataRoot: root,
+      projectName: 'default-project',
+      repository: new NotebookRunRepository(root)
+    })
+    const server = new NotebookLocalRpcServer(service, { transport: 'pipe' })
+    const session = await server.issueSessionConnection('session-1', 'default-project')
+    const skillImport = await server.issueSkillImportConnection('session-1')
+    const control = await server.issueControlConnection('session-1', 'default-project')
+
+    try {
+      expect(session.socketPath).toBeTruthy()
+      expect(skillImport.socketPath).toBe(session.socketPath)
+      expect(control.socketPath).toBe(session.socketPath)
+
+      const response = await fetchLocalRpc(
+        session,
+        {
+          method: 'POST',
+          headers: {
+            authorization: `Bearer ${session.token}`,
+            'content-type': 'application/json'
+          },
+          body: JSON.stringify({
+            method: 'state',
+            params: { sessionId: 'session-1', workspaceCwd: root }
+          })
+        },
+        'Notebook capability test RPC'
+      )
+      expect(response.status).toBe(200)
+    } finally {
+      control.release()
+      await server.close()
+    }
+  })
+
   it('requires a bearer token and dispatches notebook execute calls', async () => {
     const root = await createStorageRoot()
     const service = new NotebookRuntimeService({

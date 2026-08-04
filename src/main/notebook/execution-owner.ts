@@ -387,6 +387,7 @@ class NotebookExecutionOwner {
                   protectedDirs: [getAppClaudeConfigDir(this.options.configRoot)],
                   timeoutMs: request.timeoutMs,
                   mcpRpcEndpoint: mcpRpc?.endpoint,
+                  mcpRpcSocketPath: mcpRpc?.socketPath,
                   mcpRpcToken: mcpRpc?.token,
                   sessionId: session.sessionId,
                   projectName: session.projectName,

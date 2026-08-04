@@ -567,6 +567,9 @@ class NotebookKernelExecutor implements NotebookExecutor {
       ...(kind === 'repl' && request.mcpRpcEndpoint
         ? { OPEN_SCIENCE_MCP_RPC_ENDPOINT: request.mcpRpcEndpoint }
         : {}),
+      ...(kind === 'repl' && request.mcpRpcSocketPath
+        ? { OPEN_SCIENCE_MCP_RPC_SOCKET_PATH: request.mcpRpcSocketPath }
+        : {}),
       ...(kind === 'repl' && request.mcpRpcToken
         ? { OPEN_SCIENCE_MCP_RPC_TOKEN: request.mcpRpcToken }
         : {}),

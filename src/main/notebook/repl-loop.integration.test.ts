@@ -6,8 +6,9 @@ import { createInterface } from 'node:readline'
 import { join, relative } from 'node:path'
 import { tmpdir } from 'node:os'
 import { randomUUID } from 'node:crypto'
-import type { Server } from 'node:http'
+import { createServer, type Server } from 'node:http'
 import { framePythonRequest, parseLoopResponse, type KernelLoopResponse } from './kernel-protocol'
+import { listenForLocalRpc } from '../local-rpc-transport'
 
 // Run with: RUN_KERNEL=1 npx vitest run src/main/notebook/repl-loop.integration.test.ts
 // Node is always available in vitest, so the only gate is RUN_KERNEL. The child is spawned exactly
@@ -47,6 +48,50 @@ const startLoop = (
     })
   return { child, send }
 }
+
+describe('repl_loop local RPC transport', () => {
+  it('routes host.mcp through the issued local socket', async () => {
+    let received: { method?: string; params?: { server?: string } } = {}
+    let authorization: string | undefined
+    const server = createServer((request, response) => {
+      let body = ''
+      request.on('data', (chunk) => (body += chunk))
+      request.on('end', () => {
+        authorization = request.headers.authorization
+        received = JSON.parse(body)
+        response
+          .writeHead(200, { 'content-type': 'application/json' })
+          .end(JSON.stringify({ result: { ok: true } }))
+      })
+    })
+    const connection = await listenForLocalRpc(server, {
+      name: 'repl-loop-test',
+      transport: 'pipe'
+    })
+    const { child, send } = startLoop({
+      OPEN_SCIENCE_MCP_RPC_ENDPOINT: connection.endpoint,
+      OPEN_SCIENCE_MCP_RPC_SOCKET_PATH: connection.socketPath,
+      OPEN_SCIENCE_MCP_RPC_TOKEN: 'test-token',
+      OPEN_SCIENCE_NOTEBOOK_SESSION_ID: 'session-1'
+    })
+
+    try {
+      const result = await send("return await host.mcp('pubmed', 'search', { q: 'rna' })")
+      expect(result.error).toBeNull()
+      expect(result.result).toBe('{"ok":true}')
+      expect(received).toMatchObject({
+        method: 'mcpCall',
+        params: { server: 'pubmed' }
+      })
+      expect(authorization).toBe('Bearer test-token')
+    } finally {
+      child.kill()
+      await new Promise<void>((resolve, reject) =>
+        server.close((error) => (error ? reject(error) : resolve()))
+      )
+    }
+  }, 60_000)
+})
 
 gate('repl_loop.js', () => {
   it('captures console.log, keeps a persistent context, and survives a thrown error', async () => {

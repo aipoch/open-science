@@ -38,6 +38,7 @@ export type NotebookSessionExecutionRequest = {
   resolvedInterpreter?: NotebookSessionResolvedInterpreter
   kind?: 'repl'
   mcpRpcEndpoint?: string
+  mcpRpcSocketPath?: string
   mcpRpcToken?: string
   sessionId?: string
   projectName?: string
@@ -83,6 +84,7 @@ export type NotebookSessionOwnedExecutor<
 
 export type NotebookSessionMcpRpcConnection = {
   endpoint: string
+  socketPath?: string
   token: string
   beginControlInvocation?: (context: TrustedControlInvocationIdentity) => () => void
   release?: () => void

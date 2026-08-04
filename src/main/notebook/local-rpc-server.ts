@@ -392,6 +392,7 @@ class NotebookLocalRpcServer {
     this.sessionRpcCapabilities.set(token, { sessionId, projectId })
     return {
       endpoint: connection.endpoint,
+      socketPath: connection.socketPath,
       token,
       release: () => {
         // A stale startup may release after a same-ID successor has rotated the current token. Revoke
@@ -416,6 +417,7 @@ class NotebookLocalRpcServer {
     })
     return {
       endpoint: connection.endpoint,
+      socketPath: connection.socketPath,
       token,
       release: () => {
         if (this.skillImportRpcTokens.get(sessionId) === token) {
@@ -449,6 +451,7 @@ class NotebookLocalRpcServer {
 
     return {
       endpoint: connection.endpoint,
+      socketPath: connection.socketPath,
       token,
       beginControlInvocation: (context) => {
         binding.activeControlInvocation = context
