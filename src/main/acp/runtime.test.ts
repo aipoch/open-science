@@ -2864,7 +2864,7 @@ describe('ACP runtime session management', () => {
     })
   })
 
-  it('sends an oversized text upload as a bounded preview + resource_link, never the full contents', async () => {
+  it('sends compute files as bounded local references without ACP file blocks', async () => {
     const root = await createTemporaryRoot()
     const uploadRepository = new UploadRepository(root)
     // A >512 KB CSV: a unique marker after the preview window must never reach the prompt.
@@ -2875,7 +2875,12 @@ describe('ACP runtime session management', () => {
     expect(Buffer.byteLength(csvBody, 'utf8')).toBeGreaterThan(512 * 1024)
     const stagedAttachments = await stageUploadFixtures(uploadRepository, {
       files: [
-        { name: 'big.csv', mimeType: 'text/csv', content: Buffer.from(csvBody).toString('base64') }
+        { name: 'big.csv', mimeType: 'text/csv', content: Buffer.from(csvBody).toString('base64') },
+        {
+          name: 'matrix.xlsx',
+          mimeType: 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',
+          content: Buffer.from('workbook-bytes').toString('base64')
+        }
       ]
     })
     const process = new FakeAgentProcess()
@@ -2901,20 +2906,21 @@ describe('ACP runtime session management', () => {
 
     expect(receivedPrompts).toHaveLength(1)
     const [prompt] = receivedPrompts
-    // Order is preserved: user text, then the file's preview notice, then its link.
+    // Order is preserved: user text, then the file's preview notice and local reference.
     expect(prompt[0]).toEqual({ type: 'text', text: 'analyze this table' })
     const notice = prompt[1] as Extract<ContentBlock, { type: 'text' }>
     expect(notice.type).toBe('text')
     expect(notice.text).toContain('big.csv')
     expect(notice.text).toContain('too large to include in full')
     expect(notice.text).toContain('id,name,value')
-    expect(prompt[2]).toMatchObject({
-      type: 'resource_link',
-      name: 'big.csv',
-      mimeType: 'text/csv',
-      uri: expect.stringContaining('/uploads/default-project/remote-session-1/big.csv')
-    })
-    // The full contents are never inlined: no `resource` block, and the past-preview marker never ships.
+    expect(notice.text).toContain('<attached_local_file>')
+    expect(notice.text).toContain('/uploads/default-project/remote-session-1/big.csv')
+    const datasetNotice = prompt[2] as Extract<ContentBlock, { type: 'text' }>
+    expect(datasetNotice.text).toContain('matrix.xlsx')
+    expect(datasetNotice.text).toContain('<attached_local_file>')
+    expect(prompt).toHaveLength(3)
+    // ACP file/resource blocks can be eagerly hydrated downstream, so only bounded text ships.
+    expect(prompt.some((block) => block.type === 'resource_link')).toBe(false)
     expect(prompt.some((block) => block.type === 'resource')).toBe(false)
     expect(JSON.stringify(prompt)).not.toContain('SENTINEL_PAST_PREVIEW_WINDOW')
   })

@@ -286,6 +286,15 @@ class AcpPromptContentOwner {
         `</${tag}>`
       ].join('\n')
     })
+    const localFileTextReference = (notice: string): ContentBlock => ({
+      type: 'text',
+      text: [
+        notice,
+        '<attached_local_file>',
+        JSON.stringify({ name, uri, mimeType, size }),
+        '</attached_local_file>'
+      ].join('\n')
+    })
 
     if (
       input.skillImportEnabled &&
@@ -372,25 +381,20 @@ class AcpPromptContentOwner {
       )
 
       return [
-        {
-          type: 'text',
-          text: buildOversizedAttachmentNotice({
+        localFileTextReference(
+          buildOversizedAttachmentNotice({
             name,
             size,
             preview: preview.content,
             truncated: preview.truncated,
             tabular: isTabularAttachment(name, mimeType)
           })
-        },
-        { type: 'resource_link', uri, name, title: name, mimeType, size }
+        )
       ]
     }
 
     if (isDatasetAttachment(name, mimeType)) {
-      return [
-        { type: 'text', text: buildDatasetAttachmentNotice({ name, size }) },
-        { type: 'resource_link', uri, name, title: name, mimeType, size }
-      ]
+      return [localFileTextReference(buildDatasetAttachmentNotice({ name, size }))]
     }
 
     return [{ type: 'resource_link', uri, name, title: name, mimeType, size }]
