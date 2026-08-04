@@ -90,8 +90,8 @@ const LARGE_DATA_FILE_SYSTEM_PROMPT_APPEND = [
 
 const SPECIALIST_IDENTITY_TAG = '[open-science:specialist-identity]'
 
-// Pure presentation policy for exact Session and turn text. It owns neither Session state nor the
-// capabilities whose availability is supplied by their existing owner.
+// ARD-07 is a P0 pure-addition seam: later serialized Session and prompt leaves own Runtime
+// integration. This policy owns neither Session state nor capabilities supplied by existing owners.
 class AcpSessionPresentationPolicy {
   applicationSystemPromptAppends(tooling: AcpSessionToolingAvailability): readonly string[] {
     return Object.freeze([
