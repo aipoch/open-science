@@ -2809,7 +2809,7 @@ describe('recovering from a request-size overflow', () => {
     vi.unstubAllGlobals()
   })
 
-  const seedOverflowedConversation = (): void => {
+  const seedOverflowedConversation = (includeHistoryImage = false): void => {
     // A completed prior turn (replayed as text) followed by the unanswered turn that overflowed.
     useSessionStore.getState().appendUserMessage({
       sessionId: 'session-1',
@@ -2824,6 +2824,14 @@ describe('recovering from a request-size overflow', () => {
       eventId: 'event-1',
       content: 'Here is what it shows'
     })
+    if (includeHistoryImage) {
+      useSessionStore.getState().appendAgentMessageChunk({
+        sessionId: 'session-1',
+        streamId: 'assistant-image-1',
+        eventId: 'image-event-1',
+        image: { mimeType: 'image/png', data: 'aGVsbG8=', byteLength: 5 }
+      })
+    }
     useSessionStore.getState().finishRun('session-1')
     useSessionStore.getState().appendUserMessage({
       sessionId: 'session-1',
@@ -2839,7 +2847,7 @@ describe('recovering from a request-size overflow', () => {
     vi.stubGlobal('window', {
       api: { acp: { getState: vi.fn().mockResolvedValue(createSnapshot(['session-1'])) } }
     })
-    seedOverflowedConversation()
+    seedOverflowedConversation(true)
 
     const runtime = {
       state: {
@@ -2857,7 +2865,7 @@ describe('recovering from a request-size overflow', () => {
       sendPrompt: vi.fn().mockResolvedValue(createSnapshot(['session-1']))
     }
 
-    const recovered = await recoverContextOverflowWorkspaceSession(runtime, 'session-1')
+    const recovered = await recoverContextOverflowWorkspaceSession(runtime, 'session-1', false)
     await flushRuntimeTasks()
 
     expect(recovered).toBe(true)
@@ -2873,6 +2881,8 @@ describe('recovering from a request-size overflow', () => {
     expect(preamble).toContain('Analyze the first screenshot')
     expect(preamble).toContain('Here is what it shows')
     expect(preamble).not.toContain('now compare with this new screenshot')
+    expect(runtime.sendPrompt.mock.calls[0]?.[6]).toBeUndefined()
+    expect(runtime.sendPrompt.mock.calls[0]?.[7]).toBeUndefined()
   })
 
   it('uses native framework compaction and retries without replaying app-owned history', async () => {
@@ -2986,6 +2996,7 @@ describe('recovering from a request-size overflow', () => {
     const recovered = await recoverContextOverflowWorkspaceSession(
       runtime,
       'session-1',
+      undefined,
       cancelledSessionIds
     )
 

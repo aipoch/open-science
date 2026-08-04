@@ -1187,6 +1187,7 @@ const compactWorkspaceSession = async (
 const recoverContextOverflowWorkspaceSession = async (
   runtime: WorkspaceMessageRuntime,
   sessionId: string,
+  supportsImageInput?: boolean,
   cancelledSessionIds?: Set<string>
 ): Promise<boolean> => {
   const session = useSessionStore.getState().sessions.find((item) => item.id === sessionId)
@@ -1292,6 +1293,7 @@ const recoverContextOverflowWorkspaceSession = async (
     // OpenScience to replay the prior transcript into its first prompt.
     forceHistoryReplay: !nativeCompacted,
     allowCompactionRecovery: true,
+    supportsImageInput,
     agentModel: session.agentModel
   })
 
@@ -1613,6 +1615,7 @@ const useWorkspaceAgentRuntime = (): {
         return recoverContextOverflowWorkspaceSession(
           recoveryRuntime,
           sessionId,
+          supportsImageInput,
           cancelledOverflowRecoverySessionIds.current
         )
       }
