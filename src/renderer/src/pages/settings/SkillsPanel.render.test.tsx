@@ -667,15 +667,15 @@ describe('SkillsPanel (sub-views)', () => {
     })
   })
 
-  it('renders the GitHub import view with a Preview-first flow', () => {
+  it('renders the GitHub import view with a find-first flow', () => {
     act(() => {
       root.render(<SkillsPanel view={{ kind: 'import' }} onNavigate={vi.fn()} />)
     })
 
     expect(document.body.textContent).toContain('Import from GitHub')
-    // The standalone single-URL "Import" button is gone; only Preview starts the flow.
+    // One action handles both repository discovery and direct repository scanning.
     const buttons = Array.from(document.body.querySelectorAll<HTMLButtonElement>('button'))
-    expect(buttons.some((button) => button.textContent?.trim() === 'Preview')).toBe(true)
+    expect(buttons.some((button) => button.textContent?.trim() === 'Find skills')).toBe(true)
     expect(buttons.some((button) => button.textContent?.trim() === 'Import')).toBe(false)
     const importedHeading = Array.from(document.body.querySelectorAll('h3')).find(
       (heading) => heading.textContent?.trim() === 'Imported skills'
@@ -683,7 +683,7 @@ describe('SkillsPanel (sub-views)', () => {
     expect(importedHeading?.className).toContain('border-t')
   })
 
-  it('collapses repository results after preview while keeping them available', async () => {
+  it('collapses repository results after scanning while keeping them available', async () => {
     useSettingsStore.setState({
       scanRepoSkills: vi
         .fn()
@@ -715,7 +715,7 @@ describe('SkillsPanel (sub-views)', () => {
 
     setValue('GitHub keyword or repository', 'ppt master')
     const runSearch = Array.from(document.body.querySelectorAll<HTMLButtonElement>('button')).find(
-      (button) => button.textContent?.trim() === 'Preview'
+      (button) => button.textContent?.trim() === 'Find skills'
     )
     await act(async () => {
       runSearch?.click()
@@ -727,16 +727,16 @@ describe('SkillsPanel (sub-views)', () => {
     expect(document.body.textContent).toContain('42')
     expect(
       document.body
-        .querySelector<HTMLButtonElement>('[aria-label="Hide repository results"]')
+        .querySelector<HTMLButtonElement>('[aria-label="Hide repositories"]')
         ?.getAttribute('aria-expanded')
     ).toBe('true')
-    const previewRepository = document.body.querySelector<HTMLButtonElement>(
-      '[aria-label="Preview repository hugohe3/ppt-master"]'
+    const scanRepository = document.body.querySelector<HTMLButtonElement>(
+      '[aria-label="Scan hugohe3/ppt-master for skills"]'
     )
-    act(() => previewRepository?.click())
+    act(() => scanRepository?.click())
     expect(
       document.body
-        .querySelector<HTMLButtonElement>('[aria-label="Show repository results"]')
+        .querySelector<HTMLButtonElement>('[aria-label="Show repositories"]')
         ?.getAttribute('aria-expanded')
     ).toBe('false')
 
@@ -753,19 +753,22 @@ describe('SkillsPanel (sub-views)', () => {
     expect(document.body.textContent).toContain('Skills in hugohe3/ppt-master')
     expect(document.body.textContent).toContain('ppt-master')
     expect(
-      document.body.querySelector('[aria-label="Preview repository hugohe3/ppt-master"]')
+      document.body.querySelector('[aria-label="Scan hugohe3/ppt-master for skills"]')
     ).toBeNull()
 
     act(() => {
-      document.body
-        .querySelector<HTMLButtonElement>('[aria-label="Show repository results"]')
-        ?.click()
+      document.body.querySelector<HTMLButtonElement>('[aria-label="Show repositories"]')?.click()
     })
     expect(
       document.body.querySelector<HTMLButtonElement>(
-        '[aria-label="Preview repository hugohe3/ppt-master"]'
+        '[aria-label="Scan hugohe3/ppt-master for skills"]'
       )?.textContent
-    ).toContain('Previewed')
+    ).toContain('Scanned')
+
+    const selectionControls = document.body.querySelector('[aria-label="Skill selection controls"]')
+    expect(selectionControls?.textContent).toContain('Select all')
+    expect(selectionControls?.textContent).toContain('Invert selection')
+    expect(selectionControls?.textContent).not.toContain('Skills in hugohe3/ppt-master')
   })
 
   it('renders GitHub search failures in the Settings danger banner', async () => {
@@ -784,7 +787,7 @@ describe('SkillsPanel (sub-views)', () => {
 
     setValue('GitHub keyword or repository', 'slides')
     const runSearch = Array.from(document.body.querySelectorAll<HTMLButtonElement>('button')).find(
-      (button) => button.textContent?.trim() === 'Preview'
+      (button) => button.textContent?.trim() === 'Find skills'
     )
     await act(async () => {
       runSearch?.click()
@@ -812,7 +815,7 @@ describe('SkillsPanel (sub-views)', () => {
 
     setValue('GitHub keyword or repository', 'x'.repeat(257))
     const runSearch = Array.from(document.body.querySelectorAll<HTMLButtonElement>('button')).find(
-      (button) => button.textContent?.trim() === 'Preview'
+      (button) => button.textContent?.trim() === 'Find skills'
     )
     await act(async () => {
       runSearch?.click()
@@ -837,7 +840,7 @@ describe('SkillsPanel (sub-views)', () => {
     const directReference = `acme/skills@${'release-'.repeat(40)}`
     setValue('GitHub keyword or repository', directReference)
     const runScan = Array.from(document.body.querySelectorAll<HTMLButtonElement>('button')).find(
-      (button) => button.textContent?.trim() === 'Preview'
+      (button) => button.textContent?.trim() === 'Find skills'
     )
     await act(async () => {
       runScan?.click()
@@ -862,7 +865,7 @@ describe('SkillsPanel (sub-views)', () => {
 
     setValue('GitHub keyword or repository', 'unlikely phrase')
     const runSearch = Array.from(document.body.querySelectorAll<HTMLButtonElement>('button')).find(
-      (button) => button.textContent?.trim() === 'Preview'
+      (button) => button.textContent?.trim() === 'Find skills'
     )
     await act(async () => {
       runSearch?.click()
@@ -907,7 +910,7 @@ describe('SkillsPanel (sub-views)', () => {
 
     setValue('GitHub keyword or repository', 'slides')
     const runSearch = Array.from(document.body.querySelectorAll<HTMLButtonElement>('button')).find(
-      (button) => button.textContent?.trim() === 'Preview'
+      (button) => button.textContent?.trim() === 'Find skills'
     )
     act(() => runSearch?.click())
     expect(document.body.querySelector('[aria-busy="true"]')?.textContent).toContain(
@@ -946,7 +949,7 @@ describe('SkillsPanel (sub-views)', () => {
     setValue('GitHub keyword or repository', 'acme/skills')
 
     const preview = Array.from(document.body.querySelectorAll<HTMLButtonElement>('button')).find(
-      (button) => button.textContent?.trim() === 'Preview'
+      (button) => button.textContent?.trim() === 'Find skills'
     )
     await act(async () => {
       preview?.click()
@@ -959,7 +962,7 @@ describe('SkillsPanel (sub-views)', () => {
 
     // Invert toggles the pre-selected candidate off, so nothing is selected.
     const invert = Array.from(document.body.querySelectorAll<HTMLButtonElement>('button')).find(
-      (button) => button.textContent?.trim() === 'Invert'
+      (button) => button.textContent?.trim() === 'Invert selection'
     )
     act(() => invert?.click())
     expect(document.body.textContent).toContain('Import selected (0)')
@@ -988,7 +991,7 @@ describe('SkillsPanel (sub-views)', () => {
     })
     setValue('GitHub keyword or repository', 'acme/skills')
     const runScan = Array.from(document.body.querySelectorAll<HTMLButtonElement>('button')).find(
-      (button) => button.textContent?.trim() === 'Preview'
+      (button) => button.textContent?.trim() === 'Find skills'
     )
     await act(async () => {
       runScan?.click()
@@ -1053,7 +1056,7 @@ describe('SkillsPanel (sub-views)', () => {
     })
     const scanButton = (): HTMLButtonElement | undefined =>
       Array.from(document.body.querySelectorAll<HTMLButtonElement>('button')).find(
-        (button) => button.textContent?.trim() === 'Preview'
+        (button) => button.textContent?.trim() === 'Find skills'
       )
 
     setValue('GitHub keyword or repository', 'acme/old')

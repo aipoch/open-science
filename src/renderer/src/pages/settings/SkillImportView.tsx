@@ -1,3 +1,5 @@
+/* Hallmark · macrostructure: Workbench · tone: utilitarian · palette: existing warm paper + teal */
+/* Hallmark · pre-emit critique: P5 H5 E5 S5 R5 V4 */
 import { useRef, useState } from 'react'
 import { AlertTriangle, ChevronDown, ChevronUp, SearchX, Star } from 'lucide-react'
 
@@ -154,8 +156,7 @@ const SkillImportView = ({ onImported }: SkillImportViewProps): React.JSX.Elemen
     <div className="p-5">
       <h2 className="text-base font-semibold text-foreground">Import from GitHub</h2>
       <p className="mt-0.5 text-[13px] leading-5 text-muted-foreground">
-        Search GitHub by keyword, or preview a repo or Skill folder, then pick the Skills you want
-        to import.
+        Search repositories by keyword, or scan a GitHub repository for Skill folders to import.
       </p>
 
       <div className="mt-4">
@@ -189,7 +190,7 @@ const SkillImportView = ({ onImported }: SkillImportViewProps): React.JSX.Elemen
             disabled={busy || input.trim().length === 0}
             className="shrink-0 [@media(pointer:coarse)]:min-h-11"
           >
-            {busy ? 'Working…' : 'Preview'}
+            {busy ? 'Working…' : 'Find skills'}
           </Button>
         </div>
       </div>
@@ -210,7 +211,7 @@ const SkillImportView = ({ onImported }: SkillImportViewProps): React.JSX.Elemen
         ) : null}
 
         {repositories ? (
-          <div className="mt-5">
+          <section aria-label="Repository results" className="mt-5 border-b border-border pb-5">
             <div className="flex items-center justify-between gap-3">
               <h3 className="text-sm font-semibold text-foreground">
                 Repositories ({repositories.length})
@@ -218,20 +219,19 @@ const SkillImportView = ({ onImported }: SkillImportViewProps): React.JSX.Elemen
               {repositories.length > 0 ? (
                 <Button
                   type="button"
-                  variant="ghost"
-                  size="sm"
-                  aria-label={`${repositoriesExpanded ? 'Hide' : 'Show'} repository results`}
+                  variant="outline"
+                  aria-label={`${repositoriesExpanded ? 'Hide' : 'Show'} repositories`}
                   aria-expanded={repositoriesExpanded}
                   aria-controls="github-repository-results"
-                  className="gap-1 px-2 text-xs text-muted-foreground [@media(pointer:coarse)]:min-h-11"
+                  className="shrink-0 gap-1.5 [@media(pointer:coarse)]:min-h-11"
                   onClick={() => setRepositoriesExpanded((expanded) => !expanded)}
                 >
                   {repositoriesExpanded ? (
-                    <ChevronUp className="size-3.5" aria-hidden="true" />
+                    <ChevronUp className="size-4" aria-hidden="true" />
                   ) : (
-                    <ChevronDown className="size-3.5" aria-hidden="true" />
+                    <ChevronDown className="size-4" aria-hidden="true" />
                   )}
-                  {repositoriesExpanded ? 'Hide' : 'Show'}
+                  {repositoriesExpanded ? 'Hide repositories' : 'Show repositories'}
                 </Button>
               ) : null}
             </div>
@@ -263,10 +263,10 @@ const SkillImportView = ({ onImported }: SkillImportViewProps): React.JSX.Elemen
                             type="button"
                             variant="outline"
                             size="sm"
-                            aria-label={`Preview repository ${repository.fullName}`}
+                            aria-label={`Scan ${repository.fullName} for skills`}
                             aria-pressed={scannedRepo === repository.fullName}
                             disabled={busy}
-                            className="[@media(pointer:coarse)]:min-h-11"
+                            className="whitespace-nowrap [@media(pointer:coarse)]:min-h-11"
                             onClick={() => {
                               setRepositoriesExpanded(false)
                               void runPreview(repository.fullName, {
@@ -277,9 +277,9 @@ const SkillImportView = ({ onImported }: SkillImportViewProps): React.JSX.Elemen
                           >
                             {scannedRepo === repository.fullName
                               ? scanned && scanned.length > 0
-                                ? 'Previewed'
+                                ? 'Scanned'
                                 : 'No skills found'
-                              : 'Preview repository'}
+                              : 'Scan for skills'}
                           </Button>
                         </div>
                       </li>
@@ -293,7 +293,7 @@ const SkillImportView = ({ onImported }: SkillImportViewProps): React.JSX.Elemen
                 <p>{message?.kind === 'status' ? message.text : 'No repositories found.'}</p>
               </div>
             ) : null}
-          </div>
+          </section>
         ) : null}
 
         {message?.kind === 'status' && (repositories === null || repositories.length > 0) ? (
@@ -301,36 +301,15 @@ const SkillImportView = ({ onImported }: SkillImportViewProps): React.JSX.Elemen
         ) : null}
 
         {scanned && scanned.length > 0 ? (
-          <div className="mt-5">
-            <div className="flex flex-col gap-2 sm:flex-row sm:items-center sm:justify-between">
-              <div className="flex min-w-0 flex-wrap items-center gap-x-3 gap-y-1">
-                <div className="min-w-0">
-                  <h3 className="truncate text-sm font-semibold text-foreground">
-                    Skills in {scannedRepo}
-                  </h3>
-                  <p className="text-xs text-muted-foreground">
-                    Found {scanned.length} skill{scanned.length === 1 ? '' : 's'}.
-                  </p>
-                </div>
-                <label className="flex items-center gap-1.5 text-xs text-muted-foreground [@media(pointer:coarse)]:min-h-11">
-                  <input
-                    type="checkbox"
-                    aria-label="Select all"
-                    checked={allSelected}
-                    onChange={toggleAll}
-                    className="size-4 shrink-0"
-                  />
-                  Select all
-                </label>
-                <Button
-                  type="button"
-                  variant="ghost"
-                  size="sm"
-                  className="[@media(pointer:coarse)]:min-h-11"
-                  onClick={invertSelection}
-                >
-                  Invert
-                </Button>
+          <section aria-label={`Skills found in ${scannedRepo}`} className="mt-5">
+            <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
+              <div className="min-w-0">
+                <h3 className="truncate text-sm font-semibold text-foreground">
+                  Skills in {scannedRepo}
+                </h3>
+                <p className="mt-0.5 text-xs text-muted-foreground">
+                  Found {scanned.length} skill{scanned.length === 1 ? '' : 's'}.
+                </p>
               </div>
               <Button
                 type="button"
@@ -342,7 +321,34 @@ const SkillImportView = ({ onImported }: SkillImportViewProps): React.JSX.Elemen
                 Import selected ({selected.size})
               </Button>
             </div>
-            <ul className="mt-2 flex flex-col divide-y divide-border">
+
+            <div
+              role="group"
+              aria-label="Skill selection controls"
+              className="mt-3 flex min-h-10 items-center gap-2 border-y border-border bg-muted/20 px-1 py-1"
+            >
+              <label className="flex items-center gap-1.5 px-2 text-xs text-muted-foreground [@media(pointer:coarse)]:min-h-11">
+                <input
+                  type="checkbox"
+                  aria-label="Select all"
+                  checked={allSelected}
+                  onChange={toggleAll}
+                  className="size-4 shrink-0"
+                />
+                Select all
+              </label>
+              <Button
+                type="button"
+                variant="ghost"
+                size="sm"
+                className="[@media(pointer:coarse)]:min-h-11"
+                onClick={invertSelection}
+              >
+                Invert selection
+              </Button>
+            </div>
+
+            <ul className="flex flex-col divide-y divide-border">
               {scanned.map((skill) => (
                 <li key={skill.url} className="flex items-center gap-3 py-2.5">
                   <span className="flex size-4 shrink-0 items-center justify-center [@media(pointer:coarse)]:size-11">
@@ -377,7 +383,7 @@ const SkillImportView = ({ onImported }: SkillImportViewProps): React.JSX.Elemen
                 </li>
               ))}
             </ul>
-          </div>
+          </section>
         ) : null}
       </div>
 
