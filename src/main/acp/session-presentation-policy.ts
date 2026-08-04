@@ -215,7 +215,7 @@ class AcpSessionPresentationPolicy {
   }
 
   private systemPromptAppends(input: AcpSessionSetupPresentationInput): string[] {
-    if (input.persistentSystemPrompt) return []
+    if (input.persistentSystemPrompt) return [...(input.extraSystemPromptAppends ?? [])]
     return [
       ...this.applicationSystemPromptAppends(input.tooling),
       ...(input.backendSystemPromptAppends ?? []),

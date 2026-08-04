@@ -104,16 +104,18 @@ describe('ACP Session presentation policy', () => {
     expect(Object.isFrozen(presentation.metaArg._meta)).toBe(true)
   })
 
-  it('excludes stable appends from prompt text when the backend already installed them persistently', () => {
+  it('excludes stable appends installed persistently but preserves one-off Session appends', () => {
     expect(
       policy.buildSessionSetup({
         framework: codexFramework,
         tooling: { artifacts: true, notebook: true, skillImport: true },
         backendSystemPromptAppends: ['Already installed by the backend.'],
+        extraSystemPromptAppends: ['One-off Session guidance.'],
         persistentSystemPrompt: 'Baked Codex developer instructions.'
       })
     ).toEqual({
       metaArg: {},
+      promptPrefix: 'One-off Session guidance.',
       persistentSystemPrompt: 'Baked Codex developer instructions.'
     })
   })
