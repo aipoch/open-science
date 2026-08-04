@@ -16,6 +16,7 @@ describe('NotebookLocalRpcServer Skill import bridge', () => {
       skills: [{ id: 'imported-demo', name: 'Demo', status: 'imported' }]
     })
     server = new NotebookLocalRpcServer({ execute: async () => ({}) } as never, {
+      transport: 'tcp',
       token: 'secret-token',
       skillImporter: { request }
     })
@@ -55,6 +56,7 @@ describe('NotebookLocalRpcServer Skill import bridge', () => {
   it('routes a GitHub Skill import through the active conversation', async () => {
     const request = vi.fn().mockResolvedValue({ status: 'cancelled', skills: [] })
     server = new NotebookLocalRpcServer({ execute: async () => ({}) } as never, {
+      transport: 'tcp',
       token: 'secret-token',
       skillImporter: { request }
     })
@@ -100,6 +102,7 @@ describe('NotebookLocalRpcServer Skill import bridge', () => {
   it('rejects shared and out-of-scope RPC capabilities', async () => {
     const request = vi.fn().mockResolvedValue({ status: 'cancelled', skills: [] })
     server = new NotebookLocalRpcServer({ execute: async () => ({}) } as never, {
+      transport: 'tcp',
       token: 'secret-token',
       skillImporter: { request }
     })

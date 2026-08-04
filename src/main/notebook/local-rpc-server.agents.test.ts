@@ -42,6 +42,7 @@ describe('notebook RPC agentsCall route', () => {
   it('rejects agentsCall through the server master token even with forged trusted identity fields', async () => {
     const read = vi.fn(async () => [])
     const server = new NotebookLocalRpcServer(await makeService(), {
+      transport: 'tcp',
       token: 'tok',
       agentsService: { read }
     })
@@ -74,6 +75,7 @@ describe('notebook RPC agentsCall route', () => {
   it('forwards the op to the AgentsService and returns its result', async () => {
     const read = vi.fn(async () => [{ id: 'sp-1', name: 'Bio', revision: 1 }])
     const server = new NotebookLocalRpcServer(await makeService(), {
+      transport: 'tcp',
       token: 'tok',
       agentsService: { read }
     })
@@ -102,6 +104,7 @@ describe('notebook RPC agentsCall route', () => {
 
   it('rejects calls without the bearer token', async () => {
     const server = new NotebookLocalRpcServer(await makeService(), {
+      transport: 'tcp',
       token: 'tok',
       agentsService: { read: vi.fn() }
     })
@@ -121,6 +124,7 @@ describe('notebook RPC agentsCall route', () => {
   it('rejects a privileged switch when the session capability has no active control invocation', async () => {
     const read = vi.fn(async () => ({ status: 'approved' }))
     const server = new NotebookLocalRpcServer(await makeService(), {
+      transport: 'tcp',
       agentsService: { read }
     })
     const connection = await server.issueControlConnection('trusted-session', 'default-project')
@@ -156,6 +160,7 @@ describe('notebook RPC agentsCall route', () => {
   it('forwards snake_case params and the trusted session_id as context', async () => {
     const read = vi.fn(async () => null)
     const server = new NotebookLocalRpcServer(await makeService(), {
+      transport: 'tcp',
       token: 'tok',
       agentsService: { read }
     })
@@ -189,6 +194,7 @@ describe('notebook RPC agentsCall route', () => {
       throw new Error('host.agents.get: not found')
     })
     const server = new NotebookLocalRpcServer(await makeService(), {
+      transport: 'tcp',
       token: 'tok',
       agentsService: { read }
     })
@@ -214,6 +220,7 @@ describe('notebook RPC agentsCall route', () => {
   it('strips sandbox-supplied switch/reconfigure/identity fields so they cannot be forged', async () => {
     const read = vi.fn(async () => null)
     const server = new NotebookLocalRpcServer(await makeService(), {
+      transport: 'tcp',
       token: 'tok',
       agentsService: { read }
     })
@@ -259,6 +266,7 @@ describe('notebook RPC agentsCall route', () => {
     const dispatch = vi.fn(async () => ['via-dispatch'])
     const read = vi.fn(async () => ['via-read'])
     const server = new NotebookLocalRpcServer(await makeService(), {
+      transport: 'tcp',
       token: 'tok',
       agentsService: { read, dispatch }
     })

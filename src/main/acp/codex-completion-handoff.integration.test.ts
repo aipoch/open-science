@@ -137,6 +137,7 @@ describe('Codex approved handoff', () => {
       localToolHandlers: { 'molecule/preview_molecule': localConnector }
     })
     const notebookRpcServer = new NotebookLocalRpcServer({} as NotebookRuntimeService, {
+      transport: 'tcp',
       connectorService
     })
     onTestFinished(async () => {

@@ -133,7 +133,10 @@ describe('notebook local RPC server', () => {
         shutdown: async () => ({ reaped: true })
       })
     })
-    const server = new NotebookLocalRpcServer(service, { token: 'secret-token' })
+    const server = new NotebookLocalRpcServer(service, {
+      transport: 'tcp',
+      token: 'secret-token'
+    })
     const connection = await server.ensureStarted()
 
     try {
@@ -211,7 +214,10 @@ describe('notebook local RPC server', () => {
         refreshAfterPackageMutation: vi.fn()
       }
     })
-    const server = new NotebookLocalRpcServer(service, { token: 'secret-token' })
+    const server = new NotebookLocalRpcServer(service, {
+      transport: 'tcp',
+      token: 'secret-token'
+    })
     const connection = await server.ensureStarted()
 
     try {
@@ -265,7 +271,10 @@ describe('notebook local RPC server', () => {
         shutdown: async () => ({ reaped: true })
       })
     })
-    const server = new NotebookLocalRpcServer(service, { token: 'secret-token' })
+    const server = new NotebookLocalRpcServer(service, {
+      transport: 'tcp',
+      token: 'secret-token'
+    })
     const connection = await server.ensureStarted()
 
     server.registerSessionAlias('notebook-session-1', 'real-session-1')
@@ -308,6 +317,7 @@ describe('notebook local RPC server', () => {
       repository: new NotebookRunRepository(root)
     })
     const server = new NotebookLocalRpcServer(service, {
+      transport: 'tcp',
       token: 'secret-token',
       onSessionReleased,
       connectorService: { call: connectorCall }
@@ -357,6 +367,7 @@ describe('notebook local RPC server', () => {
       repository: new NotebookRunRepository(root)
     })
     const server = new NotebookLocalRpcServer(service, {
+      transport: 'tcp',
       token: 'secret-token',
       connectorService: { call: connectorCall }
     })
@@ -399,6 +410,7 @@ describe('notebook local RPC server', () => {
       repository: new NotebookRunRepository(root)
     })
     const server = new NotebookLocalRpcServer(service, {
+      transport: 'tcp',
       token: 'secret-token',
       agentsService: { read: agentsRead },
       inputRegistry: {
@@ -502,7 +514,7 @@ describe('notebook local RPC server', () => {
           throw new NotebookControlCompletionCapturedError()
         }
       } as unknown as NotebookRuntimeService,
-      { token: 'secret-token' }
+      { transport: 'tcp', token: 'secret-token' }
     )
     const connection = await server.ensureStarted()
 
@@ -535,6 +547,7 @@ describe('notebook local RPC server', () => {
       repository: new NotebookRunRepository(root)
     })
     const server = new NotebookLocalRpcServer(service, {
+      transport: 'tcp',
       token: 'secret-token',
       connectorService: { call: connectorCall }
     })
@@ -574,6 +587,7 @@ describe('notebook local RPC server', () => {
     })
     const requests: unknown[] = []
     const server = new NotebookLocalRpcServer(service, {
+      transport: 'tcp',
       token: 'secret-token',
       artifactProvenance: {
         createVersion: async (request) => {
@@ -661,6 +675,7 @@ describe('notebook local RPC server', () => {
     const releaseCreate = createDeferred()
     let now = 1_000
     const server = new NotebookLocalRpcServer(service, {
+      transport: 'tcp',
       token: 'secret-token',
       now: () => now,
       artifactProvenance: {
@@ -751,6 +766,7 @@ describe('notebook local RPC server', () => {
     })
     const createVersion = vi.fn()
     const server = new NotebookLocalRpcServer(service, {
+      transport: 'tcp',
       token: 'secret-token',
       artifactProvenance: { createVersion }
     })
@@ -797,6 +813,7 @@ describe('notebook local RPC server', () => {
     })
     const createVersion = vi.fn()
     const server = new NotebookLocalRpcServer(service, {
+      transport: 'tcp',
       token: 'secret-token',
       now: () => now,
       artifactProvenance: { createVersion }
@@ -860,6 +877,7 @@ describe('notebook local RPC server', () => {
     })
     const createVersion = vi.fn().mockResolvedValue({ versionId: 'version-1' })
     const server = new NotebookLocalRpcServer(service, {
+      transport: 'tcp',
       token: 'secret-token',
       now: () => now,
       artifactProvenance: { createVersion }
@@ -916,6 +934,7 @@ describe('notebook local RPC server', () => {
       promptMessageId: 'message-user-1'
     }
     const server = new NotebookLocalRpcServer(service, {
+      transport: 'tcp',
       token: 'secret-token',
       artifactProvenance: {
         createVersion: vi.fn(),
@@ -945,6 +964,7 @@ describe('notebook local RPC server', () => {
     }
 
     const unconfigured = new NotebookLocalRpcServer(service, {
+      transport: 'tcp',
       token: 'secret-token',
       artifactProvenance: { createVersion: vi.fn() }
     })
@@ -1014,6 +1034,7 @@ describe('notebook local RPC server', () => {
       })
     })
     const server = new NotebookLocalRpcServer(service, {
+      transport: 'tcp',
       token: 'secret-token',
       inputRegistry: {
         registerTurn: async () => undefined,
@@ -1106,6 +1127,7 @@ describe('notebook local RPC server', () => {
       throw failure
     })
     const server = new NotebookLocalRpcServer(service, {
+      transport: 'tcp',
       token: 'secret-token',
       inputRegistry: {
         registerTurn: vi.fn().mockResolvedValue(undefined),
@@ -1181,7 +1203,7 @@ describe('notebook local RPC server', () => {
         projectName: 'default-project',
         repository: new NotebookRunRepository(root)
       }),
-      { token: 'secret-token' }
+      { transport: 'tcp', token: 'secret-token' }
     )
     const firstResolve = vi.fn().mockResolvedValue('/managed/groups.csv')
     const secondResolve = vi.fn().mockResolvedValue('/managed/groups.csv')
@@ -1236,7 +1258,10 @@ describe('notebook local RPC server', () => {
         return { ok: true, needsRestart: false, log: 'installed' }
       }
     })
-    const server = new NotebookLocalRpcServer(service, { token: 'secret-token' })
+    const server = new NotebookLocalRpcServer(service, {
+      transport: 'tcp',
+      token: 'secret-token'
+    })
     const connection = await server.ensureStarted()
 
     try {
@@ -1286,7 +1311,10 @@ describe('notebook local RPC server', () => {
         removeEnvironment: () => []
       }
     })
-    const server = new NotebookLocalRpcServer(service, { token: 'secret-token' })
+    const server = new NotebookLocalRpcServer(service, {
+      transport: 'tcp',
+      token: 'secret-token'
+    })
     const connection = await server.ensureStarted()
 
     try {
@@ -1349,6 +1377,7 @@ describe('notebook local RPC server', () => {
       })
     }
     const server = new NotebookLocalRpcServer(service, {
+      transport: 'tcp',
       token: 'secret-token',
       computeService: fakeComputeService
     })
@@ -1428,6 +1457,7 @@ describe('notebook local RPC server', () => {
       })
     }
     const server = new NotebookLocalRpcServer(service, {
+      transport: 'tcp',
       token: 'secret-token',
       computeService: fakeComputeService
     })
@@ -1481,6 +1511,7 @@ describe('notebook local RPC server', () => {
       })
     }
     const server = new NotebookLocalRpcServer(service, {
+      transport: 'tcp',
       token: 'secret-token',
       computeService: fakeComputeService
     })

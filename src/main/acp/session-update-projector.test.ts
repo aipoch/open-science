@@ -1,5 +1,5 @@
 import type { SessionNotification } from '@agentclientprotocol/sdk'
-import { join } from 'node:path'
+import { join, resolve } from 'node:path'
 import { describe, expect, it } from 'vitest'
 
 import { AcpSessionUpdateProjector } from './session-update-projector'
@@ -169,7 +169,7 @@ describe('AcpSessionUpdateProjector', () => {
 
   it('owns Codex Skill activity state for one generation and clears sparse lifecycle correlation', () => {
     const projector = new AcpSessionUpdateProjector()
-    const skillsRoot = join('/data', 'codex-home', 'skills')
+    const skillsRoot = resolve('/data', 'codex-home', 'skills')
     const skillPath = join(skillsRoot, 'mcp-pubmed', 'SKILL.md')
     projector.beginGeneration(skillsRoot)
     const routing = {

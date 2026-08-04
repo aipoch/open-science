@@ -256,7 +256,9 @@ export class ReviewerMcpServer {
   async start(): Promise<{ endpoint: string; token: string }> {
     const connection = await listenForLocalRpc(this.httpServer, {
       name: 'reviewer-mcp',
-      transport: this.options.transport
+      transport:
+        this.options.transport ??
+        (this.options.command && this.options.entryPath ? undefined : 'tcp')
     })
     this._endpoint = `${connection.endpoint}/mcp`
     this._socketPath = connection.socketPath
