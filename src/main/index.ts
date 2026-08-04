@@ -5,6 +5,7 @@ import { fileURLToPath } from 'node:url'
 import {
   ARTIFACT_MCP_SERVER_ARG,
   NOTEBOOK_MCP_SERVER_ARG,
+  REVIEWER_MCP_PROXY_ARG,
   SKILL_IMPORT_MCP_SERVER_ARG
 } from './mcp-server-args'
 import { withApplicationRuntimeShutdown } from './application-runtime'
@@ -24,6 +25,7 @@ const APP_NAME = 'Open Science'
 const APP_USER_MODEL_ID = 'com.aipoch.open-science'
 const shouldRunArtifactMcpServer = process.argv.includes(ARTIFACT_MCP_SERVER_ARG)
 const shouldRunNotebookMcpServer = process.argv.includes(NOTEBOOK_MCP_SERVER_ARG)
+const shouldRunReviewerMcpProxy = process.argv.includes(REVIEWER_MCP_PROXY_ARG)
 const shouldRunSkillImportMcpServer = process.argv.includes(SKILL_IMPORT_MCP_SERVER_ARG)
 let startupDiagnostics: DiagnosticOperation | undefined
 let startupFlush = flushLogs
@@ -40,6 +42,13 @@ if (shouldRunArtifactMcpServer) {
   // Keep notebook MCP mode as a Node stdio process that proxies to the app-owned runtime.
   void import('./notebook/mcp-server')
     .then(({ runNotebookMcpServer }) => runNotebookMcpServer())
+    .catch((error: unknown) => {
+      console.error(error)
+      process.exitCode = 1
+    })
+} else if (shouldRunReviewerMcpProxy) {
+  void import('./reviewer/mcp-stdio-proxy')
+    .then(({ runReviewerMcpStdioProxy }) => runReviewerMcpStdioProxy())
     .catch((error: unknown) => {
       console.error(error)
       process.exitCode = 1

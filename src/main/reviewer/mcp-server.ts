@@ -1,6 +1,6 @@
-// In-process HTTP MCP server that exposes scope-bounded evidence reads and `submit_findings` to the
-// reviewer ACP session. It is the reviewer's only approved capability.
-// Uses the MCP Streamable HTTP transport so the agent connects via URL (McpServerHttp).
+// In-process MCP server that exposes scope-bounded evidence reads and `submit_findings` to the
+// reviewer ACP session. It is the reviewer's only approved capability. Streamable HTTP remains the
+// protocol; Windows carries it over a named pipe through the stdio proxy instead of loopback TCP.
 // The server is created per review run and shut down after the reviewer session disposes.
 //
 // v2 (issue 12): submit_findings now accepts a single `checks[]` array with status pass|warn|fail.
@@ -24,6 +24,8 @@ import {
 } from '../../shared/reviewer'
 import { assertBlockInScope, type ReviewerHostServer } from './host-sdk'
 import { createLogger } from '../logger'
+import { listenForLocalRpc } from '../local-rpc-transport'
+import { createReviewerMcpStdioProxyConfig } from './mcp-stdio-proxy'
 
 const log = createLogger('reviewer:mcp')
 
@@ -149,6 +151,12 @@ export const validateReviewerEvidenceAccess = (
 // The reviewer-supplied report (v3: no reasoning — captured from action stream instead).
 export type SubmitFindingsReport = Record<string, never>
 
+type ReviewerMcpServerOptions = {
+  command?: string
+  entryPath?: string
+  transport?: 'tcp' | 'pipe'
+}
+
 // Maps model-submitted checks onto the turn scope, enforcing the single-sourcing contract
 // (design.md:114): for checks that carry a locator, the model supplies only blockIndex as the
 // pointer; the block is resolved from scope.blocks, out-of-scope indices are rejected, its identity
@@ -218,6 +226,7 @@ export class ReviewerMcpServer {
   private readonly httpServer: ReturnType<typeof createServer>
   private readonly token: string
   private _endpoint: string | undefined
+  private _socketPath: string | undefined
   private readonly transports = new Map<string, StreamableHTTPServerTransport>()
   private readonly trackedFindingIds: ReadonlySet<string>
   private readonly evidenceAccess = {
@@ -232,7 +241,8 @@ export class ReviewerMcpServer {
     private readonly scope: TurnScope,
     private readonly onSubmitFindings: SubmitFindingsHandler,
     private readonly evidence?: ReviewerEvidenceAccess,
-    trackedFindingIds: readonly string[] = []
+    trackedFindingIds: readonly string[] = [],
+    private readonly options: ReviewerMcpServerOptions = {}
   ) {
     this.trackedFindingIds = new Set(trackedFindingIds)
     this.token = randomUUID()
@@ -242,17 +252,19 @@ export class ReviewerMcpServer {
     })
   }
 
-  // Starts the HTTP MCP server on a random port and returns its URL + auth token.
+  // Starts the MCP server on loopback TCP or a Windows named pipe.
   async start(): Promise<{ endpoint: string; token: string }> {
-    await new Promise<void>((resolve, reject) => {
-      this.httpServer.listen(0, '127.0.0.1', () => resolve())
-      this.httpServer.once('error', reject)
+    const connection = await listenForLocalRpc(this.httpServer, {
+      name: 'reviewer-mcp',
+      transport: this.options.transport
     })
+    this._endpoint = `${connection.endpoint}/mcp`
+    this._socketPath = connection.socketPath
 
-    const addr = this.httpServer.address() as { port: number }
-    this._endpoint = `http://127.0.0.1:${addr.port}/mcp`
-
-    log.info('reviewer MCP server started', { endpoint: this._endpoint })
+    log.info('reviewer MCP server started', {
+      transport: this._socketPath ? 'pipe' : 'tcp',
+      ...(!this._socketPath ? { endpoint: this._endpoint } : {})
+    })
 
     return { endpoint: this._endpoint, token: this.token }
   }
@@ -269,9 +281,21 @@ export class ReviewerMcpServer {
     log.info('reviewer MCP server stopped')
   }
 
-  // Returns the ACP McpServer config (HTTP type) to pass to buildSession.
+  // Returns the native HTTP config, or the Windows stdio proxy config for a named pipe.
   toAcpMcpServerConfig(): McpServer {
     if (!this._endpoint) throw new Error('ReviewerMcpServer not started')
+
+    if (this._socketPath) {
+      if (!this.options.command || !this.options.entryPath) {
+        throw new Error('Reviewer MCP stdio proxy launch is not configured.')
+      }
+      return createReviewerMcpStdioProxyConfig({
+        command: this.options.command,
+        entryPath: this.options.entryPath,
+        socketPath: this._socketPath,
+        token: this.token
+      })
+    }
 
     return {
       type: 'http' as const,

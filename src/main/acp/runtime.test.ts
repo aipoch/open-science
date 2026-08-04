@@ -7819,8 +7819,45 @@ describe('ACP runtime session management', () => {
           }
         ]
       })
-    ).rejects.toThrow(/loopback HTTP open-science-reviewer/)
+    ).rejects.toThrow(/app-owned open-science-reviewer/)
     expect(spawnAgent).not.toHaveBeenCalled()
+  })
+
+  it('accepts the app-owned Reviewer stdio proxy used by Windows named pipes', async () => {
+    const process = new FakeAgentProcess()
+    startPermissionProbeAgent(process, {
+      newSessionId: 'reviewer-session-pipe',
+      toolCallId: 'reviewer-pipe-tool',
+      toolTitle: 'Submit review checks',
+      providerToolName: 'mcp__open-science-reviewer__submit_findings'
+    })
+    const runtime = new AcpRuntime({
+      appVersion: '0.1.0',
+      defaultCwd: '/workspace',
+      spawnAgent: () => asAgentProcess(process),
+      framework: claudeCodeFramework
+    })
+
+    const built = await runtime.buildReviewerSession({
+      cwd: '/workspace',
+      mcpServers: [
+        {
+          name: 'open-science-reviewer',
+          command: '/app/open-science',
+          args: ['/app/main.js', '--open-science-reviewer-mcp-proxy'],
+          env: [
+            {
+              name: 'OPEN_SCIENCE_REVIEWER_MCP_SOCKET_PATH',
+              value: '\\\\.\\pipe\\open-science-reviewer'
+            },
+            { name: 'OPEN_SCIENCE_REVIEWER_MCP_TOKEN', value: 'reviewer-token' }
+          ]
+        }
+      ]
+    })
+
+    expect(built.session.sessionId).toBe('reviewer-session-pipe')
+    runtime.disposeReviewerSession(built.session)
   })
 
   it('reserves a reviewer session id while its permission mode is still starting', async () => {

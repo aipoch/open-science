@@ -10,6 +10,7 @@ import {
   SKILL_IMPORT_MCP_SERVER_NAME
 } from '../../shared/skill-import'
 import { SKILL_IMPORT_MCP_SERVER_ARG } from '../mcp-server-args'
+import { fetchLocalRpc, type LocalRpcTransport } from '../local-rpc-transport'
 import { parseGitHubSkillUrl } from './github-import'
 
 const requestSkillImportToolSchema = {
@@ -48,8 +49,7 @@ const SKILL_IMPORT_SYSTEM_PROMPT_APPEND = [
   '</open_science_skill_import_instructions>'
 ].join('\n')
 
-type SkillImportRpcConnection = {
-  endpoint: string
+type SkillImportRpcConnection = LocalRpcTransport & {
   token: string
   release?: () => void
 }
@@ -112,6 +112,7 @@ const createSkillImportMcpServerConfig = ({
   command,
   entryPath,
   endpoint,
+  socketPath,
   token,
   sessionId
 }: SkillImportMcpServerConfigRequest): McpServerStdio => ({
@@ -121,6 +122,9 @@ const createSkillImportMcpServerConfig = ({
   env: [
     { name: 'ELECTRON_RUN_AS_NODE', value: '1' },
     { name: 'OPEN_SCIENCE_SKILL_IMPORT_RPC_ENDPOINT', value: endpoint },
+    ...(socketPath
+      ? [{ name: 'OPEN_SCIENCE_SKILL_IMPORT_RPC_SOCKET_PATH', value: socketPath }]
+      : []),
     { name: 'OPEN_SCIENCE_SKILL_IMPORT_RPC_TOKEN', value: token },
     { name: 'OPEN_SCIENCE_SKILL_IMPORT_SESSION_ID', value: sessionId }
   ]
@@ -136,6 +140,7 @@ const createSkillImportMcpEnvironmentFromProcess = (
   env: NodeJS.ProcessEnv = process.env
 ): SkillImportMcpEnvironment => ({
   endpoint: requireEnvironmentVariable(env, 'OPEN_SCIENCE_SKILL_IMPORT_RPC_ENDPOINT'),
+  socketPath: env.OPEN_SCIENCE_SKILL_IMPORT_RPC_SOCKET_PATH,
   token: requireEnvironmentVariable(env, 'OPEN_SCIENCE_SKILL_IMPORT_RPC_TOKEN'),
   sessionId: requireEnvironmentVariable(env, 'OPEN_SCIENCE_SKILL_IMPORT_SESSION_ID')
 })
@@ -144,17 +149,21 @@ const callSkillImportRpcRequest = async (
   environment: SkillImportMcpEnvironment,
   params: SkillImportRpcParams
 ): Promise<ConversationSkillImportResult> => {
-  const response = await fetch(environment.endpoint, {
-    method: 'POST',
-    headers: {
-      authorization: `Bearer ${environment.token}`,
-      'content-type': 'application/json'
+  const response = await fetchLocalRpc(
+    environment,
+    {
+      method: 'POST',
+      headers: {
+        authorization: `Bearer ${environment.token}`,
+        'content-type': 'application/json'
+      },
+      body: JSON.stringify({
+        method: 'skillImport',
+        params: { sessionId: environment.sessionId, ...params }
+      })
     },
-    body: JSON.stringify({
-      method: 'skillImport',
-      params: { sessionId: environment.sessionId, ...params }
-    })
-  })
+    'Skill import RPC'
+  )
   const payload = (await response.json()) as RpcResponse
 
   if (!response.ok || payload.error || !payload.result) {

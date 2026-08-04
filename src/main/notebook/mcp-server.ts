@@ -4,6 +4,7 @@ import { StdioServerTransport } from '@modelcontextprotocol/sdk/server/stdio.js'
 import { z } from 'zod'
 
 import { NOTEBOOK_MCP_SERVER_ARG } from '../mcp-server-args'
+import { fetchLocalRpc, type LocalRpcTransport } from '../local-rpc-transport'
 
 const NOTEBOOK_MCP_SERVER_NAME = 'open-science-notebook'
 const MAX_RUNTIME_RESULTS = 40
@@ -23,8 +24,7 @@ const NOTEBOOK_SYSTEM_PROMPT_APPEND = [
   '</open_science_notebook_instructions>'
 ].join('\n')
 
-type NotebookRpcConnection = {
-  endpoint: string
+type NotebookRpcConnection = LocalRpcTransport & {
   token: string
   // Optional owner-scoped cleanup for provisional startup connections. Releasing an older connection
   // must not revoke a newer token issued under the same stable app Session id.
@@ -199,6 +199,7 @@ const createNotebookMcpServerConfig = ({
   command,
   entryPath,
   endpoint,
+  socketPath,
   token,
   projectName,
   sessionId,
@@ -210,6 +211,7 @@ const createNotebookMcpServerConfig = ({
   env: [
     { name: 'ELECTRON_RUN_AS_NODE', value: '1' },
     { name: 'OPEN_SCIENCE_NOTEBOOK_RPC_ENDPOINT', value: endpoint },
+    ...(socketPath ? [{ name: 'OPEN_SCIENCE_NOTEBOOK_RPC_SOCKET_PATH', value: socketPath }] : []),
     { name: 'OPEN_SCIENCE_NOTEBOOK_RPC_TOKEN', value: token },
     { name: 'OPEN_SCIENCE_NOTEBOOK_PROJECT_NAME', value: projectName },
     { name: 'OPEN_SCIENCE_NOTEBOOK_SESSION_ID', value: sessionId },
@@ -236,6 +238,7 @@ const createNotebookMcpEnvironmentFromProcess = (
   env: NodeJS.ProcessEnv = process.env
 ): NotebookMcpEnvironment => ({
   endpoint: requireEnvironmentVariable(env, 'OPEN_SCIENCE_NOTEBOOK_RPC_ENDPOINT'),
+  socketPath: env.OPEN_SCIENCE_NOTEBOOK_RPC_SOCKET_PATH,
   token: requireEnvironmentVariable(env, 'OPEN_SCIENCE_NOTEBOOK_RPC_TOKEN'),
   projectName: requireEnvironmentVariable(env, 'OPEN_SCIENCE_NOTEBOOK_PROJECT_NAME'),
   sessionId: requireEnvironmentVariable(env, 'OPEN_SCIENCE_NOTEBOOK_SESSION_ID'),
@@ -248,22 +251,26 @@ const callNotebookRpc = async (
   method: string,
   params: unknown = {}
 ): Promise<unknown> => {
-  const response = await fetch(environment.endpoint, {
-    method: 'POST',
-    headers: {
-      authorization: `Bearer ${environment.token}`,
-      'content-type': 'application/json'
+  const response = await fetchLocalRpc(
+    environment,
+    {
+      method: 'POST',
+      headers: {
+        authorization: `Bearer ${environment.token}`,
+        'content-type': 'application/json'
+      },
+      body: JSON.stringify({
+        method,
+        params: {
+          sessionId: environment.sessionId,
+          workspaceCwd: environment.workspaceCwd,
+          projectName: environment.projectName,
+          ...((params ?? {}) as Record<string, unknown>)
+        }
+      } satisfies RpcRequest)
     },
-    body: JSON.stringify({
-      method,
-      params: {
-        sessionId: environment.sessionId,
-        workspaceCwd: environment.workspaceCwd,
-        projectName: environment.projectName,
-        ...((params ?? {}) as Record<string, unknown>)
-      }
-    } satisfies RpcRequest)
-  })
+    'Notebook RPC'
+  )
 
   const payload = (await response.json()) as RpcResponse
 

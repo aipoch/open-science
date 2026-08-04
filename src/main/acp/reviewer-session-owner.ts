@@ -17,6 +17,7 @@ import type { AgentFramework } from '../agent-framework'
 import { createLogger, diagnosticErrorFields } from '../logger'
 import { canonicalAppMcpServerName } from '../agent-framework/app-mcp-names'
 import { extractProviderToolName } from './runtime-events'
+import { REVIEWER_MCP_PROXY_ARG } from '../mcp-server-args'
 
 const log = createLogger('acp')
 
@@ -437,6 +438,7 @@ export class ReviewerSessionOwner {
     const reviewerMcp = request.mcpServers[0]
     const reviewerMcpHttp =
       reviewerMcp && 'type' in reviewerMcp && reviewerMcp.type === 'http' ? reviewerMcp : undefined
+    const reviewerMcpStdio = reviewerMcp && !('type' in reviewerMcp) ? reviewerMcp : undefined
     let reviewerMcpUrl: URL | undefined
     try {
       reviewerMcpUrl = reviewerMcpHttp ? new URL(reviewerMcpHttp.url) : undefined
@@ -447,12 +449,22 @@ export class ReviewerSessionOwner {
       request.mcpServers.length !== 1 ||
       mcpServerNames.length !== 1 ||
       mcpServerNames[0] !== REVIEWER_MCP_SERVER_NAME ||
-      !reviewerMcpHttp ||
-      reviewerMcpUrl?.protocol !== 'http:' ||
-      reviewerMcpUrl.hostname !== '127.0.0.1'
+      !(
+        (reviewerMcpHttp &&
+          reviewerMcpUrl?.protocol === 'http:' &&
+          reviewerMcpUrl.hostname === '127.0.0.1') ||
+        (reviewerMcpStdio &&
+          reviewerMcpStdio.args?.at(-1) === REVIEWER_MCP_PROXY_ARG &&
+          reviewerMcpStdio.env?.some(
+            (entry) => entry.name === 'OPEN_SCIENCE_REVIEWER_MCP_SOCKET_PATH' && entry.value
+          ) &&
+          reviewerMcpStdio.env.some(
+            (entry) => entry.name === 'OPEN_SCIENCE_REVIEWER_MCP_TOKEN' && entry.value
+          ))
+      )
     ) {
       throw new Error(
-        `Reviewer sessions require exactly one loopback HTTP ${REVIEWER_MCP_SERVER_NAME} MCP server.`
+        `Reviewer sessions require exactly one app-owned ${REVIEWER_MCP_SERVER_NAME} MCP server.`
       )
     }
     return mcpServerNames

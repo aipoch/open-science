@@ -1589,6 +1589,7 @@ const createApplicationModules = async (
   // can spawn sessions under the same agent connection.
   const reviewerOptions = {
     acpRuntime: runtime,
+    mcpEntryPath: mainEntryPath,
     artifactProvenanceRepository,
     withSessionMutation: <Result>(
       projectId: string,

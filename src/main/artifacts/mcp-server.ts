@@ -16,6 +16,7 @@ import type {
   ReplayArtifactVersionRequest
 } from '../../shared/artifact-provenance'
 import { ARTIFACT_MCP_SERVER_ARG } from '../mcp-server-args'
+import { fetchLocalRpc } from '../local-rpc-transport'
 import { ArtifactRepository } from './repository'
 
 const ARTIFACT_MCP_SERVER_NAME = 'open-science-artifacts'
@@ -27,6 +28,7 @@ type ArtifactMcpEnvironment = {
   currentRunFile: string
   allowedImportRoots: string[]
   rpcEndpoint?: string
+  rpcSocketPath?: string
 }
 
 // The per-turn run context the main process writes into current-run.json. runId attributes writes to
@@ -200,14 +202,21 @@ const callArtifactRpc = async (
     throw new Error('Artifact Provenance RPC connection is not configured.')
   }
 
-  const response = await fetch(environment.rpcEndpoint, {
-    method: 'POST',
-    headers: {
-      authorization: `Bearer ${capabilityToken}`,
-      'content-type': 'application/json'
+  const response = await fetchLocalRpc(
+    {
+      endpoint: environment.rpcEndpoint,
+      socketPath: environment.rpcSocketPath
     },
-    body: JSON.stringify({ method: 'artifactCreateVersion', params: request })
-  })
+    {
+      method: 'POST',
+      headers: {
+        authorization: `Bearer ${capabilityToken}`,
+        'content-type': 'application/json'
+      },
+      body: JSON.stringify({ method: 'artifactCreateVersion', params: request })
+    },
+    'Artifact Provenance RPC'
+  )
   const payload = (await response.json()) as ArtifactRpcResponse
 
   if (!response.ok || payload.error || !payload.result) {
@@ -226,14 +235,21 @@ const callArtifactReplayRpc = async (
   if (!environment.rpcEndpoint) {
     throw new Error('Artifact Provenance RPC connection is not configured.')
   }
-  const response = await fetch(environment.rpcEndpoint, {
-    method: 'POST',
-    headers: {
-      authorization: `Bearer ${capabilityToken}`,
-      'content-type': 'application/json'
+  const response = await fetchLocalRpc(
+    {
+      endpoint: environment.rpcEndpoint,
+      socketPath: environment.rpcSocketPath
     },
-    body: JSON.stringify({ method: 'artifactReplayVersion', params: request })
-  })
+    {
+      method: 'POST',
+      headers: {
+        authorization: `Bearer ${capabilityToken}`,
+        'content-type': 'application/json'
+      },
+      body: JSON.stringify({ method: 'artifactReplayVersion', params: request })
+    },
+    'Artifact Provenance RPC'
+  )
   const payload = (await response.json()) as ArtifactRpcResponse
   if (!response.ok || payload.error) {
     throw new Error(
@@ -511,7 +527,8 @@ const createArtifactMcpServerConfig = ({
   sessionId,
   currentRunFile,
   allowedImportRoots,
-  rpcEndpoint
+  rpcEndpoint,
+  rpcSocketPath
 }: ArtifactMcpServerConfigRequest): McpServerStdio => ({
   name: ARTIFACT_MCP_SERVER_NAME,
   command,
@@ -526,7 +543,10 @@ const createArtifactMcpServerConfig = ({
       name: 'OPEN_SCIENCE_ARTIFACT_ALLOWED_IMPORT_ROOTS',
       value: JSON.stringify(allowedImportRoots)
     },
-    ...(rpcEndpoint ? [{ name: 'OPEN_SCIENCE_ARTIFACT_RPC_ENDPOINT', value: rpcEndpoint }] : [])
+    ...(rpcEndpoint ? [{ name: 'OPEN_SCIENCE_ARTIFACT_RPC_ENDPOINT', value: rpcEndpoint }] : []),
+    ...(rpcSocketPath
+      ? [{ name: 'OPEN_SCIENCE_ARTIFACT_RPC_SOCKET_PATH', value: rpcSocketPath }]
+      : [])
   ]
 })
 
@@ -556,7 +576,8 @@ const createArtifactMcpEnvironmentFromProcess = (
   sessionId: requireEnvironmentVariable(env, 'OPEN_SCIENCE_ARTIFACT_SESSION_ID'),
   currentRunFile: requireEnvironmentVariable(env, 'OPEN_SCIENCE_ARTIFACT_CURRENT_RUN_FILE'),
   allowedImportRoots: parseAllowedImportRoots(env.OPEN_SCIENCE_ARTIFACT_ALLOWED_IMPORT_ROOTS),
-  rpcEndpoint: env.OPEN_SCIENCE_ARTIFACT_RPC_ENDPOINT
+  rpcEndpoint: env.OPEN_SCIENCE_ARTIFACT_RPC_ENDPOINT,
+  rpcSocketPath: env.OPEN_SCIENCE_ARTIFACT_RPC_SOCKET_PATH
 })
 
 // Runs only the artifact MCP server; Electron app modules are intentionally not loaded in this mode.

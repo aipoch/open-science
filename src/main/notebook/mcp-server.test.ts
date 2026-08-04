@@ -58,6 +58,24 @@ describe('notebook MCP server config', () => {
     })
   })
 
+  it('passes the Windows named-pipe path to the notebook MCP process', () => {
+    const config = createNotebookMcpServerConfig({
+      command: 'C:\\Open Science.exe',
+      entryPath: 'C:\\app\\main.js',
+      endpoint: 'http://localhost',
+      socketPath: '\\\\.\\pipe\\open-science-notebook',
+      token: 'secret-token',
+      projectName: 'default-project',
+      sessionId: 'session-1',
+      workspaceCwd: 'C:\\workspace'
+    })
+
+    expect(config.env).toContainEqual({
+      name: 'OPEN_SCIENCE_NOTEBOOK_RPC_SOCKET_PATH',
+      value: '\\\\.\\pipe\\open-science-notebook'
+    })
+  })
+
   it('keeps notebook instructions scoped to the notebook tools', () => {
     expect(NOTEBOOK_SYSTEM_PROMPT_APPEND).toContain(
       'only applies when using open-science-notebook tools'

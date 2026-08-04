@@ -30,12 +30,14 @@ import {
   type TrustedCallingSession,
   type TrustedControlInvocationIdentity
 } from '../../shared/agents-contract'
+import { listenForLocalRpc, type LocalRpcListenOptions } from '../local-rpc-transport'
 
 type NotebookLocalRpcServerOptions = {
   token?: string
   host?: string
   now?: () => number
   onSessionReleased?: (sessionId: string) => void
+  transport?: LocalRpcListenOptions['transport']
   connectorService?: {
     call(
       server: string,
@@ -180,12 +182,14 @@ const writeJson = (response: ServerResponse, statusCode: number, payload: unknow
   response.end(`${JSON.stringify(payload)}\n`)
 }
 
-// Hosts an app-local authenticated HTTP bridge between MCP stdio tools and the runtime service.
+// Hosts an authenticated app-local bridge between MCP stdio tools and the runtime service. The wire
+// protocol is HTTP/JSON; Windows carries it over a named pipe instead of loopback TCP.
 class NotebookLocalRpcServer {
   private readonly token: string
   private readonly host: string
   private readonly now: () => number
   private readonly onSessionReleased: NotebookLocalRpcServerOptions['onSessionReleased']
+  private readonly transport: NotebookLocalRpcServerOptions['transport']
   private readonly connectorService: NotebookLocalRpcServerOptions['connectorService']
   private readonly computeService: NotebookLocalRpcServerOptions['computeService']
   private readonly skillImporter: NotebookLocalRpcServerOptions['skillImporter']
@@ -217,6 +221,7 @@ class NotebookLocalRpcServer {
     this.host = options.host ?? '127.0.0.1'
     this.now = options.now ?? Date.now
     this.onSessionReleased = options.onSessionReleased
+    this.transport = options.transport
     this.connectorService = options.connectorService
     this.computeService = options.computeService
     this.skillImporter = options.skillImporter
@@ -279,22 +284,11 @@ class NotebookLocalRpcServer {
       void this.handleRequest(request, response)
     })
     this.server = server
-    this.startPromise = new Promise((resolve, reject) => {
-      server.once('error', reject)
-      server.listen(0, this.host, () => {
-        const address = server.address()
-
-        if (typeof address !== 'object' || address === null) {
-          reject(new Error('Notebook RPC server did not return a TCP address.'))
-          return
-        }
-
-        resolve({
-          endpoint: `http://${address.address}:${address.port}`,
-          token: this.token
-        })
-      })
-    })
+    this.startPromise = listenForLocalRpc(server, {
+      name: 'notebook-rpc',
+      host: this.host,
+      transport: this.transport
+    }).then((connection) => ({ ...connection, token: this.token }))
 
     return this.startPromise
   }

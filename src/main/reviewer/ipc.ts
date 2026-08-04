@@ -75,6 +75,7 @@ const createDefaultReviewRepository = (
 type ReviewerIpcOptions = {
   // The ACP runtime used to spawn reviewer sessions.
   acpRuntime: ReviewerAcpRuntime
+  mcpEntryPath?: string
   // Optional override for the config root (DB/sessions) (for testing).
   storageRoot?: string
   // Optional override for the data root (artifacts) (for testing).
@@ -285,6 +286,7 @@ const createReviewerCommandOwner = (options: ReviewerIpcOptions): ReviewerComman
         artifactStorageRoot: dataRoot,
         artifactVersionContentResolver: (request) =>
           artifactProvenanceRepository.resolveVersionContent(request),
+        reviewerMcpEntryPath: options.mcpEntryPath,
         onStarted: () => settle({ started: true }),
         onReviewUpdate: (review: ReviewWithChecks) => {
           broadcastReviewUpdate({ review })
