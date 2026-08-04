@@ -1,5 +1,6 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest'
 
+import type { SpecialistExportPreview } from '../../../shared/specialist-package'
 import { useSpecialistStore } from './specialist-store'
 
 const setSpecialistApi = (api: Partial<Window['api']['specialist']>): void => {
@@ -18,6 +19,56 @@ beforeEach(() => {
 })
 
 describe('specialist store package export', () => {
+  it('keeps overlapping previews bound to their own Specialist export identity', async () => {
+    let resolveFirst: ((value: SpecialistExportPreview) => void) | undefined
+    let resolveSecond: ((value: SpecialistExportPreview) => void) | undefined
+    const first = {
+      specialistId: 'first-specialist',
+      name: 'First Specialist',
+      version: '1.0.0',
+      fileName: 'first.zip',
+      expectedRevision: 1,
+      skills: [],
+      connectorIds: [],
+      diagnostics: [],
+      canExport: true
+    } satisfies SpecialistExportPreview
+    const second = {
+      ...first,
+      specialistId: 'second-specialist',
+      name: 'Second Specialist',
+      fileName: 'second.zip',
+      expectedRevision: 2
+    } satisfies SpecialistExportPreview
+    const exportSpecialist = vi.fn().mockResolvedValue({ saved: true })
+    setSpecialistApi({
+      previewExport: vi
+        .fn()
+        .mockImplementationOnce(
+          () => new Promise<SpecialistExportPreview>((resolve) => (resolveFirst = resolve))
+        )
+        .mockImplementationOnce(
+          () => new Promise<SpecialistExportPreview>((resolve) => (resolveSecond = resolve))
+        ),
+      exportSpecialist
+    })
+
+    const firstRequest = useSpecialistStore.getState().previewExport(first.specialistId)
+    const secondRequest = useSpecialistStore.getState().previewExport(second.specialistId)
+    resolveSecond?.(second)
+    await secondRequest
+    resolveFirst?.(first)
+    await firstRequest
+
+    expect(useSpecialistStore.getState().exportPreview).toEqual(second)
+    await useSpecialistStore.getState().exportSpecialist(first, [])
+    expect(exportSpecialist).toHaveBeenCalledWith({
+      specialistId: first.specialistId,
+      expectedRevision: first.expectedRevision,
+      includedSkillIds: []
+    })
+  })
+
   it('keeps selection renderer-safe and preserves the catalog when native save is cancelled', async () => {
     const preview = {
       specialistId: 'research-synth',
@@ -52,7 +103,7 @@ describe('specialist store package export', () => {
       preview
     )
     await expect(
-      useSpecialistStore.getState().exportSpecialist(['analysis-tools'])
+      useSpecialistStore.getState().exportSpecialist(preview, ['analysis-tools'])
     ).resolves.toEqual({ saved: false })
     expect(exportSpecialist).toHaveBeenCalledWith({
       specialistId: 'research-synth',

@@ -1,4 +1,4 @@
-import { randomUUID } from 'node:crypto'
+import { createHash, randomUUID } from 'node:crypto'
 import { mkdir, rm, writeFile } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
@@ -36,7 +36,9 @@ describe('specialistExportFileName', () => {
   })
 })
 
-const validZip = (overrides: { version?: string; description?: string } = {}): Uint8Array =>
+const validZip = (
+  overrides: { version?: string; description?: string; connectorIds?: readonly string[] } = {}
+): Uint8Array =>
   zipSync({
     'manifest.json': encoder.encode(
       JSON.stringify({
@@ -50,7 +52,8 @@ const validZip = (overrides: { version?: string; description?: string } = {}): U
       JSON.stringify({
         name: 'Research Synthesizer',
         description: overrides.description ?? 'Synthesizes research.',
-        systemPrompt: 'Private imported instructions.'
+        systemPrompt: 'Private imported instructions.',
+        ...(overrides.connectorIds ? { connectorIds: overrides.connectorIds } : {})
       })
     )
   })
@@ -908,6 +911,25 @@ describe('SpecialistPackageService', () => {
     expect(service.report('unknown-token')).toBeUndefined()
   })
 
+  it('isolates package candidates and cleanup by renderer owner', async () => {
+    let tokenSequence = 0
+    const service = new SpecialistPackageService({
+      storageDir,
+      repository: new SpecialistRepository(storageDir),
+      catalog: async () => catalog,
+      token: () => `candidate-${++tokenSequence}`
+    })
+
+    const first = await service.preview(validZip(), 101)
+    const second = await service.preview(validZip(), 202)
+
+    expect(service.report(first.candidateToken, 101)).toBeDefined()
+    expect(service.report(first.candidateToken, 202)).toBeUndefined()
+    service.dispose(202)
+    expect(service.report(second.candidateToken, 202)).toBeUndefined()
+    expect(service.report(first.candidateToken, 101)).toBeDefined()
+  })
+
   it('previews and explicitly confirms an atomic overwrite while preserving local enabled state', async () => {
     const repository = new SpecialistRepository(storageDir)
     await repository.insert({
@@ -966,7 +988,8 @@ describe('SpecialistPackageService', () => {
       importBaseline: {
         importedAt: expect.any(String),
         archiveDigest: expect.stringMatching(/^[a-f0-9]{64}$/),
-        contentDigest: expect.stringMatching(/^[a-f0-9]{64}$/)
+        contentDigest: expect.stringMatching(/^[a-f0-9]{64}$/),
+        packageContentDigest: expect.stringMatching(/^[a-f0-9]{64}$/)
       }
     })
   })
@@ -1011,6 +1034,97 @@ describe('SpecialistPackageService', () => {
     const downgrade = await initial.preview(validZip({ version: '1.2.0' }))
     expect(downgrade.diagnostics.map((item) => item.code)).toContain(
       'specialist.overwrite-downgrade'
+    )
+  })
+
+  it('reports local presentation and capability setup as modified before overwrite', async () => {
+    const repository = new SpecialistRepository(storageDir)
+    const service = new SpecialistPackageService({
+      storageDir,
+      repository,
+      catalog: async () => catalog
+    })
+    const initial = await service.preview(validZip())
+    await service.install({ candidateToken: initial.candidateToken })
+
+    await new ProfileService(repository).update({
+      id: 'research-synth',
+      revision: 1,
+      iconKey: 'dna',
+      colorKey: 'blue',
+      capabilityMode: 'full',
+      fullAccess: {
+        excludedSkillIds: ['excluded-locally'],
+        excludedConnectorIds: [],
+        connectorTools: []
+      }
+    })
+
+    const overwrite = await service.preview(validZip())
+    expect(overwrite.overwrite).toMatchObject({ modifiedSinceImport: true })
+    expect(overwrite.diagnostics).toContainEqual(
+      expect.objectContaining({ code: 'specialist.overwrite-local-modifications' })
+    )
+  })
+
+  it('warns when a same-version package changes only its Connector references', async () => {
+    const repository = new SpecialistRepository(storageDir)
+    const packageCatalog = { ...catalog, connectorIds: ['reference-library'] }
+    const service = new SpecialistPackageService({
+      storageDir,
+      repository,
+      catalog: async () => packageCatalog
+    })
+    const initial = await service.preview(validZip())
+    await service.install({ candidateToken: initial.candidateToken })
+
+    const unchanged = await service.preview(validZip())
+    expect(unchanged.diagnostics).not.toContainEqual(
+      expect.objectContaining({ code: 'specialist.overwrite-content-without-version-bump' })
+    )
+    const changed = await service.preview(validZip({ connectorIds: ['reference-library'] }))
+    expect(changed.diagnostics).toContainEqual(
+      expect.objectContaining({ code: 'specialist.overwrite-content-without-version-bump' })
+    )
+  })
+
+  it('keeps legacy import baselines unchanged when their portable payload still matches', async () => {
+    const repository = new SpecialistRepository(storageDir)
+    const legacyPayload = {
+      name: 'Research Synthesizer',
+      displayName: 'Research Synthesizer',
+      description: 'Synthesizes research.',
+      systemPrompt: 'Private imported instructions.'
+    }
+    const legacyDigest = createHash('sha256').update(JSON.stringify(legacyPayload)).digest('hex')
+    await repository.insert({
+      id: 'research-synth',
+      ...legacyPayload,
+      enabled: false,
+      capabilityMode: 'selected',
+      fullAccess: { excludedSkillIds: [], excludedConnectorIds: [], connectorTools: [] },
+      selectedCapabilities: { skillIds: [], connectorIds: [], connectorTools: [] },
+      revision: 1,
+      packageVersion: '1.3.0',
+      origin: 'imported',
+      ownedSkillIds: [],
+      importBaseline: {
+        importedAt: '2026-08-01T00:00:00.000Z',
+        archiveDigest: 'legacy-archive',
+        contentDigest: legacyDigest,
+        packageVersion: '1.3.0'
+      }
+    })
+    const service = new SpecialistPackageService({
+      storageDir,
+      repository,
+      catalog: async () => catalog
+    })
+
+    const preview = await service.preview(validZip())
+    expect(preview.overwrite).toMatchObject({ modifiedSinceImport: false })
+    expect(preview.diagnostics).not.toContainEqual(
+      expect.objectContaining({ code: 'specialist.overwrite-content-without-version-bump' })
     )
   })
 

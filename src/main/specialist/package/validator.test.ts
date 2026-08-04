@@ -98,6 +98,26 @@ describe('validateSpecialistPackage', () => {
     expect(result.plan?.connectorIds).toEqual(['reference-library'])
   })
 
+  it('changes the package content identity when bundled Skill bytes change', () => {
+    const bundled = (body: string): ReturnType<typeof validateSpecialistPackage> =>
+      validateSpecialistPackage(
+        packageFiles(validManifest, validSpecialist, [
+          {
+            path: 'skills/analysis-tools/SKILL.md',
+            bytes: encoder.encode(
+              `---\nname: analysis-tools\ndescription: Analyze data\nversion: 1.0.0\n---\n${body}`
+            )
+          }
+        ]),
+        catalog,
+        'zip'
+      )
+
+    expect(bundled('First behavior.').plan?.contentHash).not.toBe(
+      bundled('Changed behavior.').plan?.contentHash
+    )
+  })
+
   it('warns and continues when optional capability IDs are malformed or unavailable', () => {
     const result = validateSpecialistPackage(
       packageFiles(validManifest, {

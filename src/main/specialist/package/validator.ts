@@ -327,7 +327,50 @@ const parsePayload = (
   }
 }
 
-export const specialistPayloadContentHash = (payload: SpecialistPackagePayload): string =>
+type SpecialistContentHashInput = SpecialistPackagePayload & {
+  iconKey?: string
+  colorKey?: string
+  capabilityMode?: 'full' | 'selected'
+  fullAccess?: {
+    excludedSkillIds: readonly string[]
+    excludedConnectorIds: readonly string[]
+    connectorTools: readonly unknown[]
+  }
+  selectedCapabilities?: {
+    skillIds: readonly string[]
+    connectorIds: readonly string[]
+    connectorTools: readonly unknown[]
+  }
+}
+
+export const specialistPayloadContentHash = (payload: SpecialistContentHashInput): string =>
+  createHash('sha256')
+    .update(
+      JSON.stringify({
+        name: payload.name,
+        displayName: payload.displayName ?? payload.name,
+        description: payload.description,
+        systemPrompt: payload.systemPrompt,
+        ...(payload.skillIds === undefined
+          ? {}
+          : { skillIds: [...new Set(payload.skillIds)].sort() }),
+        ...(payload.connectorIds === undefined
+          ? {}
+          : { connectorIds: [...new Set(payload.connectorIds)].sort() }),
+        ...(payload.iconKey === undefined ? {} : { iconKey: payload.iconKey }),
+        ...(payload.colorKey === undefined ? {} : { colorKey: payload.colorKey }),
+        ...(payload.capabilityMode === undefined
+          ? {}
+          : {
+              capabilityMode: payload.capabilityMode,
+              fullAccess: payload.fullAccess,
+              selectedCapabilities: payload.selectedCapabilities
+            })
+      })
+    )
+    .digest('hex')
+
+export const specialistLegacyPayloadContentHash = (payload: SpecialistPackagePayload): string =>
   createHash('sha256')
     .update(
       JSON.stringify({
@@ -338,6 +381,16 @@ export const specialistPayloadContentHash = (payload: SpecialistPackagePayload):
       })
     )
     .digest('hex')
+
+export const specialistContentModifiedSinceImport = (
+  specialist: SpecialistContentHashInput & {
+    importBaseline: { contentDigest: string; packageContentDigest?: string }
+  }
+): boolean =>
+  specialist.importBaseline.contentDigest !==
+  (specialist.importBaseline.packageContentDigest === undefined
+    ? specialistLegacyPayloadContentHash(specialist)
+    : specialistPayloadContentHash(specialist))
 
 const filesContentHash = (files: readonly SpecialistPackageFile[]): string => {
   const hash = createHash('sha256')
@@ -678,7 +731,14 @@ export const validateSpecialistPackage = (
     specialistId: manifest.id,
     packageVersion: manifest.version,
     source,
-    contentHash: specialistPayloadContentHash(payload),
+    contentHash: createHash('sha256')
+      .update(
+        JSON.stringify({
+          payloadDigest: specialistPayloadContentHash({ ...payload, skillIds, connectorIds }),
+          skills: skillPlans.map(({ id, version, contentHash }) => ({ id, version, contentHash }))
+        })
+      )
+      .digest('hex'),
     manifest,
     payload,
     skillIds,

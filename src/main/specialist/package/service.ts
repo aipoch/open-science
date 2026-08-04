@@ -24,7 +24,10 @@ import { SpecialistRepository } from '../repository'
 import { validateSpecialistZip } from './zip-adapter'
 import { compareSemver } from './semver'
 import { buildDeterministicSpecialistZip } from './contribution-template'
-import { specialistPayloadContentHash } from './validator'
+import {
+  specialistContentModifiedSinceImport,
+  specialistLegacyPayloadContentHash
+} from './validator'
 import {
   SpecialistPackageRecoveryError,
   SpecialistPackageRevisionConflictError,
@@ -51,6 +54,7 @@ type Candidate = {
   archiveBytes: Uint8Array
   overwrite?: { id: string; expectedRevision: number }
   report: SpecialistPackageReport
+  ownerId?: number
 }
 
 type SpecialistPackageServiceOptions = {
@@ -333,10 +337,13 @@ export class SpecialistPackageService {
     return { status: 'deleted' }
   }
 
-  async preview(archiveBytes: Uint8Array): Promise<SpecialistPackageCandidatePreview> {
-    // One renderer window owns one active preview. Selecting another archive invalidates the prior
-    // capability immediately so stale confirmation buttons cannot replay it.
-    this.candidates.clear()
+  async preview(
+    archiveBytes: Uint8Array,
+    ownerId?: number
+  ): Promise<SpecialistPackageCandidatePreview> {
+    // One renderer window owns one active preview. Selecting another archive invalidates only that
+    // renderer's prior capability so another window can finish its own confirmation flow.
+    this.clearCandidates(ownerId)
     const catalog = await this.validationCatalog()
     const result = validateSpecialistZip(archiveBytes, catalog)
     const token = this.token()
@@ -357,7 +364,10 @@ export class SpecialistPackageService {
           modifiedSinceImport:
             existing.origin === 'imported' &&
             existing.importBaseline !== undefined &&
-            existing.importBaseline.contentDigest !== specialistPayloadContentHash(existing),
+            specialistContentModifiedSinceImport({
+              ...existing,
+              importBaseline: existing.importBaseline
+            }),
           hasImportBaseline: existing.origin === 'imported' && existing.importBaseline !== undefined
         }
         overwriteTarget = { id: existing.id, expectedRevision: existing.revision }
@@ -386,7 +396,11 @@ export class SpecialistPackageService {
         if (
           versionOrder === 0 &&
           existing.importBaseline &&
-          existing.importBaseline.contentDigest !== result.plan.contentHash
+          (existing.importBaseline.packageContentDigest ??
+            existing.importBaseline.contentDigest) !==
+            (existing.importBaseline.packageContentDigest === undefined
+              ? specialistLegacyPayloadContentHash(result.plan.payload)
+              : result.plan.contentHash)
         )
           diagnostics.push({
             severity: 'warning',
@@ -402,6 +416,7 @@ export class SpecialistPackageService {
       archiveDigest: createHash('sha256').update(archiveBytes).digest('hex'),
       installable,
       archiveBytes: Uint8Array.from(archiveBytes),
+      ...(ownerId === undefined ? {} : { ownerId }),
       ...(overwriteTarget ? { overwrite: overwriteTarget } : {}),
       report: specialistPackageReportFromPreview({ ...result.preview, diagnostics, installable })
     })
@@ -471,7 +486,10 @@ export class SpecialistPackageService {
       specialist.importBaseline &&
       (specialist.importBaseline.packageVersion === undefined ||
         specialist.importBaseline.packageVersion === specialist.packageVersion) &&
-      specialist.importBaseline.contentDigest !== specialistPayloadContentHash(specialist)
+      specialistContentModifiedSinceImport({
+        ...specialist,
+        importBaseline: specialist.importBaseline
+      })
     ) {
       diagnostics.push({
         severity: 'warning',
@@ -641,9 +659,10 @@ export class SpecialistPackageService {
   }
 
   async previewOversizedArchive(
-    compressedBytes: number
+    compressedBytes: number,
+    ownerId?: number
   ): Promise<SpecialistPackageCandidatePreview> {
-    this.candidates.clear()
+    this.clearCandidates(ownerId)
     const token = this.token()
     const preview = {
       diagnostics: [
@@ -667,17 +686,22 @@ export class SpecialistPackageService {
       archiveDigest: '',
       installable: false,
       archiveBytes: new Uint8Array(),
+      ...(ownerId === undefined ? {} : { ownerId }),
       report: specialistPackageReportFromPreview(preview)
     })
     return { candidateToken: token, ...preview }
   }
 
-  report(candidateToken: unknown): SpecialistPackageReport | undefined {
+  report(candidateToken: unknown, ownerId?: number): SpecialistPackageReport | undefined {
     if (typeof candidateToken !== 'string') return undefined
-    return this.candidates.get(candidateToken)?.report
+    const candidate = this.candidates.get(candidateToken)
+    return candidate && candidate.ownerId === ownerId ? candidate.report : undefined
   }
 
-  async install(request: SpecialistPackageInstallRequest): Promise<SpecialistPackageInstallResult> {
+  async install(
+    request: SpecialistPackageInstallRequest,
+    ownerId?: number
+  ): Promise<SpecialistPackageInstallResult> {
     if (
       !request ||
       typeof request !== 'object' ||
@@ -689,7 +713,9 @@ export class SpecialistPackageService {
       return { status: 'failed', code: 'candidate-invalid' }
     }
     const candidate = this.candidates.get(request.candidateToken)
-    if (!candidate) return { status: 'failed', code: 'stale-candidate' }
+    if (!candidate || candidate.ownerId !== ownerId) {
+      return { status: 'failed', code: 'stale-candidate' }
+    }
     if (candidate.expiresAt <= this.now().getTime()) {
       this.candidates.delete(request.candidateToken)
       return { status: 'failed', code: 'candidate-expired' }
@@ -740,12 +766,21 @@ export class SpecialistPackageService {
     return { status: 'installed', specialist }
   }
 
-  cancel(candidateToken: unknown): void {
-    if (typeof candidateToken === 'string') this.candidates.delete(candidateToken)
+  cancel(candidateToken: unknown, ownerId?: number): void {
+    if (typeof candidateToken !== 'string') return
+    if (this.candidates.get(candidateToken)?.ownerId === ownerId) {
+      this.candidates.delete(candidateToken)
+    }
   }
 
-  dispose(): void {
-    this.candidates.clear()
-    this.deletePreviews.clear()
+  dispose(ownerId?: number): void {
+    this.clearCandidates(ownerId)
+    if (ownerId === undefined) this.deletePreviews.clear()
+  }
+
+  private clearCandidates(ownerId?: number): void {
+    for (const [token, candidate] of this.candidates) {
+      if (candidate.ownerId === ownerId) this.candidates.delete(token)
+    }
   }
 }

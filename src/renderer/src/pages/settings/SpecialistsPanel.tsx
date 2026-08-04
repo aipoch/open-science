@@ -162,13 +162,20 @@ const SpecialistsPanel = ({ view, onNavigate }: SpecialistsPanelProps): React.JS
 
   useEffect(() => {
     if (view.kind !== 'export') return
+    let active = true
     void previewExport(view.id)
-      .then((preview) =>
+      .then((preview) => {
+        if (!active) return
         setIncludedExportSkillIds(
           preview.skills.filter((skill) => skill.selected).map((skill) => skill.id)
         )
-      )
-      .catch(() => setExportError('Could not preview this Specialist export. Try again.'))
+      })
+      .catch(() => {
+        if (active) setExportError('Could not preview this Specialist export. Try again.')
+      })
+    return () => {
+      active = false
+    }
   }, [previewExport, view])
 
   // Direct export from the list action menu: silently preview with the approved default selection
@@ -188,7 +195,7 @@ const SpecialistsPanel = ({ view, onNavigate }: SpecialistsPanelProps): React.JS
         onNavigate({ kind: 'export', id })
         return
       }
-      const result = await exportSpecialist(includedSkillIds)
+      const result = await exportSpecialist(preview, includedSkillIds)
       if (result.saved) {
         setExportSaved(true)
         onNavigate({ kind: 'export', id })
@@ -449,7 +456,7 @@ const SpecialistsPanel = ({ view, onNavigate }: SpecialistsPanelProps): React.JS
                 onClick={() => {
                   setExportBusy(true)
                   setExportError(undefined)
-                  void exportSpecialist(includedExportSkillIds)
+                  void exportSpecialist(exportPreview, includedExportSkillIds)
                     .then((result) => {
                       if (result.saved) setExportSaved(true)
                     })

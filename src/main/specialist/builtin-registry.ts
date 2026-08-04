@@ -97,8 +97,8 @@ export class BuiltinSpecialistRegistry {
         capabilityMode: 'selected',
         fullAccess: { excludedSkillIds: [], excludedConnectorIds: [], connectorTools: [] },
         selectedCapabilities: {
-          skillIds: result.plan.skills.map((skill) => skill.id),
-          connectorIds: [],
+          skillIds: [...result.plan.skillIds],
+          connectorIds: [...result.plan.connectorIds],
           connectorTools: []
         },
         ...result.plan.payload

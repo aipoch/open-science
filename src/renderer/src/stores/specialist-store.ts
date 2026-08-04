@@ -37,11 +37,16 @@ type SpecialistStoreActions = {
   installPackage: (confirmOverwrite?: boolean) => Promise<SpecialistPackageInstallResult>
   cancelPackage: () => Promise<void>
   previewExport: (specialistId: string) => Promise<SpecialistExportPreview>
-  exportSpecialist: (includedSkillIds: readonly string[]) => Promise<SpecialistExportSaveResult>
+  exportSpecialist: (
+    preview: SpecialistExportPreview,
+    includedSkillIds: readonly string[]
+  ) => Promise<SpecialistExportSaveResult>
   clearExport: () => void
 }
 
 type SpecialistStore = SpecialistStoreData & SpecialistStoreActions
+
+let latestExportPreviewRequest = 0
 
 const useSpecialistStore = create<SpecialistStore>((set) => ({
   items: [],
@@ -118,14 +123,16 @@ const useSpecialistStore = create<SpecialistStore>((set) => ({
   },
 
   previewExport: async (specialistId: string) => {
+    const requestId = ++latestExportPreviewRequest
     const preview = await window.api.specialist.previewExport({ specialistId })
-    set({ exportPreview: preview })
+    if (requestId === latestExportPreviewRequest) set({ exportPreview: preview })
     return preview
   },
 
-  exportSpecialist: async (includedSkillIds: readonly string[]) => {
-    const preview = useSpecialistStore.getState().exportPreview
-    if (!preview) throw new Error('Preview the Specialist export before saving.')
+  exportSpecialist: async (
+    preview: SpecialistExportPreview,
+    includedSkillIds: readonly string[]
+  ) => {
     return window.api.specialist.exportSpecialist({
       specialistId: preview.specialistId,
       expectedRevision: preview.expectedRevision,
@@ -133,7 +140,10 @@ const useSpecialistStore = create<SpecialistStore>((set) => ({
     })
   },
 
-  clearExport: () => set({ exportPreview: undefined })
+  clearExport: () => {
+    latestExportPreviewRequest += 1
+    set({ exportPreview: undefined })
+  }
 }))
 
 export { useSpecialistStore }

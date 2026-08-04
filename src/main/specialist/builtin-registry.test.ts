@@ -49,6 +49,49 @@ describe('BuiltinSpecialistRegistry', () => {
     expect(result.entries.some((entry) => entry.id === 'reviewer')).toBe(false)
   })
 
+  it('applies validated Skill and Connector references to a builtin Specialist', async () => {
+    const root = await mkdtemp(join(tmpdir(), 'builtin-specialists-capabilities-'))
+    await cp(fixtureRoot, join(root, 'contribution-one'), { recursive: true })
+    await writeFile(
+      join(root, 'contribution-one', 'specialist.json'),
+      JSON.stringify({
+        name: 'Fixture Specialist',
+        description: 'A valid adapter fixture.',
+        systemPrompt: 'Fixture prompt that must stay out of previews and diagnostics.',
+        skillIds: ['literature-review'],
+        connectorIds: ['reference-library']
+      }),
+      'utf8'
+    )
+    await writeFile(
+      join(root, 'manifest.json'),
+      JSON.stringify({ version: 1, specialists: ['contribution-one'] }),
+      'utf8'
+    )
+
+    const result = await new BuiltinSpecialistRegistry(
+      {
+        ...catalog,
+        builtinSkills: [
+          {
+            id: 'literature-review',
+            appVersion: '0.9.2',
+            compatibility: 'sha256:literature-review'
+          }
+        ],
+        skills: [{ id: 'literature-review', builtin: true }],
+        connectorIds: ['reference-library']
+      },
+      root
+    ).load()
+
+    expect(result.entries[0]?.selectedCapabilities).toEqual({
+      skillIds: ['literature-review'],
+      connectorIds: ['reference-library'],
+      connectorTools: []
+    })
+  })
+
   it('gates every shipped contribution without migrating legacy Specialists or Reviewer', async () => {
     const result = await new BuiltinSpecialistRegistry(catalog, shippedRoot).load()
 

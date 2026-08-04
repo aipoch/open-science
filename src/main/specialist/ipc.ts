@@ -95,6 +95,11 @@ const isExportRequest = (request: unknown): request is SpecialistExportRequest =
     (id) => typeof id === 'string'
   )
 
+const rendererOwnerId = (event: unknown): number | undefined => {
+  const id = (event as { sender?: { id?: unknown } } | undefined)?.sender?.id
+  return typeof id === 'number' ? id : undefined
+}
+
 // Broadcasts a catalog-changed event to all renderer windows.
 const broadcastCatalogChanged = (): void => {
   broadcastToRenderers(SPECIALIST_IPC.CATALOG_CHANGED, undefined)
@@ -175,40 +180,38 @@ export const registerSpecialistIpcHandlers = (
       ): Promise<{ cancelled: true } | SpecialistPackageCandidatePreview> => {
         if (request !== undefined)
           throw new Error('Package selection does not accept renderer data.')
-        packageImport.service.dispose()
+        const ownerId = rendererOwnerId(event)
+        packageImport.service.dispose(ownerId)
         const selected = await packageImport.selectArchive()
         if ('cancelled' in selected) return selected
         const sender = (
           event as { sender?: { once?: (name: string, listener: () => void) => void } }
         )?.sender
-        sender?.once?.('destroyed', () => packageImport.service.dispose())
+        sender?.once?.('destroyed', () => packageImport.service.dispose(ownerId))
         return 'tooLarge' in selected
-          ? packageImport.service.previewOversizedArchive(selected.compressedBytes)
-          : packageImport.service.preview(selected.bytes)
+          ? packageImport.service.previewOversizedArchive(selected.compressedBytes, ownerId)
+          : packageImport.service.preview(selected.bytes, ownerId)
       }
     )
 
     ipcMainHandle(
       SPECIALIST_IPC.INSTALL_PACKAGE,
-      async (_event, request: unknown): Promise<SpecialistPackageInstallResult> => {
+      async (event, request: unknown): Promise<SpecialistPackageInstallResult> => {
         if (!isCandidateRequest(request)) return { status: 'failed', code: 'candidate-invalid' }
-        return packageImport.service.install(request)
+        return packageImport.service.install(request, rendererOwnerId(event))
       }
     )
 
-    ipcMainHandle(
-      SPECIALIST_IPC.CANCEL_PACKAGE,
-      async (_event, request: unknown): Promise<void> => {
-        if (!isCandidateRequest(request)) throw new Error('Invalid Specialist package candidate.')
-        packageImport.service.cancel(request.candidateToken)
-      }
-    )
+    ipcMainHandle(SPECIALIST_IPC.CANCEL_PACKAGE, async (event, request: unknown): Promise<void> => {
+      if (!isCandidateRequest(request)) throw new Error('Invalid Specialist package candidate.')
+      packageImport.service.cancel(request.candidateToken, rendererOwnerId(event))
+    })
 
     ipcMainHandle(
       SPECIALIST_IPC.SAVE_PACKAGE_REPORT,
-      async (_event, request: unknown): Promise<SpecialistPackageReportSaveResult> => {
+      async (event, request: unknown): Promise<SpecialistPackageReportSaveResult> => {
         if (!isCandidateRequest(request)) return { saved: false }
-        const report = packageImport.service.report(request.candidateToken)
+        const report = packageImport.service.report(request.candidateToken, rendererOwnerId(event))
         if (!report) return { saved: false }
         const result = await packageImport.saveReport(report)
         return { saved: result.saved }

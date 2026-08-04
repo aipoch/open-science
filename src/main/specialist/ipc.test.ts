@@ -109,6 +109,8 @@ describe('specialist session IPC', () => {
       installable: true
     })
     const install = vi.fn()
+    const dispose = vi.fn()
+    const once = vi.fn()
 
     registerSpecialistIpcHandlers(
       createProfileService(),
@@ -123,7 +125,7 @@ describe('specialist session IPC', () => {
           previewOversizedArchive: vi.fn(),
           install,
           cancel: vi.fn(),
-          dispose: vi.fn(),
+          dispose,
           report: vi.fn(),
           previewExport: vi.fn(),
           export: vi.fn(),
@@ -136,7 +138,8 @@ describe('specialist session IPC', () => {
       }
     )
 
-    const selected = await handlers.get(SPECIALIST_IPC.SELECT_PACKAGE)?.(undefined, undefined)
+    const event = { sender: { id: 17, once } }
+    const selected = await handlers.get(SPECIALIST_IPC.SELECT_PACKAGE)?.(event, undefined)
     expect(selected).toEqual({
       candidateToken: 'candidate-1',
       summary: { id: 'safe-id' },
@@ -144,7 +147,9 @@ describe('specialist session IPC', () => {
       installable: true
     })
     expect(JSON.stringify(selected)).not.toMatch(/bytes|path/i)
-    expect(preview).toHaveBeenCalledWith(new Uint8Array([1, 2, 3]))
+    expect(dispose).toHaveBeenCalledWith(17)
+    expect(preview).toHaveBeenCalledWith(new Uint8Array([1, 2, 3]), 17)
+    expect(once).toHaveBeenCalledWith('destroyed', expect.any(Function))
 
     await expect(
       handlers.get(SPECIALIST_IPC.INSTALL_PACKAGE)?.(undefined, {

@@ -8,7 +8,7 @@ import { emptyFullAccessConfig } from '../../../shared/specialist'
 import { createLogger } from '../../logger'
 import { SpecialistRepository } from '../repository'
 import { SPECIALISTS_FILE_VERSION, type StoredSpecialist, type StoredSpecialists } from '../types'
-import { specialistPayloadContentHash } from './validator'
+import { specialistContentModifiedSinceImport, specialistPayloadContentHash } from './validator'
 import { NOOP_SPECIALIST_PACKAGE_SKILL_PORT, type SpecialistPackageSkillPort } from './skill-port'
 
 type TransactionPhase = 'prepared' | 'committing' | 'committed' | 'rolling-back' | 'rolled-back'
@@ -45,7 +45,7 @@ const toView = (stored: StoredSpecialist): SpecialistProfileView => ({
   displayName: stored.displayName ?? stored.name,
   modifiedSinceImport:
     stored.origin === 'imported' && stored.importBaseline !== undefined
-      ? specialistPayloadContentHash(stored) !== stored.importBaseline.contentDigest
+      ? specialistContentModifiedSinceImport({ ...stored, importBaseline: stored.importBaseline })
       : false
 })
 
@@ -172,10 +172,12 @@ export class SpecialistPackageTransaction {
         importBaseline: {
           importedAt: importedAt.toISOString(),
           archiveDigest,
-          contentDigest: plan.contentHash,
+          contentDigest: '',
+          packageContentDigest: plan.contentHash,
           packageVersion: plan.packageVersion
         }
       }
+      stored.importBaseline!.contentDigest = specialistPayloadContentHash(stored)
       const after: StoredSpecialists = {
         version: SPECIALISTS_FILE_VERSION,
         specialists:

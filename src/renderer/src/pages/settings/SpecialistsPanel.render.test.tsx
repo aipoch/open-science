@@ -10,6 +10,7 @@ import { useProjectStore } from '@/stores/project-store'
 import { useSettingsStore } from '@/stores/settings-store'
 import { useSpecialistStore } from '@/stores/specialist-store'
 import type { SpecialistListItem } from '../../../../shared/specialist'
+import type { SpecialistExportPreview } from '../../../../shared/specialist-package'
 
 const navigationMock = vi.hoisted(() => ({
   startCustomizeConversation: vi.fn()
@@ -183,9 +184,9 @@ describe('SpecialistsPanel', () => {
 
   // Mirrors the real store action: previewExport also records the preview for exportSpecialist.
   const makePreviewExportMock = (
-    preview: ReturnType<typeof exportPreviewFixture>
-  ): ReturnType<typeof vi.fn> =>
-    vi.fn().mockImplementation(async () => {
+    preview: SpecialistExportPreview
+  ): ((specialistId: string) => Promise<SpecialistExportPreview>) =>
+    vi.fn(async (): Promise<SpecialistExportPreview> => {
       useSpecialistStore.setState({ exportPreview: preview })
       return preview
     })
@@ -220,7 +221,7 @@ describe('SpecialistsPanel', () => {
 
     // No chooser page — the default selection (builtin + owned) goes straight to the save dialog.
     expect(previewExportMock).toHaveBeenCalledWith('rna-reviewer')
-    expect(exportSpecialist).toHaveBeenCalledWith(['document-reader', 'analysis-tools'])
+    expect(exportSpecialist).toHaveBeenCalledWith(preview, ['document-reader', 'analysis-tools'])
     expect(onNavigate).toHaveBeenCalledWith({ kind: 'export', id: 'rna-reviewer' })
     expect(document.body.querySelector('[aria-label="Actions for Builtin Curator"]')).toBeNull()
 
@@ -411,7 +412,7 @@ describe('SpecialistsPanel', () => {
       (button) => button.textContent === 'Export ZIP'
     )
     await act(async () => exportButton?.click())
-    expect(exportSpecialist).toHaveBeenCalledWith(['document-reader', 'analysis-tools'])
+    expect(exportSpecialist).toHaveBeenCalledWith(preview, ['document-reader', 'analysis-tools'])
     expect(document.body.textContent).toContain('Choose Skills to include')
     expect(document.body.textContent).not.toContain('Export complete')
   })

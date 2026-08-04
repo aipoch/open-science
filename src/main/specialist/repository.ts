@@ -45,10 +45,12 @@ const sanitizeImportBaseline = (v: unknown): SpecialistImportBaseline | undefine
   const contentDigest = asString(v.contentDigest)
   if (!importedAt || !archiveDigest || !contentDigest) return undefined
   const packageVersion = asString(v.packageVersion)
+  const packageContentDigest = asString(v.packageContentDigest)
   return {
     importedAt,
     archiveDigest,
     contentDigest,
+    ...(packageContentDigest ? { packageContentDigest } : {}),
     ...(packageVersion ? { packageVersion } : {})
   }
 }
