@@ -125,7 +125,7 @@ describe('installWebRendererContracts', () => {
           kind: 'method',
           parameterCodec: { electron: 'positional', web: 'positional' },
           surfaceInstallation: surface('preload', 'web-rpc'),
-          dispatchPolicy: surface('electron-ipc-request', 'captured-ipc-request'),
+          dispatchPolicy: surface('electron-ipc-request', 'direct-application-request'),
           eventDeliverability: surface('not-event', 'not-event'),
           authorityFlow: surface('electron-sender', 'caller-context'),
           mapProjection: 'invoke'

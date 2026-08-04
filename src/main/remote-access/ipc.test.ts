@@ -5,12 +5,10 @@ vi.mock('electron', () => ({ ipcMain: { handle: vi.fn() } }))
 import {
   canManagePairing,
   isDesktopCaller,
-  registerRemoteAccessIpcHandlers,
   requireDesktopCaller,
   requirePairingManager
 } from './ipc'
 import { createElectronCallerContext, createWebCallerContext } from '../caller-context'
-import { webRpc } from '../ipc-handler-registry'
 
 describe('remote access IPC authorization', () => {
   it.each([
@@ -42,27 +40,6 @@ describe('remote access IPC authorization', () => {
     expect(canManagePairing(context)).toBe(expected)
   })
 
-  it('registers remote access handlers with the Web RPC router', async () => {
-    const snapshot = vi.fn(() => ({ mode: 'off' }))
-    registerRemoteAccessIpcHandlers({ snapshot } as never)
-
-    expect(webRpc.channels()).toEqual(
-      expect.arrayContaining([
-        'remote-access:approve',
-        'remote-access:detect',
-        'remote-access:disable',
-        'remote-access:get-snapshot',
-        'remote-access:reject',
-        'remote-access:revoke-browser',
-        'remote-access:set-mode'
-      ])
-    )
-    await expect(
-      webRpc.invoke('remote-access:get-snapshot', createWebCallerContext('browser-1'), [])
-    ).resolves.toEqual({ mode: 'off' })
-    expect(snapshot).toHaveBeenCalledWith(false, false)
-  })
-
   it('allows a real Electron WebContents sender', () => {
     const context = createElectronCallerContext(7)
     expect(isDesktopCaller(context)).toBe(true)
@@ -71,7 +48,7 @@ describe('remote access IPC authorization', () => {
     expect(() => requirePairingManager(context)).not.toThrow()
   })
 
-  it('rejects the synthetic negative sender used by every Web RPC client', () => {
+  it('rejects an ordinary remote Web caller', () => {
     const context = createWebCallerContext('browser-1', { location: 'remote' })
     expect(isDesktopCaller(context)).toBe(false)
     expect(canManagePairing(context)).toBe(false)

@@ -42,8 +42,8 @@ describe('renderer contract catalog', () => {
     ).toMatchObject({
       dispatchPolicy: {
         electron: 'electron-ipc-request',
-        localWeb: 'browser-native-with-captured-ipc',
-        remoteWeb: 'browser-native-with-captured-ipc'
+        localWeb: 'browser-native-with-direct-application-request',
+        remoteWeb: 'browser-native-with-direct-application-request'
       },
       authorityFlow: {
         electron: 'electron-sender',

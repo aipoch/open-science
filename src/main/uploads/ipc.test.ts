@@ -27,11 +27,7 @@ import {
   clearMigrationPending,
   waitForDataRootWriters
 } from '../storage/migration-state'
-import {
-  createElectronCallerContext,
-  createWebCallerContext,
-  type CallerContext
-} from '../caller-context'
+import { createElectronCallerContext, type CallerContext } from '../caller-context'
 import { createUploadCommandOwner } from './command-owner'
 import {
   createDefaultUploadRepository,
@@ -477,31 +473,6 @@ describe('default upload repository', () => {
     sender.emit('did-start-navigation', {}, 'http://localhost/', false, true)
     await drainPromise
     expect(repository.abortTransfer).toHaveBeenCalledWith({ transferId: 'transfer-4' })
-  })
-
-  it('does not compose Electron navigation cleanup into Web callers', async () => {
-    const repository = {
-      beginTransfer: vi.fn(async () => ({
-        transferId: 'web-transfer',
-        name: 'data.csv',
-        receivedBytes: 0,
-        totalBytes: 10
-      })),
-      abortTransfer: vi.fn(async () => undefined)
-    } as unknown as UploadRepository
-    registerUploadIpcHandlers(repository)
-    const begin = ipcHandlers.get('uploads:begin-transfer')!
-    const caller = createIpcEvent(-1, createWebCallerContext('browser-1'))
-
-    await begin(caller.event, { transferId: 'web-transfer', name: 'data.csv', size: 10 })
-    caller.emit('did-start-navigation', {}, 'http://localhost/', false, true)
-    await new Promise((resolve) => setImmediate(resolve))
-    expect(repository.abortTransfer).not.toHaveBeenCalled()
-
-    caller.emit('destroyed')
-    await vi.waitFor(() => {
-      expect(repository.abortTransfer).toHaveBeenCalledWith({ transferId: 'web-transfer' })
-    })
   })
 
   it('aborts a native-path upload and releases its migration lease when its renderer is destroyed', async () => {

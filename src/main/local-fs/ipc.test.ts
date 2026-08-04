@@ -4,8 +4,8 @@ const { ipcHandlers } = vi.hoisted(() => ({
   ipcHandlers: new Map<string, (...args: unknown[]) => unknown>()
 }))
 
-// The real registry is built over this fake ipcMain, so channel tracking and the Web RPC router
-// behave exactly as they do in the app.
+// The real registry is built over this fake ipcMain so channel tracking and adapter teardown behave
+// exactly as they do in the app.
 vi.mock('electron', () => ({
   ipcMain: {
     handle: (channel: string, handler: (...args: unknown[]) => unknown) =>
@@ -14,7 +14,7 @@ vi.mock('electron', () => ({
   }
 }))
 
-import { createIpcHandlerInstallationScope, webRpc } from '../ipc-handler-registry'
+import { createIpcHandlerInstallationScope } from '../ipc-handler-registry'
 import type { LocalFsService } from './service'
 import {
   LOCAL_FS_GET_ROOTS_CHANNEL,
@@ -44,12 +44,11 @@ const createServiceStub = (): LocalFsService =>
 
 beforeEach(() => {
   ipcHandlers.clear()
-  webRpc.dispose()
 })
 
 describe('registerLocalFsIpcHandlers', () => {
   // Raw ipcMain.handle registers a working handler but stays invisible to the registry, which
-  // silently breaks adapter teardown and the Web RPC router. Assert the registry actually sees them.
+  // silently breaks adapter teardown. Assert the registry actually sees them.
   it('registers every channel through the handler registry so teardown can remove them', () => {
     const scope = createIpcHandlerInstallationScope()
     registerLocalFsIpcHandlers(createServiceStub())
@@ -59,23 +58,5 @@ describe('registerLocalFsIpcHandlers', () => {
 
     installation.uninstall()
     expect([...ipcHandlers.keys()]).toEqual([])
-  })
-
-  it('exposes the channels to the Web RPC router', async () => {
-    const service = createServiceStub()
-    registerLocalFsIpcHandlers(service)
-
-    expect(webRpc.channels()).toEqual(expect.arrayContaining(CHANNELS))
-
-    const callerContext = {
-      lifecycleClientId: 'web:test',
-      isAuthorizationCurrent: () => true
-    }
-    await webRpc.invoke(
-      LOCAL_FS_LIST_DIR_CHANNEL,
-      callerContext as unknown as Parameters<typeof webRpc.invoke>[1],
-      ['/Users/test']
-    )
-    expect(service.listDir).toHaveBeenCalledWith('/Users/test')
   })
 })

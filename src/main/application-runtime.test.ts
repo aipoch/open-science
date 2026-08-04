@@ -294,24 +294,27 @@ describe('application surface shutdown', () => {
             order.push('web-controller')
           }
         },
-        webRpc: {
-          dispose: () => {
-            order.push('web-rpc')
-          }
+        disposeIpcHandlers: () => {
+          order.push('ipc-handlers')
         }
       }
     )
     await expect(lifecycle.shutdownBackends()).resolves.toBe('completed')
 
     expect(lifecycle.marker).toBe('electron-lifecycle')
-    expect(order).toEqual(['web-controller', 'application-runtime', 'remote-access', 'web-rpc'])
+    expect(order).toEqual([
+      'web-controller',
+      'application-runtime',
+      'remote-access',
+      'ipc-handlers'
+    ])
   })
 
   it('diagnoses runtime failure and continues closing surfaces without rejecting lifecycle', async () => {
     const failure = new Error('backend shutdown failed')
     const shutdownRemoteAccess = vi.fn()
     const disposeWebController = vi.fn()
-    const disposeWebRpc = vi.fn()
+    const disposeIpcHandlers = vi.fn()
     const log = { error: vi.fn() }
 
     await expect(
@@ -319,7 +322,7 @@ describe('application surface shutdown', () => {
         disposeApplicationRuntime: () => Promise.reject(failure),
         shutdownRemoteAccess,
         disposeWebController,
-        disposeWebRpc,
+        disposeIpcHandlers,
         log
       })
     ).resolves.toBe('failed')
@@ -332,20 +335,20 @@ describe('application surface shutdown', () => {
     expect(JSON.stringify(log.error.mock.calls)).not.toContain('backend shutdown failed')
     expect(shutdownRemoteAccess).toHaveBeenCalledOnce()
     expect(disposeWebController).toHaveBeenCalledOnce()
-    expect(disposeWebRpc).toHaveBeenCalledOnce()
+    expect(disposeIpcHandlers).toHaveBeenCalledOnce()
   })
 
   it('continues closing surfaces when the shutdown diagnostic sink throws', async () => {
     const shutdownRemoteAccess = vi.fn()
     const disposeWebController = vi.fn()
-    const disposeWebRpc = vi.fn()
+    const disposeIpcHandlers = vi.fn()
 
     await expect(
       shutdownApplicationSurfaces({
         disposeApplicationRuntime: () => Promise.reject(new Error('runtime failure')),
         shutdownRemoteAccess,
         disposeWebController,
-        disposeWebRpc,
+        disposeIpcHandlers,
         log: {
           error: () => {
             throw new Error('sink failure')
@@ -356,7 +359,7 @@ describe('application surface shutdown', () => {
 
     expect(shutdownRemoteAccess).toHaveBeenCalledOnce()
     expect(disposeWebController).toHaveBeenCalledOnce()
-    expect(disposeWebRpc).toHaveBeenCalledOnce()
+    expect(disposeIpcHandlers).toHaveBeenCalledOnce()
   })
 
   it.each([
@@ -373,7 +376,7 @@ describe('application surface shutdown', () => {
             Promise.reject(new BackendShutdownOutcomeError(expected)),
           shutdownRemoteAccess: vi.fn(),
           disposeWebController: vi.fn(),
-          disposeWebRpc: vi.fn(),
+          disposeIpcHandlers: vi.fn(),
           log
         })
       ).resolves.toBe(backendOutcome)

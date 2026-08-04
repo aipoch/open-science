@@ -189,7 +189,7 @@ async function startElectronApp(mainEntryPath: string): Promise<void> {
         { installMigrationQuitGuard, isMigrationInProgress },
         { createAppTray, setTrayIconVariant },
         { installAppLifecycle },
-        { webRpc },
+        { disposeIpcHandlerRegistry },
         { parseWebModeOptions, createWebServiceController, buildAuthenticatedWebUrl },
         { routeSecondInstance },
         { createElectronCloseConfirm },
@@ -355,7 +355,6 @@ async function startElectronApp(mainEntryPath: string): Promise<void> {
       const remoteAccess = await RemoteAccessService.create()
       bindRemoteAccess(remoteAccess)
       const webController = createWebServiceController({
-        rpc: webRpc,
         applicationCommands,
         requestQuit: () => app.quit(),
         externalAccess: remoteAccess.webAccess,
@@ -407,7 +406,7 @@ async function startElectronApp(mainEntryPath: string): Promise<void> {
         webMode,
         webController,
         remoteAccess,
-        webRpc
+        disposeIpcHandlerRegistry
       }
     },
     // Warn (rather than silently tear down) if the user tries to quit mid data-root migration. Installed
@@ -469,7 +468,7 @@ async function startElectronApp(mainEntryPath: string): Promise<void> {
             disposeApplicationRuntime: ctx.disposeApplicationRuntime,
             remoteAccess: ctx.remoteAccess,
             webController: ctx.webController,
-            webRpc: ctx.webRpc,
+            disposeIpcHandlers: ctx.disposeIpcHandlerRegistry,
             log: ctx.log
           }
         )

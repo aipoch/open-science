@@ -16,7 +16,6 @@ import { WEB_INVOKE_CHANNELS } from '../../shared/web-api-map.generated'
 import { isWebRpcChannel, WEB_RPC_PROTOCOL_VERSION } from '../../shared/web-rpc-contract'
 import { ApplicationEventHub } from '../application-events'
 import type { CallerContext } from '../caller-context'
-import type { WebRpcRouter } from '../ipc-handler-registry'
 import {
   REMOTE_LOCAL_ONLY_RPC_CHANNELS,
   startWebHttpServer,
@@ -30,32 +29,38 @@ const servers: RunningWebServer[] = []
 const applicationEvents = new ApplicationEventHub()
 type TestWebServerOptions = Omit<
   Parameters<typeof startWebHttpServer>[0],
-  'applicationCommands' | 'applicationEvents' | 'rpc'
+  'applicationCommands' | 'applicationEvents'
 > &
   Partial<Pick<Parameters<typeof startWebHttpServer>[0], 'applicationCommands'>> & {
-    rpc: WebRpcRouter
+    rpc: {
+      channels: () => string[]
+      invoke: (channel: string, callerContext: CallerContext, args: unknown[]) => Promise<unknown>
+      releaseClient?: (clientId: string) => void
+      dispose?: () => void
+    }
   }
 const startTestWebHttpServer = (
   options: TestWebServerOptions
 ): ReturnType<typeof startWebHttpServer> => {
-  const localNames = options.rpc.channels().filter(isWebRpcChannel)
+  const { rpc, ...serverOptions } = options
+  const localNames = rpc.channels().filter(isWebRpcChannel)
   const remoteRejectedNames = localNames.filter((channel) =>
     REMOTE_LOCAL_ONLY_RPC_CHANNELS.has(channel)
   )
-  const invokeCaptured = (
+  const invokeDirect = (
     channel: string,
     invocation: { callerContext: CallerContext; args: readonly unknown[] }
-  ): Promise<unknown> => options.rpc.invoke(channel, invocation.callerContext, [...invocation.args])
+  ): Promise<unknown> => rpc.invoke(channel, invocation.callerContext, [...invocation.args])
 
   return startWebHttpServer({
-    ...options,
+    ...serverOptions,
     applicationCommands: options.applicationCommands ?? {
-      localWeb: { commandNames: () => localNames, invoke: invokeCaptured },
+      localWeb: { commandNames: () => localNames, invoke: invokeDirect },
       remoteWeb: {
         commandNames: () =>
           localNames.filter((channel) => !REMOTE_LOCAL_ONLY_RPC_CHANNELS.has(channel)),
         rejectedCommandNames: () => remoteRejectedNames,
-        invoke: invokeCaptured
+        invoke: invokeDirect
       }
     },
     applicationEvents
@@ -79,7 +84,7 @@ afterEach(async () => {
 
 describe('startWebHttpServer', () => {
   it('dispatches local Web RPC through the narrow application command view', async () => {
-    const capturedInvoke = vi.fn()
+    const unusedFallbackInvoke = vi.fn()
     const directInvoke = vi.fn(
       async (
         _channel: string,
@@ -88,7 +93,7 @@ describe('startWebHttpServer', () => {
     )
     const rpc = {
       channels: () => ['projects:list'],
-      invoke: capturedInvoke,
+      invoke: unusedFallbackInvoke,
       releaseClient: vi.fn(),
       dispose: vi.fn()
     }
@@ -154,7 +159,7 @@ describe('startWebHttpServer', () => {
         args: [{ source: 'direct' }]
       })
     )
-    expect(capturedInvoke).not.toHaveBeenCalled()
+    expect(unusedFallbackInvoke).not.toHaveBeenCalled()
 
     const directSignal = directInvoke.mock.calls[0]?.[1].callerLease.signal
     firstSocket.close()
@@ -204,7 +209,7 @@ describe('startWebHttpServer', () => {
     expect(unsubscribe).toHaveBeenCalledTimes(2)
   })
 
-  it('authenticates, serves the UI, invokes RPC, and mirrors events over WebSocket', async () => {
+  it('authenticates, invokes direct commands, and delivers projected events once in order', async () => {
     const staticRoot = await mkdtemp(join(tmpdir(), 'open-science-web-static-'))
     roots.push(staticRoot)
     await writeFile(join(staticRoot, 'index.html'), '<!doctype html><title>Web test</title>')
@@ -363,14 +368,11 @@ describe('startWebHttpServer', () => {
     const socketClosed = new Promise<void>((resolve) => socket.once('close', () => resolve()))
     socket.close()
     await socketClosed
-    expect(rpc.releaseClient).not.toHaveBeenCalled()
     const secondSocketClosed = new Promise<void>((resolve) =>
       secondSocket.once('close', () => resolve())
     )
     secondSocket.close()
     await secondSocketClosed
-    await vi.waitFor(() => expect(rpc.releaseClient).toHaveBeenCalledWith('test-client'))
-    expect(rpc.releaseClient).toHaveBeenCalledTimes(1)
 
     await new Promise<void>((resolve, reject) => {
       const unauthenticatedSocket = new WebSocket(`ws://127.0.0.1:${server.port}/api/v1/events`)
@@ -493,7 +495,6 @@ describe('startWebHttpServer', () => {
     const staticRoot = await mkdtemp(join(tmpdir(), 'open-science-web-static-'))
     roots.push(staticRoot)
     await writeFile(join(staticRoot, 'index.html'), '<!doctype html>')
-    const releaseClient = vi.fn()
     const directSignals: AbortSignal[] = []
     const directInvoke = vi.fn(async (_channel, invocation) => {
       directSignals.push(invocation.callerLease.signal)
@@ -507,7 +508,6 @@ describe('startWebHttpServer', () => {
       rpc: {
         channels: () => ['projects:list'],
         invoke: vi.fn(),
-        releaseClient,
         dispose: vi.fn()
       },
       applicationCommands: {
@@ -547,8 +547,6 @@ describe('startWebHttpServer', () => {
     await server.close()
     servers.splice(servers.indexOf(server), 1)
 
-    expect(releaseClient).toHaveBeenCalledTimes(1)
-    expect(releaseClient).toHaveBeenCalledWith('test-client')
     expect(directSignals[0]?.aborted).toBe(true)
   })
 

@@ -23,8 +23,6 @@ vi.mock('electron', () => ({
 
 const { registerSettingsIpcHandlers } = await import('./ipc')
 const { createSettingsWorkflows } = await import('./workflows')
-const { webRpc } = await import('../ipc-handler-registry')
-const { createWebCallerContext } = await import('../caller-context')
 
 // A fake service whose methods are all spies; cast to SettingsService only when registering handlers.
 type FakeSettingsService = Record<
@@ -228,23 +226,6 @@ const invoke = (channel: string, payload?: unknown): unknown =>
   handlers.get(channel)!(undefined, payload)
 
 describe('settings IPC handlers', () => {
-  it('routes local Web RPC through the same workflow command as Electron', async () => {
-    handlers.clear()
-    const service = createFakeService()
-    const onActiveProviderChanged = vi.fn()
-    registerTestSettingsIpcHandlers({ service: asService(service), onActiveProviderChanged })
-    const context = createWebCallerContext('settings-workflow-test')
-
-    try {
-      await webRpc.invoke('settings:set-active-provider', context, [{ id: 'p1' }])
-    } finally {
-      webRpc.releaseClient(context.clientId)
-    }
-
-    expect(service.setActiveProvider).toHaveBeenCalledWith('p1', undefined)
-    expect(onActiveProviderChanged).toHaveBeenCalledOnce()
-  })
-
   it('registers every settings channel', () => {
     handlers.clear()
     registerTestSettingsIpcHandlers({ service: asService(createFakeService()) })

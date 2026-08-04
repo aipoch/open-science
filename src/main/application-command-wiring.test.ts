@@ -21,6 +21,14 @@ const ipcSource = readSource('src/main/ipc.ts')
 const indexSource = readSource('src/main/index.ts')
 const runtimeSource = readSource('src/main/application-runtime.ts')
 const compositionSource = readSource('src/main/application-command-composition.ts')
+const ipcRegistrySource = readSource('src/main/ipc-handler-registry.ts')
+const webAdapterSources = [
+  'src/main/application-command-client.ts',
+  'src/main/tasks/task-runner.ts',
+  'src/main/web-service/http-server.ts',
+  'src/main/web-service/index.ts',
+  'src/main/web-service/task-api.ts'
+].map(readSource)
 const legacyAdapterBlock = compact(
   between(ipcSource, "declareElectronAdapter('desktop-utilities'", 'const electronSenderFor')
 )
@@ -169,5 +177,16 @@ describe('production application command wiring', () => {
     expect(webServiceSource).toContain('localWeb: applicationCommands.localWeb')
     expect(webServiceSource).toContain('remoteWeb: applicationCommands.remoteWeb')
     expect(readSource('src/main/tasks/task-runner.ts')).not.toContain('applicationCommands')
+  })
+
+  it('keeps Web and Task direct dispatch independent from Electron IPC capture machinery', () => {
+    expect(ipcRegistrySource).not.toContain('WebIpcSender')
+    expect(ipcRegistrySource).not.toContain('webHandlers')
+    expect(ipcRegistrySource).not.toContain('nextSenderId')
+    for (const source of webAdapterSources) {
+      expect(source).not.toContain('ipc-handler-registry')
+      expect(source).not.toContain('IpcMainInvokeEvent')
+      expect(source).not.toContain('sender.id')
+    }
   })
 })

@@ -3,7 +3,6 @@ import { describe, expect, it, vi } from 'vitest'
 import { ApplicationEventHub } from '../application-events'
 import type { ApplicationEventSource } from '../application-events'
 import type { ApplicationCommandComposition } from '../application-command-composition'
-import type { WebRpcRouter } from '../ipc-handler-registry'
 import type { TaskAgentPort } from '../tasks/task-runner'
 import { createWebServiceController, type WebServiceControllerDeps } from './index'
 
@@ -11,7 +10,7 @@ type StartOptions = Parameters<WebServiceControllerDeps['startServer']>[0]
 
 // Builds a controller over fully faked I/O so the idempotency + attached logic is exercised without
 // Electron, the network, or the filesystem. `startServer` echoes the requested port and records the
-// options it was given (so the test can drive the captured onShutdownRequest).
+// options it was given (so the test can drive onShutdownRequest).
 const makeController = (
   overrides: Partial<WebServiceControllerDeps> = {},
   requestQuit = vi.fn(),
@@ -43,7 +42,6 @@ const makeController = (
 
   const controller = createWebServiceController(
     {
-      rpc: {} as WebRpcRouter,
       applicationCommands,
       requestQuit,
       applicationEvents: runtime.applicationEvents ?? new ApplicationEventHub(),

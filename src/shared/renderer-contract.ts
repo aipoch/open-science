@@ -7,7 +7,7 @@ export type RendererSurfaceInstallation =
   'preload' | 'web-rpc' | 'web-event' | 'browser-native' | 'rejecting-stub' | 'unavailable'
 
 // prettier-ignore
-export type RendererDispatchPolicy = 'electron-ipc-request' | 'electron-ipc-send' | 'electron-ipc-subscription' | 'captured-ipc-request' | 'browser-native-with-captured-ipc' | 'web-event-subscription' | 'surface-native' | 'rejecting-stub' | 'none'
+export type RendererDispatchPolicy = 'electron-ipc-request' | 'electron-ipc-send' | 'electron-ipc-subscription' | 'direct-application-request' | 'browser-native-with-direct-application-request' | 'web-event-subscription' | 'surface-native' | 'rejecting-stub' | 'none'
 
 export type RendererEventDeliverability =
   'not-event' | 'electron-ipc' | 'application-event' | 'installed-undelivered' | 'unavailable'

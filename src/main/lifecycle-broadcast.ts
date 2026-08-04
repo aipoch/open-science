@@ -2,7 +2,7 @@ import { ipcMainHandle } from './ipc-handler-registry'
 
 import { LIFECYCLE_CHANNELS } from '../shared/lifecycle-events'
 import { callerLeaseForEvent } from './caller-lifecycle'
-import { callerContextForEvent, type CallerContext } from './caller-context'
+import { callerContextForEvent } from './caller-context'
 import { createLogger } from './logger'
 import type { ApplicationEventChannel, ApplicationEventMap } from './application-events'
 import { broadcastToRenderers } from './renderer-broadcast'
@@ -25,9 +25,7 @@ const broadcastLifecycleEvent = <Channel extends ApplicationEventChannel>(
   }
 }
 
-const getLifecycleClientId = (event: {
-  sender: { id: number; callerContext?: CallerContext; lifecycleClientId?: string }
-}): string => {
+const getLifecycleClientId = (event: { sender: { id: number } }): string => {
   const context = callerContextForEvent(event)
   const lease = callerLeaseForEvent(event)
   if (lease.leaseId !== context.leaseId || !lease.isCurrent()) {

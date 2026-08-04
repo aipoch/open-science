@@ -46,7 +46,7 @@ export type ApplicationSurfaceShutdown = {
   disposeApplicationRuntime(): Awaitable<void>
   shutdownRemoteAccess(): Awaitable<void>
   disposeWebController(): Awaitable<void>
-  disposeWebRpc(): Awaitable<void>
+  disposeIpcHandlers(): Awaitable<void>
   log?: Pick<Logger, 'error'>
 }
 
@@ -54,7 +54,7 @@ export type ApplicationLifecycleShutdownDependencies = {
   disposeApplicationRuntime: ApplicationSurfaceShutdown['disposeApplicationRuntime']
   remoteAccess: { shutdown(): Awaitable<void> }
   webController: { dispose(): Awaitable<void> }
-  webRpc: { dispose(): Awaitable<void> }
+  disposeIpcHandlers: ApplicationSurfaceShutdown['disposeIpcHandlers']
   log?: ApplicationSurfaceShutdown['log']
 }
 
@@ -65,7 +65,7 @@ export const shutdownApplicationSurfaces = async ({
   disposeApplicationRuntime,
   shutdownRemoteAccess,
   disposeWebController,
-  disposeWebRpc,
+  disposeIpcHandlers,
   log
 }: ApplicationSurfaceShutdown): Promise<ShutdownStepOutcome> => {
   const flattenErrors = (error: unknown): unknown[] =>
@@ -111,7 +111,7 @@ export const shutdownApplicationSurfaces = async ({
   await dispose('web-controller', disposeWebController)
   await dispose('application-runtime', disposeApplicationRuntime)
   await dispose('remote-access', shutdownRemoteAccess)
-  await dispose('web-rpc', disposeWebRpc)
+  await dispose('ipc-handlers', disposeIpcHandlers)
   return overallOutcome
 }
 
@@ -121,7 +121,7 @@ export const createApplicationLifecycleShutdown = ({
   disposeApplicationRuntime,
   remoteAccess,
   webController,
-  webRpc,
+  disposeIpcHandlers,
   log
 }: ApplicationLifecycleShutdownDependencies): (() => Promise<ShutdownStepOutcome>) => {
   return () =>
@@ -129,7 +129,7 @@ export const createApplicationLifecycleShutdown = ({
       disposeApplicationRuntime,
       shutdownRemoteAccess: () => remoteAccess.shutdown(),
       disposeWebController: () => webController.dispose(),
-      disposeWebRpc: () => webRpc.dispose(),
+      disposeIpcHandlers,
       log
     })
 }

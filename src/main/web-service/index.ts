@@ -3,7 +3,6 @@ import { join } from 'node:path'
 import { app } from 'electron'
 
 import type { ApplicationCommandComposition } from '../application-command-composition'
-import type { WebRpcRouter } from '../ipc-handler-registry'
 import { createLogger } from '../logger'
 import type { ApplicationEventSource } from '../application-events'
 import type { TaskAgentPort } from '../tasks/task-runner'
@@ -60,19 +59,17 @@ const authUrl = (token: string, port: number): string =>
 const buildAuthenticatedWebUrl = async (port: number): Promise<string> =>
   authUrl(await loadOrCreateWebToken(resolveConfigRoot()), port)
 
-// Builds the controller. `rpc` retains the always-installed captured fallback while Web and Task use
-// their application-owned narrow command views. `requestQuit` quits the whole app when a dedicated
-// headless daemon is asked to shut down. An attached service instead only tears itself down.
+// Builds the controller over application-owned narrow command views. `requestQuit` quits the whole
+// app when a dedicated headless daemon is asked to shut down. An attached service instead only tears
+// itself down.
 const createWebServiceController = (
   {
-    rpc,
     applicationCommands,
     requestQuit,
     externalAccess,
     applicationEvents,
     taskAgent
   }: {
-    rpc: Pick<WebRpcRouter, 'releaseClient'>
     applicationCommands: Pick<ApplicationCommandComposition, 'localWeb' | 'remoteWeb' | 'task'>
     requestQuit: () => void
     externalAccess?: ExternalWebAccess
@@ -161,7 +158,6 @@ const createWebServiceController = (
       port,
       token,
       staticRoot: join(info.appPath, 'out', 'web'),
-      rpc,
       applicationCommands: {
         localWeb: applicationCommands.localWeb,
         remoteWeb: applicationCommands.remoteWeb

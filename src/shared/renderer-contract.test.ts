@@ -15,8 +15,8 @@ const seed = (publicPath: string, channel: string): RendererContractSeed => ({
   surfaceInstallation: { electron: 'preload', localWeb: 'web-rpc', remoteWeb: 'web-rpc' },
   dispatchPolicy: {
     electron: 'electron-ipc-request',
-    localWeb: 'captured-ipc-request',
-    remoteWeb: 'captured-ipc-request'
+    localWeb: 'direct-application-request',
+    remoteWeb: 'direct-application-request'
   },
   eventDeliverability: {
     electron: 'not-event',

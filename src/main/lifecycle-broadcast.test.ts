@@ -22,14 +22,11 @@ import { getLifecycleClientId, registerLifecycleIpcHandlers } from './lifecycle-
 describe('lifecycle broadcast IPC', () => {
   beforeEach(() => ipcHandlers.clear())
 
-  it('identifies Electron and Web renderers through stable lifecycle client IDs', async () => {
+  it('identifies Electron renderers through stable lifecycle client IDs', async () => {
     registerLifecycleIpcHandlers()
 
     const getClientId = ipcHandlers.get('lifecycle:client-id')
     expect(getClientId?.({ sender: { id: 42 } })).toBe('electron:42')
-    expect(getClientId?.({ sender: { id: -2, lifecycleClientId: 'web:browser-1' } })).toBe(
-      'web:browser-1'
-    )
   })
 
   it('requires the surface adapter to bind a caller lease', () => {

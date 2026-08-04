@@ -8,8 +8,7 @@ const { broadcastLifecycleEvent, getLifecycleClientId, ipcHandlers, registration
   vi.hoisted(() => ({
     broadcastLifecycleEvent: vi.fn(),
     getLifecycleClientId: vi.fn(
-      (event: { sender: { id: number; lifecycleClientId?: string } }) =>
-        event.sender.lifecycleClientId ?? `electron:${event.sender.id}`
+      (event: { sender: { id: number } }) => `electron:${event.sender.id}`
     ),
     ipcHandlers: new Map<string, (...args: unknown[]) => unknown>(),
     registrationFailure: {
@@ -308,7 +307,7 @@ describe('session persistence IPC handlers', () => {
 
     const deleteRequest = { projectId: 'project-a', sessionId: 'session-1' }
     const manifestRequest = { lastProjectId: 'project-a', lastSessionId: 'session-1' }
-    const event = { sender: { id: -2, lifecycleClientId: 'web:browser-1' } }
+    const event = { sender: { id: 2 } }
     await expect(ipcHandlers.get('sessions:load-all')?.()).resolves.toBe(loadResult)
     await expect(ipcHandlers.get('sessions:save-session')?.(event, session)).resolves.toBe(
       durableSession
@@ -324,11 +323,11 @@ describe('session persistence IPC handlers', () => {
     expect(repository.saveManifest).toHaveBeenCalledWith(manifestRequest)
     expect(broadcastLifecycleEvent).toHaveBeenCalledWith('session:created', {
       session: durableSession,
-      originClientId: 'web:browser-1'
+      originClientId: 'electron:2'
     })
     expect(broadcastLifecycleEvent).toHaveBeenCalledWith('session:updated', {
       session: durableSession,
-      originClientId: 'web:browser-1'
+      originClientId: 'electron:2'
     })
     expect(broadcastLifecycleEvent).toHaveBeenCalledWith('session:deleted', deleteRequest)
   })
@@ -413,10 +412,7 @@ describe('session persistence IPC handlers', () => {
     registerSessionPersistenceIpcHandlers(repository, createMockReviewRepository())
 
     await expect(
-      ipcHandlers.get('sessions:save-session')?.(
-        { sender: { id: 1, lifecycleClientId: 'electron:origin' } },
-        createSession()
-      )
+      ipcHandlers.get('sessions:save-session')?.({ sender: { id: 1 } }, createSession())
     ).rejects.toBe(failure)
     expect(broadcastLifecycleEvent).not.toHaveBeenCalled()
   })
@@ -438,13 +434,10 @@ describe('session persistence IPC handlers', () => {
     }
     registerSessionPersistenceIpcHandlers(repository, createMockReviewRepository())
 
-    const save = ipcHandlers.get('sessions:save-session')?.(
-      { sender: { id: 1, lifecycleClientId: 'electron:origin' } },
-      session
-    )
+    const save = ipcHandlers.get('sessions:save-session')?.({ sender: { id: 1 } }, session)
 
     expect(getLifecycleClientId).toHaveBeenCalledOnce()
-    expect(getLifecycleClientId).toHaveReturnedWith('electron:origin')
+    expect(getLifecycleClientId).toHaveReturnedWith('electron:1')
     completeSave()
     await expect(save).resolves.toBe(session)
   })
@@ -466,10 +459,7 @@ describe('session persistence IPC handlers', () => {
     })
     registerSessionPersistenceIpcHandlers(repository, createMockReviewRepository())
 
-    await ipcHandlers.get('sessions:save-session')?.(
-      { sender: { id: 1, lifecycleClientId: 'electron:origin' } },
-      session
-    )
+    await ipcHandlers.get('sessions:save-session')?.({ sender: { id: 1 } }, session)
 
     expect(repository.saveSession).toHaveBeenCalledOnce()
     expect(broadcastLifecycleEvent).toHaveBeenCalledOnce()

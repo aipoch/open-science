@@ -18,7 +18,6 @@ import {
 } from '../caller-context'
 import { createApplicationCommandClient } from '../application-command-client'
 import type { ApplicationCommandComposition } from '../application-command-composition'
-import type { WebRpcRouter } from '../ipc-handler-registry'
 import type { ApplicationEventSource } from '../application-events'
 import {
   isWebRpcChannel,
@@ -66,7 +65,6 @@ type WebServerOptions = {
   port: number
   token: string
   staticRoot: string
-  rpc: Pick<WebRpcRouter, 'releaseClient'>
   applicationCommands: Pick<ApplicationCommandComposition, 'localWeb' | 'remoteWeb'>
   applicationEvents: ApplicationEventSource
   externalAccess?: ExternalWebAccess
@@ -426,7 +424,6 @@ const startWebHttpServer = async (options: WebServerOptions): Promise<RunningWeb
   const commandClient = createApplicationCommandClient()
   const clientLeases = new ClientLeaseRegistry((clientId) => {
     commandClient.releaseClient('web', clientId)
-    options.rpc.releaseClient(clientId)
   })
   const wsServer = new WebSocketServer({ noServer: true })
 

@@ -26,7 +26,6 @@ import {
   type ApplicationInvocation
 } from '../application-command-router'
 import { createWebCallerContext } from '../caller-context'
-import { webRpc } from '../ipc-handler-registry'
 import {
   permissionGrantApplicationCommands,
   registerPermissionGrantApplicationCommands
@@ -187,14 +186,6 @@ describe('permission grant IPC', () => {
       'permissions:extend-undo',
       'permissions:restore'
     ])
-    expect(webRpc.channels()).toEqual(
-      expect.arrayContaining([
-        'permissions:list',
-        'permissions:revoke',
-        'permissions:extend-undo',
-        'permissions:restore'
-      ])
-    )
     await handlers.get('permissions:revoke')?.(undefined, {
       grants: [{ id: 'grant-1', revision: 2 }]
     })

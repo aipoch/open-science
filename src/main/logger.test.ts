@@ -981,7 +981,7 @@ describe('logger: application shutdown diagnostics', () => {
         ),
       shutdownRemoteAccess: () => undefined,
       disposeWebController: () => undefined,
-      disposeWebRpc: () => undefined,
+      disposeIpcHandlers: () => undefined,
       log
     })
     await flushLogs()

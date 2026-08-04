@@ -75,11 +75,11 @@ const expandEntry = (
         ? 'browser-native'
         : 'unavailable'
   const localDispatch = isWebRequest
-    ? 'captured-ipc-request'
+    ? 'direct-application-request'
     : isWebEvent
       ? 'web-event-subscription'
       : profile === DELEGATED_NATIVE
-        ? 'browser-native-with-captured-ipc'
+        ? 'browser-native-with-direct-application-request'
         : isNative
           ? 'surface-native'
           : 'none'
