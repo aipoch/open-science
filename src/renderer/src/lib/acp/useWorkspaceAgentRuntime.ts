@@ -63,7 +63,7 @@ type SendWorkspaceMessageInput = {
   // internal re-resume below runs against an already-attached session and can't report the reset
   // again, so this forces the prior turns to be replayed as a history preamble on the re-sent turn.
   forceHistoryReplay?: boolean
-  // Current Provider capability, injected by the hook so context replay cannot bypass image gating.
+  // Current Provider capability, injected by the hook so replay can omit unsupported image media.
   supportsImageInput?: boolean
   // Internal edit-resend seam: reset the selected runtime first, then replace the active Branch from
   // this message and replay only the retained prefix into the fresh context.
@@ -712,6 +712,13 @@ const sendWorkspaceMessage = async (
     const branchResetRequired = Boolean(
       truncateFromMessageId || currentSession?.branchContextResetRequired
     )
+    const resumeNeedsImageFiltering =
+      runtimeMustAdoptSession &&
+      supportsImageInput === false &&
+      (() => {
+        const media = buildHistoryReplayMedia(currentSession?.messages ?? [], sessionProjectName)
+        return media.images.length > 0 || media.attachments.length > 0
+      })()
     const sendPreparationRequired = branchResetRequired || runtimeMustAdoptSession
 
     if (sendPreparationRequired) {
@@ -786,8 +793,8 @@ const sendWorkspaceMessage = async (
           .markResumed(targetSessionId, resumeResult?.frameworkId, resumeResult?.backendId)
 
         // A provider may resume an existing selected-runtime session without resetting its hidden
-        // history. Branch isolation requires a fresh context even in that case, now on the adopted owner.
-        if (branchContextResetPerformed && !contextResetFromResume) {
+        // history. Branch isolation and text-only models both require a fresh context in that case.
+        if ((branchContextResetPerformed || resumeNeedsImageFiltering) && !contextResetFromResume) {
           const reset = await runtime.resetSessionContext(
             targetSessionId,
             resumeCwd,
@@ -875,15 +882,8 @@ const sendWorkspaceMessage = async (
     ) {
       historyPreamble = buildHistoryPreamble(historyMessages)
       const media = buildHistoryReplayMedia(historyMessages, sessionProjectName)
-      if (
-        supportsImageInput === false &&
-        (media.images.length > 0 || media.attachments.length > 0)
-      ) {
-        useSessionStore.getState().failRun(targetSessionId, IMAGE_REPLAY_UNSUPPORTED_MESSAGE)
-        return appended
-      }
-      historyAttachments = media.attachments
-      historyImages = media.images
+      historyAttachments = supportsImageInput === false ? undefined : media.attachments
+      historyImages = supportsImageInput === false ? undefined : media.images
     }
 
     const resumeFallback =
@@ -892,7 +892,7 @@ const sendWorkspaceMessage = async (
             const media = buildHistoryReplayMedia(historyMessages, sessionProjectName)
             return {
               historyPreamble: buildHistoryPreamble(historyMessages),
-              historyAttachments: media.attachments,
+              historyAttachments: supportsImageInput === false ? undefined : media.attachments,
               historyImages: supportsImageInput === false ? undefined : media.images
             }
           })()

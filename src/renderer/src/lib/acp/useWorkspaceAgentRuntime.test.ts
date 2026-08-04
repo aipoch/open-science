@@ -1003,7 +1003,7 @@ describe('workspace agent message sending', () => {
     expect(useSessionStore.getState().sessions[0].branchContextResetRequired).toBe(true)
   })
 
-  it('keeps Branch replay required when selected history cannot be replayed', async () => {
+  it('clears Branch replay after filtering images for a text-only model', async () => {
     useSessionStore.getState().appendUserMessage({
       sessionId: 'transport-session-1',
       content: 'Inspect this upload',
@@ -1038,7 +1038,7 @@ describe('workspace agent message sending', () => {
       createSession: vi.fn(),
       resumeSession: vi.fn(),
       resetSessionContext: vi.fn().mockResolvedValue({ contextReset: true }),
-      sendPrompt: vi.fn()
+      sendPrompt: vi.fn().mockResolvedValue(createSnapshot(['transport-session-1']))
     }
 
     await sendWorkspaceMessage(runtime, {
@@ -1048,9 +1048,12 @@ describe('workspace agent message sending', () => {
       projectId: 'project-1',
       supportsImageInput: false
     })
+    await flushRuntimeTasks()
 
-    expect(runtime.sendPrompt).not.toHaveBeenCalled()
-    expect(useSessionStore.getState().sessions[0].branchContextResetRequired).toBe(true)
+    expect(runtime.sendPrompt).toHaveBeenCalledOnce()
+    expect(runtime.sendPrompt.mock.calls[0]?.[6]).toBeUndefined()
+    expect(runtime.sendPrompt.mock.calls[0]?.[7]).toBeUndefined()
+    expect(useSessionStore.getState().sessions[0].branchContextResetRequired).toBeFalsy()
   })
 
   it('shows a new conversation prompt before ACP session creation resolves', async () => {
@@ -2707,7 +2710,7 @@ describe('resuming an interrupted session on demand', () => {
     expect(runtime.sendPrompt.mock.calls[0]?.[5]).toBeUndefined()
   })
 
-  it('blocks image replay after switching to a model without image input', async () => {
+  it('resumes, resets image history, and replays only text for a model without image input', async () => {
     useSessionStore.getState().appendUserMessage({
       sessionId: 'session-1',
       content: 'Inspect this image',
@@ -2727,11 +2730,15 @@ describe('resuming an interrupted session on demand', () => {
       resumeSession: vi.fn().mockResolvedValue({
         sessionId: 'session-1',
         cwd: '/workspace/project',
+        frameworkId: 'codex'
+      }),
+      resetSessionContext: vi.fn().mockResolvedValue({
+        sessionId: 'session-1',
+        cwd: '/workspace/project',
         contextReset: true,
         frameworkId: 'codex'
       }),
-      resetSessionContext: vi.fn(),
-      sendPrompt: vi.fn()
+      sendPrompt: vi.fn().mockResolvedValue(createSnapshot(['session-1']))
     }
 
     await sendWorkspaceMessage(runtime, {
@@ -2741,9 +2748,18 @@ describe('resuming an interrupted session on demand', () => {
       projectId: 'default-project',
       supportsImageInput: false
     })
+    await flushRuntimeTasks()
 
-    expect(runtime.sendPrompt).not.toHaveBeenCalled()
-    expect(useSessionStore.getState().sessions[0].error).toContain('does not support image input')
+    expect(runtime.resumeSession).toHaveBeenCalledOnce()
+    expect(runtime.resetSessionContext).toHaveBeenCalledOnce()
+    expect(runtime.resumeSession.mock.invocationCallOrder[0]).toBeLessThan(
+      runtime.resetSessionContext.mock.invocationCallOrder[0]
+    )
+    expect(runtime.sendPrompt).toHaveBeenCalledOnce()
+    expect(runtime.sendPrompt.mock.calls[0]?.[5]).toContain('Inspect this image')
+    expect(runtime.sendPrompt.mock.calls[0]?.[6]).toBeUndefined()
+    expect(runtime.sendPrompt.mock.calls[0]?.[7]).toBeUndefined()
+    expect(useSessionStore.getState().sessions[0].error).toBeUndefined()
     expect(useSessionStore.getState().sessions[0].agentFrameworkId).toBe('codex')
   })
 
@@ -3859,7 +3875,7 @@ describe('edit resend reply streaming', () => {
   })
 })
 
-describe('sendWorkspaceMessage replay image gate', () => {
+describe('sendWorkspaceMessage replay image filtering', () => {
   const baseTime = 1710000000000
 
   const createMessage = (
@@ -3886,7 +3902,7 @@ describe('sendWorkspaceMessage replay image gate', () => {
     vi.unstubAllGlobals()
   })
 
-  it('blocks the replay before dispatch when the kept history has user-uploaded images', async () => {
+  it('omits user-uploaded images when replaying into a text-only model', async () => {
     useSessionStore.setState({
       ...createInitialSessionState(),
       sessions: [
@@ -3925,13 +3941,14 @@ describe('sendWorkspaceMessage replay image gate', () => {
       forceHistoryReplay: true,
       supportsImageInput: false
     })
+    await flushRuntimeTasks()
 
-    // The user turn is recorded, but the replayed upload would become an image block the model
-    // cannot take, so nothing is dispatched and the session carries the gate's error.
     expect(sent).toBeDefined()
-    expect(runtime.sendPrompt).not.toHaveBeenCalled()
+    expect(runtime.sendPrompt).toHaveBeenCalledOnce()
+    expect(runtime.sendPrompt.mock.calls[0]?.[5]).toContain('first prompt')
+    expect(runtime.sendPrompt.mock.calls[0]?.[6]).toBeUndefined()
+    expect(runtime.sendPrompt.mock.calls[0]?.[7]).toBeUndefined()
     const session = useSessionStore.getState().sessions[0]
-    expect(session?.status).toBe('error')
-    expect(session?.error).toContain('image replay')
+    expect(session?.error).toBeUndefined()
   })
 })
