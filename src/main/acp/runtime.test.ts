@@ -2232,7 +2232,7 @@ describe('ACP runtime session management', () => {
       spawnAgent: () => {
         spawnCount += 1
         if (spawnCount === 1) {
-          // Model the update gate landing while a connect is inside spawnAgentProcess: start the gate
+          // Model the update gate landing while a connect is inside provider spawn: start the gate
           // teardown, then hand back the freshly-spawned child. The gate must latch shutting-down for
           // its duration so connectFresh's check reaps this child; otherwise it is assigned after the
           // generation bump and outlives a clean-reported gate, holding the very files the NSIS
@@ -2262,7 +2262,7 @@ describe('ACP runtime session management', () => {
   })
 
   it('shutdownForUpdateGate never latches shutting-down, so an abandoned (hung) teardown still reconnects', async () => {
-    // Models the P2 timeout shape: the gate's in-flight connect hangs inside spawnAgentProcess, so the
+    // Models the P2 timeout shape: the gate's in-flight connect hangs inside provider spawn, so the
     // gate's own await never settles and runBounded abandons it once the budget elapses. Because the gate
     // must NOT set a shutting-down latch (it would never clear on an abandoned teardown), a fresh connect
     // afterward has to succeed instead of self-aborting forever.
@@ -5556,10 +5556,10 @@ describe('ACP runtime session management', () => {
     const internal = runtime as unknown as { connectionAdapter: AcpAgentConnectionAdapter }
     const openConnection = internal.connectionAdapter.open.bind(internal.connectionAdapter)
     let disconnect: Promise<unknown> | undefined
-    vi.spyOn(internal.connectionAdapter, 'open').mockImplementation((input, hooks) => {
-      const connection = openConnection(input, hooks)
+    vi.spyOn(internal.connectionAdapter, 'open').mockImplementation(async (input, hooks) => {
+      const candidate = await openConnection(input, hooks)
       disconnect = runtime.disconnect()
-      return connection
+      return candidate
     })
 
     await expect(runtime.connect({ cwd: '/workspace' })).rejects.toThrow(/superseded/i)
@@ -5568,6 +5568,32 @@ describe('ACP runtime session management', () => {
     expect(process.killed).toBe(true)
     expect(release).toHaveBeenCalledOnce()
     expect(runtime.getSnapshot().sessionIds).toEqual([])
+  })
+
+  it('drops the process candidate immediately after transfer to the resource owner', async () => {
+    const process = new FakeAgentProcess()
+    startFakeAgent(process, [])
+    const runtime = new AcpRuntime({
+      appVersion: '0.1.0',
+      defaultCwd: '/workspace',
+      spawnAgent: () => asAgentProcess(process)
+    })
+    const internal = runtime as unknown as { connectionAdapter: AcpAgentConnectionAdapter }
+    const openCandidate = internal.connectionAdapter.open.bind(internal.connectionAdapter)
+    const candidateDispose = vi.fn(async () => undefined)
+    vi.spyOn(internal.connectionAdapter, 'open').mockImplementation(async (input, hooks) => {
+      const candidate = await openCandidate(input, hooks)
+      return Object.freeze({
+        transferTo: candidate.transferTo,
+        dispose: candidateDispose
+      })
+    })
+
+    await runtime.connect({ cwd: '/workspace' })
+    await runtime.disconnect()
+
+    expect(candidateDispose).not.toHaveBeenCalled()
+    expect(process.killed).toBe(true)
   })
 
   it('invalidates an in-flight connection when disconnect is requested before initialization finishes', async () => {
@@ -16337,7 +16363,7 @@ describe('ACP runtime — connect failure logging', () => {
     errorLogSpy.mockClear()
     const { lease, release } = createBackendLeaseHarness()
     // The runtime defaults to claude-code; this reconnect resolves a *different* backend whose real
-    // framework.spawn() throws. spawnAgentProcess sets this.framework to opencode before spawning, so
+    // framework.spawn() throws after resolving opencode, so
     // the failure must be attributed to opencode — the backend actually launched — via the spawn tag,
     // exercising the real resolveBackend + framework switch + framework.spawn() path (no injected spawn).
     const runtime = new AcpRuntime({

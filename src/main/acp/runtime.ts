@@ -120,13 +120,16 @@ import {
   type AcpConnectionResourceAttempt,
   type AcpConnectionResourceReadyHandle
 } from './connection-resource-owner'
-import { AcpAgentConnectionAdapter } from './agent-connection-adapter'
+import {
+  AcpAgentConnectionAdapter,
+  type AcpAgentConnectionCandidate,
+  type AcpAgentConnectionHooks
+} from './agent-connection-adapter'
 import { AcpConnectionTransitionOwner } from './connection-transition-owner'
 import { AcpGenerationActivityOwner } from './generation-activity-owner'
 import { AcpHandoffContinuityOwner } from './handoff-continuity-owner'
 import {
   AcpBackendGenerationOwner,
-  type AcpBackendGenerationAttempt,
   type AcpBackendGenerationView
 } from './backend-generation-owner'
 import { AcpSessionConfigurator, type AcpSessionConfigurationFacts } from './session-configurator'
@@ -357,17 +360,6 @@ const acpErrorKind = (error: unknown): string | undefined => {
   } catch {
     return undefined
   }
-}
-
-// Internal wrapper thrown when framework.spawn() fails, carrying the framework the spawn targeted so
-// connectFresh can label the failure with the right backend. It never mutates the original throwable
-// (which may be a frozen/non-extensible Error, a write-rejecting Proxy, or a non-Error value) and holds
-// the original `cause` verbatim so connectFresh can re-throw exactly what was thrown.
-class SpawnFailure {
-  constructor(
-    readonly framework: AgentFramework['id'],
-    readonly cause: unknown
-  ) {}
 }
 
 const log = createLogger('acp')
@@ -908,17 +900,9 @@ class AcpRuntime {
     // Resolve up front rather than reading this.cwd after the pre-connect teardown, which may still be
     // mutating runtime state.
     const cwd = resolve(request.cwd || this.options.defaultCwd)
-    // Captured at function scope so the catch can clean up the spawned child on every failure path —
-    // including "superseded during spawn", before it can be attached to the resource owner.
-    let agentProcess: ChildProcessWithoutNullStreams | undefined
-    let unattachedConnection: ClientConnection | undefined
-    let unattachedBridgeLease: ResolvedAgentBackend['responsesBridgeLease']
-    let backendAttempt: AcpBackendGenerationAttempt | undefined
-    let resourceAttached = false
-    // The framework THIS connect spawned under, bound atomically to the spawn (spawnAgentProcess returns
-    // it alongside the process, and tags a spawn-throw with it) rather than re-read from the mutable
-    // this.framework, which an overlapping reconnect can move before the failure log is written. Seeded
-    // with the current value in case we throw before spawning at all (e.g. a pre-spawn teardown failure).
+    let candidate: AcpAgentConnectionCandidate | undefined
+    let transferred: ReturnType<AcpAgentConnectionCandidate['transferTo']> | undefined
+    // Capture the framework resolved for this attempt so a later reconnect cannot relabel its failure.
     let spawnedFramework = this.framework.id
 
     try {
@@ -933,79 +917,14 @@ class AcpRuntime {
       this.setStatus('connecting')
       log.info('connecting agent', this.diagnosticContext(this.framework.id, generation))
 
-      const spawned = await this.spawnAgentProcess(attempt)
-      agentProcess = spawned.process
-      spawnedFramework = spawned.framework
-      backendAttempt = spawned.backendAttempt
-      unattachedBridgeLease = spawned.bridgeLease
-
-      // spawnAgentProcess resolves the provider config asynchronously, so the connection may have been
-      // torn down or superseded during the spawn: a quit latched shuttingDown, or any teardown/reconnect
-      // bumped the generation past ours (e.g. the pre-update-install gate calls disconnect()). Either way
-      // this freshly-spawned child was never assigned, so the teardown that ran saw no process to reap —
-      // tree-kill it now and abort, or it would outlive that teardown as an orphan holding file handles.
-      // Keying off the generation (not just shuttingDown) lets the NON-LATCHING update gate collect a
-      // late spawn without holding a shuttingDown latch it might never release if it is itself abandoned
-      // on timeout. Awaited (not a bare kill) so a teardown that awaits this in-flight connect does not
-      // resolve before the child's whole tree is reaped on Windows.
-      if (this.connectionResources.isShuttingDown || generation !== this.connectionGeneration) {
-        await this.connectionResources.cleanupUnattached(
-          { process: agentProcess, bridgeLease: unattachedBridgeLease },
-          (stage, error) => {
-            safeLogError(`unattached ACP ${stage} cleanup failed`, {
-              ...diagnosticErrorFields(error),
-              ...this.diagnosticContext(spawnedFramework, generation)
-            })
-          }
-        )
-        agentProcess = undefined
-        unattachedBridgeLease = undefined
-        throw new Error(
-          this.connectionResources.isShuttingDown
-            ? 'ACP runtime is shutting down.'
-            : 'ACP connection superseded during spawn.'
-        )
-      }
-
-      const backend = backendAttempt.publish()
-      this.sessionUpdateProjector.beginGeneration(
-        backend.adapter.codexHome ? join(backend.adapter.codexHome, 'skills') : undefined
-      )
-      this.attachAgentProcessEvents(agentProcess, generation)
-
-      const connection = this.connectionAdapter.open(
-        { process: agentProcess },
-        {
-          requestPermission: (params) => this.handlePermissionRequest(params),
-          observeSessionUpdate: (notification) => this.observePermissionToolContext(notification),
-          observeClaudeSdkMessage: (params) => this.observeClaudeSdkMessage(params),
-          filesystem: {
-            resolveSessionCwd: (sessionId) => this.resolveSessionCwd(sessionId),
-            protectedReadRoots: () => this.protectedReadRoots()
-          }
-        }
-      )
-      unattachedConnection = connection
-      attempt.attach({
-        process: agentProcess,
-        connection,
-        framework: spawned.framework,
-        bridgeLease: spawned.bridgeLease
+      candidate = await this.openAgentConnection(attempt, (framework) => {
+        spawnedFramework = framework
       })
-      resourceAttached = true
-      unattachedConnection = undefined
-      unattachedBridgeLease = undefined
-      connection.closed.then(() => {
-        if (
-          attempt.owns(connection) &&
-          (this.snapshotOwner.status === 'connected' || this.snapshotOwner.status === 'connecting')
-        ) {
-          this.handleConnectionClosed()
-        }
-      })
+      transferred = candidate.transferTo(attempt)
+      candidate = undefined
 
       // Initialization tells the agent which client-side services this app can handle.
-      const initResult = await connection.agent.request(acp.methods.agent.initialize, {
+      const initResult = await transferred.initialize({
         protocolVersion: acp.PROTOCOL_VERSION,
         clientInfo: {
           name: 'open-science',
@@ -1025,19 +944,13 @@ class AcpRuntime {
         }
       })
       attempt.assertCurrent()
-      const initializeMaterial = backendAttempt.consumeInitializeMaterial()
+      const initializeMaterial = transferred.backendAttempt.consumeInitializeMaterial()
       if (initializeMaterial?.authentication) {
-        await connection.agent.request(
-          acp.methods.agent.authenticate,
-          initializeMaterial.authentication
-        )
+        await transferred.authenticate(initializeMaterial.authentication)
         attempt.assertCurrent()
       }
       if (initializeMaterial?.providerConfiguration) {
-        await connection.agent.request(
-          acp.methods.agent.providers.set,
-          initializeMaterial.providerConfiguration
-        )
+        await transferred.setProvider(initializeMaterial.providerConfiguration)
         attempt.assertCurrent()
       }
       const handle = attempt.publish({
@@ -1065,40 +978,9 @@ class AcpRuntime {
       this.setStatus('connected')
       return handle
     } catch (thrown) {
-      backendAttempt?.fail()
-      // A spawn failure arrives wrapped so it can name the framework it targeted without mutating the
-      // original throwable; unwrap to the real cause (logged and re-thrown) and prefer its framework
-      // (the process never returned to update spawnedFramework). `instanceof` is guarded because a
-      // hostile thrown value's getPrototypeOf trap could otherwise throw here. Every other failure is
-      // its own cause.
-      let spawnFailure: SpawnFailure | undefined
-      try {
-        if (thrown instanceof SpawnFailure) spawnFailure = thrown
-      } catch {
-        spawnFailure = undefined
-      }
-      const cause = spawnFailure ? spawnFailure.cause : thrown
-
-      // Before attach(), the owner cannot detach the candidate for failure cleanup. Keep that
-      // pre-publication resource local and transfer-or-release it exactly once.
-      if (!resourceAttached && agentProcess) {
-        await this.connectionResources.cleanupUnattached(
-          {
-            process: agentProcess,
-            connection: unattachedConnection,
-            bridgeLease: unattachedBridgeLease
-          },
-          (stage, cleanupError) => {
-            safeLogError(`unattached ACP ${stage} cleanup failed`, {
-              ...diagnosticErrorFields(cleanupError),
-              ...this.diagnosticContext(spawnedFramework, generation)
-            })
-          }
-        )
-        unattachedConnection = undefined
-        agentProcess = undefined
-        unattachedBridgeLease = undefined
-      }
+      transferred?.backendAttempt.fail()
+      await candidate?.dispose()
+      const cause = thrown
 
       // The entire failure-handling body is best-effort: logging, notification sinks (pushEvent/
       // emitState), and cleanup are each isolated so that whatever throws — a hostile error value, a
@@ -1107,10 +989,7 @@ class AcpRuntime {
       try {
         // Shared lifecycle context keeps the resolved framework and attempted generation attached to
         // both the abandoned and failed paths without retaining process or workspace details.
-        const processFields = this.diagnosticContext(
-          spawnFailure ? spawnFailure.framework : spawnedFramework,
-          generation
-        )
+        const processFields = this.diagnosticContext(spawnedFramework, generation)
 
         if (generation !== this.connectionGeneration) {
           // Superseded (a newer reconnect bumped the generation) or shutting down: the fast-path re-throw
@@ -1176,10 +1055,7 @@ class AcpRuntime {
         try {
           log.error('error while handling agent connection failure', {
             ...diagnosticErrorFields(handlingError),
-            ...this.diagnosticContext(
-              spawnFailure ? spawnFailure.framework : spawnedFramework,
-              generation
-            )
+            ...this.diagnosticContext(spawnedFramework, generation)
           })
         } catch {
           /* nothing more we can safely do */
@@ -2300,7 +2176,7 @@ class AcpRuntime {
   // Teardown for the pre-update-install gate. Reaps the current agent tree (so the NSIS installer can
   // delete files the agent held) but, unlike shutdownForQuit, does NOT latch shuttingDown: a refused
   // install (degraded or timed-out teardown) must leave the runtime able to lazily reconnect. Crucially
-  // it does not rely on a latch to catch a connect racing inside spawnAgentProcess either — this teardown
+  // it does not rely on a latch to catch a connect racing inside provider spawn either — this teardown
   // can itself be abandoned by its caller (runBounded) once the budget elapses, and a latch set here
   // would then never clear, wedging every future connect. Instead disconnect() bumps the connection
   // generation, and connectFresh reaps any freshly-spawned child whose generation is now stale,
@@ -2431,89 +2307,76 @@ class AcpRuntime {
     return this.getSnapshot()
   }
 
-  // Creates the agent process, preferring an injected spawner (tests) and otherwise resolving the
-  // active agent backend so each reconnect uses the current framework + up-to-date credentials. Returns
-  // the child paired with the framework it was spawned under so the caller labels lifecycle/failure logs
-  // atomically — never by re-reading the current generation view after an overlapping reconnect.
-  private async spawnAgentProcess(identity: AcpConnectionResourceAttempt): Promise<{
-    process: ChildProcessWithoutNullStreams
-    framework: AgentFramework['id']
-    bridgeLease: ResolvedAgentBackend['responsesBridgeLease']
-    backendAttempt: AcpBackendGenerationAttempt
-  }> {
-    if (this.spawnAgent) {
-      const backend: ResolvedAgentBackend = {
-        framework: this.framework,
-        executablePath: '',
-        env: {}
-      }
-      const backendAttempt = this.backendGeneration.prepare(identity, backend)
-      let process: ChildProcessWithoutNullStreams
-      try {
-        process = this.spawnAgent()
-      } catch (error) {
-        backendAttempt.fail()
-        throw error
-      }
-      return {
-        process,
-        framework: this.framework.id,
-        bridgeLease: undefined,
-        backendAttempt
-      }
-    }
-
-    const backend = this.options.resolveBackend
-      ? await this.options.resolveBackend({
-          forcedSkillIds: [...this.turnSkills.backendPreparation().forcedSkillIds],
-          systemPromptAppends: await this.getBackendSystemPromptAppends()
+  private openAgentConnection(
+    identity: AcpConnectionResourceAttempt,
+    onFrameworkResolved: (framework: AgentFramework['id']) => void
+  ): Promise<AcpAgentConnectionCandidate> {
+    const hooks: AcpAgentConnectionHooks = {
+      requestPermission: (params) => this.handlePermissionRequest(params),
+      observeSessionUpdate: (notification) => this.observePermissionToolContext(notification),
+      observeClaudeSdkMessage: (params) => this.observeClaudeSdkMessage(params),
+      filesystem: {
+        resolveSessionCwd: (sessionId) => this.resolveSessionCwd(sessionId),
+        protectedReadRoots: () => this.protectedReadRoots()
+      },
+      onBackendResolved: (framework) => {
+        onFrameworkResolved(framework)
+        if (!this.spawnAgent) {
+          // Keep spawn configuration and provider identifiers out of diagnostics.
+          log.info('agent backend resolved', this.diagnosticContext(framework))
+        }
+      },
+      onProcessSpawned: (framework) => {
+        if (!this.spawnAgent) log.info('agent process spawned', this.diagnosticContext(framework))
+      },
+      onBackendPublished: (backend) => {
+        this.sessionUpdateProjector.beginGeneration(
+          backend.adapter.codexHome ? join(backend.adapter.codexHome, 'skills') : undefined
+        )
+      },
+      attachProcessDiagnostics: (process, _framework, epoch) =>
+        this.attachAgentProcessEvents(process, epoch),
+      onConnectionClosed: () => {
+        if (
+          this.snapshotOwner.status === 'connected' ||
+          this.snapshotOwner.status === 'connecting'
+        ) {
+          this.handleConnectionClosed()
+        }
+      },
+      reportCleanupFailure: (stage, error, framework, epoch) => {
+        if (stage === 'bridge-lease') {
+          safeLogError('responses bridge lease release failed', errorLogFields(error))
+          return
+        }
+        safeLogError(`unattached ACP ${stage} cleanup failed`, {
+          ...diagnosticErrorFields(error),
+          ...this.diagnosticContext(framework, epoch)
         })
-      : undefined
-
-    if (!backend) {
-      throw new Error('ACP agent spawn configuration is not available.')
-    }
-    let backendAttempt: AcpBackendGenerationAttempt
-    try {
-      backendAttempt = this.backendGeneration.prepare(identity, backend)
-    } catch (error) {
-      await this.connectionResources.cleanupUnattached({
-        bridgeLease: backend.responsesBridgeLease
-      })
-      throw error
+      },
+      reportProcessTreeError: (message, error) => log.error(message, error)
     }
 
-    // Record the resolved framework without retaining executable paths, arguments, environment names,
-    // provider identifiers, or model selections from the spawn configuration.
-    log.info('agent backend resolved', this.diagnosticContext(backend.framework.id))
-
-    let process: ChildProcessWithoutNullStreams
-    try {
-      process = backend.framework.spawn({
-        executablePath: backend.executablePath,
-        env: backend.env,
-        args: backend.args ?? [],
-        proxyEnvironmentMode: backend.proxyEnvironmentMode
-      })
-    } catch (error) {
-      // Wrap (never mutate) the failure with the framework this spawn targeted: the connect-level catch
-      // would otherwise fall back to this.framework.id, which an overlapping reconnect could move before
-      // the log is written. connectFresh unwraps this and re-throws the original `error` value.
-      await this.connectionResources.cleanupUnattached({
-        bridgeLease: backend.responsesBridgeLease
-      })
-      backendAttempt.fail()
-      throw new SpawnFailure(backend.framework.id, error)
-    }
-
-    log.info('agent process spawned', this.diagnosticContext(backend.framework.id))
-
-    return {
-      process,
-      framework: backend.framework.id,
-      bridgeLease: backend.responsesBridgeLease,
-      backendAttempt
-    }
+    return this.connectionAdapter.open(
+      {
+        epoch: identity.epoch,
+        resolveBackend: async () => {
+          const backend: ResolvedAgentBackend | undefined = this.spawnAgent
+            ? { framework: this.framework, executablePath: '', env: {} }
+            : await this.options.resolveBackend?.({
+                forcedSkillIds: [...this.turnSkills.backendPreparation().forcedSkillIds],
+                systemPromptAppends: await this.getBackendSystemPromptAppends()
+              })
+          if (!backend) throw new Error('ACP agent spawn configuration is not available.')
+          return backend
+        },
+        prepareBackend: (backend) => this.backendGeneration.prepare(identity, backend),
+        isCurrent: () => identity.epoch === this.connectionGeneration,
+        isShuttingDown: () => this.connectionResources.isShuttingDown,
+        ...(this.spawnAgent ? { spawnAgent: this.spawnAgent } : {})
+      },
+      hooks
+    )
   }
 
   // Sends one prompt turn to the targeted session and streams updates until stop.

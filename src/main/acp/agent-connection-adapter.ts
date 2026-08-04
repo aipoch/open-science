@@ -1,14 +1,28 @@
 import * as acp from '@agentclientprotocol/sdk'
 import type {
+  AuthenticateRequest,
   ClientConnection,
+  InitializeRequest,
+  InitializeResponse,
   RequestPermissionRequest,
   RequestPermissionResponse,
+  SetProviderRequest,
   SessionNotification
 } from '@agentclientprotocol/sdk'
 import type { ChildProcessWithoutNullStreams } from 'node:child_process'
 import { Readable, Writable } from 'node:stream'
 
+import type { AgentFramework, ResolvedAgentBackend } from '../agent-framework'
+import { terminateProcessTree } from '../process-tree'
+import type {
+  AcpBackendGenerationAttempt,
+  AcpBackendGenerationView
+} from './backend-generation-owner'
+import type { AcpConnectionResourceAttempt } from './connection-resource-owner'
 import { readWorkspaceTextFile, writeWorkspaceTextFile } from './filesystem'
+
+type ResponsesBridgeLease = ResolvedAgentBackend['responsesBridgeLease']
+type CandidateCleanupStage = 'connection' | 'agent-process' | 'bridge-lease'
 
 type AcpAgentConnectionHooks = Readonly<{
   requestPermission: (
@@ -20,19 +34,174 @@ type AcpAgentConnectionHooks = Readonly<{
     resolveSessionCwd: (sessionId: string) => string
     protectedReadRoots: () => readonly string[]
   }>
+  onBackendResolved: (framework: AgentFramework['id']) => void
+  onProcessSpawned: (framework: AgentFramework['id']) => void
+  onBackendPublished: (backend: AcpBackendGenerationView) => void
+  attachProcessDiagnostics: (
+    process: ChildProcessWithoutNullStreams,
+    framework: AgentFramework['id'],
+    epoch: number
+  ) => void
+  onConnectionClosed: () => void
+  reportCleanupFailure: (
+    stage: CandidateCleanupStage,
+    error: unknown,
+    framework: AgentFramework['id'],
+    epoch: number
+  ) => void
+  reportProcessTreeError: (message: string, error?: unknown) => void
 }>
 
-type AcpAgentConnectionInput = Readonly<{
-  process: ChildProcessWithoutNullStreams
+type AcpAgentConnectionCandidateInput = Readonly<{
+  epoch: number
+  resolveBackend: () => Promise<ResolvedAgentBackend>
+  prepareBackend: (backend: ResolvedAgentBackend) => AcpBackendGenerationAttempt
+  isCurrent: () => boolean
+  isShuttingDown: () => boolean
+  spawnAgent?: () => ChildProcessWithoutNullStreams
 }>
 
-// Translates one spawned agent's stdio and client-side protocol callbacks into an ACP connection.
-// Process, connection, bridge-lease, and transition ownership remain with the Runtime/resource owner.
+type AcpTransferredAgentConnection = Readonly<{
+  backendAttempt: AcpBackendGenerationAttempt
+  initialize: (request: InitializeRequest) => Promise<InitializeResponse>
+  authenticate: (request: AuthenticateRequest) => Promise<void>
+  setProvider: (request: SetProviderRequest) => Promise<void>
+}>
+
+type AcpAgentConnectionCandidate = Readonly<{
+  transferTo: (attempt: AcpConnectionResourceAttempt) => AcpTransferredAgentConnection
+  dispose: () => Promise<void>
+}>
+
+// Owns one spawned provider process, ACP client/stream, and bridge lease until their single transfer
+// to the existing resource owner. Runtime supplies policy/projection hooks but never receives those
+// provisional physical resources.
 class AcpAgentConnectionAdapter {
-  open(input: AcpAgentConnectionInput, hooks: AcpAgentConnectionHooks): ClientConnection {
+  async open(
+    input: AcpAgentConnectionCandidateInput,
+    hooks: AcpAgentConnectionHooks
+  ): Promise<AcpAgentConnectionCandidate> {
+    let process: ChildProcessWithoutNullStreams | undefined
+    let connection: ReturnType<AcpAgentConnectionAdapter['createClientConnection']> | undefined
+    let bridgeLease: ResponsesBridgeLease
+    let backendAttempt: AcpBackendGenerationAttempt | undefined
+    let framework: AgentFramework['id'] = 'claude-code'
+
+    const reportCleanupFailure = (stage: CandidateCleanupStage, error: unknown): void => {
+      try {
+        hooks.reportCleanupFailure(stage, error, framework, input.epoch)
+      } catch {
+        // Cleanup and the original failure take precedence over diagnostic sinks.
+      }
+    }
+    const cleanup = async (): Promise<void> => {
+      try {
+        connection?.close()
+      } catch (error) {
+        reportCleanupFailure('connection', error)
+      }
+      if (process) {
+        try {
+          await terminateProcessTree(process, undefined, {
+            error: (message, error) => hooks.reportProcessTreeError(message, error)
+          })
+        } catch (error) {
+          reportCleanupFailure('agent-process', error)
+        }
+      }
+      if (bridgeLease) {
+        try {
+          await bridgeLease.release()
+        } catch (error) {
+          reportCleanupFailure('bridge-lease', error)
+        }
+      }
+    }
+
+    try {
+      const backend = await input.resolveBackend()
+      framework = backend.framework.id
+      bridgeLease = backend.responsesBridgeLease
+      backendAttempt = input.prepareBackend(backend)
+      hooks.onBackendResolved(framework)
+      process = input.spawnAgent
+        ? input.spawnAgent()
+        : backend.framework.spawn({
+            executablePath: backend.executablePath,
+            env: backend.env,
+            args: backend.args ?? [],
+            proxyEnvironmentMode: backend.proxyEnvironmentMode
+          })
+      hooks.onProcessSpawned(framework)
+      if (input.isShuttingDown() || !input.isCurrent()) {
+        throw new Error(
+          input.isShuttingDown()
+            ? 'ACP runtime is shutting down.'
+            : 'ACP connection superseded during spawn.'
+        )
+      }
+      hooks.onBackendPublished(backendAttempt.publish())
+      hooks.attachProcessDiagnostics(process, framework, input.epoch)
+      connection = this.createClientConnection(process, hooks)
+    } catch (error) {
+      backendAttempt?.fail()
+      await cleanup()
+      throw error
+    }
+
+    const openedProcess = process
+    const openedConnection = connection
+    const openedAttempt = backendAttempt
+    if (!openedProcess || !openedConnection || !openedAttempt) {
+      throw new Error('ACP agent connection candidate did not open.')
+    }
+    let state: 'open' | 'transferred' | 'disposed' = 'open'
+
+    return Object.freeze({
+      transferTo: (attempt) => {
+        if (state === 'disposed') throw new Error('ACP agent connection candidate is disposed.')
+        if (state === 'transferred') {
+          throw new Error('ACP agent connection candidate was already transferred.')
+        }
+        if (attempt.epoch !== input.epoch) throw new Error('ACP connection was superseded.')
+        attempt.attach({
+          process: openedProcess,
+          connection: openedConnection,
+          framework,
+          bridgeLease
+        })
+        state = 'transferred'
+        openedConnection.closed.then(() => {
+          if (attempt.owns(openedConnection)) hooks.onConnectionClosed()
+        })
+        return Object.freeze({
+          backendAttempt: openedAttempt,
+          initialize: (request) =>
+            openedConnection.agent.request(acp.methods.agent.initialize, request),
+          authenticate: async (request) => {
+            await openedConnection.agent.request(acp.methods.agent.authenticate, request)
+          },
+          setProvider: async (request) => {
+            await openedConnection.agent.request(acp.methods.agent.providers.set, request)
+          }
+        })
+      },
+      dispose: async () => {
+        if (state !== 'open') return
+        state = 'disposed'
+        openedAttempt.fail()
+        await cleanup()
+      }
+    })
+  }
+
+  private createClientConnection(
+    process: ChildProcessWithoutNullStreams,
+    hooks: AcpAgentConnectionHooks
+  ): ClientConnection {
     const stream = acp.ndJsonStream(
-      Writable.toWeb(input.process.stdin) as WritableStream<Uint8Array>,
-      Readable.toWeb(input.process.stdout) as ReadableStream<Uint8Array>
+      Writable.toWeb(process.stdin) as WritableStream<Uint8Array>,
+      Readable.toWeb(process.stdout) as ReadableStream<Uint8Array>
     )
 
     return acp
@@ -66,4 +235,4 @@ class AcpAgentConnectionAdapter {
 }
 
 export { AcpAgentConnectionAdapter }
-export type { AcpAgentConnectionHooks, AcpAgentConnectionInput }
+export type { AcpAgentConnectionCandidate, AcpAgentConnectionHooks }

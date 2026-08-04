@@ -5,14 +5,44 @@ import { mkdir, mkdtemp, readFile, rm, writeFile } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { PassThrough, Readable, Writable } from 'node:stream'
-import { describe, expect, it, vi } from 'vitest'
+import { afterEach, describe, expect, it, vi } from 'vitest'
 
-import { AcpAgentConnectionAdapter, type AcpAgentConnectionHooks } from './agent-connection-adapter'
+import { claudeCodeFramework, type ResolvedAgentBackend } from '../agent-framework'
+import {
+  AcpAgentConnectionAdapter,
+  type AcpAgentConnectionCandidate,
+  type AcpAgentConnectionHooks
+} from './agent-connection-adapter'
+import { AcpBackendGenerationOwner } from './backend-generation-owner'
+import {
+  AcpConnectionResourceOwner,
+  type AcpConnectionResourceAttempt
+} from './connection-resource-owner'
+
+const terminateProcessTree = vi.hoisted(() =>
+  vi.fn(async (child?: { kill?: () => void }) => {
+    child?.kill?.()
+    return { reaped: true }
+  })
+)
+vi.mock('../process-tree', () => ({ terminateProcessTree }))
+
+afterEach(() => {
+  vi.clearAllMocks()
+})
 
 class FakeAgentProcess extends EventEmitter {
   stdin = new PassThrough()
   stdout = new PassThrough()
   stderr = new PassThrough()
+  killed = false
+  pid = 1234
+
+  kill(): boolean {
+    this.killed = true
+    this.emit('exit', 0, null)
+    return true
+  }
 }
 
 const asAgentProcess = (process: FakeAgentProcess): ChildProcessWithoutNullStreams =>
@@ -25,10 +55,180 @@ const hooks = (): AcpAgentConnectionHooks => ({
   filesystem: {
     resolveSessionCwd: vi.fn(() => '/workspace'),
     protectedReadRoots: vi.fn(() => [])
-  }
+  },
+  onBackendResolved: vi.fn(),
+  onProcessSpawned: vi.fn(),
+  onBackendPublished: vi.fn(),
+  attachProcessDiagnostics: vi.fn(),
+  onConnectionClosed: vi.fn(),
+  reportCleanupFailure: vi.fn(),
+  reportProcessTreeError: vi.fn()
 })
 
+const openConnection = async (
+  process: FakeAgentProcess,
+  connectionHooks: AcpAgentConnectionHooks
+): Promise<{ connection: acp.ClientConnection; close: () => Promise<void> }> => {
+  const owner = new AcpConnectionResourceOwner()
+  const backendOwner = new AcpBackendGenerationOwner(claudeCodeFramework)
+  const ready = await owner.connect(async (attempt) => {
+    const candidate = await new AcpAgentConnectionAdapter().open(
+      {
+        epoch: attempt.epoch,
+        resolveBackend: async () => ({
+          framework: claudeCodeFramework,
+          executablePath: '',
+          env: {}
+        }),
+        prepareBackend: (backend) => backendOwner.prepare(attempt, backend),
+        isCurrent: () => attempt.epoch === owner.epoch,
+        isShuttingDown: () => owner.isShuttingDown,
+        spawnAgent: () => asAgentProcess(process)
+      },
+      connectionHooks
+    )
+    candidate.transferTo(attempt)
+    return attempt.publish({ close: false, delete: false, resume: false })
+  })
+  return { connection: ready.connection, close: () => owner.teardown(owner.epoch) }
+}
+
+const openCandidate = async (
+  process: FakeAgentProcess,
+  backend: ResolvedAgentBackend = {
+    framework: claudeCodeFramework,
+    executablePath: '',
+    env: {}
+  }
+): Promise<AcpAgentConnectionCandidate> => {
+  const backendOwner = new AcpBackendGenerationOwner(claudeCodeFramework)
+  const identity = { epoch: 1, assertCurrent: vi.fn() }
+  return new AcpAgentConnectionAdapter().open(
+    {
+      epoch: identity.epoch,
+      resolveBackend: async () => backend,
+      prepareBackend: (resolved) => backendOwner.prepare(identity, resolved),
+      isCurrent: () => true,
+      isShuttingDown: () => false,
+      spawnAgent: () => asAgentProcess(process)
+    },
+    hooks()
+  )
+}
+
 describe('AcpAgentConnectionAdapter', () => {
+  it('reaps an untransferred process tree and releases its bridge lease exactly once', async () => {
+    const process = new FakeAgentProcess()
+    const release = vi.fn(async () => undefined)
+    const backend: ResolvedAgentBackend = {
+      framework: { ...claudeCodeFramework, spawn: () => asAgentProcess(process) },
+      executablePath: '/bin/agent',
+      env: {},
+      responsesBridgeLease: {
+        selectSkills: vi.fn(async () => []),
+        registerReviewerSession: vi.fn(),
+        unregisterReviewerSession: vi.fn(() => false),
+        release
+      }
+    }
+    const candidate = await openCandidate(process, backend)
+
+    await candidate.dispose()
+    await candidate.dispose()
+
+    expect(terminateProcessTree).toHaveBeenCalledOnce()
+    expect(terminateProcessTree.mock.calls[0]?.[0]).toBe(process)
+    expect(release).toHaveBeenCalledOnce()
+  })
+
+  it('rejects a transfer to a different owner epoch without consuming the candidate', async () => {
+    const process = new FakeAgentProcess()
+    const candidate = await openCandidate(process)
+    const attach = vi.fn()
+    const mismatchedAttempt = {
+      epoch: 2,
+      attach,
+      publish: vi.fn(),
+      assertCurrent: vi.fn(),
+      owns: vi.fn(() => false)
+    } as unknown as AcpConnectionResourceAttempt
+
+    expect(() => candidate.transferTo(mismatchedAttempt)).toThrow(/superseded/i)
+    expect(attach).not.toHaveBeenCalled()
+
+    await candidate.dispose()
+    expect(terminateProcessTree).toHaveBeenCalledOnce()
+  })
+
+  it('transfers once without exposing resources and leaves teardown solely to the owner', async () => {
+    const process = new FakeAgentProcess()
+    const release = vi.fn(async () => undefined)
+    const owner = new AcpConnectionResourceOwner()
+    let candidateDispose: (() => Promise<void>) | undefined
+    await owner.connect(async (attempt) => {
+      const candidate = await openCandidate(process, {
+        framework: claudeCodeFramework,
+        executablePath: '',
+        env: {},
+        responsesBridgeLease: {
+          selectSkills: vi.fn(async () => []),
+          registerReviewerSession: vi.fn(),
+          unregisterReviewerSession: vi.fn(() => false),
+          release
+        }
+      })
+      candidateDispose = candidate.dispose
+      const transferred = candidate.transferTo(attempt)
+
+      expect(Object.keys(candidate).sort()).toEqual(['dispose', 'transferTo'])
+      expect(Object.keys(transferred).sort()).toEqual([
+        'authenticate',
+        'backendAttempt',
+        'initialize',
+        'setProvider'
+      ])
+      expect(candidate).not.toHaveProperty('process')
+      expect(candidate).not.toHaveProperty('connection')
+      expect(candidate).not.toHaveProperty('bridgeLease')
+      expect(transferred).not.toHaveProperty('process')
+      expect(transferred).not.toHaveProperty('connection')
+      expect(transferred).not.toHaveProperty('bridgeLease')
+      expect(() => candidate.transferTo(attempt)).toThrow(/already transferred/i)
+      await candidate.dispose()
+
+      expect(terminateProcessTree).not.toHaveBeenCalled()
+      expect(release).not.toHaveBeenCalled()
+      return attempt.publish({ close: false, delete: false, resume: false })
+    })
+
+    await candidateDispose?.()
+    expect(terminateProcessTree).not.toHaveBeenCalled()
+    expect(release).not.toHaveBeenCalled()
+
+    await owner.teardown(owner.epoch)
+    expect(terminateProcessTree).toHaveBeenCalledOnce()
+    expect(release).toHaveBeenCalledOnce()
+  })
+
+  it('retains cleanup ownership when the resource owner rejects transfer', async () => {
+    const process = new FakeAgentProcess()
+    const candidate = await openCandidate(process)
+    const rejectedAttempt = {
+      epoch: 1,
+      attach: vi.fn(() => {
+        throw new Error('owner rejected transfer')
+      }),
+      publish: vi.fn(),
+      assertCurrent: vi.fn(),
+      owns: vi.fn(() => false)
+    } as unknown as AcpConnectionResourceAttempt
+
+    expect(() => candidate.transferTo(rejectedAttempt)).toThrow('owner rejected transfer')
+    await candidate.dispose()
+
+    expect(terminateProcessTree).toHaveBeenCalledOnce()
+  })
+
   it('opens an ACP client connection over the child process streams', async () => {
     const process = new FakeAgentProcess()
     acp
@@ -45,10 +245,7 @@ describe('AcpAgentConnectionAdapter', () => {
         )
       )
 
-    const connection = new AcpAgentConnectionAdapter().open(
-      { process: asAgentProcess(process) },
-      hooks()
-    )
+    const { connection, close } = await openConnection(process, hooks())
 
     await expect(
       connection.agent.request(acp.methods.agent.initialize, {
@@ -58,7 +255,7 @@ describe('AcpAgentConnectionAdapter', () => {
       })
     ).resolves.toMatchObject({ protocolVersion: acp.PROTOCOL_VERSION })
 
-    connection.close()
+    await close()
   })
 
   it('translates permission requests and returns the hook response', async () => {
@@ -85,17 +282,14 @@ describe('AcpAgentConnectionAdapter', () => {
     vi.mocked(connectionHooks.requestPermission).mockResolvedValue({
       outcome: { outcome: 'selected', optionId: 'allow-once' }
     })
-    const connection = new AcpAgentConnectionAdapter().open(
-      { process: asAgentProcess(process) },
-      connectionHooks
-    )
+    const { close } = await openConnection(process, connectionHooks)
 
     await expect(
       agentConnection.client.request(acp.methods.client.session.requestPermission, request)
     ).resolves.toEqual({ outcome: { outcome: 'selected', optionId: 'allow-once' } })
     expect(connectionHooks.requestPermission).toHaveBeenCalledWith(request)
 
-    connection.close()
+    await close()
     agentConnection.close()
   })
 
@@ -113,10 +307,7 @@ describe('AcpAgentConnectionAdapter', () => {
     vi.mocked(connectionHooks.requestPermission).mockRejectedValue(
       new Error('permission hook failed')
     )
-    const connection = new AcpAgentConnectionAdapter().open(
-      { process: asAgentProcess(process) },
-      connectionHooks
-    )
+    const { close } = await openConnection(process, connectionHooks)
 
     await expect(
       agentConnection.client.request(acp.methods.client.session.requestPermission, {
@@ -134,7 +325,7 @@ describe('AcpAgentConnectionAdapter', () => {
       data: { details: 'permission hook failed' }
     })
 
-    connection.close()
+    await close()
     agentConnection.close()
   })
 
@@ -157,10 +348,7 @@ describe('AcpAgentConnectionAdapter', () => {
       actions.push('permission')
       return { outcome: { outcome: 'cancelled' } }
     })
-    const connection = new AcpAgentConnectionAdapter().open(
-      { process: asAgentProcess(process) },
-      connectionHooks
-    )
+    const { close } = await openConnection(process, connectionHooks)
 
     const notification = {
       sessionId: 'provider-session',
@@ -181,7 +369,7 @@ describe('AcpAgentConnectionAdapter', () => {
     expect(connectionHooks.observeSessionUpdate).toHaveBeenCalledWith(notification)
     expect(actions).toEqual(['update', 'permission'])
 
-    connection.close()
+    await close()
     agentConnection.close()
   })
 
@@ -196,10 +384,7 @@ describe('AcpAgentConnectionAdapter', () => {
         )
       )
     const connectionHooks = hooks()
-    const connection = new AcpAgentConnectionAdapter().open(
-      { process: asAgentProcess(process) },
-      connectionHooks
-    )
+    const { close } = await openConnection(process, connectionHooks)
     const notification = {
       sessionId: 'provider-session',
       message: { type: 'result', num_turns: 2, origin: { kind: 'human' } }
@@ -211,7 +396,7 @@ describe('AcpAgentConnectionAdapter', () => {
       expect(connectionHooks.observeClaudeSdkMessage).toHaveBeenCalledWith(notification)
     )
 
-    connection.close()
+    await close()
     agentConnection.close()
   })
 
@@ -230,10 +415,7 @@ describe('AcpAgentConnectionAdapter', () => {
       )
     const connectionHooks = hooks()
     vi.mocked(connectionHooks.filesystem.resolveSessionCwd).mockReturnValue(workspace)
-    const connection = new AcpAgentConnectionAdapter().open(
-      { process: asAgentProcess(process) },
-      connectionHooks
-    )
+    const { close } = await openConnection(process, connectionHooks)
 
     await expect(
       agentConnection.client.request(acp.methods.client.fs.readTextFile, {
@@ -246,7 +428,7 @@ describe('AcpAgentConnectionAdapter', () => {
     expect(connectionHooks.filesystem.resolveSessionCwd).toHaveBeenCalledWith('provider-session')
     expect(connectionHooks.filesystem.protectedReadRoots).toHaveBeenCalledOnce()
 
-    connection.close()
+    await close()
     agentConnection.close()
     await rm(workspace, { recursive: true, force: true })
   })
@@ -269,10 +451,7 @@ describe('AcpAgentConnectionAdapter', () => {
     const connectionHooks = hooks()
     vi.mocked(connectionHooks.filesystem.resolveSessionCwd).mockReturnValue(workspace)
     vi.mocked(connectionHooks.filesystem.protectedReadRoots).mockReturnValue([protectedRoot])
-    const connection = new AcpAgentConnectionAdapter().open(
-      { process: asAgentProcess(process) },
-      connectionHooks
-    )
+    const { close } = await openConnection(process, connectionHooks)
 
     await expect(
       agentConnection.client.request(acp.methods.client.fs.readTextFile, {
@@ -286,7 +465,7 @@ describe('AcpAgentConnectionAdapter', () => {
       }
     })
 
-    connection.close()
+    await close()
     agentConnection.close()
     await rm(workspace, { recursive: true, force: true })
   })
@@ -305,10 +484,7 @@ describe('AcpAgentConnectionAdapter', () => {
       )
     const connectionHooks = hooks()
     vi.mocked(connectionHooks.filesystem.resolveSessionCwd).mockReturnValue(workspace)
-    const connection = new AcpAgentConnectionAdapter().open(
-      { process: asAgentProcess(process) },
-      connectionHooks
-    )
+    const { close } = await openConnection(process, connectionHooks)
 
     await expect(
       agentConnection.client.request(acp.methods.client.fs.writeTextFile, {
@@ -320,7 +496,7 @@ describe('AcpAgentConnectionAdapter', () => {
     await expect(readFile(filePath, 'utf8')).resolves.toBe('written through ACP')
     expect(connectionHooks.filesystem.resolveSessionCwd).toHaveBeenCalledWith('provider-session')
 
-    connection.close()
+    await close()
     agentConnection.close()
     await rm(workspace, { recursive: true, force: true })
   })
