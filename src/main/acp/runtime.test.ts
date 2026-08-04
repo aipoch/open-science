@@ -10758,6 +10758,7 @@ describe('ACP runtime session management', () => {
   })
 
   it('prepends a history preamble to the agent content but not the user-facing message', async () => {
+    infoLogSpy.mockClear()
     const process = new FakeAgentProcess()
     const fakeAgent = startFakeAgent(process, ['adopted-session-1'], { resumeNotFound: true })
     const messageEvents: Array<{ role?: string; text?: string }> = []
@@ -10786,6 +10787,18 @@ describe('ACP runtime session management', () => {
     expect(fakeAgent.prompts[0]?.text).toContain('keep going')
     // ...but the conversation bubble records only what the user actually typed.
     expect(messageEvents).toEqual([{ role: 'user', text: 'keep going' }])
+    expect(
+      infoLogSpy.mock.calls.find(
+        ([message]) => message === 'session transcript replay dispatched'
+      )?.[1]
+    ).toMatchObject({
+      sessionId: 'switched-session',
+      historyTextLength: 43,
+      historyAttachmentCount: 0,
+      historyImageCount: 0,
+      framework: 'claude-code',
+      status: 'connected'
+    })
   })
 
   it('sends an app-owned continuation without publishing its synthetic text as a user message', async () => {

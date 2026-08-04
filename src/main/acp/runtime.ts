@@ -2774,6 +2774,15 @@ class AcpRuntime {
       }
 
       // Start the prompt and race it against routed updates from the active session queue.
+      if (request.historyPreamble) {
+        log.info('session transcript replay dispatched', {
+          sessionId: request.sessionId,
+          historyTextLength: request.historyPreamble.length,
+          historyAttachmentCount: request.historyAttachments?.length ?? 0,
+          historyImageCount: request.historyImages?.length ?? 0,
+          ...this.diagnosticContext()
+        })
+      }
       const promptFailure = new Promise<never>((_, reject) => {
         activeSession.prompt(promptContent).catch(reject)
       })
