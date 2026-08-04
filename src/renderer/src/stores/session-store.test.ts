@@ -2043,6 +2043,58 @@ describe('truncateSessionFromMessage', () => {
     expect(useSessionStore.getState().sessions[0].branchContextResetRequired).toBe(true)
   })
 
+  it('does not replay an original Branch event onto an edited Branch', () => {
+    seedSession({
+      messages: [
+        createMessage('user-1', 'user', baseTime),
+        createMessage('agent-1', 'agent', baseTime + 100),
+        createMessage('user-2', 'user', baseTime + 200),
+        createMessage('agent-2', 'agent', baseTime + 300, {
+          streamId: 'assistant-2',
+          responseToMessageId: 'user-2',
+          eventIds: ['event-2']
+        })
+      ]
+    })
+    useSessionStore.getState().truncateSessionFromMessage('session-1', 'user-2')
+    const edited = useSessionStore.getState().appendUserMessage({
+      sessionId: 'session-1',
+      content: 'edited user-2'
+    })
+    const beforeReplay = useSessionStore.getState().sessions[0]
+
+    const replayed = useSessionStore.getState().appendAgentMessageChunk({
+      sessionId: 'session-1',
+      streamId: 'assistant-2',
+      eventId: 'event-2',
+      promptMessageId: 'user-2',
+      content: 'agent-2 content'
+    })
+
+    const afterReplay = useSessionStore.getState().sessions[0]
+    expect(replayed?.messageId).toBe('agent-2')
+    expect(afterReplay).toBe(beforeReplay)
+    expect(afterReplay.messages.map((message) => message.id)).toEqual([
+      'user-1',
+      'agent-1',
+      edited?.messageId
+    ])
+
+    const collidingEvent = useSessionStore.getState().appendAgentMessageChunk({
+      sessionId: 'session-1',
+      streamId: 'assistant-edited',
+      eventId: 'event-2',
+      promptMessageId: edited?.messageId,
+      content: 'edited agent response'
+    })
+    expect(collidingEvent?.messageId).not.toBe('agent-2')
+    expect(useSessionStore.getState().sessions[0].messages.at(-1)).toMatchObject({
+      id: collidingEvent?.messageId,
+      responseToMessageId: edited?.messageId,
+      content: 'edited agent response'
+    })
+  })
+
   it('retains an edited Branch response when an unchanged finalized Artifact is switched away and back', () => {
     seedSession()
     useSessionStore.getState().truncateSessionFromMessage('session-1', 'user-2')
