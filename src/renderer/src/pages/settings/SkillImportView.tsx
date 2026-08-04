@@ -1,4 +1,4 @@
-import { useState } from 'react'
+import { useRef, useState } from 'react'
 import { AlertTriangle, SearchX, Star } from 'lucide-react'
 
 import type {
@@ -6,6 +6,7 @@ import type {
   ScannedSkillView,
   SkillView
 } from '../../../../shared/settings'
+import { GITHUB_REPOSITORY_SEARCH_TOO_LONG_MESSAGE } from '../../../../shared/settings'
 import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
 import { useSettingsStore } from '@/stores/settings-store'
@@ -24,6 +25,7 @@ const SkillImportView = ({ onImported }: SkillImportViewProps): React.JSX.Elemen
   const scanRepoSkills = useSettingsStore((state) => state.scanRepoSkills)
   const previewGitHubSkill = useSettingsStore((state) => state.previewGitHubSkill)
   const [input, setInput] = useState('')
+  const inputRef = useRef('')
   const [busy, setBusy] = useState(false)
   const [message, setMessage] = useState<{ kind: 'error' | 'status'; text: string } | null>(null)
   const [repositories, setRepositories] = useState<GitHubRepositorySearchView[] | null>(null)
@@ -40,6 +42,7 @@ const SkillImportView = ({ onImported }: SkillImportViewProps): React.JSX.Elemen
   ): Promise<void> => {
     const value = requestedInput.trim()
     if (!value || busy) return
+    const visibleInputAtStart = inputRef.current
     candidatePreview.invalidatePreview()
     setBusy(true)
     setMessage(null)
@@ -49,6 +52,7 @@ const SkillImportView = ({ onImported }: SkillImportViewProps): React.JSX.Elemen
     if (!options.preserveRepositories) setRepositories(null)
     try {
       const result = await scanRepoSkills(value)
+      if (inputRef.current !== visibleInputAtStart) return
       if (result.repositories !== undefined) {
         setRepositories(result.repositories)
         if (result.repositories.length === 0) {
@@ -67,9 +71,10 @@ const SkillImportView = ({ onImported }: SkillImportViewProps): React.JSX.Elemen
         new Set(result.skills.filter((skill) => !skill.alreadyImported).map((skill) => skill.url))
       )
       if (result.skills.length === 0) {
-        setMessage({ kind: 'status', text: 'No skills found in that repository.' })
+        setMessage({ kind: 'status', text: 'No skills found in that repo.' })
       }
     } catch (error) {
+      if (inputRef.current !== visibleInputAtStart) return
       setMessage({
         kind: 'error',
         text: error instanceof Error ? error.message : 'GitHub request failed.'
@@ -77,6 +82,17 @@ const SkillImportView = ({ onImported }: SkillImportViewProps): React.JSX.Elemen
     } finally {
       setBusy(false)
     }
+  }
+
+  const updateInput = (value: string): void => {
+    inputRef.current = value
+    setInput(value)
+    candidatePreview.invalidatePreview()
+    setMessage(null)
+    setRepositories(null)
+    setScanned(null)
+    setScannedRepo(null)
+    setSelected(new Set())
   }
 
   const importSelected = async (): Promise<void> => {
@@ -136,7 +152,7 @@ const SkillImportView = ({ onImported }: SkillImportViewProps): React.JSX.Elemen
         to import.
       </p>
 
-      <div className="mt-4" aria-busy={busy}>
+      <div className="mt-4">
         <label
           htmlFor="github-skill-source"
           className="mb-1.5 block text-xs font-medium text-foreground"
@@ -147,9 +163,15 @@ const SkillImportView = ({ onImported }: SkillImportViewProps): React.JSX.Elemen
           <Input
             id="github-skill-source"
             aria-label="GitHub keyword or repository"
+            aria-invalid={
+              (message?.kind === 'error' &&
+                message.text === GITHUB_REPOSITORY_SEARCH_TOO_LONG_MESSAGE) ||
+              undefined
+            }
             placeholder="keywords, owner/repo, owner/repo@ref, or a github.com URL"
+            className="[@media(pointer:coarse)]:min-h-11"
             value={input}
-            onChange={(event) => setInput(event.target.value)}
+            onChange={(event) => updateInput(event.target.value)}
             onKeyDown={(event) => {
               if (event.key === 'Enter') void runPreview()
             }}
@@ -165,144 +187,166 @@ const SkillImportView = ({ onImported }: SkillImportViewProps): React.JSX.Elemen
           </Button>
         </div>
       </div>
-      {message?.kind === 'error' ? (
-        <div
-          role="alert"
-          className="mt-2 flex items-start gap-2 rounded-lg border border-danger-000/30 bg-danger-000/10 px-3 py-2 text-xs text-danger-000"
-        >
-          <AlertTriangle className="mt-0.5 size-3.5 shrink-0" aria-hidden="true" />
-          <p className="min-w-0 flex-1 break-words py-0.5">{message.text}</p>
-        </div>
-      ) : null}
+      <div className="min-h-5" aria-busy={busy}>
+        {busy ? (
+          <p role="status" className="mt-2 text-xs text-muted-foreground">
+            Working with GitHub…
+          </p>
+        ) : null}
+        {message?.kind === 'error' ? (
+          <div
+            role="alert"
+            className="mt-2 flex items-start gap-2 rounded-lg border border-danger-000/30 bg-danger-000/10 px-3 py-2 text-xs text-danger-000"
+          >
+            <AlertTriangle className="mt-0.5 size-3.5 shrink-0" aria-hidden="true" />
+            <p className="min-w-0 flex-1 break-words py-0.5">{message.text}</p>
+          </div>
+        ) : null}
 
-      {repositories ? (
-        <div className="mt-5">
-          <h3 className="text-sm font-semibold text-foreground">Repositories</h3>
-          {repositories.length > 0 ? (
-            <ul className="mt-2 flex flex-col divide-y divide-border border-y border-border">
-              {repositories.map((repository) => (
-                <li
-                  key={repository.fullName}
-                  className="flex min-w-0 flex-col gap-2 py-3 hover:bg-muted/40 sm:flex-row sm:items-center"
-                >
-                  <div className="min-w-0 flex-1 px-1">
-                    <p className="truncate text-sm font-medium text-foreground">
-                      {repository.fullName}
-                    </p>
-                    {repository.description ? (
-                      <p className="mt-0.5 line-clamp-2 text-xs leading-4 text-muted-foreground">
-                        {repository.description}
+        {repositories ? (
+          <div className="mt-5">
+            <h3 className="text-sm font-semibold text-foreground">
+              Repositories ({repositories.length})
+            </h3>
+            {repositories.length > 0 ? (
+              <ul className="mt-2 flex flex-col divide-y divide-border border-y border-border">
+                {repositories.map((repository) => (
+                  <li
+                    key={repository.fullName}
+                    className="flex min-w-0 flex-col gap-2 py-3 hover:bg-muted/40 sm:flex-row sm:items-center"
+                  >
+                    <div className="min-w-0 flex-1 px-1">
+                      <p className="truncate text-sm font-medium text-foreground">
+                        {repository.fullName}
                       </p>
-                    ) : null}
-                  </div>
-                  <div className="flex shrink-0 items-center justify-between gap-3 px-1 sm:justify-end">
-                    <span className="inline-flex items-center gap-1 text-xs tabular-nums text-muted-foreground">
-                      <Star className="size-3.5" aria-hidden="true" />
-                      {repository.stars.toLocaleString()}
+                      {repository.description ? (
+                        <p className="mt-0.5 line-clamp-2 text-xs leading-4 text-muted-foreground">
+                          {repository.description}
+                        </p>
+                      ) : null}
+                    </div>
+                    <div className="flex shrink-0 items-center justify-between gap-3 px-1 sm:justify-end">
+                      <span className="inline-flex items-center gap-1 text-xs tabular-nums text-muted-foreground">
+                        <Star className="size-3.5" aria-hidden="true" />
+                        {repository.stars.toLocaleString()}
+                      </span>
+                      <Button
+                        type="button"
+                        variant="outline"
+                        size="sm"
+                        aria-label={`Preview repository ${repository.fullName}`}
+                        disabled={busy}
+                        className="[@media(pointer:coarse)]:min-h-11"
+                        onClick={() =>
+                          void runPreview(repository.fullName, {
+                            preserveRepositories: true,
+                            repositoryName: repository.fullName
+                          })
+                        }
+                      >
+                        Preview repository
+                      </Button>
+                    </div>
+                  </li>
+                ))}
+              </ul>
+            ) : (
+              <div className="mt-2 flex items-center gap-2 py-3 text-xs text-muted-foreground">
+                <SearchX className="size-4 shrink-0" aria-hidden="true" />
+                <p>{message?.kind === 'status' ? message.text : 'No repositories found.'}</p>
+              </div>
+            )}
+          </div>
+        ) : null}
+
+        {message?.kind === 'status' && (repositories === null || repositories.length > 0) ? (
+          <p className="mt-2 text-xs text-muted-foreground">{message.text}</p>
+        ) : null}
+
+        {scanned && scanned.length > 0 ? (
+          <div className="mt-5">
+            <div className="flex flex-col gap-2 sm:flex-row sm:items-center sm:justify-between">
+              <div className="flex min-w-0 flex-wrap items-center gap-x-3 gap-y-1">
+                <div className="min-w-0">
+                  <h3 className="truncate text-sm font-semibold text-foreground">
+                    Skills in {scannedRepo}
+                  </h3>
+                  <p className="text-xs text-muted-foreground">
+                    Found {scanned.length} skill{scanned.length === 1 ? '' : 's'}.
+                  </p>
+                </div>
+                <label className="flex items-center gap-1.5 text-xs text-muted-foreground [@media(pointer:coarse)]:min-h-11">
+                  <input
+                    type="checkbox"
+                    aria-label="Select all"
+                    checked={allSelected}
+                    onChange={toggleAll}
+                    className="size-4 shrink-0"
+                  />
+                  Select all
+                </label>
+                <Button
+                  type="button"
+                  variant="ghost"
+                  size="sm"
+                  className="[@media(pointer:coarse)]:min-h-11"
+                  onClick={invertSelection}
+                >
+                  Invert
+                </Button>
+              </div>
+              <Button
+                type="button"
+                variant="outline"
+                onClick={() => void importSelected()}
+                disabled={busy || selected.size === 0}
+                className="self-start [@media(pointer:coarse)]:min-h-11 sm:self-auto"
+              >
+                Import selected ({selected.size})
+              </Button>
+            </div>
+            <ul className="mt-2 flex flex-col divide-y divide-border">
+              {scanned.map((skill) => (
+                <li key={skill.url} className="flex items-center gap-3 py-2.5">
+                  <span className="flex size-4 shrink-0 items-center justify-center [@media(pointer:coarse)]:size-11">
+                    <input
+                      type="checkbox"
+                      aria-label={`Select ${skill.name}`}
+                      checked={selected.has(skill.url)}
+                      onChange={() => toggle(skill.url)}
+                      className="size-4 shrink-0"
+                    />
+                  </span>
+                  <button
+                    type="button"
+                    aria-label={`Preview ${skill.name}`}
+                    onClick={() =>
+                      candidatePreview.openPreview(() => previewGitHubSkill(skill.url))
+                    }
+                    className="flex min-w-0 flex-1 items-center gap-3 rounded-md text-left outline-none transition-colors hover:bg-muted/40 focus-visible:ring-2 focus-visible:ring-ring [@media(pointer:coarse)]:min-h-11"
+                  >
+                    <span className="min-w-0 flex-1 px-1 py-1">
+                      <span className="block truncate text-sm text-foreground">{skill.name}</span>
+                      <span className="block truncate text-xs text-muted-foreground">
+                        {skill.path}
+                      </span>
                     </span>
-                    <Button
-                      type="button"
-                      variant="outline"
-                      size="sm"
-                      disabled={busy}
-                      className="[@media(pointer:coarse)]:min-h-11"
-                      onClick={() =>
-                        void runPreview(repository.fullName, {
-                          preserveRepositories: true,
-                          repositoryName: repository.fullName
-                        })
-                      }
-                    >
-                      Preview repository
-                    </Button>
-                  </div>
+                    {skill.alreadyImported ? (
+                      <span className="shrink-0 rounded-full bg-muted px-2 py-0.5 text-xs text-muted-foreground">
+                        Imported
+                      </span>
+                    ) : null}
+                  </button>
                 </li>
               ))}
             </ul>
-          ) : (
-            <div className="mt-2 flex items-center gap-2 py-3 text-xs text-muted-foreground">
-              <SearchX className="size-4 shrink-0" aria-hidden="true" />
-              <p>{message?.kind === 'status' ? message.text : 'No repositories found.'}</p>
-            </div>
-          )}
-        </div>
-      ) : null}
-
-      {message?.kind === 'status' && (repositories === null || repositories.length > 0) ? (
-        <p className="mt-2 text-xs text-muted-foreground">{message.text}</p>
-      ) : null}
-
-      {scanned && scanned.length > 0 ? (
-        <div className="mt-5">
-          <div className="flex flex-col gap-2 sm:flex-row sm:items-center sm:justify-between">
-            <div className="flex min-w-0 flex-wrap items-center gap-x-3 gap-y-1">
-              <div className="min-w-0">
-                <h3 className="truncate text-sm font-semibold text-foreground">
-                  Skills in {scannedRepo}
-                </h3>
-                <p className="text-xs text-muted-foreground">
-                  Found {scanned.length} skill{scanned.length === 1 ? '' : 's'}.
-                </p>
-              </div>
-              <label className="flex items-center gap-1.5 text-xs text-muted-foreground">
-                <input
-                  type="checkbox"
-                  aria-label="Select all"
-                  checked={allSelected}
-                  onChange={toggleAll}
-                  className="size-4 shrink-0"
-                />
-                Select all
-              </label>
-              <Button type="button" variant="ghost" size="sm" onClick={invertSelection}>
-                Invert
-              </Button>
-            </div>
-            <Button
-              type="button"
-              variant="outline"
-              onClick={() => void importSelected()}
-              disabled={busy || selected.size === 0}
-              className="self-start [@media(pointer:coarse)]:min-h-11 sm:self-auto"
-            >
-              Import selected ({selected.size})
-            </Button>
           </div>
-          <ul className="mt-2 flex flex-col divide-y divide-border">
-            {scanned.map((skill) => (
-              <li key={skill.url} className="flex items-center gap-3 py-2.5">
-                <input
-                  type="checkbox"
-                  aria-label={`Select ${skill.name}`}
-                  checked={selected.has(skill.url)}
-                  onChange={() => toggle(skill.url)}
-                  className="size-4 shrink-0"
-                />
-                <button
-                  type="button"
-                  aria-label={`Preview ${skill.name}`}
-                  onClick={() => candidatePreview.openPreview(() => previewGitHubSkill(skill.url))}
-                  className="flex min-w-0 flex-1 items-center gap-3 rounded-md text-left outline-none transition-colors hover:bg-muted/40 focus-visible:ring-2 focus-visible:ring-ring"
-                >
-                  <span className="min-w-0 flex-1 px-1 py-1">
-                    <span className="block truncate text-sm text-foreground">{skill.name}</span>
-                    <span className="block truncate text-xs text-muted-foreground">
-                      {skill.path}
-                    </span>
-                  </span>
-                  {skill.alreadyImported ? (
-                    <span className="shrink-0 rounded-full bg-muted px-2 py-0.5 text-xs text-muted-foreground">
-                      Imported
-                    </span>
-                  ) : null}
-                </button>
-              </li>
-            ))}
-          </ul>
-        </div>
-      ) : null}
+        ) : null}
+      </div>
 
-      <h3 className="mt-8 text-sm font-semibold text-foreground">Imported skills</h3>
+      <h3 className="mt-8 border-t border-border pt-5 text-sm font-semibold text-foreground">
+        Imported skills
+      </h3>
       {imported.length > 0 ? (
         <ul className="mt-2 flex flex-col divide-y divide-border">
           {imported.map((skill) => (

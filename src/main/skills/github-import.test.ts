@@ -765,6 +765,34 @@ describe('searchGitHubSkillRepositories', () => {
       }
     ])
   })
+
+  it('reports a malformed repository-search response explicitly', async () => {
+    const fetcher: FetchLike = async () => ({
+      ok: true,
+      status: 200,
+      json: async () => ({ unexpected: true }),
+      arrayBuffer: async () => new ArrayBuffer(0)
+    })
+
+    await expect(searchGitHubSkillRepositories('acme', fetcher)).rejects.toThrow(
+      'GitHub returned an invalid repository search response.'
+    )
+  })
+
+  it('does not expose JSON parser details from a malformed GitHub response', async () => {
+    const fetcher: FetchLike = async () => ({
+      ok: true,
+      status: 200,
+      json: async () => {
+        throw new SyntaxError('Unexpected token from private response body')
+      },
+      arrayBuffer: async () => new ArrayBuffer(0)
+    })
+
+    await expect(searchGitHubSkillRepositories('acme', fetcher)).rejects.toThrow(
+      'GitHub returned an invalid repository search response.'
+    )
+  })
 })
 
 describe('scanRepoForSkills', () => {

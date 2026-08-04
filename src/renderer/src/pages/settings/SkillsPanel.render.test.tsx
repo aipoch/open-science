@@ -677,6 +677,10 @@ describe('SkillsPanel (sub-views)', () => {
     const buttons = Array.from(document.body.querySelectorAll<HTMLButtonElement>('button'))
     expect(buttons.some((button) => button.textContent?.trim() === 'Preview')).toBe(true)
     expect(buttons.some((button) => button.textContent?.trim() === 'Import')).toBe(false)
+    const importedHeading = Array.from(document.body.querySelectorAll('h3')).find(
+      (heading) => heading.textContent?.trim() === 'Imported skills'
+    )
+    expect(importedHeading?.className).toContain('border-t')
   })
 
   it('searches by keyword, then previews a chosen repository without hiding search results', async () => {
@@ -718,11 +722,12 @@ describe('SkillsPanel (sub-views)', () => {
       await Promise.resolve()
     })
 
+    expect(document.body.textContent).toContain('Repositories (1)')
     expect(document.body.textContent).toContain('hugohe3/ppt-master')
     expect(document.body.textContent).toContain('42')
-    const previewRepository = Array.from(
-      document.body.querySelectorAll<HTMLButtonElement>('button')
-    ).find((button) => button.textContent?.trim() === 'Preview repository')
+    const previewRepository = document.body.querySelector<HTMLButtonElement>(
+      '[aria-label="Preview repository hugohe3/ppt-master"]'
+    )
     await act(async () => {
       previewRepository?.click()
       await Promise.resolve()
@@ -766,6 +771,62 @@ describe('SkillsPanel (sub-views)', () => {
     )
   })
 
+  it('marks an overlength GitHub keyword invalid after bounded main-process validation', async () => {
+    useSettingsStore.setState({
+      scanRepoSkills: vi
+        .fn()
+        .mockRejectedValue(
+          new Error(
+            'GitHub search is limited to 256 characters. Shorten the keywords or paste an owner/repo reference.'
+          )
+        )
+    })
+    act(() => {
+      root.render(<SkillsPanel view={{ kind: 'import' }} onNavigate={vi.fn()} />)
+    })
+
+    setValue('GitHub keyword or repository', 'x'.repeat(257))
+    const runSearch = Array.from(document.body.querySelectorAll<HTMLButtonElement>('button')).find(
+      (button) => button.textContent?.trim() === 'Preview'
+    )
+    await act(async () => {
+      runSearch?.click()
+      await Promise.resolve()
+    })
+
+    const input = document.body.querySelector<HTMLInputElement>(
+      '[aria-label="GitHub keyword or repository"]'
+    )
+    expect(input?.getAttribute('aria-invalid')).toBe('true')
+    expect(useSettingsStore.getState().scanRepoSkills).toHaveBeenCalledWith('x'.repeat(257))
+    expect(document.body.querySelector('[role="alert"]')?.textContent).toContain(
+      'GitHub search is limited to 256 characters.'
+    )
+  })
+
+  it('preserves direct scanning for a repository reference longer than the keyword limit', async () => {
+    act(() => {
+      root.render(<SkillsPanel view={{ kind: 'import' }} onNavigate={vi.fn()} />)
+    })
+
+    const directReference = `acme/skills@${'release-'.repeat(40)}`
+    setValue('GitHub keyword or repository', directReference)
+    const runScan = Array.from(document.body.querySelectorAll<HTMLButtonElement>('button')).find(
+      (button) => button.textContent?.trim() === 'Preview'
+    )
+    await act(async () => {
+      runScan?.click()
+      await Promise.resolve()
+    })
+
+    expect(useSettingsStore.getState().scanRepoSkills).toHaveBeenCalledWith(directReference)
+    expect(
+      document.body
+        .querySelector<HTMLInputElement>('[aria-label="GitHub keyword or repository"]')
+        ?.getAttribute('aria-invalid')
+    ).toBeNull()
+  })
+
   it('keeps the keyword input as the recovery path when search has no matches', async () => {
     useSettingsStore.setState({
       scanRepoSkills: vi.fn().mockResolvedValue({ skills: [], repositories: [] })
@@ -791,6 +852,65 @@ describe('SkillsPanel (sub-views)', () => {
         ?.value
     ).toBe('unlikely phrase')
     expect(document.body.querySelector('[role="alert"]')).toBeNull()
+  })
+
+  it('does not apply search results after the user edits the in-flight query', async () => {
+    let finishSearch: (result: {
+      skills: []
+      repositories: Array<{
+        fullName: string
+        description: string | null
+        url: string
+        stars: number
+      }>
+    }) => void = () => undefined
+    const pendingSearch = new Promise<{
+      skills: []
+      repositories: Array<{
+        fullName: string
+        description: string | null
+        url: string
+        stars: number
+      }>
+    }>((resolve) => {
+      finishSearch = resolve
+    })
+    useSettingsStore.setState({ scanRepoSkills: vi.fn().mockReturnValue(pendingSearch) })
+    act(() => {
+      root.render(<SkillsPanel view={{ kind: 'import' }} onNavigate={vi.fn()} />)
+    })
+
+    setValue('GitHub keyword or repository', 'slides')
+    const runSearch = Array.from(document.body.querySelectorAll<HTMLButtonElement>('button')).find(
+      (button) => button.textContent?.trim() === 'Preview'
+    )
+    act(() => runSearch?.click())
+    expect(document.body.querySelector('[aria-busy="true"]')?.textContent).toContain(
+      'Working with GitHub…'
+    )
+    setValue('GitHub keyword or repository', 'presentations')
+
+    await act(async () => {
+      finishSearch({
+        skills: [],
+        repositories: [
+          {
+            fullName: 'acme/stale-slides',
+            description: null,
+            url: 'https://github.com/acme/stale-slides',
+            stars: 1
+          }
+        ]
+      })
+      await pendingSearch
+      await Promise.resolve()
+    })
+
+    expect(document.body.textContent).not.toContain('acme/stale-slides')
+    expect(
+      document.body.querySelector<HTMLInputElement>('[aria-label="GitHub keyword or repository"]')
+        ?.value
+    ).toBe('presentations')
   })
 
   it('scans a repo and batch-imports the selected skills', async () => {

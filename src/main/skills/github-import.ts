@@ -1,6 +1,10 @@
 import { createLogger } from '../logger'
 import { SKILL_IMPORT_LIMITS } from './import-limits'
-import type { GitHubRepositorySearchView } from '../../shared/settings'
+import {
+  GITHUB_REPOSITORY_SEARCH_MAX_KEYWORD_LENGTH,
+  GITHUB_REPOSITORY_SEARCH_TOO_LONG_MESSAGE,
+  type GitHubRepositorySearchView
+} from '../../shared/settings'
 
 const log = createLogger('skills')
 
@@ -314,10 +318,8 @@ const searchGitHubSkillRepositories = async (
   fetchImpl: FetchLike
 ): Promise<GitHubRepositorySearchView[]> => {
   const keywords = input.trim()
-  if (keywords.length > 256) {
-    throw new Error(
-      'GitHub search is limited to 256 characters. Shorten the keywords or paste an owner/repo reference.'
-    )
+  if (keywords.length > GITHUB_REPOSITORY_SEARCH_MAX_KEYWORD_LENGTH) {
+    throw new Error(GITHUB_REPOSITORY_SEARCH_TOO_LONG_MESSAGE)
   }
   const query = `${keywords} SKILL.md in:name,description,topics,readme`
   const response = await fetchImpl(
@@ -331,13 +333,18 @@ const searchGitHubSkillRepositories = async (
   }
   if (!response.ok) throw new Error(`GitHub API request failed (${response.status}).`)
 
-  const payload = await response.json()
+  let payload: unknown
+  try {
+    payload = await response.json()
+  } catch {
+    throw new Error('GitHub returned an invalid repository search response.')
+  }
   if (
     !payload ||
     typeof payload !== 'object' ||
     !Array.isArray((payload as { items?: unknown }).items)
   ) {
-    return []
+    throw new Error('GitHub returned an invalid repository search response.')
   }
 
   const repositories: GitHubRepositorySearchView[] = []
