@@ -44,9 +44,13 @@
   --color-border-100: hsl(var(--border-ink-channel));
   --color-text-000: var(--text-000);
   --color-text-100: var(--text-100);
+  --color-text-200: var(--text-200);
   --color-text-300: var(--text-300);
   --color-danger-000: var(--danger-000);
   --color-danger-900: var(--danger-900);
+  --color-warning-100: var(--warning-100);
+  --color-warning-900: var(--warning-900);
+  --color-success-000: var(--success-000);
   --color-syntax-keyword: var(--syntax-keyword);
   --color-syntax-string: var(--syntax-string);
   --color-syntax-number: var(--syntax-number);
@@ -88,10 +92,14 @@
   --border-ink-channel: 60 2% 12%;
   --text-000: hsl(0 0% 7%);
   --text-100: hsl(43 3% 47%);
+  --text-200: hsl(43 3% 52%);
   --text-300: hsl(43 3% 57%);
   --rail-card-bg: 0 0% 100%;
   --danger-000: hsl(0 45% 38%);
   --danger-900: hsl(0 55% 95%);
+  --warning-100: hsl(45 80% 90%);
+  --warning-900: hsl(32 65% 28%);
+  --success-000: hsl(145 45% 38%);
   /* Notebook code highlighting: distinct blue/green/purple hues so keywords, strings, and numbers
      read apart from plain text on the warm paper surface. */
   --syntax-keyword: hsl(222 60% 46%);
@@ -154,10 +162,14 @@
   --border-ink-channel: 48 8% 82%;
   --text-000: hsl(48 12% 92%);
   --text-100: hsl(45 5% 62%);
+  --text-200: hsl(45 5% 56%);
   --text-300: hsl(45 4% 50%);
   --rail-card-bg: 48 4% 15%;
   --danger-000: hsl(0 70% 72%);
   --danger-900: hsl(0 35% 20%);
+  --warning-100: hsl(45 45% 18%);
+  --warning-900: hsl(45 90% 62%);
+  --success-000: hsl(145 70% 72%);
   /* Brighter code-highlight hues so keywords/strings/numbers keep enough contrast on the dark surface. */
   --syntax-keyword: hsl(215 75% 72%);
   --syntax-string: hsl(140 45% 62%);

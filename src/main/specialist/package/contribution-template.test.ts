@@ -35,8 +35,7 @@ describe('contribution template ZIP', () => {
       schema_version: 1,
       id: '00000000-0000-4000-8000-000000000001',
       version: '0.1.0',
-      exported_with_app_version: '0.9.2',
-      requires_app: '>=0.9.2 <1.0.0'
+      exported_with_app_version: '0.9.2'
     })
     expect(strFromU8(archive['README.txt'])).toContain('中文指南')
     expect(strFromU8(archive['README.txt'])).toContain('English guide')

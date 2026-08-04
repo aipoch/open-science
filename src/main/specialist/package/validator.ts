@@ -19,7 +19,6 @@ import {
   validateSpecialistPublicName,
   validateSpecialistSystemPrompt
 } from '../../../shared/specialist'
-import { isValidSemverRange, satisfiesSemverRange } from './semver'
 
 export type SpecialistPackageFile = { path: string; bytes: Uint8Array }
 
@@ -59,6 +58,37 @@ const warning = (
   })
 }
 
+const parseOptionalIdList = (
+  value: Record<string, unknown>,
+  field: 'skillIds' | 'connectorIds',
+  diagnostics: PackageDiagnostic[]
+): string[] | undefined => {
+  if (!(field in value)) return undefined
+  if (!Array.isArray(value[field])) {
+    warning(
+      diagnostics,
+      `specialist.${field}-invalid`,
+      `${field} must be an array of IDs; the invalid value was ignored.`,
+      'specialist.json'
+    )
+    return []
+  }
+  const ids: string[] = []
+  for (const item of value[field]) {
+    if (typeof item !== 'string' || !item.trim()) {
+      warning(
+        diagnostics,
+        `specialist.${field}-entry-invalid`,
+        `${field} may contain only non-empty string IDs; the invalid entry was ignored.`,
+        'specialist.json'
+      )
+      continue
+    }
+    if (!ids.includes(item)) ids.push(item)
+  }
+  return ids
+}
+
 const parseJson = (
   file: SpecialistPackageFile,
   diagnostics: PackageDiagnostic[]
@@ -90,13 +120,7 @@ const parseManifest = (
     return undefined
   }
 
-  const allowedFields = new Set([
-    'schema_version',
-    'id',
-    'version',
-    'exported_with_app_version',
-    'requires_app'
-  ])
+  const allowedFields = new Set(['schema_version', 'id', 'version', 'exported_with_app_version'])
   if (Object.keys(value).some((key) => !allowedFields.has(key))) {
     diagnostic(
       diagnostics,
@@ -138,24 +162,11 @@ const parseManifest = (
       'manifest.json'
     )
   }
-  const requiresApp =
-    typeof value.requires_app === 'string' && isValidSemverRange(value.requires_app)
-      ? value.requires_app
-      : undefined
-  if (!requiresApp) {
-    diagnostic(
-      diagnostics,
-      'manifest.requires-app-invalid',
-      'requires_app must be a SemVer range.',
-      'manifest.json'
-    )
-  }
   if (
     value.schema_version !== SPECIALIST_PACKAGE_SCHEMA_VERSION ||
     !id ||
     !version ||
     !exportedWithAppVersion ||
-    !requiresApp ||
     Object.keys(value).some((key) => !allowedFields.has(key))
   ) {
     return undefined
@@ -164,8 +175,7 @@ const parseManifest = (
     schema_version: SPECIALIST_PACKAGE_SCHEMA_VERSION,
     id,
     version,
-    exported_with_app_version: exportedWithAppVersion,
-    requires_app: requiresApp
+    exported_with_app_version: exportedWithAppVersion
   }
 }
 
@@ -182,7 +192,14 @@ const parsePayload = (
     )
     return undefined
   }
-  const allowedFields = new Set(['name', 'displayName', 'description', 'systemPrompt'])
+  const allowedFields = new Set([
+    'name',
+    'displayName',
+    'description',
+    'systemPrompt',
+    'skillIds',
+    'connectorIds'
+  ])
   const identityFields = ['id', 'version'].filter((key) => key in value)
   const presentationFields = ['iconKey', 'colorKey'].filter((key) => key in value)
   const capabilityFields = ['capabilityMode', 'fullAccess', 'selectedCapabilities'].filter(
@@ -285,6 +302,8 @@ const parsePayload = (
       'specialist.json'
     )
   }
+  const skillIds = parseOptionalIdList(value, 'skillIds', diagnostics)
+  const connectorIds = parseOptionalIdList(value, 'connectorIds', diagnostics)
   if (
     !name ||
     description === undefined ||
@@ -302,7 +321,9 @@ const parsePayload = (
     name,
     ...(typeof value.displayName === 'string' ? { displayName: value.displayName } : {}),
     description,
-    systemPrompt
+    systemPrompt,
+    ...(skillIds ? { skillIds } : {}),
+    ...(connectorIds ? { connectorIds } : {})
   }
 }
 
@@ -341,7 +362,7 @@ const planBundledSkills = (
   for (const file of skillFiles) {
     const segments = file.path.split('/')
     if (segments.length < 3 || !segments[1]) {
-      diagnostic(
+      warning(
         diagnostics,
         'skill.path-noncanonical',
         'Bundled Skill files must use skills/<skill-id>/<file>.',
@@ -353,24 +374,13 @@ const planBundledSkills = (
   }
 
   const plans: SpecialistPackageSkillPlan[] = []
-  const builtinIds = new Set(catalog.builtinSkills.map((skill) => skill.id))
   for (const id of [...roots].sort()) {
     const root = `skills/${id}`
     if (!isSafeContributionId(id)) {
-      diagnostic(
+      warning(
         diagnostics,
         'skill.id-invalid',
         'Bundled Skill directory names must be safe canonical Skill IDs.',
-        root,
-        id
-      )
-      continue
-    }
-    if (builtinIds.has(id)) {
-      diagnostic(
-        diagnostics,
-        'skill.builtin-id-protected',
-        'A bundled Skill cannot use a builtin Skill ID.',
         root,
         id
       )
@@ -387,7 +397,7 @@ const planBundledSkills = (
       })
     const document = files.find((file) => file.path === 'SKILL.md')
     if (!document) {
-      diagnostic(
+      warning(
         diagnostics,
         'skill.document-missing',
         'A bundled Skill must contain SKILL.md.',
@@ -396,27 +406,11 @@ const planBundledSkills = (
       )
       continue
     }
-    const standardRoots = new Set(['scripts', 'references', 'assets', 'templates'])
-    const unsupported = files.find((file) => {
-      if (file.path === 'SKILL.md') return false
-      const [top] = file.path.split('/')
-      return !standardRoots.has(top)
-    })
-    if (unsupported) {
-      diagnostic(
-        diagnostics,
-        'skill.layout-invalid',
-        'Bundled Skill files must use the standard Skill directory layout.',
-        `${root}/${unsupported.path}`,
-        id
-      )
-      continue
-    }
     let skillDocument: ReturnType<typeof parseSkillDocument> | undefined
     try {
       skillDocument = parseSkillDocument(decoder.decode(document.bytes))
     } catch {
-      diagnostic(
+      warning(
         diagnostics,
         'skill.document-invalid',
         'SKILL.md must contain valid UTF-8 text.',
@@ -426,7 +420,7 @@ const planBundledSkills = (
       continue
     }
     if (skillDocument.name?.trim() !== id) {
-      diagnostic(
+      warning(
         diagnostics,
         'skill.name-mismatch',
         'SKILL.md frontmatter name must exactly match its directory Skill ID.',
@@ -437,7 +431,7 @@ const planBundledSkills = (
     }
     const declaredVersion = skillDocument.metadata.version?.trim()
     if (declaredVersion !== undefined && !SEMVER.test(declaredVersion)) {
-      diagnostic(
+      warning(
         diagnostics,
         'skill.version-invalid',
         'SKILL.md frontmatter version must be SemVer when present.',
@@ -462,18 +456,13 @@ const planBundledSkills = (
     let reason: string | undefined
     if (existing) {
       const existingVersion = existing.version ?? DEFAULT_BUNDLED_SKILL_VERSION
-      if (existing.builtin || existingVersion !== version || existing.contentHash !== contentHash) {
+      if (existing.builtin) {
+        disposition = 'reuse-builtin'
+        reason = 'The local builtin Skill is read-only and will be reused.'
+      } else if (existingVersion !== version || existing.contentHash !== contentHash) {
         disposition = 'conflict'
-        reason = existing.builtin
-          ? 'The ID belongs to a builtin Skill.'
-          : 'The installed Skill version or normalized content differs.'
-        diagnostic(
-          diagnostics,
-          existing.builtin ? 'skill.builtin-id-protected' : 'skill.existing-conflict',
-          reason,
-          root,
-          id
-        )
+        reason = 'The installed Skill version or normalized content differs.'
+        diagnostic(diagnostics, 'skill.existing-conflict', reason, root, id)
       } else if (existing.standalone !== false && !existing.ownerIds?.length) {
         disposition = 'reuse-standalone'
         reason = 'An identical standalone Skill is already installed.'
@@ -607,15 +596,6 @@ export const validateSpecialistPackage = (
       payload.name
     )
   }
-  if (manifest && !satisfiesSemverRange(catalog.appVersion, manifest.requires_app)) {
-    diagnostic(
-      diagnostics,
-      'compatibility.app-incompatible',
-      'This package is not compatible with the current application version.',
-      'manifest.json',
-      catalog.appVersion
-    )
-  }
   if (manifest && catalog.protectedSpecialistIds.includes(manifest.id)) {
     diagnostic(
       diagnostics,
@@ -638,6 +618,38 @@ export const validateSpecialistPackage = (
   }
 
   const skillPlans = planBundledSkills(packageFiles, catalog, diagnostics)
+  const bundledSkillIds = skillPlans.map((skill) => skill.id)
+  const catalogSkillIds = new Set(catalog.skills.map((skill) => skill.id))
+  const declaredSkillIds = [...new Set(payload?.skillIds ?? [])]
+  const skillIds = [
+    ...new Set(
+      [...declaredSkillIds, ...bundledSkillIds].filter((id) => {
+        if (catalogSkillIds.has(id) || bundledSkillIds.includes(id)) return true
+        warning(
+          diagnostics,
+          'specialist.skill-unavailable',
+          'The referenced Skill is not available on this installation and was ignored.',
+          'specialist.json',
+          id
+        )
+        return false
+      })
+    )
+  ]
+  const connectorIds = [...new Set(payload?.connectorIds ?? [])].filter((id) => {
+    if (catalog.connectorIds.includes(id)) return true
+    warning(
+      diagnostics,
+      'specialist.connector-unavailable',
+      'The referenced Connector is not available on this installation and was ignored.',
+      'specialist.json',
+      id
+    )
+    return false
+  })
+  const builtinSkillIds = skillIds.filter((id) =>
+    catalog.skills.some((skill) => skill.id === id && skill.builtin)
+  )
   const summary =
     manifest && payload
       ? {
@@ -646,11 +658,10 @@ export const validateSpecialistPackage = (
           name: payload.name,
           description: payload.description,
           source,
-          requiresApp: manifest.requires_app,
-          bundledSkillIds: skillPlans.map((skill) => skill.id),
-          requiredSkillIds: [],
-          builtinSkillIds: [],
-          connectorIds: [],
+          bundledSkillIds,
+          requiredSkillIds: skillIds,
+          builtinSkillIds,
+          connectorIds,
           skills: skillPlans.map((skill) => ({
             id: skill.id,
             version: skill.version,
@@ -670,6 +681,8 @@ export const validateSpecialistPackage = (
     contentHash: specialistPayloadContentHash(payload),
     manifest,
     payload,
+    skillIds,
+    connectorIds,
     skills: skillPlans
   }
   deepFreeze(plan)

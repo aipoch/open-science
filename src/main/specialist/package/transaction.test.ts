@@ -23,8 +23,7 @@ const plan = (): SpecialistPackageValidationPlan => ({
     schema_version: 1,
     id: 'imported-specialist',
     version: '1.0.0',
-    exported_with_app_version: '0.9.2',
-    requires_app: '>=0.9.2 <1.0.0'
+    exported_with_app_version: '0.9.2'
   },
   payload: {
     name: 'IMPORTED_SPECIALIST',
@@ -32,6 +31,8 @@ const plan = (): SpecialistPackageValidationPlan => ({
     description: 'Imported description.',
     systemPrompt: 'Imported instructions.'
   },
+  skillIds: ['bundled-analysis'],
+  connectorIds: [],
   skills: [
     {
       id: 'bundled-analysis',
@@ -42,6 +43,12 @@ const plan = (): SpecialistPackageValidationPlan => ({
       filesToInstall: [{ path: 'SKILL.md', bytes: encoder.encode('Bundled skill') }]
     }
   ]
+})
+
+const planWithCapabilities = (): SpecialistPackageValidationPlan => ({
+  ...plan(),
+  skillIds: ['bundled-analysis', 'existing-analysis'],
+  connectorIds: ['reference-library']
 })
 
 beforeEach(async () => {
@@ -59,8 +66,7 @@ describe('SpecialistPackageTransaction imported setup lifecycle', () => {
     const installed = await new SpecialistPackageTransaction(storageDir, repository).install(
       plan(),
       new Date('2026-08-04T00:00:00.000Z'),
-      'archive-digest',
-      '>=0.9.2 <1.0.0'
+      'archive-digest'
     )
 
     expect(installed).toMatchObject({
@@ -78,6 +84,23 @@ describe('SpecialistPackageTransaction imported setup lifecycle', () => {
     expect(installed.colorKey).toBeUndefined()
     await expect(repository.getAll()).resolves.toMatchObject({
       specialists: [{ id: 'imported-specialist', enabled: false, setupPending: true }]
+    })
+  })
+
+  it('persists declared capabilities together with Skills discovered from the package', async () => {
+    const installed = await new SpecialistPackageTransaction(storageDir, repository).install(
+      planWithCapabilities(),
+      new Date('2026-08-04T00:00:00.000Z'),
+      'archive-digest'
+    )
+
+    expect(installed).toMatchObject({
+      capabilityMode: 'selected',
+      selectedCapabilities: {
+        skillIds: ['bundled-analysis', 'existing-analysis'],
+        connectorIds: ['reference-library'],
+        connectorTools: []
+      }
     })
   })
 
@@ -108,7 +131,6 @@ describe('SpecialistPackageTransaction imported setup lifecycle', () => {
       plan(),
       new Date('2026-08-04T00:00:00.000Z'),
       'archive-digest',
-      '>=0.9.2 <1.0.0',
       { expectedRevision: 4 }
     )
 

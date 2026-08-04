@@ -127,7 +127,6 @@ export class SpecialistPackageTransaction {
     plan: Readonly<SpecialistPackageValidationPlan>,
     importedAt: Date,
     archiveDigest: string,
-    inferredRequiresApp: string,
     overwrite?: { expectedRevision: number }
   ): Promise<SpecialistProfileView> {
     const run = this.queue.then(async () => {
@@ -153,8 +152,8 @@ export class SpecialistPackageTransaction {
         capabilityMode: 'selected',
         fullAccess: emptyFullAccessConfig(),
         selectedCapabilities: {
-          skillIds: [...new Set(plan.skills.map((skill) => skill.id))],
-          connectorIds: [],
+          skillIds: [...new Set(plan.skillIds)],
+          connectorIds: [...new Set(plan.connectorIds)],
           connectorTools: []
         },
         revision: existing ? existing.revision + 1 : 1,
@@ -174,7 +173,6 @@ export class SpecialistPackageTransaction {
           importedAt: importedAt.toISOString(),
           archiveDigest,
           contentDigest: plan.contentHash,
-          requiresApp: plan.manifest.requires_app ?? inferredRequiresApp,
           packageVersion: plan.packageVersion
         }
       }

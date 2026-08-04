@@ -120,11 +120,77 @@ afterEach(() => {
 })
 
 describe('SpecialistsPanel', () => {
-  it('offers Export ZIP only from a custom Specialist action menu', async () => {
-    const onNavigate = vi.fn()
-    await act(async () => {
-      root.render(<SpecialistsPanel view={{ kind: 'list' }} onNavigate={onNavigate} />)
+  // Shared preview fixture: builtin + owned selected by default, referenced skill unchecked.
+  const exportPreviewFixture = (
+    overrides: Partial<{
+      canExport: boolean
+      diagnostics: Array<{
+        severity: 'error' | 'warning' | 'info'
+        code: string
+        message: string
+      }>
+    }> = {}
+  ): {
+    specialistId: string
+    name: string
+    version: string
+    fileName: string
+    expectedRevision: number
+    canExport: boolean
+    connectorIds: string[]
+    diagnostics: Array<{ severity: 'error' | 'warning' | 'info'; code: string; message: string }>
+    skills: Array<{
+      id: string
+      version: string
+      kind: 'builtin' | 'owned' | 'referenced'
+      selected: boolean
+      selectable: boolean
+    }>
+  } => ({
+    specialistId: 'rna-reviewer',
+    name: 'RNA Reviewer',
+    version: '0.1.0',
+    fileName: 'open-science-specialist-rna-reviewer-v0.1.0.zip',
+    expectedRevision: 1,
+    canExport: true,
+    connectorIds: ['reference-library'],
+    diagnostics: [],
+    skills: [
+      {
+        id: 'document-reader',
+        version: '0.9.2',
+        kind: 'builtin',
+        selected: true,
+        selectable: true
+      },
+      {
+        id: 'analysis-tools',
+        version: '1.2.3',
+        kind: 'owned',
+        selected: true,
+        selectable: true
+      },
+      {
+        id: 'citation-manager',
+        version: '0.1.0',
+        kind: 'referenced',
+        selected: false,
+        selectable: true
+      }
+    ],
+    ...overrides
+  })
+
+  // Mirrors the real store action: previewExport also records the preview for exportSpecialist.
+  const makePreviewExportMock = (
+    preview: ReturnType<typeof exportPreviewFixture>
+  ): ReturnType<typeof vi.fn> =>
+    vi.fn().mockImplementation(async () => {
+      useSpecialistStore.setState({ exportPreview: preview })
+      return preview
     })
+
+  const openExportMenuItem = async (): Promise<HTMLElement | undefined> => {
     const actions = document.body.querySelector<HTMLButtonElement>(
       '[aria-label="Actions for RNA Reviewer"]'
     )
@@ -134,8 +200,149 @@ describe('SpecialistsPanel', () => {
     ).find((item) => item.textContent?.includes('Export ZIP'))
     expect(exportItem).toBeDefined()
     await act(async () => clickRadixMenuItem(exportItem))
+    return exportItem
+  }
+
+  it('exports directly from the custom action menu with approved default selection', async () => {
+    const preview = exportPreviewFixture()
+    const previewExportMock = makePreviewExportMock(preview)
+    const exportSpecialist = vi.fn().mockResolvedValue({ saved: true })
+    useSpecialistStore.setState({
+      ...useSpecialistStore.getState(),
+      previewExport: previewExportMock,
+      exportSpecialist
+    })
+    const onNavigate = vi.fn()
+    await act(async () => {
+      root.render(<SpecialistsPanel view={{ kind: 'list' }} onNavigate={onNavigate} />)
+    })
+    await openExportMenuItem()
+
+    // No chooser page — the default selection (builtin + owned) goes straight to the save dialog.
+    expect(previewExportMock).toHaveBeenCalledWith('rna-reviewer')
+    expect(exportSpecialist).toHaveBeenCalledWith(['document-reader', 'analysis-tools'])
     expect(onNavigate).toHaveBeenCalledWith({ kind: 'export', id: 'rna-reviewer' })
     expect(document.body.querySelector('[aria-label="Actions for Builtin Curator"]')).toBeNull()
+
+    // After navigating, the approved Export complete page replaces the chooser.
+    await act(async () => {
+      root.render(
+        <SpecialistsPanel view={{ kind: 'export', id: 'rna-reviewer' }} onNavigate={onNavigate} />
+      )
+    })
+    expect(document.body.textContent).toContain('Export complete')
+    expect(document.body.textContent).toContain(
+      'open-science-specialist-rna-reviewer-v0.1.0.zip was saved'
+    )
+  })
+
+  it('keeps the list untouched when the native save dialog is cancelled', async () => {
+    const preview = exportPreviewFixture()
+    useSpecialistStore.setState({
+      ...useSpecialistStore.getState(),
+      previewExport: makePreviewExportMock(preview),
+      exportSpecialist: vi.fn().mockResolvedValue({ saved: false })
+    })
+    const onNavigate = vi.fn()
+    await act(async () => {
+      root.render(<SpecialistsPanel view={{ kind: 'list' }} onNavigate={onNavigate} />)
+    })
+    await openExportMenuItem()
+
+    expect(onNavigate).not.toHaveBeenCalled()
+    expect(document.body.textContent).not.toContain('Export complete')
+    expect(document.body.querySelector('[aria-label="Actions for RNA Reviewer"]')).not.toBeNull()
+    expect(useSpecialistStore.getState().exportPreview).toBeUndefined()
+  })
+
+  it('falls back to the skill chooser when the direct export has blocking diagnostics', async () => {
+    const preview = exportPreviewFixture({
+      canExport: false,
+      diagnostics: [
+        {
+          severity: 'error',
+          code: 'package.archive-file-size-exceeded',
+          message: 'The archive entry is too large.'
+        }
+      ]
+    })
+    const exportSpecialist = vi.fn()
+    useSpecialistStore.setState({
+      ...useSpecialistStore.getState(),
+      previewExport: makePreviewExportMock(preview),
+      exportSpecialist
+    })
+    const onNavigate = vi.fn()
+    await act(async () => {
+      root.render(<SpecialistsPanel view={{ kind: 'list' }} onNavigate={onNavigate} />)
+    })
+    await openExportMenuItem()
+
+    expect(exportSpecialist).not.toHaveBeenCalled()
+    expect(onNavigate).toHaveBeenCalledWith({ kind: 'export', id: 'rna-reviewer' })
+
+    // The chooser opens with the blocking diagnostics visible so the user can adjust and retry.
+    await act(async () => {
+      root.render(
+        <SpecialistsPanel view={{ kind: 'export', id: 'rna-reviewer' }} onNavigate={onNavigate} />
+      )
+    })
+    expect(document.body.textContent).toContain('Choose Skills to include')
+    expect(document.body.textContent).toContain('package.archive-file-size-exceeded')
+  })
+
+  it('falls back to the skill chooser with an error when the direct export save fails', async () => {
+    const preview = exportPreviewFixture()
+    useSpecialistStore.setState({
+      ...useSpecialistStore.getState(),
+      previewExport: makePreviewExportMock(preview),
+      exportSpecialist: vi.fn().mockRejectedValue(new Error('boom'))
+    })
+    const onNavigate = vi.fn()
+    await act(async () => {
+      root.render(<SpecialistsPanel view={{ kind: 'list' }} onNavigate={onNavigate} />)
+    })
+    await openExportMenuItem()
+
+    expect(onNavigate).toHaveBeenCalledWith({ kind: 'export', id: 'rna-reviewer' })
+    await act(async () => {
+      root.render(
+        <SpecialistsPanel view={{ kind: 'export', id: 'rna-reviewer' }} onNavigate={onNavigate} />
+      )
+    })
+    expect(document.body.querySelector('[role="alert"]')?.textContent).toContain(
+      'Could not save this Specialist export. Preview again and retry.'
+    )
+  })
+
+  it('disables the action menu while the direct export is in flight, then restores it', async () => {
+    let finishExport: ((value: { saved: boolean }) => void) | undefined
+    useSpecialistStore.setState({
+      ...useSpecialistStore.getState(),
+      previewExport: makePreviewExportMock(exportPreviewFixture()),
+      exportSpecialist: vi.fn(
+        (): Promise<{ saved: boolean }> => new Promise((resolve) => (finishExport = resolve))
+      )
+    })
+    await act(async () => {
+      root.render(<SpecialistsPanel view={{ kind: 'list' }} onNavigate={vi.fn()} />)
+    })
+    await openExportMenuItem()
+
+    const actions = document.body.querySelector<HTMLButtonElement>(
+      '[aria-label="Actions for RNA Reviewer"]'
+    )
+    expect(actions?.disabled).toBe(true)
+    expect(document.body.querySelector('[role="status"]')?.getAttribute('aria-label')).toBe(
+      'Preparing export'
+    )
+
+    await act(async () => finishExport?.({ saved: false }))
+    expect(
+      document.body.querySelector<HTMLButtonElement>('[aria-label="Actions for RNA Reviewer"]')
+        ?.disabled
+    ).toBe(false)
+    expect(document.body.querySelector('[role="status"]')).toBeNull()
   })
 
   it('matches approved export defaults, portability warning, and native-cancel state', async () => {
@@ -146,6 +353,7 @@ describe('SpecialistsPanel', () => {
       fileName: 'open-science-specialist-rna-reviewer-v0.1.0.zip',
       expectedRevision: 1,
       canExport: true,
+      connectorIds: ['reference-library'],
       diagnostics: [
         {
           severity: 'warning' as const,
@@ -159,7 +367,7 @@ describe('SpecialistsPanel', () => {
           version: '0.9.2',
           kind: 'builtin' as const,
           selected: true,
-          selectable: false
+          selectable: true
         },
         {
           id: 'analysis-tools',
@@ -193,7 +401,7 @@ describe('SpecialistsPanel', () => {
       Array.from(document.body.querySelectorAll('label'))
         .find((node) => node.textContent?.includes(label))
         ?.querySelector('input') ?? undefined
-    expect(checkboxFor('document-reader')).toMatchObject({ checked: true, disabled: true })
+    expect(checkboxFor('document-reader')).toMatchObject({ checked: true, disabled: false })
     expect(checkboxFor('analysis-tools')).toMatchObject({ checked: true, disabled: false })
     expect(checkboxFor('citation-manager')).toMatchObject({ checked: false, disabled: false })
     expect(document.body.textContent).toContain('Content changed but the package version remains')
@@ -203,7 +411,7 @@ describe('SpecialistsPanel', () => {
       (button) => button.textContent === 'Export ZIP'
     )
     await act(async () => exportButton?.click())
-    expect(exportSpecialist).toHaveBeenCalledWith(['analysis-tools'])
+    expect(exportSpecialist).toHaveBeenCalledWith(['document-reader', 'analysis-tools'])
     expect(document.body.textContent).toContain('Choose Skills to include')
     expect(document.body.textContent).not.toContain('Export complete')
   })
@@ -325,7 +533,6 @@ describe('SpecialistsPanel', () => {
         name: 'Research Synthesizer',
         description: 'Synthesizes research.',
         source: 'zip' as const,
-        requiresApp: '>=0.9.2 <1.0.0',
         bundledSkillIds: ['analysis-tools'],
         requiredSkillIds: ['analysis-tools'],
         builtinSkillIds: [],
@@ -343,7 +550,7 @@ describe('SpecialistsPanel', () => {
       diagnostics: [
         {
           severity: 'warning' as const,
-          code: 'connector.unavailable',
+          code: 'specialist.connector-unavailable',
           message: 'The lab-notebook Connector is unavailable.',
           relatedId: 'lab-notebook'
         },
@@ -397,7 +604,6 @@ describe('SpecialistsPanel', () => {
     expect(document.body.textContent).toContain('Research Synthesizer')
     expect(document.body.textContent).toContain('research-synth')
     expect(document.body.textContent).toContain('1.3.0')
-    expect(document.body.textContent).toContain('>=0.9.2 <1.0.0')
     expect(document.body.textContent).toContain('analysis-tools')
     expect(document.body.textContent).toContain('1.2.3')
     expect(document.body.textContent).toContain('Reuse standalone')
@@ -406,8 +612,12 @@ describe('SpecialistsPanel', () => {
     )
     expect(document.body.textContent).toContain('scripts/run.sh')
     expect(document.body.textContent).not.toContain('No Connector references')
-    expect(document.body.textContent).toContain('connector.unavailable')
-    expect(document.body.textContent).toContain('package.metadata-noise-ignored')
+    expect(document.body.textContent).toContain('✓ Installable')
+    // Human-readable diagnostics; raw codes stay out of the user-facing copy.
+    expect(document.body.textContent).toContain('Connector unavailable')
+    expect(document.body.textContent).not.toContain('connector.unavailable')
+    expect(document.body.textContent).toContain('Archive metadata ignored')
+    expect(document.body.textContent).not.toContain('package.metadata-noise-ignored')
     expect(document.body.textContent).toContain('Warnings (1)')
     expect(document.body.textContent).toContain('Information (1)')
     expect(document.body.textContent).toContain('ID: lab-notebook')
@@ -431,12 +641,35 @@ describe('SpecialistsPanel', () => {
     expect(savePackageReport).toHaveBeenCalledWith({ candidateToken: 'candidate-1' })
     expect(document.body.textContent).toContain('Report saved')
 
+    // After the install, the Skill catalog must be refreshed so a Skill bundled by the package is
+    // recognized as available in the editor instead of showing "Missing · unavailable".
+    window.api.settings.listSkills = vi.fn().mockResolvedValue([
+      {
+        id: 'analysis-tools',
+        name: 'Analysis Tools',
+        description: 'Runs analyses.',
+        source: 'personal',
+        updatedAt: '2026-08-04T00:00:00.000Z',
+        enabled: true
+      }
+    ])
     await act(async () => {
       Array.from(document.body.querySelectorAll<HTMLButtonElement>('button'))
         .find((button) => button.textContent === 'Next')
         ?.click()
     })
     expect(installPackage).toHaveBeenCalledOnce()
+    expect(window.api.settings.listSkills).toHaveBeenCalled()
+    expect(useSettingsStore.getState().skills).toEqual([
+      {
+        id: 'analysis-tools',
+        name: 'Analysis Tools',
+        description: 'Runs analyses.',
+        source: 'personal',
+        updatedAt: '2026-08-04T00:00:00.000Z',
+        enabled: true
+      }
+    ])
     expect(onNavigate).toHaveBeenCalledWith({ kind: 'edit', id: 'research-synth' })
   })
 
@@ -494,7 +727,7 @@ describe('SpecialistsPanel', () => {
     expect(document.body.textContent).toContain('Current local edits are not recoverable')
     expect(document.body.textContent).toContain('Current version1.4.0')
     expect(document.body.textContent).toContain('Incoming version1.3.0 · downgrade')
-    expect(document.body.textContent).toContain('Modified after import')
+    expect(document.body.textContent).toContain('Local edits will be replaced by this import.')
     expect(document.body.textContent).toContain('Export current version first')
 
     await act(async () => {
@@ -517,8 +750,7 @@ describe('SpecialistsPanel', () => {
       importBaseline: {
         importedAt: '2026-08-03T10:00:00.000Z',
         archiveDigest: 'a'.repeat(64),
-        contentDigest: 'b'.repeat(64),
-        requiresApp: '>=0.9.2 <1.0.0'
+        contentDigest: 'b'.repeat(64)
       }
     }
     useSpecialistStore.setState({ items: [imported, { kind: 'reviewer', id: 'reviewer' }] })
@@ -833,27 +1065,42 @@ describe('SpecialistsPanel', () => {
       specialistName: 'RNA Reviewer',
       expectedRevision: 1,
       skills: [
-        { id: 'exclusive', kind: 'owned-exclusive', deletable: true, reasons: [] },
+        {
+          id: 'personal-exclusive',
+          displayName: 'Exclusive Skill',
+          source: 'personal',
+          kind: 'owned-exclusive',
+          deletable: true,
+          reasons: []
+        },
         {
           id: 'builtin-tool',
+          displayName: 'Built-in Tool',
+          source: 'featured',
           kind: 'builtin',
           deletable: false,
           reasons: [{ code: 'builtin', specialistIds: [] }]
         },
         {
           id: 'standalone-tool',
+          displayName: 'Standalone Tool',
+          source: 'personal',
           kind: 'standalone',
           deletable: false,
           reasons: [{ code: 'standalone', specialistIds: [] }]
         },
         {
           id: 'shared-tool',
+          displayName: 'Shared Tool',
+          source: 'imported',
           kind: 'shared-owner',
           deletable: false,
           reasons: [{ code: 'shared-owner', specialistIds: ['literature-reviewer'] }]
         },
         {
           id: 'referenced-tool',
+          displayName: 'Referenced Tool',
+          source: 'personal',
           kind: 'referenced',
           deletable: false,
           reasons: [{ code: 'referenced', specialistIds: ['builtin-curator'] }]
@@ -892,15 +1139,22 @@ describe('SpecialistsPanel', () => {
     })
 
     expect(previewDelete).toHaveBeenCalledWith('rna-reviewer')
-    expect(document.body.textContent).toContain('Choose linked Skills to delete')
-    expect(document.body.textContent).toContain('Built-in Skill content is managed by the app')
-    expect(document.body.textContent).toContain('Pre-existing standalone Skill')
-    expect(document.body.textContent).toContain('Owned by literature-reviewer')
-    expect(document.body.textContent).toContain('Referenced by builtin-curator')
+    expect(document.body.textContent).toContain('Skills you can also delete')
+    expect(document.body.textContent).toContain('Exclusive Skill')
+    expect(document.body.textContent).toContain('Shared Tool')
+    expect(document.body.textContent).toContain('Imported')
+    expect(document.body.textContent).toContain('Personal')
+    expect(document.body.textContent).not.toContain('Built-in Tool')
+    expect(document.body.textContent).not.toContain('personal-exclusive')
+    expect(document.body.textContent).toContain('Already exists independently and will be kept.')
+    expect(document.body.textContent).toContain(
+      'Also owned by another Specialist and will be kept.'
+    )
+    expect(document.body.textContent).toContain('Used by another Specialist and will be kept.')
     const checkboxes = Array.from(
       document.body.querySelectorAll<HTMLInputElement>('input[type="checkbox"]')
     )
-    expect(checkboxes).toHaveLength(5)
+    expect(checkboxes).toHaveLength(4)
     expect(checkboxes.filter((input) => !input.disabled)).toHaveLength(1)
     expect(checkboxes.every((input) => !input.checked)).toBe(true)
     await act(async () => checkboxes.find((input) => !input.disabled)?.click())
@@ -914,7 +1168,7 @@ describe('SpecialistsPanel', () => {
       confirmBtn!.click()
     })
 
-    expect(deleteMock).toHaveBeenCalledWith('rna-reviewer', 1, ['exclusive'])
+    expect(deleteMock).toHaveBeenCalledWith('rna-reviewer', 1, ['personal-exclusive'])
   })
 })
 

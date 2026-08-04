@@ -1,8 +1,13 @@
 import { useEffect, useMemo, useState } from 'react'
 import {
+  AlertTriangle,
+  CheckCircle2,
   ChevronDown,
+  CircleX,
   Copy,
   Download,
+  Info,
+  Loader2,
   MessagesSquare,
   Pencil,
   Plus,
@@ -11,6 +16,7 @@ import {
   Upload
 } from 'lucide-react'
 import { AlertDialog } from 'radix-ui'
+import { Badge } from '@/components/ui/badge'
 import { Button } from '@/components/ui/button'
 import {
   dialogDescriptionClassName,
@@ -27,6 +33,7 @@ import {
 } from '@/components/ui/dropdown-menu'
 import { Input } from '@/components/ui/input'
 import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from '@/components/ui/tooltip'
+import { specialistDiagnosticCopy } from '@/lib/specialist-diagnostics'
 import { resolveCustomizeProjectId } from '@/lib/last-opened-project'
 import { SettingsToggle } from './SettingsLayout'
 import { useNavigationStore } from '@/stores/navigation-store'
@@ -34,6 +41,7 @@ import { useProjectStore } from '@/stores/project-store'
 import { useSettingsStore } from '@/stores/settings-store'
 import { useSpecialistStore } from '@/stores/specialist-store'
 import type { CreateSpecialistInput } from '../../../../shared/specialist'
+import type { SkillSource } from '../../../../shared/settings'
 import { specialistPackageReportFromPreview } from '../../../../shared/specialist-package'
 import type {
   SpecialistDeletePreview,
@@ -59,10 +67,36 @@ const FILTER_LABELS: Record<CategoryFilter, string> = {
   builtin: 'Built-in'
 }
 
+const SKILL_SOURCE_LABELS: Record<SkillSource, string> = {
+  featured: 'Featured',
+  imported: 'Imported',
+  personal: 'Personal'
+}
+
 const formatBytes = (value: number): string =>
   value >= 1024 * 1024
     ? `${Number((value / (1024 * 1024)).toFixed(1))} MB`
     : `${Number((value / 1024).toFixed(1))} KB`
+
+// User-facing presentation of package diagnostics (see lib/specialist-diagnostics.ts).
+// Severity is distinguished by icon shape, color and grouping, not by color alone.
+const SEVERITY_GROUPS = [
+  { severity: 'error', label: 'Blocking errors' },
+  { severity: 'warning', label: 'Warnings' },
+  { severity: 'info', label: 'Information' }
+] as const
+
+const SEVERITY_ICON = {
+  error: CircleX,
+  warning: AlertTriangle,
+  info: Info
+} as const
+
+const SEVERITY_CLASSES = {
+  error: 'border-red-200 bg-red-50 text-red-800',
+  warning: 'border-amber-200 bg-amber-50 text-amber-800',
+  info: 'border-blue-200 bg-blue-50 text-blue-800'
+} as const
 
 type SpecialistsPanelProps = {
   view: SpecialistsView
@@ -111,6 +145,8 @@ const SpecialistsPanel = ({ view, onNavigate }: SpecialistsPanelProps): React.JS
   const [exportBusy, setExportBusy] = useState(false)
   const [exportSaved, setExportSaved] = useState(false)
   const [exportError, setExportError] = useState<string | undefined>()
+  // Specialist currently exporting from the list row (direct export bypasses the chooser).
+  const [exportingId, setExportingId] = useState<string | null>(null)
 
   // Memoised so visibleCustomItems' memo can reference a stable value.
   const customItems = useMemo(() => items.filter((i) => i.kind === 'custom'), [items])
@@ -129,13 +165,44 @@ const SpecialistsPanel = ({ view, onNavigate }: SpecialistsPanelProps): React.JS
     void previewExport(view.id)
       .then((preview) =>
         setIncludedExportSkillIds(
-          preview.skills
-            .filter((skill) => skill.selected && skill.kind !== 'builtin')
-            .map((skill) => skill.id)
+          preview.skills.filter((skill) => skill.selected).map((skill) => skill.id)
         )
       )
       .catch(() => setExportError('Could not preview this Specialist export. Try again.'))
   }, [previewExport, view])
+
+  // Direct export from the list action menu: silently preview with the approved default selection
+  // (builtin + owned Skills), then open the native save dialog. The chooser page is skipped unless
+  // the export is blocked — then it opens automatically so the diagnostics and Skills stay visible.
+  const runDirectExport = async (id: string): Promise<void> => {
+    if (exportingId) return
+    setExportingId(id)
+    setExportSaved(false)
+    setExportError(undefined)
+    try {
+      const preview = await previewExport(id)
+      const includedSkillIds = preview.skills
+        .filter((skill) => skill.selected)
+        .map((skill) => skill.id)
+      if (!preview.canExport) {
+        onNavigate({ kind: 'export', id })
+        return
+      }
+      const result = await exportSpecialist(includedSkillIds)
+      if (result.saved) {
+        setExportSaved(true)
+        onNavigate({ kind: 'export', id })
+      } else {
+        // Native save dialog cancelled — stay on the list with no feedback.
+        clearExport()
+      }
+    } catch {
+      setExportError('Could not save this Specialist export. Preview again and retry.')
+      onNavigate({ kind: 'export', id })
+    } finally {
+      setExportingId(null)
+    }
+  }
 
   // Keep runnable builtins distinct from the Reviewer placeholder even though Settings groups both
   // under Built-in. Only runnable builtins enter the Session picker.
@@ -168,6 +235,12 @@ const SpecialistsPanel = ({ view, onNavigate }: SpecialistsPanelProps): React.JS
     if (!term || 'reviewer used by auto-review'.includes(term)) return reviewerItems
     return []
   }, [filter, query, reviewerItems])
+
+  // Built-in Skills are app-managed and never participate in Specialist deletion. Keep this
+  // renderer-side filter as a defensive boundary even though the main-side preview omits them.
+  const visibleDeleteSkills = deletingItem?.preview.skills.filter(
+    (skill) => skill.source !== 'featured'
+  )
 
   // Resolves the valid last-opened project (or the newest-existing fallback) against the live catalog.
   // Undefined means zero projects and the entry is disabled with explanatory help text.
@@ -277,11 +350,20 @@ const SpecialistsPanel = ({ view, onNavigate }: SpecialistsPanelProps): React.JS
               {exportPreview ? 'Choose Skills to include' : 'Preparing export…'}
             </h2>
             <p className="mt-1 text-sm text-muted-foreground">
-              Selected non-builtin Skills are copied into the ZIP and discovered automatically on
-              import.
+              Builtin and owned Skills are selected by default. Skills copied into the ZIP are
+              discovered automatically on import; Connector IDs are carried as selected references.
             </p>
           </div>
-          <span className="text-sm font-medium" role="status">
+          <span
+            role="status"
+            className={`inline-flex items-center gap-1 rounded-full px-2 py-0.5 text-xs font-semibold ${
+              exportPreview?.canExport
+                ? 'bg-success-000/10 text-success-000'
+                : exportPreview
+                  ? 'bg-danger-000/10 text-danger-000'
+                  : 'bg-muted text-muted-foreground'
+            }`}
+          >
             {exportPreview?.canExport ? '✓ Ready' : exportPreview ? '× Blocked' : 'Checking…'}
           </span>
         </div>
@@ -307,8 +389,7 @@ const SpecialistsPanel = ({ view, onNavigate }: SpecialistsPanelProps): React.JS
             ))}
             <div className="flex flex-col divide-y divide-border rounded-lg border border-border">
               {exportPreview.skills.map((skill) => {
-                const checked =
-                  skill.kind === 'builtin' || includedExportSkillIds.includes(skill.id)
+                const checked = includedExportSkillIds.includes(skill.id)
                 return (
                   <label key={skill.id} className="flex items-center gap-3 p-3 text-sm">
                     <input
@@ -327,7 +408,7 @@ const SpecialistsPanel = ({ view, onNavigate }: SpecialistsPanelProps): React.JS
                       <strong className="block">{skill.id}</strong>
                       <span className="text-xs text-muted-foreground">
                         {skill.kind === 'builtin'
-                          ? 'Not included; choose local capabilities after import.'
+                          ? 'Builtin Skill · bundled by default; the original ID is preserved.'
                           : skill.kind === 'owned'
                             ? `Owned Skill · v${skill.version} · bundled by default.`
                             : `Installed Skill · v${skill.version} · include it to bundle a copy.`}
@@ -341,8 +422,14 @@ const SpecialistsPanel = ({ view, onNavigate }: SpecialistsPanelProps): React.JS
             <div className="rounded-lg border border-border p-3 text-sm" role="status">
               <strong>What the package carries</strong>
               <p className="text-muted-foreground">
-                Only checked Skills are bundled. Builtin Skills and Connectors are selected locally
-                while finishing setup after import.
+                Only checked Skills are bundled. Connector IDs are imported as selected references;
+                full access can only be chosen later in the configuration page.
+              </p>
+              <p className="mt-2 text-xs text-muted-foreground">
+                Connectors:{' '}
+                {exportPreview.connectorIds.length
+                  ? exportPreview.connectorIds.join(', ')
+                  : 'None selected'}
               </p>
             </div>
             <div className="flex justify-between gap-3">
@@ -437,6 +524,18 @@ const SpecialistsPanel = ({ view, onNavigate }: SpecialistsPanelProps): React.JS
                   ? 'Ready to continue'
                   : 'Cannot continue'
                 : 'Import a Specialist package'}
+              {packagePreview ? (
+                <span
+                  role="status"
+                  className={`ml-2 inline-flex items-center gap-1 rounded-full px-2 py-0.5 text-xs font-semibold ${
+                    packagePreview.installable
+                      ? 'bg-success-000/10 text-success-000'
+                      : 'bg-danger-000/10 text-danger-000'
+                  }`}
+                >
+                  {packagePreview.installable ? '✓ Installable' : '× Not installable'}
+                </span>
+              ) : null}
             </h2>
             <p className="mt-1 text-sm text-muted-foreground">
               {packagePreview
@@ -512,10 +611,6 @@ const SpecialistsPanel = ({ view, onNavigate }: SpecialistsPanelProps): React.JS
               <div>
                 <span className="block text-xs text-muted-foreground">Package version</span>
                 {summary?.version ?? 'Unknown'}
-              </div>
-              <div>
-                <span className="block text-xs text-muted-foreground">App compatibility</span>
-                {summary?.requiresApp ?? 'Not declared'}
               </div>
             </div>
 
@@ -629,56 +724,60 @@ const SpecialistsPanel = ({ view, onNavigate }: SpecialistsPanelProps): React.JS
               </div>
               {packagePreview.diagnostics.length ? (
                 <div className="mt-3 max-h-64 space-y-4 overflow-y-auto pr-2" tabIndex={0}>
-                  {(
-                    [
-                      ['error', 'Blocking errors'],
-                      ['warning', 'Warnings'],
-                      ['info', 'Information']
-                    ] as const
-                  ).map(([severity, label]) =>
-                    diagnosticsBySeverity[severity].length ? (
-                      <div key={severity}>
+                  {SEVERITY_GROUPS.map((group) => {
+                    const items = diagnosticsBySeverity[group.severity]
+                    if (!items.length) return null
+                    return (
+                      <div key={group.severity}>
                         <h4 className="text-xs font-semibold">
-                          {label} ({diagnosticsBySeverity[severity].length})
+                          {group.label} ({items.length})
                         </h4>
                         <ul className="mt-1 space-y-2">
-                          {diagnosticsBySeverity[severity].map((diagnostic, index) => (
-                            <li
-                              key={`${diagnostic.code}-${index}`}
-                              className="rounded-md bg-muted/40 p-2 text-xs"
-                            >
-                              <strong>{diagnostic.code}</strong>
-                              <span className="block text-muted-foreground">
-                                {diagnostic.message}
-                              </span>
-                              {diagnostic.path || diagnostic.relatedId ? (
-                                <span className="block text-muted-foreground">
-                                  {diagnostic.path ? `Path: ${diagnostic.path}` : ''}
-                                  {diagnostic.path && diagnostic.relatedId ? ' · ' : ''}
-                                  {diagnostic.relatedId ? `ID: ${diagnostic.relatedId}` : ''}
-                                </span>
-                              ) : null}
-                              {diagnostic.actual !== undefined && diagnostic.limit !== undefined ? (
-                                <span className="block text-muted-foreground">
-                                  Actual:{' '}
-                                  {diagnostic.unit === 'bytes'
-                                    ? formatBytes(diagnostic.actual)
-                                    : diagnostic.actual}{' '}
-                                  · Limit:{' '}
-                                  {diagnostic.unit === 'bytes'
-                                    ? formatBytes(diagnostic.limit)
-                                    : diagnostic.limit}
-                                </span>
-                              ) : null}
-                            </li>
-                          ))}
+                          {items.map((diagnostic, index) => {
+                            const copy = specialistDiagnosticCopy(diagnostic)
+                            const SeverityIcon = SEVERITY_ICON[group.severity]
+                            return (
+                              <li
+                                key={`${diagnostic.code}-${index}`}
+                                role={group.severity === 'error' ? 'alert' : 'status'}
+                                className={`flex gap-2 rounded-md border p-2 text-xs ${SEVERITY_CLASSES[group.severity]}`}
+                              >
+                                <SeverityIcon
+                                  className="mt-0.5 size-3.5 shrink-0"
+                                  aria-hidden="true"
+                                />
+                                <div className="min-w-0">
+                                  <strong className="block">{copy.title}</strong>
+                                  <span className="block opacity-80">{copy.body}</span>
+                                  {diagnostic.path || diagnostic.relatedId ? (
+                                    <span className="mt-0.5 block font-mono text-[10px] opacity-60">
+                                      {diagnostic.path}
+                                      {diagnostic.path && diagnostic.relatedId ? ' · ' : ''}
+                                      {diagnostic.relatedId ? `ID: ${diagnostic.relatedId}` : ''}
+                                    </span>
+                                  ) : null}
+                                </div>
+                              </li>
+                            )
+                          })}
                         </ul>
                       </div>
-                    ) : null
-                  )}
+                    )
+                  })}
                 </div>
               ) : (
-                <p className="mt-1 text-xs text-muted-foreground">Validation passed.</p>
+                <div
+                  role="status"
+                  className="mt-3 flex gap-2 rounded-md border border-green-200 bg-green-50 p-2 text-xs text-green-800"
+                >
+                  <CheckCircle2 className="mt-0.5 size-3.5 shrink-0" aria-hidden="true" />
+                  <div>
+                    <strong className="block">Validation passed</strong>
+                    <span className="opacity-80">
+                      The package can be installed after explicit confirmation.
+                    </span>
+                  </div>
+                </div>
               )}
               {reportStatus ? (
                 <p role="status" className="mt-2 text-xs text-muted-foreground">
@@ -687,16 +786,12 @@ const SpecialistsPanel = ({ view, onNavigate }: SpecialistsPanelProps): React.JS
               ) : null}
             </section>
 
-            {packagePreview.overwrite ? (
+            {packagePreview.overwrite?.modifiedSinceImport ? (
               <p
                 role="alert"
                 className="rounded-lg border border-warning-100/50 bg-warning-100/10 p-3 text-xs"
               >
-                {packagePreview.overwrite.hasImportBaseline
-                  ? packagePreview.overwrite.modifiedSinceImport
-                    ? 'Modified after import. Local edits will be replaced.'
-                    : 'Unchanged since import.'
-                  : 'This locally created Specialist has no import baseline.'}
+                Local edits will be replaced by this import.
               </p>
             ) : null}
             {packageErrorCode ? (
@@ -722,8 +817,15 @@ const SpecialistsPanel = ({ view, onNavigate }: SpecialistsPanelProps): React.JS
                   }
                   setPackageBusy(true)
                   void installPackage(false)
-                    .then((result) => {
+                    .then(async (result) => {
                       if (result.status === 'installed') {
+                        // Bundled Skills were just installed on disk; refresh the Skill catalog so the
+                        // editor recognizes them as available instead of showing "Missing · unavailable".
+                        try {
+                          await useSettingsStore.getState().loadSkills()
+                        } catch {
+                          // Best-effort refresh; navigation proceeds so the install result is shown.
+                        }
                         onNavigate({ kind: 'edit', id: result.specialist.id })
                       } else {
                         setPackageErrorCode(result.code)
@@ -809,8 +911,15 @@ const SpecialistsPanel = ({ view, onNavigate }: SpecialistsPanelProps): React.JS
                         onClick={() => {
                           setPackageBusy(true)
                           void installPackage(true)
-                            .then((result) => {
+                            .then(async (result) => {
                               if (result.status === 'installed') {
+                                // Bundled Skills were just installed on disk; refresh the Skill catalog
+                                // so the editor recognizes them as available after the overwrite.
+                                try {
+                                  await useSettingsStore.getState().loadSkills()
+                                } catch {
+                                  // Best-effort refresh; navigation proceeds so the install result is shown.
+                                }
                                 setOverwriteConfirmationOpen(false)
                                 onNavigate({ kind: 'edit', id: result.specialist.id })
                               } else setPackageErrorCode(result.code)
@@ -1073,9 +1182,19 @@ const SpecialistsPanel = ({ view, onNavigate }: SpecialistsPanelProps): React.JS
                                   <Button
                                     variant="ghost"
                                     size="icon"
+                                    disabled={exportingId === item.id}
                                     aria-label={`Actions for ${item.displayName ?? item.name}`}
                                   >
-                                    <ChevronDown aria-hidden="true" />
+                                    {exportingId === item.id ? (
+                                      <span role="status" aria-label="Preparing export">
+                                        <Loader2
+                                          className="size-4 animate-spin"
+                                          aria-hidden="true"
+                                        />
+                                      </span>
+                                    ) : (
+                                      <ChevronDown aria-hidden="true" />
+                                    )}
                                   </Button>
                                 </DropdownMenuTrigger>
                               </TooltipTrigger>
@@ -1097,12 +1216,7 @@ const SpecialistsPanel = ({ view, onNavigate }: SpecialistsPanelProps): React.JS
                             </DropdownMenuItem>
                             <DropdownMenuItem
                               className="gap-2 text-xs"
-                              onSelect={() => {
-                                setExportSaved(false)
-                                setExportError(undefined)
-                                clearExport()
-                                onNavigate({ kind: 'export', id: item.id })
-                              }}
+                              onSelect={() => void runDirectExport(item.id)}
                             >
                               <Download className="size-3.5" aria-hidden="true" /> Export ZIP
                             </DropdownMenuItem>
@@ -1219,27 +1333,37 @@ const SpecialistsPanel = ({ view, onNavigate }: SpecialistsPanelProps): React.JS
           <AlertDialog.Overlay className={dialogOverlayClassName} />
           <AlertDialog.Content className={dialogPanelClassName('w-[min(440px,calc(100vw-2rem))]')}>
             <AlertDialog.Title className={dialogTitleClassName}>
-              Delete {deletingItem?.name}?
+              Delete “{deletingItem?.name}”?
             </AlertDialog.Title>
             <AlertDialog.Description className={dialogDescriptionClassName}>
-              Choose linked Skills to delete. Eligible Skills are never selected automatically.
-              Retained owned Skills become standalone; shared owners and references are preserved.
+              This permanently deletes the Specialist. Conversations using it will no longer be able
+              to use it.
             </AlertDialog.Description>
-            <div className="mt-4 max-h-72 overflow-y-auto rounded-lg border border-border px-3">
-              {deletingItem?.preview.skills.length ? (
-                deletingItem.preview.skills.map((skill) => {
+            <div className="mt-4">
+              <p className="text-sm font-medium text-foreground">
+                Skills you can also delete{' '}
+                <span className="font-normal text-muted-foreground">(optional)</span>
+              </p>
+              <p className="mt-1 text-xs leading-5 text-muted-foreground">
+                Only Skills used exclusively by this Specialist can be deleted. Other linked Skills
+                will be kept automatically.
+              </p>
+            </div>
+            <div className="mt-3 max-h-72 overflow-y-auto rounded-lg border border-border px-3">
+              {visibleDeleteSkills?.length ? (
+                visibleDeleteSkills.map((skill) => {
                   const reasonText =
                     skill.reasons
                       .map((reason) =>
-                        reason.code === 'builtin'
-                          ? 'Built-in Skill content is managed by the app.'
-                          : reason.code === 'standalone'
-                            ? 'Pre-existing standalone Skill.'
-                            : reason.code === 'shared-owner'
-                              ? `Owned by ${reason.specialistIds.join(', ')}.`
-                              : `Referenced by ${reason.specialistIds.join(', ')}.`
+                        reason.code === 'standalone'
+                          ? 'Already exists independently and will be kept.'
+                          : reason.code === 'shared-owner'
+                            ? 'Also owned by another Specialist and will be kept.'
+                            : reason.code === 'referenced'
+                              ? 'Used by another Specialist and will be kept.'
+                              : 'Managed by the app and will be kept.'
                       )
-                      .join(' ') || 'Exclusive owned Skill; optional deletion.'
+                      .join(' ') || 'Used only by this Specialist. Select to permanently delete it.'
                   return (
                     <label
                       key={skill.id}
@@ -1260,8 +1384,11 @@ const SpecialistsPanel = ({ view, onNavigate }: SpecialistsPanelProps): React.JS
                         }
                       />
                       <span className="min-w-0">
-                        <span className="block text-sm font-medium text-foreground">
-                          {skill.id}
+                        <span className="flex flex-wrap items-center gap-1.5 text-sm font-medium text-foreground">
+                          <span>{skill.displayName}</span>
+                          <Badge variant="outline" className="text-[11px] font-normal">
+                            {SKILL_SOURCE_LABELS[skill.source]}
+                          </Badge>
                         </span>
                         <span className="block text-xs text-muted-foreground">{reasonText}</span>
                       </span>
@@ -1269,7 +1396,9 @@ const SpecialistsPanel = ({ view, onNavigate }: SpecialistsPanelProps): React.JS
                   )
                 })
               ) : (
-                <p className="py-3 text-xs text-muted-foreground">No linked Skills.</p>
+                <p className="py-3 text-xs text-muted-foreground">
+                  No additional Skills will be deleted.
+                </p>
               )}
             </div>
             {deleteError ? (

@@ -1,3 +1,5 @@
+import type { SkillSource } from './settings'
+
 export const SPECIALIST_PACKAGE_SCHEMA_VERSION = 1 as const
 export const DEFAULT_BUNDLED_SKILL_VERSION = '0.1.0' as const
 export type SpecialistPackageArchiveLimits = {
@@ -40,6 +42,7 @@ export type SpecialistExportPreview = {
   fileName: string
   expectedRevision: number
   skills: readonly SpecialistExportSkillChoice[]
+  connectorIds: readonly string[]
   diagnostics: readonly PackageDiagnostic[]
   canExport: boolean
 }
@@ -73,7 +76,6 @@ export type SpecialistPackageManifestV1 = {
   id: string
   version: string
   exported_with_app_version: string
-  requires_app: string
 }
 
 export type SpecialistPackagePayload = {
@@ -81,6 +83,8 @@ export type SpecialistPackagePayload = {
   displayName?: string
   description: string
   systemPrompt: string
+  skillIds?: readonly string[]
+  connectorIds?: readonly string[]
 }
 
 export type SpecialistPackageCatalogSnapshot = {
@@ -88,6 +92,8 @@ export type SpecialistPackageCatalogSnapshot = {
   builtinSkills: ReadonlyArray<{ id: string; appVersion: string; compatibility: string }>
   skills: ReadonlyArray<{
     id: string
+    displayName?: string
+    source?: SkillSource
     version?: string
     builtin: boolean
     contentDigest?: string
@@ -102,7 +108,7 @@ export type SpecialistPackageCatalogSnapshot = {
 }
 
 export type SpecialistPackageSkillDisposition =
-  'install' | 'reuse-owned' | 'reuse-standalone' | 'conflict'
+  'install' | 'reuse-builtin' | 'reuse-owned' | 'reuse-standalone' | 'conflict'
 
 export type SpecialistPackageSkillPreview = {
   id: string
@@ -124,7 +130,6 @@ export type SpecialistPackageSummary = {
   name: string
   description: string
   source: SpecialistPackageSource
-  requiresApp?: string
   bundledSkillIds: readonly string[]
   requiredSkillIds: readonly string[]
   builtinSkillIds: readonly string[]
@@ -141,10 +146,7 @@ export type SpecialistPackagePreview = {
 
 export type SpecialistPackageReport = {
   schemaVersion: 1
-  summary?: Pick<
-    SpecialistPackageSummary,
-    'id' | 'version' | 'name' | 'description' | 'source' | 'requiresApp'
-  >
+  summary?: Pick<SpecialistPackageSummary, 'id' | 'version' | 'name' | 'description' | 'source'>
   diagnostics: readonly PackageDiagnostic[]
   installable: boolean
   archive?: SpecialistPackageArchiveMetrics
@@ -161,8 +163,7 @@ export const specialistPackageReportFromPreview = (
           version: preview.summary.version,
           name: preview.summary.name,
           description: preview.summary.description,
-          source: preview.summary.source,
-          ...(preview.summary.requiresApp ? { requiresApp: preview.summary.requiresApp } : {})
+          source: preview.summary.source
         }
       }
     : {}),
@@ -212,6 +213,8 @@ export type SpecialistDeleteSkillKind = 'owned-exclusive' | SpecialistDeleteProt
 
 export type SpecialistDeleteSkillPreview = {
   id: string
+  displayName: string
+  source: SkillSource
   kind: SpecialistDeleteSkillKind
   deletable: boolean
   reasons: ReadonlyArray<{
@@ -254,6 +257,8 @@ export type SpecialistPackageValidationPlan = {
   contentHash: string
   manifest: SpecialistPackageManifestV1
   payload: SpecialistPackagePayload
+  skillIds: readonly string[]
+  connectorIds: readonly string[]
   skills: readonly SpecialistPackageSkillPlan[]
 }
 

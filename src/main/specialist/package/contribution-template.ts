@@ -28,11 +28,9 @@ type ContributionTemplateExporterDependencies = {
   generatePackageId?: () => string
 }
 
-const compatibilityRange = (appVersion: string): string => {
+const assertValidAppVersion = (appVersion: string): void => {
   const match = /^(0|[1-9]\d*)\.(0|[1-9]\d*)\.(0|[1-9]\d*)/.exec(appVersion)
   if (!match) throw new Error('Application version must be SemVer.')
-  const major = Number(match[1])
-  return `>=${appVersion} <${major + 1}.0.0`
 }
 
 export const buildDeterministicSpecialistZip = (
@@ -53,17 +51,19 @@ export const buildContributionTemplateZip = (input: {
   readme: string
   packageId?: string
 }): Uint8Array => {
+  assertValidAppVersion(input.appVersion)
   const manifest = {
     schema_version: SPECIALIST_PACKAGE_SCHEMA_VERSION,
     id: input.packageId ?? randomUUID(),
     version: '0.1.0',
-    exported_with_app_version: input.appVersion,
-    requires_app: compatibilityRange(input.appVersion)
+    exported_with_app_version: input.appVersion
   }
   const specialist = {
     name: '',
     description: '',
-    systemPrompt: ''
+    systemPrompt: '',
+    skillIds: [],
+    connectorIds: []
   }
   return buildDeterministicSpecialistZip({
     'manifest.json': strToU8(`${JSON.stringify(manifest, null, 2)}\n`),

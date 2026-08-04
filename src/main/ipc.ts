@@ -161,6 +161,7 @@ import {
   selectSpecialistArchive
 } from './specialist/package/electron-adapter'
 import { UserSkillSpecialistPackageAdapter } from './skills/specialist-package-adapter'
+import { BundledSkillSpecialistPackageAdapter } from './skills/builtin-specialist-package-adapter'
 import { AgentsService } from './agents/agents-service'
 import {
   CompletionGateCoordinator,
@@ -575,13 +576,20 @@ const createApplicationModules = async (
   const appVersion = app.getVersion()
   const specialistSkills = await settingsService.listSpecialistSkillCatalog()
   const specialistPackageSkillAdapter = new UserSkillSpecialistPackageAdapter(resolveStorageRoot())
+  const builtinSpecialistPackageSkillAdapter = new BundledSkillSpecialistPackageAdapter()
   const packageSkills = await specialistPackageSkillAdapter.snapshot()
   const builtinRegistry = new BuiltinSpecialistRegistry({
     appVersion,
     builtinSkills: composeBuiltinSkillCatalog(appVersion, specialistSkills),
     skills: specialistSkills.map((skill) => {
       const packageSkill = packageSkills.find((candidate) => candidate.id === skill.id)
-      return { id: skill.id, builtin: skill.source === 'featured', ...(packageSkill ?? {}) }
+      return {
+        id: skill.id,
+        builtin: skill.source === 'featured',
+        displayName: skill.displayName,
+        source: skill.source,
+        ...(packageSkill ?? {})
+      }
     }),
     connectorIds: ALL_CONNECTOR_IDS,
     protectedSpecialistIds: ['reviewer'],
@@ -592,8 +600,6 @@ const createApplicationModules = async (
   const specialistPackageService = new SpecialistPackageService({
     storageDir: resolveStorageRoot(),
     repository: specialistRepository,
-    readPackageGuide: () =>
-      readFile(resolveContributionTemplateReadmePath(app.getAppPath()), 'utf8'),
     catalog: async () => {
       const appVersion = app.getVersion()
       const [skills, packageSkills, connectorSettings] = await Promise.all([
@@ -609,6 +615,8 @@ const createApplicationModules = async (
           return {
             id: skill.id,
             builtin: skill.source === 'featured',
+            displayName: skill.displayName,
+            source: skill.source,
             ...(packageSkill ?? {})
           }
         }),
@@ -636,6 +644,7 @@ const createApplicationModules = async (
       }
     },
     skillPort: specialistPackageSkillAdapter,
+    builtinSkillPort: builtinSpecialistPackageSkillAdapter,
     onCommitted: () => {
       broadcastToRenderers(SPECIALIST_IPC.CATALOG_CHANGED, undefined)
       void runtime.requestSkillsReload()

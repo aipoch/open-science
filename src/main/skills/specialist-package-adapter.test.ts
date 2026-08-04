@@ -1,4 +1,4 @@
-import { mkdtemp, rm, writeFile } from 'node:fs/promises'
+import { mkdir, mkdtemp, rm, writeFile } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 
@@ -10,6 +10,8 @@ import {
   SPECIALIST_PACKAGE_SKILL_METADATA,
   UserSkillSpecialistPackageAdapter
 } from './specialist-package-adapter'
+import { BundledSkillSpecialistPackageAdapter } from './builtin-specialist-package-adapter'
+import { SkillRegistry } from './registry'
 import { zipSync, strToU8 } from 'fflate'
 
 const roots: string[] = []
@@ -45,7 +47,7 @@ describe('UserSkillSpecialistPackageAdapter', () => {
     await adapter.commit('tx-seed')
     await adapter.recover('tx-seed', 'commit')
     await writeFile(
-      join(root, 'skills', 'imported', 'analysis-tools', SPECIALIST_PACKAGE_SKILL_METADATA),
+      join(root, 'skills', 'personal', 'analysis-tools', SPECIALIST_PACKAGE_SKILL_METADATA),
       JSON.stringify({
         id: 'analysis-tools',
         version: '1.2.3',
@@ -94,10 +96,10 @@ describe('UserSkillSpecialistPackageAdapter', () => {
 
     await expect(ordinaryImport).resolves.toMatchObject({
       status: 'imported',
-      id: 'imported-analysis-tools-2'
+      id: 'imported-analysis-tools'
     })
     await expect(repository.body('analysis-tools')).resolves.toContain('Use this Skill.')
-    await expect(repository.body('imported-analysis-tools-2')).resolves.toContain('Standalone.')
+    await expect(repository.body('imported-analysis-tools')).resolves.toContain('Standalone.')
   })
 
   it('keeps prepared Skill trees invisible until commit and exposes their package identity afterward', async () => {
@@ -113,7 +115,7 @@ describe('UserSkillSpecialistPackageAdapter', () => {
     await adapter.recover('tx-1', 'commit')
 
     await expect(repository.list()).resolves.toEqual([
-      expect.objectContaining({ id: 'analysis-tools', source: 'imported' })
+      expect.objectContaining({ id: 'analysis-tools', source: 'personal' })
     ])
     await expect(repository.body('analysis-tools')).resolves.toContain('Use this Skill.')
     await expect(repository.delete('analysis-tools')).rejects.toThrow(/Specialist-owned/)
@@ -170,5 +172,49 @@ describe('UserSkillSpecialistPackageAdapter', () => {
       expect.objectContaining({ id: 'delete-me', standalone: false, ownerIds: ['research-synth'] }),
       expect.objectContaining({ id: 'retain-me', standalone: false, ownerIds: ['research-synth'] })
     ])
+  })
+})
+
+describe('BundledSkillSpecialistPackageAdapter', () => {
+  it('exports selected builtin files under their original Skill IDs', async () => {
+    const root = await mkdtemp(join(tmpdir(), 'bundled-specialist-skill-adapter-'))
+    roots.push(root)
+    await mkdir(join(root, 'literature-review', 'scripts'), { recursive: true })
+    await writeFile(
+      join(root, 'manifest.json'),
+      JSON.stringify({
+        skills: [
+          {
+            id: 'literature-review',
+            name: 'Literature Review',
+            source: 'featured',
+            updatedAt: '2026-08-04T00:00:00.000Z'
+          }
+        ]
+      })
+    )
+    await writeFile(
+      join(root, 'literature-review', 'SKILL.md'),
+      '---\nname: literature-review\ndescription: Review literature\n---\nReview.'
+    )
+    await writeFile(join(root, 'literature-review', 'kernel.py'), 'print("review")')
+    await writeFile(join(root, 'literature-review', '.catalog_stamp'), 'ignored')
+    await writeFile(join(root, 'literature-review', 'scripts', 'run.sh'), 'exit 0')
+
+    const snapshots = await new BundledSkillSpecialistPackageAdapter(
+      new SkillRegistry(root)
+    ).exportSnapshot(['literature-review'])
+
+    expect(snapshots).toEqual([
+      expect.objectContaining({
+        id: 'literature-review',
+        files: expect.arrayContaining([
+          expect.objectContaining({ path: 'SKILL.md' }),
+          expect.objectContaining({ path: 'kernel.py' }),
+          expect.objectContaining({ path: 'scripts/run.sh' })
+        ])
+      })
+    ])
+    expect(snapshots[0]?.files.map((file) => file.path)).not.toContain('.catalog_stamp')
   })
 })

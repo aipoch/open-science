@@ -219,7 +219,6 @@ export type SpecialistProfileView = {
     importedAt: string
     archiveDigest: string
     contentDigest: string
-    requiresApp: string
     packageVersion?: string
   }
 }

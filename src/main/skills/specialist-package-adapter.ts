@@ -71,7 +71,7 @@ const directoryHash = async (directory: string): Promise<string> => {
 }
 
 export class UserSkillSpecialistPackageAdapter implements SpecialistPackageSkillPort {
-  private readonly importedRoot: string
+  private readonly personalRoot: string
   private readonly transactionRoot: string
   private readonly mutationOwner: SkillMutationOwner
   private readonly mutationReleases = new Map<string, () => void>()
@@ -80,7 +80,7 @@ export class UserSkillSpecialistPackageAdapter implements SpecialistPackageSkill
     storageRoot: string,
     mutationOwner: SkillMutationOwner = skillMutationOwnerFor(storageRoot)
   ) {
-    this.importedRoot = join(storageRoot, 'skills', 'imported')
+    this.personalRoot = join(storageRoot, 'skills', 'personal')
     this.transactionRoot = join(storageRoot, 'specialist-package-skill-transactions')
     this.mutationOwner = mutationOwner
   }
@@ -99,7 +99,7 @@ export class UserSkillSpecialistPackageAdapter implements SpecialistPackageSkill
       for (const skill of skills) {
         const current = live.find((candidate) => candidate.id === skill.id)
         if (skill.disposition === 'install') {
-          if (current || (await exists(join(this.importedRoot, skill.id)))) {
+          if (current || (await exists(join(this.personalRoot, skill.id)))) {
             throw new Error(`Skill ${skill.id} changed after preview.`)
           }
           continue
@@ -134,7 +134,7 @@ export class UserSkillSpecialistPackageAdapter implements SpecialistPackageSkill
   async snapshot(): Promise<PackageSkillMetadata[]> {
     const result: PackageSkillMetadata[] = []
     for (const source of ['imported', 'personal'] as const) {
-      const root = join(dirname(this.importedRoot), source)
+      const root = join(dirname(this.personalRoot), source)
       let entries: string[] = []
       try {
         entries = await readdir(root)
@@ -180,7 +180,7 @@ export class UserSkillSpecialistPackageAdapter implements SpecialistPackageSkill
       files: Array<{ path: string; bytes: Uint8Array }>
     }> = []
     for (const source of ['imported', 'personal'] as const) {
-      const root = join(dirname(this.importedRoot), source)
+      const root = join(dirname(this.personalRoot), source)
       let entries: string[] = []
       try {
         entries = await readdir(root)
@@ -191,8 +191,9 @@ export class UserSkillSpecialistPackageAdapter implements SpecialistPackageSkill
         if (!SAFE_SLUG.test(entry)) continue
         const directory = join(root, entry)
         const beforeMetadata = await readMetadata(directory)
-        const id = beforeMetadata?.id ?? `${source}-${entry}`
-        if (!requested.has(id)) continue
+        const sourceId = beforeMetadata?.id ?? `${source}-${entry}`
+        if (!requested.has(sourceId)) continue
+        const id = beforeMetadata?.id ?? entry
         const beforeHash = await directoryHash(directory)
         const files: Array<{ path: string; bytes: Uint8Array }> = []
         const visit = async (current: string, prefix = ''): Promise<void> => {
@@ -226,6 +227,7 @@ export class UserSkillSpecialistPackageAdapter implements SpecialistPackageSkill
         }
         result.push({
           id,
+          ...(sourceId === id ? {} : { sourceId }),
           version: beforeMetadata?.version ?? '0.1.0',
           contentHash: afterHash,
           files
@@ -269,7 +271,7 @@ export class UserSkillSpecialistPackageAdapter implements SpecialistPackageSkill
           await mkdir(dirname(target), { recursive: true })
           await writeFile(target, file.bytes, { flag: 'wx' })
         }
-        const existing = await readMetadata(join(this.importedRoot, skill.id))
+        const existing = await readMetadata(join(this.personalRoot, skill.id))
         const ownerIds = [...new Set([...(existing?.ownerIds ?? []), specialistId])].sort()
         const metadata: PackageSkillMetadata = {
           id: skill.id,
@@ -367,10 +369,10 @@ export class UserSkillSpecialistPackageAdapter implements SpecialistPackageSkill
     } catch {
       // A delete-only transaction intentionally has no staging directory.
     }
-    await mkdir(this.importedRoot, { recursive: true })
+    await mkdir(this.personalRoot, { recursive: true })
     await mkdir(join(root, 'backup'), { recursive: true })
     for (const id of [...ids].sort()) {
-      const live = join(this.importedRoot, id)
+      const live = join(this.personalRoot, id)
       const backup = join(root, 'backup', id)
       const staging = join(stagingRoot, id)
       if (await exists(live)) await rename(live, backup)
@@ -422,7 +424,7 @@ export class UserSkillSpecialistPackageAdapter implements SpecialistPackageSkill
     }
     if (outcome === 'rollback') {
       for (const id of [...ids].sort()) {
-        const live = join(this.importedRoot, id)
+        const live = join(this.personalRoot, id)
         const staging = join(stagingRoot, id)
         const backup = join(backupRoot, id)
         if (await exists(backup)) {
@@ -435,7 +437,7 @@ export class UserSkillSpecialistPackageAdapter implements SpecialistPackageSkill
       }
     } else {
       for (const id of [...ids].sort()) {
-        const live = join(this.importedRoot, id)
+        const live = join(this.personalRoot, id)
         const staging = join(stagingRoot, id)
         const backup = join(backupRoot, id)
         if (await exists(staging)) {
@@ -456,7 +458,7 @@ export class UserSkillSpecialistPackageAdapter implements SpecialistPackageSkill
 
   private async findSkillDirectory(id: string): Promise<string | undefined> {
     for (const source of ['imported', 'personal'] as const) {
-      const root = join(dirname(this.importedRoot), source)
+      const root = join(dirname(this.personalRoot), source)
       let entries: string[] = []
       try {
         entries = await readdir(root)

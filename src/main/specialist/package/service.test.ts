@@ -43,8 +43,7 @@ const validZip = (overrides: { version?: string; description?: string } = {}): U
         schema_version: 1,
         id: 'research-synth',
         version: overrides.version ?? '1.3.0',
-        exported_with_app_version: '0.9.2',
-        requires_app: '>=0.9.2 <1.0.0'
+        exported_with_app_version: '0.9.2'
       })
     ),
     'specialist.json': encoder.encode(
@@ -63,8 +62,7 @@ const bundledZip = (): Uint8Array =>
         schema_version: 1,
         id: 'research-synth',
         version: '1.3.0',
-        exported_with_app_version: '0.9.2',
-        requires_app: '>=0.9.2 <1.0.0'
+        exported_with_app_version: '0.9.2'
       })
     ),
     'specialist.json': encoder.encode(
@@ -134,7 +132,7 @@ afterEach(async () => {
 })
 
 describe('SpecialistPackageService', () => {
-  it('preserves a conflicting GitHub import that lands while package Skill preparation is paused', async () => {
+  it('coexists with a same-ID GitHub import that lands while package Skill preparation is paused', async () => {
     const repository = new SpecialistRepository(storageDir)
     const skillPort = new UserSkillSpecialistPackageAdapter(storageDir)
     const userSkills = new UserSkillRepository(storageDir)
@@ -173,13 +171,16 @@ describe('SpecialistPackageService', () => {
     )
     continueInstall()
 
-    await expect(installation).resolves.toEqual({ status: 'failed', code: 'commit-failed' })
+    // Package Skills install under Personal while the GitHub copy stays under Imported:
+    // same ID, independent sources.
+    await expect(installation).resolves.toEqual({
+      status: 'installed',
+      specialist: expect.objectContaining({ id: 'research-synth' })
+    })
     await expect(userSkills.body('imported-analysis-tools')).resolves.toContain(
       'Keep the GitHub version.'
     )
-    await expect(new ProfileService(repository).getById('research-synth')).rejects.toThrow(
-      /not found/i
-    )
+    await expect(userSkills.body('analysis-tools')).resolves.toContain('Use the tools.')
   })
 
   it('keeps a reused standalone Skill when direct deletion races the durable Specialist commit', async () => {
@@ -281,6 +282,23 @@ describe('SpecialistPackageService', () => {
       storageDir,
       repository,
       catalog: async () => exportCatalog,
+      builtinSkillPort: {
+        exportSnapshot: async () => [
+          {
+            id: 'document-reader',
+            version: 'builtin',
+            contentHash: 'builtin-stable',
+            files: [
+              {
+                path: 'SKILL.md',
+                bytes: encoder.encode(
+                  '---\nname: document-reader\ndescription: Read documents\n---\nRead documents.'
+                )
+              }
+            ]
+          }
+        ]
+      },
       skillPort: {
         snapshot: async () => [],
         prepare: async () => undefined,
@@ -314,9 +332,168 @@ describe('SpecialistPackageService', () => {
       skills: [
         { id: 'analysis-tools', kind: 'owned', selected: true, version: '1.2.3' },
         { id: 'citation-manager', kind: 'referenced', selected: false, version: '0.1.0' },
-        { id: 'document-reader', kind: 'builtin', selected: true, selectable: false }
-      ]
+        { id: 'document-reader', kind: 'builtin', selected: true, selectable: true }
+      ],
+      connectorIds: ['reference-library']
     })
+  })
+
+  it('exports builtin and owned Skills with exact IDs and editable capability references only', async () => {
+    const repository = new SpecialistRepository(storageDir)
+    await repository.insert({
+      id: 'research-synth',
+      name: 'RESEARCH_SYNTH',
+      displayName: 'Research Synthesizer',
+      description: 'Synthesizes research.',
+      systemPrompt: 'Portable instructions.',
+      enabled: true,
+      capabilityMode: 'selected',
+      fullAccess: { excludedSkillIds: [], excludedConnectorIds: [], connectorTools: [] },
+      selectedCapabilities: {
+        skillIds: ['document-reader', 'analysis-tools'],
+        connectorIds: ['reference-library'],
+        connectorTools: []
+      },
+      revision: 3,
+      packageVersion: '1.3.0',
+      origin: 'local',
+      ownedSkillIds: ['analysis-tools']
+    })
+    const exportCatalog: SpecialistPackageCatalogSnapshot = {
+      appVersion: '0.9.2',
+      builtinSkills: [
+        {
+          id: 'document-reader',
+          appVersion: '0.9.2',
+          compatibility: 'app:0.9.2:document-reader'
+        }
+      ],
+      skills: [
+        { id: 'document-reader', builtin: true },
+        { id: 'analysis-tools', version: '1.2.3', builtin: false, ownerIds: ['research-synth'] }
+      ],
+      connectorIds: ['reference-library'],
+      protectedSpecialistIds: ['reviewer']
+    }
+    const service = new SpecialistPackageService({
+      storageDir,
+      repository,
+      catalog: async () => exportCatalog,
+      builtinSkillPort: {
+        exportSnapshot: async () => [
+          {
+            id: 'document-reader',
+            version: 'builtin',
+            contentHash: 'builtin-stable',
+            files: [
+              {
+                path: 'SKILL.md',
+                bytes: encoder.encode(
+                  '---\nname: document-reader\ndescription: Read documents\nversion: 9.9.9\n---\nRead documents.'
+                )
+              }
+            ]
+          }
+        ]
+      },
+      skillPort: {
+        snapshot: async () => [],
+        prepare: async () => undefined,
+        commit: async () => undefined,
+        rollback: async () => undefined,
+        recover: async () => undefined,
+        exportSnapshot: async () => [
+          {
+            id: 'analysis-tools',
+            version: '1.2.3',
+            contentHash: 'stable',
+            files: [
+              {
+                path: 'SKILL.md',
+                bytes: encoder.encode(
+                  '---\nname: analysis-tools\ndescription: Analyze data\n---\nUse the tools.'
+                )
+              }
+            ]
+          }
+        ]
+      }
+    })
+
+    const exported = await service.export({
+      specialistId: 'research-synth',
+      expectedRevision: 3,
+      includedSkillIds: ['document-reader', 'analysis-tools']
+    })
+    const archive = unzipSync(exported.archiveBytes)
+    const payload = JSON.parse(strFromU8(archive['specialist.json']!)) as Record<string, unknown>
+
+    expect(Object.keys(payload).sort()).toEqual([
+      'connectorIds',
+      'description',
+      'displayName',
+      'name',
+      'skillIds',
+      'systemPrompt'
+    ])
+    expect(payload.skillIds).toEqual(['document-reader', 'analysis-tools'])
+    expect(payload.connectorIds).toEqual(['reference-library'])
+    expect(archive['skills/document-reader/SKILL.md']).toBeDefined()
+    expect(archive['skills/analysis-tools/SKILL.md']).toBeDefined()
+    expect(archive['skills/os-document-reader/SKILL.md']).toBeUndefined()
+    expect(strFromU8(archive['skills/document-reader/SKILL.md']!)).not.toContain('version: 9.9.9')
+  })
+
+  it('exports a personal Skill under its portable ID without the personal source prefix', async () => {
+    const repository = new SpecialistRepository(storageDir)
+    const skillPort = new UserSkillSpecialistPackageAdapter(storageDir)
+    const skillDirectory = join(storageDir, 'skills', 'personal', 'literature-review')
+    await mkdir(skillDirectory, { recursive: true })
+    await writeFile(
+      join(skillDirectory, 'SKILL.md'),
+      '---\nname: Literature Review\ndescription: Review literature\n---\nReview.'
+    )
+    await repository.insert({
+      id: 'research-synth',
+      name: 'RESEARCH_SYNTH',
+      description: 'Synthesizes research.',
+      systemPrompt: 'Portable instructions.',
+      enabled: true,
+      capabilityMode: 'selected',
+      fullAccess: { excludedSkillIds: [], excludedConnectorIds: [], connectorTools: [] },
+      selectedCapabilities: {
+        skillIds: ['personal-literature-review'],
+        connectorIds: [],
+        connectorTools: []
+      },
+      revision: 1,
+      packageVersion: '1.0.0',
+      origin: 'local',
+      ownedSkillIds: []
+    })
+    const service = new SpecialistPackageService({
+      storageDir,
+      repository,
+      skillPort,
+      catalog: async () => ({
+        ...catalog,
+        skills: (await skillPort.snapshot()).map((skill) => ({ ...skill, builtin: false }))
+      })
+    })
+
+    const exported = await service.export({
+      specialistId: 'research-synth',
+      expectedRevision: 1,
+      includedSkillIds: ['personal-literature-review']
+    })
+    const archive = unzipSync(exported.archiveBytes)
+    const payload = JSON.parse(strFromU8(archive['specialist.json']!)) as {
+      skillIds: string[]
+    }
+
+    expect(payload.skillIds).toEqual(['literature-review'])
+    expect(archive['skills/literature-review/SKILL.md']).toBeDefined()
+    expect(archive['skills/personal-literature-review/SKILL.md']).toBeUndefined()
   })
 
   it('warns without auto-bumping when imported content changed at the same version', async () => {
@@ -338,7 +515,6 @@ describe('SpecialistPackageService', () => {
         importedAt: '2026-08-03T00:00:00.000Z',
         archiveDigest: 'archive',
         contentDigest: 'different-content',
-        requiresApp: '>=0.9.2 <1.0.0',
         packageVersion: '1.3.0'
       }
     })
@@ -375,7 +551,8 @@ describe('SpecialistPackageService', () => {
     expect(exported.fileName).toBe('open-science-specialist-research-synth-v2.0.0.zip')
     expect(JSON.parse(strFromU8(unzipSync(exported.archiveBytes)['manifest.json']))).toMatchObject({
       id: 'research-synth',
-      version: '2.0.0'
+      version: '2.0.0',
+      exported_with_app_version: '0.9.2'
     })
   })
 
@@ -560,7 +737,6 @@ describe('SpecialistPackageService', () => {
     expect(second.archiveBytes).toEqual(first.archiveBytes)
     const files = unzipSync(first.archiveBytes)
     expect(Object.keys(files).sort()).toEqual([
-      'README.txt',
       'manifest.json',
       'skills/analysis-tools/SKILL.md',
       'skills/analysis-tools/references/guide.md',
@@ -568,7 +744,6 @@ describe('SpecialistPackageService', () => {
     ])
     const manifest = JSON.parse(strFromU8(files['manifest.json']))
     expect(manifest).not.toHaveProperty('skills')
-    expect(strFromU8(files['README.txt'])).toContain('Open Science Specialist import guide')
     expect(strFromU8(files['skills/analysis-tools/SKILL.md'])).toContain('name: "analysis-tools"\n')
     expect(strFromU8(files['skills/analysis-tools/SKILL.md'])).toContain('version: "1.2.3"\n')
     expect(strFromU8(files['specialist.json'])).not.toMatch(
@@ -591,8 +766,8 @@ describe('SpecialistPackageService', () => {
         id: 'research-synth',
         version: '1.3.0',
         bundledSkillIds: ['analysis-tools'],
-        requiredSkillIds: [],
-        builtinSkillIds: [],
+        requiredSkillIds: ['document-reader', 'analysis-tools', 'citation-manager'],
+        builtinSkillIds: ['document-reader'],
         skills: [expect.objectContaining({ id: 'analysis-tools', version: '1.2.3' })]
       }
     })
@@ -609,8 +784,8 @@ describe('SpecialistPackageService', () => {
         ownedSkillIds: ['analysis-tools'],
         systemPrompt: 'Portable user-authored instructions.',
         selectedCapabilities: {
-          skillIds: ['analysis-tools'],
-          connectorIds: [],
+          skillIds: ['document-reader', 'analysis-tools', 'citation-manager'],
+          connectorIds: ['reference-library'],
           connectorTools: []
         }
       }
@@ -1237,22 +1412,35 @@ describe('SpecialistPackageService', () => {
       catalog: async () => ({
         ...catalog,
         skills: [
-          { id: 'exclusive', builtin: false, standalone: false, ownerIds: ['research-synth'] },
+          {
+            id: 'exclusive',
+            displayName: 'Exclusive Skill',
+            source: 'personal',
+            builtin: false,
+            standalone: false,
+            ownerIds: ['research-synth']
+          },
           { id: 'builtin-tool', builtin: true },
           {
             id: 'standalone-tool',
+            displayName: 'Standalone Tool',
+            source: 'personal',
             builtin: false,
             standalone: true,
             ownerIds: ['research-synth']
           },
           {
             id: 'shared-tool',
+            displayName: 'Shared Tool',
+            source: 'personal',
             builtin: false,
             standalone: false,
             ownerIds: ['research-synth', 'other-specialist']
           },
           {
             id: 'referenced-tool',
+            displayName: 'Referenced Tool',
+            source: 'imported',
             builtin: false,
             standalone: false,
             ownerIds: ['research-synth']
@@ -1267,26 +1455,33 @@ describe('SpecialistPackageService', () => {
       expectedRevision: 7,
       skills: [
         {
-          id: 'builtin-tool',
-          kind: 'builtin',
-          deletable: false,
-          reasons: [{ code: 'builtin', specialistIds: [] }]
+          id: 'exclusive',
+          displayName: 'Exclusive Skill',
+          source: 'personal',
+          kind: 'owned-exclusive',
+          deletable: true,
+          reasons: []
         },
-        { id: 'exclusive', kind: 'owned-exclusive', deletable: true, reasons: [] },
         {
           id: 'referenced-tool',
+          displayName: 'Referenced Tool',
+          source: 'imported',
           kind: 'referenced',
           deletable: false,
           reasons: [{ code: 'referenced', specialistIds: ['other-specialist'] }]
         },
         {
           id: 'shared-tool',
+          displayName: 'Shared Tool',
+          source: 'personal',
           kind: 'shared-owner',
           deletable: false,
           reasons: [{ code: 'shared-owner', specialistIds: ['other-specialist'] }]
         },
         {
           id: 'standalone-tool',
+          displayName: 'Standalone Tool',
+          source: 'personal',
           kind: 'standalone',
           deletable: false,
           reasons: [{ code: 'standalone', specialistIds: [] }]

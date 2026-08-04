@@ -31,10 +31,17 @@ import {
   SpecialistPackageRollbackError,
   SpecialistPackageTransaction
 } from './transaction'
-import type { SpecialistPackageSkillPort } from './skill-port'
+import type {
+  SpecialistPackageBuiltinSkillPort,
+  SpecialistPackageSkillPort,
+  SpecialistPackageSkillSnapshot
+} from './skill-port'
 
 const CANDIDATE_TTL_MS = 10 * 60 * 1000
 const log = createLogger('specialist.package.service')
+
+const fallbackSkillDisplayName = (id: string): string =>
+  id.replace(/^(?:personal|imported)-/, '') || id
 
 type Candidate = {
   plan?: Readonly<SpecialistPackageValidationPlan>
@@ -50,16 +57,11 @@ type SpecialistPackageServiceOptions = {
   storageDir: string
   repository: SpecialistRepository
   catalog: () => Promise<SpecialistPackageCatalogSnapshot>
-  readPackageGuide?: () => Promise<string>
   token?: () => string
   now?: () => Date
   onCommitted?: () => void
   skillPort?: SpecialistPackageSkillPort
-}
-
-const inferredAppRange = (version: string): string => {
-  const major = Number(version.split('.')[0] ?? 0)
-  return `>=${version} <${major + 1}.0.0`
+  builtinSkillPort?: SpecialistPackageBuiltinSkillPort
 }
 
 export const specialistExportFileName = (
@@ -86,7 +88,7 @@ export const specialistExportFileName = (
 const normalizeExportedSkillDocument = (
   bytes: Uint8Array,
   id: string,
-  version: string
+  version?: string
 ): Uint8Array => {
   const document = parseSkillDocument(new TextDecoder('utf-8', { fatal: true }).decode(bytes))
   if (!document.hasFrontmatter) throw new Error(`Skill ${id} has no frontmatter.`)
@@ -98,7 +100,7 @@ const normalizeExportedSkillDocument = (
     ...(document.description === undefined
       ? []
       : [`description: ${JSON.stringify(document.description)}`]),
-    `version: ${JSON.stringify(version)}`,
+    ...(version === undefined ? [] : [`version: ${JSON.stringify(version)}`]),
     ...metadata.map(([key, value]) => `${JSON.stringify(key)}: ${JSON.stringify(value)}`)
   ]
   return strToU8(`---\n${fields.join('\n')}\n---\n${document.body}`)
@@ -111,6 +113,29 @@ const referencedSkillIds = (
   specialist.capabilityMode === 'selected'
     ? specialist.selectedCapabilities.skillIds
     : catalogSkillIds.filter((id) => !specialist.fullAccess.excludedSkillIds.includes(id))
+
+const effectiveSpecialistSkillIds = (
+  specialist: StoredSpecialist,
+  catalog: SpecialistPackageCatalogSnapshot
+): readonly string[] =>
+  referencedSkillIds(
+    specialist,
+    catalog.skills.map((skill) => skill.id)
+  )
+
+const effectiveSpecialistConnectorIds = (
+  specialist: StoredSpecialist,
+  catalog: SpecialistPackageCatalogSnapshot
+): readonly string[] =>
+  specialist.capabilityMode === 'selected'
+    ? [...new Set(specialist.selectedCapabilities.connectorIds)]
+    : [
+        ...new Set(
+          catalog.connectorIds.filter(
+            (id) => !specialist.fullAccess.excludedConnectorIds.includes(id)
+          )
+        )
+      ]
 
 export class SpecialistSkillDeletionProtectedError extends Error {
   readonly code = 'protected-skill' as const
@@ -177,7 +202,7 @@ export class SpecialistPackageService {
       ...referencedSkillIds(specialist, catalogSkillIds)
     ])
     const skills = catalog.skills
-      .filter((skill) => associated.has(skill.id))
+      .filter((skill) => associated.has(skill.id) && !skill.builtin)
       .map((skill) => {
         const otherOwners = [...(skill.ownerIds ?? [])].filter((id) => id !== specialist.id).sort()
         const otherReferences = document.specialists
@@ -189,25 +214,27 @@ export class SpecialistPackageService {
           .map((candidate) => candidate.id)
           .sort()
         const reasons: Array<SpecialistDeletePreview['skills'][number]['reasons'][number]> = []
-        if (skill.builtin) reasons.push({ code: 'builtin', specialistIds: [] })
-        else {
-          if (skill.standalone) reasons.push({ code: 'standalone', specialistIds: [] })
-          if (otherOwners.length > 0) {
-            reasons.push({ code: 'shared-owner', specialistIds: otherOwners })
-          }
-          if (otherReferences.length > 0) {
-            reasons.push({ code: 'referenced', specialistIds: otherReferences })
-          }
+        if (skill.standalone) reasons.push({ code: 'standalone', specialistIds: [] })
+        if (otherOwners.length > 0) {
+          reasons.push({ code: 'shared-owner', specialistIds: otherOwners })
+        }
+        if (otherReferences.length > 0) {
+          reasons.push({ code: 'referenced', specialistIds: otherReferences })
         }
         const deletable = specialist.ownedSkillIds.includes(skill.id) && reasons.length === 0
         return {
           id: skill.id,
+          displayName: skill.displayName?.trim() || fallbackSkillDisplayName(skill.id),
+          source: skill.source ?? 'personal',
           kind: deletable ? ('owned-exclusive' as const) : (reasons[0]?.code ?? 'referenced'),
           deletable,
           reasons
         }
       })
-      .sort((left, right) => left.id.localeCompare(right.id))
+      .sort(
+        (left, right) =>
+          left.displayName.localeCompare(right.displayName) || left.id.localeCompare(right.id)
+      )
     const preview = {
       specialistId: specialist.id,
       specialistName: specialist.displayName ?? specialist.name,
@@ -398,12 +425,7 @@ export class SpecialistPackageService {
     const specialist = document.specialists.find((candidate) => candidate.id === specialistId)
     if (!specialist) throw new Error('Custom Specialist not found.')
 
-    const requestedSkillIds =
-      specialist.capabilityMode === 'selected'
-        ? specialist.selectedCapabilities.skillIds
-        : catalog.skills
-            .filter((skill) => !specialist.fullAccess.excludedSkillIds.includes(skill.id))
-            .map((skill) => skill.id)
+    const requestedSkillIds = effectiveSpecialistSkillIds(specialist, catalog)
     const skills = [...new Set(requestedSkillIds)]
       .map((id) => {
         const builtin = catalog.builtinSkills.find((candidate) => candidate.id === id)
@@ -428,12 +450,16 @@ export class SpecialistPackageService {
         }
       })
       .sort((left, right) => left.id.localeCompare(right.id))
+    const selectedSkills = skills.map((skill) =>
+      skill.kind === 'builtin' ? { ...skill, selected: true, selectable: true } : skill
+    )
+    const connectorIds = effectiveSpecialistConnectorIds(specialist, catalog)
     const diagnostics: Array<{
       severity: 'error' | 'warning' | 'info'
       code: string
       message: string
     }> = []
-    if (skills.some((skill) => skill.kind === 'referenced')) {
+    if (selectedSkills.some((skill) => skill.kind === 'referenced')) {
       diagnostics.push({
         severity: 'info',
         code: 'specialist.export-unbundled-skills',
@@ -453,8 +479,8 @@ export class SpecialistPackageService {
         message: `Content changed but the package version remains ${specialist.packageVersion}.`
       })
     }
-    const includedSkillIds = skills
-      .filter((skill) => skill.kind === 'owned')
+    const includedSkillIds = selectedSkills
+      .filter((skill) => skill.selected)
       .map((skill) => skill.id)
     try {
       await this.export({
@@ -480,7 +506,8 @@ export class SpecialistPackageService {
         specialist.id
       ),
       expectedRevision: specialist.revision,
-      skills,
+      skills: selectedSkills,
+      connectorIds,
       diagnostics,
       canExport: !diagnostics.some((diagnostic) => diagnostic.severity === 'error')
     }
@@ -513,35 +540,46 @@ export class SpecialistPackageService {
       throw new Error('Specialist changed during export. Preview again and retry.')
     }
 
-    const requestedSkillIds =
-      specialist.capabilityMode === 'selected'
-        ? specialist.selectedCapabilities.skillIds
-        : catalog.skills
-            .filter((skill) => !specialist.fullAccess.excludedSkillIds.includes(skill.id))
-            .map((skill) => skill.id)
+    const requestedSkillIds = effectiveSpecialistSkillIds(specialist, catalog)
     const builtinIds = new Set(catalog.builtinSkills.map((skill) => skill.id))
-    const portable = [...new Set(requestedSkillIds)]
-      .filter((id) => !builtinIds.has(id))
-      .map((id) => {
-        const skill = catalog.skills.find((candidate) => candidate.id === id)
-        return { id, version: skill?.version ?? '0.1.0' }
-      })
-      .sort((left, right) => left.id.localeCompare(right.id))
-    if (request.includedSkillIds.some((id) => !portable.some((skill) => skill.id === id))) {
+    const connectorIds = effectiveSpecialistConnectorIds(specialist, catalog)
+    const requested = new Set(requestedSkillIds)
+    if (request.includedSkillIds.some((id) => !requested.has(id))) {
       throw new Error('Export selection contains a Skill the Specialist does not reference.')
     }
-    if (!this.options.skillPort?.exportSnapshot && request.includedSkillIds.length > 0) {
+    const includedBuiltinIds = request.includedSkillIds.filter((id) => builtinIds.has(id))
+    const includedPortableIds = request.includedSkillIds.filter((id) => !builtinIds.has(id))
+    if (includedBuiltinIds.length > 0 && !this.options.builtinSkillPort?.exportSnapshot) {
+      throw new Error('Builtin Skill export snapshot is unavailable.')
+    }
+    if (includedPortableIds.length > 0 && !this.options.skillPort?.exportSnapshot) {
       throw new Error('Skill export snapshot is unavailable.')
     }
-    const skillSnapshots = request.includedSkillIds.length
-      ? await this.options.skillPort!.exportSnapshot!(request.includedSkillIds)
+    const builtinSnapshots = includedBuiltinIds.length
+      ? await this.options.builtinSkillPort!.exportSnapshot(includedBuiltinIds)
       : []
+    const portableSnapshots = includedPortableIds.length
+      ? await this.options.skillPort!.exportSnapshot!(includedPortableIds)
+      : []
+    const skillSnapshots: SpecialistPackageSkillSnapshot[] = [
+      ...builtinSnapshots,
+      ...portableSnapshots
+    ]
     if (
       skillSnapshots.length !== request.includedSkillIds.length ||
-      request.includedSkillIds.some((id) => !skillSnapshots.some((skill) => skill.id === id))
+      request.includedSkillIds.some(
+        (id) => !skillSnapshots.some((skill) => (skill.sourceId ?? skill.id) === id)
+      )
     ) {
       throw new Error('A selected Skill changed during export. Preview again and retry.')
     }
+    const packageSkillIds = skillSnapshots.map((skill) => skill.id)
+    if (new Set(packageSkillIds).size !== packageSkillIds.length) {
+      throw new Error('Selected Skills have duplicate portable IDs. Preview again and retry.')
+    }
+    const packageIdBySourceId = new Map(
+      skillSnapshots.map((skill) => [skill.sourceId ?? skill.id, skill.id])
+    )
 
     const after = await this.options.repository.getAll()
     const live = after.specialists.find((candidate) => candidate.id === request.specialistId)
@@ -557,28 +595,29 @@ export class SpecialistPackageService {
       schema_version: SPECIALIST_PACKAGE_SCHEMA_VERSION,
       id: specialist.id,
       version: specialist.packageVersion,
-      exported_with_app_version: catalog.appVersion,
-      requires_app: inferredAppRange(catalog.appVersion)
+      exported_with_app_version: catalog.appVersion
     }
     const payload = {
       name: specialist.name,
       ...(specialist.displayName ? { displayName: specialist.displayName } : {}),
       description: specialist.description,
-      systemPrompt: specialist.systemPrompt
+      systemPrompt: specialist.systemPrompt,
+      skillIds: [...new Set(requestedSkillIds.map((id) => packageIdBySourceId.get(id) ?? id))],
+      connectorIds
     }
-    const readme = this.options.readPackageGuide
-      ? await this.options.readPackageGuide()
-      : 'Open Science Specialist import guide.\n'
     const files: Record<string, Uint8Array> = {
       'manifest.json': strToU8(`${JSON.stringify(manifest, null, 2)}\n`),
-      'specialist.json': strToU8(`${JSON.stringify(payload, null, 2)}\n`),
-      'README.txt': strToU8(readme)
+      'specialist.json': strToU8(`${JSON.stringify(payload, null, 2)}\n`)
     }
     for (const skill of skillSnapshots) {
       for (const file of skill.files) {
         files[`skills/${skill.id}/${file.path}`] =
           file.path === 'SKILL.md'
-            ? normalizeExportedSkillDocument(file.bytes, skill.id, skill.version)
+            ? normalizeExportedSkillDocument(
+                file.bytes,
+                skill.id,
+                builtinIds.has(skill.id) ? undefined : skill.version
+              )
             : file.bytes
       }
     }
@@ -675,7 +714,6 @@ export class SpecialistPackageService {
         liveValidation.plan,
         this.now(),
         candidate.archiveDigest,
-        inferredAppRange(catalog.appVersion),
         candidate.overwrite ? { expectedRevision: candidate.overwrite.expectedRevision } : undefined
       )
     } catch (error) {

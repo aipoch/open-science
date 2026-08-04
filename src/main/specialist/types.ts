@@ -13,7 +13,6 @@ export type SpecialistImportBaseline = {
   importedAt: string
   archiveDigest: string
   contentDigest: string
-  requiresApp: string
   packageVersion?: string
 }
 

@@ -29,7 +29,7 @@ describe('Specialist package source adapters', () => {
   it('reads a complete stable Skill directory for export without sidecar metadata', async () => {
     const root = await mkdtemp(join(tmpdir(), 'specialist-export-snapshot-'))
     try {
-      const skill = join(root, 'skills', 'imported', 'analysis-tools')
+      const skill = join(root, 'skills', 'personal', 'analysis-tools')
       await mkdir(join(skill, 'references'), { recursive: true })
       await writeFile(
         join(skill, 'SKILL.md'),
@@ -61,6 +61,27 @@ describe('Specialist package source adapters', () => {
         })
       ])
       expect(snapshot[0].files.map((file) => file.path)).not.toContain('.specialist-package.json')
+    } finally {
+      await rm(root, { recursive: true, force: true })
+    }
+  })
+
+  it('exports a user Skill with its original slug instead of the storage source prefix', async () => {
+    const root = await mkdtemp(join(tmpdir(), 'specialist-export-snapshot-'))
+    try {
+      const skill = join(root, 'skills', 'personal', 'literature-review')
+      await mkdir(skill, { recursive: true })
+      await writeFile(
+        join(skill, 'SKILL.md'),
+        '---\nname: Literature Review\ndescription: Review literature\n---\nReview.'
+      )
+
+      const adapter = new UserSkillSpecialistPackageAdapter(root)
+      const snapshot = await adapter.exportSnapshot(['personal-literature-review'])
+
+      expect(snapshot).toEqual([
+        expect.objectContaining({ id: 'literature-review', sourceId: 'personal-literature-review' })
+      ])
     } finally {
       await rm(root, { recursive: true, force: true })
     }

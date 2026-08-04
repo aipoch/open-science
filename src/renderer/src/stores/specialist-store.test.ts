@@ -34,6 +34,7 @@ describe('specialist store package export', () => {
           selectable: true
         }
       ],
+      connectorIds: [],
       diagnostics: [],
       canExport: true
     }
@@ -69,6 +70,7 @@ describe('specialist store package export', () => {
       fileName: 'open-science-specialist-research-synthesizer-v1.3.0.zip',
       expectedRevision: 3,
       skills: [],
+      connectorIds: [],
       diagnostics: [],
       canExport: true
     }
@@ -102,7 +104,6 @@ describe('specialist store package import', () => {
         name: 'Research Synthesizer',
         description: 'Synthesizes research.',
         source: 'zip' as const,
-        requiresApp: '>=0.9.2 <1.0.0',
         bundledSkillIds: [],
         requiredSkillIds: [],
         builtinSkillIds: [],
