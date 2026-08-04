@@ -24,7 +24,7 @@ import {
 } from '../../shared/reviewer'
 import { assertBlockInScope, type ReviewerHostServer } from './host-sdk'
 import { createLogger } from '../logger'
-import { listenForLocalRpc } from '../local-rpc-transport'
+import { listenForLocalRpc, localRpcServerLogFields } from '../local-rpc-transport'
 import { createReviewerMcpStdioProxyConfig } from './mcp-stdio-proxy'
 
 const log = createLogger('reviewer:mcp')
@@ -261,16 +261,15 @@ export class ReviewerMcpServer {
     this._endpoint = `${connection.endpoint}/mcp`
     this._socketPath = connection.socketPath
 
-    log.info('reviewer MCP server started', {
-      transport: this._socketPath ? 'pipe' : 'tcp',
-      ...(!this._socketPath ? { endpoint: this._endpoint } : {})
-    })
+    log.info('reviewer MCP server started', localRpcServerLogFields(this.httpServer))
 
     return { endpoint: this._endpoint, token: this.token }
   }
 
   // Stops the HTTP server; called after the reviewer session is disposed.
   async stop(): Promise<void> {
+    const connection = localRpcServerLogFields(this.httpServer)
+    log.info('reviewer MCP server stopping', connection)
     for (const transport of this.transports.values()) {
       await transport.close().catch(() => undefined)
     }
@@ -278,7 +277,10 @@ export class ReviewerMcpServer {
 
     await new Promise<void>((resolve) => this.httpServer.close(() => resolve()))
 
-    log.info('reviewer MCP server stopped')
+    log.info('reviewer MCP server stopped', {
+      ...connection,
+      listening: this.httpServer.listening
+    })
   }
 
   // Returns the native HTTP config, or the Windows stdio proxy config for a named pipe.

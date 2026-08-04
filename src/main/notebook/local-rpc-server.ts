@@ -30,7 +30,14 @@ import {
   type TrustedCallingSession,
   type TrustedControlInvocationIdentity
 } from '../../shared/agents-contract'
-import { listenForLocalRpc, type LocalRpcListenOptions } from '../local-rpc-transport'
+import {
+  listenForLocalRpc,
+  localRpcServerLogFields,
+  type LocalRpcListenOptions
+} from '../local-rpc-transport'
+import { createLogger, errorLogFields } from '../logger'
+
+const log = createLogger('notebook:local-rpc')
 
 type NotebookLocalRpcServerOptions = {
   token?: string
@@ -284,11 +291,26 @@ class NotebookLocalRpcServer {
       void this.handleRequest(request, response)
     })
     this.server = server
+    log.info('notebook RPC server starting', {
+      transport: this.transport ?? (process.platform === 'win32' ? 'pipe' : 'tcp'),
+      listening: server.listening
+    })
     this.startPromise = listenForLocalRpc(server, {
       name: 'notebook-rpc',
       host: this.host,
       transport: this.transport
-    }).then((connection) => ({ ...connection, token: this.token }))
+    })
+      .then((connection) => {
+        log.info('notebook RPC server listening', localRpcServerLogFields(server))
+        return { ...connection, token: this.token }
+      })
+      .catch((error) => {
+        log.error('notebook RPC server failed to listen', {
+          ...localRpcServerLogFields(server),
+          ...errorLogFields(error)
+        })
+        throw error
+      })
 
     return this.startPromise
   }
@@ -306,12 +328,16 @@ class NotebookLocalRpcServer {
 
     if (!server) return
 
+    const connection = localRpcServerLogFields(server)
+    log.info('notebook RPC server stopping', connection)
+
     await new Promise<void>((resolve, reject) => {
       server.close((error) => {
         if (error) reject(error)
         else resolve()
       })
     })
+    log.info('notebook RPC server stopped', { ...connection, listening: server.listening })
   }
 
   // Remembers the final ACP session id for notebook aliases created before session start.

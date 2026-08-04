@@ -1069,17 +1069,41 @@ describe('Responses-compatible bridge conversion', () => {
     }
   })
 
-  it('advertises reviewer MCP functions only for a trusted registered session key', async () => {
+  it('carries DeepSeek reviewer tool calls only for a trusted registered session key', async () => {
     const upstreamRequests: Array<Record<string, unknown>> = []
+    const upstreamUrls: string[] = []
     const upstreamFetch = vi.fn(
-      async (_url: Parameters<typeof fetch>[0], init?: Parameters<typeof fetch>[1]) => {
-        upstreamRequests.push(JSON.parse(String(init?.body)) as Record<string, unknown>)
+      async (url: Parameters<typeof fetch>[0], init?: Parameters<typeof fetch>[1]) => {
+        const request = JSON.parse(String(init?.body)) as Record<string, unknown>
+        const reviewer = upstreamRequests.length === 1
+        upstreamUrls.push(String(url))
+        upstreamRequests.push(request)
         return new Response(
           [
             `data: ${JSON.stringify({
               id: 'chat-reviewer-scope',
-              model: 'model-a',
-              choices: [{ index: 0, delta: {}, finish_reason: 'stop' }]
+              model: 'deepseek-v4-pro',
+              choices: [
+                {
+                  index: 0,
+                  delta: reviewer
+                    ? {
+                        tool_calls: [
+                          {
+                            index: 0,
+                            id: 'call-deepseek-reviewer',
+                            type: 'function',
+                            function: {
+                              name: 'mcp__open_science_reviewer__submit_findings',
+                              arguments: '{"checks":[]}'
+                            }
+                          }
+                        ]
+                      }
+                    : {},
+                  finish_reason: reviewer ? 'tool_calls' : 'stop'
+                }
+              ]
             })}`,
             '',
             'data: [DONE]',
@@ -1091,7 +1115,7 @@ describe('Responses-compatible bridge conversion', () => {
     )
     const bridge = new ResponsesBridge(
       {
-        baseUrl: 'https://vendor.example/v1',
+        baseUrl: 'https://api.deepseek.com/v1',
         namespacedTools: [
           {
             namespace: 'mcp__open_science_notebook',
@@ -1117,7 +1141,7 @@ describe('Responses-compatible bridge conversion', () => {
       upstreamFetch
     )
     const connection = await bridge.start()
-    const post = async (input: string, promptCacheKey: string): Promise<void> => {
+    const post = async (input: string, promptCacheKey: string): Promise<string> => {
       const response = await fetch(`${connection.baseUrl}/responses`, {
         method: 'POST',
         headers: {
@@ -1125,7 +1149,7 @@ describe('Responses-compatible bridge conversion', () => {
           'content-type': 'application/json'
         },
         body: JSON.stringify({
-          model: 'model-a',
+          model: 'deepseek-v4-pro',
           input,
           prompt_cache_key: promptCacheKey,
           stream: true,
@@ -1137,7 +1161,7 @@ describe('Responses-compatible bridge conversion', () => {
           tool_choice: { type: 'function', name: 'exec_command' }
         })
       })
-      await response.text()
+      return response.text()
     }
 
     try {
@@ -1146,7 +1170,10 @@ describe('Responses-compatible bridge conversion', () => {
 
       await post(`${legacyReviewerMarker} normal user content`, 'normal-session')
       bridge.registerReviewerSession('reviewer-session')
-      await post('review this turn without a model-visible routing marker', 'reviewer-session')
+      const reviewerOutput = await post(
+        'review this turn without a model-visible routing marker',
+        'reviewer-session'
+      )
       expect(bridge.unregisterReviewerSession('reviewer-session')).toBe(true)
 
       const toolNames = upstreamRequests.map((request) =>
@@ -1164,6 +1191,14 @@ describe('Responses-compatible bridge conversion', () => {
         function: { name: 'exec_command' }
       })
       expect(upstreamRequests[1]?.tool_choice).toBe('auto')
+      expect(upstreamUrls).toEqual([
+        'https://api.deepseek.com/v1/chat/completions',
+        'https://api.deepseek.com/v1/chat/completions'
+      ])
+      expect(reviewerOutput).toContain('"type":"function_call"')
+      expect(reviewerOutput).toContain('"namespace":"mcp__open_science_reviewer"')
+      expect(reviewerOutput).toContain('"name":"submit_findings"')
+      expect(reviewerOutput).toContain('"call_id":"call-deepseek-reviewer"')
     } finally {
       await bridge.close()
     }

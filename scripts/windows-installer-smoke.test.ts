@@ -14,6 +14,7 @@ import {
   fetchWithTimeout,
   findSetupInstaller,
   installerVersion,
+  packagedMainEntryPath,
   packagedResourcePaths,
   parsePackagedAppEndpoint,
   readPackagedAppConfigRoot,
@@ -281,6 +282,12 @@ Open Science Web: http://127.0.0.1:52378/?token=iUFHGSACwBz2k1kSJfPixHbclDywVg0C
         'query_engine-windows.dll.node'
       )
     ])
+  })
+
+  it('targets the bundled main entry for packaged MCP subprocesses', () => {
+    expect(packagedMainEntryPath(join('smoke', 'app'))).toBe(
+      join('smoke', 'app', 'resources', 'app.asar', 'out', 'main', 'index.js')
+    )
   })
 
   it('builds an isolated profile environment for smoke child processes', () => {

@@ -1,7 +1,7 @@
 import { createServer } from 'node:http'
 import { afterEach, describe, expect, it } from 'vitest'
 
-import { fetchLocalRpc, listenForLocalRpc } from './local-rpc-transport'
+import { fetchLocalRpc, listenForLocalRpc, localRpcServerLogFields } from './local-rpc-transport'
 
 const servers: Array<ReturnType<typeof createServer>> = []
 
@@ -29,6 +29,11 @@ describe('local RPC transport', () => {
     })
 
     expect(connection.socketPath).toBeTruthy()
+    expect(localRpcServerLogFields(server)).toEqual({
+      transport: 'pipe',
+      listening: true,
+      socketPath: connection.socketPath
+    })
     const response = await fetchLocalRpc(
       { ...connection, endpoint: `${connection.endpoint}/rpc` },
       {
@@ -42,6 +47,19 @@ describe('local RPC transport', () => {
     await expect(response.json()).resolves.toEqual({
       path: '/rpc',
       authorized: 'Bearer test-token'
+    })
+  })
+
+  it('reports the bound TCP host, port, and listening state', async () => {
+    const server = createServer()
+    servers.push(server)
+    await listenForLocalRpc(server, { name: 'transport-test', transport: 'tcp' })
+
+    expect(localRpcServerLogFields(server)).toMatchObject({
+      transport: 'tcp',
+      listening: true,
+      host: '127.0.0.1',
+      port: expect.any(Number)
     })
   })
 

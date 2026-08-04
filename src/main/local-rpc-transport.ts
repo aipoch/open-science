@@ -14,6 +14,14 @@ type LocalRpcListenOptions = {
   transport?: 'tcp' | 'pipe'
 }
 
+type LocalRpcServerLogFields = {
+  transport: 'tcp' | 'pipe' | 'pending'
+  listening: boolean
+  host?: string
+  port?: number
+  socketPath?: string
+}
+
 const namedPipePath = (name: string): string =>
   process.platform === 'win32'
     ? `\\\\.\\pipe\\open-science-${name}-${process.pid}-${randomUUID()}`
@@ -53,6 +61,22 @@ const listenForLocalRpc = async (
     throw new Error('Local RPC server did not return a TCP address.')
   }
   return { endpoint: `http://${address.address}:${address.port}` }
+}
+
+const localRpcServerLogFields = (server: Server): LocalRpcServerLogFields => {
+  const address = server.address()
+  if (typeof address === 'string') {
+    return { transport: 'pipe', listening: server.listening, socketPath: address }
+  }
+  if (address) {
+    return {
+      transport: 'tcp',
+      listening: server.listening,
+      host: address.address,
+      port: address.port
+    }
+  }
+  return { transport: 'pending', listening: server.listening }
 }
 
 const requestBody = (
@@ -147,5 +171,5 @@ const fetchLocalRpc = async (
   }
 }
 
-export { fetchLocalRpc, fetchOverSocket, listenForLocalRpc }
-export type { LocalRpcListenOptions, LocalRpcTransport }
+export { fetchLocalRpc, fetchOverSocket, listenForLocalRpc, localRpcServerLogFields }
+export type { LocalRpcListenOptions, LocalRpcServerLogFields, LocalRpcTransport }

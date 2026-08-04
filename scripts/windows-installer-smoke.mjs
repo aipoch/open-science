@@ -3,20 +3,29 @@
 import { spawn } from 'node:child_process'
 import { randomUUID } from 'node:crypto'
 import { access, mkdir, mkdtemp, readFile, readdir, rm, writeFile } from 'node:fs/promises'
+import { createServer } from 'node:http'
 import { homedir, tmpdir } from 'node:os'
 import { basename, join, resolve, win32 } from 'node:path'
 import { pathToFileURL } from 'node:url'
 
+import { Client } from '@modelcontextprotocol/sdk/client/index.js'
+import { StdioClientTransport } from '@modelcontextprotocol/sdk/client/stdio.js'
+
 const APP_EXECUTABLE = 'open-science.exe'
+const ARTIFACT_MCP_SERVER_ARG = '--open-science-artifact-mcp'
+const NOTEBOOK_MCP_SERVER_ARG = '--open-science-notebook-mcp'
 const CONFIG_DIRECTORY = '.open-science'
 const PROCESS_TIMEOUT_MS = 120_000
 const STARTUP_TIMEOUT_MS = 60_000
 const SHUTDOWN_TIMEOUT_MS = 60_000
 const HTTP_REQUEST_TIMEOUT_MS = 15_000
 const TERMINATION_TIMEOUT_MS = 10_000
+const MCP_REQUEST_TIMEOUT_MS = 30_000
 const SMOKE_ROOT_PREFIX = 'open-science-installer-smoke-'
+const RPC_SMOKE_ROOT_PREFIX = 'open-science-rpc-smoke-'
 const UPGRADE_SENTINEL_PREFIX = 'installer-smoke-upgrade-sentinel-'
 const UPGRADE_SENTINEL_CONTENT = 'previous-version-profile-preserved\n'
+const RPC_SMOKE_CONTENT = 'windows-rpc-smoke\n'
 
 const delay = (milliseconds) =>
   new Promise((resolveDelay) => setTimeout(resolveDelay, milliseconds))
@@ -319,6 +328,267 @@ const packagedResourcePaths = (installDirectory) => [
   )
 ]
 
+const packagedMainEntryPath = (installDirectory) =>
+  join(installDirectory, 'resources', 'app.asar', 'out', 'main', 'index.js')
+
+const stringEnvironment = (environment) =>
+  Object.fromEntries(Object.entries(environment).filter((entry) => typeof entry[1] === 'string'))
+
+const listenOnPipe = (server, socketPath) =>
+  new Promise((resolveListen, rejectListen) => {
+    const onError = (error) => rejectListen(error)
+    server.once('error', onError)
+    server.listen(socketPath, () => {
+      server.off('error', onError)
+      resolveListen()
+    })
+  })
+
+const closeServer = (server) =>
+  new Promise((resolveClose, rejectClose) => {
+    server.close((error) => (error ? rejectClose(error) : resolveClose()))
+  })
+
+const readJsonBody = async (request) => {
+  let body = ''
+  request.setEncoding('utf8')
+  for await (const chunk of request) body += chunk
+  return JSON.parse(body)
+}
+
+const sendJson = (response, statusCode, payload) => {
+  response.writeHead(statusCode, { 'content-type': 'application/json' })
+  response.end(JSON.stringify(payload))
+}
+
+const toolResultText = (result) =>
+  result.content
+    .filter((item) => item.type === 'text')
+    .map((item) => item.text)
+    .join('\n')
+
+const assertToolResult = (toolName, result, expectedText) => {
+  const text = toolResultText(result)
+  if (result.isError || !text.includes(expectedText)) {
+    throw new Error(
+      `${toolName} did not return the expected packaged MCP result.${text ? `\n${text}` : ''}`
+    )
+  }
+}
+
+const appendMcpStderr = (error, stderr) => {
+  const detail = stderr().trim()
+  if (error instanceof Error && detail && !error.message.includes(detail))
+    error.message += `\n${detail}`
+  return error
+}
+
+const connectPackagedMcp = async ({ executable, entryPath, serverArg, env, cwd }) => {
+  const transport = new StdioClientTransport({
+    command: executable,
+    args: [entryPath, serverArg],
+    env: stringEnvironment(env),
+    cwd,
+    stderr: 'pipe'
+  })
+  let stderr = ''
+  transport.stderr?.setEncoding?.('utf8')
+  transport.stderr?.on('data', (chunk) => {
+    stderr += chunk
+  })
+  const client = new Client({ name: 'windows-installer-smoke', version: '1.0.0' })
+  try {
+    await client.connect(transport, { timeout: MCP_REQUEST_TIMEOUT_MS })
+  } catch (error) {
+    await transport.close().catch(() => undefined)
+    throw appendMcpStderr(error, () => stderr)
+  }
+  return { client, stderr: () => stderr }
+}
+
+const runPackagedLocalRpcSmoke = async ({ installDirectory, env }) => {
+  const root = await mkdtemp(join(env.TEMP, RPC_SMOKE_ROOT_PREFIX))
+  const workspace = join(root, 'workspace')
+  const artifactStorage = join(root, 'artifacts')
+  const currentRunFile = join(root, 'current-run.json')
+  const socketPath = `\\\\.\\pipe\\open-science-installer-smoke-${process.pid}-${randomUUID()}`
+  const token = randomUUID()
+  const methods = []
+  const server = createServer(async (request, response) => {
+    try {
+      if (request.headers.authorization !== `Bearer ${token}`) {
+        sendJson(response, 401, { error: 'Unauthorized installer smoke RPC request.' })
+        return
+      }
+      const body = await readJsonBody(request)
+      methods.push(body.method)
+      if (body.method === 'state') {
+        sendJson(response, 200, {
+          result: {
+            sessionId: 'installer-smoke-session',
+            cwd: workspace,
+            dataRoot: workspace,
+            kernelStatus: 'idle',
+            cells: [],
+            runs: [],
+            environments: []
+          }
+        })
+        return
+      }
+      if (body.method === 'executeShell') {
+        sendJson(response, 200, {
+          result: {
+            runId: 'installer-smoke-shell-run',
+            kernelKind: 'bash',
+            status: 'completed',
+            exitCode: 0,
+            stdout: RPC_SMOKE_CONTENT,
+            stderr: '',
+            traceback: '',
+            outputs: [],
+            workingFiles: []
+          }
+        })
+        return
+      }
+      if (body.method === 'artifactCreateVersion') {
+        sendJson(response, 200, {
+          result: {
+            id: 'installer-smoke-version',
+            artifactId: 'installer-smoke-artifact',
+            versionId: 'installer-smoke-version',
+            versionNumber: 1,
+            checksum: 'a'.repeat(64),
+            createdAt: new Date(0).toISOString(),
+            projectName: 'installer-smoke-project',
+            sessionId: 'installer-smoke-session',
+            runId: 'installer-smoke-artifact-run',
+            name: 'windows-rpc-smoke.txt',
+            path: join(workspace, 'windows-rpc-smoke.txt'),
+            fileUrl: 'file:///windows-rpc-smoke.txt',
+            mimeType: 'text/plain',
+            size: Buffer.byteLength(RPC_SMOKE_CONTENT),
+            mtimeMs: 0,
+            producerRunId: 'installer-smoke-shell-run'
+          }
+        })
+        return
+      }
+      sendJson(response, 400, { error: `Unexpected installer smoke RPC method: ${body.method}` })
+    } catch (error) {
+      sendJson(response, 500, {
+        error: error instanceof Error ? error.message : String(error)
+      })
+    }
+  })
+  let notebookMcp
+  let artifactMcp
+  let primaryError
+  try {
+    await Promise.all([
+      mkdir(workspace, { recursive: true }),
+      mkdir(artifactStorage, { recursive: true })
+    ])
+    await writeFile(
+      currentRunFile,
+      JSON.stringify({
+        artifactRunId: 'installer-smoke-artifact-run',
+        appSessionId: 'installer-smoke-session',
+        rootFrameId: 'installer-smoke-root-frame',
+        agentFrameId: 'installer-smoke-agent-frame',
+        messageBranchId: 'installer-smoke-branch',
+        runtimeSegmentId: 'installer-smoke-runtime',
+        promptMessageId: 'installer-smoke-prompt',
+        notebookSessionId: 'installer-smoke-session',
+        rpcCapabilityToken: token
+      })
+    )
+    await listenOnPipe(server, socketPath)
+
+    const executable = join(installDirectory, APP_EXECUTABLE)
+    const entryPath = packagedMainEntryPath(installDirectory)
+    const sharedEnv = { ...env, ELECTRON_RUN_AS_NODE: '1' }
+    notebookMcp = await connectPackagedMcp({
+      executable,
+      entryPath,
+      serverArg: NOTEBOOK_MCP_SERVER_ARG,
+      cwd: workspace,
+      env: {
+        ...sharedEnv,
+        OPEN_SCIENCE_NOTEBOOK_RPC_ENDPOINT: 'http://localhost',
+        OPEN_SCIENCE_NOTEBOOK_RPC_SOCKET_PATH: socketPath,
+        OPEN_SCIENCE_NOTEBOOK_RPC_TOKEN: token,
+        OPEN_SCIENCE_NOTEBOOK_PROJECT_NAME: 'installer-smoke-project',
+        OPEN_SCIENCE_NOTEBOOK_SESSION_ID: 'installer-smoke-session',
+        OPEN_SCIENCE_NOTEBOOK_WORKSPACE_CWD: workspace
+      }
+    })
+    const state = await notebookMcp.client.callTool(
+      { name: 'notebook_state', arguments: {} },
+      undefined,
+      { timeout: MCP_REQUEST_TIMEOUT_MS }
+    )
+    assertToolResult('notebook_state', state, 'installer-smoke-session')
+    const shell = await notebookMcp.client.callTool(
+      { name: 'bash_execute', arguments: { command: 'Write-Output windows-rpc-smoke' } },
+      undefined,
+      { timeout: MCP_REQUEST_TIMEOUT_MS }
+    )
+    assertToolResult('bash_execute', shell, RPC_SMOKE_CONTENT.trim())
+
+    artifactMcp = await connectPackagedMcp({
+      executable,
+      entryPath,
+      serverArg: ARTIFACT_MCP_SERVER_ARG,
+      cwd: workspace,
+      env: {
+        ...sharedEnv,
+        OPEN_SCIENCE_ARTIFACT_STORAGE_ROOT: artifactStorage,
+        OPEN_SCIENCE_ARTIFACT_PROJECT_NAME: 'installer-smoke-project',
+        OPEN_SCIENCE_ARTIFACT_SESSION_ID: 'installer-smoke-session',
+        OPEN_SCIENCE_ARTIFACT_CURRENT_RUN_FILE: currentRunFile,
+        OPEN_SCIENCE_ARTIFACT_ALLOWED_IMPORT_ROOTS: JSON.stringify([workspace]),
+        OPEN_SCIENCE_ARTIFACT_RPC_ENDPOINT: 'http://localhost',
+        OPEN_SCIENCE_ARTIFACT_RPC_SOCKET_PATH: socketPath
+      }
+    })
+    const artifact = await artifactMcp.client.callTool(
+      {
+        name: 'write_artifact_file',
+        arguments: {
+          filename: 'windows-rpc-smoke.txt',
+          mimeType: 'text/plain',
+          content: RPC_SMOKE_CONTENT,
+          encoding: 'utf8',
+          producerRunId: 'installer-smoke-shell-run'
+        }
+      },
+      undefined,
+      { timeout: MCP_REQUEST_TIMEOUT_MS }
+    )
+    assertToolResult('write_artifact_file', artifact, 'installer-smoke-version')
+
+    const expectedMethods = ['state', 'executeShell', 'artifactCreateVersion']
+    if (JSON.stringify(methods) !== JSON.stringify(expectedMethods)) {
+      throw new Error(`Unexpected packaged local RPC sequence: ${methods.join(' -> ')}`)
+    }
+  } catch (error) {
+    const stderr = [notebookMcp?.stderr(), artifactMcp?.stderr()].filter(Boolean).join('\n').trim()
+    primaryError = appendMcpStderr(error, () => stderr)
+  }
+  const cleanupResults = await Promise.allSettled([
+    notebookMcp?.client.close(),
+    artifactMcp?.client.close(),
+    server.listening ? closeServer(server) : undefined,
+    rm(root, { force: true, maxRetries: 10, recursive: true, retryDelay: 500 })
+  ])
+  const cleanupFailure = cleanupResults.find((result) => result.status === 'rejected')
+  if (primaryError) throw primaryError
+  if (cleanupFailure?.status === 'rejected') throw cleanupFailure.reason
+  console.log('Packaged Windows MCP local RPC smoke completed successfully.')
+}
+
 const windowsProfileEnvironment = (profileDirectory, baseEnvironment = process.env) => {
   const temporaryDirectory = join(profileDirectory, 'Temp')
   return {
@@ -458,6 +728,7 @@ const installAndProbe = async ({ installer, installDirectory, phase, env, legacy
   await runProcess(installer, ['/S', `/D=${installDirectory}`], { env })
   await assertPackagedResources(installDirectory)
   await runProcess(join(installDirectory, 'resources', 'micromamba.exe'), ['--version'], { env })
+  if (phase === 'current') await runPackagedLocalRpcSmoke({ installDirectory, env })
   return launchAndProbe({
     installDirectory,
     expectedVersion: installerVersion(installer),
@@ -597,6 +868,7 @@ export {
   fetchWithTimeout,
   findSetupInstaller,
   installerVersion,
+  packagedMainEntryPath,
   packagedResourcePaths,
   parsePackagedAppEndpoint,
   readPackagedAppConfigRoot,

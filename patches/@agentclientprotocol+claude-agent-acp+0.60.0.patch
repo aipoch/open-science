@@ -1,20 +1,20 @@
 diff --git a/node_modules/@agentclientprotocol/claude-agent-acp/dist/acp-agent.d.ts b/node_modules/@agentclientprotocol/claude-agent-acp/dist/acp-agent.d.ts
-index f247a7e..1288e59 100644
+index f247a7e..266f90d 100644
 --- a/node_modules/@agentclientprotocol/claude-agent-acp/dist/acp-agent.d.ts
 +++ b/node_modules/@agentclientprotocol/claude-agent-acp/dist/acp-agent.d.ts
 @@ -13,6 +13,7 @@ export interface Logger {
      log: (...args: any[]) => void;
      error: (...args: any[]) => void;
  }
-+export declare function waitForMcpServers(query: Pick<Query, "mcpServerStatus" | "close">, serverNames: string[], timeoutMs?: number): Promise<void>;
++export declare function waitForMcpServers(query: Pick<Query, "mcpServerStatus" | "close">, serverNames: string[], timeoutMs?: number, logger?: Pick<Logger, "error">): Promise<void>;
  type AccumulatedUsage = {
      inputTokens: number;
      outputTokens: number;
 diff --git a/node_modules/@agentclientprotocol/claude-agent-acp/dist/acp-agent.js b/node_modules/@agentclientprotocol/claude-agent-acp/dist/acp-agent.js
-index 361d032..1e98b3f 100644
+index 361d032..69371ea 100644
 --- a/node_modules/@agentclientprotocol/claude-agent-acp/dist/acp-agent.js
 +++ b/node_modules/@agentclientprotocol/claude-agent-acp/dist/acp-agent.js
-@@ -438,6 +438,59 @@ class ClientConnection {
+@@ -438,6 +438,62 @@ class ClientConnection {
          return this.ctx.notify(method, params);
      }
  }
@@ -33,7 +33,7 @@ index 361d032..1e98b3f 100644
 +        reject(error);
 +    });
 +});
-+export async function waitForMcpServers(query, serverNames, timeoutMs = MCP_STARTUP_TIMEOUT_MS) {
++export async function waitForMcpServers(query, serverNames, timeoutMs = MCP_STARTUP_TIMEOUT_MS, logger = console) {
 +    if (serverNames.length === 0) {
 +        return;
 +    }
@@ -42,6 +42,7 @@ index 361d032..1e98b3f 100644
 +    while (pending.size > 0) {
 +        const remainingMs = deadline - Date.now();
 +        if (remainingMs <= 0) {
++            logger.error(`[mcp-readiness] Timed out waiting for MCP servers: ${[...pending].join(", ")}`);
 +            query.close();
 +            throw new Error(`Timed out waiting for MCP servers: ${[...pending].join(", ")}`);
 +        }
@@ -50,6 +51,7 @@ index 361d032..1e98b3f 100644
 +            statuses = await withTimeout(query.mcpServerStatus(), remainingMs, () => new Error(`Timed out waiting for MCP servers: ${[...pending].join(", ")}`));
 +        }
 +        catch (error) {
++            logger.error(`[mcp-readiness] ${error instanceof Error ? error.message : String(error)}`);
 +            query.close();
 +            throw error;
 +        }
@@ -62,6 +64,7 @@ index 361d032..1e98b3f 100644
 +                continue;
 +            }
 +            if (status.status === "failed" || status.status === "needs-auth" || status.status === "disabled") {
++                logger.error(`[mcp-readiness] MCP server ${status.name} is ${status.status}${status.error ? `: ${status.error}` : ""}`);
 +                query.close();
 +                throw new Error(`MCP server ${status.name} is ${status.status}${status.error ? `: ${status.error}` : ""}`);
 +            }
@@ -74,7 +77,7 @@ index 361d032..1e98b3f 100644
  export class ClaudeAcpAgent {
      sessions;
      client;
-@@ -2353,7 +2406,7 @@ export class ClaudeAcpAgent {
+@@ -2353,7 +2409,7 @@ export class ClaudeAcpAgent {
                                      cache_creation_input_tokens: usage.cache_creation_input_tokens ?? prev.cache_creation_input_tokens,
                                  };
                              }
@@ -83,7 +86,7 @@ index 361d032..1e98b3f 100644
                              if (nextUsage !== lastAssistantTotalUsage) {
                                  lastAssistantTotalUsage = nextUsage;
                                  await sendUpdate({
-@@ -2465,7 +2518,7 @@ export class ClaudeAcpAgent {
+@@ -2465,7 +2521,7 @@ export class ClaudeAcpAgent {
                          // aligned with what the user's current selection is producing.
                          if (message.type === "assistant" && message.parent_tool_use_id === null) {
                              lastAssistantUsage = snapshotFromUsage(message.message.usage);
@@ -92,15 +95,15 @@ index 361d032..1e98b3f 100644
                              if (message.message.model && message.message.model !== "<synthetic>") {
                                  lastAssistantModel = message.message.model;
                              }
-@@ -4067,6 +4120,7 @@ export class ClaudeAcpAgent {
+@@ -4067,6 +4123,7 @@ export class ClaudeAcpAgent {
          let initializationResult;
          try {
              initializationResult = await q.initializationResult();
-+            await waitForMcpServers(q, Object.keys(mcpServers));
++            await waitForMcpServers(q, Object.keys(mcpServers), undefined, this.logger);
          }
          catch (error) {
              if (creationOpts.resume &&
-@@ -4282,15 +4336,10 @@ function sessionUsage(session) {
+@@ -4282,15 +4339,10 @@ function sessionUsage(session) {
              session.accumulatedUsage.cachedWriteTokens,
      };
  }
@@ -120,7 +123,7 @@ index 361d032..1e98b3f 100644
  }
  /**
   * Build the `data` payload attached to a `RequestError.internalError` when we
-@@ -4307,7 +4356,7 @@ function errorKindData(errorKind) {
+@@ -4307,7 +4359,7 @@ function errorKindData(errorKind) {
  }
  /** Project a nullable API usage object into our non-null snapshot shape.
   *  Both SDK message_start and assistant message `usage` have `number | null`
