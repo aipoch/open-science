@@ -5544,6 +5544,7 @@ describe('ACP runtime session management', () => {
   })
 
   it('releases a spawned resource superseded immediately before owner attach', async () => {
+    infoLogSpy.mockClear()
     const process = new FakeAgentProcess()
     startFakeAgent(process, [])
     const { lease, release } = createBackendLeaseHarness()
@@ -5572,6 +5573,9 @@ describe('ACP runtime session management', () => {
     expect(process.killed).toBe(true)
     expect(release).toHaveBeenCalledOnce()
     expect(runtime.getSnapshot().sessionIds).toEqual([])
+    expect(
+      infoLogSpy.mock.calls.find(([message]) => message === 'agent process exit')?.[1]
+    ).toMatchObject({ expected: true })
   })
 
   it('drops the process candidate immediately after transfer to the resource owner', async () => {

@@ -3802,11 +3802,16 @@ class AcpRuntime {
   private attachAgentProcessEvents(
     agentProcess: ChildProcessWithoutNullStreams,
     generation: number
-  ): void {
+  ): () => void {
     // Bind the framework this process was spawned under now. During a reconnect the runtime's
     // The current generation view may already name a new backend, so reading it in async handlers would
     // mislabel a late stderr/exit from the old process.
     const framework = this.framework.id
+    let expectedExit = false
+    const disposition = (): ReturnType<AcpConnectionResourceOwner['processEventDisposition']> =>
+      expectedExit
+        ? 'expected'
+        : this.connectionResources.processEventDisposition(agentProcess, generation)
 
     agentProcess.stderr.on('data', (data: Buffer) => {
       const text = data.toString('utf8').trim()
@@ -3822,8 +3827,7 @@ class AcpRuntime {
         })
       }
 
-      if (this.connectionResources.processEventDisposition(agentProcess, generation) !== 'current')
-        return
+      if (disposition() !== 'current') return
 
       if (text) {
         // Attribute stderr to a session only when exactly one prompt is in flight — then it's
@@ -3846,8 +3850,7 @@ class AcpRuntime {
         ...this.diagnosticContext(framework, generation)
       })
 
-      if (this.connectionResources.processEventDisposition(agentProcess, generation) !== 'current')
-        return
+      if (disposition() !== 'current') return
 
       this.snapshotOwner.updateError(errorMessage(error))
       this.pushEvent({
@@ -3860,18 +3863,18 @@ class AcpRuntime {
     })
 
     agentProcess.on('exit', (code, signal) => {
-      const disposition = this.connectionResources.processEventDisposition(agentProcess, generation)
+      const processDisposition = disposition()
       log.info('agent process exit', {
         code,
         signal,
         framework,
         status: this.snapshotOwner.status,
-        expected: disposition === 'expected',
+        expected: processDisposition === 'expected',
         sessionCount: this.activeSessionIds().length,
         pid: agentProcess.pid
       })
 
-      if (disposition !== 'current') return
+      if (processDisposition !== 'current') return
 
       if (this.snapshotOwner.status === 'connected' || this.snapshotOwner.status === 'connecting') {
         this.pushEvent({
@@ -3882,6 +3885,10 @@ class AcpRuntime {
         })
       }
     })
+
+    return () => {
+      expectedExit = true
+    }
   }
 
   // Clears local state after the protocol connection closes unexpectedly.

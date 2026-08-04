@@ -42,7 +42,7 @@ type AcpAgentConnectionHooks = Readonly<{
     process: ChildProcessWithoutNullStreams,
     framework: AgentFramework['id'],
     epoch: number
-  ) => void
+  ) => () => void
   onConnectionClosed: () => void
   reportCleanupFailure: (
     stage: CandidateCleanupStage,
@@ -86,6 +86,7 @@ class AcpAgentConnectionAdapter {
     let connection: ReturnType<AcpAgentConnectionAdapter['createClientConnection']> | undefined
     let bridgeLease: ResponsesBridgeLease
     let backendAttempt: AcpBackendGenerationAttempt | undefined
+    let expectProcessExit: (() => void) | undefined
     let framework: AgentFramework['id'] = 'claude-code'
 
     const reportCleanupFailure = (stage: CandidateCleanupStage, error: unknown): void => {
@@ -102,6 +103,7 @@ class AcpAgentConnectionAdapter {
         reportCleanupFailure('connection', error)
       }
       if (process) {
+        expectProcessExit?.()
         try {
           const result = await terminateProcessTree(process, undefined, {
             error: (message, error) => hooks.reportProcessTreeError(message, error)
@@ -143,7 +145,7 @@ class AcpAgentConnectionAdapter {
         )
       }
       hooks.onBackendPublished(backendAttempt.publish())
-      hooks.attachProcessDiagnostics(process, framework, input.epoch)
+      expectProcessExit = hooks.attachProcessDiagnostics(process, framework, input.epoch)
       connection = this.createClientConnection(process, hooks)
     } catch (error) {
       backendAttempt?.fail()
