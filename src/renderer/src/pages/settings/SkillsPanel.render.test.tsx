@@ -683,7 +683,7 @@ describe('SkillsPanel (sub-views)', () => {
     expect(importedHeading?.className).toContain('border-t')
   })
 
-  it('searches by keyword, then previews a chosen repository without hiding search results', async () => {
+  it('collapses repository results after preview while keeping them available', async () => {
     useSettingsStore.setState({
       scanRepoSkills: vi
         .fn()
@@ -725,6 +725,11 @@ describe('SkillsPanel (sub-views)', () => {
     expect(document.body.textContent).toContain('Repositories (1)')
     expect(document.body.textContent).toContain('hugohe3/ppt-master')
     expect(document.body.textContent).toContain('42')
+    expect(
+      document.body
+        .querySelector<HTMLButtonElement>('[aria-label="Hide repository results"]')
+        ?.getAttribute('aria-expanded')
+    ).toBe('true')
     const previewRepository = document.body.querySelector<HTMLButtonElement>(
       '[aria-label="Preview repository hugohe3/ppt-master"]'
     )
@@ -741,6 +746,25 @@ describe('SkillsPanel (sub-views)', () => {
     expect(document.body.textContent).toContain('Repositories')
     expect(document.body.textContent).toContain('Skills in hugohe3/ppt-master')
     expect(document.body.textContent).toContain('ppt-master')
+    expect(
+      document.body
+        .querySelector<HTMLButtonElement>('[aria-label="Show repository results"]')
+        ?.getAttribute('aria-expanded')
+    ).toBe('false')
+    expect(
+      document.body.querySelector('[aria-label="Preview repository hugohe3/ppt-master"]')
+    ).toBeNull()
+
+    act(() => {
+      document.body
+        .querySelector<HTMLButtonElement>('[aria-label="Show repository results"]')
+        ?.click()
+    })
+    expect(
+      document.body.querySelector<HTMLButtonElement>(
+        '[aria-label="Preview repository hugohe3/ppt-master"]'
+      )?.textContent
+    ).toContain('Previewed')
   })
 
   it('renders GitHub search failures in the Settings danger banner', async () => {

@@ -1,5 +1,5 @@
 import { useRef, useState } from 'react'
-import { AlertTriangle, SearchX, Star } from 'lucide-react'
+import { AlertTriangle, ChevronDown, ChevronUp, SearchX, Star } from 'lucide-react'
 
 import type {
   GitHubRepositorySearchView,
@@ -29,6 +29,7 @@ const SkillImportView = ({ onImported }: SkillImportViewProps): React.JSX.Elemen
   const [busy, setBusy] = useState(false)
   const [message, setMessage] = useState<{ kind: 'error' | 'status'; text: string } | null>(null)
   const [repositories, setRepositories] = useState<GitHubRepositorySearchView[] | null>(null)
+  const [repositoriesExpanded, setRepositoriesExpanded] = useState(true)
   const [scanned, setScanned] = useState<ScannedSkillView[] | null>(null)
   const [scannedRepo, setScannedRepo] = useState<string | null>(null)
   const [selected, setSelected] = useState<Set<string>>(new Set())
@@ -49,12 +50,16 @@ const SkillImportView = ({ onImported }: SkillImportViewProps): React.JSX.Elemen
     setScanned(null)
     setScannedRepo(null)
     setSelected(new Set())
-    if (!options.preserveRepositories) setRepositories(null)
+    if (!options.preserveRepositories) {
+      setRepositories(null)
+      setRepositoriesExpanded(true)
+    }
     try {
       const result = await scanRepoSkills(value)
       if (inputRef.current !== visibleInputAtStart) return
       if (result.repositories !== undefined) {
         setRepositories(result.repositories)
+        setRepositoriesExpanded(true)
         if (result.repositories.length === 0) {
           setMessage({
             kind: 'status',
@@ -66,6 +71,7 @@ const SkillImportView = ({ onImported }: SkillImportViewProps): React.JSX.Elemen
 
       setScanned(result.skills)
       setScannedRepo(options.repositoryName ?? value)
+      if (options.preserveRepositories) setRepositoriesExpanded(false)
       // Pre-select every skill that isn't already imported.
       setSelected(
         new Set(result.skills.filter((skill) => !skill.alreadyImported).map((skill) => skill.url))
@@ -90,6 +96,7 @@ const SkillImportView = ({ onImported }: SkillImportViewProps): React.JSX.Elemen
     candidatePreview.invalidatePreview()
     setMessage(null)
     setRepositories(null)
+    setRepositoriesExpanded(true)
     setScanned(null)
     setScannedRepo(null)
     setSelected(new Set())
@@ -205,57 +212,87 @@ const SkillImportView = ({ onImported }: SkillImportViewProps): React.JSX.Elemen
 
         {repositories ? (
           <div className="mt-5">
-            <h3 className="text-sm font-semibold text-foreground">
-              Repositories ({repositories.length})
-            </h3>
+            <div className="flex items-center justify-between gap-3">
+              <h3 className="text-sm font-semibold text-foreground">
+                Repositories ({repositories.length})
+              </h3>
+              {repositories.length > 0 ? (
+                <Button
+                  type="button"
+                  variant="ghost"
+                  size="sm"
+                  aria-label={`${repositoriesExpanded ? 'Hide' : 'Show'} repository results`}
+                  aria-expanded={repositoriesExpanded}
+                  aria-controls="github-repository-results"
+                  className="gap-1 px-2 text-xs text-muted-foreground [@media(pointer:coarse)]:min-h-11"
+                  onClick={() => setRepositoriesExpanded((expanded) => !expanded)}
+                >
+                  {repositoriesExpanded ? (
+                    <ChevronUp className="size-3.5" aria-hidden="true" />
+                  ) : (
+                    <ChevronDown className="size-3.5" aria-hidden="true" />
+                  )}
+                  {repositoriesExpanded ? 'Hide' : 'Show'}
+                </Button>
+              ) : null}
+            </div>
             {repositories.length > 0 ? (
-              <ul className="mt-2 flex flex-col divide-y divide-border border-y border-border">
-                {repositories.map((repository) => (
-                  <li
-                    key={repository.fullName}
-                    className="flex min-w-0 flex-col gap-2 py-3 hover:bg-muted/40 sm:flex-row sm:items-center"
-                  >
-                    <div className="min-w-0 flex-1 px-1">
-                      <p className="truncate text-sm font-medium text-foreground">
-                        {repository.fullName}
-                      </p>
-                      {repository.description ? (
-                        <p className="mt-0.5 line-clamp-2 text-xs leading-4 text-muted-foreground">
-                          {repository.description}
-                        </p>
-                      ) : null}
-                    </div>
-                    <div className="flex shrink-0 items-center justify-between gap-3 px-1 sm:justify-end">
-                      <span className="inline-flex items-center gap-1 text-xs tabular-nums text-muted-foreground">
-                        <Star className="size-3.5" aria-hidden="true" />
-                        {repository.stars.toLocaleString()}
-                      </span>
-                      <Button
-                        type="button"
-                        variant="outline"
-                        size="sm"
-                        aria-label={`Preview repository ${repository.fullName}`}
-                        disabled={busy}
-                        className="[@media(pointer:coarse)]:min-h-11"
-                        onClick={() =>
-                          void runPreview(repository.fullName, {
-                            preserveRepositories: true,
-                            repositoryName: repository.fullName
-                          })
-                        }
+              <div id="github-repository-results">
+                {repositoriesExpanded ? (
+                  <ul className="mt-2 flex flex-col divide-y divide-border border-y border-border">
+                    {repositories.map((repository) => (
+                      <li
+                        key={repository.fullName}
+                        className="flex min-w-0 flex-col gap-2 py-3 hover:bg-muted/40 sm:flex-row sm:items-center"
                       >
-                        Preview repository
-                      </Button>
-                    </div>
-                  </li>
-                ))}
-              </ul>
-            ) : (
+                        <div className="min-w-0 flex-1 px-1">
+                          <p className="truncate text-sm font-medium text-foreground">
+                            {repository.fullName}
+                          </p>
+                          {repository.description ? (
+                            <p className="mt-0.5 line-clamp-2 text-xs leading-4 text-muted-foreground">
+                              {repository.description}
+                            </p>
+                          ) : null}
+                        </div>
+                        <div className="flex shrink-0 items-center justify-between gap-3 px-1 sm:justify-end">
+                          <span className="inline-flex items-center gap-1 text-xs tabular-nums text-muted-foreground">
+                            <Star className="size-3.5" aria-hidden="true" />
+                            {repository.stars.toLocaleString()}
+                          </span>
+                          <Button
+                            type="button"
+                            variant="outline"
+                            size="sm"
+                            aria-label={`Preview repository ${repository.fullName}`}
+                            aria-pressed={scannedRepo === repository.fullName}
+                            disabled={busy}
+                            className="[@media(pointer:coarse)]:min-h-11"
+                            onClick={() =>
+                              void runPreview(repository.fullName, {
+                                preserveRepositories: true,
+                                repositoryName: repository.fullName
+                              })
+                            }
+                          >
+                            {scannedRepo === repository.fullName
+                              ? scanned && scanned.length > 0
+                                ? 'Previewed'
+                                : 'No skills found'
+                              : 'Preview repository'}
+                          </Button>
+                        </div>
+                      </li>
+                    ))}
+                  </ul>
+                ) : null}
+              </div>
+            ) : repositories.length === 0 ? (
               <div className="mt-2 flex items-center gap-2 py-3 text-xs text-muted-foreground">
                 <SearchX className="size-4 shrink-0" aria-hidden="true" />
                 <p>{message?.kind === 'status' ? message.text : 'No repositories found.'}</p>
               </div>
-            )}
+            ) : null}
           </div>
         ) : null}
 
