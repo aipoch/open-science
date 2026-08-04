@@ -3145,22 +3145,22 @@ describe('SettingsService: official vendors', () => {
       settings: {
         skipWebFetchPreflight: true,
         permissions: { ask: ['WebFetch'] },
-        availableModels: ['sonnet', 'opus', 'haiku'],
+        availableModels: ['deepseek-v4-flash', 'deepseek-v4-pro', 'deepseek-v4-pro[1m]'],
         modelOverrides: {
-          sonnet: 'deepseek-v4-flash',
-          opus: 'deepseek-v4-pro',
-          haiku: 'deepseek-v4-pro[1m]'
+          'deepseek-v4-flash': 'deepseek-v4-flash',
+          'deepseek-v4-pro': 'deepseek-v4-pro',
+          'deepseek-v4-pro[1m]': 'deepseek-v4-pro[1m]'
         }
       }
     })
     await expect(
       readFile(join(getAppClaudeConfigDir(storageRoot), 'settings.json'), 'utf8').then(JSON.parse)
     ).resolves.toMatchObject({
-      availableModels: ['sonnet', 'opus', 'haiku'],
+      availableModels: ['deepseek-v4-flash', 'deepseek-v4-pro', 'deepseek-v4-pro[1m]'],
       modelOverrides: {
-        sonnet: 'deepseek-v4-flash',
-        opus: 'deepseek-v4-pro',
-        haiku: 'deepseek-v4-pro[1m]'
+        'deepseek-v4-flash': 'deepseek-v4-flash',
+        'deepseek-v4-pro': 'deepseek-v4-pro',
+        'deepseek-v4-pro[1m]': 'deepseek-v4-pro[1m]'
       }
     })
     expect(config.contextWindow).toBe(1_000_000)

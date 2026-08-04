@@ -971,6 +971,12 @@ class AcpRuntime {
   }
 
   private canApplyModelChange(target: AgentModelChangeTarget): boolean {
+    const backendCompatible =
+      this.backendId === target.backendId ||
+      (this.framework.id === 'claude-code' &&
+        target.route === 'claude-anthropic' &&
+        target.anthropicBridgeTargetId !== undefined &&
+        this.connectionResources.anthropicBridgeAvailable)
     return (
       !this.connectionResources.isShuttingDown &&
       !this.pendingProviderReconnect &&
@@ -978,13 +984,14 @@ class AcpRuntime {
       this.connection !== undefined &&
       this.activeSessionEntries().length > 0 &&
       this.framework.id === target.frameworkId &&
-      this.backendId === target.backendId &&
+      backendCompatible &&
       this.backend.modelRoute === target.route
     )
   }
 
   private modelChangeMatchesCurrent(target: AgentModelChangeTarget): boolean {
     return (
+      this.backendId === target.backendId &&
       this.backend.context.model === target.model &&
       this.backend.session.model === target.sessionModel &&
       this.backend.context.supportsImageInput === target.supportsImageInput &&
@@ -1064,6 +1071,11 @@ class AcpRuntime {
     }
 
     try {
+      if (target.anthropicBridgeTargetId) {
+        if (!this.connectionResources.setAnthropicBridgeTarget(target.anthropicBridgeTargetId)) {
+          return false
+        }
+      }
       if (target.bridge) {
         const bridgeUpdated = this.connectionResources.setBridgeModelTarget({
           ...target.bridge,
@@ -1136,7 +1148,7 @@ class AcpRuntime {
       for (const [appSessionId, result] of results) {
         this.sessionRegistry
           .lookup(appSessionId)
-          ?.aggregate.updateModel(result.appliedModel, result.configOptions)
+          ?.aggregate.updateModel(result.appliedModel, result.configOptions, target.backendId)
       }
       this.contextUsageTracker.clear()
       for (const appSessionId of results.keys()) this.ensureContextUsageTracking(appSessionId)
@@ -2372,6 +2384,10 @@ class AcpRuntime {
       reportCleanupFailure: (stage, error, framework, epoch) => {
         if (stage === 'bridge-lease') {
           safeLogError('responses bridge lease release failed', errorLogFields(error))
+          return
+        }
+        if (stage === 'anthropic-bridge-lease') {
+          safeLogError('Anthropic bridge lease release failed', errorLogFields(error))
           return
         }
         safeLogError(`unattached ACP ${stage} cleanup failed`, {

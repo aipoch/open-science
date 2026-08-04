@@ -154,6 +154,7 @@ export class AcpBackendGenerationOwner {
     else session.effort = target.reasoningEffort
     this.currentView = Object.freeze({
       ...this.currentView,
+      backendId: target.backendId,
       modelRoute: target.route,
       session: Object.freeze(session),
       context: Object.freeze({

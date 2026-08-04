@@ -16606,6 +16606,65 @@ describe('ACP runtime — model hot switch', () => {
     ])
   })
 
+  it('hot-switches an advertised model across compatible Claude backend identities', async () => {
+    const process = new FakeAgentProcess()
+    const configOptions = [modelOption()]
+    const fakeAgent = startFakeAgent(process, ['s-model'], {
+      configOptions,
+      onSetConfigOption: ({ value }) => {
+        const model = configOptions[0]
+        if (model.type === 'select' && typeof value === 'string') model.currentValue = value
+      }
+    })
+    const spawn = vi.fn(() => asAgentProcess(process))
+    const setTarget = vi.fn(() => true)
+    const runtime = new AcpRuntime({
+      appVersion: '0.1.0',
+      defaultCwd: '/workspace',
+      resolveBackend: () => ({
+        framework: { ...claudeCodeFramework, spawn },
+        backendId: 'claude-code:provider-a',
+        modelRoute: 'claude-anthropic',
+        executablePath: '/bin/claude',
+        env: {},
+        sessionModel: 'model-a',
+        supportsImageInput: false,
+        contextUsageModel: 'model-a',
+        anthropicBridgeLease: {
+          setTarget,
+          release: vi.fn(async () => undefined)
+        }
+      })
+    })
+    await runtime.createSession({ cwd: '/workspace' })
+    fakeAgent.configChanges.length = 0
+
+    await expect(
+      runtime.applyModelChange(
+        modelTarget('model-b', {
+          backendId: 'claude-code:provider-b',
+          anthropicBridgeTargetId: 'provider-b/model-b'
+        })
+      )
+    ).resolves.toBe(true)
+    await expect(
+      runtime.applyModelChange(
+        modelTarget('model-a', {
+          backendId: 'claude-code:provider-a',
+          anthropicBridgeTargetId: 'provider-a/model-a'
+        })
+      )
+    ).resolves.toBe(true)
+
+    expect(fakeAgent.configChanges).toEqual([
+      { sessionId: 's-model', configId: 'model', value: 'model-b' },
+      { sessionId: 's-model', configId: 'model', value: 'model-a' }
+    ])
+    expect(spawn).toHaveBeenCalledOnce()
+    expect(setTarget.mock.calls).toEqual([['provider-b/model-b'], ['provider-a/model-a']])
+    expect(process.killed).toBe(false)
+  })
+
   it('falls back when no primary session can verify that the agent advertises the model', async () => {
     const process = new FakeAgentProcess()
     startFakeAgent(process, [], { configOptions: [modelOption()] })
@@ -16791,6 +16850,76 @@ describe('ACP runtime — model hot switch', () => {
       { sessionId: 's-model', configId: 'model', value: 'model-c' }
     ])
     expect(fakeAgent.prompts.map(({ text }) => text)).toEqual(['old-model turn', 'new-model turn'])
+  })
+
+  it('waits for a generating Claude message before retargeting its upstream provider', async () => {
+    const process = new FakeAgentProcess()
+    const promptStarted = createDeferred()
+    const finishPrompt = createDeferred()
+    const setTarget = vi.fn(() => true)
+    const configOptions = [modelOption()]
+    const fakeAgent = startFakeAgent(process, ['s-provider-switch'], {
+      configOptions,
+      onPrompt: async () => {
+        promptStarted.resolve()
+        await finishPrompt.promise
+        return { stopReason: 'end_turn' }
+      },
+      onSetConfigOption: ({ value }) => {
+        const model = configOptions[0]
+        if (model.type === 'select' && typeof value === 'string') model.currentValue = value
+      }
+    })
+    const spawn = vi.fn(() => asAgentProcess(process))
+    const runtime = new AcpRuntime({
+      appVersion: '0.1.0',
+      defaultCwd: '/workspace',
+      resolveBackend: () => ({
+        framework: { ...claudeCodeFramework, spawn },
+        backendId: 'claude-code:provider-a',
+        modelRoute: 'claude-anthropic',
+        executablePath: '/bin/claude',
+        env: {},
+        sessionModel: 'model-a',
+        supportsImageInput: true,
+        contextUsageModel: 'model-a',
+        anthropicBridgeLease: {
+          setTarget,
+          release: vi.fn(async () => undefined)
+        }
+      })
+    })
+    await runtime.createSession({ cwd: '/workspace' })
+    fakeAgent.configChanges.length = 0
+    const prompt = runtime.sendPrompt({
+      sessionId: 's-provider-switch',
+      text: 'stay on provider a'
+    })
+    await promptStarted.promise
+
+    await runtime.applyModelChange(
+      modelTarget('model-b', {
+        backendId: 'claude-code:provider-b',
+        anthropicBridgeTargetId: 'provider-b/model-b'
+      })
+    )
+
+    expect(setTarget).not.toHaveBeenCalled()
+    expect(fakeAgent.configChanges).toEqual([])
+    expect(process.killed).toBe(false)
+
+    finishPrompt.resolve()
+    await prompt
+    await vi.waitFor(() => {
+      expect(setTarget).toHaveBeenCalledWith('provider-b/model-b')
+      expect(fakeAgent.configChanges).toHaveLength(1)
+    })
+
+    expect(fakeAgent.configChanges).toEqual([
+      { sessionId: 's-provider-switch', configId: 'model', value: 'model-b' }
+    ])
+    expect(spawn).toHaveBeenCalledOnce()
+    expect(process.killed).toBe(false)
   })
 
   it('cancels a queued switch when the user selects the currently applied model again', async () => {

@@ -92,6 +92,9 @@ export type AgentModelChangeTarget = Readonly<{
   reasoningEffort: ResolvedReasoningEffort
   supportsImageInput: boolean
   contextWindow?: number
+  // Opaque, secret-free id for one provider/model already registered in the current Claude
+  // generation's loopback Anthropic bridge. Absent means this target cannot cross a provider env.
+  anthropicBridgeTargetId?: string
   bridge?: Readonly<{
     model: string
     vendorId?: OfficialVendorId
@@ -294,6 +297,13 @@ export type ResolvedAgentBackend = {
     // lease prevents an active-model value from leaking into bridges owned by retiring generations.
     setReasoningEffort?: (effort?: ModelReasoningEffort) => void
     setModelTarget?: (target: ResponsesBridgeModelTarget) => void
+    release: () => Promise<void>
+  }
+  // API-key Claude generations keep their process environment stable by talking to an app-owned
+  // loopback Anthropic bridge. The bridge owns endpoint/token/model routing in memory; live model
+  // targets carry only an opaque id into this lease.
+  anthropicBridgeLease?: {
+    setTarget: (targetId: string) => boolean
     release: () => Promise<void>
   }
 }

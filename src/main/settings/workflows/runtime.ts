@@ -101,11 +101,12 @@ class RuntimeSettingsWorkflows {
   ): Promise<Awaited<ReturnType<RuntimeSettingsWorkflowStore['setActiveProvider']>>> {
     const before = await this.settings.getSettingsView()
     const snapshot = await this.settings.setActiveProvider(request.id, request.model)
-    if (before.activeProviderId !== snapshot.activeProviderId) {
-      this.effects.requestProviderReconnect()
+    if (
+      before.activeProviderId === snapshot.activeProviderId &&
+      before.activeModel === snapshot.activeModel
+    ) {
       return snapshot
     }
-    if (before.activeModel === snapshot.activeModel) return snapshot
 
     const target = await this.settings.resolveActiveModelChangeTarget()
     const appliedLive = target ? await this.effects.applyModelChange(target) : false

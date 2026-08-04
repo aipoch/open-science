@@ -19,6 +19,10 @@ type NativeResponsesProxyFactory = NonNullable<
   AgentBackendResolverOptions['createNativeResponsesProxy']
 >
 type NativeResponsesProxyDouble = ReturnType<NativeResponsesProxyFactory>
+type AnthropicProviderBridgeFactory = NonNullable<
+  AgentBackendResolverOptions['createAnthropicProviderBridge']
+>
+type AnthropicProviderBridgeDouble = ReturnType<AnthropicProviderBridgeFactory>
 type ResolveRuntimeTarget = AgentBackendProviderPort['resolveRuntimeTarget']
 type ResolveRuntimeModelCatalog = AgentBackendProviderPort['resolveRuntimeModelCatalog']
 type TargetOverride = Omit<Partial<ProviderRuntimeTarget>, 'provider'> & {
@@ -106,6 +110,15 @@ const makeNativeResponsesProxyDouble = (
   setModelTarget: vi.fn()
 })
 
+const makeAnthropicProviderBridgeDouble = (): AnthropicProviderBridgeDouble => ({
+  start: vi.fn(async () => ({
+    baseUrl: 'http://127.0.0.1:41003',
+    token: 'anthropic-bridge-token'
+  })),
+  close: vi.fn(async () => undefined),
+  setTarget: vi.fn(() => true)
+})
+
 type HarnessOptions = {
   settings?: StoredSettings
   frameworkOverride?: string
@@ -118,6 +131,7 @@ type HarnessOptions = {
   ) => TargetOverride
   responsesBridgeBuilder?: (index: number) => ResponsesBridgeDouble
   nativeResponsesProxyBuilder?: (index: number) => NativeResponsesProxyDouble
+  anthropicProviderBridgeBuilder?: (index: number) => AnthropicProviderBridgeDouble
   nextGenerationId?: () => string
 }
 
@@ -220,6 +234,14 @@ const makeHarness = (options: HarnessOptions = {}) => {
     nativeResponsesProxies.push(proxy)
     return proxy
   })
+  const anthropicProviderBridges: AnthropicProviderBridgeDouble[] = []
+  const createAnthropicProviderBridge = vi.fn((): AnthropicProviderBridgeDouble => {
+    const bridge =
+      options.anthropicProviderBridgeBuilder?.(anthropicProviderBridges.length) ??
+      makeAnthropicProviderBridgeDouble()
+    anthropicProviderBridges.push(bridge)
+    return bridge
+  })
 
   const resolver = new AgentBackendResolver({
     readSettings,
@@ -231,6 +253,7 @@ const makeHarness = (options: HarnessOptions = {}) => {
     readFrameworkOverride,
     createResponsesBridge,
     createNativeResponsesProxy,
+    createAnthropicProviderBridge,
     ensureCodexSubscriptionHome,
     nextGenerationId
   })
@@ -248,8 +271,10 @@ const makeHarness = (options: HarnessOptions = {}) => {
     connectors,
     createResponsesBridge,
     createNativeResponsesProxy,
+    createAnthropicProviderBridge,
     responsesBridges,
     nativeResponsesProxies,
+    anthropicProviderBridges,
     getSettings: () => currentSettings,
     setSettings: (settings: StoredSettings) => {
       currentSettings = settings
@@ -282,6 +307,7 @@ describe('AgentBackendResolver construction and selection', () => {
     expect(harness.connectors.enabledConnectorIds).not.toHaveBeenCalled()
     expect(harness.createResponsesBridge).not.toHaveBeenCalled()
     expect(harness.createNativeResponsesProxy).not.toHaveBeenCalled()
+    expect(harness.createAnthropicProviderBridge).not.toHaveBeenCalled()
     expect(harness.ensureCodexSubscriptionHome).not.toHaveBeenCalled()
     expect(harness.nextGenerationId).not.toHaveBeenCalled()
     expectRuntimeNotStarted(harness.runtime)
@@ -340,24 +366,91 @@ describe('AgentBackendResolver configured and explicit targets', () => {
     const modelConfig = (backend.sessionOptions as { settings?: unknown })?.settings
 
     expect(modelConfig).toMatchObject({
-      availableModels: ['sonnet', 'opus'],
+      availableModels: ['third-party/model-a', 'third-party/model-b'],
       modelOverrides: {
-        sonnet: 'third-party/model-a',
-        opus: 'third-party/model-b'
+        'third-party/model-a': 'third-party/model-a',
+        'third-party/model-b': 'third-party/model-b'
       }
     })
     expect(harness.runtime.provisionClaudeRuntimeConfig).toHaveBeenCalledWith(
       harness.getSettings(),
       new Set(),
       {
-        availableModels: ['sonnet', 'opus'],
+        availableModels: ['third-party/model-a', 'third-party/model-b'],
         modelOverrides: {
-          sonnet: 'third-party/model-a',
-          opus: 'third-party/model-b'
+          'third-party/model-a': 'third-party/model-a',
+          'third-party/model-b': 'third-party/model-b'
         }
       }
     )
     expect(JSON.stringify(modelConfig)).not.toContain('plain:key-a')
+  })
+
+  it('routes configured Claude API providers through one retargetable loopback generation', async () => {
+    const deepseek = {
+      ...makeStoredProvider('deepseek', 'deepseek-v4-pro'),
+      baseUrl: 'https://api.deepseek.example'
+    }
+    const kimi = {
+      ...makeStoredProvider('kimi', 'kimi-k3'),
+      baseUrl: 'https://api.kimi.example'
+    }
+    const harness = makeHarness({
+      settings: makeSettings({
+        providers: [deepseek, kimi],
+        activeProviderId: deepseek.id,
+        activeModel: deepseek.model,
+        agentFrameworkId: 'claude-code'
+      }),
+      targetOverride: (_provider, _selection, frameworkId) => ({
+        apiEndpoints: frameworkId === 'claude-code' ? ['anthropic'] : ['openai'],
+        provider: { apiEndpoints: ['anthropic'] }
+      })
+    })
+
+    const backend = await harness.resolver.resolveActiveBackend()
+
+    expect(harness.createAnthropicProviderBridge).toHaveBeenCalledWith(
+      [
+        {
+          id: JSON.stringify(['deepseek', 'deepseek-v4-pro']),
+          baseUrl: 'https://api.deepseek.example',
+          key: 'plain:deepseek-key-ref',
+          model: 'deepseek-v4-pro'
+        },
+        {
+          id: JSON.stringify(['kimi', 'kimi-k3']),
+          baseUrl: 'https://api.kimi.example',
+          key: 'plain:kimi-key-ref',
+          model: 'kimi-k3'
+        }
+      ],
+      JSON.stringify(['deepseek', 'deepseek-v4-pro'])
+    )
+    expect(backend.env).toMatchObject({
+      ANTHROPIC_BASE_URL: 'http://127.0.0.1:41003',
+      ANTHROPIC_AUTH_TOKEN: 'anthropic-bridge-token'
+    })
+    expect(JSON.stringify(backend)).not.toContain('plain:deepseek-key-ref')
+    expect(JSON.stringify(backend)).not.toContain('plain:kimi-key-ref')
+
+    harness.setSettings({
+      ...harness.getSettings(),
+      activeProviderId: kimi.id,
+      activeModel: kimi.model
+    })
+    await expect(harness.resolver.resolveActiveModelChangeTarget()).resolves.toMatchObject({
+      backendId: 'claude-code:kimi',
+      model: 'kimi-k3',
+      anthropicBridgeTargetId: JSON.stringify(['kimi', 'kimi-k3'])
+    })
+
+    backend.anthropicBridgeLease?.setTarget(JSON.stringify(['kimi', 'kimi-k3']))
+    expect(harness.anthropicProviderBridges[0].setTarget).toHaveBeenCalledWith(
+      JSON.stringify(['kimi', 'kimi-k3'])
+    )
+    await backend.anthropicBridgeLease?.release()
+    expect(harness.anthropicProviderBridges[0].close).toHaveBeenCalledOnce()
   })
 
   it('resolves a secret-free live model target without starting runtime resources', async () => {

@@ -258,6 +258,32 @@ describe('AcpConnectionResourceOwner', () => {
     expect(release).toHaveBeenCalledOnce()
   })
 
+  it('retargets and releases the generation-scoped Anthropic bridge', async () => {
+    const owner = new AcpConnectionResourceOwner()
+    const setTarget = vi.fn(() => true)
+    const release = vi.fn(async () => undefined)
+    await owner.connect(async (attempt) => {
+      attempt.attach({
+        process: process('anthropic-bridge'),
+        connection: { close: vi.fn() } as unknown as ClientConnection,
+        framework: 'claude-code',
+        bridgeLease: undefined,
+        anthropicBridgeLease: { setTarget, release }
+      })
+      return attempt.publish({ close: true, delete: false, resume: true })
+    })
+
+    expect(owner.anthropicBridgeAvailable).toBe(true)
+    expect(owner.setAnthropicBridgeTarget('kimi/kimi-k3')).toBe(true)
+    expect(setTarget).toHaveBeenCalledWith('kimi/kimi-k3')
+
+    const teardownEpoch = owner.supersede()
+    await owner.teardown(teardownEpoch, vi.fn())
+
+    expect(owner.anthropicBridgeAvailable).toBe(false)
+    expect(release).toHaveBeenCalledOnce()
+  })
+
   it('keeps synchronous shutdown terminal when close and kill both throw', async () => {
     const owner = new AcpConnectionResourceOwner()
     const close = vi.fn(() => {

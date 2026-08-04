@@ -6,6 +6,7 @@ import { createLogger, errorLogFields } from '../logger'
 import { terminateProcessTree } from '../process-tree'
 
 type ResponsesBridgeLease = ResolvedAgentBackend['responsesBridgeLease']
+type AnthropicBridgeLease = ResolvedAgentBackend['anthropicBridgeLease']
 type CleanupFailure = (stage: 'connection' | 'agent-process', error: unknown) => void
 
 const log = createLogger('acp')
@@ -28,6 +29,7 @@ export type AcpAttachedConnectionResource = {
   connection: ClientConnection
   framework: AgentFramework['id']
   bridgeLease: ResponsesBridgeLease
+  anthropicBridgeLease?: AnthropicBridgeLease
 }
 
 export type AcpConnectionResourceReadyHandle = Readonly<{
@@ -50,6 +52,7 @@ export type AcpUnattachedConnectionResource = Readonly<{
   process?: ChildProcessWithoutNullStreams
   connection?: ClientConnection
   bridgeLease?: ResponsesBridgeLease
+  anthropicBridgeLease?: AnthropicBridgeLease
 }>
 
 export type AcpConnectionShutdownHandle = Readonly<{
@@ -99,6 +102,10 @@ export class AcpConnectionResourceOwner {
 
   get bridgeSkillsAvailable(): boolean {
     return Boolean(this.currentResource()?.bridgeLease?.selectSkills)
+  }
+
+  get anthropicBridgeAvailable(): boolean {
+    return Boolean(this.currentResource()?.anthropicBridgeLease)
   }
 
   get isShuttingDown(): boolean {
@@ -169,6 +176,7 @@ export class AcpConnectionResourceOwner {
       this.reportCleanupFailure(onFailure, 'agent-process', error)
     }
     await this.releaseBridgeLease(resource.bridgeLease)
+    await this.releaseAnthropicBridgeLease(resource.anthropicBridgeLease)
   }
 
   async cleanupUnattached(
@@ -191,6 +199,7 @@ export class AcpConnectionResourceOwner {
       }
     }
     await this.releaseBridgeLease(resource.bridgeLease)
+    await this.releaseAnthropicBridgeLease(resource.anthropicBridgeLease)
   }
 
   cleanupUnexpectedClose(expectedEpoch: number): void {
@@ -201,6 +210,7 @@ export class AcpConnectionResourceOwner {
       safeLogCleanupError('agent process cleanup after unexpected close failed', error)
     })
     void this.releaseBridgeLease(resource.bridgeLease)
+    void this.releaseAnthropicBridgeLease(resource.anthropicBridgeLease)
   }
 
   shutdownSynchronously(onSuperseded: () => void): void {
@@ -224,6 +234,7 @@ export class AcpConnectionResourceOwner {
         }
       }
       void this.releaseBridgeLease(resource?.bridgeLease)
+      void this.releaseAnthropicBridgeLease(resource?.anthropicBridgeLease)
       void this.closeMcp()
     }
   }
@@ -302,6 +313,10 @@ export class AcpConnectionResourceOwner {
     return true
   }
 
+  setAnthropicBridgeTarget(targetId: string): boolean {
+    return this.currentResource()?.anthropicBridgeLease?.setTarget(targetId) ?? false
+  }
+
   async selectBridgeSkills(
     text: Parameters<NonNullable<ResponsesBridgeLease>['selectSkills']>[0],
     catalog: Parameters<NonNullable<ResponsesBridgeLease>['selectSkills']>[1],
@@ -323,6 +338,16 @@ export class AcpConnectionResourceOwner {
       await lease.release()
     } catch (error) {
       safeLogCleanupError('responses bridge lease release failed', error)
+    }
+  }
+
+  private async releaseAnthropicBridgeLease(lease: AnthropicBridgeLease): Promise<void> {
+    if (!lease || this.releasedBridgeLeases.has(lease)) return
+    this.releasedBridgeLeases.add(lease)
+    try {
+      await lease.release()
+    } catch (error) {
+      safeLogCleanupError('Anthropic bridge lease release failed', error)
     }
   }
 

@@ -22,7 +22,12 @@ import type { AcpConnectionResourceAttempt } from './connection-resource-owner'
 import { readWorkspaceTextFile, writeWorkspaceTextFile } from './filesystem'
 
 type ResponsesBridgeLease = ResolvedAgentBackend['responsesBridgeLease']
-type CandidateCleanupStage = 'connection' | 'agent-process' | 'bridge-lease'
+type AnthropicBridgeLease = ResolvedAgentBackend['anthropicBridgeLease']
+type CandidateCleanupStage =
+  | 'connection'
+  | 'agent-process'
+  | 'bridge-lease'
+  | 'anthropic-bridge-lease'
 type AcpProcessEventContext = Readonly<{
   process: ChildProcessWithoutNullStreams
   framework: AgentFramework['id']
@@ -97,6 +102,7 @@ class AcpAgentConnectionAdapter {
     let process: ChildProcessWithoutNullStreams | undefined
     let connection: ReturnType<AcpAgentConnectionAdapter['createClientConnection']> | undefined
     let bridgeLease: ResponsesBridgeLease
+    let anthropicBridgeLease: AnthropicBridgeLease
     let backendAttempt: AcpBackendGenerationAttempt | undefined
     let framework: AgentFramework['id'] = 'claude-code'
 
@@ -131,12 +137,20 @@ class AcpAgentConnectionAdapter {
           reportCleanupFailure('bridge-lease', error)
         }
       }
+      if (anthropicBridgeLease) {
+        try {
+          await anthropicBridgeLease.release()
+        } catch (error) {
+          reportCleanupFailure('anthropic-bridge-lease', error)
+        }
+      }
     }
 
     try {
       const backend = await input.resolveBackend()
       framework = backend.framework.id
       bridgeLease = backend.responsesBridgeLease
+      anthropicBridgeLease = backend.anthropicBridgeLease
       backendAttempt = input.prepareBackend(backend)
       hooks.onBackendResolved(framework)
       process = input.spawnAgent
@@ -206,7 +220,8 @@ class AcpAgentConnectionAdapter {
           process: openedProcess,
           connection: openedConnection,
           framework,
-          bridgeLease
+          bridgeLease,
+          anthropicBridgeLease
         })
         state = 'transferred'
         openedConnection.closed.then(() => {

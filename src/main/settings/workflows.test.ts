@@ -237,6 +237,46 @@ describe('SettingsWorkflows runtime effects', () => {
     expect(requestProviderReconnect).not.toHaveBeenCalled()
   })
 
+  it('attempts a live model switch before reconnecting across providers', async () => {
+    const calls: string[] = []
+    const { store, capability } = fakeStore()
+    const target: AgentModelChangeTarget = {
+      frameworkId: 'claude-code',
+      backendId: 'claude-code:kimi',
+      route: 'claude-anthropic',
+      model: 'kimi-k3',
+      sessionModel: 'kimi-k3',
+      sessionModelRequired: false,
+      supportsImageInput: true,
+      reasoningEffort: 'default'
+    }
+    store.getSettingsView.mockResolvedValue(
+      snapshot({ activeProviderId: 'deepseek', activeModel: 'deepseek-v4-pro' })
+    )
+    store.setActiveProvider.mockImplementation(async () => {
+      calls.push('persist')
+      return snapshot({ activeProviderId: 'kimi', activeModel: 'kimi-k3' })
+    })
+    store.resolveActiveModelChangeTarget.mockImplementation(async () => {
+      calls.push('resolve')
+      return target
+    })
+    const applyModelChange = vi.fn(async () => {
+      calls.push('apply')
+      return true
+    })
+    const requestProviderReconnect = vi.fn(() => calls.push('reconnect'))
+
+    await createSettingsWorkflows(
+      capability,
+      testEffects({ applyModelChange, requestProviderReconnect })
+    ).runtime.setActiveProvider({ id: 'kimi', model: 'kimi-k3' })
+
+    expect(calls).toEqual(['persist', 'resolve', 'apply'])
+    expect(applyModelChange).toHaveBeenCalledWith(target)
+    expect(requestProviderReconnect).not.toHaveBeenCalled()
+  })
+
   it('falls back to reconnect when the active generation cannot switch models live', async () => {
     const { store, capability } = fakeStore()
     store.getSettingsView.mockResolvedValue(

@@ -46,8 +46,12 @@ import {
   REQUEST_SKILL_IMPORT_TOOL_NAME,
   SKILL_IMPORT_MCP_SERVER_NAME
 } from '../../shared/skill-import'
-import { openAiCompletionsBase } from './base-url'
+import { normalizeAnthropicBaseUrl, openAiCompletionsBase } from './base-url'
 import { buildProviderEnv } from './provider-env'
+import {
+  AnthropicProviderBridge,
+  type AnthropicProviderBridgeTarget
+} from './anthropic-provider-bridge'
 import {
   ResponsesBridge,
   type ResponsesBridgeConnection,
@@ -120,6 +124,7 @@ type ResponsesBridgePort = BridgeBasePort &
   Pick<ResponsesBridge, 'setReasoningEffort' | 'setModelTarget'>
 type NativeResponsesProxyPort = BridgeBasePort &
   Pick<NativeResponsesCompatibilityProxy, 'setModelTarget'>
+type AnthropicProviderBridgePort = Pick<AnthropicProviderBridge, 'start' | 'close' | 'setTarget'>
 
 type NativeResponsesProxyTarget = {
   baseUrl: string
@@ -163,7 +168,13 @@ const resolvedModelEffort = (
     ? DEFAULT_REASONING_EFFORT
     : resolveReasoningEffortValue(intent, target.reasoningEffortProfile)
 
-const CLAUDE_MODEL_OVERRIDE_ALIASES = ['sonnet', 'opus', 'haiku'] as const
+const claudeBridgeTargetId = (providerId: string, model: string): string =>
+  JSON.stringify([providerId, model])
+
+type ClaudeBridgeCatalog = Readonly<{
+  targets: readonly AnthropicProviderBridgeTarget[]
+  initialTargetId: string
+}>
 
 export type AgentBackendResolverOptions = {
   readSettings: () => Promise<StoredSettings>
@@ -175,6 +186,10 @@ export type AgentBackendResolverOptions = {
   readFrameworkOverride?: () => string | undefined
   createResponsesBridge?: (target: ResponsesBridgeTarget) => ResponsesBridgePort
   createNativeResponsesProxy?: (target: NativeResponsesProxyTarget) => NativeResponsesProxyPort
+  createAnthropicProviderBridge?: (
+    targets: readonly AnthropicProviderBridgeTarget[],
+    initialTargetId: string
+  ) => AnthropicProviderBridgePort
   ensureCodexSubscriptionHome?: () => Promise<void>
   nextGenerationId?: () => string
 }
@@ -242,6 +257,10 @@ export class AgentBackendResolver {
   private readonly createNativeResponsesProxy: (
     target: NativeResponsesProxyTarget
   ) => NativeResponsesProxyPort
+  private readonly createAnthropicProviderBridge: (
+    targets: readonly AnthropicProviderBridgeTarget[],
+    initialTargetId: string
+  ) => AnthropicProviderBridgePort
   private readonly ensureCodexSubscriptionHome: () => Promise<void>
   private readonly nextGenerationId: () => string
   private readonly responsesBridges = new Map<string, ResponsesBridgeEntry>()
@@ -264,6 +283,9 @@ export class AgentBackendResolver {
     this.createNativeResponsesProxy =
       options.createNativeResponsesProxy ??
       ((target) => new NativeResponsesCompatibilityProxy(target))
+    this.createAnthropicProviderBridge =
+      options.createAnthropicProviderBridge ??
+      ((targets, initialTargetId) => new AnthropicProviderBridge(targets, initialTargetId))
     this.ensureCodexSubscriptionHome =
       options.ensureCodexSubscriptionHome ??
       (() => ensureCodexAuthHome('isolated', this.storageRoot))
@@ -338,6 +360,9 @@ export class AgentBackendResolver {
         settings.reasoningEffort ?? DEFAULT_REASONING_EFFORT,
         target
       ),
+      ...(frameworkId === 'claude-code' && target.provider.type === 'custom'
+        ? { anthropicBridgeTargetId: claudeBridgeTargetId(target.providerId, model) }
+        : {}),
       ...(target.provider.contextWindow ? { contextWindow: target.provider.contextWindow } : {}),
       ...(route === 'codex-bridge' || route === 'codex-responses-compatibility'
         ? {
@@ -466,18 +491,49 @@ export class AgentBackendResolver {
     if (framework.id === 'claude-code') {
       const { envOverrides, executablePath, sessionOptions, contextWindow } =
         await this.resolveClaudeSpawnConfig(settings, target, forcedSkillIds)
-      return {
-        framework,
-        backendId: `${framework.id}:${target.providerId}`,
-        modelRoute,
-        executablePath,
-        env: envOverrides,
-        sessionOptions,
-        sessionEffort,
-        contextWindow,
-        ...(target.provider.supportsImageInput ? { supportsImageInput: true } : {}),
-        contextUsageModel: target.effectiveModel,
-        ...(connectorInstructions ? { systemPromptAppends: [connectorInstructions] } : {})
+      const bridgeCatalog = this.resolveClaudeBridgeCatalog(settings, target)
+      let bridge: AnthropicProviderBridgePort | undefined
+      try {
+        const bridgeConnection = bridgeCatalog
+          ? await (bridge = this.createAnthropicProviderBridge(
+              bridgeCatalog.targets,
+              bridgeCatalog.initialTargetId
+            )).start()
+          : undefined
+        const startedBridge = bridge
+        const bridgeLease = startedBridge
+          ? {
+              setTarget: (targetId: string) => startedBridge.setTarget(targetId),
+              release: () => startedBridge.close()
+            }
+          : undefined
+        return {
+          framework,
+          backendId: `${framework.id}:${target.providerId}`,
+          modelRoute,
+          executablePath,
+          env: {
+            ...envOverrides,
+            ...(bridgeConnection
+              ? {
+                  ANTHROPIC_BASE_URL: bridgeConnection.baseUrl,
+                  ANTHROPIC_AUTH_TOKEN: bridgeConnection.token,
+                  ANTHROPIC_API_KEY: bridgeConnection.token,
+                  ...loopbackProxyBypassEnvironment(process.env)
+                }
+              : {})
+          },
+          sessionOptions,
+          sessionEffort,
+          contextWindow,
+          ...(target.provider.supportsImageInput ? { supportsImageInput: true } : {}),
+          contextUsageModel: target.effectiveModel,
+          ...(connectorInstructions ? { systemPromptAppends: [connectorInstructions] } : {}),
+          ...(bridgeLease ? { anthropicBridgeLease: bridgeLease } : {})
+        }
+      } catch (error) {
+        await bridge?.close().catch(() => undefined)
+        throw error
       }
     }
 
@@ -677,36 +733,96 @@ export class AgentBackendResolver {
     settings: StoredSettings,
     target: ProviderRuntimeTarget
   ): ClaudeRuntimeModelConfig | undefined {
-    // Subscription and Anthropic-native sessions already get an authoritative SDK catalog. The
-    // override lanes are needed only for third-party Anthropic-compatible model ids, which Claude's
-    // SDK otherwise advertises but rejects when setModel receives an unregistered opaque id.
-    if (
-      target.providerType === 'claude-shared' ||
-      target.providerType === 'claude-isolated' ||
-      target.provider.vendorId === 'anthropic'
-    ) {
-      return undefined
-    }
-    const storedProvider = settings.providers.find((provider) => provider.id === target.providerId)
-    if (!storedProvider || storedProvider.type !== 'official') return undefined
-
-    const framework = getAgentFramework('claude-code')
-    const models = [
-      target.effectiveModel,
-      ...this.providers
-        .resolveRuntimeModelCatalog(storedProvider, framework)
-        .filter((candidate) => candidate.frameworkCompatible)
-        .map((candidate) => candidate.effectiveModel)
+    if (target.provider.type !== 'custom') return undefined
+    const registered = [
+      ...new Set(
+        this.resolveClaudeApiTargets(settings, target).map(
+          (candidate) => candidate.effectiveModel ?? candidate.provider.model
+        )
+      )
     ].filter((model): model is string => Boolean(model))
-    const registered = [...new Set(models)].slice(0, CLAUDE_MODEL_OVERRIDE_ALIASES.length)
     if (registered.length < 2) return undefined
 
-    const availableModels = CLAUDE_MODEL_OVERRIDE_ALIASES.slice(0, registered.length)
     return Object.freeze({
-      availableModels: Object.freeze([...availableModels]),
+      availableModels: Object.freeze([...registered]),
       modelOverrides: Object.freeze(
-        Object.fromEntries(availableModels.map((alias, index) => [alias, registered[index]]))
+        // Identity overrides deliberately register opaque third-party ids with Claude's SDK. A real
+        // adapter spike verifies that this has no three-alias ceiling and setModel accepts every row.
+        Object.fromEntries(registered.map((model) => [model, model]))
       )
+    })
+  }
+
+  private resolveClaudeBridgeCatalog(
+    settings: StoredSettings,
+    target: ProviderRuntimeTarget
+  ): ClaudeBridgeCatalog | undefined {
+    if (target.provider.type !== 'custom') return undefined
+    const apiTargets = this.resolveClaudeApiTargets(settings, target)
+    if (new Set(apiTargets.map((candidate) => candidate.providerId)).size < 2) return undefined
+    const targets = apiTargets.flatMap((candidate): AnthropicProviderBridgeTarget[] => {
+      const model = candidate.effectiveModel ?? candidate.provider.model
+      const baseUrl = normalizeAnthropicBaseUrl(candidate.provider.baseUrl ?? '')
+      if (!model || !baseUrl) return []
+      return [
+        Object.freeze({
+          id: claudeBridgeTargetId(candidate.providerId, model),
+          baseUrl,
+          ...(candidate.provider.key ? { key: candidate.provider.key } : {}),
+          model
+        })
+      ]
+    })
+    const initialModel = target.effectiveModel ?? target.provider.model
+    if (!initialModel) return undefined
+    const initialTargetId = claudeBridgeTargetId(target.providerId, initialModel)
+    if (!targets.some((candidate) => candidate.id === initialTargetId)) return undefined
+
+    return Object.freeze({ targets: Object.freeze(targets), initialTargetId })
+  }
+
+  private resolveClaudeApiTargets(
+    settings: StoredSettings,
+    activeTarget: ProviderRuntimeTarget
+  ): ProviderRuntimeTarget[] {
+    const framework = getAgentFramework('claude-code')
+    const candidates: ProviderRuntimeTarget[] = [activeTarget]
+
+    for (const storedProvider of settings.providers) {
+      try {
+        const configured =
+          storedProvider.id === activeTarget.providerId
+            ? activeTarget
+            : this.providers.resolveRuntimeTarget(
+                storedProvider,
+                { kind: 'configured', requestedModel: storedProvider.model },
+                framework
+              )
+        candidates.push(configured)
+        candidates.push(...this.providers.resolveRuntimeModelCatalog(storedProvider, framework))
+      } catch {
+        // Another configured provider may have stale/missing credentials. It must not prevent the
+        // active backend from starting; selecting it later falls back to reconnect and validation.
+      }
+    }
+
+    const seen = new Set<string>()
+    return candidates.filter((candidate) => {
+      const model = candidate.effectiveModel ?? candidate.provider.model
+      if (
+        !candidate.frameworkCompatible ||
+        candidate.provider.type !== 'custom' ||
+        !candidate.apiEndpoints.includes('anthropic') ||
+        !model ||
+        !candidate.provider.baseUrl ||
+        !candidate.provider.key
+      ) {
+        return false
+      }
+      const id = claudeBridgeTargetId(candidate.providerId, model)
+      if (seen.has(id)) return false
+      seen.add(id)
+      return true
     })
   }
 
