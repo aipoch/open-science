@@ -575,6 +575,61 @@ describe('single-round auditor correction', () => {
     expect(msg).toContain('[fail]')
   })
 
+  it('marks checks unaddressed when correction provenance is incomplete', async () => {
+    const process = new FakeAgentProcess()
+    startFakeAgent(process, {
+      reviewerSessionId: 'reviewer-session-1',
+      mainSessionId: 'main-session-1',
+      simulateFindingsViaHttp: true,
+      checksToSubmit: [
+        {
+          status: 'fail',
+          claim: 'Test claim',
+          evidence: 'Test evidence',
+          locator: { blockRef: { blockIndex: 0 }, contentHash: 'hash1' }
+        }
+      ]
+    })
+
+    const runtime = new AcpRuntime({
+      appVersion: '0.1.0',
+      defaultCwd: '/workspace',
+      spawnAgent: () => asAgentProcess(process)
+    })
+    await runtime.createSession({ cwd: '/workspace' })
+
+    const client = createProjectDbClient(temporaryRoot!)
+    await ensureProjectSchema(client)
+    const repository = new ReviewRepository(() => Promise.resolve(client))
+    const session = makeSession()
+    session.conversationGraph = createLinearConversationGraph({
+      sessionId: session.id,
+      messages: session.messages,
+      frameworkId: 'claude-code',
+      createdAt: session.createdAt,
+      updatedAt: session.updatedAt
+    })
+    session.conversationGraph.runtimeSegments = []
+    const correctionPrompts: string[] = []
+
+    const review = await runReview({
+      sessionId: session.id,
+      turnMessageId: 'msg-2',
+      projectId: session.projectId,
+      getSession: () => session,
+      reviewRepository: repository,
+      acpRuntime: runtime,
+      artifactStorageRoot: temporaryRoot!,
+      mainSessionId: 'main-session-1',
+      onCorrectionPrompt: (text) => correctionPrompts.push(text)
+    })
+
+    expect(review.checks[0]?.resolution).toBe('unaddressed')
+    expect(correctionPrompts).toHaveLength(0)
+
+    await client.$disconnect()
+  })
+
   it('error in correction sendPrompt does not spin into a re-review loop', async () => {
     const process = new FakeAgentProcess()
     const checksToSubmit = [

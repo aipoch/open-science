@@ -580,25 +580,34 @@ const runFixLoop = async (options: FixLoopOptions): Promise<void> => {
     }
     const messagesBefore = sessionBefore.messages
     const messageIdsBefore = new Set(messagesBefore.map((message) => message.id))
-    const provenanceContext = getActiveConversationContext(
-      materializeSessionConversationGraph(sessionBefore).conversationGraph!,
-      `prompt-${randomUUID()}`
-    )
 
     // Step B: inject [Auditor] with the currently-open warn/fail checks.
     let correctionFailed = false
-    await injectAuditorMessage({
-      sessionId,
-      mainSessionId,
-      findings: openChecks,
-      acpRuntime,
-      provenanceContext,
-      onCorrectionPrompt,
-      onCorrectionFailed: () => {
-        correctionFailed = true
-        onCorrectionFailed?.()
-      }
-    })
+    try {
+      const provenanceContext = getActiveConversationContext(
+        materializeSessionConversationGraph(sessionBefore).conversationGraph!,
+        `prompt-${randomUUID()}`
+      )
+      await injectAuditorMessage({
+        sessionId,
+        mainSessionId,
+        findings: openChecks,
+        acpRuntime,
+        provenanceContext,
+        onCorrectionPrompt,
+        onCorrectionFailed: () => {
+          correctionFailed = true
+          onCorrectionFailed?.()
+        }
+      })
+    } catch (error) {
+      correctionFailed = true
+      log.warn('fix loop: failed to derive correction provenance', {
+        sessionId,
+        round,
+        error: error instanceof Error ? error.message : String(error)
+      })
+    }
 
     // Error handling: a failed correction counts as a round (prevents infinite loop) but we
     // cannot re-review (there's no correction turn). Mark remaining as unaddressed and stop.
