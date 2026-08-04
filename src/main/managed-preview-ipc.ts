@@ -178,9 +178,10 @@ const registerManagedPreviewIpcHandlers = (
 
 const installManagedPreviewElectronAdapter = (
   resources: ManagedPreviewResources,
-  targetProtocol?: PreviewProtocolRegistrar
+  targetProtocol?: PreviewProtocolRegistrar,
+  injectedOwners?: ManagedPreviewOwnerRegistry
 ): (() => void) => {
-  const cleanupOwners = registerManagedPreviewIpcHandlers(resources)
+  const cleanupOwners = registerManagedPreviewIpcHandlers(resources, injectedOwners)
   try {
     const unregisterProtocol = registerManagedPreviewProtocol(resources, targetProtocol)
     return () => {

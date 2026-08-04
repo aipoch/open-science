@@ -75,10 +75,9 @@ const createProjectHandlers = (
 const registerProjectIpcHandlers = (
   repository: ProjectRepository,
   previewRepository: PreviewStateRepository,
-  deletionCoordinator: ProjectDeleteHandler
+  deletionCoordinator: ProjectDeleteHandler,
+  handlers: ProjectHandlers = createProjectHandlers(repository, deletionCoordinator)
 ): void => {
-  const handlers = createProjectHandlers(repository, deletionCoordinator)
-
   ipcMainHandle('projects:list', () => handlers.list())
   ipcMainHandle('projects:get', (_event, id: string) => handlers.get(id))
   ipcMainHandle('projects:create', async (_event, request: CreateProjectRequest) => {

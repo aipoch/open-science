@@ -129,10 +129,12 @@ const createDefaultReviewRepository = (): ReviewRepository =>
 // Registers renderer-callable persistence commands without coupling them to ACP runtime IPC.
 const registerSessionPersistenceIpcHandlers = (
   repository: SessionPersistenceBackend,
-  reviewRepository = createDefaultReviewRepository()
+  reviewRepository = createDefaultReviewRepository(),
+  handlers: SessionPersistenceHandlers = createSessionPersistenceHandlers(
+    repository,
+    reviewRepository
+  )
 ): void => {
-  const handlers = createSessionPersistenceHandlers(repository, reviewRepository)
-
   // Keep persistence IPC separate from ACP runtime commands; it owns durable UI state only.
   // loadAll can replay pending deletions and every mutation can materialize provenance/upload bytes.
   // Hold the shared data-root lease at the IPC boundary so migration drains the complete operation.

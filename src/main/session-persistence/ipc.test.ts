@@ -4,19 +4,26 @@ import type { PersistedChatSession } from '../../shared/session-persistence'
 import type { Logger } from '../logger'
 import type { ReviewRepository } from '../reviewer/repository'
 
-const { broadcastLifecycleEvent, getLifecycleClientId, ipcHandlers } = vi.hoisted(() => ({
-  broadcastLifecycleEvent: vi.fn(),
-  getLifecycleClientId: vi.fn(
-    (event: { sender: { id: number; lifecycleClientId?: string } }) =>
-      event.sender.lifecycleClientId ?? `electron:${event.sender.id}`
-  ),
-  ipcHandlers: new Map<string, (...args: unknown[]) => unknown>()
-}))
+const { broadcastLifecycleEvent, getLifecycleClientId, ipcHandlers, registrationFailure } =
+  vi.hoisted(() => ({
+    broadcastLifecycleEvent: vi.fn(),
+    getLifecycleClientId: vi.fn(
+      (event: { sender: { id: number; lifecycleClientId?: string } }) =>
+        event.sender.lifecycleClientId ?? `electron:${event.sender.id}`
+    ),
+    ipcHandlers: new Map<string, (...args: unknown[]) => unknown>(),
+    registrationFailure: {
+      channel: undefined as string | undefined,
+      error: undefined as Error | undefined
+    }
+  }))
 
 vi.mock('electron', () => ({
   ipcMain: {
-    handle: (channel: string, handler: (...args: unknown[]) => unknown) =>
+    handle: (channel: string, handler: (...args: unknown[]) => unknown) => {
+      if (registrationFailure.channel === channel) throw registrationFailure.error
       ipcHandlers.set(channel, handler)
+    }
   }
 }))
 vi.mock('../lifecycle-broadcast', () => ({
@@ -29,7 +36,8 @@ import {
   loadSessionMetadataAfterProjectRecovery,
   loadSessionsAfterProjectRecovery,
   registerSessionPersistenceIpcHandlers,
-  type SessionPersistenceBackend
+  type SessionPersistenceBackend,
+  type SessionPersistenceHandlers
 } from './ipc'
 import { beginMigration, clearMigrationPending } from '../storage/migration-state'
 
@@ -37,6 +45,8 @@ beforeEach(() => {
   ipcHandlers.clear()
   broadcastLifecycleEvent.mockClear()
   getLifecycleClientId.mockClear()
+  registrationFailure.channel = undefined
+  registrationFailure.error = undefined
 })
 afterEach(() => clearMigrationPending())
 
@@ -321,6 +331,56 @@ describe('session persistence IPC handlers', () => {
       originClientId: 'web:browser-1'
     })
     expect(broadcastLifecycleEvent).toHaveBeenCalledWith('session:deleted', deleteRequest)
+  })
+
+  it('dispatches through the injected application handler identity', async () => {
+    const loadResult = { sessions: [createSession()], manifest: { version: 1 as const } }
+    const repository: SessionPersistenceBackend = {
+      loadAll: vi.fn(),
+      saveSession: vi.fn(),
+      deleteSession: vi.fn(),
+      saveManifest: vi.fn()
+    }
+    const injected: SessionPersistenceHandlers = {
+      loadAll: vi.fn().mockResolvedValue(loadResult),
+      saveSession: vi.fn(),
+      deleteSession: vi.fn(),
+      saveManifest: vi.fn()
+    }
+
+    registerSessionPersistenceIpcHandlers(repository, createMockReviewRepository(), injected)
+
+    await expect(ipcHandlers.get('sessions:load-all')?.()).resolves.toBe(loadResult)
+    expect(injected.loadAll).toHaveBeenCalledOnce()
+    expect(repository.loadAll).not.toHaveBeenCalled()
+  })
+
+  it('preserves an injected handler identity when registration fails', async () => {
+    const failure = new Error('registration failed')
+    const repository: SessionPersistenceBackend = {
+      loadAll: vi.fn(),
+      saveSession: vi.fn(),
+      deleteSession: vi.fn(),
+      saveManifest: vi.fn()
+    }
+    const injected: SessionPersistenceHandlers = {
+      loadAll: vi.fn().mockResolvedValue({ sessions: [], manifest: { version: 1 as const } }),
+      saveSession: vi.fn(),
+      deleteSession: vi.fn(),
+      saveManifest: vi.fn()
+    }
+    registrationFailure.channel = 'sessions:load-all'
+    registrationFailure.error = failure
+
+    expect(() =>
+      registerSessionPersistenceIpcHandlers(repository, createMockReviewRepository(), injected)
+    ).toThrow(failure)
+
+    registrationFailure.channel = undefined
+    registrationFailure.error = undefined
+    registerSessionPersistenceIpcHandlers(repository, createMockReviewRepository(), injected)
+    await ipcHandlers.get('sessions:load-all')?.()
+    expect(injected.loadAll).toHaveBeenCalledOnce()
   })
 
   it('rejects session persistence while a data-root migration is pending', async () => {

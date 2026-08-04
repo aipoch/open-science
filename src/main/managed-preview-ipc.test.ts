@@ -500,6 +500,23 @@ describe('managed preview IPC handlers', () => {
     expect(() => registerManagedPreviewIpcHandlers(resources, retryOwners)).not.toThrow()
   })
 
+  it('installs the protocol adapter over an explicitly shared owner registry', () => {
+    handlers.clear()
+    const resources = createResources()
+    const targetProtocol = { handle: vi.fn(), unhandle: vi.fn() }
+    const owners = {
+      acquire: vi.fn<ManagedPreviewOwnerRegistry['acquire']>(),
+      readRange: vi.fn<ManagedPreviewOwnerRegistry['readRange']>(),
+      register: vi.fn<ManagedPreviewOwnerRegistry['register']>(),
+      release: vi.fn<ManagedPreviewOwnerRegistry['release']>()
+    } satisfies ManagedPreviewOwnerRegistry
+
+    const cleanup = installManagedPreviewElectronAdapter(resources, targetProtocol, owners)
+
+    expect(createManagedPreviewOwnerRegistry(resources)).toBe(owners)
+    cleanup()
+  })
+
   it('releases a newly bound owner when protocol teardown fails', () => {
     handlers.clear()
     const resources = createResources()
