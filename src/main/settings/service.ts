@@ -83,8 +83,7 @@ import { AgentRuntimeManager, type ExecuteClaudeProbe } from './agent-runtime-ma
 import {
   AgentBackendResolver,
   type AgentBackendResolutionContext,
-  type AgentBackendSelection,
-  type AgentSpawnConfig
+  type AgentBackendSelection
 } from './backend-resolver'
 import { CONNECTOR_CATALOG } from '../connectors/catalog'
 import { SkillRegistry } from '../skills/registry'
@@ -753,14 +752,6 @@ class SettingsService {
     return this.providers.logoutClaudeShared()
   }
 
-  async getClaudeSharedStatus(): Promise<ValidateProviderResult> {
-    return this.providers.getClaudeSharedStatus()
-  }
-
-  async getClaudeIsolatedStatus(): Promise<ValidateProviderResult> {
-    return this.providers.getClaudeIsolatedStatus()
-  }
-
   async setActiveProvider(id: string, model?: string): Promise<SettingsSnapshot> {
     await this.providers.setActiveProvider(id, model)
     return this.getSettingsView()
@@ -868,24 +859,6 @@ class SettingsService {
     await this.repository.setComputeBookmarks(providerId, folders)
   }
 
-  // Builds the spawn env for the active provider, read fresh so switching takes effect on reconnect.
-  async resolveActiveSpawnConfig(
-    context: AgentBackendResolutionContext = {}
-  ): Promise<AgentSpawnConfig> {
-    return this.backendResolver.resolveActiveSpawnConfig(context)
-  }
-
-  // Resolves the active agent backend for one connect: the selected framework plus its spawn inputs.
-  // Claude reuses the existing provider-env path unchanged; other frameworks (opencode) map the active
-  // provider to their own native config (a generated opencode.json) via the framework adapter and get
-  // it written to disk before spawn. The framework can be forced with OPEN_SCIENCE_AGENT_FRAMEWORK for
-  // the spike until the settings selector lands.
-  async resolveActiveAgentBackend(
-    context: AgentBackendResolutionContext = {}
-  ): Promise<ResolvedAgentBackend> {
-    return this.backendResolver.resolveActiveBackend(context)
-  }
-
   // Captures only non-secret backend identity. Runtime generations resolve credentials again at spawn,
   // so decrypted keys are not retained by the coordinator after AcpRuntime finishes authentication.
   async captureActiveAgentBackendSelection(): Promise<AgentBackendSelection> {
@@ -905,8 +878,4 @@ const createDefaultSettingsService = (): SettingsService => new SettingsService(
 
 export { SettingsService, createDefaultSettingsService }
 export type { CustomServerSecurityChangeGuard }
-export type {
-  AgentBackendResolutionContext,
-  AgentBackendSelection,
-  AgentSpawnConfig
-} from './backend-resolver'
+export type { AgentBackendResolutionContext, AgentBackendSelection } from './backend-resolver'

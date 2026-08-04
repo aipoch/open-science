@@ -769,13 +769,6 @@ class AcpRuntimeCoordinator {
     return runtime.disposeReviewerSession(session)
   }
 
-  reviewerRejectedToolCallCount(sessionId: string): number {
-    return Array.from(this.runtimes).reduce(
-      (count, runtime) => count + runtime.reviewerRejectedToolCallCount(sessionId),
-      0
-    )
-  }
-
   private createScopedActivityRuntime(
     runtime: AcpRuntime,
     options: AcpRuntimeActivityOptions

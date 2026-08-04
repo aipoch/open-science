@@ -7563,8 +7563,10 @@ describe('ACP runtime session management', () => {
     expect(permissionResponse).toEqual({
       outcome: { outcome: 'selected', optionId: 'allow-once' }
     })
-    expect(runtime.reviewerRejectedToolCallCount(session.sessionId)).toBe(0)
-    runtime.disposeReviewerSession(session)
+    expect(runtime.disposeReviewerSession(session)).toEqual({
+      rejectedToolCalls: 0,
+      reviewerBridgeScoped: undefined
+    })
   })
 
   // Claude Code preserves hyphens in MCP server names in real tool traces, so the permission title
@@ -7607,8 +7609,10 @@ describe('ACP runtime session management', () => {
     expect(permissionResponse).toEqual({
       outcome: { outcome: 'selected', optionId: 'allow-once' }
     })
-    expect(runtime.reviewerRejectedToolCallCount(session.sessionId)).toBe(0)
-    runtime.disposeReviewerSession(session)
+    expect(runtime.disposeReviewerSession(session)).toEqual({
+      rejectedToolCalls: 0,
+      reviewerBridgeScoped: undefined
+    })
   })
 
   // Security: the toolCallId is agent-controlled, so a reviewer-shaped id must NOT authorize a call
@@ -7647,8 +7651,10 @@ describe('ACP runtime session management', () => {
     expect(permissionResponse).toEqual({
       outcome: { outcome: 'selected', optionId: 'reject-once' }
     })
-    expect(runtime.reviewerRejectedToolCallCount(session.sessionId)).toBe(1)
-    runtime.disposeReviewerSession(session)
+    expect(runtime.disposeReviewerSession(session)).toEqual({
+      rejectedToolCalls: 1,
+      reviewerBridgeScoped: undefined
+    })
   })
 
   it('counts reviewer tool calls rejected by the strict gate', async () => {
@@ -7678,13 +7684,11 @@ describe('ACP runtime session management', () => {
     })
     await session.prompt([{ type: 'text', text: 'run a shell command' }])
 
-    expect(runtime.reviewerRejectedToolCallCount(session.sessionId)).toBe(1)
     // dispose returns the final count and clears it atomically — the orchestrator relies on this.
     expect(runtime.disposeReviewerSession(session)).toEqual({
       rejectedToolCalls: 1,
       reviewerBridgeScoped: undefined
     })
-    expect(runtime.reviewerRejectedToolCallCount('reviewer-session-1')).toBe(0)
   })
 
   it('refuses a non-loopback reviewer MCP before starting an agent connection', async () => {
@@ -12805,7 +12809,6 @@ describe('ACP runtime session management', () => {
     expect(() => runtime.disposeReviewerSession(session)).toThrow('reviewer dispose failed')
 
     expect(unregisterReviewerSession).toHaveBeenCalledWith('reviewer-session-1')
-    expect(runtime.reviewerRejectedToolCallCount('reviewer-session-1')).toBe(0)
     await expect(stat(reviewerCwd)).rejects.toMatchObject({ code: 'ENOENT' })
     await vi.waitFor(() => expect(process.killed).toBe(true))
     expect(releaseBridge).toHaveBeenCalledOnce()

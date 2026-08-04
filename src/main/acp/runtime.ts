@@ -4899,12 +4899,6 @@ class AcpRuntime {
   ): ReviewerSessionDisposition {
     return this.reviewerSessions.dispose(session)
   }
-
-  // Returns how many permission requests the strict reviewer gate rejected for a given reviewer
-  // session. Non-zero means the session was active but the gate blocked its tool calls.
-  reviewerRejectedToolCallCount(sessionId: string): number {
-    return this.reviewerSessions.rejectedToolCallCount(sessionId)
-  }
 }
 
 export { AcpRuntime }

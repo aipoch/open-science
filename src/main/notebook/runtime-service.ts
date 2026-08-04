@@ -117,6 +117,15 @@ import {
 // to public hosts, so this default never silently forces a CN mirror).
 const DEFAULT_LOCALE = 'en-US'
 
+const EMPTY_NOTEBOOK_RUNTIME_SETTINGS: Pick<NotebookRuntimeSettings, 'getSnapshot'> = {
+  getSnapshot: async (language) => ({
+    language,
+    runtimeEnablement: { enabled: {}, installAuthorized: {} },
+    manualInterpreters: [],
+    packageMirror: {}
+  })
+}
+
 const REPAIR_QUARANTINE_FAILED = 'REPAIR_QUARANTINE_FAILED'
 
 const isRepairQuarantineError = (error: unknown): boolean =>
@@ -240,17 +249,8 @@ type NotebookRuntimeServiceOptions = {
   // double works just as well as the real disk-backed settings service.
   getPackageMirror?: () => PackageMirror | undefined | Promise<PackageMirror | undefined>
   // Stable, detached Settings capability used by runtime discovery and binding policy. Production
-  // injects this named capability; the raw resolvers below remain compatibility seams for isolated
-  // callers and tests that predate the Settings capability split.
+  // injects this named capability; isolated tests may omit it and receive a fail-safe empty policy.
   notebookRuntimeSettings?: Pick<NotebookRuntimeSettings, 'getSnapshot'>
-  // Resolves the v4 per-language enablement (enabled/install-authorized maps) used to gate which
-  // discovered runtimes the agent may bind. Undefined / returning undefined -> the provenance defaults
-  // (app-managed enabled; user-own disabled), so an omitted resolver can never enable a BYO env — the
-  // enable gate holds by default (defense-in-depth).
-  getRuntimeEnablement?: (language: NotebookLanguage) => Promise<RuntimeEnablement | undefined>
-  // Resolves Settings-added interpreters that are not discoverable from PATH/conda roots. Injected at
-  // construction so production cannot briefly expose a different catalog during startup.
-  getManualInterpreters?: (language: NotebookLanguage) => Promise<string[]>
   // Discovers the interpreters available for a language (app-managed + user-own). Injectable so tests
   // don't spawn real interpreters; production defaults to environment-discovery over the runtime root.
   discoverRuntimes?: (language: NotebookLanguage) => Promise<DiscoveredInterpreter[]>
@@ -449,12 +449,9 @@ class NotebookRuntimeService {
     this.recoveryCoordinator = new NotebookRecoveryCoordinator(getRuntimeRoot(options.dataRoot))
     this.mcpRpcConnectionResolver = options.getMcpRpcConnection
     this.packageMirrorResolver = options.getPackageMirror
-    this.runtimeEnablementResolver = options.notebookRuntimeSettings
-      ? async (language) =>
-          (await options.notebookRuntimeSettings?.getSnapshot(language))?.runtimeEnablement
-      : options.getRuntimeEnablement
-    const runtimeSettings =
-      options.notebookRuntimeSettings ?? this.legacyRuntimeSettingsCapability(options)
+    const runtimeSettings = options.notebookRuntimeSettings ?? EMPTY_NOTEBOOK_RUNTIME_SETTINGS
+    this.runtimeEnablementResolver = async (language) =>
+      (await runtimeSettings.getSnapshot(language)).runtimeEnablement
     this.runtimeBindingOwner = new NotebookRuntimeBindingOwner({
       dataRoot: options.dataRoot,
       repository: this.repository,
@@ -505,25 +502,6 @@ class NotebookRuntimeService {
       platform: options.platform,
       shellProcess: options.shellProcess
     })
-  }
-
-  private legacyRuntimeSettingsCapability(
-    options: NotebookRuntimeServiceOptions
-  ): Pick<NotebookRuntimeSettings, 'getSnapshot'> {
-    return {
-      getSnapshot: async (language) => {
-        const [runtimeEnablement, manualInterpreters] = await Promise.all([
-          options.getRuntimeEnablement?.(language).catch(() => undefined),
-          options.getManualInterpreters?.(language).catch(() => [])
-        ])
-        return {
-          language,
-          runtimeEnablement: runtimeEnablement ?? { enabled: {}, installAuthorized: {} },
-          manualInterpreters: manualInterpreters ?? [],
-          packageMirror: {}
-        }
-      }
-    }
   }
 
   private async resolveRuntimeEnablement(

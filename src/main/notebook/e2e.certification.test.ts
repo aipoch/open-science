@@ -111,10 +111,17 @@ const makeHarness = async (opts: { idleTimeoutMs?: number } = {}): Promise<Harne
     // v4 seam: discovery surfaces the system python as a user-own runtime and enablement turns it on,
     // so the session can bind it below (no micromamba provisioning exists on this machine).
     discoverRuntimes: async (language) => (language === 'python' ? [externalPython] : []),
-    getRuntimeEnablement: async () => ({
-      enabled: { [pyBin as string]: true },
-      installAuthorized: {}
-    }),
+    notebookRuntimeSettings: {
+      getSnapshot: async (language) => ({
+        language,
+        runtimeEnablement: {
+          enabled: { [pyBin as string]: true },
+          installAuthorized: {}
+        },
+        manualInterpreters: [],
+        packageMirror: {}
+      })
+    },
     // The real kernel executor with the shipped loop scripts. No micromamba provisioning exists on this
     // machine, so the two runtimes reach the system interpreters by different (both production) routes:
     // Python via the Runtime Registry's EXTERNAL (BYO) seam (setRuntimeSelectionResolver below), R via

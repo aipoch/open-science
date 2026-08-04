@@ -17,7 +17,6 @@ import {
   createComputeIpcModule,
   createJobUpdatedBroadcaster,
   installComputeIpcHandlers,
-  registerComputeIpcHandlers,
   toJobSummary
 } from './ipc'
 import type { ComputeJobRepository } from './job-repository'
@@ -1145,7 +1144,7 @@ describe('compute handlers — jobsMarkConsumed', () => {
 })
 
 // ---------------------------------------------------------------------------
-// registerComputeIpcHandlers — channel registration + enabled-hosts + error serialization
+// Compute IPC installation — channel registration + enabled-hosts + error serialization
 // ---------------------------------------------------------------------------
 
 const invokeHandler = async (channel: string, ...args: unknown[]): Promise<unknown> => {
@@ -1165,7 +1164,7 @@ const invokeExpectingError = async (channel: string, ...args: unknown[]): Promis
   throw new Error(`Handler ${channel} resolved unexpectedly; expected it to reject`)
 }
 
-describe('registerComputeIpcHandlers', () => {
+describe('installComputeIpcHandlers', () => {
   let storageRoot: string
 
   beforeEach(async () => {
@@ -1180,7 +1179,8 @@ describe('registerComputeIpcHandlers', () => {
   })
 
   it('registers every compute:* channel that the renderer can invoke', () => {
-    registerComputeIpcHandlers(mockRepository({}), mockJobRepo({}))
+    const module = createComputeIpcModule(mockRepository({}), mockJobRepo({}))
+    installComputeIpcHandlers(module)
 
     const expected = [
       'compute:list',
@@ -1222,7 +1222,8 @@ describe('registerComputeIpcHandlers', () => {
   })
 
   it('round-trips the enabled-hosts registry through get/set IPC channels', async () => {
-    registerComputeIpcHandlers(mockRepository({}), mockJobRepo({}))
+    const module = createComputeIpcModule(mockRepository({}), mockJobRepo({}))
+    installComputeIpcHandlers(module)
 
     // Initially empty for an unseen session.
     const initial = await invokeHandler('compute:enabled-hosts:get', 'sess-fresh')
@@ -1247,16 +1248,17 @@ describe('registerComputeIpcHandlers', () => {
   })
 
   it('returns the production computeService and jobRepository so downstream wiring can use them', () => {
-    const result = registerComputeIpcHandlers(mockRepository({}), mockJobRepo({}))
+    const module = createComputeIpcModule(mockRepository({}), mockJobRepo({}))
+    installComputeIpcHandlers(module)
 
-    expect(result.computeService).toBeDefined()
-    expect(result.jobRepository).toBeDefined()
-    expect(result.hostRepository).toBeDefined()
-    expect(result.enabledComputeHostsRegistry).toBeInstanceOf(EnabledComputeHostsRegistry)
+    expect(module.computeService).toBeDefined()
+    expect(module.jobRepository).toBeDefined()
+    expect(module.hostRepository).toBeDefined()
+    expect(module.enabledComputeHostsRegistry).toBeInstanceOf(EnabledComputeHostsRegistry)
   })
 })
 
-describe('registerComputeIpcHandlers — remoteFsError serialization', () => {
+describe('installComputeIpcHandlers — remoteFsError serialization', () => {
   let storageRoot: string
 
   beforeEach(async () => {
@@ -1270,9 +1272,8 @@ describe('registerComputeIpcHandlers — remoteFsError serialization', () => {
     await rm(storageRoot, { recursive: true, force: true })
   })
 
-  // Drive the handler installed by registerComputeIpcHandlers directly. registerComputeIpcHandlers
-  // accepts a `service` seam so the renderer-callable try/catch wrapper around listDir / download
-  // is exercised end-to-end against a fake service — no hand-rolled wrapper duplication.
+  // Drive the production create/install seams directly so the renderer-callable try/catch wrapper
+  // around listDir / download is exercised end-to-end against a fake service.
   it('encodes a remoteFsError on the compute:list-dir channel via the production handler wrapper', async () => {
     const fsErr = new Error('no such file or directory') as Error & {
       remoteFsError: { detail: string; remoteKind: 'not_found'; retry_after_user_action: boolean }
@@ -1285,7 +1286,8 @@ describe('registerComputeIpcHandlers — remoteFsError serialization', () => {
     const listDir = vi.fn(() => Promise.reject(fsErr))
     const service = mockService({ listDir })
 
-    registerComputeIpcHandlers(mockRepository({}), mockJobRepo({}), undefined, service)
+    const module = createComputeIpcModule(mockRepository({}), mockJobRepo({}), undefined, service)
+    installComputeIpcHandlers(module)
 
     const err = await invokeExpectingError('compute:list-dir', 'ssh:biowulf', '/missing')
 
@@ -1307,7 +1309,8 @@ describe('registerComputeIpcHandlers — remoteFsError serialization', () => {
     const download = vi.fn(() => Promise.reject(fsErr))
     const service = mockService({ download })
 
-    registerComputeIpcHandlers(mockRepository({}), mockJobRepo({}), undefined, service)
+    const module = createComputeIpcModule(mockRepository({}), mockJobRepo({}), undefined, service)
+    installComputeIpcHandlers(module)
 
     const dest: DownloadDest = { kind: 'os-downloads' }
     const err = await invokeExpectingError('compute:download', 'ssh:biowulf', '/some/dir', dest)
@@ -1323,7 +1326,8 @@ describe('registerComputeIpcHandlers — remoteFsError serialization', () => {
     const download = vi.fn(() => Promise.reject(new Error('boom: plain failure')))
     const service = mockService({ download })
 
-    registerComputeIpcHandlers(mockRepository({}), mockJobRepo({}), undefined, service)
+    const module = createComputeIpcModule(mockRepository({}), mockJobRepo({}), undefined, service)
+    installComputeIpcHandlers(module)
 
     const dest: DownloadDest = { kind: 'os-downloads' }
     const err = await invokeExpectingError('compute:download', 'ssh:biowulf', '/x', dest)
