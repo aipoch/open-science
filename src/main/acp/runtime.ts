@@ -13,7 +13,6 @@ import type {
 import type { ChildProcessWithoutNullStreams } from 'node:child_process'
 import { readFile } from 'node:fs/promises'
 import { join, resolve } from 'node:path'
-import { Readable, Writable } from 'node:stream'
 
 import type {
   AcpCancelPromptRequest,
@@ -57,7 +56,6 @@ import {
 import { resolveCanonicalMcpToolIdentity } from '../agent-framework/app-mcp-names'
 import { createLogger, diagnosticErrorFields, errorLogFields } from '../logger'
 import { extractProviderToolName } from './runtime-events'
-import { readWorkspaceTextFile, writeWorkspaceTextFile } from './filesystem'
 import { toCodexTurnTokenUsage } from './codex-turn-usage'
 import { fetchOpenCodeUsageSnapshot, sumOpenCodeTurnUsage } from './opencode-turn-usage'
 import { describePromptError, isProviderPromptError } from './prompt-error'
@@ -122,6 +120,7 @@ import {
   type AcpConnectionResourceAttempt,
   type AcpConnectionResourceReadyHandle
 } from './connection-resource-owner'
+import { AcpAgentConnectionAdapter } from './agent-connection-adapter'
 import { AcpConnectionTransitionOwner } from './connection-transition-owner'
 import { AcpGenerationActivityOwner } from './generation-activity-owner'
 import { AcpHandoffContinuityOwner } from './handoff-continuity-owner'
@@ -486,6 +485,7 @@ const isUnresumableSessionError = (error: unknown): boolean => {
 class AcpRuntime {
   private readonly snapshotOwner: AcpRuntimeSnapshotOwner
   private readonly contextUsageTracker: ContextUsageTracker
+  private readonly connectionAdapter = new AcpAgentConnectionAdapter()
   private readonly connectionResources: AcpConnectionResourceOwner
   private readonly connectionTransitions: AcpConnectionTransitionOwner
   private readonly generationActivity: AcpGenerationActivityOwner
@@ -973,12 +973,18 @@ class AcpRuntime {
       )
       this.attachAgentProcessEvents(agentProcess, generation)
 
-      const stream = acp.ndJsonStream(
-        Writable.toWeb(agentProcess.stdin) as WritableStream<Uint8Array>,
-        Readable.toWeb(agentProcess.stdout) as ReadableStream<Uint8Array>
+      const connection = this.connectionAdapter.open(
+        { process: agentProcess },
+        {
+          requestPermission: (params) => this.handlePermissionRequest(params),
+          observeSessionUpdate: (notification) => this.observePermissionToolContext(notification),
+          observeClaudeSdkMessage: (params) => this.observeClaudeSdkMessage(params),
+          filesystem: {
+            resolveSessionCwd: (sessionId) => this.resolveSessionCwd(sessionId),
+            protectedReadRoots: () => this.protectedReadRoots()
+          }
+        }
       )
-
-      const connection = this.createClientConnection(stream)
       unattachedConnection = connection
       attempt.attach({
         process: agentProcess,
@@ -3321,34 +3327,6 @@ class AcpRuntime {
 
     log.info('ensureConnected: connection established', this.diagnosticContext())
     return this.connection
-  }
-
-  // Registers client-side protocol handlers exposed to the agent process.
-  private createClientConnection(stream: acp.Stream): ClientConnection {
-    return acp
-      .client({ name: 'open-science' })
-      .onRequest(acp.methods.client.session.requestPermission, (ctx) =>
-        this.handlePermissionRequest(ctx.params)
-      )
-      .onNotification(acp.methods.client.session.update, (ctx) =>
-        this.observePermissionToolContext(ctx.params)
-      )
-      .onNotification(
-        '_claude/sdkMessage',
-        (params) => params as Record<string, unknown>,
-        (ctx) => this.observeClaudeSdkMessage(ctx.params)
-      )
-      .onRequest(acp.methods.client.fs.readTextFile, (ctx) =>
-        readWorkspaceTextFile(
-          this.resolveSessionCwd(ctx.params.sessionId),
-          ctx.params,
-          this.protectedReadRoots()
-        )
-      )
-      .onRequest(acp.methods.client.fs.writeTextFile, (ctx) =>
-        writeWorkspaceTextFile(this.resolveSessionCwd(ctx.params.sessionId), ctx.params)
-      )
-      .connect(stream)
   }
 
   private observeClaudeSdkMessage(params: Record<string, unknown>): void {

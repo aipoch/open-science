@@ -15,6 +15,7 @@ import { PassThrough, Readable, Writable } from 'node:stream'
 import { afterEach, describe, expect, it, vi } from 'vitest'
 
 import { AcpRuntime } from './runtime'
+import type { AcpAgentConnectionAdapter } from './agent-connection-adapter'
 import { AcpPermissionContext } from './permission-context'
 import { ContextUsageTracker, type TokenCounter } from './context-usage-tracker'
 import {
@@ -5551,15 +5552,11 @@ describe('ACP runtime session management', () => {
         responsesBridgeLease: lease
       })
     })
-    const internal = runtime as unknown as {
-      createClientConnection: (
-        stream: acp.Stream
-      ) => import('@agentclientprotocol/sdk').ClientConnection
-    }
-    const createConnection = internal.createClientConnection.bind(runtime)
+    const internal = runtime as unknown as { connectionAdapter: AcpAgentConnectionAdapter }
+    const openConnection = internal.connectionAdapter.open.bind(internal.connectionAdapter)
     let disconnect: Promise<unknown> | undefined
-    vi.spyOn(internal, 'createClientConnection').mockImplementation((stream) => {
-      const connection = createConnection(stream)
+    vi.spyOn(internal.connectionAdapter, 'open').mockImplementation((input, hooks) => {
+      const connection = openConnection(input, hooks)
       disconnect = runtime.disconnect()
       return connection
     })
