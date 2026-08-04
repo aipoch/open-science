@@ -87,6 +87,7 @@ import { opencodeStorageDir } from '../agent-framework/opencode'
 import { CodexSkillActivityProjector } from './codex-skill-activity'
 import {
   ContextUsageTracker,
+  type ContextUsageTurnHandle,
   type SessionEstimateInput,
   type SessionUpdateObservation
 } from './context-usage-tracker'
@@ -503,9 +504,6 @@ const isUnresumableSessionError = (error: unknown): boolean => {
 class AcpRuntime {
   private readonly snapshotOwner: AcpRuntimeSnapshotOwner
   private readonly contextUsageTracker: ContextUsageTracker
-  // Prompt lifecycle stays with the runtime: this marks turns that received provider-side
-  // context-bearing updates so a rejected prompt rolls back only when the provider saw no turn data.
-  private readonly contextUsageUpdatedPromptTurnsBySession = new Map<string, number>()
   private readonly connectionResources: AcpConnectionResourceOwner
   private readonly connectionTransitions: AcpConnectionTransitionOwner
   private readonly generationActivity: AcpGenerationActivityOwner
@@ -1560,7 +1558,6 @@ class AcpRuntime {
     // A context reset creates a new agent-side conversation under the same app id. Do not carry the
     // previous context size into the fresh conversation before its first usage_update arrives.
     this.contextUsageTracker.deleteSession(request.sessionId)
-    this.contextUsageUpdatedPromptTurnsBySession.delete(request.sessionId)
     this.sessionRegistry.lookup(request.sessionId)?.aggregate.clearAppliedModel()
 
     // Release the failed interaction now. Its own `finally` may run only after async artifact cleanup;
@@ -2289,7 +2286,6 @@ class AcpRuntime {
     })
     this.connectionTransitions.resetReconnect()
     this.contextUsageTracker.clear()
-    this.contextUsageUpdatedPromptTurnsBySession.clear()
     this.clearAppliedSessionModels()
   }
 
@@ -2342,9 +2338,9 @@ class AcpRuntime {
     // The selected backend changed even if teardown must wait for an active prompt. Its old context
     // measurement no longer describes the selected generation, so hide it immediately and let the
     // replacement generation repopulate usage after reconnect/resume.
-    if (this.contextUsageTracker.hasUsage()) {
-      this.contextUsageTracker.clear()
-      this.contextUsageUpdatedPromptTurnsBySession.clear()
+    const contextUsageWasVisible = this.contextUsageTracker.hasUsage()
+    this.contextUsageTracker.clear()
+    if (contextUsageWasVisible) {
       this.clearAppliedSessionModels()
       this.emitState()
     }
@@ -2414,7 +2410,6 @@ class AcpRuntime {
     // including when a later session.dispose throws. A reconnect may resume the native context or
     // replay history into a fresh one; only that generation's own usage_update can repopulate it.
     this.contextUsageTracker.clear()
-    this.contextUsageUpdatedPromptTurnsBySession.clear()
     this.clearAppliedSessionModels()
 
     const activeSessionIds = this.activeSessionIds()
@@ -2717,8 +2712,7 @@ class AcpRuntime {
     let skillActivitiesStarted = false
     let skillActivitiesFinalized = false
     let revokeReferencedUploadGrant: (() => void) | undefined
-    let contextUsageCheckpoint: ReturnType<ContextUsageTracker['checkpointSession']> | undefined
-    let contextUsageEstimateCommitted = false
+    let contextUsageTurn: ContextUsageTurnHandle | undefined
     let observedPromptStop:
       | {
           response: PromptResponse
@@ -2784,6 +2778,7 @@ class AcpRuntime {
           sessionId: request.sessionId,
           stopReason: response.stopReason
         })
+        contextUsageTurn?.fail()
         publishObservedPromptStop()
         return response
       }
@@ -2884,7 +2879,7 @@ class AcpRuntime {
       }
       const promptContent = preparedPrompt.content
 
-      contextUsageCheckpoint = this.contextUsageTracker.checkpointSession(request.sessionId)
+      contextUsageTurn = this.contextUsageTracker.beginTurn(request.sessionId)
       await this.recordPromptContextEstimate(
         request.sessionId,
         promptContent,
@@ -2982,21 +2977,12 @@ class AcpRuntime {
           if (!this.sessionInteractions.captureTerminal(promptInteraction, 'stop')) {
             return message.response
           }
-          contextUsageEstimateCommitted = true
           this.recordCodexPromptResponseContextUsage(
             request.sessionId,
             message.response,
             promptTurn
           )
-          this.contextUsageTracker.finalizeAssistantOutput(request.sessionId)
-          if (
-            this.restoreContextUsageBeforePromptIfPreflight(
-              request.sessionId,
-              contextUsageCheckpoint
-            )
-          ) {
-            this.emitState()
-          }
+          if (contextUsageTurn.complete()) this.emitState()
           // Emit artifact metadata before stop so the renderer can attach files to the finished message.
           await this.emitArtifactRunEvent(request.sessionId, artifactRun)
           artifactEmitted = true
@@ -3050,6 +3036,7 @@ class AcpRuntime {
       if (observedPromptStop) {
         // Provider stop/cancellation already won the outcome race. App-side finalization failure,
         // reset, or connection teardown cannot rewrite it as a prompt failure.
+        contextUsageTurn?.complete()
         if (publishObservedPromptStop()) {
           log.warn('prompt terminal finalization failed', {
             sessionId: request.sessionId,
@@ -3061,27 +3048,12 @@ class AcpRuntime {
       if (this.sessionInteractions.current(request.sessionId) !== promptInteraction) {
         // Reset/replacement is silent. Unexpected connection teardown settles and publishes every
         // visible prompt in handleConnectionClosed before releasing its interaction scope.
+        contextUsageTurn?.supersede()
         throw error
       }
       // A fresh provider failure captures its terminal outcome before rollback work can add latency.
       if (!this.sessionInteractions.captureTerminal(promptInteraction, 'error')) throw error
-      if (
-        contextUsageCheckpoint &&
-        !contextUsageEstimateCommitted &&
-        !this.pendingProviderReconnect
-      ) {
-        const partialTurnWasObserved =
-          this.contextUsageUpdatedPromptTurnsBySession.get(request.sessionId) === promptTurn
-        if (partialTurnWasObserved) {
-          // The provider may keep a turn that already streamed context-bearing updates even when its
-          // prompt request ultimately rejects. Preserve those prompt/tool/output estimates, but do not
-          // leave their transient preflight reading in place without a fresh authoritative total.
-          this.contextUsageTracker.finalizeAssistantOutput(request.sessionId)
-          this.restoreContextUsageBeforePromptIfPreflight(request.sessionId, contextUsageCheckpoint)
-        } else {
-          this.contextUsageTracker.restoreSession(request.sessionId, contextUsageCheckpoint)
-        }
-      }
+      contextUsageTurn?.fail()
       if (skillActivitiesStarted && !skillActivitiesFinalized) {
         this.emitCodexSkillInputActivities(
           request.sessionId,
@@ -3155,10 +3127,8 @@ class AcpRuntime {
         this.sessionInteractions.current(request.sessionId) === promptInteraction
       if (ownsInteraction) {
         this.permissionContext.clearCorrelationsForSession(request.sessionId)
-        if (this.contextUsageUpdatedPromptTurnsBySession.get(request.sessionId) === promptTurn) {
-          this.contextUsageUpdatedPromptTurnsBySession.delete(request.sessionId)
-        }
       }
+      contextUsageTurn?.supersede()
       this.sessionInteractions.release(promptInteraction)
       if (ownsInteraction) {
         try {
@@ -3276,7 +3246,6 @@ class AcpRuntime {
     this.promptContentOwner.resetSession(request.sessionId)
     this.handoffContinuity.clearSession(request.sessionId)
     this.contextUsageTracker.deleteSession(request.sessionId)
-    this.contextUsageUpdatedPromptTurnsBySession.delete(request.sessionId)
 
     // Only announce a deletion and shift the current session when something was actually attached; a
     // detached cleanup (post-switch) must not emit a spurious event or move the current selection.
@@ -3923,16 +3892,6 @@ class AcpRuntime {
     if (this.contextUsageTracker.reconcileUsed(sessionId, used)) this.emitState()
   }
 
-  private restoreContextUsageBeforePromptIfPreflight(
-    sessionId: string,
-    checkpoint: ReturnType<ContextUsageTracker['checkpointSession']>
-  ): boolean {
-    // Preflight is a generation-only projection. If this turn produced no authoritative update,
-    // return to the last Agent reading so compaction remains available; a prior preflight reading is
-    // not authoritative either, so clear it instead of carrying the transient state across turns.
-    return this.contextUsageTracker.restorePreflightUsage(sessionId, checkpoint)
-  }
-
   private contextUsageSelectionFor(sessionId?: string): {
     model?: string
     contextWindow?: number
@@ -4076,21 +4035,6 @@ class AcpRuntime {
         this.contextUsageTracker.observeSessionUpdate(routed.sessionId, routed, observation)
       } else {
         this.contextUsageTracker.observeSessionUpdate(routed.sessionId, routed)
-      }
-
-      if (
-        event.contextUsage ||
-        routed.update.sessionUpdate === 'agent_message_chunk' ||
-        routed.update.sessionUpdate === 'tool_call' ||
-        routed.update.sessionUpdate === 'tool_call_update'
-      ) {
-        const promptInteraction = this.currentPromptInteraction(routed.sessionId)
-        if (promptInteraction) {
-          this.contextUsageUpdatedPromptTurnsBySession.set(
-            routed.sessionId,
-            promptInteraction.sequence
-          )
-        }
       }
     }
 
@@ -4274,7 +4218,6 @@ class AcpRuntime {
     this.handoffContinuity.clearGeneration()
     this.codexSkillActivity.clear()
     this.contextUsageTracker.clear()
-    this.contextUsageUpdatedPromptTurnsBySession.clear()
     this.sessionCapabilities.clearHttpRoutes()
     this.sessionRegistry.select(undefined)
     this.sessionInteractions.supersedeAll()

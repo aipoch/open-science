@@ -722,6 +722,195 @@ describe('ContextUsageTracker', () => {
     })
   })
 
+  it('closes a completed turn once and restores its transient preflight reading', () => {
+    const tracker = new ContextUsageTracker(wordCounter)
+    tracker.beginSession('s1', { frameworkId: 'opencode', model: 'deepseek-v4' })
+    tracker.appendText('s1', 'messages', 'committed history')
+    tracker.reconcileProviderUsage('s1', { used: 20, size: 128_000 })
+
+    const turn = tracker.beginTurn('s1')
+    tracker.appendPromptContent('s1', 'new prompt')
+    tracker.observeSessionUpdate('s1', {
+      sessionId: 's1',
+      update: {
+        sessionUpdate: 'agent_message_chunk',
+        messageId: 'answer-1',
+        content: { type: 'text', text: 'completed answer' }
+      }
+    })
+    expect(tracker.refreshUsage('s1', 'preflight', 128_000)).toBe(true)
+
+    expect(turn.complete()).toBe(true)
+    expect(turn.complete()).toBe(false)
+    expect(tracker.usage('s1')).toMatchObject({
+      used: 20,
+      size: 128_000,
+      breakdown: { status: 'reconciled' }
+    })
+
+    tracker.commitPendingAssistantOutput('s1')
+    expect(tracker.estimate('s1')?.categories).toContainEqual({
+      key: 'messages',
+      tokens: 6,
+      estimated: true
+    })
+  })
+
+  it('rolls back a turn rejected before provider data to its captured checkpoint', () => {
+    const tracker = new ContextUsageTracker(wordCounter)
+    tracker.beginSession('s1', { frameworkId: 'opencode', model: 'deepseek-v4' })
+    tracker.appendText('s1', 'messages', 'committed history')
+    tracker.reconcileProviderUsage('s1', { used: 20, size: 128_000 })
+    const beforeTurn = tracker.usage('s1')
+
+    const turn = tracker.beginTurn('s1')
+    tracker.appendPromptContent('s1', 'rejected prompt content')
+    tracker.replaceText('s1', 'prompt-skill', 'skills', 'rejected skill content')
+    expect(tracker.refreshUsage('s1', 'preflight', 128_000)).toBe(true)
+
+    turn.fail()
+    turn.fail()
+    expect(tracker.usage('s1')).toEqual(beforeTurn)
+    expect(tracker.estimate('s1')?.categories).toEqual([
+      { key: 'messages', tokens: 2, estimated: true }
+    ])
+  })
+
+  it('retains a partially observed failed turn while restoring prior authoritative usage', () => {
+    const tracker = new ContextUsageTracker(wordCounter)
+    tracker.beginSession('s1', { frameworkId: 'opencode', model: 'deepseek-v4' })
+    tracker.appendText('s1', 'messages', 'committed history')
+    tracker.reconcileProviderUsage('s1', { used: 20, size: 128_000 })
+    const beforeTurn = tracker.usage('s1')
+
+    const turn = tracker.beginTurn('s1')
+    tracker.appendPromptContent('s1', 'new prompt')
+    expect(tracker.refreshUsage('s1', 'preflight', 128_000)).toBe(true)
+    tracker.observeSessionUpdate('s1', {
+      sessionId: 's1',
+      update: {
+        sessionUpdate: 'agent_message_chunk',
+        messageId: 'partial-answer',
+        content: { type: 'text', text: 'partial answer' }
+      }
+    })
+    tracker.observeSessionUpdate('s1', {
+      sessionId: 's1',
+      update: {
+        sessionUpdate: 'tool_call_update',
+        toolCallId: 'partial-tool',
+        status: 'completed',
+        rawOutput: 'partial tool result'
+      }
+    })
+
+    turn.fail()
+    turn.fail()
+    expect(tracker.usage('s1')).toEqual(beforeTurn)
+    tracker.commitPendingAssistantOutput('s1')
+    expect(tracker.estimate('s1')?.categories).toEqual([
+      { key: 'tools', tokens: 3, estimated: true },
+      { key: 'messages', tokens: 6, estimated: true }
+    ])
+  })
+
+  it('does not let a superseded turn restore over its successor revision', () => {
+    const tracker = new ContextUsageTracker(wordCounter)
+    tracker.beginSession('s1', { frameworkId: 'opencode', model: 'deepseek-v4' })
+    tracker.reconcileProviderUsage('s1', { used: 20, size: 128_000 })
+
+    const stale = tracker.beginTurn('s1')
+    tracker.appendPromptContent('s1', 'first prompt')
+    expect(tracker.refreshUsage('s1', 'preflight', 128_000)).toBe(true)
+
+    const successor = tracker.beginTurn('s1')
+    tracker.appendPromptContent('s1', 'successor prompt')
+    tracker.reconcileProviderUsage('s1', { used: 42, size: 128_000 })
+
+    stale.fail()
+    expect(stale.complete()).toBe(false)
+    stale.supersede()
+    expect(tracker.usage('s1')).toMatchObject({
+      used: 42,
+      size: 128_000,
+      breakdown: { status: 'reconciled' }
+    })
+
+    successor.supersede()
+    successor.supersede()
+  })
+
+  it('invalidates a matching turn when its estimate session resets', () => {
+    const tracker = new ContextUsageTracker(wordCounter)
+    const input = { frameworkId: 'opencode' as const, model: 'deepseek-v4' }
+    tracker.beginSession('s1', input)
+    tracker.reconcileProviderUsage('s1', { used: 20, size: 128_000 })
+    const stale = tracker.beginTurn('s1')
+    tracker.appendPromptContent('s1', 'old prompt')
+    expect(tracker.refreshUsage('s1', 'preflight', 128_000)).toBe(true)
+
+    tracker.resetSession('s1', input)
+    tracker.reconcileProviderUsage('s1', { used: 7, size: 128_000 })
+
+    stale.fail()
+    expect(tracker.usage('s1')).toMatchObject({ used: 7, size: 128_000 })
+  })
+
+  it('invalidates a matching turn when its session is deleted and reused', () => {
+    const tracker = new ContextUsageTracker(wordCounter)
+    const input = { frameworkId: 'opencode' as const, model: 'deepseek-v4' }
+    tracker.beginSession('s1', input)
+    tracker.reconcileProviderUsage('s1', { used: 20, size: 128_000 })
+    const stale = tracker.beginTurn('s1')
+    tracker.appendPromptContent('s1', 'deleted prompt')
+    expect(tracker.refreshUsage('s1', 'preflight', 128_000)).toBe(true)
+
+    tracker.deleteSession('s1')
+    tracker.beginSession('s1', input)
+    tracker.reconcileProviderUsage('s1', { used: 7, size: 128_000 })
+
+    stale.fail()
+    expect(tracker.usage('s1')).toMatchObject({ used: 7, size: 128_000 })
+  })
+
+  it('invalidates every matching turn when its provider generation clears', () => {
+    const tracker = new ContextUsageTracker(wordCounter)
+    const input = { frameworkId: 'opencode' as const, model: 'deepseek-v4' }
+    tracker.beginSession('s1', input)
+    tracker.beginSession('s2', input)
+    const staleTurns = [tracker.beginTurn('s1'), tracker.beginTurn('s2')]
+    tracker.appendPromptContent('s1', 'old prompt one')
+    tracker.appendPromptContent('s2', 'old prompt two')
+
+    tracker.clear()
+    tracker.beginSession('s1', input)
+    tracker.reconcileProviderUsage('s1', { used: 7, size: 128_000 })
+
+    for (const turn of staleTurns) turn.fail()
+    expect(tracker.usage('s1')).toMatchObject({ used: 7, size: 128_000 })
+  })
+
+  it('invalidates a prompt turn when compaction captures its own checkpoint', () => {
+    const tracker = new ContextUsageTracker(wordCounter)
+    const input = { frameworkId: 'claude-code' as const, model: 'claude-sonnet-4-5' }
+    tracker.beginSession('s1', input)
+    tracker.reconcileProviderUsage('s1', { used: 100, size: 200_000 })
+    const stale = tracker.beginTurn('s1')
+    tracker.appendPromptContent('s1', 'overflowing prompt')
+    expect(tracker.refreshUsage('s1', 'preflight', 200_000)).toBe(true)
+
+    const compactionCheckpoint = tracker.checkpointSession('s1')
+    tracker.reconcileProviderUsage('s1', { used: 12, size: 200_000 })
+
+    stale.fail()
+    tracker.resetAfterCompaction('s1', input, compactionCheckpoint, 200_000)
+    expect(tracker.usage('s1')).toMatchObject({
+      used: 12,
+      size: 200_000,
+      breakdown: { status: 'reconciled' }
+    })
+  })
+
   it('keeps only a fresh provider reading after context compaction', () => {
     const tracker = new ContextUsageTracker(wordCounter)
     const input = { frameworkId: 'claude-code' as const, model: 'claude-sonnet-4-5' }

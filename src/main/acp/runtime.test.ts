@@ -10071,6 +10071,23 @@ describe('ACP runtime session management', () => {
     expect(runtime.getSnapshot().contextUsageBySession).toEqual({})
   })
 
+  it('invalidates context usage when its session is deleted', async () => {
+    const process = new FakeAgentProcess()
+    startFakeAgent(process, ['remote-session-1'])
+    const runtime = new AcpRuntime({
+      appVersion: '0.1.0',
+      defaultCwd: '/workspace',
+      spawnAgent: () => asAgentProcess(process)
+    })
+
+    const session = await runtime.createSession({ cwd: '/workspace' })
+    contextUsageMap(runtime).set(session.sessionId, { used: 12_000, size: 128_000 })
+
+    await runtime.deleteSession({ sessionId: session.sessionId })
+
+    expect(runtime.getSnapshot().contextUsageBySession).toEqual({})
+  })
+
   it('clears a session MCP server names when the session is deleted', async () => {
     const process = new FakeAgentProcess()
     startFakeAgent(process, ['remote-session-1'])
