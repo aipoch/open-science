@@ -20,6 +20,7 @@ type NativeResponsesProxyFactory = NonNullable<
 >
 type NativeResponsesProxyDouble = ReturnType<NativeResponsesProxyFactory>
 type ResolveRuntimeTarget = AgentBackendProviderPort['resolveRuntimeTarget']
+type ResolveRuntimeModelCatalog = AgentBackendProviderPort['resolveRuntimeModelCatalog']
 type TargetOverride = Omit<Partial<ProviderRuntimeTarget>, 'provider'> & {
   provider?: Partial<ResolvedProvider>
 }
@@ -78,7 +79,8 @@ const makeResponsesBridgeDouble = (
   selectSkills: vi.fn(async () => []),
   registerReviewerSession: vi.fn(),
   unregisterReviewerSession: vi.fn(() => false),
-  setReasoningEffort: vi.fn()
+  setReasoningEffort: vi.fn(),
+  setModelTarget: vi.fn()
 })
 
 const makeNativeResponsesProxyDouble = (
@@ -100,7 +102,8 @@ const makeNativeResponsesProxyDouble = (
   }),
   selectSkills: vi.fn(async () => []),
   registerReviewerSession: vi.fn(),
-  unregisterReviewerSession: vi.fn(() => false)
+  unregisterReviewerSession: vi.fn(() => false),
+  setModelTarget: vi.fn()
 })
 
 type HarnessOptions = {
@@ -171,8 +174,19 @@ const makeHarness = (options: HarnessOptions = {}) => {
     supported: true as const,
     slots: ['low', 'medium', 'high', 'xhigh', 'max'] as const
   }))
+  const resolveRuntimeModelCatalog = vi.fn(
+    (
+      storedProvider: Parameters<ResolveRuntimeModelCatalog>[0],
+      framework: Parameters<ResolveRuntimeModelCatalog>[1]
+    ): ProviderRuntimeTarget[] => {
+      void storedProvider
+      void framework
+      return []
+    }
+  )
   const providers: AgentBackendProviderPort = {
     resolveRuntimeTarget,
+    resolveRuntimeModelCatalog,
     resolveRuntimeReasoningEffortProfile
   }
 
@@ -228,6 +242,7 @@ const makeHarness = (options: HarnessOptions = {}) => {
     ensureCodexSubscriptionHome,
     nextGenerationId,
     resolveRuntimeTarget,
+    resolveRuntimeModelCatalog,
     resolveRuntimeReasoningEffortProfile,
     runtime,
     connectors,
@@ -296,6 +311,94 @@ describe('AgentBackendResolver construction and selection', () => {
 })
 
 describe('AgentBackendResolver configured and explicit targets', () => {
+  it('registers third-party Claude model ids through canonical override lanes', async () => {
+    const provider: StoredProvider = {
+      ...makeStoredProvider('provider-a', 'third-party/model-a'),
+      type: 'official',
+      vendorId: 'deepseek',
+      fetchedModels: ['third-party/model-a', 'third-party/model-b']
+    }
+    const harness = makeHarness({
+      settings: makeSettings({
+        providers: [provider],
+        activeProviderId: provider.id,
+        activeModel: provider.model,
+        agentFrameworkId: 'claude-code'
+      }),
+      targetOverride: () => ({
+        apiEndpoints: ['anthropic'],
+        provider: { type: 'custom', apiEndpoints: ['anthropic'], vendorId: 'deepseek' }
+      })
+    })
+    harness.resolveRuntimeModelCatalog.mockImplementation((storedProvider, framework) =>
+      ['third-party/model-a', 'third-party/model-b'].map((model) =>
+        harness.resolveRuntimeTarget(storedProvider, { kind: 'required', model }, framework)
+      )
+    )
+
+    const backend = await harness.resolver.resolveActiveBackend()
+    const modelConfig = (backend.sessionOptions as { settings?: unknown })?.settings
+
+    expect(modelConfig).toMatchObject({
+      availableModels: ['sonnet', 'opus'],
+      modelOverrides: {
+        sonnet: 'third-party/model-a',
+        opus: 'third-party/model-b'
+      }
+    })
+    expect(JSON.stringify(modelConfig)).not.toContain('plain:key-a')
+  })
+
+  it('resolves a secret-free live model target without starting runtime resources', async () => {
+    const harness = makeHarness({
+      settings: makeSettings({ agentFrameworkId: 'codex', reasoningEffort: 'max' }),
+      targetOverride: () => ({
+        apiEndpoints: ['openai'],
+        needsChatResponsesBridge: true,
+        provider: {
+          apiEndpoints: ['openai'],
+          vendorId: 'deepseek',
+          reasoningEffortTransport: 'deepseek'
+        }
+      })
+    })
+
+    const target = await harness.resolver.resolveActiveModelChangeTarget()
+
+    expect(target).toEqual({
+      frameworkId: 'codex',
+      backendId: 'codex:provider-a',
+      route: 'codex-bridge',
+      model: 'model-a',
+      sessionModel: 'gpt-5.4',
+      sessionModelRequired: false,
+      reasoningEffort: 'max',
+      contextWindow: 128_000,
+      bridge: {
+        model: 'model-a',
+        vendorId: 'deepseek',
+        reasoningEffortTransport: 'deepseek'
+      }
+    })
+    expect(JSON.stringify(target)).not.toContain('plain:key-a')
+    expect(harness.createResponsesBridge).not.toHaveBeenCalled()
+    expectRuntimeNotStarted(harness.runtime)
+  })
+
+  it('distinguishes OpenCode endpoint routes so cross-route model changes reconnect', async () => {
+    const harness = makeHarness({
+      settings: makeSettings({ agentFrameworkId: 'opencode' }),
+      targetOverride: () => ({
+        apiEndpoints: ['openai'],
+        provider: { apiEndpoints: ['openai'] }
+      })
+    })
+
+    await expect(harness.resolver.resolveActiveModelChangeTarget()).resolves.toMatchObject({
+      route: 'opencode-openai'
+    })
+  })
+
   it('produces equivalent stable backends for configured and provider-default explicit targets', async () => {
     const settings = makeSettings()
     const harness = makeHarness({ settings })

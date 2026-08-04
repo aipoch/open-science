@@ -412,6 +412,60 @@ describe('codexFramework', () => {
     expect(JSON.parse(second.env?.CODEX_CONFIG ?? '').model_catalog_json).toBe(secondCatalog?.path)
   })
 
+  it('advertises every same-route native model in one catalog for live ACP switching', () => {
+    const framework = createCodexFramework()
+    const activeProvider = {
+      type: 'custom' as const,
+      apiEndpoints: ['responses' as const],
+      baseUrl: 'https://gateway.example/v1',
+      model: 'vendor-model-a',
+      contextWindow: 128_000,
+      key: 'secret'
+    }
+    const config = framework.prepareModelConfig(activeProvider, {
+      storageRoot: '/data',
+      executablePath: '/runtime/codex-acp',
+      providerModelCatalog: [
+        {
+          provider: activeProvider,
+          reasoningEffort: 'high',
+          reasoningEfforts: ['low', 'high']
+        },
+        {
+          provider: {
+            ...activeProvider,
+            model: 'vendor-model-b',
+            contextWindow: 64_000,
+            supportsImageInput: true
+          },
+          reasoningEffort: 'low',
+          reasoningEfforts: ['low', 'medium']
+        }
+      ]
+    })
+
+    const codexConfig = JSON.parse(config.env?.CODEX_CONFIG ?? '')
+    const modelCatalogFile = config.configFiles?.find(
+      (file) => file.path === codexConfig.model_catalog_json
+    )
+    const models = JSON.parse(modelCatalogFile?.content ?? '').models
+
+    expect(models.map(({ slug }: { slug: string }) => slug)).toEqual([
+      'vendor-model-a',
+      'vendor-model-b'
+    ])
+    expect(models[0]).toMatchObject({
+      default_reasoning_level: 'high',
+      context_window: 128_000,
+      input_modalities: ['text']
+    })
+    expect(models[1]).toMatchObject({
+      default_reasoning_level: 'low',
+      context_window: 64_000,
+      input_modalities: ['text', 'image']
+    })
+  })
+
   it('maps the legacy shared subscription to the app-owned subscription home', () => {
     const framework = createCodexFramework({ platform: 'darwin' })
     const config = framework.prepareModelConfig(

@@ -23,11 +23,15 @@ import {
 import {
   DEFAULT_AGENT_FRAMEWORK_ID,
   getAgentFramework,
+  type AgentModelCatalogEntry,
+  type AgentModelChangeTarget,
+  type AgentModelRoute,
   type AgentFrameworkId,
   type ResolvedAgentBackend
 } from '../agent-framework'
 import { opencodeConfigDir } from '../agent-framework/opencode'
 import {
+  CODEX_BRIDGE_MODEL,
   codexStorageDir,
   codexSubscriptionStorageDir,
   normalizeResponsesBaseUrl
@@ -101,7 +105,7 @@ export type AgentBackendRuntimePort = Pick<
 
 export type AgentBackendProviderPort = Pick<
   ProviderAccountsModule,
-  'resolveRuntimeTarget' | 'resolveRuntimeReasoningEffortProfile'
+  'resolveRuntimeTarget' | 'resolveRuntimeModelCatalog' | 'resolveRuntimeReasoningEffortProfile'
 >
 
 export type AgentBackendConnectorPort = Pick<ConnectorSettingsModule, 'enabledConnectorIds'>
@@ -111,8 +115,10 @@ type BridgeBasePort = Pick<
   'start' | 'close' | 'selectSkills' | 'registerReviewerSession' | 'unregisterReviewerSession'
 >
 
-type ResponsesBridgePort = BridgeBasePort & Pick<ResponsesBridge, 'setReasoningEffort'>
-type NativeResponsesProxyPort = BridgeBasePort
+type ResponsesBridgePort = BridgeBasePort &
+  Pick<ResponsesBridge, 'setReasoningEffort' | 'setModelTarget'>
+type NativeResponsesProxyPort = BridgeBasePort &
+  Pick<NativeResponsesCompatibilityProxy, 'setModelTarget'>
 
 type NativeResponsesProxyTarget = {
   baseUrl: string
@@ -134,6 +140,34 @@ type NativeResponsesCompatibilityEntry = {
 type LeasedResponsesBridgeConnection = ResponsesBridgeConnection & {
   lease: NonNullable<ResolvedAgentBackend['responsesBridgeLease']>
 }
+
+const modelRouteFor = (
+  frameworkId: AgentFrameworkId,
+  target: ProviderRuntimeTarget
+): AgentModelRoute => {
+  if (frameworkId === 'claude-code') return 'claude-anthropic'
+  if (frameworkId === 'opencode') {
+    return target.apiEndpoints.includes('openai') ? 'opencode-openai' : 'opencode-anthropic'
+  }
+  if (target.needsChatResponsesBridge) return 'codex-bridge'
+  if (target.needsNativeResponsesCompatibility) return 'codex-responses-compatibility'
+  return 'codex-responses'
+}
+
+const resolvedModelEffort = (
+  intent: ReasoningEffort,
+  target: ProviderRuntimeTarget
+): ResolvedReasoningEffort =>
+  intent === DEFAULT_REASONING_EFFORT
+    ? DEFAULT_REASONING_EFFORT
+    : resolveReasoningEffortValue(intent, target.reasoningEffortProfile)
+
+type ClaudeModelConfig = Readonly<{
+  availableModels: readonly string[]
+  modelOverrides: Readonly<Record<string, string>>
+}>
+
+const CLAUDE_MODEL_OVERRIDE_ALIASES = ['sonnet', 'opus', 'haiku'] as const
 
 export type AgentBackendResolverOptions = {
   readSettings: () => Promise<StoredSettings>
@@ -269,6 +303,59 @@ export class AgentBackendResolver {
     )
   }
 
+  async resolveActiveModelChangeTarget(): Promise<AgentModelChangeTarget | undefined> {
+    const settings = await this.readSettings()
+    const frameworkId = this.resolveConfiguredFrameworkId(settings)
+    const framework = getAgentFramework(frameworkId)
+    const storedProvider = settings.activeProviderId
+      ? settings.providers.find((provider) => provider.id === settings.activeProviderId)
+      : undefined
+    if (!storedProvider) return undefined
+
+    const target = this.providers.resolveRuntimeTarget(
+      storedProvider,
+      { kind: 'configured', requestedModel: settings.activeModel },
+      framework
+    )
+    if (!target.frameworkCompatible || (frameworkId === 'codex' && !target.modelBridgeSupported)) {
+      return undefined
+    }
+
+    const model = target.effectiveModel ?? target.provider.model
+    if (!model) return undefined
+    const route = modelRouteFor(frameworkId, target)
+    const backendProviderId =
+      frameworkId === 'codex' && isCodexSubscriptionProvider(target.provider.type)
+        ? CODEX_ISOLATED_PROVIDER_ID
+        : target.providerId
+
+    return Object.freeze({
+      frameworkId,
+      backendId: `${frameworkId}:${backendProviderId}`,
+      route,
+      model,
+      sessionModel: route === 'codex-bridge' ? CODEX_BRIDGE_MODEL : model,
+      sessionModelRequired:
+        frameworkId === 'codex' && isCodexSubscriptionProvider(target.provider.type),
+      reasoningEffort: resolvedModelEffort(
+        settings.reasoningEffort ?? DEFAULT_REASONING_EFFORT,
+        target
+      ),
+      ...(target.provider.contextWindow ? { contextWindow: target.provider.contextWindow } : {}),
+      ...(route === 'codex-bridge' || route === 'codex-responses-compatibility'
+        ? {
+            bridge: Object.freeze({
+              model,
+              ...(target.provider.vendorId ? { vendorId: target.provider.vendorId } : {}),
+              ...(target.provider.reasoningEffortTransport
+                ? { reasoningEffortTransport: target.provider.reasoningEffortTransport }
+                : {})
+            })
+          }
+        : {})
+    })
+  }
+
   async captureConfiguredSelection(): Promise<AgentBackendSelection> {
     const settings = await this.readSettings()
     return { frameworkId: this.resolveConfiguredFrameworkId(settings) }
@@ -367,10 +454,8 @@ export class AgentBackendResolver {
       throw new Error(CODEX_BRIDGE_UNSUPPORTED_MESSAGE)
     }
 
-    const resolvedEffort =
-      effortIntent === DEFAULT_REASONING_EFFORT
-        ? DEFAULT_REASONING_EFFORT
-        : resolveReasoningEffortValue(effortIntent, target.reasoningEffortProfile)
+    const modelRoute = modelRouteFor(frameworkId, target)
+    const resolvedEffort = resolvedModelEffort(effortIntent, target)
     const sessionEffort: ModelReasoningEffort | undefined =
       resolvedEffort === 'default' ? undefined : resolvedEffort
     const supportedReasoningEfforts = target.reasoningEffortProfile.supported
@@ -387,6 +472,7 @@ export class AgentBackendResolver {
       return {
         framework,
         backendId: `${framework.id}:${target.providerId}`,
+        modelRoute,
         executablePath,
         env: envOverrides,
         sessionOptions,
@@ -409,6 +495,24 @@ export class AgentBackendResolver {
         ? await this.runtime.probeCodexNativeVersion(settings.codex?.nativePath)
         : undefined
     const provider = target.provider
+    const providerModelCatalog: AgentModelCatalogEntry[] = this.providers
+      .resolveRuntimeModelCatalog(storedProvider, framework)
+      .filter(
+        (candidate) =>
+          candidate.frameworkCompatible &&
+          (framework.id !== 'codex' || candidate.modelBridgeSupported) &&
+          modelRouteFor(framework.id, candidate) === modelRoute
+      )
+      .map((candidate) => {
+        const candidateEffort = resolvedModelEffort(effortIntent, candidate)
+        return Object.freeze({
+          provider: candidate.provider,
+          ...(candidateEffort === 'default' ? {} : { reasoningEffort: candidateEffort }),
+          ...(candidate.reasoningEffortProfile.supported
+            ? { reasoningEfforts: [...new Set(candidate.reasoningEffortProfile.slots)] }
+            : {})
+        })
+      })
     if (framework.id === 'codex' && isCodexSubscriptionProvider(provider.type)) {
       await this.ensureCodexSubscriptionHome()
     }
@@ -446,6 +550,7 @@ export class AgentBackendResolver {
         responsesBridge,
         reasoningEffort: sessionEffort,
         reasoningEfforts: supportedReasoningEfforts,
+        providerModelCatalog,
         instructions: connectorInstructions,
         ...(persistentSystemPromptAppends.length > 0
           ? { systemPromptAppends: persistentSystemPromptAppends }
@@ -471,6 +576,7 @@ export class AgentBackendResolver {
       return {
         framework,
         backendId: `${framework.id}:${backendProviderId}`,
+        modelRoute,
         executablePath,
         env: {
           ...(modelConfig.env ?? {}),
@@ -534,6 +640,7 @@ export class AgentBackendResolver {
     }
     const appConfigDir = await this.runtime.provisionClaudeRuntimeConfig(settings, forcedSkillIds)
     const provider = target.provider
+    const modelConfig = this.resolveClaudeModelConfig(settings, target)
     const envOverrides = buildProviderEnv(provider, {
       storageRoot: this.storageRoot,
       claudeExecutablePath: executablePath,
@@ -549,7 +656,8 @@ export class AgentBackendResolver {
           ? {
               settings: {
                 skipWebFetchPreflight: true,
-                permissions: { ask: ['WebFetch'] }
+                permissions: { ask: ['WebFetch'] },
+                ...(modelConfig ?? {})
               }
             }
           : undefined
@@ -560,6 +668,43 @@ export class AgentBackendResolver {
       sessionOptions,
       contextWindow: provider.contextWindow
     }
+  }
+
+  private resolveClaudeModelConfig(
+    settings: StoredSettings,
+    target: ProviderRuntimeTarget
+  ): ClaudeModelConfig | undefined {
+    // Subscription and Anthropic-native sessions already get an authoritative SDK catalog. The
+    // override lanes are needed only for third-party Anthropic-compatible model ids, which Claude's
+    // SDK otherwise advertises but rejects when setModel receives an unregistered opaque id.
+    if (
+      target.providerType === 'claude-shared' ||
+      target.providerType === 'claude-isolated' ||
+      target.provider.vendorId === 'anthropic'
+    ) {
+      return undefined
+    }
+    const storedProvider = settings.providers.find((provider) => provider.id === target.providerId)
+    if (!storedProvider || storedProvider.type !== 'official') return undefined
+
+    const framework = getAgentFramework('claude-code')
+    const models = [
+      target.effectiveModel,
+      ...this.providers
+        .resolveRuntimeModelCatalog(storedProvider, framework)
+        .filter((candidate) => candidate.frameworkCompatible)
+        .map((candidate) => candidate.effectiveModel)
+    ].filter((model): model is string => Boolean(model))
+    const registered = [...new Set(models)].slice(0, CLAUDE_MODEL_OVERRIDE_ALIASES.length)
+    if (registered.length < 2) return undefined
+
+    const availableModels = CLAUDE_MODEL_OVERRIDE_ALIASES.slice(0, registered.length)
+    return Object.freeze({
+      availableModels: Object.freeze([...availableModels]),
+      modelOverrides: Object.freeze(
+        Object.fromEntries(availableModels.map((alias, index) => [alias, registered[index]]))
+      )
+    })
   }
 
   private async ensureResponsesBridge(
@@ -609,6 +754,7 @@ export class AgentBackendResolver {
         unregisterReviewerSession: (promptCacheKey) =>
           leasedEntry.bridge.unregisterReviewerSession(promptCacheKey),
         setReasoningEffort: (effort) => leasedEntry.bridge.setReasoningEffort(effort),
+        setModelTarget: (target) => leasedEntry.bridge.setModelTarget(target),
         release: async () => {
           if (released) return
           released = true
@@ -657,6 +803,7 @@ export class AgentBackendResolver {
           leasedEntry.proxy.registerReviewerSession(promptCacheKey),
         unregisterReviewerSession: (promptCacheKey) =>
           leasedEntry.proxy.unregisterReviewerSession(promptCacheKey),
+        setModelTarget: (target) => leasedEntry.proxy.setModelTarget(target),
         release: async () => {
           if (released) return
           released = true

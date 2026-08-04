@@ -18,6 +18,7 @@ import type { OfficialVendorId } from '../../shared/provider-registry'
 import type {
   AgentFramework,
   AgentAuthentication,
+  AgentModelCatalogEntry,
   AgentProviderConfiguration,
   AgentModelConfig,
   AgentSpawnInput,
@@ -180,7 +181,7 @@ const buildCodexConfig = (provider: {
   }
 }
 
-const buildCodexNativeModelCatalog = (provider: {
+type CodexNativeModelCatalogInput = {
   model?: string
   vendorId?: OfficialVendorId
   baseUrl?: string
@@ -190,7 +191,9 @@ const buildCodexNativeModelCatalog = (provider: {
   supportsImageInput?: boolean
   reasoningEffort?: ModelReasoningEffort
   reasoningEfforts?: readonly ModelReasoningEffort[]
-}): Record<string, unknown> | undefined => {
+}
+
+const buildCodexNativeModelCatalogEntry = (provider: CodexNativeModelCatalogInput): unknown => {
   const model = provider.model?.trim()
   // Bundled capabilities are trustworthy only for an exact model/version pair on OpenAI's official
   // backend. A custom provider may represent the real api.openai.com endpoint, so vendor identity
@@ -217,56 +220,83 @@ const buildCodexNativeModelCatalog = (provider: {
       : null
 
   return {
-    models: [
-      {
-        slug: model,
-        display_name: model,
-        description: null,
-        default_reasoning_level: defaultReasoningEffort,
-        supported_reasoning_levels: supportedReasoningEfforts.map((effort) => ({
-          effort,
-          description: `${effort === 'xhigh' ? 'Extra high' : effort.charAt(0).toUpperCase() + effort.slice(1)} reasoning effort`
-        })),
-        shell_type: 'shell_command',
-        // codex-acp obtains its session model options from app-server model/list. A hidden-only
-        // static catalog produces an empty list and makes session/new fail before the first prompt.
-        visibility: 'list',
-        supported_in_api: true,
-        priority: 99,
-        additional_speed_tiers: [],
-        service_tiers: [],
-        default_service_tier: null,
-        availability_nux: null,
-        upgrade: null,
-        base_instructions: codexNativeModelInstructions,
-        // Skill discovery is an app/runtime capability, not an optional upstream Responses tool.
-        // Keep Codex's native Skill guidance so materialized mcp-* connector skills remain usable.
-        include_skills_usage_instructions: true,
-        supports_reasoning_summaries: false,
-        default_reasoning_summary: 'none',
-        support_verbosity: false,
-        default_verbosity: null,
-        // Native Responses support does not imply support for OpenAI custom/freeform tools, hosted
-        // search, or parallel calls. Advertise only the function-shaped shell tool until the provider
-        // registry can express and verify those capabilities explicitly.
-        apply_patch_tool_type: null,
-        truncation_policy: { mode: 'tokens', limit: 10_000 },
-        supports_parallel_tool_calls: false,
-        supports_image_detail_original: false,
-        context_window: contextWindow,
-        max_context_window: contextWindow,
-        comp_hash: null,
-        effective_context_window_percent: CODEX_EFFECTIVE_CONTEXT_WINDOW_PERCENT,
-        experimental_supported_tools: [],
-        input_modalities: provider.supportsImageInput ? ['text', 'image'] : ['text'],
-        supports_search_tool: false,
-        use_responses_lite: false,
-        auto_review_model_override: null,
-        tool_mode: null,
-        multi_agent_version: null
-      }
-    ]
+    slug: model,
+    display_name: model,
+    description: null,
+    default_reasoning_level: defaultReasoningEffort,
+    supported_reasoning_levels: supportedReasoningEfforts.map((effort) => ({
+      effort,
+      description: `${effort === 'xhigh' ? 'Extra high' : effort.charAt(0).toUpperCase() + effort.slice(1)} reasoning effort`
+    })),
+    shell_type: 'shell_command',
+    // codex-acp obtains its session model options from app-server model/list. A hidden-only
+    // static catalog produces an empty list and makes session/new fail before the first prompt.
+    visibility: 'list',
+    supported_in_api: true,
+    priority: 99,
+    additional_speed_tiers: [],
+    service_tiers: [],
+    default_service_tier: null,
+    availability_nux: null,
+    upgrade: null,
+    base_instructions: codexNativeModelInstructions,
+    // Skill discovery is an app/runtime capability, not an optional upstream Responses tool.
+    // Keep Codex's native Skill guidance so materialized mcp-* connector skills remain usable.
+    include_skills_usage_instructions: true,
+    supports_reasoning_summaries: false,
+    default_reasoning_summary: 'none',
+    support_verbosity: false,
+    default_verbosity: null,
+    // Native Responses support does not imply support for OpenAI custom/freeform tools, hosted
+    // search, or parallel calls. Advertise only the function-shaped shell tool until the provider
+    // registry can express and verify those capabilities explicitly.
+    apply_patch_tool_type: null,
+    truncation_policy: { mode: 'tokens', limit: 10_000 },
+    supports_parallel_tool_calls: false,
+    supports_image_detail_original: false,
+    context_window: contextWindow,
+    max_context_window: contextWindow,
+    comp_hash: null,
+    effective_context_window_percent: CODEX_EFFECTIVE_CONTEXT_WINDOW_PERCENT,
+    experimental_supported_tools: [],
+    input_modalities: provider.supportsImageInput ? ['text', 'image'] : ['text'],
+    supports_search_tool: false,
+    use_responses_lite: false,
+    auto_review_model_override: null,
+    tool_mode: null,
+    multi_agent_version: null
   }
+}
+
+const buildCodexNativeModelCatalog = (
+  provider: CodexNativeModelCatalogInput,
+  catalog: readonly AgentModelCatalogEntry[] = []
+): Record<string, unknown> | undefined => {
+  const candidates = new Map<string, CodexNativeModelCatalogInput>()
+  for (const entry of catalog) {
+    const model = entry.provider.model?.trim()
+    if (!model) continue
+    candidates.set(model, {
+      ...entry.provider,
+      nativeVersion: provider.nativeVersion,
+      reasoningEffort: entry.reasoningEffort,
+      reasoningEfforts: entry.reasoningEfforts
+    })
+  }
+  if (provider.model) {
+    const catalogEntry = candidates.get(provider.model)
+    candidates.set(provider.model, {
+      ...catalogEntry,
+      ...provider,
+      reasoningEffort: provider.reasoningEffort ?? catalogEntry?.reasoningEffort,
+      reasoningEfforts: provider.reasoningEfforts ?? catalogEntry?.reasoningEfforts
+    })
+  }
+
+  const models = [...candidates.values()]
+    .map(buildCodexNativeModelCatalogEntry)
+    .filter((entry) => entry !== undefined)
+  return models.length > 0 ? { models } : undefined
 }
 
 const buildSpawnEnvironment = (
@@ -425,12 +455,15 @@ export const createCodexFramework = ({
     const codexHome = codexStorageDir(ctx.storageRoot)
     const modelCatalog = useChatBridge
       ? undefined
-      : buildCodexNativeModelCatalog({
-          ...provider,
-          nativeVersion: ctx.nativeVersion,
-          reasoningEffort: ctx.reasoningEffort,
-          reasoningEfforts: ctx.reasoningEfforts
-        })
+      : buildCodexNativeModelCatalog(
+          {
+            ...provider,
+            nativeVersion: ctx.nativeVersion,
+            reasoningEffort: ctx.reasoningEffort,
+            reasoningEfforts: ctx.reasoningEfforts
+          },
+          ctx.providerModelCatalog
+        )
     const modelCatalogContent = modelCatalog
       ? `${JSON.stringify(modelCatalog, null, 2)}\n`
       : undefined

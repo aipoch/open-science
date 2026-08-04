@@ -293,6 +293,15 @@ export class AcpConnectionResourceOwner {
     this.currentResource()?.bridgeLease?.setReasoningEffort?.(effort)
   }
 
+  setBridgeModelTarget(
+    target: Parameters<NonNullable<NonNullable<ResponsesBridgeLease>['setModelTarget']>>[0]
+  ): boolean {
+    const setModelTarget = this.currentResource()?.bridgeLease?.setModelTarget
+    if (!setModelTarget) return false
+    setModelTarget(target)
+    return true
+  }
+
   async selectBridgeSkills(
     text: Parameters<NonNullable<ResponsesBridgeLease>['selectSkills']>[0],
     catalog: Parameters<NonNullable<ResponsesBridgeLease>['selectSkills']>[1],

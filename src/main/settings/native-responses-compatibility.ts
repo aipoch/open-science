@@ -4,6 +4,7 @@ import { createServer, type IncomingMessage, type Server, type ServerResponse } 
 import { createLogger, diagnosticErrorFields } from '../logger'
 import type {
   ResponsesBridgeConnection,
+  ResponsesBridgeModelTarget,
   ResponsesBridgeNamespacedTool,
   ResponsesBridgeSkillCandidate,
   ResponsesBridgeSkillInput
@@ -331,10 +332,14 @@ export class NativeResponsesCompatibilityProxy {
   private readonly scopedReviewerSessionKeys = new Set<string>()
 
   constructor(
-    private readonly target: NativeResponsesCompatibilityTarget,
+    private target: NativeResponsesCompatibilityTarget,
     private readonly fetchImpl: NativeFetch = fetch,
     private readonly options: NativeResponsesCompatibilityOptions = {}
   ) {}
+
+  setModelTarget(target: ResponsesBridgeModelTarget): void {
+    this.target = { ...this.target, model: target.model }
+  }
 
   async selectSkills(
     text: string,

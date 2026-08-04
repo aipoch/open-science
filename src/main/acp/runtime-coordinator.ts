@@ -24,6 +24,7 @@ import type { AcpRuntimeActivity, AcpRuntimeActivityOptions } from './runtime-ac
 import { ConversationPermissionGrantStore } from './permission-broker'
 import type { ApprovedSwitchReadBack, ClaudeCodeReplayInput } from '../agents/claude-code-handoff'
 import type { ShutdownStepOutcome } from '../lifecycle-shutdown'
+import type { AgentModelChangeTarget } from '../agent-framework'
 
 const MAX_EVENTS = 500
 const QUIT_PREPARATION_TIMEOUT_MS = 4_000
@@ -734,6 +735,10 @@ class AcpRuntimeCoordinator {
     // generations stay pinned to their own provider/model and therefore must not receive a value
     // resolved for a different model profile.
     return this.getActiveRuntime().applyReasoningEffortChange(effort)
+  }
+
+  async applyModelChange(target: AgentModelChangeTarget): Promise<boolean> {
+    return this.getActiveRuntime().applyModelChange(target)
   }
 
   writeArtifactForCurrentRun(

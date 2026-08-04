@@ -2971,19 +2971,21 @@ describe('SettingsService: preflight & spawn config', () => {
     })
     expect(codexConfig.model_providers['open-science']).not.toHaveProperty('requires_openai_auth')
     const modelCatalog = JSON.parse(await readFile(codexConfig.model_catalog_json, 'utf8'))
-    expect(modelCatalog.models).toEqual([
-      expect.objectContaining({
-        slug: 'MiniMax-M3',
-        context_window: 1_000_000,
-        max_context_window: 1_000_000,
-        supported_in_api: true,
-        default_reasoning_level: null,
-        supported_reasoning_levels: [
-          { effort: 'none', description: 'None reasoning effort' },
-          { effort: 'high', description: 'High reasoning effort' }
-        ]
-      })
-    ])
+    expect(modelCatalog.models).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({
+          slug: 'MiniMax-M3',
+          context_window: 1_000_000,
+          max_context_window: 1_000_000,
+          supported_in_api: true,
+          default_reasoning_level: null,
+          supported_reasoning_levels: [
+            { effort: 'none', description: 'None reasoning effort' },
+            { effort: 'high', description: 'High reasoning effort' }
+          ]
+        })
+      ])
+    )
     expect(backend.authentication).toBeUndefined()
     expect(backend.env.CODEX_CONFIG).not.toContain('mm-secret')
 
@@ -3142,7 +3144,13 @@ describe('SettingsService: official vendors', () => {
     expect(config.sessionOptions).toEqual({
       settings: {
         skipWebFetchPreflight: true,
-        permissions: { ask: ['WebFetch'] }
+        permissions: { ask: ['WebFetch'] },
+        availableModels: ['sonnet', 'opus', 'haiku'],
+        modelOverrides: {
+          sonnet: 'deepseek-v4-flash',
+          opus: 'deepseek-v4-pro',
+          haiku: 'deepseek-v4-pro[1m]'
+        }
       }
     })
     expect(config.contextWindow).toBe(1_000_000)

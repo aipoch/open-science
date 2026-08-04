@@ -15,6 +15,7 @@ import type { ResolvedProvider } from '../settings/provider-env'
 import { resolveChatReasoningTransport } from '../settings/reasoning-transport'
 import type {
   AgentFramework,
+  AgentModelCatalogEntry,
   AgentModelConfig,
   AgentSpawnInput,
   ModelConfigContext,
@@ -182,67 +183,30 @@ const buildModelCapabilities = (
   }
 }
 
-// The app-authoritative config layer (model + provider block + permission policy) passed verbatim to
-// opencode via OPENCODE_CONFIG_CONTENT, which opencode deep-merges ABOVE both the app-owned global config
-// and any project config. Pinning the provider/model/baseURL here (not just permission) means a
-// lower-precedence config — e.g. the user's own ~/.opencode — cannot repoint the active provider's
-// baseURL or switch the model to an attacker-defined provider while inheriting the app's key ref, so the
-// real key can only ever go to the app's own endpoint. The key stays an env reference, never plaintext.
-const buildAppConfigContent = (
+const opencodeModelCatalog = (
   provider: ResolvedProvider,
-  reasoningEffort?: ModelReasoningEffort
-): Record<string, unknown> => {
-  const { bareModel, providerId, npm, baseURL } = resolveOpencodeEndpoint(provider)
-  const modelConfig = {
-    ...buildModelCapabilities(provider, reasoningEffort),
-    ...(provider.contextWindow === undefined
-      ? {}
-      : {
-          limit: {
-            context: provider.contextWindow,
-            output: opencodeOutputLimit(provider.contextWindow)
-          }
-        })
+  reasoningEffort: ModelReasoningEffort | undefined,
+  catalog: readonly AgentModelCatalogEntry[] = []
+): AgentModelCatalogEntry[] => {
+  const active: AgentModelCatalogEntry = { provider, reasoningEffort }
+  const providerId = resolveOpencodeEndpoint(provider).providerId
+  const models = new Map<string, AgentModelCatalogEntry>()
+  for (const entry of [...catalog, active]) {
+    const endpoint = resolveOpencodeEndpoint(entry.provider)
+    if (!endpoint.bareModel || endpoint.providerId !== providerId) continue
+    models.set(endpoint.bareModel, entry)
   }
-
-  return {
-    ...(bareModel ? { model: `${providerId}/${bareModel}` } : {}),
-    permission: { ...OPENCODE_PERMISSION_RULES },
-    provider: {
-      [providerId]: {
-        ...(npm ? { npm } : {}),
-        options: {
-          ...(baseURL ? { baseURL } : {}),
-          ...(provider.key ? { apiKey: `{env:${OPENCODE_API_KEY_ENV}}` } : {})
-        },
-        ...(bareModel ? { models: { [bareModel]: modelConfig } } : {})
-      }
-    }
-  }
+  return [...models.values()]
 }
 
-// Builds opencode's config by MERGING the app's active provider/model onto the user's existing config
-// so their own providers, mcp servers, and auth are preserved. The model is both selected (top-level
-// `model`) and registered under the provider's `models` map — without the registration opencode does
-// not recognize a non-catalog model id (e.g. a custom gateway's `deepseek-v4-pro`) and silently falls
-// back to its own default. Verified against opencode 1.17.13.
-const buildOpencodeConfig = (
+const buildOpencodeModelConfig = (
   provider: ResolvedProvider,
-  baseConfig: Record<string, unknown> = {},
-  instructionPaths: string[] = [],
-  reasoningEffort?: ModelReasoningEffort
-): string => {
-  const { bareModel, providerId, npm, baseURL } = resolveOpencodeEndpoint(provider)
-
-  const baseProviders = asRecord(baseConfig.provider)
-  const baseProvider = asRecord(baseProviders[providerId])
-  const baseOptions = asRecord(baseProvider.options)
-  const baseModels = asRecord(baseProvider.models)
-  const baseModel = bareModel ? asRecord(baseModels[bareModel]) : {}
+  reasoningEffort: ModelReasoningEffort | undefined,
+  baseModel: Record<string, unknown> = {}
+): Record<string, unknown> => {
   const baseLimit = asRecord(baseModel.limit)
-  const basePermission = asRecord(baseConfig.permission)
   const modelCapabilities = buildModelCapabilities(provider, reasoningEffort)
-  const modelConfig = {
+  return {
     ...baseModel,
     ...modelCapabilities,
     ...(modelCapabilities.options
@@ -262,6 +226,72 @@ const buildOpencodeConfig = (
             output: opencodeOutputLimit(provider.contextWindow, baseLimit.output)
           }
         })
+  }
+}
+
+// The app-authoritative config layer (model + provider block + permission policy) passed verbatim to
+// opencode via OPENCODE_CONFIG_CONTENT, which opencode deep-merges ABOVE both the app-owned global config
+// and any project config. Pinning the provider/model/baseURL here (not just permission) means a
+// lower-precedence config — e.g. the user's own ~/.opencode — cannot repoint the active provider's
+// baseURL or switch the model to an attacker-defined provider while inheriting the app's key ref, so the
+// real key can only ever go to the app's own endpoint. The key stays an env reference, never plaintext.
+const buildAppConfigContent = (
+  provider: ResolvedProvider,
+  reasoningEffort?: ModelReasoningEffort,
+  catalog: readonly AgentModelCatalogEntry[] = []
+): Record<string, unknown> => {
+  const { bareModel, providerId, npm, baseURL } = resolveOpencodeEndpoint(provider)
+  const models = Object.fromEntries(
+    opencodeModelCatalog(provider, reasoningEffort, catalog).flatMap((entry) => {
+      const model = resolveOpencodeEndpoint(entry.provider).bareModel
+      return model ? [[model, buildOpencodeModelConfig(entry.provider, entry.reasoningEffort)]] : []
+    })
+  )
+
+  return {
+    ...(bareModel ? { model: `${providerId}/${bareModel}` } : {}),
+    permission: { ...OPENCODE_PERMISSION_RULES },
+    provider: {
+      [providerId]: {
+        ...(npm ? { npm } : {}),
+        options: {
+          ...(baseURL ? { baseURL } : {}),
+          ...(provider.key ? { apiKey: `{env:${OPENCODE_API_KEY_ENV}}` } : {})
+        },
+        ...(Object.keys(models).length > 0 ? { models } : {})
+      }
+    }
+  }
+}
+
+// Builds opencode's config by MERGING the app's active provider/model onto the user's existing config
+// so their own providers, mcp servers, and auth are preserved. The model is both selected (top-level
+// `model`) and registered under the provider's `models` map — without the registration opencode does
+// not recognize a non-catalog model id (e.g. a custom gateway's `deepseek-v4-pro`) and silently falls
+// back to its own default. Verified against opencode 1.17.13.
+const buildOpencodeConfig = (
+  provider: ResolvedProvider,
+  baseConfig: Record<string, unknown> = {},
+  instructionPaths: string[] = [],
+  reasoningEffort?: ModelReasoningEffort,
+  catalog: readonly AgentModelCatalogEntry[] = []
+): string => {
+  const { bareModel, providerId, npm, baseURL } = resolveOpencodeEndpoint(provider)
+
+  const baseProviders = asRecord(baseConfig.provider)
+  const baseProvider = asRecord(baseProviders[providerId])
+  const baseOptions = asRecord(baseProvider.options)
+  const baseModels = asRecord(baseProvider.models)
+  const basePermission = asRecord(baseConfig.permission)
+  const models = { ...baseModels }
+  for (const entry of opencodeModelCatalog(provider, reasoningEffort, catalog)) {
+    const model = resolveOpencodeEndpoint(entry.provider).bareModel
+    if (!model) continue
+    models[model] = buildOpencodeModelConfig(
+      entry.provider,
+      entry.reasoningEffort,
+      asRecord(baseModels[model])
+    )
   }
   // Preserve any instructions the base config already declared, then append ours (de-duplicated).
   const baseInstructions = Array.isArray(baseConfig.instructions)
@@ -297,12 +327,9 @@ const buildOpencodeConfig = (
         },
         // Register the model so opencode treats a non-catalog id as a real, selectable model, declaring
         // its image capability when the active model is multimodal (else opencode strips image parts).
-        ...(bareModel
+        ...(Object.keys(models).length > 0
           ? {
-              models: {
-                ...baseModels,
-                [bareModel]: modelConfig
-              }
+              models
             }
           : {})
       }
@@ -389,7 +416,8 @@ export const opencodeFramework: AgentFramework = {
       provider,
       {},
       instructionPaths,
-      ctx.reasoningEffort
+      ctx.reasoningEffort,
+      ctx.providerModelCatalog
     )
 
     return {
@@ -422,7 +450,7 @@ export const opencodeFramework: AgentFramework = {
         // active provider's baseURL or swap the model to an attacker provider while inheriting the app's
         // `{env:...}` key ref. The key itself never rides this layer, only its env reference.
         OPENCODE_CONFIG_CONTENT: JSON.stringify(
-          buildAppConfigContent(provider, ctx.reasoningEffort)
+          buildAppConfigContent(provider, ctx.reasoningEffort, ctx.providerModelCatalog)
         ),
         // Pass the decrypted key ONLY via the environment; the config references it as `{env:...}`.
         ...(provider.key ? { [OPENCODE_API_KEY_ENV]: provider.key } : {})

@@ -4,10 +4,16 @@ import type { SessionModeState } from '@agentclientprotocol/sdk'
 import type { PermissionProfileApplication } from '../acp/permission-profile-controller'
 import type { PermissionProfileId } from '../../shared/permission-profiles'
 import type { AgentFrameworkId, ChatApiEndpoint } from '../../shared/settings'
-import type { ModelReasoningEffort } from '../../shared/reasoning-effort'
+import type {
+  CustomReasoningEffortTransport,
+  ModelReasoningEffort,
+  ResolvedReasoningEffort
+} from '../../shared/reasoning-effort'
+import type { OfficialVendorId } from '../../shared/provider-registry'
 import type { ResolvedProvider } from '../settings/provider-env'
 import type {
   ResponsesBridgeConnection,
+  ResponsesBridgeModelTarget,
   ResponsesBridgeSkillCandidate,
   ResponsesBridgeSkillInput
 } from '../settings/responses-bridge'
@@ -59,6 +65,39 @@ export type AgentModelConfig = {
   persistentSystemPrompt?: string
 }
 
+export type AgentModelRoute =
+  | 'claude-anthropic'
+  | 'opencode-anthropic'
+  | 'opencode-openai'
+  | 'codex-responses'
+  | 'codex-responses-compatibility'
+  | 'codex-bridge'
+
+export type AgentModelCatalogEntry = Readonly<{
+  provider: ResolvedProvider
+  reasoningEffort?: ModelReasoningEffort
+  reasoningEfforts?: readonly ModelReasoningEffort[]
+}>
+
+// Secret-free, side-effect-free projection of one persisted model selection onto the live runtime.
+// Settings owns provider/vendor/route resolution; AcpRuntime only compares this identity with its
+// current generation and applies the already-resolved session or bridge values.
+export type AgentModelChangeTarget = Readonly<{
+  frameworkId: AgentFrameworkId
+  backendId: string
+  route: AgentModelRoute
+  model: string
+  sessionModel: string
+  sessionModelRequired: boolean
+  reasoningEffort: ResolvedReasoningEffort
+  contextWindow?: number
+  bridge?: Readonly<{
+    model: string
+    vendorId?: OfficialVendorId
+    reasoningEffortTransport?: CustomReasoningEffortTransport
+  }>
+}>
+
 // Inputs for translating a provider; paths differ per framework (Claude wants its executable + config
 // dir root, opencode wants a location to write its generated config into).
 export type ModelConfigContext = {
@@ -83,6 +122,9 @@ export type ModelConfigContext = {
   // register custom model metadata use this to keep their capability catalog consistent with the
   // selected effort above.
   reasoningEfforts?: readonly ModelReasoningEffort[]
+  // Same-provider models that keep the active backend route. Frameworks may pre-register these in
+  // their native catalog so a later session configOption switch does not require a process respawn.
+  providerModelCatalog?: readonly AgentModelCatalogEntry[]
 }
 
 // System-prompt guidance the runtime wants appended for a session (artifact routing, notebook, skill
@@ -197,6 +239,7 @@ export type ResolvedAgentBackend = {
   // Stable identity of the framework/provider storage boundary. Two providers can use the same
   // framework while keeping incompatible session stores (for example Codex shared vs isolated login).
   backendId?: string
+  modelRoute?: AgentModelRoute
   executablePath: string
   env: Record<string, string>
   args?: string[]
@@ -246,6 +289,7 @@ export type ResolvedAgentBackend = {
     // Updates the concrete effort on this runtime's own bridged provider/model. Keeping it on the
     // lease prevents an active-model value from leaking into bridges owned by retiring generations.
     setReasoningEffort?: (effort?: ModelReasoningEffort) => void
+    setModelTarget?: (target: ResponsesBridgeModelTarget) => void
     release: () => Promise<void>
   }
 }

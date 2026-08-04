@@ -1637,6 +1637,31 @@ describe('Responses-compatible bridge conversion', () => {
     bridge.setTarget({ baseUrl: 'https://b.example/v1', model: 'm2', key: 'k2' })
     expect(cache.size).toBe(0)
   })
+
+  it('retargets only model-owned fields and preserves the live endpoint credentials', () => {
+    const bridge = new ResponsesBridge({
+      baseUrl: 'https://gateway.example/v1',
+      model: 'model-a',
+      key: 'secret',
+      vendorId: 'deepseek'
+    })
+
+    bridge.setModelTarget({
+      model: 'model-b',
+      vendorId: 'minimax',
+      reasoningEffortTransport: 'minimax',
+      reasoningEffort: 'high'
+    })
+
+    expect((bridge as unknown as { target: Record<string, unknown> }).target).toEqual({
+      baseUrl: 'https://gateway.example/v1',
+      key: 'secret',
+      model: 'model-b',
+      vendorId: 'minimax',
+      reasoningEffortTransport: 'minimax',
+      reasoningEffort: 'high'
+    })
+  })
 })
 
 describe('Responses bridge Skill selector', () => {

@@ -62,6 +62,7 @@ import { resolveStorageRoot } from '../storage-root'
 import {
   DEFAULT_AGENT_FRAMEWORK_ID,
   listAgentFrameworks,
+  type AgentModelChangeTarget,
   type AgentFrameworkId,
   type ResolvedAgentBackend
 } from '../agent-framework'
@@ -382,6 +383,10 @@ class SettingsService {
   // is synchronous and never performs provider discovery or a network request.
   async resolveActiveReasoningEffort(intent: ReasoningEffort): Promise<ResolvedReasoningEffort> {
     return this.backendResolver.resolveActiveReasoningEffort(intent)
+  }
+
+  async resolveActiveModelChangeTarget(): Promise<AgentModelChangeTarget | undefined> {
+    return this.backendResolver.resolveActiveModelChangeTarget()
   }
 
   // Whether desktop notifications for finished/failed agent tasks are on, read fresh so the

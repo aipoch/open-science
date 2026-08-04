@@ -51,6 +51,7 @@ import {
   claudeCodeFramework,
   getAgentFramework,
   type AgentFramework,
+  type AgentModelChangeTarget,
   type ResolvedAgentBackend
 } from '../agent-framework'
 import { resolveCanonicalMcpToolIdentity } from '../agent-framework/app-mcp-names'
@@ -58,6 +59,10 @@ import { createLogger, diagnosticErrorFields, errorLogFields } from '../logger'
 import { extractProviderToolName } from './runtime-events'
 import { toCodexTurnTokenUsage } from './codex-turn-usage'
 import { fetchOpenCodeUsageSnapshot, sumOpenCodeTurnUsage } from './opencode-turn-usage'
+import {
+  matchSessionModelOption,
+  resolveSessionEffortOption
+} from './session-config'
 import { describePromptError, isProviderPromptError } from './prompt-error'
 import { AcpRuntimeSnapshotOwner } from './runtime-snapshot-owner'
 import { ConversationPermissionGrantStore } from './permission-broker'
@@ -512,6 +517,10 @@ class AcpRuntime {
   private readonly promptContentOwner: AcpPromptContentOwner
   private readonly connectionClose: AcpConnectionCloseWorkflow
   private readonly connectionLifecycle: AcpConnectionLifecycleWorkflow
+  private pendingModelChange: AgentModelChangeTarget | undefined
+  private modelChangeBarrier: Promise<void> | undefined
+  private resolveModelChangeBarrier: (() => void) | undefined
+  private modelChangeDrain: Promise<void> | undefined
 
   // Wires runtime dependencies and forwards permission prompts into the event stream.
   constructor(private readonly options: AcpRuntimeOptions) {
@@ -523,7 +532,7 @@ class AcpRuntime {
       }
     })
     this.generationActivity = new AcpGenerationActivityOwner({
-      activityChanged: () => this.connectionTransitions.activityChanged(),
+      activityChanged: () => this.generationActivityChanged(),
       hasActivePrompts: () => this.sessionInteractions.snapshot().length > 0,
       hasActiveReviewerSessions: () => this.reviewerSessions.hasActiveSessions()
     })
@@ -652,7 +661,7 @@ class AcpRuntime {
         this.permissionContext.clearCorrelationsForSession(sessionId),
       currentStartupGeneration: () => this.sessionRegistry.startupGeneration,
       isPrimarySessionIdClaimed: (sessionId) => this.sessionRegistry.isIdentityClaimed(sessionId),
-      onActiveSessionReleased: () => this.connectionTransitions.activityChanged(),
+      onActiveSessionReleased: () => this.generationActivityChanged(),
       registerBridgeSession: (sessionId) =>
         this.connectionResources.registerBridgeReviewerSession(sessionId),
       removeStartupBlocker: (token) => this.generationActivity.releaseStartup(token),
@@ -776,6 +785,13 @@ class AcpRuntime {
 
   private get reconnectBarrier(): Promise<void> | undefined {
     return this.connectionTransitions.barrier
+  }
+
+  private generationActivityChanged(): void {
+    this.connectionTransitions.activityChanged()
+    if (this.pendingModelChange && !this.generationActivity.blockers().retirement) {
+      void this.drainModelChanges()
+    }
   }
 
   private get connectionGeneration(): number {
@@ -934,6 +950,198 @@ class AcpRuntime {
   // turn is still writing, while a crashed run — absent here — correctly surfaces as orphaned.
   getActiveArtifactRunIds(): string[] {
     return this.artifactTurns?.activeRunIds() ?? []
+  }
+
+  // Accepts a model selection without interrupting a live generation. The picker may keep changing
+  // while work is active; one pending slot deliberately makes the latest selection win. New runtime
+  // operations wait on the barrier, while the operation that was already admitted finishes against
+  // the old model.
+  async applyModelChange(target: AgentModelChangeTarget): Promise<boolean> {
+    if (!this.canApplyModelChange(target)) return false
+
+    if (!this.modelChangeDrain && this.modelChangeMatchesCurrent(target)) {
+      this.pendingModelChange = undefined
+      this.completeModelChangeBarrier()
+      return true
+    }
+
+    this.pendingModelChange = target
+    this.armModelChangeBarrier()
+    if (this.generationActivity.blockers().retirement) return true
+
+    await this.drainModelChanges()
+    return true
+  }
+
+  private canApplyModelChange(target: AgentModelChangeTarget): boolean {
+    return (
+      !this.connectionResources.isShuttingDown &&
+      !this.pendingProviderReconnect &&
+      this.snapshotOwner.status === 'connected' &&
+      this.connection !== undefined &&
+      this.activeSessionEntries().length > 0 &&
+      this.framework.id === target.frameworkId &&
+      this.backendId === target.backendId &&
+      this.backend.modelRoute === target.route
+    )
+  }
+
+  private modelChangeMatchesCurrent(target: AgentModelChangeTarget): boolean {
+    return (
+      this.backend.context.model === target.model &&
+      this.backend.session.model === target.sessionModel &&
+      (this.backend.session.effort ?? 'default') === target.reasoningEffort
+    )
+  }
+
+  private armModelChangeBarrier(): void {
+    if (this.modelChangeBarrier) return
+    this.modelChangeBarrier = new Promise<void>((resolve) => {
+      this.resolveModelChangeBarrier = resolve
+    })
+  }
+
+  private completeModelChangeBarrier(): void {
+    const resolveBarrier = this.resolveModelChangeBarrier
+    this.modelChangeBarrier = undefined
+    this.resolveModelChangeBarrier = undefined
+    resolveBarrier?.()
+  }
+
+  private cancelPendingModelChange(): void {
+    this.pendingModelChange = undefined
+    if (!this.modelChangeDrain) this.completeModelChangeBarrier()
+  }
+
+  private drainModelChanges(): Promise<void> {
+    if (this.modelChangeDrain) return this.modelChangeDrain
+
+    const drain = this.drainModelChangeQueue()
+    this.modelChangeDrain = drain
+    const finalize = (): void => {
+      if (this.modelChangeDrain !== drain) return
+      this.modelChangeDrain = undefined
+      if (this.pendingModelChange && !this.generationActivity.blockers().retirement) {
+        void this.drainModelChanges()
+      } else if (!this.pendingModelChange) {
+        this.completeModelChangeBarrier()
+      }
+    }
+    void drain.then(finalize, finalize)
+    return drain
+  }
+
+  private async drainModelChangeQueue(): Promise<void> {
+    while (this.pendingModelChange && !this.generationActivity.blockers().retirement) {
+      const target = this.pendingModelChange
+      this.pendingModelChange = undefined
+
+      if (!this.canApplyModelChange(target) || !(await this.applyModelTarget(target))) {
+        this.pendingModelChange = undefined
+        // Arm the existing reconnect barrier before releasing model admission. A failed or
+        // incompatible live apply must never admit a prompt onto a partially switched generation.
+        try {
+          await this.connectionTransitions.requestProviderReconnect()
+        } catch (error) {
+          safeLogError('model-change reconnect failed', errorLogFields(error))
+          this.connectionClose.recoverFailedDeferredDisconnect()
+        }
+        return
+      }
+    }
+  }
+
+  private async applyModelTarget(target: AgentModelChangeTarget): Promise<boolean> {
+    const connection = this.connection
+    if (!connection) return false
+
+    try {
+      if (target.bridge) {
+        const bridgeUpdated = this.connectionResources.setBridgeModelTarget({
+          ...target.bridge,
+          ...(target.reasoningEffort === 'default'
+            ? { reasoningEffort: undefined }
+            : { reasoningEffort: target.reasoningEffort })
+        })
+        if (!bridgeUpdated) return false
+      }
+
+      const results = new Map<
+        string,
+        { appliedModel: string; configOptions: SessionConfigOption[] | null | undefined }
+      >()
+
+      for (const [appSessionId, session] of this.activeSessionEntries()) {
+        const priorOptions =
+          (this.sessionRegistry.lookup(appSessionId)?.aggregate.snapshot().configOptions as
+            readonly SessionConfigOption[] | undefined) ??
+          (session as { newSessionResponse?: { configOptions?: SessionConfigOption[] | null } })
+            .newSessionResponse?.configOptions
+        let configOptions: SessionConfigOption[] | null | undefined = priorOptions
+          ? structuredClone([...priorOptions])
+          : priorOptions
+        let appliedModel = target.sessionModel
+
+        // The Chat-to-Responses bridge keeps the ACP transport model fixed; only its upstream target
+        // changes. Other routes switch the session's advertised model option in place.
+        if (target.route !== 'codex-bridge') {
+          const selection = matchSessionModelOption(configOptions, target.sessionModel)
+          if (!selection) return false
+          appliedModel = selection.value
+
+          if (!selection.alreadyCurrent) {
+            this.assertCurrentConnectedConnection(connection)
+            const response = (await connection.agent.request(
+              acp.methods.agent.session.setConfigOption,
+              {
+                sessionId: session.sessionId,
+                configId: selection.configId,
+                value: selection.value
+              }
+            )) as { configOptions?: SessionConfigOption[] | null }
+            configOptions = response?.configOptions ?? configOptions
+          }
+
+          if (this.framework.supportsLiveEffortChange && target.reasoningEffort !== 'default') {
+            const effortSelection = resolveSessionEffortOption(
+              configOptions,
+              target.reasoningEffort
+            )
+            if (!effortSelection) return false
+            const response = (await connection.agent.request(
+              acp.methods.agent.session.setConfigOption,
+              {
+                sessionId: session.sessionId,
+                configId: effortSelection.configId,
+                value: effortSelection.value
+              }
+            )) as { configOptions?: SessionConfigOption[] | null }
+            configOptions = response?.configOptions ?? configOptions
+          }
+        }
+
+        results.set(appSessionId, { appliedModel, configOptions })
+      }
+
+      this.assertCurrentConnectedConnection(connection)
+      this.backendGeneration.updateModel(target)
+      for (const [appSessionId, result] of results) {
+        this.sessionRegistry
+          .lookup(appSessionId)
+          ?.aggregate.updateModel(result.appliedModel, result.configOptions)
+      }
+      this.contextUsageTracker.clear()
+      for (const appSessionId of results.keys()) this.ensureContextUsageTracking(appSessionId)
+      this.emitState()
+      log.info('session model change applied', this.diagnosticContext())
+      return true
+    } catch (error) {
+      log.warn('live session model change failed', {
+        ...diagnosticErrorFields(error),
+        ...this.diagnosticContext()
+      })
+      return false
+    }
   }
 
   // Live-applies a reasoning-effort change to every open session — the ACP equivalent of a model
@@ -2038,6 +2246,7 @@ class AcpRuntime {
 
   // Tears down every local session route and closes the underlying agent process.
   async disconnect(emitClosedStatus = true): Promise<AcpStateSnapshot> {
+    this.cancelPendingModelChange()
     return this.connectionClose.disconnect(emitClosedStatus)
   }
 
@@ -2046,6 +2255,7 @@ class AcpRuntime {
   // the app is gone would be an orphaned process still holding its network connection open. The OS
   // reclaims the remaining connection/session state as the process exits.
   shutdown(): void {
+    this.cancelPendingModelChange()
     this.connectionClose.shutdown()
   }
 
@@ -2075,6 +2285,8 @@ class AcpRuntime {
   // Retires this framework generation without interrupting active turns or background workflows. The
   // coordinator stops routing new work here immediately; teardown waits for every prompt and lease.
   async requestRetirement(): Promise<void> {
+    this.cancelPendingModelChange()
+    await this.modelChangeDrain
     await this.connectionClose.requestRetirement()
   }
 
@@ -2083,6 +2295,8 @@ class AcpRuntime {
   // until the session goes idle. Because every provider shares one config dir, the reconnect resumes the
   // conversation on the new provider with full context. Called when the active provider changes.
   async requestProviderReconnect(): Promise<void> {
+    this.cancelPendingModelChange()
+    await this.modelChangeDrain
     await this.connectionClose.requestProviderReconnect()
   }
 
@@ -2094,7 +2308,11 @@ class AcpRuntime {
     return this.generationActivity.withActivity(() => work(this))
   }
 
-  private async withOperationLease<T>(work: () => Promise<T>): Promise<T> {
+  private withOperationLease<T>(work: () => Promise<T>): Promise<T> {
+    const barrier = this.modelChangeBarrier ?? this.reconnectBarrier
+    if (barrier) {
+      return barrier.then(() => this.withOperationLease(work))
+    }
     return this.generationActivity.withOperation(work)
   }
 
@@ -2139,7 +2357,10 @@ class AcpRuntime {
       onProcessStderr: (text, context) => this.handleAgentProcessStderr(text, context),
       onProcessError: (error, context) => this.handleAgentProcessError(error, context),
       onProcessExit: (code, signal, context) => this.handleAgentProcessExit(code, signal, context),
-      onConnectionClosed: () => this.connectionClose.handleUnexpectedClose(),
+      onConnectionClosed: () => {
+        this.cancelPendingModelChange()
+        this.connectionClose.handleUnexpectedClose()
+      },
       reportCleanupFailure: (stage, error, framework, epoch) => {
         if (stage === 'bridge-lease') {
           safeLogError('responses bridge lease release failed', errorLogFields(error))
@@ -2756,7 +2977,7 @@ class AcpRuntime {
       }
       turnSkillHandle.close(turnSkillOutcome)
       if (turnSkillHandle.reloadDecision.kind === 'continue') {
-        this.connectionTransitions.activityChanged()
+        this.generationActivityChanged()
       }
     }
   }

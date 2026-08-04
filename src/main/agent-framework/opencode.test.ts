@@ -370,6 +370,56 @@ describe('opencodeFramework.prepareModelConfig', () => {
     expect(fileConfig.provider.anthropic.models).toEqual({ m: {} })
     expect(content.provider.anthropic.models).toEqual({ m: {} })
   })
+
+  it('registers every same-route provider model so ACP can switch without a respawn', () => {
+    const activeProvider = {
+      type: 'official' as const,
+      vendorId: 'deepseek' as const,
+      baseUrl: 'https://api.deepseek.com/v1',
+      apiEndpoints: ['anthropic' as const],
+      model: 'deepseek-v4-pro',
+      contextWindow: 128_000,
+      key: 'k'
+    }
+    const config = opencodeFramework.prepareModelConfig(activeProvider, {
+      storageRoot: '/data',
+      executablePath: '/bin/opencode',
+      reasoningEffort: 'high',
+      providerModelCatalog: [
+        { provider: activeProvider, reasoningEffort: 'high' },
+        {
+          provider: {
+            ...activeProvider,
+            model: 'deepseek-v3.2',
+            contextWindow: 64_000,
+            supportsImageInput: true
+          },
+          reasoningEffort: 'low'
+        }
+      ]
+    })
+
+    const fileConfig = JSON.parse(
+      config.configFiles?.find((file) => file.path.endsWith('opencode.json'))?.content ?? '{}'
+    )
+    const pinnedConfig = JSON.parse(config.env?.OPENCODE_CONFIG_CONTENT ?? '{}')
+    const expectedModels = {
+      'deepseek-v4-pro': {
+        options: { reasoningEffort: 'high', thinking: { type: 'enabled' } },
+        limit: { context: 128_000, output: 32_000 }
+      },
+      'deepseek-v3.2': {
+        attachment: true,
+        modalities: { input: ['text', 'image'] },
+        options: { reasoningEffort: 'low', thinking: { type: 'enabled' } },
+        limit: { context: 64_000, output: 32_000 }
+      }
+    }
+
+    expect(fileConfig.model).toBe('anthropic/deepseek-v4-pro')
+    expect(fileConfig.provider.anthropic.models).toEqual(expectedModels)
+    expect(pinnedConfig.provider.anthropic.models).toEqual(expectedModels)
+  })
 })
 
 describe('buildOpencodeConfig', () => {

@@ -4,6 +4,7 @@ import type { AcpPermissionRequest, AcpRuntimeEvent, AcpStateSnapshot } from '..
 import { AcpRuntimeCoordinator } from './runtime-coordinator'
 import type { AcpRuntime, AcpRuntimeCallbacks } from './runtime'
 import type { ConversationPermissionGrantStore } from './permission-broker'
+import type { AgentModelChangeTarget } from '../agent-framework'
 
 const createDeferred = <Value = void>(): {
   promise: Promise<Value>
@@ -60,6 +61,7 @@ const createFakeRuntime = (options: {
   sendPrompt: ReturnType<typeof vi.fn>
   sendAppContinuation: ReturnType<typeof vi.fn>
   applyReasoningEffortChange: ReturnType<typeof vi.fn>
+  applyModelChange: ReturnType<typeof vi.fn>
   respondToPermission: ReturnType<typeof vi.fn>
   emitEvent: (event: AcpRuntimeEvent) => void
   emitPermission: (request: AcpPermissionRequest) => void
@@ -119,6 +121,7 @@ const createFakeRuntime = (options: {
   const requestRetirement = vi.fn(async () => undefined)
   const requestProviderReconnect = vi.fn(async () => undefined)
   const applyReasoningEffortChange = vi.fn(async () => true)
+  const applyModelChange = vi.fn(async () => true)
   const respondToPermission = vi.fn(() => snapshot)
   const shutdown = vi.fn()
   const shutdownForQuit = vi.fn(async () => ({ reaped: true }))
@@ -204,6 +207,7 @@ const createFakeRuntime = (options: {
     requestRetirement,
     requestProviderReconnect,
     applyReasoningEffortChange,
+    applyModelChange,
     respondToPermission,
     shutdown,
     shutdownForQuit,
@@ -226,6 +230,7 @@ const createFakeRuntime = (options: {
     sendPrompt,
     sendAppContinuation,
     applyReasoningEffortChange,
+    applyModelChange,
     respondToPermission,
     emitEvent: (event) => {
       snapshot = { ...snapshot, events: [...snapshot.events, event] }
@@ -1047,6 +1052,35 @@ describe('AcpRuntimeCoordinator', () => {
     expect(created[1].requestRetirement).toHaveBeenCalledOnce()
     expect(created[1].applyReasoningEffortChange).not.toHaveBeenCalled()
     expect(created[2].applyReasoningEffortChange).toHaveBeenCalledWith('high')
+  })
+
+  it('routes a model hot-switch only to the active runtime generation', async () => {
+    const created: ReturnType<typeof createFakeRuntime>[] = []
+    const coordinator = new AcpRuntimeCoordinator((callbacks) => {
+      const fake = createFakeRuntime({
+        frameworkId: created.length === 0 ? 'claude-code' : 'codex',
+        sessionIds: [`session-${created.length + 1}`],
+        callbacks
+      })
+      created.push(fake)
+      return fake.runtime
+    })
+    const target: AgentModelChangeTarget = {
+      frameworkId: 'codex',
+      backendId: 'codex:provider-a',
+      route: 'codex-responses',
+      model: 'model-b',
+      sessionModel: 'model-b',
+      sessionModelRequired: false,
+      reasoningEffort: 'high'
+    }
+
+    await coordinator.createSession()
+    await coordinator.requestAgentFrameworkSwitch()
+    await expect(coordinator.applyModelChange(target)).resolves.toBe(true)
+
+    expect(created[0].applyModelChange).not.toHaveBeenCalled()
+    expect(created[1].applyModelChange).toHaveBeenCalledWith(target)
   })
 
   it('detaches idle sessions while an active turn retires and resumes them on a fresh runtime', async () => {

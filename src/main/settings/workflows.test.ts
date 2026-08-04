@@ -11,6 +11,7 @@ import {
   type SettingsWorkflowEffects,
   type SettingsWorkflowStore
 } from './workflows'
+import type { AgentModelChangeTarget } from '../agent-framework'
 
 type TestSettingsWorkflowEffects = Partial<
   SettingsWorkflowEffects['runtime'] &
@@ -25,7 +26,8 @@ const testEffects = (effects: TestSettingsWorkflowEffects = {}): SettingsWorkflo
   runtime: {
     requestProviderReconnect: effects.requestProviderReconnect ?? (() => undefined),
     requestAgentFrameworkSwitch: effects.requestAgentFrameworkSwitch ?? (() => undefined),
-    applyReasoningEffort: effects.applyReasoningEffort ?? (async () => false)
+    applyReasoningEffort: effects.applyReasoningEffort ?? (async () => false),
+    applyModelChange: effects.applyModelChange ?? (async () => false)
   },
   skills: { requestSkillsReload: effects.requestSkillsReload ?? (() => undefined) },
   connectors: {
@@ -70,6 +72,7 @@ const fakeStore = () => {
     setAgentFramework: vi.fn().mockResolvedValue(snapshot()),
     setReasoningEffort: vi.fn().mockResolvedValue(snapshot()),
     resolveActiveReasoningEffort: vi.fn().mockResolvedValue('high'),
+    resolveActiveModelChangeTarget: vi.fn().mockResolvedValue(undefined),
     setConversationSkillImportEnabled: vi.fn().mockResolvedValue(snapshot()),
     setAppIconVariant: vi.fn().mockResolvedValue(snapshot()),
     loginClaudeShared: vi.fn().mockResolvedValue({ ok: true, category: 'ok' }),
@@ -185,12 +188,97 @@ describe('SettingsWorkflows runtime effects', () => {
       'read',
       'upsert',
       'reconnect',
+      'read',
       'select',
       'reconnect',
       'read',
       'delete',
       'reconnect'
     ])
+  })
+
+  it('persists a same-provider model selection before applying it live', async () => {
+    const calls: string[] = []
+    const { store, capability } = fakeStore()
+    const target: AgentModelChangeTarget = {
+      frameworkId: 'claude-code',
+      backendId: 'claude-code:active',
+      route: 'claude-anthropic',
+      model: 'model-b',
+      sessionModel: 'model-b',
+      sessionModelRequired: false,
+      reasoningEffort: 'high'
+    }
+    store.getSettingsView.mockResolvedValue(
+      snapshot({ activeProviderId: 'active', activeModel: 'model-a' })
+    )
+    store.setActiveProvider.mockImplementation(async () => {
+      calls.push('persist')
+      return snapshot({ activeProviderId: 'active', activeModel: 'model-b' })
+    })
+    store.resolveActiveModelChangeTarget.mockImplementation(async () => {
+      calls.push('resolve')
+      return target
+    })
+    const applyModelChange = vi.fn(async () => {
+      calls.push('apply')
+      return true
+    })
+    const requestProviderReconnect = vi.fn(() => calls.push('reconnect'))
+
+    await createSettingsWorkflows(
+      capability,
+      testEffects({ applyModelChange, requestProviderReconnect })
+    ).runtime.setActiveProvider({ id: 'active', model: 'model-b' })
+
+    expect(calls).toEqual(['persist', 'resolve', 'apply'])
+    expect(applyModelChange).toHaveBeenCalledWith(target)
+    expect(requestProviderReconnect).not.toHaveBeenCalled()
+  })
+
+  it('falls back to reconnect when the active generation cannot switch models live', async () => {
+    const { store, capability } = fakeStore()
+    store.getSettingsView.mockResolvedValue(
+      snapshot({ activeProviderId: 'active', activeModel: 'model-a' })
+    )
+    store.setActiveProvider.mockResolvedValue(
+      snapshot({ activeProviderId: 'active', activeModel: 'model-b' })
+    )
+    store.resolveActiveModelChangeTarget.mockResolvedValue({
+      frameworkId: 'opencode',
+      backendId: 'opencode:active',
+      route: 'opencode-openai',
+      model: 'model-b',
+      sessionModel: 'model-b',
+      sessionModelRequired: false,
+      reasoningEffort: 'default'
+    })
+    const requestProviderReconnect = vi.fn()
+
+    await createSettingsWorkflows(
+      capability,
+      testEffects({ applyModelChange: async () => false, requestProviderReconnect })
+    ).runtime.setActiveProvider({ id: 'active', model: 'model-b' })
+
+    expect(requestProviderReconnect).toHaveBeenCalledOnce()
+  })
+
+  it('does not resolve or reconnect when the persisted effective model is unchanged', async () => {
+    const { store, capability } = fakeStore()
+    const unchanged = snapshot({ activeProviderId: 'active', activeModel: 'model-a' })
+    store.getSettingsView.mockResolvedValue(unchanged)
+    store.setActiveProvider.mockResolvedValue(unchanged)
+    const applyModelChange = vi.fn(async () => true)
+    const requestProviderReconnect = vi.fn()
+
+    await createSettingsWorkflows(
+      capability,
+      testEffects({ applyModelChange, requestProviderReconnect })
+    ).runtime.setActiveProvider({ id: 'active', model: 'model-a' })
+
+    expect(store.resolveActiveModelChangeTarget).not.toHaveBeenCalled()
+    expect(applyModelChange).not.toHaveBeenCalled()
+    expect(requestProviderReconnect).not.toHaveBeenCalled()
   })
 
   it('does not reconnect for a new or inactive provider edit or a failed mutation', async () => {

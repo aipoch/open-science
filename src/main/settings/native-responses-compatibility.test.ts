@@ -23,6 +23,22 @@ afterEach(() => {
 })
 
 describe('native Responses compatibility', () => {
+  it('retargets the upstream model without replacing endpoint credentials', () => {
+    const proxy = new NativeResponsesCompatibilityProxy({
+      baseUrl: 'https://api.minimaxi.com/v1',
+      key: 'secret',
+      model: 'MiniMax-M3'
+    })
+
+    proxy.setModelTarget({ model: 'MiniMax-M4' })
+
+    expect((proxy as unknown as { target: Record<string, unknown> }).target).toEqual({
+      baseUrl: 'https://api.minimaxi.com/v1',
+      key: 'secret',
+      model: 'MiniMax-M4'
+    })
+  })
+
   it('flattens namespace tools and matching history without changing plain functions', () => {
     const { request, aliases } = flattenNativeResponsesRequest({
       model: 'MiniMax-M3',
