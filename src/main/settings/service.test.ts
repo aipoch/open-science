@@ -4021,6 +4021,45 @@ describe('SettingsService: skills', () => {
     expect(scanRepo).toHaveBeenCalledWith('o/r', netFetch)
   })
 
+  it('searches GitHub repositories for keyword input without scanning a guessed repo', async () => {
+    const scanRepo = vi.fn().mockResolvedValue([])
+    const fetch = vi.fn().mockResolvedValue(
+      new Response(
+        JSON.stringify({
+          items: [
+            {
+              full_name: 'hugohe3/ppt-master',
+              description: 'Presentation generation skills',
+              html_url: 'https://github.com/hugohe3/ppt-master',
+              stargazers_count: 42
+            }
+          ]
+        }),
+        { status: 200, headers: { 'content-type': 'application/json' } }
+      )
+    )
+    vi.stubGlobal('fetch', fetch)
+    const service = new SettingsService({
+      repository,
+      storageRoot,
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any
+      userSkills: { scanRepo } as any
+    })
+
+    await expect(service.scanRepoSkills({ repo: 'ppt master' })).resolves.toEqual({
+      skills: [],
+      repositories: [
+        {
+          fullName: 'hugohe3/ppt-master',
+          description: 'Presentation generation skills',
+          url: 'https://github.com/hugohe3/ppt-master',
+          stars: 42
+        }
+      ]
+    })
+    expect(scanRepo).not.toHaveBeenCalled()
+  })
+
   it('previews a selected GitHub skill through the proxy-aware bounded repository path', async () => {
     const previewGitHubSkill = vi.fn().mockResolvedValue({
       name: 'Demo',

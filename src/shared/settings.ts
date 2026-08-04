@@ -967,7 +967,7 @@ export type ConversationSkillImportResult = {
   errors?: Array<{ name: string; error: string }>
 }
 
-// Scan a GitHub repo (owner/repo, owner/repo@ref, or a URL) for skill directories.
+// Search GitHub by keyword, or scan a direct repo reference for skill directories.
 export type ScanRepoRequest = {
   repo: string
 }
@@ -1031,9 +1031,19 @@ export type ScannedSkillView = {
   alreadyImported: boolean
 }
 
-export type ScanRepoResult = {
-  skills: ScannedSkillView[]
+// Compact public-repository metadata returned when scanRepoSkills receives a keyword query.
+export type GitHubRepositorySearchView = {
+  fullName: string
+  description: string | null
+  url: string
+  stars: number
 }
+
+// The existing scan seam also handles keyword discovery. Presence of `repositories` identifies a
+// search result, including the empty-results case; direct repo scans retain their original shape.
+export type ScanRepoResult =
+  | { skills: ScannedSkillView[]; repositories?: never }
+  | { skills: []; repositories: GitHubRepositorySearchView[] }
 
 // Outcome of an import: newly imported, refreshed from upstream, or an already-imported no-op. The
 // refreshed skill list is included so the renderer can update in one round-trip.

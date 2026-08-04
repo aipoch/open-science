@@ -30,7 +30,11 @@ import type {
 } from '../../shared/settings'
 import { DEFAULT_AGENT_FRAMEWORK_ID, type AgentFrameworkId } from '../agent-framework'
 import { codexStorageDir, codexSubscriptionStorageDir } from '../agent-framework/codex'
-import { parseGitHubSkillUrl } from '../skills/github-import'
+import {
+  parseGitHubRepo,
+  parseGitHubSkillUrl,
+  searchGitHubSkillRepositories
+} from '../skills/github-import'
 import { decodeBoundedBase64, SKILL_IMPORT_LIMITS } from '../skills/import-limits'
 import { ClaudeCodeSkillMaterializer, OS_SKILL_PREFIX } from '../skills/materializer'
 import { netFetch } from '../skills/net-fetch'
@@ -320,7 +324,13 @@ class SkillCatalogModule {
   }
 
   async scanRepoSkills(request: ScanRepoRequest): Promise<ScanRepoResult> {
-    return { skills: await this.userSkills.scanRepo(request.repo, netFetch) }
+    if (parseGitHubRepo(request.repo)) {
+      return { skills: await this.userSkills.scanRepo(request.repo, netFetch) }
+    }
+    return {
+      skills: [],
+      repositories: await searchGitHubSkillRepositories(request.repo, netFetch)
+    }
   }
 
   async listAgentHomeSkills(): Promise<AgentHomeSkillView[]> {

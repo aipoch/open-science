@@ -679,12 +679,126 @@ describe('SkillsPanel (sub-views)', () => {
     expect(buttons.some((button) => button.textContent?.trim() === 'Import')).toBe(false)
   })
 
+  it('searches by keyword, then previews a chosen repository without hiding search results', async () => {
+    useSettingsStore.setState({
+      scanRepoSkills: vi
+        .fn()
+        .mockResolvedValueOnce({
+          skills: [],
+          repositories: [
+            {
+              fullName: 'hugohe3/ppt-master',
+              description: 'Presentation generation skills',
+              url: 'https://github.com/hugohe3/ppt-master',
+              stars: 42
+            }
+          ]
+        })
+        .mockResolvedValueOnce({
+          skills: [
+            {
+              name: 'ppt-master',
+              path: 'skills/ppt-master',
+              url: 'https://github.com/hugohe3/ppt-master/tree/main/skills/ppt-master',
+              alreadyImported: false
+            }
+          ]
+        })
+    })
+    act(() => {
+      root.render(<SkillsPanel view={{ kind: 'import' }} onNavigate={vi.fn()} />)
+    })
+
+    setValue('GitHub keyword or repository', 'ppt master')
+    const runSearch = Array.from(document.body.querySelectorAll<HTMLButtonElement>('button')).find(
+      (button) => button.textContent?.trim() === 'Preview'
+    )
+    await act(async () => {
+      runSearch?.click()
+      await Promise.resolve()
+    })
+
+    expect(document.body.textContent).toContain('hugohe3/ppt-master')
+    expect(document.body.textContent).toContain('42')
+    const previewRepository = Array.from(
+      document.body.querySelectorAll<HTMLButtonElement>('button')
+    ).find((button) => button.textContent?.trim() === 'Preview repository')
+    await act(async () => {
+      previewRepository?.click()
+      await Promise.resolve()
+    })
+
+    expect(useSettingsStore.getState().scanRepoSkills).toHaveBeenNthCalledWith(1, 'ppt master')
+    expect(useSettingsStore.getState().scanRepoSkills).toHaveBeenNthCalledWith(
+      2,
+      'hugohe3/ppt-master'
+    )
+    expect(document.body.textContent).toContain('Repositories')
+    expect(document.body.textContent).toContain('Skills in hugohe3/ppt-master')
+    expect(document.body.textContent).toContain('ppt-master')
+  })
+
+  it('renders GitHub search failures in the Settings danger banner', async () => {
+    useSettingsStore.setState({
+      scanRepoSkills: vi
+        .fn()
+        .mockRejectedValue(
+          new Error(
+            'GitHub search is temporarily rate-limited. Try again later or paste an owner/repo reference.'
+          )
+        )
+    })
+    act(() => {
+      root.render(<SkillsPanel view={{ kind: 'import' }} onNavigate={vi.fn()} />)
+    })
+
+    setValue('GitHub keyword or repository', 'slides')
+    const runSearch = Array.from(document.body.querySelectorAll<HTMLButtonElement>('button')).find(
+      (button) => button.textContent?.trim() === 'Preview'
+    )
+    await act(async () => {
+      runSearch?.click()
+      await Promise.resolve()
+    })
+
+    expect(document.body.querySelector('[role="alert"]')?.textContent).toContain(
+      'GitHub search is temporarily rate-limited'
+    )
+  })
+
+  it('keeps the keyword input as the recovery path when search has no matches', async () => {
+    useSettingsStore.setState({
+      scanRepoSkills: vi.fn().mockResolvedValue({ skills: [], repositories: [] })
+    })
+    act(() => {
+      root.render(<SkillsPanel view={{ kind: 'import' }} onNavigate={vi.fn()} />)
+    })
+
+    setValue('GitHub keyword or repository', 'unlikely phrase')
+    const runSearch = Array.from(document.body.querySelectorAll<HTMLButtonElement>('button')).find(
+      (button) => button.textContent?.trim() === 'Preview'
+    )
+    await act(async () => {
+      runSearch?.click()
+      await Promise.resolve()
+    })
+
+    expect(document.body.textContent).toContain(
+      'No matching Skill repositories found. Try another keyword or paste an owner/repo reference.'
+    )
+    expect(
+      document.body.querySelector<HTMLInputElement>('[aria-label="GitHub keyword or repository"]')
+        ?.value
+    ).toBe('unlikely phrase')
+    expect(document.body.querySelector('[role="alert"]')).toBeNull()
+  })
+
   it('scans a repo and batch-imports the selected skills', async () => {
     act(() => {
       root.render(<SkillsPanel view={{ kind: 'import' }} onNavigate={vi.fn()} />)
     })
 
-    setValue('GitHub skill URL or repo', 'acme/skills')
+    setValue('GitHub keyword or repository', 'acme/skills')
 
     const preview = Array.from(document.body.querySelectorAll<HTMLButtonElement>('button')).find(
       (button) => button.textContent?.trim() === 'Preview'
@@ -727,7 +841,7 @@ describe('SkillsPanel (sub-views)', () => {
     act(() => {
       root.render(<SkillsPanel view={{ kind: 'import' }} onNavigate={vi.fn()} />)
     })
-    setValue('GitHub skill URL or repo', 'acme/skills')
+    setValue('GitHub keyword or repository', 'acme/skills')
     const runScan = Array.from(document.body.querySelectorAll<HTMLButtonElement>('button')).find(
       (button) => button.textContent?.trim() === 'Preview'
     )
@@ -797,7 +911,7 @@ describe('SkillsPanel (sub-views)', () => {
         (button) => button.textContent?.trim() === 'Preview'
       )
 
-    setValue('GitHub skill URL or repo', 'acme/old')
+    setValue('GitHub keyword or repository', 'acme/old')
     await act(async () => {
       scanButton()?.click()
       await Promise.resolve()
@@ -808,7 +922,7 @@ describe('SkillsPanel (sub-views)', () => {
     })
     expect(document.body.querySelector('[role="dialog"]')).not.toBeNull()
 
-    setValue('GitHub skill URL or repo', 'acme/new')
+    setValue('GitHub keyword or repository', 'acme/new')
     await act(async () => {
       scanButton()?.click()
       await Promise.resolve()
