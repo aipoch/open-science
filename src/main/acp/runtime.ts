@@ -140,6 +140,7 @@ import {
   type AcpConnectionResourceReadyHandle
 } from './connection-resource-owner'
 import { AcpConnectionTransitionOwner } from './connection-transition-owner'
+import { AcpGenerationActivityOwner } from './generation-activity-owner'
 import {
   AcpBackendGenerationOwner,
   type AcpBackendGenerationAttempt,
@@ -521,6 +522,7 @@ class AcpRuntime {
   private readonly contextUsageUpdatedPromptTurnsBySession = new Map<string, number>()
   private readonly connectionResources: AcpConnectionResourceOwner
   private readonly connectionTransitions: AcpConnectionTransitionOwner
+  private readonly generationActivity: AcpGenerationActivityOwner
   // Stable app identities, provider aliases, publication order, selection, and startup/delete
   // arbitration share one owner. The runtime retains only protocol/resource orchestration.
   private readonly sessionRegistry: AcpSessionRegistry
@@ -530,18 +532,6 @@ class AcpRuntime {
   private readonly sessionInteractions: AcpSessionInteractionOwner
   // Ephemeral Reviewer identity, isolation, permission, and resource state lives behind one owner.
   private readonly reviewerSessions: ReviewerSessionOwner
-  // A startup that begins while a reconnect barrier is already armed must not block the reconnect it
-  // is waiting for. Once it reaches the replacement connection, renewal adds its token here so any
-  // later reconnect waits for publication or rollback.
-  private readonly pendingSessionStartupBlockers = new Set<symbol>()
-  // Public operations acquire this lease synchronously, before backend resolution, skill checks, or
-  // session handshakes can await. Retirement cannot remove a generation while one of those preflight
-  // phases is still capable of spawning or attaching a process/session.
-  private operationLeaseCount = 0
-  // Workflow-scoped leases keep this generation alive across gaps between ephemeral sessions and main
-  // prompts (for example reviewer -> correction -> re-review). A framework switch can retire the runtime
-  // only after every lease and reviewer session has been released.
-  private activityLeaseCount = 0
   // Forced skill state belongs to this runtime generation. It is passed explicitly into backend
   // provisioning so concurrent old/new generations cannot overwrite a SettingsService singleton.
   private readonly turnForcedSkillIds = new Set<string>()
@@ -578,11 +568,13 @@ class AcpRuntime {
         await options.mcpHttpHost?.close()
       }
     })
+    this.generationActivity = new AcpGenerationActivityOwner({
+      activityChanged: () => this.connectionTransitions.activityChanged(),
+      hasActivePrompts: () => this.sessionInteractions.snapshot().length > 0,
+      hasActiveReviewerSessions: () => this.reviewerSessions.hasActiveSessions()
+    })
     this.connectionTransitions = new AcpConnectionTransitionOwner({
-      blockers: () => ({
-        reconnect: this.hasBlockingActivity(),
-        retirement: this.hasRetirementBlockingActivity()
-      }),
+      blockers: () => this.generationActivity.blockers(),
       connectionGeneration: () => this.connectionGeneration,
       disconnect: (emitClosedStatus) => this.disconnect(emitClosedStatus),
       onRetired: () => this.callbacks.onRetired?.(),
@@ -647,7 +639,7 @@ class AcpRuntime {
       inlineImageBudgetBytes: options.inlineImageBudgetBytes
     })
     this.sessionRegistry = new AcpSessionRegistry({
-      addStartupBlocker: (token) => this.pendingSessionStartupBlockers.add(token),
+      addStartupBlocker: (token) => this.generationActivity.acquireStartup(token),
       foreignIdentityCollision: (sessionIds) => {
         const pendingReviewerCollision = sessionIds.find((sessionId) =>
           this.reviewerSessions.hasPendingSessionId(sessionId)
@@ -664,7 +656,7 @@ class AcpRuntime {
           ? new Error(`Primary session id collision with reviewer: ${activeReviewerCollision}`)
           : undefined
       },
-      removeStartupBlocker: (token) => this.pendingSessionStartupBlockers.delete(token)
+      removeStartupBlocker: (token) => this.generationActivity.releaseStartup(token)
     })
     this.permissionContext = new AcpPermissionContext({
       emitPermissionRequest: (request) => {
@@ -693,7 +685,7 @@ class AcpRuntime {
       }
     })
     this.reviewerSessions = new ReviewerSessionOwner({
-      addStartupBlocker: (token) => this.pendingSessionStartupBlockers.add(token),
+      addStartupBlocker: (token) => this.generationActivity.acquireStartup(token),
       clearPermissionCorrelations: (sessionId) =>
         this.permissionContext.clearCorrelationsForSession(sessionId),
       currentStartupGeneration: () => this.sessionRegistry.startupGeneration,
@@ -701,7 +693,7 @@ class AcpRuntime {
       onActiveSessionReleased: () => this.connectionTransitions.activityChanged(),
       registerBridgeSession: (sessionId) =>
         this.connectionResources.registerBridgeReviewerSession(sessionId),
-      removeStartupBlocker: (token) => this.pendingSessionStartupBlockers.delete(token),
+      removeStartupBlocker: (token) => this.generationActivity.releaseStartup(token),
       unregisterBridgeSession: (sessionId) =>
         this.connectionResources.unregisterBridgeReviewerSession(sessionId)
     })
@@ -2802,36 +2794,11 @@ class AcpRuntime {
     _options: AcpRuntimeActivityOptions,
     work: (runtime: AcpRuntimeActivity) => Promise<T>
   ): Promise<T> {
-    this.activityLeaseCount += 1
-    try {
-      return await work(this)
-    } finally {
-      this.activityLeaseCount = Math.max(0, this.activityLeaseCount - 1)
-      this.connectionTransitions.activityChanged()
-    }
+    return this.generationActivity.withActivity(() => work(this))
   }
 
   private async withOperationLease<T>(work: () => Promise<T>): Promise<T> {
-    this.operationLeaseCount += 1
-    try {
-      return await work()
-    } finally {
-      this.operationLeaseCount = Math.max(0, this.operationLeaseCount - 1)
-      this.connectionTransitions.activityChanged()
-    }
-  }
-
-  private hasBlockingActivity(): boolean {
-    return (
-      this.sessionInteractions.snapshot().length > 0 ||
-      this.reviewerSessions.hasActiveSessions() ||
-      this.pendingSessionStartupBlockers.size > 0 ||
-      this.activityLeaseCount > 0
-    )
-  }
-
-  private hasRetirementBlockingActivity(): boolean {
-    return this.operationLeaseCount > 0 || this.hasBlockingActivity()
+    return this.generationActivity.withOperation(work)
   }
 
   private async disconnectCurrent(
@@ -4818,6 +4785,7 @@ class AcpRuntime {
   }
 
   private invalidatePendingSessionStartups(): void {
+    this.generationActivity.invalidateStartups()
     this.sessionRegistry.invalidatePending()
     this.reviewerSessions.invalidatePending()
   }
