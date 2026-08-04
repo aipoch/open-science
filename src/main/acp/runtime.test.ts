@@ -10785,6 +10785,155 @@ describe('ACP runtime session management', () => {
     })
   })
 
+  it('retains handoff continuity across expected reconnect teardown', async () => {
+    const process = new FakeAgentProcess()
+    startFakeAgent(process, ['session-1'])
+    const runtime = new AcpRuntime({
+      appVersion: '0.1.0',
+      defaultCwd: '/workspace',
+      spawnAgent: () => asAgentProcess(process)
+    })
+    const session = await runtime.createSession({ cwd: '/workspace' })
+    await runtime.sendPrompt({
+      sessionId: session.sessionId,
+      text: 'Continue this task after reconnect',
+      provenanceContext: { promptMessageId: 'message-1' }
+    })
+
+    await runtime.disconnect(false)
+
+    expect(
+      runtime.createClaudeCodeContinuationRequest({
+        sessionId: session.sessionId,
+        switchReadBack: {
+          status: 'approved',
+          operation: 'switch',
+          binding: {
+            sessionId: session.sessionId,
+            specialistId: 'specialist-1',
+            targetName: 'Target Specialist'
+          }
+        }
+      })
+    ).toMatchObject({
+      sessionId: session.sessionId,
+      suppressUserMessage: true,
+      provenanceContext: { promptMessageId: 'message-1' }
+    })
+  })
+
+  it('retains staged Claude replay after failed adoption and commits it after success', async () => {
+    const process = new FakeAgentProcess()
+    const fakeAgent = startFakeAgent(
+      process,
+      ['session-1', 'failed-replacement', 'successful-replacement', 'post-commit-replacement'],
+      {
+        resumeNotFound: true,
+        onNewSession: ({ index }) => {
+          if (index === 1) throw new Error('replacement startup failed')
+        }
+      }
+    )
+    const runtime = new AcpRuntime({
+      appVersion: '0.1.0',
+      defaultCwd: '/workspace',
+      spawnAgent: () => asAgentProcess(process)
+    })
+    const session = await runtime.createSession({ cwd: '/workspace' })
+    await runtime.sendPrompt({
+      sessionId: session.sessionId,
+      text: 'Carry this task through replacement',
+      provenanceContext: { promptMessageId: 'message-1' }
+    })
+    runtime.prepareClaudeCodeHandoffReplay({
+      sessionId: session.sessionId,
+      capturedCompletion: { kind: 'returned', value: 'approved completion' },
+      switchReadBack: {
+        status: 'approved',
+        operation: 'switch',
+        binding: {
+          sessionId: session.sessionId,
+          specialistId: 'specialist-1',
+          targetName: 'Target Specialist'
+        }
+      }
+    })
+
+    await expect(runtime.switchSpecialist(session.sessionId, 'specialist-1')).rejects.toThrow()
+    expect(JSON.stringify(fakeAgent.newSessions[1]?._meta)).toContain(
+      'Carry this task through replacement'
+    )
+
+    await runtime.resumeSession({ sessionId: session.sessionId, cwd: '/workspace' })
+    expect(JSON.stringify(fakeAgent.newSessions[2]?._meta)).toContain(
+      'Carry this task through replacement'
+    )
+
+    await runtime.switchSpecialist(session.sessionId, 'specialist-1')
+    expect(JSON.stringify(fakeAgent.newSessions[3]?._meta)).not.toContain(
+      'Carry this task through replacement'
+    )
+  })
+
+  it('clears handoff continuity when its Session is deleted', async () => {
+    const process = new FakeAgentProcess()
+    startFakeAgent(process, ['session-1'])
+    const runtime = new AcpRuntime({
+      appVersion: '0.1.0',
+      defaultCwd: '/workspace',
+      spawnAgent: () => asAgentProcess(process)
+    })
+    const session = await runtime.createSession({ cwd: '/workspace' })
+    await runtime.sendPrompt({ sessionId: session.sessionId, text: 'Delete this task' })
+
+    await runtime.deleteSession({ sessionId: session.sessionId })
+
+    expect(() =>
+      runtime.createClaudeCodeContinuationRequest({
+        sessionId: session.sessionId,
+        switchReadBack: {
+          status: 'approved',
+          operation: 'switch',
+          binding: {
+            sessionId: session.sessionId,
+            specialistId: 'specialist-1',
+            targetName: 'Target Specialist'
+          }
+        }
+      })
+    ).toThrow('No user task is available')
+  })
+
+  it('clears handoff continuity after an unexpected protocol close', async () => {
+    const process = new FakeAgentProcess()
+    startFakeAgent(process, ['session-1'])
+    const runtime = new AcpRuntime({
+      appVersion: '0.1.0',
+      defaultCwd: '/workspace',
+      spawnAgent: () => asAgentProcess(process)
+    })
+    const session = await runtime.createSession({ cwd: '/workspace' })
+    await runtime.sendPrompt({ sessionId: session.sessionId, text: 'Interrupted task' })
+
+    process.stdout.end()
+    await vi.waitFor(() => expect(runtime.getSnapshot().status).toBe('closed'))
+
+    expect(() =>
+      runtime.createClaudeCodeContinuationRequest({
+        sessionId: session.sessionId,
+        switchReadBack: {
+          status: 'approved',
+          operation: 'switch',
+          binding: {
+            sessionId: session.sessionId,
+            specialistId: 'specialist-1',
+            targetName: 'Target Specialist'
+          }
+        }
+      })
+    ).toThrow('No user task is available')
+  })
+
   it('adopts a fresh session when the agent returns a generic Internal error on resume', async () => {
     const process = new FakeAgentProcess()
     const fakeAgent = startFakeAgent(process, ['adopted-session-1'], { resumeInternalError: true })

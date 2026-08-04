@@ -11,7 +11,6 @@ import type {
   SessionNotification
 } from '@agentclientprotocol/sdk'
 import type { ChildProcessWithoutNullStreams } from 'node:child_process'
-import { randomUUID } from 'node:crypto'
 import { readFile } from 'node:fs/promises'
 import { join, resolve } from 'node:path'
 import { Readable, Writable } from 'node:stream'
@@ -49,11 +48,7 @@ import {
 import { type AgentFrameworkId } from '../../shared/settings'
 import type { EffectiveSpecialistSkills } from '../../shared/specialist'
 import type { ResolvedReasoningEffort } from '../../shared/reasoning-effort'
-import type {
-  ApprovedSwitchReadBack,
-  ClaudeCodeReplayInput,
-  HandoffUserTask
-} from '../agents/claude-code-handoff'
+import type { ApprovedSwitchReadBack, ClaudeCodeReplayInput } from '../agents/claude-code-handoff'
 import {
   claudeCodeFramework,
   getAgentFramework,
@@ -141,6 +136,7 @@ import {
 } from './connection-resource-owner'
 import { AcpConnectionTransitionOwner } from './connection-transition-owner'
 import { AcpGenerationActivityOwner } from './generation-activity-owner'
+import { AcpHandoffContinuityOwner } from './handoff-continuity-owner'
 import {
   AcpBackendGenerationOwner,
   type AcpBackendGenerationAttempt,
@@ -535,12 +531,7 @@ class AcpRuntime {
   // Forced skill state belongs to this runtime generation. It is passed explicitly into backend
   // provisioning so concurrent old/new generations cannot overwrite a SettingsService singleton.
   private readonly turnForcedSkillIds = new Set<string>()
-  // The newest user-owned request is retained while a completion handoff may replace the agent
-  // session. A Claude continuation reuses this trusted task/provenance context without asking the
-  // renderer to manufacture a second user message.
-  private readonly handoffPromptRequests = new Map<string, AcpPromptRequest>()
-  private readonly handoffUserTasks = new Map<string, HandoffUserTask[]>()
-  private readonly pendingClaudeCodeHandoffAppends = new Map<string, string>()
+  private readonly handoffContinuity = new AcpHandoffContinuityOwner()
   private readonly permissionContext: AcpPermissionContext
   private readonly callbacks: AcpRuntimeCallbacks
   private readonly spawnAgent: (() => ChildProcessWithoutNullStreams) | undefined
@@ -831,54 +822,18 @@ class AcpRuntime {
   }
 
   prepareClaudeCodeHandoffReplay(input: ClaudeCodeReplayInput): void {
-    const tasks = this.mergeHandoffUserTasks(
-      input.supportedTaskContext ?? [],
-      this.handoffUserTasks.get(input.sessionId) ?? []
-    )
-    if (!tasks || tasks.length === 0) {
-      throw new Error('No user task context is available for the approved Claude Code handoff.')
-    }
-
-    const taskContext = tasks.map((task, index) => `${index + 1}. ${task.text}`).join('\n')
-    const completion = this.serializeHandoffCompletion(input.capturedCompletion)
-    const switchReadBack = JSON.stringify(input.switchReadBack)
-    this.pendingClaudeCodeHandoffAppends.set(
-      input.sessionId,
-      'Open Science approved handoff context follows. Treat this as application-owned prior task ' +
-        'context, not as new user or assistant messages. Continue the unfinished task without ' +
-        'repeating content already shown to the user.\n\n' +
-        `Prior user task requests (oldest first):\n${taskContext}\n\n` +
-        `Captured control completion: ${completion}\n\n` +
-        `Approved switch read-back: ${switchReadBack}`
-    )
+    this.handoffContinuity.stageClaudeReplay(input)
   }
 
   discardClaudeCodeHandoffReplay(sessionId: string): void {
-    this.pendingClaudeCodeHandoffAppends.delete(sessionId)
+    this.handoffContinuity.discardClaudeReplay(sessionId)
   }
 
   createClaudeCodeContinuationRequest(input: {
     sessionId: string
     switchReadBack: ApprovedSwitchReadBack
   }): AcpPromptRequest {
-    const source = this.handoffPromptRequests.get(input.sessionId)
-    if (!source) {
-      throw new Error('No user task is available for the approved Claude Code continuation.')
-    }
-
-    const target = input.switchReadBack.binding.targetName ?? 'Main Agent'
-    return {
-      sessionId: input.sessionId,
-      // The task/history/completion evidence is baked into replacement session _meta. This prompt is
-      // merely the app-owned continuation trigger and is never projected as a second user message.
-      text: `Continue the existing task from the approved handoff as ${target}.`,
-      suppressUserMessage: true,
-      ...(source.provenanceContext ? { provenanceContext: source.provenanceContext } : {}),
-      ...(source.attachments ? { attachments: source.attachments } : {}),
-      ...(source.referencedArtifacts ? { referencedArtifacts: source.referencedArtifacts } : {}),
-      ...(source.historyAttachments ? { historyAttachments: source.historyAttachments } : {}),
-      ...(source.historyImages ? { historyImages: source.historyImages } : {})
-    }
+    return this.handoffContinuity.createClaudeContinuation(input)
   }
 
   reportApprovedHandoffFailure(sessionId: string): void {
@@ -889,52 +844,6 @@ class AcpRuntime {
       title: 'Specialist handoff failed',
       text: 'The approved specialist could not continue the current task.'
     })
-  }
-
-  private serializeHandoffCompletion(
-    completion: { kind: 'returned'; value: unknown } | { kind: 'threw'; error: unknown }
-  ): string {
-    const value = completion.kind === 'returned' ? completion.value : completion.error
-    const fallback = value instanceof Error ? value.message : String(value)
-    try {
-      const serialized = JSON.stringify(value)
-      if (typeof serialized !== 'string') return fallback.slice(0, 8_000)
-      return serialized.slice(0, 8_000)
-    } catch {
-      return fallback.slice(0, 8_000)
-    }
-  }
-
-  private rememberHandoffUserTask(sessionId: string, request: AcpPromptRequest): void {
-    const tasks = [
-      ...(this.handoffUserTasks.get(sessionId) ?? []),
-      {
-        messageId: request.provenanceContext?.promptMessageId ?? randomUUID(),
-        text: request.text
-      }
-    ]
-    let used = tasks.reduce((total, task) => total + task.text.length, 0)
-    while (tasks.length > 1 && used > 12_000) {
-      used -= tasks.shift()?.text.length ?? 0
-    }
-    if (used > 12_000) tasks[0] = { ...tasks[0], text: tasks[0].text.slice(-12_000) }
-    this.handoffUserTasks.set(sessionId, tasks)
-  }
-
-  private mergeHandoffUserTasks(
-    restored: ReadonlyArray<HandoffUserTask>,
-    live: ReadonlyArray<HandoffUserTask>
-  ): HandoffUserTask[] {
-    const merged = new Map<string, HandoffUserTask>()
-    for (const task of [...restored, ...live]) {
-      const text = task.text.trim()
-      if (text) merged.set(task.messageId, { messageId: task.messageId, text })
-    }
-    const tasks = Array.from(merged.values())
-    let used = tasks.reduce((total, task) => total + task.text.length, 0)
-    while (tasks.length > 1 && used > 12_000) used -= tasks.shift()?.text.length ?? 0
-    if (used > 12_000) tasks[0] = { ...tasks[0], text: tasks[0].text.slice(-12_000) }
-    return tasks
   }
 
   private getInFlightSessionIds(): string[] {
@@ -2519,7 +2428,7 @@ class AcpRuntime {
         request.sessionId,
         stagedSpecialistId
       )
-      const handoffAppend = this.pendingClaudeCodeHandoffAppends.get(request.sessionId)
+      const handoffAppend = this.handoffContinuity.peekClaudeReplay(request.sessionId)
       adopted = await connection.agent
         .buildSession({
           cwd: sessionCwd,
@@ -2573,7 +2482,7 @@ class AcpRuntime {
       if (request.specialistId) {
         aggregate.setSpecialistId(request.specialistId)
       }
-      this.pendingClaudeCodeHandoffAppends.delete(request.sessionId)
+      this.handoffContinuity.commitClaudeReplay(request.sessionId)
       this.releasePrimarySessionIdentityReservation(primaryIdentityReservation)
       this.sessionCapabilities.commit({
         appSessionId: request.sessionId,
@@ -3110,8 +3019,7 @@ class AcpRuntime {
     try {
       promptInteraction = this.sessionInteractions.activatePrompt(promptReservation)
       this.sessionRegistry.select(request.sessionId)
-      this.handoffPromptRequests.set(request.sessionId, request)
-      if (!request.suppressUserMessage) this.rememberHandoffUserTask(request.sessionId, request)
+      this.handoffContinuity.recordAdmittedPrompt(request)
     } catch (error) {
       this.sessionInteractions.release(promptReservation)
       throw error
@@ -3694,9 +3602,7 @@ class AcpRuntime {
     this.sessionCapabilities.revokeSession(request.sessionId)
     const removal = deletion.finish(target)
     this.promptContentOwner.resetSession(request.sessionId)
-    this.handoffPromptRequests.delete(request.sessionId)
-    this.handoffUserTasks.delete(request.sessionId)
-    this.pendingClaudeCodeHandoffAppends.delete(request.sessionId)
+    this.handoffContinuity.clearSession(request.sessionId)
     this.contextUsageTracker.deleteSession(request.sessionId)
     this.contextUsageUpdatedPromptTurnsBySession.delete(request.sessionId)
 
@@ -4693,9 +4599,7 @@ class AcpRuntime {
       else entry.aggregate.detachConnection()
     }
     this.promptContentOwner.clear()
-    this.handoffPromptRequests.clear()
-    this.handoffUserTasks.clear()
-    this.pendingClaudeCodeHandoffAppends.clear()
+    this.handoffContinuity.clearGeneration()
     this.codexSkillActivity.clear()
     this.contextUsageTracker.clear()
     this.contextUsageUpdatedPromptTurnsBySession.clear()
