@@ -6,6 +6,7 @@
 
 import type { ReviewerAcpRuntime } from './acp-runtime'
 import { createLogger } from '../logger'
+import type { AcpPromptRequest } from '../../shared/acp'
 import type { ReviewCheck } from '../../shared/reviewer'
 
 const log = createLogger('reviewer:correction')
@@ -42,13 +43,21 @@ export const injectAuditorMessage = async (options: {
   mainSessionId: string
   findings: ReviewCheck[] // the full checks list; only warn/fail are injected
   acpRuntime: ReviewerAcpRuntime
+  provenanceContext: NonNullable<AcpPromptRequest['provenanceContext']>
   // Optional hook for tests to capture the injected message text.
   onCorrectionPrompt?: (text: string) => void
   // Called if the correction sendPrompt fails, so the caller can undo pre-emptive suppression.
   onCorrectionFailed?: () => void
 }): Promise<void> => {
-  const { sessionId, mainSessionId, findings, acpRuntime, onCorrectionPrompt, onCorrectionFailed } =
-    options
+  const {
+    sessionId,
+    mainSessionId,
+    findings,
+    acpRuntime,
+    provenanceContext,
+    onCorrectionPrompt,
+    onCorrectionFailed
+  } = options
 
   // Only inject for warn/fail checks.
   const warnFailChecks = findings.filter((c) => c.status === 'warn' || c.status === 'fail')
@@ -71,7 +80,7 @@ export const injectAuditorMessage = async (options: {
   try {
     // Inject through the main-session sendPrompt path (design.md cross-cutting requirement).
     // This is a normal prompt turn that the user sees in the conversation.
-    await acpRuntime.sendPrompt({ sessionId: mainSessionId, text: message })
+    await acpRuntime.sendPrompt({ sessionId: mainSessionId, text: message, provenanceContext })
     log.info('[Auditor] correction turn complete', { mainSessionId })
   } catch (error) {
     const errorMsg = error instanceof Error ? error.message : String(error)

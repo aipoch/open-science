@@ -16,7 +16,7 @@ import { mkdtemp, rm } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { PassThrough, Readable, Writable } from 'node:stream'
-import { afterEach, beforeEach, describe, expect, it } from 'vitest'
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 
 import { AcpRuntime } from '../acp/runtime'
 import { ReviewRepository } from './repository'
@@ -24,6 +24,7 @@ import { createProjectDbClient, ensureProjectSchema } from '../projects/prisma-c
 import { runReview } from './orchestrator'
 import { callSubmitFindingsAfterReadingEvidence as callSubmitFindings } from './reviewer-mcp-test-client'
 import type { PersistedChatSession } from '../../shared/session-persistence'
+import { createLinearConversationGraph } from '../../shared/conversation-graph'
 
 // ---------------------------------------------------------------------------
 // FakeAgentProcess — re-used from orchestrator.test.ts
@@ -267,6 +268,14 @@ describe('single-round auditor correction', () => {
     await ensureProjectSchema(client)
     const repository = new ReviewRepository(() => Promise.resolve(client))
     const session = makeSession()
+    session.conversationGraph = createLinearConversationGraph({
+      sessionId: 'pending-session-1',
+      messages: session.messages,
+      frameworkId: 'claude-code',
+      createdAt: session.createdAt,
+      updatedAt: session.updatedAt
+    })
+    const correctionSendPrompt = vi.spyOn(runtime, 'sendPrompt')
 
     // Capture prompts sent to the main session via sendCorrectionPrompt.
     const correctionPrompts: string[] = []
@@ -307,6 +316,18 @@ describe('single-round auditor correction', () => {
     // Must end with the instruction line.
     expect(auditorMsg).toContain('Acknowledge in one line')
     expect(auditorMsg).toContain("Don't restate or narrate")
+    expect(correctionSendPrompt).toHaveBeenCalledWith(
+      expect.objectContaining({
+        sessionId: 'main-session-1',
+        provenanceContext: expect.objectContaining({
+          rootFrameId: 'root-frame-pending-session-1',
+          agentFrameId: 'root-frame-pending-session-1',
+          messageBranchId: 'message-branch-pending-session-1',
+          runtimeSegmentId: 'runtime-segment-pending-session-1',
+          promptMessageId: expect.stringMatching(/^prompt-/u)
+        })
+      })
+    )
 
     await client.$disconnect()
   })
