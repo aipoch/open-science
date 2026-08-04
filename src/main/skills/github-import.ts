@@ -1,7 +1,6 @@
 import { createLogger } from '../logger'
 import { SKILL_IMPORT_LIMITS } from './import-limits'
 import {
-  GITHUB_REPOSITORY_SEARCH_MAX_KEYWORD_LENGTH,
   GITHUB_REPOSITORY_SEARCH_TOO_LONG_MESSAGE,
   type GitHubRepositorySearchView
 } from '../../shared/settings'
@@ -318,10 +317,11 @@ const searchGitHubSkillRepositories = async (
   fetchImpl: FetchLike
 ): Promise<GitHubRepositorySearchView[]> => {
   const keywords = input.trim()
-  if (keywords.length > GITHUB_REPOSITORY_SEARCH_MAX_KEYWORD_LENGTH) {
+  const searchTerms = `${keywords} SKILL.md`
+  if (searchTerms.length > 256) {
     throw new Error(GITHUB_REPOSITORY_SEARCH_TOO_LONG_MESSAGE)
   }
-  const query = `${keywords} SKILL.md in:name,description,topics,readme`
+  const query = `${searchTerms} in:name,description,topics,readme`
   const response = await fetchImpl(
     `https://api.github.com/search/repositories?q=${encodeURIComponent(query)}&per_page=10`,
     { headers: GITHUB_HEADERS }

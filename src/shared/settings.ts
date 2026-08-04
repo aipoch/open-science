@@ -1039,7 +1039,6 @@ export type GitHubRepositorySearchView = {
   stars: number
 }
 
-export const GITHUB_REPOSITORY_SEARCH_MAX_KEYWORD_LENGTH = 256
 export const GITHUB_REPOSITORY_SEARCH_TOO_LONG_MESSAGE =
   'GitHub search is limited to 256 characters. Shorten the keywords or paste an owner/repo reference.'
 

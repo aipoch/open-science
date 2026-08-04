@@ -716,7 +716,7 @@ describe('searchGitHubSkillRepositories', () => {
   it('rejects keywords longer than GitHub search accepts before fetching', async () => {
     const fetcher = vi.fn<FetchLike>()
 
-    await expect(searchGitHubSkillRepositories('x'.repeat(257), fetcher)).rejects.toThrow(
+    await expect(searchGitHubSkillRepositories('x'.repeat(248), fetcher)).rejects.toThrow(
       'GitHub search is limited to 256 characters. Shorten the keywords or paste an owner/repo reference.'
     )
     expect(fetcher).not.toHaveBeenCalled()
