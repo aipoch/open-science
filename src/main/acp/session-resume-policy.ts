@@ -144,8 +144,9 @@ const authoritativeFailure = (
   reason: AcpSessionResumeAuthoritativeFailureReason
 ): AcpSessionResumeFailureClassification => Object.freeze({ disposition: 'authoritative', reason })
 
-// Pure preflight and provider-error policy. Session ownership, protocol calls, and replay remain with
-// the provider Session transactions that consume these decisions.
+// ARD-04 intentionally adds this pure policy without a production caller. ARD-20 exclusively owns
+// the Runtime cutover once its transaction seams exist; integrating here would violate the serialized
+// hot-file boundary. Session ownership, protocol calls, and replay stay with those transactions.
 class AcpSessionResumePolicy {
   decide(input: AcpSessionResumePolicyInput): AcpSessionResumeDecision {
     const providerSessionId = input.providerSessionId ?? input.appSessionId
