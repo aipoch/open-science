@@ -15567,6 +15567,56 @@ describe('ACP runtime skill force-load + nudge', () => {
     expect(runtime.getSnapshot().status).toBe('idle')
   })
 
+  it('restores normal backend preparation after a forced Skill reload fails', async () => {
+    const backendContexts: string[][] = []
+    let spawnCount = 0
+    const spawn = (): ChildProcessWithoutNullStreams => {
+      spawnCount += 1
+      const process = new FakeAgentProcess()
+      startFakeAgent(
+        process,
+        ['remote-session-1'],
+        spawnCount === 2
+          ? {
+              onResumeRequest: () => {
+                throw new Error('provider unavailable')
+              }
+            }
+          : {}
+      )
+      return asAgentProcess(process)
+    }
+    const runtime = new AcpRuntime({
+      appVersion: '0.1.0',
+      defaultCwd: '/workspace',
+      resolveBackend: (context) => {
+        backendContexts.push([...context.forcedSkillIds])
+        return {
+          framework: { ...claudeCodeFramework, spawn },
+          executablePath: '/bin/agent',
+          env: {}
+        }
+      },
+      skills: {
+        needForceLoad: async (ids) => ids,
+        namesForIds: async (ids) => ids
+      }
+    })
+
+    await runtime.createSession({ cwd: '/workspace' })
+    await expect(
+      runtime.sendPrompt({
+        sessionId: 'remote-session-1',
+        text: 'use the disabled skill',
+        forcedSkillIds: ['research']
+      })
+    ).rejects.toThrow()
+    await vi.waitFor(() => expect(runtime.getSnapshot().status).toBe('idle'))
+
+    await runtime.resumeSession({ sessionId: 'remote-session-1', cwd: '/workspace' })
+    expect(backendContexts.slice(0, 3)).toEqual([[], ['research'], []])
+  })
+
   it('nudges without any reconnect when every picked skill is already enabled', async () => {
     const spawner = createFreshAgentSpawner()
     const hooks = createSkillsHooks({ needForceLoad: [] })

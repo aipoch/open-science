@@ -76,7 +76,6 @@ import {
 } from '../skills/mcp-server'
 import { codexStorageDir, codexSubscriptionStorageDir } from '../agent-framework/codex'
 import { getAppClaudeConfigDir } from '../settings/provider-env'
-import type { ResponsesBridgeSkillCandidate } from '../settings/responses-bridge'
 import type { PermissionGrantRegistry } from '../permission-grants/registry'
 import { withDataRootWrite } from '../storage/migration-state'
 import { opencodeStorageDir } from '../agent-framework/opencode'
@@ -133,6 +132,12 @@ import {
 } from './backend-generation-owner'
 import { AcpSessionConfigurator, type AcpSessionConfigurationFacts } from './session-configurator'
 import { AcpSessionUpdateProjector, type AcpSessionUpdateEffect } from './session-update-projector'
+import {
+  AcpTurnSkillOwner,
+  type AcpTurnSkillHooks,
+  type TurnSkillHandle,
+  type TurnSkillOutcome
+} from './turn-skill-owner'
 
 export type AcpRuntimeCallbacks = {
   onStateChanged?: (state: AcpStateSnapshot) => void
@@ -169,7 +174,7 @@ type AcpRuntimeOptions = {
   uploads?: AcpRuntimeUploadOptions
   notebook?: AcpRuntimeNotebookOptions
   skillImport?: AcpRuntimeSkillImportOptions
-  skills?: AcpRuntimeSkillsOptions
+  skills?: AcpTurnSkillHooks
   // The agent backend to drive. Defaults to Claude Code; selecting another (opencode) swaps only the
   // framework-coupled behavior (spawn, session meta, permission-mode mapping) via AgentFramework.
   framework?: AgentFramework
@@ -200,24 +205,6 @@ type AcpRuntimeOptions = {
   // intentionally separate from Main Agent enablement: a Main-disabled installed Skill remains
   // eligible for a Specialist.
   resolveSpecialistSkills?: (specialistId: string) => Promise<EffectiveSpecialistSkills>
-}
-
-// Turn-scoped skill force-load hooks, wired from the settings service. Optional so tests that construct
-// the runtime without them are unaffected; every usage guards on presence.
-type AcpRuntimeSkillsOptions = {
-  // Returns the subset of forced ids that are currently disabled (i.e. need a respawn to materialize).
-  needForceLoad: (ids: string[]) => Promise<string[]>
-  // Resolves picker ids to the names accepted by the agent's Skill tool.
-  namesForIds: (ids: string[]) => Promise<string[]>
-  // Resolves picker ids to exact app-owned Codex Skill files. Codex carries these as private ACP
-  // metadata; Claude Code and OpenCode keep the existing text nudge.
-  descriptorsForIds?: (
-    ids: string[],
-    codexHome: string | undefined
-  ) => Promise<Array<{ name: string; path: string }>>
-  // Lists only enabled, materialized app-owned Skills from the active isolated Codex home. The
-  // Chat Completions compatibility selector receives name + description; paths remain local.
-  catalogForCodexHome?: (codexHome: string | undefined) => Promise<ResponsesBridgeSkillCandidate[]>
 }
 
 type AcpRuntimeArtifactOptions = {
@@ -511,14 +498,11 @@ class AcpRuntime {
   private readonly sessionInteractions: AcpSessionInteractionOwner
   // Ephemeral Reviewer identity, isolation, permission, and resource state lives behind one owner.
   private readonly reviewerSessions: ReviewerSessionOwner
-  // Forced skill state belongs to this runtime generation. It is passed explicitly into backend
-  // provisioning so concurrent old/new generations cannot overwrite a SettingsService singleton.
-  private readonly turnForcedSkillIds = new Set<string>()
+  private readonly turnSkills: AcpTurnSkillOwner
   private readonly handoffContinuity = new AcpHandoffContinuityOwner()
   private readonly permissionContext: AcpPermissionContext
   private readonly callbacks: AcpRuntimeCallbacks
   private readonly spawnAgent: (() => ChildProcessWithoutNullStreams) | undefined
-  private readonly skillsHooks: AcpRuntimeSkillsOptions | undefined
   private readonly backendGeneration: AcpBackendGenerationOwner
   private readonly sessionConfigurator: AcpSessionConfigurator
   private readonly sessionUpdateProjector = new AcpSessionUpdateProjector()
@@ -557,8 +541,12 @@ class AcpRuntime {
       recoverFailedDeferredDisconnect: () => this.recoverFailedDeferredDisconnect(),
       reportFailure: (message, error) => safeLogError(message, errorLogFields(error))
     })
+    this.turnSkills = new AcpTurnSkillOwner({
+      resolveSpecialistSkills: options.resolveSpecialistSkills,
+      skills: options.skills,
+      requestSkillsReload: () => this.connectionTransitions.requestSkillsReload()
+    })
     this.spawnAgent = options.spawnAgent
-    this.skillsHooks = options.skills
     this.backendGeneration = new AcpBackendGenerationOwner(options.framework ?? claudeCodeFramework)
     this.sessionConfigurator = new AcpSessionConfigurator({
       assertCurrentConnection: (connection) => this.assertCurrentConnectedConnection(connection),
@@ -2471,7 +2459,7 @@ class AcpRuntime {
 
     const backend = this.options.resolveBackend
       ? await this.options.resolveBackend({
-          forcedSkillIds: [...this.turnForcedSkillIds],
+          forcedSkillIds: [...this.turnSkills.backendPreparation().forcedSkillIds],
           systemPromptAppends: await this.getBackendSystemPromptAppends()
         })
       : undefined
@@ -2566,100 +2554,62 @@ class AcpRuntime {
       turnToken: request.continuation?.originatingTurnToken
     })
 
-    // A chip can survive a catalog/profile edit in the renderer. Re-resolve immediately before
-    // dispatch so it cannot be used to escape the active Specialist scope.
-    // Ordinary sessions continue without yielding. Specialist sessions await their authoritative scope,
-    // but the reservation is invalidated by reset/replacement before a stale attempt can be activated.
-    let currentSpecialistSkills: EffectiveSpecialistSkills | undefined
+    let turnSkillHandle: TurnSkillHandle
     try {
-      currentSpecialistSkills =
-        this.sessionRegistry.lookup(request.sessionId)?.aggregate.snapshot().specialistId &&
-        this.options.resolveSpecialistSkills
-          ? await this.resolveCurrentSpecialistSkills(request.sessionId)
-          : undefined
+      const authorization = this.turnSkills.authorize({
+        specialistId: this.sessionRegistry.lookup(request.sessionId)?.aggregate.snapshot()
+          .specialistId,
+        selectedSkillIds: request.forcedSkillIds,
+        signal: promptReservation.signal
+      })
+      turnSkillHandle = authorization instanceof Promise ? await authorization : authorization
     } catch (error) {
       this.sessionInteractions.release(promptReservation)
       throw error
     }
-    if (currentSpecialistSkills && currentSpecialistSkills.kind !== 'main') {
-      if (currentSpecialistSkills.kind === 'unavailable') {
-        this.sessionInteractions.release(promptReservation)
-        throw new Error(currentSpecialistSkills.reason)
-      }
-      const rejected = (request.forcedSkillIds ?? []).find(
-        (id) =>
-          !currentSpecialistSkills.skillIds.includes(id) &&
-          // Connector docs are materialized as `mcp-<id>` Skills. They deliberately have no
-          // durable Skill catalog id, so their allow-list lives in frameworkNames alongside the
-          // specialist's ordinary skills. A continuation may inherit one from its source turn.
-          !(id.startsWith('mcp-') && currentSpecialistSkills.frameworkNames.includes(id))
-      )
-      if (rejected) {
-        this.sessionInteractions.release(promptReservation)
-        throw new Error(`Skill "${rejected}" is not available to the active specialist.`)
-      }
-    }
-
-    // Turn-scoped skill force-load: a skill the user picked but has toggled off must run this turn only.
-    // If any pick is currently disabled, mark the picks forced and respawn the agent (drop the connection,
-    // then resume the same session) so the fresh spawn's provisioning materializes them with full context
-    // restored. Picks that are already enabled need no respawn. Restored to the normal set after the turn.
-    const forced = request.forcedSkillIds ?? []
-    let didForceReload = false
+    const rejectedSkillOutcome =
+      turnSkillHandle.reloadDecision.kind === 'reload' ? 'reload-restored' : 'failed'
 
     try {
-      if (this.skillsHooks && forced.length > 0) {
-        const toForce = await this.skillsHooks.needForceLoad(forced)
-
-        // The Skill check yields before a force-load reconnect mutates runtime-wide state. A newer turn
-        // may have claimed this session meanwhile, so refuse the stale reconnect before it can tear down
-        // that turn.
+      if (turnSkillHandle.reloadDecision.kind === 'reload') {
         if (this.hasSessionInteractionInFlight(request.sessionId)) {
           throw new Error('An ACP prompt is already running for this session')
         }
 
-        if (toForce.length > 0) {
-          // Capture routing before disconnect clears it, so resume lands on the same conversation.
-          const aggregateSnapshot = this.sessionRegistry
-            .lookup(request.sessionId)
-            ?.aggregate.snapshot()
-          const sessionCwd = aggregateSnapshot?.cwd ?? this.snapshotOwner.cwd
-          const projectName = this.resolveSessionProjectName(request.sessionId)
-          const permissionProfile =
-            aggregateSnapshot?.permissionProfile?.selectedProfile ?? DEFAULT_PERMISSION_PROFILE
-          this.turnForcedSkillIds.clear()
-          for (const id of forced) this.turnForcedSkillIds.add(id)
-          didForceReload = true
-          await this.disconnect(false)
-          const reloadResume = await this.resumeSession({
-            sessionId: request.sessionId,
-            cwd: sessionCwd,
-            projectName,
-            permissionProfile
-          })
-          if (reloadResume.contextReset) {
-            request.historyPreamble = request.resumeFallback?.historyPreamble
-            request.historyAttachments = request.resumeFallback?.historyAttachments
-            request.historyImages = request.resumeFallback?.historyImages
-          }
-
-          const reloaded = this.activeSessionFor(request.sessionId)
-          if (!reloaded) {
-            throw new Error(`ACP session not found after force-load: ${request.sessionId}`)
-          }
-          activeSession = reloaded
-          // disconnect() invalidates every scope belonging to the old provider generation. Reserve the
-          // resumed stable App Session again before this same authorized attempt can continue.
-          promptReservation = this.sessionInteractions.reservePrompt({
-            sessionId: request.sessionId,
-            kind: 'prompt',
-            promptMessageId: request.provenanceContext?.promptMessageId,
-            turnToken: request.continuation?.originatingTurnToken
-          })
+        const aggregateSnapshot = this.sessionRegistry
+          .lookup(request.sessionId)
+          ?.aggregate.snapshot()
+        const sessionCwd = aggregateSnapshot?.cwd ?? this.snapshotOwner.cwd
+        const projectName = this.resolveSessionProjectName(request.sessionId)
+        const permissionProfile =
+          aggregateSnapshot?.permissionProfile?.selectedProfile ?? DEFAULT_PERMISSION_PROFILE
+        await this.disconnect(false)
+        const reloadResume = await this.resumeSession({
+          sessionId: request.sessionId,
+          cwd: sessionCwd,
+          projectName,
+          permissionProfile
+        })
+        if (reloadResume.contextReset) {
+          request.historyPreamble = request.resumeFallback?.historyPreamble
+          request.historyAttachments = request.resumeFallback?.historyAttachments
+          request.historyImages = request.resumeFallback?.historyImages
         }
+
+        const reloaded = this.activeSessionFor(request.sessionId)
+        if (!reloaded) {
+          throw new Error(`ACP session not found after force-load: ${request.sessionId}`)
+        }
+        activeSession = reloaded
+        promptReservation = this.sessionInteractions.reservePrompt({
+          sessionId: request.sessionId,
+          kind: 'prompt',
+          promptMessageId: request.provenanceContext?.promptMessageId,
+          turnToken: request.continuation?.originatingTurnToken
+        })
       }
     } catch (error) {
-      if (didForceReload) this.turnForcedSkillIds.clear()
+      turnSkillHandle.close('reload-restored')
       this.sessionInteractions.release(promptReservation)
       throw error
     }
@@ -2667,12 +2617,14 @@ class AcpRuntime {
     // Another prompt can claim this session while authorization preflight is awaiting. Activate only
     // the newest reservation so a delayed attempt cannot overwrite a newer turn's lifecycle state.
     if (this.hasSessionInteractionInFlight(request.sessionId)) {
+      turnSkillHandle.close(rejectedSkillOutcome)
       this.sessionInteractions.release(promptReservation)
       throw new Error('An ACP prompt is already running for this session')
     }
 
     const refreshedActiveSession = this.activeSessionFor(request.sessionId)
     if (!refreshedActiveSession) {
+      turnSkillHandle.close(rejectedSkillOutcome)
       this.sessionInteractions.release(promptReservation)
       throw new Error(`ACP session not found: ${request.sessionId}`)
     }
@@ -2684,6 +2636,7 @@ class AcpRuntime {
       this.sessionRegistry.select(request.sessionId)
       this.handoffContinuity.recordAdmittedPrompt(request)
     } catch (error) {
+      turnSkillHandle.close(rejectedSkillOutcome)
       this.sessionInteractions.release(promptReservation)
       throw error
     }
@@ -2709,6 +2662,7 @@ class AcpRuntime {
     let skillActivitiesFinalized = false
     let revokeReferencedUploadGrant: (() => void) | undefined
     let contextUsageTurn: ContextUsageTurnHandle | undefined
+    let turnSkillOutcome: TurnSkillOutcome = 'failed'
     let observedPromptStop:
       | {
           response: PromptResponse
@@ -2762,6 +2716,7 @@ class AcpRuntime {
         })
       }
       const finishCancelledBeforePrompt = async (): Promise<PromptResponse> => {
+        turnSkillOutcome = 'cancelled'
         const response: PromptResponse = { stopReason: 'cancelled' }
         observedPromptStop = { response }
         if (!this.sessionInteractions.captureTerminal(promptInteraction, 'cancelled')) {
@@ -2784,51 +2739,44 @@ class AcpRuntime {
         return finishCancelledBeforePrompt()
       }
 
-      // Prepend a short steering nudge naming the picked skills. It goes only into the content sent to
-      // the agent; the user-facing message event keeps the original text (which already shows /Name).
-      // Framework-neutral delivery of system-prompt guidance: Claude carries appends in session _meta;
-      // frameworks without a session preset carry the guidance as a prompt prefix.
-      const specialistSkillGuidance = this.specialistSkillGuidance(currentSpecialistSkills)
-      const { promptPrefix: frameworkPromptPrefix } = this.framework.buildSessionSetup({
-        systemPromptAppends: this.backend.prompt.persistentSystemPrompt
-          ? []
-          : this.getSystemPromptAppends(),
-        turnPromptReminders: specialistSkillGuidance ? [specialistSkillGuidance] : [],
-        sessionOptions: this.backend.session.options
-      })
-      // For Codex/OpenCode, prepend the per-session specialist identity prefix (set at createSession).
-      // Claude carries its identity in session-level _meta; no per-turn prefix needed there.
       const sessionSpecialistPrefix = this.sessionRegistry
         .lookup(request.sessionId)
         ?.aggregate.snapshot().specialistPrefix
-      const promptPrefix =
-        [sessionSpecialistPrefix, frameworkPromptPrefix]
-          .filter((segment): segment is string => Boolean(segment))
-          .join('\n\n') || undefined
-      const selectorSignal =
-        this.framework.id === 'codex' &&
-        forced.length === 0 &&
-        this.connectionResources.bridgeSkillsAvailable
-          ? promptInteraction.signal
-          : undefined
-      const codexSkillInputs = await this.resolveCodexSkillInputs(
-        forced,
-        request.text,
-        selectorSignal,
-        currentSpecialistSkills
-      )
+      const promptRequestText = request.continuation
+        ? this.buildSpecialistHandoffContinuationText(request)
+        : request.text
+      const skillPreparation = await turnSkillHandle.prepareProvider({
+        frameworkId: this.framework.id,
+        selectionText: request.text,
+        promptText: promptRequestText,
+        codex: {
+          home: this.backend.adapter.codexHome,
+          bridgeSkillsAvailable: this.connectionResources.bridgeSkillsAvailable,
+          selectSkills: async (text, catalog, signal) =>
+            (await this.connectionResources.selectBridgeSkills(text, catalog, signal)) ?? [],
+          signal: promptInteraction.signal
+        }
+      })
       if (
         (await this.sessionInteractions.cancellationCheckpoint(promptInteraction)) === 'cancelled'
       ) {
         return finishCancelledBeforePrompt()
       }
-      const promptRequestText = request.continuation
-        ? this.buildSpecialistHandoffContinuationText(request)
-        : request.text
-      const nudgedText = await this.applySkillNudge(promptRequestText, forced)
-      // A history preamble (transcript replayed after a context reset) leads, then the framework guidance
-      // prefix, then the nudged user text. Absent segments drop out so the normal turn is unchanged.
-      const promptText = [request.historyPreamble, promptPrefix, nudgedText]
+      const { promptPrefix: frameworkPromptPrefix } = this.framework.buildSessionSetup({
+        systemPromptAppends: this.backend.prompt.persistentSystemPrompt
+          ? []
+          : this.getSystemPromptAppends(),
+        turnPromptReminders: skillPreparation.specialistSkillGuidance
+          ? [skillPreparation.specialistSkillGuidance]
+          : [],
+        sessionOptions: this.backend.session.options
+      })
+      const promptPrefix =
+        [sessionSpecialistPrefix, frameworkPromptPrefix]
+          .filter((segment): segment is string => Boolean(segment))
+          .join('\n\n') || undefined
+      const codexSkillInputs = [...skillPreparation.codexSkillInputs]
+      const promptText = [request.historyPreamble, promptPrefix, skillPreparation.text]
         .filter((segment): segment is string => Boolean(segment))
         .join('\n\n')
       revokeReferencedUploadGrant = await this.authorizeReferencedSkillUploads(
@@ -2952,6 +2900,7 @@ class AcpRuntime {
         }
 
         if (message.kind === 'stop') {
+          turnSkillOutcome = message.response.stopReason === 'cancelled' ? 'cancelled' : 'completed'
           const codexTurnCount = message.response._meta?.[ACP_MODEL_TURN_COUNT_META_KEY]
           const reportedTurnCount =
             promptFramework === 'codex' &&
@@ -3140,14 +3089,8 @@ class AcpRuntime {
       } catch (error) {
         safeLogError('emitState after prompt turn failed', errorLogFields(error))
       }
-      // A disabled skill forced for this turn is restored now: clear the force set, then schedule a
-      // reconnect so the NEXT prompt respawns with the normal enabled set. Ordering matters — the clear
-      // must happen before the reconnect is applied so the fresh spawn no longer sees the forced ids.
-      if (didForceReload) {
-        this.turnForcedSkillIds.clear()
-        this.connectionTransitions.requestSkillsReload()
-      } else {
-        // A provider switch requested mid-turn is applied now that the session is idle.
+      turnSkillHandle.close(turnSkillOutcome)
+      if (turnSkillHandle.reloadDecision.kind === 'continue') {
         this.connectionTransitions.activityChanged()
       }
     }
@@ -3295,72 +3238,6 @@ class AcpRuntime {
     rawInput: unknown
   }): Promise<boolean> {
     return this.permissionContext.requestAppApproval(input)
-  }
-
-  // Prepends a one-line steering nudge naming the picked skills to the prompt text. No-op when no skills
-  // were picked or no hooks are wired. It is prompt text, not a system directive, per the design.
-  //
-  // Featured skill ids equal their frontmatter names, while personal/imported ids include an app-owned
-  // source prefix. Resolve the picker ids through settings so every nudge uses the name the agent's
-  // Skill tool accepts.
-  private async applySkillNudge(text: string, forcedSkillIds: string[]): Promise<string> {
-    if (!this.skillsHooks || forcedSkillIds.length === 0 || this.framework.id === 'codex')
-      return text
-
-    const names = await this.skillsHooks.namesForIds(forcedSkillIds)
-    if (names.length === 0) return text
-
-    return `Use the following skill(s) for this task: ${names.join(', ')}.\n\n${text}`
-  }
-
-  private async resolveCodexSkillInputs(
-    forcedSkillIds: string[],
-    text: string,
-    signal?: AbortSignal,
-    specialistSkills?: EffectiveSpecialistSkills
-  ): Promise<Array<{ name: string; path: string }>> {
-    if (this.framework.id !== 'codex') return []
-
-    // An explicit picker choice is authoritative even when it no longer resolves. Never supplement
-    // it with model-selected Skills, which would make the user's visible choice nondeterministic.
-    if (forcedSkillIds.length > 0) {
-      if (!this.skillsHooks?.descriptorsForIds) return []
-      return this.skillsHooks.descriptorsForIds(forcedSkillIds, this.backend.adapter.codexHome)
-    }
-
-    if (!this.connectionResources.bridgeSkillsAvailable || !this.skillsHooks?.catalogForCodexHome) {
-      return []
-    }
-
-    let catalog: ResponsesBridgeSkillCandidate[]
-    try {
-      catalog = await this.skillsHooks.catalogForCodexHome(this.backend.adapter.codexHome)
-    } catch {
-      log.warn('Codex Skill selection failed', { reason: 'catalog-error' })
-      return []
-    }
-    // Codex receives selected Skills as native prompt metadata. Unlike Claude, it has no
-    // session-native whitelist, so its automatic selector must be scoped before it sees the
-    // catalog. This includes connector docs: they are materialized as `mcp-<id>` Skills and are
-    // part of frameworkNames, not the app's durable skillIds.
-    const allowedFrameworkNames =
-      specialistSkills?.kind === 'specialist' ? new Set(specialistSkills.frameworkNames) : undefined
-    if (allowedFrameworkNames) {
-      catalog = catalog.filter((skill) => allowedFrameworkNames.has(skill.name))
-    }
-    if (catalog.length === 0) return []
-
-    try {
-      const selected = await this.connectionResources.selectBridgeSkills(text, catalog, signal)
-      if (!selected) return []
-      // Treat the selector as advisory: retain only Skills it was offered. This keeps an out-of-date
-      // selector result from reintroducing a Skill or mcp-* connector from the previous specialist.
-      const offeredSkills = new Set(catalog.map((skill) => `${skill.name}\u0000${skill.path}`))
-      return selected.filter((skill) => offeredSkills.has(`${skill.name}\u0000${skill.path}`))
-    } catch {
-      log.warn('Codex Skill selection failed', { reason: 'selector-error' })
-      return []
-    }
   }
 
   // Native UserInput::Skill entries are consumed inside Codex and may not emit a filesystem read
@@ -3621,15 +3498,6 @@ class AcpRuntime {
     } catch {
       return String(value)
     }
-  }
-
-  // Codex and OpenCode have no session-native whitelist. Their guidance is intentionally factual
-  // rather than presented as an isolation boundary; enforcement remains the picker/send gate.
-  private specialistSkillGuidance(
-    skills: EffectiveSpecialistSkills | undefined
-  ): string | undefined {
-    if (this.framework.id === 'claude-code' || skills?.kind !== 'specialist') return undefined
-    return `Allowed Specialist Skills for this session:\n${skills.frameworkNames.map((name) => `- ${name}`).join('\n')}`
   }
 
   // Builds the ACP `_meta` argument for session/new and session/resume, delegating the framework-specific
