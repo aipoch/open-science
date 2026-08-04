@@ -5,6 +5,7 @@ import type {
   PermissionProfileId,
   SessionPermissionProfileState
 } from '../../shared/permission-profiles'
+import type { ResolvedReasoningEffort } from '../../shared/reasoning-effort'
 import { createLogger, diagnosticErrorFields } from '../logger'
 import type { AcpBackendGenerationView } from './backend-generation-owner'
 import {
@@ -21,6 +22,16 @@ type ConfigurationContext = Readonly<{
 }>
 type StartupConfiguration = ConfigurationContext &
   Readonly<{ session: ActiveSession; permissionProfile: PermissionProfileId }>
+type LiveEffortSession = Readonly<{
+  session: ActiveSession
+  configOptions: readonly SessionConfigOption[] | null | undefined
+  assertCurrent: () => void
+}>
+type LiveEffortConfiguration = ConfigurationContext &
+  Readonly<{
+    effort: ResolvedReasoningEffort
+    sessions: readonly LiveEffortSession[]
+  }>
 type ModelApplication = Readonly<{
   appliedModel: string | undefined
   configOptions: SessionConfigOption[] | null | undefined
@@ -29,6 +40,9 @@ export type AcpSessionConfigurationFacts = Readonly<{
   permissionProfile: SessionPermissionProfileState
   appliedModel: string | undefined
   configOptions: SessionConfigOption[] | undefined
+}>
+export type AcpLiveEffortConfigurationFacts = Readonly<{
+  reconnectRequired: boolean
 }>
 const configOptionsOf = (session: ActiveSession): SessionConfigOption[] | null | undefined =>
   (session as { newSessionResponse?: { configOptions?: SessionConfigOption[] | null } })
@@ -76,6 +90,38 @@ export class AcpSessionConfigurator {
     input: StartupConfiguration
   ): Promise<Readonly<SessionPermissionProfileState>> {
     return deepFreeze(structuredClone(await this.applyPermissionMode(input)))
+  }
+
+  async applyLiveEffort(
+    input: LiveEffortConfiguration
+  ): Promise<AcpLiveEffortConfigurationFacts> {
+    if (!input.backend.framework.supportsLiveEffortChange) {
+      return deepFreeze({ reconnectRequired: true })
+    }
+    let reconnectRequired = false
+    let appliedToAny = false
+    for (const candidate of input.sessions) {
+      const selection = resolveSessionEffortOption(candidate.configOptions, input.effort)
+      if (!selection) {
+        log.info('no session effort option to apply', this.deps.diagnosticContext(input.backend))
+        continue
+      }
+      try {
+        candidate.assertCurrent()
+        if (await this.sendEffort(input, candidate.session, selection)) appliedToAny = true
+        else reconnectRequired = true
+      } catch (error) {
+        log.warn('set session effort failed', {
+          ...diagnosticErrorFields(error),
+          ...this.deps.diagnosticContext(input.backend)
+        })
+        reconnectRequired = true
+      }
+    }
+    if (!appliedToAny && input.sessions.length > 0 && input.backend.framework.id === 'codex') {
+      reconnectRequired = true
+    }
+    return deepFreeze({ reconnectRequired })
   }
 
   private async applyPermissionMode(

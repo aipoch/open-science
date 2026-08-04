@@ -64,7 +64,6 @@ import {
 import { readWorkspaceTextFile, writeWorkspaceTextFile } from './filesystem'
 import { toCodexTurnTokenUsage } from './codex-turn-usage'
 import { fetchOpenCodeUsageSnapshot, sumOpenCodeTurnUsage } from './opencode-turn-usage'
-import { resolveSessionEffortOption, type SessionModelSelection } from './session-config'
 import { describePromptError, isProviderPromptError } from './prompt-error'
 import { AcpRuntimeSnapshotOwner } from './runtime-snapshot-owner'
 import { ConversationPermissionGrantStore } from './permission-broker'
@@ -878,7 +877,6 @@ class AcpRuntime {
   // either). On success the generation view tracks the new level, so sessions created later in
   // this process inherit it; the persisted setting covers the next respawn.
   async applyReasoningEffortChange(effort: ResolvedReasoningEffort): Promise<boolean> {
-    if (!this.framework.supportsLiveEffortChange) return false
     // A provider/model switch may be waiting for an in-flight turn to finish. The incoming effort was
     // resolved against that newly selected model, while this connection still owns the old one. Let
     // the persisted setting reach the fresh backend after reconnect instead of leaking it here.
@@ -887,64 +885,28 @@ class AcpRuntime {
     const backend = this.backendGeneration.updateReasoningEffort(effort)
     this.connectionResources.setBridgeReasoningEffort(backend.session.effort)
     const connection = this.connection
-    if (!connection) return true
+    if (!connection) return backend.framework.supportsLiveEffortChange
 
-    let allApplied = true
-    let appliedToAny = false
-
-    const activeEntries = this.activeSessionEntries()
-    for (const [appSessionId, session] of activeEntries) {
-      const configOptions =
-        (this.sessionRegistry.lookup(appSessionId)?.aggregate.snapshot().configOptions as
-          readonly SessionConfigOption[] | undefined) ??
-        (session as { newSessionResponse?: { configOptions?: SessionConfigOption[] | null } })
-          .newSessionResponse?.configOptions
-      const selection = resolveSessionEffortOption(configOptions, effort)
-
-      if (!selection) {
-        log.info('no session effort option to apply', this.diagnosticContext())
-        continue
-      }
-
-      if (!(await this.sendSessionEffort(session, selection, connection))) {
-        allApplied = false
-      } else {
-        appliedToAny = true
-      }
-    }
-
-    // No open session could take the level over ACP. For Claude there is no other channel — the
-    // model simply doesn't support effort, and a respawn can't change that. Codex also bakes the
-    // level into its spawn config (model_reasoning_effort), so a reconnect DOES deliver it: report
-    // failure rather than leaving the UI showing a level the running session never received.
-    if (!appliedToAny && activeEntries.length > 0 && this.framework.id === 'codex') return false
-
-    return allApplied
-  }
-
-  // Sends one resolved effort selection to a session. Best-effort: a failure is logged (never
-  // thrown) and reported as false, so live callers can escalate while build-time callers stay
-  // non-fatal.
-  private async sendSessionEffort(
-    session: ActiveSession,
-    selection: SessionModelSelection,
-    connection: ClientConnection | undefined = this.connection
-  ): Promise<boolean> {
-    try {
-      await connection?.agent.request(acp.methods.agent.session.setConfigOption, {
-        sessionId: session.sessionId,
-        configId: selection.configId,
-        value: selection.value
-      })
-      log.info('session effort applied', this.diagnosticContext())
-      return true
-    } catch (error) {
-      log.warn('set session effort failed', {
-        ...diagnosticErrorFields(error),
-        ...this.diagnosticContext()
-      })
-      return false
-    }
+    const facts = await this.sessionConfigurator.applyLiveEffort({
+      backend,
+      connection,
+      effort,
+      sessions: this.activeSessionEntries().map(([appSessionId, session]) => ({
+        session,
+        configOptions:
+          (this.sessionRegistry.lookup(appSessionId)?.aggregate.snapshot().configOptions as
+            | readonly SessionConfigOption[]
+            | undefined) ??
+          (session as { newSessionResponse?: { configOptions?: SessionConfigOption[] | null } })
+            .newSessionResponse?.configOptions,
+        assertCurrent: () => {
+          if (this.activeSessionFor(appSessionId) !== session) {
+            throw new Error('ACP session startup was superseded.')
+          }
+        }
+      }))
+    })
+    return !facts.reconnectRequired
   }
 
   // Starts a fresh agent process connection and initializes protocol capabilities.

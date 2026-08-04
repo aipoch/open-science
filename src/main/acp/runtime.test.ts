@@ -16691,6 +16691,40 @@ describe('ACP runtime — session effort', () => {
     expect(fakeAgent.configChanges).toEqual([])
   })
 
+  it('attempts every remaining open session after a live effort update is rejected', async () => {
+    const process = new FakeAgentProcess()
+    let rejectLiveUpdate = false
+    const fakeAgent = startFakeAgent(process, ['rejected-session', 'updated-session'], {
+      configOptions: [thoughtLevelOption(['low', 'high'])],
+      onSetConfigOption: ({ sessionId }) => {
+        if (rejectLiveUpdate && sessionId === 'rejected-session') {
+          throw new Error('live effort rejected')
+        }
+      }
+    })
+    const runtime = new AcpRuntime({
+      appVersion: '0.1.0',
+      defaultCwd: '/workspace',
+      resolveBackend: () => ({
+        framework: { ...claudeCodeFramework, spawn: () => asAgentProcess(process) },
+        executablePath: '/bin/claude',
+        env: {}
+      })
+    })
+    await runtime.createSession({ cwd: '/workspace' })
+    await runtime.createSession({ cwd: '/workspace' })
+    fakeAgent.configChanges.length = 0
+    rejectLiveUpdate = true
+
+    const applied = await runtime.applyReasoningEffortChange('high')
+
+    expect(applied).toBe(false)
+    expect(fakeAgent.configChanges).toEqual([
+      { sessionId: 'rejected-session', configId: 'effort', value: 'high' },
+      { sessionId: 'updated-session', configId: 'effort', value: 'high' }
+    ])
+  })
+
   it('declines the live change when the framework bakes effort into its spawn config', async () => {
     const process = new FakeAgentProcess()
     const fakeAgent = startFakeAgent(process, ['s-effort'], {
