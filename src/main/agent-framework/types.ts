@@ -90,6 +90,7 @@ export type AgentModelChangeTarget = Readonly<{
   sessionModel: string
   sessionModelRequired: boolean
   reasoningEffort: ResolvedReasoningEffort
+  supportsImageInput: boolean
   contextWindow?: number
   bridge?: Readonly<{
     model: string
@@ -264,6 +265,9 @@ export type ResolvedAgentBackend = {
   // Exact context-window limit for the selected upstream provider model. Framework adapters may
   // report a fallback or bridge transport model instead, so the runtime treats this as authoritative.
   contextWindow?: number
+  // Whether the selected upstream model accepts image input. Kept on the generation so a model-only
+  // switch can fail closed when an adapter cannot remove images already retained in native history.
+  supportsImageInput?: boolean
   // Upstream provider model used for local context tokenization. This is deliberately separate from
   // `sessionModel`: a framework may select its model through env rather than ACP, or use a bridge
   // transport model whose id differs from the provider model that ultimately tokenizes the request.

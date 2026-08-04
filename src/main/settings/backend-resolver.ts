@@ -337,6 +337,7 @@ export class AgentBackendResolver {
       sessionModel: route === 'codex-bridge' ? CODEX_BRIDGE_MODEL : model,
       sessionModelRequired:
         frameworkId === 'codex' && isCodexSubscriptionProvider(target.provider.type),
+      supportsImageInput: target.provider.supportsImageInput === true,
       reasoningEffort: resolvedModelEffort(
         settings.reasoningEffort ?? DEFAULT_REASONING_EFFORT,
         target
@@ -478,6 +479,7 @@ export class AgentBackendResolver {
         sessionOptions,
         sessionEffort,
         contextWindow,
+        ...(target.provider.supportsImageInput ? { supportsImageInput: true } : {}),
         contextUsageModel: target.effectiveModel,
         ...(connectorInstructions ? { systemPromptAppends: [connectorInstructions] } : {})
       }
@@ -606,6 +608,7 @@ export class AgentBackendResolver {
           : {}),
         sessionEffort,
         contextWindow: provider.contextWindow,
+        ...(provider.supportsImageInput ? { supportsImageInput: true } : {}),
         contextUsageModel: provider.model,
         authentication: modelConfig.authentication,
         providerConfiguration: modelConfig.providerConfiguration,

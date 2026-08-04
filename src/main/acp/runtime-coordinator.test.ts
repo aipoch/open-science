@@ -1072,6 +1072,7 @@ describe('AcpRuntimeCoordinator', () => {
       model: 'model-b',
       sessionModel: 'model-b',
       sessionModelRequired: false,
+      supportsImageInput: true,
       reasoningEffort: 'high'
     }
 

@@ -990,6 +990,7 @@ class AcpRuntime {
     return (
       this.backend.context.model === target.model &&
       this.backend.session.model === target.sessionModel &&
+      this.backend.context.supportsImageInput === target.supportsImageInput &&
       (this.backend.session.effort ?? 'default') === target.reasoningEffort
     )
   }
@@ -1054,6 +1055,16 @@ class AcpRuntime {
   private async applyModelTarget(target: AgentModelChangeTarget): Promise<boolean> {
     const connection = this.connection
     if (!connection) return false
+    if (
+      this.backend.context.supportsImageInput &&
+      !target.supportsImageInput &&
+      (target.route === 'claude-anthropic' || target.route === 'codex-bridge')
+    ) {
+      // Claude retains opaque SDK history, while the Codex bridge keeps an image-capable transport
+      // model. Neither can prove that images from earlier turns will be removed for a text-only
+      // upstream model, so reuse the reconnect/resume path that already filters image history.
+      return false
+    }
 
     try {
       if (target.bridge) {

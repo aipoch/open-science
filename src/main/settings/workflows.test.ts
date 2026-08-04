@@ -207,6 +207,7 @@ describe('SettingsWorkflows runtime effects', () => {
       model: 'model-b',
       sessionModel: 'model-b',
       sessionModelRequired: false,
+      supportsImageInput: true,
       reasoningEffort: 'high'
     }
     store.getSettingsView.mockResolvedValue(
@@ -251,6 +252,7 @@ describe('SettingsWorkflows runtime effects', () => {
       model: 'model-b',
       sessionModel: 'model-b',
       sessionModelRequired: false,
+      supportsImageInput: false,
       reasoningEffort: 'default'
     })
     const requestProviderReconnect = vi.fn()

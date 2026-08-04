@@ -358,6 +358,7 @@ describe('AgentBackendResolver configured and explicit targets', () => {
         provider: {
           apiEndpoints: ['openai'],
           vendorId: 'deepseek',
+          supportsImageInput: true,
           reasoningEffortTransport: 'deepseek'
         }
       })
@@ -372,6 +373,7 @@ describe('AgentBackendResolver configured and explicit targets', () => {
       model: 'model-a',
       sessionModel: 'gpt-5.4',
       sessionModelRequired: false,
+      supportsImageInput: true,
       reasoningEffort: 'max',
       contextWindow: 128_000,
       bridge: {

@@ -14,7 +14,7 @@ const backendView = (
     framework,
     session: Object.freeze(session),
     prompt: Object.freeze({ systemPromptAppends: Object.freeze([]) }),
-    context: Object.freeze({}),
+    context: Object.freeze({ supportsImageInput: false }),
     adapter: Object.freeze({ nativeMcpEnabled: true, bridgeMcpAliasesEnabled: false })
   })
 

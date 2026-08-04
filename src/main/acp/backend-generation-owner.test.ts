@@ -23,6 +23,7 @@ describe('AcpBackendGenerationOwner', () => {
         systemPromptAppends,
         persistentSystemPrompt: 'Stable instructions.',
         contextWindow: 1_000_000,
+        supportsImageInput: true,
         contextUsageModel: 'provider-model',
         authentication: { methodId: 'codex-login' },
         providerConfiguration: {
@@ -58,7 +59,7 @@ describe('AcpBackendGenerationOwner', () => {
         systemPromptAppends: ['Use the app tools.'],
         persistentSystemPrompt: 'Stable instructions.'
       },
-      context: { window: 1_000_000, model: 'provider-model' },
+      context: { window: 1_000_000, model: 'provider-model', supportsImageInput: true },
       adapter: {
         codexHome: '/data/codex',
         nativeMcpEnabled: false,

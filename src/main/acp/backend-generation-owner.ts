@@ -28,6 +28,7 @@ export type AcpBackendGenerationView = Readonly<{
   context: Readonly<{
     window?: number
     model?: string
+    supportsImageInput: boolean
   }>
   adapter: Readonly<{
     codexHome?: string
@@ -92,7 +93,8 @@ const generationView = (backend: ResolvedAgentBackend): AcpBackendGenerationView
     }),
     context: Object.freeze({
       ...(backend.contextWindow ? { window: backend.contextWindow } : {}),
-      ...(backend.contextUsageModel ? { model: backend.contextUsageModel } : {})
+      ...(backend.contextUsageModel ? { model: backend.contextUsageModel } : {}),
+      supportsImageInput: backend.supportsImageInput === true
     }),
     adapter: Object.freeze({
       ...(codexHome ? { codexHome } : {}),
@@ -156,7 +158,8 @@ export class AcpBackendGenerationOwner {
       session: Object.freeze(session),
       context: Object.freeze({
         model: target.model,
-        ...(target.contextWindow ? { window: target.contextWindow } : {})
+        ...(target.contextWindow ? { window: target.contextWindow } : {}),
+        supportsImageInput: target.supportsImageInput
       })
     })
     return this.currentView
