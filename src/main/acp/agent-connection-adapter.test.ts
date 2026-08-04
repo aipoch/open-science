@@ -59,6 +59,7 @@ const hooks = (): AcpAgentConnectionHooks => ({
   onBackendResolved: vi.fn(),
   onProcessSpawned: vi.fn(),
   onBackendPublished: vi.fn(),
+  onProcessTreeReaped: vi.fn(),
   attachProcessDiagnostics: vi.fn(),
   onConnectionClosed: vi.fn(),
   reportCleanupFailure: vi.fn(),

@@ -37,6 +37,7 @@ type AcpAgentConnectionHooks = Readonly<{
   onBackendResolved: (framework: AgentFramework['id']) => void
   onProcessSpawned: (framework: AgentFramework['id']) => void
   onBackendPublished: (backend: AcpBackendGenerationView) => void
+  onProcessTreeReaped: (reaped: boolean) => void
   attachProcessDiagnostics: (
     process: ChildProcessWithoutNullStreams,
     framework: AgentFramework['id'],
@@ -102,9 +103,10 @@ class AcpAgentConnectionAdapter {
       }
       if (process) {
         try {
-          await terminateProcessTree(process, undefined, {
+          const result = await terminateProcessTree(process, undefined, {
             error: (message, error) => hooks.reportProcessTreeError(message, error)
           })
+          hooks.onProcessTreeReaped(result.reaped)
         } catch (error) {
           reportCleanupFailure('agent-process', error)
         }

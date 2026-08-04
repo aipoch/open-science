@@ -479,6 +479,7 @@ class AcpRuntime {
   private readonly contextUsageTracker: ContextUsageTracker
   private readonly connectionAdapter = new AcpAgentConnectionAdapter()
   private readonly connectionResources: AcpConnectionResourceOwner
+  private candidateTreeKillReaped = true
   private readonly connectionTransitions: AcpConnectionTransitionOwner
   private readonly generationActivity: AcpGenerationActivityOwner
   // Stable app identities, provider aliases, publication order, selection, and startup/delete
@@ -2161,6 +2162,7 @@ class AcpRuntime {
   // remains — assigned, connecting, or mid-spawn. Returns { reaped } so the caller can tell a clean
   // teardown from a degraded one (taskkill fallback left grandchildren) before committing to app.exit.
   async shutdownForQuit(): Promise<{ reaped: boolean }> {
+    this.candidateTreeKillReaped = true
     const shutdown = this.connectionResources.beginAwaitableShutdown(true)
     // Kill the currently-assigned agent tree right away. Do NOT wait on the in-flight connect first: it
     // may be stalled on ACP initialize with the child already assigned, and waiting would let
@@ -2170,7 +2172,8 @@ class AcpRuntime {
     // Cover the child that had not been assigned yet when disconnect ran: a connect still mid-spawn hits
     // the shutting-down check and tree-kills its freshly-spawned child. Await it (swallowing its
     // rejection, bounded by shutdownBackends' timeout) so that kill completes before we resolve.
-    return shutdown.finish()
+    const outcome = await shutdown.finish()
+    return { reaped: outcome.reaped && this.candidateTreeKillReaped }
   }
 
   // Teardown for the pre-update-install gate. Reaps the current agent tree (so the NSIS installer can
@@ -2184,10 +2187,12 @@ class AcpRuntime {
   // signal (so a degraded reap makes the caller refuse the install); if that await is abandoned on
   // timeout the caller refuses on !completed and the stale-generation self-reap still collects the child.
   async shutdownForUpdateGate(): Promise<{ reaped: boolean }> {
+    this.candidateTreeKillReaped = true
     const shutdown = this.connectionResources.beginAwaitableShutdown(false)
     await this.disconnect(false)
     // Await so the mid-spawn child's kill settles before we report the reaped signal.
-    return shutdown.finish()
+    const outcome = await shutdown.finish()
+    return { reaped: outcome.reaped && this.candidateTreeKillReaped }
   }
 
   // Retires this framework generation without interrupting active turns or background workflows. The
@@ -2333,6 +2338,9 @@ class AcpRuntime {
         this.sessionUpdateProjector.beginGeneration(
           backend.adapter.codexHome ? join(backend.adapter.codexHome, 'skills') : undefined
         )
+      },
+      onProcessTreeReaped: (reaped) => {
+        this.candidateTreeKillReaped = this.candidateTreeKillReaped && reaped
       },
       attachProcessDiagnostics: (process, _framework, epoch) =>
         this.attachAgentProcessEvents(process, epoch),

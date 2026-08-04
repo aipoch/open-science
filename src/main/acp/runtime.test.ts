@@ -2223,6 +2223,10 @@ describe('ACP runtime session management', () => {
 
   it('shutdownForUpdateGate reaps a mid-spawn child, then stays non-latching so the app can reconnect', async () => {
     const midSpawn = new FakeAgentProcess()
+    vi.mocked(terminateProcessTree).mockImplementationOnce(async (child) => {
+      child?.kill()
+      return { reaped: false }
+    })
     let gatePromise: Promise<{ reaped: boolean }> | undefined
     let spawnCount = 0
     const reconnectSpawns: FakeAgentProcess[] = []
@@ -2252,7 +2256,7 @@ describe('ACP runtime session management', () => {
     await expect(runtime.createSession({ cwd: '/workspace' })).rejects.toThrow(/superseded/)
     expect(gatePromise).toBeDefined()
     const outcome = await gatePromise
-    expect(outcome).toHaveProperty('reaped')
+    expect(outcome).toEqual({ reaped: false })
     // The mid-spawn child was reaped, not left orphaned holding the install dir open.
     expect(midSpawn.killed).toBe(true)
 
