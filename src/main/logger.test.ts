@@ -980,7 +980,7 @@ describe('logger: application shutdown diagnostics', () => {
           ])
         ),
       shutdownRemoteAccess: () => undefined,
-      closeWebController: () => undefined,
+      disposeWebController: () => undefined,
       disposeWebRpc: () => undefined,
       log
     })

@@ -143,7 +143,7 @@ describe('production application command wiring', () => {
     expect(runtimeSource).toContain("await modules.dispose('rollback')")
   })
 
-  it('late-binds the unique Remote Access owner and leaves command views unconsumed', () => {
+  it('late-binds the unique Remote Access owner and passes only narrow views to Web and Task', () => {
     const startup = compact(
       between(
         indexSource,
@@ -159,8 +159,15 @@ describe('production application command wiring', () => {
     expect(startup).toContain('registerRemoteAccessIpcHandlers(remoteAccess)')
 
     expect(occurrences(ipcSource, 'applicationCommands')).toBe(2)
-    expect(indexSource).not.toContain('applicationCommands')
-    expect(readSource('src/main/web-service/index.ts')).not.toContain('applicationCommands')
+    expect(indexSource).toContain('applicationCommands,')
+    expect(startup).toContain('applicationCommands,')
+    const webServiceSource = readSource('src/main/web-service/index.ts')
+    expect(webServiceSource).toContain(
+      "Pick<ApplicationCommandComposition, 'localWeb' | 'remoteWeb' | 'task'>"
+    )
+    expect(webServiceSource).toContain('{ commands: applicationCommands.task, agent: taskAgent }')
+    expect(webServiceSource).toContain('localWeb: applicationCommands.localWeb')
+    expect(webServiceSource).toContain('remoteWeb: applicationCommands.remoteWeb')
     expect(readSource('src/main/tasks/task-runner.ts')).not.toContain('applicationCommands')
   })
 })

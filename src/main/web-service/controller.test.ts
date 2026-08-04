@@ -1,7 +1,10 @@
 import { describe, expect, it, vi } from 'vitest'
 
 import { ApplicationEventHub } from '../application-events'
+import type { ApplicationEventSource } from '../application-events'
+import type { ApplicationCommandComposition } from '../application-command-composition'
 import type { WebRpcRouter } from '../ipc-handler-registry'
+import type { TaskAgentPort } from '../tasks/task-runner'
 import { createWebServiceController, type WebServiceControllerDeps } from './index'
 
 type StartOptions = Parameters<WebServiceControllerDeps['startServer']>[0]
@@ -11,7 +14,13 @@ type StartOptions = Parameters<WebServiceControllerDeps['startServer']>[0]
 // options it was given (so the test can drive the captured onShutdownRequest).
 const makeController = (
   overrides: Partial<WebServiceControllerDeps> = {},
-  requestQuit = vi.fn()
+  requestQuit = vi.fn(),
+  applicationCommands: Pick<ApplicationCommandComposition, 'localWeb' | 'remoteWeb' | 'task'> = {
+    localWeb: { commandNames: () => [], invoke: vi.fn() },
+    remoteWeb: { commandNames: () => [], rejectedCommandNames: () => [], invoke: vi.fn() },
+    task: { commandNames: () => [], invoke: vi.fn() }
+  },
+  runtime: { applicationEvents?: ApplicationEventSource; taskAgent?: TaskAgentPort } = {}
 ): {
   controller: ReturnType<typeof createWebServiceController>
   startServer: ReturnType<typeof vi.fn>
@@ -35,9 +44,10 @@ const makeController = (
   const controller = createWebServiceController(
     {
       rpc: {} as WebRpcRouter,
+      applicationCommands,
       requestQuit,
-      applicationEvents: new ApplicationEventHub(),
-      taskAgent: {} as never
+      applicationEvents: runtime.applicationEvents ?? new ApplicationEventHub(),
+      taskAgent: runtime.taskAgent ?? ({} as never)
     },
     {
       startServer,
@@ -69,6 +79,35 @@ const makeController = (
 }
 
 describe('createWebServiceController', () => {
+  it('passes only Web command views to the server and the narrow Task view to its façade', async () => {
+    const taskInvoke = vi.fn(async () => [])
+    const applicationCommands = {
+      localWeb: { commandNames: () => ['projects:list'], invoke: vi.fn() },
+      remoteWeb: {
+        commandNames: () => ['projects:list'],
+        rejectedCommandNames: () => [],
+        invoke: vi.fn()
+      },
+      task: { commandNames: () => ['projects:list'], invoke: taskInvoke }
+    } satisfies Pick<ApplicationCommandComposition, 'localWeb' | 'remoteWeb' | 'task'>
+    const h = makeController({}, vi.fn(), applicationCommands)
+
+    await h.controller.ensureStarted(44100, { attached: true })
+
+    expect(h.lastOptions().applicationCommands).toEqual({
+      localWeb: applicationCommands.localWeb,
+      remoteWeb: applicationCommands.remoteWeb
+    })
+    await expect(h.lastOptions().tasks?.listProjects()).resolves.toEqual([])
+    expect(taskInvoke).toHaveBeenCalledWith(
+      'projects:list',
+      expect.objectContaining({
+        callerContext: expect.objectContaining({ surface: 'task' }),
+        args: []
+      })
+    )
+  })
+
   it('starts once and records the port/url plus the attached flag in the state file', async () => {
     const h = makeController()
     const result = await h.controller.ensureStarted(44100, { attached: true })
@@ -129,6 +168,145 @@ describe('createWebServiceController', () => {
 
     await h.controller.ensureStarted(44100, { attached: true })
     expect(h.startServer).toHaveBeenCalledTimes(2)
+  })
+
+  it('preserves Task run state and its caller lease across a restartable close', async () => {
+    const project = {
+      id: 'project-1',
+      name: 'Project',
+      description: '',
+      isExample: false,
+      createdAt: 1,
+      updatedAt: 1
+    }
+    const callerSignals: AbortSignal[] = []
+    const sessions: unknown[] = []
+    const taskInvoke = vi.fn(async (name, invocation) => {
+      callerSignals.push(invocation.callerLease.signal)
+      if (name === 'projects:list') return [project]
+      if (name === 'sessions:load-all') return { sessions, manifest: { version: 1 } }
+      if (name === 'sessions:save-session') {
+        sessions.splice(0, sessions.length, invocation.args[0])
+        return undefined
+      }
+      throw new Error(`Unexpected Task command: ${name}`)
+    })
+    const applicationCommands = {
+      localWeb: { commandNames: () => [], invoke: vi.fn() },
+      remoteWeb: { commandNames: () => [], rejectedCommandNames: () => [], invoke: vi.fn() },
+      task: { commandNames: () => ['projects:list'], invoke: taskInvoke }
+    } satisfies Pick<ApplicationCommandComposition, 'localWeb' | 'remoteWeb' | 'task'>
+    const h = makeController({}, vi.fn(), applicationCommands, {
+      taskAgent: {
+        listAttachedSessionIds: vi.fn(async () => []),
+        createSession: vi.fn(async () => ({ sessionId: 'session-created' })),
+        resumeSession: vi.fn(async (request) => ({ sessionId: request.sessionId })),
+        setPermissionProfile: vi.fn(async () => undefined),
+        prompt: vi.fn(async () => undefined)
+      }
+    })
+
+    await h.controller.ensureStarted(44100, { attached: true })
+    const firstTasks = h.lastOptions().tasks!
+    const run = await firstTasks.startRun({ project: project.id, prompt: 'Research.' })
+
+    await h.controller.close()
+    expect(callerSignals.every((signal) => !signal.aborted)).toBe(true)
+
+    await h.controller.ensureStarted(44100, { attached: true })
+    const restartedTasks = h.lastOptions().tasks!
+    expect(restartedTasks).toBe(firstTasks)
+    expect(restartedTasks.getRun(run.id)).toMatchObject({ id: run.id, sessionId: run.sessionId })
+  })
+
+  it('terminal dispose is idempotent, releases Task once, and rejects later starts', async () => {
+    const unsubscribe = vi.fn()
+    const applicationEvents = { subscribe: vi.fn(() => unsubscribe) }
+    const callerSignals: AbortSignal[] = []
+    const applicationCommands = {
+      localWeb: { commandNames: () => [], invoke: vi.fn() },
+      remoteWeb: { commandNames: () => [], rejectedCommandNames: () => [], invoke: vi.fn() },
+      task: {
+        commandNames: () => ['projects:list'],
+        invoke: vi.fn(async (_name, invocation) => {
+          callerSignals.push(invocation.callerLease.signal)
+          return []
+        })
+      }
+    } satisfies Pick<ApplicationCommandComposition, 'localWeb' | 'remoteWeb' | 'task'>
+    const h = makeController({}, vi.fn(), applicationCommands, { applicationEvents })
+
+    await h.controller.ensureStarted(44100, { attached: true })
+    await h.lastOptions().tasks?.listProjects()
+    await h.controller.dispose()
+    await h.controller.dispose()
+
+    expect(h.serverClose).toHaveBeenCalledOnce()
+    expect(unsubscribe).toHaveBeenCalledOnce()
+    expect(callerSignals[0]?.aborted).toBe(true)
+    await expect(h.controller.ensureStarted(44100, { attached: true })).rejects.toThrow(
+      'Web service controller is disposed.'
+    )
+  })
+
+  it('waits for a pending start before terminal disposal closes the server', async () => {
+    let releaseStart: (() => void) | undefined
+    const gate = new Promise<void>((resolve) => {
+      releaseStart = resolve
+    })
+    const serverClose = vi.fn().mockResolvedValue(undefined)
+    const startServer = vi.fn(async (options: StartOptions) => {
+      await gate
+      return { port: options.port, closeExternalConnections: vi.fn(), close: serverClose }
+    })
+    const h = makeController({ startServer })
+
+    const start = h.controller.ensureStarted(44100, { attached: true })
+    const dispose = h.controller.dispose()
+    expect(serverClose).not.toHaveBeenCalled()
+    releaseStart?.()
+    await Promise.all([start, dispose])
+
+    expect(serverClose).toHaveBeenCalledOnce()
+    expect(h.removeState).toHaveBeenCalledWith('/fake/root')
+    expect(h.controller.isRunning()).toBe(false)
+  })
+
+  it('does not deadlock after start failure and still releases Task on terminal dispose', async () => {
+    const failure = new Error('listen failed')
+    const unsubscribe = vi.fn()
+    const h = makeController(
+      { startServer: vi.fn().mockRejectedValue(failure) },
+      vi.fn(),
+      undefined,
+      { applicationEvents: { subscribe: vi.fn(() => unsubscribe) } }
+    )
+
+    await expect(h.controller.ensureStarted(44100, { attached: true })).rejects.toBe(failure)
+    await expect(h.controller.dispose()).resolves.toBeUndefined()
+    expect(unsubscribe).toHaveBeenCalledOnce()
+  })
+
+  it('releases Task even when terminal server cleanup fails', async () => {
+    const failure = new Error('server close failed')
+    const unsubscribe = vi.fn()
+    const h = makeController(
+      {
+        startServer: async (options) => ({
+          port: options.port,
+          closeExternalConnections: vi.fn(),
+          close: vi.fn().mockRejectedValue(failure)
+        })
+      },
+      vi.fn(),
+      undefined,
+      { applicationEvents: { subscribe: vi.fn(() => unsubscribe) } }
+    )
+
+    await h.controller.ensureStarted(44100, { attached: true })
+    await expect(h.controller.dispose()).rejects.toBe(failure)
+    expect(h.removeState).toHaveBeenCalledWith('/fake/root')
+    expect(unsubscribe).toHaveBeenCalledOnce()
   })
 
   it('forwards remote socket closure to the running server', async () => {

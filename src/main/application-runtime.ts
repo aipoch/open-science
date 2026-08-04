@@ -45,7 +45,7 @@ export type ApplicationRuntime<Interfaces> = {
 export type ApplicationSurfaceShutdown = {
   disposeApplicationRuntime(): Awaitable<void>
   shutdownRemoteAccess(): Awaitable<void>
-  closeWebController(): Awaitable<void>
+  disposeWebController(): Awaitable<void>
   disposeWebRpc(): Awaitable<void>
   log?: Pick<Logger, 'error'>
 }
@@ -53,17 +53,18 @@ export type ApplicationSurfaceShutdown = {
 export type ApplicationLifecycleShutdownDependencies = {
   disposeApplicationRuntime: ApplicationSurfaceShutdown['disposeApplicationRuntime']
   remoteAccess: { shutdown(): Awaitable<void> }
-  webController: { close(): Awaitable<void> }
+  webController: { dispose(): Awaitable<void> }
   webRpc: { dispose(): Awaitable<void> }
   log?: ApplicationSurfaceShutdown['log']
 }
 
-// Preserves the desktop quit order while guaranteeing that a failed surface cannot strand a later
-// one. Backend shutdown is owned by the application runtime and remains bounded by its coordinator.
+// Direct Web/Task adapters close before the application command router, which in turn closes before
+// its underlying RemoteAccess owner. Closing Web first can publish RemoteAccess's stopped state, but
+// this path runs only while the app is quitting. A failed surface still cannot strand a later one.
 export const shutdownApplicationSurfaces = async ({
   disposeApplicationRuntime,
   shutdownRemoteAccess,
-  closeWebController,
+  disposeWebController,
   disposeWebRpc,
   log
 }: ApplicationSurfaceShutdown): Promise<ShutdownStepOutcome> => {
@@ -107,9 +108,9 @@ export const shutdownApplicationSurfaces = async ({
     }
   }
 
+  await dispose('web-controller', disposeWebController)
   await dispose('application-runtime', disposeApplicationRuntime)
   await dispose('remote-access', shutdownRemoteAccess)
-  await dispose('web-controller', closeWebController)
   await dispose('web-rpc', disposeWebRpc)
   return overallOutcome
 }
@@ -127,7 +128,7 @@ export const createApplicationLifecycleShutdown = ({
     shutdownApplicationSurfaces({
       disposeApplicationRuntime,
       shutdownRemoteAccess: () => remoteAccess.shutdown(),
-      closeWebController: () => webController.close(),
+      disposeWebController: () => webController.dispose(),
       disposeWebRpc: () => webRpc.dispose(),
       log
     })

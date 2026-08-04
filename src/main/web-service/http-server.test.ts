@@ -13,9 +13,10 @@ vi.mock('electron', () => ({
 }))
 
 import { WEB_INVOKE_CHANNELS } from '../../shared/web-api-map.generated'
-import { WEB_RPC_PROTOCOL_VERSION } from '../../shared/web-rpc-contract'
+import { isWebRpcChannel, WEB_RPC_PROTOCOL_VERSION } from '../../shared/web-rpc-contract'
 import { ApplicationEventHub } from '../application-events'
 import type { CallerContext } from '../caller-context'
+import type { WebRpcRouter } from '../ipc-handler-registry'
 import {
   REMOTE_LOCAL_ONLY_RPC_CHANNELS,
   startWebHttpServer,
@@ -27,9 +28,39 @@ import { TaskApiError } from './task-api'
 const roots: string[] = []
 const servers: RunningWebServer[] = []
 const applicationEvents = new ApplicationEventHub()
+type TestWebServerOptions = Omit<
+  Parameters<typeof startWebHttpServer>[0],
+  'applicationCommands' | 'applicationEvents' | 'rpc'
+> &
+  Partial<Pick<Parameters<typeof startWebHttpServer>[0], 'applicationCommands'>> & {
+    rpc: WebRpcRouter
+  }
 const startTestWebHttpServer = (
-  options: Omit<Parameters<typeof startWebHttpServer>[0], 'applicationEvents'>
-): ReturnType<typeof startWebHttpServer> => startWebHttpServer({ ...options, applicationEvents })
+  options: TestWebServerOptions
+): ReturnType<typeof startWebHttpServer> => {
+  const localNames = options.rpc.channels().filter(isWebRpcChannel)
+  const remoteRejectedNames = localNames.filter((channel) =>
+    REMOTE_LOCAL_ONLY_RPC_CHANNELS.has(channel)
+  )
+  const invokeCaptured = (
+    channel: string,
+    invocation: { callerContext: CallerContext; args: readonly unknown[] }
+  ): Promise<unknown> => options.rpc.invoke(channel, invocation.callerContext, [...invocation.args])
+
+  return startWebHttpServer({
+    ...options,
+    applicationCommands: options.applicationCommands ?? {
+      localWeb: { commandNames: () => localNames, invoke: invokeCaptured },
+      remoteWeb: {
+        commandNames: () =>
+          localNames.filter((channel) => !REMOTE_LOCAL_ONLY_RPC_CHANNELS.has(channel)),
+        rejectedCommandNames: () => remoteRejectedNames,
+        invoke: invokeCaptured
+      }
+    },
+    applicationEvents
+  })
+}
 const authorizedExternalAccess = (): ExternalWebAccessAuthorization => ({
   kind: 'authorized-pairing-manager' as const,
   isCurrent: () => true
@@ -47,6 +78,93 @@ afterEach(async () => {
 })
 
 describe('startWebHttpServer', () => {
+  it('dispatches local Web RPC through the narrow application command view', async () => {
+    const capturedInvoke = vi.fn()
+    const directInvoke = vi.fn(
+      async (
+        _channel: string,
+        invocation: { args: readonly unknown[]; callerLease: { signal: AbortSignal } }
+      ) => Promise.resolve(invocation.args[0])
+    )
+    const rpc = {
+      channels: () => ['projects:list'],
+      invoke: capturedInvoke,
+      releaseClient: vi.fn(),
+      dispose: vi.fn()
+    }
+    const server = await startTestWebHttpServer({
+      host: '127.0.0.1',
+      port: 0,
+      token: 'test-token',
+      staticRoot: '/unused',
+      rpc,
+      applicationCommands: {
+        localWeb: { commandNames: rpc.channels, invoke: directInvoke },
+        remoteWeb: {
+          commandNames: () => [],
+          rejectedCommandNames: () => ['projects:list'],
+          invoke: vi.fn()
+        }
+      },
+      bootstrap: {
+        appName: 'Open Science',
+        appVersion: '0.0.0',
+        configRoot: '/fake/root',
+        platform: 'test',
+        versions: { electron: '1', chrome: '1', node: '1' }
+      }
+    })
+    servers.push(server)
+
+    const firstSocket = new WebSocket(
+      `ws://127.0.0.1:${server.port}/events?token=test-token&client=direct-client`
+    )
+    const secondSocket = new WebSocket(
+      `ws://127.0.0.1:${server.port}/events?token=test-token&client=direct-client`
+    )
+    await Promise.all([
+      new Promise<void>((resolve) => firstSocket.once('open', resolve)),
+      new Promise<void>((resolve) => secondSocket.once('open', resolve))
+    ])
+
+    const response = await fetch(`http://127.0.0.1:${server.port}/rpc/projects%3Alist`, {
+      method: 'POST',
+      headers: {
+        authorization: 'Bearer test-token',
+        'content-type': 'application/json',
+        'x-open-science-client': 'direct-client'
+      },
+      body: JSON.stringify({
+        protocolVersion: WEB_RPC_PROTOCOL_VERSION,
+        args: [{ source: 'direct' }]
+      })
+    })
+
+    expect(response.status).toBe(200)
+    expect(await response.json()).toMatchObject({ ok: true, result: { source: 'direct' } })
+    expect(directInvoke).toHaveBeenCalledWith(
+      'projects:list',
+      expect.objectContaining({
+        callerContext: expect.objectContaining({
+          clientId: 'direct-client',
+          surface: 'web',
+          location: 'local'
+        }),
+        callerLease: expect.objectContaining({ leaseId: 'direct-client' }),
+        args: [{ source: 'direct' }]
+      })
+    )
+    expect(capturedInvoke).not.toHaveBeenCalled()
+
+    const directSignal = directInvoke.mock.calls[0]?.[1].callerLease.signal
+    firstSocket.close()
+    await new Promise<void>((resolve) => firstSocket.once('close', () => resolve()))
+    expect(directSignal.aborted).toBe(false)
+    secondSocket.close()
+    await new Promise<void>((resolve) => secondSocket.once('close', () => resolve()))
+    await vi.waitFor(() => expect(directSignal.aborted).toBe(true))
+  })
+
   it('releases its application-event subscription when listening fails', async () => {
     const unsubscribe = vi.fn()
     const subscribe = vi.fn(() => unsubscribe)
@@ -60,6 +178,10 @@ describe('startWebHttpServer', () => {
         invoke: vi.fn(async () => undefined),
         releaseClient: vi.fn(),
         dispose: vi.fn()
+      },
+      applicationCommands: {
+        localWeb: { commandNames: () => [], invoke: vi.fn() },
+        remoteWeb: { commandNames: () => [], rejectedCommandNames: () => [], invoke: vi.fn() }
       },
       bootstrap: {
         appName: 'Open Science',
@@ -372,16 +494,25 @@ describe('startWebHttpServer', () => {
     roots.push(staticRoot)
     await writeFile(join(staticRoot, 'index.html'), '<!doctype html>')
     const releaseClient = vi.fn()
+    const directSignals: AbortSignal[] = []
+    const directInvoke = vi.fn(async (_channel, invocation) => {
+      directSignals.push(invocation.callerLease.signal)
+      return []
+    })
     const server = await startTestWebHttpServer({
       host: '127.0.0.1',
       port: 0,
       token: 'test-token',
       staticRoot,
       rpc: {
-        channels: () => [],
+        channels: () => ['projects:list'],
         invoke: vi.fn(),
         releaseClient,
         dispose: vi.fn()
+      },
+      applicationCommands: {
+        localWeb: { commandNames: () => ['projects:list'], invoke: directInvoke },
+        remoteWeb: { commandNames: () => [], rejectedCommandNames: () => [], invoke: vi.fn() }
       },
       bootstrap: {
         appName: 'Open Science',
@@ -402,12 +533,23 @@ describe('startWebHttpServer', () => {
       new Promise<void>((resolve) => firstSocket.once('open', resolve)),
       new Promise<void>((resolve) => secondSocket.once('open', resolve))
     ])
+    await fetch(`http://127.0.0.1:${server.port}/rpc/projects%3Alist`, {
+      method: 'POST',
+      headers: {
+        authorization: 'Bearer test-token',
+        'content-type': 'application/json',
+        'x-open-science-client': 'test-client'
+      },
+      body: JSON.stringify({ protocolVersion: WEB_RPC_PROTOCOL_VERSION, args: [] })
+    })
+    expect(directSignals[0]?.aborted).toBe(false)
 
     await server.close()
     servers.splice(servers.indexOf(server), 1)
 
     expect(releaseClient).toHaveBeenCalledTimes(1)
     expect(releaseClient).toHaveBeenCalledWith('test-client')
+    expect(directSignals[0]?.aborted).toBe(true)
   })
 
   it('passes pairing authority only for trusted-browser Web RPC calls', async () => {
@@ -621,9 +763,11 @@ describe('startWebHttpServer', () => {
     const localOnlyChannels = [...REMOTE_LOCAL_ONLY_RPC_CHANNELS]
     const remotelyAvailableChannel = 'projects:list'
     const rpcChannels = [...localOnlyChannels, remotelyAvailableChannel]
+    const localInvoke = vi.fn(async () => ({ installed: true }))
+    const remoteInvoke = vi.fn(async () => ({ projects: [] }))
     const rpc = {
       channels: () => rpcChannels,
-      invoke: vi.fn(async () => ({ installed: true })),
+      invoke: vi.fn(),
       releaseClient: vi.fn(),
       dispose: vi.fn()
     }
@@ -633,6 +777,14 @@ describe('startWebHttpServer', () => {
       token: 'local-token',
       staticRoot,
       rpc,
+      applicationCommands: {
+        localWeb: { commandNames: () => rpcChannels, invoke: localInvoke },
+        remoteWeb: {
+          commandNames: () => [remotelyAvailableChannel],
+          rejectedCommandNames: () => localOnlyChannels,
+          invoke: remoteInvoke
+        }
+      },
       externalAccess: {
         authorizeHttp: vi.fn().mockResolvedValue(authorizedExternalAccess()),
         authorizeWebSocket: vi.fn().mockResolvedValue({})
@@ -690,7 +842,16 @@ describe('startWebHttpServer', () => {
         body: JSON.stringify({ protocolVersion: WEB_RPC_PROTOCOL_VERSION, args: [] })
       })
       expect(remoteResponse.status, channel).toBe(403)
+      expect(await remoteResponse.json(), channel).toEqual({
+        protocolVersion: WEB_RPC_PROTOCOL_VERSION,
+        ok: false,
+        error: {
+          code: 'method_not_found',
+          message: `Channel only available from the local app: ${channel}`
+        }
+      })
     }
+    expect(remoteInvoke).not.toHaveBeenCalled()
     expect(rpc.invoke).not.toHaveBeenCalled()
 
     const localResponse = await fetch(rpcUrl('cli:install'), {
@@ -702,7 +863,8 @@ describe('startWebHttpServer', () => {
       body: JSON.stringify({ protocolVersion: WEB_RPC_PROTOCOL_VERSION, args: [] })
     })
     expect(localResponse.status).toBe(200)
-    expect(rpc.invoke).toHaveBeenCalledOnce()
+    expect(localInvoke).toHaveBeenCalledOnce()
+    expect(rpc.invoke).not.toHaveBeenCalled()
   })
 
   it('pins the remote Web Notebook capability matrix', () => {

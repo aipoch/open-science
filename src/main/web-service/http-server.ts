@@ -16,6 +16,8 @@ import {
   createWebCallerContext,
   type CallerContext
 } from '../caller-context'
+import { createApplicationCommandClient } from '../application-command-client'
+import type { ApplicationCommandComposition } from '../application-command-composition'
 import type { WebRpcRouter } from '../ipc-handler-registry'
 import type { ApplicationEventSource } from '../application-events'
 import {
@@ -64,7 +66,8 @@ type WebServerOptions = {
   port: number
   token: string
   staticRoot: string
-  rpc: WebRpcRouter
+  rpc: Pick<WebRpcRouter, 'releaseClient'>
+  applicationCommands: Pick<ApplicationCommandComposition, 'localWeb' | 'remoteWeb'>
   applicationEvents: ApplicationEventSource
   externalAccess?: ExternalWebAccess
   tasks?: Pick<
@@ -420,7 +423,11 @@ const startWebHttpServer = async (options: WebServerOptions): Promise<RunningWeb
   const sockets = new Set<WebSocket>()
   const externalSockets = new Map<WebSocket, string | undefined>()
   const publicEventSockets = new Set<WebSocket>()
-  const clientLeases = new ClientLeaseRegistry(options.rpc.releaseClient)
+  const commandClient = createApplicationCommandClient()
+  const clientLeases = new ClientLeaseRegistry((clientId) => {
+    commandClient.releaseClient('web', clientId)
+    options.rpc.releaseClient(clientId)
+  })
   const wsServer = new WebSocketServer({ noServer: true })
 
   const server = createServer(async (request, response) => {
@@ -452,13 +459,12 @@ const startWebHttpServer = async (options: WebServerOptions): Promise<RunningWeb
       }
 
       if (url.pathname === '/api/bootstrap' && request.method === 'GET') {
-        const allRpcChannels = options.rpc.channels().filter(isWebRpcChannel)
+        const rpcChannels = auth.ok
+          ? options.applicationCommands.localWeb.commandNames()
+          : options.applicationCommands.remoteWeb.commandNames()
         const restrictedRpcChannels = auth.ok
           ? []
-          : allRpcChannels.filter((channel) => REMOTE_LOCAL_ONLY_RPC_CHANNELS.has(channel))
-        const rpcChannels = allRpcChannels.filter(
-          (channel) => auth.ok || !REMOTE_LOCAL_ONLY_RPC_CHANNELS.has(channel)
-        )
+          : options.applicationCommands.remoteWeb.rejectedCommandNames()
         json(response, 200, {
           ...options.bootstrap,
           rpcProtocolVersion: WEB_RPC_PROTOCOL_VERSION,
@@ -576,7 +582,15 @@ const startWebHttpServer = async (options: WebServerOptions): Promise<RunningWeb
         })
         try {
           assertExternalAuthorizationCurrent(externalAuthorization)
-          const result = await options.rpc.invoke(channel, callerContext, parsed.data.args)
+          const dispatcher = auth.ok
+            ? options.applicationCommands.localWeb
+            : options.applicationCommands.remoteWeb
+          const result = await commandClient.invoke(
+            dispatcher,
+            channel,
+            callerContext,
+            parsed.data.args
+          )
           json(response, 200, {
             protocolVersion: WEB_RPC_PROTOCOL_VERSION,
             ok: true,
@@ -687,7 +701,11 @@ const startWebHttpServer = async (options: WebServerOptions): Promise<RunningWeb
     })
   } catch (error) {
     removeBroadcastSink()
-    clientLeases.dispose()
+    try {
+      clientLeases.dispose()
+    } finally {
+      commandClient.dispose()
+    }
     throw error
   }
 
@@ -708,7 +726,11 @@ const startWebHttpServer = async (options: WebServerOptions): Promise<RunningWeb
       for (const socket of sockets) socket.close()
       wsServer.close()
       await new Promise<void>((resolveClose) => server.close(() => resolveClose()))
-      clientLeases.dispose()
+      try {
+        clientLeases.dispose()
+      } finally {
+        commandClient.dispose()
+      }
     }
   }
 }

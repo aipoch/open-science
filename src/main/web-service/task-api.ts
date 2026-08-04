@@ -14,6 +14,8 @@ import type {
   TaskRun,
   TaskSessionSummary
 } from '../../shared/task-api'
+import { createApplicationCommandClient } from '../application-command-client'
+import type { ApplicationCommandByNameDispatcher } from '../application-command-composition'
 import { createTaskCallerContext, type CallerContext } from '../caller-context'
 import {
   TaskRunner,
@@ -26,12 +28,8 @@ import {
 
 const TASK_CALLER_CONTEXT = createTaskCallerContext()
 
-type TaskRpc = {
-  invoke(channel: string, callerContext: CallerContext, args: unknown[]): Promise<unknown>
-}
-
 type TaskApiPorts = {
-  rpc: TaskRpc
+  commands: ApplicationCommandByNameDispatcher
   agent: TaskAgentPort
 }
 
@@ -43,6 +41,7 @@ type TaskApiDependencies = {
 
 class HeadlessTaskApi {
   private readonly callerContexts = new AsyncLocalStorage<CallerContext>()
+  private readonly commandClient = createApplicationCommandClient()
   private readonly runner: TaskRunner
 
   constructor(
@@ -94,9 +93,12 @@ class HeadlessTaskApi {
         // Capability cleanup must remain available if request authorization is revoked while a
         // response stream drains. The fixed local automation context grants no new access.
         release: async (resourceId) => {
-          await this.ports.rpc.invoke('preview-resources:release', TASK_CALLER_CONTEXT, [
-            { resourceId }
-          ])
+          await this.commandClient.invoke(
+            this.ports.commands,
+            'preview-resources:release',
+            TASK_CALLER_CONTEXT,
+            [{ resourceId }]
+          )
         }
       },
       runtimeEvents: { subscribe: subscribeEvents },
@@ -106,7 +108,11 @@ class HeadlessTaskApi {
   }
 
   dispose(): void {
-    this.runner.dispose()
+    try {
+      this.runner.dispose()
+    } finally {
+      this.commandClient.dispose()
+    }
   }
 
   runWithCallerContext<Result>(context: CallerContext, operation: () => Result): Result {
@@ -154,7 +160,12 @@ class HeadlessTaskApi {
   }
 
   private invoke(channel: string, ...args: unknown[]): Promise<unknown> {
-    return this.ports.rpc.invoke(channel, this.currentCallerContext(), args)
+    return this.commandClient.invoke(
+      this.ports.commands,
+      channel,
+      this.currentCallerContext(),
+      args
+    )
   }
 
   private currentCallerContext(): CallerContext {
@@ -170,4 +181,4 @@ class HeadlessTaskApi {
 }
 
 export { HeadlessTaskApi, TaskRunnerError as TaskApiError, summarizeSession }
-export type { TaskApiDependencies, TaskApiPorts, TaskRpc }
+export type { TaskApiDependencies, TaskApiPorts }
