@@ -113,7 +113,7 @@ import {
 import {
   AcpSessionCapabilityOwner,
   CURRENT_PRIMARY_SESSION_CAPABILITY_POLICY,
-  type SessionCapabilityRoutingIds
+  type SessionCapabilityProvision
 } from './session-capability-owner'
 import { ArtifactTurnOwner, type ArtifactTurnHandle } from './artifact-turn-owner'
 import { AcpPromptContentOwner } from './prompt-content-owner'
@@ -1391,12 +1391,9 @@ class AcpRuntime {
   private async createSessionOperation(
     request: AcpCreateSessionRequest = {}
   ): Promise<AcpCreateSessionResponse> {
-    let provisionalRoutingIds: SessionCapabilityRoutingIds | undefined
-    let releaseProvisionalNotebookConnection: (() => void) | undefined
-    let releaseProvisionalSkillImportConnection: (() => void) | undefined
+    let capabilityProvision: SessionCapabilityProvision | undefined
     let primaryIdentityReservation: AcpPrimarySessionIdentityReservation | undefined
     let provisionalSession: ActiveSession | undefined
-    let provisionalHttpMcpRoutes = false
     try {
       log.info('createSession: starting', this.diagnosticContext())
       const sessionCwd = resolve(request.cwd || this.snapshotOwner.cwd || this.options.defaultCwd)
@@ -1405,8 +1402,6 @@ class AcpRuntime {
       const connection = await this.ensureConnected(sessionCwd)
       this.assertCurrentConnectedConnection(connection)
       const sessionStartupGeneration = this.sessionRegistry.startupGeneration
-      const routingIds = this.sessionCapabilities.createRoutingIds()
-      provisionalRoutingIds = routingIds
 
       // Resolve specialist identity before starting the ACP session so the identity append is
       // included in session/new. Main process reads the latest Profile — renderer only sends the UUID.
@@ -1435,23 +1430,15 @@ class AcpRuntime {
       }
 
       log.info('createSession: createMcpServers', this.diagnosticContext())
-      provisionalHttpMcpRoutes = !this.framework.acceptsStdioMcp
-      const builtCapabilities = await this.sessionCapabilities.build({
+      capabilityProvision = await this.sessionCapabilities.provision({
         framework: this.framework,
         nativeMcpEnabled: this.backend.adapter.nativeMcpEnabled,
         bridgeMcpAliasesEnabled: this.backend.adapter.bridgeMcpAliasesEnabled,
         policy: CURRENT_PRIMARY_SESSION_CAPABILITY_POLICY,
-        routingIds,
         sessionCwd,
-        projectName,
-        onNotebookConnection: (connection) => {
-          releaseProvisionalNotebookConnection = connection.release
-        },
-        onSkillImportConnection: (connection) => {
-          releaseProvisionalSkillImportConnection = connection.release
-        }
+        projectName
       })
-      const { mcpServers } = builtCapabilities
+      const { mcpServers } = capabilityProvision
       log.info('createSession: buildSession', this.diagnosticContext())
       const extraAppends = specialistAppend ? [specialistAppend] : []
       const session = await connection.agent
@@ -1528,22 +1515,14 @@ class AcpRuntime {
       } else {
         aggregate.setSpecialistId(undefined)
       }
+      capabilityProvision.commit(session.sessionId)
       provisionalSession = undefined
       this.releasePrimarySessionIdentityReservation(primaryIdentityReservation)
       primaryIdentityReservation = undefined
-      this.sessionCapabilities.commit({
-        appSessionId: session.sessionId,
-        routingIds,
-        descriptor: builtCapabilities.descriptor,
-        notebookRelease: releaseProvisionalNotebookConnection,
-        skillImportRelease: releaseProvisionalSkillImportConnection
-      })
       // Route and bearer ownership is now represented by the committed app-session maps. End the
       // provisional rollback window before invoking external observers so their failures cannot tear
       // down a Session that has already been published.
-      provisionalRoutingIds = undefined
-      releaseProvisionalNotebookConnection = undefined
-      releaseProvisionalSkillImportConnection = undefined
+      capabilityProvision = undefined
       try {
         this.notebookOptions?.registerSessionSpecialist?.(session.sessionId, request.specialistId)
       } catch (error) {
@@ -1598,20 +1577,7 @@ class AcpRuntime {
           'primary startup session disposal failed'
         )
       }
-      this.sessionCapabilities.revokeProvisional({
-        routingIds: provisionalRoutingIds
-          ? [
-              provisionalRoutingIds.artifact,
-              provisionalRoutingIds.notebook,
-              provisionalRoutingIds.skillImport
-            ]
-          : [],
-        usedHttpTransport: provisionalHttpMcpRoutes,
-        notebookSessionId: provisionalRoutingIds?.notebook || undefined,
-        notebookRelease: releaseProvisionalNotebookConnection,
-        skillImportRelease: releaseProvisionalSkillImportConnection,
-        ownsStableIdentity: true
-      })
+      capabilityProvision?.release({ ownsStableIdentity: true })
       safeLogError('createSession: failed', {
         ...diagnosticErrorFields(startupError),
         ...this.diagnosticContext()
@@ -2150,35 +2116,21 @@ class AcpRuntime {
       throw new Error('ACP agent does not support session resume.')
     }
 
-    // Session bearer tokens are provisional until the resumed session is fully registered. Any
-    // later setup failure must revoke them so an unattached Agent cannot retain app capabilities.
-    let notebookCapabilityProvisional = Boolean(this.notebookOptions)
-    let skillImportCapabilityProvisional = Boolean(this.skillImportOptions)
-    let releaseProvisionalNotebookConnection: (() => void) | undefined
-    let releaseProvisionalSkillImportConnection: (() => void) | undefined
+    let capabilityProvision: SessionCapabilityProvision | undefined
     let session: ActiveSession | undefined
-    let provisionalHttpMcpRoutes = false
-    const routingIds = this.sessionCapabilities.createRoutingIds(request.sessionId)
     try {
       // Resumed sessions already have stable ids, so the artifact session mirrors the runtime session
       // id.
-      provisionalHttpMcpRoutes = !this.framework.acceptsStdioMcp
-      const builtCapabilities = await this.sessionCapabilities.build({
+      capabilityProvision = await this.sessionCapabilities.provision({
+        stableAppSessionId: request.sessionId,
         framework: this.framework,
         nativeMcpEnabled: this.backend.adapter.nativeMcpEnabled,
         bridgeMcpAliasesEnabled: this.backend.adapter.bridgeMcpAliasesEnabled,
         policy: CURRENT_PRIMARY_SESSION_CAPABILITY_POLICY,
-        routingIds,
         sessionCwd,
-        projectName,
-        onNotebookConnection: (connection) => {
-          releaseProvisionalNotebookConnection = connection.release
-        },
-        onSkillImportConnection: (connection) => {
-          releaseProvisionalSkillImportConnection = connection.release
-        }
+        projectName
       })
-      const { mcpServers } = builtCapabilities
+      const { mcpServers } = capabilityProvision
       let resumeResponse
       try {
         resumeResponse = await connection.agent.request(acp.methods.agent.session.resume, {
@@ -2202,20 +2154,8 @@ class AcpRuntime {
         try {
           this.assertPrimarySessionIdentityReservation(primaryIdentityReservation)
         } catch (supersededError) {
-          if (notebookCapabilityProvisional || skillImportCapabilityProvisional) {
-            this.sessionCapabilities.revokeProvisional({
-              routingIds: [routingIds.artifact, routingIds.notebook, routingIds.skillImport],
-              usedHttpTransport: false,
-              notebookSessionId: routingIds.notebook || undefined,
-              notebookRelease: releaseProvisionalNotebookConnection,
-              skillImportRelease: releaseProvisionalSkillImportConnection,
-              ownsStableIdentity: false
-            })
-            notebookCapabilityProvisional = false
-            skillImportCapabilityProvisional = false
-            releaseProvisionalNotebookConnection = undefined
-            releaseProvisionalSkillImportConnection = undefined
-          }
+          capabilityProvision.release({ ownsStableIdentity: false })
+          capabilityProvision = undefined
           throw supersededError
         }
 
@@ -2223,20 +2163,8 @@ class AcpRuntime {
         // longer holds it — surfacing as -32002 not-found or a generic -32603 Internal error). Revoke
         // the token handed to that failed attempt before adopting a brand-new agent session under the
         // SAME app id; adoptFreshSession owns the replacement token's lifecycle.
-        if (notebookCapabilityProvisional || skillImportCapabilityProvisional) {
-          this.sessionCapabilities.revokeProvisional({
-            routingIds: [routingIds.artifact, routingIds.notebook, routingIds.skillImport],
-            usedHttpTransport: false,
-            notebookSessionId: routingIds.notebook || undefined,
-            notebookRelease: releaseProvisionalNotebookConnection,
-            skillImportRelease: releaseProvisionalSkillImportConnection,
-            ownsStableIdentity: true
-          })
-          notebookCapabilityProvisional = false
-          skillImportCapabilityProvisional = false
-          releaseProvisionalNotebookConnection = undefined
-          releaseProvisionalSkillImportConnection = undefined
-        }
+        capabilityProvision.release({ ownsStableIdentity: true })
+        capabilityProvision = undefined
         log.info('resumed session adopted after unrecoverable resume error', {
           sessionId: request.sessionId,
           ...errorLogFields(error)
@@ -2295,18 +2223,9 @@ class AcpRuntime {
       if (request.specialistId) {
         aggregate.setSpecialistId(request.specialistId)
       }
+      capabilityProvision.commit(request.sessionId)
       this.releasePrimarySessionIdentityReservation(primaryIdentityReservation)
-      this.sessionCapabilities.commit({
-        appSessionId: request.sessionId,
-        routingIds,
-        descriptor: builtCapabilities.descriptor,
-        notebookRelease: releaseProvisionalNotebookConnection,
-        skillImportRelease: releaseProvisionalSkillImportConnection
-      })
-      notebookCapabilityProvisional = false
-      skillImportCapabilityProvisional = false
-      releaseProvisionalNotebookConnection = undefined
-      releaseProvisionalSkillImportConnection = undefined
+      capabilityProvision = undefined
       this.snapshotOwner.updateCwd(sessionCwd)
       try {
         this.pushEvent({
@@ -2339,41 +2258,17 @@ class AcpRuntime {
       }
     } catch (error) {
       let startupError = error
-      let ownsProvisionalHttpRoutes = true
+      let ownsStableIdentity = true
       try {
         this.assertPrimarySessionIdentityReservation(primaryIdentityReservation)
       } catch (supersededError) {
         startupError = supersededError
-        ownsProvisionalHttpRoutes = false
+        ownsStableIdentity = false
       }
-      if (ownsProvisionalHttpRoutes) {
-        this.sessionCapabilities.revokeProvisional({
-          routingIds: [routingIds.artifact, routingIds.notebook, routingIds.skillImport],
-          usedHttpTransport: provisionalHttpMcpRoutes,
-          notebookSessionId: routingIds.notebook || undefined,
-          notebookRelease: notebookCapabilityProvisional
-            ? releaseProvisionalNotebookConnection
-            : undefined,
-          skillImportRelease: skillImportCapabilityProvisional
-            ? releaseProvisionalSkillImportConnection
-            : undefined,
-          ownsStableIdentity: notebookCapabilityProvisional
-        })
-        notebookCapabilityProvisional = false
-        skillImportCapabilityProvisional = false
-      }
+      capabilityProvision?.release({ ownsStableIdentity })
+      capabilityProvision = undefined
       if (session) {
         this.disposeSessionAfterFailure(session, 'resumed startup session disposal failed')
-      }
-      if (notebookCapabilityProvisional || skillImportCapabilityProvisional) {
-        this.sessionCapabilities.revokeProvisional({
-          routingIds: [],
-          usedHttpTransport: false,
-          notebookSessionId: routingIds.notebook || undefined,
-          notebookRelease: releaseProvisionalNotebookConnection,
-          skillImportRelease: releaseProvisionalSkillImportConnection,
-          ownsStableIdentity: ownsProvisionalHttpRoutes
-        })
       }
       throw startupError
     }
@@ -2393,31 +2288,19 @@ class AcpRuntime {
     // Fresh adoption also receives provisional app capability tokens. Transfer ownership only after
     // adoptSession has registered the replacement; every earlier failure revokes them and disposes any
     // partially-created Agent session.
-    let notebookCapabilityProvisional = Boolean(this.notebookOptions)
-    let skillImportCapabilityProvisional = Boolean(this.skillImportOptions)
-    let releaseProvisionalNotebookConnection: (() => void) | undefined
-    let releaseProvisionalSkillImportConnection: (() => void) | undefined
+    let capabilityProvision: SessionCapabilityProvision | undefined
     let adopted: ActiveSession | undefined
-    let provisionalHttpMcpRoutes = false
-    const routingIds = this.sessionCapabilities.createRoutingIds(request.sessionId)
     try {
-      provisionalHttpMcpRoutes = !this.framework.acceptsStdioMcp
-      const builtCapabilities = await this.sessionCapabilities.build({
+      capabilityProvision = await this.sessionCapabilities.provision({
+        stableAppSessionId: request.sessionId,
         framework: this.framework,
         nativeMcpEnabled: this.backend.adapter.nativeMcpEnabled,
         bridgeMcpAliasesEnabled: this.backend.adapter.bridgeMcpAliasesEnabled,
         policy: CURRENT_PRIMARY_SESSION_CAPABILITY_POLICY,
-        routingIds,
         sessionCwd,
-        projectName,
-        onNotebookConnection: (connection) => {
-          releaseProvisionalNotebookConnection = connection.release
-        },
-        onSkillImportConnection: (connection) => {
-          releaseProvisionalSkillImportConnection = connection.release
-        }
+        projectName
       })
-      const { mcpServers } = builtCapabilities
+      const { mcpServers } = capabilityProvision
       // A freshly adopted session carries no prior _meta, so the specialist identity append (Claude)
       // must be re-resolved from the live binding. Without this, a context reset or specialist switch
       // would silently drop the session's specialist identity.
@@ -2482,19 +2365,10 @@ class AcpRuntime {
       if (request.specialistId) {
         aggregate.setSpecialistId(request.specialistId)
       }
+      capabilityProvision.commit(request.sessionId)
       this.handoffContinuity.commitClaudeReplay(request.sessionId)
       this.releasePrimarySessionIdentityReservation(primaryIdentityReservation)
-      this.sessionCapabilities.commit({
-        appSessionId: request.sessionId,
-        routingIds,
-        descriptor: builtCapabilities.descriptor,
-        notebookRelease: releaseProvisionalNotebookConnection,
-        skillImportRelease: releaseProvisionalSkillImportConnection
-      })
-      notebookCapabilityProvisional = false
-      skillImportCapabilityProvisional = false
-      releaseProvisionalNotebookConnection = undefined
-      releaseProvisionalSkillImportConnection = undefined
+      capabilityProvision = undefined
       try {
         this.emitState()
       } catch (error) {
@@ -2513,41 +2387,17 @@ class AcpRuntime {
       }
     } catch (error) {
       let startupError = error
-      let ownsProvisionalHttpRoutes = true
+      let ownsStableIdentity = true
       try {
         this.assertPrimarySessionIdentityReservation(primaryIdentityReservation)
       } catch (supersededError) {
         startupError = supersededError
-        ownsProvisionalHttpRoutes = false
+        ownsStableIdentity = false
       }
-      if (ownsProvisionalHttpRoutes) {
-        this.sessionCapabilities.revokeProvisional({
-          routingIds: [routingIds.artifact, routingIds.notebook, routingIds.skillImport],
-          usedHttpTransport: provisionalHttpMcpRoutes,
-          notebookSessionId: routingIds.notebook || undefined,
-          notebookRelease: notebookCapabilityProvisional
-            ? releaseProvisionalNotebookConnection
-            : undefined,
-          skillImportRelease: skillImportCapabilityProvisional
-            ? releaseProvisionalSkillImportConnection
-            : undefined,
-          ownsStableIdentity: notebookCapabilityProvisional
-        })
-        notebookCapabilityProvisional = false
-        skillImportCapabilityProvisional = false
-      }
+      capabilityProvision?.release({ ownsStableIdentity })
+      capabilityProvision = undefined
       if (adopted) {
         this.disposeSessionAfterFailure(adopted, 'adopted startup session disposal failed')
-      }
-      if (notebookCapabilityProvisional || skillImportCapabilityProvisional) {
-        this.sessionCapabilities.revokeProvisional({
-          routingIds: [],
-          usedHttpTransport: false,
-          notebookSessionId: routingIds.notebook || undefined,
-          notebookRelease: releaseProvisionalNotebookConnection,
-          skillImportRelease: releaseProvisionalSkillImportConnection,
-          ownsStableIdentity: ownsProvisionalHttpRoutes
-        })
       }
       throw startupError
     }

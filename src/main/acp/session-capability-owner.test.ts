@@ -55,24 +55,429 @@ describe('ACP session capability owner', () => {
     expect(owner.toolingAvailability(input).skillImport).toBe(true)
   })
 
-  it('derives the exact current primary set while reviewer and unknown capabilities fail closed', async () => {
-    const owner = createOwner()
-    const routingIds = owner.createRoutingIds('session-1')
-    const primary = await owner.build({
+  it('commits a provision under the stable app identity', async () => {
+    const release = vi.fn()
+    const registerSessionAlias = vi.fn()
+    const releaseSessionCapabilities = vi.fn()
+    const owner = createOwner({
+      artifacts: undefined,
+      skillImport: undefined,
+      notebook: {
+        projectName: 'project',
+        mcpEntryPath: '/app/main.js',
+        getRpcConnection: async () => ({
+          endpoint: 'http://127.0.0.1:1',
+          token: 'notebook',
+          release
+        }),
+        registerSessionAlias,
+        releaseSessionCapabilities
+      }
+    })
+
+    const provision = await owner.provision({
+      stableAppSessionId: 'provider-session',
       framework: opencodeFramework,
       nativeMcpEnabled: true,
       bridgeMcpAliasesEnabled: false,
       policy: CURRENT_PRIMARY_SESSION_CAPABILITY_POLICY,
-      routingIds,
       sessionCwd: '/workspace',
       projectName: 'project'
     })
-    const reviewer = await owner.build({
+
+    provision.commit('app-session')
+
+    expect(registerSessionAlias).toHaveBeenCalledWith('provider-session', 'app-session')
+    expect(owner.mcpServerNamesFor('app-session')).toEqual(['open-science-notebook'])
+    expect(release).not.toHaveBeenCalled()
+
+    owner.revokeSession('app-session')
+    expect(release).toHaveBeenCalledOnce()
+    expect(releaseSessionCapabilities).toHaveBeenCalledWith('app-session')
+  })
+
+  it('releases acquired local RPC leases when a later provision step fails', async () => {
+    const notebookRelease = vi.fn()
+    const releaseSessionCapabilities = vi.fn()
+    const owner = createOwner({
+      notebook: {
+        projectName: 'project',
+        mcpEntryPath: '/app/main.js',
+        getRpcConnection: async () => ({
+          endpoint: 'http://127.0.0.1:1',
+          token: 'notebook',
+          release: notebookRelease
+        }),
+        releaseSessionCapabilities
+      },
+      skillImport: {
+        mcpEntryPath: '/app/main.js',
+        getRpcConnection: async () => {
+          throw new Error('Skill import RPC unavailable')
+        }
+      }
+    })
+
+    await expect(
+      owner.provision({
+        stableAppSessionId: 'session-1',
+        framework: opencodeFramework,
+        nativeMcpEnabled: true,
+        bridgeMcpAliasesEnabled: false,
+        policy: CURRENT_PRIMARY_SESSION_CAPABILITY_POLICY,
+        sessionCwd: '/workspace',
+        projectName: 'project'
+      })
+    ).rejects.toThrow('Skill import RPC unavailable')
+    expect(notebookRelease).toHaveBeenCalledOnce()
+    expect(releaseSessionCapabilities).toHaveBeenCalledWith('session-1')
+  })
+
+  it('unregisters partial HTTP routes when provision building fails', async () => {
+    const unregister = vi.fn()
+    const host = {
+      ensureStarted: vi.fn(async () => ({ endpoint: 'http://127.0.0.1:3', token: 'host' })),
+      registerArtifact: vi.fn(),
+      registerNotebook: vi.fn(),
+      registerSkillImport: vi.fn(),
+      urlFor: vi.fn((kind: string, routingId: string) => `http://127.0.0.1:3/${kind}/${routingId}`),
+      unregister,
+      clear: vi.fn(),
+      close: vi.fn()
+    } as unknown as AgentMcpHttpHost
+    const owner = createOwner({
+      mcpHttpHost: host,
+      skillImport: {
+        mcpEntryPath: '/app/main.js',
+        getRpcConnection: async () => {
+          throw new Error('Skill import RPC unavailable')
+        }
+      }
+    })
+
+    await expect(
+      owner.provision({
+        stableAppSessionId: 'session-1',
+        framework: { ...opencodeFramework, acceptsStdioMcp: false },
+        nativeMcpEnabled: true,
+        bridgeMcpAliasesEnabled: false,
+        policy: CURRENT_PRIMARY_SESSION_CAPABILITY_POLICY,
+        sessionCwd: '/workspace',
+        projectName: 'project'
+      })
+    ).rejects.toThrow('Skill import RPC unavailable')
+
+    expect(unregister).toHaveBeenCalledOnce()
+    expect(unregister).toHaveBeenCalledWith('session-1')
+  })
+
+  it('revokes a committed same-ID HTTP route when its replacement fails before registration', async () => {
+    const startupFailure = new Error('MCP host startup failed')
+    const ensureStarted = vi
+      .fn()
+      .mockResolvedValueOnce({ endpoint: 'http://127.0.0.1:3', token: 'host' })
+      .mockRejectedValueOnce(startupFailure)
+    const unregister = vi.fn()
+    const host = {
+      ensureStarted,
+      registerNotebook: vi.fn(),
+      urlFor: vi.fn((kind: string, routingId: string) => `http://127.0.0.1:3/${kind}/${routingId}`),
+      unregister,
+      clear: vi.fn(),
+      close: vi.fn()
+    } as unknown as AgentMcpHttpHost
+    const owner = createOwner({
+      artifacts: undefined,
+      skillImport: undefined,
+      mcpHttpHost: host
+    })
+    const input = {
+      stableAppSessionId: 'session-1',
+      framework: { ...opencodeFramework, acceptsStdioMcp: false },
+      nativeMcpEnabled: true,
+      bridgeMcpAliasesEnabled: false,
+      policy: CURRENT_PRIMARY_SESSION_CAPABILITY_POLICY,
+      sessionCwd: '/workspace',
+      projectName: 'project'
+    }
+    const committed = await owner.provision(input)
+    committed.commit('session-1')
+
+    await expect(owner.provision(input)).rejects.toBe(startupFailure)
+
+    expect(unregister).toHaveBeenCalledOnce()
+    expect(unregister).toHaveBeenCalledWith('session-1')
+  })
+
+  it('retains provisional cleanup ownership through disposal', async () => {
+    let resolveConnection!: (connection: { endpoint: string; token: string }) => void
+    const connection = new Promise<{ endpoint: string; token: string }>((resolve) => {
+      resolveConnection = resolve
+    })
+    const getRpcConnection = vi.fn(() => connection)
+    const unregister = vi.fn()
+    const clear = vi.fn()
+    const registerNotebook = vi.fn()
+    const host = {
+      ensureStarted: vi.fn(async () => ({ endpoint: 'http://127.0.0.1:3', token: 'host' })),
+      registerNotebook,
+      urlFor: vi.fn((kind: string, routingId: string) => `http://127.0.0.1:3/${kind}/${routingId}`),
+      unregister,
+      clear,
+      close: vi.fn()
+    } as unknown as AgentMcpHttpHost
+    const owner = createOwner({
+      artifacts: undefined,
+      skillImport: undefined,
+      mcpHttpHost: host,
+      notebook: {
+        projectName: 'project',
+        mcpEntryPath: '/app/main.js',
+        getRpcConnection
+      }
+    })
+    const provisionPromise = owner.provision({
+      stableAppSessionId: 'session-1',
+      framework: { ...opencodeFramework, acceptsStdioMcp: false },
+      nativeMcpEnabled: true,
+      bridgeMcpAliasesEnabled: false,
+      policy: CURRENT_PRIMARY_SESSION_CAPABILITY_POLICY,
+      sessionCwd: '/workspace',
+      projectName: 'project'
+    })
+    await vi.waitFor(() => expect(getRpcConnection).toHaveBeenCalledOnce())
+
+    owner.dispose()
+    owner.clearHttpRoutes()
+    resolveConnection({ endpoint: 'http://127.0.0.1:1', token: 'notebook' })
+    const provision = await provisionPromise
+    provision.release({ ownsStableIdentity: true })
+
+    expect(clear).toHaveBeenCalledOnce()
+    expect(registerNotebook).not.toHaveBeenCalled()
+    expect(unregister).toHaveBeenCalledOnce()
+    expect(unregister).toHaveBeenCalledWith('session-1')
+  })
+
+  it('prevents a stale HTTP provision from overwriting its same-ID successor', async () => {
+    let resolveFirstConnection!: (connection: { endpoint: string; token: string }) => void
+    const firstConnection = new Promise<{ endpoint: string; token: string }>((resolve) => {
+      resolveFirstConnection = resolve
+    })
+    let connectionIndex = 0
+    const getRpcConnection = vi.fn(() => {
+      connectionIndex += 1
+      return connectionIndex === 1
+        ? firstConnection
+        : Promise.resolve({ endpoint: 'http://127.0.0.1:2', token: 'successor' })
+    })
+    const registerNotebook = vi.fn()
+    const unregister = vi.fn()
+    const host = {
+      ensureStarted: vi.fn(async () => ({ endpoint: 'http://127.0.0.1:3', token: 'host' })),
+      registerNotebook,
+      urlFor: vi.fn((kind: string, routingId: string) => `http://127.0.0.1:3/${kind}/${routingId}`),
+      unregister,
+      clear: vi.fn(),
+      close: vi.fn()
+    } as unknown as AgentMcpHttpHost
+    const owner = createOwner({
+      artifacts: undefined,
+      skillImport: undefined,
+      mcpHttpHost: host,
+      notebook: {
+        projectName: 'project',
+        mcpEntryPath: '/app/main.js',
+        getRpcConnection
+      }
+    })
+    const input = {
+      stableAppSessionId: 'session-1',
+      framework: { ...opencodeFramework, acceptsStdioMcp: false },
+      nativeMcpEnabled: true,
+      bridgeMcpAliasesEnabled: false,
+      policy: CURRENT_PRIMARY_SESSION_CAPABILITY_POLICY,
+      sessionCwd: '/workspace',
+      projectName: 'project'
+    }
+    const staleProvisionPromise = owner.provision(input)
+    await vi.waitFor(() => expect(getRpcConnection).toHaveBeenCalledOnce())
+    owner.dispose()
+    owner.clearHttpRoutes()
+
+    const successor = await owner.provision(input)
+    successor.commit('session-1')
+    resolveFirstConnection({ endpoint: 'http://127.0.0.1:1', token: 'stale' })
+    const stale = await staleProvisionPromise
+    stale.release({ ownsStableIdentity: true })
+
+    expect(registerNotebook).toHaveBeenCalledOnce()
+    expect(registerNotebook).toHaveBeenCalledWith(
+      'session-1',
+      expect.objectContaining({ token: 'successor' })
+    )
+    expect(unregister).not.toHaveBeenCalled()
+  })
+
+  it('rejects a provision commit from before owner disposal', async () => {
+    const owner = createOwner({ artifacts: undefined, skillImport: undefined })
+    const provision = await owner.provision({
+      stableAppSessionId: 'session-1',
+      framework: opencodeFramework,
+      nativeMcpEnabled: true,
+      bridgeMcpAliasesEnabled: false,
+      policy: CURRENT_PRIMARY_SESSION_CAPABILITY_POLICY,
+      sessionCwd: '/workspace',
+      projectName: 'project'
+    })
+
+    owner.dispose()
+
+    expect(() => provision.commit('session-1')).toThrow('provision was superseded')
+    expect(owner.mcpServerNamesFor('session-1')).toEqual([])
+  })
+
+  it('performs only the first terminal provision action', async () => {
+    const release = vi.fn()
+    const registerSessionAlias = vi.fn()
+    const releaseSessionCapabilities = vi.fn()
+    const owner = createOwner({
+      artifacts: undefined,
+      skillImport: undefined,
+      notebook: {
+        projectName: 'project',
+        mcpEntryPath: '/app/main.js',
+        getRpcConnection: async () => ({
+          endpoint: 'http://127.0.0.1:1',
+          token: 'notebook',
+          release
+        }),
+        registerSessionAlias,
+        releaseSessionCapabilities
+      }
+    })
+    const provision = await owner.provision({
+      stableAppSessionId: 'provider-session',
+      framework: opencodeFramework,
+      nativeMcpEnabled: true,
+      bridgeMcpAliasesEnabled: false,
+      policy: CURRENT_PRIMARY_SESSION_CAPABILITY_POLICY,
+      sessionCwd: '/workspace',
+      projectName: 'project'
+    })
+
+    provision.release({ ownsStableIdentity: true })
+    provision.release({ ownsStableIdentity: true })
+    provision.commit('app-session')
+
+    expect(release).toHaveBeenCalledOnce()
+    expect(releaseSessionCapabilities).toHaveBeenCalledOnce()
+    expect(releaseSessionCapabilities).toHaveBeenCalledWith('provider-session')
+    expect(registerSessionAlias).not.toHaveBeenCalled()
+    expect(owner.mcpServerNamesFor('app-session')).toEqual([])
+  })
+
+  it('does not broadly revoke stable capability state from a superseded provision', async () => {
+    const firstRelease = vi.fn()
+    const secondRelease = vi.fn()
+    const releaseSessionCapabilities = vi.fn()
+    let provisionIndex = 0
+    const owner = createOwner({
+      artifacts: undefined,
+      skillImport: undefined,
+      notebook: {
+        projectName: 'project',
+        mcpEntryPath: '/app/main.js',
+        getRpcConnection: async () => ({
+          endpoint: 'http://127.0.0.1:1',
+          token: 'notebook',
+          release: [firstRelease, secondRelease][provisionIndex++]
+        }),
+        releaseSessionCapabilities
+      }
+    })
+    const input = {
+      stableAppSessionId: 'session-1',
+      framework: opencodeFramework,
+      nativeMcpEnabled: true,
+      bridgeMcpAliasesEnabled: false,
+      policy: CURRENT_PRIMARY_SESSION_CAPABILITY_POLICY,
+      sessionCwd: '/workspace',
+      projectName: 'project'
+    }
+    const first = await owner.provision(input)
+    const second = await owner.provision(input)
+
+    first.release({ ownsStableIdentity: true })
+
+    expect(firstRelease).toHaveBeenCalledOnce()
+    expect(releaseSessionCapabilities).not.toHaveBeenCalled()
+
+    second.commit('session-1')
+    owner.revokeSession('session-1')
+    expect(secondRelease).toHaveBeenCalledOnce()
+    expect(releaseSessionCapabilities).toHaveBeenCalledOnce()
+  })
+
+  it('rejects commit from a superseded stable-identity provision', async () => {
+    const firstRelease = vi.fn()
+    const secondRelease = vi.fn()
+    const releaseSessionCapabilities = vi.fn()
+    let provisionIndex = 0
+    const owner = createOwner({
+      artifacts: undefined,
+      skillImport: undefined,
+      notebook: {
+        projectName: 'project',
+        mcpEntryPath: '/app/main.js',
+        getRpcConnection: async () => ({
+          endpoint: 'http://127.0.0.1:1',
+          token: 'notebook',
+          release: [firstRelease, secondRelease][provisionIndex++]
+        }),
+        releaseSessionCapabilities
+      }
+    })
+    const input = {
+      stableAppSessionId: 'session-1',
+      framework: opencodeFramework,
+      nativeMcpEnabled: true,
+      bridgeMcpAliasesEnabled: false,
+      policy: CURRENT_PRIMARY_SESSION_CAPABILITY_POLICY,
+      sessionCwd: '/workspace',
+      projectName: 'project'
+    }
+    const first = await owner.provision(input)
+    const second = await owner.provision(input)
+
+    expect(() => first.commit('stale-session')).toThrow('provision was superseded')
+    expect(firstRelease).toHaveBeenCalledOnce()
+    expect(releaseSessionCapabilities).not.toHaveBeenCalled()
+    expect(owner.mcpServerNamesFor('stale-session')).toEqual([])
+
+    second.commit('session-1')
+    owner.revokeSession('session-1')
+    expect(secondRelease).toHaveBeenCalledOnce()
+    expect(releaseSessionCapabilities).toHaveBeenCalledOnce()
+  })
+
+  it('derives the exact current primary set while reviewer and unknown capabilities fail closed', async () => {
+    const owner = createOwner()
+    const primary = await owner.provision({
+      stableAppSessionId: 'session-1',
+      framework: opencodeFramework,
+      nativeMcpEnabled: true,
+      bridgeMcpAliasesEnabled: false,
+      policy: CURRENT_PRIMARY_SESSION_CAPABILITY_POLICY,
+      sessionCwd: '/workspace',
+      projectName: 'project'
+    })
+    const reviewer = await owner.provision({
+      stableAppSessionId: 'reviewer-session',
       framework: opencodeFramework,
       nativeMcpEnabled: true,
       bridgeMcpAliasesEnabled: false,
       policy: REVIEWER_SESSION_CAPABILITY_POLICY,
-      routingIds,
       sessionCwd: '/workspace',
       projectName: 'project'
     })
@@ -106,12 +511,12 @@ describe('ACP session capability owner', () => {
 
   it('returns an immutable, credential-free descriptor', async () => {
     const owner = createOwner()
-    const built = await owner.build({
+    const built = await owner.provision({
+      stableAppSessionId: 'session-1',
       framework: opencodeFramework,
       nativeMcpEnabled: true,
       bridgeMcpAliasesEnabled: false,
       policy: CURRENT_PRIMARY_SESSION_CAPABILITY_POLICY,
-      routingIds: owner.createRoutingIds('session-1'),
       sessionCwd: '/workspace',
       projectName: 'project'
     })
@@ -129,39 +534,49 @@ describe('ACP session capability owner', () => {
     const firstSkillImportRelease = vi.fn()
     const secondSkillImportRelease = vi.fn()
     const releaseSessionCapabilities = vi.fn()
+    let notebookProvision = 0
+    let skillImportProvision = 0
     const owner = createOwner({
       notebook: {
         projectName: 'project',
         mcpEntryPath: '/app/main.js',
-        getRpcConnection: async () => ({ endpoint: 'http://127.0.0.1:1', token: 'notebook' }),
+        getRpcConnection: async () => ({
+          endpoint: 'http://127.0.0.1:1',
+          token: 'notebook',
+          release: [firstRelease, secondRelease][notebookProvision++]
+        }),
         releaseSessionCapabilities
+      },
+      skillImport: {
+        mcpEntryPath: '/app/main.js',
+        getRpcConnection: async () => ({
+          endpoint: 'http://127.0.0.1:2',
+          token: 'skill',
+          release: [firstSkillImportRelease, secondSkillImportRelease][skillImportProvision++]
+        })
       }
     })
-    const routingIds = owner.createRoutingIds('session-1')
-    const built = await owner.build({
+    const first = await owner.provision({
+      stableAppSessionId: 'session-1',
       framework: opencodeFramework,
       nativeMcpEnabled: true,
       bridgeMcpAliasesEnabled: false,
       policy: CURRENT_PRIMARY_SESSION_CAPABILITY_POLICY,
-      routingIds,
+      sessionCwd: '/workspace',
+      projectName: 'project'
+    })
+    first.commit('session-1')
+    const second = await owner.provision({
+      stableAppSessionId: 'session-1',
+      framework: opencodeFramework,
+      nativeMcpEnabled: true,
+      bridgeMcpAliasesEnabled: false,
+      policy: CURRENT_PRIMARY_SESSION_CAPABILITY_POLICY,
       sessionCwd: '/workspace',
       projectName: 'project'
     })
 
-    owner.commit({
-      appSessionId: 'session-1',
-      routingIds,
-      descriptor: built.descriptor,
-      notebookRelease: firstRelease,
-      skillImportRelease: firstSkillImportRelease
-    })
-    owner.commit({
-      appSessionId: 'session-1',
-      routingIds,
-      descriptor: built.descriptor,
-      notebookRelease: secondRelease,
-      skillImportRelease: secondSkillImportRelease
-    })
+    second.commit('session-1')
 
     expect(firstRelease).toHaveBeenCalledOnce()
     expect(firstSkillImportRelease).toHaveBeenCalledOnce()
@@ -190,17 +605,16 @@ describe('ACP session capability owner', () => {
       close
     } as unknown as AgentMcpHttpHost
     const owner = createOwner({ mcpHttpHost: host })
-    const routingIds = owner.createRoutingIds('session-1')
-    const built = await owner.build({
+    const provision = await owner.provision({
+      stableAppSessionId: 'session-1',
       framework: { ...opencodeFramework, acceptsStdioMcp: false },
       nativeMcpEnabled: true,
       bridgeMcpAliasesEnabled: false,
       policy: CURRENT_PRIMARY_SESSION_CAPABILITY_POLICY,
-      routingIds,
       sessionCwd: '/workspace',
       projectName: 'project'
     })
-    owner.commit({ appSessionId: 'session-1', routingIds, descriptor: built.descriptor })
+    provision.commit('session-1')
 
     owner.revokeSession('session-1')
 
@@ -229,26 +643,24 @@ describe('ACP session capability owner', () => {
       notebook: {
         projectName: 'project',
         mcpEntryPath: '/app/main.js',
-        getRpcConnection: async () => ({ endpoint: 'http://127.0.0.1:1', token: 'notebook' }),
+        getRpcConnection: async () => ({
+          endpoint: 'http://127.0.0.1:1',
+          token: 'notebook',
+          release: notebookRelease
+        }),
         releaseSessionCapabilities
       }
     })
-    const routingIds = owner.createRoutingIds('session-1')
-    const built = await owner.build({
+    const provision = await owner.provision({
+      stableAppSessionId: 'session-1',
       framework: { ...opencodeFramework, acceptsStdioMcp: false },
       nativeMcpEnabled: true,
       bridgeMcpAliasesEnabled: false,
       policy: CURRENT_PRIMARY_SESSION_CAPABILITY_POLICY,
-      routingIds,
       sessionCwd: '/workspace',
       projectName: 'project'
     })
-    owner.commit({
-      appSessionId: 'session-1',
-      routingIds,
-      descriptor: built.descriptor,
-      notebookRelease
-    })
+    provision.commit('session-1')
 
     expect(() => owner.revokeSession('session-1')).not.toThrow()
     expect(unregister).toHaveBeenCalledOnce()

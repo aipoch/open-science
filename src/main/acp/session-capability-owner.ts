@@ -73,7 +73,7 @@ export type EffectiveSessionCapabilityDescriptor = Readonly<{
   controlRpcMethods: readonly string[]
 }>
 
-export type SessionCapabilityRoutingIds = Readonly<{
+type SessionCapabilityRoutingIds = Readonly<{
   artifact: string
   notebook: string
   skillImport: string
@@ -108,21 +108,45 @@ export type SessionCapabilitySkillImportOptions = {
   releaseSessionCapabilities?: (sessionId: string) => void
 }
 
-export type BuildSessionCapabilitiesRequest = {
+type BuildSessionCapabilitiesRequest = {
   framework: Pick<AgentFramework, 'id' | 'acceptsStdioMcp'>
   nativeMcpEnabled: boolean
   bridgeMcpAliasesEnabled: boolean
   policy: SessionCapabilityPolicy
   routingIds: SessionCapabilityRoutingIds
+  routingOwner: object
+  provisionGeneration: number
   sessionCwd: string
   projectName: string
   onNotebookConnection?: (connection: NotebookRpcConnection) => void
   onSkillImportConnection?: (connection: SkillImportRpcConnection) => void
 }
 
-export type BuiltSessionCapabilities = Readonly<{
+type BuiltSessionCapabilities = Readonly<{
   mcpServers: McpServer[]
   descriptor: EffectiveSessionCapabilityDescriptor
+}>
+
+export type ProvisionSessionCapabilitiesRequest = Omit<
+  BuildSessionCapabilitiesRequest,
+  | 'routingIds'
+  | 'routingOwner'
+  | 'provisionGeneration'
+  | 'onNotebookConnection'
+  | 'onSkillImportConnection'
+> & {
+  stableAppSessionId?: string
+}
+
+export type SessionCapabilityOwnershipFacts = Readonly<{
+  ownsStableIdentity: boolean
+}>
+
+export type SessionCapabilityProvision = Readonly<{
+  mcpServers: McpServer[]
+  descriptor: EffectiveSessionCapabilityDescriptor
+  commit: (appSessionId: string) => void
+  release: (ownershipFacts: SessionCapabilityOwnershipFacts) => void
 }>
 
 type CommitSessionCapabilitiesRequest = {
@@ -184,6 +208,8 @@ export class AcpSessionCapabilityOwner {
   private readonly skillImportCapabilityReleases = new Map<string, () => void>()
   private readonly descriptors = new Map<string, EffectiveSessionCapabilityDescriptor>()
   private readonly committedSessionIds = new Set<string>()
+  private readonly provisionalRoutingOwners = new Map<string, object>()
+  private provisionalGeneration = 0
   private artifactSessionSequence = 0
   private notebookSessionSequence = 0
   private skillImportSessionSequence = 0
@@ -191,7 +217,107 @@ export class AcpSessionCapabilityOwner {
 
   constructor(private readonly options: SessionCapabilityOwnerOptions) {}
 
-  createRoutingIds(stableAppSessionId?: string): SessionCapabilityRoutingIds {
+  async provision(
+    request: ProvisionSessionCapabilitiesRequest
+  ): Promise<SessionCapabilityProvision> {
+    const routingIds = this.createRoutingIds(request.stableAppSessionId)
+    const routingOwner = this.trackProvisionalRoutingOwner(routingIds)
+    const provisionGeneration = this.provisionalGeneration
+    let notebookRelease: (() => void) | undefined
+    let skillImportRelease: (() => void) | undefined
+    let built: BuiltSessionCapabilities
+    try {
+      built = await this.build({
+        framework: request.framework,
+        nativeMcpEnabled: request.nativeMcpEnabled,
+        bridgeMcpAliasesEnabled: request.bridgeMcpAliasesEnabled,
+        policy: request.policy,
+        routingIds,
+        routingOwner,
+        provisionGeneration,
+        sessionCwd: request.sessionCwd,
+        projectName: request.projectName,
+        onNotebookConnection: (connection) => {
+          notebookRelease = connection.release
+        },
+        onSkillImportConnection: (connection) => {
+          skillImportRelease = connection.release
+        }
+      })
+    } catch (error) {
+      const ownsStableIdentity = this.ownsProvisionalRoutingIds(routingIds, routingOwner)
+      this.revokeProvisional({
+        routingIds: [routingIds.artifact, routingIds.notebook, routingIds.skillImport],
+        usedHttpTransport: ownsStableIdentity && !request.framework.acceptsStdioMcp,
+        notebookSessionId: routingIds.notebook || undefined,
+        notebookRelease,
+        skillImportRelease,
+        ownsStableIdentity
+      })
+      this.finishProvisionalRoutingOwner(routingIds, routingOwner)
+      throw error
+    }
+    let terminal = false
+
+    return Object.freeze({
+      ...built,
+      commit: (appSessionId: string): void => {
+        if (terminal) return
+        terminal = true
+        const ownsRoutingIds = this.ownsProvisionalRoutingIds(routingIds, routingOwner)
+        if (provisionGeneration !== this.provisionalGeneration) {
+          this.revokeProvisional({
+            routingIds: [routingIds.artifact, routingIds.notebook, routingIds.skillImport],
+            usedHttpTransport: ownsRoutingIds && !request.framework.acceptsStdioMcp,
+            notebookSessionId: routingIds.notebook || undefined,
+            notebookRelease,
+            skillImportRelease,
+            ownsStableIdentity: ownsRoutingIds
+          })
+          this.finishProvisionalRoutingOwner(routingIds, routingOwner)
+          throw new Error('ACP session capability provision was superseded.')
+        }
+        if (!ownsRoutingIds) {
+          this.revokeProvisional({
+            routingIds: [],
+            usedHttpTransport: false,
+            notebookSessionId: routingIds.notebook || undefined,
+            notebookRelease,
+            skillImportRelease,
+            ownsStableIdentity: false
+          })
+          this.finishProvisionalRoutingOwner(routingIds, routingOwner)
+          throw new Error('ACP session capability provision was superseded.')
+        }
+        this.commit({
+          appSessionId,
+          routingIds,
+          descriptor: built.descriptor,
+          notebookRelease,
+          skillImportRelease
+        })
+        this.finishProvisionalRoutingOwner(routingIds, routingOwner)
+      },
+      release: (ownershipFacts: SessionCapabilityOwnershipFacts): void => {
+        if (terminal) return
+        terminal = true
+        const ownsStableIdentity =
+          ownershipFacts.ownsStableIdentity &&
+          this.ownsProvisionalRoutingIds(routingIds, routingOwner)
+        this.revokeProvisional({
+          routingIds: [routingIds.artifact, routingIds.notebook, routingIds.skillImport],
+          usedHttpTransport: ownsStableIdentity && !request.framework.acceptsStdioMcp,
+          notebookSessionId: routingIds.notebook || undefined,
+          notebookRelease,
+          skillImportRelease,
+          ownsStableIdentity
+        })
+        this.finishProvisionalRoutingOwner(routingIds, routingOwner)
+      }
+    })
+  }
+
+  private createRoutingIds(stableAppSessionId?: string): SessionCapabilityRoutingIds {
     if (stableAppSessionId) {
       return Object.freeze({
         artifact: this.options.artifacts ? stableAppSessionId : '',
@@ -218,7 +344,7 @@ export class AcpSessionCapabilityOwner {
     })
   }
 
-  async build(request: BuildSessionCapabilitiesRequest): Promise<BuiltSessionCapabilities> {
+  private async build(request: BuildSessionCapabilitiesRequest): Promise<BuiltSessionCapabilities> {
     const transport = request.framework.acceptsStdioMcp
       ? 'stdio'
       : this.options.mcpHttpHost
@@ -290,7 +416,7 @@ export class AcpSessionCapabilityOwner {
     return Object.freeze({ mcpServers: modelFacingServers, descriptor })
   }
 
-  commit(request: CommitSessionCapabilitiesRequest): void {
+  private commit(request: CommitSessionCapabilitiesRequest): void {
     const { appSessionId, routingIds, descriptor } = request
     if (routingIds.artifact) this.artifactRoutingIds.set(appSessionId, routingIds.artifact)
     if (routingIds.notebook) {
@@ -317,7 +443,7 @@ export class AcpSessionCapabilityOwner {
     this.commitSkillImportRelease(appSessionId, request.skillImportRelease)
   }
 
-  revokeProvisional(request: RevokeProvisionalSessionCapabilitiesRequest): void {
+  private revokeProvisional(request: RevokeProvisionalSessionCapabilitiesRequest): void {
     if (request.usedHttpTransport && this.options.mcpHttpHost) {
       for (const routingId of new Set(request.routingIds)) {
         if (!routingId) continue
@@ -390,6 +516,7 @@ export class AcpSessionCapabilityOwner {
   }
 
   dispose(sessionIds: Iterable<string> = []): void {
+    this.provisionalGeneration += 1
     const ownedSessionIds = new Set([
       ...sessionIds,
       ...this.artifactRoutingIds.keys(),
@@ -412,6 +539,8 @@ export class AcpSessionCapabilityOwner {
     this.skillImportCapabilityReleases.clear()
     this.descriptors.clear()
     this.committedSessionIds.clear()
+    // In-flight provisions retain terminal cleanup ownership across teardown. A same-id successor
+    // supersedes that ownership when it starts provisioning.
   }
 
   clearHttpRoutes(): void {
@@ -599,7 +728,7 @@ export class AcpSessionCapabilityOwner {
         request.sessionCwd,
         request.projectName
       )
-      if (environment) {
+      if (environment && this.canPublishHttpRoute(request)) {
         host.registerArtifact(request.routingIds.artifact, environment)
         servers.push({
           type: 'http',
@@ -616,7 +745,7 @@ export class AcpSessionCapabilityOwner {
         request.projectName,
         request.onNotebookConnection
       )
-      if (environment) {
+      if (environment && this.canPublishHttpRoute(request)) {
         host.registerNotebook(request.routingIds.notebook, environment)
         servers.push({
           type: 'http',
@@ -631,7 +760,7 @@ export class AcpSessionCapabilityOwner {
         request.routingIds.skillImport,
         request.onSkillImportConnection
       )
-      if (environment) {
+      if (environment && this.canPublishHttpRoute(request)) {
         host.registerSkillImport(request.routingIds.skillImport, environment)
         servers.push({
           type: 'http',
@@ -642,6 +771,42 @@ export class AcpSessionCapabilityOwner {
       }
     }
     return servers
+  }
+
+  private canPublishHttpRoute(request: BuildSessionCapabilitiesRequest): boolean {
+    return (
+      request.provisionGeneration === this.provisionalGeneration &&
+      this.ownsProvisionalRoutingIds(request.routingIds, request.routingOwner)
+    )
+  }
+
+  private trackProvisionalRoutingOwner(routingIds: SessionCapabilityRoutingIds): object {
+    const owner = {}
+    for (const routingId of new Set(Object.values(routingIds))) {
+      if (routingId) this.provisionalRoutingOwners.set(routingId, owner)
+    }
+    return owner
+  }
+
+  private ownsProvisionalRoutingIds(
+    routingIds: SessionCapabilityRoutingIds,
+    owner: object
+  ): boolean {
+    for (const routingId of new Set(Object.values(routingIds))) {
+      if (routingId && this.provisionalRoutingOwners.get(routingId) !== owner) return false
+    }
+    return true
+  }
+
+  private finishProvisionalRoutingOwner(
+    routingIds: SessionCapabilityRoutingIds,
+    owner: object
+  ): void {
+    for (const routingId of new Set(Object.values(routingIds))) {
+      if (routingId && this.provisionalRoutingOwners.get(routingId) === owner) {
+        this.provisionalRoutingOwners.delete(routingId)
+      }
+    }
   }
 
   private registerAlias(
