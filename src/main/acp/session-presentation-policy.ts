@@ -234,7 +234,8 @@ class AcpSessionPresentationPolicy {
   private serializeHandoffValue(value: unknown): string {
     if (typeof value === 'string') return value
     try {
-      return JSON.stringify(value)
+      const serialized = JSON.stringify(value)
+      return serialized === undefined ? String(value) : serialized
     } catch {
       return String(value)
     }

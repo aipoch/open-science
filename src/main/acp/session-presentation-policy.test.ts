@@ -246,6 +246,20 @@ describe('ACP Session presentation policy', () => {
     )
   })
 
+  it('falls back when a returned handoff value has no JSON representation', () => {
+    expect(
+      policy.continuationText({
+        text: 'Continue the analysis.',
+        continuation: {
+          kind: 'specialist-handoff',
+          originatingTurnToken: 'turn-3',
+          targetName: null,
+          completion: { kind: 'returned', value: Symbol('result') }
+        }
+      })
+    ).toContain('Captured outer tool result:\nSymbol(result)')
+  })
+
   it('keeps Codex Skill paths in immutable private inputs without changing prompt text', () => {
     const presentation = policy.presentTurnSkills({
       frameworkId: 'codex',
