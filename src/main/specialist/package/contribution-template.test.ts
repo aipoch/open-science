@@ -109,7 +109,7 @@ describe('contribution template ZIP', () => {
       join(repositoryRoot, 'resources', 'specialists', 'template', 'v1', 'README.txt')
     )
     expect(packagedPath).toContain(
-      '/app.asar.unpacked/resources/specialists/template/v1/README.txt'
+      join('app.asar.unpacked', 'resources', 'specialists', 'template', 'v1', 'README.txt')
     )
   })
 
