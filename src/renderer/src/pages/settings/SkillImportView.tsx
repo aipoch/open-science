@@ -71,7 +71,6 @@ const SkillImportView = ({ onImported }: SkillImportViewProps): React.JSX.Elemen
 
       setScanned(result.skills)
       setScannedRepo(options.repositoryName ?? value)
-      if (options.preserveRepositories) setRepositoriesExpanded(false)
       // Pre-select every skill that isn't already imported.
       setSelected(
         new Set(result.skills.filter((skill) => !skill.alreadyImported).map((skill) => skill.url))
@@ -268,12 +267,13 @@ const SkillImportView = ({ onImported }: SkillImportViewProps): React.JSX.Elemen
                             aria-pressed={scannedRepo === repository.fullName}
                             disabled={busy}
                             className="[@media(pointer:coarse)]:min-h-11"
-                            onClick={() =>
+                            onClick={() => {
+                              setRepositoriesExpanded(false)
                               void runPreview(repository.fullName, {
                                 preserveRepositories: true,
                                 repositoryName: repository.fullName
                               })
-                            }
+                            }}
                           >
                             {scannedRepo === repository.fullName
                               ? scanned && scanned.length > 0

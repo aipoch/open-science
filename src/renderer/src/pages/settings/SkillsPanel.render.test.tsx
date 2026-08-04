@@ -733,8 +733,14 @@ describe('SkillsPanel (sub-views)', () => {
     const previewRepository = document.body.querySelector<HTMLButtonElement>(
       '[aria-label="Preview repository hugohe3/ppt-master"]'
     )
+    act(() => previewRepository?.click())
+    expect(
+      document.body
+        .querySelector<HTMLButtonElement>('[aria-label="Show repository results"]')
+        ?.getAttribute('aria-expanded')
+    ).toBe('false')
+
     await act(async () => {
-      previewRepository?.click()
       await Promise.resolve()
     })
 
@@ -746,11 +752,6 @@ describe('SkillsPanel (sub-views)', () => {
     expect(document.body.textContent).toContain('Repositories')
     expect(document.body.textContent).toContain('Skills in hugohe3/ppt-master')
     expect(document.body.textContent).toContain('ppt-master')
-    expect(
-      document.body
-        .querySelector<HTMLButtonElement>('[aria-label="Show repository results"]')
-        ?.getAttribute('aria-expanded')
-    ).toBe('false')
     expect(
       document.body.querySelector('[aria-label="Preview repository hugohe3/ppt-master"]')
     ).toBeNull()
