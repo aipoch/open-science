@@ -895,8 +895,7 @@ class AcpRuntime {
         session,
         configOptions:
           (this.sessionRegistry.lookup(appSessionId)?.aggregate.snapshot().configOptions as
-            | readonly SessionConfigOption[]
-            | undefined) ??
+            readonly SessionConfigOption[] | undefined) ??
           (session as { newSessionResponse?: { configOptions?: SessionConfigOption[] | null } })
             .newSessionResponse?.configOptions,
         assertCurrent: () => {

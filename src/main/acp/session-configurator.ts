@@ -92,9 +92,7 @@ export class AcpSessionConfigurator {
     return deepFreeze(structuredClone(await this.applyPermissionMode(input)))
   }
 
-  async applyLiveEffort(
-    input: LiveEffortConfiguration
-  ): Promise<AcpLiveEffortConfigurationFacts> {
+  async applyLiveEffort(input: LiveEffortConfiguration): Promise<AcpLiveEffortConfigurationFacts> {
     if (!input.backend.framework.supportsLiveEffortChange) {
       return deepFreeze({ reconnectRequired: true })
     }
