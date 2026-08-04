@@ -42,7 +42,6 @@ import { ACP_PROMPT_FAILED_EVENT_TITLE } from '../../shared/acp'
 import {
   DEFAULT_PERMISSION_PROFILE,
   normalizePermissionProfile,
-  type PermissionProfileId,
   type SessionPermissionProfileState
 } from '../../shared/permission-profiles'
 import { type AgentFrameworkId } from '../../shared/settings'
@@ -65,11 +64,7 @@ import {
 import { readWorkspaceTextFile, writeWorkspaceTextFile } from './filesystem'
 import { toCodexTurnTokenUsage } from './codex-turn-usage'
 import { fetchOpenCodeUsageSnapshot, sumOpenCodeTurnUsage } from './opencode-turn-usage'
-import {
-  matchSessionModelOption,
-  resolveSessionEffortOption,
-  type SessionModelSelection
-} from './session-config'
+import { resolveSessionEffortOption, type SessionModelSelection } from './session-config'
 import { describePromptError, isProviderPromptError } from './prompt-error'
 import { AcpRuntimeSnapshotOwner } from './runtime-snapshot-owner'
 import { ConversationPermissionGrantStore } from './permission-broker'
@@ -142,6 +137,7 @@ import {
   type AcpBackendGenerationAttempt,
   type AcpBackendGenerationView
 } from './backend-generation-owner'
+import { AcpSessionConfigurator, type AcpSessionConfigurationFacts } from './session-configurator'
 
 export type AcpRuntimeCallbacks = {
   onStateChanged?: (state: AcpStateSnapshot) => void
@@ -227,11 +223,6 @@ type AcpRuntimeSkillsOptions = {
   // Lists only enabled, materialized app-owned Skills from the active isolated Codex home. The
   // Chat Completions compatibility selector receives name + description; paths remain local.
   catalogForCodexHome?: (codexHome: string | undefined) => Promise<ResponsesBridgeSkillCandidate[]>
-}
-
-type SessionModelApplication = {
-  appliedModel: string | undefined
-  configOptions: SessionConfigOption[] | null | undefined
 }
 
 type AcpRuntimeArtifactOptions = {
@@ -537,6 +528,7 @@ class AcpRuntime {
   private readonly spawnAgent: (() => ChildProcessWithoutNullStreams) | undefined
   private readonly skillsHooks: AcpRuntimeSkillsOptions | undefined
   private readonly backendGeneration: AcpBackendGenerationOwner
+  private readonly sessionConfigurator: AcpSessionConfigurator
   private readonly codexSkillActivity = new CodexSkillActivityProjector()
   // Bounded resume network timeout + injectable timers (defaults to real setTimeout/clearTimeout).
   private readonly resumeTimeoutMs: number
@@ -576,6 +568,10 @@ class AcpRuntime {
     this.spawnAgent = options.spawnAgent
     this.skillsHooks = options.skills
     this.backendGeneration = new AcpBackendGenerationOwner(options.framework ?? claudeCodeFramework)
+    this.sessionConfigurator = new AcpSessionConfigurator({
+      assertCurrentConnection: (connection) => this.assertCurrentConnectedConnection(connection),
+      diagnosticContext: (backend) => this.diagnosticContext(backend.framework.id)
+    })
     this.resumeTimeoutMs = options.resumeTimeoutMs ?? 30_000
     this.contextUsageTracker = options.contextUsageTracker ?? new ContextUsageTracker()
     this.setTimer = options.setTimer ?? ((fn, ms) => setTimeout(fn, ms))
@@ -870,143 +866,6 @@ class AcpRuntime {
   // turn is still writing, while a crashed run — absent here — correctly surfaces as orphaned.
   getActiveArtifactRunIds(): string[] {
     return this.artifactTurns?.activeRunIds() ?? []
-  }
-
-  // Resolves an application profile against per-session ACP capabilities and applies the real Agent
-  // mode before any prompt is sent. The selected/effective projection is then shared with the UI and
-  // the conservative fallback reviewer.
-  private async applyPermissionProfileMode(
-    session: ActiveSession,
-    profile: PermissionProfileId,
-    connection: ClientConnection | undefined = this.connection
-  ): Promise<SessionPermissionProfileState> {
-    const application = this.framework.mapPermissionProfile(profile, session.modes)
-
-    if (application.modeId && application.modeId !== session.modes?.currentModeId) {
-      if (!connection) throw new Error('ACP connection is not available.')
-      this.assertCurrentConnectedConnection(connection)
-
-      await connection.agent.request(acp.methods.agent.session.setMode, {
-        sessionId: session.sessionId,
-        modeId: application.modeId
-      })
-    }
-
-    log.info('permission profile applied', this.diagnosticContext())
-    return application.state
-  }
-
-  private async configurePermissionProfile(
-    appSessionId: string,
-    session: ActiveSession,
-    profile: PermissionProfileId,
-    commit = true,
-    connection: ClientConnection | undefined = this.connection
-  ): Promise<SessionPermissionProfileState> {
-    const state = await this.applyPermissionProfileMode(session, profile, connection)
-    if (commit) {
-      if (this.activeSessionFor(appSessionId) !== session) {
-        throw new Error('ACP session startup was superseded.')
-      }
-      if (connection) this.assertCurrentConnectedConnection(connection)
-      this.sessionRegistry.lookup(appSessionId)?.aggregate.setPermissionProfile(state)
-    }
-    return state
-  }
-
-  // Applies the active model to a freshly built/resumed session via the ACP model configOption, for
-  // frameworks that select the model over the protocol (opencode). No-op for env-driven frameworks
-  // (generation Session model undefined). Optional selections keep the default when no matching option
-  // exists or application fails; required selections fail visibly rather than silently running another
-  // model. Returns the agent's post-application configOptions when it reports them — effort levels are
-  // model-dependent, so callers resolving further options must use the set from AFTER the model switch.
-  private async applySessionModel(
-    session: ActiveSession,
-    connection: ClientConnection | undefined = this.connection
-  ): Promise<SessionModelApplication> {
-    const model = this.backend.session.model
-    if (!model || !connection) {
-      return { appliedModel: undefined, configOptions: undefined }
-    }
-
-    const configOptions = (
-      session as { newSessionResponse?: { configOptions?: SessionConfigOption[] | null } }
-    ).newSessionResponse?.configOptions
-    const selection = matchSessionModelOption(configOptions, model)
-
-    if (!selection) {
-      log.info('no matching session model option', this.diagnosticContext())
-      if (this.backend.session.modelRequired) {
-        throw new Error(`The selected model "${model}" is not available for this Codex account.`)
-      }
-      return { appliedModel: undefined, configOptions: undefined }
-    }
-
-    // The agent already has the desired model — typically because the framework seeded it via
-    // CODEX_CONFIG (codex-isolated subscription) or because the previous call landed on it. Skip the
-    // redundant session/set_config_option round-trip: codex-acp reloads on every call, and even
-    // sending the same value back stalled the first prompt of a new session for ~2 min (issue #277).
-    if (selection.alreadyCurrent) {
-      log.info('session model already current', this.diagnosticContext())
-      return { appliedModel: selection.value, configOptions: configOptions ?? null }
-    }
-
-    this.assertCurrentConnectedConnection(connection)
-    try {
-      const response = (await connection.agent.request(acp.methods.agent.session.setConfigOption, {
-        sessionId: session.sessionId,
-        configId: selection.configId,
-        value: selection.value
-      })) as { configOptions?: SessionConfigOption[] | null }
-      log.info('session model applied', this.diagnosticContext())
-      // The model switch rebuilds the agent's options (effort rungs are model-dependent). The
-      // caller commits the fresh set to latestSessionConfigOptions once the session is registered,
-      // so the map never holds an entry for a session that failed to attach.
-      return {
-        appliedModel: selection.value,
-        configOptions: response?.configOptions ?? configOptions
-      }
-    } catch (error) {
-      const message = error instanceof Error ? error.message : String(error)
-      log.warn('set session model failed', {
-        ...diagnosticErrorFields(error),
-        ...this.diagnosticContext()
-      })
-      if (this.backend.session.modelRequired) {
-        throw new Error(`The selected model "${model}" could not be applied: ${message}`)
-      }
-      return { appliedModel: undefined, configOptions: undefined }
-    }
-  }
-
-  // Applies the user's reasoning-effort preference to a freshly built/resumed session via the ACP
-  // thought_level configOption. No-op when the generation view has no explicit effort level —
-  // the agent then keeps its own default) or when the agent advertises no effort option. The desired
-  // level is already resolved by the model profile and therefore only an exact advertised match is
-  // sent. `configOptions` should be the agent's latest option set (e.g. returned by a model switch
-  // just before); falls back to the session's original response. Best-effort: a failure is logged,
-  // never fatal to the session.
-  private async applySessionEffort(
-    session: ActiveSession,
-    configOptions?: SessionConfigOption[] | null,
-    connection: ClientConnection | undefined = this.connection
-  ): Promise<void> {
-    const effort = this.backend.session.effort
-    if (!effort || !connection) return
-
-    const effectiveOptions =
-      configOptions ??
-      (session as { newSessionResponse?: { configOptions?: SessionConfigOption[] | null } })
-        .newSessionResponse?.configOptions
-    const selection = resolveSessionEffortOption(effectiveOptions, effort)
-
-    if (!selection) {
-      log.info('no session effort option to apply', this.diagnosticContext())
-      return
-    }
-
-    this.assertCurrentConnectedConnection(connection)
-    await this.sendSessionEffort(session, selection, connection)
   }
 
   // Live-applies a reasoning-effort change to every open session — the ACP equivalent of a model
@@ -1466,26 +1325,14 @@ class AcpRuntime {
       primaryIdentityReservation = reservationResult.reservation
 
       log.info('createSession: configurePermissionProfile', this.diagnosticContext())
-      let permissionState: SessionPermissionProfileState
-      try {
-        permissionState = await this.configurePermissionProfile(
-          session.sessionId,
-          session,
-          normalizePermissionProfile(request.permissionProfile),
-          false,
-          connection
-        )
-      } catch (error) {
-        safeLogError('createSession: configurePermissionProfile failed', {
-          ...diagnosticErrorFields(error),
-          ...this.diagnosticContext()
-        })
-        throw error
-      }
-
       log.info('createSession: applySessionModel', this.diagnosticContext())
-      const modelApplication = await this.applySessionModel(session, connection)
-      await this.applySessionEffort(session, modelApplication.configOptions, connection)
+      const backend = this.backend
+      const configuration = await this.sessionConfigurator.configure({
+        backend,
+        connection,
+        session,
+        permissionProfile: normalizePermissionProfile(request.permissionProfile)
+      })
 
       this.assertPrimarySessionIdentityReservation(primaryIdentityReservation)
       // Commit app-owned projections only after the reservation is known to still own this id. No
@@ -1498,11 +1345,11 @@ class AcpRuntime {
           session,
           cwd: sessionCwd,
           projectName,
-          frameworkId: this.framework.id,
-          backendId: this.backendId,
-          permissionProfile: permissionState,
-          appliedModel: modelApplication.appliedModel,
-          configOptions: modelApplication.configOptions
+          frameworkId: backend.framework.id,
+          backendId: backend.backendId,
+          permissionProfile: structuredClone(configuration.permissionProfile),
+          appliedModel: configuration.appliedModel,
+          configOptions: structuredClone(configuration.configOptions)
         }
       )
       if (specialistPrefix) {
@@ -1599,19 +1446,18 @@ class AcpRuntime {
     session: ActiveSession,
     cwd: string,
     projectName: string,
-    permissionProfile: SessionPermissionProfileState,
-    appliedModel: string | undefined,
-    configOptions: SessionConfigOption[] | null | undefined
+    backend: AcpBackendGenerationView,
+    configuration: AcpSessionConfigurationFacts
   ): AcpSessionRegistryEntry {
     const entry = this.attachSessionAggregate(primaryIdentityReservation, appSessionId, {
       session,
       cwd,
       projectName,
-      frameworkId: this.framework.id,
-      backendId: this.backendId,
-      permissionProfile,
-      appliedModel,
-      configOptions
+      frameworkId: backend.framework.id,
+      backendId: backend.backendId,
+      permissionProfile: structuredClone(configuration.permissionProfile),
+      appliedModel: configuration.appliedModel,
+      configOptions: structuredClone(configuration.configOptions)
     })
 
     this.snapshotOwner.updateCwd(cwd)
@@ -1638,15 +1484,23 @@ class AcpRuntime {
       if (request.specialistId) {
         aggregate.setSpecialistId(request.specialistId)
       }
-      await this.configurePermissionProfile(
-        request.sessionId,
-        attachedSession,
-        normalizePermissionProfile(
+      const connection = this.connection
+      if (!connection) throw new Error('ACP connection is not available.')
+      const permissionProfile = await this.sessionConfigurator.configurePermissionProfile({
+        backend: this.backend,
+        connection,
+        session: attachedSession,
+        permissionProfile: normalizePermissionProfile(
           request.permissionProfile ??
             aggregate.snapshot().permissionProfile?.selectedProfile ??
             DEFAULT_PERMISSION_PROFILE
         )
-      )
+      })
+      if (this.activeSessionFor(request.sessionId) !== attachedSession) {
+        throw new Error('ACP session startup was superseded.')
+      }
+      this.assertCurrentConnectedConnection(connection)
+      aggregate.setPermissionProfile(structuredClone(permissionProfile))
       this.sessionRegistry.select(request.sessionId)
       this.snapshotOwner.updateCwd(sessionCwd)
       aggregate.updateLocation(sessionCwd, projectName)
@@ -2194,16 +2048,13 @@ class AcpRuntime {
         throw reservationResult.collision
       }
 
-      const permissionState = await this.configurePermissionProfile(
-        request.sessionId,
+      const backend = this.backend
+      const configuration = await this.sessionConfigurator.configure({
+        backend,
+        connection,
         session,
-        normalizePermissionProfile(request.permissionProfile),
-        false,
-        connection
-      )
-
-      const modelApplication = await this.applySessionModel(session, connection)
-      await this.applySessionEffort(session, modelApplication.configOptions, connection)
+        permissionProfile: normalizePermissionProfile(request.permissionProfile)
+      })
 
       this.assertPrimarySessionIdentityReservation(primaryIdentityReservation)
       const { aggregate } = this.attachSessionAggregate(
@@ -2213,11 +2064,11 @@ class AcpRuntime {
           session,
           cwd: sessionCwd,
           projectName,
-          frameworkId: this.framework.id,
-          backendId: this.backendId,
-          permissionProfile: permissionState,
-          appliedModel: modelApplication.appliedModel,
-          configOptions: modelApplication.configOptions
+          frameworkId: backend.framework.id,
+          backendId: backend.backendId,
+          permissionProfile: structuredClone(configuration.permissionProfile),
+          appliedModel: configuration.appliedModel,
+          configOptions: structuredClone(configuration.configOptions)
         }
       )
       if (request.specialistId) {
@@ -2336,16 +2187,13 @@ class AcpRuntime {
       }
       primaryIdentityReservation = reservationResult.reservation
 
-      const permissionState = await this.configurePermissionProfile(
-        request.sessionId,
-        adopted,
-        normalizePermissionProfile(request.permissionProfile),
-        false,
-        connection
-      )
-
-      const modelApplication = await this.applySessionModel(adopted, connection)
-      await this.applySessionEffort(adopted, modelApplication.configOptions, connection)
+      const backend = this.backend
+      const configuration = await this.sessionConfigurator.configure({
+        backend,
+        connection,
+        session: adopted,
+        permissionProfile: normalizePermissionProfile(request.permissionProfile)
+      })
       this.assertPrimarySessionIdentityReservation(primaryIdentityReservation)
       const { aggregate } = this.adoptSession(
         primaryIdentityReservation,
@@ -2353,9 +2201,8 @@ class AcpRuntime {
         adopted,
         sessionCwd,
         projectName,
-        permissionState,
-        modelApplication.appliedModel,
-        modelApplication.configOptions
+        backend,
+        configuration
       )
       if (specialistIdentity) {
         aggregate.setSpecialistPrefix(specialistIdentity.prefix || undefined)
@@ -2422,7 +2269,21 @@ class AcpRuntime {
       throw new Error('Resolve the pending permission request before changing profiles.')
     }
 
-    await this.configurePermissionProfile(request.sessionId, session, request.profile)
+    const connection = this.connection
+    if (!connection) throw new Error('ACP connection is not available.')
+    const permissionProfile = await this.sessionConfigurator.configurePermissionProfile({
+      backend: this.backend,
+      connection,
+      session,
+      permissionProfile: request.profile
+    })
+    if (this.activeSessionFor(request.sessionId) !== session) {
+      throw new Error('ACP session startup was superseded.')
+    }
+    this.assertCurrentConnectedConnection(connection)
+    this.sessionRegistry
+      .lookup(request.sessionId)
+      ?.aggregate.setPermissionProfile(structuredClone(permissionProfile))
     this.emitState()
 
     return this.getSnapshot()

@@ -8493,8 +8493,14 @@ describe('ACP runtime session management', () => {
   it('does not let stale permission setup target a same-id successor connection', async () => {
     const oldProcess = new FakeAgentProcess()
     const newProcess = new FakeAgentProcess()
+    const permissionSetupStarted = createDeferred()
+    const releasePermissionSetup = createDeferred()
     startFakeAgent(oldProcess, ['shared-primary'], {
-      modes: createModes(['read-only', 'agent', 'agent-full-access'], 'agent')
+      modes: createModes(['read-only', 'agent', 'agent-full-access'], 'agent'),
+      onSetMode: async () => {
+        permissionSetupStarted.resolve()
+        await releasePermissionSetup.promise
+      }
     })
     const newAgent = startFakeAgent(newProcess, ['shared-primary'], {
       modes: createModes(['read-only', 'agent', 'agent-full-access'], 'agent')
@@ -8514,17 +8520,6 @@ describe('ACP runtime session management', () => {
           env: {}
         }
       }
-    })
-    const permissionSetupStarted = createDeferred()
-    const releasePermissionSetup = createDeferred()
-    const internal = runtime as unknown as {
-      configurePermissionProfile: (...args: unknown[]) => Promise<unknown>
-    }
-    const configurePermissionProfile = internal.configurePermissionProfile.bind(runtime)
-    vi.spyOn(internal, 'configurePermissionProfile').mockImplementationOnce(async (...args) => {
-      permissionSetupStarted.resolve()
-      await releasePermissionSetup.promise
-      return configurePermissionProfile(...args)
     })
 
     const stale = runtime.createSession({
@@ -10377,10 +10372,17 @@ describe('ACP runtime session management', () => {
     const process = new FakeAgentProcess()
     startFakeAgent(process, [])
     const releaseSessionCapabilities = vi.fn()
+    const failure = new Error('resumed permission setup failed')
+    const mapPermissionProfile = vi
+      .fn(claudeCodeFramework.mapPermissionProfile)
+      .mockImplementationOnce(() => {
+        throw failure
+      })
     const runtime = new AcpRuntime({
       appVersion: '0.1.0',
       defaultCwd: '/workspace',
       spawnAgent: () => asAgentProcess(process),
+      framework: { ...claudeCodeFramework, mapPermissionProfile },
       notebook: {
         projectName: 'default-project',
         mcpEntryPath: '/app/out/main/index.js',
@@ -10391,11 +10393,6 @@ describe('ACP runtime session management', () => {
         releaseSessionCapabilities
       }
     })
-    const failure = new Error('resumed permission setup failed')
-    vi.spyOn(
-      runtime as unknown as { configurePermissionProfile: () => Promise<void> },
-      'configurePermissionProfile'
-    ).mockRejectedValueOnce(failure)
     const disposeSpy = vi
       .spyOn(acp.ActiveSession.prototype, 'dispose')
       .mockImplementationOnce(() => {
@@ -10425,10 +10422,17 @@ describe('ACP runtime session management', () => {
     const process = new FakeAgentProcess()
     startFakeAgent(process, ['adopted-session', 'adopted-session'])
     const releaseSessionCapabilities = vi.fn()
+    const failure = new Error('adopted permission setup failed')
+    const mapPermissionProfile = vi
+      .fn(claudeCodeFramework.mapPermissionProfile)
+      .mockImplementationOnce(() => {
+        throw failure
+      })
     const runtime = new AcpRuntime({
       appVersion: '0.1.0',
       defaultCwd: '/workspace',
       spawnAgent: () => asAgentProcess(process),
+      framework: { ...claudeCodeFramework, mapPermissionProfile },
       notebook: {
         projectName: 'default-project',
         mcpEntryPath: '/app/out/main/index.js',
@@ -10439,11 +10443,6 @@ describe('ACP runtime session management', () => {
         releaseSessionCapabilities
       }
     })
-    const failure = new Error('adopted permission setup failed')
-    vi.spyOn(
-      runtime as unknown as { configurePermissionProfile: () => Promise<void> },
-      'configurePermissionProfile'
-    ).mockRejectedValueOnce(failure)
     const disposeSpy = vi
       .spyOn(acp.ActiveSession.prototype, 'dispose')
       .mockImplementationOnce(() => {
@@ -16856,22 +16855,21 @@ describe('ACP runtime — session-creation and spawn diagnostics', () => {
     errorLogSpy.mockClear()
     const process = new FakeAgentProcess()
     startFakeAgent(process, ['perm-fail-session', 'perm-fail-session'])
+    const boom = Object.assign(new Error('permission setup failed'), { code: 'EPERM' })
+    const mapPermissionProfile = vi
+      .fn(claudeCodeFramework.mapPermissionProfile)
+      .mockImplementationOnce(() => {
+        throw boom
+      })
     const runtime = new AcpRuntime({
       appVersion: '0.1.0',
       defaultCwd: '/workspace',
-      spawnAgent: () => asAgentProcess(process)
+      spawnAgent: () => asAgentProcess(process),
+      framework: { ...claudeCodeFramework, mapPermissionProfile }
     })
-    // Force the permission-profile step to throw after the session is built.
-    const boom = Object.assign(new Error('permission setup failed'), { code: 'EPERM' })
-    vi.spyOn(
-      runtime as unknown as { configurePermissionProfile: () => Promise<void> },
-      'configurePermissionProfile'
-    ).mockRejectedValueOnce(boom)
 
     await expect(runtime.createSession({ cwd: '/workspace' })).rejects.toBe(boom)
-    const call = errorLogSpy.mock.calls.find(
-      ([message]) => message === 'createSession: configurePermissionProfile failed'
-    )
+    const call = errorLogSpy.mock.calls.find(([message]) => message === 'createSession: failed')
     expect(call).toBeDefined()
     expect(call?.[1]).toEqual({
       errorCategory: 'permission',
@@ -16889,10 +16887,17 @@ describe('ACP runtime — session-creation and spawn diagnostics', () => {
     const process = new FakeAgentProcess()
     startFakeAgent(process, ['perm-fail-session'])
     const releaseSessionCapabilities = vi.fn()
+    const failure = new Error('permission setup failed')
     const runtime = new AcpRuntime({
       appVersion: '0.1.0',
       defaultCwd: '/workspace',
       spawnAgent: () => asAgentProcess(process),
+      framework: {
+        ...claudeCodeFramework,
+        mapPermissionProfile: () => {
+          throw failure
+        }
+      },
       notebook: {
         projectName: 'default-project',
         mcpEntryPath: '/app/out/main/index.js',
@@ -16903,11 +16908,6 @@ describe('ACP runtime — session-creation and spawn diagnostics', () => {
         releaseSessionCapabilities
       }
     })
-    const failure = new Error('permission setup failed')
-    vi.spyOn(
-      runtime as unknown as { configurePermissionProfile: () => Promise<void> },
-      'configurePermissionProfile'
-    ).mockRejectedValueOnce(failure)
 
     await expect(runtime.createSession({ cwd: '/workspace' })).rejects.toBe(failure)
 
@@ -16922,10 +16922,17 @@ describe('ACP runtime — session-creation and spawn diagnostics', () => {
     startFakeAgent(process, ['perm-fail-session'])
     const release = vi.fn()
     const releaseSessionCapabilities = vi.fn()
+    const failure = new Error('permission setup failed')
     const runtime = new AcpRuntime({
       appVersion: '0.1.0',
       defaultCwd: '/workspace',
       spawnAgent: () => asAgentProcess(process),
+      framework: {
+        ...claudeCodeFramework,
+        mapPermissionProfile: () => {
+          throw failure
+        }
+      },
       notebook: {
         projectName: 'default-project',
         mcpEntryPath: '/app/out/main/index.js',
@@ -16937,11 +16944,6 @@ describe('ACP runtime — session-creation and spawn diagnostics', () => {
         releaseSessionCapabilities
       }
     })
-    const failure = new Error('permission setup failed')
-    vi.spyOn(
-      runtime as unknown as { configurePermissionProfile: () => Promise<void> },
-      'configurePermissionProfile'
-    ).mockRejectedValueOnce(failure)
 
     await expect(runtime.createSession({ cwd: '/workspace' })).rejects.toBe(failure)
 
@@ -17407,16 +17409,18 @@ describe('ACP runtime — failure-path robustness (errorMessage coercion + sync-
   it('re-throws the permission-profile failure even when the logger throws', async () => {
     const process = new FakeAgentProcess()
     startFakeAgent(process, ['perm-log-session'])
+    const boom = new Error('permission setup failed')
     const runtime = new AcpRuntime({
       appVersion: '0.1.0',
       defaultCwd: '/workspace',
-      spawnAgent: () => asAgentProcess(process)
+      spawnAgent: () => asAgentProcess(process),
+      framework: {
+        ...claudeCodeFramework,
+        mapPermissionProfile: () => {
+          throw boom
+        }
+      }
     })
-    const boom = new Error('permission setup failed')
-    vi.spyOn(
-      runtime as unknown as { configurePermissionProfile: () => Promise<void> },
-      'configurePermissionProfile'
-    ).mockRejectedValueOnce(boom)
     errorLogSpy.mockImplementation(() => {
       throw new Error('logger boom')
     })
