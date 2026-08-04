@@ -121,6 +121,35 @@ describe('OpenCode turn usage', () => {
     })
   })
 
+  it('omits the cache split when any new assistant step lacks it', () => {
+    expect(
+      sumOpenCodeTurnUsage(
+        { assistantMessageIds: new Set(), usageByMessageId: new Map() },
+        {
+          assistantMessageIds: new Set(['step-1', 'step-2']),
+          usageByMessageId: new Map([
+            [
+              'step-1',
+              {
+                inputTokens: 12,
+                cacheTokens: 3,
+                cachedReadTokens: 2,
+                cachedWriteTokens: 1,
+                outputTokens: 2
+              }
+            ],
+            ['step-2', { inputTokens: 19, cacheTokens: 5, outputTokens: 3 }]
+          ])
+        }
+      )
+    ).toEqual({
+      inputTokens: 31,
+      cacheTokens: 8,
+      outputTokens: 5,
+      turnCount: 2
+    })
+  })
+
   it('fails closed instead of publishing a partial sum', () => {
     expect(
       sumOpenCodeTurnUsage(
