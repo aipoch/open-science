@@ -165,6 +165,37 @@ describe('provisionAppClaudeConfigDir', () => {
     }
   })
 
+  it('projects and explicitly clears the app-owned model catalog', async () => {
+    root = await mkdtemp(join(tmpdir(), 'os-claude-config-'))
+    const configDir = join(root, 'claude')
+
+    await provisionAppClaudeConfigDir(configDir, {
+      modelConfig: {
+        availableModels: ['sonnet', 'opus'],
+        modelOverrides: {
+          sonnet: 'deepseek-v4-flash',
+          opus: 'deepseek-v4-pro'
+        }
+      }
+    })
+
+    expect(JSON.parse(await readFile(join(configDir, 'settings.json'), 'utf8'))).toMatchObject({
+      availableModels: ['sonnet', 'opus'],
+      modelOverrides: {
+        sonnet: 'deepseek-v4-flash',
+        opus: 'deepseek-v4-pro'
+      }
+    })
+
+    await provisionAppClaudeConfigDir(configDir, { modelConfig: null })
+
+    const cleared = JSON.parse(await readFile(join(configDir, 'settings.json'), 'utf8'))
+    expect(cleared.availableModels).toBeUndefined()
+    expect(cleared.modelOverrides).toBeUndefined()
+    expect(cleared.permissions.deny).toEqual(configDenyRules(configDir))
+    expect(cleared.disableBundledSkills).toBe(true)
+  })
+
   it('materializes enabled bundled skills, honoring disabledSkillIds', async () => {
     root = await mkdtemp(join(tmpdir(), 'os-claude-config-'))
     const configDir = join(root, 'claude')

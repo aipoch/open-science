@@ -3153,6 +3153,16 @@ describe('SettingsService: official vendors', () => {
         }
       }
     })
+    await expect(
+      readFile(join(getAppClaudeConfigDir(storageRoot), 'settings.json'), 'utf8').then(JSON.parse)
+    ).resolves.toMatchObject({
+      availableModels: ['sonnet', 'opus', 'haiku'],
+      modelOverrides: {
+        sonnet: 'deepseek-v4-flash',
+        opus: 'deepseek-v4-pro',
+        haiku: 'deepseek-v4-pro[1m]'
+      }
+    })
     expect(config.contextWindow).toBe(1_000_000)
   })
 

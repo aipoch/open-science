@@ -66,6 +66,7 @@ import {
 import { ensureCodexAuthHome } from './codex-auth'
 import { loopbackProxyBypassEnvironment } from './system-proxy'
 import type { StoredSettings } from './types'
+import type { ClaudeRuntimeModelConfig } from './claude-config-provision'
 
 export type AgentBackendSelection = Readonly<{
   frameworkId: AgentFrameworkId
@@ -161,11 +162,6 @@ const resolvedModelEffort = (
   intent === DEFAULT_REASONING_EFFORT
     ? DEFAULT_REASONING_EFFORT
     : resolveReasoningEffortValue(intent, target.reasoningEffortProfile)
-
-type ClaudeModelConfig = Readonly<{
-  availableModels: readonly string[]
-  modelOverrides: Readonly<Record<string, string>>
-}>
 
 const CLAUDE_MODEL_OVERRIDE_ALIASES = ['sonnet', 'opus', 'haiku'] as const
 
@@ -641,9 +637,13 @@ export class AgentBackendResolver {
     if (target.providerType === 'claude-shared' && target.disconnectedAt !== undefined) {
       throw new Error(CLAUDE_SHARED_DISCONNECTED_MESSAGE)
     }
-    const appConfigDir = await this.runtime.provisionClaudeRuntimeConfig(settings, forcedSkillIds)
     const provider = target.provider
     const modelConfig = this.resolveClaudeModelConfig(settings, target)
+    const appConfigDir = await this.runtime.provisionClaudeRuntimeConfig(
+      settings,
+      forcedSkillIds,
+      modelConfig ?? null
+    )
     const envOverrides = buildProviderEnv(provider, {
       storageRoot: this.storageRoot,
       claudeExecutablePath: executablePath,
@@ -676,7 +676,7 @@ export class AgentBackendResolver {
   private resolveClaudeModelConfig(
     settings: StoredSettings,
     target: ProviderRuntimeTarget
-  ): ClaudeModelConfig | undefined {
+  ): ClaudeRuntimeModelConfig | undefined {
     // Subscription and Anthropic-native sessions already get an authoritative SDK catalog. The
     // override lanes are needed only for third-party Anthropic-compatible model ids, which Claude's
     // SDK otherwise advertises but rejects when setModel receives an unregistered opaque id.

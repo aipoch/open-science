@@ -346,6 +346,17 @@ describe('AgentBackendResolver configured and explicit targets', () => {
         opus: 'third-party/model-b'
       }
     })
+    expect(harness.runtime.provisionClaudeRuntimeConfig).toHaveBeenCalledWith(
+      harness.getSettings(),
+      new Set(),
+      {
+        availableModels: ['sonnet', 'opus'],
+        modelOverrides: {
+          sonnet: 'third-party/model-a',
+          opus: 'third-party/model-b'
+        }
+      }
+    )
     expect(JSON.stringify(modelConfig)).not.toContain('plain:key-a')
   })
 
@@ -559,7 +570,8 @@ describe('AgentBackendResolver runtime delegation', () => {
     if (testCase.frameworkId === 'claude-code') {
       expect(harness.runtime.provisionClaudeRuntimeConfig).toHaveBeenCalledWith(
         harness.getSettings(),
-        new Set(['forced-skill'])
+        new Set(['forced-skill']),
+        null
       )
       expect(harness.runtime.materializeAgentSkills).not.toHaveBeenCalled()
       expect(harness.runtime.materializeAgentConfigFiles).not.toHaveBeenCalled()

@@ -41,7 +41,10 @@ import { netFetch } from '../skills/net-fetch'
 import { SkillRegistry, type BundledSkill } from '../skills/registry'
 import { readSkillFile } from '../skills/skill-files'
 import { SAFE_SLUG, UserSkillRepository } from '../skills/user-skill-repository'
-import { provisionAppClaudeConfigDir } from './claude-config-provision'
+import {
+  provisionAppClaudeConfigDir,
+  type ClaudeRuntimeModelConfig
+} from './claude-config-provision'
 import type { SettingsRepository } from './repository'
 import type { StoredSettings } from './types'
 
@@ -658,10 +661,15 @@ class SkillCatalogModule {
     )
   }
 
-  async provisionClaudeConfig(configDir: string, disabledSkillIds: string[]): Promise<void> {
+  async provisionClaudeConfig(
+    configDir: string,
+    disabledSkillIds: string[],
+    modelConfig?: ClaudeRuntimeModelConfig | null
+  ): Promise<void> {
     await provisionAppClaudeConfigDir(configDir, {
       skills: await this.catalog(),
-      disabledSkillIds
+      disabledSkillIds,
+      ...(modelConfig === undefined ? {} : { modelConfig })
     })
   }
 

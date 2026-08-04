@@ -59,10 +59,7 @@ import { createLogger, diagnosticErrorFields, errorLogFields } from '../logger'
 import { extractProviderToolName } from './runtime-events'
 import { toCodexTurnTokenUsage } from './codex-turn-usage'
 import { fetchOpenCodeUsageSnapshot, sumOpenCodeTurnUsage } from './opencode-turn-usage'
-import {
-  matchSessionModelOption,
-  resolveSessionEffortOption
-} from './session-config'
+import { matchSessionModelOption, resolveSessionEffortOption } from './session-config'
 import { describePromptError, isProviderPromptError } from './prompt-error'
 import { AcpRuntimeSnapshotOwner } from './runtime-snapshot-owner'
 import { ConversationPermissionGrantStore } from './permission-broker'

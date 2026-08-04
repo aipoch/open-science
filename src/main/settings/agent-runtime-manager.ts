@@ -45,6 +45,7 @@ import {
 } from './codex-detect'
 import { detectNpmAvailable, runInstallWithFallback, type InstallTarget } from './claude-install'
 import { OPENCODE_INSTALL_TARGET } from './opencode-install'
+import type { ClaudeRuntimeModelConfig } from './claude-config-provision'
 import {
   DEFAULT_REGISTRIES,
   installManagedClaude,
@@ -619,13 +620,14 @@ export class AgentRuntimeManager {
 
   async provisionClaudeRuntimeConfig(
     settings: StoredSettings,
-    forcedSkillIds: ReadonlySet<string> = new Set()
+    forcedSkillIds: ReadonlySet<string> = new Set(),
+    modelConfig?: ClaudeRuntimeModelConfig | null
   ): Promise<string> {
     const configDir = getAppClaudeConfigDir(this.storageRoot)
     const disabledSkillIds = (settings.disabledSkillIds ?? []).filter(
       (id) => !forcedSkillIds.has(id)
     )
-    await this.skills.provisionClaudeConfig(configDir, disabledSkillIds)
+    await this.skills.provisionClaudeConfig(configDir, disabledSkillIds, modelConfig)
     const connectors = await this.connectors.getConnectors()
     await syncConnectorSkillDocs(
       join(configDir, 'skills'),
