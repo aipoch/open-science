@@ -19,6 +19,8 @@ export type OfficialVendorId =
   | 'anthropic'
   | 'xai'
   | 'deepseek'
+  | 'bailian'
+  | 'bailianplan'
   | 'zhipu'
   | 'glmcodingplan'
   | 'kimi'
@@ -217,6 +219,107 @@ export const OFFICIAL_VENDORS: OfficialVendor[] = [
     // implement /v1/responses (planned for early August 2026), so it stays on the Chat Completions bridge.
     responsesModels: ['deepseek-v4-flash']
     // DeepSeek's chat models are text-only, so no `multimodal` rule (image input stays disabled).
+  },
+  {
+    id: 'bailian',
+    label: 'Bailian',
+    // Keep effort hidden for models that only expose protocol-specific thinking controls. Models
+    // with a documented cross-protocol effort vocabulary override this default below.
+    reasoningEffort: 'unsupported',
+    // Both regions expose Anthropic Messages plus OpenAI-compatible Chat Completions. Responses is
+    // available only for the Qwen models listed below.
+    // The Anthropic URL is kept in its documented full-endpoint form; the shared URL normalizer strips
+    // `/v1/messages` before Claude Code/OpenCode append their own protocol suffix.
+    apiEndpoints: ['anthropic', 'openai'],
+    regions: [
+      {
+        id: 'china',
+        label: 'China',
+        baseUrl: 'https://dashscope.aliyuncs.com/apps/anthropic/v1/messages',
+        openaiBaseUrl: 'https://dashscope.aliyuncs.com/compatible-mode/v1',
+        apiKeyUrl: 'https://bailian.console.aliyun.com/cn-beijing?tab=model#/api-key'
+      },
+      {
+        id: 'global',
+        label: 'Global',
+        baseUrl: 'https://dashscope-us.aliyuncs.com/apps/anthropic/v1/messages',
+        openaiBaseUrl: 'https://dashscope-us.aliyuncs.com/compatible-mode/v1',
+        apiKeyUrl: 'https://modelstudio.console.alibabacloud.com/us-east-1?tab=model#/api-key'
+      }
+    ],
+    // Curated from Bailian's model marketplace. Keep refresh hidden because the full catalog also
+    // contains image, audio, video, embedding, and other models outside this chat-provider surface.
+    models: [
+      {
+        id: 'qwen3.8-max',
+        contextWindow: 983_616,
+        reasoningEffort: 'low-medium-xhigh'
+      },
+      { id: 'qwen3.7-plus', contextWindow: 1_000_000 },
+      { id: 'qwen3.7-max', contextWindow: 1_000_000 },
+      { id: 'qwen3.7-flash', contextWindow: 1_000_000 },
+      { id: 'qwen3.6-plus', contextWindow: 1_000_000 },
+      { id: 'qwen3.6-flash', contextWindow: 1_000_000 },
+      {
+        id: 'deepseek-v4-flash-0731',
+        contextWindow: 1_000_000,
+        reasoningEffort: 'high-max'
+      },
+      { id: 'deepseek-v4-pro', contextWindow: 1_000_000, reasoningEffort: 'high-max' },
+      { id: 'deepseek-v4-flash', contextWindow: 1_000_000, reasoningEffort: 'high-max' }
+    ],
+    responsesModels: [
+      'qwen3.8-max',
+      'qwen3.7-plus',
+      'qwen3.7-max',
+      'qwen3.7-flash',
+      'qwen3.6-plus',
+      'qwen3.6-flash'
+    ],
+    multimodal: {
+      multimodalModels: [
+        'qwen3.8-max',
+        'qwen3.7-plus',
+        'qwen3.7-flash',
+        'qwen3.6-plus',
+        'qwen3.6-flash'
+      ]
+    }
+  },
+  {
+    id: 'bailianplan',
+    label: 'Bailian for Plan',
+    // The qwen3.8, GLM, and DeepSeek entries below override this conservative default.
+    reasoningEffort: 'unsupported',
+    apiEndpoints: ['anthropic', 'openai'],
+    baseUrl: 'https://token-plan.cn-beijing.maas.aliyuncs.com/apps/anthropic',
+    openaiBaseUrl: 'https://token-plan.cn-beijing.maas.aliyuncs.com/compatible-mode/v1',
+    apiKeyUrl: 'https://bailian.console.aliyun.com/cn-beijing?tab=plan#/efm/subscription/overview',
+    models: [
+      {
+        id: 'qwen3.8-max',
+        contextWindow: 983_616,
+        reasoningEffort: 'low-medium-xhigh'
+      },
+      {
+        id: 'qwen3.8-max-preview',
+        contextWindow: 983_616,
+        reasoningEffort: 'low-medium-xhigh'
+      },
+      { id: 'qwen3.7-max', contextWindow: 1_000_000 },
+      { id: 'qwen3.7-plus', contextWindow: 1_000_000 },
+      { id: 'qwen3.6-flash', contextWindow: 1_000_000 },
+      { id: 'glm-5.2', contextWindow: 1_000_000, reasoningEffort: 'high-max' },
+      { id: 'deepseek-v4-pro', contextWindow: 1_000_000, reasoningEffort: 'high-max' },
+      {
+        id: 'deepseek-v4-flash-0731',
+        contextWindow: 1_000_000,
+        reasoningEffort: 'high-max'
+      }
+    ],
+    multimodal: {
+      multimodalModels: ['qwen3.8-max', 'qwen3.8-max-preview', 'qwen3.7-plus', 'qwen3.6-flash']
+    }
   },
   {
     id: 'zhipu',

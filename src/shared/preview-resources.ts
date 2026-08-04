@@ -1,4 +1,6 @@
-export type ManagedPreviewSource = 'artifact' | 'upload' | 'notebook-input'
+// 'local' streams a file from an arbitrary absolute filesystem path (the "This computer" browser).
+// Unlike artifact/upload it is not confined to a storage root; the resolver validates + realpaths it.
+export type ManagedPreviewSource = 'artifact' | 'upload' | 'notebook-input' | 'local'
 
 export const MANAGED_PREVIEW_LOAD_ERROR = 'open-science-preview-load-error'
 

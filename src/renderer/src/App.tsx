@@ -24,6 +24,7 @@ import { EnvStatusBanner } from '@/pages/workspace/EnvStatusBanner'
 import { WorkspacePage } from '@/pages/workspace/WorkspacePage'
 import { useCloseActivePaneShortcut } from '@/hooks/useCloseActivePaneShortcut'
 import { useLifecycleSync } from '@/hooks/useLifecycleSync'
+import { useQuitPersistenceFlush } from '@/hooks/useQuitPersistenceFlush'
 import { useUnreadTaskViewSync } from '@/hooks/useUnreadTaskViewSync'
 import { useWindowFindAppearanceSync } from '@/hooks/useWindowFindAppearanceSync'
 import { useNavigationStore } from '@/stores/navigation-store'
@@ -46,6 +47,7 @@ type NotificationOpenIntent = {
 const App = (): React.JSX.Element | null => {
   // Persistence is started once at the top so sessions stay loaded for both Home and Workspace.
   const sessionPersistence = useSessionPersistence()
+  useQuitPersistenceFlush()
   const isSessionPersistenceHydrated = sessionPersistence.isHydrated
   const isSessionPersistenceLoading = sessionPersistence.isLoading
   const isSessionPersistenceReady = sessionPersistence.isReady

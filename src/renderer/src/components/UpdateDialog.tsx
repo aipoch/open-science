@@ -31,12 +31,13 @@ const UpdateDialog = (): React.JSX.Element | null => {
   const releaseUrl = `${APP.links.githubReleases}/tag/v${dialogStatus?.latest ?? ''}`
   const isDownloading = dialogStatus?.state === 'downloading'
   const isReady = dialogStatus?.state === 'ready'
+  const isApplying = dialogStatus?.state === 'applying'
 
   return (
     <Dialog.Root
       open={open}
       onOpenChange={(open) => {
-        if (!open) closeDialog()
+        if (!open && !isApplying) closeDialog()
       }}
     >
       {dialogStatus ? (
@@ -59,6 +60,7 @@ const UpdateDialog = (): React.JSX.Element | null => {
                   variant="ghost"
                   size="icon-sm"
                   aria-label="Close"
+                  disabled={isApplying}
                   className={dialogCloseButtonClassName}
                 >
                   <X className="size-4" aria-hidden="true" />
@@ -102,6 +104,14 @@ const UpdateDialog = (): React.JSX.Element | null => {
               </div>
             ) : null}
 
+            {isApplying ? (
+              <div className="mt-4 rounded-lg border border-border bg-muted/50 px-3 py-3 text-xs text-muted-foreground">
+                Open Science is stopping background tasks and will close to finish installing. The
+                update may take a moment; please don&apos;t reopen the app during this step. The
+                updated app will reopen automatically.
+              </div>
+            ) : null}
+
             {dialogStatus.state === 'error' ? (
               <div className="mt-3" role="alert">
                 <p className="text-xs text-destructive">{dialogStatus.error ?? 'Update failed'}</p>
@@ -117,11 +127,21 @@ const UpdateDialog = (): React.JSX.Element | null => {
               <button
                 type="button"
                 onClick={() => closeDialog()}
+                disabled={isApplying}
                 className="rounded-lg border border-border px-3 py-1.5 text-sm font-medium text-foreground transition-colors hover:bg-bg-300"
               >
                 {isReady ? 'Close' : 'Cancel'}
               </button>
-              {isReady ? (
+              {isApplying ? (
+                <button
+                  type="button"
+                  disabled
+                  className="inline-flex items-center gap-1.5 rounded-lg bg-primary px-3 py-1.5 text-sm font-medium text-primary-foreground opacity-70"
+                >
+                  <RefreshCw className="size-4 animate-spin" aria-hidden="true" />
+                  Preparing update…
+                </button>
+              ) : isReady ? (
                 <button
                   type="button"
                   onClick={() => void apply()}

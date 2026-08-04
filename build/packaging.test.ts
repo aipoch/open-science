@@ -20,6 +20,12 @@ describe('packaging config', () => {
     expect(yml).toMatch(/asarUnpack:\s*\n\s*-\s*resources\/(\*\*|notebook\/\*\*)/)
   })
 
+  it('ships the versioned Specialist contribution template guidance unpacked from the asar', () => {
+    expect(existsSync(join(repoRoot, 'resources/specialists/template/v1/README.txt'))).toBe(true)
+    const yml = readFileSync(join(repoRoot, 'electron-builder.yml'), 'utf8')
+    expect(yml).toMatch(/asarUnpack:\s*\n\s*-\s*resources\/\*\*/)
+  })
+
   it('ships micromamba as a per-platform extraResource to Contents/Resources', () => {
     const yml = readFileSync(join(repoRoot, 'electron-builder.yml'), 'utf8')
     // Staged per-platform binaries copied to the resources root under the name micromamba(.exe).

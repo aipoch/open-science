@@ -209,7 +209,7 @@ export const formatBytes = (bytes: number): string => {
   return `${value.toFixed(1)} ${units[unit]}`
 }
 
-// Builds the text block that accompanies an oversized file's resource_link: it states why the file is
+// Builds the notice that accompanies an oversized file's local descriptor: it states why the file is
 // not inlined, tells the agent to read only what it needs, and shows a bounded preview of the start.
 export const buildOversizedAttachmentNotice = (input: {
   name: string
@@ -225,7 +225,7 @@ export const buildOversizedAttachmentNotice = (input: {
   const trailer = truncated ? '\n\n… file continues beyond this preview.' : ''
 
   return [
-    `[Attached file "${name}" (${formatBytes(size)}) is too large to include in full and is available on disk via the linked resource below.`,
+    `[Attached file "${name}" (${formatBytes(size)}) is too large to include in full and is available on disk via the local file reference below.`,
     `Do not load the whole file — read ${readHint}. For analysis over the full file, compute in the notebook rather than reading it into the conversation.`,
     'Preview of the start of the file:',
     '',
@@ -235,10 +235,10 @@ export const buildOversizedAttachmentNotice = (input: {
 }
 
 // Binary spreadsheets and scientific containers cannot provide a useful UTF-8 preview. Give the
-// agent an explicit analysis contract alongside the resource link instead of a context-free URI.
+// agent an explicit analysis contract alongside a local file reference instead of a provider file.
 export const buildDatasetAttachmentNotice = (input: { name: string; size: number }): string =>
   [
-    `[Attached dataset "${input.name}" (${formatBytes(input.size)}) is available on disk via the linked resource below.`,
+    `[Attached dataset "${input.name}" (${formatBytes(input.size)}) is available on disk via the local file reference below.`,
     'Do not load the whole file into the conversation. Inspect its schema and a small sample first, then use the notebook or a streaming/query tool to compute over the full dataset.]'
   ].join('\n')
 

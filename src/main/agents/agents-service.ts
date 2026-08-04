@@ -30,6 +30,10 @@ import { executeAgentsMutation, type AgentsMutationCatalog } from './agents-muta
 import { SwitchOperation, SwitchCommitSequencer, type SwitchParams } from './switch-operation'
 import { applyDelete } from './specialist-privileged-ops'
 import type { HandoffApprovalContext } from '../../shared/handoff-lifecycle'
+import type {
+  SpecialistDeleteRequest,
+  SpecialistDeleteResult
+} from '../../shared/specialist-package'
 
 // The minimal read surface this adapter needs from the settings/connectors catalog. Keeping it
 // narrow avoids pulling the whole SettingsService into the SDK contract and lets tests stub it.
@@ -76,6 +80,7 @@ export type AgentsServiceDeps = {
   // existing ProfileService/catalog-change broadcast path; the privileged delete runs through a
   // dedicated module that calls this only on success. Wired in issue 08.
   invalidateCatalog?: () => Promise<void> | void
+  deleteSpecialist?: (request: SpecialistDeleteRequest) => Promise<SpecialistDeleteResult>
 }
 
 // ---------------------------------------------------------------------------
@@ -327,6 +332,7 @@ export class AgentsService {
       currentName,
       reviewedRevision: revision,
       session: context,
+      ...(this.deps.deleteSpecialist ? { deleteSpecialist: this.deps.deleteSpecialist } : {}),
       ...(invalidateCatalog ? { invalidateCatalog } : {})
     })
   }

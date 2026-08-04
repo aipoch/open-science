@@ -21,7 +21,8 @@ import { ArtifactRepository } from './repository'
 import {
   createArtifactHandlers,
   createDefaultArtifactRepository,
-  registerArtifactIpcHandlers
+  registerArtifactIpcHandlers,
+  type ArtifactHandlers
 } from './ipc'
 import { ArtifactRunRegistry } from './run-registry'
 import {
@@ -34,10 +35,17 @@ import { createProjectDbClient, ensureProjectSchema } from '../projects/prisma-c
 // Capture every ipcMain.handle registration so registerArtifactIpcHandlers can be verified directly.
 // The mock is set up here (before importing the IPC module) so registering handlers in tests is
 // observable without depending on a real Electron process.
-const ipcHandlers = new Map<string, (event: unknown, payload: unknown) => unknown>()
+const { ipcHandlers, registrationFailure } = vi.hoisted(() => ({
+  ipcHandlers: new Map<string, (event: unknown, payload: unknown) => unknown>(),
+  registrationFailure: {
+    channel: undefined as string | undefined,
+    error: undefined as Error | undefined
+  }
+}))
 vi.mock('electron', () => ({
   ipcMain: {
     handle: (channel: string, handler: (event: unknown, payload: unknown) => unknown) => {
+      if (registrationFailure.channel === channel) throw registrationFailure.error
       ipcHandlers.set(channel, handler)
     }
   },
@@ -82,6 +90,8 @@ afterEach(async () => {
 // registrations from a prior test case. Individual tests re-register as needed.
 beforeEach(() => {
   ipcHandlers.clear()
+  registrationFailure.channel = undefined
+  registrationFailure.error = undefined
 })
 
 describe('artifact IPC handlers', () => {
@@ -753,6 +763,67 @@ describe('artifact IPC handler registration', () => {
       'artifacts:read-preview',
       'artifacts:reconcile-pending'
     ])
+  })
+
+  it('shares the injected artifact finalization lock with application commands', async () => {
+    let releaseFinalize!: () => void
+    const finalizePending = new Promise<ArtifactFile[]>((resolve) => {
+      releaseFinalize = () => resolve([])
+    })
+    const repository = {
+      finalizeRunArtifacts: vi.fn().mockReturnValue(finalizePending),
+      listMessageFiles: vi.fn().mockResolvedValue([])
+    } as unknown as ArtifactRepository
+    const runRegistry = new ArtifactRunRegistry()
+    const claimId = runRegistry.register({
+      projectName: 'default-project',
+      artifactSessionId: 'artifact-session-1',
+      sessionId: 'session-1',
+      runId: 'run-1'
+    })
+    const injected = createArtifactHandlers(repository, runRegistry)
+    registerArtifactIpcHandlers(repository, runRegistry, undefined, undefined, undefined, injected)
+    const request = { claimId, messageId: 'message-1' }
+
+    const applicationFinalize = injected.finalizeRunArtifacts(request)
+    await vi.waitFor(() => expect(repository.finalizeRunArtifacts).toHaveBeenCalledOnce())
+    const electronFinalize = ipcHandlers.get('artifacts:finalize-run')?.({}, request)
+    await Promise.resolve()
+
+    expect(repository.finalizeRunArtifacts).toHaveBeenCalledOnce()
+    releaseFinalize()
+    await expect(applicationFinalize).resolves.toEqual([])
+    await expect(electronFinalize).resolves.toEqual({ ok: true, artifacts: [] })
+    expect(repository.finalizeRunArtifacts).toHaveBeenCalledOnce()
+    expect(repository.listMessageFiles).toHaveBeenCalledOnce()
+  })
+
+  it('preserves an injected handler identity when registration fails', async () => {
+    const failure = new Error('registration failed')
+    const injected: ArtifactHandlers = {
+      finalizeRunArtifacts: vi.fn(),
+      listProjectFiles: vi.fn().mockResolvedValue([]),
+      reconcilePendingArtifacts: vi.fn(),
+      openFile: vi.fn(),
+      readPreview: vi.fn(),
+      getLineage: vi.fn(),
+      getVersionProvenance: vi.fn(),
+      getVersionExecution: vi.fn(),
+      getVersionMessages: vi.fn(),
+      getVersionReview: vi.fn()
+    }
+    registrationFailure.channel = 'artifacts:finalize-run'
+    registrationFailure.error = failure
+
+    expect(() =>
+      registerArtifactIpcHandlers(undefined, undefined, undefined, undefined, undefined, injected)
+    ).toThrow(failure)
+
+    registrationFailure.channel = undefined
+    registrationFailure.error = undefined
+    registerArtifactIpcHandlers(undefined, undefined, undefined, undefined, undefined, injected)
+    await ipcHandlers.get('artifacts:list-project-files')?.({}, { projectName: 'default-project' })
+    expect(injected.listProjectFiles).toHaveBeenCalledOnce()
   })
 
   it('delegates each registered channel to the matching handler implementation', async () => {

@@ -1,0 +1,192 @@
+import { readFileSync } from 'node:fs'
+import { resolve } from 'node:path'
+
+import { describe, expect, it } from 'vitest'
+
+const projectRoot = resolve(__dirname, '../..')
+const readSource = (path: string): string => readFileSync(resolve(projectRoot, path), 'utf8')
+const compact = (source: string): string => source.replace(/\s+/g, ' ').trim()
+const occurrences = (source: string, token: string): number => source.split(token).length - 1
+
+const between = (source: string, start: string, end: string): string => {
+  const startIndex = source.indexOf(start)
+  const endIndex = source.indexOf(end, startIndex + start.length)
+  if (startIndex < 0 || endIndex < 0) {
+    throw new Error(`Production command wiring marker is missing: ${start} -> ${end}`)
+  }
+  return source.slice(startIndex, endIndex)
+}
+
+const ipcSource = readSource('src/main/ipc.ts')
+const indexSource = readSource('src/main/index.ts')
+const runtimeSource = readSource('src/main/application-runtime.ts')
+const compositionSource = readSource('src/main/application-command-composition.ts')
+const ipcRegistrySource = readSource('src/main/ipc-handler-registry.ts')
+const webAdapterSources = [
+  'src/main/application-command-client.ts',
+  'src/main/tasks/task-runner.ts',
+  'src/main/web-service/http-server.ts',
+  'src/main/web-service/index.ts',
+  'src/main/web-service/task-api.ts'
+].map(readSource)
+const legacyAdapterBlock = compact(
+  between(ipcSource, "declareElectronAdapter('desktop-utilities'", 'const electronSenderFor')
+)
+const dependencyBlock = compact(
+  between(
+    ipcSource,
+    'const applicationCommandDependencies:',
+    '// The shared coordinator remains the sole ACP + Notebook teardown owner.'
+  )
+)
+
+describe('production application command wiring', () => {
+  it('injects each stateful owner into both legacy Electron and command composition', () => {
+    const sharedOwners = [
+      [
+        'managedPreviewOwners',
+        'installManagedPreviewElectronAdapter(previewResources, undefined, managedPreviewOwners)',
+        'managedPreview: managedPreviewOwners'
+      ],
+      [
+        'projectHandlers',
+        'projectDeletionCoordinator, projectHandlers )',
+        'projects: projectHandlers'
+      ],
+      [
+        'projectFilesHandlers',
+        'projectDeletionCoordinator, projectFilesHandlers )',
+        'projectFiles: projectFilesHandlers'
+      ],
+      [
+        'sessionPersistenceHandlers',
+        'reviewRepository, sessionPersistenceHandlers )',
+        'sessions: sessionPersistenceHandlers'
+      ],
+      ['artifactHandlers', 'artifactHandlers )', 'artifacts: artifactHandlers'],
+      [
+        'permissionGrantProjection',
+        'registerPermissionGrantIpcAdapter(permissionGrantProjection)',
+        'permissionGrants: permissionGrantProjection'
+      ],
+      ['storageCommandOwner', 'storageCommandOwner )', 'storage: storageCommandOwner'],
+      [
+        'reviewerCommandOwner',
+        'registerReviewerIpcHandlers(reviewerOptions, reviewerCommandOwner)',
+        'reviewer: reviewerCommandOwner'
+      ],
+      [
+        'updateCommandOwner',
+        'registerUpdateIpcHandlers(updateStrategy, updateCommandOwner)',
+        'update: updateCommandOwner'
+      ],
+      ['cliCommandOwner', 'registerCliInstallIpcHandlers(cliCommandOwner)', 'cli: cliCommandOwner'],
+      [
+        'githubCommandOwner',
+        'registerGithubIpcHandlers({}, githubCommandOwner)',
+        'github: githubCommandOwner'
+      ],
+      ['logsCommandOwner', 'registerLogsIpcHandlers(logsCommandOwner)', 'logs: logsCommandOwner'],
+      [
+        'uploadCommandOwner',
+        'registerUploadIpcHandlers(uploadCommandOwner, {',
+        'uploads: uploadCommandOwner'
+      ],
+      [
+        'conversationExportService',
+        'registerConversationExportIpcHandler(conversationExportService)',
+        'conversationExportService.exportConversation('
+      ]
+    ] as const
+
+    for (const [owner, electronUse, compositionUse] of sharedOwners) {
+      expect(legacyAdapterBlock, `${owner} must be used by the legacy Electron adapter`).toContain(
+        electronUse
+      )
+      expect(dependencyBlock, `${owner} must be used by command composition`).toContain(
+        compositionUse
+      )
+    }
+
+    expect(compact(ipcSource)).toContain(
+      'electronAdapters: { beforeCompute: beforeComputeAdapters, compute: computeIpcModule,'
+    )
+    expect(dependencyBlock).toContain('compute: computeIpcModule.handlers')
+    expect(dependencyBlock).toContain('enabledHosts: hostsRegistry')
+  })
+
+  it('keeps native-only commands inside the Electron owner adapter and exposes only narrow views', () => {
+    const electronOwner = compact(
+      between(dependencyBlock, 'electron: {', 'events: applicationEvents')
+    )
+    expect(occurrences(electronOwner, 'exportConversationFromInvokingWindow')).toBe(1)
+    expect(occurrences(electronOwner, 'stageLocalFileWithProgress')).toBe(1)
+    expect(compositionSource).toContain("'sessions:export-conversation'")
+    expect(compositionSource).toContain("'uploads:stage-local-file'")
+
+    const returnedViews = compact(
+      between(ipcSource, 'return {\n    applicationCommands:', '    applicationEvents,')
+    )
+    expect(returnedViews).toContain('localWeb: applicationCommandComposition.localWeb')
+    expect(returnedViews).toContain('remoteWeb: applicationCommandComposition.remoteWeb')
+    expect(returnedViews).toContain('task: applicationCommandComposition.task')
+    expect(occurrences(returnedViews, 'applicationCommandComposition.')).toBe(3)
+  })
+
+  it('adds transport adapters after composition and disposes the router before its owners', () => {
+    const backendModule = ipcSource.indexOf("name: 'backend-shutdown-coordinator'")
+    const commandModule = ipcSource.indexOf("name: 'application-command-composition'")
+    expect(backendModule).toBeGreaterThan(-1)
+    expect(commandModule).toBeGreaterThan(backendModule)
+    expect(compact(ipcSource)).toContain('dispose: () => composition.dispose()')
+
+    const build = runtimeSource.indexOf('const built = await createModules(modules)')
+    const install = runtimeSource.indexOf(
+      'const installation = await installAdapters(built.electronAdapters)'
+    )
+    const ownAdapter = runtimeSource.indexOf('await modules.add(installation, (installed) => ({')
+    expect(build).toBeGreaterThan(-1)
+    expect(install).toBeGreaterThan(build)
+    expect(ownAdapter).toBeGreaterThan(install)
+    expect(runtimeSource).toContain("await modules.dispose('rollback')")
+  })
+
+  it('late-binds the unique Remote Access owner and passes only narrow views to Web and Task', () => {
+    const startup = compact(
+      between(
+        indexSource,
+        'const remoteAccess = await RemoteAccessService.create()',
+        '// A launch that itself requested serving'
+      )
+    )
+    expect(occurrences(indexSource, 'RemoteAccessService.create()')).toBe(1)
+    expect(startup).toMatch(
+      /const remoteAccess = await RemoteAccessService\.create\(\) bindRemoteAccess\(remoteAccess\) const webController = createWebServiceController\(\{[^}]*externalAccess: remoteAccess\.webAccess/
+    )
+    expect(startup).toContain('remoteAccess.attachWebController(webController)')
+    expect(startup).toContain('registerRemoteAccessIpcHandlers(remoteAccess)')
+
+    expect(occurrences(ipcSource, 'applicationCommands')).toBe(2)
+    expect(indexSource).toContain('applicationCommands,')
+    expect(startup).toContain('applicationCommands,')
+    const webServiceSource = readSource('src/main/web-service/index.ts')
+    expect(webServiceSource).toContain(
+      "Pick<ApplicationCommandComposition, 'localWeb' | 'remoteWeb' | 'task'>"
+    )
+    expect(webServiceSource).toContain('{ commands: applicationCommands.task, agent: taskAgent }')
+    expect(webServiceSource).toContain('localWeb: applicationCommands.localWeb')
+    expect(webServiceSource).toContain('remoteWeb: applicationCommands.remoteWeb')
+    expect(readSource('src/main/tasks/task-runner.ts')).not.toContain('applicationCommands')
+  })
+
+  it('keeps Web and Task direct dispatch independent from Electron IPC capture machinery', () => {
+    expect(ipcRegistrySource).not.toContain('WebIpcSender')
+    expect(ipcRegistrySource).not.toContain('webHandlers')
+    expect(ipcRegistrySource).not.toContain('nextSenderId')
+    for (const source of webAdapterSources) {
+      expect(source).not.toContain('ipc-handler-registry')
+      expect(source).not.toContain('IpcMainInvokeEvent')
+      expect(source).not.toContain('sender.id')
+    }
+  })
+})

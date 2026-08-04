@@ -449,7 +449,7 @@ export class TaskNotificationService {
     if (!tracked) return
 
     await this.deliver(
-      describeApprovalNotification(`Import ${request.attachmentName}`, tracked.snippet),
+      describeApprovalNotification(`Import ${request.source.label}`, tracked.snippet),
       request.sessionId
     )
   }

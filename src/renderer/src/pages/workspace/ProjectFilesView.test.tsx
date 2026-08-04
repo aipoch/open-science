@@ -672,7 +672,53 @@ describe('ProjectFilesView', () => {
       '[aria-label="Preview generated file result.txt"]'
     )
     expect(listRowButton?.className).toContain('focus-visible:outline-none')
-    expect(listRow?.className).toContain('focus-within:ring-3')
+    expect(listRowButton?.className).toContain('cursor-pointer')
+    expect(listRow?.className).toContain('has-[:focus-visible]:ring-3')
+  })
+
+  it('uses matching two-button file actions in grid and list views', async () => {
+    await renderView([
+      createSession({
+        artifacts: [
+          {
+            id: 'artifact-1',
+            kind: 'managed-file',
+            path: '/workspace/result.txt',
+            name: 'result.txt'
+          }
+        ]
+      })
+    ])
+
+    const expectFileActions = (): void => {
+      const buttons = [
+        container.querySelector<HTMLButtonElement>('[aria-label="Download result.txt"]'),
+        container.querySelector<HTMLButtonElement>(
+          '[aria-label="Open result.txt in split view beside the session"]'
+        )
+      ]
+
+      expect(buttons.every(Boolean)).toBe(true)
+      expect(buttons.every((button) => button?.dataset.size === 'icon-sm')).toBe(true)
+      expect(buttons.every((button) => button?.className.includes('cursor-pointer'))).toBe(true)
+      expect(container.querySelector('[aria-label="More actions for result.txt"]')).toBeNull()
+      expect(buttons[1]?.parentElement?.className).toContain('flex')
+    }
+
+    expectFileActions()
+    await act(async () => {
+      container
+        .querySelector<HTMLButtonElement>(
+          '[aria-label="Open result.txt in split view beside the session"]'
+        )
+        ?.focus()
+    })
+    expect(document.body.textContent).toContain('Open in split view beside the session')
+
+    await act(async () => {
+      container.querySelector<HTMLButtonElement>('[aria-label="List view"]')?.click()
+    })
+    expectFileActions()
   })
 
   it('removes the divider only from the first visible file group', async () => {
@@ -712,6 +758,53 @@ describe('ProjectFilesView', () => {
     expect(sectionHeaders[1]?.className).toContain('border-t')
   })
 
+  it('shows the Session artifact count and update age with the default cursor in list view', async () => {
+    const now = 1710061200000
+    vi.spyOn(Date, 'now').mockReturnValue(now)
+    await renderView([
+      createSession({
+        title: 'Recent analysis',
+        updatedAt: now,
+        artifacts: [
+          {
+            id: 'artifact-now',
+            kind: 'managed-file',
+            path: '/workspace/current.txt',
+            name: 'current.txt'
+          }
+        ]
+      }),
+      createSession({
+        id: 'session-older',
+        title: 'Earlier analysis',
+        updatedAt: now - 15 * 60 * 60 * 1000,
+        artifacts: [
+          {
+            id: 'artifact-older',
+            kind: 'managed-file',
+            path: '/workspace/earlier.txt',
+            name: 'earlier.txt'
+          }
+        ]
+      })
+    ])
+
+    await act(async () => {
+      container.querySelector<HTMLButtonElement>('[aria-label="List view"]')?.click()
+    })
+
+    const headers = Array.from(
+      container.querySelectorAll<HTMLButtonElement>('[data-testid="project-file-section-header"]')
+    )
+    const recentHeader = headers.find((header) => header.textContent?.includes('Recent analysis'))
+    const earlierHeader = headers.find((header) => header.textContent?.includes('Earlier analysis'))
+
+    expect(recentHeader?.lastElementChild?.textContent).toBe('1 · now')
+    expect(earlierHeader?.lastElementChild?.textContent).toBe('1 · 15h ago')
+    expect(recentHeader?.className).toContain('cursor-default')
+    expect(recentHeader?.getAttribute('aria-expanded')).toBe('true')
+  })
+
   it('replaces compact list metadata with the row action on hover', async () => {
     vi.spyOn(Date, 'now').mockReturnValue(1710007202000)
     await renderView([
@@ -745,8 +838,8 @@ describe('ProjectFilesView', () => {
     expect(metadata?.className).toContain('group-hover:invisible')
     expect(metadata?.className).not.toContain('w-16')
     expect(metadata?.className).not.toContain('w-20')
-    expect(downloadWrapper?.className).toContain('absolute')
-    expect(downloadWrapper?.className).toContain('right-2')
+    expect(downloadWrapper?.parentElement?.className).toContain('absolute')
+    expect(downloadWrapper?.parentElement?.className).toContain('right-2')
   })
 
   it('uses a dark neutral clear button with a light neutral hover surface', async () => {
@@ -942,10 +1035,14 @@ describe('ProjectFilesView', () => {
     expect(container.textContent).toContain('iso621_bridge_recombinase.fasta')
     expect(container.querySelector('[title="iso621_bridge_recombinase.fasta"]')).not.toBeNull()
     expect(container.textContent).not.toContain('Hidden session title')
-    expect(
-      container.querySelector('[data-testid="project-file-preview"]')?.parentElement?.parentElement
-        ?.className
-    ).toContain('focus-within:ring')
+    const tileClassName = container.querySelector('[data-testid="project-file-preview"]')
+      ?.parentElement?.parentElement?.className
+    const tileButtonClassName = container.querySelector<HTMLButtonElement>(
+      '[aria-label="Preview uploaded file iso621_bridge_recombinase.fasta"]'
+    )?.className
+    expect(tileClassName).toContain('has-[:focus-visible]:ring-2')
+    expect(tileClassName).not.toContain('focus-within:ring')
+    expect(tileButtonClassName).toContain('cursor-pointer')
   })
 
   it('downloads an uploaded file without opening its preview', async () => {
@@ -961,7 +1058,7 @@ describe('ProjectFilesView', () => {
     )
     expect(downloadButton).not.toBeNull()
     expect(
-      downloadButton?.closest('[data-testid="download-tooltip-trigger"]')?.className
+      downloadButton?.closest('[data-testid="download-tooltip-trigger"]')?.parentElement?.className
     ).toContain('absolute')
 
     await act(async () => {
@@ -1353,7 +1450,7 @@ describe('ProjectFilesView', () => {
     expect(container.querySelectorAll('[data-testid="project-files-end"]')).toHaveLength(1)
   })
 
-  it('opens a filter menu without This computer entries', async () => {
+  it('opens a filter menu with a "this computer" entry', async () => {
     await renderView([
       createSession({
         title: 'Session A',
@@ -1388,7 +1485,8 @@ describe('ProjectFilesView', () => {
     expect(document.body.textContent).toContain('All artifacts')
     expect(document.body.textContent).toContain('Your uploads')
     expect(document.body.textContent).toContain('Session A')
-    expect(document.body.textContent).not.toContain('This computer')
+    // localFs is absent in this environment, so the entry falls back to its default label.
+    expect(document.body.textContent).toContain('This computer')
     expect(document.body.querySelector('[data-filter-id="all"] .lucide-boxes')).not.toBeNull()
   })
 
@@ -3200,6 +3298,46 @@ describe('ProjectFilesView', () => {
     expect(usePreviewWorkbenchStore.getState().items).toEqual([])
   })
 
+  it('opens a generated file directly in the preview panel', async () => {
+    await renderView([
+      createSession({
+        id: 'session-1',
+        title: 'Generated session',
+        artifacts: [
+          {
+            id: 'artifact-1',
+            kind: 'managed-file',
+            path: '/workspace/tree.png',
+            fileUrl: 'file:///workspace/tree.png',
+            name: 'tree.png',
+            mimeType: 'image/png',
+            size: 4096,
+            mtimeMs: 1710000002000
+          }
+        ]
+      })
+    ])
+
+    await act(async () => {
+      container
+        .querySelector<HTMLButtonElement>(
+          '[aria-label="Open tree.png in split view beside the session"]'
+        )
+        ?.click()
+    })
+
+    expect(usePreviewWorkbenchStore.getState()).toMatchObject({
+      activeItemId: expect.any(String),
+      panelState: 'open',
+      fileDialogItem: undefined
+    })
+    expect(usePreviewWorkbenchStore.getState().items[0]).toMatchObject({
+      projectId: 'default',
+      sessionId: 'session-1',
+      name: 'tree.png'
+    })
+  })
+
   it('does not acquire a TIFF thumbnail until its grid tile is near the viewport', async () => {
     const observed = new Map<Element, IntersectionObserverCallback>()
     vi.stubGlobal(
@@ -3360,7 +3498,7 @@ const createHost = (overrides: Partial<ComputeHost> = {}): ComputeHost => ({
   ...overrides
 })
 
-describe('ProjectFilesView — REMOTE section in source dropdown', () => {
+describe('ProjectFilesView — Remote section in source dropdown', () => {
   let container: HTMLDivElement
   let root: Root
 
@@ -3413,6 +3551,17 @@ describe('ProjectFilesView — REMOTE section in source dropdown', () => {
         bookmarksGet: vi.fn().mockResolvedValue([]),
         bookmarksSet: vi.fn().mockResolvedValue(undefined)
       },
+      localFs: {
+        getRoots: vi.fn().mockResolvedValue({ home: '/Users/roxi', machineName: 'TychoStation' }),
+        listDir: vi.fn().mockResolvedValue({
+          entries: [
+            { name: 'Projects', isDirectory: true, size: 0, mtimeMs: 1710000000000 },
+            { name: 'notes.md', isDirectory: false, size: 2048, mtimeMs: 1710000001000 }
+          ],
+          resolvedPath: '/Users/roxi',
+          truncated: false
+        })
+      },
       projectFiles: {
         getOverview: vi.fn().mockResolvedValue({
           totalCount: 0,
@@ -3452,7 +3601,7 @@ describe('ProjectFilesView — REMOTE section in source dropdown', () => {
     })
   }
 
-  it('shows REMOTE section label in source dropdown when hosts are present', async () => {
+  it('shows the Remote section label in source dropdown when hosts are present', async () => {
     useComputeStore.setState({
       ...createInitialComputeState(),
       isLoaded: true,
@@ -3473,11 +3622,154 @@ describe('ProjectFilesView — REMOTE section in source dropdown', () => {
       filterButton?.dispatchEvent(new MouseEvent('click', { bubbles: true }))
     })
 
-    expect(document.body.textContent).toContain('REMOTE')
+    expect(document.body.textContent).toContain('Remote')
     expect(document.body.textContent).toContain('biowulf')
   })
 
-  it('disables unreachable hosts in the REMOTE section', async () => {
+  it('swaps the artifacts list for the local browser when the device is picked', async () => {
+    await renderFilesView()
+
+    // Starts on the artifacts container, labelled with the resolved device name in the dropdown.
+    expect(container.querySelector('[data-testid="project-files-scroll"]')).not.toBeNull()
+    expect(container.querySelector('[aria-label="Local file browser"]')).toBeNull()
+
+    const openMenu = async (): Promise<void> => {
+      const filterButton = container.querySelector<HTMLButtonElement>(
+        '[aria-label="Filter project files"]'
+      )
+      await act(async () => {
+        filterButton?.dispatchEvent(new MouseEvent('pointerdown', { bubbles: true, button: 0 }))
+        filterButton?.dispatchEvent(new MouseEvent('click', { bubbles: true }))
+      })
+    }
+
+    await openMenu()
+    const deviceItem = Array.from(
+      document.querySelectorAll<HTMLElement>('[role="menuitemradio"]')
+    ).find((el) => el.textContent?.includes('TychoStation'))
+    await act(async () => {
+      deviceItem?.dispatchEvent(new MouseEvent('click', { bubbles: true }))
+    })
+
+    // The local browser replaces the artifacts list inside the same Files tab.
+    expect(container.querySelector('[aria-label="Local file browser"]')).not.toBeNull()
+    expect(container.querySelector('[data-testid="project-files-scroll"]')).toBeNull()
+    expect(window.api.localFs.listDir).toHaveBeenCalledWith('/Users/roxi')
+    expect(container.textContent).toContain('Projects')
+    expect(container.textContent).toContain('notes.md')
+    // Header count follows the visible container.
+    expect(container.textContent).toContain('2 files')
+
+    // Picking an artifact scope returns the body to the artifacts list.
+    await openMenu()
+    const allArtifacts = document.querySelector<HTMLElement>('[data-filter-id="all"]')
+    await act(async () => {
+      allArtifacts?.dispatchEvent(new MouseEvent('click', { bubbles: true }))
+    })
+
+    expect(container.querySelector('[data-testid="project-files-scroll"]')).not.toBeNull()
+    expect(container.querySelector('[aria-label="Local file browser"]')).toBeNull()
+  })
+
+  it('closes the local browser Go-to menu on an outside click', async () => {
+    await renderFilesView()
+
+    const filterButton = container.querySelector<HTMLButtonElement>(
+      '[aria-label="Filter project files"]'
+    )
+    await act(async () => {
+      filterButton?.dispatchEvent(new MouseEvent('pointerdown', { bubbles: true, button: 0 }))
+      filterButton?.dispatchEvent(new MouseEvent('click', { bubbles: true }))
+    })
+    const deviceItem = Array.from(
+      document.querySelectorAll<HTMLElement>('[role="menuitemradio"]')
+    ).find((el) => el.textContent?.includes('TychoStation'))
+    await act(async () => {
+      deviceItem?.dispatchEvent(new MouseEvent('click', { bubbles: true }))
+    })
+
+    const goTo = Array.from(container.querySelectorAll<HTMLButtonElement>('button')).find((el) =>
+      el.textContent?.includes('Go to')
+    )
+    await act(async () => {
+      goTo?.dispatchEvent(new MouseEvent('pointerdown', { bubbles: true, button: 0 }))
+      goTo?.dispatchEvent(new MouseEvent('click', { bubbles: true }))
+    })
+    expect(document.querySelector('[role="menu"]')).not.toBeNull()
+    expect(document.body.textContent).toContain('Home')
+
+    // Radix dismisses on pointerdown-then-click outside the content.
+    await act(async () => {
+      document.body.dispatchEvent(new MouseEvent('pointerdown', { bubbles: true, button: 0 }))
+      document.body.dispatchEvent(new MouseEvent('click', { bubbles: true }))
+    })
+    expect(document.querySelector('[role="menu"]')).toBeNull()
+  })
+
+  it('only re-lists the directory when the address bar path actually changes', async () => {
+    await renderFilesView()
+
+    const filterButton = container.querySelector<HTMLButtonElement>(
+      '[aria-label="Filter project files"]'
+    )
+    await act(async () => {
+      filterButton?.dispatchEvent(new MouseEvent('pointerdown', { bubbles: true, button: 0 }))
+      filterButton?.dispatchEvent(new MouseEvent('click', { bubbles: true }))
+    })
+    const deviceItem = Array.from(
+      document.querySelectorAll<HTMLElement>('[role="menuitemradio"]')
+    ).find((el) => el.textContent?.includes('TychoStation'))
+    await act(async () => {
+      deviceItem?.dispatchEvent(new MouseEvent('click', { bubbles: true }))
+    })
+
+    const listDir = window.api.localFs.listDir as ReturnType<typeof vi.fn>
+    const callsAfterLanding = listDir.mock.calls.length
+    const address = container.querySelector<HTMLInputElement>('[aria-label="Directory path"]')
+    expect(address?.value).toBe('/Users/roxi')
+
+    // React tracks the value setter, so drive it natively to make onChange fire.
+    const typePath = async (next: string): Promise<void> => {
+      await act(async () => {
+        if (!address) return
+        const setter = Object.getOwnPropertyDescriptor(
+          HTMLInputElement.prototype,
+          'value'
+        )?.set?.bind(address)
+        setter?.(next)
+        address.dispatchEvent(new Event('input', { bubbles: true }))
+      })
+    }
+
+    // Blurring an untouched path, and a no-op edit (trailing slash), both skip the listing call.
+    await act(async () => {
+      address?.dispatchEvent(new FocusEvent('focusout', { bubbles: true }))
+    })
+    expect(listDir.mock.calls.length).toBe(callsAfterLanding)
+
+    await typePath('/Users/roxi/')
+    await act(async () => {
+      address?.dispatchEvent(new FocusEvent('focusout', { bubbles: true }))
+    })
+    expect(listDir.mock.calls.length).toBe(callsAfterLanding)
+    // The field snaps back to the canonical path rather than keeping the equivalent spelling.
+    expect(address?.value).toBe('/Users/roxi')
+
+    // A genuinely different path does re-read.
+    listDir.mockResolvedValueOnce({
+      entries: [],
+      resolvedPath: '/Users/roxi/Projects',
+      truncated: false
+    })
+    await typePath('/Users/roxi/Projects')
+    await act(async () => {
+      address?.dispatchEvent(new FocusEvent('focusout', { bubbles: true }))
+    })
+    expect(listDir).toHaveBeenLastCalledWith('/Users/roxi/Projects')
+    expect(listDir.mock.calls.length).toBe(callsAfterLanding + 1)
+  })
+
+  it('disables unreachable hosts in the Remote section', async () => {
     useComputeStore.setState({
       ...createInitialComputeState(),
       isLoaded: true,

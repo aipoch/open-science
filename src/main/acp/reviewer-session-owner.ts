@@ -398,10 +398,6 @@ export class ReviewerSessionOwner {
     return { rejectedToolCalls, reviewerBridgeScoped }
   }
 
-  rejectedToolCallCount(sessionId: string): number {
-    return this.rejectedToolCalls.get(sessionId) ?? 0
-  }
-
   invalidatePending(): void {
     for (const token of this.pendingIds.values()) this.dependencies.removeStartupBlocker(token)
     this.pendingIds.clear()

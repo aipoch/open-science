@@ -1,6 +1,16 @@
 import type { App, BrowserWindow, Tray } from 'electron'
 
 import type { ActiveSessionInfo } from '../shared/storage'
+import type { RendererSessionPersistenceFlushOutcome } from './session-persistence/renderer-flush'
+import type { ShutdownStepOutcome } from './lifecycle-shutdown'
+import { flushDiagnosticsWithTimeout } from './diagnostics/flush'
+import { diagnosticErrorFields, type Logger } from './logger'
+import { startDiagnosticOperation } from './diagnostics/operation'
+import {
+  clearApplicationShutdownTrigger,
+  currentApplicationShutdownTrigger,
+  type ApplicationShutdownTrigger
+} from './application-shutdown-trigger'
 import type {
   CloseClassification,
   CloseConfirmChoice,
@@ -20,12 +30,23 @@ export type AppLifecycleDeps = {
   createMainWindow: (opts: {
     classifyClose: () => CloseClassification
     resolveCloseAction: () => Promise<CloseConfirmChoice>
-    requestQuit: () => void
+    requestQuit: (confirmed?: boolean) => void
   }) => BrowserWindow
   // Builds the tray; returns undefined on hosts without a tray (e.g. some Linux desktops).
   createTray: (handlers: TrayHandlers) => Tray | undefined
   // Bounded, best-effort backend teardown (agent tree + notebook kernels); never throws.
-  shutdownBackends: () => Promise<void>
+  shutdownBackends: () => Promise<ShutdownStepOutcome | void>
+  // Requests active ACP turns to cancel, then waits a bounded interval for terminal usage events.
+  prepareForQuit: () => Promise<ShutdownStepOutcome | void>
+  // Drains renderer runtime events and its ordered Session write queue before the window disappears.
+  flushSessionPersistence: () => Promise<RendererSessionPersistenceFlushOutcome | void>
+  // Local structured diagnostics remain optional for the dependency-injected lifecycle tests.
+  log?: Logger
+  // Drains the logger's serialized write queue after the shutdown terminal record.
+  flushLogs?: () => Promise<void>
+  logFlushTimeoutMs?: number
+  // Classifies an orderly shutdown without changing its cleanup sequence.
+  shutdownTrigger?: () => ApplicationShutdownTrigger
   // True while a data-root migration is copying; a quit during it is owned by the migration guard.
   isMigrationInProgress: () => boolean
   // Requests an app quit (app.quit); the before-quit handler below turns it into an awaited teardown.
@@ -58,6 +79,7 @@ export const installAppLifecycle = (
   isMainWindowHidden: () => boolean
 } => {
   const platform = deps.platform ?? process.platform
+  const logFlushTimeoutMs = deps.logFlushTimeoutMs ?? 1_000
 
   let mainWindow: BrowserWindow | undefined
   const hiddenWindows = new WeakSet<BrowserWindow>()
@@ -75,13 +97,35 @@ export const installAppLifecycle = (
   // dispatch would silently overwrite the first and strand its promise forever (see app-lifecycle.test.ts).
   let confirmInFlight = false
 
+  const normalizeStepOutcome = (outcome: ShutdownStepOutcome | void): ShutdownStepOutcome =>
+    outcome ?? 'completed'
+  const rendererStepOutcome = (
+    outcome: RendererSessionPersistenceFlushOutcome
+  ): ShutdownStepOutcome => {
+    if (outcome === 'timeout') return 'timeout'
+    if (outcome === 'send-failed') return 'failed'
+    if (outcome === 'renderer-gone') return 'degraded'
+    return 'completed'
+  }
+  const shutdownTrigger = (): ApplicationShutdownTrigger => {
+    try {
+      return deps.shutdownTrigger?.() ?? currentApplicationShutdownTrigger()
+    } catch {
+      return 'quit'
+    }
+  }
+
   const confirmClose = deps.createConfirmClose(() => mainWindow)
 
-  // Synchronous close classification, evaluated at close time. darwin keeps its dock convention (real
-  // close); a mid-quit or no-tray close proceeds; Windows asks (confirm); Linux keeps silent hide-to-tray.
+  // Synchronous close classification, evaluated at close time. A mid-quit close is held so the
+  // renderer survives persistence flushing; otherwise darwin keeps its dock convention (real close),
+  // no-tray hosts retain the renderer while requesting app quit, Windows asks (confirm), and Linux
+  // keeps silent hide-to-tray.
   const classifyClose = (): CloseClassification => {
+    if (shutdownStarted) return 'quit'
     if (platform === 'darwin') return 'close'
-    if (!trayBox.current || shutdownStarted || quitConfirmed) return 'close'
+    if (quitConfirmed) return 'close'
+    if (!trayBox.current) return 'quit'
     if (platform === 'win32') return 'confirm'
     return 'hide'
   }
@@ -102,8 +146,8 @@ export const installAppLifecycle = (
     const window = deps.createMainWindow({
       classifyClose,
       resolveCloseAction,
-      requestQuit: () => {
-        quitConfirmed = true
+      requestQuit: (confirmed = true) => {
+        quitConfirmed = confirmed
         deps.quit()
       }
     })
@@ -157,15 +201,17 @@ export const installAppLifecycle = (
     }
     if (event.defaultPrevented || deps.isMigrationInProgress()) {
       // This quit is being aborted (e.g. the migration guard cancelled it). Clear any prior
-      // confirmation so it doesn't leak into a later close: otherwise classifyClose would return
-      // 'close' and the next Windows X would bypass the dialog and destroy the window.
+      // confirmation and shutdown trigger so neither leaks into a later close: otherwise a later
+      // ordinary quit could bypass its active-session confirmation.
+      clearApplicationShutdownTrigger()
       quitConfirmed = false
       return
     }
+    const trigger = shutdownTrigger()
 
     // Confirmation gate: unless the user already confirmed (e.g. Windows X -> Quit), confirm the
     // quit. An empty active-session list makes confirmClose('quit', []) resolve 'quit' with no modal.
-    if (!quitConfirmed) {
+    if (!quitConfirmed && trigger === 'quit') {
       event.preventDefault()
       if (confirmInFlight) return
       confirmInFlight = true
@@ -196,8 +242,70 @@ export const installAppLifecycle = (
     event.preventDefault()
     shutdownStarted = true
     void (async () => {
+      const diagnostics = deps.log
+        ? startDiagnosticOperation(deps.log, {
+            operation: 'application-shutdown',
+            fields: { trigger }
+          })
+        : undefined
+      let usageDrainResult: ShutdownStepOutcome
+      let rendererFlushOutcome: RendererSessionPersistenceFlushOutcome
+      let rendererFlushResult: ShutdownStepOutcome
+      let backendTeardownResult: ShutdownStepOutcome
       try {
-        await deps.shutdownBackends()
+        diagnostics?.phase('usage-drain')
+        try {
+          usageDrainResult = normalizeStepOutcome(await deps.prepareForQuit())
+          diagnostics?.phase('usage-drain', { result: usageDrainResult })
+        } catch (error) {
+          usageDrainResult = 'failed'
+          diagnostics?.phase('usage-drain', {
+            result: usageDrainResult,
+            ...diagnosticErrorFields(error)
+          })
+        }
+
+        diagnostics?.phase('renderer-session-flush')
+        try {
+          rendererFlushOutcome = (await deps.flushSessionPersistence()) ?? 'completed'
+          rendererFlushResult = rendererStepOutcome(rendererFlushOutcome)
+          diagnostics?.phase('renderer-session-flush', { result: rendererFlushResult })
+        } catch (error) {
+          rendererFlushOutcome = 'send-failed'
+          rendererFlushResult = 'failed'
+          diagnostics?.phase('renderer-session-flush', {
+            result: rendererFlushResult,
+            ...diagnosticErrorFields(error)
+          })
+        }
+
+        diagnostics?.phase('backend-teardown')
+        try {
+          backendTeardownResult = normalizeStepOutcome(await deps.shutdownBackends())
+          diagnostics?.phase('backend-teardown', { result: backendTeardownResult })
+        } catch (error) {
+          backendTeardownResult = 'failed'
+          diagnostics?.phase('backend-teardown', {
+            result: backendTeardownResult,
+            ...diagnosticErrorFields(error)
+          })
+        }
+        const degraded =
+          usageDrainResult !== 'completed' ||
+          rendererFlushResult !== 'completed' ||
+          backendTeardownResult !== 'completed'
+        diagnostics?.complete({
+          degraded,
+          usageDrainResult,
+          rendererFlushResult,
+          rendererFlushOutcome,
+          backendTeardownResult
+        })
+
+        if (deps.flushLogs) {
+          const result = await flushDiagnosticsWithTimeout(deps.flushLogs, logFlushTimeoutMs)
+          if (result === 'timeout') console.warn('[shutdown] final log flush timed out')
+        }
       } finally {
         trayBox.current?.destroy()
         shutdownFinished = true

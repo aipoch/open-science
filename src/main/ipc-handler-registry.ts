@@ -1,11 +1,16 @@
-import { EventEmitter } from 'node:events'
-
 import { ipcMain, type IpcMain, type IpcMainInvokeEvent } from 'electron'
 
-import { isWebRpcChannel } from '../shared/web-rpc-contract'
-import { callerContextForEvent, hasCallerAuthority, type CallerContext } from './caller-context'
-
-type IpcHandler = Parameters<IpcMain['handle']>[1]
+import { callerContextForEvent, type CallerContext } from './caller-context'
+import {
+  ApplicationCallerLeaseRegistry,
+  bindCallerLeaseToEvent,
+  type OwnedApplicationCallerLease
+} from './caller-lifecycle'
+import {
+  invokeWithIpcRejectionDiagnostics,
+  type IpcRejectionLogger
+} from './diagnostics/ipc-rejection'
+import { createLogger } from './logger'
 
 type IpcHandlerInstallation = {
   uninstall(): void
@@ -16,91 +21,121 @@ type IpcHandlerInstallationScope = {
   rollback(): void
 }
 
-class WebIpcSender {
-  readonly id: number
-  readonly lifecycleClientId: string
-  readonly callerContext: CallerContext
-
-  constructor(
-    id: number,
-    callerContext: CallerContext,
-    private readonly lifecycle: EventEmitter
-  ) {
-    this.id = id
-    this.lifecycleClientId = callerContext.lifecycleClientId
-    this.callerContext = callerContext
-  }
-
-  once(event: string, listener: (...args: unknown[]) => void): this {
-    this.lifecycle.once(event, listener)
-    return this
-  }
-
-  on(event: string, listener: (...args: unknown[]) => void): this {
-    this.lifecycle.on(event, listener)
-    return this
-  }
-
-  off(event: string, listener: (...args: unknown[]) => void): this {
-    this.lifecycle.off(event, listener)
-    return this
-  }
-
-  removeListener(event: string, listener: (...args: unknown[]) => void): this {
-    this.lifecycle.removeListener(event, listener)
-    return this
-  }
-}
-
-export type WebRpcRouter = {
-  invoke: (channel: string, callerContext: CallerContext, args: unknown[]) => Promise<unknown>
-  releaseClient: (clientId: string) => void
-  dispose: () => void
-  channels: () => string[]
-}
-
 type IpcHandlerRegistry = {
   ipcMainHandle: IpcMain['handle']
-  webRpc: WebRpcRouter
   createInstallationScope(): IpcHandlerInstallationScope
+  dispose(): void
+}
+
+type IpcHandlerRegistryDiagnostics = {
+  log?: IpcRejectionLogger
+  now?: () => number
+}
+
+type CallerLeaseEpoch = {
+  registry: ApplicationCallerLeaseRegistry
+  nativeCallers: WeakMap<object, OwnedApplicationCallerLease>
+  disposed: boolean
+}
+
+const createCallerLeaseEpoch = (): CallerLeaseEpoch => ({
+  registry: new ApplicationCallerLeaseRegistry(),
+  nativeCallers: new WeakMap(),
+  disposed: false
+})
+
+const diagnosticCallerContextForEvent = (
+  event: IpcMainInvokeEvent
+): Pick<CallerContext, 'surface' | 'location' | 'principalKind' | 'actionOrigin'> => {
+  try {
+    return callerContextForEvent(event)
+  } catch {
+    return {
+      surface: 'electron',
+      location: 'local',
+      principalKind: 'human',
+      actionOrigin: 'human'
+    }
+  }
 }
 
 const createIpcHandlerRegistry = (
-  target: Pick<IpcMain, 'handle'> & Partial<Pick<IpcMain, 'removeHandler'>>
+  target: Pick<IpcMain, 'handle'> & Partial<Pick<IpcMain, 'removeHandler'>>,
+  diagnostics: IpcHandlerRegistryDiagnostics = {}
 ): IpcHandlerRegistry => {
-  const webHandlers = new Map<string, IpcHandler>()
+  const diagnosticLog =
+    diagnostics.log ??
+    ({
+      warn: (message, data) => createLogger('ipc').warn(message, data)
+    } satisfies IpcRejectionLogger)
   const registeredChannels = new Set<string>()
-  const clients = new Map<string, { id: number; lifecycle: EventEmitter }>()
-  let nextSenderId = -1
+  let activeCallerLeaseEpoch = createCallerLeaseEpoch()
+  const destroyedNativeCallers = new WeakSet<object>()
 
-  const senderFor = (callerContext: CallerContext): WebIpcSender => {
-    let client = clients.get(callerContext.clientId)
-    if (!client) {
-      client = { id: nextSenderId--, lifecycle: new EventEmitter() }
-      clients.set(callerContext.clientId, client)
-    }
-    return new WebIpcSender(client.id, callerContext, client.lifecycle)
+  const callerLeaseEpochForRegistration = (): CallerLeaseEpoch => {
+    if (activeCallerLeaseEpoch.disposed) activeCallerLeaseEpoch = createCallerLeaseEpoch()
+    return activeCallerLeaseEpoch
   }
 
-  const destroyClient = (clientId: string): void => {
-    const client = clients.get(clientId)
-    if (!client) return
-    clients.delete(clientId)
-    client.lifecycle.emit('destroyed')
-    client.lifecycle.removeAllListeners()
+  const nativeCallerLease = (
+    epoch: CallerLeaseEpoch,
+    event: IpcMainInvokeEvent
+  ): OwnedApplicationCallerLease => {
+    const sender = event.sender as object
+    if (destroyedNativeCallers.has(sender)) {
+      throw new Error('Caller lease is no longer current.')
+    }
+    const existing = epoch.nativeCallers.get(sender)
+    if (existing && !existing.lease.signal.aborted && existing.lease.isCurrent()) return existing
+
+    const ownedLease = epoch.registry.acquire(callerContextForEvent(event))
+    epoch.nativeCallers.set(sender, ownedLease)
+    const lifecycleSender = event.sender as typeof event.sender & {
+      once?: (name: string, listener: () => void) => unknown
+    }
+    lifecycleSender.once?.('destroyed', () => {
+      destroyedNativeCallers.add(sender)
+      ownedLease.release()
+    })
+    lifecycleSender.once?.('render-process-gone', ownedLease.release)
+    return ownedLease
+  }
+
+  const assertCurrentLease = (lease: OwnedApplicationCallerLease['lease']): void => {
+    if (lease.signal.aborted || !lease.isCurrent()) {
+      throw new Error('Caller lease is no longer current.')
+    }
   }
 
   const ipcMainHandle: IpcMain['handle'] = (channel, listener) => {
-    target.handle(channel, listener)
+    const callerLeaseEpoch = callerLeaseEpochForRegistration()
+    target.handle(channel, (event, ...args) =>
+      invokeWithIpcRejectionDiagnostics({
+        channel,
+        callerContext: diagnosticCallerContextForEvent(event),
+        invoke: () => {
+          // Electron always supplies an invoke event. Isolated handler registrars historically call
+          // their injected target without Electron, so keep that pure test seam lease-neutral.
+          const invokedEvent = event as IpcMainInvokeEvent | undefined
+          if (!invokedEvent?.sender || typeof invokedEvent.sender !== 'object') {
+            return listener(event, ...args)
+          }
+          const { lease } = nativeCallerLease(callerLeaseEpoch, invokedEvent)
+          bindCallerLeaseToEvent(invokedEvent, lease)
+          assertCurrentLease(lease)
+          return listener(invokedEvent, ...args)
+        },
+        log: diagnosticLog,
+        now: diagnostics.now
+      })
+    )
     registeredChannels.add(channel)
-    if (isWebRpcChannel(channel)) webHandlers.set(channel, listener)
   }
 
   const removeChannels = (channels: Iterable<string>): void => {
     for (const channel of channels) {
       target.removeHandler?.(channel)
       registeredChannels.delete(channel)
-      webHandlers.delete(channel)
     }
   }
 
@@ -136,43 +171,24 @@ const createIpcHandlerRegistry = (
         }
       }
     },
-    webRpc: {
-      invoke: async (channel, callerContext, args) => {
-        if (!isWebRpcChannel(channel)) throw new Error(`Unknown Web RPC channel: ${channel}`)
-        const handler = webHandlers.get(channel)
-        if (!handler) throw new Error(`Unregistered Web RPC channel: ${channel}`)
-        if (!callerContext.isAuthorizationCurrent()) {
-          throw new Error('Caller authorization is no longer current.')
-        }
-        const sender = senderFor(callerContext)
-        const event = { sender } as unknown as IpcMainInvokeEvent
-        return handler(event, ...args)
-      },
-      releaseClient: destroyClient,
-      dispose: () => {
-        for (const clientId of [...clients.keys()]) destroyClient(clientId)
-        webHandlers.clear()
-      },
-      channels: () => [...webHandlers.keys()].sort()
+    dispose: () => {
+      activeCallerLeaseEpoch.registry.dispose()
+      activeCallerLeaseEpoch.disposed = true
     }
   }
 }
 
-const isRemotePairingManagerSender = (event: IpcMainInvokeEvent): boolean =>
-  hasCallerAuthority(callerContextForEvent(event), 'manage-remote-pairing')
-
 const defaultRegistry = createIpcHandlerRegistry(ipcMain)
 
 const ipcMainHandle = defaultRegistry.ipcMainHandle
-const webRpc = defaultRegistry.webRpc
+const disposeIpcHandlerRegistry = (): void => defaultRegistry.dispose()
 const createIpcHandlerInstallationScope = (): IpcHandlerInstallationScope =>
   defaultRegistry.createInstallationScope()
 
 export {
   createIpcHandlerInstallationScope,
   createIpcHandlerRegistry,
-  ipcMainHandle,
-  isRemotePairingManagerSender,
-  webRpc
+  disposeIpcHandlerRegistry,
+  ipcMainHandle
 }
-export type { IpcHandlerInstallation, IpcHandlerInstallationScope }
+export type { IpcHandlerInstallation, IpcHandlerInstallationScope, IpcHandlerRegistryDiagnostics }

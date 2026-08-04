@@ -20,10 +20,14 @@ describe('sanitizeSpecialist', () => {
     description: 'Reviews differential expression.',
     systemPrompt: '',
     enabled: true,
+    setupPending: false,
     capabilityMode: 'full',
     fullAccess: emptyFullAccessConfig(),
     selectedCapabilities: emptySelectedConfig(),
-    revision: 1
+    revision: 1,
+    packageVersion: '0.1.0',
+    origin: 'local',
+    ownedSkillIds: []
   }
 
   it('accepts a valid record', () => {
@@ -66,6 +70,11 @@ describe('sanitizeSpecialist', () => {
     expect(result?.iconKey).toBeUndefined()
     expect(result?.colorKey).toBeUndefined()
   })
+
+  it('defaults setupPending to false and preserves an imported pending state', () => {
+    expect(sanitizeSpecialist(valid)?.setupPending).toBe(false)
+    expect(sanitizeSpecialist({ ...valid, setupPending: true })?.setupPending).toBe(true)
+  })
 })
 
 // ---------------------------------------------------------------------------
@@ -80,10 +89,14 @@ const makeSpecialist = (overrides: Partial<StoredSpecialist> = {}): StoredSpecia
   description: 'A test specialist.',
   systemPrompt: '',
   enabled: true,
+  setupPending: false,
   capabilityMode: 'full',
   fullAccess: emptyFullAccessConfig(),
   selectedCapabilities: emptySelectedConfig(),
   revision: 1,
+  packageVersion: '0.1.0',
+  origin: 'local',
+  ownedSkillIds: [],
   ...overrides
 })
 
@@ -116,6 +129,34 @@ describe('SpecialistRepository.getAll', () => {
     await mkdir(filePath)
     const repo = new SpecialistRepository(tmpDir)
     await expect(repo.getAll()).rejects.toThrow()
+  })
+
+  it('migrates existing custom Specialists to local package metadata without changing identity or content', async () => {
+    const legacy = makeSpecialist({
+      id: 'existing-session-binding-id',
+      name: 'LEGACY_SPECIALIST',
+      systemPrompt: 'Keep these instructions unchanged.',
+      revision: 7
+    })
+    await writeFile(
+      join(tmpDir, 'specialists.json'),
+      JSON.stringify({ version: 1, specialists: [legacy] }),
+      'utf8'
+    )
+
+    const firstRead = await new SpecialistRepository(tmpDir).getAll()
+    const secondRead = await new SpecialistRepository(tmpDir).getAll()
+
+    expect(firstRead.version).toBe(2)
+    expect(firstRead.specialists[0]).toEqual({
+      ...legacy,
+      displayName: legacy.name,
+      packageVersion: '0.1.0',
+      origin: 'local',
+      ownedSkillIds: []
+    })
+    expect(firstRead.specialists[0].importBaseline).toBeUndefined()
+    expect(secondRead).toEqual(firstRead)
   })
 })
 
@@ -167,6 +208,19 @@ describe('SpecialistRepository.setEnabled', () => {
   it('throws for unknown id', async () => {
     const repo = new SpecialistRepository(tmpDir)
     await expect(repo.setEnabled('no-such-id', false)).rejects.toThrow()
+  })
+
+  it('rejects enabling an imported Specialist while setup is pending', async () => {
+    const repo = new SpecialistRepository(tmpDir)
+    const sp = makeSpecialist({ enabled: false, setupPending: true, origin: 'imported' })
+    await repo.insert(sp)
+
+    await expect(repo.setEnabled(sp.id, true)).rejects.toThrow(/complete.*setup/i)
+    expect((await repo.getAll()).specialists[0]).toMatchObject({
+      enabled: false,
+      setupPending: true,
+      revision: sp.revision
+    })
   })
 })
 

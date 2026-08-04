@@ -40,14 +40,6 @@ const shellRequest = (sessionId: string): RequestPermissionRequest => ({
   ]
 })
 
-const secretShellRequest = (sessionId: string): RequestPermissionRequest => ({
-  ...shellRequest(sessionId),
-  toolCall: {
-    ...shellRequest(sessionId).toolCall,
-    rawInput: { command: 'TOKEN=secret python upload.py' }
-  }
-})
-
 const registeredToolRequest = (toolName: string): RequestPermissionRequest => ({
   sessionId: 'session-registered',
   toolCall: {
@@ -231,17 +223,102 @@ describe('ACP permission broker with durable grants', () => {
     expect(emitted).toHaveLength(1)
   })
 
-  it('offers only provider Once for a secret-bearing exact request', async () => {
-    storageRoot = await mkdtemp(join(tmpdir(), 'open-science-broker-secret-'))
+  it.each([
+    ['posix', 'python upload.py --token secret', ['python', 'upload.py']],
+    ['posix', 'curl --auth-token secret https://example.com', ['curl']],
+    ['posix', 'curl --bearer secret https://example.com', ['curl']],
+    ['posix', 'curl --oauth2-bearer secret https://example.com', ['curl']],
+    ['posix', 'curl --cookie session=secret https://example.com', ['curl']],
+    ['posix', 'curl -uuser:secret https://example.com', ['curl']],
+    ['posix', 'curl -b session=secret https://example.com', ['curl']],
+    ['posix', 'curl -bsession=secret https://example.com', ['curl']],
+    ['powershell', 'CURL.EXE -bsession=secret https://example.com', ['CURL.EXE']],
+    ['posix', 'docker login -p secret', ['docker', 'login']],
+    ['posix', 'docker login -psecret', ['docker', 'login']],
+    ['powershell', 'Docker login -psecret', ['Docker', 'login']],
+    ['posix', 'sshpass -psecret ssh user@example.com', ['sshpass']],
+    ['posix', 'redis-cli -asecret ping', ['redis-cli']],
+    ['posix', 'mysql -psecret app', ['mysql']],
+    ['posix', 'mysqldump -psecret app', ['mysqldump']],
+    ['posix', 'npm config set //registry.npmjs.org/:_authToken=secret', ['npm', 'config', 'set']],
+    ['posix', 'aws configure set aws_secret_access_key secret', ['aws', 'configure', 'set']],
+    ['posix', 'gpg --passphrase secret --decrypt payload.gpg', ['gpg']],
+    ['posix', 'gpg --passphrase-file=credentials.txt --decrypt payload.gpg', ['gpg']],
+    [
+      'posix',
+      'gcloud auth activate-service-account --key-file credentials.json',
+      ['gcloud', 'auth', 'activate-service-account']
+    ],
+    ['posix', 'oauth login --client-secret secret', ['oauth', 'login']],
+    ['posix', 'deploy --github-token secret', ['deploy']],
+    ['posix', 'deploy --client_secret=secret', ['deploy']],
+    ['posix', 'deploy --x-api-key secret', ['deploy']],
+    ['posix', 'deploy --aws-secret-access-key secret', ['deploy']],
+    ['posix', 'deploy --credentials credentials.json', ['deploy']],
+    ['powershell', 'Invoke-RestMethod -Credential secret', ['Invoke-RestMethod']],
+    ['powershell', 'Invoke-RestMethod -ClientSecret:secret', ['Invoke-RestMethod']]
+  ] as const)(
+    'offers only provider Once for a credential-bearing Codex %s command group: %s',
+    async (shellDialect, command, commandPrefix) => {
+      storageRoot = await mkdtemp(join(tmpdir(), 'open-science-broker-secret-'))
+      client = createProjectDbClient(storageRoot)
+      await ensureProjectSchema(client)
+      await client.project.create({ data: { id: 'project-1', name: 'Project one' } })
+      const registry = await createPermissionGrantRegistry({ getClient: async () => client! })
+      const emitted: Parameters<ConstructorParameters<typeof AcpPermissionBroker>[0]>[0][] = []
+      const broker = new AcpPermissionBroker(
+        (request) => emitted.push(request),
+        undefined,
+        registry
+      )
+      const request = shellRequest('session-1')
+      request.toolCall.rawInput = { command }
+      request.options.splice(2, 0, {
+        optionId: 'accept_execpolicy_amendment',
+        name: `Allow Commands Starting With \`${commandPrefix.join(' ')}\``,
+        kind: 'allow_always',
+        _meta: {
+          codex: {
+            execpolicyAmendment: [...commandPrefix]
+          }
+        }
+      })
+
+      const pending = broker.requestPermission(request, {
+        profile: 'ask',
+        frameworkId: 'codex',
+        shellDialect,
+        projectId: 'project-1'
+      })
+      await new Promise<void>((resolve) => setImmediate(resolve))
+
+      expect(emitted[0].options.map((option) => option.scope).filter(Boolean)).toEqual(['once'])
+      broker.respond({ requestId: emitted[0].requestId, optionId: 'provider-allow-once' })
+      await expect(pending).resolves.toEqual({
+        outcome: { outcome: 'selected', optionId: 'provider-allow-once' }
+      })
+      await expect(registry.list()).resolves.toEqual([])
+    }
+  )
+
+  it('offers only provider Once for a command that executes a mutable script', async () => {
+    storageRoot = await mkdtemp(join(tmpdir(), 'open-science-broker-mutable-script-'))
     client = createProjectDbClient(storageRoot)
     await ensureProjectSchema(client)
     await client.project.create({ data: { id: 'project-1', name: 'Project one' } })
     const registry = await createPermissionGrantRegistry({ getClient: async () => client! })
     const emitted: Parameters<ConstructorParameters<typeof AcpPermissionBroker>[0]>[0][] = []
     const broker = new AcpPermissionBroker((request) => emitted.push(request), undefined, registry)
+    const request = shellRequest('session-1')
+    request.toolCall.rawInput = { command: 'python analyze.py --input data.csv' }
+    request._meta = {
+      codex: { params: { proposedExecpolicyAmendment: ['python', 'analyze.py'] } }
+    }
 
-    const pending = broker.requestPermission(secretShellRequest('session-1'), {
+    const pending = broker.requestPermission(request, {
       profile: 'ask',
+      frameworkId: 'codex',
+      shellDialect: 'posix',
       projectId: 'project-1'
     })
     await new Promise<void>((resolve) => setImmediate(resolve))
@@ -254,8 +331,82 @@ describe('ACP permission broker with durable grants', () => {
     await expect(registry.list()).resolves.toEqual([])
   })
 
-  it('offers only provider Once for a command that executes a mutable script', async () => {
-    storageRoot = await mkdtemp(join(tmpdir(), 'open-science-broker-mutable-script-'))
+  it.each([
+    ['posix', 'rm -rf build'],
+    ['posix', 'git status && rm -rf build'],
+    ['posix', 'git status "$(rm -rf build)"'],
+    ['posix', 'git status "`rm -rf build`"'],
+    ['posix', 'git status "$API_KEY"'],
+    ['posix', 'git status ${ARGUMENTS}'],
+    ['posix', 'git status "$?"'],
+    ['posix', 'git\u00a0status'],
+    ['posix', 'git status\nrm -rf build'],
+    ['posix', 'git status\rrm -rf build'],
+    ['posix', 'git status "line\nbreak"'],
+    ['posix', '"g\\it" status'],
+    ['powershell', 'git status (Remove-Item build)'],
+    ['powershell', 'git status \\(Remove-Item build)'],
+    ['powershell', 'git status "$(Remove-Item build)"'],
+    ['powershell', 'git status { Remove-Item build }'],
+    ['powershell', 'git status $env:API_KEY'],
+    ['powershell', 'git status "${env:API_KEY}"'],
+    ['powershell', 'git status @arguments'],
+    ['powershell', 'git status\r\nRemove-Item build'],
+    ['posix', './g* --version', ['./g*']],
+    ['posix', 'g?t status', ['g?t', 'status']],
+    ['posix', '[g]it status', ['[g]it', 'status']],
+    ['posix', '{git,gh} status', ['{git,gh}', 'status']],
+    ['posix', '~/bin/git status', ['~/bin/git', 'status']],
+    ['posix', '=git status', ['=git', 'status']],
+    ['powershell', '~/bin/git status', ['~/bin/git', 'status']],
+    ['powershell', 'Remove-Item *.tmp', ['Remove-Item', '*.tmp']],
+    ['powershell', 'Remove-Item file?.tmp', ['Remove-Item', 'file?.tmp']],
+    ['powershell', 'Remove-Item [ab].tmp', ['Remove-Item', '[ab].tmp']]
+  ] as const)(
+    'offers only provider Once when a Codex %s command group does not safely prefix %s',
+    async (...args) => {
+      const [shellDialect, command] = args
+      const proposedPrefix = args.length === 3 ? args[2] : undefined
+      storageRoot = await mkdtemp(join(tmpdir(), 'open-science-broker-mismatched-command-group-'))
+      client = createProjectDbClient(storageRoot)
+      await ensureProjectSchema(client)
+      await client.project.create({ data: { id: 'project-1', name: 'Project one' } })
+      const registry = await createPermissionGrantRegistry({ getClient: async () => client! })
+      const emitted: Parameters<ConstructorParameters<typeof AcpPermissionBroker>[0]>[0][] = []
+      const broker = new AcpPermissionBroker(
+        (request) => emitted.push(request),
+        undefined,
+        registry
+      )
+      const request = shellRequest('session-1')
+      request.toolCall.rawInput = { command }
+      request.options.splice(2, 0, {
+        optionId: 'accept_execpolicy_amendment',
+        name: `Allow Commands Starting With \`${(proposedPrefix ?? ['git', 'status']).join(' ')}\``,
+        kind: 'allow_always',
+        _meta: { codex: { execpolicyAmendment: [...(proposedPrefix ?? ['git', 'status'])] } }
+      })
+
+      const pending = broker.requestPermission(request, {
+        profile: 'ask',
+        frameworkId: 'codex',
+        shellDialect,
+        projectId: 'project-1'
+      })
+      await new Promise<void>((resolve) => setImmediate(resolve))
+
+      expect(emitted[0].options.map((option) => option.scope).filter(Boolean)).toEqual(['once'])
+      expect(emitted[0].commandPrefix).toBeUndefined()
+      broker.respond({ requestId: emitted[0].requestId, optionId: 'provider-allow-once' })
+      await expect(pending).resolves.toEqual({
+        outcome: { outcome: 'selected', optionId: 'provider-allow-once' }
+      })
+      await expect(registry.list()).resolves.toEqual([])
+    }
+  )
+
+  it('offers durable scopes for a Codex-proposed command group', async () => {
+    storageRoot = await mkdtemp(join(tmpdir(), 'open-science-broker-codex-command-group-'))
     client = createProjectDbClient(storageRoot)
     await ensureProjectSchema(client)
     await client.project.create({ data: { id: 'project-1', name: 'Project one' } })
@@ -264,19 +415,78 @@ describe('ACP permission broker with durable grants', () => {
     const broker = new AcpPermissionBroker((request) => emitted.push(request), undefined, registry)
     const request = shellRequest('session-1')
     request.toolCall.rawInput = { command: 'python analyze.py --input data.csv' }
+    request.options.splice(2, 0, {
+      optionId: 'accept_execpolicy_amendment',
+      name: 'Allow Commands Starting With `python analyze.py`',
+      kind: 'allow_always',
+      _meta: {
+        codex: {
+          decision: 'acceptWithExecpolicyAmendment',
+          execpolicyAmendment: ['python', 'analyze.py']
+        }
+      }
+    })
 
     const pending = broker.requestPermission(request, {
       profile: 'ask',
+      frameworkId: 'codex',
+      shellDialect: 'posix',
       projectId: 'project-1'
     })
     await new Promise<void>((resolve) => setImmediate(resolve))
 
-    expect(emitted[0].options.map((option) => option.scope).filter(Boolean)).toEqual(['once'])
-    broker.respond({ requestId: emitted[0].requestId, optionId: 'provider-allow-once' })
+    expect(emitted[0].options.map((option) => option.scope).filter(Boolean)).toEqual([
+      'once',
+      'session',
+      'project',
+      'global'
+    ])
+    expect(emitted[0].commandPrefix).toEqual(['python', 'analyze.py'])
+    await broker.respond({
+      requestId: emitted[0].requestId,
+      optionId: emitted[0].options.find((option) => option.scope === 'session')?.optionId
+    })
     await expect(pending).resolves.toEqual({
       outcome: { outcome: 'selected', optionId: 'provider-allow-once' }
     })
-    await expect(registry.list()).resolves.toEqual([])
+
+    const [grant] = await registry.list()
+    expect(grant).toMatchObject({
+      capability: {
+        kind: 'execution',
+        key: 'exec:agent/shell',
+        qualifier: {
+          mode: 'category',
+          value: expect.stringMatching(/^argv-prefix:sha256:v1:[a-f0-9]{64}$/)
+        }
+      },
+      scope: { kind: 'session', projectId: 'project-1', sessionId: 'session-1' }
+    })
+    expect(JSON.stringify(grant)).not.toContain('python')
+    expect(JSON.stringify(grant)).not.toContain('analyze.py')
+
+    const nextRequest = shellRequest('session-1')
+    nextRequest.toolCall.rawInput = { command: 'python analyze.py --output results.csv' }
+    nextRequest.options.splice(2, 0, {
+      optionId: 'accept_execpolicy_amendment',
+      name: 'Allow Commands Starting With `python analyze.py`',
+      kind: 'allow_always'
+    })
+    nextRequest._meta = {
+      codex: { params: { proposedExecpolicyAmendment: ['python', 'analyze.py'] } }
+    }
+
+    await expect(
+      broker.requestPermission(nextRequest, {
+        profile: 'ask',
+        frameworkId: 'codex',
+        shellDialect: 'posix',
+        projectId: 'project-1'
+      })
+    ).resolves.toEqual({
+      outcome: { outcome: 'selected', optionId: 'provider-allow-once' }
+    })
+    expect(emitted).toHaveLength(1)
   })
 
   it.each(['WebFetch', 'WebSearch'] as const)(

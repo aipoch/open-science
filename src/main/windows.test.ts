@@ -877,6 +877,18 @@ describe('createMainWindow close-to-tray interceptor', () => {
     expect(window.isDestroyed()).toBe(true)
   })
 
+  it('requests app quit without destroying the renderer when classifyClose returns "quit"', () => {
+    const requestQuit = vi.fn()
+    createMainWindow({ classifyClose: () => 'quit', resolveCloseAction: vi.fn(), requestQuit })
+    const window = lastWindow!
+
+    const event = emitClose(window)
+
+    expect(event.defaultPrevented).toBe(true)
+    expect(requestQuit).toHaveBeenCalledWith(false)
+    expect(window.isDestroyed()).toBe(false)
+  })
+
   it('lets the window close when no options are provided', () => {
     createMainWindow()
     const window = lastWindow!

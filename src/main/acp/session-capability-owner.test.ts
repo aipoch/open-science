@@ -126,6 +126,8 @@ describe('ACP session capability owner', () => {
   it('publishes replacement ownership before releasing the prior lease and revokes once', async () => {
     const firstRelease = vi.fn()
     const secondRelease = vi.fn()
+    const firstSkillImportRelease = vi.fn()
+    const secondSkillImportRelease = vi.fn()
     const releaseSessionCapabilities = vi.fn()
     const owner = createOwner({
       notebook: {
@@ -150,22 +152,27 @@ describe('ACP session capability owner', () => {
       appSessionId: 'session-1',
       routingIds,
       descriptor: built.descriptor,
-      notebookRelease: firstRelease
+      notebookRelease: firstRelease,
+      skillImportRelease: firstSkillImportRelease
     })
     owner.commit({
       appSessionId: 'session-1',
       routingIds,
       descriptor: built.descriptor,
-      notebookRelease: secondRelease
+      notebookRelease: secondRelease,
+      skillImportRelease: secondSkillImportRelease
     })
 
     expect(firstRelease).toHaveBeenCalledOnce()
+    expect(firstSkillImportRelease).toHaveBeenCalledOnce()
     expect(secondRelease).not.toHaveBeenCalled()
+    expect(secondSkillImportRelease).not.toHaveBeenCalled()
 
     owner.revokeSession('session-1')
     owner.revokeSession('session-1')
 
     expect(secondRelease).toHaveBeenCalledOnce()
+    expect(secondSkillImportRelease).toHaveBeenCalledOnce()
     expect(releaseSessionCapabilities).toHaveBeenCalledOnce()
   })
 

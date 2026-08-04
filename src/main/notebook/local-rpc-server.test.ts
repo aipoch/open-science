@@ -1049,6 +1049,88 @@ describe('notebook local RPC server', () => {
     }
   })
 
+  it('closes and revokes an input-run lease when notebook execution rejects', async () => {
+    const root = await createStorageRoot()
+    const failure = new Error('execution failed')
+    let inputRunLeaseId: string | undefined
+    const close = vi.fn()
+    const service = new NotebookRuntimeService({
+      configRoot: root,
+      dataRoot: root,
+      projectName: 'default-project',
+      repository: new NotebookRunRepository(root)
+    })
+    vi.spyOn(service, 'execute').mockImplementation(async (executeRequest) => {
+      inputRunLeaseId = executeRequest.inputRunLeaseId
+      throw failure
+    })
+    const server = new NotebookLocalRpcServer(service, {
+      token: 'secret-token',
+      inputRegistry: {
+        registerTurn: vi.fn().mockResolvedValue(undefined),
+        getTurnInputs: () => [registeredInput],
+        openRun: vi.fn().mockResolvedValue({
+          getRunInputFiles: () => [registeredInput],
+          resolve: vi.fn().mockResolvedValue('/managed/groups.csv'),
+          close
+        }),
+        clearSession: vi.fn()
+      }
+    })
+    const connection = await server.ensureStarted()
+    server.setArtifactProvenanceContext('session-1', {
+      rootFrameId: 'root-frame-1',
+      agentFrameId: 'root-frame-1',
+      messageBranchId: 'branch-1',
+      runtimeSegmentId: 'runtime-1',
+      promptMessageId: 'message-user-1'
+    })
+    await server.registerNotebookTurnInputs({
+      projectId: 'default-project',
+      appSessionId: 'session-1',
+      promptMessageId: 'message-user-1',
+      uploads: [],
+      references: []
+    })
+
+    try {
+      const response = await fetch(connection.endpoint, {
+        method: 'POST',
+        headers: {
+          authorization: 'Bearer secret-token',
+          'content-type': 'application/json'
+        },
+        body: JSON.stringify({
+          method: 'execute',
+          params: {
+            sessionId: 'session-1',
+            workspaceCwd: '/workspace',
+            code: 'throw new Error()'
+          }
+        })
+      })
+
+      expect(response.status).toBe(500)
+      await expect(response.json()).resolves.toEqual({ error: failure.message })
+      expect(inputRunLeaseId).toEqual(expect.any(String))
+      expect(close).toHaveBeenCalledTimes(1)
+
+      const internals = server as unknown as {
+        dispatch(method: string, params: Record<string, unknown>): Promise<unknown>
+      }
+      await expect(
+        internals.dispatch('resolveNotebookInput', {
+          sessionId: 'session-1',
+          inputRunLeaseId,
+          sourceKind: 'upload-version',
+          inputFileVersionId: 'upload-version-1'
+        })
+      ).rejects.toThrow('Notebook input resolution requires an active run lease.')
+    } finally {
+      await server.close()
+    }
+  })
+
   it('resolves an immutable input only for the calling run while leases overlap', async () => {
     const root = await createStorageRoot()
     const server = new NotebookLocalRpcServer(

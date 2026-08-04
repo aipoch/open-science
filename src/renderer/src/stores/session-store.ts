@@ -1231,6 +1231,17 @@ export const useSessionStore = create<SessionStore>((set, get) => ({
     const session = state.sessions.find((item) => item.id === sessionId)
 
     if (!session) return undefined
+    const responseToMessageId = promptMessageId ?? session.activeRun?.promptMessageId
+    const replayedGraphMessage = session.conversationGraph?.messages.find(
+      (message) =>
+        message.role === 'agent' &&
+        message.responseToMessageId === responseToMessageId &&
+        message.eventIds.includes(eventId)
+    )
+
+    // Branch switches remove downstream messages only from the flat projection. Ignore a bounded
+    // runtime event already owned by another Branch instead of appending it to the active Branch.
+    if (replayedGraphMessage) return { sessionId, messageId: replayedGraphMessage.id }
     const sessionImageBytes = session.messages.reduce(
       (total, message) =>
         total + (message.images ?? []).reduce((sum, candidate) => sum + candidate.byteLength, 0),
@@ -1248,7 +1259,6 @@ export const useSessionStore = create<SessionStore>((set, get) => ({
       (message) => message.role === 'agent' && message.streamId === streamId
     )
     const messageId = existingMessage?.id ?? createMessageId()
-    const responseToMessageId = promptMessageId ?? session.activeRun?.promptMessageId
     const now = Date.now()
 
     set({

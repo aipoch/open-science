@@ -1,5 +1,6 @@
 import type { NotebookLanguage } from '../../shared/notebook'
 import type {
+  EnvPackage,
   RuntimeEnablement,
   RuntimeSelection,
   RuntimeSurvey,
@@ -15,6 +16,7 @@ import {
   discoverInterpreters,
   type DiscoveredInterpreter
 } from './environment-discovery'
+import { listEnvPackages } from './package-listing'
 import { RuntimeRegistry } from './runtime-registry'
 import { prepareExternalPythonRuntime, type AppOwnedExternalSelection } from './venv-overlay'
 
@@ -22,6 +24,11 @@ type RuntimeRegistryPort = Pick<RuntimeRegistry, 'survey' | 'readiness'>
 
 // Settings presents languages in this order; keep survey results stable for existing callers.
 const RUNTIME_LANGUAGES: readonly NotebookLanguage[] = ['python', 'r']
+
+// Upper bound on concurrent package listings inside listPackageCounts (mirrors the bounded
+// probe concurrency in environment-discovery): enough to fill the Settings badges quickly without
+// a subprocess storm.
+const PACKAGE_COUNT_CONCURRENCY = 4
 
 // Persisted runtime state remains Settings-owned. This narrow port keeps the workflows independent of
 // the broader Settings module while preserving its normalized read-after-write behavior.
@@ -62,6 +69,9 @@ type RuntimeSelectionWorkflowDeps = {
   onRuntimeDisabled?: (language: NotebookLanguage, envId: string, force?: boolean) => Promise<void>
   // Optional because sessions may not be composed yet during startup; absence means no live usage.
   describeRuntimeUsage?: (language: NotebookLanguage, envId: string) => RuntimeUsage
+  // Injectable for tests so the package-listing workflows never spawn micromamba/pip/Rscript;
+  // production defaults to listEnvPackages against the real env.
+  listPackages?: (env: DiscoveredInterpreter) => Promise<EnvPackage[]>
 }
 
 type RuntimeSelectionWorkflows = {
@@ -70,6 +80,11 @@ type RuntimeSelectionWorkflows = {
     python: DiscoveredInterpreter[]
     r: DiscoveredInterpreter[]
   }>
+  // Read-only installed-package inventory for one discovered env (Settings "Packages" dialog).
+  listPackages(request: { language: NotebookLanguage; envId: string }): Promise<EnvPackage[]>
+  // Bulk per-env package counts for the Settings card badges; null = the listing failed (badge
+  // omitted). Non-runnable envs get no entry.
+  listPackageCounts(request: { language: NotebookLanguage }): Promise<Record<string, number | null>>
   getEnablement(request: { language: NotebookLanguage }): Promise<RuntimeEnablement>
   describeUsage(request: { language: NotebookLanguage; envId: string }): Promise<RuntimeUsage>
   setSelection(request: {
@@ -116,6 +131,29 @@ const createRuntimeSelectionWorkflows = (
     return { language, selection, managed: surveyed.managed, external }
   }
 
+  // One language's discovered envs for the package-listing workflows: the manual-interpreter
+  // catalog snapshot merged into discovery as a sync getter. listEnvironments keeps its own
+  // two-language sweep (one shared discovery construction); these workflows need a single language.
+  const discoverLanguageEnvs = async (
+    language: NotebookLanguage
+  ): Promise<DiscoveredInterpreter[]> => {
+    const manual = await deps.settingsService.getManualInterpreters(language)
+    return discoverInterpreters(
+      language,
+      defaultDiscoveryDeps(deps.runtimeRoot(), () => manual)
+    )
+  }
+
+  // The validated listing path shared by both package workflows: only ever called with a DISCOVERED
+  // env (see the envId lookup in listPackages), never with renderer-supplied paths.
+  const listPackagesFor = (env: DiscoveredInterpreter): Promise<EnvPackage[]> => {
+    const list =
+      deps.listPackages ??
+      ((target: DiscoveredInterpreter) =>
+        listEnvPackages(target, { runtimeRoot: deps.runtimeRoot() }))
+    return list(env)
+  }
+
   return {
     survey: () => Promise.all(RUNTIME_LANGUAGES.map(buildSurvey)),
     listEnvironments: async () => {
@@ -132,6 +170,40 @@ const createRuntimeSelectionWorkflows = (
         discoverInterpreters('r', discovery)
       ])
       return { python, r }
+    },
+    // Read-only installed-package inventory for one env (Settings "Packages" dialog). The envId is
+    // validated against a FRESH discovery result — the renderer only names the env; the interpreter
+    // path / provenance used for dispatch come from discovery, so an arbitrary renderer-supplied
+    // path can never be probed.
+    listPackages: async (request) => {
+      const env = (await discoverLanguageEnvs(request.language)).find(
+        (candidate) => candidate.envId === request.envId
+      )
+      if (!env) {
+        throw new Error(`Unknown ${request.language} environment: ${request.envId}`)
+      }
+      return listPackagesFor(env)
+    },
+    // Bulk per-env package counts for the Settings card badges. ONE discovery sweep for the
+    // language (not one per env — each sweep spawns probe subprocesses), then a listing per
+    // runnable env with bounded concurrency so a machine with many envs doesn't spawn a burst of
+    // subprocesses. A failed listing maps to null (the card simply omits its badge).
+    listPackageCounts: async (request) => {
+      const runnable = (await discoverLanguageEnvs(request.language)).filter((env) => env.runnable)
+      const counts: Record<string, number | null> = {}
+      let next = 0
+      const worker = async (): Promise<void> => {
+        for (let i = next++; i < runnable.length; i = next++) {
+          const env = runnable[i]
+          counts[env.envId] = await listPackagesFor(env)
+            .then((packages) => packages.length)
+            .catch(() => null)
+        }
+      }
+      await Promise.all(
+        Array.from({ length: Math.min(PACKAGE_COUNT_CONCURRENCY, runnable.length) }, () => worker())
+      )
+      return counts
     },
     getEnablement: (request) => deps.settingsService.getRuntimeEnablement(request.language),
     describeUsage: async (request) =>

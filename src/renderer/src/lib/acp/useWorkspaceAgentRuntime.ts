@@ -63,7 +63,7 @@ type SendWorkspaceMessageInput = {
   // internal re-resume below runs against an already-attached session and can't report the reset
   // again, so this forces the prior turns to be replayed as a history preamble on the re-sent turn.
   forceHistoryReplay?: boolean
-  // Current Provider capability, injected by the hook so context replay cannot bypass image gating.
+  // Current Provider capability, injected by the hook so replay can omit unsupported image media.
   supportsImageInput?: boolean
   // Internal edit-resend seam: reset the selected runtime first, then replace the active Branch from
   // this message and replay only the retained prefix into the fresh context.
@@ -86,7 +86,7 @@ type SendWorkspaceMessageResult = {
 }
 
 type SendPreparationStateChange = (sessionId: string, inFlight: boolean) => void
-type RuntimeEventDrain = () => Promise<void>
+type RuntimeEventDrain = (sessionId?: string) => Promise<void>
 
 // Payload of an inline edit resend: the adjusted prompt text plus the mentions it carries. The
 // session/message ids stay separate because they address the truncation point, not the prompt.
@@ -130,6 +130,7 @@ type RuntimeEventApplier = (event: AcpRuntimeEvent) => Promise<boolean>
 
 type WorkspaceRuntimeEventProcessor = {
   process: (events: AcpRuntimeEvent[]) => Promise<void>
+  drain: (sessionId?: string) => Promise<void>
 }
 
 // Runtime adoption and Branch reset intentionally complete before appendUserMessage creates the next
@@ -361,45 +362,154 @@ const processVisibleWorkspaceRuntimeEvents = async (
 const createWorkspaceRuntimeEventProcessor = (
   applyEvent: RuntimeEventApplier = applyWorkspaceRuntimeEvent
 ): WorkspaceRuntimeEventProcessor => {
-  const processedEventIds = new Set<string>()
-  const processingEventIds = new Set<string>()
-  let latestEvents: AcpRuntimeEvent[] = []
-  let drainInFlight: Promise<void> | undefined
-  let drainAgain = false
+  type EventLane = {
+    acceptedEvents: Map<string, AcpRuntimeEvent>
+    failedEventIds: Set<string>
+    processedEventIds: Set<string>
+    processingEventIds: Set<string>
+    drainInFlight?: Promise<void>
+    drainAgain: boolean
+  }
 
-  // Coalesces rapid runtime snapshots while preserving a single ordered drain loop.
-  const drain = async (): Promise<void> => {
-    if (drainInFlight) {
-      drainAgain = true
-      return drainInFlight
+  const unscopedEventLane = Symbol('unscoped-workspace-runtime-events')
+  const eventLanes = new Map<string | symbol, EventLane>()
+  let latestEvents: AcpRuntimeEvent[] = []
+  let acceptedEventVersion = 0
+
+  const getEventLaneKey = (event: AcpRuntimeEvent): string | symbol =>
+    event.sessionId ?? unscopedEventLane
+
+  const getEventLane = (laneKey: string | symbol): EventLane => {
+    let lane = eventLanes.get(laneKey)
+    if (!lane) {
+      lane = {
+        acceptedEvents: new Map<string, AcpRuntimeEvent>(),
+        failedEventIds: new Set<string>(),
+        processedEventIds: new Set<string>(),
+        processingEventIds: new Set<string>(),
+        drainAgain: false
+      }
+      eventLanes.set(laneKey, lane)
     }
 
-    drainInFlight = (async () => {
+    return lane
+  }
+
+  const cleanEventLane = (laneKey: string | symbol, lane: EventLane): void => {
+    const visibleEventIds = new Set(
+      latestEvents.filter((event) => getEventLaneKey(event) === laneKey).map((event) => event.id)
+    )
+
+    for (const eventId of lane.acceptedEvents.keys()) {
+      if (!visibleEventIds.has(eventId) && lane.processedEventIds.has(eventId)) {
+        lane.acceptedEvents.delete(eventId)
+        lane.failedEventIds.delete(eventId)
+        lane.processedEventIds.delete(eventId)
+        lane.processingEventIds.delete(eventId)
+      }
+    }
+
+    if (lane.acceptedEvents.size === 0 && !lane.drainInFlight) {
+      eventLanes.delete(laneKey)
+    }
+  }
+
+  const drainLane = async (laneKey: string | symbol): Promise<void> => {
+    const lane = getEventLane(laneKey)
+
+    if (lane.drainInFlight) {
+      lane.drainAgain = true
+      return lane.drainInFlight
+    }
+
+    lane.drainInFlight = (async () => {
       do {
-        drainAgain = false
+        lane.drainAgain = false
         await processVisibleWorkspaceRuntimeEvents(
-          latestEvents,
-          processedEventIds,
-          applyEvent,
-          processingEventIds
+          [...lane.acceptedEvents.values()],
+          lane.processedEventIds,
+          async (event) => {
+            const hadFailed = lane.failedEventIds.has(event.id)
+            try {
+              const applied = await applyEvent(event)
+              lane.failedEventIds.delete(event.id)
+              return applied
+            } catch (error) {
+              const isVisible = latestEvents.some(
+                (candidate) => candidate.id === event.id && getEventLaneKey(candidate) === laneKey
+              )
+              if (hadFailed && !isVisible) {
+                lane.acceptedEvents.delete(event.id)
+                lane.failedEventIds.delete(event.id)
+              } else {
+                lane.failedEventIds.add(event.id)
+              }
+              throw error
+            }
+          },
+          lane.processingEventIds
         )
-      } while (drainAgain)
+      } while (lane.drainAgain)
     })()
 
     try {
-      await drainInFlight
+      await lane.drainInFlight
     } finally {
-      drainInFlight = undefined
+      lane.drainInFlight = undefined
+      cleanEventLane(laneKey, lane)
     }
   }
 
   return {
     process: (events) => {
       latestEvents = events
-      return drain()
+      const visibleLaneKeys = new Set<string | symbol>()
+
+      for (const event of events) {
+        const laneKey = getEventLaneKey(event)
+        const lane = getEventLane(laneKey)
+        visibleLaneKeys.add(laneKey)
+
+        if (
+          !lane.processedEventIds.has(event.id) &&
+          !lane.processingEventIds.has(event.id) &&
+          !lane.acceptedEvents.has(event.id)
+        ) {
+          // A bounded source snapshot may evict this event before a slow predecessor finishes.
+          lane.acceptedEvents.set(event.id, event)
+          acceptedEventVersion += 1
+        }
+      }
+
+      for (const [laneKey, lane] of eventLanes) {
+        cleanEventLane(laneKey, lane)
+      }
+
+      const drains = [...visibleLaneKeys].map((laneKey) => drainLane(laneKey))
+      for (const [laneKey, lane] of eventLanes) {
+        if (!visibleLaneKeys.has(laneKey) && lane.acceptedEvents.size > 0) {
+          void drainLane(laneKey)
+        }
+      }
+
+      return Promise.all(drains).then(() => undefined)
+    },
+    drain: async (sessionId) => {
+      if (sessionId !== undefined) {
+        if (eventLanes.has(sessionId)) await drainLane(sessionId)
+        return
+      }
+
+      let drainedVersion: number
+      do {
+        drainedVersion = acceptedEventVersion
+        await Promise.all([...eventLanes.keys()].map((laneKey) => drainLane(laneKey)))
+      } while (drainedVersion !== acceptedEventVersion)
     }
   }
 }
+
+const liveWorkspaceRuntimeEventProcessor = createWorkspaceRuntimeEventProcessor()
 
 // Finishes the ACP session handshake for a prompt that is already visible locally.
 const startPendingSessionPrompt = (
@@ -602,6 +712,13 @@ const sendWorkspaceMessage = async (
     const branchResetRequired = Boolean(
       truncateFromMessageId || currentSession?.branchContextResetRequired
     )
+    const resumeNeedsImageFiltering =
+      runtimeMustAdoptSession &&
+      supportsImageInput === false &&
+      (() => {
+        const media = buildHistoryReplayMedia(currentSession?.messages ?? [], sessionProjectName)
+        return media.images.length > 0 || media.attachments.length > 0
+      })()
     const sendPreparationRequired = branchResetRequired || runtimeMustAdoptSession
 
     if (sendPreparationRequired) {
@@ -676,8 +793,8 @@ const sendWorkspaceMessage = async (
           .markResumed(targetSessionId, resumeResult?.frameworkId, resumeResult?.backendId)
 
         // A provider may resume an existing selected-runtime session without resetting its hidden
-        // history. Branch isolation requires a fresh context even in that case, now on the adopted owner.
-        if (branchContextResetPerformed && !contextResetFromResume) {
+        // history. Branch isolation and text-only models both require a fresh context in that case.
+        if ((branchContextResetPerformed || resumeNeedsImageFiltering) && !contextResetFromResume) {
           const reset = await runtime.resetSessionContext(
             targetSessionId,
             resumeCwd,
@@ -693,7 +810,7 @@ const sendWorkspaceMessage = async (
         // The coordinator waits for the prior owner to stop before committing adoption, but its
         // retained events still cross the asynchronous renderer bridge. Apply the latest accepted
         // snapshot before opening the new optimistic run so a terminal event cannot settle that run.
-        await drainRuntimeEvents?.()
+        await drainRuntimeEvents?.(targetSessionId)
       }
     } catch (error) {
       useSessionStore.getState().failRun(targetSessionId, getResumeFailureMessage(error))
@@ -765,15 +882,8 @@ const sendWorkspaceMessage = async (
     ) {
       historyPreamble = buildHistoryPreamble(historyMessages)
       const media = buildHistoryReplayMedia(historyMessages, sessionProjectName)
-      if (
-        supportsImageInput === false &&
-        (media.images.length > 0 || media.attachments.length > 0)
-      ) {
-        useSessionStore.getState().failRun(targetSessionId, IMAGE_REPLAY_UNSUPPORTED_MESSAGE)
-        return appended
-      }
-      historyAttachments = media.attachments
-      historyImages = media.images
+      historyAttachments = supportsImageInput === false ? undefined : media.attachments
+      historyImages = supportsImageInput === false ? undefined : media.images
     }
 
     const resumeFallback =
@@ -782,7 +892,7 @@ const sendWorkspaceMessage = async (
             const media = buildHistoryReplayMedia(historyMessages, sessionProjectName)
             return {
               historyPreamble: buildHistoryPreamble(historyMessages),
-              historyAttachments: media.attachments,
+              historyAttachments: supportsImageInput === false ? undefined : media.attachments,
               historyImages: supportsImageInput === false ? undefined : media.images
             }
           })()
@@ -1077,6 +1187,7 @@ const compactWorkspaceSession = async (
 const recoverContextOverflowWorkspaceSession = async (
   runtime: WorkspaceMessageRuntime,
   sessionId: string,
+  supportsImageInput?: boolean,
   cancelledSessionIds?: Set<string>
 ): Promise<boolean> => {
   const session = useSessionStore.getState().sessions.find((item) => item.id === sessionId)
@@ -1182,6 +1293,7 @@ const recoverContextOverflowWorkspaceSession = async (
     // OpenScience to replay the prior transcript into its first prompt.
     forceHistoryReplay: !nativeCompacted,
     allowCompactionRecovery: true,
+    supportsImageInput,
     agentModel: session.agentModel
   })
 
@@ -1391,6 +1503,13 @@ const syncWorkspaceContextUsage = (
   }
 }
 
+const drainWorkspaceRuntimeEventsForPersistence = async (sessionId?: string): Promise<void> => {
+  const snapshot = await window.api.acp.getState()
+  void liveWorkspaceRuntimeEventProcessor.process(snapshot.events)
+  await liveWorkspaceRuntimeEventProcessor.drain(sessionId)
+  syncWorkspaceContextUsage(snapshot.sessionIds, snapshot.contextUsageBySession)
+}
+
 // Deletes in three ordered ownership layers: agent runtime, durable JSON/DB coordinator, then renderer
 // state. A failure in either authoritative layer leaves the session visible with an actionable error.
 const deleteWorkspaceSession = async (
@@ -1466,11 +1585,7 @@ const useWorkspaceAgentRuntime = (): {
     },
     []
   )
-  const eventProcessor = useRef(createWorkspaceRuntimeEventProcessor())
-  const drainRuntimeEvents = useCallback(async (): Promise<void> => {
-    const snapshot = await window.api.acp.getState()
-    await eventProcessor.current.process(snapshot.events)
-  }, [])
+  const drainRuntimeEvents = drainWorkspaceRuntimeEventsForPersistence
   // Tracks the last connection status so the disconnect effect fires only on a transition, not on
   // every unrelated snapshot re-render.
   const previousStatusRef = useRef(runtime.state.status)
@@ -1500,6 +1615,7 @@ const useWorkspaceAgentRuntime = (): {
         return recoverContextOverflowWorkspaceSession(
           recoveryRuntime,
           sessionId,
+          supportsImageInput,
           cancelledOverflowRecoverySessionIds.current
         )
       }
@@ -1509,7 +1625,7 @@ const useWorkspaceAgentRuntime = (): {
 
   // Applies each visible runtime event once and trims ids that fell out of the runtime window.
   useEffect(() => {
-    void eventProcessor.current.process(runtime.state.events)
+    void liveWorkspaceRuntimeEventProcessor.process(runtime.state.events)
   }, [runtime.state.events])
 
   // Mirrors pending permission requests into per-session store status.
@@ -1695,6 +1811,7 @@ export {
   cancelWorkspaceRun,
   compactWorkspaceSession,
   createWorkspaceRuntimeEventProcessor,
+  drainWorkspaceRuntimeEventsForPersistence,
   getResumeFailureMessage,
   deleteWorkspaceSession,
   markRunningSessionsDisconnectedOnDrop,

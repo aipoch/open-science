@@ -11,6 +11,7 @@ import {
 describe('isReasoningEffortPresetSetting', () => {
   it('accepts supported presets and the explicit unsupported setting', () => {
     expect(isReasoningEffortPresetSetting('standard-5')).toBe(true)
+    expect(isReasoningEffortPresetSetting('low-medium-xhigh')).toBe(true)
     expect(isReasoningEffortPresetSetting('none-high')).toBe(true)
     expect(isReasoningEffortPresetSetting('unsupported')).toBe(true)
   })
@@ -27,6 +28,14 @@ describe('resolveReasoningEffortControl', () => {
 
     expect(control.options.map((option) => option.value)).toEqual(['low', 'medium', 'high'])
     expect(control.selectedValue).toBe('high')
+    expect(control.options.at(-1)?.intent).toBe('max')
+  })
+
+  it('shows the three qwen3.8 effort levels documented for Codex integrations', () => {
+    const control = resolveReasoningEffortControl('max', reasoningEffortProfile('low-medium-xhigh'))
+
+    expect(control.options.map((option) => option.value)).toEqual(['low', 'medium', 'xhigh'])
+    expect(control.selectedValue).toBe('xhigh')
     expect(control.options.at(-1)?.intent).toBe('max')
   })
 

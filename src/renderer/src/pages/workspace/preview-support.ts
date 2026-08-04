@@ -36,27 +36,32 @@ const PREVIEW_SUPPORTED_EXTENSIONS: Record<string, PreviewFileFormat> = {
   xls: 'spreadsheet',
   xlsx: 'spreadsheet',
   pptx: 'presentation',
-  bash: 'text',
   conf: 'text',
   config: 'text',
-  css: 'text',
   ini: 'text',
   iqtree: 'text',
-  js: 'text',
   log: 'text',
   nwk: 'text',
-  py: 'text',
-  sh: 'text',
   state: 'text',
   toml: 'text',
   tree: 'text',
   treefile: 'text',
-  ts: 'text',
-  tsx: 'text',
   txt: 'text',
   xml: 'text',
   yaml: 'text',
   yml: 'text'
+}
+
+export const PREVIEW_CODE_LANGUAGES: Record<string, string> = {
+  bash: 'bash',
+  css: 'css',
+  js: 'javascript',
+  jsx: 'jsx',
+  py: 'python',
+  r: 'r',
+  sh: 'bash',
+  ts: 'typescript',
+  tsx: 'tsx'
 }
 
 // Keeps MIME fallback narrow so unknown binary formats still land in the unsupported state.
@@ -119,6 +124,7 @@ export const getPreviewFormat = (extension: string, mimeType?: string): PreviewF
   const extensionFormat = PREVIEW_SUPPORTED_EXTENSIONS[normalizedExtension]
 
   if (extensionFormat) return extensionFormat
+  if (PREVIEW_CODE_LANGUAGES[normalizedExtension]) return 'code'
   // Legacy Office formats must not enter OOXML renderers through misleading MIME metadata.
   if (normalizedExtension === 'doc' || normalizedExtension === 'ppt') return 'unknown'
 
@@ -146,6 +152,7 @@ export const getPreviewThumbnailReadEncoding = (format: PreviewFileFormat): 'utf
   // Binary document formats use dedicated full-byte readers and must not use truncated thumbnails.
   if (
     format === 'markdown' ||
+    format === 'code' ||
     format === 'text' ||
     format === 'json' ||
     format === 'csv' ||

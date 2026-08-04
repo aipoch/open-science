@@ -1,0 +1,751 @@
+import { describe, expect, it, vi } from 'vitest'
+
+import {
+  createApplicationCommandRouter,
+  type ApplicationCommandRouter,
+  type ApplicationInvocation
+} from './application-command-router'
+import { createCallerContext, type CallerContext } from './caller-context'
+import { ArtifactOwnershipPersistenceRaceError } from './artifacts/provenance-repository'
+import {
+  dataContentApplicationCommandGroups,
+  dataContentApplicationCommands,
+  registerDataContentApplicationCommands,
+  type DataContentApplicationCommandDependencies
+} from './data-content-application-commands'
+
+const callerContext = createCallerContext({
+  clientId: 'renderer-1',
+  lifecycleClientId: 'web:renderer-1',
+  leaseId: 'renderer-lease-1',
+  surface: 'web',
+  location: 'local',
+  principalKind: 'human',
+  actionOrigin: 'human'
+})
+
+const electronCaller = createCallerContext({
+  clientId: 'renderer-electron',
+  lifecycleClientId: 'electron:renderer-electron',
+  leaseId: 'electron-lease-1',
+  surface: 'electron',
+  location: 'local',
+  principalKind: 'human',
+  actionOrigin: 'human'
+})
+
+const remoteCaller = createCallerContext({
+  clientId: 'renderer-remote',
+  lifecycleClientId: 'web:renderer-remote',
+  leaseId: 'remote-lease-1',
+  surface: 'web',
+  location: 'remote',
+  principalKind: 'human',
+  actionOrigin: 'human'
+})
+
+const invocation = <Args extends readonly unknown[]>(
+  args: Args,
+  caller: CallerContext = callerContext
+): ApplicationInvocation<Args> => ({
+  callerContext: caller,
+  callerLease: {
+    leaseId: caller.leaseId,
+    generation: 7,
+    signal: new AbortController().signal,
+    isCurrent: () => true
+  },
+  args
+})
+
+const registeredCommands = (): Array<{ name: string }> => {
+  const commands: Array<{ name: string }> = []
+  for (const group of dataContentApplicationCommandGroups) commands.push(...group.commands)
+  return commands
+}
+
+// The inferred spy surface is intentionally retained so each assertion keeps its exact Vitest type.
+// eslint-disable-next-line @typescript-eslint/explicit-function-return-type
+const createDependencies = () => {
+  const artifacts = {
+    finalizeRunArtifacts: vi.fn(async () => []),
+    listProjectFiles: vi.fn(async () => []),
+    reconcilePendingArtifacts: vi.fn(async () => []),
+    openFile: vi.fn(async () => undefined),
+    readPreview: vi.fn(async () => ({ content: '', encoding: 'utf8', size: 0, truncated: false })),
+    getLineage: vi.fn(async () => undefined),
+    getVersionProvenance: vi.fn(),
+    getVersionExecution: vi.fn(),
+    getVersionMessages: vi.fn(),
+    getVersionReview: vi.fn()
+  }
+  const events = { publish: vi.fn() }
+  const managedPreview = {
+    acquire: vi.fn(async () => ({
+      id: 'resource-1',
+      url: 'open-science-preview://resource-1/file',
+      size: 10,
+      mimeType: 'text/plain',
+      version: 1
+    })),
+    readRange: vi.fn(async () => ({
+      begin: 0,
+      end: 1,
+      total: 1,
+      data: new Uint8Array([1])
+    })),
+    register: vi.fn(),
+    release: vi.fn()
+  }
+  const preview = { load: vi.fn(), save: vi.fn(), delete: vi.fn() }
+  const projectFiles = {
+    getOverview: vi.fn(),
+    listArtifactGroups: vi.fn(),
+    listFiles: vi.fn(),
+    repairIndex: vi.fn(),
+    searchArtifacts: vi.fn()
+  }
+  const project = {
+    id: 'project-1',
+    name: 'Project',
+    description: '',
+    isExample: false,
+    createdAt: 1,
+    updatedAt: 1
+  }
+  const projects = {
+    create: vi.fn(async () => project),
+    delete: vi.fn(async () => undefined),
+    get: vi.fn(async () => project),
+    list: vi.fn(async () => [project]),
+    update: vi.fn(async () => project)
+  }
+  const session = {
+    id: 'session-1',
+    projectId: 'project-1',
+    title: 'Session',
+    cwd: '/workspace',
+    status: 'idle' as const,
+    createdAt: 1,
+    updatedAt: 1,
+    messages: []
+  }
+  const sessions = {
+    loadAll: vi.fn(),
+    saveSession: vi.fn(async () => ({ created: true, session })),
+    deleteSession: vi.fn(),
+    saveManifest: vi.fn()
+  }
+  const attachment = {
+    id: 'upload-1',
+    sessionId: 'standalone-uploads',
+    name: 'report.txt',
+    originalName: 'report.txt',
+    path: 'upload-version:version-1',
+    size: 10
+  }
+  const uploads = {
+    claimLocalFile: vi.fn(),
+    stageLocalPath: vi.fn(async () => attachment),
+    beginTransfer: vi.fn(),
+    appendTransfer: vi.fn(),
+    transferStatus: vi.fn(),
+    finishTransfer: vi.fn(),
+    abortTransfer: vi.fn(),
+    deleteUpload: vi.fn(),
+    finalizeSession: vi.fn(),
+    readPreview: vi.fn()
+  }
+  const electron = {
+    exportConversationFromInvokingWindow: vi.fn(async () => ({ saved: false as const })),
+    stageLocalFileWithProgress: vi.fn(async () => attachment)
+  }
+  const withDataRootWrite = vi.fn(async <Result>(operation: () => Promise<Result>) => operation())
+  const dependencies = {
+    artifacts,
+    electron,
+    events,
+    managedPreview,
+    preview,
+    projectFiles,
+    projects,
+    sessions,
+    uploads,
+    withDataRootWrite
+  } as unknown as DataContentApplicationCommandDependencies
+  return {
+    dependencies,
+    artifacts,
+    attachment,
+    electron,
+    events,
+    managedPreview,
+    preview,
+    project,
+    projectFiles,
+    projects,
+    session,
+    sessions,
+    uploads,
+    withDataRootWrite
+  }
+}
+
+type DataContentCommandKey = keyof typeof dataContentApplicationCommands
+const WRAPPED_COMMAND_KEYS = [
+  'artifactFinalizeRun',
+  'artifactOpenFile',
+  'lifecycleClientId',
+  'projectCreate',
+  'projectDelete',
+  'projectUpdate',
+  'sessionDelete',
+  'sessionExportConversation',
+  'sessionLoadAll',
+  'sessionSaveManifest',
+  'sessionSave',
+  'uploadStageLocalFile',
+  'uploadStageLocalPath'
+] as const satisfies readonly DataContentCommandKey[]
+type DispatchedCommand = {
+  invocation: ApplicationInvocation<readonly unknown[]>
+  result: Promise<unknown>
+}
+
+const dispatchCommand = (
+  router: ApplicationCommandRouter,
+  key: DataContentCommandKey,
+  args: readonly unknown[],
+  caller: CallerContext = callerContext
+): DispatchedCommand => {
+  const commandInvocation = invocation(args, caller)
+  const invoke = router.dispatcher.invoke as unknown as (
+    command: { name: string },
+    currentInvocation: ApplicationInvocation<readonly unknown[]>
+  ) => Promise<unknown>
+  return {
+    invocation: commandInvocation,
+    result: invoke(dataContentApplicationCommands[key], commandInvocation)
+  }
+}
+
+describe('Data and content application commands', () => {
+  it('owns exactly the 43 current data and content invoke channels', () => {
+    expect(registeredCommands()).toEqual(
+      [
+        'artifacts:finalize-run',
+        'artifacts:get-lineage',
+        'artifacts:get-version-execution',
+        'artifacts:get-version-messages',
+        'artifacts:get-version-provenance',
+        'artifacts:get-version-review',
+        'artifacts:list-project-files',
+        'artifacts:open-file',
+        'artifacts:read-preview',
+        'artifacts:reconcile-pending',
+        'lifecycle:client-id',
+        'preview:delete',
+        'preview:load',
+        'preview:save',
+        'preview-resources:acquire',
+        'preview-resources:read-range',
+        'preview-resources:release',
+        'project-files:get-overview',
+        'project-files:list-artifact-groups',
+        'project-files:list-files',
+        'project-files:repair-index',
+        'project-files:search-artifacts',
+        'projects:create',
+        'projects:delete',
+        'projects:get',
+        'projects:list',
+        'projects:update',
+        'sessions:delete-session',
+        'sessions:export-conversation',
+        'sessions:load-all',
+        'sessions:save-manifest',
+        'sessions:save-session',
+        'uploads:abort-transfer',
+        'uploads:append-transfer',
+        'uploads:begin-transfer',
+        'uploads:claim-local-file',
+        'uploads:delete',
+        'uploads:finalize-session',
+        'uploads:finish-transfer',
+        'uploads:read-preview',
+        'uploads:stage-local-file',
+        'uploads:stage-local-path',
+        'uploads:transfer-status'
+      ].map((name) => expect.objectContaining({ name }))
+    )
+  })
+
+  it('registers the exact inventory and resolves lifecycle identity from caller authority', async () => {
+    const router = createApplicationCommandRouter()
+    const installation = registerDataContentApplicationCommands(
+      router.registrar,
+      createDependencies().dependencies
+    )
+
+    expect(router.dispatcher.commandNames()).toEqual(
+      registeredCommands()
+        .map((command) => command.name)
+        .sort()
+    )
+    await expect(
+      router.dispatcher.invoke(dataContentApplicationCommands.lifecycleClientId, invocation([]))
+    ).resolves.toBe('web:renderer-1')
+
+    installation.uninstall()
+    expect(router.dispatcher.commandNames()).toEqual([])
+  })
+
+  it('maps every pass-through command to its exact existing owner method', async () => {
+    const router = createApplicationCommandRouter()
+    const deps = createDependencies()
+    registerDataContentApplicationCommands(router.registrar, deps.dependencies)
+    const request = (key: string): Readonly<{ key: string }> => Object.freeze({ key })
+    const cases = [
+      {
+        key: 'artifactGetLineage',
+        args: [request('lineage')],
+        owner: deps.artifacts.getLineage
+      },
+      {
+        key: 'artifactGetVersionExecution',
+        args: [request('version-execution')],
+        owner: deps.artifacts.getVersionExecution
+      },
+      {
+        key: 'artifactGetVersionMessages',
+        args: [request('version-messages')],
+        owner: deps.artifacts.getVersionMessages
+      },
+      {
+        key: 'artifactGetVersionProvenance',
+        args: [request('version-provenance')],
+        owner: deps.artifacts.getVersionProvenance
+      },
+      {
+        key: 'artifactGetVersionReview',
+        args: [request('version-review')],
+        owner: deps.artifacts.getVersionReview
+      },
+      {
+        key: 'artifactListProjectFiles',
+        args: [request('artifact-list')],
+        owner: deps.artifacts.listProjectFiles
+      },
+      {
+        key: 'artifactReadPreview',
+        args: [request('artifact-preview')],
+        owner: deps.artifacts.readPreview
+      },
+      {
+        key: 'artifactReconcilePending',
+        args: [request('artifact-reconcile')],
+        owner: deps.artifacts.reconcilePendingArtifacts
+      },
+      { key: 'previewDelete', args: [request('preview-delete')], owner: deps.preview.delete },
+      { key: 'previewLoad', args: [request('preview-load')], owner: deps.preview.load },
+      { key: 'previewSave', args: [request('preview-save')], owner: deps.preview.save },
+      {
+        key: 'previewResourceAcquire',
+        args: [request('preview-resource-acquire')],
+        owner: deps.managedPreview.acquire,
+        passCallerLease: true
+      },
+      {
+        key: 'previewResourceReadRange',
+        args: [request('preview-resource-read')],
+        owner: deps.managedPreview.readRange,
+        passCallerLease: true
+      },
+      {
+        key: 'previewResourceRelease',
+        args: [request('preview-resource-release')],
+        owner: deps.managedPreview.release,
+        passCallerLease: true
+      },
+      {
+        key: 'projectFilesGetOverview',
+        args: [request('project-files-overview')],
+        owner: deps.projectFiles.getOverview
+      },
+      {
+        key: 'projectFilesListArtifactGroups',
+        args: [request('project-files-groups')],
+        owner: deps.projectFiles.listArtifactGroups
+      },
+      {
+        key: 'projectFilesListFiles',
+        args: [request('project-files-list')],
+        owner: deps.projectFiles.listFiles
+      },
+      {
+        key: 'projectFilesRepairIndex',
+        args: [request('project-files-repair')],
+        owner: deps.projectFiles.repairIndex
+      },
+      {
+        key: 'projectFilesSearchArtifacts',
+        args: [request('project-files-search')],
+        owner: deps.projectFiles.searchArtifacts
+      },
+      { key: 'projectGet', args: ['project-1'], owner: deps.projects.get },
+      { key: 'projectList', args: [], owner: deps.projects.list },
+      {
+        key: 'uploadAbortTransfer',
+        args: [request('upload-abort')],
+        owner: deps.uploads.abortTransfer,
+        passInvocation: true
+      },
+      {
+        key: 'uploadAppendTransfer',
+        args: [request('upload-append')],
+        owner: deps.uploads.appendTransfer,
+        passInvocation: true
+      },
+      {
+        key: 'uploadBeginTransfer',
+        args: [request('upload-begin')],
+        owner: deps.uploads.beginTransfer,
+        passInvocation: true
+      },
+      {
+        key: 'uploadClaimLocalFile',
+        args: [request('upload-claim')],
+        owner: deps.uploads.claimLocalFile,
+        passInvocation: true
+      },
+      {
+        key: 'uploadDelete',
+        args: [request('upload-delete')],
+        owner: deps.uploads.deleteUpload,
+        passInvocation: true
+      },
+      {
+        key: 'uploadFinalizeSession',
+        args: [request('upload-finalize')],
+        owner: deps.uploads.finalizeSession,
+        passInvocation: true
+      },
+      {
+        key: 'uploadFinishTransfer',
+        args: [request('upload-finish')],
+        owner: deps.uploads.finishTransfer,
+        passInvocation: true
+      },
+      {
+        key: 'uploadReadPreview',
+        args: [request('upload-preview')],
+        owner: deps.uploads.readPreview,
+        passInvocation: true
+      },
+      {
+        key: 'uploadTransferStatus',
+        args: [request('upload-status')],
+        owner: deps.uploads.transferStatus,
+        passInvocation: true
+      }
+    ] as const
+
+    for (const testCase of cases) {
+      const dispatched = dispatchCommand(router, testCase.key, testCase.args)
+      await dispatched.result
+      const expectedArgs =
+        'passInvocation' in testCase
+          ? [dispatched.invocation]
+          : 'passCallerLease' in testCase
+            ? [dispatched.invocation.callerLease, ...testCase.args]
+            : testCase.args
+      expect(testCase.owner, testCase.key).toHaveBeenCalledWith(...expectedArgs)
+    }
+
+    expect(
+      [...cases.map(({ key }) => key), ...WRAPPED_COMMAND_KEYS]
+        .map((key) => dataContentApplicationCommands[key].name)
+        .sort()
+    ).toEqual(
+      registeredCommands()
+        .map(({ name }) => name)
+        .sort()
+    )
+  })
+
+  it('routes existing owner seams and passes the exact caller lease to owned resources', async () => {
+    const router = createApplicationCommandRouter()
+    const deps = createDependencies()
+    registerDataContentApplicationCommands(router.registrar, deps.dependencies)
+    const managedInvocation = invocation([
+      { source: 'artifact' as const, path: 'artifact://report' }
+    ] as const)
+    const uploadInvocation = invocation([
+      { transferId: 'transfer-1', offset: 0, chunk: new Uint8Array([1]) }
+    ] as const)
+
+    await router.dispatcher.invoke(
+      dataContentApplicationCommands.previewResourceAcquire,
+      managedInvocation
+    )
+    await router.dispatcher.invoke(
+      dataContentApplicationCommands.uploadAppendTransfer,
+      uploadInvocation
+    )
+    await router.dispatcher.invoke(
+      dataContentApplicationCommands.projectFilesRepairIndex,
+      invocation([{ projectId: 'project-1' }] as const)
+    )
+    await router.dispatcher.invoke(
+      dataContentApplicationCommands.previewLoad,
+      invocation([{ projectId: 'project-1' }] as const)
+    )
+
+    expect(deps.managedPreview.acquire).toHaveBeenCalledWith(
+      managedInvocation.callerLease,
+      managedInvocation.args[0]
+    )
+    expect(deps.uploads.appendTransfer).toHaveBeenCalledWith(uploadInvocation)
+    expect(deps.projectFiles.repairIndex).toHaveBeenCalledWith({ projectId: 'project-1' })
+    expect(deps.preview.load).toHaveBeenCalledWith({ projectId: 'project-1' })
+  })
+
+  it('keeps artifact finalization recovery and local-file authority unchanged', async () => {
+    const router = createApplicationCommandRouter()
+    const deps = createDependencies()
+    registerDataContentApplicationCommands(router.registrar, deps.dependencies)
+    const finalizeRequest = { claimId: 'claim-1', messageId: 'message-1' }
+
+    await expect(
+      router.dispatcher.invoke(
+        dataContentApplicationCommands.artifactFinalizeRun,
+        invocation([finalizeRequest] as const)
+      )
+    ).resolves.toEqual({ ok: true, artifacts: [] })
+
+    deps.artifacts.finalizeRunArtifacts.mockRejectedValueOnce(
+      new ArtifactOwnershipPersistenceRaceError('ownership is pending')
+    )
+    await expect(
+      router.dispatcher.invoke(
+        dataContentApplicationCommands.artifactFinalizeRun,
+        invocation([finalizeRequest] as const)
+      )
+    ).resolves.toEqual({
+      ok: false,
+      code: 'ownership-persistence-race',
+      message: 'ownership is pending'
+    })
+
+    await expect(
+      router.dispatcher.invoke(
+        dataContentApplicationCommands.artifactOpenFile,
+        invocation([{ path: 'artifact://report' }] as const, remoteCaller)
+      )
+    ).rejects.toThrow('Channel only available from the local app: artifacts:open-file')
+    expect(deps.artifacts.openFile).not.toHaveBeenCalled()
+
+    await router.dispatcher.invoke(
+      dataContentApplicationCommands.artifactOpenFile,
+      invocation([{ path: 'artifact://report' }] as const)
+    )
+    expect(deps.artifacts.openFile).toHaveBeenCalledWith({ path: 'artifact://report' })
+  })
+
+  it('publishes project and session mutations after durable owner completion without failing commits', async () => {
+    const order: string[] = []
+    const router = createApplicationCommandRouter()
+    const deps = createDependencies()
+    deps.projects.create.mockImplementationOnce(async () => {
+      order.push('project:commit')
+      return deps.project
+    })
+    deps.sessions.saveSession.mockImplementationOnce(async () => {
+      order.push('session:commit')
+      return { created: true, session: deps.session }
+    })
+    deps.events.publish.mockImplementation((channel: string) => {
+      order.push(`publish:${channel}`)
+      throw new Error('renderer disconnected')
+    })
+    deps.withDataRootWrite.mockImplementation(async <Result>(operation: () => Promise<Result>) => {
+      order.push('write:start')
+      const result = await operation()
+      order.push('write:end')
+      return result
+    })
+    registerDataContentApplicationCommands(router.registrar, deps.dependencies)
+
+    await expect(
+      router.dispatcher.invoke(
+        dataContentApplicationCommands.projectCreate,
+        invocation([{ name: 'Project' }] as const)
+      )
+    ).resolves.toBe(deps.project)
+    await expect(
+      router.dispatcher.invoke(
+        dataContentApplicationCommands.sessionSave,
+        invocation([deps.session] as const)
+      )
+    ).resolves.toBe(deps.session)
+
+    expect(order).toEqual([
+      'project:commit',
+      'publish:project:created',
+      'write:start',
+      'session:commit',
+      'publish:session:created',
+      'write:end'
+    ])
+    expect(deps.events.publish).toHaveBeenLastCalledWith('session:created', {
+      session: deps.session,
+      originClientId: 'web:renderer-1'
+    })
+  })
+
+  it('dispatches every remaining Project and Session wrapper to its existing owner', async () => {
+    const router = createApplicationCommandRouter()
+    const deps = createDependencies()
+    const loadResult = { sessions: [], manifest: { version: 1 as const } }
+    deps.sessions.loadAll.mockResolvedValueOnce(loadResult)
+    registerDataContentApplicationCommands(router.registrar, deps.dependencies)
+    const updateRequest = { id: 'project-1', name: 'Updated project' }
+    const deleteProjectRequest = { id: 'project-1' }
+    const manifestRequest = { lastProjectId: 'project-1', lastSessionId: 'session-1' }
+    const deleteSessionRequest = { projectId: 'project-1', sessionId: 'session-1' }
+
+    await expect(
+      router.dispatcher.invoke(
+        dataContentApplicationCommands.projectUpdate,
+        invocation([updateRequest] as const)
+      )
+    ).resolves.toBe(deps.project)
+    await router.dispatcher.invoke(
+      dataContentApplicationCommands.projectDelete,
+      invocation([deleteProjectRequest] as const)
+    )
+    await expect(
+      router.dispatcher.invoke(dataContentApplicationCommands.sessionLoadAll, invocation([]))
+    ).resolves.toBe(loadResult)
+    await router.dispatcher.invoke(
+      dataContentApplicationCommands.sessionSaveManifest,
+      invocation([manifestRequest] as const)
+    )
+    await router.dispatcher.invoke(
+      dataContentApplicationCommands.sessionDelete,
+      invocation([deleteSessionRequest] as const)
+    )
+
+    expect(deps.projects.update).toHaveBeenCalledWith(updateRequest)
+    expect(deps.projects.delete).toHaveBeenCalledWith('project-1')
+    expect(deps.sessions.loadAll).toHaveBeenCalledOnce()
+    expect(deps.sessions.saveManifest).toHaveBeenCalledWith(manifestRequest)
+    expect(deps.sessions.deleteSession).toHaveBeenCalledWith(deleteSessionRequest)
+    expect(deps.withDataRootWrite).toHaveBeenCalledTimes(3)
+    expect(deps.events.publish).toHaveBeenCalledWith('project:updated', deps.project)
+    expect(deps.events.publish).toHaveBeenCalledWith('project:deleted', {
+      projectId: 'project-1'
+    })
+    expect(deps.events.publish).toHaveBeenCalledWith('session:deleted', deleteSessionRequest)
+  })
+
+  it('keeps native and local upload/export capability restrictions and standalone invalidation', async () => {
+    const router = createApplicationCommandRouter()
+    const deps = createDependencies()
+    registerDataContentApplicationCommands(router.registrar, deps.dependencies)
+    const nativeUpload = {
+      transferId: 'transfer-1',
+      sourcePath: '/tmp/report.txt',
+      name: 'report.txt',
+      size: 10
+    }
+    const pathUpload = {
+      transferId: 'transfer-2',
+      sourcePath: '/tmp/report.txt',
+      name: 'report.txt',
+      projectId: 'project-1'
+    }
+
+    await expect(
+      router.dispatcher.invoke(
+        dataContentApplicationCommands.uploadStageLocalFile,
+        invocation([nativeUpload] as const)
+      )
+    ).rejects.toThrow('Channel only available from the Electron app: uploads:stage-local-file')
+    await expect(
+      router.dispatcher.invoke(
+        dataContentApplicationCommands.sessionExportConversation,
+        invocation([
+          { projectId: 'project-1', sessionId: 'session-1', format: 'markdown' }
+        ] as const)
+      )
+    ).rejects.toThrow('Channel only available from the Electron app: sessions:export-conversation')
+    await expect(
+      router.dispatcher.invoke(
+        dataContentApplicationCommands.uploadStageLocalPath,
+        invocation([pathUpload] as const, remoteCaller)
+      )
+    ).rejects.toThrow('Channel only available from the local app: uploads:stage-local-path')
+
+    const exportRequest = {
+      projectId: 'project-1',
+      sessionId: 'session-1',
+      format: 'markdown' as const
+    }
+    const exportInvocation = invocation([exportRequest] as const, electronCaller)
+    await expect(
+      router.dispatcher.invoke(
+        dataContentApplicationCommands.sessionExportConversation,
+        exportInvocation
+      )
+    ).resolves.toEqual({ saved: false })
+    expect(deps.electron.exportConversationFromInvokingWindow).toHaveBeenCalledWith(
+      exportInvocation
+    )
+    const nativeUploadInvocation = invocation([nativeUpload] as const, electronCaller)
+    await expect(
+      router.dispatcher.invoke(
+        dataContentApplicationCommands.uploadStageLocalFile,
+        nativeUploadInvocation
+      )
+    ).resolves.toBe(deps.attachment)
+    expect(deps.electron.stageLocalFileWithProgress).toHaveBeenCalledWith(nativeUploadInvocation)
+    await expect(
+      router.dispatcher.invoke(
+        dataContentApplicationCommands.uploadStageLocalPath,
+        invocation([pathUpload] as const)
+      )
+    ).resolves.toBe(deps.attachment)
+    expect(deps.events.publish).toHaveBeenCalledWith('project-files:changed', {
+      projectId: 'project-1',
+      sessionId: 'standalone-uploads',
+      sources: ['upload'],
+      kind: 'upsert'
+    })
+  })
+
+  it('preserves standalone upload publication failures after the upload commits', async () => {
+    const router = createApplicationCommandRouter()
+    const deps = createDependencies()
+    const publicationFailure = new Error('renderer broadcast failed')
+    deps.events.publish.mockImplementationOnce(() => {
+      throw publicationFailure
+    })
+    registerDataContentApplicationCommands(router.registrar, deps.dependencies)
+    const request = {
+      transferId: 'transfer-standalone',
+      sourcePath: '/tmp/report.txt',
+      name: 'report.txt',
+      projectId: 'project-1'
+    }
+
+    await expect(
+      router.dispatcher.invoke(
+        dataContentApplicationCommands.uploadStageLocalPath,
+        invocation([request] as const)
+      )
+    ).rejects.toBe(publicationFailure)
+    expect(deps.uploads.stageLocalPath).toHaveBeenCalledOnce()
+    expect(deps.events.publish).toHaveBeenCalledOnce()
+  })
+})

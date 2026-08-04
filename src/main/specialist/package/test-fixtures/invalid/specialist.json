@@ -1,0 +1,5 @@
+{
+  "name": "Invalid Fixture",
+  "description": "Contains forbidden root content.",
+  "systemPrompt": "Do not execute package code."
+}

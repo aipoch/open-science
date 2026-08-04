@@ -10,6 +10,7 @@ type ManagedFileDownloadButtonProps = SaveManagedFileRequest & {
   appearance?: 'icon' | 'primary'
   className?: string
   disabled?: boolean
+  iconSize?: 'icon-xs' | 'icon-sm' | 'icon'
   revealOnParentHover?: boolean
   wrapperClassName?: string
 }
@@ -24,6 +25,7 @@ const ManagedFileDownloadButtonState = ({
   appearance = 'icon',
   className,
   disabled = false,
+  iconSize = 'icon-xs',
   revealOnParentHover = false,
   wrapperClassName
 }: ManagedFileDownloadButtonProps): React.JSX.Element => {
@@ -116,7 +118,7 @@ const ManagedFileDownloadButtonState = ({
             <Button
               type="button"
               variant={isPrimary ? 'default' : 'ghost'}
-              size={isPrimary ? 'sm' : 'icon-xs'}
+              size={isPrimary ? 'sm' : iconSize}
               className={cn(
                 isPrimary ? 'w-24' : 'bg-bg-000/90 shadow-sm',
                 !isPrimary &&

@@ -68,10 +68,13 @@ const createProjectFilesHandlers = (
 const registerProjectFilesIpcHandlers = (
   repository: ProjectFilesQueryRepository,
   repairBackend: ProjectFilesRepairBackend,
-  recoveryBackend: ProjectFilesRecoveryBackend
+  recoveryBackend: ProjectFilesRecoveryBackend,
+  handlers: ProjectFilesHandlers = createProjectFilesHandlers(
+    repository,
+    repairBackend,
+    recoveryBackend
+  )
 ): void => {
-  const handlers = createProjectFilesHandlers(repository, repairBackend, recoveryBackend)
-
   ipcMainHandle('project-files:get-overview', (_event, request: GetProjectFilesOverviewRequest) =>
     handlers.getOverview(request)
   )

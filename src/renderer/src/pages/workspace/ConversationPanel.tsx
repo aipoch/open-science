@@ -228,6 +228,7 @@ const ConversationPanel = ({
   const specialistItems = useSpecialistStore((state) => state.items)
   const catalogSkills = useSettingsStore((state) => state.skills)
   const fileInputRef = useRef<HTMLInputElement | null>(null)
+  const globalSearchShortcut = window.api?.platform === 'darwin' ? '⌘K' : 'Ctrl+K'
   // Local so the interrupted banner can show a spinner and block a double-resume until the request settles.
   const [isResuming, setIsResuming] = useState(false)
   // Opens the reviewable, consent-gated error report dialog for a failed run.
@@ -652,7 +653,7 @@ const ConversationPanel = ({
                           onSubmit={handleSubmit}
                           onPaste={handleMessageDraftPaste}
                           disabled={!canEditDraft}
-                          placeholder="Ask anything — / for skills, @ for files"
+                          placeholder={`Ask anything — / for skills, @ for files, ${globalSearchShortcut} to search`}
                           ariaLabel="Ask anything"
                           allowedSkillIds={allowedSkillIds}
                         />

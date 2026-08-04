@@ -79,7 +79,11 @@ const NotebookDialogCell = ({
           className="mb-2 rounded-md border border-border bg-muted px-2 py-1.5"
         />
       ) : null}
-      <NotebookCodeBlock code={run.script} highlightLine={errorLine} />
+      <NotebookCodeBlock
+        code={run.script}
+        language={kind === 'repl' ? 'javascript' : kind}
+        highlightLine={errorLine}
+      />
       <NotebookRunOutputs run={run} />
     </div>
   )

@@ -35,6 +35,7 @@ type OrderedSessionPersistence = Pick<SessionPersistenceApi, 'saveSession' | 'sa
     task: LatestSessionSaveTask,
     options?: SaveSessionOptions
   ) => Promise<PersistedChatSession>
+  flush: () => Promise<void>
 }
 
 const SESSION_CONFLICT_REBASE_FIELDS = [
@@ -130,7 +131,8 @@ const createOrderedSessionPersistence = (
     saveLatestSession,
     saveSession: (session, options) =>
       enqueue(() => (options ? api.saveSession(session, options) : api.saveSession(session))),
-    saveManifest: (request) => enqueue(() => api.saveManifest(request))
+    saveManifest: (request) => enqueue(() => api.saveManifest(request)),
+    flush: () => queue.then(() => undefined)
   }
 }
 
@@ -146,6 +148,8 @@ const liveSessionPersistence = createOrderedSessionPersistence({
 
 const saveSessionInOrder = (session: PersistedChatSession): Promise<PersistedChatSession> =>
   liveSessionPersistence.saveSession(session)
+
+const flushSessionPersistence = (): Promise<void> => liveSessionPersistence.flush()
 
 // The one artifact command startup reconciliation needs; kept narrow so it is trivial to fake in tests.
 type ArtifactReconcileApi = {
@@ -675,6 +679,7 @@ const useSessionPersistence = (): SessionPersistenceState => {
 export {
   createOrderedSessionPersistence,
   createStoreSaver,
+  flushSessionPersistence,
   loadPersistedSessions,
   reconcilePendingArtifacts,
   saveSessionInOrder,

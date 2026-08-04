@@ -6,6 +6,8 @@ import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest'
 
 import { ProfileService } from './service'
 import { SpecialistRepository } from './repository'
+import type { BuiltinSpecialistRegistryEntry } from '../../shared/specialist-package'
+import { emptyFullAccessConfig, emptySelectedConfig } from '../../shared/specialist'
 
 let tmpDir: string
 let service: ProfileService
@@ -21,6 +23,62 @@ afterEach(async () => {
 })
 
 describe('ProfileService.list', () => {
+  it('fails the whole runnable catalog with structured diagnostics when any builtin is invalid', async () => {
+    const diagnostic = {
+      severity: 'error' as const,
+      code: 'dependency.builtin-skill-missing',
+      message: 'A required builtin Skill is unavailable.',
+      path: 'manifest.json',
+      relatedId: 'missing-skill'
+    }
+    const guarded = new ProfileService(new SpecialistRepository(tmpDir), {
+      load: async () => ({ entries: [], diagnostics: [diagnostic] })
+    })
+
+    await expect(guarded.ensureBuiltinCatalogReady()).rejects.toMatchObject({
+      name: 'BuiltinSpecialistConformanceError',
+      diagnostics: [diagnostic]
+    })
+    await expect(guarded.listForSettings()).rejects.toThrow(
+      /dependency\.builtin-skill-missing.*required builtin Skill/i
+    )
+  })
+
+  it('keeps custom mutation queries separate from the runnable builtin catalog', async () => {
+    const builtin: BuiltinSpecialistRegistryEntry = {
+      kind: 'builtin',
+      readonly: true,
+      id: 'builtin-curator',
+      version: '1.0.0',
+      name: 'BUILTIN_CURATOR',
+      displayName: 'Builtin Curator',
+      description: 'Curates repository evidence.',
+      systemPrompt: 'Curate the evidence.',
+      enabled: true,
+      capabilityMode: 'selected',
+      fullAccess: { excludedSkillIds: [], excludedConnectorIds: [], connectorTools: [] },
+      selectedCapabilities: { skillIds: [], connectorIds: [], connectorTools: [] }
+    }
+    const withBuiltin = new ProfileService(new SpecialistRepository(tmpDir), {
+      load: async () => ({ entries: [builtin], diagnostics: [] })
+    })
+    const custom = await withBuiltin.create({ name: 'CUSTOM_CURATOR' })
+
+    expect(await withBuiltin.list()).toEqual([custom])
+    await expect(withBuiltin.getById(builtin.id)).rejects.toThrow(/not found/i)
+    expect(await withBuiltin.resolveRunnableById(builtin.id)).toMatchObject({
+      id: builtin.id,
+      name: builtin.name,
+      revision: 0
+    })
+    expect(await withBuiltin.resolveRunnableByName(builtin.name)).toMatchObject({ id: builtin.id })
+    expect((await withBuiltin.listForSettings()).map((item) => item.kind)).toEqual([
+      'custom',
+      'builtin',
+      'reviewer'
+    ])
+  })
+
   it('returns empty array on fresh store', async () => {
     expect(await service.list()).toHaveLength(0)
   })
@@ -32,6 +90,48 @@ describe('ProfileService.list', () => {
 })
 
 describe('ProfileService.create', () => {
+  it('returns structured read-only errors for builtin and Reviewer mutation targets', async () => {
+    const builtin: BuiltinSpecialistRegistryEntry = {
+      kind: 'builtin',
+      readonly: true,
+      id: 'builtin-curator',
+      version: '1.0.0',
+      name: 'BUILTIN_CURATOR',
+      description: 'Curates repository evidence.',
+      systemPrompt: 'Curate the evidence.',
+      enabled: true,
+      capabilityMode: 'selected',
+      fullAccess: { excludedSkillIds: [], excludedConnectorIds: [], connectorTools: [] },
+      selectedCapabilities: { skillIds: [], connectorIds: [], connectorTools: [] }
+    }
+    const guarded = new ProfileService(new SpecialistRepository(tmpDir), {
+      load: async () => ({ entries: [builtin], diagnostics: [] })
+    })
+    const builtinError = { code: 'SPECIALIST_READ_ONLY', targetKind: 'builtin' }
+    const reviewerError = { code: 'SPECIALIST_READ_ONLY', targetKind: 'reviewer' }
+
+    await expect(guarded.create({ name: builtin.name })).rejects.toMatchObject(builtinError)
+    await expect(guarded.create({ name: 'Reviewer' })).rejects.toMatchObject(reviewerError)
+    await expect(guarded.resolveCustomMutationByName(builtin.name)).rejects.toMatchObject(
+      builtinError
+    )
+    await expect(guarded.resolveCustomMutationByName('Reviewer')).rejects.toMatchObject(
+      reviewerError
+    )
+    await expect(
+      guarded.update({ id: builtin.id, revision: 0, description: 'changed' })
+    ).rejects.toMatchObject(builtinError)
+    await expect(
+      guarded.rename({ id: builtin.id, name: 'RENAMED', expectedRevision: 0 })
+    ).rejects.toMatchObject(builtinError)
+    await expect(guarded.setEnabled(builtin.id, false)).rejects.toMatchObject(builtinError)
+    await expect(guarded.delete(builtin.id)).rejects.toMatchObject(builtinError)
+    await expect(guarded.attachSkill(builtin.id, 'skill-a', 0)).rejects.toMatchObject(builtinError)
+    await expect(guarded.detachSkill(builtin.id, 'skill-a', 0)).rejects.toMatchObject(builtinError)
+    await expect(guarded.duplicate(builtin.id)).rejects.toMatchObject(builtinError)
+    await expect(guarded.delete('reviewer')).rejects.toMatchObject(reviewerError)
+  })
+
   it('creates a specialist with immutable UUID', async () => {
     const view = await service.create({ name: 'RNA-seq Reviewer' })
     expect(view.id).toBeTruthy()
@@ -151,6 +251,33 @@ describe('ProfileService.setEnabled', () => {
     await expect(service.setEnabled('no-such-id', false)).rejects.toThrow()
   })
 
+  it('rejects enabling a Specialist whose imported setup is pending', async () => {
+    const repo = new SpecialistRepository(tmpDir)
+    await repo.insert({
+      id: 'pending-import',
+      name: 'PENDING_IMPORT',
+      displayName: 'Pending import',
+      description: '',
+      systemPrompt: '',
+      enabled: false,
+      setupPending: true,
+      capabilityMode: 'selected',
+      fullAccess: emptyFullAccessConfig(),
+      selectedCapabilities: emptySelectedConfig(),
+      revision: 1,
+      packageVersion: '0.1.0',
+      origin: 'imported',
+      ownedSkillIds: []
+    })
+
+    await expect(service.setEnabled('pending-import', true)).rejects.toThrow(/complete.*setup/i)
+    expect(await service.getById('pending-import')).toMatchObject({
+      enabled: false,
+      setupPending: true,
+      revision: 1
+    })
+  })
+
   it('rejects a non-boolean enabled value without corrupting the profile', async () => {
     const created = await service.create({ name: 'My Bot' })
 
@@ -167,6 +294,103 @@ describe('ProfileService.setEnabled', () => {
 })
 
 describe('ProfileService.update', () => {
+  it('atomically completes imported setup with submitted configuration and enablement', async () => {
+    const repo = new SpecialistRepository(tmpDir)
+    await repo.insert({
+      id: 'pending-import',
+      name: 'PENDING_IMPORT',
+      displayName: 'Pending import',
+      description: '',
+      systemPrompt: '',
+      enabled: false,
+      setupPending: true,
+      capabilityMode: 'selected',
+      fullAccess: emptyFullAccessConfig(),
+      selectedCapabilities: {
+        skillIds: ['bundled-skill'],
+        connectorIds: [],
+        connectorTools: []
+      },
+      revision: 1,
+      packageVersion: '0.1.0',
+      origin: 'imported',
+      ownedSkillIds: ['bundled-skill']
+    })
+
+    const completed = await service.update({
+      id: 'pending-import',
+      revision: 1,
+      displayName: 'Configured import',
+      iconKey: 'microscope',
+      colorKey: 'teal',
+      selectedCapabilities: {
+        skillIds: ['bundled-skill'],
+        connectorIds: ['pubmed'],
+        connectorTools: []
+      },
+      completeSetup: true
+    })
+
+    expect(completed).toMatchObject({
+      displayName: 'Configured import',
+      iconKey: 'microscope',
+      colorKey: 'teal',
+      enabled: true,
+      setupPending: false,
+      revision: 2,
+      selectedCapabilities: { connectorIds: ['pubmed'] }
+    })
+  })
+
+  it('keeps pending imports disabled during ordinary edits and rejects implicit enablement', async () => {
+    const repo = new SpecialistRepository(tmpDir)
+    await repo.insert({
+      id: 'pending-import',
+      name: 'PENDING_IMPORT',
+      displayName: 'Pending import',
+      description: '',
+      systemPrompt: '',
+      enabled: false,
+      setupPending: true,
+      capabilityMode: 'selected',
+      fullAccess: emptyFullAccessConfig(),
+      selectedCapabilities: emptySelectedConfig(),
+      revision: 1,
+      packageVersion: '0.1.0',
+      origin: 'imported',
+      ownedSkillIds: []
+    })
+
+    const edited = await service.update({
+      id: 'pending-import',
+      revision: 1,
+      description: 'Draft configuration'
+    })
+    expect(edited).toMatchObject({ enabled: false, setupPending: true, revision: 2 })
+    await expect(
+      service.update({ id: 'pending-import', revision: 2, enabled: true })
+    ).rejects.toThrow(/complete.*setup/i)
+    expect(await service.getById('pending-import')).toMatchObject({
+      enabled: false,
+      setupPending: true,
+      revision: 2
+    })
+  })
+
+  it('persists an explicit package-version bump through optimistic update', async () => {
+    const created = await service.create({ name: 'Versioned Bot' })
+
+    const updated = await service.update({
+      id: created.id,
+      revision: created.revision,
+      packageVersion: '1.0.0'
+    })
+
+    expect(updated).toMatchObject({ packageVersion: '1.0.0', revision: created.revision + 1 })
+    const restarted = new ProfileService(new SpecialistRepository(tmpDir))
+    await expect(restarted.getById(created.id)).resolves.toMatchObject({ packageVersion: '1.0.0' })
+  })
+
   it('atomically persists enabled with other fields and bumps revision once', async () => {
     const created = await service.create({ name: 'My Bot' })
     const updated = await service.update({

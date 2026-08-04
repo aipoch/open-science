@@ -30,7 +30,11 @@ import type {
 } from '../../shared/settings'
 import { DEFAULT_AGENT_FRAMEWORK_ID, type AgentFrameworkId } from '../agent-framework'
 import { codexStorageDir, codexSubscriptionStorageDir } from '../agent-framework/codex'
-import { parseGitHubSkillUrl } from '../skills/github-import'
+import {
+  parseGitHubRepo,
+  parseGitHubSkillUrl,
+  searchGitHubSkillRepositories
+} from '../skills/github-import'
 import { decodeBoundedBase64, SKILL_IMPORT_LIMITS } from '../skills/import-limits'
 import { ClaudeCodeSkillMaterializer, OS_SKILL_PREFIX } from '../skills/materializer'
 import { netFetch } from '../skills/net-fetch'
@@ -105,6 +109,7 @@ class SkillCatalogModule {
       source: SkillSource
       mainEnabled: boolean
       available: boolean
+      compatibility?: string
     }>
   > {
     const [skills, settings] = await Promise.all([
@@ -119,7 +124,8 @@ class SkillCatalogModule {
       source: skill.source,
       mainEnabled: !disabled.has(skill.id),
       // Catalog entries are installed skills, so they resolve to a present entry at dispatch time.
-      available: true
+      available: true,
+      ...(skill.compatibility ? { compatibility: skill.compatibility } : {})
     }))
   }
 
@@ -250,8 +256,11 @@ class SkillCatalogModule {
     return this.listSkills()
   }
 
-  async deleteSkill(request: DeleteSkillRequest): Promise<SkillView[]> {
-    await this.userSkills.delete(request.id)
+  async deleteSkill(
+    request: DeleteSkillRequest,
+    guard?: (skillId: string) => Promise<void>
+  ): Promise<SkillView[]> {
+    await this.userSkills.delete(request.id, guard)
     await this.options.repository.setSkillEnabled(request.id, true)
     return this.listSkills()
   }
@@ -315,7 +324,13 @@ class SkillCatalogModule {
   }
 
   async scanRepoSkills(request: ScanRepoRequest): Promise<ScanRepoResult> {
-    return { skills: await this.userSkills.scanRepo(request.repo, netFetch) }
+    if (parseGitHubRepo(request.repo)) {
+      return { skills: await this.userSkills.scanRepo(request.repo, netFetch) }
+    }
+    return {
+      skills: [],
+      repositories: await searchGitHubSkillRepositories(request.repo, netFetch)
+    }
   }
 
   async listAgentHomeSkills(): Promise<AgentHomeSkillView[]> {

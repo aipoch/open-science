@@ -254,7 +254,14 @@ jobs:
         continue-on-error: true
         run: |
           npm run check:web-api-map
-          npx vitest run src/preload/index.test.ts src/shared/web-rpc-contract.test.ts
+          npx vitest run \
+            src/preload/index.test.ts \
+            src/preload/electron-renderer-contract-adapter.test.ts \
+            src/shared/renderer-contract.test.ts \
+            src/shared/renderer-contract-catalog.test.ts \
+            src/shared/renderer-surface-inventory.test.ts \
+            src/shared/renderer-surface-matrix.test.ts \
+            src/shared/web-rpc-contract.test.ts
       - name: Test CLI and SDK
         id: cli_sdk
         if: ${{ contains(fromJSON(needs.preflight.outputs.plan).lanes, 'cli_sdk') }}

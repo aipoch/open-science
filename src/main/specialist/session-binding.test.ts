@@ -28,6 +28,11 @@ const makeService = (profiles: Map<string, SpecialistProfileView> = new Map()): 
       const p = profiles.get(id)
       if (!p) throw new Error(`Specialist ${id} not found.`)
       return p
+    }),
+    resolveRunnableById: vi.fn(async (id: string) => {
+      const p = profiles.get(id)
+      if (!p) throw new Error(`Runnable Specialist ${id} not found.`)
+      return p
     })
   } as unknown as ProfileService
 }
@@ -72,6 +77,24 @@ describe('SessionBindingService.setBinding', () => {
 // ---------------------------------------------------------------------------
 
 describe('SessionBindingService.resolve', () => {
+  it('resolves builtin bindings through the runnable catalog instead of the custom repository query', async () => {
+    const builtin = makeProfile({ id: 'builtin-curator', name: 'BUILTIN_CURATOR', revision: 0 })
+    const profileService = {
+      getById: vi.fn(async () => {
+        throw new Error('custom-only query must not be used')
+      }),
+      resolveRunnableById: vi.fn(async () => builtin)
+    } as unknown as ProfileService
+    const svc = new SessionBindingService(profileService)
+    svc.setBinding('restored-session', builtin.id)
+
+    await expect(svc.resolve('restored-session')).resolves.toEqual({
+      kind: 'bound',
+      profile: builtin
+    })
+    expect(profileService.getById).not.toHaveBeenCalled()
+  })
+
   it("returns 'main' when no binding is recorded", async () => {
     const svc = new SessionBindingService(makeService())
     const result = await svc.resolve('session-a')

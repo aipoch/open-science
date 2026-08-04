@@ -156,8 +156,9 @@ export const WINDOW_CLOSE_CONFIRM_REQUEST_CHANNEL = 'window:close-confirm-reques
 export const WINDOW_CLOSE_CONFIRM_RESPONSE_CHANNEL = 'window:close-confirm-response'
 
 // How a titlebar close resolves synchronously at close time: 'close' lets the window close, 'hide'
-// minimizes to tray, 'confirm' asks the user via the confirmation modal.
-export type CloseClassification = 'close' | 'hide' | 'confirm'
+// minimizes to tray, 'quit' requests app quit while retaining the renderer for teardown, and 'confirm'
+// asks the user via the confirmation modal.
+export type CloseClassification = 'close' | 'hide' | 'confirm' | 'quit'
 
 // 'close-to-tray' = Windows X (Minimize vs Quit); 'quit' = explicit quit (Quit vs Cancel).
 export type CloseConfirmVariant = 'close-to-tray' | 'quit'

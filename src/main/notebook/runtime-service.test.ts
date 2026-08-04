@@ -508,10 +508,17 @@ describe('notebook runtime service', () => {
       dataRoot: root,
       projectName: 'default-project',
       repository: new NotebookRunRepository(root),
-      getRuntimeEnablement: async () => ({
-        enabled: { [defaultInterpreter]: false },
-        installAuthorized: {}
-      }),
+      notebookRuntimeSettings: {
+        getSnapshot: async (language) => ({
+          language,
+          runtimeEnablement: {
+            enabled: { [defaultInterpreter]: false },
+            installAuthorized: {}
+          },
+          manualInterpreters: [],
+          packageMirror: {}
+        })
+      },
       environmentStateTracker,
       executorFactory: () => ({ execute, shutdown: async () => ({ reaped: true }) })
     })
@@ -3486,10 +3493,17 @@ describe('notebook runtime service', () => {
                 }
               ]
             : [],
-        getRuntimeEnablement: async () => ({
-          enabled: { [runtimeId]: true },
-          installAuthorized: {}
-        }),
+        notebookRuntimeSettings: {
+          getSnapshot: async (language) => ({
+            language,
+            runtimeEnablement: {
+              enabled: { [runtimeId]: true },
+              installAuthorized: {}
+            },
+            manualInterpreters: [],
+            packageMirror: {}
+          })
+        },
         environmentStateTracker: {
           prepareRun: vi.fn(),
           captureCompletedRun: vi.fn(),
@@ -7338,10 +7352,17 @@ describe('v4 runtime bindings & agent tools', () => {
       projectName: 'default-project',
       repository: new NotebookRunRepository(root),
       discoverRuntimes: async (language) => (language === 'python' ? [userPyA, userPyB] : []),
-      getRuntimeEnablement: async () => ({
-        enabled: { [userPyA.envId]: true, [userPyB.envId]: true },
-        installAuthorized: {}
-      }),
+      notebookRuntimeSettings: {
+        getSnapshot: async (language) => ({
+          language,
+          runtimeEnablement: {
+            enabled: { [userPyA.envId]: true, [userPyB.envId]: true },
+            installAuthorized: {}
+          },
+          manualInterpreters: [],
+          packageMirror: {}
+        })
+      },
       executorFactory: () => ({
         execute: () => {
           executionCount += 1

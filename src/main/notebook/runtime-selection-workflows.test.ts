@@ -11,7 +11,9 @@ import type { DiscoveredInterpreter } from './environment-discovery'
 const discoveryState = vi.hoisted(() => ({
   python: [] as DiscoveredInterpreter[],
   r: [] as DiscoveredInterpreter[],
-  snapshots: [] as Array<{ runtimeRoot: string; python: string[]; r: string[] }>
+  snapshots: [] as Array<{ runtimeRoot: string; python: string[]; r: string[] }>,
+  // Every discoverInterpreters invocation, so tests can assert on sweep counts.
+  calls: [] as NotebookLanguage[]
 }))
 
 vi.mock('./environment-discovery', () => ({
@@ -26,7 +28,10 @@ vi.mock('./environment-discovery', () => ({
     })
     return {}
   },
-  discoverInterpreters: async (language: NotebookLanguage) => discoveryState[language]
+  discoverInterpreters: async (language: NotebookLanguage) => {
+    discoveryState.calls.push(language)
+    return discoveryState[language]
+  }
 }))
 
 import {
@@ -129,6 +134,7 @@ beforeEach(() => {
   discoveryState.python = []
   discoveryState.r = []
   discoveryState.snapshots = []
+  discoveryState.calls = []
 })
 
 describe('runtime selection workflows', () => {
@@ -453,5 +459,98 @@ describe('runtime selection workflows', () => {
 
     expect(settingsService.selections.has('python')).toBe(false)
     expect(survey.selection).toBeUndefined()
+  })
+})
+
+describe('package-listing workflows', () => {
+  const fakeEnv = (
+    provenance: DiscoveredInterpreter['provenance'],
+    envId: string,
+    overrides: Partial<DiscoveredInterpreter> = {}
+  ): DiscoveredInterpreter => ({
+    language: 'python',
+    provenance,
+    envId,
+    interpreterPath: envId,
+    label: envId,
+    runnable: true,
+    ...overrides
+  })
+
+  const fakeWorkflows = (
+    listPackages: NonNullable<RuntimeSelectionWorkflowDeps['listPackages']>
+  ): ReturnType<typeof createRuntimeSelectionWorkflows> =>
+    createRuntimeSelectionWorkflows({
+      settingsService: fakeSettingsService(),
+      runtimeRoot: () => '/data/runtime',
+      registry: fakeRegistry(),
+      listPackages
+    })
+
+  it('lists packages for a DISCOVERED env, passing the discovery env (not renderer data) through', async () => {
+    discoveryState.python = [fakeEnv('app-managed', '/managed/a')]
+    const listed: DiscoveredInterpreter[] = []
+    const workflows = fakeWorkflows(async (env) => {
+      listed.push(env)
+      return [{ name: 'numpy', version: '2.1.3', build: 'b0', channel: 'conda-forge' }]
+    })
+
+    const result = await workflows.listPackages({ language: 'python', envId: '/managed/a' })
+
+    expect(result).toEqual([
+      { name: 'numpy', version: '2.1.3', build: 'b0', channel: 'conda-forge' }
+    ])
+    expect(listed).toEqual([fakeEnv('app-managed', '/managed/a')])
+  })
+
+  it('rejects an envId that discovery does not know, so arbitrary paths cannot be probed', async () => {
+    discoveryState.python = [fakeEnv('app-managed', '/managed/a')]
+    const listPackages = vi.fn()
+    const workflows = fakeWorkflows(listPackages)
+
+    await expect(
+      workflows.listPackages({ language: 'python', envId: '/etc/passwd' })
+    ).rejects.toThrow(/Unknown python environment/)
+    expect(listPackages).not.toHaveBeenCalled()
+  })
+
+  it('counts every runnable env from ONE discovery sweep, skipping non-runnable envs', async () => {
+    discoveryState.python = [
+      fakeEnv('app-managed', '/managed/a'),
+      fakeEnv('user-own', '/usr/bin/python3'),
+      fakeEnv('user-own', '/broken/python', { runnable: false })
+    ]
+    const listed: string[] = []
+    const workflows = fakeWorkflows(async (env) => {
+      listed.push(env.envId)
+      return env.envId === '/managed/a'
+        ? [
+            { name: 'numpy', version: '2.1.3' },
+            { name: 'pandas', version: '2.2.3' }
+          ]
+        : [{ name: 'requests', version: '2.32.3' }]
+    })
+
+    const counts = await workflows.listPackageCounts({ language: 'python' })
+
+    // One sweep regardless of env count; non-runnable envs are never listed.
+    expect(discoveryState.calls).toEqual(['python'])
+    expect(listed.sort()).toEqual(['/managed/a', '/usr/bin/python3'])
+    expect(counts).toEqual({ '/managed/a': 2, '/usr/bin/python3': 1 })
+  })
+
+  it('maps a failed listing to null (badge omitted) without failing the other envs', async () => {
+    discoveryState.python = [
+      fakeEnv('app-managed', '/managed/a'),
+      fakeEnv('user-own', '/usr/bin/python3')
+    ]
+    const workflows = fakeWorkflows(async (env) => {
+      if (env.envId === '/usr/bin/python3') throw new Error('pip failed')
+      return [{ name: 'numpy', version: '2.1.3' }]
+    })
+
+    const counts = await workflows.listPackageCounts({ language: 'python' })
+
+    expect(counts).toEqual({ '/managed/a': 1, '/usr/bin/python3': null })
   })
 })

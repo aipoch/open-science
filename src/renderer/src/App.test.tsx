@@ -661,7 +661,7 @@ describe('App startup routing', () => {
     const pending = {
       id: 'approval-recovered',
       sessionId: 'session-1',
-      attachmentName: 'recovered.skill',
+      source: { kind: 'attachment', label: 'recovered.skill' },
       previews: [],
       skipped: []
     }

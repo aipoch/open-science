@@ -270,7 +270,7 @@ class ElectronAppHarness implements ElectronApp {
   async dispose(): Promise<void> {
     await this.close().catch(() => undefined)
     await makeTreeWritable(this.testRoot)
-    await rm(this.testRoot, { force: true, recursive: true })
+    await rm(this.testRoot, { force: true, maxRetries: 5, recursive: true, retryDelay: 200 })
     this.rendererFailures.assertNoFailures()
   }
 

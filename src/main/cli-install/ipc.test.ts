@@ -30,7 +30,7 @@ vi.mock('../logger', () => ({
 
 vi.mock('./launcher', () => launcher)
 
-import { registerCliInstallIpcHandlers } from './ipc'
+import { registerCliInstallIpcHandlers, type CliCommandOwner } from './ipc'
 
 const INSTALLED = { installed: true, target: '/home/u/.local/bin/open-science', onPath: true }
 
@@ -41,6 +41,20 @@ beforeEach(() => {
 })
 
 describe('registerCliInstallIpcHandlers', () => {
+  it('delegates every channel to one injected command owner', async () => {
+    handlers.clear()
+    const owner: CliCommandOwner = {
+      getStatus: vi.fn().mockResolvedValue(INSTALLED),
+      install: vi.fn().mockResolvedValue(INSTALLED),
+      uninstall: vi.fn().mockResolvedValue({ ...INSTALLED, installed: false })
+    }
+
+    expect(registerCliInstallIpcHandlers(owner)).toBe(owner)
+    await expect(handlers.get('cli:get-status')?.()).resolves.toBe(INSTALLED)
+    await expect(handlers.get('cli:install')?.()).resolves.toBe(INSTALLED)
+    await expect(handlers.get('cli:uninstall')?.()).resolves.toMatchObject({ installed: false })
+  })
+
   it('registers the three cli channels', () => {
     expect([...handlers.keys()].sort()).toEqual(['cli:get-status', 'cli:install', 'cli:uninstall'])
   })

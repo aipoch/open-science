@@ -1,4 +1,5 @@
 import type { PreviewFileRendererProps } from './preview-types'
+import { CodePreviewRenderer } from './renderers/CodePreview'
 import { CsvPreviewRenderer } from './renderers/CsvPreview'
 import { FastaPreviewRenderer } from './renderers/FastaPreview'
 import { HtmlPreviewRenderer } from './renderers/HtmlPreview'
@@ -17,6 +18,8 @@ export const renderPreviewFile = ({
   item
 }: PreviewFileRendererProps): React.JSX.Element | undefined => {
   switch (item.format) {
+    case 'code':
+      return <CodePreviewRenderer item={item} />
     case 'csv':
       return <CsvPreviewRenderer item={item} />
     case 'fasta':

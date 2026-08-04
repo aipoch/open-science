@@ -1,8 +1,6 @@
 import { ipcMainHandle } from '../ipc-handler-registry'
 
 import {
-  isAppIconVariant,
-  isReasoningEffort,
   type AppIconPreview,
   type SetAppIconVariantRequest,
   type CreateSkillRequest,
@@ -45,6 +43,14 @@ import { SettingsService } from './service'
 import type { SettingsWorkflows } from './workflows'
 import { createLogger } from '../logger'
 import { broadcastToRenderers } from '../renderer-broadcast'
+import {
+  readAppIconVariant,
+  readClosePreference,
+  readConversationSkillImportEnabled,
+  readIsolatedClaudeToken,
+  readNotificationsEnabled,
+  readReasoningEffort
+} from './transport-validation'
 
 const log = createLogger('settings-ipc')
 
@@ -122,49 +128,31 @@ const registerSettingsIpcHandlers = ({
   ipcMainHandle(
     'settings:set-reasoning-effort',
     async (_event, request: SetReasoningEffortRequest) => {
-      // Renderer payloads are untyped at runtime: reject anything outside the known levels instead
-      // of persisting a value the agent-mapping layers can't interpret.
-      if (!isReasoningEffort(request?.effort)) {
-        throw new Error(`Unknown reasoning effort: ${String(request?.effort)}`)
-      }
-
-      log.info('set reasoning effort requested', { effort: request.effort })
-      return workflows.runtime.setReasoningEffort(request)
+      const effort = readReasoningEffort(request)
+      log.info('set reasoning effort requested', { effort })
+      return workflows.runtime.setReasoningEffort({ effort })
     }
   )
   ipcMainHandle(
     'settings:set-notifications-enabled',
     async (_event, request: SetNotificationsEnabledRequest) => {
-      // Renderer payloads are untyped at runtime: only a real boolean may persist.
-      if (typeof request?.enabled !== 'boolean') {
-        throw new Error(`Invalid notifications-enabled flag: ${String(request?.enabled)}`)
-      }
-
-      log.info('set notifications enabled requested', { enabled: request.enabled })
-      return service.setNotificationsEnabled(request.enabled)
+      const enabled = readNotificationsEnabled(request)
+      log.info('set notifications enabled requested', { enabled })
+      return service.setNotificationsEnabled(enabled)
     }
   )
   ipcMainHandle(
     'settings:set-conversation-skill-import-enabled',
     async (_event, request: SetConversationSkillImportEnabledRequest) => {
-      if (typeof request?.enabled !== 'boolean') {
-        throw new Error(
-          `Invalid conversation-skill-import-enabled flag: ${String(request?.enabled)}`
-        )
-      }
-
-      log.info('set conversation Skill import enabled requested', { enabled: request.enabled })
-      return workflows.skills.setConversationSkillImportEnabled(request)
+      const enabled = readConversationSkillImportEnabled(request)
+      log.info('set conversation Skill import enabled requested', { enabled })
+      return workflows.skills.setConversationSkillImportEnabled({ enabled })
     }
   )
   ipcMainHandle(
     'settings:set-close-preference',
     async (_event, request: SetClosePreferenceRequest) => {
-      const preference = request?.preference
-      if (preference !== undefined && preference !== 'minimize' && preference !== 'quit') {
-        throw new Error(`Invalid close preference: ${String(preference)}`)
-      }
-
+      const preference = readClosePreference(request)
       log.info('set close preference requested', { preference: preference ?? 'ask' })
       return service.setClosePreference(preference)
     }
@@ -173,13 +161,9 @@ const registerSettingsIpcHandlers = ({
   ipcMainHandle(
     'settings:set-app-icon-variant',
     async (_event, request: SetAppIconVariantRequest) => {
-      // Renderer payloads are untyped at runtime: only a known variant may persist.
-      if (!isAppIconVariant(request?.variant)) {
-        throw new Error(`Unknown app icon variant: ${String(request?.variant)}`)
-      }
-
-      log.info('set app icon variant requested', { variant: request.variant })
-      return workflows.appearance.setAppIconVariant(request.variant)
+      const variant = readAppIconVariant(request)
+      log.info('set app icon variant requested', { variant })
+      return workflows.appearance.setAppIconVariant(variant)
     }
   )
   ipcMainHandle('settings:validate-provider', (_event, request: ValidateProviderRequest) =>
@@ -189,15 +173,9 @@ const registerSettingsIpcHandlers = ({
   ipcMainHandle('settings:cancel-claude-login', () => service.cancelClaudeLogin())
   ipcMainHandle('settings:login-shared-claude', () => workflows.runtime.loginClaudeShared())
   ipcMainHandle('settings:logout-shared-claude', () => workflows.runtime.logoutClaudeShared())
-  ipcMainHandle('settings:login-isolated-claude', async (_event, token: string) => {
-    // Renderer payloads are untyped at runtime: reject anything that isn't a string before it
-    // reaches the controller, so a malicious or corrupt payload can never be coerced into a save.
-    if (typeof token !== 'string') {
-      throw new Error('Claude sign-in token must be a string.')
-    }
-
-    return workflows.runtime.loginIsolatedClaude(token)
-  })
+  ipcMainHandle('settings:login-isolated-claude', (_event, token: string) =>
+    workflows.runtime.loginIsolatedClaude(readIsolatedClaudeToken(token))
+  )
   ipcMainHandle('settings:login-isolated-claude-browser', () =>
     workflows.runtime.loginIsolatedClaudeBrowser()
   )

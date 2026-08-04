@@ -34,7 +34,7 @@ import {
 } from './provisioner'
 import { CHILD_UNCONFIRMED } from './provisioner-runtime'
 import { envsLockDir } from './runtime-relocation'
-import { serializeProvisioner } from './env-ipc'
+import { serializeProvisioner } from './environment-operation-foundation'
 import { withExclusiveCacheLock, withSharedCacheLock } from './pkgs-cache-lock'
 import { micromambaCacheLockKey, selectMicromambaCache } from './micromamba-cache'
 import {

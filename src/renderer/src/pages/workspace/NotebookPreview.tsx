@@ -127,7 +127,11 @@ const NotebookRunCell = ({
         inputFiles={run.inputFiles ?? []}
         className="mb-2 rounded-md border border-border-100 bg-bg-100 px-2 py-1.5"
       />
-      <NotebookCodeBlock code={run.script} highlightLine={errorLine} />
+      <NotebookCodeBlock
+        code={run.script}
+        language={kind === 'repl' ? 'javascript' : kind}
+        highlightLine={errorLine}
+      />
       <NotebookRunOutputs run={run} />
     </div>
   )

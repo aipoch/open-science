@@ -91,6 +91,55 @@ describe('Web RPC contract', () => {
     ])
   })
 
+  it('pins the local Web Notebook, environment, and runtime surfaces', () => {
+    const invokePaths = Object.keys(WEB_INVOKE_CHANNELS)
+    const eventPaths = Object.keys(WEB_EVENT_CHANNELS)
+
+    expect(invokePaths.filter((path) => path.startsWith('notebook.'))).toEqual([
+      'notebook.appendCodeCell',
+      'notebook.beginCodeCell',
+      'notebook.execute',
+      'notebook.exportIpynb',
+      'notebook.exportIpynbAll',
+      'notebook.finishCodeCell',
+      'notebook.getReference',
+      'notebook.readInputPreview',
+      'notebook.restart',
+      'notebook.runCell',
+      'notebook.shutdown',
+      'notebook.state'
+    ])
+    expect(invokePaths.filter((path) => path.startsWith('notebookEnv.'))).toEqual([
+      'notebookEnv.cancel',
+      'notebookEnv.getStatus',
+      'notebookEnv.provision',
+      'notebookEnv.repair'
+    ])
+    expect(invokePaths.filter((path) => path.startsWith('runtime.'))).toEqual([
+      'runtime.describeUsage',
+      'runtime.getEnablement',
+      'runtime.listEnvironments',
+      'runtime.listPackageCounts',
+      'runtime.listPackages',
+      'runtime.pickInterpreter',
+      'runtime.registerInterpreter',
+      'runtime.setEnvironmentEnabled',
+      'runtime.setInstallAuthorized',
+      'runtime.setSelection',
+      'runtime.survey',
+      'runtime.unregisterInterpreter'
+    ])
+    expect(eventPaths.filter((path) => path.startsWith('notebook.'))).toEqual([
+      'notebook.onAvailable',
+      'notebook.onChanged'
+    ])
+    // This generated mapping remains dormant for Web: production publishes environment progress
+    // directly to Electron BrowserWindows and never adds it to ApplicationEventMap.
+    expect(eventPaths.filter((path) => path.startsWith('notebookEnv.'))).toEqual([
+      'notebookEnv.onProgress'
+    ])
+  })
+
   it('validates versioned request and response envelopes at runtime', () => {
     expect(
       webRpcRequestSchema.safeParse({

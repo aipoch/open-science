@@ -67,10 +67,12 @@ describe('broadcastToRenderers', () => {
     live.webContents.send.mockImplementation(() => order.push('electron'))
     const uninstall = installRendererBroadcastEventHub(hub)
     const remove = addRendererBroadcastSink(() => order.push('sink'))
+    const payload = { sessionId: 'session-1', targetName: 'ANALYST' }
 
-    broadcastToRenderers('specialist:catalog-changed', undefined)
+    hub.publish('specialist:pending-switch', payload)
 
     expect(order).toEqual(['electron', 'sink'])
+    expect(live.webContents.send).toHaveBeenCalledWith('specialist:pending-switch', payload)
     remove()
     uninstall()
     hub.dispose()

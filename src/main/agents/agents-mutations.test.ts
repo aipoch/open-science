@@ -54,6 +54,11 @@ const makeProfileService = (
       if (!found) throw new Error(`Specialist "${name}" not found.`)
       return found
     },
+    async resolveCustomMutationByName(name: string) {
+      const found = stored.find((p) => p.name === name)
+      if (!found) throw new Error(`Specialist "${name}" not found.`)
+      return found
+    },
     async create(input: CreateSpecialistInput) {
       calls.push({ method: 'create', args: [input] })
       const view: SpecialistProfileView = {

@@ -2,6 +2,7 @@ import { describe, expect, it, vi, type MockedFunction } from 'vitest'
 
 import type { AcpRuntimeEvent } from '../../shared/acp'
 import type { PersistedChatSession } from '../../shared/session-persistence'
+import type { ApplicationCommandByNameDispatcher } from '../application-command-composition'
 import { createTaskCallerContext, type CallerContext } from '../caller-context'
 import type { TaskAgentPort } from '../tasks/task-runner'
 import { HeadlessTaskApi } from './task-api'
@@ -41,7 +42,35 @@ const createAgent = (overrides: Partial<TaskAgentMock> = {}): TaskAgentMock => (
   ...overrides
 })
 
+const commandsFrom = (
+  invoke: (channel: string, callerContext: CallerContext, args: unknown[]) => Promise<unknown>
+): ApplicationCommandByNameDispatcher => ({
+  commandNames: () => [],
+  invoke: (channel, invocation) => invoke(channel, invocation.callerContext, [...invocation.args])
+})
+
 describe('HeadlessTaskApi adapter', () => {
+  it('dispatches façade operations through the narrow Task command view', async () => {
+    const commandInvoke = vi.fn(async () => [project])
+    const api = new HeadlessTaskApi({
+      commands: {
+        commandNames: () => ['projects:list'],
+        invoke: commandInvoke
+      },
+      agent: createAgent()
+    })
+
+    await expect(api.listProjects()).resolves.toEqual([project])
+    expect(commandInvoke).toHaveBeenCalledWith(
+      'projects:list',
+      expect.objectContaining({
+        callerContext: taskCallerContext(),
+        callerLease: expect.objectContaining({ leaseId: 'headless-task-api' }),
+        args: []
+      })
+    )
+  })
+
   it('maps public query and artifact commands to the compatibility façade', async () => {
     const session: PersistedChatSession = {
       id: 'session-query',
@@ -82,7 +111,7 @@ describe('HeadlessTaskApi adapter', () => {
       if (channel === 'preview-resources:release') return undefined
       throw new Error(`Unexpected RPC channel: ${channel}`)
     })
-    const api = new HeadlessTaskApi({ rpc: { invoke }, agent: createAgent() })
+    const api = new HeadlessTaskApi({ commands: commandsFrom(invoke), agent: createAgent() })
 
     await expect(api.createProject({ name: 'Created' })).resolves.toMatchObject({
       id: 'project-created',
@@ -148,7 +177,7 @@ describe('HeadlessTaskApi adapter', () => {
     })
     const ids = ['attached-user', 'attached-run', 'attached-agent']
     const api = new HeadlessTaskApi(
-      { rpc: { invoke }, agent },
+      { commands: commandsFrom(invoke), agent },
       {
         createId: () => ids.shift() ?? 'generated-id',
         subscribeEvents: (listener) => {
@@ -204,7 +233,7 @@ describe('HeadlessTaskApi adapter', () => {
     })
     const ids = ['detached-user', 'detached-run', 'detached-agent']
     const api = new HeadlessTaskApi(
-      { rpc: { invoke }, agent },
+      { commands: commandsFrom(invoke), agent },
       { createId: () => ids.shift() ?? 'generated-id' }
     )
 
@@ -247,7 +276,7 @@ describe('HeadlessTaskApi adapter', () => {
       })),
       prompt: vi.fn(async () => promptGate)
     })
-    const api = new HeadlessTaskApi({ rpc: { invoke }, agent })
+    const api = new HeadlessTaskApi({ commands: commandsFrom(invoke), agent })
     let authorizationCurrent = true
     const context = createTaskCallerContext({
       location: 'remote',
@@ -293,7 +322,7 @@ describe('HeadlessTaskApi adapter', () => {
       throw new Error(`Unexpected RPC channel: ${channel}`)
     })
     const agent = createAgent()
-    const api = new HeadlessTaskApi({ rpc: { invoke }, agent })
+    const api = new HeadlessTaskApi({ commands: commandsFrom(invoke), agent })
     const context = createTaskCallerContext({
       location: 'remote',
       isAuthorizationCurrent: () => authorizationCurrent

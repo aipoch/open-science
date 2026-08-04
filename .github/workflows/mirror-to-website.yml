@@ -24,7 +24,7 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - name: Checkout (for the manifest script)
-        uses: actions/checkout@v7
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
 
       # Tag from the Release event, or the manual input; version is the tag without a leading 'v'.
       - name: Resolve tag and version
@@ -45,9 +45,12 @@ jobs:
         run: gh release download "${{ steps.ref.outputs.tag }}" --repo "${{ github.repository }}" --dir dist-assets
 
       - name: Set up Node
-        uses: actions/setup-node@v7
+        uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7
         with:
           node-version: 20
+
+      - name: Install manifest dependencies
+        run: npm ci --ignore-scripts --omit=dev --omit=optional --no-audit --no-fund
 
       # Build version.json from the downloaded files. Missing platforms warn (not fail) inside the
       # script, so a partial release still yields a usable manifest. Notes/date are pulled from the
@@ -69,9 +72,52 @@ jobs:
           export NOTES RELEASE_DATE
           node scripts/generate-version-manifest.mjs
 
-      # Credentials + region for aws-cli. The region alone lets aws-cli resolve the correct AWS S3
-      # endpoint on its own — do NOT pass --endpoint-url: a bucket/website-style endpoint there makes
-      # ListObjectsV2 return NoSuchKey and breaks the sync.
+      # electron-updater feed files (win latest.yml, linux latest-linux.yml, and the per-arch mac
+      # feeds arm64-mac.yml / x64-mac.yml) must live at the channel root (a stable url the updater
+      # always polls), but the installers + blockmaps they reference live under releases/<version>/.
+      # Rewrite each feed's bare `path:`/`url:` filenames to that versioned subpath so the updater
+      # resolves them against the channel root. Missing feeds (e.g. a mac-only backfill) are skipped.
+      - name: Rewrite update feed paths
+        env:
+          VERSION: ${{ steps.ref.outputs.version }}
+        run: |
+          shopt -s nullglob
+          for yml in dist-assets/latest.yml dist-assets/latest-linux.yml dist-assets/*-mac.yml; do
+            [ -f "$yml" ] || continue
+            node -e '
+              const fs = require("fs");
+              const file = process.argv[1];
+              const version = process.env.VERSION;
+              const text = fs.readFileSync(file, "utf8").replace(
+                /^(\s*(?:- )?(?:path|url):\s*)(?!https?:|releases\/)([^\s].*)$/gm,
+                (_m, prefix, name) => `${prefix}releases/${version}/${name}`
+              );
+              fs.writeFileSync(file, text);
+              process.stdout.write(text);
+            ' "$yml"
+          done
+
+      # electron-builder never writes releaseNotes into the feeds, so already-installed clients (which
+      # read update notes only from the feed) show an empty "What's new" and only a GitHub link. Inject
+      # the same condensed notes version.json carries into each feed's releaseNotes. inject-feed-notes
+      # parses + re-serializes with js-yaml (never hand-writes YAML) and re-parses its own output, so a
+      # malformed feed fails the job here — before any upload — rather than reaching the installed base.
+      # js-yaml comes from the committed lockfile installed above with package scripts disabled.
+      - name: Inject release notes into update feeds
+        run: |
+          shopt -s nullglob
+          feeds=()
+          for yml in dist-assets/latest.yml dist-assets/latest-linux.yml dist-assets/*-mac.yml; do
+            [ -f "$yml" ] && feeds+=("$yml")
+          done
+          if [ ${#feeds[@]} -eq 0 ]; then
+            echo "no update feeds present, skipping notes injection"
+            exit 0
+          fi
+          node scripts/inject-feed-notes.mjs version.json "${feeds[@]}"
+
+      # Credentials + region are configured only after dependency installation and every local
+      # manifest/feed transformation succeeds. The region lets aws-cli resolve the S3 endpoint.
       - name: Configure AWS credentials
         env:
           S3_ACCESS_KEY_ID: ${{ secrets.S3_ACCESS_KEY_ID }}
@@ -107,52 +153,6 @@ jobs:
           aws s3 cp version.json \
             "s3://$S3_BUCKET/$S3_PREFIX/version.json" \
             --cache-control "no-cache" --content-type "application/json" --only-show-errors
-
-      # electron-updater feed files (win latest.yml, linux latest-linux.yml, and the per-arch mac
-      # feeds arm64-mac.yml / x64-mac.yml) must live at the channel root (a stable url the updater
-      # always polls), but the installers + blockmaps they reference live under releases/<version>/.
-      # Rewrite each feed's bare `path:`/`url:` filenames to that versioned subpath so the updater
-      # resolves them against the channel root. Missing feeds (e.g. a mac-only backfill) are skipped.
-      - name: Rewrite update feed paths
-        env:
-          VERSION: ${{ steps.ref.outputs.version }}
-        run: |
-          shopt -s nullglob
-          for yml in dist-assets/latest.yml dist-assets/latest-linux.yml dist-assets/*-mac.yml; do
-            [ -f "$yml" ] || continue
-            node -e '
-              const fs = require("fs");
-              const file = process.argv[1];
-              const version = process.env.VERSION;
-              const text = fs.readFileSync(file, "utf8").replace(
-                /^(\s*(?:- )?(?:path|url):\s*)(?!https?:|releases\/)([^\s].*)$/gm,
-                (_m, prefix, name) => `${prefix}releases/${version}/${name}`
-              );
-              fs.writeFileSync(file, text);
-              process.stdout.write(text);
-            ' "$yml"
-          done
-
-      # electron-builder never writes releaseNotes into the feeds, so already-installed clients (which
-      # read update notes only from the feed) show an empty "What's new" and only a GitHub link. Inject
-      # the same condensed notes version.json carries into each feed's releaseNotes. inject-feed-notes
-      # parses + re-serializes with js-yaml (never hand-writes YAML) and re-parses its own output, so a
-      # malformed feed fails the job here — before any upload — rather than reaching the installed base.
-      # js-yaml is installed on its own (this job never runs npm ci) with scripts off so no electron
-      # postinstall fires.
-      - name: Inject release notes into update feeds
-        run: |
-          npm install js-yaml@^4 --no-save --no-package-lock --no-audit --no-fund --ignore-scripts
-          shopt -s nullglob
-          feeds=()
-          for yml in dist-assets/latest.yml dist-assets/latest-linux.yml dist-assets/*-mac.yml; do
-            [ -f "$yml" ] && feeds+=("$yml")
-          done
-          if [ ${#feeds[@]} -eq 0 ]; then
-            echo "no update feeds present, skipping notes injection"
-            exit 0
-          fi
-          node scripts/inject-feed-notes.mjs version.json "${feeds[@]}"
 
       # Publish the rewritten feeds to the channel root as mutable, no-cache objects (same policy as
       # version.json), so the updater always sees the latest version immediately.

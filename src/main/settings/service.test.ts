@@ -18,6 +18,7 @@ import type {
 import type { ClaudeSharedAuthControllerPort } from './claude-shared-auth'
 import type { UserSkillRepository } from '../skills/user-skill-repository'
 import type { SystemProxyEnvironment } from './system-proxy'
+import type { AgentBackendResolutionContext } from './backend-resolver'
 
 // Reversible fake safeStorage so provider keys can be encrypted/decrypted without an OS keychain.
 vi.mock('electron', () => ({
@@ -46,9 +47,18 @@ const { SkillRegistry } = await import('../skills/registry')
 const { managedClaudeDir } = await import('./managed-claude')
 const { managedOpencodeDir } = await import('./managed-opencode')
 const { netFetch } = await import('../skills/net-fetch')
+const { UserSkillSpecialistPackageAdapter } = await import('../skills/specialist-package-adapter')
 const { net: mockedNet } = (await import('electron')) as unknown as {
   net: { fetch: ReturnType<typeof vi.fn> }
 }
+
+// Production captures the non-secret framework selection at generation construction, then resolves
+// current credentials and provider configuration at spawn. Integration tests use that same public seam.
+const resolveActiveBackend = async (
+  service: InstanceType<typeof SettingsService>,
+  context: AgentBackendResolutionContext = {}
+): ReturnType<InstanceType<typeof SettingsService>['resolveAgentBackend']> =>
+  service.resolveAgentBackend(await service.captureActiveAgentBackendSelection(), context)
 
 let storageRoot: string
 let repository: InstanceType<typeof SettingsRepository>
@@ -1085,7 +1095,7 @@ describe('SettingsService: providers', () => {
       lastValidatedAt: Date.now()
     })
     await service.setActiveProvider(view.id)
-    const backend = await service.resolveActiveAgentBackend()
+    const backend = await resolveActiveBackend(service)
     const content = JSON.parse(backend.env?.OPENCODE_CONFIG_CONTENT ?? '{}')
     expect(content.provider.anthropic.models.m.limit.context).toBe(64_000)
   })
@@ -1112,7 +1122,7 @@ describe('SettingsService: providers', () => {
       lastValidatedAt: Date.now()
     })
     await service.setActiveProvider(view.id)
-    const backend = await service.resolveActiveAgentBackend()
+    const backend = await resolveActiveBackend(service)
     const content = JSON.parse(backend.env?.OPENCODE_CONFIG_CONTENT ?? '{}')
     expect(content.provider.anthropic.models.m.limit.context).toBe(200_000)
   })
@@ -1133,7 +1143,7 @@ describe('SettingsService: providers', () => {
     ).providers[0]
     await service.setActiveProvider(provider.id)
 
-    const backend = await service.resolveActiveAgentBackend({
+    const backend = await resolveActiveBackend(service, {
       systemPromptAppends: ['Stable Open Science app guidance.']
     })
 
@@ -1881,7 +1891,9 @@ describe('SettingsService: preflight & spawn config', () => {
     })
     await service.setActiveProvider(CLAUDE_SHARED_PROVIDER_ID)
 
-    await expect(service.getClaudeSharedStatus()).resolves.toMatchObject({ ok: true })
+    await expect(
+      service.validateProvider({ providerId: CLAUDE_SHARED_PROVIDER_ID })
+    ).resolves.toMatchObject({ ok: true })
     await expect(service.getPreflight()).resolves.toMatchObject({ activeProviderReady: true })
 
     expect(claudeSharedAuth.getStatus).toHaveBeenCalledOnce()
@@ -2100,7 +2112,7 @@ describe('SettingsService: preflight & spawn config', () => {
     await service.setActiveProvider(provider.id)
     vi.stubEnv('OPEN_SCIENCE_AGENT_FRAMEWORK', 'codex')
 
-    const backend = await service.resolveActiveAgentBackend({
+    const backend = await resolveActiveBackend(service, {
       systemPromptAppends: ['Stable Open Science developer guidance.']
     })
     const selection = await service.captureActiveAgentBackendSelection()
@@ -2178,7 +2190,7 @@ describe('SettingsService: preflight & spawn config', () => {
     await service.setActiveProvider(provider.id, 'gpt-5.4')
     vi.stubEnv('OPEN_SCIENCE_AGENT_FRAMEWORK', 'codex')
 
-    const backend = await service.resolveActiveAgentBackend()
+    const backend = await resolveActiveBackend(service)
 
     expect(JSON.parse(backend.env.CODEX_CONFIG ?? '{}')).not.toHaveProperty('model_catalog_json')
   })
@@ -2216,7 +2228,7 @@ describe('SettingsService: preflight & spawn config', () => {
     await service.setActiveProvider(provider.id, 'gpt-5.4')
     vi.stubEnv('OPEN_SCIENCE_AGENT_FRAMEWORK', 'codex')
 
-    const backend = await service.resolveActiveAgentBackend()
+    const backend = await resolveActiveBackend(service)
 
     expect(JSON.parse(backend.env.CODEX_CONFIG ?? '{}')).toHaveProperty('model_catalog_json')
   })
@@ -2255,7 +2267,7 @@ describe('SettingsService: preflight & spawn config', () => {
     ).providers[0]
     await service.setActiveProvider(provider.id)
 
-    const backend = await service.resolveActiveAgentBackend()
+    const backend = await resolveActiveBackend(service)
 
     expect(backend.executablePath).toBe(adapterPath)
     expect(await readFile(adapterPath, 'utf8')).toContain(
@@ -2300,7 +2312,7 @@ describe('SettingsService: preflight & spawn config', () => {
     ).providers[0]
     await service.setActiveProvider(provider.id)
 
-    const backend = await service.resolveActiveAgentBackend()
+    const backend = await resolveActiveBackend(service)
 
     expect(backend.executablePath).toBe(managedAdapterPath)
     expect(backend.env.CODEX_PATH).toBe(globalNativePath)
@@ -2339,7 +2351,7 @@ describe('SettingsService: preflight & spawn config', () => {
     ).providers[0]
     await service.setActiveProvider(provider.id)
 
-    await expect(service.resolveActiveAgentBackend()).rejects.toThrow(
+    await expect(resolveActiveBackend(service)).rejects.toThrow(
       'Open Science Codex ACP adapter not found. Install Codex in settings.'
     )
   })
@@ -2368,7 +2380,7 @@ describe('SettingsService: preflight & spawn config', () => {
     ).providers[0]
     await service.setActiveProvider(provider.id)
 
-    await expect(service.resolveActiveAgentBackend()).rejects.toThrow(
+    await expect(resolveActiveBackend(service)).rejects.toThrow(
       'Codex native executable not found. Re-detect or install Codex in settings.'
     )
   })
@@ -2450,7 +2462,7 @@ describe('SettingsService: preflight & spawn config', () => {
     )
 
     expect(await service.getPreflight()).toMatchObject({ activeProviderReady: true })
-    const backend = await service.resolveActiveAgentBackend()
+    const backend = await resolveActiveBackend(service)
 
     expect(backend.backendId).toBe('codex:builtin-codex-isolated')
     expect(backend.sessionModel).toBe('gpt-5.6-terra')
@@ -2485,7 +2497,7 @@ describe('SettingsService: preflight & spawn config', () => {
       codexDetected: { path: adapterPath, version: 'codex-acp 1.1.4' },
       resolveCodexProxyEnvironment: () => Promise.resolve(undefined)
     })
-    const fallbackBackend = await fallbackService.resolveActiveAgentBackend()
+    const fallbackBackend = await resolveActiveBackend(fallbackService)
 
     expect(fallbackBackend.proxyEnvironmentMode).toBe('inherit')
     expect(fallbackBackend.env).not.toHaveProperty('HTTP_PROXY')
@@ -2516,14 +2528,14 @@ describe('SettingsService: preflight & spawn config', () => {
     })
     await service.setActiveProvider(CODEX_SHARED_PROVIDER_ID)
 
-    const backend = await service.resolveActiveAgentBackend()
+    const backend = await resolveActiveBackend(service)
 
     expect(backend.sessionModel).toBeUndefined()
     expect(backend.sessionModelRequired).toBeUndefined()
   })
 
   it('declares the model image capability in the resolved OpenCode backend config', async () => {
-    // resolveActiveAgentBackend honors this forced-framework env above stored settings; set it
+    // AgentBackendResolver honors this forced-framework env above stored settings; set it
     // explicitly (a prior Codex test leaves it stubbed to 'codex') so this resolves OpenCode.
     vi.stubEnv('OPEN_SCIENCE_AGENT_FRAMEWORK', 'opencode')
     await repository.setAgentFramework('opencode')
@@ -2535,7 +2547,7 @@ describe('SettingsService: preflight & spawn config', () => {
     ).providers[0]
     await service.setActiveProvider(provider.id)
 
-    const backend = await service.resolveActiveAgentBackend()
+    const backend = await resolveActiveBackend(service)
 
     // End-to-end guard for the whole capability chain: resolveProvider must carry supportsImageInput
     // for the multimodal default (kimi-k3) and prepareModelConfig must surface it, so OpenCode receives
@@ -2565,13 +2577,13 @@ describe('SettingsService: preflight & spawn config', () => {
     ).providers[0]
 
     await service.setActiveProvider(provider.id, 'glm-5.1')
-    const smallBackend = await service.resolveActiveAgentBackend()
+    const smallBackend = await resolveActiveBackend(service)
     const smallConfig = JSON.parse(smallBackend.env?.OPENCODE_CONFIG_CONTENT ?? '{}')
     expect(smallBackend.contextWindow).toBe(200_000)
     expect(smallConfig.provider['openai-compatible'].models['glm-5.1'].limit.context).toBe(200_000)
 
     await service.setActiveProvider(provider.id, 'glm-5.2')
-    const largeBackend = await service.resolveActiveAgentBackend()
+    const largeBackend = await resolveActiveBackend(service)
     const largeConfig = JSON.parse(largeBackend.env?.OPENCODE_CONFIG_CONTENT ?? '{}')
     expect(largeBackend.contextWindow).toBe(1_000_000)
     expect(largeConfig.provider['openai-compatible'].models['glm-5.2'].limit.context).toBe(
@@ -2635,7 +2647,7 @@ describe('SettingsService: preflight & spawn config', () => {
     await repository.setReasoningEffort('low')
 
     vi.stubEnv('OPEN_SCIENCE_AGENT_FRAMEWORK', 'codex')
-    const backend = await service.resolveActiveAgentBackend()
+    const backend = await resolveActiveBackend(service)
 
     // Chat Completions provider ⇒ bridge ⇒ Codex runs the classic-tool-mode catalog model so it
     // advertises the shell_command function tool the bridge can forward (CODEX_BRIDGE_MODEL).
@@ -2715,7 +2727,7 @@ describe('SettingsService: preflight & spawn config', () => {
     await backend.responsesBridgeLease?.release()
     await repository.setConversationSkillImportEnabled(false)
     upstreamRequest = undefined
-    const disabledBackend = await service.resolveActiveAgentBackend()
+    const disabledBackend = await resolveActiveBackend(service)
     const disabledBridgeResponse = await localFetch(
       `${disabledBackend.providerConfiguration?.baseUrl}/responses`,
       {
@@ -2812,9 +2824,9 @@ describe('SettingsService: preflight & spawn config', () => {
     vi.stubEnv('OPEN_SCIENCE_AGENT_FRAMEWORK', 'codex')
 
     await service.setActiveProvider(first.id)
-    const firstBackend = await service.resolveActiveAgentBackend()
+    const firstBackend = await resolveActiveBackend(service)
     await service.setActiveProvider(second.id)
-    const secondBackend = await service.resolveActiveAgentBackend()
+    const secondBackend = await resolveActiveBackend(service)
 
     expect(firstBackend.providerConfiguration?.baseUrl).not.toBe(
       secondBackend.providerConfiguration?.baseUrl
@@ -2898,7 +2910,7 @@ describe('SettingsService: preflight & spawn config', () => {
     vi.stubEnv('OPEN_SCIENCE_AGENT_FRAMEWORK', 'codex')
 
     try {
-      await expect(service.resolveActiveAgentBackend()).rejects.toBe(startError)
+      await expect(resolveActiveBackend(service)).rejects.toBe(startError)
       expect(closeSpy).toHaveBeenCalledOnce()
     } finally {
       startSpy.mockRestore()
@@ -2937,7 +2949,7 @@ describe('SettingsService: preflight & spawn config', () => {
     await service.setActiveProvider(provider.id)
 
     vi.stubEnv('OPEN_SCIENCE_AGENT_FRAMEWORK', 'codex')
-    const backend = await service.resolveActiveAgentBackend()
+    const backend = await resolveActiveBackend(service)
 
     expect(backend.providerConfiguration).toEqual({
       providerId: 'custom-gateway',
@@ -2993,10 +3005,10 @@ describe('SettingsService: preflight & spawn config', () => {
     ).providers[0]
     await service.setActiveProvider(created.id)
 
-    const config = await service.resolveActiveSpawnConfig()
+    const config = await resolveActiveBackend(service)
 
     expect(config.executablePath).toBe(execPath)
-    expect(config.envOverrides).toMatchObject({
+    expect(config.env).toMatchObject({
       // A user-supplied trailing /v1 is normalized away; the client appends /v1/messages itself.
       ANTHROPIC_BASE_URL: 'https://api.anthropic.com',
       ANTHROPIC_AUTH_TOKEN: 'test-key',
@@ -3010,7 +3022,7 @@ describe('SettingsService: preflight & spawn config', () => {
       }
     })
     // Custom providers always use the bearer token variable, never x-api-key.
-    expect(config.envOverrides.ANTHROPIC_API_KEY).toBeUndefined()
+    expect(config.env.ANTHROPIC_API_KEY).toBeUndefined()
   })
 
   it('does not inject WebFetch preflight settings into isolated Claude sessions', async () => {
@@ -3023,7 +3035,7 @@ describe('SettingsService: preflight & spawn config', () => {
     })
     await service.setActiveProvider(CLAUDE_ISOLATED_PROVIDER_ID)
 
-    const config = await service.resolveActiveSpawnConfig()
+    const config = await resolveActiveBackend(service)
 
     expect(config.sessionOptions).toBeUndefined()
   })
@@ -3032,7 +3044,7 @@ describe('SettingsService: preflight & spawn config', () => {
     const service = createService()
     await repository.setClaudeInfo({ resolvedPath: execPath, version: '2.1.0' })
 
-    await expect(service.resolveActiveSpawnConfig()).rejects.toThrow(/active model provider/i)
+    await expect(resolveActiveBackend(service)).rejects.toThrow(/active model provider/i)
   })
 })
 
@@ -3120,9 +3132,9 @@ describe('SettingsService: official vendors', () => {
     ).providers[0]
     await service.setActiveProvider(created.id, 'deepseek-v4-flash')
 
-    const config = await service.resolveActiveSpawnConfig()
+    const config = await resolveActiveBackend(service)
 
-    expect(config.envOverrides).toMatchObject({
+    expect(config.env).toMatchObject({
       ANTHROPIC_BASE_URL: 'https://api.deepseek.com/anthropic',
       ANTHROPIC_AUTH_TOKEN: 'sk-ds',
       ANTHROPIC_MODEL: 'deepseek-v4-flash'
@@ -3150,7 +3162,7 @@ describe('SettingsService: official vendors', () => {
     ).providers[0]
     await service.setActiveProvider(provider.id, 'deepseek-v4-flash')
 
-    const backend = await service.resolveActiveAgentBackend()
+    const backend = await resolveActiveBackend(service)
 
     expect(backend.contextUsageModel).toBe('deepseek-v4-flash')
   })
@@ -3571,6 +3583,49 @@ describe('SettingsService: skills', () => {
     expect(skills.map((skill) => skill.id)).toEqual(['demo'])
   })
 
+  it('runs the shared live-reference guard before direct Skill deletion', async () => {
+    const service = await createSkillService()
+    await service.createSkill({ name: 'My Skill', description: 'Mine.', body: '# Mine' })
+    const guard = vi.fn().mockRejectedValue(
+      Object.assign(new Error('Skill is referenced by specialist-1.'), {
+        code: 'protected-skill'
+      })
+    )
+    service.setSkillDeletionGuard(guard)
+
+    await expect(service.deleteSkill({ id: 'personal-my-skill' })).rejects.toMatchObject({
+      code: 'protected-skill'
+    })
+    expect(guard).toHaveBeenCalledWith('personal-my-skill')
+    await expect(service.getSkillDetail('personal-my-skill')).resolves.toBeDefined()
+  })
+
+  it('checks live Specialist references atomically with direct Skill deletion', async () => {
+    const service = await createSkillService()
+    await service.createSkill({ name: 'My Skill', description: 'Mine.', body: '# Mine' })
+    const packageSkills = new UserSkillSpecialistPackageAdapter(storageRoot)
+    await packageSkills.beginMutation('tx-delete-race', 'research-synth', [])
+
+    let referenced = false
+    const guard = vi.fn(async () => {
+      if (referenced) {
+        throw Object.assign(new Error('Skill is referenced by research-synth.'), {
+          code: 'protected-skill'
+        })
+      }
+    })
+    service.setSkillDeletionGuard(guard)
+    const deletion = service.deleteSkill({ id: 'personal-my-skill' })
+    await new Promise((resolve) => setImmediate(resolve))
+    expect(guard).not.toHaveBeenCalled()
+
+    referenced = true
+    await packageSkills.endMutation('tx-delete-race')
+
+    await expect(deletion).rejects.toMatchObject({ code: 'protected-skill' })
+    await expect(service.getSkillDetail('personal-my-skill')).resolves.toBeDefined()
+  })
+
   it('creates with a custom slug and reconciles references reported by the detail view', async () => {
     const service = await createSkillService()
     const b64 = (text: string): string => Buffer.from(text).toString('base64')
@@ -3626,11 +3681,11 @@ describe('SettingsService: skills', () => {
       )
 
     // Disabled: the skill is not materialized on a normal spawn.
-    await service.resolveActiveSpawnConfig()
+    await resolveActiveBackend(service)
     expect(await exists(skillDir)).toBe(false)
 
     // Turn-forced: the disabled skill is materialized for this spawn only.
-    await service.resolveActiveSpawnConfig({ forcedSkillIds: ['demo'] })
+    await resolveActiveBackend(service, { forcedSkillIds: ['demo'] })
     expect(await exists(skillDir)).toBe(true)
 
     // The stored disabled set is untouched, so the skill still lists as disabled.
@@ -3638,7 +3693,7 @@ describe('SettingsService: skills', () => {
     expect(skills.find((skill) => skill.id === 'demo')?.enabled).toBe(false)
 
     // Clearing the force set removes it again on the next spawn.
-    await service.resolveActiveSpawnConfig()
+    await resolveActiveBackend(service)
     expect(await exists(skillDir)).toBe(false)
   })
 
@@ -3672,10 +3727,10 @@ describe('SettingsService: skills', () => {
     const managedSkillDir = join(appClaudeDir, 'skills', 'os-demo')
     const managedSkillFile = join(managedSkillDir, 'SKILL.md')
     try {
-      const config = await service.resolveActiveSpawnConfig()
-      const backend = await service.resolveActiveAgentBackend()
+      const config = await resolveActiveBackend(service)
+      const backend = await resolveActiveBackend(service)
 
-      expect(config.envOverrides.CLAUDE_CONFIG_DIR).toBe(userClaudeDir)
+      expect(config.env.CLAUDE_CONFIG_DIR).toBe(userClaudeDir)
       expect(config.sessionOptions).toEqual({
         settings: join(appClaudeDir, 'settings.json'),
         plugins: [{ type: 'local', path: appClaudeDir, skipMcpDiscovery: true }]
@@ -3714,7 +3769,7 @@ describe('SettingsService: skills', () => {
     await service.upsertProvider({ type: 'claude-shared', model: 'claude-opus-4-8' })
     await service.setActiveProvider(CLAUDE_SHARED_PROVIDER_ID, 'claude-opus-4-8')
 
-    await expect(service.resolveActiveSpawnConfig()).resolves.toMatchObject({
+    await expect(resolveActiveBackend(service)).resolves.toMatchObject({
       contextWindow: 1_000_000
     })
   })
@@ -3762,7 +3817,7 @@ describe('SettingsService: skills', () => {
     ).providers[0]
     await service.setActiveProvider(provider.id)
 
-    await service.resolveActiveAgentBackend()
+    await resolveActiveBackend(service)
 
     const materializedDir = join(storageRoot, 'codex', 'skills', 'os-demo')
     const materializedFile = join(materializedDir, 'SKILL.md')
@@ -3874,7 +3929,7 @@ describe('SettingsService: skills', () => {
     })
     await service.setActiveProvider(CODEX_SHARED_PROVIDER_ID)
 
-    await service.resolveActiveAgentBackend()
+    await resolveActiveBackend(service)
 
     expect(
       await readFile(
@@ -3964,6 +4019,45 @@ describe('SettingsService: skills', () => {
     await service.scanRepoSkills({ repo: 'o/r' })
 
     expect(scanRepo).toHaveBeenCalledWith('o/r', netFetch)
+  })
+
+  it('searches GitHub repositories for keyword input without scanning a guessed repo', async () => {
+    const scanRepo = vi.fn().mockResolvedValue([])
+    const fetch = vi.fn().mockResolvedValue(
+      new Response(
+        JSON.stringify({
+          items: [
+            {
+              full_name: 'hugohe3/ppt-master',
+              description: 'Presentation generation skills',
+              html_url: 'https://github.com/hugohe3/ppt-master',
+              stargazers_count: 42
+            }
+          ]
+        }),
+        { status: 200, headers: { 'content-type': 'application/json' } }
+      )
+    )
+    vi.stubGlobal('fetch', fetch)
+    const service = new SettingsService({
+      repository,
+      storageRoot,
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any
+      userSkills: { scanRepo } as any
+    })
+
+    await expect(service.scanRepoSkills({ repo: 'ppt master' })).resolves.toEqual({
+      skills: [],
+      repositories: [
+        {
+          fullName: 'hugohe3/ppt-master',
+          description: 'Presentation generation skills',
+          url: 'https://github.com/hugohe3/ppt-master',
+          stars: 42
+        }
+      ]
+    })
+    expect(scanRepo).not.toHaveBeenCalled()
   })
 
   it('previews a selected GitHub skill through the proxy-aware bounded repository path', async () => {
@@ -4591,7 +4685,7 @@ describe('SettingsService: reasoning effort', () => {
     expect(await service.resolveActiveReasoningEffort('max')).toBe('default')
 
     await repository.setReasoningEffort('max')
-    expect((await service.resolveActiveAgentBackend()).sessionEffort).toBeUndefined()
+    expect((await resolveActiveBackend(service)).sessionEffort).toBeUndefined()
   })
 
   it('does not guess an effort profile for an unpinned Claude subscription model', async () => {
@@ -4605,13 +4699,13 @@ describe('SettingsService: reasoning effort', () => {
     await repository.setReasoningEffort('max')
 
     expect(await service.resolveActiveReasoningEffort('max')).toBe('default')
-    const backend = await service.resolveActiveAgentBackend()
+    const backend = await resolveActiveBackend(service)
     expect(backend.sessionEffort).toBeUndefined()
     expect(backend.env).not.toHaveProperty('ANTHROPIC_MODEL')
   })
 
   it('passes the model-mapped effort to both OpenCode delivery channels', async () => {
-    // resolveActiveAgentBackend honors this forced-framework env above stored settings; set it
+    // AgentBackendResolver honors this forced-framework env above stored settings; set it
     // explicitly (a prior test may leave it stubbed) so this resolves OpenCode.
     vi.stubEnv('OPEN_SCIENCE_AGENT_FRAMEWORK', 'opencode')
     await repository.setAgentFramework('opencode')
@@ -4629,7 +4723,7 @@ describe('SettingsService: reasoning effort', () => {
     await service.setActiveProvider(provider.id, 'deepseek-v4-pro')
     await repository.setReasoningEffort('low')
 
-    const backend = await service.resolveActiveAgentBackend()
+    const backend = await resolveActiveBackend(service)
 
     expect(backend.sessionEffort).toBe('none')
     // The official vendor identity survives provider resolution, so OpenCode receives DeepSeek's
@@ -4660,7 +4754,7 @@ describe('SettingsService: reasoning effort', () => {
     const stored = (await repository.getSettings()).providers[0]
     await repository.upsertProvider({ ...stored, fetchedModels: ['claude-opus-5'] })
 
-    const backend = await service.resolveActiveAgentBackend()
+    const backend = await resolveActiveBackend(service)
     const content = JSON.parse(backend.env?.OPENCODE_CONFIG_CONTENT ?? '{}')
 
     expect(backend.sessionModel).toBe('claude-opus-5')
@@ -4684,7 +4778,7 @@ describe('SettingsService: reasoning effort', () => {
     await service.setActiveProvider(provider.id)
     await repository.setReasoningEffort('low')
 
-    const backend = await service.resolveActiveAgentBackend()
+    const backend = await resolveActiveBackend(service)
 
     expect(backend.framework.id).toBe('claude-code')
     expect(backend.sessionEffort).toBe('low')
@@ -4710,11 +4804,11 @@ describe('SettingsService: reasoning effort', () => {
     await service.setActiveProvider(provider.id)
 
     // Unset: nothing stored yet.
-    expect((await service.resolveActiveAgentBackend()).sessionEffort).toBeUndefined()
+    expect((await resolveActiveBackend(service)).sessionEffort).toBeUndefined()
 
     // 'default' means "don't override": the agent keeps its own default effort.
     await repository.setReasoningEffort('default')
-    expect((await service.resolveActiveAgentBackend()).sessionEffort).toBeUndefined()
+    expect((await resolveActiveBackend(service)).sessionEffort).toBeUndefined()
   })
 
   it('lets the owning runtime update its live bridge with a model-resolved effort', async () => {
@@ -4766,7 +4860,7 @@ describe('SettingsService: reasoning effort', () => {
     ).providers[0]
     await service.setActiveProvider(provider.id)
     vi.stubEnv('OPEN_SCIENCE_AGENT_FRAMEWORK', 'codex')
-    const backend = await service.resolveActiveAgentBackend()
+    const backend = await resolveActiveBackend(service)
     const post = (): Promise<string> =>
       localFetch(`${backend.providerConfiguration?.baseUrl}/responses`, {
         method: 'POST',
@@ -5597,7 +5691,7 @@ describe('SettingsService: claude-isolated login + status coordination', () => {
       lastValidationFailure: undefined
     })
 
-    const result = await service.getClaudeIsolatedStatus()
+    const result = await service.validateProvider({ providerId: CLAUDE_ISOLATED_PROVIDER_ID })
 
     expect(probe).toHaveBeenCalledOnce()
     expect(result).toMatchObject({ ok: false, category: 'auth' })
@@ -6490,18 +6584,18 @@ describe('SettingsService: claude-shared login orchestration', () => {
         (provider) => provider.id === CLAUDE_SHARED_PROVIDER_ID
       )?.disconnectedAt
     ).toBeGreaterThan(0)
-    await expect(service.getClaudeSharedStatus()).resolves.toMatchObject({
+    await expect(
+      service.validateProvider({ providerId: CLAUDE_SHARED_PROVIDER_ID })
+    ).resolves.toMatchObject({
       ok: false,
       category: 'auth',
       message: expect.stringContaining('disconnected from Open Science')
     })
-    await expect(service.resolveActiveSpawnConfig()).rejects.toThrow(
-      /disconnected from Open Science/
-    )
+    await expect(resolveActiveBackend(service)).rejects.toThrow(/disconnected from Open Science/)
 
     await expect(service.loginClaudeShared()).resolves.toMatchObject({ ok: true, applied: true })
-    await expect(service.resolveActiveSpawnConfig()).resolves.toMatchObject({
-      envOverrides: expect.objectContaining({
+    await expect(resolveActiveBackend(service)).resolves.toMatchObject({
+      env: expect.objectContaining({
         CLAUDE_CONFIG_DIR: join(storageRoot, 'no-user-claude')
       })
     })

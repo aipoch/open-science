@@ -24,6 +24,10 @@ import type {
   TrustedCallingSession
 } from '../../shared/agents-contract'
 import type { SpecialistProfileView } from '../../shared/specialist'
+import type {
+  SpecialistDeleteRequest,
+  SpecialistDeleteResult
+} from '../../shared/specialist-package'
 import type { ProfileService } from '../specialist/service'
 
 const METHOD_PREFIX = 'host.agents'
@@ -73,7 +77,7 @@ const reResolveForMutation = async (
 ): Promise<SpecialistProfileView> => {
   let current: SpecialistProfileView
   try {
-    current = await profileService.getByName(currentName)
+    current = await profileService.resolveCustomMutationByName(currentName)
   } catch (error) {
     // Target was renamed or deleted after card creation.
     throw new PrivilegedOpError(method, error)
@@ -118,6 +122,7 @@ export type ApplyDeleteDeps = PrivilegedOpDeps & {
   // later (design.md §10). It exists only so the contract is testable — a test asserts it is never
   // called. Clearing/rewriting bindings is explicitly forbidden behavior.
   clearSessionBindings?: (specialistId: string) => Promise<void> | void
+  deleteSpecialist?: (request: SpecialistDeleteRequest) => Promise<SpecialistDeleteResult>
 }
 
 // Approves and deletes a Specialist. On approval, re-resolves name -> UUID, verifies the reviewed
@@ -149,7 +154,16 @@ export const applyDelete = async (deps: ApplyDeleteDeps): Promise<DeleteResult> 
   )
 
   try {
-    await profileService.delete(current.id, current.revision)
+    if (deps.deleteSpecialist) {
+      const result = await deps.deleteSpecialist({
+        id: current.id,
+        expectedRevision: current.revision,
+        deleteSkillIds: []
+      })
+      if (result.status === 'failed') throw new Error(result.code)
+    } else {
+      await profileService.delete(current.id, current.revision)
+    }
   } catch (error) {
     throw new PrivilegedOpError('delete', error)
   }
@@ -174,6 +188,6 @@ export const applyDelete = async (deps: ApplyDeleteDeps): Promise<DeleteResult> 
     throw new PrivilegedOpError('delete', `specialist "${currentName}" still present after delete`)
   }
 
-  if (deps.invalidateCatalog) await deps.invalidateCatalog()
+  if (!deps.deleteSpecialist && deps.invalidateCatalog) await deps.invalidateCatalog()
   return { status: 'deleted', name: currentName }
 }

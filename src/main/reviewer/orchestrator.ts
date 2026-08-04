@@ -7,6 +7,7 @@
 //
 // Errors are isolated: reviewer failures set lifecycle='error' and do NOT crash the main session.
 
+import { randomUUID } from 'node:crypto'
 import { homedir } from 'node:os'
 
 import type { ActiveSession } from '@agentclientprotocol/sdk'
@@ -24,13 +25,17 @@ import type {
 } from '../../shared/reviewer'
 import type { ReviewRepository } from './repository'
 import { resolveTurnScopeWithArtifactDigests } from './artifact-digest'
-import type { PersistedChatSession } from '../../shared/session-persistence'
+import {
+  materializeSessionConversationGraph,
+  type PersistedChatSession
+} from '../../shared/session-persistence'
 import { ReviewerMcpServer } from './mcp-server'
 import { ReviewerHostServer, type ArtifactVersionContentResolver } from './host-sdk'
 import { buildReviewScopeSnapshot } from './scope-snapshot'
 import { REVIEWER_RUBRIC_SYSTEM_PROMPT_APPEND } from './rubric'
 import { injectAuditorMessage } from './correction'
 import { buildHistoryPreamble } from '../../shared/history-preamble'
+import { getActiveConversationContext } from '../../shared/conversation-graph'
 
 const log = createLogger('reviewer:orchestrator')
 
@@ -578,17 +583,31 @@ const runFixLoop = async (options: FixLoopOptions): Promise<void> => {
 
     // Step B: inject [Auditor] with the currently-open warn/fail checks.
     let correctionFailed = false
-    await injectAuditorMessage({
-      sessionId,
-      mainSessionId,
-      findings: openChecks,
-      acpRuntime,
-      onCorrectionPrompt,
-      onCorrectionFailed: () => {
-        correctionFailed = true
-        onCorrectionFailed?.()
-      }
-    })
+    try {
+      const provenanceContext = getActiveConversationContext(
+        materializeSessionConversationGraph(sessionBefore).conversationGraph!,
+        `prompt-${randomUUID()}`
+      )
+      await injectAuditorMessage({
+        sessionId,
+        mainSessionId,
+        findings: openChecks,
+        acpRuntime,
+        provenanceContext,
+        onCorrectionPrompt,
+        onCorrectionFailed: () => {
+          correctionFailed = true
+          onCorrectionFailed?.()
+        }
+      })
+    } catch (error) {
+      correctionFailed = true
+      log.warn('fix loop: failed to derive correction provenance', {
+        sessionId,
+        round,
+        error: error instanceof Error ? error.message : String(error)
+      })
+    }
 
     // Error handling: a failed correction counts as a round (prevents infinite loop) but we
     // cannot re-review (there's no correction turn). Mark remaining as unaddressed and stop.

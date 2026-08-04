@@ -18,6 +18,7 @@ type WorkflowJob = {
   'continue-on-error'?: boolean
   if?: string
   needs?: string | string[]
+  permissions?: Record<string, string>
   'runs-on'?: string
   steps?: WorkflowStep[]
   strategy?: { matrix?: Record<string, unknown> }
@@ -75,6 +76,19 @@ describe('post-merge Windows validation', () => {
     expect(uploadIndex).toBeGreaterThan(smokeIndex)
   })
 
+  it('builds every platform without repeating the verified typecheck', () => {
+    const workflow = readWorkflow('build.yml')
+    const verifyTypecheck = findStep(workflow.jobs.verify, 'Typecheck')
+    const build = findStep(workflow.jobs.build, 'Build & package')
+    const commands = build.run?.split('\n').map((line) => line.trim()) ?? []
+
+    expect(verifyTypecheck.run).toBe('npm run typecheck')
+    expect(commands).toContain('npm run build:e2e')
+    expect(commands).toContain('npm run build:web')
+    expect(commands).not.toContain('npm run build')
+    expect(commands.some((command) => command.startsWith('npm run typecheck'))).toBe(false)
+  })
+
   it('runs the previous-stable upgrade smoke alongside notarization before publishing', () => {
     const release = readWorkflow('release.yml')
     const upgrade = release.jobs['windows-upgrade-smoke']
@@ -83,11 +97,11 @@ describe('post-merge Windows validation', () => {
     expect(upgrade.needs).toBe('build')
     expect(upgrade['timeout-minutes']).toBe(20)
     expect(findStep(upgrade, 'Setup Node')).toMatchObject({
-      uses: 'actions/setup-node@v7',
+      uses: 'actions/setup-node@820762786026740c76f36085b0efc47a31fe5020',
       with: { 'node-version': 22 }
     })
     expect(findStep(upgrade, 'Download current Windows installer').uses).toBe(
-      'actions/download-artifact@v8'
+      'actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c'
     )
     const previous = findStep(upgrade, 'Download previous stable Windows installer')
     expect(previous.env?.CURRENT_TAG).toBe('${{ github.ref_name }}')
@@ -98,5 +112,67 @@ describe('post-merge Windows validation', () => {
       '--previous-installer-dir previous'
     )
     expect(release.jobs.publish.needs).toEqual(['build', 'notarize-mac', 'windows-upgrade-smoke'])
+  })
+
+  it('validates stable desktop tags on main before starting platform builds', () => {
+    const release = readWorkflow('release.yml')
+    const preflight = release.jobs['release-preflight']
+    const checkout = findStep(preflight, 'Checkout')
+    const validateTag = findStep(preflight, 'Validate desktop release tag')
+    const verifyMain = findStep(preflight, 'Verify release commit is on main')
+    const stableTagCondition = "github.event_name == 'push' && startsWith(github.ref, 'refs/tags/')"
+
+    expect(preflight).toMatchObject({
+      permissions: { contents: 'read' },
+      'runs-on': 'ubuntu-latest'
+    })
+    expect(checkout).toMatchObject({
+      uses: 'actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1',
+      with: { 'fetch-depth': 0 }
+    })
+    expect(validateTag.if).toBe(stableTagCondition)
+    expect(validateTag.run).toContain("require('./package.json').version")
+    expect(validateTag.run).toContain('$GITHUB_REF_NAME')
+    expect(verifyMain).toMatchObject({
+      if: stableTagCondition,
+      run: 'git merge-base --is-ancestor "$GITHUB_SHA" origin/main'
+    })
+    expect(release.jobs.build.needs).toBe('release-preflight')
+    expect(release.jobs['notarize-mac'].if).toBe(stableTagCondition)
+    expect(release.jobs['windows-upgrade-smoke'].if).toBe(stableTagCondition)
+    expect(release.jobs.publish.if).toBe(stableTagCondition)
+  })
+
+  it('locks mirror dependencies and completes local transforms before configuring credentials', () => {
+    const mirror = readWorkflow('mirror-to-website.yml').jobs.mirror
+    const stepNames = mirror.steps?.map(({ name }) => name) ?? []
+    const install = findStep(mirror, 'Install manifest dependencies')
+    const configureIndex = stepNames.indexOf('Configure AWS credentials')
+
+    expect(install.run).toBe(
+      'npm ci --ignore-scripts --omit=dev --omit=optional --no-audit --no-fund'
+    )
+    expect(mirror.steps?.filter(({ run }) => run?.includes('npm install'))).toEqual([])
+    expect(configureIndex).toBeGreaterThan(stepNames.indexOf('Install manifest dependencies'))
+    expect(configureIndex).toBeGreaterThan(stepNames.indexOf('Generate version.json'))
+    expect(configureIndex).toBeGreaterThan(stepNames.indexOf('Rewrite update feed paths'))
+    expect(configureIndex).toBeGreaterThan(
+      stepNames.indexOf('Inject release notes into update feeds')
+    )
+    expect(stepNames.indexOf('Sync installers to versioned path')).toBeGreaterThan(configureIndex)
+    expect(stepNames.indexOf('Upload version.json')).toBeGreaterThan(configureIndex)
+    expect(stepNames.indexOf('Upload update feed to channel root')).toBeGreaterThan(configureIndex)
+  })
+
+  it('pins external actions in every changed release workflow', () => {
+    for (const workflowName of ['release.yml', 'mirror-to-website.yml']) {
+      const workflow = readWorkflow(workflowName)
+      const references = Object.values(workflow.jobs).flatMap((job) =>
+        (job.steps ?? []).flatMap(({ uses }) => (uses?.startsWith('./') || !uses ? [] : [uses]))
+      )
+
+      expect(references.length).toBeGreaterThan(0)
+      expect(references.every((reference) => /@[0-9a-f]{40}$/i.test(reference))).toBe(true)
+    }
   })
 })

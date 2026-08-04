@@ -7,6 +7,16 @@ import type {
   SpecialistSelectedConfig
 } from '../../shared/specialist'
 
+export type SpecialistOrigin = 'local' | 'imported'
+
+export type SpecialistImportBaseline = {
+  importedAt: string
+  archiveDigest: string
+  contentDigest: string
+  packageContentDigest?: string
+  packageVersion?: string
+}
+
 // The persisted document stored in specialists.json.
 export type StoredSpecialist = {
   id: string // immutable UUID
@@ -17,19 +27,24 @@ export type StoredSpecialist = {
   iconKey?: string
   colorKey?: string
   enabled: boolean
+  setupPending?: boolean
   capabilityMode: SpecialistCapabilityMode
   fullAccess: SpecialistFullAccessConfig
   selectedCapabilities: SpecialistSelectedConfig
   revision: number
+  packageVersion: string
+  origin: SpecialistOrigin
+  ownedSkillIds: string[]
+  importBaseline?: SpecialistImportBaseline
 }
 
 // The whole specialists.json document.
 export type StoredSpecialists = {
-  version: 1
+  version: 2
   specialists: StoredSpecialist[]
 }
 
-export const SPECIALISTS_FILE_VERSION = 1 as const
+export const SPECIALISTS_FILE_VERSION = 2 as const
 
 export const createEmptySpecialists = (): StoredSpecialists => ({
   version: SPECIALISTS_FILE_VERSION,

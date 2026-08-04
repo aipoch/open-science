@@ -1,11 +1,10 @@
-import { WEB_EVENT_CHANNELS, WEB_INVOKE_CHANNELS } from '../../shared/web-api-map.generated'
 import {
   WEB_RPC_PROTOCOL_VERSION,
   webRpcBootstrapSchema,
   webRpcEventSchema,
   webRpcResponseSchema
 } from '../../shared/web-rpc-contract'
-import { assignApiPath, installWebInvokeChannels } from './api-installer'
+import { installWebRendererContracts } from './api-installer'
 import { applyTheme, resolveInitialTheme } from '@/lib/theme'
 import openScienceLogoSvg from '../../main/remote-access/openscience-logo.svg?raw'
 
@@ -227,25 +226,6 @@ const downloadBlob = (blob: Blob, name: string): void => {
   window.setTimeout(() => URL.revokeObjectURL(url), 0)
 }
 
-const transformArgs = (path: string, args: unknown[]): unknown[] => {
-  if (
-    [
-      'storage.validateDataRoot',
-      'storage.inspectDataRoot',
-      'storage.migrate',
-      'storage.commitAndRelaunch',
-      'storage.discardMigratedCopy'
-    ].includes(path)
-  ) {
-    return [{ parent: args[0] }]
-  }
-  if (path === 'storage.setDataRootAndRelaunch') {
-    return [{ parent: args[0], markOnboarding: args[1] }]
-  }
-  if ((path === 'acp.connect' || path === 'acp.createSession') && args.length === 0) return [{}]
-  return args
-}
-
 const installWebApi = async (): Promise<void> => {
   const parsedBootstrap = webRpcBootstrapSchema.safeParse(await fetchBootstrap())
   if (!parsedBootstrap.success) {
@@ -254,50 +234,43 @@ const installWebApi = async (): Promise<void> => {
     )
   }
   const bootstrap = parsedBootstrap.data
-  const api: Record<string, unknown> = {
-    platform: bootstrap.platform,
-    getRuntimeVersions: () => bootstrap.versions
-  }
+  const api: Record<string, unknown> = { platform: bootstrap.platform }
   const availableRpcChannels = new Set(bootstrap.rpcChannels)
   const restrictedRpcChannels = new Set(bootstrap.restrictedRpcChannels ?? [])
 
-  installWebInvokeChannels(
-    api,
-    WEB_INVOKE_CHANNELS,
+  installWebRendererContracts(api, {
     availableRpcChannels,
     restrictedRpcChannels,
-    (path, channel) =>
-      (...args: unknown[]) =>
-        invoke(channel, transformArgs(path, args))
-  )
-  for (const [path, channel] of Object.entries(WEB_EVENT_CHANNELS)) {
-    assignApiPath(api, path, (listener: Listener) => subscribe(channel, listener))
-  }
-
-  api.saveBlobFile = (request: { suggestedName: string; mimeType: string; data: ArrayBuffer }) => {
-    downloadBlob(new Blob([request.data], { type: request.mimeType }), request.suggestedName)
-    return Promise.resolve({ saved: true })
-  }
-  api.saveManagedFile = async (request: {
-    source: 'artifact' | 'upload'
-    path: string
-    suggestedName: string
-  }) => {
-    const resource = (await invoke('preview-resources:acquire', [
-      { source: request.source, path: request.path }
-    ])) as { id: string; url: string }
-    try {
-      const response = await fetch(resource.url)
-      if (!response.ok) throw new Error(`Download failed: HTTP ${response.status}`)
-      downloadBlob(await response.blob(), request.suggestedName)
-      return { saved: true }
-    } finally {
-      await invoke('preview-resources:release', [{ resourceId: resource.id }])
+    invoke,
+    subscribe,
+    nativeAdapters: {
+      getRuntimeVersions: () => bootstrap.versions,
+      saveBlobFile: (request: { suggestedName: string; mimeType: string; data: ArrayBuffer }) => {
+        downloadBlob(new Blob([request.data], { type: request.mimeType }), request.suggestedName)
+        return Promise.resolve({ saved: true })
+      },
+      saveManagedFile: async (request: {
+        source: 'artifact' | 'upload'
+        path: string
+        suggestedName: string
+      }) => {
+        const resource = (await invoke('preview-resources:acquire', [
+          { source: request.source, path: request.path }
+        ])) as { id: string; url: string }
+        try {
+          const response = await fetch(resource.url)
+          if (!response.ok) throw new Error(`Download failed: HTTP ${response.status}`)
+          downloadBlob(await response.blob(), request.suggestedName)
+          return { saved: true }
+        } finally {
+          await invoke('preview-resources:release', [{ resourceId: resource.id }])
+        }
+      },
+      'window.close': () => {
+        window.close()
+        return Promise.resolve()
+      }
     }
-  }
-  assignApiPath(api, 'window.close', () => {
-    window.close()
-    return Promise.resolve()
   })
 
   ;(window as unknown as { api: unknown }).api = api

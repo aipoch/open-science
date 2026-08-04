@@ -13,7 +13,8 @@ vi.mock('electron', () => ({
   }
 }))
 
-import { createNotebookHandlers, registerNotebookIpcHandlers } from './ipc'
+import { registerNotebookIpcHandlers } from './ipc'
+import { createNotebookCommandWorkflows } from './notebook-workflows'
 import { beginMigration, clearMigrationPending } from '../storage/migration-state'
 
 beforeEach(() => {
@@ -26,7 +27,7 @@ describe('notebook IPC handlers', () => {
     const service = {
       execute: vi.fn().mockResolvedValue({ runId: 'run-1', status: 'completed' })
     } as unknown as NotebookRuntimeService
-    const handlers = createNotebookHandlers(service)
+    const handlers = createNotebookCommandWorkflows(service)
     beginMigration()
 
     await expect(
@@ -57,7 +58,7 @@ describe('notebook IPC handlers', () => {
       restart: vi.fn().mockResolvedValue({ sessionId: 'session-1' }),
       shutdown: vi.fn().mockResolvedValue({ sessionId: 'session-1', status: 'shutdown' })
     } as unknown as NotebookRuntimeService
-    const handlers = createNotebookHandlers(service)
+    const handlers = createNotebookCommandWorkflows(service)
 
     await handlers.state({ sessionId: 'session-1', workspaceCwd: '/workspace' })
     await handlers.reference({ sessionId: 'session-1', workspaceCwd: '/workspace' })
@@ -136,7 +137,7 @@ describe('notebook IPC handlers', () => {
       restart: vi.fn().mockResolvedValue({ sessionId: 'session-1' }),
       shutdown: vi.fn().mockResolvedValue({ sessionId: 'session-1', status: 'shutdown' })
     } as unknown as NotebookRuntimeService
-    registerNotebookIpcHandlers(service)
+    registerNotebookIpcHandlers(createNotebookCommandWorkflows(service))
 
     expect([...ipcHandlers.keys()]).toEqual([
       'notebook:state',

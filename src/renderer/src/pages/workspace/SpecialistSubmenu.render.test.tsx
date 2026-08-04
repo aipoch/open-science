@@ -94,6 +94,14 @@ const makeSpecialist = (
   revision: 1
 })
 
+const makeBuiltin = (enabled = true): SpecialistListItem => ({
+  ...makeSpecialist('builtin-curator', 'BUILTIN_CURATOR', enabled),
+  kind: 'builtin',
+  readonly: true,
+  version: '1.0.0',
+  revision: 0
+})
+
 const mockStore = (
   items: SpecialistListItem[],
   overrides: { isLoaded?: boolean; load?: () => Promise<void> } = {}
@@ -200,6 +208,19 @@ describe('SpecialistSubmenu — submenu contents', () => {
     mockStore([sp])
     renderSubmenu({ selectedId: undefined, onChange: vi.fn() })
     expect(container.querySelector('[data-testid="specialist-option-uuid-1"]')).toBeTruthy()
+  })
+
+  it('lists enabled runnable builtins and persists their stable id through selection', () => {
+    const onChange = vi.fn()
+    mockStore([makeBuiltin()])
+    renderSubmenu({ selectedId: undefined, onChange })
+
+    const option = container.querySelector<HTMLButtonElement>(
+      '[data-testid="specialist-option-builtin-curator"]'
+    )
+    expect(option).toBeTruthy()
+    act(() => option?.click())
+    expect(onChange).toHaveBeenCalledWith('builtin-curator')
   })
 
   it('does NOT list disabled specialists', () => {

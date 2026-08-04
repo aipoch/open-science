@@ -91,6 +91,38 @@ describe('conversation graph', () => {
     })
   })
 
+  it('keeps a resumed Agent response on its Prompt Runtime Segment', () => {
+    const prompt = message('u1', 'user', 'create a file', 1)
+    const resumed = createLinearConversationGraph({
+      sessionId: 'session-1',
+      messages: [prompt],
+      frameworkId: 'codex',
+      backendId: 'codex-subscription',
+      model: 'gpt-5.5',
+      createdAt: 1,
+      updatedAt: 1
+    })
+    const runtimeChangedBeforeResponse = ensureConversationRuntimeSegment(resumed, {
+      id: 'runtime-later',
+      frameworkId: 'codex',
+      backendId: 'codex-subscription',
+      startedAt: 2
+    })
+    const response = {
+      ...message('a1', 'agent', 'done', 3),
+      responseToMessageId: prompt.id
+    }
+    const completed = synchronizeActiveConversationMessages(
+      runtimeChangedBeforeResponse,
+      [prompt, response],
+      3
+    )
+
+    expect(completed.messages.find(({ id }) => id === response.id)?.runtimeSegmentId).toBe(
+      completed.messages.find(({ id }) => id === prompt.id)?.runtimeSegmentId
+    )
+  })
+
   it('keeps graph-owned history when a stale flat projection is shorter or older', () => {
     const graph = createLinearConversationGraph({
       sessionId: 'session-1',

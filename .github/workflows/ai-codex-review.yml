@@ -312,7 +312,7 @@ jobs:
           } >> "$GITHUB_OUTPUT"
 
       - name: Checkout pull request review commit
-        uses: actions/checkout@v7
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
         with:
           ref: ${{ inputs.review_event == 'pull_request_target' && format('refs/pull/{0}/merge', inputs.pull_request_number) || inputs.review_sha }}
           fetch-depth: 0
@@ -711,7 +711,7 @@ jobs:
 
       - name: Normalize Codex review
         id: normalize
-        uses: actions/github-script@v9
+        uses: actions/github-script@3a2844b7e9c422d3c10d287c895573f7108da1b3 # v9
         env:
           CODEX_FINAL_MESSAGE: ${{ steps.run_codex.outputs.final-message }}
           REVIEW_HEADER: ${{ steps.review_inputs.outputs.review_header }}

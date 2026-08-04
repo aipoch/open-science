@@ -5,82 +5,76 @@ import { format } from 'prettier'
 import ts from 'typescript'
 
 const root = resolve(import.meta.dirname, '..')
-const preloadPath = resolve(root, 'src/preload/index.ts')
+const catalogPath = resolve(root, 'src/shared/renderer-contract-catalog.ts')
 const outputPath = resolve(root, 'src/shared/web-api-map.generated.ts')
 
-const specialChannels = {
-  'REVIEWER_IPC.RUN': 'reviewer:run',
-  'REVIEWER_IPC.GET_FOR_SESSION': 'reviewer:get-for-session',
-  'REVIEWER_IPC.ABORT_FIX_LOOP': 'reviewer:abort-fix-loop',
-  'REVIEWER_IPC.UPDATED': 'reviewer:updated',
-  'REVIEWER_IPC.SUPPRESS_NEXT_AUTO_REVIEW': 'reviewer:suppress-next-auto-review',
-  'REVIEWER_IPC.FIX_LOOP_START': 'reviewer:fix-loop-start',
-  'REVIEWER_IPC.FIX_LOOP_END': 'reviewer:fix-loop-end',
-  WINDOW_CLOSE_CHANNEL: 'window:close'
-}
+const sourceText = await readFile(catalogPath, 'utf8')
+const source = ts.createSourceFile(catalogPath, sourceText, ts.ScriptTarget.Latest, true)
 
-const sourceText = await readFile(preloadPath, 'utf8')
-const source = ts.createSourceFile(preloadPath, sourceText, ts.ScriptTarget.Latest, true)
-
-const channelFromExpression = (node) => {
+const stringLiteral = (node, label) => {
   if (ts.isStringLiteral(node) || ts.isNoSubstitutionTemplateLiteral(node)) return node.text
-  return specialChannels[node.getText(source)]
+  throw new Error(`Renderer contract ${label} must be a string literal.`)
 }
 
-const findChannelCall = (node) => {
-  let found
-  const visit = (child) => {
-    if (found) return
-    if (ts.isCallExpression(child)) {
-      const callee = child.expression.getText(source)
-      if (callee === 'ipcRenderer.invoke' || callee === 'onIpcMessage') {
-        const channel = child.arguments[0] && channelFromExpression(child.arguments[0])
-        if (channel) found = { kind: callee === 'ipcRenderer.invoke' ? 'invoke' : 'event', channel }
-      }
-    }
-    ts.forEachChild(child, visit)
-  }
-  visit(node)
-  return found
-}
+// prettier-ignore
+const invokeProfiles = new Set(['WEB', 'LOCAL', 'MAPPED_ELECTRON', 'MAPPED_NATIVE', 'DELEGATED_NATIVE'])
+const eventProfiles = new Set(['EVENT', 'DORMANT_EVENT', 'CLOSE_PANE_EVENT'])
+// prettier-ignore
+const unprojectedProfiles = new Set(['ELECTRON', 'SEND', 'WINDOW_FIND_READY', 'ELECTRON_EVENT', 'NATIVE'])
 
-const propertyName = (node) => {
-  if (ts.isIdentifier(node) || ts.isStringLiteral(node)) return node.text
-  return node.getText(source)
+const projectionFor = (node) => {
+  if (!node) return 'invoke'
+  if (!ts.isIdentifier(node)) throw new Error('Renderer contract profile must be an identifier.')
+  if (invokeProfiles.has(node.text)) return 'invoke'
+  if (eventProfiles.has(node.text)) return 'event'
+  if (unprojectedProfiles.has(node.text)) return 'none'
+  throw new Error(`Unknown renderer contract profile: ${node.text}`)
 }
 
 const invoke = {}
 const events = {}
 
-const walkObject = (object, prefix = []) => {
-  for (const property of object.properties) {
-    if (!ts.isPropertyAssignment(property)) continue
-    const path = [...prefix, propertyName(property.name)]
-    if (ts.isObjectLiteralExpression(property.initializer)) {
-      walkObject(property.initializer, path)
-      continue
+let groups
+const findCatalog = (node) => {
+  if (
+    ts.isVariableDeclaration(node) &&
+    ts.isIdentifier(node.name) &&
+    node.name.text === 'RENDERER_CONTRACT_GROUPS' &&
+    node.initializer &&
+    ts.isCallExpression(node.initializer) &&
+    node.initializer.arguments[0] &&
+    ts.isArrayLiteralExpression(node.initializer.arguments[0])
+  ) {
+    groups = node.initializer.arguments[0]
+  }
+  ts.forEachChild(node, findCatalog)
+}
+findCatalog(source)
+if (!groups) throw new Error('Renderer contract group manifest was not found.')
+
+for (const group of groups.elements) {
+  if (!ts.isCallExpression(group) || group.expression.getText(source) !== 'group') {
+    throw new Error('Renderer contract manifest may only contain group(...) calls.')
+  }
+  const publicRoot = stringLiteral(group.arguments[1], 'public root')
+  const entries = group.arguments[2]
+  if (!entries || !ts.isArrayLiteralExpression(entries)) {
+    throw new Error('Renderer contract group entries must be an array literal.')
+  }
+  for (const entry of entries.elements) {
+    if (!ts.isArrayLiteralExpression(entry)) {
+      throw new Error('Renderer contract entries must be tuple literals.')
     }
-    const match = findChannelCall(property.initializer)
-    if (match?.kind === 'invoke') invoke[path.join('.')] = match.channel
-    if (match?.kind === 'event') events[path.join('.')] = match.channel
+    const member = stringLiteral(entry.elements[0], 'member')
+    const projection = projectionFor(entry.elements[2])
+    if (projection === 'none') continue
+    const channel = stringLiteral(entry.elements[1], 'channel')
+    const path = publicRoot ? `${publicRoot}.${member}` : member
+    const target = projection === 'invoke' ? invoke : events
+    if (Object.hasOwn(target, path)) throw new Error(`Duplicate projected renderer path: ${path}`)
+    target[path] = channel
   }
 }
-
-for (const statement of source.statements) {
-  if (!ts.isVariableStatement(statement)) continue
-  for (const declaration of statement.declarationList.declarations) {
-    if (
-      ts.isIdentifier(declaration.name) &&
-      declaration.name.text === 'api' &&
-      declaration.initializer &&
-      ts.isObjectLiteralExpression(declaration.initializer)
-    ) {
-      walkObject(declaration.initializer)
-    }
-  }
-}
-
-events['window.onCloseActivePane'] = 'shortcut:close-active-pane'
 
 const sorted = (value) =>
   Object.fromEntries(Object.entries(value).sort(([a], [b]) => a.localeCompare(b)))

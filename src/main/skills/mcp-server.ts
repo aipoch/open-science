@@ -10,16 +10,25 @@ import {
   SKILL_IMPORT_MCP_SERVER_NAME
 } from '../../shared/skill-import'
 import { SKILL_IMPORT_MCP_SERVER_ARG } from '../mcp-server-args'
+import { parseGitHubSkillUrl } from './github-import'
 
 const requestSkillImportToolSchema = {
   attachment_uri: z
     .string()
     .url()
+    .optional()
     .describe('Exact file URI of the attachment marked skillImportEligible in the user prompt.'),
   turn_token: z
     .string()
     .uuid()
-    .describe('Exact skillImportTurnToken from the same eligible attachment reference.')
+    .optional()
+    .describe('Exact skillImportTurnToken from the same eligible attachment reference.'),
+  github_url: z
+    .string()
+    .url()
+    .refine((url) => parseGitHubSkillUrl(url) !== null, 'Must be an HTTPS github.com Skill URL.')
+    .optional()
+    .describe('Exact public github.com URL of the Skill directory or its SKILL.md file.')
 }
 const requestSkillImportToolDefinition = {
   title: 'Request Skill import',
@@ -29,7 +38,11 @@ const requestSkillImportToolDefinition = {
 const SKILL_IMPORT_SYSTEM_PROMPT_APPEND = [
   '<open_science_skill_import_instructions>',
   'When the user explicitly asks to install or import an attachment wrapped in <attached_skill_package> and marked skillImportEligible, call request_skill_import with its exact URI as attachment_uri and skillImportTurnToken as turn_token.',
-  'The tool opens an application-owned preview and confirmation dialog. Never unpack or copy an attached Skill package into a Skill directory yourself.',
+  'When the user supplies an exact public github.com Skill directory or SKILL.md URL, call request_skill_import with that URL as github_url.',
+  'When the user supplies only a Skill name or keywords, first use available web search to find its public github.com Skill directory or SKILL.md URL. Call request_skill_import only when one candidate is unambiguous; otherwise show the candidates and ask the user to choose.',
+  'Do not download GitHub content into a temporary attachment. The application fetches the validated GitHub URL and owns preview, confirmation, and import.',
+  'Do not invoke an external Skill installer, including skill-installer or install-skill-from-github.py, and do not write to codex/skills. Use request_skill_import so the application owns the import.',
+  'The tool opens an application-owned preview and confirmation dialog. Never unpack or copy a Skill into a Skill directory yourself.',
   'An <attached_local_archive> is an ordinary ZIP reference, not an eligible Skill package. Do not call request_skill_import for it.',
   'A newly imported Skill becomes available on the next user turn after the agent runtime reloads.',
   '</open_science_skill_import_instructions>'
@@ -38,6 +51,7 @@ const SKILL_IMPORT_SYSTEM_PROMPT_APPEND = [
 type SkillImportRpcConnection = {
   endpoint: string
   token: string
+  release?: () => void
 }
 
 type SkillImportMcpEnvironment = SkillImportRpcConnection & {
@@ -49,6 +63,7 @@ type SkillImportMcpHandler = {
     attachmentUri: string,
     turnToken: string
   ) => Promise<ConversationSkillImportResult>
+  requestGitHubImport: (githubUrl: string) => Promise<ConversationSkillImportResult>
 }
 
 type SkillImportMcpServerConfigRequest = SkillImportMcpEnvironment & {
@@ -61,6 +76,8 @@ type RpcResponse = {
   error?: string
 }
 
+type SkillImportRpcParams = { attachmentUri: string; turnToken: string } | { githubUrl: string }
+
 const createSkillImportMcpServer = (handler: SkillImportMcpHandler): ModelContextProtocolServer => {
   const server = new ModelContextProtocolServer({
     name: SKILL_IMPORT_MCP_SERVER_NAME,
@@ -70,14 +87,22 @@ const createSkillImportMcpServer = (handler: SkillImportMcpHandler): ModelContex
   server.registerTool(
     REQUEST_SKILL_IMPORT_TOOL_NAME,
     requestSkillImportToolDefinition,
-    async ({ attachment_uri, turn_token }) => ({
-      content: [
-        {
-          type: 'text',
-          text: JSON.stringify(await handler.requestImport(attachment_uri, turn_token), null, 2)
-        }
-      ]
-    })
+    async ({ attachment_uri, turn_token, github_url }) => {
+      if (github_url && (attachment_uri || turn_token)) {
+        throw new Error('Skill import accepts exactly one source.')
+      }
+      if (!github_url && (!attachment_uri || !turn_token)) {
+        throw new Error(
+          'Skill import requires either github_url or both attachment_uri and turn_token.'
+        )
+      }
+      const result = github_url
+        ? await handler.requestGitHubImport(github_url)
+        : await handler.requestImport(attachment_uri!, turn_token!)
+      return {
+        content: [{ type: 'text', text: JSON.stringify(result, null, 2) }]
+      }
+    }
   )
 
   return server
@@ -115,10 +140,9 @@ const createSkillImportMcpEnvironmentFromProcess = (
   sessionId: requireEnvironmentVariable(env, 'OPEN_SCIENCE_SKILL_IMPORT_SESSION_ID')
 })
 
-const callSkillImportRpc = async (
+const callSkillImportRpcRequest = async (
   environment: SkillImportMcpEnvironment,
-  attachmentUri: string,
-  turnToken: string
+  params: SkillImportRpcParams
 ): Promise<ConversationSkillImportResult> => {
   const response = await fetch(environment.endpoint, {
     method: 'POST',
@@ -128,7 +152,7 @@ const callSkillImportRpc = async (
     },
     body: JSON.stringify({
       method: 'skillImport',
-      params: { sessionId: environment.sessionId, turnToken, attachmentUri }
+      params: { sessionId: environment.sessionId, ...params }
     })
   })
   const payload = (await response.json()) as RpcResponse
@@ -139,12 +163,25 @@ const callSkillImportRpc = async (
   return payload.result
 }
 
+const callSkillImportRpc = (
+  environment: SkillImportMcpEnvironment,
+  attachmentUri: string,
+  turnToken: string
+): Promise<ConversationSkillImportResult> =>
+  callSkillImportRpcRequest(environment, { attachmentUri, turnToken })
+
+const callGitHubSkillImportRpc = (
+  environment: SkillImportMcpEnvironment,
+  githubUrl: string
+): Promise<ConversationSkillImportResult> => callSkillImportRpcRequest(environment, { githubUrl })
+
 const runSkillImportMcpServer = async (
   environment = createSkillImportMcpEnvironmentFromProcess()
 ): Promise<void> => {
   const server = createSkillImportMcpServer({
     requestImport: (attachmentUri, turnToken) =>
-      callSkillImportRpc(environment, attachmentUri, turnToken)
+      callSkillImportRpc(environment, attachmentUri, turnToken),
+    requestGitHubImport: (githubUrl) => callGitHubSkillImportRpc(environment, githubUrl)
   })
   await server.connect(new StdioServerTransport())
 }
@@ -155,6 +192,7 @@ export {
   SKILL_IMPORT_MCP_SERVER_ARG,
   SKILL_IMPORT_MCP_SERVER_NAME,
   SKILL_IMPORT_SYSTEM_PROMPT_APPEND,
+  callGitHubSkillImportRpc,
   callSkillImportRpc,
   createSkillImportMcpEnvironmentFromProcess,
   createSkillImportMcpServer,

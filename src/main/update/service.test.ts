@@ -7,6 +7,7 @@ import { join } from 'node:path'
 import { afterEach, describe, expect, it, vi } from 'vitest'
 
 import type { UpdateManifest } from '../../shared/update'
+import type { Logger } from '../logger'
 import { UpdateService } from './service'
 
 const manifest: UpdateManifest = {
@@ -19,7 +20,47 @@ const manifest: UpdateManifest = {
 const jsonResponse = (body: unknown): Response =>
   ({ ok: true, status: 200, json: () => Promise.resolve(body) }) as unknown as Response
 
+const createLogSpy = (): Logger => ({
+  debug: vi.fn(),
+  info: vi.fn(),
+  warn: vi.fn(),
+  error: vi.fn()
+})
+
+const diagnosticRecords = (log: Logger): Record<string, unknown>[] =>
+  (['debug', 'info', 'warn', 'error'] as const).flatMap((level) =>
+    vi.mocked(log[level]).mock.calls.map(([, data]) => data as Record<string, unknown>)
+  )
+
 describe('UpdateService.check', () => {
+  it('records a completed manifest check without manifest payloads', async () => {
+    const log = createLogSpy()
+    const service = new UpdateService({
+      fetchImpl: (() => Promise.resolve(jsonResponse(manifest))) as unknown as typeof fetch,
+      platform: 'darwin',
+      arch: 'arm64',
+      currentVersion: '0.2.0',
+      manifestUrl: 'https://diagnostic-secret.example/version.json?token=secret',
+      broadcast: vi.fn(),
+      log
+    })
+
+    await service.check()
+
+    const records = diagnosticRecords(log)
+    expect(records).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({
+          operation: 'update-check',
+          outcome: 'completed',
+          result: 'available'
+        })
+      ])
+    )
+    expect(JSON.stringify(records)).not.toContain('diagnostic-secret')
+    expect(JSON.stringify(records)).not.toContain('release notes')
+  })
+
   it('reports available with the platform download when newer', async () => {
     const broadcast = vi.fn()
     const service = new UpdateService({
@@ -65,6 +106,33 @@ describe('UpdateService.check', () => {
     const status = await service.check()
     expect(status.state).toBe('error')
     expect(status.error).toBe('offline')
+  })
+
+  it('records a failed manifest check without the provider error message', async () => {
+    const log = createLogSpy()
+    const service = new UpdateService({
+      fetchImpl: (() =>
+        Promise.reject(new Error('raw provider diagnostic secret'))) as unknown as typeof fetch,
+      currentVersion: '0.2.0',
+      broadcast: vi.fn(),
+      log
+    })
+
+    const status = await service.check()
+
+    expect(status.error).toBe('raw provider diagnostic secret')
+    const records = diagnosticRecords(log)
+    expect(records).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({
+          operation: 'update-check',
+          outcome: 'failed',
+          phase: 'fetch-manifest',
+          errorCategory: 'error'
+        })
+      ])
+    )
+    expect(JSON.stringify(records)).not.toContain('raw provider diagnostic secret')
   })
 
   it('stamps applyKind "installer" on every emitted status', async () => {
@@ -138,6 +206,49 @@ describe('UpdateService.download', () => {
     expect(status.state).toBe('ready')
     expect(status.localPath).toBe(target)
     expect(existsSync(target)).toBe(true)
+  })
+
+  it('records a completed installer download without its URL or local path', async () => {
+    dir = await mkdtemp(join(tmpdir(), 'diagnostic-private-'))
+    const target = join(dir, 'private-installer.dmg')
+    const body = Buffer.from('installer-bytes')
+    const manifestForCheck = downloadManifest(
+      body.byteLength,
+      createHash('sha256').update(body).digest('hex')
+    )
+    const fetchImpl = ((input: unknown) =>
+      String(input).endsWith('version.json')
+        ? Promise.resolve(jsonResponse(manifestForCheck))
+        : Promise.resolve(new Response(body, { status: 200 }))) as unknown as typeof fetch
+    const log = createLogSpy()
+    const service = new UpdateService({
+      fetchImpl,
+      platform: 'darwin',
+      arch: 'arm64',
+      currentVersion: '0.2.0',
+      manifestUrl: 'https://statics.aipoch.com/version.json',
+      broadcast: vi.fn(),
+      promptSavePath: () => Promise.resolve(target),
+      log
+    })
+    await service.check()
+    vi.mocked(log.info).mockClear()
+
+    await service.download()
+
+    const records = diagnosticRecords(log)
+    expect(records).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({
+          operation: 'update-download',
+          outcome: 'completed',
+          result: 'ready'
+        })
+      ])
+    )
+    const serialized = JSON.stringify(records)
+    expect(serialized).not.toContain('private-installer.dmg')
+    expect(serialized).not.toContain('statics.aipoch.com')
   })
 
   it('drops a prior-session <target>.part on the first download so a restart starts fresh', async () => {
@@ -379,6 +490,75 @@ describe('UpdateService.download', () => {
     expect(fetchMock).not.toHaveBeenCalled()
   })
 
+  it('records a failed installer download without the shell error message', async () => {
+    const manifestForCheck = downloadManifest(100, 'irrelevant')
+    const fetchImpl = (() =>
+      Promise.resolve(jsonResponse(manifestForCheck))) as unknown as typeof fetch
+    const log = createLogSpy()
+    const service = new UpdateService({
+      fetchImpl,
+      platform: 'darwin',
+      arch: 'arm64',
+      currentVersion: '0.2.0',
+      manifestUrl: 'https://statics.aipoch.com/version.json',
+      broadcast: vi.fn(),
+      promptSavePath: () => Promise.reject(new Error('private shell diagnostic detail')),
+      log
+    })
+    await service.check()
+    vi.mocked(log.info).mockClear()
+
+    const status = await service.download()
+
+    expect(status.error).toBe('private shell diagnostic detail')
+    const records = diagnosticRecords(log)
+    expect(records).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({
+          operation: 'update-download',
+          outcome: 'failed',
+          phase: 'select-target',
+          errorCategory: 'error'
+        })
+      ])
+    )
+    expect(JSON.stringify(records)).not.toContain('private shell diagnostic detail')
+  })
+
+  it('records manifest URL validation failure without the invalid URL', async () => {
+    const manifestForCheck = downloadManifest(100, 'irrelevant')
+    const log = createLogSpy()
+    const service = new UpdateService({
+      fetchImpl: (() => Promise.resolve(jsonResponse(manifestForCheck))) as unknown as typeof fetch,
+      platform: 'darwin',
+      arch: 'arm64',
+      currentVersion: '0.2.0',
+      manifestUrl: 'not-a-url-private-diagnostic-detail',
+      broadcast: vi.fn(),
+      promptSavePath: () => Promise.resolve('/unused'),
+      log
+    })
+    await service.check()
+    for (const level of ['debug', 'info', 'warn', 'error'] as const) {
+      vi.mocked(log[level]).mockClear()
+    }
+
+    await expect(service.download()).rejects.toThrow()
+
+    const records = diagnosticRecords(log)
+    expect(records).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({
+          operation: 'update-download',
+          outcome: 'failed',
+          phase: 'validate-source',
+          errorCategory: 'system'
+        })
+      ])
+    )
+    expect(JSON.stringify(records)).not.toContain('not-a-url-private-diagnostic-detail')
+  })
+
   it('cancel aborts an in-flight download, resets to available, and leaves no partial file', async () => {
     dir = await mkdtemp(join(tmpdir(), 'svc-'))
     const target = join(dir, 'installer.dmg')
@@ -401,6 +581,7 @@ describe('UpdateService.download', () => {
       onInstallerFetch?.()
       return Promise.resolve(new Response(body, { status: 200 }))
     }) as unknown as typeof fetch
+    const log = createLogSpy()
     const service = new UpdateService({
       fetchImpl,
       platform: 'darwin',
@@ -408,10 +589,12 @@ describe('UpdateService.download', () => {
       currentVersion: '0.2.0',
       manifestUrl: 'https://statics.aipoch.com/version.json',
       broadcast: vi.fn(),
-      promptSavePath: () => Promise.resolve(target)
+      promptSavePath: () => Promise.resolve(target),
+      log
     })
 
     await service.check()
+    vi.mocked(log.info).mockClear()
     const downloading = service.download()
     await fetched
     const cancelled = await service.cancel()
@@ -421,6 +604,15 @@ describe('UpdateService.download', () => {
     expect(final.state).toBe('available')
     expect(final.error).toBeUndefined()
     expect(existsSync(target)).toBe(false)
+    expect(diagnosticRecords(log)).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({
+          operation: 'update-download',
+          outcome: 'cancelled',
+          reason: 'user'
+        })
+      ])
+    )
   })
 
   it('ignores a second download() while one is already in flight', async () => {
@@ -674,7 +866,11 @@ describe('UpdateService.apply', () => {
   // Drives a service to the 'ready' state (checked + downloaded to `target`), with injected shell hooks.
   const downloadedService = async (
     target: string,
-    overrides: { openPath?: () => Promise<string>; fileExists?: (path: string) => boolean }
+    overrides: {
+      openPath?: () => Promise<string>
+      fileExists?: (path: string) => boolean
+      log?: Logger
+    }
   ): Promise<UpdateService> => {
     const body = Buffer.from('installer-bytes')
     const manifestForCheck: UpdateManifest = {
@@ -720,16 +916,57 @@ describe('UpdateService.apply', () => {
     expect(status.state).toBe('ready')
   })
 
+  it('records a completed installer apply without its local path', async () => {
+    dir = await mkdtemp(join(tmpdir(), 'private-apply-'))
+    const target = join(dir, 'private-installer.dmg')
+    const log = createLogSpy()
+    const service = await downloadedService(target, {
+      openPath: () => Promise.resolve(''),
+      log
+    })
+    for (const level of ['debug', 'info', 'warn', 'error'] as const) {
+      vi.mocked(log[level]).mockClear()
+    }
+
+    await service.apply()
+
+    const records = diagnosticRecords(log)
+    expect(records).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({
+          operation: 'update-apply',
+          outcome: 'completed',
+          result: 'installer-opened'
+        })
+      ])
+    )
+    expect(JSON.stringify(records)).not.toContain('private-installer.dmg')
+  })
+
   it('returns to available when the downloaded file is missing (e.g. the user deleted it)', async () => {
     dir = await mkdtemp(join(tmpdir(), 'open-'))
     const target = join(dir, 'installer.dmg')
     const openPath = vi.fn(() => Promise.resolve(''))
-    const service = await downloadedService(target, { openPath, fileExists: () => false })
+    const log = createLogSpy()
+    const service = await downloadedService(target, { openPath, fileExists: () => false, log })
+    for (const level of ['debug', 'info', 'warn', 'error'] as const) {
+      vi.mocked(log[level]).mockClear()
+    }
 
     const status = await service.apply()
 
     expect(openPath).not.toHaveBeenCalled()
     expect(status.state).toBe('available')
     expect(status.localPath).toBeUndefined()
+    expect(diagnosticRecords(log)).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({
+          operation: 'update-apply',
+          outcome: 'failed',
+          phase: 'verify-installer',
+          reason: 'installer-missing'
+        })
+      ])
+    )
   })
 })

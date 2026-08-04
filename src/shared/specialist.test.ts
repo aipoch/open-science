@@ -153,6 +153,20 @@ describe('system prompt validation in create/update inputs', () => {
   })
 })
 
+describe('package version validation in update inputs', () => {
+  it('accepts SemVer and rejects a non-SemVer package version', () => {
+    expect(
+      validateUpdateSpecialistInput(
+        { id: 'specialist-1', revision: 1, packageVersion: '2.0.0-beta.1+build.7' },
+        []
+      )
+    ).toEqual([])
+    expect(
+      validateUpdateSpecialistInput({ id: 'specialist-1', revision: 1, packageVersion: 'next' }, [])
+    ).toEqual([{ field: 'packageVersion', message: 'Package version must be valid SemVer.' }])
+  })
+})
+
 describe('empty config helpers', () => {
   it('emptyFullAccessConfig returns correct shape', () => {
     const cfg = emptyFullAccessConfig()

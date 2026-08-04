@@ -6,6 +6,8 @@ import { app, BrowserWindow, dialog, shell } from 'electron'
 
 import { APP } from '../../shared/app-config'
 import { isNewer, selectDownload, type UpdateStatus } from '../../shared/update'
+import { startDiagnosticOperation, type DiagnosticOperation } from '../diagnostics/operation'
+import type { Logger } from '../logger'
 import { downloadInstaller } from './downloader'
 import { fetchManifest } from './manifest'
 import type { UpdateStrategy } from './strategy'
@@ -35,6 +37,14 @@ export type UpdateServiceDeps = {
   // prior session's <target>.part the FIRST time a target path is downloaded this session, so a restart
   // starts the installer download from scratch rather than resuming last session's fragment via Range.
   removeFile?: (path: string) => Promise<void>
+  log?: Logger
+}
+
+const NOOP_LOGGER: Logger = {
+  debug: () => {},
+  info: () => {},
+  warn: () => {},
+  error: () => {}
 }
 
 // Default broadcast pushes to every live window, mirroring the connector approval-broker pattern.
@@ -64,6 +74,7 @@ export class UpdateService implements UpdateStrategy {
   // Monotonic id per started download; the finally only clears downloadLifecycle when it is still the
   // latest, so an older (drained) download can't clear a newer one's lifecycle.
   private downloadGeneration = 0
+  private downloadOperation?: DiagnosticOperation
   private readonly fetchImpl?: typeof fetch
   private readonly platform: NodeJS.Platform
   private readonly arch: string
@@ -75,6 +86,7 @@ export class UpdateService implements UpdateStrategy {
   private readonly openPath: (path: string) => Promise<string>
   private readonly openExternal: (url: string) => Promise<void>
   private readonly removeFile: (path: string) => Promise<void>
+  private readonly log: Logger
   // Per-session set of target paths that have already been downloaded once this run. The first
   // download to a given path removes any pre-existing <target>.part so a restart starts fresh
   // (design: "app closes → start from scratch"). Within a session the path stays in the set and
@@ -93,6 +105,7 @@ export class UpdateService implements UpdateStrategy {
     this.openPath = deps.openPath ?? ((path) => shell.openPath(path))
     this.openExternal = deps.openExternal ?? ((url) => shell.openExternal(url))
     this.removeFile = deps.removeFile ?? ((path) => rm(path, { force: true }))
+    this.log = deps.log ?? NOOP_LOGGER
     this.status = { state: 'idle', current: this.currentVersion, applyKind: 'installer' }
   }
 
@@ -124,7 +137,12 @@ export class UpdateService implements UpdateStrategy {
   }
 
   async check(): Promise<UpdateStatus> {
+    const operation = startDiagnosticOperation(this.log, {
+      operation: 'update-check',
+      fields: { strategy: 'manifest' }
+    })
     this.setStatus({ state: 'checking', current: this.currentVersion })
+    operation.phase('fetch-manifest')
     try {
       const manifest = await fetchManifest(this.manifestUrl, this.fetchImpl)
       if (!isNewer(manifest.version, this.currentVersion)) {
@@ -133,6 +151,7 @@ export class UpdateService implements UpdateStrategy {
           current: this.currentVersion,
           latest: manifest.version
         })
+        operation.complete({ result: 'up-to-date' })
         return this.status
       }
       const download = selectDownload(manifest, this.platform, this.arch) ?? undefined
@@ -144,12 +163,14 @@ export class UpdateService implements UpdateStrategy {
         download,
         totalBytes: download?.size
       })
+      operation.complete({ result: 'available', artifactAvailable: download !== undefined })
     } catch (error) {
       this.setStatus({
         state: 'error',
         current: this.currentVersion,
         error: error instanceof Error ? error.message : 'Update check failed'
       })
+      operation.fail(error, { result: 'error' })
     }
     return this.status
   }
@@ -163,9 +184,23 @@ export class UpdateService implements UpdateStrategy {
     const { download } = this.status
     if (!download) return this.status
 
+    const operation = startDiagnosticOperation(this.log, {
+      operation: 'update-download',
+      fields: { strategy: 'manifest' }
+    })
+    this.downloadOperation = operation
+    operation.phase('validate-source')
+
     // Defense-in-depth: the sha256 comes from the same manifest as the URL, so it can't catch a
     // tampered manifest pointing at a hostile host. Require the download to stay on the trusted host.
-    const trustedHost = new URL(this.manifestUrl).host
+    let trustedHost: string
+    try {
+      trustedHost = new URL(this.manifestUrl).host
+    } catch (error) {
+      operation.fail(error, { reason: 'invalid-manifest-url' })
+      if (this.downloadOperation === operation) this.downloadOperation = undefined
+      throw error
+    }
     let downloadHost: string
     try {
       downloadHost = new URL(download.url).host
@@ -174,6 +209,8 @@ export class UpdateService implements UpdateStrategy {
     }
     if (downloadHost !== trustedHost) {
       this.setStatus({ ...this.status, state: 'error', error: 'Untrusted download host' })
+      operation.fail(new URIError('Untrusted update source'), { reason: 'untrusted-source' })
+      if (this.downloadOperation === operation) this.downloadOperation = undefined
       return this.status
     }
 
@@ -188,14 +225,22 @@ export class UpdateService implements UpdateStrategy {
       try {
         // Drain any prior (e.g. just-cancelled) download so its partial-file rm can't delete a same-path
         // retry's installer. Swallow its outcome — it is owned by its own lifecycle.
-        if (previous) await previous.catch(() => {})
+        if (previous) {
+          operation.phase('wait-for-previous')
+          await previous.catch(() => {})
+        }
         // A cancel() during the drain means never start this download.
         if (abort.signal.aborted) return
 
         // Ask where to save (platform-aware). A dialog cancel — or a cancel() during the prompt —
         // leaves the status untouched (stays 'available').
+        operation.phase('select-target')
         const targetPath = await this.promptSavePath(installerFileName(download.url))
-        if (!targetPath || abort.signal.aborted) return
+        if (!targetPath) {
+          operation.cancel({ reason: 'target-selection' })
+          return
+        }
+        if (abort.signal.aborted) return
 
         // First time this session that we download to this exact path: drop any <target>.part left by
         // a PRIOR session so the resilient core can't Range-resume a stale fragment (the user may
@@ -206,6 +251,7 @@ export class UpdateService implements UpdateStrategy {
         // cross-restart resume). Subsequent downloads to the same path this session are left alone so
         // an in-session cancel/retry still resumes via Range.
         if (!this.freshTargets.has(targetPath)) {
+          operation.phase('prepare-target')
           await this.removeFile(`${targetPath}.part`)
           this.freshTargets.add(targetPath)
           if (abort.signal.aborted) return
@@ -218,6 +264,7 @@ export class UpdateService implements UpdateStrategy {
           downloadedBytes: 0,
           totalBytes: download.size
         })
+        operation.phase('transfer')
         const localPath = await downloadInstaller(download, targetPath, {
           fetchImpl: this.fetchImpl,
           onProgress: (progress) => this.broadcast('update:progress', progress),
@@ -231,6 +278,7 @@ export class UpdateService implements UpdateStrategy {
           totalBytes: download.size,
           localPath
         })
+        operation.complete({ result: 'ready' })
       } catch (error) {
         // A user cancel aborts the fetch (rejects here); cancel() already reset the status to
         // 'available', so leave it. Any other failure — including a save-dialog rejection — surfaces as
@@ -242,9 +290,11 @@ export class UpdateService implements UpdateStrategy {
             state: 'error',
             error: error instanceof Error ? error.message : 'Download failed'
           })
+          operation.fail(error, { result: 'error' })
         }
       } finally {
         if (this.downloadAbort === abort) this.downloadAbort = undefined
+        if (this.downloadOperation === operation) this.downloadOperation = undefined
       }
     })()
     this.downloadLifecycle = lifecycle
@@ -261,6 +311,7 @@ export class UpdateService implements UpdateStrategy {
   async cancel(): Promise<UpdateStatus> {
     this.downloadAbort?.abort()
     this.downloadAbort = undefined
+    this.downloadOperation?.cancel({ reason: 'user' })
     if (this.status.state === 'downloading') {
       this.setStatus({ ...this.status, state: 'available', progress: undefined })
     }
@@ -271,21 +322,45 @@ export class UpdateService implements UpdateStrategy {
   // drop back to 'available' so the user can re-download in place — the download metadata is still on
   // the status. With no installer for this platform at all, send them to the public download page.
   async apply(): Promise<UpdateStatus> {
-    const { localPath, download } = this.status
-    if (localPath && this.fileExists(localPath)) {
-      const error = await this.openPath(localPath)
-      if (!error) return this.status
+    const operation = startDiagnosticOperation(this.log, {
+      operation: 'update-apply',
+      fields: { strategy: 'manifest' }
+    })
+    try {
+      const { localPath, download } = this.status
+      if (localPath) {
+        operation.phase('verify-installer')
+        if (this.fileExists(localPath)) {
+          operation.phase('open-installer')
+          const error = await this.openPath(localPath)
+          if (!error) {
+            operation.complete({ result: 'installer-opened' })
+            return this.status
+          }
+          operation.fail(new Error('Installer open failed'), { reason: 'open-failed' })
+        } else {
+          operation.fail(new Error('Installer unavailable'), { reason: 'installer-missing' })
+        }
+      } else if (download) {
+        operation.fail(new Error('Installer unavailable'), { reason: 'installer-missing' })
+      }
+
+      if (download) {
+        this.setStatus({
+          ...this.status,
+          state: 'available',
+          localPath: undefined,
+          progress: undefined
+        })
+      } else {
+        operation.phase('open-download-page')
+        await this.openExternal(APP.update.downloadPage)
+        operation.complete({ result: 'download-page-opened' })
+      }
+      return this.status
+    } catch (error) {
+      operation.fail(error, { result: 'error' })
+      throw error
     }
-    if (download) {
-      this.setStatus({
-        ...this.status,
-        state: 'available',
-        localPath: undefined,
-        progress: undefined
-      })
-    } else {
-      await this.openExternal(APP.update.downloadPage)
-    }
-    return this.status
   }
 }

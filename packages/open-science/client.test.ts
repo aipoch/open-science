@@ -4,6 +4,7 @@ import { join } from 'node:path'
 
 import { afterEach, describe, expect, it, vi } from 'vitest'
 
+import { PUBLIC_TERMINAL_FIXTURE } from '../../test/fixtures/renderer-contract-certification'
 import { connectToOpenScience, OpenScienceClient } from './index.mjs'
 
 const response = (status: number, payload: unknown): Response =>
@@ -19,6 +20,27 @@ afterEach(async () => {
 })
 
 describe('OpenScienceClient', () => {
+  it('pins the SDK method inventory without exposing management capabilities', () => {
+    expect(Object.getOwnPropertyNames(OpenScienceClient.prototype).sort()).toEqual(
+      [
+        'constructor',
+        'health',
+        'listProjects',
+        'createProject',
+        'listSessions',
+        'getSession',
+        'startRun',
+        'getRun',
+        'waitForRun',
+        'listArtifacts',
+        'downloadArtifact',
+        'events',
+        'request',
+        'throwResponseError'
+      ].sort()
+    )
+  })
+
   it('starts and waits for a run through the authenticated versioned API', async () => {
     const fetch = vi
       .fn()
@@ -151,6 +173,9 @@ describe('OpenScienceClient', () => {
     expect(client).not.toHaveProperty('permissions')
     expect(client).not.toHaveProperty('specialists')
     expect(client).not.toHaveProperty('compute')
+    expect(client).not.toHaveProperty('notebook')
+    expect(client).not.toHaveProperty('notebookEnv')
+    expect(client).not.toHaveProperty('runtime')
   })
 
   it('surfaces stable API errors without including the authentication token', async () => {
@@ -250,7 +275,7 @@ describe('OpenScienceClient', () => {
     FakeWebSocket.instance.emit('open')
     const first = events.next()
     FakeWebSocket.instance.emit('message', {
-      data: JSON.stringify({ type: 'run.event', data: { sessionId: 'session-1' } })
+      data: JSON.stringify(PUBLIC_TERMINAL_FIXTURE)
     })
     const second = events.next()
     FakeWebSocket.instance.emit('message', {
@@ -261,7 +286,7 @@ describe('OpenScienceClient', () => {
     })
 
     await expect(first).resolves.toEqual({
-      value: { type: 'run.event', data: { sessionId: 'session-1' } },
+      value: PUBLIC_TERMINAL_FIXTURE,
       done: false
     })
     await expect(second).resolves.toEqual({

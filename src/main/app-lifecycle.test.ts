@@ -1,7 +1,14 @@
-import { describe, expect, it, vi } from 'vitest'
+import { afterEach, describe, expect, it, vi } from 'vitest'
 
 import { installAppLifecycle, type AppLifecycleDeps, type TrayHandlers } from './app-lifecycle'
+import {
+  clearApplicationShutdownTrigger,
+  currentApplicationShutdownTrigger,
+  markApplicationShutdownTrigger
+} from './application-shutdown-trigger'
 import type { ActiveSessionInfo } from '../shared/storage'
+import type { RendererSessionPersistenceFlushOutcome } from './session-persistence/renderer-flush'
+import type { ShutdownStepOutcome } from './lifecycle-shutdown'
 import type {
   CloseClassification,
   CloseConfirmChoice,
@@ -10,6 +17,8 @@ import type {
 
 type QuitEvent = { preventDefault: () => void; defaultPrevented: boolean }
 type Handler = (event: QuitEvent) => void
+
+afterEach(() => clearApplicationShutdownTrigger())
 
 type FakeApp = {
   on: (event: string, handler: Handler) => void
@@ -102,7 +111,7 @@ const asWindow = (w: FakeWindow): import('electron').BrowserWindow =>
 type CapturedCloseOpts = {
   classifyClose: () => CloseClassification
   resolveCloseAction: () => Promise<CloseConfirmChoice>
-  requestQuit: () => void
+  requestQuit: (confirmed?: boolean) => void
 }
 
 type Harness = {
@@ -110,7 +119,9 @@ type Harness = {
   windows: FakeWindow[]
   tray: { destroy: ReturnType<typeof vi.fn> } | undefined
   trayHandlers: TrayHandlers | undefined
-  shutdownBackends: () => Promise<void>
+  shutdownBackends: () => Promise<ShutdownStepOutcome | void>
+  prepareForQuit: () => Promise<ShutdownStepOutcome | void>
+  flushSessionPersistence: () => Promise<RendererSessionPersistenceFlushOutcome | void>
   quit: ReturnType<typeof vi.fn>
   showMainWindow: () => void
   getMainWindow: () => import('electron').BrowserWindow | undefined
@@ -123,7 +134,16 @@ const setup = (
   overrides: Partial<
     Pick<
       AppLifecycleDeps,
-      'shutdownBackends' | 'isMigrationInProgress' | 'platform' | 'createInitialWindow'
+      | 'shutdownBackends'
+      | 'prepareForQuit'
+      | 'flushSessionPersistence'
+      | 'log'
+      | 'flushLogs'
+      | 'logFlushTimeoutMs'
+      | 'shutdownTrigger'
+      | 'isMigrationInProgress'
+      | 'platform'
+      | 'createInitialWindow'
     >
   > & {
     trayHost?: boolean
@@ -140,6 +160,9 @@ const setup = (
   const tray = trayHost ? { destroy: vi.fn() } : undefined
   let trayHandlers: TrayHandlers | undefined
   const shutdownBackends = overrides.shutdownBackends ?? vi.fn(async () => undefined)
+  const prepareForQuit = overrides.prepareForQuit ?? vi.fn(async () => undefined)
+  const flushSessionPersistence =
+    overrides.flushSessionPersistence ?? vi.fn(async () => 'completed' as const)
   const quit = vi.fn()
   const closeOpts: CapturedCloseOpts[] = []
   const confirmClose = vi.fn(
@@ -160,6 +183,12 @@ const setup = (
       return tray as unknown as import('electron').Tray | undefined
     },
     shutdownBackends,
+    prepareForQuit,
+    flushSessionPersistence,
+    log: overrides.log,
+    flushLogs: overrides.flushLogs,
+    logFlushTimeoutMs: overrides.logFlushTimeoutMs,
+    shutdownTrigger: overrides.shutdownTrigger,
     isMigrationInProgress: overrides.isMigrationInProgress ?? ((): boolean => false),
     quit,
     countWindows: () => windows.filter((w) => !w.destroyed).length,
@@ -174,6 +203,8 @@ const setup = (
     tray,
     trayHandlers,
     shutdownBackends,
+    prepareForQuit,
+    flushSessionPersistence,
     quit,
     showMainWindow,
     getMainWindow,
@@ -291,6 +322,8 @@ describe('installAppLifecycle', () => {
       createMainWindow: () => asWindow(makeFakeWindow()),
       createTray: () => ({ destroy: vi.fn() }) as unknown as import('electron').Tray,
       shutdownBackends,
+      prepareForQuit: async () => undefined,
+      flushSessionPersistence: async () => undefined,
       isMigrationInProgress: (): boolean => false,
       quit: vi.fn(),
       countWindows: (): number => 1,
@@ -319,11 +352,149 @@ describe('installAppLifecycle', () => {
     app.emit('before-quit') // starts cleanup (pending)
     const second = app.emit('before-quit') // re-issued while running
     expect(second.defaultPrevented).toBe(true)
+    await flush()
     expect(shutdownBackends).toHaveBeenCalledTimes(1)
 
     release?.()
     await flush()
     expect(app.exit).toHaveBeenCalledWith(0)
+  })
+
+  it('keeps the renderer alive when the window is closed again during quit cleanup', async () => {
+    let release: (() => void) | undefined
+    const prepareForQuit = vi.fn(
+      () =>
+        new Promise<void>((resolve) => {
+          release = resolve
+        })
+    )
+    const { app, closeOpts } = setup({
+      platform: 'linux',
+      trayHost: false,
+      prepareForQuit
+    })
+    closeOpts[0].requestQuit()
+
+    app.emit('before-quit')
+
+    expect(closeOpts[0].classifyClose()).toBe('quit')
+
+    release?.()
+    await flush()
+  })
+
+  it('waits for ACP cancellation and Session persistence before backend teardown', async () => {
+    const calls: string[] = []
+    const { app, closeOpts } = setup({
+      prepareForQuit: vi.fn(async () => {
+        calls.push('prepare')
+      }),
+      flushSessionPersistence: vi.fn(async () => {
+        calls.push('flush')
+      }),
+      shutdownBackends: vi.fn(async () => {
+        calls.push('shutdown')
+      })
+    })
+    closeOpts[0].requestQuit()
+
+    app.emit('before-quit')
+    await flush()
+
+    expect(calls).toEqual(['prepare', 'flush', 'shutdown'])
+    expect(app.exit).toHaveBeenCalledWith(0)
+  })
+
+  it('records a degraded renderer persistence flush and drains terminal logs before exit', async () => {
+    const log = { debug: vi.fn(), info: vi.fn(), warn: vi.fn(), error: vi.fn() }
+    const flushLogs = vi.fn(async () => undefined)
+    const { app, closeOpts } = setup({
+      log,
+      flushLogs,
+      flushSessionPersistence: vi.fn(async () => 'timeout' as const)
+    })
+    closeOpts[0].requestQuit()
+
+    app.emit('before-quit')
+    await flush()
+
+    expect(log.info).toHaveBeenCalledWith(
+      'operation completed',
+      expect.objectContaining({
+        operation: 'application-shutdown',
+        outcome: 'completed',
+        degraded: true,
+        usageDrainResult: 'completed',
+        rendererFlushResult: 'timeout',
+        backendTeardownResult: 'completed'
+      })
+    )
+    expect(flushLogs).toHaveBeenCalledOnce()
+    expect(flushLogs.mock.invocationCallOrder[0]).toBeLessThan(app.exit.mock.invocationCallOrder[0])
+  })
+
+  it.each(['migration-relaunch', 'update'] as const)(
+    'classifies a %s handoff without changing shutdown ordering',
+    async (trigger) => {
+      const log = { debug: vi.fn(), info: vi.fn(), warn: vi.fn(), error: vi.fn() }
+      markApplicationShutdownTrigger(trigger)
+      const { app, confirmClose } = setup({
+        log,
+        detectActiveSessions: () => [
+          { projectId: 'project-1', sessionId: 'session-1', kind: 'agent' }
+        ]
+      })
+
+      app.emit('before-quit')
+      await flush()
+
+      expect(confirmClose).not.toHaveBeenCalled()
+      expect(log.info).toHaveBeenCalledWith(
+        'operation completed',
+        expect.objectContaining({
+          operation: 'application-shutdown',
+          trigger,
+          outcome: 'completed'
+        })
+      )
+    }
+  )
+
+  it('records fixed outcomes for every shutdown step and never reports a degraded shutdown as clean', async () => {
+    const log = { debug: vi.fn(), info: vi.fn(), warn: vi.fn(), error: vi.fn() }
+    const { app, closeOpts } = setup({
+      log,
+      prepareForQuit: vi.fn(async () => 'timeout' as const),
+      flushSessionPersistence: vi.fn(async () => 'send-failed' as const),
+      shutdownBackends: vi.fn(async () => 'degraded' as const)
+    })
+    closeOpts[0].requestQuit()
+
+    app.emit('before-quit')
+    await flush()
+
+    expect(log.info).toHaveBeenCalledWith(
+      'operation phase',
+      expect.objectContaining({ phase: 'usage-drain', result: 'timeout' })
+    )
+    expect(log.info).toHaveBeenCalledWith(
+      'operation phase',
+      expect.objectContaining({ phase: 'renderer-session-flush', result: 'failed' })
+    )
+    expect(log.info).toHaveBeenCalledWith(
+      'operation phase',
+      expect.objectContaining({ phase: 'backend-teardown', result: 'degraded' })
+    )
+    expect(log.info).toHaveBeenCalledWith(
+      'operation completed',
+      expect.objectContaining({
+        operation: 'application-shutdown',
+        degraded: true,
+        usageDrainResult: 'timeout',
+        rendererFlushResult: 'failed',
+        backendTeardownResult: 'degraded'
+      })
+    )
   })
 
   it('quits on window-all-closed only when non-darwin and no tray host', () => {
@@ -399,9 +570,9 @@ describe('installAppLifecycle', () => {
     expect(captured.classifyClose()).toBe('hide')
   })
 
-  it('classifyClose returns "close" when no tray', () => {
+  it('classifyClose returns "quit" when no tray so the renderer survives through flush', () => {
     const captured = installWithCapturedOpts({ platform: 'win32', hasTray: false })
-    expect(captured.classifyClose()).toBe('close')
+    expect(captured.classifyClose()).toBe('quit')
   })
 
   it('resolveCloseAction resolves via confirmClose("close-to-tray", sessions)', async () => {
@@ -418,6 +589,22 @@ describe('installAppLifecycle', () => {
     const { closeOpts, quit } = setup()
     closeOpts[0].requestQuit()
     expect(quit).toHaveBeenCalledTimes(1)
+  })
+
+  it('keeps a no-tray close unconfirmed so active work still prompts before quit', async () => {
+    const sessions: ActiveSessionInfo[] = [{ projectId: 'demo', sessionId: 's1', kind: 'agent' }]
+    const confirmClose = vi.fn(async (): Promise<CloseConfirmChoice> => 'cancel')
+    const { app, closeOpts } = setup({
+      trayHost: false,
+      detectActiveSessions: () => sessions,
+      confirmClose
+    })
+
+    closeOpts[0].requestQuit(false)
+    app.emit('before-quit')
+    await flush()
+
+    expect(confirmClose).toHaveBeenCalledWith('quit', sessions)
   })
 
   it('before-quit with no active work proceeds to shutdown (confirmClose resolves quit)', async () => {
@@ -560,6 +747,19 @@ describe('installAppLifecycle', () => {
     expect(event.defaultPrevented).toBe(false)
     expect(confirmClose).not.toHaveBeenCalled()
     expect(quit).not.toHaveBeenCalled()
+    expect(shutdownBackends).not.toHaveBeenCalled()
+  })
+
+  it('clears an update shutdown trigger when migration aborts the quit', async () => {
+    markApplicationShutdownTrigger('update')
+    const { app, shutdownBackends } = setup({
+      isMigrationInProgress: (): boolean => true
+    })
+
+    app.emit('before-quit')
+    await flush()
+
+    expect(currentApplicationShutdownTrigger()).toBe('quit')
     expect(shutdownBackends).not.toHaveBeenCalled()
   })
 

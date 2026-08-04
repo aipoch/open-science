@@ -89,7 +89,7 @@ vi.mock('./stale-reviews', () => ({
     (flagStaleReviews as unknown as (...a: unknown[]) => unknown)(...args)
 }))
 
-const { registerReviewerIpcHandlers } = await import('./ipc')
+const { createReviewerCommandOwner, registerReviewerIpcHandlers } = await import('./ipc')
 const { beginMigration, clearMigrationPending } = await import('../storage/migration-state')
 
 const acpRuntime = {} as AcpRuntime
@@ -124,6 +124,31 @@ beforeEach(() => {
 afterEach(() => clearMigrationPending())
 
 describe('reviewer IPC handlers', () => {
+  it('shares one in-flight arbitration owner between direct and IPC commands', async () => {
+    let finishRun: (() => void) | undefined
+    let backgroundRun: Promise<void> | undefined
+    runReview.mockImplementation((options?: { onStarted?: () => void }) => {
+      backgroundRun = new Promise<void>((resolve) => {
+        options?.onStarted?.()
+        finishRun = resolve
+      })
+      return backgroundRun
+    })
+    const options = { acpRuntime }
+    const owner = createReviewerCommandOwner(options)
+    registerReviewerIpcHandlers(options, owner)
+
+    await expect(owner.run(createRequest())).resolves.toEqual({ started: true })
+    await expect(handlers.get(REVIEWER_IPC.RUN)?.({}, createRequest())).resolves.toEqual({
+      started: false,
+      reason: 'already-in-flight'
+    })
+    expect(runReview).toHaveBeenCalledTimes(1)
+
+    finishRun?.()
+    await backgroundRun
+  })
+
   it('runs reviews with artifacts rooted at the data root, not the config root', async () => {
     registerReviewerIpcHandlers({ acpRuntime })
 

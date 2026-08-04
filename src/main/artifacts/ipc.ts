@@ -341,14 +341,13 @@ const registerArtifactIpcHandlers = (
     | 'getVersionReview'
     | 'resolveVersionContent'
   >,
-  withSessionMutation?: ArtifactHandlerDependencies['withSessionMutation']
-): void => {
-  const handlers = createArtifactHandlers(repository, runRegistry, {
+  withSessionMutation?: ArtifactHandlerDependencies['withSessionMutation'],
+  handlers: ArtifactHandlers = createArtifactHandlers(repository, runRegistry, {
     getActiveArtifactRunIds,
     provenance,
     withSessionMutation
   })
-
+): void => {
   ipcMainHandle(
     'artifacts:finalize-run',
     async (_event, request: FinalizeRunArtifactsRequest): Promise<FinalizeRunArtifactsResult> => {

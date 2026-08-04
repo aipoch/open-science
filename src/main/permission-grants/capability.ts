@@ -43,19 +43,55 @@ const TRUSTED_TOOL_CATEGORIES: Readonly<Record<string, string>> = {
 // digest protects display/storage privacy; it does not make a secret reusable authority.
 const SECRET_BEARING_INPUT_PATTERNS = [
   /\b(?:authorization|proxy-authorization|x-api-key|api-key|x-auth-token|x-amz-security-token|cookie)\s*:/i,
-  /\b(?:token|access[_-]?token|api[_-]?key|secret|password|passwd|credential)s?\s*=/i,
-  /--(?:token|access-token|api-key|secret|password|passwd)(?:=|\s+)/i,
-  /\b[A-Z0-9_]*(?:TOKEN|API_KEY|SECRET|PASSWORD|PASSWD|CREDENTIALS?|PAT|ACCESS_KEY(?:_ID)?|SECRET_ACCESS_KEY|CLIENT_SECRET|PRIVATE_KEY)\s*=/,
-  /(?:^|\s)(?:-u|--user)(?:=|\s+)['"]?[^\s:'"]+:[^\s'"]+/i,
+  /\b_?[a-z0-9_-]*(?:auth(?:entication)?(?:[_-]?(?:key|token))?|access[_-]?token|api[_-]?key|bearer[_-]?token|client[_-]?secret|private[_-]?key|secret(?:[_-]?access[_-]?key)?|token|password|passphrase|passwd|credential)s?\s*=/i,
+  /\b[a-z0-9_.-]*(?:secret[-_]?access[-_]?key|access[-_]?key(?:[-_]?id)?|session[-_]?token|security[-_]?token)[ \t]+['"]?[^\s'"]+/i,
+  /(?:^|[ \t'"])--?(?:[a-z0-9]+[-_])*(?:access[-_]?(?:key|token)|api[-_]?key|auth[-_]?token|authorization|bearer(?:[-_]?token)?|client[-_]?secret|cookie|credentials?|pass|passphrase|passwd|password|pat|private[-_]?key|secret(?:[-_]?access[-_]?key)?|tokens?)(?:[-_]?(?:file|path))?(?:=|:|[ \t]+)/i,
+  /(?:^|[ \t'"])--?key[-_]?(?:file|path)(?:=|:|[ \t]+)/i,
+  /\b[A-Z0-9_]*(?:TOKEN|API_KEY|SECRET|PASSWORD|PASSPHRASE|PASSWD|CREDENTIALS?|PAT|ACCESS_KEY(?:_ID)?|SECRET_ACCESS_KEY|CLIENT_SECRET|PRIVATE_KEY)\s*=/,
+  /(?:^|\s)(?:-u|--(?:proxy-)?user)(?:=|\s+)['"]?[^\s:'"]+:[^\s'"]+/i,
+  /\bcurl(?:\.exe)?\b[^\r\n]*?[ \t]-u=?['"]?[^\s:'"]+:[^\s'"]+/i,
+  // Short flags are overloaded across CLIs, so reject only credential-bearing meanings for the
+  // command that owns them instead of making every -a, -b, or -p command Once-only.
+  /\b[Cc][Uu][Rr][Ll](?:\.[Ee][Xx][Ee])?\b[^\r\n]*?[ \t]-b(?:=?['"]?[^\s'"]+|[ \t]+['"]?[^\s'"]+)/,
+  /\b[Dd][Oo][Cc][Kk][Ee][Rr](?:\.[Ee][Xx][Ee])?\b[^\r\n]*?\blogin\b[^\r\n]*?[ \t]-p(?:=?['"]?[^\s'"]+|[ \t]+['"]?[^\s'"]+)/,
+  /\b[Ss][Ss][Hh][Pp][Aa][Ss][Ss](?:\.[Ee][Xx][Ee])?\b[^\r\n]*?[ \t]-p(?:=?['"]?[^\s'"]+|[ \t]+['"]?[^\s'"]+)/,
+  /\b[Rr][Ee][Dd][Ii][Ss]-[Cc][Ll][Ii](?:\.[Ee][Xx][Ee])?\b[^\r\n]*?[ \t]-a(?:=?['"]?[^\s'"]+|[ \t]+['"]?[^\s'"]+)/,
+  /\b(?:[Mm][Yy][Ss][Qq][Ll]|[Mm][Yy][Ss][Qq][Ll][Dd][Uu][Mm][Pp])(?:\.[Ee][Xx][Ee])?\b[^\r\n]*?[ \t]-p=?['"]?[^\s'"]+/,
   /\b(?:github_pat_|gh[pousr]_|AKIA[0-9A-Z]{16}|sk-[A-Za-z0-9_-]{16,})[A-Za-z0-9_-]*/,
   /\b[a-z][a-z0-9+.-]*:\/\/[^\s/@:]+:[^\s/@]+@/i,
   /[?&](?:token|access_token|api_key|key|secret|password|signature)=[^&#\s]+/i
 ] as const
 
 const PERSISTABLE_GIT_SUBCOMMANDS = new Set(['status'])
+const COMMAND_PREFIX_QUALIFIER_PATTERN = /^argv-prefix:sha256:v1:[a-f0-9]{64}$/
 
 const containsSecretBearingMaterial = (value: string): boolean =>
   SECRET_BEARING_INPUT_PATTERNS.some((pattern) => pattern.test(value))
+
+// Command groups retain only a digest of Codex's structured argv prefix. The category qualifier
+// distinguishes them from exact full-command grants without persisting command arguments.
+const commandPrefixPermissionCategory = (value: unknown): string | undefined => {
+  if (
+    !Array.isArray(value) ||
+    value.length === 0 ||
+    !value.every(
+      (token): token is string =>
+        typeof token === 'string' &&
+        token.length > 0 &&
+        [...token].every((character) => {
+          const codePoint = character.codePointAt(0)
+          return codePoint !== undefined && codePoint > 0x1f && codePoint !== 0x7f
+        })
+    )
+  ) {
+    return undefined
+  }
+
+  if (containsSecretBearingMaterial(value.join(' '))) return undefined
+
+  const digest = createHash('sha256').update(JSON.stringify(value)).digest('hex')
+  return `shell-group:argv-prefix:sha256:v1:${digest}`
+}
 
 // Exact-command memory is deliberately opt-in. A command digest proves only that the command text is
 // unchanged; it cannot prove that a referenced script or local executable still has the same content.
@@ -63,7 +99,7 @@ const containsSecretBearingMaterial = (value: string): boolean =>
 // interpreter, test runner, and shell-script invocation remains provider Once-only.
 const isPersistableExactCommand = (command: string): boolean => {
   if (containsSecretBearingMaterial(command) || /[\r\n;&|<>`$\\'"=]/.test(command)) return false
-  const tokens = command.trim().split(/\s+/)
+  const tokens = command.replace(/^[ \t]+|[ \t]+$/gu, '').split(/[ \t]+/u)
   // Only the PATH-resolved system command is stable enough for V1. A path-qualified executable can
   // be replaced after approval while leaving the stored command digest unchanged.
   const executable = tokens.shift()
@@ -114,6 +150,16 @@ const capabilityFromLegacyCategory = (categoryKey: string): PermissionCapability
     }
   }
 
+  if (categoryKey.startsWith('shell-group:')) {
+    const qualifier = categoryKey.slice('shell-group:'.length)
+    if (!COMMAND_PREFIX_QUALIFIER_PATTERN.test(qualifier)) return undefined
+    return {
+      kind: 'execution',
+      key: 'exec:agent/shell',
+      qualifier: { mode: 'category', value: qualifier }
+    }
+  }
+
   if (categoryKey.startsWith('mcp:')) {
     const descriptor = categoryKey.slice('mcp:'.length)
     const separator = descriptor.lastIndexOf(':')
@@ -155,6 +201,7 @@ const capabilityFromLegacyCategory = (categoryKey: string): PermissionCapability
 export {
   capabilityFromLegacyCategory,
   categoryFromTrustedToolName,
+  commandPrefixPermissionCategory,
   containsSecretBearingMaterial,
   exactPermissionQualifier
 }

@@ -26,6 +26,7 @@ vi.mock('./logger', () => ({
 }))
 
 const { registerLogsIpcHandlers } = await import('./logs-ipc')
+type LogsCommandOwner = import('./logs-ipc').LogsCommandOwner
 
 const invoke = (channel: string): unknown => handlers.get(channel)!(undefined, undefined)
 
@@ -35,6 +36,19 @@ describe('logs IPC handlers', () => {
     openPath.mockClear()
     showItemInFolder.mockClear()
     logPath.value = '/logs/main.log'
+  })
+
+  it('delegates every channel to one injected command owner', async () => {
+    const owner: LogsCommandOwner = {
+      getPath: vi.fn(() => '/injected/main.log'),
+      openFile: vi.fn().mockResolvedValue({ opened: true }),
+      revealInFolder: vi.fn(() => ({ revealed: true }))
+    }
+
+    expect(registerLogsIpcHandlers(owner)).toBe(owner)
+    expect(invoke('logs:get-path')).toBe('/injected/main.log')
+    await expect(invoke('logs:open-file')).resolves.toEqual({ opened: true })
+    expect(invoke('logs:reveal-in-folder')).toEqual({ revealed: true })
   })
 
   it('registers the diagnostics channels', () => {

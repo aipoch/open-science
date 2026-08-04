@@ -8,6 +8,7 @@ import { getUploadedAttachmentPath } from '../../../shared/uploads'
 
 export type PreviewPanelState = 'open' | 'collapsed'
 export type PreviewFileFormat =
+  | 'code'
   | 'markdown'
   | 'text'
   | 'json'
@@ -23,8 +24,10 @@ export type PreviewFileFormat =
   | 'spreadsheet'
   | 'presentation'
   | 'unknown'
-// Distinguishes generated artifacts from user uploads when preview readers and actions differ.
-export type PreviewFileSource = 'artifact' | 'upload' | 'notebook-input'
+// Distinguishes generated artifacts from user uploads, notebook inputs, and local ("This computer")
+// files when preview readers and header actions differ. 'local' files live outside app storage:
+// their path is an absolute filesystem path read via window.api.localFs.
+export type PreviewFileSource = 'artifact' | 'upload' | 'notebook-input' | 'local'
 export const PROJECT_FILES_PREVIEW_ID = 'tool:project:files'
 
 type PreviewItemBase = {

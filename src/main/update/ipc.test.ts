@@ -12,6 +12,7 @@ vi.mock('electron', () => ({
 }))
 
 const { registerUpdateIpcHandlers } = await import('./ipc')
+type UpdateCommandOwner = import('./ipc').UpdateCommandOwner
 
 const status = { state: 'available' as const, current: '0.5.1', latest: '0.5.2' }
 
@@ -26,6 +27,23 @@ const createStrategy = (): UpdateStrategy => ({
 describe('registerUpdateIpcHandlers', () => {
   beforeEach(() => {
     handlers.clear()
+  })
+
+  it('delegates IPC to an injected owner while returning the scheduler strategy', async () => {
+    const strategy = createStrategy()
+    const owner: UpdateCommandOwner = {
+      getAppInfo: vi.fn(() => ({ name: 'Injected', version: '1.0.0', copyright: 'test' })),
+      getStatus: vi.fn(() => status),
+      check: vi.fn().mockResolvedValue(status),
+      download: vi.fn().mockResolvedValue(status),
+      cancel: vi.fn().mockResolvedValue(status),
+      apply: vi.fn().mockResolvedValue(status)
+    }
+
+    expect(registerUpdateIpcHandlers(strategy, owner)).toBe(strategy)
+    expect(handlers.get('update:get-app-info')?.()).toMatchObject({ name: 'Injected' })
+    await expect(handlers.get('update:check')?.()).resolves.toBe(status)
+    expect(strategy.check).not.toHaveBeenCalled()
   })
 
   it('registers every renderer update command and returns the supplied strategy', async () => {

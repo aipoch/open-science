@@ -6,6 +6,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import type { PreviewFileItem } from '@/stores/preview-workbench-store'
 import { PreviewFileContent } from './PreviewFileContent'
 
+const highlightSpy = vi.hoisted(() => vi.fn())
 const addModel = vi.fn()
 const setStyle = vi.fn()
 const addSurface = vi.fn()
@@ -29,6 +30,42 @@ vi.mock('3dmol', () => ({
   createViewer,
   SurfaceType: {
     VDW: 'VDW'
+  }
+}))
+
+vi.mock('@streamdown/code', () => ({
+  code: {
+    supportsLanguage: (language: string) =>
+      ['bash', 'css', 'javascript', 'jsx', 'python', 'r', 'typescript', 'tsx'].includes(language),
+    getThemes: () => ['github-light', 'github-dark'],
+    highlight: (
+      options: { code: string; language: string },
+      callback?: (result: { tokens: Array<Array<Record<string, unknown>>> }) => void
+    ) => {
+      highlightSpy(options)
+      if (options.code === 'print("fresh")') {
+        const staleResult = {
+          tokens: [[{ content: 'print("stale")', color: '#24292f' }]]
+        }
+        callback?.(staleResult)
+        return null
+      }
+      const firstToken = options.language === 'r' ? 'library' : 'import'
+      const result = {
+        tokens: [
+          [
+            {
+              content: firstToken,
+              color: '#0969da',
+              htmlStyle: { color: '#0969da', '--shiki-dark': '#79c0ff' }
+            },
+            { content: options.code.slice(firstToken.length), color: '#24292f' }
+          ]
+        ]
+      }
+      callback?.(result)
+      return null
+    }
   }
 }))
 
@@ -141,6 +178,7 @@ describe('PreviewFileContent', () => {
       }
     } as unknown as Window['api']
     vi.clearAllMocks()
+    highlightSpy.mockClear()
   })
 
   afterEach(async () => {
@@ -150,6 +188,7 @@ describe('PreviewFileContent', () => {
     container.remove()
     restorePdbLayoutMocks?.()
     restorePdbLayoutMocks = undefined
+    vi.unstubAllGlobals()
   })
 
   const renderFile = async (item: PreviewFileItem): Promise<void> => {
@@ -237,6 +276,128 @@ describe('PreviewFileContent', () => {
     expect(container.querySelector('[data-testid="source-line-number"]')?.textContent).toBe('1')
     expect(container.textContent).toContain('alpha')
     expect(container.textContent).toContain('beta')
+  })
+
+  it('does not run highlight byte sizing for plain text previews', async () => {
+    const OriginalTextEncoder = globalThis.TextEncoder
+    const textEncoderSpy = vi.fn()
+    vi.stubGlobal(
+      'TextEncoder',
+      class extends OriginalTextEncoder {
+        constructor() {
+          textEncoderSpy()
+          super()
+        }
+      }
+    )
+    vi.mocked(window.api.artifacts.readPreview).mockResolvedValue({
+      content: 'alpha\nbeta',
+      encoding: 'utf8',
+      size: 10,
+      truncated: false
+    })
+
+    await renderFile(createFileItem({ format: 'text', name: 'notes.txt' }))
+
+    expect(textEncoderSpy).not.toHaveBeenCalled()
+    expect(highlightSpy).not.toHaveBeenCalled()
+  })
+
+  it('keeps source preview line numbers inside the grid column and inherited typography', async () => {
+    vi.mocked(window.api.artifacts.readPreview).mockResolvedValue({
+      content: Array.from({ length: 12 }, (_, index) => `line ${index + 1}`).join('\n'),
+      encoding: 'utf8',
+      size: 86,
+      truncated: false
+    })
+
+    await renderFile(createFileItem({ format: 'text', name: 'notes.txt' }))
+
+    const lineNumber = container.querySelector<HTMLElement>('[data-testid="source-line-number"]')
+    const row = lineNumber?.parentElement as HTMLElement | null
+    expect(row?.style.gridTemplateColumns).toBe('3ch minmax(0, 1fr)')
+    expect(lineNumber?.style.minWidth).toBe('')
+    expect(row?.parentElement?.className).not.toContain('text-[13px]')
+  })
+
+  it('renders Python file previews with GitHub-style syntax tokens', async () => {
+    vi.mocked(window.api.artifacts.readPreview).mockResolvedValue({
+      content: 'import pandas as pd',
+      encoding: 'utf8',
+      size: 19,
+      truncated: false
+    })
+
+    await renderFile(createFileItem({ format: 'code', name: 'analysis.py' }))
+
+    await vi.waitFor(() =>
+      expect(highlightSpy).toHaveBeenCalledWith(
+        expect.objectContaining({
+          code: 'import pandas as pd',
+          language: 'python'
+        })
+      )
+    )
+    const token = container.querySelector('[data-testid="source-code-token"]') as HTMLElement
+    expect(token?.textContent).toBe('import')
+    expect(token?.style.color).toBe('rgb(9, 105, 218)')
+    expect(token?.style.getPropertyValue('--shiki-dark')).toBe('#79c0ff')
+    expect(container.querySelector('[data-testid="source-line-number"]')?.textContent).toBe('1')
+  })
+
+  it('renders R file previews with R syntax tokens', async () => {
+    vi.mocked(window.api.artifacts.readPreview).mockResolvedValue({
+      content: 'library(ggplot2)',
+      encoding: 'utf8',
+      size: 16,
+      truncated: false
+    })
+
+    await renderFile(createFileItem({ format: 'code', name: 'plot.r' }))
+
+    await vi.waitFor(() =>
+      expect(highlightSpy).toHaveBeenCalledWith(
+        expect.objectContaining({
+          code: 'library(ggplot2)',
+          language: 'r'
+        })
+      )
+    )
+  })
+
+  it('falls back to the current source when cached highlight tokens belong to another file', async () => {
+    vi.mocked(window.api.artifacts.readPreview).mockResolvedValue({
+      content: 'print("fresh")',
+      encoding: 'utf8',
+      size: 14,
+      truncated: false
+    })
+
+    await renderFile(createFileItem({ format: 'code', name: 'analysis.py' }))
+
+    await vi.waitFor(() => expect(highlightSpy).toHaveBeenCalled())
+    expect(container.textContent).toContain('print("fresh")')
+    expect(container.textContent).not.toContain('print("stale")')
+    expect(container.querySelector('[data-testid="source-code-token"]')).toBeNull()
+  })
+
+  it('renders large code previews as plain source without running syntax highlighting', async () => {
+    const largeSource = Array.from(
+      { length: 14_000 },
+      (_, index) => `import pandas as pd # ${index}`
+    ).join('\n')
+    vi.mocked(window.api.artifacts.readPreview).mockResolvedValue({
+      content: largeSource,
+      encoding: 'utf8',
+      size: largeSource.length,
+      truncated: false
+    })
+
+    await renderFile(createFileItem({ format: 'code', name: 'large.py' }))
+
+    expect(container.textContent).toContain('import pandas as pd # 13999')
+    expect(highlightSpy).not.toHaveBeenCalled()
+    expect(container.querySelector('[data-testid="source-code-token"]')).toBeNull()
   })
 
   it('renders a truncated TSV table with bounded rows and columns', async () => {

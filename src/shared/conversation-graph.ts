@@ -312,7 +312,7 @@ export const synchronizeActiveConversationMessages = (
   if (!frame) throw new Error('Active Agent Frame not found.')
   const branch = next.branches.find((candidate) => candidate.id === frame.activeBranchId)
   if (!branch) throw new Error('Active Message Branch not found.')
-  const runtimeSegmentId = next.runtimeSegments
+  const activeRuntimeSegmentId = next.runtimeSegments
     .filter((segment) => segment.agentFrameId === frame.id)
     .at(-1)?.id
   const existing = indexById(next.messages)
@@ -333,6 +333,10 @@ export const synchronizeActiveConversationMessages = (
       if (message.updatedAt > known.updatedAt) Object.assign(known, message)
       continue
     }
+    const runtimeSegmentId =
+      message.role === 'agent' && message.responseToMessageId
+        ? (existing.get(message.responseToMessageId)?.runtimeSegmentId ?? activeRuntimeSegmentId)
+        : activeRuntimeSegmentId
     const node: PersistedMessageNode = {
       ...message,
       agentFrameId: frame.id,

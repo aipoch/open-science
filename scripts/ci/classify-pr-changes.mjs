@@ -76,6 +76,21 @@ export function classifyChanges(changes, manifest = defaultManifest) {
   const roots = new Set()
   let mode = 'selective'
 
+  const selectFullPlan = (root, reason) => {
+    mode = 'full'
+    roots.add(root)
+    reasonChains.add(reason)
+    for (const lane of manifest.laneOrder) lanes.add(lane)
+  }
+
+  const visitRule = (rule, path) => {
+    roots.add(rule.id)
+    for (const capability of rule.capabilities) {
+      const reasonPath = rule.id === capability ? [path] : [path, rule.id]
+      visitCapability(manifest, capability, reasonPath, lanes, reasonChains, new Set())
+    }
+  }
+
   for (const change of changes) {
     const paths = new Set([change.path, change.previousPath].filter(Boolean))
     for (const path of paths) {
@@ -83,23 +98,45 @@ export function classifyChanges(changes, manifest = defaultManifest) {
         rule.paths.some((pattern) => matchesPath(path, pattern))
       )
       if (rules.length === 0) {
-        mode = 'full'
-        roots.add('unknown')
-        reasonChains.add(`${path} -> unknown -> full`)
-        for (const lane of manifest.laneOrder) lanes.add(lane)
+        selectFullPlan('unknown', `${path} -> unknown -> full`)
         continue
       }
+
       for (const rule of rules) {
-        roots.add(rule.id)
-        if (rule.mode === 'full') {
-          mode = 'full'
-          reasonChains.add(`${path} -> ${rule.id} -> full`)
-          for (const lane of manifest.laneOrder) lanes.add(lane)
-          continue
+        if (!['global', 'owner', 'overlay'].includes(rule.role)) {
+          throw new Error(`Unknown change-impact rule role for ${rule.id}: ${rule.role}`)
         }
-        for (const capability of rule.capabilities) {
-          visitCapability(manifest, capability, [path], lanes, reasonChains, new Set())
+      }
+
+      const globalRules = rules.filter((rule) => rule.role === 'global' || rule.mode === 'full')
+      if (globalRules.length > 0) {
+        for (const rule of globalRules) {
+          selectFullPlan(rule.id, `${path} -> ${rule.id} -> full`)
         }
+        continue
+      }
+
+      const ownerRules = rules.filter((rule) => rule.role === 'owner')
+      const specificOwners = ownerRules.filter((rule) => !rule.fallbackOwner)
+      const fallbackOwners = ownerRules.filter((rule) => rule.fallbackOwner)
+      const candidateOwners = specificOwners.length > 0 ? specificOwners : fallbackOwners
+
+      if (candidateOwners.length === 0) {
+        selectFullPlan('missing_owner', `${path} -> missing owner -> full`)
+        continue
+      }
+      if (candidateOwners.length > 1) {
+        const ownerIds = candidateOwners
+          .map((rule) => rule.id)
+          .sort()
+          .join(', ')
+        selectFullPlan('owner_ambiguity', `${path} -> owner ambiguity: ${ownerIds} -> full`)
+        continue
+      }
+
+      visitRule(candidateOwners[0], path)
+      for (const overlay of rules.filter((rule) => rule.role === 'overlay')) {
+        visitRule(overlay, path)
       }
     }
   }

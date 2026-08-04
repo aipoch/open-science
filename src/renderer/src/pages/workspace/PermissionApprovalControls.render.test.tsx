@@ -649,6 +649,25 @@ describe('PermissionApprovalControls', () => {
     expect(html).toContain('data-testid="scope-chevron"')
   })
 
+  it('discloses the command prefix covered by remembered scopes', () => {
+    const html = renderToStaticMarkup(
+      <PermissionApprovalControls
+        requests={[
+          {
+            ...bashPermissionRequest,
+            commandPrefix: ['python', 'analyze.py'],
+            rawInput: { command: 'python analyze.py --input data.csv' }
+          }
+        ]}
+        onRespond={() => undefined}
+      />
+    )
+
+    expect(html).toContain('Remembered scopes apply to commands starting with:')
+    expect(html).toContain('[&quot;python&quot;,&quot;analyze.py&quot;]')
+    expect(html).toContain('python analyze.py --input data.csv')
+  })
+
   it('keeps reject_always reachable with a canonical label when Deny sends reject_once', () => {
     // Deny sends reject_once; reject_always must stay selectable (not hidden), and its label must
     // disclose the persistent scope rather than a generic "Deny".

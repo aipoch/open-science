@@ -123,4 +123,26 @@ describe('orchestrateAppStartup', () => {
     signal(['app'])
     expect(onSecondInstance).toHaveBeenCalledWith(['app'])
   })
+
+  it('terminalizes startup diagnostics at the phase that rejects without changing the failure', async () => {
+    const failure = new Error('backend import failed')
+    const diagnostics = {
+      phase: vi.fn(),
+      complete: vi.fn(),
+      cancel: vi.fn(),
+      fail: vi.fn()
+    }
+    const deps = makeDeps({
+      prepare: vi.fn(async () => {
+        throw failure
+      }),
+      diagnostics
+    })
+
+    await expect(orchestrateAppStartup(deps)).rejects.toBe(failure)
+
+    expect(diagnostics.phase).toHaveBeenCalledWith('prepare-runtime')
+    expect(diagnostics.fail).toHaveBeenCalledWith(failure)
+    expect(diagnostics.complete).not.toHaveBeenCalled()
+  })
 })

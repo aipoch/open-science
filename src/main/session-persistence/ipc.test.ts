@@ -1,23 +1,33 @@
 import { afterEach, beforeEach, describe, expect, expectTypeOf, it, vi } from 'vitest'
 
 import type { PersistedChatSession } from '../../shared/session-persistence'
+import type { Logger } from '../logger'
 import type { ReviewRepository } from '../reviewer/repository'
 
-const { broadcastLifecycleEvent, ipcHandlers } = vi.hoisted(() => ({
-  broadcastLifecycleEvent: vi.fn(),
-  ipcHandlers: new Map<string, (...args: unknown[]) => unknown>()
-}))
+const { broadcastLifecycleEvent, getLifecycleClientId, ipcHandlers, registrationFailure } =
+  vi.hoisted(() => ({
+    broadcastLifecycleEvent: vi.fn(),
+    getLifecycleClientId: vi.fn(
+      (event: { sender: { id: number } }) => `electron:${event.sender.id}`
+    ),
+    ipcHandlers: new Map<string, (...args: unknown[]) => unknown>(),
+    registrationFailure: {
+      channel: undefined as string | undefined,
+      error: undefined as Error | undefined
+    }
+  }))
 
 vi.mock('electron', () => ({
   ipcMain: {
-    handle: (channel: string, handler: (...args: unknown[]) => unknown) =>
+    handle: (channel: string, handler: (...args: unknown[]) => unknown) => {
+      if (registrationFailure.channel === channel) throw registrationFailure.error
       ipcHandlers.set(channel, handler)
+    }
   }
 }))
 vi.mock('../lifecycle-broadcast', () => ({
   broadcastLifecycleEvent,
-  getLifecycleClientId: (event: { sender: { id: number; lifecycleClientId?: string } }) =>
-    event.sender.lifecycleClientId ?? `electron:${event.sender.id}`
+  getLifecycleClientId
 }))
 
 import {
@@ -25,13 +35,17 @@ import {
   loadSessionMetadataAfterProjectRecovery,
   loadSessionsAfterProjectRecovery,
   registerSessionPersistenceIpcHandlers,
-  type SessionPersistenceBackend
+  type SessionPersistenceBackend,
+  type SessionPersistenceHandlers
 } from './ipc'
 import { beginMigration, clearMigrationPending } from '../storage/migration-state'
 
 beforeEach(() => {
   ipcHandlers.clear()
   broadcastLifecycleEvent.mockClear()
+  getLifecycleClientId.mockClear()
+  registrationFailure.channel = undefined
+  registrationFailure.error = undefined
 })
 afterEach(() => clearMigrationPending())
 
@@ -92,8 +106,8 @@ describe('session persistence IPC handlers', () => {
   })
 
   it('hydrates a read-only Session snapshot when Project deletion recovery fails', async () => {
-    const failure = new Error('Project deletion journal is locked')
-    const consoleError = vi.spyOn(console, 'error').mockImplementation(() => undefined)
+    const failure = new Error('Project deletion journal is locked at /private/sessions')
+    const warn = vi.fn<Logger['warn']>()
     const degraded = {
       sessions: [createSession()],
       manifest: { version: 1 as const },
@@ -111,23 +125,26 @@ describe('session persistence IPC handlers', () => {
       loadAllReadOnly: vi.fn().mockResolvedValue(degraded)
     }
 
-    await expect(loadSessionsAfterProjectRecovery(projectRecovery, sessionLoader)).resolves.toEqual(
-      {
-        ...degraded,
-        diagnostics: {
-          ...degraded.diagnostics,
-          isProjectDeletionRecoveryComplete: false
-        }
+    await expect(
+      loadSessionsAfterProjectRecovery(projectRecovery, sessionLoader, { warn })
+    ).resolves.toEqual({
+      ...degraded,
+      diagnostics: {
+        ...degraded.diagnostics,
+        isProjectDeletionRecoveryComplete: false
       }
-    )
+    })
 
     expect(sessionLoader.loadAll).not.toHaveBeenCalled()
     expect(sessionLoader.loadAllReadOnly).toHaveBeenCalledOnce()
-    expect(consoleError).toHaveBeenCalledWith(
-      '[session-persistence] Project deletion recovery failed',
-      failure
-    )
-    consoleError.mockRestore()
+    expect(warn).toHaveBeenCalledWith('project deletion recovery failed', {
+      operation: 'session-hydration',
+      phase: 'recover-project-deletions',
+      outcome: 'degraded',
+      errorCategory: 'error'
+    })
+    expect(JSON.stringify(warn.mock.calls)).not.toContain('journal is locked')
+    expect(JSON.stringify(warn.mock.calls)).not.toContain('/private/sessions')
   })
 
   it('runs ordinary startup loading after Project deletion recovery succeeds', async () => {
@@ -290,7 +307,7 @@ describe('session persistence IPC handlers', () => {
 
     const deleteRequest = { projectId: 'project-a', sessionId: 'session-1' }
     const manifestRequest = { lastProjectId: 'project-a', lastSessionId: 'session-1' }
-    const event = { sender: { id: -2, lifecycleClientId: 'web:browser-1' } }
+    const event = { sender: { id: 2 } }
     await expect(ipcHandlers.get('sessions:load-all')?.()).resolves.toBe(loadResult)
     await expect(ipcHandlers.get('sessions:save-session')?.(event, session)).resolves.toBe(
       durableSession
@@ -306,13 +323,63 @@ describe('session persistence IPC handlers', () => {
     expect(repository.saveManifest).toHaveBeenCalledWith(manifestRequest)
     expect(broadcastLifecycleEvent).toHaveBeenCalledWith('session:created', {
       session: durableSession,
-      originClientId: 'web:browser-1'
+      originClientId: 'electron:2'
     })
     expect(broadcastLifecycleEvent).toHaveBeenCalledWith('session:updated', {
       session: durableSession,
-      originClientId: 'web:browser-1'
+      originClientId: 'electron:2'
     })
     expect(broadcastLifecycleEvent).toHaveBeenCalledWith('session:deleted', deleteRequest)
+  })
+
+  it('dispatches through the injected application handler identity', async () => {
+    const loadResult = { sessions: [createSession()], manifest: { version: 1 as const } }
+    const repository: SessionPersistenceBackend = {
+      loadAll: vi.fn(),
+      saveSession: vi.fn(),
+      deleteSession: vi.fn(),
+      saveManifest: vi.fn()
+    }
+    const injected: SessionPersistenceHandlers = {
+      loadAll: vi.fn().mockResolvedValue(loadResult),
+      saveSession: vi.fn(),
+      deleteSession: vi.fn(),
+      saveManifest: vi.fn()
+    }
+
+    registerSessionPersistenceIpcHandlers(repository, createMockReviewRepository(), injected)
+
+    await expect(ipcHandlers.get('sessions:load-all')?.()).resolves.toBe(loadResult)
+    expect(injected.loadAll).toHaveBeenCalledOnce()
+    expect(repository.loadAll).not.toHaveBeenCalled()
+  })
+
+  it('preserves an injected handler identity when registration fails', async () => {
+    const failure = new Error('registration failed')
+    const repository: SessionPersistenceBackend = {
+      loadAll: vi.fn(),
+      saveSession: vi.fn(),
+      deleteSession: vi.fn(),
+      saveManifest: vi.fn()
+    }
+    const injected: SessionPersistenceHandlers = {
+      loadAll: vi.fn().mockResolvedValue({ sessions: [], manifest: { version: 1 as const } }),
+      saveSession: vi.fn(),
+      deleteSession: vi.fn(),
+      saveManifest: vi.fn()
+    }
+    registrationFailure.channel = 'sessions:load-all'
+    registrationFailure.error = failure
+
+    expect(() =>
+      registerSessionPersistenceIpcHandlers(repository, createMockReviewRepository(), injected)
+    ).toThrow(failure)
+
+    registrationFailure.channel = undefined
+    registrationFailure.error = undefined
+    registerSessionPersistenceIpcHandlers(repository, createMockReviewRepository(), injected)
+    await ipcHandlers.get('sessions:load-all')?.()
+    expect(injected.loadAll).toHaveBeenCalledOnce()
   })
 
   it('rejects session persistence while a data-root migration is pending', async () => {
@@ -345,12 +412,34 @@ describe('session persistence IPC handlers', () => {
     registerSessionPersistenceIpcHandlers(repository, createMockReviewRepository())
 
     await expect(
-      ipcHandlers.get('sessions:save-session')?.(
-        { sender: { id: 1, lifecycleClientId: 'electron:origin' } },
-        createSession()
-      )
+      ipcHandlers.get('sessions:save-session')?.({ sender: { id: 1 } }, createSession())
     ).rejects.toBe(failure)
     expect(broadcastLifecycleEvent).not.toHaveBeenCalled()
+  })
+
+  it('captures the lifecycle origin before awaiting a durable save', async () => {
+    const session = createSession()
+    let completeSave!: () => void
+    const savePending = new Promise<void>((resolve) => {
+      completeSave = resolve
+    })
+    const repository: SessionPersistenceBackend = {
+      loadAll: vi.fn().mockResolvedValue({ sessions: [], manifest: { version: 1 as const } }),
+      saveSession: vi.fn(async () => {
+        await savePending
+        return { created: false, session }
+      }),
+      deleteSession: vi.fn().mockResolvedValue(undefined),
+      saveManifest: vi.fn().mockResolvedValue(undefined)
+    }
+    registerSessionPersistenceIpcHandlers(repository, createMockReviewRepository())
+
+    const save = ipcHandlers.get('sessions:save-session')?.({ sender: { id: 1 } }, session)
+
+    expect(getLifecycleClientId).toHaveBeenCalledOnce()
+    expect(getLifecycleClientId).toHaveReturnedWith('electron:1')
+    completeSave()
+    await expect(save).resolves.toBe(session)
   })
 
   it('publishes a lifecycle event only after the durable Session transition is readable', async () => {
@@ -370,10 +459,7 @@ describe('session persistence IPC handlers', () => {
     })
     registerSessionPersistenceIpcHandlers(repository, createMockReviewRepository())
 
-    await ipcHandlers.get('sessions:save-session')?.(
-      { sender: { id: 1, lifecycleClientId: 'electron:origin' } },
-      session
-    )
+    await ipcHandlers.get('sessions:save-session')?.({ sender: { id: 1 } }, session)
 
     expect(repository.saveSession).toHaveBeenCalledOnce()
     expect(broadcastLifecycleEvent).toHaveBeenCalledOnce()

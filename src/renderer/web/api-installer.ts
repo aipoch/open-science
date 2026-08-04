@@ -1,10 +1,17 @@
-type InvokeHandler = (...args: unknown[]) => Promise<unknown>
+import { RENDERER_CONTRACT_CATALOG } from '../../shared/renderer-contract-catalog'
+import type { RendererContractDescriptor } from '../../shared/renderer-contract'
 
-export const assignApiPath = (
-  root: Record<string, unknown>,
-  path: string,
-  value: unknown
-): void => {
+type Listener = (payload: unknown) => void
+
+type WebRendererAdapters = Readonly<{
+  availableRpcChannels: ReadonlySet<string>
+  restrictedRpcChannels: ReadonlySet<string>
+  invoke: (channel: string, args: unknown[]) => Promise<unknown>
+  subscribe: (channel: string, listener: Listener) => () => void
+  nativeAdapters: Readonly<Record<string, unknown>>
+}>
+
+const assignApiPath = (root: Record<string, unknown>, path: string, value: unknown): void => {
   const parts = path.split('.')
   const key = parts.pop()!
   let target = root
@@ -15,22 +22,50 @@ export const assignApiPath = (
   target[key] = value
 }
 
-export const installWebInvokeChannels = (
+const transformArguments = (contract: RendererContractDescriptor, args: unknown[]): unknown[] => {
+  switch (contract.parameterCodec.web) {
+    case 'default-empty-object':
+      return args.length === 0 || (args.length === 1 && args[0] === undefined) ? [{}] : args
+    case 'default-empty-object-absent-only':
+      return args.length === 0 ? [{}] : args
+    case 'storage-parent-object':
+      return [{ parent: args[0] }]
+    case 'storage-data-root-object':
+      return [{ parent: args[0], markOnboarding: args[1] }]
+    default:
+      return args
+  }
+}
+
+export const installWebRendererContracts = (
   api: Record<string, unknown>,
-  channels: Record<string, string>,
-  availableRpcChannels: ReadonlySet<string>,
-  restrictedRpcChannels: ReadonlySet<string>,
-  createInvoker: (path: string, channel: string) => InvokeHandler
+  adapters: WebRendererAdapters
 ): void => {
-  for (const [path, channel] of Object.entries(channels)) {
-    if (availableRpcChannels.has(channel)) {
-      assignApiPath(api, path, createInvoker(path, channel))
-    } else if (restrictedRpcChannels.has(channel)) {
-      assignApiPath(api, path, () =>
+  for (const contract of RENDERER_CONTRACT_CATALOG) {
+    const { channel, publicPath } = contract
+    if (
+      channel !== null &&
+      contract.surfaceInstallation.localWeb === 'web-rpc' &&
+      adapters.availableRpcChannels.has(channel)
+    ) {
+      assignApiPath(api, publicPath, (...args: unknown[]) =>
+        adapters.invoke(channel, transformArguments(contract, args))
+      )
+    } else if (
+      channel !== null &&
+      contract.surfaceInstallation.remoteWeb === 'rejecting-stub' &&
+      adapters.restrictedRpcChannels.has(channel)
+    ) {
+      assignApiPath(api, publicPath, () =>
         Promise.reject(
           new Error(`This action is only available in the local desktop app (${channel}).`)
         )
       )
+    } else if (channel !== null && contract.surfaceInstallation.localWeb === 'web-event') {
+      assignApiPath(api, publicPath, (listener: Listener) => adapters.subscribe(channel, listener))
+    } else if (contract.surfaceInstallation.localWeb === 'browser-native') {
+      const nativeAdapter = adapters.nativeAdapters[publicPath]
+      if (nativeAdapter !== undefined) assignApiPath(api, publicPath, nativeAdapter)
     }
   }
 }

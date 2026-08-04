@@ -1,4 +1,5 @@
 import { appendFile, mkdir, rename, rm, stat } from 'node:fs/promises'
+import { randomUUID } from 'node:crypto'
 import { extname, join } from 'node:path'
 
 // Lightweight structured file logger for the main process. Kept free of Electron imports so it stays
@@ -16,6 +17,7 @@ const LEVEL_ORDER: Record<LogLevel, number> = { debug: 10, info: 20, warn: 30, e
 
 export type LoggerConfig = {
   logDir: string
+  runId: string
   fileName: string
   minLevel: LogLevel
   mirrorToConsole: boolean
@@ -530,7 +532,13 @@ const errorLogFields = (error: unknown): Record<string, unknown> => {
   }
 }
 
-const formatLine = (level: LogLevel, scope: string, message: string, data?: unknown): string => {
+const formatLine = (
+  level: LogLevel,
+  scope: string,
+  message: string,
+  data?: unknown,
+  runId?: string
+): string => {
   const record: Record<string, unknown> = {
     t: new Date().toISOString(),
     level,
@@ -538,13 +546,21 @@ const formatLine = (level: LogLevel, scope: string, message: string, data?: unkn
     msg: message
   }
 
+  if (runId !== undefined) record.runId = runId
   if (data !== undefined) record.data = toSerializable(data)
 
   try {
     return JSON.stringify(record)
   } catch {
     // Fall back to a best-effort line if the payload has circular refs.
-    return JSON.stringify({ t: record.t, level, scope, msg: message, data: '[unserializable]' })
+    return JSON.stringify({
+      t: record.t,
+      level,
+      ...(runId === undefined ? {} : { runId }),
+      scope,
+      msg: message,
+      data: '[unserializable]'
+    })
   }
 }
 
@@ -625,6 +641,7 @@ const appendLine = (line: string): void => {
 // Initializes the sink. Safe to call once at startup; later calls replace the config and re-seed size.
 const initLogger = (options: { logDir: string } & Partial<Omit<LoggerConfig, 'logDir'>>): void => {
   config = {
+    runId: randomUUID(),
     fileName: 'main.log',
     minLevel: 'debug',
     mirrorToConsole: true,
@@ -652,7 +669,7 @@ const emit = (level: LogLevel, scope: string, message: string, data?: unknown): 
 
   if (config && LEVEL_ORDER[level] < LEVEL_ORDER[config.minLevel]) return
 
-  appendLine(formatLine(level, scope, message, data))
+  appendLine(formatLine(level, scope, message, data, config?.runId))
 }
 
 export type Logger = {

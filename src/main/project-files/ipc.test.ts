@@ -3,17 +3,25 @@ import { beforeEach, describe, expect, it, vi } from 'vitest'
 import {
   createProjectFilesHandlers,
   registerProjectFilesIpcHandlers,
+  type ProjectFilesHandlers,
   type ProjectFilesQueryRepository,
   type ProjectFilesRecoveryBackend,
   type ProjectFilesRepairBackend
 } from './ipc'
 
 // Capture ipcMain.handle registrations so the registered handler can be invoked directly from tests.
-const handlers = new Map<string, (event: unknown, payload: unknown) => unknown>()
+const { handlers, registrationFailure } = vi.hoisted(() => ({
+  handlers: new Map<string, (event: unknown, payload: unknown) => unknown>(),
+  registrationFailure: {
+    channel: undefined as string | undefined,
+    error: undefined as Error | undefined
+  }
+}))
 
 vi.mock('electron', () => ({
   ipcMain: {
     handle: (channel: string, handler: (event: unknown, payload: unknown) => unknown) => {
+      if (registrationFailure.channel === channel) throw registrationFailure.error
       handlers.set(channel, handler)
     }
   }
@@ -173,6 +181,8 @@ describe('registerProjectFilesIpcHandlers', () => {
 
   beforeEach(() => {
     handlers.clear()
+    registrationFailure.channel = undefined
+    registrationFailure.error = undefined
     repository = {
       getOverview: vi.fn().mockResolvedValue({
         totalCount: 0,
@@ -201,6 +211,61 @@ describe('registerProjectFilesIpcHandlers', () => {
     expect(handlers.has('project-files:list-artifact-groups')).toBe(true)
     expect(handlers.has('project-files:search-artifacts')).toBe(true)
     expect(handlers.has('project-files:repair-index')).toBe(true)
+  })
+
+  it('dispatches through the injected application handler identity', async () => {
+    const overview = {
+      totalCount: 0,
+      uploadCount: 0,
+      artifactCount: 0,
+      artifactGroupCount: 0,
+      isIndexComplete: true
+    }
+    const injected: ProjectFilesHandlers = {
+      getOverview: vi.fn().mockResolvedValue(overview),
+      listFiles: vi.fn(),
+      listArtifactGroups: vi.fn(),
+      searchArtifacts: vi.fn(),
+      repairIndex: vi.fn()
+    }
+
+    registerProjectFilesIpcHandlers(repository, repairBackend, recoveryBackend, injected)
+
+    await expect(invoke('project-files:get-overview', { projectId: 'project-1' })).resolves.toBe(
+      overview
+    )
+    expect(injected.getOverview).toHaveBeenCalledWith({ projectId: 'project-1' })
+    expect(repository.getOverview).not.toHaveBeenCalled()
+    expect(recoveryBackend.recoverPendingDeletions).not.toHaveBeenCalled()
+  })
+
+  it('preserves an injected handler identity when registration fails', async () => {
+    const failure = new Error('registration failed')
+    const injected: ProjectFilesHandlers = {
+      getOverview: vi.fn().mockResolvedValue({
+        totalCount: 0,
+        uploadCount: 0,
+        artifactCount: 0,
+        artifactGroupCount: 0,
+        isIndexComplete: true
+      }),
+      listFiles: vi.fn(),
+      listArtifactGroups: vi.fn(),
+      searchArtifacts: vi.fn(),
+      repairIndex: vi.fn()
+    }
+    registrationFailure.channel = 'project-files:get-overview'
+    registrationFailure.error = failure
+
+    expect(() =>
+      registerProjectFilesIpcHandlers(repository, repairBackend, recoveryBackend, injected)
+    ).toThrow(failure)
+
+    registrationFailure.channel = undefined
+    registrationFailure.error = undefined
+    registerProjectFilesIpcHandlers(repository, repairBackend, recoveryBackend, injected)
+    await invoke('project-files:get-overview', { projectId: 'project-1' })
+    expect(injected.getOverview).toHaveBeenCalledOnce()
   })
 
   it('get-overview handler waits for deletion recovery before reading the overview', async () => {

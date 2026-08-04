@@ -3,6 +3,7 @@ import { dirname, resolve } from 'node:path'
 
 import { app } from 'electron'
 
+import { createLogger } from '../logger'
 import { ElectronUpdaterStrategy } from './electron-updater-strategy'
 import { UpdateService } from './service'
 import type { InstallGate, UpdateStrategy } from './strategy'
@@ -53,8 +54,12 @@ export const createUpdateStrategy = (
   platform: NodeJS.Platform = process.platform,
   opts: CreateStrategyOptions = {}
 ): UpdateStrategy => {
+  const log = createLogger('update')
   const createInPlaceStrategy = (): ElectronUpdaterStrategy =>
-    new ElectronUpdaterStrategy(opts.installGate ? { installGate: opts.installGate } : {})
+    new ElectronUpdaterStrategy({
+      ...(opts.installGate ? { installGate: opts.installGate } : {}),
+      log
+    })
 
   if (platform === 'win32' || platform === 'linux') return createInPlaceStrategy()
 
@@ -63,5 +68,5 @@ export const createUpdateStrategy = (
   if (platform === 'darwin' && macCanAutoUpdate(isPackaged, version)) {
     return createInPlaceStrategy()
   }
-  return new UpdateService()
+  return new UpdateService({ log })
 }

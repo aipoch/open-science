@@ -7,6 +7,9 @@ import { describe, expect, it } from 'vitest'
 
 import { classifyChanges, parseNameStatus } from './classify-pr-changes.mjs'
 
+const readManifest = (): ReturnType<JSON['parse']> =>
+  JSON.parse(readFileSync(resolve('scripts/ci/change-impact.json'), 'utf8'))
+
 describe('pull request change classification', () => {
   it('publishes a Git revision plan for GitHub Actions callers', () => {
     const root = mkdtempSync(join(tmpdir(), 'pr-change-classifier-'))
@@ -140,7 +143,7 @@ describe('pull request change classification', () => {
   })
 
   it('fails closed when a selected lane has no execution bundle', () => {
-    const manifest = JSON.parse(readFileSync(resolve('scripts/ci/change-impact.json'), 'utf8'))
+    const manifest = readManifest()
     delete manifest.laneBundles.policy
 
     expect(() => classifyChanges([], manifest)).toThrow(
@@ -149,7 +152,7 @@ describe('pull request change classification', () => {
   })
 
   it('fails closed when a selected lane references an undeclared execution bundle', () => {
-    const manifest = JSON.parse(readFileSync(resolve('scripts/ci/change-impact.json'), 'utf8'))
+    const manifest = readManifest()
     manifest.laneBundles.policy = 'undeclared'
 
     expect(() => classifyChanges([], manifest)).toThrow(
@@ -172,6 +175,94 @@ describe('pull request change classification', () => {
         'docs/internal/pr-gate.md -> documentation'
       ])
     )
+  })
+
+  it('uses one specific owner instead of a broad fallback owner', () => {
+    const manifest = readManifest()
+    manifest.rules.push({
+      id: 'notebook_runtime',
+      role: 'owner',
+      paths: ['src/main/notebook/runtime-service.ts'],
+      capabilities: ['notebook_runtime']
+    })
+    manifest.capabilities.notebook_runtime = {
+      consumers: [],
+      lanes: ['typecheck_node']
+    }
+
+    const plan = classifyChanges(
+      [{ path: 'src/main/notebook/runtime-service.ts', status: 'modified' }],
+      manifest
+    )
+
+    expect(plan.mode).toBe('selective')
+    expect(plan.roots).toContain('notebook_runtime')
+    expect(plan.roots).not.toContain('main_runtime')
+    expect(plan.lanes).toEqual(['policy', 'typecheck_node'])
+  })
+
+  it('keeps risk overlays additive after a specific owner replaces a fallback', () => {
+    const manifest = readManifest()
+    manifest.rules.push({
+      id: 'notebook_windows_runtime',
+      role: 'owner',
+      paths: ['src/main/notebook/windows-runtime.ts'],
+      capabilities: ['notebook_runtime']
+    })
+    manifest.capabilities.notebook_runtime = {
+      consumers: [],
+      lanes: ['typecheck_node']
+    }
+
+    const path = 'src/main/notebook/windows-runtime.ts'
+    const plan = classifyChanges([{ path, status: 'modified' }], manifest)
+
+    expect(plan.mode).toBe('selective')
+    expect(plan.roots).toEqual(
+      expect.arrayContaining(['notebook_windows_runtime', 'windows_sensitive'])
+    )
+    expect(plan.roots).not.toContain('main_runtime')
+    expect(plan.lanes).toEqual(
+      expect.arrayContaining(['typecheck_node', 'windows_runtime', 'windows_path'])
+    )
+  })
+
+  it('fails closed when multiple specific owners match one path', () => {
+    const manifest = readManifest()
+    for (const id of ['notebook_runtime_a', 'notebook_runtime_b']) {
+      manifest.rules.push({
+        id,
+        role: 'owner',
+        paths: ['src/main/notebook/runtime-service.ts'],
+        capabilities: ['main_runtime']
+      })
+    }
+
+    const path = 'src/main/notebook/runtime-service.ts'
+    const plan = classifyChanges([{ path, status: 'modified' }], manifest)
+
+    expect(plan.mode).toBe('full')
+    expect(plan.roots).toContain('owner_ambiguity')
+    expect(plan.reasonChains).toContain(
+      `${path} -> owner ambiguity: notebook_runtime_a, notebook_runtime_b -> full`
+    )
+  })
+
+  it('fails closed when a matched path has no owner', () => {
+    const manifest = readManifest()
+    manifest.rules.push({
+      id: 'unowned_overlay',
+      role: 'overlay',
+      paths: ['src/new-runtime/overlay.ts'],
+      capabilities: ['ci_integrity_surface']
+    })
+
+    const path = 'src/new-runtime/overlay.ts'
+    const plan = classifyChanges([{ path, status: 'added' }], manifest)
+
+    expect(plan.mode).toBe('full')
+    expect(plan.roots).toContain('missing_owner')
+    expect(plan.reasonChains).toContain(`${path} -> missing owner -> full`)
   })
 
   it('treats Shared changes as cross-process consumer changes', () => {
@@ -302,31 +393,37 @@ describe('pull request change classification', () => {
     )
   })
 
-  it('treats Preload changes as a known cross-process Interface change', () => {
-    const plan = classifyChanges([{ path: 'src/preload/index.ts', status: 'modified' }])
+  it('keeps a PR 684-shaped Preload change on the shadow contract plan', () => {
+    const plan = classifyChanges([
+      { path: 'src/preload/electron-renderer-contract-adapter.test.ts', status: 'modified' },
+      { path: 'src/preload/electron-renderer-contract-adapter.ts', status: 'modified' },
+      { path: 'src/preload/index.test.ts', status: 'modified' },
+      { path: 'src/preload/index.ts', status: 'modified' }
+    ])
 
     expect(plan.mode).toBe('selective')
-    expect(plan.roots).toContain('preload_contract')
-    expect(plan.lanes).toEqual(
-      expect.arrayContaining([
-        'typecheck_node',
-        'typecheck_web',
-        'interface_contracts',
-        'unit_linux',
-        'coverage_macos',
-        'windows_runtime',
-        'windows_path',
-        'unit_renderer',
-        'build',
-        'e2e_functional_macos',
-        'e2e_functional_windows',
-        'e2e_workspace_macos',
-        'e2e_workspace_windows',
-        'e2e_accessibility_macos',
-        'e2e_accessibility_windows',
-        'e2e_visual_macos'
-      ])
-    )
+    expect(plan.roots).toEqual(['preload_contract'])
+    expect(plan.lanes).toEqual([
+      'policy',
+      'format',
+      'lint',
+      'typecheck_node',
+      'typecheck_web',
+      'interface_contracts',
+      'coverage_macos',
+      'build'
+    ])
+    expect(plan.bundles).toEqual(['policy', 'static', 'coverage_macos', 'macos_e2e'])
+  })
+
+  it('adds Windows core back when a Preload platform-risk overlay matches', () => {
+    const plan = classifyChanges([{ path: 'src/preload/windows-path-adapter.ts', status: 'added' }])
+
+    expect(plan.mode).toBe('selective')
+    expect(plan.roots).toEqual(expect.arrayContaining(['preload_contract', 'windows_sensitive']))
+    expect(plan.lanes).toEqual(expect.arrayContaining(['windows_runtime', 'windows_path']))
+    expect(plan.bundles).toContain('windows_core')
+    expect(plan.bundles).not.toContain('windows_e2e')
   })
 
   it('keeps CLI and SDK changes out of Electron E2E', () => {

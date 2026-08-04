@@ -323,9 +323,9 @@ export const isReasoningEffort = (value: unknown): value is ReasoningEffort =>
   typeof value === 'string' && (REASONING_EFFORTS as readonly string[]).includes(value)
 
 // The selectable app-icon look. 'light' is the shipped default; 'dark' is its matching dark variant.
-// Both are built-in assets; the choice is applied at runtime to the app window icon (all platforms)
-// and the macOS Dock (the static installed icon in Finder/Explorer/taskbar is baked into the build and
-// never changes).
+// Both are built-in assets; the choice is applied at runtime to the app window icon (all platforms),
+// the macOS Dock, and the Windows tray glyph (the static installed icon in Finder/Explorer/taskbar is
+// baked into the build and never changes).
 export type AppIconVariant = 'light' | 'dark'
 
 export const DEFAULT_APP_ICON_VARIANT: AppIconVariant = 'light'
@@ -916,6 +916,9 @@ export type SkillBundlePreview = {
   files: string[]
   alreadyImported: boolean
   replaceableId?: string
+  // Present only for candidates discovered from a public GitHub repo. The approval dialog uses it
+  // to load the same lazy candidate preview as Settings; the main process still owns import URLs.
+  githubUrl?: string
 }
 
 // One skill the bundle contained but that couldn't be imported (too large, no SKILL.md, no name, an
@@ -939,7 +942,10 @@ export type SkillBundlePreviewResult = {
 export type ConversationSkillImportApprovalRequest = SkillBundlePreviewResult & {
   id: string
   sessionId: string
-  attachmentName: string
+  source: {
+    kind: 'attachment' | 'github'
+    label: string
+  }
 }
 
 export type ConversationSkillImportSelection = {
@@ -961,7 +967,7 @@ export type ConversationSkillImportResult = {
   errors?: Array<{ name: string; error: string }>
 }
 
-// Scan a GitHub repo (owner/repo, owner/repo@ref, or a URL) for skill directories.
+// Search GitHub by keyword, or scan a direct repo reference for skill directories.
 export type ScanRepoRequest = {
   repo: string
 }
@@ -1025,9 +1031,22 @@ export type ScannedSkillView = {
   alreadyImported: boolean
 }
 
-export type ScanRepoResult = {
-  skills: ScannedSkillView[]
+// Compact public-repository metadata returned when scanRepoSkills receives a keyword query.
+export type GitHubRepositorySearchView = {
+  fullName: string
+  description: string | null
+  url: string
+  stars: number
 }
+
+export const GITHUB_REPOSITORY_SEARCH_TOO_LONG_MESSAGE =
+  'GitHub search is limited to 256 characters. Shorten the keywords or paste an owner/repo reference.'
+
+// The existing scan seam also handles keyword discovery. Presence of `repositories` identifies a
+// search result, including the empty-results case; direct repo scans retain their original shape.
+export type ScanRepoResult =
+  | { skills: ScannedSkillView[]; repositories?: never }
+  | { skills: []; repositories: GitHubRepositorySearchView[] }
 
 // Outcome of an import: newly imported, refreshed from upstream, or an already-imported no-op. The
 // refreshed skill list is included so the renderer can update in one round-trip.

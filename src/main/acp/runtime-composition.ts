@@ -170,9 +170,12 @@ const createAcpRuntime = ({
         skillImport: {
           mcpEntryPath,
           isEnabled: () => settingsService.getConversationSkillImportEnabled(),
-          getRpcConnection: () => notebookRpcServer.ensureStarted(),
+          getRpcConnection: ({ sessionId }) =>
+            notebookRpcServer.issueSkillImportConnection(sessionId),
           registerSessionAlias: (aliasSessionId, sessionId) =>
             notebookRpcServer.registerSessionAlias(aliasSessionId, sessionId),
+          releaseSessionCapabilities: (sessionId) =>
+            notebookRpcServer.releaseSessionCapabilities(sessionId),
           authorizeReferencedUploads: authorizeSkillImportReferencedUploads
         },
         callbacks: runtimeCallbacks,
@@ -182,7 +185,7 @@ const createAcpRuntime = ({
           ? async (specialistId: string, frameworkId: string) => {
               let profile
               try {
-                profile = await profileService.getById(specialistId)
+                profile = await profileService.resolveRunnableById(specialistId)
               } catch {
                 // Profile not found or corrupt
                 return undefined
@@ -197,7 +200,7 @@ const createAcpRuntime = ({
         resolveSpecialistSkills: profileService
           ? async (specialistId) => {
               try {
-                const profile = await profileService.getById(specialistId)
+                const profile = await profileService.resolveRunnableById(specialistId)
                 if (!profile.enabled) {
                   return { kind: 'unavailable', reason: 'The bound specialist is disabled.' }
                 }

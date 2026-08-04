@@ -9,6 +9,7 @@ import type {
 } from '../../shared/session-persistence'
 import { LIFECYCLE_CHANNELS } from '../../shared/lifecycle-events'
 import { broadcastLifecycleEvent, getLifecycleClientId } from '../lifecycle-broadcast'
+import { createLogger, diagnosticErrorFields, type Logger } from '../logger'
 import { resolveStorageRoot } from '../storage-root'
 import { SessionRepository } from './repository'
 import { ReviewRepository } from '../reviewer/repository'
@@ -77,12 +78,22 @@ const loadSessionMetadataAfterProjectRecovery = async (
 // without allowing partially recovered Project authority to drive cleanup or derived-state writes.
 const loadSessionsAfterProjectRecovery = async (
   projectRecovery: ProjectDeletionRecoveryBackend,
-  sessionLoader: SessionStartupLoader
+  sessionLoader: SessionStartupLoader,
+  log: Pick<Logger, 'warn'> = createLogger('session-persistence')
 ): Promise<LoadAllSessionsResult> => {
   try {
     await projectRecovery.recoverPendingDeletions()
   } catch (error) {
-    console.error('[session-persistence] Project deletion recovery failed', error)
+    try {
+      log.warn('project deletion recovery failed', {
+        operation: 'session-hydration',
+        phase: 'recover-project-deletions',
+        outcome: 'degraded',
+        ...diagnosticErrorFields(error)
+      })
+    } catch {
+      // Diagnostics must never prevent the explicit read-only recovery path.
+    }
     return withProjectDeletionRecoveryStatus(await sessionLoader.loadAllReadOnly(), false)
   }
 
@@ -118,10 +129,12 @@ const createDefaultReviewRepository = (): ReviewRepository =>
 // Registers renderer-callable persistence commands without coupling them to ACP runtime IPC.
 const registerSessionPersistenceIpcHandlers = (
   repository: SessionPersistenceBackend,
-  reviewRepository = createDefaultReviewRepository()
+  reviewRepository = createDefaultReviewRepository(),
+  handlers: SessionPersistenceHandlers = createSessionPersistenceHandlers(
+    repository,
+    reviewRepository
+  )
 ): void => {
-  const handlers = createSessionPersistenceHandlers(repository, reviewRepository)
-
   // Keep persistence IPC separate from ACP runtime commands; it owns durable UI state only.
   // loadAll can replay pending deletions and every mutation can materialize provenance/upload bytes.
   // Hold the shared data-root lease at the IPC boundary so migration drains the complete operation.
@@ -129,13 +142,14 @@ const registerSessionPersistenceIpcHandlers = (
   ipcMainHandle(
     'sessions:save-session',
     async (event, session: PersistedChatSession, options?: SaveSessionOptions) => {
+      const originClientId = getLifecycleClientId(event)
       return withDataRootWrite(async () => {
         const result = await handlers.saveSession(session, options)
         broadcastLifecycleEvent(
           result.created ? LIFECYCLE_CHANNELS.sessionCreated : LIFECYCLE_CHANNELS.sessionUpdated,
           {
             session: result.session,
-            originClientId: getLifecycleClientId(event)
+            originClientId
           }
         )
         return result.session
@@ -161,4 +175,4 @@ export {
   loadSessionsAfterProjectRecovery,
   registerSessionPersistenceIpcHandlers
 }
-export type { SessionPersistenceBackend }
+export type { SessionPersistenceBackend, SessionPersistenceHandlers }

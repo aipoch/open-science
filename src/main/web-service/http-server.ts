@@ -16,13 +16,15 @@ import {
   createWebCallerContext,
   type CallerContext
 } from '../caller-context'
-import type { WebRpcRouter } from '../ipc-handler-registry'
+import { createApplicationCommandClient } from '../application-command-client'
+import type { ApplicationCommandComposition } from '../application-command-composition'
 import type { ApplicationEventSource } from '../application-events'
 import {
   isWebRpcChannel,
   WEB_RPC_PROTOCOL_VERSION,
   webRpcRequestSchema
 } from '../../shared/web-rpc-contract'
+import { RENDERER_CONTRACT_CATALOG } from '../../shared/renderer-contract-catalog'
 import { projectPublicTaskEvent, projectWebRendererEvent } from './application-event-projections'
 import { authenticateRequest, persistAuthCookie } from './auth'
 import type { StartTaskRunRequest } from '../../shared/task-api'
@@ -33,60 +35,16 @@ const MIN_GZIP_BYTES = 1_024
 const gzipAsync = promisify(gzip)
 
 // Remote Browser access is an application session, not authority over native host lifecycle and
-// shell integration. Keep these channels available to the loopback-token Web client while rejecting
-// them when authentication came from the external access adapter.
-export const REMOTE_LOCAL_ONLY_RPC_CHANNELS = new Set([
-  'artifacts:open-file',
-  'cli:install',
-  'cli:uninstall',
-  'compute:download',
-  'compute:reveal-in-folder',
-  'logs:open-file',
-  'logs:reveal-in-folder',
-  'notebook-env:cancel',
-  'notebook-env:provision',
-  'notebook-env:repair',
-  'notebook:export-ipynb',
-  'notebook:export-ipynb-all',
-  'runtime:pick-interpreter',
-  'runtime:register-interpreter',
-  'runtime:set-environment-enabled',
-  'runtime:set-install-authorized',
-  'runtime:set-selection',
-  'runtime:unregister-interpreter',
-  'settings:cancel-claude-login',
-  'settings:cancel-codex-login',
-  'settings:cancel-isolated-claude-login',
-  'settings:install-claude',
-  'settings:install-codex',
-  'settings:install-opencode',
-  'settings:login-isolated-claude',
-  'settings:login-isolated-claude-browser',
-  'settings:login-isolated-codex',
-  'settings:login-shared-claude',
-  'settings:logout-isolated-claude',
-  'settings:logout-isolated-codex',
-  'settings:logout-shared-claude',
-  'settings:set-app-icon-variant',
-  'settings:set-close-preference',
-  'settings:set-notifications-enabled',
-  'settings:set-package-mirror',
-  'settings:uninstall-claude',
-  'settings:uninstall-codex',
-  'settings:uninstall-opencode',
-  'storage:cancel-migrate',
-  'storage:commit-and-relaunch',
-  'storage:discard-migrated-copy',
-  'storage:inspect-data-root',
-  'storage:migrate',
-  'storage:pick-directory',
-  'storage:reveal-app-storage',
-  'storage:set-data-root-and-relaunch',
-  'storage:validate-data-root',
-  'update:apply',
-  'update:cancel',
-  'update:download'
-])
+// shell integration. The catalog keeps that authority decision aligned with renderer installation.
+export const REMOTE_LOCAL_ONLY_RPC_CHANNELS = new Set(
+  RENDERER_CONTRACT_CATALOG.flatMap(({ channel, surfaceInstallation }) =>
+    channel !== null &&
+    surfaceInstallation.localWeb === 'web-rpc' &&
+    surfaceInstallation.remoteWeb === 'rejecting-stub'
+      ? [channel]
+      : []
+  )
+)
 
 const MIME_TYPES: Record<string, string> = {
   '.css': 'text/css; charset=utf-8',
@@ -107,7 +65,7 @@ type WebServerOptions = {
   port: number
   token: string
   staticRoot: string
-  rpc: WebRpcRouter
+  applicationCommands: Pick<ApplicationCommandComposition, 'localWeb' | 'remoteWeb'>
   applicationEvents: ApplicationEventSource
   externalAccess?: ExternalWebAccess
   tasks?: Pick<
@@ -463,7 +421,10 @@ const startWebHttpServer = async (options: WebServerOptions): Promise<RunningWeb
   const sockets = new Set<WebSocket>()
   const externalSockets = new Map<WebSocket, string | undefined>()
   const publicEventSockets = new Set<WebSocket>()
-  const clientLeases = new ClientLeaseRegistry(options.rpc.releaseClient)
+  const commandClient = createApplicationCommandClient()
+  const clientLeases = new ClientLeaseRegistry((clientId) => {
+    commandClient.releaseClient('web', clientId)
+  })
   const wsServer = new WebSocketServer({ noServer: true })
 
   const server = createServer(async (request, response) => {
@@ -495,13 +456,12 @@ const startWebHttpServer = async (options: WebServerOptions): Promise<RunningWeb
       }
 
       if (url.pathname === '/api/bootstrap' && request.method === 'GET') {
-        const allRpcChannels = options.rpc.channels().filter(isWebRpcChannel)
+        const rpcChannels = auth.ok
+          ? options.applicationCommands.localWeb.commandNames()
+          : options.applicationCommands.remoteWeb.commandNames()
         const restrictedRpcChannels = auth.ok
           ? []
-          : allRpcChannels.filter((channel) => REMOTE_LOCAL_ONLY_RPC_CHANNELS.has(channel))
-        const rpcChannels = allRpcChannels.filter(
-          (channel) => auth.ok || !REMOTE_LOCAL_ONLY_RPC_CHANNELS.has(channel)
-        )
+          : options.applicationCommands.remoteWeb.rejectedCommandNames()
         json(response, 200, {
           ...options.bootstrap,
           rpcProtocolVersion: WEB_RPC_PROTOCOL_VERSION,
@@ -619,7 +579,15 @@ const startWebHttpServer = async (options: WebServerOptions): Promise<RunningWeb
         })
         try {
           assertExternalAuthorizationCurrent(externalAuthorization)
-          const result = await options.rpc.invoke(channel, callerContext, parsed.data.args)
+          const dispatcher = auth.ok
+            ? options.applicationCommands.localWeb
+            : options.applicationCommands.remoteWeb
+          const result = await commandClient.invoke(
+            dispatcher,
+            channel,
+            callerContext,
+            parsed.data.args
+          )
           json(response, 200, {
             protocolVersion: WEB_RPC_PROTOCOL_VERSION,
             ok: true,
@@ -730,7 +698,11 @@ const startWebHttpServer = async (options: WebServerOptions): Promise<RunningWeb
     })
   } catch (error) {
     removeBroadcastSink()
-    clientLeases.dispose()
+    try {
+      clientLeases.dispose()
+    } finally {
+      commandClient.dispose()
+    }
     throw error
   }
 
@@ -751,7 +723,11 @@ const startWebHttpServer = async (options: WebServerOptions): Promise<RunningWeb
       for (const socket of sockets) socket.close()
       wsServer.close()
       await new Promise<void>((resolveClose) => server.close(() => resolveClose()))
-      clientLeases.dispose()
+      try {
+        clientLeases.dispose()
+      } finally {
+        commandClient.dispose()
+      }
     }
   }
 }

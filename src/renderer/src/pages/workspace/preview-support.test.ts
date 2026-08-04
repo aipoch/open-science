@@ -43,7 +43,15 @@ describe('preview support format detection', () => {
     ['xlsx', undefined, 'spreadsheet'],
     ['pptx', undefined, 'presentation'],
     ['html', undefined, 'html'],
-    ['htm', undefined, 'html']
+    ['htm', undefined, 'html'],
+    ['py', undefined, 'code'],
+    ['r', undefined, 'code'],
+    ['js', undefined, 'code'],
+    ['ts', undefined, 'code'],
+    ['tsx', undefined, 'code'],
+    ['css', undefined, 'code'],
+    ['sh', undefined, 'code'],
+    ['bash', undefined, 'code']
   ])('maps .%s files to %s previews', (extension, mimeType, expectedFormat) => {
     expect(getPreviewFormat(extension, mimeType)).toBe(expectedFormat)
   })
@@ -90,12 +98,14 @@ describe('preview support format detection', () => {
   it('derives the preview format from source-neutral file metadata', () => {
     expect(getPreviewFormatForFile({ name: 'results.csv', mimeType: 'text/plain' })).toBe('csv')
     expect(getPreviewFormatForFile({ name: 'analysis.treefile' })).toBe('text')
+    expect(getPreviewFormatForFile({ name: 'analysis.R' })).toBe('code')
   })
 
   it.each([
     ['image', undefined],
     ['csv', 'utf8'],
     ['fasta', 'utf8'],
+    ['code', 'utf8'],
     ['text', 'utf8'],
     ['pdf', undefined],
     ['word', undefined],

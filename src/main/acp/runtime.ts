@@ -48,7 +48,7 @@ import {
 } from '../../shared/permission-profiles'
 import { type AgentFrameworkId } from '../../shared/settings'
 import type { EffectiveSpecialistSkills } from '../../shared/specialist'
-import type { ModelReasoningEffort, ResolvedReasoningEffort } from '../../shared/reasoning-effort'
+import type { ResolvedReasoningEffort } from '../../shared/reasoning-effort'
 import type {
   ApprovedSwitchReadBack,
   ClaudeCodeReplayInput,
@@ -56,6 +56,7 @@ import type {
 } from '../agents/claude-code-handoff'
 import {
   claudeCodeFramework,
+  getAgentFramework,
   type AgentFramework,
   type ResolvedAgentBackend
 } from '../agent-framework'
@@ -139,6 +140,11 @@ import {
   type AcpConnectionResourceReadyHandle
 } from './connection-resource-owner'
 import { AcpConnectionTransitionOwner } from './connection-transition-owner'
+import {
+  AcpBackendGenerationOwner,
+  type AcpBackendGenerationAttempt,
+  type AcpBackendGenerationView
+} from './backend-generation-owner'
 
 export type AcpRuntimeCallbacks = {
   onStateChanged?: (state: AcpStateSnapshot) => void
@@ -290,8 +296,9 @@ type AcpRuntimeSkillImportOptions = {
   // Read when building each agent session so a settings-triggered reconnect can add/remove the MCP
   // without constructing a new application service or keeping stale prompt guidance.
   isEnabled?: () => Promise<boolean>
-  getRpcConnection: () => Promise<SkillImportRpcConnection>
+  getRpcConnection: (binding: { sessionId: string }) => Promise<SkillImportRpcConnection>
   registerSessionAlias?: (aliasSessionId: string, sessionId: string) => void
+  releaseSessionCapabilities?: (sessionId: string) => void
   authorizeReferencedUploads?: (
     projectId: string,
     sessionId: string,
@@ -548,34 +555,8 @@ class AcpRuntime {
   private readonly callbacks: AcpRuntimeCallbacks
   private readonly spawnAgent: (() => ChildProcessWithoutNullStreams) | undefined
   private readonly skillsHooks: AcpRuntimeSkillsOptions | undefined
-  // Mutable: refreshed from resolveBackend on each connect so a framework switch applies on reconnect.
-  private framework: AgentFramework
-  private backendId: string | undefined
-  private codexHome: string | undefined
+  private readonly backendGeneration: AcpBackendGenerationOwner
   private readonly codexSkillActivity = new CodexSkillActivityProjector()
-  // A Chat Completions provider uses the local Responses bridge. App-owned notebook, artifact, and
-  // reviewer MCPs have explicit namespaced bridge mappings; other MCP tools still require Responses.
-  private nativeMcpEnabled = true
-  private bridgeMcpAliasesEnabled = false
-  // Model to apply per session via the ACP model configOption (opencode); undefined for env-driven
-  // frameworks (Claude). Refreshed from the resolved backend on each connect.
-  private pendingSessionModel: string | undefined
-  private pendingSessionModelRequired = false
-  // The selected upstream model owns the denominator. Adapter values are fallback-only because a
-  // bridge can report its internal transport model (for example Codex gpt-5.5) instead.
-  private selectedModelContextWindow: number | undefined
-  private selectedContextUsageModel: string | undefined
-  // Reasoning-effort level to apply per session via the ACP thought_level configOption; undefined
-  // means "don't override" (the agent keeps its own default). Refreshed on each connect.
-  private pendingSessionEffort: ModelReasoningEffort | undefined
-  private pendingSessionOptions: Record<string, unknown> | undefined
-  private pendingSystemPromptAppends: string[] = []
-  private pendingPersistentSystemPrompt: string | undefined
-  // One-shot ACP authentication material resolved alongside the spawn config. It is cleared after
-  // initialize so the decrypted key is not retained by the runtime longer than necessary.
-  private pendingAuthentication: ResolvedAgentBackend['authentication']
-  private pendingProviderConfiguration: ResolvedAgentBackend['providerConfiguration']
-  private opencodeUsageApi: ResolvedAgentBackend['opencodeUsageApi']
   // Bounded resume network timeout + injectable timers (defaults to real setTimeout/clearTimeout).
   private readonly resumeTimeoutMs: number
   private readonly setTimer: (fn: () => void, ms: number) => ReturnType<typeof setTimeout>
@@ -611,7 +592,7 @@ class AcpRuntime {
     })
     this.spawnAgent = options.spawnAgent
     this.skillsHooks = options.skills
-    this.framework = options.framework ?? claudeCodeFramework
+    this.backendGeneration = new AcpBackendGenerationOwner(options.framework ?? claudeCodeFramework)
     this.resumeTimeoutMs = options.resumeTimeoutMs ?? 30_000
     this.contextUsageTracker = options.contextUsageTracker ?? new ContextUsageTracker()
     this.setTimer = options.setTimer ?? ((fn, ms) => setTimeout(fn, ms))
@@ -724,6 +705,18 @@ class AcpRuntime {
       unregisterBridgeSession: (sessionId) =>
         this.connectionResources.unregisterBridgeReviewerSession(sessionId)
     })
+  }
+
+  private get backend(): AcpBackendGenerationView {
+    return this.backendGeneration.current
+  }
+
+  private get framework(): AgentFramework {
+    return this.backend.framework
+  }
+
+  private get backendId(): string | undefined {
+    return this.backend.backendId
   }
 
   private get connection(): ClientConnection | undefined {
@@ -1022,7 +1015,7 @@ class AcpRuntime {
 
   // Applies the active model to a freshly built/resumed session via the ACP model configOption, for
   // frameworks that select the model over the protocol (opencode). No-op for env-driven frameworks
-  // (pendingSessionModel undefined). Optional selections keep the agent default when no matching option
+  // (generation Session model undefined). Optional selections keep the default when no matching option
   // exists or application fails; required selections fail visibly rather than silently running another
   // model. Returns the agent's post-application configOptions when it reports them — effort levels are
   // model-dependent, so callers resolving further options must use the set from AFTER the model switch.
@@ -1030,21 +1023,20 @@ class AcpRuntime {
     session: ActiveSession,
     connection: ClientConnection | undefined = this.connection
   ): Promise<SessionModelApplication> {
-    if (!this.pendingSessionModel || !connection) {
+    const model = this.backend.session.model
+    if (!model || !connection) {
       return { appliedModel: undefined, configOptions: undefined }
     }
 
     const configOptions = (
       session as { newSessionResponse?: { configOptions?: SessionConfigOption[] | null } }
     ).newSessionResponse?.configOptions
-    const selection = matchSessionModelOption(configOptions, this.pendingSessionModel)
+    const selection = matchSessionModelOption(configOptions, model)
 
     if (!selection) {
       log.info('no matching session model option', this.diagnosticContext())
-      if (this.pendingSessionModelRequired) {
-        throw new Error(
-          `The selected model "${this.pendingSessionModel}" is not available for this Codex account.`
-        )
+      if (this.backend.session.modelRequired) {
+        throw new Error(`The selected model "${model}" is not available for this Codex account.`)
       }
       return { appliedModel: undefined, configOptions: undefined }
     }
@@ -1079,17 +1071,15 @@ class AcpRuntime {
         ...diagnosticErrorFields(error),
         ...this.diagnosticContext()
       })
-      if (this.pendingSessionModelRequired) {
-        throw new Error(
-          `The selected model "${this.pendingSessionModel}" could not be applied: ${message}`
-        )
+      if (this.backend.session.modelRequired) {
+        throw new Error(`The selected model "${model}" could not be applied: ${message}`)
       }
       return { appliedModel: undefined, configOptions: undefined }
     }
   }
 
   // Applies the user's reasoning-effort preference to a freshly built/resumed session via the ACP
-  // thought_level configOption. No-op when no explicit level is set (pendingSessionEffort undefined —
+  // thought_level configOption. No-op when the generation view has no explicit effort level —
   // the agent then keeps its own default) or when the agent advertises no effort option. The desired
   // level is already resolved by the model profile and therefore only an exact advertised match is
   // sent. `configOptions` should be the agent's latest option set (e.g. returned by a model switch
@@ -1100,13 +1090,14 @@ class AcpRuntime {
     configOptions?: SessionConfigOption[] | null,
     connection: ClientConnection | undefined = this.connection
   ): Promise<void> {
-    if (!this.pendingSessionEffort || !connection) return
+    const effort = this.backend.session.effort
+    if (!effort || !connection) return
 
     const effectiveOptions =
       configOptions ??
       (session as { newSessionResponse?: { configOptions?: SessionConfigOption[] | null } })
         .newSessionResponse?.configOptions
-    const selection = resolveSessionEffortOption(effectiveOptions, this.pendingSessionEffort)
+    const selection = resolveSessionEffortOption(effectiveOptions, effort)
 
     if (!selection) {
       log.info('no session effort option to apply', this.diagnosticContext())
@@ -1124,7 +1115,7 @@ class AcpRuntime {
   // leaving the UI showing a level the agent never received. All sessions are attempted even after
   // a failure, so the set never straddles two levels longer than the reconnect takes. Sessions that
   // simply advertise no effort option are skipped (a reconnect could not give their model one
-  // either). On success pendingSessionEffort tracks the new level, so sessions created later in
+  // either). On success the generation view tracks the new level, so sessions created later in
   // this process inherit it; the persisted setting covers the next respawn.
   async applyReasoningEffortChange(effort: ResolvedReasoningEffort): Promise<boolean> {
     if (!this.framework.supportsLiveEffortChange) return false
@@ -1133,8 +1124,8 @@ class AcpRuntime {
     // the persisted setting reach the fresh backend after reconnect instead of leaking it here.
     if (this.pendingProviderReconnect) return false
 
-    this.pendingSessionEffort = effort === 'default' ? undefined : effort
-    this.connectionResources.setBridgeReasoningEffort(this.pendingSessionEffort)
+    const backend = this.backendGeneration.updateReasoningEffort(effort)
+    this.connectionResources.setBridgeReasoningEffort(backend.session.effort)
     const connection = this.connection
     if (!connection) return true
 
@@ -1220,9 +1211,8 @@ class AcpRuntime {
     let agentProcess: ChildProcessWithoutNullStreams | undefined
     let unattachedConnection: ClientConnection | undefined
     let unattachedBridgeLease: ResolvedAgentBackend['responsesBridgeLease']
+    let backendAttempt: AcpBackendGenerationAttempt | undefined
     let resourceAttached = false
-    let connectionAuthentication: ResolvedAgentBackend['authentication']
-    let connectionProviderConfiguration: ResolvedAgentBackend['providerConfiguration']
     // The framework THIS connect spawned under, bound atomically to the spawn (spawnAgentProcess returns
     // it alongside the process, and tags a spawn-throw with it) rather than re-read from the mutable
     // this.framework, which an overlapping reconnect can move before the failure log is written. Seeded
@@ -1241,12 +1231,11 @@ class AcpRuntime {
       this.setStatus('connecting')
       log.info('connecting agent', this.diagnosticContext(this.framework.id, generation))
 
-      const spawned = await this.spawnAgentProcess()
+      const spawned = await this.spawnAgentProcess(attempt)
       agentProcess = spawned.process
       spawnedFramework = spawned.framework
-      connectionAuthentication = spawned.backend.authentication
-      connectionProviderConfiguration = spawned.backend.providerConfiguration
-      unattachedBridgeLease = spawned.backend.responsesBridgeLease
+      backendAttempt = spawned.backendAttempt
+      unattachedBridgeLease = spawned.bridgeLease
 
       // spawnAgentProcess resolves the provider config asynchronously, so the connection may have been
       // torn down or superseded during the spawn: a quit latched shuttingDown, or any teardown/reconnect
@@ -1276,7 +1265,10 @@ class AcpRuntime {
         )
       }
 
-      this.applyResolvedBackend(spawned.backend)
+      const backend = backendAttempt.publish()
+      this.codexSkillActivity.setSkillsRoot(
+        backend.adapter.codexHome ? join(backend.adapter.codexHome, 'skills') : undefined
+      )
       this.attachAgentProcessEvents(agentProcess, generation)
 
       const stream = acp.ndJsonStream(
@@ -1290,7 +1282,7 @@ class AcpRuntime {
         process: agentProcess,
         connection,
         framework: spawned.framework,
-        bridgeLease: spawned.backend.responsesBridgeLease
+        bridgeLease: spawned.bridgeLease
       })
       resourceAttached = true
       unattachedConnection = undefined
@@ -1325,21 +1317,20 @@ class AcpRuntime {
         }
       })
       attempt.assertCurrent()
-      if (this.pendingAuthentication) {
-        const authentication = this.pendingAuthentication
-        await connection.agent.request(acp.methods.agent.authenticate, authentication)
+      const initializeMaterial = backendAttempt.consumeInitializeMaterial()
+      if (initializeMaterial?.authentication) {
+        await connection.agent.request(
+          acp.methods.agent.authenticate,
+          initializeMaterial.authentication
+        )
         attempt.assertCurrent()
-        if (this.pendingAuthentication === authentication) {
-          this.pendingAuthentication = undefined
-        }
       }
-      if (this.pendingProviderConfiguration) {
-        const providerConfiguration = this.pendingProviderConfiguration
-        await connection.agent.request(acp.methods.agent.providers.set, providerConfiguration)
+      if (initializeMaterial?.providerConfiguration) {
+        await connection.agent.request(
+          acp.methods.agent.providers.set,
+          initializeMaterial.providerConfiguration
+        )
         attempt.assertCurrent()
-        if (this.pendingProviderConfiguration === providerConfiguration) {
-          this.pendingProviderConfiguration = undefined
-        }
       }
       const handle = attempt.publish({
         close: Boolean(initResult.agentCapabilities?.sessionCapabilities?.close),
@@ -1366,6 +1357,7 @@ class AcpRuntime {
       this.setStatus('connected')
       return handle
     } catch (thrown) {
+      backendAttempt?.fail()
       // A spawn failure arrives wrapped so it can name the framework it targeted without mutating the
       // original throwable; unwrap to the real cause (logged and re-thrown) and prefer its framework
       // (the process never returned to update spawnedFramework). `instanceof` is guarded because a
@@ -1398,18 +1390,6 @@ class AcpRuntime {
         unattachedConnection = undefined
         agentProcess = undefined
         unattachedBridgeLease = undefined
-      }
-
-      // This connect owns the one-shot credential/config intent only while its generation is current.
-      // Clear every unconsumed value on a same-generation failure (including initialize/auth failure),
-      // but leave a successor generation's possibly identity-equal configuration untouched.
-      if (generation === this.connectionGeneration) {
-        if (this.pendingAuthentication === connectionAuthentication) {
-          this.pendingAuthentication = undefined
-        }
-        if (this.pendingProviderConfiguration === connectionProviderConfiguration) {
-          this.pendingProviderConfiguration = undefined
-        }
       }
 
       // The entire failure-handling body is best-effort: logging, notification sinks (pushEvent/
@@ -1512,6 +1492,7 @@ class AcpRuntime {
   ): Promise<AcpCreateSessionResponse> {
     let provisionalRoutingIds: SessionCapabilityRoutingIds | undefined
     let releaseProvisionalNotebookConnection: (() => void) | undefined
+    let releaseProvisionalSkillImportConnection: (() => void) | undefined
     let primaryIdentityReservation: AcpPrimarySessionIdentityReservation | undefined
     let provisionalSession: ActiveSession | undefined
     let provisionalHttpMcpRoutes = false
@@ -1556,14 +1537,17 @@ class AcpRuntime {
       provisionalHttpMcpRoutes = !this.framework.acceptsStdioMcp
       const builtCapabilities = await this.sessionCapabilities.build({
         framework: this.framework,
-        nativeMcpEnabled: this.nativeMcpEnabled,
-        bridgeMcpAliasesEnabled: this.bridgeMcpAliasesEnabled,
+        nativeMcpEnabled: this.backend.adapter.nativeMcpEnabled,
+        bridgeMcpAliasesEnabled: this.backend.adapter.bridgeMcpAliasesEnabled,
         policy: CURRENT_PRIMARY_SESSION_CAPABILITY_POLICY,
         routingIds,
         sessionCwd,
         projectName,
         onNotebookConnection: (connection) => {
           releaseProvisionalNotebookConnection = connection.release
+        },
+        onSkillImportConnection: (connection) => {
+          releaseProvisionalSkillImportConnection = connection.release
         }
       })
       const { mcpServers } = builtCapabilities
@@ -1650,13 +1634,15 @@ class AcpRuntime {
         appSessionId: session.sessionId,
         routingIds,
         descriptor: builtCapabilities.descriptor,
-        notebookRelease: releaseProvisionalNotebookConnection
+        notebookRelease: releaseProvisionalNotebookConnection,
+        skillImportRelease: releaseProvisionalSkillImportConnection
       })
       // Route and bearer ownership is now represented by the committed app-session maps. End the
       // provisional rollback window before invoking external observers so their failures cannot tear
       // down a Session that has already been published.
       provisionalRoutingIds = undefined
       releaseProvisionalNotebookConnection = undefined
+      releaseProvisionalSkillImportConnection = undefined
       try {
         this.notebookOptions?.registerSessionSpecialist?.(session.sessionId, request.specialistId)
       } catch (error) {
@@ -1722,6 +1708,7 @@ class AcpRuntime {
         usedHttpTransport: provisionalHttpMcpRoutes,
         notebookSessionId: provisionalRoutingIds?.notebook || undefined,
         notebookRelease: releaseProvisionalNotebookConnection,
+        skillImportRelease: releaseProvisionalSkillImportConnection,
         ownsStableIdentity: true
       })
       safeLogError('createSession: failed', {
@@ -2262,10 +2249,12 @@ class AcpRuntime {
       throw new Error('ACP agent does not support session resume.')
     }
 
-    // A Notebook bearer token is provisional until the resumed session is fully registered. Any
-    // later setup failure must revoke it so an unattached Agent cannot retain host.mcp/compute access.
+    // Session bearer tokens are provisional until the resumed session is fully registered. Any
+    // later setup failure must revoke them so an unattached Agent cannot retain app capabilities.
     let notebookCapabilityProvisional = Boolean(this.notebookOptions)
+    let skillImportCapabilityProvisional = Boolean(this.skillImportOptions)
     let releaseProvisionalNotebookConnection: (() => void) | undefined
+    let releaseProvisionalSkillImportConnection: (() => void) | undefined
     let session: ActiveSession | undefined
     let provisionalHttpMcpRoutes = false
     const routingIds = this.sessionCapabilities.createRoutingIds(request.sessionId)
@@ -2275,14 +2264,17 @@ class AcpRuntime {
       provisionalHttpMcpRoutes = !this.framework.acceptsStdioMcp
       const builtCapabilities = await this.sessionCapabilities.build({
         framework: this.framework,
-        nativeMcpEnabled: this.nativeMcpEnabled,
-        bridgeMcpAliasesEnabled: this.bridgeMcpAliasesEnabled,
+        nativeMcpEnabled: this.backend.adapter.nativeMcpEnabled,
+        bridgeMcpAliasesEnabled: this.backend.adapter.bridgeMcpAliasesEnabled,
         policy: CURRENT_PRIMARY_SESSION_CAPABILITY_POLICY,
         routingIds,
         sessionCwd,
         projectName,
         onNotebookConnection: (connection) => {
           releaseProvisionalNotebookConnection = connection.release
+        },
+        onSkillImportConnection: (connection) => {
+          releaseProvisionalSkillImportConnection = connection.release
         }
       })
       const { mcpServers } = builtCapabilities
@@ -2309,16 +2301,19 @@ class AcpRuntime {
         try {
           this.assertPrimarySessionIdentityReservation(primaryIdentityReservation)
         } catch (supersededError) {
-          if (notebookCapabilityProvisional) {
+          if (notebookCapabilityProvisional || skillImportCapabilityProvisional) {
             this.sessionCapabilities.revokeProvisional({
               routingIds: [routingIds.artifact, routingIds.notebook, routingIds.skillImport],
               usedHttpTransport: false,
               notebookSessionId: routingIds.notebook || undefined,
               notebookRelease: releaseProvisionalNotebookConnection,
+              skillImportRelease: releaseProvisionalSkillImportConnection,
               ownsStableIdentity: false
             })
             notebookCapabilityProvisional = false
+            skillImportCapabilityProvisional = false
             releaseProvisionalNotebookConnection = undefined
+            releaseProvisionalSkillImportConnection = undefined
           }
           throw supersededError
         }
@@ -2327,16 +2322,19 @@ class AcpRuntime {
         // longer holds it — surfacing as -32002 not-found or a generic -32603 Internal error). Revoke
         // the token handed to that failed attempt before adopting a brand-new agent session under the
         // SAME app id; adoptFreshSession owns the replacement token's lifecycle.
-        if (notebookCapabilityProvisional) {
+        if (notebookCapabilityProvisional || skillImportCapabilityProvisional) {
           this.sessionCapabilities.revokeProvisional({
             routingIds: [routingIds.artifact, routingIds.notebook, routingIds.skillImport],
             usedHttpTransport: false,
             notebookSessionId: routingIds.notebook || undefined,
             notebookRelease: releaseProvisionalNotebookConnection,
+            skillImportRelease: releaseProvisionalSkillImportConnection,
             ownsStableIdentity: true
           })
           notebookCapabilityProvisional = false
+          skillImportCapabilityProvisional = false
           releaseProvisionalNotebookConnection = undefined
+          releaseProvisionalSkillImportConnection = undefined
         }
         log.info('resumed session adopted after unrecoverable resume error', {
           sessionId: request.sessionId,
@@ -2401,10 +2399,13 @@ class AcpRuntime {
         appSessionId: request.sessionId,
         routingIds,
         descriptor: builtCapabilities.descriptor,
-        notebookRelease: releaseProvisionalNotebookConnection
+        notebookRelease: releaseProvisionalNotebookConnection,
+        skillImportRelease: releaseProvisionalSkillImportConnection
       })
       notebookCapabilityProvisional = false
+      skillImportCapabilityProvisional = false
       releaseProvisionalNotebookConnection = undefined
+      releaseProvisionalSkillImportConnection = undefined
       this.snapshotOwner.updateCwd(sessionCwd)
       try {
         this.pushEvent({
@@ -2452,19 +2453,24 @@ class AcpRuntime {
           notebookRelease: notebookCapabilityProvisional
             ? releaseProvisionalNotebookConnection
             : undefined,
+          skillImportRelease: skillImportCapabilityProvisional
+            ? releaseProvisionalSkillImportConnection
+            : undefined,
           ownsStableIdentity: notebookCapabilityProvisional
         })
         notebookCapabilityProvisional = false
+        skillImportCapabilityProvisional = false
       }
       if (session) {
         this.disposeSessionAfterFailure(session, 'resumed startup session disposal failed')
       }
-      if (notebookCapabilityProvisional) {
+      if (notebookCapabilityProvisional || skillImportCapabilityProvisional) {
         this.sessionCapabilities.revokeProvisional({
           routingIds: [],
           usedHttpTransport: false,
           notebookSessionId: routingIds.notebook || undefined,
           notebookRelease: releaseProvisionalNotebookConnection,
+          skillImportRelease: releaseProvisionalSkillImportConnection,
           ownsStableIdentity: ownsProvisionalHttpRoutes
         })
       }
@@ -2483,11 +2489,13 @@ class AcpRuntime {
     projectName: string,
     primaryIdentityReservation: AcpPrimarySessionIdentityReservation
   ): Promise<AcpCreateSessionResponse> {
-    // Fresh adoption also receives a provisional Notebook bearer token. Transfer ownership only after
-    // adoptSession has registered the replacement; every earlier failure revokes it and disposes any
+    // Fresh adoption also receives provisional app capability tokens. Transfer ownership only after
+    // adoptSession has registered the replacement; every earlier failure revokes them and disposes any
     // partially-created Agent session.
     let notebookCapabilityProvisional = Boolean(this.notebookOptions)
+    let skillImportCapabilityProvisional = Boolean(this.skillImportOptions)
     let releaseProvisionalNotebookConnection: (() => void) | undefined
+    let releaseProvisionalSkillImportConnection: (() => void) | undefined
     let adopted: ActiveSession | undefined
     let provisionalHttpMcpRoutes = false
     const routingIds = this.sessionCapabilities.createRoutingIds(request.sessionId)
@@ -2495,14 +2503,17 @@ class AcpRuntime {
       provisionalHttpMcpRoutes = !this.framework.acceptsStdioMcp
       const builtCapabilities = await this.sessionCapabilities.build({
         framework: this.framework,
-        nativeMcpEnabled: this.nativeMcpEnabled,
-        bridgeMcpAliasesEnabled: this.bridgeMcpAliasesEnabled,
+        nativeMcpEnabled: this.backend.adapter.nativeMcpEnabled,
+        bridgeMcpAliasesEnabled: this.backend.adapter.bridgeMcpAliasesEnabled,
         policy: CURRENT_PRIMARY_SESSION_CAPABILITY_POLICY,
         routingIds,
         sessionCwd,
         projectName,
         onNotebookConnection: (connection) => {
           releaseProvisionalNotebookConnection = connection.release
+        },
+        onSkillImportConnection: (connection) => {
+          releaseProvisionalSkillImportConnection = connection.release
         }
       })
       const { mcpServers } = builtCapabilities
@@ -2576,10 +2587,13 @@ class AcpRuntime {
         appSessionId: request.sessionId,
         routingIds,
         descriptor: builtCapabilities.descriptor,
-        notebookRelease: releaseProvisionalNotebookConnection
+        notebookRelease: releaseProvisionalNotebookConnection,
+        skillImportRelease: releaseProvisionalSkillImportConnection
       })
       notebookCapabilityProvisional = false
+      skillImportCapabilityProvisional = false
       releaseProvisionalNotebookConnection = undefined
+      releaseProvisionalSkillImportConnection = undefined
       try {
         this.emitState()
       } catch (error) {
@@ -2613,19 +2627,24 @@ class AcpRuntime {
           notebookRelease: notebookCapabilityProvisional
             ? releaseProvisionalNotebookConnection
             : undefined,
+          skillImportRelease: skillImportCapabilityProvisional
+            ? releaseProvisionalSkillImportConnection
+            : undefined,
           ownsStableIdentity: notebookCapabilityProvisional
         })
         notebookCapabilityProvisional = false
+        skillImportCapabilityProvisional = false
       }
       if (adopted) {
         this.disposeSessionAfterFailure(adopted, 'adopted startup session disposal failed')
       }
-      if (notebookCapabilityProvisional) {
+      if (notebookCapabilityProvisional || skillImportCapabilityProvisional) {
         this.sessionCapabilities.revokeProvisional({
           routingIds: [],
           usedHttpTransport: false,
           notebookSessionId: routingIds.notebook || undefined,
           notebookRelease: releaseProvisionalNotebookConnection,
+          skillImportRelease: releaseProvisionalSkillImportConnection,
           ownsStableIdentity: ownsProvisionalHttpRoutes
         })
       }
@@ -2691,7 +2710,10 @@ class AcpRuntime {
   // the app is gone would be an orphaned process still holding its network connection open. The OS
   // reclaims the remaining connection/session state as the process exits.
   shutdown(): void {
-    this.connectionResources.shutdownSynchronously(() => this.invalidatePendingSessionStartups())
+    this.connectionResources.shutdownSynchronously(() => {
+      this.invalidatePendingSessionStartups()
+      this.backendGeneration.supersede(this.connectionGeneration - 1)
+    })
     this.connectionTransitions.resetReconnect()
     this.contextUsageTracker.clear()
     this.contextUsageUpdatedPromptTurnsBySession.clear()
@@ -2761,6 +2783,7 @@ class AcpRuntime {
     // A failed Runtime teardown may still expose the stale connection. Supersede it before releasing
     // the transition barrier so the next startup must resolve and connect a fresh backend.
     const teardownGeneration = this.connectionResources.supersede()
+    this.backendGeneration.supersede(teardownGeneration - 1)
     void this.connectionResources.teardown(teardownGeneration, (stage, cleanupError) => {
       safeLogError(`${stage} cleanup after failed deferred disconnect failed`, {
         ...diagnosticErrorFields(cleanupError)
@@ -2870,6 +2893,7 @@ class AcpRuntime {
       runCleanup('closed-status', () => this.setStatus('closed'))
     }
 
+    this.backendGeneration.supersede(teardownGeneration - 1)
     if (teardownFailed) throw teardownFailure
     return this.getSnapshot()
   }
@@ -2877,21 +2901,32 @@ class AcpRuntime {
   // Creates the agent process, preferring an injected spawner (tests) and otherwise resolving the
   // active agent backend so each reconnect uses the current framework + up-to-date credentials. Returns
   // the child paired with the framework it was spawned under so the caller labels lifecycle/failure logs
-  // atomically — never by re-reading the mutable this.framework, which an overlapping reconnect can move.
-  private async spawnAgentProcess(): Promise<{
+  // atomically — never by re-reading the current generation view after an overlapping reconnect.
+  private async spawnAgentProcess(identity: AcpConnectionResourceAttempt): Promise<{
     process: ChildProcessWithoutNullStreams
     framework: AgentFramework['id']
-    backend: ResolvedAgentBackend
+    bridgeLease: ResolvedAgentBackend['responsesBridgeLease']
+    backendAttempt: AcpBackendGenerationAttempt
   }> {
     if (this.spawnAgent) {
+      const backend: ResolvedAgentBackend = {
+        framework: this.framework,
+        executablePath: '',
+        env: {}
+      }
+      const backendAttempt = this.backendGeneration.prepare(identity, backend)
+      let process: ChildProcessWithoutNullStreams
+      try {
+        process = this.spawnAgent()
+      } catch (error) {
+        backendAttempt.fail()
+        throw error
+      }
       return {
-        process: this.spawnAgent(),
+        process,
         framework: this.framework.id,
-        backend: {
-          framework: this.framework,
-          executablePath: '',
-          env: {}
-        }
+        bridgeLease: undefined,
+        backendAttempt
       }
     }
 
@@ -2904,6 +2939,15 @@ class AcpRuntime {
 
     if (!backend) {
       throw new Error('ACP agent spawn configuration is not available.')
+    }
+    let backendAttempt: AcpBackendGenerationAttempt
+    try {
+      backendAttempt = this.backendGeneration.prepare(identity, backend)
+    } catch (error) {
+      await this.connectionResources.cleanupUnattached({
+        bridgeLease: backend.responsesBridgeLease
+      })
+      throw error
     }
 
     // Record the resolved framework without retaining executable paths, arguments, environment names,
@@ -2925,39 +2969,18 @@ class AcpRuntime {
       await this.connectionResources.cleanupUnattached({
         bridgeLease: backend.responsesBridgeLease
       })
+      backendAttempt.fail()
       throw new SpawnFailure(backend.framework.id, error)
     }
 
     log.info('agent process spawned', this.diagnosticContext(backend.framework.id))
 
-    return { process, framework: backend.framework.id, backend }
-  }
-
-  private applyResolvedBackend(backend: ResolvedAgentBackend): void {
-    this.framework = backend.framework
-    this.backendId = backend.backendId
-    this.codexHome =
-      backend.framework.id === 'codex' && typeof backend.env.CODEX_HOME === 'string'
-        ? backend.env.CODEX_HOME
-        : undefined
-    this.codexSkillActivity.setSkillsRoot(
-      this.codexHome ? join(this.codexHome, 'skills') : undefined
-    )
-    this.nativeMcpEnabled =
-      backend.framework.id !== 'codex' || backend.providerConfiguration === undefined
-    this.bridgeMcpAliasesEnabled =
-      backend.framework.id === 'codex' && backend.providerConfiguration !== undefined
-    this.pendingSessionModel = backend.sessionModel
-    this.pendingSessionModelRequired = backend.sessionModelRequired ?? false
-    this.pendingSessionEffort = backend.sessionEffort
-    this.selectedModelContextWindow = backend.contextWindow
-    this.selectedContextUsageModel = backend.contextUsageModel
-    this.pendingSessionOptions = backend.sessionOptions
-    this.pendingSystemPromptAppends = [...(backend.systemPromptAppends ?? [])]
-    this.pendingPersistentSystemPrompt = backend.persistentSystemPrompt
-    this.pendingAuthentication = backend.authentication
-    this.pendingProviderConfiguration = backend.providerConfiguration
-    this.opencodeUsageApi = backend.opencodeUsageApi
+    return {
+      process,
+      framework: backend.framework.id,
+      bridgeLease: backend.responsesBridgeLease,
+      backendAttempt
+    }
   }
 
   // Sends one prompt turn to the targeted session and streams updates until stop.
@@ -3229,11 +3252,11 @@ class AcpRuntime {
       // frameworks without a session preset carry the guidance as a prompt prefix.
       const specialistSkillGuidance = this.specialistSkillGuidance(currentSpecialistSkills)
       const { promptPrefix: frameworkPromptPrefix } = this.framework.buildSessionSetup({
-        systemPromptAppends: this.pendingPersistentSystemPrompt
+        systemPromptAppends: this.backend.prompt.persistentSystemPrompt
           ? []
           : this.getSystemPromptAppends(),
         turnPromptReminders: specialistSkillGuidance ? [specialistSkillGuidance] : [],
-        sessionOptions: this.pendingSessionOptions
+        sessionOptions: this.backend.session.options
       })
       // For Codex/OpenCode, prepend the per-session specialist identity prefix (set at createSession).
       // Claude carries its identity in session-level _meta; no per-turn prefix needed there.
@@ -3338,10 +3361,11 @@ class AcpRuntime {
         .lookup(request.sessionId)
         ?.aggregate.snapshot()
       const promptFramework = promptSessionSnapshot?.frameworkId ?? this.framework.id
+      const openCodeUsageApi = this.backendGeneration.openCodeUsageApi()
       const opencodeUsageBefore =
-        promptFramework === 'opencode' && this.opencodeUsageApi
+        promptFramework === 'opencode' && openCodeUsageApi
           ? await fetchOpenCodeUsageSnapshot(
-              this.opencodeUsageApi,
+              openCodeUsageApi,
               activeSession.sessionId,
               promptSessionSnapshot?.cwd ?? this.snapshotOwner.cwd,
               this.options.opencodeUsageFetch
@@ -3434,11 +3458,11 @@ class AcpRuntime {
             stopReason: message.stopReason
           })
           const opencodeTurnUsage =
-            promptFramework === 'opencode' && this.opencodeUsageApi
+            promptFramework === 'opencode' && openCodeUsageApi
               ? sumOpenCodeTurnUsage(
                   opencodeUsageBefore,
                   await fetchOpenCodeUsageSnapshot(
-                    this.opencodeUsageApi,
+                    openCodeUsageApi,
                     activeSession.sessionId,
                     this.sessionRegistry.lookup(request.sessionId)?.aggregate.snapshot().cwd ??
                       this.snapshotOwner.cwd,
@@ -3524,7 +3548,7 @@ class AcpRuntime {
       // nested in the payload serializes without its (non-enumerable) message, which once hid the
       // provider's real rejection reason from the log.
       log.error('prompt failed', { sessionId: request.sessionId, ...errorLogFields(error) })
-      const text = describePromptError(error, { model: this.pendingSessionModel })
+      const text = describePromptError(error, { model: this.backend.session.model })
       // Tag a request-size overflow as recoverable so the renderer tries native compaction, falls back
       // to context replacement + text replay, and retries instead of dead-ending.
       // The structured errorKind slug is checked alongside the message text: providers relay the same
@@ -3791,7 +3815,7 @@ class AcpRuntime {
     // it with model-selected Skills, which would make the user's visible choice nondeterministic.
     if (forcedSkillIds.length > 0) {
       if (!this.skillsHooks?.descriptorsForIds) return []
-      return this.skillsHooks.descriptorsForIds(forcedSkillIds, this.codexHome)
+      return this.skillsHooks.descriptorsForIds(forcedSkillIds, this.backend.adapter.codexHome)
     }
 
     if (!this.connectionResources.bridgeSkillsAvailable || !this.skillsHooks?.catalogForCodexHome) {
@@ -3800,7 +3824,7 @@ class AcpRuntime {
 
     let catalog: ResponsesBridgeSkillCandidate[]
     try {
-      catalog = await this.skillsHooks.catalogForCodexHome(this.codexHome)
+      catalog = await this.skillsHooks.catalogForCodexHome(this.backend.adapter.codexHome)
     } catch {
       log.warn('Codex Skill selection failed', { reason: 'catalog-error' })
       return []
@@ -4005,8 +4029,8 @@ class AcpRuntime {
   > {
     return this.sessionCapabilities.toolingAvailability({
       framework: this.framework,
-      nativeMcpEnabled: this.nativeMcpEnabled,
-      bridgeMcpAliasesEnabled: this.bridgeMcpAliasesEnabled,
+      nativeMcpEnabled: this.backend.adapter.nativeMcpEnabled,
+      bridgeMcpAliasesEnabled: this.backend.adapter.bridgeMcpAliasesEnabled,
       policy: CURRENT_PRIMARY_SESSION_CAPABILITY_POLICY
     })
   }
@@ -4031,7 +4055,7 @@ class AcpRuntime {
     // omit it otherwise so the agent isn't told to use tools it wasn't given.
     return [
       ...this.getAppSystemPromptAppends(),
-      ...this.pendingSystemPromptAppends,
+      ...this.backend.prompt.systemPromptAppends,
       ...(skillGuidance ? [skillGuidance] : [])
     ]
   }
@@ -4102,7 +4126,7 @@ class AcpRuntime {
   // shape to the active framework. Claude applies its settingSources restriction, resolved backend
   // options, and system-prompt appends; opencode returns no meta and uses a prompt prefix instead.
   // `extraAppends` lets createSession inject a one-off specialist identity without touching the
-  // shared pendingSystemPromptAppends that apply to every session on this runtime generation.
+  // shared generation appends that apply to every session on this runtime generation.
   private buildSessionMetaArg(
     extraAppends: string[] = [],
     specialistSkills?: EffectiveSpecialistSkills
@@ -4115,7 +4139,7 @@ class AcpRuntime {
           : undefined
     const setup = this.framework.buildSessionSetup({
       systemPromptAppends: [...this.getSystemPromptAppends(), ...extraAppends],
-      sessionOptions: this.pendingSessionOptions,
+      sessionOptions: this.backend.session.options,
       ...(skillWhitelist !== undefined ? { skillWhitelist } : {})
     })
 
@@ -4273,6 +4297,11 @@ class AcpRuntime {
       }
 
       const profileState = aggregateSnapshot?.permissionProfile
+      const permissionFrameworkId = aggregateSnapshot?.frameworkId ?? this.framework.id
+      const permissionFramework =
+        permissionFrameworkId === this.framework.id
+          ? this.framework
+          : getAgentFramework(permissionFrameworkId)
 
       return await this.permissionContext.requestPermission(
         appSessionId === normalizedParams.sessionId
@@ -4280,9 +4309,10 @@ class AcpRuntime {
           : { ...normalizedParams, sessionId: appSessionId },
         {
           profile: profileState?.selectedProfile ?? DEFAULT_PERMISSION_PROFILE,
-          // Source the framework from the per-session map, not mutable this.framework — an overlapping
-          // reconnect can move this.framework off codex mid-request and leak the amendment options.
-          frameworkId: aggregateSnapshot?.frameworkId ?? this.framework.id,
+          // Source the framework from the per-session map, not the current generation view — an
+          // overlapping reconnect can move it off Codex mid-request and leak the amendment options.
+          frameworkId: permissionFrameworkId,
+          shellDialect: permissionFramework.commandShellDialect,
           autoReviewStrategy: profileState?.autoReviewStrategy,
           cwd: aggregateSnapshot?.cwd,
           mcpServerNames,
@@ -4371,31 +4401,33 @@ class AcpRuntime {
     // through env or an app-owned bridge, independently of the ACP transport model.
     const selectedModelConfirmed = !(
       this.framework.id === 'opencode' &&
-      this.pendingSessionModel &&
+      this.backend.session.model &&
       !appliedModel
     )
     if (!selectedModelConfirmed) return {}
 
-    const model = this.selectedContextUsageModel ?? appliedModel
+    const model = this.backend.context.model ?? appliedModel
     return {
       ...(model ? { model } : {}),
-      ...(this.selectedModelContextWindow ? { contextWindow: this.selectedModelContextWindow } : {})
+      ...(this.backend.context.window ? { contextWindow: this.backend.context.window } : {})
     }
   }
 
   private contextUsageEstimateInput(sessionId?: string): SessionEstimateInput {
     const { model } = this.contextUsageSelectionFor(sessionId)
     const sessionSetup = this.framework.buildSessionSetup({
-      systemPromptAppends: this.pendingPersistentSystemPrompt ? [] : this.getSystemPromptAppends(),
-      sessionOptions: this.pendingSessionOptions
+      systemPromptAppends: this.backend.prompt.persistentSystemPrompt
+        ? []
+        : this.getSystemPromptAppends(),
+      sessionOptions: this.backend.session.options
     })
     const persistentSystemPrompt =
-      this.pendingPersistentSystemPrompt ?? sessionSetup.persistentSystemPrompt
+      this.backend.prompt.persistentSystemPrompt ?? sessionSetup.persistentSystemPrompt
     const persistentSections = contextUsageMcpSections(this.framework.id, {
       artifacts: this.artifactToolingAvailable(),
       notebook: this.notebookToolingAvailable(),
       skillImport: this.skillImportToolingAvailable(),
-      codexBridgeAliases: this.bridgeMcpAliasesEnabled
+      codexBridgeAliases: this.backend.adapter.bridgeMcpAliasesEnabled
     }).map(({ sectionId, text }) => ({ sectionId, category: 'mcp' as const, text }))
 
     return {
@@ -4599,7 +4631,7 @@ class AcpRuntime {
     generation: number
   ): void {
     // Bind the framework this process was spawned under now. During a reconnect the runtime's
-    // this.framework may already point at a new backend, so reading it inside the async handlers would
+    // The current generation view may already name a new backend, so reading it in async handlers would
     // mislabel a late stderr/exit from the old process.
     const framework = this.framework.id
 
@@ -4687,6 +4719,7 @@ class AcpRuntime {
     this.permissionContext.dispose()
     this.reviewerSessions.clear()
     this.connectionResources.cleanupUnexpectedClose(teardownGeneration)
+    this.backendGeneration.supersede(teardownGeneration)
     this.sessionCapabilities.dispose(this.activeSessionIds())
     for (const entry of this.sessionRegistry.entries()) {
       if (entry.attachment) this.sessionRegistry.detach(entry.attachment, 'connection')
@@ -4777,7 +4810,7 @@ class AcpRuntime {
         return {
           connection,
           framework: this.framework,
-          sessionOptions: this.pendingSessionOptions,
+          sessionOptions: this.backend.session.options,
           startupGeneration: this.sessionRegistry.startupGeneration
         }
       })
@@ -4851,12 +4884,6 @@ class AcpRuntime {
     session: import('@agentclientprotocol/sdk').ActiveSession
   ): ReviewerSessionDisposition {
     return this.reviewerSessions.dispose(session)
-  }
-
-  // Returns how many permission requests the strict reviewer gate rejected for a given reviewer
-  // session. Non-zero means the session was active but the gate blocked its tool calls.
-  reviewerRejectedToolCallCount(sessionId: string): number {
-    return this.reviewerSessions.rejectedToolCallCount(sessionId)
   }
 }
 

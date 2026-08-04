@@ -782,6 +782,35 @@ describe('renderer session persistence bridge', () => {
     expect(saveSession).toHaveBeenCalledTimes(3)
     expect(durableTitle).toBe('Artifact latest')
   })
+
+  it('flushes only after explicit and coalesced queued writes settle', async () => {
+    const firstSave = createDeferred<PersistedChatSession>()
+    const latestSave = createDeferred<PersistedChatSession>()
+    const api = createApi({
+      saveSession: vi.fn(() => firstSave.promise)
+    })
+    const persistence = createOrderedSessionPersistence(api)
+    const session = createPersistedSession()
+
+    const saving = persistence.saveSession(session)
+    const savingLatest = persistence.saveLatestSession('session-1', () => latestSave.promise)
+    let flushed = false
+    const flushing = persistence.flush().then(() => {
+      flushed = true
+    })
+    await flushMicrotasks()
+
+    expect(flushed).toBe(false)
+    firstSave.resolve(session)
+    await saving
+    await flushMicrotasks()
+    expect(flushed).toBe(false)
+
+    latestSave.resolve(session)
+    await savingLatest
+    await flushing
+    expect(flushed).toBe(true)
+  })
 })
 
 type Deferred<T> = {

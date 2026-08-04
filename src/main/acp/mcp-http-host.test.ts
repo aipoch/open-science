@@ -173,8 +173,7 @@ describe('AgentMcpHttpHost', () => {
     const result = await client.callTool({
       name: 'request_skill_import',
       arguments: {
-        attachment_uri: 'file:///workspace/demo.skill',
-        turn_token: '00000000-0000-4000-8000-000000000001'
+        github_url: 'https://github.com/acme/skills/tree/main/slide-master'
       }
     })
     expect(JSON.stringify(result.content)).toContain('cancelled')
@@ -184,8 +183,7 @@ describe('AgentMcpHttpHost', () => {
         method: 'skillImport',
         params: {
           sessionId: routingId,
-          turnToken: '00000000-0000-4000-8000-000000000001',
-          attachmentUri: 'file:///workspace/demo.skill'
+          githubUrl: 'https://github.com/acme/skills/tree/main/slide-master'
         }
       }
     })

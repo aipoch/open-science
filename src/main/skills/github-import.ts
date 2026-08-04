@@ -1,5 +1,9 @@
 import { createLogger } from '../logger'
 import { SKILL_IMPORT_LIMITS } from './import-limits'
+import {
+  GITHUB_REPOSITORY_SEARCH_TOO_LONG_MESSAGE,
+  type GitHubRepositorySearchView
+} from '../../shared/settings'
 
 const log = createLogger('skills')
 
@@ -87,20 +91,27 @@ const readBounded = async (
 // Parses a GitHub URL into the repo + skill directory it points at. Accepts tree/blob URLs and trims a
 // trailing SKILL.md so a link to the file resolves to its directory. Returns null when unrecognizable.
 const parseGitHubSkillUrl = (input: string): GitHubSkillLocation | null => {
-  const match =
-    /github\.com\/([^/\s]+)\/([^/\s]+)(?:\/(?:tree|blob)\/([^/\s]+)((?:\/[^?#]*)?))?/.exec(
-      input.trim()
-    )
-  if (!match) return null
+  try {
+    const url = new URL(input.trim())
+    if (url.protocol !== 'https:' || url.host !== 'github.com' || url.username || url.password) {
+      return null
+    }
 
-  const owner = match[1]
-  const repo = match[2].replace(/\.git$/, '')
-  const ref = match[3]
-  // Decode so a pasted %20 and a literal space both normalize to a real space; the path may contain spaces.
-  let path = decodeURIComponent(match[4] ?? '').replace(/^\/+|\/+$/g, '')
-  path = path.replace(/\/?SKILL\.md$/i, '')
+    const segments = url.pathname.split('/').filter(Boolean).map(decodeURIComponent)
+    if (segments.length < 2) return null
+    const owner = segments[0]
+    const repo = segments[1].replace(/\.git$/, '')
+    if (!owner || !repo || owner === '.' || owner === '..' || repo === '.' || repo === '..')
+      return null
+    if (segments.length === 2) return { owner, repo, ref: undefined, path: '' }
 
-  return { owner, repo, ref, path }
+    const [kind, ref, ...pathSegments] = segments.slice(2)
+    if ((kind !== 'tree' && kind !== 'blob') || !ref) return null
+    const path = pathSegments.join('/').replace(/\/?SKILL\.md$/i, '')
+    return { owner, repo, ref, path }
+  } catch {
+    return null
+  }
 }
 
 // Builds the GitHub contents API URL for a path within a repo. Percent-encodes each path segment
@@ -301,8 +312,65 @@ const parseGitHubRepo = (input: string): GitHubRepoRef | null => {
   return location ? { owner: location.owner, repo: location.repo, ref: location.ref } : null
 }
 
+const searchGitHubSkillRepositories = async (
+  input: string,
+  fetchImpl: FetchLike
+): Promise<GitHubRepositorySearchView[]> => {
+  const keywords = input.trim()
+  const searchTerms = `${keywords} SKILL.md`
+  if (searchTerms.length > 256) {
+    throw new Error(GITHUB_REPOSITORY_SEARCH_TOO_LONG_MESSAGE)
+  }
+  const query = `${searchTerms} in:name,description,topics,readme`
+  const response = await fetchImpl(
+    `https://api.github.com/search/repositories?q=${encodeURIComponent(query)}&per_page=10`,
+    { headers: GITHUB_HEADERS }
+  )
+  if (response.status === 403 || response.status === 429) {
+    throw new Error(
+      'GitHub search is temporarily rate-limited. Try again later or paste an owner/repo reference.'
+    )
+  }
+  if (!response.ok) throw new Error(`GitHub API request failed (${response.status}).`)
+
+  let payload: unknown
+  try {
+    payload = await response.json()
+  } catch {
+    throw new Error('GitHub returned an invalid repository search response.')
+  }
+  if (
+    !payload ||
+    typeof payload !== 'object' ||
+    !Array.isArray((payload as { items?: unknown }).items)
+  ) {
+    throw new Error('GitHub returned an invalid repository search response.')
+  }
+
+  const repositories: GitHubRepositorySearchView[] = []
+  for (const item of (payload as { items: unknown[] }).items.slice(0, 10)) {
+    if (!item || typeof item !== 'object') continue
+    const repository = item as Record<string, unknown>
+    if (
+      typeof repository.full_name !== 'string' ||
+      (repository.description !== null && typeof repository.description !== 'string') ||
+      typeof repository.html_url !== 'string' ||
+      typeof repository.stargazers_count !== 'number'
+    ) {
+      continue
+    }
+    repositories.push({
+      fullName: repository.full_name,
+      description: repository.description,
+      url: repository.html_url,
+      stars: repository.stargazers_count
+    })
+  }
+  return repositories
+}
+
 // Scans a repo's git tree for every directory containing a SKILL.md, returning an importable URL for
-// each. Uses the public Git Trees API (recursive); resolves the default branch when no ref is given.
+// each. Resolve branch/tag refs to a commit first so a later preview and import read the same snapshot.
 const scanRepoForSkills = async (
   repo: GitHubRepoRef,
   fetchImpl: FetchLike
@@ -316,13 +384,29 @@ const scanRepoForSkills = async (
     ref = ((await meta.json()) as { default_branch?: string }).default_branch ?? 'main'
   }
 
+  const commitResponse = await fetchImpl(
+    `https://api.github.com/repos/${repo.owner}/${repo.repo}/commits/${encodeURIComponent(ref)}`,
+    { headers: GITHUB_HEADERS }
+  )
+  if (!commitResponse.ok) throw new Error(`GitHub API request failed (${commitResponse.status}).`)
+  const commitSha = ((await commitResponse.json()) as { sha?: string }).sha
+  if (!commitSha) throw new Error('GitHub did not return a commit SHA for that ref.')
+
   const treeResponse = await fetchImpl(
-    `https://api.github.com/repos/${repo.owner}/${repo.repo}/git/trees/${encodeURIComponent(ref)}?recursive=1`,
+    `https://api.github.com/repos/${repo.owner}/${repo.repo}/git/trees/${encodeURIComponent(commitSha)}?recursive=1`,
     { headers: GITHUB_HEADERS }
   )
   if (!treeResponse.ok) throw new Error(`GitHub API request failed (${treeResponse.status}).`)
 
-  const tree = (await treeResponse.json()) as { tree?: { path: string; type: string }[] }
+  const tree = (await treeResponse.json()) as {
+    tree?: { path: string; type: string }[]
+    truncated?: boolean
+  }
+  if (tree.truncated) {
+    throw new Error(
+      'This repository is too large to scan completely. Paste a link to the Skill folder instead.'
+    )
+  }
   const skills: ScannedSkill[] = []
 
   for (const entry of tree.tree ?? []) {
@@ -330,7 +414,7 @@ const scanRepoForSkills = async (
       const dir = entry.path.replace(/\/?SKILL\.md$/i, '')
       const name = dir.split('/').filter(Boolean).pop() ?? repo.repo
       // Percent-encode each segment so the url round-trips when later imported (e.g. spaces in dir names).
-      const encodedRef = encodeURIComponent(ref)
+      const encodedRef = encodeURIComponent(commitSha)
       const encodedDir = dir.split('/').map(encodeURIComponent).join('/')
       const url = dir
         ? `https://github.com/${repo.owner}/${repo.repo}/tree/${encodedRef}/${encodedDir}`
@@ -345,6 +429,7 @@ const scanRepoForSkills = async (
 export {
   parseGitHubSkillUrl,
   parseGitHubRepo,
+  searchGitHubSkillRepositories,
   fetchSkillPreview,
   fetchSkillFiles,
   scanRepoForSkills

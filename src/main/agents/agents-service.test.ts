@@ -188,7 +188,7 @@ describe('AgentsService read surface', () => {
 // dispatch without a real store.
 const mutatingProfileService = (profiles: SpecialistProfileView[]): ProfileService => {
   let store = [...profiles]
-  return {
+  const service = {
     list: vi.fn(async () => [...store]),
     getByName: vi.fn(async (name: string) => {
       const found = store.find((p) => p.name === name)
@@ -213,6 +213,8 @@ const mutatingProfileService = (profiles: SpecialistProfileView[]): ProfileServi
       store = store.filter((p) => p.id !== id)
     })
   } as unknown as ProfileService
+  service.resolveCustomMutationByName = vi.fn(async (name: string) => service.getByName(name))
+  return service
 }
 
 describe('AgentsService privileged dispatch — trusted session threading', () => {

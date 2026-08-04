@@ -15,6 +15,7 @@ import {
   CircleGauge,
   Copy,
   FileText,
+  GitBranch,
   Image as ImageIcon,
   Pencil
 } from 'lucide-react'
@@ -782,6 +783,8 @@ const WorkspaceMessageItem = ({
   const terminalDate = toMessageDate(terminalTimestamp)
   const turnStartedDate = toMessageDate(turnStartedAt)
   const terminalLabel = message.status === 'error' ? 'Failed' : 'Completed'
+  const showRevisionNavigation =
+    showUserActions && revisionNavigation && revisionNavigation.total > 1
   const [copied, setCopied] = useState(false)
   // Inline editing swaps the bubble for a multi-line editor; the doc starts from the message's
   // structured parts so mention chips survive the round-trip.
@@ -890,39 +893,10 @@ const WorkspaceMessageItem = ({
                 data-slot="user-bubble-row"
                 className="flex w-full max-w-full items-center justify-end gap-1"
               >
-                {/* Branch/copy/edit controls stay left of the bubble and never shift its sent time. */}
+                {/* Copy/edit controls stay left of the bubble; Branch navigation lives below it. */}
                 {showUserActions ? (
                   <TooltipProvider delayDuration={200}>
                     <div data-slot="user-message-actions" className={userMessageActionsClassName}>
-                      {revisionNavigation && revisionNavigation.total > 1 ? (
-                        <div className="flex items-center gap-0.5">
-                          <UserMessageActionTooltip label="Previous message revision">
-                            <button
-                              type="button"
-                              className={userMessageActionButtonClassName}
-                              aria-label="Previous message revision"
-                              disabled={!revisionNavigation.onPrevious || !canEditMessage}
-                              onClick={revisionNavigation.onPrevious}
-                            >
-                              <ChevronLeft className="size-3.5" aria-hidden="true" />
-                            </button>
-                          </UserMessageActionTooltip>
-                          <span aria-label="Message revision">
-                            {revisionNavigation.index + 1}/{revisionNavigation.total}
-                          </span>
-                          <UserMessageActionTooltip label="Next message revision">
-                            <button
-                              type="button"
-                              className={userMessageActionButtonClassName}
-                              aria-label="Next message revision"
-                              disabled={!revisionNavigation.onNext || !canEditMessage}
-                              onClick={revisionNavigation.onNext}
-                            >
-                              <ChevronRight className="size-3.5" aria-hidden="true" />
-                            </button>
-                          </UserMessageActionTooltip>
-                        </div>
-                      ) : null}
                       <UserMessageActionTooltip label={copied ? 'Copied' : 'Copy message'}>
                         <button
                           type="button"
@@ -977,12 +951,51 @@ const WorkspaceMessageItem = ({
                   ) : null}
                 </div>
               </div>
-              {sentDate ? (
+              {sentDate || showRevisionNavigation ? (
                 <div
                   data-slot="user-message-footer"
-                  className="mt-1 flex min-h-6 items-center justify-end text-[11px] leading-4 text-text-000/70 tabular-nums"
+                  className="mt-1 flex min-h-6 w-full flex-wrap items-center justify-end gap-x-2 text-[11px] leading-4 text-text-000/70 tabular-nums"
                 >
-                  <MessageTimestamp label="Sent" date={sentDate} />
+                  {sentDate ? <MessageTimestamp label="Sent" date={sentDate} /> : null}
+                  {showRevisionNavigation ? (
+                    <TooltipProvider delayDuration={200}>
+                      <div
+                        data-slot="user-message-revision-navigation"
+                        className="flex items-center gap-0.5 text-[13px] text-text-100"
+                      >
+                        <UserMessageActionTooltip label="Previous message revision">
+                          <button
+                            type="button"
+                            className={userMessageActionButtonClassName}
+                            aria-label="Previous message revision"
+                            disabled={!revisionNavigation.onPrevious || !canEditMessage}
+                            onClick={revisionNavigation.onPrevious}
+                          >
+                            <ChevronLeft className="size-3.5" aria-hidden="true" />
+                          </button>
+                        </UserMessageActionTooltip>
+                        <GitBranch
+                          data-slot="user-message-revision-icon"
+                          className="size-3.5 text-text-300"
+                          aria-hidden="true"
+                        />
+                        <span aria-label="Message revision" className="min-w-7 text-center">
+                          {revisionNavigation.index + 1}/{revisionNavigation.total}
+                        </span>
+                        <UserMessageActionTooltip label="Next message revision">
+                          <button
+                            type="button"
+                            className={userMessageActionButtonClassName}
+                            aria-label="Next message revision"
+                            disabled={!revisionNavigation.onNext || !canEditMessage}
+                            onClick={revisionNavigation.onNext}
+                          >
+                            <ChevronRight className="size-3.5" aria-hidden="true" />
+                          </button>
+                        </UserMessageActionTooltip>
+                      </div>
+                    </TooltipProvider>
+                  ) : null}
                 </div>
               ) : null}
             </div>
