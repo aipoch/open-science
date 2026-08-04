@@ -16021,6 +16021,53 @@ describe('ACP runtime Codex Skill activity projection', () => {
     expect(categories).toContainEqual(expect.objectContaining({ key: 'skills', estimated: true }))
     expect(categories).not.toContainEqual(expect.objectContaining({ key: 'tools' }))
   })
+
+  it('clears sparse Codex Skill correlation when the backend generation disconnects', async () => {
+    const events: AcpRuntimeEvent[] = []
+    const codexHome = join('/data', 'codex-subscription')
+    const skillPath = join(codexHome, 'skills', 'mcp-pubmed', 'SKILL.md')
+    const process = new FakeAgentProcess()
+    startFakeAgent(process, ['session-1'], {
+      modes: createModes(['read-only', 'agent', 'agent-full-access'], 'agent')
+    })
+    const runtime = new AcpRuntime({
+      appVersion: '0.1.0',
+      defaultCwd: '/workspace',
+      resolveBackend: () => ({
+        framework: { ...codexFramework, spawn: () => asAgentProcess(process) },
+        backendId: 'codex:isolated',
+        executablePath: '/data/codex-acp',
+        env: { CODEX_HOME: codexHome }
+      }),
+      callbacks: { onEvent: (event) => events.push(event) }
+    })
+    await runtime.createSession({ cwd: '/workspace' })
+
+    handleSessionUpdate(runtime, {
+      sessionId: 'session-1',
+      update: {
+        sessionUpdate: 'tool_call',
+        toolCallId: 'read-skill-1',
+        kind: 'read',
+        title: `Read file '${skillPath}'`,
+        status: 'in_progress',
+        locations: [{ path: skillPath }]
+      }
+    })
+    await runtime.disconnect(false)
+    handleSessionUpdate(runtime, {
+      sessionId: 'session-1',
+      update: {
+        sessionUpdate: 'tool_call_update',
+        toolCallId: 'read-skill-1',
+        status: 'completed'
+      }
+    })
+
+    expect(
+      events.filter((event) => event.toolCallId === 'read-skill-1').map((event) => event.title)
+    ).toEqual(['Loading skill: mcp-pubmed', undefined])
+  })
 })
 
 describe('ACP runtime — agent process lifecycle logging', () => {

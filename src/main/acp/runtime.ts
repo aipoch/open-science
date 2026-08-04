@@ -56,11 +56,7 @@ import {
 } from '../agent-framework'
 import { resolveCanonicalMcpToolIdentity } from '../agent-framework/app-mcp-names'
 import { createLogger, diagnosticErrorFields, errorLogFields } from '../logger'
-import {
-  extractProviderToolName,
-  extractToolFailureText,
-  toAcpRuntimeEvent
-} from './runtime-events'
+import { extractProviderToolName } from './runtime-events'
 import { readWorkspaceTextFile, writeWorkspaceTextFile } from './filesystem'
 import { toCodexTurnTokenUsage } from './codex-turn-usage'
 import { fetchOpenCodeUsageSnapshot, sumOpenCodeTurnUsage } from './opencode-turn-usage'
@@ -84,12 +80,10 @@ import type { ResponsesBridgeSkillCandidate } from '../settings/responses-bridge
 import type { PermissionGrantRegistry } from '../permission-grants/registry'
 import { withDataRootWrite } from '../storage/migration-state'
 import { opencodeStorageDir } from '../agent-framework/opencode'
-import { CodexSkillActivityProjector } from './codex-skill-activity'
 import {
   ContextUsageTracker,
   type ContextUsageTurnHandle,
-  type SessionEstimateInput,
-  type SessionUpdateObservation
+  type SessionEstimateInput
 } from './context-usage-tracker'
 import { contextUsageMcpSections } from './context-usage-static-context'
 import { createManagedFileReferenceResolver } from './file-reference-resolver'
@@ -138,6 +132,7 @@ import {
   type AcpBackendGenerationView
 } from './backend-generation-owner'
 import { AcpSessionConfigurator, type AcpSessionConfigurationFacts } from './session-configurator'
+import { AcpSessionUpdateProjector, type AcpSessionUpdateEffect } from './session-update-projector'
 
 export type AcpRuntimeCallbacks = {
   onStateChanged?: (state: AcpStateSnapshot) => void
@@ -526,7 +521,7 @@ class AcpRuntime {
   private readonly skillsHooks: AcpRuntimeSkillsOptions | undefined
   private readonly backendGeneration: AcpBackendGenerationOwner
   private readonly sessionConfigurator: AcpSessionConfigurator
-  private readonly codexSkillActivity = new CodexSkillActivityProjector()
+  private readonly sessionUpdateProjector = new AcpSessionUpdateProjector()
   // Bounded resume network timeout + injectable timers (defaults to real setTimeout/clearTimeout).
   private readonly resumeTimeoutMs: number
   private readonly setTimer: (fn: () => void, ms: number) => ReturnType<typeof setTimeout>
@@ -985,7 +980,7 @@ class AcpRuntime {
       }
 
       const backend = backendAttempt.publish()
-      this.codexSkillActivity.setSkillsRoot(
+      this.sessionUpdateProjector.beginGeneration(
         backend.adapter.codexHome ? join(backend.adapter.codexHome, 'skills') : undefined
       )
       this.attachAgentProcessEvents(agentProcess, generation)
@@ -2285,6 +2280,7 @@ class AcpRuntime {
       this.backendGeneration.supersede(this.connectionGeneration - 1)
     })
     this.connectionTransitions.resetReconnect()
+    this.sessionUpdateProjector.clearGeneration()
     this.contextUsageTracker.clear()
     this.clearAppliedSessionModels()
   }
@@ -2426,7 +2422,7 @@ class AcpRuntime {
       entry.aggregate.setPermissionProfile(undefined)
     }
     this.promptContentOwner.clear()
-    this.codexSkillActivity.clear()
+    this.sessionUpdateProjector.clearGeneration()
     runCleanup('MCP HTTP routes', () => this.sessionCapabilities.clearHttpRoutes())
     this.sessionRegistry.select(undefined)
 
@@ -3857,12 +3853,15 @@ class AcpRuntime {
     const framework =
       reviewerContext?.frameworkId ??
       this.sessionRegistry.lookup(sessionId)?.aggregate.snapshot().frameworkId
-    this.permissionContext.observeToolCall(notification, {
-      sessionId,
-      framework,
-      mcpServerNames:
-        reviewerContext?.mcpServerNames ?? this.sessionCapabilities.mcpServerNamesFor(sessionId)
-    })
+    this.applySessionUpdateEffects(
+      this.sessionUpdateProjector.project(notification, {
+        kind: 'permission',
+        appSessionId: sessionId,
+        framework,
+        mcpServerNames:
+          reviewerContext?.mcpServerNames ?? this.sessionCapabilities.mcpServerNamesFor(sessionId)
+      })
+    )
   }
 
   private cancelPermissionFlowForSession(sessionId: string): void {
@@ -3997,107 +3996,75 @@ class AcpRuntime {
     appSessionId?: string,
     visible = true
   ): void {
-    // When a session was adopted onto a replaced agent, the agent labels updates with its own id;
-    // relabel to the app-facing id so events land in the conversation the renderer tracks.
-    const routed =
-      appSessionId && appSessionId !== notification.sessionId
-        ? { ...notification, sessionId: appSessionId }
-        : notification
-    const projection = this.codexSkillActivity.projectWithContext(
-      toAcpRuntimeEvent(routed, this.nextEventId())
-    )
-    const event = projection.event
-
-    // A provider reconnect clears context immediately while its superseded prompt drains. Continue
-    // surfacing that prompt's visible output, but never rebuild usage from its late notifications.
-    if (!this.pendingProviderReconnect) {
-      this.ensureContextUsageTracking(routed.sessionId)
-      if (
-        routed.update.sessionUpdate === 'tool_call' ||
-        routed.update.sessionUpdate === 'tool_call_update'
-      ) {
-        const mcpServerNames = this.sessionCapabilities.mcpServerNamesFor(routed.sessionId)
-        const providerToolName = extractProviderToolName(routed.update)
-        const isMcp =
-          isMcpToolName(routed.update.title, mcpServerNames) ||
-          isMcpToolName(providerToolName, mcpServerNames)
-        const hasReportedToolIdentity =
-          routed.update.sessionUpdate === 'tool_call' ||
-          Boolean(routed.update.title) ||
-          Boolean(providerToolName)
-        const observation: SessionUpdateObservation = projection.skillFile
-          ? { toolCategory: 'skills', skillFilePath: projection.skillFile.path }
-          : isMcp
-            ? { toolCategory: 'mcp' }
-            : hasReportedToolIdentity
-              ? { toolCategory: 'tools' }
-              : {}
-        this.contextUsageTracker.observeSessionUpdate(routed.sessionId, routed, observation)
-      } else {
-        this.contextUsageTracker.observeSessionUpdate(routed.sessionId, routed)
-      }
-    }
-
-    if (routed.update.sessionUpdate === 'current_mode_update') {
-      const aggregate = this.sessionRegistry.lookup(routed.sessionId)?.aggregate
-      const profileState = aggregate?.snapshot().permissionProfile
-
-      if (profileState) {
-        aggregate.setPermissionProfile(
-          applyCurrentModeUpdate(
-            profileState as SessionPermissionProfileState,
-            routed.update.currentModeId
-          )
-        )
-        this.emitState()
-      }
-    }
-
-    // usage_update carries the session's context-window usage, not conversation content: record it per
-    // session and emit state so the indicator updates, but never push it as a visible event.
-    if (event.contextUsage) {
-      // A provider switch can wait for this prompt to finish. Any updates from that superseded backend
-      // must stay hidden until disconnect replaces the agent-context generation.
-      if (this.pendingProviderReconnect) return
-
-      this.contextUsageTracker.reconcileProviderUsage(
-        routed.sessionId,
-        event.contextUsage,
-        this.selectedContextWindowFor(routed.sessionId)
-      )
-      this.emitState()
-      return
-    }
-
-    if (!visible) return
-
-    if (
-      !this.pendingProviderReconnect &&
-      this.contextUsageTracker.usage(routed.sessionId)?.breakdown?.status !== 'reconciled'
-    ) {
-      this.refreshEstimatedContextUsage(routed.sessionId, 'preflight')
-    }
-
-    // Tool results (e.g. WebFetch's claude.ai domain-safety preflight, a failed Bash command) stream as
-    // tool_call_update content, which the session-update log omits — so a tool that runs and fails leaves
-    // no trace. Surface failures with the tool name and a bounded, text-only reason; never the arguments,
-    // raw output, or the URL/command-bearing title, to keep user data out of the log.
-    if (event.kind === 'tool' && event.status === 'failed') {
-      log.warn('tool call failed', {
-        tool:
-          this.toolIdentityForDiagnostics(event.providerToolName, routed.sessionId) ??
-          event.toolKind,
-        toolCallId: event.toolCallId,
-        sessionId: event.sessionId,
-        reason: extractToolFailureText(event.toolContent)
+    const sessionId = appSessionId ?? notification.sessionId
+    this.applySessionUpdateEffects(
+      this.sessionUpdateProjector.project(notification, {
+        kind: 'runtime',
+        appSessionId,
+        eventId: this.nextEventId(),
+        visible,
+        reconnectPending: this.pendingProviderReconnect,
+        mcpServerNames: this.sessionCapabilities.mcpServerNamesFor(sessionId)
       })
-    }
+    )
+  }
 
-    if ((event.kind === 'message' || event.kind === 'thought') && !event.text) {
-      return
+  private applySessionUpdateEffects(effects: readonly AcpSessionUpdateEffect[]): void {
+    for (const effect of effects) {
+      switch (effect.kind) {
+        case 'permission-tool-correlation':
+          this.permissionContext.observeToolCall(effect.notification, effect.context)
+          break
+        case 'context-observation':
+          this.ensureContextUsageTracking(effect.sessionId)
+          this.contextUsageTracker.observeSessionUpdate(
+            effect.sessionId,
+            effect.notification,
+            effect.observation
+          )
+          break
+        case 'current-mode': {
+          const aggregate = this.sessionRegistry.lookup(effect.sessionId)?.aggregate
+          const profileState = aggregate?.snapshot().permissionProfile
+          if (profileState) {
+            aggregate.setPermissionProfile(
+              applyCurrentModeUpdate(
+                profileState as SessionPermissionProfileState,
+                effect.currentModeId
+              )
+            )
+            this.emitState()
+          }
+          break
+        }
+        case 'provider-usage':
+          this.contextUsageTracker.reconcileProviderUsage(
+            effect.sessionId,
+            effect.usage,
+            this.selectedContextWindowFor(effect.sessionId)
+          )
+          this.emitState()
+          break
+        case 'context-refresh':
+          if (
+            this.contextUsageTracker.usage(effect.sessionId)?.breakdown?.status !== 'reconciled'
+          ) {
+            this.refreshEstimatedContextUsage(effect.sessionId, 'preflight')
+          }
+          break
+        case 'tool-failure-diagnostic':
+          log.warn('tool call failed', {
+            tool: effect.tool,
+            toolCallId: effect.toolCallId,
+            sessionId: effect.sessionId,
+            reason: effect.reason
+          })
+          break
+        case 'visible-event':
+          this.pushEvent(effect.event)
+          break
+      }
     }
-
-    this.pushEvent(event)
   }
 
   private toolIdentityForDiagnostics(
@@ -4216,7 +4183,7 @@ class AcpRuntime {
     }
     this.promptContentOwner.clear()
     this.handoffContinuity.clearGeneration()
-    this.codexSkillActivity.clear()
+    this.sessionUpdateProjector.dispose()
     this.contextUsageTracker.clear()
     this.sessionCapabilities.clearHttpRoutes()
     this.sessionRegistry.select(undefined)
