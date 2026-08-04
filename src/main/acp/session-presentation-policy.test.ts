@@ -246,7 +246,7 @@ describe('ACP Session presentation policy', () => {
     )
   })
 
-  it('falls back when a returned handoff value has no JSON representation', () => {
+  it('preserves current handoff text when a returned value has no JSON representation', () => {
     expect(
       policy.continuationText({
         text: 'Continue the analysis.',
@@ -257,7 +257,7 @@ describe('ACP Session presentation policy', () => {
           completion: { kind: 'returned', value: Symbol('result') }
         }
       })
-    ).toContain('Captured outer tool result:\nSymbol(result)')
+    ).toContain('Captured outer tool result:\nundefined')
   })
 
   it('keeps Codex Skill paths in immutable private inputs without changing prompt text', () => {

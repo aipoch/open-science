@@ -235,7 +235,8 @@ class AcpSessionPresentationPolicy {
     if (typeof value === 'string') return value
     try {
       const serialized = JSON.stringify(value)
-      return serialized === undefined ? String(value) : serialized
+      // Preserve Runtime's template interpolation until the later behavior-neutral cutover.
+      return serialized === undefined ? 'undefined' : serialized
     } catch {
       return String(value)
     }
