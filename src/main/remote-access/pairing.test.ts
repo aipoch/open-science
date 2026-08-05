@@ -103,6 +103,8 @@ describe('RemoteSessionPairingManager', () => {
     )
     expect(JSON.parse(statusResponse.body())).toEqual({ status: 'approved' })
     const setCookies = statusResponse.headers.get('set-cookie') as string[]
+    expect(setCookies[0]).toContain('SameSite=Strict')
+    expect(setCookies[0]).not.toContain('Max-Age')
     const sessionCookie = cookiePair(setCookies[0])
 
     const authorizedResponse = response()
@@ -145,7 +147,25 @@ describe('RemoteSessionPairingManager', () => {
       new URL('https://home.example.ts.net/__open_science_remote/pair/status')
     )
     const setCookies = statusResponse.headers.get('set-cookie') as string[]
+    expect(setCookies[0]).toContain('SameSite=Lax')
+    expect(setCookies[0]).toContain('Max-Age=15552000')
     const sessionCookie = cookiePair(setCookies[0])
+
+    const restartedManager = await RemoteSessionPairingManager.create({
+      repository,
+      isAllowedRemoteHost: (hostname) => hostname === 'home.example.ts.net',
+      isEnabled: () => true,
+      onChanged: vi.fn()
+    })
+    await expect(
+      restartedManager.webAccess.authorizeHttp(
+        request('/', { cookie: sessionCookie }),
+        response().response,
+        new URL('https://home.example.ts.net/')
+      )
+    ).resolves.toMatchObject({ kind: 'authorized-pairing-manager' })
+    expect(restartedManager.pendingViews()).toHaveLength(0)
+
     await expect(
       manager.webAccess.authorizeHttp(
         request(

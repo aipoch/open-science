@@ -84,7 +84,7 @@ const readCookies = (request: IncomingMessage): Map<string, string> => {
 }
 
 const sessionCookie = (value: string, persistent: boolean): string =>
-  `${SESSION_COOKIE}=${encodeURIComponent(value)}; HttpOnly; Secure; SameSite=Strict; Path=/${
+  `${SESSION_COOKIE}=${encodeURIComponent(value)}; HttpOnly; Secure; SameSite=${persistent ? 'Lax' : 'Strict'}; Path=/${
     persistent ? `; Max-Age=${TRUSTED_COOKIE_MAX_AGE_SECONDS}` : ''
   }`
 

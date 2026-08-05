@@ -349,6 +349,16 @@ export const OfficePreviewContent = ({
       />
     )
   }
+  if (!window.api.officePreview) {
+    return (
+      <OfficeDownloadFallback
+        item={item}
+        source={source}
+        title="Preview unavailable"
+        message="Office preview is only available in the desktop app. Download this file to view it."
+      />
+    )
+  }
   return <RemoteOfficePreviewContent item={item} source={source} />
 }
 
