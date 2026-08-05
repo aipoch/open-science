@@ -7,7 +7,12 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { ConversationPanel } from './ConversationPanel'
 import { emptyDoc } from './composer/composer-doc'
 
+import {
+  createInitialPreviewWorkbenchState,
+  usePreviewWorkbenchStore
+} from '@/stores/preview-workbench-store'
 import type { ChatSession } from '@/stores/session-store'
+import type { ActivePlanProjection } from '../../../../shared/session-plan/contract'
 
 // React's act() refuses to run unless the environment opts in to act-aware scheduling.
 ;(globalThis as { IS_REACT_ACT_ENVIRONMENT?: boolean }).IS_REACT_ACT_ENVIRONMENT = true
@@ -43,6 +48,15 @@ vi.mock('@/components/ui/dropdown-menu', () => ({
     <button type="button" disabled={disabled} onClick={onSelect} {...rest}>
       {children}
     </button>
+  )
+}))
+
+vi.mock('@/components/ui/tooltip', () => ({
+  TooltipProvider: ({ children }: PropsWithChildren): React.JSX.Element => <>{children}</>,
+  Tooltip: ({ children }: PropsWithChildren): React.JSX.Element => <>{children}</>,
+  TooltipTrigger: ({ children }: PropsWithChildren): React.JSX.Element => <>{children}</>,
+  TooltipContent: ({ children }: PropsWithChildren): React.JSX.Element => (
+    <span data-testid="tooltip-content">{children}</span>
   )
 }))
 
@@ -96,10 +110,48 @@ vi.mock('./PermissionApprovalControls', () => ({
   PermissionApprovalControls: (): null => null
 }))
 
+const { respondToSessionPlanMock } = vi.hoisted(() => ({
+  respondToSessionPlanMock: vi.fn().mockResolvedValue(undefined)
+}))
+
+vi.mock('./session-plan/respond-to-session-plan', () => ({
+  respondToSessionPlan: respondToSessionPlanMock
+}))
+
 let container: HTMLDivElement
 let root: Root
 
 const onStageAttachmentFiles = vi.fn()
+
+const completedPlanProjection: ActivePlanProjection = {
+  artifactId: 'artifact-1',
+  artifactVersionId: 'version-1',
+  artifactChecksum: 'a'.repeat(64),
+  revision: 4,
+  approval: 'approved',
+  lifecycle: 'completed',
+  requiresExplicitContinuation: false,
+  document: {
+    schema_version: 1,
+    task_summary: 'Analyze one dataset',
+    phases: [
+      {
+        name: 'Analysis',
+        delegations: [
+          {
+            name: 'Primary agent',
+            steps: [{ title: 'Analyze data', description: 'Produce the result.' }]
+          }
+        ]
+      }
+    ],
+    desired_outputs: [],
+    feasibility: { confidence: 'high', rationale: 'Inputs are available.' }
+  },
+  stepStatuses: { 'Analyze data': { status: 'completed', updatedAt: 1 } },
+  stepStates: { 'Analyze data': { status: 'completed' } },
+  counts: { phases: 1, delegations: 1, steps: 1, completed: 1, inProgress: 0 }
+}
 
 const renderPanel = (props: Partial<Parameters<typeof ConversationPanel>[0]> = {}): void => {
   act(() => {
@@ -123,6 +175,7 @@ const renderPanel = (props: Partial<Parameters<typeof ConversationPanel>[0]> = {
         canChangePermissionProfile
         onDraftDocChange={vi.fn()}
         onSendMessage={vi.fn()}
+        onRespondToRestoredPlan={vi.fn().mockResolvedValue(undefined)}
         onStageAttachmentFiles={onStageAttachmentFiles}
         onRemoveAttachment={vi.fn()}
         onCancelAttachmentTransfer={vi.fn()}
@@ -205,6 +258,8 @@ beforeEach(() => {
   document.body.appendChild(container)
   root = createRoot(container)
   onStageAttachmentFiles.mockClear()
+  respondToSessionPlanMock.mockReset().mockResolvedValue(undefined)
+  usePreviewWorkbenchStore.setState(createInitialPreviewWorkbenchState())
   mockHasRunningJobs = false
   mockAllJobs = []
 })
@@ -237,6 +292,32 @@ describe('ConversationPanel composer intake', () => {
     expect(container.querySelector('[data-testid="attachment-limits"]')?.textContent).toContain(
       'Any file type · 10 GB per file. Large files are linked, not embedded.'
     )
+  })
+
+  it('keeps a pending Plan read-only after the Agent interaction ends without a decision', () => {
+    const session: ChatSession = {
+      id: 'session-settled-without-decision',
+      projectId: 'project-a',
+      title: 'Settled pending Plan',
+      cwd: '/workspace',
+      status: 'idle',
+      messages: [],
+      createdAt: 1,
+      updatedAt: 2,
+      activePlanProjection: {
+        ...completedPlanProjection,
+        approval: 'pending',
+        lifecycle: 'awaiting_approval'
+      }
+    }
+
+    renderPanel({ activeSession: session, canEditDraft: true })
+
+    expect(container.textContent).not.toContain('Plan ready for review')
+    expect(container.querySelector('[role="textbox"]')?.closest('form')?.classList).not.toContain(
+      'hidden'
+    )
+    expect(container.querySelector('[data-testid="menu-view-plan"]')).not.toBeNull()
   })
 
   it('shows per-file progress and cancels only the selected transfer', () => {
@@ -337,6 +418,86 @@ describe('ConversationPanel composer intake', () => {
 
     // A plain-text draft carries no chips, so the send handler receives an empty id list.
     expect(onSendMessage).toHaveBeenCalledWith([])
+  })
+
+  it('offers Plan first for a text draft in a new conversation while Branch stays disabled', () => {
+    const onPlanFirst = vi.fn()
+    renderPanel({
+      canSendMessage: true,
+      draftDoc: {
+        nodes: [
+          { type: 'skill', id: 'skill-analysis', name: 'analysis' },
+          { type: 'text', text: ' analyze this dataset' }
+        ]
+      },
+      onPlanFirst
+    })
+
+    const trigger = container.querySelector(
+      '[data-testid="branch-send-menu-trigger"]'
+    ) as HTMLButtonElement
+    const planItem = container.querySelector('[data-testid="menu-plan-first"]') as HTMLButtonElement
+    const branchItem = container.querySelector(
+      '[data-testid="menu-branch-in-new-session"]'
+    ) as HTMLButtonElement
+
+    expect(trigger).not.toBeNull()
+    expect(planItem.textContent).toContain('Plan first')
+    expect(planItem.disabled).toBe(false)
+    expect(branchItem.disabled).toBe(true)
+
+    act(() => planItem.click())
+    expect(onPlanFirst).toHaveBeenCalledWith(['skill-analysis'])
+  })
+
+  it('enables both Plan first and Branch in new session for an existing Session text draft', () => {
+    const session: ChatSession = {
+      id: 'session-existing',
+      projectId: 'project-a',
+      title: 'Existing session',
+      cwd: '/workspace',
+      status: 'idle',
+      messages: [],
+      createdAt: 1,
+      updatedAt: 2
+    }
+    renderPanel({
+      activeSession: session,
+      canSendMessage: true,
+      draftDoc: { nodes: [{ type: 'text', text: 'analyze this dataset' }] },
+      onPlanFirst: vi.fn(),
+      onBranchInNewSession: vi.fn()
+    })
+
+    expect(
+      (container.querySelector('[data-testid="menu-plan-first"]') as HTMLButtonElement).disabled
+    ).toBe(false)
+    expect(
+      (container.querySelector('[data-testid="menu-branch-in-new-session"]') as HTMLButtonElement)
+        .disabled
+    ).toBe(false)
+  })
+
+  it('disables Plan first for an attachment-only draft', () => {
+    renderPanel({
+      canSendMessage: true,
+      attachments: [
+        {
+          id: 'upload-1',
+          sessionId: '.pending',
+          name: 'data.csv',
+          originalName: 'data.csv',
+          path: '/uploads/data.csv',
+          size: 12,
+          mimeType: 'text/csv'
+        }
+      ],
+      onPlanFirst: vi.fn()
+    })
+
+    expect(
+      (container.querySelector('[data-testid="menu-plan-first"]') as HTMLButtonElement).disabled
+    ).toBe(true)
   })
 
   it('adds a branch option beside Send only when a branch handler is available', () => {
@@ -479,6 +640,315 @@ describe('ConversationPanel + menu', () => {
     expect(attachItem).not.toBeNull()
     expect(reviewItem).not.toBeNull()
   })
+
+  it('describes the composer add icon with a tooltip', () => {
+    renderPanel()
+
+    expect(
+      [...container.querySelectorAll('[data-testid="tooltip-content"]')].some(
+        (node) => node.textContent === 'Add attachment or request review'
+      )
+    ).toBe(true)
+  })
+
+  it('replaces the composer with a pending Plan card and restores it immediately after approval', async () => {
+    renderPanel()
+    expect(container.querySelector('[data-testid="menu-view-plan"]')).toBeNull()
+
+    const session: ChatSession = {
+      id: 'session-plan',
+      projectId: 'project-a',
+      title: 'Planned session',
+      cwd: '/workspace',
+      status: 'waiting-plan-approval',
+      activeRun: { promptMessageId: 'interaction-1', startedAt: 1 },
+      messages: [],
+      createdAt: 1,
+      updatedAt: 2,
+      activePlanProjection: {
+        ...completedPlanProjection,
+        approval: 'pending',
+        lifecycle: 'awaiting_approval'
+      }
+    }
+    renderPanel({ activeSession: session, canEditDraft: false })
+
+    const pendingEditor = container.querySelector('[role="textbox"]')
+    expect(pendingEditor?.closest('form')?.classList.contains('hidden')).toBe(true)
+    expect(container.textContent).toContain('Plan ready for review')
+    const pendingPlanCard = [...container.querySelectorAll('article')].find((article) =>
+      article.textContent?.includes('Plan ready for review')
+    )
+    expect(pendingPlanCard?.classList.contains('relative')).toBe(true)
+    expect(pendingPlanCard?.classList.contains('z-10')).toBe(true)
+    expect(
+      container
+        .querySelector('[data-testid="composer-plus-trigger"]')
+        ?.closest('form')
+        ?.classList.contains('hidden')
+    ).toBe(true)
+
+    await act(async () => {
+      ;[...container.querySelectorAll<HTMLButtonElement>('button')]
+        .find((button) => button.textContent === 'Approve')
+        ?.click()
+      await Promise.resolve()
+    })
+
+    expect(container.textContent).not.toContain('Plan ready for review')
+    expect(
+      container.querySelector('[role="textbox"]')?.closest('form')?.classList.contains('hidden')
+    ).toBe(false)
+
+    renderPanel({
+      activeSession: {
+        ...session,
+        status: 'idle',
+        activePlanProjection: completedPlanProjection
+      }
+    })
+    expect(container.textContent).not.toContain('Plan approved')
+    expect(
+      container.querySelector('[role="textbox"]')?.closest('form')?.classList.contains('hidden')
+    ).toBe(false)
+    expect(container.querySelector('[data-testid="menu-view-plan"]')).not.toBeNull()
+  })
+
+  it('routes Plan revision notes through the blocked Plan interaction', async () => {
+    const session: ChatSession = {
+      id: 'session-plan-feedback',
+      projectId: 'project-a',
+      title: 'Plan feedback',
+      cwd: '/workspace',
+      status: 'waiting-plan-approval',
+      activeRun: { promptMessageId: 'interaction-1', startedAt: 1 },
+      messages: [],
+      createdAt: 1,
+      updatedAt: 2,
+      activePlanProjection: {
+        ...completedPlanProjection,
+        approval: 'pending',
+        lifecycle: 'awaiting_approval'
+      }
+    }
+    renderPanel({ activeSession: session, canEditDraft: false })
+
+    const textarea = container.querySelector('textarea') as HTMLTextAreaElement
+    await act(async () => {
+      const setter = Object.getOwnPropertyDescriptor(HTMLTextAreaElement.prototype, 'value')?.set
+      setter?.call(textarea, 'Split the analysis by cohort.')
+      textarea.dispatchEvent(new Event('input', { bubbles: true }))
+      textarea
+        .closest('form')
+        ?.dispatchEvent(new Event('submit', { bubbles: true, cancelable: true }))
+      await Promise.resolve()
+    })
+
+    expect(respondToSessionPlanMock).toHaveBeenCalledWith(
+      expect.objectContaining({ projectId: 'project-a', sessionId: 'session-plan-feedback' }),
+      { feedback: 'Split the analysis by cohort.' }
+    )
+  })
+
+  it('routes approval-like card text as a user Message instead of a UI decision', async () => {
+    const session: ChatSession = {
+      id: 'session-plan-text-approval',
+      projectId: 'project-a',
+      title: 'Plan text approval',
+      cwd: '/workspace',
+      status: 'waiting-plan-approval',
+      activeRun: { promptMessageId: 'interaction-1', startedAt: 1 },
+      messages: [],
+      createdAt: 1,
+      updatedAt: 2,
+      activePlanProjection: {
+        ...completedPlanProjection,
+        approval: 'pending',
+        lifecycle: 'awaiting_approval'
+      }
+    }
+    renderPanel({ activeSession: session, canEditDraft: false })
+
+    const textarea = container.querySelector('textarea') as HTMLTextAreaElement
+    await act(async () => {
+      const setter = Object.getOwnPropertyDescriptor(HTMLTextAreaElement.prototype, 'value')?.set
+      setter?.call(textarea, '批准执行')
+      textarea.dispatchEvent(new Event('input', { bubbles: true }))
+      textarea
+        .closest('form')
+        ?.dispatchEvent(new Event('submit', { bubbles: true, cancelable: true }))
+      await Promise.resolve()
+    })
+
+    expect(respondToSessionPlanMock).toHaveBeenCalledWith(
+      expect.objectContaining({ sessionId: 'session-plan-text-approval' }),
+      { feedback: '批准执行' }
+    )
+  })
+
+  it('reopens an actionable Plan card after restart without reviving the expired interaction', async () => {
+    const onRespondToRestoredPlan = vi.fn().mockResolvedValue(undefined)
+    const session: ChatSession = {
+      id: 'session-orphaned-plan',
+      projectId: 'project-a',
+      title: 'Orphaned pending Plan',
+      cwd: '/workspace',
+      status: 'waiting-plan-approval',
+      messages: [],
+      createdAt: 1,
+      updatedAt: 2,
+      activePlanProjection: {
+        ...completedPlanProjection,
+        approval: 'pending',
+        lifecycle: 'awaiting_approval'
+      }
+    }
+
+    renderPanel({ activeSession: session, canEditDraft: false, onRespondToRestoredPlan })
+
+    expect(container.textContent).toContain('Plan ready for review')
+    expect(container.querySelector('[role="textbox"]')?.closest('form')?.classList).toContain(
+      'hidden'
+    )
+
+    const textarea = container.querySelector('textarea') as HTMLTextAreaElement
+    await act(async () => {
+      const setter = Object.getOwnPropertyDescriptor(HTMLTextAreaElement.prototype, 'value')?.set
+      setter?.call(textarea, 'Split the analysis by cohort.')
+      textarea.dispatchEvent(new Event('input', { bubbles: true }))
+      textarea
+        .closest('form')
+        ?.dispatchEvent(new Event('submit', { bubbles: true, cancelable: true }))
+      await Promise.resolve()
+    })
+
+    expect(onRespondToRestoredPlan).toHaveBeenCalledWith({
+      feedback: 'Split the analysis by cohort.'
+    })
+    expect(respondToSessionPlanMock).not.toHaveBeenCalled()
+  })
+
+  it('shows and opens only the active Message Branch Plan while retaining an open Preview', () => {
+    const planA: ActivePlanProjection = {
+      ...completedPlanProjection,
+      artifactId: 'artifact-a',
+      artifactVersionId: 'version-a',
+      originatingPromptMessageId: 'prompt-a',
+      lifecycle: 'approved'
+    }
+    const planB: ActivePlanProjection = {
+      ...completedPlanProjection,
+      artifactId: 'artifact-b',
+      artifactVersionId: 'version-b',
+      originatingPromptMessageId: 'prompt-b',
+      lifecycle: 'approved'
+    }
+    const baseSession: ChatSession = {
+      id: 'session-plan-branches',
+      projectId: 'project-a',
+      title: 'Branched plans',
+      cwd: '/workspace',
+      status: 'idle',
+      messages: [],
+      activePlanProjection: planB,
+      planHistoryProjections: [planA],
+      createdAt: 1,
+      updatedAt: 2
+    }
+
+    renderPanel({
+      activeSession: {
+        ...baseSession,
+        messages: [
+          {
+            id: 'prompt-a',
+            role: 'user',
+            content: 'Plan branch A',
+            status: 'complete',
+            eventIds: [],
+            createdAt: 1,
+            updatedAt: 1
+          }
+        ]
+      }
+    })
+
+    act(() => {
+      ;(
+        container.querySelector('button[aria-label^="Open plan, step"]') as HTMLButtonElement
+      ).click()
+    })
+    expect(usePreviewWorkbenchStore.getState().activeItemId).toBe(
+      'tool:session-plan-branches:plan:version-a'
+    )
+
+    usePreviewWorkbenchStore.setState(createInitialPreviewWorkbenchState())
+    act(() => {
+      ;(container.querySelector('[data-testid="menu-view-plan"]') as HTMLButtonElement).click()
+    })
+    expect(usePreviewWorkbenchStore.getState().activeItemId).toBe(
+      'tool:session-plan-branches:plan:version-a'
+    )
+
+    renderPanel({
+      activeSession: {
+        ...baseSession,
+        messages: [
+          {
+            id: 'prompt-c',
+            role: 'user',
+            content: 'Branch without a Plan',
+            status: 'complete',
+            eventIds: [],
+            createdAt: 1,
+            updatedAt: 1
+          }
+        ]
+      }
+    })
+
+    expect(container.querySelector('[data-testid="menu-view-plan"]')).toBeNull()
+    expect(container.querySelector('button[aria-label^="Open plan, step"]')).toBeNull()
+    expect(usePreviewWorkbenchStore.getState().activeItemId).toBe(
+      'tool:session-plan-branches:plan:version-a'
+    )
+  })
+
+  it.each([
+    ['Approve', 'approved'],
+    ['Dismiss', 'rejected']
+  ] as const)(
+    'routes restored Plan %s through the durable decision API',
+    async (label, decision) => {
+      const session: ChatSession = {
+        id: `session-restored-${decision}`,
+        projectId: 'project-a',
+        title: 'Restored pending Plan',
+        cwd: '/workspace',
+        status: 'waiting-plan-approval',
+        messages: [],
+        createdAt: 1,
+        updatedAt: 2,
+        activePlanProjection: {
+          ...completedPlanProjection,
+          approval: 'pending',
+          lifecycle: 'awaiting_approval'
+        }
+      }
+      const onRespondToRestoredPlan = vi.fn().mockResolvedValue(undefined)
+      renderPanel({ activeSession: session, canEditDraft: false, onRespondToRestoredPlan })
+
+      await act(async () => {
+        ;[...container.querySelectorAll<HTMLButtonElement>('button')]
+          .find((button) => button.textContent === label)
+          ?.click()
+        await Promise.resolve()
+      })
+
+      expect(onRespondToRestoredPlan).toHaveBeenCalledWith({ decision })
+      expect(respondToSessionPlanMock).not.toHaveBeenCalled()
+    }
+  )
 
   it('Attach files item triggers the hidden file input (onStageAttachmentFiles path)', () => {
     // We can only confirm the item exists and is not disabled; the picker click is browser-native.

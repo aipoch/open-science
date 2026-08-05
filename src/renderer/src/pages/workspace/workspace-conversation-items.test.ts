@@ -88,6 +88,31 @@ describe('workspace conversation items', () => {
     ])
   })
 
+  it('projects successful Plan tools through the Plan surface instead of generic activity rows', () => {
+    const session: ChatSession = {
+      ...baseSession,
+      activities: [
+        createActivity({
+          id: 'plan-generate',
+          providerToolName: 'mcp__open-science-plan__generate_plan'
+        }),
+        createActivity({
+          id: 'plan-status',
+          providerToolName: 'mcp.open-science-plan.update_step_status'
+        }),
+        createActivity({
+          id: 'plan-opencode',
+          providerToolName: 'open_science_plan_generate_plan'
+        }),
+        createActivity({ id: 'failed-plan', providerToolName: 'generate_plan', status: 'failed' })
+      ]
+    }
+
+    expect(createConversationItems(session).map((item) => item.id)).toEqual([
+      'activity-failed-plan'
+    ])
+  })
+
   it('anchors a handoff lifecycle row to the original user turn without inventing another user message', () => {
     const session: ChatSession = {
       ...baseSession,

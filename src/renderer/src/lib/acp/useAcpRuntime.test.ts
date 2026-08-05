@@ -260,6 +260,36 @@ describe('useAcpRuntime value action failures', () => {
 })
 
 describe('useAcpRuntime payload construction', () => {
+  it('forwards the closed Plan first turn intent without changing the user text', async () => {
+    const { result } = await mountRuntime()
+
+    await act(async () => {
+      await result.current.sendPrompt(
+        'session-1',
+        'analyze this dataset',
+        undefined,
+        ['skill-analysis'],
+        undefined,
+        undefined,
+        undefined,
+        undefined,
+        undefined,
+        undefined,
+        undefined,
+        undefined,
+        'plan-first'
+      )
+    })
+
+    expect(acpApi.sendPrompt).toHaveBeenCalledWith({
+      sessionId: 'session-1',
+      text: 'analyze this dataset',
+      forcedSkillIds: ['skill-analysis'],
+      attachments: undefined,
+      turnIntent: 'plan-first'
+    })
+  })
+
   it('requests native context compaction for one session', async () => {
     const { result } = await mountRuntime()
 

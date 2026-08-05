@@ -39,6 +39,12 @@ const KNOWN_TITLE_TOOL_NAMES = new Set(['ToolSearch'])
 // Both preserve the notebook server name, with Codex occasionally sanitizing its hyphens.
 const NOTEBOOK_PROVIDER_TOOL_PATTERN =
   /^(?:mcp__|mcp\.)?open[-_]science[-_]notebook(?:__|\.)([^.]+)$/iu
+const PLAN_PROVIDER_TOOL_PATTERN =
+  /^(?:(?:mcp__|mcp\.)?open[-_]science[-_]plan(?:__|\.|_)|)(?:generate_plan|update_step_status)$/iu
+
+const isSuccessfulPlanActivity = (activity: ToolActivity): boolean =>
+  activity.status !== 'failed' &&
+  PLAN_PROVIDER_TOOL_PATTERN.test(activity.providerToolName?.trim() ?? activity.title.trim())
 
 // Returns the notebook tool suffix (e.g. "notebook_execute") for a notebook MCP tool identity, or
 // undefined when the name is not a notebook tool. Framework-agnostic across the two server-name forms.
@@ -145,13 +151,15 @@ const createConversationItems = (
       message
     })) ?? []
   const activities: ConversationItem[] =
-    session?.activities?.map((activity) => ({
-      id: `activity-${activity.id}`,
-      type: 'activity',
-      createdAt: activity.createdAt,
-      sortIndex: activity.sortIndex,
-      activity
-    })) ?? []
+    session?.activities
+      ?.filter((activity) => !isSuccessfulPlanActivity(activity))
+      .map((activity) => ({
+        id: `activity-${activity.id}`,
+        type: 'activity',
+        createdAt: activity.createdAt,
+        sortIndex: activity.sortIndex,
+        activity
+      })) ?? []
   const handoffs: ConversationItem[] = projectHandoffLifecycle(handoffEvents).map((handoff) => ({
     ...handoff,
     type: 'handoff',

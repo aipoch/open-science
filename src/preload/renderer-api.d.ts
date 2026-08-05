@@ -14,6 +14,7 @@ import type {
   AcpSetPermissionProfileRequest,
   AcpStateSnapshot
 } from '../shared/acp'
+import type { ActivePlanProjection, PlanResponseCommand } from '../shared/session-plan/contract'
 import type {
   ArtifactFile,
   ArtifactPreviewResult,
@@ -318,6 +319,8 @@ export interface OpenScienceAPI {
   }
   acp: {
     getState(): Promise<AcpStateSnapshot>
+    getPlanProjection(projectId: string, sessionId: string): Promise<ActivePlanProjection | null>
+    respondPlan(request: PlanResponseCommand): Promise<unknown>
     connect(request?: AcpConnectRequest): Promise<AcpStateSnapshot>
     disconnect(): Promise<AcpStateSnapshot>
     createSession(request?: AcpCreateSessionRequest): Promise<AcpCreateSessionResponse>

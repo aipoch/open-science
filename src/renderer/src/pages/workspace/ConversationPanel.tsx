@@ -24,6 +24,7 @@ import {
   GitBranch,
   Image as ImageIcon,
   Loader2,
+  ListChecks,
   Menu,
   PanelRight,
   Plus,
@@ -65,6 +66,14 @@ import { ReportErrorDialog } from './ReportErrorDialog'
 import { SessionInterruptedBanner } from './SessionInterruptedBanner'
 import { ExtensionPreservingFileName } from './ExtensionPreservingFileName'
 import { WorkspaceMessageScroller } from './WorkspaceMessageScroller'
+import { PlanProgressChip, WorkspacePlanCard } from './session-plan/SessionPlanSurfaces'
+import { selectActiveBranchPlan } from './session-plan/active-branch-plan'
+import { isPlanProgressVisible } from './session-plan/plan-progress'
+import { respondToSessionPlan } from './session-plan/respond-to-session-plan'
+import {
+  createSessionPlanPreviewItem,
+  usePreviewWorkbenchStore
+} from '@/stores/preview-workbench-store'
 import { WorkspaceMessageEditStateProvider } from './workspace-message-edit-state'
 import { workspaceHandoffLifecycleClient } from './handoff-lifecycle-source'
 
@@ -145,6 +154,13 @@ type ConversationPanelProps = {
   historyStatus?: string
   onNavigateHistory?: (direction: 'previous' | 'next') => boolean
   onSendMessage: (forcedSkillIds: string[]) => void
+  // Sends this draft as a one-turn request to plan before execution.
+  onPlanFirst?: (forcedSkillIds: string[]) => void
+  // A restored pending Plan has no live tool-call waiter. Every card action starts a fresh,
+  // identity-bound Plan interaction instead of trying to resume the expired one.
+  onRespondToRestoredPlan: (
+    response: { decision: 'approved' | 'rejected' } | { feedback: string }
+  ) => Promise<void>
   // Starts a new session from this session's visible branch, then sends the current draft there.
   // Optional while callers migrate to the split send affordance.
   onBranchInNewSession?: (forcedSkillIds: string[]) => void
@@ -219,6 +235,8 @@ const ConversationPanel = ({
   historyStatus = '',
   onNavigateHistory,
   onSendMessage,
+  onPlanFirst,
+  onRespondToRestoredPlan,
   onBranchInNewSession,
   onStageAttachmentFiles,
   onRemoveAttachment,
@@ -267,6 +285,18 @@ const ConversationPanel = ({
   // Unconditional hook: check if the active session has any jobs (running or finished).
   const allJobsForSession = useSessionJobStore((s) => s.allJobsForSession)
   const hasAnyJobs = activeSession !== undefined && allJobsForSession(activeSession.id).length > 0
+  const activeBranchPlan = selectActiveBranchPlan(activeSession)
+  const activePendingPlan = activeBranchPlan?.approval === 'pending' ? activeBranchPlan : undefined
+  const activePendingPlanKey = activePendingPlan
+    ? `${activePendingPlan.artifactVersionId}:${activePendingPlan.revision}`
+    : undefined
+  const [resolvedPlanKey, setResolvedPlanKey] = useState<string>()
+  const pendingPlan =
+    activePendingPlanKey &&
+    resolvedPlanKey !== activePendingPlanKey &&
+    activeSession?.status === 'waiting-plan-approval'
+      ? activePendingPlan
+      : undefined
   const resolvedRunError = normalizeRunFailureError(activeSession?.error)
   // Only unknown/opaque ACP-layer failures offer the "Report error → GitHub issue" affordance. The
   // reportability is resolved at failure time and persisted on the session: a model-provider error is
@@ -320,6 +350,43 @@ const ConversationPanel = ({
   const handleBranchInNewSession = (): void => {
     if (!canSendMessage || !onBranchInNewSession) return
     onBranchInNewSession(docToSkillIds(draftDoc))
+  }
+
+  const respondToPendingPlan = async (
+    response: { decision: 'approved' | 'rejected' } | { feedback: string }
+  ): Promise<void> => {
+    if (!activeSession || !pendingPlan) return
+    if (!activeSession.activeRun) {
+      await onRespondToRestoredPlan(response)
+      return
+    }
+    await respondToSessionPlan(
+      {
+        projectId: activeSession.projectId,
+        sessionId: activeSession.id,
+        projection: pendingPlan
+      },
+      response
+    )
+  }
+
+  const openPendingPlan = (): void => {
+    if (!activeSession || !pendingPlan) return
+    usePreviewWorkbenchStore
+      .getState()
+      .upsertAndActivateItem(
+        createSessionPlanPreviewItem(activeSession.id, activeSession.projectId)
+      )
+  }
+
+  const hasTextDraft = draftDoc.nodes.some(
+    (node) => node.type === 'text' && node.text.trim().length > 0
+  )
+  const canPlanFirst = canSendMessage && hasTextDraft && onPlanFirst !== undefined
+
+  const handlePlanFirst = (): void => {
+    if (!canPlanFirst || !onPlanFirst) return
+    onPlanFirst(docToSkillIds(draftDoc))
   }
 
   // Converts the hidden file input selection into the shared staging callback.
@@ -464,7 +531,9 @@ const ConversationPanel = ({
 
                 {/* Switching between a compact job bar and Notebook chrome remounts this layer so a
                     Notebook that becomes available after jobs still receives its entrance animation. */}
-                {notebookReference || hasAnyJobs ? (
+                {notebookReference ||
+                hasAnyJobs ||
+                (activeBranchPlan ? isPlanProgressVisible(activeBranchPlan) : false) ? (
                   <div
                     key={notebookReference ? `notebook-${notebookReference.sessionId}` : 'jobs'}
                     className={cn(
@@ -474,6 +543,24 @@ const ConversationPanel = ({
                         : 'mb-2 min-h-9 items-center rounded-lg border border-border-200 bg-bg-000 shadow-card'
                     )}
                   >
+                    {activeSession &&
+                    activeBranchPlan &&
+                    isPlanProgressVisible(activeBranchPlan) ? (
+                      <PlanProgressChip
+                        projection={activeBranchPlan}
+                        onOpen={() => {
+                          usePreviewWorkbenchStore
+                            .getState()
+                            .upsertAndActivateItem(
+                              createSessionPlanPreviewItem(
+                                activeSession.id,
+                                activeSession.projectId,
+                                activeBranchPlan.artifactVersionId
+                              )
+                            )
+                        }}
+                      />
+                    ) : null}
                     {notebookReference ? (
                       <button
                         type="button"
@@ -549,10 +636,24 @@ const ConversationPanel = ({
                     </div>
                   ) : null}
 
+                  {pendingPlan ? (
+                    <WorkspacePlanCard
+                      className="relative z-10"
+                      projection={pendingPlan}
+                      onOpen={openPendingPlan}
+                      onRespond={(decision) => respondToPendingPlan({ decision })}
+                      onSubmitResponse={(text) => respondToPendingPlan({ feedback: text })}
+                      onResolved={() => setResolvedPlanKey(activePendingPlanKey)}
+                    />
+                  ) : null}
+
                   {/* Composer keeps draft input local until submit delegates to the session store.
                       Enter-to-send is owned by ComposerEditor; the form only guards native submit. */}
                   <form
-                    className="relative z-10 flex flex-col gap-2 rounded-2xl border border-border-200 bg-bg-000 px-3 py-2"
+                    className={cn(
+                      'relative z-10 flex flex-col gap-2 rounded-2xl border border-border-200 bg-bg-000 px-3 py-2',
+                      pendingPlan && 'hidden'
+                    )}
                     onSubmit={(event) => event.preventDefault()}
                     {...dropZoneProps}
                   >
@@ -694,20 +795,38 @@ const ConversationPanel = ({
                       <div className="@container/composer flex items-center gap-1">
                         {/* The + button opens a dropdown for Attach files and Request review actions. */}
                         <DropdownMenu>
-                          <DropdownMenuTrigger asChild>
-                            <button
-                              type="button"
-                              disabled={!canEditDraft || isUploadingAttachments}
-                              className={composerIconButtonClassName}
-                              aria-label="Add attachment or request review"
-                              data-testid="composer-plus-trigger"
-                            >
-                              <Plus className="size-4" strokeWidth={2} aria-hidden="true" />
-                            </button>
-                          </DropdownMenuTrigger>
+                          <TooltipProvider delayDuration={200}>
+                            <Tooltip>
+                              <TooltipTrigger asChild>
+                                <DropdownMenuTrigger asChild>
+                                  <button
+                                    type="button"
+                                    disabled={
+                                      isUploadingAttachments || (!canEditDraft && !activeBranchPlan)
+                                    }
+                                    className={composerIconButtonClassName}
+                                    aria-label={
+                                      activeBranchPlan
+                                        ? 'Add attachment, view plan, or request review'
+                                        : 'Add attachment or request review'
+                                    }
+                                    data-testid="composer-plus-trigger"
+                                  >
+                                    <Plus className="size-4" strokeWidth={2} aria-hidden="true" />
+                                  </button>
+                                </DropdownMenuTrigger>
+                              </TooltipTrigger>
+                              <TooltipContent side="top">
+                                {activeBranchPlan
+                                  ? 'Add attachment, view plan, or request review'
+                                  : 'Add attachment or request review'}
+                              </TooltipContent>
+                            </Tooltip>
+                          </TooltipProvider>
                           <DropdownMenuContent side="top" align="start" className="w-64">
                             <DropdownMenuItem
                               data-testid="menu-attach-files"
+                              disabled={!canEditDraft || isUploadingAttachments}
                               onSelect={() => fileInputRef.current?.click()}
                             >
                               <FileText className="mr-2 size-4 text-text-300" aria-hidden="true" />
@@ -721,11 +840,40 @@ const ConversationPanel = ({
                               file. Large files are linked, not embedded.
                             </div>
                             <DropdownMenuSeparator />
+                            {activeSession && activeBranchPlan ? (
+                              <>
+                                <DropdownMenuItem
+                                  data-testid="menu-view-plan"
+                                  onSelect={() => {
+                                    usePreviewWorkbenchStore
+                                      .getState()
+                                      .upsertAndActivateItem(
+                                        createSessionPlanPreviewItem(
+                                          activeSession.id,
+                                          activeSession.projectId,
+                                          activeBranchPlan.artifactVersionId
+                                        )
+                                      )
+                                  }}
+                                >
+                                  <BookOpen
+                                    className="mr-2 size-4 text-text-300"
+                                    aria-hidden="true"
+                                  />
+                                  <span className="flex-1">View plan</span>
+                                  <span className="text-[11px] text-text-300">
+                                    {activeBranchPlan.counts.completed}/
+                                    {activeBranchPlan.counts.steps}
+                                  </span>
+                                </DropdownMenuItem>
+                                <DropdownMenuSeparator />
+                              </>
+                            ) : null}
                             <DropdownMenuItem
                               data-testid="menu-request-review"
-                              disabled={isRequestReviewDisabled}
+                              disabled={!canEditDraft || isRequestReviewDisabled}
                               onSelect={() => {
-                                if (!isRequestReviewDisabled) onRequestReview()
+                                if (canEditDraft && !isRequestReviewDisabled) onRequestReview()
                               }}
                             >
                               <ScanEye className="mr-2 size-4 text-text-300" aria-hidden="true" />
@@ -809,7 +957,9 @@ const ConversationPanel = ({
                             data-testid="composer-running-control-slot"
                             className={cn(
                               'flex shrink-0 justify-end',
-                              onBranchInNewSession ? 'w-16 [@media(pointer:coarse)]:mx-3' : 'w-8'
+                              onPlanFirst || onBranchInNewSession
+                                ? 'w-16 [@media(pointer:coarse)]:mx-3'
+                                : 'w-8'
                             )}
                           >
                             <button
@@ -821,7 +971,7 @@ const ConversationPanel = ({
                               <Square className="size-3.5" strokeWidth={2.2} aria-hidden="true" />
                             </button>
                           </div>
-                        ) : onBranchInNewSession ? (
+                        ) : onPlanFirst || onBranchInNewSession ? (
                           <TooltipProvider delayDuration={200}>
                             <div
                               role="group"
@@ -859,7 +1009,10 @@ const ConversationPanel = ({
                                         type="button"
                                         variant="ghost"
                                         size="icon"
-                                        disabled={!canSendMessage}
+                                        disabled={
+                                          !canPlanFirst &&
+                                          (!canSendMessage || !onBranchInNewSession)
+                                        }
                                         className={composerSplitSendMenuButtonClassName}
                                         aria-label="More send options"
                                         aria-haspopup="menu"
@@ -877,8 +1030,20 @@ const ConversationPanel = ({
                                 </Tooltip>
                                 <DropdownMenuContent side="top" align="end" className="w-56">
                                   <DropdownMenuItem
+                                    data-testid="menu-plan-first"
+                                    disabled={!canPlanFirst}
+                                    onSelect={handlePlanFirst}
+                                    className="whitespace-nowrap [@media(pointer:coarse)]:min-h-11"
+                                  >
+                                    <ListChecks
+                                      className="mr-2 size-4 text-text-300"
+                                      aria-hidden="true"
+                                    />
+                                    Plan first
+                                  </DropdownMenuItem>
+                                  <DropdownMenuItem
                                     data-testid="menu-branch-in-new-session"
-                                    disabled={!canSendMessage}
+                                    disabled={!canSendMessage || !onBranchInNewSession}
                                     onSelect={handleBranchInNewSession}
                                     className="whitespace-nowrap [@media(pointer:coarse)]:min-h-11"
                                   >

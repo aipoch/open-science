@@ -187,7 +187,7 @@ describe('renderer argument-shape characterization', () => {
     const actualPaths = collectFunctionPaths(webApi).sort()
 
     expect(new Set(actualPaths).size).toBe(actualPaths.length)
-    expect(actualPaths).toHaveLength(251)
+    expect(actualPaths).toHaveLength(253)
     expect(actualPaths).toEqual(expectedPaths)
   })
 

@@ -80,7 +80,9 @@ const useAcpRuntime = (): {
     historyImages?: AcpPromptRequest['historyImages'],
     resumeFallback?: AcpPromptRequest['resumeFallback'],
     provenanceContext?: AcpPromptRequest['provenanceContext'],
-    contextReset?: AcpPromptRequest['contextReset']
+    contextReset?: AcpPromptRequest['contextReset'],
+    planContinuation?: AcpPromptRequest['planContinuation'],
+    turnIntent?: AcpPromptRequest['turnIntent']
   ) => Promise<AcpStateSnapshot>
   respondToPermission: (requestId: string, optionId?: string) => Promise<AcpStateSnapshot>
   setPermissionProfile: (
@@ -296,7 +298,9 @@ const useAcpRuntime = (): {
       historyImages?: AcpPromptRequest['historyImages'],
       resumeFallback?: AcpPromptRequest['resumeFallback'],
       provenanceContext?: AcpPromptRequest['provenanceContext'],
-      contextReset?: AcpPromptRequest['contextReset']
+      contextReset?: AcpPromptRequest['contextReset'],
+      planContinuation?: AcpPromptRequest['planContinuation'],
+      turnIntent?: AcpPromptRequest['turnIntent']
     ) =>
       runSendPromptAction(() =>
         window.api.acp.sendPrompt({
@@ -313,7 +317,9 @@ const useAcpRuntime = (): {
           ...(historyImages && historyImages.length > 0 ? { historyImages } : {}),
           ...(resumeFallback ? { resumeFallback } : {}),
           ...(provenanceContext ? { provenanceContext } : {}),
-          ...(contextReset ? { contextReset: true } : {})
+          ...(contextReset ? { contextReset: true } : {}),
+          ...(planContinuation ? { planContinuation } : {}),
+          ...(turnIntent ? { turnIntent } : {})
         })
       ),
     [runSendPromptAction]

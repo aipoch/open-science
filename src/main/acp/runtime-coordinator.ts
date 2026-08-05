@@ -216,6 +216,29 @@ class AcpRuntimeCoordinator {
     }
   }
 
+  callSessionPlan(input: Parameters<AcpRuntime['callSessionPlan']>[0]): Promise<unknown> {
+    const runtime = this.sessionRuntimes.get(input.sessionId) ?? this.activeRuntime
+    if (!runtime) return Promise.reject(new Error('No active runtime owns the Session Plan call.'))
+    return runtime.callSessionPlan(input)
+  }
+
+  getSessionPlanProjection(
+    projectId: string,
+    sessionId: string
+  ): ReturnType<AcpRuntime['getSessionPlanProjection']> {
+    const runtime = this.sessionRuntimes.get(sessionId) ?? this.activeRuntime
+    return runtime?.getSessionPlanProjection(projectId, sessionId) ?? Promise.resolve(null)
+  }
+
+  respondSessionPlan(
+    input: Parameters<AcpRuntime['respondSessionPlan']>[0]
+  ): ReturnType<AcpRuntime['respondSessionPlan']> {
+    const runtime = this.sessionRuntimes.get(input.sessionId) ?? this.activeRuntime
+    if (!runtime)
+      return Promise.reject(new Error('No active runtime owns the Session Plan response.'))
+    return runtime.respondSessionPlan(input)
+  }
+
   getActivePromptSessions(): { projectName: string; sessionId: string }[] {
     return Array.from(this.runtimes).flatMap((runtime) => runtime.getActivePromptSessions())
   }

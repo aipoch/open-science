@@ -55,13 +55,14 @@ export type PreviewFileItem = PreviewItemBase & {
 // Tool previews share the workbench chrome with files, but keep their own render path.
 export type PreviewToolItem = PreviewItemBase & {
   type: 'tool'
-  toolKind?: 'notebook' | 'files' | 'reviewer'
+  toolKind?: 'notebook' | 'files' | 'reviewer' | 'plan'
   notebook?: NotebookSessionReference
   // Reviewer-specific: which session's reviews to show, which review to select, and the active
   // finding to scroll to.
   reviewerSessionId?: string
   reviewerReviewId?: string
   reviewerActiveFindingId?: string
+  planArtifactVersionId?: string
 }
 
 export type PreviewItem = PreviewFileItem | PreviewToolItem
@@ -178,6 +179,20 @@ const createNotebookPreviewItem = (notebook: NotebookSessionReference): PreviewT
   toolKind: 'notebook',
   title: 'Notebook',
   notebook
+})
+
+const createSessionPlanPreviewItem = (
+  sessionId: string,
+  projectId: string,
+  artifactVersionId?: string
+): PreviewToolItem => ({
+  id: `tool:${sessionId}:plan${artifactVersionId ? `:${artifactVersionId}` : ''}`,
+  projectId,
+  sessionId,
+  type: 'tool',
+  toolKind: 'plan',
+  title: 'Session Plan',
+  ...(artifactVersionId ? { planArtifactVersionId: artifactVersionId } : {})
 })
 
 // Builds the stable project-level preview tab that owns the file library surface.
@@ -450,5 +465,6 @@ export const usePreviewWorkbenchStore = create<PreviewWorkbenchStore>((set, get)
 export {
   createNotebookPreviewItem,
   createProjectFilesPreviewItem,
+  createSessionPlanPreviewItem,
   createSessionReviewerPreviewItem
 }

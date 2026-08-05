@@ -24,6 +24,11 @@ import {
   type SkillImportMcpEnvironment,
   type SkillImportRpcConnection
 } from '../skills/mcp-server'
+import {
+  PLAN_MCP_SERVER_NAME,
+  createPlanMcpServerConfig,
+  type PlanMcpEnvironment
+} from '../session-plan/plan-mcp-server'
 import type { AgentMcpHttpHost } from './mcp-http-host'
 
 const log = createLogger('acp')
@@ -32,6 +37,7 @@ const CURRENT_PRIMARY_CAPABILITIES = [
   'artifacts',
   'notebook',
   'skill-import',
+  'plan',
   'host-agents'
 ] as const
 const NOTEBOOK_CONTROL_RPC_METHODS = ['mcpCall', 'computeCall', 'agentsCall'] as const
@@ -77,6 +83,7 @@ type SessionCapabilityRoutingIds = Readonly<{
   artifact: string
   notebook: string
   skillImport: string
+  plan: string
 }>
 
 export type SessionCapabilityArtifactOptions = {
@@ -108,6 +115,16 @@ export type SessionCapabilitySkillImportOptions = {
   releaseSessionCapabilities?: (sessionId: string) => void
 }
 
+export type SessionCapabilityPlanOptions = {
+  mcpEntryPath: string
+  mcpCommand?: string
+  getRpcConnection: (binding: {
+    sessionId: string
+    projectId: string
+  }) => Promise<NotebookRpcConnection>
+  registerSessionAlias?: (aliasSessionId: string, sessionId: string) => void
+}
+
 type BuildSessionCapabilitiesRequest = {
   framework: Pick<AgentFramework, 'id' | 'acceptsStdioMcp'>
   nativeMcpEnabled: boolean
@@ -120,6 +137,7 @@ type BuildSessionCapabilitiesRequest = {
   projectName: string
   onNotebookConnection?: (connection: NotebookRpcConnection) => void
   onSkillImportConnection?: (connection: SkillImportRpcConnection) => void
+  onPlanConnection?: (connection: NotebookRpcConnection) => void
 }
 
 type BuiltSessionCapabilities = Readonly<{
@@ -134,6 +152,7 @@ export type ProvisionSessionCapabilitiesRequest = Omit<
   | 'provisionGeneration'
   | 'onNotebookConnection'
   | 'onSkillImportConnection'
+  | 'onPlanConnection'
 > & {
   stableAppSessionId?: string
 }
@@ -155,6 +174,7 @@ type CommitSessionCapabilitiesRequest = {
   descriptor: EffectiveSessionCapabilityDescriptor
   notebookRelease?: () => void
   skillImportRelease?: () => void
+  planRelease?: () => void
 }
 
 type RevokeProvisionalSessionCapabilitiesRequest = {
@@ -163,6 +183,7 @@ type RevokeProvisionalSessionCapabilitiesRequest = {
   notebookSessionId?: string
   notebookRelease?: () => void
   skillImportRelease?: () => void
+  planRelease?: () => void
   ownsStableIdentity: boolean
 }
 
@@ -170,6 +191,7 @@ type SessionCapabilityOwnerOptions = {
   artifacts?: SessionCapabilityArtifactOptions
   notebook?: SessionCapabilityNotebookOptions
   skillImport?: SessionCapabilitySkillImportOptions
+  plan?: SessionCapabilityPlanOptions
   mcpHttpHost?: AgentMcpHttpHost
 }
 
@@ -206,6 +228,8 @@ export class AcpSessionCapabilityOwner {
   private readonly notebookCapabilityReleases = new Map<string, () => void>()
   private readonly skillImportRoutingIds = new Map<string, string>()
   private readonly skillImportCapabilityReleases = new Map<string, () => void>()
+  private readonly planRoutingIds = new Map<string, string>()
+  private readonly planCapabilityReleases = new Map<string, () => void>()
   private readonly descriptors = new Map<string, EffectiveSessionCapabilityDescriptor>()
   private readonly committedSessionIds = new Set<string>()
   private readonly provisionalRoutingOwners = new Map<string, object>()
@@ -213,6 +237,7 @@ export class AcpSessionCapabilityOwner {
   private artifactSessionSequence = 0
   private notebookSessionSequence = 0
   private skillImportSessionSequence = 0
+  private planSessionSequence = 0
   private skillImportEnabled = true
 
   constructor(private readonly options: SessionCapabilityOwnerOptions) {}
@@ -225,6 +250,7 @@ export class AcpSessionCapabilityOwner {
     const provisionGeneration = this.provisionalGeneration
     let notebookRelease: (() => void) | undefined
     let skillImportRelease: (() => void) | undefined
+    let planRelease: (() => void) | undefined
     let built: BuiltSessionCapabilities
     try {
       built = await this.build({
@@ -242,16 +268,25 @@ export class AcpSessionCapabilityOwner {
         },
         onSkillImportConnection: (connection) => {
           skillImportRelease = connection.release
+        },
+        onPlanConnection: (connection) => {
+          planRelease = connection.release
         }
       })
     } catch (error) {
       const ownsStableIdentity = this.ownsProvisionalRoutingIds(routingIds, routingOwner)
       this.revokeProvisional({
-        routingIds: [routingIds.artifact, routingIds.notebook, routingIds.skillImport],
+        routingIds: [
+          routingIds.artifact,
+          routingIds.notebook,
+          routingIds.skillImport,
+          routingIds.plan
+        ],
         usedHttpTransport: ownsStableIdentity && !request.framework.acceptsStdioMcp,
         notebookSessionId: routingIds.notebook || undefined,
         notebookRelease,
         skillImportRelease,
+        planRelease,
         ownsStableIdentity
       })
       this.finishProvisionalRoutingOwner(routingIds, routingOwner)
@@ -267,11 +302,17 @@ export class AcpSessionCapabilityOwner {
         const ownsRoutingIds = this.ownsProvisionalRoutingIds(routingIds, routingOwner)
         if (provisionGeneration !== this.provisionalGeneration) {
           this.revokeProvisional({
-            routingIds: [routingIds.artifact, routingIds.notebook, routingIds.skillImport],
+            routingIds: [
+              routingIds.artifact,
+              routingIds.notebook,
+              routingIds.skillImport,
+              routingIds.plan
+            ],
             usedHttpTransport: ownsRoutingIds && !request.framework.acceptsStdioMcp,
             notebookSessionId: routingIds.notebook || undefined,
             notebookRelease,
             skillImportRelease,
+            planRelease,
             ownsStableIdentity: ownsRoutingIds
           })
           this.finishProvisionalRoutingOwner(routingIds, routingOwner)
@@ -284,6 +325,7 @@ export class AcpSessionCapabilityOwner {
             notebookSessionId: routingIds.notebook || undefined,
             notebookRelease,
             skillImportRelease,
+            planRelease,
             ownsStableIdentity: false
           })
           this.finishProvisionalRoutingOwner(routingIds, routingOwner)
@@ -294,7 +336,8 @@ export class AcpSessionCapabilityOwner {
           routingIds,
           descriptor: built.descriptor,
           notebookRelease,
-          skillImportRelease
+          skillImportRelease,
+          planRelease
         })
         this.finishProvisionalRoutingOwner(routingIds, routingOwner)
       },
@@ -305,11 +348,17 @@ export class AcpSessionCapabilityOwner {
           ownershipFacts.ownsStableIdentity &&
           this.ownsProvisionalRoutingIds(routingIds, routingOwner)
         this.revokeProvisional({
-          routingIds: [routingIds.artifact, routingIds.notebook, routingIds.skillImport],
+          routingIds: [
+            routingIds.artifact,
+            routingIds.notebook,
+            routingIds.skillImport,
+            routingIds.plan
+          ],
           usedHttpTransport: ownsStableIdentity && !request.framework.acceptsStdioMcp,
           notebookSessionId: routingIds.notebook || undefined,
           notebookRelease,
           skillImportRelease,
+          planRelease,
           ownsStableIdentity
         })
         this.finishProvisionalRoutingOwner(routingIds, routingOwner)
@@ -322,7 +371,8 @@ export class AcpSessionCapabilityOwner {
       return Object.freeze({
         artifact: this.options.artifacts ? stableAppSessionId : '',
         notebook: this.options.notebook ? stableAppSessionId : '',
-        skillImport: this.options.skillImport ? stableAppSessionId : ''
+        skillImport: this.options.skillImport ? stableAppSessionId : '',
+        plan: this.options.plan ? stableAppSessionId : ''
       })
     }
 
@@ -330,6 +380,7 @@ export class AcpSessionCapabilityOwner {
     if (this.options.artifacts) this.artifactSessionSequence += 1
     if (this.options.notebook) this.notebookSessionSequence += 1
     if (this.options.skillImport) this.skillImportSessionSequence += 1
+    if (this.options.plan) this.planSessionSequence += 1
 
     return Object.freeze({
       artifact: this.options.artifacts
@@ -340,7 +391,8 @@ export class AcpSessionCapabilityOwner {
         : '',
       skillImport: this.options.skillImport
         ? `skill-import-session-${timestamp}-${this.skillImportSessionSequence}`
-        : ''
+        : '',
+      plan: this.options.plan ? `plan-session-${timestamp}-${this.planSessionSequence}` : ''
     })
   }
 
@@ -355,19 +407,22 @@ export class AcpSessionCapabilityOwner {
       (request.nativeMcpEnabled || request.bridgeMcpAliasesEnabled)
     const notebookAllowed = policyAllowsSessionCapability(request.policy, 'notebook')
     const skillImportAllowed = policyAllowsSessionCapability(request.policy, 'skill-import')
+    const planAllowed = policyAllowsSessionCapability(request.policy, 'plan')
 
     const servers =
       transport === 'stdio'
         ? await this.buildStdioServers(request, {
             artifacts: artifactsAllowed,
             notebook: notebookAllowed,
-            skillImport: skillImportAllowed
+            skillImport: skillImportAllowed,
+            plan: planAllowed
           })
         : transport === 'http'
           ? await this.buildHttpServers(request, {
               artifacts: artifactsAllowed,
               notebook: notebookAllowed,
-              skillImport: skillImportAllowed
+              skillImport: skillImportAllowed,
+              plan: planAllowed
             })
           : []
     const modelFacingServers = servers.map((server) => {
@@ -387,6 +442,7 @@ export class AcpSessionCapabilityOwner {
     if (canonicalMcpServerNames.includes(SKILL_IMPORT_MCP_SERVER_NAME)) {
       capabilities.push('skill-import')
     }
+    if (canonicalMcpServerNames.includes(PLAN_MCP_SERVER_NAME)) capabilities.push('plan')
     if (
       capabilities.includes('notebook') &&
       policyAllowsSessionCapability(request.policy, 'host-agents')
@@ -437,10 +493,20 @@ export class AcpSessionCapabilityOwner {
         this.options.skillImport?.registerSessionAlias
       )
     }
+    if (routingIds.plan) {
+      this.planRoutingIds.set(appSessionId, routingIds.plan)
+      this.registerAlias(
+        'plan',
+        routingIds.plan,
+        appSessionId,
+        this.options.plan?.registerSessionAlias
+      )
+    }
     this.descriptors.set(appSessionId, descriptor)
     this.committedSessionIds.add(appSessionId)
     this.commitNotebookRelease(appSessionId, request.notebookRelease)
     this.commitSkillImportRelease(appSessionId, request.skillImportRelease)
+    this.commitPlanRelease(appSessionId, request.planRelease)
   }
 
   private revokeProvisional(request: RevokeProvisionalSessionCapabilitiesRequest): void {
@@ -477,6 +543,15 @@ export class AcpSessionCapabilityOwner {
         })
       }
     }
+    if (request.planRelease) {
+      try {
+        request.planRelease()
+      } catch (error) {
+        safeLogError('provisional Plan capability cleanup failed', {
+          ...diagnosticErrorFields(error)
+        })
+      }
+    }
     if (request.notebookSessionId && request.ownsStableIdentity) {
       this.releaseSessionCapabilities(request.notebookSessionId)
     }
@@ -489,7 +564,8 @@ export class AcpSessionCapabilityOwner {
       const routingIds = [
         this.artifactRoutingIds.get(appSessionId),
         this.notebookRoutingIds.get(appSessionId),
-        this.skillImportRoutingIds.get(appSessionId)
+        this.skillImportRoutingIds.get(appSessionId),
+        this.planRoutingIds.get(appSessionId)
       ]
       for (const routingId of routingIds) {
         if (!routingId) continue
@@ -508,10 +584,12 @@ export class AcpSessionCapabilityOwner {
     this.artifactRoutingIds.delete(appSessionId)
     this.notebookRoutingIds.delete(appSessionId)
     this.skillImportRoutingIds.delete(appSessionId)
+    this.planRoutingIds.delete(appSessionId)
     this.descriptors.delete(appSessionId)
     this.committedSessionIds.delete(appSessionId)
     this.releaseCommittedNotebookCapability(appSessionId)
     this.releaseCommittedSkillImportCapability(appSessionId)
+    this.releaseCommittedPlanCapability(appSessionId)
     this.releaseSessionCapabilities(appSessionId)
   }
 
@@ -522,21 +600,26 @@ export class AcpSessionCapabilityOwner {
       ...this.artifactRoutingIds.keys(),
       ...this.notebookRoutingIds.keys(),
       ...this.skillImportRoutingIds.keys(),
+      ...this.planRoutingIds.keys(),
       ...this.notebookCapabilityReleases.keys(),
       ...this.skillImportCapabilityReleases.keys(),
+      ...this.planCapabilityReleases.keys(),
       ...this.descriptors.keys(),
       ...this.committedSessionIds
     ])
     for (const sessionId of ownedSessionIds) {
       this.releaseCommittedNotebookCapability(sessionId)
       this.releaseCommittedSkillImportCapability(sessionId)
+      this.releaseCommittedPlanCapability(sessionId)
       this.releaseSessionCapabilities(sessionId)
     }
     this.artifactRoutingIds.clear()
     this.notebookRoutingIds.clear()
     this.skillImportRoutingIds.clear()
+    this.planRoutingIds.clear()
     this.notebookCapabilityReleases.clear()
     this.skillImportCapabilityReleases.clear()
+    this.planCapabilityReleases.clear()
     this.descriptors.clear()
     this.committedSessionIds.clear()
     // In-flight provisions retain terminal cleanup ownership across teardown. A same-id successor
@@ -576,6 +659,7 @@ export class AcpSessionCapabilityOwner {
     artifacts: boolean
     notebook: boolean
     skillImport: boolean
+    plan: boolean
     hostAgents: boolean
   }> {
     const transportAvailable = input.framework.acceptsStdioMcp || Boolean(this.options.mcpHttpHost)
@@ -595,6 +679,10 @@ export class AcpSessionCapabilityOwner {
         this.skillImportEnabled &&
         Boolean(this.options.skillImport) &&
         policyAllowsSessionCapability(input.policy, 'skill-import'),
+      plan:
+        transportAvailable &&
+        Boolean(this.options.plan) &&
+        policyAllowsSessionCapability(input.policy, 'plan'),
       hostAgents: notebook && policyAllowsSessionCapability(input.policy, 'host-agents')
     })
   }
@@ -658,9 +746,20 @@ export class AcpSessionCapabilityOwner {
     return { ...connection, sessionId: routingId }
   }
 
+  private async buildPlanEnvironment(
+    routingId: string,
+    projectId: string,
+    onConnection?: (connection: NotebookRpcConnection) => void
+  ): Promise<PlanMcpEnvironment | undefined> {
+    if (!this.options.plan || !routingId) return undefined
+    const connection = await this.options.plan.getRpcConnection({ sessionId: routingId, projectId })
+    onConnection?.(connection)
+    return { ...connection, projectId, sessionId: routingId }
+  }
+
   private async buildStdioServers(
     request: BuildSessionCapabilitiesRequest,
-    enabled: { artifacts: boolean; notebook: boolean; skillImport: boolean }
+    enabled: { artifacts: boolean; notebook: boolean; skillImport: boolean; plan: boolean }
   ): Promise<McpServer[]> {
     const servers: McpServer[] = []
     if (enabled.artifacts) {
@@ -711,12 +810,28 @@ export class AcpSessionCapabilityOwner {
         )
       }
     }
+    if (enabled.plan) {
+      const environment = await this.buildPlanEnvironment(
+        request.routingIds.plan,
+        request.projectName,
+        request.onPlanConnection
+      )
+      if (environment && this.options.plan) {
+        servers.push(
+          createPlanMcpServerConfig({
+            command: this.options.plan.mcpCommand ?? process.execPath,
+            entryPath: this.options.plan.mcpEntryPath,
+            ...environment
+          })
+        )
+      }
+    }
     return servers
   }
 
   private async buildHttpServers(
     request: BuildSessionCapabilitiesRequest,
-    enabled: { artifacts: boolean; notebook: boolean; skillImport: boolean }
+    enabled: { artifacts: boolean; notebook: boolean; skillImport: boolean; plan: boolean }
   ): Promise<McpServer[]> {
     const host = this.options.mcpHttpHost
     if (!host) return []
@@ -768,6 +883,22 @@ export class AcpSessionCapabilityOwner {
           type: 'http',
           name: SKILL_IMPORT_MCP_SERVER_NAME,
           url: host.urlFor('skill-import', request.routingIds.skillImport),
+          headers: [authHeader]
+        })
+      }
+    }
+    if (enabled.plan) {
+      const environment = await this.buildPlanEnvironment(
+        request.routingIds.plan,
+        request.projectName,
+        request.onPlanConnection
+      )
+      if (environment && this.canPublishHttpRoute(request)) {
+        host.registerPlan(request.routingIds.plan, environment)
+        servers.push({
+          type: 'http',
+          name: PLAN_MCP_SERVER_NAME,
+          url: host.urlFor('plan', request.routingIds.plan),
           headers: [authHeader]
         })
       }
@@ -883,6 +1014,34 @@ export class AcpSessionCapabilityOwner {
       release()
     } catch (error) {
       safeLogError('committed Skill import capability cleanup failed', {
+        ...diagnosticErrorFields(error),
+        sessionId
+      })
+    }
+  }
+
+  private commitPlanRelease(sessionId: string, release: (() => void) | undefined): void {
+    const previousRelease = this.planCapabilityReleases.get(sessionId)
+    if (previousRelease === release) return
+    if (release) this.planCapabilityReleases.set(sessionId, release)
+    else this.planCapabilityReleases.delete(sessionId)
+    try {
+      previousRelease?.()
+    } catch (error) {
+      safeLogError('replaced Plan capability cleanup failed', {
+        ...diagnosticErrorFields(error),
+        sessionId
+      })
+    }
+  }
+
+  private releaseCommittedPlanCapability(sessionId: string): void {
+    const release = this.planCapabilityReleases.get(sessionId)
+    this.planCapabilityReleases.delete(sessionId)
+    try {
+      release?.()
+    } catch (error) {
+      safeLogError('committed Plan capability cleanup failed', {
         ...diagnosticErrorFields(error),
         sessionId
       })

@@ -6,6 +6,7 @@ import type {
   SessionModeState,
   SessionNotification
 } from '@agentclientprotocol/sdk'
+import { createHash } from 'node:crypto'
 import type { ChildProcessWithoutNullStreams } from 'node:child_process'
 import { EventEmitter } from 'node:events'
 import { mkdir, mkdtemp, readFile, readdir, realpath, rm, stat, writeFile } from 'node:fs/promises'
@@ -39,6 +40,8 @@ import {
 import { CODEX_BRIDGE_MODEL } from '../agent-framework/codex'
 import { ArtifactRepository } from '../artifacts/repository'
 import { ArtifactProvenanceRepository } from '../artifacts/provenance-repository'
+import { ArtifactRunRegistry } from '../artifacts/run-registry'
+import type { ArtifactVersionFile } from '../../shared/artifact-provenance'
 import type { ArtifactRunClaim } from '../artifacts/run-registry'
 import { createPngBytes, createPngInlineSource } from '../artifacts/artifact-test-fixtures'
 import { writeArtifactFileForCurrentRun } from '../artifacts/mcp-server'
@@ -47,6 +50,7 @@ import { BEGIN_ACTIVITY_GROUP_TOOL_NAME } from '../../shared/activity-groups'
 import type { UploadedAttachment } from '../../shared/uploads'
 import { projectConversationMessage } from '../../shared/conversation-graph'
 import type { PersistedChatSession } from '../../shared/session-persistence'
+import type { ActivePlanProjection } from '../../shared/session-plan/contract'
 import { UploadRepository } from '../uploads/repository'
 import { stageUploadFixtures } from '../uploads/repository.test-utils'
 import { MAX_INLINE_IMAGE_TOTAL_BASE64_BYTES } from '../uploads/attachment-media'
@@ -1580,6 +1584,188 @@ describe('ACP runtime session management', () => {
     }
   )
 
+  const restoredPlanProjection = (
+    approval: 'pending' | 'approved' | 'rejected',
+    revision: number
+  ): ActivePlanProjection => ({
+    artifactId: 'artifact-1',
+    artifactVersionId: 'version-1',
+    artifactChecksum: 'a'.repeat(64),
+    revision,
+    approval,
+    lifecycle:
+      approval === 'pending'
+        ? 'awaiting_approval'
+        : approval === 'approved'
+          ? 'approved'
+          : 'rejected',
+    requiresExplicitContinuation: false,
+    document: {
+      schema_version: 1,
+      task_summary: 'Analyze data',
+      phases: [
+        {
+          name: 'Analysis',
+          delegations: [
+            {
+              name: 'Main Agent',
+              steps: [{ title: 'Analyze', description: 'Analyze the data.' }]
+            }
+          ]
+        }
+      ],
+      desired_outputs: ['Result'],
+      feasibility: { confidence: 'high', rationale: 'Ready.' }
+    },
+    stepStatuses: {},
+    stepStates: { Analyze: { status: approval === 'rejected' ? 'not_run' : 'not_started' } },
+    counts: { phases: 1, delegations: 1, steps: 1, completed: 0, inProgress: 0 }
+  })
+
+  it('activates one interaction before durably approving a restored Plan', async () => {
+    const process = new FakeAgentProcess()
+    const fakeAgent = startFakeAgent(process, ['s1'])
+    const events: AcpRuntimeEvent[] = []
+    const runtime = new AcpRuntime({
+      appVersion: '0.1.0',
+      defaultCwd: '/workspace',
+      spawnAgent: () => asAgentProcess(process),
+      framework: opencodeFramework,
+      callbacks: { onEvent: (event) => events.push(event) }
+    })
+    const approved = restoredPlanProjection('approved', 5)
+    const respond = vi.fn(async () => ({ projection: approved, changed: true }))
+    const checkTurnCompletion = vi.fn(async () => ({ allow: true }))
+    Object.assign(runtime as unknown as { planService: unknown }, {
+      planService: {
+        respond,
+        checkTurnCompletion,
+        getProjection: vi.fn(async () => approved)
+      }
+    })
+
+    await runtime.createSession({ cwd: '/workspace', projectName: 'project-1' })
+    await runtime.sendPrompt({
+      sessionId: 's1',
+      text: 'approve and continue',
+      planContinuation: {
+        projectId: 'project-1',
+        artifactVersionId: 'version-1',
+        expectedRevision: 4,
+        pendingAction: 'approve'
+      }
+    })
+
+    expect(respond).toHaveBeenCalledWith(
+      expect.objectContaining({
+        decision: 'approved',
+        interactionIsLive: true,
+        expectedRevision: 4
+      })
+    )
+    expect(fakeAgent.prompts[0]?.text).toContain('artifact_version_id=version-1')
+    expect(checkTurnCompletion).toHaveBeenCalledWith({
+      projectId: 'project-1',
+      sessionId: 's1'
+    })
+    expect(events).toContainEqual(
+      expect.objectContaining({
+        kind: 'plan',
+        planProjection: expect.objectContaining({ approval: 'approved', revision: 5 })
+      })
+    )
+  })
+
+  it('injects restored pending Plan context into a fresh feedback interaction without authority', async () => {
+    const process = new FakeAgentProcess()
+    const fakeAgent = startFakeAgent(process, ['s1'])
+    const runtime = new AcpRuntime({
+      appVersion: '0.1.0',
+      defaultCwd: '/workspace',
+      spawnAgent: () => asAgentProcess(process),
+      framework: opencodeFramework
+    })
+    const pending = restoredPlanProjection('pending', 4)
+    const getProjection = vi.fn(async () => pending)
+    const respond = vi.fn()
+    Object.assign(runtime as unknown as { planService: unknown }, {
+      planService: { getProjection, respond }
+    })
+
+    await runtime.createSession({ cwd: '/workspace', projectName: 'project-1' })
+    await runtime.sendPrompt({
+      sessionId: 's1',
+      text: 'Split the analysis by cohort.',
+      planContinuation: {
+        projectId: 'project-1',
+        artifactVersionId: 'version-1',
+        expectedRevision: 4,
+        pendingAction: 'review'
+      }
+    })
+
+    expect(getProjection).toHaveBeenCalledWith('project-1', 's1', {
+      interactionIsLive: false
+    })
+    expect(respond).not.toHaveBeenCalled()
+    expect(fakeAgent.prompts[0]?.text).toContain('approval=pending')
+    expect(fakeAgent.prompts[0]?.text).toContain('Split the analysis by cohort.')
+
+    await expect(
+      runtime.sendPrompt({
+        sessionId: 's1',
+        text: 'Use stale feedback.',
+        planContinuation: {
+          projectId: 'project-1',
+          artifactVersionId: 'version-1',
+          expectedRevision: 3,
+          pendingAction: 'review'
+        }
+      })
+    ).rejects.toMatchObject({ code: 'revision-conflict' })
+    expect(fakeAgent.prompts).toHaveLength(1)
+  })
+
+  it('activates a fresh interaction before rejecting a restored Plan', async () => {
+    const process = new FakeAgentProcess()
+    const fakeAgent = startFakeAgent(process, ['s1'])
+    const runtime = new AcpRuntime({
+      appVersion: '0.1.0',
+      defaultCwd: '/workspace',
+      spawnAgent: () => asAgentProcess(process),
+      framework: opencodeFramework
+    })
+    const rejected = restoredPlanProjection('rejected', 5)
+    const respond = vi.fn(async () => ({ projection: rejected, changed: true }))
+    Object.assign(runtime as unknown as { planService: unknown }, {
+      planService: {
+        respond,
+        getProjection: vi.fn(async () => rejected)
+      }
+    })
+
+    await runtime.createSession({ cwd: '/workspace', projectName: 'project-1' })
+    await runtime.sendPrompt({
+      sessionId: 's1',
+      text: 'Dismiss the current Plan.',
+      planContinuation: {
+        projectId: 'project-1',
+        artifactVersionId: 'version-1',
+        expectedRevision: 4,
+        pendingAction: 'reject'
+      }
+    })
+
+    expect(respond).toHaveBeenCalledWith(
+      expect.objectContaining({
+        decision: 'rejected',
+        interactionIsLive: true,
+        expectedRevision: 4
+      })
+    )
+    expect(fakeAgent.prompts[0]?.text).toContain('approval=rejected')
+  })
+
   it('gives OpenCode stable underscore names for app-owned action MCPs on create and resume', async () => {
     const root = await createTemporaryRoot()
     const process = new FakeAgentProcess()
@@ -2371,6 +2557,55 @@ describe('ACP runtime session management', () => {
         { sessionId: 'remote-session-2', text: 'reply for remote-session-2' }
       ])
     )
+  })
+
+  it('adds the hidden Plan mode context only to the requested turn and preserves user Messages', async () => {
+    const process = new FakeAgentProcess()
+    const fakeAgent = startFakeAgent(process, ['remote-session-1'])
+    const events: AcpRuntimeEvent[] = []
+    const runtime = new AcpRuntime({
+      appVersion: '0.1.0',
+      defaultCwd: '/workspace',
+      spawnAgent: () => asAgentProcess(process),
+      callbacks: { onEvent: (event) => events.push(event) }
+    })
+
+    const session = await runtime.createSession({ cwd: '/workspace' })
+    await runtime.sendPrompt({
+      sessionId: session.sessionId,
+      text: 'Analyze this dataset',
+      turnIntent: 'plan-first'
+    })
+    await runtime.sendPrompt({ sessionId: session.sessionId, text: 'Here are more details' })
+
+    const planPrompt = fakeAgent.prompts[0].text
+    expect(planPrompt).toContain('## Plan mode (ACTIVE — MANDATORY)')
+    expect(planPrompt).toContain(
+      'Review the Skills available in the current session to confirm the catalog has what the task needs.'
+    )
+    expect(planPrompt).toContain('directly ask the user in an ordinary response')
+    expect(planPrompt).toContain('complete revised plan')
+    expect(planPrompt).toContain('creates a new immutable plan and re-requests approval')
+    expect(planPrompt).toContain(
+      'Do NOT run code without an approved plan. Always call `mcp__open-science-plan__generate_plan` first.'
+    )
+    for (const forbidden of [
+      'search_skills',
+      'ask_user',
+      'read_file',
+      'save_artifacts',
+      'end_turn',
+      'agent framework'
+    ]) {
+      expect(planPrompt).not.toContain(forbidden)
+    }
+    expect(planPrompt).toContain('Analyze this dataset')
+    expect(fakeAgent.prompts[1].text).toBe('Here are more details')
+    expect(
+      events
+        .filter((event) => event.kind === 'message' && event.role === 'user')
+        .map((event) => event.text)
+    ).toEqual(['Analyze this dataset', 'Here are more details'])
   })
 
   it('keeps a text-only prompt free of omitted ambient context', async () => {
@@ -3513,6 +3748,54 @@ describe('ACP runtime session management', () => {
 
     await runtime.compactSession({ sessionId: session.sessionId })
     expect(agent.prompts.at(-1)).toEqual({ sessionId: 'remote-session-1', text: '/compact' })
+  })
+
+  it('keeps the native compaction control command exact when a durable Plan is unfinished', async () => {
+    const process = new FakeAgentProcess()
+    const agent = startFakeAgent(process, ['remote-session-1'])
+    const runtime = new AcpRuntime({
+      appVersion: '0.1.0',
+      defaultCwd: '/workspace',
+      spawnAgent: () => asAgentProcess(process),
+      framework: claudeCodeFramework
+    })
+    const projection = {
+      artifactId: 'artifact-1',
+      artifactVersionId: 'version-2',
+      artifactChecksum: 'a'.repeat(64),
+      revision: 7,
+      approval: 'approved',
+      lifecycle: 'blocked',
+      requiresExplicitContinuation: true,
+      document: {
+        schema_version: 1,
+        task_summary: 'Analyze data',
+        phases: [
+          {
+            name: 'Analysis',
+            delegations: [
+              {
+                name: 'Main Agent',
+                steps: [{ title: 'Analyze', description: 'Analyze the data.' }]
+              }
+            ]
+          }
+        ],
+        desired_outputs: ['Result'],
+        feasibility: { confidence: 'high', rationale: 'Ready.' }
+      },
+      stepStatuses: { Analyze: { status: 'blocked', updatedAt: 42, notes: 'Input missing' } },
+      stepStates: { Analyze: { status: 'blocked', notes: 'Input missing' } },
+      counts: { phases: 1, delegations: 1, steps: 1, completed: 0, inProgress: 0 }
+    } satisfies ActivePlanProjection
+    Object.assign(runtime as unknown as { planService: unknown }, {
+      planService: { getProjection: vi.fn(async () => projection) }
+    })
+
+    const session = await runtime.createSession({ cwd: '/workspace', projectName: 'project-1' })
+    await runtime.compactSession({ sessionId: session.sessionId })
+
+    expect(agent.prompts.at(-1)?.text).toBe('/compact')
   })
 
   it('clears the previous context usage before a context reset replacement reports usage', async () => {
@@ -12249,6 +12532,304 @@ describe('ACP runtime session management', () => {
     expect(runtime.getSnapshot().contextUsageBySession.s1).toEqual(beforeFailure)
   })
 
+  it('publishes an interrupted Plan after a provider prompt fails and releases the interaction', async () => {
+    const process = new FakeAgentProcess()
+    startFakeAgent(process, ['s1'], {
+      onPrompt: () => {
+        throw new Error('provider rejected prompt')
+      }
+    })
+    const events: AcpRuntimeEvent[] = []
+    const runtime = new AcpRuntime({
+      appVersion: '0.1.0',
+      defaultCwd: '/workspace',
+      spawnAgent: () => asAgentProcess(process),
+      framework: opencodeFramework,
+      callbacks: { onEvent: (event) => events.push(event) }
+    })
+    const interruptedProjection = {
+      artifactId: 'artifact-version-1',
+      artifactVersionId: 'version-1',
+      artifactChecksum: 'a'.repeat(64),
+      revision: 4,
+      approval: 'approved',
+      lifecycle: 'interrupted',
+      requiresExplicitContinuation: true,
+      document: {
+        schema_version: 1,
+        task_summary: 'Analyze one dataset',
+        phases: [
+          {
+            name: 'Analysis',
+            delegations: [
+              {
+                name: 'Primary agent',
+                steps: [{ title: 'Analyze the data', description: 'Produce the result.' }]
+              }
+            ]
+          }
+        ],
+        desired_outputs: ['Analysis result'],
+        feasibility: { confidence: 'high', rationale: 'Inputs are available.' }
+      },
+      stepStatuses: {
+        'Analyze the data': { status: 'in_progress', updatedAt: 42 }
+      },
+      stepStates: { 'Analyze the data': { status: 'in_progress' } },
+      counts: { phases: 1, delegations: 1, steps: 1, completed: 0, inProgress: 0 }
+    } satisfies ActivePlanProjection
+    const getProjection = vi.fn(async () => interruptedProjection)
+    Object.assign(runtime as unknown as { planService: unknown }, {
+      planService: { getProjection }
+    })
+
+    await runtime.createSession({ cwd: '/workspace', projectName: 'project-1' })
+    await expect(runtime.sendPrompt({ sessionId: 's1', text: 'run the plan' })).rejects.toThrow()
+
+    expect(getProjection).toHaveBeenCalledWith('project-1', 's1', {
+      interactionIsLive: false
+    })
+    expect(events).toContainEqual(
+      expect.objectContaining({
+        kind: 'plan',
+        sessionId: 's1',
+        planProjection: expect.objectContaining({ lifecycle: 'interrupted' })
+      })
+    )
+  })
+
+  it.each([
+    ['Claude Code', claudeCodeFramework],
+    ['Codex', codexFramework],
+    ['OpenCode', opencodeFramework]
+  ] as const)(
+    'binds %s explicit continuation to one durable Plan version and protected context',
+    async (_name, framework) => {
+      const process = new FakeAgentProcess()
+      const fakeAgent = startFakeAgent(process, ['s1'], {
+        modes:
+          framework.id === 'codex'
+            ? createModes(['read-only', 'agent', 'agent-full-access'], 'agent')
+            : undefined
+      })
+      const runtime = new AcpRuntime({
+        appVersion: '0.1.0',
+        defaultCwd: '/workspace',
+        spawnAgent: () => asAgentProcess(process),
+        framework
+      })
+      const active = {
+        artifactId: 'artifact-1',
+        artifactVersionId: 'version-7',
+        artifactChecksum: 'a'.repeat(64),
+        revision: 11,
+        approval: 'approved',
+        lifecycle: 'approved',
+        requiresExplicitContinuation: false,
+        document: {
+          schema_version: 1,
+          task_summary: 'Analyze one dataset',
+          phases: [
+            {
+              name: 'Analysis',
+              delegations: [
+                {
+                  name: 'Primary agent',
+                  steps: [{ title: 'Analyze data', description: 'Produce the result.' }]
+                }
+              ]
+            }
+          ],
+          desired_outputs: ['Analysis result'],
+          feasibility: { confidence: 'high', rationale: 'Inputs are available.' }
+        },
+        stepStatuses: {},
+        stepStates: { 'Analyze data': { status: 'not_started' } },
+        counts: { phases: 1, delegations: 1, steps: 1, completed: 0, inProgress: 0 }
+      } satisfies ActivePlanProjection
+      const authorizeContinuation = vi.fn(async () => active)
+      Object.assign(runtime as unknown as { planService: unknown }, {
+        planService: {
+          authorizeContinuation,
+          checkTurnCompletion: vi.fn(async () => ({ allow: true })),
+          getProjection: vi.fn(async () => active)
+        }
+      })
+
+      await runtime.createSession({ cwd: '/workspace', projectName: 'project-1' })
+      await runtime.sendPrompt({
+        sessionId: 's1',
+        text: 'continue',
+        planContinuation: {
+          projectId: 'project-1',
+          artifactVersionId: 'version-7',
+          expectedRevision: 11
+        }
+      })
+
+      expect(authorizeContinuation).toHaveBeenCalledWith({
+        projectId: 'project-1',
+        sessionId: 's1',
+        artifactVersionId: 'version-7',
+        expectedRevision: 11
+      })
+      expect(fakeAgent.prompts[0]?.text).toContain('<open_science_protected_plan_context>')
+      expect(fakeAgent.prompts[0]?.text).toContain('artifact_version_id=version-7')
+      expect(fakeAgent.prompts[0]?.text).toContain('Analyze data: not_started')
+      expect(fakeAgent.prompts[0]?.text).toContain('continue')
+    }
+  )
+
+  it.each([
+    ['Claude Code', claudeCodeFramework],
+    ['Codex', codexFramework],
+    ['OpenCode', opencodeFramework]
+  ] as const)(
+    'routes %s normal terminal stops through the Session Plan completion gate',
+    async (_name, framework) => {
+      const process = new FakeAgentProcess()
+      startFakeAgent(process, ['s1'], {
+        modes:
+          framework.id === 'codex'
+            ? createModes(['read-only', 'agent', 'agent-full-access'], 'agent')
+            : undefined,
+        onPrompt: () => ({ stopReason: 'end_turn' })
+      })
+      const runtime = new AcpRuntime({
+        appVersion: '0.1.0',
+        defaultCwd: '/workspace',
+        spawnAgent: () => asAgentProcess(process),
+        framework
+      })
+      const checkTurnCompletion = vi.fn(async () => ({
+        allow: false,
+        lifecycle: 'in_progress' as const
+      }))
+      const getProjection = vi.fn(async () => null)
+      const authorized = {
+        artifactId: 'artifact-1',
+        artifactVersionId: 'version-1',
+        artifactChecksum: 'a'.repeat(64),
+        revision: 2,
+        approval: 'approved',
+        lifecycle: 'approved',
+        requiresExplicitContinuation: false,
+        document: {
+          schema_version: 1,
+          task_summary: 'Analyze data',
+          phases: [
+            {
+              name: 'Analysis',
+              delegations: [
+                {
+                  name: 'Main Agent',
+                  steps: [{ title: 'Analyze', description: 'Analyze the data.' }]
+                }
+              ]
+            }
+          ],
+          desired_outputs: ['Result'],
+          feasibility: { confidence: 'high', rationale: 'Ready.' }
+        },
+        stepStatuses: {},
+        stepStates: { Analyze: { status: 'not_started' } },
+        counts: { phases: 1, delegations: 1, steps: 1, completed: 0, inProgress: 0 }
+      } satisfies ActivePlanProjection
+      Object.assign(runtime as unknown as { planService: unknown }, {
+        planService: {
+          authorizeContinuation: vi.fn(async () => authorized),
+          checkTurnCompletion,
+          getProjection
+        }
+      })
+
+      await runtime.createSession({ cwd: '/workspace', projectName: 'project-1' })
+      await expect(
+        runtime.sendPrompt({
+          sessionId: 's1',
+          text: 'finish early',
+          planContinuation: {
+            projectId: 'project-1',
+            artifactVersionId: 'version-1',
+            expectedRevision: 2
+          }
+        })
+      ).rejects.toThrow('The active Session Plan is not complete (in_progress).')
+      expect(checkTurnCompletion).toHaveBeenCalledWith({
+        projectId: 'project-1',
+        sessionId: 's1'
+      })
+    }
+  )
+
+  it('lets an unrelated ordinary message finish without resuming an approved Plan', async () => {
+    const process = new FakeAgentProcess()
+    const fakeAgent = startFakeAgent(process, ['s1'])
+    const runtime = new AcpRuntime({
+      appVersion: '0.1.0',
+      defaultCwd: '/workspace',
+      spawnAgent: () => asAgentProcess(process),
+      framework: opencodeFramework
+    })
+    const checkTurnCompletion = vi.fn(async () => ({
+      allow: false,
+      lifecycle: 'approved' as const
+    }))
+    Object.assign(runtime as unknown as { planService: unknown }, {
+      planService: { checkTurnCompletion, getProjection: vi.fn(async () => null) }
+    })
+
+    await runtime.createSession({ cwd: '/workspace', projectName: 'project-1' })
+    await expect(
+      runtime.sendPrompt({ sessionId: 's1', text: 'What is the weather?' })
+    ).resolves.toMatchObject({ stopReason: 'end_turn' })
+
+    expect(checkTurnCompletion).not.toHaveBeenCalled()
+    expect(fakeAgent.prompts[0]?.text).not.toContain('<open_science_protected_plan_context>')
+  })
+
+  it('projects an abnormal provider terminal stop as interrupted instead of checking normal completion', async () => {
+    const process = new FakeAgentProcess()
+    startFakeAgent(process, ['s1'], {
+      modes: createModes(['read-only', 'agent', 'agent-full-access'], 'agent'),
+      onPrompt: () => ({ stopReason: 'max_tokens' })
+    })
+    const events: AcpRuntimeEvent[] = []
+    const runtime = new AcpRuntime({
+      appVersion: '0.1.0',
+      defaultCwd: '/workspace',
+      spawnAgent: () => asAgentProcess(process),
+      framework: codexFramework,
+      callbacks: { onEvent: (event) => events.push(event) }
+    })
+    const checkTurnCompletion = vi.fn(async () => ({ allow: true }))
+    const getProjection = vi.fn(
+      async () =>
+        ({
+          lifecycle: 'interrupted'
+        }) as ActivePlanProjection
+    )
+    Object.assign(runtime as unknown as { planService: unknown }, {
+      planService: { checkTurnCompletion, getProjection }
+    })
+
+    await runtime.createSession({ cwd: '/workspace', projectName: 'project-1' })
+    await expect(
+      runtime.sendPrompt({ sessionId: 's1', text: 'run the plan' })
+    ).resolves.toMatchObject({ stopReason: 'max_tokens' })
+
+    expect(checkTurnCompletion).not.toHaveBeenCalled()
+    expect(getProjection).toHaveBeenCalledWith('project-1', 's1', {
+      interactionIsLive: false
+    })
+    expect(events).toContainEqual(
+      expect.objectContaining({
+        kind: 'plan',
+        planProjection: expect.objectContaining({ lifecycle: 'interrupted' })
+      })
+    )
+  })
+
   it('retains partial turn context when an Agent prompt fails after streaming updates', async () => {
     const process = new FakeAgentProcess()
     let promptAttempt = 0
@@ -19040,5 +19621,136 @@ describe('Specialist Skill scoping', () => {
     expect(agent.newSessions[1]?._meta).not.toMatchObject({
       claudeCode: { options: { skills: expect.anything() } }
     })
+  })
+
+  it('keeps the Artifact provenance receiver when constructing the production Plan service', async () => {
+    const root = await createTemporaryRoot()
+    const planPath = join(root, 'plan.json')
+    let serializedPlan = ''
+    const checksum = (value: string): string => createHash('sha256').update(value).digest('hex')
+    const provenance = {
+      listRunVersions: async (): Promise<ArtifactVersionFile[]> => [],
+      writeAppGeneratedVersion: async (
+        input: Parameters<ArtifactProvenanceRepository['writeAppGeneratedVersion']>[0]
+      ): Promise<ArtifactVersionFile> => {
+        serializedPlan = input.content
+        await writeFile(planPath, serializedPlan, 'utf8')
+        return {
+          id: 'version-1',
+          projectName: 'project-1',
+          sessionId: 'session-1',
+          name: input.filename,
+          path: planPath,
+          fileUrl: `file://${planPath}`,
+          mimeType: input.contentType,
+          size: Buffer.byteLength(serializedPlan),
+          mtimeMs: 1,
+          artifactId: 'artifact-1',
+          versionId: 'version-1',
+          versionNumber: 1,
+          checksum: checksum(serializedPlan),
+          createdAt: new Date(0).toISOString()
+        }
+      },
+      async resolveVersionContent(this: unknown) {
+        expect(this).toBe(provenance)
+        return { path: planPath, filename: 'plan.json', checksum: checksum(serializedPlan) }
+      }
+    }
+    let context: import('../../shared/session-persistence').SessionRuntimeContext = {
+      version: 1,
+      revision: 0
+    }
+    const runtime = new AcpRuntime({
+      appVersion: '0.1.0',
+      defaultCwd: '/workspace',
+      artifacts: {
+        configRoot: root,
+        dataRoot: root,
+        projectName: 'project-1',
+        mcpEntryPath: '/unused',
+        repository: new ArtifactRepository(root),
+        runRegistry: new ArtifactRunRegistry(),
+        provenance
+      },
+      plan: {
+        mcpEntryPath: '/unused',
+        getRpcConnection: async () => ({ endpoint: 'http://127.0.0.1:1', token: 'token' }),
+        sessions: {
+          readSessionRuntimeContext: async () => context,
+          patchSessionRuntimeContext: async ({ patch }) => {
+            context = { version: 1, revision: context.revision + 1, ...patch }
+            return context
+          },
+          appendUserMessageToInteraction: async () => {
+            throw new Error('not used in this test')
+          }
+        }
+      }
+    })
+    const internals = runtime as unknown as {
+      artifactTurns: {
+        open(request: {
+          appSessionId: string
+          artifactStorageSessionId: string
+          projectId: string
+          agentName: string
+        }): Promise<unknown>
+        dispose(handle: unknown): Promise<void>
+      }
+      planService: {
+        generate(input: {
+          projectId: string
+          sessionId: string
+          interactionId: string
+          content: {
+            task_summary: string
+            phases: Array<{
+              name: string
+              delegations: Array<{
+                name: string
+                steps: Array<{ title: string; description: string }>
+              }>
+            }>
+            desired_outputs: string[]
+            feasibility: { confidence: 'high'; rationale: string }
+          }
+        }): Promise<{ projection: { artifactVersionId: string } }>
+      }
+    }
+    const turn = await internals.artifactTurns.open({
+      appSessionId: 'session-1',
+      artifactStorageSessionId: 'session-1',
+      projectId: 'project-1',
+      agentName: 'Main Agent'
+    })
+
+    try {
+      await expect(
+        internals.planService.generate({
+          projectId: 'project-1',
+          sessionId: 'session-1',
+          interactionId: 'interaction-1',
+          content: {
+            task_summary: 'Analyze one dataset',
+            phases: [
+              {
+                name: 'Analysis',
+                delegations: [
+                  {
+                    name: 'Primary agent',
+                    steps: [{ title: 'Analyze the data', description: 'Produce the result.' }]
+                  }
+                ]
+              }
+            ],
+            desired_outputs: ['Analysis result'],
+            feasibility: { confidence: 'high', rationale: 'Inputs are available.' }
+          }
+        })
+      ).resolves.toMatchObject({ projection: { artifactVersionId: 'version-1' } })
+    } finally {
+      await internals.artifactTurns.dispose(turn)
+    }
   })
 })

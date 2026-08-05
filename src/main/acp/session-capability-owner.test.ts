@@ -1,6 +1,6 @@
 import { describe, expect, it, vi } from 'vitest'
 
-import { opencodeFramework } from '../agent-framework'
+import { claudeCodeFramework, codexFramework, opencodeFramework } from '../agent-framework'
 import type { AgentMcpHttpHost } from './mcp-http-host'
 import {
   AcpSessionCapabilityOwner,
@@ -31,6 +31,111 @@ const createOwner = (
   })
 
 describe('ACP session capability owner', () => {
+  it.each([
+    [claudeCodeFramework, 'open-science-plan'],
+    [codexFramework, 'open-science-plan'],
+    [opencodeFramework, 'open_science_plan']
+  ] as const)('projects the same Session Plan tools for %s', async (framework, modelFacingName) => {
+    const release = vi.fn()
+    const owner = createOwner({
+      artifacts: undefined,
+      notebook: undefined,
+      skillImport: undefined,
+      plan: {
+        mcpEntryPath: '/app/main.js',
+        getRpcConnection: async () => ({
+          endpoint: 'http://127.0.0.1:4',
+          token: 'plan',
+          release
+        })
+      }
+    })
+    const provision = await owner.provision({
+      stableAppSessionId: 'session-1',
+      framework,
+      nativeMcpEnabled: true,
+      bridgeMcpAliasesEnabled: false,
+      policy: CURRENT_PRIMARY_SESSION_CAPABILITY_POLICY,
+      sessionCwd: '/workspace',
+      projectName: 'project-1'
+    })
+
+    expect(provision.descriptor).toMatchObject({
+      transport: 'stdio',
+      capabilities: ['plan'],
+      canonicalMcpServerNames: ['open-science-plan'],
+      modelFacingMcpServerNames: [modelFacingName]
+    })
+    provision.commit('session-1')
+    owner.revokeSession('session-1')
+    expect(release).toHaveBeenCalledOnce()
+  })
+
+  it('provisions the Session Plan capability over stdio with server-owned identity', async () => {
+    const owner = createOwner({
+      artifacts: undefined,
+      notebook: undefined,
+      skillImport: undefined,
+      plan: {
+        mcpEntryPath: '/app/main.js',
+        getRpcConnection: async () => ({ endpoint: 'http://127.0.0.1:4', token: 'plan' })
+      }
+    })
+
+    const provision = await owner.provision({
+      stableAppSessionId: 'session-1',
+      framework: { ...opencodeFramework, acceptsStdioMcp: true },
+      nativeMcpEnabled: true,
+      bridgeMcpAliasesEnabled: false,
+      policy: CURRENT_PRIMARY_SESSION_CAPABILITY_POLICY,
+      sessionCwd: '/workspace',
+      projectName: 'project-1'
+    })
+
+    expect(provision.descriptor.capabilities).toEqual(['plan'])
+    expect(provision.mcpServers).toEqual([
+      expect.objectContaining({
+        name: 'open_science_plan',
+        env: expect.arrayContaining([
+          { name: 'OPEN_SCIENCE_PLAN_PROJECT_ID', value: 'project-1' },
+          { name: 'OPEN_SCIENCE_PLAN_SESSION_ID', value: 'session-1' }
+        ])
+      })
+    ])
+  })
+
+  it('aliases a provisional Plan capability to the stable app Session on commit', async () => {
+    const registerSessionAlias = vi.fn()
+    const owner = createOwner({
+      artifacts: undefined,
+      notebook: undefined,
+      skillImport: undefined,
+      plan: {
+        mcpEntryPath: '/app/main.js',
+        getRpcConnection: async () => ({ endpoint: 'http://127.0.0.1:4', token: 'plan' }),
+        registerSessionAlias
+      }
+    })
+
+    const provision = await owner.provision({
+      framework: { ...opencodeFramework, acceptsStdioMcp: true },
+      nativeMcpEnabled: true,
+      bridgeMcpAliasesEnabled: false,
+      policy: CURRENT_PRIMARY_SESSION_CAPABILITY_POLICY,
+      sessionCwd: '/workspace',
+      projectName: 'project-1'
+    })
+    const planServer = provision.mcpServers[0]
+    expect(planServer && 'env' in planServer).toBe(true)
+    const provisionalId = (planServer && 'env' in planServer ? planServer.env : undefined)?.find(
+      (entry) => entry.name === 'OPEN_SCIENCE_PLAN_SESSION_ID'
+    )?.value
+    provision.commit('session-1')
+
+    expect(provisionalId).toMatch(/^plan-session-/u)
+    expect(registerSessionAlias).toHaveBeenCalledWith(provisionalId, 'session-1')
+  })
+
   it('refreshes preference-backed availability before backend guidance is projected', async () => {
     let skillImportEnabled = false
     const owner = createOwner({

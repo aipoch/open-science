@@ -144,6 +144,7 @@ describe('WorkspacePage inline edit resend', () => {
     vi.clearAllMocks()
 
     window.api = {
+      acp: { getPlanProjection: vi.fn(() => Promise.resolve(null)) },
       notebook: {
         onAvailable: vi.fn(() => vi.fn()),
         getReference: vi.fn(() => Promise.resolve(null))

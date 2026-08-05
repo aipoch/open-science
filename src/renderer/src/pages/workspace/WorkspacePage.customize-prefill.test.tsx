@@ -130,6 +130,7 @@ describe('WorkspacePage customize prefill', () => {
     vi.clearAllMocks()
     runtime.sendMessage.mockResolvedValue({ sessionId: 'sess-a', messageId: 'm1' })
     window.api = {
+      acp: { getPlanProjection: vi.fn(() => Promise.resolve(null)) },
       notebook: {
         onAvailable: vi.fn(() => vi.fn()),
         getReference: vi.fn(() => Promise.resolve(null))
@@ -220,6 +221,13 @@ describe('WorkspacePage customize prefill', () => {
 
     // No pending prefill: the new-conversation composer stays empty.
     expect(conversationProps.draftDoc).toEqual({ nodes: [] })
+  })
+
+  it('renders a selected session when an older preload omits plan projection hydration', async () => {
+    useSessionStore.setState({ selectedSessionId: 'sess-a' })
+
+    await expect(renderPage()).resolves.toBeUndefined()
+    expect(container.querySelector('[data-testid="conversation"]')).not.toBeNull()
   })
 
   it('uses the normal picked-Skill mechanism: the chip is a real skill node, not parsed text', async () => {

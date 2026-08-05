@@ -1,6 +1,7 @@
 import type { ArtifactFile } from './artifacts'
 import type { PermissionProfileId } from './permission-profiles'
 import type { Project } from './projects'
+import type { PersistedSessionStatus } from './session-persistence'
 
 export type TaskRunStatus = 'running' | 'completed' | 'failed'
 
@@ -28,7 +29,7 @@ export type TaskSessionSummary = {
   id: string
   projectId: string
   title: string
-  status: 'idle' | 'running' | 'waiting-permission' | 'error'
+  status: PersistedSessionStatus
   permissionProfile?: PermissionProfileId
   createdAt: number
   updatedAt: number

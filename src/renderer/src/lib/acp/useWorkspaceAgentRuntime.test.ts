@@ -589,6 +589,57 @@ describe('workspace agent message sending', () => {
     vi.unstubAllGlobals()
   })
 
+  it('forwards Plan first for an existing Session without storing it on the user Message', async () => {
+    const runtime = {
+      state: createSnapshot(['transport-session-1']),
+      createSession: vi.fn(),
+      resumeSession: vi.fn(),
+      resetSessionContext: vi.fn(),
+      sendPrompt: vi.fn().mockResolvedValue(createSnapshot(['transport-session-1']))
+    }
+
+    await sendWorkspaceMessage(runtime, {
+      sessionId: 'transport-session-1',
+      text: 'analyze this dataset',
+      cwd: '/workspace/project',
+      projectId: 'project-1',
+      forcedSkillIds: ['skill-analysis'],
+      turnIntent: 'plan-first'
+    })
+
+    expect(runtime.sendPrompt.mock.calls[0]?.[12]).toBe('plan-first')
+    expect(useSessionStore.getState().sessions[0].messages[0]).toMatchObject({
+      role: 'user',
+      content: 'analyze this dataset'
+    })
+    expect(useSessionStore.getState().sessions[0].messages[0]).not.toHaveProperty('turnIntent')
+  })
+
+  it('binds an explicit continuation prompt to the durable active Plan version', async () => {
+    const sendPrompt = vi.fn().mockResolvedValue(createSnapshot(['transport-session-1']))
+    const runtime = {
+      state: createSnapshot(['transport-session-1']),
+      createSession: vi.fn(),
+      resumeSession: vi.fn(),
+      resetSessionContext: vi.fn(),
+      sendPrompt
+    }
+
+    await sendWorkspaceMessage(runtime, {
+      sessionId: 'transport-session-1',
+      text: 'continue',
+      cwd: '/workspace/project',
+      projectId: 'project-1',
+      planContinuation: { artifactVersionId: 'plan-version-1', revision: 9 }
+    })
+
+    expect(sendPrompt.mock.calls[0]?.[11]).toEqual({
+      projectId: 'project-1',
+      artifactVersionId: 'plan-version-1',
+      expectedRevision: 9
+    })
+  })
+
   it('rebuilds Agent and Notebook context before continuing a switched Branch', async () => {
     useSessionStore.getState().appendUserMessage({
       sessionId: 'transport-session-1',
@@ -1131,6 +1182,27 @@ describe('workspace agent message sending', () => {
     )
   })
 
+  it('retains Plan first while a new Session waits for ACP creation', async () => {
+    const created = createDeferred<{ sessionId: string; cwd?: string }>()
+    const runtime = {
+      state: createSnapshot(),
+      createSession: vi.fn(() => created.promise),
+      resumeSession: vi.fn(),
+      resetSessionContext: vi.fn(),
+      sendPrompt: vi.fn().mockResolvedValue(createSnapshot(['transport-session-1']))
+    }
+
+    await sendWorkspaceMessage(runtime, {
+      text: 'Plan the analysis',
+      cwd: '/workspace/project',
+      turnIntent: 'plan-first'
+    })
+    created.resolve({ sessionId: 'transport-session-1', cwd: '/workspace/project' })
+    await flushRuntimeTasks()
+
+    expect(runtime.sendPrompt.mock.calls[0]?.[12]).toBe('plan-first')
+  })
+
   it('creates and selects a branched Session before replaying its active history into a fresh ACP session', async () => {
     useSessionStore.getState().appendUserMessage({
       sessionId: 'source-session',
@@ -1160,7 +1232,8 @@ describe('workspace agent message sending', () => {
       text: 'Try a different interpretation',
       cwd: '/ignored-by-source-snapshot',
       projectId: 'wrong-project',
-      projectName: 'wrong-project'
+      projectName: 'wrong-project',
+      turnIntent: 'plan-first'
     })
 
     expect(branched).toBeDefined()
@@ -1204,7 +1277,9 @@ describe('workspace agent message sending', () => {
       [],
       undefined,
       expect.objectContaining({ promptMessageId: branched?.messageId }),
-      true
+      true,
+      undefined,
+      'plan-first'
     )
   })
 
@@ -3540,6 +3615,149 @@ describe('recovering from a request-size overflow', () => {
     expect(runtime.resetSessionContext).not.toHaveBeenCalled()
     expect(runtime.sendPrompt.mock.calls[0]?.[1]).toBe('now compare with this new screenshot')
     expect(runtime.sendPrompt.mock.calls[0]?.[5]).toBeUndefined()
+  })
+
+  it('does not synthesize Plan authority when an unrelated message overflows', async () => {
+    seedOverflowedConversation()
+    useSessionStore.getState().setActivePlanProjection('session-1', {
+      artifactVersionId: 'plan-version-1',
+      revision: 9,
+      approval: 'approved',
+      lifecycle: 'blocked'
+    } as never)
+    const nativeSnapshot = {
+      ...createSnapshot(['session-1']),
+      nativeContextCompactionSessionIds: ['session-1'],
+      promptInFlight: true,
+      promptInFlightSessionIds: ['session-1']
+    }
+    const compactedSnapshot = {
+      ...nativeSnapshot,
+      promptInFlight: false,
+      promptInFlightSessionIds: []
+    }
+    const runtime = {
+      state: nativeSnapshot,
+      createSession: vi.fn(),
+      resumeSession: vi.fn(),
+      resetSessionContext: vi.fn(),
+      compactSession: vi.fn().mockResolvedValue(compactedSnapshot),
+      sendPrompt: vi.fn().mockResolvedValue(compactedSnapshot)
+    }
+
+    expect(await recoverContextOverflowWorkspaceSession(runtime, 'session-1')).toBe(true)
+    await flushRuntimeTasks()
+
+    expect(runtime.sendPrompt.mock.calls[0]?.[11]).toBeUndefined()
+  })
+
+  it('refreshes explicit Plan authority after a step update advances the revision', async () => {
+    seedOverflowedConversation()
+    useSessionStore.getState().setActivePlanProjection('session-1', {
+      artifactVersionId: 'plan-version-1',
+      revision: 12,
+      approval: 'approved',
+      lifecycle: 'in_progress'
+    } as never)
+    const nativeSnapshot = {
+      ...createSnapshot(['session-1']),
+      nativeContextCompactionSessionIds: ['session-1'],
+      promptInFlight: true,
+      promptInFlightSessionIds: ['session-1']
+    }
+    const compactedSnapshot = {
+      ...nativeSnapshot,
+      promptInFlight: false,
+      promptInFlightSessionIds: []
+    }
+    const runtime = {
+      state: nativeSnapshot,
+      createSession: vi.fn(),
+      resumeSession: vi.fn(),
+      resetSessionContext: vi.fn(),
+      compactSession: vi.fn().mockResolvedValue(compactedSnapshot),
+      sendPrompt: vi.fn().mockResolvedValue(compactedSnapshot)
+    }
+
+    expect(
+      await recoverContextOverflowWorkspaceSession(
+        runtime,
+        'session-1',
+        undefined,
+        undefined,
+        undefined,
+        {
+          artifactVersionId: 'plan-version-1',
+          revision: 9
+        }
+      )
+    ).toBe(true)
+    await flushRuntimeTasks()
+
+    expect(runtime.sendPrompt.mock.calls[0]?.[11]).toEqual({
+      projectId: 'default-project',
+      artifactVersionId: 'plan-version-1',
+      expectedRevision: 12
+    })
+  })
+
+  it('converts a restored approval action to current approved authority on overflow', async () => {
+    seedOverflowedConversation()
+    useSessionStore.getState().setActivePlanProjection('session-1', {
+      artifactVersionId: 'plan-version-1',
+      revision: 9,
+      approval: 'pending',
+      lifecycle: 'awaiting_approval'
+    } as never)
+    const nativeSnapshot = {
+      ...createSnapshot(['session-1']),
+      nativeContextCompactionSessionIds: ['session-1'],
+      promptInFlight: true,
+      promptInFlightSessionIds: ['session-1']
+    }
+    const compactedSnapshot = {
+      ...nativeSnapshot,
+      promptInFlight: false,
+      promptInFlightSessionIds: []
+    }
+    const runtime = {
+      state: nativeSnapshot,
+      createSession: vi.fn(),
+      resumeSession: vi.fn(),
+      resetSessionContext: vi.fn(),
+      compactSession: vi.fn().mockImplementation(async () => {
+        useSessionStore.getState().setActivePlanProjection('session-1', {
+          artifactVersionId: 'plan-version-1',
+          revision: 10,
+          approval: 'approved',
+          lifecycle: 'approved'
+        } as never)
+        return compactedSnapshot
+      }),
+      sendPrompt: vi.fn().mockResolvedValue(compactedSnapshot)
+    }
+
+    expect(
+      await recoverContextOverflowWorkspaceSession(
+        runtime,
+        'session-1',
+        undefined,
+        undefined,
+        undefined,
+        {
+          artifactVersionId: 'plan-version-1',
+          revision: 9,
+          pendingAction: 'approve'
+        }
+      )
+    ).toBe(true)
+    await flushRuntimeTasks()
+
+    expect(runtime.sendPrompt.mock.calls[0]?.[11]).toEqual({
+      projectId: 'default-project',
+      artifactVersionId: 'plan-version-1',
+      expectedRevision: 10
+    })
   })
 
   it('preserves the failed turn when compaction still reports runtime ownership', async () => {

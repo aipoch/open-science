@@ -77,6 +77,7 @@ export type WritePendingArtifactFileRequest = {
   runId: string
   filename: string
   mimeType?: string
+  kind?: 'plan'
   source: ArtifactWriteSource
 }
 

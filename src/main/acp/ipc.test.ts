@@ -223,9 +223,11 @@ describe('ACP module transport seam', () => {
       'acp:create-session',
       'acp:delete-session',
       'acp:disconnect',
+      'acp:get-plan-projection',
       'acp:get-state',
       'acp:reset-session-context',
       'acp:respond-permission',
+      'acp:respond-plan',
       'acp:resume-session',
       'acp:revoke-permission-grant',
       'acp:send-prompt',
@@ -899,6 +901,22 @@ describe('installAcpIpcHandlers — create-session failure logging', () => {
 // by a rejected prompt's tracking. An earlier spec review flagged exactly this kind of seam as the
 // gap that let a connector-sessionId regression slip through green.
 describe('installAcpIpcHandlers — acp:send-prompt notification tracking', () => {
+  it('accepts only the exact Plan first turn intent from renderer IPC', async () => {
+    registerWithFakes()
+
+    await handlers.get('acp:send-prompt')?.(
+      {},
+      { sessionId: 'session-1', text: 'Plan this', turnIntent: 'plan-first' }
+    )
+    await handlers.get('acp:send-prompt')?.(
+      {},
+      { sessionId: 'session-1', text: 'Do not trust this', turnIntent: 'hidden-injection' }
+    )
+
+    expect(sendPrompt.mock.calls.at(-2)?.[0]).toMatchObject({ turnIntent: 'plan-first' })
+    expect(sendPrompt.mock.calls.at(-1)?.[0]).toMatchObject({ turnIntent: undefined })
+  })
+
   it('reverts the tracked prompt when the runtime rejects the send', async () => {
     const trackPrompt = vi.fn().mockReturnValue({ token: 1 })
     const untrackPrompt = vi.fn()

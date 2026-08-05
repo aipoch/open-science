@@ -139,6 +139,7 @@ const apiStub = (specialistOverrides?: Record<string, unknown>): typeof window.a
   pendingSwitchListener = undefined
   handoffLifecycleListener = undefined
   return {
+    acp: { getPlanProjection: vi.fn(() => Promise.resolve(null)) },
     notebook: {
       onAvailable: vi.fn(() => vi.fn()),
       getReference: vi.fn(() => Promise.resolve(null))

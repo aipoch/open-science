@@ -327,6 +327,7 @@ export type AcpRuntimeEvent = {
   // separate recovery path from automatic context-overflow compaction. Completion contents and
   // prompt text deliberately remain in the main-process recovery store, not this event.
   handoffFailure?: AcpHandoffFailure
+  planProjection?: import('./session-plan/contract').ActivePlanProjection
   // Set on an error event whose failure originates upstream of the app — the agent relayed a
   // model/provider error (bad key, rate limit, quota, provider 5xx/overloaded, wrong model id). The
   // renderer uses this to withhold the "Report error" affordance: a provider-side problem is the user's
@@ -507,6 +508,20 @@ export type AcpSetPermissionProfileRequest = {
 export type AcpPromptRequest = {
   sessionId: string
   text: string
+  // Closed, application-owned behavior requested for this Conversation Turn only.
+  turnIntent?: 'plan-first'
+  // Explicit, immutable identity for a Plan-bound interaction. Main validates it before admitting
+  // the prompt. An already-approved continuation grants execution authority; pending recovery
+  // actions are handled below and never infer authority from ordinary message text.
+  planContinuation?: {
+    projectId: string
+    artifactVersionId: string
+    expectedRevision: number
+    // A restored pending Plan starts a fresh interaction. Main either commits the explicit card
+    // decision after activation or exposes pending context for feedback without granting authority.
+    // Missing means an already-approved Plan continuation.
+    pendingAction?: 'review' | 'approve' | 'reject'
+  }
   // An application-owned continuation retains the originating user request but must not create a
   // second visible user-message event. It is never accepted from renderer IPC.
   continuation?: {

@@ -69,6 +69,7 @@ import { JobDetailModal } from '@/components/JobDetailModal'
 import { getVisiblePermissionRequests } from './session-permissions'
 import { WorkspaceSidebar } from './WorkspaceSidebar'
 import { useJobAnalysisEffect } from '@/lib/compute/useJobAnalysisEffect'
+import { selectActiveBranchPlan } from './session-plan/active-branch-plan'
 
 type WorkspacePageProps = {
   isSessionPersistenceHydrated: boolean
@@ -450,6 +451,7 @@ const WorkspacePage = ({
     (state) => state.markSpecialistSwitchResetRequired
   )
   const setFixLoopActive = useSessionStore((state) => state.setFixLoopActive)
+  const setActivePlanProjection = useSessionStore((state) => state.setActivePlanProjection)
   // Only sessions belonging to the active project are shown in this workspace.
   const sessions = useMemo(
     () => allSessions.filter((session) => session.projectId === scopedProjectId),
@@ -879,6 +881,29 @@ const WorkspacePage = ({
     historyBrowsingKey,
     markComposerDraftChanged
   ])
+  useEffect(() => {
+    const getPlanProjection = window.api.acp?.getPlanProjection
+    if (!activeSession || activeSession.activePlanProjection || !getPlanProjection) return
+    let cancelled = false
+    void getPlanProjection(activeSession.projectId, activeSession.id)
+      .then((projection) => {
+        if (cancelled) return
+        if (projection) {
+          setActivePlanProjection(activeSession.id, projection)
+          return
+        }
+        const current = useSessionStore
+          .getState()
+          .sessions.find((session) => session.id === activeSession.id)
+        if (current?.status === 'waiting-plan-approval' && !current.activePlanProjection) {
+          useSessionStore.getState().finishRun(activeSession.id)
+        }
+      })
+      .catch(() => undefined)
+    return () => {
+      cancelled = true
+    }
+  }, [activeSession, setActivePlanProjection])
   const activeSessionHasSendPreparation = activeSession
     ? sendPreparationInFlightSessionIds.includes(activeSession.id)
     : false
@@ -953,7 +978,10 @@ const WorkspacePage = ({
   })
   const handleReviewUpdate = useReviewStore((state) => state.handleReviewUpdate)
   // Composer controls follow only the selected session and persistence readiness.
-  const canEditDraft = isSessionPersistenceReady && !activeSessionHasSendPreparation
+  const canEditDraft =
+    isSessionPersistenceReady &&
+    !activeSessionHasSendPreparation &&
+    activeSession?.status !== 'waiting-plan-approval'
   const isUploadingAttachments = attachmentTransfers.some(
     (transfer) =>
       transfer.status === 'queued' ||
@@ -1524,13 +1552,63 @@ const WorkspacePage = ({
     [activeSessionId, resendEditedMessage]
   )
 
+  // Restart recovery intentionally does not revive the expired generate_plan interaction. Each card
+  // action starts a fresh user turn bound to the exact pending Plan. Main commits explicit decisions
+  // only after activating that turn; feedback receives protected Plan context without authority.
+  const respondToRestoredPlan = useCallback(
+    async (
+      response: { decision: 'approved' | 'rejected' } | { feedback: string }
+    ): Promise<void> => {
+      const session = activeSessionId
+        ? useSessionStore.getState().sessions.find((candidate) => candidate.id === activeSessionId)
+        : undefined
+      const plan = selectActiveBranchPlan(session)
+      if (!session || session.activeRun || plan?.approval !== 'pending') {
+        throw new Error('The pending Plan is no longer available for a response.')
+      }
+      const pendingAction =
+        'feedback' in response
+          ? ('review' as const)
+          : response.decision === 'approved'
+            ? ('approve' as const)
+            : ('reject' as const)
+      const text =
+        'feedback' in response
+          ? response.feedback
+          : response.decision === 'approved'
+            ? 'Approve the current Plan and continue.'
+            : 'Dismiss the current Plan.'
+
+      const result = await sendMessage({
+        sessionId: session.id,
+        text,
+        planContinuation: {
+          artifactVersionId: plan.artifactVersionId,
+          revision: plan.revision,
+          pendingAction
+        },
+        attachments: [],
+        cwd: session.cwd,
+        projectId: session.projectId,
+        projectName: session.projectId,
+        permissionProfile: session.permissionProfile ?? DEFAULT_PERMISSION_PROFILE
+      })
+      if (!result) throw new Error('Unable to respond to the Plan.')
+    },
+    [activeSessionId, sendMessage]
+  )
+
   // Sends the current draft only after hydration so restored selection cannot overwrite intent.
   // ConversationPanel owns preventDefault and passes the skills picked as inline chips.
   // For existing sessions with a pending specialist switch, the reconfigure barrier runs first:
   // dispose + resume the Claude ACP session with the new specialist identity. On failure, the
   // draft is preserved, no user turn is created, and a recovery banner is shown (fail-closed —
   // never silently fall back to Main Agent).
-  const sendCurrentMessage = (forcedSkillIds: string[], branchInNewSession = false): void => {
+  const sendCurrentMessage = (
+    forcedSkillIds: string[],
+    options: { branchInNewSession?: boolean; turnIntent?: 'plan-first' } = {}
+  ): void => {
+    const branchInNewSession = options.branchInNewSession === true
     if (!canSendMessage) return
     // A blank New conversation has no source transcript to snapshot; ordinary Send already creates the
     // fresh Session for that case.
@@ -1602,23 +1680,33 @@ const WorkspacePage = ({
     // Dispatches the final send after draft/attachment state has been cleared.
     // Shared by the normal send path and the Retry recovery action so the logic stays in sync.
     const dispatchSend = (sessionId: string | undefined): void => {
-      void sendMessage({
-        sessionId,
-        ...(branchInNewSession && activeSession ? { branchSourceSessionId: activeSession.id } : {}),
-        text: docToText(doc),
-        attachments: attachmentsForSend,
-        // Existing files the user referenced via `@`; the runtime attaches each as a content block.
-        referencedArtifacts: docToArtifactRefs(doc),
-        // Persist the draft's structural segments so the sent bubble renders styled mention pills.
-        parts: doc.nodes,
-        cwd: activeSession?.cwd,
-        projectId: activeSession?.projectId ?? scopedProjectId,
-        projectName: activeSession?.projectId ?? scopedProjectId,
-        permissionProfile: activePermissionProfile,
-        forcedSkillIds,
-        // New-conversation only: the UUID is forwarded to createSession; main process reads latest Profile.
-        specialistId: draftSpecialistId
-      })
+      const send = async (): ReturnType<typeof sendMessage> => {
+        return sendMessage({
+          sessionId,
+          ...(branchInNewSession && activeSession
+            ? { branchSourceSessionId: activeSession.id }
+            : {}),
+          text: docToText(doc),
+          attachments: attachmentsForSend,
+          // Existing files the user referenced via `@`; the runtime attaches each as a content block.
+          referencedArtifacts: docToArtifactRefs(doc),
+          // Persist the draft's structural segments so the sent bubble renders styled mention pills.
+          parts: doc.nodes,
+          cwd: activeSession?.cwd,
+          projectId: activeSession?.projectId ?? scopedProjectId,
+          projectName: activeSession?.projectId ?? scopedProjectId,
+          permissionProfile: activePermissionProfile,
+          forcedSkillIds,
+          ...(options.turnIntent ? { turnIntent: options.turnIntent } : {}),
+          // New-conversation only: the UUID is forwarded to createSession; main process reads latest Profile.
+          specialistId: draftSpecialistId
+        })
+      }
+      void send()
+        .catch((error: unknown) => {
+          setAttachmentError(getErrorMessage(error))
+          return undefined
+        })
         .then((result) => {
           if (!result) {
             // A newer edit on the same draft key wins over this failed request. Otherwise restore the
@@ -1761,7 +1849,11 @@ const WorkspacePage = ({
   }
 
   const branchCurrentMessage = (forcedSkillIds: string[]): void => {
-    sendCurrentMessage(forcedSkillIds, true)
+    sendCurrentMessage(forcedSkillIds, { branchInNewSession: true })
+  }
+
+  const planCurrentMessage = (forcedSkillIds: string[]): void => {
+    sendCurrentMessage(forcedSkillIds, { turnIntent: 'plan-first' })
   }
 
   // Opens the rename dialog with the current title prefilled.
@@ -2327,6 +2419,8 @@ const WorkspacePage = ({
             historyStatus={historyStatus}
             onNavigateHistory={navigateComposerHistory}
             onSendMessage={sendCurrentMessage}
+            onPlanFirst={planCurrentMessage}
+            onRespondToRestoredPlan={respondToRestoredPlan}
             onBranchInNewSession={activeSession ? branchCurrentMessage : undefined}
             onStageAttachmentFiles={stageAttachmentFiles}
             onRemoveAttachment={removeComposerAttachment}

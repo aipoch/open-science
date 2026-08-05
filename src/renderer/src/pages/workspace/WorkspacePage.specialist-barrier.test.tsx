@@ -126,6 +126,7 @@ let root: Root
 
 const apiStub = (specialistOverrides?: Record<string, unknown>): typeof window.api =>
   ({
+    acp: { getPlanProjection: vi.fn(() => Promise.resolve(null)) },
     notebook: {
       onAvailable: vi.fn(() => vi.fn()),
       getReference: vi.fn(() => Promise.resolve(null))

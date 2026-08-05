@@ -225,6 +225,7 @@ describe('WorkspacePage draft preservation', () => {
     globalThis.FileReader = MockFileReader as never
 
     window.api = {
+      acp: { getPlanProjection: vi.fn(() => Promise.resolve(null)) },
       notebook: {
         onAvailable: vi.fn(() => vi.fn()),
         getReference: vi.fn(() => Promise.resolve(null))

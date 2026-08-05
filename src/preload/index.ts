@@ -95,6 +95,9 @@ const api: OpenScienceAPI = {
   },
   acp: {
     getState: () => electronRendererContracts.invoke('acp.getState'),
+    getPlanProjection: (projectId, sessionId) =>
+      electronRendererContracts.invoke('acp.getPlanProjection', projectId, sessionId),
+    respondPlan: (request) => electronRendererContracts.invoke('acp.respondPlan', request),
     connect: (request) => electronRendererContracts.invoke('acp.connect', request),
     disconnect: () => electronRendererContracts.invoke('acp.disconnect'),
     createSession: (request) => electronRendererContracts.invoke('acp.createSession', request),

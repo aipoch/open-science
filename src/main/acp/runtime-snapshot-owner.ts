@@ -97,6 +97,7 @@ class AcpRuntimeSnapshotOwner {
       artifactSessionId: event.artifactSessionId,
       artifactClaimId: event.artifactClaimId,
       artifacts: event.artifacts,
+      planProjection: event.planProjection,
       raw
     }
 

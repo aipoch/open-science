@@ -36,6 +36,7 @@ import {
   type LocalRpcListenOptions
 } from '../local-rpc-transport'
 import { createLogger, errorLogFields } from '../logger'
+import { PlanCommandError } from '../../shared/session-plan/contract'
 
 const log = createLogger('notebook:local-rpc')
 
@@ -109,6 +110,14 @@ type NotebookLocalRpcServerOptions = {
     }>
   }
   skillImporter?: Pick<ConversationSkillImporter, 'request'>
+  planService?: {
+    call(input: {
+      projectId: string
+      sessionId: string
+      operation: 'generate' | 'approve' | 'reject' | 'updateStepStatus'
+      input?: unknown
+    }): Promise<unknown>
+  }
   artifactProvenance?: {
     createVersion(request: CreateArtifactVersionRequest): Promise<ArtifactVersionFile>
     replayVersion?(request: ReplayArtifactVersionRequest): Promise<ArtifactVersionFile | undefined>
@@ -164,6 +173,7 @@ const ARTIFACT_RPC_METHODS = new Set<ArtifactRpcMethod>([
 const DEFAULT_ARTIFACT_RPC_CAPABILITY_TTL_MS = 2 * 60 * 60 * 1_000
 const CONTROL_RPC_METHODS = new Set(['mcpCall', 'computeCall', 'agentsCall'])
 const SKILL_IMPORT_RPC_METHODS = new Set(['skillImport'])
+const PLAN_RPC_METHODS = new Set(['planCall'])
 
 const isArtifactRpcMethod = (method: string): method is ArtifactRpcMethod =>
   ARTIFACT_RPC_METHODS.has(method as ArtifactRpcMethod)
@@ -200,6 +210,7 @@ class NotebookLocalRpcServer {
   private readonly connectorService: NotebookLocalRpcServerOptions['connectorService']
   private readonly computeService: NotebookLocalRpcServerOptions['computeService']
   private readonly skillImporter: NotebookLocalRpcServerOptions['skillImporter']
+  private readonly planService: NotebookLocalRpcServerOptions['planService']
   private readonly artifactProvenance: NotebookLocalRpcServerOptions['artifactProvenance']
   private readonly inputRegistry: NotebookLocalRpcServerOptions['inputRegistry']
   private readonly agentsService: NotebookLocalRpcServerOptions['agentsService']
@@ -209,6 +220,7 @@ class NotebookLocalRpcServer {
   private readonly sessionRpcCapabilities = new Map<string, NotebookRpcSessionBinding>()
   private readonly sessionRpcTokens = new Map<string, string>()
   private readonly skillImportRpcTokens = new Map<string, string>()
+  private readonly planRpcTokens = new Map<string, string>()
   // The session → Specialist relationship is established by the ACP runtime, not supplied by the
   // notebook process. Keeping it here prevents an agent from selecting another Specialist's scope
   // by forging an RPC parameter.
@@ -232,6 +244,7 @@ class NotebookLocalRpcServer {
     this.connectorService = options.connectorService
     this.computeService = options.computeService
     this.skillImporter = options.skillImporter
+    this.planService = options.planService
     this.artifactProvenance = options.artifactProvenance
     this.inputRegistry = options.inputRegistry
     this.agentsService = options.agentsService
@@ -385,6 +398,14 @@ class NotebookLocalRpcServer {
     }
   }
 
+  private revokePlanSessionCapabilities(sessionId: string): void {
+    for (const ownedSessionId of this.resolveSessionCapabilityOwners(sessionId)) {
+      const token = this.planRpcTokens.get(ownedSessionId)
+      if (token) this.sessionRpcCapabilities.delete(token)
+      this.planRpcTokens.delete(ownedSessionId)
+    }
+  }
+
   // Releases ACP-owned session state without revoking the persistent control-plane capability. The
   // Notebook RuntimeSession owns that capability and revokes it through connection.release().
   releaseSessionCapabilities(sessionId: string): void {
@@ -392,6 +413,7 @@ class NotebookLocalRpcServer {
 
     this.revokeAgentSessionCapabilities(sessionId)
     this.revokeSkillImportSessionCapabilities(sessionId)
+    this.revokePlanSessionCapabilities(sessionId)
     for (const ownedSessionId of ownedSessionIds) {
       this.sessionSpecialists.delete(ownedSessionId)
     }
@@ -449,6 +471,28 @@ class NotebookLocalRpcServer {
         if (this.skillImportRpcTokens.get(sessionId) === token) {
           this.skillImportRpcTokens.delete(sessionId)
         }
+        this.sessionRpcCapabilities.delete(token)
+      }
+    }
+  }
+
+  async issuePlanConnection(sessionId: string, projectId: string): Promise<NotebookRpcConnection> {
+    const connection = await this.ensureStarted()
+    this.revokePlanSessionCapabilities(sessionId)
+
+    const token = randomUUID()
+    this.planRpcTokens.set(sessionId, token)
+    this.sessionRpcCapabilities.set(token, {
+      sessionId,
+      projectId,
+      allowedMethods: PLAN_RPC_METHODS
+    })
+    return {
+      endpoint: connection.endpoint,
+      socketPath: connection.socketPath,
+      token,
+      release: () => {
+        if (this.planRpcTokens.get(sessionId) === token) this.planRpcTokens.delete(sessionId)
         this.sessionRpcCapabilities.delete(token)
       }
     }
@@ -657,7 +701,11 @@ class NotebookLocalRpcServer {
           if (authorization !== `Bearer ${this.token}`) {
             throw new RpcHttpError(401, 'Invalid notebook RPC token.')
           }
-          if (CONTROL_RPC_METHODS.has(method) || SKILL_IMPORT_RPC_METHODS.has(method)) {
+          if (
+            CONTROL_RPC_METHODS.has(method) ||
+            SKILL_IMPORT_RPC_METHODS.has(method) ||
+            PLAN_RPC_METHODS.has(method)
+          ) {
             throw new RpcHttpError(401, 'A session-bound notebook RPC token is required.')
           }
         }
@@ -675,9 +723,11 @@ class NotebookLocalRpcServer {
         return
       }
       const message = error instanceof Error ? error.message : String(error)
+      const serializedError =
+        error instanceof PlanCommandError ? { code: error.code, message } : message
 
       writeJson(response, error instanceof RpcHttpError ? error.statusCode : 500, {
-        error: message
+        error: serializedError
       })
     } finally {
       releaseArtifactRequest?.()
@@ -734,6 +784,23 @@ class NotebookLocalRpcServer {
         attachmentUri: params.attachmentUri
       }
       return this.skillImporter.request(request)
+    }
+
+    if (method === 'planCall') {
+      if (!this.planService) throw new Error('Session Plan service is not configured.')
+      if (
+        typeof params.projectId !== 'string' ||
+        typeof params.sessionId !== 'string' ||
+        !['generate', 'approve', 'reject', 'updateStepStatus'].includes(String(params.operation))
+      ) {
+        throw new Error('Session Plan RPC params are invalid.')
+      }
+      return this.planService.call({
+        projectId: params.projectId,
+        sessionId: params.sessionId,
+        operation: params.operation as 'generate' | 'approve' | 'reject' | 'updateStepStatus',
+        input: params.input
+      })
     }
 
     if (method === 'resolveNotebookInput') {

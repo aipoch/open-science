@@ -20,6 +20,7 @@ import {
   type ChatSession
 } from '@/stores/session-store'
 import type { ReviewWithChecks } from '../../../../shared/reviewer'
+import type { ActivePlanProjection } from '../../../../shared/session-plan/contract'
 
 import { type ComposerDoc } from './composer/composer-doc'
 
@@ -32,6 +33,10 @@ let conversationProps: {
   canCompactContext: boolean
   compactContextDisabledReason?: string
   onDraftDocChange: (doc: ComposerDoc) => void
+  onSendMessage: (forcedSkillIds: string[]) => void
+  onRespondToRestoredPlan: (
+    response: { decision: 'approved' | 'rejected' } | { feedback: string }
+  ) => Promise<void>
 }
 
 const runtime = vi.hoisted(() => ({
@@ -113,6 +118,36 @@ const createSession = (overrides: Partial<ChatSession> = {}): ChatSession => {
 
 const textDoc = (text: string): ComposerDoc => ({ nodes: [{ type: 'text', text }] })
 
+const planProjection = (approval: 'pending' | 'approved', revision = 3): ActivePlanProjection => ({
+  artifactId: 'plan-artifact-1',
+  artifactVersionId: 'plan-version-1',
+  artifactChecksum: 'a'.repeat(64),
+  revision,
+  approval,
+  lifecycle: approval === 'pending' ? 'awaiting_approval' : 'approved',
+  requiresExplicitContinuation: approval === 'approved',
+  document: {
+    schema_version: 1,
+    task_summary: 'Analyze data',
+    phases: [
+      {
+        name: 'Analysis',
+        delegations: [
+          {
+            name: 'Main Agent',
+            steps: [{ title: 'Analyze', description: 'Analyze the data.' }]
+          }
+        ]
+      }
+    ],
+    desired_outputs: ['Result'],
+    feasibility: { confidence: 'high', rationale: 'Ready.' }
+  },
+  stepStatuses: {},
+  stepStates: { Analyze: { status: 'not_started' } },
+  counts: { phases: 1, delegations: 1, steps: 1, completed: 0, inProgress: 0 }
+})
+
 describe('WorkspacePage send gate while compacting', () => {
   let container: HTMLDivElement
   let root: Root
@@ -133,6 +168,9 @@ describe('WorkspacePage send gate while compacting', () => {
     runtime.nativeContextCompactionSessionIds = ['sess-a']
 
     window.api = {
+      acp: {
+        getPlanProjection: vi.fn(() => Promise.resolve(null))
+      },
       notebook: {
         onAvailable: vi.fn(() => vi.fn()),
         getReference: vi.fn(() => Promise.resolve(null))
@@ -198,6 +236,170 @@ describe('WorkspacePage send gate while compacting', () => {
       useSessionStore.getState().finishRun('sess-a')
     })
     expect(conversationProps.canSendMessage).toBe(true)
+  })
+
+  it('unlocks a waiting Session after main drops unreadable Plan authority', async () => {
+    useSessionStore.setState({
+      sessions: [createSession({ status: 'waiting-plan-approval' })],
+      selectedSessionId: 'sess-a'
+    })
+
+    await renderPage()
+
+    expect(window.api.acp.getPlanProjection).toHaveBeenCalledWith('proj-1', 'sess-a')
+    expect(useSessionStore.getState().sessions[0]?.status).toBe('idle')
+  })
+
+  it('sends restored Plan-card feedback as a fresh user turn', async () => {
+    const pending = planProjection('pending')
+    useSessionStore.setState({
+      sessions: [createSession({ status: 'waiting-plan-approval', activePlanProjection: pending })],
+      selectedSessionId: 'sess-a'
+    })
+    runtime.sendMessage.mockResolvedValue({ sessionId: 'sess-a', messageId: 'message-1' })
+    await renderPage()
+
+    await act(async () => {
+      await conversationProps.onRespondToRestoredPlan({
+        feedback: 'Split the analysis by cohort.'
+      })
+    })
+
+    expect(runtime.sendMessage).toHaveBeenCalledWith(
+      expect.objectContaining({
+        sessionId: 'sess-a',
+        text: 'Split the analysis by cohort.',
+        attachments: [],
+        projectId: 'proj-1',
+        planContinuation: {
+          artifactVersionId: 'plan-version-1',
+          revision: 3,
+          pendingAction: 'review'
+        }
+      })
+    )
+  })
+
+  it.each([
+    ['approved', 'Approve the current Plan and continue.', 'approve'],
+    ['rejected', 'Dismiss the current Plan.', 'reject']
+  ] as const)('starts a fresh Plan interaction for restored %s', async (decision, text, action) => {
+    const pending = planProjection('pending')
+    useSessionStore.setState({
+      sessions: [createSession({ status: 'waiting-plan-approval', activePlanProjection: pending })],
+      selectedSessionId: 'sess-a'
+    })
+    runtime.sendMessage.mockResolvedValue({ sessionId: 'sess-a', messageId: 'message-1' })
+    await renderPage()
+
+    await act(async () => {
+      await conversationProps.onRespondToRestoredPlan({ decision })
+    })
+
+    expect(runtime.sendMessage).toHaveBeenCalledWith(
+      expect.objectContaining({
+        sessionId: 'sess-a',
+        text,
+        planContinuation: {
+          artifactVersionId: 'plan-version-1',
+          revision: 3,
+          pendingAction: action
+        }
+      })
+    )
+  })
+
+  it('sends approved-Plan continuation language as an ordinary Message for the Agent to interpret', async () => {
+    useSessionStore.setState({
+      sessions: [createSession({ activePlanProjection: planProjection('approved') })],
+      selectedSessionId: 'sess-a'
+    })
+    runtime.sendMessage.mockResolvedValue({ sessionId: 'sess-a', messageId: 'message-1' })
+    await renderPage()
+
+    await act(async () => {
+      conversationProps.onDraftDocChange(textDoc('continue'))
+    })
+    await act(async () => {
+      conversationProps.onSendMessage([])
+      await Promise.resolve()
+    })
+
+    expect(runtime.sendMessage).toHaveBeenCalledWith(
+      expect.objectContaining({
+        text: 'continue'
+      })
+    )
+    expect(runtime.sendMessage).toHaveBeenCalledWith(
+      expect.not.objectContaining({ planContinuation: expect.anything() })
+    )
+
+    runtime.sendMessage.mockClear()
+    await act(async () => {
+      conversationProps.onDraftDocChange(textDoc('What is the weather?'))
+    })
+    await act(async () => {
+      conversationProps.onSendMessage([])
+      await Promise.resolve()
+    })
+
+    expect(runtime.sendMessage).toHaveBeenCalledWith(
+      expect.not.objectContaining({ planContinuation: expect.anything() })
+    )
+  })
+
+  it('sends approval language as an ordinary user Message after a Plan interaction ends', async () => {
+    window.api.acp.respondPlan = vi.fn()
+    const pending = planProjection('pending')
+    useSessionStore.setState({
+      sessions: [createSession({ status: 'idle', activePlanProjection: pending })],
+      selectedSessionId: 'sess-a'
+    })
+    runtime.sendMessage.mockResolvedValue({ sessionId: 'sess-a', messageId: 'message-1' })
+    await renderPage()
+
+    await act(async () => {
+      conversationProps.onDraftDocChange(textDoc('approve and continue'))
+    })
+    await act(async () => {
+      conversationProps.onSendMessage([])
+      await vi.waitFor(() => expect(runtime.sendMessage).toHaveBeenCalledOnce())
+    })
+
+    expect(window.api.acp.respondPlan).not.toHaveBeenCalled()
+    expect(runtime.sendMessage).toHaveBeenCalledWith(
+      expect.objectContaining({
+        text: 'approve and continue'
+      })
+    )
+    expect(runtime.sendMessage).toHaveBeenCalledWith(
+      expect.not.objectContaining({ planContinuation: expect.anything() })
+    )
+  })
+
+  it('does not convert a plain orphaned-Plan approval Message into a UI decision', async () => {
+    const pending = planProjection('pending')
+    useSessionStore.setState({
+      sessions: [createSession({ status: 'idle', activePlanProjection: pending })],
+      selectedSessionId: 'sess-a'
+    })
+    window.api.acp.respondPlan = vi.fn()
+    runtime.sendMessage.mockResolvedValue({ sessionId: 'sess-a', messageId: 'message-1' })
+    await renderPage()
+
+    await act(async () => {
+      conversationProps.onDraftDocChange(textDoc('approve'))
+    })
+    await act(async () => {
+      conversationProps.onSendMessage([])
+      await vi.waitFor(() => expect(runtime.sendMessage).toHaveBeenCalledOnce())
+    })
+
+    expect(window.api.acp.respondPlan).not.toHaveBeenCalled()
+    expect(runtime.sendMessage).toHaveBeenCalledWith(expect.objectContaining({ text: 'approve' }))
+    expect(runtime.sendMessage).toHaveBeenCalledWith(
+      expect.not.objectContaining({ planContinuation: expect.anything() })
+    )
   })
 
   it('blocks message-branch changes only while the project-scoped review is running', async () => {

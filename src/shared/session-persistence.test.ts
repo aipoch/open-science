@@ -8,9 +8,11 @@ import {
   normalizeSessionFile,
   sanitizeMessageImages,
   sanitizeToolActivity,
-  type PersistedChatSession
+  type PersistedChatSession,
+  type SessionPlanRuntimeContext
 } from './session-persistence'
 import { createLinearConversationGraph } from './conversation-graph'
+import type { ActivePlanProjection } from './session-plan/contract'
 
 const createSessionWithActivity = (activity: unknown): Record<string, unknown> => ({
   id: 'session-1',
@@ -26,6 +28,110 @@ const createSessionWithActivity = (activity: unknown): Record<string, unknown> =
 
 const getRestoredActivities = (session: unknown): PersistedChatSession['activities'] =>
   normalizeSessionFile(session)?.activities
+
+const createRuntimePlan = (): SessionPlanRuntimeContext => ({
+  artifactId: 'plan-1',
+  artifactVersionId: 'plan-version-1',
+  artifactChecksum: 'a'.repeat(64),
+  originatingPromptMessageId: 'prompt-plan-1',
+  approval: 'pending',
+  stepStatuses: {}
+})
+
+const createHistoricalPlan = (): ActivePlanProjection => ({
+  artifactId: 'artifact-plan-history',
+  artifactVersionId: 'version-plan-history',
+  artifactChecksum: 'b'.repeat(64),
+  originatingPromptMessageId: 'prompt-plan-history',
+  revision: 3,
+  approval: 'approved',
+  lifecycle: 'completed',
+  requiresExplicitContinuation: false,
+  document: {
+    schema_version: 1,
+    task_summary: 'Analyze the branched dataset',
+    phases: [
+      {
+        name: 'Analysis',
+        delegations: [
+          {
+            name: 'Primary agent',
+            steps: [{ title: 'Analyze data', description: 'Produce the result.' }]
+          }
+        ]
+      }
+    ],
+    desired_outputs: ['Analysis report'],
+    feasibility: { confidence: 'high', rationale: 'Inputs are available.' }
+  },
+  stepStatuses: { 'Analyze data': { status: 'completed', updatedAt: 4 } },
+  stepStates: { 'Analyze data': { status: 'completed' } },
+  counts: { phases: 1, delegations: 1, steps: 1, completed: 1, inProgress: 0 }
+})
+
+describe('branch Plan history persistence', () => {
+  it('restores only branch-bound projections and recomputes their display state', () => {
+    const valid = createHistoricalPlan()
+    const restored = normalizeSessionFile({
+      ...createSessionWithActivity(undefined),
+      activities: undefined,
+      planHistoryProjections: [
+        { ...valid, originatingPromptMessageId: undefined },
+        {
+          ...valid,
+          stepStates: { 'Analyze data': { status: 'not_started' } },
+          counts: { phases: 99, delegations: 99, steps: 99, completed: 0, inProgress: 0 }
+        }
+      ]
+    })
+
+    expect(restored?.planHistoryProjections).toEqual([valid])
+  })
+
+  it('bounds aggregate history size while retaining the newest exact versions', () => {
+    const history = Array.from({ length: 5 }, (_, index) => {
+      const version = index + 1
+      const plan = createHistoricalPlan()
+      return {
+        ...plan,
+        artifactVersionId: `version-${version}`,
+        originatingPromptMessageId: `prompt-${version}`,
+        document: {
+          ...plan.document,
+          phases: [
+            {
+              ...plan.document.phases[0],
+              delegations: [
+                {
+                  ...plan.document.phases[0].delegations[0],
+                  steps: [
+                    {
+                      title: 'Analyze data',
+                      description: `${version}${'x'.repeat(409_999)}`
+                    }
+                  ]
+                }
+              ]
+            }
+          ]
+        }
+      }
+    })
+
+    const restored = normalizeSessionFile({
+      ...createSessionWithActivity(undefined),
+      activities: undefined,
+      planHistoryProjections: history
+    })
+
+    expect(restored?.planHistoryProjections?.map((plan) => plan.artifactVersionId)).toEqual([
+      'version-2',
+      'version-3',
+      'version-4',
+      'version-5'
+    ])
+  })
+})
 
 describe('message part persistence', () => {
   it('preserves a linked-folder reference as root id plus relative path', () => {
@@ -573,6 +679,99 @@ describe('sanitizeActivityGroup', () => {
 })
 
 describe('normalizeSessionFile with activities', () => {
+  it('round-trips a main-owned runtime context and preserves plan approval waiting across restart', () => {
+    const persisted = createSessionFile({
+      ...(createSessionWithActivity(undefined) as PersistedChatSession),
+      activities: undefined,
+      status: 'waiting-plan-approval',
+      runtimeContext: {
+        version: 1,
+        revision: 3,
+        plan: createRuntimePlan()
+      }
+    })
+
+    const restored = normalizeSessionFile(persisted)
+
+    expect(restored).toMatchObject({
+      status: 'waiting-plan-approval',
+      runtimeContext: {
+        version: 1,
+        revision: 3,
+        plan: createRuntimePlan()
+      }
+    })
+    expect(restored?.error).toBeUndefined()
+  })
+
+  it('does not restore the expired interaction identity for a pending Plan', () => {
+    const restored = normalizeSessionFile({
+      ...(createSessionWithActivity(undefined) as PersistedChatSession),
+      activities: undefined,
+      status: 'waiting-plan-approval',
+      activeRun: { promptMessageId: 'expired-prompt', startedAt: 10 },
+      runtimeContext: {
+        version: 1,
+        revision: 3,
+        plan: createRuntimePlan()
+      }
+    })
+
+    expect(restored?.status).toBe('waiting-plan-approval')
+    expect(restored?.activeRun).toBeUndefined()
+    expect(restored?.error).toBeUndefined()
+  })
+
+  it('restores an approved incomplete Plan passively instead of as a generic Session error', () => {
+    const plan = { ...createRuntimePlan(), approval: 'approved' as const }
+    const restored = normalizeSessionFile({
+      ...(createSessionWithActivity(undefined) as PersistedChatSession),
+      activities: undefined,
+      status: 'running',
+      activeRun: { promptMessageId: 'prompt-1', startedAt: 10 },
+      runtimeContext: { version: 1, revision: 4, plan }
+    })
+
+    expect(restored).toMatchObject({
+      status: 'idle',
+      runtimeContext: { version: 1, revision: 4, plan }
+    })
+    expect(restored?.activeRun).toBeUndefined()
+    expect(restored?.error).toBeUndefined()
+  })
+
+  it('drops unknown or damaged runtime context without losing the conversation', () => {
+    const unknown = normalizeSessionFile({
+      ...createSessionWithActivity(undefined),
+      activities: undefined,
+      runtimeContext: { version: 1, revision: 8, alienAuthority: { active: true } }
+    })
+    const damaged = normalizeSessionFile({
+      ...createSessionWithActivity(undefined),
+      activities: undefined,
+      title: 'Conversation survives',
+      status: 'waiting-plan-approval',
+      runtimeContext: { version: 1, revision: -1, plan: { approval: 'approved' } }
+    })
+    const malformedPlan = normalizeSessionFile({
+      ...createSessionWithActivity(undefined),
+      activities: undefined,
+      status: 'waiting-plan-approval',
+      runtimeContext: { version: 1, revision: 2, plan: null }
+    })
+
+    expect(unknown).toMatchObject({ id: 'session-1', messages: [] })
+    expect(unknown?.runtimeContext).toBeUndefined()
+    expect(damaged).toMatchObject({
+      title: 'Conversation survives',
+      status: 'idle',
+      messages: []
+    })
+    expect(damaged?.runtimeContext).toBeUndefined()
+    expect(malformedPlan).toMatchObject({ status: 'idle', messages: [] })
+    expect(malformedPlan?.runtimeContext).toBeUndefined()
+  })
+
   it('restores a persisted session with its activities intact', () => {
     const activities = getRestoredActivities(
       createSessionWithActivity({

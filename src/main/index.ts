@@ -5,6 +5,7 @@ import { fileURLToPath } from 'node:url'
 import {
   ARTIFACT_MCP_SERVER_ARG,
   NOTEBOOK_MCP_SERVER_ARG,
+  PLAN_MCP_SERVER_ARG,
   REVIEWER_MCP_PROXY_ARG,
   SKILL_IMPORT_MCP_SERVER_ARG
 } from './mcp-server-args'
@@ -27,6 +28,7 @@ const shouldRunArtifactMcpServer = process.argv.includes(ARTIFACT_MCP_SERVER_ARG
 const shouldRunNotebookMcpServer = process.argv.includes(NOTEBOOK_MCP_SERVER_ARG)
 const shouldRunReviewerMcpProxy = process.argv.includes(REVIEWER_MCP_PROXY_ARG)
 const shouldRunSkillImportMcpServer = process.argv.includes(SKILL_IMPORT_MCP_SERVER_ARG)
+const shouldRunPlanMcpServer = process.argv.includes(PLAN_MCP_SERVER_ARG)
 let startupDiagnostics: DiagnosticOperation | undefined
 let startupFlush = flushLogs
 
@@ -56,6 +58,13 @@ if (shouldRunArtifactMcpServer) {
 } else if (shouldRunSkillImportMcpServer) {
   void import('./skills/mcp-server')
     .then(({ runSkillImportMcpServer }) => runSkillImportMcpServer())
+    .catch((error: unknown) => {
+      console.error(error)
+      process.exitCode = 1
+    })
+} else if (shouldRunPlanMcpServer) {
+  void import('./session-plan/plan-mcp-server')
+    .then(({ runPlanMcpServer }) => runPlanMcpServer())
     .catch((error: unknown) => {
       console.error(error)
       process.exitCode = 1

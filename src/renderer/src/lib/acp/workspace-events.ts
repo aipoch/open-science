@@ -25,7 +25,8 @@ import {
   createRuntimeStreamId,
   getAcpRuntimeEventImage,
   getAcpRuntimeEventText,
-  isAssistantRuntimeChatMessageEvent
+  isAssistantRuntimeChatMessageEvent,
+  isRuntimeChatMessageEvent
 } from './chat-events'
 
 // Remembers which sessions were marked as waiting during the previous permission sync.
@@ -391,6 +392,25 @@ const applyWorkspaceRuntimeEvent = async (
 ): Promise<boolean> => {
   const store = useSessionStore.getState()
 
+  // A routed user Message is persisted by main before broadcast. Project that same Message locally
+  // without treating it as a fresh prompt or starting another run.
+  if (
+    isRuntimeChatMessageEvent(event) &&
+    event.role === 'user' &&
+    event.sessionId &&
+    event.messageId
+  ) {
+    store.appendRoutedUserMessage({
+      sessionId: event.sessionId,
+      messageId: event.messageId,
+      eventId: event.id,
+      content: getAcpRuntimeEventText(event) ?? '',
+      createdAt: event.timestamp,
+      ...(event.promptMessageId ? { responseToMessageId: event.promptMessageId } : {})
+    })
+    return true
+  }
+
   // Assistant chat deltas extend the transcript as streamed markdown messages.
   if (isAssistantRuntimeChatMessageEvent(event)) {
     const image = getAcpRuntimeEventImage(event)
@@ -445,6 +465,11 @@ const applyWorkspaceRuntimeEvent = async (
       terminalOutput: event.terminalOutput,
       terminalExitCode: event.terminalExitCode
     })
+    return true
+  }
+
+  if (event.kind === 'plan' && event.sessionId && event.planProjection) {
+    store.setActivePlanProjection(event.sessionId, event.planProjection)
     return true
   }
 

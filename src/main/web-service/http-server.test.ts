@@ -934,7 +934,7 @@ describe('startWebHttpServer', () => {
       .filter(([path]) => path.startsWith('acp.'))
       .map(([, channel]) => channel)
       .sort()
-    expect(acpChannels).toHaveLength(13)
+    expect(acpChannels).toHaveLength(15)
     const permissionChannels = [
       'permissions:extend-undo',
       'permissions:list',

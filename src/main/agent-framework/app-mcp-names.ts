@@ -41,6 +41,11 @@ const APP_MCP_SERVERS: readonly AppMcpServerDefinition[] = [
     canonicalName: 'open-science-skills',
     openCodeName: 'open_science_skills',
     tools: ['request_skill_import']
+  },
+  {
+    canonicalName: 'open-science-plan',
+    openCodeName: 'open_science_plan',
+    tools: ['generate_plan', 'update_step_status']
   }
 ]
 

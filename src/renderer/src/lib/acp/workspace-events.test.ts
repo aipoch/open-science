@@ -102,6 +102,39 @@ describe('workspace runtime events', () => {
     })
   })
 
+  it('projects Plan feedback runtime events as settled user Messages', async () => {
+    const sessionBefore = useSessionStore.getState().sessions[0]
+    useSessionStore.setState({
+      sessions: [
+        {
+          ...sessionBefore,
+          status: 'waiting-plan-approval',
+          activeRun: { promptMessageId: 'prompt-1', startedAt: 1 }
+        }
+      ]
+    })
+
+    await expect(
+      applyWorkspaceRuntimeEvent(
+        createEvent({
+          id: 'session-user-message-message-1',
+          role: 'user',
+          messageId: 'message-1',
+          text: 'Split the analysis by cohort.'
+        })
+      )
+    ).resolves.toBe(true)
+
+    const session = useSessionStore.getState().sessions[0]
+    expect(session.status).toBe('running')
+    expect(session.messages.at(-1)).toMatchObject({
+      id: 'message-1',
+      role: 'user',
+      content: 'Split the analysis by cohort.',
+      status: 'complete'
+    })
+  })
+
   it('consumes activity-group declarations without creating a visible tool step', async () => {
     await applyWorkspaceRuntimeEvent(
       createEvent({

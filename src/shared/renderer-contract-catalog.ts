@@ -166,9 +166,9 @@ export const RENDERER_CONTRACT_GROUPS = Object.freeze([
   group('acp', 'acp', [
     ['onEvent', 'acp:event', EVENT], ['onPermissionRequest', 'acp:permission-request', EVENT], ['onState', 'acp:state', EVENT], ['cancel', 'acp:cancel'],
     ['compactSession', 'acp:compact-session'], ['connect', 'acp:connect', WEB, DEFAULT_EMPTY, DEFAULT_EMPTY_ABSENT_ONLY], ['createSession', 'acp:create-session', WEB, DEFAULT_EMPTY, DEFAULT_EMPTY_ABSENT_ONLY],
-    ['deleteSession', 'acp:delete-session'], ['disconnect', 'acp:disconnect'], ['getState', 'acp:get-state'],
+    ['deleteSession', 'acp:delete-session'], ['disconnect', 'acp:disconnect'], ['getState', 'acp:get-state'], ['getPlanProjection', 'acp:get-plan-projection'],
     ['resetSessionContext', 'acp:reset-session-context'], ['respondToPermission', 'acp:respond-permission'], ['resumeSession', 'acp:resume-session'],
-    ['revokePermissionGrant', 'acp:revoke-permission-grant'], ['sendPrompt', 'acp:send-prompt'], ['setPermissionProfile', 'acp:set-permission-profile'],
+    ['respondPlan', 'acp:respond-plan'], ['revokePermissionGrant', 'acp:revoke-permission-grant'], ['sendPrompt', 'acp:send-prompt'], ['setPermissionProfile', 'acp:set-permission-profile'],
   ]),
   group('artifacts', 'artifacts', [
     ['finalizeRunArtifacts', 'artifacts:finalize-run'], ['getLineage', 'artifacts:get-lineage'], ['getVersionExecution', 'artifacts:get-version-execution'],

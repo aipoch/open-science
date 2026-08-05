@@ -941,6 +941,13 @@ const createApplicationModules = async (
       connectorService,
       computeService: computeServiceWithRegistry,
       skillImporter: conversationSkillImporter,
+      planService: {
+        call: (input) => {
+          const runtime = runtimeRef.current
+          if (!runtime) return Promise.reject(new Error('ACP runtime is not available.'))
+          return runtime.callSessionPlan(input)
+        }
+      },
       artifactProvenance: {
         createVersion: (request) =>
           sessionPersistenceCoordinator.runSessionMutation(
@@ -1059,7 +1066,8 @@ const createApplicationModules = async (
       beforeSessionDelete: (sessionId) =>
         notebookService.shutdownSession(sessionId).then(() => undefined),
       initializationBarrier: initialConnectorSkillsReady,
-      profileService
+      profileService,
+      sessionPersistenceCoordinator
     },
     (options) => {
       const runtime = createAcpRuntime(options)

@@ -7,6 +7,7 @@ import {
   type PersistedChatSession
 } from '../../../shared/session-persistence'
 import type { UploadedAttachment } from '../../../shared/uploads'
+import type { ActivePlanProjection } from '../../../shared/session-plan/contract'
 import {
   createInitialSessionState,
   toPersistedSession,
@@ -43,6 +44,36 @@ const createUploadAttachment = (
   ...overrides
 })
 
+const createPlanProjection = (artifactVersionId: string): ActivePlanProjection => ({
+  artifactId: `artifact-${artifactVersionId}`,
+  artifactVersionId,
+  artifactChecksum: 'a'.repeat(64),
+  revision: 1,
+  approval: 'pending',
+  lifecycle: 'awaiting_approval',
+  requiresExplicitContinuation: false,
+  document: {
+    schema_version: 1,
+    task_summary: `Plan ${artifactVersionId}`,
+    phases: [
+      {
+        name: 'Analysis',
+        delegations: [
+          {
+            name: 'Primary agent',
+            steps: [{ title: `Step ${artifactVersionId}`, description: 'Do the work.' }]
+          }
+        ]
+      }
+    ],
+    desired_outputs: [],
+    feasibility: { confidence: 'high', rationale: 'Inputs are available.' }
+  },
+  stepStatuses: {},
+  stepStates: { Step: { status: 'not_started' } },
+  counts: { phases: 1, delegations: 1, steps: 1, completed: 0, inProgress: 0 }
+})
+
 describe('session store', () => {
   // Reset time and state so each store assertion starts from the same baseline.
   beforeEach(() => {
@@ -54,6 +85,289 @@ describe('session store', () => {
   it('starts empty so New can stay outside store state', () => {
     expect(useSessionStore.getState().sessions).toEqual([])
     expect(useSessionStore.getState().selectedSessionId).toBeUndefined()
+  })
+
+  it('hydrates runtime context as a read projection but never authors it in a renderer save', () => {
+    useSessionStore.getState().hydrateSessions(
+      [
+        {
+          id: 'session-with-runtime-context',
+          projectId: 'default',
+          title: 'Plan approval',
+          cwd: '/workspace',
+          status: 'waiting-plan-approval',
+          runtimeContext: {
+            version: 1,
+            revision: 2,
+            plan: {
+              artifactId: 'plan-1',
+              artifactVersionId: 'plan-version-1',
+              artifactChecksum: 'a'.repeat(64),
+              approval: 'pending',
+              stepStatuses: {}
+            }
+          },
+          messages: [],
+          createdAt: 1,
+          updatedAt: 2
+        }
+      ],
+      { version: SESSION_MANIFEST_VERSION }
+    )
+
+    const projection = useSessionStore.getState().sessions[0]
+    expect(projection.runtimeContext).toMatchObject({ revision: 2 })
+    expect(toPersistedSession(projection)).not.toHaveProperty('runtimeContext')
+  })
+
+  it('keeps a current Plan projection when a durable Session update echoes back', () => {
+    const persistedPlan = {
+      artifactId: 'artifact-version-1',
+      artifactVersionId: 'version-1',
+      artifactChecksum: 'a'.repeat(64),
+      approval: 'pending' as const,
+      stepStatuses: {}
+    }
+    useSessionStore.getState().hydrateSessions([
+      {
+        id: 'session-1',
+        projectId: 'project-1',
+        title: 'Plan approval',
+        cwd: '/workspace',
+        status: 'waiting-plan-approval',
+        runtimeContext: { version: 1, revision: 1, plan: persistedPlan },
+        messages: [],
+        createdAt: 1,
+        updatedAt: 1
+      }
+    ])
+
+    const projection = createPlanProjection('version-1')
+    useSessionStore.getState().setActivePlanProjection('session-1', projection)
+
+    useSessionStore.getState().upsertPersistedSession({
+      id: 'session-1',
+      projectId: 'project-1',
+      title: 'Plan approval',
+      cwd: '/workspace',
+      status: 'waiting-plan-approval',
+      runtimeContext: { version: 1, revision: 1, plan: persistedPlan },
+      messages: [],
+      createdAt: 1,
+      updatedAt: Date.now() + 1
+    })
+
+    expect(useSessionStore.getState().sessions[0].activePlanProjection).toBe(projection)
+  })
+
+  it('restores branch-bound Plan history after saving and hydrating a Session', () => {
+    useSessionStore.getState().hydrateSessions(
+      [
+        {
+          id: 'session-1',
+          projectId: 'project-1',
+          title: 'Plan replacement',
+          cwd: '/workspace',
+          status: 'idle',
+          messages: [],
+          createdAt: 1,
+          updatedAt: 2
+        }
+      ],
+      { version: SESSION_MANIFEST_VERSION }
+    )
+    const original = {
+      ...createPlanProjection('version-1'),
+      originatingPromptMessageId: 'prompt-a'
+    }
+    const replacement = {
+      ...createPlanProjection('version-2'),
+      originatingPromptMessageId: 'prompt-b'
+    }
+
+    useSessionStore.getState().setActivePlanProjection('session-1', original)
+    useSessionStore.getState().setActivePlanProjection('session-1', replacement)
+
+    const session = useSessionStore.getState().sessions[0]
+    expect(session.activePlanProjection).toBe(replacement)
+    expect(session.planHistoryProjections).toEqual([original])
+    const persisted = toPersistedSession(session)
+    expect(persisted.planHistoryProjections).toEqual([
+      {
+        ...original,
+        stepStates: { 'Step version-1': { status: 'not_started' } }
+      }
+    ])
+
+    useSessionStore.setState(createInitialSessionState())
+    useSessionStore.getState().hydrateSessions([persisted], {
+      version: SESSION_MANIFEST_VERSION
+    })
+
+    expect(useSessionStore.getState().sessions[0].planHistoryProjections).toEqual(
+      persisted.planHistoryProjections
+    )
+  })
+
+  it('does not drop Plan history when a newer durable Session echo omits UI history', () => {
+    useSessionStore.getState().hydrateSessions([
+      {
+        id: 'session-1',
+        projectId: 'project-1',
+        title: 'Plan replacement',
+        cwd: '/workspace',
+        status: 'idle',
+        messages: [],
+        createdAt: 1,
+        updatedAt: 2
+      }
+    ])
+    const original = {
+      ...createPlanProjection('version-1'),
+      originatingPromptMessageId: 'prompt-a'
+    }
+    useSessionStore.getState().setActivePlanProjection('session-1', original)
+    useSessionStore.getState().setActivePlanProjection('session-1', {
+      ...createPlanProjection('version-2'),
+      originatingPromptMessageId: 'prompt-b'
+    })
+
+    useSessionStore.getState().upsertPersistedSession({
+      id: 'session-1',
+      projectId: 'project-1',
+      title: 'Newer durable echo',
+      cwd: '/workspace',
+      status: 'idle',
+      messages: [],
+      createdAt: 1,
+      updatedAt: Date.now() + 1
+    })
+
+    expect(useSessionStore.getState().sessions[0].planHistoryProjections).toEqual([original])
+  })
+
+  it('releases renderer Composer blocking when the active Plan is rejected', () => {
+    useSessionStore.getState().hydrateSessions(
+      [
+        {
+          id: 'session-1',
+          projectId: 'project-1',
+          title: 'Plan rejection',
+          cwd: '/workspace',
+          status: 'waiting-plan-approval',
+          messages: [],
+          createdAt: 1,
+          updatedAt: 2
+        }
+      ],
+      { version: SESSION_MANIFEST_VERSION }
+    )
+    const rejected = {
+      ...createPlanProjection('version-1'),
+      approval: 'rejected' as const,
+      lifecycle: 'rejected' as const
+    }
+
+    useSessionStore.getState().setActivePlanProjection('session-1', rejected)
+
+    expect(useSessionStore.getState().sessions[0].status).toBe('idle')
+  })
+
+  it('keeps an approved Plan idle when no execution turn is active', () => {
+    useSessionStore.getState().hydrateSessions([
+      {
+        id: 'session-1',
+        projectId: 'project-1',
+        title: 'Plan approval',
+        cwd: '/workspace',
+        status: 'waiting-plan-approval',
+        messages: [],
+        createdAt: 1,
+        updatedAt: 2
+      }
+    ])
+    const approved = {
+      ...createPlanProjection('version-1'),
+      approval: 'approved' as const,
+      lifecycle: 'approved' as const,
+      requiresExplicitContinuation: true
+    }
+
+    useSessionStore.getState().setActivePlanProjection('session-1', approved)
+
+    const session = useSessionStore.getState().sessions[0]
+    expect(session).toMatchObject({
+      status: 'idle',
+      activePlanProjection: { approval: 'approved', requiresExplicitContinuation: true }
+    })
+    expect(session.activeRun).toBeUndefined()
+  })
+
+  it('keeps a restored pending Plan awaiting review when no response interaction is active', () => {
+    useSessionStore.getState().hydrateSessions([
+      {
+        id: 'session-1',
+        projectId: 'project-1',
+        title: 'Orphaned Plan',
+        cwd: '/workspace',
+        status: 'waiting-plan-approval',
+        messages: [],
+        createdAt: 1,
+        updatedAt: 2
+      }
+    ])
+
+    useSessionStore
+      .getState()
+      .setActivePlanProjection('session-1', createPlanProjection('version-1'))
+
+    expect(useSessionStore.getState().sessions[0]).toMatchObject({
+      status: 'waiting-plan-approval',
+      activePlanProjection: { approval: 'pending' }
+    })
+  })
+
+  it('keeps a pending Plan idle after its Agent interaction ended without a decision', () => {
+    useSessionStore.getState().hydrateSessions([
+      {
+        id: 'session-1',
+        projectId: 'project-1',
+        title: 'Settled Plan interaction',
+        cwd: '/workspace',
+        status: 'idle',
+        messages: [],
+        createdAt: 1,
+        updatedAt: 2
+      }
+    ])
+
+    useSessionStore
+      .getState()
+      .setActivePlanProjection('session-1', createPlanProjection('version-1'))
+
+    expect(useSessionStore.getState().sessions[0]).toMatchObject({
+      status: 'idle',
+      activePlanProjection: { approval: 'pending' }
+    })
+  })
+
+  it('returns a settled blocked Plan session to idle', () => {
+    useSessionStore.setState({
+      sessions: [
+        {
+          id: 'blocked-plan-session',
+          projectId: 'default',
+          status: 'running'
+        } as ChatSession
+      ]
+    })
+
+    useSessionStore.getState().setActivePlanProjection('blocked-plan-session', {
+      lifecycle: 'blocked',
+      approval: 'approved'
+    } as NonNullable<ChatSession['activePlanProjection']>)
+
+    expect(useSessionStore.getState().sessions[0].status).toBe('idle')
   })
 
   it('uses the provided session id when the first user message creates a session', () => {
@@ -719,6 +1033,29 @@ describe('session store', () => {
 
     useSessionStore.getState().clearPermissionPending('transport-session-1')
     expect(useSessionStore.getState().sessions[0].status).toBe('running')
+  })
+
+  it('keeps Plan approval waiting sticky across late generate_plan activity updates', () => {
+    useSessionStore.getState().appendUserMessage({
+      sessionId: 'transport-session-1',
+      content: 'Create a plan'
+    })
+    useSessionStore
+      .getState()
+      .setActivePlanProjection('transport-session-1', createPlanProjection('version-1'))
+
+    useSessionStore.getState().upsertToolActivity({
+      sessionId: 'transport-session-1',
+      toolCallId: 'generate-plan-call',
+      eventId: 'generate-plan-completed',
+      providerToolName: 'generate_plan',
+      status: 'completed'
+    })
+
+    expect(useSessionStore.getState().sessions[0]).toMatchObject({
+      status: 'waiting-plan-approval',
+      activePlanProjection: { lifecycle: 'awaiting_approval' }
+    })
   })
 
   it('upserts transient tool activities without duplicating repeated events', () => {

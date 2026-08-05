@@ -67,6 +67,8 @@ type AcpPromptPreparationInput = Readonly<{
   skillImportEnabled: boolean
   skillImportTurnToken: string
   turnSkill: TurnSkillHandle
+  protectedContext?: string
+  turnPromptReminders?: readonly string[]
   signal: AbortSignal
   isCurrent: () => boolean
   cancellationCheckpoint: () => Promise<'active' | 'cancelled'>
@@ -156,9 +158,12 @@ class AcpPromptPreparationOwner {
         persistentSystemPrompt: input.backend.prompt.persistentSystemPrompt,
         sessionOptions: input.backend.session.options,
         specialistPrefix: input.specialistPrefix,
-        turnPromptReminders: skillPreparation.specialistSkillGuidance
-          ? [skillPreparation.specialistSkillGuidance]
-          : []
+        turnPromptReminders: [
+          ...(skillPreparation.specialistSkillGuidance
+            ? [skillPreparation.specialistSkillGuidance]
+            : []),
+          ...(input.turnPromptReminders ?? [])
+        ]
       })
       const skillActivityInputs = Object.freeze(
         skillPreparation.codexSkillInputs.map((skill) => Object.freeze({ ...skill }))
@@ -168,6 +173,7 @@ class AcpPromptPreparationOwner {
           ? this.options.notebook?.peekHandoffContext?.(input.request.sessionId)
           : undefined
       const promptText = [
+        input.protectedContext,
         input.request.historyPreamble,
         notebookHandoff ? notebookHandoffPrompt(notebookHandoff) : undefined,
         promptPrefix,

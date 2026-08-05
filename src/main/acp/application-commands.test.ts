@@ -50,6 +50,8 @@ const createDependencies = (): AcpApplicationCommandDependencies => ({
     cancelPrompt: vi.fn(async () => snapshot),
     deleteSession: vi.fn(async () => snapshot),
     respondToPermission: vi.fn(async () => snapshot),
+    getSessionPlanProjection: vi.fn(async () => null),
+    respondSessionPlan: vi.fn(async () => ({ projection: {} as never, changed: true })),
     setPermissionProfile: vi.fn(async () => snapshot),
     revokePermissionGrant: vi.fn(async () => snapshot)
   },
@@ -86,9 +88,11 @@ describe('ACP application commands', () => {
       'acp:create-session',
       'acp:delete-session',
       'acp:disconnect',
+      'acp:get-plan-projection',
       'acp:get-state',
       'acp:reset-session-context',
       'acp:respond-permission',
+      'acp:respond-plan',
       'acp:resume-session',
       'acp:revoke-permission-grant',
       'acp:send-prompt',
@@ -193,6 +197,66 @@ describe('ACP application commands', () => {
     expect(request.continuation.originatingTurnToken).toBe('renderer-forged-turn')
   })
 
+  it('accepts only the exact Plan first turn intent at the application-command seam', async () => {
+    const dependencies = createDependencies()
+    const router = createApplicationCommandRouter()
+    registerAcpCommands(router.registrar, dependencies)
+
+    await router.dispatcher.invoke(
+      acpCommands.sendPrompt,
+      invocation([{ sessionId: 'session-1', text: 'Plan this', turnIntent: 'plan-first' }])
+    )
+    await router.dispatcher.invoke(
+      acpCommands.sendPrompt,
+      invocation([
+        {
+          sessionId: 'session-1',
+          text: 'Do not trust this',
+          turnIntent: 'hidden-injection' as 'plan-first'
+        }
+      ])
+    )
+
+    expect(dependencies.workflows.sendPrompt).toHaveBeenNthCalledWith(
+      1,
+      expect.objectContaining({ turnIntent: 'plan-first' })
+    )
+    expect(dependencies.workflows.sendPrompt).toHaveBeenNthCalledWith(
+      2,
+      expect.objectContaining({ turnIntent: undefined })
+    )
+  })
+
+  it('accepts explicit Plan continuation authority only from a current human caller', async () => {
+    const dependencies = createDependencies()
+    const router = createApplicationCommandRouter()
+    registerAcpCommands(router.registrar, dependencies)
+    const request = {
+      sessionId: 'session-1',
+      text: 'continue',
+      planContinuation: {
+        projectId: 'project-1',
+        artifactVersionId: 'version-1',
+        expectedRevision: 4
+      }
+    }
+
+    await expect(
+      router.dispatcher.invoke(
+        acpCommands.sendPrompt,
+        invocation([request], createWebCallerContext('local-web'))
+      )
+    ).resolves.toBe(snapshot)
+    await expect(
+      router.dispatcher.invoke(
+        acpCommands.sendPrompt,
+        invocation([request], createTaskCallerContext())
+      )
+    ).rejects.toThrow('Only a current human caller can continue a Session Plan.')
+
+    expect(dependencies.workflows.sendPrompt).toHaveBeenCalledTimes(1)
+  })
+
   it('accepts permission responses only from a current human-originated caller', async () => {
     const dependencies = createDependencies()
     const router = createApplicationCommandRouter()
@@ -245,6 +309,74 @@ describe('ACP application commands', () => {
     ).rejects.toThrow('Caller authorization is no longer current.')
 
     expect(dependencies.runtime.respondToPermission).toHaveBeenCalledTimes(humanCallers.length)
+  })
+
+  it('routes Plan decisions and revision feedback only from a current human', async () => {
+    const dependencies = createDependencies()
+    const router = createApplicationCommandRouter()
+    registerAcpCommands(router.registrar, dependencies)
+    const request = {
+      projectId: 'project-1',
+      sessionId: 'session-1',
+      artifactVersionId: 'version-1',
+      expectedRevision: 2,
+      decision: 'approved' as const
+    }
+
+    await expect(
+      router.dispatcher.invoke(acpCommands.respondPlan, invocation([request]))
+    ).resolves.toMatchObject({ changed: true })
+    expect(dependencies.runtime.respondSessionPlan).toHaveBeenCalledWith(request)
+    const feedback = {
+      projectId: 'project-1',
+      sessionId: 'session-1',
+      feedback: 'Split the analysis by cohort.'
+    }
+    await router.dispatcher.invoke(acpCommands.respondPlan, invocation([feedback]))
+    expect(dependencies.runtime.respondSessionPlan).toHaveBeenCalledWith(feedback)
+    await expect(
+      router.dispatcher.invoke(
+        acpCommands.respondPlan,
+        invocation([request], createTaskCallerContext())
+      )
+    ).rejects.toThrow('Only a current human caller can respond to a Session Plan.')
+  })
+
+  it('exposes Plan projection reads to the same current human callers on Electron and Web', async () => {
+    const dependencies = createDependencies()
+    const router = createApplicationCommandRouter()
+    registerAcpCommands(router.registrar, dependencies)
+    const humanCallers = [
+      createElectronCallerContext(7),
+      createWebCallerContext('local-web'),
+      createWebCallerContext('remote-web', { location: 'remote' })
+    ]
+
+    for (const callerContext of humanCallers) {
+      await expect(
+        router.dispatcher.invoke(
+          acpCommands.getPlanProjection,
+          invocation(['project-1', 'session-1'], callerContext)
+        )
+      ).resolves.toBeNull()
+    }
+    await expect(
+      router.dispatcher.invoke(
+        acpCommands.getPlanProjection,
+        invocation(['project-1', 'session-1'], createTaskCallerContext())
+      )
+    ).rejects.toThrow('Only a current human caller can access a Session Plan.')
+    await expect(
+      router.dispatcher.invoke(
+        acpCommands.getPlanProjection,
+        invocation(
+          ['project-1', 'session-1'],
+          createWebCallerContext('stale', { isAuthorizationCurrent: () => false })
+        )
+      )
+    ).rejects.toThrow('Caller authorization is no longer current.')
+
+    expect(dependencies.runtime.getSessionPlanProjection).toHaveBeenCalledTimes(humanCallers.length)
   })
 
   it('keeps permission-profile changes on their separate current policy', async () => {
