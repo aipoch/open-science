@@ -9,6 +9,7 @@ import type { DiscoveredInterpreter } from '../shared/notebook-runtime'
 import type {
   AddCustomServerRequest,
   AuthenticateCustomServerRequest,
+  ExportCustomServerTemplateRequest,
   CreateSkillRequest,
   DeleteSkillRequest,
   ImportAgentHomeSkillsRequest,
@@ -238,6 +239,12 @@ const api: OpenScienceAPI = {
     importAgentHomeSkills: (request: ImportAgentHomeSkillsRequest) =>
       electronRendererContracts.invoke('settings.importAgentHomeSkills', request),
     listConnectors: () => electronRendererContracts.invoke('settings.listConnectors'),
+    previewCustomServerTemplateExport: (id: string) =>
+      electronRendererContracts.invoke('settings.previewCustomServerTemplateExport', id),
+    selectCustomServerTemplate: () =>
+      electronRendererContracts.invoke('settings.selectCustomServerTemplate'),
+    exportCustomServerTemplate: (request: ExportCustomServerTemplateRequest) =>
+      electronRendererContracts.invoke('settings.exportCustomServerTemplate', request),
     getConnectorDetail: (id: string) =>
       electronRendererContracts.invoke('settings.getConnectorDetail', id),
     setConnectorEnabled: (request: SetConnectorEnabledRequest) =>

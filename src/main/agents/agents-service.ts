@@ -417,7 +417,9 @@ export const projectConnectorsFromStored = (
       (server.transport !== 'stdio' && !server.url)
     const unauthenticated = Boolean(server.oauth && !server.oauthState?.tokens?.access_token)
     return {
-      id: server.id,
+      // The immutable public name is also the host.mcp routing key and the value Specialists
+      // persist. The UUID remains a local Settings/OAuth/Skill-provisioning identity.
+      id: server.name,
       displayName: server.name,
       description: server.description ?? '',
       mainEnabled: server.enabled,

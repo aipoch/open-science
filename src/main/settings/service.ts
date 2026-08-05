@@ -8,6 +8,8 @@ import type {
   ClaudeInstallEvent,
   ClaudeInstallResult,
   ConnectorDetailView,
+  ConnectorTemplateExportPreview,
+  ConnectorTemplatePreview,
   ConnectorsSnapshot,
   AddCustomServerRequest,
   RemoveCustomServerRequest,
@@ -793,6 +795,21 @@ class SettingsService {
   // Lists every bundled connector with enabled / auto-allow state, plus shared NCBI credential state.
   async listConnectors(): Promise<ConnectorsSnapshot> {
     return this.connectors.listConnectors()
+  }
+
+  async previewCustomServerTemplateExport(id: string): Promise<ConnectorTemplateExportPreview> {
+    return (await this.connectors.buildCustomServerTemplateExport(id)).preview
+  }
+
+  async buildCustomServerTemplateExport(id: string): Promise<{
+    preview: ConnectorTemplateExportPreview
+    contents?: string
+  }> {
+    return this.connectors.buildCustomServerTemplateExport(id)
+  }
+
+  async previewCustomServerTemplateImport(contents: string): Promise<ConnectorTemplatePreview> {
+    return this.connectors.previewCustomServerTemplateImport(contents)
   }
 
   // Returns one connector's view plus its tools (with per-tool permission) and metadata.

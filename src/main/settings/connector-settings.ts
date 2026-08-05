@@ -4,6 +4,8 @@ import { isDeepStrictEqual } from 'node:util'
 import type {
   AddCustomServerRequest,
   ConnectorDetailView,
+  ConnectorTemplateExportPreview,
+  ConnectorTemplatePreview,
   ConnectorsSnapshot,
   ConnectorView,
   CustomServerView,
@@ -22,6 +24,7 @@ import { getConnectorTools } from '../connectors/registry'
 import { encryptKey, isEncryptionAvailable, tryDecryptKey } from './crypto'
 import { sanitizeCustomMcpServer, type SettingsRepository } from './repository'
 import type { StoredConnectors, StoredCustomMcpOAuthState, StoredCustomMcpServer } from './types'
+import { buildConnectorTemplateExport, parseConnectorTemplate } from './connector-template'
 
 type CustomServerSecurityChangeGuard = {
   commit(server: StoredCustomMcpServer): void
@@ -115,6 +118,41 @@ class ConnectorSettingsModule {
     return this.connectorsSnapshot()
   }
 
+  async buildCustomServerTemplateExport(id: string): Promise<{
+    preview: ConnectorTemplateExportPreview
+    contents?: string
+  }> {
+    const server = (await this.repository.getSettings()).connectors?.customMcpServers?.find(
+      (candidate) => candidate.id === id
+    )
+    if (!server) throw new Error(`Unknown custom connector: ${id}`)
+
+    return buildConnectorTemplateExport({
+      id: server.id,
+      name: server.name,
+      transport: server.transport,
+      ...(server.description ? { description: server.description } : {}),
+      ...(server.command ? { command: server.command } : {}),
+      ...(server.args?.length ? { args: server.args } : {}),
+      ...(server.url ? { url: server.url } : {}),
+      ...(server.envRefs || server.env
+        ? { environmentNames: Object.keys(server.envRefs ?? server.env ?? {}) }
+        : {}),
+      ...(server.headerRefs || server.headers
+        ? { headerNames: Object.keys(server.headerRefs ?? server.headers ?? {}) }
+        : {}),
+      ...(server.oauth ? { oauth: server.oauth } : {})
+    })
+  }
+
+  async previewCustomServerTemplateImport(contents: string): Promise<ConnectorTemplatePreview> {
+    const customServers = (await this.repository.getSettings()).connectors?.customMcpServers ?? []
+    return parseConnectorTemplate(contents, {
+      existingNames: customServers.map((server) => server.name),
+      bundledIds: CONNECTOR_CATALOG.map((connector) => connector.id)
+    })
+  }
+
   async getConnectorDetail(id: string): Promise<ConnectorDetailView> {
     const meta = CONNECTOR_CATALOG.find((entry) => entry.id === id)
 
@@ -178,6 +216,15 @@ class ConnectorSettingsModule {
   }
 
   async addCustomServer(request: AddCustomServerRequest): Promise<ConnectorsSnapshot> {
+    const name = request.name.trim()
+    const normalizedName = name.toLowerCase()
+    const existingServers = (await this.repository.getSettings()).connectors?.customMcpServers ?? []
+    if (CONNECTOR_CATALOG.some((connector) => connector.id.toLowerCase() === normalizedName)) {
+      throw new Error(`Connector name "${name}" is reserved by a built-in connector`)
+    }
+    if (existingServers.some((server) => server.name.toLowerCase() === normalizedName)) {
+      throw new Error(`A custom connector named "${name}" already exists`)
+    }
     if (request.transport === 'stdio' && request.oauth) {
       throw new Error('OAuth is only supported for remote custom connectors')
     }
@@ -186,7 +233,7 @@ class ConnectorSettingsModule {
     }
     const candidate: StoredCustomMcpServer = {
       id: randomUUID(),
-      name: request.name.trim(),
+      name,
       transport: request.transport,
       enabled: true,
       trustedAt: Date.now(),

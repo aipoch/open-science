@@ -130,13 +130,13 @@ describe('AgentsService read surface', () => {
     expect(chemistry?.availability).toBe('available')
     expect(chemistry?.tools.length).toBeGreaterThan(0)
     expect(chemistry).not.toHaveProperty('args')
-    const custom = connectors.find((c) => c.id === 'cust-1')
+    const custom = connectors.find((c) => c.id === 'My Server')
     expect(custom?.source).toBe('custom')
     expect(custom?.mainEnabled).toBe(true)
     expect(custom).not.toHaveProperty('command')
     expect(custom).not.toHaveProperty('headers')
     expect(custom).not.toHaveProperty('env')
-    expect(connectors.find((c) => c.id === 'oauth-1')?.availability).toBe('unauthenticated')
+    expect(connectors.find((c) => c.id === 'OAuth Server')?.availability).toBe('unauthenticated')
   })
 
   it('filters by exact stable id first', async () => {

@@ -66,6 +66,9 @@ const GENERATED_SOURCE_OMISSIONS = [
   'officePreview.reportState',
   'sessions.onFlushRequest',
   'sessions.sendFlushResponse',
+  'settings.exportCustomServerTemplate',
+  'settings.previewCustomServerTemplateExport',
+  'settings.selectCustomServerTemplate',
   'specialist.cancelHandoff',
   'specialist.cancelPackage',
   'specialist.create',
@@ -207,7 +210,7 @@ describe('renderer surface inventory', () => {
       ...Object.keys(WEB_EVENT_CHANNELS)
     ])
 
-    expect(electronPaths).toHaveLength(303)
+    expect(electronPaths).toHaveLength(306)
     expectSameSet(
       electronPaths,
       RENDERER_CONTRACT_CATALOG.map(({ publicPath }) => publicPath)

@@ -212,6 +212,10 @@ import type {
   ScanRepoResult,
   ConnectorsSnapshot,
   ConnectorDetailView,
+  ConnectorTemplateExportPreview,
+  ConnectorTemplateSelectionResult,
+  ExportCustomServerTemplateRequest,
+  ExportCustomServerTemplateResult,
   SetConnectorEnabledRequest,
   SetConnectorAutoAllowRequest,
   SetToolPermissionRequest,
@@ -424,6 +428,11 @@ export interface OpenScienceAPI {
       request: ImportAgentHomeSkillsRequest
     ): Promise<ImportAgentHomeSkillsResult>
     listConnectors(): Promise<ConnectorsSnapshot>
+    previewCustomServerTemplateExport(id: string): Promise<ConnectorTemplateExportPreview>
+    selectCustomServerTemplate(): Promise<ConnectorTemplateSelectionResult>
+    exportCustomServerTemplate(
+      request: ExportCustomServerTemplateRequest
+    ): Promise<ExportCustomServerTemplateResult>
     getConnectorDetail(id: string): Promise<ConnectorDetailView>
     setConnectorEnabled(request: SetConnectorEnabledRequest): Promise<ConnectorsSnapshot>
     setConnectorAutoAllow(request: SetConnectorAutoAllowRequest): Promise<ConnectorsSnapshot>

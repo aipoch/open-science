@@ -74,6 +74,9 @@ type FakeSettingsService = Record<
   | 'listAgentHomeSkills'
   | 'previewAgentHomeSkill'
   | 'importAgentHomeSkills'
+  | 'previewCustomServerTemplateExport'
+  | 'buildCustomServerTemplateExport'
+  | 'previewCustomServerTemplateImport'
   | 'setConnectorEnabled'
   | 'updateCustomServer',
   ReturnType<typeof vi.fn>
@@ -161,6 +164,34 @@ const createFakeService = (): FakeSettingsService => ({
   listAgentHomeSkills: vi.fn().mockResolvedValue([]),
   previewAgentHomeSkill: vi.fn().mockResolvedValue({ name: 'Installed preview' }),
   importAgentHomeSkills: vi.fn().mockResolvedValue({ results: [], skills: [] }),
+  previewCustomServerTemplateExport: vi.fn().mockResolvedValue({
+    connectorId: 'server-id',
+    ready: true,
+    diagnostics: [],
+    digest: 'digest',
+    suggestedFileName: 'open-science-connector-example.json'
+  }),
+  buildCustomServerTemplateExport: vi.fn().mockResolvedValue({
+    preview: {
+      connectorId: 'server-id',
+      ready: true,
+      diagnostics: [],
+      digest: 'digest',
+      suggestedFileName: 'open-science-connector-example.json'
+    },
+    contents: '{"schemaVersion":1}\n'
+  }),
+  previewCustomServerTemplateImport: vi.fn().mockResolvedValue({
+    ready: true,
+    diagnostics: [],
+    definition: {
+      schemaVersion: 1,
+      kind: 'open-science.connector',
+      name: 'example-server',
+      transport: 'stdio',
+      command: 'example-mcp'
+    }
+  }),
   setConnectorEnabled: vi.fn().mockResolvedValue({ connectors: [] }),
   updateCustomServer: vi.fn().mockResolvedValue({ connectors: [], customServers: [] })
 })
@@ -179,6 +210,7 @@ type TestSettingsIpcOptions = {
   onCustomServerSecurityChanged?: (serverId: string) => Promise<unknown>
   onAppIconVariantChanged?: SettingsWorkflowEffects['appearance']['applyAppIconVariant']
   listAppIconPreviews?: SettingsIpcOptions['listAppIconPreviews']
+  connectorTemplateFiles?: SettingsIpcOptions['connectorTemplateFiles']
 }
 
 // Keeps the adapter tests concise while routing every mutation through the real workflow owner.
@@ -192,7 +224,8 @@ const registerTestSettingsIpcHandlers = ({
   onCustomServerRemoved,
   onCustomServerSecurityChanged,
   onAppIconVariantChanged,
-  listAppIconPreviews
+  listAppIconPreviews,
+  connectorTemplateFiles
 }: TestSettingsIpcOptions): void => {
   registerSettingsIpcHandlers({
     service,
@@ -222,7 +255,8 @@ const registerTestSettingsIpcHandlers = ({
         applyAppIconVariant: onAppIconVariantChanged ?? (() => undefined)
       }
     }),
-    listAppIconPreviews
+    listAppIconPreviews,
+    connectorTemplateFiles
   })
 }
 
@@ -257,10 +291,55 @@ describe('settings IPC handlers', () => {
       'settings:login-isolated-claude-browser',
       'settings:cancel-isolated-claude-login',
       'settings:logout-isolated-claude',
-      'settings:mark-onboarding-complete'
+      'settings:mark-onboarding-complete',
+      'settings:preview-custom-server-template-export',
+      'settings:select-custom-server-template',
+      'settings:export-custom-server-template'
     ]) {
       expect(handlers.has(channel)).toBe(true)
     }
+  })
+
+  it('validates selected Connector files and saves only the previewed export', async () => {
+    handlers.clear()
+    const service = createFakeService()
+    const connectorTemplateFiles = {
+      select: vi.fn().mockResolvedValue({
+        cancelled: false as const,
+        fileName: 'example.json',
+        contents: '{"schemaVersion":1}'
+      }),
+      save: vi.fn().mockResolvedValue(true)
+    }
+    registerTestSettingsIpcHandlers({
+      service: asService(service),
+      connectorTemplateFiles
+    })
+
+    await expect(invoke('settings:select-custom-server-template')).resolves.toMatchObject({
+      cancelled: false,
+      fileName: 'example.json',
+      preview: { ready: true }
+    })
+    expect(service.previewCustomServerTemplateImport).toHaveBeenCalledWith('{"schemaVersion":1}')
+
+    await expect(
+      invoke('settings:export-custom-server-template', {
+        id: 'server-id',
+        expectedDigest: 'digest'
+      })
+    ).resolves.toEqual({ saved: true })
+    expect(connectorTemplateFiles.save).toHaveBeenCalledWith(
+      'open-science-connector-example.json',
+      '{"schemaVersion":1}\n'
+    )
+
+    await expect(
+      invoke('settings:export-custom-server-template', {
+        id: 'server-id',
+        expectedDigest: 'stale'
+      })
+    ).rejects.toThrow('changed after preview')
   })
 
   it('routes provider commands to the service', async () => {

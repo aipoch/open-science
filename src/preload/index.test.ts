@@ -389,6 +389,7 @@ describe('preload bridge — public surface inventory', () => {
       'settings.detectClaude',
       'settings.detectCodex',
       'settings.detectOpencode',
+      'settings.exportCustomServerTemplate',
       'settings.getConnectorDetail',
       'settings.getPackageMirror',
       'settings.getPreflight',
@@ -420,6 +421,7 @@ describe('preload bridge — public surface inventory', () => {
       'settings.onSkillImportApprovalRequest',
       'settings.onSkillImportApprovalSettled',
       'settings.previewAgentHomeSkill',
+      'settings.previewCustomServerTemplateExport',
       'settings.previewGitHubSkill',
       'settings.previewSkillZip',
       'settings.refreshProviderModels',
@@ -428,6 +430,7 @@ describe('preload bridge — public surface inventory', () => {
       'settings.respondConnectorApproval',
       'settings.respondSkillImportApproval',
       'settings.scanRepoSkills',
+      'settings.selectCustomServerTemplate',
       'settings.setActiveProvider',
       'settings.setAgentFramework',
       'settings.setAppIconVariant',
@@ -521,10 +524,10 @@ describe('preload bridge — public surface inventory', () => {
 })
 
 describe('preload bridge — runtime renderer contract catalog', () => {
-  it('routes all 174 owned methods through their cataloged Electron channels', async () => {
+  it('routes all 177 owned methods through their cataloged Electron channels', async () => {
     const requestContracts = runtimeContracts.filter(({ kind }) => kind === 'method')
 
-    expect(runtimeContracts).toHaveLength(174)
+    expect(runtimeContracts).toHaveLength(177)
 
     for (const contract of requestContracts) {
       invokeMock.mockClear()

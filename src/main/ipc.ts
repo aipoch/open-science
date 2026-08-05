@@ -1,4 +1,4 @@
-import { join } from 'node:path'
+import { basename, join } from 'node:path'
 import { randomUUID } from 'node:crypto'
 import { readFile, stat, writeFile } from 'node:fs/promises'
 
@@ -51,6 +51,7 @@ import { createMoleculePreviewHandler } from './connectors/molecule-preview'
 import { ALL_CONNECTOR_IDS } from './connectors/registry'
 import { ConnectorRuntimeSettingsProjection } from './connectors/runtime-settings-projection'
 import { ConnectorService } from './connectors/service'
+import { CONNECTOR_TEMPLATE_MAX_BYTES } from './settings/connector-template'
 import { registerFileSaveHandlers } from './file-save'
 import { createSessionArtifactFileResolver } from './session-artifact-file-resolver'
 import { createCliCommandOwner, registerCliInstallIpcHandlers } from './cli-install/ipc'
@@ -624,7 +625,7 @@ const createApplicationModules = async (
         }),
         connectorIds: [
           ...ALL_CONNECTOR_IDS,
-          ...(connectorSettings?.customMcpServers ?? []).map((server) => server.id)
+          ...(connectorSettings?.customMcpServers ?? []).map((server) => server.name)
         ],
         protectedSpecialistIds: ['reviewer'],
         protectedSpecialistNames: ['Reviewer']
@@ -1262,7 +1263,36 @@ const createApplicationModules = async (
     registerSettingsIpcHandlers({
       service: settingsService,
       workflows: settingsWorkflows,
-      listAppIconPreviews
+      listAppIconPreviews,
+      connectorTemplateFiles: {
+        select: async () => {
+          const selected = await dialog.showOpenDialog({
+            title: 'Import Connector configuration',
+            properties: ['openFile'],
+            filters: [{ name: 'Connector configuration', extensions: ['json'] }]
+          })
+          const filePath = selected.filePaths[0]
+          if (selected.canceled || !filePath) return { cancelled: true as const }
+          if ((await stat(filePath)).size > CONNECTOR_TEMPLATE_MAX_BYTES) {
+            throw new Error('Connector configuration files must be 256 KiB or smaller')
+          }
+          return {
+            cancelled: false as const,
+            fileName: basename(filePath),
+            contents: await readFile(filePath, 'utf8')
+          }
+        },
+        save: async (suggestedFileName, contents) => {
+          const selected = await dialog.showSaveDialog({
+            title: 'Export Connector configuration',
+            defaultPath: suggestedFileName,
+            filters: [{ name: 'Connector configuration', extensions: ['json'] }]
+          })
+          if (selected.canceled || !selected.filePath) return false
+          await writeFile(selected.filePath, contents, 'utf8')
+          return true
+        }
+      }
     })
   )
   declareElectronAdapter('notebook', () => registerNotebookIpcHandlers(notebookCommands))

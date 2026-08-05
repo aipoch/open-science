@@ -163,6 +163,47 @@ describe('ConnectorSettingsModule', () => {
     expect(snapshot.customServers).toEqual([])
   })
 
+  it('rejects duplicate and built-in custom connector names', async () => {
+    await service.addCustomServer({
+      name: 'example-server',
+      transport: 'stdio',
+      command: 'example-mcp'
+    })
+
+    await expect(
+      service.addCustomServer({
+        name: ' Example-Server ',
+        transport: 'stdio',
+        command: 'another-mcp'
+      })
+    ).rejects.toThrow('already exists')
+    await expect(
+      service.addCustomServer({ name: 'Chemistry', transport: 'stdio', command: 'example-mcp' })
+    ).rejects.toThrow('reserved by a built-in connector')
+  })
+
+  it('exports only credential names and validates imports against installed connectors', async () => {
+    const snapshot = await service.addCustomServer({
+      name: 'example-export',
+      transport: 'stdio',
+      command: 'npx',
+      args: ['-y', '@example/research-mcp'],
+      env: { API_TOKEN: 'must-not-export' }
+    })
+
+    const result = await service.buildCustomServerTemplateExport(snapshot.customServers[0].id)
+    expect(result.preview).toMatchObject({ ready: true, connectorId: snapshot.customServers[0].id })
+    expect(result.contents).toContain('API_TOKEN')
+    expect(result.contents).not.toContain('must-not-export')
+    expect(result.contents).not.toContain(snapshot.customServers[0].id)
+
+    const imported = await service.previewCustomServerTemplateImport(result.contents!)
+    expect(imported.ready).toBe(false)
+    expect(imported.diagnostics.map((item) => item.code)).toContain(
+      'connector-template.duplicate-name'
+    )
+  })
+
   it('adds a remote (streamable_http) custom server with a url', async () => {
     const snapshot = await service.addCustomServer({
       name: 'remote-x',
