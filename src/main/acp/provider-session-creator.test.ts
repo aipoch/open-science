@@ -1,4 +1,5 @@
 import type { ActiveSession, ClientConnection } from '@agentclientprotocol/sdk'
+import { resolve } from 'node:path'
 import { describe, expect, it, vi } from 'vitest'
 
 import type { SessionPermissionProfileState } from '../../shared/permission-profiles'
@@ -150,7 +151,7 @@ describe('AcpProviderSessionCreator', () => {
 
     expect(result).toEqual({
       sessionId: 'provider-session',
-      cwd: '/workspace',
+      cwd: resolve('/workspace'),
       frameworkId: 'claude-code',
       backendId: 'claude-code'
     })
