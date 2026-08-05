@@ -12,6 +12,7 @@ import { PermissionUndoSnackbar } from '@/components/PermissionUndoSnackbar'
 import { SessionPersistenceAlert } from '@/components/SessionPersistenceAlert'
 import { UpdateDialog } from '@/components/UpdateDialog'
 import { GlobalSearchDialog } from '@/components/global-search/GlobalSearchDialog'
+import { STREAMDOWN_FULLSCREEN_SELECTOR } from '@/components/streamdown/dom-selectors'
 import { Button } from '@/components/ui/button'
 import { HomePage } from '@/pages/home/HomePage'
 import { OnboardingWizard } from '@/pages/onboarding/OnboardingWizard'
@@ -162,7 +163,9 @@ const App = (): React.JSX.Element | null => {
         event.isComposing ||
         event.key !== ',' ||
         !(event.metaKey || event.ctrlKey) ||
-        document.querySelector('[role="dialog"], [role="alertdialog"]') !== null ||
+        document.querySelector(
+          `[role="dialog"], [role="alertdialog"], ${STREAMDOWN_FULLSCREEN_SELECTOR}`
+        ) !== null ||
         startupView !== 'app' ||
         !isSessionPersistenceHydrated ||
         isSettingsOpen ||

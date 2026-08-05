@@ -491,6 +491,21 @@ describe('App startup routing', () => {
     expect(mocks.settings.openSettings).not.toHaveBeenCalled()
   })
 
+  it('does not open Settings under a Streamdown fullscreen viewer', async () => {
+    mocks.settings.isLoaded = true
+    await render()
+    const fullscreen = document.createElement('div')
+    fullscreen.dataset.streamdown = 'table-fullscreen'
+    document.body.appendChild(fullscreen)
+
+    window.dispatchEvent(
+      new KeyboardEvent('keydown', { key: ',', metaKey: true, cancelable: true })
+    )
+
+    fullscreen.remove()
+    expect(mocks.settings.openSettings).not.toHaveBeenCalled()
+  })
+
   it('ignores a stale expansion after another preview becomes active', async () => {
     mocks.settings.isLoaded = true
     mocks.navigation.view = 'workspace'
