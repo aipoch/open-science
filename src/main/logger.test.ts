@@ -2,7 +2,7 @@ import { mkdtemp, readFile, readdir, rm } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 
-import { afterEach, describe, expect, it } from 'vitest'
+import { afterEach, describe, expect, it, vi } from 'vitest'
 
 import {
   createLogger,
@@ -20,6 +20,7 @@ import {
 let logDir: string | undefined
 
 afterEach(async () => {
+  vi.restoreAllMocks()
   if (logDir) {
     await rm(logDir, { recursive: true, force: true })
     logDir = undefined
@@ -64,6 +65,216 @@ describe('logger: formatLine', () => {
 
     expect(() => JSON.parse(line)).not.toThrow()
     expect((JSON.parse(line) as { data: unknown }).data).toBe('[unserializable]')
+  })
+
+  it('recursively redacts sensitive field variants while retaining token metrics', () => {
+    const sentinel = 'opaque-field-value-7319'
+    const sensitiveKeys = [
+      'authorization',
+      'proxy-authorization',
+      'providerApiKey',
+      'providerApiKeys',
+      'access_token',
+      'refreshToken',
+      'x-amz-security-token',
+      'clientSecret',
+      'secrets',
+      'privateKey',
+      'cookieValue',
+      'cookies',
+      'password',
+      'credentials'
+    ]
+    const nestings = [
+      (key: string): unknown => ({ [key]: sentinel }),
+      (key: string): unknown => ({ nested: { [key]: sentinel } }),
+      (key: string): unknown => ({ items: [{ [key]: sentinel }] }),
+      (key: string): unknown => ({ data: { cause: { [key]: sentinel } } })
+    ]
+
+    for (const key of sensitiveKeys) {
+      for (const nest of nestings) {
+        const line = formatLine('error', 'redaction', 'failed', nest(key))
+        expect(line).not.toContain(sentinel)
+        expect(line).toContain('[redacted]')
+      }
+    }
+
+    const preserved = JSON.parse(
+      formatLine('info', 'usage', 'counted', {
+        tokenUsage: { inputTokens: 21, outputTokens: 8, cachedInputTokens: 5 },
+        tokenCount: 29,
+        maxOutputTokens: 100
+      })
+    ) as {
+      data: {
+        tokenUsage: { inputTokens: number; outputTokens: number; cachedInputTokens: number }
+        tokenCount: number
+        maxOutputTokens: number
+      }
+    }
+
+    expect(preserved.data).toEqual({
+      tokenUsage: { inputTokens: 21, outputTokens: 8, cachedInputTokens: 5 },
+      tokenCount: 29,
+      maxOutputTokens: 100
+    })
+  })
+
+  it('redacts credential-shaped strings in messages and nested error context', () => {
+    const jwt = 'eyJhbGciOiJIUzI1NiJ9.eyJzdWIiOiJsb2ctcmVkYWN0aW9uIn0.signaturevalue123'
+    const examples = [
+      { text: 'Bearer bearer-opaque-7319', secrets: ['bearer-opaque-7319'] },
+      { text: `jwt=${jwt}`, secrets: [jwt] },
+      { text: 'Authorization: Basic dXNlcjpwYXNz', secrets: ['dXNlcjpwYXNz'] },
+      { text: 'Cookie: session=cookie-opaque-7319; Path=/', secrets: ['cookie-opaque-7319'] },
+      { text: 'apiKey="json-opaque-7319"', secrets: ['json-opaque-7319'] },
+      { text: 'OPENAI_API_KEY=env-opaque-7319', secrets: ['env-opaque-7319'] },
+      { text: '--api-key cli-opaque-7319', secrets: ['cli-opaque-7319'] },
+      {
+        text: 'https://alice:password-opaque-7319@example.test/v1?token=query-opaque-7319&ok=1',
+        secrets: ['alice', 'password-opaque-7319', 'query-opaque-7319']
+      },
+      { text: 'sk-1234567890abcdef', secrets: ['sk-1234567890abcdef'] },
+      { text: 'github_pat_1234567890abcdef', secrets: ['github_pat_1234567890abcdef'] },
+      { text: 'AKIA1234567890ABCDEF', secrets: ['AKIA1234567890ABCDEF'] }
+    ]
+
+    for (const { text, secrets } of examples) {
+      const line = formatLine('error', 'redaction', text, {
+        data: { cause: { message: text, stack: `Error: ${text}` } }
+      })
+      for (const secret of secrets) expect(line).not.toContain(secret)
+      expect(line).toContain('[redacted]')
+    }
+  })
+
+  it('drops content-bearing fields and unlabeled oversized text', () => {
+    const sentinel = 'opaque-body-value-7319'
+    for (const key of [
+      'body',
+      'rawBody',
+      'requestBody',
+      'response_body',
+      'payload',
+      'requestPayload',
+      'responsePayload'
+    ]) {
+      const line = formatLine('error', 'redaction', 'request failed', {
+        nested: { [key]: { research: sentinel } }
+      })
+      expect(line).not.toContain(sentinel)
+      expect(line).toContain('[redacted]')
+    }
+
+    const oversized = `${sentinel}${'x'.repeat(8192)}`
+    const line = formatLine('error', 'redaction', oversized, { detail: oversized })
+    expect(line).not.toContain(sentinel)
+    expect(line).toContain('[redacted: oversized text]')
+  })
+
+  it('preserves error classification, status, and correlation identifiers', () => {
+    const parsed = JSON.parse(
+      formatLine(
+        'error',
+        'provider',
+        'request failed',
+        {
+          errorCategory: 'request',
+          name: 'RequestError',
+          code: -32603,
+          status: 502,
+          statusCode: 503,
+          errno: -2,
+          syscall: 'connect',
+          requestId: 'req-1',
+          sessionId: 'session-1',
+          operationId: 'operation-1',
+          correlationId: 'correlation-1',
+          traceId: 'trace-1'
+        },
+        'run-1'
+      )
+    ) as Record<string, unknown>
+
+    expect(parsed).toMatchObject({
+      runId: 'run-1',
+      data: {
+        errorCategory: 'request',
+        name: 'RequestError',
+        code: -32603,
+        status: 502,
+        statusCode: 503,
+        errno: -2,
+        syscall: 'connect',
+        requestId: 'req-1',
+        sessionId: 'session-1',
+        operationId: 'operation-1',
+        correlationId: 'correlation-1',
+        traceId: 'trace-1'
+      }
+    })
+  })
+
+  it('redacts a rich provider RequestError at the persisted boundary', () => {
+    const sentinel = 'provider-opaque-value-7319'
+    const requestError = Object.assign(new Error(`request rejected: Bearer ${sentinel}`), {
+      name: 'RequestError',
+      code: -32603,
+      data: {
+        authorization: sentinel,
+        responseBody: { research: sentinel },
+        statusCode: 429,
+        requestId: 'request-7319'
+      },
+      cause: new Error(`upstream https://user:${sentinel}@example.test/v1`)
+    })
+
+    const line = formatLine('error', 'acp', 'prompt failed', {
+      sessionId: 'session-7319',
+      ...errorLogFields(requestError)
+    })
+    const parsed = JSON.parse(line) as {
+      data: { code: number; data: { statusCode: number; requestId: string }; sessionId: string }
+    }
+
+    expect(line).not.toContain(sentinel)
+    expect(parsed.data).toMatchObject({
+      code: -32603,
+      data: { statusCode: 429, requestId: 'request-7319' },
+      sessionId: 'session-7319'
+    })
+  })
+})
+
+describe('logger: redacted sinks', () => {
+  it('keeps secrets out of the console mirror and every rotated JSONL file', async () => {
+    logDir = await mkdtemp(join(tmpdir(), 'os-logger-redaction-'))
+    const sentinel = 'sink-opaque-value-7319'
+    const consoleWarn = vi.spyOn(console, 'warn').mockImplementation(() => undefined)
+    initLogger({
+      logDir,
+      fileName: 'main.log',
+      maxBytes: 240,
+      maxFiles: 3,
+      mirrorToConsole: true,
+      runId: 'redaction-run'
+    })
+    const log = createLogger('redaction')
+
+    for (let index = 0; index < 12; index += 1) {
+      log.warn(`Bearer ${sentinel}`, { authorization: sentinel, index })
+    }
+    await flushLogs()
+
+    expect(JSON.stringify(consoleWarn.mock.calls)).not.toContain(sentinel)
+    const files = (await readdir(logDir)).filter((name) => name.startsWith('main'))
+    expect(files.length).toBeGreaterThan(1)
+    const jsonl = (
+      await Promise.all(files.map((file) => readFile(join(logDir!, file), 'utf8')))
+    ).join('\n')
+    expect(jsonl).not.toContain(sentinel)
+    expect(jsonl).toContain('[redacted]')
   })
 })
 
