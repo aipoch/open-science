@@ -14,6 +14,8 @@ describe('renderConnectorInstructions', () => {
     // The "do not reimplement with raw HTTP" rule is what steers opencode away from raw requests.
     expect(md).toMatch(/urllib|requests|httpx|fetch/)
     expect(md).toContain('mcp-*')
+    expect(md).toContain('process.env.OPEN_SCIENCE_HANDOFF_DIR')
+    expect(md).not.toContain('./handoff/')
     expect(md).not.toContain('## chemistry')
     expect(md).not.toContain('pubchem_get_compounds')
     expect(md).not.toContain('```json')

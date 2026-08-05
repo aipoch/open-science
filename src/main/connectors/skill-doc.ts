@@ -7,7 +7,7 @@ const CONVENTIONS = [
   'The REPL is a persistent session: assign a result you will reuse to `globalThis` (e.g. `globalThis.hits = result`) so later `repl_execute` calls can see it, instead of running the call again. Each call hits the rate-limited upstream — never re-issue the same call to look at or reprocess a result you already have.',
   'Do NOT reimplement these calls with raw HTTP (urllib / requests / httpx / fetch) or hit the upstream endpoints directly — that bypasses the approval gate, per-tool policy, credentials, and rate limits, and can leak project data.',
   'Prefer bulk/list tools over per-item loops — the upstream API is rate-limited and shared across subagents.',
-  'To use a result in a python or r cell, have the REPL write it to `./handoff/<name>.json` (the shared `$OPEN_SCIENCE_HANDOFF_DIR`), then read that file from the data cell — not through the model context.'
+  'To use a result in a python or r cell, have the REPL write it under `process.env.OPEN_SCIENCE_HANDOFF_DIR`, then read the same `OPEN_SCIENCE_HANDOFF_DIR` path from the data cell — not through the model context or a cwd-relative handoff path.'
 ].join('\n')
 
 // A Skill may be loaded outside the bundled-connector baseline (notably for custom MCP servers), so

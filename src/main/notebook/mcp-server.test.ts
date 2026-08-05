@@ -137,7 +137,8 @@ describe('notebook MCP server config', () => {
     expect(toolNames).toContain('manage_environments')
 
     expect(NOTEBOOK_SYSTEM_PROMPT_APPEND).toContain('manage_environments')
-    expect(NOTEBOOK_SYSTEM_PROMPT_APPEND).toContain('./handoff/')
+    expect(NOTEBOOK_SYSTEM_PROMPT_APPEND).toContain('process.env.OPEN_SCIENCE_HANDOFF_DIR')
+    expect(NOTEBOOK_SYSTEM_PROMPT_APPEND).not.toContain('./handoff/')
     expect(NOTEBOOK_SYSTEM_PROMPT_APPEND.toLowerCase()).toContain('separate')
   })
 })
@@ -228,7 +229,8 @@ describe('repl_execute tool', () => {
     expect(tool?.description).toContain('host.mcp')
     // host.compute (remote compute) is only reachable here too, same as host.mcp.
     expect(tool?.description).toContain('host.compute')
-    expect(tool?.description).toContain('./handoff/')
+    expect(tool?.description).toContain('process.env.OPEN_SCIENCE_HANDOFF_DIR')
+    expect(tool?.description).not.toContain('./handoff/')
     expect(tool?.description.toLowerCase()).toContain('connector')
     expect(tool?.description).toContain('notebook_execute')
   })
@@ -297,6 +299,7 @@ describe('bash_execute tool', () => {
     expect(windowsDoc).toContain('Windows PowerShell')
     expect(windowsDoc).not.toContain('`sh -c`')
     expect(windowsDoc).toContain('$env:OPEN_SCIENCE_HANDOFF_DIR')
+    expect(windowsDoc).not.toContain('./handoff/')
     expect(windowsDoc).toContain('Windows PowerShell 5.1')
     expect(windowsDoc).toContain('`&&` is unavailable')
     expect(windowsDoc).toContain('cmdlet failure')
@@ -756,6 +759,17 @@ describe('compactNotebookExecutionResult', () => {
     expect(compact.outputs).toEqual([{ type: 'display', data: { 'text/plain': '42' } }])
   })
 
+  it('keeps a compact connector text result inline', () => {
+    const text = 'x'.repeat(3_030)
+    const compact = compactNotebookExecutionResult({
+      ...runSummary({}),
+      outputs: [{ type: 'display', data: { 'text/plain': text } }]
+    }) as { outputs: Array<{ data: Record<string, string> }>; truncated?: boolean }
+
+    expect(compact.outputs[0].data['text/plain']).toBe(text)
+    expect(compact.truncated).toBeUndefined()
+  })
+
   it('elides an image display output while preserving its notebook-preview marker', () => {
     const base64 = 'A'.repeat(60_000)
     const result = {
@@ -796,8 +810,9 @@ describe('compactNotebookExecutionResult', () => {
       NOTEBOOK_MCP_EXECUTION_RESULT_LIMIT
     )
 
+    expect(NOTEBOOK_MCP_EXECUTION_RESULT_LIMIT).toBe(24_000)
     expect(serialized.length).toBeLessThanOrEqual(NOTEBOOK_MCP_EXECUTION_RESULT_LIMIT)
-    expect(tokenizer.encode(serialized).length).toBeLessThanOrEqual(4_000)
+    expect(tokenizer.encode(serialized).length).toBeLessThanOrEqual(8_000)
     expect(JSON.parse(serialized)).toMatchObject({ status: 'completed', truncated: true })
     expect(result.stdout.length).toBe(oversized.length)
   })
