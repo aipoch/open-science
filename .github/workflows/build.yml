@@ -30,13 +30,6 @@ on:
           notarization in isolation; release/nightly leave it false so builds stay gated on tests.
         type: boolean
         default: false
-      require_windows_signing:
-        description: >-
-          Fail closed unless the Windows installer is Authenticode-signed. Stable tag releases set
-          this; nightlies and manual packaging may leave signing optional.
-        type: boolean
-        default: false
-
 jobs:
   # Gate every packaged build on the quality suite so nightly (push to main) and release (tag) can
   # never publish installers that were never tested. Runs once on Apple Silicon to match the
@@ -181,17 +174,6 @@ jobs:
           node scripts/fetch-micromamba.mjs "${{ matrix.subdir }}" \
             "resources/bin/${{ matrix.bin_os }}/${{ matrix.bin_arch }}/$name"
 
-      - name: Require Windows signing credentials
-        if: ${{ matrix.platform == 'win' && inputs.require_windows_signing }}
-        shell: pwsh
-        env:
-          CSC_LINK: ${{ secrets.WIN_CSC_LINK }}
-          CSC_KEY_PASSWORD: ${{ secrets.WIN_CSC_KEY_PASSWORD }}
-        run: |
-          if ([string]::IsNullOrWhiteSpace($env:CSC_LINK) -or [string]::IsNullOrWhiteSpace($env:CSC_KEY_PASSWORD)) {
-            throw 'Stable Windows packaging requires WIN_CSC_LINK and WIN_CSC_KEY_PASSWORD.'
-          }
-
       # Build the renderer + main and Web bundles, then package with electron-builder. The verify
       # job already typechecks this exact checkout once, so the four platform jobs must not repeat it.
       #
@@ -205,10 +187,9 @@ jobs:
       - name: Build & package
         shell: bash
         env:
-          # Use only the signing identity for the current target. Stable Windows releases validate
-          # their credentials above and verify the resulting signature below.
-          CSC_LINK: ${{ matrix.platform == 'win' && secrets.WIN_CSC_LINK || secrets.MAC_CSC_LINK }}
-          CSC_KEY_PASSWORD: ${{ matrix.platform == 'win' && secrets.WIN_CSC_KEY_PASSWORD || secrets.MAC_CSC_KEY_PASSWORD }}
+          # Windows remains unsigned until a code-signing certificate is provisioned.
+          CSC_LINK: ${{ matrix.platform == 'mac' && secrets.MAC_CSC_LINK || '' }}
+          CSC_KEY_PASSWORD: ${{ matrix.platform == 'mac' && secrets.MAC_CSC_KEY_PASSWORD || '' }}
         run: |
           npm run build:e2e
           npm run build:web
@@ -233,8 +214,6 @@ jobs:
             # never matched against the published feed names.
             npx electron-builder ${{ matrix.eb_args }} "${eb_ver[@]}" --publish never \
               -c.mac.notarize=false
-          elif [ "${{ matrix.platform }}" = "win" ] && [ -n "$CSC_LINK" ]; then
-            npx electron-builder ${{ matrix.eb_args }} "${eb_ver[@]}" --publish never
           else
             # No cert, or a nightly build (ad-hoc on purpose): skip electron-builder's own signing.
             # GitHub injects unset secrets as EMPTY strings, and electron-builder mis-reads an empty
@@ -270,18 +249,6 @@ jobs:
             npm run test:e2e:visual
           fi
 
-      - name: Verify Windows Authenticode signature
-        if: ${{ matrix.platform == 'win' && inputs.require_windows_signing }}
-        shell: pwsh
-        run: |
-          $installers = @(Get-ChildItem -LiteralPath dist -Filter '*-win-x64-setup.exe')
-          if ($installers.Count -ne 1) { throw "Expected one Windows installer; found $($installers.Count)." }
-          $signature = Get-AuthenticodeSignature -LiteralPath $installers[0].FullName
-          if ($signature.Status -ne 'Valid' -or $null -eq $signature.SignerCertificate) {
-            throw "Windows installer Authenticode validation failed: $($signature.Status) $($signature.StatusMessage)"
-          }
-          Write-Host "Validated Authenticode signer: $($signature.SignerCertificate.Subject)"
-
       # Run the actual NSIS artifact, not the source tree: silent install into an isolated directory,
       # start the packaged app in headless web mode, verify its authenticated bootstrap and bundled
       # Windows runtime resources, request a clean shutdown, then silently uninstall it.
@@ -313,7 +280,6 @@ jobs:
           authenticode=not-applicable
           if [ "${{ matrix.platform }}" = "win" ]; then
             authenticode=not-required
-            [ "${{ inputs.require_windows_signing }}" = "true" ] && authenticode=passed
           fi
           node scripts/ci/release-certification-evidence.mjs write \
             --platform "${{ matrix.name }}" \

@@ -73,8 +73,7 @@ extraResources:
       - '*.d.ts'
       - 'LICENSE'
       - 'package.json'
-# Windows: an NSIS installer. Stable tags fail closed unless build.yml provides WIN_CSC_LINK and
-# validates the resulting Authenticode signature; local/manual/nightly packaging may remain unsigned.
+# Windows: an unsigned NSIS installer. SmartScreen shows a bypassable "unknown publisher" prompt.
 # The afterPack ad-hoc-sign hook is a no-op off macOS, so it is safe on this target.
 win:
   executableName: open-science

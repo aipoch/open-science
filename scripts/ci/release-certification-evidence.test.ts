@@ -62,7 +62,7 @@ describe('release certification evidence', () => {
     })
   })
 
-  it('records every real signed Windows update-drill phase', async () => {
+  it('records every real Windows update-drill phase without claiming code signing', async () => {
     const root = await mkdtemp(join(tmpdir(), 'release-evidence-update-'))
     const output = join(root, 'certification-windows-update.json')
     const environment = {
@@ -88,7 +88,7 @@ describe('release certification evidence', () => {
     ).resolves.toMatchObject({
       kind: 'windows-update-drill',
       checks: {
-        authenticode: 'passed',
+        authenticode: 'not-required',
         silentInstall: 'passed',
         processLock: 'passed',
         rollback: 'passed',
@@ -109,7 +109,7 @@ describe('release certification evidence', () => {
     ).rejects.toThrow(/approved reason/)
   })
 
-  it('fails closed on missing platforms, mismatched SHA, or unsigned stable Windows evidence', async () => {
+  it('fails closed on missing platforms, mismatched SHA, or incomplete stable evidence', async () => {
     const root = await mkdtemp(join(tmpdir(), 'release-evidence-aggregate-'))
     const output = join(root, 'RELEASE-CERTIFICATION.json')
     const artifactDigest = 'ca978112ca1bbdcafac231b39a23dc4da786eff8147c4e72b9807785afee48bb'
@@ -140,13 +140,6 @@ describe('release certification evidence', () => {
       join(root, 'certification-windows-x64.json'),
       JSON.stringify(recordFor('windows-x64'))
     )
-    await expect(
-      aggregateEvidence({ argv: [...args, '--require-signed-windows'] })
-    ).rejects.toThrow(/not Authenticode-signed/)
-
-    const windows = recordFor('windows-x64')
-    windows.checks.authenticode = 'passed'
-    await writeFile(join(root, 'certification-windows-x64.json'), JSON.stringify(windows))
     await expect(aggregateEvidence({ argv: args })).resolves.toMatchObject({
       sourceSha: 'abc123',
       platforms: expect.arrayContaining([expect.objectContaining({ platform: 'windows-x64' })])
@@ -163,7 +156,7 @@ describe('release certification evidence', () => {
         source: { sha: 'abc123' },
         status: 'passed',
         checks: {
-          authenticode: 'passed',
+          authenticode: 'not-required',
           silentInstall: 'passed',
           processLock: 'passed',
           rollback: 'passed',

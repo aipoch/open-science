@@ -80,19 +80,18 @@ describe('post-merge Windows validation', () => {
     expect(uploadIndex).toBeGreaterThan(smokeIndex)
   })
 
-  it('requires and verifies Authenticode for stable Windows installers', () => {
+  it('keeps Windows packaging unsigned until signing credentials are available', () => {
     const build = readWorkflow('build.yml')
     const job = build.jobs.build
-    const requireCredentials = findStep(job, 'Require Windows signing credentials')
-    const verifySignature = findStep(job, 'Verify Windows Authenticode signature')
+    const names = job.steps?.map(({ name }) => name) ?? []
+    const packageStep = findStep(job, 'Build & package')
 
-    expect(requireCredentials.if).toContain('inputs.require_windows_signing')
-    expect(requireCredentials.env).toMatchObject({
-      CSC_LINK: '${{ secrets.WIN_CSC_LINK }}',
-      CSC_KEY_PASSWORD: '${{ secrets.WIN_CSC_KEY_PASSWORD }}'
+    expect(names).not.toContain('Require Windows signing credentials')
+    expect(names).not.toContain('Verify Windows Authenticode signature')
+    expect(packageStep.env).toMatchObject({
+      CSC_LINK: "${{ matrix.platform == 'mac' && secrets.MAC_CSC_LINK || '' }}",
+      CSC_KEY_PASSWORD: "${{ matrix.platform == 'mac' && secrets.MAC_CSC_KEY_PASSWORD || '' }}"
     })
-    expect(verifySignature.run).toContain('Get-AuthenticodeSignature')
-    expect(verifySignature.run).toContain("$signature.Status -ne 'Valid'")
   })
 
   it('runs cross-platform P0, visual, Linux package smoke, and records evidence before upload', () => {
@@ -126,7 +125,7 @@ describe('post-merge Windows validation', () => {
     expect(commands.some((command) => command.startsWith('npm run typecheck'))).toBe(false)
   })
 
-  it('runs the signed update drill and full Windows suite before publishing', () => {
+  it('runs the installer update drill and full Windows suite before publishing', () => {
     const release = readWorkflow('release.yml')
     const upgrade = release.jobs['windows-upgrade-smoke']
 
@@ -146,8 +145,7 @@ describe('post-merge Windows validation', () => {
     const previous = findStep(upgrade, 'Download previous stable Windows installer')
     expect(previous.env?.CURRENT_TAG).toBe('${{ github.ref_name }}')
     expect(previous.run).toContain('gh release download')
-    expect(previous.run).toContain('Get-AuthenticodeSignature')
-    expect(previous.run).toContain('Previous stable installer is not Authenticode-signed')
+    expect(previous.run).not.toContain('Get-AuthenticodeSignature')
     expect(previous.run).toContain("$_.tagName -like 'v*'")
     expect(previous.run).toContain('$_.tagName -ne $env:CURRENT_TAG')
     expect(
@@ -162,7 +160,7 @@ describe('post-merge Windows validation', () => {
     ])
     expect(
       findStep(release.jobs.publish, 'Aggregate release certification evidence').run
-    ).toContain('--require-signed-windows')
+    ).not.toContain('--require-signed-windows')
     expect(
       findStep(release.jobs.publish, 'Aggregate release certification evidence').run
     ).toContain('--require-stable-release-checks')
@@ -195,9 +193,7 @@ describe('post-merge Windows validation', () => {
       run: 'git merge-base --is-ancestor "$GITHUB_SHA" origin/main'
     })
     expect(release.jobs.build.needs).toBe('release-preflight')
-    expect(release.jobs.build.with?.require_windows_signing).toBe(
-      "${{ github.event_name == 'push' && startsWith(github.ref, 'refs/tags/') }}"
-    )
+    expect(release.jobs.build.with?.require_windows_signing).toBeUndefined()
     expect(release.jobs['notarize-mac'].if).toBe(stableTagCondition)
     expect(release.jobs['windows-upgrade-smoke'].if).toBe(stableTagCondition)
     expect(release.jobs['windows-full-test'].if).toBe(stableTagCondition)

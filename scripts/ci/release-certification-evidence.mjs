@@ -108,7 +108,7 @@ const writeWindowsUpdateEvidence = async ({ argv, environment = process.env }) =
     previousTag: previousTag || undefined,
     status,
     checks: {
-      authenticode: check,
+      authenticode: 'not-required',
       silentInstall: check,
       processLock: check,
       rollback: check,
@@ -124,12 +124,12 @@ const aggregateEvidence = async ({ argv }) => {
   const directoryArgument = argumentValue(argv, '--directory')
   const outputArgument = argumentValue(argv, '--output')
   const expectedSha = argumentValue(argv, '--expected-sha')
-  const requireSignedWindows = argv.includes('--require-signed-windows')
   const requireStableReleaseChecks = argv.includes('--require-stable-release-checks')
   const windowsFullSuite = argumentValue(argv, '--windows-full-suite')
   if (!directoryArgument || !outputArgument || !expectedSha) {
     throw new Error(
-      'Usage: --directory <path> --output <path> --expected-sha <sha> [--require-signed-windows]'
+      'Usage: --directory <path> --output <path> --expected-sha <sha> ' +
+        '[--require-stable-release-checks] [--windows-full-suite passed]'
     )
   }
   const directory = resolve(directoryArgument)
@@ -176,10 +176,6 @@ const aggregateEvidence = async ({ argv }) => {
       throw new Error(`Package smoke did not pass for ${platform}.`)
     }
   }
-  if (requireSignedWindows && byPlatform.get('windows-x64')?.checks?.authenticode !== 'passed') {
-    throw new Error('Stable Windows release evidence is not Authenticode-signed.')
-  }
-
   let windowsUpdate
   if (requireStableReleaseChecks) {
     if (windowsFullSuite !== 'passed') {
@@ -189,7 +185,7 @@ const aggregateEvidence = async ({ argv }) => {
     windowsUpdate = JSON.parse(await readFile(updatePath, 'utf8').catch(() => 'null'))
     const passedChecks =
       windowsUpdate?.status === 'passed' &&
-      ['authenticode', 'silentInstall', 'processLock', 'rollback', 'restart'].every(
+      ['silentInstall', 'processLock', 'rollback', 'restart'].every(
         (check) => windowsUpdate.checks?.[check] === 'passed'
       )
     const firstRelease =
