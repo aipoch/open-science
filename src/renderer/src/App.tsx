@@ -68,6 +68,7 @@ const App = (): React.JSX.Element | null => {
   const loadSettings = useSettingsStore((state) => state.load)
   const checkEnvironment = useSettingsStore((state) => state.checkEnvironment)
   const isSettingsOpen = useSettingsStore((state) => state.isSettingsOpen)
+  const openSettings = useSettingsStore((state) => state.openSettings)
   const hasConnectorApproval = useSettingsStore((state) => state.pendingApprovals.length > 0)
   const closeSettings = useSettingsStore((state) => state.closeSettings)
   const enqueueApproval = useSettingsStore((state) => state.enqueueApproval)
@@ -136,6 +137,25 @@ const App = (): React.JSX.Element | null => {
     legacyMove === undefined
 
   useUnreadTaskViewSync({ isSessionContentVisible })
+
+  useEffect(() => {
+    const openSettingsFromShortcut = (event: KeyboardEvent): void => {
+      if (
+        event.defaultPrevented ||
+        event.isComposing ||
+        event.key !== ',' ||
+        !(event.metaKey || event.ctrlKey) ||
+        startupView !== 'app'
+      ) {
+        return
+      }
+      event.preventDefault()
+      openSettings()
+    }
+
+    window.addEventListener('keydown', openSettingsFromShortcut)
+    return () => window.removeEventListener('keydown', openSettingsFromShortcut)
+  }, [openSettings, startupView])
 
   useEffect(() => {
     const toggleGlobalSearch = (event: KeyboardEvent): void => {

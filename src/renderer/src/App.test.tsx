@@ -23,6 +23,7 @@ const mocks = vi.hoisted(() => {
       enqueueApproval: vi.fn(),
       load: vi.fn().mockResolvedValue(true),
       checkEnvironment: vi.fn().mockResolvedValue(undefined),
+      openSettings: vi.fn(),
       closeSettings: vi.fn()
     },
     skillImport: { enqueue: vi.fn(), dismiss: vi.fn(), pending: [] as unknown[] },
@@ -251,6 +252,7 @@ describe('App startup routing', () => {
     mocks.settings.isSettingsOpen = false
     mocks.settings.load.mockReset().mockResolvedValue(true)
     mocks.settings.checkEnvironment.mockReset().mockResolvedValue(undefined)
+    mocks.settings.openSettings.mockClear()
     mocks.settings.closeSettings.mockClear()
     mocks.skillImport.enqueue.mockClear()
     mocks.skillImport.dismiss.mockClear()
@@ -318,6 +320,27 @@ describe('App startup routing', () => {
     root = createRoot(container)
     await act(async () => root.render(<App />))
   }
+
+  it('opens Settings with Cmd/Ctrl+, after startup is interactive', async () => {
+    await render()
+
+    window.dispatchEvent(
+      new KeyboardEvent('keydown', { key: ',', metaKey: true, cancelable: true })
+    )
+    expect(mocks.settings.openSettings).not.toHaveBeenCalled()
+
+    mocks.settings.isLoaded = true
+    await act(async () => root.render(<App />))
+
+    window.dispatchEvent(
+      new KeyboardEvent('keydown', { key: ',', metaKey: true, cancelable: true })
+    )
+    window.dispatchEvent(
+      new KeyboardEvent('keydown', { key: ',', ctrlKey: true, cancelable: true })
+    )
+
+    expect(mocks.settings.openSettings).toHaveBeenCalledTimes(2)
+  })
 
   it('toggles global search with Cmd/Ctrl+K after startup is interactive', async () => {
     mocks.settings.isLoaded = true
