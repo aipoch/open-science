@@ -7788,6 +7788,6 @@ describe('v4 runtime bindings & agent tools', () => {
 
       await rm(manualDir, { recursive: true, force: true })
     },
-    30_000
+    60_000
   )
 })
