@@ -21,6 +21,7 @@ import {
   type AgentFrameworkView,
   type ProviderView
 } from '../../../../shared/settings'
+import { resolveModelContextWindow } from '../../../../shared/provider-registry'
 
 export const resolveHistoryReplayTarget = (
   frameworkId: AgentFrameworkId | undefined,
@@ -40,6 +41,36 @@ export const resolveHistoryReplayTarget = (
     return 'codex-bridge'
   }
   return 'codex-response'
+}
+
+export const resolveSessionHistoryReplayDescriptor = (
+  session: {
+    agentFrameworkId?: AgentFrameworkId
+    agentBackendId?: string
+    agentModel?: string
+  },
+  providers: ProviderView[],
+  frameworks: AgentFrameworkView[]
+): HistoryReplayDescriptor => {
+  const frameworkId = session.agentFrameworkId
+  const provider = providers.find(
+    (candidate) => session.agentBackendId === `${frameworkId}:${candidate.id}`
+  )
+  const framework = frameworks.find((candidate) => candidate.id === frameworkId)
+  const target =
+    frameworkId === 'codex' && (!provider || !framework)
+      ? 'codex-bridge'
+      : resolveHistoryReplayTarget(frameworkId, provider, framework)
+
+  return {
+    target,
+    contextWindow: provider?.vendorId
+      ? resolveModelContextWindow(
+          provider.vendorId,
+          session.agentModel ?? provider.model ?? provider.models[0]
+        )
+      : provider?.contextWindow
+  }
 }
 
 export const buildHistoryReplayMedia = (

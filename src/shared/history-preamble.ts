@@ -380,9 +380,9 @@ export const buildHistoryReplay = (
 // use buildHistoryReplay() so media selection follows the admitted message indexes.
 export const buildHistoryPreamble = (
   messages: HistoryMessage[],
-  descriptor: HistoryReplayDescriptor | number = { target: 'claude-code' }
+  descriptor: HistoryReplayDescriptor | number = { target: 'codex-bridge' }
 ): string | undefined =>
   buildHistoryReplay(
     messages,
-    typeof descriptor === 'number' ? { target: 'claude-code', budget: descriptor } : descriptor
+    typeof descriptor === 'number' ? { target: 'codex-bridge', budget: descriptor } : descriptor
   )?.preamble

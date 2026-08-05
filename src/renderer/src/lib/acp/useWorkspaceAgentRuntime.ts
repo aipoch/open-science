@@ -39,6 +39,7 @@ import { useAcpRuntime } from './useAcpRuntime'
 import {
   buildWorkspaceHistoryReplay,
   resolveHistoryReplayTarget,
+  resolveSessionHistoryReplayDescriptor,
   type HistoryReplayDescriptor
 } from './history-preamble'
 import { applyWorkspaceRuntimeEvent, syncWorkspacePermissionState } from './workspace-events'
@@ -1829,6 +1830,8 @@ const useWorkspaceAgentRuntime = (): {
   const agentFramework = useSettingsStore((state) =>
     state.agentFrameworks.find((candidate) => candidate.id === state.agentFrameworkId)
   )
+  const providers = useSettingsStore((state) => state.providers)
+  const agentFrameworks = useSettingsStore((state) => state.agentFrameworks)
   const agentBackendId = activeProviderId ? `${agentFrameworkId}:${activeProviderId}` : undefined
   const historyReplayDescriptor = useMemo<HistoryReplayDescriptor>(
     () => ({
@@ -1841,6 +1844,17 @@ const useWorkspaceAgentRuntime = (): {
         : activeProvider?.contextWindow
     }),
     [activeModel, activeProvider, agentFramework, agentFrameworkId]
+  )
+  const getSessionHistoryReplayDescriptor = useCallback(
+    (sessionId: string): HistoryReplayDescriptor => {
+      const session = useSessionStore
+        .getState()
+        .sessions.find((candidate) => candidate.id === sessionId)
+      return session
+        ? resolveSessionHistoryReplayDescriptor(session, providers, agentFrameworks)
+        : { target: 'codex-bridge' }
+    },
+    [agentFrameworks, providers]
   )
   const [sendPreparationInFlightSessionIds, setSendPreparationInFlightSessionIds] = useState<
     string[]
@@ -1887,12 +1901,12 @@ const useWorkspaceAgentRuntime = (): {
           sessionId,
           supportsImageInput,
           cancelledOverflowRecoverySessionIds.current,
-          historyReplayDescriptor
+          getSessionHistoryReplayDescriptor(sessionId)
         )
       }
     )
     // eslint-disable-next-line react-hooks/exhaustive-deps -- runtime is read fresh; fire on new events.
-  }, [runtime.state.events, historyReplayDescriptor, supportsImageInput])
+  }, [runtime.state.events, getSessionHistoryReplayDescriptor, supportsImageInput])
 
   // Applies each visible runtime event once and trims ids that fell out of the runtime window.
   useEffect(() => {
@@ -1988,19 +2002,22 @@ const useWorkspaceAgentRuntime = (): {
   // Explicitly re-attaches an interrupted session's ACP runtime so the user can keep chatting. On
   // success the composer is unlocked; on failure the interrupted banner stays so a retry stays possible.
   const resumeInterruptedSession = useCallback(
-    (sessionId: string): Promise<void> =>
-      resumeInterruptedWorkspaceSession(runtime, sessionId, {
+    (sessionId: string): Promise<void> => {
+      const session = useSessionStore
+        .getState()
+        .sessions.find((candidate) => candidate.id === sessionId)
+      return resumeInterruptedWorkspaceSession(runtime, sessionId, {
         supportsImageInput,
-        agentModel: activeModel,
-        historyReplayDescriptor,
+        agentModel: session?.agentModel,
+        historyReplayDescriptor: getSessionHistoryReplayDescriptor(sessionId),
         onSendPreparationStateChange: handleSendPreparationStateChange,
         drainRuntimeEvents
-      }),
+      })
+    },
     [
       runtime,
       supportsImageInput,
-      activeModel,
-      historyReplayDescriptor,
+      getSessionHistoryReplayDescriptor,
       handleSendPreparationStateChange,
       drainRuntimeEvents
     ]

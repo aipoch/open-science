@@ -6,7 +6,8 @@ import {
   buildWorkspaceHistoryReplay,
   estimateHistoryTokens,
   resolveHistoryReplayBudget,
-  resolveHistoryReplayTarget
+  resolveHistoryReplayTarget,
+  resolveSessionHistoryReplayDescriptor
 } from './history-preamble'
 import type { ChatMessage } from '../../stores/session-store'
 import type { AgentFrameworkView, ProviderView } from '../../../../shared/settings'
@@ -67,6 +68,14 @@ describe('agent-aware history replay', () => {
     expect(resolveHistoryReplayBudget({ target: 'codex-bridge', contextWindow: 100_000 })).toBe(
       5_000
     )
+  })
+
+  it('uses the conservative bridge cap when a caller omits its runtime descriptor', () => {
+    const preamble = buildHistoryPreamble([
+      message({ role: 'user', content: 'large history '.repeat(2_000) })
+    ])!
+
+    expect(estimateHistoryTokens(preamble)).toBeLessThanOrEqual(8_000)
   })
 
   it('keeps the original task and a contiguous recent suffix without orphan replies', () => {
@@ -310,5 +319,39 @@ describe('history replay target resolution', () => {
       'codex-response'
     )
     expect(resolveHistoryReplayTarget('codex', provider(['openai']), codex)).toBe('codex-bridge')
+  })
+
+  it('derives persisted session policy from its backend instead of active settings', () => {
+    const bridgeProvider = {
+      id: 'persisted-provider',
+      apiEndpoints: ['openai'],
+      contextWindow: 100_000
+    } as ProviderView
+
+    expect(
+      resolveSessionHistoryReplayDescriptor(
+        {
+          agentFrameworkId: 'codex',
+          agentBackendId: 'codex:persisted-provider',
+          agentModel: 'persisted-model'
+        },
+        [bridgeProvider],
+        [codex]
+      )
+    ).toEqual({ target: 'codex-bridge', contextWindow: 100_000 })
+  })
+
+  it('falls back to the conservative bridge policy when a persisted Codex provider is gone', () => {
+    expect(
+      resolveSessionHistoryReplayDescriptor(
+        {
+          agentFrameworkId: 'codex',
+          agentBackendId: 'codex:removed-provider',
+          agentModel: 'persisted-model'
+        },
+        [],
+        [codex]
+      )
+    ).toEqual({ target: 'codex-bridge', contextWindow: undefined })
   })
 })
