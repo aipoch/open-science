@@ -5,8 +5,10 @@ import type { ArtifactProvenanceRepository } from '../artifacts/provenance-repos
 import type { SessionPersistenceCoordinator } from '../session-persistence/coordinator'
 import { SessionRuntimeContextRevisionConflictError } from '../session-persistence/coordinator'
 import { PlanService } from './plan-service'
+import { SessionPlanInteractionOwner } from './session-plan-interaction-owner'
 
 type ProductionPlanServiceDependencies = Readonly<{
+  interactions?: SessionPlanInteractionOwner
   artifactTurns: Pick<ArtifactTurnOwner, 'writeForActiveTurn'>
   provenance: Pick<ArtifactProvenanceRepository, 'resolveVersionContent'>
   sessions: Pick<
@@ -16,11 +18,13 @@ type ProductionPlanServiceDependencies = Readonly<{
 }>
 
 const createProductionPlanService = ({
+  interactions = new SessionPlanInteractionOwner(),
   artifactTurns,
   provenance,
   sessions
 }: ProductionPlanServiceDependencies): PlanService =>
   new PlanService({
+    interactions,
     writeArtifactForActiveTurn: (sessionId, input) =>
       artifactTurns.writeForActiveTurn(sessionId, input),
     readArtifactVersion: async ({ projectId, sessionId, artifactId, artifactVersionId }) => {

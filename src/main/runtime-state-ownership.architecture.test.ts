@@ -362,6 +362,7 @@ describe('runtime state ownership architecture', () => {
     ['../acp/runtime', 'AcpRuntime'],
     ['../acp/runtime-coordinator.js', 'AcpRuntimeCoordinator'],
     ['../acp/reviewer-session-owner', 'ReviewerSessionOwner'],
+    ['../session-plan/session-plan-interaction-owner', 'SessionPlanInteractionOwner'],
     ['../settings/service', 'SettingsService'],
     ['../settings/backend-resolver', 'AgentBackendResolver'],
     ['../settings/ipc', 'registerSettingsIpcHandlers'],

@@ -4,6 +4,7 @@ import { describe, expect, it, vi } from 'vitest'
 import type { SessionRuntimeContext } from '../../shared/session-persistence'
 import type { ActivePlanProjection } from '../../shared/session-plan/contract'
 import { PlanService, type PlanServiceDependencies } from './plan-service'
+import { SessionPlanInteractionOwner } from './session-plan-interaction-owner'
 
 const content = {
   task_summary: 'Analyze one dataset',
@@ -62,6 +63,7 @@ const executionContent = {
 
 type PlanServiceHarness = Readonly<{
   service: PlanService
+  interactions: SessionPlanInteractionOwner
   dependencies: PlanServiceDependencies
   context: () => SessionRuntimeContext
   status: () => string
@@ -72,7 +74,9 @@ const setup = (): PlanServiceHarness => {
   let context: SessionRuntimeContext = { version: 1, revision: 0 }
   let persistedStatus = 'running'
   let bytes = ''
+  const interactions = new SessionPlanInteractionOwner()
   const dependencies: PlanServiceDependencies = {
+    interactions,
     writeArtifactForActiveTurn: vi.fn(async (_sessionId, input) => {
       bytes = input.content
       return {
@@ -113,6 +117,7 @@ const setup = (): PlanServiceHarness => {
   }
   return {
     service: new PlanService(dependencies),
+    interactions,
     dependencies,
     context: () => context,
     status: () => persistedStatus,
@@ -252,6 +257,31 @@ describe('PlanService', () => {
       })
     ).rejects.toMatchObject({ code: 'approval-already-decided' })
   })
+
+  it.each(['approved', 'rejected'] as const)(
+    'releases the live interaction after a %s decision',
+    async (decision) => {
+      const { service, interactions } = setup()
+      const generated = await service.generate({
+        projectId: 'project-1',
+        sessionId: 'session-1',
+        interactionId: 'interaction-1',
+        content
+      })
+
+      await service.respond({
+        projectId: 'project-1',
+        sessionId: 'session-1',
+        artifactVersionId: generated.projection.artifactVersionId,
+        expectedRevision: generated.projection.revision,
+        decision
+      })
+
+      expect(
+        interactions.interactionIdFor('session-1', generated.projection.artifactVersionId)
+      ).toBeUndefined()
+    }
+  )
 
   it('counts a deliberately skipped step as done in completed Plan progress', async () => {
     const { service } = setup()
@@ -499,13 +529,16 @@ describe('PlanService', () => {
   })
 
   it('persists revision feedback as a standard user Message for the live blocked interaction', async () => {
-    const { service, dependencies } = setup()
-    await service.generate({
+    const { service, dependencies, interactions } = setup()
+    const generated = await service.generate({
       projectId: 'project-1',
       sessionId: 'session-1',
       interactionId: 'interaction-1',
       content
     })
+    expect(interactions.interactionIdFor('session-1', generated.projection.artifactVersionId)).toBe(
+      'interaction-1'
+    )
 
     const response = await service.respond({
       projectId: 'project-1',
@@ -525,6 +558,31 @@ describe('PlanService', () => {
       content: 'Split the analysis by cohort.',
       interactionId: 'interaction-1'
     })
+    expect(
+      interactions.interactionIdFor('session-1', generated.projection.artifactVersionId)
+    ).toBeUndefined()
+  })
+
+  it('retains the live interaction when revision feedback persistence fails', async () => {
+    const { service, dependencies, interactions } = setup()
+    const generated = await service.generate({
+      projectId: 'project-1',
+      sessionId: 'session-1',
+      interactionId: 'interaction-1',
+      content
+    })
+    vi.mocked(dependencies.persistUserMessage).mockRejectedValueOnce(new Error('disk unavailable'))
+
+    await expect(
+      service.respond({
+        projectId: 'project-1',
+        sessionId: 'session-1',
+        feedback: 'Split the analysis by cohort.'
+      })
+    ).rejects.toThrow('disk unavailable')
+    expect(interactions.interactionIdFor('session-1', generated.projection.artifactVersionId)).toBe(
+      'interaction-1'
+    )
   })
 
   it('projects retained in-progress work as interrupted after the interaction ends', async () => {
@@ -660,7 +718,10 @@ describe('PlanService', () => {
       expectedRevision: generated.projection.revision,
       decision: 'approved'
     })
-    const reconstructed = new PlanService(dependencies)
+    const reconstructed = new PlanService({
+      ...dependencies,
+      interactions: new SessionPlanInteractionOwner()
+    })
     await expect(
       reconstructed.updateStepStatus({
         projectId: 'project-1',
@@ -991,7 +1052,10 @@ describe('PlanService', () => {
       status: 'in_progress'
     })
 
-    const restarted = new PlanService(dependencies)
+    const restarted = new PlanService({
+      ...dependencies,
+      interactions: new SessionPlanInteractionOwner()
+    })
     await expect(restarted.getProjection('project-1', 'session-1')).resolves.toMatchObject({
       lifecycle: 'interrupted',
       requiresExplicitContinuation: true,

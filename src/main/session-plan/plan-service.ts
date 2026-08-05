@@ -19,6 +19,7 @@ import {
   type PlanDocumentV1,
   type PlanResponseCommand
 } from '../../shared/session-plan/contract'
+import { SessionPlanInteractionOwner } from './session-plan-interaction-owner'
 
 type ArtifactWriteResult = Readonly<{
   artifactId?: string
@@ -27,7 +28,13 @@ type ArtifactWriteResult = Readonly<{
   name: string
 }>
 
+type SessionPlanIdentityOwner = Pick<
+  SessionPlanInteractionOwner,
+  'register' | 'interactionIdFor' | 'release'
+>
+
 type PlanServiceDependencies = Readonly<{
+  interactions: SessionPlanIdentityOwner
   writeArtifactForActiveTurn: (
     sessionId: string,
     input: { filename: string; content: string; mimeType: string; kind: 'plan' }
@@ -96,10 +103,6 @@ const parseDocument = (content: string): PlanDocumentV1 => {
 class PlanService {
   private readonly now: () => number
   private readonly createId: () => string
-  private readonly livePlanInteractions = new Map<
-    string,
-    { artifactVersionId: string; interactionId: string }
-  >()
   constructor(private readonly dependencies: PlanServiceDependencies) {
     this.now = dependencies.now ?? Date.now
     this.createId = dependencies.createId ?? (() => randomUUID().slice(0, 8))
@@ -162,7 +165,8 @@ class PlanService {
       }
       throw error
     }
-    this.livePlanInteractions.set(input.sessionId, {
+    this.dependencies.interactions.register({
+      sessionId: input.sessionId,
       artifactVersionId: plan.artifactVersionId,
       interactionId: input.interactionId
     })
@@ -191,8 +195,11 @@ class PlanService {
       }
       const text = input.feedback.trim()
       if (!text) throw new PlanCommandError('invalid-plan', 'Plan feedback must be non-empty.')
-      const live = this.livePlanInteractions.get(input.sessionId)
-      if (!live || live.artifactVersionId !== plan.artifactVersionId) {
+      const interactionId = this.dependencies.interactions.interactionIdFor(
+        input.sessionId,
+        plan.artifactVersionId
+      )
+      if (!interactionId) {
         throw new PlanCommandError(
           'stale-plan',
           'The Plan interaction is no longer available for revision feedback.'
@@ -202,12 +209,12 @@ class PlanService {
         projectId: input.projectId,
         sessionId: input.sessionId,
         content: text,
-        interactionId: live.interactionId
+        interactionId
       })
-      this.livePlanInteractions.delete(input.sessionId)
+      this.dependencies.interactions.release(input.sessionId, plan.artifactVersionId)
       return {
         kind: 'feedback',
-        routeToInteractionId: live.interactionId,
+        routeToInteractionId: interactionId,
         artifactVersionId: plan.artifactVersionId,
         text,
         message
@@ -215,7 +222,7 @@ class PlanService {
     }
     const { context, plan, document } = await this.loadActive(input, input.decision)
     if (plan.approval === input.decision) {
-      this.livePlanInteractions.delete(input.sessionId)
+      this.dependencies.interactions.release(input.sessionId, plan.artifactVersionId)
       return {
         projection: this.project(document, plan, context.revision, input.interactionIsLive),
         changed: false
@@ -226,7 +233,7 @@ class PlanService {
     }
     const updated = { ...plan, approval: input.decision }
     const next = await this.patch(input, updated, input.interactionIsLive ? 'running' : 'idle')
-    this.livePlanInteractions.delete(input.sessionId)
+    this.dependencies.interactions.release(input.sessionId, plan.artifactVersionId)
     return {
       projection: this.project(document, updated, next.revision, input.interactionIsLive),
       changed: true
