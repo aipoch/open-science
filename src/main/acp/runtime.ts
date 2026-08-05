@@ -139,6 +139,7 @@ import { AcpModelChangeWorkflow } from './model-change-workflow'
 import { AcpProviderSessionCreator } from './provider-session-creator'
 import { AcpProviderSessionAdopter } from './provider-session-adopter'
 import { AcpProviderSessionResumer } from './provider-session-resumer'
+import { AcpSessionReplacementWorkflow } from './session-replacement-workflow'
 import {
   AcpTurnSkillOwner,
   type AcpTurnSkillHooks,
@@ -418,6 +419,7 @@ class AcpRuntime {
   private readonly providerSessionCreator: AcpProviderSessionCreator
   private readonly providerSessionAdopter: AcpProviderSessionAdopter
   private readonly providerSessionResumer: AcpProviderSessionResumer
+  private readonly sessionReplacement: AcpSessionReplacementWorkflow
 
   // Wires runtime dependencies and forwards permission prompts into the event stream.
   constructor(private readonly options: AcpRuntimeOptions) {
@@ -704,6 +706,24 @@ class AcpRuntime {
       updateCwd: (cwd) => this.snapshotOwner.updateCwd(cwd),
       emitState: () => this.emitState(),
       diagnosticContext: () => this.diagnosticContext()
+    })
+    this.sessionReplacement = new AcpSessionReplacementWorkflow({
+      defaultCwd: options.defaultCwd,
+      defaultProjectName: options.artifacts?.projectName || DEFAULT_UPLOAD_PROJECT_NAME,
+      currentCwd: () => this.snapshotOwner.cwd,
+      currentFrameworkId: () => this.framework.id,
+      ensureConnected: (cwd) => this.ensureConnected(cwd),
+      assertCurrentConnection: (connection) => this.assertCurrentConnectedConnection(connection),
+      registry: this.sessionRegistry,
+      reserveIdentity: (sessionId, publishedAppSessionId) =>
+        this.reservePrimarySessionIds(undefined, [sessionId], publishedAppSessionId),
+      adopter: this.providerSessionAdopter,
+      permission: this.permissionContext,
+      promptContent: this.promptContentOwner,
+      contextUsage: this.contextUsageTracker,
+      interactions: this.sessionInteractions,
+      resolveSpecialistIdentity: options.resolveSpecialistIdentity,
+      registerSessionSpecialist: options.notebook?.registerSessionSpecialist
     })
     this.providerSessionResumer = new AcpProviderSessionResumer({
       defaultCwd: options.defaultCwd,
@@ -1192,92 +1212,7 @@ class AcpRuntime {
   // transcript starts clean. Returns contextReset so the caller replays a bounded transcript into the
   // next prompt (the app-level equivalent of compaction, which — unlike the backend's — drops all media).
   async resetSessionContext(request: AcpResumeSessionRequest): Promise<AcpCreateSessionResponse> {
-    return this.withOperationLease(() => this.resetSessionContextOperation(request))
-  }
-
-  private async resetSessionContextOperation(
-    request: AcpResumeSessionRequest
-  ): Promise<AcpCreateSessionResponse> {
-    const sessionCwd = resolve(request.cwd || this.snapshotOwner.cwd || this.options.defaultCwd)
-    const projectName = this.normalizeProjectName(request.projectName)
-    const publishedSession = this.activeSessionFor(request.sessionId)
-    const publishedAppSessionId = publishedSession ? request.sessionId : undefined
-    const reservationResult = this.reservePrimarySessionIds(
-      undefined,
-      [request.sessionId],
-      publishedAppSessionId
-    )
-    if (reservationResult.collision) throw reservationResult.collision
-    const reservation = reservationResult.reservation
-
-    try {
-      return await this.resetReservedSessionContextOperation(
-        request,
-        sessionCwd,
-        projectName,
-        reservation,
-        publishedSession
-      )
-    } finally {
-      this.releasePrimarySessionIdentityReservation(reservation)
-    }
-  }
-
-  private async resetReservedSessionContextOperation(
-    request: AcpResumeSessionRequest,
-    sessionCwd: string,
-    projectName: string,
-    primaryIdentityReservation: AcpPrimarySessionIdentityReservation,
-    publishedSession: ActiveSession | undefined
-  ): Promise<AcpCreateSessionResponse> {
-    const connection = await this.ensureConnected(sessionCwd)
-    this.assertCurrentConnectedConnection(connection)
-    const currentPublishedSession = this.activeSessionFor(request.sessionId)
-    const crossedGeneration = this.renewPrimarySessionIdentityReservation(
-      primaryIdentityReservation,
-      currentPublishedSession === publishedSession && currentPublishedSession
-        ? request.sessionId
-        : undefined
-    )
-    const reconnectReplacedPublishedSession =
-      publishedSession !== undefined && currentPublishedSession === undefined && crossedGeneration
-    if (currentPublishedSession !== publishedSession && !reconnectReplacedPublishedSession) {
-      throw new Error('ACP session startup was superseded.')
-    }
-
-    // Tear down the currently attached agent session (if any) before adopting a replacement, dropping
-    // its reverse routing so late events from the old agent session can no longer target this app id.
-    const attachedEntry = this.sessionRegistry.lookup(request.sessionId)
-    const attached = attachedEntry?.attachment
-
-    // A context reset replaces only the provider-side history; the app conversation continues under
-    // the same id, so retain its visible/revocable grants while cancelling requests owned by the old
-    // agent session. Provider tool context must not survive because a fresh agent may reuse call ids.
-    this.cancelPermissionFlowForSession(request.sessionId)
-
-    if (attached) {
-      attached.session.dispose()
-      this.sessionRegistry.detach(attached, 'provider')
-    }
-
-    // The fresh agent session holds no history, so the accumulated media is gone; start its budget clean.
-    this.promptContentOwner.resetSession(request.sessionId)
-    // A context reset creates a new agent-side conversation under the same app id. Do not carry the
-    // previous context size into the fresh conversation before its first usage_update arrives.
-    this.contextUsageTracker.deleteSession(request.sessionId)
-    this.sessionRegistry.lookup(request.sessionId)?.aggregate.clearAppliedModel()
-
-    // Release the failed interaction now. Its own `finally` may run only after async artifact cleanup;
-    // the generation-guarded owner prevents that stale cleanup from clearing the recovery resend.
-    this.sessionInteractions.supersedeCurrent(request.sessionId)
-
-    return this.adoptFreshSession(
-      connection,
-      request,
-      sessionCwd,
-      projectName,
-      primaryIdentityReservation
-    )
+    return this.withOperationLease(() => this.sessionReplacement.reset(request))
   }
 
   // Hot-switches the specialist bound to a live session. Updates the per-session skills and identity
@@ -1290,62 +1225,15 @@ class AcpRuntime {
     sessionId: string,
     specialistId: string | undefined
   ): Promise<{ contextReset: boolean }> {
-    return this.withOperationLease(() => this.switchSpecialistOperation(sessionId, specialistId))
+    return this.withOperationLease(() =>
+      this.sessionReplacement.switchSpecialist(sessionId, specialistId)
+    )
   }
 
   // The completion-gate adapter uses this public runtime fact to claim only the framework it owns.
   // A session keeps its original framework while a different active backend is prepared elsewhere.
   getSessionFramework(sessionId: string): AgentFrameworkId | undefined {
     return this.sessionRegistry.lookup(sessionId)?.aggregate.snapshot().frameworkId
-  }
-
-  private async switchSpecialistOperation(
-    sessionId: string,
-    specialistId: string | undefined
-  ): Promise<{ contextReset: boolean }> {
-    if (this.hasSessionInteractionInFlight(sessionId)) {
-      throw new Error('Cannot switch specialist while the Agent is running.')
-    }
-
-    // Skills map drives per-turn skill resolution for every framework.
-    const { aggregate } = this.sessionRegistry.ensureAffinity(sessionId)
-    aggregate.setSpecialistId(specialistId)
-
-    // Per-turn identity prefix (Codex / OpenCode). Claude uses a session _meta append instead, which
-    // adoptFreshSession re-bakes from sessionSpecialistIds during the context reset below.
-    if (specialistId !== undefined && this.options.resolveSpecialistIdentity) {
-      const identity = await this.options.resolveSpecialistIdentity(specialistId, this.framework.id)
-      if (identity?.prefix) {
-        aggregate.setSpecialistPrefix(identity.prefix)
-      } else {
-        aggregate.setSpecialistPrefix(undefined)
-      }
-    } else {
-      aggregate.setSpecialistPrefix(undefined)
-    }
-
-    // Keep notebook routing metadata in sync so MCP calls carry the new specialist context.
-    this.notebookOptions?.registerSessionSpecialist?.(sessionId, specialistId)
-
-    // Claude bakes the specialist identity into the session _meta at session/new. A live identity
-    // change therefore requires replacing the agent session so the new append takes effect. Only do
-    // this when a session is actually attached; an unattached session will pick up the new binding
-    // (now recorded in the maps above) when it is later created or resumed.
-    const requiresContextReset =
-      this.framework.id === 'claude-code' && this.activeSessionFor(sessionId) !== undefined
-    if (requiresContextReset) {
-      const snapshot = aggregate.snapshot()
-      await this.resetSessionContextOperation({
-        sessionId,
-        cwd: snapshot.cwd,
-        projectName: snapshot.projectName,
-        ...(snapshot.permissionProfile?.selectedProfile
-          ? { permissionProfile: snapshot.permissionProfile.selectedProfile }
-          : {})
-      } as AcpResumeSessionRequest)
-    }
-
-    return { contextReset: requiresContextReset }
   }
 
   // Invokes the framework's own context compaction command on the attached agent session. The
@@ -1502,27 +1390,6 @@ class AcpRuntime {
       })
       throw error
     }
-  }
-
-  // Builds a brand-new agent session under the SAME app id when a resume cannot reattach the original
-  // (a cross-framework switch, or an unresumable restart). Earlier turns stay visible; only agent-side
-  // context is gone, so contextReset is returned to let the caller replay a transcript into the next
-  // prompt. Shared by the cross-framework skip and the unrecoverable-error fallback.
-  private async adoptFreshSession(
-    connection: ClientConnection,
-    request: AcpResumeSessionRequest,
-    sessionCwd: string,
-    projectName: string,
-    primaryIdentityReservation: AcpPrimarySessionIdentityReservation
-  ): Promise<AcpCreateSessionResponse> {
-    return this.providerSessionAdopter.adopt(request.sessionId, {
-      connection,
-      cwd: sessionCwd,
-      projectName,
-      identity: primaryIdentityReservation,
-      permissionProfile: request.permissionProfile,
-      specialistId: request.specialistId
-    })
   }
 
   // Changes approval behavior only while the conversation is idle. Applying the ACP mode before the
@@ -3233,23 +3100,10 @@ class AcpRuntime {
     })
   }
 
-  private renewPrimarySessionIdentityReservation(
-    reservation: AcpPrimarySessionIdentityReservation,
-    publishedAppSessionId?: string
-  ): boolean {
-    return reservation.renew(publishedAppSessionId)
-  }
-
   private assertCurrentConnectedConnection(connection: ClientConnection): void {
     if (this.connection !== connection || this.snapshotOwner.status !== 'connected') {
       throw new Error('ACP session startup was superseded.')
     }
-  }
-
-  private releasePrimarySessionIdentityReservation(
-    reservation: AcpPrimarySessionIdentityReservation
-  ): void {
-    reservation.release()
   }
 
   // Disposes an ephemeral reviewer session and unregisters it from the auto-approve set. Safe to call
