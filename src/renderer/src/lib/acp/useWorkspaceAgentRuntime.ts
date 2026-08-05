@@ -14,6 +14,7 @@ import {
   type SessionPermissionProfileState
 } from '../../../../shared/permission-profiles'
 import {
+  imageAttachmentMimeType,
   toPersistedUploadedAttachment,
   toRuntimeUploadedAttachment,
   type UploadedAttachment
@@ -25,7 +26,6 @@ import type { AgentFrameworkId } from '../../../../shared/settings'
 import { resolveModelContextWindow } from '../../../../shared/provider-registry'
 import { isMediaOverflowError } from '../../../../shared/media-overflow'
 import {
-  IMAGE_REPLAY_UNSUPPORTED_MESSAGE,
   RESUME_MODEL_INCOMPATIBLE_MESSAGE,
   RESUME_RECONNECT_FAILED_MESSAGE,
   RESUME_TIMED_OUT_MESSAGE,
@@ -101,7 +101,7 @@ type HistoryReplayContext = {
 }
 
 const isReplayImage = (attachment: UploadedAttachment): boolean =>
-  attachment.mimeType?.startsWith('image/') === true
+  imageAttachmentMimeType(attachment.name, attachment.mimeType) !== undefined
 
 const hasReplayImages = (replay?: HistoryReplayContext): boolean =>
   (replay?.historyImages?.length ?? 0) > 0 ||
@@ -120,12 +120,14 @@ const buildWorkspaceReplay = (
   messages: ChatMessage[],
   descriptor: HistoryReplayDescriptor | undefined,
   frameworkId: AgentFrameworkId | undefined,
-  projectId?: string
+  projectId?: string,
+  supportsImageInput?: boolean
 ): HistoryReplayContext | undefined =>
   buildWorkspaceHistoryReplay(
     messages,
     descriptor ?? { target: resolveHistoryReplayTarget(frameworkId) },
-    projectId
+    projectId,
+    supportsImageInput
   )
 
 type SendPreparationStateChange = (sessionId: string, inFlight: boolean) => void
@@ -831,17 +833,11 @@ const sendWorkspaceMessage = async (
         historyMessages,
         historyReplayDescriptor,
         agentFrameworkId,
-        sessionProjectName
+        sessionProjectName,
+        supportsImageInput
       )
     } catch (error) {
       useSessionStore.getState().failRun(pending.sessionId, getErrorMessage(error))
-      return pending
-    }
-
-    // Branch creation is intentionally immediate. A model incompatibility remains a recoverable error
-    // on the selected pending Session and must never silently dispatch the new prompt without history.
-    if (supportsImageInput === false && hasReplayImages(historyReplay)) {
-      useSessionStore.getState().failRun(pending.sessionId, IMAGE_REPLAY_UNSUPPORTED_MESSAGE)
       return pending
     }
 
@@ -896,19 +892,11 @@ const sendWorkspaceMessage = async (
             historyMessages,
             historyReplayDescriptor,
             agentFrameworkId,
-            sessionProjectName
+            sessionProjectName,
+            supportsImageInput
           )
         } catch (error) {
           useSessionStore.getState().failRun(currentSession.id, getErrorMessage(error))
-          return {
-            sessionId: currentSession.id,
-            messageId: currentSession.pendingContextReplayMessageId
-          }
-        }
-
-        // Keep the original pending prompt intact until the selected model can accept its history.
-        if (supportsImageInput === false && hasReplayImages(replay)) {
-          useSessionStore.getState().failRun(currentSession.id, IMAGE_REPLAY_UNSUPPORTED_MESSAGE)
           return {
             sessionId: currentSession.id,
             messageId: currentSession.pendingContextReplayMessageId
@@ -1145,7 +1133,8 @@ const sendWorkspaceMessage = async (
         historyMessages,
         historyReplayDescriptor,
         agentFrameworkId,
-        sessionProjectName
+        sessionProjectName,
+        supportsImageInput
       )
       historyPreamble = replay?.historyPreamble
       historyAttachments = replayAttachmentsForModel(replay, supportsImageInput)
@@ -1159,7 +1148,8 @@ const sendWorkspaceMessage = async (
               historyMessages,
               historyReplayDescriptor,
               agentFrameworkId,
-              sessionProjectName
+              sessionProjectName,
+              supportsImageInput
             )
             return {
               historyPreamble: replay?.historyPreamble,
@@ -1641,21 +1631,6 @@ const resendEditedWorkspaceMessage = async (
     cutIndex < 0 ||
     runtime.state.promptInFlightSessionIds.includes(input.sessionId)
   ) {
-    return false
-  }
-
-  // Validate replay compatibility before the Branch switch: a kept history with images — whether
-  // agent-emitted blocks or user uploads — cannot be replayed on a model without image input, and
-  // discovering that after the truncation would leave the later turns dropped with no prompt dispatched.
-  const replay = buildWorkspaceReplay(
-    session.messages.slice(0, cutIndex),
-    historyReplayDescriptor,
-    agentFrameworkId,
-    session.projectId
-  )
-
-  if (supportsImageInput === false && hasReplayImages(replay)) {
-    useSessionStore.getState().failRun(input.sessionId, IMAGE_REPLAY_UNSUPPORTED_MESSAGE)
     return false
   }
 

@@ -1,6 +1,5 @@
 import type { AcpRuntimeEvent, AcpStateSnapshot } from '../../../../shared/acp'
 import type { UploadedAttachment } from '../../../../shared/uploads'
-import { IMAGE_REPLAY_UNSUPPORTED_MESSAGE } from '../../../../shared/run-error-classification'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 
 import {
@@ -1206,7 +1205,7 @@ describe('workspace agent message sending', () => {
     )
   })
 
-  it('keeps the immediately created branched Session in an error state when history images cannot replay', async () => {
+  it('omits history images when branching into a text-only model', async () => {
     useSessionStore.getState().appendUserMessage({
       sessionId: 'source-session',
       content: 'Inspect this chart',
@@ -1223,10 +1222,13 @@ describe('workspace agent message sending', () => {
     const sourceBeforeBranch = useSessionStore.getState().sessions[0]
     const runtime = {
       state: createSnapshot(['source-session']),
-      createSession: vi.fn(),
+      createSession: vi.fn().mockResolvedValue({
+        sessionId: 'branched-runtime-session',
+        cwd: '/workspace/project'
+      }),
       resumeSession: vi.fn(),
       resetSessionContext: vi.fn(),
-      sendPrompt: vi.fn()
+      sendPrompt: vi.fn().mockResolvedValue(createSnapshot(['branched-runtime-session']))
     }
 
     const branched = await sendWorkspaceMessage(runtime, {
@@ -1236,22 +1238,17 @@ describe('workspace agent message sending', () => {
     })
 
     expect(branched).toBeDefined()
-    expect(runtime.createSession).not.toHaveBeenCalled()
-    expect(runtime.sendPrompt).not.toHaveBeenCalled()
+    await flushRuntimeTasks()
+
+    expect(runtime.createSession).toHaveBeenCalledOnce()
+    expect(runtime.sendPrompt).toHaveBeenCalledOnce()
+    expect(runtime.sendPrompt.mock.calls[0]?.[5]).toContain('Inspect this chart')
+    expect(runtime.sendPrompt.mock.calls[0]?.[6]).toEqual([])
+    expect(runtime.sendPrompt.mock.calls[0]?.[7]).toEqual([])
     expect(
       useSessionStore.getState().sessions.find((session) => session.id === 'source-session')
     ).toEqual(sourceBeforeBranch)
-    expect(useSessionStore.getState().selectedSessionId).toBe(branched?.sessionId)
-    expect(
-      useSessionStore.getState().sessions.find((session) => session.id === branched?.sessionId)
-    ).toMatchObject({
-      id: branched?.sessionId,
-      status: 'error',
-      error: IMAGE_REPLAY_UNSUPPORTED_MESSAGE,
-      messages: expect.arrayContaining([
-        expect.objectContaining({ content: 'Try another chart explanation' })
-      ])
-    })
+    expect(useSessionStore.getState().selectedSessionId).toBe('branched-runtime-session')
   })
 
   it('publishes a path-only legacy history upload under the source Session before replay', async () => {
@@ -1591,6 +1588,12 @@ describe('workspace agent message sending', () => {
       eventId: 'source-event',
       content: 'The original analysis is complete.'
     })
+    useSessionStore.getState().appendAgentMessageChunk({
+      sessionId: 'source-session',
+      streamId: 'source-stream',
+      eventId: 'source-image-event',
+      image: { mimeType: 'image/png', data: 'aGVsbG8=', byteLength: 5 }
+    })
     useSessionStore.getState().finishRun('source-session')
     const runtime = {
       state: createSnapshot(['source-session', 'branched-runtime-session']),
@@ -1623,7 +1626,8 @@ describe('workspace agent message sending', () => {
 
     const retried = await sendWorkspaceMessage(runtime, {
       sessionId: 'branched-runtime-session',
-      text: 'Try a different interpretation'
+      text: 'Try a different interpretation',
+      supportsImageInput: false
     })
     await flushRuntimeTasks()
 
@@ -1641,6 +1645,7 @@ describe('workspace agent message sending', () => {
     expect(retryPromptCall[5]).toContain('Inspect the original data')
     expect(retryPromptCall[5]).toContain('The original analysis is complete.')
     expect(retryPromptCall[5]).not.toContain('Try a different interpretation')
+    expect(retryPromptCall[7]).toBeUndefined()
     expect(finalizeSession).toHaveBeenCalledTimes(2)
     expect(child.messages.at(-1)?.uploads).toEqual([
       expect.objectContaining({ versionId: 'upload-version-1' })
@@ -4139,7 +4144,7 @@ describe('resendEditedWorkspaceMessage', () => {
     expect(runtime.sendPrompt).not.toHaveBeenCalled()
   })
 
-  it('refuses the edit before truncating when the kept history needs image replay the model cannot take', async () => {
+  it('omits agent images when resending an edit into a text-only model', async () => {
     useSessionStore.setState({
       ...createInitialSessionState(),
       sessions: [
@@ -4168,8 +4173,8 @@ describe('resendEditedWorkspaceMessage', () => {
       state: createSnapshot(['session-1']),
       createSession: vi.fn(),
       resumeSession: vi.fn(),
-      resetSessionContext: vi.fn(),
-      sendPrompt: vi.fn()
+      resetSessionContext: vi.fn().mockResolvedValue({ contextReset: true }),
+      sendPrompt: vi.fn().mockResolvedValue(createSnapshot(['session-1']))
     }
 
     const resent = await resendEditedWorkspaceMessage(
@@ -4177,19 +4182,24 @@ describe('resendEditedWorkspaceMessage', () => {
       { sessionId: 'session-1', messageId: 'user-2', text: 'second prompt, edited' },
       { supportsImageInput: false }
     )
+    await flushRuntimeTasks()
 
-    // The incompatible replay is rejected before the destructive cut: no reset, no prompt, and the
-    // transcript is untouched apart from the visible error.
-    expect(resent).toBe(false)
-    expect(runtime.resetSessionContext).not.toHaveBeenCalled()
-    expect(runtime.sendPrompt).not.toHaveBeenCalled()
+    expect(resent).toBe(true)
+    expect(runtime.resetSessionContext).toHaveBeenCalledOnce()
+    expect(runtime.sendPrompt).toHaveBeenCalledOnce()
+    expect(runtime.sendPrompt.mock.calls[0]?.[5]).toContain('first prompt')
+    expect(runtime.sendPrompt.mock.calls[0]?.[6]).toBeUndefined()
+    expect(runtime.sendPrompt.mock.calls[0]?.[7]).toBeUndefined()
     const session = useSessionStore.getState().sessions[0]
-    expect(session?.messages.map((message) => message.id)).toEqual(['user-1', 'agent-1', 'user-2'])
-    expect(session?.status).toBe('error')
-    expect(session?.error).toContain('image replay')
+    expect(session?.messages.slice(0, 2).map((message) => message.id)).toEqual([
+      'user-1',
+      'agent-1'
+    ])
+    expect(session?.messages.at(-1)?.content).toBe('second prompt, edited')
+    expect(session?.error).toBeUndefined()
   })
 
-  it('refuses the edit before truncating when the kept history has user-uploaded images', async () => {
+  it('classifies generic image uploads by extension before a text-only edited resend', async () => {
     useSessionStore.setState({
       ...createInitialSessionState(),
       sessions: [
@@ -4202,7 +4212,14 @@ describe('resendEditedWorkspaceMessage', () => {
           messages: [
             {
               ...createMessage('user-1', 'user', 'first prompt', baseTime),
-              uploads: [createAttachment({ name: 'photo.png', mimeType: 'image/png' })]
+              uploads: [
+                createAttachment({
+                  id: 'photo',
+                  name: 'photo.png',
+                  mimeType: 'application/octet-stream'
+                }),
+                createAttachment({ id: 'notes', name: 'notes.txt', mimeType: 'text/plain' })
+              ]
             },
             createMessage('agent-1', 'agent', 'first answer', baseTime + 100),
             createMessage('user-2', 'user', 'second prompt', baseTime + 200)
@@ -4218,8 +4235,8 @@ describe('resendEditedWorkspaceMessage', () => {
       state: createSnapshot(['session-1']),
       createSession: vi.fn(),
       resumeSession: vi.fn(),
-      resetSessionContext: vi.fn(),
-      sendPrompt: vi.fn()
+      resetSessionContext: vi.fn().mockResolvedValue({ contextReset: true }),
+      sendPrompt: vi.fn().mockResolvedValue(createSnapshot(['session-1']))
     }
 
     const resent = await resendEditedWorkspaceMessage(
@@ -4227,15 +4244,17 @@ describe('resendEditedWorkspaceMessage', () => {
       { sessionId: 'session-1', messageId: 'user-2', text: 'second prompt, edited' },
       { supportsImageInput: false }
     )
+    await flushRuntimeTasks()
 
-    // User uploads replay as image attachments, so they are gated exactly like agent-emitted images.
-    expect(resent).toBe(false)
-    expect(runtime.resetSessionContext).not.toHaveBeenCalled()
-    expect(runtime.sendPrompt).not.toHaveBeenCalled()
+    expect(resent).toBe(true)
+    expect(runtime.resetSessionContext).toHaveBeenCalledOnce()
+    expect(runtime.sendPrompt).toHaveBeenCalledOnce()
+    expect(runtime.sendPrompt.mock.calls[0]?.[6]).toEqual([
+      expect.objectContaining({ id: 'notes', name: 'notes.txt' })
+    ])
+    expect(runtime.sendPrompt.mock.calls[0]?.[7]).toBeUndefined()
     const session = useSessionStore.getState().sessions[0]
-    expect(session?.messages.map((message) => message.id)).toEqual(['user-1', 'agent-1', 'user-2'])
-    expect(session?.status).toBe('error')
-    expect(session?.error).toContain('image replay')
+    expect(session?.error).toBeUndefined()
   })
 
   it('replays earlier uploaded images with their Project-scoped Version locator after an edit', async () => {

@@ -218,6 +218,59 @@ describe('agent-aware history replay', () => {
     expect(attachmentIds).toContain('document-9')
   })
 
+  it('fills the upload cap with documents after omitting images for a text-only model', () => {
+    const messages = [
+      ...Array.from({ length: 10 }, (_, index) =>
+        message({
+          role: 'user',
+          content: `image turn ${index}`,
+          uploads: [
+            {
+              id: `image-${index}`,
+              versionId: `image-version-${index}`,
+              sessionId: 'session-1',
+              name: `image-${index}.png`,
+              originalName: `image-${index}.png`,
+              path: `/uploads/image-${index}.png`,
+              mimeType: index === 0 ? 'application/octet-stream' : 'image/png',
+              size: 10
+            }
+          ]
+        })
+      ),
+      ...Array.from({ length: 10 }, (_, index) =>
+        message({
+          role: 'user',
+          content: `document turn ${index}`,
+          uploads: [
+            {
+              id: `document-${index}`,
+              versionId: `document-version-${index}`,
+              sessionId: 'session-1',
+              name: `document-${index}.txt`,
+              originalName: `document-${index}.txt`,
+              path: `/uploads/document-${index}.txt`,
+              mimeType: 'text/plain',
+              size: 10
+            }
+          ]
+        })
+      )
+    ]
+
+    const replay = buildWorkspaceHistoryReplay(
+      messages,
+      { target: 'claude-code' },
+      'project-1',
+      false
+    )!
+
+    expect(replay.historyAttachments.map((attachment) => attachment.id)).toEqual(
+      Array.from({ length: 10 }, (_, index) => `document-${index}`)
+    )
+    expect(replay.historyImages).toEqual([])
+  })
+
   it('keeps media-only Assistant output when an oversized turn is projected', () => {
     const replay = buildWorkspaceHistoryReplay(
       [

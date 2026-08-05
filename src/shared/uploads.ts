@@ -14,6 +14,31 @@ export const MAX_UPLOAD_CHUNK_BYTES = 8 * 1024 * 1024
 // Composer total attachment cap; enforced renderer-side since main is stateless about composer state.
 export const MAX_COMPOSER_ATTACHMENTS = 10
 
+const GENERIC_UPLOAD_MIME_TYPES = new Set(['application/octet-stream', 'binary/octet-stream'])
+const RASTER_IMAGE_MIME_BY_EXTENSION = new Map<string, string>([
+  ['png', 'image/png'],
+  ['jpg', 'image/jpeg'],
+  ['jpeg', 'image/jpeg'],
+  ['gif', 'image/gif'],
+  ['webp', 'image/webp'],
+  ['avif', 'image/avif']
+])
+
+// Shared by renderer replay selection and main-process prompt materialization so generic or missing
+// MIME metadata cannot make the two layers disagree about whether an upload is a supported image.
+export const imageAttachmentMimeType = (name: string, mimeType?: string): string | undefined => {
+  const essence = mimeType?.split(';', 1)[0]?.trim().toLowerCase()
+
+  if (essence?.startsWith('image/')) {
+    return essence === 'image/svg+xml' ? undefined : essence
+  }
+  if (essence && !GENERIC_UPLOAD_MIME_TYPES.has(essence)) return undefined
+
+  const dot = name.lastIndexOf('.')
+  const extension = dot >= 0 ? name.slice(dot + 1).toLowerCase() : ''
+  return RASTER_IMAGE_MIME_BY_EXTENSION.get(extension)
+}
+
 export const formatUploadSizeLimit = (bytes: number): string => {
   const gibibytes = bytes / (1024 * 1024 * 1024)
   if (bytes >= 1024 * 1024 * 1024) {

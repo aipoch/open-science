@@ -5,7 +5,11 @@ import { pathToFileURL } from 'node:url'
 import type { AcpMessageImage } from '../../shared/acp'
 import type { FileReference } from '../../shared/artifacts'
 import { estimateHistoryTokens, truncateTextToEstimatedTokens } from '../../shared/history-preamble'
-import { PENDING_UPLOAD_SESSION_ID, type UploadedAttachment } from '../../shared/uploads'
+import {
+  imageAttachmentMimeType,
+  PENDING_UPLOAD_SESSION_ID,
+  type UploadedAttachment
+} from '../../shared/uploads'
 import { readBoundedManagedFilePreview } from '../managed-file-preview'
 import {
   buildImageContentData,
@@ -26,7 +30,6 @@ import {
   buildDatasetAttachmentNotice,
   buildDeferredMediaNotice,
   buildOversizedAttachmentNotice,
-  imageAttachmentMimeType,
   isDatasetAttachment,
   isTabularAttachment,
   isTextLikeAttachment,

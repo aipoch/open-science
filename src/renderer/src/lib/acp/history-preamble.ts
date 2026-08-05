@@ -10,6 +10,7 @@ import {
   type AcpMessageImage
 } from '../../../../shared/acp'
 import {
+  imageAttachmentMimeType,
   MAX_COMPOSER_ATTACHMENTS,
   toRuntimeUploadedAttachment,
   type UploadedAttachment
@@ -43,17 +44,23 @@ export const resolveHistoryReplayTarget = (
 
 export const buildHistoryReplayMedia = (
   messages: ChatMessage[],
-  projectId?: string
+  projectId?: string,
+  supportsImageInput?: boolean
 ): { attachments: UploadedAttachment[]; images: AcpMessageImage[] } => {
   const images: AcpMessageImage[] = []
   let imageBytes = 0
 
   const uploads = messages.flatMap((message) => message.uploads ?? [])
   const newestUploads = [...uploads].reverse()
-  const selectedUploads = [
-    ...newestUploads.filter((upload) => upload.mimeType?.startsWith('image/')),
-    ...newestUploads.filter((upload) => !upload.mimeType?.startsWith('image/'))
-  ].slice(0, MAX_COMPOSER_ATTACHMENTS)
+  const imageUploads = newestUploads.filter((upload) =>
+    imageAttachmentMimeType(upload.name, upload.mimeType)
+  )
+  const fileUploads = newestUploads.filter(
+    (upload) => !imageAttachmentMimeType(upload.name, upload.mimeType)
+  )
+  const selectedUploads = (
+    supportsImageInput === false ? fileUploads : [...imageUploads, ...fileUploads]
+  ).slice(0, MAX_COMPOSER_ATTACHMENTS)
   const selectedUploadSet = new Set(selectedUploads)
   const attachments = uploads
     .filter((upload) => selectedUploadSet.has(upload))
@@ -61,6 +68,7 @@ export const buildHistoryReplayMedia = (
 
   for (let messageIndex = messages.length - 1; messageIndex >= 0; messageIndex -= 1) {
     const message = messages[messageIndex]
+    if (supportsImageInput === false) continue
     for (let index = (message.images?.length ?? 0) - 1; index >= 0; index -= 1) {
       const image = message.images?.[index]
       if (
@@ -80,7 +88,8 @@ export const buildHistoryReplayMedia = (
 export const buildWorkspaceHistoryReplay = (
   messages: ChatMessage[],
   descriptor: HistoryReplayDescriptor,
-  projectId?: string
+  projectId?: string,
+  supportsImageInput?: boolean
 ):
   | {
       historyPreamble: string
@@ -98,7 +107,7 @@ export const buildWorkspaceHistoryReplay = (
   if (!replay) return undefined
 
   const selected = replay.selectedMessageIndexes.map((index) => messages[index]).filter(Boolean)
-  const media = buildHistoryReplayMedia(selected, projectId)
+  const media = buildHistoryReplayMedia(selected, projectId, supportsImageInput)
   return {
     historyPreamble: replay.preamble,
     historyAttachments: media.attachments,
