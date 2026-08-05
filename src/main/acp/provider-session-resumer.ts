@@ -1,0 +1,349 @@
+import * as acp from '@agentclientprotocol/sdk'
+import type { ActiveSession, ClientConnection } from '@agentclientprotocol/sdk'
+import { resolve } from 'node:path'
+
+import type {
+  AcpCreateSessionResponse,
+  AcpResumeSessionRequest,
+  AcpRuntimeEvent
+} from '../../shared/acp'
+import { normalizePermissionProfile } from '../../shared/permission-profiles'
+import type { EffectiveSpecialistSkills } from '../../shared/specialist'
+import { createLogger, diagnosticErrorFields, errorLogFields } from '../logger'
+import type { AcpBackendGenerationView } from './backend-generation-owner'
+import type { AcpProviderSessionAdopter } from './provider-session-adopter'
+import {
+  CURRENT_PRIMARY_SESSION_CAPABILITY_POLICY,
+  type AcpSessionCapabilityOwner,
+  type SessionCapabilityProvision
+} from './session-capability-owner'
+import type { AcpSessionConfigurator } from './session-configurator'
+import { AcpSessionPresentationPolicy } from './session-presentation-policy'
+import type {
+  AcpPrimarySessionIdentityReservation,
+  AcpPrimarySessionIdentityReservationResult,
+  AcpSessionRegistry
+} from './session-registry'
+import { AcpSessionResumePolicy } from './session-resume-policy'
+
+const log = createLogger('acp')
+
+type SessionAttachmentResponse = {
+  sessionId: string
+  modes?: ActiveSession['modes'] | null
+  configOptions?: unknown
+  _meta?: unknown
+}
+
+type ClientContextSessionAttacher = {
+  attachSession: (response: SessionAttachmentResponse) => ActiveSession
+}
+
+type ResumeEvent = Omit<AcpRuntimeEvent, 'id' | 'timestamp'>
+
+type AcpProviderSessionResumerDependencies = Readonly<{
+  defaultCwd: string
+  defaultProjectName: string
+  currentCwd: () => string | undefined
+  ensureConnected: (cwd: string) => Promise<ClientConnection>
+  assertCurrentConnection: (connection: ClientConnection) => void
+  disconnectTimedOutConnection: () => Promise<void>
+  resumeCapabilityAdvertised: () => boolean
+  currentBackend: () => AcpBackendGenerationView
+  registry: AcpSessionRegistry
+  reserveIdentity: (sessionId: string) => AcpPrimarySessionIdentityReservationResult
+  capabilities: Pick<AcpSessionCapabilityOwner, 'provision'>
+  configurator: Pick<AcpSessionConfigurator, 'configure'>
+  adopter: Pick<AcpProviderSessionAdopter, 'adopt'>
+  resolveSpecialistSkills?: (specialistId: string) => Promise<EffectiveSpecialistSkills>
+  updateCwd: (cwd: string) => void
+  pushEvent: (event: ResumeEvent) => void
+  emitState: () => void
+  resumeTimeoutMs: number
+  setTimer: (fn: () => void, ms: number) => ReturnType<typeof setTimeout>
+  clearTimer: (handle: ReturnType<typeof setTimeout>) => void
+  diagnosticContext: () => Readonly<Record<string, unknown>>
+}>
+
+export class AcpProviderSessionResumer {
+  private readonly policy = new AcpSessionResumePolicy()
+  private readonly presentation = new AcpSessionPresentationPolicy()
+
+  constructor(private readonly deps: AcpProviderSessionResumerDependencies) {}
+
+  async resume(request: AcpResumeSessionRequest): Promise<AcpCreateSessionResponse> {
+    const cwd = resolve(request.cwd || this.deps.currentCwd() || this.deps.defaultCwd)
+    const projectName = request.projectName?.trim() || this.deps.defaultProjectName
+    const reserved = this.deps.reserveIdentity(request.sessionId)
+    if (reserved.collision) throw reserved.collision
+    const identity = reserved.reservation
+
+    try {
+      return await this.withTimeout(() => this.resumeReserved(request, cwd, projectName, identity))
+    } finally {
+      identity.release()
+    }
+  }
+
+  private async withTimeout(
+    operation: () => Promise<AcpCreateSessionResponse>
+  ): Promise<AcpCreateSessionResponse> {
+    let timer: ReturnType<typeof setTimeout> | undefined
+    let timedOut = false
+    const timeout = new Promise<never>((_resolve, reject) => {
+      timer = this.deps.setTimer(() => {
+        timedOut = true
+        reject(new Error('ACP session resume timed out.'))
+      }, this.deps.resumeTimeoutMs)
+    })
+
+    try {
+      return await Promise.race([operation(), timeout])
+    } catch (error) {
+      if (timedOut) await this.deps.disconnectTimedOutConnection()
+      throw error
+    } finally {
+      if (timer !== undefined) this.deps.clearTimer(timer)
+    }
+  }
+
+  private async resumeReserved(
+    request: AcpResumeSessionRequest,
+    cwd: string,
+    projectName: string,
+    identity: AcpPrimarySessionIdentityReservation
+  ): Promise<AcpCreateSessionResponse> {
+    const connection = await this.deps.ensureConnected(cwd)
+    this.deps.assertCurrentConnection(connection)
+    identity.renew()
+
+    const affinity = this.deps.registry.lookup(request.sessionId)?.aggregate.snapshot()
+    const backend = this.deps.currentBackend()
+    const decision = this.policy.decide({
+      appSessionId: request.sessionId,
+      previousFrameworkId: affinity?.frameworkId ?? request.previousFrameworkId,
+      currentFrameworkId: backend.framework.id,
+      previousBackendId: affinity?.backendId ?? request.previousBackendId,
+      currentBackendId: backend.backendId,
+      resumeCapabilityAdvertised: this.deps.resumeCapabilityAdvertised()
+    })
+
+    if (decision.action === 'adopt') {
+      log.info('skipping incompatible provider resume; adopting a fresh session', {
+        sessionId: request.sessionId,
+        reason: decision.reason,
+        ...this.deps.diagnosticContext()
+      })
+      return this.adopt(request, connection, cwd, projectName, identity)
+    }
+    if (decision.action === 'fail') throw new Error(decision.message)
+
+    return this.resumeCompatible(request, connection, cwd, projectName, identity)
+  }
+
+  private async resumeCompatible(
+    request: AcpResumeSessionRequest,
+    connection: ClientConnection,
+    cwd: string,
+    projectName: string,
+    identity: AcpPrimarySessionIdentityReservation
+  ): Promise<AcpCreateSessionResponse> {
+    let capability: SessionCapabilityProvision | undefined
+    let provisionalSession: ActiveSession | undefined
+    try {
+      let backend = this.deps.currentBackend()
+      capability = await this.deps.capabilities.provision({
+        stableAppSessionId: request.sessionId,
+        framework: backend.framework,
+        nativeMcpEnabled: backend.adapter.nativeMcpEnabled,
+        bridgeMcpAliasesEnabled: backend.adapter.bridgeMcpAliasesEnabled,
+        policy: CURRENT_PRIMARY_SESSION_CAPABILITY_POLICY,
+        sessionCwd: cwd,
+        projectName
+      })
+      const specialistId =
+        request.specialistId ??
+        this.deps.registry.lookup(request.sessionId)?.aggregate.snapshot().specialistId
+      const setup = this.presentation.buildSessionSetup({
+        framework: backend.framework,
+        tooling: {
+          artifacts: capability.descriptor.capabilities.includes('artifacts'),
+          notebook: capability.descriptor.capabilities.includes('notebook'),
+          skillImport: capability.descriptor.capabilities.includes('skill-import')
+        },
+        backendSystemPromptAppends: backend.prompt.systemPromptAppends,
+        sessionOptions: backend.session.options,
+        specialistSkills: await this.resolveSpecialistSkills(specialistId)
+      })
+
+      let resumeResponse: unknown
+      try {
+        resumeResponse = await connection.agent.request(acp.methods.agent.session.resume, {
+          sessionId: request.sessionId,
+          cwd,
+          mcpServers: capability.mcpServers,
+          ...setup.metaArg
+        })
+      } catch (error) {
+        if (this.policy.classifyFailure(error).disposition !== 'adoptable') throw error
+        try {
+          identity.assertCurrent()
+        } catch (supersededError) {
+          capability.release({ ownsStableIdentity: false })
+          capability = undefined
+          throw supersededError
+        }
+        capability.release({ ownsStableIdentity: true })
+        capability = undefined
+        log.info('resumed session adopted after unrecoverable resume error', {
+          sessionId: request.sessionId,
+          ...errorLogFields(error)
+        })
+        return await this.adopt(request, connection, cwd, projectName, identity)
+      }
+
+      provisionalSession = (
+        connection.agent as unknown as ClientContextSessionAttacher
+      ).attachSession({ sessionId: request.sessionId, ...(resumeResponse as object) })
+      const extended = this.deps.registry.reserve({
+        reservation: identity,
+        sessionIds: [provisionalSession.sessionId]
+      })
+      if (extended.collision) {
+        this.disposeProvisional(provisionalSession, 'primary collision session disposal failed')
+        provisionalSession = undefined
+        throw extended.collision
+      }
+
+      const permission = normalizePermissionProfile(request.permissionProfile)
+      let configuration = await this.deps.configurator.configure({
+        backend,
+        connection,
+        session: provisionalSession,
+        permissionProfile: permission
+      })
+      for (;;) {
+        const currentBackend = this.deps.currentBackend()
+        if (currentBackend !== backend) {
+          backend = currentBackend
+          configuration = await this.deps.configurator.configure({
+            backend,
+            connection,
+            session: provisionalSession,
+            permissionProfile: permission
+          })
+          continue
+        }
+        identity.assertCurrent()
+        const { aggregate } = this.deps.registry.publish(identity, request.sessionId, {
+          session: provisionalSession,
+          cwd,
+          projectName,
+          frameworkId: backend.framework.id,
+          backendId: backend.backendId,
+          permissionProfile: structuredClone(configuration.permissionProfile),
+          appliedModel: configuration.appliedModel,
+          configOptions: structuredClone(configuration.configOptions)
+        })
+        if (request.specialistId) aggregate.setSpecialistId(request.specialistId)
+        capability.commit(request.sessionId)
+        capability = undefined
+        provisionalSession = undefined
+        identity.release()
+        this.publish(request.sessionId, cwd)
+        return {
+          sessionId: request.sessionId,
+          cwd,
+          frameworkId: backend.framework.id,
+          ...(backend.backendId ? { backendId: backend.backendId } : {})
+        }
+      }
+    } catch (caught) {
+      let startupError = caught
+      let ownsStableIdentity = true
+      try {
+        identity.assertCurrent()
+      } catch (supersededError) {
+        startupError = supersededError
+        ownsStableIdentity = false
+      }
+      capability?.release({ ownsStableIdentity })
+      this.disposeProvisional(provisionalSession, 'resumed startup session disposal failed')
+      throw startupError
+    }
+  }
+
+  private adopt(
+    request: AcpResumeSessionRequest,
+    connection: ClientConnection,
+    cwd: string,
+    projectName: string,
+    identity: AcpPrimarySessionIdentityReservation
+  ): Promise<AcpCreateSessionResponse> {
+    return this.deps.adopter.adopt(request.sessionId, {
+      connection,
+      cwd,
+      projectName,
+      identity,
+      permissionProfile: request.permissionProfile,
+      specialistId: request.specialistId
+    })
+  }
+
+  private async resolveSpecialistSkills(
+    specialistId: string | undefined
+  ): Promise<EffectiveSpecialistSkills | undefined> {
+    if (!specialistId || !this.deps.resolveSpecialistSkills) return undefined
+    try {
+      return await this.deps.resolveSpecialistSkills(specialistId)
+    } catch {
+      return { kind: 'unavailable', reason: 'The bound specialist is unavailable.' }
+    }
+  }
+
+  private publish(sessionId: string, cwd: string): void {
+    this.deps.updateCwd(cwd)
+    try {
+      this.deps.pushEvent({
+        kind: 'system',
+        level: 'info',
+        sessionId,
+        title: 'Session resumed',
+        text: cwd
+      })
+    } catch (error) {
+      this.safeLogError('session resumed event callback failed', error, sessionId)
+    }
+    try {
+      this.deps.emitState()
+    } catch (error) {
+      this.safeLogError('session resumed state callback failed', error, sessionId)
+    }
+  }
+
+  private disposeProvisional(session: ActiveSession | undefined, message: string): void {
+    if (!session) return
+    try {
+      session.dispose()
+    } catch (error) {
+      this.safeLogError(message, error, session.sessionId, false)
+    }
+  }
+
+  private safeLogError(
+    message: string,
+    error: unknown,
+    sessionId: string,
+    includeContext = true
+  ): void {
+    try {
+      log.error(message, {
+        ...diagnosticErrorFields(error),
+        ...(includeContext ? this.deps.diagnosticContext() : {}),
+        sessionId
+      })
+    } catch {
+      // Diagnostics must never replace provider, cleanup, or observer outcomes.
+    }
+  }
+}

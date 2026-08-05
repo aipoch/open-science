@@ -7,7 +7,6 @@ import type {
   RequestPermissionRequest,
   RequestPermissionResponse,
   SessionConfigOption,
-  SessionModeState,
   SessionNotification
 } from '@agentclientprotocol/sdk'
 import type { ChildProcessWithoutNullStreams } from 'node:child_process'
@@ -102,8 +101,7 @@ import {
 } from './reviewer-session-owner'
 import {
   AcpSessionCapabilityOwner,
-  CURRENT_PRIMARY_SESSION_CAPABILITY_POLICY,
-  type SessionCapabilityProvision
+  CURRENT_PRIMARY_SESSION_CAPABILITY_POLICY
 } from './session-capability-owner'
 import { ArtifactTurnOwner, type ArtifactTurnHandle } from './artifact-turn-owner'
 import { AcpPromptContentOwner } from './prompt-content-owner'
@@ -111,13 +109,11 @@ import {
   AcpSessionInteractionOwner,
   type AcpPromptSessionInteractionScope
 } from './session-interaction-owner'
-import type { AcpSessionAggregateAttachInput } from './session-aggregate'
 import {
   AcpSessionRegistry,
   type AcpPrimarySessionIdentityReservation,
   type AcpPrimarySessionIdentityReservationResult,
-  type AcpSessionDeletion,
-  type AcpSessionRegistryEntry
+  type AcpSessionDeletion
 } from './session-registry'
 import {
   AcpConnectionResourceOwner,
@@ -142,6 +138,7 @@ import { AcpConnectionCloseWorkflow, type CloseState } from './connection-close-
 import { AcpModelChangeWorkflow } from './model-change-workflow'
 import { AcpProviderSessionCreator } from './provider-session-creator'
 import { AcpProviderSessionAdopter } from './provider-session-adopter'
+import { AcpProviderSessionResumer } from './provider-session-resumer'
 import {
   AcpTurnSkillOwner,
   type AcpTurnSkillHooks,
@@ -287,17 +284,6 @@ type AcpRuntimeSkillImportOptions = {
   ) => Promise<() => void>
 }
 
-type SessionAttachmentResponse = {
-  sessionId: string
-  modes?: SessionModeState | null
-  configOptions?: unknown
-  _meta?: unknown
-}
-
-type ClientContextSessionAttacher = {
-  attachSession: (response: SessionAttachmentResponse) => ActiveSession
-}
-
 // Mirror claude-agent-acp's autonomous result lanes. Unknown future origins stay eligible so a
 // newly introduced user lane does not silently lose the terminal SDK `num_turns` value.
 const CLAUDE_AUTONOMOUS_RESULT_ORIGINS = new Set([
@@ -390,104 +376,6 @@ const safeLogError = (message: string, data?: unknown): void => {
   }
 }
 
-const UNRESUMABLE_SESSION_ERROR_KINDS = new Set([
-  'session_not_found',
-  'conversation_not_found',
-  'session_missing',
-  'conversation_missing',
-  'session_resume_failed',
-  'conversation_restore_failed'
-])
-
-const isUnresumableSessionErrorKind = (errorKind: unknown): boolean =>
-  typeof errorKind === 'string' &&
-  UNRESUMABLE_SESSION_ERROR_KINDS.has(
-    errorKind
-      .trim()
-      .toLowerCase()
-      .replace(/[^a-z0-9]+/g, '_')
-      .replace(/^_|_$/g, '')
-  )
-
-const isCodexProtocolSessionId = (sessionId: string): boolean =>
-  /^(?:urn:uuid:)?[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(sessionId)
-
-const isOpenCodeProtocolSessionId = (sessionId: string): boolean => sessionId.startsWith('ses_')
-
-// Legacy agents may expose only an English diagnostic. Keep this fallback deliberately narrow: a
-// false positive silently resets agent-side context, while a false negative leaves the real error
-// visible and can be fixed by teaching the backend to emit a machine-readable errorKind.
-const describesUnresumableSession = (details: unknown): boolean => {
-  if (typeof details !== 'string') return false
-  if (
-    /\b(?:auth|authentication|authorization|credential|provider|mcp|model|tool|server)\b/i.test(
-      details
-    )
-  )
-    return false
-
-  const describesMissingSession =
-    /\b(?:session|conversation)(?:\s+(?:id|identifier))?\s+(?:(?:was|is)\s+)?(?:not found|missing|unknown)\b/i.test(
-      details
-    ) ||
-    /\b(?:session|conversation)(?:\s+(?:id|identifier))?\s+does not exist\b/i.test(details) ||
-    /\b(?:no|missing|unknown)\s+(?:saved\s+|previous\s+)?(?:session|conversation)\b/i.test(details)
-  const describesFailedResume =
-    /\b(?:failed|unable|cannot|can't|could not)\s+to\s+(?:resume|restore|reopen|reattach)\b.{0,80}\b(?:session|conversation)\b/i.test(
-      details
-    ) ||
-    /\b(?:session|conversation)\b.{0,40}\b(?:failed|was unable)\s+to\s+(?:resume|restore|reopen|reattach)\b/i.test(
-      details
-    ) ||
-    /\b(?:session|conversation)\b.{0,40}\b(?:could not|cannot|can't)\s+be\s+(?:resumed|restored|reopened|reattached)\b/i.test(
-      details
-    )
-
-  return describesMissingSession || describesFailedResume
-}
-
-// Detects an agent-side resume failure that means the session cannot be reattached, so the thread
-// should adopt a fresh agent session instead of dead-ending. A spec-compliant agent returns
-// "Resource not found" (-32002) for a session id it no longer holds (e.g. after a provider switch);
-// some agents instead return a generic "Internal error" (-32603) after an app restart replaced their
-// process. Both mean resume is impossible here. Other failures (invalid params, transport errors)
-// still propagate so genuinely fatal problems stay visible.
-const isUnresumableSessionError = (error: unknown): boolean => {
-  if (typeof error !== 'object' || error === null) return false
-
-  const candidate = error as {
-    code?: number
-    message?: string
-    data?: { details?: unknown; errorKind?: unknown; service?: unknown }
-  }
-  const message = candidate.message ?? ''
-
-  if (candidate.code === -32002 || /resource not found|session not found/i.test(message))
-    return true
-
-  if (candidate.code !== -32603) return false
-
-  // opencode reports a lost session as an Internal error tagged with the failing service
-  // (`{ service: 'session' }`) and a descriptive message suffix, rather than the bare message or the
-  // details string the fallbacks below expect. This marker is machine-readable and language-
-  // independent, so a session-service failure is authoritative — adopt a fresh session regardless of
-  // the suffix. A non-session service (provider, mcp, …) still propagates as a genuine failure.
-  if (candidate.data?.service === 'session') return true
-
-  if (!/^internal error\.?$/i.test(message.trim())) return false
-
-  // A structured reason is authoritative and language-independent. Unknown reasons propagate even when
-  // their detail happens to look session-related, preventing provider/MCP errors from being swallowed.
-  if (candidate.data?.errorKind !== undefined) {
-    return isUnresumableSessionErrorKind(candidate.data.errorKind)
-  }
-
-  // Detail-free Internal errors keep the existing fallback because some agents discard the cause.
-  return (
-    candidate.data?.details === undefined || describesUnresumableSession(candidate.data.details)
-  )
-}
-
 // ACP Session facade. Connection publication and physical teardown live behind their epoch owner;
 // Runtime retains protocol startup, Session/Permission/Notebook cleanup, and status/event projection.
 class AcpRuntime {
@@ -514,8 +402,7 @@ class AcpRuntime {
   private readonly backendGeneration: AcpBackendGenerationOwner
   private readonly sessionConfigurator: AcpSessionConfigurator
   private readonly sessionUpdateProjector = new AcpSessionUpdateProjector()
-  // Bounded resume network timeout + injectable timers (defaults to real setTimeout/clearTimeout).
-  private readonly resumeTimeoutMs: number
+  // Injectable lifecycle timers (defaults to real setTimeout/clearTimeout).
   private readonly setTimer: (fn: () => void, ms: number) => ReturnType<typeof setTimeout>
   private readonly clearTimer: (handle: ReturnType<typeof setTimeout>) => void
   private readonly artifactOptions: AcpRuntimeArtifactOptions | undefined
@@ -530,6 +417,7 @@ class AcpRuntime {
   private readonly modelChanges: AcpModelChangeWorkflow
   private readonly providerSessionCreator: AcpProviderSessionCreator
   private readonly providerSessionAdopter: AcpProviderSessionAdopter
+  private readonly providerSessionResumer: AcpProviderSessionResumer
 
   // Wires runtime dependencies and forwards permission prompts into the event stream.
   constructor(private readonly options: AcpRuntimeOptions) {
@@ -565,7 +453,6 @@ class AcpRuntime {
       assertCurrentConnection: (connection) => this.assertCurrentConnectedConnection(connection),
       diagnosticContext: (backend) => this.diagnosticContext(backend.framework.id)
     })
-    this.resumeTimeoutMs = options.resumeTimeoutMs ?? 30_000
     this.contextUsageTracker = options.contextUsageTracker ?? new ContextUsageTracker()
     this.setTimer = options.setTimer ?? ((fn, ms) => setTimeout(fn, ms))
     this.clearTimer = options.clearTimer ?? ((handle) => clearTimeout(handle))
@@ -818,6 +705,31 @@ class AcpRuntime {
       emitState: () => this.emitState(),
       diagnosticContext: () => this.diagnosticContext()
     })
+    this.providerSessionResumer = new AcpProviderSessionResumer({
+      defaultCwd: options.defaultCwd,
+      defaultProjectName: options.artifacts?.projectName || DEFAULT_UPLOAD_PROJECT_NAME,
+      currentCwd: () => this.snapshotOwner.cwd,
+      ensureConnected: (cwd) => this.ensureConnected(cwd),
+      assertCurrentConnection: (connection) => this.assertCurrentConnectedConnection(connection),
+      disconnectTimedOutConnection: async () => {
+        await this.disconnect(false)
+      },
+      resumeCapabilityAdvertised: () => this.connectionResources.capabilities.resume,
+      currentBackend: () => this.backend,
+      registry: this.sessionRegistry,
+      reserveIdentity: (sessionId) => this.reservePrimarySessionIds(undefined, [sessionId]),
+      capabilities: this.sessionCapabilities,
+      configurator: this.sessionConfigurator,
+      adopter: this.providerSessionAdopter,
+      resolveSpecialistSkills: options.resolveSpecialistSkills,
+      updateCwd: (cwd) => this.snapshotOwner.updateCwd(cwd),
+      pushEvent: (event) => this.pushEvent(event),
+      emitState: () => this.emitState(),
+      resumeTimeoutMs: options.resumeTimeoutMs ?? 30_000,
+      setTimer: this.setTimer,
+      clearTimer: this.clearTimer,
+      diagnosticContext: () => this.diagnosticContext()
+    })
   }
 
   private get backend(): AcpBackendGenerationView {
@@ -859,18 +771,6 @@ class AcpRuntime {
 
   private get supportsSessionDelete(): boolean {
     return this.connectionResources.capabilities.delete
-  }
-
-  private get supportsSessionResume(): boolean {
-    return this.connectionResources.capabilities.resume
-  }
-
-  private attachSessionAggregate(
-    reservation: AcpPrimarySessionIdentityReservation,
-    appSessionId: string,
-    input: AcpSessionAggregateAttachInput
-  ): AcpSessionRegistryEntry {
-    return this.sessionRegistry.publish(reservation, appSessionId, input)
   }
 
   private activeSessionFor(appSessionId: string): ActiveSession | undefined {
@@ -1282,9 +1182,7 @@ class AcpRuntime {
       }
     }
 
-    // The reconnect + session/resume handshake spawns a fresh agent and is network-bound, so it is
-    // wrapped in a bounded timeout that tears down the half-open connection if the agent stalls.
-    return this.resumeSessionWithTimeout(request, sessionCwd, projectName)
+    return this.providerSessionResumer.resume(request)
   }
 
   // Forcibly drops the agent-side context for a session whose accumulated history can no longer be sent
@@ -1603,292 +1501,6 @@ class AcpRuntime {
         text: errorMessage(error)
       })
       throw error
-    }
-  }
-
-  // Races the network-bound resume against a timeout so a stalled agent handshake cannot hang Resume
-  // forever. On timeout the half-open connection is torn down so the next Resume reconnects cleanly.
-  private async resumeSessionWithTimeout(
-    request: AcpResumeSessionRequest,
-    sessionCwd: string,
-    projectName: string
-  ): Promise<AcpCreateSessionResponse> {
-    let timer: ReturnType<typeof setTimeout> | undefined
-    let timedOut = false
-    const timeout = new Promise<never>((_resolve, reject) => {
-      timer = this.setTimer(() => {
-        timedOut = true
-        reject(new Error('ACP session resume timed out.'))
-      }, this.resumeTimeoutMs)
-    })
-
-    try {
-      return await Promise.race([
-        this.resumeSessionNetwork(request, sessionCwd, projectName),
-        timeout
-      ])
-    } catch (error) {
-      if (timedOut) {
-        await this.disconnect(false)
-      }
-
-      throw error
-    } finally {
-      if (timer !== undefined) {
-        this.clearTimer(timer)
-      }
-    }
-  }
-
-  // Performs the connect + session/resume handshake for a session the runtime does not yet hold.
-  private async resumeSessionNetwork(
-    request: AcpResumeSessionRequest,
-    sessionCwd: string,
-    projectName: string
-  ): Promise<AcpCreateSessionResponse> {
-    // request.sessionId is the known stable app identity. Reserve it synchronously, before connection
-    // setup can await, then let the network path extend the same owner with the provider protocol id.
-    const reservationResult = this.reservePrimarySessionIds(undefined, [request.sessionId])
-    if (reservationResult.collision) throw reservationResult.collision
-    const reservation = reservationResult.reservation
-
-    try {
-      return await this.resumeReservedSessionNetwork(request, sessionCwd, projectName, reservation)
-    } finally {
-      this.releasePrimarySessionIdentityReservation(reservation)
-    }
-  }
-
-  private async resumeReservedSessionNetwork(
-    request: AcpResumeSessionRequest,
-    sessionCwd: string,
-    projectName: string,
-    primaryIdentityReservation: AcpPrimarySessionIdentityReservation
-  ): Promise<AcpCreateSessionResponse> {
-    const connection = await this.ensureConnected(sessionCwd)
-    this.assertCurrentConnectedConnection(connection)
-    this.renewPrimarySessionIdentityReservation(primaryIdentityReservation)
-    // A session created under a different framework can never be resumed by the current agent — each
-    // framework keeps its own session store, so the request is guaranteed to fail and only makes the
-    // agent log a scary internal error. Skip straight to adopting a fresh session (context still
-    // resets, so the caller replays the transcript) when we know it last ran under another framework.
-    const priorAffinity = this.sessionRegistry.lookup(request.sessionId)?.aggregate.snapshot()
-    const priorFramework = priorAffinity?.frameworkId ?? request.previousFrameworkId
-    const priorBackend = priorAffinity?.backendId ?? request.previousBackendId
-
-    if (
-      (priorFramework && priorFramework !== this.framework.id) ||
-      (priorBackend && this.backendId && priorBackend !== this.backendId)
-    ) {
-      log.info('skipping incompatible backend resume; adopting a fresh session', {
-        sessionId: request.sessionId,
-        fromFramework: priorFramework,
-        toFramework: this.framework.id,
-        fromBackend: priorBackend,
-        toBackend: this.backendId
-      })
-
-      return this.adoptFreshSession(
-        connection,
-        request,
-        sessionCwd,
-        projectName,
-        primaryIdentityReservation
-      )
-    }
-
-    // A conversation adopted from another framework keeps its app-facing id. After restart the
-    // in-memory agent-id mapping is gone, and Codex cannot parse non-UUID ids such as OpenCode's
-    // `ses_...` form. The resume call is guaranteed to fail, so adopt a fresh Codex session directly
-    // and let the caller replay the visible transcript under the stable app id.
-    if (this.framework.id === 'codex' && !isCodexProtocolSessionId(request.sessionId)) {
-      log.info('skipping invalid Codex session resume; adopting a fresh session', {
-        sessionId: request.sessionId
-      })
-      return this.adoptFreshSession(
-        connection,
-        request,
-        sessionCwd,
-        projectName,
-        primaryIdentityReservation
-      )
-    }
-
-    // Persisted sessions created before framework provenance was recorded may restore without a
-    // previousFrameworkId. OpenCode ids use the `ses_...` namespace, which Claude Code rejects before
-    // it can return a resumable session-not-found result. Avoid the guaranteed failing request and
-    // preserve the app-facing conversation by adopting a fresh Claude session for transcript replay.
-    if (this.framework.id === 'claude-code' && isOpenCodeProtocolSessionId(request.sessionId)) {
-      log.info('skipping OpenCode session id for Claude resume; adopting a fresh session', {
-        sessionId: request.sessionId
-      })
-      return this.adoptFreshSession(
-        connection,
-        request,
-        sessionCwd,
-        projectName,
-        primaryIdentityReservation
-      )
-    }
-
-    // Resume is optional in ACP. A cross-framework session was handled above and can always be
-    // adopted fresh; same-framework sessions require the advertised resume capability.
-    if (!this.supportsSessionResume) {
-      throw new Error('ACP agent does not support session resume.')
-    }
-
-    let capabilityProvision: SessionCapabilityProvision | undefined
-    let session: ActiveSession | undefined
-    try {
-      // Resumed sessions already have stable ids, so the artifact session mirrors the runtime session
-      // id.
-      capabilityProvision = await this.sessionCapabilities.provision({
-        stableAppSessionId: request.sessionId,
-        framework: this.framework,
-        nativeMcpEnabled: this.backend.adapter.nativeMcpEnabled,
-        bridgeMcpAliasesEnabled: this.backend.adapter.bridgeMcpAliasesEnabled,
-        policy: CURRENT_PRIMARY_SESSION_CAPABILITY_POLICY,
-        sessionCwd,
-        projectName
-      })
-      const { mcpServers } = capabilityProvision
-      let resumeResponse
-      try {
-        resumeResponse = await connection.agent.request(acp.methods.agent.session.resume, {
-          sessionId: request.sessionId,
-          cwd: sessionCwd,
-          mcpServers,
-          ...this.buildSessionMetaArg(
-            [],
-            await this.resolveCurrentSpecialistSkills(
-              request.sessionId,
-              request.specialistId ?? priorAffinity?.specialistId
-            )
-          )
-        })
-      } catch (error) {
-        if (!isUnresumableSessionError(error)) throw error
-
-        // The failed resume crossed a network await. If teardown replaced this startup meanwhile,
-        // release only its concrete bearer lease and stop: broad app-id cleanup or fresh adoption
-        // could otherwise revoke or overwrite the same-id successor.
-        try {
-          this.assertPrimarySessionIdentityReservation(primaryIdentityReservation)
-        } catch (supersededError) {
-          capabilityProvision.release({ ownsStableIdentity: false })
-          capabilityProvision = undefined
-          throw supersededError
-        }
-
-        // The agent could not resume this session (an app restart spawned a fresh agent process that no
-        // longer holds it — surfacing as -32002 not-found or a generic -32603 Internal error). Revoke
-        // the token handed to that failed attempt before adopting a brand-new agent session under the
-        // SAME app id; adoptFreshSession owns the replacement token's lifecycle.
-        capabilityProvision.release({ ownsStableIdentity: true })
-        capabilityProvision = undefined
-        log.info('resumed session adopted after unrecoverable resume error', {
-          sessionId: request.sessionId,
-          ...errorLogFields(error)
-        })
-
-        return await this.adoptFreshSession(
-          connection,
-          request,
-          sessionCwd,
-          projectName,
-          primaryIdentityReservation
-        )
-      }
-      // The SDK exposes public helpers for new sessions only. The runtime keeps this adapter
-      // narrow so resume can reuse the same update routing surface as newly-created sessions.
-      session = (connection.agent as unknown as ClientContextSessionAttacher).attachSession({
-        sessionId: request.sessionId,
-        ...resumeResponse
-      })
-
-      const reservationResult = this.reservePrimarySessionIds(primaryIdentityReservation, [
-        session.sessionId
-      ])
-      if (reservationResult.collision) {
-        this.disposeSessionAfterFailure(session, 'primary collision session disposal failed')
-        session = undefined
-        throw reservationResult.collision
-      }
-
-      const backend = this.backend
-      const configuration = await this.sessionConfigurator.configure({
-        backend,
-        connection,
-        session,
-        permissionProfile: normalizePermissionProfile(request.permissionProfile)
-      })
-
-      this.assertPrimarySessionIdentityReservation(primaryIdentityReservation)
-      const { aggregate } = this.attachSessionAggregate(
-        primaryIdentityReservation,
-        request.sessionId,
-        {
-          session,
-          cwd: sessionCwd,
-          projectName,
-          frameworkId: backend.framework.id,
-          backendId: backend.backendId,
-          permissionProfile: structuredClone(configuration.permissionProfile),
-          appliedModel: configuration.appliedModel,
-          configOptions: structuredClone(configuration.configOptions)
-        }
-      )
-      if (request.specialistId) {
-        aggregate.setSpecialistId(request.specialistId)
-      }
-      capabilityProvision.commit(request.sessionId)
-      this.releasePrimarySessionIdentityReservation(primaryIdentityReservation)
-      capabilityProvision = undefined
-      this.snapshotOwner.updateCwd(sessionCwd)
-      try {
-        this.pushEvent({
-          kind: 'system',
-          level: 'info',
-          sessionId: request.sessionId,
-          title: 'Session resumed',
-          text: sessionCwd
-        })
-      } catch (error) {
-        safeLogError('session resumed event callback failed', {
-          ...diagnosticErrorFields(error),
-          sessionId: request.sessionId
-        })
-      }
-      try {
-        this.emitState()
-      } catch (error) {
-        safeLogError('session resumed state callback failed', {
-          ...diagnosticErrorFields(error),
-          sessionId: request.sessionId
-        })
-      }
-
-      return {
-        sessionId: request.sessionId,
-        cwd: sessionCwd,
-        frameworkId: this.framework.id,
-        ...(this.backendId ? { backendId: this.backendId } : {})
-      }
-    } catch (error) {
-      let startupError = error
-      let ownsStableIdentity = true
-      try {
-        this.assertPrimarySessionIdentityReservation(primaryIdentityReservation)
-      } catch (supersededError) {
-        startupError = supersededError
-        ownsStableIdentity = false
-      }
-      capabilityProvision?.release({ ownsStableIdentity })
-      capabilityProvision = undefined
-      if (session) {
-        this.disposeSessionAfterFailure(session, 'resumed startup session disposal failed')
-      }
-      throw startupError
     }
   }
 
@@ -3007,18 +2619,6 @@ class AcpRuntime {
     ]
   }
 
-  private async resolveCurrentSpecialistSkills(
-    sessionId: string,
-    specialistId = this.sessionRegistry.lookup(sessionId)?.aggregate.snapshot().specialistId
-  ): Promise<EffectiveSpecialistSkills | undefined> {
-    if (!specialistId || !this.options.resolveSpecialistSkills) return undefined
-    try {
-      return await this.options.resolveSpecialistSkills(specialistId)
-    } catch {
-      return { kind: 'unavailable', reason: 'The bound specialist is unavailable.' }
-    }
-  }
-
   private buildSpecialistHandoffContinuationText(request: AcpPromptRequest): string {
     const continuation = request.continuation
     if (!continuation) return request.text
@@ -3043,30 +2643,6 @@ class AcpRuntime {
     } catch {
       return String(value)
     }
-  }
-
-  // Builds the ACP `_meta` argument for session/new and session/resume, delegating the framework-specific
-  // shape to the active framework. Claude applies its settingSources restriction, resolved backend
-  // options, and system-prompt appends; opencode returns no meta and uses a prompt prefix instead.
-  // `extraAppends` lets createSession inject a one-off specialist identity without touching the
-  // shared generation appends that apply to every session on this runtime generation.
-  private buildSessionMetaArg(
-    extraAppends: string[] = [],
-    specialistSkills?: EffectiveSpecialistSkills
-  ): { _meta?: Record<string, unknown> } {
-    const skillWhitelist =
-      specialistSkills?.kind === 'specialist'
-        ? specialistSkills.frameworkNames
-        : specialistSkills?.kind === 'unavailable'
-          ? []
-          : undefined
-    const setup = this.framework.buildSessionSetup({
-      systemPromptAppends: [...this.getSystemPromptAppends(), ...extraAppends],
-      sessionOptions: this.backend.session.options,
-      ...(skillWhitelist !== undefined ? { skillWhitelist } : {})
-    })
-
-    return setup.meta ? { _meta: setup.meta } : {}
   }
 
   // Resolves the artifact/notebook storage project for a session, defaulting to the runtime constant.
@@ -3664,12 +3240,6 @@ class AcpRuntime {
     return reservation.renew(publishedAppSessionId)
   }
 
-  private assertPrimarySessionIdentityReservation(
-    reservation: AcpPrimarySessionIdentityReservation
-  ): void {
-    reservation.assertCurrent()
-  }
-
   private assertCurrentConnectedConnection(connection: ClientConnection): void {
     if (this.connection !== connection || this.snapshotOwner.status !== 'connected') {
       throw new Error('ACP session startup was superseded.')
@@ -3680,17 +3250,6 @@ class AcpRuntime {
     reservation: AcpPrimarySessionIdentityReservation
   ): void {
     reservation.release()
-  }
-
-  private disposeSessionAfterFailure(session: ActiveSession, logMessage: string): void {
-    try {
-      session.dispose()
-    } catch (cleanupError) {
-      safeLogError(logMessage, {
-        ...diagnosticErrorFields(cleanupError),
-        sessionId: session.sessionId
-      })
-    }
   }
 
   // Disposes an ephemeral reviewer session and unregisters it from the auto-approve set. Safe to call
