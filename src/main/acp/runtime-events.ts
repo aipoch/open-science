@@ -6,6 +6,11 @@ import {
   type AcpRuntimeEvent
 } from '../../shared/acp'
 
+const CLAUDE_CODE_USAGE_POLICY_REFUSAL_PREFIX =
+  'API Error: Claude Code is unable to respond to this request, which appears to violate our Usage Policy (https://www.anthropic.com/legal/aup).'
+const PROVIDER_NEUTRAL_REFUSAL_PREFIX =
+  'The selected model declined to complete this response under its safety policy.'
+
 // Bounds how much of a failed tool's result text reaches the log, so large or sensitive tool output
 // cannot flood it. Tuned to fit a typical error message (e.g. WebFetch's domain-safety preflight).
 const TOOL_FAILURE_TEXT_LIMIT = 300
@@ -119,9 +124,18 @@ const contentToText = (content: ContentBlock): string => {
 // Image notifications can carry megabytes of base64. Keep only bounded display data on the event;
 // the internal text sentinel lets the existing runtime projection forward image-only messages.
 const normalizeMessageContent = (
-  content: ContentBlock
+  content: ContentBlock,
+  normalizeClaudeCodeRefusal = false
 ): Pick<AcpRuntimeEvent, 'text' | 'image'> => {
-  if (content.type !== 'image') return { text: contentToText(content) }
+  if (content.type !== 'image') {
+    const text = contentToText(content)
+    return {
+      text:
+        normalizeClaudeCodeRefusal && text.startsWith(CLAUDE_CODE_USAGE_POLICY_REFUSAL_PREFIX)
+          ? text.replace(CLAUDE_CODE_USAGE_POLICY_REFUSAL_PREFIX, PROVIDER_NEUTRAL_REFUSAL_PREFIX)
+          : text
+    }
+  }
 
   const image = sanitizeAcpMessageImage(content)
 
@@ -230,7 +244,8 @@ const projectToolDetailPayload = (update: ToolCallUpdate): Partial<AcpRuntimeEve
 const toAcpRuntimeEvent = (
   notification: SessionNotification,
   id: string,
-  timestamp = Date.now()
+  timestamp = Date.now(),
+  normalizeClaudeCodeRefusal = false
 ): AcpRuntimeEvent => {
   const { sessionId, update } = notification
   const base = {
@@ -244,7 +259,7 @@ const toAcpRuntimeEvent = (
   // Group protocol update variants into the small set of event kinds the UI renders.
   switch (update.sessionUpdate) {
     case 'agent_message_chunk': {
-      const messageContent = normalizeMessageContent(update.content)
+      const messageContent = normalizeMessageContent(update.content, normalizeClaudeCodeRefusal)
 
       return {
         ...base,

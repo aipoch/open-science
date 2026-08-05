@@ -75,6 +75,41 @@ describe('AcpSessionUpdateProjector', () => {
     expect(projector.project(notification, { ...routing, reconnectPending: true })).toEqual([])
   })
 
+  it('removes Claude Code policy attribution from visible refusal messages', () => {
+    const projector = new AcpSessionUpdateProjector()
+    const [context, refresh, visible] = projector.project(
+      {
+        sessionId: 'session-1',
+        update: {
+          sessionUpdate: 'agent_message_chunk',
+          content: {
+            type: 'text',
+            text: 'API Error: Claude Code is unable to respond to this request, which appears to violate our Usage Policy (https://www.anthropic.com/legal/aup). Try rephrasing.'
+          }
+        }
+      },
+      {
+        kind: 'runtime',
+        framework: 'claude-code',
+        eventId: 'event-refusal',
+        visible: true,
+        reconnectPending: false,
+        mcpServerNames: []
+      }
+    )
+
+    expect([context.kind, refresh.kind, visible.kind]).toEqual([
+      'context-observation',
+      'context-refresh',
+      'visible-event'
+    ])
+    expect(visible).toMatchObject({
+      event: {
+        text: 'The selected model declined to complete this response under its safety policy. Try rephrasing.'
+      }
+    })
+  })
+
   it('projects hidden current-mode updates while a reconnect suppresses stale context effects', () => {
     const projector = new AcpSessionUpdateProjector()
     const notification: SessionNotification = {

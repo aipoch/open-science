@@ -2804,6 +2804,9 @@ class AcpRuntime {
     this.applySessionUpdateEffects(
       this.sessionUpdateProjector.project(notification, {
         kind: 'runtime',
+        framework:
+          this.sessionRegistry.lookup(sessionId)?.aggregate.snapshot().frameworkId ??
+          this.framework.id,
         appSessionId,
         eventId: this.nextEventId(),
         visible,
