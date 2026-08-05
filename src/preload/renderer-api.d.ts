@@ -217,6 +217,7 @@ import type {
   SetToolPermissionRequest,
   SetNcbiCredentialsRequest,
   AddCustomServerRequest,
+  AuthenticateCustomServerRequest,
   SetCustomServerEnabledRequest,
   RemoveCustomServerRequest,
   UpdateCustomServerRequest,
@@ -432,6 +433,7 @@ export interface OpenScienceAPI {
     setCustomServerEnabled(request: SetCustomServerEnabledRequest): Promise<ConnectorsSnapshot>
     removeCustomServer(request: RemoveCustomServerRequest): Promise<ConnectorsSnapshot>
     updateCustomServer(request: UpdateCustomServerRequest): Promise<ConnectorsSnapshot>
+    authenticateCustomServer(request: AuthenticateCustomServerRequest): Promise<ConnectorsSnapshot>
     onConnectorApprovalRequest(listener: AcpListener<ConnectorApprovalRequest>): RemoveListener
     onSkillImportApprovalRequest(
       listener: AcpListener<ConversationSkillImportApprovalRequest>

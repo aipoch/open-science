@@ -296,7 +296,7 @@ export const RENDERER_CONTRACT_GROUPS = Object.freeze([
     ['saveSession', 'sessions:save-session', WEB, SESSION_SAVE, SESSION_SAVE_JSON], ['sendFlushResponse', 'sessions:flush-response', SEND],
   ]),
   group('settings', 'settings', [
-    ['addCustomServer', 'settings:add-custom-server'], ['cancelClaudeLogin', 'settings:cancel-claude-login', LOCAL],
+    ['addCustomServer', 'settings:add-custom-server'], ['authenticateCustomServer', 'settings:authenticate-custom-server'], ['cancelClaudeLogin', 'settings:cancel-claude-login', LOCAL],
     ['cancelCodexLogin', 'settings:cancel-codex-login', LOCAL], ['cancelIsolatedClaudeLogin', 'settings:cancel-isolated-claude-login', LOCAL],
     ['checkEnvironment', 'settings:check-environment'], ['createSkill', 'settings:create-skill'], ['deleteProvider', 'settings:delete-provider'],
     ['deleteSkill', 'settings:delete-skill'], ['detectClaude', 'settings:detect-claude'], ['detectCodex', 'settings:detect-codex'],

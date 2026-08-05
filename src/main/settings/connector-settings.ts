@@ -21,12 +21,24 @@ import { CONNECTOR_CATALOG } from '../connectors/catalog'
 import { getConnectorTools } from '../connectors/registry'
 import { encryptKey, isEncryptionAvailable, tryDecryptKey } from './crypto'
 import { sanitizeCustomMcpServer, type SettingsRepository } from './repository'
-import type { StoredConnectors, StoredCustomMcpServer } from './types'
+import type { StoredConnectors, StoredCustomMcpOAuthState, StoredCustomMcpServer } from './types'
 
 type CustomServerSecurityChangeGuard = {
   commit(server: StoredCustomMcpServer): void
   rollback(): void
 }
+
+const normalizeOAuthConfig = (
+  oauth: Exclude<AddCustomServerRequest['oauth'], null | undefined>
+): NonNullable<StoredCustomMcpServer['oauth']> => ({
+  ...(oauth.clientMetadataUrl?.trim() ? { clientMetadataUrl: oauth.clientMetadataUrl.trim() } : {}),
+  ...(oauth.authorizationServerUrl?.trim()
+    ? { authorizationServerUrl: oauth.authorizationServerUrl.trim() }
+    : {}),
+  ...(oauth.scopes?.length
+    ? { scopes: [...new Set(oauth.scopes.map((scope) => scope.trim()).filter(Boolean))] }
+    : {})
+})
 
 // Owns durable Connector policy, secret migration/projection, and custom-server mutation. Live MCP
 // clients, approval decisions, Specialist bindings, and refresh workflows remain outside this module.
@@ -79,7 +91,10 @@ class ConnectorSettingsModule {
       resolvedServers.push({
         ...secured,
         env: secured.envRefs ? this.decryptSecretRecord(secured.envRefs) : secured.env,
-        headers: secured.headerRefs ? this.decryptSecretRecord(secured.headerRefs) : secured.headers
+        headers: secured.headerRefs
+          ? this.decryptSecretRecord(secured.headerRefs)
+          : secured.headers,
+        ...(secured.oauthRef ? { oauthState: this.decryptOAuthState(secured.oauthRef) } : {})
       })
     }
 
@@ -178,6 +193,9 @@ class ConnectorSettingsModule {
       ...(request.url?.trim() ? { url: request.url.trim() } : {}),
       ...(request.headers && Object.keys(request.headers).length > 0
         ? { headerRefs: this.encryptSecretRecord(request.headers) }
+        : {}),
+      ...(request.oauth && request.transport !== 'stdio'
+        ? { oauth: normalizeOAuthConfig(request.oauth) }
         : {})
     }
     const server = sanitizeCustomMcpServer(candidate)
@@ -225,6 +243,13 @@ class ConnectorSettingsModule {
     // unavailable. A later getConnectors() call migrates it as soon as encryption becomes available.
     const legacyEnv = request.env === undefined ? existing.env : undefined
     const legacyHeaders = request.headers === undefined ? existing.headers : undefined
+    const nextOAuth =
+      request.oauth === null
+        ? undefined
+        : request.oauth === undefined
+          ? existing.oauth
+          : normalizeOAuthConfig(request.oauth)
+    const oauthChanged = !isDeepStrictEqual(existing.oauth ?? undefined, nextOAuth ?? undefined)
     const merged: StoredCustomMcpServer = {
       id: existing.id,
       name: existing.name,
@@ -238,7 +263,9 @@ class ConnectorSettingsModule {
       ...(legacyEnv && Object.keys(legacyEnv).length > 0 ? { env: legacyEnv } : {}),
       ...(request.url?.trim() ? { url: request.url.trim() } : {}),
       ...(headerRefs && Object.keys(headerRefs).length > 0 ? { headerRefs } : {}),
-      ...(legacyHeaders && Object.keys(legacyHeaders).length > 0 ? { headers: legacyHeaders } : {})
+      ...(legacyHeaders && Object.keys(legacyHeaders).length > 0 ? { headers: legacyHeaders } : {}),
+      ...(nextOAuth && request.transport !== 'stdio' ? { oauth: nextOAuth } : {}),
+      ...(!oauthChanged && existing.oauthRef ? { oauthRef: existing.oauthRef } : {})
     }
     const server = sanitizeCustomMcpServer(merged)
 
@@ -250,7 +277,8 @@ class ConnectorSettingsModule {
       !isDeepStrictEqual(existing.args ?? [], server.args ?? []) ||
       existing.url !== server.url ||
       request.env !== undefined ||
-      request.headers !== undefined
+      request.headers !== undefined ||
+      oauthChanged
 
     const securityChangeGuard = securitySensitiveConfigChanged
       ? await beforeSecuritySensitiveUpdate?.(request.id)
@@ -283,6 +311,35 @@ class ConnectorSettingsModule {
     })
 
     return values.length > 0 ? Object.fromEntries(values) : undefined
+  }
+
+  async saveCustomServerOAuthState(
+    serverId: string,
+    state: StoredCustomMcpOAuthState | undefined
+  ): Promise<void> {
+    const stored = (await this.repository.getSettings()).connectors?.customMcpServers?.find(
+      (server) => server.id === serverId
+    )
+    if (!stored) throw new Error(`Unknown custom connector: ${serverId}`)
+    if (!stored.oauth) throw new Error(`Custom connector "${serverId}" is not configured for OAuth`)
+
+    await this.repository.updateCustomServer(serverId, {
+      ...stored,
+      ...(state ? { oauthRef: encryptKey(JSON.stringify(state)) } : { oauthRef: undefined })
+    })
+  }
+
+  private decryptOAuthState(ref: string): StoredCustomMcpOAuthState | undefined {
+    const value = tryDecryptKey(ref)
+    if (!value) return undefined
+    try {
+      const parsed: unknown = JSON.parse(value)
+      return parsed && typeof parsed === 'object'
+        ? (parsed as StoredCustomMcpOAuthState)
+        : undefined
+    } catch {
+      return undefined
+    }
   }
 
   private toConnectorViews(connectors: StoredConnectors | undefined): ConnectorView[] {
@@ -320,6 +377,20 @@ class ConnectorSettingsModule {
           command: server.command,
           args: server.args,
           url: server.url,
+          ...(server.oauth
+            ? {
+                oauth: {
+                  ...(server.oauth.clientMetadataUrl
+                    ? { clientMetadataUrl: server.oauth.clientMetadataUrl }
+                    : {}),
+                  ...(server.oauth.authorizationServerUrl
+                    ? { authorizationServerUrl: server.oauth.authorizationServerUrl }
+                    : {}),
+                  ...(server.oauth.scopes ? { scopes: server.oauth.scopes } : {}),
+                  hasTokens: Boolean(server.oauthState?.tokens?.access_token)
+                }
+              }
+            : {}),
           ...(unavailable ? { availability: 'unavailable' as const } : {})
         }
       })

@@ -3,11 +3,13 @@ import { StdioClientTransport } from '@modelcontextprotocol/sdk/client/stdio.js'
 import { StreamableHTTPClientTransport } from '@modelcontextprotocol/sdk/client/streamableHttp.js'
 import { SSEClientTransport } from '@modelcontextprotocol/sdk/client/sse.js'
 import type { Transport } from '@modelcontextprotocol/sdk/shared/transport.js'
+import { UnauthorizedError } from '@modelcontextprotocol/sdk/client/auth.js'
 
-// Config for a user-added custom MCP server. Phase 1 (stdio/local command) + Phase 2
-// (streamable_http/sse remote, with static auth headers). OAuth and a dynamic headers-helper
-// command are a later task — not modeled here.
-// See docs/internal/2026-07-12-custom-mcp-connectors-plan4.md §3.1.
+import { OAuthCallbackServer, PersistentOAuthClientProvider } from './oauth-client'
+import type { StoredCustomMcpOAuthState } from '../settings/types'
+
+// Config for a user-added custom MCP server. OAuth state is a transient main-process projection;
+// stdio remains non-OAuth and remote servers can use OAuth, static headers, or neither.
 export type CustomMcpServerConfig = {
   id: string
   name: string
@@ -19,6 +21,12 @@ export type CustomMcpServerConfig = {
   // remote (streamable_http / sse):
   url?: string
   headers?: Record<string, string>
+  oauth?: {
+    clientMetadataUrl?: string
+    authorizationServerUrl?: string
+    scopes?: string[]
+    state?: StoredCustomMcpOAuthState
+  }
 }
 
 export type McpClientManagerTool = {
@@ -28,12 +36,20 @@ export type McpClientManagerTool = {
 }
 
 type McpClientManagerDeps = {
-  createClient?: (config: CustomMcpServerConfig) => Promise<Client>
+  createClient?: (
+    config: CustomMcpServerConfig,
+    authProvider?: PersistentOAuthClientProvider
+  ) => Promise<Client>
+  openExternal?: (url: string) => Promise<void> | void
+  saveOAuthState?: (serverId: string, state: StoredCustomMcpOAuthState) => Promise<void>
 }
 
 // Pure factory: picks the transport for a custom server config. Exported so callers/tests can
 // build a transport without a full connect, and so defaultCreateClient below stays a thin wrapper.
-export function buildTransport(config: CustomMcpServerConfig): Transport {
+export function buildTransport(
+  config: CustomMcpServerConfig,
+  authProvider?: PersistentOAuthClientProvider
+): Transport {
   switch (config.transport) {
     case 'stdio': {
       if (!config.command) {
@@ -49,26 +65,29 @@ export function buildTransport(config: CustomMcpServerConfig): Transport {
       if (!config.url) {
         throw new Error(`custom MCP server "${config.name}" is missing a url for streamable_http`)
       }
-      return new StreamableHTTPClientTransport(
-        new URL(config.url),
-        config.headers ? { requestInit: { headers: config.headers } } : undefined
-      )
+      return new StreamableHTTPClientTransport(new URL(config.url), {
+        ...(authProvider ? { authProvider } : {}),
+        ...(config.headers ? { requestInit: { headers: config.headers } } : {})
+      })
     }
     case 'sse': {
       if (!config.url) {
         throw new Error(`custom MCP server "${config.name}" is missing a url for sse`)
       }
-      return new SSEClientTransport(
-        new URL(config.url),
-        config.headers ? { requestInit: { headers: config.headers } } : undefined
-      )
+      return new SSEClientTransport(new URL(config.url), {
+        ...(authProvider ? { authProvider } : {}),
+        ...(config.headers ? { requestInit: { headers: config.headers } } : {})
+      })
     }
   }
 }
 
 // Default factory: build the transport for the server's configured type and connect an MCP client.
-async function defaultCreateClient(config: CustomMcpServerConfig): Promise<Client> {
-  const transport = buildTransport(config)
+async function defaultCreateClient(
+  config: CustomMcpServerConfig,
+  authProvider?: PersistentOAuthClientProvider
+): Promise<Client> {
+  const transport = buildTransport(config, authProvider)
   const client = new Client({ name: 'open-science', version: '0.0.0' })
   await client.connect(transport)
   return client
@@ -78,12 +97,27 @@ async function defaultCreateClient(config: CustomMcpServerConfig): Promise<Clien
 // ParserEngine's structured-dict + isError-throws call contract so ConnectorService can
 // dispatch to either uniformly. Lazily connects and caches one client per server id.
 export class McpClientManager {
-  private readonly createClient: (config: CustomMcpServerConfig) => Promise<Client>
+  private readonly createClient: (
+    config: CustomMcpServerConfig,
+    authProvider?: PersistentOAuthClientProvider
+  ) => Promise<Client>
   private readonly clients = new Map<string, Client>()
   private readonly connecting = new Map<string, Promise<Client>>()
+  private readonly callbackServer = new OAuthCallbackServer()
+  private readonly openExternal: (url: string) => Promise<void> | void
+  private readonly saveOAuthState?: (
+    serverId: string,
+    state: StoredCustomMcpOAuthState
+  ) => Promise<void>
 
   constructor(deps?: McpClientManagerDeps) {
     this.createClient = deps?.createClient ?? defaultCreateClient
+    this.openExternal =
+      deps?.openExternal ??
+      (() => {
+        throw new Error('No browser opener is configured for OAuth')
+      })
+    this.saveOAuthState = deps?.saveOAuthState
   }
 
   async listTools(config: CustomMcpServerConfig): Promise<McpClientManagerTool[]> {
@@ -111,6 +145,42 @@ export class McpClientManager {
 
   async closeAll(): Promise<void> {
     await Promise.all([...this.clients.keys()].map((id) => this.close(id)))
+    await this.callbackServer.close()
+  }
+
+  // Starts standard OAuth, waits for the loopback callback, and caches an authenticated client.
+  async authenticate(config: CustomMcpServerConfig): Promise<void> {
+    if (!config.oauth || config.transport === 'stdio') {
+      throw new Error(`custom MCP server "${config.name}" is not configured for OAuth`)
+    }
+    await this.close(config.id)
+    const redirectUrl = await this.callbackServer.ensureStarted()
+    const provider = this.oauthProvider(config, redirectUrl)
+    const callback = this.callbackServer.waitFor(provider.state())
+    const transport = buildTransport(config, provider)
+    const firstClient = new Client({ name: 'open-science', version: '0.0.0' })
+    try {
+      await firstClient.connect(transport)
+      this.clients.set(config.id, firstClient)
+      callback.cancel()
+      return
+    } catch (error) {
+      if (!(error instanceof UnauthorizedError)) {
+        callback.cancel()
+        throw error
+      }
+      await firstClient.close().catch(() => undefined)
+    }
+
+    const result = await callback.promise
+    if (result.error) throw new Error(`OAuth authorization failed: ${result.error}`)
+    if (!result.code) throw new Error('OAuth callback did not include an authorization code')
+
+    await (transport as StreamableHTTPClientTransport | SSEClientTransport).finishAuth(result.code)
+    // Recreate the transport/client after the SDK has completed the authorization-code exchange.
+    const client = new Client({ name: 'open-science', version: '0.0.0' })
+    await client.connect(buildTransport(config, provider))
+    this.clients.set(config.id, client)
   }
 
   // Lazily connects, caching the client by server id and deduping concurrent connect calls.
@@ -121,7 +191,7 @@ export class McpClientManager {
     const inFlight = this.connecting.get(config.id)
     if (inFlight) return inFlight
 
-    const connectPromise = this.createClient(config)
+    const connectPromise = this.createClientWithOAuth(config)
       .then((client) => {
         this.clients.set(config.id, client)
         return client
@@ -131,6 +201,26 @@ export class McpClientManager {
       })
     this.connecting.set(config.id, connectPromise)
     return connectPromise
+  }
+
+  private async createClientWithOAuth(config: CustomMcpServerConfig): Promise<Client> {
+    if (!config.oauth) return this.createClient(config)
+    const redirectUrl = await this.callbackServer.ensureStarted()
+    return this.createClient(config, this.oauthProvider(config, redirectUrl))
+  }
+
+  private oauthProvider(
+    config: CustomMcpServerConfig,
+    redirectUrl: string
+  ): PersistentOAuthClientProvider {
+    return new PersistentOAuthClientProvider({
+      serverId: config.id,
+      redirectUrl,
+      config: config.oauth ?? {},
+      state: config.oauth?.state,
+      openExternal: this.openExternal,
+      saveState: this.saveOAuthState ? (state) => this.saveOAuthState!(config.id, state) : undefined
+    })
   }
 }
 

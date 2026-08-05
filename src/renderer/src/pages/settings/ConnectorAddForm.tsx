@@ -17,6 +17,7 @@ type ConnectorMode = 'local' | 'remote'
 
 // The two remote transports, kept out of the local (stdio) mode.
 type RemoteTransport = Extract<CustomServerTransport, 'streamable_http' | 'sse'>
+type RemoteAuth = 'none' | 'oauth' | 'headers'
 
 const fieldLabelClassName = 'text-xs font-medium text-muted-foreground'
 
@@ -125,6 +126,14 @@ export function ConnectorAddForm({
   const [remoteTransport, setRemoteTransport] = useState<RemoteTransport>(
     editServer && editServer.transport !== 'stdio' ? editServer.transport : 'streamable_http'
   )
+  const [remoteAuth, setRemoteAuth] = useState<RemoteAuth>(editServer?.oauth ? 'oauth' : 'headers')
+  const [oauthScopesText, setOauthScopesText] = useState(editServer?.oauth?.scopes?.join(' ') ?? '')
+  const [authorizationServerUrl, setAuthorizationServerUrl] = useState(
+    editServer?.oauth?.authorizationServerUrl ?? ''
+  )
+  const [clientMetadataUrl, setClientMetadataUrl] = useState(
+    editServer?.oauth?.clientMetadataUrl ?? ''
+  )
   const [headersText, setHeadersText] = useState('')
   // Add-time trust confirmation and submission state. An existing (already-trusted) server starts trusted.
   const [trusted, setTrusted] = useState(isEdit)
@@ -150,6 +159,10 @@ export function ConnectorAddForm({
     try {
       const env = parseEnv(envText)
       const headers = parseHeaders(headersText)
+      const oauthScopes = oauthScopesText
+        .split(/[\s,]+/)
+        .map((scope) => scope.trim())
+        .filter(Boolean)
       // Omitted env/headers keep the stored (secret) values on edit; on add they are simply unset.
       const hasEnv = envText.trim().length > 0
       const hasHeaders = headersText.trim().length > 0
@@ -162,7 +175,21 @@ export function ConnectorAddForm({
               command: command.trim(),
               ...(parsedArgs.length > 0 ? { args: parsedArgs } : {})
             }
-          : { url: url.trim() })
+          : {
+              url: url.trim(),
+              oauth:
+                remoteAuth === 'oauth'
+                  ? {
+                      ...(authorizationServerUrl.trim()
+                        ? { authorizationServerUrl: authorizationServerUrl.trim() }
+                        : {}),
+                      ...(clientMetadataUrl.trim()
+                        ? { clientMetadataUrl: clientMetadataUrl.trim() }
+                        : {}),
+                      ...(oauthScopes.length ? { scopes: oauthScopes } : {})
+                    }
+                  : null
+            })
       }
 
       if (isEdit && editServer) {
@@ -170,7 +197,8 @@ export function ConnectorAddForm({
           id: editServer.id,
           ...shared,
           ...(mode === 'local' && hasEnv ? { env } : {}),
-          ...(mode === 'remote' && hasHeaders ? { headers } : {})
+          ...(mode === 'remote' && hasHeaders ? { headers } : {}),
+          ...(mode === 'remote' && remoteAuth !== 'oauth' ? { oauth: null } : {})
         }
         await updateCustomServer(request)
       } else {
@@ -364,23 +392,92 @@ export function ConnectorAddForm({
             </div>
 
             <div className="space-y-1.5">
-              <label className={fieldLabelClassName} htmlFor="connector-headers">
-                Headers <span className="text-muted-foreground">(optional)</span>
-              </label>
-              <Textarea
-                id="connector-headers"
-                aria-label="Headers"
-                value={headersText}
-                rows={3}
-                placeholder={'Authorization: Bearer <token>\nX-Api-Key: <key>'}
-                className="resize-none font-mono text-[13px]"
-                onChange={(event) => setHeadersText(event.target.value)}
-              />
-              <p className="text-xs text-muted-foreground">
-                One <span className="font-mono">Name: Value</span> per line (not JSON).
-                {isEdit ? ' Leave blank to keep the current values.' : ''}
-              </p>
+              <span className={fieldLabelClassName}>Authentication</span>
+              <Select
+                value={remoteAuth}
+                onValueChange={(value) => setRemoteAuth(value as RemoteAuth)}
+              >
+                <SelectTrigger aria-label="Authentication">
+                  <span>
+                    {remoteAuth === 'oauth'
+                      ? 'OAuth (browser sign-in)'
+                      : remoteAuth === 'headers'
+                        ? 'Static headers'
+                        : 'None'}
+                  </span>
+                </SelectTrigger>
+                <SelectContent>
+                  <SelectItem value="none">None</SelectItem>
+                  <SelectItem value="oauth">OAuth (browser sign-in)</SelectItem>
+                  <SelectItem value="headers">Static headers</SelectItem>
+                </SelectContent>
+              </Select>
             </div>
+
+            {remoteAuth === 'oauth' ? (
+              <>
+                <div className="space-y-1.5">
+                  <label className={fieldLabelClassName} htmlFor="connector-oauth-scopes">
+                    OAuth scopes <span className="text-muted-foreground">(optional)</span>
+                  </label>
+                  <Input
+                    id="connector-oauth-scopes"
+                    aria-label="OAuth scopes"
+                    value={oauthScopesText}
+                    placeholder="openid profile"
+                    onChange={(event) => setOauthScopesText(event.target.value)}
+                  />
+                </div>
+                <div className="space-y-1.5">
+                  <label className={fieldLabelClassName} htmlFor="connector-oauth-server">
+                    Authorization server URL{' '}
+                    <span className="text-muted-foreground">(optional)</span>
+                  </label>
+                  <Input
+                    id="connector-oauth-server"
+                    aria-label="Authorization server URL"
+                    value={authorizationServerUrl}
+                    placeholder="Auto-discover from MCP server"
+                    className="font-mono"
+                    onChange={(event) => setAuthorizationServerUrl(event.target.value)}
+                  />
+                </div>
+                <div className="space-y-1.5">
+                  <label className={fieldLabelClassName} htmlFor="connector-oauth-client-metadata">
+                    Client metadata URL <span className="text-muted-foreground">(optional)</span>
+                  </label>
+                  <Input
+                    id="connector-oauth-client-metadata"
+                    aria-label="Client metadata URL"
+                    value={clientMetadataUrl}
+                    placeholder="Use dynamic client registration by default"
+                    className="font-mono"
+                    onChange={(event) => setClientMetadataUrl(event.target.value)}
+                  />
+                </div>
+              </>
+            ) : null}
+
+            {remoteAuth !== 'oauth' ? (
+              <div className="space-y-1.5">
+                <label className={fieldLabelClassName} htmlFor="connector-headers">
+                  Headers <span className="text-muted-foreground">(optional)</span>
+                </label>
+                <Textarea
+                  id="connector-headers"
+                  aria-label="Headers"
+                  value={headersText}
+                  rows={3}
+                  placeholder={'Authorization: Bearer <token>\nX-Api-Key: <key>'}
+                  className="resize-none font-mono text-[13px]"
+                  onChange={(event) => setHeadersText(event.target.value)}
+                />
+                <p className="text-xs text-muted-foreground">
+                  One <span className="font-mono">Name: Value</span> per line (not JSON).
+                  {isEdit ? ' Leave blank to keep the current values.' : ''}
+                </p>
+              </div>
+            ) : null}
           </>
         )}
 

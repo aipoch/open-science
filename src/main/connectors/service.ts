@@ -95,6 +95,7 @@ const customServerSecurityFingerprint = (server: StoredCustomMcpServer): string 
         server.command ?? null,
         server.args ?? [],
         server.url ?? null,
+        server.oauth ?? null,
         stableRecordEntries(server.envRefs ?? server.env),
         stableRecordEntries(server.headerRefs ?? server.headers)
       ])

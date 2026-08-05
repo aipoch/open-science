@@ -22,6 +22,7 @@ import {
   type SetActiveProviderRequest,
   type SetAgentFrameworkRequest,
   type AddCustomServerRequest,
+  type AuthenticateCustomServerRequest,
   type RemoveCustomServerRequest,
   type SetCustomServerEnabledRequest,
   type UpdateCustomServerRequest,
@@ -272,6 +273,11 @@ const registerSettingsIpcHandlers = ({
   )
   ipcMainHandle('settings:update-custom-server', (_event, request: UpdateCustomServerRequest) =>
     workflows.connectors.updateCustomServer(request)
+  )
+  ipcMainHandle(
+    'settings:authenticate-custom-server',
+    (_event, request: AuthenticateCustomServerRequest) =>
+      workflows.connectors.authenticateCustomServer(request)
   )
   // Compute file browser bookmarks: keyed by provider_id in settings.computeBookmarks.
   ipcMainHandle('compute:bookmarks:get', (_event, providerId: string) =>

@@ -1,0 +1,214 @@
+import { createServer, type Server } from 'node:http'
+import { randomUUID } from 'node:crypto'
+
+import type {
+  OAuthClientProvider,
+  OAuthDiscoveryState
+} from '@modelcontextprotocol/sdk/client/auth.js'
+import type {
+  OAuthClientInformationMixed,
+  OAuthClientMetadata,
+  OAuthTokens
+} from '@modelcontextprotocol/sdk/shared/auth.js'
+
+import type { StoredCustomMcpOAuthConfig, StoredCustomMcpOAuthState } from '../settings/types'
+
+export type OAuthCallback = {
+  code?: string
+  error?: string
+  state?: string
+}
+
+type PendingCallback = {
+  resolve: (value: OAuthCallback) => void
+  reject: (error: Error) => void
+}
+
+// One loopback listener is shared by all custom MCP OAuth logins. The callback state is matched to
+// the pending flow before handing the authorization code back to the caller.
+export class OAuthCallbackServer {
+  private server: Server | undefined
+  private redirectUrl: string | undefined
+  private readonly pending = new Map<string, PendingCallback>()
+
+  async ensureStarted(): Promise<string> {
+    if (this.redirectUrl) return this.redirectUrl
+
+    const server = createServer((request, response) => {
+      const url = new URL(request.url ?? '/', 'http://127.0.0.1')
+      if (url.pathname !== '/oauth/callback') {
+        response.writeHead(404)
+        response.end('Not found')
+        return
+      }
+
+      const state = url.searchParams.get('state') ?? ''
+      const pending = this.pending.get(state)
+      if (!pending) {
+        response.writeHead(400, { 'content-type': 'text/html; charset=utf-8' })
+        response.end('<h1>Open Science authorization expired</h1><p>You can close this window.</p>')
+        return
+      }
+
+      this.pending.delete(state)
+      const error = url.searchParams.get('error') ?? undefined
+      const code = url.searchParams.get('code') ?? undefined
+      response.writeHead(error ? 400 : 200, { 'content-type': 'text/html; charset=utf-8' })
+      response.end(
+        error
+          ? '<h1>Authorization failed</h1><p>You can close this window.</p>'
+          : '<h1>Authorization complete</h1><p>You can close this window.</p>'
+      )
+      pending.resolve({ code, error, state })
+    })
+
+    this.server = server
+    await new Promise<void>((resolve, reject) => {
+      server.once('error', reject)
+      server.listen(0, '127.0.0.1', () => resolve())
+    })
+    const address = server.address()
+    if (!address || typeof address === 'string')
+      throw new Error('OAuth callback server did not bind')
+    this.redirectUrl = `http://127.0.0.1:${address.port}/oauth/callback`
+    return this.redirectUrl
+  }
+
+  waitFor(state: string): { promise: Promise<OAuthCallback>; cancel: () => void } {
+    let cancelled = false
+    const promise = new Promise<OAuthCallback>((resolve, reject) => {
+      this.pending.set(state, { resolve, reject })
+    })
+    return {
+      promise,
+      cancel: () => {
+        if (cancelled) return
+        cancelled = true
+        this.pending.delete(state)
+      }
+    }
+  }
+
+  async close(): Promise<void> {
+    for (const entry of this.pending.values())
+      entry.reject(new Error('OAuth callback server closed'))
+    this.pending.clear()
+    const server = this.server
+    this.server = undefined
+    this.redirectUrl = undefined
+    if (!server) return
+    server.closeAllConnections()
+    await new Promise<void>((resolve) => server.close(() => resolve()))
+  }
+}
+
+export type OAuthClientProviderOptions = {
+  serverId: string
+  redirectUrl: string
+  config: StoredCustomMcpOAuthConfig
+  state?: StoredCustomMcpOAuthState
+  saveState?: (state: StoredCustomMcpOAuthState) => Promise<void>
+  openExternal?: (url: string) => Promise<void> | void
+}
+
+// Persistent provider backed by the app's encrypted state callback. The SDK owns discovery, PKCE,
+// dynamic registration, token exchange, and refresh; this class only supplies storage and browser IO.
+export class PersistentOAuthClientProvider implements OAuthClientProvider {
+  private readonly oauthState: StoredCustomMcpOAuthState
+  private readonly oauthStateId: string
+  private readonly saveState?: (state: StoredCustomMcpOAuthState) => Promise<void>
+  private readonly openExternal?: (url: string) => Promise<void> | void
+  private codeVerifierValue: string | undefined
+  private readonly stateValue = randomUUID()
+
+  constructor(private readonly options: OAuthClientProviderOptions) {
+    this.oauthState = { ...(options.state ?? {}) }
+    this.oauthStateId = options.serverId
+    this.saveState = options.saveState
+    this.openExternal = options.openExternal
+  }
+
+  get redirectUrl(): string {
+    return this.options.redirectUrl
+  }
+
+  get clientMetadataUrl(): string | undefined {
+    return this.options.config.clientMetadataUrl
+  }
+
+  get clientMetadata(): OAuthClientMetadata {
+    return {
+      client_name: 'Open Science',
+      redirect_uris: [this.options.redirectUrl],
+      grant_types: ['authorization_code', 'refresh_token'],
+      response_types: ['code'],
+      token_endpoint_auth_method: 'none',
+      ...(this.options.config.scopes?.length ? { scope: this.options.config.scopes.join(' ') } : {})
+    }
+  }
+
+  state(): string {
+    return this.stateValue
+  }
+
+  clientInformation(): OAuthClientInformationMixed | undefined {
+    return this.oauthState.clientInformation
+  }
+
+  async saveClientInformation(clientInformation: OAuthClientInformationMixed): Promise<void> {
+    this.oauthState.clientInformation = clientInformation
+    await this.persist()
+  }
+
+  tokens(): OAuthTokens | undefined {
+    return this.oauthState.tokens
+  }
+
+  async saveTokens(tokens: OAuthTokens): Promise<void> {
+    this.oauthState.tokens = tokens
+    await this.persist()
+  }
+
+  async redirectToAuthorization(authorizationUrl: URL): Promise<void> {
+    if (!this.openExternal) throw new Error('No browser opener is configured for OAuth')
+    await this.openExternal(authorizationUrl.toString())
+  }
+
+  saveCodeVerifier(codeVerifier: string): void {
+    this.codeVerifierValue = codeVerifier
+  }
+
+  codeVerifier(): string {
+    if (!this.codeVerifierValue)
+      throw new Error(`OAuth code verifier is missing for ${this.oauthStateId}`)
+    return this.codeVerifierValue
+  }
+
+  async saveDiscoveryState(state: OAuthDiscoveryState): Promise<void> {
+    this.oauthState.discoveryState = state
+    await this.persist()
+  }
+
+  discoveryState(): OAuthDiscoveryState | undefined {
+    return (
+      this.oauthState.discoveryState ??
+      (this.options.config.authorizationServerUrl
+        ? { authorizationServerUrl: this.options.config.authorizationServerUrl }
+        : undefined)
+    )
+  }
+
+  async invalidateCredentials(
+    scope: 'all' | 'client' | 'tokens' | 'verifier' | 'discovery'
+  ): Promise<void> {
+    if (scope === 'all' || scope === 'client') delete this.oauthState.clientInformation
+    if (scope === 'all' || scope === 'tokens') delete this.oauthState.tokens
+    if (scope === 'all' || scope === 'discovery') delete this.oauthState.discoveryState
+    if (scope === 'all' || scope === 'verifier') this.codeVerifierValue = undefined
+    await this.persist()
+  }
+
+  private persist(): Promise<void> {
+    return this.saveState?.({ ...this.oauthState }) ?? Promise.resolve()
+  }
+}

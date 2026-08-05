@@ -44,6 +44,7 @@ export function ConnectorsPanel({ onNavigate }: ConnectorsPanelProps): React.JSX
   const setConnectorEnabled = useSettingsStore((state) => state.setConnectorEnabled)
   const setCustomServerEnabled = useSettingsStore((state) => state.setCustomServerEnabled)
   const removeCustomServer = useSettingsStore((state) => state.removeCustomServer)
+  const authenticateCustomServer = useSettingsStore((state) => state.authenticateCustomServer)
   const setNcbiCredentials = useSettingsStore((state) => state.setNcbiCredentials)
 
   const [filter, setFilter] = useState<GroupFilter>('all')
@@ -54,6 +55,8 @@ export function ConnectorsPanel({ onNavigate }: ConnectorsPanelProps): React.JSX
   const [editing, setEditing] = useState(false)
   const [emailField, setEmailField] = useState('')
   const [keyField, setKeyField] = useState('')
+  const [authenticatingId, setAuthenticatingId] = useState<string | null>(null)
+  const [authError, setAuthError] = useState<string | null>(null)
 
   useEffect(() => {
     void loadConnectors()
@@ -96,6 +99,18 @@ export function ConnectorsPanel({ onNavigate }: ConnectorsPanelProps): React.JSX
   const clearKey = async (): Promise<void> => {
     await setNcbiCredentials({ contactEmail: emailField, apiKey: '' })
     setKeyField('')
+  }
+
+  const signIn = async (id: string): Promise<void> => {
+    setAuthenticatingId(id)
+    setAuthError(null)
+    try {
+      await authenticateCustomServer({ id })
+    } catch (error) {
+      setAuthError(error instanceof Error ? error.message : 'OAuth sign-in failed.')
+    } finally {
+      setAuthenticatingId(null)
+    }
   }
 
   const showFeatured = filter === 'all' || filter === 'featured'
@@ -303,6 +318,11 @@ export function ConnectorsPanel({ onNavigate }: ConnectorsPanelProps): React.JSX
       </div>
 
       <div className="flex flex-col gap-4">
+        {authError ? (
+          <p className="text-xs text-destructive" role="alert">
+            {authError}
+          </p>
+        ) : null}
         {showFeatured
           ? connectorGroup(
               'featured',
@@ -372,6 +392,21 @@ export function ConnectorsPanel({ onNavigate }: ConnectorsPanelProps): React.JSX
                         onClick={() => void removeCustomServer(server.id)}
                         danger
                       />
+                      {server.oauth ? (
+                        <Button
+                          type="button"
+                          size="sm"
+                          variant={server.oauth.hasTokens ? 'outline' : 'default'}
+                          disabled={authenticatingId === server.id}
+                          onClick={() => void signIn(server.id)}
+                        >
+                          {authenticatingId === server.id
+                            ? 'Waiting…'
+                            : server.oauth.hasTokens
+                              ? 'Connected'
+                              : 'Sign in'}
+                        </Button>
+                      ) : null}
                       <SettingsToggle
                         enabled={server.enabled}
                         aria-label={server.name}

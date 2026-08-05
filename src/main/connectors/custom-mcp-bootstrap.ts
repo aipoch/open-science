@@ -18,7 +18,15 @@ export function toCustomMcpConfig(server: StoredCustomMcpServer): CustomMcpServe
     args: server.args,
     env: server.env,
     url: server.url,
-    headers: server.headers
+    headers: server.headers,
+    ...(server.oauth
+      ? {
+          oauth: {
+            ...server.oauth,
+            ...(server.oauthState ? { state: server.oauthState } : {})
+          }
+        }
+      : {})
   }
 }
 

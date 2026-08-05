@@ -177,6 +177,35 @@ describe('ConnectorSettingsModule', () => {
     })
   })
 
+  it('stores OAuth configuration publicly and OAuth state encrypted', async () => {
+    const snapshot = await service.addCustomServer({
+      name: 'oauth-x',
+      transport: 'streamable_http',
+      url: 'https://example.com/mcp',
+      oauth: {
+        authorizationServerUrl: 'https://example.com/oauth',
+        scopes: ['openid', 'profile']
+      }
+    })
+    const id = snapshot.customServers[0].id
+    expect(snapshot.customServers[0].oauth).toEqual({
+      authorizationServerUrl: 'https://example.com/oauth',
+      scopes: ['openid', 'profile'],
+      hasTokens: false
+    })
+
+    await service.saveCustomServerOAuthState(id, {
+      tokens: { access_token: 'oauth-access', token_type: 'Bearer' }
+    })
+    const storedJson = await readFile(join(dir, 'settings.json'), 'utf8')
+    expect(storedJson).not.toContain('oauth-access')
+    expect(storedJson).toContain('oauthRef')
+
+    const resolved = (await service.getConnectors())?.customMcpServers?.[0]
+    expect(resolved?.oauthState?.tokens?.access_token).toBe('oauth-access')
+    expect((await service.listConnectors()).customServers[0].oauth?.hasTokens).toBe(true)
+  })
+
   it('rejects an invalid custom server (stdio without a command)', async () => {
     await expect(service.addCustomServer({ name: 'bad', transport: 'stdio' })).rejects.toThrow(
       /Invalid custom connector/

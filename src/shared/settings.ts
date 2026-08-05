@@ -1112,6 +1112,12 @@ export type CustomServerView = {
   command?: string
   args?: string[]
   url?: string
+  oauth?: {
+    clientMetadataUrl?: string
+    authorizationServerUrl?: string
+    scopes?: string[]
+    hasTokens: boolean
+  }
 }
 
 // The connectors list plus custom servers and shared credential state, returned by list/mutation calls.
@@ -1136,9 +1142,15 @@ export type AddCustomServerRequest = {
   env?: Record<string, string>
   url?: string
   headers?: Record<string, string>
+  oauth?: {
+    clientMetadataUrl?: string
+    authorizationServerUrl?: string
+    scopes?: string[]
+  } | null
 }
 export type SetCustomServerEnabledRequest = { id: string; enabled: boolean }
 export type RemoveCustomServerRequest = { id: string }
+export type AuthenticateCustomServerRequest = { id: string }
 
 // Edit an existing custom MCP server. The name is immutable (it is the server's identity — host.mcp
 // routing, skill-doc name, and per-tool policy keys all depend on it). Omitted env/headers keep the
@@ -1152,6 +1164,11 @@ export type UpdateCustomServerRequest = {
   env?: Record<string, string>
   url?: string
   headers?: Record<string, string>
+  oauth?: {
+    clientMetadataUrl?: string
+    authorizationServerUrl?: string
+    scopes?: string[]
+  } | null
 }
 
 // A per-call approval request for a connector tool invocation (external data-egress gate). Sent from

@@ -8,6 +8,7 @@ import type { NotebookLanguage } from '../shared/notebook'
 import type { DiscoveredInterpreter } from '../shared/notebook-runtime'
 import type {
   AddCustomServerRequest,
+  AuthenticateCustomServerRequest,
   CreateSkillRequest,
   DeleteSkillRequest,
   ImportAgentHomeSkillsRequest,
@@ -255,6 +256,8 @@ const api: OpenScienceAPI = {
       electronRendererContracts.invoke('settings.removeCustomServer', request),
     updateCustomServer: (request: UpdateCustomServerRequest) =>
       electronRendererContracts.invoke('settings.updateCustomServer', request),
+    authenticateCustomServer: (request: AuthenticateCustomServerRequest) =>
+      electronRendererContracts.invoke('settings.authenticateCustomServer', request),
     // Fires when a connector call needs the user's approval (external data-egress gate).
     onConnectorApprovalRequest: (listener) =>
       electronRendererContracts.subscribe('settings.onConnectorApprovalRequest', listener),

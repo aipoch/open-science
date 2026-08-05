@@ -129,6 +129,7 @@ export const WEB_INVOKE_CHANNELS = {
   'sessions.saveManifest': 'sessions:save-manifest',
   'sessions.saveSession': 'sessions:save-session',
   'settings.addCustomServer': 'settings:add-custom-server',
+  'settings.authenticateCustomServer': 'settings:authenticate-custom-server',
   'settings.cancelClaudeLogin': 'settings:cancel-claude-login',
   'settings.cancelCodexLogin': 'settings:cancel-codex-login',
   'settings.cancelIsolatedClaudeLogin': 'settings:cancel-isolated-claude-login',

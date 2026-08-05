@@ -89,7 +89,7 @@ import {
 import { CONNECTOR_CATALOG } from '../connectors/catalog'
 import { SkillRegistry } from '../skills/registry'
 import { UserSkillRepository } from '../skills/user-skill-repository'
-import type { StoredConnectors, StoredSettings } from './types'
+import type { StoredConnectors, StoredCustomMcpOAuthState, StoredSettings } from './types'
 import type { CodexAuthControllerPort } from './codex-auth'
 import { createSettingsIdSequence } from './id-sequence'
 
@@ -167,6 +167,7 @@ class SettingsService {
   private readonly backendResolver: AgentBackendResolver
   private readonly storageRoot: string
   private readonly userClaudeDir: string
+  private customServerAuthenticator?: (serverId: string) => Promise<void>
   private skillDeletionGuard?: (skillId: string) => Promise<void>
   constructor(options: SettingsServiceOptions = {}) {
     this.storageRoot = options.storageRoot ?? resolveStorageRoot()
@@ -850,6 +851,27 @@ class SettingsService {
     ) => Promise<CustomServerSecurityChangeGuard | void>
   ): Promise<ConnectorsSnapshot> {
     return this.connectors.updateCustomServer(request, beforeSecuritySensitiveUpdate)
+  }
+
+  // Persists OAuth state through the connector module's encrypted safeStorage projection. This is
+  // intentionally main-process-only; renderer settings never receive the token-bearing state.
+  async saveCustomServerOAuthState(
+    serverId: string,
+    state: StoredCustomMcpOAuthState | undefined
+  ): Promise<void> {
+    return this.connectors.saveCustomServerOAuthState(serverId, state)
+  }
+
+  setCustomServerAuthenticator(authenticator: (serverId: string) => Promise<void>): void {
+    this.customServerAuthenticator = authenticator
+  }
+
+  async authenticateCustomServer(serverId: string): Promise<ConnectorsSnapshot> {
+    if (!this.customServerAuthenticator) {
+      throw new Error('Custom MCP OAuth is not available yet')
+    }
+    await this.customServerAuthenticator(serverId)
+    return this.connectors.listConnectors()
   }
 
   // Reports whether npm is on PATH so the installer UI can default to/enable the npm source.

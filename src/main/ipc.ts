@@ -9,6 +9,7 @@ import {
   net,
   Notification,
   protocol,
+  shell,
   webContents,
   type WebContents
 } from 'electron'
@@ -45,6 +46,7 @@ import { createComputeJobRuntime } from './compute/job-runtime'
 import { waitForInitialConnectorRefresh } from './connector-reload'
 import { ApprovalBroker } from './connectors/approval-broker'
 import { McpClientManager } from './connectors/mcp-client-manager'
+import { toCustomMcpConfig } from './connectors/custom-mcp-bootstrap'
 import { createMoleculePreviewHandler } from './connectors/molecule-preview'
 import { ALL_CONNECTOR_IDS } from './connectors/registry'
 import { ConnectorRuntimeSettingsProjection } from './connectors/runtime-settings-projection'
@@ -738,7 +740,11 @@ const createApplicationModules = async (
   // generation (listTools) for user-added custom MCP servers (stdio + remote). It lazily connects per
   // server, so constructing it here does not spawn anything until a custom server is actually used.
   const mcpClientManager = await modules.add(undefined, () => {
-    const manager = new McpClientManager()
+    const manager = new McpClientManager({
+      openExternal: (url) => shell.openExternal(url),
+      saveOAuthState: (serverId, state) =>
+        settingsService.saveCustomServerOAuthState(serverId, state)
+    })
     return {
       name: 'mcp-client-manager',
       capability: manager,
@@ -749,6 +755,13 @@ const createApplicationModules = async (
     readConnectors: () => settingsService.getConnectors(),
     skillsDir: join(getAppClaudeConfigDir(resolveStorageRoot()), 'skills'),
     mcpClientManager
+  })
+  settingsService.setCustomServerAuthenticator(async (serverId) => {
+    const server = (await settingsService.getConnectors())?.customMcpServers?.find(
+      (candidate) => candidate.id === serverId
+    )
+    if (!server) throw new Error(`Unknown custom connector: ${serverId}`)
+    await mcpClientManager.authenticate(toCustomMcpConfig(server))
   })
   // Bridges un-trusted connector calls to the renderer approval card. A tool call that isn't
   // pre-allowed or skip-approved is held here until the user decides (or it auto-denies on timeout).
