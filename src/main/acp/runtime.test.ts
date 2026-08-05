@@ -17032,6 +17032,50 @@ describe('ACP runtime — model hot switch', () => {
     expect(fakeAgent.prompts.map(({ text }) => text)).toEqual(['old-model turn', 'new-model turn'])
   })
 
+  it('applies a newer effort change after a queued model switch', async () => {
+    const process = new FakeAgentProcess()
+    const promptStarted = createDeferred()
+    const finishPrompt = createDeferred()
+    const effortOption = {
+      type: 'select',
+      id: 'effort',
+      name: 'Effort',
+      category: 'thought_level',
+      currentValue: 'default',
+      options: ['default', 'low', 'high'].map((value) => ({ value, name: value }))
+    } as SessionConfigOption
+    const fakeAgent = startFakeAgent(process, ['s-model-effort'], {
+      configOptions: [modelOption(), effortOption],
+      onPrompt: async ({ text }) => {
+        if (text === 'old-model turn') {
+          promptStarted.resolve()
+          await finishPrompt.promise
+        }
+        return { stopReason: 'end_turn' }
+      }
+    })
+    const { runtime } = createModelRuntime(process)
+    await runtime.createSession({ cwd: '/workspace' })
+    fakeAgent.configChanges.length = 0
+
+    const prompt = runtime.sendPrompt({ sessionId: 's-model-effort', text: 'old-model turn' })
+    await promptStarted.promise
+
+    await runtime.applyModelChange(modelTarget('model-b', { reasoningEffort: 'high' }))
+    const effortChange = runtime.applyReasoningEffortChange('low')
+
+    finishPrompt.resolve()
+    await prompt
+    await expect(effortChange).resolves.toBe(true)
+    await runtime.sendPrompt({ sessionId: 's-model-effort', text: 'new-model turn' })
+
+    expect(fakeAgent.configChanges).toEqual([
+      { sessionId: 's-model-effort', configId: 'model', value: 'model-b' },
+      { sessionId: 's-model-effort', configId: 'effort', value: 'high' },
+      { sessionId: 's-model-effort', configId: 'effort', value: 'low' }
+    ])
+  })
+
   it('waits for a generating Claude message before retargeting its upstream provider', async () => {
     const process = new FakeAgentProcess()
     const promptStarted = createDeferred()

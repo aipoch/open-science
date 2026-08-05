@@ -1136,6 +1136,12 @@ class AcpRuntime {
   // either). On success the generation view tracks the new level, so sessions created later in
   // this process inherit it; the persisted setting covers the next respawn.
   async applyReasoningEffortChange(effort: ResolvedReasoningEffort): Promise<boolean> {
+    const modelChangeBarrier = this.modelChanges.barrier
+    if (modelChangeBarrier) {
+      await modelChangeBarrier
+      return this.applyReasoningEffortChange(effort)
+    }
+
     // A provider/model switch may be waiting for an in-flight turn to finish. The incoming effort was
     // resolved against that newly selected model, while this connection still owns the old one. Let
     // the persisted setting reach the fresh backend after reconnect instead of leaking it here.
