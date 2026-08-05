@@ -164,7 +164,7 @@ const App = (): React.JSX.Element | null => {
         event.key !== ',' ||
         !(event.metaKey || event.ctrlKey) ||
         document.querySelector(
-          `[role="dialog"], [role="alertdialog"], ${STREAMDOWN_FULLSCREEN_SELECTOR}`
+          `[role="dialog"]:not([data-state="closed"]), [role="alertdialog"]:not([data-state="closed"]), ${STREAMDOWN_FULLSCREEN_SELECTOR}`
         ) !== null ||
         startupView !== 'app' ||
         !isSessionPersistenceHydrated ||

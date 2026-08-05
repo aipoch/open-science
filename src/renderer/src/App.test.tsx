@@ -447,6 +447,22 @@ describe('App startup routing', () => {
     dialog.remove()
   })
 
+  it('ignores a closed dialog portal when opening Settings', async () => {
+    mocks.settings.isLoaded = true
+    await render()
+    const dialog = document.createElement('div')
+    dialog.setAttribute('role', 'dialog')
+    dialog.dataset.state = 'closed'
+    document.body.appendChild(dialog)
+
+    window.dispatchEvent(
+      new KeyboardEvent('keydown', { key: ',', metaKey: true, cancelable: true })
+    )
+
+    dialog.remove()
+    expect(mocks.settings.openSettings).toHaveBeenCalledOnce()
+  })
+
   it('closes the update dialog before underlying surfaces', async () => {
     mocks.settings.isLoaded = true
     mocks.settings.isSettingsOpen = true
