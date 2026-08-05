@@ -189,8 +189,12 @@ const redactUrlCredentials = (rawUrl: string): string => {
       changed = true
     }
     for (const key of [...url.searchParams.keys()]) {
-      if (!isSensitiveLogKey(key)) continue
+      if (!isSensitiveLogKey(key) && key.toLowerCase() !== 'key') continue
       url.searchParams.set(key, REDACTED_MARKER)
+      changed = true
+    }
+    if (url.hash) {
+      url.hash = ''
       changed = true
     }
 

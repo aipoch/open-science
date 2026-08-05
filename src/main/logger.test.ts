@@ -140,8 +140,14 @@ describe('logger: formatLine', () => {
       { text: 'OPENAI_API_KEY=env-opaque-7319', secrets: ['env-opaque-7319'] },
       { text: '--api-key cli-opaque-7319', secrets: ['cli-opaque-7319'] },
       {
-        text: 'https://alice:password-opaque-7319@example.test/v1?token=query-opaque-7319&ok=1',
-        secrets: ['alice', 'password-opaque-7319', 'query-opaque-7319']
+        text: 'https://alice:password-opaque-7319@example.test/v1?token=query-opaque-7319&key=generic-key-opaque-7319&ok=1#access_token=fragment-opaque-7319',
+        secrets: [
+          'alice',
+          'password-opaque-7319',
+          'query-opaque-7319',
+          'generic-key-opaque-7319',
+          'fragment-opaque-7319'
+        ]
       },
       { text: 'sk-1234567890abcdef', secrets: ['sk-1234567890abcdef'] },
       { text: 'github_pat_1234567890abcdef', secrets: ['github_pat_1234567890abcdef'] },
