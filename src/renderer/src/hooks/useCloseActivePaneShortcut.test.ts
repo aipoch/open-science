@@ -51,6 +51,14 @@ const fileTab = (id: string): Extract<PreviewItem, { type: 'file' }> => ({
   title: id
 })
 
+const toolTab = (id: string): Extract<PreviewItem, { type: 'tool' }> => ({
+  id,
+  sessionId: 'session',
+  type: 'tool',
+  toolKind: 'files',
+  title: id
+})
+
 describe('decideCloseActivePaneAction', () => {
   it('closes the active tab when the pane is open in the workspace with a tab', () => {
     expect(
@@ -172,6 +180,7 @@ describe('useCloseActivePaneShortcut', () => {
     useNavigationStore.setState({ view: 'workspace' })
     const preview = usePreviewWorkbenchStore.getState()
     preview.upsertAndActivateItem(fileTab('kept-open'))
+    preview.upsertAndActivateItem(toolTab('expanded-tool'))
     preview.setToolItemExpanded('expanded-tool')
     preview.openFileDialog(fileTab('dialog'))
 
@@ -182,7 +191,25 @@ describe('useCloseActivePaneShortcut', () => {
 
     act(() => closeActivePane?.())
     expect(usePreviewWorkbenchStore.getState().expandedToolItemId).toBeNull()
-    expect(usePreviewWorkbenchStore.getState().items).toHaveLength(1)
+    expect(usePreviewWorkbenchStore.getState().items).toHaveLength(2)
+    expect(close).not.toHaveBeenCalled()
+    unmount()
+  })
+
+  it('ignores a stale expansion after another preview becomes active', () => {
+    useNavigationStore.setState({ view: 'workspace' })
+    const preview = usePreviewWorkbenchStore.getState()
+    preview.upsertAndActivateItem(toolTab('expanded-tool'))
+    preview.setToolItemExpanded('expanded-tool')
+    preview.upsertAndActivateItem(fileTab('active-file'))
+
+    const { unmount } = renderHook(() => useCloseActivePaneShortcut())
+    act(() => closeActivePane?.())
+
+    expect(usePreviewWorkbenchStore.getState().expandedToolItemId).toBe('expanded-tool')
+    expect(usePreviewWorkbenchStore.getState().items.map((item) => item.id)).toEqual([
+      'expanded-tool'
+    ])
     expect(close).not.toHaveBeenCalled()
     unmount()
   })

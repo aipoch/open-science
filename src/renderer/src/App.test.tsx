@@ -37,7 +37,9 @@ const mocks = vi.hoisted(() => {
     },
     preview: {
       fileDialogItem: undefined as unknown | undefined,
-      expandedToolItemId: null as string | null
+      expandedToolItemId: null as string | null,
+      activeItemId: undefined as string | undefined,
+      panelState: 'collapsed' as 'open' | 'collapsed'
     },
     loadProjects: vi.fn().mockResolvedValue(undefined),
     deepLinkNavigation: vi.fn(),
@@ -295,6 +297,8 @@ describe('App startup routing', () => {
     mocks.skillImport.pending = []
     mocks.preview.fileDialogItem = undefined
     mocks.preview.expandedToolItemId = null
+    mocks.preview.activeItemId = undefined
+    mocks.preview.panelState = 'collapsed'
     mocks.deepLinkNavigation.mockClear()
     mocks.lifecycleSync.mockClear()
     mocks.syncWindowFindAppearance.mockClear()
@@ -472,10 +476,12 @@ describe('App startup routing', () => {
     expect(mocks.globalSearch.props?.open).toBe(false)
   })
 
-  it('does not open Settings under an expanded preview modal', async () => {
+  it('does not open Settings under the active expanded preview modal', async () => {
     mocks.settings.isLoaded = true
     mocks.navigation.view = 'workspace'
     mocks.preview.expandedToolItemId = 'project-files'
+    mocks.preview.activeItemId = 'project-files'
+    mocks.preview.panelState = 'open'
     await render()
 
     window.dispatchEvent(
@@ -483,6 +489,21 @@ describe('App startup routing', () => {
     )
 
     expect(mocks.settings.openSettings).not.toHaveBeenCalled()
+  })
+
+  it('ignores a stale expansion after another preview becomes active', async () => {
+    mocks.settings.isLoaded = true
+    mocks.navigation.view = 'workspace'
+    mocks.preview.expandedToolItemId = 'project-files'
+    mocks.preview.activeItemId = 'paper'
+    mocks.preview.panelState = 'open'
+    await render()
+
+    window.dispatchEvent(
+      new KeyboardEvent('keydown', { key: ',', metaKey: true, cancelable: true })
+    )
+
+    expect(mocks.settings.openSettings).toHaveBeenCalledOnce()
   })
 
   it('ignores stale workspace preview modals when opening Settings from Home', async () => {

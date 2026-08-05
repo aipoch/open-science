@@ -81,7 +81,7 @@ const App = (): React.JSX.Element | null => {
   const isUpdateDialogOpen = useUpdateStore((state) => state.isDialogOpen)
   const isFilePreviewOpen = usePreviewWorkbenchStore((state) => state.fileDialogItem !== undefined)
   const isExpandedPreviewOpen = usePreviewWorkbenchStore(
-    (state) => state.expandedToolItemId !== null
+    (state) => state.panelState === 'open' && state.expandedToolItemId === state.activeItemId
   )
   const isPreviewModalOpen = view === 'workspace' && (isFilePreviewOpen || isExpandedPreviewOpen)
   const initEnv = useNotebookEnvStore((state) => state.init)
