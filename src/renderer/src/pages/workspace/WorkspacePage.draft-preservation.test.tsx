@@ -10,11 +10,14 @@ import {
   usePreviewWorkbenchStore
 } from '@/stores/preview-workbench-store'
 import { useProjectStore } from '@/stores/project-store'
+import { useSettingsStore } from '@/stores/settings-store'
 import {
   createInitialSessionState,
   useSessionStore,
+  type ChatMessage,
   type ChatSession
 } from '@/stores/session-store'
+import { useSpecialistStore } from '@/stores/specialist-store'
 import type { UploadedAttachment } from '../../../../shared/uploads'
 
 import type { ComposerUploadTransfer } from './composer-upload-transfer'
@@ -27,6 +30,10 @@ let conversationProps: {
   attachmentTransfers: ComposerUploadTransfer[]
   canResumeSession: boolean
   onDraftDocChange: (doc: ComposerDoc) => void
+  isHistoryBrowsing: boolean
+  historyStatus: string
+  onNavigateHistory: (direction: 'previous' | 'next') => boolean
+  onSpecialistChange?: (specialistId: string | undefined) => void
   onSendMessage: (forcedSkillIds: string[]) => void
   onBranchInNewSession?: (forcedSkillIds: string[]) => void
   onStageAttachmentFiles: (files: File[]) => void
@@ -149,6 +156,16 @@ const createAttachment = (id: string): UploadedAttachment => ({
 // Deterministic doc containing a single text run.
 const textDoc = (text: string): ComposerDoc => ({ nodes: [{ type: 'text', text }] })
 
+const userMessage = (id: string, content: string): ChatMessage => ({
+  id,
+  role: 'user' as const,
+  content,
+  status: 'complete' as const,
+  eventIds: [],
+  createdAt: 1,
+  updatedAt: 1
+})
+
 const createDeferred = <Value,>(): {
   promise: Promise<Value>
   resolve: (value: Value) => void
@@ -184,6 +201,8 @@ describe('WorkspacePage draft preservation', () => {
       sessions: [createSession('sess-a', 'proj-1'), createSession('sess-b', 'proj-1')],
       selectedSessionId: 'sess-a'
     })
+    useSettingsStore.setState({ skills: [] })
+    useSpecialistStore.setState({ items: [], isLoaded: false })
     vi.clearAllMocks()
     runtime.sendMessage.mockResolvedValue({ sessionId: 'sess-a', messageId: 'm1' })
     runtime.deleteRuntimeSession.mockImplementation((id: string) => {
@@ -316,6 +335,267 @@ describe('WorkspacePage draft preservation', () => {
 
     await openSession('sess-b')
     expect(conversationProps.draftDoc).toEqual(textDoc('draft for B'))
+  })
+
+  it('browses visible Session prompts and restores the unsent scratch draft', async () => {
+    useSessionStore.setState((state) => ({
+      sessions: state.sessions.map((candidate) =>
+        candidate.id === 'sess-a'
+          ? {
+              ...candidate,
+              messages: [
+                userMessage('first', 'first prompt'),
+                userMessage('latest', 'latest prompt')
+              ]
+            }
+          : candidate
+      )
+    }))
+    await renderPage()
+
+    await act(async () => {
+      conversationProps.onDraftDocChange(textDoc('unsent scratch'))
+    })
+    await act(async () => {
+      expect(conversationProps.onNavigateHistory('previous')).toBe(true)
+    })
+    expect(conversationProps.draftDoc).toEqual(textDoc('latest prompt'))
+    expect(conversationProps.isHistoryBrowsing).toBe(true)
+    expect(conversationProps.historyStatus).toBe('History item 1 of 2')
+
+    await act(async () => {
+      expect(conversationProps.onNavigateHistory('previous')).toBe(true)
+    })
+    expect(conversationProps.draftDoc).toEqual(textDoc('first prompt'))
+
+    await act(async () => {
+      expect(conversationProps.onNavigateHistory('next')).toBe(true)
+      expect(conversationProps.onNavigateHistory('next')).toBe(true)
+    })
+    expect(conversationProps.draftDoc).toEqual(textDoc('unsent scratch'))
+    expect(conversationProps.isHistoryBrowsing).toBe(false)
+    expect(conversationProps.historyStatus).toBe('Draft restored')
+  })
+
+  it('does not enter history while a top-level attachment is staged', async () => {
+    useSessionStore.setState((state) => ({
+      sessions: state.sessions.map((candidate) =>
+        candidate.id === 'sess-a'
+          ? { ...candidate, messages: [userMessage('prompt', 'historical prompt')] }
+          : candidate
+      )
+    }))
+    await renderPage()
+    await stageAttachment(createAttachment('history-blocker'))
+
+    expect(conversationProps.onNavigateHistory('previous')).toBe(false)
+    expect(conversationProps.draftDoc).toEqual(emptyDoc)
+    expect(conversationProps.isHistoryBrowsing).toBe(false)
+  })
+
+  it('restores scratch and exits history when switching Sessions', async () => {
+    useSessionStore.setState((state) => ({
+      sessions: state.sessions.map((candidate) =>
+        candidate.id === 'sess-a'
+          ? { ...candidate, messages: [userMessage('prompt', 'historical prompt')] }
+          : candidate
+      )
+    }))
+    await renderPage()
+    await act(async () => {
+      conversationProps.onDraftDocChange(textDoc('session scratch'))
+    })
+    await act(async () => {
+      conversationProps.onNavigateHistory('previous')
+    })
+    expect(conversationProps.draftDoc).toEqual(textDoc('historical prompt'))
+
+    await openSession('sess-b')
+    await openSession('sess-a')
+    expect(conversationProps.draftDoc).toEqual(textDoc('session scratch'))
+    expect(conversationProps.isHistoryBrowsing).toBe(false)
+  })
+
+  it('restores New Conversation scratch when a frozen opener source is deleted', async () => {
+    useSessionStore.setState((state) => ({
+      ...state,
+      selectedSessionId: undefined,
+      sessions: state.sessions.map((candidate, index) => ({
+        ...candidate,
+        messages: [userMessage(`opener-${index}`, `opener ${index}`)],
+        updatedAt: 10 - index
+      }))
+    }))
+    await renderPage()
+    await act(async () => {
+      conversationProps.onDraftDocChange(textDoc('new scratch'))
+    })
+    await act(async () => {
+      conversationProps.onNavigateHistory('previous')
+    })
+    expect(conversationProps.isHistoryBrowsing).toBe(true)
+
+    await act(async () => {
+      useSessionStore.setState((state) => ({
+        sessions: state.sessions.filter((candidate) => candidate.id !== 'sess-a')
+      }))
+    })
+    expect(conversationProps.draftDoc).toEqual(textDoc('new scratch'))
+    expect(conversationProps.isHistoryBrowsing).toBe(false)
+  })
+
+  it('keeps a New Conversation browsing round frozen when a new Session appears', async () => {
+    useSessionStore.setState((state) => ({
+      ...state,
+      selectedSessionId: undefined,
+      sessions: state.sessions.map((candidate, index) => ({
+        ...candidate,
+        messages: [userMessage(`opener-${index}`, `opener ${index}`)],
+        updatedAt: 10 - index
+      }))
+    }))
+    await renderPage()
+    await act(async () => {
+      conversationProps.onNavigateHistory('previous')
+    })
+    expect(conversationProps.draftDoc).toEqual(textDoc('opener 0'))
+
+    await act(async () => {
+      useSessionStore.setState((state) => ({
+        sessions: [
+          ...state.sessions,
+          {
+            ...createSession('sess-new', 'proj-1'),
+            messages: [userMessage('new-opener', 'new opener')],
+            updatedAt: 100
+          }
+        ]
+      }))
+    })
+    expect(conversationProps.isHistoryBrowsing).toBe(true)
+    expect(conversationProps.draftDoc).toEqual(textDoc('opener 0'))
+
+    await act(async () => {
+      conversationProps.onNavigateHistory('previous')
+    })
+    expect(conversationProps.draftDoc).toEqual(textDoc('opener 1'))
+  })
+
+  it('downgrades a recalled Skill when the selected Specialist disallows it', async () => {
+    useSettingsStore.setState({
+      skills: [
+        {
+          id: 'lit',
+          name: 'Literature',
+          description: 'Search papers',
+          source: 'featured',
+          enabled: true,
+          updatedAt: '2026-08-05T00:00:00.000Z'
+        }
+      ]
+    })
+    useSpecialistStore.setState({
+      isLoaded: true,
+      items: [
+        {
+          kind: 'custom',
+          id: 'restricted',
+          name: 'Restricted',
+          description: '',
+          systemPrompt: '',
+          enabled: true,
+          capabilityMode: 'selected',
+          fullAccess: { excludedSkillIds: [], excludedConnectorIds: [], connectorTools: [] },
+          selectedCapabilities: { skillIds: [], connectorIds: [], connectorTools: [] },
+          revision: 1
+        }
+      ]
+    })
+    useSessionStore.setState((state) => ({
+      sessions: state.sessions.map((candidate) =>
+        candidate.id === 'sess-a'
+          ? {
+              ...candidate,
+              messages: [
+                {
+                  ...userMessage('skill-prompt', '/Literature analyze'),
+                  parts: [
+                    { type: 'skill', id: 'lit', name: 'Literature' },
+                    { type: 'text', text: ' analyze' }
+                  ]
+                }
+              ]
+            }
+          : candidate
+      )
+    }))
+    await renderPage()
+    await act(async () => {
+      conversationProps.onNavigateHistory('previous')
+    })
+    expect(conversationProps.draftDoc.nodes[0]).toMatchObject({ type: 'skill', id: 'lit' })
+
+    await act(async () => {
+      conversationProps.onSpecialistChange?.('restricted')
+    })
+    expect(conversationProps.draftDoc).toEqual(textDoc('/Literature analyze'))
+    expect(conversationProps.historyStatus).toContain('/Literature unavailable')
+
+    await act(async () => {
+      conversationProps.onSpecialistChange?.(undefined)
+    })
+    expect(conversationProps.draftDoc.nodes[0]).toMatchObject({ type: 'skill', id: 'lit' })
+    expect(conversationProps.historyStatus).toBe('History item 1 of 1')
+  })
+
+  it('does not downgrade Skill history when the catalog fails to load', async () => {
+    const listSkills = vi.fn().mockRejectedValue(new Error('catalog unavailable'))
+    window.api = { ...window.api, settings: { listSkills } } as never
+    useSessionStore.setState((state) => ({
+      sessions: state.sessions.map((candidate) =>
+        candidate.id === 'sess-a'
+          ? {
+              ...candidate,
+              messages: [
+                {
+                  ...userMessage('skill-prompt', '/Literature analyze'),
+                  parts: [
+                    { type: 'skill', id: 'lit', name: 'Literature' },
+                    { type: 'text', text: ' analyze' }
+                  ]
+                }
+              ]
+            }
+          : candidate
+      )
+    }))
+    await renderPage()
+
+    await act(async () => {
+      expect(conversationProps.onNavigateHistory('previous')).toBe(false)
+      await Promise.resolve()
+    })
+    expect(conversationProps.draftDoc).toEqual(emptyDoc)
+    expect(conversationProps.historyStatus).toContain('loading')
+    expect(listSkills).toHaveBeenCalled()
+  })
+
+  it('keeps New Conversation drafts isolated by Project', async () => {
+    useSessionStore.setState((state) => ({ ...state, selectedSessionId: undefined }))
+    await renderPage()
+    await act(async () => {
+      conversationProps.onDraftDocChange(textDoc('project one draft'))
+    })
+
+    await act(async () => {
+      useNavigationStore.setState({ activeProjectId: 'proj-2' })
+    })
+    expect(conversationProps.draftDoc).toEqual(emptyDoc)
+    await act(async () => {
+      conversationProps.onDraftDocChange(textDoc('project two draft'))
+      useNavigationStore.setState({ activeProjectId: 'proj-1' })
+    })
+    expect(conversationProps.draftDoc).toEqual(textDoc('project one draft'))
   })
 
   it('preserves the new-conversation draft across session switches', async () => {

@@ -179,6 +179,9 @@ type Overrides = Partial<{
   onSubmit: () => void
   onPaste: (event: React.ClipboardEvent<HTMLDivElement>) => void
   disabled: boolean
+  isHistoryBrowsing: boolean
+  historyStatus: string
+  onNavigateHistory: (direction: 'previous' | 'next') => boolean
 }>
 
 const renderEditor = (overrides: Overrides = {}): void => {
@@ -192,6 +195,9 @@ const renderEditor = (overrides: Overrides = {}): void => {
         disabled={overrides.disabled}
         placeholder="Ask anything"
         ariaLabel="Ask anything"
+        isHistoryBrowsing={overrides.isHistoryBrowsing}
+        historyStatus={overrides.historyStatus}
+        onNavigateHistory={overrides.onNavigateHistory}
       />
     )
   })
@@ -311,6 +317,106 @@ describe('ComposerEditor', () => {
     })
     dispatchKey(editor(), 'Enter')
     expect(onSubmit).toHaveBeenCalledTimes(1)
+  })
+
+  it('enters history with ArrowUp only from a collapsed caret at the logical start', () => {
+    const onNavigateHistory = vi.fn(() => true)
+    renderEditor({
+      doc: { nodes: [{ type: 'text', text: 'scratch' }] },
+      onNavigateHistory
+    })
+    const text = editor().firstChild as Text
+
+    setCaret(text, 4)
+    dispatchKey(editor(), 'ArrowUp')
+    expect(onNavigateHistory).not.toHaveBeenCalled()
+
+    setCaret(text, 0)
+    const arrow = new KeyboardEvent('keydown', {
+      key: 'ArrowUp',
+      bubbles: true,
+      cancelable: true
+    })
+    act(() => editor().dispatchEvent(arrow))
+    expect(onNavigateHistory).toHaveBeenCalledWith('previous')
+    expect(arrow.defaultPrevented).toBe(true)
+  })
+
+  it('enters history from an empty editor but not from after a mention chip', () => {
+    const onNavigateHistory = vi.fn(() => true)
+    renderEditor({ doc: emptyDoc, onNavigateHistory })
+    setCaret(editor(), 0)
+    dispatchKey(editor(), 'ArrowUp')
+    expect(onNavigateHistory).toHaveBeenCalledOnce()
+
+    onNavigateHistory.mockClear()
+    renderEditor({
+      doc: { nodes: [{ type: 'skill', id: 'lit', name: 'Literature' }] },
+      onNavigateHistory
+    })
+    setCaret(editor(), 1)
+    dispatchKey(editor(), 'ArrowUp')
+    expect(onNavigateHistory).not.toHaveBeenCalled()
+  })
+
+  it('uses both arrows while browsing, but leaves modifier arrows and selections alone', () => {
+    const onNavigateHistory = vi.fn(() => true)
+    renderEditor({
+      doc: { nodes: [{ type: 'text', text: 'history' }] },
+      isHistoryBrowsing: true,
+      onNavigateHistory
+    })
+    const text = editor().firstChild as Text
+
+    setCaret(text, text.length)
+    dispatchKey(editor(), 'ArrowDown')
+    expect(onNavigateHistory).toHaveBeenLastCalledWith('next')
+
+    dispatchKey(editor(), 'ArrowUp', { metaKey: true })
+    expect(onNavigateHistory).toHaveBeenCalledTimes(1)
+
+    const range = document.createRange()
+    range.setStart(text, 0)
+    range.setEnd(text, 2)
+    window.getSelection()?.removeAllRanges()
+    window.getSelection()?.addRange(range)
+    dispatchKey(editor(), 'ArrowUp')
+    expect(onNavigateHistory).toHaveBeenCalledTimes(1)
+
+    setCaret(text, 0)
+    dispatchKey(editor(), 'ArrowUp', { isComposing: true })
+    expect(onNavigateHistory).toHaveBeenCalledTimes(1)
+
+    act(() => {
+      editor().dispatchEvent(new CompositionEvent('compositionstart', { bubbles: true }))
+    })
+    setCaret(text, 0)
+    dispatchKey(editor(), 'ArrowUp')
+    expect(onNavigateHistory).toHaveBeenCalledTimes(1)
+  })
+
+  it('moves the caret to the end after applying a recalled history doc', () => {
+    const onNavigateHistory = vi.fn(() => true)
+    renderEditor({
+      doc: { nodes: [{ type: 'text', text: 'scratch' }] },
+      onNavigateHistory
+    })
+    setCaret(editor().firstChild as Text, 0)
+    dispatchKey(editor(), 'ArrowUp')
+
+    renderEditor({
+      doc: { nodes: [{ type: 'text', text: 'recalled' }] },
+      isHistoryBrowsing: true,
+      historyStatus: 'History item 1 of 1',
+      onNavigateHistory
+    })
+
+    const selection = window.getSelection()
+    expect(document.activeElement).toBe(editor())
+    expect(selection?.anchorNode).toBe(editor())
+    expect(selection?.anchorOffset).toBe(editor().childNodes.length)
+    expect(document.querySelector('[role="status"]')?.textContent).toBe('History item 1 of 1')
+    expect(editor().getAttribute('aria-describedby')).toBeTruthy()
   })
 
   it('forwards paste to onPaste and inserts clipboard text as plain text', () => {

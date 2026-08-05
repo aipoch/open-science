@@ -141,6 +141,9 @@ type ConversationPanelProps = {
   // Auto-review toggle: whether the current session has auto-review enabled (default false).
   autoReviewEnabled: boolean
   onDraftDocChange: (doc: ComposerDoc) => void
+  isHistoryBrowsing?: boolean
+  historyStatus?: string
+  onNavigateHistory?: (direction: 'previous' | 'next') => boolean
   onSendMessage: (forcedSkillIds: string[]) => void
   // Starts a new session from this session's visible branch, then sends the current draft there.
   // Optional while callers migrate to the split send affordance.
@@ -212,6 +215,9 @@ const ConversationPanel = ({
   canChangePermissionProfile,
   autoReviewEnabled,
   onDraftDocChange,
+  isHistoryBrowsing = false,
+  historyStatus = '',
+  onNavigateHistory,
   onSendMessage,
   onBranchInNewSession,
   onStageAttachmentFiles,
@@ -676,9 +682,12 @@ const ConversationPanel = ({
                           onSubmit={handleSubmit}
                           onPaste={handleMessageDraftPaste}
                           disabled={!canEditDraft}
-                          placeholder={`Ask anything — / for skills, @ for files, ${globalSearchShortcut} to search`}
+                          placeholder={`Ask anything — / skills · @ files · ${globalSearchShortcut} search · ↑↓ history`}
                           ariaLabel="Ask anything"
                           allowedSkillIds={allowedSkillIds}
+                          isHistoryBrowsing={isHistoryBrowsing}
+                          historyStatus={historyStatus}
+                          onNavigateHistory={onNavigateHistory}
                         />
                       </div>
 

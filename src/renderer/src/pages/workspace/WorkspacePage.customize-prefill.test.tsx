@@ -26,6 +26,8 @@ let conversationProps: {
   attachments: unknown[]
   attachmentTransfers: unknown[]
   onDraftDocChange: (doc: ComposerDoc) => void
+  isHistoryBrowsing: boolean
+  onNavigateHistory: (direction: 'previous' | 'next') => boolean
 }
 
 const runtime = vi.hoisted(() => ({
@@ -234,6 +236,41 @@ describe('WorkspacePage customize prefill', () => {
       type: 'text',
       text: '  Help me create a new specialist.'
     })
+  })
+
+  it('discards an active history scratch when the explicit customize prefill arrives', async () => {
+    useSessionStore.setState((state) => ({
+      sessions: state.sessions.map((session, index) => ({
+        ...session,
+        messages: [
+          {
+            id: `prompt-${index}`,
+            role: 'user',
+            content: `starter ${index}`,
+            status: 'complete',
+            eventIds: [],
+            createdAt: index,
+            updatedAt: index
+          }
+        ]
+      }))
+    }))
+    await renderPage()
+    await act(async () => {
+      conversationProps.onDraftDocChange({ nodes: [{ type: 'text', text: 'old scratch' }] })
+    })
+    await act(async () => {
+      conversationProps.onNavigateHistory('previous')
+    })
+    expect(conversationProps.isHistoryBrowsing).toBe(true)
+
+    await act(async () => {
+      useNavigationStore.getState().startCustomizeConversation('proj-1')
+    })
+    expect(conversationProps.draftDoc).toEqual(expectedCustomizeDoc)
+    expect(conversationProps.isHistoryBrowsing).toBe(false)
+    expect(conversationProps.onNavigateHistory('next')).toBe(false)
+    expect(conversationProps.draftDoc).toEqual(expectedCustomizeDoc)
   })
 
   // F1 regression: `Chat with agent` prefill must survive when it is triggered from a workspace

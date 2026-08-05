@@ -32,7 +32,10 @@ import {
 } from '@/lib/acp/workspace-events'
 import type { UploadedAttachment } from '../../../../shared/uploads'
 import type { ConversationExportFormat } from '../../../../shared/conversation-export'
-import type { CompletionHandoffLifecycleEvent } from '../../../../shared/specialist'
+import {
+  resolveEffectiveSpecialistSkills,
+  type CompletionHandoffLifecycleEvent
+} from '../../../../shared/specialist'
 
 import { planComposerAttachmentIntake } from './composer-attachment-intake'
 import { stageComposerFile, type ComposerUploadTransfer } from './composer-upload-transfer'
@@ -47,6 +50,12 @@ import {
   MAX_COMPOSER_ARTIFACT_MENTIONS,
   type ComposerDoc
 } from './composer/composer-doc'
+import {
+  buildSessionComposerHistory,
+  buildStarterComposerHistory,
+  normalizeHistorySkills,
+  type ComposerHistoryEntry
+} from './composer/composer-history'
 import { buildCustomizePrefillDoc } from '@/lib/customize-chat'
 import { ConversationPanel } from './ConversationPanel'
 import { DeleteSessionDialog } from './DeleteSessionDialog'
@@ -67,6 +76,12 @@ type WorkspacePageProps = {
   canDeleteConversations: boolean
 }
 
+type ComposerHistoryNavigation = {
+  entries: ComposerHistoryEntry[]
+  cursorId: string
+  scratch: ComposerDoc
+}
+
 // Converts unknown async failures into composer-visible text.
 const getErrorMessage = (error: unknown): string =>
   error instanceof Error ? error.message : String(error)
@@ -85,8 +100,8 @@ const compareHandoffEventOrder = (
   left.sequence - right.sequence ||
   left.id.localeCompare(right.id)
 
-// Stable draft-map key for the "new conversation" composer, which has no selected session id.
-const NEW_CONVERSATION_DRAFT_KEY = '__new_conversation__'
+// New-conversation drafts are project-scoped so switching projects never leaks unsent intent.
+const newConversationDraftKeyFor = (projectId: string): string => `new:${projectId}`
 
 const PANEL_COLLAPSED_SIZE = 0
 const PANEL_COLLAPSED_SIZE_CSS = `${PANEL_COLLAPSED_SIZE}%`
@@ -406,6 +421,8 @@ const WorkspacePage = ({
   const goHome = useNavigationStore((state) => state.goHome)
   const openSettings = useSettingsStore((state) => state.openSettings)
   const activeProviderId = useSettingsStore((state) => state.activeProviderId)
+  const catalogSkills = useSettingsStore((state) => state.skills)
+  const loadSkills = useSettingsStore((state) => state.loadSkills)
   const supportsImageInput = useSettingsStore(
     (state) =>
       state.providers.find((provider) => provider.id === activeProviderId)?.supportsImageInput
@@ -421,6 +438,8 @@ const WorkspacePage = ({
   const loadSpecialists = useSpecialistStore((state) => state.load)
   const allSessions = useSessionStore((state) => state.sessions)
   const selectedSessionId = useSessionStore((state) => state.selectedSessionId)
+  const newConversationDraftKey = newConversationDraftKeyFor(scopedProjectId)
+  const currentDraftKey = selectedSessionId ?? newConversationDraftKey
   const clearSelection = useSessionStore((state) => state.clearSelection)
   const renameSession = useSessionStore((state) => state.renameSession)
   const togglePinned = useSessionStore((state) => state.togglePinned)
@@ -489,6 +508,21 @@ const WorkspacePage = ({
   // Auto-trigger an analysis turn when a remote job finishes (design §11).
   useJobAnalysisEffect({ enabled: isSessionPersistenceReady, sendMessage })
   const [draftDoc, setDraftDoc] = useState<ComposerDoc>(emptyDoc)
+  const [historySkillCatalogReady, setHistorySkillCatalogReady] = useState(
+    () => catalogSkills.length > 0 || !window.api?.settings?.listSkills
+  )
+  const previousDraftKeyRef = useRef<string>(currentDraftKey)
+  const composerHistoryRef = useRef<Record<string, ComposerHistoryNavigation>>({})
+  const [historyBrowsingKey, setHistoryBrowsingKey] = useState<string | undefined>(undefined)
+  const [historyStatus, setHistoryStatus] = useState('')
+  const clearComposerHistory = useCallback(
+    (draftKey: string): void => {
+      delete composerHistoryRef.current[draftKey]
+      setHistoryBrowsingKey((current) => (current === draftKey ? undefined : current))
+      if (previousDraftKeyRef.current === draftKey) setHistoryStatus('')
+    },
+    [previousDraftKeyRef, setHistoryBrowsingKey, setHistoryStatus]
+  )
   const [newConversationPermissionProfile, setNewConversationPermissionProfile] =
     useState<PermissionProfileId>(DEFAULT_PERMISSION_PROFILE)
   // Draft auto-review state for a not-yet-created conversation. Auto-review defaults off, so a new
@@ -531,10 +565,18 @@ const WorkspacePage = ({
     appliedCustomizePrefill !== pendingCustomizePrefill
   ) {
     setAppliedCustomizePrefill(pendingCustomizePrefill)
+    setHistoryBrowsingKey(undefined)
+    setHistoryStatus('')
     setDraftDoc(buildCustomizePrefillDoc())
     // A fresh New Conversation draft carries no Specialist binding (no badge, no Customize Profile).
     setNewConversationSpecialistId(undefined)
   }
+
+  useLayoutEffect(() => {
+    if (appliedCustomizePrefill === activeProjectId) {
+      delete composerHistoryRef.current[newConversationDraftKey]
+    }
+  }, [activeProjectId, appliedCustomizePrefill, composerHistoryRef, newConversationDraftKey])
 
   // Per-session pending specialist selection for existing conversations.
   // Key: sessionId. Value: the pending UUID (or undefined to clear binding).
@@ -590,20 +632,23 @@ const WorkspacePage = ({
       }
     >
   >({})
-  const previousDraftKeyRef = useRef<string>(selectedSessionId ?? NEW_CONVERSATION_DRAFT_KEY)
   // Tracks user-authored mutations separately from optimistic send clearing and conversation switches.
   // A failed prepared send may restore its captured draft only if this version has not advanced.
   const composerDraftVersionsRef = useRef<Record<string, number>>({})
-  const markComposerDraftChanged = useCallback((draftKey = previousDraftKeyRef.current): void => {
-    composerDraftVersionsRef.current[draftKey] =
-      (composerDraftVersionsRef.current[draftKey] ?? 0) + 1
-  }, [])
+  const markComposerDraftChanged = useCallback(
+    (draftKey = previousDraftKeyRef.current): void => {
+      composerDraftVersionsRef.current[draftKey] =
+        (composerDraftVersionsRef.current[draftKey] ?? 0) + 1
+    },
+    [composerDraftVersionsRef, previousDraftKeyRef]
+  )
   const changeComposerDraftDoc = useCallback(
     (doc: ComposerDoc): void => {
+      clearComposerHistory(previousDraftKeyRef.current)
       markComposerDraftChanged()
       setDraftDoc(doc)
     },
-    [markComposerDraftChanged]
+    [clearComposerHistory, markComposerDraftChanged, previousDraftKeyRef, setDraftDoc]
   )
   const [attachments, setAttachments] = useState<UploadedAttachment[]>([])
   const [attachmentTransfers, setAttachmentTransfers] = useState<ComposerUploadTransfer[]>([])
@@ -653,6 +698,187 @@ const WorkspacePage = ({
     () => sessions.find((session) => session.id === selectedSessionId),
     [selectedSessionId, sessions]
   )
+  const composerHistoryEntries = useMemo(
+    () =>
+      activeSession
+        ? buildSessionComposerHistory(activeSession)
+        : buildStarterComposerHistory(sessions),
+    [activeSession, sessions]
+  )
+  const historySpecialistId = activeSession
+    ? Object.hasOwn(pendingSessionSpecialist, activeSession.id)
+      ? pendingSessionSpecialist[activeSession.id]
+      : activeSession.specialistId
+    : newConversationSpecialistId
+  const catalogSkillIds = useMemo(
+    () => new Set(catalogSkills.map((skill) => skill.id)),
+    [catalogSkills]
+  )
+  const historyAllowedSkillIds = useMemo(() => {
+    if (historySpecialistId === undefined) return undefined
+    const specialist = specialistItems.find(
+      (item) => item.kind === 'custom' && item.enabled && item.id === historySpecialistId
+    )
+    if (specialist?.kind !== 'custom') return new Set<string>()
+    const effective = resolveEffectiveSpecialistSkills(
+      specialist,
+      catalogSkills.map((skill) => ({
+        id: skill.id,
+        frameworkName: skill.source === 'featured' ? skill.id : skill.name,
+        displayName: skill.name
+      }))
+    )
+    return effective.kind === 'specialist' ? new Set(effective.skillIds) : new Set<string>()
+  }, [catalogSkills, historySpecialistId, specialistItems])
+  const navigateComposerHistory = useCallback(
+    (direction: 'previous' | 'next'): boolean => {
+      if (attachments.length > 0 || attachmentTransfers.length > 0) return false
+
+      let navigation = composerHistoryRef.current[currentDraftKey]
+      if (!navigation) {
+        if (direction === 'next' || composerHistoryEntries.length === 0) return false
+        navigation = {
+          entries: composerHistoryEntries,
+          cursorId: composerHistoryEntries[0].id,
+          scratch: draftDoc
+        }
+        composerHistoryRef.current[currentDraftKey] = navigation
+      } else {
+        const cursor = navigation.entries.findIndex((entry) => entry.id === navigation.cursorId)
+        if (cursor < 0) return false
+        if (direction === 'next' && cursor === 0) {
+          delete composerHistoryRef.current[currentDraftKey]
+          markComposerDraftChanged(currentDraftKey)
+          setDraftDoc(navigation.scratch)
+          setHistoryBrowsingKey(undefined)
+          setHistoryStatus('Draft restored')
+          return true
+        }
+        const nextCursor = direction === 'previous' ? cursor + 1 : cursor - 1
+        if (nextCursor < 0 || nextCursor >= navigation.entries.length) return false
+        navigation.cursorId = navigation.entries[nextCursor].id
+      }
+
+      const cursor = navigation.entries.findIndex((entry) => entry.id === navigation.cursorId)
+      const entry = navigation.entries[cursor]
+      if (!entry) return false
+      if (
+        entry.doc.nodes.some((node) => node.type === 'skill') &&
+        (!historySkillCatalogReady ||
+          (historySpecialistId !== undefined && !specialistCatalogLoaded))
+      ) {
+        delete composerHistoryRef.current[currentDraftKey]
+        if (!historySkillCatalogReady) {
+          void loadSkills()
+            .then(() => setHistorySkillCatalogReady(true))
+            .catch(() => undefined)
+        }
+        if (historySpecialistId !== undefined && !specialistCatalogLoaded) {
+          void loadSpecialists()
+        }
+        setHistoryStatus('Prompt history is loading. Press Up Arrow again shortly.')
+        return false
+      }
+
+      const normalized = normalizeHistorySkills(entry.doc, catalogSkillIds, historyAllowedSkillIds)
+      markComposerDraftChanged(currentDraftKey)
+      setDraftDoc(normalized.doc)
+      setHistoryBrowsingKey(currentDraftKey)
+      setHistoryStatus(
+        `History item ${cursor + 1} of ${navigation.entries.length}${
+          normalized.unavailableSkillNames.length > 0
+            ? `. ${normalized.unavailableSkillNames.map((name) => `/${name}`).join(', ')} unavailable`
+            : ''
+        }`
+      )
+      return true
+    },
+    [
+      attachmentTransfers.length,
+      attachments.length,
+      catalogSkillIds,
+      composerHistoryRef,
+      composerHistoryEntries,
+      currentDraftKey,
+      draftDoc,
+      historyAllowedSkillIds,
+      historySkillCatalogReady,
+      historySpecialistId,
+      loadSkills,
+      loadSpecialists,
+      markComposerDraftChanged,
+      setDraftDoc,
+      setHistoryBrowsingKey,
+      setHistorySkillCatalogReady,
+      setHistoryStatus,
+      specialistCatalogLoaded
+    ]
+  )
+
+  // Catalog or Specialist policy can change after a prompt was recalled; remove newly-invalid chips
+  // before the user can send a turn that the runtime would reject after optimistic append.
+  useEffect(() => {
+    if (
+      historyBrowsingKey !== currentDraftKey ||
+      !historySkillCatalogReady ||
+      (historySpecialistId !== undefined && !specialistCatalogLoaded)
+    ) {
+      return
+    }
+    const navigation = composerHistoryRef.current[currentDraftKey]
+    const cursor = navigation?.entries.findIndex((entry) => entry.id === navigation.cursorId) ?? -1
+    const entry = navigation?.entries[cursor]
+    if (!navigation || !entry) return
+    const normalized = normalizeHistorySkills(entry.doc, catalogSkillIds, historyAllowedSkillIds)
+    if (JSON.stringify(normalized.doc) !== JSON.stringify(draftDoc)) {
+      markComposerDraftChanged(currentDraftKey)
+      setDraftDoc(normalized.doc)
+    }
+    setHistoryStatus(
+      `History item ${cursor + 1} of ${navigation.entries.length}${
+        normalized.unavailableSkillNames.length > 0
+          ? `. ${normalized.unavailableSkillNames.map((name) => `/${name}`).join(', ')} unavailable`
+          : ''
+      }`
+    )
+  }, [
+    catalogSkillIds,
+    currentDraftKey,
+    draftDoc,
+    historyAllowedSkillIds,
+    historyBrowsingKey,
+    historySkillCatalogReady,
+    historySpecialistId,
+    markComposerDraftChanged,
+    specialistCatalogLoaded
+  ])
+
+  // A Branch switch or deleted starter source replaces the visible history projection; abandon the
+  // frozen round and restore its scratch instead of exposing prompts from a no-longer-visible source.
+  useEffect(() => {
+    if (historyBrowsingKey !== currentDraftKey) return
+    const navigation = composerHistoryRef.current[currentDraftKey]
+    if (!navigation) return
+    const visibleIds = new Set(composerHistoryEntries.map((entry) => entry.id))
+    const frozenSourcesStillVisible = navigation.entries.every((entry) => visibleIds.has(entry.id))
+    if (
+      frozenSourcesStillVisible &&
+      (!activeSession || navigation.entries.length === composerHistoryEntries.length)
+    ) {
+      return
+    }
+    delete composerHistoryRef.current[currentDraftKey]
+    markComposerDraftChanged(currentDraftKey)
+    setDraftDoc(navigation.scratch)
+    setHistoryBrowsingKey(undefined)
+    setHistoryStatus('Draft restored')
+  }, [
+    activeSession,
+    composerHistoryEntries,
+    currentDraftKey,
+    historyBrowsingKey,
+    markComposerDraftChanged
+  ])
   const activeSessionHasSendPreparation = activeSession
     ? sendPreparationInFlightSessionIds.includes(activeSession.id)
     : false
@@ -777,7 +1003,6 @@ const WorkspacePage = ({
     const file = consumeArtifactMention()
     if (!file || file.projectId !== activeProjectId || !canEditDraft) return
 
-    // eslint-disable-next-line react-hooks/set-state-in-effect -- consume a one-shot user intent in its state owner.
     changeComposerDraftDoc(
       appendArtifactMention(draftDoc, {
         id: file.id,
@@ -861,6 +1086,20 @@ const WorkspacePage = ({
     if (pendingCustomizePrefill !== undefined) consumeCustomizePrefill()
   }, [pendingCustomizePrefill, consumeCustomizePrefill])
 
+  // History can revive executable Skill chips, so resolve the catalog before recalling such entries.
+  useEffect(() => {
+    if (!window.api?.settings?.listSkills) return
+    let active = true
+    void loadSkills()
+      .then(() => {
+        if (active) setHistorySkillCatalogReady(true)
+      })
+      .catch(() => undefined)
+    return () => {
+      active = false
+    }
+  }, [loadSkills])
+
   // Escape closes the mobile navigation drawer without touching the active session or draft.
   useEffect(() => {
     if (!isMobile || !isMobileSidebarOpen) return
@@ -874,16 +1113,19 @@ const WorkspacePage = ({
   // Save the outgoing draft and load the incoming one whenever the selected session changes, covering
   // every selection path (session list, new conversation, project switch, deletes) in one place.
   useEffect(() => {
-    const currentDraftKey = selectedSessionId ?? NEW_CONVERSATION_DRAFT_KEY
     const previousDraftKey = previousDraftKeyRef.current
 
     if (currentDraftKey === previousDraftKey) return
 
+    const outgoingHistory = composerHistoryRef.current[previousDraftKey]
     composerDraftsRef.current[previousDraftKey] = {
-      doc: draftDoc,
+      doc: outgoingHistory?.scratch ?? draftDoc,
       attachments,
       attachmentTransfers
     }
+    delete composerHistoryRef.current[previousDraftKey]
+    setHistoryBrowsingKey(undefined)
+    setHistoryStatus('')
     // When the selection lands on the New Conversation key while a `Chat with agent` prefill is
     // pending for the active project, the render-phase consumer above has already set the exact
     // `/customize` doc. This effect runs AFTER that render-phase write, so loading the stored/empty
@@ -891,7 +1133,7 @@ const WorkspacePage = ({
     // tracked key so a later switch still saves the prefill draft, and clear any attachments that
     // leaked from the previously-selected session so the fresh draft starts clean.
     const customizePrefillPending =
-      currentDraftKey === NEW_CONVERSATION_DRAFT_KEY &&
+      currentDraftKey === newConversationDraftKey &&
       pendingCustomizePrefill !== undefined &&
       pendingCustomizePrefill === activeProjectId
     if (customizePrefillPending) {
@@ -918,7 +1160,8 @@ const WorkspacePage = ({
     setAttachmentTransfers(nextDraft.attachmentTransfers)
     previousDraftKeyRef.current = currentDraftKey
   }, [
-    selectedSessionId,
+    currentDraftKey,
+    newConversationDraftKey,
     draftDoc,
     attachments,
     attachmentTransfers,
@@ -1132,6 +1375,7 @@ const WorkspacePage = ({
     if (accepted.length === 0) return
 
     const draftKey = previousDraftKeyRef.current
+    clearComposerHistory(draftKey)
     markComposerDraftChanged(draftKey)
     const pending = accepted.map(
       (file, index): { file: File; transfer: ComposerUploadTransfer } => {
@@ -1326,7 +1570,7 @@ const WorkspacePage = ({
       }
     }
 
-    const sendRequestKey = activeSession?.id ?? NEW_CONVERSATION_DRAFT_KEY
+    const sendRequestKey = activeSession?.id ?? newConversationDraftKey
     if (sendRequestsInFlightRef.current.has(sendRequestKey)) return
     sendRequestsInFlightRef.current.add(sendRequestKey)
     const sendDraftVersion = composerDraftVersionsRef.current[sendRequestKey] ?? 0
@@ -1481,6 +1725,7 @@ const WorkspacePage = ({
         return next
       })
       setDraftDoc(emptyDoc)
+      clearComposerHistory(sessionId)
       delete composerDraftsRef.current[sessionId]
       setAttachments([])
       setAttachmentError(null)
@@ -1506,8 +1751,9 @@ const WorkspacePage = ({
 
     // No pending switch: proceed with the normal send path.
     setDraftDoc(emptyDoc)
+    clearComposerHistory(currentDraftKey)
     // Drop the stored draft for this key so a sent message never lingers as a restorable draft.
-    delete composerDraftsRef.current[selectedSessionId ?? NEW_CONVERSATION_DRAFT_KEY]
+    delete composerDraftsRef.current[currentDraftKey]
     setAttachments([])
     setAttachmentError(null)
 
@@ -1604,6 +1850,7 @@ const WorkspacePage = ({
       if (!deleted || !deletionCleanup) return
 
       delete composerDraftsRef.current[deletedSessionId]
+      clearComposerHistory(deletedSessionId)
       for (const transfer of deletionCleanup.attachmentTransfers) {
         // Queued files have no controller yet. Mark every transfer before aborting the active one so
         // the serialized loop skips later entries after the in-flight request settles.
@@ -2076,6 +2323,9 @@ const WorkspacePage = ({
             canChangePermissionProfile={canChangePermissionProfile}
             autoReviewEnabled={activeAutoReviewEnabled}
             onDraftDocChange={changeComposerDraftDoc}
+            isHistoryBrowsing={historyBrowsingKey === currentDraftKey}
+            historyStatus={historyStatus}
+            onNavigateHistory={navigateComposerHistory}
             onSendMessage={sendCurrentMessage}
             onBranchInNewSession={activeSession ? branchCurrentMessage : undefined}
             onStageAttachmentFiles={stageAttachmentFiles}
