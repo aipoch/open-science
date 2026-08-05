@@ -824,9 +824,14 @@ describe('SettingsPage layout', () => {
     expect(document.body.querySelector('[aria-label="Provider type"]')).not.toBeNull()
     expect(onClose).not.toHaveBeenCalled()
 
+    const inlineDialog = document.createElement('div')
+    inlineDialog.setAttribute('role', 'dialog')
+    inlineDialog.setAttribute('aria-modal', 'true')
+    document.body.appendChild(inlineDialog)
     act(() => {
       expect(settingsRef.current?.closeActivePane()).toBe(true)
     })
+    inlineDialog.remove()
     expect(document.body.querySelector('section[aria-label="Providers"]')).not.toBeNull()
     expect(document.body.querySelector<HTMLButtonElement>('[aria-label="Back"]')?.disabled).toBe(
       true

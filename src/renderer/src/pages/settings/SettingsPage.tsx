@@ -538,7 +538,9 @@ const SettingsPage = forwardRef<SettingsPageHandle, SettingsPageProps>(function 
     closeActivePane: () => {
       if (!open) return false
       const hasNestedDialog = Array.from(
-        document.querySelectorAll<HTMLElement>('[role="dialog"], [role="alertdialog"]')
+        document.querySelectorAll<HTMLElement>(
+          '[role="dialog"][data-state="open"], [role="alertdialog"][data-state="open"]'
+        )
       ).some((dialog) => dialog.dataset.slot !== 'settings-surface')
       if (hasNestedDialog) {
         document.dispatchEvent(
