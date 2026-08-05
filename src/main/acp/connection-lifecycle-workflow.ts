@@ -52,13 +52,17 @@ const log = createLogger('acp')
 const safeLogError = (message: string, error: unknown): void => {
   try {
     log.error(message, error)
-  } catch { return }
+  } catch {
+    return
+  }
 }
 
 const safeLogWarning = (message: string, data: unknown): void => {
   try {
     log.warn(message, data)
-  } catch { return }
+  } catch {
+    return
+  }
 }
 
 const errorMessage = (error: unknown): string => {
