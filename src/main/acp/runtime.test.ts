@@ -8675,6 +8675,66 @@ describe('ACP runtime session management', () => {
     await vi.waitFor(() => expect(process.killed).toBe(true))
   })
 
+  it('does not let a startup reserved behind an armed reconnect barrier publish on the old connection', async () => {
+    const process = new FakeAgentProcess()
+    const promptGate = createDeferred()
+    const secondNewStarted = createDeferred()
+    const releaseSecondNew = createDeferred()
+    const secondModeStarted = createDeferred()
+    const releaseSecondMode = createDeferred()
+    let modeRequestCount = 0
+    const fakeAgent = startFakeAgent(process, ['first-session', 'barrier-session'], {
+      modes: createModes(['read-only', 'agent', 'agent-full-access'], 'agent'),
+      onNewSession: async ({ index }) => {
+        if (index !== 1) return
+        secondNewStarted.resolve()
+        await releaseSecondNew.promise
+      },
+      onSetMode: async () => {
+        modeRequestCount += 1
+        if (modeRequestCount !== 2) return
+        secondModeStarted.resolve()
+        await releaseSecondMode.promise
+      },
+      onPrompt: () => promptGate.promise
+    })
+    const runtime = new AcpRuntime({
+      appVersion: '0.1.0',
+      defaultCwd: '/workspace',
+      resolveBackend: () => ({
+        framework: { ...codexFramework, spawn: () => asAgentProcess(process) },
+        executablePath: '/bin/codex-acp',
+        env: {}
+      })
+    })
+    const first = await runtime.createSession({ cwd: '/workspace' })
+    const prompt = runtime.sendPrompt({ sessionId: first.sessionId, text: 'stay active' })
+    await vi.waitFor(() => expect(fakeAgent.prompts).toHaveLength(1))
+    const second = runtime.createSession({ cwd: '/workspace' })
+    await secondNewStarted.promise
+
+    try {
+      await runtime.requestProviderReconnect()
+      releaseSecondNew.resolve()
+      await secondModeStarted.promise
+
+      promptGate.resolve()
+      await prompt
+      await vi.waitFor(() => expect(process.killed).toBe(true))
+
+      releaseSecondMode.resolve()
+      await expect(second).rejects.toThrow('ACP session startup was superseded.')
+      expect(runtime.getSnapshot().sessionIds).not.toContain('barrier-session')
+    } finally {
+      promptGate.resolve()
+      releaseSecondNew.resolve()
+      releaseSecondMode.resolve()
+      await prompt.catch(() => undefined)
+      await second.catch(() => undefined)
+      await runtime.disconnect().catch(() => undefined)
+    }
+  })
+
   it('defers a provider reconnect until a pending reviewer startup activates', async () => {
     const { lease, runtime, reviewer, releaseReviewerMode } = await startPendingReviewerRace([
       'pending-reviewer'
@@ -17032,6 +17092,71 @@ describe('ACP runtime — model hot switch', () => {
     expect(fakeAgent.prompts.map(({ text }) => text)).toEqual(['old-model turn', 'new-model turn'])
   })
 
+  it('holds a new session behind a queued model switch', async () => {
+    const process = new FakeAgentProcess()
+    const promptStarted = createDeferred()
+    const finishPrompt = createDeferred()
+    const fakeAgent = startFakeAgent(process, ['s-existing', 's-created-after-switch'], {
+      configOptions: [modelOption()],
+      onPrompt: async () => {
+        promptStarted.resolve()
+        await finishPrompt.promise
+        return { stopReason: 'end_turn' }
+      }
+    })
+    const { runtime } = createModelRuntime(process)
+    await runtime.createSession({ cwd: '/workspace' })
+    fakeAgent.configChanges.length = 0
+
+    const prompt = runtime.sendPrompt({ sessionId: 's-existing', text: 'old-model turn' })
+    await promptStarted.promise
+    await runtime.applyModelChange(modelTarget('model-b'))
+    const create = runtime.createSession({ cwd: '/workspace' })
+
+    await Promise.resolve()
+    expect(fakeAgent.newSessions).toHaveLength(1)
+
+    finishPrompt.resolve()
+    await prompt
+    await create
+
+    expect(fakeAgent.configChanges).toEqual([
+      { sessionId: 's-existing', configId: 'model', value: 'model-b' },
+      { sessionId: 's-created-after-switch', configId: 'model', value: 'model-b' }
+    ])
+  })
+
+  it('includes a session whose creation is in progress when draining a queued model switch', async () => {
+    const process = new FakeAgentProcess()
+    const creationStarted = createDeferred()
+    const finishCreation = createDeferred()
+    const fakeAgent = startFakeAgent(process, ['s-existing', 's-creating'], {
+      configOptions: [modelOption()],
+      onNewSession: async ({ index }) => {
+        if (index !== 1) return
+        creationStarted.resolve()
+        await finishCreation.promise
+      }
+    })
+    const { runtime } = createModelRuntime(process)
+    await runtime.createSession({ cwd: '/workspace' })
+    fakeAgent.configChanges.length = 0
+
+    const create = runtime.createSession({ cwd: '/workspace' })
+    await creationStarted.promise
+    await runtime.applyModelChange(modelTarget('model-b'))
+    expect(fakeAgent.configChanges).toEqual([])
+
+    finishCreation.resolve()
+    await create
+    await vi.waitFor(() => expect(fakeAgent.configChanges).toHaveLength(2))
+
+    expect(fakeAgent.configChanges).toEqual([
+      { sessionId: 's-existing', configId: 'model', value: 'model-b' },
+      { sessionId: 's-creating', configId: 'model', value: 'model-b' }
+    ])
+  })
+
   it('applies a newer effort change after a queued model switch', async () => {
     const process = new FakeAgentProcess()
     const promptStarted = createDeferred()
@@ -17360,6 +17485,44 @@ describe('ACP runtime — session effort', () => {
     // Sessions created later in the same process inherit the new level.
     await runtime.createSession({ cwd: '/workspace' })
     expect(fakeAgent.configChanges[1]).toMatchObject({ configId: 'effort', value: 'high' })
+  })
+
+  it('keeps a session created concurrently with a live effort change on the new level', async () => {
+    const process = new FakeAgentProcess()
+    const staleConfigurationStarted = createDeferred()
+    const finishStaleConfiguration = createDeferred()
+    const fakeAgent = startFakeAgent(process, ['s-existing', 's-creating'], {
+      configOptions: [thoughtLevelOption(['default', 'low', 'high'])],
+      onSetConfigOption: async ({ sessionId, value }) => {
+        if (sessionId !== 's-creating' || value !== 'low') return
+        staleConfigurationStarted.resolve()
+        await finishStaleConfiguration.promise
+      }
+    })
+    const runtime = new AcpRuntime({
+      appVersion: '0.1.0',
+      defaultCwd: '/workspace',
+      resolveBackend: () => ({
+        framework: { ...claudeCodeFramework, spawn: () => asAgentProcess(process) },
+        executablePath: '/bin/claude',
+        env: {},
+        sessionEffort: 'low'
+      })
+    })
+    await runtime.createSession({ cwd: '/workspace' })
+    fakeAgent.configChanges.length = 0
+
+    const create = runtime.createSession({ cwd: '/workspace' })
+    await staleConfigurationStarted.promise
+    await runtime.applyReasoningEffortChange('high')
+    finishStaleConfiguration.resolve()
+    await create
+
+    expect(fakeAgent.configChanges).toEqual([
+      { sessionId: 's-creating', configId: 'effort', value: 'low' },
+      { sessionId: 's-existing', configId: 'effort', value: 'high' },
+      { sessionId: 's-creating', configId: 'effort', value: 'high' }
+    ])
   })
 
   it('updates only the runtime-owned Responses bridge with a live effort change', async () => {

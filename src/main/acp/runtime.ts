@@ -138,6 +138,7 @@ import { AcpSessionUpdateProjector, type AcpSessionUpdateEffect } from './sessio
 import { AcpConnectionLifecycleWorkflow } from './connection-lifecycle-workflow'
 import { AcpConnectionCloseWorkflow, type CloseState } from './connection-close-workflow'
 import { AcpModelChangeWorkflow } from './model-change-workflow'
+import { AcpProviderSessionCreator } from './provider-session-creator'
 import {
   AcpTurnSkillOwner,
   type AcpTurnSkillHooks,
@@ -516,6 +517,7 @@ class AcpRuntime {
   private readonly connectionClose: AcpConnectionCloseWorkflow
   private readonly connectionLifecycle: AcpConnectionLifecycleWorkflow
   private readonly modelChanges: AcpModelChangeWorkflow
+  private readonly providerSessionCreator: AcpProviderSessionCreator
 
   // Wires runtime dependencies and forwards permission prompts into the event stream.
   constructor(private readonly options: AcpRuntimeOptions) {
@@ -768,6 +770,26 @@ class AcpRuntime {
       diagnosticContext: (framework, generation) => this.diagnosticContext(framework, generation),
       openCandidate: (attempt, onFrameworkResolved) =>
         this.openAgentConnection(attempt, onFrameworkResolved)
+    })
+    this.providerSessionCreator = new AcpProviderSessionCreator({
+      defaultCwd: options.defaultCwd,
+      defaultProjectName: options.artifacts?.projectName || DEFAULT_UPLOAD_PROJECT_NAME,
+      currentCwd: () => this.snapshotOwner.cwd,
+      ensureConnected: (cwd) => this.ensureConnected(cwd),
+      assertCurrentConnection: (connection) => this.assertCurrentConnectedConnection(connection),
+      currentBackend: () => this.backend,
+      registry: this.sessionRegistry,
+      reserveIdentity: (sessionId, startupGeneration) =>
+        this.reservePrimarySessionIds(undefined, [sessionId], undefined, startupGeneration),
+      capabilities: this.sessionCapabilities,
+      configurator: this.sessionConfigurator,
+      resolveSpecialistIdentity: options.resolveSpecialistIdentity,
+      resolveSpecialistSkills: options.resolveSpecialistSkills,
+      registerSessionSpecialist: options.notebook?.registerSessionSpecialist,
+      updateCwd: (cwd) => this.snapshotOwner.updateCwd(cwd),
+      pushEvent: (event) => this.pushEvent(event),
+      emitState: () => this.emitState(),
+      diagnosticContext: () => this.diagnosticContext()
     })
   }
 
@@ -1180,197 +1202,7 @@ class AcpRuntime {
 
   // Creates a protocol session, injects artifact tooling, and uses the returned id as the app session id.
   async createSession(request: AcpCreateSessionRequest = {}): Promise<AcpCreateSessionResponse> {
-    return this.withOperationLease(() => this.createSessionOperation(request))
-  }
-
-  private async createSessionOperation(
-    request: AcpCreateSessionRequest = {}
-  ): Promise<AcpCreateSessionResponse> {
-    let capabilityProvision: SessionCapabilityProvision | undefined
-    let primaryIdentityReservation: AcpPrimarySessionIdentityReservation | undefined
-    let provisionalSession: ActiveSession | undefined
-    try {
-      log.info('createSession: starting', this.diagnosticContext())
-      const sessionCwd = resolve(request.cwd || this.snapshotOwner.cwd || this.options.defaultCwd)
-      const projectName = this.normalizeProjectName(request.projectName)
-      log.info('createSession: ensureConnected', this.diagnosticContext())
-      const connection = await this.ensureConnected(sessionCwd)
-      this.assertCurrentConnectedConnection(connection)
-      const sessionStartupGeneration = this.sessionRegistry.startupGeneration
-
-      // Resolve specialist identity before starting the ACP session so the identity append is
-      // included in session/new. Main process reads the latest Profile — renderer only sends the UUID.
-      let specialistAppend: string | undefined
-      let specialistPrefix: string | undefined
-      let specialistSkills: EffectiveSpecialistSkills | undefined
-      if (request.specialistId) {
-        if (!this.options.resolveSpecialistIdentity) {
-          // A UUID must never quietly fall back to Main Agent just because startup omitted the
-          // ProfileService wiring. Failing closed preserves the user's selected identity.
-          throw new Error('Specialist identity resolution is unavailable.')
-        }
-        const identity = await this.options.resolveSpecialistIdentity(
-          request.specialistId,
-          this.framework.id
-        )
-        if (!identity) {
-          // Profile is unavailable (disabled, deleted, or corrupt): fail fast.
-          throw new Error(
-            `Specialist ${request.specialistId} is unavailable (disabled, deleted, or corrupt).`
-          )
-        }
-        specialistAppend = identity.append || undefined
-        specialistPrefix = identity.prefix || undefined
-        specialistSkills = await this.options.resolveSpecialistSkills?.(request.specialistId)
-      }
-
-      log.info('createSession: createMcpServers', this.diagnosticContext())
-      capabilityProvision = await this.sessionCapabilities.provision({
-        framework: this.framework,
-        nativeMcpEnabled: this.backend.adapter.nativeMcpEnabled,
-        bridgeMcpAliasesEnabled: this.backend.adapter.bridgeMcpAliasesEnabled,
-        policy: CURRENT_PRIMARY_SESSION_CAPABILITY_POLICY,
-        sessionCwd,
-        projectName
-      })
-      const { mcpServers } = capabilityProvision
-      log.info('createSession: buildSession', this.diagnosticContext())
-      const extraAppends = specialistAppend ? [specialistAppend] : []
-      const session = await connection.agent
-        .buildSession({
-          cwd: sessionCwd,
-          mcpServers,
-          ...this.buildSessionMetaArg(extraAppends, specialistSkills)
-        })
-        .start()
-      provisionalSession = session
-
-      // New-session requests have no app id on their interface: the provider-returned id becomes the
-      // stable app id. Reserve that first known identity synchronously before any later setup awaits.
-      const reservationResult = this.reservePrimarySessionIds(
-        undefined,
-        [session.sessionId],
-        undefined,
-        sessionStartupGeneration
-      )
-      if (reservationResult.collision) {
-        this.disposeSessionAfterFailure(session, 'primary collision session disposal failed')
-        provisionalSession = undefined
-        throw reservationResult.collision
-      }
-      primaryIdentityReservation = reservationResult.reservation
-
-      log.info('createSession: configurePermissionProfile', this.diagnosticContext())
-      log.info('createSession: applySessionModel', this.diagnosticContext())
-      const backend = this.backend
-      const configuration = await this.sessionConfigurator.configure({
-        backend,
-        connection,
-        session,
-        permissionProfile: normalizePermissionProfile(request.permissionProfile)
-      })
-
-      this.assertPrimarySessionIdentityReservation(primaryIdentityReservation)
-      // Commit app-owned projections only after the reservation is known to still own this id. No
-      // await separates this assertion from publication, so an invalidated startup cannot overwrite a
-      // same-id successor's Specialist, Permission, or model state.
-      const { aggregate } = this.attachSessionAggregate(
-        primaryIdentityReservation,
-        session.sessionId,
-        {
-          session,
-          cwd: sessionCwd,
-          projectName,
-          frameworkId: backend.framework.id,
-          backendId: backend.backendId,
-          permissionProfile: structuredClone(configuration.permissionProfile),
-          appliedModel: configuration.appliedModel,
-          configOptions: structuredClone(configuration.configOptions)
-        }
-      )
-      if (specialistPrefix) {
-        aggregate.setSpecialistPrefix(specialistPrefix)
-      } else {
-        aggregate.setSpecialistPrefix(undefined)
-      }
-      if (request.specialistId) {
-        aggregate.setSpecialistId(request.specialistId)
-      } else {
-        aggregate.setSpecialistId(undefined)
-      }
-      capabilityProvision.commit(session.sessionId)
-      provisionalSession = undefined
-      this.releasePrimarySessionIdentityReservation(primaryIdentityReservation)
-      primaryIdentityReservation = undefined
-      // Route and bearer ownership is now represented by the committed app-session maps. End the
-      // provisional rollback window before invoking external observers so their failures cannot tear
-      // down a Session that has already been published.
-      capabilityProvision = undefined
-      try {
-        this.notebookOptions?.registerSessionSpecialist?.(session.sessionId, request.specialistId)
-      } catch (error) {
-        safeLogError('register session specialist failed', {
-          ...diagnosticErrorFields(error),
-          sessionId: session.sessionId
-        })
-      }
-      this.snapshotOwner.updateCwd(sessionCwd)
-      try {
-        this.pushEvent({
-          kind: 'system',
-          level: 'info',
-          sessionId: session.sessionId,
-          title: 'Session created',
-          text: sessionCwd
-        })
-      } catch (error) {
-        safeLogError('session created event callback failed', {
-          ...diagnosticErrorFields(error),
-          sessionId: session.sessionId
-        })
-      }
-      try {
-        this.emitState()
-      } catch (error) {
-        safeLogError('session created state callback failed', {
-          ...diagnosticErrorFields(error),
-          sessionId: session.sessionId
-        })
-      }
-
-      log.info('createSession: completed successfully', this.diagnosticContext())
-      return {
-        sessionId: session.sessionId,
-        cwd: sessionCwd,
-        frameworkId: this.framework.id,
-        ...(this.backendId ? { backendId: this.backendId } : {})
-      }
-    } catch (error) {
-      let startupError = error
-      if (primaryIdentityReservation) {
-        try {
-          this.assertPrimarySessionIdentityReservation(primaryIdentityReservation)
-        } catch (supersededError) {
-          startupError = supersededError
-        }
-      }
-      if (provisionalSession) {
-        this.disposeSessionAfterFailure(
-          provisionalSession,
-          'primary startup session disposal failed'
-        )
-      }
-      capabilityProvision?.release({ ownsStableIdentity: true })
-      safeLogError('createSession: failed', {
-        ...diagnosticErrorFields(startupError),
-        ...this.diagnosticContext()
-      })
-      throw startupError
-    } finally {
-      if (primaryIdentityReservation) {
-        this.releasePrimarySessionIdentityReservation(primaryIdentityReservation)
-      }
-    }
+    return this.withOperationLease(() => this.providerSessionCreator.create(request))
   }
 
   // Registers a freshly-built agent session under an app-facing id (used when adopting a conversation
