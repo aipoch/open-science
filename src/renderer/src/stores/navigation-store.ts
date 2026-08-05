@@ -27,6 +27,8 @@ type NavigationStore = {
   // Project id targeted by a pending `Chat with agent` prefill, consumed once by WorkspacePage when it
   // opens that project's New Conversation draft. Undefined means no prefill is pending.
   pendingCustomizePrefill: string | undefined
+  // Home consumes this one-shot intent to open its existing New Project dialog.
+  pendingProjectCreation: boolean
   // A same-Project Artifact selected from global search. WorkspacePage consumes it once and appends
   // its immutable Version reference to the currently active composer draft.
   pendingArtifactMention: ProjectFileItem | undefined
@@ -44,6 +46,8 @@ type NavigationStore = {
   // prefill once and clears it.
   startCustomizeConversation: (projectId: string) => void
   consumeCustomizePrefill: () => void
+  requestProjectCreation: () => void
+  consumeProjectCreation: () => void
   requestArtifactMention: (file: ProjectFileItem) => void
   consumeArtifactMention: () => ProjectFileItem | undefined
   setArtifactMentionAvailability: (availability: ArtifactMentionAvailability | undefined) => void
@@ -83,6 +87,7 @@ export const useNavigationStore = create<NavigationStore>((set) => ({
   userNavigationRevision: 0,
   explicitNavigationRevision: 0,
   pendingCustomizePrefill: undefined,
+  pendingProjectCreation: false,
   pendingArtifactMention: undefined,
   artifactMentionAvailability: undefined,
 
@@ -162,6 +167,14 @@ export const useNavigationStore = create<NavigationStore>((set) => ({
 
   // Clears the consumed prefill intent so a later normal open starts fresh.
   consumeCustomizePrefill: () => set({ pendingCustomizePrefill: undefined }),
+
+  requestProjectCreation: () =>
+    set((state) => ({
+      ...navigationState(state, 'user', { view: 'home' }),
+      pendingProjectCreation: true
+    })),
+
+  consumeProjectCreation: () => set({ pendingProjectCreation: false }),
 
   // Mentions never route between Projects. Keeping this guard at the Navigation boundary prevents a
   // dialog caller from leaking an Artifact locator into whichever composer happens to mount next.

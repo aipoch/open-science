@@ -5,7 +5,7 @@
  * contrast: inherited from the app's verified semantic tokens · slop: pass
  */
 import { useCallback, useEffect, useId, useMemo, useRef, useState } from 'react'
-import { ArrowUpRight, AtSign, Hash, MessageCircle, Search } from 'lucide-react'
+import { ArrowUpRight, AtSign, Hash, MessageCircle, Search, Zap } from 'lucide-react'
 import { Dialog } from 'radix-ui'
 
 import type { ProjectFileItem } from '../../../../shared/project-files'
@@ -28,6 +28,7 @@ import {
   getNextBatchCount,
   getRecentSessions,
   GLOBAL_SEARCH_PAGE_SIZE,
+  OTHER_PROJECT_RESULT_LIMIT,
   searchSessionTitles,
   type SessionSearchResult
 } from './global-search-catalog'
@@ -53,6 +54,7 @@ type SelectableRow =
   | { kind: 'more-artifacts' }
   | { kind: 'retry-artifacts' }
   | { kind: 'new-session' }
+  | { kind: 'new-project' }
 
 const emptyArtifactState: ArtifactState = {
   items: [],
@@ -141,14 +143,16 @@ export const GlobalSearchDialog = ({
   const openProject = useNavigationStore((state) => state.openProject)
   const openSession = useNavigationStore((state) => state.openSession)
   const requestArtifactMention = useNavigationStore((state) => state.requestArtifactMention)
+  const requestProjectCreation = useNavigationStore((state) => state.requestProjectCreation)
   const artifactMentionAvailability = useNavigationStore(
     (state) => state.artifactMentionAvailability
   )
   const openFileDialog = usePreviewWorkbenchStore((state) => state.openFileDialog)
 
+  const isProjectScope = view === 'workspace' && activeProjectId !== undefined
   const primaryProjectId = useMemo(
-    () => activeProjectId ?? resolveCustomizeProjectId(projects),
-    [activeProjectId, projects]
+    () => (isProjectScope ? activeProjectId : resolveCustomizeProjectId(projects)),
+    [activeProjectId, isProjectScope, projects]
   )
   const primaryProject = useMemo(
     () => projects.find((project) => project.id === primaryProjectId),
@@ -196,12 +200,20 @@ export const GlobalSearchDialog = ({
               isPending: session.isPending
             })),
             projectNames,
-            primaryProjectId: primaryProject.id,
+            primaryProjectId: isProjectScope ? primaryProject.id : undefined,
             query: trimmedQuery,
             visiblePrimaryCount: visibleSessionCount
           })
         : undefined,
-    [isSearchMode, primaryProject, projectNames, sessions, trimmedQuery, visibleSessionCount]
+    [
+      isProjectScope,
+      isSearchMode,
+      primaryProject,
+      projectNames,
+      sessions,
+      trimmedQuery,
+      visibleSessionCount
+    ]
   )
   const recentSessions = useMemo(
     () =>
@@ -215,14 +227,14 @@ export const GlobalSearchDialog = ({
               artifactCount: session.artifacts?.length ?? 0,
               isPending: session.isPending
             })),
-            primaryProject.id
+            isProjectScope ? primaryProject.id : undefined
           ).map((session) => ({
             ...session,
             kind: 'session' as const,
-            projectName: primaryProject.name
+            projectName: projectNames.get(session.projectId) ?? 'Unknown project'
           }))
         : [],
-    [primaryProject, sessions]
+    [isProjectScope, primaryProject, projectNames, sessions]
   )
 
   const reloadArtifacts = useCallback(
@@ -242,7 +254,7 @@ export const GlobalSearchDialog = ({
           ...(trimmedQuery ? { filenameContains: trimmedQuery } : {}),
           primaryLimit: GLOBAL_SEARCH_PAGE_SIZE,
           ...(cursor ? { primaryCursor: cursor } : {}),
-          otherLimit: isSearchMode && !cursor ? 1 : 0
+          otherLimit: !cursor && (!isProjectScope || isSearchMode) ? OTHER_PROJECT_RESULT_LIMIT : 0
         })
         if (version !== requestVersionRef.current) return
         setArtifacts((current) =>
@@ -271,7 +283,7 @@ export const GlobalSearchDialog = ({
         setFailedArtifactCursor(cursor)
       }
     },
-    [isSearchMode, otherProjectIds, primaryProject, trimmedQuery]
+    [isProjectScope, isSearchMode, otherProjectIds, primaryProject, trimmedQuery]
   )
 
   useEffect(() => {
@@ -314,33 +326,59 @@ export const GlobalSearchDialog = ({
   const artifactMoreCount = getNextBatchCount(artifacts.totalCount, artifacts.items.length)
   const canLoadMoreArtifacts =
     artifactError === undefined && artifactMoreCount > 0 && artifacts.nextCursor !== undefined
+  const displayedArtifacts = useMemo(
+    () =>
+      isProjectScope
+        ? artifacts.items
+        : [...artifacts.items, ...artifacts.other].sort(
+            (left, right) => right.sortAtMs - left.sortAtMs
+          ),
+    [artifacts.items, artifacts.other, isProjectScope]
+  )
+  const otherRows = useMemo<SelectableRow[]>(() => {
+    if (!isProjectScope || !isSearchMode) return []
+    return [
+      ...artifacts.other.map((artifact) => ({ kind: 'artifact' as const, artifact })),
+      ...(sessionGroups?.other.map((session) => ({ kind: 'session' as const, session })) ?? [])
+    ]
+      .sort((left, right) => {
+        const leftTime = left.kind === 'artifact' ? left.artifact.sortAtMs : left.session.updatedAt
+        const rightTime =
+          right.kind === 'artifact' ? right.artifact.sortAtMs : right.session.updatedAt
+        return rightTime - leftTime
+      })
+      .slice(0, OTHER_PROJECT_RESULT_LIMIT)
+  }, [artifacts.other, isProjectScope, isSearchMode, sessionGroups?.other])
   const selectableRows = useMemo<SelectableRow[]>(() => {
-    if (!primaryProject) return []
+    const command = isProjectScope
+      ? ({ kind: 'new-session' } as const)
+      : ({ kind: 'new-project' } as const)
+    if (!primaryProject) return isProjectScope ? [] : [command]
     if (!isSearchMode) {
       return [
-        ...artifacts.items.map((artifact) => ({ kind: 'artifact' as const, artifact })),
+        ...displayedArtifacts.map((artifact) => ({ kind: 'artifact' as const, artifact })),
         ...recentSessions.map((session) => ({ kind: 'session' as const, session })),
-        { kind: 'new-session' as const }
+        command
       ]
     }
     return [
-      ...artifacts.items.map((artifact) => ({ kind: 'artifact' as const, artifact })),
+      ...displayedArtifacts.map((artifact) => ({ kind: 'artifact' as const, artifact })),
       ...(artifactError ? [{ kind: 'retry-artifacts' as const }] : []),
       ...(canLoadMoreArtifacts ? [{ kind: 'more-artifacts' as const }] : []),
       ...(sessionGroups?.primary.map((session) => ({ kind: 'session' as const, session })) ?? []),
       ...(sessionMoreCount > 0 ? [{ kind: 'more-sessions' as const }] : []),
-      ...artifacts.other.map((artifact) => ({ kind: 'artifact' as const, artifact })),
-      ...(sessionGroups?.other.map((session) => ({ kind: 'session' as const, session })) ?? [])
+      ...otherRows,
+      command
     ]
   }, [
     canLoadMoreArtifacts,
-    artifacts.items,
-    artifacts.other,
     artifactError,
+    displayedArtifacts,
+    isProjectScope,
     isSearchMode,
+    otherRows,
     primaryProject,
     recentSessions,
-    sessionGroups?.other,
     sessionGroups?.primary,
     sessionMoreCount
   ])
@@ -428,6 +466,11 @@ export const GlobalSearchDialog = ({
         openProject(primaryProject.id, 'user')
         useSessionStore.getState().clearSelection()
         close()
+        return
+      }
+      if (row.kind === 'new-project') {
+        requestProjectCreation()
+        close()
       }
     },
     [
@@ -442,6 +485,7 @@ export const GlobalSearchDialog = ({
       previewArtifact,
       primaryProject,
       reloadArtifacts,
+      requestProjectCreation,
       sessions
     ]
   )
@@ -482,10 +526,8 @@ export const GlobalSearchDialog = ({
 
   const resultCount = isSearchMode
     ? (sessionGroups?.primaryTotalCount ?? 0) +
-      artifacts.totalCount +
-      (sessionGroups?.other.length ?? 0) +
-      artifacts.other.length
-    : artifacts.items.length + recentSessions.length + (primaryProject ? 1 : 0)
+      (isProjectScope ? artifacts.totalCount + otherRows.length : displayedArtifacts.length)
+    : displayedArtifacts.length + recentSessions.length
   const renderSessionRow = (session: SessionSearchResult, rowIndex: number): React.JSX.Element => {
     const active = rowIndex === activeRowIndex
     return (
@@ -505,7 +547,9 @@ export const GlobalSearchDialog = ({
             {session.title}
           </span>
           <span className="block truncate text-xs text-muted-foreground">
-            {session.projectId !== primaryProject?.id ? `${session.projectName} · ` : ''}
+            {!isProjectScope || session.projectId !== primaryProject?.id
+              ? `${session.projectName} · `
+              : ''}
             {session.artifactCount} artifact{session.artifactCount === 1 ? '' : 's'} ·{' '}
             {formatRelativeTime(session.updatedAt)}
           </span>
@@ -560,7 +604,7 @@ export const GlobalSearchDialog = ({
             {artifact.name}
           </span>
           <span className="block truncate text-xs text-muted-foreground">
-            {artifact.projectId !== primaryProject?.id
+            {!isProjectScope || artifact.projectId !== primaryProject?.id
               ? `${projectNames.get(artifact.projectId) ?? 'Unknown project'} · `
               : ''}
             {artifact.originSession?.title ??
@@ -653,11 +697,13 @@ export const GlobalSearchDialog = ({
               aria-autocomplete="list"
               aria-controls={listboxId}
               aria-activedescendant={selectableRows.length > 0 ? activeRowId : undefined}
-              placeholder="Search this project…"
+              placeholder={
+                isProjectScope ? 'Search this project…' : 'Search sessions and artifacts…'
+              }
               maxLength={256}
               className="h-auto min-w-0 flex-1 rounded-none border-0 bg-transparent px-0 text-xl text-foreground placeholder:text-muted-foreground focus-visible:border-transparent focus-visible:ring-0"
             />
-            {primaryProject ? (
+            {isProjectScope && primaryProject ? (
               <span className="max-w-[35%] shrink-0 truncate rounded-lg bg-bg-200 px-3 py-1.5 text-sm font-medium text-muted-foreground">
                 {primaryProject.name}
               </span>
@@ -682,10 +728,12 @@ export const GlobalSearchDialog = ({
                 </p>
               ) : !isSearchMode ? (
                 <>
-                  {artifacts.items.length > 0 ? (
+                  {displayedArtifacts.length > 0 ? (
                     <section role="group" aria-label="Recent artifacts">
                       <h2 className={sectionTitleClassName}>Recent artifacts</h2>
-                      {artifacts.items.map((artifact) => renderArtifactRow(artifact, nextIndex()))}
+                      {displayedArtifacts.map((artifact) =>
+                        renderArtifactRow(artifact, nextIndex())
+                      )}
                     </section>
                   ) : null}
                   {recentSessions.length > 0 ? (
@@ -694,35 +742,16 @@ export const GlobalSearchDialog = ({
                       {recentSessions.map((session) => renderSessionRow(session, nextIndex()))}
                     </section>
                   ) : null}
-                  <section role="group" aria-label="Commands">
-                    <h2 className={sectionTitleClassName}>Commands</h2>
-                    <Button
-                      id={`global-search-option-${nextIndex()}`}
-                      type="button"
-                      role="option"
-                      aria-selected={activeRowIndex === rowIndex - 1}
-                      variant="ghost"
-                      disabled={!isSessionPersistenceReady}
-                      className={cn(
-                        rowClassName,
-                        activeRowIndex === rowIndex - 1 && 'bg-bg-200 before:opacity-100',
-                        !isSessionPersistenceReady && 'opacity-50'
-                      )}
-                      onMouseEnter={() => setActiveIndex(rowIndex - 1)}
-                      onClick={() => activate({ kind: 'new-session' })}
-                    >
-                      <MessageCircle className="size-5 text-primary" aria-hidden="true" />
-                      <span className="text-sm font-medium">New session</span>
-                    </Button>
-                  </section>
                 </>
               ) : (
                 <>
-                  {artifacts.items.length || artifactStatus === 'loading' || artifactError ? (
+                  {displayedArtifacts.length || artifactStatus === 'loading' || artifactError ? (
                     <section role="group" aria-label="Artifacts">
                       <h2 className={sectionTitleClassName}>Artifacts</h2>
-                      {artifacts.items.map((artifact) => renderArtifactRow(artifact, nextIndex()))}
-                      {artifactStatus === 'loading' && artifacts.items.length === 0 ? (
+                      {displayedArtifacts.map((artifact) =>
+                        renderArtifactRow(artifact, nextIndex())
+                      )}
+                      {artifactStatus === 'loading' && displayedArtifacts.length === 0 ? (
                         <p className="px-4 py-3 text-sm text-muted-foreground">
                           Searching artifacts…
                         </p>
@@ -788,22 +817,60 @@ export const GlobalSearchDialog = ({
                       ) : null}
                     </section>
                   ) : null}
-                  {sessionGroups?.other.length || artifacts.other.length ? (
+                  {otherRows.length > 0 ? (
                     <section role="group" aria-label="Other projects">
                       <h2 className={sectionTitleClassName}>Other projects</h2>
-                      {artifacts.other.map((artifact) => renderArtifactRow(artifact, nextIndex()))}
-                      {sessionGroups?.other.map((session) =>
-                        renderSessionRow(session, nextIndex())
+                      {otherRows.map((row) =>
+                        row.kind === 'artifact'
+                          ? renderArtifactRow(row.artifact, nextIndex())
+                          : row.kind === 'session'
+                            ? renderSessionRow(row.session, nextIndex())
+                            : null
                       )}
                     </section>
                   ) : null}
-                  {selectableRows.length === 0 && artifactStatus !== 'loading' ? (
+                  {displayedArtifacts.length === 0 &&
+                  !sessionGroups?.primary.length &&
+                  otherRows.length === 0 &&
+                  artifactStatus !== 'loading' &&
+                  !artifactError ? (
                     <p className="px-4 py-8 text-center text-sm text-muted-foreground">
                       No sessions or artifacts match “{query}”.
                     </p>
                   ) : null}
                 </>
               )}
+              {!isProjectScope || primaryProject ? (
+                <section role="group" aria-label="Commands">
+                  <h2 className={sectionTitleClassName}>Commands</h2>
+                  <Button
+                    id={`global-search-option-${nextIndex()}`}
+                    type="button"
+                    role="option"
+                    aria-selected={activeRowIndex === rowIndex - 1}
+                    variant="ghost"
+                    disabled={isProjectScope && !isSessionPersistenceReady}
+                    className={cn(
+                      rowClassName,
+                      activeRowIndex === rowIndex - 1 && 'bg-bg-200 before:opacity-100',
+                      isProjectScope && !isSessionPersistenceReady && 'opacity-50'
+                    )}
+                    onMouseEnter={() => setActiveIndex(rowIndex - 1)}
+                    onClick={() =>
+                      activate({ kind: isProjectScope ? 'new-session' : 'new-project' })
+                    }
+                  >
+                    {isProjectScope ? (
+                      <MessageCircle className="size-5 text-primary" aria-hidden="true" />
+                    ) : (
+                      <Zap className="size-5 text-primary" aria-hidden="true" />
+                    )}
+                    <span className="text-sm font-medium">
+                      {isProjectScope ? 'New session' : 'New project'}
+                    </span>
+                  </Button>
+                </section>
+              ) : null}
               {!artifacts.isIndexComplete ? (
                 <p className="px-4 py-2 text-xs text-muted-foreground">
                   Some artifact results may be missing.
@@ -823,10 +890,12 @@ export const GlobalSearchDialog = ({
               <kbd className={keycapClassName}>↵</kbd>
               <span>open</span>
             </span>
-            <span className={shortcutClassName}>
-              <kbd className={keycapClassName}>⇧↵</kbd>
-              <span>mention</span>
-            </span>
+            {isProjectScope ? (
+              <span className={shortcutClassName}>
+                <kbd className={keycapClassName}>⇧↵</kbd>
+                <span>mention</span>
+              </span>
+            ) : null}
             <span className={shortcutClassName}>
               <kbd className={keycapClassName}>esc</kbd>
               <span>close</span>

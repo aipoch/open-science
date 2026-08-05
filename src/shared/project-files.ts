@@ -62,7 +62,7 @@ export type SearchArtifactsRequest = {
   filenameContains?: string
   primaryLimit: number
   primaryCursor?: string
-  otherLimit: 0 | 1
+  otherLimit: 0 | 1 | 2 | 3 | 4 | 5
 }
 
 export type SearchArtifactsResult = {

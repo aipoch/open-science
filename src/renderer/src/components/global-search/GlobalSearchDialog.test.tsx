@@ -92,6 +92,7 @@ beforeEach(() => {
     userNavigationRevision: 0,
     explicitNavigationRevision: 0,
     pendingCustomizePrefill: undefined,
+    pendingProjectCreation: false,
     pendingArtifactMention: undefined,
     artifactMentionAvailability: { projectId: 'project-a', canMention: true }
   })
@@ -134,6 +135,12 @@ describe('GlobalSearchDialog', () => {
     expect(document.body.textContent).toContain('Recent artifacts')
     expect(document.body.textContent).toContain('Recent sessions')
     expect(document.body.textContent).toContain('New session')
+    const input = document.body.querySelector<HTMLInputElement>('input[role="combobox"]')
+    expect(input?.placeholder).toBe('Search this project…')
+    expect(input?.parentElement?.textContent).toContain('Alpha')
+    expect(
+      document.body.querySelector('[data-testid="global-search-footer"]')?.textContent
+    ).toContain('mention')
 
     const artifactRow = [...document.body.querySelectorAll('[role="option"]')].find((element) =>
       element.textContent?.includes('sin.png')
@@ -178,6 +185,7 @@ describe('GlobalSearchDialog', () => {
 
     expect(groupHeadings.slice(0, 2)).toEqual(['Artifacts', 'Sessions'])
     expect(selectedOption?.textContent).toContain('sin.png')
+    expect(document.body.textContent).toContain('New session')
 
     await act(async () => {
       input?.dispatchEvent(
@@ -481,7 +489,59 @@ describe('GlobalSearchDialog', () => {
     expect(useNavigationStore.getState().pendingArtifactMention).toBeUndefined()
   })
 
-  it('uses the valid last-opened Project as Home search scope', async () => {
+  it('limits Other projects to five mixed Session and Artifact results', async () => {
+    const now = Date.now()
+    useSessionStore.setState((state) => ({
+      sessions: [
+        ...state.sessions,
+        ...Array.from({ length: 5 }, (_, index) => ({
+          ...state.sessions[1],
+          id: `other-session-${index}`,
+          title: `Other sin ${index}`,
+          updatedAt: now - (index + 1) * 20
+        }))
+      ] as ChatSession[]
+    }))
+    vi.mocked(window.api.projectFiles.searchArtifacts).mockResolvedValue({
+      primary: { items: [artifact], totalCount: 1 },
+      other: Array.from({ length: 3 }, (_, index) => ({
+        ...artifact,
+        id: `other-artifact-${index}`,
+        sourceFileId: `other-artifact-${index}`,
+        sourceVersionId: `other-version-${index}`,
+        projectId: 'project-b',
+        sessionId: 'session-b',
+        name: `other-sin-${index}.png`,
+        path: `artifact-version:project-b/session-b/other-artifact-${index}/other-version-${index}`,
+        sortAtMs: now - index * 30
+      })),
+      isIndexComplete: true
+    })
+
+    await act(async () => {
+      root.render(<GlobalSearchDialog open onOpenChange={vi.fn()} isSessionPersistenceReady />)
+      await new Promise((resolve) => window.setTimeout(resolve, 20))
+    })
+    const input = document.body.querySelector<HTMLInputElement>('input[role="combobox"]')
+    const valueSetter = Object.getOwnPropertyDescriptor(
+      window.HTMLInputElement.prototype,
+      'value'
+    )?.set
+    await act(async () => {
+      valueSetter?.call(input, 'sin')
+      input?.dispatchEvent(new Event('input', { bubbles: true }))
+      await new Promise((resolve) => window.setTimeout(resolve, 180))
+    })
+
+    const otherGroup = document.body.querySelector<HTMLElement>(
+      '[role="group"][aria-label="Other projects"]'
+    )
+    expect(otherGroup?.querySelectorAll('[role="option"]')).toHaveLength(5)
+    expect(otherGroup?.textContent).toContain('other-sin-0.png')
+    expect(otherGroup?.textContent).toContain('Other sin session')
+  })
+
+  it('uses the global Home context and offers New Project without mention', async () => {
     window.localStorage.setItem('open-science:last-opened-project', 'project-b')
     useNavigationStore.setState({ view: 'home', activeProjectId: undefined })
     await act(async () => {
@@ -489,6 +549,34 @@ describe('GlobalSearchDialog', () => {
       await new Promise((resolve) => window.setTimeout(resolve, 20))
     })
 
-    expect(document.body.textContent).toContain('Beta')
+    const input = document.body.querySelector<HTMLInputElement>('input[role="combobox"]')
+    const footer = document.body.querySelector<HTMLElement>('[data-testid="global-search-footer"]')
+    expect(input?.placeholder).toBe('Search sessions and artifacts…')
+    expect(input?.parentElement?.textContent).not.toContain('Beta')
+    expect(footer?.textContent).not.toContain('mention')
+    expect(footer?.querySelectorAll('kbd')).toHaveLength(3)
+    expect(window.api.projectFiles.searchArtifacts).toHaveBeenCalledWith(
+      expect.objectContaining({ primaryProjectId: 'project-b', otherLimit: 5 })
+    )
+
+    const valueSetter = Object.getOwnPropertyDescriptor(
+      window.HTMLInputElement.prototype,
+      'value'
+    )?.set
+    await act(async () => {
+      valueSetter?.call(input, 'sin')
+      input?.dispatchEvent(new Event('input', { bubbles: true }))
+      await new Promise((resolve) => window.setTimeout(resolve, 180))
+    })
+    expect(document.body.querySelector('[role="group"][aria-label="Other projects"]')).toBeNull()
+
+    const newProject = [...document.body.querySelectorAll<HTMLElement>('[role="option"]')].find(
+      (element) => element.textContent?.includes('New project')
+    )
+    await act(async () => newProject?.click())
+    expect(useNavigationStore.getState()).toMatchObject({
+      view: 'home',
+      pendingProjectCreation: true
+    })
   })
 })

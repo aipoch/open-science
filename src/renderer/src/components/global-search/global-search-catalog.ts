@@ -1,5 +1,6 @@
 export const GLOBAL_SEARCH_PAGE_SIZE = 8
 export const RECENT_SESSION_LIMIT = 5
+export const OTHER_PROJECT_RESULT_LIMIT = 5
 
 export type SearchableSession = {
   id: string
@@ -47,7 +48,7 @@ export const searchSessionTitles = ({
 }: {
   sessions: SearchableSession[]
   projectNames: Map<string, string>
-  primaryProjectId: string
+  primaryProjectId: string | undefined
   query: string
   visiblePrimaryCount: number
 }): SessionSearchGroups => {
@@ -60,26 +61,30 @@ export const searchSessionTitles = ({
         foldAsciiCase(session.title).includes(foldedQuery)
     )
     .sort(compareByRecency)
-  const primaryMatches = matches.filter((session) => session.projectId === primaryProjectId)
+  const primaryMatches = primaryProjectId
+    ? matches.filter((session) => session.projectId === primaryProjectId)
+    : matches
 
   return {
     primary: primaryMatches
       .slice(0, visiblePrimaryCount)
       .map((session) => toResult(session, projectNames)),
     primaryTotalCount: primaryMatches.length,
-    other: matches
-      .filter((session) => session.projectId !== primaryProjectId)
-      .slice(0, 1)
-      .map((session) => toResult(session, projectNames))
+    other: primaryProjectId
+      ? matches
+          .filter((session) => session.projectId !== primaryProjectId)
+          .slice(0, OTHER_PROJECT_RESULT_LIMIT)
+          .map((session) => toResult(session, projectNames))
+      : []
   }
 }
 
 export const getRecentSessions = (
   sessions: SearchableSession[],
-  projectId: string
+  projectId?: string
 ): SearchableSession[] =>
   sessions
-    .filter((session) => session.projectId === projectId && !session.isPending)
+    .filter((session) => !session.isPending && (!projectId || session.projectId === projectId))
     .sort(compareByRecency)
     .slice(0, RECENT_SESSION_LIMIT)
 

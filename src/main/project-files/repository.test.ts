@@ -1689,20 +1689,25 @@ describe('ManagedFileIndexRepository', () => {
     ).rejects.toThrow(/cursor.*search/i)
   })
 
-  it('searches generated artifacts with a primary cursor and one combined other-project result', async () => {
+  it('searches generated artifacts with a primary cursor and bounded other-project results', async () => {
     const primaryFiles = [
       ['sin-old', 'sin-old.png', 100],
       ['sin-new', 'sin-new.png', 300],
       ['sin-mid', 'sin-mid.csv', 200]
     ] as const
-    const otherPath = join(
-      storageRoot,
-      'artifacts',
-      'project-b',
-      'session-b',
-      'message-1',
-      'sin-other.png'
-    )
+    const otherFiles = Array.from({ length: 6 }, (_, index) => ({
+      id: `sin-other-${index}`,
+      name: `sin-other-${index}.png`,
+      path: join(
+        storageRoot,
+        'artifacts',
+        'project-b',
+        'session-b',
+        'message-1',
+        `sin-other-${index}.png`
+      ),
+      mtimeMs: 400 - index
+    }))
     const uploadPath = join(storageRoot, 'uploads', 'default-project', SESSION_ID, 'sin-input.csv')
 
     await Promise.all([
@@ -1719,7 +1724,7 @@ describe('ManagedFileIndexRepository', () => {
           id
         )
       ),
-      writeManagedFile(otherPath, 'other'),
+      ...otherFiles.map((file) => writeManagedFile(file.path, file.id)),
       writeManagedFile(uploadPath, 'upload')
     ])
     await repository.syncSession(
@@ -1765,15 +1770,13 @@ describe('ManagedFileIndexRepository', () => {
       createSession({
         id: 'session-b',
         projectId: 'project-b',
-        artifacts: [
-          {
-            id: 'sin-other',
-            kind: 'managed-file',
-            path: otherPath,
-            name: 'sin-other.png',
-            mtimeMs: 400
-          }
-        ]
+        artifacts: otherFiles.map((file) => ({
+          id: file.id,
+          kind: 'managed-file' as const,
+          path: file.path,
+          name: file.name,
+          mtimeMs: file.mtimeMs
+        }))
       })
     )
 
@@ -1782,7 +1785,7 @@ describe('ManagedFileIndexRepository', () => {
       otherProjectIds: ['project-b'],
       filenameContains: 'SIN',
       primaryLimit: 2,
-      otherLimit: 1
+      otherLimit: 5
     })
 
     expect(first.primary).toMatchObject({
@@ -1793,8 +1796,19 @@ describe('ManagedFileIndexRepository', () => {
       ]
     })
     expect(first.primary.nextCursor).toBeDefined()
-    expect(first.other).toEqual([expect.objectContaining({ name: 'sin-other.png' })])
+    expect(first.other.map((item) => item.name)).toEqual(
+      otherFiles.slice(0, 5).map((file) => file.name)
+    )
     expect(first.isIndexComplete).toBe(true)
+
+    await expect(
+      repository.searchArtifacts({
+        primaryProjectId: PROJECT_ID,
+        otherProjectIds: ['project-b'],
+        primaryLimit: 2,
+        otherLimit: 6
+      } as never)
+    ).rejects.toThrow('otherLimit must be between 0 and 5')
 
     await expect(
       repository.searchArtifacts({

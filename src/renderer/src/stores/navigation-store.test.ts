@@ -34,6 +34,7 @@ beforeEach(() => {
     userNavigationRevision: 0,
     explicitNavigationRevision: 0,
     pendingCustomizePrefill: undefined,
+    pendingProjectCreation: false,
     pendingArtifactMention: undefined,
     artifactMentionAvailability: undefined
   })
@@ -119,6 +120,19 @@ describe('navigation store', () => {
     useNavigationStore.getState().goHome('user')
 
     expect(useNavigationStore.getState().view).toBe('home')
+  })
+
+  it('routes a New Project request home as a one-shot intent', () => {
+    useNavigationStore.getState().openProject('project-a', 'automatic')
+
+    useNavigationStore.getState().requestProjectCreation()
+
+    expect(useNavigationStore.getState()).toMatchObject({
+      view: 'home',
+      pendingProjectCreation: true
+    })
+    useNavigationStore.getState().consumeProjectCreation()
+    expect(useNavigationStore.getState().pendingProjectCreation).toBe(false)
   })
 
   it('advances user navigation revision only for explicit user actions', () => {

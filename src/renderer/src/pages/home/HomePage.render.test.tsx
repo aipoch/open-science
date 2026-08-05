@@ -5,6 +5,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 
 import type { EnvironmentCheckResult } from '../../../../shared/settings'
 import { createInitialProjectState, useProjectStore } from '@/stores/project-store'
+import { useNavigationStore } from '@/stores/navigation-store'
 import { createInitialSessionState, useSessionStore } from '@/stores/session-store'
 import { createInitialSettingsState, useSettingsStore } from '@/stores/settings-store'
 import { HomePage } from './HomePage'
@@ -28,6 +29,7 @@ const environment = (checks: EnvironmentCheckResult['checks']): EnvironmentCheck
 
 beforeEach(() => {
   useProjectStore.setState(createInitialProjectState())
+  useNavigationStore.setState({ pendingProjectCreation: false })
   useSessionStore.setState(createInitialSessionState())
   useSettingsStore.setState(createInitialSettingsState())
   container = document.createElement('div')
@@ -42,6 +44,15 @@ afterEach(() => {
 })
 
 describe('HomePage environment repair notice', () => {
+  it('consumes a global-search request and opens the New Project dialog', async () => {
+    useNavigationStore.setState({ pendingProjectCreation: true })
+
+    await act(async () => root.render(<HomePage canDeleteProjects hasCompleteSessionCatalog />))
+
+    expect(document.body.textContent).toContain('Group related sessions under a project.')
+    expect(useNavigationStore.getState().pendingProjectCreation).toBe(false)
+  })
+
   it('does not alert for optional Python or secure-storage warnings', async () => {
     useSettingsStore.setState({
       environmentCheck: environment([

@@ -22,7 +22,7 @@ describe('global search catalog', () => {
     const result = searchSessionTitles({
       sessions: [
         ...sessions(14),
-        ...sessions(2, 'project-b'),
+        ...sessions(7, 'project-b'),
         {
           id: 'pending-match',
           projectId: 'project-a',
@@ -51,10 +51,28 @@ describe('global search catalog', () => {
 
     expect(result.primary).toHaveLength(8)
     expect(result.primaryTotalCount).toBe(14)
-    expect(result.other).toEqual([
+    expect(result.other).toHaveLength(5)
+    expect(result.other[0]).toEqual(
       expect.objectContaining({ id: 'session-0', projectId: 'project-b', projectName: 'Beta' })
-    ])
+    )
     expect(getNextBatchCount(result.primaryTotalCount, result.primary.length)).toBe(6)
+  })
+
+  it('searches every Project as the primary result set when no Project scope is active', () => {
+    const result = searchSessionTitles({
+      sessions: [...sessions(3), ...sessions(3, 'project-b')],
+      projectNames: new Map([
+        ['project-a', 'Alpha'],
+        ['project-b', 'Beta']
+      ]),
+      primaryProjectId: undefined,
+      query: 'sin',
+      visiblePrimaryCount: 5
+    })
+
+    expect(result.primary).toHaveLength(5)
+    expect(result.primaryTotalCount).toBe(6)
+    expect(result.other).toEqual([])
   })
 
   it('returns recent non-pending sessions in recency order with a five-row cap', () => {

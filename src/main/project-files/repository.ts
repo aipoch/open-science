@@ -747,7 +747,7 @@ class ManagedFileIndexRepository {
   }
 
   // Global search keeps its cross-project scope deliberately bounded: the primary project is
-  // independently paged while every other project shares a single latest-artifact sample.
+  // independently paged while every other project shares a small latest-artifact sample.
   async searchArtifacts(request: SearchArtifactsRequest): Promise<SearchArtifactsResult> {
     requireIdentifier(request.primaryProjectId, 'primaryProjectId')
     if (!Array.isArray(request.otherProjectIds)) {
@@ -759,8 +759,8 @@ class ManagedFileIndexRepository {
         requireIdentifier(projectId, 'otherProjectId')
         return projectId
       })
-    if (request.otherLimit !== 0 && request.otherLimit !== 1) {
-      throw new Error('Project files otherLimit must be 0 or 1.')
+    if (!Number.isInteger(request.otherLimit) || request.otherLimit < 0 || request.otherLimit > 5) {
+      throw new Error('Project files otherLimit must be between 0 and 5.')
     }
 
     const primaryLimit = normalizeLimit(request.primaryLimit)
@@ -775,8 +775,8 @@ class ManagedFileIndexRepository {
     const [primaryRows, primaryTotalCount, otherRows] = await Promise.all([
       listMatchingArtifacts(client, request.primaryProjectId, search, cursor, primaryLimit),
       countMatchingArtifacts(client, request.primaryProjectId, search),
-      request.otherLimit === 1 && otherProjectIds.length > 0
-        ? listOtherProjectArtifacts(client, otherProjectIds, search)
+      request.otherLimit > 0 && otherProjectIds.length > 0
+        ? listOtherProjectArtifacts(client, otherProjectIds, search, request.otherLimit)
         : Promise.resolve([])
     ])
     const primaryPageRows = primaryRows.slice(0, primaryLimit)
@@ -1421,7 +1421,8 @@ const countMatchingArtifacts = async (
 const listOtherProjectArtifacts = async (
   client: ProjectFilesClient,
   projectIds: string[],
-  search: NormalizedSearch | undefined
+  search: NormalizedSearch | undefined,
+  limit: number
 ): Promise<ManagedFile[]> => {
   const filenamePredicate = search
     ? Prisma.sql`AND ${filenameContainsPredicate(Prisma.sql`"displayName"`, search)}`
@@ -1439,7 +1440,7 @@ const listOtherProjectArtifacts = async (
       AND "deletedAt" IS NULL
       ${filenamePredicate}
     ORDER BY "sortAtMs" DESC, "seq" DESC
-    LIMIT 1
+    LIMIT ${limit}
   `)
 }
 
