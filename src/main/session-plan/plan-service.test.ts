@@ -285,6 +285,71 @@ describe('PlanService', () => {
     })
   })
 
+  it('treats special JavaScript property names as opaque Plan step titles', async () => {
+    const { service, context } = setup()
+    const specialContent = {
+      ...content,
+      phases: [
+        {
+          name: 'Special names',
+          delegations: [
+            {
+              name: 'Primary agent',
+              steps: ['toString', 'constructor', '__proto__'].map((title) => ({
+                title,
+                description: `Complete ${title}.`
+              }))
+            }
+          ]
+        }
+      ]
+    }
+    const generated = await service.generate({
+      projectId: 'project-1',
+      sessionId: 'session-1',
+      interactionId: 'interaction-1',
+      content: specialContent
+    })
+    expect(generated.projection.stepStates).toEqual(
+      Object.fromEntries(
+        ['toString', 'constructor', '__proto__'].map((title) => [title, { status: 'not_started' }])
+      )
+    )
+    const approved = await service.respond({
+      projectId: 'project-1',
+      sessionId: 'session-1',
+      artifactVersionId: generated.projection.artifactVersionId,
+      expectedRevision: generated.projection.revision,
+      decision: 'approved'
+    })
+    let revision = approved.projection.revision
+    for (const title of ['toString', 'constructor', '__proto__']) {
+      const running = await service.updateStepStatus({
+        projectId: 'project-1',
+        sessionId: 'session-1',
+        artifactVersionId: generated.projection.artifactVersionId,
+        expectedRevision: revision,
+        title,
+        status: 'in_progress'
+      })
+      const completed = await service.updateStepStatus({
+        projectId: 'project-1',
+        sessionId: 'session-1',
+        artifactVersionId: generated.projection.artifactVersionId,
+        expectedRevision: running.projection.revision,
+        title,
+        status: 'completed'
+      })
+      revision = completed.projection.revision
+    }
+
+    const statuses = context().plan?.stepStatuses
+    expect(statuses?.toString).toMatchObject({ status: 'completed' })
+    expect(statuses?.constructor).toMatchObject({ status: 'completed' })
+    expect(Object.hasOwn(statuses!, '__proto__')).toBe(true)
+    expect(statuses?.__proto__).toMatchObject({ status: 'completed' })
+  })
+
   it('accepts duplicate terminal delivery with the original revision without rewriting the record', async () => {
     const { service, context } = setup()
     const generated = await service.generate({
@@ -751,6 +816,7 @@ describe('PlanService', () => {
     })
 
     expect(settled.projection.lifecycle).toBe('blocked')
+    expect(settled.projection.requiresExplicitContinuation).toBe(false)
     expect(settled.projection.stepStates).toMatchObject({
       'Validate cohorts': { status: 'blocked', notes: 'Cohort boundaries are missing.' },
       'Compare cohorts': { status: 'not_run' },
@@ -762,6 +828,12 @@ describe('PlanService', () => {
     await expect(
       service.checkTurnCompletion({ projectId: 'project-1', sessionId: 'session-1' })
     ).resolves.toEqual({ allow: true, lifecycle: 'blocked' })
+    await expect(
+      service.authorizeContinuation({
+        ...identity,
+        expectedRevision: settled.projection.revision
+      })
+    ).rejects.toMatchObject({ code: 'invalid-transition' })
   })
 
   it('fails the completion gate closed without clearing approved authority when its Artifact is unavailable', async () => {

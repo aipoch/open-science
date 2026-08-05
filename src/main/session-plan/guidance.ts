@@ -10,7 +10,7 @@ const SESSION_PLAN_SYSTEM_PROMPT_APPEND = [
   'Only a Plan projection with `approval: approved` grants execution authority. Never call `update_step_status` while approval is pending, even if the feedback text sounds approving.',
   'After a restart or interruption, do not resume an approved unfinished Plan from an unrelated user Message. If the user explicitly asks to continue or resume that Plan, call `generate_plan` with only `decision: "approved"` to bind it to the current interaction before updating steps.',
   'After approval, call `update_step_status` with the exact step title when work starts and when it completes, is blocked, or is skipped.',
-  'Do not call `end_turn` while an approved Session Plan still has unfinished steps.',
+  'Do not call `end_turn` while an approved Session Plan has runnable or in-progress work. If an irreversible blocker makes later steps unreachable, record the blocker, settle every already-started peer step, and end with the blocked outcome.',
   '</open_science_session_plan_instructions>'
 ].join('\n')
 

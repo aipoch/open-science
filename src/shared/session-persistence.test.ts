@@ -704,6 +704,29 @@ describe('normalizeSessionFile with activities', () => {
     expect(restored?.error).toBeUndefined()
   })
 
+  it('round-trips special Plan step titles without changing object prototypes', () => {
+    const specialStatuses = JSON.parse(
+      '{"toString":{"status":"completed","updatedAt":1},"constructor":{"status":"skipped","updatedAt":2},"__proto__":{"status":"blocked","updatedAt":3}}'
+    ) as Record<string, unknown>
+    const restored = normalizeSessionFile({
+      ...(createSessionWithActivity(undefined) as PersistedChatSession),
+      activities: undefined,
+      runtimeContext: {
+        version: 1,
+        revision: 3,
+        plan: { ...createRuntimePlan(), stepStatuses: specialStatuses }
+      }
+    })
+    const statuses = restored?.runtimeContext?.plan?.stepStatuses
+
+    expect(statuses).toBeDefined()
+    expect(Object.getPrototypeOf(statuses)).toBe(Object.prototype)
+    expect(Object.hasOwn(statuses!, '__proto__')).toBe(true)
+    expect(statuses?.toString).toMatchObject({ status: 'completed' })
+    expect(statuses?.constructor).toMatchObject({ status: 'skipped' })
+    expect(statuses?.__proto__).toMatchObject({ status: 'blocked' })
+  })
+
   it('does not restore the expired interaction identity for a pending Plan', () => {
     const restored = normalizeSessionFile({
       ...(createSessionWithActivity(undefined) as PersistedChatSession),

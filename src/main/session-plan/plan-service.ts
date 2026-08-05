@@ -9,7 +9,7 @@ import type {
 import {
   createPlanDocumentV1,
   derivePlanLifecycle,
-  isPlanComplete,
+  isPlanTerminalOutcome,
   parsePlanDocumentV1,
   PlanCommandError,
   projectPlanStepStates,
@@ -78,6 +78,12 @@ const sha256 = (value: string): string => createHash('sha256').update(value).dig
 
 const isTerminalStepStatus = (status: SessionPlanStepStatus): boolean =>
   status === 'completed' || status === 'blocked' || status === 'skipped'
+
+const runtimeStatusFor = (
+  plan: SessionPlanRuntimeContext,
+  title: string
+): SessionPlanRuntimeContext['stepStatuses'][string] | undefined =>
+  Object.hasOwn(plan.stepStatuses, title) ? plan.stepStatuses[title] : undefined
 
 const parseDocument = (content: string): PlanDocumentV1 => {
   try {
@@ -241,7 +247,7 @@ class PlanService {
     if (!planStepTitles(document).includes(input.title)) {
       throw new PlanCommandError('unknown-step', `Unknown Plan step: ${input.title}`)
     }
-    const previous = plan.stepStatuses[input.title]?.status
+    const previous = runtimeStatusFor(plan, input.title)?.status
     const sameTerminal = previous === input.status && isTerminalStepStatus(input.status)
     if (sameTerminal) {
       return { projection: this.project(document, plan, context.revision, true), changed: false }
@@ -294,8 +300,11 @@ class PlanService {
     if (plan.approval !== 'approved') {
       throw new PlanCommandError('plan-not-approved', 'The Plan must be approved before execution.')
     }
-    if (isPlanComplete(document, plan.stepStatuses)) {
-      throw new PlanCommandError('invalid-transition', 'The Plan is already complete.')
+    if (isPlanTerminalOutcome(document, plan.stepStatuses)) {
+      throw new PlanCommandError(
+        'invalid-transition',
+        'The Plan has already reached a terminal outcome.'
+      )
     }
     return this.project(document, plan, context.revision, true)
   }
@@ -308,11 +317,8 @@ class PlanService {
     if (!context.plan || context.plan.approval !== 'approved') return { allow: true }
     const document = await this.readDocument(input.projectId, input.sessionId, context.plan)
     const projection = this.project(document, context.plan, context.revision, true)
-    const cleanlyBlocked =
-      projection.lifecycle === 'blocked' &&
-      !Object.values(projection.stepStates).some((step) => step.status === 'not_started')
     return {
-      allow: projection.lifecycle === 'completed' || cleanlyBlocked,
+      allow: isPlanTerminalOutcome(document, context.plan.stepStatuses),
       lifecycle: projection.lifecycle
     }
   }
@@ -335,7 +341,7 @@ class PlanService {
     const repeatsTerminalStep =
       idempotentStep !== undefined &&
       isTerminalStepStatus(idempotentStep.status) &&
-      plan.stepStatuses[idempotentStep.title]?.status === idempotentStep.status
+      runtimeStatusFor(plan, idempotentStep.title)?.status === idempotentStep.status
     if (
       context.revision !== input.expectedRevision &&
       plan.approval !== idempotentDecision &&
@@ -445,7 +451,7 @@ class PlanService {
     )!
     const stepIndex = delegation.steps.findIndex((step) => step.title === title)
     const isNormallyFinished = (stepTitle: string): boolean => {
-      const status = plan.stepStatuses[stepTitle]?.status
+      const status = runtimeStatusFor(plan, stepTitle)?.status
       return status === 'completed' || status === 'skipped'
     }
     const priorStepSatisfied = delegation.steps
@@ -462,7 +468,7 @@ class PlanService {
       ([, value]) => value.status === 'blocked'
     )?.[0]
     const delegationStartedBeforeBlock = delegation.steps.some(
-      (step) => plan.stepStatuses[step.title] !== undefined
+      (step) => runtimeStatusFor(plan, step.title) !== undefined
     )
     if (
       !priorStepSatisfied ||
@@ -483,6 +489,12 @@ class PlanService {
     interactionIsLive = false
   ): ActivePlanProjection {
     const titles = planStepTitles(document)
+    const lifecycle = derivePlanLifecycle(
+      document,
+      plan.approval,
+      plan.stepStatuses,
+      interactionIsLive
+    )
     return {
       artifactId: plan.artifactId,
       artifactVersionId: plan.artifactVersionId,
@@ -492,11 +504,11 @@ class PlanService {
         : {}),
       revision,
       approval: plan.approval,
-      lifecycle: derivePlanLifecycle(document, plan.approval, plan.stepStatuses, interactionIsLive),
+      lifecycle,
       requiresExplicitContinuation:
         !interactionIsLive &&
         plan.approval === 'approved' &&
-        !isPlanComplete(document, plan.stepStatuses),
+        !isPlanTerminalOutcome(document, plan.stepStatuses),
       document,
       stepStatuses: plan.stepStatuses,
       stepStates: projectPlanStepStates(document, plan.stepStatuses),
@@ -505,11 +517,12 @@ class PlanService {
         delegations: document.phases.reduce((sum, phase) => sum + phase.delegations.length, 0),
         steps: titles.length,
         completed: titles.filter((title) => {
-          const status = plan.stepStatuses[title]?.status
+          const status = runtimeStatusFor(plan, title)?.status
           return status === 'completed' || status === 'skipped'
         }).length,
-        inProgress: titles.filter((title) => plan.stepStatuses[title]?.status === 'in_progress')
-          .length
+        inProgress: titles.filter(
+          (title) => runtimeStatusFor(plan, title)?.status === 'in_progress'
+        ).length
       }
     }
   }

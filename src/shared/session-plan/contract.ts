@@ -285,26 +285,32 @@ export const planStepTitles = (document: PlanDocumentV1): string[] =>
     phase.delegations.flatMap((delegation) => delegation.steps.map((step) => step.title))
   )
 
+const runtimeStatusFor = (
+  statuses: SessionPlanRuntimeContext['stepStatuses'],
+  title: string
+): SessionPlanRuntimeContext['stepStatuses'][string] | undefined =>
+  Object.hasOwn(statuses, title) ? statuses[title] : undefined
+
 export const projectPlanStepStates = (
   document: PlanDocumentV1,
   statuses: SessionPlanRuntimeContext['stepStatuses']
 ): Readonly<Record<string, PlanStepProjection>> => {
   const blockedPhaseIndex = document.phases.findIndex((phase) =>
     phase.delegations.some((delegation) =>
-      delegation.steps.some((step) => statuses[step.title]?.status === 'blocked')
+      delegation.steps.some((step) => runtimeStatusFor(statuses, step.title)?.status === 'blocked')
     )
   )
   return Object.fromEntries(
     document.phases.flatMap((phase, phaseIndex) =>
       phase.delegations.flatMap((delegation) => {
         const delegationStarted = delegation.steps.some(
-          (step) => statuses[step.title] !== undefined
+          (step) => runtimeStatusFor(statuses, step.title) !== undefined
         )
         const delegationBlocked = delegation.steps.some(
-          (step) => statuses[step.title]?.status === 'blocked'
+          (step) => runtimeStatusFor(statuses, step.title)?.status === 'blocked'
         )
         return delegation.steps.map((step) => {
-          const runtime = statuses[step.title]
+          const runtime = runtimeStatusFor(statuses, step.title)
           if (runtime) {
             return [
               step.title,
@@ -327,9 +333,21 @@ export const isPlanComplete = (
   statuses: Readonly<Record<string, Readonly<{ status: SessionPlanStepStatus }>>>
 ): boolean =>
   planStepTitles(document).every((title) => {
-    const status = statuses[title]?.status
+    const status = Object.hasOwn(statuses, title) ? statuses[title]?.status : undefined
     return status === 'completed' || status === 'skipped'
   })
+
+export const isPlanTerminalOutcome = (
+  document: PlanDocumentV1,
+  statuses: SessionPlanRuntimeContext['stepStatuses']
+): boolean => {
+  if (isPlanComplete(document, statuses)) return true
+  const states = Object.values(projectPlanStepStates(document, statuses))
+  return (
+    states.some((step) => step.status === 'blocked') &&
+    states.every((step) => step.status !== 'not_started' && step.status !== 'in_progress')
+  )
+}
 
 export const derivePlanLifecycle = (
   document: PlanDocumentV1,
@@ -339,7 +357,9 @@ export const derivePlanLifecycle = (
 ): PlanLifecycle => {
   if (approval === 'pending') return 'awaiting_approval'
   if (approval === 'rejected') return 'rejected'
-  const values = planStepTitles(document).map((title) => statuses[title]?.status)
+  const values = planStepTitles(document).map((title) =>
+    Object.hasOwn(statuses, title) ? statuses[title]?.status : undefined
+  )
   if (isPlanComplete(document, statuses)) return 'completed'
   if (values.includes('in_progress')) return interactionIsLive ? 'in_progress' : 'interrupted'
   if (values.includes('blocked')) return 'blocked'

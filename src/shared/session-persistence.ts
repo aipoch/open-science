@@ -357,7 +357,12 @@ const sanitizeRuntimeContextValue = (
   for (const [key, item] of Object.entries(value)) {
     const sanitized = sanitizeRuntimeContextValue(item, budget, depth + 1)
     if (sanitized === undefined) return undefined
-    result[key] = sanitized
+    Object.defineProperty(result, key, {
+      value: sanitized,
+      enumerable: true,
+      configurable: true,
+      writable: true
+    })
   }
   return result
 }
@@ -443,7 +448,12 @@ const sanitizeSessionPlanRuntimeContext = (
     ) {
       return undefined
     }
-    stepStatuses[title] = { status, updatedAt, ...(notes !== undefined ? { notes } : {}) }
+    Object.defineProperty(stepStatuses, title, {
+      value: { status, updatedAt, ...(notes !== undefined ? { notes } : {}) },
+      enumerable: true,
+      configurable: true,
+      writable: true
+    })
   }
 
   return {

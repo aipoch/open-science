@@ -6,8 +6,10 @@ import {
   generatePlanContentSchema,
   formatPlanProtectedContext,
   isPlanComplete,
+  isPlanTerminalOutcome,
   parsePlanDocumentV1,
-  PlanCommandError
+  PlanCommandError,
+  projectPlanStepStates
 } from './contract'
 
 describe('protected Plan context', () => {
@@ -324,5 +326,46 @@ describe('derived Plan lifecycle', () => {
       })
     ).toBe(true)
     expect(isPlanComplete(document, { Analyze: { status: 'completed' } })).toBe(false)
+  })
+
+  it('treats special JavaScript property names as opaque status keys', () => {
+    const document = createPlanDocumentV1({
+      task_summary: 'Exercise special names',
+      phases: [
+        {
+          name: 'Analysis',
+          delegations: [
+            {
+              name: 'Primary agent',
+              steps: ['toString', 'constructor', '__proto__'].map((title) => ({
+                title,
+                description: `Complete ${title}.`
+              }))
+            }
+          ]
+        }
+      ],
+      desired_outputs: [],
+      feasibility: { confidence: 'high', rationale: 'Inputs are available.' }
+    })
+
+    expect(projectPlanStepStates(document, {})).toEqual(
+      Object.fromEntries(
+        ['toString', 'constructor', '__proto__'].map((title) => [title, { status: 'not_started' }])
+      )
+    )
+    const statuses = Object.fromEntries([
+      ['toString', { status: 'completed' as const, updatedAt: 1 }],
+      ['constructor', { status: 'skipped' as const, updatedAt: 2 }],
+      ['__proto__', { status: 'blocked' as const, updatedAt: 3 }]
+    ])
+    expect(projectPlanStepStates(document, statuses)).toEqual(
+      Object.fromEntries([
+        ['toString', { status: 'completed' }],
+        ['constructor', { status: 'skipped' }],
+        ['__proto__', { status: 'blocked' }]
+      ])
+    )
+    expect(isPlanTerminalOutcome(document, statuses)).toBe(true)
   })
 })
