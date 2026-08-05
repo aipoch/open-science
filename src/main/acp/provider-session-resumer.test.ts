@@ -1,4 +1,5 @@
 import type { ActiveSession, ClientConnection } from '@agentclientprotocol/sdk'
+import { resolve } from 'node:path'
 import { describe, expect, it, vi } from 'vitest'
 
 import type { AcpCreateSessionResponse, AcpResumeSessionRequest } from '../../shared/acp'
@@ -238,7 +239,7 @@ describe('AcpProviderSessionResumer', () => {
 
     expect(response).toEqual({
       sessionId: 'stable-app-session',
-      cwd: '/workspace',
+      cwd: resolve('/workspace'),
       frameworkId: 'claude-code',
       backendId: 'claude-code'
     })

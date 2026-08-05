@@ -1,4 +1,5 @@
 import type { ActiveSession, ClientConnection } from '@agentclientprotocol/sdk'
+import { resolve } from 'node:path'
 import { describe, expect, it, vi } from 'vitest'
 
 import type { AcpCreateSessionResponse } from '../../shared/acp'
@@ -83,7 +84,7 @@ describe('AcpSessionReplacementWorkflow', () => {
     expect(supersedeInteraction).toHaveBeenCalledWith('app-session')
     expect(adopt).toHaveBeenCalledWith('app-session', {
       connection,
-      cwd: '/new-workspace',
+      cwd: resolve('/new-workspace'),
       projectName: 'new-project',
       identity: expect.any(Object),
       permissionProfile: 'ask',
