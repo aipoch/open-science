@@ -117,8 +117,7 @@ import {
 } from './session-registry'
 import {
   AcpConnectionResourceOwner,
-  type AcpConnectionResourceAttempt,
-  type AcpConnectionResourceReadyHandle
+  type AcpConnectionResourceAttempt
 } from './connection-resource-owner'
 import {
   AcpAgentConnectionAdapter,
@@ -134,6 +133,7 @@ import {
 } from './backend-generation-owner'
 import { AcpSessionConfigurator, type AcpSessionConfigurationFacts } from './session-configurator'
 import { AcpSessionUpdateProjector, type AcpSessionUpdateEffect } from './session-update-projector'
+import { AcpConnectionLifecycleWorkflow } from './connection-lifecycle-workflow'
 import {
   AcpTurnSkillOwner,
   type AcpTurnSkillHooks,
@@ -511,6 +511,7 @@ class AcpRuntime {
   private readonly artifactRunRegistry: ArtifactRunRegistry | undefined
   private readonly artifactTurns: ArtifactTurnOwner | undefined
   private readonly promptContentOwner: AcpPromptContentOwner
+  private readonly connectionLifecycle: AcpConnectionLifecycleWorkflow
 
   // Wires runtime dependencies and forwards permission prompts into the event stream.
   constructor(private readonly options: AcpRuntimeOptions) {
@@ -657,6 +658,30 @@ class AcpRuntime {
       removeStartupBlocker: (token) => this.generationActivity.releaseStartup(token),
       unregisterBridgeSession: (sessionId) =>
         this.connectionResources.unregisterBridgeReviewerSession(sessionId)
+    })
+    this.connectionLifecycle = new AcpConnectionLifecycleWorkflow({
+      appVersion: options.appVersion,
+      defaultCwd: options.defaultCwd,
+      currentConnection: () => this.connection,
+      currentStatus: () => this.snapshotOwner.status,
+      currentGeneration: () => this.connectionGeneration,
+      currentFramework: () => this.framework.id,
+      reconnectBarrier: () => this.reconnectBarrier,
+      connect: (request) => this.connect(request),
+      getSnapshot: () => this.getSnapshot(),
+      connectResources: this.connectionResources,
+      invalidatePendingSessionStartups: () => this.invalidatePendingSessionStartups(),
+      disconnectCurrent: (emitClosedStatus, generation) =>
+        this.disconnectCurrent(emitClosedStatus, generation),
+      updateCwd: (cwd) => this.snapshotOwner.updateCwd(cwd),
+      updateError: (error) => this.snapshotOwner.updateError(error),
+      setStatus: (status) => this.setStatus(status),
+      pushEvent: (event) => this.pushEvent(event),
+      transitionStatus: (status) => this.snapshotOwner.transitionStatus(status),
+      emitState: () => this.emitState(),
+      diagnosticContext: (framework, generation) => this.diagnosticContext(framework, generation),
+      openCandidate: (attempt, onFrameworkResolved) =>
+        this.openAgentConnection(attempt, onFrameworkResolved)
     })
   }
 
@@ -885,187 +910,7 @@ class AcpRuntime {
 
   // Starts a fresh agent process connection and initializes protocol capabilities.
   async connect(request: AcpConnectRequest = {}): Promise<AcpStateSnapshot> {
-    return this.withOperationLease(() => this.connectOperation(request))
-  }
-
-  private async connectOperation(request: AcpConnectRequest = {}): Promise<AcpStateSnapshot> {
-    await this.connectionResources.connect((attempt) => this.connectFresh(request, attempt))
-    return this.getSnapshot()
-  }
-
-  private async connectFresh(
-    request: AcpConnectRequest = {},
-    attempt: AcpConnectionResourceAttempt
-  ): Promise<AcpConnectionResourceReadyHandle> {
-    const generation = attempt.epoch
-    attempt.assertCurrent()
-    // Resolve up front rather than reading this.cwd after the pre-connect teardown, which may still be
-    // mutating runtime state.
-    const cwd = resolve(request.cwd || this.options.defaultCwd)
-    let candidate: AcpAgentConnectionCandidate | undefined
-    let transferred: ReturnType<AcpAgentConnectionCandidate['transferTo']> | undefined
-    // Capture the framework resolved for this attempt so a later reconnect cannot relabel its failure.
-    let spawnedFramework = this.framework.id
-
-    try {
-      // Inside the try so a teardown throw or the generation assertion (a supersede race) also produces
-      // an enriched failure record instead of propagating silently.
-      this.invalidatePendingSessionStartups()
-      await this.disconnectCurrent(false, generation)
-      attempt.assertCurrent()
-
-      this.snapshotOwner.updateCwd(cwd)
-      this.snapshotOwner.updateError(undefined)
-      this.setStatus('connecting')
-      log.info('connecting agent', this.diagnosticContext(this.framework.id, generation))
-
-      candidate = await this.openAgentConnection(attempt, (framework) => {
-        spawnedFramework = framework
-      })
-      transferred = candidate.transferTo(attempt)
-      candidate = undefined
-
-      // Initialization tells the agent which client-side services this app can handle.
-      const initResult = await transferred.initialize({
-        protocolVersion: acp.PROTOCOL_VERSION,
-        clientInfo: {
-          name: 'open-science',
-          version: this.options.appVersion
-        },
-        clientCapabilities: {
-          fs: {
-            readTextFile: true,
-            writeTextFile: true
-          },
-          session: {
-            configOptions: {
-              boolean: {}
-            }
-          },
-          plan: {}
-        }
-      })
-      attempt.assertCurrent()
-      const initializeMaterial = transferred.backendAttempt.consumeInitializeMaterial()
-      if (initializeMaterial?.authentication) {
-        await transferred.authenticate(initializeMaterial.authentication)
-        attempt.assertCurrent()
-      }
-      if (initializeMaterial?.providerConfiguration) {
-        await transferred.setProvider(initializeMaterial.providerConfiguration)
-        attempt.assertCurrent()
-      }
-      const handle = attempt.publish({
-        close: Boolean(initResult.agentCapabilities?.sessionCapabilities?.close),
-        delete: Boolean(initResult.agentCapabilities?.sessionCapabilities?.delete),
-        resume: Boolean(initResult.agentCapabilities?.sessionCapabilities?.resume)
-      })
-
-      log.info('agent initialized', {
-        protocolVersion: initResult.protocolVersion,
-        supportsSessionClose: handle.capabilities.close,
-        supportsSessionDelete: handle.capabilities.delete,
-        supportsSessionResume: handle.capabilities.resume
-      })
-
-      this.pushEvent({
-        kind: 'system',
-        level: 'info',
-        title: 'Agent initialized',
-        text: `ACP protocol ${initResult.protocolVersion}`
-      })
-      // Event/state listeners are external and may synchronously disconnect or replace the runtime.
-      // Re-check the concrete owner after callbacks return before committing the connected snapshot.
-      handle.assertCurrent()
-      this.setStatus('connected')
-      return handle
-    } catch (thrown) {
-      transferred?.backendAttempt.fail()
-      await candidate?.dispose()
-      const cause = thrown
-
-      // The entire failure-handling body is best-effort: logging, notification sinks (pushEvent/
-      // emitState), and cleanup are each isolated so that whatever throws — a hostile error value, a
-      // renderer broadcast, or a teardown hook — the original `cause` is still re-thrown below and never
-      // replaced by a handling-time error.
-      try {
-        // Shared lifecycle context keeps the resolved framework and attempted generation attached to
-        // both the abandoned and failed paths without retaining process or workspace details.
-        const processFields = this.diagnosticContext(spawnedFramework, generation)
-
-        if (generation !== this.connectionGeneration) {
-          // Superseded (a newer reconnect bumped the generation) or shutting down: the fast-path re-throw
-          // skips the error handling below, so log here too — these late-spawn/teardown races are exactly
-          // the failures that are otherwise invisible.
-          try {
-            log.warn('agent connection abandoned (superseded or shutting down)', {
-              ...diagnosticErrorFields(cause),
-              ...processFields
-            })
-          } catch {
-            /* a throwing logger must not mask the cause */
-          }
-        } else {
-          this.snapshotOwner.updateError(errorMessage(cause))
-          safeLogError('agent connection failed', {
-            ...diagnosticErrorFields(cause),
-            ...processFields
-          })
-          // A notification sink that throws synchronously must not skip cleanup or the re-throw.
-          try {
-            this.pushEvent({
-              kind: 'error',
-              level: 'error',
-              title: 'Connection failed',
-              text: this.snapshotOwner.error
-            })
-          } catch (notifyError) {
-            safeLogError('agent connection failure notification failed', {
-              ...diagnosticErrorFields(notifyError),
-              ...processFields
-            })
-          }
-          // Cleanup must not mask the original failure: a throw from session.dispose(),
-          // connection.close(), or a teardown hook is logged with context but never replaces `cause`.
-          if (generation === this.connectionGeneration) {
-            try {
-              await this.disconnectCurrent(false, generation)
-            } catch (cleanupError) {
-              safeLogError('agent connection cleanup failed', {
-                ...diagnosticErrorFields(cleanupError),
-                ...processFields
-              })
-            }
-          }
-          // Cleanup and external callbacks both yield or re-enter. A newer generation owns the status
-          // once either happens, so the failed connect may commit `error` only while still current.
-          if (generation === this.connectionGeneration) {
-            this.snapshotOwner.transitionStatus('error')
-            try {
-              this.emitState()
-            } catch (notifyError) {
-              safeLogError('agent connection emitState failed', {
-                ...diagnosticErrorFields(notifyError),
-                ...processFields
-              })
-            }
-          }
-        }
-      } catch (handlingError) {
-        // Last-resort guard: even the logger threw. Swallow it (best-effort re-log) so the original
-        // cause below is what propagates.
-        try {
-          log.error('error while handling agent connection failure', {
-            ...diagnosticErrorFields(handlingError),
-            ...this.diagnosticContext(spawnedFramework, generation)
-          })
-        } catch {
-          /* nothing more we can safely do */
-        }
-      }
-
-      throw cause
-    }
+    return this.withOperationLease(() => this.connectionLifecycle.connect(request))
   }
 
   // Creates a protocol session, injects artifact tooling, and uses the returned id as the app session id.
@@ -2158,7 +2003,7 @@ class AcpRuntime {
   }
 
   // Awaitable quit/relaunch teardown. Latches shuttingDown FIRST so a connect that is mid-spawn when
-  // quit lands self-aborts and kills its freshly-spawned child (see connectFresh). Unlike shutdown(),
+  // quit lands self-aborts and kills its freshly-spawned child (see the lifecycle workflow). Unlike shutdown(),
   // this can be awaited, so a caller that follows it with app.exit(0) is guaranteed no orphaned agent
   // remains — assigned, connecting, or mid-spawn. Returns { reaped } so the caller can tell a clean
   // teardown from a degraded one (taskkill fallback left grandchildren) before committing to app.exit.
@@ -2183,7 +2028,7 @@ class AcpRuntime {
   // it does not rely on a latch to catch a connect racing inside provider spawn either — this teardown
   // can itself be abandoned by its caller (runBounded) once the budget elapses, and a latch set here
   // would then never clear, wedging every future connect. Instead disconnect() bumps the connection
-  // generation, and connectFresh reaps any freshly-spawned child whose generation is now stale,
+  // generation, and the lifecycle workflow reaps any freshly-spawned child whose generation is now stale,
   // independent of shuttingDown. Awaiting the in-flight connect here only sharpens the returned reaped
   // signal (so a degraded reap makes the caller refuse the install); if that await is abandoned on
   // timeout the caller refuses on !completed and the stale-generation self-reap still collects the child.
@@ -3167,40 +3012,7 @@ class AcpRuntime {
 
   // Lazily initializes the process connection before session creation.
   private async ensureConnected(cwd: string): Promise<ClientConnection> {
-    // A deferred provider/framework/skills reconnect is pending: wait for it to
-    // complete before reusing (or opening) a connection. Without this guard a
-    // createSession called while a prompt is still running would piggy-back onto
-    // the stale connection and land on the old backend.
-    if (this.reconnectBarrier) {
-      await this.reconnectBarrier
-    }
-
-    if (this.connection && this.snapshotOwner.status === 'connected') {
-      return this.connection
-    }
-
-    log.info('ensureConnected: attempting connection', this.diagnosticContext())
-
-    try {
-      await this.connect({ cwd })
-    } catch (error) {
-      safeLogError('ensureConnected: connect failed', {
-        ...diagnosticErrorFields(error),
-        ...this.diagnosticContext()
-      })
-      throw error
-    }
-
-    if (!this.connection) {
-      safeLogError('ensureConnected: connection is null after connect', {
-        ...this.diagnosticContext(),
-        errorCategory: 'connection-unavailable'
-      })
-      throw new Error('ACP connection failed')
-    }
-
-    log.info('ensureConnected: connection established', this.diagnosticContext())
-    return this.connection
+    return this.connectionLifecycle.ensureConnected(cwd)
   }
 
   private observeClaudeSdkMessage(params: Record<string, unknown>): void {
