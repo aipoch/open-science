@@ -218,6 +218,10 @@ class ArtifactTurnOwner {
     return this.activeTurnsBySession.get(sessionId)?.promptMessageId
   }
 
+  containsMessageForActiveTurn(sessionId: string, messageId: string): boolean {
+    return this.activeTurnsBySession.get(sessionId)?.messageAncestry.includes(messageId) ?? false
+  }
+
   snapshot(handle: ArtifactTurnHandle): ArtifactTurnSnapshot {
     const turn = this.resolve(handle)
     return {

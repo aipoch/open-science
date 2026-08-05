@@ -3,10 +3,15 @@ import { describe, expect, it, vi } from 'vitest'
 import type { ActivePlanProjection } from '../../shared/session-plan/contract'
 import { AcpRuntime } from './runtime'
 
-const projection = (artifactVersionId: string, revision = 1): ActivePlanProjection => ({
+const projection = (
+  artifactVersionId: string,
+  revision = 1,
+  originatingPromptMessageId: string | null = 'interaction-1'
+): ActivePlanProjection => ({
   artifactId: `artifact-${artifactVersionId}`,
   artifactVersionId,
   artifactChecksum: 'a'.repeat(64),
+  ...(originatingPromptMessageId ? { originatingPromptMessageId } : {}),
   revision,
   approval: 'pending',
   lifecycle: 'awaiting_approval',
@@ -47,6 +52,7 @@ type RuntimeHarness = Readonly<{
 const createRuntimeHarness = (options: {
   onEvent?: (event?: unknown) => void
   activeProjection?: ActivePlanProjection
+  messageAncestry?: string[]
 }): RuntimeHarness => {
   const generated = projection('version-1')
   const approved = { ...generated, approval: 'approved' as const, lifecycle: 'approved' as const }
@@ -103,7 +109,11 @@ const createRuntimeHarness = (options: {
     },
     planExecutionBindings: new Map(),
     planApprovalWaiters: new Map(),
-    artifactTurns: { promptMessageIdFor: () => 'interaction-1' },
+    artifactTurns: {
+      promptMessageIdFor: () => 'interaction-1',
+      containsMessageForActiveTurn: (_sessionId: string, messageId: string) =>
+        (options.messageAncestry ?? ['interaction-1']).includes(messageId)
+    },
     callbacks: { onEvent: options.onEvent },
     pushEvent: (event: unknown) => options.onEvent?.(event),
     resolveSessionProjectName: () => 'project-1'
@@ -178,6 +188,37 @@ describe('AcpRuntime Session Plan seam', () => {
       })
     ).rejects.toMatchObject({ code: 'interaction-mismatch' })
     expect(updateStepStatus).not.toHaveBeenCalled()
+  })
+
+  it('rejects an MCP Plan decision when the Plan originated on a sibling Message Branch', async () => {
+    const { runtime, service } = createRuntimeHarness({
+      activeProjection: projection('version-2', 4, 'sibling-message'),
+      messageAncestry: ['parent-message', 'interaction-1']
+    })
+
+    await expect(
+      runtime.callSessionPlan({
+        projectId: 'project-1',
+        sessionId: 'session-1',
+        operation: 'approve'
+      })
+    ).rejects.toMatchObject({ code: 'interaction-mismatch' })
+    expect(service.respond).not.toHaveBeenCalled()
+  })
+
+  it('rejects an MCP Plan decision when a legacy Plan has no originating Message', async () => {
+    const { runtime, service } = createRuntimeHarness({
+      activeProjection: projection('legacy-version', 1, null)
+    })
+
+    await expect(
+      runtime.callSessionPlan({
+        projectId: 'project-1',
+        sessionId: 'session-1',
+        operation: 'approve'
+      })
+    ).rejects.toMatchObject({ code: 'interaction-mismatch' })
+    expect(service.respond).not.toHaveBeenCalled()
   })
 
   it('rejects Plan execution from an ordinary interaction without explicit continuation authority', async () => {

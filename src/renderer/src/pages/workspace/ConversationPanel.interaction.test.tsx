@@ -127,6 +127,7 @@ const completedPlanProjection: ActivePlanProjection = {
   artifactId: 'artifact-1',
   artifactVersionId: 'version-1',
   artifactChecksum: 'a'.repeat(64),
+  originatingPromptMessageId: 'plan-origin',
   revision: 4,
   approval: 'approved',
   lifecycle: 'completed',
@@ -152,6 +153,18 @@ const completedPlanProjection: ActivePlanProjection = {
   stepStates: { 'Analyze data': { status: 'completed' } },
   counts: { phases: 1, delegations: 1, steps: 1, completed: 1, inProgress: 0 }
 }
+
+const planOriginMessages = (): ChatSession['messages'] => [
+  {
+    id: 'plan-origin',
+    role: 'user',
+    content: 'Create the Plan.',
+    status: 'complete',
+    eventIds: [],
+    createdAt: 1,
+    updatedAt: 1
+  }
+]
 
 const renderPanel = (props: Partial<Parameters<typeof ConversationPanel>[0]> = {}): void => {
   act(() => {
@@ -301,7 +314,7 @@ describe('ConversationPanel composer intake', () => {
       title: 'Settled pending Plan',
       cwd: '/workspace',
       status: 'idle',
-      messages: [],
+      messages: planOriginMessages(),
       createdAt: 1,
       updatedAt: 2,
       activePlanProjection: {
@@ -457,7 +470,7 @@ describe('ConversationPanel composer intake', () => {
       title: 'Existing session',
       cwd: '/workspace',
       status: 'idle',
-      messages: [],
+      messages: planOriginMessages(),
       createdAt: 1,
       updatedAt: 2
     }
@@ -606,7 +619,7 @@ describe('ConversationPanel interrupted Session recovery', () => {
       cwd: '/workspace',
       status: 'idle',
       interrupted: true,
-      messages: [],
+      messages: planOriginMessages(),
       createdAt: Date.now(),
       updatedAt: Date.now()
     }
@@ -662,7 +675,7 @@ describe('ConversationPanel + menu', () => {
       cwd: '/workspace',
       status: 'waiting-plan-approval',
       activeRun: { promptMessageId: 'interaction-1', startedAt: 1 },
-      messages: [],
+      messages: planOriginMessages(),
       createdAt: 1,
       updatedAt: 2,
       activePlanProjection: {
@@ -722,7 +735,7 @@ describe('ConversationPanel + menu', () => {
       cwd: '/workspace',
       status: 'waiting-plan-approval',
       activeRun: { promptMessageId: 'interaction-1', startedAt: 1 },
-      messages: [],
+      messages: planOriginMessages(),
       createdAt: 1,
       updatedAt: 2,
       activePlanProjection: {
@@ -758,7 +771,7 @@ describe('ConversationPanel + menu', () => {
       cwd: '/workspace',
       status: 'waiting-plan-approval',
       activeRun: { promptMessageId: 'interaction-1', startedAt: 1 },
-      messages: [],
+      messages: planOriginMessages(),
       createdAt: 1,
       updatedAt: 2,
       activePlanProjection: {
@@ -794,7 +807,7 @@ describe('ConversationPanel + menu', () => {
       title: 'Orphaned pending Plan',
       cwd: '/workspace',
       status: 'waiting-plan-approval',
-      messages: [],
+      messages: planOriginMessages(),
       createdAt: 1,
       updatedAt: 2,
       activePlanProjection: {
@@ -828,7 +841,7 @@ describe('ConversationPanel + menu', () => {
     expect(respondToSessionPlanMock).not.toHaveBeenCalled()
   })
 
-  it('shows and opens only the active Message Branch Plan while retaining an open Preview', () => {
+  it('shows only the authoritative Plan on its Message Branch while retaining an open Preview', () => {
     const planA: ActivePlanProjection = {
       ...completedPlanProjection,
       artifactId: 'artifact-a',
@@ -861,9 +874,9 @@ describe('ConversationPanel + menu', () => {
         ...baseSession,
         messages: [
           {
-            id: 'prompt-a',
+            id: 'prompt-b',
             role: 'user',
-            content: 'Plan branch A',
+            content: 'Plan branch B',
             status: 'complete',
             eventIds: [],
             createdAt: 1,
@@ -879,7 +892,7 @@ describe('ConversationPanel + menu', () => {
       ).click()
     })
     expect(usePreviewWorkbenchStore.getState().activeItemId).toBe(
-      'tool:session-plan-branches:plan:version-a'
+      'tool:session-plan-branches:plan:version-b'
     )
 
     usePreviewWorkbenchStore.setState(createInitialPreviewWorkbenchState())
@@ -887,7 +900,7 @@ describe('ConversationPanel + menu', () => {
       ;(container.querySelector('[data-testid="menu-view-plan"]') as HTMLButtonElement).click()
     })
     expect(usePreviewWorkbenchStore.getState().activeItemId).toBe(
-      'tool:session-plan-branches:plan:version-a'
+      'tool:session-plan-branches:plan:version-b'
     )
 
     renderPanel({
@@ -895,9 +908,9 @@ describe('ConversationPanel + menu', () => {
         ...baseSession,
         messages: [
           {
-            id: 'prompt-c',
+            id: 'prompt-a',
             role: 'user',
-            content: 'Branch without a Plan',
+            content: 'Historical Plan branch A',
             status: 'complete',
             eventIds: [],
             createdAt: 1,
@@ -910,7 +923,7 @@ describe('ConversationPanel + menu', () => {
     expect(container.querySelector('[data-testid="menu-view-plan"]')).toBeNull()
     expect(container.querySelector('button[aria-label^="Open plan, step"]')).toBeNull()
     expect(usePreviewWorkbenchStore.getState().activeItemId).toBe(
-      'tool:session-plan-branches:plan:version-a'
+      'tool:session-plan-branches:plan:version-b'
     )
   })
 
@@ -926,7 +939,7 @@ describe('ConversationPanel + menu', () => {
         title: 'Restored pending Plan',
         cwd: '/workspace',
         status: 'waiting-plan-approval',
-        messages: [],
+        messages: planOriginMessages(),
         createdAt: 1,
         updatedAt: 2,
         activePlanProjection: {

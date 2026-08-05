@@ -1591,6 +1591,7 @@ describe('ACP runtime session management', () => {
     artifactId: 'artifact-1',
     artifactVersionId: 'version-1',
     artifactChecksum: 'a'.repeat(64),
+    originatingPromptMessageId: 'plan-origin',
     revision,
     approval,
     lifecycle:
@@ -1634,13 +1635,14 @@ describe('ACP runtime session management', () => {
       callbacks: { onEvent: (event) => events.push(event) }
     })
     const approved = restoredPlanProjection('approved', 5)
+    const pending = restoredPlanProjection('pending', 4)
     const respond = vi.fn(async () => ({ projection: approved, changed: true }))
     const checkTurnCompletion = vi.fn(async () => ({ allow: true }))
     Object.assign(runtime as unknown as { planService: unknown }, {
       planService: {
         respond,
         checkTurnCompletion,
-        getProjection: vi.fn(async () => approved)
+        getProjection: vi.fn(async () => pending)
       }
     })
 
@@ -1653,6 +1655,10 @@ describe('ACP runtime session management', () => {
         artifactVersionId: 'version-1',
         expectedRevision: 4,
         pendingAction: 'approve'
+      },
+      provenanceContext: {
+        promptMessageId: 'approve-message',
+        messageAncestry: ['plan-origin', 'approve-message']
       }
     })
 
@@ -1701,6 +1707,10 @@ describe('ACP runtime session management', () => {
         artifactVersionId: 'version-1',
         expectedRevision: 4,
         pendingAction: 'review'
+      },
+      provenanceContext: {
+        promptMessageId: 'feedback-message',
+        messageAncestry: ['plan-origin', 'feedback-message']
       }
     })
 
@@ -1720,6 +1730,10 @@ describe('ACP runtime session management', () => {
           artifactVersionId: 'version-1',
           expectedRevision: 3,
           pendingAction: 'review'
+        },
+        provenanceContext: {
+          promptMessageId: 'stale-feedback-message',
+          messageAncestry: ['plan-origin', 'stale-feedback-message']
         }
       })
     ).rejects.toMatchObject({ code: 'revision-conflict' })
@@ -1736,11 +1750,12 @@ describe('ACP runtime session management', () => {
       framework: opencodeFramework
     })
     const rejected = restoredPlanProjection('rejected', 5)
+    const pending = restoredPlanProjection('pending', 4)
     const respond = vi.fn(async () => ({ projection: rejected, changed: true }))
     Object.assign(runtime as unknown as { planService: unknown }, {
       planService: {
         respond,
-        getProjection: vi.fn(async () => rejected)
+        getProjection: vi.fn(async () => pending)
       }
     })
 
@@ -1753,6 +1768,10 @@ describe('ACP runtime session management', () => {
         artifactVersionId: 'version-1',
         expectedRevision: 4,
         pendingAction: 'reject'
+      },
+      provenanceContext: {
+        promptMessageId: 'reject-message',
+        messageAncestry: ['plan-origin', 'reject-message']
       }
     })
 
@@ -12622,6 +12641,7 @@ describe('ACP runtime session management', () => {
         artifactId: 'artifact-1',
         artifactVersionId: 'version-7',
         artifactChecksum: 'a'.repeat(64),
+        originatingPromptMessageId: 'plan-origin',
         revision: 11,
         approval: 'approved',
         lifecycle: 'approved',
@@ -12664,6 +12684,10 @@ describe('ACP runtime session management', () => {
           projectId: 'project-1',
           artifactVersionId: 'version-7',
           expectedRevision: 11
+        },
+        provenanceContext: {
+          promptMessageId: 'continuation-message',
+          messageAncestry: ['plan-origin', 'continuation-message']
         }
       })
 
@@ -12679,6 +12703,39 @@ describe('ACP runtime session management', () => {
       expect(fakeAgent.prompts[0]?.text).toContain('continue')
     }
   )
+
+  it('rejects an explicit Plan continuation from a sibling Message Branch', async () => {
+    const process = new FakeAgentProcess()
+    const fakeAgent = startFakeAgent(process, ['s1'])
+    const runtime = new AcpRuntime({
+      appVersion: '0.1.0',
+      defaultCwd: '/workspace',
+      spawnAgent: () => asAgentProcess(process),
+      framework: opencodeFramework
+    })
+    const active = restoredPlanProjection('approved', 4)
+    Object.assign(runtime as unknown as { planService: unknown }, {
+      planService: { authorizeContinuation: vi.fn(async () => active) }
+    })
+
+    await runtime.createSession({ cwd: '/workspace', projectName: 'project-1' })
+    await expect(
+      runtime.sendPrompt({
+        sessionId: 's1',
+        text: 'continue a sibling plan',
+        planContinuation: {
+          projectId: 'project-1',
+          artifactVersionId: 'version-1',
+          expectedRevision: 4
+        },
+        provenanceContext: {
+          promptMessageId: 'branch-b-message',
+          messageAncestry: ['branch-b-root', 'branch-b-message']
+        }
+      })
+    ).rejects.toMatchObject({ code: 'interaction-mismatch' })
+    expect(fakeAgent.prompts).toHaveLength(0)
+  })
 
   it.each([
     ['Claude Code', claudeCodeFramework],
@@ -12710,6 +12767,7 @@ describe('ACP runtime session management', () => {
         artifactId: 'artifact-1',
         artifactVersionId: 'version-1',
         artifactChecksum: 'a'.repeat(64),
+        originatingPromptMessageId: 'plan-origin',
         revision: 2,
         approval: 'approved',
         lifecycle: 'approved',
@@ -12752,6 +12810,10 @@ describe('ACP runtime session management', () => {
             projectId: 'project-1',
             artifactVersionId: 'version-1',
             expectedRevision: 2
+          },
+          provenanceContext: {
+            promptMessageId: 'completion-message',
+            messageAncestry: ['plan-origin', 'completion-message']
           }
         })
       ).rejects.toThrow('The active Session Plan is not complete (in_progress).')
