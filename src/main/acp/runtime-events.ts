@@ -2,14 +2,10 @@ import type { ContentBlock, SessionNotification, ToolCallContent } from '@agentc
 
 import {
   ACP_MESSAGE_IMAGE_EVENT_TEXT,
+  normalizeClaudeCodeRefusalText,
   sanitizeAcpMessageImage,
   type AcpRuntimeEvent
 } from '../../shared/acp'
-
-const CLAUDE_CODE_USAGE_POLICY_REFUSAL_PREFIX =
-  'API Error: Claude Code is unable to respond to this request, which appears to violate our Usage Policy (https://www.anthropic.com/legal/aup).'
-const PROVIDER_NEUTRAL_REFUSAL_PREFIX =
-  'The selected model declined to complete this response under its safety policy.'
 
 // Bounds how much of a failed tool's result text reaches the log, so large or sensitive tool output
 // cannot flood it. Tuned to fit a typical error message (e.g. WebFetch's domain-safety preflight).
@@ -130,10 +126,7 @@ const normalizeMessageContent = (
   if (content.type !== 'image') {
     const text = contentToText(content)
     return {
-      text:
-        normalizeClaudeCodeRefusal && text.startsWith(CLAUDE_CODE_USAGE_POLICY_REFUSAL_PREFIX)
-          ? text.replace(CLAUDE_CODE_USAGE_POLICY_REFUSAL_PREFIX, PROVIDER_NEUTRAL_REFUSAL_PREFIX)
-          : text
+      text: normalizeClaudeCodeRefusal ? normalizeClaudeCodeRefusalText(text) : text
     }
   }
 

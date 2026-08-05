@@ -381,6 +381,35 @@ describe('session store', () => {
     expect(session.activeRun).toBeUndefined()
   })
 
+  it('normalizes a Claude refusal prefix after streamed chunks are merged', () => {
+    useSessionStore.getState().appendUserMessage({
+      sessionId: 'transport-session-1',
+      content: 'Search the web',
+      agentFrameworkId: 'claude-code'
+    })
+    useSessionStore.getState().appendAgentMessageChunk({
+      sessionId: 'transport-session-1',
+      streamId: 'assistant-message-1',
+      eventId: 'event-1',
+      content: 'API Error: Claude Code is unable to respond to this request, '
+    })
+    useSessionStore.getState().appendAgentMessageChunk({
+      sessionId: 'transport-session-1',
+      streamId: 'assistant-message-1',
+      eventId: 'event-2',
+      content:
+        'which appears to violate our Usage Policy (https://www.anthropic.com/legal/aup). Try rephrasing.'
+    })
+
+    const session = useSessionStore.getState().sessions[0]
+    expect(session.messages[1]?.content).toBe(
+      'The selected model declined to complete this response under its safety policy. Try rephrasing.'
+    )
+    expect(toPersistedSession(session).messages[1]?.content).toBe(
+      'The selected model declined to complete this response under its safety policy. Try rephrasing.'
+    )
+  })
+
   it('attaches whole-turn usage only to the final agent message for the active prompt', () => {
     useSessionStore.getState().appendUserMessage({
       sessionId: 'transport-session-1',

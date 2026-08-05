@@ -1,5 +1,9 @@
 import type { AcpRuntimeEvent } from '../../shared/acp'
-import { getAcpRuntimeEventImage, getAcpRuntimeEventText } from '../../shared/acp'
+import {
+  getAcpRuntimeEventImage,
+  getAcpRuntimeEventText,
+  normalizeClaudeCodeRefusalText
+} from '../../shared/acp'
 import type {
   ArtifactFile,
   FinalizeRunArtifactsRequest,
@@ -553,7 +557,13 @@ class TaskRunner {
       (event) => event.kind === 'message' && event.role === 'assistant'
     )
     const terminalStopEvent = [...events].reverse().find((event) => event.kind === 'stop')
-    const output = assistantEvents.map((event) => getAcpRuntimeEventText(event) ?? '').join('')
+    const streamedOutput = assistantEvents
+      .map((event) => getAcpRuntimeEventText(event) ?? '')
+      .join('')
+    const output =
+      session.agentFrameworkId === 'claude-code'
+        ? normalizeClaudeCodeRefusalText(streamedOutput)
+        : streamedOutput
     const images = assistantEvents
       .map((event) => {
         const image = getAcpRuntimeEventImage(event)

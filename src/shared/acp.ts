@@ -382,6 +382,16 @@ export const getAcpRuntimeEventText = (event: AcpRuntimeEvent): string | undefin
     ? undefined
     : event.text
 
+const CLAUDE_CODE_USAGE_POLICY_REFUSAL_PREFIX =
+  'API Error: Claude Code is unable to respond to this request, which appears to violate our Usage Policy (https://www.anthropic.com/legal/aup).'
+const PROVIDER_NEUTRAL_REFUSAL_PREFIX =
+  'The selected model declined to complete this response under its safety policy.'
+
+export const normalizeClaudeCodeRefusalText = (text: string): string =>
+  text.startsWith(CLAUDE_CODE_USAGE_POLICY_REFUSAL_PREFIX)
+    ? `${PROVIDER_NEUTRAL_REFUSAL_PREFIX}${text.slice(CLAUDE_CODE_USAGE_POLICY_REFUSAL_PREFIX.length)}`
+    : text
+
 export type AcpPermissionScope = 'once' | 'session' | 'project' | 'global'
 export type AcpPermissionGrantScope = Exclude<AcpPermissionScope, 'once'>
 

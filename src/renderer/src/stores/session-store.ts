@@ -10,6 +10,7 @@ import type { ArtifactFile } from '../../../shared/artifacts'
 import { sanitizeActivityGroupTitle } from '../../../shared/activity-groups'
 import {
   MAX_ACP_SESSION_IMAGE_BYTES,
+  normalizeClaudeCodeRefusalText,
   sanitizeAcpMessageImage,
   type AcpContextUsage,
   type AcpMessageImage,
@@ -1471,6 +1472,12 @@ export const useSessionStore = create<SessionStore>((set, get) => ({
     const existingMessage = session.messages.find(
       (message) => message.role === 'agent' && message.streamId === streamId
     )
+    const mergedContent = (current = ''): string => {
+      const text = `${current}${content}`
+      return session.agentFrameworkId === 'claude-code'
+        ? normalizeClaudeCodeRefusalText(text)
+        : text
+    }
     const messageId = existingMessage?.id ?? createMessageId()
     const now = Date.now()
 
@@ -1493,7 +1500,7 @@ export const useSessionStore = create<SessionStore>((set, get) => ({
               message.id === existingMessage.id
                 ? {
                     ...message,
-                    content: `${message.content}${content}`,
+                    content: mergedContent(message.content),
                     images: sanitizedImage
                       ? sanitizeMessageImages([
                           ...(message.images ?? []),
@@ -1513,7 +1520,7 @@ export const useSessionStore = create<SessionStore>((set, get) => ({
         const agentMessage: ChatMessage = {
           id: messageId,
           role: 'agent',
-          content,
+          content: mergedContent(),
           status: 'streaming',
           streamId,
           responseToMessageId,
