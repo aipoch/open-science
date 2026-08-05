@@ -210,6 +210,30 @@ type NotebookRuntimeServiceCallbacks = {
   onNotebookChanged?: (event: NotebookSessionReference) => void
 }
 
+type NotebookHandoffContext = {
+  activeRunId?: string
+  activeWriteCellId?: string
+  executionCount: number
+  cells: Array<{
+    id: string
+    language: NotebookLanguage
+    status: NotebookCell['status']
+    executionCount?: number
+    latestRunId?: string
+  }>
+  kernels: Array<{
+    kind: NotebookLanguage | 'repl'
+    status: NotebookKernelMetadata['lastKnownStatus']
+  }>
+  runtimes: Array<{
+    language: NotebookLanguage
+    label: string
+    version?: string
+    status?: NotebookRuntimeBinding['status']
+    reason?: NotebookRuntimeBinding['reason']
+  }>
+}
+
 // Provisioner-backed environment manager injected into the service (mirrors installPackagesImpl /
 // getPackageMirror injection). DefaultRuntimeProvisioner satisfies this structurally; tests inject a
 // fake so manageEnvironments never spawns real micromamba.
@@ -811,6 +835,60 @@ class NotebookRuntimeService {
   async executeShell(request: ExecuteShellRequest): Promise<NotebookShellResult> {
     const session = await this.ensureSession(request)
     return this.executionOwner.executeShell(session, request)
+  }
+
+  // Read-only handoff projection for a fresh Agent context. A missing aggregate means Notebook was
+  // never used (or was intentionally shut down for a Branch change), so this must not call
+  // ensureSession(), load run.json, discover runtimes, or create an executor.
+  peekHandoffContext(sessionId: string): NotebookHandoffContext | undefined {
+    const session = this.sessions.get(sessionId)
+    if (!session) return undefined
+
+    const snapshot = session.snapshot()
+    const kernels: NotebookHandoffContext['kernels'] = snapshot.kernelStatuses
+      .filter(([, status]) => status !== 'terminated')
+      .slice(-6)
+      .map(([processKey, status]) => ({
+        kind: processKey === 'repl' ? 'repl' : processKey.startsWith('r:') ? 'r' : 'python',
+        status
+      }))
+    const runtimes = session
+      .runtimeBindingEntries()
+      .slice(-4)
+      .map(([language, binding]) => ({
+        language,
+        label: binding.label,
+        ...(binding.version ? { version: binding.version } : {}),
+        ...(binding.status ? { status: binding.status } : {}),
+        ...(binding.reason ? { reason: binding.reason } : {})
+      }))
+    const cells = snapshot.cells.slice(-6).map((cell) => ({
+      id: cell.id,
+      language: cell.language,
+      status: cell.status,
+      ...(cell.executionCount === undefined ? {} : { executionCount: cell.executionCount }),
+      ...(cell.latestRunId ? { latestRunId: cell.latestRunId } : {})
+    }))
+
+    if (
+      snapshot.executionCount === 0 &&
+      !snapshot.activeRunId &&
+      !snapshot.activeWrite &&
+      cells.length === 0 &&
+      kernels.length === 0 &&
+      runtimes.length === 0
+    ) {
+      return undefined
+    }
+
+    return {
+      executionCount: snapshot.executionCount,
+      ...(snapshot.activeRunId ? { activeRunId: snapshot.activeRunId } : {}),
+      ...(snapshot.activeWrite ? { activeWriteCellId: snapshot.activeWrite.cellId } : {}),
+      cells,
+      kernels,
+      runtimes
+    }
   }
 
   // Returns the current in-memory cells plus the complete persisted run history.
@@ -2266,6 +2344,7 @@ export type {
   NotebookExecutor,
   NotebookExecutorLifecycleCallbacks,
   NotebookEnvironmentManager,
+  NotebookHandoffContext,
   NotebookRuntimeServiceCallbacks,
   NotebookRuntimeServiceOptions
 }

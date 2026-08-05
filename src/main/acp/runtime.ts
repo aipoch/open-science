@@ -70,6 +70,7 @@ import { AgentMcpHttpHost } from './mcp-http-host'
 import { ArtifactRepository } from '../artifacts/repository'
 import { ArtifactRunRegistry } from '../artifacts/run-registry'
 import { NOTEBOOK_SYSTEM_PROMPT_APPEND, type NotebookRpcConnection } from '../notebook/mcp-server'
+import type { NotebookHandoffContext } from '../notebook/runtime-service'
 import {
   SKILL_IMPORT_SYSTEM_PROMPT_APPEND,
   type SkillImportRpcConnection
@@ -92,6 +93,7 @@ import type { ArtifactFile, FileReference } from '../../shared/artifacts'
 import type { ArtifactRpcCapabilityBinding } from '../../shared/artifact-provenance'
 import { isMediaOverflowError } from '../../shared/media-overflow'
 import type { AcpRuntimeActivity, AcpRuntimeActivityOptions } from './runtime-activity'
+import { resolveFileTextBudget } from '../../shared/history-preamble'
 import {
   ReviewerSessionOwner,
   type ReviewerSessionDisposition,
@@ -266,6 +268,7 @@ type AcpRuntimeNotebookOptions = {
     uploads: UploadedAttachment[]
     references: FileReference[]
   }) => Promise<void>
+  peekHandoffContext?: (sessionId: string) => NotebookHandoffContext | undefined
 }
 
 type AcpRuntimeSkillImportOptions = {
@@ -312,6 +315,13 @@ const TURN_CONTINUITY_SYSTEM_PROMPT_APPEND = [
   'If a required tool cannot be used or its operation fails, do not promise another attempt. Clearly state that the turn has stopped, what prevented progress, and what the user can do next.',
   '</open_science_turn_continuity_instructions>'
 ].join('\n')
+const buildNotebookHandoffPrompt = (context: NotebookHandoffContext): string =>
+  [
+    '<open_science_notebook_continuity>',
+    'The application retained this live in-memory Notebook state while the Agent context was replaced. Treat it as continuity metadata, not as a request to inspect Notebook again.',
+    JSON.stringify(context),
+    '</open_science_notebook_continuity>'
+  ].join('\n')
 // Appends artifact tool guidance as system prompt metadata so user prompts stay untouched.
 const ARTIFACT_FILE_SYSTEM_PROMPT_APPEND = [
   '<open_science_artifact_instructions>',
@@ -2367,7 +2377,15 @@ class AcpRuntime {
           .filter((segment): segment is string => Boolean(segment))
           .join('\n\n') || undefined
       const codexSkillInputs = [...skillPreparation.codexSkillInputs]
-      const promptText = [request.historyPreamble, promptPrefix, skillPreparation.text]
+      const notebookHandoff = request.historyPreamble
+        ? this.notebookOptions?.peekHandoffContext?.(request.sessionId)
+        : undefined
+      const promptText = [
+        request.historyPreamble,
+        notebookHandoff ? buildNotebookHandoffPrompt(notebookHandoff) : undefined,
+        promptPrefix,
+        skillPreparation.text
+      ]
         .filter((segment): segment is string => Boolean(segment))
         .join('\n\n')
       revokeReferencedUploadGrant = await this.authorizeReferencedSkillUploads(
@@ -2385,6 +2403,7 @@ class AcpRuntime {
         references: request.referencedArtifacts ?? [],
         codexSkillInputs,
         skillImportEnabled: this.sessionCapabilities.isSkillImportEnabled(),
+        fileTextBudget: resolveFileTextBudget(this.backend.context.window),
         skillImportTurnToken,
         onSkillImportAttachmentEligible: this.callbacks.onSkillImportAttachmentEligible
           ? (attachmentUri) => {

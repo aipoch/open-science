@@ -5,6 +5,7 @@ import { join } from 'node:path'
 import { afterEach, describe, expect, it, vi } from 'vitest'
 
 import type { UploadedAttachment } from '../../shared/uploads'
+import { estimateHistoryTokens } from '../../shared/history-preamble'
 import { UploadRepository } from '../uploads/repository'
 import { stageUploadFixtures } from '../uploads/repository.test-utils'
 import { createManagedFileReferenceResolver } from './file-reference-resolver'
@@ -165,16 +166,13 @@ describe('AcpPromptContentOwner', () => {
     expect(blocks.map((block) => block.type)).toEqual([
       'text',
       'image',
-      'resource',
+      'resource_link',
       'resource',
       'resource'
     ])
     expect(blocks[0]).toEqual({ type: 'text', text: 'combined prompt' })
     expect(blocks[1]).toMatchObject({ type: 'image', mimeType: 'image/png' })
-    expect(blocks[2]).toMatchObject({
-      type: 'resource',
-      resource: { text: 'history body' }
-    })
+    expect(blocks[2]).toMatchObject({ type: 'resource_link', name: 'history.txt' })
     expect(blocks[3]).toMatchObject({
       type: 'resource',
       resource: { text: 'current body' }
@@ -198,6 +196,57 @@ describe('AcpPromptContentOwner', () => {
       'default-project'
     )
     expect(result.turnInputs?.references).toEqual([reference])
+  })
+
+  it('shares one text budget across current files and keeps both ends of prose previews', async () => {
+    const root = await createRoot()
+    const uploads = new UploadRepository(root)
+    const staged = await stageUploadFixtures(uploads, {
+      files: [
+        {
+          name: 'one.txt',
+          mimeType: 'text/plain',
+          content: Buffer.from(`BEGIN-ONE\n${'a'.repeat(4_000)}\nEND-ONE`).toString('base64')
+        },
+        {
+          name: 'two.txt',
+          mimeType: 'text/plain',
+          content: Buffer.from(`BEGIN-TWO\n${'b'.repeat(4_000)}\nEND-TWO`).toString('base64')
+        }
+      ]
+    })
+    const owner = new AcpPromptContentOwner({
+      uploadRepository: uploads,
+      fileReferenceResolver: createManagedFileReferenceResolver({ uploads })
+    })
+
+    const result = await owner.prepare({
+      appSessionId: 'target-session',
+      projectId: 'default-project',
+      text: 'compare these files',
+      historyImages: [],
+      historyUploads: [],
+      currentUploads: staged,
+      references: [],
+      codexSkillInputs: [],
+      skillImportEnabled: false,
+      fileTextBudget: 500
+    })
+
+    const fileText = contentBlocks(result.content)
+      .filter((block): block is Extract<ContentBlock, { type: 'text' }> => block.type === 'text')
+      .slice(1)
+      .map((block) => block.text)
+    expect(fileText).toHaveLength(2)
+    expect(fileText.join('\n')).toContain('BEGIN-ONE')
+    expect(fileText.join('\n')).toContain('END-ONE')
+    expect(fileText.join('\n')).toContain('BEGIN-TWO')
+    expect(fileText.join('\n')).toContain('END-TWO')
+    expect(
+      fileText.reduce((total, text) => total + estimateHistoryTokens(text), 0)
+    ).toBeLessThanOrEqual(500)
+    expect(fileText.join('\n')).not.toContain('a'.repeat(1_000))
+    expect(fileText.join('\n')).not.toContain('b'.repeat(1_000))
   })
 
   it('finalizes a genuinely staged history upload for the target Session', async () => {
@@ -233,10 +282,7 @@ describe('AcpPromptContentOwner', () => {
       expect.objectContaining({ sessionId: 'target-session', id: stagedHistory.id })
     ])
     expect(contentBlocks(result.content)).toContainEqual(
-      expect.objectContaining({
-        type: 'resource',
-        resource: expect.objectContaining({ text: 'history body' })
-      })
+      expect.objectContaining({ type: 'resource_link', name: 'history.txt' })
     )
   })
 
@@ -276,10 +322,7 @@ describe('AcpPromptContentOwner', () => {
     })
 
     expect(contentBlocks(result.content)).toContainEqual(
-      expect.objectContaining({
-        type: 'resource',
-        resource: expect.objectContaining({ text: 'history body' })
-      })
+      expect.objectContaining({ type: 'resource_link', name: 'history.txt' })
     )
     expect(finalizeUploads).not.toHaveBeenCalled()
   })

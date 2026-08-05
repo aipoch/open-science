@@ -13,6 +13,7 @@ import { ArtifactRepository } from '../artifacts/repository'
 import type { ArtifactRunRegistry } from '../artifacts/run-registry'
 import { createLogger, errorLogFields } from '../logger'
 import { NotebookLocalRpcServer } from '../notebook/local-rpc-server'
+import type { NotebookHandoffContext } from '../notebook/runtime-service'
 import {
   runTaskNotificationInBackground,
   type TaskNotificationService
@@ -48,6 +49,7 @@ type AcpRuntimeCompositionOptions = AcpRuntimeArtifacts & {
   mcpEntryPath: string
   uploadRepository: UploadRepository
   notebookRpcServer: NotebookLocalRpcServer
+  peekNotebookHandoffContext?: (sessionId: string) => NotebookHandoffContext | undefined
   authorizeSkillImportReferencedUploads: (
     projectId: string,
     sessionId: string,
@@ -80,6 +82,7 @@ const createAcpRuntime = ({
   provenanceRepository,
   uploadRepository,
   notebookRpcServer,
+  peekNotebookHandoffContext,
   authorizeSkillImportReferencedUploads,
   settingsService,
   permissionGrantRegistry,
@@ -165,7 +168,8 @@ const createAcpRuntime = ({
             notebookRpcServer.registerSessionSpecialist(sessionId, specialistId),
           setArtifactProvenanceContext: (sessionId, context) =>
             notebookRpcServer.setArtifactProvenanceContext(sessionId, context),
-          registerTurnInputs: (request) => notebookRpcServer.registerNotebookTurnInputs(request)
+          registerTurnInputs: (request) => notebookRpcServer.registerNotebookTurnInputs(request),
+          peekHandoffContext: peekNotebookHandoffContext
         },
         skillImport: {
           mcpEntryPath,

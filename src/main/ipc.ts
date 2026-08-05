@@ -1040,6 +1040,7 @@ const createApplicationModules = async (
       provenanceRepository: artifactProvenanceRepository,
       uploadRepository,
       notebookRpcServer,
+      peekNotebookHandoffContext: (sessionId) => notebookService.peekHandoffContext(sessionId),
       authorizeSkillImportReferencedUploads: (projectId, sessionId, paths) =>
         conversationSkillImporter.authorizeReferencedUploads(projectId, sessionId, paths),
       settingsService,

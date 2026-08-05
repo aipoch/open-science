@@ -142,6 +142,33 @@ const lifecycleCallbackHarness = (
 }
 
 describe('notebook runtime service', () => {
+  it('peeks only actionable in-memory handoff state without creating or reloading a Session', async () => {
+    const root = await createStorageRoot()
+    const { service } = lifecycleCallbackHarness(root)
+    const sessionRoot = join(root, 'notebooks', 'default-project', 'session-1')
+
+    expect(service.peekHandoffContext('session-1')).toBeUndefined()
+    expect(existsSync(sessionRoot)).toBe(false)
+
+    const begin = await service.beginCodeCell({
+      projectName: 'default-project',
+      sessionId: 'session-1',
+      workspaceCwd: '/workspace'
+    })
+    const handoff = service.peekHandoffContext('session-1')
+
+    expect(handoff).toMatchObject({
+      executionCount: 0,
+      activeWriteCellId: begin.cellId,
+      cells: [{ id: begin.cellId, language: 'python', status: 'receiving-code' }]
+    })
+    expect(JSON.stringify(handoff)).not.toContain('notebookSessionRoot')
+    expect(JSON.stringify(handoff)).not.toContain('runtimeRoot')
+
+    await service.shutdownSession('session-1')
+    expect(service.peekHandoffContext('session-1')).toBeUndefined()
+  })
+
   it('streams agent code into a locked cell and runs it through the shared executor', async () => {
     const root = await createStorageRoot()
     const executions: NotebookExecutionRequest[] = []

@@ -1,13 +1,22 @@
 import { describe, expect, it } from 'vitest'
 
-import { buildHistoryPreamble, buildHistoryReplayMedia } from './history-preamble'
+import {
+  buildHistoryPreamble,
+  buildHistoryReplay,
+  buildWorkspaceHistoryReplay,
+  estimateHistoryTokens,
+  resolveHistoryReplayBudget,
+  resolveHistoryReplayTarget
+} from './history-preamble'
 import type { ChatMessage } from '../../stores/session-store'
+import type { AgentFrameworkView, ProviderView } from '../../../../shared/settings'
 
+let messageId = 0
 const message = (
   partial: Partial<ChatMessage> & Pick<ChatMessage, 'role' | 'content'>
 ): ChatMessage =>
   ({
-    id: Math.random().toString(36).slice(2),
+    id: `message-${messageId++}`,
     status: 'complete',
     eventIds: [],
     createdAt: 0,
@@ -15,7 +24,7 @@ const message = (
     ...partial
   }) as ChatMessage
 
-describe('buildHistoryPreamble', () => {
+describe('agent-aware history replay', () => {
   it('returns undefined when there is nothing meaningful to replay', () => {
     expect(buildHistoryPreamble([])).toBeUndefined()
     expect(
@@ -26,91 +35,149 @@ describe('buildHistoryPreamble', () => {
     ).toBeUndefined()
   })
 
-  it('renders labelled user/assistant turns in order', () => {
+  it('renders labelled user-led turns in order and skips failed content', () => {
     const preamble = buildHistoryPreamble([
+      message({ role: 'agent', content: 'orphaned leading reply' }),
       message({ role: 'user', content: 'plot the data' }),
+      message({ role: 'agent', content: 'failed draft', status: 'error' }),
       message({ role: 'agent', content: 'done, see chart.png' })
     ])
 
     expect(preamble).toContain('before you joined it')
+    expect(preamble).not.toContain('orphaned leading reply')
+    expect(preamble).not.toContain('failed draft')
     expect(preamble).toContain('**User:** plot the data')
     expect(preamble).toContain('**Assistant:** done, see chart.png')
-    const userIndex = preamble!.indexOf('**User:**')
-    const agentIndex = preamble!.indexOf('**Assistant:**')
-    expect(userIndex).toBeLessThan(agentIndex)
+    expect(preamble!.indexOf('**User:**')).toBeLessThan(preamble!.indexOf('**Assistant:**'))
   })
 
-  it('skips failed and empty turns', () => {
-    const preamble = buildHistoryPreamble([
-      message({ role: 'user', content: 'first' }),
-      message({ role: 'agent', content: 'half a reply', status: 'error' }),
-      message({ role: 'user', content: 'second' })
-    ])
+  it('uses distinct budgets for all four target classes', () => {
+    expect(resolveHistoryReplayBudget({ target: 'claude-code' })).toBe(16_000)
+    expect(resolveHistoryReplayBudget({ target: 'opencode' })).toBe(12_000)
+    expect(resolveHistoryReplayBudget({ target: 'codex-response' })).toBe(16_000)
+    expect(resolveHistoryReplayBudget({ target: 'codex-bridge' })).toBe(8_000)
 
-    expect(preamble).not.toContain('half a reply')
-    expect(preamble).toContain('**User:** first')
-    expect(preamble).toContain('**User:** second')
-  })
-
-  it('keeps the most recent turns within budget and marks omissions', () => {
-    const messages = Array.from({ length: 10 }, (_, index) =>
-      message({
-        role: index % 2 === 0 ? 'user' : 'agent',
-        content: `turn-${index} ${'x'.repeat(50)}`
-      })
+    expect(resolveHistoryReplayBudget({ target: 'claude-code', contextWindow: 100_000 })).toBe(
+      10_000
     )
-
-    const preamble = buildHistoryPreamble(messages, 200)
-
-    expect(preamble).toContain('earlier turns omitted')
-    // The newest turn survives; the oldest is dropped.
-    expect(preamble).toContain('turn-9')
-    expect(preamble).not.toContain('turn-0 ')
-  })
-
-  it('hard-bounds a single oversized latest turn', () => {
-    const budget = 80
-    const preamble = buildHistoryPreamble(
-      [message({ role: 'user', content: `start-${'a'.repeat(500)}-end` })],
-      budget
+    expect(resolveHistoryReplayBudget({ target: 'opencode', contextWindow: 100_000 })).toBe(8_000)
+    expect(resolveHistoryReplayBudget({ target: 'codex-response', contextWindow: 100_000 })).toBe(
+      10_000
     )
-    const transcript = preamble?.split('\n\n').slice(1).join('\n\n') ?? ''
-
-    expect(transcript.length).toBeLessThanOrEqual(budget)
-    expect(transcript).toContain('-end')
-    expect(transcript).not.toContain('start-')
+    expect(resolveHistoryReplayBudget({ target: 'codex-bridge', contextWindow: 100_000 })).toBe(
+      5_000
+    )
   })
 
-  it('collects bounded recent image uploads and inline assistant images for replay', () => {
-    const media = buildHistoryReplayMedia(
+  it('keeps the original task and a contiguous recent suffix without orphan replies', () => {
+    const messages = Array.from({ length: 20 }, (_, turn) => [
+      message({ role: 'user', content: `user-${turn} ${'u'.repeat(80)}` }),
+      message({ role: 'agent', content: `assistant-${turn} ${'a'.repeat(80)}` })
+    ]).flat()
+    const replay = buildHistoryReplay(messages, { target: 'codex-bridge', budget: 360 })!
+
+    expect(replay.estimatedTokens).toBeLessThanOrEqual(replay.budget)
+    expect(replay.preamble).toContain('user-0 ')
+    expect(replay.preamble).toContain('user-19 ')
+    expect(replay.preamble).toContain('assistant-19 ')
+    expect(replay.preamble).toContain('middle turns omitted')
+    expect(replay.preamble).not.toContain('assistant-10 ')
+
+    const selectedRoles = replay.selectedMessageIndexes.map((index) => messages[index].role)
+    expect(selectedRoles[0]).toBe('user')
+    for (let index = 0; index < selectedRoles.length; index += 1) {
+      if (selectedRoles[index] === 'agent') expect(selectedRoles.slice(0, index)).toContain('user')
+    }
+  })
+
+  it('preserves both ends of a physically oversized user request inside its role', () => {
+    const replay = buildHistoryReplay(
+      [message({ role: 'user', content: `BEGIN-CONSTRAINT ${'界'.repeat(500)} END-CONSTRAINT` })],
+      { target: 'codex-bridge', budget: 190 }
+    )!
+
+    expect(replay.estimatedTokens).toBeLessThanOrEqual(190)
+    expect(replay.preamble).toContain('**User:** BEGIN-CONSTRAINT')
+    expect(replay.preamble).toContain('END-CONSTRAINT')
+    expect(replay.preamble).toContain('middle of this message omitted')
+  })
+
+  it('keeps a full latest user request plus a marked Assistant conclusion tail', () => {
+    const replay = buildHistoryReplay(
       [
-        message({
-          role: 'user',
-          content: 'look',
-          uploads: [
-            {
-              id: 'u1',
-              versionId: 'v1',
-              sessionId: 's1',
-              name: 'plot.png',
-              originalName: 'plot.png',
-              path: '/uploads/plot.png',
-              mimeType: 'image/png',
-              size: 10
-            }
-          ]
-        }),
+        message({ role: 'user', content: 'original task' }),
+        message({ role: 'agent', content: 'original response' }),
+        message({ role: 'user', content: 'please finish the analysis' }),
         message({
           role: 'agent',
-          content: '',
-          images: [{ id: 'i1', mimeType: 'image/png', data: 'aGVsbG8=', byteLength: 5 }]
+          content: `${'working '.repeat(300)}FINAL-CONCLUSION`
         })
       ],
-      'project-1'
-    )
+      { target: 'codex-bridge', budget: 230 }
+    )!
 
-    expect(media.attachments.map((item) => item.id)).toEqual(['u1'])
-    expect(media.attachments[0].path).toBe('upload-version:project-1/s1/v1')
-    expect(media.images).toHaveLength(1)
+    expect(replay.estimatedTokens).toBeLessThanOrEqual(230)
+    expect(replay.preamble).toContain('**User:** please finish the analysis')
+    expect(replay.preamble).toContain('earlier response omitted')
+    expect(replay.preamble).toContain('FINAL-CONCLUSION')
+  })
+
+  it('counts CJK conservatively', () => {
+    expect(estimateHistoryTokens('a'.repeat(40))).toBe(10)
+    expect(estimateHistoryTokens('界'.repeat(40))).toBe(40)
+  })
+
+  it('replays media only from text-selected messages', () => {
+    const turns = Array.from({ length: 10 }, (_, turn) => [
+      message({
+        role: 'user',
+        content: `user-${turn} ${'x'.repeat(100)}`,
+        uploads:
+          turn === 4 || turn === 9
+            ? [
+                {
+                  id: `upload-${turn}`,
+                  versionId: `version-${turn}`,
+                  sessionId: 'session-1',
+                  name: `plot-${turn}.png`,
+                  originalName: `plot-${turn}.png`,
+                  path: `/uploads/plot-${turn}.png`,
+                  mimeType: 'image/png',
+                  size: 10
+                }
+              ]
+            : undefined
+      }),
+      message({ role: 'agent', content: `assistant-${turn} ${'y'.repeat(100)}` })
+    ]).flat()
+    const replay = buildWorkspaceHistoryReplay(
+      turns,
+      { target: 'codex-bridge', budget: 280 },
+      'project-1'
+    )!
+
+    expect(replay.historyPreamble).toContain('user-9 ')
+    expect(replay.historyPreamble).not.toContain('user-4 ')
+    expect(replay.historyAttachments.map((item) => item.id)).toEqual(['upload-9'])
+  })
+})
+
+describe('history replay target resolution', () => {
+  const provider = (apiEndpoints: ProviderView['apiEndpoints']): ProviderView =>
+    ({ apiEndpoints }) as ProviderView
+  const codex = {
+    id: 'codex',
+    displayName: 'Codex',
+    supportsSkills: true,
+    supportedApiTypes: ['responses']
+  } as AgentFrameworkView
+
+  it('uses the provider endpoint contract to distinguish direct Responses and bridge Codex', () => {
+    expect(resolveHistoryReplayTarget('claude-code')).toBe('claude-code')
+    expect(resolveHistoryReplayTarget('opencode')).toBe('opencode')
+    expect(resolveHistoryReplayTarget('codex', provider(['responses']), codex)).toBe(
+      'codex-response'
+    )
+    expect(resolveHistoryReplayTarget('codex', provider(['openai']), codex)).toBe('codex-bridge')
   })
 })

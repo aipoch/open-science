@@ -4,6 +4,7 @@ import { pathToFileURL } from 'node:url'
 
 import type { AcpMessageImage } from '../../shared/acp'
 import type { FileReference } from '../../shared/artifacts'
+import { estimateHistoryTokens, truncateTextToEstimatedTokens } from '../../shared/history-preamble'
 import { PENDING_UPLOAD_SESSION_ID, type UploadedAttachment } from '../../shared/uploads'
 import { readBoundedManagedFilePreview } from '../managed-file-preview'
 import {
@@ -54,6 +55,7 @@ type PrepareAcpPromptContentInput = {
   references: ReadonlyArray<FileReference>
   codexSkillInputs: ReadonlyArray<CodexSkillInput>
   skillImportEnabled: boolean
+  fileTextBudget?: number
   skillImportTurnToken?: string
   onSkillImportAttachmentEligible?: (attachmentUri: string) => void
 }
@@ -75,6 +77,11 @@ type ResolvedPromptFile = {
   mimeType?: string
   size: number
   allowSkillImportReference: boolean
+}
+
+type PromptFileTextBudget = {
+  remaining: number
+  perFileLimit: number
 }
 
 const errorMessage = (error: unknown): string => {
@@ -110,6 +117,11 @@ class AcpPromptContentOwner {
         ? [{ type: 'text', text: input.text }]
         : []
       let imageBudget: InlineImageBudget = { imageCount: 0, base64Bytes: 0 }
+      const totalFileTextBudget = Math.max(1, Math.floor(input.fileTextBudget ?? 12_000))
+      const fileTextBudget: PromptFileTextBudget = {
+        remaining: totalFileTextBudget,
+        perFileLimit: Math.max(1, Math.floor(totalFileTextBudget / 2))
+      }
       const appendBlock = (block: ContentBlock, overflowFallback?: ContentBlock): void => {
         if (block.type === 'image') {
           try {
@@ -167,7 +179,8 @@ class AcpPromptContentOwner {
           const blocks = await this.createAttachmentContentBlocks(
             input,
             attachment,
-            index < input.historyUploads.length
+            index < input.historyUploads.length,
+            fileTextBudget
           )
           for (const block of blocks) {
             appendBlock(
@@ -179,7 +192,11 @@ class AcpPromptContentOwner {
       }
 
       for (const reference of input.references) {
-        const blocks = await this.createReferencedArtifactContentBlocks(input, reference)
+        const blocks = await this.createReferencedArtifactContentBlocks(
+          input,
+          reference,
+          fileTextBudget
+        )
         for (const block of blocks) {
           appendBlock(block, this.imageOverflowResourceLink(block, reference.name))
         }
@@ -244,7 +261,8 @@ class AcpPromptContentOwner {
   private async createAttachmentContentBlocks(
     input: PrepareAcpPromptContentInput,
     attachment: UploadedAttachment,
-    isHistoryUpload: boolean
+    isHistoryUpload: boolean,
+    fileTextBudget: PromptFileTextBudget
   ): Promise<ContentBlock[]> {
     if (!this.options.uploadRepository) throw new Error('Upload storage is not configured.')
 
@@ -257,31 +275,39 @@ class AcpPromptContentOwner {
     )
     const { size } = await stat(filePath)
 
-    return this.buildFileContentBlocks(input, {
-      absolutePath: filePath,
-      uri: pathToFileURL(filePath).href,
-      name: attachment.originalName || attachment.name,
-      mimeType: attachment.mimeType,
-      size,
-      allowSkillImportReference: true
-    })
+    return this.buildFileContentBlocks(
+      input,
+      {
+        absolutePath: filePath,
+        uri: pathToFileURL(filePath).href,
+        name: attachment.originalName || attachment.name,
+        mimeType: attachment.mimeType,
+        size,
+        allowSkillImportReference: true
+      },
+      fileTextBudget,
+      isHistoryUpload
+    )
   }
 
   private async createReferencedArtifactContentBlocks(
     input: PrepareAcpPromptContentInput,
-    reference: FileReference
+    reference: FileReference,
+    fileTextBudget: PromptFileTextBudget
   ): Promise<ContentBlock[]> {
     const resolvedReference = await this.options.fileReferenceResolver.resolve(
       { sessionId: input.appSessionId, projectId: input.projectId },
       reference
     )
 
-    return this.buildFileContentBlocks(input, resolvedReference)
+    return this.buildFileContentBlocks(input, resolvedReference, fileTextBudget, false)
   }
 
   private async buildFileContentBlocks(
     input: PrepareAcpPromptContentInput,
-    descriptor: ResolvedPromptFile
+    descriptor: ResolvedPromptFile,
+    fileTextBudget: PromptFileTextBudget,
+    isHistoryUpload: boolean
   ): Promise<ContentBlock[]> {
     const { absolutePath, uri, name, mimeType, size, allowSkillImportReference } = descriptor
 
@@ -313,6 +339,12 @@ class AcpPromptContentOwner {
         '</attached_local_file>'
       ].join('\n')
     })
+
+    // A replayed raster may still be required by the selected conversational turn. Every other
+    // historical file is a descriptor only: do not re-import archives or re-embed text/PDF bytes.
+    if (isHistoryUpload && !imageAttachmentMimeType(name, mimeType)) {
+      return [{ type: 'resource_link', uri, name, title: name, mimeType, size }]
+    }
 
     if (
       input.skillImportEnabled &&
@@ -379,36 +411,28 @@ class AcpPromptContentOwner {
           { type: 'resource_link', uri, name, title: name, mimeType: 'application/pdf', size }
         ]
       }
-      return [await this.createPdfContentBlock(name, absolutePath, uri)]
+      const block = await this.createPdfContentBlock(name, absolutePath, uri)
+      return this.admitTextResource(block, descriptor, fileTextBudget, false)
     }
 
     if (isTextLikeAttachment(name, mimeType)) {
       if (size <= MAX_EMBEDDED_TEXT_UPLOAD_BYTES) {
-        return [
-          {
-            type: 'resource',
-            resource: { uri, mimeType, text: await readFile(absolutePath, 'utf8') }
-          }
-        ]
-      }
-
-      const preview = await readBoundedManagedFilePreview(
-        absolutePath,
-        { path: absolutePath, maxBytes: ATTACHMENT_PREVIEW_BYTES, encoding: 'utf8' },
-        'Attachment preview requires UTF-8 encoding.'
-      )
-
-      return [
-        localFileTextReference(
-          buildOversizedAttachmentNotice({
-            name,
-            size,
-            preview: preview.content,
-            truncated: preview.truncated,
-            tabular: isTabularAttachment(name, mimeType)
-          })
+        const block: ContentBlock = {
+          type: 'resource',
+          resource: { uri, mimeType, text: await readFile(absolutePath, 'utf8') }
+        }
+        return this.admitTextResource(
+          block,
+          descriptor,
+          fileTextBudget,
+          isTabularAttachment(name, mimeType)
         )
-      ]
+      }
+      return this.createBudgetedTextPreview(
+        descriptor,
+        fileTextBudget,
+        isTabularAttachment(name, mimeType)
+      )
     }
 
     if (isDatasetAttachment(name, mimeType)) {
@@ -416,6 +440,107 @@ class AcpPromptContentOwner {
     }
 
     return [{ type: 'resource_link', uri, name, title: name, mimeType, size }]
+  }
+
+  private async admitTextResource(
+    block: ContentBlock,
+    descriptor: ResolvedPromptFile,
+    budget: PromptFileTextBudget,
+    tabular: boolean
+  ): Promise<ContentBlock[]> {
+    if (block.type !== 'resource' || !('text' in block.resource)) return [block]
+
+    const cost = estimateHistoryTokens(block.resource.text)
+    const allowance = Math.min(budget.remaining, budget.perFileLimit)
+    if (cost <= allowance) {
+      budget.remaining -= cost
+      return [block]
+    }
+
+    return this.createBudgetedTextPreview(descriptor, budget, tabular, block.resource.text)
+  }
+
+  private async createBudgetedTextPreview(
+    descriptor: ResolvedPromptFile,
+    budget: PromptFileTextBudget,
+    tabular: boolean,
+    sourceText?: string
+  ): Promise<ContentBlock[]> {
+    const { absolutePath, uri, name, mimeType, size } = descriptor
+    const fallback: ContentBlock[] = [
+      { type: 'resource_link', uri, name, title: name, mimeType, size }
+    ]
+    const allowance = Math.min(budget.remaining, budget.perFileLimit)
+    if (allowance <= 0) return fallback
+
+    const toBlock = (preview: string): Extract<ContentBlock, { type: 'text' }> => ({
+      type: 'text',
+      text: [
+        buildOversizedAttachmentNotice({
+          name,
+          size,
+          preview,
+          truncated: true,
+          tabular
+        }),
+        '<attached_local_file>',
+        JSON.stringify({ name, uri, mimeType, size }),
+        '</attached_local_file>'
+      ].join('\n')
+    })
+    const fixedCost = estimateHistoryTokens(toBlock('').text)
+    if (fixedCost >= allowance) return fallback
+
+    const previewBudget = allowance - fixedCost
+    let rawPreview: string
+    if (sourceText !== undefined) {
+      rawPreview = sourceText
+    } else {
+      const previewBytes = Math.min(ATTACHMENT_PREVIEW_BYTES, Math.max(256, previewBudget * 3))
+      const startBytes = tabular ? previewBytes : Math.ceil(previewBytes / 2)
+      const start = await readBoundedManagedFilePreview(
+        absolutePath,
+        { path: absolutePath, maxBytes: startBytes, encoding: 'utf8' },
+        'Attachment preview requires UTF-8 encoding.'
+      )
+      if (tabular) {
+        rawPreview = start.content
+      } else {
+        const endBytes = Math.max(1, previewBytes - startBytes)
+        const end = await readBoundedManagedFilePreview(
+          absolutePath,
+          {
+            path: absolutePath,
+            offset: Math.max(0, size - endBytes),
+            maxBytes: endBytes,
+            encoding: 'utf8'
+          },
+          'Attachment preview requires UTF-8 encoding.'
+        )
+        rawPreview = `${start.content}\n\n[…middle of file omitted…]\n\n${end.content}`
+      }
+    }
+
+    let preview = truncateTextToEstimatedTokens(
+      rawPreview,
+      previewBudget,
+      tabular ? 'start' : 'both'
+    )
+    let block = toBlock(preview)
+    let cost = estimateHistoryTokens(block.text)
+    if (cost > allowance) {
+      preview = truncateTextToEstimatedTokens(
+        preview,
+        Math.max(0, previewBudget - (cost - allowance)),
+        tabular ? 'start' : 'both'
+      )
+      block = toBlock(preview)
+      cost = estimateHistoryTokens(block.text)
+    }
+    if (cost > allowance) return fallback
+
+    budget.remaining -= cost
+    return [block]
   }
 
   private imageOverflowResourceLink(

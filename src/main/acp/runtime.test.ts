@@ -2552,7 +2552,7 @@ describe('ACP runtime session management', () => {
     expect(receivedPrompts[0]).toMatchObject([
       { type: 'text', text: 'inspect all context' },
       { type: 'image', mimeType: 'image/png', data: historyImageData },
-      { type: 'resource', resource: { text: 'history upload' } },
+      { type: 'resource_link', name: 'history.txt' },
       { type: 'resource', resource: { text: 'current upload' } },
       { type: 'resource', resource: { text: 'mentioned upload' } }
     ])
@@ -10822,10 +10822,25 @@ describe('ACP runtime session management', () => {
     const process = new FakeAgentProcess()
     const fakeAgent = startFakeAgent(process, ['adopted-session-1'], { resumeNotFound: true })
     const messageEvents: Array<{ role?: string; text?: string }> = []
+    const peekHandoffContext = vi.fn(() => ({
+      executionCount: 2,
+      cells: [{ id: 'cell-1', language: 'python' as const, status: 'completed' as const }],
+      kernels: [{ kind: 'python' as const, status: 'idle' as const }],
+      runtimes: []
+    }))
     const runtime = new AcpRuntime({
       appVersion: '0.1.0',
       defaultCwd: '/workspace',
       spawnAgent: () => asAgentProcess(process),
+      notebook: {
+        projectName: 'default-project',
+        mcpEntryPath: '/app/out/main/index.js',
+        getRpcConnection: async () => ({
+          endpoint: 'http://127.0.0.1:1/notebook',
+          token: 'notebook-token'
+        }),
+        peekHandoffContext
+      },
       callbacks: {
         onEvent: (event) => {
           if (event.kind === 'message' && event.role === 'user') {
@@ -10844,6 +10859,8 @@ describe('ACP runtime session management', () => {
 
     // The agent sees the replayed context ahead of the user's text...
     expect(fakeAgent.prompts[0]?.text).toContain('PRIOR CONTEXT: the user asked to plot data.')
+    expect(fakeAgent.prompts[0]?.text).toContain('<open_science_notebook_continuity>')
+    expect(fakeAgent.prompts[0]?.text).toContain('"executionCount":2')
     expect(fakeAgent.prompts[0]?.text).toContain('keep going')
     // ...but the conversation bubble records only what the user actually typed.
     expect(messageEvents).toEqual([{ role: 'user', text: 'keep going' }])
@@ -10859,6 +10876,10 @@ describe('ACP runtime session management', () => {
       framework: 'claude-code',
       status: 'connected'
     })
+
+    await runtime.sendPrompt({ sessionId: 'switched-session', text: 'ordinary continuation' })
+    expect(peekHandoffContext).toHaveBeenCalledOnce()
+    expect(fakeAgent.prompts[1]?.text).not.toContain('<open_science_notebook_continuity>')
   })
 
   it('sends an app-owned continuation without publishing its synthetic text as a user message', async () => {
