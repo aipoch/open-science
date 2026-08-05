@@ -1,4 +1,3 @@
-import { spawn } from 'node:child_process'
 import { randomUUID } from 'node:crypto'
 import { existsSync } from 'node:fs'
 import { chmod, mkdir, mkdtemp, readFile, realpath, rm, writeFile } from 'node:fs/promises'
@@ -1830,51 +1829,88 @@ describe('notebook runtime service', () => {
       expect(new Set(state.runs.map((run) => run.runId)).size).toBe(2)
     })
 
-    // POSIX-only: relies on `trap '' TERM` (a SIGTERM-ignoring shell) and pgrep to inspect the real
-    // process table — neither exists on Windows, where signal semantics differ entirely.
+    // POSIX-only: relies on `trap '' TERM` and signal-0 process probes. Windows signal semantics
+    // differ entirely and use taskkill-backed tree termination instead.
     it.skipIf(process.platform === 'win32')(
       'SIGKILLs a timed-out command that ignores SIGTERM instead of leaving it running',
       async () => {
         const root = await createStorageRoot()
         const service = createShellService(root)
-        // A marker unique to this test run, embedded as a harmless shell comment so it shows up in the
-        // spawned process's command line (visible to pgrep -f) without affecting what the shell runs.
+        // A marker unique to this test run. It appears on both the shell and its real Node descendant,
+        // so the observable contract requires the whole timed-out command tree to disappear.
         const marker = `os-notebook-shell-test-${randomUUID()}`
+        const descendantPidPath = join(root, `${marker}.pid`)
+        const quoteForShell = (value: string): string => `'${value.replaceAll("'", `'\\''`)}'`
 
-        const result = await service.executeShell({
+        const execution = service.executeShell({
           sessionId: 'session-1',
           workspaceCwd: root,
-          // Ignores SIGTERM; only SIGKILL can end it before its own 30s sleep completes.
-          command: `trap '' TERM; sleep 30 # ${marker}`,
-          timeoutMs: 100
+          // The shell records its real descendant's PID before waiting. Both ignore SIGTERM, so the
+          // timeout cleanup must escalate and reap the whole tree rather than only the direct shell.
+          command: `trap '' TERM; ${quoteForShell(process.execPath)} -e ${quoteForShell(
+            "process.on('SIGTERM', () => {}); setTimeout(() => {}, 30_000)"
+          )} ${quoteForShell(marker)} & descendant_pid=$!; printf '%s' "$descendant_pid" > ${quoteForShell(
+            descendantPidPath
+          )}; wait "$descendant_pid" # ${marker}`,
+          timeoutMs: 2_000
         })
+
+        // Start the execution first, then require the descendant to be observable well before the
+        // timeout. This prevents a loaded runner from taking the process-tree snapshot before the
+        // fixture has spawned the process that the cleanup contract is meant to cover.
+        const readinessDeadline = Date.now() + 1_500
+        let descendantPid: number | undefined
+        while (descendantPid === undefined && Date.now() < readinessDeadline) {
+          try {
+            const candidate = Number((await readFile(descendantPidPath, 'utf8')).trim())
+            if (Number.isInteger(candidate) && candidate > 0) descendantPid = candidate
+          } catch (error) {
+            if ((error as NodeJS.ErrnoException).code !== 'ENOENT') throw error
+          }
+          if (descendantPid === undefined) await new Promise((r) => setTimeout(r, 20))
+        }
+        if (descendantPid === undefined) {
+          throw new Error(
+            'timed-out shell descendant did not become ready before the fixture deadline'
+          )
+        }
+
+        const result = await execution
 
         // The RPC promise settles at the timeout, well before either the grace period or the sleep.
         expect(result.exitCode).toBeNull()
 
-        // Poll the real process table until the marked process is gone -- not child.killed, which Node
-        // sets as soon as SIGTERM is delivered regardless of whether the (SIGTERM-ignoring) process
-        // actually died. Polling (rather than a single fixed sleep) absorbs SIGKILL-escalation +
-        // process-teardown latency on a loaded CI runner, so the test isn't timing-flaky; if SIGKILL
-        // never worked, it stays non-empty until the deadline and the assertion fails.
-        const pgrepMarker = async (): Promise<string> =>
-          new Promise<string>((resolve) => {
-            const check = spawn('sh', ['-c', `pgrep -f '${marker}' || true`])
-            let out = ''
-            check.stdout.on('data', (chunk: Buffer) => {
-              out += chunk.toString('utf8')
-            })
-            check.once('exit', () => resolve(out.trim()))
-          })
-
-        let stillRunning = await pgrepMarker()
-        const deadline = Date.now() + 10_000
-        while (stillRunning !== '' && Date.now() < deadline) {
-          await new Promise((r) => setTimeout(r, 500))
-          stillRunning = await pgrepMarker()
+        // Probe the exact descendant instead of searching the process table. The former pgrep fixture
+        // wrapped the query in `sh -c`, whose own argv contained the marker and self-matched on Linux.
+        const descendantIsRunning = (): boolean => {
+          try {
+            process.kill(descendantPid, 0)
+            return true
+          } catch (error) {
+            if ((error as NodeJS.ErrnoException).code === 'ESRCH') return false
+            throw error
+          }
         }
 
-        expect(stillRunning).toBe('')
+        let stillRunning = descendantIsRunning()
+        const deadline = Date.now() + 10_000
+        while (stillRunning && Date.now() < deadline) {
+          await new Promise((r) => setTimeout(r, 500))
+          stillRunning = descendantIsRunning()
+        }
+
+        try {
+          expect(stillRunning).toBe(false)
+        } finally {
+          // A RED run must not leak the process whose survival it proves.
+          if (stillRunning) {
+            try {
+              process.kill(descendantPid, 'SIGKILL')
+            } catch {
+              // It exited between the final probe and cleanup.
+            }
+          }
+        }
       },
       15_000
     )

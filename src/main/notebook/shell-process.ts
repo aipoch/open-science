@@ -7,7 +7,7 @@ import { resolveWindowsPowerShellExecutable } from '../windows-powershell'
 
 // Default bash_execute timeout, matching the data/repl kernels' own default.
 const DEFAULT_SHELL_TIMEOUT_MS = 120_000
-// Grace period between SIGTERM and SIGKILL when a timed-out shell command ignores the polite signal.
+// Grace between the POSIX process group's polite termination and an uncatchable group kill.
 const SHELL_KILL_GRACE_MS = 2_000
 
 // Result of one stateless bash_execute run. No status/traceback classification: the shell is
@@ -205,13 +205,40 @@ const resolveShellInvocation = (
       }
     : { executable: 'sh', args: ['-c', command] }
 
-// Waits for Windows tree termination so taskkill no longer holds workspace files open on return.
+// Signals only the independently spawned POSIX shell group. A validated positive child pid is also its
+// process-group id because POSIX spawn uses detached:true below. If group signaling is unavailable, fall
+// back to the direct handle without allowing timeout cleanup to reject.
+const signalPosixShellGroup = (child: ChildProcess, signal: NodeJS.Signals): void => {
+  const groupId = child.pid
+  if (groupId !== undefined && Number.isSafeInteger(groupId) && groupId > 0) {
+    try {
+      process.kill(-groupId, signal)
+      return
+    } catch {
+      // The group may already be gone or the platform may reject group signaling; try the leader.
+    }
+  }
+
+  try {
+    child.kill(signal)
+  } catch {
+    // It exited between the timeout and this best-effort signal.
+  }
+}
+
+// POSIX returns immediately after arming bounded group teardown. Windows continues to await taskkill so
+// callers can safely inspect or remove cwd after PowerShell and every descendant release their handles.
 const terminateShellOnTimeout = async (
   child: ChildProcess,
   platform: NodeJS.Platform = process.platform,
   terminateTree: (process: ChildProcess) => Promise<unknown> = terminateProcessTree
 ): Promise<boolean> => {
-  if (platform !== 'win32') return false
+  if (platform !== 'win32') {
+    signalPosixShellGroup(child, 'SIGTERM')
+    setTimeout(() => signalPosixShellGroup(child, 'SIGKILL'), SHELL_KILL_GRACE_MS)
+    return false
+  }
+
   try {
     await terminateTree(child)
   } catch {
@@ -237,14 +264,15 @@ const runShellCommand = (
     )
     const child = spawn(invocation.executable, invocation.args, {
       cwd: options.cwd,
-      env: buildShellEnv(options.handoffDir)
+      env: buildShellEnv(options.handoffDir),
+      // On POSIX this makes the shell the leader of a private process group/session. Keep its handle
+      // and stdio referenced (no unref), preserving normal completion while enabling safe -PGID kills.
+      detached: platform !== 'win32'
     })
 
     let stdout = ''
     let stderr = ''
     let settled = false
-    // child.killed means a signal was delivered, not that a SIGTERM-ignoring process exited.
-    let exited = false
     // Timeout owns settlement even if Windows taskkill emits exit before its promise resolves.
     let timedOut = false
 
@@ -273,14 +301,8 @@ const runShellCommand = (
           return
         }
 
-        // Escalate SIGTERM -> SIGKILL if the process ignores the polite signal; the promise itself
-        // settles immediately so a wedged process can never hang the caller past the timeout.
-        child.kill('SIGTERM')
-        const killTimer = setTimeout(() => {
-          if (!exited) child.kill('SIGKILL')
-        }, SHELL_KILL_GRACE_MS)
-        child.once('exit', () => clearTimeout(killTimer))
-
+        // POSIX group teardown continues in the background so a wedged command tree cannot delay the
+        // timeout result. Its SIGKILL timer intentionally survives the shell leader's exit.
         finish(timeoutResult)
       })
     }, timeoutMs)
@@ -297,7 +319,6 @@ const runShellCommand = (
       if (!timedOut) finish({ stdout, stderr: stderr || error.message, exitCode: null })
     })
     child.once('exit', (code) => {
-      exited = true
       if (!timedOut) finish({ stdout, stderr, exitCode: code })
     })
   })
