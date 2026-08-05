@@ -316,12 +316,14 @@ jobs:
           cache: npm
       - name: Install dependencies
         run: npm ci
-      - name: Test complete portable suite (advisory)
+      # Both selected unit lanes are blocking through the final enforcement step. Step-level
+      # continue-on-error lets both suites report their outcomes in the same run.
+      - name: Test complete portable suite (blocking)
         id: unit_linux
         if: ${{ contains(fromJSON(needs.preflight.outputs.plan).lanes, 'unit_linux') }}
         continue-on-error: true
         run: npm test
-      - name: Test Renderer
+      - name: Test Renderer (blocking)
         id: unit_renderer
         if: ${{ contains(fromJSON(needs.preflight.outputs.plan).lanes, 'unit_renderer') }}
         continue-on-error: true
@@ -330,13 +332,20 @@ jobs:
         if: ${{ always() }}
         shell: bash
         env:
+          UNIT_LINUX_OUTCOME: ${{ steps.unit_linux.outcome }}
           UNIT_RENDERER_OUTCOME: ${{ steps.unit_renderer.outcome }}
         run: |
           set -euo pipefail
-          if [[ "$UNIT_RENDERER_OUTCOME" == "failure" || "$UNIT_RENDERER_OUTCOME" == "cancelled" ]]; then
-            echo "unit_renderer ended with $UNIT_RENDERER_OUTCOME" >&2
-            exit 1
-          fi
+          failed=0
+          check() {
+            if [[ "$2" == "failure" || "$2" == "cancelled" ]]; then
+              echo "$1 ended with $2" >&2
+              failed=1
+            fi
+          }
+          check unit_linux "$UNIT_LINUX_OUTCOME"
+          check unit_renderer "$UNIT_RENDERER_OUTCOME"
+          exit "$failed"
 
   coverage_macos:
     name: Coverage macOS

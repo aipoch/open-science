@@ -207,7 +207,7 @@ describe('PR Gate workflow', () => {
   })
 
   it('collects independent bundle failures before failing the shared runner', () => {
-    for (const bundle of ['static', 'windows_core', 'macos_e2e', 'windows_e2e']) {
+    for (const bundle of ['static', 'unit', 'windows_core', 'macos_e2e', 'windows_e2e']) {
       const enforce = workflow.jobs[bundle].steps?.find(({ name }) => name?.startsWith('Enforce'))
       expect(enforce, `${bundle} must enforce collected step outcomes`).toMatchObject({
         if: '${{ always() }}'
@@ -226,22 +226,27 @@ describe('PR Gate workflow', () => {
     }
 
     const portable = workflow.jobs.unit.steps?.find(
-      ({ name }) => name === 'Test complete portable suite (advisory)'
+      ({ name }) => name === 'Test complete portable suite (blocking)'
     )
-    const renderer = workflow.jobs.unit.steps?.find(({ name }) => name === 'Test Renderer')
+    const renderer = workflow.jobs.unit.steps?.find(
+      ({ name }) => name === 'Test Renderer (blocking)'
+    )
     const enforceUnit = workflow.jobs.unit.steps?.find(
       ({ name }) => name === 'Enforce selected unit checks'
     )
     expect(portable?.['continue-on-error']).toBe(true)
     expect(renderer?.['continue-on-error']).toBe(true)
     expect(enforceUnit?.env).toEqual({
+      UNIT_LINUX_OUTCOME: '${{ steps.unit_linux.outcome }}',
       UNIT_RENDERER_OUTCOME: '${{ steps.unit_renderer.outcome }}'
     })
+    expect(enforceUnit?.run).toContain('check unit_linux "$UNIT_LINUX_OUTCOME"')
+    expect(enforceUnit?.run).toContain('check unit_renderer "$UNIT_RENDERER_OUTCOME"')
   })
 
-  it('preserves the advisory portable suite and hard Windows contracts', () => {
+  it('preserves the complete portable suite and hard Windows contracts', () => {
     const portable = workflow.jobs.unit.steps?.find(
-      ({ name }) => name === 'Test complete portable suite (advisory)'
+      ({ name }) => name === 'Test complete portable suite (blocking)'
     )
     expect(portable).toMatchObject({
       'continue-on-error': true,
