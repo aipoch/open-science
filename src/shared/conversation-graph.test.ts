@@ -112,6 +112,9 @@ describe('conversation graph', () => {
       ...message('a1', 'agent', 'done', 3),
       responseToMessageId: prompt.id
     }
+    expect(getActiveConversationContext(runtimeChangedBeforeResponse, prompt.id)).toMatchObject({
+      runtimeSegmentId: resumed.runtimeSegments[0].id
+    })
     const completed = synchronizeActiveConversationMessages(
       runtimeChangedBeforeResponse,
       [prompt, response],
