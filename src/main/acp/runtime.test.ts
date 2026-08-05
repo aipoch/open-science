@@ -15020,7 +15020,7 @@ describe('ACP runtime session management', () => {
       if (listAttempts === 1) throw new Error('temporary Artifact list failure')
       return [generatedArtifact]
     })
-    const artifactEvents: AcpRuntimeEvent[] = []
+    const terminalEvents: AcpRuntimeEvent[] = []
     const process = new FakeAgentProcess()
     startFakeAgent(process, ['remote-session-1'])
     const runtime = new AcpRuntime({
@@ -15040,19 +15040,26 @@ describe('ACP runtime session management', () => {
       },
       callbacks: {
         onEvent: (event) => {
-          if (event.kind === 'artifact') artifactEvents.push(event)
+          if (event.kind === 'artifact' || event.kind === 'stop') terminalEvents.push(event)
         }
       }
     })
     const session = await runtime.createSession({ cwd: '/workspace', projectName: 'project-1' })
 
-    await expect(
-      runtime.sendPrompt({ sessionId: session.sessionId, text: 'prepare an Artifact claim' })
-    ).rejects.toThrow('temporary Artifact list failure')
+    warnLogSpy.mockImplementation(() => {
+      throw new Error('logger failed')
+    })
+    try {
+      await expect(
+        runtime.sendPrompt({ sessionId: session.sessionId, text: 'prepare an Artifact claim' })
+      ).rejects.toThrow('temporary Artifact list failure')
+    } finally {
+      warnLogSpy.mockReset()
+    }
 
     expect(listRunVersions).toHaveBeenCalledTimes(2)
-    expect(artifactEvents).toHaveLength(1)
-    const claim = resolveArtifactRunClaim(runtime, artifactEvents[0].artifactClaimId!)
+    expect(terminalEvents.map((event) => event.kind)).toEqual(['artifact', 'stop'])
+    const claim = resolveArtifactRunClaim(runtime, terminalEvents[0].artifactClaimId!)
     expect(claim.artifactVersionIds).toEqual(['version-1'])
     await expect(
       repository.findRunFinalizationMarker('project-1', claim.runId)
@@ -15174,6 +15181,8 @@ describe('ACP runtime session management', () => {
               artifactClaimId: event.artifactClaimId,
               artifactCount: event.artifacts?.length
             })
+          } else if (event.kind === 'stop') {
+            events.push({ kind: event.kind, sessionId: event.sessionId })
           }
         }
       }
@@ -15194,6 +15203,10 @@ describe('ACP runtime session management', () => {
         promptMessageId: expect.stringMatching(/^prompt-artifact-run-/),
         artifactClaimId: expect.stringMatching(/^artifact-claim-/),
         artifactCount: 1
+      },
+      {
+        kind: 'stop',
+        sessionId: 'remote-session-1'
       }
     ])
     await expect(
@@ -15944,6 +15957,38 @@ describe('ACP runtime session management', () => {
         code: -32603,
         data: { errorKind: 'request_too_large' }
       })
+    )
+  })
+
+  it('preserves a provider failure and its terminal event when the failure logger throws', async () => {
+    const process = new FakeAgentProcess()
+    const events: AcpRuntimeEvent[] = []
+    startFakeAgent(process, ['remote-session-1'], {
+      onPrompt: () => {
+        throw acp.RequestError.internalError({ errorKind: 'invalid_request' }, 'provider failed')
+      }
+    })
+    const runtime = new AcpRuntime({
+      appVersion: '0.1.0',
+      defaultCwd: '/workspace',
+      spawnAgent: () => asAgentProcess(process),
+      callbacks: { onEvent: (event) => events.push(event) }
+    })
+
+    await runtime.createSession({ cwd: '/workspace' })
+    errorLogSpy.mockImplementation(() => {
+      throw new Error('logger failed')
+    })
+    try {
+      await expect(
+        runtime.sendPrompt({ sessionId: 'remote-session-1', text: 'hi' })
+      ).rejects.toMatchObject({ code: -32603, data: { errorKind: 'invalid_request' } })
+    } finally {
+      errorLogSpy.mockReset()
+    }
+
+    expect(events).toContainEqual(
+      expect.objectContaining({ kind: 'error', title: ACP_PROMPT_FAILED_EVENT_TITLE })
     )
   })
 

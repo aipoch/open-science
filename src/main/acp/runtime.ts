@@ -25,7 +25,6 @@ import type {
   AcpResumeSessionRequest,
   AcpRevokePermissionGrantRequest,
   AcpContextUsage,
-  AcpTurnTokenUsage,
   AcpSetPermissionProfileRequest,
   AcpStateSnapshot
 } from '../../shared/acp'
@@ -51,7 +50,6 @@ import { createLogger, diagnosticErrorFields, errorLogFields } from '../logger'
 import { extractProviderToolName } from './runtime-events'
 import { fetchOpenCodeUsageSnapshot } from './opencode-turn-usage'
 import { matchSessionModelOption, resolveSessionEffortOption } from './session-config'
-import { describePromptError, isProviderPromptError } from './prompt-error'
 import { AcpRuntimeSnapshotOwner } from './runtime-snapshot-owner'
 import { ConversationPermissionGrantStore } from './permission-broker'
 import { isMcpToolName } from './permission-policy'
@@ -82,7 +80,6 @@ import type { UploadRepository } from '../uploads/repository'
 import { DEFAULT_UPLOAD_PROJECT_NAME, type UploadedAttachment } from '../../shared/uploads'
 import type { ArtifactFile, FileReference } from '../../shared/artifacts'
 import type { ArtifactRpcCapabilityBinding } from '../../shared/artifact-provenance'
-import { isMediaOverflowError } from '../../shared/media-overflow'
 import type { AcpRuntimeActivity, AcpRuntimeActivityOptions } from './runtime-activity'
 import {
   ReviewerSessionOwner,
@@ -134,16 +131,15 @@ import { AcpSessionDeletionWorkflow } from './session-deletion-workflow'
 import { AcpPromptPreparationOwner, type PreparedPromptHandle } from './prompt-preparation-owner'
 import { AcpSessionPresentationPolicy } from './session-presentation-policy'
 import { AcpProviderPromptExecutor } from './provider-prompt-executor'
+import {
+  AcpPromptOutcomeFinalizer,
+  type AcpPromptFinalizationOutcome
+} from './prompt-outcome-finalizer'
 import type { AcpProviderTurnAdapter } from './provider-turn-adapter'
 import { claudeCodeTurnAdapter } from './claude-turn-adapter'
 import { createCodexTurnAdapter } from './codex-turn-adapter'
 import { AcpOpenCodeTurnAdapter } from './opencode-turn-adapter'
-import {
-  AcpTurnSkillOwner,
-  type AcpTurnSkillHooks,
-  type TurnSkillHandle,
-  type TurnSkillOutcome
-} from './turn-skill-owner'
+import { AcpTurnSkillOwner, type AcpTurnSkillHooks, type TurnSkillHandle } from './turn-skill-owner'
 import { createProductionPlanService } from '../session-plan/production-plan-service'
 import {
   PLAN_FIRST_TURN_PROMPT_REMINDER,
@@ -414,6 +410,7 @@ class AcpRuntime {
   private readonly sessionConfigurator: AcpSessionConfigurator
   private readonly sessionUpdateProjector = new AcpSessionUpdateProjector()
   private readonly providerPromptExecutor = new AcpProviderPromptExecutor()
+  private readonly promptOutcomeFinalizer = new AcpPromptOutcomeFinalizer()
   // Injectable lifecycle timers (defaults to real setTimeout/clearTimeout).
   private readonly setTimer: (fn: () => void, ms: number) => ReturnType<typeof setTimeout>
   private readonly clearTimer: (handle: ReturnType<typeof setTimeout>) => void
@@ -2094,87 +2091,37 @@ class AcpRuntime {
       textLength: request.text?.length ?? 0
     })
     let artifactRun: ArtifactTurnHandle | undefined
-    let artifactEmitted = false
     let skillActivityInputs: Array<{ name: string; path: string }> = []
     let skillActivitiesStarted = false
     let skillActivitiesFinalized = false
     let preparedPromptHandle: PreparedPromptHandle | undefined
     let contextUsageTurn: ContextUsageTurnHandle | undefined
-    let turnSkillOutcome: TurnSkillOutcome = 'failed'
-    let observedPromptStop:
-      | {
-          response: PromptResponse
-          turnUsage?: AcpTurnTokenUsage
-          modelTurnCount?: number
-        }
-      | undefined
-    const publishObservedPromptStop = (): boolean => {
-      if (!observedPromptStop) return false
-      const terminal = this.sessionInteractions.settle(promptInteraction, {
-        ...(observedPromptStop.turnUsage ? { turnUsage: observedPromptStop.turnUsage } : {}),
-        ...(observedPromptStop.modelTurnCount === undefined
-          ? {}
-          : { modelTurnCount: observedPromptStop.modelTurnCount })
-      })
-      if (!terminal) return false
+    let userMessageEmitted = false
+    const emitUserMessage = (): void => {
+      if (
+        !publishUserMessage ||
+        request.continuation ||
+        request.suppressUserMessage ||
+        userMessageEmitted
+      )
+        return
+      userMessageEmitted = true
       this.pushEvent({
-        kind: 'stop',
+        kind: 'message',
         level: 'info',
         sessionId: request.sessionId,
         ...promptEventIdentity,
-        timestamp: terminal.timestamp,
-        title: 'Prompt stopped',
-        text: observedPromptStop.response.stopReason,
-        turnUsage: terminal.turnUsage,
-        raw: observedPromptStop.response
+        role: 'user',
+        text: request.text
       })
-      return true
     }
-
-    try {
+    const executePrompt = async (): Promise<AcpPromptFinalizationOutcome> => {
       // Create a fresh run context before prompting so MCP writes can be attributed to this turn.
       artifactRun = await this.activateArtifactRun(request.sessionId, request.provenanceContext)
-      let userMessageEmitted = false
-      const emitUserMessage = (): void => {
-        if (
-          !publishUserMessage ||
-          request.continuation ||
-          request.suppressUserMessage ||
-          userMessageEmitted
-        )
-          return
-        userMessageEmitted = true
-        this.pushEvent({
-          kind: 'message',
-          level: 'info',
-          sessionId: request.sessionId,
-          ...promptEventIdentity,
-          role: 'user',
-          text: request.text
-        })
-      }
-      const finishCancelledBeforePrompt = async (): Promise<PromptResponse> => {
-        turnSkillOutcome = 'cancelled'
-        const response: PromptResponse = { stopReason: 'cancelled' }
-        observedPromptStop = { response }
-        if (!this.sessionInteractions.captureTerminal(promptInteraction, 'cancelled')) {
-          return response
-        }
-        emitUserMessage()
-        await this.emitArtifactRunEvent(request.sessionId, artifactRun)
-        artifactEmitted = true
-        log.info('prompt stopped', {
-          sessionId: request.sessionId,
-          stopReason: response.stopReason
-        })
-        contextUsageTurn?.fail()
-        publishObservedPromptStop()
-        return response
-      }
       if (
         (await this.sessionInteractions.cancellationCheckpoint(promptInteraction)) === 'cancelled'
       ) {
-        return finishCancelledBeforePrompt()
+        return Object.freeze({ kind: 'not-dispatched' })
       }
 
       const sessionSpecialistPrefix = this.sessionRegistry
@@ -2224,7 +2171,7 @@ class AcpRuntime {
           : {})
       })
       if (preparedPromptHandle.status === 'cancelled') {
-        return finishCancelledBeforePrompt()
+        return Object.freeze({ kind: 'not-dispatched' })
       }
       const promptContent = preparedPromptHandle.content
       skillActivityInputs = [...preparedPromptHandle.skillActivityInputs]
@@ -2245,7 +2192,7 @@ class AcpRuntime {
         .lookup(request.sessionId)
         ?.aggregate.snapshot()
       const promptFramework = promptSessionSnapshot?.frameworkId ?? this.framework.id
-      const providerOutcome = await this.providerPromptExecutor.execute({
+      return this.providerPromptExecutor.execute({
         session: activeSession,
         content: promptContent,
         cwd: promptSessionSnapshot?.cwd ?? this.snapshotOwner.cwd,
@@ -2315,180 +2262,75 @@ class AcpRuntime {
             ...errorLogFields(error)
           })
       })
+    }
 
-      if (providerOutcome.kind === 'not-dispatched') {
-        return finishCancelledBeforePrompt()
-      }
-      if (providerOutcome.kind === 'superseded') {
-        return providerOutcome.response
-      }
-      const { response, facts } = providerOutcome
-      turnSkillOutcome = response.stopReason === 'cancelled' ? 'cancelled' : 'completed'
-      observedPromptStop = {
-        response,
-        ...(facts.turnUsage ? { turnUsage: facts.turnUsage } : {}),
-        ...(facts.modelTurnCount === undefined ? {} : { modelTurnCount: facts.modelTurnCount })
-      }
-      if (facts.contextUsedTokens !== undefined) {
-        this.recordProviderPromptContextUsage(
-          request.sessionId,
-          facts.contextUsedTokens,
-          promptTurn
-        )
-      }
-      if (contextUsageTurn.complete()) this.emitState()
-      // Emit artifact metadata before stop so the renderer can attach files to the finished message.
-      await this.emitArtifactRunEvent(request.sessionId, artifactRun)
-      artifactEmitted = true
-      log.info('prompt stopped', {
-        sessionId: request.sessionId,
-        stopReason: response.stopReason
-      })
-      publishObservedPromptStop()
-      if (
-        this.sessionInteractions.current(request.sessionId) === promptInteraction &&
-        this.activeSessionFor(request.sessionId) === activeSession &&
-        this.shouldAutoCompactContext(request.sessionId)
-      ) {
-        try {
-          await this.performNativeContextCompaction(activeSession, request.sessionId, 'automatic')
-        } catch (error) {
-          log.warn('automatic context compaction failed', {
-            sessionId: request.sessionId,
-            ...errorLogFields(error)
-          })
-        }
-      }
-      return response
+    let outcome: AcpPromptFinalizationOutcome
+    try {
+      outcome = await executePrompt()
     } catch (error) {
-      if (observedPromptStop) {
-        // Provider stop/cancellation already won the outcome race. App-side finalization failure,
-        // reset, or connection teardown cannot rewrite it as a prompt failure.
-        contextUsageTurn?.complete()
-        if (publishObservedPromptStop()) {
-          log.warn('prompt terminal finalization failed', {
-            sessionId: request.sessionId,
-            ...errorLogFields(error)
-          })
-        }
-        throw error
-      }
-      if (this.sessionInteractions.current(request.sessionId) !== promptInteraction) {
-        // Reset/replacement is silent. Unexpected connection teardown settles and publishes every
-        // visible prompt in handleConnectionClosed before releasing its interaction scope.
-        contextUsageTurn?.supersede()
-        throw error
-      }
-      // A fresh provider failure captures its terminal outcome before rollback work can add latency.
-      if (!this.sessionInteractions.captureTerminal(promptInteraction, 'error')) throw error
-      contextUsageTurn?.fail()
-      if (skillActivitiesStarted && !skillActivitiesFinalized) {
-        this.emitCodexSkillInputActivities(
-          request.sessionId,
-          promptTurn,
-          skillActivityInputs,
-          'failed'
-        )
-        skillActivitiesFinalized = true
-      }
-      // errorLogFields keeps the RequestError message/code/data visible in the file log — a raw Error
-      // nested in the payload serializes without its (non-enumerable) message, which once hid the
-      // provider's real rejection reason from the log.
-      log.error('prompt failed', { sessionId: request.sessionId, ...errorLogFields(error) })
-      const text = describePromptError(error, { model: this.backend.session.model })
-      // Tag a request-size overflow as recoverable so the renderer tries native compaction, falls back
-      // to context replacement + text replay, and retries instead of dead-ending.
-      // The structured errorKind slug is checked alongside the message text: providers relay the same
-      // overflow in different wordings, and a slug-only match needs no message at all.
-      const recoverable =
-        isMediaOverflowError(text) ||
-        isMediaOverflowError(errorMessage(error)) ||
-        isMediaOverflowError(acpErrorKind(error))
-          ? 'context-overflow'
-          : undefined
-      const terminal = this.sessionInteractions.settle(promptInteraction, {})
-      if (!terminal) throw error
-      this.pushEvent({
-        kind: 'error',
-        level: 'error',
-        recoverable,
-        // Tag a model-provider failure (upstream LLM/HTTP error the agent relayed) so the renderer
-        // keeps the message but hides the "Report error" button — only ACP-layer exceptions are bugs
-        // worth a GitHub issue. Determined structurally from the agent's signals, not the message text.
-        providerError: isProviderPromptError(error),
+      outcome = Object.freeze({ kind: 'failed', error })
+    }
+    return this.promptOutcomeFinalizer.finalize(
+      {
         sessionId: request.sessionId,
         ...promptEventIdentity,
-        timestamp: terminal.timestamp,
-        title: ACP_PROMPT_FAILED_EVENT_TITLE,
-        text
-      })
-      throw error
-    } finally {
-      preparedPromptHandle?.close()
-      // A turn that fails or is aborted never reaches the stop branch; still surface any files it
-      // wrote so they are attached to a message instead of being orphaned in the pending directory.
-      if (!artifactEmitted) {
-        try {
-          await this.emitArtifactRunEvent(request.sessionId, artifactRun)
-        } catch (error) {
-          log.error('artifact emit after prompt failure failed', {
-            sessionId: request.sessionId,
-            ...errorLogFields(error)
-          })
-        }
-      }
-      try {
-        await this.clearArtifactRun(artifactRun)
-      } catch (error) {
-        this.pushEvent({
-          kind: 'error',
-          level: 'error',
-          sessionId: request.sessionId,
-          ...promptEventIdentity,
-          title: 'Artifact cleanup failed',
-          text: errorMessage(error)
-        })
-      }
-      // ArtifactTurnOwner clears only the handle that still owns this Session. A superseded turn's
-      // delayed finally therefore cannot erase the replacement turn's handoff or active-run state.
-      const ownsInteraction =
-        this.sessionInteractions.current(request.sessionId) === promptInteraction
-      if (ownsInteraction) {
-        const planBinding = this.planExecutionBindings.get(request.sessionId)
-        if (planBinding?.interactionSequence === promptInteraction.sequence) {
-          this.planExecutionBindings.delete(request.sessionId)
-        }
-        const planWaiter = this.planApprovalWaiters.get(request.sessionId)
-        if (planWaiter?.interactionId === promptInteraction.promptMessageId) {
-          this.rejectPlanApprovalWaiter(
+        interaction: promptInteraction,
+        interactions: this.sessionInteractions,
+        permission: this.permissionContext,
+        ...(preparedPromptHandle ? { prepared: preparedPromptHandle } : {}),
+        ...(contextUsageTurn ? { context: contextUsageTurn } : {}),
+        skill: turnSkillHandle,
+        ...(this.backend.session.model ? { model: this.backend.session.model } : {}),
+        emitUserMessage,
+        emitArtifact: (onPublished) =>
+          this.emitArtifactRunEvent(request.sessionId, artifactRun, onPublished),
+        disposeArtifact: () => this.clearArtifactRun(artifactRun),
+        failPendingSkillActivities: () => {
+          if (!skillActivitiesStarted || skillActivitiesFinalized) return
+          this.emitCodexSkillInputActivities(
             request.sessionId,
-            'The Session Plan interaction ended before approval.'
+            promptTurn,
+            skillActivityInputs,
+            'failed'
           )
-        }
-        this.permissionContext.clearCorrelationsForSession(request.sessionId)
-      }
-      contextUsageTurn?.supersede()
-      this.sessionInteractions.release(promptInteraction)
-      if (ownsInteraction) await this.publishTerminalPlanProjection(request.sessionId)
-      if (ownsInteraction) {
-        try {
-          this.callbacks.onPromptEnded?.(request.sessionId, skillImportTurnToken)
-        } catch (error) {
-          safeLogError('prompt-end callback failed', errorLogFields(error))
-        }
-      }
-      // emitState invokes the renderer onStateChanged callback; guard it so a throw there cannot skip
-      // transition arbitration and strand a barrier awaited by a later createSession.
-      try {
-        this.emitState()
-      } catch (error) {
-        safeLogError('emitState after prompt turn failed', errorLogFields(error))
-      }
-      turnSkillHandle.close(turnSkillOutcome)
-      if (turnSkillHandle.reloadDecision.kind === 'continue') {
-        this.generationActivityChanged()
-      }
-    }
+          skillActivitiesFinalized = true
+        },
+        recordContextUsed: (used) =>
+          this.recordProviderPromptContextUsage(request.sessionId, used, promptTurn),
+        errorMessage,
+        errorKind: acpErrorKind,
+        pushEvent: (event) => this.pushEvent(event),
+        emitState: () => this.emitState(),
+        onPromptEnded: () =>
+          this.callbacks.onPromptEnded?.(request.sessionId, skillImportTurnToken),
+        generationActivityChanged: () => this.generationActivityChanged(),
+        autoCompactIfNeeded: () => {
+          if (
+            this.sessionInteractions.current(request.sessionId) !== promptInteraction ||
+            this.activeSessionFor(request.sessionId) !== activeSession ||
+            !this.shouldAutoCompactContext(request.sessionId)
+          ) {
+            return Promise.resolve()
+          }
+          return this.performNativeContextCompaction(activeSession, request.sessionId, 'automatic')
+        },
+        beforeInteractionRelease: () => {
+          const planBinding = this.planExecutionBindings.get(request.sessionId)
+          if (planBinding?.interactionSequence === promptInteraction.sequence) {
+            this.planExecutionBindings.delete(request.sessionId)
+          }
+          const planWaiter = this.planApprovalWaiters.get(request.sessionId)
+          if (planWaiter?.interactionId === promptInteraction.promptMessageId) {
+            this.rejectPlanApprovalWaiter(
+              request.sessionId,
+              'The Session Plan interaction ended before approval.'
+            )
+          }
+        },
+        afterInteractionRelease: () => this.publishTerminalPlanProjection(request.sessionId)
+      },
+      outcome
+    )
   }
 
   // Requests cancellation without clearing in-flight state before the agent stops.
@@ -2748,23 +2590,27 @@ class AcpRuntime {
   // Publishes pending files as a claim event; the renderer later supplies the final message id.
   private async emitArtifactRunEvent(
     sessionId: string,
-    artifactRun: ArtifactTurnHandle | undefined
+    artifactRun: ArtifactTurnHandle | undefined,
+    onPublished?: () => void
   ): Promise<void> {
     if (!artifactRun || !this.artifactTurns) return
     const publication = await this.artifactTurns.finalize(artifactRun)
     if (!publication) return
 
-    this.pushEvent({
-      kind: 'artifact',
-      level: 'info',
-      sessionId,
-      title: 'Generated files',
-      runId: publication.runId,
-      promptMessageId: publication.promptMessageId,
-      artifactSessionId: publication.artifactStorageSessionId,
-      artifactClaimId: publication.artifactClaimId,
-      artifacts: publication.artifacts
-    })
+    this.pushEvent(
+      {
+        kind: 'artifact',
+        level: 'info',
+        sessionId,
+        title: 'Generated files',
+        runId: publication.runId,
+        promptMessageId: publication.promptMessageId,
+        artifactSessionId: publication.artifactStorageSessionId,
+        artifactClaimId: publication.artifactClaimId,
+        artifacts: publication.artifacts
+      },
+      onPublished
+    )
   }
 
   // Hands permission requests to the broker so the renderer can answer later. Any failure is logged with
@@ -3191,7 +3037,8 @@ class AcpRuntime {
 
   // Adds a bounded event entry and notifies all renderer listeners.
   private pushEvent(
-    event: Omit<AcpRuntimeEvent, 'id' | 'timestamp'> & Partial<AcpRuntimeEvent>
+    event: Omit<AcpRuntimeEvent, 'id' | 'timestamp'> & Partial<AcpRuntimeEvent>,
+    onAppended?: () => void
   ): void {
     const currentPromptMessageId = event.sessionId
       ? this.currentPromptInteraction(event.sessionId)?.promptMessageId
@@ -3201,6 +3048,7 @@ class AcpRuntime {
         ? { ...event, promptMessageId: currentPromptMessageId }
         : event
     const runtimeEvent = this.snapshotOwner.appendEvent(scopedEvent)
+    onAppended?.()
     this.callbacks.onEvent?.(runtimeEvent)
     this.emitState()
   }
