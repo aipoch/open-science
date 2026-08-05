@@ -384,6 +384,7 @@ describe('TaskRunner', () => {
     expect(prompts).toEqual([
       {
         sessionId: existing.id,
+        promptMessageId: 'new-user',
         text: 'Follow-up question',
         contextReset: true,
         historyPreamble:
@@ -443,6 +444,7 @@ describe('TaskRunner', () => {
     expect(prompts).toEqual([
       {
         sessionId: existing.id,
+        promptMessageId: 'skill-user',
         text: 'Use the selected skill.',
         skillIds: ['literature-review'],
         resumeFallback: {

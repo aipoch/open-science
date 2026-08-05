@@ -77,6 +77,7 @@ type TaskAgentResumeSessionRequest = {
 
 type TaskAgentPromptRequest = {
   sessionId: string
+  promptMessageId: string
   text: string
   skillIds?: string[]
   historyPreamble?: string
@@ -480,6 +481,7 @@ class TaskRunner {
     try {
       await this.dependencies.agent.prompt({
         sessionId: session.id,
+        promptMessageId: session.activeRun!.promptMessageId,
         text: prompt,
         ...(request.skillIds?.length ? { skillIds: request.skillIds } : {}),
         ...(historyPreamble ? { historyPreamble } : {}),

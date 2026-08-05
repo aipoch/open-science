@@ -20,6 +20,7 @@ type TaskPromptNotifications = Pick<TaskNotificationService, 'trackPrompt' | 'un
 const toAcpPromptRequest = (request: TaskAgentPromptRequest): AcpPromptRequest => ({
   sessionId: request.sessionId,
   text: request.text,
+  provenanceContext: { promptMessageId: request.promptMessageId },
   ...(request.skillIds?.length ? { forcedSkillIds: request.skillIds } : {}),
   ...(request.historyPreamble ? { historyPreamble: request.historyPreamble } : {}),
   ...(request.contextReset ? { contextReset: true } : {}),

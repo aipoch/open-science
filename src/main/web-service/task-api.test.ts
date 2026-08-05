@@ -199,6 +199,7 @@ describe('HeadlessTaskApi adapter', () => {
     expect(agent.setPermissionProfile).toHaveBeenCalledWith(existing.id, 'auto')
     expect(agent.prompt).toHaveBeenCalledWith({
       sessionId: existing.id,
+      promptMessageId: 'attached-user',
       text: 'Continue research.'
     })
     expect(invoke.mock.calls.every(([channel]) => !String(channel).startsWith('acp:'))).toBe(true)
@@ -298,6 +299,7 @@ describe('HeadlessTaskApi adapter', () => {
     })
     expect(agent.prompt).toHaveBeenCalledWith({
       sessionId: 'session-context',
+      promptMessageId: expect.any(String),
       text: 'Research with remote context.'
     })
     expect(context.isAuthorizationCurrent()).toBe(false)

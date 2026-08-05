@@ -59,6 +59,7 @@ describe('ACP Task Agent port', () => {
     await port.setPermissionProfile('session-stable', 'full')
     await port.prompt({
       sessionId: 'session-stable',
+      promptMessageId: 'persisted-prompt',
       text: 'Continue the research.',
       skillIds: ['literature-review'],
       historyPreamble: 'Previous conversation.',
@@ -85,6 +86,7 @@ describe('ACP Task Agent port', () => {
     expect(runtime.sendPrompt).toHaveBeenCalledWith({
       sessionId: 'session-stable',
       text: 'Continue the research.',
+      provenanceContext: { promptMessageId: 'persisted-prompt' },
       forcedSkillIds: ['literature-review'],
       historyPreamble: 'Previous conversation.',
       contextReset: true,
@@ -95,6 +97,7 @@ describe('ACP Task Agent port', () => {
   it('keeps Task prompt notification tracking equivalent on success and failure', async () => {
     const prompt = {
       sessionId: 'session-1',
+      promptMessageId: 'persisted-prompt',
       text: 'Research this.',
       skillIds: ['literature-review']
     }
@@ -118,6 +121,7 @@ describe('ACP Task Agent port', () => {
     expect(trackPrompt).toHaveBeenCalledWith({
       sessionId: 'session-1',
       text: 'Research this.',
+      provenanceContext: { promptMessageId: 'persisted-prompt' },
       forcedSkillIds: ['literature-review']
     })
     expect(untrackPrompt).not.toHaveBeenCalled()
