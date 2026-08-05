@@ -141,6 +141,14 @@ describe('logger: formatLine', () => {
         text: 'Authorization=Bearer assignment-scheme-opaque-7319',
         secrets: ['assignment-scheme-opaque-7319']
       },
+      {
+        text: 'providerApiKey=compound-camel-opaque-7319',
+        secrets: ['compound-camel-opaque-7319']
+      },
+      {
+        text: 'openai_api_key=compound-lower-opaque-7319',
+        secrets: ['compound-lower-opaque-7319']
+      },
       { text: 'OPENAI_API_KEY=env-opaque-7319', secrets: ['env-opaque-7319'] },
       { text: '--api-key cli-opaque-7319', secrets: ['cli-opaque-7319'] },
       {

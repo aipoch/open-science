@@ -218,8 +218,9 @@ const redactLogText = (value: string): string => {
       `$1$2${REDACTED_MARKER}`
     )
     .replace(
-      /\b([A-Z0-9_]*(?:ACCESS_KEY(?:_ID)?|API_KEY|CLIENT_SECRET|CREDENTIALS?|PASSWORD|PASSPHRASE|PASSWD|PAT|PRIVATE_KEY|SECRET|SECRET_ACCESS_KEY|TOKEN))(\s*=\s*)[^\s"'&;]+/g,
-      `$1$2${REDACTED_MARKER}`
+      /\b([a-z][a-z0-9_-]*)(\s*=\s*)(?:(?:Bearer|Basic|Digest|Negotiate)\s+)?[^\s"'&;}]+/gi,
+      (match, key: string, separator: string) =>
+        isSensitiveLogKey(key) ? `${key}${separator}${REDACTED_MARKER}` : match
     )
     .replace(
       /(--?(?:access[-_]?token|api[-_]?key|auth[-_]?token|authorization|bearer[-_]?token|client[-_]?secret|cookie|credentials?|passphrase|passwd|password|pat|private[-_]?key|secret|token))(\s+|=)(?:(?:Bearer|Basic|Digest|Negotiate)\s+)?[^\s"'&;]+/gi,
