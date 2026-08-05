@@ -1,6 +1,7 @@
 // @vitest-environment jsdom
 import { act, createRef } from 'react'
 import { createRoot, type Root } from 'react-dom/client'
+import { Dialog } from 'radix-ui'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 
 import { SettingsPage, type SettingsPageHandle } from './SettingsPage'
@@ -695,8 +696,10 @@ describe('SettingsPage layout', () => {
       }))
     )
 
+    const onClose = vi.fn()
+    const settingsRef = createRef<SettingsPageHandle>()
     await act(async () => {
-      root.render(<SettingsPage open onClose={vi.fn()} />)
+      root.render(<SettingsPage ref={settingsRef} open onClose={onClose} />)
     })
     const nav = document.body.querySelector<HTMLElement>('nav[aria-label="Settings"]')
     expect(nav?.getAttribute('aria-hidden')).toBe('true')
@@ -721,6 +724,17 @@ describe('SettingsPage layout', () => {
         heading.textContent?.includes('General')
       )
     ).toBe(true)
+
+    await act(async () => {
+      document.body
+        .querySelector<HTMLButtonElement>('[aria-label="Open settings navigation"]')
+        ?.click()
+    })
+    act(() => {
+      expect(settingsRef.current?.closeActivePane()).toBe(true)
+    })
+    expect(nav?.getAttribute('aria-hidden')).toBe('true')
+    expect(onClose).toHaveBeenCalledOnce()
   })
 
   it('opens Add provider as a history-driven sub-page and returns via the back arrow', () => {
@@ -766,7 +780,7 @@ describe('SettingsPage layout', () => {
     expect(document.body.querySelector('section[aria-label="Providers"]')).not.toBeNull()
   })
 
-  it('backs out of a breadcrumb before closing Settings with the close-pane shortcut', () => {
+  it('closes a nested dialog, then a breadcrumb, then Settings with the close-pane shortcut', () => {
     const onClose = vi.fn()
     const settingsRef = createRef<SettingsPageHandle>()
     act(() => {
@@ -778,6 +792,29 @@ describe('SettingsPage layout', () => {
     ).find((button) => button.textContent?.trim() === 'Add provider')
     act(() => addProvider?.click())
     expect(document.body.querySelector('[aria-label="Provider type"]')).not.toBeNull()
+
+    act(() => {
+      root.render(
+        <>
+          <SettingsPage ref={settingsRef} open onClose={onClose} />
+          <Dialog.Root defaultOpen>
+            <Dialog.Portal>
+              <Dialog.Content>
+                <Dialog.Title>Nested Settings dialog</Dialog.Title>
+              </Dialog.Content>
+            </Dialog.Portal>
+          </Dialog.Root>
+        </>
+      )
+    })
+    expect(document.body.textContent).toContain('Nested Settings dialog')
+
+    act(() => {
+      expect(settingsRef.current?.closeActivePane()).toBe(true)
+    })
+    expect(document.body.textContent).not.toContain('Nested Settings dialog')
+    expect(document.body.querySelector('[aria-label="Provider type"]')).not.toBeNull()
+    expect(onClose).not.toHaveBeenCalled()
 
     act(() => {
       expect(settingsRef.current?.closeActivePane()).toBe(true)

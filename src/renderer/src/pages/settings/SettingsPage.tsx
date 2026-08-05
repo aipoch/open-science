@@ -537,8 +537,20 @@ const SettingsPage = forwardRef<SettingsPageHandle, SettingsPageProps>(function 
   useImperativeHandle(ref, () => ({
     closeActivePane: () => {
       if (!open) return false
+      const hasNestedDialog = Array.from(
+        document.querySelectorAll<HTMLElement>('[role="dialog"], [role="alertdialog"]')
+      ).some((dialog) => dialog.dataset.slot !== 'settings-surface')
+      if (hasNestedDialog) {
+        document.dispatchEvent(
+          new KeyboardEvent('keydown', { key: 'Escape', bubbles: true, cancelable: true })
+        )
+        return true
+      }
       if (breadcrumb) navigate(breadcrumb.rootTo)
-      else onClose()
+      else {
+        setIsMobileNavOpen(false)
+        onClose()
+      }
       return true
     }
   }))
