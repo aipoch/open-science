@@ -416,6 +416,17 @@ describe('AgentBackendResolver configured and explicit targets', () => {
     expect(JSON.stringify(modelConfig)).not.toContain('plain:key-a')
   })
 
+  it('omits an Anthropic bridge target when the active generation has no bridge', async () => {
+    const harness = makeHarness()
+    const backend = await harness.resolver.resolveActiveBackend()
+
+    expect(backend.anthropicBridgeLease).toBeUndefined()
+    expect(harness.createAnthropicProviderBridge).not.toHaveBeenCalled()
+    await expect(harness.resolver.resolveActiveModelChangeTarget()).resolves.not.toHaveProperty(
+      'anthropicBridgeTargetId'
+    )
+  })
+
   it('routes configured Claude API providers through one retargetable loopback generation', async () => {
     const deepseek = {
       ...makeStoredProvider('deepseek', 'deepseek-v4-pro'),

@@ -385,6 +385,9 @@ export class AgentBackendResolver {
       frameworkId === 'codex' ? this.resolveCodexApiTargets(settings, target, route) : []
     const hasCodexProviderTransport =
       new Set(codexTransportTargets.map((candidate) => candidate.providerId)).size >= 2
+    const hasClaudeProviderTransport =
+      frameworkId === 'claude-code' &&
+      this.resolveClaudeBridgeCatalog(settings, target) !== undefined
     const backendProviderId =
       frameworkId === 'codex' && isCodexSubscriptionProvider(target.provider.type)
         ? CODEX_ISOLATED_PROVIDER_ID
@@ -408,7 +411,7 @@ export class AgentBackendResolver {
         settings.reasoningEffort ?? DEFAULT_REASONING_EFFORT,
         target
       ),
-      ...(frameworkId === 'claude-code' && target.provider.type === 'custom'
+      ...(hasClaudeProviderTransport
         ? { anthropicBridgeTargetId: claudeBridgeTargetId(target.providerId, model) }
         : {}),
       ...(hasOpenCodeProviderTransport || hasCodexProviderTransport
