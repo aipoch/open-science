@@ -133,12 +133,13 @@ import {
   AcpBackendGenerationOwner,
   type AcpBackendGenerationView
 } from './backend-generation-owner'
-import { AcpSessionConfigurator, type AcpSessionConfigurationFacts } from './session-configurator'
+import { AcpSessionConfigurator } from './session-configurator'
 import { AcpSessionUpdateProjector, type AcpSessionUpdateEffect } from './session-update-projector'
 import { AcpConnectionLifecycleWorkflow } from './connection-lifecycle-workflow'
 import { AcpConnectionCloseWorkflow, type CloseState } from './connection-close-workflow'
 import { AcpModelChangeWorkflow } from './model-change-workflow'
 import { AcpProviderSessionCreator } from './provider-session-creator'
+import { AcpProviderSessionAdopter } from './provider-session-adopter'
 import {
   AcpTurnSkillOwner,
   type AcpTurnSkillHooks,
@@ -518,6 +519,7 @@ class AcpRuntime {
   private readonly connectionLifecycle: AcpConnectionLifecycleWorkflow
   private readonly modelChanges: AcpModelChangeWorkflow
   private readonly providerSessionCreator: AcpProviderSessionCreator
+  private readonly providerSessionAdopter: AcpProviderSessionAdopter
 
   // Wires runtime dependencies and forwards permission prompts into the event stream.
   constructor(private readonly options: AcpRuntimeOptions) {
@@ -788,6 +790,21 @@ class AcpRuntime {
       registerSessionSpecialist: options.notebook?.registerSessionSpecialist,
       updateCwd: (cwd) => this.snapshotOwner.updateCwd(cwd),
       pushEvent: (event) => this.pushEvent(event),
+      emitState: () => this.emitState(),
+      diagnosticContext: () => this.diagnosticContext()
+    })
+    this.providerSessionAdopter = new AcpProviderSessionAdopter({
+      currentBackend: () => this.backend,
+      registry: this.sessionRegistry,
+      reserveIdentity: (reservation, sessionIds) =>
+        this.reservePrimarySessionIds(reservation, sessionIds),
+      capabilities: this.sessionCapabilities,
+      configurator: this.sessionConfigurator,
+      resolveSpecialistIdentity: options.resolveSpecialistIdentity,
+      resolveSpecialistSkills: options.resolveSpecialistSkills,
+      peekClaudeReplay: (sessionId) => this.handoffContinuity.peekClaudeReplay(sessionId),
+      commitClaudeReplay: (sessionId) => this.handoffContinuity.commitClaudeReplay(sessionId),
+      updateCwd: (cwd) => this.snapshotOwner.updateCwd(cwd),
       emitState: () => this.emitState(),
       diagnosticContext: () => this.diagnosticContext()
     })
@@ -1203,33 +1220,6 @@ class AcpRuntime {
   // Creates a protocol session, injects artifact tooling, and uses the returned id as the app session id.
   async createSession(request: AcpCreateSessionRequest = {}): Promise<AcpCreateSessionResponse> {
     return this.withOperationLease(() => this.providerSessionCreator.create(request))
-  }
-
-  // Registers a freshly-built agent session under an app-facing id (used when adopting a conversation
-  // onto a replaced agent after a provider switch). Remaps the agent's own id so later updates and
-  // permission requests relabel into the same conversation.
-  private adoptSession(
-    primaryIdentityReservation: AcpPrimarySessionIdentityReservation,
-    appSessionId: string,
-    session: ActiveSession,
-    cwd: string,
-    projectName: string,
-    backend: AcpBackendGenerationView,
-    configuration: AcpSessionConfigurationFacts
-  ): AcpSessionRegistryEntry {
-    const entry = this.attachSessionAggregate(primaryIdentityReservation, appSessionId, {
-      session,
-      cwd,
-      projectName,
-      frameworkId: backend.framework.id,
-      backendId: backend.backendId,
-      permissionProfile: structuredClone(configuration.permissionProfile),
-      appliedModel: configuration.appliedModel,
-      configOptions: structuredClone(configuration.configOptions)
-    })
-
-    this.snapshotOwner.updateCwd(cwd)
-    return entry
   }
 
   // Reattaches a persisted protocol session after an app restart so later prompts can stream.
@@ -1903,118 +1893,14 @@ class AcpRuntime {
     projectName: string,
     primaryIdentityReservation: AcpPrimarySessionIdentityReservation
   ): Promise<AcpCreateSessionResponse> {
-    // Fresh adoption also receives provisional app capability tokens. Transfer ownership only after
-    // adoptSession has registered the replacement; every earlier failure revokes them and disposes any
-    // partially-created Agent session.
-    let capabilityProvision: SessionCapabilityProvision | undefined
-    let adopted: ActiveSession | undefined
-    try {
-      capabilityProvision = await this.sessionCapabilities.provision({
-        stableAppSessionId: request.sessionId,
-        framework: this.framework,
-        nativeMcpEnabled: this.backend.adapter.nativeMcpEnabled,
-        bridgeMcpAliasesEnabled: this.backend.adapter.bridgeMcpAliasesEnabled,
-        policy: CURRENT_PRIMARY_SESSION_CAPABILITY_POLICY,
-        sessionCwd,
-        projectName
-      })
-      const { mcpServers } = capabilityProvision
-      // A freshly adopted session carries no prior _meta, so the specialist identity append (Claude)
-      // must be re-resolved from the live binding. Without this, a context reset or specialist switch
-      // would silently drop the session's specialist identity.
-      const stagedSpecialistId =
-        request.specialistId ??
-        this.sessionRegistry.lookup(request.sessionId)?.aggregate.snapshot().specialistId
-      const specialistIdentity = await this.resolveCurrentSpecialistIdentity(
-        request.sessionId,
-        stagedSpecialistId
-      )
-      const handoffAppend = this.handoffContinuity.peekClaudeReplay(request.sessionId)
-      adopted = await connection.agent
-        .buildSession({
-          cwd: sessionCwd,
-          mcpServers,
-          ...this.buildSessionMetaArg(
-            [specialistIdentity?.append, handoffAppend].filter((append): append is string =>
-              Boolean(append)
-            ),
-            await this.resolveCurrentSpecialistSkills(request.sessionId, stagedSpecialistId)
-          )
-        })
-        .start()
-
-      const reservationResult = this.reservePrimarySessionIds(primaryIdentityReservation, [
-        request.sessionId,
-        adopted.sessionId
-      ])
-      if (reservationResult.collision) {
-        this.disposeSessionAfterFailure(adopted, 'primary collision session disposal failed')
-        adopted = undefined
-        throw reservationResult.collision
-      }
-      primaryIdentityReservation = reservationResult.reservation
-
-      const backend = this.backend
-      const configuration = await this.sessionConfigurator.configure({
-        backend,
-        connection,
-        session: adopted,
-        permissionProfile: normalizePermissionProfile(request.permissionProfile)
-      })
-      this.assertPrimarySessionIdentityReservation(primaryIdentityReservation)
-      const { aggregate } = this.adoptSession(
-        primaryIdentityReservation,
-        request.sessionId,
-        adopted,
-        sessionCwd,
-        projectName,
-        backend,
-        configuration
-      )
-      if (specialistIdentity) {
-        aggregate.setSpecialistPrefix(specialistIdentity.prefix || undefined)
-      } else if (!stagedSpecialistId) {
-        aggregate.setSpecialistPrefix(undefined)
-      }
-      if (request.specialistId) {
-        aggregate.setSpecialistId(request.specialistId)
-      }
-      capabilityProvision.commit(request.sessionId)
-      this.handoffContinuity.commitClaudeReplay(request.sessionId)
-      this.releasePrimarySessionIdentityReservation(primaryIdentityReservation)
-      capabilityProvision = undefined
-      try {
-        this.emitState()
-      } catch (error) {
-        safeLogError('adopted session state callback failed', {
-          ...diagnosticErrorFields(error),
-          sessionId: request.sessionId
-        })
-      }
-
-      return {
-        sessionId: request.sessionId,
-        cwd: sessionCwd,
-        frameworkId: this.framework.id,
-        ...(this.backendId ? { backendId: this.backendId } : {}),
-        contextReset: true
-      }
-    } catch (error) {
-      let startupError = error
-      let ownsStableIdentity = true
-      try {
-        this.assertPrimarySessionIdentityReservation(primaryIdentityReservation)
-      } catch (supersededError) {
-        startupError = supersededError
-        ownsStableIdentity = false
-      }
-      capabilityProvision?.release({ ownsStableIdentity })
-      capabilityProvision = undefined
-      if (adopted) {
-        this.disposeSessionAfterFailure(adopted, 'adopted startup session disposal failed')
-      }
-      throw startupError
-    }
+    return this.providerSessionAdopter.adopt(request.sessionId, {
+      connection,
+      cwd: sessionCwd,
+      projectName,
+      identity: primaryIdentityReservation,
+      permissionProfile: request.permissionProfile,
+      specialistId: request.specialistId
+    })
   }
 
   // Changes approval behavior only while the conversation is idle. Applying the ACP mode before the
@@ -3109,21 +2995,6 @@ class AcpRuntime {
       return await this.options.resolveSpecialistSkills(specialistId)
     } catch {
       return { kind: 'unavailable', reason: 'The bound specialist is unavailable.' }
-    }
-  }
-
-  // Re-resolves the current Specialist identity when a stable app Session adopts a fresh provider
-  // Session. Claude re-bakes the append into Session metadata; Codex/OpenCode retain the prefix for
-  // subsequent prompts.
-  private async resolveCurrentSpecialistIdentity(
-    sessionId: string,
-    specialistId = this.sessionRegistry.lookup(sessionId)?.aggregate.snapshot().specialistId
-  ): Promise<{ append: string; prefix: string } | undefined> {
-    if (!specialistId || !this.options.resolveSpecialistIdentity) return undefined
-    try {
-      return await this.options.resolveSpecialistIdentity(specialistId, this.framework.id)
-    } catch {
-      return undefined
     }
   }
 

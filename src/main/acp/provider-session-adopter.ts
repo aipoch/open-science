@@ -1,0 +1,253 @@
+import type { ActiveSession, ClientConnection } from '@agentclientprotocol/sdk'
+
+import type { AcpCreateSessionResponse } from '../../shared/acp'
+import {
+  normalizePermissionProfile,
+  type PermissionProfileId
+} from '../../shared/permission-profiles'
+import type { EffectiveSpecialistSkills } from '../../shared/specialist'
+import { createLogger, diagnosticErrorFields } from '../logger'
+import type { AcpBackendGenerationView } from './backend-generation-owner'
+import {
+  CURRENT_PRIMARY_SESSION_CAPABILITY_POLICY,
+  type AcpSessionCapabilityOwner,
+  type SessionCapabilityProvision
+} from './session-capability-owner'
+import type { AcpSessionConfigurator } from './session-configurator'
+import { AcpSessionPresentationPolicy } from './session-presentation-policy'
+import type {
+  AcpPrimarySessionIdentityReservation,
+  AcpPrimarySessionIdentityReservationResult,
+  AcpSessionRegistry
+} from './session-registry'
+
+const log = createLogger('acp')
+
+type AcpProviderSessionAdoptionRequest = Readonly<{
+  connection: ClientConnection
+  cwd: string
+  projectName: string
+  // The enclosing resume/reset transaction transfers its opaque stable-ID reservation here after
+  // reconnect renewal. Adoption owns extension, publication, and terminal release; the caller's
+  // finally may release the same handle only as an idempotent fallback.
+  identity: AcpPrimarySessionIdentityReservation
+  permissionProfile?: PermissionProfileId
+  specialistId?: string
+}>
+
+type AcpProviderSessionAdopterDependencies = Readonly<{
+  currentBackend: () => AcpBackendGenerationView
+  registry: AcpSessionRegistry
+  reserveIdentity: (
+    reservation: AcpPrimarySessionIdentityReservation,
+    sessionIds: string[]
+  ) => AcpPrimarySessionIdentityReservationResult
+  capabilities: Pick<AcpSessionCapabilityOwner, 'provision'>
+  configurator: Pick<AcpSessionConfigurator, 'configure'>
+  resolveSpecialistIdentity?: (
+    specialistId: string,
+    frameworkId: string
+  ) => Promise<{ append: string; prefix: string } | undefined>
+  resolveSpecialistSkills?: (specialistId: string) => Promise<EffectiveSpecialistSkills>
+  peekClaudeReplay: (sessionId: string) => string | undefined
+  commitClaudeReplay: (sessionId: string) => void
+  updateCwd: (cwd: string) => void
+  emitState: () => void
+  diagnosticContext: () => Readonly<Record<string, unknown>>
+}>
+
+export class AcpProviderSessionAdopter {
+  private readonly presentation = new AcpSessionPresentationPolicy()
+
+  constructor(private readonly deps: AcpProviderSessionAdopterDependencies) {}
+
+  async adopt(
+    stableAppSessionId: string,
+    request: AcpProviderSessionAdoptionRequest
+  ): Promise<AcpCreateSessionResponse> {
+    let capability: SessionCapabilityProvision | undefined
+    let provisionalSession: ActiveSession | undefined
+    let identity = request.identity
+    try {
+      const startupBackend = this.deps.currentBackend()
+      capability = await this.deps.capabilities.provision({
+        stableAppSessionId,
+        framework: startupBackend.framework,
+        nativeMcpEnabled: startupBackend.adapter.nativeMcpEnabled,
+        bridgeMcpAliasesEnabled: startupBackend.adapter.bridgeMcpAliasesEnabled,
+        policy: CURRENT_PRIMARY_SESSION_CAPABILITY_POLICY,
+        sessionCwd: request.cwd,
+        projectName: request.projectName
+      })
+      const specialistId =
+        request.specialistId ??
+        this.deps.registry.lookup(stableAppSessionId)?.aggregate.snapshot().specialistId
+      const [specialistIdentity, specialistSkills] = await Promise.all([
+        this.resolveSpecialistIdentity(specialistId, startupBackend),
+        this.resolveSpecialistSkills(specialistId)
+      ])
+      const handoffAppend = this.deps.peekClaudeReplay(stableAppSessionId)
+      const setup = this.presentation.buildSessionSetup({
+        framework: startupBackend.framework,
+        tooling: {
+          artifacts: capability.descriptor.capabilities.includes('artifacts'),
+          notebook: capability.descriptor.capabilities.includes('notebook'),
+          skillImport: capability.descriptor.capabilities.includes('skill-import')
+        },
+        backendSystemPromptAppends: startupBackend.prompt.systemPromptAppends,
+        extraSystemPromptAppends: [specialistIdentity?.append, handoffAppend].filter(
+          (append): append is string => Boolean(append)
+        ),
+        persistentSystemPrompt: startupBackend.prompt.persistentSystemPrompt,
+        sessionOptions: startupBackend.session.options,
+        specialistSkills
+      })
+      provisionalSession = await request.connection.agent
+        .buildSession({ cwd: request.cwd, mcpServers: capability.mcpServers, ...setup.metaArg })
+        .start()
+
+      const reserved = this.deps.reserveIdentity(identity, [
+        stableAppSessionId,
+        provisionalSession.sessionId
+      ])
+      if (reserved.collision) {
+        this.disposeProvisional(provisionalSession, 'primary collision session disposal failed')
+        provisionalSession = undefined
+        throw reserved.collision
+      }
+      identity = reserved.reservation
+
+      const permissionProfile = normalizePermissionProfile(request.permissionProfile)
+      let backend = this.deps.currentBackend()
+      let configuration = await this.deps.configurator.configure({
+        backend,
+        connection: request.connection,
+        session: provisionalSession,
+        permissionProfile
+      })
+      for (;;) {
+        // Live effort may change outside the operation lease. Replay against the newest immutable
+        // generation view before synchronous publication, matching fresh creation semantics.
+        const currentBackend = this.deps.currentBackend()
+        if (currentBackend !== backend) {
+          backend = currentBackend
+          configuration = await this.deps.configurator.configure({
+            backend,
+            connection: request.connection,
+            session: provisionalSession,
+            permissionProfile
+          })
+          continue
+        }
+        identity.assertCurrent()
+        const { aggregate } = this.deps.registry.publish(identity, stableAppSessionId, {
+          session: provisionalSession,
+          cwd: request.cwd,
+          projectName: request.projectName,
+          frameworkId: backend.framework.id,
+          backendId: backend.backendId,
+          permissionProfile: structuredClone(configuration.permissionProfile),
+          appliedModel: configuration.appliedModel,
+          configOptions: structuredClone(configuration.configOptions)
+        })
+        this.deps.updateCwd(request.cwd)
+        if (specialistIdentity) {
+          aggregate.setSpecialistPrefix(specialistIdentity.prefix || undefined)
+        } else if (!specialistId) {
+          aggregate.setSpecialistPrefix(undefined)
+        }
+        if (request.specialistId) aggregate.setSpecialistId(request.specialistId)
+        capability.commit(stableAppSessionId)
+        this.deps.commitClaudeReplay(stableAppSessionId)
+        provisionalSession = undefined
+        capability = undefined
+        identity.release()
+        break
+      }
+
+      try {
+        this.deps.emitState()
+      } catch (error) {
+        this.safeLogError('adopted session state callback failed', error, stableAppSessionId)
+      }
+      return {
+        sessionId: stableAppSessionId,
+        cwd: request.cwd,
+        frameworkId: backend.framework.id,
+        ...(backend.backendId ? { backendId: backend.backendId } : {}),
+        contextReset: true
+      }
+    } catch (caught) {
+      let startupError = caught
+      let ownsStableIdentity = true
+      try {
+        identity.assertCurrent()
+      } catch (supersededError) {
+        startupError = supersededError
+        ownsStableIdentity = false
+      }
+      if (capability) {
+        try {
+          capability.release({ ownsStableIdentity })
+        } catch (cleanupError) {
+          this.safeLogError('adopted capability release failed', cleanupError, stableAppSessionId)
+        }
+      }
+      this.disposeProvisional(provisionalSession, 'adopted startup session disposal failed')
+      throw startupError
+    } finally {
+      identity.release()
+    }
+  }
+
+  private async resolveSpecialistIdentity(
+    specialistId: string | undefined,
+    backend: AcpBackendGenerationView
+  ): Promise<{ append: string; prefix: string } | undefined> {
+    if (!specialistId || !this.deps.resolveSpecialistIdentity) return undefined
+    try {
+      return await this.deps.resolveSpecialistIdentity(specialistId, backend.framework.id)
+    } catch {
+      return undefined
+    }
+  }
+
+  private async resolveSpecialistSkills(
+    specialistId: string | undefined
+  ): Promise<EffectiveSpecialistSkills | undefined> {
+    if (!specialistId || !this.deps.resolveSpecialistSkills) return undefined
+    try {
+      return await this.deps.resolveSpecialistSkills(specialistId)
+    } catch {
+      return { kind: 'unavailable', reason: 'The bound specialist is unavailable.' }
+    }
+  }
+
+  private disposeProvisional(session: ActiveSession | undefined, message: string): void {
+    if (!session) return
+    try {
+      session.dispose()
+    } catch (error) {
+      this.safeLogError(message, error, session.sessionId, false)
+    }
+  }
+
+  private safeLogError(
+    message: string,
+    error: unknown,
+    sessionId: string,
+    includeContext = true
+  ): void {
+    try {
+      log.error(message, {
+        ...diagnosticErrorFields(error),
+        ...(includeContext ? this.deps.diagnosticContext() : {}),
+        sessionId
+      })
+    } catch {
+      // Diagnostics must never replace provider, cleanup, or observer outcomes.
+    }
+  }
+}
+
+export type { AcpProviderSessionAdoptionRequest }
