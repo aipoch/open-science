@@ -127,8 +127,16 @@ describe('logger: formatLine', () => {
       { text: 'Bearer bearer-opaque-7319', secrets: ['bearer-opaque-7319'] },
       { text: `jwt=${jwt}`, secrets: [jwt] },
       { text: 'Authorization: Basic dXNlcjpwYXNz', secrets: ['dXNlcjpwYXNz'] },
+      {
+        text: 'Authorization: Digest comma-opaque-7319,remaining-opaque-7319',
+        secrets: ['comma-opaque-7319', 'remaining-opaque-7319']
+      },
       { text: 'Cookie: session=cookie-opaque-7319; Path=/', secrets: ['cookie-opaque-7319'] },
       { text: 'apiKey="json-opaque-7319"', secrets: ['json-opaque-7319'] },
+      {
+        text: 'token=comma-token-opaque-7319,remaining-token-opaque-7319',
+        secrets: ['comma-token-opaque-7319', 'remaining-token-opaque-7319']
+      },
       { text: 'OPENAI_API_KEY=env-opaque-7319', secrets: ['env-opaque-7319'] },
       { text: '--api-key cli-opaque-7319', secrets: ['cli-opaque-7319'] },
       {
@@ -262,12 +270,16 @@ describe('logger: redacted sinks', () => {
     })
     const log = createLogger('redaction')
 
+    log.warn('nested error', { error: new Error(`Bearer ${sentinel}`) })
     for (let index = 0; index < 12; index += 1) {
       log.warn(`Bearer ${sentinel}`, { authorization: sentinel, index })
     }
     await flushLogs()
 
-    expect(JSON.stringify(consoleWarn.mock.calls)).not.toContain(sentinel)
+    const consoleOutput = JSON.stringify(consoleWarn.mock.calls)
+    expect(consoleOutput).not.toContain(sentinel)
+    expect(consoleOutput).toContain('Bearer [redacted]')
+    expect(consoleOutput).toContain('Error')
     const files = (await readdir(logDir)).filter((name) => name.startsWith('main'))
     expect(files.length).toBeGreaterThan(1)
     const jsonl = (
@@ -1155,14 +1167,14 @@ describe('logger: errorLogFields', () => {
     expect(errorLogFields(42).error).toBe('42')
   })
 
-  it('survives the file logger nested in a context object (the {} regression it guards)', () => {
-    // A raw Error nested in a context object serializes to {} — its fields are non-enumerable.
+  it('preserves nested and explicitly expanded error diagnostics', () => {
     const raw = JSON.parse(
       formatLine('error', 'acp', 'failed', { error: new Error('x'), framework: 'claude-code' })
-    ) as { data: { error: unknown } }
-    expect(raw.data.error).toEqual({})
+    ) as { data: { error: { message: string; name: string; stack?: string } } }
+    expect(raw.data.error).toMatchObject({ message: 'x', name: 'Error' })
+    expect(typeof raw.data.error.stack).toBe('string')
 
-    // Spreading errorLogFields keeps message + stack + context visible.
+    // Spreading errorLogFields additionally keeps richer error details at the context root.
     const fixed = JSON.parse(
       formatLine('error', 'acp', 'failed', {
         ...errorLogFields(new Error('x')),

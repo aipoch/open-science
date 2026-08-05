@@ -206,11 +206,11 @@ const redactLogText = (value: string): string => {
   return value
     .replace(/\b[a-z][a-z0-9+.-]*:\/\/[^\s"'<>]+/gi, redactUrlCredentials)
     .replace(
-      /\b(authorization|proxy-authorization|x-api-key|api-key|x-auth-token|x-amz-security-token|cookie|set-cookie)\b(\s*["']?\s*:\s*["']?)[^"'\r\n,}]*/gi,
+      /\b(authorization|proxy-authorization|x-api-key|api-key|x-auth-token|x-amz-security-token|cookie|set-cookie)\b(\s*["']?\s*:\s*["']?)[^"'\r\n}]*/gi,
       `$1$2${REDACTED_MARKER}`
     )
     .replace(
-      /\b(api[_-]?key|access[_-]?token|auth[_-]?token|authorization|bearer[_-]?token|client[_-]?secret|cookie|credential|password|passphrase|passwd|private[_-]?key|refresh[_-]?token|secret|secret[_-]?access[_-]?key|security[_-]?token|session[_-]?token|token)\b(\s*["']?\s*[:=]\s*["']?)[^\s,"'&;}]+/gi,
+      /\b(api[_-]?key|access[_-]?token|auth[_-]?token|authorization|bearer[_-]?token|client[_-]?secret|cookie|credential|password|passphrase|passwd|private[_-]?key|refresh[_-]?token|secret|secret[_-]?access[_-]?key|security[_-]?token|session[_-]?token|token)\b(\s*["']?\s*[:=]\s*["']?)[^\s"'&;}]+/gi,
       `$1$2${REDACTED_MARKER}`
     )
     .replace(
@@ -234,7 +234,8 @@ const stringifyLogRecord = (record: Record<string, unknown>): string =>
   // before they can reach the file or the console mirror.
   JSON.stringify(record, (key, value: unknown) => {
     if (key && (isSensitiveLogKey(key) || isContentBearingLogKey(key))) return REDACTED_MARKER
-    return typeof value === 'string' ? redactLogText(value) : value
+    const serializable = toSerializable(value)
+    return typeof serializable === 'string' ? redactLogText(serializable) : serializable
   })
 
 // Applies the per-field cap AND the shared character budget to a string about to be emitted, charging
