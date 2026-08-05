@@ -1061,6 +1061,11 @@ class AcpRuntime {
       throw new Error('The paused Session Plan interaction is no longer available.')
     }
     const interactionIsLive = this.planApprovalWaiters.has(input.sessionId)
+    const projection = await this.planService.getProjection(input.projectId, input.sessionId, {
+      interactionIsLive
+    })
+    if (!projection) throw new Error('The Session has no active Plan.')
+    this.assertPlanVisibleToActiveTurn(input.sessionId, projection)
     const result = await this.planService.respond({ ...input, interactionIsLive })
     if ('projection' in result) {
       if (interactionIsLive && result.projection.approval === 'approved') {

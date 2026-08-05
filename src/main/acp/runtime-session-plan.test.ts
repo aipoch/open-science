@@ -221,6 +221,48 @@ describe('AcpRuntime Session Plan seam', () => {
     expect(service.respond).not.toHaveBeenCalled()
   })
 
+  it('rejects a renderer Plan decision when the Plan originated on a sibling Message Branch', async () => {
+    const { runtime, service } = createRuntimeHarness({
+      activeProjection: projection('version-2', 4, 'sibling-message'),
+      messageAncestry: ['parent-message', 'interaction-1']
+    })
+
+    await expect(
+      runtime.respondSessionPlan({
+        projectId: 'project-1',
+        sessionId: 'session-1',
+        artifactVersionId: 'version-2',
+        expectedRevision: 4,
+        decision: 'approved'
+      })
+    ).rejects.toMatchObject({ code: 'interaction-mismatch' })
+    expect(service.respond).not.toHaveBeenCalled()
+  })
+
+  it('rejects renderer Plan feedback when the Plan originated on a sibling Message Branch', async () => {
+    const { runtime, service } = createRuntimeHarness({
+      activeProjection: projection('version-2', 4, 'sibling-message'),
+      messageAncestry: ['parent-message', 'interaction-1']
+    })
+    const pending = runtime.callSessionPlan({
+      projectId: 'project-1',
+      sessionId: 'session-1',
+      operation: 'generate',
+      input: {}
+    })
+    void pending.catch(() => undefined)
+    await Promise.resolve()
+
+    await expect(
+      runtime.respondSessionPlan({
+        projectId: 'project-1',
+        sessionId: 'session-1',
+        feedback: 'Use the sibling Plan.'
+      })
+    ).rejects.toMatchObject({ code: 'interaction-mismatch' })
+    expect(service.respond).not.toHaveBeenCalled()
+  })
+
   it('rejects Plan execution from an ordinary interaction without explicit continuation authority', async () => {
     const { runtime, updateStepStatus } = createRuntimeHarness({
       activeProjection: {
