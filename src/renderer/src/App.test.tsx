@@ -72,7 +72,8 @@ const mocks = vi.hoisted(() => {
     getInfo: vi.fn(),
     syncWindowFindAppearance: vi.fn(),
     syncUnreadTaskView: vi.fn(),
-    globalSearch: { props: undefined as { open: boolean } | undefined }
+    globalSearch: { props: undefined as { open: boolean } | undefined },
+    closeActiveModal: { handler: undefined as (() => boolean) | undefined }
   }
 })
 
@@ -83,7 +84,9 @@ vi.mock('@/lib/deep-link', () => ({
   useDeepLinkNavigation: mocks.deepLinkNavigation
 }))
 vi.mock('@/hooks/useCloseActivePaneShortcut', () => ({
-  useCloseActivePaneShortcut: vi.fn()
+  useCloseActivePaneShortcut: (handler?: () => boolean) => {
+    mocks.closeActiveModal.handler = handler
+  }
 }))
 vi.mock('@/hooks/useLifecycleSync', () => ({
   useLifecycleSync: mocks.lifecycleSync
@@ -309,6 +312,7 @@ describe('App startup routing', () => {
     mocks.notifications.takePendingOpenSession.mockReset().mockResolvedValue(null)
     mocks.notificationNudgeBox.current = undefined
     mocks.globalSearch.props = undefined
+    mocks.closeActiveModal.handler = undefined
   })
 
   afterEach(async () => {
@@ -378,6 +382,29 @@ describe('App startup routing', () => {
       window.dispatchEvent(
         new KeyboardEvent('keydown', { key: 'k', ctrlKey: true, cancelable: true })
       )
+    })
+    expect(mocks.globalSearch.props?.open).toBe(false)
+  })
+
+  it('does not open Settings over global search', async () => {
+    mocks.settings.isLoaded = true
+    await render()
+
+    await act(async () => {
+      window.dispatchEvent(
+        new KeyboardEvent('keydown', { key: 'k', metaKey: true, cancelable: true })
+      )
+    })
+    expect(mocks.globalSearch.props?.open).toBe(true)
+
+    window.dispatchEvent(
+      new KeyboardEvent('keydown', { key: ',', metaKey: true, cancelable: true })
+    )
+
+    expect(mocks.settings.openSettings).not.toHaveBeenCalled()
+
+    act(() => {
+      expect(mocks.closeActiveModal.handler?.()).toBe(true)
     })
     expect(mocks.globalSearch.props?.open).toBe(false)
   })

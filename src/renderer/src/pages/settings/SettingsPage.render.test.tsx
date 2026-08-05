@@ -1,9 +1,9 @@
 // @vitest-environment jsdom
-import { act } from 'react'
+import { act, createRef } from 'react'
 import { createRoot, type Root } from 'react-dom/client'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 
-import { SettingsPage } from './SettingsPage'
+import { SettingsPage, type SettingsPageHandle } from './SettingsPage'
 import { clickRadixMenuItem, openRadixMenu } from './test-utils'
 import type { SpecialistProfileView } from '../../../../shared/specialist'
 import { useSpecialistStore } from '@/stores/specialist-store'
@@ -764,6 +764,31 @@ describe('SettingsPage layout', () => {
     const rootCrumb = document.body.querySelector<HTMLButtonElement>('[aria-label="Back to model"]')
     act(() => rootCrumb?.click())
     expect(document.body.querySelector('section[aria-label="Providers"]')).not.toBeNull()
+  })
+
+  it('backs out of a breadcrumb before closing Settings with the close-pane shortcut', () => {
+    const onClose = vi.fn()
+    const settingsRef = createRef<SettingsPageHandle>()
+    act(() => {
+      root.render(<SettingsPage ref={settingsRef} open onClose={onClose} />)
+    })
+
+    const addProvider = Array.from(
+      document.body.querySelectorAll<HTMLButtonElement>('button')
+    ).find((button) => button.textContent?.trim() === 'Add provider')
+    act(() => addProvider?.click())
+    expect(document.body.querySelector('[aria-label="Provider type"]')).not.toBeNull()
+
+    act(() => {
+      expect(settingsRef.current?.closeActivePane()).toBe(true)
+    })
+    expect(document.body.querySelector('section[aria-label="Providers"]')).not.toBeNull()
+    expect(onClose).not.toHaveBeenCalled()
+
+    act(() => {
+      expect(settingsRef.current?.closeActivePane()).toBe(true)
+    })
+    expect(onClose).toHaveBeenCalledOnce()
   })
 
   it('defaults the Add provider type to the framework vendor (Codex → OpenAI, OpenCode → DeepSeek)', async () => {

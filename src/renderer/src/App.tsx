@@ -19,7 +19,7 @@ import { resolveStartupView } from '@/pages/onboarding/startup-gate'
 import { ComputeApprovalDialog } from '@/pages/settings/ComputeApprovalDialog'
 import { ConnectorApprovalDialog } from '@/pages/settings/ConnectorApprovalDialog'
 import { SkillImportApprovalDialog } from '@/pages/settings/SkillImportApprovalDialog'
-import { SettingsPage } from '@/pages/settings/SettingsPage'
+import { SettingsPage, type SettingsPageHandle } from '@/pages/settings/SettingsPage'
 import { EnvStatusBanner } from '@/pages/workspace/EnvStatusBanner'
 import { WorkspacePage } from '@/pages/workspace/WorkspacePage'
 import { useCloseActivePaneShortcut } from '@/hooks/useCloseActivePaneShortcut'
@@ -57,8 +57,7 @@ const App = (): React.JSX.Element | null => {
     isReady: isSessionPersistenceReady
   })
   const view = useNavigationStore((state) => state.view)
-  // Cmd+W / Ctrl+W closes the open preview panel before it closes the window.
-  useCloseActivePaneShortcut()
+  const settingsPageRef = useRef<SettingsPageHandle>(null)
   useWindowFindAppearanceSync()
   const loadProjects = useProjectStore((state) => state.loadProjects)
   const isSettingsLoaded = useSettingsStore((state) => state.isLoaded)
@@ -112,6 +111,15 @@ const App = (): React.JSX.Element | null => {
   })
   const [isCloseConfirmOpen, setIsCloseConfirmOpen] = useState(false)
   const [isGlobalSearchOpen, setIsGlobalSearchOpen] = useState(false)
+  // Cmd+W / Ctrl+W closes transient modals before falling through to preview panes/window.
+  const closeActiveModal = useCallback((): boolean => {
+    if (isGlobalSearchOpen) {
+      setIsGlobalSearchOpen(false)
+      return true
+    }
+    return settingsPageRef.current?.closeActivePane() ?? false
+  }, [isGlobalSearchOpen])
+  useCloseActivePaneShortcut(closeActiveModal)
   const startupView = isSettingsLoaded
     ? resolveStartupView({ onboardingDone: onboardingCompletedAt !== undefined })
     : undefined
@@ -146,7 +154,17 @@ const App = (): React.JSX.Element | null => {
         event.key !== ',' ||
         !(event.metaKey || event.ctrlKey) ||
         startupView !== 'app' ||
-        !isSessionPersistenceHydrated
+        !isSessionPersistenceHydrated ||
+        isSettingsOpen ||
+        isGlobalSearchOpen ||
+        hasConnectorApproval ||
+        hasComputeApproval ||
+        hasSkillImportApproval ||
+        isUpdateDialogOpen ||
+        isFilePreviewOpen ||
+        isCloseConfirmOpen ||
+        missingDataRoot !== undefined ||
+        legacyMove !== undefined
       ) {
         return
       }
@@ -156,7 +174,21 @@ const App = (): React.JSX.Element | null => {
 
     window.addEventListener('keydown', openSettingsFromShortcut)
     return () => window.removeEventListener('keydown', openSettingsFromShortcut)
-  }, [isSessionPersistenceHydrated, openSettings, startupView])
+  }, [
+    hasComputeApproval,
+    hasConnectorApproval,
+    hasSkillImportApproval,
+    isCloseConfirmOpen,
+    isFilePreviewOpen,
+    isGlobalSearchOpen,
+    isSessionPersistenceHydrated,
+    isSettingsOpen,
+    isUpdateDialogOpen,
+    legacyMove,
+    missingDataRoot,
+    openSettings,
+    startupView
+  ])
 
   useEffect(() => {
     const toggleGlobalSearch = (event: KeyboardEvent): void => {
@@ -498,6 +530,7 @@ const App = (): React.JSX.Element | null => {
         />
       )}
       <SettingsPage
+        ref={settingsPageRef}
         open={isSettingsOpen}
         onClose={closeSettings}
         onOpenSession={openPermissionSession}

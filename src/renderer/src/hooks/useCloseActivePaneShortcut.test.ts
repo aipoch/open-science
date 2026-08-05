@@ -41,7 +41,7 @@ const renderHook = (hook: () => void): { unmount: () => void } => {
 }
 
 // Minimal previewable file tab; only identity fields matter for the close ladder.
-const fileTab = (id: string): PreviewItem => ({
+const fileTab = (id: string): Extract<PreviewItem, { type: 'file' }> => ({
   id,
   sessionId: 'session',
   type: 'file',
@@ -150,6 +150,39 @@ describe('useCloseActivePaneShortcut', () => {
     act(() => closeActivePane?.())
 
     expect(usePreviewWorkbenchStore.getState().panelState).toBe('collapsed')
+    expect(close).not.toHaveBeenCalled()
+    unmount()
+  })
+
+  it('lets an active modal handle the shortcut before preview panes or the window', () => {
+    useNavigationStore.setState({ view: 'workspace' })
+    usePreviewWorkbenchStore.getState().upsertAndActivateItem(fileTab('kept-open'))
+    const closeActiveModal = vi.fn(() => true)
+
+    const { unmount } = renderHook(() => useCloseActivePaneShortcut(closeActiveModal))
+    act(() => closeActivePane?.())
+
+    expect(closeActiveModal).toHaveBeenCalledOnce()
+    expect(usePreviewWorkbenchStore.getState().items).toHaveLength(1)
+    expect(close).not.toHaveBeenCalled()
+    unmount()
+  })
+
+  it('closes transient preview modals before preview tabs or the window', () => {
+    useNavigationStore.setState({ view: 'workspace' })
+    const preview = usePreviewWorkbenchStore.getState()
+    preview.upsertAndActivateItem(fileTab('kept-open'))
+    preview.setToolItemExpanded('expanded-tool')
+    preview.openFileDialog(fileTab('dialog'))
+
+    const { unmount } = renderHook(() => useCloseActivePaneShortcut())
+    act(() => closeActivePane?.())
+    expect(usePreviewWorkbenchStore.getState().fileDialogItem).toBeUndefined()
+    expect(usePreviewWorkbenchStore.getState().expandedToolItemId).toBe('expanded-tool')
+
+    act(() => closeActivePane?.())
+    expect(usePreviewWorkbenchStore.getState().expandedToolItemId).toBeNull()
+    expect(usePreviewWorkbenchStore.getState().items).toHaveLength(1)
     expect(close).not.toHaveBeenCalled()
     unmount()
   })

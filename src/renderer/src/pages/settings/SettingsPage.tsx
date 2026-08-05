@@ -19,7 +19,7 @@ import {
   Zap
 } from 'lucide-react'
 import { Dialog } from 'radix-ui'
-import { useEffect, useState } from 'react'
+import { forwardRef, useEffect, useImperativeHandle, useState } from 'react'
 
 import {
   resolveCodexSubscriptionType,
@@ -69,6 +69,10 @@ type SettingsPageProps = {
   open: boolean
   onClose: () => void
   onOpenSession?: (sessionId: string) => void
+}
+
+type SettingsPageHandle = {
+  closeActivePane: () => boolean
 }
 
 // The model panel sub-view, driven by the settings navigation history so add/edit is a breadcrumb page.
@@ -184,7 +188,10 @@ const INITIAL_LOCATION: NavLocation = {
 
 // App-level model settings surface. Reuses the onboarding cards/form; manages providers (CRUD +
 // activate + test). Opened from the Home/Workspace gear entry.
-const SettingsPage = ({ open, onClose, onOpenSession }: SettingsPageProps): React.JSX.Element => {
+const SettingsPage = forwardRef<SettingsPageHandle, SettingsPageProps>(function SettingsPage(
+  { open, onClose, onOpenSession },
+  ref
+): React.JSX.Element {
   const providers = useSettingsStore((state) => state.providers)
   const agentFrameworkId = useSettingsStore((state) => state.agentFrameworkId)
   const frameworkEndpoints = useSettingsStore(selectFrameworkApiEndpoints)
@@ -526,6 +533,15 @@ const SettingsPage = ({ open, onClose, onOpenSession }: SettingsPageProps): Reac
     if (!canGoForward) return
     setHistoryIndex((index) => index + 1)
   }
+
+  useImperativeHandle(ref, () => ({
+    closeActivePane: () => {
+      if (!open) return false
+      if (breadcrumb) navigate(breadcrumb.rootTo)
+      else onClose()
+      return true
+    }
+  }))
 
   // A provider form (add/edit) is open when the model panel is on a non-list sub-view.
   const isProviderFormOpen = activePanel === 'model' && modelView.kind !== 'list'
@@ -991,6 +1007,6 @@ const SettingsPage = ({ open, onClose, onOpenSession }: SettingsPageProps): Reac
       </Dialog.Portal>
     </Dialog.Root>
   )
-}
+})
 
-export { SettingsPage }
+export { SettingsPage, type SettingsPageHandle }
