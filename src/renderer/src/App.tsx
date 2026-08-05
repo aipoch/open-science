@@ -145,7 +145,8 @@ const App = (): React.JSX.Element | null => {
         event.isComposing ||
         event.key !== ',' ||
         !(event.metaKey || event.ctrlKey) ||
-        startupView !== 'app'
+        startupView !== 'app' ||
+        !isSessionPersistenceHydrated
       ) {
         return
       }
@@ -155,7 +156,7 @@ const App = (): React.JSX.Element | null => {
 
     window.addEventListener('keydown', openSettingsFromShortcut)
     return () => window.removeEventListener('keydown', openSettingsFromShortcut)
-  }, [openSettings, startupView])
+  }, [isSessionPersistenceHydrated, openSettings, startupView])
 
   useEffect(() => {
     const toggleGlobalSearch = (event: KeyboardEvent): void => {

@@ -330,6 +330,26 @@ describe('App startup routing', () => {
     expect(mocks.settings.openSettings).not.toHaveBeenCalled()
 
     mocks.settings.isLoaded = true
+    mocks.sessionPersistence.isHydrated = false
+    mocks.sessionPersistence.isLoading = true
+    mocks.sessionPersistence.isReady = false
+    await act(async () => root.render(<App />))
+
+    window.dispatchEvent(
+      new KeyboardEvent('keydown', { key: ',', metaKey: true, cancelable: true })
+    )
+    expect(mocks.settings.openSettings).not.toHaveBeenCalled()
+
+    mocks.sessionPersistence.isLoading = false
+    mocks.sessionPersistence.loadError = 'saved conversations unavailable'
+    await act(async () => root.render(<App />))
+
+    window.dispatchEvent(
+      new KeyboardEvent('keydown', { key: ',', ctrlKey: true, cancelable: true })
+    )
+    expect(mocks.settings.openSettings).not.toHaveBeenCalled()
+
+    mocks.sessionPersistence.isHydrated = true
     await act(async () => root.render(<App />))
 
     window.dispatchEvent(
