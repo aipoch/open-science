@@ -651,7 +651,8 @@ describe('workspace agent message sending', () => {
       [],
       [],
       undefined,
-      expect.objectContaining({ promptMessageId: expect.any(String) })
+      expect.objectContaining({ promptMessageId: expect.any(String) }),
+      true
     )
     expect(useSessionStore.getState().sessions[0].branchContextResetRequired).toBeUndefined()
   })
@@ -1125,7 +1126,8 @@ describe('workspace agent message sending', () => {
       undefined,
       undefined,
       undefined,
-      expect.objectContaining({ promptMessageId: expect.any(String) })
+      expect.objectContaining({ promptMessageId: expect.any(String) }),
+      false
     )
   })
 
@@ -1201,7 +1203,8 @@ describe('workspace agent message sending', () => {
       [],
       [],
       undefined,
-      expect.objectContaining({ promptMessageId: branched?.messageId })
+      expect.objectContaining({ promptMessageId: branched?.messageId }),
+      true
     )
   })
 
@@ -1341,7 +1344,8 @@ describe('workspace agent message sending', () => {
       [finalizedHistory],
       [],
       undefined,
-      expect.objectContaining({ promptMessageId: branched?.messageId })
+      expect.objectContaining({ promptMessageId: branched?.messageId }),
+      true
     )
   })
 
@@ -1469,7 +1473,8 @@ describe('workspace agent message sending', () => {
       [finalizedHistory],
       [],
       undefined,
-      expect.objectContaining({ promptMessageId: branched?.messageId })
+      expect.objectContaining({ promptMessageId: branched?.messageId }),
+      true
     )
   })
 
@@ -1851,7 +1856,8 @@ describe('workspace agent message sending', () => {
       undefined,
       undefined,
       undefined,
-      expect.objectContaining({ promptMessageId: expect.any(String) })
+      expect.objectContaining({ promptMessageId: expect.any(String) }),
+      false
     )
     expect(useSessionStore.getState().sessions[0].messages[0].uploads?.[0]).not.toHaveProperty(
       'path'
@@ -1957,7 +1963,8 @@ describe('workspace agent message sending', () => {
       undefined,
       undefined,
       undefined,
-      expect.objectContaining({ promptMessageId: expect.any(String) })
+      expect.objectContaining({ promptMessageId: expect.any(String) }),
+      false
     )
     expect(useSessionStore.getState().selectedSessionId).toBe('transport-session-1')
     expect(useSessionStore.getState().sessions[0]).toMatchObject({
@@ -2895,7 +2902,8 @@ describe('resuming an interrupted session on demand', () => {
       undefined,
       undefined,
       undefined,
-      expect.objectContaining({ promptMessageId: expect.any(String) })
+      expect.objectContaining({ promptMessageId: expect.any(String) }),
+      false
     )
 
     const session = useSessionStore.getState().sessions[0]
@@ -3034,6 +3042,39 @@ describe('resuming an interrupted session on demand', () => {
     expect(preamble).toContain('Done, saved chart.png')
     // The re-sent interrupted turn is prior-context only: it is not folded into its own preamble.
     expect(preamble).not.toContain('now add a trend line')
+    expect(runtime.sendPrompt.mock.calls[0]?.[10]).toBe(true)
+  })
+
+  it('marks a fresh-context retry even when the interrupted first turn has no replayable history', async () => {
+    useSessionStore.getState().appendUserMessage({
+      sessionId: 'session-1',
+      content: 'Run the first notebook cell',
+      cwd: '/workspace/project',
+      projectId: 'default-project',
+      permissionProfile: 'ask'
+    })
+    useSessionStore.getState().markDisconnected('session-1')
+
+    const runtime = {
+      state: createSnapshot([]),
+      createSession: vi.fn(),
+      resumeSession: vi
+        .fn()
+        .mockResolvedValueOnce({
+          sessionId: 'session-1',
+          cwd: '/workspace/project',
+          contextReset: true
+        })
+        .mockResolvedValue({ sessionId: 'session-1', cwd: '/workspace/project' }),
+      resetSessionContext: vi.fn(),
+      sendPrompt: vi.fn().mockResolvedValue(createSnapshot(['session-1']))
+    }
+
+    await resumeInterruptedWorkspaceSession(runtime, 'session-1')
+    await flushRuntimeTasks()
+
+    expect(runtime.sendPrompt.mock.calls[0]?.[5]).toBeUndefined()
+    expect(runtime.sendPrompt.mock.calls[0]?.[10]).toBe(true)
   })
 
   it('does not replay a history preamble when the interrupted resume kept agent context', async () => {

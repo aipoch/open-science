@@ -817,8 +817,12 @@ class AcpRuntimeCoordinator {
         const contextReset = await ensureActivitySession(request.sessionId)
         const historyPreamble = options.session?.historyPreamble
         return this.dispatchPrompt(
-          contextReset && historyPreamble && !request.historyPreamble
-            ? { ...request, historyPreamble }
+          contextReset
+            ? {
+                ...request,
+                contextReset: true,
+                ...(historyPreamble && !request.historyPreamble ? { historyPreamble } : {})
+              }
             : request,
           undefined,
           'sendPrompt',

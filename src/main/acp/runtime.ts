@@ -2195,6 +2195,7 @@ class AcpRuntime {
           request.historyPreamble = request.resumeFallback?.historyPreamble
           request.historyAttachments = request.resumeFallback?.historyAttachments
           request.historyImages = request.resumeFallback?.historyImages
+          request.contextReset = true
         }
 
         const reloaded = this.activeSessionFor(request.sessionId)
@@ -2377,9 +2378,10 @@ class AcpRuntime {
           .filter((segment): segment is string => Boolean(segment))
           .join('\n\n') || undefined
       const codexSkillInputs = [...skillPreparation.codexSkillInputs]
-      const notebookHandoff = request.historyPreamble
-        ? this.notebookOptions?.peekHandoffContext?.(request.sessionId)
-        : undefined
+      const notebookHandoff =
+        request.contextReset || request.historyPreamble
+          ? this.notebookOptions?.peekHandoffContext?.(request.sessionId)
+          : undefined
       const promptText = [
         request.historyPreamble,
         notebookHandoff ? buildNotebookHandoffPrompt(notebookHandoff) : undefined,

@@ -385,6 +385,7 @@ describe('TaskRunner', () => {
       {
         sessionId: existing.id,
         text: 'Follow-up question',
+        contextReset: true,
         historyPreamble:
           'Previous conversation:\n\nUser: Initial question\n\nAssistant: Initial answer'
       }

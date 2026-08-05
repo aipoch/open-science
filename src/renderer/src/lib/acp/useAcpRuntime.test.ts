@@ -309,7 +309,9 @@ describe('useAcpRuntime payload construction', () => {
         'prior transcript',
         [attachment] as never,
         [image] as never,
-        resumeFallback as never
+        resumeFallback as never,
+        undefined,
+        true
       )
     })
 
@@ -320,7 +322,8 @@ describe('useAcpRuntime payload construction', () => {
       historyPreamble: 'prior transcript',
       historyAttachments: [attachment],
       historyImages: [image],
-      resumeFallback
+      resumeFallback,
+      contextReset: true
     })
   })
 
@@ -346,7 +349,8 @@ describe('useAcpRuntime payload construction', () => {
       'historyPreamble',
       'historyAttachments',
       'historyImages',
-      'resumeFallback'
+      'resumeFallback',
+      'contextReset'
     ]) {
       expect(field in payload).toBe(false)
     }

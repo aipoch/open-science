@@ -2274,6 +2274,7 @@ describe('AcpRuntimeCoordinator', () => {
         sessionId: 'old-session',
         text: '[Auditor] fix this',
         historyPreamble: 'prior transcript',
+        contextReset: true,
         provenanceContext: { promptMessageId: expect.stringMatching(/^prompt-/u) }
       },
       'prompt-attempt-1'

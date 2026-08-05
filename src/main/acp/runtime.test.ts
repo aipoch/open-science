@@ -10882,6 +10882,43 @@ describe('ACP runtime session management', () => {
     expect(fakeAgent.prompts[1]?.text).not.toContain('<open_science_notebook_continuity>')
   })
 
+  it('hands off live Notebook state after a context reset with no replayable transcript', async () => {
+    const process = new FakeAgentProcess()
+    const fakeAgent = startFakeAgent(process, ['session-1'])
+    const peekHandoffContext = vi.fn(() => ({
+      executionCount: 1,
+      cells: [{ id: 'cell-1', language: 'python' as const, status: 'completed' as const }],
+      kernels: [{ kind: 'python' as const, status: 'idle' as const }],
+      runtimes: []
+    }))
+    const runtime = new AcpRuntime({
+      appVersion: '0.1.0',
+      defaultCwd: '/workspace',
+      spawnAgent: () => asAgentProcess(process),
+      notebook: {
+        projectName: 'default-project',
+        mcpEntryPath: '/app/out/main/index.js',
+        getRpcConnection: async () => ({
+          endpoint: 'http://127.0.0.1:1/notebook',
+          token: 'notebook-token'
+        }),
+        peekHandoffContext
+      }
+    })
+
+    await runtime.createSession({ cwd: '/workspace' })
+    await runtime.sendPrompt({
+      sessionId: 'session-1',
+      text: 'retry the interrupted first turn',
+      contextReset: true
+    })
+
+    expect(peekHandoffContext).toHaveBeenCalledOnce()
+    expect(fakeAgent.prompts[0]?.text).toContain('<open_science_notebook_continuity>')
+    expect(fakeAgent.prompts[0]?.text).toContain('"executionCount":1')
+    expect(fakeAgent.prompts[0]?.text).not.toContain('Previous conversation')
+  })
+
   it('sends an app-owned continuation without publishing its synthetic text as a user message', async () => {
     const process = new FakeAgentProcess()
     const fakeAgent = startFakeAgent(process, ['session-1'], {

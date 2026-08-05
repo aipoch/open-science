@@ -22,6 +22,7 @@ const toAcpPromptRequest = (request: TaskAgentPromptRequest): AcpPromptRequest =
   text: request.text,
   ...(request.skillIds?.length ? { forcedSkillIds: request.skillIds } : {}),
   ...(request.historyPreamble ? { historyPreamble: request.historyPreamble } : {}),
+  ...(request.contextReset ? { contextReset: true } : {}),
   ...(request.resumeFallback ? { resumeFallback: request.resumeFallback } : {})
 })
 

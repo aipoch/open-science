@@ -76,6 +76,7 @@ type TaskAgentPromptRequest = {
   text: string
   skillIds?: string[]
   historyPreamble?: string
+  contextReset?: boolean
   resumeFallback?: { historyPreamble?: string }
 }
 
@@ -341,6 +342,7 @@ class TaskRunner {
       request,
       prompt,
       prepared.historyPreamble,
+      prepared.contextReset,
       prepared.resumeFallback
     ).finally(() => this.releaseSession(session.id, runId))
     return cloneRun(run)
@@ -382,6 +384,7 @@ class TaskRunner {
   ): Promise<{
     session: PersistedChatSession
     historyPreamble?: string
+    contextReset?: boolean
     resumeFallback?: TaskAgentPromptRequest['resumeFallback']
   }> {
     const now = this.dependencies.now()
@@ -452,6 +455,7 @@ class TaskRunner {
     return {
       session,
       historyPreamble: sessionInfo.contextReset ? previousHistoryPreamble : undefined,
+      contextReset: sessionInfo.contextReset,
       resumeFallback:
         request.skillIds?.length && previousHistoryPreamble
           ? { historyPreamble: previousHistoryPreamble }
@@ -465,6 +469,7 @@ class TaskRunner {
     request: StartTaskRunRequest,
     prompt: string,
     historyPreamble?: string,
+    contextReset?: boolean,
     resumeFallback?: TaskAgentPromptRequest['resumeFallback']
   ): Promise<void> {
     let promptError: unknown
@@ -474,6 +479,7 @@ class TaskRunner {
         text: prompt,
         ...(request.skillIds?.length ? { skillIds: request.skillIds } : {}),
         ...(historyPreamble ? { historyPreamble } : {}),
+        ...(contextReset ? { contextReset: true } : {}),
         ...(resumeFallback ? { resumeFallback } : {})
       })
     } catch (error) {

@@ -630,7 +630,8 @@ const startPendingSessionPrompt = (
   forcedSkillIds: string[] | undefined,
   referencedArtifacts: FileReference[] | undefined,
   specialistId: string | undefined,
-  historyReplay?: HistoryReplayContext
+  historyReplay?: HistoryReplayContext,
+  contextReset = false
 ): void => {
   void (async () => {
     if (!sessionOwnsActivePrompt(pending.sessionId, pending.messageId)) return
@@ -714,7 +715,8 @@ const startPendingSessionPrompt = (
         historyReplay?.historyAttachments,
         historyReplay?.historyImages,
         undefined,
-        getPromptProvenanceContext(runtimeSessionId, bound.messageId)
+        getPromptProvenanceContext(runtimeSessionId, bound.messageId),
+        contextReset
       )
       .then((snapshot) => {
         useSessionStore.getState().clearPendingContextReplay(runtimeSessionId, bound.messageId)
@@ -854,7 +856,8 @@ const sendWorkspaceMessage = async (
       forcedSkillIds,
       referencedArtifacts,
       pendingSession.specialistId,
-      historyReplay
+      historyReplay,
+      true
     )
 
     return pending
@@ -933,7 +936,8 @@ const sendWorkspaceMessage = async (
         forcedSkillIds,
         referencedArtifacts,
         currentSession.pendingContextReplayMessageId ? currentSession.specialistId : undefined,
-        historyReplay
+        historyReplay,
+        Boolean(currentSession.pendingContextReplayMessageId)
       )
       return appended
     }
@@ -1152,6 +1156,13 @@ const sendWorkspaceMessage = async (
             }
           })()
         : undefined
+    const contextReset = Boolean(
+      branchContextResetPerformed ||
+      contextResetFromResume ||
+      forceHistoryReplay ||
+      specialistSwitchReplay ||
+      preparedSession?.pendingContextReplayMessageId
+    )
 
     let promptAttachments = effectiveAttachments
 
@@ -1186,7 +1197,8 @@ const sendWorkspaceMessage = async (
         historyAttachments,
         historyImages,
         resumeFallback,
-        getPromptProvenanceContext(targetSessionId, appended.messageId)
+        getPromptProvenanceContext(targetSessionId, appended.messageId),
+        contextReset
       )
       .then((snapshot) => {
         if (branchContextResetPerformed) {

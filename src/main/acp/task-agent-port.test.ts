@@ -62,6 +62,7 @@ describe('ACP Task Agent port', () => {
       text: 'Continue the research.',
       skillIds: ['literature-review'],
       historyPreamble: 'Previous conversation.',
+      contextReset: true,
       resumeFallback: { historyPreamble: 'Fallback conversation.' }
     })
 
@@ -86,6 +87,7 @@ describe('ACP Task Agent port', () => {
       text: 'Continue the research.',
       forcedSkillIds: ['literature-review'],
       historyPreamble: 'Previous conversation.',
+      contextReset: true,
       resumeFallback: { historyPreamble: 'Fallback conversation.' }
     })
   })

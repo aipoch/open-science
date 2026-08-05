@@ -530,6 +530,9 @@ export type AcpPromptRequest = {
   historyPreamble?: string
   historyAttachments?: UploadedAttachment[]
   historyImages?: AcpMessageImage[]
+  // Transient prompt-boundary signal: the provider context was replaced, so live application state
+  // must be handed off even when there are no replayable transcript turns. Never persisted.
+  contextReset?: boolean
   // Prepared by the renderer for an internal skill-triggered reconnect. Used only if that reconnect
   // cannot resume the agent session and must adopt a fresh one.
   resumeFallback?: {
