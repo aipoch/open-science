@@ -547,7 +547,7 @@
   }
 
   [data-session-message-link] {
-    @apply cursor-pointer appearance-none border-0 bg-transparent p-0 text-left font-medium text-sd-link underline underline-offset-2 transition-colors duration-150 ease-out;
+    @apply cursor-pointer appearance-none border-0 bg-transparent p-0 text-left font-medium text-primary underline underline-offset-2 transition-colors duration-150 ease-out;
     display: inline;
     font: inherit;
     font-weight: 500;
