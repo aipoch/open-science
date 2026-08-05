@@ -537,13 +537,15 @@ const SettingsPage = forwardRef<SettingsPageHandle, SettingsPageProps>(function 
   useImperativeHandle(ref, () => ({
     closeActivePane: () => {
       if (!open) return false
-      const hasNestedDialog = Array.from(
+      const activeDialog = Array.from(
         document.querySelectorAll<HTMLElement>(
           '[role="dialog"][data-state="open"], [role="alertdialog"][data-state="open"]'
         )
-      ).some((dialog) => dialog.dataset.slot !== 'settings-surface')
-      if (hasNestedDialog) {
-        document.dispatchEvent(
+      )
+        .filter((dialog) => dialog.dataset.slot !== 'settings-surface')
+        .at(-1)
+      if (activeDialog) {
+        activeDialog.dispatchEvent(
           new KeyboardEvent('keydown', { key: 'Escape', bubbles: true, cancelable: true })
         )
         return true

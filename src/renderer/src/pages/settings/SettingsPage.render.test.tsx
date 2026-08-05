@@ -4,11 +4,12 @@ import { createRoot, type Root } from 'react-dom/client'
 import { Dialog } from 'radix-ui'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 
-import { SettingsPage, type SettingsPageHandle } from './SettingsPage'
-import { clickRadixMenuItem, openRadixMenu } from './test-utils'
+import { LinkSafetyModal } from '@/components/streamdown/LinkSafetyModal'
 import type { SpecialistProfileView } from '../../../../shared/specialist'
 import { useSpecialistStore } from '@/stores/specialist-store'
 import { createInitialSettingsState, useSettingsStore } from '@/stores/settings-store'
+import { SettingsPage, type SettingsPageHandle } from './SettingsPage'
+import { clickRadixMenuItem, openRadixMenu } from './test-utils'
 
 if (!Element.prototype.hasPointerCapture) {
   Element.prototype.hasPointerCapture = (): boolean => false
@@ -842,6 +843,30 @@ describe('SettingsPage layout', () => {
       expect(settingsRef.current?.closeActivePane()).toBe(true)
     })
     expect(onClose).toHaveBeenCalledOnce()
+  })
+
+  it('dispatches the close-pane Escape to an active link-safety dialog', () => {
+    const settingsRef = createRef<SettingsPageHandle>()
+    const onLinkClose = vi.fn()
+    act(() => {
+      root.render(
+        <>
+          <SettingsPage ref={settingsRef} open onClose={vi.fn()} />
+          <LinkSafetyModal
+            url="https://example.com/paper"
+            isOpen
+            onClose={onLinkClose}
+            onConfirm={vi.fn()}
+          />
+        </>
+      )
+    })
+
+    act(() => {
+      expect(settingsRef.current?.closeActivePane()).toBe(true)
+    })
+
+    expect(onLinkClose).toHaveBeenCalledOnce()
   })
 
   it('defaults the Add provider type to the framework vendor (Codex → OpenAI, OpenCode → DeepSeek)', async () => {
