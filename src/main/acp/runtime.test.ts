@@ -3766,6 +3766,39 @@ describe('ACP runtime session management', () => {
     ).resolves.toBeDefined()
   })
 
+  it('does not dispatch a superseded prompt after its preparation finishes', async () => {
+    const process = new FakeAgentProcess()
+    const agent = startFakeAgent(process, ['remote-session-1', 'remote-session-2'])
+    const namesGate = createDeferred<string[]>()
+    const namesForIds = vi.fn(() => namesGate.promise)
+    const runtime = new AcpRuntime({
+      appVersion: '0.1.0',
+      defaultCwd: '/workspace',
+      spawnAgent: () => asAgentProcess(process),
+      skills: {
+        needForceLoad: vi.fn(async () => []),
+        namesForIds
+      }
+    })
+
+    const session = await runtime.createSession({ cwd: '/workspace' })
+    const stalePrompt = runtime.sendPrompt({
+      sessionId: session.sessionId,
+      text: 'stale turn',
+      forcedSkillIds: ['research']
+    })
+    await vi.waitFor(() => expect(namesForIds).toHaveBeenCalledTimes(1))
+
+    await runtime.resetSessionContext({ sessionId: session.sessionId, cwd: '/workspace' })
+    namesGate.resolve(['research'])
+    await expect(stalePrompt).resolves.toMatchObject({ stopReason: 'cancelled' })
+    expect(agent.prompts).toHaveLength(0)
+
+    await runtime.sendPrompt({ sessionId: session.sessionId, text: 'replacement turn' })
+    expect(agent.prompts).toHaveLength(1)
+    expect(agent.prompts[0]?.text).toContain('replacement turn')
+  })
+
   it('does not let a superseded turn finally clear the replay turn in-flight lock', async () => {
     const root = await createTemporaryRoot()
     const artifactRepository = new ArtifactRepository(root)

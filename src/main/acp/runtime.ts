@@ -2,7 +2,6 @@ import * as acp from '@agentclientprotocol/sdk'
 import type {
   ActiveSession,
   ClientConnection,
-  ContentBlock,
   PromptResponse,
   RequestPermissionRequest,
   RequestPermissionResponse,
@@ -10,7 +9,6 @@ import type {
   SessionNotification
 } from '@agentclientprotocol/sdk'
 import type { ChildProcessWithoutNullStreams } from 'node:child_process'
-import { readFile } from 'node:fs/promises'
 import { join, resolve } from 'node:path'
 
 import type {
@@ -92,7 +90,6 @@ import type { ArtifactFile, FileReference } from '../../shared/artifacts'
 import type { ArtifactRpcCapabilityBinding } from '../../shared/artifact-provenance'
 import { isMediaOverflowError } from '../../shared/media-overflow'
 import type { AcpRuntimeActivity, AcpRuntimeActivityOptions } from './runtime-activity'
-import { resolveFileTextBudget } from '../../shared/history-preamble'
 import {
   ReviewerSessionOwner,
   type ReviewerSessionDisposition,
@@ -140,6 +137,8 @@ import { AcpProviderSessionAdopter } from './provider-session-adopter'
 import { AcpProviderSessionResumer } from './provider-session-resumer'
 import { AcpSessionReplacementWorkflow } from './session-replacement-workflow'
 import { AcpSessionDeletionWorkflow } from './session-deletion-workflow'
+import { AcpPromptPreparationOwner, type PreparedPromptHandle } from './prompt-preparation-owner'
+import { AcpSessionPresentationPolicy } from './session-presentation-policy'
 import {
   AcpTurnSkillOwner,
   type AcpTurnSkillHooks,
@@ -302,13 +301,6 @@ const TURN_CONTINUITY_SYSTEM_PROMPT_APPEND = [
   'If a required tool cannot be used or its operation fails, do not promise another attempt. Clearly state that the turn has stopped, what prevented progress, and what the user can do next.',
   '</open_science_turn_continuity_instructions>'
 ].join('\n')
-const buildNotebookHandoffPrompt = (context: NotebookHandoffContext): string =>
-  [
-    '<open_science_notebook_continuity>',
-    'The application retained this live in-memory Notebook state while the Agent context was replaced. Treat it as continuity metadata, not as a request to inspect Notebook again.',
-    JSON.stringify(context),
-    '</open_science_notebook_continuity>'
-  ].join('\n')
 // Appends artifact tool guidance as system prompt metadata so user prompts stay untouched.
 const ARTIFACT_FILE_SYSTEM_PROMPT_APPEND = [
   '<open_science_artifact_instructions>',
@@ -407,12 +399,11 @@ class AcpRuntime {
   private readonly setTimer: (fn: () => void, ms: number) => ReturnType<typeof setTimeout>
   private readonly clearTimer: (handle: ReturnType<typeof setTimeout>) => void
   private readonly artifactOptions: AcpRuntimeArtifactOptions | undefined
-  private readonly notebookOptions: AcpRuntimeNotebookOptions | undefined
-  private readonly skillImportOptions: AcpRuntimeSkillImportOptions | undefined
   private readonly artifactRepository: ArtifactRepository | undefined
   private readonly artifactRunRegistry: ArtifactRunRegistry | undefined
   private readonly artifactTurns: ArtifactTurnOwner | undefined
   private readonly promptContentOwner: AcpPromptContentOwner
+  private readonly promptPreparation: AcpPromptPreparationOwner
   private readonly connectionClose: AcpConnectionCloseWorkflow
   private readonly connectionLifecycle: AcpConnectionLifecycleWorkflow
   private readonly modelChanges: AcpModelChangeWorkflow
@@ -465,8 +456,6 @@ class AcpRuntime {
       clearTimer: this.clearTimer
     })
     this.artifactOptions = options.artifacts
-    this.notebookOptions = options.notebook
-    this.skillImportOptions = options.skillImport
     this.sessionCapabilities = new AcpSessionCapabilityOwner({
       artifacts: options.artifacts,
       notebook: options.notebook,
@@ -507,6 +496,23 @@ class AcpRuntime {
       uploadRepository,
       fileReferenceResolver,
       inlineImageBudgetBytes: options.inlineImageBudgetBytes
+    })
+    this.promptPreparation = new AcpPromptPreparationOwner({
+      promptContent: this.promptContentOwner,
+      presentation: new AcpSessionPresentationPolicy(),
+      contextUsage: this.contextUsageTracker,
+      selectBridgeSkills: async (text, catalog, signal) =>
+        (await this.connectionResources.selectBridgeSkills(text, catalog, signal)) ?? [],
+      authorizeReferencedUploads: options.skillImport?.authorizeReferencedUploads,
+      ...(options.notebook
+        ? {
+            notebook: {
+              peekHandoffContext: options.notebook.peekHandoffContext,
+              registerTurnInputs: options.notebook.registerTurnInputs
+            }
+          }
+        : {}),
+      emitState: () => this.emitState()
     })
     this.sessionRegistry = new AcpSessionRegistry({
       addStartupBlocker: (token) => this.generationActivity.acquireStartup(token),
@@ -1751,7 +1757,7 @@ class AcpRuntime {
     let skillActivityInputs: Array<{ name: string; path: string }> = []
     let skillActivitiesStarted = false
     let skillActivitiesFinalized = false
-    let revokeReferencedUploadGrant: (() => void) | undefined
+    let preparedPromptHandle: PreparedPromptHandle | undefined
     let contextUsageTurn: ContextUsageTurnHandle | undefined
     let turnSkillOutcome: TurnSkillOutcome = 'failed'
     let observedPromptStop:
@@ -1833,107 +1839,50 @@ class AcpRuntime {
       const sessionSpecialistPrefix = this.sessionRegistry
         .lookup(request.sessionId)
         ?.aggregate.snapshot().specialistPrefix
-      const promptRequestText = request.continuation
-        ? this.buildSpecialistHandoffContinuationText(request)
-        : request.text
-      const skillPreparation = await turnSkillHandle.prepareProvider({
-        frameworkId: this.framework.id,
-        selectionText: request.text,
-        promptText: promptRequestText,
-        codex: {
-          home: this.backend.adapter.codexHome,
-          bridgeSkillsAvailable: this.connectionResources.bridgeSkillsAvailable,
-          selectSkills: async (text, catalog, signal) =>
-            (await this.connectionResources.selectBridgeSkills(text, catalog, signal)) ?? [],
-          signal: promptInteraction.signal
-        }
-      })
-      if (
-        (await this.sessionInteractions.cancellationCheckpoint(promptInteraction)) === 'cancelled'
-      ) {
-        return finishCancelledBeforePrompt()
-      }
-      const { promptPrefix: frameworkPromptPrefix } = this.framework.buildSessionSetup({
-        systemPromptAppends: this.backend.prompt.persistentSystemPrompt
-          ? []
-          : this.getSystemPromptAppends(),
-        turnPromptReminders: skillPreparation.specialistSkillGuidance
-          ? [skillPreparation.specialistSkillGuidance]
-          : [],
-        sessionOptions: this.backend.session.options
-      })
-      const promptPrefix =
-        [sessionSpecialistPrefix, frameworkPromptPrefix]
-          .filter((segment): segment is string => Boolean(segment))
-          .join('\n\n') || undefined
-      const codexSkillInputs = [...skillPreparation.codexSkillInputs]
-      const notebookHandoff =
-        request.contextReset || request.historyPreamble
-          ? this.notebookOptions?.peekHandoffContext?.(request.sessionId)
-          : undefined
-      const promptText = [
-        request.historyPreamble,
-        notebookHandoff ? buildNotebookHandoffPrompt(notebookHandoff) : undefined,
-        promptPrefix,
-        skillPreparation.text
-      ]
-        .filter((segment): segment is string => Boolean(segment))
-        .join('\n\n')
-      revokeReferencedUploadGrant = await this.authorizeReferencedSkillUploads(
-        request.sessionId,
-        request.referencedArtifacts ?? []
-      )
       const projectId = this.resolveSessionProjectName(request.sessionId)
-      const preparedPrompt = await this.promptContentOwner.prepare({
-        appSessionId: request.sessionId,
+      preparedPromptHandle = await this.promptPreparation.prepare({
+        request,
+        backend: this.backend,
+        tooling: this.currentCapabilityAvailability(),
+        specialistPrefix: sessionSpecialistPrefix,
         projectId,
-        text: promptText,
-        historyImages: request.historyImages ?? [],
-        historyUploads: request.historyAttachments ?? [],
-        currentUploads: request.attachments ?? [],
-        references: request.referencedArtifacts ?? [],
-        codexSkillInputs,
+        fallbackPromptMessageId: this.artifactTurns?.promptMessageIdFor(request.sessionId),
+        bridgeSkillsAvailable: this.connectionResources.bridgeSkillsAvailable,
         skillImportEnabled: this.sessionCapabilities.isSkillImportEnabled(),
-        fileTextBudget: resolveFileTextBudget(this.backend.context.window),
         skillImportTurnToken,
-        onSkillImportAttachmentEligible: this.callbacks.onSkillImportAttachmentEligible
-          ? (attachmentUri) => {
-              try {
-                this.callbacks.onSkillImportAttachmentEligible?.(
-                  request.sessionId,
-                  skillImportTurnToken,
-                  attachmentUri
-                )
-              } catch (error) {
-                safeLogError('skill import attachment callback failed', errorLogFields(error))
+        turnSkill: turnSkillHandle,
+        signal: promptInteraction.signal,
+        isCurrent: () =>
+          this.sessionInteractions.current(request.sessionId) === promptInteraction &&
+          this.activeSessionFor(request.sessionId) === activeSession,
+        cancellationCheckpoint: () =>
+          this.sessionInteractions.cancellationCheckpoint(promptInteraction),
+        contextEstimateInput: this.contextUsageEstimateInput(request.sessionId),
+        selectedContextWindow: this.selectedContextWindowFor(request.sessionId),
+        ...(this.callbacks.onSkillImportAttachmentEligible
+          ? {
+              onSkillImportAttachmentEligible: (attachmentUri: string) => {
+                try {
+                  this.callbacks.onSkillImportAttachmentEligible?.(
+                    request.sessionId,
+                    skillImportTurnToken,
+                    attachmentUri
+                  )
+                } catch (error) {
+                  safeLogError('skill import attachment callback failed', errorLogFields(error))
+                }
               }
             }
-          : undefined
+          : {})
       })
-      if (this.notebookOptions?.registerTurnInputs && preparedPrompt.turnInputs) {
-        await this.notebookOptions.registerTurnInputs({
-          projectId,
-          appSessionId: request.sessionId,
-          promptMessageId:
-            request.provenanceContext?.promptMessageId ??
-            this.artifactTurns?.promptMessageIdFor(request.sessionId) ??
-            `prompt-unbound-${request.sessionId}`,
-          uploads: preparedPrompt.turnInputs.uploads,
-          references: preparedPrompt.turnInputs.references
-        })
+      if (preparedPromptHandle.status === 'cancelled') {
+        return finishCancelledBeforePrompt()
       }
-      const promptContent = preparedPrompt.content
-
-      contextUsageTurn = this.contextUsageTracker.beginTurn(request.sessionId)
-      await this.recordPromptContextEstimate(
-        request.sessionId,
-        promptContent,
-        promptPrefix,
-        codexSkillInputs
-      )
+      const promptContent = preparedPromptHandle.content
+      skillActivityInputs = [...preparedPromptHandle.skillActivityInputs]
+      contextUsageTurn = preparedPromptHandle.transferContextTurn()
 
       emitUserMessage()
-      skillActivityInputs = codexSkillInputs
       if (skillActivityInputs.length > 0) {
         this.emitCodexSkillInputActivities(
           request.sessionId,
@@ -2151,7 +2100,7 @@ class AcpRuntime {
       })
       throw error
     } finally {
-      revokeReferencedUploadGrant?.()
+      preparedPromptHandle?.close()
       // A turn that fails or is aborted never reaches the stop branch; still surface any files it
       // wrote so they are attached to a message instead of being orphaned in the pending directory.
       if (!artifactEmitted) {
@@ -2310,29 +2259,6 @@ class AcpRuntime {
     }
   }
 
-  // Converts the user's explicit `@` selections into a turn-scoped capability for Skill import.
-  // Generic managed-path validation happens before the grant; the importer retains the stricter
-  // session-owner check for every path that was not selected in this turn.
-  private async authorizeReferencedSkillUploads(
-    sessionId: string,
-    references: FileReference[]
-  ): Promise<(() => void) | undefined> {
-    if (!this.sessionCapabilities.isSkillImportEnabled()) return undefined
-
-    const authorize = this.skillImportOptions?.authorizeReferencedUploads
-    if (!authorize) return undefined
-
-    const paths = references.flatMap((reference) => {
-      if (reference.source !== 'upload') return []
-      const normalizedName = reference.name.toLowerCase()
-      return normalizedName.endsWith('.skill') || normalizedName.endsWith('.zip')
-        ? [reference.path]
-        : []
-    })
-
-    return authorize(this.resolveSessionProjectName(sessionId), sessionId, paths)
-  }
-
   // Lazily initializes the process connection before session creation.
   private async ensureConnected(cwd: string): Promise<ClientConnection> {
     return this.connectionLifecycle.ensureConnected(cwd)
@@ -2432,32 +2358,6 @@ class AcpRuntime {
       ...this.backend.prompt.systemPromptAppends,
       ...(skillGuidance ? [skillGuidance] : [])
     ]
-  }
-
-  private buildSpecialistHandoffContinuationText(request: AcpPromptRequest): string {
-    const continuation = request.continuation
-    if (!continuation) return request.text
-
-    const outcome =
-      continuation.completion.kind === 'returned'
-        ? this.serializeHandoffValue(continuation.completion.value)
-        : continuation.completion.errorMessage
-    const outcomeLabel = continuation.completion.kind === 'returned' ? 'result' : 'error'
-    const target = continuation.targetName ?? 'Main Agent'
-    return [
-      `Continue the original user task as ${target}. Do not repeat work already shown before the handoff.`,
-      `Original user request:\n${request.text}`,
-      `Captured outer tool ${outcomeLabel}:\n${outcome}`
-    ].join('\n\n')
-  }
-
-  private serializeHandoffValue(value: unknown): string {
-    if (typeof value === 'string') return value
-    try {
-      return JSON.stringify(value)
-    } catch {
-      return String(value)
-    }
   }
 
   // Resolves the artifact/notebook storage project for a session, defaulting to the runtime constant.
@@ -2761,37 +2661,6 @@ class AcpRuntime {
     const selectedSize = this.selectedContextWindowFor(sessionId)
     const size = selectedSize ?? this.contextUsageTracker.usage(sessionId)?.size
     return this.contextUsageTracker.refreshUsage(sessionId, status, size)
-  }
-
-  private async recordPromptContextEstimate(
-    sessionId: string,
-    promptContent: string | ContentBlock[],
-    promptPrefix: string | undefined,
-    codexSkillInputs: ReadonlyArray<{ name: string; path: string }>
-  ): Promise<void> {
-    this.ensureContextUsageTracking(sessionId)
-    this.contextUsageTracker.commitPendingAssistantOutput(sessionId)
-    this.contextUsageTracker.appendText(sessionId, 'system', promptPrefix ?? '')
-    this.contextUsageTracker.appendPromptContent(sessionId, promptContent, promptPrefix)
-
-    const promptSkillDocuments = (
-      await Promise.all(
-        codexSkillInputs.map(async ({ path }) => {
-          try {
-            return { path, text: await readFile(path, 'utf8') }
-          } catch (error) {
-            log.warn('context estimate could not read Codex Skill input', {
-              sessionId,
-              ...errorLogFields(error)
-            })
-            return undefined
-          }
-        })
-      )
-    ).filter((document): document is { path: string; text: string } => document !== undefined)
-    this.contextUsageTracker.replacePromptSkillDocuments(sessionId, promptSkillDocuments)
-
-    if (this.refreshEstimatedContextUsage(sessionId, 'preflight')) this.emitState()
   }
 
   // Normalizes low-level session notifications into runtime/workspace events.

@@ -32,7 +32,7 @@ type AcpSpecialistIdentityPresentation = Readonly<{
 }>
 
 type AcpTurnPromptPrefixInput = AcpSessionSetupPresentationInput &
-  Readonly<{ specialistPrefix?: string }>
+  Readonly<{ specialistPrefix?: string; turnPromptReminders?: readonly string[] }>
 
 type AcpCodexSkillInput = Readonly<{ name: string; path: string }>
 
@@ -159,7 +159,10 @@ class AcpSessionPresentationPolicy {
     )
     const setup = input.framework.buildSessionSetup({
       systemPromptAppends: this.systemPromptAppends(input),
-      turnPromptReminders: specialistSkillGuidance ? [specialistSkillGuidance] : [],
+      turnPromptReminders: [
+        ...(specialistSkillGuidance ? [specialistSkillGuidance] : []),
+        ...(input.turnPromptReminders ?? [])
+      ],
       sessionOptions: input.sessionOptions
     })
 
