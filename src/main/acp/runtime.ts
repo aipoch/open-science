@@ -69,11 +69,7 @@ import { getAppClaudeConfigDir } from '../settings/provider-env'
 import type { PermissionGrantRegistry } from '../permission-grants/registry'
 import { withDataRootWrite } from '../storage/migration-state'
 import { opencodeStorageDir } from '../agent-framework/opencode'
-import {
-  ContextUsageTracker,
-  type ContextUsageTurnHandle,
-  type SessionEstimateInput
-} from './context-usage-tracker'
+import { ContextUsageTracker, type SessionEstimateInput } from './context-usage-tracker'
 import { contextUsageMcpSections } from './context-usage-static-context'
 import { createManagedFileReferenceResolver } from './file-reference-resolver'
 import type { UploadRepository } from '../uploads/repository'
@@ -128,35 +124,29 @@ import { AcpProviderSessionAdopter } from './provider-session-adopter'
 import { AcpProviderSessionResumer } from './provider-session-resumer'
 import { AcpSessionReplacementWorkflow } from './session-replacement-workflow'
 import { AcpSessionDeletionWorkflow } from './session-deletion-workflow'
-import { AcpPromptPreparationOwner, type PreparedPromptHandle } from './prompt-preparation-owner'
+import { AcpPromptPreparationOwner } from './prompt-preparation-owner'
 import {
   AcpPromptTurnWorkflow,
-  type AcpActivatedPromptTurn,
+  type AcpExecutedPromptTurn,
   type AcpPromptTurnPlanContext
 } from './prompt-turn-workflow'
 import { AcpSessionPresentationPolicy } from './session-presentation-policy'
 import { AcpProviderPromptExecutor } from './provider-prompt-executor'
-import {
-  AcpPromptOutcomeFinalizer,
-  type AcpPromptFinalizationOutcome
-} from './prompt-outcome-finalizer'
+import { AcpPromptOutcomeFinalizer } from './prompt-outcome-finalizer'
 import type { AcpProviderTurnAdapter } from './provider-turn-adapter'
 import { claudeCodeTurnAdapter } from './claude-turn-adapter'
 import { createCodexTurnAdapter } from './codex-turn-adapter'
 import { AcpOpenCodeTurnAdapter } from './opencode-turn-adapter'
 import { AcpTurnSkillOwner, type AcpTurnSkillHooks } from './turn-skill-owner'
 import { createProductionPlanService } from '../session-plan/production-plan-service'
-import {
-  PLAN_FIRST_TURN_PROMPT_REMINDER,
-  SESSION_PLAN_SYSTEM_PROMPT_APPEND
-} from '../session-plan/guidance'
+import { SESSION_PLAN_SYSTEM_PROMPT_APPEND } from '../session-plan/guidance'
 import type { PlanResponseResult, PlanService } from '../session-plan/plan-service'
 import type {
   ActivePlanProjection,
   GeneratePlanContent,
   PlanResponseCommand
 } from '../../shared/session-plan/contract'
-import { formatPlanProtectedContext, PlanCommandError } from '../../shared/session-plan/contract'
+import { PlanCommandError } from '../../shared/session-plan/contract'
 import type { SessionPlanStepStatus } from '../../shared/session-persistence'
 import type { SessionPersistenceCoordinator } from '../session-persistence/coordinator'
 
@@ -624,6 +614,42 @@ class AcpRuntime {
       registry: this.sessionRegistry,
       interactions: this.sessionInteractions,
       skills: this.turnSkills,
+      preparation: this.promptPreparation,
+      executor: this.providerPromptExecutor,
+      environment: {
+        backend: () => this.backend,
+        tooling: () => this.currentCapabilityAvailability(),
+        bridgeSkillsAvailable: () => this.connectionResources.bridgeSkillsAvailable,
+        skillImportEnabled: () => this.sessionCapabilities.isSkillImportEnabled(),
+        contextEstimateInput: (sessionId) => this.contextUsageEstimateInput(sessionId),
+        selectedContextWindow: (sessionId) => this.selectedContextWindowFor(sessionId),
+        providerAdapter: (frameworkId) => this.providerTurnAdapter(frameworkId),
+        emitSkillActivities: (sessionId, turn, inputs, status) =>
+          this.emitCodexSkillInputActivities(sessionId, turn, inputs, status),
+        onSkillImportAttachmentEligible: this.callbacks.onSkillImportAttachmentEligible,
+        onProviderPromptAccepted: this.callbacks.onProviderPromptAccepted,
+        routeNotification: (notification, sessionId) =>
+          this.handleSessionUpdate(notification, sessionId),
+        diagnosticContext: () => this.diagnosticContext(),
+        pushUserMessage: ({ sessionId, promptMessageId, text }) =>
+          this.pushEvent({
+            kind: 'message',
+            level: 'info',
+            sessionId,
+            ...(promptMessageId ? { promptMessageId } : {}),
+            role: 'user',
+            text
+          })
+      },
+      artifacts: {
+        open: (sessionId, provenance) => this.activateArtifactRun(sessionId, provenance),
+        promptMessageIdFor: (sessionId) => this.artifactTurns?.promptMessageIdFor(sessionId)
+      },
+      planLifecycle: {
+        beforeStop: (sessionId, interaction, response) =>
+          this.checkPromptPlanCompletion(sessionId, interaction, response)
+      },
+      finalizeTurn: (execution) => this.finalizePromptTurn(execution),
       currentCwd: () => this.snapshotOwner.cwd,
       resolveProjectName: (sessionId) => this.resolveSessionProjectName(sessionId),
       preflightPlan: (request) => this.preflightPromptPlan(request),
@@ -633,8 +659,7 @@ class AcpRuntime {
       recordAdmittedPrompt: (request) => this.handoffContinuity.recordAdmittedPrompt(request),
       onPromptStarted: (sessionId, turnToken, promptAttemptId) =>
         this.callbacks.onPromptStarted?.(sessionId, turnToken, promptAttemptId),
-      emitState: () => this.emitState(),
-      continueTurn: (turn) => this.continuePromptTurn(turn)
+      emitState: () => this.emitState()
     })
     const closeState: CloseState = {
       invalidatePendingSessionStartups: () => this.invalidatePendingSessionStartups(),
@@ -1979,6 +2004,47 @@ class AcpRuntime {
     return committed()
   }
 
+  private async checkPromptPlanCompletion(
+    sessionId: string,
+    interaction: AcpPromptSessionInteractionScope,
+    response: PromptResponse
+  ): Promise<void> {
+    const binding = this.planExecutionBindings.get(sessionId)
+    if (
+      response.stopReason !== 'end_turn' ||
+      !this.planService ||
+      binding?.interactionSequence !== interaction.sequence
+    ) {
+      return
+    }
+    const completion = await this.planService.checkTurnCompletion({
+      projectId: this.resolveSessionProjectName(sessionId),
+      sessionId
+    })
+    if (!completion.allow) {
+      throw new Error(
+        `The active Session Plan is not complete (${completion.lifecycle ?? 'incomplete'}).`
+      )
+    }
+  }
+
+  private releasePromptPlanBinding(
+    sessionId: string,
+    interaction: AcpPromptSessionInteractionScope
+  ): void {
+    const binding = this.planExecutionBindings.get(sessionId)
+    if (binding?.interactionSequence === interaction.sequence) {
+      this.planExecutionBindings.delete(sessionId)
+    }
+    const waiter = this.planApprovalWaiters.get(sessionId)
+    if (waiter?.interactionId === interaction.promptMessageId) {
+      this.rejectPlanApprovalWaiter(
+        sessionId,
+        'The Session Plan interaction ended before approval.'
+      )
+    }
+  }
+
   // Sends one prompt turn to the targeted session and streams updates until stop.
   async sendPrompt(request: AcpPromptRequest, promptAttemptId?: string): Promise<PromptResponse> {
     return this.withOperationLease(() =>
@@ -2008,256 +2074,54 @@ class AcpRuntime {
     )
   }
 
-  private async continuePromptTurn(turn: AcpActivatedPromptTurn): Promise<PromptResponse> {
-    const { request, session: activeSession, interaction: promptInteraction } = turn
-    const turnSkillHandle = turn.skill
-    const authorizedPlanContinuation = turn.plan.authorized
-    const protectedPendingPlan = turn.plan.protectedPending
-    const publishUserMessage = turn.mode.kind === 'user'
-    const promptAttemptId = turn.mode.promptAttemptId
-    const promptTurn = promptInteraction.sequence
-    const skillImportTurnToken = promptInteraction.turnToken
-    const promptEventIdentity = promptInteraction.promptMessageId
-      ? { promptMessageId: promptInteraction.promptMessageId }
+  private finalizePromptTurn(execution: AcpExecutedPromptTurn): Promise<PromptResponse> {
+    const { turn, artifact, prepared, context, skillInputs, skillStarted, outcome } = execution
+    const { request, session, interaction, skill } = turn
+    const sessionId = request.sessionId
+    const promptTurn = interaction.sequence
+    const eventIdentity = interaction.promptMessageId
+      ? { promptMessageId: interaction.promptMessageId }
       : {}
-    let artifactRun: ArtifactTurnHandle | undefined
-    let skillActivityInputs: Array<{ name: string; path: string }> = []
-    let skillActivitiesStarted = false
-    let skillActivitiesFinalized = false
-    let preparedPromptHandle: PreparedPromptHandle | undefined
-    let contextUsageTurn: ContextUsageTurnHandle | undefined
-    let userMessageEmitted = false
-    const emitUserMessage = (): void => {
-      if (
-        !publishUserMessage ||
-        request.continuation ||
-        request.suppressUserMessage ||
-        userMessageEmitted
-      )
-        return
-      userMessageEmitted = true
-      this.pushEvent({
-        kind: 'message',
-        level: 'info',
-        sessionId: request.sessionId,
-        ...promptEventIdentity,
-        role: 'user',
-        text: request.text
-      })
-    }
-    const executePrompt = async (): Promise<AcpPromptFinalizationOutcome> => {
-      // Create a fresh run context before prompting so MCP writes can be attributed to this turn.
-      artifactRun = await this.activateArtifactRun(request.sessionId, request.provenanceContext)
-      if (
-        (await this.sessionInteractions.cancellationCheckpoint(promptInteraction)) === 'cancelled'
-      ) {
-        return Object.freeze({ kind: 'not-dispatched' })
-      }
-
-      const sessionSpecialistPrefix = this.sessionRegistry
-        .lookup(request.sessionId)
-        ?.aggregate.snapshot().specialistPrefix
-      const planContextProjection = authorizedPlanContinuation ?? protectedPendingPlan
-      const projectId = this.resolveSessionProjectName(request.sessionId)
-      preparedPromptHandle = await this.promptPreparation.prepare({
-        request,
-        backend: this.backend,
-        tooling: this.currentCapabilityAvailability(),
-        specialistPrefix: sessionSpecialistPrefix,
-        projectId,
-        fallbackPromptMessageId: this.artifactTurns?.promptMessageIdFor(request.sessionId),
-        bridgeSkillsAvailable: this.connectionResources.bridgeSkillsAvailable,
-        skillImportEnabled: this.sessionCapabilities.isSkillImportEnabled(),
-        skillImportTurnToken,
-        turnSkill: turnSkillHandle,
-        ...(planContextProjection
-          ? { protectedContext: formatPlanProtectedContext(planContextProjection) }
-          : {}),
-        ...(request.turnIntent === 'plan-first'
-          ? { turnPromptReminders: [PLAN_FIRST_TURN_PROMPT_REMINDER] }
-          : {}),
-        signal: promptInteraction.signal,
-        isCurrent: () =>
-          this.sessionInteractions.current(request.sessionId) === promptInteraction &&
-          this.activeSessionFor(request.sessionId) === activeSession,
-        cancellationCheckpoint: () =>
-          this.sessionInteractions.cancellationCheckpoint(promptInteraction),
-        contextEstimateInput: this.contextUsageEstimateInput(request.sessionId),
-        selectedContextWindow: this.selectedContextWindowFor(request.sessionId),
-        ...(this.callbacks.onSkillImportAttachmentEligible
-          ? {
-              onSkillImportAttachmentEligible: (attachmentUri: string) => {
-                try {
-                  this.callbacks.onSkillImportAttachmentEligible?.(
-                    request.sessionId,
-                    skillImportTurnToken,
-                    attachmentUri
-                  )
-                } catch (error) {
-                  safeLogError('skill import attachment callback failed', errorLogFields(error))
-                }
-              }
-            }
-          : {})
-      })
-      if (preparedPromptHandle.status === 'cancelled') {
-        return Object.freeze({ kind: 'not-dispatched' })
-      }
-      const promptContent = preparedPromptHandle.content
-      skillActivityInputs = [...preparedPromptHandle.skillActivityInputs]
-      contextUsageTurn = preparedPromptHandle.transferContextTurn()
-
-      emitUserMessage()
-      if (skillActivityInputs.length > 0) {
-        this.emitCodexSkillInputActivities(
-          request.sessionId,
-          promptTurn,
-          skillActivityInputs,
-          'in_progress'
-        )
-        skillActivitiesStarted = true
-      }
-
-      const promptSessionSnapshot = this.sessionRegistry
-        .lookup(request.sessionId)
-        ?.aggregate.snapshot()
-      const promptFramework = promptSessionSnapshot?.frameworkId ?? this.framework.id
-      return this.providerPromptExecutor.execute({
-        session: activeSession,
-        content: promptContent,
-        cwd: promptSessionSnapshot?.cwd ?? this.snapshotOwner.cwd,
-        adapter: this.providerTurnAdapter(promptFramework),
-        isCurrent: () =>
-          this.sessionInteractions.current(request.sessionId) === promptInteraction &&
-          this.activeSessionFor(request.sessionId) === activeSession,
-        beforeDispatch: async () => {
-          if (
-            (await this.sessionInteractions.cancellationCheckpoint(promptInteraction)) ===
-            'cancelled'
-          ) {
-            return 'cancelled'
-          }
-          if (request.historyPreamble) {
-            log.info('session transcript replay dispatched', {
-              sessionId: request.sessionId,
-              historyTextLength: request.historyPreamble.length,
-              historyAttachmentCount: request.historyAttachments?.length ?? 0,
-              historyImageCount: request.historyImages?.length ?? 0,
-              ...this.diagnosticContext()
-            })
-          }
-          return 'active'
-        },
-        captureStop: () => this.sessionInteractions.captureTerminal(promptInteraction, 'stop'),
-        onAccepted: () => {
-          try {
-            this.callbacks.onProviderPromptAccepted?.(request.sessionId, promptAttemptId)
-          } catch (error) {
-            safeLogError('provider-prompt-accepted callback failed', errorLogFields(error))
-          }
-          if (skillActivitiesStarted && !skillActivitiesFinalized) {
-            this.emitCodexSkillInputActivities(
-              request.sessionId,
-              promptTurn,
-              skillActivityInputs,
-              'completed'
-            )
-            skillActivitiesFinalized = true
-          }
-        },
-        beforeStop: async (response) => {
-          const planExecutionBinding = this.planExecutionBindings.get(request.sessionId)
-          if (
-            response.stopReason === 'end_turn' &&
-            this.planService &&
-            planExecutionBinding?.interactionSequence === promptInteraction.sequence
-          ) {
-            const completion = await this.planService.checkTurnCompletion({
-              projectId: this.resolveSessionProjectName(request.sessionId),
-              sessionId: request.sessionId
-            })
-            if (!completion.allow) {
-              throw new Error(
-                `The active Session Plan is not complete (${completion.lifecycle ?? 'incomplete'}).`
-              )
-            }
-          }
-        },
-        routeNotification: (notification) =>
-          this.handleSessionUpdate(notification, request.sessionId),
-        reportBestEffortFailure: (stage, error) =>
-          log.warn('provider prompt observation failed', {
-            sessionId: request.sessionId,
-            stage,
-            ...errorLogFields(error)
-          })
-      })
-    }
-
-    let outcome: AcpPromptFinalizationOutcome
-    try {
-      outcome = await executePrompt()
-    } catch (error) {
-      outcome = Object.freeze({ kind: 'failed', error })
-    }
+    let skillFinalized = execution.skillFinalized
     return this.promptOutcomeFinalizer.finalize(
       {
-        sessionId: request.sessionId,
-        ...promptEventIdentity,
-        interaction: promptInteraction,
+        sessionId,
+        ...eventIdentity,
+        interaction,
         interactions: this.sessionInteractions,
         permission: this.permissionContext,
-        ...(preparedPromptHandle ? { prepared: preparedPromptHandle } : {}),
-        ...(contextUsageTurn ? { context: contextUsageTurn } : {}),
-        skill: turnSkillHandle,
+        ...(prepared ? { prepared } : {}),
+        ...(context ? { context } : {}),
+        skill,
         ...(this.backend.session.model ? { model: this.backend.session.model } : {}),
-        emitUserMessage,
-        emitArtifact: (onPublished) =>
-          this.emitArtifactRunEvent(request.sessionId, artifactRun, onPublished),
-        disposeArtifact: () => this.clearArtifactRun(artifactRun),
+        emitUserMessage: execution.emitUserMessage,
+        emitArtifact: (onPublished) => this.emitArtifactRunEvent(sessionId, artifact, onPublished),
+        disposeArtifact: () => this.clearArtifactRun(artifact),
         failPendingSkillActivities: () => {
-          if (!skillActivitiesStarted || skillActivitiesFinalized) return
-          this.emitCodexSkillInputActivities(
-            request.sessionId,
-            promptTurn,
-            skillActivityInputs,
-            'failed'
-          )
-          skillActivitiesFinalized = true
+          if (!skillStarted || skillFinalized) return
+          this.emitCodexSkillInputActivities(sessionId, promptTurn, skillInputs, 'failed')
+          skillFinalized = true
         },
         recordContextUsed: (used) =>
-          this.recordProviderPromptContextUsage(request.sessionId, used, promptTurn),
+          this.recordProviderPromptContextUsage(sessionId, used, promptTurn),
         errorMessage,
         errorKind: acpErrorKind,
         pushEvent: (event) => this.pushEvent(event),
         emitState: () => this.emitState(),
-        onPromptEnded: () =>
-          this.callbacks.onPromptEnded?.(request.sessionId, skillImportTurnToken),
+        onPromptEnded: () => this.callbacks.onPromptEnded?.(sessionId, interaction.turnToken),
         generationActivityChanged: () => this.generationActivityChanged(),
         autoCompactIfNeeded: () => {
           if (
-            this.sessionInteractions.current(request.sessionId) !== promptInteraction ||
-            this.activeSessionFor(request.sessionId) !== activeSession ||
-            !this.shouldAutoCompactContext(request.sessionId)
+            this.sessionInteractions.current(sessionId) !== interaction ||
+            this.activeSessionFor(sessionId) !== session ||
+            !this.shouldAutoCompactContext(sessionId)
           ) {
             return Promise.resolve()
           }
-          return this.performNativeContextCompaction(activeSession, request.sessionId, 'automatic')
+          return this.performNativeContextCompaction(session, sessionId, 'automatic')
         },
-        beforeInteractionRelease: () => {
-          const planBinding = this.planExecutionBindings.get(request.sessionId)
-          if (planBinding?.interactionSequence === promptInteraction.sequence) {
-            this.planExecutionBindings.delete(request.sessionId)
-          }
-          const planWaiter = this.planApprovalWaiters.get(request.sessionId)
-          if (planWaiter?.interactionId === promptInteraction.promptMessageId) {
-            this.rejectPlanApprovalWaiter(
-              request.sessionId,
-              'The Session Plan interaction ended before approval.'
-            )
-          }
-        },
-        afterInteractionRelease: () => this.publishTerminalPlanProjection(request.sessionId)
+        beforeInteractionRelease: () => this.releasePromptPlanBinding(sessionId, interaction),
+        afterInteractionRelease: () => this.publishTerminalPlanProjection(sessionId)
       },
       outcome
     )
