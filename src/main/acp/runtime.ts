@@ -129,6 +129,11 @@ import { AcpProviderSessionResumer } from './provider-session-resumer'
 import { AcpSessionReplacementWorkflow } from './session-replacement-workflow'
 import { AcpSessionDeletionWorkflow } from './session-deletion-workflow'
 import { AcpPromptPreparationOwner, type PreparedPromptHandle } from './prompt-preparation-owner'
+import {
+  AcpPromptTurnWorkflow,
+  type AcpActivatedPromptTurn,
+  type AcpPromptTurnPlanContext
+} from './prompt-turn-workflow'
 import { AcpSessionPresentationPolicy } from './session-presentation-policy'
 import { AcpProviderPromptExecutor } from './provider-prompt-executor'
 import {
@@ -139,7 +144,7 @@ import type { AcpProviderTurnAdapter } from './provider-turn-adapter'
 import { claudeCodeTurnAdapter } from './claude-turn-adapter'
 import { createCodexTurnAdapter } from './codex-turn-adapter'
 import { AcpOpenCodeTurnAdapter } from './opencode-turn-adapter'
-import { AcpTurnSkillOwner, type AcpTurnSkillHooks, type TurnSkillHandle } from './turn-skill-owner'
+import { AcpTurnSkillOwner, type AcpTurnSkillHooks } from './turn-skill-owner'
 import { createProductionPlanService } from '../session-plan/production-plan-service'
 import {
   PLAN_FIRST_TURN_PROMPT_REMINDER,
@@ -433,6 +438,7 @@ class AcpRuntime {
   >()
   private readonly promptContentOwner: AcpPromptContentOwner
   private readonly promptPreparation: AcpPromptPreparationOwner
+  private readonly promptTurnWorkflow: AcpPromptTurnWorkflow
   private readonly connectionClose: AcpConnectionCloseWorkflow
   private readonly connectionLifecycle: AcpConnectionLifecycleWorkflow
   private readonly modelChanges: AcpModelChangeWorkflow
@@ -613,6 +619,22 @@ class AcpRuntime {
       removeStartupBlocker: (token) => this.generationActivity.releaseStartup(token),
       unregisterBridgeSession: (sessionId) =>
         this.connectionResources.unregisterBridgeReviewerSession(sessionId)
+    })
+    this.promptTurnWorkflow = new AcpPromptTurnWorkflow({
+      registry: this.sessionRegistry,
+      interactions: this.sessionInteractions,
+      skills: this.turnSkills,
+      currentCwd: () => this.snapshotOwner.cwd,
+      resolveProjectName: (sessionId) => this.resolveSessionProjectName(sessionId),
+      preflightPlan: (request) => this.preflightPromptPlan(request),
+      admitPlan: (request, interaction, plan) => this.admitPromptPlan(request, interaction, plan),
+      disconnectForReload: () => this.disconnect(false),
+      resumeAfterReload: (request) => this.resumeSession(request),
+      recordAdmittedPrompt: (request) => this.handoffContinuity.recordAdmittedPrompt(request),
+      onPromptStarted: (sessionId, turnToken, promptAttemptId) =>
+        this.callbacks.onPromptStarted?.(sessionId, turnToken, promptAttemptId),
+      emitState: () => this.emitState(),
+      continueTurn: (turn) => this.continuePromptTurn(turn)
     })
     const closeState: CloseState = {
       invalidatePendingSessionStartups: () => this.invalidatePendingSessionStartups(),
@@ -1871,40 +1893,9 @@ class AcpRuntime {
     )
   }
 
-  // Sends one prompt turn to the targeted session and streams updates until stop.
-  async sendPrompt(request: AcpPromptRequest, promptAttemptId?: string): Promise<PromptResponse> {
-    return this.withOperationLease(() =>
-      withDataRootWrite(() => this.sendPromptTurn(request, promptAttemptId, true))
-    )
-  }
-
-  // App-owned continuations participate in the same prompt ownership, cancellation, provenance, and
-  // accounting lifecycle as user turns. Their synthesized control text is provider input, however,
-  // and must never be projected into the transcript as a second user-authored message.
-  async sendAppContinuation(
-    request: AcpPromptRequest,
-    promptAttemptId?: string
-  ): Promise<PromptResponse> {
-    return this.withOperationLease(() =>
-      withDataRootWrite(() => this.sendPromptTurn(request, promptAttemptId, false))
-    )
-  }
-
-  private async sendPromptTurn(
-    request: AcpPromptRequest,
-    promptAttemptId: string | undefined,
-    publishUserMessage: boolean
-  ): Promise<PromptResponse> {
-    let activeSession = this.activeSessionFor(request.sessionId)
-
-    if (!activeSession) {
-      throw new Error(`ACP session not found: ${request.sessionId}`)
-    }
-
-    if (this.hasSessionInteractionInFlight(request.sessionId)) {
-      throw new Error('An ACP prompt is already running for this session')
-    }
-
+  private preflightPromptPlan(
+    request: AcpPromptRequest
+  ): AcpPromptTurnPlanContext | Promise<AcpPromptTurnPlanContext> {
     if (
       request.planContinuation &&
       request.planContinuation.projectId !== this.resolveSessionProjectName(request.sessionId)
@@ -1917,179 +1908,118 @@ class AcpRuntime {
     if (request.planContinuation && !this.planService) {
       throw new Error('Session Plan capability is not configured.')
     }
-    let authorizedPlanContinuation =
-      request.planContinuation && request.planContinuation.pendingAction === undefined
-        ? await this.planService!.authorizeContinuation({
-            projectId: request.planContinuation.projectId,
-            sessionId: request.sessionId,
-            artifactVersionId: request.planContinuation.artifactVersionId,
-            expectedRevision: request.planContinuation.expectedRevision
-          })
-        : undefined
-    let protectedPendingPlan: ActivePlanProjection | undefined
-    if (request.planContinuation?.pendingAction === 'review') {
-      const projection = await this.planService!.getProjection(
-        request.planContinuation.projectId,
-        request.sessionId,
-        { interactionIsLive: false }
-      )
-      if (!projection) {
+    const continuation = request.planContinuation
+    if (continuation?.pendingAction === undefined && continuation) {
+      return this.planService!.authorizeContinuation({
+        projectId: continuation.projectId,
+        sessionId: request.sessionId,
+        artifactVersionId: continuation.artifactVersionId,
+        expectedRevision: continuation.expectedRevision
+      }).then((authorized) => Object.freeze({ authorized }))
+    }
+    if (continuation?.pendingAction !== 'review') return Object.freeze({})
+    return this.planService!.getProjection(continuation.projectId, request.sessionId, {
+      interactionIsLive: false
+    }).then((protectedPending) => {
+      if (!protectedPending) {
         throw new PlanCommandError('no-active-plan', 'The Session has no active Plan.')
       }
-      if (projection.artifactVersionId !== request.planContinuation.artifactVersionId) {
+      if (protectedPending.artifactVersionId !== continuation.artifactVersionId) {
         throw new PlanCommandError('stale-plan', 'A newer Plan is active.')
       }
-      if (projection.revision !== request.planContinuation.expectedRevision) {
+      if (protectedPending.revision !== continuation.expectedRevision) {
         throw new PlanCommandError('revision-conflict', 'The Plan revision is stale.')
       }
-      if (projection.approval !== 'pending') {
+      if (protectedPending.approval !== 'pending') {
         throw new PlanCommandError('approval-already-decided', 'Plan approval is irreversible.')
       }
-      protectedPendingPlan = projection
-    }
-
-    // Reserve this attempt before Specialist/skill authorization can yield. A newer preflight may
-    // supersede the reservation without publishing an in-flight turn, preserving the existing
-    // last-admitted-preflight behavior while preventing a stale attempt from using a replaced session.
-    let promptReservation = this.sessionInteractions.reservePrompt({
-      sessionId: request.sessionId,
-      kind: 'prompt',
-      promptMessageId: request.provenanceContext?.promptMessageId,
-      turnToken: request.continuation?.originatingTurnToken
+      return Object.freeze({ protectedPending })
     })
+  }
 
-    let turnSkillHandle: TurnSkillHandle
-    try {
-      const authorization = this.turnSkills.authorize({
-        specialistId: this.sessionRegistry.lookup(request.sessionId)?.aggregate.snapshot()
-          .specialistId,
-        selectedSkillIds: request.forcedSkillIds,
-        signal: promptReservation.signal
-      })
-      turnSkillHandle = authorization instanceof Promise ? await authorization : authorization
-    } catch (error) {
-      this.sessionInteractions.release(promptReservation)
-      throw error
-    }
-    const rejectedSkillOutcome =
-      turnSkillHandle.reloadDecision.kind === 'reload' ? 'reload-restored' : 'failed'
-
-    try {
-      if (turnSkillHandle.reloadDecision.kind === 'reload') {
-        if (this.hasSessionInteractionInFlight(request.sessionId)) {
-          throw new Error('An ACP prompt is already running for this session')
-        }
-
-        const aggregateSnapshot = this.sessionRegistry
-          .lookup(request.sessionId)
-          ?.aggregate.snapshot()
-        const sessionCwd = aggregateSnapshot?.cwd ?? this.snapshotOwner.cwd
-        const projectName = this.resolveSessionProjectName(request.sessionId)
-        const permissionProfile =
-          aggregateSnapshot?.permissionProfile?.selectedProfile ?? DEFAULT_PERMISSION_PROFILE
-        await this.disconnect(false)
-        const reloadResume = await this.resumeSession({
-          sessionId: request.sessionId,
-          cwd: sessionCwd,
-          projectName,
-          permissionProfile
-        })
-        if (reloadResume.contextReset) {
-          request.historyPreamble = request.resumeFallback?.historyPreamble
-          request.historyAttachments = request.resumeFallback?.historyAttachments
-          request.historyImages = request.resumeFallback?.historyImages
-          request.contextReset = true
-        }
-
-        const reloaded = this.activeSessionFor(request.sessionId)
-        if (!reloaded) {
-          throw new Error(`ACP session not found after force-load: ${request.sessionId}`)
-        }
-        activeSession = reloaded
-        promptReservation = this.sessionInteractions.reservePrompt({
-          sessionId: request.sessionId,
-          kind: 'prompt',
-          promptMessageId: request.provenanceContext?.promptMessageId,
-          turnToken: request.continuation?.originatingTurnToken
+  private admitPromptPlan(
+    request: AcpPromptRequest,
+    interaction: AcpPromptSessionInteractionScope,
+    plan: AcpPromptTurnPlanContext
+  ): AcpPromptTurnPlanContext | Promise<AcpPromptTurnPlanContext> {
+    let { authorized, protectedPending } = plan
+    const continuation = request.planContinuation
+    const decision = continuation?.pendingAction
+    const committed = (): AcpPromptTurnPlanContext => {
+      if (authorized) {
+        this.planExecutionBindings.set(request.sessionId, {
+          interactionSequence: interaction.sequence,
+          artifactVersionId: authorized.artifactVersionId
         })
       }
-    } catch (error) {
-      turnSkillHandle.close('reload-restored')
-      this.sessionInteractions.release(promptReservation)
-      throw error
+      return Object.freeze({
+        ...(authorized ? { authorized } : {}),
+        ...(protectedPending ? { protectedPending } : {})
+      })
     }
-
-    // Another prompt can claim this session while authorization preflight is awaiting. Activate only
-    // the newest reservation so a delayed attempt cannot overwrite a newer turn's lifecycle state.
-    if (this.hasSessionInteractionInFlight(request.sessionId)) {
-      turnSkillHandle.close(rejectedSkillOutcome)
-      this.sessionInteractions.release(promptReservation)
-      throw new Error('An ACP prompt is already running for this session')
-    }
-
-    const refreshedActiveSession = this.activeSessionFor(request.sessionId)
-    if (!refreshedActiveSession) {
-      turnSkillHandle.close(rejectedSkillOutcome)
-      this.sessionInteractions.release(promptReservation)
-      throw new Error(`ACP session not found: ${request.sessionId}`)
-    }
-    activeSession = refreshedActiveSession
-
-    let promptInteraction: AcpPromptSessionInteractionScope | undefined
-    try {
-      promptInteraction = this.sessionInteractions.activatePrompt(promptReservation)
-      const pendingPlanContinuation = request.planContinuation
-      const pendingDecision = pendingPlanContinuation?.pendingAction
-      if (
-        pendingPlanContinuation &&
-        (pendingDecision === 'approve' || pendingDecision === 'reject')
-      ) {
-        const decision = await this.planService!.respond({
-          projectId: pendingPlanContinuation.projectId,
-          sessionId: request.sessionId,
-          artifactVersionId: pendingPlanContinuation.artifactVersionId,
-          expectedRevision: pendingPlanContinuation.expectedRevision,
-          decision: pendingDecision === 'approve' ? 'approved' : 'rejected',
-          interactionIsLive: true
-        })
-        if (pendingDecision === 'approve') {
-          authorizedPlanContinuation = decision.projection
-        } else {
-          protectedPendingPlan = decision.projection
+    if (continuation && (decision === 'approve' || decision === 'reject')) {
+      return this.planService!.respond({
+        projectId: continuation.projectId,
+        sessionId: request.sessionId,
+        artifactVersionId: continuation.artifactVersionId,
+        expectedRevision: continuation.expectedRevision,
+        decision: decision === 'approve' ? 'approved' : 'rejected',
+        interactionIsLive: true
+      }).then((result) => {
+        if (decision === 'approve') authorized = result.projection
+        else {
+          protectedPending = result.projection
           this.planExecutionBindings.delete(request.sessionId)
         }
-        this.resolvePlanApprovalWaiter(request.sessionId, decision)
-        this.publishPlanProjection(request.sessionId, decision.projection)
-      }
-      if (authorizedPlanContinuation) {
-        this.planExecutionBindings.set(request.sessionId, {
-          interactionSequence: promptInteraction.sequence,
-          artifactVersionId: authorizedPlanContinuation.artifactVersionId
-        })
-      }
-      this.sessionRegistry.select(request.sessionId)
-      this.handoffContinuity.recordAdmittedPrompt(request)
-    } catch (error) {
-      turnSkillHandle.close(rejectedSkillOutcome)
-      this.sessionInteractions.release(promptInteraction ?? promptReservation)
-      throw error
+        this.resolvePlanApprovalWaiter(request.sessionId, result)
+        this.publishPlanProjection(request.sessionId, result.projection)
+        return committed()
+      })
     }
-    if (!promptInteraction) throw new Error('ACP prompt interaction was not activated.')
+    return committed()
+  }
+
+  // Sends one prompt turn to the targeted session and streams updates until stop.
+  async sendPrompt(request: AcpPromptRequest, promptAttemptId?: string): Promise<PromptResponse> {
+    return this.withOperationLease(() =>
+      withDataRootWrite(() =>
+        this.promptTurnWorkflow.run(request, {
+          kind: 'user',
+          ...(promptAttemptId === undefined ? {} : { promptAttemptId })
+        })
+      )
+    )
+  }
+
+  // App-owned continuations participate in the same prompt ownership, cancellation, provenance, and
+  // accounting lifecycle as user turns. Their synthesized control text is provider input, however,
+  // and must never be projected into the transcript as a second user-authored message.
+  async sendAppContinuation(
+    request: AcpPromptRequest,
+    promptAttemptId?: string
+  ): Promise<PromptResponse> {
+    return this.withOperationLease(() =>
+      withDataRootWrite(() =>
+        this.promptTurnWorkflow.run(request, {
+          kind: 'app-continuation',
+          ...(promptAttemptId === undefined ? {} : { promptAttemptId })
+        })
+      )
+    )
+  }
+
+  private async continuePromptTurn(turn: AcpActivatedPromptTurn): Promise<PromptResponse> {
+    const { request, session: activeSession, interaction: promptInteraction } = turn
+    const turnSkillHandle = turn.skill
+    const authorizedPlanContinuation = turn.plan.authorized
+    const protectedPendingPlan = turn.plan.protectedPending
+    const publishUserMessage = turn.mode.kind === 'user'
+    const promptAttemptId = turn.mode.promptAttemptId
     const promptTurn = promptInteraction.sequence
     const skillImportTurnToken = promptInteraction.turnToken
     const promptEventIdentity = promptInteraction.promptMessageId
       ? { promptMessageId: promptInteraction.promptMessageId }
       : {}
-    try {
-      this.callbacks.onPromptStarted?.(request.sessionId, skillImportTurnToken, promptAttemptId)
-    } catch (error) {
-      safeLogError('prompt-start callback failed', errorLogFields(error))
-    }
-    this.emitState()
-    log.info('prompt start', {
-      sessionId: request.sessionId,
-      textLength: request.text?.length ?? 0
-    })
     let artifactRun: ArtifactTurnHandle | undefined
     let skillActivityInputs: Array<{ name: string; path: string }> = []
     let skillActivitiesStarted = false
