@@ -8,7 +8,7 @@
 
 **Open Science is an open-source, local-first, model-agnostic, self-hosted AI research workbench for reproducible scientific discovery.** Built for researchers, it runs on your own computer (macOS, Windows, Linux). Create a project, describe a task in plain language, and let the AI agent read files, run Python and R code, search the web, call scientific data connectors, and return reproducible reports, tables, and figures linked to an inspectable activity history in one workspace.
 
-> 💡 **[Open Science v0.10.1 released](https://github.com/aipoch/open-science/releases/latest)** _(last updated August 4, 2026)_. Highlights include branching a conversation into a new session, searching GitHub skills by keyword, specialist package import/export, and keeping oversized data files out of model context. See the [latest release notes](https://github.com/aipoch/open-science/releases/latest) for the full changelog.
+> 💡 **[Open Science v0.11.0 released](https://github.com/aipoch/open-science/releases/latest)** _(last updated August 5, 2026)_. Highlights include review-gated session plans, hot-switching models and providers without reconnect, agent-aware context replay, prompt history navigation, and a settings keyboard shortcut. See the [latest release notes](https://github.com/aipoch/open-science/releases/latest) for the full changelog.
 
 <p align="center">
  <img width="1920" height="1140" alt="Open Science open-source AI research workbench desktop app workspace showing an agent session with generated artifacts" src="https://github.com/user-attachments/assets/df59db19-98d7-4071-81f2-c682fbecdf86" />
@@ -226,6 +226,7 @@ Open Science is available as a released desktop application and is actively deve
 - **v0.9.2** added immediate specialist handoff, completed-turn agent and model identification, context-usage persistence across restarts, and Windows renderer crash recovery.
 - **v0.10.0** adds a project-scoped command palette, code syntax highlighting in previews and notebook cells, read-only package inventories per runtime environment, conversational skill imports from GitHub URLs, direct file preview beside the session, and Bailian as a built-in model provider.
 - **v0.10.1** adds branching a conversation into a new session, GitHub skill search by keyword, specialist package import/export with contribution channels, and session-age metadata in the artifact list, while keeping oversized data files out of model context and hardening branch replay, reviewer correction provenance, and Codex prompt-runtime ownership.
+- **v0.11.0** adds review-gated session plans with durable execution contracts, hot-switching ACP models and providers without reconnecting the agent process, agent-aware context replay that respects each framework's context path, prompt history navigation in the composer, session link favicons, and a settings keyboard shortcut, while hardening Windows auto-update and local RPC, logger data redaction, artifact provenance binding, and notebook process-group cleanup.
 
 Deterministic reconstruction, portable environment restoration, and full-fidelity session replay remain on the roadmap.
 
