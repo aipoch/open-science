@@ -3460,6 +3460,43 @@ describe('ACP runtime session management', () => {
     ).toEqual([])
   })
 
+  it('keeps compaction successful when a hidden usage update state callback throws', async () => {
+    const process = new FakeAgentProcess()
+    startFakeAgent(process, ['remote-session-1'], {
+      usageForPrompt: (text) => (text === '/compact' ? { used: 24_000, size: 200_000 } : undefined)
+    })
+    const runtime = new AcpRuntime({
+      appVersion: '0.1.0',
+      defaultCwd: '/workspace',
+      spawnAgent: () => asAgentProcess(process),
+      framework: claudeCodeFramework,
+      callbacks: {
+        onStateChanged: (snapshot) => {
+          if (Object.values(snapshot.contextUsageBySession).some(({ used }) => used === 24_000)) {
+            throw new Error('state listener failed')
+          }
+        }
+      }
+    })
+    const session = await runtime.createSession({ cwd: '/workspace' })
+
+    await expect(runtime.compactSession({ sessionId: session.sessionId })).resolves.toEqual({
+      stopReason: 'end_turn'
+    })
+
+    expect(runtime.getSnapshot().contextUsageBySession[session.sessionId]).toMatchObject({
+      used: 24_000,
+      size: 200_000
+    })
+    expect(
+      runtime
+        .getSnapshot()
+        .events.filter((event) => event.kind === 'compaction')
+        .map(({ status }) => status)
+    ).toEqual(['in_progress', 'completed'])
+    expect(runtime.getSnapshot().promptInFlightSessionIds).toEqual([])
+  })
+
   it('serializes prompts and compaction per session without blocking another session', async () => {
     const process = new FakeAgentProcess()
     const firstPromptGate = createDeferred<PromptResponse>()

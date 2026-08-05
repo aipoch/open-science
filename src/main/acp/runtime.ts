@@ -126,6 +126,7 @@ import { AcpSessionReplacementWorkflow } from './session-replacement-workflow'
 import { AcpSessionDeletionWorkflow } from './session-deletion-workflow'
 import { AcpPromptPreparationOwner } from './prompt-preparation-owner'
 import { AcpPromptTurnWorkflow, type AcpPromptTurnPlanContext } from './prompt-turn-workflow'
+import { AcpContextCompactionWorkflow } from './context-compaction-workflow'
 import { AcpSessionPresentationPolicy } from './session-presentation-policy'
 import { AcpProviderPromptExecutor } from './provider-prompt-executor'
 import { AcpPromptOutcomeFinalizer } from './prompt-outcome-finalizer'
@@ -423,6 +424,7 @@ class AcpRuntime {
   >()
   private readonly promptContentOwner: AcpPromptContentOwner
   private readonly promptPreparation: AcpPromptPreparationOwner
+  private readonly contextCompactionWorkflow: AcpContextCompactionWorkflow
   private readonly promptTurnWorkflow: AcpPromptTurnWorkflow
   private readonly connectionClose: AcpConnectionCloseWorkflow
   private readonly connectionLifecycle: AcpConnectionLifecycleWorkflow
@@ -605,6 +607,28 @@ class AcpRuntime {
       unregisterBridgeSession: (sessionId) =>
         this.connectionResources.unregisterBridgeReviewerSession(sessionId)
     })
+    this.contextCompactionWorkflow = new AcpContextCompactionWorkflow({
+      sessions: {
+        activeSession: (sessionId) => this.activeSessionFor(sessionId),
+        currentFramework: () => this.framework
+      },
+      interactions: this.sessionInteractions,
+      context: this.contextUsageTracker,
+      promptContent: this.promptContentOwner,
+      contextEstimateInput: (sessionId) => this.contextUsageEstimateInput(sessionId),
+      selectedContextWindow: (sessionId) => this.selectedContextWindowFor(sessionId),
+      routeHiddenNotification: (notification, sessionId) =>
+        this.handleSessionUpdate(notification, sessionId, false, () => {
+          try {
+            this.emitState()
+          } catch (error) {
+            safeLogError('compaction state callback failed', errorLogFields(error))
+          }
+        }),
+      pushEvent: (event) => this.pushEvent(event),
+      emitState: () => this.emitState(),
+      errorMessage
+    })
     this.promptTurnWorkflow = new AcpPromptTurnWorkflow({
       registry: this.sessionRegistry,
       interactions: this.sessionInteractions,
@@ -661,16 +685,8 @@ class AcpRuntime {
         onPromptEnded: (sessionId, turnToken) =>
           this.callbacks.onPromptEnded?.(sessionId, turnToken),
         generationActivityChanged: () => this.generationActivityChanged(),
-        autoCompact: (sessionId, session, interaction) => {
-          if (
-            this.sessionInteractions.current(sessionId) !== interaction ||
-            this.activeSessionFor(sessionId) !== session ||
-            !this.shouldAutoCompactContext(sessionId)
-          ) {
-            return Promise.resolve()
-          }
-          return this.performNativeContextCompaction(session, sessionId, 'automatic')
-        }
+        autoCompact: (sessionId, session, interaction) =>
+          this.contextCompactionWorkflow.compactAutomatic({ sessionId, session, interaction })
       },
       currentCwd: () => this.snapshotOwner.cwd,
       resolveProjectName: (sessionId) => this.resolveSessionProjectName(sessionId),
@@ -1620,156 +1636,7 @@ class AcpRuntime {
   // command is an internal control turn: fresh usage updates are retained, while its command
   // echo/status output is not projected into the user's conversation.
   async compactSession(request: AcpCompactSessionRequest): Promise<PromptResponse> {
-    return this.withOperationLease(() => this.compactSessionOperation(request))
-  }
-
-  private async compactSessionOperation(
-    request: AcpCompactSessionRequest
-  ): Promise<PromptResponse> {
-    const session = this.activeSessionFor(request.sessionId)
-    if (!session) throw new Error(`ACP session not found: ${request.sessionId}`)
-    const currentInteraction = this.sessionInteractions.current(request.sessionId)
-    if (currentInteraction?.kind === 'compaction') {
-      throw new Error('Context compaction is already running for this session')
-    }
-    if (currentInteraction && request.reason !== 'overflow-recovery') {
-      throw new Error('An ACP prompt is already running for this session')
-    }
-
-    // A recoverable overflow is emitted only after the provider prompt has already rejected; the old
-    // turn may still be doing artifact cleanup, but it no longer owns the agent session. Transfer its
-    // public lock to the control turn now so the retry can start immediately after compaction, while the
-    // dedicated compaction lock below keeps unrelated sends blocked during `/compact` itself.
-    if (request.reason === 'overflow-recovery' && currentInteraction) {
-      this.sessionInteractions.supersede(currentInteraction)
-    }
-
-    const compactionInteraction = this.sessionInteractions.claim({
-      sessionId: request.sessionId,
-      kind: 'compaction'
-    })
-    this.emitState()
-
-    try {
-      return await this.performNativeContextCompaction(
-        session,
-        request.sessionId,
-        request.reason ?? 'manual'
-      )
-    } finally {
-      this.sessionInteractions.release(compactionInteraction)
-      this.emitState()
-    }
-  }
-
-  private shouldAutoCompactContext(sessionId: string): boolean {
-    const strategy = this.framework.contextCompaction
-    if (strategy.kind !== 'native-command' || strategy.triggerAtPercent === undefined) return false
-
-    const usage = this.contextUsageTracker.usage(sessionId)
-    if (!usage || usage.size === undefined || usage.size <= 0 || usage.used < 0) return false
-    if (usage.breakdown?.status === 'preflight') return false
-
-    return (usage.used / usage.size) * 100 >= strategy.triggerAtPercent
-  }
-
-  private async performNativeContextCompaction(
-    session: ActiveSession,
-    appSessionId: string,
-    reason: NonNullable<AcpRuntimeEvent['compactionReason']>
-  ): Promise<PromptResponse> {
-    const strategy = this.framework.contextCompaction
-    if (strategy.kind !== 'native-command') {
-      throw new Error(`${this.framework.displayName} manages context compaction automatically.`)
-    }
-    const contextUsageCheckpoint = this.contextUsageTracker.checkpointSession(appSessionId)
-    const restoreContextEstimate = (): void => {
-      this.contextUsageTracker.restoreSession(appSessionId, contextUsageCheckpoint)
-    }
-
-    this.pushEvent({
-      kind: 'compaction',
-      compactionReason: reason,
-      level: 'info',
-      sessionId: appSessionId,
-      status: 'in_progress',
-      title: 'Compacting context'
-    })
-
-    try {
-      let failureText: string | undefined
-      const promptFailure = new Promise<never>((_, reject) => {
-        session.prompt([{ type: 'text', text: strategy.command }]).catch(reject)
-      })
-
-      for (;;) {
-        const message = await Promise.race([session.nextUpdate(), promptFailure])
-        if (message.kind === 'stop') {
-          if (message.response.stopReason === 'cancelled') {
-            restoreContextEstimate()
-            this.pushEvent({
-              kind: 'compaction',
-              compactionReason: reason,
-              level: 'info',
-              sessionId: appSessionId,
-              status: 'cancelled',
-              title: 'Context compaction cancelled'
-            })
-            return message.response
-          }
-          if (message.response.stopReason !== 'end_turn') {
-            throw new Error(
-              `Context compaction stopped before completion: ${message.response.stopReason}`
-            )
-          }
-          if (failureText) throw new Error(failureText)
-
-          // Some adapters do not emit usage_update for their compaction control turn. Invalidate only
-          // the unchanged pre-compaction reading; a fresh update received during the turn is a new
-          // object and remains available to the context meter and auto-compaction threshold.
-          this.contextUsageTracker.resetAfterCompaction(
-            appSessionId,
-            this.contextUsageEstimateInput(appSessionId),
-            contextUsageCheckpoint,
-            this.selectedContextWindowFor(appSessionId)
-          )
-          this.promptContentOwner.resetSession(appSessionId)
-          this.pushEvent({
-            kind: 'compaction',
-            compactionReason: reason,
-            level: 'info',
-            sessionId: appSessionId,
-            status: 'completed',
-            title: 'Context compacted'
-          })
-          return message.response
-        }
-
-        const update = message.notification.update
-        if (
-          !failureText &&
-          strategy.failureTextPrefix &&
-          update.sessionUpdate === 'agent_message_chunk' &&
-          update.content.type === 'text' &&
-          update.content.text.trimStart().startsWith(strategy.failureTextPrefix)
-        ) {
-          failureText = update.content.text.trim()
-        }
-        this.handleSessionUpdate(message.notification, appSessionId, false)
-      }
-    } catch (error) {
-      restoreContextEstimate()
-      this.pushEvent({
-        kind: 'compaction',
-        compactionReason: reason,
-        level: 'error',
-        sessionId: appSessionId,
-        status: 'failed',
-        title: 'Context compaction failed',
-        text: errorMessage(error)
-      })
-      throw error
-    }
+    return this.withOperationLease(() => this.contextCompactionWorkflow.compact(request))
   }
 
   // Changes approval behavior only while the conversation is idle. Applying the ACP mode before the
@@ -2651,7 +2518,8 @@ class AcpRuntime {
   private handleSessionUpdate(
     notification: SessionNotification,
     appSessionId?: string,
-    visible = true
+    visible = true,
+    emitState: () => void = () => this.emitState()
   ): void {
     const sessionId = appSessionId ?? notification.sessionId
     this.applySessionUpdateEffects(
@@ -2665,11 +2533,15 @@ class AcpRuntime {
         visible,
         reconnectPending: this.pendingProviderReconnect,
         mcpServerNames: this.sessionCapabilities.mcpServerNamesFor(sessionId)
-      })
+      }),
+      emitState
     )
   }
 
-  private applySessionUpdateEffects(effects: readonly AcpSessionUpdateEffect[]): void {
+  private applySessionUpdateEffects(
+    effects: readonly AcpSessionUpdateEffect[],
+    emitState: () => void = () => this.emitState()
+  ): void {
     for (const effect of effects) {
       switch (effect.kind) {
         case 'permission-tool-correlation':
@@ -2693,7 +2565,7 @@ class AcpRuntime {
                 effect.currentModeId
               )
             )
-            this.emitState()
+            emitState()
           }
           break
         }
@@ -2703,7 +2575,7 @@ class AcpRuntime {
             effect.usage,
             this.selectedContextWindowFor(effect.sessionId)
           )
-          this.emitState()
+          emitState()
           break
         case 'context-refresh':
           if (
