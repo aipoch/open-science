@@ -27,6 +27,7 @@ const backend: AcpBackendGenerationView = {
 }
 
 type HarnessOptions = {
+  attached?: boolean
   attachError?: Error
   backendAfterFirstConfigure?: AcpBackendGenerationView
   configureError?: Error
@@ -40,9 +41,11 @@ type HarnessOptions = {
 
 type ResumerHarness = {
   adopt: ReturnType<typeof vi.fn>
+  assertCurrentConnection: ReturnType<typeof vi.fn>
   attachSession: ReturnType<typeof vi.fn>
   commit: ReturnType<typeof vi.fn>
   configure: ReturnType<typeof vi.fn>
+  configurePermissionProfile: ReturnType<typeof vi.fn>
   connection: ClientConnection
   disconnectTimedOutConnection: ReturnType<typeof vi.fn>
   fireTimeout: () => void
@@ -53,6 +56,7 @@ type ResumerHarness = {
   release: ReturnType<typeof vi.fn>
   request: ReturnType<typeof vi.fn>
   resume: (request?: Partial<AcpResumeSessionRequest>) => Promise<AcpCreateSessionResponse>
+  setTimer: ReturnType<typeof vi.fn>
   successorSession: ActiveSession
 }
 
@@ -143,17 +147,44 @@ const createHarness = (options: HarnessOptions = {}): ResumerHarness => {
       configOptions: undefined
     }
   })
+  const configurePermissionProfile = vi.fn(async () => {
+    order.push('configure permission')
+    return permissionProfile
+  })
+  if (options.attached) {
+    const attached = registry.reserve({
+      sessionIds: ['stable-app-session', providerSession.sessionId],
+      blockStartup: false
+    })
+    if (attached.collision) throw attached.collision
+    registry.publish(attached.reservation, 'stable-app-session', {
+      session: providerSession,
+      cwd: '/old-workspace',
+      projectName: 'old-project',
+      frameworkId: 'claude-code',
+      backendId: 'claude-code',
+      permissionProfile
+    })
+    attached.reservation.release()
+    order.length = 0
+  }
+  const setTimer = vi.fn((callback: () => void) => {
+    timerCallback = callback
+    return {} as ReturnType<typeof setTimeout>
+  })
+  const assertCurrentConnection = vi.fn()
   const resumer = new AcpProviderSessionResumer({
     defaultCwd: '/default',
     defaultProjectName: 'default-project',
     currentCwd: () => undefined,
+    currentConnection: () => connection,
     ensureConnected:
       options.ensureConnected ??
       vi.fn(async () => {
         order.push('connect')
         return connection
       }),
-    assertCurrentConnection: vi.fn(),
+    assertCurrentConnection,
     disconnectTimedOutConnection,
     resumeCapabilityAdvertised: () => options.supportsResume !== false,
     currentBackend: () => currentBackend,
@@ -183,7 +214,7 @@ const createHarness = (options: HarnessOptions = {}): ResumerHarness => {
         }
       })
     },
-    configurator: { configure },
+    configurator: { configure, configurePermissionProfile },
     adopter: { adopt },
     updateCwd: () => order.push('cwd callback'),
     pushEvent: () => {
@@ -195,10 +226,7 @@ const createHarness = (options: HarnessOptions = {}): ResumerHarness => {
       if (options.observerError) throw options.observerError
     },
     resumeTimeoutMs: 30_000,
-    setTimer: (callback) => {
-      timerCallback = callback
-      return {} as ReturnType<typeof setTimeout>
-    },
+    setTimer,
     clearTimer: () => undefined,
     diagnosticContext: () => ({})
   })
@@ -214,9 +242,11 @@ const createHarness = (options: HarnessOptions = {}): ResumerHarness => {
 
   return {
     adopt,
+    assertCurrentConnection,
     attachSession,
     commit,
     configure,
+    configurePermissionProfile,
     connection,
     disconnectTimedOutConnection,
     fireTimeout: () => timerCallback?.(),
@@ -227,11 +257,131 @@ const createHarness = (options: HarnessOptions = {}): ResumerHarness => {
     release,
     request,
     resume,
+    setTimer,
     successorSession
   }
 }
 
 describe('AcpProviderSessionResumer', () => {
+  it('refreshes an attached Session without entering provider startup', async () => {
+    const harness = createHarness({ attached: true })
+
+    const response = await harness.resume({
+      cwd: '/moved-workspace',
+      projectName: 'moved-project',
+      specialistId: 'specialist-1',
+      permissionProfile: 'full'
+    })
+
+    expect(response).toEqual({
+      sessionId: 'stable-app-session',
+      cwd: resolve('/moved-workspace'),
+      frameworkId: 'claude-code',
+      backendId: 'claude-code'
+    })
+    expect(harness.configurePermissionProfile).toHaveBeenCalledWith({
+      backend,
+      connection: harness.connection,
+      session: harness.providerSession,
+      permissionProfile: 'full'
+    })
+    expect(harness.registry.lookup('stable-app-session')?.aggregate.snapshot()).toMatchObject({
+      cwd: resolve('/moved-workspace'),
+      projectName: 'moved-project',
+      specialistId: 'specialist-1',
+      permissionProfile
+    })
+    expect(harness.registry.currentSessionId).toBe('stable-app-session')
+    expect(harness.order).toEqual(['configure permission', 'cwd callback', 'state callback'])
+    expect(harness.request).not.toHaveBeenCalled()
+    expect(harness.adopt).not.toHaveBeenCalled()
+    expect(harness.setTimer).not.toHaveBeenCalled()
+    expect(harness.assertCurrentConnection).toHaveBeenCalledWith(harness.connection)
+  })
+
+  it('does not update a successor attachment after permission configuration', async () => {
+    const harness = createHarness({ attached: true })
+    let markConfigureStarted!: () => void
+    let finishConfigure!: () => void
+    const configureStarted = new Promise<void>((resolve) => {
+      markConfigureStarted = resolve
+    })
+    const configureGate = new Promise<void>((resolve) => {
+      finishConfigure = resolve
+    })
+    harness.configurePermissionProfile.mockImplementationOnce(async () => {
+      markConfigureStarted()
+      await configureGate
+      return { ...permissionProfile, selectedProfile: 'full' as const }
+    })
+
+    const resumed = harness.resume({
+      cwd: '/stale-workspace',
+      projectName: 'stale-project',
+      specialistId: 'stale-specialist'
+    })
+    await configureStarted
+    const oldAttachment = harness.registry.lookup('stable-app-session')?.attachment
+    if (!oldAttachment) throw new Error('expected attached Session')
+    harness.registry.detach(oldAttachment, 'connection')
+    const successor = harness.registry.reserve({
+      sessionIds: ['stable-app-session', harness.successorSession.sessionId],
+      blockStartup: false
+    })
+    if (successor.collision) throw successor.collision
+    harness.registry.publish(successor.reservation, 'stable-app-session', {
+      session: harness.successorSession,
+      cwd: '/successor-workspace',
+      projectName: 'successor-project',
+      frameworkId: 'claude-code',
+      backendId: 'claude-code',
+      permissionProfile
+    })
+    successor.reservation.release()
+    harness.order.length = 0
+    finishConfigure()
+
+    await expect(resumed).rejects.toThrow('ACP session startup was superseded.')
+    expect(harness.configurePermissionProfile).toHaveBeenCalledWith(
+      expect.objectContaining({ permissionProfile: 'ask' })
+    )
+    expect(harness.registry.lookup('stable-app-session')?.aggregate.snapshot()).toMatchObject({
+      cwd: '/successor-workspace',
+      projectName: 'successor-project',
+      specialistId: 'stale-specialist',
+      permissionProfile
+    })
+    expect(harness.registry.currentSessionId).toBe('stable-app-session')
+    expect(harness.assertCurrentConnection).not.toHaveBeenCalled()
+    expect(harness.order).toEqual([])
+  })
+
+  it('does not commit attached metadata when the connection is superseded', async () => {
+    const harness = createHarness({ attached: true })
+    const select = vi.spyOn(harness.registry, 'select')
+    harness.configurePermissionProfile.mockResolvedValueOnce({
+      ...permissionProfile,
+      selectedProfile: 'full',
+      effectiveProfile: 'full'
+    })
+    harness.assertCurrentConnection.mockImplementationOnce(() => {
+      throw new Error('ACP session startup was superseded.')
+    })
+
+    await expect(
+      harness.resume({ cwd: '/stale-workspace', projectName: 'stale-project' })
+    ).rejects.toThrow('ACP session startup was superseded.')
+
+    expect(harness.registry.lookup('stable-app-session')?.aggregate.snapshot()).toMatchObject({
+      cwd: '/old-workspace',
+      projectName: 'old-project',
+      permissionProfile
+    })
+    expect(select).not.toHaveBeenCalled()
+    expect(harness.order).not.toContain('cwd callback')
+    expect(harness.order).not.toContain('state callback')
+  })
+
   it('resumes and publishes a provider Session under its stable application id', async () => {
     const harness = createHarness()
 

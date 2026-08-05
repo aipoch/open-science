@@ -341,6 +341,18 @@ describe('runtime state ownership architecture', () => {
     expect(source).toContain('interactions: this.planInteractions')
   })
 
+  it('keeps model application and attached resume behavior behind their workflows', () => {
+    const source = readSource('src/main/acp/runtime.ts')
+
+    expect(source).not.toContain('canApplyModelChange')
+    expect(source).not.toContain('modelChangeMatchesCurrent')
+    expect(source).not.toContain('applyModelTarget')
+    expect(source).not.toContain('resumeSessionOperation')
+    expect(source).toContain('return this.modelChanges.applyReasoningEffort(effort)')
+    expect(source).toContain('this.providerSessionResumer.resume(request)')
+    expect(source).toContain('currentConnection: () => this.connection')
+  })
+
   it('accepts declared interface imports for a future orchestration module', () => {
     const source = `
       import type { AcpApplicationCommandDependencies } from '../acp/application-commands'

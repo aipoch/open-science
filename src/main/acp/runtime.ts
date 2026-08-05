@@ -5,7 +5,6 @@ import type {
   PromptResponse,
   RequestPermissionRequest,
   RequestPermissionResponse,
-  SessionConfigOption,
   SessionNotification
 } from '@agentclientprotocol/sdk'
 import type { ChildProcessWithoutNullStreams } from 'node:child_process'
@@ -31,7 +30,6 @@ import type {
 import { ACP_PROMPT_FAILED_EVENT_TITLE } from '../../shared/acp'
 import {
   DEFAULT_PERMISSION_PROFILE,
-  normalizePermissionProfile,
   type SessionPermissionProfileState
 } from '../../shared/permission-profiles'
 import { type AgentFrameworkId } from '../../shared/settings'
@@ -49,7 +47,6 @@ import { resolveCanonicalMcpToolIdentity } from '../agent-framework/app-mcp-name
 import { createLogger, diagnosticErrorFields, errorLogFields } from '../logger'
 import { extractProviderToolName } from './runtime-events'
 import { fetchOpenCodeUsageSnapshot } from './opencode-turn-usage'
-import { matchSessionModelOption, resolveSessionEffortOption } from './session-config'
 import { AcpRuntimeSnapshotOwner } from './runtime-snapshot-owner'
 import { ConversationPermissionGrantStore } from './permission-broker'
 import { isMcpToolName } from './permission-policy'
@@ -755,16 +752,23 @@ class AcpRuntime {
       hasContextUsage: () => this.contextUsageTracker.hasUsage()
     }
     this.modelChanges = new AcpModelChangeWorkflow({
-      canApply: (target) => this.canApplyModelChange(target),
-      matchesCurrent: (target) => this.modelChangeMatchesCurrent(target),
+      backendGeneration: this.backendGeneration,
+      connectionResources: this.connectionResources,
+      registry: this.sessionRegistry,
+      configurator: this.sessionConfigurator,
+      contextUsage: this.contextUsageTracker,
+      currentStatus: () => this.snapshotOwner.status,
+      providerReconnectPending: () => this.pendingProviderReconnect,
       isGenerationBusy: () => this.generationActivity.blockers().retirement,
-      applyTarget: (target) => this.applyModelTarget(target),
+      contextEstimateInput: (sessionId) => this.contextUsageEstimateInput(sessionId),
+      emitState: () => this.emitState(),
       // Model-change fallback already owns its drain. Calling the close workflow here would ask the
       // same drain to await itself, so arm the authoritative transition directly.
       requestReconnect: () => this.connectionTransitions.requestProviderReconnect(),
       recoverFailedReconnect: () => this.connectionClose.recoverFailedDeferredDisconnect(),
       reportReconnectFailure: (error) =>
-        safeLogError('model-change reconnect failed', errorLogFields(error))
+        safeLogError('model-change reconnect failed', errorLogFields(error)),
+      diagnosticContext: () => this.diagnosticContext()
     })
     this.connectionClose = new AcpConnectionCloseWorkflow({
       currentGeneration: () => this.connectionGeneration,
@@ -877,6 +881,7 @@ class AcpRuntime {
       defaultCwd: options.defaultCwd,
       defaultProjectName: options.artifacts?.projectName || DEFAULT_UPLOAD_PROJECT_NAME,
       currentCwd: () => this.snapshotOwner.cwd,
+      currentConnection: () => this.connection,
       ensureConnected: (cwd) => this.ensureConnected(cwd),
       assertCurrentConnection: (connection) => this.assertCurrentConnectedConnection(connection),
       disconnectTimedOutConnection: async () => {
@@ -906,10 +911,6 @@ class AcpRuntime {
 
   private get framework(): AgentFramework {
     return this.backend.framework
-  }
-
-  private get backendId(): string | undefined {
-    return this.backend.backendId
   }
 
   private get connection(): ClientConnection | undefined {
@@ -1322,166 +1323,6 @@ class AcpRuntime {
     return this.modelChanges.apply(target)
   }
 
-  private canApplyModelChange(target: AgentModelChangeTarget): boolean {
-    const backendCompatible =
-      this.backendId === target.backendId ||
-      (this.framework.id === 'claude-code' &&
-        target.route === 'claude-anthropic' &&
-        target.anthropicBridgeTargetId !== undefined &&
-        this.connectionResources.anthropicBridgeAvailable) ||
-      (target.providerTransportTargetId !== undefined &&
-        this.connectionResources.providerTransportAvailable)
-    return (
-      !this.connectionResources.isShuttingDown &&
-      !this.pendingProviderReconnect &&
-      this.snapshotOwner.status === 'connected' &&
-      this.connection !== undefined &&
-      this.activeSessionEntries().length > 0 &&
-      this.framework.id === target.frameworkId &&
-      backendCompatible &&
-      this.backend.modelRoute === target.route
-    )
-  }
-
-  private modelChangeMatchesCurrent(target: AgentModelChangeTarget): boolean {
-    return (
-      this.backendId === target.backendId &&
-      this.backend.context.model === target.model &&
-      this.backend.session.model === target.sessionModel &&
-      this.backend.context.supportsImageInput === target.supportsImageInput &&
-      (this.backend.session.effort ?? 'default') === target.reasoningEffort
-    )
-  }
-
-  private async applyModelTarget(target: AgentModelChangeTarget): Promise<boolean> {
-    const connection = this.connection
-    if (!connection) return false
-    if (
-      this.framework.id === 'codex' &&
-      target.route !== 'codex-bridge' &&
-      this.backendId !== target.backendId &&
-      this.backend.session.model === target.sessionModel
-    ) {
-      // Native Codex catalogs capability metadata by model slug. Two providers may reuse one slug
-      // for models with different image, context, or effort capabilities, which the live session
-      // cannot distinguish. Reconnect so the newly selected provider owns a fresh catalog entry.
-      return false
-    }
-    if (
-      this.backend.context.supportsImageInput &&
-      !target.supportsImageInput &&
-      (target.route === 'claude-anthropic' || target.route === 'codex-bridge')
-    ) {
-      // Claude retains opaque SDK history, while the Codex bridge keeps an image-capable transport
-      // model. Neither can prove that images from earlier turns will be removed for a text-only
-      // upstream model, so reuse the reconnect/resume path that already filters image history.
-      return false
-    }
-
-    try {
-      if (target.providerTransportTargetId) {
-        if (
-          !this.connectionResources.setProviderTransportTarget(target.providerTransportTargetId)
-        ) {
-          return false
-        }
-      }
-      if (target.anthropicBridgeTargetId) {
-        if (!this.connectionResources.setAnthropicBridgeTarget(target.anthropicBridgeTargetId)) {
-          return false
-        }
-      }
-      if (target.bridge) {
-        const bridgeUpdated = this.connectionResources.setBridgeModelTarget({
-          ...target.bridge,
-          ...(target.reasoningEffort === 'default'
-            ? { reasoningEffort: undefined }
-            : { reasoningEffort: target.reasoningEffort })
-        })
-        if (!bridgeUpdated) return false
-      }
-
-      const results = new Map<
-        string,
-        { appliedModel: string; configOptions: SessionConfigOption[] | null | undefined }
-      >()
-
-      for (const [appSessionId, session] of this.activeSessionEntries()) {
-        const priorOptions =
-          (this.sessionRegistry.lookup(appSessionId)?.aggregate.snapshot().configOptions as
-            readonly SessionConfigOption[] | undefined) ??
-          (session as { newSessionResponse?: { configOptions?: SessionConfigOption[] | null } })
-            .newSessionResponse?.configOptions
-        let configOptions: SessionConfigOption[] | null | undefined = priorOptions
-          ? structuredClone([...priorOptions])
-          : priorOptions
-        let appliedModel = target.sessionModel
-
-        // The Chat-to-Responses bridge keeps the ACP transport model fixed; only its upstream target
-        // changes. Other routes switch the session's advertised model option in place.
-        if (target.route !== 'codex-bridge') {
-          const selection = matchSessionModelOption(configOptions, target.sessionModel)
-          if (!selection) return false
-          appliedModel = selection.value
-
-          if (!selection.alreadyCurrent) {
-            this.assertCurrentConnectedConnection(connection)
-            const response = (await connection.agent.request(
-              acp.methods.agent.session.setConfigOption,
-              {
-                sessionId: session.sessionId,
-                configId: selection.configId,
-                value: selection.value
-              }
-            )) as { configOptions?: SessionConfigOption[] | null }
-            configOptions = response?.configOptions ?? configOptions
-          }
-
-          const shouldApplyEffort =
-            this.framework.supportsLiveEffortChange &&
-            (target.reasoningEffort !== 'default' || this.backend.session.effort !== undefined)
-          if (shouldApplyEffort) {
-            const effortSelection = resolveSessionEffortOption(
-              configOptions,
-              target.reasoningEffort
-            )
-            if (!effortSelection) return false
-            const response = (await connection.agent.request(
-              acp.methods.agent.session.setConfigOption,
-              {
-                sessionId: session.sessionId,
-                configId: effortSelection.configId,
-                value: effortSelection.value
-              }
-            )) as { configOptions?: SessionConfigOption[] | null }
-            configOptions = response?.configOptions ?? configOptions
-          }
-        }
-
-        results.set(appSessionId, { appliedModel, configOptions })
-      }
-
-      this.assertCurrentConnectedConnection(connection)
-      this.backendGeneration.updateModel(target)
-      for (const [appSessionId, result] of results) {
-        this.sessionRegistry
-          .lookup(appSessionId)
-          ?.aggregate.updateModel(result.appliedModel, result.configOptions, target.backendId)
-      }
-      this.contextUsageTracker.clear()
-      for (const appSessionId of results.keys()) this.ensureContextUsageTracking(appSessionId)
-      this.emitState()
-      log.info('session model change applied', this.diagnosticContext())
-      return true
-    } catch (error) {
-      log.warn('live session model change failed', {
-        ...diagnosticErrorFields(error),
-        ...this.diagnosticContext()
-      })
-      return false
-    }
-  }
-
   // Live-applies a reasoning-effort change to every open session — the ACP equivalent of a model
   // switch, no respawn. Returns false when the active framework only carries effort in its baked
   // spawn config (opencode advertises no thought_level option), or when applying to a session
@@ -1492,41 +1333,7 @@ class AcpRuntime {
   // either). On success the generation view tracks the new level, so sessions created later in
   // this process inherit it; the persisted setting covers the next respawn.
   async applyReasoningEffortChange(effort: ResolvedReasoningEffort): Promise<boolean> {
-    const modelChangeBarrier = this.modelChanges.barrier
-    if (modelChangeBarrier) {
-      await modelChangeBarrier
-      return this.applyReasoningEffortChange(effort)
-    }
-
-    // A provider/model switch may be waiting for an in-flight turn to finish. The incoming effort was
-    // resolved against that newly selected model, while this connection still owns the old one. Let
-    // the persisted setting reach the fresh backend after reconnect instead of leaking it here.
-    if (this.pendingProviderReconnect) return false
-
-    const backend = this.backendGeneration.updateReasoningEffort(effort)
-    this.connectionResources.setBridgeReasoningEffort(backend.session.effort)
-    const connection = this.connection
-    if (!connection) return backend.framework.supportsLiveEffortChange
-
-    const facts = await this.sessionConfigurator.applyLiveEffort({
-      backend,
-      connection,
-      effort,
-      sessions: this.activeSessionEntries().map(([appSessionId, session]) => ({
-        session,
-        configOptions:
-          (this.sessionRegistry.lookup(appSessionId)?.aggregate.snapshot().configOptions as
-            readonly SessionConfigOption[] | undefined) ??
-          (session as { newSessionResponse?: { configOptions?: SessionConfigOption[] | null } })
-            .newSessionResponse?.configOptions,
-        assertCurrent: () => {
-          if (this.activeSessionFor(appSessionId) !== session) {
-            throw new Error('ACP session startup was superseded.')
-          }
-        }
-      }))
-    })
-    return !facts.reconnectRequired
+    return this.modelChanges.applyReasoningEffort(effort)
   }
 
   // Starts a fresh agent process connection and initializes protocol capabilities.
@@ -1541,55 +1348,7 @@ class AcpRuntime {
 
   // Reattaches a persisted protocol session after an app restart so later prompts can stream.
   async resumeSession(request: AcpResumeSessionRequest): Promise<AcpCreateSessionResponse> {
-    return this.withOperationLease(() => this.resumeSessionOperation(request))
-  }
-
-  private async resumeSessionOperation(
-    request: AcpResumeSessionRequest
-  ): Promise<AcpCreateSessionResponse> {
-    const sessionCwd = resolve(request.cwd || this.snapshotOwner.cwd || this.options.defaultCwd)
-    const projectName = this.normalizeProjectName(request.projectName)
-
-    // If the runtime already attached this session, only refresh routing metadata.
-    const attachedSession = this.activeSessionFor(request.sessionId)
-
-    if (attachedSession) {
-      const aggregate = this.sessionRegistry.lookup(request.sessionId)?.aggregate
-      if (!aggregate) throw new Error(`ACP session is not registered: ${request.sessionId}`)
-      if (request.specialistId) {
-        aggregate.setSpecialistId(request.specialistId)
-      }
-      const connection = this.connection
-      if (!connection) throw new Error('ACP connection is not available.')
-      const permissionProfile = await this.sessionConfigurator.configurePermissionProfile({
-        backend: this.backend,
-        connection,
-        session: attachedSession,
-        permissionProfile: normalizePermissionProfile(
-          request.permissionProfile ??
-            aggregate.snapshot().permissionProfile?.selectedProfile ??
-            DEFAULT_PERMISSION_PROFILE
-        )
-      })
-      if (this.activeSessionFor(request.sessionId) !== attachedSession) {
-        throw new Error('ACP session startup was superseded.')
-      }
-      this.assertCurrentConnectedConnection(connection)
-      aggregate.setPermissionProfile(structuredClone(permissionProfile))
-      this.sessionRegistry.select(request.sessionId)
-      this.snapshotOwner.updateCwd(sessionCwd)
-      aggregate.updateLocation(sessionCwd, projectName)
-      this.emitState()
-
-      return {
-        sessionId: request.sessionId,
-        cwd: sessionCwd,
-        frameworkId: this.framework.id,
-        ...(this.backendId ? { backendId: this.backendId } : {})
-      }
-    }
-
-    return this.providerSessionResumer.resume(request)
+    return this.withOperationLease(() => this.providerSessionResumer.resume(request))
   }
 
   // Forcibly drops the agent-side context for a session whose accumulated history can no longer be sent
@@ -2220,15 +1979,6 @@ class AcpRuntime {
     return (
       this.sessionRegistry.lookup(sessionId)?.aggregate.snapshot().projectName ??
       this.artifactOptions?.projectName ??
-      DEFAULT_UPLOAD_PROJECT_NAME
-    )
-  }
-
-  // Normalizes a requested project name, falling back to the runtime default when absent.
-  private normalizeProjectName(requestedProjectName: string | undefined): string {
-    return (
-      requestedProjectName?.trim() ||
-      this.artifactOptions?.projectName ||
       DEFAULT_UPLOAD_PROJECT_NAME
     )
   }

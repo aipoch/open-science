@@ -7,7 +7,10 @@ import type {
   AcpResumeSessionRequest,
   AcpRuntimeEvent
 } from '../../shared/acp'
-import { normalizePermissionProfile } from '../../shared/permission-profiles'
+import {
+  DEFAULT_PERMISSION_PROFILE,
+  normalizePermissionProfile
+} from '../../shared/permission-profiles'
 import type { EffectiveSpecialistSkills } from '../../shared/specialist'
 import { createLogger, diagnosticErrorFields, errorLogFields } from '../logger'
 import type { AcpBackendGenerationView } from './backend-generation-owner'
@@ -22,6 +25,7 @@ import { AcpSessionPresentationPolicy } from './session-presentation-policy'
 import type {
   AcpPrimarySessionIdentityReservation,
   AcpPrimarySessionIdentityReservationResult,
+  AcpSessionAttachment,
   AcpSessionRegistry
 } from './session-registry'
 import { AcpSessionResumePolicy } from './session-resume-policy'
@@ -45,6 +49,7 @@ type AcpProviderSessionResumerDependencies = Readonly<{
   defaultCwd: string
   defaultProjectName: string
   currentCwd: () => string | undefined
+  currentConnection: () => ClientConnection | undefined
   ensureConnected: (cwd: string) => Promise<ClientConnection>
   assertCurrentConnection: (connection: ClientConnection) => void
   disconnectTimedOutConnection: () => Promise<void>
@@ -53,7 +58,7 @@ type AcpProviderSessionResumerDependencies = Readonly<{
   registry: AcpSessionRegistry
   reserveIdentity: (sessionId: string) => AcpPrimarySessionIdentityReservationResult
   capabilities: Pick<AcpSessionCapabilityOwner, 'provision'>
-  configurator: Pick<AcpSessionConfigurator, 'configure'>
+  configurator: Pick<AcpSessionConfigurator, 'configure' | 'configurePermissionProfile'>
   adopter: Pick<AcpProviderSessionAdopter, 'adopt'>
   resolveSpecialistSkills?: (specialistId: string) => Promise<EffectiveSpecialistSkills>
   updateCwd: (cwd: string) => void
@@ -72,6 +77,9 @@ export class AcpProviderSessionResumer {
   constructor(private readonly deps: AcpProviderSessionResumerDependencies) {}
 
   async resume(request: AcpResumeSessionRequest): Promise<AcpCreateSessionResponse> {
+    const attached = this.deps.registry.lookup(request.sessionId)?.attachment
+    if (attached) return this.resumeAttached(request, attached)
+
     const cwd = resolve(request.cwd || this.deps.currentCwd() || this.deps.defaultCwd)
     const projectName = request.projectName?.trim() || this.deps.defaultProjectName
     const reserved = this.deps.reserveIdentity(request.sessionId)
@@ -82,6 +90,52 @@ export class AcpProviderSessionResumer {
       return await this.withTimeout(() => this.resumeReserved(request, cwd, projectName, identity))
     } finally {
       identity.release()
+    }
+  }
+
+  private async resumeAttached(
+    request: AcpResumeSessionRequest,
+    attachment: AcpSessionAttachment
+  ): Promise<AcpCreateSessionResponse> {
+    const entry = this.deps.registry.lookup(request.sessionId)
+    if (!entry) throw new Error(`ACP session is not registered: ${request.sessionId}`)
+    const connection = this.deps.currentConnection()
+    if (!connection) throw new Error('ACP connection is not available.')
+
+    const cwd = resolve(request.cwd || this.deps.currentCwd() || this.deps.defaultCwd)
+    const projectName = request.projectName?.trim() || this.deps.defaultProjectName
+    const backend = this.deps.currentBackend()
+    if (request.specialistId) entry.aggregate.setSpecialistId(request.specialistId)
+    const permissionProfile = await this.deps.configurator.configurePermissionProfile({
+      backend,
+      connection,
+      session: attachment.session,
+      permissionProfile: normalizePermissionProfile(
+        request.permissionProfile ??
+          entry.aggregate.snapshot().permissionProfile?.selectedProfile ??
+          DEFAULT_PERMISSION_PROFILE
+      )
+    })
+    const current = this.deps.registry.lookup(request.sessionId)
+    if (
+      current?.attachment?.generation !== attachment.generation ||
+      current.attachment.session !== attachment.session
+    ) {
+      throw new Error('ACP session startup was superseded.')
+    }
+    this.deps.assertCurrentConnection(connection)
+    current.aggregate.setPermissionProfile(structuredClone(permissionProfile))
+    this.deps.registry.select(request.sessionId)
+    this.deps.updateCwd(cwd)
+    current.aggregate.updateLocation(cwd, projectName)
+    this.deps.emitState()
+
+    const responseBackend = this.deps.currentBackend()
+    return {
+      sessionId: request.sessionId,
+      cwd,
+      frameworkId: responseBackend.framework.id,
+      ...(responseBackend.backendId ? { backendId: responseBackend.backendId } : {})
     }
   }
 
