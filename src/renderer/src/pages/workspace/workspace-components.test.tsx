@@ -273,6 +273,7 @@ describe('conversation message scroller integration', () => {
     expect(workspaceMessageItemSource).toContain('messageId={message.id}')
     expect(workspaceMessageItemSource).toContain('<AgentMarkdown')
     expect(workspaceMessageItemSource).toContain('content={message.content}')
+    expect(workspaceMessageItemSource).toContain('sessionLinks')
   })
 
   // Agent replies should read as a full-width transcript surface, while user bubbles stay compact.

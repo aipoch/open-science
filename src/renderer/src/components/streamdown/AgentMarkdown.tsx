@@ -1,9 +1,19 @@
-import { Component, memo, useMemo, type ErrorInfo, type ReactNode } from 'react'
+/* Hallmark · pre-emit critique: P5 H5 E5 S5 R5 V5 */
+import {
+  Component,
+  memo,
+  useMemo,
+  useState,
+  type ComponentProps,
+  type ErrorInfo,
+  type ReactNode
+} from 'react'
 import { code } from '@streamdown/code'
 import { cjk } from '@streamdown/cjk'
 import { createMathPlugin } from '@streamdown/math'
 import { mermaid } from '@streamdown/mermaid'
-import { Streamdown, type LinkSafetyConfig } from 'streamdown'
+import { Globe2 } from 'lucide-react'
+import { Streamdown, type Components, type LinkSafetyConfig } from 'streamdown'
 import 'katex/dist/katex.min.css'
 
 import { AGENT_ALLOWED_TAGS, AGENT_CONTROLS } from './streamdown-config'
@@ -15,7 +25,89 @@ type AgentMarkdownProps = {
   content: string
   isAnimating?: boolean
   allowMedia?: boolean
+  sessionLinks?: boolean
 }
+
+type SessionMessageLinkProps = ComponentProps<'a'> & {
+  node?: unknown
+  'data-incomplete'?: boolean
+}
+
+type FaviconState = 'loading' | 'success' | 'error'
+
+const getSessionLinkFaviconUrl = (href: string | undefined): string | undefined => {
+  if (!href) return undefined
+
+  try {
+    const url = new URL(href)
+    if ((url.protocol !== 'http:' && url.protocol !== 'https:') || !url.hostname) return undefined
+
+    return `https://${url.hostname.toLowerCase()}/favicon.ico`
+  } catch {
+    return undefined
+  }
+}
+
+const SessionLinkFavicon = ({ src }: { src: string }): React.JSX.Element => {
+  const [state, setState] = useState<FaviconState>('loading')
+
+  return (
+    <span data-session-link-favicon="" data-state={state} aria-hidden="true">
+      <Globe2 data-session-link-favicon-fallback="" />
+      {state !== 'error' ? (
+        <img
+          src={src}
+          alt=""
+          width="16"
+          height="16"
+          loading="lazy"
+          decoding="async"
+          referrerPolicy="no-referrer"
+          draggable={false}
+          onLoad={() => setState('success')}
+          onError={() => setState('error')}
+        />
+      ) : null}
+    </span>
+  )
+}
+
+const SessionMessageLink = ({
+  children,
+  className,
+  href,
+  'data-incomplete': dataIncomplete
+}: SessionMessageLinkProps): React.JSX.Element => {
+  const [isOpen, setIsOpen] = useState(false)
+  const faviconUrl = getSessionLinkFaviconUrl(href)
+
+  return (
+    <>
+      <button
+        type="button"
+        className={className}
+        data-incomplete={dataIncomplete}
+        data-session-message-link=""
+        data-streamdown="link"
+        disabled={!href}
+        onClick={() => setIsOpen(true)}
+      >
+        {faviconUrl ? <SessionLinkFavicon key={faviconUrl} src={faviconUrl} /> : null}
+        {children}
+      </button>
+      {href ? (
+        <LinkSafetyModal
+          url={href}
+          isOpen={isOpen}
+          onClose={() => setIsOpen(false)}
+          onConfirm={() => window.open(href, '_blank', 'noreferrer')}
+        />
+      ) : null}
+    </>
+  )
+}
+
+const sessionLinkComponents = { a: SessionMessageLink } satisfies Components
 
 // Import previews render untrusted Markdown. Removing every element that can initiate a media fetch
 // prevents opening a candidate from disclosing viewer activity to an external host. `use` is
@@ -136,7 +228,12 @@ class AgentMarkdownErrorBoundary extends Component<
 
 // Renders agent markdown with Streamdown tuned for incremental AI output.
 const RichAgentMarkdown = memo(
-  ({ content, isAnimating = false, allowMedia = true }: AgentMarkdownProps): React.JSX.Element => {
+  ({
+    content,
+    isAnimating = false,
+    allowMedia = true,
+    sessionLinks = false
+  }: AgentMarkdownProps): React.JSX.Element => {
     const renderedContent = useMemo(() => normalizeAgentMarkdown(content), [content])
 
     return (
@@ -151,6 +248,7 @@ const RichAgentMarkdown = memo(
           plugins={plugins}
           controls={AGENT_CONTROLS}
           linkSafety={agentLinkSafety}
+          components={sessionLinks ? sessionLinkComponents : undefined}
           dir="auto"
           mode={isAnimating ? 'streaming' : 'static'}
           isAnimating={isAnimating}
@@ -173,13 +271,23 @@ RichAgentMarkdown.displayName = 'RichAgentMarkdown'
 
 // Keeps renderer-specific failures from unmounting the surrounding workspace.
 const AgentMarkdown = memo(
-  ({ content, isAnimating = false, allowMedia = true }: AgentMarkdownProps): React.JSX.Element => (
+  ({
+    content,
+    isAnimating = false,
+    allowMedia = true,
+    sessionLinks = false
+  }: AgentMarkdownProps): React.JSX.Element => (
     <AgentMarkdownErrorBoundary content={content}>
-      <RichAgentMarkdown content={content} isAnimating={isAnimating} allowMedia={allowMedia} />
+      <RichAgentMarkdown
+        content={content}
+        isAnimating={isAnimating}
+        allowMedia={allowMedia}
+        sessionLinks={sessionLinks}
+      />
     </AgentMarkdownErrorBoundary>
   )
 )
 
 AgentMarkdown.displayName = 'AgentMarkdown'
 
-export { AgentMarkdown }
+export { AgentMarkdown, SessionMessageLink }

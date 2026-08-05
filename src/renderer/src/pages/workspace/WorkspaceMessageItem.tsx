@@ -1006,6 +1006,7 @@ const WorkspaceMessageItem = ({
               <AgentMarkdown
                 content={message.content}
                 isAnimating={message.status === 'streaming'}
+                sessionLinks
               />
             ) : null}
             <MessageImageList images={message.images ?? []} />
