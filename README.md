@@ -87,7 +87,7 @@ Notebook execution is optional. Every required environment and agent-runtime che
 
 ## Product Tour
 
-Open Science organizes research into projects and sessions so that every result can stay connected to the evidence that produced it. The sections below walk through the workspace, artifact provenance, previews, scientific skills, and data connectors.
+Open Science gives you a single desktop workspace where projects, sessions, files, and agent tool activity stay connected to the evidence behind every result. The sections below walk through the workspace, artifact provenance, previews, scientific skills, and data connectors.
 
 ### One workspace from task to traceable artifacts
 
@@ -157,7 +157,7 @@ Open Science is an independent product built from scratch. It is not a proxy, un
 
 ## Core Capabilities
 
-This section describes durable product capabilities rather than a version-specific inventory. The installed app and [latest release notes](https://github.com/aipoch/open-science/releases/latest) are the source of truth for changing catalogs, packaging details, and newly added options.
+Open Science covers the full research loop: project management, model-agnostic agents, Python and R execution, scientific data connectors, file previews, artifact provenance, and permission controls. The table below describes these durable capabilities; the installed app and [latest release notes](https://github.com/aipoch/open-science/releases/latest) are the source of truth for changing catalogs, packaging details, and newly added options.
 
 | Area                         | Core capability                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                   |
 | ---------------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
