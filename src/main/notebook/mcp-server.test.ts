@@ -112,6 +112,18 @@ describe('notebook MCP server config', () => {
     expect(NOTEBOOK_SYSTEM_PROMPT_APPEND).not.toContain('will not resolve a bare relative name')
   })
 
+  it('does not inject a 4000-character output instruction into agent guidance', () => {
+    const agentGuidance = [
+      NOTEBOOK_SYSTEM_PROMPT_APPEND,
+      ...NOTEBOOK_RPC_TOOLS.map((tool) => tool.description)
+    ].join('\n')
+
+    expect(agentGuidance).not.toMatch(/\b4,?000\b/)
+    expect(REPL_EXECUTE_DOC).toContain('hand off large data from the REPL to Python/R')
+    expect(REPL_EXECUTE_DOC).toContain('Python/R reads the same OPEN_SCIENCE_HANDOFF_DIR path')
+    expect(REPL_EXECUTE_DOC).not.toContain('Do not echo large data')
+  })
+
   it('directs the agent to run code as one notebook_execute call per cell', () => {
     // The single-step execute tool keeps each cell to one permission prompt and one activity row,
     // instead of the old begin/append/finish/run streaming sequence.
@@ -757,6 +769,18 @@ describe('compactNotebookExecutionResult', () => {
     expect(compact).not.toHaveProperty('script')
     expect(compact).not.toHaveProperty('roots')
     expect(compact.outputs).toEqual([{ type: 'display', data: { 'text/plain': '42' } }])
+  })
+
+  it('keeps a practical diagnostic stream inline for the next agent step', () => {
+    const stdout = 'x'.repeat(7_500)
+
+    const compact = compactNotebookExecutionResult(runSummary({ stdout })) as {
+      stdout: string
+      truncated?: boolean
+    }
+
+    expect(compact.stdout).toBe(stdout)
+    expect(compact.truncated).toBeUndefined()
   })
 
   it('keeps a compact connector text result inline', () => {

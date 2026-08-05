@@ -19,7 +19,7 @@ const NOTEBOOK_SYSTEM_PROMPT_APPEND = [
   'Each runtime is a separate persistent namespace. Create named runtimes with `manage_environments`, select them with the bind/switch tools, and use files to move data across runtimes. Memory is lost on restart or app reopen; run history and files survive.',
   'The notebook already runs inside a writable session workspace. The cwd is already the session data dir; use plain relative paths for normal inputs and outputs. The connector handoff directory is outside that cwd and must be resolved from `OPEN_SCIENCE_HANDOFF_DIR`. Never copy a saved file onto the same path. Do not modify original user files.',
   'Use `inspect_packages` for version checks and `manage_packages` for installs. Never install inside a cell or shell. App-managed runtime contents belong under `$OPEN_SCIENCE_RUNTIME_DIR`, never the project, workspace, system Python, or a user global environment.',
-  'MCP execution replies are bounded summaries; full output remains in the notebook preview. Inspect stdout, stderr, traceback, outputs, and workingFiles, then revise and rerun if needed. The notebook runtime does not classify files for you.',
+  'MCP execution replies include bounded output for the next step; use it directly when sufficient. Full output remains in the notebook preview. Inspect stdout, stderr, traceback, outputs, and workingFiles, then revise and rerun if needed. The notebook runtime does not classify files for you.',
   'For a final user-facing file, call `write_artifact_file` from the `open-science-artifacts` server before announcing it. Use `source: { "kind": "localPath", "path": "plot.png" }` with the SAME relative filename you saved with and `producerRunId` set to the exact `runId` returned by the execution that last wrote it. Use inline content only for small text.',
   '</open_science_notebook_instructions>'
 ].join('\n')
@@ -137,7 +137,7 @@ const SWITCH_RUNTIME_DOC = [
 const REPL_EXECUTE_DOC = [
   'Run JavaScript in the persistent control-plane REPL, separate from notebook_execute Python/R data kernels.',
   'Only this kernel can call connectors (`await host.mcp(server, method, args)`) and remote compute (`host.compute`; load its skill for the API).',
-  'Globals persist and a trailing expression is returned. Do not echo large data; write it under process.env.OPEN_SCIENCE_HANDOFF_DIR for Python/R. Use notebook_execute for analysis code.'
+  'Globals persist and a trailing expression is returned. Return results directly when they are for Agent inspection. To hand off large data from the REPL to Python/R, write it under process.env.OPEN_SCIENCE_HANDOFF_DIR; Python/R reads the same OPEN_SCIENCE_HANDOFF_DIR path. Use notebook_execute for analysis code.'
 ].join('\n')
 
 // Stateless shell contract, embedded as the bash_execute description so the agent always sees it.
@@ -281,12 +281,12 @@ const callNotebookRpc = async (
   return payload.result
 }
 
-// Approximate 4k/2k-token budgets for ordinary English/JSON. The final serialized character caps are
-// deliberately conservative; full values stay in run.json and the notebook preview.
+// These character caps apply only to serialized MCP replies; full values stay in run.json and the
+// notebook preview.
 const NOTEBOOK_MCP_EXECUTION_RESULT_LIMIT = 24_000
 const NOTEBOOK_MCP_STATE_RESULT_LIMIT = 6_000
 const NOTEBOOK_MCP_CONTROL_RESULT_LIMIT = 8_000
-const NOTEBOOK_MCP_STREAM_PREVIEW_LIMIT = 2_500
+const NOTEBOOK_MCP_STREAM_PREVIEW_LIMIT = 8_000
 const NOTEBOOK_MCP_STATE_OUTPUT_PREVIEW_LIMIT = 600
 const MIME_INLINE_LIMIT = 4_000
 const MAX_EXECUTION_OUTPUTS = 6
