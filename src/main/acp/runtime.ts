@@ -296,7 +296,10 @@ type AcpRuntimePlanOptions = {
   registerSessionAlias?: (aliasSessionId: string, sessionId: string) => void
   sessions: Pick<
     SessionPersistenceCoordinator,
-    'readSessionRuntimeContext' | 'patchSessionRuntimeContext' | 'appendUserMessageToInteraction'
+    | 'readSessionRuntimeContext'
+    | 'patchSessionRuntimeContext'
+    | 'appendUserMessageToInteraction'
+    | 'containsMessageOnActiveBranch'
   >
 }
 // An end_turn is final from the runtime's perspective, so promised work must be a tool call in the
@@ -410,6 +413,7 @@ class AcpRuntime {
   private readonly artifactRunRegistry: ArtifactRunRegistry | undefined
   private readonly artifactTurns: ArtifactTurnOwner | undefined
   private readonly planService: PlanService | undefined
+  private readonly planSessions: AcpRuntimePlanOptions['sessions'] | undefined
   private readonly planApprovalWaiters = new Map<
     string,
     {
@@ -509,6 +513,7 @@ class AcpRuntime {
               : {})
           })
         : undefined
+    this.planSessions = options.plan?.sessions
     this.planService =
       options.plan && this.artifactTurns && options.artifacts?.provenance?.resolveVersionContent
         ? createProductionPlanService({
@@ -1033,7 +1038,7 @@ class AcpRuntime {
       interactionIsLive: this.sessionInteractions.current(input.sessionId) !== undefined
     })
     if (!projection) throw new Error('The Session has no active Plan.')
-    this.assertPlanVisibleToActiveTurn(input.sessionId, projection)
+    await this.assertPlanVisibleToDurableBranch(input.projectId, input.sessionId, projection)
     const identity = {
       projectId: input.projectId,
       sessionId: input.sessionId,
@@ -1128,7 +1133,7 @@ class AcpRuntime {
       interactionIsLive
     })
     if (!projection) throw new Error('The Session has no active Plan.')
-    this.assertPlanVisibleToActiveTurn(input.sessionId, projection)
+    await this.assertPlanVisibleToDurableBranch(input.projectId, input.sessionId, projection)
     const result = await this.planService.respond({ ...input, interactionIsLive })
     if ('projection' in result) {
       if (interactionIsLive && result.projection.approval === 'approved') {
@@ -1216,29 +1221,20 @@ class AcpRuntime {
     })
   }
 
-  private assertPlanVisibleToActiveTurn(sessionId: string, projection: ActivePlanProjection): void {
-    const origin = projection.originatingPromptMessageId
-    if (!origin || !this.artifactTurns?.containsMessageForActiveTurn(sessionId, origin)) {
-      throw new PlanCommandError(
-        'interaction-mismatch',
-        'The active Session Plan does not belong to this Message Branch.'
-      )
-    }
-  }
-
-  private assertPlanVisibleToPrompt(
-    request: AcpPromptRequest,
+  private async assertPlanVisibleToDurableBranch(
+    projectId: string,
+    sessionId: string,
     projection: ActivePlanProjection
-  ): void {
+  ): Promise<void> {
     const origin = projection.originatingPromptMessageId
-    const visibleMessageIds = new Set(request.provenanceContext?.messageAncestry ?? [])
-    if (request.provenanceContext?.promptMessageId) {
-      visibleMessageIds.add(request.provenanceContext.promptMessageId)
-    }
-    if (!origin || !visibleMessageIds.has(origin)) {
+    if (
+      !origin ||
+      !this.planSessions ||
+      !(await this.planSessions.containsMessageOnActiveBranch(projectId, sessionId, origin))
+    ) {
       throw new PlanCommandError(
         'interaction-mismatch',
-        'The Session Plan continuation does not belong to this Message Branch.'
+        'The active Session Plan does not belong to the durable active Message Branch.'
       )
     }
   }
@@ -1862,15 +1858,19 @@ class AcpRuntime {
         sessionId: request.sessionId,
         artifactVersionId: continuation.artifactVersionId,
         expectedRevision: continuation.expectedRevision
-      }).then((authorized) => {
-        this.assertPlanVisibleToPrompt(request, authorized)
+      }).then(async (authorized) => {
+        await this.assertPlanVisibleToDurableBranch(
+          continuation.projectId,
+          request.sessionId,
+          authorized
+        )
         return Object.freeze({ authorized })
       })
     }
     if (!continuation) return Object.freeze({})
     return this.planService!.getProjection(continuation.projectId, request.sessionId, {
       interactionIsLive: false
-    }).then((protectedPending) => {
+    }).then(async (protectedPending) => {
       if (!protectedPending) {
         throw new PlanCommandError('no-active-plan', 'The Session has no active Plan.')
       }
@@ -1883,7 +1883,11 @@ class AcpRuntime {
       if (protectedPending.approval !== 'pending') {
         throw new PlanCommandError('approval-already-decided', 'Plan approval is irreversible.')
       }
-      this.assertPlanVisibleToPrompt(request, protectedPending)
+      await this.assertPlanVisibleToDurableBranch(
+        continuation.projectId,
+        request.sessionId,
+        protectedPending
+      )
       return Object.freeze({ protectedPending })
     })
   }

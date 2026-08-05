@@ -75,7 +75,10 @@ type AcpRuntimeCompositionOptions = AcpRuntimeArtifacts & {
   profileService?: ProfileService
   sessionPersistenceCoordinator?: Pick<
     SessionPersistenceCoordinator,
-    'readSessionRuntimeContext' | 'patchSessionRuntimeContext' | 'appendUserMessageToInteraction'
+    | 'readSessionRuntimeContext'
+    | 'patchSessionRuntimeContext'
+    | 'appendUserMessageToInteraction'
+    | 'containsMessageOnActiveBranch'
   >
 }
 

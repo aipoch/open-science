@@ -52,7 +52,7 @@ type RuntimeHarness = Readonly<{
 const createRuntimeHarness = (options: {
   onEvent?: (event?: unknown) => void
   activeProjection?: ActivePlanProjection
-  messageAncestry?: string[]
+  durableMessageIds?: string[]
 }): RuntimeHarness => {
   const generated = projection('version-1')
   const approved = { ...generated, approval: 'approved' as const, lifecycle: 'approved' as const }
@@ -109,10 +109,14 @@ const createRuntimeHarness = (options: {
     },
     planExecutionBindings: new Map(),
     planApprovalWaiters: new Map(),
+    planSessions: {
+      containsMessageOnActiveBranch: vi.fn(
+        async (_projectId: string, _sessionId: string, messageId: string) =>
+          (options.durableMessageIds ?? ['interaction-1']).includes(messageId)
+      )
+    },
     artifactTurns: {
-      promptMessageIdFor: () => 'interaction-1',
-      containsMessageForActiveTurn: (_sessionId: string, messageId: string) =>
-        (options.messageAncestry ?? ['interaction-1']).includes(messageId)
+      promptMessageIdFor: () => 'interaction-1'
     },
     callbacks: { onEvent: options.onEvent },
     pushEvent: (event: unknown) => options.onEvent?.(event),
@@ -193,7 +197,7 @@ describe('AcpRuntime Session Plan seam', () => {
   it('rejects an MCP Plan decision when the Plan originated on a sibling Message Branch', async () => {
     const { runtime, service } = createRuntimeHarness({
       activeProjection: projection('version-2', 4, 'sibling-message'),
-      messageAncestry: ['parent-message', 'interaction-1']
+      durableMessageIds: ['parent-message', 'interaction-1']
     })
 
     await expect(
@@ -224,7 +228,7 @@ describe('AcpRuntime Session Plan seam', () => {
   it('rejects a renderer Plan decision when the Plan originated on a sibling Message Branch', async () => {
     const { runtime, service } = createRuntimeHarness({
       activeProjection: projection('version-2', 4, 'sibling-message'),
-      messageAncestry: ['parent-message', 'interaction-1']
+      durableMessageIds: ['parent-message', 'interaction-1']
     })
 
     await expect(
@@ -242,7 +246,7 @@ describe('AcpRuntime Session Plan seam', () => {
   it('rejects renderer Plan feedback when the Plan originated on a sibling Message Branch', async () => {
     const { runtime, service } = createRuntimeHarness({
       activeProjection: projection('version-2', 4, 'sibling-message'),
-      messageAncestry: ['parent-message', 'interaction-1']
+      durableMessageIds: ['parent-message', 'interaction-1']
     })
     const pending = runtime.callSessionPlan({
       projectId: 'project-1',

@@ -5,8 +5,14 @@ import { describe, expect, it, vi } from 'vitest'
 
 import type { ArtifactVersionFile } from '../../shared/artifact-provenance'
 import {
+  createLinearConversationGraph,
+  forkEditedConversationMessage,
+  synchronizeActiveConversationMessages
+} from '../../shared/conversation-graph'
+import {
   materializeSessionConversationGraph,
   type PersistedArtifact,
+  type PersistedChatMessage,
   type PersistedChatSession,
   type SessionPlanRuntimeContext
 } from '../../shared/session-persistence'
@@ -154,6 +160,87 @@ const createProjectReconciliationSnapshot = (): ArtifactProjectReconciliationSna
   ({}) as ArtifactProjectReconciliationSnapshot
 
 describe('SessionPersistenceCoordinator', () => {
+  it('resolves Message membership from the durable active Branch', async () => {
+    const prompt = (id: string, createdAt: number): PersistedChatMessage => ({
+      id,
+      role: 'user',
+      content: id,
+      status: 'complete',
+      eventIds: [],
+      createdAt,
+      updatedAt: createdAt
+    })
+    const promptA = prompt('prompt-a', 1)
+    const promptB = prompt('prompt-b', 2)
+    const original = createLinearConversationGraph({
+      sessionId: 'session-1',
+      messages: [promptA],
+      createdAt: 1,
+      updatedAt: 1
+    })
+    const branchB = synchronizeActiveConversationMessages(
+      forkEditedConversationMessage(original, promptA.id, 'branch-b', 2),
+      [promptB],
+      2
+    )
+    const durable = createSession({ messages: [promptB], conversationGraph: branchB })
+    const repository = createSessionRepository({
+      loadSessionWithDiagnostics: vi.fn(async () => ({
+        status: 'found' as const,
+        session: durable
+      }))
+    })
+    const coordinator = new SessionPersistenceCoordinator(repository, createFileIndex())
+
+    await expect(
+      coordinator.containsMessageOnActiveBranch('project-1', 'session-1', promptB.id)
+    ).resolves.toBe(true)
+    await expect(
+      coordinator.containsMessageOnActiveBranch('project-1', 'session-1', promptA.id)
+    ).resolves.toBe(false)
+  })
+
+  it('materializes a legacy linear Session before checking its active Branch', async () => {
+    const durable = createSession({
+      messages: [
+        {
+          id: 'legacy-prompt',
+          role: 'user',
+          content: 'Legacy prompt',
+          status: 'complete',
+          eventIds: [],
+          createdAt: 1,
+          updatedAt: 1
+        }
+      ]
+    })
+    const repository = createSessionRepository({
+      loadSessionWithDiagnostics: vi.fn(async () => ({
+        status: 'found' as const,
+        session: durable
+      }))
+    })
+    const coordinator = new SessionPersistenceCoordinator(repository, createFileIndex())
+
+    await expect(
+      coordinator.containsMessageOnActiveBranch('project-1', 'session-1', 'legacy-prompt')
+    ).resolves.toBe(true)
+  })
+
+  it.each(['missing', 'unreadable'] as const)(
+    'fails closed when the durable Session is %s',
+    async (status) => {
+      const repository = createSessionRepository({
+        loadSessionWithDiagnostics: vi.fn(async () => ({ status }))
+      })
+      const coordinator = new SessionPersistenceCoordinator(repository, createFileIndex())
+
+      await expect(
+        coordinator.containsMessageOnActiveBranch('project-1', 'session-1', 'prompt-a')
+      ).rejects.toThrow(`Cannot read active Message Branch for a ${status} Session.`)
+    }
+  )
+
   it('persists blocked Plan feedback as a standard user Message without changing Plan authority', async () => {
     let durable = createSession({
       status: 'waiting-plan-approval',

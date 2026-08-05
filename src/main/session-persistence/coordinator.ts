@@ -1,5 +1,6 @@
 import { createHash, randomUUID } from 'node:crypto'
 
+import { resolveActiveConversationMessages } from '../../shared/conversation-graph'
 import type { ProjectFilesChangedEvent } from '../../shared/project-files'
 import type { ProjectFileSource } from '../../shared/project-files'
 import type { ArtifactVersionFile } from '../../shared/artifact-provenance'
@@ -405,6 +406,23 @@ class SessionPersistenceCoordinator {
     private readonly permissionGrants?: SessionPermissionGrantReconciliation,
     private readonly log: Logger = createLogger('session-persistence')
   ) {}
+
+  containsMessageOnActiveBranch(
+    projectId: string,
+    sessionId: string,
+    messageId: string
+  ): Promise<boolean> {
+    return this.enqueue(async () => {
+      const loaded = await this.repository.loadSessionWithDiagnostics(projectId, sessionId)
+      if (loaded.status !== 'found') {
+        throw new Error(`Cannot read active Message Branch for a ${loaded.status} Session.`)
+      }
+      const graph = materializeSessionConversationGraph(loaded.session).conversationGraph
+      return graph
+        ? resolveActiveConversationMessages(graph).some((message) => message.id === messageId)
+        : false
+    })
+  }
 
   // Binds unread cleanup to authoritative Session mutations. Reconciliation is called only with a
   // complete live Session catalog, while commit runs only after deletion succeeds.

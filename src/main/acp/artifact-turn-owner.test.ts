@@ -88,8 +88,6 @@ describe('ArtifactTurnOwner', () => {
 
     expect(owner.activeRunIds()).toEqual(['artifact-run-123-1'])
     expect(owner.promptMessageIdFor('session-1')).toBe('prompt-1')
-    expect(owner.containsMessageForActiveTurn('session-1', 'message-parent')).toBe(true)
-    expect(owner.containsMessageForActiveTurn('session-1', 'message-sibling')).toBe(false)
     expect(issuedBindings).toEqual([
       expect.objectContaining({
         projectId: 'project-1',

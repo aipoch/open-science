@@ -1623,6 +1623,21 @@ describe('ACP runtime session management', () => {
     counts: { phases: 1, delegations: 1, steps: 1, completed: 0, inProgress: 0 }
   })
 
+  const durablePlanSessions = (
+    messageIds: string[] = ['plan-origin']
+  ): {
+    containsMessageOnActiveBranch(
+      projectId: string,
+      sessionId: string,
+      messageId: string
+    ): Promise<boolean>
+  } => ({
+    containsMessageOnActiveBranch: vi.fn(
+      async (_projectId: string, _sessionId: string, messageId: string) =>
+        messageIds.includes(messageId)
+    )
+  })
+
   it('activates one interaction before durably approving a restored Plan', async () => {
     const process = new FakeAgentProcess()
     const fakeAgent = startFakeAgent(process, ['s1'])
@@ -1639,6 +1654,7 @@ describe('ACP runtime session management', () => {
     const respond = vi.fn(async () => ({ projection: approved, changed: true }))
     const checkTurnCompletion = vi.fn(async () => ({ allow: true }))
     Object.assign(runtime as unknown as { planService: unknown }, {
+      planSessions: durablePlanSessions(),
       planService: {
         respond,
         checkTurnCompletion,
@@ -1695,6 +1711,7 @@ describe('ACP runtime session management', () => {
     const getProjection = vi.fn(async () => pending)
     const respond = vi.fn()
     Object.assign(runtime as unknown as { planService: unknown }, {
+      planSessions: durablePlanSessions(),
       planService: { getProjection, respond }
     })
 
@@ -1753,6 +1770,7 @@ describe('ACP runtime session management', () => {
     const pending = restoredPlanProjection('pending', 4)
     const respond = vi.fn(async () => ({ projection: rejected, changed: true }))
     Object.assign(runtime as unknown as { planService: unknown }, {
+      planSessions: durablePlanSessions(),
       planService: {
         respond,
         getProjection: vi.fn(async () => pending)
@@ -12706,6 +12724,7 @@ describe('ACP runtime session management', () => {
       } satisfies ActivePlanProjection
       const authorizeContinuation = vi.fn(async () => active)
       Object.assign(runtime as unknown as { planService: unknown }, {
+        planSessions: durablePlanSessions(),
         planService: {
           authorizeContinuation,
           checkTurnCompletion: vi.fn(async () => ({ allow: true })),
@@ -12752,6 +12771,7 @@ describe('ACP runtime session management', () => {
     })
     const active = restoredPlanProjection('approved', 4)
     Object.assign(runtime as unknown as { planService: unknown }, {
+      planSessions: durablePlanSessions(['branch-b-root', 'branch-b-message']),
       planService: { authorizeContinuation: vi.fn(async () => active) }
     })
 
@@ -12767,7 +12787,7 @@ describe('ACP runtime session management', () => {
         },
         provenanceContext: {
           promptMessageId: 'branch-b-message',
-          messageAncestry: ['branch-b-root', 'branch-b-message']
+          messageAncestry: ['plan-origin', 'branch-b-root', 'branch-b-message']
         }
       })
     ).rejects.toMatchObject({ code: 'interaction-mismatch' })
@@ -12831,6 +12851,7 @@ describe('ACP runtime session management', () => {
         counts: { phases: 1, delegations: 1, steps: 1, completed: 0, inProgress: 0 }
       } satisfies ActivePlanProjection
       Object.assign(runtime as unknown as { planService: unknown }, {
+        planSessions: durablePlanSessions(),
         planService: {
           authorizeContinuation: vi.fn(async () => authorized),
           checkTurnCompletion,
@@ -19828,7 +19849,8 @@ describe('Specialist Skill scoping', () => {
           },
           appendUserMessageToInteraction: async () => {
             throw new Error('not used in this test')
-          }
+          },
+          containsMessageOnActiveBranch: async () => true
         }
       }
     })
