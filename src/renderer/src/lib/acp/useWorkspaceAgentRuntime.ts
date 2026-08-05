@@ -100,12 +100,13 @@ type HistoryReplayContext = {
   historyImages?: AcpMessageImage[]
 }
 
-const isReplayImage = (attachment: UploadedAttachment): boolean =>
+const isReplayImage = (attachment: Pick<UploadedAttachment, 'name' | 'mimeType'>): boolean =>
   imageAttachmentMimeType(attachment.name, attachment.mimeType) !== undefined
 
-const hasReplayImages = (replay?: HistoryReplayContext): boolean =>
-  (replay?.historyImages?.length ?? 0) > 0 ||
-  replay?.historyAttachments?.some(isReplayImage) === true
+const hasHistoryImages = (messages: ChatMessage[]): boolean =>
+  messages.some(
+    (message) => (message.images?.length ?? 0) > 0 || message.uploads?.some(isReplayImage) === true
+  )
 
 const replayAttachmentsForModel = (
   replay: HistoryReplayContext | undefined,
@@ -957,15 +958,7 @@ const sendWorkspaceMessage = async (
     const resumeNeedsImageFiltering =
       runtimeMustAdoptSession &&
       supportsImageInput === false &&
-      (() => {
-        const replay = buildWorkspaceReplay(
-          currentSession?.messages ?? [],
-          historyReplayDescriptor,
-          agentFrameworkId,
-          sessionProjectName
-        )
-        return hasReplayImages(replay)
-      })()
+      hasHistoryImages(currentSession?.messages ?? [])
     const sendPreparationRequired = branchResetRequired || runtimeMustAdoptSession
 
     if (sendPreparationRequired) {

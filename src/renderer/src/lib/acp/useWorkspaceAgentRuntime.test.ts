@@ -3286,6 +3286,67 @@ describe('resuming an interrupted session on demand', () => {
     expect(useSessionStore.getState().sessions[0].agentFrameworkId).toBe('codex')
   })
 
+  it('resets text-only context when replay budgeting omits an older image turn', async () => {
+    useSessionStore.getState().appendUserMessage({
+      sessionId: 'session-1',
+      content: `Original task ${'a'.repeat(500)}`,
+      cwd: '/workspace/project',
+      projectId: 'default-project'
+    })
+    useSessionStore.getState().finishRun('session-1')
+    useSessionStore.getState().appendUserMessage({
+      sessionId: 'session-1',
+      content: 'Middle image turn that should be omitted from the replay packet',
+      cwd: '/workspace/project',
+      projectId: 'default-project'
+    })
+    useSessionStore.getState().appendAgentMessageChunk({
+      sessionId: 'session-1',
+      streamId: 'omitted-image',
+      eventId: 'omitted-image-event',
+      image: { mimeType: 'image/png', data: 'aGVsbG8=', byteLength: 5 }
+    })
+    useSessionStore.getState().finishRun('session-1')
+    useSessionStore.getState().appendUserMessage({
+      sessionId: 'session-1',
+      content: `Latest turn ${'b'.repeat(500)}`,
+      cwd: '/workspace/project',
+      projectId: 'default-project'
+    })
+    useSessionStore.getState().finishRun('session-1')
+
+    const runtime = {
+      state: createSnapshot([]),
+      createSession: vi.fn(),
+      resumeSession: vi.fn().mockResolvedValue({
+        sessionId: 'session-1',
+        cwd: '/workspace/project',
+        frameworkId: 'codex'
+      }),
+      resetSessionContext: vi.fn().mockResolvedValue({
+        sessionId: 'session-1',
+        cwd: '/workspace/project',
+        contextReset: true,
+        frameworkId: 'codex'
+      }),
+      sendPrompt: vi.fn().mockResolvedValue(createSnapshot(['session-1']))
+    }
+
+    await sendWorkspaceMessage(runtime, {
+      sessionId: 'session-1',
+      text: 'continue',
+      cwd: '/workspace/project',
+      projectId: 'default-project',
+      supportsImageInput: false,
+      historyReplayDescriptor: { target: 'codex-response', budget: 600 }
+    })
+    await flushRuntimeTasks()
+
+    expect(runtime.resetSessionContext).toHaveBeenCalledOnce()
+    expect(runtime.sendPrompt.mock.calls[0]?.[5]).not.toContain('Middle image turn')
+    expect(runtime.sendPrompt.mock.calls[0]?.[7]).toBeUndefined()
+  })
+
   it('reconnects without re-sending when the last turn was already answered', async () => {
     useSessionStore.getState().appendUserMessage({
       sessionId: 'session-1',
