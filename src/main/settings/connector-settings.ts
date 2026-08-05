@@ -178,6 +178,12 @@ class ConnectorSettingsModule {
   }
 
   async addCustomServer(request: AddCustomServerRequest): Promise<ConnectorsSnapshot> {
+    if (request.transport === 'stdio' && request.oauth) {
+      throw new Error('OAuth is only supported for remote custom connectors')
+    }
+    if (request.oauth && request.headers && Object.keys(request.headers).length > 0) {
+      throw new Error('OAuth and static headers cannot be configured together')
+    }
     const candidate: StoredCustomMcpServer = {
       id: randomUUID(),
       name: request.name.trim(),
@@ -236,20 +242,36 @@ class ConnectorSettingsModule {
     if (!existing) throw new Error(`Unknown custom connector: ${request.id}`)
 
     const envRefs = request.env ? this.encryptSecretRecord(request.env) : existing.envRefs
-    const headerRefs = request.headers
-      ? this.encryptSecretRecord(request.headers)
-      : existing.headerRefs
     // Preserve legacy plaintext only when the caller leaves it untouched and safeStorage is still
     // unavailable. A later getConnectors() call migrates it as soon as encryption becomes available.
     const legacyEnv = request.env === undefined ? existing.env : undefined
-    const legacyHeaders = request.headers === undefined ? existing.headers : undefined
     const nextOAuth =
       request.oauth === null
         ? undefined
         : request.oauth === undefined
           ? existing.oauth
           : normalizeOAuthConfig(request.oauth)
+    if (request.transport === 'stdio' && nextOAuth) {
+      throw new Error('OAuth is only supported for remote custom connectors')
+    }
+    if (nextOAuth && request.headers && Object.keys(request.headers).length > 0) {
+      throw new Error('OAuth and static headers cannot be configured together')
+    }
+    const headerRefs = nextOAuth
+      ? undefined
+      : request.headers
+        ? this.encryptSecretRecord(request.headers)
+        : existing.headerRefs
+    const legacyHeaders = nextOAuth
+      ? undefined
+      : request.headers === undefined
+        ? existing.headers
+        : undefined
     const oauthChanged = !isDeepStrictEqual(existing.oauth ?? undefined, nextOAuth ?? undefined)
+    const oauthCredentialsChanged =
+      oauthChanged ||
+      existing.transport !== request.transport ||
+      existing.url !== request.url?.trim()
     const merged: StoredCustomMcpServer = {
       id: existing.id,
       name: existing.name,
@@ -265,7 +287,7 @@ class ConnectorSettingsModule {
       ...(headerRefs && Object.keys(headerRefs).length > 0 ? { headerRefs } : {}),
       ...(legacyHeaders && Object.keys(legacyHeaders).length > 0 ? { headers: legacyHeaders } : {}),
       ...(nextOAuth && request.transport !== 'stdio' ? { oauth: nextOAuth } : {}),
-      ...(!oauthChanged && existing.oauthRef ? { oauthRef: existing.oauthRef } : {})
+      ...(!oauthCredentialsChanged && existing.oauthRef ? { oauthRef: existing.oauthRef } : {})
     }
     const server = sanitizeCustomMcpServer(merged)
 
@@ -368,6 +390,7 @@ class ConnectorSettingsModule {
         const unavailable =
           (server.transport === 'stdio' && !server.command) ||
           (server.transport !== 'stdio' && !server.url)
+        const unauthenticated = Boolean(server.oauth && !server.oauthState?.tokens?.access_token)
         return {
           id: server.id,
           name: server.name,
@@ -377,6 +400,11 @@ class ConnectorSettingsModule {
           command: server.command,
           args: server.args,
           url: server.url,
+          ...(server.transport !== 'stdio'
+            ? {
+                hasHeaders: Boolean(Object.keys(server.headerRefs ?? server.headers ?? {}).length)
+              }
+            : {}),
           ...(server.oauth
             ? {
                 oauth: {
@@ -391,7 +419,11 @@ class ConnectorSettingsModule {
                 }
               }
             : {}),
-          ...(unavailable ? { availability: 'unavailable' as const } : {})
+          ...(unavailable
+            ? { availability: 'unavailable' as const }
+            : unauthenticated
+              ? { availability: 'unauthenticated' as const }
+              : {})
         }
       })
       .sort((a, b) => a.name.localeCompare(b.name))

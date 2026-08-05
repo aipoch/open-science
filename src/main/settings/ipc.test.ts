@@ -215,7 +215,8 @@ const registerTestSettingsIpcHandlers = ({
                 await onCustomServerSecurityChanged(serverId)
               }
             : async () => undefined),
-        beginCustomServerSecurityChange: () => undefined
+        beginCustomServerSecurityChange: () => undefined,
+        clearCustomServerFailure: () => undefined
       },
       appearance: {
         applyAppIconVariant: onAppIconVariantChanged ?? (() => undefined)

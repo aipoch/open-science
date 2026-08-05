@@ -58,6 +58,33 @@ describe('toCustomMcpConfig', () => {
       headers: { Authorization: 'Bearer token' }
     })
   })
+
+  it('maps OAuth configuration and decrypted state to the manager', () => {
+    const server: StoredCustomMcpServer = {
+      id: 'srv-oauth',
+      name: 'OAuth Server',
+      transport: 'streamable_http',
+      url: 'https://example.com/mcp',
+      oauth: { scopes: ['openid'] },
+      oauthState: { tokens: { access_token: 'access', token_type: 'Bearer' } },
+      enabled: true
+    }
+
+    expect(toCustomMcpConfig(server)).toEqual({
+      id: 'srv-oauth',
+      name: 'OAuth Server',
+      transport: 'streamable_http',
+      command: '',
+      args: undefined,
+      env: undefined,
+      url: 'https://example.com/mcp',
+      headers: undefined,
+      oauth: {
+        scopes: ['openid'],
+        state: { tokens: { access_token: 'access', token_type: 'Bearer' } }
+      }
+    })
+  })
 })
 
 describe('selectEnabledCustomServers', () => {

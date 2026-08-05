@@ -75,6 +75,7 @@ beforeEach(() => {
     setToolPermission: vi.fn().mockResolvedValue(undefined),
     setNcbiCredentials: vi.fn().mockResolvedValue(undefined),
     addCustomServer: vi.fn().mockResolvedValue(undefined),
+    authenticateCustomServer: vi.fn().mockResolvedValue(undefined),
     setCustomServerEnabled: vi.fn().mockResolvedValue(undefined),
     removeCustomServer: vi.fn().mockResolvedValue(undefined)
   })
@@ -198,6 +199,84 @@ describe('ConnectorsPanel (groups)', () => {
 
     act(() => remove?.click())
     expect(useSettingsStore.getState().removeCustomServer).toHaveBeenCalledWith('my-mcp')
+  })
+
+  it('starts OAuth sign-in and displays the connected state', async () => {
+    useSettingsStore.setState({
+      customServers: [
+        {
+          id: 'oauth-mcp',
+          name: 'OAuth MCP',
+          transport: 'streamable_http',
+          enabled: true,
+          url: 'https://mcp.example.test',
+          oauth: { hasTokens: false }
+        }
+      ]
+    })
+    act(() => {
+      root.render(<ConnectorsPanel onNavigate={vi.fn()} />)
+    })
+
+    await act(async () => {
+      clickButtonByText('Sign in')
+    })
+    expect(useSettingsStore.getState().authenticateCustomServer).toHaveBeenCalledWith({
+      id: 'oauth-mcp'
+    })
+
+    act(() => {
+      useSettingsStore.setState({
+        customServers: [
+          {
+            id: 'oauth-mcp',
+            name: 'OAuth MCP',
+            transport: 'streamable_http',
+            enabled: true,
+            url: 'https://mcp.example.test',
+            oauth: { hasTokens: true }
+          }
+        ]
+      })
+    })
+    expect(document.body.textContent).toContain('Connected')
+  })
+
+  it('disables OAuth sign-in while waiting and displays a failure', async () => {
+    let rejectAuthentication!: (error: Error) => void
+    const authenticateCustomServer = vi.fn(
+      () =>
+        new Promise<void>((_resolve, reject) => {
+          rejectAuthentication = reject
+        })
+    )
+    useSettingsStore.setState({
+      authenticateCustomServer,
+      customServers: [
+        {
+          id: 'oauth-mcp',
+          name: 'OAuth MCP',
+          transport: 'streamable_http',
+          enabled: true,
+          url: 'https://mcp.example.test',
+          oauth: { hasTokens: false }
+        }
+      ]
+    })
+    act(() => {
+      root.render(<ConnectorsPanel onNavigate={vi.fn()} />)
+    })
+
+    clickButtonByText('Sign in')
+    const waiting = Array.from(document.body.querySelectorAll<HTMLButtonElement>('button')).find(
+      (button) => button.textContent?.trim() === 'Waiting…'
+    )
+    expect(waiting?.disabled).toBe(true)
+
+    await act(async () => rejectAuthentication(new Error('Authorization denied')))
+
+    expect(document.body.textContent).toContain('Authorization denied')
+    expect(document.body.textContent).toContain('Sign in')
   })
 
   it('shows an empty-state line when there are no custom servers', () => {

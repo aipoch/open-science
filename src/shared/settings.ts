@@ -1112,6 +1112,7 @@ export type CustomServerView = {
   command?: string
   args?: string[]
   url?: string
+  hasHeaders?: boolean
   oauth?: {
     clientMetadataUrl?: string
     authorizationServerUrl?: string

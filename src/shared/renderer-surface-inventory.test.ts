@@ -135,6 +135,7 @@ const REMOTE_LOCAL_ONLY_CHANNELS: GroupedInventory = {
     'unregister-interpreter'
   ],
   settings: [
+    'authenticate-custom-server',
     'cancel-claude-login',
     'cancel-codex-login',
     'cancel-isolated-claude-login',
@@ -247,7 +248,7 @@ describe('renderer surface inventory', () => {
     const expectedRemoteLocalOnly = expand(REMOTE_LOCAL_ONLY_CHANNELS, ':')
 
     expectSameSet(REMOTE_LOCAL_ONLY_RPC_CHANNELS, expectedRemoteLocalOnly)
-    expect(expectedRemoteLocalOnly).toHaveLength(56)
+    expect(expectedRemoteLocalOnly).toHaveLength(57)
     expect(
       expectedRemoteLocalOnly.every((channel) => WEB_RPC_ALLOWED_CHANNELS.includes(channel))
     ).toBe(true)

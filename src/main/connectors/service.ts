@@ -126,6 +126,7 @@ export class ConnectorService {
     string,
     'connector_unavailable' | 'connector_unauthenticated'
   >()
+  private readonly customServerFailureEpochs = new Map<string, number>()
   private readonly permissionBroker: ConnectorPermissionBroker
   private readonly customServerGenerations = new Map<string, number>()
   private readonly customServerBarriers = new Map<
@@ -171,6 +172,14 @@ export class ConnectorService {
         }
       }
     }
+  }
+
+  clearCustomServerFailure(serverId: string): void {
+    this.customServerFailureEpochs.set(
+      serverId,
+      (this.customServerFailureEpochs.get(serverId) ?? 0) + 1
+    )
+    this.unavailableCustomConnectors.delete(serverId)
   }
 
   async call(
@@ -256,12 +265,16 @@ export class ConnectorService {
     access: ConnectorAccess
   ): Promise<unknown> {
     const generation = this.assertCustomServerCurrent(custom)
-    const physicalFailure = this.unavailableCustomConnectors.get(custom.name)
+    const failureEpoch = this.customServerFailureEpochs.get(custom.id) ?? 0
+    const physicalFailure = this.unavailableCustomConnectors.get(custom.id)
     if (physicalFailure) throw new ConnectorGateError(physicalFailure)
     if (!access.bypassMainEnablement && !custom.enabled) {
       throw new ConnectorGateError('connector_disabled', `connector not enabled: ${custom.name}`)
     }
     if (!this.isCustomConfigRunnable(custom)) throw new ConnectorGateError('connector_unavailable')
+    if (custom.oauth && !custom.oauthState?.tokens?.access_token) {
+      throw new ConnectorGateError('connector_unauthenticated')
+    }
     if (!this.deps.mcpClientManager) throw new ConnectorGateError('connector_runtime_unavailable')
 
     // Approval must precede tools/list because even discovery connects the external server. The
@@ -289,7 +302,7 @@ export class ConnectorService {
         /(?:401|403|unauthoriz|authenticat|forbidden)/i.test(error.message)
           ? 'connector_unauthenticated'
           : 'connector_unavailable'
-      this.unavailableCustomConnectors.set(custom.name, category)
+      this.recordCustomServerFailure(custom.id, failureEpoch, category)
       throw new ConnectorGateError(category)
     }
 
@@ -324,7 +337,9 @@ export class ConnectorService {
 
     try {
       const result = await this.deps.mcpClientManager.call(config, method, args)
-      this.unavailableCustomConnectors.delete(custom.name)
+      if ((this.customServerFailureEpochs.get(custom.id) ?? 0) === failureEpoch) {
+        this.unavailableCustomConnectors.delete(custom.id)
+      }
       return result
     } catch (error) {
       const category =
@@ -332,8 +347,18 @@ export class ConnectorService {
         /(?:401|403|unauthoriz|authenticat|forbidden)/i.test(error.message)
           ? 'connector_unauthenticated'
           : 'connector_unavailable'
-      this.unavailableCustomConnectors.set(custom.name, category)
+      this.recordCustomServerFailure(custom.id, failureEpoch, category)
       throw new ConnectorGateError(category)
+    }
+  }
+
+  private recordCustomServerFailure(
+    serverId: string,
+    expectedEpoch: number,
+    category: 'connector_unavailable' | 'connector_unauthenticated'
+  ): void {
+    if ((this.customServerFailureEpochs.get(serverId) ?? 0) === expectedEpoch) {
+      this.unavailableCustomConnectors.set(serverId, category)
     }
   }
 

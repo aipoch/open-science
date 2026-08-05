@@ -415,6 +415,7 @@ export const projectConnectorsFromStored = (
     const unreachable =
       (server.transport === 'stdio' && !server.command) ||
       (server.transport !== 'stdio' && !server.url)
+    const unauthenticated = Boolean(server.oauth && !server.oauthState?.tokens?.access_token)
     return {
       id: server.id,
       displayName: server.name,
@@ -423,7 +424,7 @@ export const projectConnectorsFromStored = (
       // Custom MCP servers expose their tools dynamically; we do not enumerate them here (the
       // milestone decides whole-Connector inclusion only). An empty tools list keeps the shape
       // consistent without leaking transport/command details.
-      availability: unreachable ? 'unavailable' : 'available',
+      availability: unreachable ? 'unavailable' : unauthenticated ? 'unauthenticated' : 'available',
       source: 'custom',
       tools: []
     }

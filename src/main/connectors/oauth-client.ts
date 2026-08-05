@@ -24,6 +24,8 @@ type PendingCallback = {
   reject: (error: Error) => void
 }
 
+const OAUTH_CALLBACK_TIMEOUT_MS = 5 * 60_000
+
 // One loopback listener is shared by all custom MCP OAuth logins. The callback state is matched to
 // the pending flow before handing the authorization code back to the caller.
 export class OAuthCallbackServer {
@@ -74,16 +76,37 @@ export class OAuthCallbackServer {
     return this.redirectUrl
   }
 
-  waitFor(state: string): { promise: Promise<OAuthCallback>; cancel: () => void } {
+  waitFor(
+    state: string,
+    timeoutMs = OAUTH_CALLBACK_TIMEOUT_MS
+  ): { promise: Promise<OAuthCallback>; cancel: () => void } {
     let cancelled = false
+    let timeout: ReturnType<typeof setTimeout> | undefined
     const promise = new Promise<OAuthCallback>((resolve, reject) => {
-      this.pending.set(state, { resolve, reject })
+      const clear = (): void => {
+        if (timeout) clearTimeout(timeout)
+      }
+      this.pending.set(state, {
+        resolve: (value) => {
+          clear()
+          resolve(value)
+        },
+        reject: (error) => {
+          clear()
+          reject(error)
+        }
+      })
+      timeout = setTimeout(() => {
+        this.pending.delete(state)
+        reject(new Error('OAuth authorization timed out. Try Sign in again.'))
+      }, timeoutMs)
     })
     return {
       promise,
       cancel: () => {
         if (cancelled) return
         cancelled = true
+        if (timeout) clearTimeout(timeout)
         this.pending.delete(state)
       }
     }
@@ -170,7 +193,11 @@ export class PersistentOAuthClientProvider implements OAuthClientProvider {
   }
 
   async redirectToAuthorization(authorizationUrl: URL): Promise<void> {
-    if (!this.openExternal) throw new Error('No browser opener is configured for OAuth')
+    if (!this.openExternal) {
+      delete this.oauthState.tokens
+      await this.persist()
+      throw new Error('OAuth authentication required. Sign in from Settings > Connectors.')
+    }
     await this.openExternal(authorizationUrl.toString())
   }
 

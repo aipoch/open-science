@@ -328,7 +328,11 @@ export const sanitizeCustomMcpServer = (value: unknown): StoredCustomMcpServer |
     server.oauth = oauth
   }
   const oauthRef = asString(value.oauthRef)
-  if (oauthRef) server.oauthRef = oauthRef
+  if (server.oauth) {
+    delete server.headers
+    delete server.headerRefs
+    if (oauthRef) server.oauthRef = oauthRef
+  }
   const trustedAt = asNumber(value.trustedAt)
   if (trustedAt !== undefined) server.trustedAt = trustedAt
   const description = asString(value.description)

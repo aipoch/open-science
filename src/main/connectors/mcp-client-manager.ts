@@ -103,6 +103,7 @@ export class McpClientManager {
   ) => Promise<Client>
   private readonly clients = new Map<string, Client>()
   private readonly connecting = new Map<string, Promise<Client>>()
+  private readonly generations = new Map<string, number>()
   private readonly callbackServer = new OAuthCallbackServer()
   private readonly openExternal: (url: string) => Promise<void> | void
   private readonly saveOAuthState?: (
@@ -137,6 +138,7 @@ export class McpClientManager {
   }
 
   async close(id: string): Promise<void> {
+    this.generations.set(id, this.generation(id) + 1)
     const client = this.clients.get(id)
     this.clients.delete(id)
     this.connecting.delete(id)
@@ -144,7 +146,9 @@ export class McpClientManager {
   }
 
   async closeAll(): Promise<void> {
-    await Promise.all([...this.clients.keys()].map((id) => this.close(id)))
+    await Promise.all(
+      [...new Set([...this.clients.keys(), ...this.connecting.keys()])].map((id) => this.close(id))
+    )
     await this.callbackServer.close()
   }
 
@@ -154,13 +158,18 @@ export class McpClientManager {
       throw new Error(`custom MCP server "${config.name}" is not configured for OAuth`)
     }
     await this.close(config.id)
+    const generation = this.generation(config.id)
     const redirectUrl = await this.callbackServer.ensureStarted()
-    const provider = this.oauthProvider(config, redirectUrl)
+    const provider = this.oauthProvider(config, redirectUrl, generation, true)
     const callback = this.callbackServer.waitFor(provider.state())
     const transport = buildTransport(config, provider)
     const firstClient = new Client({ name: 'open-science', version: '0.0.0' })
     try {
       await firstClient.connect(transport)
+      if (generation !== this.generation(config.id)) {
+        await firstClient.close().catch(() => undefined)
+        throw new Error(`custom MCP server "${config.name}" connection was superseded`)
+      }
       this.clients.set(config.id, firstClient)
       callback.cancel()
       return
@@ -172,14 +181,24 @@ export class McpClientManager {
       await firstClient.close().catch(() => undefined)
     }
 
-    const result = await callback.promise
-    if (result.error) throw new Error(`OAuth authorization failed: ${result.error}`)
-    if (!result.code) throw new Error('OAuth callback did not include an authorization code')
+    try {
+      const result = await callback.promise
+      if (result.error) throw new Error(`OAuth authorization failed: ${result.error}`)
+      if (!result.code) throw new Error('OAuth callback did not include an authorization code')
 
-    await (transport as StreamableHTTPClientTransport | SSEClientTransport).finishAuth(result.code)
+      await (transport as StreamableHTTPClientTransport | SSEClientTransport).finishAuth(
+        result.code
+      )
+    } finally {
+      await provider.invalidateCredentials('verifier')
+    }
     // Recreate the transport/client after the SDK has completed the authorization-code exchange.
     const client = new Client({ name: 'open-science', version: '0.0.0' })
     await client.connect(buildTransport(config, provider))
+    if (generation !== this.generation(config.id)) {
+      await client.close().catch(() => undefined)
+      throw new Error(`custom MCP server "${config.name}" connection was superseded`)
+    }
     this.clients.set(config.id, client)
   }
 
@@ -191,36 +210,57 @@ export class McpClientManager {
     const inFlight = this.connecting.get(config.id)
     if (inFlight) return inFlight
 
-    const connectPromise = this.createClientWithOAuth(config)
-      .then((client) => {
+    const generation = this.generation(config.id)
+    const connectPromise = this.createClientWithOAuth(config, generation)
+      .then(async (client) => {
+        if (generation !== this.generation(config.id)) {
+          await client.close().catch(() => undefined)
+          throw new Error(`custom MCP server "${config.name}" connection was superseded`)
+        }
         this.clients.set(config.id, client)
         return client
       })
       .finally(() => {
-        this.connecting.delete(config.id)
+        if (this.connecting.get(config.id) === connectPromise) {
+          this.connecting.delete(config.id)
+        }
       })
     this.connecting.set(config.id, connectPromise)
     return connectPromise
   }
 
-  private async createClientWithOAuth(config: CustomMcpServerConfig): Promise<Client> {
+  private async createClientWithOAuth(
+    config: CustomMcpServerConfig,
+    generation: number
+  ): Promise<Client> {
     if (!config.oauth) return this.createClient(config)
     const redirectUrl = await this.callbackServer.ensureStarted()
-    return this.createClient(config, this.oauthProvider(config, redirectUrl))
+    return this.createClient(config, this.oauthProvider(config, redirectUrl, generation))
   }
 
   private oauthProvider(
     config: CustomMcpServerConfig,
-    redirectUrl: string
+    redirectUrl: string,
+    generation: number,
+    interactive = false
   ): PersistentOAuthClientProvider {
     return new PersistentOAuthClientProvider({
       serverId: config.id,
       redirectUrl,
       config: config.oauth ?? {},
       state: config.oauth?.state,
-      openExternal: this.openExternal,
-      saveState: this.saveOAuthState ? (state) => this.saveOAuthState!(config.id, state) : undefined
+      ...(interactive ? { openExternal: this.openExternal } : {}),
+      saveState: this.saveOAuthState
+        ? (state) =>
+            generation === this.generation(config.id)
+              ? this.saveOAuthState!(config.id, state)
+              : Promise.resolve()
+        : undefined
     })
+  }
+
+  private generation(id: string): number {
+    return this.generations.get(id) ?? 0
   }
 }
 

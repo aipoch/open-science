@@ -902,6 +902,118 @@ describe('ConnectorService', () => {
         })
     })
 
+    it('does not contact an OAuth connector before it has tokens', async () => {
+      const call = vi.fn()
+      const mcpClientManager = manager(call)
+      const svc = new ConnectorService({
+        mcpClientManager,
+        getConnectors: () => ({
+          enabledIds: [],
+          autoAllowIds: [],
+          customMcpServers: [
+            {
+              id: 'oauth-1',
+              name: 'oauth-server',
+              transport: 'streamable_http',
+              url: 'https://mcp.example.test',
+              oauth: {},
+              enabled: true
+            }
+          ]
+        }),
+        resolveApiKey: () => undefined
+      })
+
+      await expect(svc.call('oauth-server', 'lookup', {}, internal)).rejects.toThrow(
+        'connector_unauthenticated'
+      )
+      expect(mcpClientManager.listTools).not.toHaveBeenCalled()
+      expect(call).not.toHaveBeenCalled()
+    })
+
+    it('recovers from a cached authentication failure after successful sign-in', async () => {
+      const call = vi
+        .fn()
+        .mockRejectedValueOnce(new Error('401 Unauthorized'))
+        .mockResolvedValueOnce({ ok: true })
+      const svc = new ConnectorService({
+        mcpClientManager: manager(call, ['lookup']),
+        getConnectors: () => ({
+          enabledIds: [],
+          autoAllowIds: [],
+          customMcpServers: [
+            {
+              id: 'srv-1',
+              name: 'secured-server',
+              transport: 'streamable_http',
+              url: 'https://mcp.example.test',
+              enabled: true
+            }
+          ]
+        }),
+        resolveApiKey: () => undefined
+      })
+
+      await expect(svc.call('secured-server', 'lookup', {}, internal)).rejects.toThrow(
+        'connector_unauthenticated'
+      )
+      await expect(svc.call('secured-server', 'lookup', {}, internal)).rejects.toThrow(
+        'connector_unauthenticated'
+      )
+      expect(call).toHaveBeenCalledOnce()
+
+      svc.clearCustomServerFailure('srv-1')
+
+      await expect(svc.call('secured-server', 'lookup', {}, internal)).resolves.toEqual({
+        ok: true
+      })
+      expect(call).toHaveBeenCalledTimes(2)
+    })
+
+    it('does not restore a cached failure from a request started before sign-in', async () => {
+      let rejectStaleList: ((error: Error) => void) | undefined
+      const listTools = vi
+        .fn()
+        .mockImplementationOnce(
+          () =>
+            new Promise<Array<{ name: string }>>((_, reject) => {
+              rejectStaleList = reject
+            })
+        )
+        .mockResolvedValue([{ name: 'lookup' }])
+      const call = vi.fn().mockResolvedValue({ ok: true })
+      const svc = new ConnectorService({
+        mcpClientManager: { listTools, call },
+        getConnectors: () => ({
+          enabledIds: [],
+          autoAllowIds: [],
+          customMcpServers: [
+            {
+              id: 'srv-1',
+              name: 'secured-server',
+              transport: 'streamable_http',
+              url: 'https://mcp.example.test',
+              enabled: true
+            }
+          ]
+        }),
+        resolveApiKey: () => undefined
+      })
+
+      const staleCall = svc.call('secured-server', 'lookup', {}, internal)
+      await vi.waitFor(() => expect(listTools).toHaveBeenCalledOnce())
+
+      svc.clearCustomServerFailure('srv-1')
+      rejectStaleList?.(new Error('401 Unauthorized'))
+      await expect(staleCall).rejects.toThrow('connector_unauthenticated')
+
+      await expect(svc.call('secured-server', 'lookup', {}, internal)).resolves.toEqual({
+        ok: true
+      })
+      expect(listTools).toHaveBeenCalledTimes(2)
+      expect(call).toHaveBeenCalledOnce()
+    })
+
     it('resolves remembered grants by immutable custom server id after a rename', async () => {
       const call = vi.fn().mockResolvedValue({ ok: true })
       const requestApproval = vi.fn().mockResolvedValue('once')

@@ -147,6 +147,37 @@ describe('sanitizeCustomMcpServer', () => {
       enabled: true
     })
   })
+
+  it('sanitizes OAuth fields and removes conflicting static headers', () => {
+    expect(
+      sanitizeCustomMcpServer({
+        id: 'srv-oauth',
+        name: 'OAuth Server',
+        transport: 'streamable_http',
+        url: 'https://example.com/mcp',
+        enabled: true,
+        headers: { Authorization: 'Bearer stale' },
+        headerRefs: { Authorization: 'encrypted-stale' },
+        oauth: {
+          clientMetadataUrl: 'https://client.example.test/metadata.json',
+          authorizationServerUrl: 42,
+          scopes: ['openid', ' openid ', 'profile', 42]
+        },
+        oauthRef: 'encrypted-oauth-state'
+      })
+    ).toEqual({
+      id: 'srv-oauth',
+      name: 'OAuth Server',
+      transport: 'streamable_http',
+      url: 'https://example.com/mcp',
+      enabled: true,
+      oauth: {
+        clientMetadataUrl: 'https://client.example.test/metadata.json',
+        scopes: ['openid', 'profile']
+      },
+      oauthRef: 'encrypted-oauth-state'
+    })
+  })
 })
 
 describe('sanitizeConnectors customMcpServers', () => {

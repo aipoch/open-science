@@ -126,7 +126,9 @@ export function ConnectorAddForm({
   const [remoteTransport, setRemoteTransport] = useState<RemoteTransport>(
     editServer && editServer.transport !== 'stdio' ? editServer.transport : 'streamable_http'
   )
-  const [remoteAuth, setRemoteAuth] = useState<RemoteAuth>(editServer?.oauth ? 'oauth' : 'headers')
+  const [remoteAuth, setRemoteAuth] = useState<RemoteAuth>(
+    editServer?.oauth ? 'oauth' : editServer?.hasHeaders ? 'headers' : 'none'
+  )
   const [oauthScopesText, setOauthScopesText] = useState(editServer?.oauth?.scopes?.join(' ') ?? '')
   const [authorizationServerUrl, setAuthorizationServerUrl] = useState(
     editServer?.oauth?.authorizationServerUrl ?? ''
@@ -197,7 +199,11 @@ export function ConnectorAddForm({
           id: editServer.id,
           ...shared,
           ...(mode === 'local' && hasEnv ? { env } : {}),
-          ...(mode === 'remote' && hasHeaders ? { headers } : {}),
+          ...(mode === 'remote' && remoteAuth !== 'headers'
+            ? { headers: {} }
+            : hasHeaders
+              ? { headers }
+              : {}),
           ...(mode === 'remote' && remoteAuth !== 'oauth' ? { oauth: null } : {})
         }
         await updateCustomServer(request)
@@ -206,7 +212,9 @@ export function ConnectorAddForm({
           name: name.trim(),
           ...shared,
           ...(mode === 'local' && Object.keys(env).length > 0 ? { env } : {}),
-          ...(mode === 'remote' && Object.keys(headers).length > 0 ? { headers } : {})
+          ...(mode === 'remote' && remoteAuth === 'headers' && Object.keys(headers).length > 0
+            ? { headers }
+            : {})
         }
         await addCustomServer(request)
       }
@@ -458,7 +466,7 @@ export function ConnectorAddForm({
               </>
             ) : null}
 
-            {remoteAuth !== 'oauth' ? (
+            {remoteAuth === 'headers' ? (
               <div className="space-y-1.5">
                 <label className={fieldLabelClassName} htmlFor="connector-headers">
                   Headers <span className="text-muted-foreground">(optional)</span>

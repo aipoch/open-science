@@ -6,6 +6,15 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { ConnectorAddForm } from './ConnectorAddForm'
 import { createInitialSettingsState, useSettingsStore } from '@/stores/settings-store'
 
+if (!Element.prototype.hasPointerCapture) {
+  Element.prototype.hasPointerCapture = (): boolean => false
+  Element.prototype.setPointerCapture = (): void => undefined
+  Element.prototype.releasePointerCapture = (): void => undefined
+}
+if (!Element.prototype.scrollIntoView) {
+  Element.prototype.scrollIntoView = (): void => undefined
+}
+
 let container: HTMLDivElement
 let root: Root
 
@@ -53,6 +62,21 @@ const addButton = (): HTMLButtonElement | undefined =>
     (button) => button.textContent?.trim() === 'Add connector'
   )
 
+const selectOption = (label: string, option: string): void => {
+  const trigger = document.body.querySelector<HTMLButtonElement>(`[aria-label="${label}"]`)
+  act(() => {
+    trigger?.dispatchEvent(new MouseEvent('pointerdown', { bubbles: true, button: 0 }))
+    trigger?.dispatchEvent(new MouseEvent('click', { bubbles: true }))
+  })
+  const item = Array.from(document.body.querySelectorAll<HTMLElement>('[role="option"]')).find(
+    (candidate) => candidate.textContent?.includes(option)
+  )
+  act(() => {
+    item?.dispatchEvent(new MouseEvent('pointerup', { bubbles: true, button: 0 }))
+    item?.dispatchEvent(new MouseEvent('click', { bubbles: true }))
+  })
+}
+
 describe('ConnectorAddForm (local command)', () => {
   it('adds a stdio server with the default npx command, then calls onDone', async () => {
     const onDone = vi.fn()
@@ -98,6 +122,38 @@ describe('ConnectorAddForm (remote server)', () => {
     })
 
     expect(document.body.querySelector('[aria-label="Server URL"]')).not.toBeNull()
+  })
+
+  it('adds a remote OAuth server with scopes and discovery overrides', async () => {
+    act(() => {
+      root.render(
+        <ConnectorAddForm initialTransport="remote" onDone={vi.fn()} onCancel={vi.fn()} />
+      )
+    })
+
+    setValue('Name', 'OAuth MCP')
+    setValue('Server URL', 'https://mcp.example.test')
+    selectOption('Authentication', 'OAuth')
+    setValue('OAuth scopes', 'openid profile')
+    setValue('Authorization server URL', 'https://auth.example.test')
+    setValue('Client metadata URL', 'https://client.example.test/metadata.json')
+    checkTrust()
+
+    await act(async () => {
+      addButton()?.click()
+    })
+
+    expect(useSettingsStore.getState().addCustomServer).toHaveBeenCalledWith({
+      name: 'OAuth MCP',
+      description: undefined,
+      transport: 'streamable_http',
+      url: 'https://mcp.example.test',
+      oauth: {
+        scopes: ['openid', 'profile'],
+        authorizationServerUrl: 'https://auth.example.test',
+        clientMetadataUrl: 'https://client.example.test/metadata.json'
+      }
+    })
   })
 })
 
@@ -152,5 +208,96 @@ describe('ConnectorAddForm (edit)', () => {
       .calls[0][0]
     expect(call).not.toHaveProperty('name')
     expect(onDone).toHaveBeenCalled()
+  })
+
+  it('clears static headers when switching a remote server to OAuth', async () => {
+    const updateCustomServer = vi.fn().mockResolvedValue(undefined)
+    useSettingsStore.setState({ ...createInitialSettingsState(), updateCustomServer })
+    act(() => {
+      root.render(
+        <ConnectorAddForm
+          editServer={{
+            id: 'remote-1',
+            name: 'Remote',
+            transport: 'streamable_http',
+            enabled: true,
+            url: 'https://mcp.example.test',
+            hasHeaders: true
+          }}
+          onDone={vi.fn()}
+          onCancel={vi.fn()}
+        />
+      )
+    })
+
+    selectOption('Authentication', 'OAuth')
+    const save = Array.from(document.body.querySelectorAll<HTMLButtonElement>('button')).find(
+      (button) => button.textContent?.trim() === 'Save changes'
+    )
+    await act(async () => save?.click())
+
+    expect(updateCustomServer).toHaveBeenCalledWith(
+      expect.objectContaining({ id: 'remote-1', headers: {}, oauth: {} })
+    )
+  })
+
+  it('clears OAuth state when switching a remote server to static headers', async () => {
+    const updateCustomServer = vi.fn().mockResolvedValue(undefined)
+    useSettingsStore.setState({ ...createInitialSettingsState(), updateCustomServer })
+    act(() => {
+      root.render(
+        <ConnectorAddForm
+          editServer={{
+            id: 'remote-1',
+            name: 'Remote',
+            transport: 'streamable_http',
+            enabled: true,
+            url: 'https://mcp.example.test',
+            oauth: { hasTokens: true }
+          }}
+          onDone={vi.fn()}
+          onCancel={vi.fn()}
+        />
+      )
+    })
+
+    selectOption('Authentication', 'Static headers')
+    setValue('Headers', 'Authorization: Bearer replacement')
+    const save = Array.from(document.body.querySelectorAll<HTMLButtonElement>('button')).find(
+      (button) => button.textContent?.trim() === 'Save changes'
+    )
+    await act(async () => save?.click())
+
+    expect(updateCustomServer).toHaveBeenCalledWith(
+      expect.objectContaining({
+        id: 'remote-1',
+        headers: { Authorization: 'Bearer replacement' },
+        oauth: null
+      })
+    )
+  })
+
+  it('shows None without a headers field for a remote server that has no authentication', () => {
+    act(() => {
+      root.render(
+        <ConnectorAddForm
+          editServer={{
+            id: 'remote-1',
+            name: 'Remote',
+            transport: 'streamable_http',
+            enabled: true,
+            url: 'https://mcp.example.test',
+            hasHeaders: false
+          }}
+          onDone={vi.fn()}
+          onCancel={vi.fn()}
+        />
+      )
+    })
+
+    expect(document.body.querySelector('[aria-label="Authentication"]')?.textContent).toContain(
+      'None'
+    )
+    expect(document.body.querySelector('[aria-label="Headers"]')).toBeNull()
   })
 })

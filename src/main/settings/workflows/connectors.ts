@@ -32,6 +32,7 @@ type ConnectorSettingsWorkflowEffects = {
   requestSkillsReload: () => void
   pruneCustomServerPermissions: (serverId: string) => Promise<void>
   beginCustomServerSecurityChange: (serverId: string) => CustomServerSecurityChangeGuard | undefined
+  clearCustomServerFailure: (serverId: string) => void
 }
 
 type WorkflowResult<Method extends keyof ConnectorSettingsWorkflowStore> = Promise<
@@ -104,6 +105,7 @@ class ConnectorSettingsWorkflows {
     request: AuthenticateCustomServerRequest
   ): WorkflowResult<'authenticateCustomServer'> {
     const snapshot = await this.settings.authenticateCustomServer(request.id)
+    this.effects.clearCustomServerFailure(request.id)
     this.connectorsChanged()
     return snapshot
   }

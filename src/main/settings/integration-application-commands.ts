@@ -8,7 +8,7 @@ import {
   type ApplicationCommandInstallation,
   type ApplicationCommandRegistrar
 } from '../application-command-router'
-import { canSatisfyHumanApproval } from '../caller-context'
+import { canSatisfyHumanApproval, type CallerContext } from '../caller-context'
 import type { ApprovalBroker } from '../connectors/approval-broker'
 import type { SkillImportApprovalBroker } from '../skills/conversation-import'
 import { readConversationSkillImportEnabled } from './transport-validation'
@@ -37,6 +37,7 @@ type ConnectorIntegrationWorkflows = Pick<
   | 'setCustomServerEnabled'
   | 'removeCustomServer'
   | 'updateCustomServer'
+  | 'authenticateCustomServer'
 >
 
 type OwnerArgs<Owner, Method extends keyof Owner> = Owner[Method] extends (
@@ -50,6 +51,12 @@ type OwnerResult<Owner, Method extends keyof Owner> = Owner[Method] extends (
 ) => infer Result
   ? Awaited<Result>
   : never
+
+const requireLocalCaller = (context: CallerContext, channel: string): void => {
+  if (context.location !== 'local') {
+    throw new Error(`Channel only available from the local app: ${channel}`)
+  }
+}
 
 const settingsIntegrationApplicationCommands = Object.freeze({
   setConversationSkillImportEnabled: defineApplicationCommand<
@@ -132,6 +139,11 @@ const settingsIntegrationApplicationCommands = Object.freeze({
     OwnerArgs<ConnectorIntegrationWorkflows, 'updateCustomServer'>,
     OwnerResult<ConnectorIntegrationWorkflows, 'updateCustomServer'>
   >('settings:update-custom-server'),
+  authenticateCustomServer: defineApplicationCommand<
+    'settings:authenticate-custom-server',
+    OwnerArgs<ConnectorIntegrationWorkflows, 'authenticateCustomServer'>,
+    OwnerResult<ConnectorIntegrationWorkflows, 'authenticateCustomServer'>
+  >('settings:authenticate-custom-server'),
   respondConnectorApproval: defineApplicationCommand<
     'connectors:approval-respond',
     readonly [request: RespondApprovalRequest],
@@ -170,7 +182,8 @@ const settingsConnectorApplicationCommandGroup = defineApplicationCommandGroup(
     settingsIntegrationApplicationCommands.addCustomServer,
     settingsIntegrationApplicationCommands.setCustomServerEnabled,
     settingsIntegrationApplicationCommands.removeCustomServer,
-    settingsIntegrationApplicationCommands.updateCustomServer
+    settingsIntegrationApplicationCommands.updateCustomServer,
+    settingsIntegrationApplicationCommands.authenticateCustomServer
   ] as const
 )
 
@@ -226,7 +239,11 @@ const registerIntegrationSettingsApplicationCommands = (
       'settings:remove-custom-server': ({ args }) =>
         dependencies.connectors.removeCustomServer(args[0]),
       'settings:update-custom-server': ({ args }) =>
-        dependencies.connectors.updateCustomServer(args[0])
+        dependencies.connectors.updateCustomServer(args[0]),
+      'settings:authenticate-custom-server': ({ args, callerContext }) => {
+        requireLocalCaller(callerContext, 'settings:authenticate-custom-server')
+        return dependencies.connectors.authenticateCustomServer(args[0])
+      }
     })
     scope.registerGroup(settingsApprovalApplicationCommandGroup, {
       'connectors:approval-respond': ({ args, callerContext }) => {

@@ -8,6 +8,8 @@ describe('OAuthCallbackServer', () => {
     const redirectUrl = await server.ensureStarted()
     const pending = server.waitFor('state-1')
 
+    const unknown = await fetch(`${redirectUrl}?code=wrong&state=unknown`)
+    expect(unknown.status).toBe(400)
     const response = await fetch(`${redirectUrl}?code=code-1&state=state-1`)
     expect(response.status).toBe(200)
     await expect(pending.promise).resolves.toEqual({
@@ -16,6 +18,33 @@ describe('OAuthCallbackServer', () => {
       state: 'state-1'
     })
 
+    await server.close()
+  })
+
+  it('returns an OAuth error to the matching pending flow', async () => {
+    const server = new OAuthCallbackServer()
+    const redirectUrl = await server.ensureStarted()
+    const pending = server.waitFor('state-error')
+
+    const response = await fetch(`${redirectUrl}?error=access_denied&state=state-error`)
+
+    expect(response.status).toBe(400)
+    await expect(pending.promise).resolves.toEqual({
+      code: undefined,
+      error: 'access_denied',
+      state: 'state-error'
+    })
+    await server.close()
+  })
+
+  it('rejects an abandoned authorization attempt after the timeout', async () => {
+    const server = new OAuthCallbackServer()
+    await server.ensureStarted()
+    const pending = server.waitFor('state-timeout', 5)
+
+    await expect(pending.promise).rejects.toThrow(
+      'OAuth authorization timed out. Try Sign in again.'
+    )
     await server.close()
   })
 })
@@ -41,5 +70,22 @@ describe('PersistentOAuthClientProvider', () => {
       expect.objectContaining({ tokens: { access_token: 'access', token_type: 'Bearer' } })
     )
     expect(JSON.stringify(provider.clientMetadata)).not.toContain('access')
+  })
+
+  it('clears stale tokens instead of opening a browser outside an interactive sign-in', async () => {
+    const saveState = vi.fn(async () => undefined)
+    const provider = new PersistentOAuthClientProvider({
+      serverId: 'server-1',
+      redirectUrl: 'http://127.0.0.1:4000/oauth/callback',
+      config: {},
+      state: { tokens: { access_token: 'stale', token_type: 'Bearer' } },
+      saveState
+    })
+
+    await expect(
+      provider.redirectToAuthorization(new URL('https://auth.example.test/authorize'))
+    ).rejects.toThrow('OAuth authentication required. Sign in from Settings > Connectors.')
+    expect(provider.tokens()).toBeUndefined()
+    expect(saveState).toHaveBeenLastCalledWith({})
   })
 })

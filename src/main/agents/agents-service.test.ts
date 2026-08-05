@@ -109,7 +109,15 @@ describe('AgentsService read surface', () => {
       autoAllowIds: [],
       disabledConnectorIds: ['chemistry'],
       customMcpServers: [
-        { id: 'cust-1', name: 'My Server', transport: 'stdio', enabled: true, command: 'run' }
+        { id: 'cust-1', name: 'My Server', transport: 'stdio', enabled: true, command: 'run' },
+        {
+          id: 'oauth-1',
+          name: 'OAuth Server',
+          transport: 'streamable_http',
+          enabled: true,
+          url: 'https://mcp.example.test',
+          oauth: {}
+        }
       ]
     }
     const service = new AgentsService({
@@ -128,6 +136,7 @@ describe('AgentsService read surface', () => {
     expect(custom).not.toHaveProperty('command')
     expect(custom).not.toHaveProperty('headers')
     expect(custom).not.toHaveProperty('env')
+    expect(connectors.find((c) => c.id === 'oauth-1')?.availability).toBe('unauthenticated')
   })
 
   it('filters by exact stable id first', async () => {

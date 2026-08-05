@@ -35,7 +35,8 @@ const testEffects = (effects: TestSettingsWorkflowEffects = {}): SettingsWorkflo
     refreshConnectorSkillDocs: effects.refreshConnectorSkillDocs ?? (async () => undefined),
     requestSkillsReload: effects.requestSkillsReload ?? (() => undefined),
     pruneCustomServerPermissions: effects.pruneCustomServerPermissions ?? (async () => undefined),
-    beginCustomServerSecurityChange: effects.beginCustomServerSecurityChange ?? (() => undefined)
+    beginCustomServerSecurityChange: effects.beginCustomServerSecurityChange ?? (() => undefined),
+    clearCustomServerFailure: effects.clearCustomServerFailure ?? (() => undefined)
   },
   appearance: { applyAppIconVariant: effects.applyAppIconVariant ?? (() => undefined) }
 })
@@ -97,7 +98,8 @@ const fakeStore = () => {
     addCustomServer: vi.fn().mockResolvedValue({ connectors: [] }),
     setCustomServerEnabled: vi.fn().mockResolvedValue({ connectors: [] }),
     removeCustomServer: vi.fn().mockResolvedValue({ connectors: [] }),
-    updateCustomServer: vi.fn().mockResolvedValue({ connectors: [] })
+    updateCustomServer: vi.fn().mockResolvedValue({ connectors: [] }),
+    authenticateCustomServer: vi.fn().mockResolvedValue({ connectors: [] })
   }
   return { store, capability: store as unknown as SettingsWorkflowStore }
 }
@@ -535,6 +537,28 @@ describe('SettingsWorkflows catalog and appearance effects', () => {
 
     finishRefresh?.()
     await vi.waitFor(() => expect(calls).toEqual(['persist', 'invalidate', 'refresh', 'reload']))
+  })
+
+  it('refreshes Connector projections after OAuth authentication', async () => {
+    const calls: string[] = []
+    const { store, capability } = fakeStore()
+    store.authenticateCustomServer.mockImplementation(async () => {
+      calls.push('authenticate')
+      return { connectors: [] }
+    })
+    const workflows = createSettingsWorkflows(
+      capability,
+      testEffects({
+        clearCustomServerFailure: (serverId) => calls.push(`clear:${serverId}`),
+        invalidatePermissionProjection: () => calls.push('invalidate'),
+        refreshConnectorSkillDocs: async () => {
+          calls.push('refresh')
+        }
+      })
+    ).connectors
+
+    await workflows.authenticateCustomServer({ id: 'server-1' })
+    expect(calls).toEqual(['authenticate', 'clear:server-1', 'invalidate', 'refresh'])
   })
 
   it('awaits custom-server prune before refreshing and skips refresh when prune fails', async () => {

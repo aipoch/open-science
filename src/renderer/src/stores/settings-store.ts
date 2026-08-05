@@ -1514,9 +1514,18 @@ export const useSettingsStore = create<SettingsStore>((set, get) => ({
   },
 
   authenticateCustomServer: async (request) => {
-    const { connectors, customServers, ncbi } =
-      await window.api.settings.authenticateCustomServer(request)
-    set({ connectors, customServers, ncbi })
+    try {
+      const { connectors, customServers, ncbi } =
+        await window.api.settings.authenticateCustomServer(request)
+      set({ connectors, customServers, ncbi })
+    } catch (error) {
+      // Authentication can invalidate stale tokens before failing. Refresh the projection so the
+      // connector does not remain visibly "Connected" after main has cleared its credentials.
+      await get()
+        .loadConnectors()
+        .catch(() => undefined)
+      throw error
+    }
   },
 
   // Optimistically flips the server toggle, then reconciles from main.

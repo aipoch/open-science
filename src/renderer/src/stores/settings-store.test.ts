@@ -5,7 +5,8 @@ import type {
   EnvironmentCheckResult,
   SettingsSnapshot,
   ValidateProviderResult,
-  ConnectorView
+  ConnectorView,
+  CustomServerView
 } from '../../../shared/settings'
 import { CODEX_SUBSCRIPTION_PROVIDER_ID } from '../../../shared/settings'
 import {
@@ -66,6 +67,7 @@ type SettingsApi = {
   setToolPermission: ReturnType<typeof vi.fn>
   setNcbiCredentials: ReturnType<typeof vi.fn>
   addCustomServer: ReturnType<typeof vi.fn>
+  authenticateCustomServer: ReturnType<typeof vi.fn>
   setCustomServerEnabled: ReturnType<typeof vi.fn>
   removeCustomServer: ReturnType<typeof vi.fn>
   updateCustomServer: ReturnType<typeof vi.fn>
@@ -218,6 +220,9 @@ beforeEach(() => {
       .fn()
       .mockResolvedValue({ connectors: [], customServers: [], ncbi: { hasApiKey: false } }),
     addCustomServer: vi
+      .fn()
+      .mockResolvedValue({ connectors: [], customServers: [], ncbi: { hasApiKey: false } }),
+    authenticateCustomServer: vi
       .fn()
       .mockResolvedValue({ connectors: [], customServers: [], ncbi: { hasApiKey: false } }),
     setCustomServerEnabled: vi
@@ -1335,6 +1340,51 @@ describe('settings store: connectors slice', () => {
     await useSettingsStore.getState().removeCustomServer('srv-1')
     expect(api.removeCustomServer).toHaveBeenCalledWith({ id: 'srv-1' })
     expect(useSettingsStore.getState().customServers).toEqual([])
+  })
+
+  it('authenticateCustomServer reconciles the OAuth status from main', async () => {
+    const server: CustomServerView = {
+      id: 'oauth-1',
+      name: 'OAuth server',
+      transport: 'streamable_http',
+      enabled: true,
+      url: 'https://mcp.example.test',
+      oauth: { hasTokens: true }
+    }
+    api.authenticateCustomServer.mockResolvedValue({
+      connectors: [],
+      customServers: [server],
+      ncbi: { hasApiKey: false }
+    })
+
+    await useSettingsStore.getState().authenticateCustomServer({ id: server.id })
+
+    expect(api.authenticateCustomServer).toHaveBeenCalledWith({ id: server.id })
+    expect(useSettingsStore.getState().customServers).toEqual([server])
+  })
+
+  it('refreshes OAuth status after authenticateCustomServer fails', async () => {
+    const server: CustomServerView = {
+      id: 'oauth-1',
+      name: 'OAuth server',
+      transport: 'streamable_http',
+      enabled: true,
+      url: 'https://mcp.example.test',
+      oauth: { hasTokens: false }
+    }
+    api.authenticateCustomServer.mockRejectedValueOnce(new Error('Authorization denied'))
+    api.listConnectors.mockResolvedValue({
+      connectors: [],
+      customServers: [server],
+      ncbi: { hasApiKey: false }
+    })
+
+    await expect(
+      useSettingsStore.getState().authenticateCustomServer({ id: server.id })
+    ).rejects.toThrow('Authorization denied')
+
+    expect(api.listConnectors).toHaveBeenCalledOnce()
+    expect(useSettingsStore.getState().customServers).toEqual([server])
   })
 
   it('enqueues an approval request and responds, clearing it from the queue', async () => {
