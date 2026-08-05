@@ -107,6 +107,10 @@ class AcpSessionUpdateProjector {
     this.codexSkillActivity.setSkillsRoot(undefined)
   }
 
+  clearSession(sessionId: string): void {
+    this.codexSkillActivity.clearSession(sessionId)
+  }
+
   dispose(): void {
     this.clearGeneration()
   }

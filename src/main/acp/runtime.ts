@@ -112,8 +112,7 @@ import {
 import {
   AcpSessionRegistry,
   type AcpPrimarySessionIdentityReservation,
-  type AcpPrimarySessionIdentityReservationResult,
-  type AcpSessionDeletion
+  type AcpPrimarySessionIdentityReservationResult
 } from './session-registry'
 import {
   AcpConnectionResourceOwner,
@@ -140,6 +139,7 @@ import { AcpProviderSessionCreator } from './provider-session-creator'
 import { AcpProviderSessionAdopter } from './provider-session-adopter'
 import { AcpProviderSessionResumer } from './provider-session-resumer'
 import { AcpSessionReplacementWorkflow } from './session-replacement-workflow'
+import { AcpSessionDeletionWorkflow } from './session-deletion-workflow'
 import {
   AcpTurnSkillOwner,
   type AcpTurnSkillHooks,
@@ -420,6 +420,7 @@ class AcpRuntime {
   private readonly providerSessionAdopter: AcpProviderSessionAdopter
   private readonly providerSessionResumer: AcpProviderSessionResumer
   private readonly sessionReplacement: AcpSessionReplacementWorkflow
+  private readonly sessionDeletion: AcpSessionDeletionWorkflow
 
   // Wires runtime dependencies and forwards permission prompts into the event stream.
   constructor(private readonly options: AcpRuntimeOptions) {
@@ -725,6 +726,23 @@ class AcpRuntime {
       resolveSpecialistIdentity: options.resolveSpecialistIdentity,
       registerSessionSpecialist: options.notebook?.registerSessionSpecialist
     })
+    this.sessionDeletion = new AcpSessionDeletionWorkflow({
+      registry: this.sessionRegistry,
+      withOperation: (work) => this.withOperationLease(work),
+      currentConnection: () => this.connection,
+      supportsSessionDelete: () => this.connectionResources.capabilities.delete,
+      supportsSessionClose: () => this.connectionResources.capabilities.close,
+      permission: this.permissionContext,
+      interactions: this.sessionInteractions,
+      capabilities: this.sessionCapabilities,
+      promptContent: this.promptContentOwner,
+      handoff: this.handoffContinuity,
+      contextUsage: this.contextUsageTracker,
+      projector: this.sessionUpdateProjector,
+      pushEvent: (event) => this.pushEvent(event),
+      emitState: () => this.emitState(),
+      getSnapshot: () => this.getSnapshot()
+    })
     this.providerSessionResumer = new AcpProviderSessionResumer({
       defaultCwd: options.defaultCwd,
       defaultProjectName: options.artifacts?.projectName || DEFAULT_UPLOAD_PROJECT_NAME,
@@ -783,14 +801,6 @@ class AcpRuntime {
 
   private get connectionGeneration(): number {
     return this.connectionResources.epoch
-  }
-
-  private get supportsSessionClose(): boolean {
-    return this.connectionResources.capabilities.close
-  }
-
-  private get supportsSessionDelete(): boolean {
-    return this.connectionResources.capabilities.delete
   }
 
   private activeSessionFor(appSessionId: string): ActiveSession | undefined {
@@ -2236,69 +2246,7 @@ class AcpRuntime {
 
   // Closes the agent-side session when supported, then removes local routing state.
   async deleteSession(request: AcpDeleteSessionRequest): Promise<AcpStateSnapshot> {
-    const deletion = this.sessionRegistry.beginDelete(request.sessionId)
-    try {
-      return await this.withOperationLease(() => this.deleteSessionOperation(request, deletion))
-    } finally {
-      deletion.finish()
-    }
-  }
-
-  private async deleteSessionOperation(
-    request: AcpDeleteSessionRequest,
-    deletion: AcpSessionDeletion
-  ): Promise<AcpStateSnapshot> {
-    const target = this.sessionRegistry.lookup(request.sessionId)
-    const session = target?.attachment?.session
-
-    this.cancelPermissionFlowForSession(request.sessionId)
-
-    if (session) {
-      // Talk to the agent using its own session id: for an adopted session the underlying
-      // agent id (session.sessionId) differs from the app-facing request.sessionId.
-      if (this.connection && this.supportsSessionDelete) {
-        await this.connection.agent.request(acp.methods.agent.session.delete, {
-          sessionId: session.sessionId
-        })
-      } else if (this.connection && this.supportsSessionClose) {
-        await this.connection.agent.request(acp.methods.agent.session.close, {
-          sessionId: session.sessionId
-        })
-      } else {
-        await this.connection?.agent.notify(acp.methods.agent.session.cancel, {
-          sessionId: session.sessionId
-        })
-      }
-
-      session.dispose()
-      if (target?.attachment) this.sessionRegistry.detach(target.attachment, 'provider')
-    }
-
-    // App-session-keyed cleanup runs whether or not a live session is attached. A framework switch
-    // A disconnect detaches the provider but deliberately keeps framework/backend affinity, so deleting
-    // a session that was never re-adopted must remove its remaining Aggregate as well.
-    this.permissionContext.clearSession(request.sessionId)
-    this.sessionInteractions.supersedeCurrent(request.sessionId)
-    // Drop this session's MCP routes, aliases, and bearer ownership (idempotent for detached deletes).
-    this.sessionCapabilities.revokeSession(request.sessionId)
-    const removal = deletion.finish(target)
-    this.promptContentOwner.resetSession(request.sessionId)
-    this.handoffContinuity.clearSession(request.sessionId)
-    this.contextUsageTracker.deleteSession(request.sessionId)
-
-    // Only announce a deletion and shift the current session when something was actually attached; a
-    // detached cleanup (post-switch) must not emit a spurious event or move the current selection.
-    if (removal.wasActive) {
-      this.pushEvent({
-        kind: 'system',
-        level: 'info',
-        sessionId: request.sessionId,
-        title: 'Session deleted'
-      })
-      this.emitState()
-    }
-
-    return this.getSnapshot()
+    return this.sessionDeletion.delete(request.sessionId)
   }
 
   // Resolves or cancels one pending permission request from the renderer.

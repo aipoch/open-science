@@ -175,4 +175,43 @@ describe('CodexSkillActivityProjector', () => {
     expect(chemistryCompletion).not.toHaveProperty('rawOutput')
     expect(pubmedCompletion).not.toHaveProperty('rawOutput')
   })
+
+  it('clears only the deleted Session lifecycle while retaining another Session', () => {
+    const skillsRoot = join('/data', 'codex-subscription', 'skills')
+    const projector = new CodexSkillActivityProjector(skillsRoot)
+
+    for (const [sessionId, skillName] of [
+      ['session-a', 'mcp-pubmed'],
+      ['session-b', 'mcp-chemistry']
+    ] as const) {
+      projector.project(
+        toolEvent({
+          sessionId,
+          toolCallId: 'shared-call-id',
+          toolKind: 'read',
+          status: 'in_progress',
+          toolLocations: [{ path: join(skillsRoot, skillName, 'SKILL.md') }]
+        })
+      )
+    }
+
+    projector.clearSession('session-a')
+    const deletedCompletion = projector.project(
+      toolEvent({
+        sessionId: 'session-a',
+        toolCallId: 'shared-call-id',
+        status: 'completed'
+      })
+    )
+    const retainedCompletion = projector.project(
+      toolEvent({
+        sessionId: 'session-b',
+        toolCallId: 'shared-call-id',
+        status: 'completed'
+      })
+    )
+
+    expect(deletedCompletion.title).toBeUndefined()
+    expect(retainedCompletion.title).toBe('Loaded skill: mcp-chemistry')
+  })
 })

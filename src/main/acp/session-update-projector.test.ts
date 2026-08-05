@@ -243,6 +243,60 @@ describe('AcpSessionUpdateProjector', () => {
     projector.dispose()
   })
 
+  it('clears Codex Skill presentation state for only one Session', () => {
+    const projector = new AcpSessionUpdateProjector()
+    const skillsRoot = resolve('/data', 'codex-home', 'skills')
+    projector.beginGeneration(skillsRoot)
+    const routing = {
+      kind: 'runtime' as const,
+      eventId: 'event-skill',
+      visible: true,
+      reconnectPending: false,
+      mcpServerNames: []
+    }
+
+    for (const [sessionId, skillName] of [
+      ['session-a', 'mcp-pubmed'],
+      ['session-b', 'mcp-chemistry']
+    ] as const) {
+      projector.project(
+        {
+          sessionId,
+          update: {
+            sessionUpdate: 'tool_call',
+            toolCallId: 'shared-call-id',
+            title: `Read ${skillName}`,
+            kind: 'read',
+            status: 'in_progress',
+            locations: [{ path: join(skillsRoot, skillName, 'SKILL.md') }]
+          }
+        },
+        routing
+      )
+    }
+
+    projector.clearSession('session-a')
+    const complete = (sessionId: string): ReturnType<AcpSessionUpdateProjector['project']> =>
+      projector.project(
+        {
+          sessionId,
+          update: {
+            sessionUpdate: 'tool_call_update',
+            toolCallId: 'shared-call-id',
+            status: 'completed'
+          }
+        },
+        { ...routing, eventId: `event-${sessionId}` }
+      )
+
+    expect(complete('session-a').at(-1)).not.toMatchObject({
+      event: { title: expect.stringContaining('skill') }
+    })
+    expect(complete('session-b').at(-1)).toMatchObject({
+      event: { title: 'Loaded skill: mcp-chemistry' }
+    })
+  })
+
   it('projects Permission tool correlation first with the stable Session identity', () => {
     const projector = new AcpSessionUpdateProjector()
     const effects = projector.project(
