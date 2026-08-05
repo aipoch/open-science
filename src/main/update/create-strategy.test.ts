@@ -84,7 +84,7 @@ describe('createUpdateStrategy', () => {
     await strategy.apply()
 
     expect(installGate).toHaveBeenCalledTimes(1)
-    expect(quitAndInstall).toHaveBeenCalledWith(false, true)
+    expect(quitAndInstall).toHaveBeenCalledWith(true, true)
   })
 
   it('uses ElectronUpdaterStrategy on darwin for a packaged stable build', () => {

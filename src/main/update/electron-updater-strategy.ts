@@ -443,8 +443,8 @@ export class ElectronUpdaterStrategy implements UpdateStrategy {
   }
 
   // Triggered by the user's "Restart to update" click once the download is ready. On Windows,
-  // isSilent=false keeps the assisted NSIS progress page visible while the app files are unavailable;
-  // isForceRunAfter=true relaunches into the new version. Other updaters ignore isSilent.
+  // isSilent=true bypasses the assisted NSIS wizard and isForceRunAfter=true relaunches into the new
+  // version. Other updaters ignore isSilent.
   async apply(): Promise<UpdateStatus> {
     // Claim the update synchronously so repeat clicks or concurrent renderers cannot start a second
     // teardown/install. The broadcast also gives the renderer immediate feedback during the shutdown
@@ -508,7 +508,7 @@ export class ElectronUpdaterStrategy implements UpdateStrategy {
     this.pendingInstallRollback = rollbackTrigger
     this.installerStarted = true
     try {
-      this.updater.quitAndInstall(false, true)
+      this.updater.quitAndInstall(true, true)
     } catch (error) {
       rollbackTrigger()
       this.pendingInstallRollback = undefined

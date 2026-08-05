@@ -378,7 +378,7 @@ describe('ElectronUpdaterStrategy', () => {
     expect(JSON.stringify(records)).not.toContain('raw provider diagnostic detail')
   })
 
-  it('apply shows installer progress and relaunches (quitAndInstall(false, true))', async () => {
+  it('apply installs silently and relaunches (quitAndInstall(true, true))', async () => {
     const updater = new FakeUpdater()
     const log = createLogSpy()
     const strategy = new ElectronUpdaterStrategy({
@@ -389,7 +389,7 @@ describe('ElectronUpdaterStrategy', () => {
     })
     await strategy.apply()
     expect(updater.quitAndInstall).toHaveBeenCalledTimes(1)
-    expect(updater.quitAndInstall).toHaveBeenCalledWith(false, true)
+    expect(updater.quitAndInstall).toHaveBeenCalledWith(true, true)
     expect(currentApplicationShutdownTrigger()).toBe('update')
     expect(diagnosticRecords(log)).toEqual(
       expect.arrayContaining([
@@ -415,7 +415,7 @@ describe('ElectronUpdaterStrategy', () => {
 
     const status = await strategy.apply()
     expect(updater.quitAndInstall).toHaveBeenCalledTimes(1)
-    expect(updater.quitAndInstall).toHaveBeenCalledWith(false, true)
+    expect(updater.quitAndInstall).toHaveBeenCalledWith(true, true)
     expect(status.state).toBe('error')
     expect(currentApplicationShutdownTrigger()).toBe('quit')
   })
