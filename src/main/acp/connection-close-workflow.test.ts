@@ -11,6 +11,7 @@ type TestHarness = {
   state: Record<string, ReturnType<typeof vi.fn>>
   resources: Record<string, ReturnType<typeof vi.fn>>
   transitions: Record<string, ReturnType<typeof vi.fn>>
+  modelChanges: Record<string, ReturnType<typeof vi.fn>>
 }
 
 const createWorkflow = (overrides: Record<string, unknown> = {}): TestHarness => {
@@ -59,8 +60,18 @@ const createWorkflow = (overrides: Record<string, unknown> = {}): TestHarness =>
     settleTeardown: vi.fn(async <T>(teardown: () => Promise<T>) => teardown()),
     resetReconnect: vi.fn(),
     activityChanged: vi.fn(),
-    requestProviderReconnect: vi.fn(async () => undefined),
-    requestRetirement: vi.fn(async () => undefined)
+    requestProviderReconnect: vi.fn(async () => {
+      actions.push('provider-reconnect')
+    }),
+    requestRetirement: vi.fn(async () => {
+      actions.push('retirement')
+    })
+  }
+  const modelChanges = {
+    cancel: vi.fn(() => actions.push('model-cancel')),
+    cancelAndDrain: vi.fn(async () => {
+      actions.push('model-drain')
+    })
   }
   const workflow = new AcpConnectionCloseWorkflow({
     currentGeneration: () => generation,
@@ -68,6 +79,7 @@ const createWorkflow = (overrides: Record<string, unknown> = {}): TestHarness =>
     getSnapshot: () => snapshot,
     transitions,
     resources,
+    modelChanges,
     backendGeneration: {
       supersede: vi.fn((throughEpoch: number) => actions.push(`backend:${throughEpoch}`))
     },
@@ -75,7 +87,15 @@ const createWorkflow = (overrides: Record<string, unknown> = {}): TestHarness =>
     reportFailure: vi.fn(),
     ...overrides
   } as never)
-  return { workflow, actions, generation: () => generation, state, resources, transitions }
+  return {
+    workflow,
+    actions,
+    generation: () => generation,
+    state,
+    resources,
+    transitions,
+    modelChanges
+  }
 }
 
 describe('AcpConnectionCloseWorkflow', () => {
@@ -89,6 +109,7 @@ describe('AcpConnectionCloseWorkflow', () => {
     expect(resources.teardown).toHaveBeenCalledOnce()
     expect(resources.closeMcp).toHaveBeenCalledOnce()
     expect(actions).toEqual([
+      'model-cancel',
       'invalidate',
       'permission',
       'reviewer',
@@ -118,6 +139,7 @@ describe('AcpConnectionCloseWorkflow', () => {
     expect(transitions.resetReconnect).toHaveBeenCalledOnce()
     expect(transitions.activityChanged).toHaveBeenCalledOnce()
     expect(actions).toEqual([
+      'model-cancel',
       'invalidate',
       'permission',
       'reviewer',
@@ -150,13 +172,25 @@ describe('AcpConnectionCloseWorkflow', () => {
   })
 
   it('clears usage before deferring provider reconnect and delegates intent ownership', async () => {
-    const { workflow, state, transitions } = createWorkflow()
+    const { workflow, actions, state, transitions, modelChanges } = createWorkflow()
 
     await workflow.requestProviderReconnect()
 
+    expect(modelChanges.cancelAndDrain).toHaveBeenCalledOnce()
     expect(state.clearContextUsage).toHaveBeenCalledOnce()
     expect(state.clearAppliedSessionModels).toHaveBeenCalledOnce()
     expect(state.emitState).toHaveBeenCalledOnce()
     expect(transitions.requestProviderReconnect).toHaveBeenCalledOnce()
+    expect(actions).toEqual(['model-drain', 'usage', 'models', 'emit', 'provider-reconnect'])
+  })
+
+  it('drains model changes before delegating retirement intent', async () => {
+    const { workflow, actions, transitions, modelChanges } = createWorkflow()
+
+    await workflow.requestRetirement()
+
+    expect(modelChanges.cancelAndDrain).toHaveBeenCalledOnce()
+    expect(transitions.requestRetirement).toHaveBeenCalledOnce()
+    expect(actions).toEqual(['model-drain', 'retirement'])
   })
 })

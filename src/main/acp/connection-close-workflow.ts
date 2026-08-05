@@ -3,6 +3,7 @@ import type { ChildProcessWithoutNullStreams } from 'node:child_process'
 import type { AcpBackendGenerationOwner } from './backend-generation-owner'
 import type { AcpConnectionResourceOwner } from './connection-resource-owner'
 import type { AcpConnectionTransitionOwner } from './connection-transition-owner'
+import type { AcpModelChangeWorkflow } from './model-change-workflow'
 type CleanupFailure = (stage: string, error: unknown) => void
 type CloseStatus = AcpStateSnapshot['status']
 type DisconnectCurrent = (...args: [boolean, number]) => Promise<AcpStateSnapshot>
@@ -54,6 +55,7 @@ type AcpConnectionCloseWorkflowOptions = Readonly<{
     | 'beginAwaitableShutdown'
   >
   backendGeneration: Pick<AcpBackendGenerationOwner, 'supersede'>
+  modelChanges: Pick<AcpModelChangeWorkflow, 'cancel' | 'cancelAndDrain'>
   state: CloseState
   reportFailure: (message: string, error: unknown) => void
 }>
@@ -62,6 +64,7 @@ class AcpConnectionCloseWorkflow {
   private readonly expectedProcessExits = new WeakSet<ChildProcessWithoutNullStreams>()
   constructor(private readonly options: AcpConnectionCloseWorkflowOptions) {}
   async disconnect(emitClosedStatus = true): Promise<AcpStateSnapshot> {
+    this.options.modelChanges.cancel()
     return this.options.transitions.settleTeardown(async () => {
       const teardownGeneration = this.options.resources.supersede()
       this.options.state.invalidatePendingSessionStartups()
@@ -125,6 +128,7 @@ class AcpConnectionCloseWorkflow {
     ) {
       return
     }
+    this.options.modelChanges.cancel()
     const teardownGeneration = this.options.currentGeneration()
     const interruptedPrompts = this.options.state.settleActivePrompts()
     this.options.state.invalidatePendingSessionStartups()
@@ -151,6 +155,7 @@ class AcpConnectionCloseWorkflow {
     }
   }
   shutdown(): void {
+    this.options.modelChanges.cancel()
     this.options.resources.shutdownSynchronously(() => {
       this.options.state.invalidatePendingSessionStartups()
       this.options.backendGeneration.supersede(this.options.currentGeneration() - 1)
@@ -175,6 +180,7 @@ class AcpConnectionCloseWorkflow {
     return { reaped: outcome.reaped && this.candidateTreeKillReaped }
   }
   async requestProviderReconnect(): Promise<void> {
+    await this.options.modelChanges.cancelAndDrain()
     if (this.options.state.hasContextUsage()) {
       this.options.state.clearContextUsage()
       this.options.state.clearAppliedSessionModels()
@@ -182,8 +188,9 @@ class AcpConnectionCloseWorkflow {
     }
     await this.options.transitions.requestProviderReconnect()
   }
-  requestRetirement(): Promise<void> {
-    return this.options.transitions.requestRetirement()
+  async requestRetirement(): Promise<void> {
+    await this.options.modelChanges.cancelAndDrain()
+    await this.options.transitions.requestRetirement()
   }
   recoverFailedDeferredDisconnect(): void {
     const teardownGeneration = this.options.resources.supersede()

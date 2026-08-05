@@ -153,9 +153,11 @@ describe('AcpAgentConnectionAdapter', () => {
     expect(connectionHooks.markProcessExitExpected).toHaveBeenCalledWith(process, 1)
   })
 
-  it('reaps an untransferred process tree and releases its bridge lease exactly once', async () => {
+  it('reaps an untransferred process tree and releases every transport lease exactly once', async () => {
     const process = new FakeAgentProcess()
-    const release = vi.fn(async () => undefined)
+    const releaseBridge = vi.fn(async () => undefined)
+    const releaseAnthropic = vi.fn(async () => undefined)
+    const releaseProviderTransport = vi.fn(async () => undefined)
     const backend: ResolvedAgentBackend = {
       framework: { ...claudeCodeFramework, spawn: () => asAgentProcess(process) },
       executablePath: '/bin/agent',
@@ -164,7 +166,15 @@ describe('AcpAgentConnectionAdapter', () => {
         selectSkills: vi.fn(async () => []),
         registerReviewerSession: vi.fn(),
         unregisterReviewerSession: vi.fn(() => false),
-        release
+        release: releaseBridge
+      },
+      anthropicBridgeLease: {
+        setTarget: vi.fn(() => true),
+        release: releaseAnthropic
+      },
+      providerTransportLease: {
+        setTarget: vi.fn(() => true),
+        release: releaseProviderTransport
       }
     }
     const candidate = await openCandidate(process, backend)
@@ -174,7 +184,9 @@ describe('AcpAgentConnectionAdapter', () => {
 
     expect(terminateProcessTree).toHaveBeenCalledOnce()
     expect(terminateProcessTree.mock.calls[0]?.[0]).toBe(process)
-    expect(release).toHaveBeenCalledOnce()
+    expect(releaseBridge).toHaveBeenCalledOnce()
+    expect(releaseAnthropic).toHaveBeenCalledOnce()
+    expect(releaseProviderTransport).toHaveBeenCalledOnce()
   })
 
   it('rejects a transfer to a different owner epoch without consuming the candidate', async () => {
@@ -198,7 +210,9 @@ describe('AcpAgentConnectionAdapter', () => {
 
   it('transfers once without exposing resources and leaves teardown solely to the owner', async () => {
     const process = new FakeAgentProcess()
-    const release = vi.fn(async () => undefined)
+    const releaseBridge = vi.fn(async () => undefined)
+    const releaseAnthropic = vi.fn(async () => undefined)
+    const releaseProviderTransport = vi.fn(async () => undefined)
     const owner = new AcpConnectionResourceOwner()
     let candidateDispose: (() => Promise<void>) | undefined
     await owner.connect(async (attempt) => {
@@ -210,7 +224,15 @@ describe('AcpAgentConnectionAdapter', () => {
           selectSkills: vi.fn(async () => []),
           registerReviewerSession: vi.fn(),
           unregisterReviewerSession: vi.fn(() => false),
-          release
+          release: releaseBridge
+        },
+        anthropicBridgeLease: {
+          setTarget: vi.fn(() => true),
+          release: releaseAnthropic
+        },
+        providerTransportLease: {
+          setTarget: vi.fn(() => true),
+          release: releaseProviderTransport
         }
       })
       candidateDispose = candidate.dispose
@@ -233,17 +255,23 @@ describe('AcpAgentConnectionAdapter', () => {
       await candidate.dispose()
 
       expect(terminateProcessTree).not.toHaveBeenCalled()
-      expect(release).not.toHaveBeenCalled()
+      expect(releaseBridge).not.toHaveBeenCalled()
+      expect(releaseAnthropic).not.toHaveBeenCalled()
+      expect(releaseProviderTransport).not.toHaveBeenCalled()
       return attempt.publish({ close: false, delete: false, resume: false })
     })
 
     await candidateDispose?.()
     expect(terminateProcessTree).not.toHaveBeenCalled()
-    expect(release).not.toHaveBeenCalled()
+    expect(releaseBridge).not.toHaveBeenCalled()
+    expect(releaseAnthropic).not.toHaveBeenCalled()
+    expect(releaseProviderTransport).not.toHaveBeenCalled()
 
     await owner.teardown(owner.epoch)
     expect(terminateProcessTree).toHaveBeenCalledOnce()
-    expect(release).toHaveBeenCalledOnce()
+    expect(releaseBridge).toHaveBeenCalledOnce()
+    expect(releaseAnthropic).toHaveBeenCalledOnce()
+    expect(releaseProviderTransport).toHaveBeenCalledOnce()
   })
 
   it('retains cleanup ownership when the resource owner rejects transfer', async () => {
