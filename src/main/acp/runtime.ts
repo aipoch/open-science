@@ -125,11 +125,7 @@ import { AcpProviderSessionResumer } from './provider-session-resumer'
 import { AcpSessionReplacementWorkflow } from './session-replacement-workflow'
 import { AcpSessionDeletionWorkflow } from './session-deletion-workflow'
 import { AcpPromptPreparationOwner } from './prompt-preparation-owner'
-import {
-  AcpPromptTurnWorkflow,
-  type AcpExecutedPromptTurn,
-  type AcpPromptTurnPlanContext
-} from './prompt-turn-workflow'
+import { AcpPromptTurnWorkflow, type AcpPromptTurnPlanContext } from './prompt-turn-workflow'
 import { AcpSessionPresentationPolicy } from './session-presentation-policy'
 import { AcpProviderPromptExecutor } from './provider-prompt-executor'
 import { AcpPromptOutcomeFinalizer } from './prompt-outcome-finalizer'
@@ -405,7 +401,6 @@ class AcpRuntime {
   private readonly sessionConfigurator: AcpSessionConfigurator
   private readonly sessionUpdateProjector = new AcpSessionUpdateProjector()
   private readonly providerPromptExecutor = new AcpProviderPromptExecutor()
-  private readonly promptOutcomeFinalizer = new AcpPromptOutcomeFinalizer()
   // Injectable lifecycle timers (defaults to real setTimeout/clearTimeout).
   private readonly setTimer: (fn: () => void, ms: number) => ReturnType<typeof setTimeout>
   private readonly clearTimer: (handle: ReturnType<typeof setTimeout>) => void
@@ -616,6 +611,8 @@ class AcpRuntime {
       skills: this.turnSkills,
       preparation: this.promptPreparation,
       executor: this.providerPromptExecutor,
+      finalizer: new AcpPromptOutcomeFinalizer(),
+      permission: this.permissionContext,
       environment: {
         backend: () => this.backend,
         tooling: () => this.currentCapabilityAvailability(),
@@ -643,13 +640,38 @@ class AcpRuntime {
       },
       artifacts: {
         open: (sessionId, provenance) => this.activateArtifactRun(sessionId, provenance),
-        promptMessageIdFor: (sessionId) => this.artifactTurns?.promptMessageIdFor(sessionId)
+        promptMessageIdFor: (sessionId) => this.artifactTurns?.promptMessageIdFor(sessionId),
+        publish: (sessionId, artifact, onPublished) =>
+          this.emitArtifactRunEvent(sessionId, artifact, onPublished),
+        dispose: (artifact) => this.clearArtifactRun(artifact)
       },
       planLifecycle: {
         beforeStop: (sessionId, interaction, response) =>
-          this.checkPromptPlanCompletion(sessionId, interaction, response)
+          this.checkPromptPlanCompletion(sessionId, interaction, response),
+        beforeRelease: (sessionId, interaction) =>
+          this.releasePromptPlanBinding(sessionId, interaction),
+        afterRelease: (sessionId) => this.publishTerminalPlanProjection(sessionId)
       },
-      finalizeTurn: (execution) => this.finalizePromptTurn(execution),
+      finalization: {
+        recordContextUsed: (sessionId, used, promptTurn) =>
+          this.recordProviderPromptContextUsage(sessionId, used, promptTurn),
+        errorMessage,
+        errorKind: acpErrorKind,
+        pushEvent: (event) => this.pushEvent(event),
+        onPromptEnded: (sessionId, turnToken) =>
+          this.callbacks.onPromptEnded?.(sessionId, turnToken),
+        generationActivityChanged: () => this.generationActivityChanged(),
+        autoCompact: (sessionId, session, interaction) => {
+          if (
+            this.sessionInteractions.current(sessionId) !== interaction ||
+            this.activeSessionFor(sessionId) !== session ||
+            !this.shouldAutoCompactContext(sessionId)
+          ) {
+            return Promise.resolve()
+          }
+          return this.performNativeContextCompaction(session, sessionId, 'automatic')
+        }
+      },
       currentCwd: () => this.snapshotOwner.cwd,
       resolveProjectName: (sessionId) => this.resolveSessionProjectName(sessionId),
       preflightPlan: (request) => this.preflightPromptPlan(request),
@@ -2108,59 +2130,6 @@ class AcpRuntime {
           ...(promptAttemptId === undefined ? {} : { promptAttemptId })
         })
       )
-    )
-  }
-
-  private finalizePromptTurn(execution: AcpExecutedPromptTurn): Promise<PromptResponse> {
-    const { turn, artifact, prepared, context, skillInputs, skillStarted, outcome } = execution
-    const { request, session, interaction, skill } = turn
-    const sessionId = request.sessionId
-    const promptTurn = interaction.sequence
-    const eventIdentity = interaction.promptMessageId
-      ? { promptMessageId: interaction.promptMessageId }
-      : {}
-    let skillFinalized = execution.skillFinalized
-    return this.promptOutcomeFinalizer.finalize(
-      {
-        sessionId,
-        ...eventIdentity,
-        interaction,
-        interactions: this.sessionInteractions,
-        permission: this.permissionContext,
-        ...(prepared ? { prepared } : {}),
-        ...(context ? { context } : {}),
-        skill,
-        ...(this.backend.session.model ? { model: this.backend.session.model } : {}),
-        emitUserMessage: execution.emitUserMessage,
-        emitArtifact: (onPublished) => this.emitArtifactRunEvent(sessionId, artifact, onPublished),
-        disposeArtifact: () => this.clearArtifactRun(artifact),
-        failPendingSkillActivities: () => {
-          if (!skillStarted || skillFinalized) return
-          this.emitCodexSkillInputActivities(sessionId, promptTurn, skillInputs, 'failed')
-          skillFinalized = true
-        },
-        recordContextUsed: (used) =>
-          this.recordProviderPromptContextUsage(sessionId, used, promptTurn),
-        errorMessage,
-        errorKind: acpErrorKind,
-        pushEvent: (event) => this.pushEvent(event),
-        emitState: () => this.emitState(),
-        onPromptEnded: () => this.callbacks.onPromptEnded?.(sessionId, interaction.turnToken),
-        generationActivityChanged: () => this.generationActivityChanged(),
-        autoCompactIfNeeded: () => {
-          if (
-            this.sessionInteractions.current(sessionId) !== interaction ||
-            this.activeSessionFor(sessionId) !== session ||
-            !this.shouldAutoCompactContext(sessionId)
-          ) {
-            return Promise.resolve()
-          }
-          return this.performNativeContextCompaction(session, sessionId, 'automatic')
-        },
-        beforeInteractionRelease: () => this.releasePromptPlanBinding(sessionId, interaction),
-        afterInteractionRelease: () => this.publishTerminalPlanProjection(sessionId)
-      },
-      outcome
     )
   }
 

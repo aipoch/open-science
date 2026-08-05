@@ -13,7 +13,12 @@ import { PLAN_FIRST_TURN_PROMPT_REMINDER } from '../session-plan/guidance'
 import type { ArtifactTurnHandle } from './artifact-turn-owner'
 import type { AcpBackendGenerationView } from './backend-generation-owner'
 import type { ContextUsageTurnHandle, SessionEstimateInput } from './context-usage-tracker'
-import type { AcpPromptFinalizationOutcome } from './prompt-outcome-finalizer'
+import type { AcpPermissionContext } from './permission-context'
+import {
+  AcpPromptOutcomeFinalizer,
+  type AcpPromptFinalizationHandles,
+  type AcpPromptFinalizationOutcome
+} from './prompt-outcome-finalizer'
 import type { AcpPromptPreparationOwner, PreparedPromptHandle } from './prompt-preparation-owner'
 import type { AcpProviderPromptExecutor, ProviderPromptOutcome } from './provider-prompt-executor'
 import type { AcpProviderTurnAdapter } from './provider-turn-adapter'
@@ -43,18 +48,6 @@ type AcpActivatedPromptTurn = Readonly<{
   plan: AcpPromptTurnPlanContext
 }>
 
-type AcpExecutedPromptTurn = Readonly<{
-  turn: AcpActivatedPromptTurn
-  artifact?: ArtifactTurnHandle
-  prepared?: PreparedPromptHandle
-  context?: ContextUsageTurnHandle
-  skillInputs: ReadonlyArray<{ name: string; path: string }>
-  skillStarted: boolean
-  skillFinalized: boolean
-  emitUserMessage: () => void
-  outcome: AcpPromptFinalizationOutcome
-}>
-
 type AcpPromptTurnEnvironment = Readonly<{
   backend: () => AcpBackendGenerationView
   tooling: () => AcpSessionToolingAvailability
@@ -82,6 +75,12 @@ type AcpPromptTurnArtifacts = Readonly<{
     provenance: AcpPromptRequest['provenanceContext']
   ) => Promise<ArtifactTurnHandle | undefined>
   promptMessageIdFor: (sessionId: string) => string | undefined
+  publish: (
+    sessionId: string,
+    artifact: ArtifactTurnHandle | undefined,
+    onPublished: () => void
+  ) => Promise<void>
+  dispose: (artifact: ArtifactTurnHandle | undefined) => Promise<void>
 }>
 
 type AcpPromptTurnPlanLifecycle = Readonly<{
@@ -90,6 +89,22 @@ type AcpPromptTurnPlanLifecycle = Readonly<{
     interaction: AcpPromptSessionInteractionScope,
     response: PromptResponse
   ) => Promise<void>
+  beforeRelease: (sessionId: string, interaction: AcpPromptSessionInteractionScope) => void
+  afterRelease: (sessionId: string) => Promise<void>
+}>
+
+type AcpPromptTurnFinalization = Readonly<{
+  recordContextUsed: (sessionId: string, used: number, promptTurn: number) => void
+  errorMessage: AcpPromptFinalizationHandles['errorMessage']
+  errorKind: AcpPromptFinalizationHandles['errorKind']
+  pushEvent: AcpPromptFinalizationHandles['pushEvent']
+  onPromptEnded: (sessionId: string, turnToken: string) => void
+  generationActivityChanged: () => void
+  autoCompact: (
+    sessionId: string,
+    session: ActiveSession,
+    interaction: AcpPromptSessionInteractionScope
+  ) => Promise<unknown>
 }>
 
 type AcpPromptTurnWorkflowOptions = Readonly<{
@@ -107,10 +122,12 @@ type AcpPromptTurnWorkflowOptions = Readonly<{
   skills: Pick<AcpTurnSkillOwner, 'authorize'>
   preparation: Pick<AcpPromptPreparationOwner, 'prepare'>
   executor: Pick<AcpProviderPromptExecutor, 'execute'>
+  finalizer: Pick<AcpPromptOutcomeFinalizer, 'finalize'>
+  permission: Pick<AcpPermissionContext, 'clearCorrelationsForSession'>
   environment: AcpPromptTurnEnvironment
   artifacts: AcpPromptTurnArtifacts
   planLifecycle: AcpPromptTurnPlanLifecycle
-  finalizeTurn: (execution: AcpExecutedPromptTurn) => Promise<PromptResponse>
+  finalization: AcpPromptTurnFinalization
   currentCwd: () => string
   resolveProjectName: (sessionId: string) => string
   preflightPlan: (
@@ -240,8 +257,11 @@ class AcpPromptTurnWorkflow {
       artifacts,
       environment: env,
       executor,
+      finalization,
+      finalizer,
       interactions,
       planLifecycle,
+      permission,
       preparation,
       registry
     } = this.options
@@ -364,17 +384,39 @@ class AcpPromptTurnWorkflow {
     } catch (error) {
       outcome = Object.freeze({ kind: 'failed', error })
     }
-    return this.options.finalizeTurn({
-      turn,
-      ...(artifact ? { artifact } : {}),
-      ...(prepared ? { prepared } : {}),
-      ...(context ? { context } : {}),
-      skillInputs,
-      skillStarted,
-      skillFinalized,
-      emitUserMessage,
+    const model = env.backend().session.model
+    return finalizer.finalize(
+      {
+        sessionId,
+        ...eventIdentity,
+        interaction,
+        interactions,
+        permission,
+        ...(prepared ? { prepared } : {}),
+        ...(context ? { context } : {}),
+        skill,
+        ...(model ? { model } : {}),
+        emitUserMessage,
+        emitArtifact: (onPublished) => artifacts.publish(sessionId, artifact, onPublished),
+        disposeArtifact: () => artifacts.dispose(artifact),
+        failPendingSkillActivities: () => {
+          if (!skillStarted || skillFinalized) return
+          env.emitSkillActivities(sessionId, promptTurn, skillInputs, 'failed')
+          skillFinalized = true
+        },
+        recordContextUsed: (used) => finalization.recordContextUsed(sessionId, used, promptTurn),
+        errorMessage: finalization.errorMessage,
+        errorKind: finalization.errorKind,
+        pushEvent: finalization.pushEvent,
+        emitState: this.options.emitState,
+        onPromptEnded: () => finalization.onPromptEnded(sessionId, turnToken),
+        generationActivityChanged: finalization.generationActivityChanged,
+        autoCompactIfNeeded: () => finalization.autoCompact(sessionId, session, interaction),
+        beforeInteractionRelease: () => planLifecycle.beforeRelease(sessionId, interaction),
+        afterInteractionRelease: () => planLifecycle.afterRelease(sessionId)
+      },
       outcome
-    })
+    )
   }
 
   private activeSession(sessionId: string): ActiveSession | undefined {
@@ -423,9 +465,4 @@ class AcpPromptTurnWorkflow {
 }
 
 export { AcpPromptTurnWorkflow }
-export type {
-  AcpExecutedPromptTurn,
-  AcpPromptTurnMode,
-  AcpPromptTurnPlanContext,
-  AcpPromptTurnWorkflowOptions
-}
+export type { AcpPromptTurnMode, AcpPromptTurnPlanContext, AcpPromptTurnWorkflowOptions }

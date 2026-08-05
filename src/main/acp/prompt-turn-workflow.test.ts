@@ -7,6 +7,7 @@ import { opencodeFramework } from '../agent-framework'
 import type { ArtifactTurnHandle } from './artifact-turn-owner'
 import type { AcpBackendGenerationView } from './backend-generation-owner'
 import type { ContextUsageTurnHandle } from './context-usage-tracker'
+import type { AcpPromptOutcomeFinalizer } from './prompt-outcome-finalizer'
 import type { ReadyPreparedPromptHandle } from './prompt-preparation-owner'
 import { AcpPromptTurnWorkflow, type AcpPromptTurnWorkflowOptions } from './prompt-turn-workflow'
 import { AcpSessionAggregate } from './session-aggregate'
@@ -19,12 +20,25 @@ type Harness = {
   artifacts: {
     open: Mock<AcpPromptTurnWorkflowOptions['artifacts']['open']>
     promptMessageIdFor: Mock<AcpPromptTurnWorkflowOptions['artifacts']['promptMessageIdFor']>
+    publish: Mock<AcpPromptTurnWorkflowOptions['artifacts']['publish']>
+    dispose: Mock<AcpPromptTurnWorkflowOptions['artifacts']['dispose']>
   }
   authorize: Mock<AcpPromptTurnWorkflowOptions['skills']['authorize']>
   context: ContextUsageTurnHandle
   emitSkillActivities: Mock<AcpPromptTurnWorkflowOptions['environment']['emitSkillActivities']>
   executor: Mock<AcpPromptTurnWorkflowOptions['executor']['execute']>
-  finalizeTurn: Mock<AcpPromptTurnWorkflowOptions['finalizeTurn']>
+  finalization: {
+    recordContextUsed: Mock<AcpPromptTurnWorkflowOptions['finalization']['recordContextUsed']>
+    errorMessage: AcpPromptTurnWorkflowOptions['finalization']['errorMessage']
+    errorKind: AcpPromptTurnWorkflowOptions['finalization']['errorKind']
+    pushEvent: Mock<AcpPromptTurnWorkflowOptions['finalization']['pushEvent']>
+    onPromptEnded: Mock<AcpPromptTurnWorkflowOptions['finalization']['onPromptEnded']>
+    generationActivityChanged: Mock<
+      AcpPromptTurnWorkflowOptions['finalization']['generationActivityChanged']
+    >
+    autoCompact: Mock<AcpPromptTurnWorkflowOptions['finalization']['autoCompact']>
+  }
+  finalizer: Mock<AcpPromptOutcomeFinalizer['finalize']>
   interactions: {
     current: Mock<AcpSessionInteractionOwner['current']>
     reservePrompt: Mock<AcpSessionInteractionOwner['reservePrompt']>
@@ -41,7 +55,10 @@ type Harness = {
   owner: AcpSessionInteractionOwner
   planLifecycle: {
     beforeStop: Mock<AcpPromptTurnWorkflowOptions['planLifecycle']['beforeStop']>
+    beforeRelease: Mock<AcpPromptTurnWorkflowOptions['planLifecycle']['beforeRelease']>
+    afterRelease: Mock<AcpPromptTurnWorkflowOptions['planLifecycle']['afterRelease']>
   }
+  permission: AcpPromptTurnWorkflowOptions['permission']
   preparation: Mock<AcpPromptTurnWorkflowOptions['preparation']['prepare']>
   preflightPlan: Mock<AcpPromptTurnWorkflowOptions['preflightPlan']>
   prepared: ReadyPreparedPromptHandle
@@ -108,7 +125,7 @@ const createHarness = (
     authorize?: () => TurnSkillHandle | Promise<TurnSkillHandle>
     cancellationCheckpoint?: AcpPromptTurnWorkflowOptions['interactions']['cancellationCheckpoint']
     execute?: AcpPromptTurnWorkflowOptions['executor']['execute']
-    finalizeTurn?: AcpPromptTurnWorkflowOptions['finalizeTurn']
+    finalize?: AcpPromptOutcomeFinalizer['finalize']
     onPromptStarted?: () => void
     preflightPlan?: AcpPromptTurnWorkflowOptions['preflightPlan']
     prepare?: AcpPromptTurnWorkflowOptions['preparation']['prepare']
@@ -200,6 +217,12 @@ const createHarness = (
   const planLifecycle: Harness['planLifecycle'] = {
     beforeStop: vi.fn(async () => {
       journal.push('plan:before-stop')
+    }),
+    beforeRelease: vi.fn(() => {
+      journal.push('plan:before-release')
+    }),
+    afterRelease: vi.fn(async () => {
+      journal.push('plan:after-release')
     })
   }
   const onProviderPromptAccepted: Harness['onProviderPromptAccepted'] = vi.fn(() => {
@@ -214,12 +237,12 @@ const createHarness = (
     request.captureStop()
     return { kind: 'stopped' as const, response, facts: {} }
   })
-  const finalizeTurn: Harness['finalizeTurn'] = vi.fn(async (execution) => {
+  const finalizer: Harness['finalizer'] = vi.fn(async (handles, outcome) => {
     journal.push('finalize')
-    if (input.finalizeTurn) return input.finalizeTurn(execution)
-    if (execution.outcome.kind === 'failed') throw execution.outcome.error
-    if (execution.outcome.kind === 'not-dispatched') return { stopReason: 'cancelled' }
-    return execution.outcome.response
+    if (input.finalize) return input.finalize(handles, outcome)
+    if (outcome.kind === 'failed') throw outcome.error
+    if (outcome.kind === 'not-dispatched') return { stopReason: 'cancelled' }
+    return outcome.response
   })
   const artifact = {} as ArtifactTurnHandle
   const artifacts: Harness['artifacts'] = {
@@ -227,7 +250,24 @@ const createHarness = (
       journal.push('artifact:open')
       return artifact
     }),
-    promptMessageIdFor: vi.fn(() => 'fallback-message-1')
+    promptMessageIdFor: vi.fn(() => 'fallback-message-1'),
+    publish: vi.fn(async (_sessionId, _artifact, onPublished) => {
+      journal.push('artifact:publish')
+      onPublished()
+    }),
+    dispose: vi.fn(async () => {
+      journal.push('artifact:dispose')
+    })
+  }
+  const permission = { clearCorrelationsForSession: vi.fn() }
+  const finalization: Harness['finalization'] = {
+    recordContextUsed: vi.fn(),
+    errorMessage: (error) => (error instanceof Error ? error.message : String(error)),
+    errorKind: (error) => (error as { data?: { errorKind?: string } } | undefined)?.data?.errorKind,
+    pushEvent: vi.fn(),
+    onPromptEnded: vi.fn(),
+    generationActivityChanged: vi.fn(),
+    autoCompact: vi.fn(async () => undefined)
   }
   const pushUserMessage: Harness['pushUserMessage'] = vi.fn(() => {
     journal.push('event:message')
@@ -270,7 +310,9 @@ const createHarness = (
     },
     artifacts,
     planLifecycle,
-    finalizeTurn,
+    finalizer: { finalize: finalizer },
+    permission,
+    finalization,
     currentCwd: () => '/default',
     resolveProjectName: () => 'project-1',
     preflightPlan,
@@ -292,12 +334,14 @@ const createHarness = (
     context,
     emitSkillActivities,
     executor,
-    finalizeTurn,
+    finalization,
+    finalizer,
     interactions,
     journal,
     onProviderPromptAccepted,
     owner,
     planLifecycle,
+    permission,
     preparation,
     preflightPlan,
     prepared,
@@ -358,22 +402,49 @@ describe('AcpPromptTurnWorkflow', () => {
       'plan:before-stop',
       'finalize'
     ])
-    const execution = harness.finalizeTurn.mock.calls[0][0]
-    expect(execution).toMatchObject({
-      artifact: expect.any(Object),
+    const [handles, outcome] = harness.finalizer.mock.calls[0]
+    expect(handles).toMatchObject({
+      sessionId: 's1',
+      promptMessageId: 'message-1',
+      interaction: expect.objectContaining({ promptMessageId: 'message-1' }),
+      interactions: harness.interactions,
+      permission: harness.permission,
       context: harness.context,
       prepared: harness.prepared,
-      skillInputs: [{ name: 'Research', path: '/skills/research/SKILL.md' }],
-      skillStarted: true,
-      skillFinalized: true,
-      outcome: { kind: 'stopped', response: { stopReason: 'end_turn' } },
-      turn: {
-        request: expect.objectContaining({ sessionId: 's1' }),
-        mode: { kind: 'user', promptAttemptId: 'attempt-1' },
-        interaction: expect.objectContaining({ promptMessageId: 'message-1' }),
-        skill: harness.skill
-      }
+      skill: harness.skill,
+      model: 'test-model'
     })
+    expect(outcome).toMatchObject({
+      kind: 'stopped',
+      response: { stopReason: 'end_turn' }
+    })
+
+    const onPublished = vi.fn()
+    await handles.emitArtifact(onPublished)
+    await handles.disposeArtifact()
+    handles.recordContextUsed(42)
+    handles.onPromptEnded()
+    handles.generationActivityChanged()
+    await handles.autoCompactIfNeeded()
+    handles.failPendingSkillActivities()
+
+    expect(harness.artifacts.publish).toHaveBeenCalledWith('s1', expect.any(Object), onPublished)
+    expect(harness.artifacts.dispose).toHaveBeenCalledWith(expect.any(Object))
+    expect(harness.finalization.recordContextUsed).toHaveBeenCalledWith('s1', 42, 1)
+    expect(harness.finalization.onPromptEnded).toHaveBeenCalledWith(
+      's1',
+      handles.interaction.turnToken
+    )
+    expect(harness.finalization.generationActivityChanged).toHaveBeenCalledOnce()
+    expect(harness.finalization.autoCompact).toHaveBeenCalledWith(
+      's1',
+      expect.objectContaining({ sessionId: 'provider-1' }),
+      handles.interaction
+    )
+    expect(harness.emitSkillActivities.mock.calls.map((call) => call[3])).toEqual([
+      'in_progress',
+      'completed'
+    ])
   })
 
   it('propagates app-continuation identity without publishing its synthetic text', async () => {
@@ -391,9 +462,9 @@ describe('AcpPromptTurnWorkflow', () => {
       promptAttemptId: 'attempt-2'
     })
 
-    const execution = harness.finalizeTurn.mock.calls[0][0]
-    execution.emitUserMessage()
-    expect(execution.turn.interaction.turnToken).toBe('origin-turn')
+    const handles = harness.finalizer.mock.calls[0][0]
+    handles.emitUserMessage()
+    expect(handles.interaction.turnToken).toBe('origin-turn')
     expect(harness.pushUserMessage).not.toHaveBeenCalled()
     expect(harness.onProviderPromptAccepted).toHaveBeenCalledWith('s1', 'attempt-2')
   })
@@ -416,7 +487,7 @@ describe('AcpPromptTurnWorkflow', () => {
     expect(harness.interactions.release).toHaveBeenCalledWith(staleReservation)
     expect(harness.owner.current('s1')).toBe(replacement)
     expect(harness.preparation).not.toHaveBeenCalled()
-    expect(harness.finalizeTurn).not.toHaveBeenCalled()
+    expect(harness.finalizer).not.toHaveBeenCalled()
   })
 
   it('refreshes reservation, session, and replay context after a Skill reload', async () => {
@@ -473,7 +544,7 @@ describe('AcpPromptTurnWorkflow', () => {
     await expect(harness.workflow.run(request(), { kind: 'user' })).resolves.toEqual({
       stopReason: 'end_turn'
     })
-    expect(harness.finalizeTurn).toHaveBeenCalledOnce()
+    expect(harness.finalizer).toHaveBeenCalledOnce()
     expect(harness.journal.slice(6, 10)).toEqual(['handoff', 'start', 'state', 'artifact:open'])
   })
 
@@ -489,10 +560,12 @@ describe('AcpPromptTurnWorkflow', () => {
     })
     expect(harness.preparation).not.toHaveBeenCalled()
     expect(harness.executor).not.toHaveBeenCalled()
-    const execution = harness.finalizeTurn.mock.calls[0][0]
-    expect(execution.outcome).toEqual({ kind: 'not-dispatched' })
-    expect(execution).not.toHaveProperty('prepared')
-    expect(execution).not.toHaveProperty('context')
+    const [handles, outcome] = harness.finalizer.mock.calls[0]
+    expect(outcome).toEqual({ kind: 'not-dispatched' })
+    expect(handles).not.toHaveProperty('prepared')
+    expect(handles).not.toHaveProperty('context')
+    await handles.disposeArtifact()
+    expect(harness.artifacts.dispose).toHaveBeenCalledWith(expect.any(Object))
   })
 
   it('turns execution failure into one finalization outcome with pending Skill state', async () => {
@@ -505,16 +578,17 @@ describe('AcpPromptTurnWorkflow', () => {
 
     await expect(harness.workflow.run(request(), { kind: 'user' })).rejects.toBe(failure)
 
-    expect(harness.finalizeTurn).toHaveBeenCalledOnce()
-    const execution = harness.finalizeTurn.mock.calls[0][0]
-    expect(execution).toMatchObject({
-      outcome: { kind: 'failed', error: failure },
-      skillStarted: true,
-      skillFinalized: false
-    })
-    execution.emitUserMessage()
+    expect(harness.finalizer).toHaveBeenCalledOnce()
+    const [handles, outcome] = harness.finalizer.mock.calls[0]
+    expect(outcome).toEqual({ kind: 'failed', error: failure })
+    handles.emitUserMessage()
+    handles.failPendingSkillActivities()
+    handles.failPendingSkillActivities()
     expect(harness.pushUserMessage).toHaveBeenCalledOnce()
-    expect(harness.emitSkillActivities.mock.calls.map((call) => call[3])).toEqual(['in_progress'])
+    expect(harness.emitSkillActivities.mock.calls.map((call) => call[3])).toEqual([
+      'in_progress',
+      'failed'
+    ])
     expect(harness.onProviderPromptAccepted).not.toHaveBeenCalled()
   })
 
@@ -532,9 +606,14 @@ describe('AcpPromptTurnWorkflow', () => {
         turnPromptReminders: [expect.stringContaining('Plan mode (ACTIVE')]
       })
     )
-    const interaction = harness.finalizeTurn.mock.calls[0][0].turn.interaction
+    const handles = harness.finalizer.mock.calls[0][0]
+    const interaction = handles.interaction
     expect(harness.planLifecycle.beforeStop).toHaveBeenCalledWith('s1', interaction, {
       stopReason: 'end_turn'
     })
+    handles.beforeInteractionRelease()
+    await handles.afterInteractionRelease()
+    expect(harness.planLifecycle.beforeRelease).toHaveBeenCalledWith('s1', interaction)
+    expect(harness.planLifecycle.afterRelease).toHaveBeenCalledWith('s1')
   })
 })
