@@ -86,6 +86,7 @@ type PreloadApi = {
     logoutIsolatedClaude: () => unknown
     previewGitHubSkill: (request: unknown) => unknown
     previewAgentHomeSkill: (request: unknown) => unknown
+    selectCustomServerTemplate: (request?: unknown) => unknown
   }
   acp: {
     connect: (request?: unknown) => unknown
@@ -520,6 +521,19 @@ describe('preload bridge — public surface inventory', () => {
       'window.onWindowFindAppearance',
       'window.sendCloseConfirmResponse'
     ])
+  })
+})
+
+describe('preload bridge — Connector configuration files', () => {
+  it('forwards dropped file contents for main-process validation', async () => {
+    const request = {
+      fileName: 'example.json',
+      contents: '{"schemaVersion":1,"kind":"open-science.connector"}'
+    }
+
+    await api.settings.selectCustomServerTemplate(request)
+
+    expect(invokeMock).toHaveBeenCalledWith('settings:select-custom-server-template', request)
   })
 })
 

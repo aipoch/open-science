@@ -277,7 +277,7 @@ export function ConnectorAddForm({
 
   return (
     <div className="p-5">
-      <div className="flex max-w-xl flex-col gap-4">
+      <div className="flex w-full flex-col gap-4">
         {initialTemplate ? (
           <div className="rounded-lg border border-border bg-muted/30 px-3 py-2 text-xs leading-5 text-muted-foreground">
             Imported configuration is prefilled below. Enter required credentials locally, review

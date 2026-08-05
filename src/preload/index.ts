@@ -23,6 +23,7 @@ import type {
   RemoveCustomServerRequest,
   RespondApprovalRequest,
   ScanRepoRequest,
+  SelectCustomServerTemplateRequest,
   SetConnectorAutoAllowRequest,
   SetConnectorEnabledRequest,
   SetCustomServerEnabledRequest,
@@ -241,8 +242,8 @@ const api: OpenScienceAPI = {
     listConnectors: () => electronRendererContracts.invoke('settings.listConnectors'),
     previewCustomServerTemplateExport: (id: string) =>
       electronRendererContracts.invoke('settings.previewCustomServerTemplateExport', id),
-    selectCustomServerTemplate: () =>
-      electronRendererContracts.invoke('settings.selectCustomServerTemplate'),
+    selectCustomServerTemplate: (request?: SelectCustomServerTemplateRequest) =>
+      electronRendererContracts.invoke('settings.selectCustomServerTemplate', request),
     exportCustomServerTemplate: (request: ExportCustomServerTemplateRequest) =>
       electronRendererContracts.invoke('settings.exportCustomServerTemplate', request),
     getConnectorDetail: (id: string) =>

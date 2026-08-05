@@ -84,6 +84,7 @@ describe('ConnectorAddForm (local command)', () => {
       root.render(<ConnectorAddForm initialTransport="local" onDone={onDone} onCancel={vi.fn()} />)
     })
 
+    expect(container.firstElementChild?.firstElementChild?.className).toContain('w-full')
     expect(document.body.querySelector('[aria-label="Arguments"]')?.getAttribute('data-slot')).toBe(
       'textarea'
     )

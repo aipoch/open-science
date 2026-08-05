@@ -214,6 +214,7 @@ import type {
   ConnectorDetailView,
   ConnectorTemplateExportPreview,
   ConnectorTemplateSelectionResult,
+  SelectCustomServerTemplateRequest,
   ExportCustomServerTemplateRequest,
   ExportCustomServerTemplateResult,
   SetConnectorEnabledRequest,
@@ -429,7 +430,9 @@ export interface OpenScienceAPI {
     ): Promise<ImportAgentHomeSkillsResult>
     listConnectors(): Promise<ConnectorsSnapshot>
     previewCustomServerTemplateExport(id: string): Promise<ConnectorTemplateExportPreview>
-    selectCustomServerTemplate(): Promise<ConnectorTemplateSelectionResult>
+    selectCustomServerTemplate(
+      request?: SelectCustomServerTemplateRequest
+    ): Promise<ConnectorTemplateSelectionResult>
     exportCustomServerTemplate(
       request: ExportCustomServerTemplateRequest
     ): Promise<ExportCustomServerTemplateResult>

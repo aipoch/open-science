@@ -324,6 +324,21 @@ describe('settings IPC handlers', () => {
     expect(service.previewCustomServerTemplateImport).toHaveBeenCalledWith('{"schemaVersion":1}')
 
     await expect(
+      invoke('settings:select-custom-server-template', {
+        fileName: 'dropped.json',
+        contents: '{"schemaVersion":1,"kind":"open-science.connector"}'
+      })
+    ).resolves.toMatchObject({
+      cancelled: false,
+      fileName: 'dropped.json',
+      preview: { ready: true }
+    })
+    expect(connectorTemplateFiles.select).toHaveBeenCalledTimes(1)
+    expect(service.previewCustomServerTemplateImport).toHaveBeenLastCalledWith(
+      '{"schemaVersion":1,"kind":"open-science.connector"}'
+    )
+
+    await expect(
       invoke('settings:export-custom-server-template', {
         id: 'server-id',
         expectedDigest: 'digest'

@@ -8,8 +8,7 @@ import type {
   ConnectorTemplatePreview,
   CustomServerTransport
 } from '../../shared/settings'
-
-export const CONNECTOR_TEMPLATE_MAX_BYTES = 256 * 1024
+import { CONNECTOR_TEMPLATE_MAX_BYTES } from '../../shared/settings'
 
 export type ConnectorTemplateSource = {
   id: string
@@ -291,19 +290,22 @@ const readRequiredSecrets = (
 const hasErrors = (diagnostics: ConnectorTemplateDiagnostic[]): boolean =>
   diagnostics.some((item) => item.severity === 'error')
 
+const isLocalPath = (value: string): boolean =>
+  value.startsWith('/') ||
+  value.startsWith('~') ||
+  /^[A-Za-z]:[\\/]/.test(value) ||
+  value.startsWith('\\\\')
+
 const validatePortableCommand = (
   command: string | undefined,
   diagnostics: ConnectorTemplateDiagnostic[]
 ): void => {
-  if (
-    command &&
-    (command.startsWith('/') || command.startsWith('~') || /^[A-Za-z]:[\\/]/.test(command))
-  ) {
+  if (command && isLocalPath(command)) {
     diagnostic(
       diagnostics,
-      'error',
+      'warning',
       'connector-template.local-command',
-      'command must be portable and cannot use an absolute local path.',
+      'command uses a local path and may need to be changed on another computer.',
       'command'
     )
   }
@@ -314,6 +316,15 @@ const validateArgs = (
   diagnostics: ConnectorTemplateDiagnostic[]
 ): void => {
   for (const [index, arg] of (args ?? []).entries()) {
+    if (isLocalPath(arg)) {
+      diagnostic(
+        diagnostics,
+        'warning',
+        'connector-template.local-argument',
+        `args[${index}] uses a local path and may need to be changed on another computer.`,
+        `args[${index}]`
+      )
+    }
     if (/[\r\n]/.test(arg)) {
       diagnostic(
         diagnostics,

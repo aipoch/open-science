@@ -63,7 +63,7 @@ export function ConnectorExportView({ id, onDone }: ConnectorExportViewProps): R
 
   return (
     <div className="p-5">
-      <div className="flex max-w-xl flex-col gap-5">
+      <div className="flex w-full flex-col gap-5">
         <div>
           <h3 className="text-sm font-semibold text-foreground">Export Connector configuration</h3>
           <p className="mt-1 text-xs leading-5 text-muted-foreground">
@@ -128,7 +128,11 @@ export function ConnectorExportView({ id, onDone }: ConnectorExportViewProps): R
             {preview.diagnostics.map((item) => (
               <div
                 key={`${item.code}:${item.path ?? ''}`}
-                className="flex items-start gap-2 text-xs text-destructive"
+                className={`flex items-start gap-2 text-xs ${
+                  item.severity === 'warning'
+                    ? 'text-amber-600 dark:text-amber-400'
+                    : 'text-destructive'
+                }`}
               >
                 <AlertTriangle className="mt-0.5 size-3.5 shrink-0" aria-hidden="true" />
                 <span>{item.message}</span>

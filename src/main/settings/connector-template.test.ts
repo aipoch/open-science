@@ -97,18 +97,46 @@ describe('Connector configuration templates', () => {
     expect(ordinary.ready).toBe(true)
   })
 
-  it('rejects local paths, conflicting OAuth headers, and installed names', () => {
+  it('accepts local paths with portability warnings', () => {
     const local = parseConnectorTemplate(
       JSON.stringify({
         schemaVersion: 1,
         kind: 'open-science.connector',
         name: 'example-server',
         transport: 'stdio',
-        command: '/Users/example/bin/mcp'
+        command: 'node',
+        args: ['/Users/example/bin/server.mjs', '--stdio']
       })
     )
-    expect(local.diagnostics.map((item) => item.code)).toContain('connector-template.local-command')
 
+    expect(local.ready).toBe(true)
+    expect(local.diagnostics).toContainEqual({
+      severity: 'warning',
+      code: 'connector-template.local-argument',
+      message: 'args[0] uses a local path and may need to be changed on another computer.',
+      path: 'args[0]'
+    })
+
+    const localCommand = parseConnectorTemplate(
+      JSON.stringify({
+        schemaVersion: 1,
+        kind: 'open-science.connector',
+        name: 'example-command',
+        transport: 'stdio',
+        command: '/opt/example/bin/server'
+      })
+    )
+    expect(localCommand.ready).toBe(true)
+    expect(localCommand.diagnostics).toContainEqual(
+      expect.objectContaining({
+        severity: 'warning',
+        code: 'connector-template.local-command',
+        path: 'command'
+      })
+    )
+  })
+
+  it('rejects conflicting OAuth headers and installed names', () => {
     const oauthHeaders = parseConnectorTemplate(
       JSON.stringify({
         schemaVersion: 1,

@@ -1153,6 +1153,8 @@ export type SetCustomServerEnabledRequest = { id: string; enabled: boolean }
 export type RemoveCustomServerRequest = { id: string }
 export type AuthenticateCustomServerRequest = { id: string }
 
+export const CONNECTOR_TEMPLATE_MAX_BYTES = 256 * 1024
+
 // Versioned, credential-free exchange format for sharing one custom Connector. Secret fields list
 // names only; values are always supplied locally through the trusted Add Connector form.
 export type ConnectorTemplateDefinition = {
@@ -1196,6 +1198,11 @@ export type ConnectorTemplateExportPreview = ConnectorTemplatePreview & {
 
 export type ConnectorTemplateSelectionResult =
   { cancelled: true } | { cancelled: false; fileName: string; preview: ConnectorTemplatePreview }
+
+export type SelectCustomServerTemplateRequest = {
+  fileName: string
+  contents: string
+}
 
 export type ExportCustomServerTemplateRequest = { id: string; expectedDigest: string }
 export type ExportCustomServerTemplateResult = { saved: boolean }

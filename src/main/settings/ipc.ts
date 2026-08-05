@@ -27,6 +27,7 @@ import {
   type ExportCustomServerTemplateRequest,
   type ExportCustomServerTemplateResult,
   type RemoveCustomServerRequest,
+  type SelectCustomServerTemplateRequest,
   type SetCustomServerEnabledRequest,
   type UpdateCustomServerRequest,
   type SetConnectorAutoAllowRequest,
@@ -258,7 +259,17 @@ const registerSettingsIpcHandlers = ({
   )
   ipcMainHandle(
     'settings:select-custom-server-template',
-    async (): Promise<ConnectorTemplateSelectionResult> => {
+    async (
+      _event,
+      request?: SelectCustomServerTemplateRequest
+    ): Promise<ConnectorTemplateSelectionResult> => {
+      if (request) {
+        return {
+          cancelled: false,
+          fileName: request.fileName,
+          preview: await service.previewCustomServerTemplateImport(request.contents)
+        }
+      }
       if (!connectorTemplateFiles) throw new Error('Connector configuration files are unavailable')
       const selected = await connectorTemplateFiles.select()
       if (selected.cancelled) return selected

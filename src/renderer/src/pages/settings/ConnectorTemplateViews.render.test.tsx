@@ -24,6 +24,23 @@ const buttonNamed = (name: string): HTMLButtonElement | undefined =>
     (button) => button.textContent?.trim() === name
   )
 
+const buttonContaining = (name: string): HTMLButtonElement | undefined =>
+  Array.from(document.body.querySelectorAll<HTMLButtonElement>('button')).find((button) =>
+    button.textContent?.includes(name)
+  )
+
+const dropFile = async (file: File): Promise<void> => {
+  const dropEvent = new Event('drop', { bubbles: true, cancelable: true })
+  Object.defineProperty(dropEvent, 'dataTransfer', {
+    value: { types: ['Files'], files: [file], dropEffect: 'none' }
+  })
+  await act(async () => {
+    buttonContaining('Drag and drop or click to choose')?.dispatchEvent(dropEvent)
+    await Promise.resolve()
+    await Promise.resolve()
+  })
+}
+
 beforeEach(() => {
   container = document.createElement('div')
   document.body.appendChild(container)
@@ -38,6 +55,7 @@ afterEach(() => {
 
 describe('Connector configuration transfer views', () => {
   it('shows a validated import preview before handing it to the Add form', async () => {
+    const contents = JSON.stringify(definition)
     const selectCustomServerTemplate = vi.fn().mockResolvedValue({
       cancelled: false,
       fileName: 'example.json',
@@ -50,12 +68,19 @@ describe('Connector configuration transfer views', () => {
     act(() => {
       root.render(<ConnectorImportView onUse={onUse} onCancel={vi.fn()} />)
     })
+    const file = new File([contents], 'example.json', { type: 'application/json' })
+    Object.defineProperty(file, 'text', { value: vi.fn().mockResolvedValue(contents) })
 
-    await act(async () => buttonNamed('Choose configuration')?.click())
+    await dropFile(file)
 
+    expect(selectCustomServerTemplate).toHaveBeenCalledWith({
+      fileName: 'example.json',
+      contents
+    })
     expect(document.body.textContent).toContain('example.json')
     expect(document.body.textContent).toContain('example-research')
     expect(document.body.textContent).toContain('Enter locally: API_TOKEN')
+    expect(container.firstElementChild?.firstElementChild?.className).toContain('w-full')
     act(() => buttonNamed('Use configuration')?.click())
     expect(onUse).toHaveBeenCalledWith(definition)
   })
@@ -84,10 +109,47 @@ describe('Connector configuration transfer views', () => {
       root.render(<ConnectorImportView onUse={vi.fn()} onCancel={vi.fn()} />)
     })
 
-    await act(async () => buttonNamed('Choose configuration')?.click())
+    await act(async () => buttonContaining('Drag and drop or click to choose')?.click())
 
     expect(document.body.textContent).toContain('credential-like query parameter')
     expect(buttonNamed('Use configuration')?.disabled).toBe(true)
+  })
+
+  it('keeps a local-only path warning importable', async () => {
+    const localDefinition = {
+      ...definition,
+      command: 'node',
+      args: ['/Users/example/bin/server.mjs', '--stdio']
+    }
+    window.api = {
+      settings: {
+        selectCustomServerTemplate: vi.fn().mockResolvedValue({
+          cancelled: false,
+          fileName: 'local.json',
+          preview: {
+            ready: true,
+            definition: localDefinition,
+            diagnostics: [
+              {
+                severity: 'warning',
+                code: 'connector-template.local-argument',
+                message:
+                  'args[0] uses a local path and may need to be changed on another computer.',
+                path: 'args[0]'
+              }
+            ]
+          }
+        })
+      }
+    } as unknown as Window['api']
+    act(() => {
+      root.render(<ConnectorImportView onUse={vi.fn()} onCancel={vi.fn()} />)
+    })
+
+    await act(async () => buttonContaining('Drag and drop or click to choose')?.click())
+
+    expect(document.body.textContent).toContain('may need to be changed on another computer')
+    expect(buttonNamed('Use configuration')?.disabled).toBe(false)
   })
 
   it('saves only with the digest returned by the export preview', async () => {
@@ -108,6 +170,7 @@ describe('Connector configuration transfer views', () => {
     })
     await act(async () => undefined)
 
+    expect(container.firstElementChild?.firstElementChild?.className).toContain('w-full')
     expect(document.body.textContent).toContain('Names only: API_TOKEN')
     await act(async () => buttonNamed('Save configuration')?.click())
 

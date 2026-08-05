@@ -51,7 +51,6 @@ import { createMoleculePreviewHandler } from './connectors/molecule-preview'
 import { ALL_CONNECTOR_IDS } from './connectors/registry'
 import { ConnectorRuntimeSettingsProjection } from './connectors/runtime-settings-projection'
 import { ConnectorService } from './connectors/service'
-import { CONNECTOR_TEMPLATE_MAX_BYTES } from './settings/connector-template'
 import { registerFileSaveHandlers } from './file-save'
 import { createSessionArtifactFileResolver } from './session-artifact-file-resolver'
 import { createCliCommandOwner, registerCliInstallIpcHandlers } from './cli-install/ipc'
@@ -197,7 +196,12 @@ import {
 } from './specialist/package/contribution-template'
 import { SessionBindingService } from './specialist/session-binding'
 import { SPECIALIST_IPC } from '../shared/specialist'
-import type { AppIconPreview, AppIconVariant, RespondApprovalRequest } from '../shared/settings'
+import {
+  CONNECTOR_TEMPLATE_MAX_BYTES,
+  type AppIconPreview,
+  type AppIconVariant,
+  type RespondApprovalRequest
+} from '../shared/settings'
 import { registerStorageIpcHandlers } from './storage/ipc'
 import { createStorageCommandOwner } from './storage/command-owner'
 import { withDataRootWrite } from './storage/migration-state'
