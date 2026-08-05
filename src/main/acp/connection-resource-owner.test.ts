@@ -284,6 +284,31 @@ describe('AcpConnectionResourceOwner', () => {
     expect(release).toHaveBeenCalledOnce()
   })
 
+  it('selects and releases the generation-scoped provider transport', async () => {
+    const owner = new AcpConnectionResourceOwner()
+    const setTarget = vi.fn(() => true)
+    const release = vi.fn(async () => undefined)
+    await owner.connect(async (attempt) => {
+      attempt.attach({
+        process: process('provider-transport'),
+        connection: { close: vi.fn() } as unknown as ClientConnection,
+        framework: 'opencode',
+        bridgeLease: undefined,
+        providerTransportLease: { setTarget, release }
+      })
+      return attempt.publish({ close: true, delete: false, resume: true })
+    })
+
+    expect(owner.providerTransportAvailable).toBe(true)
+    expect(owner.setProviderTransportTarget('provider-b/model-b')).toBe(true)
+    expect(setTarget).toHaveBeenCalledWith('provider-b/model-b')
+
+    await owner.teardown(owner.supersede(), vi.fn())
+
+    expect(owner.providerTransportAvailable).toBe(false)
+    expect(release).toHaveBeenCalledOnce()
+  })
+
   it('keeps synchronous shutdown terminal when close and kill both throw', async () => {
     const owner = new AcpConnectionResourceOwner()
     const close = vi.fn(() => {

@@ -95,6 +95,9 @@ export type AgentModelChangeTarget = Readonly<{
   // Opaque, secret-free id for one provider/model already registered in the current Claude
   // generation's loopback Anthropic bridge. Absent means this target cannot cross a provider env.
   anthropicBridgeTargetId?: string
+  // Opaque, secret-free id for a provider/model route pre-registered in the generation transport.
+  // The lease decides whether selecting it is validation-only (OpenCode) or retargets a route.
+  providerTransportTargetId?: string
   bridge?: Readonly<{
     model: string
     vendorId?: OfficialVendorId
@@ -303,6 +306,10 @@ export type ResolvedAgentBackend = {
   // loopback Anthropic bridge. The bridge owns endpoint/token/model routing in memory; live model
   // targets carry only an opaque id into this lease.
   anthropicBridgeLease?: {
+    setTarget: (targetId: string) => boolean
+    release: () => Promise<void>
+  }
+  providerTransportLease?: {
     setTarget: (targetId: string) => boolean
     release: () => Promise<void>
   }

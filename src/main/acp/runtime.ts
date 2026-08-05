@@ -976,7 +976,9 @@ class AcpRuntime {
       (this.framework.id === 'claude-code' &&
         target.route === 'claude-anthropic' &&
         target.anthropicBridgeTargetId !== undefined &&
-        this.connectionResources.anthropicBridgeAvailable)
+        this.connectionResources.anthropicBridgeAvailable) ||
+      (target.providerTransportTargetId !== undefined &&
+        this.connectionResources.providerTransportAvailable)
     return (
       !this.connectionResources.isShuttingDown &&
       !this.pendingProviderReconnect &&
@@ -1071,6 +1073,13 @@ class AcpRuntime {
     }
 
     try {
+      if (target.providerTransportTargetId) {
+        if (
+          !this.connectionResources.setProviderTransportTarget(target.providerTransportTargetId)
+        ) {
+          return false
+        }
+      }
       if (target.anthropicBridgeTargetId) {
         if (!this.connectionResources.setAnthropicBridgeTarget(target.anthropicBridgeTargetId)) {
           return false
@@ -2388,6 +2397,10 @@ class AcpRuntime {
         }
         if (stage === 'anthropic-bridge-lease') {
           safeLogError('Anthropic bridge lease release failed', errorLogFields(error))
+          return
+        }
+        if (stage === 'provider-transport-lease') {
+          safeLogError('provider transport lease release failed', errorLogFields(error))
           return
         }
         safeLogError(`unattached ACP ${stage} cleanup failed`, {

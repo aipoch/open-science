@@ -337,8 +337,12 @@ export class NativeResponsesCompatibilityProxy {
     private readonly options: NativeResponsesCompatibilityOptions = {}
   ) {}
 
+  setTarget(target: NativeResponsesCompatibilityTarget): void {
+    this.target = target
+  }
+
   setModelTarget(target: ResponsesBridgeModelTarget): void {
-    this.target = { ...this.target, model: target.model }
+    this.setTarget({ ...this.target, model: target.model })
   }
 
   async selectSkills(
@@ -544,7 +548,10 @@ export class NativeResponsesCompatibilityProxy {
             tool_choice: 'auto'
           }
         : body
-      const { request: upstreamRequest, aliases } = flattenNativeResponsesRequest(scopedBody)
+      const routedBody = this.target.model
+        ? { ...scopedBody, model: this.target.model }
+        : scopedBody
+      const { request: upstreamRequest, aliases } = flattenNativeResponsesRequest(routedBody)
       log.info('native Responses compatibility request', {
         requestId,
         namespaceToolCount: aliases.size,

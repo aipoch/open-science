@@ -420,6 +420,52 @@ describe('opencodeFramework.prepareModelConfig', () => {
     expect(fileConfig.provider.anthropic.models).toEqual(expectedModels)
     expect(pinnedConfig.provider.anthropic.models).toEqual(expectedModels)
   })
+
+  it('registers immutable provider/model routes with separate local credentials', () => {
+    const activeProvider = {
+      type: 'custom' as const,
+      agentProviderId: 'open-science-a',
+      baseUrl: 'http://127.0.0.1:41001/v1',
+      apiEndpoints: ['openai' as const],
+      model: 'model-a',
+      key: 'local-token-a'
+    }
+    const secondProvider = {
+      type: 'custom' as const,
+      agentProviderId: 'open-science-b',
+      baseUrl: 'http://127.0.0.1:41002/v1',
+      apiEndpoints: ['openai' as const],
+      model: 'model-b',
+      key: 'local-token-b'
+    }
+    const config = opencodeFramework.prepareModelConfig(activeProvider, {
+      storageRoot: '/data',
+      executablePath: '/bin/opencode',
+      providerModelCatalog: [{ provider: activeProvider }, { provider: secondProvider }]
+    })
+
+    const fileConfig = JSON.parse(
+      config.configFiles?.find((file) => file.path.endsWith('opencode.json'))?.content ?? '{}'
+    )
+    const pinnedConfig = JSON.parse(config.env?.OPENCODE_CONFIG_CONTENT ?? '{}')
+
+    expect(config.sessionModel).toBe('open-science-a/model-a')
+    expect(fileConfig.model).toBe('open-science-a/model-a')
+    expect(Object.keys(fileConfig.provider)).toEqual(['open-science-a', 'open-science-b'])
+    expect(fileConfig.provider['open-science-a'].options).toEqual({
+      baseURL: 'http://127.0.0.1:41001/v1',
+      apiKey: '{env:OPENCODE_APP_API_KEY_OPEN_SCIENCE_A}'
+    })
+    expect(fileConfig.provider['open-science-b'].options).toEqual({
+      baseURL: 'http://127.0.0.1:41002/v1',
+      apiKey: '{env:OPENCODE_APP_API_KEY_OPEN_SCIENCE_B}'
+    })
+    expect(fileConfig.provider['open-science-a'].models).toEqual({ 'model-a': {} })
+    expect(fileConfig.provider['open-science-b'].models).toEqual({ 'model-b': {} })
+    expect(pinnedConfig.provider).toEqual(fileConfig.provider)
+    expect(config.env?.OPENCODE_APP_API_KEY_OPEN_SCIENCE_A).toBe('local-token-a')
+    expect(config.env?.OPENCODE_APP_API_KEY_OPEN_SCIENCE_B).toBe('local-token-b')
+  })
 })
 
 describe('buildOpencodeConfig', () => {

@@ -16678,6 +16678,75 @@ describe('ACP runtime — model hot switch', () => {
     expect(process.killed).toBe(false)
   })
 
+  it('hot-switches OpenCode across pre-registered provider transports', async () => {
+    const process = new FakeAgentProcess()
+    const configOptions = [
+      {
+        type: 'select',
+        id: 'model',
+        name: 'Model',
+        category: 'model',
+        currentValue: 'open-science-a/model-a',
+        options: ['open-science-a/model-a', 'open-science-b/model-b'].map((value) => ({
+          value,
+          name: value
+        }))
+      } as SessionConfigOption
+    ]
+    const fakeAgent = startFakeAgent(process, ['s-opencode-provider'], {
+      configOptions,
+      onSetConfigOption: ({ value }) => {
+        const model = configOptions[0]
+        if (model.type === 'select' && typeof value === 'string') model.currentValue = value
+      }
+    })
+    const spawn = vi.fn(() => asAgentProcess(process))
+    const setTarget = vi.fn(() => true)
+    const runtime = new AcpRuntime({
+      appVersion: '0.1.0',
+      defaultCwd: '/workspace',
+      resolveBackend: () => ({
+        framework: { ...opencodeFramework, spawn },
+        backendId: 'opencode:provider-a',
+        modelRoute: 'opencode-openai',
+        executablePath: '/bin/opencode',
+        env: {},
+        sessionModel: 'open-science-a/model-a',
+        supportsImageInput: false,
+        contextUsageModel: 'model-a',
+        providerTransportLease: {
+          setTarget,
+          release: vi.fn(async () => undefined)
+        }
+      })
+    })
+    await runtime.createSession({ cwd: '/workspace' })
+    fakeAgent.configChanges.length = 0
+
+    await runtime.applyModelChange({
+      frameworkId: 'opencode',
+      backendId: 'opencode:provider-b',
+      route: 'opencode-openai',
+      model: 'model-b',
+      sessionModel: 'open-science-b/model-b',
+      sessionModelRequired: false,
+      supportsImageInput: false,
+      reasoningEffort: 'default',
+      providerTransportTargetId: JSON.stringify(['opencode', 'provider-b', 'model-b'])
+    })
+
+    expect(setTarget).toHaveBeenCalledWith(JSON.stringify(['opencode', 'provider-b', 'model-b']))
+    expect(fakeAgent.configChanges).toEqual([
+      {
+        sessionId: 's-opencode-provider',
+        configId: 'model',
+        value: 'open-science-b/model-b'
+      }
+    ])
+    expect(spawn).toHaveBeenCalledOnce()
+    expect(process.killed).toBe(false)
+  })
+
   it('falls back when no primary session can verify that the agent advertises the model', async () => {
     const process = new FakeAgentProcess()
     startFakeAgent(process, [], { configOptions: [modelOption()] })
@@ -16756,6 +16825,7 @@ describe('ACP runtime — model hot switch', () => {
   it('retargets an image-capable Codex bridge but reconnects before an image downgrade', async () => {
     const process = new FakeAgentProcess()
     const setModelTarget = vi.fn()
+    const setProviderTarget = vi.fn(() => true)
     const fakeAgent = startFakeAgent(process, ['s-bridge-model'], {
       modes: createModes(['read-only', 'agent', 'agent-full-access'], 'agent')
     })
@@ -16778,6 +16848,10 @@ describe('ACP runtime — model hot switch', () => {
           unregisterReviewerSession: vi.fn(() => false),
           setModelTarget,
           release: vi.fn(async () => undefined)
+        },
+        providerTransportLease: {
+          setTarget: setProviderTarget,
+          release: vi.fn(async () => undefined)
         }
       })
     })
@@ -16786,13 +16860,14 @@ describe('ACP runtime — model hot switch', () => {
 
     await runtime.applyModelChange({
       frameworkId: 'codex',
-      backendId: 'codex:provider-a',
+      backendId: 'codex:provider-b',
       route: 'codex-bridge',
       model: 'model-b',
       sessionModel: CODEX_BRIDGE_MODEL,
       sessionModelRequired: false,
       supportsImageInput: true,
       reasoningEffort: 'high',
+      providerTransportTargetId: JSON.stringify(['codex', 'provider-b', 'model-b']),
       bridge: {
         model: 'model-b',
         vendorId: 'deepseek',
@@ -16806,6 +16881,9 @@ describe('ACP runtime — model hot switch', () => {
       reasoningEffortTransport: 'deepseek',
       reasoningEffort: 'high'
     })
+    expect(setProviderTarget).toHaveBeenCalledWith(
+      JSON.stringify(['codex', 'provider-b', 'model-b'])
+    )
     expect(fakeAgent.configChanges).toEqual([])
     expect(spawn).toHaveBeenCalledOnce()
     expect(process.killed).toBe(false)
@@ -16820,10 +16898,12 @@ describe('ACP runtime — model hot switch', () => {
       sessionModelRequired: false,
       supportsImageInput: false,
       reasoningEffort: 'default',
+      providerTransportTargetId: JSON.stringify(['codex', 'provider-a', 'model-c']),
       bridge: { model: 'model-c' }
     })
 
     expect(setModelTarget).not.toHaveBeenCalled()
+    expect(setProviderTarget).toHaveBeenCalledOnce()
     expect(process.killed).toBe(true)
   })
 

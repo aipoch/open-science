@@ -16,6 +16,9 @@ import { normalizeAnthropicBaseUrl } from './base-url'
 // A provider resolved for spawning: the plaintext key is already decrypted by the caller.
 export type ResolvedProvider = {
   type: ProviderType
+  // Framework-local provider id used only for a generation's pre-registered transport routes.
+  // It is derived from the persisted provider/model identity and never contains a credential.
+  agentProviderId?: string
   codexAuthMode?: CodexSubscriptionAuthMode
   // Retained for official providers even though they use the custom credential path at runtime.
   // Transport adapters need this stable identity because `none` has vendor-specific wire semantics.
