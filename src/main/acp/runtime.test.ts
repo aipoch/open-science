@@ -16907,6 +16907,93 @@ describe('ACP runtime — model hot switch', () => {
     expect(process.killed).toBe(true)
   })
 
+  it('reconnects native Codex before switching providers that share one model slug', async () => {
+    const process = new FakeAgentProcess()
+    const setProviderTarget = vi.fn(() => true)
+    const fakeAgent = startFakeAgent(process, ['s-native-model'], {
+      modes: createModes(['read-only', 'agent', 'agent-full-access'], 'agent'),
+      configOptions: [modelOption()]
+    })
+    const spawn = vi.fn(() => asAgentProcess(process))
+    const runtime = new AcpRuntime({
+      appVersion: '0.1.0',
+      defaultCwd: '/workspace',
+      resolveBackend: () => ({
+        framework: { ...codexFramework, spawn },
+        backendId: 'codex:provider-a',
+        modelRoute: 'codex-responses',
+        executablePath: '/bin/codex-acp',
+        env: {},
+        sessionModel: 'model-a',
+        supportsImageInput: true,
+        contextUsageModel: 'model-a',
+        providerTransportLease: {
+          setTarget: setProviderTarget,
+          release: vi.fn(async () => undefined)
+        }
+      })
+    })
+    await runtime.createSession({ cwd: '/workspace' })
+    fakeAgent.configChanges.length = 0
+
+    await runtime.applyModelChange({
+      frameworkId: 'codex',
+      backendId: 'codex:provider-b',
+      route: 'codex-responses',
+      model: 'model-a',
+      sessionModel: 'model-a',
+      sessionModelRequired: false,
+      supportsImageInput: false,
+      reasoningEffort: 'default',
+      providerTransportTargetId: JSON.stringify(['codex', 'provider-b', 'model-a'])
+    })
+
+    expect(setProviderTarget).not.toHaveBeenCalled()
+    expect(fakeAgent.configChanges).toEqual([])
+    expect(process.killed).toBe(true)
+  })
+
+  it('clears an advertised effort override when the switched model resolves to default', async () => {
+    const process = new FakeAgentProcess()
+    const effortOption = {
+      type: 'select',
+      id: 'effort',
+      name: 'Effort',
+      category: 'thought_level',
+      currentValue: 'high',
+      options: ['default', 'high'].map((value) => ({ value, name: value }))
+    } as SessionConfigOption
+    const fakeAgent = startFakeAgent(process, ['s-default-effort'], {
+      configOptions: [modelOption(), effortOption]
+    })
+    const spawn = vi.fn(() => asAgentProcess(process))
+    const runtime = new AcpRuntime({
+      appVersion: '0.1.0',
+      defaultCwd: '/workspace',
+      resolveBackend: () => ({
+        framework: { ...claudeCodeFramework, spawn },
+        backendId: 'claude-code:provider-a',
+        modelRoute: 'claude-anthropic',
+        executablePath: '/bin/claude',
+        env: {},
+        sessionModel: 'model-a',
+        sessionEffort: 'high',
+        supportsImageInput: true,
+        contextUsageModel: 'model-a'
+      })
+    })
+    await runtime.createSession({ cwd: '/workspace' })
+    fakeAgent.configChanges.length = 0
+
+    await runtime.applyModelChange(modelTarget('model-b'))
+
+    expect(fakeAgent.configChanges).toEqual([
+      { sessionId: 's-default-effort', configId: 'model', value: 'model-b' },
+      { sessionId: 's-default-effort', configId: 'effort', value: 'default' }
+    ])
+    expect(process.killed).toBe(false)
+  })
+
   it('keeps the generating message on its model and applies only the latest queued selection', async () => {
     const process = new FakeAgentProcess()
     const promptStarted = createDeferred()

@@ -1062,6 +1062,17 @@ class AcpRuntime {
     const connection = this.connection
     if (!connection) return false
     if (
+      this.framework.id === 'codex' &&
+      target.route !== 'codex-bridge' &&
+      this.backendId !== target.backendId &&
+      this.backend.session.model === target.sessionModel
+    ) {
+      // Native Codex catalogs capability metadata by model slug. Two providers may reuse one slug
+      // for models with different image, context, or effort capabilities, which the live session
+      // cannot distinguish. Reconnect so the newly selected provider owns a fresh catalog entry.
+      return false
+    }
+    if (
       this.backend.context.supportsImageInput &&
       !target.supportsImageInput &&
       (target.route === 'claude-anthropic' || target.route === 'codex-bridge')
@@ -1131,7 +1142,10 @@ class AcpRuntime {
             configOptions = response?.configOptions ?? configOptions
           }
 
-          if (this.framework.supportsLiveEffortChange && target.reasoningEffort !== 'default') {
+          const shouldApplyEffort =
+            this.framework.supportsLiveEffortChange &&
+            (target.reasoningEffort !== 'default' || this.backend.session.effort !== undefined)
+          if (shouldApplyEffort) {
             const effortSelection = resolveSessionEffortOption(
               configOptions,
               target.reasoningEffort
