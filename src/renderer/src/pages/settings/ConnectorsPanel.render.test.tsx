@@ -181,24 +181,44 @@ describe('ConnectorsPanel (groups)', () => {
   })
 
   it('renders a custom server that can be toggled and removed', () => {
+    const onNavigate = vi.fn()
     act(() => {
-      root.render(<ConnectorsPanel onNavigate={vi.fn()} />)
+      root.render(<ConnectorsPanel onNavigate={onNavigate} />)
     })
 
     act(() => document.body.querySelector<HTMLButtonElement>('[aria-label="My MCP"]')?.click())
     expect(useSettingsStore.getState().setCustomServerEnabled).toHaveBeenCalledWith('my-mcp', false)
 
     const edit = document.body.querySelector<HTMLButtonElement>('[aria-label="Edit My MCP"]')
+    const exportButton = document.body.querySelector<HTMLButtonElement>(
+      '[aria-label="Export My MCP"]'
+    )
     const remove = document.body.querySelector<HTMLButtonElement>('[aria-label="Remove My MCP"]')
     expect(edit?.getAttribute('data-slot')).toBe('button')
+    expect(exportButton?.getAttribute('data-slot')).toBe('button')
     expect(remove?.getAttribute('data-slot')).toBe('button')
     expect(edit?.getAttribute('data-size')).toBe('icon-sm')
     expect(remove?.getAttribute('data-size')).toBe('icon-sm')
     expect(edit?.getAttribute('data-state')).toBe('closed')
     expect(remove?.getAttribute('data-state')).toBe('closed')
 
+    act(() => exportButton?.click())
+    expect(onNavigate).toHaveBeenCalledWith({ kind: 'export', id: 'my-mcp' })
+
     act(() => remove?.click())
     expect(useSettingsStore.getState().removeCustomServer).toHaveBeenCalledWith('my-mcp')
+  })
+
+  it('offers validated configuration import from the Add connector menu', () => {
+    const onNavigate = vi.fn()
+    act(() => {
+      root.render(<ConnectorsPanel onNavigate={onNavigate} />)
+    })
+
+    openDropdownByText('Add connector')
+    clickItemByText('menuitem', 'Import configuration')
+
+    expect(onNavigate).toHaveBeenCalledWith({ kind: 'import' })
   })
 
   it('starts OAuth sign-in and displays the connected state', async () => {

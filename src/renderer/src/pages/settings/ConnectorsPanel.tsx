@@ -1,7 +1,21 @@
-import { ChevronDown, Globe, Pencil, Plus, Search, Terminal, Trash2 } from 'lucide-react'
+import {
+  ChevronDown,
+  Download,
+  FileUp,
+  Globe,
+  Pencil,
+  Plus,
+  Search,
+  Terminal,
+  Trash2
+} from 'lucide-react'
 import { useEffect, useMemo, useState } from 'react'
 
-import type { ConnectorView, CustomServerView } from '../../../../shared/settings'
+import type {
+  ConnectorTemplateDefinition,
+  ConnectorView,
+  CustomServerView
+} from '../../../../shared/settings'
 import { Button } from '@/components/ui/button'
 import {
   DropdownMenu,
@@ -20,8 +34,14 @@ import { SettingsIconAction, SettingsSection, SettingsToggle } from './SettingsL
 export type ConnectorsView =
   | { kind: 'list' }
   | { kind: 'detail'; id: string }
-  | { kind: 'add'; transport: 'local' | 'remote' }
+  | {
+      kind: 'add'
+      transport: 'local' | 'remote'
+      template?: ConnectorTemplateDefinition
+    }
   | { kind: 'edit'; id: string }
+  | { kind: 'import' }
+  | { kind: 'export'; id: string }
 
 type GroupFilter = 'all' | 'featured' | 'directory' | 'custom'
 
@@ -313,6 +333,15 @@ export function ConnectorsPanel({ onNavigate }: ConnectorsPanelProps): React.JSX
                 <span className="text-xs text-muted-foreground">Connect to an MCP server URL</span>
               </span>
             </DropdownMenuItem>
+            <DropdownMenuItem className="gap-2.5" onSelect={() => onNavigate({ kind: 'import' })}>
+              <FileUp className="size-4 shrink-0" aria-hidden="true" />
+              <span className="flex flex-col">
+                <span>Import configuration</span>
+                <span className="text-xs text-muted-foreground">
+                  Validate a shared Connector file
+                </span>
+              </span>
+            </DropdownMenuItem>
           </DropdownMenuContent>
         </DropdownMenu>
       </div>
@@ -381,6 +410,11 @@ export function ConnectorsPanel({ onNavigate }: ConnectorsPanelProps): React.JSX
                           </span>
                         ) : null}
                       </div>
+                      <SettingsIconAction
+                        label={`Export ${server.name}`}
+                        icon={Download}
+                        onClick={() => onNavigate({ kind: 'export', id: server.id })}
+                      />
                       <SettingsIconAction
                         label={`Edit ${server.name}`}
                         icon={Pencil}

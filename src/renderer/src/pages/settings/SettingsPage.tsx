@@ -47,6 +47,8 @@ import { ConnectorsPanel, type ConnectorsView } from './ConnectorsPanel'
 import { SpecialistsPanel, type SpecialistsView } from './SpecialistsPanel'
 import { ConnectorDetailView } from './ConnectorDetailView'
 import { ConnectorAddForm } from './ConnectorAddForm'
+import { ConnectorExportView } from './ConnectorExportView'
+import { ConnectorImportView } from './ConnectorImportView'
 import { ConnectorsNavIcon } from './connector-icons'
 import { ComputePanel, type ComputeView } from './ComputePanel'
 import { ComputeAddForm } from './ComputeAddForm'
@@ -466,9 +468,13 @@ const SettingsPage = forwardRef<SettingsPageHandle, SettingsPageProps>(function 
       const leaf =
         connectorsView.kind === 'add'
           ? 'Add connector'
-          : connectorsView.kind === 'edit'
-            ? `Edit ${customServers.find((s) => s.id === connectorsView.id)?.name ?? 'connector'}`.trim()
-            : (connectors.find((c) => c.id === connectorsView.id)?.displayName ?? '')
+          : connectorsView.kind === 'import'
+            ? 'Import configuration'
+            : connectorsView.kind === 'export'
+              ? `Export ${customServers.find((s) => s.id === connectorsView.id)?.name ?? 'connector'}`.trim()
+              : connectorsView.kind === 'edit'
+                ? `Edit ${customServers.find((s) => s.id === connectorsView.id)?.name ?? 'connector'}`.trim()
+                : (connectors.find((c) => c.id === connectorsView.id)?.displayName ?? '')
       return {
         rootLabel: 'Connectors',
         rootTo: {
@@ -905,8 +911,26 @@ const SettingsPage = forwardRef<SettingsPageHandle, SettingsPageProps>(function 
                   ) : connectorsView.kind === 'add' ? (
                     <ConnectorAddForm
                       initialTransport={connectorsView.transport}
+                      initialTemplate={connectorsView.template}
                       onDone={() => navigateConnectors({ kind: 'list' })}
                       onCancel={() => navigateConnectors({ kind: 'list' })}
+                    />
+                  ) : connectorsView.kind === 'import' ? (
+                    <ConnectorImportView
+                      onUse={(template) =>
+                        navigateConnectors({
+                          kind: 'add',
+                          transport: template.transport === 'stdio' ? 'local' : 'remote',
+                          template
+                        })
+                      }
+                      onCancel={() => navigateConnectors({ kind: 'list' })}
+                    />
+                  ) : connectorsView.kind === 'export' ? (
+                    <ConnectorExportView
+                      key={connectorsView.id}
+                      id={connectorsView.id}
+                      onDone={() => navigateConnectors({ kind: 'list' })}
                     />
                   ) : connectorsView.kind === 'edit' ? (
                     <ConnectorAddForm

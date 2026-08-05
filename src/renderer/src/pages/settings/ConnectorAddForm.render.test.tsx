@@ -111,6 +111,49 @@ describe('ConnectorAddForm (local command)', () => {
     checkTrust()
     expect(addButton()?.disabled).toBe(false)
   })
+
+  it('prefills an imported template and requires local secret values', async () => {
+    act(() => {
+      root.render(
+        <ConnectorAddForm
+          initialTemplate={{
+            schemaVersion: 1,
+            kind: 'open-science.connector',
+            name: 'example-research',
+            transport: 'stdio',
+            command: 'npx',
+            args: ['-y', '@example/research-mcp', '--label', 'two words'],
+            requiredSecrets: { environment: ['API_TOKEN'] }
+          }}
+          onDone={vi.fn()}
+          onCancel={vi.fn()}
+        />
+      )
+    })
+
+    expect(document.body.querySelector<HTMLInputElement>('[aria-label="Name"]')?.value).toBe(
+      'example-research'
+    )
+    expect(
+      document.body.querySelector<HTMLTextAreaElement>('[aria-label="Environment variables"]')
+        ?.value
+    ).toBe('API_TOKEN=')
+    checkTrust()
+    expect(addButton()?.disabled).toBe(true)
+
+    setValue('Environment variables', 'API_TOKEN=local-secret')
+    expect(addButton()?.disabled).toBe(false)
+    await act(async () => addButton()?.click())
+
+    expect(useSettingsStore.getState().addCustomServer).toHaveBeenCalledWith(
+      expect.objectContaining({
+        name: 'example-research',
+        command: 'npx',
+        args: ['-y', '@example/research-mcp', '--label', 'two words'],
+        env: { API_TOKEN: 'local-secret' }
+      })
+    )
+  })
 })
 
 describe('ConnectorAddForm (remote server)', () => {
