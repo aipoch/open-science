@@ -29,11 +29,6 @@ import type {
   AcpSetPermissionProfileRequest,
   AcpStateSnapshot
 } from '../../shared/acp'
-import {
-  ACP_MODEL_TURN_COUNT_META_KEY,
-  ACP_TURN_TOKEN_USAGE_META_KEY,
-  toAcpTurnTokenUsage
-} from '../../shared/acp'
 import { ACP_PROMPT_FAILED_EVENT_TITLE } from '../../shared/acp'
 import {
   DEFAULT_PERMISSION_PROFILE,
@@ -54,8 +49,7 @@ import {
 import { resolveCanonicalMcpToolIdentity } from '../agent-framework/app-mcp-names'
 import { createLogger, diagnosticErrorFields, errorLogFields } from '../logger'
 import { extractProviderToolName } from './runtime-events'
-import { toCodexTurnTokenUsage } from './codex-turn-usage'
-import { fetchOpenCodeUsageSnapshot, sumOpenCodeTurnUsage } from './opencode-turn-usage'
+import { fetchOpenCodeUsageSnapshot } from './opencode-turn-usage'
 import { matchSessionModelOption, resolveSessionEffortOption } from './session-config'
 import { describePromptError, isProviderPromptError } from './prompt-error'
 import { AcpRuntimeSnapshotOwner } from './runtime-snapshot-owner'
@@ -139,6 +133,11 @@ import { AcpSessionReplacementWorkflow } from './session-replacement-workflow'
 import { AcpSessionDeletionWorkflow } from './session-deletion-workflow'
 import { AcpPromptPreparationOwner, type PreparedPromptHandle } from './prompt-preparation-owner'
 import { AcpSessionPresentationPolicy } from './session-presentation-policy'
+import { AcpProviderPromptExecutor } from './provider-prompt-executor'
+import type { AcpProviderTurnAdapter } from './provider-turn-adapter'
+import { claudeCodeTurnAdapter } from './claude-turn-adapter'
+import { createCodexTurnAdapter } from './codex-turn-adapter'
+import { AcpOpenCodeTurnAdapter } from './opencode-turn-adapter'
 import {
   AcpTurnSkillOwner,
   type AcpTurnSkillHooks,
@@ -284,15 +283,6 @@ type AcpRuntimeSkillImportOptions = {
   ) => Promise<() => void>
 }
 
-// Mirror claude-agent-acp's autonomous result lanes. Unknown future origins stay eligible so a
-// newly introduced user lane does not silently lose the terminal SDK `num_turns` value.
-const CLAUDE_AUTONOMOUS_RESULT_ORIGINS = new Set([
-  'task-notification',
-  'peer',
-  'coordinator',
-  'observer',
-  'observer-activity'
-])
 // An end_turn is final from the runtime's perspective, so promised work must be a tool call in the
 // current turn or an explicit request for user input rather than text that implies later execution.
 const TURN_CONTINUITY_SYSTEM_PROMPT_APPEND = [
@@ -395,6 +385,7 @@ class AcpRuntime {
   private readonly backendGeneration: AcpBackendGenerationOwner
   private readonly sessionConfigurator: AcpSessionConfigurator
   private readonly sessionUpdateProjector = new AcpSessionUpdateProjector()
+  private readonly providerPromptExecutor = new AcpProviderPromptExecutor()
   // Injectable lifecycle timers (defaults to real setTimeout/clearTimeout).
   private readonly setTimer: (fn: () => void, ms: number) => ReturnType<typeof setTimeout>
   private readonly clearTimer: (handle: ReturnType<typeof setTimeout>) => void
@@ -1897,145 +1888,103 @@ class AcpRuntime {
         .lookup(request.sessionId)
         ?.aggregate.snapshot()
       const promptFramework = promptSessionSnapshot?.frameworkId ?? this.framework.id
-      const openCodeUsageApi = this.backendGeneration.openCodeUsageApi()
-      const opencodeUsageBefore =
-        promptFramework === 'opencode' && openCodeUsageApi
-          ? await fetchOpenCodeUsageSnapshot(
-              openCodeUsageApi,
-              activeSession.sessionId,
-              promptSessionSnapshot?.cwd ?? this.snapshotOwner.cwd,
-              this.options.opencodeUsageFetch
-            )
-          : undefined
-      if (
-        (await this.sessionInteractions.cancellationCheckpoint(promptInteraction)) === 'cancelled'
-      ) {
-        return finishCancelledBeforePrompt()
-      }
-
-      // Start the prompt and race it against routed updates from the active session queue.
-      if (request.historyPreamble) {
-        log.info('session transcript replay dispatched', {
-          sessionId: request.sessionId,
-          historyTextLength: request.historyPreamble.length,
-          historyAttachmentCount: request.historyAttachments?.length ?? 0,
-          historyImageCount: request.historyImages?.length ?? 0,
-          ...this.diagnosticContext()
-        })
-      }
-      const promptFailure = new Promise<never>((_, reject) => {
-        activeSession.prompt(promptContent).catch(reject)
-      })
-      let providerPromptAccepted = false
-
-      for (;;) {
-        const message = await Promise.race([activeSession.nextUpdate(), promptFailure])
-
-        // A reset/replacement may supersede this provider turn while a queued update or terminal
-        // response is still draining. Settle the abandoned promise, but never project its state or
-        // terminal facts into the replacement interaction.
-        if (this.sessionInteractions.current(request.sessionId) !== promptInteraction) {
-          if (message.kind === 'stop') return message.response
-          continue
-        }
-
-        if (!providerPromptAccepted) {
-          providerPromptAccepted = true
+      const providerOutcome = await this.providerPromptExecutor.execute({
+        session: activeSession,
+        content: promptContent,
+        cwd: promptSessionSnapshot?.cwd ?? this.snapshotOwner.cwd,
+        adapter: this.providerTurnAdapter(promptFramework),
+        isCurrent: () =>
+          this.sessionInteractions.current(request.sessionId) === promptInteraction &&
+          this.activeSessionFor(request.sessionId) === activeSession,
+        beforeDispatch: async () => {
+          if (
+            (await this.sessionInteractions.cancellationCheckpoint(promptInteraction)) ===
+            'cancelled'
+          ) {
+            return 'cancelled'
+          }
+          if (request.historyPreamble) {
+            log.info('session transcript replay dispatched', {
+              sessionId: request.sessionId,
+              historyTextLength: request.historyPreamble.length,
+              historyAttachmentCount: request.historyAttachments?.length ?? 0,
+              historyImageCount: request.historyImages?.length ?? 0,
+              ...this.diagnosticContext()
+            })
+          }
+          return 'active'
+        },
+        captureStop: () => this.sessionInteractions.captureTerminal(promptInteraction, 'stop'),
+        onAccepted: () => {
           try {
             this.callbacks.onProviderPromptAccepted?.(request.sessionId, promptAttemptId)
           } catch (error) {
             safeLogError('provider-prompt-accepted callback failed', errorLogFields(error))
           }
-        }
-
-        if (skillActivitiesStarted && !skillActivitiesFinalized) {
-          this.emitCodexSkillInputActivities(
-            request.sessionId,
-            promptTurn,
-            skillActivityInputs,
-            'completed'
-          )
-          skillActivitiesFinalized = true
-        }
-
-        if (message.kind === 'stop') {
-          turnSkillOutcome = message.response.stopReason === 'cancelled' ? 'cancelled' : 'completed'
-          const codexTurnCount = message.response._meta?.[ACP_MODEL_TURN_COUNT_META_KEY]
-          const reportedTurnCount =
-            promptFramework === 'codex' &&
-            Number.isSafeInteger(codexTurnCount) &&
-            (codexTurnCount as number) > 0
-              ? (codexTurnCount as number)
-              : undefined
-          observedPromptStop = {
-            response: message.response,
-            turnUsage:
-              promptFramework === 'codex'
-                ? (toCodexTurnTokenUsage(message.response._meta?.[ACP_TURN_TOKEN_USAGE_META_KEY]) ??
-                  toCodexTurnTokenUsage(message.response.usage))
-                : toAcpTurnTokenUsage(message.response.usage),
-            ...(reportedTurnCount === undefined ? {} : { modelTurnCount: reportedTurnCount })
+          if (skillActivitiesStarted && !skillActivitiesFinalized) {
+            this.emitCodexSkillInputActivities(
+              request.sessionId,
+              promptTurn,
+              skillActivityInputs,
+              'completed'
+            )
+            skillActivitiesFinalized = true
           }
-          // Freeze provider-terminal time before artifact work and provider-specific usage fetching.
-          // The outcome remains authoritative through close/reset while usage facts are finalized.
-          if (!this.sessionInteractions.captureTerminal(promptInteraction, 'stop')) {
-            return message.response
-          }
-          this.recordCodexPromptResponseContextUsage(
-            request.sessionId,
-            message.response,
-            promptTurn
-          )
-          if (contextUsageTurn.complete()) this.emitState()
-          // Emit artifact metadata before stop so the renderer can attach files to the finished message.
-          await this.emitArtifactRunEvent(request.sessionId, artifactRun)
-          artifactEmitted = true
-          log.info('prompt stopped', {
+        },
+        routeNotification: (notification) =>
+          this.handleSessionUpdate(notification, request.sessionId),
+        reportBestEffortFailure: (stage, error) =>
+          log.warn('provider prompt observation failed', {
             sessionId: request.sessionId,
-            stopReason: message.stopReason
+            stage,
+            ...errorLogFields(error)
           })
-          const opencodeTurnUsage =
-            promptFramework === 'opencode' && openCodeUsageApi
-              ? sumOpenCodeTurnUsage(
-                  opencodeUsageBefore,
-                  await fetchOpenCodeUsageSnapshot(
-                    openCodeUsageApi,
-                    activeSession.sessionId,
-                    this.sessionRegistry.lookup(request.sessionId)?.aggregate.snapshot().cwd ??
-                      this.snapshotOwner.cwd,
-                    this.options.opencodeUsageFetch
-                  )
-                )
-              : undefined
-          if (opencodeTurnUsage) observedPromptStop.turnUsage = opencodeTurnUsage
-          publishObservedPromptStop()
-          if (
-            this.sessionInteractions.current(request.sessionId) === promptInteraction &&
-            this.activeSessionFor(request.sessionId) === activeSession &&
-            this.shouldAutoCompactContext(request.sessionId)
-          ) {
-            try {
-              await this.performNativeContextCompaction(
-                activeSession,
-                request.sessionId,
-                'automatic'
-              )
-            } catch (error) {
-              log.warn('automatic context compaction failed', {
-                sessionId: request.sessionId,
-                ...errorLogFields(error)
-              })
-            }
-          }
-          return message.response
-        }
+      })
 
-        // Route the update under the app-facing id so a session adopted onto a new agent (after a
-        // provider switch) still streams into the same conversation the renderer is watching. (No
-        // per-update log line here: it fires once per streamed chunk and floods the console for no
-        // signal — 'prompt start'/'prompt stopped' already bracket the turn.)
-        this.handleSessionUpdate(message.notification, request.sessionId)
+      if (providerOutcome.kind === 'not-dispatched') {
+        return finishCancelledBeforePrompt()
       }
+      if (providerOutcome.kind === 'superseded') {
+        return providerOutcome.response
+      }
+      const { response, facts } = providerOutcome
+      turnSkillOutcome = response.stopReason === 'cancelled' ? 'cancelled' : 'completed'
+      observedPromptStop = {
+        response,
+        ...(facts.turnUsage ? { turnUsage: facts.turnUsage } : {}),
+        ...(facts.modelTurnCount === undefined ? {} : { modelTurnCount: facts.modelTurnCount })
+      }
+      if (facts.contextUsedTokens !== undefined) {
+        this.recordProviderPromptContextUsage(
+          request.sessionId,
+          facts.contextUsedTokens,
+          promptTurn
+        )
+      }
+      if (contextUsageTurn.complete()) this.emitState()
+      // Emit artifact metadata before stop so the renderer can attach files to the finished message.
+      await this.emitArtifactRunEvent(request.sessionId, artifactRun)
+      artifactEmitted = true
+      log.info('prompt stopped', {
+        sessionId: request.sessionId,
+        stopReason: response.stopReason
+      })
+      publishObservedPromptStop()
+      if (
+        this.sessionInteractions.current(request.sessionId) === promptInteraction &&
+        this.activeSessionFor(request.sessionId) === activeSession &&
+        this.shouldAutoCompactContext(request.sessionId)
+      ) {
+        try {
+          await this.performNativeContextCompaction(activeSession, request.sessionId, 'automatic')
+        } catch (error) {
+          log.warn('automatic context compaction failed', {
+            sessionId: request.sessionId,
+            ...errorLogFields(error)
+          })
+        }
+      }
+      return response
     } catch (error) {
       if (observedPromptStop) {
         // Provider stop/cancellation already won the outcome race. App-side finalization failure,
@@ -2265,22 +2214,7 @@ class AcpRuntime {
   }
 
   private observeClaudeSdkMessage(params: Record<string, unknown>): void {
-    if (typeof params.sessionId !== 'string') return
-    if (typeof params.message !== 'object' || params.message === null) return
-
-    const message = params.message as Record<string, unknown>
-    if (message.type !== 'result') return
-    const origin =
-      typeof message.origin === 'object' && message.origin !== null
-        ? (message.origin as Record<string, unknown>).kind
-        : undefined
-    if (typeof origin === 'string' && CLAUDE_AUTONOMOUS_RESULT_ORIGINS.has(origin)) return
-    if (!Number.isSafeInteger(message.num_turns) || (message.num_turns as number) <= 0) return
-
-    const appSessionId = this.sessionRegistry.resolveAppSessionId(params.sessionId)
-    const promptInteraction = this.currentPromptInteraction(appSessionId)
-    if (!promptInteraction) return
-    this.sessionInteractions.observeModelTurns(promptInteraction, message.num_turns as number)
+    this.providerPromptExecutor.observeProviderMessage(params)
   }
 
   // Looks up the workspace root bound to a session for filesystem operations.
@@ -2572,26 +2506,36 @@ class AcpRuntime {
     this.permissionContext.cancelForSession(sessionId)
   }
 
-  // App-managed codex-acp emits the exact per-request numerator during generation. Codex's pinned
-  // adapter publishes uncached input and cached input as separate PromptResponse categories, so
-  // recombine them for the context numerator when applying the final per-request correction.
-  private recordCodexPromptResponseContextUsage(
+  private providerTurnAdapter(frameworkId: AgentFramework['id']): AcpProviderTurnAdapter {
+    if (frameworkId === 'claude-code') return claudeCodeTurnAdapter
+    if (frameworkId === 'codex') return createCodexTurnAdapter()
+
+    const usageApi = this.backendGeneration.openCodeUsageApi()
+    return new AcpOpenCodeTurnAdapter((providerSessionId, cwd) =>
+      usageApi
+        ? fetchOpenCodeUsageSnapshot(
+            usageApi,
+            providerSessionId,
+            cwd,
+            this.options.opencodeUsageFetch
+          )
+        : Promise.resolve(undefined)
+    )
+  }
+
+  // Provider adapters normalize an exact latest-request context numerator when one exists. Apply it
+  // only while the same app turn still owns the Session so a delayed old stop cannot rewrite a reset.
+  private recordProviderPromptContextUsage(
     sessionId: string,
-    response: PromptResponse,
+    used: number,
     promptTurn: number
   ): void {
     if (
-      this.framework.id !== 'codex' ||
       this.pendingProviderReconnect ||
       this.currentPromptInteraction(sessionId)?.sequence !== promptTurn
     ) {
       return
     }
-
-    const usage = toCodexTurnTokenUsage(response.usage)
-    if (!usage) return
-
-    const used = usage.inputTokens + usage.cacheTokens
     if (this.contextUsageTracker.reconcileUsed(sessionId, used)) this.emitState()
   }
 

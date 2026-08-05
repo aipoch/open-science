@@ -3799,6 +3799,49 @@ describe('ACP runtime session management', () => {
     expect(agent.prompts[0]?.text).toContain('replacement turn')
   })
 
+  it('does not dispatch after reset wins during an asynchronous provider probe', async () => {
+    const process = new FakeAgentProcess()
+    const agent = startFakeAgent(process, ['remote-session-1', 'remote-session-2'])
+    const probeStarted = createDeferred()
+    const releaseProbe = createDeferred()
+    let usageFetchCount = 0
+    const opencodeUsageFetch = vi.fn(async () => {
+      usageFetchCount += 1
+      if (usageFetchCount === 1) {
+        probeStarted.resolve()
+        await releaseProbe.promise
+      }
+      return new Response(JSON.stringify([]), {
+        headers: { 'content-type': 'application/json' }
+      })
+    })
+    const framework = { ...opencodeFramework, spawn: () => asAgentProcess(process) }
+    const runtime = new AcpRuntime({
+      appVersion: '0.1.0',
+      defaultCwd: '/workspace',
+      resolveBackend: () => ({
+        framework,
+        executablePath: '/bin/opencode',
+        env: {},
+        opencodeUsageApi: {
+          baseUrl: 'http://127.0.0.1:4242',
+          authorization: 'Basic test'
+        }
+      }),
+      framework,
+      opencodeUsageFetch
+    })
+
+    const session = await runtime.createSession({ cwd: '/workspace' })
+    const stalePrompt = runtime.sendPrompt({ sessionId: session.sessionId, text: 'stale turn' })
+    await probeStarted.promise
+
+    await runtime.resetSessionContext({ sessionId: session.sessionId, cwd: '/workspace' })
+    releaseProbe.resolve()
+    await expect(stalePrompt).resolves.toMatchObject({ stopReason: 'cancelled' })
+    expect(agent.prompts).toHaveLength(0)
+  })
+
   it('does not let a superseded turn finally clear the replay turn in-flight lock', async () => {
     const root = await createTemporaryRoot()
     const artifactRepository = new ArtifactRepository(root)

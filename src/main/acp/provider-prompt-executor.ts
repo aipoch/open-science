@@ -1,0 +1,188 @@
+import type {
+  ActiveSession,
+  ContentBlock,
+  PromptResponse,
+  SessionNotification
+} from '@agentclientprotocol/sdk'
+
+import { toAcpTurnTokenUsage } from '../../shared/acp'
+import type {
+  AcpProviderTurnAdapter,
+  AcpProviderTurnProbe,
+  AcpProviderTurnResult
+} from './provider-turn-adapter'
+
+type ProviderPromptObservationStage = 'accepted' | 'begin' | 'cancel' | 'finalize' | 'observe'
+
+type ProviderPromptExecutionInput = Readonly<{
+  session: Pick<ActiveSession, 'sessionId' | 'prompt' | 'nextUpdate'>
+  content: string | ContentBlock[]
+  cwd: string
+  adapter: AcpProviderTurnAdapter
+  isCurrent: () => boolean
+  beforeDispatch: () => Promise<'active' | 'cancelled'>
+  captureStop: () => boolean
+  onAccepted: () => void
+  routeNotification: (notification: SessionNotification) => void
+  reportBestEffortFailure?: (stage: ProviderPromptObservationStage, error: unknown) => void
+}>
+
+type ProviderPromptOutcome =
+  | Readonly<{ kind: 'not-dispatched' }>
+  | Readonly<{ kind: 'superseded'; response: PromptResponse }>
+  | Readonly<{ kind: 'stopped'; response: PromptResponse; facts: AcpProviderTurnResult }>
+
+type ActiveObservation = Readonly<{
+  token: symbol
+  probe: AcpProviderTurnProbe
+  report?: ProviderPromptExecutionInput['reportBestEffortFailure']
+}>
+
+const EMPTY_FACTS: AcpProviderTurnResult = Object.freeze({})
+const NOOP_PROBE: AcpProviderTurnProbe = Object.freeze({
+  finalize: () => EMPTY_FACTS,
+  cancel: () => undefined
+})
+
+const reportBestEffort = (
+  report: ProviderPromptExecutionInput['reportBestEffortFailure'],
+  stage: ProviderPromptObservationStage,
+  error: unknown
+): void => {
+  try {
+    report?.(stage, error)
+  } catch {
+    // Diagnostics must not replace the provider outcome.
+  }
+}
+
+const normalizeFacts = (
+  response: PromptResponse,
+  facts: AcpProviderTurnResult
+): AcpProviderTurnResult => {
+  const turnUsage = facts.turnUsage ?? toAcpTurnTokenUsage(response.usage)
+  return Object.freeze({
+    ...(turnUsage ? { turnUsage: Object.freeze({ ...turnUsage }) } : {}),
+    ...(facts.modelTurnCount === undefined ? {} : { modelTurnCount: facts.modelTurnCount }),
+    ...(facts.contextUsedTokens === undefined ? {} : { contextUsedTokens: facts.contextUsedTokens })
+  })
+}
+
+class AcpProviderPromptExecutor {
+  private readonly observations = new Map<string, ActiveObservation>()
+
+  observeProviderMessage(message: unknown): void {
+    if (typeof message !== 'object' || message === null || Array.isArray(message)) return
+    const providerSessionId = (message as { sessionId?: unknown }).sessionId
+    if (typeof providerSessionId !== 'string') return
+    const observation = this.observations.get(providerSessionId)
+    if (!observation?.probe.observe) return
+    try {
+      observation.probe.observe(message)
+    } catch (error) {
+      reportBestEffort(observation.report, 'observe', error)
+    }
+  }
+
+  async execute(input: ProviderPromptExecutionInput): Promise<ProviderPromptOutcome> {
+    const providerSessionId = input.session.sessionId
+    const token = Symbol(providerSessionId)
+    let probe = NOOP_PROBE
+    try {
+      probe = await input.adapter.begin({ providerSessionId, cwd: input.cwd })
+    } catch (error) {
+      reportBestEffort(input.reportBestEffortFailure, 'begin', error)
+    }
+
+    this.observations.set(providerSessionId, {
+      token,
+      probe,
+      report: input.reportBestEffortFailure
+    })
+    let probeState: 'open' | 'cancelled' | 'finalized' = 'open'
+    const releaseObservation = (): void => {
+      if (this.observations.get(providerSessionId)?.token === token) {
+        this.observations.delete(providerSessionId)
+      }
+    }
+    const cancelProbe = async (): Promise<void> => {
+      if (probeState !== 'open') return
+      probeState = 'cancelled'
+      releaseObservation()
+      try {
+        await probe.cancel()
+      } catch (error) {
+        reportBestEffort(input.reportBestEffortFailure, 'cancel', error)
+      }
+    }
+
+    try {
+      const dispatch = await input.beforeDispatch()
+      if (dispatch === 'cancelled' || !input.isCurrent()) {
+        await cancelProbe()
+        return Object.freeze({ kind: 'not-dispatched' })
+      }
+
+      let promptRequest: Promise<unknown>
+      try {
+        promptRequest = input.session.prompt(input.content)
+      } catch (error) {
+        await cancelProbe()
+        throw error
+      }
+      const promptFailure = promptRequest.then(
+        () => new Promise<never>(() => undefined),
+        (error) => Object.freeze({ kind: 'provider-rejection' as const, error })
+      )
+      let accepted = false
+
+      for (;;) {
+        const message = await Promise.race([input.session.nextUpdate(), promptFailure])
+        if (message.kind === 'provider-rejection') throw message.error
+
+        if (!input.isCurrent()) {
+          if (message.kind !== 'stop') continue
+          await cancelProbe()
+          return Object.freeze({ kind: 'superseded', response: message.response })
+        }
+
+        if (!accepted) {
+          accepted = true
+          try {
+            input.onAccepted()
+          } catch (error) {
+            reportBestEffort(input.reportBestEffortFailure, 'accepted', error)
+          }
+        }
+        if (message.kind !== 'stop') {
+          input.routeNotification(message.notification)
+          continue
+        }
+        if (!input.captureStop()) {
+          await cancelProbe()
+          return Object.freeze({ kind: 'superseded', response: message.response })
+        }
+
+        probeState = 'finalized'
+        releaseObservation()
+        let facts = EMPTY_FACTS
+        try {
+          facts = await probe.finalize({ response: message.response })
+        } catch (error) {
+          reportBestEffort(input.reportBestEffortFailure, 'finalize', error)
+        }
+        return Object.freeze({
+          kind: 'stopped',
+          response: message.response,
+          facts: normalizeFacts(message.response, facts)
+        })
+      }
+    } finally {
+      await cancelProbe()
+      releaseObservation()
+    }
+  }
+}
+
+export { AcpProviderPromptExecutor }
+export type { ProviderPromptExecutionInput, ProviderPromptObservationStage, ProviderPromptOutcome }
