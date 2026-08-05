@@ -78,7 +78,8 @@ type FakeSettingsService = Record<
   | 'buildCustomServerTemplateExport'
   | 'previewCustomServerTemplateImport'
   | 'setConnectorEnabled'
-  | 'updateCustomServer',
+  | 'updateCustomServer'
+  | 'cancelCustomServerAuthentication',
   ReturnType<typeof vi.fn>
 >
 
@@ -193,7 +194,8 @@ const createFakeService = (): FakeSettingsService => ({
     }
   }),
   setConnectorEnabled: vi.fn().mockResolvedValue({ connectors: [] }),
-  updateCustomServer: vi.fn().mockResolvedValue({ connectors: [], customServers: [] })
+  updateCustomServer: vi.fn().mockResolvedValue({ connectors: [], customServers: [] }),
+  cancelCustomServerAuthentication: vi.fn().mockResolvedValue(undefined)
 })
 
 // Adapts the spy bag into the SettingsService shape the registration function expects.
@@ -501,6 +503,18 @@ describe('settings IPC handlers', () => {
     // fires even if the refresh rejects — see connector-skill-reload.finally.test.ts).
     expect(service.setConnectorEnabled).toHaveBeenCalledWith({ id: 'biomart', enabled: false })
     expect(onConnectorsChanged).toHaveBeenCalledOnce()
+  })
+
+  it('routes OAuth cancellation without treating it as a Connector settings change', async () => {
+    handlers.clear()
+    const fake = createFakeService()
+    const onConnectorsChanged = vi.fn()
+    registerTestSettingsIpcHandlers({ service: asService(fake), onConnectorsChanged })
+
+    await invoke('settings:cancel-custom-server-authentication', { id: 'server-id' })
+
+    expect(fake.cancelCustomServerAuthentication).toHaveBeenCalledWith('server-id')
+    expect(onConnectorsChanged).not.toHaveBeenCalled()
   })
 
   it('passes the custom-server security invalidation gate through before refreshing connectors', async () => {

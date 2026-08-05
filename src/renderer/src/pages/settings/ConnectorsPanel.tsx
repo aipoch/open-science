@@ -9,7 +9,7 @@ import {
   Terminal,
   Trash2
 } from 'lucide-react'
-import { useEffect, useMemo, useState } from 'react'
+import { useEffect, useMemo, useRef, useState } from 'react'
 
 import type {
   ConnectorTemplateDefinition,
@@ -65,6 +65,9 @@ export function ConnectorsPanel({ onNavigate }: ConnectorsPanelProps): React.JSX
   const setCustomServerEnabled = useSettingsStore((state) => state.setCustomServerEnabled)
   const removeCustomServer = useSettingsStore((state) => state.removeCustomServer)
   const authenticateCustomServer = useSettingsStore((state) => state.authenticateCustomServer)
+  const cancelCustomServerAuthentication = useSettingsStore(
+    (state) => state.cancelCustomServerAuthentication
+  )
   const setNcbiCredentials = useSettingsStore((state) => state.setNcbiCredentials)
 
   const [filter, setFilter] = useState<GroupFilter>('all')
@@ -77,6 +80,7 @@ export function ConnectorsPanel({ onNavigate }: ConnectorsPanelProps): React.JSX
   const [keyField, setKeyField] = useState('')
   const [authenticatingId, setAuthenticatingId] = useState<string | null>(null)
   const [authError, setAuthError] = useState<string | null>(null)
+  const authenticationAttempt = useRef(0)
 
   useEffect(() => {
     void loadConnectors()
@@ -122,12 +126,27 @@ export function ConnectorsPanel({ onNavigate }: ConnectorsPanelProps): React.JSX
   }
 
   const signIn = async (id: string): Promise<void> => {
+    const attempt = ++authenticationAttempt.current
     setAuthenticatingId(id)
     setAuthError(null)
     try {
       await authenticateCustomServer({ id })
     } catch (error) {
-      setAuthError(error instanceof Error ? error.message : 'OAuth sign-in failed.')
+      if (attempt === authenticationAttempt.current) {
+        setAuthError(error instanceof Error ? error.message : 'OAuth sign-in failed.')
+      }
+    } finally {
+      if (attempt === authenticationAttempt.current) setAuthenticatingId(null)
+    }
+  }
+
+  const cancelSignIn = async (id: string): Promise<void> => {
+    authenticationAttempt.current += 1
+    setAuthError(null)
+    try {
+      await cancelCustomServerAuthentication({ id })
+    } catch (error) {
+      setAuthError(error instanceof Error ? error.message : 'Could not cancel OAuth sign-in.')
     } finally {
       setAuthenticatingId(null)
     }
@@ -430,12 +449,19 @@ export function ConnectorsPanel({ onNavigate }: ConnectorsPanelProps): React.JSX
                         <Button
                           type="button"
                           size="sm"
-                          variant={server.oauth.hasTokens ? 'outline' : 'default'}
-                          disabled={authenticatingId === server.id}
-                          onClick={() => void signIn(server.id)}
+                          variant={
+                            authenticatingId === server.id || server.oauth.hasTokens
+                              ? 'outline'
+                              : 'default'
+                          }
+                          onClick={() =>
+                            void (authenticatingId === server.id
+                              ? cancelSignIn(server.id)
+                              : signIn(server.id))
+                          }
                         >
                           {authenticatingId === server.id
-                            ? 'Waiting…'
+                            ? 'Cancel'
                             : server.oauth.hasTokens
                               ? 'Connected'
                               : 'Sign in'}

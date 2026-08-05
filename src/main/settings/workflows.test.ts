@@ -99,7 +99,8 @@ const fakeStore = () => {
     setCustomServerEnabled: vi.fn().mockResolvedValue({ connectors: [] }),
     removeCustomServer: vi.fn().mockResolvedValue({ connectors: [] }),
     updateCustomServer: vi.fn().mockResolvedValue({ connectors: [] }),
-    authenticateCustomServer: vi.fn().mockResolvedValue({ connectors: [] })
+    authenticateCustomServer: vi.fn().mockResolvedValue({ connectors: [] }),
+    cancelCustomServerAuthentication: vi.fn().mockResolvedValue(undefined)
   }
   return { store, capability: store as unknown as SettingsWorkflowStore }
 }
@@ -559,6 +560,18 @@ describe('SettingsWorkflows catalog and appearance effects', () => {
 
     await workflows.authenticateCustomServer({ id: 'server-1' })
     expect(calls).toEqual(['authenticate', 'clear:server-1', 'invalidate', 'refresh'])
+  })
+
+  it('cancels OAuth authentication without refreshing Connector projections', async () => {
+    const { store, capability } = fakeStore()
+    const refreshConnectorSkillDocs = vi.fn(async () => undefined)
+    const effects = testEffects({ refreshConnectorSkillDocs })
+    const workflows = createSettingsWorkflows(capability, effects).connectors
+
+    await workflows.cancelCustomServerAuthentication({ id: 'server-1' })
+
+    expect(store.cancelCustomServerAuthentication).toHaveBeenCalledWith('server-1')
+    expect(refreshConnectorSkillDocs).not.toHaveBeenCalled()
   })
 
   it('awaits custom-server prune before refreshing and skips refresh when prune fails', async () => {

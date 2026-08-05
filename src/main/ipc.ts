@@ -761,13 +761,16 @@ const createApplicationModules = async (
     skillsDir: join(getAppClaudeConfigDir(resolveStorageRoot()), 'skills'),
     mcpClientManager
   })
-  settingsService.setCustomServerAuthenticator(async (serverId) => {
-    const server = (await settingsService.getConnectors())?.customMcpServers?.find(
-      (candidate) => candidate.id === serverId
-    )
-    if (!server) throw new Error(`Unknown custom connector: ${serverId}`)
-    await mcpClientManager.authenticate(toCustomMcpConfig(server))
-  })
+  settingsService.setCustomServerAuthenticator(
+    async (serverId) => {
+      const server = (await settingsService.getConnectors())?.customMcpServers?.find(
+        (candidate) => candidate.id === serverId
+      )
+      if (!server) throw new Error(`Unknown custom connector: ${serverId}`)
+      await mcpClientManager.authenticate(toCustomMcpConfig(server))
+    },
+    (serverId) => mcpClientManager.cancelAuthentication(serverId)
+  )
   // Bridges un-trusted connector calls to the renderer approval card. A tool call that isn't
   // pre-allowed or skip-approved is held here until the user decides (or it auto-denies on timeout).
   const approvalBroker = new ApprovalBroker({

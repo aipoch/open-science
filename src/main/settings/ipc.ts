@@ -340,6 +340,11 @@ const registerSettingsIpcHandlers = ({
     (_event, request: AuthenticateCustomServerRequest) =>
       workflows.connectors.authenticateCustomServer(request)
   )
+  ipcMainHandle(
+    'settings:cancel-custom-server-authentication',
+    (_event, request: AuthenticateCustomServerRequest) =>
+      workflows.connectors.cancelCustomServerAuthentication(request)
+  )
   // Compute file browser bookmarks: keyed by provider_id in settings.computeBookmarks.
   ipcMainHandle('compute:bookmarks:get', (_event, providerId: string) =>
     service.getComputeBookmarks(providerId)

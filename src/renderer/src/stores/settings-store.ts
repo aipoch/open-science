@@ -303,6 +303,7 @@ type SettingsStore = SettingsStoreData & {
   // Edits an existing custom MCP server (name is immutable), reconciling from main.
   updateCustomServer: (request: UpdateCustomServerRequest) => Promise<void>
   authenticateCustomServer: (request: AuthenticateCustomServerRequest) => Promise<void>
+  cancelCustomServerAuthentication: (request: AuthenticateCustomServerRequest) => Promise<void>
   // Enables/disables one custom MCP server; optimistic, then reconciled from main.
   setCustomServerEnabled: (id: string, enabled: boolean) => Promise<void>
   // Removes one custom MCP server, reconciling from main.
@@ -1527,6 +1528,9 @@ export const useSettingsStore = create<SettingsStore>((set, get) => ({
       throw error
     }
   },
+
+  cancelCustomServerAuthentication: (request) =>
+    window.api.settings.cancelCustomServerAuthentication(request),
 
   // Optimistically flips the server toggle, then reconciles from main.
   setCustomServerEnabled: async (id, enabled) => {

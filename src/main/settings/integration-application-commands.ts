@@ -38,6 +38,7 @@ type ConnectorIntegrationWorkflows = Pick<
   | 'removeCustomServer'
   | 'updateCustomServer'
   | 'authenticateCustomServer'
+  | 'cancelCustomServerAuthentication'
 >
 
 type OwnerArgs<Owner, Method extends keyof Owner> = Owner[Method] extends (
@@ -144,6 +145,11 @@ const settingsIntegrationApplicationCommands = Object.freeze({
     OwnerArgs<ConnectorIntegrationWorkflows, 'authenticateCustomServer'>,
     OwnerResult<ConnectorIntegrationWorkflows, 'authenticateCustomServer'>
   >('settings:authenticate-custom-server'),
+  cancelCustomServerAuthentication: defineApplicationCommand<
+    'settings:cancel-custom-server-authentication',
+    OwnerArgs<ConnectorIntegrationWorkflows, 'cancelCustomServerAuthentication'>,
+    OwnerResult<ConnectorIntegrationWorkflows, 'cancelCustomServerAuthentication'>
+  >('settings:cancel-custom-server-authentication'),
   respondConnectorApproval: defineApplicationCommand<
     'connectors:approval-respond',
     readonly [request: RespondApprovalRequest],
@@ -183,7 +189,8 @@ const settingsConnectorApplicationCommandGroup = defineApplicationCommandGroup(
     settingsIntegrationApplicationCommands.setCustomServerEnabled,
     settingsIntegrationApplicationCommands.removeCustomServer,
     settingsIntegrationApplicationCommands.updateCustomServer,
-    settingsIntegrationApplicationCommands.authenticateCustomServer
+    settingsIntegrationApplicationCommands.authenticateCustomServer,
+    settingsIntegrationApplicationCommands.cancelCustomServerAuthentication
   ] as const
 )
 
@@ -243,6 +250,10 @@ const registerIntegrationSettingsApplicationCommands = (
       'settings:authenticate-custom-server': ({ args, callerContext }) => {
         requireLocalCaller(callerContext, 'settings:authenticate-custom-server')
         return dependencies.connectors.authenticateCustomServer(args[0])
+      },
+      'settings:cancel-custom-server-authentication': ({ args, callerContext }) => {
+        requireLocalCaller(callerContext, 'settings:cancel-custom-server-authentication')
+        return dependencies.connectors.cancelCustomServerAuthentication(args[0])
       }
     })
     scope.registerGroup(settingsApprovalApplicationCommandGroup, {

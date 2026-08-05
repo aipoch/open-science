@@ -68,6 +68,7 @@ type SettingsApi = {
   setNcbiCredentials: ReturnType<typeof vi.fn>
   addCustomServer: ReturnType<typeof vi.fn>
   authenticateCustomServer: ReturnType<typeof vi.fn>
+  cancelCustomServerAuthentication: ReturnType<typeof vi.fn>
   setCustomServerEnabled: ReturnType<typeof vi.fn>
   removeCustomServer: ReturnType<typeof vi.fn>
   updateCustomServer: ReturnType<typeof vi.fn>
@@ -225,6 +226,7 @@ beforeEach(() => {
     authenticateCustomServer: vi
       .fn()
       .mockResolvedValue({ connectors: [], customServers: [], ncbi: { hasApiKey: false } }),
+    cancelCustomServerAuthentication: vi.fn().mockResolvedValue(undefined),
     setCustomServerEnabled: vi
       .fn()
       .mockResolvedValue({ connectors: [], customServers: [], ncbi: { hasApiKey: false } }),
@@ -1385,6 +1387,12 @@ describe('settings store: connectors slice', () => {
 
     expect(api.listConnectors).toHaveBeenCalledOnce()
     expect(useSettingsStore.getState().customServers).toEqual([server])
+  })
+
+  it('forwards OAuth authentication cancellation to main', async () => {
+    await useSettingsStore.getState().cancelCustomServerAuthentication({ id: 'oauth-1' })
+
+    expect(api.cancelCustomServerAuthentication).toHaveBeenCalledWith({ id: 'oauth-1' })
   })
 
   it('enqueues an approval request and responds, clearing it from the queue', async () => {

@@ -206,6 +206,62 @@ describe('McpClientManager', () => {
     }
   })
 
+  it('cancels an interactive OAuth attempt waiting for its callback', async () => {
+    let markBrowserOpened!: () => void
+    const browserOpened = new Promise<void>((resolve) => {
+      markBrowserOpened = resolve
+    })
+    const openExternal = vi.fn(async () => markBrowserOpened())
+    vi.spyOn(Client.prototype, 'connect').mockImplementationOnce(async (transport) => {
+      const provider = (transport as unknown as { _authProvider: PersistentOAuthClientProvider })
+        ._authProvider
+      const authorizationUrl = new URL('https://auth.example.test/authorize')
+      authorizationUrl.searchParams.set('redirect_uri', String(provider.redirectUrl))
+      authorizationUrl.searchParams.set('state', provider.state())
+      provider.saveCodeVerifier('verifier-1')
+      await provider.redirectToAuthorization(authorizationUrl)
+      throw new UnauthorizedError()
+    })
+    const manager = new McpClientManager({ openExternal })
+    const oauthConfig: CustomMcpServerConfig = {
+      id: 'oauth-cancel',
+      name: 'OAuth server',
+      transport: 'streamable_http',
+      url: 'https://mcp.example.test',
+      oauth: {}
+    }
+
+    try {
+      const pending = manager.authenticate(oauthConfig)
+      await browserOpened
+
+      await manager.cancelAuthentication(oauthConfig.id)
+
+      await expect(pending).rejects.toThrow('OAuth authorization failed: authorization_cancelled')
+    } finally {
+      await manager.closeAll()
+    }
+  })
+
+  it('cancels an interactive OAuth attempt before its callback listener starts', async () => {
+    const openExternal = vi.fn(async () => undefined)
+    const manager = new McpClientManager({ openExternal })
+    const oauthConfig: CustomMcpServerConfig = {
+      id: 'oauth-early-cancel',
+      name: 'OAuth server',
+      transport: 'streamable_http',
+      url: 'https://mcp.example.test',
+      oauth: {}
+    }
+
+    const pending = manager.authenticate(oauthConfig)
+    await manager.cancelAuthentication(oauthConfig.id)
+
+    await expect(pending).rejects.toThrow('connection was superseded')
+    expect(openExternal).not.toHaveBeenCalled()
+    await manager.closeAll()
+  })
+
   it('does not open a browser during a background OAuth connection', async () => {
     const openExternal = vi.fn(async () => undefined)
     const saveOAuthState = vi.fn(async () => undefined)

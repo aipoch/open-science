@@ -170,6 +170,7 @@ class SettingsService {
   private readonly storageRoot: string
   private readonly userClaudeDir: string
   private customServerAuthenticator?: (serverId: string) => Promise<void>
+  private customServerAuthenticationCanceller?: (serverId: string) => Promise<void>
   private skillDeletionGuard?: (skillId: string) => Promise<void>
   constructor(options: SettingsServiceOptions = {}) {
     this.storageRoot = options.storageRoot ?? resolveStorageRoot()
@@ -879,8 +880,12 @@ class SettingsService {
     return this.connectors.saveCustomServerOAuthState(serverId, state)
   }
 
-  setCustomServerAuthenticator(authenticator: (serverId: string) => Promise<void>): void {
+  setCustomServerAuthenticator(
+    authenticator: (serverId: string) => Promise<void>,
+    cancel: (serverId: string) => Promise<void>
+  ): void {
     this.customServerAuthenticator = authenticator
+    this.customServerAuthenticationCanceller = cancel
   }
 
   async authenticateCustomServer(serverId: string): Promise<ConnectorsSnapshot> {
@@ -889,6 +894,10 @@ class SettingsService {
     }
     await this.customServerAuthenticator(serverId)
     return this.connectors.listConnectors()
+  }
+
+  async cancelCustomServerAuthentication(serverId: string): Promise<void> {
+    await this.customServerAuthenticationCanceller?.(serverId)
   }
 
   // Reports whether npm is on PATH so the installer UI can default to/enable the npm source.

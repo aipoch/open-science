@@ -132,6 +132,7 @@ export const WEB_INVOKE_CHANNELS = {
   'settings.authenticateCustomServer': 'settings:authenticate-custom-server',
   'settings.cancelClaudeLogin': 'settings:cancel-claude-login',
   'settings.cancelCodexLogin': 'settings:cancel-codex-login',
+  'settings.cancelCustomServerAuthentication': 'settings:cancel-custom-server-authentication',
   'settings.cancelIsolatedClaudeLogin': 'settings:cancel-isolated-claude-login',
   'settings.checkEnvironment': 'settings:check-environment',
   'settings.createSkill': 'settings:create-skill',

@@ -141,6 +141,7 @@ const REMOTE_LOCAL_ONLY_CHANNELS: GroupedInventory = {
     'authenticate-custom-server',
     'cancel-claude-login',
     'cancel-codex-login',
+    'cancel-custom-server-authentication',
     'cancel-isolated-claude-login',
     'install-claude',
     'install-codex',
@@ -210,12 +211,12 @@ describe('renderer surface inventory', () => {
       ...Object.keys(WEB_EVENT_CHANNELS)
     ])
 
-    expect(electronPaths).toHaveLength(306)
+    expect(electronPaths).toHaveLength(307)
     expectSameSet(
       electronPaths,
       RENDERER_CONTRACT_CATALOG.map(({ publicPath }) => publicPath)
     )
-    expect(Object.keys(WEB_INVOKE_CHANNELS)).toHaveLength(226)
+    expect(Object.keys(WEB_INVOKE_CHANNELS)).toHaveLength(227)
     expect(Object.keys(WEB_EVENT_CHANNELS)).toHaveLength(32)
     expectSameSet(
       electronPaths.filter((path) => !generatedPaths.has(path)),
@@ -251,7 +252,7 @@ describe('renderer surface inventory', () => {
     const expectedRemoteLocalOnly = expand(REMOTE_LOCAL_ONLY_CHANNELS, ':')
 
     expectSameSet(REMOTE_LOCAL_ONLY_RPC_CHANNELS, expectedRemoteLocalOnly)
-    expect(expectedRemoteLocalOnly).toHaveLength(57)
+    expect(expectedRemoteLocalOnly).toHaveLength(58)
     expect(
       expectedRemoteLocalOnly.every((channel) => WEB_RPC_ALLOWED_CHANNELS.includes(channel))
     ).toBe(true)

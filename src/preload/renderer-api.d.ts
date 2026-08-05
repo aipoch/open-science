@@ -446,6 +446,7 @@ export interface OpenScienceAPI {
     removeCustomServer(request: RemoveCustomServerRequest): Promise<ConnectorsSnapshot>
     updateCustomServer(request: UpdateCustomServerRequest): Promise<ConnectorsSnapshot>
     authenticateCustomServer(request: AuthenticateCustomServerRequest): Promise<ConnectorsSnapshot>
+    cancelCustomServerAuthentication(request: AuthenticateCustomServerRequest): Promise<void>
     onConnectorApprovalRequest(listener: AcpListener<ConnectorApprovalRequest>): RemoveListener
     onSkillImportApprovalRequest(
       listener: AcpListener<ConversationSkillImportApprovalRequest>

@@ -76,6 +76,7 @@ beforeEach(() => {
     setNcbiCredentials: vi.fn().mockResolvedValue(undefined),
     addCustomServer: vi.fn().mockResolvedValue(undefined),
     authenticateCustomServer: vi.fn().mockResolvedValue(undefined),
+    cancelCustomServerAuthentication: vi.fn().mockResolvedValue(undefined),
     setCustomServerEnabled: vi.fn().mockResolvedValue(undefined),
     removeCustomServer: vi.fn().mockResolvedValue(undefined)
   })
@@ -262,16 +263,17 @@ describe('ConnectorsPanel (groups)', () => {
     expect(document.body.textContent).toContain('Connected')
   })
 
-  it('disables OAuth sign-in while waiting and displays a failure', async () => {
-    let rejectAuthentication!: (error: Error) => void
+  it('cancels a waiting OAuth sign-in and allows retry', async () => {
+    const rejectAuthentications: Array<(error: Error) => void> = []
     const authenticateCustomServer = vi.fn(
       () =>
         new Promise<void>((_resolve, reject) => {
-          rejectAuthentication = reject
+          rejectAuthentications.push(reject)
         })
     )
     useSettingsStore.setState({
       authenticateCustomServer,
+      cancelCustomServerAuthentication: vi.fn().mockResolvedValue(undefined),
       customServers: [
         {
           id: 'oauth-mcp',
@@ -288,15 +290,20 @@ describe('ConnectorsPanel (groups)', () => {
     })
 
     clickButtonByText('Sign in')
-    const waiting = Array.from(document.body.querySelectorAll<HTMLButtonElement>('button')).find(
-      (button) => button.textContent?.trim() === 'Waiting…'
-    )
-    expect(waiting?.disabled).toBe(true)
+    expect(document.body.textContent).toContain('Cancel')
 
-    await act(async () => rejectAuthentication(new Error('Authorization denied')))
+    await act(async () => clickButtonByText('Cancel'))
 
-    expect(document.body.textContent).toContain('Authorization denied')
+    expect(useSettingsStore.getState().cancelCustomServerAuthentication).toHaveBeenCalledWith({
+      id: 'oauth-mcp'
+    })
     expect(document.body.textContent).toContain('Sign in')
+
+    clickButtonByText('Sign in')
+    expect(authenticateCustomServer).toHaveBeenCalledTimes(2)
+
+    await act(async () => rejectAuthentications[0](new Error('Authorization denied')))
+    expect(document.body.textContent).not.toContain('Authorization denied')
   })
 
   it('shows an empty-state line when there are no custom servers', () => {

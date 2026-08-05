@@ -268,13 +268,17 @@ describe('SettingsService: custom MCP OAuth', () => {
         tokens: { access_token: 'access', token_type: 'Bearer' }
       })
     })
-    service.setCustomServerAuthenticator(authenticator)
+    const cancel = vi.fn(async () => undefined)
+    service.setCustomServerAuthenticator(authenticator, cancel)
 
     const snapshot = await service.authenticateCustomServer(id)
 
     expect(authenticator).toHaveBeenCalledWith(id)
     expect(snapshot.customServers[0].oauth).toMatchObject({ hasTokens: true })
     expect(snapshot.customServers[0].availability).toBeUndefined()
+
+    await service.cancelCustomServerAuthentication(id)
+    expect(cancel).toHaveBeenCalledWith(id)
   })
 })
 

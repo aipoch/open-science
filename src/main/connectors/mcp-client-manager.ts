@@ -103,6 +103,7 @@ export class McpClientManager {
   ) => Promise<Client>
   private readonly clients = new Map<string, Client>()
   private readonly connecting = new Map<string, Promise<Client>>()
+  private readonly authenticationCancels = new Map<string, () => void>()
   private readonly generations = new Map<string, number>()
   private readonly callbackServer = new OAuthCallbackServer()
   private readonly openExternal: (url: string) => Promise<void> | void
@@ -139,6 +140,9 @@ export class McpClientManager {
 
   async close(id: string): Promise<void> {
     this.generations.set(id, this.generation(id) + 1)
+    const cancelAuthentication = this.authenticationCancels.get(id)
+    this.authenticationCancels.delete(id)
+    cancelAuthentication?.()
     const client = this.clients.get(id)
     this.clients.delete(id)
     this.connecting.delete(id)
@@ -147,9 +151,19 @@ export class McpClientManager {
 
   async closeAll(): Promise<void> {
     await Promise.all(
-      [...new Set([...this.clients.keys(), ...this.connecting.keys()])].map((id) => this.close(id))
+      [
+        ...new Set([
+          ...this.clients.keys(),
+          ...this.connecting.keys(),
+          ...this.authenticationCancels.keys()
+        ])
+      ].map((id) => this.close(id))
     )
     await this.callbackServer.close()
+  }
+
+  async cancelAuthentication(id: string): Promise<void> {
+    await this.close(id)
   }
 
   // Starts standard OAuth, waits for the loopback callback, and caches an authenticated client.
@@ -157,49 +171,60 @@ export class McpClientManager {
     if (!config.oauth || config.transport === 'stdio') {
       throw new Error(`custom MCP server "${config.name}" is not configured for OAuth`)
     }
-    await this.close(config.id)
+    const closing = this.close(config.id)
     const generation = this.generation(config.id)
+    await closing
+    if (generation !== this.generation(config.id)) {
+      throw new Error(`custom MCP server "${config.name}" connection was superseded`)
+    }
     const redirectUrl = await this.callbackServer.ensureStarted()
     const provider = this.oauthProvider(config, redirectUrl, generation, true)
     const callback = this.callbackServer.waitFor(provider.state())
+    this.authenticationCancels.set(config.id, callback.cancel)
     const transport = buildTransport(config, provider)
     const firstClient = new Client({ name: 'open-science', version: '0.0.0' })
     try {
-      await firstClient.connect(transport)
-      if (generation !== this.generation(config.id)) {
+      try {
+        await firstClient.connect(transport)
+        if (generation !== this.generation(config.id)) {
+          await firstClient.close().catch(() => undefined)
+          throw new Error(`custom MCP server "${config.name}" connection was superseded`)
+        }
+        this.clients.set(config.id, firstClient)
+        callback.cancel()
+        return
+      } catch (error) {
+        if (!(error instanceof UnauthorizedError)) {
+          callback.cancel()
+          throw error
+        }
         await firstClient.close().catch(() => undefined)
+      }
+
+      try {
+        const result = await callback.promise
+        if (result.error) throw new Error(`OAuth authorization failed: ${result.error}`)
+        if (!result.code) throw new Error('OAuth callback did not include an authorization code')
+
+        await (transport as StreamableHTTPClientTransport | SSEClientTransport).finishAuth(
+          result.code
+        )
+      } finally {
+        await provider.invalidateCredentials('verifier')
+      }
+      // Recreate the transport/client after the SDK has completed the authorization-code exchange.
+      const client = new Client({ name: 'open-science', version: '0.0.0' })
+      await client.connect(buildTransport(config, provider))
+      if (generation !== this.generation(config.id)) {
+        await client.close().catch(() => undefined)
         throw new Error(`custom MCP server "${config.name}" connection was superseded`)
       }
-      this.clients.set(config.id, firstClient)
-      callback.cancel()
-      return
-    } catch (error) {
-      if (!(error instanceof UnauthorizedError)) {
-        callback.cancel()
-        throw error
-      }
-      await firstClient.close().catch(() => undefined)
-    }
-
-    try {
-      const result = await callback.promise
-      if (result.error) throw new Error(`OAuth authorization failed: ${result.error}`)
-      if (!result.code) throw new Error('OAuth callback did not include an authorization code')
-
-      await (transport as StreamableHTTPClientTransport | SSEClientTransport).finishAuth(
-        result.code
-      )
+      this.clients.set(config.id, client)
     } finally {
-      await provider.invalidateCredentials('verifier')
+      if (this.authenticationCancels.get(config.id) === callback.cancel) {
+        this.authenticationCancels.delete(config.id)
+      }
     }
-    // Recreate the transport/client after the SDK has completed the authorization-code exchange.
-    const client = new Client({ name: 'open-science', version: '0.0.0' })
-    await client.connect(buildTransport(config, provider))
-    if (generation !== this.generation(config.id)) {
-      await client.close().catch(() => undefined)
-      throw new Error(`custom MCP server "${config.name}" connection was superseded`)
-    }
-    this.clients.set(config.id, client)
   }
 
   // Lazily connects, caching the client by server id and deduping concurrent connect calls.

@@ -47,6 +47,20 @@ describe('OAuthCallbackServer', () => {
     )
     await server.close()
   })
+
+  it('settles a cancelled authorization attempt immediately', async () => {
+    const server = new OAuthCallbackServer()
+    await server.ensureStarted()
+    const pending = server.waitFor('state-cancelled')
+
+    pending.cancel()
+
+    await expect(pending.promise).resolves.toEqual({
+      error: 'authorization_cancelled',
+      state: 'state-cancelled'
+    })
+    await server.close()
+  })
 })
 
 describe('PersistentOAuthClientProvider', () => {

@@ -382,6 +382,7 @@ describe('preload bridge — public surface inventory', () => {
       'settings.authenticateCustomServer',
       'settings.cancelClaudeLogin',
       'settings.cancelCodexLogin',
+      'settings.cancelCustomServerAuthentication',
       'settings.cancelIsolatedClaudeLogin',
       'settings.checkEnvironment',
       'settings.createSkill',
@@ -538,10 +539,10 @@ describe('preload bridge — Connector configuration files', () => {
 })
 
 describe('preload bridge — runtime renderer contract catalog', () => {
-  it('routes all 177 owned methods through their cataloged Electron channels', async () => {
+  it('routes all 178 owned methods through their cataloged Electron channels', async () => {
     const requestContracts = runtimeContracts.filter(({ kind }) => kind === 'method')
 
-    expect(runtimeContracts).toHaveLength(177)
+    expect(runtimeContracts).toHaveLength(178)
 
     for (const contract of requestContracts) {
       invokeMock.mockClear()

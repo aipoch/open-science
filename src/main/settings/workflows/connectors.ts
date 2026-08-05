@@ -24,6 +24,7 @@ type ConnectorSettingsWorkflowStore = Pick<
   | 'removeCustomServer'
   | 'updateCustomServer'
   | 'authenticateCustomServer'
+  | 'cancelCustomServerAuthentication'
 >
 
 type ConnectorSettingsWorkflowEffects = {
@@ -108,6 +109,12 @@ class ConnectorSettingsWorkflows {
     this.effects.clearCustomServerFailure(request.id)
     this.connectorsChanged()
     return snapshot
+  }
+
+  async cancelCustomServerAuthentication(
+    request: AuthenticateCustomServerRequest
+  ): WorkflowResult<'cancelCustomServerAuthentication'> {
+    return this.settings.cancelCustomServerAuthentication(request.id)
   }
 
   private async afterConnectorsChanged<Result>(mutation: () => Promise<Result>): Promise<Result> {

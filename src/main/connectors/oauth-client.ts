@@ -107,7 +107,9 @@ export class OAuthCallbackServer {
         if (cancelled) return
         cancelled = true
         if (timeout) clearTimeout(timeout)
+        const pending = this.pending.get(state)
         this.pending.delete(state)
+        pending?.resolve({ error: 'authorization_cancelled', state })
       }
     }
   }
