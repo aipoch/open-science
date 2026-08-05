@@ -206,14 +206,17 @@ class AcpPromptContentOwner {
     }
 
     const preparedContent = this.attachCodexSkillInputs(content, input.codexSkillInputs)
-    const hasTurnInputs = promptUploads.length > 0 || input.references.length > 0
+    const turnInputUploads = promptUploads.filter(
+      (upload, index) => index >= input.historyUploads.length || upload.versionId
+    )
+    const hasTurnInputs = turnInputUploads.length > 0 || input.references.length > 0
 
     return {
       content: preparedContent,
       ...(hasTurnInputs
         ? {
             turnInputs: {
-              uploads: promptUploads,
+              uploads: turnInputUploads,
               references: [...input.references]
             }
           }

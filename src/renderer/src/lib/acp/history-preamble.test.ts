@@ -171,6 +171,53 @@ describe('agent-aware history replay', () => {
     expect(replay.historyAttachments.map((item) => item.id)).toEqual(['upload-9', 'document-9'])
   })
 
+  it('reserves capped upload replay for an older selected image before recent documents', () => {
+    const messages = [
+      message({
+        role: 'user',
+        content: 'original task with image',
+        uploads: [
+          {
+            id: 'original-image',
+            versionId: 'original-image-version',
+            sessionId: 'session-1',
+            name: 'original.png',
+            originalName: 'original.png',
+            path: '/uploads/original.png',
+            mimeType: 'image/png',
+            size: 10
+          }
+        ]
+      }),
+      ...Array.from({ length: 10 }, (_, index) =>
+        message({
+          role: 'user',
+          content: `document turn ${index}`,
+          uploads: [
+            {
+              id: `document-${index}`,
+              versionId: `document-version-${index}`,
+              sessionId: 'session-1',
+              name: `document-${index}.txt`,
+              originalName: `document-${index}.txt`,
+              path: `/uploads/document-${index}.txt`,
+              mimeType: 'text/plain',
+              size: 10
+            }
+          ]
+        })
+      )
+    ]
+
+    const replay = buildWorkspaceHistoryReplay(messages, { target: 'claude-code' }, 'project-1')!
+    const attachmentIds = replay.historyAttachments.map((attachment) => attachment.id)
+
+    expect(attachmentIds).toHaveLength(10)
+    expect(attachmentIds).toContain('original-image')
+    expect(attachmentIds).not.toContain('document-0')
+    expect(attachmentIds).toContain('document-9')
+  })
+
   it('keeps media-only Assistant output when an oversized turn is projected', () => {
     const replay = buildWorkspaceHistoryReplay(
       [

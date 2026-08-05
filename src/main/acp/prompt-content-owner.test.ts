@@ -278,9 +278,7 @@ describe('AcpPromptContentOwner', () => {
       skillImportEnabled: false
     })
 
-    expect(result.turnInputs?.uploads).toEqual([
-      expect.objectContaining({ sessionId: 'target-session', id: stagedHistory.id })
-    ])
+    expect(result.turnInputs).toBeUndefined()
     expect(contentBlocks(result.content)).toContainEqual(
       expect.objectContaining({ type: 'resource_link', name: 'history.txt' })
     )
@@ -314,7 +312,7 @@ describe('AcpPromptContentOwner', () => {
       projectId: 'default-project',
       text: 'continue',
       historyImages: [],
-      historyUploads: [legacyHistory],
+      historyUploads: [{ ...legacyHistory, versionId: undefined }],
       currentUploads: [],
       references: [],
       codexSkillInputs: [],
@@ -324,6 +322,7 @@ describe('AcpPromptContentOwner', () => {
     expect(contentBlocks(result.content)).toContainEqual(
       expect.objectContaining({ type: 'resource_link', name: 'history.txt' })
     )
+    expect(result.turnInputs).toBeUndefined()
     expect(finalizeUploads).not.toHaveBeenCalled()
   })
 

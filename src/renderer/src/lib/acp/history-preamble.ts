@@ -45,18 +45,22 @@ export const buildHistoryReplayMedia = (
   messages: ChatMessage[],
   projectId?: string
 ): { attachments: UploadedAttachment[]; images: AcpMessageImage[] } => {
-  const attachments: UploadedAttachment[] = []
   const images: AcpMessageImage[] = []
   let imageBytes = 0
 
+  const uploads = messages.flatMap((message) => message.uploads ?? [])
+  const newestUploads = [...uploads].reverse()
+  const selectedUploads = [
+    ...newestUploads.filter((upload) => upload.mimeType?.startsWith('image/')),
+    ...newestUploads.filter((upload) => !upload.mimeType?.startsWith('image/'))
+  ].slice(0, MAX_COMPOSER_ATTACHMENTS)
+  const selectedUploadSet = new Set(selectedUploads)
+  const attachments = uploads
+    .filter((upload) => selectedUploadSet.has(upload))
+    .map((upload) => toRuntimeUploadedAttachment(upload, projectId))
+
   for (let messageIndex = messages.length - 1; messageIndex >= 0; messageIndex -= 1) {
     const message = messages[messageIndex]
-    for (let index = (message.uploads?.length ?? 0) - 1; index >= 0; index -= 1) {
-      const upload = message.uploads?.[index]
-      if (upload && attachments.length < MAX_COMPOSER_ATTACHMENTS) {
-        attachments.unshift(toRuntimeUploadedAttachment(upload, projectId))
-      }
-    }
     for (let index = (message.images?.length ?? 0) - 1; index >= 0; index -= 1) {
       const image = message.images?.[index]
       if (
