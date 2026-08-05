@@ -35,18 +35,21 @@ export const useCloseActivePaneShortcut = (closeActiveModal?: () => boolean): vo
         if (closeActiveModalRef.current?.()) return
 
         const preview = usePreviewWorkbenchStore.getState()
-        if (preview.fileDialogItem) {
-          preview.closeFileDialog()
-          return
-        }
-        if (preview.expandedToolItemId) {
-          preview.setToolItemExpanded(null)
-          return
+        const view = useNavigationStore.getState().view
+        if (view === 'workspace') {
+          if (preview.fileDialogItem) {
+            preview.closeFileDialog()
+            return
+          }
+          if (preview.expandedToolItemId) {
+            preview.setToolItemExpanded(null)
+            return
+          }
         }
         const activeItem = preview.items.find((item) => item.id === preview.activeItemId)
 
         const action = decideCloseActivePaneAction({
-          view: useNavigationStore.getState().view,
+          view,
           panelState: preview.panelState,
           hasActiveTab: activeItem !== undefined
         })

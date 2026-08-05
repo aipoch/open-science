@@ -83,6 +83,7 @@ const App = (): React.JSX.Element | null => {
   const isExpandedPreviewOpen = usePreviewWorkbenchStore(
     (state) => state.expandedToolItemId !== null
   )
+  const isPreviewModalOpen = view === 'workspace' && (isFilePreviewOpen || isExpandedPreviewOpen)
   const initEnv = useNotebookEnvStore((state) => state.init)
   const envUi = useNotebookEnvStore((state) => state.ui)
   const listenForPermissionChanges = usePermissionGrantsStore((state) => state.listen)
@@ -169,8 +170,7 @@ const App = (): React.JSX.Element | null => {
         hasComputeApproval ||
         hasSkillImportApproval ||
         isUpdateDialogOpen ||
-        isFilePreviewOpen ||
-        isExpandedPreviewOpen ||
+        isPreviewModalOpen ||
         isCloseConfirmOpen ||
         missingDataRoot !== undefined ||
         legacyMove !== undefined
@@ -188,9 +188,8 @@ const App = (): React.JSX.Element | null => {
     hasConnectorApproval,
     hasSkillImportApproval,
     isCloseConfirmOpen,
-    isExpandedPreviewOpen,
-    isFilePreviewOpen,
     isGlobalSearchOpen,
+    isPreviewModalOpen,
     isSessionPersistenceHydrated,
     isSettingsOpen,
     isUpdateDialogOpen,
@@ -215,7 +214,7 @@ const App = (): React.JSX.Element | null => {
         hasComputeApproval ||
         hasSkillImportApproval ||
         isUpdateDialogOpen ||
-        isFilePreviewOpen ||
+        isPreviewModalOpen ||
         isCloseConfirmOpen ||
         missingDataRoot !== undefined ||
         legacyMove !== undefined
@@ -234,7 +233,7 @@ const App = (): React.JSX.Element | null => {
     hasSkillImportApproval,
     isCloseConfirmOpen,
     isSessionPersistenceHydrated,
-    isFilePreviewOpen,
+    isPreviewModalOpen,
     isSettingsLoaded,
     isSettingsOpen,
     isUpdateDialogOpen,

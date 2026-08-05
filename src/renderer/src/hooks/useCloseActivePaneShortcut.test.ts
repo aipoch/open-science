@@ -187,6 +187,21 @@ describe('useCloseActivePaneShortcut', () => {
     unmount()
   })
 
+  it('closes the window without consuming stale preview modals on Home', () => {
+    useNavigationStore.setState({ view: 'home' })
+    const preview = usePreviewWorkbenchStore.getState()
+    preview.setToolItemExpanded('expanded-tool')
+    preview.openFileDialog(fileTab('dialog'))
+
+    const { unmount } = renderHook(() => useCloseActivePaneShortcut())
+    act(() => closeActivePane?.())
+
+    expect(usePreviewWorkbenchStore.getState().fileDialogItem?.id).toBe('dialog')
+    expect(usePreviewWorkbenchStore.getState().expandedToolItemId).toBe('expanded-tool')
+    expect(close).toHaveBeenCalledOnce()
+    unmount()
+  })
+
   it('closes the window when no panel is open', () => {
     useNavigationStore.setState({ view: 'workspace' })
     usePreviewWorkbenchStore.getState().collapsePanel()

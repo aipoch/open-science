@@ -444,6 +444,7 @@ describe('App startup routing', () => {
 
   it('does not open global search while a file preview modal is open', async () => {
     mocks.settings.isLoaded = true
+    mocks.navigation.view = 'workspace'
     mocks.preview.fileDialogItem = { id: 'previewed-file' }
     await render()
 
@@ -458,6 +459,7 @@ describe('App startup routing', () => {
 
   it('does not open Settings under an expanded preview modal', async () => {
     mocks.settings.isLoaded = true
+    mocks.navigation.view = 'workspace'
     mocks.preview.expandedToolItemId = 'project-files'
     await render()
 
@@ -466,6 +468,19 @@ describe('App startup routing', () => {
     )
 
     expect(mocks.settings.openSettings).not.toHaveBeenCalled()
+  })
+
+  it('ignores stale workspace preview modals when opening Settings from Home', async () => {
+    mocks.settings.isLoaded = true
+    mocks.preview.fileDialogItem = { id: 'previewed-file' }
+    mocks.preview.expandedToolItemId = 'project-files'
+    await render()
+
+    window.dispatchEvent(
+      new KeyboardEvent('keydown', { key: ',', metaKey: true, cancelable: true })
+    )
+
+    expect(mocks.settings.openSettings).toHaveBeenCalledOnce()
   })
 
   it('shows startup progress until settings have loaded', async () => {
