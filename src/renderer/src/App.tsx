@@ -162,6 +162,7 @@ const App = (): React.JSX.Element | null => {
         event.isComposing ||
         event.key !== ',' ||
         !(event.metaKey || event.ctrlKey) ||
+        document.querySelector('[role="dialog"], [role="alertdialog"]') !== null ||
         startupView !== 'app' ||
         !isSessionPersistenceHydrated ||
         isSettingsOpen ||

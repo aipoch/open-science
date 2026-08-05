@@ -546,6 +546,10 @@ const SettingsPage = forwardRef<SettingsPageHandle, SettingsPageProps>(function 
         )
         return true
       }
+      if (isMobileNavOpen) {
+        setIsMobileNavOpen(false)
+        return true
+      }
       if (breadcrumb) navigate(breadcrumb.rootTo)
       else {
         setIsMobileNavOpen(false)

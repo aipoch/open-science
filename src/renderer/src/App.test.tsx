@@ -428,6 +428,21 @@ describe('App startup routing', () => {
     expect(mocks.globalSearch.props?.open).toBe(false)
   })
 
+  it('does not open Settings over an active dialog', async () => {
+    mocks.settings.isLoaded = true
+    await render()
+    const dialog = document.createElement('div')
+    dialog.setAttribute('role', 'dialog')
+    document.body.appendChild(dialog)
+
+    window.dispatchEvent(
+      new KeyboardEvent('keydown', { key: ',', metaKey: true, cancelable: true })
+    )
+
+    expect(mocks.settings.openSettings).not.toHaveBeenCalled()
+    dialog.remove()
+  })
+
   it('closes the update dialog before underlying surfaces', async () => {
     mocks.settings.isLoaded = true
     mocks.settings.isSettingsOpen = true

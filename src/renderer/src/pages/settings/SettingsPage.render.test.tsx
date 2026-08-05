@@ -725,6 +725,13 @@ describe('SettingsPage layout', () => {
       )
     ).toBe(true)
 
+    await act(async () => navButton('Model')?.click())
+    const addProvider = Array.from(
+      document.body.querySelectorAll<HTMLButtonElement>('button')
+    ).find((button) => button.textContent?.trim() === 'Add provider')
+    act(() => addProvider?.click())
+    expect(document.body.querySelector('[aria-label="Provider type"]')).not.toBeNull()
+
     await act(async () => {
       document.body
         .querySelector<HTMLButtonElement>('[aria-label="Open settings navigation"]')
@@ -734,7 +741,8 @@ describe('SettingsPage layout', () => {
       expect(settingsRef.current?.closeActivePane()).toBe(true)
     })
     expect(nav?.getAttribute('aria-hidden')).toBe('true')
-    expect(onClose).toHaveBeenCalledOnce()
+    expect(document.body.querySelector('[aria-label="Provider type"]')).not.toBeNull()
+    expect(onClose).not.toHaveBeenCalled()
   })
 
   it('opens Add provider as a history-driven sub-page and returns via the back arrow', () => {
