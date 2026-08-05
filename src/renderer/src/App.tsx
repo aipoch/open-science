@@ -113,6 +113,11 @@ const App = (): React.JSX.Element | null => {
   const [isGlobalSearchOpen, setIsGlobalSearchOpen] = useState(false)
   // Cmd+W / Ctrl+W closes transient modals before falling through to preview panes/window.
   const closeActiveModal = useCallback((): boolean => {
+    const update = useUpdateStore.getState()
+    if (update.isDialogOpen) {
+      if (update.status.state !== 'applying') update.closeDialog()
+      return true
+    }
     if (isGlobalSearchOpen) {
       setIsGlobalSearchOpen(false)
       return true

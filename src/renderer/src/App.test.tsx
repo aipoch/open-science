@@ -68,6 +68,11 @@ const mocks = vi.hoisted(() => {
       retryLoad: vi.fn(),
       retryWrites: vi.fn()
     },
+    update: {
+      isDialogOpen: false,
+      status: { state: 'idle' },
+      closeDialog: vi.fn()
+    },
     startupView: 'app' as 'app' | 'onboarding',
     getInfo: vi.fn(),
     syncWindowFindAppearance: vi.fn(),
@@ -144,11 +149,18 @@ vi.mock('@/stores/skill-import-store', () => ({
   useSkillImportStore: <T,>(selector: (state: typeof mocks.skillImport) => T): T =>
     selector(mocks.skillImport)
 }))
-vi.mock('@/stores/update-store', () => ({
-  useUpdateStore: <T,>(
-    selector: (state: { init: typeof mocks.initUpdates; isDialogOpen: boolean }) => T
-  ): T => selector({ init: mocks.initUpdates, isDialogOpen: false })
-}))
+vi.mock('@/stores/update-store', () => {
+  const getState = (): typeof mocks.update & { init: typeof mocks.initUpdates } => ({
+    init: mocks.initUpdates,
+    ...mocks.update
+  })
+  return {
+    useUpdateStore: Object.assign(
+      <T,>(selector: (state: ReturnType<typeof getState>) => T): T => selector(getState()),
+      { getState }
+    )
+  }
+})
 vi.mock('@/pages/onboarding/startup-gate', () => ({
   resolveStartupView: vi.fn(() => mocks.startupView)
 }))
@@ -269,6 +281,9 @@ describe('App startup routing', () => {
     mocks.sessionPersistence.loadError = undefined
     mocks.sessionPersistence.loadWarning = undefined
     mocks.sessionPersistence.writeError = undefined
+    mocks.update.isDialogOpen = false
+    mocks.update.status.state = 'idle'
+    mocks.update.closeDialog.mockClear()
     mocks.sessionPersistence.dismissLoadWarning.mockClear()
     mocks.sessionPersistence.retryLoad.mockClear()
     mocks.sessionPersistence.retryWrites.mockClear()
@@ -407,6 +422,20 @@ describe('App startup routing', () => {
       expect(mocks.closeActiveModal.handler?.()).toBe(true)
     })
     expect(mocks.globalSearch.props?.open).toBe(false)
+  })
+
+  it('closes the update dialog before underlying surfaces', async () => {
+    mocks.settings.isLoaded = true
+    mocks.settings.isSettingsOpen = true
+    mocks.update.isDialogOpen = true
+    await render()
+
+    act(() => {
+      expect(mocks.closeActiveModal.handler?.()).toBe(true)
+    })
+
+    expect(mocks.update.closeDialog).toHaveBeenCalledOnce()
+    expect(mocks.settings.closeSettings).not.toHaveBeenCalled()
   })
 
   it('does not open global search while a file preview modal is open', async () => {
