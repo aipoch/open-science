@@ -157,6 +157,10 @@ describe('logger: formatLine', () => {
           'fragment-opaque-7319'
         ]
       },
+      {
+        text: 'https://alice:malformed-url-opaque-7319@example.test:99999/path',
+        secrets: ['alice', 'malformed-url-opaque-7319']
+      },
       { text: 'sk-1234567890abcdef', secrets: ['sk-1234567890abcdef'] },
       { text: 'github_pat_1234567890abcdef', secrets: ['github_pat_1234567890abcdef'] },
       { text: 'AKIA1234567890ABCDEF', secrets: ['AKIA1234567890ABCDEF'] }

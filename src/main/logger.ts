@@ -200,7 +200,7 @@ const redactUrlCredentials = (rawUrl: string): string => {
 
     return changed ? url.toString().replaceAll('%5Bredacted%5D', REDACTED_MARKER) : rawUrl
   } catch {
-    return rawUrl
+    return REDACTED_MARKER
   }
 }
 
