@@ -134,6 +134,7 @@ import {
 import { AcpSessionConfigurator, type AcpSessionConfigurationFacts } from './session-configurator'
 import { AcpSessionUpdateProjector, type AcpSessionUpdateEffect } from './session-update-projector'
 import { AcpConnectionLifecycleWorkflow } from './connection-lifecycle-workflow'
+import { AcpConnectionCloseWorkflow, type CloseState } from './connection-close-workflow'
 import {
   AcpTurnSkillOwner,
   type AcpTurnSkillHooks,
@@ -479,8 +480,6 @@ class AcpRuntime {
   private readonly contextUsageTracker: ContextUsageTracker
   private readonly connectionAdapter = new AcpAgentConnectionAdapter()
   private readonly connectionResources: AcpConnectionResourceOwner
-  private candidateTreeKillReaped = true
-  private readonly expectedProcessExits = new WeakSet<ChildProcessWithoutNullStreams>()
   private readonly connectionTransitions: AcpConnectionTransitionOwner
   private readonly generationActivity: AcpGenerationActivityOwner
   // Stable app identities, provider aliases, publication order, selection, and startup/delete
@@ -511,6 +510,7 @@ class AcpRuntime {
   private readonly artifactRunRegistry: ArtifactRunRegistry | undefined
   private readonly artifactTurns: ArtifactTurnOwner | undefined
   private readonly promptContentOwner: AcpPromptContentOwner
+  private readonly connectionClose: AcpConnectionCloseWorkflow
   private readonly connectionLifecycle: AcpConnectionLifecycleWorkflow
 
   // Wires runtime dependencies and forwards permission prompts into the event stream.
@@ -533,7 +533,7 @@ class AcpRuntime {
       disconnect: (emitClosedStatus) => this.disconnect(emitClosedStatus),
       onRetired: () => this.callbacks.onRetired?.(),
       publishIdle: () => this.setStatus('idle'),
-      recoverFailedDeferredDisconnect: () => this.recoverFailedDeferredDisconnect(),
+      recoverFailedDeferredDisconnect: () => this.connectionClose.recoverFailedDeferredDisconnect(),
       reportFailure: (message, error) => safeLogError(message, errorLogFields(error))
     })
     this.turnSkills = new AcpTurnSkillOwner({
@@ -658,6 +658,75 @@ class AcpRuntime {
       removeStartupBlocker: (token) => this.generationActivity.releaseStartup(token),
       unregisterBridgeSession: (sessionId) =>
         this.connectionResources.unregisterBridgeReviewerSession(sessionId)
+    })
+    const closeState: CloseState = {
+      invalidatePendingSessionStartups: () => this.invalidatePendingSessionStartups(),
+      disposePermissionContext: () => this.permissionContext.dispose(),
+      clearReviewerState: () => this.reviewerSessions.clear(),
+      settleActivePrompts: () => this.sessionInteractions.settleActivePrompts(),
+      supersedeInteractions: () => this.sessionInteractions.supersedeAll(),
+      clearContextUsage: () => this.contextUsageTracker.clear(),
+      clearAppliedSessionModels: () => this.clearAppliedSessionModels(),
+      activeSessionIds: () => this.activeSessionIds(),
+      disposeSessionCapabilities: (sessionIds) => this.sessionCapabilities.dispose(sessionIds),
+      disposeActiveSessions: (recordFailure) => {
+        for (const session of this.activeSessions()) {
+          try {
+            session.dispose()
+          } catch (error) {
+            recordFailure('primary-session', error)
+          }
+        }
+      },
+      detachSessionConnections: (clearPermissionProfile) => {
+        for (const entry of this.sessionRegistry.entries()) {
+          if (entry.attachment) this.sessionRegistry.detach(entry.attachment, 'connection')
+          else entry.aggregate.detachConnection()
+          if (clearPermissionProfile) entry.aggregate.setPermissionProfile(undefined)
+        }
+      },
+      clearPromptContent: () => this.promptContentOwner.clear(),
+      clearHandoffContinuity: () => this.handoffContinuity.clearGeneration(),
+      clearSessionProjection: () => this.sessionUpdateProjector.clearGeneration(),
+      disposeSessionProjection: () => this.sessionUpdateProjector.dispose(),
+      clearHttpRoutes: () => this.sessionCapabilities.clearHttpRoutes(),
+      selectSession: () => this.sessionRegistry.select(undefined),
+      publishInterruptedPromptFailures: (prompts) => {
+        for (const { scope, terminal } of prompts as ReturnType<
+          AcpSessionInteractionOwner['settleActivePrompts']
+        >) {
+          try {
+            this.pushEvent({
+              kind: 'error',
+              level: 'error',
+              providerError: false,
+              sessionId: scope.sessionId,
+              ...(scope.promptMessageId ? { promptMessageId: scope.promptMessageId } : {}),
+              timestamp: terminal.timestamp,
+              title: ACP_PROMPT_FAILED_EVENT_TITLE,
+              text: 'ACP connection closed'
+            })
+          } catch (error) {
+            safeLogError('connection-close prompt event failed', errorLogFields(error))
+          }
+        }
+      },
+      setStatus: (status) => this.setStatus(status),
+      transitionStatus: (status) => this.snapshotOwner.transitionStatus(status),
+      emitState: () => this.emitState(),
+      hasContextUsage: () => this.contextUsageTracker.hasUsage()
+    }
+    this.connectionClose = new AcpConnectionCloseWorkflow({
+      currentGeneration: () => this.connectionGeneration,
+      currentStatus: () => this.snapshotOwner.status,
+      getSnapshot: () => this.getSnapshot(),
+      disconnectCurrent: (emitClosedStatus, generation) =>
+        this.disconnectCurrent(emitClosedStatus, generation),
+      transitions: this.connectionTransitions,
+      resources: this.connectionResources,
+      backendGeneration: this.backendGeneration,
+      state: closeState,
+      reportFailure: (message, error) => safeLogError(message, errorLogFields(error))
     })
     this.connectionLifecycle = new AcpConnectionLifecycleWorkflow({
       appVersion: options.appVersion,
@@ -1969,22 +2038,7 @@ class AcpRuntime {
 
   // Tears down every local session route and closes the underlying agent process.
   async disconnect(emitClosedStatus = true): Promise<AcpStateSnapshot> {
-    return this.connectionTransitions.settleTeardown(async () => {
-      const teardownGeneration = this.connectionResources.supersede()
-      this.invalidatePendingSessionStartups()
-
-      try {
-        return await this.disconnectCurrent(emitClosedStatus, teardownGeneration)
-      } catch (error) {
-        // disconnectCurrent transfers the resource with detach before physical teardown. If it failed
-        // earlier, the owner still holds a live published connection: restore only that exact teardown
-        // epoch so callers retain the pre-refactor recovery behavior. Once detached, rollback is a no-op.
-        this.connectionResources.restorePublished(teardownGeneration)
-        throw error
-      } finally {
-        await this.connectionResources.closeMcp(teardownGeneration)
-      }
-    })
+    return this.connectionClose.disconnect(emitClosedStatus)
   }
 
   // Synchronously terminates the agent child for app shutdown. Electron's `will-quit` cannot await, so
@@ -1992,14 +2046,7 @@ class AcpRuntime {
   // the app is gone would be an orphaned process still holding its network connection open. The OS
   // reclaims the remaining connection/session state as the process exits.
   shutdown(): void {
-    this.connectionResources.shutdownSynchronously(() => {
-      this.invalidatePendingSessionStartups()
-      this.backendGeneration.supersede(this.connectionGeneration - 1)
-    })
-    this.connectionTransitions.resetReconnect()
-    this.sessionUpdateProjector.clearGeneration()
-    this.contextUsageTracker.clear()
-    this.clearAppliedSessionModels()
+    this.connectionClose.shutdown()
   }
 
   // Awaitable quit/relaunch teardown. Latches shuttingDown FIRST so a connect that is mid-spawn when
@@ -2008,18 +2055,7 @@ class AcpRuntime {
   // remains — assigned, connecting, or mid-spawn. Returns { reaped } so the caller can tell a clean
   // teardown from a degraded one (taskkill fallback left grandchildren) before committing to app.exit.
   async shutdownForQuit(): Promise<{ reaped: boolean }> {
-    this.candidateTreeKillReaped = true
-    const shutdown = this.connectionResources.beginAwaitableShutdown(true)
-    // Kill the currently-assigned agent tree right away. Do NOT wait on the in-flight connect first: it
-    // may be stalled on ACP initialize with the child already assigned, and waiting would let
-    // shutdownBackends time out and app.exit orphan it. disconnect() reaps that child's tree and closes
-    // the connection, which also unblocks (rejects) the stalled connect.
-    await this.disconnect(false)
-    // Cover the child that had not been assigned yet when disconnect ran: a connect still mid-spawn hits
-    // the shutting-down check and tree-kills its freshly-spawned child. Await it (swallowing its
-    // rejection, bounded by shutdownBackends' timeout) so that kill completes before we resolve.
-    const outcome = await shutdown.finish()
-    return { reaped: outcome.reaped && this.candidateTreeKillReaped }
+    return this.connectionClose.shutdownForQuit()
   }
 
   // Teardown for the pre-update-install gate. Reaps the current agent tree (so the NSIS installer can
@@ -2033,18 +2069,13 @@ class AcpRuntime {
   // signal (so a degraded reap makes the caller refuse the install); if that await is abandoned on
   // timeout the caller refuses on !completed and the stale-generation self-reap still collects the child.
   async shutdownForUpdateGate(): Promise<{ reaped: boolean }> {
-    this.candidateTreeKillReaped = true
-    const shutdown = this.connectionResources.beginAwaitableShutdown(false)
-    await this.disconnect(false)
-    // Await so the mid-spawn child's kill settles before we report the reaped signal.
-    const outcome = await shutdown.finish()
-    return { reaped: outcome.reaped && this.candidateTreeKillReaped }
+    return this.connectionClose.shutdownForUpdateGate()
   }
 
   // Retires this framework generation without interrupting active turns or background workflows. The
   // coordinator stops routing new work here immediately; teardown waits for every prompt and lease.
   async requestRetirement(): Promise<void> {
-    await this.connectionTransitions.requestRetirement()
+    await this.connectionClose.requestRetirement()
   }
 
   // Applies an active-provider change without interrupting the user. The agent bakes its provider env in
@@ -2052,35 +2083,7 @@ class AcpRuntime {
   // until the session goes idle. Because every provider shares one config dir, the reconnect resumes the
   // conversation on the new provider with full context. Called when the active provider changes.
   async requestProviderReconnect(): Promise<void> {
-    // The selected backend changed even if teardown must wait for an active prompt. Its old context
-    // measurement no longer describes the selected generation, so hide it immediately and let the
-    // replacement generation repopulate usage after reconnect/resume.
-    const contextUsageWasVisible = this.contextUsageTracker.hasUsage()
-    this.contextUsageTracker.clear()
-    if (contextUsageWasVisible) {
-      this.clearAppliedSessionModels()
-      this.emitState()
-    }
-
-    await this.connectionTransitions.requestProviderReconnect()
-  }
-
-  private recoverFailedDeferredDisconnect(): void {
-    // A failed Runtime teardown may still expose the stale connection. Supersede it before releasing
-    // the transition barrier so the next startup must resolve and connect a fresh backend.
-    const teardownGeneration = this.connectionResources.supersede()
-    this.backendGeneration.supersede(teardownGeneration - 1)
-    void this.connectionResources.teardown(teardownGeneration, (stage, cleanupError) => {
-      safeLogError(`${stage} cleanup after failed deferred disconnect failed`, {
-        ...diagnosticErrorFields(cleanupError)
-      })
-    })
-    this.snapshotOwner.transitionStatus('closed')
-    try {
-      this.emitState()
-    } catch (error) {
-      safeLogError('emitState after failed deferred disconnect failed', errorLogFields(error))
-    }
+    await this.connectionClose.requestProviderReconnect()
   }
 
   // Holds this generation across a multi-step background workflow, including gaps with no live session.
@@ -2095,67 +2098,11 @@ class AcpRuntime {
     return this.generationActivity.withOperation(work)
   }
 
-  private async disconnectCurrent(
+  private disconnectCurrent(
     emitClosedStatus = true,
     teardownGeneration = this.connectionGeneration
   ): Promise<AcpStateSnapshot> {
-    let teardownFailed = false
-    let teardownFailure: unknown
-    const recordFailure = (stage: string, error: unknown): void => {
-      if (!teardownFailed) {
-        teardownFailed = true
-        teardownFailure = error
-        return
-      }
-      safeLogError('secondary ACP disconnect cleanup failed', {
-        ...diagnosticErrorFields(error),
-        stage
-      })
-    }
-    const runCleanup = (stage: string, cleanup: () => void): void => {
-      try {
-        cleanup()
-      } catch (error) {
-        recordFailure(stage, error)
-      }
-    }
-
-    runCleanup('permission-context', () => this.permissionContext.dispose())
-    runCleanup('reviewer-state', () => this.reviewerSessions.clear())
-    this.sessionInteractions.supersedeAll()
-    // Context usage belongs to this live agent-context generation. Invalidate it before teardown,
-    // including when a later session.dispose throws. A reconnect may resume the native context or
-    // replay history into a fresh one; only that generation's own usage_update can repopulate it.
-    this.contextUsageTracker.clear()
-    this.clearAppliedSessionModels()
-
-    const activeSessionIds = this.activeSessionIds()
-    const activeSessions = this.activeSessions()
-    this.sessionCapabilities.dispose(activeSessionIds)
-
-    for (const session of activeSessions) {
-      runCleanup('primary-session', () => session.dispose())
-    }
-
-    for (const entry of this.sessionRegistry.entries()) {
-      if (entry.attachment) this.sessionRegistry.detach(entry.attachment, 'connection')
-      else entry.aggregate.detachConnection()
-      entry.aggregate.setPermissionProfile(undefined)
-    }
-    this.promptContentOwner.clear()
-    this.sessionUpdateProjector.clearGeneration()
-    runCleanup('MCP HTTP routes', () => this.sessionCapabilities.clearHttpRoutes())
-    this.sessionRegistry.select(undefined)
-
-    await this.connectionResources.teardown(teardownGeneration, recordFailure)
-
-    if (emitClosedStatus && teardownGeneration === this.connectionGeneration) {
-      runCleanup('closed-status', () => this.setStatus('closed'))
-    }
-
-    this.backendGeneration.supersede(teardownGeneration - 1)
-    if (teardownFailed) throw teardownFailure
-    return this.getSnapshot()
+    return this.connectionClose.disconnectCurrent(emitClosedStatus, teardownGeneration)
   }
 
   private openAgentConnection(
@@ -2186,20 +2133,13 @@ class AcpRuntime {
         )
       },
       onProcessTreeReaped: (reaped) => {
-        this.candidateTreeKillReaped = this.candidateTreeKillReaped && reaped
+        this.connectionClose.recordProcessTreeReaped(reaped)
       },
-      markProcessExitExpected: (process) => this.expectedProcessExits.add(process),
+      markProcessExitExpected: (process) => this.connectionClose.markExpected(process),
       onProcessStderr: (text, context) => this.handleAgentProcessStderr(text, context),
       onProcessError: (error, context) => this.handleAgentProcessError(error, context),
       onProcessExit: (code, signal, context) => this.handleAgentProcessExit(code, signal, context),
-      onConnectionClosed: () => {
-        if (
-          this.snapshotOwner.status === 'connected' ||
-          this.snapshotOwner.status === 'connecting'
-        ) {
-          this.handleConnectionClosed()
-        }
-      },
+      onConnectionClosed: () => this.connectionClose.handleUnexpectedClose(),
       reportCleanupFailure: (stage, error, framework, epoch) => {
         if (stage === 'bridge-lease') {
           safeLogError('responses bridge lease release failed', errorLogFields(error))
@@ -3617,7 +3557,7 @@ class AcpRuntime {
     process: ChildProcessWithoutNullStreams,
     epoch: number
   ): ReturnType<AcpConnectionResourceOwner['processEventDisposition']> {
-    if (this.expectedProcessExits.has(process)) return 'expected'
+    if (this.connectionClose.isExpected(process)) return 'expected'
     return this.connectionResources.processEventDisposition(process, epoch)
   }
 
@@ -3698,58 +3638,6 @@ class AcpRuntime {
         title: 'Agent process exited',
         text: signal ? `signal ${signal}` : `code ${code ?? 'unknown'}`
       })
-    }
-  }
-
-  // Clears local state after the protocol connection closes unexpectedly.
-  private handleConnectionClosed(): void {
-    const teardownGeneration = this.connectionGeneration
-    const interruptedPrompts = this.sessionInteractions.settleActivePrompts()
-    this.invalidatePendingSessionStartups()
-    this.permissionContext.dispose()
-    this.reviewerSessions.clear()
-    this.connectionResources.cleanupUnexpectedClose(teardownGeneration)
-    this.backendGeneration.supersede(teardownGeneration)
-    this.sessionCapabilities.dispose(this.activeSessionIds())
-    for (const entry of this.sessionRegistry.entries()) {
-      if (entry.attachment) this.sessionRegistry.detach(entry.attachment, 'connection')
-      else entry.aggregate.detachConnection()
-    }
-    this.promptContentOwner.clear()
-    this.handoffContinuity.clearGeneration()
-    this.sessionUpdateProjector.dispose()
-    this.contextUsageTracker.clear()
-    this.sessionCapabilities.clearHttpRoutes()
-    this.sessionRegistry.select(undefined)
-    this.sessionInteractions.supersedeAll()
-    // The connection is already gone, so any ensureConnected caller waiting on
-    // the reconnect barrier must unblock now — it will fall through to connect()
-    // and pick up the new backend from resolveBackend. A fresh spawn re-provisions
-    // skills too, so clear both pending flags to avoid a spurious later reconnect.
-    this.connectionTransitions.resetReconnect()
-    void this.connectionResources.closeMcp(teardownGeneration)
-    try {
-      this.setStatus('closed')
-    } finally {
-      for (const { scope, terminal } of interruptedPrompts) {
-        try {
-          this.pushEvent({
-            kind: 'error',
-            level: 'error',
-            providerError: false,
-            sessionId: scope.sessionId,
-            ...(scope.promptMessageId ? { promptMessageId: scope.promptMessageId } : {}),
-            timestamp: terminal.timestamp,
-            title: ACP_PROMPT_FAILED_EVENT_TITLE,
-            text: 'ACP connection closed'
-          })
-        } catch (error) {
-          safeLogError('connection-close prompt event failed', errorLogFields(error))
-        }
-      }
-      // An unexpected close satisfies any pending reconnect, but retirement remains terminal. Re-run
-      // its evaluator now and again when outstanding operation/activity leases drain.
-      this.connectionTransitions.activityChanged()
     }
   }
 

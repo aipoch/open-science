@@ -1669,18 +1669,18 @@ describe('ACP runtime session management', () => {
       (runtime: AcpRuntime) =>
         (
           runtime as unknown as {
-            handleConnectionClosed: () => void
+            connectionClose: { handleUnexpectedClose: () => void }
           }
-        ).handleConnectionClosed()
+        ).connectionClose.handleUnexpectedClose()
     ],
     [
       'failed deferred disconnect recovery',
       (runtime: AcpRuntime) =>
         (
           runtime as unknown as {
-            recoverFailedDeferredDisconnect: () => void
+            connectionClose: { recoverFailedDeferredDisconnect: () => void }
           }
-        ).recoverFailedDeferredDisconnect()
+        ).connectionClose.recoverFailedDeferredDisconnect()
     ]
   ] satisfies ReadonlyArray<readonly [string, (runtime: AcpRuntime) => void | Promise<void>]>
 
@@ -8146,8 +8146,10 @@ describe('ACP runtime session management', () => {
     const reviewerCwds = fakeAgent.newSessions.map(({ cwd }) => cwd)
     await runtime.requestProviderReconnect()
     const handleConnectionClosed = (
-      runtime as unknown as { handleConnectionClosed: () => void }
-    ).handleConnectionClosed.bind(runtime)
+      runtime as unknown as { connectionClose: { handleUnexpectedClose: () => void } }
+    ).connectionClose.handleUnexpectedClose.bind(
+      (runtime as unknown as { connectionClose: unknown }).connectionClose
+    )
 
     try {
       expect(handleConnectionClosed).not.toThrow()
