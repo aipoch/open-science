@@ -906,12 +906,7 @@ const waitForOpenCodeMcpToolInput = (
 const observePermissionToolContext = (
   runtime: AcpRuntime,
   notification: SessionNotification
-): void =>
-  (
-    runtime as unknown as {
-      observePermissionToolContext: (value: SessionNotification) => void
-    }
-  ).observePermissionToolContext(notification)
+): void => permissionContext(runtime).observeProviderUpdate(notification)
 
 // Finds the isMcp flag the runtime logged for a given permission request (identified by toolCallId).
 const auditedIsMcp = (toolCallId: string): boolean | undefined => {

@@ -17,7 +17,6 @@ describe('AcpSessionUpdateProjector', () => {
     }
 
     const effects = projector.project(notification, {
-      kind: 'runtime',
       appSessionId: 'stable-session',
       eventId: 'event-1',
       timestamp: 1710000000000,
@@ -57,7 +56,6 @@ describe('AcpSessionUpdateProjector', () => {
       update: { sessionUpdate: 'usage_update', used: 42, size: 128_000 }
     }
     const routing = {
-      kind: 'runtime' as const,
       eventId: 'event-usage',
       visible: true,
       reconnectPending: false,
@@ -89,7 +87,6 @@ describe('AcpSessionUpdateProjector', () => {
         }
       },
       {
-        kind: 'runtime',
         framework: 'claude-code',
         eventId: 'event-refusal',
         visible: true,
@@ -117,7 +114,6 @@ describe('AcpSessionUpdateProjector', () => {
       update: { sessionUpdate: 'current_mode_update', currentModeId: 'bypassPermissions' }
     }
     const routing = {
-      kind: 'runtime' as const,
       eventId: 'event-mode',
       visible: false,
       reconnectPending: true,
@@ -155,7 +151,6 @@ describe('AcpSessionUpdateProjector', () => {
     }
 
     const effects = projector.project(notification, {
-      kind: 'runtime',
       eventId: 'event-tool',
       visible: true,
       reconnectPending: false,
@@ -191,7 +186,6 @@ describe('AcpSessionUpdateProjector', () => {
         }
       },
       {
-        kind: 'runtime',
         eventId: 'event-empty',
         visible: true,
         reconnectPending: false,
@@ -208,7 +202,6 @@ describe('AcpSessionUpdateProjector', () => {
     const skillPath = join(skillsRoot, 'mcp-pubmed', 'SKILL.md')
     projector.beginGeneration(skillsRoot)
     const routing = {
-      kind: 'runtime' as const,
       eventId: 'event-skill',
       visible: true,
       reconnectPending: false,
@@ -283,7 +276,6 @@ describe('AcpSessionUpdateProjector', () => {
     const skillsRoot = resolve('/data', 'codex-home', 'skills')
     projector.beginGeneration(skillsRoot)
     const routing = {
-      kind: 'runtime' as const,
       eventId: 'event-skill',
       visible: true,
       reconnectPending: false,
@@ -330,49 +322,5 @@ describe('AcpSessionUpdateProjector', () => {
     expect(complete('session-b').at(-1)).toMatchObject({
       event: { title: 'Loaded skill: mcp-chemistry' }
     })
-  })
-
-  it('projects Permission tool correlation first with the stable Session identity', () => {
-    const projector = new AcpSessionUpdateProjector()
-    const effects = projector.project(
-      {
-        sessionId: 'provider-session',
-        update: {
-          sessionUpdate: 'tool_call',
-          toolCallId: 'mcp-1',
-          title: 'Run notebook cell',
-          kind: 'execute',
-          status: 'pending'
-        }
-      },
-      {
-        kind: 'permission',
-        appSessionId: 'stable-session',
-        framework: 'codex',
-        mcpServerNames: ['open-science-notebook']
-      }
-    )
-
-    expect(effects).toEqual([
-      {
-        kind: 'permission-tool-correlation',
-        notification: {
-          sessionId: 'stable-session',
-          update: {
-            sessionUpdate: 'tool_call',
-            toolCallId: 'mcp-1',
-            title: 'Run notebook cell',
-            kind: 'execute',
-            status: 'pending'
-          }
-        },
-        context: {
-          sessionId: 'stable-session',
-          framework: 'codex',
-          mcpServerNames: ['open-science-notebook']
-        }
-      }
-    ])
-    expect(Object.isFrozen(effects[0])).toBe(true)
   })
 })

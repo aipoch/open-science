@@ -3,8 +3,6 @@ import type {
   ActiveSession,
   ClientConnection,
   PromptResponse,
-  RequestPermissionRequest,
-  RequestPermissionResponse,
   SessionNotification
 } from '@agentclientprotocol/sdk'
 import type { ChildProcessWithoutNullStreams } from 'node:child_process'
@@ -28,28 +26,21 @@ import type {
   AcpStateSnapshot
 } from '../../shared/acp'
 import { ACP_PROMPT_FAILED_EVENT_TITLE } from '../../shared/acp'
-import {
-  DEFAULT_PERMISSION_PROFILE,
-  type SessionPermissionProfileState
-} from '../../shared/permission-profiles'
+import { type SessionPermissionProfileState } from '../../shared/permission-profiles'
 import { type AgentFrameworkId } from '../../shared/settings'
 import type { EffectiveSpecialistSkills } from '../../shared/specialist'
 import type { ResolvedReasoningEffort } from '../../shared/reasoning-effort'
 import type { ApprovedSwitchReadBack, ClaudeCodeReplayInput } from '../agents/claude-code-handoff'
 import {
   claudeCodeFramework,
-  getAgentFramework,
   type AgentFramework,
   type AgentModelChangeTarget,
   type ResolvedAgentBackend
 } from '../agent-framework'
-import { resolveCanonicalMcpToolIdentity } from '../agent-framework/app-mcp-names'
 import { createLogger, diagnosticErrorFields, errorLogFields } from '../logger'
-import { extractProviderToolName } from './runtime-events'
 import { fetchOpenCodeUsageSnapshot } from './opencode-turn-usage'
 import { AcpRuntimeSnapshotOwner } from './runtime-snapshot-owner'
 import { ConversationPermissionGrantStore } from './permission-broker'
-import { isMcpToolName } from './permission-policy'
 import { AcpPermissionContext, HUMAN_PERMISSION_ACTION_ORIGIN } from './permission-context'
 import { applyCurrentModeUpdate } from './permission-profile-controller'
 import { AgentMcpHttpHost } from './mcp-http-host'
@@ -563,21 +554,47 @@ class AcpRuntime {
     })
     this.permissionContext = new AcpPermissionContext({
       emitPermissionRequest: (request) => {
-        // Relabel to the app-facing id when this session was adopted onto a replaced agent.
-        const sessionId = this.sessionRegistry.resolveAppSessionId(request.sessionId)
-        const routed = sessionId === request.sessionId ? request : { ...request, sessionId }
-
         this.pushEvent({
           kind: 'permission',
           level: 'warning',
-          sessionId: routed.sessionId,
-          toolCallId: routed.toolCallId,
+          sessionId: request.sessionId,
+          toolCallId: request.toolCallId,
           title: 'Permission requested',
-          text: routed.title,
-          raw: routed
+          text: request.title,
+          raw: request
         })
-        this.callbacks.onPermissionRequest?.(routed)
+        this.callbacks.onPermissionRequest?.(request)
         this.emitState()
+      },
+      routing: {
+        resolveAppSessionId: (sessionId) => this.sessionRegistry.resolveAppSessionId(sessionId),
+        sessionSnapshot: (sessionId) => {
+          const snapshot = this.sessionRegistry.lookup(sessionId)?.aggregate.snapshot()
+          return snapshot
+            ? {
+                cwd: snapshot.cwd,
+                frameworkId: snapshot.frameworkId,
+                permissionProfile: snapshot.permissionProfile
+              }
+            : undefined
+        },
+        hasActivePrimarySession: (sessionId) => this.activeSessionFor(sessionId) !== undefined,
+        capturePrompt: (sessionId) => {
+          const scope = this.currentPromptInteraction(sessionId)
+          return scope
+            ? {
+                sequence: scope.sequence,
+                isCancellationAccepted: () => this.sessionInteractions.isCancellationAccepted(scope)
+              }
+            : undefined
+        },
+        currentInteractionSequence: (sessionId) =>
+          this.sessionInteractions.current(sessionId)?.sequence,
+        mcpServerNamesFor: (sessionId) => this.sessionCapabilities.mcpServerNamesFor(sessionId),
+        reviewerContextFor: (sessionId) => this.reviewerSessions.contextFor(sessionId),
+        resolveReviewerPermission: (request) => this.reviewerSessions.resolvePermission(request),
+        currentFramework: () => this.framework,
+        resolveProjectId: (sessionId) => this.resolveSessionProjectName(sessionId)
       },
       conversationGrants: options.permissionGrantStore,
       permissionGrantRegistry: options.permissionGrantRegistry,
@@ -589,9 +606,15 @@ class AcpRuntime {
     })
     this.reviewerSessions = new ReviewerSessionOwner({
       addStartupBlocker: (token) => this.generationActivity.acquireStartup(token),
+      assertCurrentConnection: (connection) => this.assertCurrentConnectedConnection(connection),
       clearPermissionCorrelations: (sessionId) =>
         this.permissionContext.clearCorrelationsForSession(sessionId),
+      currentSessionSetup: () => ({
+        framework: this.framework,
+        sessionOptions: this.backend.session.options
+      }),
       currentStartupGeneration: () => this.sessionRegistry.startupGeneration,
+      ensureConnected: (cwd) => this.ensureConnected(cwd),
       isPrimarySessionIdClaimed: (sessionId) => this.sessionRegistry.isIdentityClaimed(sessionId),
       onActiveSessionReleased: () => this.generationActivityChanged(),
       registerBridgeSession: (sessionId) =>
@@ -1514,8 +1537,9 @@ class AcpRuntime {
     onFrameworkResolved: (framework: AgentFramework['id']) => void
   ): Promise<AcpAgentConnectionCandidate> {
     const hooks: AcpAgentConnectionHooks = {
-      requestPermission: (params) => this.handlePermissionRequest(params),
-      observeSessionUpdate: (notification) => this.observePermissionToolContext(notification),
+      requestPermission: (params) => this.permissionContext.handleProviderRequest(params),
+      observeSessionUpdate: (notification) =>
+        this.permissionContext.observeProviderUpdate(notification),
       observeClaudeSdkMessage: (params) => this.observeClaudeSdkMessage(params),
       filesystem: {
         resolveSessionCwd: (sessionId) => this.resolveSessionCwd(sessionId),
@@ -2048,135 +2072,6 @@ class AcpRuntime {
     )
   }
 
-  // Hands permission requests to the broker so the renderer can answer later. Any failure is logged with
-  // its real message before it propagates: the ACP SDK collapses a thrown handler error into a bare
-  // -32603 "Internal error" (real detail buried in `data.details`), so this is the only place the true
-  // cause is captured in the app log. The error is rethrown unchanged to preserve protocol behavior.
-  private async handlePermissionRequest(
-    params: RequestPermissionRequest
-  ): Promise<RequestPermissionResponse> {
-    // Fork point: a WebFetch/server-side tool that never reaches this line means the "Internal error"
-    // originated elsewhere. Info level so it's a visible audit line (one per prompt): if an MCP call
-    // runs without this appearing, the agent never asked (e.g. an un-gated permission config). Log the
-    // tool identity (name/kind) and whether it looks like MCP — never the title (a WebFetch title is the
-    // full URL with query params, i.e. user data).
-    const appSessionId = this.sessionRegistry.resolveAppSessionId(params.sessionId)
-    const reviewerContext = this.reviewerSessions.contextFor(params.sessionId)
-    const mcpServerNames =
-      reviewerContext?.mcpServerNames ?? this.sessionCapabilities.mcpServerNamesFor(appSessionId)
-    const promptInteraction = this.currentPromptInteraction(appSessionId)
-    const promptTurn = promptInteraction?.sequence
-    const aggregateSnapshot = this.sessionRegistry.lookup(appSessionId)?.aggregate.snapshot()
-    const framework = reviewerContext?.frameworkId ?? aggregateSnapshot?.frameworkId
-    const isPermissionContextCancelled = (): boolean =>
-      framework === 'opencode' &&
-      (promptTurn === undefined
-        ? this.activeSessionFor(appSessionId) !== undefined
-        : this.currentPromptInteraction(appSessionId)?.sequence !== promptTurn ||
-          (promptInteraction !== undefined &&
-            this.sessionInteractions.isCancellationAccepted(promptInteraction)))
-    const restoreContext = {
-      sessionId: appSessionId,
-      framework,
-      mcpServerNames,
-      isCancelled: isPermissionContextCancelled
-    }
-    const normalizedParams = await this.permissionContext.restoreToolCall(params, restoreContext)
-    if (
-      !normalizedParams ||
-      this.permissionContext.isPermissionRequestCancelled(
-        params.toolCall.toolCallId,
-        restoreContext
-      )
-    ) {
-      return { outcome: { outcome: 'cancelled' } }
-    }
-    const toolName = extractProviderToolName(normalizedParams.toolCall)
-    const isMcp =
-      isMcpToolName(normalizedParams.toolCall?.title, mcpServerNames) ||
-      isMcpToolName(toolName, mcpServerNames)
-    log.info('permission request received', {
-      tool:
-        this.toolIdentityForDiagnostics(toolName, appSessionId) ?? normalizedParams.toolCall?.kind,
-      isMcp,
-      toolCallId: normalizedParams.toolCall?.toolCallId,
-      sessionId: params.sessionId,
-      optionCount: params.options?.length
-    })
-
-    try {
-      // Background reviewer sessions run unattended and are intentionally absent from the primary
-      // Session Aggregate collection.
-      // Approve only their dedicated, scope-bounded MCP. Bash, filesystem, network, other MCP servers,
-      // and unknown tools are rejected without involving the renderer.
-      if (reviewerContext) {
-        const response = this.reviewerSessions.resolvePermission(normalizedParams)
-        if (response) return response
-        throw new Error(`Unknown ACP reviewer session: ${params.sessionId}`)
-      }
-
-      if (!this.activeSessionFor(appSessionId)) {
-        throw new Error(`Unknown ACP session: ${appSessionId}`)
-      }
-
-      const profileState = aggregateSnapshot?.permissionProfile
-      const permissionFrameworkId = aggregateSnapshot?.frameworkId ?? this.framework.id
-      const permissionFramework =
-        permissionFrameworkId === this.framework.id
-          ? this.framework
-          : getAgentFramework(permissionFrameworkId)
-
-      return await this.permissionContext.requestPermission(
-        appSessionId === normalizedParams.sessionId
-          ? normalizedParams
-          : { ...normalizedParams, sessionId: appSessionId },
-        {
-          profile: profileState?.selectedProfile ?? DEFAULT_PERMISSION_PROFILE,
-          // Source the framework from the per-session map, not the current generation view — an
-          // overlapping reconnect can move it off Codex mid-request and leak the amendment options.
-          frameworkId: permissionFrameworkId,
-          shellDialect: permissionFramework.commandShellDialect,
-          autoReviewStrategy: profileState?.autoReviewStrategy,
-          cwd: aggregateSnapshot?.cwd,
-          mcpServerNames,
-          projectId: this.resolveSessionProjectName(appSessionId)
-        }
-      )
-    } catch (error) {
-      log.error('permission request failed', {
-        message: errorMessage(error),
-        tool:
-          this.toolIdentityForDiagnostics(
-            extractProviderToolName(normalizedParams.toolCall),
-            appSessionId
-          ) ?? normalizedParams.toolCall?.kind,
-        toolCallId: params.toolCall?.toolCallId,
-        sessionId: params.sessionId
-      })
-      throw error
-    }
-  }
-
-  // Observes every ACP update before framework-specific consumers drain their ActiveSession queue.
-  // Reviewer updates are consumed outside handleSessionUpdate, so this shared boundary is the only
-  // place where a preceding tool_call can reliably enrich a later sparse permission request.
-  private observePermissionToolContext(notification: SessionNotification): void {
-    const sessionId = this.sessionRegistry.resolveAppSessionId(notification.sessionId)
-    const reviewerContext = this.reviewerSessions.contextFor(notification.sessionId)
-    const framework =
-      reviewerContext?.frameworkId ??
-      this.sessionRegistry.lookup(sessionId)?.aggregate.snapshot().frameworkId
-    this.applySessionUpdateEffects(
-      this.sessionUpdateProjector.project(notification, {
-        kind: 'permission',
-        appSessionId: sessionId,
-        framework,
-        mcpServerNames:
-          reviewerContext?.mcpServerNames ?? this.sessionCapabilities.mcpServerNamesFor(sessionId)
-      })
-    )
-  }
-
   private cancelPermissionFlowForSession(sessionId: string): void {
     this.permissionContext.cancelForSession(sessionId)
   }
@@ -2292,7 +2187,6 @@ class AcpRuntime {
     const sessionId = appSessionId ?? notification.sessionId
     this.applySessionUpdateEffects(
       this.sessionUpdateProjector.project(notification, {
-        kind: 'runtime',
         framework:
           this.sessionRegistry.lookup(sessionId)?.aggregate.snapshot().frameworkId ??
           this.framework.id,
@@ -2312,9 +2206,6 @@ class AcpRuntime {
   ): void {
     for (const effect of effects) {
       switch (effect.kind) {
-        case 'permission-tool-correlation':
-          this.permissionContext.observeToolCall(effect.notification, effect.context)
-          break
         case 'context-observation':
           this.ensureContextUsageTracking(effect.sessionId)
           this.contextUsageTracker.observeSessionUpdate(
@@ -2365,20 +2256,6 @@ class AcpRuntime {
           break
       }
     }
-  }
-
-  private toolIdentityForDiagnostics(
-    providerToolName: string | undefined,
-    sessionId: string
-  ): string | undefined {
-    if (!providerToolName) return undefined
-
-    return (
-      resolveCanonicalMcpToolIdentity(
-        providerToolName,
-        this.sessionCapabilities.mcpServerNamesFor(sessionId)
-      ) ?? providerToolName
-    )
   }
 
   private processEventDisposition(
@@ -2508,18 +2385,7 @@ class AcpRuntime {
   // appear in the snapshot, and callers are responsible for disposing it. This allows background
   // review to run in parallel with the main session without affecting the main state machine.
   async buildReviewerSession(request: ReviewerSessionRequest): Promise<ReviewerSessionResult> {
-    return this.withOperationLease(() =>
-      this.reviewerSessions.create(request, async () => {
-        const connection = await this.ensureConnected(request.cwd)
-        this.assertCurrentConnectedConnection(connection)
-        return {
-          connection,
-          framework: this.framework,
-          sessionOptions: this.backend.session.options,
-          startupGeneration: this.sessionRegistry.startupGeneration
-        }
-      })
-    )
+    return this.withOperationLease(() => this.reviewerSessions.create(request))
   }
 
   private invalidatePendingSessionStartups(): void {

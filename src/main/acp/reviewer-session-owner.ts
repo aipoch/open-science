@@ -114,17 +114,16 @@ type ActiveReviewerSessionOwner = ReviewerSessionContext & {
   token: symbol
 }
 
-type ReviewerSessionCreationContext = {
-  connection: ClientConnection
-  framework: AgentFramework
-  sessionOptions: Record<string, unknown> | undefined
-  startupGeneration: number
-}
-
 export type ReviewerSessionOwnerDependencies = {
   addStartupBlocker: (token: symbol) => void
+  assertCurrentConnection: (connection: ClientConnection) => void
   clearPermissionCorrelations: (sessionId: string) => void
+  currentSessionSetup: () => {
+    framework: AgentFramework
+    sessionOptions: Record<string, unknown> | undefined
+  }
   currentStartupGeneration: () => number
+  ensureConnected: (cwd: string) => Promise<ClientConnection>
   isPrimarySessionIdClaimed: (sessionId: string) => boolean
   onActiveSessionReleased: () => void
   registerBridgeSession: (sessionId: string) => void
@@ -132,8 +131,8 @@ export type ReviewerSessionOwnerDependencies = {
   unregisterBridgeSession: (sessionId: string) => boolean | undefined
 }
 
-// Owns every ephemeral Reviewer identity and resource. Primary session state remains in AcpRuntime;
-// the two owners collaborate only through the narrow collision and startup-blocker ports above.
+// Owns every ephemeral Reviewer startup, identity, and resource. Runtime supplies only current
+// connection/setup facts plus narrow collision, bridge, cleanup, and startup-blocker ports.
 export class ReviewerSessionOwner {
   private readonly activeById = new Map<string, ActiveReviewerSessionOwner>()
   private readonly activeBySession = new WeakMap<ActiveSession, ActiveReviewerSessionOwner>()
@@ -142,12 +141,12 @@ export class ReviewerSessionOwner {
 
   constructor(private readonly dependencies: ReviewerSessionOwnerDependencies) {}
 
-  async create(
-    request: ReviewerSessionRequest,
-    prepare: () => Promise<ReviewerSessionCreationContext>
-  ): Promise<ReviewerSessionResult> {
+  async create(request: ReviewerSessionRequest): Promise<ReviewerSessionResult> {
     const mcpServerNames = this.validateRequest(request)
-    const { connection, framework, sessionOptions, startupGeneration } = await prepare()
+    const connection = await this.dependencies.ensureConnected(request.cwd)
+    this.dependencies.assertCurrentConnection(connection)
+    const { framework, sessionOptions } = this.dependencies.currentSessionSetup()
+    const startupGeneration = this.dependencies.currentStartupGeneration()
     const reviewerCwd = await mkdtemp(join(tmpdir(), 'open-science-reviewer-'))
     const setup = framework.buildSessionSetup({
       systemPromptAppends: request.systemPromptAppend ? [request.systemPromptAppend] : [],

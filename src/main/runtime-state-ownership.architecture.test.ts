@@ -353,6 +353,17 @@ describe('runtime state ownership architecture', () => {
     expect(source).toContain('currentConnection: () => this.connection')
   })
 
+  it('keeps provider permission routing and reviewer preparation behind their owners', () => {
+    const source = readSource('src/main/acp/runtime.ts')
+
+    expect(source).not.toContain('private async handlePermissionRequest')
+    expect(source).not.toContain('private observePermissionToolContext')
+    expect(source).not.toContain('reviewerSessions.create(request, async')
+    expect(source).toContain('this.permissionContext.handleProviderRequest(params)')
+    expect(source).toContain('this.permissionContext.observeProviderUpdate(notification)')
+    expect(source).toContain('this.reviewerSessions.create(request)')
+  })
+
   it('accepts declared interface imports for a future orchestration module', () => {
     const source = `
       import type { AcpApplicationCommandDependencies } from '../acp/application-commands'

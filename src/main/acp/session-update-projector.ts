@@ -1,10 +1,10 @@
 import type { SessionNotification } from '@agentclientprotocol/sdk'
 
 import type { AcpContextUsage, AcpRuntimeEvent } from '../../shared/acp'
+import type { AgentFrameworkId } from '../../shared/settings'
 import { resolveCanonicalMcpToolIdentity } from '../agent-framework/app-mcp-names'
 import { CodexSkillActivityProjector } from './codex-skill-activity'
 import type { SessionUpdateObservation } from './context-usage-tracker'
-import type { PermissionToolContext } from './permission-context'
 import { isMcpToolName } from './permission-policy'
 import {
   extractProviderToolName,
@@ -12,9 +12,8 @@ import {
   toAcpRuntimeEvent
 } from './runtime-events'
 
-type RuntimeProjectionRouting = Readonly<{
-  kind: 'runtime'
-  framework?: PermissionToolContext['framework']
+type AcpSessionUpdateRouting = Readonly<{
+  framework?: AgentFrameworkId
   appSessionId?: string
   eventId: string
   timestamp?: number
@@ -23,21 +22,7 @@ type RuntimeProjectionRouting = Readonly<{
   mcpServerNames: readonly string[]
 }>
 
-type PermissionProjectionRouting = Readonly<{
-  kind: 'permission'
-  appSessionId: string
-  framework: PermissionToolContext['framework']
-  mcpServerNames: readonly string[]
-}>
-
-type AcpSessionUpdateRouting = RuntimeProjectionRouting | PermissionProjectionRouting
-
 type AcpSessionUpdateEffect =
-  | Readonly<{
-      kind: 'permission-tool-correlation'
-      notification: Readonly<SessionNotification>
-      context: Readonly<PermissionToolContext>
-    }>
   | Readonly<{
       kind: 'context-observation'
       sessionId: string
@@ -123,20 +108,6 @@ class AcpSessionUpdateProjector {
     const routed = structuredClone(notification)
     if (routing.appSessionId) routed.sessionId = routing.appSessionId
     deepFreeze(routed)
-
-    if (routing.kind === 'permission') {
-      return Object.freeze([
-        deepFreeze({
-          kind: 'permission-tool-correlation' as const,
-          notification: routed,
-          context: {
-            sessionId: routed.sessionId,
-            framework: routing.framework,
-            mcpServerNames: [...routing.mcpServerNames]
-          }
-        })
-      ])
-    }
 
     const projection = this.codexSkillActivity.projectWithContext(
       toAcpRuntimeEvent(
