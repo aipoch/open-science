@@ -783,8 +783,8 @@ describe('compactNotebookExecutionResult', () => {
     expect(compact.truncated).toBeUndefined()
   })
 
-  it('keeps a compact connector text result inline', () => {
-    const text = 'x'.repeat(3_030)
+  it('keeps a practical connector trailing result inline', () => {
+    const text = 'x'.repeat(7_500)
     const compact = compactNotebookExecutionResult({
       ...runSummary({}),
       outputs: [{ type: 'display', data: { 'text/plain': text } }]
