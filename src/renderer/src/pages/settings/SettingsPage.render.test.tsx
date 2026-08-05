@@ -828,6 +828,9 @@ describe('SettingsPage layout', () => {
       expect(settingsRef.current?.closeActivePane()).toBe(true)
     })
     expect(document.body.querySelector('section[aria-label="Providers"]')).not.toBeNull()
+    expect(document.body.querySelector<HTMLButtonElement>('[aria-label="Back"]')?.disabled).toBe(
+      true
+    )
     expect(onClose).not.toHaveBeenCalled()
 
     act(() => {
@@ -1684,8 +1687,9 @@ describe('SettingsPage layout', () => {
     // A skill mention sets the pending id before the dialog opens.
     useSettingsStore.setState({ pendingSkillId: 'alpha' })
 
+    const settingsRef = createRef<SettingsPageHandle>()
     await act(async () => {
-      root.render(<SettingsPage open onClose={vi.fn()} />)
+      root.render(<SettingsPage ref={settingsRef} open onClose={vi.fn()} />)
     })
     // Flush the seeding effect, the skills-list load, and the skill-detail fetch.
     await act(async () => {
@@ -1701,6 +1705,14 @@ describe('SettingsPage layout', () => {
     expect(document.body.querySelector('section[aria-label="Providers"]')).toBeNull()
     // The pending id is consumed so a later normal open won't jump back to it.
     expect(useSettingsStore.getState().pendingSkillId).toBeUndefined()
+
+    act(() => {
+      expect(settingsRef.current?.closeActivePane()).toBe(true)
+    })
+    expect(document.body.querySelector('[aria-label="Back to skills"]')).toBeNull()
+    expect(document.body.querySelector<HTMLButtonElement>('[aria-label="Back"]')?.disabled).toBe(
+      true
+    )
   })
 
   it('opens directly on a requested settings panel and consumes the target', async () => {

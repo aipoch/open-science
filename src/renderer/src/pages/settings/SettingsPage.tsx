@@ -550,8 +550,14 @@ const SettingsPage = forwardRef<SettingsPageHandle, SettingsPageProps>(function 
         setIsMobileNavOpen(false)
         return true
       }
-      if (breadcrumb) navigate(breadcrumb.rootTo)
-      else {
+      if (breadcrumb) {
+        if (canGoBack) setHistoryIndex((index) => index - 1)
+        else {
+          setHistory((entries) =>
+            entries.map((entry, index) => (index === historyIndex ? breadcrumb.rootTo : entry))
+          )
+        }
+      } else {
         setIsMobileNavOpen(false)
         onClose()
       }
