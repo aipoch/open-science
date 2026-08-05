@@ -23,6 +23,15 @@ import { readWorkspaceTextFile, writeWorkspaceTextFile } from './filesystem'
 
 type ResponsesBridgeLease = ResolvedAgentBackend['responsesBridgeLease']
 type CandidateCleanupStage = 'connection' | 'agent-process' | 'bridge-lease'
+type AcpProcessEventContext = Readonly<{
+  process: ChildProcessWithoutNullStreams
+  framework: AgentFramework['id']
+  epoch: number
+}>
+type AcpProcessExitContext = AcpProcessEventContext &
+  Readonly<{
+    pid: number | undefined
+  }>
 
 type AcpAgentConnectionHooks = Readonly<{
   requestPermission: (
@@ -38,11 +47,14 @@ type AcpAgentConnectionHooks = Readonly<{
   onProcessSpawned: (framework: AgentFramework['id']) => void
   onBackendPublished: (backend: AcpBackendGenerationView) => void
   onProcessTreeReaped: (reaped: boolean) => void
-  attachProcessDiagnostics: (
-    process: ChildProcessWithoutNullStreams,
-    framework: AgentFramework['id'],
-    epoch: number
-  ) => () => void
+  markProcessExitExpected: (process: ChildProcessWithoutNullStreams, epoch: number) => void
+  onProcessStderr: (text: string, context: AcpProcessEventContext) => void
+  onProcessError: (error: unknown, context: AcpProcessEventContext) => void
+  onProcessExit: (
+    code: number | null,
+    signal: NodeJS.Signals | null,
+    context: AcpProcessExitContext
+  ) => void
   onConnectionClosed: () => void
   reportCleanupFailure: (
     stage: CandidateCleanupStage,
@@ -86,7 +98,6 @@ class AcpAgentConnectionAdapter {
     let connection: ReturnType<AcpAgentConnectionAdapter['createClientConnection']> | undefined
     let bridgeLease: ResponsesBridgeLease
     let backendAttempt: AcpBackendGenerationAttempt | undefined
-    let expectProcessExit: (() => void) | undefined
     let framework: AgentFramework['id'] = 'claude-code'
 
     const reportCleanupFailure = (stage: CandidateCleanupStage, error: unknown): void => {
@@ -103,7 +114,7 @@ class AcpAgentConnectionAdapter {
         reportCleanupFailure('connection', error)
       }
       if (process) {
-        expectProcessExit?.()
+        hooks.markProcessExitExpected(process, input.epoch)
         try {
           const result = await terminateProcessTree(process, undefined, {
             error: (message, error) => hooks.reportProcessTreeError(message, error)
@@ -144,9 +155,32 @@ class AcpAgentConnectionAdapter {
             : 'ACP connection superseded during spawn.'
         )
       }
+      if (!process) throw new Error('ACP agent process did not spawn.')
+      const spawnedProcess = process
       hooks.onBackendPublished(backendAttempt.publish())
-      expectProcessExit = hooks.attachProcessDiagnostics(process, framework, input.epoch)
-      connection = this.createClientConnection(process, hooks)
+      spawnedProcess.stderr.on('data', (data: Buffer) => {
+        hooks.onProcessStderr(data.toString('utf8').trim(), {
+          process: spawnedProcess,
+          framework,
+          epoch: input.epoch
+        })
+      })
+      spawnedProcess.on('error', (error) => {
+        hooks.onProcessError(error, {
+          process: spawnedProcess,
+          framework,
+          epoch: input.epoch
+        })
+      })
+      spawnedProcess.on('exit', (code, signal) => {
+        hooks.onProcessExit(code, signal, {
+          process: spawnedProcess,
+          framework,
+          epoch: input.epoch,
+          pid: spawnedProcess.pid
+        })
+      })
+      connection = this.createClientConnection(spawnedProcess, hooks)
     } catch (error) {
       backendAttempt?.fail()
       await cleanup()

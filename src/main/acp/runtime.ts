@@ -480,6 +480,7 @@ class AcpRuntime {
   private readonly connectionAdapter = new AcpAgentConnectionAdapter()
   private readonly connectionResources: AcpConnectionResourceOwner
   private candidateTreeKillReaped = true
+  private readonly expectedProcessExits = new WeakSet<ChildProcessWithoutNullStreams>()
   private readonly connectionTransitions: AcpConnectionTransitionOwner
   private readonly generationActivity: AcpGenerationActivityOwner
   // Stable app identities, provider aliases, publication order, selection, and startup/delete
@@ -2342,8 +2343,10 @@ class AcpRuntime {
       onProcessTreeReaped: (reaped) => {
         this.candidateTreeKillReaped = this.candidateTreeKillReaped && reaped
       },
-      attachProcessDiagnostics: (process, _framework, epoch) =>
-        this.attachAgentProcessEvents(process, epoch),
+      markProcessExitExpected: (process) => this.expectedProcessExits.add(process),
+      onProcessStderr: (text, context) => this.handleAgentProcessStderr(text, context),
+      onProcessError: (error, context) => this.handleAgentProcessError(error, context),
+      onProcessExit: (code, signal, context) => this.handleAgentProcessExit(code, signal, context),
       onConnectionClosed: () => {
         if (
           this.snapshotOwner.status === 'connected' ||
@@ -3798,96 +3801,91 @@ class AcpRuntime {
     )
   }
 
-  // Captures process stderr/errors/exits and converts unexpected ones to events.
-  private attachAgentProcessEvents(
-    agentProcess: ChildProcessWithoutNullStreams,
-    generation: number
-  ): () => void {
-    // Bind the framework this process was spawned under now. During a reconnect the runtime's
-    // The current generation view may already name a new backend, so reading it in async handlers would
-    // mislabel a late stderr/exit from the old process.
-    const framework = this.framework.id
-    let expectedExit = false
-    const disposition = (): ReturnType<AcpConnectionResourceOwner['processEventDisposition']> =>
-      expectedExit
-        ? 'expected'
-        : this.connectionResources.processEventDisposition(agentProcess, generation)
+  private processEventDisposition(
+    process: ChildProcessWithoutNullStreams,
+    epoch: number
+  ): ReturnType<AcpConnectionResourceOwner['processEventDisposition']> {
+    if (this.expectedProcessExits.has(process)) return 'expected'
+    return this.connectionResources.processEventDisposition(process, epoch)
+  }
 
-    agentProcess.stderr.on('data', (data: Buffer) => {
-      const text = data.toString('utf8').trim()
-
-      // Always capture agent stderr in the log — it's the primary clue when a turn stalls or the
-      // agent misbehaves (auth loops, MCP connection failures, tool errors) in a packaged build.
-      if (text) {
-        log.warn('agent stderr', {
-          text,
-          framework,
-          status: this.snapshotOwner.status,
-          sessionCount: this.activeSessionIds().length
-        })
-      }
-
-      if (disposition() !== 'current') return
-
-      if (text) {
-        // Attribute stderr to a session only when exactly one prompt is in flight — then it's
-        // unambiguously that turn's. With zero or multiple concurrent prompts, omit the sessionId
-        // rather than risk pinning it to the wrong conversation's waiting indicator.
-        const inFlight = this.getInFlightSessionIds()
-        this.pushEvent({
-          kind: 'system',
-          level: 'warning',
-          sessionId: inFlight.length === 1 ? inFlight[0] : undefined,
-          title: 'agent',
-          text
-        })
-      }
-    })
-
-    agentProcess.on('error', (error) => {
-      log.error('agent process error event', {
-        ...diagnosticErrorFields(error),
-        ...this.diagnosticContext(framework, generation)
-      })
-
-      if (disposition() !== 'current') return
-
-      this.snapshotOwner.updateError(errorMessage(error))
-      this.pushEvent({
-        kind: 'error',
-        level: 'error',
-        title: 'Agent process error',
-        text: this.snapshotOwner.error
-      })
-      this.setStatus('error')
-    })
-
-    agentProcess.on('exit', (code, signal) => {
-      const processDisposition = disposition()
-      log.info('agent process exit', {
-        code,
-        signal,
-        framework,
+  // Projects adapter-bound process diagnostics while retaining epoch classification and event state.
+  private handleAgentProcessStderr(
+    text: string,
+    context: Parameters<AcpAgentConnectionHooks['onProcessStderr']>[1]
+  ): void {
+    // Always capture agent stderr in the log — it's the primary clue when a turn stalls or the
+    // agent misbehaves (auth loops, MCP connection failures, tool errors) in a packaged build.
+    if (text) {
+      log.warn('agent stderr', {
+        text,
+        framework: context.framework,
         status: this.snapshotOwner.status,
-        expected: processDisposition === 'expected',
-        sessionCount: this.activeSessionIds().length,
-        pid: agentProcess.pid
+        sessionCount: this.activeSessionIds().length
       })
+    }
 
-      if (processDisposition !== 'current') return
+    if (this.processEventDisposition(context.process, context.epoch) !== 'current' || !text) return
 
-      if (this.snapshotOwner.status === 'connected' || this.snapshotOwner.status === 'connecting') {
-        this.pushEvent({
-          kind: 'system',
-          level: code === 0 ? 'info' : 'warning',
-          title: 'Agent process exited',
-          text: signal ? `signal ${signal}` : `code ${code ?? 'unknown'}`
-        })
-      }
+    // Attribute stderr to a session only when exactly one prompt is in flight — then it's
+    // unambiguously that turn's. With zero or multiple concurrent prompts, omit the sessionId
+    // rather than risk pinning it to the wrong conversation's waiting indicator.
+    const inFlight = this.getInFlightSessionIds()
+    this.pushEvent({
+      kind: 'system',
+      level: 'warning',
+      sessionId: inFlight.length === 1 ? inFlight[0] : undefined,
+      title: 'agent',
+      text
+    })
+  }
+
+  private handleAgentProcessError(
+    error: unknown,
+    context: Parameters<AcpAgentConnectionHooks['onProcessError']>[1]
+  ): void {
+    log.error('agent process error event', {
+      ...diagnosticErrorFields(error),
+      ...this.diagnosticContext(context.framework, context.epoch)
     })
 
-    return () => {
-      expectedExit = true
+    if (this.processEventDisposition(context.process, context.epoch) !== 'current') return
+
+    this.snapshotOwner.updateError(errorMessage(error))
+    this.pushEvent({
+      kind: 'error',
+      level: 'error',
+      title: 'Agent process error',
+      text: this.snapshotOwner.error
+    })
+    this.setStatus('error')
+  }
+
+  private handleAgentProcessExit(
+    code: number | null,
+    signal: NodeJS.Signals | null,
+    context: Parameters<AcpAgentConnectionHooks['onProcessExit']>[2]
+  ): void {
+    const processDisposition = this.processEventDisposition(context.process, context.epoch)
+    log.info('agent process exit', {
+      code,
+      signal,
+      framework: context.framework,
+      status: this.snapshotOwner.status,
+      expected: processDisposition === 'expected',
+      sessionCount: this.activeSessionIds().length,
+      pid: context.pid
+    })
+
+    if (processDisposition !== 'current') return
+
+    if (this.snapshotOwner.status === 'connected' || this.snapshotOwner.status === 'connecting') {
+      this.pushEvent({
+        kind: 'system',
+        level: code === 0 ? 'info' : 'warning',
+        title: 'Agent process exited',
+        text: signal ? `signal ${signal}` : `code ${code ?? 'unknown'}`
+      })
     }
   }
 

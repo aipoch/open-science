@@ -60,7 +60,10 @@ const hooks = (): AcpAgentConnectionHooks => ({
   onProcessSpawned: vi.fn(),
   onBackendPublished: vi.fn(),
   onProcessTreeReaped: vi.fn(),
-  attachProcessDiagnostics: vi.fn(() => vi.fn()),
+  markProcessExitExpected: vi.fn(),
+  onProcessStderr: vi.fn(),
+  onProcessError: vi.fn(),
+  onProcessExit: vi.fn(),
   onConnectionClosed: vi.fn(),
   reportCleanupFailure: vi.fn(),
   reportProcessTreeError: vi.fn()
@@ -100,7 +103,8 @@ const openCandidate = async (
     framework: claudeCodeFramework,
     executablePath: '',
     env: {}
-  }
+  },
+  connectionHooks: AcpAgentConnectionHooks = hooks()
 ): Promise<AcpAgentConnectionCandidate> => {
   const backendOwner = new AcpBackendGenerationOwner(claudeCodeFramework)
   const identity = { epoch: 1, assertCurrent: vi.fn() }
@@ -113,11 +117,42 @@ const openCandidate = async (
       isShuttingDown: () => false,
       spawnAgent: () => asAgentProcess(process)
     },
-    hooks()
+    connectionHooks
   )
 }
 
 describe('AcpAgentConnectionAdapter', () => {
+  it('binds process diagnostics and forwards the process epoch context', async () => {
+    const process = new FakeAgentProcess()
+    const connectionHooks = hooks()
+    const candidate = await openCandidate(process, undefined, connectionHooks)
+
+    process.stderr.emit('data', Buffer.from(' provider auth failed\n'))
+    const error = new Error('pipe failed')
+    process.emit('error', error)
+    process.emit('exit', 1, 'SIGTERM')
+
+    expect(connectionHooks.onProcessStderr).toHaveBeenCalledWith('provider auth failed', {
+      process,
+      framework: 'claude-code',
+      epoch: 1
+    })
+    expect(connectionHooks.onProcessError).toHaveBeenCalledWith(error, {
+      process,
+      framework: 'claude-code',
+      epoch: 1
+    })
+    expect(connectionHooks.onProcessExit).toHaveBeenCalledWith(1, 'SIGTERM', {
+      process,
+      framework: 'claude-code',
+      epoch: 1,
+      pid: 1234
+    })
+
+    await candidate.dispose()
+    expect(connectionHooks.markProcessExitExpected).toHaveBeenCalledWith(process, 1)
+  })
+
   it('reaps an untransferred process tree and releases its bridge lease exactly once', async () => {
     const process = new FakeAgentProcess()
     const release = vi.fn(async () => undefined)
