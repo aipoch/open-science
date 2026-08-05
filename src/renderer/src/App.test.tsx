@@ -35,7 +35,10 @@ const mocks = vi.hoisted(() => {
       init: vi.fn().mockResolvedValue(undefined),
       retry: vi.fn().mockResolvedValue(undefined)
     },
-    preview: { fileDialogItem: undefined as unknown | undefined },
+    preview: {
+      fileDialogItem: undefined as unknown | undefined,
+      expandedToolItemId: null as string | null
+    },
     loadProjects: vi.fn().mockResolvedValue(undefined),
     deepLinkNavigation: vi.fn(),
     lifecycleSync: vi.fn(() => ({
@@ -291,6 +294,7 @@ describe('App startup routing', () => {
     mocks.compute.pendingApprovals = []
     mocks.skillImport.pending = []
     mocks.preview.fileDialogItem = undefined
+    mocks.preview.expandedToolItemId = null
     mocks.deepLinkNavigation.mockClear()
     mocks.lifecycleSync.mockClear()
     mocks.syncWindowFindAppearance.mockClear()
@@ -450,6 +454,18 @@ describe('App startup routing', () => {
     })
 
     expect(mocks.globalSearch.props?.open).toBe(false)
+  })
+
+  it('does not open Settings under an expanded preview modal', async () => {
+    mocks.settings.isLoaded = true
+    mocks.preview.expandedToolItemId = 'project-files'
+    await render()
+
+    window.dispatchEvent(
+      new KeyboardEvent('keydown', { key: ',', metaKey: true, cancelable: true })
+    )
+
+    expect(mocks.settings.openSettings).not.toHaveBeenCalled()
   })
 
   it('shows startup progress until settings have loaded', async () => {
