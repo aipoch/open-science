@@ -53,7 +53,7 @@ export const buildHistoryReplayMedia = (
     const message = messages[messageIndex]
     for (let index = (message.uploads?.length ?? 0) - 1; index >= 0; index -= 1) {
       const upload = message.uploads?.[index]
-      if (upload?.mimeType?.startsWith('image/') && attachments.length < MAX_COMPOSER_ATTACHMENTS) {
+      if (upload && attachments.length < MAX_COMPOSER_ATTACHMENTS) {
         attachments.unshift(toRuntimeUploadedAttachment(upload, projectId))
       }
     }

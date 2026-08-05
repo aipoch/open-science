@@ -4431,7 +4431,7 @@ describe('sendWorkspaceMessage replay image filtering', () => {
     vi.unstubAllGlobals()
   })
 
-  it('omits user-uploaded images when replaying into a text-only model', async () => {
+  it('omits uploaded images but keeps other files when replaying into a text-only model', async () => {
     useSessionStore.setState({
       ...createInitialSessionState(),
       sessions: [
@@ -4444,7 +4444,10 @@ describe('sendWorkspaceMessage replay image filtering', () => {
           messages: [
             {
               ...createMessage('user-1', 'user', 'first prompt', baseTime),
-              uploads: [createAttachment({ name: 'photo.png', mimeType: 'image/png' })]
+              uploads: [
+                createAttachment({ id: 'photo', name: 'photo.png', mimeType: 'image/png' }),
+                createAttachment({ id: 'notes', name: 'notes.txt', mimeType: 'text/plain' })
+              ]
             },
             createMessage('agent-1', 'agent', 'first answer', baseTime + 100)
           ],
@@ -4475,7 +4478,9 @@ describe('sendWorkspaceMessage replay image filtering', () => {
     expect(sent).toBeDefined()
     expect(runtime.sendPrompt).toHaveBeenCalledOnce()
     expect(runtime.sendPrompt.mock.calls[0]?.[5]).toContain('first prompt')
-    expect(runtime.sendPrompt.mock.calls[0]?.[6]).toBeUndefined()
+    expect(runtime.sendPrompt.mock.calls[0]?.[6]).toEqual([
+      expect.objectContaining({ id: 'notes', name: 'notes.txt' })
+    ])
     expect(runtime.sendPrompt.mock.calls[0]?.[7]).toBeUndefined()
     const session = useSessionStore.getState().sessions[0]
     expect(session?.error).toBeUndefined()

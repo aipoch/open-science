@@ -144,6 +144,16 @@ describe('agent-aware history replay', () => {
                   path: `/uploads/plot-${turn}.png`,
                   mimeType: 'image/png',
                   size: 10
+                },
+                {
+                  id: `document-${turn}`,
+                  versionId: `document-version-${turn}`,
+                  sessionId: 'session-1',
+                  name: `notes-${turn}.pdf`,
+                  originalName: `notes-${turn}.pdf`,
+                  path: `/uploads/notes-${turn}.pdf`,
+                  mimeType: 'application/pdf',
+                  size: 20
                 }
               ]
             : undefined
@@ -158,7 +168,27 @@ describe('agent-aware history replay', () => {
 
     expect(replay.historyPreamble).toContain('user-9 ')
     expect(replay.historyPreamble).not.toContain('user-4 ')
-    expect(replay.historyAttachments.map((item) => item.id)).toEqual(['upload-9'])
+    expect(replay.historyAttachments.map((item) => item.id)).toEqual(['upload-9', 'document-9'])
+  })
+
+  it('keeps media-only Assistant output when an oversized turn is projected', () => {
+    const replay = buildWorkspaceHistoryReplay(
+      [
+        message({ role: 'user', content: 'original task' }),
+        message({ role: 'agent', content: 'original answer' }),
+        message({ role: 'user', content: 'keep the generated screenshot' }),
+        message({ role: 'agent', content: 'working '.repeat(300) }),
+        message({
+          role: 'agent',
+          content: '',
+          images: [{ id: 'result-image', mimeType: 'image/png', data: 'AQID', byteLength: 3 }]
+        })
+      ],
+      { target: 'codex-bridge', budget: 230 }
+    )!
+
+    expect(replay.historyPreamble).toContain('**Assistant:** [media attached]')
+    expect(replay.historyImages).toEqual([expect.objectContaining({ data: 'AQID' })])
   })
 })
 

@@ -100,6 +100,22 @@ type HistoryReplayContext = {
   historyImages?: AcpMessageImage[]
 }
 
+const isReplayImage = (attachment: UploadedAttachment): boolean =>
+  attachment.mimeType?.startsWith('image/') === true
+
+const hasReplayImages = (replay?: HistoryReplayContext): boolean =>
+  (replay?.historyImages?.length ?? 0) > 0 ||
+  replay?.historyAttachments?.some(isReplayImage) === true
+
+const replayAttachmentsForModel = (
+  replay: HistoryReplayContext | undefined,
+  supportsImageInput: boolean | undefined
+): UploadedAttachment[] | undefined => {
+  if (supportsImageInput !== false) return replay?.historyAttachments
+  const attachments = replay?.historyAttachments?.filter((attachment) => !isReplayImage(attachment))
+  return attachments?.length ? attachments : undefined
+}
+
 const buildWorkspaceReplay = (
   messages: ChatMessage[],
   descriptor: HistoryReplayDescriptor | undefined,
@@ -824,11 +840,7 @@ const sendWorkspaceMessage = async (
 
     // Branch creation is intentionally immediate. A model incompatibility remains a recoverable error
     // on the selected pending Session and must never silently dispatch the new prompt without history.
-    if (
-      supportsImageInput === false &&
-      ((historyReplay?.historyImages?.length ?? 0) > 0 ||
-        (historyReplay?.historyAttachments?.length ?? 0) > 0)
-    ) {
+    if (supportsImageInput === false && hasReplayImages(historyReplay)) {
       useSessionStore.getState().failRun(pending.sessionId, IMAGE_REPLAY_UNSUPPORTED_MESSAGE)
       return pending
     }
@@ -895,11 +907,7 @@ const sendWorkspaceMessage = async (
         }
 
         // Keep the original pending prompt intact until the selected model can accept its history.
-        if (
-          supportsImageInput === false &&
-          ((replay?.historyImages?.length ?? 0) > 0 ||
-            (replay?.historyAttachments?.length ?? 0) > 0)
-        ) {
+        if (supportsImageInput === false && hasReplayImages(replay)) {
           useSessionStore.getState().failRun(currentSession.id, IMAGE_REPLAY_UNSUPPORTED_MESSAGE)
           return {
             sessionId: currentSession.id,
@@ -968,9 +976,7 @@ const sendWorkspaceMessage = async (
           agentFrameworkId,
           sessionProjectName
         )
-        return (
-          (replay?.historyImages?.length ?? 0) > 0 || (replay?.historyAttachments?.length ?? 0) > 0
-        )
+        return hasReplayImages(replay)
       })()
     const sendPreparationRequired = branchResetRequired || runtimeMustAdoptSession
 
@@ -1142,7 +1148,7 @@ const sendWorkspaceMessage = async (
         sessionProjectName
       )
       historyPreamble = replay?.historyPreamble
-      historyAttachments = supportsImageInput === false ? undefined : replay?.historyAttachments
+      historyAttachments = replayAttachmentsForModel(replay, supportsImageInput)
       historyImages = supportsImageInput === false ? undefined : replay?.historyImages
     }
 
@@ -1157,8 +1163,7 @@ const sendWorkspaceMessage = async (
             )
             return {
               historyPreamble: replay?.historyPreamble,
-              historyAttachments:
-                supportsImageInput === false ? undefined : replay?.historyAttachments,
+              historyAttachments: replayAttachmentsForModel(replay, supportsImageInput),
               historyImages: supportsImageInput === false ? undefined : replay?.historyImages
             }
           })()
@@ -1649,10 +1654,7 @@ const resendEditedWorkspaceMessage = async (
     session.projectId
   )
 
-  if (
-    supportsImageInput === false &&
-    ((replay?.historyImages?.length ?? 0) > 0 || (replay?.historyAttachments?.length ?? 0) > 0)
-  ) {
+  if (supportsImageInput === false && hasReplayImages(replay)) {
     useSessionStore.getState().failRun(input.sessionId, IMAGE_REPLAY_UNSUPPORTED_MESSAGE)
     return false
   }

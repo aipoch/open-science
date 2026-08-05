@@ -29,6 +29,7 @@ const HEADER =
 const OMISSION_NOTE = '[…middle turns omitted for replay budget…]'
 const RESPONSE_OMISSION_NOTE = '[…earlier response omitted for replay budget…]'
 const MESSAGE_OMISSION_NOTE = '[…middle of this message omitted for replay budget…]'
+const MEDIA_PLACEHOLDER = '[media attached]'
 
 export type HistoryMessage = {
   role: string
@@ -52,7 +53,7 @@ const isUserMessage = (message: HistoryMessage): boolean => message.role === 'us
 const speakerFor = (message: HistoryMessage): 'User' | 'Assistant' =>
   isUserMessage(message) ? 'User' : 'Assistant'
 const formatMessage = (message: HistoryMessage): string =>
-  `**${speakerFor(message)}:** ${message.content.trim() || '[media attached]'}`
+  `**${speakerFor(message)}:** ${message.content.trim() || MEDIA_PLACEHOLDER}`
 
 // Stable conservative admission estimate: ASCII-heavy text gets the usual four-bytes-per-token
 // approximation, while every non-ASCII code point costs at least one token.
@@ -189,6 +190,17 @@ const projectTurn = (turn: HistoryTurn, budget: number): ProjectedTurn | undefin
   const assistant = turn.messages.at(-1)
   if (!assistant || isUserMessage(assistant))
     return { index: turn.index, text: fullUser, selectedMessageIndexes }
+
+  if (!assistant.content.trim() && assistant.hasReplayMedia) {
+    const text = `${fullUser}\n\n${formatMessage(assistant)}`
+    return estimateHistoryTokens(text) <= budget
+      ? {
+          index: turn.index,
+          text,
+          selectedMessageIndexes: [...selectedMessageIndexes, assistant.index]
+        }
+      : { index: turn.index, text: fullUser, selectedMessageIndexes }
+  }
 
   const assistantPrefix = `**Assistant:** ${RESPONSE_OMISSION_NOTE}\n`
   const assistantBudget =
