@@ -30,6 +30,12 @@ on:
           notarization in isolation; release/nightly leave it false so builds stay gated on tests.
         type: boolean
         default: false
+      require_windows_signing:
+        description: >-
+          Fail closed unless the Windows installer is Authenticode-signed. Stable tag releases set
+          this; nightlies and manual packaging may leave signing optional.
+        type: boolean
+        default: false
 
 jobs:
   # Gate every packaged build on the quality suite so nightly (push to main) and release (tag) can
@@ -175,6 +181,17 @@ jobs:
           node scripts/fetch-micromamba.mjs "${{ matrix.subdir }}" \
             "resources/bin/${{ matrix.bin_os }}/${{ matrix.bin_arch }}/$name"
 
+      - name: Require Windows signing credentials
+        if: ${{ matrix.platform == 'win' && inputs.require_windows_signing }}
+        shell: pwsh
+        env:
+          CSC_LINK: ${{ secrets.WIN_CSC_LINK }}
+          CSC_KEY_PASSWORD: ${{ secrets.WIN_CSC_KEY_PASSWORD }}
+        run: |
+          if ([string]::IsNullOrWhiteSpace($env:CSC_LINK) -or [string]::IsNullOrWhiteSpace($env:CSC_KEY_PASSWORD)) {
+            throw 'Stable Windows packaging requires WIN_CSC_LINK and WIN_CSC_KEY_PASSWORD.'
+          }
+
       # Build the renderer + main and Web bundles, then package with electron-builder. The verify
       # job already typechecks this exact checkout once, so the four platform jobs must not repeat it.
       #
@@ -188,9 +205,10 @@ jobs:
       - name: Build & package
         shell: bash
         env:
-          # macOS Developer ID (real signing when present, ad-hoc fallback otherwise)
-          CSC_LINK: ${{ secrets.MAC_CSC_LINK }}
-          CSC_KEY_PASSWORD: ${{ secrets.MAC_CSC_KEY_PASSWORD }}
+          # Use only the signing identity for the current target. Stable Windows releases validate
+          # their credentials above and verify the resulting signature below.
+          CSC_LINK: ${{ matrix.platform == 'win' && secrets.WIN_CSC_LINK || secrets.MAC_CSC_LINK }}
+          CSC_KEY_PASSWORD: ${{ matrix.platform == 'win' && secrets.WIN_CSC_KEY_PASSWORD || secrets.MAC_CSC_KEY_PASSWORD }}
         run: |
           npm run build:e2e
           npm run build:web
@@ -215,6 +233,8 @@ jobs:
             # never matched against the published feed names.
             npx electron-builder ${{ matrix.eb_args }} "${eb_ver[@]}" --publish never \
               -c.mac.notarize=false
+          elif [ "${{ matrix.platform }}" = "win" ] && [ -n "$CSC_LINK" ]; then
+            npx electron-builder ${{ matrix.eb_args }} "${eb_ver[@]}" --publish never
           else
             # No cert, or a nightly build (ad-hoc on purpose): skip electron-builder's own signing.
             # GitHub injects unset secrets as EMPTY strings, and electron-builder mis-reads an empty
@@ -226,6 +246,42 @@ jobs:
             npx electron-builder ${{ matrix.eb_args }} "${eb_ver[@]}" --publish never
           fi
 
+      # Run the release-critical desktop journeys against a real Electron process on every native
+      # target. The same focused specs are selected in PR Gate only when their owners change.
+      - name: Run P0 Electron certification
+        if: ${{ !inputs.skip_verify }}
+        shell: bash
+        run: |
+          if [ "${{ matrix.platform }}" = "linux" ]; then
+            xvfb-run -a npm run test:e2e:p0
+          else
+            npm run test:e2e:p0
+          fi
+
+      # All platforms compare the same canonical Chromium layout baseline. The spec keeps the strict
+      # macOS budget and a bounded cross-platform antialiasing budget.
+      - name: Run desktop visual regression
+        if: ${{ !inputs.skip_verify }}
+        shell: bash
+        run: |
+          if [ "${{ matrix.platform }}" = "linux" ]; then
+            xvfb-run -a npm run test:e2e:visual
+          else
+            npm run test:e2e:visual
+          fi
+
+      - name: Verify Windows Authenticode signature
+        if: ${{ matrix.platform == 'win' && inputs.require_windows_signing }}
+        shell: pwsh
+        run: |
+          $installers = @(Get-ChildItem -LiteralPath dist -Filter '*-win-x64-setup.exe')
+          if ($installers.Count -ne 1) { throw "Expected one Windows installer; found $($installers.Count)." }
+          $signature = Get-AuthenticodeSignature -LiteralPath $installers[0].FullName
+          if ($signature.Status -ne 'Valid' -or $null -eq $signature.SignerCertificate) {
+            throw "Windows installer Authenticode validation failed: $($signature.Status) $($signature.StatusMessage)"
+          }
+          Write-Host "Validated Authenticode signer: $($signature.SignerCertificate.Subject)"
+
       # Run the actual NSIS artifact, not the source tree: silent install into an isolated directory,
       # start the packaged app in headless web mode, verify its authenticated bootstrap and bundled
       # Windows runtime resources, request a clean shutdown, then silently uninstall it.
@@ -233,6 +289,38 @@ jobs:
         if: matrix.platform == 'win'
         timeout-minutes: 10
         run: node scripts/windows-installer-smoke.mjs --installer-dir dist
+
+      # Install the deb with apt, launch the installed application, then extract and launch the
+      # AppImage. Both paths verify authenticated bootstrap and packaged native/runtime resources.
+      - name: Smoke test Linux packages
+        if: matrix.platform == 'linux'
+        timeout-minutes: 10
+        shell: bash
+        run: |
+          sudo apt-get install --yes ./dist/*.deb
+          trap 'sudo apt-get remove --yes open-science || true' EXIT
+          xvfb-run -a node scripts/linux-package-smoke.mjs \
+            --artifact-dir dist \
+            --installed-executable /usr/bin/open-science
+
+      - name: Record platform certification evidence
+        if: ${{ !inputs.skip_verify }}
+        shell: bash
+        run: |
+          package_smoke=not-applicable
+          [ "${{ matrix.platform }}" = "linux" ] && package_smoke=passed
+          [ "${{ matrix.platform }}" = "win" ] && package_smoke=passed
+          authenticode=not-applicable
+          if [ "${{ matrix.platform }}" = "win" ]; then
+            authenticode=not-required
+            [ "${{ inputs.require_windows_signing }}" = "true" ] && authenticode=passed
+          fi
+          node scripts/ci/release-certification-evidence.mjs write \
+            --platform "${{ matrix.name }}" \
+            --artifact-dir dist \
+            --output "dist/certification-${{ matrix.name }}.json" \
+            --package-smoke "$package_smoke" \
+            --authenticode "$authenticode"
 
       # Upload only the distributables + electron-updater metadata for the caller's publish job.
       - name: Upload build artifacts
@@ -249,4 +337,5 @@ jobs:
             dist/*.blockmap
             dist/latest*.yml
             dist/*-mac.yml
+            dist/certification-*.json
           if-no-files-found: error

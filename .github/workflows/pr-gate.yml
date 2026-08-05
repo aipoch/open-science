@@ -135,11 +135,31 @@ jobs:
             'build',
             'e2e_functional_macos',
             'e2e_functional_windows',
+            'e2e_functional_linux',
             'e2e_workspace_macos',
             'e2e_workspace_windows',
+            'e2e_workspace_linux',
             'e2e_accessibility_macos',
             'e2e_accessibility_windows',
-            'e2e_visual_macos'
+            'e2e_accessibility_linux',
+            'e2e_visual_macos',
+            'e2e_visual_windows',
+            'e2e_visual_linux',
+            'e2e_storage_migration_macos',
+            'e2e_storage_migration_windows',
+            'e2e_storage_migration_linux',
+            'e2e_provider_bridge_macos',
+            'e2e_provider_bridge_windows',
+            'e2e_provider_bridge_linux',
+            'e2e_notebook_lifecycle_macos',
+            'e2e_notebook_lifecycle_windows',
+            'e2e_notebook_lifecycle_linux',
+            'e2e_remote_pairing_macos',
+            'e2e_remote_pairing_windows',
+            'e2e_remote_pairing_linux',
+            'e2e_artifact_provenance_macos',
+            'e2e_artifact_provenance_windows',
+            'e2e_artifact_provenance_linux'
           ]
           const bundles = [
             'policy',
@@ -148,7 +168,8 @@ jobs:
             'coverage_macos',
             'windows_core',
             'macos_e2e',
-            'windows_e2e'
+            'windows_e2e',
+            'linux_e2e'
           ]
           const plan = {
             schemaVersion: 1,
@@ -557,6 +578,31 @@ jobs:
             test-results/
           retention-days: 5
           if-no-files-found: warn
+      - name: Run selected P0 release journeys
+        id: e2e_release_macos
+        if: >-
+          ${{ steps.build_electron.outcome == 'success' && (
+            contains(fromJSON(needs.preflight.outputs.plan).lanes, 'e2e_storage_migration_macos') ||
+            contains(fromJSON(needs.preflight.outputs.plan).lanes, 'e2e_provider_bridge_macos') ||
+            contains(fromJSON(needs.preflight.outputs.plan).lanes, 'e2e_notebook_lifecycle_macos') ||
+            contains(fromJSON(needs.preflight.outputs.plan).lanes, 'e2e_remote_pairing_macos') ||
+            contains(fromJSON(needs.preflight.outputs.plan).lanes, 'e2e_artifact_provenance_macos')
+          ) }}
+        continue-on-error: true
+        env:
+          PR_GATE_LANES: ${{ needs.preflight.outputs.lanes }}
+        run: node scripts/ci/run-selected-release-e2e.mjs
+      - name: Upload P0 release journey failure artifacts
+        if: ${{ steps.e2e_release_macos.outcome == 'failure' }}
+        continue-on-error: true
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7
+        with:
+          name: p0-release-e2e-macos-failure
+          path: |
+            playwright-report/
+            test-results/
+          retention-days: 5
+          if-no-files-found: warn
       - name: Enforce selected macOS checks
         if: ${{ always() }}
         shell: bash
@@ -565,6 +611,7 @@ jobs:
           BUILD_WEB_OUTCOME: ${{ steps.build_web.outcome }}
           E2E_ACCESSIBILITY_OUTCOME: ${{ steps.e2e_accessibility_macos.outcome }}
           E2E_FUNCTIONAL_OUTCOME: ${{ steps.e2e_functional_macos.outcome }}
+          E2E_RELEASE_OUTCOME: ${{ steps.e2e_release_macos.outcome }}
           E2E_VISUAL_OUTCOME: ${{ steps.e2e_visual_macos.outcome }}
           E2E_WORKSPACE_OUTCOME: ${{ steps.e2e_workspace_macos.outcome }}
         run: |
@@ -582,6 +629,7 @@ jobs:
           check e2e_workspace_macos "$E2E_WORKSPACE_OUTCOME"
           check e2e_accessibility_macos "$E2E_ACCESSIBILITY_OUTCOME"
           check e2e_visual_macos "$E2E_VISUAL_OUTCOME"
+          check e2e_release_macos "$E2E_RELEASE_OUTCOME"
           exit "$failed"
 
   windows_e2e:
@@ -654,6 +702,47 @@ jobs:
             test-results/
           retention-days: 5
           if-no-files-found: warn
+      - name: Run visual regression
+        id: e2e_visual_windows
+        if: ${{ steps.build_electron.outcome == 'success' && contains(fromJSON(needs.preflight.outputs.plan).lanes, 'e2e_visual_windows') }}
+        continue-on-error: true
+        run: npm run test:e2e:visual
+      - name: Upload visual failure artifacts
+        if: ${{ steps.e2e_visual_windows.outcome == 'failure' }}
+        continue-on-error: true
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7
+        with:
+          name: visual-regression-windows-failure
+          path: |
+            playwright-report/
+            test-results/
+          retention-days: 5
+          if-no-files-found: warn
+      - name: Run selected P0 release journeys
+        id: e2e_release_windows
+        if: >-
+          ${{ steps.build_electron.outcome == 'success' && (
+            contains(fromJSON(needs.preflight.outputs.plan).lanes, 'e2e_storage_migration_windows') ||
+            contains(fromJSON(needs.preflight.outputs.plan).lanes, 'e2e_provider_bridge_windows') ||
+            contains(fromJSON(needs.preflight.outputs.plan).lanes, 'e2e_notebook_lifecycle_windows') ||
+            contains(fromJSON(needs.preflight.outputs.plan).lanes, 'e2e_remote_pairing_windows') ||
+            contains(fromJSON(needs.preflight.outputs.plan).lanes, 'e2e_artifact_provenance_windows')
+          ) }}
+        continue-on-error: true
+        env:
+          PR_GATE_LANES: ${{ needs.preflight.outputs.lanes }}
+        run: node scripts/ci/run-selected-release-e2e.mjs
+      - name: Upload P0 release journey failure artifacts
+        if: ${{ steps.e2e_release_windows.outcome == 'failure' }}
+        continue-on-error: true
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7
+        with:
+          name: p0-release-e2e-windows-failure
+          path: |
+            playwright-report/
+            test-results/
+          retention-days: 5
+          if-no-files-found: warn
       - name: Enforce selected Windows E2E checks
         if: ${{ always() }}
         shell: bash
@@ -661,6 +750,8 @@ jobs:
           BUILD_ELECTRON_OUTCOME: ${{ steps.build_electron.outcome }}
           E2E_ACCESSIBILITY_OUTCOME: ${{ steps.e2e_accessibility_windows.outcome }}
           E2E_FUNCTIONAL_OUTCOME: ${{ steps.e2e_functional_windows.outcome }}
+          E2E_RELEASE_OUTCOME: ${{ steps.e2e_release_windows.outcome }}
+          E2E_VISUAL_OUTCOME: ${{ steps.e2e_visual_windows.outcome }}
           E2E_WORKSPACE_OUTCOME: ${{ steps.e2e_workspace_windows.outcome }}
         run: |
           set -euo pipefail
@@ -675,6 +766,109 @@ jobs:
           check e2e_functional_windows "$E2E_FUNCTIONAL_OUTCOME"
           check e2e_workspace_windows "$E2E_WORKSPACE_OUTCOME"
           check e2e_accessibility_windows "$E2E_ACCESSIBILITY_OUTCOME"
+          check e2e_visual_windows "$E2E_VISUAL_OUTCOME"
+          check e2e_release_windows "$E2E_RELEASE_OUTCOME"
+          exit "$failed"
+
+  linux_e2e:
+    name: Linux E2E
+    needs: preflight
+    if: ${{ needs.preflight.result == 'success' && contains(fromJSON(needs.preflight.outputs.plan).bundles, 'linux_e2e') }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - name: Checkout
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+        with:
+          persist-credentials: false
+      - name: Setup Node
+        uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7
+        with:
+          node-version: 22
+          cache: npm
+      - name: Install dependencies
+        run: npm ci
+      - name: Build Electron application
+        id: build_electron
+        continue-on-error: true
+        run: npm run build:e2e
+      - name: Run functional journeys
+        id: e2e_functional_linux
+        if: ${{ steps.build_electron.outcome == 'success' && contains(fromJSON(needs.preflight.outputs.plan).lanes, 'e2e_functional_linux') }}
+        continue-on-error: true
+        run: xvfb-run -a npm run test:e2e:journey
+      - name: Run workspace journeys
+        id: e2e_workspace_linux
+        if: ${{ steps.build_electron.outcome == 'success' && contains(fromJSON(needs.preflight.outputs.plan).lanes, 'e2e_workspace_linux') }}
+        continue-on-error: true
+        run: xvfb-run -a npm run test:e2e:workspace
+      - name: Run accessibility checks
+        id: e2e_accessibility_linux
+        if: ${{ steps.build_electron.outcome == 'success' && contains(fromJSON(needs.preflight.outputs.plan).lanes, 'e2e_accessibility_linux') }}
+        continue-on-error: true
+        run: xvfb-run -a npm run test:e2e:accessibility
+      - name: Run visual regression
+        id: e2e_visual_linux
+        if: ${{ steps.build_electron.outcome == 'success' && contains(fromJSON(needs.preflight.outputs.plan).lanes, 'e2e_visual_linux') }}
+        continue-on-error: true
+        run: xvfb-run -a npm run test:e2e:visual
+      - name: Run selected P0 release journeys
+        id: e2e_release_linux
+        if: >-
+          ${{ steps.build_electron.outcome == 'success' && (
+            contains(fromJSON(needs.preflight.outputs.plan).lanes, 'e2e_storage_migration_linux') ||
+            contains(fromJSON(needs.preflight.outputs.plan).lanes, 'e2e_provider_bridge_linux') ||
+            contains(fromJSON(needs.preflight.outputs.plan).lanes, 'e2e_notebook_lifecycle_linux') ||
+            contains(fromJSON(needs.preflight.outputs.plan).lanes, 'e2e_remote_pairing_linux') ||
+            contains(fromJSON(needs.preflight.outputs.plan).lanes, 'e2e_artifact_provenance_linux')
+          ) }}
+        continue-on-error: true
+        env:
+          PR_GATE_LANES: ${{ needs.preflight.outputs.lanes }}
+        run: xvfb-run -a node scripts/ci/run-selected-release-e2e.mjs
+      - name: Upload Linux E2E failure artifacts
+        if: >-
+          ${{ always() && (
+            steps.e2e_functional_linux.outcome == 'failure' ||
+            steps.e2e_workspace_linux.outcome == 'failure' ||
+            steps.e2e_accessibility_linux.outcome == 'failure' ||
+            steps.e2e_visual_linux.outcome == 'failure' ||
+            steps.e2e_release_linux.outcome == 'failure'
+          ) }}
+        continue-on-error: true
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7
+        with:
+          name: linux-e2e-failure
+          path: |
+            playwright-report/
+            test-results/
+          retention-days: 5
+          if-no-files-found: warn
+      - name: Enforce selected Linux E2E checks
+        if: ${{ always() }}
+        shell: bash
+        env:
+          BUILD_ELECTRON_OUTCOME: ${{ steps.build_electron.outcome }}
+          E2E_ACCESSIBILITY_OUTCOME: ${{ steps.e2e_accessibility_linux.outcome }}
+          E2E_FUNCTIONAL_OUTCOME: ${{ steps.e2e_functional_linux.outcome }}
+          E2E_RELEASE_OUTCOME: ${{ steps.e2e_release_linux.outcome }}
+          E2E_VISUAL_OUTCOME: ${{ steps.e2e_visual_linux.outcome }}
+          E2E_WORKSPACE_OUTCOME: ${{ steps.e2e_workspace_linux.outcome }}
+        run: |
+          set -euo pipefail
+          failed=0
+          check() {
+            if [[ "$2" == "failure" || "$2" == "cancelled" ]]; then
+              echo "$1 ended with $2" >&2
+              failed=1
+            fi
+          }
+          check build_electron "$BUILD_ELECTRON_OUTCOME"
+          check e2e_functional_linux "$E2E_FUNCTIONAL_OUTCOME"
+          check e2e_workspace_linux "$E2E_WORKSPACE_OUTCOME"
+          check e2e_accessibility_linux "$E2E_ACCESSIBILITY_OUTCOME"
+          check e2e_visual_linux "$E2E_VISUAL_OUTCOME"
+          check e2e_release_linux "$E2E_RELEASE_OUTCOME"
           exit "$failed"
 
   gate:
@@ -689,6 +883,7 @@ jobs:
       - windows_core
       - macos_e2e
       - windows_e2e
+      - linux_e2e
     runs-on: ubuntu-latest
     timeout-minutes: 3
     env:

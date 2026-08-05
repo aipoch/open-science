@@ -23,12 +23,15 @@ type WorkflowJob = {
   steps?: WorkflowStep[]
   strategy?: { matrix?: Record<string, unknown> }
   'timeout-minutes'?: number
+  uses?: string
+  with?: Record<string, unknown>
 }
 
 type Workflow = {
   jobs: Record<string, WorkflowJob>
   on?: {
     push?: { branches?: string[]; tags?: string[] }
+    workflow_call?: unknown
     workflow_dispatch?: unknown
   }
 }
@@ -43,17 +46,18 @@ const findStep = (job: WorkflowJob, name: string): WorkflowStep => {
 }
 
 describe('post-merge Windows validation', () => {
-  it('runs the complete Windows suite independently from nightly and release publishing', () => {
+  it('runs the complete Windows suite on main and as a blocking reusable release gate', () => {
     const build = readWorkflow('build.yml')
     const workflow = readWorkflow('windows-full-test.yml')
     const job = workflow.jobs.windows_full_test
 
     expect(build.jobs.windows_full_test).toBeUndefined()
-    expect(workflow.on?.push).toMatchObject({ branches: ['main'], tags: ['v*'] })
+    expect(workflow.on?.push).toMatchObject({ branches: ['main'] })
+    expect(workflow.on).toHaveProperty('workflow_call')
     expect(job).toMatchObject({
-      'continue-on-error': true,
       'runs-on': 'windows-latest'
     })
+    expect(job['continue-on-error']).toBeUndefined()
     expect(job.strategy?.matrix?.shard).toEqual([1, 2])
     expect(findStep(job, 'Test complete suite shard').run).toBe(
       'npm test -- --shard=${{ matrix.shard }}/2 --maxWorkers=1 --testTimeout=60000 --hookTimeout=60000'
@@ -76,6 +80,39 @@ describe('post-merge Windows validation', () => {
     expect(uploadIndex).toBeGreaterThan(smokeIndex)
   })
 
+  it('requires and verifies Authenticode for stable Windows installers', () => {
+    const build = readWorkflow('build.yml')
+    const job = build.jobs.build
+    const requireCredentials = findStep(job, 'Require Windows signing credentials')
+    const verifySignature = findStep(job, 'Verify Windows Authenticode signature')
+
+    expect(requireCredentials.if).toContain('inputs.require_windows_signing')
+    expect(requireCredentials.env).toMatchObject({
+      CSC_LINK: '${{ secrets.WIN_CSC_LINK }}',
+      CSC_KEY_PASSWORD: '${{ secrets.WIN_CSC_KEY_PASSWORD }}'
+    })
+    expect(verifySignature.run).toContain('Get-AuthenticodeSignature')
+    expect(verifySignature.run).toContain("$signature.Status -ne 'Valid'")
+  })
+
+  it('runs cross-platform P0, visual, Linux package smoke, and records evidence before upload', () => {
+    const job = readWorkflow('build.yml').jobs.build
+    const names = job.steps?.map(({ name }) => name) ?? []
+    const p0 = findStep(job, 'Run P0 Electron certification')
+    const visual = findStep(job, 'Run desktop visual regression')
+    const linux = findStep(job, 'Smoke test Linux packages')
+
+    expect(p0.run).toContain('npm run test:e2e:p0')
+    expect(visual.run).toContain('npm run test:e2e:visual')
+    expect(linux.run).toContain('scripts/linux-package-smoke.mjs')
+    expect(names.indexOf('Record platform certification evidence')).toBeGreaterThan(
+      names.indexOf('Smoke test Linux packages')
+    )
+    expect(names.indexOf('Upload build artifacts')).toBeGreaterThan(
+      names.indexOf('Record platform certification evidence')
+    )
+  })
+
   it('builds every platform without repeating the verified typecheck', () => {
     const workflow = readWorkflow('build.yml')
     const verifyTypecheck = findStep(workflow.jobs.verify, 'Typecheck')
@@ -89,13 +126,13 @@ describe('post-merge Windows validation', () => {
     expect(commands.some((command) => command.startsWith('npm run typecheck'))).toBe(false)
   })
 
-  it('runs the previous-stable upgrade smoke alongside notarization before publishing', () => {
+  it('runs the signed update drill and full Windows suite before publishing', () => {
     const release = readWorkflow('release.yml')
     const upgrade = release.jobs['windows-upgrade-smoke']
 
     expect(upgrade['runs-on']).toBe('windows-latest')
     expect(upgrade.needs).toBe('build')
-    expect(upgrade['timeout-minutes']).toBe(20)
+    expect(upgrade['timeout-minutes']).toBe(30)
     expect(findStep(upgrade, 'Setup Node')).toMatchObject({
       uses: 'actions/setup-node@820762786026740c76f36085b0efc47a31fe5020',
       with: { 'node-version': 22 }
@@ -109,12 +146,29 @@ describe('post-merge Windows validation', () => {
     const previous = findStep(upgrade, 'Download previous stable Windows installer')
     expect(previous.env?.CURRENT_TAG).toBe('${{ github.ref_name }}')
     expect(previous.run).toContain('gh release download')
+    expect(previous.run).toContain('Get-AuthenticodeSignature')
+    expect(previous.run).toContain('Previous stable installer is not Authenticode-signed')
     expect(previous.run).toContain("$_.tagName -like 'v*'")
     expect(previous.run).toContain('$_.tagName -ne $env:CURRENT_TAG')
-    expect(findStep(upgrade, 'Smoke test Windows upgrade').run).toContain(
-      '--previous-installer-dir previous'
+    expect(
+      findStep(upgrade, 'Drill Windows silent upgrade, process lock, rollback, and restart').run
+    ).toContain('--previous-installer-dir previous')
+    expect(release.jobs['windows-full-test'].uses).toBe('./.github/workflows/windows-full-test.yml')
+    expect(release.jobs.publish.needs).toEqual([
+      'build',
+      'notarize-mac',
+      'windows-upgrade-smoke',
+      'windows-full-test'
+    ])
+    expect(
+      findStep(release.jobs.publish, 'Aggregate release certification evidence').run
+    ).toContain('--require-signed-windows')
+    expect(
+      findStep(release.jobs.publish, 'Aggregate release certification evidence').run
+    ).toContain('--require-stable-release-checks')
+    expect(findStep(upgrade, 'Record Windows update-drill evidence').run).toContain(
+      'write-windows-update'
     )
-    expect(release.jobs.publish.needs).toEqual(['build', 'notarize-mac', 'windows-upgrade-smoke'])
   })
 
   it('validates stable desktop tags on main before starting platform builds', () => {
@@ -141,8 +195,12 @@ describe('post-merge Windows validation', () => {
       run: 'git merge-base --is-ancestor "$GITHUB_SHA" origin/main'
     })
     expect(release.jobs.build.needs).toBe('release-preflight')
+    expect(release.jobs.build.with?.require_windows_signing).toBe(
+      "${{ github.event_name == 'push' && startsWith(github.ref, 'refs/tags/') }}"
+    )
     expect(release.jobs['notarize-mac'].if).toBe(stableTagCondition)
     expect(release.jobs['windows-upgrade-smoke'].if).toBe(stableTagCondition)
+    expect(release.jobs['windows-full-test'].if).toBe(stableTagCondition)
     expect(release.jobs.publish.if).toBe(stableTagCondition)
   })
 

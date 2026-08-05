@@ -48,7 +48,7 @@ describe('Windows installer smoke plan', () => {
     )
   })
 
-  it('checks the previous version before the current version in one install location', async () => {
+  it('drills upgrade, process-lock rollback, and final restart in one install location', async () => {
     const plan = buildSmokePlan({
       currentInstaller: 'current.exe',
       previousInstaller: 'previous.exe'
@@ -59,7 +59,9 @@ describe('Windows installer smoke plan', () => {
 
     expect(runCycle.mock.calls).toEqual([
       [{ installer: 'previous.exe', phase: 'previous' }],
-      [{ installer: 'current.exe', phase: 'current' }]
+      [{ installer: 'current.exe', phase: 'current', runningInstaller: 'previous.exe' }],
+      [{ installer: 'previous.exe', phase: 'rollback', runningInstaller: 'current.exe' }],
+      [{ installer: 'current.exe', phase: 'restart', runningInstaller: 'previous.exe' }]
     ])
   })
 

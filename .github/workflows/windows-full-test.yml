@@ -1,14 +1,12 @@
-name: Windows Full Test (Advisory)
+name: Windows Full Test
 
-# Preserve complete real-Windows coverage after merge and on stable tags without adding its runtime
-# to the reusable build workflow. This workflow is intentionally independent from nightly/release
-# packaging and publishing; the focused PR gate and packaged-app smoke remain blocking.
+# Preserve complete real-Windows coverage after merge without adding its runtime to ordinary PRs.
+# Stable release.yml also calls this workflow and blocks publishing on both shards.
 on:
+  workflow_call:
   push:
     branches:
       - main
-    tags:
-      - 'v*'
     paths-ignore:
       - '**/*.md'
       - 'docs/**'
@@ -27,9 +25,8 @@ concurrency:
 
 jobs:
   windows_full_test:
-    name: Windows full test (${{ matrix.shard }}/2, advisory)
+    name: Windows full test (${{ matrix.shard }}/2)
     runs-on: windows-latest
-    continue-on-error: true
     timeout-minutes: 25
     strategy:
       fail-fast: false

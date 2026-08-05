@@ -77,6 +77,10 @@ jobs:
             echo "::notice::APPLE_API_KEY_P8_BASE64 not set — skipping notarization; mac stays as built."
           fi
 
+      - name: Checkout certification tooling
+        if: steps.gate.outputs.enabled == 'true' && inputs.from_run
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+
       # Call path (from_run): pull this run's signed artifacts for the arch (uploaded by build.yml).
       - name: Download signed mac artifact (from this run)
         if: steps.gate.outputs.enabled == 'true' && inputs.from_run
@@ -216,6 +220,18 @@ jobs:
             process.stdout.write(yml);
           '
 
+      # Stapling changes the installer bytes. Re-hash the final artifacts while preserving the
+      # platform certification signal already established by the build job.
+      - name: Refresh macOS certification evidence
+        if: steps.gate.outputs.enabled == 'true' && inputs.from_run
+        run: >-
+          node scripts/ci/release-certification-evidence.mjs write
+          --platform "macos-${{ matrix.arch }}"
+          --artifact-dir mac
+          --output "mac/certification-macos-${{ matrix.arch }}.json"
+          --package-smoke not-applicable
+          --authenticode not-applicable
+
       # Call path: replace this run's signed artifacts with the stapled ones (same names) plus the
       # regenerated ${arch}-mac.yml feed, so the publish job's merge-multiple download picks them up.
       # overwrite deletes the prior artifacts of this name in the run. The stale mac blockmap is dropped
@@ -231,6 +247,7 @@ jobs:
             mac/*-mac-*.dmg
             mac/*-mac-*.zip
             mac/*-mac.yml
+            mac/certification-*.json
           if-no-files-found: error
 
       # Standalone path: push the stapled dmg/zip + regenerated feed back onto the Release, replacing

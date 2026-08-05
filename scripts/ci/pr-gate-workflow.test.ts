@@ -176,7 +176,8 @@ describe('PR Gate workflow', () => {
       'coverage_macos',
       'windows_core',
       'macos_e2e',
-      'windows_e2e'
+      'windows_e2e',
+      'linux_e2e'
     ]) {
       expect(
         workflow.jobs[bundle].steps?.filter(({ run }) => run === 'npm ci'),
@@ -191,7 +192,8 @@ describe('PR Gate workflow', () => {
         'npm run test:e2e:journey',
         'npm run test:e2e:workspace',
         'npm run test:e2e:accessibility',
-        'npm run test:e2e:visual'
+        'npm run test:e2e:visual',
+        'node scripts/ci/run-selected-release-e2e.mjs'
       ])
     )
 
@@ -201,13 +203,55 @@ describe('PR Gate workflow', () => {
       expect.arrayContaining([
         'npm run test:e2e:journey',
         'npm run test:e2e:workspace',
-        'npm run test:e2e:accessibility'
+        'npm run test:e2e:accessibility',
+        'npm run test:e2e:visual',
+        'node scripts/ci/run-selected-release-e2e.mjs'
+      ])
+    )
+
+    const linuxRuns = workflow.jobs.linux_e2e.steps?.map(({ run }) => run).filter(Boolean)
+    expect(linuxRuns?.filter((run) => run === 'npm run build:e2e')).toHaveLength(1)
+    expect(linuxRuns).toEqual(
+      expect.arrayContaining([
+        'xvfb-run -a npm run test:e2e:journey',
+        'xvfb-run -a npm run test:e2e:workspace',
+        'xvfb-run -a npm run test:e2e:accessibility',
+        'xvfb-run -a npm run test:e2e:visual',
+        'xvfb-run -a node scripts/ci/run-selected-release-e2e.mjs'
       ])
     )
   })
 
+  it('runs selected P0 journeys independently without starting unrelated platform bundles', () => {
+    for (const [bundle, platform] of [
+      ['macos_e2e', 'macos'],
+      ['windows_e2e', 'windows'],
+      ['linux_e2e', 'linux']
+    ] as const) {
+      const step = workflow.jobs[bundle].steps?.find(({ id }) => id === `e2e_release_${platform}`)
+
+      expect(step?.env).toEqual({ PR_GATE_LANES: '${{ needs.preflight.outputs.lanes }}' })
+      for (const journey of [
+        'storage_migration',
+        'provider_bridge',
+        'notebook_lifecycle',
+        'remote_pairing',
+        'artifact_provenance'
+      ]) {
+        expect(step?.if).toContain(`'e2e_${journey}_${platform}'`)
+      }
+    }
+  })
+
   it('collects independent bundle failures before failing the shared runner', () => {
-    for (const bundle of ['static', 'unit', 'windows_core', 'macos_e2e', 'windows_e2e']) {
+    for (const bundle of [
+      'static',
+      'unit',
+      'windows_core',
+      'macos_e2e',
+      'windows_e2e',
+      'linux_e2e'
+    ]) {
       const enforce = workflow.jobs[bundle].steps?.find(({ name }) => name?.startsWith('Enforce'))
       expect(enforce, `${bundle} must enforce collected step outcomes`).toMatchObject({
         if: '${{ always() }}'
@@ -215,7 +259,7 @@ describe('PR Gate workflow', () => {
       expect(enforce?.run).toContain('exit "$failed"')
     }
 
-    for (const bundle of ['macos_e2e', 'windows_e2e']) {
+    for (const bundle of ['macos_e2e', 'windows_e2e', 'linux_e2e']) {
       for (const upload of workflow.jobs[bundle].steps?.filter(({ name }) =>
         name?.startsWith('Upload')
       ) ?? []) {

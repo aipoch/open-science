@@ -44,6 +44,13 @@ jobs:
           path: artifacts
           merge-multiple: true
 
+      - name: Aggregate release certification evidence
+        run: >-
+          node scripts/ci/release-certification-evidence.mjs aggregate
+          --directory artifacts
+          --output artifacts/RELEASE-CERTIFICATION.json
+          --expected-sha "$GITHUB_SHA"
+
       - name: Generate checksums
         working-directory: artifacts
         run: |
@@ -80,3 +87,4 @@ jobs:
             artifacts/*.AppImage
             artifacts/*.deb
             artifacts/SHA256SUMS.txt
+            artifacts/RELEASE-CERTIFICATION.json

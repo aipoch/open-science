@@ -2,8 +2,6 @@ import { expect } from '@playwright/test'
 import type { Page } from 'playwright'
 import { test } from './fixtures/electron-app'
 
-test.skip(process.platform !== 'darwin', 'Visual baselines are currently macOS-only.')
-
 const prepareVisualPage = async (page: Page): Promise<void> => {
   await page.setViewportSize({ width: 1280, height: 800 })
   await page.emulateMedia({ reducedMotion: 'reduce' })
@@ -31,7 +29,7 @@ const expectStableScreenshot = async (
   await expect(page).toHaveScreenshot(name, {
     animations: 'disabled',
     caret: 'hide',
-    maxDiffPixelRatio
+    maxDiffPixelRatio: process.platform === 'darwin' ? maxDiffPixelRatio : 0.035
   })
 }
 

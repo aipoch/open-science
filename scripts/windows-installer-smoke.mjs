@@ -60,8 +60,14 @@ const installerVersion = (installer) => {
 }
 
 const buildSmokePlan = ({ currentInstaller, previousInstaller }) => [
-  ...(previousInstaller ? [{ installer: previousInstaller, phase: 'previous' }] : []),
-  { installer: currentInstaller, phase: 'current' }
+  ...(previousInstaller
+    ? [
+        { installer: previousInstaller, phase: 'previous' },
+        { installer: currentInstaller, phase: 'current', runningInstaller: previousInstaller },
+        { installer: previousInstaller, phase: 'rollback', runningInstaller: currentInstaller },
+        { installer: currentInstaller, phase: 'restart', runningInstaller: previousInstaller }
+      ]
+    : [{ installer: currentInstaller, phase: 'current' }])
 ]
 
 const executeSmokePlan = async (plan, runCycle) => {
@@ -723,6 +729,43 @@ const launchAndProbe = async ({ installDirectory, expectedVersion, env, legacyCo
   }
 }
 
+// Leaves a healthy packaged process running so the next silent installer must handle the real
+// executable/process lock. The caller owns termination if installation fails.
+const launchForProcessLock = async ({ installDirectory, expectedVersion, env }) => {
+  const executable = join(installDirectory, APP_EXECUTABLE)
+  const child = spawn(executable, ['--open-science-headless', '--serve=0'], {
+    env,
+    windowsHide: true
+  })
+  let stdout = ''
+  let stderr = ''
+  child.stdout?.setEncoding('utf8')
+  child.stderr?.setEncoding('utf8')
+  child.stdout?.on('data', (chunk) => (stdout += chunk))
+  child.stderr?.on('data', (chunk) => (stderr += chunk))
+  const output = () => `${stdout}${stderr ? `\n${stderr}` : ''}`
+  const exit = observeChildExit(child)
+  try {
+    const { endpoint, auth } = await Promise.race([
+      waitFor('the process-lock app web service', async () => parsePackagedAppEndpoint(output())),
+      exit.then((code) => {
+        throw new Error(`Process-lock app exited before becoming healthy (${code}).\n${output()}`)
+      })
+    ])
+    const response = await fetchWithTimeout(`${endpoint}/api/bootstrap?${auth}`)
+    if (!response.ok)
+      throw new Error(`Process-lock app bootstrap returned HTTP ${response.status}.`)
+    const bootstrap = await response.json()
+    if (bootstrap.appVersion !== expectedVersion || bootstrap.platform !== 'win32') {
+      throw new Error(`Unexpected process-lock app bootstrap: ${JSON.stringify(bootstrap)}`)
+    }
+    return { child, exit, output }
+  } catch (error) {
+    await terminateProcessTree(child)
+    throw error
+  }
+}
+
 const installAndProbe = async ({ installer, installDirectory, phase, env, legacyConfigRoots }) => {
   console.log(`Smoke testing ${phase} installer: ${basename(installer)}`)
   await runProcess(installer, ['/S', `/D=${installDirectory}`], { env })
@@ -734,6 +777,36 @@ const installAndProbe = async ({ installer, installDirectory, phase, env, legacy
     expectedVersion: installerVersion(installer),
     env,
     legacyConfigRoots
+  })
+}
+
+const installOverRunningApp = async ({
+  installer,
+  runningInstaller,
+  installDirectory,
+  phase,
+  env
+}) => {
+  const running = await launchForProcessLock({
+    installDirectory,
+    expectedVersion: installerVersion(runningInstaller),
+    env
+  })
+  try {
+    await runProcess(installer, ['/S', `/D=${installDirectory}`], { env })
+    await waitForShutdownExit(running.exit, running.child, running.output)
+  } catch (error) {
+    await terminateProcessTree(running.child)
+    throw error
+  }
+
+  await assertPackagedResources(installDirectory)
+  await runProcess(join(installDirectory, 'resources', 'micromamba.exe'), ['--version'], { env })
+  if (phase === 'current') await runPackagedLocalRpcSmoke({ installDirectory, env })
+  return launchAndProbe({
+    installDirectory,
+    expectedVersion: installerVersion(installer),
+    env
   })
 }
 
@@ -824,12 +897,14 @@ const main = async () => {
     await executeSmokePlan(
       buildSmokePlan({ currentInstaller, previousInstaller }),
       async (cycle) => {
-        const configRoot = await installAndProbe({
-          ...cycle,
-          installDirectory,
-          env,
-          legacyConfigRoots: cycle.phase === 'previous' ? legacyConfigRoots : undefined
-        })
+        const configRoot = cycle.runningInstaller
+          ? await installOverRunningApp({ ...cycle, installDirectory, env })
+          : await installAndProbe({
+              ...cycle,
+              installDirectory,
+              env,
+              legacyConfigRoots: cycle.phase === 'previous' ? legacyConfigRoots : undefined
+            })
         await upgradeProfileGuard.verifyCycle(cycle.phase, configRoot)
       }
     )
