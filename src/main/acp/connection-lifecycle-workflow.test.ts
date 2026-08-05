@@ -347,7 +347,7 @@ describe('AcpConnectionLifecycleWorkflow', () => {
       })),
       dispose: vi.fn(async () => undefined)
     }
-    const disconnectCurrent = vi.fn(async (_emitClosedStatus?: boolean, _epoch?: number) => {
+    const disconnectCurrent = vi.fn(async () => {
       if (reentrant) generation = 2
       return snapshot
     })
@@ -371,7 +371,7 @@ describe('AcpConnectionLifecycleWorkflow', () => {
       pushEvent: vi.fn((event) => {
         if (event.title === 'Agent initialized') {
           reentrant = true
-          void disconnectCurrent(false, 1)
+          void disconnectCurrent()
         }
       }),
       transitionStatus: vi.fn(),
@@ -408,7 +408,7 @@ describe('AcpConnectionLifecycleWorkflow', () => {
       dispose: vi.fn(async () => undefined)
     }
     let disconnectCount = 0
-    const disconnectCurrent = vi.fn(async (_emitClosedStatus?: boolean, _epoch?: number) => {
+    const disconnectCurrent = vi.fn(async () => {
       disconnectCount += 1
       if (disconnectCount > 1) {
         generation = 2
@@ -442,7 +442,7 @@ describe('AcpConnectionLifecycleWorkflow', () => {
 
     const connectPromise = workflow.connect()
     await new Promise<void>((resolvePromise) => setTimeout(resolvePromise, 0))
-    await disconnectCurrent(false, 1)
+    await disconnectCurrent()
     await expect(connectPromise).rejects.toThrow('connection closed')
     expect(attempt.publish).not.toHaveBeenCalled()
   })

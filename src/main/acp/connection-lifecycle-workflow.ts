@@ -6,7 +6,11 @@ import type { AcpConnectRequest, AcpRuntimeEvent, AcpStateSnapshot } from '../..
 import type { AgentFramework } from '../agent-framework'
 import { createLogger, diagnosticErrorFields } from '../logger'
 import type { AcpAgentConnectionCandidate } from './agent-connection-adapter'
-import type { AcpConnectionResourceAttempt, AcpConnectionResourceOwner, AcpConnectionResourceReadyHandle } from './connection-resource-owner'
+import type {
+  AcpConnectionResourceAttempt,
+  AcpConnectionResourceOwner,
+  AcpConnectionResourceReadyHandle
+} from './connection-resource-owner'
 
 type LifecycleEvent = Omit<AcpRuntimeEvent, 'id' | 'timestamp'> & Partial<AcpRuntimeEvent>
 type TransferredConnection = ReturnType<AcpAgentConnectionCandidate['transferTo']>
@@ -48,13 +52,13 @@ const log = createLogger('acp')
 const safeLogError = (message: string, error: unknown): void => {
   try {
     log.error(message, error)
-  } catch {}
+  } catch { return }
 }
 
 const safeLogWarning = (message: string, data: unknown): void => {
   try {
     log.warn(message, data)
-  } catch {}
+  } catch { return }
 }
 
 const errorMessage = (error: unknown): string => {
