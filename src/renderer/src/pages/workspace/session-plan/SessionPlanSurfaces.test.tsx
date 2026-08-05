@@ -98,6 +98,10 @@ describe('Session Plan renderer surfaces', () => {
     expect(screen.getByText('Analyze one dataset')).toBeTruthy()
     expect(screen.getByText('1 phase · 1 delegation · 1 step')).toBeTruthy()
     expect(screen.getByText(/high confidence/u)).toBeTruthy()
+    expect(screen.getAllByRole('button').every((button) => button.dataset.slot === 'button')).toBe(
+      true
+    )
+    expect(screen.getByLabelText('Respond to Plan').dataset.slot).toBe('textarea')
     fireEvent.click(screen.getByRole('button', { name: 'Open' }))
     fireEvent.click(screen.getByRole('button', { name: 'Approve' }))
     expect(onOpen).toHaveBeenCalledOnce()
@@ -177,9 +181,11 @@ describe('Session Plan renderer surfaces', () => {
       />
     )
 
-    expect(
-      screen.getByText(/A newer plan is active\. This plan can no longer be approved\./u)
-    ).toBeTruthy()
+    const warning = screen.getByText(
+      /A newer plan is active\. This plan can no longer be approved\./u
+    )
+    expect(warning.className).toContain('bg-muted')
+    expect(warning.className).not.toContain('amber')
     expect(screen.getByRole('button', { name: 'Open' })).toBeTruthy()
     expect(screen.queryByRole('button', { name: 'Approve' })).toBeNull()
     expect(screen.queryByRole('button', { name: 'Dismiss' })).toBeNull()
@@ -356,6 +362,7 @@ describe('Session Plan renderer surfaces', () => {
     )
 
     const chip = screen.getByRole('button', { name: /open plan, step 0 of 2, 2 running/i })
+    expect(chip.dataset.slot).toBe('button')
     expect(chip.textContent).toContain('2 running')
     fireEvent.click(chip)
     expect(onOpen).toHaveBeenCalledOnce()

@@ -3,6 +3,7 @@ import { Download, Info, ListChecks, Maximize2, Minimize2 } from 'lucide-react'
 
 import { Button } from '@/components/ui/button'
 import { ScrollArea } from '@/components/ui/scroll-area'
+import { Textarea } from '@/components/ui/textarea'
 import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from '@/components/ui/tooltip'
 
 import {
@@ -97,10 +98,10 @@ const WorkspacePlanCard = ({
   if (resolvedProjectionKey === projectionKey) return <></>
   return (
     <article
-      className={`overflow-hidden rounded-lg border bg-card shadow-card ${stale ? 'border-amber-300' : 'border-border'} ${className}`}
+      className={`overflow-hidden rounded-lg border border-border bg-card shadow-card ${className}`}
     >
       {stale ? (
-        <div className="border-b border-amber-300 bg-amber-50 px-3.5 py-2 text-xs text-amber-800">
+        <div className="border-b border-border bg-muted px-3.5 py-2 text-xs text-muted-foreground">
           ⚠ A newer plan is active. This plan can no longer be approved.
         </div>
       ) : null}
@@ -118,31 +119,26 @@ const WorkspacePlanCard = ({
             </div>
           </div>
           <div className="flex gap-2">
-            <button
-              type="button"
-              className="h-8 rounded-lg border border-border bg-card px-2.5 text-sm font-medium hover:bg-muted focus-visible:outline-none focus-visible:ring-[3px] focus-visible:ring-ring/50"
-              onClick={onOpen}
-            >
+            <Button type="button" variant="outline" onClick={onOpen}>
               Open
-            </button>
+            </Button>
             {decisionPending ? (
               <>
-                <button
+                <Button
                   type="button"
-                  className="h-8 rounded-lg border border-border bg-card px-2.5 text-sm font-medium hover:bg-muted focus-visible:outline-none focus-visible:ring-[3px] focus-visible:ring-ring/50 disabled:opacity-50"
+                  variant="outline"
                   disabled={decisionBusy}
                   onClick={() => void respond('rejected')}
                 >
                   Dismiss
-                </button>
-                <button
+                </Button>
+                <Button
                   type="button"
-                  className="h-8 rounded-lg bg-primary px-2.5 text-sm font-medium text-primary-foreground focus-visible:outline-none focus-visible:ring-[3px] focus-visible:ring-ring/50 disabled:opacity-50"
                   disabled={decisionBusy}
                   onClick={() => void respond('approved')}
                 >
                   Approve
-                </button>
+                </Button>
               </>
             ) : null}
           </div>
@@ -182,22 +178,18 @@ const WorkspacePlanCard = ({
             </label>
             <div className="flex items-center gap-2">
               <span aria-hidden="true">✎</span>
-              <textarea
+              <Textarea
                 id={`plan-response-${projection.artifactVersionId}`}
                 rows={1}
-                className="min-h-9 flex-1 resize-none rounded bg-transparent py-2 text-sm outline-none placeholder:text-muted-foreground focus-visible:ring-[3px] focus-visible:ring-ring/50"
+                className="min-h-9 flex-1 resize-none border-0 bg-transparent px-0 py-2 shadow-none dark:bg-transparent"
                 placeholder="Describe changes, or type “approve”…"
                 value={responseText}
                 disabled={decisionBusy}
                 onChange={(event) => setResponseText(event.target.value)}
               />
-              <button
-                type="submit"
-                className="h-8 rounded-lg bg-primary px-2.5 text-sm font-medium text-primary-foreground disabled:opacity-50"
-                disabled={decisionBusy || responseText.trim().length === 0}
-              >
+              <Button type="submit" disabled={decisionBusy || responseText.trim().length === 0}>
                 Send
-              </button>
+              </Button>
             </div>
             {decisionError ? (
               <p role="alert" className="mt-1 text-xs text-destructive">
@@ -221,9 +213,11 @@ const PlanProgressChip = ({
     isRunning ? `, ${running} running` : ''
   }`
   return (
-    <button
+    <Button
       type="button"
-      className="flex h-7 cursor-pointer items-center gap-1.5 rounded-md px-2 text-[12px] font-normal text-text-100 transition-colors duration-200 ease-out hover:bg-bg-300 hover:text-text-000 focus-visible:outline-none focus-visible:ring-[3px] focus-visible:ring-ring/50"
+      variant="ghost"
+      size="sm"
+      className="text-[12px] font-normal text-text-100 hover:bg-bg-300 hover:text-text-000"
       aria-label={accessibleName}
       onClick={onOpen}
     >
@@ -236,7 +230,7 @@ const PlanProgressChip = ({
       <ListChecks className="size-3.5" strokeWidth={2} aria-hidden="true" />
       step {projection.counts.completed}/{projection.counts.steps}
       {isRunning ? <span className="font-medium text-primary">· {running} running</span> : null}
-    </button>
+    </Button>
   )
 }
 
@@ -339,12 +333,12 @@ const PlanPreviewSurface = ({
         </div>
       </header>
       {stale ? (
-        <div className="border-b border-amber-300 bg-amber-50 px-4 py-2 text-xs text-amber-800">
+        <div className="border-b border-border bg-muted px-4 py-2 text-xs text-muted-foreground">
           ⚠ This plan has been replaced by another plan and is no longer current.
         </div>
       ) : null}
       {!stale && projection.approval === 'pending' && !onRespond ? (
-        <div className="border-b border-amber-300 bg-amber-50 px-4 py-2 text-xs text-amber-800">
+        <div className="border-b border-border bg-muted px-4 py-2 text-xs text-muted-foreground">
           This Plan is still pending, but its original Agent interaction has ended. Send a normal
           message to let the Agent decide how to continue.
         </div>
@@ -383,8 +377,13 @@ const PlanPreviewSurface = ({
                       </span>
                     </div>
                     {delegation.steps.map((step) => {
-                      const runtime = projection.stepStatuses[step.title]
-                      const state = projection.stepStates?.[step.title] ?? {
+                      const runtime = Object.hasOwn(projection.stepStatuses, step.title)
+                        ? projection.stepStatuses[step.title]
+                        : undefined
+                      const projectedState = Object.hasOwn(projection.stepStates, step.title)
+                        ? projection.stepStates[step.title]
+                        : undefined
+                      const state = projectedState ?? {
                         status: runtime?.status ?? ('not_started' as const),
                         ...(runtime?.notes ? { notes: runtime.notes } : {})
                       }
