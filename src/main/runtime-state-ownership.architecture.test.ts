@@ -332,6 +332,15 @@ describe('runtime state ownership architecture', () => {
     }
   })
 
+  it('keeps live Session Plan state behind one Runtime owner', () => {
+    const source = readSource('src/main/acp/runtime.ts')
+
+    expect(source).not.toContain('planApprovalWaiters')
+    expect(source).not.toContain('planExecutionBindings')
+    expect(source.match(/new SessionPlanInteractionOwner\(\)/g)).toHaveLength(1)
+    expect(source).toContain('interactions: this.planInteractions')
+  })
+
   it('accepts declared interface imports for a future orchestration module', () => {
     const source = `
       import type { AcpApplicationCommandDependencies } from '../acp/application-commands'

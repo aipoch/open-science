@@ -11,6 +11,7 @@ type CloseState = Readonly<{
   invalidatePendingSessionStartups: () => void
   disposePermissionContext: () => void
   clearReviewerState: () => void
+  clearPlanInteractions: () => void
   settleActivePrompts: () => readonly unknown[]
   supersedeInteractions: () => void
   clearContextUsage: () => void
@@ -102,6 +103,7 @@ class AcpConnectionCloseWorkflow {
     }
     runCleanup('permission-context', this.options.state.disposePermissionContext)
     runCleanup('reviewer-state', this.options.state.clearReviewerState)
+    runCleanup('plan-interactions', this.options.state.clearPlanInteractions)
     this.options.state.supersedeInteractions()
     this.options.state.clearContextUsage()
     this.options.state.clearAppliedSessionModels()
@@ -134,6 +136,7 @@ class AcpConnectionCloseWorkflow {
     this.options.state.invalidatePendingSessionStartups()
     this.options.state.disposePermissionContext()
     this.options.state.clearReviewerState()
+    this.options.state.clearPlanInteractions()
     this.options.resources.cleanupUnexpectedClose(teardownGeneration)
     this.options.backendGeneration.supersede(teardownGeneration)
     this.options.state.disposeSessionCapabilities(this.options.state.activeSessionIds())
@@ -161,6 +164,7 @@ class AcpConnectionCloseWorkflow {
       this.options.backendGeneration.supersede(this.options.currentGeneration() - 1)
     })
     this.options.transitions.resetReconnect()
+    this.options.state.clearPlanInteractions()
     this.options.state.clearSessionProjection()
     this.options.state.clearContextUsage()
     this.options.state.clearAppliedSessionModels()

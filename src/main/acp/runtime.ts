@@ -136,6 +136,7 @@ import { createCodexTurnAdapter } from './codex-turn-adapter'
 import { AcpOpenCodeTurnAdapter } from './opencode-turn-adapter'
 import { AcpTurnSkillOwner, type AcpTurnSkillHooks } from './turn-skill-owner'
 import { createProductionPlanService } from '../session-plan/production-plan-service'
+import { SessionPlanInteractionOwner } from '../session-plan/session-plan-interaction-owner'
 import { SESSION_PLAN_SYSTEM_PROMPT_APPEND } from '../session-plan/guidance'
 import type { PlanResponseResult, PlanService } from '../session-plan/plan-service'
 import type {
@@ -412,20 +413,9 @@ class AcpRuntime {
   private readonly artifactRepository: ArtifactRepository | undefined
   private readonly artifactRunRegistry: ArtifactRunRegistry | undefined
   private readonly artifactTurns: ArtifactTurnOwner | undefined
+  private readonly planInteractions = new SessionPlanInteractionOwner()
   private readonly planService: PlanService | undefined
   private readonly planSessions: AcpRuntimePlanOptions['sessions'] | undefined
-  private readonly planApprovalWaiters = new Map<
-    string,
-    {
-      interactionId: string
-      resolve: (result: unknown) => void
-      reject: (error: Error) => void
-    }
-  >()
-  private readonly planExecutionBindings = new Map<
-    string,
-    { interactionSequence: number; artifactVersionId: string }
-  >()
   private readonly promptContentOwner: AcpPromptContentOwner
   private readonly promptPreparation: AcpPromptPreparationOwner
   private readonly contextCompactionWorkflow: AcpContextCompactionWorkflow
@@ -517,6 +507,7 @@ class AcpRuntime {
     this.planService =
       options.plan && this.artifactTurns && options.artifacts?.provenance?.resolveVersionContent
         ? createProductionPlanService({
+            interactions: this.planInteractions,
             artifactTurns: this.artifactTurns,
             provenance: {
               resolveVersionContent: (request) =>
@@ -708,6 +699,8 @@ class AcpRuntime {
       invalidatePendingSessionStartups: () => this.invalidatePendingSessionStartups(),
       disposePermissionContext: () => this.permissionContext.dispose(),
       clearReviewerState: () => this.reviewerSessions.clear(),
+      clearPlanInteractions: () =>
+        this.planInteractions.clearAll('The Session Plan interaction was disconnected.'),
       settleActivePrompts: () => this.sessionInteractions.settleActivePrompts(),
       supersedeInteractions: () => this.sessionInteractions.supersedeAll(),
       clearContextUsage: () => this.contextUsageTracker.clear(),
@@ -1010,11 +1003,9 @@ class AcpRuntime {
     const service = this.planService
     if (!service) throw new Error('Session Plan capability is not configured.')
     if (input.operation === 'generate') {
-      if (this.planApprovalWaiters.has(input.sessionId)) {
-        throw new Error('A Session Plan is already awaiting approval.')
-      }
       const interactionId = this.artifactTurns?.promptMessageIdFor(input.sessionId)
       if (!interactionId) throw new Error('No active interaction can generate a Session Plan.')
+      this.planInteractions.reserveApproval(input.sessionId, interactionId)
       let result: Awaited<ReturnType<PlanService['generate']>>
       try {
         result = await service.generate({
@@ -1024,13 +1015,18 @@ class AcpRuntime {
           content: input.input as GeneratePlanContent
         })
       } catch (error) {
+        this.planInteractions.releaseApprovalReservation(input.sessionId, interactionId)
         const current = await service.getProjection(input.projectId, input.sessionId)
         if (current) this.publishPlanProjection(input.sessionId, current)
         throw error
       }
-      const approval = new Promise((resolve, reject) => {
-        this.planApprovalWaiters.set(input.sessionId, { interactionId, resolve, reject })
-      })
+      let approval: Promise<unknown>
+      try {
+        approval = this.planInteractions.parkReservedApproval(input.sessionId, interactionId)
+      } catch (error) {
+        this.planInteractions.release(input.sessionId, result.projection.artifactVersionId)
+        throw error
+      }
       this.publishPlanProjection(input.sessionId, result.projection)
       return approval
     }
@@ -1048,6 +1044,7 @@ class AcpRuntime {
     if (input.operation === 'approve' || input.operation === 'reject') {
       const interactionIsLive = this.sessionInteractions.current(input.sessionId) !== undefined
       const decision = input.operation === 'approve' ? 'approved' : 'rejected'
+      const executionBinding = this.planInteractions.executionBindingFor(input.sessionId)
       const result = await service.respond({
         ...identity,
         decision,
@@ -1059,9 +1056,14 @@ class AcpRuntime {
           result.projection.artifactVersionId
         )
       } else {
-        this.planExecutionBindings.delete(input.sessionId)
+        if (executionBinding) {
+          this.planInteractions.releaseExecution(
+            input.sessionId,
+            executionBinding.interactionSequence
+          )
+        }
       }
-      this.resolvePlanApprovalWaiter(input.sessionId, result)
+      this.planInteractions.resolveApproval(input.sessionId, result)
       this.publishPlanProjection(input.sessionId, result.projection)
       return result
     }
@@ -1078,7 +1080,7 @@ class AcpRuntime {
       )
     }
     const interaction = this.sessionInteractions.current(input.sessionId)
-    const binding = this.planExecutionBindings.get(input.sessionId)
+    const binding = this.planInteractions.executionBindingFor(input.sessionId)
     if (!binding) {
       throw new PlanCommandError(
         'continuation-required',
@@ -1125,10 +1127,14 @@ class AcpRuntime {
 
   async respondSessionPlan(input: PlanResponseCommand): Promise<PlanResponseResult> {
     if (!this.planService) throw new Error('Session Plan capability is not configured.')
-    if (input.decision === undefined && !this.planApprovalWaiters.has(input.sessionId)) {
+    if (
+      input.decision === undefined &&
+      !this.planInteractions.approvalInteractionIdFor(input.sessionId)
+    ) {
       throw new Error('The paused Session Plan interaction is no longer available.')
     }
-    const interactionIsLive = this.planApprovalWaiters.has(input.sessionId)
+    const interactionIsLive =
+      this.planInteractions.approvalInteractionIdFor(input.sessionId) !== undefined
     const projection = await this.planService.getProjection(input.projectId, input.sessionId, {
       interactionIsLive
     })
@@ -1142,12 +1148,14 @@ class AcpRuntime {
           result.projection.artifactVersionId
         )
       }
-      if (interactionIsLive) this.resolvePlanApprovalWaiter(input.sessionId, result)
+      if (interactionIsLive) this.planInteractions.resolveApproval(input.sessionId, result)
       this.publishPlanProjection(input.sessionId, result.projection)
       return result
     }
-    const waiter = this.planApprovalWaiters.get(input.sessionId)
-    if (!waiter || waiter.interactionId !== result.routeToInteractionId) {
+    if (
+      this.planInteractions.approvalInteractionIdFor(input.sessionId) !==
+      result.routeToInteractionId
+    ) {
       throw new Error('The paused Session Plan interaction is no longer available.')
     }
     try {
@@ -1165,7 +1173,7 @@ class AcpRuntime {
     } catch (error) {
       safeLogError('Routed user Message projection callback failed', errorLogFields(error))
     }
-    this.resolvePlanApprovalWaiter(input.sessionId, result)
+    this.planInteractions.resolveApproval(input.sessionId, result)
     return result
   }
 
@@ -1202,20 +1210,14 @@ class AcpRuntime {
     }
   }
 
-  private resolvePlanApprovalWaiter(sessionId: string, result: unknown): void {
-    const waiter = this.planApprovalWaiters.get(sessionId)
-    if (!waiter) return
-    this.planApprovalWaiters.delete(sessionId)
-    waiter.resolve(result)
-  }
-
   private bindPlanExecutionToCurrentInteraction(
     sessionId: string,
     artifactVersionId: string
   ): void {
     const interaction = this.sessionInteractions.current(sessionId)
     if (!interaction || interaction.kind !== 'prompt') return
-    this.planExecutionBindings.set(sessionId, {
+    this.planInteractions.bindExecution({
+      sessionId,
       interactionSequence: interaction.sequence,
       artifactVersionId
     })
@@ -1237,13 +1239,6 @@ class AcpRuntime {
         'The active Session Plan does not belong to the durable active Message Branch.'
       )
     }
-  }
-
-  private rejectPlanApprovalWaiter(sessionId: string, reason: string): void {
-    const waiter = this.planApprovalWaiters.get(sessionId)
-    if (!waiter) return
-    this.planApprovalWaiters.delete(sessionId)
-    waiter.reject(new Error(reason))
   }
 
   // Lists sessions with an in-flight prompt, for the pre-migration active-session warning.
@@ -1752,9 +1747,6 @@ class AcpRuntime {
     emitClosedStatus = true,
     teardownGeneration = this.connectionGeneration
   ): Promise<AcpStateSnapshot> {
-    for (const sessionId of this.planApprovalWaiters.keys()) {
-      this.rejectPlanApprovalWaiter(sessionId, 'The Session Plan interaction was disconnected.')
-    }
     return this.connectionClose.disconnectCurrent(emitClosedStatus, teardownGeneration)
   }
 
@@ -1902,7 +1894,8 @@ class AcpRuntime {
     const decision = continuation?.pendingAction
     const committed = (): AcpPromptTurnPlanContext => {
       if (authorized) {
-        this.planExecutionBindings.set(request.sessionId, {
+        this.planInteractions.bindExecution({
+          sessionId: request.sessionId,
           interactionSequence: interaction.sequence,
           artifactVersionId: authorized.artifactVersionId
         })
@@ -1913,6 +1906,7 @@ class AcpRuntime {
       })
     }
     if (continuation && (decision === 'approve' || decision === 'reject')) {
+      const executionBinding = this.planInteractions.executionBindingFor(request.sessionId)
       return this.planService!.respond({
         projectId: continuation.projectId,
         sessionId: request.sessionId,
@@ -1924,9 +1918,14 @@ class AcpRuntime {
         if (decision === 'approve') authorized = result.projection
         else {
           protectedPending = result.projection
-          this.planExecutionBindings.delete(request.sessionId)
+          if (executionBinding) {
+            this.planInteractions.releaseExecution(
+              request.sessionId,
+              executionBinding.interactionSequence
+            )
+          }
         }
-        this.resolvePlanApprovalWaiter(request.sessionId, result)
+        this.planInteractions.resolveApproval(request.sessionId, result)
         this.publishPlanProjection(request.sessionId, result.projection)
         return committed()
       })
@@ -1939,7 +1938,7 @@ class AcpRuntime {
     interaction: AcpPromptSessionInteractionScope,
     response: PromptResponse
   ): Promise<void> {
-    const binding = this.planExecutionBindings.get(sessionId)
+    const binding = this.planInteractions.executionBindingFor(sessionId)
     if (
       response.stopReason !== 'end_turn' ||
       !this.planService ||
@@ -1962,17 +1961,24 @@ class AcpRuntime {
     sessionId: string,
     interaction: AcpPromptSessionInteractionScope
   ): void {
-    const binding = this.planExecutionBindings.get(sessionId)
-    if (binding?.interactionSequence === interaction.sequence) {
-      this.planExecutionBindings.delete(sessionId)
-    }
-    const waiter = this.planApprovalWaiters.get(sessionId)
-    if (waiter?.interactionId === interaction.promptMessageId) {
-      this.rejectPlanApprovalWaiter(
+    this.planInteractions.releaseExecution(sessionId, interaction.sequence)
+    if (interaction.promptMessageId) {
+      this.rejectPlanApprovalForInteraction(
         sessionId,
+        interaction.promptMessageId,
         'The Session Plan interaction ended before approval.'
       )
     }
+  }
+
+  private rejectPlanApprovalForInteraction(
+    sessionId: string,
+    interactionId: string,
+    reason: string
+  ): void {
+    this.planInteractions.releaseApprovalReservation(sessionId, interactionId)
+    if (this.planInteractions.approvalInteractionIdFor(sessionId) !== interactionId) return
+    this.planInteractions.rejectApproval(sessionId, reason)
   }
 
   // Sends one prompt turn to the targeted session and streams updates until stop.
@@ -2008,6 +2014,9 @@ class AcpRuntime {
   async cancelPrompt(request: AcpCancelPromptRequest): Promise<AcpStateSnapshot> {
     const connection = this.connection
     const activeSession = this.activeSessionFor(request.sessionId)
+    const planInteractionId =
+      this.currentPromptInteraction(request.sessionId)?.promptMessageId ??
+      this.planInteractions.approvalInteractionIdFor(request.sessionId)
 
     if (connection && activeSession) {
       await this.sessionInteractions.cancelPrompt({
@@ -2017,10 +2026,13 @@ class AcpRuntime {
             sessionId: activeSession.sessionId
           }),
         onAccepted: () => {
-          this.rejectPlanApprovalWaiter(
-            request.sessionId,
-            'The Session Plan interaction was cancelled.'
-          )
+          if (planInteractionId) {
+            this.rejectPlanApprovalForInteraction(
+              request.sessionId,
+              planInteractionId,
+              'The Session Plan interaction was cancelled.'
+            )
+          }
           this.cancelPermissionFlowForSession(request.sessionId)
           this.pushEvent({
             kind: 'system',
@@ -2048,8 +2060,10 @@ class AcpRuntime {
 
   // Closes the agent-side session when supported, then removes local routing state.
   async deleteSession(request: AcpDeleteSessionRequest): Promise<AcpStateSnapshot> {
-    this.rejectPlanApprovalWaiter(request.sessionId, 'The Session Plan interaction was deleted.')
-    this.planExecutionBindings.delete(request.sessionId)
+    this.planInteractions.clearSession(
+      request.sessionId,
+      'The Session Plan interaction was deleted.'
+    )
     return this.sessionDeletion.delete(request.sessionId)
   }
 

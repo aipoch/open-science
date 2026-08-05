@@ -21,6 +21,7 @@ const createWorkflow = (overrides: Record<string, unknown> = {}): TestHarness =>
     invalidatePendingSessionStartups: vi.fn(() => actions.push('invalidate')),
     disposePermissionContext: vi.fn(() => actions.push('permission')),
     clearReviewerState: vi.fn(() => actions.push('reviewer')),
+    clearPlanInteractions: vi.fn(() => actions.push('plan')),
     settleActivePrompts: vi.fn(() => ['prompt'] as unknown[]),
     supersedeInteractions: vi.fn(() => actions.push('interactions')),
     clearContextUsage: vi.fn(() => actions.push('usage')),
@@ -113,6 +114,7 @@ describe('AcpConnectionCloseWorkflow', () => {
       'invalidate',
       'permission',
       'reviewer',
+      'plan',
       'interactions',
       'usage',
       'models',
@@ -143,6 +145,7 @@ describe('AcpConnectionCloseWorkflow', () => {
       'invalidate',
       'permission',
       'reviewer',
+      'plan',
       'backend:2',
       'capabilities',
       'detach',
@@ -168,7 +171,16 @@ describe('AcpConnectionCloseWorkflow', () => {
     await expect(workflow.shutdownForQuit()).resolves.toEqual({ reaped: false })
 
     expect(resources.beginAwaitableShutdown).toHaveBeenCalledWith(true)
+    expect(state.clearPlanInteractions).toHaveBeenCalledOnce()
     expect(state.clearSessionProjection).toHaveBeenCalledOnce()
+  })
+
+  it('clears Plan interactions during synchronous shutdown', () => {
+    const { workflow, state } = createWorkflow()
+
+    workflow.shutdown()
+
+    expect(state.clearPlanInteractions).toHaveBeenCalledOnce()
   })
 
   it('clears usage before deferring provider reconnect and delegates intent ownership', async () => {

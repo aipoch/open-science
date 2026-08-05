@@ -49,6 +49,36 @@ describe('SessionPlanInteractionOwner', () => {
     await expect(approval).resolves.toEqual({ decision: 'approved' })
   })
 
+  it('reserves approval generation atomically before parking becomes visible', async () => {
+    const owner = new SessionPlanInteractionOwner()
+
+    owner.reserveApproval('session-1', 'interaction-1')
+
+    expect(owner.approvalInteractionIdFor('session-1')).toBeUndefined()
+    expect(() => owner.reserveApproval('session-1', 'interaction-2')).toThrow(
+      'A Session Plan is already awaiting approval.'
+    )
+    expect(() => owner.parkApproval('session-1', 'interaction-2')).toThrow(
+      'A Session Plan is already awaiting approval.'
+    )
+    const approval = owner.parkReservedApproval('session-1', 'interaction-1')
+    expect(owner.approvalInteractionIdFor('session-1')).toBe('interaction-1')
+    owner.resolveApproval('session-1', { decision: 'approved' })
+    await expect(approval).resolves.toEqual({ decision: 'approved' })
+  })
+
+  it('releases a failed approval generation reservation for retry', () => {
+    const owner = new SessionPlanInteractionOwner()
+    owner.reserveApproval('session-1', 'interaction-1')
+
+    expect(owner.releaseApprovalReservation('session-1', 'interaction-1')).toBe(true)
+    expect(owner.releaseApprovalReservation('session-1', 'interaction-1')).toBe(false)
+    expect(() => owner.parkReservedApproval('session-1', 'interaction-1')).toThrow(
+      'The Session Plan approval reservation is no longer available.'
+    )
+    expect(() => owner.reserveApproval('session-1', 'interaction-2')).not.toThrow()
+  })
+
   it('rejects a parked approval exactly once', async () => {
     const owner = new SessionPlanInteractionOwner()
     const approval = owner.parkApproval('session-1', 'interaction-1')

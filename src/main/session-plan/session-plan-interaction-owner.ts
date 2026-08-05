@@ -16,6 +16,7 @@ type SessionPlanExecutionBinding = Readonly<{
 
 type SessionPlanInteractionRow = {
   identity?: SessionPlanInteractionIdentity
+  approvalReservation?: string
   approval?: SessionPlanApprovalParking
   execution?: SessionPlanExecutionBinding
 }
@@ -46,9 +47,37 @@ class SessionPlanInteractionOwner {
     return true
   }
 
+  reserveApproval(sessionId: string, interactionId: string): void {
+    const row = this.rows.get(sessionId) ?? {}
+    if (row.approvalReservation || row.approval) {
+      throw new Error('A Session Plan is already awaiting approval.')
+    }
+    row.approvalReservation = interactionId
+    this.rows.set(sessionId, row)
+  }
+
+  releaseApprovalReservation(sessionId: string, interactionId: string): boolean {
+    const row = this.rows.get(sessionId)
+    if (row?.approvalReservation !== interactionId) return false
+    delete row.approvalReservation
+    this.prune(sessionId, row)
+    return true
+  }
+
+  parkReservedApproval(sessionId: string, interactionId: string): Promise<unknown> {
+    const row = this.rows.get(sessionId)
+    if (row?.approvalReservation !== interactionId) {
+      throw new Error('The Session Plan approval reservation is no longer available.')
+    }
+    delete row.approvalReservation
+    return this.parkApproval(sessionId, interactionId)
+  }
+
   parkApproval(sessionId: string, interactionId: string): Promise<unknown> {
     const row = this.rows.get(sessionId) ?? {}
-    if (row.approval) throw new Error('A Session Plan is already awaiting approval.')
+    if (row.approvalReservation || row.approval) {
+      throw new Error('A Session Plan is already awaiting approval.')
+    }
     this.rows.set(sessionId, row)
     return new Promise((resolve, reject) => {
       row.approval = { interactionId, resolve, reject }
@@ -116,7 +145,9 @@ class SessionPlanInteractionOwner {
   }
 
   private prune(sessionId: string, row: SessionPlanInteractionRow): void {
-    if (!row.identity && !row.approval && !row.execution) this.rows.delete(sessionId)
+    if (!row.identity && !row.approvalReservation && !row.approval && !row.execution) {
+      this.rows.delete(sessionId)
+    }
   }
 }
 
