@@ -214,7 +214,7 @@ const redactLogText = (value: string): string => {
       `$1$2${REDACTED_MARKER}`
     )
     .replace(
-      /\b(api[_-]?key|access[_-]?token|auth[_-]?token|authorization|bearer[_-]?token|client[_-]?secret|cookie|credential|password|passphrase|passwd|private[_-]?key|refresh[_-]?token|secret|secret[_-]?access[_-]?key|security[_-]?token|session[_-]?token|token)\b(\s*["']?\s*[:=]\s*["']?)[^\s"'&;}]+/gi,
+      /\b(api[_-]?key|access[_-]?token|auth[_-]?token|authorization|bearer[_-]?token|client[_-]?secret|cookie|credential|password|passphrase|passwd|private[_-]?key|refresh[_-]?token|secret|secret[_-]?access[_-]?key|security[_-]?token|session[_-]?token|token)\b(\s*["']?\s*[:=]\s*["']?)(?:(?:Bearer|Basic|Digest|Negotiate)\s+)?[^\s"'&;}]+/gi,
       `$1$2${REDACTED_MARKER}`
     )
     .replace(
@@ -222,7 +222,7 @@ const redactLogText = (value: string): string => {
       `$1$2${REDACTED_MARKER}`
     )
     .replace(
-      /(--?(?:access[-_]?token|api[-_]?key|auth[-_]?token|authorization|bearer[-_]?token|client[-_]?secret|cookie|credentials?|passphrase|passwd|password|pat|private[-_]?key|secret|token))(\s+|=)[^\s"'&;]+/gi,
+      /(--?(?:access[-_]?token|api[-_]?key|auth[-_]?token|authorization|bearer[-_]?token|client[-_]?secret|cookie|credentials?|passphrase|passwd|password|pat|private[-_]?key|secret|token))(\s+|=)(?:(?:Bearer|Basic|Digest|Negotiate)\s+)?[^\s"'&;]+/gi,
       `$1$2${REDACTED_MARKER}`
     )
     .replace(/\bBearer\s+[^\s"']+/gi, `Bearer ${REDACTED_MARKER}`)

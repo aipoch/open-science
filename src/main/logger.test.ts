@@ -137,8 +137,16 @@ describe('logger: formatLine', () => {
         text: 'token=comma-token-opaque-7319,remaining-token-opaque-7319',
         secrets: ['comma-token-opaque-7319', 'remaining-token-opaque-7319']
       },
+      {
+        text: 'Authorization=Bearer assignment-scheme-opaque-7319',
+        secrets: ['assignment-scheme-opaque-7319']
+      },
       { text: 'OPENAI_API_KEY=env-opaque-7319', secrets: ['env-opaque-7319'] },
       { text: '--api-key cli-opaque-7319', secrets: ['cli-opaque-7319'] },
+      {
+        text: '--authorization Bearer cli-scheme-opaque-7319',
+        secrets: ['cli-scheme-opaque-7319']
+      },
       {
         text: 'https://alice:password-opaque-7319@example.test/v1?token=query-opaque-7319&key=generic-key-opaque-7319&ok=1#access_token=fragment-opaque-7319',
         secrets: [
