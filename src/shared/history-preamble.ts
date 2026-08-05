@@ -52,21 +52,29 @@ type ProjectedTurn = { index: number; text: string; selectedMessageIndexes: numb
 const isUserMessage = (message: HistoryMessage): boolean => message.role === 'user'
 const speakerFor = (message: HistoryMessage): 'User' | 'Assistant' =>
   isUserMessage(message) ? 'User' : 'Assistant'
+const speakerPrefixFor = (message: HistoryMessage): string => `**${speakerFor(message)}:** `
 const formatMessage = (message: HistoryMessage): string =>
-  `**${speakerFor(message)}:** ${message.content.trim() || MEDIA_PLACEHOLDER}`
+  `${speakerPrefixFor(message)}${message.content.trim() || MEDIA_PLACEHOLDER}`
 
-// Stable conservative admission estimate: ASCII-heavy text gets the usual four-bytes-per-token
-// approximation, while every non-ASCII code point costs at least one token.
+const utf8BytesForCodePoint = (codePoint: number): number => {
+  if (codePoint <= 0x7f) return 1
+  if (codePoint <= 0x7ff) return 2
+  if (codePoint <= 0xffff) return 3
+  return 4
+}
+
+// Provider tokenizers can split down to individual UTF-8 bytes. Counting bytes is therefore a
+// dependency-free upper bound for admission instead of an average-case chars-per-token guess.
 export const estimateHistoryTokens = (text: string): number => {
-  let asciiBytes = 0
-  let nonAsciiCodePoints = 0
+  let bytes = 0
 
-  for (const codePoint of text) {
-    if (codePoint.codePointAt(0)! <= 0x7f) asciiBytes += 1
-    else nonAsciiCodePoints += 1
+  for (let index = 0; index < text.length;) {
+    const codePoint = text.codePointAt(index)!
+    bytes += utf8BytesForCodePoint(codePoint)
+    index += codePoint > 0xffff ? 2 : 1
   }
 
-  return Math.ceil(asciiBytes / 4) + nonAsciiCodePoints
+  return bytes
 }
 
 export const resolveHistoryReplayBudget = ({
@@ -90,32 +98,42 @@ export const resolveFileTextBudget = (contextWindow?: number): number => {
 
 const takePrefixWithinTokens = (text: string, budget: number): string => {
   if (budget <= 0) return ''
-  const codePoints = Array.from(text)
-  let low = 0
-  let high = codePoints.length
+  let spent = 0
+  let end = 0
 
-  while (low < high) {
-    const middle = Math.ceil((low + high) / 2)
-    if (estimateHistoryTokens(codePoints.slice(0, middle).join('')) <= budget) low = middle
-    else high = middle - 1
+  while (end < text.length) {
+    const codePoint = text.codePointAt(end)!
+    const cost = utf8BytesForCodePoint(codePoint)
+    if (spent + cost > budget) break
+    spent += cost
+    end += codePoint > 0xffff ? 2 : 1
   }
 
-  return codePoints.slice(0, low).join('')
+  return text.slice(0, end)
 }
 
 const takeSuffixWithinTokens = (text: string, budget: number): string => {
   if (budget <= 0) return ''
-  const codePoints = Array.from(text)
-  let low = 0
-  let high = codePoints.length
+  let spent = 0
+  let start = text.length
 
-  while (low < high) {
-    const middle = Math.ceil((low + high) / 2)
-    if (estimateHistoryTokens(codePoints.slice(-middle).join('')) <= budget) low = middle
-    else high = middle - 1
+  while (start > 0) {
+    let codePoint = text.charCodeAt(start - 1)
+    let width = 1
+    if (codePoint >= 0xdc00 && codePoint <= 0xdfff && start > 1) {
+      const high = text.charCodeAt(start - 2)
+      if (high >= 0xd800 && high <= 0xdbff) {
+        codePoint = text.codePointAt(start - 2)!
+        width = 2
+      }
+    }
+    const cost = utf8BytesForCodePoint(codePoint)
+    if (spent + cost > budget) break
+    spent += cost
+    start -= width
   }
 
-  return codePoints.slice(-low).join('')
+  return text.slice(start)
 }
 
 export const truncateTextToEstimatedTokens = (
@@ -167,17 +185,27 @@ const fullTurn = (turn: HistoryTurn): ProjectedTurn => ({
   selectedMessageIndexes: turn.messages.map((message) => message.index)
 })
 
+const estimateFormattedMessageTokens = (message: HistoryMessage): number =>
+  estimateHistoryTokens(speakerPrefixFor(message)) +
+  estimateHistoryTokens(message.content.trim() || MEDIA_PLACEHOLDER)
+
+const estimateFullTurnTokens = (turn: HistoryTurn): number =>
+  turn.messages.reduce(
+    (total, message, index) =>
+      total + estimateFormattedMessageTokens(message) + (index > 0 ? 2 : 0),
+    0
+  )
+
 const projectTurn = (turn: HistoryTurn, budget: number): ProjectedTurn | undefined => {
-  const full = fullTurn(turn)
-  if (estimateHistoryTokens(full.text) <= budget) return full
+  if (estimateFullTurnTokens(turn) <= budget) return fullTurn(turn)
 
   const user = turn.messages[0]
   if (!user) return undefined
-  const fullUser = formatMessage(user)
+  const fullUserCost = estimateFormattedMessageTokens(user)
   const selectedMessageIndexes = [user.index]
 
-  if (estimateHistoryTokens(fullUser) > budget) {
-    const label = '**User:** '
+  if (fullUserCost > budget) {
+    const label = speakerPrefixFor(user)
     const contentBudget = budget - estimateHistoryTokens(label)
     if (contentBudget <= estimateHistoryTokens(MESSAGE_OMISSION_NOTE)) return undefined
     return {
@@ -187,6 +215,7 @@ const projectTurn = (turn: HistoryTurn, budget: number): ProjectedTurn | undefin
     }
   }
 
+  const fullUser = formatMessage(user)
   const assistant = turn.messages.at(-1)
   if (!assistant || isUserMessage(assistant))
     return { index: turn.index, text: fullUser, selectedMessageIndexes }
@@ -264,17 +293,23 @@ export const buildHistoryReplay = (
   if (turns.length === 0) return undefined
 
   const budget = resolveHistoryReplayBudget(descriptor)
-  const fullConversation = `${HEADER}\n\n## Conversation\n${turns
-    .map((turn) => fullTurn(turn).text)
-    .join('\n\n')}`
-  if (estimateHistoryTokens(fullConversation) <= budget) {
+  const fullConversationPrefix = `${HEADER}\n\n## Conversation\n`
+  let fullConversationCost = estimateHistoryTokens(fullConversationPrefix)
+  const fullTurns: ProjectedTurn[] = []
+  for (const turn of turns) {
+    fullConversationCost += estimateFullTurnTokens(turn) + (fullTurns.length > 0 ? 2 : 0)
+    if (fullConversationCost > budget) break
+    fullTurns.push(fullTurn(turn))
+  }
+  if (fullTurns.length === turns.length) {
+    const fullConversation = `${fullConversationPrefix}${fullTurns
+      .map((turn) => turn.text)
+      .join('\n\n')}`
     return {
       preamble: fullConversation,
-      selectedMessageIndexes: turns.flatMap((turn) =>
-        turn.messages.map((message) => message.index)
-      ),
+      selectedMessageIndexes: fullTurns.flatMap((turn) => turn.selectedMessageIndexes),
       budget,
-      estimatedTokens: estimateHistoryTokens(fullConversation)
+      estimatedTokens: fullConversationCost
     }
   }
 
@@ -294,18 +329,23 @@ export const buildHistoryReplay = (
 
   const anchorTurn = turns[0]
   const anchorProjectionBudget = Math.max(1, Math.floor(budget * 0.3))
+  const preferredAnchor = projectTurn(anchorTurn, anchorProjectionBudget)
   const anchor =
-    projectTurn(anchorTurn, anchorProjectionBudget) ??
-    fitTurnForPacket(anchorTurn, budget, (projection) =>
-      renderLongPacket(projection, [], turns.length)
-    )
+    preferredAnchor &&
+    estimateHistoryTokens(renderLongPacket(preferredAnchor, [], turns.length)) <= budget
+      ? preferredAnchor
+      : fitTurnForPacket(anchorTurn, budget, (projection) =>
+          renderLongPacket(projection, [], turns.length)
+        )
   if (!anchor) return undefined
 
   const recent: ProjectedTurn[] = []
   const latestTurn = turns.at(-1)!
-  const latestFull = fullTurn(latestTurn)
-  const latestCandidate = renderLongPacket(anchor, [latestFull], turns.length)
-  if (estimateHistoryTokens(latestCandidate) <= budget) {
+  const latestFull = estimateFullTurnTokens(latestTurn) <= budget ? fullTurn(latestTurn) : undefined
+  const latestCandidate = latestFull
+    ? renderLongPacket(anchor, [latestFull], turns.length)
+    : undefined
+  if (latestFull && latestCandidate && estimateHistoryTokens(latestCandidate) <= budget) {
     recent.unshift(latestFull)
   } else {
     const latest = fitTurnForPacket(latestTurn, budget, (projection) =>
@@ -315,6 +355,7 @@ export const buildHistoryReplay = (
   }
 
   for (let index = turns.length - 2; index > 0; index -= 1) {
+    if (estimateFullTurnTokens(turns[index]) > budget) break
     const turn = fullTurn(turns[index])
     const candidate = renderLongPacket(anchor, [turn, ...recent], turns.length)
     if (estimateHistoryTokens(candidate) > budget) break
@@ -322,6 +363,8 @@ export const buildHistoryReplay = (
   }
 
   const preamble = renderLongPacket(anchor, recent, turns.length)
+  const estimatedTokens = estimateHistoryTokens(preamble)
+  if (estimatedTokens > budget) return undefined
   return {
     preamble,
     selectedMessageIndexes: [
@@ -329,7 +372,7 @@ export const buildHistoryReplay = (
       ...recent.flatMap((turn) => turn.selectedMessageIndexes)
     ],
     budget,
-    estimatedTokens: estimateHistoryTokens(preamble)
+    estimatedTokens
   }
 }
 

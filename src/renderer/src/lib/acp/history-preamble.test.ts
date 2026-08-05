@@ -74,7 +74,7 @@ describe('agent-aware history replay', () => {
       message({ role: 'user', content: `user-${turn} ${'u'.repeat(80)}` }),
       message({ role: 'agent', content: `assistant-${turn} ${'a'.repeat(80)}` })
     ]).flat()
-    const replay = buildHistoryReplay(messages, { target: 'codex-bridge', budget: 360 })!
+    const replay = buildHistoryReplay(messages, { target: 'codex-bridge', budget: 1_440 })!
 
     expect(replay.estimatedTokens).toBeLessThanOrEqual(replay.budget)
     expect(replay.preamble).toContain('user-0 ')
@@ -93,10 +93,10 @@ describe('agent-aware history replay', () => {
   it('preserves both ends of a physically oversized user request inside its role', () => {
     const replay = buildHistoryReplay(
       [message({ role: 'user', content: `BEGIN-CONSTRAINT ${'界'.repeat(500)} END-CONSTRAINT` })],
-      { target: 'codex-bridge', budget: 190 }
+      { target: 'codex-bridge', budget: 760 }
     )!
 
-    expect(replay.estimatedTokens).toBeLessThanOrEqual(190)
+    expect(replay.estimatedTokens).toBeLessThanOrEqual(760)
     expect(replay.preamble).toContain('**User:** BEGIN-CONSTRAINT')
     expect(replay.preamble).toContain('END-CONSTRAINT')
     expect(replay.preamble).toContain('middle of this message omitted')
@@ -113,18 +113,19 @@ describe('agent-aware history replay', () => {
           content: `${'working '.repeat(300)}FINAL-CONCLUSION`
         })
       ],
-      { target: 'codex-bridge', budget: 230 }
+      { target: 'codex-bridge', budget: 920 }
     )!
 
-    expect(replay.estimatedTokens).toBeLessThanOrEqual(230)
+    expect(replay.estimatedTokens).toBeLessThanOrEqual(920)
     expect(replay.preamble).toContain('**User:** please finish the analysis')
     expect(replay.preamble).toContain('earlier response omitted')
     expect(replay.preamble).toContain('FINAL-CONCLUSION')
   })
 
-  it('counts CJK conservatively', () => {
-    expect(estimateHistoryTokens('a'.repeat(40))).toBe(10)
-    expect(estimateHistoryTokens('界'.repeat(40))).toBe(40)
+  it('uses UTF-8 bytes as a conservative tokenizer-independent upper bound', () => {
+    expect(estimateHistoryTokens('a'.repeat(40))).toBe(40)
+    expect(estimateHistoryTokens('界'.repeat(40))).toBe(120)
+    expect(estimateHistoryTokens('😀'.repeat(10))).toBe(40)
   })
 
   it('replays media only from text-selected messages', () => {
@@ -162,7 +163,7 @@ describe('agent-aware history replay', () => {
     ]).flat()
     const replay = buildWorkspaceHistoryReplay(
       turns,
-      { target: 'codex-bridge', budget: 280 },
+      { target: 'codex-bridge', budget: 1_120 },
       'project-1'
     )!
 
@@ -284,7 +285,7 @@ describe('agent-aware history replay', () => {
           images: [{ id: 'result-image', mimeType: 'image/png', data: 'AQID', byteLength: 3 }]
         })
       ],
-      { target: 'codex-bridge', budget: 230 }
+      { target: 'codex-bridge', budget: 920 }
     )!
 
     expect(replay.historyPreamble).toContain('**Assistant:** [media attached]')

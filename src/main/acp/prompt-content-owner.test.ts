@@ -230,7 +230,7 @@ describe('AcpPromptContentOwner', () => {
       references: [],
       codexSkillInputs: [],
       skillImportEnabled: false,
-      fileTextBudget: 500
+      fileTextBudget: 2_000
     })
 
     const fileText = contentBlocks(result.content)
@@ -244,7 +244,7 @@ describe('AcpPromptContentOwner', () => {
     expect(fileText.join('\n')).toContain('END-TWO')
     expect(
       fileText.reduce((total, text) => total + estimateHistoryTokens(text), 0)
-    ).toBeLessThanOrEqual(500)
+    ).toBeLessThanOrEqual(2_000)
     expect(fileText.join('\n')).not.toContain('a'.repeat(1_000))
     expect(fileText.join('\n')).not.toContain('b'.repeat(1_000))
   })
