@@ -100,6 +100,9 @@ describe('post-merge Windows validation', () => {
       uses: 'actions/setup-node@820762786026740c76f36085b0efc47a31fe5020',
       with: { 'node-version': 22 }
     })
+    expect(findStep(upgrade, 'Install dependencies').run).toBe(
+      'npm ci --ignore-scripts --omit=dev --omit=optional --no-audit --no-fund'
+    )
     expect(findStep(upgrade, 'Download current Windows installer').uses).toBe(
       'actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c'
     )

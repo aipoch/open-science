@@ -118,6 +118,16 @@ const createSession = (overrides: Partial<ChatSession> = {}): ChatSession => {
 
 const textDoc = (text: string): ComposerDoc => ({ nodes: [{ type: 'text', text }] })
 
+const planOriginMessage: ChatSession['messages'][number] = {
+  id: 'plan-origin',
+  role: 'user',
+  content: 'Create a plan.',
+  status: 'complete',
+  eventIds: [],
+  createdAt: 1,
+  updatedAt: 1
+}
+
 const planProjection = (approval: 'pending' | 'approved', revision = 3): ActivePlanProjection => ({
   artifactId: 'plan-artifact-1',
   artifactVersionId: 'plan-version-1',
@@ -251,9 +261,18 @@ describe('WorkspacePage send gate while compacting', () => {
   })
 
   it('sends restored Plan-card feedback as a fresh user turn', async () => {
-    const pending = planProjection('pending')
+    const pending = {
+      ...planProjection('pending'),
+      originatingPromptMessageId: planOriginMessage.id
+    }
     useSessionStore.setState({
-      sessions: [createSession({ status: 'waiting-plan-approval', activePlanProjection: pending })],
+      sessions: [
+        createSession({
+          status: 'waiting-plan-approval',
+          messages: [planOriginMessage],
+          activePlanProjection: pending
+        })
+      ],
       selectedSessionId: 'sess-a'
     })
     runtime.sendMessage.mockResolvedValue({ sessionId: 'sess-a', messageId: 'message-1' })
@@ -284,9 +303,18 @@ describe('WorkspacePage send gate while compacting', () => {
     ['approved', 'Approve the current Plan and continue.', 'approve'],
     ['rejected', 'Dismiss the current Plan.', 'reject']
   ] as const)('starts a fresh Plan interaction for restored %s', async (decision, text, action) => {
-    const pending = planProjection('pending')
+    const pending = {
+      ...planProjection('pending'),
+      originatingPromptMessageId: planOriginMessage.id
+    }
     useSessionStore.setState({
-      sessions: [createSession({ status: 'waiting-plan-approval', activePlanProjection: pending })],
+      sessions: [
+        createSession({
+          status: 'waiting-plan-approval',
+          messages: [planOriginMessage],
+          activePlanProjection: pending
+        })
+      ],
       selectedSessionId: 'sess-a'
     })
     runtime.sendMessage.mockResolvedValue({ sessionId: 'sess-a', messageId: 'message-1' })
