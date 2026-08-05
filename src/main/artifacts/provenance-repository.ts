@@ -1588,11 +1588,17 @@ class ArtifactProvenanceRepository {
       sessionId: artifactStorageSessionId,
       runId: artifactRunId
     })
-    const pendingFile = pendingFiles.find(
+    const matchingPendingFiles = pendingFiles.filter(
       (file) => normalizeFilename(file.name) === normalizedFilename
     )
+    const pendingFile =
+      matchingPendingFiles.find((file) => file.name === request.filename) ??
+      (matchingPendingFiles.length === 1 ? matchingPendingFiles[0] : undefined)
 
     if (!pendingFile) {
+      if (matchingPendingFiles.length > 1) {
+        throw new Error(`Pending artifact filename is ambiguous: ${request.filename}`)
+      }
       throw new Error(`Pending artifact file not found: ${request.filename}`)
     }
 
