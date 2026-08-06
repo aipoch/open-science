@@ -32,6 +32,7 @@ export type OfficialVendorId =
   | 'sensenova'
   | 'volcengine'
   | 'openrouter'
+  | 'orcarouter'
 
 // A selectable endpoint for vendors that publish more than one host — e.g. a Global vs. China region
 // (MiniMax) or a separate overseas/domestic console (GLM's Z.AI vs. BigModel). Each carries its own
@@ -743,6 +744,31 @@ export const OFFICIAL_VENDORS: OfficialVendor[] = [
         'qwen/qwen3.7-max'
       ]
     }
+  },
+  // OrcaRouter is an aggregation gateway too (many models behind one key, with an adaptive router
+  // in front), so it sits last in the picker right after OpenRouter.
+  {
+    id: 'orcarouter',
+    label: 'OrcaRouter',
+    // The gateway aggregates unrelated model families and auto-routes (`orcarouter/auto`), so effort
+    // stays hidden; any model that surfaces its own effort metadata can override below.
+    reasoningEffort: 'unsupported',
+    // One OpenAI-compatible endpoint: /v1/chat/completions and /v1/responses (plus embeddings) on a
+    // single base. The live catalog exposes many orcarouter/* aliases plus proxied vendor models, so
+    // this ships a curated set of the stable OrcaRouter-branded models (no modelsListUrl refresh).
+    apiEndpoints: ['openai', 'responses'],
+    baseUrl: 'https://api.orcarouter.ai/v1',
+    apiKeyUrl: 'https://www.orcarouter.ai',
+    models: [
+      // Adaptive router alias — the flagship, routes each request to the best model in the pool.
+      { id: 'orcarouter/auto', contextWindow: 1_000_000 },
+      { id: 'orcarouter/fusion', contextWindow: 1_000_000 },
+      { id: 'orcarouter/fusion-mini', contextWindow: 1_000_000 },
+      { id: 'orcarouter/fusion-flash', contextWindow: 200_000 },
+      { id: 'orcarouter/open-code', contextWindow: 200_000 },
+      { id: 'orcarouter/code-review', contextWindow: 200_000 },
+      { id: 'orcarouter/free', contextWindow: 200_000 }
+    ]
   }
 ]
 
