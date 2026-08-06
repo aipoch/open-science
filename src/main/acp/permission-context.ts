@@ -403,6 +403,13 @@ class AcpPermissionContext {
     for (const requestId of resolvedRequestIds) this.humanOnlyRequestIds.delete(requestId)
   }
 
+  setLivePermissionProfile(
+    sessionId: string,
+    profile: Readonly<SessionPermissionProfileState>
+  ): void {
+    this.broker.setLivePermissionProfile(sessionId, profile)
+  }
+
   listGrants(sessionId: string): AcpPermissionGrant[] {
     return this.broker.listGrants(sessionId)
   }

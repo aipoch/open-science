@@ -2,6 +2,8 @@ import type { SessionNotification } from '@agentclientprotocol/sdk'
 import { join, resolve } from 'node:path'
 import { describe, expect, it, vi } from 'vitest'
 
+import type { SessionPermissionProfileState } from '../../shared/permission-profiles'
+
 import { AcpSessionUpdateProjector } from './session-update-projector'
 
 type TestRouting = Readonly<{
@@ -24,7 +26,15 @@ type TestProjector = Readonly<{
   route: (notification: SessionNotification, routing: TestRouting) => readonly RecordedEffect[]
 }>
 
-const createProjector = (): TestProjector => {
+const createProjector = (
+  initialPermissionProfile: SessionPermissionProfileState = {
+    selectedProfile: 'ask',
+    effectiveProfile: 'ask',
+    currentModeId: 'default',
+    availableModeIds: ['default', 'bypassPermissions'],
+    fullAccessAvailable: true
+  }
+): TestProjector => {
   let routing: TestRouting = {
     eventId: 'event-route',
     visible: true,
@@ -32,6 +42,7 @@ const createProjector = (): TestProjector => {
     mcpServerNames: []
   }
   let effects: RecordedEffect[] = []
+  let permissionProfile = initialPermissionProfile
   const record = (effect: RecordedEffect): void => {
     effects.push(Object.freeze(effect))
   }
@@ -42,20 +53,17 @@ const createProjector = (): TestProjector => {
           aggregate: {
             snapshot: () => ({
               frameworkId: routing.framework,
-              permissionProfile: {
-                selectedProfile: 'ask',
-                effectiveProfile: 'ask',
-                currentModeId: 'default',
-                availableModeIds: ['default', 'bypassPermissions'],
-                fullAccessAvailable: true
-              }
+              permissionProfile
             }),
-            setPermissionProfile: (profile: { currentModeId?: string }) =>
+            setPermissionProfile: (profile: SessionPermissionProfileState) => {
+              permissionProfile = profile
               record({
                 kind: 'current-mode',
                 sessionId,
-                currentModeId: profile.currentModeId
+                currentModeId: profile.currentModeId,
+                selectedProfile: profile.selectedProfile
               })
+            }
           }
         }) as never
     },
@@ -79,6 +87,8 @@ const createProjector = (): TestProjector => {
     reconnectPending: () => routing.reconnectPending,
     mcpServerNamesFor: () => routing.mcpServerNames,
     nextEventId: () => routing.eventId,
+    setLivePermissionProfile: (sessionId, profile) =>
+      record({ kind: 'live-profile', sessionId, selectedProfile: profile.selectedProfile }),
     emitState: () => undefined,
     pushEvent: (event) => record({ kind: 'visible-event', event }),
     reportToolFailure: (effect) => record(effect)
@@ -132,6 +142,7 @@ describe('AcpSessionUpdateProjector', () => {
       reconnectPending: () => false,
       mcpServerNamesFor: () => [],
       nextEventId,
+      setLivePermissionProfile: () => undefined,
       emitState: () => journal.push('state:emit'),
       pushEvent: () => journal.push('event:push'),
       reportToolFailure: () => journal.push('diagnostic')
@@ -328,11 +339,17 @@ describe('AcpSessionUpdateProjector', () => {
     })
   })
 
-  it('projects hidden current-mode updates while a reconnect suppresses stale context effects', () => {
-    const projector = createProjector()
+  it('synchronizes hidden current-mode downgrades with the live permission profile', () => {
+    const projector = createProjector({
+      selectedProfile: 'full',
+      effectiveProfile: 'full',
+      currentModeId: 'bypassPermissions',
+      availableModeIds: ['default', 'bypassPermissions'],
+      fullAccessAvailable: true
+    })
     const notification: SessionNotification = {
       sessionId: 'session-1',
-      update: { sessionUpdate: 'current_mode_update', currentModeId: 'bypassPermissions' }
+      update: { sessionUpdate: 'current_mode_update', currentModeId: 'default' }
     }
     const routing = {
       eventId: 'event-mode',
@@ -345,7 +362,13 @@ describe('AcpSessionUpdateProjector', () => {
       {
         kind: 'current-mode',
         sessionId: 'session-1',
-        currentModeId: 'bypassPermissions'
+        currentModeId: 'default',
+        selectedProfile: 'ask'
+      },
+      {
+        kind: 'live-profile',
+        sessionId: 'session-1',
+        selectedProfile: 'ask'
       }
     ])
   })

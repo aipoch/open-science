@@ -229,6 +229,38 @@ describe('ACP permission broker with durable grants', () => {
     await expect(response).resolves.toEqual({ outcome: { outcome: 'cancelled' } })
   })
 
+  it('re-evaluates a delayed grant lookup against a provider mode downgrade', async () => {
+    const { registry, finishResolve } = controlledEmptyGrantRegistry()
+    const emitted: Parameters<ConstructorParameters<typeof AcpPermissionBroker>[0]>[0][] = []
+    const broker = new AcpPermissionBroker((request) => emitted.push(request), undefined, registry)
+    const response = broker.requestPermission(shellRequest('session-1'), {
+      profile: 'ask',
+      projectId: 'project-1'
+    })
+
+    broker.setLivePermissionProfile('session-1', {
+      selectedProfile: 'full',
+      effectiveProfile: 'full',
+      availableModeIds: ['default', 'bypassPermissions'],
+      currentModeId: 'bypassPermissions',
+      fullAccessAvailable: true
+    })
+    broker.setLivePermissionProfile('session-1', {
+      selectedProfile: 'ask',
+      effectiveProfile: 'ask',
+      availableModeIds: ['default', 'bypassPermissions'],
+      currentModeId: 'default',
+      fullAccessAvailable: true
+    })
+    finishResolve()
+    await new Promise<void>((resolve) => setImmediate(resolve))
+
+    expect(emitted).toHaveLength(1)
+    expect(broker.getPendingRequests()).toHaveLength(1)
+    broker.cancelAllPending()
+    await expect(response).resolves.toEqual({ outcome: { outcome: 'cancelled' } })
+  })
+
   it('fails closed and reports when a remembered approval cannot be persisted', async () => {
     const registry = {
       resolve: vi.fn().mockResolvedValue(undefined),

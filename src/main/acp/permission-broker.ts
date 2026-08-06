@@ -700,12 +700,20 @@ class AcpPermissionBroker {
 
   // Re-evaluates provider tool requests after the user changes the live Session profile. App-owned
   // approvals do not carry an automatic request and therefore always remain human decisions.
+  setLivePermissionProfile(
+    sessionId: string,
+    profile: Readonly<SessionPermissionProfileState>,
+    isCurrent: () => boolean = () => true
+  ): void {
+    this.livePermissionProfiles.set(sessionId, { profile, isCurrent })
+  }
+
   async applyPermissionProfile(
     sessionId: string,
     profile: Readonly<SessionPermissionProfileState>,
     isCurrent: () => boolean = () => true
   ): Promise<string[]> {
-    this.livePermissionProfiles.set(sessionId, { profile, isCurrent })
+    this.setLivePermissionProfile(sessionId, profile, isCurrent)
     const resolvedRequestIds: string[] = []
     for (const [requestId, pending] of Array.from(this.pendingRequests)) {
       if (!isCurrent()) break
