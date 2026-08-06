@@ -356,6 +356,20 @@ describe('runtime state ownership architecture', () => {
     expect(source).toContain('currentConnection: () => this.connection')
   })
 
+  it('constructs the model and connection lifecycle cycle outside Runtime', () => {
+    const runtime = readSource('src/main/acp/runtime.ts')
+    const composition = readSource('src/main/acp/runtime-lifecycle-composition.ts')
+
+    expect(runtime).not.toMatch(
+      /new (?:AcpModelChangeWorkflow|AcpConnectionCloseWorkflow|AcpConnectionLifecycleWorkflow)/
+    )
+    expect(runtime).toContain('composeAcpRuntimeLifecycleOwners(options, base, session, {')
+    expect(composition.match(/new AcpModelChangeWorkflow\(/g)).toHaveLength(1)
+    expect(composition.match(/new AcpConnectionCloseWorkflow\(/g)).toHaveLength(1)
+    expect(composition.match(/new AcpConnectionLifecycleWorkflow\(/g)).toHaveLength(1)
+    expect(composition).not.toContain('AcpRuntime.prototype')
+  })
+
   it('keeps provider permission routing and reviewer preparation behind their owners', () => {
     const source = readSource('src/main/acp/runtime.ts')
 

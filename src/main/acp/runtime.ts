@@ -19,7 +19,6 @@ import type {
   AcpSetPermissionProfileRequest,
   AcpStateSnapshot
 } from '../../shared/acp'
-import { ACP_PROMPT_FAILED_EVENT_TITLE } from '../../shared/acp'
 import { type AgentFrameworkId } from '../../shared/settings'
 import type { EffectiveSpecialistSkills } from '../../shared/specialist'
 import type { ResolvedReasoningEffort } from '../../shared/reasoning-effort'
@@ -88,9 +87,9 @@ import type {
 } from './backend-generation-owner'
 import type { AcpSessionConfigurator } from './session-configurator'
 import type { AcpSessionUpdateProjector } from './session-update-projector'
-import { AcpConnectionLifecycleWorkflow } from './connection-lifecycle-workflow'
-import { AcpConnectionCloseWorkflow, type CloseState } from './connection-close-workflow'
-import { AcpModelChangeWorkflow } from './model-change-workflow'
+import type { AcpConnectionLifecycleWorkflow } from './connection-lifecycle-workflow'
+import type { AcpConnectionCloseWorkflow } from './connection-close-workflow'
+import type { AcpModelChangeWorkflow } from './model-change-workflow'
 import { AcpProviderSessionCreator } from './provider-session-creator'
 import { AcpProviderSessionAdopter } from './provider-session-adopter'
 import { AcpProviderSessionResumer } from './provider-session-resumer'
@@ -115,6 +114,7 @@ import type { AcpRuntimeBaseOwners } from './runtime-base-composition'
 import type { AcpRuntimePublicationOwner } from './runtime-publication-owner'
 import type { AcpRuntimeSessionOwners } from './runtime-session-composition'
 import type { AcpSessionEnvironmentPolicy } from './session-environment-policy'
+import { composeAcpRuntimeLifecycleOwners } from './runtime-lifecycle-composition'
 
 export type AcpRuntimeCallbacks = {
   onStateChanged?: (state: AcpStateSnapshot) => void
@@ -517,131 +517,15 @@ class AcpRuntime {
         this.callbacks.onPromptStarted?.(sessionId, turnToken, promptAttemptId),
       emitState: () => this.emitState()
     })
-    const closeState: CloseState = {
-      invalidatePendingSessionStartups: () => this.invalidatePendingSessionStartups(),
-      disposePermissionContext: () => this.permissionContext.dispose(),
-      clearReviewerState: () => this.reviewerSessions.clear(),
-      clearPlanInteractions: () =>
-        this.planInteractions.clearAll('The Session Plan interaction was disconnected.'),
-      settleActivePrompts: () => this.sessionInteractions.settleActivePrompts(),
-      supersedeInteractions: () => this.sessionInteractions.supersedeAll(),
-      clearContextUsage: () => this.contextUsageTracker.clear(),
-      clearAppliedSessionModels: () => this.clearAppliedSessionModels(),
-      activeSessionIds: () => this.activeSessionIds(),
-      disposeSessionCapabilities: (sessionIds) => this.sessionCapabilities.dispose(sessionIds),
-      disposeActiveSessions: (recordFailure) => {
-        for (const session of this.activeSessions()) {
-          try {
-            session.dispose()
-          } catch (error) {
-            recordFailure('primary-session', error)
-          }
-        }
-      },
-      detachSessionConnections: (clearPermissionProfile) => {
-        for (const entry of this.sessionRegistry.entries()) {
-          if (entry.attachment) this.sessionRegistry.detach(entry.attachment, 'connection')
-          else entry.aggregate.detachConnection()
-          if (clearPermissionProfile) entry.aggregate.setPermissionProfile(undefined)
-        }
-      },
-      clearPromptContent: () => this.promptContentOwner.clear(),
-      clearHandoffContinuity: () => this.handoffContinuity.clearGeneration(),
-      clearSessionProjection: () => this.sessionUpdateProjector.clearGeneration(),
-      disposeSessionProjection: () => this.sessionUpdateProjector.dispose(),
-      clearHttpRoutes: () => this.sessionCapabilities.clearHttpRoutes(),
-      selectSession: () => this.sessionRegistry.select(undefined),
-      publishInterruptedPromptFailures: (prompts) => {
-        for (const { scope, terminal } of prompts as ReturnType<
-          AcpSessionInteractionOwner['settleActivePrompts']
-        >) {
-          try {
-            this.pushEvent({
-              kind: 'error',
-              level: 'error',
-              providerError: false,
-              sessionId: scope.sessionId,
-              ...(scope.promptMessageId ? { promptMessageId: scope.promptMessageId } : {}),
-              timestamp: terminal.timestamp,
-              title: ACP_PROMPT_FAILED_EVENT_TITLE,
-              text: 'ACP connection closed'
-            })
-          } catch (error) {
-            safeLogError('connection-close prompt event failed', errorLogFields(error))
-          }
-        }
-      },
-      setStatus: (status) => this.setStatus(status),
-      transitionStatus: (status) => this.snapshotOwner.transitionStatus(status),
-      emitState: () => this.emitState(),
-      hasContextUsage: () => this.contextUsageTracker.hasUsage()
-    }
-    this.modelChanges = new AcpModelChangeWorkflow({
-      backendGeneration: this.backendGeneration,
-      connectionResources: this.connectionResources,
-      registry: this.sessionRegistry,
-      configurator: this.sessionConfigurator,
-      contextUsage: this.contextUsageTracker,
-      currentStatus: () => this.snapshotOwner.status,
-      providerReconnectPending: () => this.pendingProviderReconnect,
-      isGenerationBusy: () => this.generationActivity.blockers().retirement,
-      contextEstimateInput: (sessionId) => this.contextUsagePolicy.resolve(sessionId).estimateInput,
-      emitState: () => this.emitState(),
-      // Model-change fallback already owns its drain. Calling the close workflow here would ask the
-      // same drain to await itself, so arm the authoritative transition directly.
-      requestReconnect: () => this.connectionTransitions.requestProviderReconnect(),
-      recoverFailedReconnect: () => this.connectionClose.recoverFailedDeferredDisconnect(),
-      reportReconnectFailure: (error) =>
-        safeLogError('model-change reconnect failed', errorLogFields(error)),
-      diagnosticContext: () => this.diagnosticContext()
-    })
-    this.connectionClose = new AcpConnectionCloseWorkflow({
-      currentGeneration: () => this.connectionGeneration,
-      currentStatus: () => this.snapshotOwner.status,
-      getSnapshot: () => this.getSnapshot(),
-      disconnectCurrent: (emitClosedStatus, generation) =>
-        this.disconnectCurrent(emitClosedStatus, generation),
-      transitions: this.connectionTransitions,
-      resources: this.connectionResources,
-      backendGeneration: this.backendGeneration,
-      modelChanges: this.modelChanges,
-      state: closeState,
-      reportFailure: (message, error) => safeLogError(message, errorLogFields(error))
-    })
-    base.bindGenerationConnectionEffects({
-      reviewerSessions: this.reviewerSessions,
-      modelChanges: this.modelChanges,
-      connectionClose: {
-        disconnect: (emitClosedStatus) => this.disconnect(emitClosedStatus),
-        recoverFailedDeferredDisconnect: () =>
-          this.connectionClose.recoverFailedDeferredDisconnect()
-      },
-      publishIdle: () => this.setStatus('idle')
-    })
-    this.connectionLifecycle = new AcpConnectionLifecycleWorkflow({
-      appVersion: options.appVersion,
-      defaultCwd: options.defaultCwd,
-      currentConnection: () => this.connection,
-      currentStatus: () => this.snapshotOwner.status,
-      currentGeneration: () => this.connectionGeneration,
-      currentFramework: () => this.framework.id,
-      reconnectBarrier: () => this.reconnectBarrier,
+    const lifecycle = composeAcpRuntimeLifecycleOwners(options, base, session, {
       connect: (request) => this.connect(request),
-      getSnapshot: () => this.getSnapshot(),
-      connectResources: this.connectionResources,
-      invalidatePendingSessionStartups: () => this.invalidatePendingSessionStartups(),
-      disconnectCurrent: (emitClosedStatus, generation) =>
-        this.disconnectCurrent(emitClosedStatus, generation),
-      updateCwd: (cwd) => this.snapshotOwner.updateCwd(cwd),
-      updateError: (error) => this.snapshotOwner.updateError(error),
-      setStatus: (status) => this.setStatus(status),
-      pushEvent: (event) => this.pushEvent(event),
-      transitionStatus: (status) => this.snapshotOwner.transitionStatus(status),
-      emitState: () => this.emitState(),
-      diagnosticContext: (framework, generation) => this.diagnosticContext(framework, generation),
-      openCandidate: (attempt, onFrameworkResolved) =>
+      disconnect: (emitClosedStatus) => this.disconnect(emitClosedStatus),
+      openAgentConnection: (attempt, onFrameworkResolved) =>
         this.openAgentConnection(attempt, onFrameworkResolved)
     })
+    this.modelChanges = lifecycle.modelChanges
+    this.connectionClose = lifecycle.connectionClose
+    this.connectionLifecycle = lifecycle.connectionLifecycle
     this.providerSessionCreator = new AcpProviderSessionCreator({
       defaultCwd: options.defaultCwd,
       defaultProjectName: options.artifacts?.projectName || DEFAULT_UPLOAD_PROJECT_NAME,
@@ -782,14 +666,6 @@ class AcpRuntime {
 
   private activeSessionIds(): string[] {
     return this.activeSessionEntries().map(([appSessionId]) => appSessionId)
-  }
-
-  private activeSessions(): ActiveSession[] {
-    return this.activeSessionEntries().map(([, session]) => session)
-  }
-
-  private clearAppliedSessionModels(): void {
-    this.sessionRegistry.clearAppliedModels()
   }
 
   // Boundary-safe context for session-creation and process-spawn diagnostics. Keep this list explicit:
@@ -1312,13 +1188,6 @@ class AcpRuntime {
       return barrier.then(() => this.withOperationLease(work))
     }
     return this.generationActivity.withOperation(work)
-  }
-
-  private disconnectCurrent(
-    emitClosedStatus = true,
-    teardownGeneration = this.connectionGeneration
-  ): Promise<AcpStateSnapshot> {
-    return this.connectionClose.disconnectCurrent(emitClosedStatus, teardownGeneration)
   }
 
   private openAgentConnection(
@@ -1928,12 +1797,6 @@ class AcpRuntime {
         ensureConnected: (cwd) => this.ensureConnected(cwd)
       })
     )
-  }
-
-  private invalidatePendingSessionStartups(): void {
-    this.generationActivity.invalidateStartups()
-    this.sessionRegistry.invalidatePending()
-    this.reviewerSessions.invalidatePending()
   }
 
   private reservePrimarySessionIds(
