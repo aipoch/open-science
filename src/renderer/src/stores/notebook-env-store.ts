@@ -80,10 +80,11 @@ export const useNotebookEnvStore = create<NotebookEnvStore>((set, get) => {
   const beginExplicitRun = (language: NotebookLanguage): void => {
     explicitRuns.set(language, (explicitRuns.get(language) ?? 0) + 1)
   }
-  const endExplicitRun = (language: NotebookLanguage): void => {
+  const endExplicitRun = (language: NotebookLanguage): boolean => {
     const remaining = (explicitRuns.get(language) ?? 1) - 1
     if (remaining > 0) explicitRuns.set(language, remaining)
     else explicitRuns.delete(language)
+    return remaining === 0
   }
 
   // Merges a partial update into state, then re-derives `ui` from the resulting status/scope/
@@ -204,21 +205,22 @@ export const useNotebookEnvStore = create<NotebookEnvStore>((set, get) => {
         return
       }
       beginExplicitRun(lang)
+      let status: ProvisionStatus | undefined
+      let failure: string | undefined
       try {
         await bridge.provision(lang)
-        const status = await bridge.getStatus()
+        status = await bridge.getStatus()
         applyUi({ status })
-        // Clear preparing BEFORE applyRecoveryBlocks: it skips setting the block message while preparing
-        // is true (so it never stomps a LIVE rebuild's progress) — but this run has already finished, so
-        // the stale optimistic preparing:true set at entry must clear first or a lingering block would
-        // never surface.
-        applyLang(lang, { preparing: false })
-        applyRecoveryBlocks(status)
       } catch (e) {
-        applyUi({ error: errorText(e) })
-        applyLang(lang, { preparing: false, error: errorText(e) })
+        failure = errorText(e)
       } finally {
-        endExplicitRun(lang)
+        if (endExplicitRun(lang)) {
+          applyUi({ error: failure })
+          // Only the last overlapping request settles the shared language card. Clear preparing before
+          // applying recovery state so a completed rebuild can surface a still-active quarantine.
+          applyLang(lang, { preparing: false, error: failure })
+          if (status) applyRecoveryBlocks(status)
+        }
       }
     },
 
@@ -260,17 +262,20 @@ export const useNotebookEnvStore = create<NotebookEnvStore>((set, get) => {
         return
       }
       beginExplicitRun(lang)
+      let status: ProvisionStatus | undefined
+      let failure: string | undefined
       try {
         await bridge.repair(lang)
-        const status = await bridge.getStatus()
+        status = await bridge.getStatus()
         applyUi({ status })
-        applyLang(lang, { preparing: false })
-        applyRecoveryBlocks(status)
       } catch (e) {
-        applyUi({ error: errorText(e) })
-        applyLang(lang, { preparing: false, error: errorText(e) })
+        failure = errorText(e)
       } finally {
-        endExplicitRun(lang)
+        if (endExplicitRun(lang)) {
+          applyUi({ error: failure })
+          applyLang(lang, { preparing: false, error: failure })
+          if (status) applyRecoveryBlocks(status)
+        }
       }
     }
   }
