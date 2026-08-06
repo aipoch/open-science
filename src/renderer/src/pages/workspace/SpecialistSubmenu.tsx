@@ -63,7 +63,7 @@ const SpecialistSubmenu = ({
 
   // Keep the list fresh when the specialist catalog changes elsewhere.
   useEffect(() => {
-    const remove = window.api.specialist.onCatalogChanged(() => {
+    const remove = window.api.specialist?.onCatalogChanged(() => {
       void load()
     })
     return remove

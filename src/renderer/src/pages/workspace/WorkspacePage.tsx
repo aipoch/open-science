@@ -2202,7 +2202,7 @@ const WorkspacePage = ({
     // Guard: window.api.specialist may be absent in test/headless environments.
     if (!window.api?.specialist) return
     void loadSpecialists()
-    const remove = window.api.specialist.onCatalogChanged(() => {
+    const remove = window.api.specialist?.onCatalogChanged(() => {
       void loadSpecialists()
     })
     return remove
@@ -2219,7 +2219,7 @@ const WorkspacePage = ({
   // the completion gate, never by a renderer send barrier.
   useEffect(() => {
     if (!window.api?.specialist?.onPendingSwitch) return
-    const remove = window.api.specialist.onPendingSwitch((pending) => {
+    const remove = window.api.specialist?.onPendingSwitch((pending) => {
       // null target => revert to Main Agent. main already persisted the clear BEFORE broadcasting
       // (host.agents.switch(null) writes the Main binding, then notifies), so the renderer only
       // mirrors it here — no resolveSessionSpecialist round-trip is needed, unlike the named-target
