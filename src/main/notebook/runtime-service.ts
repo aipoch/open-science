@@ -27,13 +27,16 @@ import type {
   RunNotebookCellRequest
 } from '../../shared/notebook'
 import type {
-  EnvironmentInfo,
   ManageEnvironmentsRequest,
   ManageEnvironmentsResult,
   ProvisionProgress
 } from '../../shared/notebook-env'
 import type { PackageMirror } from '../../shared/mirror'
 import { NotebookDataExecutionAdmissionOwner } from './data-execution-admission'
+import {
+  NotebookEnvironmentManagementOwner,
+  type NotebookEnvironmentManager
+} from './environment-management'
 import { NotebookExportReader } from './export-reader'
 import { NotebookKernelExecutor, type NotebookKernelExecutorOptions } from './kernel-executor'
 import { saveIpynbAll } from './save-ipynb-all'
@@ -52,7 +55,6 @@ import {
 } from './package-operations'
 import { NotebookRunRepository, getNotebookRunJsonPath, getRuntimeRoot } from './repository'
 import {
-  assertSafeEnvName,
   DEFAULT_PY_ENV,
   DEFAULT_R_ENV,
   envPrefix,
@@ -63,7 +65,6 @@ import {
 } from './runtime-paths'
 import type {
   DiscoveredInterpreter,
-  EnvProvenance,
   NotebookRuntimeBinding,
   NotebookRuntimeBindings,
   NotebookRuntimeListing,
@@ -137,19 +138,6 @@ const persistsToRunJson = (processKey: string): boolean =>
   processKey === `python:${DEFAULT_PY_ENV}` ||
   processKey === `r:${DEFAULT_R_ENV}`
 
-// Provenance of a named env under runtime/envs, mirroring environment-discovery.classify's rule: the
-// two DEFAULT envs and their versioned siblings (e.g. default-python-3.13) are app-managed; any other
-// name is an agent-created env. The remove-guard uses this so remove only ever deletes agent-created
-// envs — never an app-managed default (user-own envs never live under runtime/envs, so they can't be
-// named here at all).
-const namedEnvProvenance = (name: string): EnvProvenance =>
-  name === DEFAULT_PY_ENV ||
-  name === DEFAULT_R_ENV ||
-  name.startsWith(`${DEFAULT_PY_ENV}-`) ||
-  name.startsWith(`${DEFAULT_R_ENV}-`)
-    ? 'app-managed'
-    : 'agent-created'
-
 type ResolvedInterpreter = NotebookSessionResolvedInterpreter
 type NotebookExecutionRequest = NotebookSessionExecutionRequest
 type NotebookExecutionResult = NotebookSessionExecutionResult
@@ -188,19 +176,6 @@ type NotebookHandoffContext = {
     status?: NotebookRuntimeBinding['status']
     reason?: NotebookRuntimeBinding['reason']
   }>
-}
-
-// Provisioner-backed environment manager injected into the service (mirrors installPackagesImpl /
-// getPackageMirror injection). DefaultRuntimeProvisioner satisfies this structurally; tests inject a
-// fake so manageEnvironments never spawns real micromamba.
-type NotebookEnvironmentManager = {
-  createNamedEnvironment: (
-    name: string,
-    language: NotebookLanguage,
-    packages?: string[]
-  ) => Promise<EnvironmentInfo>
-  listEnvironments: () => EnvironmentInfo[]
-  removeEnvironment: (name: string) => EnvironmentInfo[]
 }
 
 // The session-scoped connector RPC capability injected into the persistent control-plane REPL. The
@@ -388,6 +363,7 @@ class NotebookRuntimeService {
   // revocation drains, repair blocks, and installer diagnostics. The service remains the compatibility
   // facade and chooses which execution/package path enters each environment operation.
   private readonly environmentOperations: NotebookEnvironmentOperations
+  private readonly environmentManagement: NotebookEnvironmentManagementOwner
   private mcpRpcConnectionResolver:
     ((binding: McpRpcConnectionBinding) => Promise<McpRpcConnection>) | undefined
   private readonly runtimeEnablementResolver:
@@ -406,7 +382,6 @@ class NotebookRuntimeService {
     | 'markPackageMutationDirty'
     | 'refreshAfterPackageMutation'
   >
-  private environmentManager: NotebookEnvironmentManager | undefined
   private disposalPromise: Promise<{ reaped: boolean }> | undefined
 
   constructor(private readonly options: NotebookRuntimeServiceOptions) {
@@ -456,6 +431,15 @@ class NotebookRuntimeService {
       findSession: (sessionId) => this.sessions.get(sessionId),
       notifyChanged: (session) => this.notifyNotebookChanged(session)
     })
+    this.environmentManagement = new NotebookEnvironmentManagementOwner({
+      runtimeRoot,
+      manager: options.environmentManager,
+      sessions: () => this.sessions.values(),
+      ensureRecovered: () => this.ensureRecovered(),
+      assertPrefixRecoverable: (prefix) => this.assertPrefixRecoverable(prefix),
+      environmentOperations: this.environmentOperations,
+      runtimeRepair: this.runtimeRepair
+    })
     this.environmentStateTracker =
       options.environmentStateTracker ??
       new EnvironmentStateTracker({
@@ -493,7 +477,6 @@ class NotebookRuntimeService {
       resolveRuntimeEnablement: (language) => this.resolveRuntimeEnablement(language),
       repairPolicy: this.repairPolicy
     })
-    this.environmentManager = options.environmentManager
     this.runTerminalization = new NotebookRunTerminalizationOwner({
       repository: this.repository,
       notifyChanged: (session) => this.notifyNotebookChanged(session as RuntimeSession)
@@ -529,7 +512,7 @@ class NotebookRuntimeService {
   // Wires the provisioner-backed environment manager after construction (the provisioner is built in
   // main/ipc.ts alongside the env gate, after this service exists), mirroring the resolver setters.
   setEnvironmentManager(manager: NotebookEnvironmentManager): void {
-    this.environmentManager = manager
+    this.environmentManagement.setManager(manager)
   }
 
   // Wires the (serialized) default-env provisioner used to build default-python/default-r on demand.
@@ -1015,81 +998,7 @@ class NotebookRuntimeService {
   // executor process bound to that env name (locked decision — the on-disk env can't be rm-rf'd out
   // from under a running kernel). Create returns on completion (progress streaming is out of scope).
   async manageEnvironments(request: ManageEnvironmentsRequest): Promise<ManageEnvironmentsResult> {
-    const manager = this.environmentManager
-    if (!manager) {
-      throw new Error('Environment management is unavailable (no environment manager configured).')
-    }
-
-    switch (request.action) {
-      case 'create': {
-        // Validate BEFORE the name composes a filesystem path, and reject reserved/alias/default
-        // names so a created env is always reachable by execute/install (design D8 / review #1,#2).
-        const name = assertSafeEnvName(request.name)
-        if (request.language !== 'python' && request.language !== 'r') {
-          throw new Error('Creating an environment requires a language of "python" or "r".')
-        }
-        const language = request.language
-        // Let startup recovery finish before creating a prefix: its cleanup/verify must not race a
-        // fresh create writing into <root>/envs (same barrier materialize/install use).
-        await this.ensureRecovered()
-        // Refuse if recovery left this env's prefix blocked (an unknown-liveness orphan may still hold
-        // it) — creating over a possibly-live prefix could corrupt it.
-        this.assertPrefixRecoverable(envPrefix(getRuntimeRoot(this.options.dataRoot), name))
-        // Serialize create against installs / other env ops on the same env (design D4 / review A).
-        return this.environmentOperations.runMutation(name, async () => {
-          await manager.createNamedEnvironment(name, language, request.packages)
-          return { environments: manager.listEnvironments() }
-        })
-      }
-      case 'list':
-        return { environments: manager.listEnvironments() }
-      case 'remove': {
-        const name = assertSafeEnvName(request.name)
-        // Remove-guard: only agent-created envs are removable. assertSafeEnvName already rejects the
-        // bare defaults, but a versioned app-managed env (default-python-3.13) would slip past it, so
-        // classify by provenance here and refuse anything that is not agent-created.
-        if (namedEnvProvenance(name) !== 'agent-created') {
-          throw new Error(
-            `Environment "${name}" is app-managed and cannot be removed. Only environments you ` +
-              'created with manage_environments(action:"create") can be removed.'
-          )
-        }
-        if (this.isEnvironmentLive(name)) {
-          throw new Error(
-            `Environment "${name}" is in use by a running kernel — restart the notebook or ` +
-              'wait for the run to finish before removing it.'
-          )
-        }
-        // Let startup recovery finish before rm -rf'ing a prefix, same barrier create uses: recovery's
-        // verify/rebuild of an interrupted op could otherwise race this delete on the same prefix.
-        await this.ensureRecovered()
-        // Refuse if recovery flagged this prefix possibly-live (an unknown-liveness orphan may still be
-        // writing it). After a restart there is no in-memory kernel state, so isEnvironmentLive() above
-        // can't see a surviving installer — without this, rm -rf could delete a named prefix a survivor
-        // is still writing. Mirrors the 'create' guard; keyed by the same real prefix.
-        this.assertPrefixRecoverable(envPrefix(getRuntimeRoot(this.options.dataRoot), name))
-        // Serialize the rm -rf against a concurrent install into the same env (design D4 / review A).
-        return this.environmentOperations.runMutation(name, async () => {
-          const environments = manager.removeEnvironment(name)
-          this.runtimeRepair.completeRemovedManagedEnvironment(name)
-          return { environments }
-        })
-      }
-    }
-  }
-
-  // True when any session has a live (spawned, not yet terminated) executor process bound to this env
-  // name. Derived from the per-process-key status map: a key whose status is not 'terminated' has a
-  // live proc (a run set it 'running'/'idle' and no idle-shutdown/crash has dropped it since). The
-  // repl key is env-agnostic and never blocks a named-env removal.
-  private isEnvironmentLive(name: string): boolean {
-    for (const session of this.sessions.values()) {
-      for (const [processKey, status] of session.kernelStatusEntries()) {
-        if (processKey === 'repl' || status === 'terminated') continue
-        if (processKey.slice(processKey.indexOf(':') + 1) === name) return true
-      }
-    }
-    return false
+    return this.environmentManagement.manage(request)
   }
 
   // Shuts down one session executor and removes its in-memory routing state.
