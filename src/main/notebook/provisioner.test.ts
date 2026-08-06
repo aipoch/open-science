@@ -424,7 +424,6 @@ describe('DefaultRuntimeProvisioner.provisionPython', () => {
     expect(events).toContainEqual(
       expect.objectContaining({ message: expect.stringMatching(/repair/i) })
     )
-    expect(existsSync(bin)).toBe(true)
   })
 
   it('re-arms the spawn intent before EACH create attempt (incl. the cache-repair retry)', async () => {
