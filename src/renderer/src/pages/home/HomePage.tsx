@@ -21,6 +21,7 @@ import { useProjectStore } from '@/stores/project-store'
 import { useArchiveUndoStore } from '@/stores/archive-undo-store'
 import { useSettingsStore } from '@/stores/settings-store'
 import { GitHubStarBadge } from '@/components/GitHubStarBadge'
+import { NetworkStatusIndicator } from '@/components/NetworkStatusIndicator'
 import { ThemePreferenceMenu } from '@/components/ThemeControls'
 import { UpdateCapsule } from '@/components/UpdateCapsule'
 import { APP } from '../../../../shared/app-config'
@@ -350,6 +351,7 @@ const HomePage = ({
                 <span className="sm:hidden">Environment</span>
               </button>
             ) : null}
+            <NetworkStatusIndicator variant="pill" />
             <span className="hidden sm:inline-flex">
               <GitHubStarBadge />
             </span>

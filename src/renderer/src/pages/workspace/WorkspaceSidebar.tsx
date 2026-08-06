@@ -28,6 +28,7 @@ import {
 
 import { cn } from '@/lib/utils'
 import { GitHubStarBadge } from '@/components/GitHubStarBadge'
+import { NetworkStatusIndicator } from '@/components/NetworkStatusIndicator'
 import { UpdateCapsule } from '@/components/UpdateCapsule'
 import type { ChatSession, SessionStatus } from '@/stores/session-store'
 import type { ConversationExportFormat } from '../../../../shared/conversation-export'
@@ -427,6 +428,7 @@ const WorkspaceSidebar = ({
             </button>
             <UpdateCapsule />
             <GitHubStarBadge />
+            <NetworkStatusIndicator variant="icon" />
           </div>
         </nav>
       </div>

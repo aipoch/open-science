@@ -1,7 +1,11 @@
-import { useEffect, useRef, useState } from 'react'
+import { CircleAlert, RefreshCw } from 'lucide-react'
+import { useCallback, useEffect, useRef, useState } from 'react'
 
 import type { PackageMirror } from '../../../../shared/mirror'
+import type { NetworkInfo } from '../../../../shared/network'
 import { Input } from '@/components/ui/input'
+import { cn } from '@/lib/utils'
+import { useNetworkStore } from '@/stores/network-store'
 import { useSettingsStore } from '@/stores/settings-store'
 import { ExternalTextLink } from '@/components/ExternalTextLink'
 import { isMirrorConfigured, mirrorStatusText, MIRROR_HELP_URL } from './mirror-view'
@@ -15,18 +19,43 @@ const actionButtonClassName =
 type NetworkView = { kind: 'list' | 'configure' }
 type NetworkPanelProps = { view: NetworkView; onNavigate: (view: NetworkView) => void }
 
-// Settings -> Network. Currently just the Package mirror section: conda-forge / pip fetch packages
-// from the public hosts by default; a user behind a firewall or on a slow route to those hosts can
-// point them at a mirror instead. The "Claude Science domains" egress allowlist from the mockup is
-// phase-3 (spec §14, §9) and is intentionally not built here.
+// Settings -> Network. The Network status section shows connectivity (navigator.onLine) plus the
+// local interface details reported by the main process; the Package mirror section lets a user
+// behind a firewall or on a slow route to the public conda-forge / pip hosts point package fetches
+// at a mirror instead. The "Claude Science domains" egress allowlist from the mockup is phase-3
+// (spec §14, §9) and is intentionally not built here.
 const NetworkPanel = ({ view, onNavigate }: NetworkPanelProps): React.JSX.Element => {
   const packageMirror = useSettingsStore((state) => state.packageMirror)
   const setPackageMirror = useSettingsStore((state) => state.setPackageMirror)
+  const isOnline = useNetworkStore((state) => state.isOnline)
 
   const isConfiguring = view.kind === 'configure'
   const [draft, setDraft] = useState<PackageMirror>({})
   const [isSaving, setIsSaving] = useState(false)
   const [message, setMessage] = useState<string | undefined>(undefined)
+  const [networkInfo, setNetworkInfo] = useState<NetworkInfo | null>(null)
+
+  // Local interface details come from the main process; window.api.network is Electron-only,
+  // so stay with placeholders when the preload bridge is unavailable.
+  const refreshNetworkInfo = useCallback((): void => {
+    const getInfo = window.api?.network?.getInfo
+    if (!getInfo) return
+
+    void getInfo().then((info) => setNetworkInfo(info))
+  }, [])
+
+  // Load once when the list view mounts while online, and re-pull whenever connectivity comes
+  // back; offline rows show placeholders, so a connectivity drop has nothing to refresh.
+  useEffect(() => {
+    if (view.kind === 'list' && isOnline) refreshNetworkInfo()
+  }, [view.kind, isOnline, refreshNetworkInfo])
+
+  const recheckOnline = useNetworkStore((state) => state.recheckOnline)
+
+  const handleRetry = (): void => {
+    recheckOnline()
+    refreshNetworkInfo()
+  }
 
   // Seed the draft from the saved mirror once each time the configure view is entered (including via
   // history / a remount), without clobbering in-progress edits on a background store refresh.
@@ -64,8 +93,74 @@ const NetworkPanel = ({ view, onNavigate }: NetworkPanelProps): React.JSX.Elemen
     }
   }
 
+  const connectionLabel =
+    networkInfo?.connectionType === 'wifi'
+      ? 'Wi-Fi'
+      : networkInfo?.connectionType === 'ethernet'
+        ? 'Ethernet'
+        : '—'
+
   return (
     <div className="space-y-6 p-5">
+      {!isConfiguring ? (
+        <section aria-label="Network status">
+          <h3 className="mb-1 text-sm font-semibold text-foreground">Network status</h3>
+          <p className="mb-3 text-xs text-muted-foreground">
+            Whether this machine is currently connected to the internet.
+          </p>
+
+          <div className="rounded-xl border border-border p-4">
+            <dl className="space-y-2 text-sm">
+              <div className="flex items-center justify-between gap-3">
+                <dt className={fieldLabelClassName}>Status</dt>
+                <dd className="flex items-center gap-1.5 text-foreground">
+                  <span
+                    aria-hidden="true"
+                    className={cn(
+                      'size-2 rounded-full',
+                      isOnline ? 'bg-success-000' : 'bg-destructive'
+                    )}
+                  />
+                  {isOnline ? 'Connected' : 'Offline'}
+                </dd>
+              </div>
+              <div className="flex items-center justify-between gap-3">
+                <dt className={fieldLabelClassName}>Connection</dt>
+                <dd className="text-foreground">{isOnline ? connectionLabel : '—'}</dd>
+              </div>
+              <div className="flex items-center justify-between gap-3">
+                <dt className={fieldLabelClassName}>IP address</dt>
+                <dd className="text-foreground">
+                  {isOnline ? (networkInfo?.ipAddress ?? '—') : '—'}
+                </dd>
+              </div>
+            </dl>
+
+            {!isOnline ? (
+              <div className="mt-4 rounded-lg border border-destructive/40 bg-destructive/5 px-4 py-3">
+                <p className="flex items-center gap-1.5 text-sm font-medium text-destructive">
+                  <CircleAlert className="size-4" strokeWidth={2} aria-hidden="true" />
+                  No internet connection
+                </p>
+                <ol className="mt-2 list-decimal space-y-1 pl-5 text-xs text-muted-foreground">
+                  <li>Check your cable or Wi-Fi connection.</li>
+                  <li>Check proxy or VPN settings.</li>
+                  <li>Check the package mirror configuration below.</li>
+                </ol>
+                <button
+                  type="button"
+                  onClick={handleRetry}
+                  className="mt-3 inline-flex h-8 items-center gap-1.5 rounded-lg border border-border bg-card px-2.5 text-sm font-medium text-foreground transition-colors hover:bg-muted"
+                >
+                  <RefreshCw className="size-3.5" strokeWidth={2} aria-hidden="true" />
+                  Retry
+                </button>
+              </div>
+            ) : null}
+          </div>
+        </section>
+      ) : null}
+
       <section aria-label="Package mirror">
         <h3 className="mb-1 text-sm font-semibold text-foreground">Package mirror</h3>
         <p className="mb-3 text-xs text-muted-foreground">

@@ -1,0 +1,90 @@
+// @vitest-environment jsdom
+import { afterEach, beforeEach, describe, expect, it } from 'vitest'
+import { act } from 'react'
+import { createRoot, type Root } from 'react-dom/client'
+
+import { NetworkStatusIndicator } from './NetworkStatusIndicator'
+import { useNetworkStore } from '@/stores/network-store'
+import { useSettingsStore } from '@/stores/settings-store'
+
+let container: HTMLDivElement
+let root: Root
+
+beforeEach(() => {
+  container = document.createElement('div')
+  document.body.appendChild(container)
+  root = createRoot(container)
+})
+
+afterEach(() => {
+  act(() => root.unmount())
+  container.remove()
+  useNetworkStore.setState({ isOnline: true })
+  useSettingsStore.setState({ isSettingsOpen: false, pendingSettingsPanel: undefined })
+})
+
+describe('NetworkStatusIndicator', () => {
+  it('renders nothing while online', async () => {
+    useNetworkStore.setState({ isOnline: true })
+
+    await act(async () => {
+      root.render(<NetworkStatusIndicator variant="pill" />)
+    })
+
+    expect(container.querySelector('button')).toBeNull()
+  })
+
+  it('renders the offline pill with a label', async () => {
+    useNetworkStore.setState({ isOnline: false })
+
+    await act(async () => {
+      root.render(<NetworkStatusIndicator variant="pill" />)
+    })
+
+    const button = container.querySelector('button')
+    expect(button?.getAttribute('aria-label')).toBe('No internet connection')
+    expect(button?.textContent).toContain('Offline')
+  })
+
+  it('renders the icon variant without a label', async () => {
+    useNetworkStore.setState({ isOnline: false })
+
+    await act(async () => {
+      root.render(<NetworkStatusIndicator variant="icon" />)
+    })
+
+    const button = container.querySelector('button')
+    expect(button?.getAttribute('aria-label')).toBe('No internet connection')
+    expect(button?.textContent).not.toContain('Offline')
+  })
+
+  it('opens the settings Network panel on click', async () => {
+    useNetworkStore.setState({ isOnline: false })
+
+    await act(async () => {
+      root.render(<NetworkStatusIndicator variant="pill" />)
+    })
+
+    const button = container.querySelector('button') as HTMLButtonElement
+    await act(async () => {
+      button.click()
+    })
+
+    expect(useSettingsStore.getState().isSettingsOpen).toBe(true)
+    expect(useSettingsStore.getState().pendingSettingsPanel).toBe('network')
+  })
+
+  it('disappears when connectivity recovers', async () => {
+    useNetworkStore.setState({ isOnline: false })
+
+    await act(async () => {
+      root.render(<NetworkStatusIndicator variant="pill" />)
+    })
+    expect(container.querySelector('button')).not.toBeNull()
+
+    await act(async () => {
+      window.dispatchEvent(new Event('online'))
+    })
+    expect(container.querySelector('button')).toBeNull()
+  })
+})

@@ -244,6 +244,7 @@ import type {
   ValidateProviderResult
 } from '../shared/settings'
 import type { PackageMirror } from '../shared/mirror'
+import type { NetworkInfo } from '../shared/network'
 import type {
   ActiveSessionInfo,
   DataRootInspection,
@@ -534,6 +535,9 @@ export interface OpenScienceAPI {
   }
   github: {
     getStars(): Promise<number | null>
+  }
+  network: {
+    getInfo(): Promise<NetworkInfo>
   }
   cli: {
     getStatus(): Promise<CliLauncherStatus>

@@ -11,6 +11,7 @@ import { createInitialSettingsState, useSettingsStore } from '@/stores/settings-
 import { HomePage } from './HomePage'
 
 vi.mock('@/components/GitHubStarBadge', () => ({ GitHubStarBadge: () => null }))
+vi.mock('@/components/NetworkStatusIndicator', () => ({ NetworkStatusIndicator: () => null }))
 vi.mock('@/components/ThemeControls', () => ({ ThemePreferenceMenu: () => null }))
 vi.mock('@/components/UpdateCapsule', () => ({ UpdateCapsule: () => null }))
 vi.mock('./ProjectFormDialog', () => ({ ProjectFormDialog: () => null }))

@@ -209,6 +209,9 @@ export const RENDERER_CONTRACT_GROUPS = Object.freeze([
   group('logs', 'logs', [
     ['getPath', 'logs:get-path'], ['openFile', 'logs:open-file', LOCAL], ['revealInFolder', 'logs:reveal-in-folder', LOCAL],
   ]),
+  group('network', 'network', [
+    ['getInfo', 'network:get-info', ELECTRON],
+  ]),
   group('notebook', 'notebook', [
     ['onAvailable', 'notebook:available', EVENT], ['onChanged', 'notebook:changed', EVENT], ['appendCodeCell', 'notebook:append-code-cell'],
     ['beginCodeCell', 'notebook:begin-code-cell'], ['execute', 'notebook:execute'], ['exportIpynb', 'notebook:export-ipynb', LOCAL],
