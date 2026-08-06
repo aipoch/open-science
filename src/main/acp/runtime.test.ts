@@ -11470,6 +11470,35 @@ describe('ACP runtime session management', () => {
     })
   })
 
+  it('publishes an explicit provenance prompt as the routed user message identity', async () => {
+    const process = new FakeAgentProcess()
+    startFakeAgent(process, ['session-1'])
+    const messageEvents: AcpRuntimeEvent[] = []
+    const runtime = new AcpRuntime({
+      appVersion: '0.1.0',
+      defaultCwd: '/workspace',
+      spawnAgent: () => asAgentProcess(process),
+      callbacks: {
+        onEvent: (event) => {
+          if (event.kind === 'message') messageEvents.push(event)
+        }
+      }
+    })
+    const session = await runtime.createSession({ cwd: '/workspace' })
+
+    await runtime.sendPrompt({
+      sessionId: session.sessionId,
+      text: '[Auditor] Correct the generated file.',
+      provenanceContext: { promptMessageId: 'auditor-prompt-1' }
+    })
+
+    expect(messageEvents.find((event) => event.role === 'user')).toMatchObject({
+      messageId: 'auditor-prompt-1',
+      promptMessageId: 'auditor-prompt-1',
+      text: '[Auditor] Correct the generated file.'
+    })
+  })
+
   it('retains staged Claude replay after failed adoption and commits it after success', async () => {
     const process = new FakeAgentProcess()
     const fakeAgent = startFakeAgent(

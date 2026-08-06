@@ -207,7 +207,10 @@ const composeAcpRuntimePromptOwners = (
           kind: 'message',
           level: 'info',
           sessionId,
-          ...(promptMessageId ? { promptMessageId } : {}),
+          // App-routed prompts (for example an Auditor correction) do not already exist in the
+          // renderer store. Reuse the provenance id so the durable graph and Artifact claim share
+          // one Prompt owner instead of inventing two identities for the same turn.
+          ...(promptMessageId ? { promptMessageId, messageId: promptMessageId } : {}),
           role: 'user',
           text
         })
