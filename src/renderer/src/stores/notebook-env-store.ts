@@ -106,14 +106,15 @@ export const useNotebookEnvStore = create<NotebookEnvStore>((set, get) => {
   const endExplicitRun = (
     language: NotebookLanguage,
     run: ExplicitRun
-  ): { last: boolean; ownsLatestProgress: boolean; latestProgressTerminal: boolean } => {
+  ): { last: boolean; ownsLatestProgress: boolean; newerProgressTerminal: boolean } => {
     const remaining = (explicitRuns.get(language) ?? []).filter((candidate) => candidate !== run)
     if (remaining.length > 0) explicitRuns.set(language, remaining)
     else explicitRuns.delete(language)
     const latest = latestProgress.get(language)
     const completion = {
       last: remaining.length === 0,
-      latestProgressTerminal: latest?.terminal ?? false,
+      newerProgressTerminal:
+        latest?.terminal === true && latest.revision > run.startProgressRevision,
       // An unchanged cursor or another locally queued explicit operation owns the visible state once
       // this renderer's queue drains. Newer automatic or another window's progress must survive.
       ownsLatestProgress:
@@ -259,15 +260,15 @@ export const useNotebookEnvStore = create<NotebookEnvStore>((set, get) => {
         const completion = endExplicitRun(lang, run)
         if (
           completion.last &&
-          (completion.ownsLatestProgress || completion.latestProgressTerminal)
+          (completion.ownsLatestProgress || completion.newerProgressTerminal)
         ) {
-          if (completion.ownsLatestProgress) applyUi({ error: failure })
+          const error = completion.ownsLatestProgress
+            ? failure
+            : (get().byLang[lang]?.error ?? failure)
+          applyUi({ error })
           // Only the last overlapping request settles the shared language card. Clear preparing before
           // applying recovery state so a completed rebuild can surface a still-active quarantine.
-          applyLang(lang, {
-            preparing: false,
-            ...(completion.ownsLatestProgress ? { error: failure } : {})
-          })
+          applyLang(lang, { preparing: false, error })
           if (status) applyRecoveryBlocks(status)
         }
       }
@@ -323,13 +324,13 @@ export const useNotebookEnvStore = create<NotebookEnvStore>((set, get) => {
         const completion = endExplicitRun(lang, run)
         if (
           completion.last &&
-          (completion.ownsLatestProgress || completion.latestProgressTerminal)
+          (completion.ownsLatestProgress || completion.newerProgressTerminal)
         ) {
-          if (completion.ownsLatestProgress) applyUi({ error: failure })
-          applyLang(lang, {
-            preparing: false,
-            ...(completion.ownsLatestProgress ? { error: failure } : {})
-          })
+          const error = completion.ownsLatestProgress
+            ? failure
+            : (get().byLang[lang]?.error ?? failure)
+          applyUi({ error })
+          applyLang(lang, { preparing: false, error })
           if (status) applyRecoveryBlocks(status)
         }
       }

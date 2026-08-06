@@ -320,6 +320,67 @@ describe('notebook-env-store', () => {
     })
   })
 
+  it('keeps an explicit failure when newer automatic progress completes successfully', async () => {
+    let rejectProvision: ((reason: Error) => void) | undefined
+    const provision = vi.fn(
+      () =>
+        new Promise<void>((_resolve, reject) => {
+          rejectProvision = reject
+        })
+    )
+    const { api, emit } = installApi({ provision })
+    await useNotebookEnvStore.getState().init()
+
+    const explicit = useNotebookEnvStore.getState().provision('r')
+    const operationId = api.provision.mock.calls[0]?.[1] as string
+    emit({
+      phase: 'error',
+      message: 'Explicit R setup failed',
+      progress: 0,
+      language: 'r',
+      operationId
+    })
+    emit({ phase: 'done', message: 'Automatic R setup ready', progress: 1, language: 'r' })
+    rejectProvision?.(new Error('Explicit R setup failed'))
+    await explicit
+
+    expect(useNotebookEnvStore.getState().byLang.r).toMatchObject({
+      preparing: false,
+      error: 'Explicit R setup failed',
+      progress: { phase: 'done', message: 'Automatic R setup ready' }
+    })
+  })
+
+  it('preserves a newer automatic error over an explicit failure', async () => {
+    let rejectProvision: ((reason: Error) => void) | undefined
+    const provision = vi.fn(
+      () =>
+        new Promise<void>((_resolve, reject) => {
+          rejectProvision = reject
+        })
+    )
+    const { api, emit } = installApi({ provision })
+    await useNotebookEnvStore.getState().init()
+
+    const explicit = useNotebookEnvStore.getState().provision('r')
+    const operationId = api.provision.mock.calls[0]?.[1] as string
+    emit({
+      phase: 'error',
+      message: 'Explicit R setup failed',
+      progress: 0,
+      language: 'r',
+      operationId
+    })
+    emit({ phase: 'error', message: 'Automatic R setup failed', progress: 0, language: 'r' })
+    rejectProvision?.(new Error('Explicit R setup failed'))
+    await explicit
+
+    expect(useNotebookEnvStore.getState().byLang.r).toMatchObject({
+      preparing: false,
+      error: 'Automatic R setup failed'
+    })
+  })
+
   it('does not let an automatic terminal event claim a queued explicit setup', async () => {
     let resolveProvision: (() => void) | undefined
     const provision = vi.fn(
