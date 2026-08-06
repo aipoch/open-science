@@ -275,7 +275,7 @@ describe('SettingsPage layout', () => {
     expect(dialog?.className).toContain('overscroll-contain')
 
     // Left navigation grouped as Capabilities (Skills, Connectors, Specialists, Compute, Network)
-    // and Workspace (Model, Agent, Permissions, Runtimes, Storage, General).
+    // and Workspace (Model, Agent, Permissions, Archived, Runtimes, Storage, General).
     // Remote access stays isolated from both groups.
     const nav = document.body.querySelector('nav[aria-label="Settings"]')
     expect(nav).not.toBeNull()
@@ -287,7 +287,7 @@ describe('SettingsPage layout', () => {
     expect(nav?.textContent).toContain('Workspace')
     expect(nav?.textContent).toContain('Remote access')
     const navItems = nav?.querySelectorAll('li') ?? []
-    expect(navItems).toHaveLength(12)
+    expect(navItems).toHaveLength(13)
     expect(navItems[0]?.textContent).toContain('Skills')
     expect(navItems[1]?.textContent).toContain('Connectors')
     expect(navItems[2]?.textContent).toContain('Specialists')
@@ -296,10 +296,11 @@ describe('SettingsPage layout', () => {
     expect(navItems[5]?.textContent).toContain('Model')
     expect(navItems[6]?.textContent).toContain('Agent')
     expect(navItems[7]?.textContent).toContain('Permissions')
-    expect(navItems[8]?.textContent).toContain('Runtimes')
-    expect(navItems[9]?.textContent).toContain('Storage')
-    expect(navItems[10]?.textContent).toContain('General')
-    expect(navItems[11]?.textContent).toContain('Remote control')
+    expect(navItems[8]?.textContent).toContain('Archived')
+    expect(navItems[9]?.textContent).toContain('Runtimes')
+    expect(navItems[10]?.textContent).toContain('Storage')
+    expect(navItems[11]?.textContent).toContain('General')
+    expect(navItems[12]?.textContent).toContain('Remote control')
     const modelNavButton = navButton('Model')
     const agentNavButton = navButton('Agent')
     expect(modelNavButton?.querySelector('.lucide-brain')).not.toBeNull()

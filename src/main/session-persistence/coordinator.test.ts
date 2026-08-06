@@ -397,6 +397,43 @@ describe('SessionPersistenceCoordinator', () => {
     expect(durable.updatedAt).toBeGreaterThan(previousUpdatedAt)
   })
 
+  it('preserves main-owned archive state on a stale whole-session save', async () => {
+    let durable = createSession({ archivedAt: 10 })
+    const repository = createSessionRepository({
+      loadSessionWithDiagnostics: vi.fn(async () => ({
+        status: 'found' as const,
+        session: durable
+      })),
+      saveSession: vi.fn(async (session) => {
+        durable = structuredClone(session)
+      })
+    })
+    const coordinator = new SessionPersistenceCoordinator(repository, createFileIndex())
+
+    await coordinator.saveSession(createSession({ title: 'Renderer rename' }))
+
+    expect(durable).toMatchObject({ title: 'Renderer rename', archivedAt: 10 })
+  })
+
+  it('rejects Session archive while the Session is running', async () => {
+    const repository = createSessionRepository({
+      loadSessionWithDiagnostics: vi.fn(async () => ({
+        status: 'found' as const,
+        session: createSession({ status: 'running' })
+      }))
+    })
+    const coordinator = new SessionPersistenceCoordinator(repository, createFileIndex())
+
+    await expect(
+      coordinator.setArchived({
+        projectId: 'project-1',
+        sessionId: 'session-1',
+        archived: true,
+        expectedArchivedAt: null
+      })
+    ).rejects.toThrow('Finish or stop this session before archiving.')
+  })
+
   it('does not let a renderer whole-session save create runtime authority', async () => {
     let durable: PersistedChatSession | undefined
     const repository = createSessionRepository({

@@ -34,6 +34,11 @@ type AcpHandlerWorkflowRuntime = {
 
 type PromptNotifications = Pick<TaskNotificationService, 'trackPrompt' | 'untrackPrompt'>
 
+type SessionArchiveAvailability = {
+  assertSessionAvailable(projectId: string, sessionId: string): Promise<void>
+  assertSessionAvailableById(sessionId: string): Promise<void>
+}
+
 type AcpHandlerWorkflows = {
   createSession(request: AcpCreateSessionRequest): Promise<AcpCreateSessionResponse>
   resumeSession(request: AcpResumeSessionRequest): Promise<AcpCreateSessionResponse>
@@ -97,7 +102,8 @@ const logResumeDiagnostic = (
 const createAcpHandlerWorkflows = (
   runtime: AcpHandlerWorkflowRuntime,
   createSessionWorkflow: AcpCreateSessionWorkflow,
-  taskNotifications?: PromptNotifications
+  taskNotifications?: PromptNotifications,
+  archiveAvailability?: SessionArchiveAvailability
 ): AcpHandlerWorkflows => ({
   async createSession(request): Promise<AcpCreateSessionResponse> {
     try {
@@ -122,6 +128,11 @@ const createAcpHandlerWorkflows = (
     logResumeDiagnostic('info', 'acp:resume-session started', context)
 
     try {
+      if (request.projectName) {
+        await archiveAvailability?.assertSessionAvailable(request.projectName, request.sessionId)
+      } else {
+        await archiveAvailability?.assertSessionAvailableById(request.sessionId)
+      }
       const result = await runtime.resumeSession(request)
       logResumeDiagnostic('info', 'acp:resume-session completed', {
         ...context,

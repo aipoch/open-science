@@ -1,5 +1,6 @@
 import {
   AlertTriangle,
+  Archive,
   ArrowLeft,
   ArrowRight,
   Bot,
@@ -54,6 +55,7 @@ import { ComputePanel, type ComputeView } from './ComputePanel'
 import { ComputeAddForm } from './ComputeAddForm'
 import { ComputeHostDetail } from './ComputeHostDetail'
 import { PermissionsPanel } from './PermissionsPanel'
+import { ArchivedPanel } from './ArchivedPanel'
 import { resolveVendorModelsUrl } from '../../../../shared/provider-registry'
 import { ProviderForm } from './ProviderForm'
 import {
@@ -146,6 +148,7 @@ const SETTINGS_GROUPS: ReadonlyArray<{ label: string; panels: ReadonlyArray<Sett
       { id: 'model', label: 'Model', Icon: Brain },
       { id: 'agent', label: 'Agent', Icon: Bot },
       { id: 'permissions', label: 'Permissions', Icon: LockKeyhole },
+      { id: 'archived', label: 'Archived', Icon: Archive },
       { id: 'runtimes', label: 'Runtimes', Icon: TerminalSquare },
       { id: 'storage', label: 'Storage', Icon: Cloud },
       { id: 'general', label: 'General', Icon: Settings2 }
@@ -972,6 +975,8 @@ const SettingsPage = forwardRef<SettingsPageHandle, SettingsPageProps>(function 
                       )
                     }
                   />
+                ) : activePanel === 'archived' ? (
+                  <ArchivedPanel />
                 ) : activePanel === 'runtimes' ? (
                   <RuntimesPanel
                     title="Notebook runtimes"

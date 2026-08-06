@@ -134,6 +134,9 @@ type AcpApplicationCommandRuntime = Pick<
 type AcpApplicationCommandDependencies = Readonly<{
   runtime: AcpApplicationCommandRuntime
   workflows: AcpHandlerWorkflows
+  archiveAvailability?: Readonly<{
+    assertSessionAvailable(projectId: string, sessionId: string): Promise<void>
+  }>
 }>
 
 const registerAcpCommands = (
@@ -190,7 +193,11 @@ const registerAcpCommands = (
         if (!canSatisfyHumanApproval(invocation.callerContext)) {
           throw new Error('Only a current human caller can respond to a Session Plan.')
         }
-        return dependencies.runtime.respondSessionPlan(invocation.args[0])
+        return dependencies.archiveAvailability
+          ? dependencies.archiveAvailability
+              .assertSessionAvailable(invocation.args[0].projectId, invocation.args[0].sessionId)
+              .then(() => dependencies.runtime.respondSessionPlan(invocation.args[0]))
+          : dependencies.runtime.respondSessionPlan(invocation.args[0])
       }
     })
     return scope.complete()

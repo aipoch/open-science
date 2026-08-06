@@ -353,6 +353,7 @@ describe('wireUnreadTaskController', () => {
     const controller = {
       restore: vi.fn(async () => undefined),
       markUnread: vi.fn(async () => undefined),
+      markReadSessions: vi.fn(async () => undefined),
       removeUnreadSessions: vi.fn(async () => undefined),
       syncViewState: vi.fn(async () => undefined),
       handleAppFocus: vi.fn(async () => undefined),

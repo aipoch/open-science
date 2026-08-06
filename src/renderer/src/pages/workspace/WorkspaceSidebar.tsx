@@ -50,6 +50,8 @@ type WorkspaceSidebarProps = {
   onViewNotebook: (session: ChatSession) => void
   onExportSession?: (session: ChatSession, format: ConversationExportFormat) => void
   onTogglePin: (session: ChatSession) => void
+  canArchiveSession?: (session: ChatSession) => boolean
+  onArchiveSession?: (session: ChatSession) => void
   onDeleteSession: (session: ChatSession) => void
   onOpenSettings: () => void
   mobileMode?: boolean
@@ -106,6 +108,8 @@ const WorkspaceSidebar = ({
   onViewNotebook,
   onExportSession,
   onTogglePin,
+  canArchiveSession,
+  onArchiveSession,
   onDeleteSession,
   onOpenSettings,
   mobileMode = false,
@@ -314,7 +318,7 @@ const WorkspaceSidebar = ({
                                 onSelect={() => onDownloadArtifacts(session)}
                               >
                                 <span className={sessionMenuIconClassName}>
-                                  <Archive className="size-4" strokeWidth={2} aria-hidden="true" />
+                                  <Download className="size-4" strokeWidth={2} aria-hidden="true" />
                                 </span>
                                 Download all artifacts
                               </DropdownMenuItem>
@@ -373,6 +377,16 @@ const WorkspaceSidebar = ({
                                 </DropdownMenuSubContent>
                               </DropdownMenuSub>
                             ) : null}
+                            <DropdownMenuItem
+                              className="gap-2"
+                              disabled={!canArchiveSession?.(session)}
+                              onSelect={() => onArchiveSession?.(session)}
+                            >
+                              <span className={sessionMenuIconClassName}>
+                                <Archive className="size-4" strokeWidth={2} aria-hidden="true" />
+                              </span>
+                              Archive
+                            </DropdownMenuItem>
                             <DropdownMenuSeparator />
                             {/* Delete uses the project's danger token pair for light surfaces. */}
                             <DropdownMenuItem

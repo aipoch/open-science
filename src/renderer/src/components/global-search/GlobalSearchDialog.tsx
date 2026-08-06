@@ -135,8 +135,20 @@ export const GlobalSearchDialog = ({
   const [actionError, setActionError] = useState<string | undefined>()
   const [activeIndex, setActiveIndex] = useState(0)
 
-  const projects = useProjectStore((state) => state.projects)
-  const sessions = useSessionStore((state) => state.sessions)
+  const allProjects = useProjectStore((state) => state.projects)
+  const allSessions = useSessionStore((state) => state.sessions)
+  const projects = useMemo(
+    () => allProjects.filter((project) => project.archivedAt === undefined),
+    [allProjects]
+  )
+  const activeProjectIds = useMemo(() => new Set(projects.map((project) => project.id)), [projects])
+  const sessions = useMemo(
+    () =>
+      allSessions.filter(
+        (session) => session.archivedAt === undefined && activeProjectIds.has(session.projectId)
+      ),
+    [activeProjectIds, allSessions]
+  )
   const selectedSessionId = useSessionStore((state) => state.selectedSessionId)
   const activeProjectId = useNavigationStore((state) => state.activeProjectId)
   const view = useNavigationStore((state) => state.view)

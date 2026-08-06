@@ -11,6 +11,7 @@ import type {
 import type { Project } from '../../../shared/projects'
 import { createInitialProjectState, useProjectStore } from '@/stores/project-store'
 import { useNavigationStore } from '@/stores/navigation-store'
+import { useArchiveUndoStore } from '@/stores/archive-undo-store'
 import { createInitialSessionState, useSessionStore } from '@/stores/session-store'
 import { useLifecycleSync } from './useLifecycleSync'
 
@@ -69,6 +70,7 @@ describe('useLifecycleSync', () => {
     document.body.appendChild(container)
     useProjectStore.setState({ ...createInitialProjectState(), isLoaded: true })
     useSessionStore.setState(createInitialSessionState())
+    useArchiveUndoStore.setState({ notices: [], restoringKey: undefined })
     useNavigationStore.setState({
       view: 'home',
       activeProjectId: undefined,
@@ -189,6 +191,37 @@ describe('useLifecycleSync', () => {
     })
 
     expect(useProjectStore.getState().projects).toEqual([updatedProject])
+  })
+
+  it('returns an open project to Home when another window archives it', async () => {
+    await act(async () => {
+      listeners.projectCreated?.(project)
+      listeners.sessionCreated?.({ session, originClientId: 'web:external' })
+    })
+    await act(async () => container.querySelector<HTMLButtonElement>('button')?.click())
+    await act(async () => {
+      listeners.projectUpdated?.({ ...project, archivedAt: 2 })
+    })
+
+    expect(useNavigationStore.getState().view).toBe('home')
+    expect(useSessionStore.getState().selectedSessionId).toBeUndefined()
+  })
+
+  it('clears a selected session when another window archives it', async () => {
+    await act(async () => {
+      listeners.projectCreated?.(project)
+      listeners.sessionCreated?.({ session, originClientId: 'web:external' })
+    })
+    await act(async () => container.querySelector<HTMLButtonElement>('button')?.click())
+    await act(async () => {
+      listeners.sessionUpdated?.({
+        session: { ...session, archivedAt: 2 },
+        originClientId: 'web:external'
+      })
+    })
+
+    expect(useNavigationStore.getState().view).toBe('workspace')
+    expect(useSessionStore.getState().selectedSessionId).toBeUndefined()
   })
 
   it('replays deletions after stale initial snapshots hydrate', async () => {

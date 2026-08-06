@@ -14,6 +14,7 @@ type DataRootWrite = <Result>(write: () => Promise<Result>) => Promise<Result>
 type AcpCreateSessionWorkflowDependencies = {
   workspaces: ManagedSessionWorkspaceCapability
   withDataRootWrite: DataRootWrite
+  assertProjectAvailable(projectId: string | undefined): Promise<void>
 }
 
 type AcpCreateSessionWorkflow = {
@@ -32,6 +33,7 @@ const createAcpCreateSessionWorkflow = (
 
   return {
     async create(request: AcpCreateSessionRequest): Promise<AcpCreateSessionResponse> {
+      await dependencies.assertProjectAvailable?.(request.projectName)
       const explicitCwd = request.cwd?.trim()
       if (explicitCwd) {
         return sessions.createSession({ ...request, cwd: explicitCwd })

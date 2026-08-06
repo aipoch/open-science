@@ -228,6 +228,9 @@ export type PersistedChatSession = {
   // Pins the conversation to a dedicated section at the top of the sidebar. Absent (older files) or
   // non-true restores as unpinned; only an explicit true keeps it pinned across restarts.
   pinned?: boolean
+  // Main-owned reversible visibility state. Whole-session renderer saves must preserve the durable
+  // value; only the dedicated archive command changes it.
+  archivedAt?: number
   // Immutable Specialist UUID bound at session creation. Absent means no specialist binding (Main
   // Agent). Written once when the session is created and never changed; the Profile is resolved
   // fresh from ProfileService before every turn via the UUID.
@@ -1623,6 +1626,13 @@ export type LoadAllSessionsResult = {
 export type DeleteSessionRequest = {
   projectId: string
   sessionId: string
+}
+
+export type SetSessionArchivedRequest = {
+  projectId: string
+  sessionId: string
+  archived: boolean
+  expectedArchivedAt: number | null
 }
 
 export type SaveSessionManifestRequest = {

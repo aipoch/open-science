@@ -53,6 +53,33 @@ describe('project prisma client (integration)', () => {
     }
   })
 
+  it('adds archive visibility to an existing Project table without rewriting its activity time', async () => {
+    storageRoot = await mkdtemp(join(tmpdir(), 'open-science-project-archive-migration-'))
+    const client = createProjectDbClient(storageRoot)
+    disconnect = () => client.$disconnect()
+
+    await client.$executeRawUnsafe(`CREATE TABLE "Project" (
+      "id" TEXT NOT NULL PRIMARY KEY,
+      "name" TEXT NOT NULL,
+      "description" TEXT NOT NULL DEFAULT '',
+      "isExample" BOOLEAN NOT NULL DEFAULT false,
+      "createdAt" DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
+      "updatedAt" DATETIME NOT NULL
+    )`)
+    await client.$executeRawUnsafe(
+      `INSERT INTO "Project" ("id", "name", "updatedAt") VALUES ('project-1', 'Project', '2026-08-06T00:00:00.000Z')`
+    )
+
+    await ensureProjectSchema(client)
+
+    await expect(
+      client.project.findUniqueOrThrow({ where: { id: 'project-1' } })
+    ).resolves.toMatchObject({
+      archivedAt: null,
+      updatedAt: new Date('2026-08-06T00:00:00.000Z')
+    })
+  })
+
   it('creates the Permission Grant authority table with constrained scopes and owner cascade', async () => {
     storageRoot = await mkdtemp(join(tmpdir(), 'open-science-permission-grant-schema-'))
     const client = createProjectDbClient(storageRoot)

@@ -33,6 +33,7 @@ import { createAcpRuntime } from './acp/runtime-composition'
 import { createAcpCreateSessionWorkflow } from './acp/create-session-workflow'
 import { createAcpHandlerWorkflows } from './acp/handler-workflows'
 import { createAcpTaskAgentPort } from './acp/task-agent-port'
+import { ArchiveCoordinator } from './archive/coordinator'
 import {
   createArtifactHandlers,
   createDefaultArtifactRepository,
@@ -258,6 +259,7 @@ export type ApplicationRuntimeInterfaces = {
   settingsService: WindowSettingsCapabilities
   taskAgent: TaskAgentPort
   sessionDeletionCapability: Pick<SessionPersistenceCoordinator, 'setSessionDeletionHandlers'>
+  archiveCapability: Pick<ArchiveCoordinator, 'isSessionAvailableById' | 'setMarkReadSessions'>
   detectActiveSessions: () => ReturnType<typeof detectActiveSessions>
   prepareForQuit: () => Promise<Extract<ShutdownStepOutcome, 'completed' | 'timeout' | 'failed'>>
 }
@@ -490,7 +492,21 @@ const createApplicationModules = async (
     artifactProvenanceRepository,
     permissionGrantRegistry
   )
-  const projectHandlers = createProjectHandlers(projectRepository, projectDeletionCoordinator)
+  const archiveCoordinator = new ArchiveCoordinator(
+    projectRepository,
+    sessionPersistenceCoordinator,
+    {
+      isSessionBusy: (projectId, sessionId) =>
+        runtimeRef.current
+          ?.getActivePromptSessions()
+          .some(
+            (session) => session.projectName === projectId && session.sessionId === sessionId
+          ) ?? false
+    }
+  )
+  const projectHandlers = createProjectHandlers(projectRepository, projectDeletionCoordinator, {
+    setArchived: (request) => archiveCoordinator.setProjectArchived(request)
+  })
   const projectFilesHandlers = createProjectFilesHandlers(
     projectFilesRepository,
     sessionPersistenceCoordinator,
@@ -519,6 +535,10 @@ const createApplicationModules = async (
         )
       }
       return { created, session: durableSession }
+    },
+    setArchived: async (request) => {
+      await projectDeletionCoordinator.recoverPendingDeletions()
+      return archiveCoordinator.setSessionArchived(request)
     },
     deleteSession: async (projectId, sessionId) => {
       await projectDeletionCoordinator.recoverPendingDeletions()
@@ -1122,11 +1142,19 @@ const createApplicationModules = async (
   )
   surfaceAdapters = afterAcpAdapters
   runtimeRef.current = runtime
-  const createSessionWorkflow = createAcpCreateSessionWorkflow(runtime)
+  // Archive availability is checked at the final admission point, rather than trusting renderer
+  // visibility, so an archived Project/Session cannot restart work through another surface.
+  runtime.setPromptAdmissionGuard((sessionId) =>
+    archiveCoordinator.assertSessionAvailableById(sessionId)
+  )
+  const createSessionWorkflow = createAcpCreateSessionWorkflow(runtime, {
+    assertProjectAvailable: (projectId) => archiveCoordinator.assertProjectAvailable(projectId)
+  })
   const acpHandlerWorkflows = createAcpHandlerWorkflows(
     runtime,
     createSessionWorkflow,
-    taskNotifications
+    taskNotifications,
+    archiveCoordinator
   )
   const taskAgent = createAcpTaskAgentPort(runtime, createSessionWorkflow, taskNotifications)
   {
@@ -1692,7 +1720,7 @@ const createApplicationModules = async (
     return sender
   }
   const applicationCommandDependencies: ApplicationCommandCompositionDependencies = {
-    acp: { runtime, workflows: acpHandlerWorkflows },
+    acp: { runtime, workflows: acpHandlerWorkflows, archiveAvailability: archiveCoordinator },
     notebook: {
       workflows: notebookCommands,
       readInputPreview: (request) => notebookInputRegistry.readPreview(request)
@@ -1806,6 +1834,7 @@ const createApplicationModules = async (
     settingsService,
     taskAgent,
     sessionDeletionCapability: sessionPersistenceCoordinator,
+    archiveCapability: archiveCoordinator,
     detectActiveSessions: () => detectActiveSessions({ runtime, notebook: notebookService }),
     prepareForQuit: () => runtime.prepareForQuit(),
     electronAdapters: {

@@ -76,7 +76,10 @@ const navigationState = (
 const findMostRecentSessionId = (projectId: string): string | undefined =>
   useSessionStore
     .getState()
-    .sessions.filter((session) => session.projectId === projectId && !session.isPending)
+    .sessions.filter(
+      (session) =>
+        session.projectId === projectId && !session.isPending && session.archivedAt === undefined
+    )
     .sort((left, right) => right.updatedAt - left.updatedAt)[0]?.id
 
 // Owns which top-level screen is visible and which project the workspace is scoped to. Session
@@ -139,7 +142,7 @@ export const useNavigationStore = create<NavigationStore>((set) => ({
       .getState()
       .sessions.find((candidate) => candidate.id === sessionId)
 
-    if (!session) return
+    if (!session || session.archivedAt !== undefined) return
 
     useSessionStore.getState().selectSession(sessionId)
 
