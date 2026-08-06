@@ -1360,8 +1360,8 @@ export class DefaultRuntimeProvisioner implements RuntimeProvisioner {
           )
           if (
             this.abort?.signal.aborted ||
-            error instanceof MaxPathRetryError ||
-            (!windowsAccessViolation && !isCorruptPkgsCacheError(error))
+            (!windowsAccessViolation &&
+              (error instanceof MaxPathRetryError || !isCorruptPkgsCacheError(error)))
           )
             throw error
           const repaired = await withExclusiveCacheLocks(this.cacheLockKeys(selected.cache), () =>
@@ -1369,8 +1369,12 @@ export class DefaultRuntimeProvisioner implements RuntimeProvisioner {
           )
           // A native access violation has no stderr signature and may happen after micromamba has
           // already removed its incomplete cache leaf. Retry it once even when there is nothing left
-          // to delete; runCreate still clears the partial prefix before the retry.
+          // to delete; the failed prefix is cleared below before the retry.
           if (!repaired && !windowsAccessViolation) throw error
+          // Micromamba never reported a successful transaction, so even a prefix that already has
+          // conda-meta + an interpreter may be only partially linked. Do not let clearIncompletePrefix's
+          // normal fast path mistake those two artifacts for a committed environment on the retry.
+          if (windowsAccessViolation) rmSync(prefix, { recursive: true, force: true })
           onProgress({
             phase: `create-${spec.language}`,
             message: windowsAccessViolation
@@ -1424,7 +1428,9 @@ const WINDOWS_STATUS_ACCESS_VIOLATION = 0xc0000005
 const isWindowsAccessViolationError = (error: unknown, platform: NodeJS.Platform): boolean => {
   if (platform !== 'win32' || !(error instanceof Error)) return false
   const exitCode = (error as Error & { data?: { exitCode?: unknown } }).data?.exitCode
-  return typeof exitCode === 'number' && exitCode >>> 0 === WINDOWS_STATUS_ACCESS_VIOLATION
+  if (typeof exitCode === 'number' && exitCode >>> 0 === WINDOWS_STATUS_ACCESS_VIOLATION)
+    return true
+  return error instanceof MaxPathRetryError && isWindowsAccessViolationError(error.cause, platform)
 }
 
 // Removes only INCOMPLETE extracted package directories from the shared pkgs cache — a complete conda
