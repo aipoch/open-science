@@ -3,6 +3,7 @@ import { describe, expect, it, vi } from 'vitest'
 import type { ActivePlanProjection } from '../../shared/session-plan/contract'
 import { SessionPlanInteractionOwner } from '../session-plan/session-plan-interaction-owner'
 import { AcpRuntime } from './runtime'
+import { composeAcpRuntimePlanWorkflow } from './runtime-plan-composition'
 
 const projection = (
   artifactVersionId: string,
@@ -121,6 +122,26 @@ const createRuntimeHarness = (options: {
       }
     )
   }
+  const planSessions = {
+    containsMessageOnActiveBranch: vi.fn(
+      async (_projectId: string, _sessionId: string, messageId: string) =>
+        (options.durableMessageIds ?? ['interaction-1']).includes(messageId)
+    )
+  }
+  const sessionPlanWorkflow = composeAcpRuntimePlanWorkflow(
+    { plan: { sessions: planSessions } } as unknown as Parameters<
+      typeof composeAcpRuntimePlanWorkflow
+    >[0],
+    {
+      planService: service,
+      planInteractions: interactions,
+      sessionInteractions,
+      artifactTurns: { promptMessageIdFor: () => 'interaction-1' }
+    } as unknown as Parameters<typeof composeAcpRuntimePlanWorkflow>[1],
+    {
+      publication: { pushEvent: (event: unknown) => options.onEvent?.(event) }
+    } as unknown as Parameters<typeof composeAcpRuntimePlanWorkflow>[2]
+  )
   const target = Object.create(AcpRuntime.prototype) as Record<string, unknown>
   Object.assign(target, {
     planService: service,
@@ -132,12 +153,7 @@ const createRuntimeHarness = (options: {
     sessionRegistry: {
       lookup: () => ({ attachment: { session: { sessionId: 'provider-session-1' } } })
     },
-    planSessions: {
-      containsMessageOnActiveBranch: vi.fn(
-        async (_projectId: string, _sessionId: string, messageId: string) =>
-          (options.durableMessageIds ?? ['interaction-1']).includes(messageId)
-      )
-    },
+    sessionPlanWorkflow,
     artifactTurns: {
       promptMessageIdFor: () => 'interaction-1'
     },

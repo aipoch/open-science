@@ -332,16 +332,23 @@ describe('runtime state ownership architecture', () => {
     }
   })
 
-  it('keeps live Session Plan state behind one Runtime owner', () => {
+  it('keeps live Session Plan state behind one owner and application workflow', () => {
     const runtime = readSource('src/main/acp/runtime.ts')
     const composition = readSource('src/main/acp/runtime-base-composition.ts')
-    const source = runtime + composition
+    const planComposition = readSource('src/main/acp/runtime-plan-composition.ts')
+    const source = runtime + composition + planComposition
 
     expect(source).not.toContain('planApprovalWaiters')
     expect(source).not.toContain('planExecutionBindings')
     expect(source.match(/new SessionPlanInteractionOwner\(\)/g)).toHaveLength(1)
     expect(composition).toContain('interactions: planInteractions')
     expect(runtime).toContain('this.planInteractions = base.planInteractions')
+    expect(runtime).not.toContain('private readonly planSessions')
+    expect(runtime).toContain('composeAcpRuntimePlanWorkflow(options, base, session)')
+    expect(runtime).toContain('return this.sessionPlanWorkflow.call(input)')
+    expect(runtime).toContain('return this.sessionPlanWorkflow.projection(projectId, sessionId)')
+    expect(runtime).toContain('return this.sessionPlanWorkflow.respond(input)')
+    expect(planComposition).not.toMatch(/AcpRuntime\.prototype|from ['"]electron['"]/)
   })
 
   it('keeps model application and attached resume behavior behind their workflows', () => {

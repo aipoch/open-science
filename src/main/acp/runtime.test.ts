@@ -18,6 +18,7 @@ import { afterEach, describe, expect, it, vi } from 'vitest'
 import { AcpRuntime } from './runtime.test-utils'
 import type { AcpAgentConnectionAdapter } from './agent-connection-adapter'
 import type { AcpConnectionCloseWorkflow } from './connection-close-workflow'
+import { composeAcpRuntimePlanWorkflow } from './runtime-plan-composition'
 import { AcpPermissionContext } from './permission-context'
 import { ContextUsageTracker, type TokenCounter } from './context-usage-tracker'
 import {
@@ -1665,6 +1666,34 @@ describe('ACP runtime session management', () => {
     )
   })
 
+  const installPromptPlanTestWorkflow = (
+    runtime: AcpRuntime,
+    planService: unknown,
+    sessions = durablePlanSessions()
+  ): void => {
+    const internals = runtime as unknown as {
+      planInteractions: unknown
+      sessionInteractions: unknown
+      artifactTurns: unknown
+      publication: unknown
+      planService: unknown
+      sessionPlanWorkflow: unknown
+    }
+    const sessionPlanWorkflow = composeAcpRuntimePlanWorkflow(
+      { plan: { sessions } } as unknown as Parameters<typeof composeAcpRuntimePlanWorkflow>[0],
+      {
+        planService,
+        planInteractions: internals.planInteractions,
+        sessionInteractions: internals.sessionInteractions,
+        artifactTurns: internals.artifactTurns
+      } as unknown as Parameters<typeof composeAcpRuntimePlanWorkflow>[1],
+      { publication: internals.publication } as unknown as Parameters<
+        typeof composeAcpRuntimePlanWorkflow
+      >[2]
+    )
+    Object.assign(internals, { planService, sessionPlanWorkflow })
+  }
+
   it('activates one interaction before durably approving a restored Plan', async () => {
     const process = new FakeAgentProcess()
     const fakeAgent = startFakeAgent(process, ['s1'])
@@ -1680,13 +1709,10 @@ describe('ACP runtime session management', () => {
     const pending = restoredPlanProjection('pending', 4)
     const respond = vi.fn(async () => ({ projection: approved, changed: true }))
     const checkTurnCompletion = vi.fn(async () => ({ allow: true }))
-    Object.assign(runtime as unknown as { planService: unknown }, {
-      planSessions: durablePlanSessions(),
-      planService: {
-        respond,
-        checkTurnCompletion,
-        getProjection: vi.fn(async () => pending)
-      }
+    installPromptPlanTestWorkflow(runtime, {
+      respond,
+      checkTurnCompletion,
+      getProjection: vi.fn(async () => pending)
     })
 
     await runtime.createSession({ cwd: '/workspace', projectName: 'project-1' })
@@ -1737,10 +1763,7 @@ describe('ACP runtime session management', () => {
     const pending = restoredPlanProjection('pending', 4)
     const getProjection = vi.fn(async () => pending)
     const respond = vi.fn()
-    Object.assign(runtime as unknown as { planService: unknown }, {
-      planSessions: durablePlanSessions(),
-      planService: { getProjection, respond }
-    })
+    installPromptPlanTestWorkflow(runtime, { getProjection, respond })
 
     await runtime.createSession({ cwd: '/workspace', projectName: 'project-1' })
     await runtime.sendPrompt({
@@ -1796,12 +1819,9 @@ describe('ACP runtime session management', () => {
     const rejected = restoredPlanProjection('rejected', 5)
     const pending = restoredPlanProjection('pending', 4)
     const respond = vi.fn(async () => ({ projection: rejected, changed: true }))
-    Object.assign(runtime as unknown as { planService: unknown }, {
-      planSessions: durablePlanSessions(),
-      planService: {
-        respond,
-        getProjection: vi.fn(async () => pending)
-      }
+    installPromptPlanTestWorkflow(runtime, {
+      respond,
+      getProjection: vi.fn(async () => pending)
     })
 
     await runtime.createSession({ cwd: '/workspace', projectName: 'project-1' })
@@ -12718,13 +12738,10 @@ describe('ACP runtime session management', () => {
         counts: { phases: 1, delegations: 1, steps: 1, completed: 0, inProgress: 0 }
       } satisfies ActivePlanProjection
       const authorizeContinuation = vi.fn(async () => active)
-      Object.assign(runtime as unknown as { planService: unknown }, {
-        planSessions: durablePlanSessions(),
-        planService: {
-          authorizeContinuation,
-          checkTurnCompletion: vi.fn(async () => ({ allow: true })),
-          getProjection: vi.fn(async () => active)
-        }
+      installPromptPlanTestWorkflow(runtime, {
+        authorizeContinuation,
+        checkTurnCompletion: vi.fn(async () => ({ allow: true })),
+        getProjection: vi.fn(async () => active)
       })
 
       await runtime.createSession({ cwd: '/workspace', projectName: 'project-1' })
@@ -12765,10 +12782,11 @@ describe('ACP runtime session management', () => {
       framework: opencodeFramework
     })
     const active = restoredPlanProjection('approved', 4)
-    Object.assign(runtime as unknown as { planService: unknown }, {
-      planSessions: durablePlanSessions(['branch-b-root', 'branch-b-message']),
-      planService: { authorizeContinuation: vi.fn(async () => active) }
-    })
+    installPromptPlanTestWorkflow(
+      runtime,
+      { authorizeContinuation: vi.fn(async () => active) },
+      durablePlanSessions(['branch-b-root', 'branch-b-message'])
+    )
 
     await runtime.createSession({ cwd: '/workspace', projectName: 'project-1' })
     await expect(
@@ -12845,13 +12863,10 @@ describe('ACP runtime session management', () => {
         stepStates: { Analyze: { status: 'not_started' } },
         counts: { phases: 1, delegations: 1, steps: 1, completed: 0, inProgress: 0 }
       } satisfies ActivePlanProjection
-      Object.assign(runtime as unknown as { planService: unknown }, {
-        planSessions: durablePlanSessions(),
-        planService: {
-          authorizeContinuation: vi.fn(async () => authorized),
-          checkTurnCompletion,
-          getProjection
-        }
+      installPromptPlanTestWorkflow(runtime, {
+        authorizeContinuation: vi.fn(async () => authorized),
+        checkTurnCompletion,
+        getProjection
       })
 
       await runtime.createSession({ cwd: '/workspace', projectName: 'project-1' })
