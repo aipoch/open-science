@@ -160,8 +160,13 @@ describe('ConnectorSettingsModule', () => {
     snapshot = await service.setCustomServerEnabled({ id: added.id, enabled: false })
     expect(snapshot.customServers[0].enabled).toBe(false)
 
+    await repository.setConnectorAutoAllow(added.slug, true)
+    await repository.setToolPolicy(`${added.slug}/lookup`, true, false)
     snapshot = await service.removeCustomServer({ id: added.id })
     expect(snapshot.customServers).toEqual([])
+    const afterRemoval = (await repository.getSettings()).connectors
+    expect(afterRemoval?.autoAllowIds).not.toContain(added.slug)
+    expect(afterRemoval?.askToolIds ?? []).not.toContain(`${added.slug}/lookup`)
   })
 
   it('rejects duplicate and built-in custom connector names', async () => {
