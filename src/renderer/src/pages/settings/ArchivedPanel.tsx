@@ -4,6 +4,7 @@ import { useMemo, useState } from 'react'
 import { Button } from '@/components/ui/button'
 import { DeleteProjectDialog } from '@/pages/home/DeleteProjectDialog'
 import { DeleteSessionDialog } from '@/pages/workspace/DeleteSessionDialog'
+import { useArchiveUndoStore } from '@/stores/archive-undo-store'
 import { useProjectStore } from '@/stores/project-store'
 import type { ChatSession } from '@/stores/session-store'
 import { useSessionStore } from '@/stores/session-store'
@@ -106,6 +107,7 @@ const ArchivedPanel = ({ view, onNavigate }: ArchivedPanelProps): React.JSX.Elem
         sessionId: session.id
       })
       useSessionStore.getState().deleteSession(session.id)
+      useArchiveUndoStore.getState().dismissSession(session.id)
       setSessionToDelete(undefined)
     })()
       .catch((deleteError: unknown) =>
@@ -130,6 +132,7 @@ const ArchivedPanel = ({ view, onNavigate }: ArchivedPanelProps): React.JSX.Elem
       }
       await deleteProject(project.id)
       useSessionStore.getState().removeSessionsForProject(project.id)
+      useArchiveUndoStore.getState().dismissProject(project.id)
       setProjectToDelete(undefined)
     })()
       .then(() => onNavigate({ kind: 'list' }))

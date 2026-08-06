@@ -225,6 +225,32 @@ describe('ArchiveCoordinator', () => {
     expect(sessions.assertSessionAvailable).not.toHaveBeenCalled()
   })
 
+  it('runs an id-only operation inside archive admission', async () => {
+    const projects = {
+      get: vi.fn().mockResolvedValue(project),
+      updateArchive: vi.fn()
+    }
+    const sessions = {
+      assertProjectArchivable: vi.fn(),
+      assertSessionAvailable: vi.fn().mockResolvedValue(undefined),
+      updateArchive: vi.fn(),
+      sessionProjectId: vi.fn().mockResolvedValue(project.id)
+    }
+    const coordinator = new ArchiveCoordinator(projects, sessions, {
+      isSessionBusy: vi.fn(),
+      isProjectBusy: vi.fn(),
+      liveSessionProjectId: vi.fn()
+    })
+    const operation = vi.fn().mockResolvedValue('resumed')
+
+    await expect(coordinator.withSessionAvailableById(session.id, operation)).resolves.toBe(
+      'resumed'
+    )
+
+    expect(sessions.assertSessionAvailable).toHaveBeenCalledWith(project.id, session.id)
+    expect(operation).toHaveBeenCalledOnce()
+  })
+
   it('fails closed when a session owner cannot be resolved', async () => {
     const projects = {
       get: vi.fn().mockResolvedValue(project),

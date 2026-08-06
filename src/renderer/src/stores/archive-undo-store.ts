@@ -34,6 +34,8 @@ type ArchiveUndoStore = {
   enqueueProject: (project: Project) => void
   enqueueSession: (session: PersistedChatSession) => void
   dismiss: (key: string) => void
+  dismissProject: (projectId: string) => void
+  dismissSession: (sessionId: string) => void
   reconcileProject: (project: Project) => void
   reconcileSession: (session: PersistedChatSession) => void
   undo: (key: string) => Promise<void>
@@ -91,6 +93,31 @@ export const useArchiveUndoStore = create<ArchiveUndoStore>((set, get) => ({
   },
 
   dismiss: (key) => set((state) => ({ notices: state.notices.filter((item) => item.key !== key) })),
+
+  dismissProject: (projectId) =>
+    set((state) => ({
+      notices: state.notices.filter((notice) => notice.projectId !== projectId),
+      restoringKey: state.notices.some(
+        (notice) => notice.key === state.restoringKey && notice.projectId === projectId
+      )
+        ? undefined
+        : state.restoringKey
+    })),
+
+  dismissSession: (sessionId) =>
+    set((state) => ({
+      notices: state.notices.filter(
+        (notice) => notice.kind !== 'session' || notice.sessionId !== sessionId
+      ),
+      restoringKey: state.notices.some(
+        (notice) =>
+          notice.key === state.restoringKey &&
+          notice.kind === 'session' &&
+          notice.sessionId === sessionId
+      )
+        ? undefined
+        : state.restoringKey
+    })),
 
   reconcileProject: (project) =>
     set((state) => ({

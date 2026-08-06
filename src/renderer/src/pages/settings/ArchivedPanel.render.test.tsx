@@ -3,6 +3,7 @@ import { act } from 'react'
 import { createRoot, type Root } from 'react-dom/client'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 
+import { useArchiveUndoStore } from '@/stores/archive-undo-store'
 import { createInitialProjectState, useProjectStore } from '@/stores/project-store'
 import {
   createInitialSessionState,
@@ -36,15 +37,17 @@ describe('ArchivedPanel', () => {
   let container: HTMLDivElement
   let root: Root
   const updateArchive = vi.fn()
+  const deleteSession = vi.fn()
 
   beforeEach(() => {
     container = document.createElement('div')
     document.body.appendChild(container)
     root = createRoot(container)
     updateArchive.mockReset().mockResolvedValue({ ...session, archivedAt: undefined })
+    deleteSession.mockReset().mockResolvedValue(undefined)
     window.api = {
-      sessions: { updateArchive },
-      acp: { getState: vi.fn(), deleteSession: vi.fn() }
+      sessions: { updateArchive, deleteSession },
+      acp: { getState: vi.fn().mockResolvedValue({ sessionIds: [] }), deleteSession: vi.fn() }
     } as unknown as Window['api']
     useProjectStore.setState({
       ...createInitialProjectState(),
@@ -52,6 +55,7 @@ describe('ArchivedPanel', () => {
       isLoaded: true
     })
     useSessionStore.setState({ ...createInitialSessionState(), sessions: [session] })
+    useArchiveUndoStore.setState({ notices: [], restoringKey: undefined })
   })
 
   afterEach(async () => {
@@ -95,5 +99,28 @@ describe('ArchivedPanel', () => {
     await act(async () => manage?.click())
 
     expect(onNavigate).toHaveBeenCalledWith({ kind: 'project', projectId: project.id })
+  })
+
+  it('removes a stale Undo notice after permanently deleting its session', async () => {
+    useArchiveUndoStore.getState().enqueueSession(session)
+    await act(async () =>
+      root.render(<ArchivedPanel view={{ kind: 'list' }} onNavigate={vi.fn()} />)
+    )
+
+    const openDelete = Array.from(container.querySelectorAll<HTMLButtonElement>('button')).find(
+      (button) => button.textContent?.includes('Delete')
+    )
+    await act(async () => openDelete?.click())
+    const dialog = document.body.querySelector<HTMLElement>('[role="alertdialog"]')
+    const confirmDelete = Array.from(
+      dialog?.querySelectorAll<HTMLButtonElement>('button') ?? []
+    ).find((button) => button.textContent === 'Delete')
+    await act(async () => confirmDelete?.click())
+
+    expect(deleteSession).toHaveBeenCalledWith({
+      projectId: project.id,
+      sessionId: session.id
+    })
+    expect(useArchiveUndoStore.getState().notices).toEqual([])
   })
 })

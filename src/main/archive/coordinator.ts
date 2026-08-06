@@ -127,15 +127,16 @@ class ArchiveCoordinator {
   }
 
   assertSessionAvailableById(sessionId: string): Promise<void> {
+    return this.enqueue(() => this.assertSessionAvailableByIdNow(sessionId))
+  }
+
+  withSessionAvailableById<Result>(
+    sessionId: string,
+    operation: () => Promise<Result>
+  ): Promise<Result> {
     return this.enqueue(async () => {
-      const projectId =
-        (await this.sessions.sessionProjectId(sessionId)) ??
-        this.runtime.liveSessionProjectId(sessionId)
-      if (!projectId) {
-        throw new Error('Cannot use a Session whose Project owner is unavailable.')
-      }
-      await this.activeProject(projectId)
-      await this.sessions.assertSessionAvailable(projectId, sessionId)
+      await this.assertSessionAvailableByIdNow(sessionId)
+      return operation()
     })
   }
 
@@ -158,6 +159,17 @@ class ArchiveCoordinator {
     }
     await this.activeProject(ownerProjectId)
     await this.sessions.assertSessionAvailable(ownerProjectId, sessionId)
+  }
+
+  private async assertSessionAvailableByIdNow(sessionId: string): Promise<void> {
+    const projectId =
+      (await this.sessions.sessionProjectId(sessionId)) ??
+      this.runtime.liveSessionProjectId(sessionId)
+    if (!projectId) {
+      throw new Error('Cannot use a Session whose Project owner is unavailable.')
+    }
+    await this.activeProject(projectId)
+    await this.sessions.assertSessionAvailable(projectId, sessionId)
   }
 }
 

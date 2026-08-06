@@ -135,8 +135,15 @@ type AcpApplicationCommandDependencies = Readonly<{
   runtime: AcpApplicationCommandRuntime
   workflows: AcpHandlerWorkflows
   archiveAvailability?: Readonly<{
-    assertSessionAvailable(projectId: string, sessionId: string): Promise<void>
-    assertSessionAvailableById(sessionId: string): Promise<void>
+    withSessionAvailable<Result>(
+      projectId: string,
+      sessionId: string,
+      operation: () => Promise<Result>
+    ): Promise<Result>
+    withSessionAvailableById<Result>(
+      sessionId: string,
+      operation: () => Promise<Result>
+    ): Promise<Result>
   }>
 }>
 
@@ -156,15 +163,17 @@ const registerAcpCommands = (
         dependencies.workflows.resumeSession(invocation.args[0]),
       'acp:reset-session-context': (invocation) =>
         dependencies.archiveAvailability
-          ? dependencies.archiveAvailability
-              .assertSessionAvailableById(invocation.args[0].sessionId)
-              .then(() => dependencies.runtime.resetSessionContext(invocation.args[0]))
+          ? dependencies.archiveAvailability.withSessionAvailableById(
+              invocation.args[0].sessionId,
+              () => dependencies.runtime.resetSessionContext(invocation.args[0])
+            )
           : dependencies.runtime.resetSessionContext(invocation.args[0]),
       'acp:compact-session': (invocation) =>
         dependencies.archiveAvailability
-          ? dependencies.archiveAvailability
-              .assertSessionAvailableById(invocation.args[0].sessionId)
-              .then(() => dependencies.runtime.compactSession(invocation.args[0]))
+          ? dependencies.archiveAvailability.withSessionAvailableById(
+              invocation.args[0].sessionId,
+              () => dependencies.runtime.compactSession(invocation.args[0])
+            )
           : dependencies.runtime.compactSession(invocation.args[0]),
       'acp:send-prompt': (invocation) => {
         if (
@@ -203,9 +212,11 @@ const registerAcpCommands = (
           throw new Error('Only a current human caller can respond to a Session Plan.')
         }
         return dependencies.archiveAvailability
-          ? dependencies.archiveAvailability
-              .assertSessionAvailable(invocation.args[0].projectId, invocation.args[0].sessionId)
-              .then(() => dependencies.runtime.respondSessionPlan(invocation.args[0]))
+          ? dependencies.archiveAvailability.withSessionAvailable(
+              invocation.args[0].projectId,
+              invocation.args[0].sessionId,
+              () => dependencies.runtime.respondSessionPlan(invocation.args[0])
+            )
           : dependencies.runtime.respondSessionPlan(invocation.args[0])
       }
     })

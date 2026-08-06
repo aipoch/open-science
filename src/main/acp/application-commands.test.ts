@@ -343,13 +343,19 @@ describe('ACP application commands', () => {
   })
 
   it('checks archive availability before resetting Session context or compacting', async () => {
+    const admittedById = vi.fn()
     const dependencies: AcpApplicationCommandDependencies = {
       ...createDependencies(),
       archiveAvailability: {
-        assertSessionAvailable: vi.fn(async () => undefined),
-        assertSessionAvailableById: vi.fn(async () => {
+        withSessionAvailable: async <Result>(
+          _projectId: string,
+          _sessionId: string,
+          operation: () => Promise<Result>
+        ): Promise<Result> => operation(),
+        withSessionAvailableById: async <Result>(sessionId: string): Promise<Result> => {
+          admittedById(sessionId)
           throw new Error('Restore this archived Session before continuing.')
-        })
+        }
       }
     }
     const router = createApplicationCommandRouter()
@@ -366,9 +372,8 @@ describe('ACP application commands', () => {
       )
     ).rejects.toThrow('Restore this archived Session before continuing.')
 
-    expect(dependencies.archiveAvailability?.assertSessionAvailableById).toHaveBeenCalledWith(
-      request.sessionId
-    )
+    expect(admittedById).toHaveBeenCalledTimes(2)
+    expect(admittedById).toHaveBeenCalledWith(request.sessionId)
     expect(dependencies.runtime.resetSessionContext).not.toHaveBeenCalled()
     expect(dependencies.runtime.compactSession).not.toHaveBeenCalled()
   })
