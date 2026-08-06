@@ -217,6 +217,8 @@ const specialistDeletePresentation = (
 
 const ARTIFACT_SERVER_SEGMENT = 'open-science-artifacts'
 const ARTIFACT_WRITE_TOOL = 'write_artifact_file'
+const PLAN_GENERATE_IDENTITY = 'open-science-plan/generate_plan'
+const PLAN_UPDATE_STEP_STATUS_IDENTITY = 'open-science-plan/update_step_status'
 
 const isArtifactWriteToolName = (toolName: string | undefined): boolean => {
   const name = toolName?.trim().toLowerCase() ?? ''
@@ -237,6 +239,32 @@ const isArtifactWriteToolName = (toolName: string | undefined): boolean => {
 
 const isArtifactWriteRequest = (request: AcpPermissionRequest): boolean =>
   isMcpPermissionRequest(request) && isArtifactWriteToolName(request.mcpIdentity)
+
+const planPermissionPresentation = (
+  request: AcpPermissionRequest
+): PermissionPresentation | undefined => {
+  if (!isMcpPermissionRequest(request)) return undefined
+
+  switch (request.mcpIdentity) {
+    case PLAN_GENERATE_IDENTITY:
+      return {
+        actionTitle: 'Allow Plan creation and recording your decisions?',
+        categoryLabel: 'Plan control',
+        description:
+          'Creates Plans and records decisions you make during review. This Permission Grant never approves a Plan; you must approve each Plan separately.',
+        hideToolIdentity: true
+      }
+    case PLAN_UPDATE_STEP_STATUS_IDENTITY:
+      return {
+        actionTitle: 'Allow updates to approved Plan progress?',
+        categoryLabel: 'Plan control',
+        description: 'Updates progress for an approved Plan. This does not approve Plans.',
+        hideToolIdentity: true
+      }
+    default:
+      return undefined
+  }
+}
 
 const humanizeMcpName = (name: string | undefined): string | undefined => {
   const normalized = name?.trim().replace(/^mcp(?:__|\.)/iu, '') ?? ''
@@ -297,6 +325,9 @@ const describePermissionRequest = (request: AcpPermissionRequest): PermissionPre
       description: 'Saves a file as an artifact for this conversation.'
     }
   }
+
+  const planPresentation = planPermissionPresentation(request)
+  if (planPresentation) return planPresentation
 
   // MCP metadata describes the provider's tool, not a trusted local capability. Only the
   // explicitly modeled notebook tools above receive a more specific native classification.

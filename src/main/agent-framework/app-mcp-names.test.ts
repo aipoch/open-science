@@ -3,13 +3,13 @@ import { describe, expect, it } from 'vitest'
 import { PRE_REGISTERED_PERMISSION_IDENTITIES } from '../permission-grants/identity-catalog'
 import { SESSION_PLAN_SYSTEM_PROMPT_APPEND } from '../session-plan/guidance'
 import {
+  appMcpToolIdentities,
   appMcpServerAliases,
   renderAppMcpToolReferences,
   resolveCanonicalMcpToolIdentity
 } from './app-mcp-names'
 
-const APP_MCP_CODEC_CASES = PRE_REGISTERED_PERMISSION_IDENTITIES.mcp_tool.flatMap((key) => {
-  const identity = key.slice('mcp:'.length)
+const APP_MCP_CODEC_CASES = appMcpToolIdentities().flatMap((identity) => {
   const separator = identity.indexOf('/')
   const server = identity.slice(0, separator)
   const tool = identity.slice(separator + 1)
@@ -22,6 +22,14 @@ const APP_MCP_CODEC_CASES = PRE_REGISTERED_PERMISSION_IDENTITIES.mcp_tool.flatMa
 })
 
 describe('resolveCanonicalMcpToolIdentity', () => {
+  it('keeps the app MCP inventory aligned with the remembered-permission catalog', () => {
+    expect(PRE_REGISTERED_PERMISSION_IDENTITIES.mcp_tool.toSorted()).toEqual(
+      appMcpToolIdentities()
+        .map((identity) => `mcp:${identity}`)
+        .toSorted()
+    )
+  })
+
   it('documents complete generation and approval call shapes', () => {
     expect(SESSION_PLAN_SYSTEM_PROMPT_APPEND).toContain(
       'generation supplies all four Plan fields (`task_summary`, `phases`, `desired_outputs`, and `feasibility`) in one call'

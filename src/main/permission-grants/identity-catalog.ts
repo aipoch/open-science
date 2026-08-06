@@ -30,7 +30,9 @@ const PRE_REGISTERED_PERMISSION_IDENTITIES: Readonly<
     'mcp:open-science-notebook/manage_environments',
     'mcp:open-science-artifacts/write_artifact_file',
     'mcp:open-science-activity/begin_activity_group',
-    'mcp:open-science-skills/request_skill_import'
+    'mcp:open-science-skills/request_skill_import',
+    'mcp:open-science-plan/generate_plan',
+    'mcp:open-science-plan/update_step_status'
   ],
   execution: ['exec:local/python', 'exec:local/bash'],
   file_operation: [

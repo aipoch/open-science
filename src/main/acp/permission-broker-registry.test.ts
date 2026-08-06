@@ -678,6 +678,76 @@ describe('ACP permission broker with durable grants', () => {
     ])
   })
 
+  it('offers durable Ask scopes for Plan capabilities without sharing their grants', async () => {
+    storageRoot = await mkdtemp(join(tmpdir(), 'open-science-broker-plan-grants-'))
+    client = createProjectDbClient(storageRoot)
+    await ensureProjectSchema(client)
+    await client.project.create({ data: { id: 'project-1', name: 'Project one' } })
+    const registry = await createPermissionGrantRegistry({ getClient: async () => client! })
+    const emitted: Parameters<ConstructorParameters<typeof AcpPermissionBroker>[0]>[0][] = []
+    const broker = new AcpPermissionBroker((request) => emitted.push(request), undefined, registry)
+    const context = {
+      profile: 'ask' as const,
+      projectId: 'project-1',
+      mcpServerNames: ['open-science-plan']
+    }
+
+    const generate = broker.requestPermission(
+      mcpRequest('session-plan', 'mcp__open_science_plan__generate_plan'),
+      context
+    )
+    await new Promise<void>((resolve) => setImmediate(resolve))
+
+    expect(emitted[0].options.map((option) => option.scope).filter(Boolean)).toEqual([
+      'once',
+      'session',
+      'project',
+      'global'
+    ])
+    broker.respond({
+      requestId: emitted[0].requestId,
+      optionId: emitted[0].options.find((option) => option.scope === 'session')?.optionId
+    })
+    await expect(generate).resolves.toEqual({
+      outcome: { outcome: 'selected', optionId: 'provider-allow-once' }
+    })
+
+    const update = broker.requestPermission(
+      mcpRequest('session-plan', 'mcp__open_science_plan__update_step_status'),
+      context
+    )
+    await new Promise<void>((resolve) => setImmediate(resolve))
+
+    expect(emitted).toHaveLength(2)
+    expect(emitted[1].options.map((option) => option.scope).filter(Boolean)).toEqual([
+      'once',
+      'session',
+      'project',
+      'global'
+    ])
+    broker.respond({ requestId: emitted[1].requestId, optionId: 'provider-allow-once' })
+    await expect(update).resolves.toEqual({
+      outcome: { outcome: 'selected', optionId: 'provider-allow-once' }
+    })
+
+    await expect(
+      broker.requestPermission(
+        mcpRequest('session-plan', 'mcp__open_science_plan__generate_plan'),
+        context
+      )
+    ).resolves.toEqual({ outcome: { outcome: 'selected', optionId: 'provider-allow-once' } })
+    expect(emitted).toHaveLength(2)
+    await expect(registry.list()).resolves.toEqual([
+      expect.objectContaining({
+        capability: {
+          kind: 'mcp_tool',
+          key: 'mcp:open-science-plan/generate_plan'
+        },
+        scope: { kind: 'session', projectId: 'project-1', sessionId: 'session-plan' }
+      })
+    ])
+  })
+
   it('uses runtime-trusted identity to align sparse dynamic MCP requests', async () => {
     storageRoot = await mkdtemp(join(tmpdir(), 'open-science-broker-dynamic-mcp-aliases-'))
     client = createProjectDbClient(storageRoot)

@@ -140,6 +140,41 @@ describe('describePermissionRequest', () => {
     })
   })
 
+  it('distinguishes permission to create and decide Plans from approval of a specific Plan', () => {
+    expect(
+      describePermissionRequest(
+        request({
+          title: 'mcp__open-science-plan__generate_plan',
+          isMcp: true,
+          mcpIdentity: 'open-science-plan/generate_plan'
+        })
+      )
+    ).toMatchObject({
+      actionTitle: 'Allow Plan creation and recording your decisions?',
+      categoryLabel: 'Plan control',
+      description:
+        'Creates Plans and records decisions you make during review. This Permission Grant never approves a Plan; you must approve each Plan separately.',
+      hideToolIdentity: true
+    })
+  })
+
+  it('distinguishes permission to update approved Plan progress from Plan approval', () => {
+    expect(
+      describePermissionRequest(
+        request({
+          title: 'mcp__open-science-plan__update_step_status',
+          isMcp: true,
+          mcpIdentity: 'open-science-plan/update_step_status'
+        })
+      )
+    ).toMatchObject({
+      actionTitle: 'Allow updates to approved Plan progress?',
+      categoryLabel: 'Plan control',
+      description: 'Updates progress for an approved Plan. This does not approve Plans.',
+      hideToolIdentity: true
+    })
+  })
+
   it('does not classify an artifact-looking provider title without the broker identity', () => {
     expect(
       describePermissionRequest(
