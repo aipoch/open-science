@@ -85,14 +85,14 @@ import {
   type AcpAgentConnectionCandidate,
   type AcpAgentConnectionHooks
 } from './agent-connection-adapter'
-import { AcpConnectionTransitionOwner } from './connection-transition-owner'
-import { AcpGenerationActivityOwner } from './generation-activity-owner'
+import type { AcpConnectionTransitionOwner } from './connection-transition-owner'
+import type { AcpGenerationActivityOwner } from './generation-activity-owner'
 import { AcpHandoffContinuityOwner } from './handoff-continuity-owner'
 import {
   AcpBackendGenerationOwner,
   type AcpBackendGenerationView
 } from './backend-generation-owner'
-import { AcpSessionConfigurator } from './session-configurator'
+import type { AcpSessionConfigurator } from './session-configurator'
 import { AcpSessionUpdateProjector } from './session-update-projector'
 import { AcpConnectionLifecycleWorkflow } from './connection-lifecycle-workflow'
 import { AcpConnectionCloseWorkflow, type CloseState } from './connection-close-workflow'
@@ -106,7 +106,7 @@ import { AcpPromptPreparationOwner } from './prompt-preparation-owner'
 import { AcpPromptTurnWorkflow, type AcpPromptTurnPlanContext } from './prompt-turn-workflow'
 import { AcpContextCompactionWorkflow } from './context-compaction-workflow'
 import { AcpProviderPromptExecutor } from './provider-prompt-executor'
-import { AcpTurnSkillOwner, type AcpTurnSkillHooks } from './turn-skill-owner'
+import type { AcpTurnSkillHooks, AcpTurnSkillOwner } from './turn-skill-owner'
 import { SessionPlanInteractionOwner } from '../session-plan/session-plan-interaction-owner'
 import { SESSION_PLAN_SYSTEM_PROMPT_APPEND } from '../session-plan/guidance'
 import type { PlanResponseResult, PlanService } from '../session-plan/plan-service'
@@ -424,29 +424,10 @@ class AcpRuntime {
     this.planService = base.planService
     this.promptContentOwner = base.promptContentOwner
     this.handoffContinuity = base.handoffContinuity
-    this.generationActivity = new AcpGenerationActivityOwner({
-      activityChanged: () => this.generationActivityChanged(),
-      hasActivePrompts: () => this.sessionInteractions.snapshot().length > 0,
-      hasActiveReviewerSessions: () => this.reviewerSessions.hasActiveSessions()
-    })
-    this.connectionTransitions = new AcpConnectionTransitionOwner({
-      blockers: () => this.generationActivity.blockers(),
-      connectionGeneration: () => this.connectionGeneration,
-      disconnect: (emitClosedStatus) => this.disconnect(emitClosedStatus),
-      onRetired: () => this.callbacks.onRetired?.(),
-      publishIdle: () => this.setStatus('idle'),
-      recoverFailedDeferredDisconnect: () => this.connectionClose.recoverFailedDeferredDisconnect(),
-      reportFailure: (message, error) => safeLogError(message, errorLogFields(error))
-    })
-    this.turnSkills = new AcpTurnSkillOwner({
-      resolveSpecialistSkills: options.resolveSpecialistSkills,
-      skills: options.skills,
-      requestSkillsReload: () => this.connectionTransitions.requestSkillsReload()
-    })
-    this.sessionConfigurator = new AcpSessionConfigurator({
-      assertCurrentConnection: (connection) => this.assertCurrentConnectedConnection(connection),
-      diagnosticContext: (backend) => this.diagnosticContext(backend.framework.id)
-    })
+    this.generationActivity = base.generationActivity
+    this.connectionTransitions = base.connectionTransitions
+    this.turnSkills = base.turnSkills
+    this.sessionConfigurator = base.sessionConfigurator
     this.promptPreparation = new AcpPromptPreparationOwner({
       promptContent: this.promptContentOwner,
       presentation: base.sessionPresentationPolicy,
@@ -769,6 +750,16 @@ class AcpRuntime {
       modelChanges: this.modelChanges,
       state: closeState,
       reportFailure: (message, error) => safeLogError(message, errorLogFields(error))
+    })
+    base.bindGenerationConnectionEffects({
+      reviewerSessions: this.reviewerSessions,
+      modelChanges: this.modelChanges,
+      connectionClose: {
+        disconnect: (emitClosedStatus) => this.disconnect(emitClosedStatus),
+        recoverFailedDeferredDisconnect: () =>
+          this.connectionClose.recoverFailedDeferredDisconnect()
+      },
+      publishIdle: () => this.setStatus('idle')
     })
     this.connectionLifecycle = new AcpConnectionLifecycleWorkflow({
       appVersion: options.appVersion,

@@ -3,28 +3,58 @@ import { resolve } from 'node:path'
 import { claudeCodeFramework } from '../agent-framework'
 import { ArtifactRepository } from '../artifacts/repository'
 import { ArtifactRunRegistry } from '../artifacts/run-registry'
+import { createLogger, errorLogFields } from '../logger'
 import { createProductionPlanService } from '../session-plan/production-plan-service'
 import { SessionPlanInteractionOwner } from '../session-plan/session-plan-interaction-owner'
 import { AcpAgentConnectionAdapter } from './agent-connection-adapter'
 import { AcpBackendGenerationOwner } from './backend-generation-owner'
+import type { AcpConnectionCloseWorkflow } from './connection-close-workflow'
 import { AcpConnectionResourceOwner } from './connection-resource-owner'
+import { AcpConnectionTransitionOwner } from './connection-transition-owner'
 import { ContextUsageTracker } from './context-usage-tracker'
 import { createManagedFileReferenceResolver } from './file-reference-resolver'
+import { AcpGenerationActivityOwner } from './generation-activity-owner'
 import { AcpHandoffContinuityOwner } from './handoff-continuity-owner'
+import type { AcpModelChangeWorkflow } from './model-change-workflow'
 import { AcpPromptContentOwner } from './prompt-content-owner'
 import { AcpPromptOutcomeFinalizer } from './prompt-outcome-finalizer'
 import { AcpProviderPromptExecutor } from './provider-prompt-executor'
+import type { ReviewerSessionOwner } from './reviewer-session-owner'
 import type { AcpRuntimeOptions } from './runtime'
 import { AcpRuntimeSnapshotOwner } from './runtime-snapshot-owner'
 import { AcpSessionCapabilityOwner } from './session-capability-owner'
+import { AcpSessionConfigurator } from './session-configurator'
 import { AcpSessionInteractionOwner } from './session-interaction-owner'
 import { AcpSessionPresentationPolicy } from './session-presentation-policy'
 import { ArtifactTurnOwner } from './artifact-turn-owner'
+import { AcpTurnSkillOwner } from './turn-skill-owner'
 
-// Composes only owners whose construction does not depend on Runtime callbacks. Callback-cycle owner
-// groups remain explicit in Runtime until their own composition seam is cut over.
+const log = createLogger('acp')
+
+type AcpGenerationConnectionEffects = Readonly<{
+  reviewerSessions: Pick<ReviewerSessionOwner, 'hasActiveSessions'>
+  modelChanges: Pick<AcpModelChangeWorkflow, 'activityChanged'>
+  connectionClose: Pick<
+    AcpConnectionCloseWorkflow,
+    'disconnect' | 'recoverFailedDeferredDisconnect'
+  >
+  publishIdle: () => void
+}>
+
+const safeLogError = (message: string, error: unknown): void => {
+  try {
+    log.error(message, errorLogFields(error))
+  } catch {
+    // Transition recovery and the original failure take precedence over diagnostic sinks.
+  }
+}
+
+// Composes base owners before Runtime. The generation/connection group exposes one bind-once seam
+// for the workflows constructed later; no owner can observe a partial Runtime during construction.
 /* eslint-disable @typescript-eslint/explicit-function-return-type */
 const composeAcpRuntimeBaseOwners = (options: AcpRuntimeOptions) => {
+  const callbacks = options.callbacks ?? {}
+  const snapshotOwner = new AcpRuntimeSnapshotOwner(resolve(options.defaultCwd))
   const connectionResources = new AcpConnectionResourceOwner({
     closeMcpHost: async () => {
       await options.mcpHttpHost?.close()
@@ -45,6 +75,55 @@ const composeAcpRuntimeBaseOwners = (options: AcpRuntimeOptions) => {
     skillImport: options.skillImport,
     plan: options.plan,
     mcpHttpHost: options.mcpHttpHost
+  })
+  let generationConnectionEffects: AcpGenerationConnectionEffects | undefined
+  const effects = (): AcpGenerationConnectionEffects => {
+    if (!generationConnectionEffects) {
+      throw new Error('ACP generation/connection effects are not bound.')
+    }
+    return generationConnectionEffects
+  }
+  const generationActivityChanged = (): void => {
+    connectionTransitions.activityChanged()
+    effects().modelChanges.activityChanged()
+  }
+  const generationActivity = new AcpGenerationActivityOwner({
+    activityChanged: generationActivityChanged,
+    hasActivePrompts: () => sessionInteractions.snapshot().length > 0,
+    hasActiveReviewerSessions: () => effects().reviewerSessions.hasActiveSessions()
+  })
+  const connectionTransitions = new AcpConnectionTransitionOwner({
+    blockers: () => generationActivity.blockers(),
+    connectionGeneration: () => connectionResources.epoch,
+    disconnect: (emitClosedStatus) => effects().connectionClose.disconnect(emitClosedStatus),
+    onRetired: () => callbacks.onRetired?.(),
+    publishIdle: () => effects().publishIdle(),
+    recoverFailedDeferredDisconnect: () =>
+      effects().connectionClose.recoverFailedDeferredDisconnect(),
+    reportFailure: safeLogError
+  })
+  const bindGenerationConnectionEffects = (next: AcpGenerationConnectionEffects): void => {
+    if (generationConnectionEffects) {
+      throw new Error('ACP generation/connection effects are already bound.')
+    }
+    generationConnectionEffects = next
+  }
+  const turnSkills = new AcpTurnSkillOwner({
+    resolveSpecialistSkills: options.resolveSpecialistSkills,
+    skills: options.skills,
+    requestSkillsReload: () => connectionTransitions.requestSkillsReload()
+  })
+  const sessionConfigurator = new AcpSessionConfigurator({
+    assertCurrentConnection: (connection) => {
+      if (connectionResources.connection !== connection || snapshotOwner.status !== 'connected') {
+        throw new Error('ACP session startup was superseded.')
+      }
+    },
+    diagnosticContext: (backend) => ({
+      framework: backend.framework.id,
+      generation: connectionResources.epoch,
+      status: snapshotOwner.status
+    })
   })
   const artifactRepository = options.artifacts
     ? (options.artifacts.repository ?? new ArtifactRepository(options.artifacts.dataRoot))
@@ -91,7 +170,7 @@ const composeAcpRuntimeBaseOwners = (options: AcpRuntimeOptions) => {
   })
 
   return Object.freeze({
-    snapshotOwner: new AcpRuntimeSnapshotOwner(resolve(options.defaultCwd)),
+    snapshotOwner,
     connectionAdapter: new AcpAgentConnectionAdapter(),
     connectionResources,
     handoffContinuity: new AcpHandoffContinuityOwner(),
@@ -105,6 +184,11 @@ const composeAcpRuntimeBaseOwners = (options: AcpRuntimeOptions) => {
     clearTimer,
     sessionInteractions,
     sessionCapabilities,
+    generationActivity,
+    connectionTransitions,
+    bindGenerationConnectionEffects,
+    turnSkills,
+    sessionConfigurator,
     artifactRepository,
     artifactRunRegistry,
     artifactTurns,
@@ -124,4 +208,4 @@ const composeAcpRuntimeBaseOwners = (options: AcpRuntimeOptions) => {
 type AcpRuntimeBaseOwners = ReturnType<typeof composeAcpRuntimeBaseOwners>
 
 export { composeAcpRuntimeBaseOwners }
-export type { AcpRuntimeBaseOwners }
+export type { AcpGenerationConnectionEffects, AcpRuntimeBaseOwners }
