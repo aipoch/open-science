@@ -16,9 +16,12 @@ import { isMirrorConfigured } from '../pages/settings/mirror-view'
 import type { SettingsPanelId } from '../pages/settings/settings-navigation'
 import {
   createSettingsWriteCoordinator,
-  type OptimisticSettingsWriteKey,
   type SettingsWriteCoordinator
 } from './settings-write-coordinator'
+import {
+  createSettingsPreferencesSlice,
+  type SettingsPreferencesActions
+} from './settings-preferences-slice'
 import {
   createProviderAuthSlice,
   type ProviderAuthActions,
@@ -128,18 +131,13 @@ type SettingsStoreData = RuntimeSetupState & {
   appIconVariant: AppIconVariant
 }
 
-type SettingsStoreCore = SettingsStoreData & ProviderAuthActions & SettingsStoreActions
+type SettingsStoreCore = SettingsStoreData &
+  ProviderAuthActions &
+  SettingsPreferencesActions &
+  SettingsStoreActions
 
 type SettingsStoreActions = {
   load: (options?: { force?: boolean }) => Promise<boolean>
-  // Sets the reasoning-effort level (main reconnects so subsequent requests run at it).
-  setReasoningEffort: (effort: ReasoningEffort) => Promise<void>
-  // Toggles desktop notifications for finished/failed agent tasks; applies immediately.
-  setNotificationsEnabled: (enabled: boolean) => Promise<void>
-  setConversationSkillImportEnabled: (enabled: boolean) => Promise<void>
-  setClosePreference: (preference: CloseActionPreference | undefined) => Promise<void>
-  // Sets the app-icon look; main applies it live to the window and dock/taskbar.
-  setAppIconVariant: (variant: AppIconVariant) => Promise<void>
   clearSettingsWriteError: () => void
   openSettings: () => void
   openSettingsToPanel: (panel: SettingsPanelId) => void
@@ -216,10 +214,6 @@ type SettingsStoreActions = {
   enqueueApproval: (request: ConnectorApprovalRequest) => void
   // Sends the user's decision to main and drops the request from the queue.
   respondApproval: (id: string, decision: ApprovalDecision) => Promise<void>
-  // Persists the first-run completion marker and caches it so the startup gate falls through to Home.
-  completeOnboarding: () => Promise<void>
-  // Persists the package mirror config; caches it as undefined when cleared back to unconfigured.
-  setPackageMirror: (mirror: PackageMirror) => Promise<void>
 }
 
 type SettingsStore = SettingsStoreCore & RuntimeSetupActions
@@ -350,15 +344,6 @@ const reportSettingsLoadError = (error: unknown): void => {
   console.warn('Settings startup loading failed', error)
 }
 
-// Visible copy stays stable and path-safe; raw IPC failures remain in the console for diagnostics.
-const SETTINGS_WRITE_ERRORS: Record<OptimisticSettingsWriteKey, string> = {
-  reasoningEffort: 'Could not save reasoning effort. Try again.',
-  notifications: 'Could not save notification preference. Try again.',
-  conversationSkillImport: 'Could not save conversation Skill import preference. Try again.',
-  closePreference: 'Could not save window close preference. Try again.',
-  appIcon: 'Could not save app icon preference. Try again.'
-}
-
 // Renderer cache of the main-process settings service. The main process stays the source of truth
 // for secrets; this store only ever holds masked provider views.
 const createSettingsStoreState = (
@@ -396,6 +381,13 @@ const createSettingsStoreState = (
       }
       await get().refreshPreflight()
     },
+    writeCoordinator
+  }),
+  ...createSettingsPreferencesSlice({
+    getState: get,
+    setState: (patch) => set(patch),
+    getCommands: () => window.api.settings,
+    reconcileSnapshot: (snapshot) => set(applySnapshot(snapshot)),
     writeCoordinator
   }),
 
@@ -446,114 +438,6 @@ const createSettingsStoreState = (
       if (settingsLoadPromise === loadPromise) settingsLoadPromise = undefined
     })
     return loadPromise
-  },
-
-  // Sets the reasoning-effort level; main reconnects so subsequent requests run at it. The IPC round
-  // trip includes that reconnect, which is too slow to gate the selector on — apply the pick
-  // optimistically, reconcile from the returned snapshot, and revert if the write fails.
-  setReasoningEffort: async (effort) => {
-    const previous = get().reasoningEffort
-    const write = writeCoordinator.beginOptimistic('reasoningEffort', previous)
-    set({ reasoningEffort: effort })
-
-    try {
-      const snapshot = await write.run(() => window.api.settings.setReasoningEffort({ effort }))
-      write.complete({ value: snapshot.reasoningEffort })
-      if (!write.isCurrent()) return
-      set(applySnapshot(snapshot))
-      write.succeed()
-    } catch (error) {
-      const confirmedValue = write.complete()
-      if (write.isCurrent()) set({ reasoningEffort: confirmedValue })
-      write.fail(SETTINGS_WRITE_ERRORS.reasoningEffort)
-      console.error('Failed to set reasoning effort', error)
-    }
-  },
-
-  // Toggles desktop notifications. Optimistic like the other preference setters: apply the pick,
-  // reconcile from the returned snapshot, and revert if the write fails.
-  setNotificationsEnabled: async (enabled) => {
-    const previous = get().notificationsEnabled
-    const write = writeCoordinator.beginOptimistic('notifications', previous)
-    set({ notificationsEnabled: enabled })
-
-    try {
-      const snapshot = await write.run(() =>
-        window.api.settings.setNotificationsEnabled({ enabled })
-      )
-      write.complete({ value: snapshot.notificationsEnabled })
-      if (!write.isCurrent()) return
-      set(applySnapshot(snapshot))
-      write.succeed()
-    } catch (error) {
-      const confirmedValue = write.complete()
-      if (write.isCurrent()) set({ notificationsEnabled: confirmedValue })
-      write.fail(SETTINGS_WRITE_ERRORS.notifications)
-      console.error('Failed to set notifications enabled', error)
-    }
-  },
-
-  setConversationSkillImportEnabled: async (enabled) => {
-    const previous = get().conversationSkillImportEnabled
-    const write = writeCoordinator.beginOptimistic('conversationSkillImport', previous)
-    set({ conversationSkillImportEnabled: enabled })
-
-    try {
-      const snapshot = await write.run(() =>
-        window.api.settings.setConversationSkillImportEnabled({ enabled })
-      )
-      write.complete({ value: snapshot.conversationSkillImportEnabled })
-      if (!write.isCurrent()) return
-      set(applySnapshot(snapshot))
-      write.succeed()
-    } catch (error) {
-      const confirmedValue = write.complete()
-      if (write.isCurrent()) {
-        set({ conversationSkillImportEnabled: confirmedValue })
-      }
-      write.fail(SETTINGS_WRITE_ERRORS.conversationSkillImport)
-      console.error('Failed to set conversation Skill import enabled', error)
-    }
-  },
-
-  setClosePreference: async (preference) => {
-    const previous = get().closePreference
-    const write = writeCoordinator.beginOptimistic('closePreference', previous)
-    set({ closePreference: preference })
-
-    try {
-      const snapshot = await write.run(() => window.api.settings.setClosePreference({ preference }))
-      write.complete({ value: snapshot.closePreference })
-      if (!write.isCurrent()) return
-      set(applySnapshot(snapshot))
-      write.succeed()
-    } catch (error) {
-      const confirmedValue = write.complete()
-      if (write.isCurrent()) set({ closePreference: confirmedValue })
-      write.fail(SETTINGS_WRITE_ERRORS.closePreference)
-      console.error('Failed to set close preference', error)
-    }
-  },
-
-  // Sets the app-icon look. Optimistic like the other preference setters: apply the pick, reconcile
-  // from the returned snapshot, and revert if the write fails.
-  setAppIconVariant: async (variant) => {
-    const previous = get().appIconVariant
-    const write = writeCoordinator.beginOptimistic('appIcon', previous)
-    set({ appIconVariant: variant })
-
-    try {
-      const snapshot = await write.run(() => window.api.settings.setAppIconVariant({ variant }))
-      write.complete({ value: snapshot.appIconVariant })
-      if (!write.isCurrent()) return
-      set(applySnapshot(snapshot))
-      write.succeed()
-    } catch (error) {
-      const confirmedValue = write.complete()
-      if (write.isCurrent()) set({ appIconVariant: confirmedValue })
-      write.fail(SETTINGS_WRITE_ERRORS.appIcon)
-      console.error('Failed to set app icon variant', error)
-    }
   },
 
   clearSettingsWriteError: () => writeCoordinator.clearFailures(),
@@ -778,17 +662,6 @@ const createSettingsStoreState = (
     // Drop it from the queue immediately so the card can't be double-answered, then notify main.
     set((state) => ({ pendingApprovals: state.pendingApprovals.filter((r) => r.id !== id) }))
     await window.api.settings.respondConnectorApproval({ id, decision })
-  },
-
-  completeOnboarding: async () => {
-    const snapshot = await window.api.settings.markOnboardingComplete()
-
-    set(applySnapshot(snapshot))
-  },
-
-  setPackageMirror: async (mirror) => {
-    const saved = await window.api.settings.setPackageMirror(mirror)
-    set({ packageMirror: isMirrorConfigured(saved) ? saved : undefined })
   }
 })
 
