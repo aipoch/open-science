@@ -68,9 +68,9 @@ class HeadlessTaskApi {
         }
       },
       agent: {
-        assertSessionAvailable: (projectId, sessionId) =>
+        withSessionAvailable: (projectId, sessionId, operation) =>
           this.withCurrentCaller(() =>
-            this.ports.agent.assertSessionAvailable(projectId, sessionId)
+            this.ports.agent.withSessionAvailable(projectId, sessionId, operation)
           ),
         listAttachedSessionIds: () =>
           this.withCurrentCaller(() => this.ports.agent.listAttachedSessionIds()),

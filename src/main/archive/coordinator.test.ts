@@ -131,6 +131,52 @@ describe('ArchiveCoordinator', () => {
     expect(sessions.assertSessionAvailable).not.toHaveBeenCalled()
   })
 
+  it('keeps archive updates behind an admitted session operation', async () => {
+    let markStarted!: () => void
+    let releaseOperation!: () => void
+    const started = new Promise<void>((resolve) => {
+      markStarted = resolve
+    })
+    const operationGate = new Promise<void>((resolve) => {
+      releaseOperation = resolve
+    })
+    const projects = {
+      get: vi.fn().mockResolvedValue(project),
+      updateArchive: vi.fn()
+    }
+    const sessions = {
+      assertProjectArchivable: vi.fn(),
+      assertSessionAvailable: vi.fn().mockResolvedValue(undefined),
+      updateArchive: vi.fn().mockResolvedValue({ ...session, archivedAt: 50 }),
+      sessionProjectId: vi.fn().mockResolvedValue(project.id)
+    }
+    const coordinator = new ArchiveCoordinator(projects, sessions, {
+      isSessionBusy: vi.fn().mockReturnValue(false),
+      isProjectBusy: vi.fn(),
+      liveSessionProjectId: vi.fn()
+    })
+
+    const admitted = coordinator.withSessionAvailable(project.id, session.id, async () => {
+      markStarted()
+      await operationGate
+      return 'resumed'
+    })
+    await started
+
+    const archive = coordinator.updateSessionArchive({
+      projectId: project.id,
+      sessionId: session.id,
+      archived: true,
+      expectedArchivedAt: null
+    })
+    await Promise.resolve()
+    expect(sessions.updateArchive).not.toHaveBeenCalled()
+
+    releaseOperation()
+    await expect(admitted).resolves.toBe('resumed')
+    await expect(archive).resolves.toMatchObject({ archivedAt: 50 })
+  })
+
   it('rejects a project archive while a fresh live session is running', async () => {
     const projects = {
       get: vi.fn().mockResolvedValue(project),

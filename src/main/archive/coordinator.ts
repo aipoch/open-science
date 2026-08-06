@@ -29,8 +29,8 @@ type SessionRuntimeActivity = {
 }
 
 // This is intentionally a narrow in-process gate, not a generic locking service. It makes an
-// archive/restore decision and the final runtime admission observe one consistent active state;
-// provider work and ordinary Session persistence stay outside it.
+// archive/restore decision and the final runtime admission observe one consistent active state.
+// Prompt execution stays outside it; Task resume holds it only until the Session is durably running.
 class ArchiveCoordinator {
   private queue: Promise<void> = Promise.resolve()
   private markReadSessions: (sessionIds: string[]) => Promise<void> = async () => undefined
@@ -110,18 +110,19 @@ class ArchiveCoordinator {
   }
 
   assertSessionAvailable(projectId: string, sessionId: string): Promise<void> {
+    return this.enqueue(() => this.assertSessionAvailableNow(projectId, sessionId))
+  }
+
+  withSessionAvailable<Result>(
+    projectId: string,
+    sessionId: string,
+    operation: () => Promise<Result>
+  ): Promise<Result> {
+    // ponytail: reuse the global archive queue until measured resume contention justifies
+    // partitioning it by Project.
     return this.enqueue(async () => {
-      const ownerProjectId =
-        (await this.sessions.sessionProjectId(sessionId)) ??
-        this.runtime.liveSessionProjectId(sessionId)
-      if (!ownerProjectId) {
-        throw new Error('Cannot use a Session whose Project owner is unavailable.')
-      }
-      if (ownerProjectId !== projectId) {
-        throw new Error('Session does not belong to the requested Project.')
-      }
-      await this.activeProject(ownerProjectId)
-      await this.sessions.assertSessionAvailable(ownerProjectId, sessionId)
+      await this.assertSessionAvailableNow(projectId, sessionId)
+      return operation()
     })
   }
 
@@ -143,6 +144,20 @@ class ArchiveCoordinator {
       () => true,
       () => false
     )
+  }
+
+  private async assertSessionAvailableNow(projectId: string, sessionId: string): Promise<void> {
+    const ownerProjectId =
+      (await this.sessions.sessionProjectId(sessionId)) ??
+      this.runtime.liveSessionProjectId(sessionId)
+    if (!ownerProjectId) {
+      throw new Error('Cannot use a Session whose Project owner is unavailable.')
+    }
+    if (ownerProjectId !== projectId) {
+      throw new Error('Session does not belong to the requested Project.')
+    }
+    await this.activeProject(ownerProjectId)
+    await this.sessions.assertSessionAvailable(ownerProjectId, sessionId)
   }
 }
 

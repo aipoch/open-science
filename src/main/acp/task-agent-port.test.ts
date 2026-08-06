@@ -6,7 +6,7 @@ import { createAcpTaskAgentPort } from './task-agent-port'
 describe('ACP Task Agent port', () => {
   it('exposes only the Task execution capabilities', () => {
     expectTypeOf<keyof TaskAgentPort>().toEqualTypeOf<
-      | 'assertSessionAvailable'
+      | 'withSessionAvailable'
       | 'listAttachedSessionIds'
       | 'createSession'
       | 'resumeSession'
@@ -34,12 +34,22 @@ describe('ACP Task Agent port', () => {
       setPermissionProfile: vi.fn(async () => undefined),
       sendPrompt: vi.fn(async () => undefined)
     }
-    const assertSessionAvailable = vi.fn(async () => undefined)
+    const withSessionAvailable = vi.fn()
     const port = createAcpTaskAgentPort(runtime, { create }, undefined, {
-      assertSessionAvailable
+      withSessionAvailable: async <Result>(
+        projectId: string,
+        sessionId: string,
+        operation: () => Promise<Result>
+      ) => {
+        withSessionAvailable(projectId, sessionId, operation)
+        return operation()
+      }
     })
 
-    await port.assertSessionAvailable('project-1', 'session-stable')
+    const admitted = vi.fn(async () => 'admitted')
+    await expect(port.withSessionAvailable('project-1', 'session-stable', admitted)).resolves.toBe(
+      'admitted'
+    )
     await expect(port.listAttachedSessionIds()).resolves.toEqual(['session-attached'])
     await expect(
       port.createSession({ projectId: 'project-1', permissionProfile: 'auto' })
@@ -76,7 +86,7 @@ describe('ACP Task Agent port', () => {
       projectName: 'project-1',
       permissionProfile: 'auto'
     })
-    expect(assertSessionAvailable).toHaveBeenCalledWith('project-1', 'session-stable')
+    expect(withSessionAvailable).toHaveBeenCalledWith('project-1', 'session-stable', admitted)
     expect(runtime.resumeSession).toHaveBeenCalledWith({
       sessionId: 'session-stable',
       cwd: '/workspace/stable',
