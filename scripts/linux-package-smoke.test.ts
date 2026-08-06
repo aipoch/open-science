@@ -1,6 +1,6 @@
 import { mkdir, mkdtemp, writeFile } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
-import { join } from 'node:path'
+import { join, resolve } from 'node:path'
 
 import { describe, expect, it } from 'vitest'
 
@@ -37,7 +37,7 @@ describe('Linux package smoke', () => {
   it('requires explicit package and installed executable paths', () => {
     expect(
       parseArguments(['--artifact-dir', 'dist', '--installed-executable', '/usr/bin/open-science'])
-    ).toMatchObject({ installedExecutable: '/usr/bin/open-science' })
+    ).toMatchObject({ installedExecutable: resolve('/usr/bin/open-science') })
     expect(() => parseArguments([])).toThrow(/Usage:/)
   })
 
