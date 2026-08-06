@@ -1,11 +1,14 @@
 import { AcpRuntime as ProductionAcpRuntime, type AcpRuntimeOptions } from './runtime'
 import { composeAcpRuntimeBaseOwners } from './runtime-base-composition'
+import { composeAcpRuntimeSessionOwners } from './runtime-session-composition'
 
 class AcpRuntime extends ProductionAcpRuntime {
   constructor(options: AcpRuntimeOptions) {
-    const owners = composeAcpRuntimeBaseOwners(options)
-    super(options, owners)
-    Object.defineProperty(this, 'artifactRunRegistry', { value: owners.artifactRunRegistry })
+    const baseOwners = composeAcpRuntimeBaseOwners(options)
+    super(options, baseOwners, composeAcpRuntimeSessionOwners(options, baseOwners))
+    Object.defineProperty(this, 'artifactRunRegistry', {
+      value: baseOwners.artifactRunRegistry
+    })
   }
 }
 

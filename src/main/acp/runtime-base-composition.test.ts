@@ -95,8 +95,9 @@ describe('ACP Runtime base composition', () => {
     )
     expect(composer).not.toMatch(/from ['"]electron['"]|import \{ AcpRuntime \}/)
     expect(composer).toContain("import type { AcpRuntimeOptions } from './runtime'")
+    expect(applicationComposition).toContain('composeAcpRuntimeBaseOwners(runtimeOptions)')
     expect(applicationComposition).toContain(
-      'new AcpRuntime(runtimeOptions, composeAcpRuntimeBaseOwners(runtimeOptions))'
+      'composeAcpRuntimeSessionOwners(runtimeOptions, baseOwners)'
     )
     expect(runtime + applicationComposition).not.toContain('runtime.test-utils')
   })

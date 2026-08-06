@@ -1,0 +1,197 @@
+import type { SessionPermissionProfileState } from '../../shared/permission-profiles'
+import { SESSION_PLAN_SYSTEM_PROMPT_APPEND } from '../session-plan/guidance'
+import { createLogger } from '../logger'
+import { AcpContextUsagePolicy } from './context-usage-policy'
+import { AcpPermissionContext } from './permission-context'
+import { ReviewerSessionOwner } from './reviewer-session-owner'
+import type { AcpRuntimeOptions } from './runtime'
+import type { AcpRuntimeBaseOwners } from './runtime-base-composition'
+import { AcpRuntimePublicationOwner } from './runtime-publication-owner'
+import type { RuntimeSnapshotProjection } from './runtime-snapshot-owner'
+import { AcpSessionEnvironmentPolicy } from './session-environment-policy'
+import { AcpSessionRegistry } from './session-registry'
+import { AcpSessionUpdateProjector } from './session-update-projector'
+
+const log = createLogger('acp')
+
+/* eslint-disable @typescript-eslint/explicit-function-return-type */
+const composeAcpRuntimeSessionOwners = (options: AcpRuntimeOptions, base: AcpRuntimeBaseOwners) => {
+  const callbacks = options.callbacks ?? {}
+  const activeSessionIds = (): string[] =>
+    sessionRegistry.entries(true).map(({ appSessionId }) => appSessionId)
+  const promptInFlightSessionIds = (): string[] => {
+    const interactions = base.sessionInteractions.snapshot()
+    return [
+      ...interactions.filter(({ kind }) => kind === 'prompt'),
+      ...interactions.filter(({ kind }) => kind === 'compaction')
+    ].map(({ sessionId }) => sessionId)
+  }
+  const snapshotProjection = (): RuntimeSnapshotProjection => {
+    const sessionIds = activeSessionIds()
+    const promptInFlightIds = promptInFlightSessionIds()
+    const permissionProfiles: Record<string, SessionPermissionProfileState> = {}
+    for (const { appSessionId: sessionId, aggregate } of sessionRegistry.entries()) {
+      const profile = aggregate.snapshot().permissionProfile
+      if (profile) permissionProfiles[sessionId] = profile as SessionPermissionProfileState
+    }
+
+    return {
+      sessionId: sessionRegistry.currentSessionId,
+      sessionIds,
+      pendingPermissions: permissionContext.getPendingRequests(),
+      permissionProfiles,
+      permissionGrants: Object.fromEntries(
+        sessionIds.map((sessionId) => [sessionId, permissionContext.listGrants(sessionId)])
+      ),
+      contextUsageBySession: base.contextUsageTracker.usageSnapshot(),
+      nativeContextCompactionSessionIds:
+        base.backendGeneration.current.framework.contextCompaction.kind === 'native-command'
+          ? sessionIds
+          : [],
+      promptInFlight: promptInFlightIds.length > 0,
+      promptInFlightSessionIds: promptInFlightIds
+    }
+  }
+  const publication = new AcpRuntimePublicationOwner({
+    snapshotOwner: base.snapshotOwner,
+    interactions: base.sessionInteractions,
+    snapshotProjection,
+    callbacks
+  })
+  const sessionRegistry = new AcpSessionRegistry({
+    addStartupBlocker: (token) => base.generationActivity.acquireStartup(token),
+    foreignIdentityCollision: (sessionIds) => {
+      const pendingReviewerCollision = sessionIds.find((sessionId) =>
+        reviewerSessions.hasPendingSessionId(sessionId)
+      )
+      if (pendingReviewerCollision) {
+        return new Error(
+          `Primary session id collision with pending reviewer: ${pendingReviewerCollision}`
+        )
+      }
+      const activeReviewerCollision = sessionIds.find((sessionId) =>
+        reviewerSessions.hasActiveSessionId(sessionId)
+      )
+      return activeReviewerCollision
+        ? new Error(`Primary session id collision with reviewer: ${activeReviewerCollision}`)
+        : undefined
+    },
+    removeStartupBlocker: (token) => base.generationActivity.releaseStartup(token)
+  })
+  const sessionEnvironment = new AcpSessionEnvironmentPolicy({
+    backendGeneration: base.backendGeneration,
+    capabilities: base.sessionCapabilities,
+    presentation: base.sessionPresentationPolicy,
+    registry: sessionRegistry,
+    defaultProjectName: options.artifacts?.projectName,
+    ...(base.planService ? { planSystemPromptAppend: SESSION_PLAN_SYSTEM_PROMPT_APPEND } : {})
+  })
+  const contextUsagePolicy = new AcpContextUsagePolicy({
+    backend: () => base.backendGeneration.current,
+    appliedModel: (sessionId) =>
+      sessionRegistry.lookup(sessionId)?.aggregate.snapshot().appliedModel,
+    systemPromptAppends: () => sessionEnvironment.systemPromptAppends(),
+    tooling: () => sessionEnvironment.toolingAvailability()
+  })
+  const permissionContext = new AcpPermissionContext({
+    emitPermissionRequest: (request) => publication.publishPermissionRequest(request),
+    routing: {
+      resolveAppSessionId: (sessionId) => sessionRegistry.resolveAppSessionId(sessionId),
+      sessionSnapshot: (sessionId) => {
+        const snapshot = sessionRegistry.lookup(sessionId)?.aggregate.snapshot()
+        return snapshot
+          ? {
+              cwd: snapshot.cwd,
+              frameworkId: snapshot.frameworkId,
+              permissionProfile: snapshot.permissionProfile
+            }
+          : undefined
+      },
+      hasActivePrimarySession: (sessionId) =>
+        sessionRegistry.lookup(sessionId)?.attachment !== undefined,
+      capturePrompt: (sessionId) => {
+        const scope = base.sessionInteractions.current(sessionId)
+        return scope?.kind === 'prompt'
+          ? {
+              sequence: scope.sequence,
+              isCancellationAccepted: () => base.sessionInteractions.isCancellationAccepted(scope)
+            }
+          : undefined
+      },
+      currentInteractionSequence: (sessionId) =>
+        base.sessionInteractions.current(sessionId)?.sequence,
+      mcpServerNamesFor: (sessionId) => base.sessionCapabilities.mcpServerNamesFor(sessionId),
+      reviewerContextFor: (sessionId) => reviewerSessions.contextFor(sessionId),
+      resolveReviewerPermission: (request) => reviewerSessions.resolvePermission(request),
+      currentFramework: () => base.backendGeneration.current.framework,
+      resolveProjectId: (sessionId) => sessionEnvironment.projectName(sessionId)
+    },
+    conversationGrants: options.permissionGrantStore,
+    permissionGrantRegistry: options.permissionGrantRegistry,
+    setTimer: base.setTimer,
+    clearTimer: base.clearTimer,
+    onOpenCodeWaitTimeout: ({ sessionId, toolCallId, waitMs }) => {
+      log.warn('OpenCode permission context wait timed out', { sessionId, toolCallId, waitMs })
+    }
+  })
+  const reviewerSessions = new ReviewerSessionOwner({
+    addStartupBlocker: (token) => base.generationActivity.acquireStartup(token),
+    assertCurrentConnection: (connection) => {
+      if (
+        base.connectionResources.connection !== connection ||
+        base.snapshotOwner.status !== 'connected'
+      ) {
+        throw new Error('ACP session startup was superseded.')
+      }
+    },
+    clearPermissionCorrelations: (sessionId) =>
+      permissionContext.clearCorrelationsForSession(sessionId),
+    currentSessionSetup: () => ({
+      framework: base.backendGeneration.current.framework,
+      sessionOptions: base.backendGeneration.current.session.options
+    }),
+    currentStartupGeneration: () => sessionRegistry.startupGeneration,
+    isPrimarySessionIdClaimed: (sessionId) => sessionRegistry.isIdentityClaimed(sessionId),
+    onActiveSessionReleased: base.notifyGenerationActivityChanged,
+    registerBridgeSession: (sessionId) =>
+      base.connectionResources.registerBridgeReviewerSession(sessionId),
+    removeStartupBlocker: (token) => base.generationActivity.releaseStartup(token),
+    unregisterBridgeSession: (sessionId) =>
+      base.connectionResources.unregisterBridgeReviewerSession(sessionId)
+  })
+  const sessionUpdateProjector = new AcpSessionUpdateProjector({
+    registry: sessionRegistry,
+    contextUsage: base.contextUsageTracker,
+    contextPolicy: contextUsagePolicy,
+    hasActiveSession: (sessionId) => sessionRegistry.lookup(sessionId)?.attachment !== undefined,
+    currentFramework: () => base.backendGeneration.current.framework.id,
+    reconnectPending: () => base.connectionTransitions.providerReconnectPending,
+    mcpServerNamesFor: (sessionId) => base.sessionCapabilities.mcpServerNamesFor(sessionId),
+    nextEventId: () => publication.nextEventId(),
+    emitState: () => publication.emitState(),
+    pushEvent: (event) => publication.pushEvent(event),
+    reportToolFailure: (effect) =>
+      log.warn('tool call failed', {
+        tool: effect.tool,
+        toolCallId: effect.toolCallId,
+        sessionId: effect.sessionId,
+        reason: effect.reason
+      })
+  })
+
+  return Object.freeze({
+    sessionRegistry,
+    sessionEnvironment,
+    contextUsagePolicy,
+    publication,
+    permissionContext,
+    reviewerSessions,
+    sessionUpdateProjector
+  })
+}
+/* eslint-enable @typescript-eslint/explicit-function-return-type */
+
+type AcpRuntimeSessionOwners = ReturnType<typeof composeAcpRuntimeSessionOwners>
+
+export { composeAcpRuntimeSessionOwners }
+export type { AcpRuntimeSessionOwners }

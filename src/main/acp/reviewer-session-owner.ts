@@ -123,13 +123,16 @@ export type ReviewerSessionOwnerDependencies = {
     sessionOptions: Record<string, unknown> | undefined
   }
   currentStartupGeneration: () => number
-  ensureConnected: (cwd: string) => Promise<ClientConnection>
   isPrimarySessionIdClaimed: (sessionId: string) => boolean
   onActiveSessionReleased: () => void
   registerBridgeSession: (sessionId: string) => void
   removeStartupBlocker: (token: symbol) => void
   unregisterBridgeSession: (sessionId: string) => boolean | undefined
 }
+
+export type ReviewerSessionCreateCapability = Readonly<{
+  ensureConnected: (cwd: string) => Promise<ClientConnection>
+}>
 
 // Owns every ephemeral Reviewer startup, identity, and resource. Runtime supplies only current
 // connection/setup facts plus narrow collision, bridge, cleanup, and startup-blocker ports.
@@ -141,9 +144,12 @@ export class ReviewerSessionOwner {
 
   constructor(private readonly dependencies: ReviewerSessionOwnerDependencies) {}
 
-  async create(request: ReviewerSessionRequest): Promise<ReviewerSessionResult> {
+  async create(
+    request: ReviewerSessionRequest,
+    capability: ReviewerSessionCreateCapability
+  ): Promise<ReviewerSessionResult> {
     const mcpServerNames = this.validateRequest(request)
-    const connection = await this.dependencies.ensureConnected(request.cwd)
+    const connection = await capability.ensureConnected(request.cwd)
     this.dependencies.assertCurrentConnection(connection)
     const { framework, sessionOptions } = this.dependencies.currentSessionSetup()
     const startupGeneration = this.dependencies.currentStartupGeneration()

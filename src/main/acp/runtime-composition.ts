@@ -34,6 +34,7 @@ import { projectRegistrySessionGrants } from './permission-broker'
 import { AcpRuntime, type AcpRuntimeCallbacks, type AcpRuntimeOptions } from './runtime'
 import { composeAcpRuntimeBaseOwners } from './runtime-base-composition'
 import { AcpRuntimeCoordinator } from './runtime-coordinator'
+import { composeAcpRuntimeSessionOwners } from './runtime-session-composition'
 
 const log = createLogger('acp')
 
@@ -251,7 +252,12 @@ const createAcpRuntime = ({
             }
           : undefined
       }
-      return new AcpRuntime(runtimeOptions, composeAcpRuntimeBaseOwners(runtimeOptions))
+      const baseOwners = composeAcpRuntimeBaseOwners(runtimeOptions)
+      return new AcpRuntime(
+        runtimeOptions,
+        baseOwners,
+        composeAcpRuntimeSessionOwners(runtimeOptions, baseOwners)
+      )
     },
     callbacks,
     defaultCwd,

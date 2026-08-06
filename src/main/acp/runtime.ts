@@ -20,7 +20,6 @@ import type {
   AcpStateSnapshot
 } from '../../shared/acp'
 import { ACP_PROMPT_FAILED_EVENT_TITLE } from '../../shared/acp'
-import { type SessionPermissionProfileState } from '../../shared/permission-profiles'
 import { type AgentFrameworkId } from '../../shared/settings'
 import type { EffectiveSpecialistSkills } from '../../shared/specialist'
 import type { ResolvedReasoningEffort } from '../../shared/reasoning-effort'
@@ -31,9 +30,10 @@ import {
   type ResolvedAgentBackend
 } from '../agent-framework'
 import { createLogger, diagnosticErrorFields, errorLogFields } from '../logger'
-import { AcpRuntimeSnapshotOwner } from './runtime-snapshot-owner'
+import type { AcpRuntimeSnapshotOwner } from './runtime-snapshot-owner'
 import { ConversationPermissionGrantStore } from './permission-broker'
-import { AcpPermissionContext, HUMAN_PERMISSION_ACTION_ORIGIN } from './permission-context'
+import { HUMAN_PERMISSION_ACTION_ORIGIN } from './permission-context'
+import type { AcpPermissionContext } from './permission-context'
 import { AgentMcpHttpHost } from './mcp-http-host'
 import { ArtifactRepository } from '../artifacts/repository'
 import { ArtifactRunRegistry } from '../artifacts/run-registry'
@@ -45,34 +45,34 @@ import { getAppClaudeConfigDir } from '../settings/provider-env'
 import type { PermissionGrantRegistry } from '../permission-grants/registry'
 import { withDataRootWrite } from '../storage/migration-state'
 import { opencodeStorageDir } from '../agent-framework/opencode'
-import { ContextUsageTracker } from './context-usage-tracker'
-import { AcpContextUsagePolicy } from './context-usage-policy'
+import type { ContextUsageTracker } from './context-usage-tracker'
+import type { AcpContextUsagePolicy } from './context-usage-policy'
 import type { UploadRepository } from '../uploads/repository'
 import { DEFAULT_UPLOAD_PROJECT_NAME, type UploadedAttachment } from '../../shared/uploads'
 import type { ArtifactFile, FileReference } from '../../shared/artifacts'
 import type { ArtifactRpcCapabilityBinding } from '../../shared/artifact-provenance'
 import type { AcpRuntimeActivity, AcpRuntimeActivityOptions } from './runtime-activity'
-import {
+import type {
   ReviewerSessionOwner,
-  type ReviewerSessionDisposition,
-  type ReviewerSessionRequest,
-  type ReviewerSessionResult
+  ReviewerSessionDisposition,
+  ReviewerSessionRequest,
+  ReviewerSessionResult
 } from './reviewer-session-owner'
-import { AcpSessionCapabilityOwner } from './session-capability-owner'
-import { ArtifactTurnOwner, type ArtifactTurnHandle } from './artifact-turn-owner'
-import { AcpPromptContentOwner } from './prompt-content-owner'
-import {
+import type { AcpSessionCapabilityOwner } from './session-capability-owner'
+import type { ArtifactTurnHandle, ArtifactTurnOwner } from './artifact-turn-owner'
+import type { AcpPromptContentOwner } from './prompt-content-owner'
+import type {
   AcpSessionInteractionOwner,
-  type AcpPromptSessionInteractionScope
+  AcpPromptSessionInteractionScope
 } from './session-interaction-owner'
-import {
+import type {
   AcpSessionRegistry,
-  type AcpPrimarySessionIdentityReservation,
-  type AcpPrimarySessionIdentityReservationResult
+  AcpPrimarySessionIdentityReservation,
+  AcpPrimarySessionIdentityReservationResult
 } from './session-registry'
-import {
+import type {
   AcpConnectionResourceOwner,
-  type AcpConnectionResourceAttempt
+  AcpConnectionResourceAttempt
 } from './connection-resource-owner'
 import {
   AcpAgentConnectionAdapter,
@@ -81,13 +81,13 @@ import {
 } from './agent-connection-adapter'
 import type { AcpConnectionTransitionOwner } from './connection-transition-owner'
 import type { AcpGenerationActivityOwner } from './generation-activity-owner'
-import { AcpHandoffContinuityOwner } from './handoff-continuity-owner'
-import {
+import type { AcpHandoffContinuityOwner } from './handoff-continuity-owner'
+import type {
   AcpBackendGenerationOwner,
-  type AcpBackendGenerationView
+  AcpBackendGenerationView
 } from './backend-generation-owner'
 import type { AcpSessionConfigurator } from './session-configurator'
-import { AcpSessionUpdateProjector } from './session-update-projector'
+import type { AcpSessionUpdateProjector } from './session-update-projector'
 import { AcpConnectionLifecycleWorkflow } from './connection-lifecycle-workflow'
 import { AcpConnectionCloseWorkflow, type CloseState } from './connection-close-workflow'
 import { AcpModelChangeWorkflow } from './model-change-workflow'
@@ -99,10 +99,9 @@ import { AcpSessionDeletionWorkflow } from './session-deletion-workflow'
 import { AcpPromptPreparationOwner } from './prompt-preparation-owner'
 import { AcpPromptTurnWorkflow, type AcpPromptTurnPlanContext } from './prompt-turn-workflow'
 import { AcpContextCompactionWorkflow } from './context-compaction-workflow'
-import { AcpProviderPromptExecutor } from './provider-prompt-executor'
+import type { AcpProviderPromptExecutor } from './provider-prompt-executor'
 import type { AcpTurnSkillHooks, AcpTurnSkillOwner } from './turn-skill-owner'
-import { SessionPlanInteractionOwner } from '../session-plan/session-plan-interaction-owner'
-import { SESSION_PLAN_SYSTEM_PROMPT_APPEND } from '../session-plan/guidance'
+import type { SessionPlanInteractionOwner } from '../session-plan/session-plan-interaction-owner'
 import type { PlanResponseResult, PlanService } from '../session-plan/plan-service'
 import type {
   ActivePlanProjection,
@@ -113,7 +112,9 @@ import { PlanCommandError } from '../../shared/session-plan/contract'
 import type { SessionPlanStepStatus } from '../../shared/session-persistence'
 import type { SessionPersistenceCoordinator } from '../session-persistence/coordinator'
 import type { AcpRuntimeBaseOwners } from './runtime-base-composition'
-import { AcpSessionEnvironmentPolicy } from './session-environment-policy'
+import type { AcpRuntimePublicationOwner } from './runtime-publication-owner'
+import type { AcpRuntimeSessionOwners } from './runtime-session-composition'
+import type { AcpSessionEnvironmentPolicy } from './session-environment-policy'
 
 export type AcpRuntimeCallbacks = {
   onStateChanged?: (state: AcpStateSnapshot) => void
@@ -322,6 +323,7 @@ class AcpRuntime {
   private readonly connectionResources: AcpConnectionResourceOwner
   private readonly connectionTransitions: AcpConnectionTransitionOwner
   private readonly generationActivity: AcpGenerationActivityOwner
+  private readonly notifyGenerationActivityChanged: () => void
   // Stable app identities, provider aliases, publication order, selection, and startup/delete
   // arbitration share one owner. The runtime retains only protocol/resource orchestration.
   private readonly sessionRegistry: AcpSessionRegistry
@@ -334,6 +336,7 @@ class AcpRuntime {
   private readonly turnSkills: AcpTurnSkillOwner
   private readonly handoffContinuity: AcpHandoffContinuityOwner
   private readonly permissionContext: AcpPermissionContext
+  private readonly publication: AcpRuntimePublicationOwner
   private readonly sessionEnvironment: AcpSessionEnvironmentPolicy
   private readonly callbacks: AcpRuntimeCallbacks
   private readonly spawnAgent: (() => ChildProcessWithoutNullStreams) | undefined
@@ -365,7 +368,8 @@ class AcpRuntime {
   // Wires runtime dependencies and forwards permission prompts into the event stream.
   constructor(
     private readonly options: AcpRuntimeOptions,
-    base: AcpRuntimeBaseOwners
+    base: AcpRuntimeBaseOwners,
+    session: AcpRuntimeSessionOwners
   ) {
     this.callbacks = options.callbacks ?? {}
     this.spawnAgent = options.spawnAgent
@@ -387,9 +391,17 @@ class AcpRuntime {
     this.promptContentOwner = base.promptContentOwner
     this.handoffContinuity = base.handoffContinuity
     this.generationActivity = base.generationActivity
+    this.notifyGenerationActivityChanged = base.notifyGenerationActivityChanged
     this.connectionTransitions = base.connectionTransitions
     this.turnSkills = base.turnSkills
     this.sessionConfigurator = base.sessionConfigurator
+    this.sessionRegistry = session.sessionRegistry
+    this.sessionEnvironment = session.sessionEnvironment
+    this.contextUsagePolicy = session.contextUsagePolicy
+    this.publication = session.publication
+    this.permissionContext = session.permissionContext
+    this.reviewerSessions = session.reviewerSessions
+    this.sessionUpdateProjector = session.sessionUpdateProjector
     this.promptPreparation = new AcpPromptPreparationOwner({
       promptContent: this.promptContentOwner,
       presentation: base.sessionPresentationPolicy,
@@ -406,131 +418,6 @@ class AcpRuntime {
           }
         : {}),
       emitState: () => this.emitState()
-    })
-    this.sessionRegistry = new AcpSessionRegistry({
-      addStartupBlocker: (token) => this.generationActivity.acquireStartup(token),
-      foreignIdentityCollision: (sessionIds) => {
-        const pendingReviewerCollision = sessionIds.find((sessionId) =>
-          this.reviewerSessions.hasPendingSessionId(sessionId)
-        )
-        if (pendingReviewerCollision) {
-          return new Error(
-            `Primary session id collision with pending reviewer: ${pendingReviewerCollision}`
-          )
-        }
-        const activeReviewerCollision = sessionIds.find((sessionId) =>
-          this.reviewerSessions.hasActiveSessionId(sessionId)
-        )
-        return activeReviewerCollision
-          ? new Error(`Primary session id collision with reviewer: ${activeReviewerCollision}`)
-          : undefined
-      },
-      removeStartupBlocker: (token) => this.generationActivity.releaseStartup(token)
-    })
-    this.sessionEnvironment = new AcpSessionEnvironmentPolicy({
-      backendGeneration: this.backendGeneration,
-      capabilities: this.sessionCapabilities,
-      presentation: base.sessionPresentationPolicy,
-      registry: this.sessionRegistry,
-      defaultProjectName: options.artifacts?.projectName,
-      ...(this.planService ? { planSystemPromptAppend: SESSION_PLAN_SYSTEM_PROMPT_APPEND } : {})
-    })
-    this.contextUsagePolicy = new AcpContextUsagePolicy({
-      backend: () => this.backend,
-      appliedModel: (sessionId) =>
-        this.sessionRegistry.lookup(sessionId)?.aggregate.snapshot().appliedModel,
-      systemPromptAppends: () => this.sessionEnvironment.systemPromptAppends(),
-      tooling: () => this.sessionEnvironment.toolingAvailability()
-    })
-    this.sessionUpdateProjector = new AcpSessionUpdateProjector({
-      registry: this.sessionRegistry,
-      contextUsage: this.contextUsageTracker,
-      contextPolicy: this.contextUsagePolicy,
-      hasActiveSession: (sessionId) => this.activeSessionFor(sessionId) !== undefined,
-      currentFramework: () => this.framework.id,
-      reconnectPending: () => this.pendingProviderReconnect,
-      mcpServerNamesFor: (sessionId) => this.sessionCapabilities.mcpServerNamesFor(sessionId),
-      nextEventId: () => this.nextEventId(),
-      emitState: () => this.emitState(),
-      pushEvent: (event) => this.pushEvent(event),
-      reportToolFailure: (effect) =>
-        log.warn('tool call failed', {
-          tool: effect.tool,
-          toolCallId: effect.toolCallId,
-          sessionId: effect.sessionId,
-          reason: effect.reason
-        })
-    })
-    this.permissionContext = new AcpPermissionContext({
-      emitPermissionRequest: (request) => {
-        this.pushEvent({
-          kind: 'permission',
-          level: 'warning',
-          sessionId: request.sessionId,
-          toolCallId: request.toolCallId,
-          title: 'Permission requested',
-          text: request.title,
-          raw: request
-        })
-        this.callbacks.onPermissionRequest?.(request)
-        this.emitState()
-      },
-      routing: {
-        resolveAppSessionId: (sessionId) => this.sessionRegistry.resolveAppSessionId(sessionId),
-        sessionSnapshot: (sessionId) => {
-          const snapshot = this.sessionRegistry.lookup(sessionId)?.aggregate.snapshot()
-          return snapshot
-            ? {
-                cwd: snapshot.cwd,
-                frameworkId: snapshot.frameworkId,
-                permissionProfile: snapshot.permissionProfile
-              }
-            : undefined
-        },
-        hasActivePrimarySession: (sessionId) => this.activeSessionFor(sessionId) !== undefined,
-        capturePrompt: (sessionId) => {
-          const scope = this.currentPromptInteraction(sessionId)
-          return scope
-            ? {
-                sequence: scope.sequence,
-                isCancellationAccepted: () => this.sessionInteractions.isCancellationAccepted(scope)
-              }
-            : undefined
-        },
-        currentInteractionSequence: (sessionId) =>
-          this.sessionInteractions.current(sessionId)?.sequence,
-        mcpServerNamesFor: (sessionId) => this.sessionCapabilities.mcpServerNamesFor(sessionId),
-        reviewerContextFor: (sessionId) => this.reviewerSessions.contextFor(sessionId),
-        resolveReviewerPermission: (request) => this.reviewerSessions.resolvePermission(request),
-        currentFramework: () => this.framework,
-        resolveProjectId: (sessionId) => this.resolveSessionProjectName(sessionId)
-      },
-      conversationGrants: options.permissionGrantStore,
-      permissionGrantRegistry: options.permissionGrantRegistry,
-      setTimer: this.setTimer,
-      clearTimer: this.clearTimer,
-      onOpenCodeWaitTimeout: ({ sessionId, toolCallId, waitMs }) => {
-        log.warn('OpenCode permission context wait timed out', { sessionId, toolCallId, waitMs })
-      }
-    })
-    this.reviewerSessions = new ReviewerSessionOwner({
-      addStartupBlocker: (token) => this.generationActivity.acquireStartup(token),
-      assertCurrentConnection: (connection) => this.assertCurrentConnectedConnection(connection),
-      clearPermissionCorrelations: (sessionId) =>
-        this.permissionContext.clearCorrelationsForSession(sessionId),
-      currentSessionSetup: () => ({
-        framework: this.framework,
-        sessionOptions: this.backend.session.options
-      }),
-      currentStartupGeneration: () => this.sessionRegistry.startupGeneration,
-      ensureConnected: (cwd) => this.ensureConnected(cwd),
-      isPrimarySessionIdClaimed: (sessionId) => this.sessionRegistry.isIdentityClaimed(sessionId),
-      onActiveSessionReleased: () => this.generationActivityChanged(),
-      registerBridgeSession: (sessionId) =>
-        this.connectionResources.registerBridgeReviewerSession(sessionId),
-      removeStartupBlocker: (token) => this.generationActivity.releaseStartup(token),
-      unregisterBridgeSession: (sessionId) =>
-        this.connectionResources.unregisterBridgeReviewerSession(sessionId)
     })
     this.contextCompactionWorkflow = new AcpContextCompactionWorkflow({
       sessions: {
@@ -874,8 +761,7 @@ class AcpRuntime {
   }
 
   private generationActivityChanged(): void {
-    this.connectionTransitions.activityChanged()
-    this.modelChanges.activityChanged()
+    this.notifyGenerationActivityChanged()
   }
 
   private get connectionGeneration(): number {
@@ -918,29 +804,7 @@ class AcpRuntime {
 
   // Returns an immutable renderer-facing view of connection and session state.
   getSnapshot(): AcpStateSnapshot {
-    const sessionIds = this.activeSessionIds()
-    const promptInFlightSessionIds = this.getInFlightSessionIds()
-    const permissionProfiles: Record<string, SessionPermissionProfileState> = {}
-    for (const { appSessionId: sessionId, aggregate } of this.sessionRegistry.entries()) {
-      const profile = aggregate.snapshot().permissionProfile
-      // getSnapshot() is an immutable projection even though the legacy shared shape is mutable.
-      if (profile) permissionProfiles[sessionId] = profile as SessionPermissionProfileState
-    }
-
-    return this.snapshotOwner.snapshot({
-      sessionId: this.sessionRegistry.currentSessionId,
-      sessionIds,
-      pendingPermissions: this.permissionContext.getPendingRequests(),
-      permissionProfiles,
-      permissionGrants: Object.fromEntries(
-        sessionIds.map((sessionId) => [sessionId, this.permissionContext.listGrants(sessionId)])
-      ),
-      contextUsageBySession: this.contextUsageTracker.usageSnapshot(),
-      nativeContextCompactionSessionIds:
-        this.framework.contextCompaction.kind === 'native-command' ? sessionIds : [],
-      promptInFlight: promptInFlightSessionIds.length > 0,
-      promptInFlightSessionIds
-    })
+    return this.publication.getSnapshot()
   }
 
   async callSessionPlan(input: {
@@ -2046,27 +1910,12 @@ class AcpRuntime {
     event: Omit<AcpRuntimeEvent, 'id' | 'timestamp'> & Partial<AcpRuntimeEvent>,
     onAppended?: () => void
   ): void {
-    const currentPromptMessageId = event.sessionId
-      ? this.currentPromptInteraction(event.sessionId)?.promptMessageId
-      : undefined
-    const scopedEvent =
-      currentPromptMessageId && !event.promptMessageId
-        ? { ...event, promptMessageId: currentPromptMessageId }
-        : event
-    const runtimeEvent = this.snapshotOwner.appendEvent(scopedEvent)
-    onAppended?.()
-    this.callbacks.onEvent?.(runtimeEvent)
-    this.emitState()
-  }
-
-  // Generates monotonically increasing event ids for this runtime instance.
-  private nextEventId(): string {
-    return this.snapshotOwner.nextEventId()
+    this.publication.pushEvent(event, onAppended)
   }
 
   // Broadcasts the latest runtime snapshot if a listener is registered.
   private emitState(): void {
-    this.callbacks.onStateChanged?.(this.getSnapshot())
+    this.publication.emitState()
   }
 
   // Creates an ephemeral reviewer ACP session using the existing agent connection. The reviewer
@@ -2074,7 +1923,11 @@ class AcpRuntime {
   // appear in the snapshot, and callers are responsible for disposing it. This allows background
   // review to run in parallel with the main session without affecting the main state machine.
   async buildReviewerSession(request: ReviewerSessionRequest): Promise<ReviewerSessionResult> {
-    return this.withOperationLease(() => this.reviewerSessions.create(request))
+    return this.withOperationLease(() =>
+      this.reviewerSessions.create(request, {
+        ensureConnected: (cwd) => this.ensureConnected(cwd)
+      })
+    )
   }
 
   private invalidatePendingSessionStartups(): void {

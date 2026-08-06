@@ -185,6 +185,7 @@ const composeAcpRuntimeBaseOwners = (options: AcpRuntimeOptions) => {
     sessionInteractions,
     sessionCapabilities,
     generationActivity,
+    notifyGenerationActivityChanged: generationActivityChanged,
     connectionTransitions,
     bindGenerationConnectionEffects,
     turnSkills,

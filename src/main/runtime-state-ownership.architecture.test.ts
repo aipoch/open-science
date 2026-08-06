@@ -364,7 +364,8 @@ describe('runtime state ownership architecture', () => {
     expect(source).not.toContain('reviewerSessions.create(request, async')
     expect(source).toContain('this.permissionContext.handleProviderRequest(params)')
     expect(source).toContain('this.permissionContext.observeProviderUpdate(notification)')
-    expect(source).toContain('this.reviewerSessions.create(request)')
+    expect(source).toContain('this.reviewerSessions.create(request, {')
+    expect(source).toContain('ensureConnected: (cwd) => this.ensureConnected(cwd)')
   })
 
   it('keeps provider selection and Context routing behind their prompt owners', () => {
