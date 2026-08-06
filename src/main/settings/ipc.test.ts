@@ -189,6 +189,7 @@ const createFakeService = (): FakeSettingsService => ({
       schemaVersion: 1,
       kind: 'open-science.connector',
       name: 'example-server',
+      slug: 'example-server',
       transport: 'stdio',
       command: 'example-mcp'
     }

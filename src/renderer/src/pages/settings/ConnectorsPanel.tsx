@@ -470,6 +470,12 @@ export function ConnectorsPanel({ onNavigate }: ConnectorsPanelProps): React.JSX
                       <SettingsToggle
                         enabled={server.enabled}
                         aria-label={server.name}
+                        disabled={Boolean(server.oauth && !server.oauth.hasTokens)}
+                        title={
+                          server.oauth && !server.oauth.hasTokens
+                            ? 'Sign in before enabling this Connector'
+                            : undefined
+                        }
                         onToggle={() => void setCustomServerEnabled(server.id, !server.enabled)}
                       />
                     </li>

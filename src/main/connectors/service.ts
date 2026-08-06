@@ -12,6 +12,7 @@ import type { ConnectorPermissionRequest } from '../permission-grants/connector-
 import type { PermissionGrantScope } from '../../shared/permission-grants'
 import type { ApprovalDecision, ConnectorApprovalScope } from '../../shared/settings'
 import type { SpecialistProfileView } from '../../shared/specialist'
+import { customConnectorSlug } from '../../shared/custom-connector'
 
 type McpClientManagerLike = {
   listTools(config: CustomMcpServerConfig): Promise<Array<{ name: string }>>
@@ -188,13 +189,21 @@ export class ConnectorService {
     args: Record<string, unknown>,
     context: ConnectorCallContext = {}
   ): Promise<unknown> {
-    const access = await this.resolveAccess(connector, context)
     const descriptor = getDescriptor(connector, method)
     const isBundled = descriptor !== undefined || ALL_CONNECTOR_IDS.includes(connector)
-    if (isBundled) return this.callBundled(connector, method, args, descriptor, context, access)
+    if (isBundled) {
+      const access = await this.resolveAccess(connector, context)
+      return this.callBundled(connector, method, args, descriptor, context, access)
+    }
 
-    const custom = ((await this.currentConnectors())?.customMcpServers ?? []).find(
-      (s) => s.name === connector
+    const customServers = (await this.currentConnectors())?.customMcpServers ?? []
+    const custom =
+      customServers.find((server) => customConnectorSlug(server) === connector) ??
+      customServers.find((server) => server.name === connector)
+    const access = await this.resolveAccess(
+      connector,
+      context,
+      custom ? [customConnectorSlug(custom), custom.name] : [connector]
     )
     if (!custom) {
       throw new ConnectorGateError(
@@ -207,7 +216,8 @@ export class ConnectorService {
 
   private async resolveAccess(
     connector: string,
-    context: ConnectorCallContext
+    context: ConnectorCallContext,
+    aliases: readonly string[] = [connector]
   ): Promise<ConnectorAccess> {
     if (context.origin === 'internal') {
       return { bypassMainEnablement: false, bypassMainPolicy: false, specialistScoped: false }
@@ -225,8 +235,8 @@ export class ConnectorService {
 
     const allowed =
       profile.capabilityMode === 'full'
-        ? !profile.fullAccess.excludedConnectorIds.includes(connector)
-        : profile.selectedCapabilities.connectorIds.includes(connector)
+        ? !aliases.some((alias) => profile.fullAccess.excludedConnectorIds.includes(alias))
+        : aliases.some((alias) => profile.selectedCapabilities.connectorIds.includes(alias))
     if (!allowed) throw new ConnectorGateError('specialist_capability_denied')
 
     // A Specialist's configuration is independent from Main's enabled and Allow/Ask/Block settings.
@@ -462,7 +472,7 @@ export class ConnectorService {
       const request = this.authorizationRequest(
         current.name,
         current.id,
-        [current.id, current.name],
+        [current.id, customConnectorSlug(current), current.name],
         method,
         args,
         context,

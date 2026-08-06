@@ -19,6 +19,11 @@ import type {
   ToolPermission,
   UpdateCustomServerRequest
 } from '../../shared/settings'
+import {
+  customConnectorSlug,
+  isCustomConnectorSlug,
+  toCustomConnectorSlug
+} from '../../shared/custom-connector'
 import { CONNECTOR_CATALOG } from '../connectors/catalog'
 import { getConnectorTools } from '../connectors/registry'
 import { encryptKey, isEncryptionAvailable, tryDecryptKey } from './crypto'
@@ -108,8 +113,11 @@ class ConnectorSettingsModule {
     const connectors = await this.getConnectors()
     const bundled = this.enabledConnectorIds(connectors)
     const custom = (connectors?.customMcpServers ?? [])
-      .filter((server) => server.enabled)
-      .map((server) => server.id)
+      .filter(
+        (server) =>
+          server.enabled && (!server.oauth || Boolean(server.oauthState?.tokens?.access_token))
+      )
+      .map(customConnectorSlug)
 
     return Array.from(new Set([...bundled, ...custom].map((id) => `mcp-${id}`)))
   }
@@ -129,6 +137,7 @@ class ConnectorSettingsModule {
 
     return buildConnectorTemplateExport({
       id: server.id,
+      slug: customConnectorSlug(server),
       name: server.name,
       transport: server.transport,
       ...(server.description ? { description: server.description } : {}),
@@ -149,6 +158,7 @@ class ConnectorSettingsModule {
     const customServers = (await this.repository.getSettings()).connectors?.customMcpServers ?? []
     return parseConnectorTemplate(contents, {
       existingNames: customServers.map((server) => server.name),
+      existingSlugs: customServers.map(customConnectorSlug),
       bundledIds: CONNECTOR_CATALOG.map((connector) => connector.id)
     })
   }
@@ -218,12 +228,22 @@ class ConnectorSettingsModule {
   async addCustomServer(request: AddCustomServerRequest): Promise<ConnectorsSnapshot> {
     const name = request.name.trim()
     const normalizedName = name.toLowerCase()
+    const slug = request.slug?.trim() || toCustomConnectorSlug(name)
     const existingServers = (await this.repository.getSettings()).connectors?.customMcpServers ?? []
     if (CONNECTOR_CATALOG.some((connector) => connector.id.toLowerCase() === normalizedName)) {
       throw new Error(`Connector name "${name}" is reserved by a built-in connector`)
     }
     if (existingServers.some((server) => server.name.toLowerCase() === normalizedName)) {
       throw new Error(`A custom connector named "${name}" already exists`)
+    }
+    if (!isCustomConnectorSlug(slug)) {
+      throw new Error('Connector ID must use only lowercase letters, numbers, and hyphens')
+    }
+    if (CONNECTOR_CATALOG.some((connector) => connector.id === slug)) {
+      throw new Error(`Connector ID "${slug}" is reserved by a built-in connector`)
+    }
+    if (existingServers.some((server) => customConnectorSlug(server) === slug)) {
+      throw new Error(`A custom connector with ID "${slug}" already exists`)
     }
     if (request.transport === 'stdio' && request.oauth) {
       throw new Error('OAuth is only supported for remote custom connectors')
@@ -233,9 +253,10 @@ class ConnectorSettingsModule {
     }
     const candidate: StoredCustomMcpServer = {
       id: randomUUID(),
+      slug,
       name,
       transport: request.transport,
-      enabled: true,
+      enabled: !request.oauth,
       trustedAt: Date.now(),
       ...(request.description?.trim() ? { description: request.description.trim() } : {}),
       ...(request.command?.trim() ? { command: request.command.trim() } : {}),
@@ -263,6 +284,15 @@ class ConnectorSettingsModule {
   async setCustomServerEnabled(
     request: SetCustomServerEnabledRequest
   ): Promise<ConnectorsSnapshot> {
+    if (request.enabled) {
+      const server = (await this.getConnectors())?.customMcpServers?.find(
+        (candidate) => candidate.id === request.id
+      )
+      if (!server) throw new Error(`Unknown custom connector: ${request.id}`)
+      if (server.oauth && !server.oauthState?.tokens?.access_token) {
+        throw new Error(`Sign in to "${server.name}" before enabling it`)
+      }
+    }
     await this.repository.setCustomServerEnabled(request.id, request.enabled)
 
     return this.connectorsSnapshot()
@@ -321,9 +351,10 @@ class ConnectorSettingsModule {
       existing.url !== request.url?.trim()
     const merged: StoredCustomMcpServer = {
       id: existing.id,
+      slug: customConnectorSlug(existing),
       name: existing.name,
       transport: request.transport,
-      enabled: existing.enabled,
+      enabled: nextOAuth && oauthCredentialsChanged ? false : existing.enabled,
       ...(existing.trustedAt !== undefined ? { trustedAt: existing.trustedAt } : {}),
       ...(request.description?.trim() ? { description: request.description.trim() } : {}),
       ...(request.command?.trim() ? { command: request.command.trim() } : {}),
@@ -440,10 +471,11 @@ class ConnectorSettingsModule {
         const unauthenticated = Boolean(server.oauth && !server.oauthState?.tokens?.access_token)
         return {
           id: server.id,
+          slug: customConnectorSlug(server),
           name: server.name,
           description: server.description,
           transport: server.transport,
-          enabled: server.enabled,
+          enabled: server.enabled && !unauthenticated,
           command: server.command,
           args: server.args,
           url: server.url,

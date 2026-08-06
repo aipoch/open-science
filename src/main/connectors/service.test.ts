@@ -418,7 +418,8 @@ describe('ConnectorService', () => {
           customMcpServers: [
             {
               id: 'srv-1',
-              name: 'myserver',
+              slug: 'example-oauth-e2e',
+              name: 'Example OAuth E2E',
               transport: 'stdio',
               command: 'npx',
               args: ['-y', '@example/server'],
@@ -429,12 +430,12 @@ describe('ConnectorService', () => {
         }),
         resolveApiKey: () => undefined
       })
-      const out = await svc.call('myserver', 'do_thing', { x: 1 }, internal)
+      const out = await svc.call('example-oauth-e2e', 'do_thing', { x: 1 }, internal)
       expect(out).toEqual({ ok: true })
       expect(call).toHaveBeenCalledWith(
         {
           id: 'srv-1',
-          name: 'myserver',
+          name: 'Example OAuth E2E',
           transport: 'stdio',
           command: 'npx',
           args: ['-y', '@example/server'],

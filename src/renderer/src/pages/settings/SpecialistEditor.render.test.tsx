@@ -160,6 +160,7 @@ describe('SpecialistEditor', () => {
       customServers: [
         {
           id: 'broken-server',
+          slug: 'broken-server',
           name: 'Broken Server',
           transport: 'stdio',
           enabled: true,

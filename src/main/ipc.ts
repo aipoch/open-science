@@ -1,6 +1,7 @@
 import { basename, join } from 'node:path'
 import { randomUUID } from 'node:crypto'
 import { readFile, stat, writeFile } from 'node:fs/promises'
+import { customConnectorSlug } from '../shared/custom-connector'
 
 import {
   app,
@@ -627,10 +628,15 @@ const createApplicationModules = async (
             ...(packageSkill ?? {})
           }
         }),
-        connectorIds: [
-          ...ALL_CONNECTOR_IDS,
-          ...(connectorSettings?.customMcpServers ?? []).map((server) => server.name)
-        ],
+        connectorIds: Array.from(
+          new Set([
+            ...ALL_CONNECTOR_IDS,
+            ...(connectorSettings?.customMcpServers ?? []).flatMap((server) => [
+              customConnectorSlug(server),
+              server.name
+            ])
+          ])
+        ),
         protectedSpecialistIds: ['reviewer'],
         protectedSpecialistNames: ['Reviewer']
       }

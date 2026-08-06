@@ -893,7 +893,7 @@ class SettingsService {
       throw new Error('Custom MCP OAuth is not available yet')
     }
     await this.customServerAuthenticator(serverId)
-    return this.connectors.listConnectors()
+    return this.connectors.setCustomServerEnabled({ id: serverId, enabled: true })
   }
 
   async cancelCustomServerAuthentication(serverId: string): Promise<void> {

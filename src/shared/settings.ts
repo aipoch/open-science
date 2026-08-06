@@ -1100,6 +1100,9 @@ export type CustomServerTransport = 'stdio' | 'streamable_http' | 'sse'
 // Renderer-safe view of one user-added custom MCP server (no secret env/header values).
 export type CustomServerView = {
   id: string
+  // Immutable agent-facing route used by host.mcp, Specialists, and generated MCP skills.
+  slug: string
+  // User-facing label; spaces and punctuation are allowed.
   name: string
   description?: string
   transport: CustomServerTransport
@@ -1136,6 +1139,7 @@ export type SetNcbiCredentialsRequest = { contactEmail?: string; apiKey?: string
 // Add a custom MCP server. stdio requires `command`; the remote transports require `url`.
 export type AddCustomServerRequest = {
   name: string
+  slug?: string
   description?: string
   transport: CustomServerTransport
   command?: string
@@ -1161,6 +1165,7 @@ export type ConnectorTemplateDefinition = {
   schemaVersion: 1
   kind: 'open-science.connector'
   name: string
+  slug: string
   description?: string
   transport: CustomServerTransport
   command?: string

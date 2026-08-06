@@ -276,6 +276,7 @@ describe('SettingsService: custom MCP OAuth', () => {
     expect(authenticator).toHaveBeenCalledWith(id)
     expect(snapshot.customServers[0].oauth).toMatchObject({ hasTokens: true })
     expect(snapshot.customServers[0].availability).toBeUndefined()
+    expect(snapshot.customServers[0].enabled).toBe(true)
 
     await service.cancelCustomServerAuthentication(id)
     expect(cancel).toHaveBeenCalledWith(id)

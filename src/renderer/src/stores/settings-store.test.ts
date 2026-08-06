@@ -1347,6 +1347,7 @@ describe('settings store: connectors slice', () => {
   it('authenticateCustomServer reconciles the OAuth status from main', async () => {
     const server: CustomServerView = {
       id: 'oauth-1',
+      slug: 'oauth-server',
       name: 'OAuth server',
       transport: 'streamable_http',
       enabled: true,
@@ -1368,6 +1369,7 @@ describe('settings store: connectors slice', () => {
   it('refreshes OAuth status after authenticateCustomServer fails', async () => {
     const server: CustomServerView = {
       id: 'oauth-1',
+      slug: 'oauth-server',
       name: 'OAuth server',
       transport: 'streamable_http',
       enabled: true,

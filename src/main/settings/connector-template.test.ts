@@ -9,6 +9,7 @@ describe('Connector configuration templates', () => {
         schemaVersion: 1,
         kind: 'open-science.connector',
         name: 'example-research',
+        slug: 'example-research',
         transport: 'stdio',
         command: 'npx',
         args: ['-y', '@example/research-mcp'],
@@ -23,6 +24,7 @@ describe('Connector configuration templates', () => {
         schemaVersion: 1,
         kind: 'open-science.connector',
         name: 'example-research',
+        slug: 'example-research',
         transport: 'stdio',
         command: 'npx',
         args: ['-y', '@example/research-mcp'],
@@ -48,6 +50,32 @@ describe('Connector configuration templates', () => {
       authorizationServerUrl: 'https://auth.example.test',
       scopes: ['openid']
     })
+  })
+
+  it('derives a safe Connector ID from a display name and accepts an explicit portable ID', () => {
+    const derived = parseConnectorTemplate(
+      JSON.stringify({
+        schemaVersion: 1,
+        kind: 'open-science.connector',
+        name: 'Example OAuth E2E',
+        transport: 'streamable_http',
+        url: 'https://mcp.example.test/mcp',
+        oauth: {}
+      })
+    )
+    expect(derived.definition?.slug).toBe('example-oauth-e2e')
+
+    const explicit = parseConnectorTemplate(
+      JSON.stringify({
+        schemaVersion: 1,
+        kind: 'open-science.connector',
+        name: 'Example OAuth E2E',
+        slug: 'example-e2e',
+        transport: 'streamable_http',
+        url: 'https://mcp.example.test/mcp'
+      })
+    )
+    expect(explicit.definition?.slug).toBe('example-e2e')
   })
 
   it.each([
@@ -179,11 +207,27 @@ describe('Connector configuration templates', () => {
     expect(duplicate.diagnostics.map((item) => item.code)).toContain(
       'connector-template.duplicate-name'
     )
+
+    const duplicateSlug = parseConnectorTemplate(
+      JSON.stringify({
+        schemaVersion: 1,
+        kind: 'open-science.connector',
+        name: 'Different display name',
+        slug: 'example-server',
+        transport: 'stdio',
+        command: 'example-mcp'
+      }),
+      { existingSlugs: ['example-server'] }
+    )
+    expect(duplicateSlug.diagnostics.map((item) => item.code)).toContain(
+      'connector-template.duplicate-slug'
+    )
   })
 
   it('exports only secret names and produces a stable digest', () => {
     const result = buildConnectorTemplateExport({
       id: 'local-id',
+      slug: 'example-server',
       name: 'example-server',
       transport: 'stdio',
       command: 'npx',

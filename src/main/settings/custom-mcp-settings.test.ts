@@ -28,6 +28,21 @@ describe('sanitizeCustomMcpServer', () => {
     })
   })
 
+  it('keeps a safe explicit slug and drops an invalid legacy value', () => {
+    const base = {
+      id: 'srv-1',
+      name: 'Example OAuth E2E',
+      transport: 'stdio',
+      command: 'npx',
+      enabled: true
+    }
+
+    expect(sanitizeCustomMcpServer({ ...base, slug: 'example-oauth-e2e' })).toMatchObject({
+      slug: 'example-oauth-e2e'
+    })
+    expect(sanitizeCustomMcpServer({ ...base, slug: '../unsafe' })).not.toHaveProperty('slug')
+  })
+
   it('drops a stdio server missing command', () => {
     expect(
       sanitizeCustomMcpServer({

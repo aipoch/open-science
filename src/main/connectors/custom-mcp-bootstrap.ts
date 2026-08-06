@@ -30,22 +30,24 @@ export function toCustomMcpConfig(server: StoredCustomMcpServer): CustomMcpServe
   }
 }
 
-// Supported custom MCP server transports (Phase 2: stdio + remote streamable_http/sse). OAuth is
-// a later task, so an `oauth`-configured remote entry (once that field exists) would still land
-// here once it has a reachable url — auth is handled by the transport, not this selector.
+// Supported custom MCP server transports: stdio plus the remote HTTP variants.
 const SUPPORTED_CUSTOM_MCP_TRANSPORTS = new Set<StoredCustomMcpServer['transport']>([
   'stdio',
   'streamable_http',
   'sse'
 ])
 
-// Selects enabled custom servers across all supported transports, for dispatch and skill-doc sync.
+// Selects runnable custom servers for discovery and skill-doc sync. OAuth Connectors remain absent
+// until sign-in has produced an access token, even if an older settings record says enabled.
 export function selectEnabledCustomServers(
   connectors: StoredConnectors | undefined
 ): StoredCustomMcpServer[] {
   return (
     connectors?.customMcpServers?.filter(
-      (s) => s.enabled && SUPPORTED_CUSTOM_MCP_TRANSPORTS.has(s.transport)
+      (s) =>
+        s.enabled &&
+        SUPPORTED_CUSTOM_MCP_TRANSPORTS.has(s.transport) &&
+        (!s.oauth || Boolean(s.oauthState?.tokens?.access_token))
     ) ?? []
   )
 }

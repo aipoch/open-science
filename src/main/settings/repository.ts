@@ -36,6 +36,7 @@ import type { PackageMirror } from '../../shared/mirror'
 import type { NotebookLanguage } from '../../shared/notebook'
 import type { RuntimeEnablement, RuntimeSelection } from '../../shared/notebook-runtime'
 import type { CloseActionPreference } from '../../shared/window-controls'
+import { isCustomConnectorSlug } from '../../shared/custom-connector'
 import { createLogger } from '../logger'
 import {
   createEmptySettings,
@@ -301,7 +302,9 @@ export const sanitizeCustomMcpServer = (value: unknown): StoredCustomMcpServer |
   if (transport === 'stdio' && !command) return undefined
   if ((transport === 'streamable_http' || transport === 'sse') && !url) return undefined
 
+  const storedSlug = asString(value.slug)
   const server: StoredCustomMcpServer = { id, name, transport, enabled }
+  if (storedSlug && isCustomConnectorSlug(storedSlug)) server.slug = storedSlug
 
   if (command) server.command = command
   const args = asStringArray(value.args)

@@ -148,6 +148,7 @@ describe('ConnectorSettingsModule', () => {
     expect(snapshot.customServers).toHaveLength(1)
     const added = snapshot.customServers[0]
     expect(added).toMatchObject({
+      slug: 'my-mem',
       name: 'my-mem',
       transport: 'stdio',
       command: 'npx',
@@ -180,6 +181,28 @@ describe('ConnectorSettingsModule', () => {
     await expect(
       service.addCustomServer({ name: 'Chemistry', transport: 'stdio', command: 'example-mcp' })
     ).rejects.toThrow('reserved by a built-in connector')
+  })
+
+  it('separates the display name from the immutable host.mcp Connector ID', async () => {
+    const snapshot = await service.addCustomServer({
+      name: 'Example OAuth E2E',
+      transport: 'streamable_http',
+      url: 'https://mcp.example.test',
+      oauth: {}
+    })
+
+    expect(snapshot.customServers[0]).toMatchObject({
+      name: 'Example OAuth E2E',
+      slug: 'example-oauth-e2e'
+    })
+    await expect(
+      service.addCustomServer({
+        name: 'Another display name',
+        slug: 'example-oauth-e2e',
+        transport: 'stdio',
+        command: 'example-mcp'
+      })
+    ).rejects.toThrow('already exists')
   })
 
   it('exports only credential names and validates imports against installed connectors', async () => {
@@ -229,12 +252,14 @@ describe('ConnectorSettingsModule', () => {
       }
     })
     const id = snapshot.customServers[0].id
+    expect(snapshot.customServers[0].enabled).toBe(false)
     expect(snapshot.customServers[0].oauth).toEqual({
       authorizationServerUrl: 'https://example.com/oauth',
       scopes: ['openid', 'profile'],
       hasTokens: false
     })
     expect(snapshot.customServers[0].availability).toBe('unauthenticated')
+    await expect(service.setCustomServerEnabled({ id, enabled: true })).rejects.toThrow('Sign in')
 
     await service.saveCustomServerOAuthState(id, {
       tokens: { access_token: 'oauth-access', token_type: 'Bearer' }
@@ -248,6 +273,10 @@ describe('ConnectorSettingsModule', () => {
     const connected = (await service.listConnectors()).customServers[0]
     expect(connected.oauth?.hasTokens).toBe(true)
     expect(connected.availability).toBeUndefined()
+    expect(connected.enabled).toBe(false)
+
+    const enabled = await service.setCustomServerEnabled({ id, enabled: true })
+    expect(enabled.customServers[0].enabled).toBe(true)
   })
 
   it('clears OAuth credentials when the remote endpoint changes', async () => {
@@ -261,6 +290,7 @@ describe('ConnectorSettingsModule', () => {
     await service.saveCustomServerOAuthState(id, {
       tokens: { access_token: 'endpoint-token', token_type: 'Bearer' }
     })
+    await service.setCustomServerEnabled({ id, enabled: true })
 
     const updated = await service.updateCustomServer({
       id,
@@ -270,6 +300,7 @@ describe('ConnectorSettingsModule', () => {
 
     expect(updated.customServers[0]).toMatchObject({
       url: 'https://two.example/mcp',
+      enabled: false,
       availability: 'unauthenticated',
       oauth: { hasTokens: false }
     })

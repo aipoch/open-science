@@ -9,9 +9,11 @@ import type {
   CustomServerTransport
 } from '../../shared/settings'
 import { CONNECTOR_TEMPLATE_MAX_BYTES } from '../../shared/settings'
+import { isCustomConnectorSlug, toCustomConnectorSlug } from '../../shared/custom-connector'
 
 export type ConnectorTemplateSource = {
   id: string
+  slug: string
   name: string
   description?: string
   transport: CustomServerTransport
@@ -25,6 +27,7 @@ export type ConnectorTemplateSource = {
 
 type ParseOptions = {
   existingNames?: readonly string[]
+  existingSlugs?: readonly string[]
   bundledIds?: readonly string[]
 }
 
@@ -32,6 +35,7 @@ const ROOT_FIELDS = new Set([
   'schemaVersion',
   'kind',
   'name',
+  'slug',
   'description',
   'transport',
   'command',
@@ -404,6 +408,17 @@ export const parseConnectorTemplate = (
   }
 
   const name = readString(parsed.name, diagnostics, 'name', { required: true, max: 128 })
+  const requestedSlug = readString(parsed.slug, diagnostics, 'slug', { max: 64 })
+  const slug = requestedSlug ?? (name ? toCustomConnectorSlug(name) : undefined)
+  if (requestedSlug && !isCustomConnectorSlug(requestedSlug)) {
+    diagnostic(
+      diagnostics,
+      'error',
+      'connector-template.slug',
+      'slug must use only lowercase letters, numbers, and hyphens.',
+      'slug'
+    )
+  }
   const description = readString(parsed.description, diagnostics, 'description', { max: 2_000 })
   const transport = TRANSPORTS.has(parsed.transport as CustomServerTransport)
     ? (parsed.transport as CustomServerTransport)
@@ -506,12 +521,33 @@ export const parseConnectorTemplate = (
       )
     }
   }
+  if (slug) {
+    if (options.bundledIds?.includes(slug)) {
+      diagnostic(
+        diagnostics,
+        'error',
+        'connector-template.reserved-slug',
+        `Connector ID "${slug}" is reserved by a built-in connector.`,
+        'slug'
+      )
+    }
+    if (options.existingSlugs?.includes(slug)) {
+      diagnostic(
+        diagnostics,
+        'error',
+        'connector-template.duplicate-slug',
+        `A custom Connector with ID "${slug}" is already installed.`,
+        'slug'
+      )
+    }
+  }
 
-  if (hasErrors(diagnostics) || !name || !transport) return { diagnostics, ready: false }
+  if (hasErrors(diagnostics) || !name || !slug || !transport) return { diagnostics, ready: false }
   const definition: ConnectorTemplateDefinition = {
     schemaVersion: 1,
     kind: 'open-science.connector',
     name,
+    slug,
     transport,
     ...(description ? { description } : {}),
     ...(command ? { command } : {}),
@@ -526,13 +562,6 @@ export const parseConnectorTemplate = (
 const templateJson = (definition: ConnectorTemplateDefinition): string =>
   `${JSON.stringify(definition, null, 2)}\n`
 
-const slug = (name: string): string =>
-  name
-    .toLowerCase()
-    .replace(/[^a-z0-9]+/g, '-')
-    .replace(/^-+|-+$/g, '')
-    .slice(0, 64) || 'connector'
-
 export const buildConnectorTemplateExport = (
   source: ConnectorTemplateSource
 ): { preview: ConnectorTemplateExportPreview; contents?: string } => {
@@ -540,6 +569,7 @@ export const buildConnectorTemplateExport = (
     schemaVersion: 1,
     kind: 'open-science.connector',
     name: source.name,
+    slug: source.slug,
     transport: source.transport,
     ...(source.description ? { description: source.description } : {}),
     ...(source.command ? { command: source.command } : {}),
@@ -564,9 +594,7 @@ export const buildConnectorTemplateExport = (
     preview: {
       ...parsed,
       connectorId: source.id,
-      ...(digest
-        ? { digest, suggestedFileName: `open-science-connector-${slug(source.name)}.json` }
-        : {})
+      ...(digest ? { digest, suggestedFileName: `open-science-connector-${source.slug}.json` } : {})
     },
     ...(parsed.ready ? { contents } : {})
   }

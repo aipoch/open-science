@@ -55,6 +55,7 @@ const seedConnectors = [
 const seedCustomServers = [
   {
     id: 'my-mcp',
+    slug: 'my-mcp',
     name: 'My MCP',
     description: 'A local tool server',
     transport: 'stdio' as const,
@@ -227,9 +228,10 @@ describe('ConnectorsPanel (groups)', () => {
       customServers: [
         {
           id: 'oauth-mcp',
+          slug: 'oauth-mcp',
           name: 'OAuth MCP',
           transport: 'streamable_http',
-          enabled: true,
+          enabled: false,
           url: 'https://mcp.example.test',
           oauth: { hasTokens: false }
         }
@@ -238,6 +240,9 @@ describe('ConnectorsPanel (groups)', () => {
     act(() => {
       root.render(<ConnectorsPanel onNavigate={vi.fn()} />)
     })
+    const waitingToggle = document.body.querySelector<HTMLButtonElement>('[aria-label="OAuth MCP"]')
+    expect(waitingToggle?.disabled).toBe(true)
+    expect(waitingToggle?.getAttribute('data-state')).toBe('unchecked')
 
     await act(async () => {
       clickButtonByText('Sign in')
@@ -251,6 +256,7 @@ describe('ConnectorsPanel (groups)', () => {
         customServers: [
           {
             id: 'oauth-mcp',
+            slug: 'oauth-mcp',
             name: 'OAuth MCP',
             transport: 'streamable_http',
             enabled: true,
@@ -261,6 +267,11 @@ describe('ConnectorsPanel (groups)', () => {
       })
     })
     expect(document.body.textContent).toContain('Connected')
+    const connectedToggle = document.body.querySelector<HTMLButtonElement>(
+      '[aria-label="OAuth MCP"]'
+    )
+    expect(connectedToggle?.disabled).toBe(false)
+    expect(connectedToggle?.getAttribute('data-state')).toBe('checked')
   })
 
   it('cancels a waiting OAuth sign-in and allows retry', async () => {
@@ -277,9 +288,10 @@ describe('ConnectorsPanel (groups)', () => {
       customServers: [
         {
           id: 'oauth-mcp',
+          slug: 'oauth-mcp',
           name: 'OAuth MCP',
           transport: 'streamable_http',
-          enabled: true,
+          enabled: false,
           url: 'https://mcp.example.test',
           oauth: { hasTokens: false }
         }

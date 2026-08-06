@@ -110,15 +110,37 @@ describe('selectEnabledCustomServers', () => {
     url: 'https://example.com/sse',
     enabled: true
   }
+  const unauthenticatedOAuthServer: StoredCustomMcpServer = {
+    ...remoteServer,
+    id: 'srv-oauth-waiting',
+    oauth: {}
+  }
+  const authenticatedOAuthServer: StoredCustomMcpServer = {
+    ...unauthenticatedOAuthServer,
+    id: 'srv-oauth-ready',
+    oauthState: { tokens: { access_token: 'access', token_type: 'Bearer' } }
+  }
 
   it('returns enabled servers across all supported transports', () => {
     const connectors: StoredConnectors = {
       enabledIds: [],
       autoAllowIds: [],
-      customMcpServers: [stdioServer, disabledServer, remoteServer, sseServer]
+      customMcpServers: [
+        stdioServer,
+        disabledServer,
+        remoteServer,
+        sseServer,
+        unauthenticatedOAuthServer,
+        authenticatedOAuthServer
+      ]
     }
 
-    expect(selectEnabledCustomServers(connectors)).toEqual([stdioServer, remoteServer, sseServer])
+    expect(selectEnabledCustomServers(connectors)).toEqual([
+      stdioServer,
+      remoteServer,
+      sseServer,
+      authenticatedOAuthServer
+    ])
   })
 
   it('returns an empty array when connectors is undefined', () => {
