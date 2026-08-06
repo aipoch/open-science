@@ -191,9 +191,12 @@ export const ComposerYourFilesMenu = ({
   return (
     <>
       <DropdownMenuSub onOpenChange={handleSubOpenChange}>
-        <DropdownMenuSubTrigger data-testid="composer-your-files-trigger">
-          <Folder className="mr-2 size-4 text-text-300" strokeWidth={1.8} aria-hidden="true" />
-          <span className="min-w-0 flex-1">Your files</span>
+        <DropdownMenuSubTrigger
+          data-testid="composer-your-files-trigger"
+          className="items-center gap-2"
+        >
+          <Folder className="size-4 shrink-0 text-text-200" strokeWidth={2} aria-hidden="true" />
+          <span className="min-w-0 flex-1 text-[13px] font-medium leading-5">Your files</span>
           <ChevronRight className="size-3.5 shrink-0 text-text-300" aria-hidden="true" />
         </DropdownMenuSubTrigger>
         <DropdownMenuSubContent className="max-h-[340px] w-[300px] overflow-y-auto">

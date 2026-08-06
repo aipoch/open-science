@@ -837,18 +837,21 @@ const ConversationPanel = ({
                               data-testid="menu-attach-files"
                               disabled={!canEditDraft || isUploadingAttachments}
                               onSelect={() => fileInputRef.current?.click()}
-                              // Two-line row: the limits copy lives inside the item so hover paints
-                              // one shared background behind the label and its description.
-                              className="items-start"
+                              // Two-line row matching the agent-controls menu style: the limits copy
+                              // lives inside the item so hover paints one shared background.
+                              className="items-center gap-2"
                             >
                               <FileText
-                                className="mt-0.5 mr-2 size-4 text-text-300"
+                                className="size-4 shrink-0 text-text-200"
+                                strokeWidth={2}
                                 aria-hidden="true"
                               />
-                              <span className="flex min-w-0 flex-col">
-                                Attach files
+                              <span className="min-w-0 flex-1">
+                                <span className="block text-[13px] font-medium leading-5">
+                                  Attach files
+                                </span>
                                 <span
-                                  className="text-[11px] leading-4 text-text-300"
+                                  className="block text-[11px] leading-4 text-text-300"
                                   data-testid="attachment-limits"
                                 >
                                   Any file type · {formatUploadSizeLimit(MAX_UPLOAD_FILE_BYTES)} per
@@ -895,9 +898,16 @@ const ConversationPanel = ({
                               onSelect={() => {
                                 if (canEditDraft && !isRequestReviewDisabled) onRequestReview()
                               }}
+                              className="items-center gap-2"
                             >
-                              <ScanEye className="mr-2 size-4 text-text-300" aria-hidden="true" />
-                              Request review
+                              <ScanEye
+                                className="size-4 shrink-0 text-text-200"
+                                strokeWidth={2}
+                                aria-hidden="true"
+                              />
+                              <span className="text-[13px] font-medium leading-5">
+                                Request review
+                              </span>
                             </DropdownMenuItem>
                           </DropdownMenuContent>
                         </DropdownMenu>
