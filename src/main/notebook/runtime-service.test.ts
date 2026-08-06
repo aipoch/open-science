@@ -48,6 +48,7 @@ import {
   envPrefix,
   isProtectedIdentityRepairRequired,
   isRepairRequired,
+  managedRepairRegistryKey,
   pythonBin,
   rBin,
   repairRegistryPath,
@@ -4179,6 +4180,31 @@ describe('notebook runtime service', () => {
       expect(calls[0][1]?.cranMirror).toBeUndefined()
     })
 
+    it('resolves the mirror before returning a package admission refusal', async () => {
+      const root = await createStorageRoot()
+      const probe = vi.fn(async () => {
+        throw new Error('probe unreachable (test)')
+      })
+      const service = new NotebookRuntimeService({
+        configRoot: root,
+        dataRoot: root,
+        projectName: 'default-project',
+        repository: new NotebookRunRepository(root),
+        getPackageMirror: () => undefined,
+        mirrorProbe: { probe }
+      })
+
+      resetAutoMirrorCache()
+      const result = await service.managePackages({
+        language: 'python',
+        packages: ['numpy'],
+        sessionId: 'unloaded-session'
+      })
+
+      expect(probe).toHaveBeenCalled()
+      expect(result.error).toContain('RUNTIME_SESSION_UNAVAILABLE')
+    })
+
     it('falls back to the region default mirror when nothing is configured', async () => {
       const root = await createStorageRoot()
       const calls: Array<Partial<InstallDepsForTest> | undefined> = []
@@ -6898,6 +6924,40 @@ describe('v4 runtime bindings & agent tools', () => {
     expect(result.ok).toBe(true)
     expect(installPackagesImpl).toHaveBeenCalledOnce()
     expect(isRepairRequired(runtimeRoot, userPyA.envId)).toBe(false)
+  })
+
+  it('recomputes repair aliases after installation before clearing legacy markers', async () => {
+    const root = await createStorageRoot()
+    const runtimeRoot = getRuntimeRoot(root)
+    const postInstallAlias = 'post-install-canonical-runtime'
+    addRepairRequired(runtimeRoot, postInstallAlias)
+    const service = bindingService(root, {
+      installPackagesImpl: async () => ({ ok: true, needsRestart: false, log: 'repaired' })
+    })
+    const repairRegistryKeys = vi.spyOn(
+      service as unknown as {
+        repairRegistryKeys: (
+          language: 'python' | 'r',
+          environment: string,
+          binding: unknown,
+          runtimeRoot: string
+        ) => string[]
+      },
+      'repairRegistryKeys'
+    )
+    repairRegistryKeys
+      .mockReturnValueOnce([DEFAULT_PY_ENV, managedRepairRegistryKey(DEFAULT_PY_ENV, 'python')])
+      .mockReturnValueOnce([
+        DEFAULT_PY_ENV,
+        managedRepairRegistryKey(DEFAULT_PY_ENV, 'python'),
+        postInstallAlias
+      ])
+
+    const result = await service.managePackages({ language: 'python', packages: ['numpy'] })
+
+    expect(result.ok).toBe(true)
+    expect(repairRegistryKeys).toHaveBeenCalledTimes(2)
+    expect(isRepairRequired(runtimeRoot, postInstallAlias)).toBe(false)
   })
 
   it('does not quarantine an external binding that shares the managed default env key', async () => {
