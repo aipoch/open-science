@@ -2775,6 +2775,51 @@ describe('truncateSessionFromMessage', () => {
     expect(useSessionStore.getState().sessions[0].branchContextResetRequired).toBe(true)
   })
 
+  it('materializes only the selected Message Branch Plan activities', () => {
+    // Transcript projection receives this already-selected compatibility view. Exercise the public
+    // Branch switch here, where the Graph is resolved into Session messages and activities.
+    seedSession({
+      activities: [
+        {
+          ...createActivity('original-plan', baseTime + 250),
+          title: 'generate_plan',
+          providerToolName: 'generate_plan',
+          rawInput: { decision: 'approved' }
+        }
+      ]
+    })
+    useSessionStore.getState().truncateSessionFromMessage('session-1', 'user-2')
+    const edited = useSessionStore.getState().appendUserMessage({
+      sessionId: 'session-1',
+      content: 'edited user-2'
+    })
+    useSessionStore.getState().upsertToolActivity({
+      sessionId: 'session-1',
+      toolCallId: 'edited-plan',
+      eventId: 'edited-plan-event',
+      promptMessageId: edited?.messageId,
+      title: 'generate_plan',
+      providerToolName: 'generate_plan',
+      status: 'completed',
+      rawInput: { decision: 'rejected' }
+    })
+    useSessionStore.getState().finishRun('session-1')
+
+    const editedSession = useSessionStore.getState().sessions[0]
+    const originalBranchId = editedSession.conversationGraph?.branches[0].id
+    const editedBranchId = editedSession.conversationGraph?.frames[0].activeBranchId
+
+    useSessionStore.getState().activateMessageBranch('session-1', originalBranchId ?? '')
+    expect(
+      useSessionStore.getState().sessions[0].activities?.map((activity) => activity.id)
+    ).toEqual(['original-plan'])
+
+    useSessionStore.getState().activateMessageBranch('session-1', editedBranchId ?? '')
+    expect(
+      useSessionStore.getState().sessions[0].activities?.map((activity) => activity.id)
+    ).toEqual(['edited-plan'])
+  })
+
   it('does not replay an original Branch event onto an edited Branch', () => {
     seedSession({
       messages: [

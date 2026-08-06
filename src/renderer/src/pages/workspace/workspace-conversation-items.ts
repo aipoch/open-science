@@ -15,13 +15,16 @@ type ConversationMessageItem = {
   message: ChatMessage
 }
 
-type ConversationActivityItem = {
+type ConversationActivityItemBase<ItemType extends 'activity' | 'plan-activity'> = {
   id: string
-  type: 'activity'
+  type: ItemType
   createdAt: number
   sortIndex: number
   activity: ToolActivity
 }
+
+type ConversationActivityItem = ConversationActivityItemBase<'activity'>
+type ConversationPlanActivityItem = ConversationActivityItemBase<'plan-activity'>
 
 // A lifecycle row is a read-only annotation on its originating user turn. It is not another user
 // message and cannot own a separate continuation identity.
@@ -31,7 +34,11 @@ type ConversationHandoffItem = HandoffTranscriptProjection & {
   sortIndex: number
 }
 
-type ConversationItem = ConversationMessageItem | ConversationActivityItem | ConversationHandoffItem
+type ConversationItem =
+  | ConversationMessageItem
+  | ConversationActivityItem
+  | ConversationPlanActivityItem
+  | ConversationHandoffItem
 
 const KNOWN_TITLE_TOOL_NAMES = new Set(['ToolSearch'])
 
@@ -40,11 +47,18 @@ const KNOWN_TITLE_TOOL_NAMES = new Set(['ToolSearch'])
 const NOTEBOOK_PROVIDER_TOOL_PATTERN =
   /^(?:mcp__|mcp\.)?open[-_]science[-_]notebook(?:__|\.)([^.]+)$/iu
 const PLAN_PROVIDER_TOOL_PATTERN =
-  /^(?:(?:mcp__|mcp\.)?open[-_]science[-_]plan(?:__|\.|_)|)(?:generate_plan|update_step_status)$/iu
+  /^(?:(?:mcp__|mcp\.)?open[-_]science[-_]plan(?:__|\.|_)|)(generate_plan|update_step_status)$/iu
 
-const isSuccessfulPlanActivity = (activity: ToolActivity): boolean =>
-  activity.status !== 'failed' &&
-  PLAN_PROVIDER_TOOL_PATTERN.test(activity.providerToolName?.trim() ?? activity.title.trim())
+const getPlanToolKind = (
+  activity: ToolActivity
+): 'generate_plan' | 'update_step_status' | undefined => {
+  const names = [activity.providerToolName, activity.title]
+  for (const name of names) {
+    const match = PLAN_PROVIDER_TOOL_PATTERN.exec(name?.trim() ?? '')
+    if (match?.[1] === 'generate_plan' || match?.[1] === 'update_step_status') return match[1]
+  }
+  return undefined
+}
 
 // Returns the notebook tool suffix (e.g. "notebook_execute") for a notebook MCP tool identity, or
 // undefined when the name is not a notebook tool. Framework-agnostic across the two server-name forms.
@@ -151,15 +165,22 @@ const createConversationItems = (
       message
     })) ?? []
   const activities: ConversationItem[] =
-    session?.activities
-      ?.filter((activity) => !isSuccessfulPlanActivity(activity))
-      .map((activity) => ({
-        id: `activity-${activity.id}`,
-        type: 'activity',
-        createdAt: activity.createdAt,
-        sortIndex: activity.sortIndex,
-        activity
-      })) ?? []
+    session?.activities?.flatMap((activity): ConversationItem[] => {
+      const planToolKind = getPlanToolKind(activity)
+      if (planToolKind === 'update_step_status') return []
+      return [
+        {
+          id:
+            planToolKind === 'generate_plan'
+              ? `plan-activity-${activity.id}`
+              : `activity-${activity.id}`,
+          type: planToolKind === 'generate_plan' ? 'plan-activity' : 'activity',
+          createdAt: activity.createdAt,
+          sortIndex: activity.sortIndex,
+          activity
+        }
+      ]
+    }) ?? []
   const handoffs: ConversationItem[] = projectHandoffLifecycle(handoffEvents).map((handoff) => ({
     ...handoff,
     type: 'handoff',

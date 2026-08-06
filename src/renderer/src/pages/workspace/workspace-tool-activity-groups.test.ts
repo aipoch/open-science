@@ -50,6 +50,14 @@ const activityItem = (activity: ToolActivity): ConversationItem => ({
   activity
 })
 
+const planActivityItem = (activity: ToolActivity): ConversationItem => ({
+  id: `plan-activity-${activity.id}`,
+  type: 'plan-activity',
+  createdAt: activity.createdAt,
+  sortIndex: activity.sortIndex,
+  activity
+})
+
 // The ToolSearch wrapper row that can precede concrete search entries.
 const toolSearchWrapper = (overrides: Partial<ToolActivity> = {}): ToolActivity =>
   createActivity({ id: 'tool-search-wrapper', title: 'ToolSearch', ...overrides })
@@ -132,6 +140,27 @@ describe('groupConversationItems', () => {
       expect.objectContaining({ id: 'activity-group-g1', title: 'Inspect files' }),
       expect.objectContaining({ id: 'activity-group-g2', title: 'Apply changes' })
     ])
+  })
+
+  it('keeps Plan call records standalone and out of adjacent tool counts', () => {
+    const grouped = groupConversationItems([
+      activityItem(createActivity({ id: 'read-1', toolKind: 'read', sortIndex: 1 })),
+      planActivityItem(
+        createActivity({ id: 'plan-1', providerToolName: 'generate_plan', sortIndex: 2 })
+      ),
+      activityItem(createActivity({ id: 'read-2', toolKind: 'read', sortIndex: 3 }))
+    ])
+
+    expect(grouped.map((item) => item.type)).toEqual([
+      'activity-group',
+      'plan-activity',
+      'activity-group'
+    ])
+    expect(
+      grouped
+        .filter((item) => item.type === 'activity-group')
+        .map((item) => formatStepCount(item.activities))
+    ).toEqual(['1 step', '1 step'])
   })
 })
 

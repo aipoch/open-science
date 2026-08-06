@@ -1203,6 +1203,55 @@ describe('WorkspaceMessageScroller tool detail rows', () => {
 })
 
 describe('WorkspaceActivityGroup header summaries', () => {
+  it('renders generate_plan outside ordinary tool groups without counting it as a tool step', async () => {
+    const html = await renderScroller(
+      createSession({
+        status: 'idle',
+        messages: [createMessage({ id: 'prompt-1' })],
+        activities: [
+          createActivity({
+            id: 'read-1',
+            title: 'Read source',
+            toolKind: 'read',
+            sortIndex: 2,
+            createdAt: 1710000000001
+          }),
+          createActivity({
+            id: 'plan-1',
+            title: 'generate_plan',
+            providerToolName: 'mcp__open-science-plan__generate_plan',
+            sortIndex: 3,
+            createdAt: 1710000000002,
+            rawInput: {
+              arguments: {
+                task_summary: 'Prepare the report',
+                phases: [
+                  {
+                    name: 'Delivery',
+                    delegations: [
+                      {
+                        name: 'Writing',
+                        steps: [{ title: 'Draft report', description: 'Write the findings.' }]
+                      }
+                    ]
+                  }
+                ],
+                desired_outputs: ['Report'],
+                feasibility: { confidence: 'high', rationale: 'Inputs are ready.' }
+              }
+            }
+          })
+        ]
+      })
+    )
+
+    expect(html).toContain('data-testid="plan-call-record"')
+    expect(html).toContain('Prepare the report')
+    expect(html).toContain('Read a file')
+    expect(html.match(/1 step/g)).toHaveLength(2)
+    expect(html).not.toContain('2 steps')
+  })
+
   it('summarizes a mixed group by tool category', async () => {
     const html = await renderScroller(
       createSession({
