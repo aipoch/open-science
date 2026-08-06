@@ -13,16 +13,32 @@ test('normalizes a Windows-style Path before injecting the fake Agent directory'
   expect(environment.ELECTRON_RENDERER_URL).toBeUndefined()
 })
 
-test('launches the packaged executable without the source application argument when configured', () => {
+test('enables the basic password store only for Linux E2E profiles', () => {
+  expect(electronLaunchTarget('profile-root', {}, 'linux')).toEqual({
+    args: ['--user-data-dir=profile-root', '--password-store=basic', expect.any(String)]
+  })
+  expect(electronLaunchTarget('profile-root', {}, 'darwin')).toEqual({
+    args: ['--user-data-dir=profile-root', expect.any(String)]
+  })
+  expect(electronLaunchTarget('profile-root', {}, 'win32')).toEqual({
+    args: ['--user-data-dir=profile-root', expect.any(String)]
+  })
+})
+
+test('launches packaged and source applications with the expected Linux arguments', () => {
   expect(
-    electronLaunchTarget('profile-root', {
-      OPEN_SCIENCE_E2E_EXECUTABLE: '/artifacts/Open Science.app/Contents/MacOS/Open Science'
-    })
+    electronLaunchTarget(
+      'profile-root',
+      {
+        OPEN_SCIENCE_E2E_EXECUTABLE: '/artifacts/Open Science.app/Contents/MacOS/Open Science'
+      },
+      'linux'
+    )
   ).toEqual({
-    args: ['--user-data-dir=profile-root'],
+    args: ['--user-data-dir=profile-root', '--password-store=basic'],
     executablePath: '/artifacts/Open Science.app/Contents/MacOS/Open Science'
   })
-  expect(electronLaunchTarget('profile-root', {})).toEqual({
-    args: ['--user-data-dir=profile-root', expect.any(String)]
+  expect(electronLaunchTarget('profile-root', {}, 'linux')).toEqual({
+    args: ['--user-data-dir=profile-root', '--password-store=basic', expect.any(String)]
   })
 })

@@ -13,11 +13,16 @@ const FAKE_PROVIDER_NAME = 'Electron E2E provider'
 
 const electronLaunchTarget = (
   userDataRoot: string,
-  environment: NodeJS.ProcessEnv = process.env
+  environment: NodeJS.ProcessEnv = process.env,
+  platform: NodeJS.Platform = process.platform
 ): { args: string[]; executablePath?: string } => {
   const executablePath = environment.OPEN_SCIENCE_E2E_EXECUTABLE
   return {
-    args: [`--user-data-dir=${userDataRoot}`, ...(executablePath ? [] : [APP_ROOT])],
+    args: [
+      `--user-data-dir=${userDataRoot}`,
+      ...(platform === 'linux' ? ['--password-store=basic'] : []),
+      ...(executablePath ? [] : [APP_ROOT])
+    ],
     ...(executablePath ? { executablePath } : {})
   }
 }
