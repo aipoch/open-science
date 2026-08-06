@@ -29,6 +29,9 @@ export type ProjectFileItem = {
 export type ProjectFilesSearch = {
   // Filename substring search is ASCII case-insensitive; non-ASCII characters match literally.
   filenameContains: string
+  // Active workspace surfaces exclude archived Sessions at query time so counts and cursors match
+  // the visible Files catalog. Archive management continues to query without this filter.
+  excludedSessionIds?: string[]
 }
 
 export type GetProjectFilesOverviewRequest = {
@@ -60,6 +63,7 @@ export type SearchArtifactsRequest = {
   primaryProjectId: string
   otherProjectIds: string[]
   filenameContains?: string
+  excludedSessionIds?: string[]
   primaryLimit: number
   primaryCursor?: string
   otherLimit: 0 | 1 | 2 | 3 | 4 | 5

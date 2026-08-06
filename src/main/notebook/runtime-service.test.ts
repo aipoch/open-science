@@ -48,6 +48,7 @@ import {
   envPrefix,
   isProtectedIdentityRepairRequired,
   isRepairRequired,
+  managedRepairRegistryKey,
   pythonBin,
   rBin,
   repairRegistryPath,
@@ -737,16 +738,15 @@ describe('notebook runtime service', () => {
 
   it('announces agent notebook availability once while publishing notebook changes', async () => {
     const root = await createStorageRoot()
-    const availableSessions: string[] = []
-    const changedSessions: string[] = []
+    const notifications: string[] = []
     const service = new NotebookRuntimeService({
       configRoot: root,
       dataRoot: root,
       projectName: 'default-project',
       repository: new NotebookRunRepository(root),
       callbacks: {
-        onNotebookAvailable: (event) => availableSessions.push(event.sessionId),
-        onNotebookChanged: (event) => changedSessions.push(event.sessionId)
+        onNotebookAvailable: (event) => notifications.push(`available:${event.sessionId}`),
+        onNotebookChanged: (event) => notifications.push(`changed:${event.sessionId}`)
       },
       executorFactory: () => ({
         execute: async (request) => ({
@@ -768,7 +768,7 @@ describe('notebook runtime service', () => {
       source: 'user'
     })
 
-    expect(availableSessions).toEqual([])
+    expect(notifications).toEqual(['changed:user-session'])
 
     const begin = await service.beginCodeCell({
       projectName: 'default-project',
@@ -797,9 +797,15 @@ describe('notebook runtime service', () => {
       cellId: begin.cellId
     })
 
-    expect(availableSessions).toEqual(['agent-session'])
-    expect(changedSessions).toContain('agent-session')
-    expect(changedSessions.filter((sessionId) => sessionId === 'agent-session').length).toBe(5)
+    expect(notifications).toEqual([
+      'changed:user-session',
+      'available:agent-session',
+      'changed:agent-session',
+      'changed:agent-session',
+      'changed:agent-session',
+      'changed:agent-session',
+      'changed:agent-session'
+    ])
   })
 
   it('keeps agent notebook availability process-scoped across session shutdown', async () => {
@@ -4174,6 +4180,31 @@ describe('notebook runtime service', () => {
       expect(calls[0][1]?.cranMirror).toBeUndefined()
     })
 
+    it('resolves the mirror before returning a package admission refusal', async () => {
+      const root = await createStorageRoot()
+      const probe = vi.fn(async () => {
+        throw new Error('probe unreachable (test)')
+      })
+      const service = new NotebookRuntimeService({
+        configRoot: root,
+        dataRoot: root,
+        projectName: 'default-project',
+        repository: new NotebookRunRepository(root),
+        getPackageMirror: () => undefined,
+        mirrorProbe: { probe }
+      })
+
+      resetAutoMirrorCache()
+      const result = await service.managePackages({
+        language: 'python',
+        packages: ['numpy'],
+        sessionId: 'unloaded-session'
+      })
+
+      expect(probe).toHaveBeenCalled()
+      expect(result.error).toContain('RUNTIME_SESSION_UNAVAILABLE')
+    })
+
     it('falls back to the region default mirror when nothing is configured', async () => {
       const root = await createStorageRoot()
       const calls: Array<Partial<InstallDepsForTest> | undefined> = []
@@ -6893,6 +6924,40 @@ describe('v4 runtime bindings & agent tools', () => {
     expect(result.ok).toBe(true)
     expect(installPackagesImpl).toHaveBeenCalledOnce()
     expect(isRepairRequired(runtimeRoot, userPyA.envId)).toBe(false)
+  })
+
+  it('recomputes repair aliases after installation before clearing legacy markers', async () => {
+    const root = await createStorageRoot()
+    const runtimeRoot = getRuntimeRoot(root)
+    const postInstallAlias = 'post-install-canonical-runtime'
+    addRepairRequired(runtimeRoot, postInstallAlias)
+    const service = bindingService(root, {
+      installPackagesImpl: async () => ({ ok: true, needsRestart: false, log: 'repaired' })
+    })
+    const repairRegistryKeys = vi.spyOn(
+      service as unknown as {
+        repairRegistryKeys: (
+          language: 'python' | 'r',
+          environment: string,
+          binding: unknown,
+          runtimeRoot: string
+        ) => string[]
+      },
+      'repairRegistryKeys'
+    )
+    repairRegistryKeys
+      .mockReturnValueOnce([DEFAULT_PY_ENV, managedRepairRegistryKey(DEFAULT_PY_ENV, 'python')])
+      .mockReturnValueOnce([
+        DEFAULT_PY_ENV,
+        managedRepairRegistryKey(DEFAULT_PY_ENV, 'python'),
+        postInstallAlias
+      ])
+
+    const result = await service.managePackages({ language: 'python', packages: ['numpy'] })
+
+    expect(result.ok).toBe(true)
+    expect(repairRegistryKeys).toHaveBeenCalledTimes(2)
+    expect(isRepairRequired(runtimeRoot, postInstallAlias)).toBe(false)
   })
 
   it('does not quarantine an external binding that shares the managed default env key', async () => {

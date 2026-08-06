@@ -36,6 +36,7 @@ import {
 import { NotebookInputDataStrip } from './NotebookInputDataStrip'
 import { NotebookDialogCell } from './SessionNotebookDialog'
 import { WorkspaceActivityGroup } from './WorkspaceActivityGroup'
+import { WorkspacePlanActivityRecord } from './WorkspacePlanActivityRecord'
 import { WorkspaceMessageItem } from './WorkspaceMessageItem'
 import { createConversationItems } from './workspace-conversation-items'
 import { groupConversationItems } from './workspace-tool-activity-groups'
@@ -338,6 +339,16 @@ const ProvenanceMessagesTimeline = ({
                 // Artifact provenance builds its immutable transcript from persisted messages and
                 // activities only, so no live coordinator lifecycle rows are supplied here.
                 if (conversationItem.type === 'handoff') return null
+
+                if (conversationItem.type === 'plan-activity') {
+                  return (
+                    <WorkspacePlanActivityRecord
+                      key={conversationItem.id}
+                      activity={conversationItem.activity}
+                      contentPaddingClassName="px-0 md:px-0"
+                    />
+                  )
+                }
 
                 return (
                   <WorkspaceActivityGroup

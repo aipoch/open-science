@@ -33,6 +33,7 @@ import { createAcpRuntime } from './acp/runtime-composition'
 import { createAcpCreateSessionWorkflow } from './acp/create-session-workflow'
 import { createAcpHandlerWorkflows } from './acp/handler-workflows'
 import { createAcpTaskAgentPort } from './acp/task-agent-port'
+import { ArchiveCoordinator } from './archive/coordinator'
 import {
   createArtifactHandlers,
   createDefaultArtifactRepository,
@@ -258,6 +259,7 @@ export type ApplicationRuntimeInterfaces = {
   settingsService: WindowSettingsCapabilities
   taskAgent: TaskAgentPort
   sessionDeletionCapability: Pick<SessionPersistenceCoordinator, 'setSessionDeletionHandlers'>
+  archiveCapability: Pick<ArchiveCoordinator, 'isSessionAvailableById' | 'setMarkReadSessions'>
   detectActiveSessions: () => ReturnType<typeof detectActiveSessions>
   prepareForQuit: () => Promise<Extract<ShutdownStepOutcome, 'completed' | 'timeout' | 'failed'>>
 }
@@ -445,6 +447,10 @@ const createApplicationModules = async (
   const runtimeRef: { current: ReturnType<typeof createAcpRuntime> | undefined } = {
     current: undefined
   }
+  const notebookActivityRef: {
+    current:
+      { getActiveNotebookSessions(): { projectName: string; sessionId: string }[] } | undefined
+  } = { current: undefined }
 
   // Construct one storage/index/deletion graph for every related IPC surface. Sharing these instances
   // is essential: separate coordinators would have independent queues and recovery gates.
@@ -490,7 +496,32 @@ const createApplicationModules = async (
     artifactProvenanceRepository,
     permissionGrantRegistry
   )
-  const projectHandlers = createProjectHandlers(projectRepository, projectDeletionCoordinator)
+  const detectArchiveBlockingSessions = (): ReturnType<typeof detectActiveSessions> =>
+    detectActiveSessions({
+      runtime: {
+        getActivePromptSessions: () => runtimeRef.current?.getActivePromptSessions() ?? []
+      },
+      notebook: {
+        getActiveNotebookSessions: () =>
+          notebookActivityRef.current?.getActiveNotebookSessions() ?? []
+      }
+    })
+  const archiveCoordinator = new ArchiveCoordinator(
+    projectRepository,
+    sessionPersistenceCoordinator,
+    {
+      isSessionBusy: (projectId, sessionId) =>
+        detectArchiveBlockingSessions().some(
+          (session) => session.projectId === projectId && session.sessionId === sessionId
+        ),
+      isProjectBusy: (projectId) =>
+        detectArchiveBlockingSessions().some((session) => session.projectId === projectId),
+      liveSessionProjectId: (sessionId) => runtimeRef.current?.liveSessionProjectId(sessionId)
+    }
+  )
+  const projectHandlers = createProjectHandlers(projectRepository, projectDeletionCoordinator, {
+    updateArchive: (request) => archiveCoordinator.updateProjectArchive(request)
+  })
   const projectFilesHandlers = createProjectFilesHandlers(
     projectFilesRepository,
     sessionPersistenceCoordinator,
@@ -519,6 +550,10 @@ const createApplicationModules = async (
         )
       }
       return { created, session: durableSession }
+    },
+    updateArchive: async (request) => {
+      await projectDeletionCoordinator.recoverPendingDeletions()
+      return archiveCoordinator.updateSessionArchive(request)
     },
     deleteSession: async (projectId, sessionId) => {
       await projectDeletionCoordinator.recoverPendingDeletions()
@@ -577,6 +612,7 @@ const createApplicationModules = async (
     commands: notebookCommands,
     localRpc: notebookLocalRpc
   } = notebookApplication
+  notebookActivityRef.current = notebookService
 
   // Builtins are validated once at startup from read-only repository resources. Package imports use
   // the same repository while keeping their dynamic Connector/custom-Skill catalog separate.
@@ -1122,13 +1158,26 @@ const createApplicationModules = async (
   )
   surfaceAdapters = afterAcpAdapters
   runtimeRef.current = runtime
-  const createSessionWorkflow = createAcpCreateSessionWorkflow(runtime)
+  // Archive availability is checked at the final admission point, rather than trusting renderer
+  // visibility, so an archived Project/Session cannot restart work through another surface.
+  runtime.setPromptAdmissionGuard((sessionId) =>
+    archiveCoordinator.assertSessionAvailableById(sessionId)
+  )
+  const createSessionWorkflow = createAcpCreateSessionWorkflow(runtime, {
+    assertProjectAvailable: (projectId) => archiveCoordinator.assertProjectAvailable(projectId)
+  })
   const acpHandlerWorkflows = createAcpHandlerWorkflows(
     runtime,
     createSessionWorkflow,
-    taskNotifications
+    taskNotifications,
+    archiveCoordinator
   )
-  const taskAgent = createAcpTaskAgentPort(runtime, createSessionWorkflow, taskNotifications)
+  const taskAgent = createAcpTaskAgentPort(
+    runtime,
+    createSessionWorkflow,
+    taskNotifications,
+    archiveCoordinator
+  )
   {
     // Framework-specific adapters declare their own session selector. The registry resolves those
     // selectors before its generic fallback, so registration order cannot route a Codex/OpenCode
@@ -1692,7 +1741,7 @@ const createApplicationModules = async (
     return sender
   }
   const applicationCommandDependencies: ApplicationCommandCompositionDependencies = {
-    acp: { runtime, workflows: acpHandlerWorkflows },
+    acp: { runtime, workflows: acpHandlerWorkflows, archiveAvailability: archiveCoordinator },
     notebook: {
       workflows: notebookCommands,
       readInputPreview: (request) => notebookInputRegistry.readPreview(request)
@@ -1806,6 +1855,7 @@ const createApplicationModules = async (
     settingsService,
     taskAgent,
     sessionDeletionCapability: sessionPersistenceCoordinator,
+    archiveCapability: archiveCoordinator,
     detectActiveSessions: () => detectActiveSessions({ runtime, notebook: notebookService }),
     prepareForQuit: () => runtime.prepareForQuit(),
     electronAdapters: {

@@ -210,6 +210,66 @@ describe('AcpSessionUpdateProjector', () => {
     expect(effects.every(Object.isFrozen)).toBe(true)
   })
 
+  it('suppresses only the unscoped Codex compaction warning', () => {
+    const projector = createProjector()
+    const warning =
+      'Warning: Heads up: Long threads and multiple compactions can cause the model to be less accurate. Start a new thread when possible to keep threads small and targeted.\n\n'
+    const notification: SessionNotification = {
+      sessionId: 'session-1',
+      update: {
+        sessionUpdate: 'agent_message_chunk',
+        content: { type: 'text', text: warning }
+      }
+    }
+    const routing = {
+      framework: 'codex' as const,
+      eventId: 'event-warning',
+      visible: true,
+      reconnectPending: false,
+      mcpServerNames: []
+    }
+
+    expect(projector.route(notification, routing)).toEqual([])
+    expect(
+      projector.route(
+        {
+          sessionId: 'session-1',
+          update: {
+            sessionUpdate: 'agent_message_chunk',
+            messageId: 'model-message',
+            content: { type: 'text', text: warning }
+          }
+        },
+        routing
+      )
+    ).toMatchObject([
+      { kind: 'context-observation' },
+      { kind: 'context-refresh' },
+      { kind: 'visible-event', event: { text: warning } }
+    ])
+    expect(projector.route(notification, { ...routing, framework: 'opencode' })).toMatchObject([
+      { kind: 'context-observation' },
+      { kind: 'context-refresh' },
+      { kind: 'visible-event', event: { text: warning } }
+    ])
+    expect(
+      projector.route(
+        {
+          sessionId: 'session-1',
+          update: {
+            sessionUpdate: 'user_message_chunk',
+            content: { type: 'text', text: warning }
+          }
+        },
+        routing
+      )
+    ).toMatchObject([
+      { kind: 'context-observation' },
+      { kind: 'context-refresh' },
+      { kind: 'visible-event', event: { text: warning } }
+    ])
+  })
+
   it('projects usage to context state without a visible event and suppresses stale reconnect usage', () => {
     const projector = createProjector()
     const notification: SessionNotification = {

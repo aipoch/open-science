@@ -114,7 +114,18 @@ describe('WorkspacePage customize prefill', () => {
 
   beforeEach(() => {
     usePreviewWorkbenchStore.setState(createInitialPreviewWorkbenchState())
-    useProjectStore.setState({ projects: [] })
+    useProjectStore.setState({
+      projects: [
+        {
+          id: 'proj-1',
+          name: 'Project',
+          description: '',
+          isExample: false,
+          createdAt: 1,
+          updatedAt: 1
+        }
+      ]
+    })
     useNavigationStore.setState({
       view: 'workspace',
       activeProjectId: 'proj-1',

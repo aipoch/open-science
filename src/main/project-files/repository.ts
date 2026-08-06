@@ -96,7 +96,8 @@ type SearchArtifactCursor = {
 }
 
 type NormalizedSearch = {
-  filenameContains: string
+  filenameContains?: string
+  excludedSessionIds: string[]
   queryKey: string
 }
 
@@ -676,12 +677,19 @@ class ManagedFileIndexRepository {
           : 'artifact'
     const sessionId =
       normalizedCollection.kind === 'sessionArtifacts' ? normalizedCollection.sessionId : undefined
+    if (sessionId && search?.excludedSessionIds.includes(sessionId)) {
+      return { items: [], totalCount: 0 }
+    }
     const cursor = request.cursor ? decodeFileCursor(request.cursor, normalizedRequest) : undefined
     const where: Prisma.ManagedFileWhereInput = {
       projectId: request.projectId,
       ...(source ? { source } : {}),
       deletedAt: null,
-      ...(sessionId !== undefined ? { sessionId } : {}),
+      ...(sessionId !== undefined
+        ? { sessionId }
+        : search?.excludedSessionIds.length
+          ? { sessionId: { notIn: search.excludedSessionIds } }
+          : {}),
       ...(cursor
         ? {
             OR: [
@@ -764,19 +772,35 @@ class ManagedFileIndexRepository {
     }
 
     const primaryLimit = normalizeLimit(request.primaryLimit)
-    const search =
-      request.filenameContains === undefined
-        ? undefined
-        : normalizeSearch({ filenameContains: request.filenameContains })
+    const search = normalizeSearch({
+      filenameContains: request.filenameContains ?? '',
+      ...(request.excludedSessionIds === undefined
+        ? {}
+        : { excludedSessionIds: request.excludedSessionIds })
+    })
     const cursor = request.primaryCursor
       ? decodeSearchArtifactCursor(request.primaryCursor, request.primaryProjectId, search)
       : undefined
     const client = await this.getClient()
+    const excludedSessionIds = search?.excludedSessionIds ?? []
     const [primaryRows, primaryTotalCount, otherRows] = await Promise.all([
-      listMatchingArtifacts(client, request.primaryProjectId, search, cursor, primaryLimit),
-      countMatchingArtifacts(client, request.primaryProjectId, search),
+      listMatchingArtifacts(
+        client,
+        request.primaryProjectId,
+        search,
+        excludedSessionIds,
+        cursor,
+        primaryLimit
+      ),
+      countMatchingArtifacts(client, request.primaryProjectId, search, excludedSessionIds),
       request.otherLimit > 0 && otherProjectIds.length > 0
-        ? listOtherProjectArtifacts(client, otherProjectIds, search, request.otherLimit)
+        ? listOtherProjectArtifacts(
+            client,
+            otherProjectIds,
+            search,
+            excludedSessionIds,
+            request.otherLimit
+          )
         : Promise.resolve([])
     ])
     const primaryPageRows = primaryRows.slice(0, primaryLimit)
@@ -835,10 +859,16 @@ class ManagedFileIndexRepository {
     const limit = normalizeLimit(request.limit)
     const search = normalizeSearch(request.search)
     const cursor = request.cursor ? decodeGroupCursor(request.cursor, request) : undefined
-    const where: Prisma.ManagedFileSessionSyncWhereInput = {
+    const groupWhere: Prisma.ManagedFileSessionSyncWhereInput = {
       projectId: request.projectId,
       deletedAt: null,
       artifactCount: { gt: 0 },
+      ...(search?.excludedSessionIds.length
+        ? { sessionId: { notIn: search.excludedSessionIds } }
+        : {})
+    }
+    const where: Prisma.ManagedFileSessionSyncWhereInput = {
+      ...groupWhere,
       ...(cursor
         ? {
             OR: [
@@ -860,7 +890,7 @@ class ManagedFileIndexRepository {
             take: limit + 1
           }),
           client.managedFileSessionSync.count({
-            where: { projectId: request.projectId, deletedAt: null, artifactCount: { gt: 0 } }
+            where: groupWhere
           })
         ])
     const pageRows = rows.slice(0, limit)
@@ -909,6 +939,10 @@ class ManagedFileIndexRepository {
       source === undefined ? Prisma.empty : Prisma.sql`AND "source" = ${source}`
     const sessionPredicate =
       sessionId === undefined ? Prisma.empty : Prisma.sql`AND "sessionId" = ${sessionId}`
+    const exclusionPredicate = excludedSessionIdsPredicate(
+      Prisma.sql`"sessionId"`,
+      search.excludedSessionIds
+    )
     const cursorPredicate = cursor
       ? Prisma.sql`AND ("sortAtMs" < ${BigInt(cursor.sortAtMs)} OR ("sortAtMs" = ${BigInt(cursor.sortAtMs)} AND "seq" < ${cursor.seq}))`
       : Prisma.empty
@@ -924,7 +958,8 @@ class ManagedFileIndexRepository {
           ${sourcePredicate}
           AND "deletedAt" IS NULL
           ${sessionPredicate}
-          AND ${filenameContainsPredicate(Prisma.sql`"displayName"`, search)}
+          ${filenameContainsPredicate(Prisma.sql`"displayName"`, search)}
+          ${exclusionPredicate}
           ${cursorPredicate}
         ORDER BY "sortAtMs" DESC, "seq" DESC
         LIMIT ${limit + 1}
@@ -1276,19 +1311,35 @@ const normalizeLimit = (limit: number): number => {
   return limit
 }
 
-// Normalizes untrusted IPC input once so SQL predicates and cursor identity share the same bounded,
-// trimmed query. Blank input deliberately falls back to the indexed non-search path.
+// Normalizes untrusted IPC input once so SQL predicates and cursor identity share the same bounded
+// filename query and archive exclusion set. An empty object deliberately uses the indexed path.
 const normalizeSearch = (search: unknown): NormalizedSearch | undefined => {
   if (search === undefined) return undefined
   if (!isRecord(search) || typeof search.filenameContains !== 'string') {
     throw new Error('Project files search is invalid.')
   }
   const filenameContains = search.filenameContains.trim()
-  if (!filenameContains) return undefined
-  if (filenameContains.length > 256) {
+  if (filenameContains && filenameContains.length > 256) {
     throw new Error('Project files search must be at most 256 characters.')
   }
-  return { filenameContains, queryKey: foldAsciiCase(filenameContains) }
+  const excludedSessionIds = normalizeExcludedSessionIds(search.excludedSessionIds)
+  if (!filenameContains && excludedSessionIds.length === 0) return undefined
+  return {
+    ...(filenameContains ? { filenameContains } : {}),
+    excludedSessionIds,
+    queryKey: `${filenameContains ? foldAsciiCase(filenameContains) : ''}\u0000${excludedSessionIds.join('\u0000')}`
+  }
+}
+
+const normalizeExcludedSessionIds = (value: unknown): string[] => {
+  if (value === undefined) return []
+  if (!Array.isArray(value) || value.some((sessionId) => typeof sessionId !== 'string')) {
+    throw new Error('Project files excludedSessionIds must be an array of identifiers.')
+  }
+  return [...new Set(value)].sort().map((sessionId) => {
+    requireIdentifier(sessionId, 'excludedSessionId')
+    return sessionId
+  })
 }
 
 // SQLite's built-in lower() folds ASCII only. Bind cursors with the same transformation so query
@@ -1300,9 +1351,19 @@ const foldAsciiCase = (value: string): string =>
 // alias. Keeping the predicate in one fragment prevents counts and pages from drifting apart.
 const filenameContainsPredicate = (
   displayNameColumn: Prisma.Sql,
-  search: NormalizedSearch
+  search: NormalizedSearch | undefined
 ): Prisma.Sql =>
-  Prisma.sql`instr(lower(${displayNameColumn}), lower(${search.filenameContains})) > 0`
+  search?.filenameContains
+    ? Prisma.sql`AND instr(lower(${displayNameColumn}), lower(${search.filenameContains})) > 0`
+    : Prisma.empty
+
+const excludedSessionIdsPredicate = (
+  sessionIdColumn: Prisma.Sql,
+  excludedSessionIds: string[]
+): Prisma.Sql =>
+  excludedSessionIds.length > 0
+    ? Prisma.sql`AND ${sessionIdColumn} NOT IN (${Prisma.join(excludedSessionIds)})`
+    : Prisma.empty
 
 const requireIdentifier = (value: string, field: string): void => {
   if (!value.trim()) throw new Error(`Project files ${field} is required.`)
@@ -1330,7 +1391,8 @@ const getMatchingOverviewCounts = async (
       AND sync."deletedAt" IS NULL
     WHERE file."projectId" = ${projectId}
       AND file."deletedAt" IS NULL
-      AND ${filenameContainsPredicate(Prisma.sql`file."displayName"`, search)}
+      ${filenameContainsPredicate(Prisma.sql`file."displayName"`, search)}
+      ${excludedSessionIdsPredicate(Prisma.sql`file."sessionId"`, search.excludedSessionIds)}
   `)
   const counts = rows[0]
 
@@ -1361,7 +1423,8 @@ const countMatchingFiles = async (
       AND "deletedAt" IS NULL
       ${sourcePredicate}
       ${sessionPredicate}
-      AND ${filenameContainsPredicate(Prisma.sql`"displayName"`, search)}
+      ${filenameContainsPredicate(Prisma.sql`"displayName"`, search)}
+      ${excludedSessionIdsPredicate(Prisma.sql`"sessionId"`, search.excludedSessionIds)}
   `)
   return toSafeCount(rows[0]?.count ?? 0n, 'search result count')
 }
@@ -1372,12 +1435,15 @@ const listMatchingArtifacts = async (
   client: ProjectFilesClient,
   projectId: string,
   search: NormalizedSearch | undefined,
+  excludedSessionIds: string[],
   cursor: SearchArtifactCursor | undefined,
   limit: number
 ): Promise<ManagedFile[]> => {
-  const filenamePredicate = search
-    ? Prisma.sql`AND ${filenameContainsPredicate(Prisma.sql`"displayName"`, search)}`
-    : Prisma.empty
+  const filenamePredicate = filenameContainsPredicate(Prisma.sql`"displayName"`, search)
+  const exclusionPredicate = excludedSessionIdsPredicate(
+    Prisma.sql`"sessionId"`,
+    excludedSessionIds
+  )
   const cursorPredicate = cursor
     ? Prisma.sql`AND ("sortAtMs" < ${BigInt(cursor.sortAtMs)} OR ("sortAtMs" = ${BigInt(cursor.sortAtMs)} AND "seq" < ${cursor.seq}))`
     : Prisma.empty
@@ -1393,6 +1459,7 @@ const listMatchingArtifacts = async (
       AND "source" = 'artifact'
       AND "deletedAt" IS NULL
       ${filenamePredicate}
+      ${exclusionPredicate}
       ${cursorPredicate}
     ORDER BY "sortAtMs" DESC, "seq" DESC
     LIMIT ${limit + 1}
@@ -1402,11 +1469,14 @@ const listMatchingArtifacts = async (
 const countMatchingArtifacts = async (
   client: ProjectFilesClient,
   projectId: string,
-  search: NormalizedSearch | undefined
+  search: NormalizedSearch | undefined,
+  excludedSessionIds: string[]
 ): Promise<number> => {
-  const filenamePredicate = search
-    ? Prisma.sql`AND ${filenameContainsPredicate(Prisma.sql`"displayName"`, search)}`
-    : Prisma.empty
+  const filenamePredicate = filenameContainsPredicate(Prisma.sql`"displayName"`, search)
+  const exclusionPredicate = excludedSessionIdsPredicate(
+    Prisma.sql`"sessionId"`,
+    excludedSessionIds
+  )
   const rows = await client.$queryRaw<Array<{ count: bigint }>>(Prisma.sql`
     SELECT COUNT(*) AS "count"
     FROM "ManagedFile"
@@ -1414,6 +1484,7 @@ const countMatchingArtifacts = async (
       AND "source" = 'artifact'
       AND "deletedAt" IS NULL
       ${filenamePredicate}
+      ${exclusionPredicate}
   `)
   return toSafeCount(rows[0]?.count ?? 0n, 'artifact search result count')
 }
@@ -1422,11 +1493,14 @@ const listOtherProjectArtifacts = async (
   client: ProjectFilesClient,
   projectIds: string[],
   search: NormalizedSearch | undefined,
+  excludedSessionIds: string[],
   limit: number
 ): Promise<ManagedFile[]> => {
-  const filenamePredicate = search
-    ? Prisma.sql`AND ${filenameContainsPredicate(Prisma.sql`"displayName"`, search)}`
-    : Prisma.empty
+  const filenamePredicate = filenameContainsPredicate(Prisma.sql`"displayName"`, search)
+  const exclusionPredicate = excludedSessionIdsPredicate(
+    Prisma.sql`"sessionId"`,
+    excludedSessionIds
+  )
 
   return client.$queryRaw<ManagedFile[]>(Prisma.sql`
     SELECT
@@ -1439,6 +1513,7 @@ const listOtherProjectArtifacts = async (
       AND "source" = 'artifact'
       AND "deletedAt" IS NULL
       ${filenamePredicate}
+      ${exclusionPredicate}
     ORDER BY "sortAtMs" DESC, "seq" DESC
     LIMIT ${limit}
   `)
@@ -1459,7 +1534,8 @@ const countMatchingArtifactGroups = async (
       AND sync."deletedAt" IS NULL
       AND file."source" = 'artifact'
       AND file."deletedAt" IS NULL
-      AND ${filenameContainsPredicate(Prisma.sql`file."displayName"`, search)}
+      ${filenameContainsPredicate(Prisma.sql`file."displayName"`, search)}
+      ${excludedSessionIdsPredicate(Prisma.sql`sync."sessionId"`, search.excludedSessionIds)}
   `)
   return toSafeCount(rows[0]?.count ?? 0n, 'artifact group count')
 }
@@ -1489,7 +1565,8 @@ const listMatchingArtifactGroups = async (
         AND sync."deletedAt" IS NULL
         AND file."source" = 'artifact'
         AND file."deletedAt" IS NULL
-        AND ${filenameContainsPredicate(Prisma.sql`file."displayName"`, search)}
+        ${filenameContainsPredicate(Prisma.sql`file."displayName"`, search)}
+        ${excludedSessionIdsPredicate(Prisma.sql`sync."sessionId"`, search.excludedSessionIds)}
         ${cursorPredicate}
       GROUP BY sync."sessionId", sync."groupSortAtMs"
       ORDER BY sync."groupSortAtMs" DESC, sync."sessionId" DESC

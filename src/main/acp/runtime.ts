@@ -57,10 +57,7 @@ import type {
   ReviewerSessionResult
 } from './reviewer-session-owner'
 import type { ArtifactTurnOwner } from './artifact-turn-owner'
-import type {
-  AcpSessionInteractionOwner,
-  AcpPromptSessionInteractionScope
-} from './session-interaction-owner'
+import type { AcpSessionInteractionOwner } from './session-interaction-owner'
 import type { AcpSessionRegistry } from './session-registry'
 import type {
   AcpConnectionResourceOwner,
@@ -87,19 +84,12 @@ import type { AcpProviderSessionCreator } from './provider-session-creator'
 import type { AcpProviderSessionResumer } from './provider-session-resumer'
 import type { AcpSessionReplacementWorkflow } from './session-replacement-workflow'
 import type { AcpSessionDeletionWorkflow } from './session-deletion-workflow'
-import type { AcpPromptTurnWorkflow, AcpPromptTurnPlanContext } from './prompt-turn-workflow'
+import type { AcpPromptTurnWorkflow } from './prompt-turn-workflow'
 import type { AcpContextCompactionWorkflow } from './context-compaction-workflow'
 import type { AcpProviderPromptExecutor } from './provider-prompt-executor'
 import type { AcpTurnSkillHooks, AcpTurnSkillOwner } from './turn-skill-owner'
-import type { SessionPlanInteractionOwner } from '../session-plan/session-plan-interaction-owner'
-import type { PlanResponseResult, PlanService } from '../session-plan/plan-service'
-import type {
-  ActivePlanProjection,
-  GeneratePlanContent,
-  PlanResponseCommand
-} from '../../shared/session-plan/contract'
-import { PlanCommandError } from '../../shared/session-plan/contract'
-import type { SessionPlanStepStatus } from '../../shared/session-persistence'
+import type { PlanResponseResult } from '../session-plan/plan-service'
+import type { ActivePlanProjection, PlanResponseCommand } from '../../shared/session-plan/contract'
 import type { SessionPersistenceCoordinator } from '../session-persistence/coordinator'
 import type { AcpRuntimeBaseOwners } from './runtime-base-composition'
 import type { AcpRuntimePublicationOwner } from './runtime-publication-owner'
@@ -108,6 +98,11 @@ import type { AcpSessionEnvironmentPolicy } from './session-environment-policy'
 import { composeAcpRuntimeLifecycleOwners } from './runtime-lifecycle-composition'
 import { composeAcpRuntimeProviderSessionOwners } from './runtime-provider-session-composition'
 import { composeAcpRuntimePromptOwners } from './runtime-prompt-composition'
+import {
+  composeAcpRuntimePlanWorkflow,
+  type AcpRuntimePlanWorkflow,
+  type AcpSessionPlanCall
+} from './runtime-plan-composition'
 
 export type AcpRuntimeCallbacks = {
   onStateChanged?: (state: AcpStateSnapshot) => void
@@ -319,9 +314,7 @@ class AcpRuntime {
   private readonly providerPromptExecutor: AcpProviderPromptExecutor
   private readonly artifactOptions: AcpRuntimeArtifactOptions | undefined
   private readonly artifactTurns: ArtifactTurnOwner | undefined
-  private readonly planInteractions: SessionPlanInteractionOwner
-  private readonly planService: PlanService | undefined
-  private readonly planSessions: AcpRuntimePlanOptions['sessions'] | undefined
+  private readonly sessionPlanWorkflow: AcpRuntimePlanWorkflow
   private readonly contextCompactionWorkflow: AcpContextCompactionWorkflow
   private readonly promptTurnWorkflow: AcpPromptTurnWorkflow
   private readonly connectionClose: AcpConnectionCloseWorkflow
@@ -340,7 +333,6 @@ class AcpRuntime {
   ) {
     this.spawnAgent = options.spawnAgent
     this.artifactOptions = options.artifacts
-    this.planSessions = options.plan?.sessions
     this.snapshotOwner = base.snapshotOwner
     this.connectionAdapter = base.connectionAdapter
     this.connectionResources = base.connectionResources
@@ -348,8 +340,6 @@ class AcpRuntime {
     this.providerPromptExecutor = base.providerPromptExecutor
     this.sessionInteractions = base.sessionInteractions
     this.artifactTurns = base.artifactTurns
-    this.planInteractions = base.planInteractions
-    this.planService = base.planService
     this.handoffContinuity = base.handoffContinuity
     this.generationActivity = base.generationActivity
     this.connectionTransitions = base.connectionTransitions
@@ -361,16 +351,9 @@ class AcpRuntime {
     this.permissionContext = session.permissionContext
     this.reviewerSessions = session.reviewerSessions
     this.sessionUpdateProjector = session.sessionUpdateProjector
+    this.sessionPlanWorkflow = composeAcpRuntimePlanWorkflow(options, base, session)
     const prompt = composeAcpRuntimePromptOwners(options, base, session, {
-      plan: {
-        preflight: (request) => this.preflightPromptPlan(request),
-        admit: (request, interaction, plan) => this.admitPromptPlan(request, interaction, plan),
-        beforeStop: (sessionId, interaction, response) =>
-          this.checkPromptPlanCompletion(sessionId, interaction, response),
-        beforeRelease: (sessionId, interaction) =>
-          this.releasePromptPlanBinding(sessionId, interaction),
-        afterRelease: (sessionId) => this.publishTerminalPlanProjection(sessionId)
-      },
+      plan: this.sessionPlanWorkflow.prompt,
       reload: {
         disconnect: () => this.disconnect(false),
         resume: (request) => this.resumeSession(request)
@@ -450,251 +433,19 @@ class AcpRuntime {
     return this.publication.getSnapshot()
   }
 
-  async callSessionPlan(input: {
-    projectId: string
-    sessionId: string
-    operation: 'generate' | 'approve' | 'reject' | 'updateStepStatus'
-    input?: unknown
-  }): Promise<unknown> {
-    const service = this.planService
-    if (!service) throw new Error('Session Plan capability is not configured.')
-    if (input.operation === 'generate') {
-      const interactionId = this.artifactTurns?.promptMessageIdFor(input.sessionId)
-      if (!interactionId) throw new Error('No active interaction can generate a Session Plan.')
-      this.planInteractions.reserveApproval(input.sessionId, interactionId)
-      let result: Awaited<ReturnType<PlanService['generate']>>
-      try {
-        result = await service.generate({
-          projectId: input.projectId,
-          sessionId: input.sessionId,
-          interactionId,
-          content: input.input as GeneratePlanContent
-        })
-      } catch (error) {
-        this.planInteractions.releaseApprovalReservation(input.sessionId, interactionId)
-        const current = await service.getProjection(input.projectId, input.sessionId)
-        if (current) this.publishPlanProjection(input.sessionId, current)
-        throw error
-      }
-      let approval: Promise<unknown>
-      try {
-        approval = this.planInteractions.parkReservedApproval(input.sessionId, interactionId)
-      } catch (error) {
-        this.planInteractions.release(input.sessionId, result.projection.artifactVersionId)
-        throw error
-      }
-      this.publishPlanProjection(input.sessionId, result.projection)
-      return approval
-    }
-    const projection = await service.getProjection(input.projectId, input.sessionId, {
-      interactionIsLive: this.sessionInteractions.current(input.sessionId) !== undefined
-    })
-    if (!projection) throw new Error('The Session has no active Plan.')
-    await this.assertPlanVisibleToDurableBranch(input.projectId, input.sessionId, projection)
-    const identity = {
-      projectId: input.projectId,
-      sessionId: input.sessionId,
-      artifactVersionId: projection.artifactVersionId,
-      expectedRevision: projection.revision
-    }
-    if (input.operation === 'approve' || input.operation === 'reject') {
-      const interactionIsLive = this.sessionInteractions.current(input.sessionId) !== undefined
-      const decision = input.operation === 'approve' ? 'approved' : 'rejected'
-      const executionBinding = this.planInteractions.executionBindingFor(input.sessionId)
-      const result = await service.respond({
-        ...identity,
-        decision,
-        interactionIsLive
-      })
-      if (decision === 'approved') {
-        this.bindPlanExecutionToCurrentInteraction(
-          input.sessionId,
-          result.projection.artifactVersionId
-        )
-      } else {
-        if (executionBinding) {
-          this.planInteractions.releaseExecution(
-            input.sessionId,
-            executionBinding.interactionSequence
-          )
-        }
-      }
-      this.planInteractions.resolveApproval(input.sessionId, result)
-      this.publishPlanProjection(input.sessionId, result.projection)
-      return result
-    }
-    const update = input.input as {
-      title: string
-      status: SessionPlanStepStatus
-      notes?: string
-      expectedArtifactVersionId?: string
-    }
-    if (projection.approval !== 'approved') {
-      throw new PlanCommandError(
-        'plan-not-approved',
-        'The Plan is still pending. Interpret the user Message, then call generate_plan with decision:"approved" or decision:"rejected" before updating steps.'
-      )
-    }
-    const interaction = this.sessionInteractions.current(input.sessionId)
-    const binding = this.planInteractions.executionBindingFor(input.sessionId)
-    if (!binding) {
-      throw new PlanCommandError(
-        'continuation-required',
-        'Continuing this Plan requires an explicit user continuation.'
-      )
-    }
-    if (!interaction || binding.interactionSequence !== interaction.sequence) {
-      throw new PlanCommandError(
-        'interaction-mismatch',
-        'This interaction is not authorized to execute the active Plan.'
-      )
-    }
-    if (
-      binding.artifactVersionId !== projection.artifactVersionId ||
-      (update.expectedArtifactVersionId !== undefined &&
-        update.expectedArtifactVersionId !== binding.artifactVersionId)
-    ) {
-      throw new PlanCommandError(
-        'interaction-mismatch',
-        'This interaction is bound to a different Plan Artifact Version.'
-      )
-    }
-    const result = await service.updateStepStatus({
-      ...identity,
-      artifactVersionId: update.expectedArtifactVersionId ?? identity.artifactVersionId,
-      title: update.title,
-      status: update.status,
-      ...(update.notes ? { notes: update.notes } : {})
-    })
-    this.publishPlanProjection(input.sessionId, result.projection)
-    return result
+  callSessionPlan(input: AcpSessionPlanCall): Promise<unknown> {
+    return this.sessionPlanWorkflow.call(input)
   }
 
   getSessionPlanProjection(
     projectId: string,
     sessionId: string
   ): Promise<ActivePlanProjection | null> {
-    return (
-      this.planService?.getProjection(projectId, sessionId, {
-        interactionIsLive: this.sessionInteractions.current(sessionId) !== undefined
-      }) ?? Promise.resolve(null)
-    )
+    return this.sessionPlanWorkflow.projection(projectId, sessionId)
   }
 
-  async respondSessionPlan(input: PlanResponseCommand): Promise<PlanResponseResult> {
-    if (!this.planService) throw new Error('Session Plan capability is not configured.')
-    if (
-      input.decision === undefined &&
-      !this.planInteractions.approvalInteractionIdFor(input.sessionId)
-    ) {
-      throw new Error('The paused Session Plan interaction is no longer available.')
-    }
-    const interactionIsLive =
-      this.planInteractions.approvalInteractionIdFor(input.sessionId) !== undefined
-    const projection = await this.planService.getProjection(input.projectId, input.sessionId, {
-      interactionIsLive
-    })
-    if (!projection) throw new Error('The Session has no active Plan.')
-    await this.assertPlanVisibleToDurableBranch(input.projectId, input.sessionId, projection)
-    const result = await this.planService.respond({ ...input, interactionIsLive })
-    if ('projection' in result) {
-      if (interactionIsLive && result.projection.approval === 'approved') {
-        this.bindPlanExecutionToCurrentInteraction(
-          input.sessionId,
-          result.projection.artifactVersionId
-        )
-      }
-      if (interactionIsLive) this.planInteractions.resolveApproval(input.sessionId, result)
-      this.publishPlanProjection(input.sessionId, result.projection)
-      return result
-    }
-    if (
-      this.planInteractions.approvalInteractionIdFor(input.sessionId) !==
-      result.routeToInteractionId
-    ) {
-      throw new Error('The paused Session Plan interaction is no longer available.')
-    }
-    try {
-      this.pushEvent({
-        id: `session-user-message-${result.message.id}`,
-        timestamp: result.message.createdAt,
-        kind: 'message',
-        level: 'info',
-        sessionId: input.sessionId,
-        promptMessageId: result.message.responseToMessageId,
-        messageId: result.message.id,
-        role: 'user',
-        text: result.message.content
-      })
-    } catch (error) {
-      safeLogError('Routed user Message projection callback failed', errorLogFields(error))
-    }
-    this.planInteractions.resolveApproval(input.sessionId, result)
-    return result
-  }
-
-  private publishPlanProjection(
-    sessionId: string,
-    projection: import('../../shared/session-plan/contract').ActivePlanProjection
-  ): void {
-    try {
-      this.pushEvent({
-        id: `session-plan-${projection.artifactVersionId}-${projection.revision}`,
-        timestamp: Date.now(),
-        kind: 'plan',
-        level: 'info',
-        sessionId,
-        title: 'Session Plan updated',
-        planProjection: projection
-      })
-    } catch (error) {
-      safeLogError('Session Plan projection callback failed', errorLogFields(error))
-    }
-  }
-
-  private async publishTerminalPlanProjection(sessionId: string): Promise<void> {
-    if (!this.planService) return
-    try {
-      const projection = await this.planService.getProjection(
-        this.resolveSessionProjectName(sessionId),
-        sessionId,
-        { interactionIsLive: false }
-      )
-      if (projection) this.publishPlanProjection(sessionId, projection)
-    } catch (error) {
-      safeLogError('Session Plan terminal projection failed', errorLogFields(error))
-    }
-  }
-
-  private bindPlanExecutionToCurrentInteraction(
-    sessionId: string,
-    artifactVersionId: string
-  ): void {
-    const interaction = this.sessionInteractions.current(sessionId)
-    if (!interaction || interaction.kind !== 'prompt') return
-    this.planInteractions.bindExecution({
-      sessionId,
-      interactionSequence: interaction.sequence,
-      artifactVersionId
-    })
-  }
-
-  private async assertPlanVisibleToDurableBranch(
-    projectId: string,
-    sessionId: string,
-    projection: ActivePlanProjection
-  ): Promise<void> {
-    const origin = projection.originatingPromptMessageId
-    if (
-      !origin ||
-      !this.planSessions ||
-      !(await this.planSessions.containsMessageOnActiveBranch(projectId, sessionId, origin))
-    ) {
-      throw new PlanCommandError(
-        'interaction-mismatch',
-        'The active Session Plan does not belong to the durable active Message Branch.'
-      )
-    }
+  respondSessionPlan(input: PlanResponseCommand): Promise<PlanResponseResult> {
+    return this.sessionPlanWorkflow.respond(input)
   }
 
   // Lists sessions with an in-flight prompt, for the pre-migration active-session warning.
@@ -710,6 +461,10 @@ class AcpRuntime {
       this.activeSessionFor(sessionId) !== undefined &&
       this.sessionRegistry.lookup(sessionId)?.aggregate.snapshot().projectName === projectId
     )
+  }
+
+  liveSessionProjectId(sessionId: string): string | undefined {
+    return this.sessionRegistry.lookup(sessionId)?.aggregate.snapshot().projectName
   }
 
   // Handoff adapters select their framework without reaching into session ownership maps. The
@@ -754,13 +509,6 @@ class AcpRuntime {
 
   private hasSessionInteractionInFlight(sessionId: string): boolean {
     return this.sessionInteractions.current(sessionId) !== undefined
-  }
-
-  private currentPromptInteraction(
-    sessionId: string
-  ): AcpPromptSessionInteractionScope | undefined {
-    const interaction = this.sessionInteractions.current(sessionId)
-    return interaction?.kind === 'prompt' ? interaction : undefined
   }
 
   // Run ids of turns currently in flight, from live in-memory state (not the persisted current-run
@@ -1038,159 +786,6 @@ class AcpRuntime {
     )
   }
 
-  private preflightPromptPlan(
-    request: AcpPromptRequest
-  ): AcpPromptTurnPlanContext | Promise<AcpPromptTurnPlanContext> {
-    if (
-      request.planContinuation &&
-      request.planContinuation.projectId !== this.resolveSessionProjectName(request.sessionId)
-    ) {
-      throw new PlanCommandError(
-        'interaction-mismatch',
-        'The Plan continuation belongs to a different Project.'
-      )
-    }
-    if (request.planContinuation && !this.planService) {
-      throw new Error('Session Plan capability is not configured.')
-    }
-    const continuation = request.planContinuation
-    if (continuation?.pendingAction === undefined && continuation) {
-      return this.planService!.authorizeContinuation({
-        projectId: continuation.projectId,
-        sessionId: request.sessionId,
-        artifactVersionId: continuation.artifactVersionId,
-        expectedRevision: continuation.expectedRevision
-      }).then(async (authorized) => {
-        await this.assertPlanVisibleToDurableBranch(
-          continuation.projectId,
-          request.sessionId,
-          authorized
-        )
-        return Object.freeze({ authorized })
-      })
-    }
-    if (!continuation) return Object.freeze({})
-    return this.planService!.getProjection(continuation.projectId, request.sessionId, {
-      interactionIsLive: false
-    }).then(async (protectedPending) => {
-      if (!protectedPending) {
-        throw new PlanCommandError('no-active-plan', 'The Session has no active Plan.')
-      }
-      if (protectedPending.artifactVersionId !== continuation.artifactVersionId) {
-        throw new PlanCommandError('stale-plan', 'A newer Plan is active.')
-      }
-      if (protectedPending.revision !== continuation.expectedRevision) {
-        throw new PlanCommandError('revision-conflict', 'The Plan revision is stale.')
-      }
-      if (protectedPending.approval !== 'pending') {
-        throw new PlanCommandError('approval-already-decided', 'Plan approval is irreversible.')
-      }
-      await this.assertPlanVisibleToDurableBranch(
-        continuation.projectId,
-        request.sessionId,
-        protectedPending
-      )
-      return Object.freeze({ protectedPending })
-    })
-  }
-
-  private admitPromptPlan(
-    request: AcpPromptRequest,
-    interaction: AcpPromptSessionInteractionScope,
-    plan: AcpPromptTurnPlanContext
-  ): AcpPromptTurnPlanContext | Promise<AcpPromptTurnPlanContext> {
-    let { authorized, protectedPending } = plan
-    const continuation = request.planContinuation
-    const decision = continuation?.pendingAction
-    const committed = (): AcpPromptTurnPlanContext => {
-      if (authorized) {
-        this.planInteractions.bindExecution({
-          sessionId: request.sessionId,
-          interactionSequence: interaction.sequence,
-          artifactVersionId: authorized.artifactVersionId
-        })
-      }
-      return Object.freeze({
-        ...(authorized ? { authorized } : {}),
-        ...(protectedPending ? { protectedPending } : {})
-      })
-    }
-    if (continuation && (decision === 'approve' || decision === 'reject')) {
-      const executionBinding = this.planInteractions.executionBindingFor(request.sessionId)
-      return this.planService!.respond({
-        projectId: continuation.projectId,
-        sessionId: request.sessionId,
-        artifactVersionId: continuation.artifactVersionId,
-        expectedRevision: continuation.expectedRevision,
-        decision: decision === 'approve' ? 'approved' : 'rejected',
-        interactionIsLive: true
-      }).then((result) => {
-        if (decision === 'approve') authorized = result.projection
-        else {
-          protectedPending = result.projection
-          if (executionBinding) {
-            this.planInteractions.releaseExecution(
-              request.sessionId,
-              executionBinding.interactionSequence
-            )
-          }
-        }
-        this.planInteractions.resolveApproval(request.sessionId, result)
-        this.publishPlanProjection(request.sessionId, result.projection)
-        return committed()
-      })
-    }
-    return committed()
-  }
-
-  private async checkPromptPlanCompletion(
-    sessionId: string,
-    interaction: AcpPromptSessionInteractionScope,
-    response: PromptResponse
-  ): Promise<void> {
-    const binding = this.planInteractions.executionBindingFor(sessionId)
-    if (
-      response.stopReason !== 'end_turn' ||
-      !this.planService ||
-      binding?.interactionSequence !== interaction.sequence
-    ) {
-      return
-    }
-    const completion = await this.planService.checkTurnCompletion({
-      projectId: this.resolveSessionProjectName(sessionId),
-      sessionId
-    })
-    if (!completion.allow) {
-      throw new Error(
-        `The active Session Plan is not complete (${completion.lifecycle ?? 'incomplete'}).`
-      )
-    }
-  }
-
-  private releasePromptPlanBinding(
-    sessionId: string,
-    interaction: AcpPromptSessionInteractionScope
-  ): void {
-    this.planInteractions.releaseExecution(sessionId, interaction.sequence)
-    if (interaction.promptMessageId) {
-      this.rejectPlanApprovalForInteraction(
-        sessionId,
-        interaction.promptMessageId,
-        'The Session Plan interaction ended before approval.'
-      )
-    }
-  }
-
-  private rejectPlanApprovalForInteraction(
-    sessionId: string,
-    interactionId: string,
-    reason: string
-  ): void {
-    this.planInteractions.releaseApprovalReservation(sessionId, interactionId)
-    if (this.planInteractions.approvalInteractionIdFor(sessionId) !== interactionId) return
-    this.planInteractions.rejectApproval(sessionId, reason)
-  }
-
   // Sends one prompt turn to the targeted session and streams updates until stop.
   async sendPrompt(request: AcpPromptRequest, promptAttemptId?: string): Promise<PromptResponse> {
     return this.withOperationLease(() =>
@@ -1224,9 +819,9 @@ class AcpRuntime {
   async cancelPrompt(request: AcpCancelPromptRequest): Promise<AcpStateSnapshot> {
     const connection = this.connection
     const activeSession = this.activeSessionFor(request.sessionId)
-    const planInteractionId =
-      this.currentPromptInteraction(request.sessionId)?.promptMessageId ??
-      this.planInteractions.approvalInteractionIdFor(request.sessionId)
+    const cancelPlanInteraction = this.sessionPlanWorkflow.capturePromptCancellation(
+      request.sessionId
+    )
 
     if (connection && activeSession) {
       await this.sessionInteractions.cancelPrompt({
@@ -1236,13 +831,7 @@ class AcpRuntime {
             sessionId: activeSession.sessionId
           }),
         onAccepted: () => {
-          if (planInteractionId) {
-            this.rejectPlanApprovalForInteraction(
-              request.sessionId,
-              planInteractionId,
-              'The Session Plan interaction was cancelled.'
-            )
-          }
+          cancelPlanInteraction()
           this.cancelPermissionFlowForSession(request.sessionId)
           this.pushEvent({
             kind: 'system',
@@ -1270,10 +859,7 @@ class AcpRuntime {
 
   // Closes the agent-side session when supported, then removes local routing state.
   async deleteSession(request: AcpDeleteSessionRequest): Promise<AcpStateSnapshot> {
-    this.planInteractions.clearSession(
-      request.sessionId,
-      'The Session Plan interaction was deleted.'
-    )
+    this.sessionPlanWorkflow.sessionDeleted(request.sessionId)
     return this.sessionDeletion.delete(request.sessionId)
   }
 

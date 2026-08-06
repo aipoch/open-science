@@ -44,6 +44,7 @@ const createRunner = (overrides: Partial<TaskRunnerDependencies> = {}): TaskRunn
       release: async () => undefined
     },
     agent: {
+      withSessionAvailable: async (_projectId, _sessionId, operation) => operation(),
       listAttachedSessionIds: async () => [],
       createSession: async () => ({ sessionId: 'session-created' }),
       resumeSession: async (request) => ({ sessionId: request.sessionId }),
@@ -207,6 +208,7 @@ describe('TaskRunner', () => {
         }
       },
       agent: {
+        withSessionAvailable: async (_projectId, _sessionId, operation) => operation(),
         listAttachedSessionIds: async () => [],
         createSession: async () => ({
           sessionId: 'session-1',
@@ -294,6 +296,7 @@ describe('TaskRunner', () => {
     const runner = createRunner({
       sessions: { list: async () => [existing], save: async () => undefined },
       agent: {
+        withSessionAvailable: async (_projectId, _sessionId, operation) => operation(),
         listAttachedSessionIds: async () => [existing.id],
         createSession: async () => ({ sessionId: 'unused' }),
         resumeSession: async (request) => ({ sessionId: request.sessionId }),
@@ -326,6 +329,33 @@ describe('TaskRunner', () => {
     }
   })
 
+  it('checks archive admission before an existing session is resumed or saved', async () => {
+    const existing = { ...session, id: 'session-archived' }
+    const resumeSession = async (): Promise<never> => {
+      throw new Error('must not resume')
+    }
+    const save = async (): Promise<never> => {
+      throw new Error('must not save')
+    }
+    const runner = createRunner({
+      sessions: { list: async () => [existing], save },
+      agent: {
+        withSessionAvailable: async () => {
+          throw new Error('Restore this archived Session before continuing.')
+        },
+        listAttachedSessionIds: async () => [],
+        createSession: async () => ({ sessionId: 'unused' }),
+        resumeSession,
+        setPermissionProfile: async () => undefined,
+        prompt: async () => undefined
+      }
+    })
+
+    await expect(
+      runner.startRun({ project: project.id, sessionId: existing.id, prompt: 'Resume research.' })
+    ).rejects.toThrow('Restore this archived Session before continuing.')
+  })
+
   it('resumes a detached session without duplicating the new prompt in history replay', async () => {
     const existing: PersistedChatSession = {
       ...session,
@@ -350,15 +380,32 @@ describe('TaskRunner', () => {
         }
       ]
     }
+    let admissionActive = false
+    let saveCount = 0
     const resumeRequests: Parameters<TaskRunnerDependencies['agent']['resumeSession']>[0][] = []
     const prompts: Parameters<TaskRunnerDependencies['agent']['prompt']>[0][] = []
     const ids = ['new-user', 'run-2', 'new-agent']
     const runner = createRunner({
-      sessions: { list: async () => [existing], save: async () => undefined },
+      sessions: {
+        list: async () => [existing],
+        save: async () => {
+          saveCount += 1
+          if (saveCount === 1) expect(admissionActive).toBe(true)
+        }
+      },
       agent: {
+        withSessionAvailable: async (_projectId, _sessionId, operation) => {
+          admissionActive = true
+          try {
+            return await operation()
+          } finally {
+            admissionActive = false
+          }
+        },
         listAttachedSessionIds: async () => [],
         createSession: async () => ({ sessionId: 'unused' }),
         resumeSession: async (request) => {
+          expect(admissionActive).toBe(true)
           resumeRequests.push(request)
           return { sessionId: existing.id, cwd: existing.cwd, contextReset: true }
         },
@@ -377,6 +424,8 @@ describe('TaskRunner', () => {
       permissionProfile: 'auto'
     })
     await runner.waitForRun(started.id)
+    expect(admissionActive).toBe(false)
+    expect(saveCount).toBeGreaterThanOrEqual(1)
 
     expect(resumeRequests).toEqual([
       expect.objectContaining({ sessionId: existing.id, permissionProfile: 'auto' })
@@ -422,6 +471,7 @@ describe('TaskRunner', () => {
     const runner = createRunner({
       sessions: { list: async () => [existing], save: async () => undefined },
       agent: {
+        withSessionAvailable: async (_projectId, _sessionId, operation) => operation(),
         listAttachedSessionIds: async () => [existing.id],
         createSession: async () => ({ sessionId: 'unused' }),
         resumeSession: async (request) => ({ sessionId: request.sessionId }),
@@ -467,6 +517,7 @@ describe('TaskRunner', () => {
         }
       },
       agent: {
+        withSessionAvailable: async (_projectId, _sessionId, operation) => operation(),
         listAttachedSessionIds: async () => [],
         createSession: async () => ({ sessionId: 'session-artifact', cwd: '/workspace/artifact' }),
         resumeSession: async (request) => ({ sessionId: request.sessionId }),
@@ -548,6 +599,7 @@ describe('TaskRunner', () => {
         }
       },
       agent: {
+        withSessionAvailable: async (_projectId, _sessionId, operation) => operation(),
         listAttachedSessionIds: async () => [],
         createSession: async () => ({ sessionId: 'session-save', cwd: '/workspace/save' }),
         resumeSession: async (request) => ({ sessionId: request.sessionId }),
@@ -598,6 +650,7 @@ describe('TaskRunner', () => {
         }
       },
       agent: {
+        withSessionAvailable: async (_projectId, _sessionId, operation) => operation(),
         listAttachedSessionIds: async () => [],
         createSession: async () => ({ sessionId: 'session-partial', cwd: '/workspace/partial' }),
         resumeSession: async (request) => ({ sessionId: request.sessionId }),
@@ -701,6 +754,7 @@ describe('TaskRunner', () => {
         }
       },
       agent: {
+        withSessionAvailable: async (_projectId, _sessionId, operation) => operation(),
         listAttachedSessionIds: async () => [],
         createSession: async () => ({ sessionId: 'session-tool', cwd: '/workspace/tool' }),
         resumeSession: async (request) => ({ sessionId: request.sessionId }),
@@ -793,6 +847,7 @@ describe('TaskRunner', () => {
     let time = 0
     const runner = createRunner({
       agent: {
+        withSessionAvailable: async (_projectId, _sessionId, operation) => operation(),
         listAttachedSessionIds: async () => [],
         createSession: async () => ({ sessionId: `session-${++sessionCounter}` }),
         resumeSession: async (request) => ({ sessionId: request.sessionId }),

@@ -6,14 +6,23 @@ import {
 } from './identity-catalog'
 
 describe('permission identity catalog', () => {
-  it('contains the closed 32-identity v1 bootstrap inventory', () => {
-    expect(PRE_REGISTERED_PERMISSION_IDENTITY_COUNT).toBe(32)
+  it('contains the closed 34-identity v1 bootstrap inventory', () => {
+    expect(PRE_REGISTERED_PERMISSION_IDENTITY_COUNT).toBe(34)
     expect(PRE_REGISTERED_PERMISSION_IDENTITIES.builtin_tool).toEqual([])
     expect(PRE_REGISTERED_PERMISSION_IDENTITIES.customize_mutation).toHaveLength(8)
-    expect(PRE_REGISTERED_PERMISSION_IDENTITIES.mcp_tool).toHaveLength(15)
+    expect(PRE_REGISTERED_PERMISSION_IDENTITIES.mcp_tool).toHaveLength(17)
     expect(PRE_REGISTERED_PERMISSION_IDENTITIES.execution).toHaveLength(2)
     expect(PRE_REGISTERED_PERMISSION_IDENTITIES.file_operation).toHaveLength(6)
     expect(PRE_REGISTERED_PERMISSION_IDENTITIES.skill_operation).toHaveLength(1)
+  })
+
+  it('admits both Session Plan capabilities to remembered permission scopes', () => {
+    expect(PRE_REGISTERED_PERMISSION_IDENTITIES.mcp_tool).toEqual(
+      expect.arrayContaining([
+        'mcp:open-science-plan/generate_plan',
+        'mcp:open-science-plan/update_step_status'
+      ])
+    )
   })
 
   it('does not expose internal Reviewer MCP identities', () => {

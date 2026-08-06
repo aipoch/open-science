@@ -34,6 +34,7 @@ describe('electron-builder Windows targets', () => {
     expect(cleanup).toContain('.open-science-cache.json')
     expect(cleanup).toContain('Get-CompactCacheLeaf')
     expect(cleanup).toContain('$compactLeaf = Get-CompactCacheLeaf $canonicalRoot $userIdentity')
+    expect(cleanup).toContain('(Join-Path $env:PUBLIC $leaf)')
     expect(cleanup).toContain('(Join-Path $env:USERPROFILE $compactLeaf)')
     expect(cleanup).toContain('S-1-5-32-544')
     expect(cleanup).toContain('$trustedWriteSids -notcontains $sid')

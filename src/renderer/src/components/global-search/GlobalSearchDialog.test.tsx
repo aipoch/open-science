@@ -579,4 +579,20 @@ describe('GlobalSearchDialog', () => {
       pendingProjectCreation: true
     })
   })
+
+  it('excludes individually archived sessions from artifact queries', async () => {
+    useSessionStore.setState((state) => ({
+      sessions: state.sessions.map((session) =>
+        session.id === 'session-a' ? { ...session, archivedAt: 3 } : session
+      )
+    }))
+    await act(async () => {
+      root.render(<GlobalSearchDialog open onOpenChange={vi.fn()} isSessionPersistenceReady />)
+      await new Promise((resolve) => window.setTimeout(resolve, 20))
+    })
+
+    expect(window.api.projectFiles.searchArtifacts).toHaveBeenCalledWith(
+      expect.objectContaining({ excludedSessionIds: ['session-a'] })
+    )
+  })
 })

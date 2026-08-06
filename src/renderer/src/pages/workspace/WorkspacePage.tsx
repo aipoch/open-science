@@ -13,6 +13,7 @@ import { useMediaQuery } from '@/hooks/useMediaQuery'
 import { useWorkspaceAgentRuntime } from '@/lib/acp/useWorkspaceAgentRuntime'
 import { usePreviewPersistence } from '@/lib/preview-persistence/preview-persistence'
 import { useNavigationStore } from '@/stores/navigation-store'
+import { useArchiveUndoStore } from '@/stores/archive-undo-store'
 import { useProjectStore } from '@/stores/project-store'
 import { useSettingsStore } from '@/stores/settings-store'
 import {
@@ -444,6 +445,8 @@ const WorkspacePage = ({
   const clearSelection = useSessionStore((state) => state.clearSelection)
   const renameSession = useSessionStore((state) => state.renameSession)
   const togglePinned = useSessionStore((state) => state.togglePinned)
+  const updateSessionArchive = useSessionStore((state) => state.updateSessionArchive)
+  const enqueueSessionArchive = useArchiveUndoStore((state) => state.enqueueSession)
   const setAutoReviewEnabled = useSessionStore((state) => state.setAutoReviewEnabled)
   const setEnabledComputeHosts = useSessionStore((state) => state.setEnabledComputeHosts)
   const setSessionSpecialistId = useSessionStore((state) => state.setSessionSpecialistId)
@@ -454,8 +457,13 @@ const WorkspacePage = ({
   const setActivePlanProjection = useSessionStore((state) => state.setActivePlanProjection)
   // Only sessions belonging to the active project are shown in this workspace.
   const sessions = useMemo(
-    () => allSessions.filter((session) => session.projectId === scopedProjectId),
-    [allSessions, scopedProjectId]
+    () =>
+      activeProject?.archivedAt === undefined
+        ? allSessions.filter(
+            (session) => session.projectId === scopedProjectId && session.archivedAt === undefined
+          )
+        : [],
+    [activeProject?.archivedAt, allSessions, scopedProjectId]
   )
   const previewPanelState = usePreviewWorkbenchStore((state) => state.panelState)
   const previewItems = usePreviewWorkbenchStore((state) => state.items)
@@ -671,6 +679,7 @@ const WorkspacePage = ({
   const [sessionDeletionInProgressIds, setSessionDeletionInProgressIds] = useState<
     ReadonlySet<string>
   >(new Set())
+  const [archivingSessionIds, setArchivingSessionIds] = useState<ReadonlySet<string>>(new Set())
   const [sessionToViewNotebook, setSessionToViewNotebook] = useState<ChatSession | undefined>(
     undefined
   )
@@ -910,6 +919,33 @@ const WorkspacePage = ({
   const activeSessionHasRuntimeInteraction = activeSession
     ? promptInFlightSessionIds.includes(activeSession.id) || activeSessionHasSendPreparation
     : false
+  const canArchiveSession = (session: ChatSession): boolean => {
+    const hasUnfinishedTransfer = (transfers: readonly ComposerUploadTransfer[]): boolean =>
+      transfers.some(
+        (transfer) =>
+          transfer.status === 'queued' ||
+          transfer.status === 'uploading' ||
+          transfer.status === 'cancelling'
+      )
+
+    return (
+      isSessionPersistenceReady &&
+      !session.isPending &&
+      session.archivedAt === undefined &&
+      !archivingSessionIds.has(session.id) &&
+      !sessionDeletionInProgressIds.has(session.id) &&
+      !promptInFlightSessionIds.includes(session.id) &&
+      !sendPreparationInFlightSessionIds.includes(session.id) &&
+      session.status !== 'running' &&
+      session.status !== 'waiting-permission' &&
+      session.status !== 'waiting-plan-approval' &&
+      !hasUnfinishedTransfer(
+        session.id === activeSessionId
+          ? attachmentTransfers
+          : (composerDraftsRef.current[session.id]?.attachmentTransfers ?? [])
+      )
+    )
+  }
   const visiblePermissionRequests = useMemo(
     () => getVisiblePermissionRequests(pendingPermissions, activeSession?.id),
     [activeSession?.id, pendingPermissions]
@@ -1102,6 +1138,12 @@ const WorkspacePage = ({
   useEffect(() => {
     if (!activeProjectId) goHome('automatic')
   }, [activeProjectId, goHome])
+
+  useEffect(() => {
+    if (activeProject?.archivedAt === undefined) return
+    clearSelection()
+    goHome('automatic')
+  }, [activeProject?.archivedAt, clearSelection, goHome])
 
   // Switches the preview panel to the active project's own tabs (never another project's stale
   // previews) and persists/restores each project's panel state across switches and restarts.
@@ -1905,6 +1947,31 @@ const WorkspacePage = ({
     setSessionToDelete(session)
   }
 
+  const archiveSession = (session: ChatSession): void => {
+    if (!canArchiveSession(session)) return
+
+    setArchivingSessionIds((current) => new Set(current).add(session.id))
+    setExportError(null)
+    void updateSessionArchive({
+      projectId: session.projectId,
+      sessionId: session.id,
+      archived: true,
+      expectedArchivedAt: null
+    })
+      .then((archived) => {
+        enqueueSessionArchive(archived)
+        if (selectedSessionId === session.id) clearSelection()
+      })
+      .catch((error: unknown) => setExportError(getErrorMessage(error)))
+      .finally(() => {
+        setArchivingSessionIds((current) => {
+          const next = new Set(current)
+          next.delete(session.id)
+          return next
+        })
+      })
+  }
+
   // Deletes the selected session and repairs the chat surface if it was showing that session.
   const confirmDeleteSession = (): void => {
     if (!isSessionPersistenceHydrated || !canDeleteConversations || !sessionToDelete) return
@@ -2314,6 +2381,11 @@ const WorkspacePage = ({
               setIsMobileSidebarOpen(false)
               if (isSessionPersistenceReady) togglePinned(session.id)
             }}
+            canArchiveSession={canArchiveSession}
+            onArchiveSession={(session) => {
+              setIsMobileSidebarOpen(false)
+              archiveSession(session)
+            }}
             onDeleteSession={(session) => {
               setIsMobileSidebarOpen(false)
               openDeleteDialog(session)
@@ -2375,6 +2447,8 @@ const WorkspacePage = ({
                   onTogglePin={(session) => {
                     if (isSessionPersistenceReady) togglePinned(session.id)
                   }}
+                  canArchiveSession={canArchiveSession}
+                  onArchiveSession={archiveSession}
                   onDeleteSession={openDeleteDialog}
                   onOpenSettings={openSettings}
                 />

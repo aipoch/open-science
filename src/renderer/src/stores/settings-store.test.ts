@@ -4,6 +4,7 @@ import type {
   ClaudeInstallEvent,
   EnvironmentCheckResult,
   SettingsSnapshot,
+  SkillView,
   ValidateProviderResult,
   ConnectorView,
   CustomServerView
@@ -55,6 +56,9 @@ type SettingsApi = {
   markOnboardingComplete: ReturnType<typeof vi.fn>
   listSkills: ReturnType<typeof vi.fn>
   setSkillEnabled: ReturnType<typeof vi.fn>
+  createSkill: ReturnType<typeof vi.fn>
+  updateSkill: ReturnType<typeof vi.fn>
+  deleteSkill: ReturnType<typeof vi.fn>
   importSkillZip: ReturnType<typeof vi.fn>
   importSkillZipBatch: ReturnType<typeof vi.fn>
   previewSkillZip: ReturnType<typeof vi.fn>
@@ -107,6 +111,15 @@ const providerView = (id: string): SettingsSnapshot['providers'][number] => ({
   supportsImageInput: false,
   hasKey: true,
   needsKey: false
+})
+
+const skillView = (id: string, name: string): SkillView => ({
+  id,
+  name,
+  description: '',
+  source: 'personal',
+  updatedAt: '',
+  enabled: true
 })
 
 let api: SettingsApi
@@ -201,6 +214,9 @@ beforeEach(() => {
       .mockResolvedValue({ ...snapshot([]), onboardingCompletedAt: 4242 }),
     listSkills: vi.fn().mockResolvedValue([]),
     setSkillEnabled: vi.fn().mockResolvedValue([]),
+    createSkill: vi.fn().mockResolvedValue([]),
+    updateSkill: vi.fn().mockResolvedValue([]),
+    deleteSkill: vi.fn().mockResolvedValue([]),
     importSkillZip: vi.fn().mockResolvedValue({ status: 'imported', id: 'z', skills: [] }),
     importSkillZipBatch: vi.fn().mockResolvedValue({ results: [], skills: [] }),
     previewSkillZip: vi.fn().mockResolvedValue({ previews: [], skipped: [] }),
@@ -1074,6 +1090,26 @@ describe('settings store: refreshProviderModels', () => {
     expect(api.setSkillEnabled).toHaveBeenCalledWith({ id: 'demo', enabled: false })
     expect(useSettingsStore.getState().skills[0].enabled).toBe(false)
   })
+
+  it('reconciles create, update, and delete from each authoritative catalog', async () => {
+    const created = skillView('personal-demo', 'Demo')
+    const updated = skillView('personal-demo', 'Updated demo')
+    api.createSkill.mockResolvedValue([created])
+    api.updateSkill.mockResolvedValue([updated])
+    api.deleteSkill.mockResolvedValue([])
+
+    await useSettingsStore.getState().createSkill({ name: 'Demo', description: '', body: '# Demo' })
+    expect(useSettingsStore.getState().skills).toEqual([created])
+
+    await useSettingsStore
+      .getState()
+      .updateSkill({ id: created.id, name: 'Updated demo', description: '', body: '# Demo' })
+    expect(useSettingsStore.getState().skills).toEqual([updated])
+
+    await useSettingsStore.getState().deleteSkill(created.id)
+    expect(api.deleteSkill).toHaveBeenCalledWith({ id: created.id })
+    expect(useSettingsStore.getState().skills).toEqual([])
+  })
 })
 
 describe('settings store: openSettingsToSkill', () => {
@@ -1118,6 +1154,18 @@ describe('settings store: openSettingsToPanel', () => {
 
     useSettingsStore.getState().closeSettings()
     expect(useSettingsStore.getState().isSettingsOpen).toBe(false)
+    expect(useSettingsStore.getState().pendingSettingsPanel).toBeUndefined()
+  })
+
+  it('routes Compute through the panel target and consumes it exactly once', () => {
+    useSettingsStore.getState().openSettingsToSkill('stale-skill')
+    useSettingsStore.getState().openSettingsToCompute()
+
+    expect(useSettingsStore.getState().pendingSettingsPanel).toBe('compute')
+    expect(useSettingsStore.getState().pendingSkillId).toBeUndefined()
+
+    useSettingsStore.getState().consumePendingSettingsPanel()
+    useSettingsStore.getState().openSettings()
     expect(useSettingsStore.getState().pendingSettingsPanel).toBeUndefined()
   })
 })
@@ -1286,6 +1334,17 @@ describe('settings store: connectors slice', () => {
 
     await useSettingsStore.getState().setConnectorEnabled('pubmed', false)
     expect(api.setConnectorEnabled).toHaveBeenCalledWith({ id: 'pubmed', enabled: false })
+    expect(useSettingsStore.getState().connectors[0].enabled).toBe(false)
+  })
+
+  it('keeps the optimistic connector value when main rejects the write', async () => {
+    useSettingsStore.setState({ connectors: [connectorView('pubmed', true)] })
+    api.setConnectorEnabled.mockRejectedValue(new Error('IPC unavailable'))
+
+    await expect(useSettingsStore.getState().setConnectorEnabled('pubmed', false)).rejects.toThrow(
+      'IPC unavailable'
+    )
+
     expect(useSettingsStore.getState().connectors[0].enabled).toBe(false)
   })
 

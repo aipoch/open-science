@@ -45,6 +45,7 @@ import {
   type InstallRequest,
   type InstallResult
 } from './package-manager'
+import { NotebookPackageAdmissionOwner } from './package-admission'
 import { NotebookRunRepository, getNotebookRunJsonPath, getRuntimeRoot } from './repository'
 import {
   addRepairRequired,
@@ -139,15 +140,6 @@ const dataProcessKey = (language: NotebookLanguage, environment?: string): strin
 
 const externalRepairBlockKey = (language: NotebookLanguage, runtimeId: string): string =>
   `external:${language}:${runtimeId}`
-
-const repairBlockKey = (
-  language: NotebookLanguage,
-  environment: string,
-  binding: NotebookRuntimeBinding | undefined
-): string =>
-  binding?.source === 'external'
-    ? externalRepairBlockKey(language, binding.runtimeId)
-    : dataProcessKey(language, environment)
 
 // The process key the executor reports through onIdleShutdown/onTerminated(kind, env): `${kind}:${env}`
 // for python/r, bare 'repl' for the env-agnostic control kernel. A missing kind/env (direct callers /
@@ -423,6 +415,7 @@ class NotebookRuntimeService {
   private readonly runTerminalization: NotebookRunTerminalizationOwner
   private readonly executionOwner: NotebookExecutionOwner
   private readonly dataExecutionAdmission: NotebookDataExecutionAdmissionOwner
+  private readonly packageAdmission: NotebookPackageAdmissionOwner
   private readonly sessions: NotebookSessionRegistry<RuntimeSession>
   private readonly announcedAgentSessionIds = new Set<string>()
   // Owns process-global operation admission, provisioning progress, restart recommendations,
@@ -492,6 +485,18 @@ class NotebookRuntimeService {
       sessions: () => this.sessions.values(),
       notifyChanged: (session) => this.notifyNotebookChanged(session as RuntimeSession),
       logger: this.runtimeLogger
+    })
+    this.packageAdmission = new NotebookPackageAdmissionOwner({
+      runtimeRoot: getRuntimeRoot(options.dataRoot),
+      loadSession: (request) => this.ensureSession(request),
+      findSession: (sessionId) => this.sessions.get(sessionId),
+      resolveRuntimeEnablement: (language) => this.resolveRuntimeEnablement(language),
+      isDefaultEnvironmentDisabled: (language, runtimeRoot) =>
+        this.isDefaultEnvDisabled(language, runtimeRoot),
+      repairRegistryKeys: (...args) => this.repairRegistryKeys(...args),
+      environmentOperations: this.environmentOperations,
+      recovery: this.recoveryCoordinator,
+      createEnvironmentCaptureTarget: (...args) => this.environmentCaptureTarget(...args)
     })
     this.environmentStateTracker =
       options.environmentStateTracker ??
@@ -1132,235 +1137,21 @@ class NotebookRuntimeService {
       this.options.mirrorProbe
     )
 
-    // Install target env comes from the SESSION BINDING (v4: no per-call environment argument). A
-    // managed binding installs into its conda env by name; an external binding pips into the user's own
-    // interpreter; no session context -> the language default env.
-    //
-    // ensureSession() (not a bare sessions.get) so the FIRST manage_packages after an app restart loads
-    // the session and REHYDRATES its persisted runtime bindings before we read them — otherwise the
-    // session isn't in memory yet, the binding reads as undefined, and the install silently targets the
-    // default env (bypassing a bound named/external/unavailable runtime and its install-authorization,
-    // while pinnedRequest below would then guarantee the wrong target). Mirrors execute(), which already
-    // ensureSession()s. The MCP bridge and local RPC always carry workspaceCwd, so this is the real path.
-    let bindingSession: RuntimeSession | undefined
-    if (request.sessionId) {
-      if (request.workspaceCwd) {
-        bindingSession = await this.ensureSession({
-          sessionId: request.sessionId,
-          workspaceCwd: request.workspaceCwd,
-          projectName: request.projectName
-        })
-      } else {
-        // A sessionId was given but there's no workspaceCwd to LOAD the session, and it isn't already in
-        // memory. A persisted binding may exist that we can't see, so installing would silently bypass
-        // it and target the default env. Refuse rather than fall back — no silent default. (Real callers
-        // always send workspaceCwd; this only guards a malformed/legacy request that names a session.)
-        bindingSession = this.sessions.get(request.sessionId)
-        if (!bindingSession) {
-          return {
-            ok: false,
-            needsRestart: false,
-            log: '',
-            error:
-              'RUNTIME_SESSION_UNAVAILABLE: cannot resolve this session to honor its runtime binding ' +
-              '(no workspaceCwd to load it). Retry with the notebook session context so any bound ' +
-              'runtime is applied instead of silently installing into the default environment.'
-          }
-        }
-      }
-    }
-    // No sessionId at all -> a caller with no session context -> the language default env (unchanged).
-    const binding = bindingSession ? bindingSession.runtimeBinding(request.language) : undefined
-    const envName = bindingSession
-      ? this.resolveRunEnv(bindingSession, request.language)
-      : resolveEnvName(request.language, undefined)
+    const admission = await this.packageAdmission.admit(request)
+    if (admission.status === 'refused') return admission.result
+    const {
+      binding,
+      environmentName: envName,
+      environmentCaptureTarget: environmentTarget,
+      interpreter,
+      journalTarget,
+      repairMarkerKey,
+      repairRuntimeId,
+      request: pinnedRequest
+    } = admission.target
     const runtimeRoot = getRuntimeRoot(this.options.dataRoot)
-
-    // A protected interpreter identity change is not repairable by installing another ordinary
-    // package. Doing so would let the package manager capture the already-replaced r-base as its new
-    // baseline and then clear quarantine after an unrelated successful install. Only the explicit UI
-    // Runtime Reset rebuilds and verifies the environment before clearing this stronger marker.
-    const protectedRepairRequired =
-      this.environmentOperations.isRepairBlocked(
-        repairBlockKey(request.language, envName, binding)
-      ) ||
-      this.repairRegistryKeys(request.language, envName, binding, runtimeRoot).some((key) => {
-        const reason = readRepairRequiredReason(runtimeRoot, key)
-        return (
-          reason === 'protected-identity-change' ||
-          (reason === 'legacy-unknown' && binding?.source !== 'external')
-        )
-      })
-    if (protectedRepairRequired) {
-      return {
-        ok: false,
-        needsRestart: false,
-        repairRequired: true,
-        log: '',
-        error:
-          `RUNTIME_REPAIR_REQUIRED: the ${request.language} runtime's protected interpreter identity ` +
-          'changed. Use Repair/Reset in Settings → Runtimes to rebuild and verify it before installing ' +
-          'packages.'
-      }
-    }
-
-    // Gate the install on that binding. An EXTERNAL binding is read-only unless the user turned on
-    // "Allow package install" for THAT runtime in Settings (per-env installAuthorized) — then pip
-    // installs into the user's OWN interpreter (installs land in the user's env, not app storage), and
-    // external uninstall stays disabled. A managed binding / no session -> micromamba into the app
-    // prefix. This replaces the removed pre-v4 RuntimeSelection gate.
-    let interpreter: { command: string; args?: string[] } | undefined
-    if (binding?.source === 'external') {
-      // An interrupted-install repair marker remains installable: re-running the authorized install
-      // to completion clears it. The stronger protected-identity marker was refused above.
-      const blocked =
-        (binding.status ?? 'active') !== 'active' && binding.reason !== 'repair-required'
-      if (blocked) {
-        return {
-          ok: false,
-          needsRestart: false,
-          log: '',
-          error:
-            `RUNTIME_BINDING_UNAVAILABLE: the bound ${request.language} runtime is ${binding.status}` +
-            (binding.reason ? ` (${binding.reason})` : '') +
-            '. Switch to another runtime (list_notebook_runtimes → notebook_switch_runtime) before ' +
-            'installing packages.'
-        }
-      }
-      if (request.operation === 'uninstall') {
-        return {
-          ok: false,
-          needsRestart: false,
-          log: '',
-          error:
-            'Uninstalling packages from your own environment is disabled. Manage it yourself, or ' +
-            'switch to the managed environment.'
-        }
-      }
-      const enablement = await this.resolveRuntimeEnablement(request.language)
-      const authorized = enablement?.installAuthorized[binding.runtimeId] ?? false
-      if (!authorized) {
-        return {
-          ok: false,
-          needsRestart: false,
-          log: '',
-          error:
-            `Installing packages into your own ${request.language} environment is not authorized. ` +
-            'Turn on "Allow package install" for this runtime in Settings → Runtimes first (installs ' +
-            'go into your own environment, not the app-managed storage).'
-        }
-      }
-      if (request.language !== 'python') {
-        return {
-          ok: false,
-          needsRestart: false,
-          log: '',
-          error:
-            'Package management for an external R runtime is not supported yet. Use the managed R ' +
-            'environment, or install the package yourself.'
-        }
-      }
-      // Install directly into the user's own interpreter (pip). No app-owned overlay: the user
-      // explicitly authorized installing into their own environment.
-      interpreter = binding.resolvedInterpreter
-    } else if (binding) {
-      // A MANAGED binding (app-managed default or an agent-created named env). Same no-silent-fallback
-      // guarantee as execute() and the external path: a disabled/unavailable managed binding refuses the
-      // install rather than quietly installing into a different env. An interrupted-install marker
-      // stays installable; the stronger protected-identity marker was refused above. Without this,
-      // disabling a managed runtime blocked execution but still let manage_packages install into it
-      // (the gate was external-only).
-      const blocked =
-        (binding.status ?? 'active') !== 'active' && binding.reason !== 'repair-required'
-      if (blocked) {
-        return {
-          ok: false,
-          needsRestart: false,
-          log: '',
-          error:
-            `RUNTIME_BINDING_UNAVAILABLE: the bound ${request.language} runtime is ${binding.status}` +
-            (binding.reason ? ` (${binding.reason})` : '') +
-            '. Switch to another runtime (list_notebook_runtimes → notebook_switch_runtime) before ' +
-            'installing packages.'
-        }
-      }
-    } else if (envName === this.defaultEnvNameFor(request.language)) {
-      // No binding and the target is the app-managed default: refuse if that default is disabled, so
-      // manage_packages can't provision + install into a runtime the user turned off in Settings
-      // (mirrors execute()'s disabled-default gate). A managed named env is never reached here (it always
-      // has a binding), so this only guards the default.
-      if (await this.isDefaultEnvDisabled(request.language, runtimeRoot)) {
-        return {
-          ok: false,
-          needsRestart: false,
-          log: '',
-          error:
-            `No enabled ${request.language} runtime: the app-managed default is disabled and no ` +
-            'runtime is bound. Enable a runtime in Settings → Runtimes, or bind one with ' +
-            'list_notebook_runtimes then notebook_bind_runtime, before installing packages.'
-        }
-      }
-    }
-
-    // Refuse if recovery left this install's target possibly-live (an unknown-liveness orphan may still
-    // be writing it). An EXTERNAL binding is keyed by runtimeId (its real target is the user's own env,
-    // not a path under runtimeRoot — so the app-managed default prefix must NOT gate it); a managed/
-    // default target is keyed by its real prefix, plus its runtimeId for a bound managed named env.
-    // Returned as a structured error (not thrown) to match managePackages' other refusals.
-    const isExternal = binding?.source === 'external'
-    const runtimeIdBlocked =
-      binding?.runtimeId !== undefined &&
-      this.recoveryCoordinator.isRuntimeIdBlocked(binding.runtimeId)
-    // A managed/default install is gated by its real prefix via isPrefixRecoveryBlocked, which already
-    // folds in the corrupt-journal barrier AND honours a force Reset's per-prefix allowlist — so a reset
-    // (allowlisted) default env can be installed into again while other envs stay blocked. An EXTERNAL
-    // install has no managed prefix to key that allowlist on, so it keeps the raw corrupt catch-all.
-    const prefixBlocked =
-      !isExternal && this.isPrefixRecoveryBlocked(envPrefix(runtimeRoot, envName))
-    const corruptBlockedExternal = isExternal && this.recoveryCoordinator.isGloballyBlocked()
-    if (runtimeIdBlocked || prefixBlocked || corruptBlockedExternal) {
-      return {
-        ok: false,
-        needsRestart: false,
-        log: '',
-        error:
-          `RUNTIME_RECOVERY_BLOCKED: the ${request.language} environment is recovering from an ` +
-          'interrupted operation whose process could not be confirmed stopped. Restart the app to ' +
-          're-check and recover it before installing packages.'
-      }
-    }
-
-    // Journal the install so a process death mid-install (killed conda/pip, half-applied packages) is
-    // reconciled at next startup by flagging this runtime repair-required — an interrupted install is
-    // never silently assumed to have succeeded. External runtimes use their runtime identity; managed
-    // interrupted installs use an (env, language) key so repairing Python cannot release R in a shared
-    // prefix. Best-effort journal I/O; cleared in the finally on completion.
-    const repairRuntimeId = binding?.source === 'external' ? binding.runtimeId : envName
-    const repairMarkerKey =
-      binding?.source === 'external'
-        ? repairRuntimeId
-        : managedRepairRegistryKey(envName, request.language)
-    // targetPath is the app-managed prefix ONLY for a managed/default install — an EXTERNAL install
-    // writes the user's own env (outside runtimeRoot), so recording the default prefix here would make
-    // recovery wrongly clean/block the unrelated managed default. Recovery then blocks an external
-    // install by its runtimeId (blockUnknownChildTarget) instead of a prefix.
-    const journalTarget =
-      binding?.source === 'external' ? undefined : envPrefix(runtimeRoot, envName)
     const journal = RuntimeOperationJournal.forPath(operationJournalPath(runtimeRoot))
     const operationId = randomUUID()
-    // The install target is the binding-resolved envName — NOT request.environment. v4 dropped the
-    // per-call environment argument, but the package manager still reads req.environment (and the local
-    // RPC forwards the raw request), so an old/direct caller could otherwise install into a DIFFERENT
-    // env than the one whose lock, journal target, and repair flag we resolved above. Pin it here so all
-    // four agree.
-    const pinnedRequest = { ...request, environment: envName }
-    const environmentTarget = this.environmentCaptureTarget(
-      request.language,
-      envName,
-      binding,
-      binding?.resolvedInterpreter,
-      runtimeRoot
-    )
     let result: InstallResult
     let retainForRecovery = false
     let begun = false // did journal.begin() succeed? distinguishes a begin failure from an install error
@@ -1587,6 +1378,8 @@ class NotebookRuntimeService {
       // Clear aliases only for the repaired language. A successful Python install must not release an R
       // interrupted-install marker (or vice versa) merely because both bindings share one Conda prefix.
       if (managedRepair) {
+        // Recompute after installation: the interpreter may have appeared or canonicalized during the
+        // mutation, and the fresh real path can name an older interrupted-install marker to clear.
         const legacyAliases = new Set(
           this.repairRegistryKeys(request.language, envName, binding, runtimeRoot)
         )

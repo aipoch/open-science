@@ -13,11 +13,16 @@ const FAKE_PROVIDER_NAME = 'Electron E2E provider'
 
 const electronLaunchTarget = (
   userDataRoot: string,
-  environment: NodeJS.ProcessEnv = process.env
+  environment: NodeJS.ProcessEnv = process.env,
+  platform: NodeJS.Platform = process.platform
 ): { args: string[]; executablePath?: string } => {
   const executablePath = environment.OPEN_SCIENCE_E2E_EXECUTABLE
   return {
-    args: [`--user-data-dir=${userDataRoot}`, ...(executablePath ? [] : [APP_ROOT])],
+    args: [
+      `--user-data-dir=${userDataRoot}`,
+      ...(platform === 'linux' ? ['--password-store=basic'] : []),
+      ...(executablePath ? [] : [APP_ROOT])
+    ],
     ...(executablePath ? { executablePath } : {})
   }
 }
@@ -76,13 +81,13 @@ const launchEnvironment = (
   return environment
 }
 
-const launchOpenScience = (
+const launchOpenScience = async (
   { storageRoot, userDataRoot, fakeAgentBinRoot }: LaunchRoots,
   fakeAgentEnabled: boolean,
   fakeRemoteItEnabled: boolean,
   fakeRemoteItRoot: string
-): Promise<ElectronApplication> =>
-  electron.launch({
+): Promise<ElectronApplication> => {
+  const application = await electron.launch({
     ...electronLaunchTarget(userDataRoot),
     cwd: fakeRemoteItEnabled ? fakeRemoteItRoot : APP_ROOT,
     env: launchEnvironment(
@@ -92,6 +97,15 @@ const launchOpenScience = (
       fakeRemoteItEnabled ? fakeRemoteItRoot : undefined
     )
   })
+
+  if (process.platform === 'linux') {
+    await application.evaluate(({ safeStorage }) => {
+      safeStorage.setUsePlainTextEncryption(true)
+    })
+  }
+
+  return application
+}
 
 const shellQuote = (value: string): string => `'${value.replaceAll("'", "'\\''")}'`
 

@@ -397,6 +397,43 @@ describe('SessionPersistenceCoordinator', () => {
     expect(durable.updatedAt).toBeGreaterThan(previousUpdatedAt)
   })
 
+  it('preserves main-owned archive state on a stale whole-session save', async () => {
+    let durable = createSession({ archivedAt: 10 })
+    const repository = createSessionRepository({
+      loadSessionWithDiagnostics: vi.fn(async () => ({
+        status: 'found' as const,
+        session: durable
+      })),
+      saveSession: vi.fn(async (session) => {
+        durable = structuredClone(session)
+      })
+    })
+    const coordinator = new SessionPersistenceCoordinator(repository, createFileIndex())
+
+    await coordinator.saveSession(createSession({ title: 'Renderer rename' }))
+
+    expect(durable).toMatchObject({ title: 'Renderer rename', archivedAt: 10 })
+  })
+
+  it('rejects Session archive while the Session is running', async () => {
+    const repository = createSessionRepository({
+      loadSessionWithDiagnostics: vi.fn(async () => ({
+        status: 'found' as const,
+        session: createSession({ status: 'running' })
+      }))
+    })
+    const coordinator = new SessionPersistenceCoordinator(repository, createFileIndex())
+
+    await expect(
+      coordinator.updateArchive({
+        projectId: 'project-1',
+        sessionId: 'session-1',
+        archived: true,
+        expectedArchivedAt: null
+      })
+    ).rejects.toThrow('Finish or stop this session before archiving.')
+  })
+
   it('does not let a renderer whole-session save create runtime authority', async () => {
     let durable: PersistedChatSession | undefined
     const repository = createSessionRepository({
@@ -1355,7 +1392,7 @@ describe('SessionPersistenceCoordinator', () => {
     const loaded = await coordinator.loadAll()
 
     expect(loaded).toBe(result)
-    expect(reconcile).toHaveBeenCalledWith(['session-1'])
+    expect(reconcile).toHaveBeenCalledWith(['session-1'], [])
     expect(artifactStorage.reconcileSession).toHaveBeenCalledWith(
       'project-1',
       'session-1',
@@ -1402,7 +1439,7 @@ describe('SessionPersistenceCoordinator', () => {
         .filter(Boolean)
     ).toEqual([
       'load-authority',
-      'reconcile-unread-deletions',
+      'reconcile-unread-sessions',
       'reconcile-derived-state',
       'reconcile-derived-state'
     ])
@@ -1461,7 +1498,7 @@ describe('SessionPersistenceCoordinator', () => {
     expect(JSON.stringify(log.error.mock.calls)).not.toContain('/private/sessions')
   })
 
-  it('keeps hydration available and records unread deletion reconciliation degradation', async () => {
+  it('keeps hydration available and records unread Session reconciliation degradation', async () => {
     const session = createSession({ title: 'Private analysis' })
     const result = { sessions: [session], manifest: { version: 1 as const } }
     const repository = createSessionRepository({
@@ -1488,9 +1525,9 @@ describe('SessionPersistenceCoordinator', () => {
 
     await expect(coordinator.loadAll()).resolves.toBe(result)
 
-    expect(log.warn).toHaveBeenCalledWith('unread deletion reconciliation failed', {
+    expect(log.warn).toHaveBeenCalledWith('unread Session reconciliation failed', {
       operation: 'session-hydration',
-      phase: 'reconcile-unread-deletions',
+      phase: 'reconcile-unread-sessions',
       outcome: 'degraded',
       errorCategory: 'error'
     })

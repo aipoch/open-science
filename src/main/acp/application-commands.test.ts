@@ -342,6 +342,42 @@ describe('ACP application commands', () => {
     ).rejects.toThrow('Only a current human caller can respond to a Session Plan.')
   })
 
+  it('checks archive availability before resetting Session context or compacting', async () => {
+    const admittedById = vi.fn()
+    const dependencies: AcpApplicationCommandDependencies = {
+      ...createDependencies(),
+      archiveAvailability: {
+        withSessionAvailable: async <Result>(
+          _projectId: string,
+          _sessionId: string,
+          operation: () => Promise<Result>
+        ): Promise<Result> => operation(),
+        withSessionAvailableById: async <Result>(sessionId: string): Promise<Result> => {
+          admittedById(sessionId)
+          throw new Error('Restore this archived Session before continuing.')
+        }
+      }
+    }
+    const router = createApplicationCommandRouter()
+    registerAcpCommands(router.registrar, dependencies)
+    const request = { sessionId: 'session-1', cwd: '/workspace' }
+
+    await expect(
+      router.dispatcher.invoke(acpCommands.resetSessionContext, invocation([request]))
+    ).rejects.toThrow('Restore this archived Session before continuing.')
+    await expect(
+      router.dispatcher.invoke(
+        acpCommands.compactSession,
+        invocation([{ sessionId: 'session-1', reason: 'manual' }])
+      )
+    ).rejects.toThrow('Restore this archived Session before continuing.')
+
+    expect(admittedById).toHaveBeenCalledTimes(2)
+    expect(admittedById).toHaveBeenCalledWith(request.sessionId)
+    expect(dependencies.runtime.resetSessionContext).not.toHaveBeenCalled()
+    expect(dependencies.runtime.compactSession).not.toHaveBeenCalled()
+  })
+
   it('exposes Plan projection reads to the same current human callers on Electron and Web', async () => {
     const dependencies = createDependencies()
     const router = createApplicationCommandRouter()

@@ -81,6 +81,13 @@ const appMcpServerAliases = (name: string): readonly string[] => {
   ]
 }
 
+// Canonical inventory used at cross-module policy seams. Callers receive identities only, keeping
+// framework aliases and rendering details owned by this module.
+const appMcpToolIdentities = (): readonly string[] =>
+  APP_MCP_SERVERS.flatMap(({ canonicalName, tools }) =>
+    tools.map((tool) => `${canonicalName}/${tool}`)
+  )
+
 const resolveCanonicalMcpToolIdentity = (
   name: string | null | undefined,
   mcpServerNames: readonly string[]
@@ -162,6 +169,7 @@ const renderAppMcpToolReferences = (frameworkId: AgentFrameworkId, text: string)
 }
 
 export {
+  appMcpToolIdentities,
   appMcpServerAliases,
   canonicalAppMcpServerName,
   modelFacingAppMcpServerName,

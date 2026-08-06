@@ -13,6 +13,7 @@ export type UnreadTaskBadge = {
 export type UnreadTaskController = {
   restore(): Promise<void>
   markUnread(sessionId: string): Promise<void>
+  markReadSessions(sessionIds: string[]): Promise<void>
   removeUnreadSessions(sessionIds: string[]): Promise<void>
   syncViewState(state: UnreadTaskViewState): Promise<void>
   handleAppFocus(): Promise<void>
@@ -26,6 +27,7 @@ type UnreadTaskControllerDeps = {
   repository: UnreadTaskRepository
   badge: UnreadTaskBadge
   confirmSessionVisible?: (sessionId: string) => Promise<boolean>
+  canMarkUnread?: (sessionId: string) => Promise<boolean>
   onError?: (error: unknown) => void
 }
 
@@ -141,6 +143,7 @@ export const createUnreadTaskController = (
     if (!normalized) return
     if (deletedSessionIds.has(normalized)) return
     if (unreadSessionIds.has(normalized)) return
+    if (!((await deps.canMarkUnread?.(normalized)) ?? true)) return
 
     if (isAppFocused()) {
       const isVisible = await confirmVisibleSession(normalized)
@@ -178,6 +181,22 @@ export const createUnreadTaskController = (
       if (unreadSessionIds.delete(normalized)) changed = true
     }
 
+    if (!changed) return
+
+    refreshBadge()
+    await persist()
+  }
+
+  // Archive is an acknowledgement, not a deletion. It clears the current attention signal without
+  // leaving a process-lifetime tombstone, so a restored Session can receive future terminal notices.
+  const markReadSessions = async (sessionIds: string[]): Promise<void> => {
+    if (deps.headless) return
+
+    let changed = false
+    for (const sessionId of sessionIds) {
+      const normalized = sessionId.trim()
+      if (normalized && unreadSessionIds.delete(normalized)) changed = true
+    }
     if (!changed) return
 
     refreshBadge()
@@ -236,6 +255,7 @@ export const createUnreadTaskController = (
   return {
     restore,
     markUnread,
+    markReadSessions,
     removeUnreadSessions,
     syncViewState,
     handleAppFocus,

@@ -20,7 +20,8 @@ type ConversationActivityGroupItem = {
 }
 
 type GroupedConversationItem =
-  Extract<ConversationItem, { type: 'message' | 'handoff' }> | ConversationActivityGroupItem
+  | Extract<ConversationItem, { type: 'message' | 'handoff' | 'plan-activity' }>
+  | ConversationActivityGroupItem
 type ActivityExpansionOverrides = Record<string, boolean>
 type RenderableActivityEntry = {
   activity: ToolActivity
@@ -38,9 +39,9 @@ const groupConversationItems = (
   const groupsById = new Map(activityGroups.map((group) => [group.id, group]))
 
   for (const item of items) {
-    // Handoff lifecycle rows are transcript annotations, not tool activities. Keep their timeline
-    // position and prevent them from merging into an adjacent tool group.
-    if (item.type === 'message' || item.type === 'handoff') {
+    // Handoff annotations and Plan call records are standalone transcript items. Keep their
+    // timeline position and prevent them from merging into an adjacent ordinary-tool group.
+    if (item.type === 'message' || item.type === 'handoff' || item.type === 'plan-activity') {
       groupedItems.push(item)
       continue
     }

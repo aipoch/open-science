@@ -88,28 +88,86 @@ describe('workspace conversation items', () => {
     ])
   })
 
-  it('projects successful Plan tools through the Plan surface instead of generic activity rows', () => {
+  it('projects every generate_plan status as a standalone item and hides step status updates', () => {
     const session: ChatSession = {
       ...baseSession,
       activities: [
         createActivity({
           id: 'plan-generate',
-          providerToolName: 'mcp__open-science-plan__generate_plan'
+          providerToolName: 'mcp__open-science-plan__generate_plan',
+          status: 'pending',
+          sortIndex: 1
         }),
         createActivity({
           id: 'plan-status',
-          providerToolName: 'mcp.open-science-plan.update_step_status'
+          providerToolName: 'mcp.open-science-plan.update_step_status',
+          sortIndex: 2
         }),
         createActivity({
           id: 'plan-opencode',
-          providerToolName: 'open_science_plan_generate_plan'
+          providerToolName: 'open_science_plan_generate_plan',
+          status: 'in_progress',
+          sortIndex: 3
         }),
-        createActivity({ id: 'failed-plan', providerToolName: 'generate_plan', status: 'failed' })
+        createActivity({
+          id: 'completed-plan',
+          title: 'generate_plan',
+          status: 'completed',
+          sortIndex: 4
+        }),
+        createActivity({
+          id: 'failed-plan',
+          providerToolName: 'generate_plan',
+          status: 'failed',
+          sortIndex: 5
+        }),
+        createActivity({
+          id: 'failed-status',
+          providerToolName: 'update_step_status',
+          status: 'failed',
+          sortIndex: 6
+        })
+      ]
+    }
+
+    expect(createConversationItems(session).map((item) => [item.id, item.type])).toEqual([
+      ['plan-activity-plan-generate', 'plan-activity'],
+      ['plan-activity-plan-opencode', 'plan-activity'],
+      ['plan-activity-completed-plan', 'plan-activity'],
+      ['plan-activity-failed-plan', 'plan-activity']
+    ])
+  })
+
+  it('keeps a generate_plan revision at its chronological position between messages and tools', () => {
+    const session: ChatSession = {
+      ...baseSession,
+      messages: [
+        {
+          id: 'feedback',
+          role: 'user',
+          content: 'Please revise step two',
+          status: 'complete',
+          eventIds: [],
+          sortIndex: 2,
+          createdAt: 1710000000000,
+          updatedAt: 1710000000000
+        }
+      ],
+      activities: [
+        createActivity({ id: 'read', toolKind: 'read', sortIndex: 1 }),
+        createActivity({
+          id: 'revision',
+          providerToolName: 'mcp.open_science_plan.generate_plan',
+          status: 'in_progress',
+          sortIndex: 3
+        })
       ]
     }
 
     expect(createConversationItems(session).map((item) => item.id)).toEqual([
-      'activity-failed-plan'
+      'activity-read',
+      'feedback',
+      'plan-activity-revision'
     ])
   })
 

@@ -304,6 +304,49 @@ describe('session store', () => {
     expect(useSessionStore.getState().sessions[0].activePlanProjection).toBe(projection)
   })
 
+  it('applies archive state from an older durable Session update without losing newer local state', () => {
+    useSessionStore.getState().hydrateSessions([
+      {
+        id: 'session-1',
+        projectId: 'project-1',
+        title: 'Newer local state',
+        cwd: '/workspace',
+        status: 'idle',
+        messages: [
+          {
+            id: 'message-1',
+            role: 'user',
+            content: 'Keep this local message.',
+            status: 'complete',
+            eventIds: [],
+            createdAt: 2,
+            updatedAt: 2
+          }
+        ],
+        createdAt: 1,
+        updatedAt: 20
+      }
+    ])
+
+    useSessionStore.getState().upsertPersistedSession({
+      id: 'session-1',
+      projectId: 'project-1',
+      title: 'Older durable state',
+      cwd: '/workspace',
+      status: 'idle',
+      messages: [],
+      archivedAt: 10,
+      createdAt: 1,
+      updatedAt: 10
+    })
+
+    expect(useSessionStore.getState().sessions[0]).toMatchObject({
+      title: 'Newer local state',
+      archivedAt: 10,
+      messages: [{ id: 'message-1' }]
+    })
+  })
+
   it('restores branch-bound Plan history after saving and hydrating a Session', () => {
     useSessionStore.getState().hydrateSessions(
       [
@@ -2945,6 +2988,51 @@ describe('truncateSessionFromMessage', () => {
     useSessionStore.getState().activateMessageBranch('session-1', editedBranchId ?? '')
     expect(useSessionStore.getState().sessions[0].messages.at(-1)?.id).toBe(edited?.messageId)
     expect(useSessionStore.getState().sessions[0].branchContextResetRequired).toBe(true)
+  })
+
+  it('materializes only the selected Message Branch Plan activities', () => {
+    // Transcript projection receives this already-selected compatibility view. Exercise the public
+    // Branch switch here, where the Graph is resolved into Session messages and activities.
+    seedSession({
+      activities: [
+        {
+          ...createActivity('original-plan', baseTime + 250),
+          title: 'generate_plan',
+          providerToolName: 'generate_plan',
+          rawInput: { decision: 'approved' }
+        }
+      ]
+    })
+    useSessionStore.getState().truncateSessionFromMessage('session-1', 'user-2')
+    const edited = useSessionStore.getState().appendUserMessage({
+      sessionId: 'session-1',
+      content: 'edited user-2'
+    })
+    useSessionStore.getState().upsertToolActivity({
+      sessionId: 'session-1',
+      toolCallId: 'edited-plan',
+      eventId: 'edited-plan-event',
+      promptMessageId: edited?.messageId,
+      title: 'generate_plan',
+      providerToolName: 'generate_plan',
+      status: 'completed',
+      rawInput: { decision: 'rejected' }
+    })
+    useSessionStore.getState().finishRun('session-1')
+
+    const editedSession = useSessionStore.getState().sessions[0]
+    const originalBranchId = editedSession.conversationGraph?.branches[0].id
+    const editedBranchId = editedSession.conversationGraph?.frames[0].activeBranchId
+
+    useSessionStore.getState().activateMessageBranch('session-1', originalBranchId ?? '')
+    expect(
+      useSessionStore.getState().sessions[0].activities?.map((activity) => activity.id)
+    ).toEqual(['original-plan'])
+
+    useSessionStore.getState().activateMessageBranch('session-1', editedBranchId ?? '')
+    expect(
+      useSessionStore.getState().sessions[0].activities?.map((activity) => activity.id)
+    ).toEqual(['edited-plan'])
   })
 
   it('does not replay an original Branch event onto an edited Branch', () => {

@@ -227,6 +227,16 @@ describe('capabilityFromLegacyCategory', () => {
     ).toBeUndefined()
   })
 
+  it.each(['generate_plan', 'update_step_status'])(
+    'admits the registered Session Plan method %s to remembered permission scopes',
+    (method) => {
+      expect(capabilityFromLegacyCategory(`mcp:open-science-plan/${method}`)).toMatchObject({
+        kind: 'mcp_tool',
+        key: `mcp:open-science-plan/${method}`
+      })
+    }
+  )
+
   it.each([
     ['CreateAgent', 'customize:agent_create'],
     ['agent_update', 'customize:agent_update'],

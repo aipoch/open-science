@@ -12,6 +12,7 @@ import type {
   PersistedSessionStatus,
   SaveSessionOptions,
   SaveSessionManifestRequest,
+  UpdateSessionArchiveRequest,
   SessionRuntimeContext,
   SessionRuntimeContextPatch,
   SessionLoadFailure,
@@ -140,8 +141,23 @@ type ArtifactStorageReconciler = {
 
 type SessionDeletionHandlers = {
   commit(sessionIds: string[]): Promise<void>
-  reconcile(existingSessionIds: string[]): Promise<void>
+  reconcile(existingSessionIds: string[], archivedSessionIds: string[]): Promise<void>
 }
+
+const ARCHIVE_BLOCKING_SESSION_STATUSES = new Set<PersistedSessionStatus>([
+  'running',
+  'waiting-permission',
+  'waiting-plan-approval'
+])
+
+const assertArchiveExpectedAt = (value: number | null, target: 'Project' | 'Session'): void => {
+  if (value !== null && (!Number.isSafeInteger(value) || value <= 0)) {
+    throw new Error(`${target} archive state is invalid.`)
+  }
+}
+
+const isSessionArchiveBlocked = (session: PersistedChatSession): boolean =>
+  ARCHIVE_BLOCKING_SESSION_STATUSES.has(session.status)
 
 type PatchSessionRuntimeContextCommand = Readonly<{
   projectId: string
@@ -559,15 +575,20 @@ class SessionPersistenceCoordinator {
       }
 
       let degradedReconciliationCount = 0
-      operation.phase('reconcile-unread-deletions')
+      operation.phase('reconcile-unread-sessions')
       try {
-        await this.sessionDeletionHandlers?.reconcile(sessions.map((session) => session.id))
+        await this.sessionDeletionHandlers?.reconcile(
+          sessions.map((session) => session.id),
+          sessions
+            .filter((session) => session.archivedAt !== undefined)
+            .map((session) => session.id)
+        )
       } catch (error) {
         degradedReconciliationCount += 1
         // Unread metadata is a recoverable projection and must not block Session hydration.
-        emitRecoverableDiagnostic(this.log, 'unread deletion reconciliation failed', {
+        emitRecoverableDiagnostic(this.log, 'unread Session reconciliation failed', {
           operation: 'session-hydration',
-          phase: 'reconcile-unread-deletions',
+          phase: 'reconcile-unread-sessions',
           outcome: 'degraded',
           ...diagnosticErrorFields(error)
         })
@@ -807,6 +828,91 @@ class SessionPersistenceCoordinator {
     })
   }
 
+  // Project archive must fail closed when even one child Session cannot be read. A partial catalog
+  // cannot prove that an omitted Session is idle, so it is unsafe to hide the whole Project.
+  assertProjectArchivable(
+    projectId: string,
+    isRuntimeBusy: (sessionId: string) => boolean = () => false
+  ): Promise<string[]> {
+    return this.enqueue(async () => {
+      const loaded = await this.repository.loadProjectWithDiagnostics(projectId)
+      if (!loaded.isComplete) {
+        throw new Error('Cannot archive a Project while its Session catalog is incomplete.')
+      }
+      if (
+        loaded.sessions.some(
+          (session) => isSessionArchiveBlocked(session) || isRuntimeBusy(session.id)
+        )
+      ) {
+        throw new Error('Finish or stop active sessions before archiving this project.')
+      }
+      return loaded.sessions.map((session) => session.id)
+    })
+  }
+
+  // Used by runtime admission checks after resolving a known project/session pair. It is intentionally
+  // read-only: restoring an item never attaches or resumes an agent session by itself.
+  assertSessionAvailable(projectId: string, sessionId: string): Promise<void> {
+    return this.enqueue(async () => {
+      const loaded = await this.repository.loadSessionWithDiagnostics(projectId, sessionId)
+      if (loaded.status === 'unreadable') {
+        throw new Error('Cannot use a Session whose durable JSON is unreadable.')
+      }
+      if (loaded.status === 'missing') return
+      if (loaded.session.archivedAt !== undefined) {
+        throw new Error('Restore this archived Session before continuing.')
+      }
+    })
+  }
+
+  // Finds a persisted Session's owner for runtime admission. Fresh, unsaved sessions have no durable
+  // archive state and deliberately return undefined.
+  sessionProjectId(sessionId: string): Promise<string | undefined> {
+    return this.enqueue(async () => this.sessionMetadata.get(sessionId)?.projectId)
+  }
+
+  // Dedicated main-owned archive mutation. Unlike full renderer saves it preserves updatedAt and
+  // never allows a stale renderer projection to alter archive state.
+  updateArchive(
+    request: UpdateSessionArchiveRequest,
+    isRuntimeBusy: () => boolean = () => false
+  ): Promise<PersistedChatSession> {
+    return this.enqueue(async () => {
+      assertArchiveExpectedAt(request.expectedArchivedAt, 'Session')
+      if (this.deletedProjects.has(request.projectId)) {
+        throw new Error('Cannot archive a Session whose project has been deleted.')
+      }
+      if (this.deletedSessions.has(sessionKey(request.projectId, request.sessionId))) {
+        throw new Error('Cannot archive a Session that has been deleted.')
+      }
+
+      const loaded = await this.repository.loadSessionWithDiagnostics(
+        request.projectId,
+        request.sessionId
+      )
+      if (loaded.status === 'missing') throw new Error('Session not found.')
+      if (loaded.status === 'unreadable') {
+        throw new Error('Cannot archive a Session whose durable JSON is unreadable.')
+      }
+
+      const currentArchivedAt = loaded.session.archivedAt ?? null
+      if (currentArchivedAt !== request.expectedArchivedAt) {
+        throw new Error('Session archive state changed elsewhere.')
+      }
+      if (request.archived && (isSessionArchiveBlocked(loaded.session) || isRuntimeBusy())) {
+        throw new Error('Finish or stop this session before archiving.')
+      }
+      if (request.archived === (currentArchivedAt !== null)) return loaded.session
+
+      const next: PersistedChatSession = { ...loaded.session }
+      if (request.archived) next.archivedAt = Date.now()
+      else delete next.archivedAt
+      await this.repository.saveSession(next)
+      this.upsertSessionMetadata(next)
+      return next
+    })
+  }
+
   // Persists authoritative JSON before updating the derived index. If indexing fails, the save stays
   // durable, the caller receives the error for its normal retry path, and Files is reset to show its
   // incomplete state rather than silently presenting stale metadata as complete.
@@ -834,8 +940,9 @@ class SessionPersistenceCoordinator {
           'Cannot save Session projection because main-owned runtime context is unreadable.'
         )
       }
-      const { runtimeContext: _submittedRuntimeContext, ...rendererOwnedSession } = session
-      void _submittedRuntimeContext
+      const rendererOwnedSession: PersistedChatSession = { ...session }
+      delete rendererOwnedSession.runtimeContext
+      delete rendererOwnedSession.archivedAt
       const authority = authoritative.status === 'found' ? authoritative.session : undefined
       const mainOwnedStatus =
         authority?.status === 'waiting-plan-approval' ||
@@ -845,6 +952,7 @@ class SessionPersistenceCoordinator {
       const mergedSession: PersistedChatSession = {
         ...rendererOwnedSession,
         ...(authority?.runtimeContext ? { runtimeContext: authority.runtimeContext } : {}),
+        ...(authority?.archivedAt ? { archivedAt: authority.archivedAt } : {}),
         // Awaiting Plan approval is main-owned blocking state and must survive the same stale save.
         ...(mainOwnedStatus ? { status: mainOwnedStatus } : {}),
         updatedAt:

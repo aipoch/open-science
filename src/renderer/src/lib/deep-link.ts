@@ -94,13 +94,18 @@ const useDeepLinkNavigation = ({ isHydrated, isReady }: DeepLinkNavigationReadin
 
     const projectExists = useProjectStore
       .getState()
-      .projects.some((project) => project.id === projectId)
+      .projects.some((project) => project.id === projectId && project.archivedAt === undefined)
     const sessionExists =
       projectExists &&
       sessionId !== undefined &&
       useSessionStore
         .getState()
-        .sessions.some((session) => session.id === sessionId && session.projectId === projectId)
+        .sessions.some(
+          (session) =>
+            session.id === sessionId &&
+            session.projectId === projectId &&
+            session.archivedAt === undefined
+        )
 
     if (projectId && sessionId && sessionExists) {
       initialized.current = true

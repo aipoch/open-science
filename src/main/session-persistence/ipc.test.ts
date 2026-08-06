@@ -292,6 +292,7 @@ describe('session persistence IPC handlers', () => {
         .fn()
         .mockResolvedValueOnce({ created: true, session: durableSession })
         .mockResolvedValueOnce({ created: false, session: durableSession }),
+      updateArchive: vi.fn().mockResolvedValue({ ...durableSession, archivedAt: 3 }),
       deleteSession: vi.fn().mockResolvedValue(undefined),
       saveManifest: vi.fn().mockResolvedValue(undefined)
     }
@@ -301,11 +302,18 @@ describe('session persistence IPC handlers', () => {
     expect([...ipcHandlers.keys()]).toEqual([
       'sessions:load-all',
       'sessions:save-session',
+      'sessions:update-archive',
       'sessions:delete-session',
       'sessions:save-manifest'
     ])
 
     const deleteRequest = { projectId: 'project-a', sessionId: 'session-1' }
+    const archiveRequest = {
+      projectId: 'project-a',
+      sessionId: 'session-1',
+      archived: true,
+      expectedArchivedAt: null
+    }
     const manifestRequest = { lastProjectId: 'project-a', lastSessionId: 'session-1' }
     const event = { sender: { id: 2 } }
     await expect(ipcHandlers.get('sessions:load-all')?.()).resolves.toBe(loadResult)
@@ -314,10 +322,12 @@ describe('session persistence IPC handlers', () => {
     )
     const updatedSession = { ...session, title: 'Updated session', updatedAt: 1710000000001 }
     await ipcHandlers.get('sessions:save-session')?.(event, updatedSession)
+    await ipcHandlers.get('sessions:update-archive')?.(event, archiveRequest)
     await ipcHandlers.get('sessions:delete-session')?.(event, deleteRequest)
     await ipcHandlers.get('sessions:save-manifest')?.(undefined, manifestRequest)
 
     expect(repository.saveSession).toHaveBeenCalledWith(session)
+    expect(repository.updateArchive).toHaveBeenCalledWith(archiveRequest)
     expect(repository.deleteSession).toHaveBeenCalledWith('project-a', 'session-1')
     expect(reviewRepository.deleteReviewsForSession).not.toHaveBeenCalled()
     expect(repository.saveManifest).toHaveBeenCalledWith(manifestRequest)
@@ -327,6 +337,10 @@ describe('session persistence IPC handlers', () => {
     })
     expect(broadcastLifecycleEvent).toHaveBeenCalledWith('session:updated', {
       session: durableSession,
+      originClientId: 'electron:2'
+    })
+    expect(broadcastLifecycleEvent).toHaveBeenCalledWith('session:updated', {
+      session: { ...durableSession, archivedAt: 3 },
       originClientId: 'electron:2'
     })
     expect(broadcastLifecycleEvent).toHaveBeenCalledWith('session:deleted', deleteRequest)
@@ -343,6 +357,7 @@ describe('session persistence IPC handlers', () => {
     const injected: SessionPersistenceHandlers = {
       loadAll: vi.fn().mockResolvedValue(loadResult),
       saveSession: vi.fn(),
+      updateArchive: vi.fn(),
       deleteSession: vi.fn(),
       saveManifest: vi.fn()
     }
@@ -365,6 +380,7 @@ describe('session persistence IPC handlers', () => {
     const injected: SessionPersistenceHandlers = {
       loadAll: vi.fn().mockResolvedValue({ sessions: [], manifest: { version: 1 as const } }),
       saveSession: vi.fn(),
+      updateArchive: vi.fn(),
       deleteSession: vi.fn(),
       saveManifest: vi.fn()
     }

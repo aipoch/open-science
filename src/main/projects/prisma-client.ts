@@ -22,6 +22,7 @@ const PROJECT_TABLE_DDL = `CREATE TABLE IF NOT EXISTS "Project" (
     "name" TEXT NOT NULL,
     "description" TEXT NOT NULL DEFAULT '',
     "isExample" BOOLEAN NOT NULL DEFAULT false,
+    "archivedAt" DATETIME,
     "createdAt" DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
     "updatedAt" DATETIME NOT NULL
 );`
@@ -135,6 +136,10 @@ const PROJECT_DELETION_INTENT_TABLE_DDL = `CREATE TABLE IF NOT EXISTS "ProjectDe
     "projectId" TEXT NOT NULL PRIMARY KEY,
     "createdAt" DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP
 );`
+
+// Existing installations create their Project table before Archive existed. Keep the migration
+// additive so no stored Project or its activity ordering is rewritten.
+const PROJECT_ADD_ARCHIVED_AT_DDL = `ALTER TABLE "Project" ADD COLUMN "archivedAt" DATETIME`
 
 // ManagedFile is a metadata projection only: storageKey points back into the existing managed roots,
 // while soft-delete fields keep Files queries reversible during durable session/project deletion.
@@ -580,6 +585,7 @@ const addColumnIfMissing = async (
 // Creates the schema if missing. Idempotent; no projects are seeded, so a fresh install starts empty.
 const ensureProjectSchema = async (client: PrismaClient): Promise<void> => {
   await client.$executeRawUnsafe(PROJECT_TABLE_DDL)
+  await addColumnIfMissing(client, 'Project', 'archivedAt', PROJECT_ADD_ARCHIVED_AT_DDL)
   await client.$executeRawUnsafe(PERMISSION_GRANT_TABLE_DDL)
   for (const ddl of PERMISSION_GRANT_INDEX_DDLS) {
     await client.$executeRawUnsafe(ddl)

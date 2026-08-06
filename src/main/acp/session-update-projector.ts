@@ -16,6 +16,9 @@ import {
 } from './runtime-events'
 import type { AcpSessionRegistry } from './session-registry'
 
+const CODEX_COMPACTION_WARNING =
+  'Warning: Heads up: Long threads and multiple compactions can cause the model to be less accurate. Start a new thread when possible to keep threads small and targeted.'
+
 type AcpSessionUpdateRouting = Readonly<{
   framework?: AgentFrameworkId
   appSessionId?: string
@@ -166,6 +169,17 @@ class AcpSessionUpdateProjector {
       )
     )
     const event = deepFreeze(projection.event)
+    // codex-acp 1.1.4 flattens Codex's post-compaction warning into an unscoped assistant chunk.
+    // Keep the separate compaction notice, but do not attribute this adapter-authored warning to the model.
+    if (
+      routing.framework === 'codex' &&
+      routed.update.sessionUpdate === 'agent_message_chunk' &&
+      event.kind === 'message' &&
+      event.messageId === undefined &&
+      event.text?.trim() === CODEX_COMPACTION_WARNING
+    ) {
+      return Object.freeze([])
+    }
     if (event.contextUsage && routing.reconnectPending) return Object.freeze([])
 
     const effects: AcpSessionUpdateEffect[] = []

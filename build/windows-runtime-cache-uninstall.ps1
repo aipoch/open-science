@@ -112,8 +112,11 @@ foreach ($root in $roots) {
     $leaf = Get-CacheLeaf $canonicalRoot $userIdentity
     $compactLeaf = Get-CompactCacheLeaf $canonicalRoot $userIdentity
     $candidates = @(
-      (Join-Path ([System.IO.Path]::GetPathRoot($canonicalRoot)) $leaf),
-      (Join-Path $env:USERPROFILE $leaf),
+      (Join-Path ([System.IO.Path]::GetPathRoot($canonicalRoot)) $leaf)
+      if (-not [string]::IsNullOrWhiteSpace($env:PUBLIC)) {
+        (Join-Path $env:PUBLIC $leaf)
+      }
+      (Join-Path $env:USERPROFILE $leaf)
       (Join-Path $env:USERPROFILE $compactLeaf)
     ) | Select-Object -Unique
     foreach ($candidate in $candidates) {

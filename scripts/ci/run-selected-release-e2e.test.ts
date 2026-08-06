@@ -1,6 +1,8 @@
+import { fileURLToPath } from 'node:url'
+
 import { describe, expect, it } from 'vitest'
 
-import { selectReleaseSpecs } from './run-selected-release-e2e.mjs'
+import { releaseE2ECommand, selectReleaseSpecs } from './run-selected-release-e2e.mjs'
 
 describe('selected release Electron E2E', () => {
   it('selects only journeys assigned to the current platform', () => {
@@ -23,5 +25,14 @@ describe('selected release Electron E2E', () => {
     expect(() => selectReleaseSpecs([], 'freebsd')).toThrow(
       'Unsupported Electron E2E platform: freebsd'
     )
+  })
+
+  it('launches the installed Playwright CLI directly through Node', () => {
+    const spec = 'e2e/certification/provider-bridge.spec.ts'
+
+    expect(releaseE2ECommand([spec])).toEqual({
+      executable: process.execPath,
+      args: [fileURLToPath(import.meta.resolve('@playwright/test/cli')), 'test', spec]
+    })
   })
 })

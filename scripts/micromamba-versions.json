@@ -9,7 +9,7 @@
     "it may re-package an existing version URL with different bytes and break reproducible builds.",
     "",
     "To repin (bump `version` and `releaseTag`, then regenerate every digest below):",
-    "  tag=2.8.1-0",
+    "  tag=2.8.1-1",
     "  for s in osx-arm64 osx-64 linux-64 linux-aarch64 win-64; do",
     "    curl -fsSL \"https://github.com/mamba-org/micromamba-releases/releases/download/$tag/micromamba-$s.tar.bz2\" | shasum -a 256 | awk -v s=$s '{print s, $1}'",
     "  done",
@@ -17,12 +17,12 @@
     "Before accepting a micromamba bump, revalidate the Windows managed-runtime fixtures for multi-cache search, URL-derived cache layout, and flat-cache fallback with LongPathsEnabled=0."
   ],
   "version": "2.8.1",
-  "releaseTag": "2.8.1-0",
+  "releaseTag": "2.8.1-1",
   "sha256": {
-    "osx-arm64": "a28588c79e96436c2001c87e3b8360bf2eb5c380fb288871389197b9150caf0a",
-    "osx-64": "146abdea8793c6ccf1b8600ae2b03cf2a0f1506a2846eeafc34ae3ebe1123fe6",
-    "linux-64": "a934c3709c997feae403a27fd1e321c106d26ffa4f294800ffb11cbc9a3e8515",
-    "linux-aarch64": "70c60a36609ee8bcc07a3a1a66b2c3a65cff7c1053466963437f1bda72e5210f",
-    "win-64": "8648c6d302bb6d7432e5d620bc862c2be14c00f39ddd7e10c5eb6d73250dbba1"
+    "osx-arm64": "cf94f0d56cd38393ccbe12543e0378f77e6581dee8c4428d1fc563a859a0b070",
+    "osx-64": "cd3c10cec65704c0a96195b46002d45350d0dd43a52d940e9dc17c517b7ee439",
+    "linux-64": "8528263837623551a44464a372e5bd6b0b856479a83d2a77490a19dd98da3b06",
+    "linux-aarch64": "daa4d5c7c5d688ce0deed4ff7887a4ff95429c89d80c76e39ab1ee3d5f66b913",
+    "win-64": "e82874c473688860d087dfe825e1a52ae9deaf8099c7edaf3caff80e2687ed5d"
   }
 }

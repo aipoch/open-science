@@ -135,8 +135,28 @@ export const GlobalSearchDialog = ({
   const [actionError, setActionError] = useState<string | undefined>()
   const [activeIndex, setActiveIndex] = useState(0)
 
-  const projects = useProjectStore((state) => state.projects)
-  const sessions = useSessionStore((state) => state.sessions)
+  const allProjects = useProjectStore((state) => state.projects)
+  const allSessions = useSessionStore((state) => state.sessions)
+  const archivedSessionIds = useMemo(
+    () =>
+      allSessions
+        .filter((session) => session.archivedAt !== undefined)
+        .map((session) => session.id)
+        .sort(),
+    [allSessions]
+  )
+  const projects = useMemo(
+    () => allProjects.filter((project) => project.archivedAt === undefined),
+    [allProjects]
+  )
+  const activeProjectIds = useMemo(() => new Set(projects.map((project) => project.id)), [projects])
+  const sessions = useMemo(
+    () =>
+      allSessions.filter(
+        (session) => session.archivedAt === undefined && activeProjectIds.has(session.projectId)
+      ),
+    [activeProjectIds, allSessions]
+  )
   const selectedSessionId = useSessionStore((state) => state.selectedSessionId)
   const activeProjectId = useNavigationStore((state) => state.activeProjectId)
   const view = useNavigationStore((state) => state.view)
@@ -252,6 +272,7 @@ export const GlobalSearchDialog = ({
           primaryProjectId: primaryProject.id,
           otherProjectIds,
           ...(trimmedQuery ? { filenameContains: trimmedQuery } : {}),
+          ...(archivedSessionIds.length > 0 ? { excludedSessionIds: archivedSessionIds } : {}),
           primaryLimit: GLOBAL_SEARCH_PAGE_SIZE,
           ...(cursor ? { primaryCursor: cursor } : {}),
           otherLimit: !cursor && (!isProjectScope || isSearchMode) ? OTHER_PROJECT_RESULT_LIMIT : 0
@@ -283,7 +304,14 @@ export const GlobalSearchDialog = ({
         setFailedArtifactCursor(cursor)
       }
     },
-    [isProjectScope, isSearchMode, otherProjectIds, primaryProject, trimmedQuery]
+    [
+      archivedSessionIds,
+      isProjectScope,
+      isSearchMode,
+      otherProjectIds,
+      primaryProject,
+      trimmedQuery
+    ]
   )
 
   useEffect(() => {

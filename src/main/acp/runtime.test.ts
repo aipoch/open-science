@@ -18,6 +18,9 @@ import { afterEach, describe, expect, it, vi } from 'vitest'
 import { AcpRuntime } from './runtime.test-utils'
 import type { AcpAgentConnectionAdapter } from './agent-connection-adapter'
 import type { AcpConnectionCloseWorkflow } from './connection-close-workflow'
+import { composeAcpRuntimePlanWorkflow } from './runtime-plan-composition'
+import { SessionPlanInteractionOwner } from '../session-plan/session-plan-interaction-owner'
+import { composeAcpRuntimeBaseOwners } from './runtime-base-composition'
 import { AcpPermissionContext } from './permission-context'
 import { ContextUsageTracker, type TokenCounter } from './context-usage-tracker'
 import {
@@ -1665,6 +1668,37 @@ describe('ACP runtime session management', () => {
     )
   })
 
+  const installPromptPlanTestWorkflow = (
+    runtime: AcpRuntime,
+    planService: unknown,
+    sessions = durablePlanSessions()
+  ): void => {
+    const internals = runtime as unknown as {
+      sessionInteractions: unknown
+      artifactTurns: unknown
+      publication: unknown
+      sessionEnvironment: unknown
+      sessionPlanWorkflow: unknown
+      promptTurnWorkflow: { options: { plan: unknown } }
+    }
+    const planInteractions = new SessionPlanInteractionOwner()
+    const sessionPlanWorkflow = composeAcpRuntimePlanWorkflow(
+      { plan: { sessions } } as unknown as Parameters<typeof composeAcpRuntimePlanWorkflow>[0],
+      {
+        planService,
+        planInteractions,
+        sessionInteractions: internals.sessionInteractions,
+        artifactTurns: internals.artifactTurns
+      } as unknown as Parameters<typeof composeAcpRuntimePlanWorkflow>[1],
+      {
+        publication: internals.publication,
+        sessionEnvironment: internals.sessionEnvironment
+      } as unknown as Parameters<typeof composeAcpRuntimePlanWorkflow>[2]
+    )
+    Object.assign(internals, { sessionPlanWorkflow })
+    Object.assign(internals.promptTurnWorkflow.options, { plan: sessionPlanWorkflow.prompt })
+  }
+
   it('activates one interaction before durably approving a restored Plan', async () => {
     const process = new FakeAgentProcess()
     const fakeAgent = startFakeAgent(process, ['s1'])
@@ -1680,13 +1714,10 @@ describe('ACP runtime session management', () => {
     const pending = restoredPlanProjection('pending', 4)
     const respond = vi.fn(async () => ({ projection: approved, changed: true }))
     const checkTurnCompletion = vi.fn(async () => ({ allow: true }))
-    Object.assign(runtime as unknown as { planService: unknown }, {
-      planSessions: durablePlanSessions(),
-      planService: {
-        respond,
-        checkTurnCompletion,
-        getProjection: vi.fn(async () => pending)
-      }
+    installPromptPlanTestWorkflow(runtime, {
+      respond,
+      checkTurnCompletion,
+      getProjection: vi.fn(async () => pending)
     })
 
     await runtime.createSession({ cwd: '/workspace', projectName: 'project-1' })
@@ -1737,10 +1768,7 @@ describe('ACP runtime session management', () => {
     const pending = restoredPlanProjection('pending', 4)
     const getProjection = vi.fn(async () => pending)
     const respond = vi.fn()
-    Object.assign(runtime as unknown as { planService: unknown }, {
-      planSessions: durablePlanSessions(),
-      planService: { getProjection, respond }
-    })
+    installPromptPlanTestWorkflow(runtime, { getProjection, respond })
 
     await runtime.createSession({ cwd: '/workspace', projectName: 'project-1' })
     await runtime.sendPrompt({
@@ -1796,12 +1824,9 @@ describe('ACP runtime session management', () => {
     const rejected = restoredPlanProjection('rejected', 5)
     const pending = restoredPlanProjection('pending', 4)
     const respond = vi.fn(async () => ({ projection: rejected, changed: true }))
-    Object.assign(runtime as unknown as { planService: unknown }, {
-      planSessions: durablePlanSessions(),
-      planService: {
-        respond,
-        getProjection: vi.fn(async () => pending)
-      }
+    installPromptPlanTestWorkflow(runtime, {
+      respond,
+      getProjection: vi.fn(async () => pending)
     })
 
     await runtime.createSession({ cwd: '/workspace', projectName: 'project-1' })
@@ -3888,10 +3913,9 @@ describe('ACP runtime session management', () => {
       stepStates: { Analyze: { status: 'blocked', notes: 'Input missing' } },
       counts: { phases: 1, delegations: 1, steps: 1, completed: 0, inProgress: 0 }
     } satisfies ActivePlanProjection
-    Object.assign(runtime as unknown as { planService: unknown }, {
-      planService: { getProjection: vi.fn(async () => projection) }
+    installPromptPlanTestWorkflow(runtime, {
+      getProjection: vi.fn(async () => projection)
     })
-
     const session = await runtime.createSession({ cwd: '/workspace', projectName: 'project-1' })
     await runtime.compactSession({ sessionId: session.sessionId })
 
@@ -11472,6 +11496,35 @@ describe('ACP runtime session management', () => {
     })
   })
 
+  it('publishes an explicit provenance prompt as the routed user message identity', async () => {
+    const process = new FakeAgentProcess()
+    startFakeAgent(process, ['session-1'])
+    const messageEvents: AcpRuntimeEvent[] = []
+    const runtime = new AcpRuntime({
+      appVersion: '0.1.0',
+      defaultCwd: '/workspace',
+      spawnAgent: () => asAgentProcess(process),
+      callbacks: {
+        onEvent: (event) => {
+          if (event.kind === 'message') messageEvents.push(event)
+        }
+      }
+    })
+    const session = await runtime.createSession({ cwd: '/workspace' })
+
+    await runtime.sendPrompt({
+      sessionId: session.sessionId,
+      text: '[Auditor] Correct the generated file.',
+      provenanceContext: { promptMessageId: 'auditor-prompt-1' }
+    })
+
+    expect(messageEvents.find((event) => event.role === 'user')).toMatchObject({
+      messageId: 'auditor-prompt-1',
+      promptMessageId: 'auditor-prompt-1',
+      text: '[Auditor] Correct the generated file.'
+    })
+  })
+
   it('retains staged Claude replay after failed adoption and commits it after success', async () => {
     const process = new FakeAgentProcess()
     const fakeAgent = startFakeAgent(
@@ -12650,9 +12703,7 @@ describe('ACP runtime session management', () => {
       counts: { phases: 1, delegations: 1, steps: 1, completed: 0, inProgress: 0 }
     } satisfies ActivePlanProjection
     const getProjection = vi.fn(async () => interruptedProjection)
-    Object.assign(runtime as unknown as { planService: unknown }, {
-      planService: { getProjection }
-    })
+    installPromptPlanTestWorkflow(runtime, { getProjection })
 
     await runtime.createSession({ cwd: '/workspace', projectName: 'project-1' })
     await expect(runtime.sendPrompt({ sessionId: 's1', text: 'run the plan' })).rejects.toThrow()
@@ -12720,13 +12771,10 @@ describe('ACP runtime session management', () => {
         counts: { phases: 1, delegations: 1, steps: 1, completed: 0, inProgress: 0 }
       } satisfies ActivePlanProjection
       const authorizeContinuation = vi.fn(async () => active)
-      Object.assign(runtime as unknown as { planService: unknown }, {
-        planSessions: durablePlanSessions(),
-        planService: {
-          authorizeContinuation,
-          checkTurnCompletion: vi.fn(async () => ({ allow: true })),
-          getProjection: vi.fn(async () => active)
-        }
+      installPromptPlanTestWorkflow(runtime, {
+        authorizeContinuation,
+        checkTurnCompletion: vi.fn(async () => ({ allow: true })),
+        getProjection: vi.fn(async () => active)
       })
 
       await runtime.createSession({ cwd: '/workspace', projectName: 'project-1' })
@@ -12767,10 +12815,11 @@ describe('ACP runtime session management', () => {
       framework: opencodeFramework
     })
     const active = restoredPlanProjection('approved', 4)
-    Object.assign(runtime as unknown as { planService: unknown }, {
-      planSessions: durablePlanSessions(['branch-b-root', 'branch-b-message']),
-      planService: { authorizeContinuation: vi.fn(async () => active) }
-    })
+    installPromptPlanTestWorkflow(
+      runtime,
+      { authorizeContinuation: vi.fn(async () => active) },
+      durablePlanSessions(['branch-b-root', 'branch-b-message'])
+    )
 
     await runtime.createSession({ cwd: '/workspace', projectName: 'project-1' })
     await expect(
@@ -12847,13 +12896,10 @@ describe('ACP runtime session management', () => {
         stepStates: { Analyze: { status: 'not_started' } },
         counts: { phases: 1, delegations: 1, steps: 1, completed: 0, inProgress: 0 }
       } satisfies ActivePlanProjection
-      Object.assign(runtime as unknown as { planService: unknown }, {
-        planSessions: durablePlanSessions(),
-        planService: {
-          authorizeContinuation: vi.fn(async () => authorized),
-          checkTurnCompletion,
-          getProjection
-        }
+      installPromptPlanTestWorkflow(runtime, {
+        authorizeContinuation: vi.fn(async () => authorized),
+        checkTurnCompletion,
+        getProjection
       })
 
       await runtime.createSession({ cwd: '/workspace', projectName: 'project-1' })
@@ -12892,8 +12938,9 @@ describe('ACP runtime session management', () => {
       allow: false,
       lifecycle: 'approved' as const
     }))
-    Object.assign(runtime as unknown as { planService: unknown }, {
-      planService: { checkTurnCompletion, getProjection: vi.fn(async () => null) }
+    installPromptPlanTestWorkflow(runtime, {
+      checkTurnCompletion,
+      getProjection: vi.fn(async () => null)
     })
 
     await runtime.createSession({ cwd: '/workspace', projectName: 'project-1' })
@@ -12926,9 +12973,7 @@ describe('ACP runtime session management', () => {
           lifecycle: 'interrupted'
         }) as ActivePlanProjection
     )
-    Object.assign(runtime as unknown as { planService: unknown }, {
-      planService: { checkTurnCompletion, getProjection }
-    })
+    installPromptPlanTestWorkflow(runtime, { checkTurnCompletion, getProjection })
 
     await runtime.createSession({ cwd: '/workspace', projectName: 'project-1' })
     await expect(
@@ -19821,7 +19866,7 @@ describe('Specialist Skill scoping', () => {
       version: 1,
       revision: 0
     }
-    const runtime = new AcpRuntime({
+    const owners = composeAcpRuntimeBaseOwners({
       appVersion: '0.1.0',
       defaultCwd: '/workspace',
       artifacts: {
@@ -19849,37 +19894,7 @@ describe('Specialist Skill scoping', () => {
         }
       }
     })
-    const internals = runtime as unknown as {
-      artifactTurns: {
-        open(request: {
-          appSessionId: string
-          artifactStorageSessionId: string
-          projectId: string
-          agentName: string
-        }): Promise<unknown>
-        dispose(handle: unknown): Promise<void>
-      }
-      planService: {
-        generate(input: {
-          projectId: string
-          sessionId: string
-          interactionId: string
-          content: {
-            task_summary: string
-            phases: Array<{
-              name: string
-              delegations: Array<{
-                name: string
-                steps: Array<{ title: string; description: string }>
-              }>
-            }>
-            desired_outputs: string[]
-            feasibility: { confidence: 'high'; rationale: string }
-          }
-        }): Promise<{ projection: { artifactVersionId: string } }>
-      }
-    }
-    const turn = await internals.artifactTurns.open({
+    const turn = await owners.artifactTurns!.open({
       appSessionId: 'session-1',
       artifactStorageSessionId: 'session-1',
       projectId: 'project-1',
@@ -19888,7 +19903,7 @@ describe('Specialist Skill scoping', () => {
 
     try {
       await expect(
-        internals.planService.generate({
+        owners.planService!.generate({
           projectId: 'project-1',
           sessionId: 'session-1',
           interactionId: 'interaction-1',
@@ -19911,7 +19926,7 @@ describe('Specialist Skill scoping', () => {
         })
       ).resolves.toMatchObject({ projection: { artifactVersionId: 'version-1' } })
     } finally {
-      await internals.artifactTurns.dispose(turn)
+      await owners.artifactTurns!.dispose(turn)
     }
   })
 })

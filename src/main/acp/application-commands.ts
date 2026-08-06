@@ -134,6 +134,17 @@ type AcpApplicationCommandRuntime = Pick<
 type AcpApplicationCommandDependencies = Readonly<{
   runtime: AcpApplicationCommandRuntime
   workflows: AcpHandlerWorkflows
+  archiveAvailability?: Readonly<{
+    withSessionAvailable<Result>(
+      projectId: string,
+      sessionId: string,
+      operation: () => Promise<Result>
+    ): Promise<Result>
+    withSessionAvailableById<Result>(
+      sessionId: string,
+      operation: () => Promise<Result>
+    ): Promise<Result>
+  }>
 }>
 
 const registerAcpCommands = (
@@ -151,9 +162,19 @@ const registerAcpCommands = (
       'acp:resume-session': (invocation) =>
         dependencies.workflows.resumeSession(invocation.args[0]),
       'acp:reset-session-context': (invocation) =>
-        dependencies.runtime.resetSessionContext(invocation.args[0]),
+        dependencies.archiveAvailability
+          ? dependencies.archiveAvailability.withSessionAvailableById(
+              invocation.args[0].sessionId,
+              () => dependencies.runtime.resetSessionContext(invocation.args[0])
+            )
+          : dependencies.runtime.resetSessionContext(invocation.args[0]),
       'acp:compact-session': (invocation) =>
-        dependencies.runtime.compactSession(invocation.args[0]),
+        dependencies.archiveAvailability
+          ? dependencies.archiveAvailability.withSessionAvailableById(
+              invocation.args[0].sessionId,
+              () => dependencies.runtime.compactSession(invocation.args[0])
+            )
+          : dependencies.runtime.compactSession(invocation.args[0]),
       'acp:send-prompt': (invocation) => {
         if (
           invocation.args[0].planContinuation &&
@@ -190,7 +211,13 @@ const registerAcpCommands = (
         if (!canSatisfyHumanApproval(invocation.callerContext)) {
           throw new Error('Only a current human caller can respond to a Session Plan.')
         }
-        return dependencies.runtime.respondSessionPlan(invocation.args[0])
+        return dependencies.archiveAvailability
+          ? dependencies.archiveAvailability.withSessionAvailable(
+              invocation.args[0].projectId,
+              invocation.args[0].sessionId,
+              () => dependencies.runtime.respondSessionPlan(invocation.args[0])
+            )
+          : dependencies.runtime.respondSessionPlan(invocation.args[0])
       }
     })
     return scope.complete()

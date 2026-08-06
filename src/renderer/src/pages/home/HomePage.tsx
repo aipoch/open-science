@@ -18,6 +18,7 @@ import { useNavigationStore } from '@/stores/navigation-store'
 import type { ChatSession } from '@/stores/session-store'
 import { useSessionStore } from '@/stores/session-store'
 import { useProjectStore } from '@/stores/project-store'
+import { useArchiveUndoStore } from '@/stores/archive-undo-store'
 import { useSettingsStore } from '@/stores/settings-store'
 import { GitHubStarBadge } from '@/components/GitHubStarBadge'
 import { ThemePreferenceMenu } from '@/components/ThemeControls'
@@ -87,8 +88,10 @@ const HomePage = ({
   const loadError = useProjectStore((state) => state.loadError)
   const createProject = useProjectStore((state) => state.createProject)
   const updateProject = useProjectStore((state) => state.updateProject)
+  const updateProjectArchive = useProjectStore((state) => state.updateProjectArchive)
   const deleteProject = useProjectStore((state) => state.deleteProject)
   const sessions = useSessionStore((state) => state.sessions)
+  const enqueueProjectArchive = useArchiveUndoStore((state) => state.enqueueProject)
   const openProject = useNavigationStore((state) => state.openProject)
   const openSession = useNavigationStore((state) => state.openSession)
   const pendingProjectCreation = useNavigationStore((state) => state.pendingProjectCreation)
@@ -107,16 +110,33 @@ const HomePage = ({
   const [projectToDelete, setProjectToDelete] = useState<Project | undefined>(undefined)
   const [isDeletingProject, setIsDeletingProject] = useState(false)
   const [deleteProjectError, setDeleteProjectError] = useState<string | undefined>(undefined)
+  const [archivingProjectIds, setArchivingProjectIds] = useState<Set<string>>(() => new Set())
+  const [archiveProjectError, setArchiveProjectError] = useState<string | undefined>(undefined)
+
+  const activeProjects = useMemo(
+    () => projects.filter((project) => project.archivedAt === undefined),
+    [projects]
+  )
+  const activeProjectIds = useMemo(
+    () => new Set(activeProjects.map((project) => project.id)),
+    [activeProjects]
+  )
 
   // Non-pending sessions only; pending ones have no durable project yet.
   const persistedSessions = useMemo(
-    () => sessions.filter((session) => !session.isPending),
-    [sessions]
+    () =>
+      sessions.filter(
+        (session) =>
+          !session.isPending &&
+          session.archivedAt === undefined &&
+          activeProjectIds.has(session.projectId)
+      ),
+    [activeProjectIds, sessions]
   )
 
   // Per-project session counts and last activity, ordered by most recent activity.
   const projectSummaries = useMemo<ProjectSummary[]>(() => {
-    const summaries = projects.map((project) => {
+    const summaries = activeProjects.map((project) => {
       const projectSessions = persistedSessions.filter(
         (session) => session.projectId === project.id
       )
@@ -129,7 +149,7 @@ const HomePage = ({
     })
 
     return summaries.sort((left, right) => right.lastActivityAt - left.lastActivityAt)
-  }, [persistedSessions, projects])
+  }, [activeProjects, persistedSessions])
 
   const recentSessions = useMemo(
     () =>
@@ -184,6 +204,39 @@ const HomePage = ({
 
     setProjectToDelete(undefined)
     setDeleteProjectError(undefined)
+  }
+
+  const canArchiveProject = (project: Project): boolean =>
+    hasCompleteSessionCatalog &&
+    canDeleteProjects &&
+    project.archivedAt === undefined &&
+    !sessions.some(
+      (session) =>
+        session.projectId === project.id &&
+        (session.status === 'running' ||
+          session.status === 'waiting-permission' ||
+          session.status === 'waiting-plan-approval')
+    )
+
+  const archiveProject = (project: Project): void => {
+    if (!canArchiveProject(project) || archivingProjectIds.has(project.id)) return
+
+    setArchivingProjectIds((current) => new Set(current).add(project.id))
+    setArchiveProjectError(undefined)
+    void updateProjectArchive({ id: project.id, archived: true, expectedArchivedAt: null })
+      .then((archived) => enqueueProjectArchive(archived))
+      .catch((error: unknown) =>
+        setArchiveProjectError(
+          error instanceof Error ? error.message : 'Could not archive project.'
+        )
+      )
+      .finally(() => {
+        setArchivingProjectIds((current) => {
+          const next = new Set(current)
+          next.delete(project.id)
+          return next
+        })
+      })
   }
 
   const closeFormDialog = (): void => {
@@ -328,6 +381,14 @@ const HomePage = ({
               <Archive className="size-4 text-text-100" strokeWidth={2} aria-hidden="true" />
               Projects
             </h2>
+            {archiveProjectError ? (
+              <div
+                className="mb-3 rounded-2xl border border-danger-000/30 px-4 py-3 text-sm text-danger-000"
+                role="alert"
+              >
+                {archiveProjectError}
+              </div>
+            ) : null}
             {loadError ? (
               <div
                 className="rounded-2xl border border-danger-000/30 px-4 py-6 text-center text-sm text-danger-000"
@@ -390,6 +451,16 @@ const HomePage = ({
                           >
                             <Pencil className="size-4" strokeWidth={2} aria-hidden="true" />
                             Rename…
+                          </DropdownMenu.Item>
+                          <DropdownMenu.Item
+                            className={menuItemClassName}
+                            disabled={
+                              !canArchiveProject(project) || archivingProjectIds.has(project.id)
+                            }
+                            onSelect={() => archiveProject(project)}
+                          >
+                            <Archive className="size-4" strokeWidth={2} aria-hidden="true" />
+                            {archivingProjectIds.has(project.id) ? 'Archiving…' : 'Archive'}
                           </DropdownMenu.Item>
                           <DropdownMenu.Separator className="mx-1 my-1 h-px bg-border-300" />
                           <DropdownMenu.Item

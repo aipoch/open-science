@@ -11,6 +11,8 @@ import type {
 import type { Project } from '../../../shared/projects'
 import { createInitialProjectState, useProjectStore } from '@/stores/project-store'
 import { useNavigationStore } from '@/stores/navigation-store'
+import { useArchiveUndoStore } from '@/stores/archive-undo-store'
+import { usePreviewWorkbenchStore } from '@/stores/preview-workbench-store'
 import { createInitialSessionState, useSessionStore } from '@/stores/session-store'
 import { useLifecycleSync } from './useLifecycleSync'
 
@@ -69,6 +71,7 @@ describe('useLifecycleSync', () => {
     document.body.appendChild(container)
     useProjectStore.setState({ ...createInitialProjectState(), isLoaded: true })
     useSessionStore.setState(createInitialSessionState())
+    useArchiveUndoStore.setState({ notices: [], restoringKey: undefined })
     useNavigationStore.setState({
       view: 'home',
       activeProjectId: undefined,
@@ -171,6 +174,36 @@ describe('useLifecycleSync', () => {
     expect(container.querySelector<HTMLButtonElement>('button')?.dataset.noticeSession).toBe('')
   })
 
+  it('clears a stale notice when its session is archived', async () => {
+    await act(async () => {
+      listeners.projectCreated?.(project)
+      listeners.sessionCreated?.({ session, originClientId: 'web:external' })
+    })
+    expect(container.querySelector<HTMLButtonElement>('button')?.dataset.noticeSession).toBe(
+      session.id
+    )
+
+    await act(async () => {
+      listeners.sessionUpdated?.({
+        session: { ...session, archivedAt: 2 },
+        originClientId: 'web:external'
+      })
+    })
+
+    expect(container.querySelector<HTMLButtonElement>('button')?.dataset.noticeSession).toBe('')
+    expect(useNavigationStore.getState().view).toBe('home')
+  })
+
+  it('clears a stale notice when its project is archived', async () => {
+    await act(async () => {
+      listeners.projectCreated?.(project)
+      listeners.sessionCreated?.({ session, originClientId: 'web:external' })
+      listeners.projectUpdated?.({ ...project, archivedAt: 2 })
+    })
+
+    expect(container.querySelector<HTMLButtonElement>('button')?.dataset.noticeSession).toBe('')
+  })
+
   it('removes a deleted session and clears its notice', async () => {
     await act(async () => {
       listeners.sessionCreated?.({ session, originClientId: 'web:external' })
@@ -189,6 +222,39 @@ describe('useLifecycleSync', () => {
     })
 
     expect(useProjectStore.getState().projects).toEqual([updatedProject])
+  })
+
+  it('returns an open project to Home when another window archives it', async () => {
+    await act(async () => {
+      listeners.projectCreated?.(project)
+      listeners.sessionCreated?.({ session, originClientId: 'web:external' })
+    })
+    await act(async () => container.querySelector<HTMLButtonElement>('button')?.click())
+    await act(async () => {
+      listeners.projectUpdated?.({ ...project, archivedAt: 2 })
+    })
+
+    expect(useNavigationStore.getState().view).toBe('home')
+    expect(useSessionStore.getState().selectedSessionId).toBeUndefined()
+  })
+
+  it('clears a selected session when another window archives it', async () => {
+    const removeSessionItems = vi.spyOn(usePreviewWorkbenchStore.getState(), 'removeSessionItems')
+    await act(async () => {
+      listeners.projectCreated?.(project)
+      listeners.sessionCreated?.({ session, originClientId: 'web:external' })
+    })
+    await act(async () => container.querySelector<HTMLButtonElement>('button')?.click())
+    await act(async () => {
+      listeners.sessionUpdated?.({
+        session: { ...session, archivedAt: 2 },
+        originClientId: 'web:external'
+      })
+    })
+
+    expect(useNavigationStore.getState().view).toBe('workspace')
+    expect(useSessionStore.getState().selectedSessionId).toBeUndefined()
+    expect(removeSessionItems).toHaveBeenCalledWith(session.id)
   })
 
   it('replays deletions after stale initial snapshots hydrate', async () => {

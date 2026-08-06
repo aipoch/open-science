@@ -1,6 +1,11 @@
 import type { PrismaClient, Project as PrismaProject } from '@prisma/client'
 
-import type { CreateProjectRequest, Project, UpdateProjectRequest } from '../../shared/projects'
+import type {
+  CreateProjectRequest,
+  Project,
+  UpdateProjectArchiveRequest,
+  UpdateProjectRequest
+} from '../../shared/projects'
 
 // Only the project delegate is needed; typing to this subset keeps the repository unit-testable with a
 // lightweight mock instead of a real (engine-backed) PrismaClient.
@@ -12,6 +17,7 @@ const toProject = (row: PrismaProject): Project => ({
   name: row.name,
   description: row.description,
   isExample: row.isExample,
+  ...(row.archivedAt ? { archivedAt: row.archivedAt.getTime() } : {}),
   createdAt: row.createdAt.getTime(),
   updatedAt: row.updatedAt.getTime()
 })
@@ -77,6 +83,43 @@ class ProjectRepository {
     const client = await this.getClient()
     const row = await client.project.update({ where: { id: request.id }, data })
 
+    return toProject(row)
+  }
+
+  // Archive is deliberately separate from ordinary Project edits: a stale rename/update must not
+  // forge or clear visibility state. The compare-and-set condition also makes Undo safe across
+  // windows without changing the research activity timestamp.
+  async updateArchive(request: UpdateProjectArchiveRequest, archivedAt: number): Promise<Project> {
+    if (!Number.isSafeInteger(request.expectedArchivedAt) && request.expectedArchivedAt !== null) {
+      throw new Error('Project archive state is invalid.')
+    }
+    if (!Number.isSafeInteger(archivedAt) || archivedAt <= 0) {
+      throw new Error('Project archive timestamp is invalid.')
+    }
+
+    const client = await this.getClient()
+    const current = await client.project.findUnique({ where: { id: request.id } })
+    if (!current) throw new Error('Project not found.')
+
+    const expectedArchivedAt = request.expectedArchivedAt
+    const result = await client.project.updateMany({
+      where: {
+        id: request.id,
+        archivedAt: expectedArchivedAt === null ? null : new Date(expectedArchivedAt)
+      },
+      data: {
+        archivedAt: request.archived ? new Date(archivedAt) : null,
+        // Prisma otherwise updates this @updatedAt field. Administrative visibility changes must
+        // not make a Project look newer than its underlying work.
+        updatedAt: current.updatedAt
+      }
+    })
+    if (result.count !== 1) {
+      throw new Error('Project archive state changed elsewhere.')
+    }
+
+    const row = await client.project.findUnique({ where: { id: request.id } })
+    if (!row) throw new Error('Project not found.')
     return toProject(row)
   }
 

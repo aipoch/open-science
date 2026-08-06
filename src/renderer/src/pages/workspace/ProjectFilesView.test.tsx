@@ -486,6 +486,39 @@ describe('ProjectFilesView', () => {
     expect(container.textContent).toContain('No files yet')
   })
 
+  it('hides archived session artifacts and their filter option', async () => {
+    await renderView([
+      createSession({
+        id: 'session-archived',
+        title: 'Archived analysis',
+        archivedAt: 2,
+        artifacts: [
+          {
+            id: 'archived-artifact',
+            kind: 'managed-file',
+            path: '/workspace/archived-result.txt',
+            name: 'archived-result.txt'
+          }
+        ]
+      })
+    ])
+
+    expect(
+      container.querySelector('[aria-label="Preview generated file archived-result.txt"]')
+    ).toBeNull()
+    expect(window.api.projectFiles.getOverview).toHaveBeenCalledWith(
+      expect.objectContaining({
+        search: { filenameContains: '', excludedSessionIds: ['session-archived'] }
+      })
+    )
+    await act(async () =>
+      clickDropdownTrigger(
+        container.querySelector<HTMLButtonElement>('[aria-label="Filter project files"]')
+      )
+    )
+    expect(document.body.querySelector('[data-filter-id="session:session-archived"]')).toBeNull()
+  })
+
   it('searches within the selected source and keeps a zero-result session selected', async () => {
     await renderView([
       createSession({

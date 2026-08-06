@@ -84,7 +84,15 @@ type AcpPromptTurnArtifacts = Readonly<{
   dispose: (artifact: ArtifactTurnHandle | undefined) => Promise<void>
 }>
 
-type AcpPromptTurnPlanLifecycle = Readonly<{
+type AcpPromptTurnPlanWorkflow = Readonly<{
+  preflight: (
+    request: AcpPromptRequest
+  ) => AcpPromptTurnPlanContext | Promise<AcpPromptTurnPlanContext>
+  admit: (
+    request: AcpPromptRequest,
+    interaction: AcpPromptSessionInteractionScope,
+    plan: AcpPromptTurnPlanContext
+  ) => AcpPromptTurnPlanContext | Promise<AcpPromptTurnPlanContext>
   beforeStop: (
     sessionId: string,
     interaction: AcpPromptSessionInteractionScope,
@@ -128,18 +136,10 @@ type AcpPromptTurnWorkflowOptions = Readonly<{
   permission: Pick<AcpPermissionContext, 'clearCorrelationsForSession'>
   environment: AcpPromptTurnEnvironment
   artifacts: AcpPromptTurnArtifacts
-  planLifecycle: AcpPromptTurnPlanLifecycle
+  plan: AcpPromptTurnPlanWorkflow
   finalization: AcpPromptTurnFinalization
   currentCwd: () => string
   resolveProjectName: (sessionId: string) => string
-  preflightPlan: (
-    request: AcpPromptRequest
-  ) => AcpPromptTurnPlanContext | Promise<AcpPromptTurnPlanContext>
-  admitPlan: (
-    request: AcpPromptRequest,
-    interaction: AcpPromptSessionInteractionScope,
-    plan: AcpPromptTurnPlanContext
-  ) => AcpPromptTurnPlanContext | Promise<AcpPromptTurnPlanContext>
   disconnectForReload: () => Promise<unknown>
   resumeAfterReload: (input: {
     sessionId: string
@@ -160,7 +160,7 @@ class AcpPromptTurnWorkflow {
     if (!activeSession) throw new Error(`ACP session not found: ${request.sessionId}`)
     this.assertSessionIdle(request.sessionId)
 
-    const planPreflight = this.options.preflightPlan(request)
+    const planPreflight = this.options.plan.preflight(request)
     let plan = planPreflight instanceof Promise ? await planPreflight : planPreflight
     let reservation = this.reserve(request)
     let skill: TurnSkillHandle
@@ -225,7 +225,7 @@ class AcpPromptTurnWorkflow {
     let interaction: AcpPromptSessionInteractionScope | undefined
     try {
       interaction = this.options.interactions.activatePrompt(reservation)
-      const admittedPlan = this.options.admitPlan(request, interaction, plan)
+      const admittedPlan = this.options.plan.admit(request, interaction, plan)
       plan = admittedPlan instanceof Promise ? await admittedPlan : admittedPlan
       this.options.registry.select(request.sessionId)
       this.options.recordAdmittedPrompt(request)
@@ -262,7 +262,7 @@ class AcpPromptTurnWorkflow {
       finalization,
       finalizer,
       interactions,
-      planLifecycle,
+      plan,
       permission,
       preparation,
       registry
@@ -370,7 +370,7 @@ class AcpPromptTurnWorkflow {
             skillFinalized = true
           }
         },
-        beforeStop: (response) => planLifecycle.beforeStop(sessionId, interaction, response),
+        beforeStop: (response) => plan.beforeStop(sessionId, interaction, response),
         routeNotification: (notification) => env.routeNotification(notification, sessionId),
         reportBestEffortFailure: (stage, error) =>
           log.warn('provider prompt observation failed', {
@@ -422,8 +422,8 @@ class AcpPromptTurnWorkflow {
         onPromptEnded: () => finalization.onPromptEnded(sessionId, turnToken),
         generationActivityChanged: finalization.generationActivityChanged,
         autoCompactIfNeeded: () => finalization.autoCompact(sessionId, session, interaction),
-        beforeInteractionRelease: () => planLifecycle.beforeRelease(sessionId, interaction),
-        afterInteractionRelease: () => planLifecycle.afterRelease(sessionId)
+        beforeInteractionRelease: () => plan.beforeRelease(sessionId, interaction),
+        afterInteractionRelease: () => plan.afterRelease(sessionId)
       },
       outcome
     )
@@ -475,4 +475,9 @@ class AcpPromptTurnWorkflow {
 }
 
 export { AcpPromptTurnWorkflow }
-export type { AcpPromptTurnMode, AcpPromptTurnPlanContext, AcpPromptTurnWorkflowOptions }
+export type {
+  AcpPromptTurnMode,
+  AcpPromptTurnPlanContext,
+  AcpPromptTurnPlanWorkflow,
+  AcpPromptTurnWorkflowOptions
+}

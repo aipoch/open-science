@@ -29,6 +29,7 @@ import { extractJobIdFromActivity } from '@/components/job-binding-utils'
 import { MessageScrollerItem } from '@/components/ui/message-scroller'
 import { ReviewerCard } from '@/components/ReviewerCard'
 import { WorkspaceActivityGroup } from './WorkspaceActivityGroup'
+import { WorkspacePlanActivityRecord } from './WorkspacePlanActivityRecord'
 import { WorkspaceAgentLoadingRow } from './WorkspaceAgentLoadingRow'
 import { WorkspaceMessageItem } from './WorkspaceMessageItem'
 import type { ArtifactMentionPart } from './WorkspaceMessageItem'
@@ -842,6 +843,10 @@ const WorkspaceMessageScrollerImpl = ({
                         </div>
                       </MessageScrollerItem>
                     )
+                  }
+
+                  if (item.type === 'plan-activity') {
+                    return <WorkspacePlanActivityRecord key={item.id} activity={item.activity} />
                   }
 
                   return (

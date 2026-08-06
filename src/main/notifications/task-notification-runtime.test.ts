@@ -31,7 +31,7 @@ describe('bindUnreadTaskDeletionRuntime', () => {
     await ensureProjectSchema(client)
 
     const repository = new UnreadTaskDbRepository(() => Promise.resolve(client!))
-    await repository.save(['deleted-headless-session'])
+    await repository.save(['deleted-headless-session', 'archived-session'])
     const badgeCounts: number[] = []
     const unreadController = createUnreadTaskController({
       headless: false,
@@ -54,12 +54,20 @@ describe('bindUnreadTaskDeletionRuntime', () => {
     await unreadController.restore()
     await unreadController.markUnread('session-1')
 
-    await expect(repository.load()).resolves.toEqual(['deleted-headless-session', 'session-1'])
-    expect(badgeCounts.at(-1)).toBe(2)
+    await expect(repository.load()).resolves.toEqual([
+      'deleted-headless-session',
+      'archived-session',
+      'session-1'
+    ])
+    expect(badgeCounts.at(-1)).toBe(3)
 
-    await deletionHandlers?.reconcile(['session-1'])
+    await deletionHandlers?.reconcile(['archived-session', 'session-1'], ['archived-session'])
     await expect(repository.load()).resolves.toEqual(['session-1'])
     expect(badgeCounts.at(-1)).toBe(1)
+
+    await unreadController.markUnread('archived-session')
+    await expect(repository.load()).resolves.toEqual(['session-1', 'archived-session'])
+    await unreadController.markReadSessions(['archived-session'])
 
     await deletionHandlers?.commit(['session-1'])
 
@@ -74,6 +82,7 @@ describe('bindUnreadTaskDeletionRuntime', () => {
     bindUnreadTaskDeletionRuntime({
       headless: true,
       unreadController: {
+        markReadSessions: noOp,
         removeUnreadSessions: noOp
       },
       unreadTaskRepository: {
