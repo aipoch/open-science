@@ -74,6 +74,7 @@ const ownerHarness = (
       log: 'installed',
       method: 'conda'
     }),
+    recheckRepair: vi.fn(() => undefined),
     quarantineProtectedIdentity: vi.fn().mockResolvedValue(undefined),
     completeInterruptedInstallRepair: vi.fn().mockResolvedValue(undefined),
     blockUnconfirmedChild: vi.fn(),
@@ -86,6 +87,41 @@ const pending = (runtimeRoot: string): ReturnType<RuntimeOperationJournal['pendi
   RuntimeOperationJournal.forPath(operationJournalPath(runtimeRoot)).pending()
 
 describe('NotebookPackageMutationOwner', () => {
+  it('rechecks repair policy after acquiring the mutation lock', async () => {
+    const refusal = {
+      status: 'refused' as const,
+      result: {
+        ok: false,
+        needsRestart: false,
+        repairRequired: true,
+        log: '',
+        error: 'RUNTIME_REPAIR_REQUIRED'
+      }
+    }
+    const order: string[] = []
+    const { owner, options, target, runtimeRoot } = ownerHarness({
+      environmentOperations: {
+        runMutation: async <T>(_environment: string, operation: () => Promise<T>): Promise<T> => {
+          order.push('lock')
+          return operation()
+        },
+        logPackageFailure: vi.fn(),
+        logPackageResult: vi.fn()
+      },
+      recheckRepair: vi.fn(() => {
+        order.push('repair-check')
+        return refusal
+      })
+    })
+
+    await expect(owner.mutate({ target, mirror: {} })).resolves.toEqual(refusal.result)
+
+    expect(order).toEqual(['lock', 'repair-check'])
+    expect(options.installPackages).not.toHaveBeenCalled()
+    expect(options.environmentStateTracker.markPackageMutationDirty).not.toHaveBeenCalled()
+    expect(await pending(runtimeRoot)).toEqual([])
+  })
+
   it('owns lock, journal, child evidence, verification and successful repair completion', async () => {
     const order: string[] = []
     let operationId = ''

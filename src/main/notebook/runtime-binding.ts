@@ -15,12 +15,8 @@ import {
   windowsCondaPrefixForR
 } from './environment-discovery'
 import { getRuntimeRoot, type NotebookRunRepository } from './repository'
-import {
-  DEFAULT_PY_ENV,
-  DEFAULT_R_ENV,
-  isRepairRequired,
-  managedRepairRegistryKey
-} from './runtime-paths'
+import { DEFAULT_PY_ENV, DEFAULT_R_ENV } from './runtime-paths'
+import type { NotebookRuntimeRepairPolicy } from './runtime-repair-policy'
 import type { NotebookSessionAggregate, NotebookSessionRuntimeBinding } from './session-aggregate'
 
 type RuntimeBindingSession = Pick<
@@ -37,6 +33,7 @@ type NotebookRuntimeBindingOwnerOptions = {
   dataRoot: string
   repository: RuntimeBindingRepository
   runtimeSettings: Pick<NotebookRuntimeSettings, 'getSnapshot'>
+  repairPolicy: Pick<NotebookRuntimeRepairPolicy, 'bindingRequirement'>
   discoverRuntimes?: (language: NotebookLanguage) => Promise<DiscoveredInterpreter[]>
   platform?: NodeJS.Platform
 }
@@ -342,17 +339,8 @@ export class NotebookRuntimeBindingOwner {
       )
     }
     const binding = this.toInternalBinding(match)
-    const repairKey =
-      binding.source === 'external'
-        ? binding.runtimeId
-        : (binding.envName ?? defaultEnvironment(language))
-    const runtimeRoot = getRuntimeRoot(this.options.dataRoot)
-    const repairRequired =
-      isRepairRequired(runtimeRoot, repairKey) ||
-      (binding.source === 'managed' &&
-        isRepairRequired(runtimeRoot, managedRepairRegistryKey(repairKey, language))) ||
-      (binding.source === 'managed' && isRepairRequired(runtimeRoot, binding.runtimeId))
-    return repairRequired
+    const environment = binding.envName ?? defaultEnvironment(language)
+    return this.options.repairPolicy.bindingRequirement(language, environment, binding).required
       ? { ...binding, status: 'unavailable', reason: 'repair-required' }
       : binding
   }

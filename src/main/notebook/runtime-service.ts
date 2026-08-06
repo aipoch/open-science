@@ -79,6 +79,7 @@ import type {
 } from '../../shared/notebook-runtime'
 import type { NotebookRuntimeSettings } from '../settings/capabilities'
 import { NotebookRecoveryCoordinator } from './recovery-coordinator'
+import { NotebookRuntimeRepairPolicy } from './runtime-repair-policy'
 import { NotebookEnvironmentOperations, type DefaultEnvProvisioner } from './environment-operations'
 import {
   NotebookSessionAggregate,
@@ -408,6 +409,7 @@ class NotebookRuntimeService {
   private readonly dataExecutionAdmission: NotebookDataExecutionAdmissionOwner
   private readonly packageAdmission: NotebookPackageAdmissionOwner
   private readonly packageMutation: NotebookPackageMutationOwner
+  private readonly repairPolicy: NotebookRuntimeRepairPolicy
   private readonly sessions: NotebookSessionRegistry<RuntimeSession>
   private readonly announcedAgentSessionIds = new Set<string>()
   // Owns process-global operation admission, provisioning progress, restart recommendations,
@@ -451,7 +453,9 @@ class NotebookRuntimeService {
         await this.runtimeBindingOwner.waitForWrites()
       }
     })
-    this.recoveryCoordinator = new NotebookRecoveryCoordinator(getRuntimeRoot(options.dataRoot))
+    const runtimeRoot = getRuntimeRoot(options.dataRoot)
+    this.repairPolicy = new NotebookRuntimeRepairPolicy(runtimeRoot)
+    this.recoveryCoordinator = new NotebookRecoveryCoordinator(runtimeRoot, this.repairPolicy)
     this.mcpRpcConnectionResolver = options.getMcpRpcConnection
     this.packageMirrorResolver = options.getPackageMirror
     const runtimeSettings = options.notebookRuntimeSettings ?? EMPTY_NOTEBOOK_RUNTIME_SETTINGS
@@ -461,6 +465,7 @@ class NotebookRuntimeService {
       dataRoot: options.dataRoot,
       repository: this.repository,
       runtimeSettings,
+      repairPolicy: this.repairPolicy,
       discoverRuntimes: options.discoverRuntimes,
       platform: options.platform
     })
@@ -487,7 +492,7 @@ class NotebookRuntimeService {
       resolveRuntimeEnablement: (language) => this.resolveRuntimeEnablement(language),
       isDefaultEnvironmentDisabled: (language, runtimeRoot) =>
         this.isDefaultEnvDisabled(language, runtimeRoot),
-      repairRegistryKeys: (...args) => this.repairRegistryKeys(...args),
+      repairPolicy: this.repairPolicy,
       environmentOperations: this.environmentOperations,
       recovery: this.recoveryCoordinator,
       createEnvironmentCaptureTarget: (...args) => this.environmentCaptureTarget(...args)
@@ -498,6 +503,7 @@ class NotebookRuntimeService {
       environmentOperations: this.environmentOperations,
       environmentStateTracker: this.environmentStateTracker,
       installPackages: options.installPackagesImpl ?? installPackagesDefault,
+      recheckRepair: (target) => this.packageAdmission.recheckRepair(target),
       quarantineProtectedIdentity: (target) => this.quarantinePackageTarget(target),
       completeInterruptedInstallRepair: (target) => this.completePackageTargetRepair(target),
       blockUnconfirmedChild: ({ repairRuntimeId, journalTarget }) => {
@@ -510,7 +516,8 @@ class NotebookRuntimeService {
       environmentOperations: this.environmentOperations,
       recovery: this.recoveryCoordinator,
       ensureRecovered: () => this.ensureRecovered(),
-      resolveRuntimeEnablement: (language) => this.resolveRuntimeEnablement(language)
+      resolveRuntimeEnablement: (language) => this.resolveRuntimeEnablement(language),
+      repairPolicy: this.repairPolicy
     })
     this.environmentManager = options.environmentManager
     this.runTerminalization = new NotebookRunTerminalizationOwner({
@@ -599,29 +606,6 @@ class NotebookRuntimeService {
     const binding = session.runtimeBinding(language)
     if (binding?.source === 'managed' && binding.envName) return binding.envName
     return this.defaultEnvNameFor(language)
-  }
-
-  // Protected managed repair state is keyed by env name, while repairable interrupted installs are
-  // scoped to (env, language). Releases before that migration used the discovered interpreter id, so
-  // include raw/canonical paths to keep legacy quarantine fail-closed.
-  private repairRegistryKeys(
-    language: NotebookLanguage,
-    env: string,
-    binding: InternalRuntimeBinding | undefined,
-    runtimeRootDir: string
-  ): string[] {
-    if (binding?.source === 'external') return [binding.runtimeId]
-    const keys = new Set<string>([env, managedRepairRegistryKey(env, language)])
-    if (binding?.source === 'managed') keys.add(binding.runtimeId)
-    const prefix = envPrefix(runtimeRootDir, env)
-    const interpreter = language === 'r' ? rBin(prefix) : pythonBin(prefix)
-    keys.add(interpreter)
-    try {
-      keys.add(realpathSync(interpreter))
-    } catch {
-      // The runtime may not be materialized yet; the raw interpreter path still covers old markers.
-    }
-    return [...keys]
   }
 
   private environmentCaptureTarget(
@@ -1175,7 +1159,7 @@ class NotebookRuntimeService {
       // Recompute after installation: the interpreter may have appeared or canonicalized during the
       // mutation, and the fresh real path can name an older interrupted-install marker to clear.
       const legacyAliases = new Set(
-        this.repairRegistryKeys(request.language, environmentName, binding, runtimeRoot)
+        this.repairPolicy.registryKeys(request.language, environmentName, binding)
       )
       legacyAliases.delete(environmentName)
       legacyAliases.delete(repairMarkerKey)
@@ -1406,12 +1390,7 @@ class NotebookRuntimeService {
     const registryKeys = new Set<string>()
 
     for (const affectedLanguage of ['python', 'r'] as const) {
-      for (const key of this.repairRegistryKeys(
-        affectedLanguage,
-        envName,
-        undefined,
-        runtimeRoot
-      )) {
+      for (const key of this.repairPolicy.registryKeys(affectedLanguage, envName)) {
         registryKeys.add(key)
       }
     }

@@ -6609,6 +6609,32 @@ describe('v4 runtime bindings & agent tools', () => {
     expect(executions).toHaveLength(0)
   })
 
+  it('keeps raw-path-only legacy repair aliases out of the public binding projection', async () => {
+    const root = await createStorageRoot()
+    const runtimeRoot = getRuntimeRoot(root)
+    addRepairRequired(runtimeRoot, pythonBin(envPrefix(runtimeRoot, DEFAULT_PY_ENV)))
+    const executions: NotebookExecutionRequest[] = []
+    const service = bindingService(root, { discovered: [managedPy], executions })
+
+    const bound = await service.bindRuntime({
+      sessionId: 'raw-alias',
+      workspaceCwd: root,
+      language: 'python',
+      runtimeId: managedPy.envId
+    })
+    expect(bound.bound).toMatchObject({ status: 'active', reason: undefined })
+
+    const run = await service.execute({
+      sessionId: 'raw-alias',
+      workspaceCwd: root,
+      language: 'python',
+      code: '1'
+    })
+    expect(run.status).toBe('failed')
+    expect(run.text.traceback).toMatch(/RUNTIME_REPAIR_REQUIRED/)
+    expect(executions).toHaveLength(0)
+  })
+
   it('keeps an interrupted install scoped to its language in a shared managed env', async () => {
     const root = await createStorageRoot()
     const runtimeRoot = getRuntimeRoot(root)
@@ -6935,17 +6961,21 @@ describe('v4 runtime bindings & agent tools', () => {
       installPackagesImpl: async () => ({ ok: true, needsRestart: false, log: 'repaired' })
     })
     const repairRegistryKeys = vi.spyOn(
-      service as unknown as {
-        repairRegistryKeys: (
-          language: 'python' | 'r',
-          environment: string,
-          binding: unknown,
-          runtimeRoot: string
-        ) => string[]
-      },
-      'repairRegistryKeys'
+      (
+        service as unknown as {
+          repairPolicy: {
+            registryKeys: (
+              language: 'python' | 'r',
+              environment: string,
+              binding: unknown
+            ) => readonly string[]
+          }
+        }
+      ).repairPolicy,
+      'registryKeys'
     )
     repairRegistryKeys
+      .mockReturnValueOnce([DEFAULT_PY_ENV, managedRepairRegistryKey(DEFAULT_PY_ENV, 'python')])
       .mockReturnValueOnce([DEFAULT_PY_ENV, managedRepairRegistryKey(DEFAULT_PY_ENV, 'python')])
       .mockReturnValueOnce([
         DEFAULT_PY_ENV,
@@ -6956,7 +6986,7 @@ describe('v4 runtime bindings & agent tools', () => {
     const result = await service.managePackages({ language: 'python', packages: ['numpy'] })
 
     expect(result.ok).toBe(true)
-    expect(repairRegistryKeys).toHaveBeenCalledTimes(2)
+    expect(repairRegistryKeys).toHaveBeenCalledTimes(3)
     expect(isRepairRequired(runtimeRoot, postInstallAlias)).toBe(false)
   })
 

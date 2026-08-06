@@ -13,7 +13,7 @@ import {
   removeOperationChildSync,
   RuntimeOperationJournal
 } from './operation-journal'
-import type { NotebookPackageAdmittedTarget } from './package-admission'
+import type { NotebookPackageAdmission, NotebookPackageAdmittedTarget } from './package-admission'
 import type { InstallDeps, InstallResult } from './package-manager'
 import { readProcessStartToken } from './operation-recovery'
 import { isChildUnconfirmedError } from './provisioner-runtime'
@@ -43,6 +43,9 @@ type NotebookPackageMutationOwnerOptions = {
     request: NotebookPackageAdmittedTarget['request'],
     deps?: Partial<InstallDeps>
   ) => Promise<InstallResult>
+  recheckRepair: (
+    target: NotebookPackageAdmittedTarget
+  ) => Extract<NotebookPackageAdmission, { status: 'refused' }> | undefined
   quarantineProtectedIdentity: (target: NotebookPackageAdmittedTarget) => Promise<void>
   completeInterruptedInstallRepair: (target: NotebookPackageAdmittedTarget) => Promise<void>
   blockUnconfirmedChild: (target: NotebookPackageAdmittedTarget) => void
@@ -72,6 +75,8 @@ class NotebookPackageMutationOwner {
       // The journal begins inside the environment lock so Reset cannot clear this new operation
       // between intent recording and the first installer spawn.
       result = await this.options.environmentOperations.runMutation(environmentName, async () => {
+        const repairRefusal = this.options.recheckRepair(target)
+        if (repairRefusal) return repairRefusal.result
         await journal.begin({
           operationId,
           kind: 'install',

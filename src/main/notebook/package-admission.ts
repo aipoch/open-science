@@ -4,14 +4,8 @@ import type { NotebookEnvironmentOperations } from './environment-operations'
 import type { EnvironmentCaptureTarget } from './environment-state-tracker'
 import type { InstallRequest, InstallResult } from './package-manager'
 import type { NotebookRecoveryCoordinator } from './recovery-coordinator'
-import {
-  DEFAULT_PY_ENV,
-  DEFAULT_R_ENV,
-  envPrefix,
-  managedRepairRegistryKey,
-  readRepairRequiredReason,
-  resolveEnvName
-} from './runtime-paths'
+import { DEFAULT_PY_ENV, DEFAULT_R_ENV, envPrefix } from './runtime-paths'
+import type { NotebookRuntimeRepairPolicy } from './runtime-repair-policy'
 import type {
   NotebookSessionAggregate,
   NotebookSessionResolvedInterpreter,
@@ -29,12 +23,10 @@ type NotebookPackageAdmissionOwnerOptions = {
     language: NotebookLanguage,
     runtimeRoot: string
   ) => Promise<boolean>
-  repairRegistryKeys: (
-    language: NotebookLanguage,
-    environment: string,
-    binding: NotebookSessionRuntimeBinding | undefined,
-    runtimeRoot: string
-  ) => string[]
+  repairPolicy: Pick<
+    NotebookRuntimeRepairPolicy,
+    'blockKey' | 'markerKey' | 'registryKeys' | 'requirement' | 'runtimeId'
+  >
   environmentOperations: Pick<NotebookEnvironmentOperations, 'isRepairBlocked'>
   recovery: Pick<
     NotebookRecoveryCoordinator,
@@ -69,18 +61,6 @@ type NotebookPackageAdmission =
 const defaultEnvironment = (language: NotebookLanguage): string =>
   language === 'r' ? DEFAULT_R_ENV : DEFAULT_PY_ENV
 
-const processKey = (language: NotebookLanguage, environment: string): string =>
-  `${language === 'r' ? 'r' : 'python'}:${resolveEnvName(language, environment)}`
-
-const repairBlockKey = (
-  language: NotebookLanguage,
-  environment: string,
-  binding: NotebookSessionRuntimeBinding | undefined
-): string =>
-  binding?.source === 'external'
-    ? `external:${language}:${binding.runtimeId}`
-    : processKey(language, environment)
-
 const refusal = (error: string, repairRequired = false): NotebookPackageRefusal => ({
   status: 'refused',
   result: {
@@ -106,32 +86,12 @@ class NotebookPackageAdmissionOwner {
         ? binding.envName
         : defaultEnvironment(request.language)
     const runtimeRoot = this.options.runtimeRoot
-    const repairRegistryKeys = this.options.repairRegistryKeys(
-      request.language,
-      environmentName,
-      binding,
-      runtimeRoot
+    const repair = this.options.repairPolicy.requirement(request.language, environmentName, binding)
+    const repairRefusal = this.protectedRepairRefusal(
+      { request, environmentName, binding },
+      repair.protectedIdentity
     )
-
-    const protectedRepairRequired =
-      this.options.environmentOperations.isRepairBlocked(
-        repairBlockKey(request.language, environmentName, binding)
-      ) ||
-      repairRegistryKeys.some((key) => {
-        const reason = readRepairRequiredReason(runtimeRoot, key)
-        return (
-          reason === 'protected-identity-change' ||
-          (reason === 'legacy-unknown' && binding?.source !== 'external')
-        )
-      })
-    if (protectedRepairRequired) {
-      return refusal(
-        `RUNTIME_REPAIR_REQUIRED: the ${request.language} runtime's protected interpreter identity ` +
-          'changed. Use Repair/Reset in Settings → Runtimes to rebuild and verify it before installing ' +
-          'packages.',
-        true
-      )
-    }
+    if (repairRefusal) return repairRefusal
 
     let interpreter: NotebookPackageAdmittedTarget['interpreter']
     if (binding?.source === 'external') {
@@ -189,10 +149,12 @@ class NotebookPackageAdmissionOwner {
       )
     }
 
-    const repairRuntimeId = isExternal ? binding.runtimeId : environmentName
-    const repairMarkerKey = isExternal
-      ? repairRuntimeId
-      : managedRepairRegistryKey(environmentName, request.language)
+    const repairRuntimeId = this.options.repairPolicy.runtimeId(environmentName, binding)
+    const repairMarkerKey = this.options.repairPolicy.markerKey(
+      request.language,
+      environmentName,
+      binding
+    )
     const journalTarget = isExternal ? undefined : envPrefix(runtimeRoot, environmentName)
     return {
       status: 'admitted',
@@ -210,10 +172,39 @@ class NotebookPackageAdmissionOwner {
         ),
         repairRuntimeId,
         repairMarkerKey,
-        repairRegistryKeys,
+        repairRegistryKeys: repair.keys,
         journalTarget
       }
     }
+  }
+
+  recheckRepair(
+    target: Pick<NotebookPackageAdmittedTarget, 'binding' | 'environmentName' | 'request'>
+  ): NotebookPackageRefusal | undefined {
+    const { binding, environmentName, request } = target
+    const repair = this.options.repairPolicy.requirement(request.language, environmentName, binding)
+    return this.protectedRepairRefusal(target, repair.protectedIdentity)
+  }
+
+  private protectedRepairRefusal(
+    target: Pick<NotebookPackageAdmittedTarget, 'binding' | 'environmentName' | 'request'>,
+    protectedIdentity: boolean
+  ): NotebookPackageRefusal | undefined {
+    const { binding, environmentName, request } = target
+    if (
+      !this.options.environmentOperations.isRepairBlocked(
+        this.options.repairPolicy.blockKey(request.language, environmentName, binding)
+      ) &&
+      !protectedIdentity
+    ) {
+      return undefined
+    }
+    return refusal(
+      `RUNTIME_REPAIR_REQUIRED: the ${request.language} runtime's protected interpreter identity ` +
+        'changed. Use Repair/Reset in Settings → Runtimes to rebuild and verify it before installing ' +
+        'packages.',
+      true
+    )
   }
 
   private async resolveSession(
