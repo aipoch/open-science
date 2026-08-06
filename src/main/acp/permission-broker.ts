@@ -672,6 +672,13 @@ class AcpPermissionBroker {
   private pendingRequests = new Map<string, PendingPermission>()
   private cancellationGeneration = 0
   private readonly sessionCancellationGenerations = new Map<string, number>()
+  private readonly livePermissionProfiles = new Map<
+    string,
+    {
+      profile: Readonly<SessionPermissionProfileState>
+      isCurrent: () => boolean
+    }
+  >()
 
   // Accepts the callback used to publish new permission requests to listeners.
   constructor(
@@ -698,6 +705,7 @@ class AcpPermissionBroker {
     profile: Readonly<SessionPermissionProfileState>,
     isCurrent: () => boolean = () => true
   ): Promise<string[]> {
+    this.livePermissionProfiles.set(sessionId, { profile, isCurrent })
     const resolvedRequestIds: string[] = []
     for (const [requestId, pending] of Array.from(this.pendingRequests)) {
       if (!isCurrent()) break
@@ -910,6 +918,19 @@ class AcpPermissionBroker {
               outcome: { outcome: 'selected' as const, optionId: providerAllowOnceOption.optionId }
             }
           }
+          const liveProfile = this.livePermissionProfiles.get(params.sessionId)
+          const liveAutomaticOptionId = liveProfile?.isCurrent()
+            ? resolveAutomaticPermission(automaticRequest, {
+                ...policyContext,
+                profile: liveProfile.profile.selectedProfile,
+                autoReviewStrategy: liveProfile.profile.autoReviewStrategy
+              })
+            : undefined
+          if (liveAutomaticOptionId) {
+            return {
+              outcome: { outcome: 'selected' as const, optionId: liveAutomaticOptionId }
+            }
+          }
           return this.enqueuePermissionRequest({
             requestId,
             request,
@@ -1062,6 +1083,7 @@ class AcpPermissionBroker {
   // Cancels every pending request while preserving conversation grants across Agent reconnects.
   cancelAllPending(): void {
     this.cancellationGeneration += 1
+    this.livePermissionProfiles.clear()
     const pendingRequests = Array.from(this.pendingRequests.keys())
 
     for (const requestId of pendingRequests) {
@@ -1087,6 +1109,7 @@ class AcpPermissionBroker {
   // Ends one Agent session: cancel its outstanding prompts and discard its non-persistent grants.
   clearSession(sessionId: string): void {
     this.cancelForSession(sessionId)
+    this.livePermissionProfiles.delete(sessionId)
     this.conversationGrants.clear(sessionId)
   }
 }
