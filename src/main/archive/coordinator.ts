@@ -106,8 +106,15 @@ class ArchiveCoordinator {
 
   assertSessionAvailable(projectId: string, sessionId: string): Promise<void> {
     return this.enqueue(async () => {
-      await this.activeProject(projectId)
-      await this.sessions.assertSessionAvailable(projectId, sessionId)
+      const ownerProjectId = await this.sessions.sessionProjectId(sessionId)
+      if (ownerProjectId && ownerProjectId !== projectId) {
+        throw new Error('Session does not belong to the requested Project.')
+      }
+      // A missing owner is allowed only for an explicitly addressed transient runtime Session. Once
+      // metadata exists, its durable owner is authoritative over caller-supplied project IDs.
+      const resolvedProjectId = ownerProjectId ?? projectId
+      await this.activeProject(resolvedProjectId)
+      await this.sessions.assertSessionAvailable(resolvedProjectId, sessionId)
     })
   }
 

@@ -1476,6 +1476,10 @@ const sanitizeSession = (
   if (agentModel) sanitized.agentModel = agentModel
   // Restore the pin only from an explicit true so malformed or legacy files stay unpinned.
   if (session.pinned === true) sanitized.pinned = true
+  const archivedAt = asNumber(session.archivedAt)
+  if (archivedAt !== undefined && Number.isSafeInteger(archivedAt) && archivedAt > 0) {
+    sanitized.archivedAt = archivedAt
+  }
   if (artifacts.length > 0) sanitized.artifacts = artifacts
   const filesRevision = asNumber(session.filesRevision)
   if (filesRevision !== undefined && Number.isInteger(filesRevision) && filesRevision >= 0) {

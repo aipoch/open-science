@@ -137,6 +137,14 @@ export const GlobalSearchDialog = ({
 
   const allProjects = useProjectStore((state) => state.projects)
   const allSessions = useSessionStore((state) => state.sessions)
+  const archivedSessionIds = useMemo(
+    () =>
+      allSessions
+        .filter((session) => session.archivedAt !== undefined)
+        .map((session) => session.id)
+        .sort(),
+    [allSessions]
+  )
   const projects = useMemo(
     () => allProjects.filter((project) => project.archivedAt === undefined),
     [allProjects]
@@ -264,6 +272,7 @@ export const GlobalSearchDialog = ({
           primaryProjectId: primaryProject.id,
           otherProjectIds,
           ...(trimmedQuery ? { filenameContains: trimmedQuery } : {}),
+          ...(archivedSessionIds.length > 0 ? { excludedSessionIds: archivedSessionIds } : {}),
           primaryLimit: GLOBAL_SEARCH_PAGE_SIZE,
           ...(cursor ? { primaryCursor: cursor } : {}),
           otherLimit: !cursor && (!isProjectScope || isSearchMode) ? OTHER_PROJECT_RESULT_LIMIT : 0
@@ -295,7 +304,14 @@ export const GlobalSearchDialog = ({
         setFailedArtifactCursor(cursor)
       }
     },
-    [isProjectScope, isSearchMode, otherProjectIds, primaryProject, trimmedQuery]
+    [
+      archivedSessionIds,
+      isProjectScope,
+      isSearchMode,
+      otherProjectIds,
+      primaryProject,
+      trimmedQuery
+    ]
   )
 
   useEffect(() => {

@@ -506,6 +506,11 @@ describe('ProjectFilesView', () => {
     expect(
       container.querySelector('[aria-label="Preview generated file archived-result.txt"]')
     ).toBeNull()
+    expect(window.api.projectFiles.getOverview).toHaveBeenCalledWith(
+      expect.objectContaining({
+        search: { filenameContains: '', excludedSessionIds: ['session-archived'] }
+      })
+    )
     await act(async () =>
       clickDropdownTrigger(
         container.querySelector<HTMLButtonElement>('[aria-label="Filter project files"]')

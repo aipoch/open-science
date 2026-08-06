@@ -94,4 +94,24 @@ describe('ArchiveCoordinator', () => {
 
     expect(sessions.assertSessionAvailable).not.toHaveBeenCalled()
   })
+
+  it('rejects a known session addressed through another project', async () => {
+    const projects = {
+      get: vi.fn().mockResolvedValue(project),
+      updateArchive: vi.fn()
+    }
+    const sessions = {
+      assertProjectArchivable: vi.fn(),
+      assertSessionAvailable: vi.fn(),
+      updateArchive: vi.fn(),
+      sessionProjectId: vi.fn().mockResolvedValue(project.id)
+    }
+    const coordinator = new ArchiveCoordinator(projects, sessions, { isSessionBusy: vi.fn() })
+
+    await expect(coordinator.assertSessionAvailable('other-project', session.id)).rejects.toThrow(
+      'Session does not belong to the requested Project.'
+    )
+
+    expect(sessions.assertSessionAvailable).not.toHaveBeenCalled()
+  })
 })
