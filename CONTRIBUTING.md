@@ -238,8 +238,11 @@ ci(review): unify automated AI reviews
   checks ran after the last material edit, and call out uncovered risks.
 - Keep PRs reasonably small and scoped so they are easy to review.
 - Ensure the final Test Impact Set, or the full fallback when required, passes.
-- Merge pull requests using **squash merge only**. The squash commit subject must
-  keep the pull request title's Conventional Commit format.
+- After the pull request checks pass, add the pull request to the merge queue. Do not update the
+  branch only because `main` advanced; the queue validates the change against the latest `main`.
+  Update the branch when it has merge conflicts or a maintainer requests it.
+- The merge queue uses **squash merge only**. The squash commit subject must keep the pull request
+  title's Conventional Commit format.
 
 ## Reporting Issues
 
