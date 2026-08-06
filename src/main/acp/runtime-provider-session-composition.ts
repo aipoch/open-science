@@ -150,6 +150,8 @@ const composeAcpRuntimeProviderSessionOwners = (
     capabilities: base.sessionCapabilities,
     configurator: base.sessionConfigurator,
     adopter: providerSessionAdopter,
+    clearLivePermissionProfile: (sessionId) =>
+      session.permissionContext.clearLivePermissionProfile(sessionId),
     resolveSpecialistSkills: options.resolveSpecialistSkills,
     updateCwd,
     pushEvent: (event) => session.publication.pushEvent(event),

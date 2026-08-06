@@ -60,6 +60,7 @@ type AcpProviderSessionResumerDependencies = Readonly<{
   capabilities: Pick<AcpSessionCapabilityOwner, 'provision'>
   configurator: Pick<AcpSessionConfigurator, 'configure' | 'configurePermissionProfile'>
   adopter: Pick<AcpProviderSessionAdopter, 'adopt'>
+  clearLivePermissionProfile: (sessionId: string) => void
   resolveSpecialistSkills?: (specialistId: string) => Promise<EffectiveSpecialistSkills>
   updateCwd: (cwd: string) => void
   pushEvent: (event: ResumeEvent) => void
@@ -125,6 +126,7 @@ export class AcpProviderSessionResumer {
     }
     this.deps.assertCurrentConnection(connection)
     current.aggregate.setPermissionProfile(structuredClone(permissionProfile))
+    this.deps.clearLivePermissionProfile(request.sessionId)
     this.deps.registry.select(request.sessionId)
     this.deps.updateCwd(cwd)
     current.aggregate.updateLocation(cwd, projectName)
