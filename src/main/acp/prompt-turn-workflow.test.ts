@@ -16,7 +16,7 @@ import type { TurnSkillHandle } from './turn-skill-owner'
 
 type Deferred<T> = { promise: Promise<T>; resolve: (value: T) => void }
 type Harness = {
-  admitPlan: Mock<AcpPromptTurnWorkflowOptions['admitPlan']>
+  admitPlan: Mock<AcpPromptTurnWorkflowOptions['plan']['admit']>
   artifacts: {
     open: Mock<AcpPromptTurnWorkflowOptions['artifacts']['open']>
     promptMessageIdFor: Mock<AcpPromptTurnWorkflowOptions['artifacts']['promptMessageIdFor']>
@@ -54,13 +54,13 @@ type Harness = {
   >
   owner: AcpSessionInteractionOwner
   planLifecycle: {
-    beforeStop: Mock<AcpPromptTurnWorkflowOptions['planLifecycle']['beforeStop']>
-    beforeRelease: Mock<AcpPromptTurnWorkflowOptions['planLifecycle']['beforeRelease']>
-    afterRelease: Mock<AcpPromptTurnWorkflowOptions['planLifecycle']['afterRelease']>
+    beforeStop: Mock<AcpPromptTurnWorkflowOptions['plan']['beforeStop']>
+    beforeRelease: Mock<AcpPromptTurnWorkflowOptions['plan']['beforeRelease']>
+    afterRelease: Mock<AcpPromptTurnWorkflowOptions['plan']['afterRelease']>
   }
   permission: AcpPromptTurnWorkflowOptions['permission']
   preparation: Mock<AcpPromptTurnWorkflowOptions['preparation']['prepare']>
-  preflightPlan: Mock<AcpPromptTurnWorkflowOptions['preflightPlan']>
+  preflightPlan: Mock<AcpPromptTurnWorkflowOptions['plan']['preflight']>
   prepared: ReadyPreparedPromptHandle
   pushUserMessage: Mock<AcpPromptTurnWorkflowOptions['environment']['pushUserMessage']>
   resumeAfterReload: Mock<AcpPromptTurnWorkflowOptions['resumeAfterReload']>
@@ -121,13 +121,13 @@ const planProjection = (): ActivePlanProjection => ({
 
 const createHarness = (
   input: {
-    admitPlan?: AcpPromptTurnWorkflowOptions['admitPlan']
+    admitPlan?: AcpPromptTurnWorkflowOptions['plan']['admit']
     authorize?: () => TurnSkillHandle | Promise<TurnSkillHandle>
     cancellationCheckpoint?: AcpPromptTurnWorkflowOptions['interactions']['cancellationCheckpoint']
     execute?: AcpPromptTurnWorkflowOptions['executor']['execute']
     finalize?: AcpPromptOutcomeFinalizer['finalize']
     onPromptStarted?: () => void
-    preflightPlan?: AcpPromptTurnWorkflowOptions['preflightPlan']
+    preflightPlan?: AcpPromptTurnWorkflowOptions['plan']['preflight']
     prepare?: AcpPromptTurnWorkflowOptions['preparation']['prepare']
     providerReconnectPending?: () => boolean
   } = {}
@@ -194,7 +194,7 @@ const createHarness = (
     return input.preflightPlan?.(request) ?? {}
   })
   const admitPlan: Harness['admitPlan'] = vi.fn(
-    (...args: Parameters<AcpPromptTurnWorkflowOptions['admitPlan']>) => {
+    (...args: Parameters<AcpPromptTurnWorkflowOptions['plan']['admit']>) => {
       journal.push('admit')
       return input.admitPlan?.(...args) ?? {}
     }
@@ -306,14 +306,12 @@ const createHarness = (
       pushUserMessage
     },
     artifacts,
-    planLifecycle,
+    plan: { preflight: preflightPlan, admit: admitPlan, ...planLifecycle },
     finalizer: { finalize: finalizer },
     permission,
     finalization,
     currentCwd: () => '/default',
     resolveProjectName: () => 'project-1',
-    preflightPlan,
-    admitPlan,
     disconnectForReload: vi.fn(async () => journal.push('disconnect')),
     resumeAfterReload,
     recordAdmittedPrompt: vi.fn(() => journal.push('handoff')),

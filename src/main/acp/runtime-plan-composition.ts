@@ -1,4 +1,6 @@
-import type { AcpRuntimeEvent } from '../../shared/acp'
+import type { PromptResponse } from '@agentclientprotocol/sdk'
+
+import type { AcpPromptRequest, AcpRuntimeEvent } from '../../shared/acp'
 import type {
   ActivePlanProjection,
   GeneratePlanContent,
@@ -11,6 +13,8 @@ import type { PlanResponseResult } from '../session-plan/plan-service'
 import type { AcpRuntimeOptions } from './runtime'
 import type { AcpRuntimeBaseOwners } from './runtime-base-composition'
 import type { AcpRuntimeSessionOwners } from './runtime-session-composition'
+import type { AcpPromptTurnPlanContext, AcpPromptTurnPlanWorkflow } from './prompt-turn-workflow'
+import type { AcpPromptSessionInteractionScope } from './session-interaction-owner'
 
 type AcpSessionPlanCall = Readonly<{
   projectId: string
@@ -87,6 +91,15 @@ const composeAcpRuntimePlanWorkflow = (
       interactionSequence: interaction.sequence,
       artifactVersionId
     })
+  }
+  const rejectApprovalForInteraction = (
+    sessionId: string,
+    interactionId: string,
+    reason: string
+  ): void => {
+    interactions.releaseApprovalReservation(sessionId, interactionId)
+    if (interactions.approvalInteractionIdFor(sessionId) !== interactionId) return
+    interactions.rejectApproval(sessionId, reason)
   }
   const call = async (input: AcpSessionPlanCall): Promise<unknown> => {
     if (!service) throw new Error('Session Plan capability is not configured.')
@@ -235,12 +248,188 @@ const composeAcpRuntimePlanWorkflow = (
     return result
   }
 
+  const preflight = (
+    request: AcpPromptRequest
+  ): AcpPromptTurnPlanContext | Promise<AcpPromptTurnPlanContext> => {
+    const projectId = session.sessionEnvironment.projectName(request.sessionId)
+    if (request.planContinuation && request.planContinuation.projectId !== projectId) {
+      throw new PlanCommandError(
+        'interaction-mismatch',
+        'The Plan continuation belongs to a different Project.'
+      )
+    }
+    if (request.planContinuation && !service) {
+      throw new Error('Session Plan capability is not configured.')
+    }
+    const continuation = request.planContinuation
+    if (continuation?.pendingAction === undefined && continuation) {
+      return service!
+        .authorizeContinuation({
+          projectId: continuation.projectId,
+          sessionId: request.sessionId,
+          artifactVersionId: continuation.artifactVersionId,
+          expectedRevision: continuation.expectedRevision
+        })
+        .then(async (authorized) => {
+          await assertVisibleToDurableBranch(continuation.projectId, request.sessionId, authorized)
+          return Object.freeze({ authorized })
+        })
+    }
+    if (!continuation) return Object.freeze({})
+    return service!
+      .getProjection(continuation.projectId, request.sessionId, {
+        interactionIsLive: false
+      })
+      .then(async (protectedPending) => {
+        if (!protectedPending) {
+          throw new PlanCommandError('no-active-plan', 'The Session has no active Plan.')
+        }
+        if (protectedPending.artifactVersionId !== continuation.artifactVersionId) {
+          throw new PlanCommandError('stale-plan', 'A newer Plan is active.')
+        }
+        if (protectedPending.revision !== continuation.expectedRevision) {
+          throw new PlanCommandError('revision-conflict', 'The Plan revision is stale.')
+        }
+        if (protectedPending.approval !== 'pending') {
+          throw new PlanCommandError('approval-already-decided', 'Plan approval is irreversible.')
+        }
+        await assertVisibleToDurableBranch(
+          continuation.projectId,
+          request.sessionId,
+          protectedPending
+        )
+        return Object.freeze({ protectedPending })
+      })
+  }
+  const admit = (
+    request: AcpPromptRequest,
+    interaction: AcpPromptSessionInteractionScope,
+    plan: AcpPromptTurnPlanContext
+  ): AcpPromptTurnPlanContext | Promise<AcpPromptTurnPlanContext> => {
+    let { authorized, protectedPending } = plan
+    const continuation = request.planContinuation
+    const decision = continuation?.pendingAction
+    const committed = (): AcpPromptTurnPlanContext => {
+      if (authorized) {
+        interactions.bindExecution({
+          sessionId: request.sessionId,
+          interactionSequence: interaction.sequence,
+          artifactVersionId: authorized.artifactVersionId
+        })
+      }
+      return Object.freeze({
+        ...(authorized ? { authorized } : {}),
+        ...(protectedPending ? { protectedPending } : {})
+      })
+    }
+    if (continuation && (decision === 'approve' || decision === 'reject')) {
+      const executionBinding = interactions.executionBindingFor(request.sessionId)
+      return service!
+        .respond({
+          projectId: continuation.projectId,
+          sessionId: request.sessionId,
+          artifactVersionId: continuation.artifactVersionId,
+          expectedRevision: continuation.expectedRevision,
+          decision: decision === 'approve' ? 'approved' : 'rejected',
+          interactionIsLive: true
+        })
+        .then((result) => {
+          if (decision === 'approve') authorized = result.projection
+          else {
+            protectedPending = result.projection
+            if (executionBinding) {
+              interactions.releaseExecution(request.sessionId, executionBinding.interactionSequence)
+            }
+          }
+          interactions.resolveApproval(request.sessionId, result)
+          publishProjection(request.sessionId, result.projection)
+          return committed()
+        })
+    }
+    return committed()
+  }
+  const beforeStop = async (
+    sessionId: string,
+    interaction: AcpPromptSessionInteractionScope,
+    response: PromptResponse
+  ): Promise<void> => {
+    const binding = interactions.executionBindingFor(sessionId)
+    if (
+      response.stopReason !== 'end_turn' ||
+      !service ||
+      binding?.interactionSequence !== interaction.sequence
+    ) {
+      return
+    }
+    const completion = await service.checkTurnCompletion({
+      projectId: session.sessionEnvironment.projectName(sessionId),
+      sessionId
+    })
+    if (!completion.allow) {
+      throw new Error(
+        `The active Session Plan is not complete (${completion.lifecycle ?? 'incomplete'}).`
+      )
+    }
+  }
+  const beforeRelease = (
+    sessionId: string,
+    interaction: AcpPromptSessionInteractionScope
+  ): void => {
+    interactions.releaseExecution(sessionId, interaction.sequence)
+    if (interaction.promptMessageId) {
+      rejectApprovalForInteraction(
+        sessionId,
+        interaction.promptMessageId,
+        'The Session Plan interaction ended before approval.'
+      )
+    }
+  }
+  const afterRelease = async (sessionId: string): Promise<void> => {
+    if (!service) return
+    try {
+      const current = await service.getProjection(
+        session.sessionEnvironment.projectName(sessionId),
+        sessionId,
+        { interactionIsLive: false }
+      )
+      if (current) publishProjection(sessionId, current)
+    } catch (error) {
+      safeLogError('Session Plan terminal projection failed', error)
+    }
+  }
+  const prompt: AcpPromptTurnPlanWorkflow = Object.freeze({
+    preflight,
+    admit,
+    beforeStop,
+    beforeRelease,
+    afterRelease
+  })
+  const capturePromptCancellation = (sessionId: string): (() => void) => {
+    const interaction = sessionInteractions.current(sessionId)
+    const interactionId =
+      (interaction?.kind === 'prompt' ? interaction.promptMessageId : undefined) ??
+      interactions.approvalInteractionIdFor(sessionId)
+    return () => {
+      if (interactionId) {
+        rejectApprovalForInteraction(
+          sessionId,
+          interactionId,
+          'The Session Plan interaction was cancelled.'
+        )
+      }
+    }
+  }
+  const sessionDeleted = (sessionId: string): void => {
+    interactions.clearSession(sessionId, 'The Session Plan interaction was deleted.')
+  }
+
   return Object.freeze({
     call,
     projection,
     respond,
-    publishProjection,
-    assertVisibleToDurableBranch
+    prompt,
+    capturePromptCancellation,
+    sessionDeleted
   })
 }
 /* eslint-enable @typescript-eslint/explicit-function-return-type */
