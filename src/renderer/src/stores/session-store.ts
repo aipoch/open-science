@@ -203,6 +203,7 @@ type UpsertToolActivityInput = {
   sessionId: string
   toolCallId: string
   eventId: string
+  timestamp?: number
   promptMessageId?: string
   title?: string
   status?: string
@@ -2151,6 +2152,7 @@ export const useSessionStore = create<SessionStore>((set, get) => ({
     sessionId,
     toolCallId,
     eventId,
+    timestamp,
     promptMessageId,
     title,
     status,
@@ -2167,6 +2169,7 @@ export const useSessionStore = create<SessionStore>((set, get) => ({
 
     const nextStatus = normalizeToolActivityStatus(status)
     const now = Date.now()
+    const eventTimestamp = timestamp ?? now
 
     set((state) => ({
       sessions: state.sessions.map((session) => {
@@ -2202,7 +2205,7 @@ export const useSessionStore = create<SessionStore>((set, get) => ({
                     terminalOutput: terminalOutput ?? activity.terminalOutput,
                     terminalExitCode: terminalExitCode ?? activity.terminalExitCode,
                     eventIds: [...activity.eventIds, eventId],
-                    updatedAt: activityWasTerminal ? activity.updatedAt : now
+                    updatedAt: activityWasTerminal ? activity.updatedAt : eventTimestamp
                   }
                 : activity
             ),
@@ -2238,8 +2241,8 @@ export const useSessionStore = create<SessionStore>((set, get) => ({
           rawOutput,
           terminalOutput,
           terminalExitCode,
-          createdAt: now,
-          updatedAt: now
+          createdAt: eventTimestamp,
+          updatedAt: eventTimestamp
         }
 
         return {

@@ -501,6 +501,7 @@ const applyWorkspaceRuntimeEvent = async (
       sessionId: event.sessionId,
       toolCallId: event.toolCallId,
       eventId: event.id,
+      timestamp: event.timestamp,
       promptMessageId: event.promptMessageId,
       title: event.title,
       status: event.status,

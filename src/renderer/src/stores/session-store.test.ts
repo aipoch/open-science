@@ -1510,8 +1510,16 @@ describe('session store', () => {
       sessionId: 'transport-session-1',
       toolCallId: 'tool-web-1',
       eventId: 'event-1',
+      timestamp: 10,
       toolKind: 'fetch',
       title: '"open science repositories"',
+      status: 'in_progress'
+    })
+    useSessionStore.getState().upsertToolActivity({
+      sessionId: 'transport-session-1',
+      toolCallId: 'tool-web-1',
+      eventId: 'event-terminal',
+      timestamp: 20,
       status: 'completed'
     })
     useSessionStore.getState().finishRun('transport-session-1')
@@ -1520,6 +1528,7 @@ describe('session store', () => {
       sessionId: 'transport-session-1',
       toolCallId: 'tool-web-1',
       eventId: 'event-2',
+      timestamp: 30,
       status: 'pending'
     })
 
@@ -1528,7 +1537,9 @@ describe('session store', () => {
       activities: [
         expect.objectContaining({
           status: 'completed',
-          eventIds: ['event-1', 'event-2']
+          eventIds: ['event-1', 'event-terminal', 'event-2'],
+          createdAt: 10,
+          updatedAt: 20
         })
       ]
     })

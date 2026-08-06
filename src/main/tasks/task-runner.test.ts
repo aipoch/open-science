@@ -783,8 +783,17 @@ describe('TaskRunner', () => {
             terminalExitCode: 0
           })
           emitEvent?.({
-            id: 'provider-error',
+            id: 'tool-metadata',
             timestamp: 12,
+            kind: 'tool',
+            level: 'info',
+            sessionId: 'session-tool',
+            toolCallId: 'tool-call-1',
+            rawOutput: { stdout: 'done' }
+          })
+          emitEvent?.({
+            id: 'provider-error',
+            timestamp: 13,
             kind: 'error',
             level: 'error',
             sessionId: 'session-tool',
@@ -818,9 +827,12 @@ describe('TaskRunner', () => {
           id: 'tool-call-1',
           title: 'Run analysis',
           status: 'completed',
-          eventIds: ['tool-start', 'tool-complete'],
+          eventIds: ['tool-start', 'tool-complete', 'tool-metadata'],
+          rawOutput: { stdout: 'done' },
           terminalOutput: 'done\n',
-          terminalExitCode: 0
+          terminalExitCode: 0,
+          createdAt: 10,
+          updatedAt: 11
         }
       ]
     })

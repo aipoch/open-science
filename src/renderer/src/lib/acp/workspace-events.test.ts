@@ -863,6 +863,7 @@ describe('workspace runtime events', () => {
     const wasApplied = await applyWorkspaceRuntimeEvent(
       createEvent({
         id: 'event-1',
+        timestamp: 10,
         kind: 'tool',
         toolCallId: 'tool-web-1',
         toolKind: 'fetch',
@@ -889,6 +890,7 @@ describe('workspace runtime events', () => {
     await applyWorkspaceRuntimeEvent(
       createEvent({
         id: 'event-2',
+        timestamp: 25,
         kind: 'tool',
         toolCallId: 'tool-web-1',
         status: 'completed'
@@ -904,6 +906,8 @@ describe('workspace runtime events', () => {
         providerToolName: 'WebSearch',
         title: '"open science repositories"',
         status: 'completed',
+        createdAt: 10,
+        updatedAt: 25,
         eventIds: ['event-1', 'event-2'],
         toolContent: [
           {
