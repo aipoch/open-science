@@ -102,6 +102,24 @@ describe('workspace runtime events', () => {
     })
   })
 
+  it('projects provider authentication recovery onto the failed Session', async () => {
+    await applyWorkspaceRuntimeEvent(
+      createEvent({
+        kind: 'error',
+        title: 'Prompt failed',
+        text: 'Sign in to your model provider in Settings → Model, then try again.',
+        providerError: true,
+        userAction: 'provider-authentication'
+      })
+    )
+
+    expect(useSessionStore.getState().sessions[0]).toMatchObject({
+      status: 'error',
+      errorReportable: false,
+      errorUserAction: 'provider-authentication'
+    })
+  })
+
   it('projects Plan feedback runtime events as settled user Messages', async () => {
     const sessionBefore = useSessionStore.getState().sessions[0]
     useSessionStore.setState({

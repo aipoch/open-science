@@ -6,7 +6,7 @@ import { createLogger, errorLogFields } from '../logger'
 import type { ContextUsageTurnHandle } from './context-usage-tracker'
 import type { AcpPermissionContext } from './permission-context'
 import type { PreparedPromptHandle } from './prompt-preparation-owner'
-import { describePromptError, isProviderPromptError } from './prompt-error'
+import { classifyPromptError } from './prompt-error'
 import type { ProviderPromptOutcome } from './provider-prompt-executor'
 import type { AcpPromptSessionInteractionScope } from './session-interaction-owner'
 import type { AcpSessionInteractionOwner as InteractionOwner } from './session-interaction-owner'
@@ -162,7 +162,8 @@ export class AcpPromptOutcomeFinalizer {
       context?.fail()
       safeCleanup('skill activity cleanup failed', handles.failPendingSkillActivities)
       safeLog('error', 'prompt failed', errorLogFields(error))
-      const text = describePromptError(error, { model: handles.model })
+      const classification = classifyPromptError(error, { model: handles.model })
+      const { text } = classification
       const recoverable =
         isMediaOverflowError(text) ||
         isMediaOverflowError(handles.errorMessage(error)) ||
@@ -175,7 +176,8 @@ export class AcpPromptOutcomeFinalizer {
         kind: 'error',
         level: 'error',
         recoverable,
-        providerError: isProviderPromptError(error),
+        providerError: classification.providerError,
+        userAction: classification.userAction,
         sessionId,
         ...eventIdentity,
         timestamp: terminal.timestamp,

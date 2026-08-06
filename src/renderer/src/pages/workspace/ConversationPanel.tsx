@@ -269,6 +269,7 @@ const ConversationPanel = ({
 }: ConversationPanelProps): React.JSX.Element => {
   const specialistItems = useSpecialistStore((state) => state.items)
   const catalogSkills = useSettingsStore((state) => state.skills)
+  const openSettingsToPanel = useSettingsStore((state) => state.openSettingsToPanel)
   const fileInputRef = useRef<HTMLInputElement | null>(null)
   const globalSearchShortcut = window.api?.platform === 'darwin' ? '⌘K' : 'Ctrl+K'
   // Local so the interrupted banner can show a spinner and block a double-resume until the request settles.
@@ -498,7 +499,16 @@ const ConversationPanel = ({
                             text and the reported text are always the same error. Shown only for an
                             unknown failure — a recognized one (app guidance or a known provider error)
                             keeps its message but is not a bug worth a GitHub issue. */}
-                        {isRunErrorReportable ? (
+                        {activeSession.errorUserAction === 'provider-authentication' ? (
+                          <button
+                            type="button"
+                            onClick={() => openSettingsToPanel('model')}
+                            className="inline-flex h-6 shrink-0 items-center rounded-md border border-red-200 bg-red-100/60 px-2 font-medium text-red-700 hover:bg-red-100 dark:border-red-800/50 dark:bg-red-900/30 dark:text-red-300 dark:hover:bg-red-900/40"
+                            aria-label="Sign in or open Model settings"
+                          >
+                            Sign in / Open Settings
+                          </button>
+                        ) : isRunErrorReportable ? (
                           <button
                             type="button"
                             onClick={openReportDialog}

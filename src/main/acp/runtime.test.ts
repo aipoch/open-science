@@ -16012,6 +16012,38 @@ describe('ACP runtime session management', () => {
     expect(events).toContainEqual({ kind: 'error', providerError: true })
   })
 
+  it('keeps the connection attached and publishes actionable recovery when authentication is required', async () => {
+    const process = new FakeAgentProcess()
+    const events: AcpRuntimeEvent[] = []
+    startFakeAgent(process, ['remote-session-1'], {
+      onPrompt: () => {
+        throw new acp.RequestError(-32000, 'Authentication required')
+      }
+    })
+    const runtime = new AcpRuntime({
+      appVersion: '0.1.0',
+      defaultCwd: '/workspace',
+      spawnAgent: () => asAgentProcess(process),
+      callbacks: { onEvent: (event) => events.push(event) }
+    })
+
+    await runtime.createSession({ cwd: '/workspace' })
+    await expect(runtime.sendPrompt({ sessionId: 'remote-session-1', text: 'hi' })).rejects.toThrow(
+      'Authentication required'
+    )
+
+    expect(runtime.getSnapshot().status).toBe('connected')
+    expect(events).toContainEqual(
+      expect.objectContaining({
+        kind: 'error',
+        sessionId: 'remote-session-1',
+        text: 'Sign in to your model provider in Settings → Model, then try again.',
+        providerError: true,
+        userAction: 'provider-authentication'
+      })
+    )
+  })
+
   it('does not tag an ACP-layer prompt failure as providerError (stays reportable)', async () => {
     const process = new FakeAgentProcess()
     const events: Array<{ kind: string; providerError?: boolean }> = []

@@ -335,6 +335,9 @@ export type AcpRuntimeEvent = {
   // from the ACP layer itself (our runtime) and stays reportable unless it is one of our own crafted,
   // actionable reminder messages.
   providerError?: boolean
+  // App-owned recovery action for a recognized prompt failure. This is deliberately narrower than
+  // provider error classification: most provider failures have no safe one-click recovery.
+  userAction?: AcpErrorUserAction
   sessionId?: string
   messageId?: string
   role?: 'assistant' | 'user'
@@ -362,6 +365,8 @@ export type AcpRuntimeEvent = {
   artifacts?: ArtifactFile[]
   raw?: unknown
 }
+
+export type AcpErrorUserAction = 'provider-authentication'
 
 const isRecord = (value: unknown): value is Record<string, unknown> =>
   typeof value === 'object' && value !== null && !Array.isArray(value)

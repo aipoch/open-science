@@ -637,7 +637,8 @@ const applyWorkspaceRuntimeEvent = async (
     // forcing true here would wrongly show and persist the report button over it. Opaque ACP-layer
     // failures still fall through the text tier to reportable.
     store.failRun(event.sessionId, getEventErrorText(event), {
-      reportable: event.providerError ? false : undefined
+      reportable: event.providerError ? false : undefined,
+      userAction: event.userAction
     })
     const failedSession = useSessionStore
       .getState()

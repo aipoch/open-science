@@ -947,10 +947,12 @@ describe('session store', () => {
 
     // A model-provider failure: opaque text that WOULD derive reportable=true, but the ACP layer
     // structurally tagged it non-reportable, and the explicit flag wins.
-    useSessionStore.getState().failRun('transport-session-1', 'Invalid API key', {
-      reportable: false
+    useSessionStore.getState().failRun('transport-session-1', 'Sign in first', {
+      reportable: false,
+      userAction: 'provider-authentication'
     })
     expect(useSessionStore.getState().sessions[0].errorReportable).toBe(false)
+    expect(useSessionStore.getState().sessions[0].errorUserAction).toBe('provider-authentication')
   })
 
   it('clears errorReportable when a new run starts, so a later error cannot inherit it', () => {
@@ -959,10 +961,12 @@ describe('session store', () => {
       content: 'first turn'
     })
     // A model-provider failure hides the report button.
-    useSessionStore.getState().failRun('transport-session-1', 'Invalid API key', {
-      reportable: false
+    useSessionStore.getState().failRun('transport-session-1', 'Sign in first', {
+      reportable: false,
+      userAction: 'provider-authentication'
     })
     expect(useSessionStore.getState().sessions[0].errorReportable).toBe(false)
+    expect(useSessionStore.getState().sessions[0].errorUserAction).toBe('provider-authentication')
 
     // A new turn clears the prior error + flag.
     useSessionStore.getState().appendUserMessage({
@@ -970,11 +974,13 @@ describe('session store', () => {
       content: 'second turn'
     })
     expect(useSessionStore.getState().sessions[0].errorReportable).toBeUndefined()
+    expect(useSessionStore.getState().sessions[0].errorUserAction).toBeUndefined()
 
     // A later ACP-layer failure with no explicit flag derives reportable=true — it never inherits the
     // earlier provider error's false.
     useSessionStore.getState().failRun('transport-session-1', 'Agent cancellation failed')
     expect(useSessionStore.getState().sessions[0].errorReportable).toBe(true)
+    expect(useSessionStore.getState().sessions[0].errorUserAction).toBeUndefined()
   })
 
   it('records an artifact finalization error as reportable (an app-layer failure)', () => {

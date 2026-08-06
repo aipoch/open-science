@@ -1,4 +1,5 @@
 import { PROVIDER_RESOURCE_NOT_FOUND_PREFIX } from '../../shared/run-error-classification'
+import type { AcpErrorUserAction } from '../../shared/acp'
 
 // Turns an agent prompt failure into user-visible text. Agents (opencode) relay an upstream provider
 // HTTP error wrapped as a JSON-RPC failure like
@@ -36,6 +37,15 @@ const errorCode = (error: unknown): number | undefined => {
 
   return typeof code === 'number' ? code : undefined
 }
+
+const normalizeProtocolMessage = (message: string): string => message.trim().replace(/\s+/g, ' ')
+
+const isAuthenticationRequired = (error: unknown): boolean =>
+  typeof error === 'object' &&
+  error !== null &&
+  (error as { name?: unknown }).name === 'RequestError' &&
+  errorCode(error) === -32000 &&
+  normalizeProtocolMessage(rawErrorMessage(error)) === 'Authentication required'
 
 // True when the agent tagged the failure as an upstream provider API error (vs. an ACP protocol
 // error such as a missing session, which the resume path handles separately).
@@ -179,10 +189,37 @@ const isProviderErrorKind = (error: unknown): boolean => {
 //   - it is a provider "resource not found" (wrong model id / endpoint), which requires the same
 //     upstream signal (see isProviderNotFound) and is never a bare ACP protocol not-found.
 export const isProviderPromptError = (error: unknown): boolean => {
+  if (isAuthenticationRequired(error)) return true
   if (isApiError(error)) return true
   if (isProviderErrorKind(error)) return true
 
   const raw = rawErrorMessage(error)
 
   return isProviderNotFound(error, raw, extractUpstreamDetail(raw))
+}
+
+export type PromptErrorClassification = Readonly<{
+  text: string
+  providerError: boolean
+  userAction?: AcpErrorUserAction
+}>
+
+// The single owner for prompt-failure presentation and recovery. Exact protocol authentication is
+// converted into app-authored guidance; all other failures retain the existing provider classifier.
+export const classifyPromptError = (
+  error: unknown,
+  ctx: PromptErrorContext = {}
+): PromptErrorClassification => {
+  if (isAuthenticationRequired(error)) {
+    return {
+      text: 'Sign in to your model provider in Settings → Model, then try again.',
+      providerError: true,
+      userAction: 'provider-authentication'
+    }
+  }
+
+  return {
+    text: describePromptError(error, ctx),
+    providerError: isProviderPromptError(error)
+  }
 }

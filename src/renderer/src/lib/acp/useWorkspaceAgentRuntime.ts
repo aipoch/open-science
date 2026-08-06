@@ -305,6 +305,8 @@ const failOrMarkDisconnected = async (
   // keeps a non-recovered overflow (providerError=false) non-reportable via the text tier instead of
   // being mislabeled reportable. Undefined also covers no NEW event (a stale prior-turn event is ignored).
   let reportable: boolean | undefined
+  let projectedMessage = message
+  let userAction: AcpRuntimeEvent['userAction']
   try {
     const snapshot = await window.api.acp.getState()
 
@@ -320,12 +322,18 @@ const failOrMarkDisconnected = async (
       .find((event) => event.kind === 'error' && event.sessionId === sessionId)
     // Only trust an event that is NEW for this turn, so a provider-error tag from an earlier turn can
     // neither hide this failure's report button nor mislabel it.
-    if (runError && runError.id !== priorErrorEventId && runError.providerError) reportable = false
+    if (runError && runError.id !== priorErrorEventId) {
+      // The main-process prompt classifier owns canonical guidance and recovery. Converge the
+      // rejection path on that same event instead of replacing it with the IPC-thrown raw message.
+      projectedMessage = runError.text?.trim() || message
+      if (runError.providerError) reportable = false
+      userAction = runError.userAction
+    }
   } catch {
     // Fall back to a plain error if the live status read fails.
   }
 
-  useSessionStore.getState().failRun(sessionId, message, { reportable })
+  useSessionStore.getState().failRun(sessionId, projectedMessage, { reportable, userAction })
 }
 
 // Moves staged uploads into the session directory and updates the already-visible user message.

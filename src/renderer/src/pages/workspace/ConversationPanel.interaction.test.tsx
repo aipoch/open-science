@@ -12,6 +12,7 @@ import {
   usePreviewWorkbenchStore
 } from '@/stores/preview-workbench-store'
 import type { ChatSession } from '@/stores/session-store'
+import { useSettingsStore } from '@/stores/settings-store'
 import type { ActivePlanProjection } from '../../../../shared/session-plan/contract'
 
 // React's act() refuses to run unless the environment opts in to act-aware scheduling.
@@ -1360,6 +1361,27 @@ describe('ConversationPanel error box + report affordance', () => {
     container.querySelector('[aria-label="Report this error"]')
 
   const errorBoxText = (): string => container.querySelector('.border-red-200')?.textContent ?? ''
+
+  it('offers Model sign-in settings instead of Report or Resume for provider authentication', () => {
+    const openSettingsToPanel = vi.fn()
+    useSettingsStore.setState({ openSettingsToPanel })
+    renderPanel({
+      activeSession: {
+        ...errorSession,
+        error: 'Sign in to your model provider in Settings → Model, then try again.',
+        errorReportable: false,
+        errorUserAction: 'provider-authentication'
+      }
+    })
+
+    const authButton = container.querySelector('[aria-label="Sign in or open Model settings"]')
+    expect(authButton?.textContent).toContain('Sign in / Open Settings')
+    expect(reportButton()).toBeNull()
+    expect(container.querySelector('[aria-label="Resume session"]')).toBeNull()
+
+    act(() => (authButton as HTMLElement).click())
+    expect(openSettingsToPanel).toHaveBeenCalledWith('model')
+  })
 
   it('shows the error and a Report button for a failed run (status === error)', () => {
     renderPanel({ activeSession: errorSession })

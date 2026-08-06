@@ -295,6 +295,16 @@ describe('AcpPromptOutcomeFinalizer', () => {
       providerError: true
     },
     {
+      name: 'provider authentication required',
+      error: Object.assign(new Error('Authentication required'), {
+        name: 'RequestError',
+        code: -32000
+      }),
+      recoverable: undefined,
+      providerError: true,
+      userAction: 'provider-authentication'
+    },
+    {
       name: 'ACP error',
       error: new Error('protocol failed'),
       recoverable: undefined,
@@ -318,7 +328,8 @@ describe('AcpPromptOutcomeFinalizer', () => {
         kind: 'error',
         timestamp: 321,
         recoverable: testCase.recoverable,
-        providerError: testCase.providerError
+        providerError: testCase.providerError,
+        ...(testCase.userAction ? { userAction: testCase.userAction } : {})
       })
     )
     expect(harness.context.fail).toHaveBeenCalledOnce()

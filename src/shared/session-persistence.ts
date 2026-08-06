@@ -8,6 +8,7 @@ import {
   sanitizeAcpMessageImage,
   sanitizeAcpTurnTokenUsage,
   type AcpContextUsage,
+  type AcpErrorUserAction,
   type AcpMessageImage,
   type AcpTurnTokenUsage
 } from './acp'
@@ -251,6 +252,9 @@ export type PersistedChatSession = {
   // unknown ACP-layer failure. Resolved once when the run fails and persisted so the "Report error"
   // gate survives a reload. Absent on older files — treated as reportable (the prior behavior).
   errorReportable?: boolean
+  // Structured app-owned recovery for the current error. Persisted so reload does not turn an
+  // actionable provider-authentication failure back into a generic dead end.
+  errorUserAction?: AcpErrorUserAction
   artifacts?: PersistedArtifact[]
   // Incremented only when finalized file metadata changes; text streaming leaves it untouched.
   filesRevision?: number
@@ -628,6 +632,7 @@ const normalizeSessionAfterRestore = (session: PersistedChatSession): PersistedC
       activeRun: undefined,
       error: undefined,
       errorReportable: undefined,
+      errorUserAction: undefined,
       messages: session.messages.map(normalizeMessageAfterRestore)
     }
   }
@@ -1466,6 +1471,9 @@ const sanitizeSession = (
   if (error) sanitized.error = error
   // Only meaningful alongside an error; persisted only when explicitly false (absent = reportable).
   if (error && session.errorReportable === false) sanitized.errorReportable = false
+  if (error && session.errorUserAction === 'provider-authentication') {
+    sanitized.errorUserAction = 'provider-authentication'
+  }
   if (agentFrameworkId && AGENT_FRAMEWORK_IDS.has(agentFrameworkId)) {
     sanitized.agentFrameworkId = agentFrameworkId
   }

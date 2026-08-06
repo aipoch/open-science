@@ -438,6 +438,8 @@ class TaskRunner {
           messages: [...existing.messages, userMessage],
           activeRun: { promptMessageId: userMessageId, startedAt: now },
           error: undefined,
+          errorReportable: undefined,
+          errorUserAction: undefined,
           updatedAt: now
         }
       : {
@@ -539,7 +541,8 @@ class TaskRunner {
       status: 'error',
       activeRun: undefined,
       error: message,
-      ...(runtimeError?.providerError ? { errorReportable: false } : {}),
+      errorReportable: runtimeError?.providerError ? false : undefined,
+      errorUserAction: runtimeError?.userAction,
       updatedAt: this.dependencies.now()
     }
     run.status = 'failed'

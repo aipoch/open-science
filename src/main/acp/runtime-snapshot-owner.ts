@@ -77,6 +77,7 @@ class AcpRuntimeSnapshotOwner {
       compactionReason: event.compactionReason,
       recoverable: event.recoverable,
       providerError: event.providerError,
+      userAction: event.userAction,
       turnUsage: event.turnUsage,
       sessionId: event.sessionId,
       messageId: event.messageId,

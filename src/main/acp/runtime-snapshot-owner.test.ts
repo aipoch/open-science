@@ -24,6 +24,30 @@ const planProjection: ActivePlanProjection = {
 }
 
 describe('AcpRuntimeSnapshotOwner', () => {
+  it('retains a structured prompt recovery action in the renderer-visible snapshot', () => {
+    const owner = new AcpRuntimeSnapshotOwner('/workspace')
+    owner.appendEvent({
+      kind: 'error',
+      level: 'error',
+      sessionId: 'session-1',
+      text: 'Sign in to your model provider in Settings → Model, then try again.',
+      providerError: true,
+      userAction: 'provider-authentication'
+    })
+
+    expect(
+      owner.snapshot({
+        sessionIds: ['session-1'],
+        pendingPermissions: [],
+        permissionProfiles: {},
+        permissionGrants: {},
+        contextUsageBySession: {},
+        promptInFlight: false,
+        promptInFlightSessionIds: []
+      }).events[0]
+    ).toMatchObject({ userAction: 'provider-authentication' })
+  })
+
   it('retains a Plan projection in the renderer-visible event snapshot', () => {
     const owner = new AcpRuntimeSnapshotOwner('/workspace')
 

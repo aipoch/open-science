@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest'
 
-import { describePromptError, isProviderPromptError } from './prompt-error'
+import { classifyPromptError, describePromptError, isProviderPromptError } from './prompt-error'
 
 // Builds an ACP RequestError-shaped value: an Error carrying the JSON-RPC code + data the agent attaches.
 const agentError = (
@@ -10,6 +10,31 @@ const agentError = (
 ): Error => Object.assign(new Error(message), { code, data, name: 'RequestError' })
 
 describe('describePromptError', () => {
+  it('classifies the exact ACP authentication RequestError as actionable provider recovery', () => {
+    const error = agentError('  Authentication   required\n', {}, -32000)
+
+    expect(classifyPromptError(error)).toEqual({
+      text: 'Sign in to your model provider in Settings → Model, then try again.',
+      providerError: true,
+      userAction: 'provider-authentication'
+    })
+  })
+
+  it.each([
+    Object.assign(new Error('Authentication required'), { name: 'Error', code: -32000 }),
+    Object.assign(new Error('Authentication required'), { name: 'RequestError', code: -32603 }),
+    Object.assign(new Error('Authentication required now'), {
+      name: 'RequestError',
+      code: -32000
+    }),
+    Object.assign(new Error('provider authentication required'), {
+      name: 'RequestError',
+      code: -32000
+    })
+  ])('does not promote an auth-like error without the exact ACP shape', (error) => {
+    expect(classifyPromptError(error)).toEqual({ text: error.message, providerError: false })
+  })
+
   it('rewords a provider JSON resource_not_found into an actionable message with the model name', () => {
     const error = agentError(
       'Internal error: Not Found: {"error":{"message":"The requested resource was not found","type":"resource_not_found_error"}}'

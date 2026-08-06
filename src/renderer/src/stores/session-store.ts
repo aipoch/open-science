@@ -14,6 +14,7 @@ import {
   normalizeClaudeCodeRefusalText,
   sanitizeAcpMessageImage,
   type AcpContextUsage,
+  type AcpErrorUserAction,
   type AcpMessageImage,
   type AcpTurnTokenUsage
 } from '../../../shared/acp'
@@ -283,7 +284,11 @@ type SessionStore = SessionStoreData & {
   // opts.reportable overrides the report-affordance decision: pass false for a model-provider failure
   // (the agent relayed an upstream LLM/HTTP error), true to force it, or omit to let the store derive it
   // from the message (an app-crafted reminder → not reportable; anything else → reportable).
-  failRun: (sessionId: string, error: string, opts?: { reportable?: boolean }) => void
+  failRun: (
+    sessionId: string,
+    error: string,
+    opts?: { reportable?: boolean; userAction?: AcpErrorUserAction }
+  ) => void
   // Sets the transient agent status line shown in the waiting indicator; only applies while running.
   setAgentStatus: (sessionId: string, text: string) => void
   // Enters the auto-recovery "compacting" state after a request-size overflow: clears the error so the
@@ -633,6 +638,7 @@ const settleConversationGraphSyncFailure = (
       ? `${input.runError}\n\n${CONVERSATION_GRAPH_SYNC_ERROR}`
       : CONVERSATION_GRAPH_SYNC_ERROR,
     errorReportable: true,
+    errorUserAction: undefined,
     messages: input.messages,
     activities: input.activities,
     activityGroups: input.activityGroups,
@@ -1170,6 +1176,7 @@ export const useSessionStore = create<SessionStore>((set, get) => ({
                 // Clear the prior failure's report flag alongside its text so a later internal error
                 // cannot inherit a stale `false` and wrongly hide its Report button.
                 errorReportable: undefined,
+                errorUserAction: undefined,
                 compacting: undefined,
                 messages: nextMessages,
                 pendingContextReplayMessageId: replayPromptIndex >= 0 ? userMessage.id : undefined,
@@ -1995,6 +2002,7 @@ export const useSessionStore = create<SessionStore>((set, get) => ({
               // An app-layer finalization failure IS a reportable bug; set it explicitly so it never
               // inherits a stale `false` from a prior provider error on the same session.
               errorReportable: true,
+              errorUserAction: undefined,
               updatedAt: Date.now()
             }
           : session
@@ -2017,6 +2025,7 @@ export const useSessionStore = create<SessionStore>((set, get) => ({
           status: session.activeRun ? 'running' : 'idle',
           error: undefined,
           errorReportable: undefined,
+          errorUserAction: undefined,
           updatedAt: Date.now()
         }
       })
@@ -2301,6 +2310,7 @@ export const useSessionStore = create<SessionStore>((set, get) => ({
           compacting: undefined,
           error: keepArtifactError ? session.error : undefined,
           errorReportable: keepArtifactError ? session.errorReportable : undefined,
+          errorUserAction: keepArtifactError ? session.errorUserAction : undefined,
           messages,
           activities,
           activityGroups,
@@ -2357,6 +2367,7 @@ export const useSessionStore = create<SessionStore>((set, get) => ({
           compacting: undefined,
           error: message,
           errorReportable,
+          errorUserAction: opts?.userAction,
           messages,
           activities,
           activityGroups,
@@ -2398,6 +2409,7 @@ export const useSessionStore = create<SessionStore>((set, get) => ({
               agentStatus: undefined,
               error: undefined,
               errorReportable: undefined,
+              errorUserAction: undefined,
               compacting: true,
               messages: failStreamingMessages(session.messages),
               activities: failOpenActivities(session.activities),
@@ -2432,6 +2444,7 @@ export const useSessionStore = create<SessionStore>((set, get) => ({
               compacting: undefined,
               error: message,
               errorReportable: false,
+              errorUserAction: undefined,
               updatedAt: Date.now()
             }
           : session
@@ -2449,6 +2462,7 @@ export const useSessionStore = create<SessionStore>((set, get) => ({
               status: 'idle',
               error: undefined,
               errorReportable: undefined,
+              errorUserAction: undefined,
               interrupted: undefined,
               agentFrameworkId: agentFrameworkId ?? session.agentFrameworkId,
               agentBackendId: agentBackendId ?? session.agentBackendId,
@@ -2482,6 +2496,7 @@ export const useSessionStore = create<SessionStore>((set, get) => ({
               // Cleared so a prior run's report flag can't bleed onto this disconnect (the interrupted
               // banner owns this path anyway; the report button never shows for it).
               errorReportable: undefined,
+              errorUserAction: undefined,
               messages: failStreamingMessages(session.messages),
               activities: failOpenActivities(session.activities),
               activityGroups: completeOpenActivityGroups(session.activityGroups, Date.now()),
@@ -2581,6 +2596,7 @@ export const useSessionStore = create<SessionStore>((set, get) => ({
           agentStatus: undefined,
           error: undefined,
           errorReportable: undefined,
+          errorUserAction: undefined,
           interrupted: undefined,
           branchContextResetRequired: true,
           pendingContextReplayMessageId: removed.some(
@@ -2634,6 +2650,7 @@ export const useSessionStore = create<SessionStore>((set, get) => ({
           activeRun: undefined,
           error: undefined,
           errorReportable: undefined,
+          errorUserAction: undefined,
           branchContextResetRequired: true,
           filesRevision: (session.filesRevision ?? 0) + 1,
           updatedAt: Date.now()

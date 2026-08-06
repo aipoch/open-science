@@ -2386,6 +2386,59 @@ describe('workspace agent message sending', () => {
     expect(session.errorReportable).toBe(false)
   })
 
+  it('converges a rejected authentication prompt on the canonical runtime recovery event', async () => {
+    const authenticationEvent: AcpRuntimeEvent = {
+      id: 'error-auth-1',
+      timestamp: Date.now(),
+      kind: 'error',
+      level: 'error',
+      sessionId: 'session-1',
+      providerError: true,
+      userAction: 'provider-authentication',
+      title: 'Prompt failed',
+      text: 'Sign in to your model provider in Settings → Model, then try again.'
+    }
+    vi.stubGlobal('window', {
+      api: {
+        acp: {
+          getState: vi
+            .fn()
+            .mockResolvedValue({ ...createSnapshot(['session-1']), events: [authenticationEvent] })
+        }
+      }
+    })
+
+    const runtime = {
+      state: createSnapshot(['session-1']),
+      createSession: vi.fn(),
+      resumeSession: vi.fn(),
+      resetSessionContext: vi.fn(),
+      sendPrompt: vi.fn().mockRejectedValue(new Error('Authentication required'))
+    }
+
+    useSessionStore.getState().appendUserMessage({
+      sessionId: 'session-1',
+      content: 'earlier turn',
+      cwd: '/workspace/project'
+    })
+    useSessionStore.getState().finishRun('session-1')
+
+    await sendWorkspaceMessage(runtime, {
+      sessionId: 'session-1',
+      text: 'hello',
+      cwd: '/workspace/project'
+    })
+    await flushRuntimeTasks()
+    await flushRuntimeTasks()
+
+    expect(useSessionStore.getState().sessions[0]).toMatchObject({
+      status: 'error',
+      error: authenticationEvent.text,
+      errorReportable: false,
+      errorUserAction: 'provider-authentication'
+    })
+  })
+
   it('marks an untagged (ACP-layer) prompt failure reportable', async () => {
     // No providerError tag on the run's error event → an app-layer failure the user should be able to
     // report as a bug.

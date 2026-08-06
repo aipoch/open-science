@@ -393,6 +393,70 @@ describe('TaskRunner', () => {
     ])
   })
 
+  it('clears stale authentication recovery when a resumed Session starts and fails generically', async () => {
+    const existing: PersistedChatSession = {
+      ...session,
+      status: 'error',
+      error: 'Sign in first',
+      errorReportable: false,
+      errorUserAction: 'provider-authentication'
+    }
+    const savedSessions: PersistedChatSession[] = []
+    let emitEvent: ((event: AcpRuntimeEvent) => void) | undefined
+    const ids = ['new-user', 'new-run']
+    const runner = createRunner({
+      sessions: {
+        list: async () => [existing],
+        save: async (saved) => {
+          savedSessions.push(structuredClone(saved))
+        }
+      },
+      agent: {
+        listAttachedSessionIds: async () => [],
+        createSession: async () => ({ sessionId: 'unused' }),
+        resumeSession: async (request) => ({ sessionId: request.sessionId }),
+        setPermissionProfile: async () => undefined,
+        prompt: async () => {
+          emitEvent?.({
+            id: 'generic-error',
+            timestamp: 10,
+            kind: 'error',
+            level: 'error',
+            sessionId: existing.id,
+            text: 'ACP transport rejected the prompt.'
+          })
+          throw new Error('opaque failure')
+        }
+      },
+      runtimeEvents: {
+        subscribe: (listener) => {
+          emitEvent = listener
+          return () => undefined
+        }
+      },
+      createId: () => ids.shift() ?? 'generated-id'
+    })
+
+    const started = await runner.startRun({
+      project: project.id,
+      sessionId: existing.id,
+      prompt: 'Try again'
+    })
+    expect(savedSessions[0]).toMatchObject({ status: 'running', error: undefined })
+    expect(savedSessions[0]).toHaveProperty('errorReportable', undefined)
+    expect(savedSessions[0]).toHaveProperty('errorUserAction', undefined)
+
+    await runner.waitForRun(started.id)
+
+    const failed = savedSessions.at(-1)
+    expect(failed).toMatchObject({
+      status: 'error',
+      error: 'ACP transport rejected the prompt.'
+    })
+    expect(failed).toHaveProperty('errorReportable', undefined)
+    expect(failed).toHaveProperty('errorUserAction', undefined)
+  })
+
   it('provides transcript fallback for skill-triggered reconnects', async () => {
     const existing: PersistedChatSession = {
       ...session,
@@ -735,7 +799,8 @@ describe('TaskRunner', () => {
             level: 'error',
             sessionId: 'session-tool',
             text: 'Provider quota exceeded.',
-            providerError: true
+            providerError: true,
+            userAction: 'provider-authentication'
           })
           throw new Error('opaque provider error')
         }
@@ -759,6 +824,7 @@ describe('TaskRunner', () => {
       status: 'error',
       error: 'Provider quota exceeded.',
       errorReportable: false,
+      errorUserAction: 'provider-authentication',
       activities: [
         {
           id: 'tool-call-1',

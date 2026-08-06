@@ -1038,4 +1038,26 @@ describe('normalizeSessionFile with activities', () => {
     expect(legacy?.errorReportable).toBeUndefined()
     expect(noError?.errorReportable).toBeUndefined()
   })
+
+  it('persists only the recognized recovery action alongside an error', () => {
+    const base = { ...createSessionWithActivity(undefined), activities: undefined, status: 'error' }
+    expect(
+      normalizeSessionFile({
+        ...base,
+        error: 'Sign in first',
+        errorUserAction: 'provider-authentication'
+      })?.errorUserAction
+    ).toBe('provider-authentication')
+    expect(
+      normalizeSessionFile({ ...base, error: 'Unknown', errorUserAction: 'open-danger-zone' })
+        ?.errorUserAction
+    ).toBeUndefined()
+    expect(
+      normalizeSessionFile({
+        ...createSessionWithActivity(undefined),
+        activities: undefined,
+        errorUserAction: 'provider-authentication'
+      })?.errorUserAction
+    ).toBeUndefined()
+  })
 })
