@@ -25,18 +25,16 @@ import {
 } from './settings-write-coordinator'
 import {
   createInitialRuntimeSetupState,
+  createRuntimeSetupLoadPatch,
   createRuntimeSetupSlice,
   type RuntimeSetupActions,
   type RuntimeSetupState
 } from './settings-runtime-slice'
 export { selectAnyInstalling } from './settings-runtime-slice'
 import type {
-  ClaudeDetectResult,
   ClaudeInfo,
   ClaudeSubscriptionProviderId,
   CodexInfo,
-  EnvironmentCheckResult,
-  Preflight,
   AgentFrameworkId,
   AgentFrameworkView,
   ChatApiEndpoint,
@@ -115,25 +113,7 @@ type SettingsStoreData = RuntimeSetupState & {
   pendingApprovals: ConnectorApprovalRequest[]
   // Shared NCBI credential state (never the plaintext key), reconciled alongside the connectors list.
   ncbi: NcbiCredentialsView
-  preflight: Preflight
   encryptionAvailable: boolean
-  npmAvailable: boolean
-  environmentCheck: EnvironmentCheckResult | undefined
-  environmentCheckError: string | undefined
-  // Transient UI state for the wizard/settings page.
-  isCheckingEnvironment: boolean
-  // Framework the in-flight environment check was issued for. Used ONLY for the React Strict Mode
-  // de-dup: a same-framework duplicate mount reuses the running pass instead of double-probing.
-  // Staleness/ownership is decided by envCheckGeneration, never by this field.
-  checkingFramework: AgentFrameworkId | undefined
-  // Monotonic token stamped by each checkEnvironment call. The success/catch/finally branches only
-  // mutate shared state when their captured generation is still current, so an older pass (even one
-  // for the same framework, as in a Claude -> OpenCode -> Claude ABA sequence) can never overwrite,
-  // fail, or clear the loading flags of a newer pass.
-  envCheckGeneration: number
-  isDetectingClaude: boolean
-  isDetectingOpencode: boolean
-  isDetectingCodex: boolean
   // Whether the settings dialog is open (rendered at the app root, over Home/Workspace).
   isSettingsOpen: boolean
   // Panel requested by an external entry point; Settings consumes it after seeding navigation.
@@ -159,12 +139,6 @@ type SettingsStoreData = RuntimeSetupState & {
 
 type SettingsStoreCore = SettingsStoreData & {
   load: (options?: { force?: boolean }) => Promise<boolean>
-  refreshPreflight: () => Promise<Preflight>
-  checkEnvironment: (options?: { force?: boolean }) => Promise<EnvironmentCheckResult | undefined>
-  detectClaude: () => Promise<ClaudeDetectResult>
-  // Detects the opencode executable and refreshes its status card.
-  detectOpencode: () => Promise<void>
-  detectCodex: () => Promise<void>
   // Persists the draft (create/update) without testing it, returning the affected provider id. The
   // Settings page uses this to return to the list immediately, then tests in the background.
   persistProvider: (request: UpsertProviderRequest) => Promise<string>
@@ -298,15 +272,6 @@ type SettingsStoreCore = SettingsStoreData & {
 
 type SettingsStore = SettingsStoreCore & RuntimeSetupActions
 
-const createInitialPreflight = (): Preflight => ({
-  claudeReady: false,
-  opencodeReady: false,
-  codexReady: false,
-  agentFrameworkId: 'claude-code',
-  agentReady: false,
-  activeProviderReady: false
-})
-
 export const createInitialSettingsState = (): SettingsStoreData => ({
   ...createInitialRuntimeSetupState(),
   isLoaded: false,
@@ -332,17 +297,7 @@ export const createInitialSettingsState = (): SettingsStoreData => ({
   customServers: [],
   pendingApprovals: [],
   ncbi: { hasApiKey: false },
-  preflight: createInitialPreflight(),
   encryptionAvailable: true,
-  npmAvailable: true,
-  environmentCheck: undefined,
-  environmentCheckError: undefined,
-  isCheckingEnvironment: false,
-  checkingFramework: undefined,
-  envCheckGeneration: 0,
-  isDetectingClaude: false,
-  isDetectingOpencode: false,
-  isDetectingCodex: false,
   isSettingsOpen: false,
   pendingSettingsPanel: undefined,
   pendingSkillId: undefined,
@@ -486,18 +441,16 @@ const createSettingsStoreState = (
   ...createRuntimeSetupSlice({
     set,
     get,
-    // Keep browser globals lazy so importing the store remains safe in node-based renderer tests.
-    commands: {
-      getSettings: () => window.api.settings.getSettings(),
-      installClaude: (request) => window.api.settings.installClaude(request),
-      installOpencode: (request) => window.api.settings.installOpencode(request),
-      installCodex: (request) => window.api.settings.installCodex(request),
-      uninstallClaude: () => window.api.settings.uninstallClaude(),
-      uninstallOpencode: () => window.api.settings.uninstallOpencode(),
-      uninstallCodex: () => window.api.settings.uninstallCodex(),
-      onInstallLog: (listener) => window.api.settings.onInstallLog(listener)
-    },
-    reconcileSnapshot: (snapshot) => set(applySnapshot(snapshot))
+    // Resolve browser globals only when an action runs; node-based renderer tests import this store.
+    getCommands: () => window.api.settings,
+    reconcileSnapshot: (snapshot, runtimePatch = {}) =>
+      set({ ...applySnapshot(snapshot), ...runtimePatch }),
+    reconcileClaudeDetection: (result, npmAvailable) =>
+      set(
+        result.found && result.path
+          ? { npmAvailable, claude: { resolvedPath: result.path, version: result.version } }
+          : { npmAvailable }
+      )
   }),
 
   // Loads settings, preflight, and encryption availability in one startup pass.
@@ -523,9 +476,8 @@ const createSettingsStoreState = (
 
         set({
           ...applySnapshot(snapshot),
-          preflight,
+          ...createRuntimeSetupLoadPatch(preflight, npmAvailable),
           encryptionAvailable,
-          npmAvailable,
           isLoaded: true,
           isLoading: false,
           loadError: undefined
@@ -548,115 +500,6 @@ const createSettingsStoreState = (
       if (settingsLoadPromise === loadPromise) settingsLoadPromise = undefined
     })
     return loadPromise
-  },
-
-  // Re-checks the two startup gates without reloading the whole snapshot.
-  refreshPreflight: async () => {
-    const preflight = await window.api.settings.getPreflight()
-
-    set({ preflight })
-
-    return preflight
-  },
-
-  // Full startup inspection: main owns filesystem/network/runtime probes; the renderer caches only
-  // their structured, non-secret result. Refresh settings/preflight afterwards because detection may
-  // have discovered and persisted a Claude installation that appeared since the previous launch.
-  checkEnvironment: async (options) => {
-    // React Strict Mode intentionally re-runs mount effects in development. Reuse the in-flight pass
-    // only when it targets the currently-selected framework: an auto-switch (e.g. Claude -> a detected
-    // OpenCode) changes the target mid-flight, and that call must issue its own probe rather than reuse
-    // the previous framework's, or Continue stays disabled on a result that no longer matches.
-    const framework = get().agentFrameworkId
-    if (!options?.force && get().isCheckingEnvironment && get().checkingFramework === framework) {
-      return get().environmentCheck
-    }
-
-    // Stamp a fresh generation; only the branch whose captured token is still current may mutate
-    // shared state. This defeats an ABA sequence (Claude -> OpenCode -> Claude) where an older pass
-    // shares the framework id of the newest one and would otherwise pass a framework-only staleness
-    // check.
-    const generation = get().envCheckGeneration + 1
-
-    set({
-      envCheckGeneration: generation,
-      isCheckingEnvironment: true,
-      checkingFramework: framework,
-      isDetectingClaude: true,
-      environmentCheckError: undefined
-    })
-
-    try {
-      const environmentCheck = await window.api.settings.checkEnvironment()
-      const [snapshot, preflight, npmAvailable] = await Promise.all([
-        window.api.settings.getSettings(),
-        window.api.settings.getPreflight(),
-        window.api.settings.isNpmAvailable()
-      ])
-
-      // Discard a stale result: a newer pass has stamped a later generation and now owns the visible
-      // state, so this older probe must not overwrite it (defensively also require the result to
-      // still match the selected framework).
-      if (
-        get().envCheckGeneration !== generation ||
-        environmentCheck.agentFrameworkId !== get().agentFrameworkId
-      ) {
-        return environmentCheck
-      }
-
-      set({
-        ...applySnapshot(snapshot),
-        environmentCheck,
-        preflight,
-        npmAvailable
-      })
-
-      return environmentCheck
-    } catch (error) {
-      // A late failure from a superseded pass must not clobber a newer pass's successful result.
-      if (get().envCheckGeneration === generation) {
-        set({
-          environmentCheckError:
-            error instanceof Error ? error.message : 'Environment detection could not be completed.'
-        })
-      }
-      return undefined
-    } finally {
-      // Only clear the loading flags when this pass is still the current one; a newer pass may
-      // already be running and now owns them.
-      set((state) =>
-        state.envCheckGeneration === generation
-          ? { isCheckingEnvironment: false, checkingFramework: undefined, isDetectingClaude: false }
-          : {}
-      )
-    }
-  },
-
-  // Detects claude and folds the resolved path/version back into the cache.
-  detectClaude: async () => {
-    set({ isDetectingClaude: true })
-
-    try {
-      // Re-detect claude and npm together so a mid-onboarding Node.js install is picked up by the same
-      // Re-detect action. npm has no separate refresh; it was previously latched at load() only, so
-      // users who installed Node.js after opening onboarding were stuck until an app restart.
-      const [result, npmAvailable] = await Promise.all([
-        window.api.settings.detectClaude(),
-        window.api.settings.isNpmAvailable()
-      ])
-
-      set(() =>
-        result.found && result.path
-          ? { npmAvailable, claude: { resolvedPath: result.path, version: result.version } }
-          : { npmAvailable }
-      )
-
-      await get().refreshPreflight()
-
-      return result
-    } finally {
-      set({ isDetectingClaude: false })
-    }
   },
 
   // Persists a provider draft (create/update) and refreshes derived state, without testing it.
@@ -982,27 +825,6 @@ const createSettingsStoreState = (
   },
 
   clearSettingsWriteError: () => writeCoordinator.clearFailures(),
-
-  // Detects the opencode executable and refreshes its status card.
-  detectOpencode: async () => {
-    set({ isDetectingOpencode: true })
-
-    try {
-      set(applySnapshot(await window.api.settings.detectOpencode()))
-    } finally {
-      set({ isDetectingOpencode: false })
-    }
-  },
-
-  detectCodex: async () => {
-    set({ isDetectingCodex: true })
-
-    try {
-      set(applySnapshot(await window.api.settings.detectCodex()))
-    } finally {
-      set({ isDetectingCodex: false })
-    }
-  },
 
   deleteProvider: async (providerId) => {
     const snapshot = await window.api.settings.deleteProvider({ id: providerId })

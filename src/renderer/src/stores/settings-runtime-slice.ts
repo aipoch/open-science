@@ -2,10 +2,12 @@ import type { StoreApi } from 'zustand'
 
 import type {
   AgentFrameworkId,
+  ClaudeDetectResult,
   ClaudeInstallProgressEvent,
   ClaudeInstallResult,
   ClaudeInstallSource,
   CodexInstallSource,
+  EnvironmentCheckResult,
   ManagedClaudeRegistry,
   Preflight,
   SettingsSnapshot
@@ -19,10 +21,25 @@ export type RuntimeInstallState = {
 }
 
 export type RuntimeSetupState = {
+  preflight: Preflight
+  npmAvailable: boolean
+  environmentCheck: EnvironmentCheckResult | undefined
+  environmentCheckError: string | undefined
+  isCheckingEnvironment: boolean
+  checkingFramework: AgentFrameworkId | undefined
+  envCheckGeneration: number
+  isDetectingClaude: boolean
+  isDetectingOpencode: boolean
+  isDetectingCodex: boolean
   installStates: Record<AgentFrameworkId, RuntimeInstallState>
 }
 
 export type RuntimeSetupActions = {
+  refreshPreflight: () => Promise<Preflight>
+  checkEnvironment: (options?: { force?: boolean }) => Promise<EnvironmentCheckResult | undefined>
+  detectClaude: () => Promise<ClaudeDetectResult>
+  detectOpencode: () => Promise<void>
+  detectCodex: () => Promise<void>
   installClaude: (
     source: ClaudeInstallSource,
     managedRegistry?: ManagedClaudeRegistry
@@ -38,12 +55,19 @@ export type RuntimeSetupActions = {
 export type RuntimeSetupSlice = RuntimeSetupState & RuntimeSetupActions
 
 type RuntimeSetupHost = RuntimeSetupState & {
-  refreshPreflight: () => Promise<Preflight>
+  agentFrameworkId: AgentFrameworkId
+  refreshPreflight: RuntimeSetupActions['refreshPreflight']
 }
 
 type RuntimeSetupCommands = Pick<
   Window['api']['settings'],
   | 'getSettings'
+  | 'getPreflight'
+  | 'isNpmAvailable'
+  | 'checkEnvironment'
+  | 'detectClaude'
+  | 'detectOpencode'
+  | 'detectCodex'
   | 'installClaude'
   | 'installOpencode'
   | 'installCodex'
@@ -53,11 +77,22 @@ type RuntimeSetupCommands = Pick<
   | 'onInstallLog'
 >
 
+type EnvironmentReconcilePatch = Pick<
+  RuntimeSetupState,
+  'environmentCheck' | 'preflight' | 'npmAvailable'
+>
+
+export type RuntimeSetupLoadPatch = Pick<RuntimeSetupState, 'preflight' | 'npmAvailable'>
+
 type RuntimeSetupSliceOptions<Store extends RuntimeSetupHost> = {
   set: StoreApi<Store>['setState']
   get: StoreApi<Store>['getState']
-  commands: RuntimeSetupCommands
-  reconcileSnapshot: (snapshot: SettingsSnapshot) => void
+  getCommands: () => RuntimeSetupCommands
+  reconcileSnapshot: (
+    snapshot: SettingsSnapshot,
+    runtimePatch?: Partial<EnvironmentReconcilePatch>
+  ) => void
+  reconcileClaudeDetection: (result: ClaudeDetectResult, npmAvailable: boolean) => void
 }
 
 const createInitialRuntimeInstallState = (): RuntimeInstallState => ({
@@ -67,7 +102,26 @@ const createInitialRuntimeInstallState = (): RuntimeInstallState => ({
   installError: undefined
 })
 
+const createInitialPreflight = (): Preflight => ({
+  claudeReady: false,
+  opencodeReady: false,
+  codexReady: false,
+  agentFrameworkId: 'claude-code',
+  agentReady: false,
+  activeProviderReady: false
+})
+
 export const createInitialRuntimeSetupState = (): RuntimeSetupState => ({
+  preflight: createInitialPreflight(),
+  npmAvailable: true,
+  environmentCheck: undefined,
+  environmentCheckError: undefined,
+  isCheckingEnvironment: false,
+  checkingFramework: undefined,
+  envCheckGeneration: 0,
+  isDetectingClaude: false,
+  isDetectingOpencode: false,
+  isDetectingCodex: false,
   installStates: {
     'claude-code': createInitialRuntimeInstallState(),
     opencode: createInitialRuntimeInstallState(),
@@ -75,10 +129,20 @@ export const createInitialRuntimeSetupState = (): RuntimeSetupState => ({
   }
 })
 
+export const createRuntimeSetupLoadPatch = (
+  preflight: Preflight,
+  npmAvailable: boolean
+): RuntimeSetupLoadPatch => ({ preflight, npmAvailable })
+
 export const selectAnyInstalling = (state: RuntimeSetupState): boolean =>
   state.installStates['claude-code'].isInstalling ||
   state.installStates.opencode.isInstalling ||
   state.installStates.codex.isInstalling
+
+const patchRuntimeSetupState = <Store extends RuntimeSetupHost>(
+  set: StoreApi<Store>['setState'],
+  patch: Partial<RuntimeSetupState>
+): void => set(patch as Partial<Store>)
 
 const updateInstallStates = <Store extends RuntimeSetupHost>(
   set: StoreApi<Store>['setState'],
@@ -98,10 +162,10 @@ const patchInstallState = <Store extends RuntimeSetupHost>(
 const runRuntimeInstall = async <Store extends RuntimeSetupHost>(
   set: StoreApi<Store>['setState'],
   get: StoreApi<Store>['getState'],
-  commands: RuntimeSetupCommands,
-  reconcileSnapshot: (snapshot: SettingsSnapshot) => void,
+  getCommands: () => RuntimeSetupCommands,
+  reconcileSnapshot: RuntimeSetupSliceOptions<Store>['reconcileSnapshot'],
   runtime: AgentFrameworkId,
-  invoke: () => Promise<ClaudeInstallResult>
+  invoke: (commands: RuntimeSetupCommands) => Promise<ClaudeInstallResult>
 ): Promise<ClaudeInstallResult> => {
   // Install events are broadcast without a runtime id. The synchronous global guard guarantees that
   // exactly one subscription is live, so every event can be attributed to this runtime.
@@ -116,6 +180,7 @@ const runRuntimeInstall = async <Store extends RuntimeSetupHost>(
     installError: undefined
   })
 
+  const commands = getCommands()
   const unsubscribe = commands.onInstallLog((event) => {
     if (event.kind === 'progress') {
       patchInstallState(set, runtime, { installProgress: event })
@@ -134,7 +199,7 @@ const runRuntimeInstall = async <Store extends RuntimeSetupHost>(
   try {
     let result: ClaudeInstallResult
     try {
-      result = await invoke()
+      result = await invoke(commands)
     } catch (error) {
       patchInstallState(set, runtime, {
         installError: error instanceof Error ? error.message : 'Install failed.'
@@ -164,34 +229,137 @@ const runRuntimeInstall = async <Store extends RuntimeSetupHost>(
 export const createRuntimeSetupSlice = <Store extends RuntimeSetupHost>({
   set,
   get,
-  commands,
-  reconcileSnapshot
+  getCommands,
+  reconcileSnapshot,
+  reconcileClaudeDetection
 }: RuntimeSetupSliceOptions<Store>): RuntimeSetupSlice => ({
   ...createInitialRuntimeSetupState(),
 
+  refreshPreflight: async () => {
+    const preflight = await getCommands().getPreflight()
+    patchRuntimeSetupState(set, { preflight })
+    return preflight
+  },
+
+  checkEnvironment: async (options) => {
+    const framework = get().agentFrameworkId
+    // Strict Mode duplicates return the cached value immediately; they do not share the first Promise.
+    if (!options?.force && get().isCheckingEnvironment && get().checkingFramework === framework) {
+      return get().environmentCheck
+    }
+
+    const generation = get().envCheckGeneration + 1
+    patchRuntimeSetupState(set, {
+      envCheckGeneration: generation,
+      isCheckingEnvironment: true,
+      checkingFramework: framework,
+      // Preserve the existing shared detection indicator even for OpenCode and Codex checks.
+      isDetectingClaude: true,
+      environmentCheckError: undefined
+    })
+
+    try {
+      const commands = getCommands()
+      const environmentCheck = await commands.checkEnvironment()
+      // Preserve the existing ordering: even a pass that became stale while probing performs these
+      // reads before generation/framework fencing decides whether it may update visible state.
+      const [snapshot, preflight, npmAvailable] = await Promise.all([
+        commands.getSettings(),
+        commands.getPreflight(),
+        commands.isNpmAvailable()
+      ])
+
+      if (
+        get().envCheckGeneration !== generation ||
+        environmentCheck.agentFrameworkId !== get().agentFrameworkId
+      ) {
+        return environmentCheck
+      }
+
+      reconcileSnapshot(snapshot, { environmentCheck, preflight, npmAvailable })
+      return environmentCheck
+    } catch (error) {
+      if (get().envCheckGeneration === generation) {
+        patchRuntimeSetupState(set, {
+          environmentCheckError:
+            error instanceof Error ? error.message : 'Environment detection could not be completed.'
+        })
+      }
+      return undefined
+    } finally {
+      set(
+        (state) =>
+          (state.envCheckGeneration === generation
+            ? {
+                isCheckingEnvironment: false,
+                checkingFramework: undefined,
+                isDetectingClaude: false
+              }
+            : {}) as Partial<Store>
+      )
+    }
+  },
+
+  detectClaude: async () => {
+    patchRuntimeSetupState(set, { isDetectingClaude: true })
+
+    try {
+      const commands = getCommands()
+      const [result, npmAvailable] = await Promise.all([
+        commands.detectClaude(),
+        commands.isNpmAvailable()
+      ])
+
+      // Core retains the stable Claude projection; a not-found result intentionally leaves it intact.
+      reconcileClaudeDetection(result, npmAvailable)
+      await get().refreshPreflight()
+      return result
+    } finally {
+      patchRuntimeSetupState(set, { isDetectingClaude: false })
+    }
+  },
+
+  detectOpencode: async () => {
+    patchRuntimeSetupState(set, { isDetectingOpencode: true })
+    try {
+      reconcileSnapshot(await getCommands().detectOpencode())
+    } finally {
+      patchRuntimeSetupState(set, { isDetectingOpencode: false })
+    }
+  },
+
+  detectCodex: async () => {
+    patchRuntimeSetupState(set, { isDetectingCodex: true })
+    try {
+      reconcileSnapshot(await getCommands().detectCodex())
+    } finally {
+      patchRuntimeSetupState(set, { isDetectingCodex: false })
+    }
+  },
+
   installClaude: (source, managedRegistry) =>
-    runRuntimeInstall(set, get, commands, reconcileSnapshot, 'claude-code', () =>
+    runRuntimeInstall(set, get, getCommands, reconcileSnapshot, 'claude-code', (commands) =>
       commands.installClaude({ source, managedRegistry })
     ),
   installOpencode: (source = 'managed') =>
-    runRuntimeInstall(set, get, commands, reconcileSnapshot, 'opencode', () =>
+    runRuntimeInstall(set, get, getCommands, reconcileSnapshot, 'opencode', (commands) =>
       commands.installOpencode({ source })
     ),
   installCodex: (source = 'managed') =>
-    runRuntimeInstall(set, get, commands, reconcileSnapshot, 'codex', () =>
+    runRuntimeInstall(set, get, getCommands, reconcileSnapshot, 'codex', (commands) =>
       commands.installCodex({ source })
     ),
 
   uninstallClaude: async () => {
-    reconcileSnapshot(await commands.uninstallClaude())
+    reconcileSnapshot(await getCommands().uninstallClaude())
     await get().refreshPreflight()
   },
   uninstallOpencode: async () => {
-    reconcileSnapshot(await commands.uninstallOpencode())
+    reconcileSnapshot(await getCommands().uninstallOpencode())
     await get().refreshPreflight()
   },
   uninstallCodex: async () => {
-    reconcileSnapshot(await commands.uninstallCodex())
+    reconcileSnapshot(await getCommands().uninstallCodex())
     await get().refreshPreflight()
   },
 
