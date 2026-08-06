@@ -24,6 +24,12 @@ import {
   type SettingsNavigationState
 } from './settings-navigation-slice'
 import {
+  createInitialSettingsConnectorsState,
+  createSettingsConnectorsSlice,
+  type SettingsConnectorsActions,
+  type SettingsConnectorsState
+} from './settings-connectors-slice'
+import {
   createSettingsPreferencesSlice,
   type SettingsPreferencesActions
 } from './settings-preferences-slice'
@@ -58,23 +64,13 @@ import type {
   ProviderView,
   ReasoningEffort,
   SettingsSnapshot,
-  AppIconVariant,
-  ConnectorView,
-  ConnectorDetailView,
-  CustomServerView,
-  NcbiCredentialsView,
-  ToolPermission,
-  SetNcbiCredentialsRequest,
-  AddCustomServerRequest,
-  AuthenticateCustomServerRequest,
-  UpdateCustomServerRequest,
-  ConnectorApprovalRequest,
-  ApprovalDecision
+  AppIconVariant
 } from '../../../shared/settings'
 
 type SettingsStoreData = RuntimeSetupState &
   SettingsNavigationState &
-  SettingsSkillsState & {
+  SettingsSkillsState &
+  SettingsConnectorsState & {
     isLoaded: boolean
     isLoading: boolean
     loadError: string | undefined
@@ -99,14 +95,6 @@ type SettingsStoreData = RuntimeSetupState &
     opencodeManaged: boolean
     codexManaged: boolean
     onboardingCompletedAt: number | undefined
-    // Bundled connectors with their enabled/auto-allow state, loaded lazily when the Connectors panel opens.
-    connectors: ConnectorView[]
-    // User-added custom MCP servers, reconciled alongside the connectors list.
-    customServers: CustomServerView[]
-    // Pending per-call connector approval requests (external data-egress gate), oldest first.
-    pendingApprovals: ConnectorApprovalRequest[]
-    // Shared NCBI credential state (never the plaintext key), reconciled alongside the connectors list.
-    ncbi: NcbiCredentialsView
     encryptionAvailable: boolean
     // Configured package mirror (conda/pip); undefined means public hosts (unconfigured).
     packageMirror?: PackageMirror
@@ -127,36 +115,12 @@ type SettingsStoreCore = SettingsStoreData &
   SettingsPreferencesActions &
   SettingsNavigationActions &
   SettingsSkillsActions &
+  SettingsConnectorsActions &
   SettingsStoreActions
 
 type SettingsStoreActions = {
   load: (options?: { force?: boolean }) => Promise<boolean>
   clearSettingsWriteError: () => void
-  // Loads the bundled-connector list (enabled/auto-allow + NCBI credential state) from main.
-  loadConnectors: () => Promise<void>
-  // Toggles one connector; optimistic, then reconciled with the authoritative snapshot from main.
-  setConnectorEnabled: (id: string, enabled: boolean) => Promise<void>
-  // Toggles a connector's "skip approvals" flag; optimistic, then reconciled from main.
-  setConnectorAutoAllow: (id: string, autoAllow: boolean) => Promise<void>
-  // Sets one tool's permission, returning the affected connector's refreshed detail view (held
-  // locally by the component, so nothing is stored here).
-  setToolPermission: (toolId: string, permission: ToolPermission) => Promise<ConnectorDetailView>
-  // Persists NCBI credentials and reconciles the connectors list + credential state from main.
-  setNcbiCredentials: (request: SetNcbiCredentialsRequest) => Promise<void>
-  // Adds a custom MCP server (add-time trust is confirmed in the UI), reconciling from main.
-  addCustomServer: (request: AddCustomServerRequest) => Promise<void>
-  // Edits an existing custom MCP server (name is immutable), reconciling from main.
-  updateCustomServer: (request: UpdateCustomServerRequest) => Promise<void>
-  authenticateCustomServer: (request: AuthenticateCustomServerRequest) => Promise<void>
-  cancelCustomServerAuthentication: (request: AuthenticateCustomServerRequest) => Promise<void>
-  // Enables/disables one custom MCP server; optimistic, then reconciled from main.
-  setCustomServerEnabled: (id: string, enabled: boolean) => Promise<void>
-  // Removes one custom MCP server, reconciling from main.
-  removeCustomServer: (id: string) => Promise<void>
-  // Queues an incoming approval request (from the main-process connector gate).
-  enqueueApproval: (request: ConnectorApprovalRequest) => void
-  // Sends the user's decision to main and drops the request from the queue.
-  respondApproval: (id: string, decision: ApprovalDecision) => Promise<void>
 }
 
 type SettingsStore = SettingsStoreCore & RuntimeSetupActions
@@ -165,6 +129,7 @@ export const createInitialSettingsState = (): SettingsStoreData => ({
   ...createInitialRuntimeSetupState(),
   ...createInitialSettingsNavigationState(),
   ...createInitialSettingsSkillsState(),
+  ...createInitialSettingsConnectorsState(),
   isLoaded: false,
   isLoading: false,
   loadError: undefined,
@@ -183,10 +148,6 @@ export const createInitialSettingsState = (): SettingsStoreData => ({
   opencodeManaged: false,
   codexManaged: false,
   onboardingCompletedAt: undefined,
-  connectors: [],
-  customServers: [],
-  pendingApprovals: [],
-  ncbi: { hasApiKey: false },
   encryptionAvailable: true,
   packageMirror: undefined,
   reasoningEffort: DEFAULT_REASONING_EFFORT,
@@ -336,6 +297,10 @@ const createSettingsStoreState = (
     setState: (patch) => set(patch),
     getCommands: () => window.api.settings
   }),
+  ...createSettingsConnectorsSlice({
+    setState: (patch) => set(patch),
+    getCommands: () => window.api.settings
+  }),
 
   // Loads settings, preflight, and encryption availability in one startup pass.
   load: (options) => {
@@ -386,111 +351,7 @@ const createSettingsStoreState = (
     return loadPromise
   },
 
-  clearSettingsWriteError: () => writeCoordinator.clearFailures(),
-
-  loadConnectors: async () => {
-    const { connectors, customServers, ncbi } = await window.api.settings.listConnectors()
-    set({ connectors, customServers, ncbi })
-  },
-
-  // Optimistically flips the toggle, then reconciles with the authoritative snapshot from main.
-  setConnectorEnabled: async (id, enabled) => {
-    set((state) => ({
-      connectors: state.connectors.map((connector) =>
-        connector.id === id ? { ...connector, enabled } : connector
-      )
-    }))
-    const { connectors, customServers, ncbi } = await window.api.settings.setConnectorEnabled({
-      id,
-      enabled
-    })
-    set({ connectors, customServers, ncbi })
-  },
-
-  // Optimistically flips "skip approvals", then reconciles from main.
-  setConnectorAutoAllow: async (id, autoAllow) => {
-    set((state) => ({
-      connectors: state.connectors.map((connector) =>
-        connector.id === id ? { ...connector, autoAllow } : connector
-      )
-    }))
-    const { connectors, customServers, ncbi } = await window.api.settings.setConnectorAutoAllow({
-      id,
-      autoAllow
-    })
-    set({ connectors, customServers, ncbi })
-  },
-
-  setToolPermission: async (toolId, permission) =>
-    window.api.settings.setToolPermission({ toolId, permission }),
-
-  setNcbiCredentials: async (request) => {
-    const { connectors, customServers, ncbi } =
-      await window.api.settings.setNcbiCredentials(request)
-    set({ connectors, customServers, ncbi })
-  },
-
-  addCustomServer: async (request) => {
-    const { connectors, customServers, ncbi } = await window.api.settings.addCustomServer(request)
-    set({ connectors, customServers, ncbi })
-  },
-
-  updateCustomServer: async (request) => {
-    const { connectors, customServers, ncbi } =
-      await window.api.settings.updateCustomServer(request)
-    set({ connectors, customServers, ncbi })
-  },
-
-  authenticateCustomServer: async (request) => {
-    try {
-      const { connectors, customServers, ncbi } =
-        await window.api.settings.authenticateCustomServer(request)
-      set({ connectors, customServers, ncbi })
-    } catch (error) {
-      // Authentication can invalidate stale tokens before failing. Refresh the projection so the
-      // connector does not remain visibly "Connected" after main has cleared its credentials.
-      await get()
-        .loadConnectors()
-        .catch(() => undefined)
-      throw error
-    }
-  },
-
-  cancelCustomServerAuthentication: (request) =>
-    window.api.settings.cancelCustomServerAuthentication(request),
-
-  // Optimistically flips the server toggle, then reconciles from main.
-  setCustomServerEnabled: async (id, enabled) => {
-    set((state) => ({
-      customServers: state.customServers.map((server) =>
-        server.id === id ? { ...server, enabled } : server
-      )
-    }))
-    const { connectors, customServers, ncbi } = await window.api.settings.setCustomServerEnabled({
-      id,
-      enabled
-    })
-    set({ connectors, customServers, ncbi })
-  },
-
-  removeCustomServer: async (id) => {
-    const { connectors, customServers, ncbi } = await window.api.settings.removeCustomServer({ id })
-    set({ connectors, customServers, ncbi })
-  },
-
-  enqueueApproval: (request) => {
-    set((state) =>
-      state.pendingApprovals.some((r) => r.id === request.id)
-        ? state
-        : { pendingApprovals: [...state.pendingApprovals, request] }
-    )
-  },
-
-  respondApproval: async (id, decision) => {
-    // Drop it from the queue immediately so the card can't be double-answered, then notify main.
-    set((state) => ({ pendingApprovals: state.pendingApprovals.filter((r) => r.id !== id) }))
-    await window.api.settings.respondConnectorApproval({ id, decision })
-  }
+  clearSettingsWriteError: () => writeCoordinator.clearFailures()
 })
 
 export const useSettingsStore = create<SettingsStore>((set, get) =>
