@@ -162,8 +162,8 @@ export const useNotebookEnvStore = create<NotebookEnvStore>((set, get) => {
           const language = progress.language
           if (language) {
             const settled =
-              progress.phase === 'error' ||
-              (progress.phase === 'done' && !explicitRuns.has(language))
+              (progress.phase === 'done' || progress.phase === 'error') &&
+              !explicitRuns.has(language)
             applyLang(language, {
               progress,
               error: progress.phase === 'error' ? progress.message : undefined,

@@ -212,6 +212,29 @@ describe('notebook-env-store', () => {
     expect(useNotebookEnvStore.getState().byLang.r?.preparing).toBe(false)
   })
 
+  it('keeps an explicit setup preparing after tagged error progress until its call returns', async () => {
+    let rejectProvision: ((reason: Error) => void) | undefined
+    const provision = vi.fn(
+      () =>
+        new Promise<void>((_resolve, reject) => {
+          rejectProvision = reject
+        })
+    )
+    const { emit } = installApi({ provision })
+    await useNotebookEnvStore.getState().init()
+
+    const setup = useNotebookEnvStore.getState().provision('r')
+    emit({ phase: 'error', message: 'R setup failed', progress: 0, language: 'r' })
+
+    expect(useNotebookEnvStore.getState().byLang.r?.preparing).toBe(true)
+    rejectProvision?.(new Error('R setup failed'))
+    await setup
+    expect(useNotebookEnvStore.getState().byLang.r).toMatchObject({
+      preparing: false,
+      error: 'R setup failed'
+    })
+  })
+
   it('keeps a language preparing until its last overlapping provision call returns', async () => {
     const resolvers: Array<() => void> = []
     const provision = vi.fn(
