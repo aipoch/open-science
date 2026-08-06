@@ -17,6 +17,7 @@ type WorkflowStep = {
 
 type WorkflowJob = {
   'continue-on-error'?: boolean
+  env?: Record<string, string>
   if?: string
   needs?: string | string[]
   permissions?: Record<string, string>
@@ -111,6 +112,9 @@ describe('post-merge Windows validation', () => {
 
     expect(setup.run).toContain('"name":"macos-arm64","os":"macos-14"')
     expect(setup.run).toContain('"name":"macos-x64","os":"macos-15-intel"')
+    expect(job.env?.MACOSX_DEPLOYMENT_TARGET).toBe(
+      "${{ matrix.platform == 'mac' && '12.0' || '' }}"
+    )
     expect(packaged.id).toBe('packaged_app')
     expect(packaged.run).toContain('Open Science.app/Contents/MacOS/Open Science')
     expect(packaged.run).toContain('win-unpacked/open-science.exe')
