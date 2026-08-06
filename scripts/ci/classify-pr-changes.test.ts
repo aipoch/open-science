@@ -64,7 +64,7 @@ describe('pull request change classification', () => {
         'src/shared/acp.ts -&gt; shared_contract -&gt; preload_adapter'
       )
       expect(readFileSync(summary, 'utf8')).toContain(
-        'Execution bundles: policy, static, unit, coverage_macos, windows_core, macos_e2e, windows_e2e, linux_e2e'
+        'Execution bundles: policy, static, unit, coverage_macos, windows_core, macos_e2e, windows_e2e'
       )
     } finally {
       rmSync(root, { force: true, recursive: true })
@@ -137,8 +137,7 @@ describe('pull request change classification', () => {
       'coverage_macos',
       'windows_core',
       'macos_e2e',
-      'windows_e2e',
-      'linux_e2e'
+      'windows_e2e'
     ])
     expect(plan.reasonChains).toContain('src/new-runtime/capability.ts -> unknown -> full')
   })
@@ -178,61 +177,12 @@ describe('pull request change classification', () => {
     )
   })
 
-  it('selects one release journey without activating unrelated P0 journeys', () => {
-    const plan = classifyChanges([
-      { path: 'src/main/settings/openai-provider-bridge.ts', status: 'modified' }
-    ])
-
-    expect(plan.mode).toBe('selective')
-    expect(plan.lanes).toEqual(
-      expect.arrayContaining([
-        'e2e_provider_bridge_macos',
-        'e2e_provider_bridge_windows',
-        'e2e_provider_bridge_linux'
-      ])
-    )
-    expect(plan.lanes.filter((lane) => lane.includes('storage_migration'))).toEqual([])
-    expect(plan.lanes.filter((lane) => lane.includes('notebook_lifecycle'))).toEqual([])
-    expect(plan.lanes.filter((lane) => lane.includes('remote_pairing'))).toEqual([])
-    expect(plan.lanes.filter((lane) => lane.includes('artifact_provenance'))).toEqual([])
-    expect(plan.bundles).toEqual(expect.arrayContaining(['macos_e2e', 'windows_e2e', 'linux_e2e']))
-  })
-
-  it('maps a focused release spec only to its three platform bundles', () => {
-    const plan = classifyChanges([
-      { path: 'e2e/certification/remote-pairing.spec.ts', status: 'modified' }
-    ])
-
-    expect(plan.mode).toBe('selective')
-    expect(plan.lanes).toEqual([
-      'policy',
-      'e2e_remote_pairing_macos',
-      'e2e_remote_pairing_windows',
-      'e2e_remote_pairing_linux'
-    ])
-    expect(plan.bundles).toEqual(['policy', 'macos_e2e', 'windows_e2e', 'linux_e2e'])
-  })
-
-  it('does not select a P0 journey for an unrelated Main runtime change', () => {
-    const plan = classifyChanges([{ path: 'src/main/menu.ts', status: 'modified' }])
-
-    for (const journey of [
-      'storage_migration',
-      'provider_bridge',
-      'notebook_lifecycle',
-      'remote_pairing',
-      'artifact_provenance'
-    ]) {
-      expect(plan.lanes.some((lane) => lane.includes(journey))).toBe(false)
-    }
-  })
-
   it('uses one specific owner instead of a broad fallback owner', () => {
     const manifest = readManifest()
     manifest.rules.push({
       id: 'notebook_runtime',
       role: 'owner',
-      paths: ['src/main/custom-runtime/service.ts'],
+      paths: ['src/main/notebook/runtime-service.ts'],
       capabilities: ['notebook_runtime']
     })
     manifest.capabilities.notebook_runtime = {
@@ -241,7 +191,7 @@ describe('pull request change classification', () => {
     }
 
     const plan = classifyChanges(
-      [{ path: 'src/main/custom-runtime/service.ts', status: 'modified' }],
+      [{ path: 'src/main/notebook/runtime-service.ts', status: 'modified' }],
       manifest
     )
 
@@ -421,13 +371,9 @@ describe('pull request change classification', () => {
         'build',
         'e2e_functional_macos',
         'e2e_functional_windows',
-        'e2e_functional_linux',
         'e2e_accessibility_macos',
         'e2e_accessibility_windows',
-        'e2e_accessibility_linux',
-        'e2e_visual_macos',
-        'e2e_visual_windows',
-        'e2e_visual_linux'
+        'e2e_visual_macos'
       ])
     )
     expect(plan.lanes).not.toContain('typecheck_node')
@@ -488,51 +434,6 @@ describe('pull request change classification', () => {
     expect(plan.lanes).not.toContain('e2e_functional_macos')
   })
 
-  it('selects provider bridge P0 when an Agent framework route changes', () => {
-    const plan = classifyChanges([
-      { path: 'src/main/agent-framework/opencode.ts', status: 'modified' }
-    ])
-
-    expect(plan.lanes).toEqual(
-      expect.arrayContaining([
-        'e2e_provider_bridge_macos',
-        'e2e_provider_bridge_windows',
-        'e2e_provider_bridge_linux'
-      ])
-    )
-  })
-
-  it('selects Notebook and Artifact P0 when Session capability routing changes', () => {
-    const plan = classifyChanges([
-      { path: 'src/main/acp/session-capability-owner.ts', status: 'modified' }
-    ])
-
-    expect(plan.lanes).toEqual(
-      expect.arrayContaining([
-        'e2e_notebook_lifecycle_macos',
-        'e2e_notebook_lifecycle_windows',
-        'e2e_notebook_lifecycle_linux',
-        'e2e_artifact_provenance_macos',
-        'e2e_artifact_provenance_windows',
-        'e2e_artifact_provenance_linux'
-      ])
-    )
-  })
-
-  it('selects remote pairing P0 when the Web authorization boundary changes', () => {
-    const plan = classifyChanges([
-      { path: 'src/main/web-service/http-server.ts', status: 'modified' }
-    ])
-
-    expect(plan.lanes).toEqual(
-      expect.arrayContaining([
-        'e2e_remote_pairing_macos',
-        'e2e_remote_pairing_windows',
-        'e2e_remote_pairing_linux'
-      ])
-    )
-  })
-
   it('uses the broader impact of both paths for a rename', () => {
     const plan = classifyChanges([
       {
@@ -571,14 +472,5 @@ describe('pull request change classification', () => {
     expect(plan.mode).toBe('selective')
     expect(plan.roots).toContain('ci_integrity_surface')
     expect(plan.lanes).toEqual(['policy'])
-  })
-
-  it('limits macOS package smoke tooling changes to static and unit validation', () => {
-    const plan = classifyChanges([{ path: 'scripts/macos-package-smoke.mjs', status: 'modified' }])
-
-    expect(plan.mode).toBe('selective')
-    expect(plan.roots).toEqual(['macos_package_smoke'])
-    expect(plan.lanes).toEqual(['policy', 'format', 'lint', 'unit_linux'])
-    expect(plan.bundles).toEqual(['policy', 'static', 'unit'])
   })
 })

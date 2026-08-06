@@ -48,14 +48,14 @@ const findStep = (job: WorkflowJob, name: string): WorkflowStep => {
 }
 
 describe('post-merge Windows validation', () => {
-  it('runs the complete Windows suite on main and as a blocking reusable release gate', () => {
+  it('runs the complete Windows suite independently after changes land on main', () => {
     const build = readWorkflow('build.yml')
     const workflow = readWorkflow('windows-full-test.yml')
     const job = workflow.jobs.windows_full_test
 
     expect(build.jobs.windows_full_test).toBeUndefined()
     expect(workflow.on?.push).toMatchObject({ branches: ['main'] })
-    expect(workflow.on).toHaveProperty('workflow_call')
+    expect(workflow.on).not.toHaveProperty('workflow_call')
     expect(job).toMatchObject({
       'runs-on': 'windows-latest'
     })
@@ -193,30 +193,24 @@ describe('post-merge Windows validation', () => {
     expect(
       findStep(upgrade, 'Drill Windows silent upgrade, process lock, rollback, and restart').run
     ).toContain('--previous-installer-dir previous')
-    expect(release.jobs['windows-full-test'].uses).toBe('./.github/workflows/windows-full-test.yml')
-    expect(release.jobs.publish.needs).toEqual([
-      'build',
-      'notarize-mac',
-      'windows-upgrade-smoke',
-      'windows-full-test'
-    ])
+    expect(release.jobs['windows-full-test']).toBeUndefined()
+    expect(release.jobs.publish.needs).toEqual(['build', 'notarize-mac', 'windows-upgrade-smoke'])
     expect(
       findStep(release.jobs.publish, 'Aggregate release certification evidence').run
     ).not.toContain('--require-signed-windows')
     expect(
       findStep(release.jobs.publish, 'Aggregate release certification evidence').run
-    ).toContain('--require-stable-release-checks')
+    ).toContain('--require-windows-update')
+    expect(
+      findStep(release.jobs.publish, 'Aggregate release certification evidence').run
+    ).not.toContain('--windows-full-suite')
     expect(findStep(upgrade, 'Record Windows update-drill evidence').run).toContain(
       'write-windows-update'
     )
     expect(findStep(upgrade, 'Record Windows update-drill evidence').run).toContain(
       '--updater-observation'
     )
-    expect(release.jobs.mirror).toMatchObject({
-      needs: 'publish',
-      uses: './.github/workflows/mirror-to-website.yml',
-      with: { tag: '${{ github.ref_name }}' }
-    })
+    expect(release.jobs.mirror).toBeUndefined()
   })
 
   it('validates stable desktop tags on main before starting platform builds', () => {
@@ -246,7 +240,6 @@ describe('post-merge Windows validation', () => {
     expect(release.jobs.build.with?.require_windows_signing).toBeUndefined()
     expect(release.jobs['notarize-mac'].if).toBe(stableTagCondition)
     expect(release.jobs['windows-upgrade-smoke'].if).toBe(stableTagCondition)
-    expect(release.jobs['windows-full-test'].if).toBe(stableTagCondition)
     expect(release.jobs.publish.if).toBe(stableTagCondition)
   })
 
@@ -257,7 +250,16 @@ describe('post-merge Windows validation', () => {
     const install = findStep(mirror, 'Install manifest dependencies')
     const configureIndex = stepNames.indexOf('Configure AWS credentials')
 
-    expect(workflow.on).toHaveProperty('workflow_call')
+    expect(workflow.on).toEqual({
+      workflow_dispatch: {
+        inputs: {
+          tag: {
+            description: 'Release tag to mirror (e.g. v0.1.2)',
+            required: true
+          }
+        }
+      }
+    })
     expect(install.run).toBe(
       'npm ci --ignore-scripts --omit=dev --omit=optional --no-audit --no-fund'
     )

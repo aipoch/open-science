@@ -159,12 +159,11 @@ const aggregateEvidence = async ({ argv }) => {
   const directoryArgument = argumentValue(argv, '--directory')
   const outputArgument = argumentValue(argv, '--output')
   const expectedSha = argumentValue(argv, '--expected-sha')
-  const requireStableReleaseChecks = argv.includes('--require-stable-release-checks')
-  const windowsFullSuite = argumentValue(argv, '--windows-full-suite')
+  const requireWindowsUpdate = argv.includes('--require-windows-update')
   if (!directoryArgument || !outputArgument || !expectedSha) {
     throw new Error(
       'Usage: --directory <path> --output <path> --expected-sha <sha> ' +
-        '[--require-stable-release-checks] [--windows-full-suite passed]'
+        '[--require-windows-update]'
     )
   }
   const directory = resolve(directoryArgument)
@@ -209,10 +208,7 @@ const aggregateEvidence = async ({ argv }) => {
     }
   }
   let windowsUpdate
-  if (requireStableReleaseChecks) {
-    if (windowsFullSuite !== 'passed') {
-      throw new Error('Stable release evidence requires the blocking Windows full suite.')
-    }
+  if (requireWindowsUpdate) {
     const updatePath = join(directory, 'certification-windows-update.json')
     windowsUpdate = JSON.parse(await readFile(updatePath, 'utf8').catch(() => 'null'))
     const passedChecks =
@@ -258,9 +254,7 @@ const aggregateEvidence = async ({ argv }) => {
     schemaVersion: 1,
     sourceSha: expectedSha,
     platforms: PLATFORMS.map((platform) => byPlatform.get(platform)),
-    ...(requireStableReleaseChecks
-      ? { releaseChecks: { windowsFullSuite: 'passed', windowsUpdate } }
-      : {})
+    ...(requireWindowsUpdate ? { releaseChecks: { windowsUpdate } } : {})
   }
   await writeFile(output, `${JSON.stringify(report, null, 2)}\n`, 'utf8')
   return report

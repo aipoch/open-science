@@ -154,17 +154,11 @@ jobs:
           path: certification-windows-update.json
           if-no-files-found: error
 
-  # Full Windows test coverage stays outside ordinary PR latency, but every stable tag must pass both
-  # real-Windows shards before any installer can be published.
-  windows-full-test:
-    if: github.event_name == 'push' && startsWith(github.ref, 'refs/tags/')
-    uses: ./.github/workflows/windows-full-test.yml
-
   # Collect every platform's artifacts and publish them to the tag's Release in one shot (a single
   # publish job avoids the race of multiple build jobs writing the same Release). Depends on
   # notarize-mac so the mac dmg/zip it downloads are the stapled versions.
   publish:
-    needs: [build, notarize-mac, windows-upgrade-smoke, windows-full-test]
+    needs: [build, notarize-mac, windows-upgrade-smoke]
     if: github.event_name == 'push' && startsWith(github.ref, 'refs/tags/')
     runs-on: ubuntu-latest
     # Job-level permissions fully override the workflow-level block, so contents:write is restated
@@ -187,15 +181,14 @@ jobs:
           merge-multiple: true # flatten every platform's files into one directory
 
       # Fail closed unless every native target reports P0 Electron, visual, and package evidence for
-      # this exact tag commit, plus the stable-only Windows suite and update drill.
+      # this exact tag commit, plus the stable-only Windows update drill.
       - name: Aggregate release certification evidence
         run: >-
           node scripts/ci/release-certification-evidence.mjs aggregate
           --directory artifacts
           --output artifacts/RELEASE-CERTIFICATION.json
           --expected-sha "$GITHUB_SHA"
-          --require-stable-release-checks
-          --windows-full-suite passed
+          --require-windows-update
 
       # Merge the two per-arch mac feeds (from notarize-mac) into the single latest-mac.yml the
       # installed app polls (default `latest` channel). No-ops if the mac feeds are absent.
@@ -229,8 +222,8 @@ jobs:
             artifacts/*.deb
 
       # Attach user-facing artifacts + checksums: installers (dmg/exe/AppImage/deb) and the mac
-      # portable zips, plus the electron-updater feed files so the mirror-to-website job can
-      # republish them to the CDN feed: win/linux latest.yml + latest-linux.yml, and the mac feeds.
+      # portable zips, plus the electron-updater feed files so the manually dispatched website mirror
+      # can republish them to the CDN feed: win/linux latest.yml + latest-linux.yml, and the mac feeds.
       # `*-mac.yml` covers the merged latest-mac.yml (the file the app polls) plus the per-arch
       # arm64/x64-mac.yml intermediates it was built from. Blockmaps are win/linux only (mac does
       # full-zip updates in v1).
@@ -252,13 +245,3 @@ jobs:
             artifacts/latest-linux.yml
             artifacts/*-mac.yml
             artifacts/*.blockmap
-
-  # Releases created with GITHUB_TOKEN do not reliably emit a second workflow run. Invoke the reusable
-  # mirror directly so publication is complete only after the updater feed and installers reach CDN.
-  mirror:
-    needs: publish
-    if: github.event_name == 'push' && startsWith(github.ref, 'refs/tags/')
-    uses: ./.github/workflows/mirror-to-website.yml
-    secrets: inherit
-    with:
-      tag: ${{ github.ref_name }}

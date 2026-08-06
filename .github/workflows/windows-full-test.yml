@@ -1,9 +1,8 @@
 name: Windows Full Test
 
-# Preserve complete real-Windows coverage after merge without adding its runtime to ordinary PRs.
-# Stable release.yml also calls this workflow and blocks publishing on both shards.
+# Preserve complete real-Windows coverage after merge without adding its runtime to ordinary PRs or
+# blocking a stable release.
 on:
-  workflow_call:
   push:
     branches:
       - main
@@ -17,8 +16,7 @@ on:
 permissions:
   contents: read
 
-# A newer main push supersedes stale advisory coverage. Stable tags use distinct refs and therefore
-# retain their own signal.
+# A newer main push supersedes stale advisory coverage.
 concurrency:
   group: windows-full-test-${{ github.ref }}
   cancel-in-progress: true
