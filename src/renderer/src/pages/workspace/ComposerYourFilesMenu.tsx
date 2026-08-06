@@ -3,7 +3,7 @@
 // listDir'd on first expand); a file row's send action inserts a linked-folder reference into the
 // composer draft. The "Grant folder…" header action reuses the Files tab's grant dialog; all list
 // mutations flow through the granted-folders store, so the tree reflects them immediately.
-import { ArrowUpRight, ChevronRight, File, Folder, FolderPlus, X } from 'lucide-react'
+import { ArrowUpRight, Check, ChevronRight, File, Folder, FolderPlus, X } from 'lucide-react'
 import { useState } from 'react'
 
 import type { LinkedFolderFileReference } from '../../../../shared/artifacts'
@@ -45,6 +45,9 @@ export const ComposerYourFilesMenu = ({
   const [expandedDirs, setExpandedDirs] = useState<Record<string, boolean>>({})
   const [listings, setListings] = useState<Record<string, DirListing>>({})
   const [grantDialogOpen, setGrantDialogOpen] = useState(false)
+  // Files inserted during this submenu session, keyed `${rootId}:${relativePath}`. Purely local:
+  // the set resets when the submenu closes, so the green check marks "added this time".
+  const [addedKeys, setAddedKeys] = useState<ReadonlySet<string>>(new Set())
 
   const loadDir = (path: string): void => {
     if (!window.api?.localFs) return
@@ -75,9 +78,14 @@ export const ComposerYourFilesMenu = ({
   }
 
   // The submenu opening is the first moment the list is needed; skip the fetch when another
-  // surface already loaded it (or when the bridge is unavailable, e.g. tests/web).
+  // surface already loaded it (or when the bridge is unavailable, e.g. tests/web). Closing the
+  // submenu also clears the "added" check marks — they only ever mean "added this time".
   const handleSubOpenChange = (open: boolean): void => {
-    if (!open || loaded || !window.api?.localFs) return
+    if (!open) {
+      setAddedKeys(new Set())
+      return
+    }
+    if (loaded || !window.api?.localFs) return
     void refresh().catch(() => undefined)
   }
 
@@ -90,11 +98,13 @@ export const ComposerYourFilesMenu = ({
       relativePath,
       mimeType: undefined
     })
+    setAddedKeys((previous) => new Set(previous).add(`${root.id}:${relativePath}`))
   }
 
   // Recursive rows for one expanded directory: subdirectories expand further, files are inert
-  // leaf rows whose hover-revealed trailing button is the menu item — selecting it inserts the
-  // reference and closes the menu naturally.
+  // leaf rows whose hover-revealed trailing button inserts the reference. The select is
+  // preventDefault'd so the menu stays open; the button then flips to a green check (local state,
+  // cleared on submenu close) marking the file as added.
   const renderDirRows = (
     root: GrantedLocalRoot,
     dirPath: string,
@@ -158,36 +168,63 @@ export const ComposerYourFilesMenu = ({
               key={childPath}
               data-testid={`your-files-file-${root.id}-${relativePath}`}
               title={relativePath}
-              className="group relative flex items-center gap-1.5 rounded-md py-1 pl-2 pr-1.5 text-[12px] hover:bg-muted"
+              // Same metrics as the directory rows above: identical padding, text size, icon size,
+              // and hover background so every tree row has one consistent height and hover style.
+              className="group relative flex items-center gap-0.5 rounded-md py-1 pr-1.5 text-[13px] text-text-000 hover:bg-bg-200"
               style={{ paddingLeft: indentForDepth(depth) }}
             >
               <File
-                className="size-3.5 shrink-0 text-text-100"
+                className="size-4 shrink-0 text-text-100"
                 strokeWidth={1.8}
                 aria-hidden="true"
               />
               <span className="min-w-0 flex-1 truncate font-mono">{entry.name}</span>
-              {/* asChild keeps the send action a real button while staying the menu item, so
-                  selecting it runs the same select-and-close path the row item used before. Bare
-                  icon at text height: it only darkens and shows its tooltip when hovered. */}
-              <Tooltip>
-                <TooltipTrigger asChild>
-                  <DropdownMenuItem
-                    asChild
-                    onSelect={() => sendFile(root, entry, relativePath)}
-                    className="flex shrink-0 items-center justify-center text-text-100 opacity-0 transition-opacity hover:text-text-000 group-hover:opacity-100 data-[highlighted]:text-text-000 data-[highlighted]:opacity-100"
-                  >
-                    <button
-                      type="button"
-                      data-testid={`your-files-send-${root.id}-${relativePath}`}
-                      aria-label={`Add ${relativePath} to conversation as attachment`}
-                    >
-                      <ArrowUpRight className="size-4" strokeWidth={1.8} aria-hidden="true" />
-                    </button>
-                  </DropdownMenuItem>
-                </TooltipTrigger>
-                <TooltipContent side="top">Add to conversation as attachment</TooltipContent>
-              </Tooltip>
+              {/* asChild keeps the send action a real button while staying the menu item.
+                  preventDefault keeps the menu open; the button then flips to a green check
+                  (addedKeys, local until the submenu closes) instead of closing on select. */}
+              {(() => {
+                const isAdded = addedKeys.has(`${root.id}:${relativePath}`)
+                return (
+                  <Tooltip>
+                    <TooltipTrigger asChild>
+                      <DropdownMenuItem
+                        asChild
+                        onSelect={(event) => {
+                          event.preventDefault()
+                          if (!isAdded) sendFile(root, entry, relativePath)
+                        }}
+                        className={cn(
+                          // min-h-0/p-0/transparent backgrounds cancel the DropdownMenuItem base
+                          // chrome — this is a bare icon, not a full-size menu row.
+                          'flex min-h-0 shrink-0 items-center justify-center p-0 transition-opacity hover:bg-transparent data-[highlighted]:bg-transparent',
+                          isAdded
+                            ? 'text-mention-chip-foreground'
+                            : 'text-text-100 opacity-0 hover:text-text-000 group-hover:opacity-100 data-[highlighted]:text-text-000 data-[highlighted]:opacity-100'
+                        )}
+                      >
+                        <button
+                          type="button"
+                          data-testid={`your-files-send-${root.id}-${relativePath}`}
+                          aria-label={
+                            isAdded
+                              ? `${relativePath} added to conversation`
+                              : `Add ${relativePath} to conversation as attachment`
+                          }
+                        >
+                          {isAdded ? (
+                            <Check className="size-4" strokeWidth={2.2} aria-hidden="true" />
+                          ) : (
+                            <ArrowUpRight className="size-4" strokeWidth={1.8} aria-hidden="true" />
+                          )}
+                        </button>
+                      </DropdownMenuItem>
+                    </TooltipTrigger>
+                    <TooltipContent side="top">
+                      {isAdded ? 'Added to conversation' : 'Add to conversation as attachment'}
+                    </TooltipContent>
+                  </Tooltip>
+                )
+              })()}
             </div>
           )
         })}

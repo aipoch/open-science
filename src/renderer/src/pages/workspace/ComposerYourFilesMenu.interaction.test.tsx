@@ -15,10 +15,21 @@ import { ComposerYourFilesMenu } from './ComposerYourFilesMenu'
 // React's act() refuses to run unless the environment opts in to act-aware scheduling.
 ;(globalThis as { IS_REACT_ACT_ENVIRONMENT?: boolean }).IS_REACT_ACT_ENVIRONMENT = true
 
+// Captured so tests can fire the submenu's open/close transitions (the flat mock never calls it).
+const subState = vi.hoisted(() => ({
+  onOpenChange: undefined as ((open: boolean) => void) | undefined
+}))
+
 // Radix DropdownMenu calls pointer-capture APIs that jsdom does not implement.
 // Replace with a flat render so the submenu content is always visible in the DOM.
 vi.mock('@/components/ui/dropdown-menu', () => ({
-  DropdownMenuSub: ({ children }: PropsWithChildren): React.JSX.Element => <div>{children}</div>,
+  DropdownMenuSub: ({
+    children,
+    onOpenChange
+  }: PropsWithChildren<{ onOpenChange?: (open: boolean) => void }>): React.JSX.Element => {
+    subState.onOpenChange = onOpenChange
+    return <div>{children}</div>
+  },
   DropdownMenuSubTrigger: ({
     children,
     ...rest
@@ -244,5 +255,44 @@ describe('ComposerYourFilesMenu', () => {
     await flush()
 
     expect(document.body.querySelector('[data-testid="grant-folder-access-dialog"]')).not.toBeNull()
+  })
+
+  it('marks a sent file with a green check and ignores repeat clicks', async () => {
+    const onInsertFileReference = renderMenu()
+
+    await click(container.querySelector('[data-testid="your-files-root-toggle-root-1"]'))
+    await flush()
+    await click(container.querySelector('[data-testid="your-files-send-root-1-study.csv"]'))
+    await flush()
+
+    const sendButton = container.querySelector('[data-testid="your-files-send-root-1-study.csv"]')
+    expect(sendButton?.getAttribute('aria-label')).toBe('study.csv added to conversation')
+
+    await click(sendButton)
+
+    expect(onInsertFileReference).toHaveBeenCalledTimes(1)
+  })
+
+  it('clears the added check marks when the submenu closes', async () => {
+    renderMenu()
+
+    await click(container.querySelector('[data-testid="your-files-root-toggle-root-1"]'))
+    await flush()
+    await click(container.querySelector('[data-testid="your-files-send-root-1-study.csv"]'))
+    await flush()
+
+    expect(
+      container
+        .querySelector('[data-testid="your-files-send-root-1-study.csv"]')
+        ?.getAttribute('aria-label')
+    ).toContain('added to conversation')
+
+    act(() => subState.onOpenChange?.(false))
+
+    expect(
+      container
+        .querySelector('[data-testid="your-files-send-root-1-study.csv"]')
+        ?.getAttribute('aria-label')
+    ).toBe('Add study.csv to conversation as attachment')
   })
 })
