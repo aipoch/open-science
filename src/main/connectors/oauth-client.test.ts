@@ -111,4 +111,49 @@ describe('PersistentOAuthClientProvider', () => {
     expect(provider.tokens()).toBeUndefined()
     expect(saveState).toHaveBeenLastCalledWith({})
   })
+
+  it('invalidates a dynamic registration tied to a previous loopback callback', async () => {
+    const saveState = vi.fn(async () => undefined)
+    const provider = new PersistentOAuthClientProvider({
+      serverId: 'server-1',
+      redirectUrl: 'http://127.0.0.1:5000/oauth/callback',
+      config: {},
+      state: {
+        clientInformation: {
+          client_id: 'registered-client',
+          redirect_uris: ['http://127.0.0.1:4000/oauth/callback']
+        },
+        tokens: { access_token: 'rejected', token_type: 'Bearer' }
+      },
+      saveState
+    })
+
+    await expect(provider.clientInformation()).resolves.toBeUndefined()
+    expect(provider.tokens()).toBeUndefined()
+    expect(saveState).toHaveBeenLastCalledWith({})
+
+    await provider.saveClientInformation({
+      client_id: 'replacement-client',
+      redirect_uris: ['http://127.0.0.1:5000/oauth/callback']
+    })
+    await expect(provider.clientInformation()).resolves.toMatchObject({
+      client_id: 'replacement-client'
+    })
+  })
+
+  it('keeps callback-independent client information across loopback ports', async () => {
+    const saveState = vi.fn(async () => undefined)
+    const provider = new PersistentOAuthClientProvider({
+      serverId: 'server-1',
+      redirectUrl: 'http://127.0.0.1:5000/oauth/callback',
+      config: { clientMetadataUrl: 'https://client.example.test/metadata' },
+      state: { clientInformation: { client_id: 'https://client.example.test/metadata' } },
+      saveState
+    })
+
+    await expect(provider.clientInformation()).resolves.toEqual({
+      client_id: 'https://client.example.test/metadata'
+    })
+    expect(saveState).not.toHaveBeenCalled()
+  })
 })

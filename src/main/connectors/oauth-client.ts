@@ -187,8 +187,21 @@ export class PersistentOAuthClientProvider implements OAuthClientProvider {
     return this.stateValue
   }
 
-  clientInformation(): OAuthClientInformationMixed | undefined {
-    return this.oauthState.clientInformation
+  async clientInformation(): Promise<OAuthClientInformationMixed | undefined> {
+    const clientInformation = this.oauthState.clientInformation
+    if (
+      clientInformation &&
+      'redirect_uris' in clientInformation &&
+      !clientInformation.redirect_uris.includes(this.options.redirectUrl)
+    ) {
+      // auth() reads client information only after the current request was rejected. A dynamic
+      // registration and its refresh token cannot safely cross client IDs, so replace both.
+      delete this.oauthState.clientInformation
+      delete this.oauthState.tokens
+      await this.persist()
+      return undefined
+    }
+    return clientInformation
   }
 
   async saveClientInformation(clientInformation: OAuthClientInformationMixed): Promise<void> {
