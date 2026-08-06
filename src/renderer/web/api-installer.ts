@@ -66,15 +66,6 @@ export const installWebRendererContracts = (
     } else if (contract.surfaceInstallation.localWeb === 'browser-native') {
       const nativeAdapter = adapters.nativeAdapters[publicPath]
       if (nativeAdapter !== undefined) assignApiPath(api, publicPath, nativeAdapter)
-    } else if (
-      channel !== null &&
-      contract.surfaceInstallation.localWeb === 'unavailable' &&
-      contract.kind === 'event'
-    ) {
-      // Electron-only event contracts are not available in the web build.
-      // Provide a no-op stub that returns a no-op unsubscribe function
-      // so callers can safely use optional chaining without crashing.
-      assignApiPath(api, publicPath, (_listener: Listener) => () => {})
     }
   }
 }
