@@ -304,7 +304,7 @@ describe('RuntimesPanel', () => {
       /download and set up/i.test(b.textContent ?? '')
     )
     await click(setupBtn ?? null)
-    expect(provision).toHaveBeenCalledWith('r')
+    expect(provision).toHaveBeenCalledWith('r', expect.any(String))
     // The failure surfaces on R's OWN card (per-language error), and its button offers a retry.
     expect(
       container.querySelector('[data-testid="runtimes-provision-error-r"]')?.textContent
@@ -400,7 +400,7 @@ describe('RuntimesPanel', () => {
     expect(resetBtn).toBeDefined()
     expect(resetBtn?.getAttribute('data-variant')).toBe('default')
     await click(resetBtn ?? null)
-    expect(repairBridge).toHaveBeenCalledWith('r')
+    expect(repairBridge).toHaveBeenCalledWith('r', expect.any(String))
   })
 
   it('surfaces Reset even when a runnable managed env is still present (interrupted upgrade/install)', async () => {
@@ -426,7 +426,7 @@ describe('RuntimesPanel', () => {
     expect(resetBtn).toBeDefined()
     expect(resetBtn?.getAttribute('data-variant')).toBe('default')
     await click(resetBtn ?? null)
-    expect(repairBridge).toHaveBeenCalledWith('python')
+    expect(repairBridge).toHaveBeenCalledWith('python', expect.any(String))
   })
 
   it('keeps Cancel clickable while a real Download-and-set-up is in flight (not locked by busy)', async () => {

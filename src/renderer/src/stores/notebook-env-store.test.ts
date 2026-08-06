@@ -290,6 +290,36 @@ describe('notebook-env-store', () => {
     expect(useNotebookEnvStore.getState().byLang.r?.preparing).toBe(false)
   })
 
+  it('settles local preparing after newer automatic terminal progress', async () => {
+    let resolveProvision: (() => void) | undefined
+    const provision = vi.fn(
+      () =>
+        new Promise<void>((resolve) => {
+          resolveProvision = resolve
+        })
+    )
+    const { api, emit } = installApi({ provision })
+    await useNotebookEnvStore.getState().init()
+
+    const explicit = useNotebookEnvStore.getState().provision('r')
+    const operationId = api.provision.mock.calls[0]?.[1] as string
+    emit({
+      phase: 'done',
+      message: 'Explicit R setup ready',
+      progress: 1,
+      language: 'r',
+      operationId
+    })
+    emit({ phase: 'done', message: 'Automatic R setup ready', progress: 1, language: 'r' })
+    resolveProvision?.()
+    await explicit
+
+    expect(useNotebookEnvStore.getState().byLang.r).toMatchObject({
+      preparing: false,
+      progress: { phase: 'done', message: 'Automatic R setup ready' }
+    })
+  })
+
   it('does not let an automatic terminal event claim a queued explicit setup', async () => {
     let resolveProvision: (() => void) | undefined
     const provision = vi.fn(

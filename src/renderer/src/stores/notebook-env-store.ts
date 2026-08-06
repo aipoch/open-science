@@ -77,7 +77,7 @@ const subscribedBridges = new WeakSet<object>()
 
 export const useNotebookEnvStore = create<NotebookEnvStore>((set, get) => {
   type ExplicitRun = { operationId: string; startProgressRevision: number }
-  type ProgressCursor = { revision: number; operationId?: string }
+  type ProgressCursor = { revision: number; operationId?: string; terminal: boolean }
   const latestProgress = new Map<NotebookLanguage, ProgressCursor>()
   const explicitRuns = new Map<NotebookLanguage, ExplicitRun[]>()
   const localOperationIds = new Map<NotebookLanguage, Set<string>>()
@@ -92,22 +92,28 @@ export const useNotebookEnvStore = create<NotebookEnvStore>((set, get) => {
     localOperationIds.set(language, operationIds)
     return run
   }
-  const trackLanguageProgress = (language: NotebookLanguage, operationId?: string): void => {
+  const trackLanguageProgress = (
+    language: NotebookLanguage,
+    operationId: string | undefined,
+    terminal: boolean
+  ): void => {
     latestProgress.set(language, {
       revision: (latestProgress.get(language)?.revision ?? 0) + 1,
-      operationId
+      operationId,
+      terminal
     })
   }
   const endExplicitRun = (
     language: NotebookLanguage,
     run: ExplicitRun
-  ): { last: boolean; ownsLatestProgress: boolean } => {
+  ): { last: boolean; ownsLatestProgress: boolean; latestProgressTerminal: boolean } => {
     const remaining = (explicitRuns.get(language) ?? []).filter((candidate) => candidate !== run)
     if (remaining.length > 0) explicitRuns.set(language, remaining)
     else explicitRuns.delete(language)
     const latest = latestProgress.get(language)
     const completion = {
       last: remaining.length === 0,
+      latestProgressTerminal: latest?.terminal ?? false,
       // An unchanged cursor or another locally queued explicit operation owns the visible state once
       // this renderer's queue drains. Newer automatic or another window's progress must survive.
       ownsLatestProgress:
@@ -196,7 +202,7 @@ export const useNotebookEnvStore = create<NotebookEnvStore>((set, get) => {
           const language = progress.language
           if (language) {
             const terminal = progress.phase === 'done' || progress.phase === 'error'
-            trackLanguageProgress(language, progress.operationId)
+            trackLanguageProgress(language, progress.operationId, terminal)
             const settled = terminal && !explicitRuns.has(language)
             applyLang(language, {
               progress,
@@ -251,11 +257,17 @@ export const useNotebookEnvStore = create<NotebookEnvStore>((set, get) => {
         failure = errorText(e)
       } finally {
         const completion = endExplicitRun(lang, run)
-        if (completion.last && completion.ownsLatestProgress) {
-          applyUi({ error: failure })
+        if (
+          completion.last &&
+          (completion.ownsLatestProgress || completion.latestProgressTerminal)
+        ) {
+          if (completion.ownsLatestProgress) applyUi({ error: failure })
           // Only the last overlapping request settles the shared language card. Clear preparing before
           // applying recovery state so a completed rebuild can surface a still-active quarantine.
-          applyLang(lang, { preparing: false, error: failure })
+          applyLang(lang, {
+            preparing: false,
+            ...(completion.ownsLatestProgress ? { error: failure } : {})
+          })
           if (status) applyRecoveryBlocks(status)
         }
       }
@@ -309,9 +321,15 @@ export const useNotebookEnvStore = create<NotebookEnvStore>((set, get) => {
         failure = errorText(e)
       } finally {
         const completion = endExplicitRun(lang, run)
-        if (completion.last && completion.ownsLatestProgress) {
-          applyUi({ error: failure })
-          applyLang(lang, { preparing: false, error: failure })
+        if (
+          completion.last &&
+          (completion.ownsLatestProgress || completion.latestProgressTerminal)
+        ) {
+          if (completion.ownsLatestProgress) applyUi({ error: failure })
+          applyLang(lang, {
+            preparing: false,
+            ...(completion.ownsLatestProgress ? { error: failure } : {})
+          })
           if (status) applyRecoveryBlocks(status)
         }
       }
