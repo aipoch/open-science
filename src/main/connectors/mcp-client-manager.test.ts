@@ -264,6 +264,33 @@ describe('McpClientManager', () => {
     await manager.closeAll()
   })
 
+  it('lets closeAll supersede OAuth authentication before its first await completes', async () => {
+    let finishInitialClose!: () => void
+    const initialClose = new Promise<void>((resolve) => {
+      finishInitialClose = resolve
+    })
+    const manager = new McpClientManager()
+    const close = vi.spyOn(manager, 'close').mockImplementationOnce(() => initialClose)
+    const ensureStarted = vi.spyOn(OAuthCallbackServer.prototype, 'ensureStarted')
+    const connect = vi.spyOn(Client.prototype, 'connect')
+    const oauthConfig: CustomMcpServerConfig = {
+      id: 'oauth-shutdown',
+      name: 'OAuth server',
+      transport: 'streamable_http',
+      url: 'https://mcp.example.test',
+      oauth: {}
+    }
+
+    const pending = manager.authenticate(oauthConfig)
+    await vi.waitFor(() => expect(close).toHaveBeenCalledWith(oauthConfig.id))
+    await manager.closeAll()
+    finishInitialClose()
+
+    await expect(pending).rejects.toThrow('connection was superseded')
+    expect(ensureStarted).not.toHaveBeenCalled()
+    expect(connect).not.toHaveBeenCalled()
+  })
+
   it('honors cancellation while the OAuth callback server is starting', async () => {
     let finishStartup!: (redirectUrl: string) => void
     const startup = new Promise<string>((resolve) => {

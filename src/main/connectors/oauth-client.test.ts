@@ -112,7 +112,7 @@ describe('PersistentOAuthClientProvider', () => {
     expect(saveState).toHaveBeenLastCalledWith({})
   })
 
-  it('invalidates a dynamic registration tied to a previous loopback callback', async () => {
+  it('retains tokens until auth reads a dynamic registration tied to an old callback', async () => {
     const saveState = vi.fn(async () => undefined)
     const provider = new PersistentOAuthClientProvider({
       serverId: 'server-1',
@@ -127,6 +127,9 @@ describe('PersistentOAuthClientProvider', () => {
       },
       saveState
     })
+
+    expect(provider.tokens()?.access_token).toBe('rejected')
+    expect(saveState).not.toHaveBeenCalled()
 
     await expect(provider.clientInformation()).resolves.toBeUndefined()
     expect(provider.tokens()).toBeUndefined()

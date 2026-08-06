@@ -171,27 +171,29 @@ export class McpClientManager {
     if (!config.oauth || config.transport === 'stdio') {
       throw new Error(`custom MCP server "${config.name}" is not configured for OAuth`)
     }
-    const closing = this.close(config.id)
-    const generation = this.generation(config.id)
-    await closing
-    if (generation !== this.generation(config.id)) {
-      throw new Error(`custom MCP server "${config.name}" connection was superseded`)
-    }
-    const redirectUrl = await this.callbackServer.ensureStarted()
-    if (generation !== this.generation(config.id)) {
-      throw new Error(`custom MCP server "${config.name}" connection was superseded`)
-    }
-    const provider = this.oauthProvider(config, redirectUrl, generation, true)
-    const callback = this.callbackServer.waitFor(provider.state())
+    let callback: ReturnType<OAuthCallbackServer['waitFor']> | undefined
     let activeClient: Client | undefined
     const cancelAuthentication = async (): Promise<void> => {
-      callback.cancel()
+      callback?.cancel()
       const client = activeClient
       activeClient = undefined
       if (client) await client.close().catch(() => undefined)
     }
+    const closing = this.close(config.id)
+    const generation = this.generation(config.id)
+    // Register before the first await so closeAll() can supersede startup during application exit.
     this.authenticationCancels.set(config.id, cancelAuthentication)
     try {
+      await closing
+      if (generation !== this.generation(config.id)) {
+        throw new Error(`custom MCP server "${config.name}" connection was superseded`)
+      }
+      const redirectUrl = await this.callbackServer.ensureStarted()
+      if (generation !== this.generation(config.id)) {
+        throw new Error(`custom MCP server "${config.name}" connection was superseded`)
+      }
+      const provider = this.oauthProvider(config, redirectUrl, generation, true)
+      callback = this.callbackServer.waitFor(provider.state())
       const transport = buildTransport(config, provider)
       const firstClient = new Client({ name: 'open-science', version: '0.0.0' })
       activeClient = firstClient
