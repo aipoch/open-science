@@ -252,6 +252,22 @@ describe('AcpSessionUpdateProjector', () => {
       { kind: 'context-refresh' },
       { kind: 'visible-event', event: { text: warning } }
     ])
+    expect(
+      projector.route(
+        {
+          sessionId: 'session-1',
+          update: {
+            sessionUpdate: 'user_message_chunk',
+            content: { type: 'text', text: warning }
+          }
+        },
+        routing
+      )
+    ).toMatchObject([
+      { kind: 'context-observation' },
+      { kind: 'context-refresh' },
+      { kind: 'visible-event', event: { text: warning } }
+    ])
   })
 
   it('projects usage to context state without a visible event and suppresses stale reconnect usage', () => {

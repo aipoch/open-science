@@ -173,6 +173,7 @@ class AcpSessionUpdateProjector {
     // Keep the separate compaction notice, but do not attribute this adapter-authored warning to the model.
     if (
       routing.framework === 'codex' &&
+      routed.update.sessionUpdate === 'agent_message_chunk' &&
       event.kind === 'message' &&
       event.messageId === undefined &&
       event.text?.trim() === CODEX_COMPACTION_WARNING
