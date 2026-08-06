@@ -88,10 +88,10 @@ const stableRecordEntries = (record: Record<string, string> | undefined): [strin
 
 const customServerSecurityFingerprintKey = randomBytes(32)
 
-// Excludes display-only fields and authenticates both encrypted references and legacy resolved
-// values. The process-local key lets the barrier identify a configuration generation without
-// retaining another plaintext copy or exposing a digest that can be enumerated offline.
-const customServerSecurityFingerprint = (server: StoredCustomMcpServer): string =>
+// Authenticates fields that can contain credentials. The process-local key lets the barrier compare
+// a configuration generation without retaining another plaintext copy or exposing an enumerable
+// digest. OAuth configuration contains only public metadata, so it remains outside the keyed digest.
+const customServerCredentialFingerprint = (server: StoredCustomMcpServer): string =>
   createHmac('sha256', customServerSecurityFingerprintKey)
     .update(
       JSON.stringify([
@@ -99,12 +99,14 @@ const customServerSecurityFingerprint = (server: StoredCustomMcpServer): string 
         server.command ?? null,
         server.args ?? [],
         server.url ?? null,
-        server.oauth ?? null,
         stableRecordEntries(server.envRefs ?? server.env),
         stableRecordEntries(server.headerRefs ?? server.headers)
       ])
     )
     .digest('hex')
+
+const customServerSecurityFingerprint = (server: StoredCustomMcpServer): string =>
+  JSON.stringify([server.oauth ?? null, customServerCredentialFingerprint(server)])
 
 // Deliberately contains only a stable category. In particular it must not interpolate connector
 // arguments, custom-server headers, credentials, or a Specialist's system prompt into an error that
