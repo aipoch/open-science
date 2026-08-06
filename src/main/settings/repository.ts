@@ -33,6 +33,7 @@ import {
   isReasoningEffortPresetSetting
 } from '../../shared/reasoning-effort'
 import type { PackageMirror } from '../../shared/mirror'
+import type { GrantedLocalRoot } from '../../shared/local-fs'
 import type { NotebookLanguage } from '../../shared/notebook'
 import type { RuntimeEnablement, RuntimeSelection } from '../../shared/notebook-runtime'
 import type { CloseActionPreference } from '../../shared/window-controls'
@@ -1249,6 +1250,12 @@ class SettingsRepository {
         [providerId]: folders
       }
     }))
+  }
+
+  // Replaces the full granted-local-roots list in settings.grantedLocalRoots. Callers (the local-fs
+  // service) compute the new list — grant/update/remove — and persist it atomically here.
+  async setGrantedLocalRoots(roots: GrantedLocalRoot[]): Promise<StoredSettings> {
+    return this.mutate((settings) => ({ ...settings, grantedLocalRoots: roots }))
   }
 
   // Read-modify-write over the connectors block, seeding an empty block on first mutation.

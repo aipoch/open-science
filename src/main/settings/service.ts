@@ -57,6 +57,7 @@ import type {
   ValidateProviderResult
 } from '../../shared/settings'
 import type { PackageMirror } from '../../shared/mirror'
+import type { GrantedLocalRoot } from '../../shared/local-fs'
 import type { NotebookLanguage } from '../../shared/notebook'
 import type { RuntimeEnablement, RuntimeSelection } from '../../shared/notebook-runtime'
 import type { ResolvedReasoningEffort } from '../../shared/reasoning-effort'
@@ -916,6 +917,25 @@ class SettingsService {
   // Sets the bookmark folders for a provider. Replaces the full array for that provider.
   async setComputeBookmarks(providerId: string, folders: string[]): Promise<void> {
     await this.repository.setComputeBookmarks(providerId, folders)
+  }
+
+  // Returns the folders the user granted the app access to. Malformed entries (e.g. from a
+  // hand-edited settings.json) are dropped rather than failing the whole list.
+  async getGrantedLocalRoots(): Promise<GrantedLocalRoot[]> {
+    const settings = await this.repository.getSettings()
+    return (settings.grantedLocalRoots ?? []).filter(
+      (root): root is GrantedLocalRoot =>
+        typeof root?.id === 'string' &&
+        typeof root?.path === 'string' &&
+        typeof root?.name === 'string' &&
+        (root?.access === 'ro' || root?.access === 'rw')
+    )
+  }
+
+  // Replaces the full granted-roots list. The local-fs service computes the new list; this only
+  // persists it.
+  async setGrantedLocalRoots(roots: GrantedLocalRoot[]): Promise<void> {
+    await this.repository.setGrantedLocalRoots(roots)
   }
 
   // Captures only non-secret backend identity. Runtime generations resolve credentials again at spawn,

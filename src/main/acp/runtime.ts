@@ -142,6 +142,11 @@ type AcpRuntimeOptions = {
   }) => Promise<ResolvedAgentBackend> | ResolvedAgentBackend
   artifacts?: AcpRuntimeArtifactOptions
   uploads?: AcpRuntimeUploadOptions
+  // Resolves a granted local root id to its absolute path (settings-backed), enabling the
+  // linked-folder file-reference adapter. Absent ⇒ linked-folder references stay unavailable.
+  grantedRoots?: {
+    resolveRootPath: (rootId: string) => Promise<string | undefined>
+  }
   notebook?: AcpRuntimeNotebookOptions
   skillImport?: AcpRuntimeSkillImportOptions
   skills?: AcpTurnSkillHooks

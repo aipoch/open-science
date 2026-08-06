@@ -3,6 +3,7 @@ import type {
   AcpPermissionRequest,
   AcpContextUsage
 } from '../../../../shared/acp'
+import type { LinkedFolderFileReference } from '../../../../shared/artifacts'
 import type { NotebookSessionReference } from '../../../../shared/notebook'
 import type {
   PermissionProfileId,
@@ -56,10 +57,11 @@ import { useSpecialistStore } from '@/stores/specialist-store'
 
 import { ComposerEditor } from './composer/ComposerEditor'
 import type { ComposerUploadTransfer } from './composer-upload-transfer'
-import { docToSkillIds, type ComposerDoc } from './composer/composer-doc'
+import { appendArtifactMention, docToSkillIds, type ComposerDoc } from './composer/composer-doc'
 import { ComposerAgentControlsMenu } from './ComposerAgentControlsMenu'
 import { ComposerContextUsage } from './ComposerContextUsage'
 import { ComposerModelPicker } from './ComposerModelPicker'
+import { ComposerYourFilesMenu } from './ComposerYourFilesMenu'
 import { PermissionApprovalControls } from './PermissionApprovalControls'
 import { normalizeRunFailureError } from './error-report'
 import { ReportErrorDialog } from './ReportErrorDialog'
@@ -345,6 +347,13 @@ const ConversationPanel = ({
   const handleSubmit = (): void => {
     if (!canEditDraft) return
     onSendMessage(docToSkillIds(draftDoc))
+  }
+
+  // The "Your files" menu appends a linked-folder mention straight into the owned draft doc (the
+  // same appendArtifactMention path Global Search uses); ComposerEditor syncs the chip into the DOM.
+  const handleInsertFileReference = (reference: LinkedFolderFileReference): void => {
+    if (!canEditDraft) return
+    onDraftDocChange(appendArtifactMention(draftDoc, reference))
   }
 
   const handleBranchInNewSession = (): void => {
@@ -839,6 +848,9 @@ const ConversationPanel = ({
                               Any file type · {formatUploadSizeLimit(MAX_UPLOAD_FILE_BYTES)} per
                               file. Large files are linked, not embedded.
                             </div>
+                            <ComposerYourFilesMenu
+                              onInsertFileReference={handleInsertFileReference}
+                            />
                             <DropdownMenuSeparator />
                             {activeSession && activeBranchPlan ? (
                               <>

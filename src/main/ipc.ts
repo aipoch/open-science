@@ -393,8 +393,9 @@ const createApplicationModules = async (
     getClient: () => getProjectDbClient(resolveStorageRoot())
   })
   // Shared local-fs service backs both the "This computer" browser IPC and the managed-preview
-  // resolver below, so path validation stays identical across both entry points.
-  const localFsService = new LocalFsService()
+  // resolver below, so path validation stays identical across both entry points. The settings
+  // service persists the granted folder roots behind the local-fs:granted-roots:* channels.
+  const localFsService = new LocalFsService(settingsService)
   // One source-neutral resolver keeps previews and user-requested exports on identical trust checks.
   const resolveManagedFilePath = (
     source: ManagedPreviewSource,

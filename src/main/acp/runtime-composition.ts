@@ -166,6 +166,11 @@ const createAcpRuntime = ({
           revokeRpcCapability: (token) => notebookRpcServer.revokeArtifactRunCapability(token)
         },
         uploads: { repository: uploadRepository },
+        grantedRoots: {
+          // Read fresh per resolution so a just-removed root stops resolving immediately.
+          resolveRootPath: async (rootId) =>
+            (await settingsService.getGrantedLocalRoots()).find((root) => root.id === rootId)?.path
+        },
         notebook: {
           projectName: DEFAULT_ARTIFACT_PROJECT_NAME,
           mcpEntryPath,

@@ -8,13 +8,17 @@ import {
   Folder,
   LayoutGrid,
   List,
+  Lock,
+  LockOpen,
   Maximize2,
   Minimize2,
   Monitor,
+  MoreHorizontal,
   Paperclip,
   Plus,
   Search,
   Server,
+  Trash2,
   X
 } from 'lucide-react'
 import { ToggleGroup } from 'radix-ui'
@@ -27,6 +31,9 @@ import {
   DropdownMenuItem,
   DropdownMenuLabel,
   DropdownMenuSeparator,
+  DropdownMenuSub,
+  DropdownMenuSubContent,
+  DropdownMenuSubTrigger,
   DropdownMenuTrigger
 } from '@/components/ui/dropdown-menu'
 import { Button } from '@/components/ui/button'
@@ -41,8 +48,10 @@ import {
 } from '@/stores/preview-workbench-store'
 import { useSessionStore } from '@/stores/session-store'
 import { useComputeStore } from '@/stores/compute-store'
+import { useGrantedFoldersStore } from '@/stores/granted-folders-store'
 import { useSettingsStore } from '@/stores/settings-store'
 import type { ArtifactPreviewResult } from '../../../../shared/artifacts'
+import type { GrantedLocalRoot } from '../../../../shared/local-fs'
 import type {
   ArtifactGroupItem,
   ProjectFileItem,
@@ -61,6 +70,8 @@ import { ManagedFileDownloadButton } from './ManagedFileDownloadButton'
 import { createPreviewFileItem } from './preview-file-item'
 import type { MessageArtifact } from './preview-file-item'
 import { FileBrowserModal } from '../settings/FileBrowserModal'
+import { GrantFolderAccessDialog } from './GrantFolderAccessDialog'
+import { grantedRootAccessBadgeClassName } from './granted-root-access-badge'
 import { LocalFileBrowser } from './LocalFileBrowser'
 import { getPreviewThumbnailReadEncoding } from './preview-support'
 import { createKeyedRequestReader } from './project-file-preview-queue'
@@ -829,6 +840,95 @@ const FilterMenuItem = ({
   )
 }
 
+// One granted local folder in the "This computer" section: two-line row (name + truncated path)
+// with an ro/rw badge. Clicking the row browses the folder; the trailing "…" opens a submenu with
+// the access-level toggle and removal. The "…" stops propagation so it never selects the row.
+const GrantedRootMenuRow = ({
+  root,
+  onSelect
+}: {
+  root: GrantedLocalRoot
+  onSelect: (root: GrantedLocalRoot) => void
+}): React.JSX.Element => {
+  const setAccess = useGrantedFoldersStore((state) => state.setAccess)
+  const remove = useGrantedFoldersStore((state) => state.remove)
+
+  return (
+    <DropdownMenuSub>
+      <DropdownMenuItem
+        className="gap-2"
+        data-testid={`granted-root-${root.id}`}
+        onSelect={() => onSelect(root)}
+      >
+        <Folder
+          className="mt-0.5 size-4 shrink-0 self-start text-text-300"
+          strokeWidth={1.8}
+          aria-hidden="true"
+        />
+        <span className="min-w-0 flex-1">
+          <span className="block truncate">{root.name}</span>
+          <span title={root.path} className="block truncate font-mono text-[11px] text-text-300">
+            {root.path}
+          </span>
+        </span>
+        <span className={grantedRootAccessBadgeClassName(root.access)}>{root.access}</span>
+        <DropdownMenuSubTrigger asChild>
+          <button
+            type="button"
+            aria-label={`Manage ${root.name}`}
+            data-testid={`granted-root-manage-${root.id}`}
+            onClick={(event) => event.stopPropagation()}
+            onPointerDown={(event) => event.stopPropagation()}
+            className="flex size-6 shrink-0 items-center justify-center rounded-md text-text-300 hover:bg-bg-300 hover:text-text-000"
+          >
+            <MoreHorizontal className="size-3.5" strokeWidth={1.8} aria-hidden="true" />
+          </button>
+        </DropdownMenuSubTrigger>
+      </DropdownMenuItem>
+      <DropdownMenuSubContent className="z-[70] w-[220px]">
+        <DropdownMenuLabel
+          title={root.path}
+          className="truncate font-mono text-[11px] text-text-300"
+        >
+          {root.path}
+        </DropdownMenuLabel>
+        <DropdownMenuSeparator />
+        {root.access === 'ro' ? (
+          <DropdownMenuItem
+            className="gap-2"
+            data-testid={`granted-root-allow-writes-${root.id}`}
+            onSelect={() => void setAccess(root.id, 'rw').catch(() => undefined)}
+          >
+            <LockOpen
+              className="size-4 shrink-0 text-text-300"
+              strokeWidth={1.8}
+              aria-hidden="true"
+            />
+            <span>Allow writes</span>
+          </DropdownMenuItem>
+        ) : (
+          <DropdownMenuItem
+            className="gap-2"
+            data-testid={`granted-root-make-read-only-${root.id}`}
+            onSelect={() => void setAccess(root.id, 'ro').catch(() => undefined)}
+          >
+            <Lock className="size-4 shrink-0 text-text-300" strokeWidth={1.8} aria-hidden="true" />
+            <span>Make read-only</span>
+          </DropdownMenuItem>
+        )}
+        <DropdownMenuItem
+          className="gap-2 text-danger-000 data-[highlighted]:text-danger-000"
+          data-testid={`granted-root-remove-${root.id}`}
+          onSelect={() => void remove(root.id).catch(() => undefined)}
+        >
+          <Trash2 className="size-4 shrink-0" strokeWidth={1.8} aria-hidden="true" />
+          <span>Remove access</span>
+        </DropdownMenuItem>
+      </DropdownMenuSubContent>
+    </DropdownMenuSub>
+  )
+}
+
 // Keeps all/uploads filters fixed while session choices expand through their own group-header cursor,
 // preventing menu exploration from advancing any file collection shown in the content area.
 const ProjectFilesFilterMenu = ({
@@ -844,6 +944,8 @@ const ProjectFilesFilterMenu = ({
   onLoadMoreOptions,
   onBrowseRemoteHost,
   onBrowseLocal,
+  onAddFolder,
+  onSelectGrantedRoot,
   localMachineName,
   isLocalSelected
 }: {
@@ -859,11 +961,14 @@ const ProjectFilesFilterMenu = ({
   onLoadMoreOptions: () => void
   onBrowseRemoteHost: (providerId: string) => void
   onBrowseLocal: () => void
+  onAddFolder: () => void
+  onSelectGrantedRoot: (root: GrantedLocalRoot) => void
   localMachineName: string | undefined
   isLocalSelected: boolean
 }): React.JSX.Element => {
   const hosts = useComputeStore((state) => state.hosts)
   const openSettingsToCompute = useSettingsStore((state) => state.openSettingsToCompute)
+  const grantedRoots = useGrantedFoldersStore((state) => state.roots)
   const fixedOptions = options.filter((option) => option.kind !== 'session')
   const sessionOptions = options.filter((option) => option.kind === 'session')
   const visibleSessionOptions = showAllSessions
@@ -975,10 +1080,16 @@ const ProjectFilesFilterMenu = ({
               <Check className="size-4 shrink-0 text-primary" strokeWidth={2} aria-hidden="true" />
             ) : null}
           </DropdownMenuItem>
-          <DropdownMenuItem disabled className="gap-2 text-muted-foreground">
+          {grantedRoots.map((root) => (
+            <GrantedRootMenuRow key={root.id} root={root} onSelect={onSelectGrantedRoot} />
+          ))}
+          <DropdownMenuItem
+            className="gap-2 text-muted-foreground"
+            data-testid="add-local-folder"
+            onSelect={() => onAddFolder()}
+          >
             <Plus className="size-4 shrink-0" strokeWidth={1.8} aria-hidden="true" />
-            <span>Add local folder…</span>
-            <span className="ml-auto shrink-0 text-[11px]">Soon</span>
+            <span>Add folder…</span>
           </DropdownMenuItem>
         </DropdownMenuGroup>
 
@@ -1177,6 +1288,35 @@ const ProjectFilesViewContent = ({
   const [sourceMode, setSourceMode] = useState<'artifacts' | 'local'>('artifacts')
   // Entry count reported by the local browser, so the header count tracks the visible container.
   const [localEntryCount, setLocalEntryCount] = useState<number | undefined>(undefined)
+  // One-shot navigation request for the local browser, set when a granted folder is picked in the
+  // filter menu. The nonce makes repeated picks of the same folder observable.
+  const [localRequestedPath, setLocalRequestedPath] = useState<
+    { path: string; nonce: number } | undefined
+  >(undefined)
+  const [grantDialogOpen, setGrantDialogOpen] = useState(false)
+
+  // Load the granted folders once so the filter menu can list them; localFs is absent outside
+  // Electron, where the section just shows the machine entry and "Add folder…" stays inert.
+  useEffect(() => {
+    if (!window.api?.localFs) return
+    void useGrantedFoldersStore
+      .getState()
+      .refresh()
+      .catch(() => undefined)
+  }, [])
+
+  // Picking a granted folder (or granting a new one) switches to the local browser at that path.
+  const handleSelectGrantedRoot = useCallback((root: GrantedLocalRoot): void => {
+    setSourceMode('local')
+    setLocalRequestedPath((previous) => ({ path: root.path, nonce: (previous?.nonce ?? 0) + 1 }))
+  }, [])
+
+  // Picking the machine itself returns to the default Home landing; a stale requestedPath must not
+  // re-trigger afterwards.
+  const handleBrowseLocal = useCallback((): void => {
+    setSourceMode('local')
+    setLocalRequestedPath(undefined)
+  }, [])
 
   // Resolve the device name once so the dropdown entry reads as the machine it browses.
   // localFs is absent in non-Electron test/build contexts, so guard the surface before calling it.
@@ -1649,7 +1789,9 @@ const ProjectFilesViewContent = ({
           optionsLoadError={sessionOptionsIndex.groups.error}
           onLoadMoreOptions={() => void sessionOptionsIndex.loadMoreGroups()}
           onBrowseRemoteHost={(providerId) => setBrowseProviderId(providerId)}
-          onBrowseLocal={() => setSourceMode('local')}
+          onBrowseLocal={handleBrowseLocal}
+          onAddFolder={() => setGrantDialogOpen(true)}
+          onSelectGrantedRoot={handleSelectGrantedRoot}
           localMachineName={localMachineName}
           isLocalSelected={isLocalMode}
         />
@@ -1769,7 +1911,10 @@ const ProjectFilesViewContent = ({
       ) : null}
 
       {isLocalMode ? (
-        <LocalFileBrowser onEntryCountChange={setLocalEntryCount} />
+        <LocalFileBrowser
+          onEntryCountChange={setLocalEntryCount}
+          requestedPath={localRequestedPath}
+        />
       ) : (
         <div data-testid="project-files-scroll" className="min-h-0 flex-1 overflow-y-auto pb-4">
           {!catalogIndex.overview.isIndexComplete ? (
@@ -1931,6 +2076,11 @@ const ProjectFilesViewContent = ({
         open={browseProviderId !== undefined}
         onClose={() => setBrowseProviderId(undefined)}
         initialProviderId={browseProviderId}
+      />
+      <GrantFolderAccessDialog
+        open={grantDialogOpen}
+        onOpenChange={setGrantDialogOpen}
+        onGranted={handleSelectGrantedRoot}
       />
     </div>
   )

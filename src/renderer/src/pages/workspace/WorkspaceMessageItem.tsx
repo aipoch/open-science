@@ -724,6 +724,26 @@ const MessagePartsContent = ({
             </span>
           )
         }
+        // Linked-folder mentions read as a dark-gray `@path:` pill over the relative path; other
+        // sources keep the green `@<name>` pill.
+        if (part.source === 'linked-folder') {
+          return (
+            <button
+              key={index}
+              type="button"
+              className={cn(
+                artifactMentionPillClassName,
+                mentionButtonClassName,
+                'bg-path-chip text-path-chip-foreground'
+              )}
+              onClick={() => onPreviewMentionArtifact(part)}
+              aria-label={`Preview ${part.name}`}
+              title={`@path:${part.relativePath}`}
+            >
+              @path:{part.relativePath}
+            </button>
+          )
+        }
         return (
           <button
             key={index}

@@ -59,7 +59,9 @@ const createDependencies = (): HostApplicationCommandDependencies => ({
   github: { getStars: vi.fn(async () => 42) },
   localFs: {
     getRoots: vi.fn(() => ({ home: '/home/scientist', machineName: 'Lab' })),
+    grantRoot: vi.fn(async () => []),
     listDir: vi.fn(async (path: string) => ({ entries: [], truncated: false, resolvedPath: path })),
+    listGrantedRoots: vi.fn(async () => []),
     openPath: vi.fn(async () => ''),
     readPreview: vi.fn(async () => ({
       content: 'result',
@@ -67,7 +69,9 @@ const createDependencies = (): HostApplicationCommandDependencies => ({
       size: 6,
       truncated: false
     })),
-    revealInFolder: vi.fn(() => undefined)
+    removeGrantedRoot: vi.fn(async () => []),
+    revealInFolder: vi.fn(() => undefined),
+    setGrantedRootAccess: vi.fn(async () => [])
   },
   logs: {
     getPath: vi.fn(() => '/logs/main.log'),
@@ -152,7 +156,7 @@ const commandByName = (name: string): ApplicationCommand<string, readonly unknow
 }
 
 describe('Host application commands', () => {
-  it('defines the exact 42 request channels in their existing capability groups', () => {
+  it('defines the exact 46 request channels in their existing capability groups', () => {
     const expected = RENDERER_CONTRACT_GROUPS.filter(({ capability }) =>
       HOST_CAPABILITIES.includes(capability as (typeof HOST_CAPABILITIES)[number])
     ).map(({ capability, contracts }) => ({
@@ -166,7 +170,7 @@ describe('Host application commands', () => {
         .filter((channel): channel is string => channel !== null)
     }))
 
-    expect(expected.flatMap(({ channels }) => channels)).toHaveLength(42)
+    expect(expected.flatMap(({ channels }) => channels)).toHaveLength(46)
     expect(
       hostApplicationCommandGroups.map(({ name, commands }) => ({
         capability: name,
@@ -182,7 +186,7 @@ describe('Host application commands', () => {
       {} as HostApplicationCommandDependencies
     )
 
-    expect(router.dispatcher.commandNames()).toHaveLength(42)
+    expect(router.dispatcher.commandNames()).toHaveLength(46)
     installation.uninstall()
     expect(router.dispatcher.commandNames()).toEqual([])
   })
@@ -207,7 +211,12 @@ describe('Host application commands', () => {
     await router.dispatcher.invoke(hostApplicationCommands.cli.uninstall, invocation([]))
     await router.dispatcher.invoke(hostApplicationCommands.github.getStars, invocation([]))
     await router.dispatcher.invoke(hostApplicationCommands.localFs.getRoots, invocation([]))
+    await router.dispatcher.invoke(
+      hostApplicationCommands.localFs.grantRoot,
+      invocation([{ path: '/data', access: 'ro' }])
+    )
     await router.dispatcher.invoke(hostApplicationCommands.localFs.listDir, invocation(['/data']))
+    await router.dispatcher.invoke(hostApplicationCommands.localFs.listGrantedRoots, invocation([]))
     await router.dispatcher.invoke(
       hostApplicationCommands.localFs.openPath,
       invocation(['/data/a'])
@@ -216,7 +225,15 @@ describe('Host application commands', () => {
       hostApplicationCommands.localFs.readPreview,
       invocation([previewRequest])
     )
+    await router.dispatcher.invoke(
+      hostApplicationCommands.localFs.removeGrantedRoot,
+      invocation([{ id: 'root-1' }])
+    )
     await router.dispatcher.invoke(hostApplicationCommands.localFs.reveal, invocation(['/data/a']))
+    await router.dispatcher.invoke(
+      hostApplicationCommands.localFs.setGrantedRootAccess,
+      invocation([{ id: 'root-1', access: 'rw' }])
+    )
     await router.dispatcher.invoke(hostApplicationCommands.logs.getPath, invocation([]))
     await router.dispatcher.invoke(hostApplicationCommands.logs.openFile, invocation([]))
     await router.dispatcher.invoke(hostApplicationCommands.logs.revealInFolder, invocation([]))
@@ -323,6 +340,9 @@ describe('Host application commands', () => {
     const previewRequest = { path: '/data/result.txt', encoding: 'utf8' as const }
     const parent = { parent: '/target' }
     const argsByChannel: Readonly<Record<string, readonly unknown[]>> = {
+      'local-fs:grant-root': [{ path: '/data', access: 'ro' }],
+      'local-fs:granted-roots:remove': [{ id: 'root-1' }],
+      'local-fs:granted-roots:set-access': [{ id: 'root-1', access: 'rw' }],
       'local-fs:list-dir': ['/data'],
       'local-fs:open-path': ['/data/result.txt'],
       'local-fs:read-preview': [previewRequest],
@@ -347,7 +367,7 @@ describe('Host application commands', () => {
         .filter((channel): channel is string => channel !== null)
     )
 
-    expect(localOnlyChannels).toHaveLength(21)
+    expect(localOnlyChannels).toHaveLength(25)
     for (const channel of localOnlyChannels) {
       await expect(
         router.dispatcher.invoke(

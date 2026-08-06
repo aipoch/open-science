@@ -277,10 +277,14 @@ describe('preload bridge — public surface inventory', () => {
       'handoff.retry',
       'lifecycle.getClientId',
       'localFs.getRoots',
+      'localFs.grantRoot',
       'localFs.listDir',
+      'localFs.listGrantedRoots',
       'localFs.openPath',
       'localFs.readPreview',
+      'localFs.removeGrantedRoot',
       'localFs.reveal',
+      'localFs.setGrantedRootAccess',
       'logs.getPath',
       'logs.openFile',
       'logs.revealInFolder',
@@ -594,7 +598,7 @@ describe('preload bridge — runtime renderer contract catalog', () => {
 })
 
 describe('preload bridge — core renderer contract catalog', () => {
-  it('pins the exact 21-group, 129-callable T1d complement', () => {
+  it('pins the exact 21-group, 133-callable T1d complement', () => {
     expect(coreContractGroups.map(({ capability }) => capability)).toEqual([
       'artifacts',
       'cli',
@@ -618,7 +622,7 @@ describe('preload bridge — core renderer contract catalog', () => {
       'uploads',
       'window'
     ])
-    expect(coreContracts).toHaveLength(129)
+    expect(coreContracts).toHaveLength(133)
     expect({
       requests: coreContracts.filter(
         ({ dispatchPolicy }) => dispatchPolicy.electron === 'electron-ipc-request'
@@ -630,16 +634,16 @@ describe('preload bridge — core renderer contract catalog', () => {
       surfaceNative: coreContracts.filter(
         ({ dispatchPolicy }) => dispatchPolicy.electron === 'surface-native'
       ).length
-    }).toEqual({ requests: 93, events: 25, sends: 10, surfaceNative: 1 })
+    }).toEqual({ requests: 97, events: 25, sends: 10, surfaceNative: 1 })
   })
 
-  it('routes all 93 request methods through their cataloged Electron channels', async () => {
+  it('routes all 97 request methods through their cataloged Electron channels', async () => {
     const requestContracts = coreContracts.filter(
       ({ dispatchPolicy }) => dispatchPolicy.electron === 'electron-ipc-request'
     )
     const localFile = { name: 'catalog.csv' } as File
 
-    expect(requestContracts).toHaveLength(93)
+    expect(requestContracts).toHaveLength(97)
 
     for (const contract of requestContracts) {
       invokeMock.mockClear()

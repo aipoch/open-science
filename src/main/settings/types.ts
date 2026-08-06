@@ -16,6 +16,7 @@ import type {
   ReasoningEffortPresetSetting
 } from '../../shared/reasoning-effort'
 import type { PackageMirror } from '../../shared/mirror'
+import type { GrantedLocalRoot } from '../../shared/local-fs'
 import type { NotebookLanguage } from '../../shared/notebook'
 import type { RuntimeEnablement, RuntimeSelection } from '../../shared/notebook-runtime'
 import type { CloseActionPreference } from '../../shared/window-controls'
@@ -203,6 +204,9 @@ export type StoredSettings = {
   // Pinned bookmark folders for the remote file browser, keyed by provider_id.
   // Each value is an ordered array of absolute paths the user has pinned via Go-to.
   computeBookmarks?: Record<string, string[]>
+  // Local folders the user explicitly granted the app access to ("Grant folder access").
+  // Managed via the local-fs:granted-roots:* channels; read by the linked-folder resolver.
+  grantedLocalRoots?: GrantedLocalRoot[]
   // Legacy project-scope compute grants, read only for one-time migration into PermissionGrant.
   // Production authorization never appends to this field; it is removed after a successful import.
   computeGrants?: StoredComputeGrant[]
