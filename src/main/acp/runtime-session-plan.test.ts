@@ -145,6 +145,7 @@ const createRuntimeHarness = (options: {
       delete: vi.fn(async () => ({ status: 'closed' }))
     },
     permissionContext: { cancelForSession: vi.fn() },
+    publication: { emitState: vi.fn() },
     callbacks: { onEvent: options.onEvent },
     pushEvent: (event: unknown) => options.onEvent?.(event),
     getSnapshot: () => ({ status: 'connected' }),
