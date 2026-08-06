@@ -15,6 +15,7 @@ import {
   DropdownMenuSubContent,
   DropdownMenuSubTrigger
 } from '@/components/ui/dropdown-menu'
+import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from '@/components/ui/tooltip'
 import { cn } from '@/lib/utils'
 import { useGrantedFoldersStore } from '@/stores/granted-folders-store'
 
@@ -157,7 +158,7 @@ export const ComposerYourFilesMenu = ({
               key={childPath}
               data-testid={`your-files-file-${root.id}-${relativePath}`}
               title={relativePath}
-              className="group relative flex min-h-8 items-center gap-1.5 rounded-lg py-1 pl-2 pr-1.5 text-[12px] hover:bg-muted"
+              className="group relative flex items-center gap-1.5 rounded-md py-1 pl-2 pr-1.5 text-[12px] hover:bg-muted"
               style={{ paddingLeft: indentForDepth(depth) }}
             >
               <File
@@ -167,20 +168,26 @@ export const ComposerYourFilesMenu = ({
               />
               <span className="min-w-0 flex-1 truncate font-mono">{entry.name}</span>
               {/* asChild keeps the send action a real button while staying the menu item, so
-                  selecting it runs the same select-and-close path the row item used before. */}
-              <DropdownMenuItem
-                asChild
-                onSelect={() => sendFile(root, entry, relativePath)}
-                className="flex size-[22px] min-h-0 shrink-0 items-center justify-center rounded-[5px] p-0 text-text-100 opacity-0 transition-opacity hover:bg-bg-300 hover:text-text-000 group-hover:opacity-100 data-[highlighted]:bg-bg-300 data-[highlighted]:text-text-000 data-[highlighted]:opacity-100"
-              >
-                <button
-                  type="button"
-                  data-testid={`your-files-send-${root.id}-${relativePath}`}
-                  aria-label={`Insert ${relativePath}`}
-                >
-                  <ArrowUpRight className="size-3.5" strokeWidth={1.8} aria-hidden="true" />
-                </button>
-              </DropdownMenuItem>
+                  selecting it runs the same select-and-close path the row item used before. Bare
+                  icon at text height: it only darkens and shows its tooltip when hovered. */}
+              <Tooltip>
+                <TooltipTrigger asChild>
+                  <DropdownMenuItem
+                    asChild
+                    onSelect={() => sendFile(root, entry, relativePath)}
+                    className="flex shrink-0 items-center justify-center text-text-100 opacity-0 transition-opacity hover:text-text-000 group-hover:opacity-100 data-[highlighted]:text-text-000 data-[highlighted]:opacity-100"
+                  >
+                    <button
+                      type="button"
+                      data-testid={`your-files-send-${root.id}-${relativePath}`}
+                      aria-label={`Add ${relativePath} to conversation as attachment`}
+                    >
+                      <ArrowUpRight className="size-4" strokeWidth={1.8} aria-hidden="true" />
+                    </button>
+                  </DropdownMenuItem>
+                </TooltipTrigger>
+                <TooltipContent side="top">Add to conversation as attachment</TooltipContent>
+              </Tooltip>
             </div>
           )
         })}
@@ -200,72 +207,75 @@ export const ComposerYourFilesMenu = ({
           <ChevronRight className="size-3.5 shrink-0 text-text-300" aria-hidden="true" />
         </DropdownMenuSubTrigger>
         <DropdownMenuSubContent className="max-h-[340px] w-[300px] overflow-y-auto">
-          {/* Header: the grant action stays one click away even when no root is granted yet. */}
-          <div className="flex items-center justify-end px-1.5 pb-1 pt-0.5">
-            <button
-              type="button"
-              data-testid="your-files-grant-folder"
-              onClick={() => setGrantDialogOpen(true)}
-              className="flex items-center gap-1.5 rounded-md px-1.5 py-1 text-[12px] font-medium text-text-100 hover:bg-bg-200 hover:text-text-000"
-            >
-              <FolderPlus className="size-3.5" strokeWidth={1.8} aria-hidden="true" />
-              Grant folder…
-            </button>
-          </div>
-          {loaded && roots.length === 0 ? (
-            <div className="px-2 py-1.5 text-[12px] leading-4 text-text-300">
-              No folders granted yet.
+          {/* One provider for every row tooltip inside the portaled submenu. */}
+          <TooltipProvider delayDuration={200}>
+            {/* Header: the grant action stays one click away even when no root is granted yet. */}
+            <div className="flex items-center justify-end px-1.5 pb-1 pt-0.5">
+              <button
+                type="button"
+                data-testid="your-files-grant-folder"
+                onClick={() => setGrantDialogOpen(true)}
+                className="flex items-center gap-1.5 rounded-md px-1.5 py-1 text-[12px] font-medium text-text-100 hover:bg-bg-200 hover:text-text-000"
+              >
+                <FolderPlus className="size-3.5" strokeWidth={1.8} aria-hidden="true" />
+                Grant folder…
+              </button>
             </div>
-          ) : null}
-          {roots.map((root) => {
-            const isExpanded = expandedDirs[root.path] === true
-            return (
-              <div key={root.id} data-testid={`your-files-root-${root.id}`}>
-                <div className="group flex items-center gap-1.5 rounded-md py-1 pr-1.5 pl-1.5 text-[13px] text-text-000 hover:bg-bg-200">
-                  <button
-                    type="button"
-                    aria-expanded={isExpanded}
-                    data-testid={`your-files-root-toggle-${root.id}`}
-                    onClick={() => toggleDir(root.path)}
-                    className="flex min-w-0 flex-1 items-center gap-1.5 text-left"
-                  >
-                    <ChevronRight
-                      className={cn(
-                        'size-3.5 shrink-0 text-text-300 transition-transform',
-                        isExpanded && 'rotate-90'
-                      )}
-                      strokeWidth={2}
-                      aria-hidden="true"
-                    />
-                    <Folder
-                      className="size-4 shrink-0 text-text-100"
-                      strokeWidth={1.8}
-                      aria-hidden="true"
-                    />
-                    <span className="min-w-0 flex-1 truncate">{root.name}</span>
-                  </button>
-                  <span className={grantedRootAccessBadgeClassName(root.access)}>
-                    {root.access}
-                  </span>
-                  {/* Plain button (not a menu item) so removing access never closes the menu. */}
-                  <button
-                    type="button"
-                    data-testid={`your-files-remove-${root.id}`}
-                    aria-label={`Remove access to ${root.name}`}
-                    onClick={(event) => {
-                      event.stopPropagation()
-                      event.preventDefault()
-                      void remove(root.id).catch(() => undefined)
-                    }}
-                    className="hidden size-[22px] shrink-0 items-center justify-center rounded-[5px] text-text-100 hover:bg-bg-300 hover:text-text-000 group-hover:inline-flex"
-                  >
-                    <X className="size-3.5" strokeWidth={2} aria-hidden="true" />
-                  </button>
-                </div>
-                {isExpanded ? renderDirRows(root, root.path, '', 1) : null}
+            {loaded && roots.length === 0 ? (
+              <div className="px-2 py-1.5 text-[12px] leading-4 text-text-300">
+                No folders granted yet.
               </div>
-            )
-          })}
+            ) : null}
+            {roots.map((root) => {
+              const isExpanded = expandedDirs[root.path] === true
+              return (
+                <div key={root.id} data-testid={`your-files-root-${root.id}`}>
+                  <div className="group flex items-center gap-1.5 rounded-md py-1 pr-1.5 pl-1.5 text-[13px] text-text-000 hover:bg-bg-200">
+                    <button
+                      type="button"
+                      aria-expanded={isExpanded}
+                      data-testid={`your-files-root-toggle-${root.id}`}
+                      onClick={() => toggleDir(root.path)}
+                      className="flex min-w-0 flex-1 items-center gap-1.5 text-left"
+                    >
+                      <ChevronRight
+                        className={cn(
+                          'size-3.5 shrink-0 text-text-300 transition-transform',
+                          isExpanded && 'rotate-90'
+                        )}
+                        strokeWidth={2}
+                        aria-hidden="true"
+                      />
+                      <Folder
+                        className="size-4 shrink-0 text-text-100"
+                        strokeWidth={1.8}
+                        aria-hidden="true"
+                      />
+                      <span className="min-w-0 flex-1 truncate">{root.name}</span>
+                    </button>
+                    <span className={grantedRootAccessBadgeClassName(root.access)}>
+                      {root.access}
+                    </span>
+                    {/* Plain button (not a menu item) so removing access never closes the menu. */}
+                    <button
+                      type="button"
+                      data-testid={`your-files-remove-${root.id}`}
+                      aria-label={`Remove access to ${root.name}`}
+                      onClick={(event) => {
+                        event.stopPropagation()
+                        event.preventDefault()
+                        void remove(root.id).catch(() => undefined)
+                      }}
+                      className="hidden size-[22px] shrink-0 items-center justify-center rounded-[5px] text-text-100 hover:bg-bg-300 hover:text-text-000 group-hover:inline-flex"
+                    >
+                      <X className="size-3.5" strokeWidth={2} aria-hidden="true" />
+                    </button>
+                  </div>
+                  {isExpanded ? renderDirRows(root, root.path, '', 1) : null}
+                </div>
+              )
+            })}
+          </TooltipProvider>
         </DropdownMenuSubContent>
       </DropdownMenuSub>
       {/* Hosted here so a fresh grant is one click from the tree; the dialog updates the store on
