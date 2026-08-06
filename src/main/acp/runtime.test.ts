@@ -765,9 +765,13 @@ const startPermissionProbeAgent = (
 const mcpServerNamesFor = (runtime: AcpRuntime, sessionId: string): readonly string[] =>
   (
     runtime as unknown as {
-      sessionCapabilities: { mcpServerNamesFor: (sessionId: string) => readonly string[] }
+      providerSessionCreator: {
+        deps: {
+          capabilities: { mcpServerNamesFor: (sessionId: string) => readonly string[] }
+        }
+      }
     }
-  ).sessionCapabilities.mcpServerNamesFor(sessionId)
+  ).providerSessionCreator.deps.capabilities.mcpServerNamesFor(sessionId)
 
 const activeSessionForTest = (
   runtime: AcpRuntime,
@@ -779,11 +783,21 @@ const activeSessionForTest = (
     }
   ).activeSessionFor(sessionId)
 
+const providerReconnectPending = (runtime: AcpRuntime): boolean =>
+  (
+    runtime as unknown as {
+      connectionTransitions: { providerReconnectPending: boolean }
+    }
+  ).connectionTransitions.providerReconnectPending
+
 const contextUsageMap = (
   runtime: AcpRuntime
 ): { set: (sessionId: string, usage: AcpContextUsage) => void } => {
-  const tracker = (runtime as unknown as { contextUsageTracker: ContextUsageTracker })
-    .contextUsageTracker
+  const tracker = (
+    runtime as unknown as {
+      contextCompactionWorkflow: { options: { context: ContextUsageTracker } }
+    }
+  ).contextCompactionWorkflow.options.context
   return {
     set: (sessionId, usage) => tracker.reconcileProviderUsage(sessionId, usage)
   }
@@ -794,16 +808,20 @@ const promptContentLifecycle = (
 ): { resetSession: (sessionId: string) => void } =>
   (
     runtime as unknown as {
-      promptContentOwner: { resetSession: (sessionId: string) => void }
+      contextCompactionWorkflow: {
+        options: { promptContent: { resetSession: (sessionId: string) => void } }
+      }
     }
-  ).promptContentOwner
+  ).contextCompactionWorkflow.options.promptContent
 
 const resolveArtifactRunClaim = (runtime: AcpRuntime, claimId: string): ArtifactRunClaim =>
   (
     runtime as unknown as {
-      artifactRunRegistry: { resolve: (id: string) => ArtifactRunClaim }
+      artifactTurns: {
+        options: { runRegistry: { resolve: (id: string) => ArtifactRunClaim } }
+      }
     }
-  ).artifactRunRegistry.resolve(claimId)
+  ).artifactTurns.options.runRegistry.resolve(claimId)
 
 const handleSessionUpdate = (runtime: AcpRuntime, notification: SessionNotification): void =>
   (
@@ -9095,9 +9113,7 @@ describe('ACP runtime session management', () => {
     await runtime.requestProviderReconnect()
 
     expect(process.killed).toBe(false)
-    expect(
-      (runtime as unknown as { pendingProviderReconnect: boolean }).pendingProviderReconnect
-    ).toBe(true)
+    expect(providerReconnectPending(runtime)).toBe(true)
 
     releasePendingMode.resolve()
     await expect(pending).resolves.toMatchObject({ sessionId: 'pending-primary' })
@@ -9172,9 +9188,7 @@ describe('ACP runtime session management', () => {
     try {
       await runtime.requestProviderReconnect()
 
-      expect(
-        (runtime as unknown as { pendingProviderReconnect: boolean }).pendingProviderReconnect
-      ).toBe(true)
+      expect(providerReconnectPending(runtime)).toBe(true)
       expect(pendingReviewerSessionIds(runtime).has('pending-reviewer')).toBe(true)
 
       releaseReviewerMode.resolve()
@@ -9233,9 +9247,7 @@ describe('ACP runtime session management', () => {
     expect(
       (runtime as unknown as { reconnectBarrier?: Promise<void> }).reconnectBarrier
     ).toBeUndefined()
-    expect(
-      (runtime as unknown as { pendingProviderReconnect: boolean }).pendingProviderReconnect
-    ).toBe(false)
+    expect(providerReconnectPending(runtime)).toBe(false)
     await expect(runtime.createSession({ cwd: '/workspace' })).resolves.toMatchObject({
       sessionId: 'fresh-primary'
     })
@@ -9315,18 +9327,14 @@ describe('ACP runtime session management', () => {
 
     try {
       await runtime.requestProviderReconnect()
-      expect(
-        (runtime as unknown as { pendingProviderReconnect: boolean }).pendingProviderReconnect
-      ).toBe(true)
+      expect(providerReconnectPending(runtime)).toBe(true)
       expect(
         (runtime as unknown as { reconnectBarrier?: Promise<void> }).reconnectBarrier
       ).toBeDefined()
 
       releaseOldClose.resolve()
       await oldDisconnect
-      expect(
-        (runtime as unknown as { pendingProviderReconnect: boolean }).pendingProviderReconnect
-      ).toBe(true)
+      expect(providerReconnectPending(runtime)).toBe(true)
       expect(
         (runtime as unknown as { reconnectBarrier?: Promise<void> }).reconnectBarrier
       ).toBeDefined()
@@ -9490,9 +9498,7 @@ describe('ACP runtime session management', () => {
     expect(
       (runtime as unknown as { reconnectBarrier?: Promise<void> }).reconnectBarrier
     ).toBeUndefined()
-    expect(
-      (runtime as unknown as { pendingProviderReconnect: boolean }).pendingProviderReconnect
-    ).toBe(false)
+    expect(providerReconnectPending(runtime)).toBe(false)
     expect(runtime.getSnapshot().sessionIds).toEqual([])
   })
 

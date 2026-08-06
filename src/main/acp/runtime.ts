@@ -44,22 +44,19 @@ import { getAppClaudeConfigDir } from '../settings/provider-env'
 import type { PermissionGrantRegistry } from '../permission-grants/registry'
 import { withDataRootWrite } from '../storage/migration-state'
 import { opencodeStorageDir } from '../agent-framework/opencode'
-import type { ContextUsageTracker } from './context-usage-tracker'
-import type { AcpContextUsagePolicy } from './context-usage-policy'
 import type { UploadRepository } from '../uploads/repository'
 import type { UploadedAttachment } from '../../shared/uploads'
 import type { ArtifactFile, FileReference } from '../../shared/artifacts'
 import type { ArtifactRpcCapabilityBinding } from '../../shared/artifact-provenance'
 import type { AcpRuntimeActivity, AcpRuntimeActivityOptions } from './runtime-activity'
+import type { ContextUsageTracker } from './context-usage-tracker'
 import type {
   ReviewerSessionOwner,
   ReviewerSessionDisposition,
   ReviewerSessionRequest,
   ReviewerSessionResult
 } from './reviewer-session-owner'
-import type { AcpSessionCapabilityOwner } from './session-capability-owner'
-import type { ArtifactTurnHandle, ArtifactTurnOwner } from './artifact-turn-owner'
-import type { AcpPromptContentOwner } from './prompt-content-owner'
+import type { ArtifactTurnOwner } from './artifact-turn-owner'
 import type {
   AcpSessionInteractionOwner,
   AcpPromptSessionInteractionScope
@@ -90,9 +87,8 @@ import type { AcpProviderSessionCreator } from './provider-session-creator'
 import type { AcpProviderSessionResumer } from './provider-session-resumer'
 import type { AcpSessionReplacementWorkflow } from './session-replacement-workflow'
 import type { AcpSessionDeletionWorkflow } from './session-deletion-workflow'
-import { AcpPromptPreparationOwner } from './prompt-preparation-owner'
-import { AcpPromptTurnWorkflow, type AcpPromptTurnPlanContext } from './prompt-turn-workflow'
-import { AcpContextCompactionWorkflow } from './context-compaction-workflow'
+import type { AcpPromptTurnWorkflow, AcpPromptTurnPlanContext } from './prompt-turn-workflow'
+import type { AcpContextCompactionWorkflow } from './context-compaction-workflow'
 import type { AcpProviderPromptExecutor } from './provider-prompt-executor'
 import type { AcpTurnSkillHooks, AcpTurnSkillOwner } from './turn-skill-owner'
 import type { SessionPlanInteractionOwner } from '../session-plan/session-plan-interaction-owner'
@@ -111,6 +107,7 @@ import type { AcpRuntimeSessionOwners } from './runtime-session-composition'
 import type { AcpSessionEnvironmentPolicy } from './session-environment-policy'
 import { composeAcpRuntimeLifecycleOwners } from './runtime-lifecycle-composition'
 import { composeAcpRuntimeProviderSessionOwners } from './runtime-provider-session-composition'
+import { composeAcpRuntimePromptOwners } from './runtime-prompt-composition'
 
 export type AcpRuntimeCallbacks = {
   onStateChanged?: (state: AcpStateSnapshot) => void
@@ -282,21 +279,6 @@ const errorMessage = (error: unknown): string => {
   }
 }
 
-// The ACP agent tags a provider-relayed failure with the upstream error type in `data.errorKind`
-// (e.g. `request_too_large` for an HTTP 413). Read it so the overflow check can match the slug even
-// when the message text comes in a wording the pattern does not cover. Total: any shape but a string
-// kind collapses to undefined, and a hostile getter never escapes.
-const acpErrorKind = (error: unknown): string | undefined => {
-  try {
-    const data = (error as { data?: unknown } | null)?.data
-    const kind = (data as { errorKind?: unknown } | null | undefined)?.errorKind
-
-    return typeof kind === 'string' ? kind : undefined
-  } catch {
-    return undefined
-  }
-}
-
 const log = createLogger('acp')
 
 // Logs an error without ever throwing back into the caller. Used on failure paths where a throwing
@@ -313,19 +295,15 @@ const safeLogError = (message: string, data?: unknown): void => {
 // Runtime retains protocol startup, Session/Permission/Notebook cleanup, and status/event projection.
 class AcpRuntime {
   private readonly snapshotOwner: AcpRuntimeSnapshotOwner
-  private readonly contextUsageTracker: ContextUsageTracker
-  private readonly contextUsagePolicy: AcpContextUsagePolicy
   private readonly connectionAdapter: AcpAgentConnectionAdapter
   private readonly connectionResources: AcpConnectionResourceOwner
   private readonly connectionTransitions: AcpConnectionTransitionOwner
   private readonly generationActivity: AcpGenerationActivityOwner
-  private readonly notifyGenerationActivityChanged: () => void
   // Stable app identities, provider aliases, publication order, selection, and startup/delete
   // arbitration share one owner. The runtime retains only protocol/resource orchestration.
   private readonly sessionRegistry: AcpSessionRegistry
   // App-owned MCP construction, routing aliases, and bearer lease ownership are kept behind one
   // explicit role policy. Connection/process lifetime remains with the connection resource owner.
-  private readonly sessionCapabilities: AcpSessionCapabilityOwner
   private readonly sessionInteractions: AcpSessionInteractionOwner
   // Ephemeral Reviewer identity, isolation, permission, and resource state lives behind one owner.
   private readonly reviewerSessions: ReviewerSessionOwner
@@ -334,7 +312,6 @@ class AcpRuntime {
   private readonly permissionContext: AcpPermissionContext
   private readonly publication: AcpRuntimePublicationOwner
   private readonly sessionEnvironment: AcpSessionEnvironmentPolicy
-  private readonly callbacks: AcpRuntimeCallbacks
   private readonly spawnAgent: (() => ChildProcessWithoutNullStreams) | undefined
   private readonly backendGeneration: AcpBackendGenerationOwner
   private readonly sessionConfigurator: AcpSessionConfigurator
@@ -345,8 +322,6 @@ class AcpRuntime {
   private readonly planInteractions: SessionPlanInteractionOwner
   private readonly planService: PlanService | undefined
   private readonly planSessions: AcpRuntimePlanOptions['sessions'] | undefined
-  private readonly promptContentOwner: AcpPromptContentOwner
-  private readonly promptPreparation: AcpPromptPreparationOwner
   private readonly contextCompactionWorkflow: AcpContextCompactionWorkflow
   private readonly promptTurnWorkflow: AcpPromptTurnWorkflow
   private readonly connectionClose: AcpConnectionCloseWorkflow
@@ -363,7 +338,6 @@ class AcpRuntime {
     base: AcpRuntimeBaseOwners,
     session: AcpRuntimeSessionOwners
   ) {
-    this.callbacks = options.callbacks ?? {}
     this.spawnAgent = options.spawnAgent
     this.artifactOptions = options.artifacts
     this.planSessions = options.plan?.sessions
@@ -372,141 +346,38 @@ class AcpRuntime {
     this.connectionResources = base.connectionResources
     this.backendGeneration = base.backendGeneration
     this.providerPromptExecutor = base.providerPromptExecutor
-    this.contextUsageTracker = base.contextUsageTracker
     this.sessionInteractions = base.sessionInteractions
-    this.sessionCapabilities = base.sessionCapabilities
     this.artifactTurns = base.artifactTurns
     this.planInteractions = base.planInteractions
     this.planService = base.planService
-    this.promptContentOwner = base.promptContentOwner
     this.handoffContinuity = base.handoffContinuity
     this.generationActivity = base.generationActivity
-    this.notifyGenerationActivityChanged = base.notifyGenerationActivityChanged
     this.connectionTransitions = base.connectionTransitions
     this.turnSkills = base.turnSkills
     this.sessionConfigurator = base.sessionConfigurator
     this.sessionRegistry = session.sessionRegistry
     this.sessionEnvironment = session.sessionEnvironment
-    this.contextUsagePolicy = session.contextUsagePolicy
     this.publication = session.publication
     this.permissionContext = session.permissionContext
     this.reviewerSessions = session.reviewerSessions
     this.sessionUpdateProjector = session.sessionUpdateProjector
-    this.promptPreparation = new AcpPromptPreparationOwner({
-      promptContent: this.promptContentOwner,
-      presentation: base.sessionPresentationPolicy,
-      contextUsage: this.contextUsageTracker,
-      selectBridgeSkills: async (text, catalog, signal) =>
-        (await this.connectionResources.selectBridgeSkills(text, catalog, signal)) ?? [],
-      authorizeReferencedUploads: options.skillImport?.authorizeReferencedUploads,
-      ...(options.notebook
-        ? {
-            notebook: {
-              peekHandoffContext: options.notebook.peekHandoffContext,
-              registerTurnInputs: options.notebook.registerTurnInputs
-            }
-          }
-        : {}),
-      emitState: () => this.emitState()
-    })
-    this.contextCompactionWorkflow = new AcpContextCompactionWorkflow({
-      sessions: {
-        activeSession: (sessionId) => this.activeSessionFor(sessionId),
-        currentFramework: () => this.framework
-      },
-      interactions: this.sessionInteractions,
-      context: this.contextUsageTracker,
-      promptContent: this.promptContentOwner,
-      contextEstimateInput: (sessionId) => this.contextUsagePolicy.resolve(sessionId).estimateInput,
-      selectedContextWindow: (sessionId) =>
-        this.contextUsagePolicy.resolve(sessionId).selectedWindow,
-      routeHiddenNotification: (notification, sessionId) =>
-        this.sessionUpdateProjector.route(notification, {
-          appSessionId: sessionId,
-          visible: false,
-          emitState: () => {
-            try {
-              this.emitState()
-            } catch (error) {
-              safeLogError('compaction state callback failed', errorLogFields(error))
-            }
-          }
-        }),
-      pushEvent: (event) => this.pushEvent(event),
-      emitState: () => this.emitState(),
-      errorMessage
-    })
-    this.promptTurnWorkflow = new AcpPromptTurnWorkflow({
-      registry: this.sessionRegistry,
-      interactions: this.sessionInteractions,
-      skills: this.turnSkills,
-      preparation: this.promptPreparation,
-      executor: this.providerPromptExecutor,
-      contextUsage: this.contextUsageTracker,
-      providerReconnectPending: () => this.pendingProviderReconnect,
-      finalizer: base.promptOutcomeFinalizer,
-      permission: this.permissionContext,
-      environment: {
-        backend: () => this.backend,
-        tooling: () => this.sessionEnvironment.toolingAvailability(),
-        bridgeSkillsAvailable: () => this.connectionResources.bridgeSkillsAvailable,
-        skillImportEnabled: () => this.sessionCapabilities.isSkillImportEnabled(),
-        contextEstimateInput: (sessionId) =>
-          this.contextUsagePolicy.resolve(sessionId).estimateInput,
-        selectedContextWindow: (sessionId) =>
-          this.contextUsagePolicy.resolve(sessionId).selectedWindow,
-        emitSkillActivities: (sessionId, turn, inputs, status) =>
-          this.emitCodexSkillInputActivities(sessionId, turn, inputs, status),
-        onSkillImportAttachmentEligible: this.callbacks.onSkillImportAttachmentEligible,
-        onProviderPromptAccepted: this.callbacks.onProviderPromptAccepted,
-        routeNotification: (notification, sessionId) =>
-          this.sessionUpdateProjector.route(notification, { appSessionId: sessionId }),
-        diagnosticContext: () => this.diagnosticContext(),
-        pushUserMessage: ({ sessionId, promptMessageId, text }) =>
-          this.pushEvent({
-            kind: 'message',
-            level: 'info',
-            sessionId,
-            ...(promptMessageId ? { promptMessageId } : {}),
-            role: 'user',
-            text
-          })
-      },
-      artifacts: {
-        open: (sessionId, provenance) => this.activateArtifactRun(sessionId, provenance),
-        promptMessageIdFor: (sessionId) => this.artifactTurns?.promptMessageIdFor(sessionId),
-        publish: (sessionId, artifact, onPublished) =>
-          this.emitArtifactRunEvent(sessionId, artifact, onPublished),
-        dispose: (artifact) => this.clearArtifactRun(artifact)
-      },
-      planLifecycle: {
+    const prompt = composeAcpRuntimePromptOwners(options, base, session, {
+      plan: {
+        preflight: (request) => this.preflightPromptPlan(request),
+        admit: (request, interaction, plan) => this.admitPromptPlan(request, interaction, plan),
         beforeStop: (sessionId, interaction, response) =>
           this.checkPromptPlanCompletion(sessionId, interaction, response),
         beforeRelease: (sessionId, interaction) =>
           this.releasePromptPlanBinding(sessionId, interaction),
         afterRelease: (sessionId) => this.publishTerminalPlanProjection(sessionId)
       },
-      finalization: {
-        errorMessage,
-        errorKind: acpErrorKind,
-        pushEvent: (event) => this.pushEvent(event),
-        onPromptEnded: (sessionId, turnToken) =>
-          this.callbacks.onPromptEnded?.(sessionId, turnToken),
-        generationActivityChanged: () => this.generationActivityChanged(),
-        autoCompact: (sessionId, session, interaction) =>
-          this.contextCompactionWorkflow.compactAutomatic({ sessionId, session, interaction })
-      },
-      currentCwd: () => this.snapshotOwner.cwd,
-      resolveProjectName: (sessionId) => this.resolveSessionProjectName(sessionId),
-      preflightPlan: (request) => this.preflightPromptPlan(request),
-      admitPlan: (request, interaction, plan) => this.admitPromptPlan(request, interaction, plan),
-      disconnectForReload: () => this.disconnect(false),
-      resumeAfterReload: (request) => this.resumeSession(request),
-      recordAdmittedPrompt: (request) => this.handoffContinuity.recordAdmittedPrompt(request),
-      onPromptStarted: (sessionId, turnToken, promptAttemptId) =>
-        this.callbacks.onPromptStarted?.(sessionId, turnToken, promptAttemptId),
-      emitState: () => this.emitState()
+      reload: {
+        disconnect: () => this.disconnect(false),
+        resume: (request) => this.resumeSession(request)
+      }
     })
+    this.contextCompactionWorkflow = prompt.contextCompactionWorkflow
+    this.promptTurnWorkflow = prompt.promptTurnWorkflow
     const lifecycle = composeAcpRuntimeLifecycleOwners(options, base, session, {
       connect: (request) => this.connect(request),
       disconnect: (emitClosedStatus) => this.disconnect(emitClosedStatus),
@@ -540,16 +411,8 @@ class AcpRuntime {
     return this.connectionResources.connection
   }
 
-  private get pendingProviderReconnect(): boolean {
-    return this.connectionTransitions.providerReconnectPending
-  }
-
   private get reconnectBarrier(): Promise<void> | undefined {
     return this.connectionTransitions.barrier
-  }
-
-  private generationActivityChanged(): void {
-    this.notifyGenerationActivityChanged()
   }
 
   private get connectionGeneration(): number {
@@ -1453,28 +1316,6 @@ class AcpRuntime {
     return this.permissionContext.requestAppApproval(input)
   }
 
-  // Native UserInput::Skill entries are consumed inside Codex and may not emit a filesystem read
-  // lifecycle over ACP. Project the same compact activity explicitly so selected and auto-routed
-  // Skills remain visible without sending their path or document to renderer state or persistence.
-  private emitCodexSkillInputActivities(
-    sessionId: string,
-    promptTurn: number,
-    inputs: ReadonlyArray<{ name: string }>,
-    status: 'in_progress' | 'completed' | 'failed'
-  ): void {
-    for (const [index, { name }] of inputs.entries()) {
-      this.pushEvent({
-        kind: 'tool',
-        level: status === 'failed' ? 'error' : 'info',
-        sessionId,
-        toolCallId: `open-science-skill-${promptTurn}-${index}`,
-        providerToolName: 'skill',
-        title: `Loaded skill: ${name}`,
-        status
-      })
-    }
-  }
-
   // Lazily initializes the process connection before session creation.
   private async ensureConnected(cwd: string): Promise<ClientConnection> {
     return this.connectionLifecycle.ensureConnected(cwd)
@@ -1515,28 +1356,6 @@ class AcpRuntime {
     return this.sessionEnvironment.projectName(sessionId)
   }
 
-  // Marks a new assistant turn as the active artifact run before the model can call the MCP tool.
-  private async activateArtifactRun(
-    sessionId: string,
-    provenanceContext: AcpPromptRequest['provenanceContext']
-  ): Promise<ArtifactTurnHandle | undefined> {
-    if (!this.artifactTurns) return undefined
-
-    return this.artifactTurns.open({
-      appSessionId: sessionId,
-      artifactStorageSessionId:
-        this.sessionCapabilities.artifactRoutingIdFor(sessionId) ?? sessionId,
-      projectId: this.resolveSessionProjectName(sessionId),
-      agentName: this.framework.displayName,
-      provenanceContext
-    })
-  }
-
-  // Clears the handoff file after the prompt so late MCP writes cannot attach to a completed turn.
-  private async clearArtifactRun(artifactRun: ArtifactTurnHandle | undefined): Promise<void> {
-    if (artifactRun) await this.artifactTurns?.dispose(artifactRun)
-  }
-
   // Writes an inline file into the in-flight turn's pending artifact run so it attaches to the resulting
   // message and surfaces to the renderer like any generated artifact. Used by app-side connector tools
   // (e.g. molecule preview). Throws when no assistant turn is active (e.g. a user-run notebook cell).
@@ -1552,32 +1371,6 @@ class AcpRuntime {
       throw new Error('No active assistant turn to attach a generated file to.')
     }
     return this.artifactTurns.writeForActiveTurn(sessionId, input)
-  }
-
-  // Publishes pending files as a claim event; the renderer later supplies the final message id.
-  private async emitArtifactRunEvent(
-    sessionId: string,
-    artifactRun: ArtifactTurnHandle | undefined,
-    onPublished?: () => void
-  ): Promise<void> {
-    if (!artifactRun || !this.artifactTurns) return
-    const publication = await this.artifactTurns.finalize(artifactRun)
-    if (!publication) return
-
-    this.pushEvent(
-      {
-        kind: 'artifact',
-        level: 'info',
-        sessionId,
-        title: 'Generated files',
-        runId: publication.runId,
-        promptMessageId: publication.promptMessageId,
-        artifactSessionId: publication.artifactStorageSessionId,
-        artifactClaimId: publication.artifactClaimId,
-        artifacts: publication.artifacts
-      },
-      onPublished
-    )
   }
 
   private cancelPermissionFlowForSession(sessionId: string): void {

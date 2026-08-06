@@ -392,6 +392,23 @@ describe('runtime state ownership architecture', () => {
     expect(composition).not.toMatch(/AcpRuntime\.prototype|from ['"]electron['"]/)
   })
 
+  it('constructs Prompt workflows outside Runtime with a private preparation owner', () => {
+    const runtime = readSource('src/main/acp/runtime.ts')
+    const composition = readSource('src/main/acp/runtime-prompt-composition.ts')
+
+    expect(runtime).not.toMatch(
+      /new (?:AcpPromptPreparationOwner|AcpContextCompactionWorkflow|AcpPromptTurnWorkflow)/
+    )
+    expect(runtime).toContain('composeAcpRuntimePromptOwners(options, base, session, {')
+    expect(composition.match(/new AcpPromptPreparationOwner\(/g)).toHaveLength(1)
+    expect(composition.match(/new AcpContextCompactionWorkflow\(/g)).toHaveLength(1)
+    expect(composition.match(/new AcpPromptTurnWorkflow\(/g)).toHaveLength(1)
+    expect(composition).toContain(
+      'return Object.freeze({ contextCompactionWorkflow, promptTurnWorkflow })'
+    )
+    expect(composition).not.toMatch(/AcpRuntime\.prototype|from ['"]electron['"]/)
+  })
+
   it('keeps provider permission routing and reviewer preparation behind their owners', () => {
     const source = readSource('src/main/acp/runtime.ts')
 
@@ -405,7 +422,9 @@ describe('runtime state ownership architecture', () => {
   })
 
   it('keeps provider selection and Context routing behind their prompt owners', () => {
-    const source = readSource('src/main/acp/runtime.ts')
+    const runtime = readSource('src/main/acp/runtime.ts')
+    const promptComposition = readSource('src/main/acp/runtime-prompt-composition.ts')
+    const source = runtime + promptComposition
 
     expect(source).not.toContain('private providerTurnAdapter')
     expect(source).not.toContain('private recordProviderPromptContextUsage')
@@ -414,8 +433,8 @@ describe('runtime state ownership architecture', () => {
     expect(source).not.toContain('private selectedContextWindowFor')
     expect(source).not.toContain('private handleSessionUpdate')
     expect(source).not.toContain('private applySessionUpdateEffects')
-    expect(source).toContain('this.contextUsagePolicy.resolve(sessionId)')
-    expect(source).toContain('this.sessionUpdateProjector.route(notification')
+    expect(promptComposition).toContain('session.contextUsagePolicy.resolve(sessionId)')
+    expect(promptComposition).toContain('session.sessionUpdateProjector.route(notification')
   })
 
   it('accepts declared interface imports for a future orchestration module', () => {
