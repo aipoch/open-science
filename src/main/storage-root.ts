@@ -11,11 +11,23 @@ import {
 import { hasPendingMigrationMarker } from './storage/migration-marker'
 import { RELOCATABLE_DATA_DIRS } from './storage/data-directories'
 
+const resolveE2eStorageRoot = (): string | undefined => {
+  const root = process.env.OPEN_SCIENCE_E2E_STORAGE_ROOT?.trim()
+  if (!root) return undefined
+  if (!isAbsolute(root)) {
+    throw new Error('OPEN_SCIENCE_E2E_STORAGE_ROOT must be an absolute path.')
+  }
+  return normalize(root)
+}
+
 // Fixed, dev-aware config root (DB, sessions, claude, skills, settings live here). Never relocated.
 // A development-only absolute override supports truly isolated onboarding previews without changing
 // HOME — changing HOME breaks the macOS default-keychain lookup and can trigger a dangerous "restore
-// default keychain" dialog. Packaged builds always ignore the override.
+// default keychain" dialog. Packaged certification uses its own explicit, disposable E2E root.
 const resolveStorageRoot = (): string => {
+  const e2eRoot = resolveE2eStorageRoot()
+  if (e2eRoot) return e2eRoot
+
   const previewRoot = process.env.OPEN_SCIENCE_STORAGE_ROOT?.trim()
 
   if (!app.isPackaged && previewRoot) {
@@ -44,6 +56,8 @@ const dataFolderName = (): string => (app.isPackaged ? 'OpenScience' : 'OpenScie
 // at its parent - so this join is the single source of truth for the final path.
 const dataRootForParent = (parent: string): string => join(parent, dataFolderName())
 
+const defaultDataParent = (): string => resolveE2eStorageRoot() ?? app.getPath('home')
+
 // Converts a user-PICKED directory into the data root. Normally appends the data folder name
 // (`<picked>/OpenScience`), but when the user navigated INTO and selected the OpenScience folder
 // itself (its basename already equals the data folder name), it is used as-is. Without this,
@@ -71,7 +85,7 @@ const dataRootForPicked = (picked: string): string => {
 // because a failed copy cleanup may leave a markerless partial tree behind.
 const computeDefaultDataRoot = (): string => {
   const configRoot = resolveConfigRoot()
-  const homeDefault = dataRootForParent(app.getPath('home'))
+  const homeDefault = dataRootForParent(defaultDataParent())
   // A marker-bearing homeDefault is a half-copied/uncommitted staging dir, NOT the committed default:
   // treat it as "not there yet" so a crashed or in-flight migration can't fool the legacy fallback into
   // thinking the modern data folder already exists (which would split a legacy user's data).
@@ -97,8 +111,6 @@ const computeDefaultDataRoot = (): string => {
 // only default that is NOT `<parent>/dataFolderName()` is an untouched legacy install (default =
 // config root), and that case never reaches the reset UI — it is already the default, so no reset
 // is offered.
-const defaultDataParent = (): string => app.getPath('home')
-
 // Path equality that respects the platform filesystem: case-insensitive on Windows (NTFS paths are
 // case-insensitive), exact elsewhere. Used for the isDefault check and the same/inside-folder
 // guards so a differently-cased path to the SAME folder on Windows isn't mistaken for a different

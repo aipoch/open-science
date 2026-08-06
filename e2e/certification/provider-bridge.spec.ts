@@ -1,6 +1,6 @@
 import { expect } from '@playwright/test'
 import { test } from '../fixtures/electron-app'
-import { createProject, sendPrompt } from './helpers'
+import { createProject, openRecentSession, sendPrompt } from './helpers'
 
 test('re-enters a persisted provider route through the real Agent process', async ({ app }) => {
   let page = await app.completeOnboarding()
@@ -13,9 +13,6 @@ test('re-enters a persisted provider route through the real Agent process', asyn
   )
 
   page = await app.restart()
-  await page
-    .getByRole('region', { name: 'Recent sessions' })
-    .getByRole('button', { name: 'Verify the provider bridge.' })
-    .click()
+  await openRecentSession(page, 'Verify the provider bridge.')
   await expect(page.getByText('Provider bridge verified through the Agent process.')).toBeVisible()
 })

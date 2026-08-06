@@ -64,6 +64,9 @@ const launchEnvironment = (
   }
 
   environment.OPEN_SCIENCE_STORAGE_ROOT = storageRoot
+  if (environment.OPEN_SCIENCE_E2E_EXECUTABLE) {
+    environment.OPEN_SCIENCE_E2E_STORAGE_ROOT = storageRoot
+  }
   if (fakeRemoteItRoot) {
     environment.OPEN_SCIENCE_FAKE_REMOTEIT_STATE = join(storageRoot, 'fake-remoteit-state.json')
     environment.OPEN_SCIENCE_REMOTEIT_BIN = process.execPath
@@ -184,12 +187,17 @@ class ElectronAppHarness implements ElectronApp {
       storageRoot: join(testRoot, 'storage'),
       userDataRoot: join(testRoot, 'electron-profile')
     })
-    await mkdir(harness.roots.storageRoot, { recursive: true })
-    await writeFile(harness.roots.fakeRemoteItState, JSON.stringify({ services: [] }), 'utf8')
-    await writeFakeAgentLauncher(harness.roots.fakeAgentBinRoot)
-    await writeFakeRemoteItCommands(harness.roots.fakeRemoteItRoot)
-    await harness.launch()
-    return harness
+    try {
+      await mkdir(harness.roots.storageRoot, { recursive: true })
+      await writeFile(harness.roots.fakeRemoteItState, JSON.stringify({ services: [] }), 'utf8')
+      await writeFakeAgentLauncher(harness.roots.fakeAgentBinRoot)
+      await writeFakeRemoteItCommands(harness.roots.fakeRemoteItRoot)
+      await harness.launch()
+      return harness
+    } catch (error) {
+      await harness.dispose().catch(() => undefined)
+      throw error
+    }
   }
 
   get page(): Page {

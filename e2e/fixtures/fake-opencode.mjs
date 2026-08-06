@@ -61,13 +61,19 @@ const withMcpClient = async (sessionId, serverName, operation) => {
 const verifyProviderBridge = () => {
   const config = JSON.parse(process.env.OPENCODE_CONFIG_CONTENT ?? '{}')
   const providers = Object.values(config.provider ?? {})
-  const route = providers.find((provider) => provider?.options?.baseURL)
-  const credential = Object.entries(process.env).find(([name]) =>
-    name.startsWith('OPENCODE_APP_API_KEY')
-  )
-  if (route?.options?.baseURL !== 'http://127.0.0.1:9/v1' || credential?.[1] !== 'e2e-key') {
+  const route = providers.find((provider) => provider?.models?.['e2e-model'])
+  const credentialName = route?.options?.apiKey?.match(/^\{env:([^}]+)\}$/)?.[1]
+  const credential = credentialName ? process.env[credentialName] : undefined
+  if (!route?.options?.baseURL || !credential)
     throw new Error('The persisted provider route did not reach the Agent process.')
-  }
+  const direct = route.options.baseURL === 'http://127.0.0.1:9/v1' && credential === 'e2e-key'
+  const url = new URL(route.options.baseURL)
+  const bridged = url.hostname === '127.0.0.1' && url.pathname === '/v1' && url.port !== '9'
+  if (!direct && !bridged)
+    throw new Error(
+      `The persisted provider route did not reach the Agent process ` +
+        `(base URL: ${route.options.baseURL}, credential: present).`
+    )
   return 'Provider bridge verified through the Agent process.'
 }
 
