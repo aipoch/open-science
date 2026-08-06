@@ -24,7 +24,7 @@ describe('micromamba pinning', () => {
 
   it('downloads the pinned archive from the matching official GitHub release', () => {
     expect(resolveDownloadUrl('osx-arm64')).toBe(
-      'https://github.com/mamba-org/micromamba-releases/releases/download/2.8.1-0/micromamba-osx-arm64.tar.bz2'
+      'https://github.com/mamba-org/micromamba-releases/releases/download/2.8.1-1/micromamba-osx-arm64.tar.bz2'
     )
   })
 })
