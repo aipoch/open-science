@@ -96,6 +96,8 @@ type PreloadApi = {
   }
   notebookEnv: {
     cancel: (language?: unknown) => unknown
+    provision: (language: unknown, operationId?: unknown) => unknown
+    repair: (language: unknown, operationId?: unknown) => unknown
   }
   notifications: {
     peekPendingOpenSession: () => unknown
@@ -580,16 +582,30 @@ describe('preload bridge — runtime renderer contract catalog', () => {
     }
   })
 
-  it('preserves ACP defaults and the notebook cancellation argument slot', async () => {
+  it('preserves ACP defaults and notebook environment operation arguments', async () => {
     await api.acp.connect()
     await api.acp.connect(undefined)
     await api.notebookEnv.cancel()
     await api.notebookEnv.cancel(undefined)
+    await api.notebookEnv.provision('r', 'provision-operation')
+    await api.notebookEnv.repair('python', 'repair-operation')
 
     expect(invokeMock).toHaveBeenNthCalledWith(1, 'acp:connect', {})
     expect(invokeMock).toHaveBeenNthCalledWith(2, 'acp:connect', {})
     expect(invokeMock).toHaveBeenNthCalledWith(3, 'notebook-env:cancel', undefined)
     expect(invokeMock).toHaveBeenNthCalledWith(4, 'notebook-env:cancel', undefined)
+    expect(invokeMock).toHaveBeenNthCalledWith(
+      5,
+      'notebook-env:provision',
+      'r',
+      'provision-operation'
+    )
+    expect(invokeMock).toHaveBeenNthCalledWith(
+      6,
+      'notebook-env:repair',
+      'python',
+      'repair-operation'
+    )
   })
 })
 

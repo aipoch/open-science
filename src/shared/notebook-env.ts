@@ -8,6 +8,9 @@ export type ProvisionProgress = {
   phase: string
   message: string
   progress: number
+  // Correlates renderer-requested provision/repair progress with the originating IPC call. Automatic
+  // maintenance omits it so its terminal event cannot accidentally settle a queued explicit request.
+  operationId?: string
   // Explicit at process boundaries so an automatic R provision is not inferred as a global upgrade.
   scope?: ProvisionOperationScope
   // Present for a provision triggered by one notebook run; other sessions remain visible and usable.

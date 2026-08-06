@@ -713,8 +713,8 @@ export interface OpenScienceAPI {
   }
   notebookEnv: {
     getStatus(): Promise<ProvisionStatus>
-    provision(lang: NotebookLanguage): Promise<void>
-    repair(lang: NotebookLanguage): Promise<void>
+    provision(lang: NotebookLanguage, operationId?: string): Promise<void>
+    repair(lang: NotebookLanguage, operationId?: string): Promise<void>
     cancel(lang?: NotebookLanguage): Promise<void>
     onProgress(listener: (progress: ProvisionProgress) => void): RemoveListener
   }

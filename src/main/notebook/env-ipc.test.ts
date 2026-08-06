@@ -89,17 +89,29 @@ describe('registerNotebookEnvIpcHandlers', () => {
     })
     registerNotebookEnvIpcHandlers(createLifecycle(provisioner))
 
-    await registered.get('notebook-env:provision')?.({}, 'r')
-    await registered.get('notebook-env:repair')?.({}, 'python')
+    await registered.get('notebook-env:provision')?.({}, 'r', 'provision-operation')
+    await registered.get('notebook-env:repair')?.({}, 'python', 'repair-operation')
 
     expect(sent).toEqual([
       {
         channel: 'notebook-env:progress',
-        progress: { phase: 'fetch-r', message: 'Downloading R', progress: 0.4, scope: 'r' }
+        progress: {
+          phase: 'fetch-r',
+          message: 'Downloading R',
+          progress: 0.4,
+          scope: 'r',
+          operationId: 'provision-operation'
+        }
       },
       {
         channel: 'notebook-env:progress',
-        progress: { phase: 'repair', message: 'Repairing Python', progress: 0.2, scope: 'python' }
+        progress: {
+          phase: 'repair',
+          message: 'Repairing Python',
+          progress: 0.2,
+          scope: 'python',
+          operationId: 'repair-operation'
+        }
       }
     ])
     expect(destroyedSend).not.toHaveBeenCalled()

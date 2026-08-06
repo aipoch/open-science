@@ -97,7 +97,7 @@ describe('notebook-env-store', () => {
   it('records the scope and forwards provision(lang) to the bridge', async () => {
     const { api } = installApi()
     await useNotebookEnvStore.getState().provision('r')
-    expect(api.provision).toHaveBeenCalledWith('r')
+    expect(api.provision).toHaveBeenCalledWith('r', expect.any(String))
     expect(useNotebookEnvStore.getState().scope).toBe('r')
   })
 
@@ -200,11 +200,12 @@ describe('notebook-env-store', () => {
           resolveProvision = resolve
         })
     )
-    const { emit } = installApi({ provision })
+    const { api, emit } = installApi({ provision })
     await useNotebookEnvStore.getState().init()
 
     const setup = useNotebookEnvStore.getState().provision('r')
-    emit({ phase: 'done', message: 'R environment ready', progress: 1, language: 'r' })
+    const operationId = api.provision.mock.calls[0]?.[1] as string
+    emit({ phase: 'done', message: 'R environment ready', progress: 1, language: 'r', operationId })
 
     expect(useNotebookEnvStore.getState().byLang.r?.preparing).toBe(true)
     resolveProvision?.()
@@ -220,11 +221,12 @@ describe('notebook-env-store', () => {
           rejectProvision = reject
         })
     )
-    const { emit } = installApi({ provision })
+    const { api, emit } = installApi({ provision })
     await useNotebookEnvStore.getState().init()
 
     const setup = useNotebookEnvStore.getState().provision('r')
-    emit({ phase: 'error', message: 'R setup failed', progress: 0, language: 'r' })
+    const operationId = api.provision.mock.calls[0]?.[1] as string
+    emit({ phase: 'error', message: 'R setup failed', progress: 0, language: 'r', operationId })
 
     expect(useNotebookEnvStore.getState().byLang.r?.preparing).toBe(true)
     rejectProvision?.(new Error('R setup failed'))
@@ -264,11 +266,18 @@ describe('notebook-env-store', () => {
           resolveProvision = resolve
         })
     )
-    const { emit } = installApi({ provision })
+    const { api, emit } = installApi({ provision })
     await useNotebookEnvStore.getState().init()
 
     const explicit = useNotebookEnvStore.getState().provision('r')
-    emit({ phase: 'done', message: 'Explicit R setup ready', progress: 1, language: 'r' })
+    const operationId = api.provision.mock.calls[0]?.[1] as string
+    emit({
+      phase: 'done',
+      message: 'Explicit R setup ready',
+      progress: 1,
+      language: 'r',
+      operationId
+    })
     emit({ phase: 'create-r', message: 'Automatic R setup started', progress: 0.1, language: 'r' })
     resolveProvision?.()
     await explicit
@@ -278,6 +287,41 @@ describe('notebook-env-store', () => {
       progress: { phase: 'create-r', message: 'Automatic R setup started' }
     })
     emit({ phase: 'done', message: 'Automatic R setup ready', progress: 1, language: 'r' })
+    expect(useNotebookEnvStore.getState().byLang.r?.preparing).toBe(false)
+  })
+
+  it('does not let an automatic terminal event claim a queued explicit setup', async () => {
+    let resolveProvision: (() => void) | undefined
+    const provision = vi.fn(
+      () =>
+        new Promise<void>((resolve) => {
+          resolveProvision = resolve
+        })
+    )
+    const { api, emit } = installApi({ provision })
+    await useNotebookEnvStore.getState().init()
+
+    emit({ phase: 'create-r', message: 'Automatic R setup started', progress: 0.1, language: 'r' })
+    const explicit = useNotebookEnvStore.getState().provision('r')
+    const operationId = api.provision.mock.calls[0]?.[1] as string
+    emit({ phase: 'done', message: 'Automatic R setup ready', progress: 1, language: 'r' })
+    emit({
+      phase: 'create-r',
+      message: 'Explicit R setup started',
+      progress: 0.1,
+      language: 'r',
+      operationId
+    })
+    emit({
+      phase: 'done',
+      message: 'Explicit R setup ready',
+      progress: 1,
+      language: 'r',
+      operationId
+    })
+
+    resolveProvision?.()
+    await explicit
     expect(useNotebookEnvStore.getState().byLang.r?.preparing).toBe(false)
   })
 
@@ -355,7 +399,7 @@ describe('notebook-env-store', () => {
       byLang: { python: { preparing: false, error: 'RUNTIME_RECOVERY_BLOCKED: …' } }
     })
     await useNotebookEnvStore.getState().reset('python')
-    expect(repair).toHaveBeenCalledWith('python') // force-recovery via the repair IPC
+    expect(repair).toHaveBeenCalledWith('python', expect.any(String)) // force-recovery via repair IPC
     const { python } = useNotebookEnvStore.getState().byLang
     expect(python?.preparing).toBe(false)
     expect(python?.error).toBeUndefined() // cleared on success

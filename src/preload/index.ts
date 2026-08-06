@@ -588,8 +588,10 @@ const api: OpenScienceAPI = {
   },
   notebookEnv: {
     getStatus: () => electronRendererContracts.invoke('notebookEnv.getStatus'),
-    provision: (lang) => electronRendererContracts.invoke('notebookEnv.provision', lang),
-    repair: (lang) => electronRendererContracts.invoke('notebookEnv.repair', lang),
+    provision: (lang, operationId) =>
+      electronRendererContracts.invoke('notebookEnv.provision', lang, operationId),
+    repair: (lang, operationId) =>
+      electronRendererContracts.invoke('notebookEnv.repair', lang, operationId),
     cancel: (lang?: NotebookLanguage) =>
       electronRendererContracts.invoke('notebookEnv.cancel', lang),
     onProgress: (listener) =>

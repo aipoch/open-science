@@ -17,8 +17,8 @@ import { DEFAULT_ENV_VERSION, DEFAULT_PY_ENV, envPrefix, readReadyMarker } from 
 
 type NotebookEnvironmentLifecycle = {
   status: () => Promise<ProvisionStatus>
-  provision: (language: NotebookLanguage) => Promise<void>
-  repair: (language: NotebookLanguage) => Promise<void>
+  provision: (language: NotebookLanguage, operationId?: string) => Promise<void>
+  repair: (language: NotebookLanguage, operationId?: string) => Promise<void>
   cancel: (language?: NotebookLanguage) => void
   startup: () => Promise<void>
 }
@@ -38,14 +38,20 @@ const RUNTIME_UNAVAILABLE_MESSAGE =
 const runUnavailableOperation = (
   deps: NotebookEnvironmentLifecycleDeps,
   operation: 'provision' | 'repair',
-  language: NotebookLanguage
+  language: NotebookLanguage,
+  operationId?: string
 ): Promise<void> =>
   runLoggedRuntimeOperation(
     operation,
     language,
     deps.root,
     () => Promise.reject(new Error(RUNTIME_UNAVAILABLE_MESSAGE)),
-    () => undefined
+    (progress) =>
+      deps.projectProgress({
+        ...progress,
+        scope: language,
+        ...(operationId === undefined ? {} : { operationId })
+      })
   )
 
 const createUnavailableLifecycle = (
@@ -58,8 +64,9 @@ const createUnavailableLifecycle = (
       version: DEFAULT_ENV_VERSION,
       provisioning: false
     }),
-  provision: (language) => runUnavailableOperation(deps, 'provision', language),
-  repair: (language) => runUnavailableOperation(deps, 'repair', language),
+  provision: (language, operationId) =>
+    runUnavailableOperation(deps, 'provision', language, operationId),
+  repair: (language, operationId) => runUnavailableOperation(deps, 'repair', language, operationId),
   cancel: () => undefined,
   startup: () => Promise.resolve()
 })
@@ -77,7 +84,7 @@ const createNotebookEnvironmentLifecycle = (
       return provisioner.status()
     })
 
-  const provision = (language: NotebookLanguage): Promise<void> =>
+  const provision = (language: NotebookLanguage, operationId?: string): Promise<void> =>
     runLoggedRuntimeOperation(
       'provision',
       language,
@@ -90,10 +97,15 @@ const createNotebookEnvironmentLifecycle = (
             ? provisioner.provisionR(report)
             : provisioner.provisionPython(report))
         }),
-      (progress) => deps.projectProgress({ ...progress, scope: language })
+      (progress) =>
+        deps.projectProgress({
+          ...progress,
+          scope: language,
+          ...(operationId === undefined ? {} : { operationId })
+        })
     )
 
-  const repair = (language: NotebookLanguage): Promise<void> =>
+  const repair = (language: NotebookLanguage, operationId?: string): Promise<void> =>
     runLoggedRuntimeOperation(
       'repair',
       language,
@@ -104,7 +116,12 @@ const createNotebookEnvironmentLifecycle = (
           await provisioner.repair(language, report, { force: true })
           await deps.onRepairCompleted?.(language)
         }),
-      (progress) => deps.projectProgress({ ...progress, scope: language })
+      (progress) =>
+        deps.projectProgress({
+          ...progress,
+          scope: language,
+          ...(operationId === undefined ? {} : { operationId })
+        })
     )
 
   const startup = async (): Promise<void> => {
