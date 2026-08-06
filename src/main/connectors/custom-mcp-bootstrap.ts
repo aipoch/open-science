@@ -1,6 +1,6 @@
 import type { CustomMcpServerConfig } from './mcp-client-manager'
 import type { StoredConnectors, StoredCustomMcpServer } from '../settings/types'
-import { customConnectorSlug } from '../../shared/custom-connector'
+import { customConnectorAliasKey, customConnectorAliases } from '../../shared/custom-connector'
 import { ALL_CONNECTOR_IDS } from './registry'
 
 // Pure mapping/filtering helpers used to wire custom MCP servers into app bootstrap (ipc.ts).
@@ -46,10 +46,15 @@ export const isCustomMcpServerRouteSafe = (
   server: StoredCustomMcpServer,
   allServers: readonly StoredCustomMcpServer[]
 ): boolean => {
-  const slug = customConnectorSlug(server)
-  return (
-    !ALL_CONNECTOR_IDS.includes(slug) &&
-    allServers.filter((candidate) => customConnectorSlug(candidate) === slug).length === 1
+  const aliases = new Set(customConnectorAliases(server).map(customConnectorAliasKey))
+  if (ALL_CONNECTOR_IDS.some((id) => aliases.has(customConnectorAliasKey(id)))) return false
+
+  return allServers.every(
+    (candidate) =>
+      candidate === server ||
+      customConnectorAliases(candidate).every(
+        (alias) => !aliases.has(customConnectorAliasKey(alias))
+      )
   )
 }
 

@@ -634,8 +634,19 @@ const createApplicationModules = async (
             ...ALL_CONNECTOR_IDS,
             ...customMcpServers
               .filter((server) => isCustomMcpServerRouteSafe(server, customMcpServers))
-              .flatMap((server) => [customConnectorSlug(server), server.name])
+              .map(customConnectorSlug)
           ])
+        ),
+        connectorAliases: Object.fromEntries(
+          customMcpServers
+            .filter((server) => isCustomMcpServerRouteSafe(server, customMcpServers))
+            .flatMap((server) => {
+              const slug = customConnectorSlug(server)
+              return [
+                [server.name, slug],
+                [server.id, slug]
+              ]
+            })
         ),
         protectedSpecialistIds: ['reviewer'],
         protectedSpecialistNames: ['Reviewer']

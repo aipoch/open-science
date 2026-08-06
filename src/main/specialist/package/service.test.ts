@@ -341,6 +341,42 @@ describe('SpecialistPackageService', () => {
     })
   })
 
+  it('keeps full-access Connector exclusions canonical across legacy aliases', async () => {
+    const repository = new SpecialistRepository(storageDir)
+    await repository.insert({
+      id: 'legacy-exclusion',
+      name: 'LEGACY_EXCLUSION',
+      displayName: 'Legacy exclusion',
+      description: '',
+      systemPrompt: '',
+      enabled: true,
+      capabilityMode: 'full',
+      fullAccess: {
+        excludedSkillIds: [],
+        excludedConnectorIds: ['Example Connector'],
+        connectorTools: []
+      },
+      selectedCapabilities: { skillIds: [], connectorIds: [], connectorTools: [] },
+      revision: 1,
+      packageVersion: '1.0.0',
+      origin: 'local',
+      ownedSkillIds: []
+    })
+    const service = new SpecialistPackageService({
+      storageDir,
+      repository,
+      catalog: async () => ({
+        ...catalog,
+        connectorIds: ['example-connector'],
+        connectorAliases: { 'Example Connector': 'example-connector' }
+      })
+    })
+
+    await expect(service.previewExport('legacy-exclusion')).resolves.toMatchObject({
+      connectorIds: []
+    })
+  })
+
   it('exports builtin and owned Skills with exact IDs and editable capability references only', async () => {
     const repository = new SpecialistRepository(storageDir)
     await repository.insert({

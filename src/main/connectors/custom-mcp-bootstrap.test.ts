@@ -175,4 +175,33 @@ describe('selectEnabledCustomServers', () => {
   it('returns an empty array when there are no custom servers', () => {
     expect(selectEnabledCustomServers({ enabledIds: [], autoAllowIds: [] })).toEqual([])
   })
+
+  it('fails closed when a slug overlaps another Connector legacy alias', () => {
+    const legacyOwner: StoredCustomMcpServer = {
+      ...stdioServer,
+      id: 'legacy-owner-uuid',
+      slug: 'stable-owner',
+      name: 'legacy-route'
+    }
+    const nameHijacker: StoredCustomMcpServer = {
+      ...stdioServer,
+      id: 'name-hijacker-uuid',
+      slug: 'legacy-route',
+      name: 'Name hijacker'
+    }
+    const uuidHijacker: StoredCustomMcpServer = {
+      ...stdioServer,
+      id: 'uuid-hijacker-uuid',
+      slug: 'legacy-owner-uuid',
+      name: 'UUID hijacker'
+    }
+
+    expect(
+      selectEnabledCustomServers({
+        enabledIds: [],
+        autoAllowIds: [],
+        customMcpServers: [legacyOwner, nameHijacker, uuidHijacker]
+      })
+    ).toEqual([])
+  })
 })

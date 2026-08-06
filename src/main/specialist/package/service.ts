@@ -130,16 +130,15 @@ const effectiveSpecialistSkillIds = (
 const effectiveSpecialistConnectorIds = (
   specialist: StoredSpecialist,
   catalog: SpecialistPackageCatalogSnapshot
-): readonly string[] =>
-  specialist.capabilityMode === 'selected'
-    ? [...new Set(specialist.selectedCapabilities.connectorIds)]
-    : [
-        ...new Set(
-          catalog.connectorIds.filter(
-            (id) => !specialist.fullAccess.excludedConnectorIds.includes(id)
-          )
-        )
-      ]
+): readonly string[] => {
+  const canonical = (id: string): string => catalog.connectorAliases?.[id] ?? id
+  if (specialist.capabilityMode === 'selected') {
+    return [...new Set(specialist.selectedCapabilities.connectorIds.map(canonical))]
+  }
+
+  const excluded = new Set(specialist.fullAccess.excludedConnectorIds.map(canonical))
+  return [...new Set(catalog.connectorIds.filter((id) => !excluded.has(id)))]
+}
 
 export class SpecialistSkillDeletionProtectedError extends Error {
   readonly code = 'protected-skill' as const

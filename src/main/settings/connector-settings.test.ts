@@ -210,6 +210,40 @@ describe('ConnectorSettingsModule', () => {
     ).rejects.toThrow('already exists')
   })
 
+  it('rejects IDs and names that overlap an installed Connector legacy alias', async () => {
+    const existing = await service.addCustomServer({
+      name: 'legacy-route',
+      slug: 'stable-route',
+      transport: 'stdio',
+      command: 'example-mcp'
+    })
+
+    await expect(
+      service.addCustomServer({
+        name: 'Different name',
+        slug: 'legacy-route',
+        transport: 'stdio',
+        command: 'example-mcp'
+      })
+    ).rejects.toThrow('conflicts with an existing Connector alias')
+    await expect(
+      service.addCustomServer({
+        name: 'Another name',
+        slug: existing.customServers[0].id,
+        transport: 'stdio',
+        command: 'example-mcp'
+      })
+    ).rejects.toThrow('conflicts with an existing Connector alias')
+    await expect(
+      service.addCustomServer({
+        name: 'stable-route',
+        slug: 'new-route',
+        transport: 'stdio',
+        command: 'example-mcp'
+      })
+    ).rejects.toThrow('conflicts with an existing Connector identity')
+  })
+
   it('fails closed when a legacy Connector derives a bundled route', async () => {
     await repository.addCustomServer({
       id: 'legacy-reserved-route',

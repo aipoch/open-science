@@ -420,6 +420,90 @@ describe('ConnectorsPanel (groups)', () => {
     expect(useSettingsStore.getState().loadConnectors).toHaveBeenCalledTimes(2)
   })
 
+  it('keeps independent cancel controls for concurrent OAuth sign-ins', async () => {
+    const rejectAuthentications = new Map<string, (error: Error) => void>()
+    const authenticateCustomServer = vi.fn(
+      ({ id }: { id: string }) =>
+        new Promise<void>((_resolve, reject) => {
+          rejectAuthentications.set(id, reject)
+        })
+    )
+    const cancelCustomServerAuthentication = vi.fn().mockResolvedValue(undefined)
+    useSettingsStore.setState({
+      authenticateCustomServer,
+      cancelCustomServerAuthentication,
+      customServers: [
+        {
+          id: 'oauth-a',
+          slug: 'oauth-a',
+          name: 'OAuth A',
+          transport: 'streamable_http',
+          enabled: false,
+          url: 'https://a.example.test',
+          oauth: { hasTokens: false }
+        },
+        {
+          id: 'oauth-b',
+          slug: 'oauth-b',
+          name: 'OAuth B',
+          transport: 'streamable_http',
+          enabled: false,
+          url: 'https://b.example.test',
+          oauth: { hasTokens: false }
+        }
+      ]
+    })
+    act(() => root.render(<ConnectorsPanel onNavigate={vi.fn()} />))
+    const row = (name: string): HTMLLIElement | undefined =>
+      Array.from(document.body.querySelectorAll<HTMLLIElement>('li')).find((item) =>
+        item.textContent?.includes(name)
+      )
+    const clickRowAction = (name: string, action: string): void => {
+      const button = Array.from(
+        row(name)?.querySelectorAll<HTMLButtonElement>('button') ?? []
+      ).find((candidate) => candidate.textContent?.trim() === action)
+      button?.click()
+    }
+
+    act(() => clickRowAction('OAuth A', 'Sign in'))
+    act(() => clickRowAction('OAuth B', 'Sign in'))
+    expect(row('OAuth A')?.textContent).toContain('Cancel')
+    expect(row('OAuth B')?.textContent).toContain('Cancel')
+
+    await act(async () => clickRowAction('OAuth A', 'Cancel'))
+    expect(cancelCustomServerAuthentication).toHaveBeenCalledWith({ id: 'oauth-a' })
+    expect(row('OAuth A')?.textContent).toContain('Sign in')
+    expect(row('OAuth B')?.textContent).toContain('Cancel')
+
+    await act(async () => rejectAuthentications.get('oauth-a')?.(new Error('cancelled')))
+    await act(async () => clickRowAction('OAuth B', 'Cancel'))
+    await act(async () => rejectAuthentications.get('oauth-b')?.(new Error('cancelled')))
+  })
+
+  it('uses the Settings danger banner for OAuth errors', async () => {
+    useSettingsStore.setState({
+      authenticateCustomServer: vi.fn().mockRejectedValue(new Error('Authorization denied')),
+      customServers: [
+        {
+          id: 'oauth-mcp',
+          slug: 'oauth-mcp',
+          name: 'OAuth MCP',
+          transport: 'streamable_http',
+          enabled: false,
+          url: 'https://mcp.example.test',
+          oauth: { hasTokens: false }
+        }
+      ]
+    })
+    act(() => root.render(<ConnectorsPanel onNavigate={vi.fn()} />))
+
+    await act(async () => clickButtonByText('Sign in'))
+
+    const alert = document.body.querySelector('[role="alert"]')
+    expect(alert?.textContent).toContain('Authorization denied')
+    expect(alert?.className).toContain('border-danger-000/30')
+  })
+
   it('shows an empty-state line when there are no custom servers', () => {
     useSettingsStore.setState({ customServers: [] })
     act(() => {

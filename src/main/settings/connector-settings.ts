@@ -20,6 +20,8 @@ import type {
   UpdateCustomServerRequest
 } from '../../shared/settings'
 import {
+  customConnectorAliasKey,
+  customConnectorAliases,
   customConnectorSlug,
   isCustomConnectorSlug,
   toCustomConnectorSlug
@@ -161,6 +163,7 @@ class ConnectorSettingsModule {
   async previewCustomServerTemplateImport(contents: string): Promise<ConnectorTemplatePreview> {
     const customServers = (await this.repository.getSettings()).connectors?.customMcpServers ?? []
     return parseConnectorTemplate(contents, {
+      existingIds: customServers.map((server) => server.id),
       existingNames: customServers.map((server) => server.name),
       existingSlugs: customServers.map(customConnectorSlug),
       bundledIds: CONNECTOR_CATALOG.map((connector) => connector.id)
@@ -234,11 +237,17 @@ class ConnectorSettingsModule {
     const normalizedName = name.toLowerCase()
     const slug = request.slug?.trim() || toCustomConnectorSlug(name)
     const existingServers = (await this.repository.getSettings()).connectors?.customMcpServers ?? []
+    const existingAliasKeys = new Set(
+      existingServers.flatMap(customConnectorAliases).map(customConnectorAliasKey)
+    )
     if (CONNECTOR_CATALOG.some((connector) => connector.id.toLowerCase() === normalizedName)) {
       throw new Error(`Connector name "${name}" is reserved by a built-in connector`)
     }
     if (existingServers.some((server) => server.name.toLowerCase() === normalizedName)) {
       throw new Error(`A custom connector named "${name}" already exists`)
+    }
+    if (existingAliasKeys.has(normalizedName)) {
+      throw new Error(`Connector name "${name}" conflicts with an existing Connector identity`)
     }
     if (!isCustomConnectorSlug(slug)) {
       throw new Error('Connector ID must use only lowercase letters, numbers, and hyphens')
@@ -248,6 +257,9 @@ class ConnectorSettingsModule {
     }
     if (existingServers.some((server) => customConnectorSlug(server) === slug)) {
       throw new Error(`A custom connector with ID "${slug}" already exists`)
+    }
+    if (existingAliasKeys.has(customConnectorAliasKey(slug))) {
+      throw new Error(`Connector ID "${slug}" conflicts with an existing Connector alias`)
     }
     if (request.transport === 'stdio' && request.oauth) {
       throw new Error('OAuth is only supported for remote custom connectors')

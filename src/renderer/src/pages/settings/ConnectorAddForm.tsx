@@ -12,7 +12,13 @@ import { Input } from '@/components/ui/input'
 import { Select, SelectContent, SelectItem, SelectTrigger } from '@/components/ui/select'
 import { Textarea } from '@/components/ui/textarea'
 import { useSettingsStore } from '@/stores/settings-store'
-import { isCustomConnectorSlug, toCustomConnectorSlug } from '../../../../shared/custom-connector'
+import {
+  customConnectorAliasKey,
+  customConnectorAliases,
+  isCustomConnectorSlug,
+  toCustomConnectorSlug
+} from '../../../../shared/custom-connector'
+import { SettingsRow } from './SettingsLayout'
 
 // Which kind of custom connector is being added: a local stdio command or a remote HTTP/SSE server.
 type ConnectorMode = 'local' | 'remote'
@@ -131,7 +137,13 @@ export function ConnectorAddForm({
       return 'This ID is reserved by a built-in Connector.'
     }
     if (
-      customServers.some((server) => server.id !== editServer?.id && server.slug === currentSlug)
+      customServers.some(
+        (server) =>
+          server.id !== editServer?.id &&
+          customConnectorAliases(server)
+            .map(customConnectorAliasKey)
+            .includes(customConnectorAliasKey(currentSlug))
+      )
     ) {
       return 'A custom Connector with this ID already exists.'
     }
@@ -355,11 +367,20 @@ export function ConnectorAddForm({
           ) : null}
         </div>
 
-        <div className="space-y-1.5">
-          <label className={fieldLabelClassName} htmlFor="connector-slug">
-            Connector ID
-            {isEdit ? null : <RequiredMark />}
-          </label>
+        <SettingsRow
+          label={
+            <>
+              Connector ID
+              {isEdit ? null : <RequiredMark />}
+            </>
+          }
+          description={
+            <span className={slugError ? 'text-destructive' : undefined}>
+              {slugError ??
+                `Used by host.mcp("${currentSlug}", …), Specialists, and the generated MCP skill.`}
+            </span>
+          }
+        >
           <Input
             id="connector-slug"
             aria-label="Connector ID"
@@ -376,11 +397,7 @@ export function ConnectorAddForm({
                   }
             }
           />
-          <p className={`text-xs ${slugError ? 'text-destructive' : 'text-muted-foreground'}`}>
-            {slugError ??
-              `Used by host.mcp("${currentSlug}", …), Specialists, and the generated MCP skill.`}
-          </p>
-        </div>
+        </SettingsRow>
 
         <div className="space-y-1.5">
           <label className={fieldLabelClassName} htmlFor="connector-description">
@@ -505,8 +522,7 @@ export function ConnectorAddForm({
               </Select>
             </div>
 
-            <div className="space-y-1.5">
-              <span className={fieldLabelClassName}>Authentication</span>
+            <SettingsRow label="Authentication">
               <Select
                 value={remoteAuth}
                 onValueChange={(value) => setRemoteAuth(value as RemoteAuth)}
@@ -526,14 +542,17 @@ export function ConnectorAddForm({
                   <SelectItem value="headers">Static headers</SelectItem>
                 </SelectContent>
               </Select>
-            </div>
+            </SettingsRow>
 
             {remoteAuth === 'oauth' ? (
               <>
-                <div className="space-y-1.5">
-                  <label className={fieldLabelClassName} htmlFor="connector-oauth-scopes">
-                    OAuth scopes <span className="text-muted-foreground">(optional)</span>
-                  </label>
+                <SettingsRow
+                  label={
+                    <>
+                      OAuth scopes <span className="text-muted-foreground">(optional)</span>
+                    </>
+                  }
+                >
                   <Input
                     id="connector-oauth-scopes"
                     aria-label="OAuth scopes"
@@ -541,12 +560,15 @@ export function ConnectorAddForm({
                     placeholder="openid profile"
                     onChange={(event) => setOauthScopesText(event.target.value)}
                   />
-                </div>
-                <div className="space-y-1.5">
-                  <label className={fieldLabelClassName} htmlFor="connector-oauth-server">
-                    Authorization server URL{' '}
-                    <span className="text-muted-foreground">(optional)</span>
-                  </label>
+                </SettingsRow>
+                <SettingsRow
+                  label={
+                    <>
+                      Authorization server URL{' '}
+                      <span className="text-muted-foreground">(optional)</span>
+                    </>
+                  }
+                >
                   <Input
                     id="connector-oauth-server"
                     aria-label="Authorization server URL"
@@ -555,11 +577,14 @@ export function ConnectorAddForm({
                     className="font-mono"
                     onChange={(event) => setAuthorizationServerUrl(event.target.value)}
                   />
-                </div>
-                <div className="space-y-1.5">
-                  <label className={fieldLabelClassName} htmlFor="connector-oauth-client-metadata">
-                    Client metadata URL <span className="text-muted-foreground">(optional)</span>
-                  </label>
+                </SettingsRow>
+                <SettingsRow
+                  label={
+                    <>
+                      Client metadata URL <span className="text-muted-foreground">(optional)</span>
+                    </>
+                  }
+                >
                   <Input
                     id="connector-oauth-client-metadata"
                     aria-label="Client metadata URL"
@@ -568,7 +593,7 @@ export function ConnectorAddForm({
                     className="font-mono"
                     onChange={(event) => setClientMetadataUrl(event.target.value)}
                   />
-                </div>
+                </SettingsRow>
               </>
             ) : null}
 

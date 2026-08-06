@@ -102,6 +102,7 @@ export type SpecialistPackageCatalogSnapshot = {
     ownerIds?: readonly string[]
   }>
   connectorIds: readonly string[]
+  connectorAliases?: Readonly<Record<string, string>>
   protectedSpecialistIds: readonly string[]
   protectedSpecialistNames?: readonly string[]
   specialists?: ReadonlyArray<{ id: string; name: string }>

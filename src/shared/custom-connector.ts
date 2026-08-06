@@ -15,3 +15,17 @@ export const customConnectorSlug = (server: { name: string; slug?: string }): st
   server.slug && isCustomConnectorSlug(server.slug)
     ? server.slug
     : toCustomConnectorSlug(server.name)
+
+export const customConnectorAliases = (server: {
+  id?: string
+  name: string
+  slug?: string
+}): string[] => [
+  ...new Set([
+    customConnectorSlug(server),
+    server.name,
+    ...(server.id === undefined ? [] : [server.id])
+  ])
+]
+
+export const customConnectorAliasKey = (value: string): string => value.trim().toLowerCase()

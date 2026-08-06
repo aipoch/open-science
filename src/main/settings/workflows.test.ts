@@ -627,6 +627,9 @@ describe('SettingsWorkflows catalog and appearance effects', () => {
     const pruneCustomServerPermissions = vi.fn(async () => {
       calls.push('prune')
     })
+    store.cancelCustomServerAuthentication.mockImplementation(async () => {
+      calls.push('cancel')
+    })
     const workflows = createSettingsWorkflows(
       capability,
       testEffects({
@@ -644,12 +647,20 @@ describe('SettingsWorkflows catalog and appearance effects', () => {
     const request = { id: 'server', transport: 'stdio' as const, command: 'new-mcp' }
 
     await workflows.updateCustomServer(request)
-    expect(calls).toEqual(['begin', 'prune', 'persist', 'commit', 'invalidate', 'refresh'])
+    expect(calls).toEqual([
+      'begin',
+      'cancel',
+      'prune',
+      'persist',
+      'commit',
+      'invalidate',
+      'refresh'
+    ])
 
     calls.length = 0
     pruneCustomServerPermissions.mockRejectedValue(new Error('prune failed'))
     await expect(workflows.updateCustomServer(request)).rejects.toThrow('prune failed')
-    expect(calls).toEqual(['begin', 'rollback'])
+    expect(calls).toEqual(['begin', 'cancel', 'rollback'])
   })
 
   it('applies an icon only after persistence succeeds', async () => {

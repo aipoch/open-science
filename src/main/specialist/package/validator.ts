@@ -689,7 +689,9 @@ export const validateSpecialistPackage = (
       })
     )
   ]
-  const connectorIds = [...new Set(payload?.connectorIds ?? [])].filter((id) => {
+  const connectorIds = [
+    ...new Set((payload?.connectorIds ?? []).map((id) => catalog.connectorAliases?.[id] ?? id))
+  ].filter((id) => {
     if (catalog.connectorIds.includes(id)) return true
     warning(
       diagnostics,

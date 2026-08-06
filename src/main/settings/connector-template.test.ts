@@ -222,6 +222,36 @@ describe('Connector configuration templates', () => {
     expect(duplicateSlug.diagnostics.map((item) => item.code)).toContain(
       'connector-template.duplicate-slug'
     )
+
+    const legacyAliasCollision = parseConnectorTemplate(
+      JSON.stringify({
+        schemaVersion: 1,
+        kind: 'open-science.connector',
+        name: 'Different display name',
+        slug: 'legacy-route',
+        transport: 'stdio',
+        command: 'example-mcp'
+      }),
+      { existingIds: ['installed-uuid'], existingNames: ['legacy-route'] }
+    )
+    expect(legacyAliasCollision.diagnostics.map((item) => item.code)).toContain(
+      'connector-template.identity-conflict'
+    )
+
+    const uuidAliasCollision = parseConnectorTemplate(
+      JSON.stringify({
+        schemaVersion: 1,
+        kind: 'open-science.connector',
+        name: 'Different display name',
+        slug: 'installed-uuid',
+        transport: 'stdio',
+        command: 'example-mcp'
+      }),
+      { existingIds: ['installed-uuid'] }
+    )
+    expect(uuidAliasCollision.diagnostics.map((item) => item.code)).toContain(
+      'connector-template.identity-conflict'
+    )
   })
 
   it('exports only secret names and produces a stable digest', () => {

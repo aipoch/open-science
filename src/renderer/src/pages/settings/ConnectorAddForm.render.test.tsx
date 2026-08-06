@@ -188,6 +188,19 @@ describe('ConnectorAddForm (remote server)', () => {
     setValue('OAuth scopes', 'openid profile')
     setValue('Authorization server URL', 'https://auth.example.test')
     setValue('Client metadata URL', 'https://client.example.test/metadata.json')
+    for (const label of [
+      'Connector ID',
+      'Authentication',
+      'OAuth scopes',
+      'Authorization server URL',
+      'Client metadata URL'
+    ]) {
+      expect(
+        document.body
+          .querySelector(`[aria-label="${label}"]`)
+          ?.closest('[data-slot="settings-row"]')
+      ).not.toBeNull()
+    }
     checkTrust()
 
     await act(async () => {

@@ -26,6 +26,7 @@ export type ConnectorTemplateSource = {
 }
 
 type ParseOptions = {
+  existingIds?: readonly string[]
   existingNames?: readonly string[]
   existingSlugs?: readonly string[]
   bundledIds?: readonly string[]
@@ -519,6 +520,18 @@ export const parseConnectorTemplate = (
         `A custom Connector named "${name}" is already installed.`,
         'name'
       )
+    } else if (
+      [...(options.existingSlugs ?? []), ...(options.existingIds ?? [])].some(
+        (item) => item.toLowerCase() === normalizedName
+      )
+    ) {
+      diagnostic(
+        diagnostics,
+        'error',
+        'connector-template.identity-conflict',
+        `Connector name "${name}" conflicts with an installed Connector identity.`,
+        'name'
+      )
     }
   }
   if (slug) {
@@ -537,6 +550,18 @@ export const parseConnectorTemplate = (
         'error',
         'connector-template.duplicate-slug',
         `A custom Connector with ID "${slug}" is already installed.`,
+        'slug'
+      )
+    } else if (
+      [...(options.existingNames ?? []), ...(options.existingIds ?? [])].some(
+        (item) => item.toLowerCase() === slug
+      )
+    ) {
+      diagnostic(
+        diagnostics,
+        'error',
+        'connector-template.identity-conflict',
+        `Connector ID "${slug}" conflicts with an installed Connector alias.`,
         'slug'
       )
     }

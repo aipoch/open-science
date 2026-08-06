@@ -115,6 +115,23 @@ describe('Connector configuration transfer views', () => {
     expect(buttonNamed('Use configuration')?.disabled).toBe(true)
   })
 
+  it('uses the Settings danger banner for import failures', async () => {
+    window.api = {
+      settings: {
+        selectCustomServerTemplate: vi.fn().mockRejectedValue(new Error('Could not read file'))
+      }
+    } as unknown as Window['api']
+    act(() => {
+      root.render(<ConnectorImportView onUse={vi.fn()} onCancel={vi.fn()} />)
+    })
+
+    await act(async () => buttonContaining('Drag and drop or click to choose')?.click())
+
+    const alert = document.body.querySelector('[role="alert"]')
+    expect(alert?.textContent).toContain('Could not read file')
+    expect(alert?.className).toContain('border-danger-000/30')
+  })
+
   it('keeps a local-only path warning importable', async () => {
     const localDefinition = {
       ...definition,
@@ -179,5 +196,23 @@ describe('Connector configuration transfer views', () => {
       expectedDigest: 'preview-digest'
     })
     expect(document.body.textContent).toContain('Configuration saved.')
+  })
+
+  it('uses the Settings danger banner for export failures', async () => {
+    window.api = {
+      settings: {
+        previewCustomServerTemplateExport: vi
+          .fn()
+          .mockRejectedValue(new Error('Could not prepare export'))
+      }
+    } as unknown as Window['api']
+    act(() => {
+      root.render(<ConnectorExportView id="server-id" onDone={vi.fn()} />)
+    })
+    await act(async () => undefined)
+
+    const alert = document.body.querySelector('[role="alert"]')
+    expect(alert?.textContent).toContain('Could not prepare export')
+    expect(alert?.className).toContain('border-danger-000/30')
   })
 })

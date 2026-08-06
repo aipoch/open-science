@@ -1,4 +1,5 @@
 import {
+  AlertTriangle,
   ChevronDown,
   Download,
   FileUp,
@@ -108,7 +109,7 @@ export function ConnectorsPanel({ onNavigate }: ConnectorsPanelProps): React.JSX
   const [editing, setEditing] = useState(false)
   const [emailField, setEmailField] = useState('')
   const [keyField, setKeyField] = useState('')
-  const [authenticatingId, setAuthenticatingId] = useState<string | null>(null)
+  const [authenticatingIds, setAuthenticatingIds] = useState<Set<string>>(() => new Set())
   const [authError, setAuthError] = useState<string | null>(null)
   const [removal, setRemoval] = useState<{
     server: CustomServerView
@@ -116,7 +117,7 @@ export function ConnectorsPanel({ onNavigate }: ConnectorsPanelProps): React.JSX
   } | null>(null)
   const [removing, setRemoving] = useState(false)
   const [removalError, setRemovalError] = useState<string | null>(null)
-  const authenticationAttempt = useRef(0)
+  const authenticationAttempts = useRef(new Map<string, number>())
 
   useEffect(() => {
     void loadConnectors()
@@ -162,30 +163,41 @@ export function ConnectorsPanel({ onNavigate }: ConnectorsPanelProps): React.JSX
   }
 
   const signIn = async (id: string): Promise<void> => {
-    const attempt = ++authenticationAttempt.current
-    setAuthenticatingId(id)
+    const attempt = (authenticationAttempts.current.get(id) ?? 0) + 1
+    authenticationAttempts.current.set(id, attempt)
+    setAuthenticatingIds((current) => new Set(current).add(id))
     setAuthError(null)
     try {
       await authenticateCustomServer({ id })
     } catch (error) {
       await loadConnectors().catch(() => undefined)
-      if (attempt === authenticationAttempt.current) {
+      if (attempt === authenticationAttempts.current.get(id)) {
         setAuthError(error instanceof Error ? error.message : 'OAuth sign-in failed.')
       }
     } finally {
-      if (attempt === authenticationAttempt.current) setAuthenticatingId(null)
+      if (attempt === authenticationAttempts.current.get(id)) {
+        setAuthenticatingIds((current) => {
+          const next = new Set(current)
+          next.delete(id)
+          return next
+        })
+      }
     }
   }
 
   const cancelSignIn = async (id: string): Promise<void> => {
-    authenticationAttempt.current += 1
+    authenticationAttempts.current.set(id, (authenticationAttempts.current.get(id) ?? 0) + 1)
     setAuthError(null)
     try {
       await cancelCustomServerAuthentication({ id })
     } catch (error) {
       setAuthError(error instanceof Error ? error.message : 'Could not cancel OAuth sign-in.')
     } finally {
-      setAuthenticatingId(null)
+      setAuthenticatingIds((current) => {
+        const next = new Set(current)
+        next.delete(id)
+        return next
+      })
     }
   }
 
@@ -431,9 +443,13 @@ export function ConnectorsPanel({ onNavigate }: ConnectorsPanelProps): React.JSX
 
       <div className="flex flex-col gap-4">
         {authError ? (
-          <p className="text-xs text-destructive" role="alert">
-            {authError}
-          </p>
+          <div
+            className="flex items-start gap-2 rounded-lg border border-danger-000/30 bg-danger-000/10 px-3 py-2 text-xs text-danger-000"
+            role="alert"
+          >
+            <AlertTriangle className="mt-0.5 size-3.5 shrink-0" aria-hidden="true" />
+            <span>{authError}</span>
+          </div>
         ) : null}
         {showFeatured
           ? connectorGroup(
@@ -514,17 +530,17 @@ export function ConnectorsPanel({ onNavigate }: ConnectorsPanelProps): React.JSX
                           type="button"
                           size="sm"
                           variant={
-                            authenticatingId === server.id || server.oauth.hasTokens
+                            authenticatingIds.has(server.id) || server.oauth.hasTokens
                               ? 'outline'
                               : 'default'
                           }
                           onClick={() =>
-                            void (authenticatingId === server.id
+                            void (authenticatingIds.has(server.id)
                               ? cancelSignIn(server.id)
                               : signIn(server.id))
                           }
                         >
-                          {authenticatingId === server.id
+                          {authenticatingIds.has(server.id)
                             ? 'Cancel'
                             : server.oauth.hasTokens
                               ? 'Connected'
@@ -592,9 +608,13 @@ export function ConnectorsPanel({ onNavigate }: ConnectorsPanelProps): React.JSX
               </p>
             ) : null}
             {removalError ? (
-              <p role="alert" className="mt-4 text-xs text-destructive">
-                {removalError}
-              </p>
+              <div
+                role="alert"
+                className="mt-4 flex items-start gap-2 rounded-lg border border-danger-000/30 bg-danger-000/10 px-3 py-2 text-xs text-danger-000"
+              >
+                <AlertTriangle className="mt-0.5 size-3.5 shrink-0" aria-hidden="true" />
+                <span>{removalError}</span>
+              </div>
             ) : null}
             <div className="mt-6 flex justify-end gap-2">
               <AlertDialog.Cancel asChild>

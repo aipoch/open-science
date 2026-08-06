@@ -136,6 +136,7 @@ class ConnectorSettingsWorkflows {
   ): Promise<CustomServerSecurityChangeGuard | void> {
     const guard = this.effects.beginCustomServerSecurityChange(serverId)
     try {
+      await this.settings.cancelCustomServerAuthentication(serverId)
       await this.effects.pruneCustomServerPermissions(serverId)
       return guard
     } catch (error) {

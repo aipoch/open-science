@@ -98,6 +98,27 @@ describe('validateSpecialistPackage', () => {
     expect(result.plan?.connectorIds).toEqual(['reference-library'])
   })
 
+  it('canonicalizes legacy Connector aliases to the portable slug', () => {
+    const result = validateSpecialistPackage(
+      packageFiles(validManifest, {
+        ...validSpecialist,
+        connectorIds: ['Example Connector', 'installed-uuid', 'example-connector']
+      }),
+      {
+        ...catalog,
+        connectorIds: ['example-connector'],
+        connectorAliases: {
+          'Example Connector': 'example-connector',
+          'installed-uuid': 'example-connector'
+        }
+      },
+      'zip'
+    )
+
+    expect(result.preview.installable).toBe(true)
+    expect(result.plan?.connectorIds).toEqual(['example-connector'])
+  })
+
   it('changes the package content identity when bundled Skill bytes change', () => {
     const bundled = (body: string): ReturnType<typeof validateSpecialistPackage> =>
       validateSpecialistPackage(
