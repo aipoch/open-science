@@ -238,11 +238,11 @@ ci(review): unify automated AI reviews
   checks ran after the last material edit, and call out uncovered risks.
 - Keep PRs reasonably small and scoped so they are easy to review.
 - Ensure the final Test Impact Set, or the full fallback when required, passes.
-- After the pull request checks pass, add the pull request to the merge queue. Do not update the
-  branch only because `main` advanced; the queue validates the change against the latest `main`.
-  Update the branch when it has merge conflicts or a maintainer requests it.
-- The merge queue uses **squash merge only**. The squash commit subject must keep the pull request
-  title's Conventional Commit format.
+- After the pull request checks pass, merge it directly using **squash merge only**. Do not update the
+  branch only because `main` advanced; update it when it has merge conflicts or a maintainer requests
+  it. The squash commit subject must keep the pull request title's Conventional Commit format.
+- Non-documentation changes merged into `main` trigger the [Nightly workflow](.github/workflows/nightly.yml),
+  which runs post-merge verification and cross-platform package certification on the resulting commit.
 
 ## Reporting Issues
 
