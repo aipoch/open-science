@@ -80,6 +80,13 @@ const tabs: Array<{ id: ProvenanceTab; label: string }> = [
   { id: 'review', label: 'Review' }
 ]
 
+const scriptDownloadFormats = {
+  python: { extension: 'py', mimeType: 'text/x-python' },
+  r: { extension: 'R', mimeType: 'text/x-r' },
+  bash: { extension: 'sh', mimeType: 'text/x-sh' },
+  repl: { extension: 'txt', mimeType: 'text/plain' }
+} satisfies Record<ArtifactCodeReconstruction['language'], { extension: string; mimeType: string }>
+
 const asRecord = (value: unknown): Record<string, unknown> | undefined =>
   typeof value === 'object' && value !== null && !Array.isArray(value)
     ? (value as Record<string, unknown>)
@@ -831,11 +838,10 @@ const ArtifactProvenancePanel = ({
       ) as ArrayBuffer
       const baseName = item.name.replace(/\.[^.]+$/u, '') || 'artifact'
       const versionNumber = lineage?.versions[selectedIndex]?.versionNumber ?? 1
-      const extension =
-        language === 'python' ? 'py' : language === 'r' ? 'R' : language === 'bash' ? 'sh' : 'txt'
+      const format = scriptDownloadFormats[language]
       await window.api.saveBlobFile({
-        suggestedName: `${baseName}-v${versionNumber}.${extension}`,
-        mimeType: 'text/plain',
+        suggestedName: `${baseName}-v${versionNumber}.${format.extension}`,
+        mimeType: format.mimeType,
         data
       })
       setCodeActionFailure(undefined)
@@ -1015,7 +1021,7 @@ const ArtifactProvenancePanel = ({
                 available.
               </p>
             ) : null}
-            <div className="flex flex-wrap items-center gap-3 border-b border-border-300/60 px-4 py-3">
+            <div className="flex items-center gap-3 border-b border-border-300/60 px-4 py-3">
               {generatedCode ? (
                 <Button
                   type="button"
@@ -1067,18 +1073,18 @@ const ArtifactProvenancePanel = ({
                 />
               )}
               {generatedCode ? (
-                <div className="flex min-w-0 flex-1 flex-wrap items-center gap-x-1 text-sm text-text-300">
-                  <span>LLM-generated reconstruction · see</span>
+                <div className="min-w-0 flex-1 truncate text-sm text-text-300">
+                  <span>LLM-generated reconstruction · see </span>
                   <Button
                     type="button"
                     variant="link"
                     size="sm"
-                    className="h-auto shrink-0 whitespace-nowrap px-0 py-0 text-sm"
+                    className="h-auto whitespace-nowrap px-0 py-0 text-sm"
                     onClick={() => setActiveTab('execution')}
                   >
                     Execution Log
                   </Button>
-                  <span>for the raw record</span>
+                  <span> for the raw record</span>
                 </div>
               ) : codeReconstructionResult?.status === 'error' ? (
                 <p className="min-w-0 flex-1 text-sm text-danger-000" role="alert">

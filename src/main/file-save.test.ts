@@ -635,18 +635,21 @@ describe('file save blob handler', () => {
     )
   })
 
-  it('maps text/plain to the txt extension filter', async () => {
+  it.each([
+    ['text/x-python', 'script.py', 'PY', 'py'],
+    ['text/x-r', 'script.R', 'R', 'R'],
+    ['text/x-sh', 'script.sh', 'SH', 'sh'],
+    ['text/plain', 'notes.txt', 'TXT', 'txt']
+  ])('maps %s to the %s extension filter', async (mimeType, suggestedName, name, extension) => {
     showSaveDialog.mockResolvedValue({ canceled: true })
 
     await handlers.get('file:save-blob')!(
       { sender: {} },
-      { suggestedName: 'notes.txt', mimeType: 'text/plain', data: new ArrayBuffer(0) }
+      { suggestedName, mimeType, data: new ArrayBuffer(0) }
     )
 
     expect(showSaveDialog).toHaveBeenCalledWith(
-      expect.objectContaining({
-        filters: [{ name: 'TXT', extensions: ['txt'] }]
-      })
+      expect.objectContaining({ filters: [{ name, extensions: [extension] }] })
     )
   })
 

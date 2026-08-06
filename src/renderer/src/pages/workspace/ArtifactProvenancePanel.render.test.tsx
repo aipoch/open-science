@@ -546,6 +546,20 @@ describe('ArtifactProvenancePanel', () => {
     expect(container.textContent).toContain('Execution Log')
     expect(container.textContent).not.toContain('Captured producer block')
 
+    const reconstructionCaption = [...container.querySelectorAll('span')].find(
+      (span) => span.textContent === 'LLM-generated reconstruction · see '
+    )?.parentElement
+    expect(reconstructionCaption?.className).toContain('truncate')
+    expect(reconstructionCaption?.parentElement?.className).not.toContain('flex-wrap')
+
+    const download = [...container.querySelectorAll('button')].find(
+      (button) => button.textContent === 'Download script'
+    )
+    await act(async () => download?.click())
+    expect(saveBlobFile).toHaveBeenCalledWith(
+      expect.objectContaining({ suggestedName: 'sin-v1.py', mimeType: 'text/x-python' })
+    )
+
     const executionLinks = [...container.querySelectorAll('button')].filter(
       (button) => button.textContent === 'Execution Log'
     )
@@ -821,7 +835,7 @@ describe('ArtifactProvenancePanel', () => {
     await act(async () => download?.click())
 
     expect(saveBlobFile).toHaveBeenCalledWith(
-      expect.objectContaining({ suggestedName: 'sin-v1.py', mimeType: 'text/plain' })
+      expect.objectContaining({ suggestedName: 'sin-v1.py', mimeType: 'text/x-python' })
     )
     const request = saveBlobFile.mock.calls[0]?.[0] as { data: ArrayBuffer }
     expect(new TextDecoder().decode(request.data)).toBe('import numpy as np\nnp.sin(0)')
