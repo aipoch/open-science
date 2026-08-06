@@ -16,8 +16,6 @@ import type {
   ExportNotebookResult,
   FinishNotebookCodeCellRequest,
   NotebookLanguage,
-  NotebookRunRecord,
-  NotebookRunSource,
   NotebookRunSummary,
   NotebookSessionRequest,
   NotebookSessionReference,
@@ -370,7 +368,7 @@ class NotebookRuntimeService {
       recovery: this.recoveryCoordinator,
       bindings: this.runtimeBindingOwner,
       sessions: () => this.sessions.values(),
-      notifyChanged: (session) => this.notifyNotebookChanged(session as RuntimeSession),
+      notifyChanged: (session) => this.sessionLifecycle.notifyChanged(session as RuntimeSession),
       logger: this.runtimeLogger
     })
     this.sessionReadModel = new NotebookSessionReadModel({
@@ -401,7 +399,7 @@ class NotebookRuntimeService {
       environmentOperations: this.environmentOperations,
       sessions: () => this.sessions.values(),
       findSession: (sessionId) => this.sessions.get(sessionId),
-      notifyChanged: (session) => this.notifyNotebookChanged(session)
+      notifyChanged: (session) => this.sessionLifecycle.notifyChanged(session)
     })
     this.environmentManagement = new NotebookEnvironmentManagementOwner({
       runtimeRoot,
@@ -426,10 +424,10 @@ class NotebookRuntimeService {
       mirrorProbe: options.mirrorProbe,
       resolvePackageMirror: options.getPackageMirror,
       ensureRecovered: () => this.ensureRecovered(),
-      loadSession: (request) => this.ensureSession(request),
+      loadSession: (request) => this.sessionLifecycle.ensure(request),
       findSession: (sessionId) => this.sessions.get(sessionId),
       sessions: () => this.sessions.values(),
-      notifyChanged: (session) => this.notifyNotebookChanged(session),
+      notifyChanged: (session) => this.sessionLifecycle.notifyChanged(session),
       resolveRuntimeEnablement: (language) => this.resolveRuntimeEnablement(language),
       isDefaultEnvironmentDisabled: (language, candidateRuntimeRoot) =>
         this.isDefaultEnvDisabled(language, candidateRuntimeRoot),
@@ -451,7 +449,7 @@ class NotebookRuntimeService {
     })
     this.runTerminalization = new NotebookRunTerminalizationOwner({
       repository: this.repository,
-      notifyChanged: (session) => this.notifyNotebookChanged(session as RuntimeSession)
+      notifyChanged: (session) => this.sessionLifecycle.notifyChanged(session as RuntimeSession)
     })
     this.executionOwner = new NotebookExecutionOwner({
       configRoot: options.configRoot,
@@ -463,7 +461,8 @@ class NotebookRuntimeService {
       persistKernelStatus: (session, status, processKey) =>
         this.sessionLifecycle.persistKernelStatus(session as RuntimeSession, status, processKey),
       getMcpRpcConnectionResolver: () => this.mcpRpcConnectionResolver,
-      notifyAvailable: (session, source) => this.notifyNotebookAvailable(session, source),
+      notifyAvailable: (session, source) =>
+        this.sessionLifecycle.notifyAvailable(session as RuntimeSession, source),
       platform: options.platform,
       shellProcess: options.shellProcess
     })
@@ -564,7 +563,7 @@ class NotebookRuntimeService {
     runtimes: NotebookRuntimeListing[]
     bindings: NotebookRuntimeBindings
   }> {
-    const session = await this.ensureSession(request)
+    const session = await this.sessionLifecycle.ensure(request)
     return this.runtimeBindingOwner.list(session)
   }
 
@@ -574,7 +573,7 @@ class NotebookRuntimeService {
     request: NotebookSessionRequest & { language: NotebookLanguage; runtimeId: string }
   ): Promise<{ bound: NotebookRuntimeBinding; bindings: NotebookRuntimeBindings }> {
     return this.runtimeBindingOwner.runWrite(request.sessionId, async () => {
-      const session = await this.ensureSession(request)
+      const session = await this.sessionLifecycle.ensure(request)
       return this.runtimeBindingOwner.bind(session, request.language, request.runtimeId)
     })
   }
@@ -585,7 +584,7 @@ class NotebookRuntimeService {
     request: NotebookSessionRequest & { language: NotebookLanguage; runtimeId: string }
   ): Promise<{ bound: NotebookRuntimeBinding; bindings: NotebookRuntimeBindings }> {
     return this.runtimeBindingOwner.runWrite(request.sessionId, async () => {
-      const session = await this.ensureSession(request)
+      const session = await this.sessionLifecycle.ensure(request)
       const result = await this.runtimeBindingOwner.switch(
         session,
         request.language,
@@ -599,7 +598,7 @@ class NotebookRuntimeService {
           this.tearDownLanguageBinding(session, request.language, oldEnv)
         }
       )
-      this.notifyNotebookChanged(session)
+      this.sessionLifecycle.notifyChanged(session)
       return result
     })
   }
@@ -661,7 +660,7 @@ class NotebookRuntimeService {
     writeId: string
     status: NotebookCell['status']
   }> {
-    const session = await this.ensureSession(request)
+    const session = await this.sessionLifecycle.ensure(request)
     const cellId = request.cellId ?? `cell-${randomUUID()}`
     const writeId = `write-${randomUUID()}`
     const source = request.source ?? 'agent'
@@ -673,8 +672,8 @@ class NotebookRuntimeService {
       startedAt: Date.now()
     })
 
-    this.notifyNotebookAvailable(session, source)
-    this.notifyNotebookChanged(session)
+    this.sessionLifecycle.notifyAvailable(session, source)
+    this.sessionLifecycle.notifyChanged(session)
 
     return { sessionId: session.sessionId, cellId, writeId, status: cell.status }
   }
@@ -686,9 +685,9 @@ class NotebookRuntimeService {
     writeId: string
     receivedBytes: number
   }> {
-    const session = await this.ensureSession(request)
+    const session = await this.sessionLifecycle.ensure(request)
     const cell = session.appendCellCode(request.cellId, request.writeId, request.delta)
-    this.notifyNotebookChanged(session)
+    this.sessionLifecycle.notifyChanged(session)
 
     return {
       sessionId: session.sessionId,
@@ -705,18 +704,18 @@ class NotebookRuntimeService {
     code: string
     status: NotebookCell['status']
   }> {
-    const session = await this.ensureSession(request)
+    const session = await this.sessionLifecycle.ensure(request)
     const cell = session.finishCellWrite(request.cellId, request.writeId)
-    this.notifyNotebookChanged(session)
+    this.sessionLifecycle.notifyChanged(session)
 
     return { sessionId: session.sessionId, cellId: cell.id, code: cell.code, status: cell.status }
   }
 
   // Compatibility facade: Session lookup and public summary projection stay here; lifecycle is owned.
   async runCell(request: RunNotebookCellRequest): Promise<NotebookRunSummary> {
-    const session = await this.ensureSession(request)
+    const session = await this.sessionLifecycle.ensure(request)
     const run = await this.executionOwner.executeDataCell(session, request)
-    return this.toRunSummary(session, run)
+    return this.sessionReadModel.toRunSummary(session, run)
   }
 
   // Convenience path used by the terminal and MCP to write a temporary cell and run it.
@@ -744,14 +743,14 @@ class NotebookRuntimeService {
   // Compatibility facade for the control-plane REPL. Admission, capability lifetime, dispatch,
   // terminalization, and completion interception belong to NotebookExecutionOwner.
   async executeControl(request: ExecuteNotebookControlRequest): Promise<NotebookControlResult> {
-    const session = await this.ensureSession(request)
+    const session = await this.sessionLifecycle.ensure(request)
     return this.executionOwner.executeControl(session, request)
   }
 
   // Compatibility facade for stateless shell execution. The owner deliberately admits calls without
   // a per-Session queue while the repository continues to serialize durable run writes.
   async executeShell(request: ExecuteShellRequest): Promise<NotebookShellResult> {
-    const session = await this.ensureSession(request)
+    const session = await this.sessionLifecycle.ensure(request)
     return this.executionOwner.executeShell(session, request)
   }
 
@@ -766,7 +765,7 @@ class NotebookRuntimeService {
   async state(
     request: NotebookSessionRequest
   ): Promise<NotebookSessionState & { runtimeBindings: NotebookRuntimeBindings }> {
-    const session = await this.ensureSession(request)
+    const session = await this.sessionLifecycle.ensure(request)
     return this.sessionReadModel.state(session)
   }
 
@@ -801,7 +800,7 @@ class NotebookRuntimeService {
   // and lazily respawns its loops) and only shuts down + recreates for executors that don't support it.
   // Reports 'restarting' for the duration and settles back to 'idle' once the fresh process is ready.
   async restart(request: NotebookSessionRequest): Promise<NotebookSessionState> {
-    const session = await this.ensureSession(request)
+    const session = await this.sessionLifecycle.ensure(request)
 
     // A restart respawns fresh loops, so any pending R-restart recommendation for this session's envs
     // is cleared. Snapshot the keys before teardown drops them from kernelStatuses.
@@ -812,7 +811,7 @@ class NotebookRuntimeService {
       sessionId: session.sessionId,
       status: 'restarting'
     })
-    this.notifyNotebookChanged(session)
+    this.sessionLifecycle.notifyChanged(session)
 
     try {
       await session.restartExecutor(() => this.sessionLifecycle.createExecutor(session.sessionId))
@@ -824,7 +823,7 @@ class NotebookRuntimeService {
         status: 'idle'
       })
     }
-    this.notifyNotebookChanged(session)
+    this.sessionLifecycle.notifyChanged(session)
 
     return this.state(request)
   }
@@ -1026,26 +1025,6 @@ class NotebookRuntimeService {
   // Lists sessions with a cell mid-execution, for the pre-migration active-session warning.
   getActiveNotebookSessions(): { projectName: string; sessionId: string }[] {
     return this.sessionLifecycle.activeSessions()
-  }
-
-  // Creates or returns the runtime session bound to an ACP/chat session id.
-  private async ensureSession(request: NotebookSessionRequest): Promise<RuntimeSession> {
-    return this.sessionLifecycle.ensure(request)
-  }
-
-  // Announces notebook availability only once per agent-started session.
-  private notifyNotebookAvailable(session: RuntimeSession, source: NotebookRunSource): void {
-    this.sessionLifecycle.notifyAvailable(session, source)
-  }
-
-  // Broadcasts state invalidation so the renderer can reload run.json and in-memory cell data.
-  private notifyNotebookChanged(session: RuntimeSession): void {
-    this.sessionLifecycle.notifyChanged(session)
-  }
-
-  // Adds notebook roots and kernel metadata to the run returned to MCP callers.
-  private toRunSummary(session: RuntimeSession, run: NotebookRunRecord): NotebookRunSummary {
-    return this.sessionReadModel.toRunSummary(session, run)
   }
 }
 
