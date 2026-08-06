@@ -2,15 +2,11 @@ import { create, type StoreApi } from 'zustand'
 
 import type { OfficialVendorId } from '../../../shared/provider-registry'
 import {
-  codexSubscriptionProviderIdentity,
-  claudeSharedProviderIdentity,
-  claudeIsolatedProviderIdentity,
   DEFAULT_APP_ICON_VARIANT,
   DEFAULT_CONVERSATION_SKILL_IMPORT_ENABLED,
   DEFAULT_NOTIFICATIONS_ENABLED,
   DEFAULT_REASONING_EFFORT,
   isClaudeSubscriptionProvider,
-  isCodexSubscriptionProvider,
   providerValidationFailed,
   selectClaudeSubscriptionProvider
 } from '../../../shared/settings'
@@ -20,9 +16,14 @@ import { isMirrorConfigured } from '../pages/settings/mirror-view'
 import type { SettingsPanelId } from '../pages/settings/settings-navigation'
 import {
   createSettingsWriteCoordinator,
-  type SettingsWriteCoordinator,
-  type SettingsWriteKey
+  type OptimisticSettingsWriteKey,
+  type SettingsWriteCoordinator
 } from './settings-write-coordinator'
+import {
+  createProviderAuthSlice,
+  type ProviderAuthActions,
+  type SaveProviderResult
+} from './settings-provider-auth-slice'
 import {
   createInitialRuntimeSetupState,
   createRuntimeSetupLoadPatch,
@@ -41,7 +42,6 @@ import type {
   OpencodeInfo,
   ProviderType,
   ProviderView,
-  RefreshProviderModelsResult,
   ReasoningEffort,
   SettingsSnapshot,
   AppIconVariant,
@@ -56,9 +56,6 @@ import type {
   SkillBundlePreviewResult,
   SkillImportPreviewContent,
   ScanRepoResult,
-  UpsertProviderRequest,
-  ValidateProviderRequest,
-  ValidateProviderResult,
   ConnectorView,
   ConnectorDetailView,
   CustomServerView,
@@ -71,12 +68,6 @@ import type {
   ConnectorApprovalRequest,
   ApprovalDecision
 } from '../../../shared/settings'
-
-// Result of the combined onboarding save flow (create/edit -> validate -> activate).
-type SaveProviderResult = {
-  providerId: string
-  validation: ValidateProviderResult
-}
 
 type SettingsStoreData = RuntimeSetupState & {
   isLoaded: boolean
@@ -137,48 +128,10 @@ type SettingsStoreData = RuntimeSetupState & {
   appIconVariant: AppIconVariant
 }
 
-type SettingsStoreCore = SettingsStoreData & {
+type SettingsStoreCore = SettingsStoreData & ProviderAuthActions & SettingsStoreActions
+
+type SettingsStoreActions = {
   load: (options?: { force?: boolean }) => Promise<boolean>
-  // Persists the draft (create/update) without testing it, returning the affected provider id. The
-  // Settings page uses this to return to the list immediately, then tests in the background.
-  persistProvider: (request: UpsertProviderRequest) => Promise<string>
-  // Persists the draft and validates it, without changing the active provider.
-  saveProvider: (request: UpsertProviderRequest) => Promise<SaveProviderResult>
-  // Combined onboarding flow: persist + validate + activate only on success.
-  saveAndActivateProvider: (request: UpsertProviderRequest) => Promise<SaveProviderResult>
-  validateProvider: (request: ValidateProviderRequest) => Promise<ValidateProviderResult>
-  cancelCodexLogin: () => Promise<void>
-  // The explicit isolated sign-in — the only flow that opens the browser login. Resolves with the
-  // recorded outcome so callers can react (onboarding advances only on success).
-  loginIsolatedCodex: () => Promise<ValidateProviderResult>
-  // The explicit isolated sign-out. Resolves with the outcome so callers can surface a failure
-  // (e.g. a timeout where the credential may still be in place) rather than silently succeeding.
-  logoutIsolatedCodex: () => Promise<ValidateProviderResult>
-  // The Claude subscription's browser OAuth login (claude-shared mode). Opens the browser for sign-in
-  // via `claude auth login --claudeai`. Resolves with the recorded outcome.
-  loginSharedClaude: () => Promise<ValidateProviderResult>
-  // Cancels an in-flight claude-shared browser sign-in (mirrors cancelIsolatedClaudeLogin).
-  cancelSharedClaudeLogin: () => Promise<void>
-  // The Claude subscription's browser OAuth sign-out (claude-shared mode).
-  logoutSharedClaude: () => Promise<ValidateProviderResult>
-  // The Claude subscription's setup-token paste (claude-isolated mode). Resolves with the recorded
-  // outcome; the renderer is responsible for collecting the token from the user (copy command + paste input).
-  loginIsolatedClaude: (token: string) => Promise<ValidateProviderResult>
-  // The Claude subscription's browser OAuth for claude-isolated mode: the app runs `claude setup-token`
-  // (opens the browser) under the isolated config dir and captures the token — no manual paste.
-  loginIsolatedClaudeBrowser: () => Promise<ValidateProviderResult>
-  // Cancels an in-flight claude-isolated browser sign-in.
-  cancelIsolatedClaudeLogin: () => Promise<void>
-  // The Claude subscription's sign-out. Same failure semantics as logoutIsolatedCodex: a failed
-  // sign-out is surfaced rather than silently swallowed.
-  logoutIsolatedClaude: () => Promise<ValidateProviderResult>
-  // Fetches a saved provider's live model list from the vendor and refreshes the cache on success.
-  refreshProviderModels: (providerId: string) => Promise<RefreshProviderModelsResult>
-  // Activates a provider and, optionally, a specific model within it (composer model switch). An
-  // omitted model lets main fall back to the provider's default.
-  setActiveProvider: (providerId: string, model?: string) => Promise<void>
-  // Switches the agent backend (main reconnects so the next prompt uses it).
-  setAgentFramework: (id: AgentFrameworkId) => Promise<void>
   // Sets the reasoning-effort level (main reconnects so subsequent requests run at it).
   setReasoningEffort: (effort: ReasoningEffort) => Promise<void>
   // Toggles desktop notifications for finished/failed agent tasks; applies immediately.
@@ -188,7 +141,6 @@ type SettingsStoreCore = SettingsStoreData & {
   // Sets the app-icon look; main applies it live to the window and dock/taskbar.
   setAppIconVariant: (variant: AppIconVariant) => Promise<void>
   clearSettingsWriteError: () => void
-  deleteProvider: (providerId: string) => Promise<void>
   openSettings: () => void
   openSettingsToPanel: (panel: SettingsPanelId) => void
   closeSettings: () => void
@@ -390,27 +342,6 @@ export const selectProviderModelOptions = (
     })
 }
 
-// Finds the provider id affected by an upsert: the edited id, or the one new since `before`.
-const resolveUpsertedProviderId = (
-  request: UpsertProviderRequest,
-  before: ProviderView[],
-  after: ProviderView[]
-): string | undefined => {
-  if (isCodexSubscriptionProvider(request.type)) {
-    return codexSubscriptionProviderIdentity().id
-  }
-  // Both Claude subscription modes use fixed builtin ids; return the correct one for the new type
-  // so mode switches (shared→isolated or vice versa) resolve to the incoming record, not the old one.
-  if (request.type === 'claude-shared') return claudeSharedProviderIdentity().id
-  if (request.type === 'claude-isolated') return claudeIsolatedProviderIdentity().id
-
-  if (request.id) return request.id
-
-  const beforeIds = new Set(before.map((provider) => provider.id))
-
-  return after.find((provider) => !beforeIds.has(provider.id))?.id
-}
-
 let settingsLoadPromise: Promise<boolean> | undefined
 const SAFE_SETTINGS_LOAD_ERROR = 'Open Science could not load settings. Retry to continue.'
 
@@ -420,9 +351,7 @@ const reportSettingsLoadError = (error: unknown): void => {
 }
 
 // Visible copy stays stable and path-safe; raw IPC failures remain in the console for diagnostics.
-const SETTINGS_WRITE_ERRORS: Record<SettingsWriteKey, string> = {
-  activeProvider: 'Could not switch active provider or model. Try again.',
-  agentFramework: 'Could not switch agent framework. Try again.',
+const SETTINGS_WRITE_ERRORS: Record<OptimisticSettingsWriteKey, string> = {
   reasoningEffort: 'Could not save reasoning effort. Try again.',
   notifications: 'Could not save notification preference. Try again.',
   conversationSkillImport: 'Could not save conversation Skill import preference. Try again.',
@@ -451,6 +380,23 @@ const createSettingsStoreState = (
           ? { npmAvailable, claude: { resolvedPath: result.path, version: result.version } }
           : { npmAvailable }
       )
+  }),
+  ...createProviderAuthSlice({
+    get,
+    getCommands: () => window.api.settings,
+    reconcileSnapshot: (snapshot) => set(applySnapshot(snapshot)),
+    refreshPreflight: () => get().refreshPreflight(),
+    refreshFrameworkStatus: async (id) => {
+      if (id === 'opencode') {
+        await get().detectOpencode()
+      } else if (id === 'codex') {
+        await get().detectCodex()
+      } else {
+        await get().detectClaude()
+      }
+      await get().refreshPreflight()
+    },
+    writeCoordinator
   }),
 
   // Loads settings, preflight, and encryption availability in one startup pass.
@@ -500,220 +446,6 @@ const createSettingsStoreState = (
       if (settingsLoadPromise === loadPromise) settingsLoadPromise = undefined
     })
     return loadPromise
-  },
-
-  // Persists a provider draft (create/update) and refreshes derived state, without testing it.
-  persistProvider: async (request) => {
-    const before = get().providers
-    const afterUpsert = await window.api.settings.upsertProvider(request)
-
-    set(applySnapshot(afterUpsert))
-    await get().refreshPreflight()
-
-    return resolveUpsertedProviderId(request, before, afterUpsert.providers) ?? ''
-  },
-
-  // Persists a provider draft and validates it (without activating), refreshing derived state.
-  saveProvider: async (request) => {
-    const before = get().providers
-    const afterUpsert = await window.api.settings.upsertProvider(request)
-
-    set(applySnapshot(afterUpsert))
-
-    const providerId = resolveUpsertedProviderId(request, before, afterUpsert.providers)
-
-    if (!providerId) {
-      return { providerId: '', validation: { ok: false, category: 'unknown' } }
-    }
-
-    const validation = await window.api.settings.validateProvider({ providerId })
-
-    // Refresh so the validated-at time / recorded failure / masked key reflect the latest stored
-    // state. A failed test keeps the provider (flagged as unverified in the list and excluded from the
-    // model pickers); it is not rolled back, so the user can fix the key and retry.
-    set(applySnapshot(await window.api.settings.getSettings()))
-    await get().refreshPreflight()
-
-    return { providerId, validation }
-  },
-
-  // Persists a provider draft, validates it, and activates it. The connectivity probe is advisory,
-  // not a gate: a provider that saved is activated even if the probe failed (e.g. a custom Responses
-  // gateway the probe can't reach or that rejects the minimal ping), so it can be configured in and
-  // tested live. The validation result is still recorded and surfaced as an "unverified" warning.
-  saveAndActivateProvider: async (request) => {
-    const result = await get().saveProvider(request)
-
-    if (result.providerId) {
-      await get().setActiveProvider(result.providerId)
-    }
-
-    return result
-  },
-
-  // Validates a saved provider or draft without changing the active selection.
-  validateProvider: async (request) => {
-    const result = await window.api.settings.validateProvider(request)
-
-    // Refresh whenever a saved provider was tested, pass or fail: success stamps lastValidatedAt, a
-    // failure records the reason and surfaces the "unverified" warning. Draft validations (no
-    // providerId) change nothing stored, so they skip the refresh.
-    if (request.providerId) {
-      set(applySnapshot(await window.api.settings.getSettings()))
-      await get().refreshPreflight()
-    }
-
-    return result
-  },
-
-  cancelCodexLogin: () => window.api.settings.cancelCodexLogin(),
-
-  // Mirrors validateProvider's refresh: the recorded outcome (validated-at or failure) lives on the
-  // stored provider, so the snapshot and derived readiness are re-applied either way.
-  loginIsolatedCodex: async () => {
-    const result = await window.api.settings.loginIsolatedCodex()
-
-    set(applySnapshot(await window.api.settings.getSettings()))
-    await get().refreshPreflight()
-
-    return result
-  },
-
-  logoutIsolatedCodex: async () => {
-    const result = await window.api.settings.logoutIsolatedCodex()
-    // Refresh the snapshot regardless of outcome: a failed sign-out preserves the verified markers
-    // on the provider (credential still in place), a successful one clears them. Either way the
-    // store must reflect the true stored state rather than a stale cached view.
-    set(applySnapshot(await window.api.settings.getSettings()))
-    await get().refreshPreflight()
-    return result
-  },
-
-  // Claude subscription's paste-token sign-in. The renderer owns the modal that captures the
-  // setup-token output; this action forwards it to main, where it lands encrypted on the fixed
-  // builtin-claude-isolated provider record.
-  loginIsolatedClaude: async (token: string) => {
-    const result = await window.api.settings.loginIsolatedClaude(token)
-
-    set(applySnapshot(await window.api.settings.getSettings()))
-    await get().refreshPreflight()
-
-    return result
-  },
-
-  // Claude subscription's browser OAuth for claude-isolated mode. The app runs `claude setup-token`
-  // under the isolated config dir (opens the browser, captures the token) so there's no manual paste.
-  loginIsolatedClaudeBrowser: async () => {
-    const result = await window.api.settings.loginIsolatedClaudeBrowser()
-
-    set(applySnapshot(await window.api.settings.getSettings()))
-    await get().refreshPreflight()
-
-    return result
-  },
-
-  cancelIsolatedClaudeLogin: async () => {
-    await window.api.settings.cancelIsolatedClaudeLogin()
-  },
-
-  logoutIsolatedClaude: async () => {
-    const result = await window.api.settings.logoutIsolatedClaude()
-    // Same refresh rule as the codex path: a failed sign-out keeps the verified markers, so the
-    // store must reflect the real stored state regardless of the outcome.
-    set(applySnapshot(await window.api.settings.getSettings()))
-    await get().refreshPreflight()
-    return result
-  },
-
-  // Claude subscription's browser OAuth sign-in (claude-shared mode). Opens the browser via
-  // `claude auth login --claudeai`. The CLI stores credentials in ~/.claude.
-  loginSharedClaude: async () => {
-    const result = await window.api.settings.loginSharedClaude()
-
-    set(applySnapshot(await window.api.settings.getSettings()))
-    await get().refreshPreflight()
-
-    return result
-  },
-
-  cancelSharedClaudeLogin: async () => {
-    await window.api.settings.cancelClaudeLogin()
-  },
-
-  logoutSharedClaude: async () => {
-    const result = await window.api.settings.logoutSharedClaude()
-    set(applySnapshot(await window.api.settings.getSettings()))
-    await get().refreshPreflight()
-    return result
-  },
-
-  // Fetches a provider's live models from the vendor; on success the persisted list is reflected here.
-  refreshProviderModels: async (providerId) => {
-    const result = await window.api.settings.refreshProviderModels({ providerId })
-
-    if (result.ok) {
-      set(applySnapshot(await window.api.settings.getSettings()))
-    }
-
-    return result
-  },
-
-  // Switches the active provider/model (main drops the agent connection so the next prompt reconnects).
-  // An empty model string is treated as "no specific model" so main uses the provider default.
-  setActiveProvider: async (providerId, model) => {
-    const write = writeCoordinator.begin('activeProvider')
-    let snapshot: SettingsSnapshot
-    try {
-      snapshot = await window.api.settings.setActiveProvider({
-        id: providerId,
-        model: model || undefined
-      })
-    } catch (error) {
-      write.fail(SETTINGS_WRITE_ERRORS.activeProvider)
-      console.error('Failed to set active provider', error)
-      throw error
-    }
-
-    if (!write.isCurrent()) return
-    set(applySnapshot(snapshot))
-    write.succeed()
-    await get().refreshPreflight()
-  },
-
-  // Switches the agent backend; main reconnects so the choice applies on the next prompt. A failed
-  // write leaves the previous framework selected and feeds the shared Settings error banner.
-  setAgentFramework: async (id) => {
-    const write = writeCoordinator.begin('agentFramework')
-
-    let snapshot: SettingsSnapshot
-    try {
-      snapshot = await window.api.settings.setAgentFramework({ id })
-    } catch (error) {
-      write.fail(SETTINGS_WRITE_ERRORS.agentFramework)
-      console.error('Failed to switch agent framework', error)
-      throw error
-    }
-
-    if (!write.isCurrent()) return
-    set(applySnapshot(snapshot))
-    write.succeed()
-
-    try {
-      // Live-detect the newly-selected framework so a binary installed (or deleted) since the last
-      // check is reflected right away, then refresh the readiness gate the install prompt keys off.
-      if (id === 'opencode') {
-        await get().detectOpencode()
-      } else if (id === 'codex') {
-        await get().detectCodex()
-      } else {
-        await get().detectClaude()
-      }
-      await get().refreshPreflight()
-    } catch (error) {
-      // The preference is already saved. Keep the new selection and avoid relabelling a follow-up
-      // detection problem as a write failure; the next explicit/full environment check can retry.
-      console.error('Failed to refresh agent framework status', error)
-    }
   },
 
   // Sets the reasoning-effort level; main reconnects so subsequent requests run at it. The IPC round
@@ -825,13 +557,6 @@ const createSettingsStoreState = (
   },
 
   clearSettingsWriteError: () => writeCoordinator.clearFailures(),
-
-  deleteProvider: async (providerId) => {
-    const snapshot = await window.api.settings.deleteProvider({ id: providerId })
-
-    set(applySnapshot(snapshot))
-    await get().refreshPreflight()
-  },
 
   openSettings: () => set({ isSettingsOpen: true }),
 
