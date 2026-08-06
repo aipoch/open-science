@@ -6,6 +6,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 
 import { LinkSafetyModal } from '@/components/streamdown/LinkSafetyModal'
 import type { SpecialistProfileView } from '../../../../shared/specialist'
+import { createInitialProjectState, useProjectStore } from '@/stores/project-store'
 import { useSpecialistStore } from '@/stores/specialist-store'
 import { createInitialSettingsState, useSettingsStore } from '@/stores/settings-store'
 import { SettingsPage, type SettingsPageHandle } from './SettingsPage'
@@ -179,6 +180,7 @@ const installApi = (): void => {
 beforeEach(() => {
   installApi()
   useSettingsStore.setState(createInitialSettingsState())
+  useProjectStore.setState(createInitialProjectState())
   container = document.createElement('div')
   document.body.appendChild(container)
   root = createRoot(container)
@@ -213,6 +215,41 @@ const settingsSection = (title: string): HTMLElement | undefined =>
   )
 
 describe('SettingsPage layout', () => {
+  it('uses the header breadcrumb for archived project details', async () => {
+    useProjectStore.setState({
+      ...createInitialProjectState(),
+      projects: [
+        {
+          id: 'project-1',
+          name: 'Archived project',
+          description: '',
+          isExample: false,
+          createdAt: 1,
+          updatedAt: 1,
+          archivedAt: 2
+        }
+      ],
+      isLoaded: true
+    })
+    await act(async () => root.render(<SettingsPage open onClose={vi.fn()} />))
+    await act(async () => navButton('Archived')?.click())
+
+    const manage = Array.from(document.body.querySelectorAll<HTMLButtonElement>('button')).find(
+      (button) => button.textContent?.includes('Manage')
+    )
+    await act(async () => manage?.click())
+
+    const backToArchived = document.body.querySelector<HTMLButtonElement>(
+      '[aria-label="Back to archived"]'
+    )
+    expect(backToArchived?.textContent).toBe('Archived')
+    expect(document.body.textContent).toContain('Archived project')
+    expect(document.body.textContent).not.toContain('Archived projects')
+
+    await act(async () => backToArchived?.click())
+    expect(document.body.querySelector('[aria-label="Back to archived"]')).toBeNull()
+  })
+
   it('anchors Archived at the bottom of Settings navigation', async () => {
     await act(async () => root.render(<SettingsPage open onClose={vi.fn()} />))
 

@@ -1,4 +1,4 @@
-import { Archive, ArrowLeft, RotateCcw, Trash2 } from 'lucide-react'
+import { Archive, RotateCcw, Trash2 } from 'lucide-react'
 import { useMemo, useState } from 'react'
 
 import { Button } from '@/components/ui/button'
@@ -9,6 +9,13 @@ import type { ChatSession } from '@/stores/session-store'
 import { useSessionStore } from '@/stores/session-store'
 import type { Project } from '../../../../shared/projects'
 
+export type ArchivedView = { kind: 'list' } | { kind: 'project'; projectId: string }
+
+type ArchivedPanelProps = {
+  view: ArchivedView
+  onNavigate: (view: ArchivedView) => void
+}
+
 const formatArchivedAt = (archivedAt: number): string =>
   new Intl.DateTimeFormat(undefined, { dateStyle: 'medium', timeStyle: 'short' }).format(archivedAt)
 
@@ -16,13 +23,12 @@ const describeError = (error: unknown, fallback: string): string =>
   error instanceof Error ? error.message : fallback
 
 // Archive recovery stays in Settings so active workspace surfaces only need to reason about active data.
-const ArchivedPanel = (): React.JSX.Element => {
+const ArchivedPanel = ({ view, onNavigate }: ArchivedPanelProps): React.JSX.Element => {
   const projects = useProjectStore((state) => state.projects)
   const updateProjectArchive = useProjectStore((state) => state.updateProjectArchive)
   const deleteProject = useProjectStore((state) => state.deleteProject)
   const sessions = useSessionStore((state) => state.sessions)
   const updateSessionArchive = useSessionStore((state) => state.updateSessionArchive)
-  const [projectId, setProjectId] = useState<string | undefined>()
   const [projectToDelete, setProjectToDelete] = useState<Project | undefined>()
   const [sessionToDelete, setSessionToDelete] = useState<ChatSession | undefined>()
   const [busyKey, setBusyKey] = useState<string | undefined>()
@@ -32,7 +38,10 @@ const ArchivedPanel = (): React.JSX.Element => {
     () => projects.filter((project) => project.archivedAt !== undefined),
     [projects]
   )
-  const selectedProject = archivedProjects.find((project) => project.id === projectId)
+  const selectedProject =
+    view.kind === 'project'
+      ? archivedProjects.find((project) => project.id === view.projectId)
+      : undefined
   const selectedProjectSessions = useMemo(
     () => sessions.filter((session) => session.projectId === selectedProject?.id),
     [selectedProject?.id, sessions]
@@ -58,6 +67,7 @@ const ArchivedPanel = (): React.JSX.Element => {
       archived: false,
       expectedArchivedAt: project.archivedAt
     })
+      .then(() => onNavigate({ kind: 'list' }))
       .catch((restoreError: unknown) =>
         setError(describeError(restoreError, 'Could not restore project.'))
       )
@@ -122,6 +132,7 @@ const ArchivedPanel = (): React.JSX.Element => {
       useSessionStore.getState().removeSessionsForProject(project.id)
       setProjectToDelete(undefined)
     })()
+      .then(() => onNavigate({ kind: 'list' }))
       .catch((deleteError: unknown) =>
         setError(describeError(deleteError, 'Could not delete project.'))
       )
@@ -174,16 +185,6 @@ const ArchivedPanel = (): React.JSX.Element => {
       ) : null}
       {selectedProject ? (
         <>
-          <Button
-            type="button"
-            variant="ghost"
-            size="sm"
-            className="-ml-2"
-            onClick={() => setProjectId(undefined)}
-          >
-            <ArrowLeft className="size-4" aria-hidden="true" />
-            Archived projects
-          </Button>
           <div className="flex flex-wrap items-start justify-between gap-3">
             <div className="min-w-0">
               <h3 className="truncate text-base font-semibold text-foreground">
@@ -244,7 +245,7 @@ const ArchivedPanel = (): React.JSX.Element => {
                   key={project.id}
                   type="button"
                   className="flex w-full items-center gap-3 rounded-lg border border-border p-3 text-left transition-colors hover:bg-muted"
-                  onClick={() => setProjectId(project.id)}
+                  onClick={() => onNavigate({ kind: 'project', projectId: project.id })}
                 >
                   <Archive className="size-4 shrink-0 text-muted-foreground" aria-hidden="true" />
                   <span className="min-w-0 flex-1">

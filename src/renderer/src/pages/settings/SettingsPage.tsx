@@ -32,9 +32,10 @@ import { Button } from '@/components/ui/button'
 import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from '@/components/ui/tooltip'
 import { useMediaQuery } from '@/hooks/useMediaQuery'
 import { cn } from '@/lib/utils'
+import { useComputeStore } from '@/stores/compute-store'
+import { useProjectStore } from '@/stores/project-store'
 import { selectFrameworkApiEndpoints, useSettingsStore } from '@/stores/settings-store'
 import type { SettingsPanelId } from './settings-navigation'
-import { useComputeStore } from '@/stores/compute-store'
 import { useSpecialistStore } from '@/stores/specialist-store'
 import { AgentPanel } from './AgentPanel'
 import { ProvidersPanel } from './ProvidersPanel'
@@ -55,7 +56,7 @@ import { ComputePanel, type ComputeView } from './ComputePanel'
 import { ComputeAddForm } from './ComputeAddForm'
 import { ComputeHostDetail } from './ComputeHostDetail'
 import { PermissionsPanel } from './PermissionsPanel'
-import { ArchivedPanel } from './ArchivedPanel'
+import { ArchivedPanel, type ArchivedView } from './ArchivedPanel'
 import { resolveVendorModelsUrl } from '../../../../shared/provider-registry'
 import { ProviderForm } from './ProviderForm'
 import {
@@ -188,6 +189,7 @@ type NavLocation = {
   network?: NetworkView
   compute?: ComputeView
   specialists?: SpecialistsView
+  archived?: ArchivedView
 }
 
 const INITIAL_LOCATION: NavLocation = {
@@ -197,7 +199,8 @@ const INITIAL_LOCATION: NavLocation = {
   connectors: { kind: 'list' },
   network: { kind: 'list' },
   compute: { kind: 'list' },
-  specialists: { kind: 'list' }
+  specialists: { kind: 'list' },
+  archived: { kind: 'list' }
 }
 
 // App-level model settings surface. Reuses the onboarding cards/form; manages providers (CRUD +
@@ -245,6 +248,7 @@ const SettingsPage = forwardRef<SettingsPageHandle, SettingsPageProps>(function 
   const connectors = useSettingsStore((state) => state.connectors)
   const customServers = useSettingsStore((state) => state.customServers)
   const computeHosts = useComputeStore((state) => state.hosts)
+  const projects = useProjectStore((state) => state.projects)
   const specialistItems = useSpecialistStore((state) => state.items)
   const [formValue, setFormValue] = useState<ProviderFormValue>(() =>
     createEmptyProviderFormValue()
@@ -355,6 +359,7 @@ const SettingsPage = forwardRef<SettingsPageHandle, SettingsPageProps>(function 
   const networkView: NetworkView = currentLocation.network ?? { kind: 'list' }
   const computeView: ComputeView = currentLocation.compute ?? { kind: 'list' }
   const specialistsView: SpecialistsView = currentLocation.specialists ?? { kind: 'list' }
+  const archivedView: ArchivedView = currentLocation.archived ?? { kind: 'list' }
   const canGoBack = historyIndex > 0
   const canGoForward = historyIndex < history.length - 1
 
@@ -364,6 +369,7 @@ const SettingsPage = forwardRef<SettingsPageHandle, SettingsPageProps>(function 
     const nextNetwork = location.network ?? { kind: 'list' }
     const nextCompute = location.compute ?? { kind: 'list' }
     const nextSpecialists = location.specialists ?? { kind: 'list' }
+    const nextArchived = location.archived ?? { kind: 'list' }
     if (
       location.panel === activePanel &&
       location.skills.kind === skillsView.kind &&
@@ -381,7 +387,10 @@ const SettingsPage = forwardRef<SettingsPageHandle, SettingsPageProps>(function 
         ('providerId' in computeView ? computeView.providerId : undefined) &&
       nextSpecialists.kind === specialistsView.kind &&
       ('id' in nextSpecialists ? nextSpecialists.id : undefined) ===
-        ('id' in specialistsView ? specialistsView.id : undefined)
+        ('id' in specialistsView ? specialistsView.id : undefined) &&
+      nextArchived.kind === archivedView.kind &&
+      ('projectId' in nextArchived ? nextArchived.projectId : undefined) ===
+        ('projectId' in archivedView ? archivedView.projectId : undefined)
     ) {
       return
     }
@@ -424,6 +433,15 @@ const SettingsPage = forwardRef<SettingsPageHandle, SettingsPageProps>(function 
       model: modelView,
       connectors: connectorsView,
       compute
+    })
+
+  const navigateArchived = (archived: ArchivedView): void =>
+    navigate({
+      panel: 'archived',
+      skills: skillsView,
+      model: modelView,
+      connectors: connectorsView,
+      archived
     })
 
   // Shared header breadcrumb for a drilled-in sub-view (null when on a panel's list, so the plain
@@ -537,6 +555,20 @@ const SettingsPage = forwardRef<SettingsPageHandle, SettingsPageProps>(function 
           specialists: { kind: 'list' }
         },
         leaf
+      }
+    }
+    if (activePanel === 'archived' && archivedView.kind === 'project') {
+      return {
+        rootLabel: 'Archived',
+        rootTo: {
+          panel: 'archived',
+          skills: currentLocation.skills,
+          model: currentLocation.model,
+          archived: { kind: 'list' }
+        },
+        leaf:
+          projects.find((project) => project.id === archivedView.projectId)?.name ??
+          'Archived project'
       }
     }
     return null
@@ -990,7 +1022,7 @@ const SettingsPage = forwardRef<SettingsPageHandle, SettingsPageProps>(function 
                     }
                   />
                 ) : activePanel === 'archived' ? (
-                  <ArchivedPanel />
+                  <ArchivedPanel view={archivedView} onNavigate={navigateArchived} />
                 ) : activePanel === 'runtimes' ? (
                   <RuntimesPanel
                     title="Notebook runtimes"

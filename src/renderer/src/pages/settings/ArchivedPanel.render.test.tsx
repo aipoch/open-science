@@ -60,7 +60,9 @@ describe('ArchivedPanel', () => {
   })
 
   it('restores an individually archived session from Settings', async () => {
-    await act(async () => root.render(<ArchivedPanel />))
+    await act(async () =>
+      root.render(<ArchivedPanel view={{ kind: 'list' }} onNavigate={vi.fn()} />)
+    )
 
     const restore = Array.from(container.querySelectorAll<HTMLButtonElement>('button')).find(
       (button) => button.textContent?.includes('Restore')
@@ -74,5 +76,24 @@ describe('ArchivedPanel', () => {
       expectedArchivedAt: 2
     })
     expect(useSessionStore.getState().sessions[0]?.archivedAt).toBeUndefined()
+  })
+
+  it('delegates archived project selection to Settings navigation', async () => {
+    const onNavigate = vi.fn()
+    useProjectStore.setState({
+      ...createInitialProjectState(),
+      projects: [{ ...project, archivedAt: 2 }],
+      isLoaded: true
+    })
+    await act(async () =>
+      root.render(<ArchivedPanel view={{ kind: 'list' }} onNavigate={onNavigate} />)
+    )
+
+    const manage = Array.from(container.querySelectorAll<HTMLButtonElement>('button')).find(
+      (button) => button.textContent?.includes('Manage')
+    )
+    await act(async () => manage?.click())
+
+    expect(onNavigate).toHaveBeenCalledWith({ kind: 'project', projectId: project.id })
   })
 })
