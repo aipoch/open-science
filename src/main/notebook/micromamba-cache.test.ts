@@ -72,7 +72,10 @@ describe('selectMicromambaCache', () => {
     const selected = selectMicromambaCache(
       'D:\\OpenScience\\runtime',
       DEFAULT_MAX_CACHE_RELATIVE_PATH,
-      windowsDeps({ prepare })
+      windowsDeps({
+        env: { USERNAME: 'alice', PUBLIC: 'C:\\Users\\Public', USERPROFILE: 'C:\\Users\\alice' },
+        prepare
+      })
     )
 
     expect(selected.path).toMatch(/^C:\\Users\\alice\\osp[0-9a-f]{10}$/)
@@ -97,6 +100,27 @@ describe('selectMicromambaCache', () => {
 
     expect(selected.path).toMatch(/^C:\\Users\\peipeidamowang\\os[0-9a-hjkmnp-tv-z]{8}$/)
     expect(selected.path.length + DEFAULT_MAX_CACHE_RELATIVE_PATH).toBe(WINDOWS_MAX_USABLE_PATH)
+    expect(prepare).toHaveBeenCalledTimes(2)
+  })
+
+  it('uses the public directory when the runtime volume is untrusted and the profile path is too long', () => {
+    const prepare = vi.fn((path: string) =>
+      path.startsWith('E:\\') ? undefined : win32.normalize(path)
+    )
+    const selected = selectMicromambaCache(
+      'E:\\deeply\\nested\\storage\\OpenScience\\runtime',
+      DEFAULT_MAX_CACHE_RELATIVE_PATH,
+      windowsDeps({
+        env: {
+          USERNAME: 'peipeidamowang',
+          PUBLIC: 'C:\\Users\\Public',
+          USERPROFILE: 'C:\\Users\\peipeidamowang-with-a-long-profile'
+        },
+        prepare
+      })
+    )
+
+    expect(selected.path).toMatch(/^C:\\Users\\Public\\osp[0-9a-f]{10}$/)
     expect(prepare).toHaveBeenCalledTimes(2)
   })
 
@@ -198,7 +222,11 @@ describe('selectMicromambaCache', () => {
 
 describe('removeMicromambaCacheForRoot', () => {
   const root = 'D:\\OpenScience\\runtime'
-  const env = { USERNAME: 'alice', USERPROFILE: 'C:\\Users\\alice' }
+  const env = {
+    USERNAME: 'alice',
+    PUBLIC: 'C:\\Users\\Public',
+    USERPROFILE: 'C:\\Users\\alice'
+  }
   const marker = {
     schema: 1,
     canonicalRoot: root.toLowerCase(),
@@ -258,7 +286,8 @@ describe('removeMicromambaCacheForRoot', () => {
       remove: (path) => removed.push(path)
     })
 
-    expect(removed).toHaveLength(3)
+    expect(removed).toHaveLength(4)
+    expect(removed).toContainEqual(expect.stringMatching(/^C:\\Users\\Public\\osp[0-9a-f]{10}$/))
     expect(removed).toContainEqual(
       expect.stringMatching(/^C:\\Users\\alice\\os[0-9a-hjkmnp-tv-z]{8}$/)
     )
