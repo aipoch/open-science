@@ -837,17 +837,25 @@ const ConversationPanel = ({
                               data-testid="menu-attach-files"
                               disabled={!canEditDraft || isUploadingAttachments}
                               onSelect={() => fileInputRef.current?.click()}
+                              // Two-line row: the limits copy lives inside the item so hover paints
+                              // one shared background behind the label and its description.
+                              className="items-start"
                             >
-                              <FileText className="mr-2 size-4 text-text-300" aria-hidden="true" />
-                              Attach files
+                              <FileText
+                                className="mt-0.5 mr-2 size-4 text-text-300"
+                                aria-hidden="true"
+                              />
+                              <span className="flex min-w-0 flex-col">
+                                Attach files
+                                <span
+                                  className="text-[11px] leading-4 text-text-300"
+                                  data-testid="attachment-limits"
+                                >
+                                  Any file type · {formatUploadSizeLimit(MAX_UPLOAD_FILE_BYTES)} per
+                                  file. Large files are linked, not embedded.
+                                </span>
+                              </span>
                             </DropdownMenuItem>
-                            <div
-                              className="px-2 py-1.5 text-[11px] leading-4 text-text-300"
-                              data-testid="attachment-limits"
-                            >
-                              Any file type · {formatUploadSizeLimit(MAX_UPLOAD_FILE_BYTES)} per
-                              file. Large files are linked, not embedded.
-                            </div>
                             <ComposerYourFilesMenu
                               onInsertFileReference={handleInsertFileReference}
                             />
