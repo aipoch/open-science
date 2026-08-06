@@ -76,15 +76,36 @@ const RECOVERY_BLOCKED_MESSAGE =
 const subscribedBridges = new WeakSet<object>()
 
 export const useNotebookEnvStore = create<NotebookEnvStore>((set, get) => {
-  const explicitRuns = new Map<NotebookLanguage, number>()
-  const beginExplicitRun = (language: NotebookLanguage): void => {
-    explicitRuns.set(language, (explicitRuns.get(language) ?? 0) + 1)
+  type ExplicitRun = { latestProgressRevision: number; terminal: boolean }
+  const progressRevisions = new Map<NotebookLanguage, number>()
+  const explicitRuns = new Map<NotebookLanguage, ExplicitRun[]>()
+  const beginExplicitRun = (language: NotebookLanguage): ExplicitRun => {
+    const run = {
+      latestProgressRevision: progressRevisions.get(language) ?? 0,
+      terminal: false
+    }
+    explicitRuns.set(language, [...(explicitRuns.get(language) ?? []), run])
+    return run
   }
-  const endExplicitRun = (language: NotebookLanguage): boolean => {
-    const remaining = (explicitRuns.get(language) ?? 1) - 1
-    if (remaining > 0) explicitRuns.set(language, remaining)
+  const trackLanguageProgress = (language: NotebookLanguage, terminal: boolean): void => {
+    const revision = (progressRevisions.get(language) ?? 0) + 1
+    progressRevisions.set(language, revision)
+    const owner = explicitRuns.get(language)?.find((run) => !run.terminal)
+    if (!owner) return
+    owner.latestProgressRevision = revision
+    if (terminal) owner.terminal = true
+  }
+  const endExplicitRun = (
+    language: NotebookLanguage,
+    run: ExplicitRun
+  ): { last: boolean; ownsLatestProgress: boolean } => {
+    const remaining = (explicitRuns.get(language) ?? []).filter((candidate) => candidate !== run)
+    if (remaining.length > 0) explicitRuns.set(language, remaining)
     else explicitRuns.delete(language)
-    return remaining === 0
+    return {
+      last: remaining.length === 0,
+      ownsLatestProgress: run.latestProgressRevision === (progressRevisions.get(language) ?? 0)
+    }
   }
 
   // Merges a partial update into state, then re-derives `ui` from the resulting status/scope/
@@ -161,9 +182,9 @@ export const useNotebookEnvStore = create<NotebookEnvStore>((set, get) => {
           // that boundary. Automatic runs have no awaiting caller, so their terminal event settles them.
           const language = progress.language
           if (language) {
-            const settled =
-              (progress.phase === 'done' || progress.phase === 'error') &&
-              !explicitRuns.has(language)
+            const terminal = progress.phase === 'done' || progress.phase === 'error'
+            trackLanguageProgress(language, terminal)
+            const settled = terminal && !explicitRuns.has(language)
             applyLang(language, {
               progress,
               error: progress.phase === 'error' ? progress.message : undefined,
@@ -204,7 +225,7 @@ export const useNotebookEnvStore = create<NotebookEnvStore>((set, get) => {
         applyLang(lang, { preparing: false })
         return
       }
-      beginExplicitRun(lang)
+      const run = beginExplicitRun(lang)
       let status: ProvisionStatus | undefined
       let failure: string | undefined
       try {
@@ -214,7 +235,8 @@ export const useNotebookEnvStore = create<NotebookEnvStore>((set, get) => {
       } catch (e) {
         failure = errorText(e)
       } finally {
-        if (endExplicitRun(lang)) {
+        const completion = endExplicitRun(lang, run)
+        if (completion.last && completion.ownsLatestProgress) {
           applyUi({ error: failure })
           // Only the last overlapping request settles the shared language card. Clear preparing before
           // applying recovery state so a completed rebuild can surface a still-active quarantine.
@@ -261,7 +283,7 @@ export const useNotebookEnvStore = create<NotebookEnvStore>((set, get) => {
         applyLang(lang, { preparing: false })
         return
       }
-      beginExplicitRun(lang)
+      const run = beginExplicitRun(lang)
       let status: ProvisionStatus | undefined
       let failure: string | undefined
       try {
@@ -271,7 +293,8 @@ export const useNotebookEnvStore = create<NotebookEnvStore>((set, get) => {
       } catch (e) {
         failure = errorText(e)
       } finally {
-        if (endExplicitRun(lang)) {
+        const completion = endExplicitRun(lang, run)
+        if (completion.last && completion.ownsLatestProgress) {
           applyUi({ error: failure })
           applyLang(lang, { preparing: false, error: failure })
           if (status) applyRecoveryBlocks(status)
