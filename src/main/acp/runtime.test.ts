@@ -660,6 +660,7 @@ const startPermissionProbeAgent = (
     announceToolCall?: boolean
     sparseCodexMcpApproval?: boolean
     modes?: SessionModeState
+    onSetMode?: (context: { sessionId: string; modeId: string }) => Promise<void> | void
     permissionOptions?: Array<{
       optionId: string
       name: string
@@ -683,7 +684,10 @@ const startPermissionProbeAgent = (
       sessionId: options.newSessionId,
       modes: options.modes
     }))
-    .onRequest(acp.methods.agent.session.setMode, () => ({}))
+    .onRequest(acp.methods.agent.session.setMode, async (ctx) => {
+      await options.onSetMode?.({ sessionId: ctx.params.sessionId, modeId: ctx.params.modeId })
+      return {}
+    })
     .onRequest(acp.methods.agent.session.resume, (ctx) => {
       if (options.resume === 'notFound') {
         throw acp.RequestError.resourceNotFound(ctx.params.sessionId)
@@ -6344,6 +6348,65 @@ describe('ACP runtime session management', () => {
       effectiveProfile: 'full',
       currentModeId: 'bypassPermissions'
     })
+  })
+
+  it('lets the latest overlapping profile change commit without releasing pending permission', async () => {
+    const process = new FakeAgentProcess()
+    const permissionSeen = createDeferred<AcpPermissionRequest>()
+    const fullModeEntered = createDeferred()
+    const releaseFullMode = createDeferred()
+    const modeChanges: string[] = []
+    let permissionResponse: unknown
+    startPermissionProbeAgent(process, {
+      newSessionId: 'live-permission-session',
+      toolCallId: 'live-permission-tool',
+      toolTitle: 'Run command',
+      modes: createModes(['default', 'bypassPermissions']),
+      onSetMode: async ({ modeId }) => {
+        modeChanges.push(modeId)
+        if (modeId === 'bypassPermissions') {
+          fullModeEntered.resolve()
+          await releaseFullMode.promise
+        }
+      },
+      onPermissionResponse: (response) => {
+        permissionResponse = response
+      }
+    })
+    const runtime = new AcpRuntime({
+      appVersion: '0.1.0',
+      defaultCwd: '/workspace',
+      spawnAgent: () => asAgentProcess(process),
+      callbacks: { onPermissionRequest: (request) => permissionSeen.resolve(request) }
+    })
+    const session = await runtime.createSession({ cwd: '/workspace', permissionProfile: 'ask' })
+    const prompting = runtime.sendPrompt({ sessionId: session.sessionId, text: 'run a command' })
+    const permission = await permissionSeen.promise
+
+    const selectingFull = runtime.setPermissionProfile({
+      sessionId: session.sessionId,
+      profile: 'full'
+    })
+    await fullModeEntered.promise
+    const selectingAsk = runtime.setPermissionProfile({
+      sessionId: session.sessionId,
+      profile: 'ask'
+    })
+    releaseFullMode.resolve()
+
+    await expect(selectingFull).resolves.toBeDefined()
+    const snapshot = await selectingAsk
+    expect(modeChanges).toEqual(['bypassPermissions', 'default'])
+    expect(permissionResponse).toBeUndefined()
+    expect(snapshot.pendingPermissions).toHaveLength(1)
+    expect(snapshot.permissionProfiles[session.sessionId]).toMatchObject({
+      selectedProfile: 'ask',
+      effectiveProfile: 'ask',
+      currentModeId: 'default'
+    })
+
+    runtime.respondToPermission({ requestId: permission.requestId, cancelled: true })
+    await expect(prompting).resolves.toMatchObject({ stopReason: 'end_turn' })
   })
 
   it('audits OpenCode MCP calls with canonical identities without logging raw tool titles', async () => {

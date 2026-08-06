@@ -324,6 +324,10 @@ class AcpRuntime {
   private readonly providerSessionResumer: AcpProviderSessionResumer
   private readonly sessionReplacement: AcpSessionReplacementWorkflow
   private readonly sessionDeletion: AcpSessionDeletionWorkflow
+  private readonly permissionProfileChanges = new Map<
+    string,
+    { revision: number; tail: Promise<void> }
+  >()
 
   // Wires runtime dependencies and forwards permission prompts into the event stream.
   constructor(
@@ -588,27 +592,63 @@ class AcpRuntime {
     return this.withOperationLease(() => this.contextCompactionWorkflow.compact(request))
   }
 
-  // Applies the Agent mode first, then releases any pending provider request that the new profile can
-  // safely approve. The aggregate is committed before release so subsequent calls observe the change.
+  // Serializes changes per Session and coalesces queued requests so only the latest selection can
+  // commit or release a pending provider request. The operation lease covers time spent in the queue.
   async setPermissionProfile(request: AcpSetPermissionProfileRequest): Promise<AcpStateSnapshot> {
-    return this.withOperationLease(() => this.setPermissionProfileOperation(request))
+    return this.withOperationLease(() => this.enqueuePermissionProfileChange(request))
+  }
+
+  private enqueuePermissionProfileChange(
+    request: AcpSetPermissionProfileRequest
+  ): Promise<AcpStateSnapshot> {
+    const state = this.permissionProfileChanges.get(request.sessionId) ?? {
+      revision: 0,
+      tail: Promise.resolve()
+    }
+    const revision = ++state.revision
+    const operation = state.tail.then(() =>
+      this.setPermissionProfileOperation(request, state, revision)
+    )
+    state.tail = operation.then(
+      () => undefined,
+      () => undefined
+    )
+    this.permissionProfileChanges.set(request.sessionId, state)
+    void state.tail.then(() => {
+      if (
+        this.permissionProfileChanges.get(request.sessionId) === state &&
+        state.revision === revision
+      ) {
+        this.permissionProfileChanges.delete(request.sessionId)
+      }
+    })
+
+    return operation
   }
 
   private async setPermissionProfileOperation(
-    request: AcpSetPermissionProfileRequest
+    request: AcpSetPermissionProfileRequest,
+    state: { revision: number },
+    revision: number
   ): Promise<AcpStateSnapshot> {
+    if (state.revision !== revision) return this.getSnapshot()
+
     const session = this.activeSessionFor(request.sessionId)
 
     if (!session) throw new Error(`ACP session not found: ${request.sessionId}`)
 
     const connection = this.connection
     if (!connection) throw new Error('ACP connection is not available.')
-    const permissionProfile = await this.sessionConfigurator.configurePermissionProfile({
-      backend: this.backend,
-      connection,
-      session,
-      permissionProfile: request.profile
-    })
+    const permissionProfile = await this.sessionConfigurator.configurePermissionProfile(
+      {
+        backend: this.backend,
+        connection,
+        session,
+        permissionProfile: request.profile
+      },
+      true
+    )
+    if (state.revision !== revision) return this.getSnapshot()
     if (this.activeSessionFor(request.sessionId) !== session) {
       throw new Error('ACP session startup was superseded.')
     }
