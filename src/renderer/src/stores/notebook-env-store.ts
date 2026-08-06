@@ -76,6 +76,16 @@ const RECOVERY_BLOCKED_MESSAGE =
 const subscribedBridges = new WeakSet<object>()
 
 export const useNotebookEnvStore = create<NotebookEnvStore>((set, get) => {
+  const explicitRuns = new Map<NotebookLanguage, number>()
+  const beginExplicitRun = (language: NotebookLanguage): void => {
+    explicitRuns.set(language, (explicitRuns.get(language) ?? 0) + 1)
+  }
+  const endExplicitRun = (language: NotebookLanguage): void => {
+    const remaining = (explicitRuns.get(language) ?? 1) - 1
+    if (remaining > 0) explicitRuns.set(language, remaining)
+    else explicitRuns.delete(language)
+  }
+
   // Merges a partial update into state, then re-derives `ui` from the resulting status/scope/
   // progress/error so every consumer of `ui` (onboarding step, launch banner, notebook gate) sees a
   // view that always matches the latest mirrored state (reuses provisioning-view's pure reducer).
@@ -146,11 +156,13 @@ export const useNotebookEnvStore = create<NotebookEnvStore>((set, get) => {
             error: progress.phase === 'error' ? progress.message : undefined
           })
           // Route a language-tagged event into that language's slot so its card advances/settles on its
-          // own. A run is done when it reports 'done' or 'error'; language-agnostic events (upgrade/
-          // restore) carry no language and only feed the single-slot ui above.
+          // own. Explicit UI runs stay preparing until their IPC call returns; `done` can arrive before
+          // that boundary. Automatic runs have no awaiting caller, so their terminal event settles them.
           const language = progress.language
           if (language) {
-            const settled = progress.phase === 'done' || progress.phase === 'error'
+            const settled =
+              progress.phase === 'error' ||
+              (progress.phase === 'done' && !explicitRuns.has(language))
             applyLang(language, {
               progress,
               error: progress.phase === 'error' ? progress.message : undefined,
@@ -191,6 +203,7 @@ export const useNotebookEnvStore = create<NotebookEnvStore>((set, get) => {
         applyLang(lang, { preparing: false })
         return
       }
+      beginExplicitRun(lang)
       try {
         await bridge.provision(lang)
         const status = await bridge.getStatus()
@@ -204,6 +217,8 @@ export const useNotebookEnvStore = create<NotebookEnvStore>((set, get) => {
       } catch (e) {
         applyUi({ error: errorText(e) })
         applyLang(lang, { preparing: false, error: errorText(e) })
+      } finally {
+        endExplicitRun(lang)
       }
     },
 
@@ -244,6 +259,7 @@ export const useNotebookEnvStore = create<NotebookEnvStore>((set, get) => {
         applyLang(lang, { preparing: false })
         return
       }
+      beginExplicitRun(lang)
       try {
         await bridge.repair(lang)
         const status = await bridge.getStatus()
@@ -253,6 +269,8 @@ export const useNotebookEnvStore = create<NotebookEnvStore>((set, get) => {
       } catch (e) {
         applyUi({ error: errorText(e) })
         applyLang(lang, { preparing: false, error: errorText(e) })
+      } finally {
+        endExplicitRun(lang)
       }
     }
   }

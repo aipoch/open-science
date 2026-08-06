@@ -455,6 +455,47 @@ describe('RuntimesPanel', () => {
 
     resolveProvision?.()
   })
+
+  it('does not re-enable setup while refreshing environments after provision completes', async () => {
+    let resolveRefresh:
+      ((value: { python: DiscoveredInterpreter[]; r: DiscoveredInterpreter[] }) => void) | undefined
+    const installedR: DiscoveredInterpreter = {
+      language: 'r',
+      provenance: 'app-managed',
+      envId: '/data/runtime/envs/default-r/bin/R',
+      interpreterPath: '/data/runtime/envs/default-r/bin/R',
+      label: 'R 4.4.3 (managed)',
+      version: '4.4.3',
+      runnable: true
+    }
+    provision.mockResolvedValue(undefined)
+    listEnvironments.mockResolvedValueOnce({ python: pythonEnvs, r: rEnvs }).mockImplementationOnce(
+      () =>
+        new Promise((resolve) => {
+          resolveRefresh = resolve
+        })
+    )
+    await render()
+
+    const setupButton = Array.from(container.querySelectorAll('button')).find((button) =>
+      /download and set up/i.test(button.textContent ?? '')
+    )
+    await click(setupButton ?? null)
+
+    const finishingButton = Array.from(container.querySelectorAll('button')).find((button) =>
+      /^finishing setup…$/i.test((button.textContent ?? '').trim())
+    )
+    const finishingDisabled = (finishingButton as HTMLButtonElement | undefined)?.disabled
+    const setupWasReenabled = container.textContent?.includes('Download and set up')
+
+    resolveRefresh?.({ python: pythonEnvs, r: [installedR, ...rEnvs] })
+    await act(async () => {})
+
+    expect(finishingButton).toBeDefined()
+    expect(finishingDisabled).toBe(true)
+    expect(setupWasReenabled).toBe(false)
+    expect(container.textContent).toContain('R 4.4.3 (managed)')
+  })
 })
 
 describe('RuntimesPanel packages dialog', () => {

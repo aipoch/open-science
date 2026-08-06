@@ -72,6 +72,9 @@ const RuntimesPanel = ({ title, description }: RuntimesPanelProps): React.JSX.El
   const [loaded, setLoaded] = useState(false)
   const [busy, setBusy] = useState(false)
   const [error, setError] = useState<string | null>(null)
+  const [managedOperations, setManagedOperations] = useState<
+    Partial<Record<NotebookLanguage, boolean>>
+  >({})
   // Set while confirming a disable that would affect live sessions (WS11): the runtime being disabled
   // plus its current usage, so the dialog can warn before revoking.
   const [disableImpact, setDisableImpact] = useState<{
@@ -313,6 +316,7 @@ const RuntimesPanel = ({ title, description }: RuntimesPanelProps): React.JSX.El
   const provisionManaged = async (language: NotebookLanguage): Promise<void> => {
     // Provisioning deliberately avoids the panel-wide busy flag. Per-language store state marks only
     // the active runtime as preparing and leaves its Cancel action available throughout the download.
+    setManagedOperations((current) => ({ ...current, [language]: true }))
     setError(null)
     try {
       await provisionEnv(language)
@@ -321,18 +325,23 @@ const RuntimesPanel = ({ title, description }: RuntimesPanelProps): React.JSX.El
       applyAll(await fetchAll())
     } catch (e) {
       setError(e instanceof Error ? e.message : 'Could not refresh runtime readiness.')
+    } finally {
+      setManagedOperations((current) => ({ ...current, [language]: false }))
     }
   }
 
   // Explicit recovery for a recovery-BLOCKED runtime (a prior setup's worker couldn't be confirmed
   // stopped, so plain provision keeps refusing). Reset force-clears the quarantine and rebuilds.
   const resetManaged = async (language: NotebookLanguage): Promise<void> => {
+    setManagedOperations((current) => ({ ...current, [language]: true }))
     setError(null)
     try {
       await resetEnv(language)
       applyAll(await fetchAll())
     } catch (e) {
       setError(e instanceof Error ? e.message : 'Could not reset the runtime.')
+    } finally {
+      setManagedOperations((current) => ({ ...current, [language]: false }))
     }
   }
 
@@ -487,7 +496,10 @@ const RuntimesPanel = ({ title, description }: RuntimesPanelProps): React.JSX.El
             // run settles, independent of the other language (fixes the concurrent python/R phantom-cancel).
             const langState = byLang[id]
             const preparing = langState?.preparing ?? false
+            const finishing = managedOperations[id] === true && !preparing
+            const settingUp = preparing || finishing
             const langProgress = langState?.progress
+            const progress = finishing ? 1 : (langProgress?.progress ?? 0)
             const langError = langState?.error
             const managedRunnable = managedRunnableFor(id)
 
@@ -537,7 +549,7 @@ const RuntimesPanel = ({ title, description }: RuntimesPanelProps): React.JSX.El
                         card above still renders), but recovery may have quarantined its prefix. Surface
                         the block + Reset here too, or the recovery entry would be unreachable whenever a
                         runnable managed env exists. */}
-                      {!preparing && langError?.includes('RUNTIME_RECOVERY_BLOCKED') ? (
+                      {!settingUp && langError?.includes('RUNTIME_RECOVERY_BLOCKED') ? (
                         <div
                           data-testid={`runtimes-recovery-blocked-${id}`}
                           className="flex items-start justify-between gap-4 rounded-lg border border-destructive/40 bg-card p-3"
@@ -576,26 +588,30 @@ const RuntimesPanel = ({ title, description }: RuntimesPanelProps): React.JSX.El
                             <Badge variant="secondary">App-managed</Badge>
                           </div>
                           <div className="mt-0.5 text-[13px] text-muted-foreground">
-                            {managedLine(managedRunnable, preparing, langProgress?.message)}
+                            {managedLine(
+                              managedRunnable,
+                              settingUp,
+                              finishing ? 'Finishing setup…' : langProgress?.message
+                            )}
                           </div>
-                          {preparing ? (
+                          {settingUp ? (
                             <div
                               className="mt-2 h-1.5 w-full overflow-hidden rounded-full bg-muted"
                               role="progressbar"
                               aria-label={`Setting up ${label} runtime`}
-                              aria-valuenow={Math.round((langProgress?.progress ?? 0) * 100)}
+                              aria-valuenow={Math.round(progress * 100)}
                               aria-valuemin={0}
                               aria-valuemax={100}
                             >
                               <div
                                 className="h-full rounded-full bg-primary transition-[width] duration-300"
                                 style={{
-                                  width: `${Math.max(2, Math.min(100, Math.round((langProgress?.progress ?? 0) * 100)))}%`
+                                  width: `${Math.max(2, Math.min(100, Math.round(progress * 100)))}%`
                                 }}
                               />
                             </div>
                           ) : null}
-                          {!preparing && langError ? (
+                          {!settingUp && langError ? (
                             <p
                               role="alert"
                               className="mt-1 text-[13px] text-destructive"
@@ -616,6 +632,16 @@ const RuntimesPanel = ({ title, description }: RuntimesPanelProps): React.JSX.El
                             onClick={() => void cancelProvision(id)}
                           >
                             Cancel
+                          </Button>
+                        ) : finishing ? (
+                          <Button
+                            type="button"
+                            variant="outline"
+                            size="sm"
+                            className="shrink-0"
+                            disabled
+                          >
+                            Finishing setup…
                           </Button>
                         ) : (
                           <Button
