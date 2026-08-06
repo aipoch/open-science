@@ -204,10 +204,7 @@ const aggregateEvidence = async ({ argv }) => {
         throw new Error(`Release artifact digest does not match evidence: ${artifact.name}.`)
       }
     }
-    if (
-      ['linux-x64', 'windows-x64'].includes(platform) &&
-      record.checks.packageSmoke !== 'passed'
-    ) {
+    if (record.checks.packageSmoke !== 'passed') {
       throw new Error(`Package smoke did not pass for ${platform}.`)
     }
   }

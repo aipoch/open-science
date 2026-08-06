@@ -175,7 +175,7 @@ describe('release certification evidence', () => {
       checks: {
         electronP0: 'passed',
         visualRegression: 'passed',
-        packageSmoke: ['linux-x64', 'windows-x64'].includes(platform) ? 'passed' : 'not-applicable',
+        packageSmoke: 'passed',
         authenticode: platform === 'windows-x64' ? 'not-required' : 'not-applicable'
       },
       artifacts: [{ name: `${platform}.zip`, sha256: artifactDigest }]
@@ -199,6 +199,21 @@ describe('release certification evidence', () => {
       sourceSha: 'abc123',
       platforms: expect.arrayContaining([expect.objectContaining({ platform: 'windows-x64' })])
     })
+
+    await writeFile(
+      join(root, 'certification-macos-arm64.json'),
+      JSON.stringify({
+        ...recordFor('macos-arm64'),
+        checks: { ...recordFor('macos-arm64').checks, packageSmoke: 'not-applicable' }
+      })
+    )
+    await expect(aggregateEvidence({ argv: args })).rejects.toThrow(
+      /Package smoke did not pass for macos-arm64/
+    )
+    await writeFile(
+      join(root, 'certification-macos-arm64.json'),
+      JSON.stringify(recordFor('macos-arm64'))
+    )
 
     await expect(
       aggregateEvidence({ argv: [...args, '--require-stable-release-checks'] })

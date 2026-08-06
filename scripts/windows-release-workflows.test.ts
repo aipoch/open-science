@@ -6,6 +6,7 @@ import { describe, expect, it } from 'vitest'
 
 type WorkflowStep = {
   env?: Record<string, string>
+  id?: string
   if?: string
   name?: string
   run?: string
@@ -94,16 +95,33 @@ describe('post-merge Windows validation', () => {
     })
   })
 
-  it('runs cross-platform P0, visual, Linux package smoke, and records evidence before upload', () => {
+  it('runs cross-platform P0 and visual against packaged apps before recording evidence', () => {
     const job = readWorkflow('build.yml').jobs.build
     const names = job.steps?.map(({ name }) => name) ?? []
+    const packaged = findStep(job, 'Resolve packaged Electron executable')
     const p0 = findStep(job, 'Run P0 Electron certification')
     const visual = findStep(job, 'Run desktop visual regression')
     const linux = findStep(job, 'Smoke test Linux packages')
+    const evidence = findStep(job, 'Record platform certification evidence')
 
+    expect(packaged.id).toBe('packaged_app')
+    expect(packaged.run).toContain('Open Science.app/Contents/MacOS/Open Science')
+    expect(packaged.run).toContain('win-unpacked/open-science.exe')
+    expect(packaged.run).toContain('linux-unpacked/open-science')
+    expect(p0.env?.OPEN_SCIENCE_E2E_EXECUTABLE).toBe('${{ steps.packaged_app.outputs.executable }}')
+    expect(visual.env?.OPEN_SCIENCE_E2E_EXECUTABLE).toBe(
+      '${{ steps.packaged_app.outputs.executable }}'
+    )
     expect(p0.run).toContain('npm run test:e2e:p0')
     expect(visual.run).toContain('npm run test:e2e:visual')
     expect(linux.run).toContain('scripts/linux-package-smoke.mjs')
+    expect(evidence.run).toContain('package_smoke=passed')
+    expect(
+      findStep(
+        readWorkflow('notarize-mac.yml').jobs.notarize,
+        'Refresh macOS certification evidence'
+      ).run
+    ).toContain('--package-smoke passed')
     expect(names.indexOf('Record platform certification evidence')).toBeGreaterThan(
       names.indexOf('Smoke test Linux packages')
     )

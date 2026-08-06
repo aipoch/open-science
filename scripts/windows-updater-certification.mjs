@@ -360,6 +360,8 @@ const main = async () => {
     await writeFile(updateConfigPath, updateConfig.source, 'utf8')
     const updaterCache = join(env.LOCALAPPDATA, updateConfig.updaterCacheDirName)
     const cachedInstaller = join(updaterCache, 'installer.exe')
+    // electron-builder's NSIS template copies $EXEPATH here during a normal install. Do not seed the
+    // cache: observing the real installer-created file proves production differential readiness.
     const [previousInstallerInfo, cachedInstallerInfo] = await Promise.all([
       stat(previousInstaller),
       stat(cachedInstaller)

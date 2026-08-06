@@ -229,7 +229,7 @@ jobs:
           --platform "macos-${{ matrix.arch }}"
           --artifact-dir mac
           --output "mac/certification-macos-${{ matrix.arch }}.json"
-          --package-smoke not-applicable
+          --package-smoke passed
           --authenticode not-applicable
 
       # Call path: replace this run's signed artifacts with the stapled ones (same names) plus the

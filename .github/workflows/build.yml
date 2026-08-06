@@ -225,11 +225,32 @@ jobs:
             npx electron-builder ${{ matrix.eb_args }} "${eb_ver[@]}" --publish never
           fi
 
-      # Run the release-critical desktop journeys against a real Electron process on every native
-      # target. The same focused specs are selected in PR Gate only when their owners change.
+      - name: Resolve packaged Electron executable
+        id: packaged_app
+        if: ${{ !inputs.skip_verify }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          case "${{ matrix.platform }}" in
+            mac) candidate="$(find dist -type f -path '*/Open Science.app/Contents/MacOS/Open Science' -print -quit)" ;;
+            win) candidate="$(find dist -type f -path '*/win-unpacked/open-science.exe' -print -quit)" ;;
+            linux) candidate="$(find dist -type f -path '*/linux-unpacked/open-science' -print -quit)" ;;
+            *) echo "Unsupported packaged Electron platform" >&2; exit 1 ;;
+          esac
+          if [ -z "$candidate" ] || [ ! -f "$candidate" ]; then
+            echo "Packaged Electron executable was not produced for ${{ matrix.name }}" >&2
+            exit 1
+          fi
+          executable="$(node -e 'process.stdout.write(require("path").resolve(process.argv[1]))' "$candidate")"
+          echo "executable=$executable" >> "$GITHUB_OUTPUT"
+
+      # Run the release-critical desktop journeys against the packaged Electron executable on every
+      # native target. The same focused specs use the source fixture in PR Gate when owners change.
       - name: Run P0 Electron certification
         if: ${{ !inputs.skip_verify }}
         shell: bash
+        env:
+          OPEN_SCIENCE_E2E_EXECUTABLE: ${{ steps.packaged_app.outputs.executable }}
         run: |
           if [ "${{ matrix.platform }}" = "linux" ]; then
             xvfb-run -a npm run test:e2e:p0
@@ -242,6 +263,8 @@ jobs:
       - name: Run desktop visual regression
         if: ${{ !inputs.skip_verify }}
         shell: bash
+        env:
+          OPEN_SCIENCE_E2E_EXECUTABLE: ${{ steps.packaged_app.outputs.executable }}
         run: |
           if [ "${{ matrix.platform }}" = "linux" ]; then
             xvfb-run -a npm run test:e2e:visual
@@ -274,9 +297,7 @@ jobs:
         if: ${{ !inputs.skip_verify }}
         shell: bash
         run: |
-          package_smoke=not-applicable
-          [ "${{ matrix.platform }}" = "linux" ] && package_smoke=passed
-          [ "${{ matrix.platform }}" = "win" ] && package_smoke=passed
+          package_smoke=passed
           authenticode=not-applicable
           if [ "${{ matrix.platform }}" = "win" ]; then
             authenticode=not-required

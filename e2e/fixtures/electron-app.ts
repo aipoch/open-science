@@ -11,6 +11,17 @@ const FAKE_AGENT_PATH = resolve(APP_ROOT, 'e2e', 'fixtures', 'fake-opencode.mjs'
 const FAKE_REMOTEIT_PATH = resolve(APP_ROOT, 'e2e', 'fixtures', 'fake-remoteit.cjs')
 const FAKE_PROVIDER_NAME = 'Electron E2E provider'
 
+const electronLaunchTarget = (
+  userDataRoot: string,
+  environment: NodeJS.ProcessEnv = process.env
+): { args: string[]; executablePath?: string } => {
+  const executablePath = environment.OPEN_SCIENCE_E2E_EXECUTABLE
+  return {
+    args: [`--user-data-dir=${userDataRoot}`, ...(executablePath ? [] : [APP_ROOT])],
+    ...(executablePath ? { executablePath } : {})
+  }
+}
+
 type LaunchRoots = {
   fakeAgentBinRoot: string
   fakeRemoteItRoot: string
@@ -72,7 +83,7 @@ const launchOpenScience = (
   fakeRemoteItRoot: string
 ): Promise<ElectronApplication> =>
   electron.launch({
-    args: [`--user-data-dir=${userDataRoot}`, APP_ROOT],
+    ...electronLaunchTarget(userDataRoot),
     cwd: fakeRemoteItEnabled ? fakeRemoteItRoot : APP_ROOT,
     env: launchEnvironment(
       storageRoot,
@@ -259,16 +270,23 @@ class ElectronAppHarness implements ElectronApp {
       executable: process.execPath
     }))
     await new Promise<void>((resolveLaunch, rejectLaunch) => {
-      const child = spawn(executable, [`--user-data-dir=${this.roots.userDataRoot}`, appPath], {
-        cwd: APP_ROOT,
-        env: launchEnvironment(
-          this.roots.storageRoot,
-          this.fakeAgentEnabled ? this.roots.fakeAgentBinRoot : undefined,
-          process.env,
-          this.fakeRemoteItEnabled ? this.roots.fakeRemoteItRoot : undefined
-        ),
-        stdio: 'ignore'
-      })
+      const child = spawn(
+        executable,
+        [
+          `--user-data-dir=${this.roots.userDataRoot}`,
+          ...(process.env.OPEN_SCIENCE_E2E_EXECUTABLE ? [] : [appPath])
+        ],
+        {
+          cwd: APP_ROOT,
+          env: launchEnvironment(
+            this.roots.storageRoot,
+            this.fakeAgentEnabled ? this.roots.fakeAgentBinRoot : undefined,
+            process.env,
+            this.fakeRemoteItEnabled ? this.roots.fakeRemoteItRoot : undefined
+          ),
+          stdio: 'ignore'
+        }
+      )
       child.once('error', rejectLaunch)
       child.once('exit', (code, signal) => {
         if (code === 0) resolveLaunch()
@@ -360,5 +378,5 @@ const test = base.extend<{ app: ElectronApp }>({
   }
 })
 
-export { launchEnvironment, test }
+export { electronLaunchTarget, launchEnvironment, test }
 export type { ElectronApp }
