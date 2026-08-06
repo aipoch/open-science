@@ -1624,6 +1624,38 @@ describe('ManagedFileIndexRepository', () => {
       ])
     )
 
+    const excludingSessionA = { filenameContains: 'impact', excludedSessionIds: [SESSION_ID] }
+    await expect(
+      repository.getOverview({ projectId: PROJECT_ID, search: excludingSessionA })
+    ).resolves.toEqual({
+      totalCount: 1,
+      uploadCount: 0,
+      artifactCount: 1,
+      artifactGroupCount: 1,
+      isIndexComplete: true
+    })
+    await expect(
+      repository.listFiles({
+        projectId: PROJECT_ID,
+        collection: { kind: 'all' },
+        search: excludingSessionA,
+        limit: 10
+      })
+    ).resolves.toMatchObject({
+      totalCount: 1,
+      items: [expect.objectContaining({ name: 'IMPACT_chart.png' })]
+    })
+    await expect(
+      repository.listArtifactGroups({
+        projectId: PROJECT_ID,
+        search: excludingSessionA,
+        limit: 10
+      })
+    ).resolves.toMatchObject({
+      totalCount: 1,
+      items: [expect.objectContaining({ sessionId: 'session-b' })]
+    })
+
     const first = await repository.listFiles({
       projectId: PROJECT_ID,
       collection: { kind: 'sessionArtifacts', sessionId: SESSION_ID },
@@ -1826,6 +1858,20 @@ describe('ManagedFileIndexRepository', () => {
         nextCursor: undefined
       },
       other: []
+    })
+
+    await expect(
+      repository.searchArtifacts({
+        primaryProjectId: PROJECT_ID,
+        otherProjectIds: ['project-b'],
+        filenameContains: 'sin',
+        excludedSessionIds: [SESSION_ID],
+        primaryLimit: 2,
+        otherLimit: 5
+      })
+    ).resolves.toMatchObject({
+      primary: { totalCount: 0, items: [], nextCursor: undefined },
+      other: otherFiles.slice(0, 5).map((file) => expect.objectContaining({ name: file.name }))
     })
   })
 

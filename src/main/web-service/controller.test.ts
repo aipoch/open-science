@@ -196,6 +196,7 @@ describe('createWebServiceController', () => {
     } satisfies Pick<ApplicationCommandComposition, 'localWeb' | 'remoteWeb' | 'task'>
     const h = makeController({}, vi.fn(), applicationCommands, {
       taskAgent: {
+        withSessionAvailable: async (_projectId, _sessionId, operation) => operation(),
         listAttachedSessionIds: vi.fn(async () => []),
         createSession: vi.fn(async () => ({ sessionId: 'session-created' })),
         resumeSession: vi.fn(async (request) => ({ sessionId: request.sessionId })),

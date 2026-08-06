@@ -1351,22 +1351,35 @@ export class DefaultRuntimeProvisioner implements RuntimeProvisioner {
           // shared cache — that would delete other envs' (and the other language's) tarballs needed for
           // offline rebuild. Instead take the cache EXCLUSIVE and remove only INCOMPLETE extracted
           // package dirs (missing info/index.json), preserving every tarball and complete package; then
-          // re-seed and retry the create ONCE. If nothing was incomplete, this isn't a corrupt-cache
-          // fault we can repair, so surface the original error rather than churn. A cancel is never
-          // retried.
+          // re-seed and retry the create ONCE. A Windows native access violation is also recoverable:
+          // it carries no stderr signature, and a transient crash may leave only a partial prefix after
+          // micromamba already removed its cache leaf. Other failures still surface without retrying.
+          const windowsAccessViolation = isWindowsAccessViolationError(
+            error,
+            this.deps.platform ?? process.platform
+          )
           if (
             this.abort?.signal.aborted ||
-            error instanceof MaxPathRetryError ||
-            !isCorruptPkgsCacheError(error)
+            (!windowsAccessViolation &&
+              (error instanceof MaxPathRetryError || !isCorruptPkgsCacheError(error)))
           )
             throw error
           const repaired = await withExclusiveCacheLocks(this.cacheLockKeys(selected.cache), () =>
             Promise.resolve(removeIncompleteExtractedPackages(this.cacheRoots(selected.cache)))
           )
-          if (!repaired) throw error
+          // A native access violation has no stderr signature and may happen after micromamba has
+          // already removed its incomplete cache leaf. Retry it once even when there is nothing left
+          // to delete; the failed prefix is cleared below before the retry.
+          if (!repaired && !windowsAccessViolation) throw error
+          // Micromamba never reported a successful transaction, so even a prefix that already has
+          // conda-meta + an interpreter may be only partially linked. Do not let clearIncompletePrefix's
+          // normal fast path mistake those two artifacts for a committed environment on the retry.
+          if (windowsAccessViolation) rmSync(prefix, { recursive: true, force: true })
           onProgress({
             phase: `create-${spec.language}`,
-            message: `Repairing ${spec.name} package cache…`,
+            message: windowsAccessViolation
+              ? `Repairing ${spec.name} after a Windows runtime crash…`
+              : `Repairing ${spec.name} package cache…`,
             progress: CREATE_FLOOR
           })
           const reseeded = await this.deps.fetchBundle(
@@ -1409,6 +1422,15 @@ const isCorruptPkgsCacheError = (error: unknown): boolean => {
     /error when extracting package/i.test(message) ||
     /remove_all[^]*not empty/i.test(message)
   )
+}
+
+const WINDOWS_STATUS_ACCESS_VIOLATION = 0xc0000005
+const isWindowsAccessViolationError = (error: unknown, platform: NodeJS.Platform): boolean => {
+  if (platform !== 'win32' || !(error instanceof Error)) return false
+  const exitCode = (error as Error & { data?: { exitCode?: unknown } }).data?.exitCode
+  if (typeof exitCode === 'number' && exitCode >>> 0 === WINDOWS_STATUS_ACCESS_VIOLATION)
+    return true
+  return error instanceof MaxPathRetryError && isWindowsAccessViolationError(error.cause, platform)
 }
 
 // Removes only INCOMPLETE extracted package directories from the shared pkgs cache — a complete conda

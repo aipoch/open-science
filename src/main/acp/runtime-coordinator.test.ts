@@ -173,6 +173,7 @@ const createFakeRuntime = (options: {
     getActivePromptSessions: () => [],
     hasLiveSession: (projectId: string, sessionId: string) =>
       snapshot.sessionIds.includes(sessionId) && sessionProjects.get(sessionId) === projectId,
+    liveSessionProjectId: (sessionId: string) => sessionProjects.get(sessionId),
     getActiveArtifactRunIds: () => [],
     connect,
     createSession,
@@ -314,9 +315,11 @@ describe('AcpRuntimeCoordinator', () => {
 
     expect(coordinator.hasLiveSession('project-1', session.sessionId)).toBe(true)
     expect(coordinator.hasLiveSession('project-2', session.sessionId)).toBe(false)
+    expect(coordinator.liveSessionProjectId(session.sessionId)).toBe('project-1')
 
     await coordinator.deleteSession({ sessionId: session.sessionId })
     expect(coordinator.hasLiveSession('project-1', session.sessionId)).toBe(false)
+    expect(coordinator.liveSessionProjectId(session.sessionId)).toBeUndefined()
   })
 
   it('forwards switchSpecialist to the owning runtime and returns its contextReset flag', async () => {

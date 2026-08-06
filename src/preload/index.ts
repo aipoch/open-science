@@ -135,6 +135,7 @@ const api: OpenScienceAPI = {
     // Persists a single sanitized session file.
     saveSession: (session, options) =>
       electronRendererContracts.invoke('sessions.saveSession', session, options),
+    updateArchive: (request) => electronRendererContracts.invoke('sessions.updateArchive', request),
     // Removes one session file.
     deleteSession: (request) => electronRendererContracts.invoke('sessions.deleteSession', request),
     // Persists the last-open project/session pointer.
@@ -391,6 +392,7 @@ const api: OpenScienceAPI = {
     get: (id) => electronRendererContracts.invoke('projects.get', id),
     create: (request) => electronRendererContracts.invoke('projects.create', request),
     update: (request) => electronRendererContracts.invoke('projects.update', request),
+    updateArchive: (request) => electronRendererContracts.invoke('projects.updateArchive', request),
     delete: (request) => electronRendererContracts.invoke('projects.delete', request),
     onCreated: (listener) => electronRendererContracts.subscribe('projects.onCreated', listener),
     onUpdated: (listener) => electronRendererContracts.subscribe('projects.onUpdated', listener),

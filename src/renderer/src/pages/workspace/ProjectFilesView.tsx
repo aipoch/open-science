@@ -1375,24 +1375,48 @@ const ProjectFilesViewContent = ({
     return () => window.clearTimeout(timer)
   }, [searchQuery])
 
-  const catalogIndex = useProjectFilesIndex(activeProjectId, handleIndexChanged)
+  const archivedSessionIds = useMemo(
+    () =>
+      allSessions
+        .filter(
+          (session) => session.projectId === activeProjectId && session.archivedAt !== undefined
+        )
+        .map((session) => session.id)
+        .sort(),
+    [activeProjectId, allSessions]
+  )
+  const archivedSessionIdSet = useMemo(() => new Set(archivedSessionIds), [archivedSessionIds])
+  const catalogIndex = useProjectFilesIndex(
+    activeProjectId,
+    handleIndexChanged,
+    undefined,
+    undefined,
+    archivedSessionIds
+  )
   // The expanded filter menu owns a separate group cursor so loading every session option does not
   // append hidden groups or trigger artifact-page reads in the visible catalog.
   const sessionOptionsIndex = useProjectFilesIndex(
     showAllSessionOptions ? activeProjectId : undefined,
     undefined,
     undefined,
-    { kind: 'artifactGroups' }
+    { kind: 'artifactGroups' },
+    archivedSessionIds
   )
   const isSearchActive = debouncedSearchQuery.length > 0
   const sessionById = useMemo(
     () =>
       new Map(
         allSessions
-          .filter((session) => session.projectId === activeProjectId)
+          .filter(
+            (session) => session.projectId === activeProjectId && session.archivedAt === undefined
+          )
           .map((session) => [session.id, session] as const)
       ),
     [activeProjectId, allSessions]
+  )
+  const isVisibleArtifactGroup = useCallback(
+    (group: ArtifactGroupItem): boolean => !archivedSessionIdSet.has(group.sessionId),
+    [archivedSessionIdSet]
   )
   const getSessionTitle = useCallback(
     (sessionId: string): string =>
@@ -1424,7 +1448,7 @@ const ProjectFilesViewContent = ({
         count: catalogIndex.overview.uploadCount,
         kind: 'uploads'
       },
-      ...filterGroupItems.map((group) => ({
+      ...filterGroupItems.filter(isVisibleArtifactGroup).map((group) => ({
         id: `session:${group.sessionId}`,
         label: getArtifactGroupTitle(group),
         count: group.artifactCount,
@@ -1437,6 +1461,7 @@ const ProjectFilesViewContent = ({
     // while that session lies beyond the currently loaded group-header page.
     if (
       selectedSessionFallback &&
+      !archivedSessionIdSet.has(selectedSessionFallback.id.slice('session:'.length)) &&
       !options.some((option) => option.id === selectedSessionFallback.id)
     ) {
       const sessionId = selectedSessionFallback.id.slice('session:'.length)
@@ -1453,6 +1478,8 @@ const ProjectFilesViewContent = ({
     catalogIndex.artifactsBySession,
     catalogIndex.overview,
     filterGroupItems,
+    archivedSessionIdSet,
+    isVisibleArtifactGroup,
     selectedSessionFallback
   ])
   const selectedSessionId = selectedFilterId.startsWith('session:')
@@ -1460,11 +1487,16 @@ const ProjectFilesViewContent = ({
     : undefined
   const selectedSessionStillExists = selectedSessionId
     ? allSessions.some(
-        (session) => session.projectId === activeProjectId && session.id === selectedSessionId
+        (session) =>
+          session.projectId === activeProjectId &&
+          session.id === selectedSessionId &&
+          session.archivedAt === undefined
       )
     : false
   const selectedSessionIsLoaded = selectedSessionId
-    ? catalogIndex.groups.items.some((group) => group.sessionId === selectedSessionId)
+    ? catalogIndex.groups.items.some(
+        (group) => group.sessionId === selectedSessionId && isVisibleArtifactGroup(group)
+      )
     : false
   const selectedCatalogSessionPage = selectedSessionId
     ? catalogIndex.artifactsBySession[selectedSessionId]
@@ -1551,7 +1583,8 @@ const ProjectFilesViewContent = ({
     isSearchActive ? activeProjectId : undefined,
     undefined,
     isSearchActive ? { filenameContains: debouncedSearchQuery } : undefined,
-    searchScope
+    searchScope,
+    archivedSessionIds
   )
   const index = isSearchActive ? searchIndex : catalogIndex
   const uploadsCollapsed = collapsedSectionIds.has('uploads')
@@ -1566,7 +1599,7 @@ const ProjectFilesViewContent = ({
   const visibleArtifactGroups = useMemo(
     () =>
       isAllFilter
-        ? index.groups.items
+        ? index.groups.items.filter(isVisibleArtifactGroup)
         : effectiveSessionId
           ? [
               index.groups.items.find((group) => group.sessionId === effectiveSessionId) ?? {
@@ -1582,6 +1615,7 @@ const ProjectFilesViewContent = ({
       effectiveSessionId,
       index.artifactsBySession,
       index.groups.items,
+      isVisibleArtifactGroup,
       isAllFilter,
       isSearchActive,
       selectedFilterOption.count,

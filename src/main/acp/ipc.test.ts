@@ -140,6 +140,7 @@ const registerWithFakes = (overrides?: {
   profileService?: { resolveRunnableById: (id: string) => Promise<unknown> }
   specialistSkillCatalog?: Array<{ id: string; frameworkName: string; displayName: string }>
   provisionedConnectorSkillNames?: string[]
+  archiveAvailability?: Parameters<typeof createAcpHandlerWorkflows>[3]
 }): AcpTestOptions => {
   const taskNotifications =
     overrides?.taskNotifications ??
@@ -178,7 +179,12 @@ const registerWithFakes = (overrides?: {
   const createSessionWorkflow = createAcpCreateSessionWorkflow(runtime)
   installAcpIpcHandlers(
     runtime,
-    createAcpHandlerWorkflows(runtime, createSessionWorkflow, options.taskNotifications)
+    createAcpHandlerWorkflows(
+      runtime,
+      createSessionWorkflow,
+      options.taskNotifications,
+      overrides?.archiveAvailability
+    )
   )
   return options as AcpTestOptions
 }
@@ -710,6 +716,45 @@ describe('installAcpIpcHandlers — reset-session-context bridge', () => {
 })
 
 describe('installAcpIpcHandlers — resume-session diagnostics', () => {
+  it('holds archive admission until runtime resume completes', async () => {
+    let admissionActive = false
+    const admitted = vi.fn()
+    const archiveAvailability = {
+      withSessionAvailable: async <Result>(
+        projectId: string,
+        sessionId: string,
+        operation: () => Promise<Result>
+      ): Promise<Result> => {
+        admitted(projectId, sessionId, operation)
+        admissionActive = true
+        try {
+          return await operation()
+        } finally {
+          admissionActive = false
+        }
+      },
+      withSessionAvailableById: async <Result>(
+        _sessionId: string,
+        operation: () => Promise<Result>
+      ): Promise<Result> => operation()
+    }
+    registerWithFakes({ archiveAvailability })
+    const request: AcpResumeSessionRequest = {
+      sessionId: 'session-1',
+      cwd: '/workspace',
+      projectName: 'project-1'
+    }
+    resumeSession.mockImplementationOnce(async () => {
+      expect(admissionActive).toBe(true)
+      return { sessionId: request.sessionId, cwd: request.cwd }
+    })
+
+    await handlers.get('acp:resume-session')?.({}, request)
+
+    expect(admitted).toHaveBeenCalledWith('project-1', request.sessionId, expect.any(Function))
+    expect(admissionActive).toBe(false)
+  })
+
   it('logs a privacy-safe correlated lifecycle on success', async () => {
     registerWithFakes()
     const request: AcpResumeSessionRequest = {

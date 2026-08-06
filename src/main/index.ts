@@ -295,6 +295,7 @@ async function startElectronApp(mainEntryPath: string): Promise<void> {
         settingsService,
         taskAgent,
         sessionDeletionCapability,
+        archiveCapability,
         detectActiveSessions,
         prepareForQuit,
         dispose: disposeApplicationRuntime
@@ -329,6 +330,7 @@ async function startElectronApp(mainEntryPath: string): Promise<void> {
         repository: unreadTaskRepository,
         confirmSessionVisible: (sessionId) =>
           visibilityProbeBox.current?.confirmSessionVisible(sessionId) ?? Promise.resolve(false),
+        canMarkUnread: (sessionId) => archiveCapability.isSessionAvailableById(sessionId),
         badge: createDesktopBadgeAdapter({
           platform: process.platform,
           setBadgeCount: (count) => app.setBadgeCount(count),
@@ -345,6 +347,9 @@ async function startElectronApp(mainEntryPath: string): Promise<void> {
         onError: (error) => log.warn('unread task state failed', error)
       })
       await unreadTaskController.restore()
+      archiveCapability.setMarkReadSessions((sessionIds) =>
+        unreadTaskController.markReadSessions(sessionIds)
+      )
       // Bind deletion recovery before a window can load Sessions. A complete main-process scan is
       // the sole authority for pruning unread rows; renderer hydration never projects its catalog.
       bindUnreadTaskDeletionRuntime({

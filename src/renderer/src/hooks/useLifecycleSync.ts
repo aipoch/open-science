@@ -2,6 +2,8 @@ import { useCallback, useLayoutEffect, useRef, useState } from 'react'
 
 import type { SessionUpsertEvent } from '../../../shared/lifecycle-events'
 import { useNavigationStore } from '@/stores/navigation-store'
+import { useArchiveUndoStore } from '@/stores/archive-undo-store'
+import { usePreviewWorkbenchStore } from '@/stores/preview-workbench-store'
 import { useProjectStore } from '@/stores/project-store'
 import { useSessionStore } from '@/stores/session-store'
 
@@ -66,7 +68,20 @@ const useLifecycleSync = ({
       applyOrQueue(() => useProjectStore.getState().upsertProject(project))
     })
     const removeProjectUpdated = window.api.projects.onUpdated((project) => {
-      applyOrQueue(() => useProjectStore.getState().upsertProject(project))
+      applyOrQueue(() => {
+        useProjectStore.getState().upsertProject(project)
+        useArchiveUndoStore.getState().reconcileProject(project)
+        if (project.archivedAt !== undefined) {
+          setNotice((current) => (current?.projectId === project.id ? undefined : current))
+        }
+        if (
+          project.archivedAt !== undefined &&
+          useNavigationStore.getState().activeProjectId === project.id
+        ) {
+          useSessionStore.getState().clearSelection()
+          useNavigationStore.getState().goHome('automatic')
+        }
+      })
     })
     const removeProjectDeleted = window.api.projects.onDeleted(({ projectId }) => {
       applyOrQueue(() => {
@@ -94,7 +109,20 @@ const useLifecycleSync = ({
       }
     )
     const removeSessionUpdated = window.api.sessions.onUpdated(({ session }) => {
-      applyOrQueue(() => useSessionStore.getState().upsertPersistedSession(session))
+      applyOrQueue(() => {
+        useSessionStore.getState().upsertPersistedSession(session)
+        useArchiveUndoStore.getState().reconcileSession(session)
+        if (
+          session.archivedAt !== undefined &&
+          useSessionStore.getState().selectedSessionId === session.id
+        ) {
+          useSessionStore.getState().clearSelection()
+        }
+        if (session.archivedAt !== undefined) {
+          usePreviewWorkbenchStore.getState().removeSessionItems(session.id)
+          setNotice((current) => (current?.sessionId === session.id ? undefined : current))
+        }
+      })
     })
     const removeSessionDeleted = window.api.sessions.onDeleted(({ sessionId }) => {
       applyOrQueue(() => {

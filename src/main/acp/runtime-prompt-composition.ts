@@ -3,18 +3,14 @@ import type { ArtifactTurnHandle } from './artifact-turn-owner'
 import { AcpContextCompactionWorkflow } from './context-compaction-workflow'
 import { createLogger, errorLogFields } from '../logger'
 import { AcpPromptPreparationOwner } from './prompt-preparation-owner'
-import { AcpPromptTurnWorkflow, type AcpPromptTurnWorkflowOptions } from './prompt-turn-workflow'
+import {
+  AcpPromptTurnWorkflow,
+  type AcpPromptTurnPlanWorkflow,
+  type AcpPromptTurnWorkflowOptions
+} from './prompt-turn-workflow'
 import type { AcpRuntimeOptions } from './runtime'
 import type { AcpRuntimeBaseOwners } from './runtime-base-composition'
 import type { AcpRuntimeSessionOwners } from './runtime-session-composition'
-
-type AcpRuntimePromptPlanHost = Readonly<{
-  preflight: AcpPromptTurnWorkflowOptions['preflightPlan']
-  admit: AcpPromptTurnWorkflowOptions['admitPlan']
-  beforeStop: AcpPromptTurnWorkflowOptions['planLifecycle']['beforeStop']
-  beforeRelease: AcpPromptTurnWorkflowOptions['planLifecycle']['beforeRelease']
-  afterRelease: AcpPromptTurnWorkflowOptions['planLifecycle']['afterRelease']
-}>
 
 type AcpRuntimePromptReloadHost = Readonly<{
   disconnect: AcpPromptTurnWorkflowOptions['disconnectForReload']
@@ -22,7 +18,7 @@ type AcpRuntimePromptReloadHost = Readonly<{
 }>
 
 type AcpRuntimePromptHost = Readonly<{
-  plan: AcpRuntimePromptPlanHost
+  plan: AcpPromptTurnPlanWorkflow
   reload: AcpRuntimePromptReloadHost
 }>
 
@@ -221,11 +217,7 @@ const composeAcpRuntimePromptOwners = (
       publish: publishArtifact,
       dispose: disposeArtifact
     },
-    planLifecycle: {
-      beforeStop: host.plan.beforeStop,
-      beforeRelease: host.plan.beforeRelease,
-      afterRelease: host.plan.afterRelease
-    },
+    plan: host.plan,
     finalization: {
       errorMessage,
       errorKind: acpErrorKind,
@@ -241,8 +233,6 @@ const composeAcpRuntimePromptOwners = (
     },
     currentCwd: () => base.snapshotOwner.cwd,
     resolveProjectName: projectName,
-    preflightPlan: host.plan.preflight,
-    admitPlan: host.plan.admit,
     disconnectForReload: host.reload.disconnect,
     resumeAfterReload: host.reload.resume,
     recordAdmittedPrompt: (request) => base.handoffContinuity.recordAdmittedPrompt(request),

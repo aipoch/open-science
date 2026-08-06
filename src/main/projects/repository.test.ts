@@ -14,7 +14,9 @@ const createRow = (overrides: Record<string, unknown> = {}): Record<string, unkn
 
 // Builds a mock project delegate; each method is a spy the tests can assert against.
 const createMockClient = (
-  methods: Partial<Record<'findMany' | 'findUnique' | 'create' | 'update' | 'delete', unknown>>
+  methods: Partial<
+    Record<'findMany' | 'findUnique' | 'create' | 'update' | 'updateMany' | 'delete', unknown>
+  >
 ): {
   client: ProjectClient
   project: Record<string, ReturnType<typeof vi.fn>>
@@ -25,6 +27,7 @@ const createMockClient = (
     findUnique: vi.fn(methods.findUnique as never),
     create: vi.fn(methods.create as never),
     update: vi.fn(methods.update as never),
+    updateMany: vi.fn(methods.updateMany as never),
     delete: vi.fn(methods.delete as never)
   }
 
@@ -110,6 +113,35 @@ describe('project repository', () => {
     await repository.delete('project-1')
 
     expect(project.delete).toHaveBeenCalledWith({ where: { id: 'project-1' } })
+  })
+
+  it('changes archive visibility with compare-and-set while preserving activity time', async () => {
+    const current = createRow({ updatedAt: new Date(1710000000100), archivedAt: null })
+    const archived = createRow({
+      updatedAt: new Date(1710000000100),
+      archivedAt: new Date(1710000000200)
+    })
+    const findUnique = vi.fn().mockResolvedValueOnce(current).mockResolvedValueOnce(archived)
+    const { client, project } = createMockClient({
+      findUnique,
+      updateMany: () => Promise.resolve({ count: 1 })
+    })
+    const repository = new ProjectRepository(() => Promise.resolve(client))
+
+    await expect(
+      repository.updateArchive(
+        { id: 'project-1', archived: true, expectedArchivedAt: null },
+        1710000000200
+      )
+    ).resolves.toMatchObject({ archivedAt: 1710000000200, updatedAt: 1710000000100 })
+
+    expect(project.updateMany).toHaveBeenCalledWith({
+      where: { id: 'project-1', archivedAt: null },
+      data: {
+        archivedAt: new Date(1710000000200),
+        updatedAt: new Date(1710000000100)
+      }
+    })
   })
 
   it('persists, lists, and clears project deletion intents', async () => {

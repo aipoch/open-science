@@ -1302,6 +1302,39 @@ describe('SpecialistsPanel Chat with agent', () => {
     expect(closeSettingsSpy).not.toHaveBeenCalled()
   })
 
+  it('disables Chat with agent when every project is archived', async () => {
+    useProjectStore.setState({
+      projects: [{ ...project('archived-project', 5), archivedAt: 2 }]
+    })
+    await renderList()
+
+    openRadixMenu(openAddSpecialistMenu())
+    const chatItem = Array.from(
+      document.body.querySelectorAll<HTMLElement>('[role="menuitem"]')
+    ).find((item) => item.textContent?.includes('Chat with agent'))
+
+    expect(chatItem?.getAttribute('aria-disabled')).toBe('true')
+    expect(navigationMock.startCustomizeConversation).not.toHaveBeenCalled()
+  })
+
+  it('resolves Chat with agent from active projects only', async () => {
+    useProjectStore.setState({
+      projects: [
+        { ...project('archived-project', 10), archivedAt: 2 },
+        project('active-project', 5)
+      ]
+    })
+    await renderList()
+
+    openRadixMenu(openAddSpecialistMenu())
+    const chatItem = Array.from(
+      document.body.querySelectorAll<HTMLElement>('[role="menuitem"]')
+    ).find((item) => item.textContent?.includes('Chat with agent'))
+    await act(async () => clickRadixMenuItem(chatItem))
+
+    expect(navigationMock.startCustomizeConversation).toHaveBeenCalledWith('active-project')
+  })
+
   it('closes Settings and starts a customize conversation for the resolved project', async () => {
     useProjectStore.setState({ projects: [project('climate-models', 5)] })
     await renderList()

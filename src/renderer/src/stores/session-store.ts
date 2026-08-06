@@ -41,6 +41,7 @@ import {
   type PersistedSessionStatus,
   type PersistedToolActivity
 } from '../../../shared/session-persistence'
+import type { UpdateSessionArchiveRequest } from '../../../shared/session-persistence'
 import { isReportableRunFailure } from '../../../shared/run-error-classification'
 import { PENDING_UPLOAD_SESSION_ID } from '../../../shared/uploads'
 import {
@@ -328,6 +329,7 @@ type SessionStore = SessionStoreData & {
   setSessionSpecialistId: (sessionId: string, specialistId: string | undefined) => void
   // Toggles whether a conversation is pinned to the top section of the sidebar.
   togglePinned: (sessionId: string) => void
+  updateSessionArchive: (request: UpdateSessionArchiveRequest) => Promise<ChatSession>
   // Sets or clears the per-session fix loop active flag. When true, the composer send button is
   // disabled for this session; when false (loop ended or cancelled), send is re-enabled.
   setFixLoopActive: (sessionId: string, active: boolean) => void
@@ -1432,7 +1434,21 @@ export const useSessionStore = create<SessionStore>((set, get) => ({
   upsertPersistedSession: (session) => {
     set((state) => {
       const existing = state.sessions.find((candidate) => candidate.id === session.id)
-      if (existing && existing.updatedAt > session.updatedAt) return state
+      if (existing && existing.updatedAt > session.updatedAt) {
+        if (existing.archivedAt === session.archivedAt) return state
+        const withoutPreviousArchive = { ...existing }
+        delete withoutPreviousArchive.archivedAt
+        const projected: ChatSession = {
+          ...withoutPreviousArchive,
+          ...(session.archivedAt === undefined ? {} : { archivedAt: session.archivedAt })
+        }
+        externallyHydratedSessions.add(projected)
+        return {
+          sessions: state.sessions.map((candidate) =>
+            candidate.id === session.id ? projected : candidate
+          )
+        }
+      }
       if (existing && existing.updatedAt === session.updatedAt) {
         const flat = mergeDurableUploadProjection(
           existing.messages,
@@ -1446,9 +1462,13 @@ export const useSessionStore = create<SessionStore>((set, get) => ({
               session.conversationGraph?.messages ?? session.messages
             )
           : undefined
-        if (!flat.changed && !graph?.changed) return state
+        const archiveChanged = existing.archivedAt !== session.archivedAt
+        if (!flat.changed && !graph?.changed && !archiveChanged) return state
+        const withoutPreviousArchive = { ...existing }
+        delete withoutPreviousArchive.archivedAt
         const projected: ChatSession = {
-          ...existing,
+          ...withoutPreviousArchive,
+          ...(session.archivedAt === undefined ? {} : { archivedAt: session.archivedAt }),
           messages: flat.messages,
           ...(graph?.changed
             ? {
@@ -2795,6 +2815,32 @@ export const useSessionStore = create<SessionStore>((set, get) => ({
         session.id === sessionId ? { ...session, pinned: !session.pinned } : session
       )
     }))
+  },
+
+  updateSessionArchive: async (request) => {
+    const persisted = await window.api.sessions.updateArchive(request)
+    let updated: ChatSession | undefined
+
+    set((state) => {
+      const existing = state.sessions.find((session) => session.id === persisted.id)
+      if (existing) {
+        const withoutPreviousArchive = { ...existing }
+        delete withoutPreviousArchive.archivedAt
+        updated =
+          persisted.archivedAt === undefined
+            ? withoutPreviousArchive
+            : { ...withoutPreviousArchive, archivedAt: persisted.archivedAt }
+      } else {
+        updated = hydrateSession(persisted)
+      }
+      return {
+        sessions: state.sessions.map((session) =>
+          session.id === persisted.id ? updated! : session
+        )
+      }
+    })
+
+    return updated ?? hydrateSession(persisted)
   },
 
   // Sets or clears the per-session fix loop active flag. The flag is transient (never persisted)

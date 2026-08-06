@@ -38,6 +38,7 @@ describe('createProjectHandlers', () => {
       get: vi.fn(),
       create: vi.fn(),
       update: vi.fn(),
+      updateArchive: vi.fn(),
       delete: vi.fn()
     }
     const deletionCoordinator = {
@@ -108,7 +109,8 @@ describe('createProjectHandlers', () => {
       list: vi.fn().mockResolvedValue([project]),
       get: vi.fn().mockResolvedValue(project),
       create: vi.fn().mockResolvedValue(project),
-      update: vi.fn().mockResolvedValue(project)
+      update: vi.fn().mockResolvedValue(project),
+      updateArchive: vi.fn().mockResolvedValue({ ...project, archivedAt: 3 })
     } as unknown as ProjectRepository
     const previewRepository = {
       get: vi.fn().mockResolvedValue(null),
@@ -126,6 +128,7 @@ describe('createProjectHandlers', () => {
       'projects:get',
       'projects:create',
       'projects:update',
+      'projects:update-archive',
       'projects:delete',
       'preview:load',
       'preview:save',
@@ -134,12 +137,14 @@ describe('createProjectHandlers', () => {
 
     const createRequest = { name: 'Project' }
     const updateRequest = { id: 'project-1', name: 'Renamed' }
+    const archiveRequest = { id: 'project-1', archived: true, expectedArchivedAt: null }
     const previewState = { openTabs: [], activeTabId: null }
 
     await ipcHandlers.get('projects:list')?.()
     await ipcHandlers.get('projects:get')?.(undefined, 'project-1')
     await ipcHandlers.get('projects:create')?.(undefined, createRequest)
     await ipcHandlers.get('projects:update')?.(undefined, updateRequest)
+    await ipcHandlers.get('projects:update-archive')?.(undefined, archiveRequest)
     await ipcHandlers.get('projects:delete')?.(undefined, { id: 'project-1' })
     await ipcHandlers.get('preview:load')?.(undefined, { projectId: 'project-1' })
     await ipcHandlers.get('preview:save')?.(undefined, {
@@ -151,9 +156,14 @@ describe('createProjectHandlers', () => {
     expect(repository.get).toHaveBeenCalledWith('project-1')
     expect(repository.create).toHaveBeenCalledWith(createRequest)
     expect(repository.update).toHaveBeenCalledWith(updateRequest)
+    expect(repository.updateArchive).toHaveBeenCalledWith(archiveRequest, expect.any(Number))
     expect(deletionCoordinator.deleteProject).toHaveBeenCalledWith('project-1')
     expect(broadcastLifecycleEvent).toHaveBeenCalledWith('project:created', project)
     expect(broadcastLifecycleEvent).toHaveBeenCalledWith('project:updated', project)
+    expect(broadcastLifecycleEvent).toHaveBeenCalledWith('project:updated', {
+      ...project,
+      archivedAt: 3
+    })
     expect(broadcastLifecycleEvent).toHaveBeenCalledWith('project:deleted', {
       projectId: 'project-1'
     })
@@ -183,6 +193,7 @@ describe('createProjectHandlers', () => {
       get: vi.fn(),
       create: vi.fn(),
       update: vi.fn(),
+      updateArchive: vi.fn(),
       delete: vi.fn()
     }
 
@@ -207,6 +218,7 @@ describe('createProjectHandlers', () => {
       get: vi.fn(),
       create: vi.fn(),
       update: vi.fn(),
+      updateArchive: vi.fn(),
       delete: vi.fn()
     }
     registrationFailure.channel = 'projects:list'

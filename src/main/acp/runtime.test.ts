@@ -19,6 +19,8 @@ import { AcpRuntime } from './runtime.test-utils'
 import type { AcpAgentConnectionAdapter } from './agent-connection-adapter'
 import type { AcpConnectionCloseWorkflow } from './connection-close-workflow'
 import { composeAcpRuntimePlanWorkflow } from './runtime-plan-composition'
+import { SessionPlanInteractionOwner } from '../session-plan/session-plan-interaction-owner'
+import { composeAcpRuntimeBaseOwners } from './runtime-base-composition'
 import { AcpPermissionContext } from './permission-context'
 import { ContextUsageTracker, type TokenCounter } from './context-usage-tracker'
 import {
@@ -1672,26 +1674,29 @@ describe('ACP runtime session management', () => {
     sessions = durablePlanSessions()
   ): void => {
     const internals = runtime as unknown as {
-      planInteractions: unknown
       sessionInteractions: unknown
       artifactTurns: unknown
       publication: unknown
-      planService: unknown
+      sessionEnvironment: unknown
       sessionPlanWorkflow: unknown
+      promptTurnWorkflow: { options: { plan: unknown } }
     }
+    const planInteractions = new SessionPlanInteractionOwner()
     const sessionPlanWorkflow = composeAcpRuntimePlanWorkflow(
       { plan: { sessions } } as unknown as Parameters<typeof composeAcpRuntimePlanWorkflow>[0],
       {
         planService,
-        planInteractions: internals.planInteractions,
+        planInteractions,
         sessionInteractions: internals.sessionInteractions,
         artifactTurns: internals.artifactTurns
       } as unknown as Parameters<typeof composeAcpRuntimePlanWorkflow>[1],
-      { publication: internals.publication } as unknown as Parameters<
-        typeof composeAcpRuntimePlanWorkflow
-      >[2]
+      {
+        publication: internals.publication,
+        sessionEnvironment: internals.sessionEnvironment
+      } as unknown as Parameters<typeof composeAcpRuntimePlanWorkflow>[2]
     )
-    Object.assign(internals, { planService, sessionPlanWorkflow })
+    Object.assign(internals, { sessionPlanWorkflow })
+    Object.assign(internals.promptTurnWorkflow.options, { plan: sessionPlanWorkflow.prompt })
   }
 
   it('activates one interaction before durably approving a restored Plan', async () => {
@@ -3906,10 +3911,9 @@ describe('ACP runtime session management', () => {
       stepStates: { Analyze: { status: 'blocked', notes: 'Input missing' } },
       counts: { phases: 1, delegations: 1, steps: 1, completed: 0, inProgress: 0 }
     } satisfies ActivePlanProjection
-    Object.assign(runtime as unknown as { planService: unknown }, {
-      planService: { getProjection: vi.fn(async () => projection) }
+    installPromptPlanTestWorkflow(runtime, {
+      getProjection: vi.fn(async () => projection)
     })
-
     const session = await runtime.createSession({ cwd: '/workspace', projectName: 'project-1' })
     await runtime.compactSession({ sessionId: session.sessionId })
 
@@ -12697,9 +12701,7 @@ describe('ACP runtime session management', () => {
       counts: { phases: 1, delegations: 1, steps: 1, completed: 0, inProgress: 0 }
     } satisfies ActivePlanProjection
     const getProjection = vi.fn(async () => interruptedProjection)
-    Object.assign(runtime as unknown as { planService: unknown }, {
-      planService: { getProjection }
-    })
+    installPromptPlanTestWorkflow(runtime, { getProjection })
 
     await runtime.createSession({ cwd: '/workspace', projectName: 'project-1' })
     await expect(runtime.sendPrompt({ sessionId: 's1', text: 'run the plan' })).rejects.toThrow()
@@ -12934,8 +12936,9 @@ describe('ACP runtime session management', () => {
       allow: false,
       lifecycle: 'approved' as const
     }))
-    Object.assign(runtime as unknown as { planService: unknown }, {
-      planService: { checkTurnCompletion, getProjection: vi.fn(async () => null) }
+    installPromptPlanTestWorkflow(runtime, {
+      checkTurnCompletion,
+      getProjection: vi.fn(async () => null)
     })
 
     await runtime.createSession({ cwd: '/workspace', projectName: 'project-1' })
@@ -12968,9 +12971,7 @@ describe('ACP runtime session management', () => {
           lifecycle: 'interrupted'
         }) as ActivePlanProjection
     )
-    Object.assign(runtime as unknown as { planService: unknown }, {
-      planService: { checkTurnCompletion, getProjection }
-    })
+    installPromptPlanTestWorkflow(runtime, { checkTurnCompletion, getProjection })
 
     await runtime.createSession({ cwd: '/workspace', projectName: 'project-1' })
     await expect(
@@ -19863,7 +19864,7 @@ describe('Specialist Skill scoping', () => {
       version: 1,
       revision: 0
     }
-    const runtime = new AcpRuntime({
+    const owners = composeAcpRuntimeBaseOwners({
       appVersion: '0.1.0',
       defaultCwd: '/workspace',
       artifacts: {
@@ -19891,37 +19892,7 @@ describe('Specialist Skill scoping', () => {
         }
       }
     })
-    const internals = runtime as unknown as {
-      artifactTurns: {
-        open(request: {
-          appSessionId: string
-          artifactStorageSessionId: string
-          projectId: string
-          agentName: string
-        }): Promise<unknown>
-        dispose(handle: unknown): Promise<void>
-      }
-      planService: {
-        generate(input: {
-          projectId: string
-          sessionId: string
-          interactionId: string
-          content: {
-            task_summary: string
-            phases: Array<{
-              name: string
-              delegations: Array<{
-                name: string
-                steps: Array<{ title: string; description: string }>
-              }>
-            }>
-            desired_outputs: string[]
-            feasibility: { confidence: 'high'; rationale: string }
-          }
-        }): Promise<{ projection: { artifactVersionId: string } }>
-      }
-    }
-    const turn = await internals.artifactTurns.open({
+    const turn = await owners.artifactTurns!.open({
       appSessionId: 'session-1',
       artifactStorageSessionId: 'session-1',
       projectId: 'project-1',
@@ -19930,7 +19901,7 @@ describe('Specialist Skill scoping', () => {
 
     try {
       await expect(
-        internals.planService.generate({
+        owners.planService!.generate({
           projectId: 'project-1',
           sessionId: 'session-1',
           interactionId: 'interaction-1',
@@ -19953,7 +19924,7 @@ describe('Specialist Skill scoping', () => {
         })
       ).resolves.toMatchObject({ projection: { artifactVersionId: 'version-1' } })
     } finally {
-      await internals.artifactTurns.dispose(turn)
+      await owners.artifactTurns!.dispose(turn)
     }
   })
 })

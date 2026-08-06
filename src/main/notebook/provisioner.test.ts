@@ -382,6 +382,104 @@ describe('DefaultRuntimeProvisioner.provisionPython', () => {
     expect(readReadyMarker(root)?.defaultEnvVersion).toBe(DEFAULT_ENV_VERSION)
   })
 
+  it('repairs and retries after a Windows native access violation leaves an incomplete cache', async () => {
+    const root = makeRoot()
+    const cache = pkgsCache(root)
+    const prefix = envPrefix(root, DEFAULT_PY_ENV)
+    const bin = pythonBin(prefix)
+    mkdirSync(join(cache, 'interrupted-pkg'), { recursive: true })
+    writeFileSync(join(cache, 'interrupted-pkg', 'partial'), 'x')
+
+    let creates = 0
+    const fetchBundle = vi.fn(async (): Promise<FetchedBundle> => ({
+      lockPath: join(root, 'python-3.12.lock'),
+      pathBudget: { maxCacheRelativePath: 1, maxEnvRelativePath: 1 }
+    }))
+    const runArgv = vi.fn(async () => {
+      creates += 1
+      if (creates === 1) {
+        mkdirSync(join(prefix, 'conda-meta'), { recursive: true })
+        mkdirSync(dirname(bin), { recursive: true })
+        writeFileSync(bin, 'partial')
+        throw Object.assign(new Error('micromamba failed (exit 3221225477; mm create)'), {
+          code: 'MICROMAMBA_EXIT',
+          data: { argv: ['mm', 'create'], exitCode: 3221225477 }
+        })
+      }
+      expect(existsSync(prefix)).toBe(false)
+      expect(existsSync(join(cache, 'interrupted-pkg'))).toBe(false)
+      mkdirSync(dirname(bin), { recursive: true })
+      writeFileSync(bin, 'ok')
+    })
+    const events: ProvisionProgress[] = []
+    const provisioner = new DefaultRuntimeProvisioner(
+      makeDeps(root, {
+        platform: 'win32',
+        cache: { path: cache, lockKey: cache },
+        fetchBundle,
+        runArgv
+      })
+    )
+
+    await provisioner.provisionPython((event) => events.push(event))
+
+    expect(creates).toBe(2)
+    expect(fetchBundle).toHaveBeenCalledTimes(2)
+    expect(events).toContainEqual(
+      expect.objectContaining({ message: expect.stringMatching(/repair/i) })
+    )
+  })
+
+  it('repairs an access violation from the short-cache MAX_PATH retry', async () => {
+    const root = makeRoot()
+    const cache = pkgsCache(root)
+    const prefix = envPrefix(root, DEFAULT_PY_ENV)
+    const bin = pythonBin(prefix)
+    const leaf = 'broken-package-1.0-0'
+    const packageDir = join(cache, 'https', 'host', 'channel', 'noarch', leaf)
+    const missing = join(packageDir, 'Library', 'x'.repeat(280))
+    mkdirSync(packageDir, { recursive: true })
+
+    let creates = 0
+    const fetchBundle = vi.fn(async (): Promise<FetchedBundle> => ({
+      lockPath: join(root, 'python-3.12.lock'),
+      pathBudget: { maxCacheRelativePath: 1, maxEnvRelativePath: 1 }
+    }))
+    const runArgv = vi.fn(async () => {
+      creates += 1
+      if (creates === 1) {
+        throw new Error(
+          `Invalid package cache, file '${missing}' is missing for '${leaf}.conda'; Package cache error`
+        )
+      }
+      if (creates === 2) {
+        mkdirSync(join(prefix, 'conda-meta'), { recursive: true })
+        mkdirSync(dirname(bin), { recursive: true })
+        writeFileSync(bin, 'partial')
+        throw Object.assign(new Error('micromamba failed (exit 3221225477; mm create)'), {
+          code: 'MICROMAMBA_EXIT',
+          data: { argv: ['mm', 'create'], exitCode: 3221225477 }
+        })
+      }
+      expect(existsSync(prefix)).toBe(false)
+      mkdirSync(dirname(bin), { recursive: true })
+      writeFileSync(bin, 'ok')
+    })
+    const provisioner = new DefaultRuntimeProvisioner(
+      makeDeps(root, {
+        platform: 'win32',
+        cache: { path: cache, lockKey: cache },
+        fetchBundle,
+        runArgv
+      })
+    )
+
+    await provisioner.provisionPython(() => {})
+
+    expect(creates).toBe(3)
+    expect(fetchBundle).toHaveBeenCalledTimes(2)
+  })
+
   it('re-arms the spawn intent before EACH create attempt (incl. the cache-repair retry)', async () => {
     // A single materialize can spawn twice (create, then retry after a cache repair). The intent must be
     // re-armed before EACH spawn — writing it once per op would leave the first spawn's exited PID in

@@ -1,4 +1,12 @@
-import { useCallback, useEffect, useRef, useState, type Dispatch, type SetStateAction } from 'react'
+import {
+  useCallback,
+  useEffect,
+  useMemo,
+  useRef,
+  useState,
+  type Dispatch,
+  type SetStateAction
+} from 'react'
 
 import type {
   ArtifactGroupItem,
@@ -10,6 +18,7 @@ import type {
 
 const FILE_PAGE_SIZE = 20
 const GROUP_PAGE_SIZE = 10
+const EMPTY_EXCLUDED_SESSION_IDS: readonly string[] = []
 
 // Each cursor layer owns its loading and retry state. failedCursor distinguishes retrying the first
 // page (replace) from retrying a continuation page (append) without coupling the three collections.
@@ -69,10 +78,20 @@ const emptyPage = <Item>(): PageState<Item> => ({
 const getErrorMessage = (error: unknown): string =>
   error instanceof Error ? error.message : 'Could not load project files.'
 
-// Omits blank search state entirely so the repository can retain its faster indexed catalog path.
-const withFilenameSearch = (
-  filenameContains: string | undefined
-): { search?: ProjectFilesSearch } => (filenameContains ? { search: { filenameContains } } : {})
+// Omits blank state entirely so ordinary catalog reads retain their indexed path. Archive exclusions
+// remain part of the same query identity, keeping counts and cursors aligned with visible files.
+const withProjectFilesSearch = (
+  filenameContains: string | undefined,
+  excludedSessionIds: readonly string[]
+): { search?: ProjectFilesSearch } =>
+  filenameContains || excludedSessionIds.length > 0
+    ? {
+        search: {
+          filenameContains: filenameContains ?? '',
+          ...(excludedSessionIds.length > 0 ? { excludedSessionIds: [...excludedSessionIds] } : {})
+        }
+      }
+    : {}
 
 type RequestLimiter = <Result>(task: () => Promise<Result>) => Promise<Result>
 
@@ -117,6 +136,7 @@ const appendUnique = <Item>(
 type InitialProjectFilesLoad = {
   projectId: string
   filenameContains?: string
+  excludedSessionIds: readonly string[]
   requestLimiter: RequestLimiter
   isOverviewCurrent: () => boolean
   isUploadsCurrent: () => boolean
@@ -133,6 +153,7 @@ type InitialProjectFilesLoad = {
 const startInitialProjectFilesLoad = ({
   projectId,
   filenameContains,
+  excludedSessionIds,
   requestLimiter,
   isOverviewCurrent,
   isUploadsCurrent,
@@ -144,7 +165,7 @@ const startInitialProjectFilesLoad = ({
   setGroups
 }: InitialProjectFilesLoad): void => {
   void window.api.projectFiles
-    .getOverview({ projectId, ...withFilenameSearch(filenameContains) })
+    .getOverview({ projectId, ...withProjectFilesSearch(filenameContains, excludedSessionIds) })
     .then((nextOverview) => {
       if (isOverviewCurrent()) {
         setOverview(nextOverview)
@@ -163,7 +184,7 @@ const startInitialProjectFilesLoad = ({
       ? window.api.projectFiles.listFiles({
           projectId,
           collection: { kind: 'uploads' },
-          ...withFilenameSearch(filenameContains),
+          ...withProjectFilesSearch(filenameContains, excludedSessionIds),
           limit: FILE_PAGE_SIZE
         })
       : Promise.reject(new Error('Stale project files request.'))
@@ -181,7 +202,7 @@ const startInitialProjectFilesLoad = ({
     isGroupsCurrent()
       ? window.api.projectFiles.listArtifactGroups({
           projectId,
-          ...withFilenameSearch(filenameContains),
+          ...withProjectFilesSearch(filenameContains, excludedSessionIds),
           limit: GROUP_PAGE_SIZE
         })
       : Promise.reject(new Error('Stale project files request.'))
@@ -208,9 +229,14 @@ const useProjectFilesIndex = (
   projectId: string | undefined,
   onChanged?: (event: ProjectFilesChangedEvent) => void,
   search?: ProjectFilesSearch,
-  scope?: ProjectFilesIndexScope
+  scope?: ProjectFilesIndexScope,
+  excludedSessionIdsInput: readonly string[] = EMPTY_EXCLUDED_SESSION_IDS
 ): ProjectFilesIndexState => {
   const filenameContains = search?.filenameContains
+  const excludedSessionIds = useMemo(
+    () => [...new Set(excludedSessionIdsInput)].sort(),
+    [excludedSessionIdsInput]
+  )
   const scopeKind = scope?.kind ?? 'all'
   const scopeSessionId = scope?.kind === 'sessionArtifacts' ? scope.sessionId : undefined
   const [overview, setOverview] = useState(EMPTY_OVERVIEW)
@@ -271,6 +297,7 @@ const useProjectFilesIndex = (
       startInitialProjectFilesLoad({
         projectId,
         filenameContains,
+        excludedSessionIds,
         requestLimiter: requestLimiterRef.current,
         isOverviewCurrent: () =>
           generation === generationRef.current && overviewRequest === overviewRequestRef.current,
@@ -295,7 +322,7 @@ const useProjectFilesIndex = (
           generation === generationRef.current && groupsRequest === groupsRequestRef.current
             ? window.api.projectFiles.listArtifactGroups({
                 projectId,
-                ...withFilenameSearch(filenameContains),
+                ...withProjectFilesSearch(filenameContains, excludedSessionIds),
                 limit: GROUP_PAGE_SIZE
               })
             : Promise.reject(new Error('Stale project files request.'))
@@ -322,7 +349,7 @@ const useProjectFilesIndex = (
             ? window.api.projectFiles.listFiles({
                 projectId,
                 collection: { kind: 'uploads' },
-                ...withFilenameSearch(filenameContains),
+                ...withProjectFilesSearch(filenameContains, excludedSessionIds),
                 limit: FILE_PAGE_SIZE
               })
             : Promise.reject(new Error('Stale project files request.'))
@@ -358,7 +385,7 @@ const useProjectFilesIndex = (
           ? window.api.projectFiles.listFiles({
               projectId,
               collection: { kind: 'sessionArtifacts', sessionId: scopeSessionId },
-              ...withFilenameSearch(filenameContains),
+              ...withProjectFilesSearch(filenameContains, excludedSessionIds),
               limit: FILE_PAGE_SIZE
             })
           : Promise.reject(new Error('Stale project files request.'))
@@ -385,7 +412,7 @@ const useProjectFilesIndex = (
           [scopeSessionId]: { ...emptyPage(), isLoaded: true, error: getErrorMessage(error) }
         })
       })
-  }, [filenameContains, projectId, refreshVersion, scopeKind, scopeSessionId])
+  }, [excludedSessionIds, filenameContains, projectId, refreshVersion, scopeKind, scopeSessionId])
 
   const handleIndexChanged = useCallback(
     (event: ProjectFilesChangedEvent): void => {
@@ -405,7 +432,10 @@ const useProjectFilesIndex = (
         setOverviewError(undefined)
         setIsOverviewLoaded(false)
         void window.api.projectFiles
-          .getOverview({ projectId, ...withFilenameSearch(filenameContains) })
+          .getOverview({
+            projectId,
+            ...withProjectFilesSearch(filenameContains, excludedSessionIds)
+          })
           .then((nextOverview) => {
             if (
               generation !== generationRef.current ||
@@ -444,7 +474,7 @@ const useProjectFilesIndex = (
               ? window.api.projectFiles.listFiles({
                   projectId,
                   collection: { kind: 'uploads' },
-                  ...withFilenameSearch(filenameContains),
+                  ...withProjectFilesSearch(filenameContains, excludedSessionIds),
                   limit: FILE_PAGE_SIZE
                 })
               : Promise.reject(new Error('Stale project files request.'))
@@ -491,7 +521,7 @@ const useProjectFilesIndex = (
               generation === generationRef.current && groupsRequest === groupsRequestRef.current
                 ? window.api.projectFiles.listArtifactGroups({
                     projectId,
-                    ...withFilenameSearch(filenameContains),
+                    ...withProjectFilesSearch(filenameContains, excludedSessionIds),
                     limit: GROUP_PAGE_SIZE
                   })
                 : Promise.reject(new Error('Stale project files request.'))
@@ -557,7 +587,7 @@ const useProjectFilesIndex = (
               ? window.api.projectFiles.listFiles({
                   projectId,
                   collection: { kind: 'sessionArtifacts', sessionId },
-                  ...withFilenameSearch(filenameContains),
+                  ...withProjectFilesSearch(filenameContains, excludedSessionIds),
                   limit: FILE_PAGE_SIZE
                 })
               : Promise.reject(new Error('Stale project files request.'))
@@ -602,7 +632,7 @@ const useProjectFilesIndex = (
           })
       }
     },
-    [filenameContains, onChanged, projectId, scopeKind, scopeSessionId]
+    [excludedSessionIds, filenameContains, onChanged, projectId, scopeKind, scopeSessionId]
   )
 
   useEffect(() => {
@@ -656,7 +686,7 @@ const useProjectFilesIndex = (
           ? window.api.projectFiles.listFiles({
               projectId,
               collection: { kind: 'uploads' },
-              ...withFilenameSearch(filenameContains),
+              ...withProjectFilesSearch(filenameContains, excludedSessionIds),
               cursor,
               limit: FILE_PAGE_SIZE
             })
@@ -686,7 +716,7 @@ const useProjectFilesIndex = (
     } finally {
       if (loadingUploadsRef.current === requestKey) loadingUploadsRef.current = undefined
     }
-  }, [filenameContains, projectId, uploads])
+  }, [excludedSessionIds, filenameContains, projectId, uploads])
 
   const loadMoreGroups = useCallback(async (): Promise<void> => {
     if (
@@ -710,7 +740,7 @@ const useProjectFilesIndex = (
         generation === generationRef.current
           ? window.api.projectFiles.listArtifactGroups({
               projectId,
-              ...withFilenameSearch(filenameContains),
+              ...withProjectFilesSearch(filenameContains, excludedSessionIds),
               cursor,
               limit: GROUP_PAGE_SIZE
             })
@@ -740,7 +770,7 @@ const useProjectFilesIndex = (
     } finally {
       if (loadingGroupsRef.current === requestKey) loadingGroupsRef.current = undefined
     }
-  }, [filenameContains, groups, projectId])
+  }, [excludedSessionIds, filenameContains, groups, projectId])
 
   const loadMoreArtifacts = useCallback(
     async (sessionId: string): Promise<void> => {
@@ -770,7 +800,7 @@ const useProjectFilesIndex = (
             ? window.api.projectFiles.listFiles({
                 projectId,
                 collection: { kind: 'sessionArtifacts', sessionId },
-                ...withFilenameSearch(filenameContains),
+                ...withProjectFilesSearch(filenameContains, excludedSessionIds),
                 cursor,
                 limit: FILE_PAGE_SIZE
               })
@@ -816,7 +846,7 @@ const useProjectFilesIndex = (
         }
       }
     },
-    [artifactsBySession, filenameContains, projectId]
+    [artifactsBySession, excludedSessionIds, filenameContains, projectId]
   )
 
   return {

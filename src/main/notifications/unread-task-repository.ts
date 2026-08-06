@@ -57,11 +57,11 @@ export class UnreadTaskDbRepository {
     return this.enqueue(() => this.reconcile(snapshot))
   }
 
-  // Reconciles unread metadata only after a complete authoritative Session JSON scan. This repairs
-  // interrupted and headless deletions without introducing a second durable deletion protocol.
-  // Returns every absent id so the live controller can drop markers and tombstone racing events.
-  reconcileSessionCatalog(existingSessionIds: string[]): Promise<string[]> {
-    const existing = new Set(normalizeSessionIds(existingSessionIds))
+  // Reconciles unread metadata only after a complete authoritative Session JSON scan. The caller
+  // supplies Sessions still eligible for attention, repairing interrupted archive cleanup and
+  // headless deletions without introducing another durable workflow.
+  reconcileSessionCatalog(attentionEligibleSessionIds: string[]): Promise<string[]> {
+    const eligible = new Set(normalizeSessionIds(attentionEligibleSessionIds))
 
     return this.enqueue(async () => {
       const client = await this.getClient()
@@ -71,15 +71,15 @@ export class UnreadTaskDbRepository {
           orderBy: { id: 'asc' },
           select: { sessionId: true }
         })
-        const deletedSessionIds = unreadRows
+        const removedSessionIds = unreadRows
           .map((row) => row.sessionId)
-          .filter((sessionId) => !existing.has(sessionId))
+          .filter((sessionId) => !eligible.has(sessionId))
 
-        for (const ids of chunkValues(deletedSessionIds)) {
+        for (const ids of chunkValues(removedSessionIds)) {
           await transaction.unreadTaskSession.deleteMany({ where: { sessionId: { in: ids } } })
         }
 
-        return deletedSessionIds
+        return removedSessionIds
       })
     })
   }

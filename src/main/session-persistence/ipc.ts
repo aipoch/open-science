@@ -5,7 +5,8 @@ import type {
   LoadAllSessionsResult,
   PersistedChatSession,
   SaveSessionOptions,
-  SaveSessionManifestRequest
+  SaveSessionManifestRequest,
+  UpdateSessionArchiveRequest
 } from '../../shared/session-persistence'
 import { LIFECYCLE_CHANNELS } from '../../shared/lifecycle-events'
 import { broadcastLifecycleEvent, getLifecycleClientId } from '../lifecycle-broadcast'
@@ -23,6 +24,7 @@ type SessionPersistenceBackend = {
     session: PersistedChatSession,
     options?: SaveSessionOptions
   ) => Promise<{ created: boolean; session: PersistedChatSession }>
+  updateArchive?: (request: UpdateSessionArchiveRequest) => Promise<PersistedChatSession>
   deleteSession: (projectId: string, sessionId: string) => Promise<void>
   saveManifest: (request: SaveSessionManifestRequest) => Promise<void>
 }
@@ -33,6 +35,7 @@ type SessionPersistenceHandlers = {
     session: PersistedChatSession,
     options?: SaveSessionOptions
   ) => Promise<{ created: boolean; session: PersistedChatSession }>
+  updateArchive: (request: UpdateSessionArchiveRequest) => Promise<PersistedChatSession>
   deleteSession: (request: DeleteSessionRequest) => Promise<void>
   saveManifest: (request: SaveSessionManifestRequest) => Promise<void>
 }
@@ -112,6 +115,10 @@ const createSessionPersistenceHandlers = (
     loadAll: () => repository.loadAll(),
     saveSession: (session, options) =>
       options ? repository.saveSession(session, options) : repository.saveSession(session),
+    updateArchive: (request) => {
+      if (!repository.updateArchive) throw new Error('Session archive is unavailable.')
+      return repository.updateArchive(request)
+    },
     // A session delete tombstones its origin graph but deliberately retains Review rows, findings and
     // scope snapshots. Provenance remains readable from Files; project deletion owns final cleanup.
     deleteSession: (request) => repository.deleteSession(request.projectId, request.sessionId),
@@ -156,6 +163,14 @@ const registerSessionPersistenceIpcHandlers = (
       })
     }
   )
+  ipcMainHandle('sessions:update-archive', async (event, request: UpdateSessionArchiveRequest) => {
+    const originClientId = getLifecycleClientId(event)
+    return withDataRootWrite(async () => {
+      const session = await handlers.updateArchive(request)
+      broadcastLifecycleEvent(LIFECYCLE_CHANNELS.sessionUpdated, { session, originClientId })
+      return session
+    })
+  })
   ipcMainHandle('sessions:delete-session', async (_event, request: DeleteSessionRequest) => {
     await withDataRootWrite(async () => {
       await handlers.deleteSession(request)

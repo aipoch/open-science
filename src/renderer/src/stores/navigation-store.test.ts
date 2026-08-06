@@ -4,7 +4,9 @@ import {
   SESSION_MANIFEST_VERSION,
   type PersistedChatSession
 } from '../../../shared/session-persistence'
+import type { Project } from '../../../shared/projects'
 import { recordLastOpenedProject } from '@/lib/last-opened-project'
+import { createInitialProjectState, useProjectStore } from './project-store'
 import { createInitialSessionState, useSessionStore } from './session-store'
 import { useNavigationStore } from './navigation-store'
 
@@ -26,7 +28,25 @@ const createSession = (overrides: Partial<PersistedChatSession>): PersistedChatS
   ...overrides
 })
 
+const createProject = (id: string): Project => ({
+  id,
+  name: id,
+  description: '',
+  isExample: false,
+  createdAt: 1,
+  updatedAt: 1
+})
+
 beforeEach(() => {
+  useProjectStore.setState({
+    ...createInitialProjectState(),
+    projects: [
+      createProject('project-a'),
+      createProject('project-b'),
+      createProject('project-empty')
+    ],
+    isLoaded: true
+  })
   useSessionStore.setState(createInitialSessionState())
   useNavigationStore.setState({
     view: 'home',
@@ -91,6 +111,28 @@ describe('navigation store', () => {
     expect(useNavigationStore.getState().view).toBe('workspace')
     expect(useNavigationStore.getState().activeProjectId).toBe('project-b')
     expect(useSessionStore.getState().selectedSessionId).toBe('b')
+  })
+
+  it('rejects archived or mismatched Session destinations', () => {
+    useSessionStore
+      .getState()
+      .hydrateSessions(
+        [
+          createSession({ id: 'active', projectId: 'project-a' }),
+          createSession({ id: 'archived', projectId: 'project-a', archivedAt: 2 })
+        ],
+        { version: SESSION_MANIFEST_VERSION }
+      )
+    useSessionStore.getState().clearSelection()
+
+    useNavigationStore.getState().openSession('project-a', 'archived', 'user')
+    useNavigationStore.getState().openSession('project-b', 'active', 'user')
+    useProjectStore.setState({ projects: [{ ...createProject('project-a'), archivedAt: 2 }] })
+    useNavigationStore.getState().openSession('project-a', 'active', 'user')
+
+    expect(useNavigationStore.getState().view).toBe('home')
+    expect(useSessionStore.getState().selectedSessionId).toBeUndefined()
+    expect(recordLastOpenedProject).not.toHaveBeenCalled()
   })
 
   it('opens a session by id alone (desktop-notification click)', () => {
@@ -163,6 +205,9 @@ describe('navigation store', () => {
   })
 
   it('records the last-opened project when a user opens a session', () => {
+    useSessionStore.getState().hydrateSessions([createSession({})], {
+      version: SESSION_MANIFEST_VERSION
+    })
     useNavigationStore.getState().openSession('project-a', 'session-1', 'user')
     expect(recordLastOpenedProject).toHaveBeenCalledWith('project-a')
   })
@@ -188,6 +233,19 @@ describe('navigation store customize conversation', () => {
   it('counts the customize entry as explicit user navigation', () => {
     useNavigationStore.getState().startCustomizeConversation('project-a')
     expect(useNavigationStore.getState().userNavigationRevision).toBe(1)
+  })
+
+  it('does not start customization for an archived project', () => {
+    useProjectStore.setState({ projects: [{ ...createProject('project-a'), archivedAt: 2 }] })
+
+    useNavigationStore.getState().startCustomizeConversation('project-a')
+
+    expect(useNavigationStore.getState()).toMatchObject({
+      view: 'home',
+      activeProjectId: undefined,
+      pendingCustomizePrefill: undefined
+    })
+    expect(recordLastOpenedProject).not.toHaveBeenCalled()
   })
 
   it('clears the pending prefill intent once consumed', () => {

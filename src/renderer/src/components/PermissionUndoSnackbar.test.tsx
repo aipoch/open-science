@@ -4,6 +4,7 @@ import { createRoot, type Root } from 'react-dom/client'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 
 import { usePermissionGrantsStore } from '@/stores/permission-grants-store'
+import { useArchiveUndoStore } from '@/stores/archive-undo-store'
 import { PermissionUndoSnackbar } from './PermissionUndoSnackbar'
 
 describe('PermissionUndoSnackbar', () => {
@@ -11,6 +12,7 @@ describe('PermissionUndoSnackbar', () => {
   let root: Root
   const restore = vi.fn()
   const extendUndo = vi.fn()
+  const updateProjectArchive = vi.fn()
 
   beforeEach(() => {
     vi.useFakeTimers()
@@ -29,7 +31,18 @@ describe('PermissionUndoSnackbar', () => {
         revokedCount: 1
       })
     )
-    window.api = { permissions: { extendUndo, restore } } as unknown as Window['api']
+    updateProjectArchive.mockReset().mockResolvedValue({
+      id: 'project-1',
+      name: 'Project',
+      description: '',
+      isExample: false,
+      createdAt: 1,
+      updatedAt: 1
+    })
+    window.api = {
+      permissions: { extendUndo, restore },
+      projects: { updateArchive: updateProjectArchive }
+    } as unknown as Window['api']
     usePermissionGrantsStore.setState({
       grants: [],
       counts: { all: 0, global: 0, project: 0, session: 0 },
@@ -43,6 +56,7 @@ describe('PermissionUndoSnackbar', () => {
       undoQueue: [],
       isRestoring: false
     })
+    useArchiveUndoStore.setState({ notices: [], restoringKey: undefined })
   })
 
   afterEach(async () => {
@@ -85,15 +99,47 @@ describe('PermissionUndoSnackbar', () => {
     expect(container.querySelector('[data-testid="permission-undo-snackbar"]')).toBeNull()
   })
 
-  it('keeps the Undo stack above the window bottom after Settings has closed', async () => {
+  it('keeps the shared Undo stack at the top center after Settings has closed', async () => {
     await act(async () => root.render(<PermissionUndoSnackbar />))
 
     const stack = container.querySelector<HTMLElement>('[data-testid="permission-undo-stack"]')
 
-    expect(stack?.className).toContain('bottom-[max(1.5rem,env(safe-area-inset-bottom))]')
+    expect(stack?.className).toContain('top-[max(1.5rem,env(safe-area-inset-top))]')
+    expect(stack?.className).toContain('left-1/2')
     expect(stack?.className).toContain('max-h-[min(70svh,32rem)]')
     expect(stack?.className).toContain('overflow-y-auto')
     expect(stack?.querySelector('[data-slot="scroll-area-viewport"]')).toBeNull()
+  })
+
+  it('shares the top stack with Archive Undo actions', async () => {
+    useArchiveUndoStore.setState({
+      notices: [
+        {
+          key: 'project:project-1:10',
+          kind: 'project',
+          projectId: 'project-1',
+          archivedAt: 10,
+          expiresAt: Date.now() + 8_000,
+          message: 'Archived project “Project”.'
+        }
+      ],
+      restoringKey: undefined
+    })
+    await act(async () => root.render(<PermissionUndoSnackbar />))
+
+    const snackbar = container.querySelector<HTMLElement>('[data-testid="archive-undo-snackbar"]')
+    expect(snackbar?.className).toContain('rounded-2xl')
+    expect(snackbar?.className).toContain('shadow-lg')
+    expect(snackbar?.className).not.toContain('shadow-xl')
+    const undo = snackbar?.querySelector<HTMLButtonElement>('button:not([aria-label])')
+    await act(async () => undo?.click())
+
+    expect(updateProjectArchive).toHaveBeenCalledWith({
+      id: 'project-1',
+      archived: false,
+      expectedArchivedAt: 10
+    })
+    expect(container.querySelector('[data-testid="archive-undo-snackbar"]')).toBeNull()
   })
 
   it('renews the authoritative receipt while automatic dismissal is paused by hover', async () => {

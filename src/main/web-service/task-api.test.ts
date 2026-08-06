@@ -26,10 +26,13 @@ const taskCallerContext = (): ReturnType<typeof expect.objectContaining> =>
   })
 
 type TaskAgentMock = {
-  [Method in keyof TaskAgentPort]: MockedFunction<TaskAgentPort[Method]>
-}
+  [Method in Exclude<keyof TaskAgentPort, 'withSessionAvailable'>]: MockedFunction<
+    TaskAgentPort[Method]
+  >
+} & Pick<TaskAgentPort, 'withSessionAvailable'>
 
 const createAgent = (overrides: Partial<TaskAgentMock> = {}): TaskAgentMock => ({
+  withSessionAvailable: async (_projectId, _sessionId, operation) => operation(),
   listAttachedSessionIds: vi.fn<TaskAgentPort['listAttachedSessionIds']>(async () => []),
   createSession: vi.fn<TaskAgentPort['createSession']>(async () => ({
     sessionId: 'session-created'

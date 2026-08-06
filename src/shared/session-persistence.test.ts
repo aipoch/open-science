@@ -679,6 +679,16 @@ describe('sanitizeActivityGroup', () => {
 })
 
 describe('normalizeSessionFile with activities', () => {
+  it('preserves a valid archive timestamp across a file round-trip', () => {
+    const persisted = createSessionFile({
+      ...(createSessionWithActivity(undefined) as PersistedChatSession),
+      activities: undefined,
+      archivedAt: 1_723_000_000_000
+    })
+
+    expect(normalizeSessionFile(persisted)?.archivedAt).toBe(1_723_000_000_000)
+  })
+
   it('round-trips a main-owned runtime context and preserves plan approval waiting across restart', () => {
     const persisted = createSessionFile({
       ...(createSessionWithActivity(undefined) as PersistedChatSession),

@@ -135,6 +135,7 @@ describe('WorkspaceSidebar accessible render', () => {
     const onDownloadArtifacts = vi.fn()
     const onDeleteSession = vi.fn()
     const onExportSession = vi.fn()
+    const onArchiveSession = vi.fn()
     const tree = WorkspaceSidebar({
       projectName: 'Example project',
       sessions,
@@ -153,6 +154,8 @@ describe('WorkspaceSidebar accessible render', () => {
       onViewNotebook: vi.fn(),
       onExportSession,
       onTogglePin: vi.fn(),
+      canArchiveSession: () => true,
+      onArchiveSession,
       onDeleteSession,
       onOpenSettings: vi.fn()
     })
@@ -168,6 +171,7 @@ describe('WorkspaceSidebar accessible render', () => {
       (element) => getTextContent(element).trim() === 'Download all artifacts'
     )
     const deleteItems = elements.filter((element) => getTextContent(element).trim() === 'Delete')
+    const archiveItems = elements.filter((element) => getTextContent(element).trim() === 'Archive')
     const markdownItems = elements.filter(
       (element) => getTextContent(element).trim() === 'Markdown'
     )
@@ -192,6 +196,10 @@ describe('WorkspaceSidebar accessible render', () => {
     expect(pdfItems[1]?.props.onSelect).toBeTypeOf('function')
     ;(pdfItems[1]?.props.onSelect as () => void)()
     expect(onExportSession).toHaveBeenCalledWith(sessions[1], 'pdf')
+
+    expect(archiveItems[1]?.props.onSelect).toBeTypeOf('function')
+    ;(archiveItems[1]?.props.onSelect as () => void)()
+    expect(onArchiveSession).toHaveBeenCalledWith(sessions[1])
 
     expect(deleteItems[0]?.props.onSelect).toBeTypeOf('function')
     ;(deleteItems[0]?.props.onSelect as () => void)()

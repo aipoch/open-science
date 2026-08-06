@@ -8,6 +8,8 @@
 
 **Open Science is an open-source, local-first, model-agnostic, self-hosted AI research workbench for reproducible scientific discovery.** Built for researchers, it runs on your own computer (macOS, Windows, Linux). Create a project, describe a task in plain language, and let the AI agent read files, run Python and R code, search the web, call scientific data connectors, and return reproducible reports, tables, and figures linked to an inspectable activity history in one workspace.
 
+Open Science currently includes 18 featured research skills and 24 built-in scientific connectors, with its strongest coverage in bioinformatics, computational biology, biomedical research, genomics, structural biology, and computational drug discovery—and an extensible architecture designed to support more scientific disciplines over time.
+
 > 💡 **[Open Science v0.11.0 released](https://github.com/aipoch/open-science/releases/latest)** _(last updated August 5, 2026)_. Highlights include review-gated session plans, hot-switching models and providers without reconnect, agent-aware context replay, prompt history navigation, and a settings keyboard shortcut. See the [latest release notes](https://github.com/aipoch/open-science/releases/latest) for the full changelog.
 
 <p align="center">
@@ -128,6 +130,8 @@ It also includes **24 built-in** research connectors: Literature Graph, PubMed, 
 </table>
 
 ## Why Open Science
+
+Open Science brings research tasks, execution, files, and evidence into one local, inspectable desktop workspace.
 
 Research work is usually split across chat windows, notebooks, local scripts, scientific databases, file browsers, and reporting tools. Context is lost at every handoff, and the answer is often separated from the code and files that produced it.
 

@@ -335,14 +335,17 @@ const candidatePaths = (
   canonicalize: (path: string) => string
 ): Array<{ path: string; profileBoundary?: string }> => {
   const profile = env.USERPROFILE ? win32.normalize(canonicalize(env.USERPROFILE)) : undefined
+  const publicRoot = env.PUBLIC ? win32.normalize(canonicalize(env.PUBLIC)) : undefined
+  const runtimeVolume = win32.parse(canonicalRoot).root
   return [
-    { path: win32.join(win32.parse(canonicalRoot).root, leaf) },
+    { path: win32.join(runtimeVolume, leaf) },
     ...(profile
       ? [
           { path: win32.join(profile, leaf), profileBoundary: profile },
           { path: win32.join(profile, compactLeaf), profileBoundary: profile }
         ]
-      : [])
+      : []),
+    ...(publicRoot ? [{ path: win32.join(publicRoot, leaf) }] : [])
   ]
 }
 
