@@ -87,7 +87,7 @@ const createProjector = (
     reconnectPending: () => routing.reconnectPending,
     mcpServerNamesFor: () => routing.mcpServerNames,
     nextEventId: () => routing.eventId,
-    setLivePermissionProfile: (sessionId, profile) =>
+    setProviderPermissionProfile: (sessionId, profile) =>
       record({ kind: 'live-profile', sessionId, selectedProfile: profile.selectedProfile }),
     emitState: () => undefined,
     pushEvent: (event) => record({ kind: 'visible-event', event }),
@@ -142,7 +142,7 @@ describe('AcpSessionUpdateProjector', () => {
       reconnectPending: () => false,
       mcpServerNamesFor: () => [],
       nextEventId,
-      setLivePermissionProfile: () => undefined,
+      setProviderPermissionProfile: () => undefined,
       emitState: () => journal.push('state:emit'),
       pushEvent: () => journal.push('event:push'),
       reportToolFailure: () => journal.push('diagnostic')

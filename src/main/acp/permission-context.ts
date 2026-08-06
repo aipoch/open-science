@@ -411,6 +411,25 @@ class AcpPermissionContext {
     this.broker.setLivePermissionProfile(sessionId, profile, isCurrent)
   }
 
+  beginPermissionProfileTransition(
+    sessionId: string,
+    profile: Readonly<SessionPermissionProfileState>,
+    isCurrent: () => boolean
+  ): void {
+    this.broker.beginPermissionProfileTransition(sessionId, profile, isCurrent)
+  }
+
+  setProviderPermissionProfile(
+    sessionId: string,
+    profile: Readonly<SessionPermissionProfileState>
+  ): void {
+    this.broker.setProviderPermissionProfile(sessionId, profile)
+  }
+
+  clearLivePermissionProfile(sessionId: string): void {
+    this.broker.clearLivePermissionProfile(sessionId)
+  }
+
   listGrants(sessionId: string): AcpPermissionGrant[] {
     return this.broker.listGrants(sessionId)
   }

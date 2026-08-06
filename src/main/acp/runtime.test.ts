@@ -660,7 +660,11 @@ const startPermissionProbeAgent = (
     announceToolCall?: boolean
     sparseCodexMcpApproval?: boolean
     modes?: SessionModeState
-    onSetMode?: (context: { sessionId: string; modeId: string }) => Promise<void> | void
+    onSetMode?: (context: {
+      sessionId: string
+      modeId: string
+      notifyCurrentMode: (currentModeId: string) => Promise<void>
+    }) => Promise<void> | void
     permissionOptions?: Array<{
       optionId: string
       name: string
@@ -685,7 +689,15 @@ const startPermissionProbeAgent = (
       modes: options.modes
     }))
     .onRequest(acp.methods.agent.session.setMode, async (ctx) => {
-      await options.onSetMode?.({ sessionId: ctx.params.sessionId, modeId: ctx.params.modeId })
+      await options.onSetMode?.({
+        sessionId: ctx.params.sessionId,
+        modeId: ctx.params.modeId,
+        notifyCurrentMode: async (currentModeId) =>
+          ctx.client.notify(acp.methods.client.session.update, {
+            sessionId: ctx.params.sessionId,
+            update: { sessionUpdate: 'current_mode_update', currentModeId }
+          })
+      })
       return {}
     })
     .onRequest(acp.methods.agent.session.resume, (ctx) => {
@@ -6364,8 +6376,9 @@ describe('ACP runtime session management', () => {
       toolCallId: 'live-permission-tool',
       toolTitle: 'Run command',
       modes: createModes(['default', 'bypassPermissions']),
-      onSetMode: async ({ modeId }) => {
+      onSetMode: async ({ modeId, notifyCurrentMode }) => {
         if (modeId === 'default') {
+          await notifyCurrentMode('bypassPermissions')
           askModeEntered.resolve()
           await releaseAskMode.promise
         }
@@ -6435,6 +6448,43 @@ describe('ACP runtime session management', () => {
     expect(runtime.getSnapshot().permissionProfiles[session.sessionId]).toMatchObject({
       selectedProfile: 'full',
       effectiveProfile: 'full'
+    })
+  })
+
+  it('uses the committed profile after replacing the provider session', async () => {
+    const process = new FakeAgentProcess()
+    const permissionSeen = vi.fn()
+    let permissionResponse: unknown
+    startPermissionProbeAgent(process, {
+      newSessionId: 'live-permission-session',
+      toolCallId: 'live-permission-tool',
+      toolTitle: 'Run command',
+      modes: createModes(['default', 'bypassPermissions']),
+      onPermissionResponse: (response) => {
+        permissionResponse = response
+      }
+    })
+    const runtime = new AcpRuntime({
+      appVersion: '0.1.0',
+      defaultCwd: '/workspace',
+      spawnAgent: () => asAgentProcess(process),
+      callbacks: { onPermissionRequest: permissionSeen }
+    })
+    const session = await runtime.createSession({ cwd: '/workspace', permissionProfile: 'ask' })
+    await runtime.setPermissionProfile({ sessionId: session.sessionId, profile: 'full' })
+
+    await runtime.resetSessionContext({
+      sessionId: session.sessionId,
+      cwd: '/workspace',
+      permissionProfile: 'full'
+    })
+    await expect(
+      runtime.sendPrompt({ sessionId: session.sessionId, text: 'run a command' })
+    ).resolves.toMatchObject({ stopReason: 'end_turn' })
+
+    expect(permissionSeen).not.toHaveBeenCalled()
+    expect(permissionResponse).toEqual({
+      outcome: { outcome: 'selected', optionId: 'allow-once' }
     })
   })
 

@@ -677,6 +677,7 @@ class AcpPermissionBroker {
     {
       profile: Readonly<SessionPermissionProfileState>
       isCurrent: () => boolean
+      providerUpdatesBlocked: boolean
     }
   >()
 
@@ -698,14 +699,39 @@ class AcpPermissionBroker {
     )
   }
 
-  // Re-evaluates provider tool requests after the user changes the live Session profile. App-owned
-  // approvals do not carry an automatic request and therefore always remain human decisions.
+  // Publishes the committed Session posture used by new provider permission requests.
   setLivePermissionProfile(
     sessionId: string,
     profile: Readonly<SessionPermissionProfileState>,
     isCurrent: () => boolean = () => true
   ): void {
-    this.livePermissionProfiles.set(sessionId, { profile, isCurrent })
+    this.livePermissionProfiles.set(sessionId, {
+      profile,
+      isCurrent,
+      providerUpdatesBlocked: false
+    })
+  }
+
+  beginPermissionProfileTransition(
+    sessionId: string,
+    profile: Readonly<SessionPermissionProfileState>,
+    isCurrent: () => boolean
+  ): void {
+    this.livePermissionProfiles.set(sessionId, { profile, isCurrent, providerUpdatesBlocked: true })
+  }
+
+  // A user-requested transition remains authoritative until its runtime operation commits or rolls
+  // back, so a delayed provider mode notification cannot restore stale Full access in the meantime.
+  setProviderPermissionProfile(
+    sessionId: string,
+    profile: Readonly<SessionPermissionProfileState>
+  ): void {
+    if (this.livePermissionProfiles.get(sessionId)?.providerUpdatesBlocked) return
+    this.setLivePermissionProfile(sessionId, profile)
+  }
+
+  clearLivePermissionProfile(sessionId: string): void {
+    this.livePermissionProfiles.delete(sessionId)
   }
 
   async applyPermissionProfile(
@@ -713,7 +739,9 @@ class AcpPermissionBroker {
     profile: Readonly<SessionPermissionProfileState>,
     isCurrent: () => boolean = () => true
   ): Promise<string[]> {
-    this.setLivePermissionProfile(sessionId, profile, isCurrent)
+    const providerUpdatesBlocked =
+      this.livePermissionProfiles.get(sessionId)?.providerUpdatesBlocked ?? false
+    this.livePermissionProfiles.set(sessionId, { profile, isCurrent, providerUpdatesBlocked })
     const resolvedRequestIds: string[] = []
     for (const [requestId, pending] of Array.from(this.pendingRequests)) {
       if (!isCurrent()) break

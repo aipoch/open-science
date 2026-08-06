@@ -47,7 +47,7 @@ type AcpSessionUpdateProjectorOptions = Readonly<{
   reconnectPending: () => boolean
   mcpServerNamesFor: (sessionId: string) => readonly string[]
   nextEventId: () => string
-  setLivePermissionProfile: (
+  setProviderPermissionProfile: (
     sessionId: string,
     profile: Readonly<SessionPermissionProfileState>
   ) => void
@@ -272,7 +272,7 @@ class AcpSessionUpdateProjector {
             effect.currentModeId
           )
           aggregate.setPermissionProfile(nextProfile)
-          this.options.setLivePermissionProfile(effect.sessionId, nextProfile)
+          this.options.setProviderPermissionProfile(effect.sessionId, nextProfile)
           emitState()
         }
         break

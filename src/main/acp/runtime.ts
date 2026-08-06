@@ -656,7 +656,7 @@ class AcpRuntime {
 
     // Make the requested posture authoritative before the provider mode request can yield. A
     // downgrade from Full must affect broker decisions immediately, even while setMode is in flight.
-    this.permissionContext.setLivePermissionProfile(
+    this.permissionContext.beginPermissionProfileTransition(
       request.sessionId,
       requestedPermissionProfile,
       isCurrent
@@ -704,6 +704,7 @@ class AcpRuntime {
     this.sessionRegistry
       .lookup(request.sessionId)
       ?.aggregate.setPermissionProfile(structuredClone(permissionProfile))
+    this.permissionContext.setLivePermissionProfile(request.sessionId, permissionProfile)
     this.emitState()
 
     return this.getSnapshot()
