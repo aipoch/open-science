@@ -3601,6 +3601,9 @@ describe('ACP runtime session management', () => {
     await expect(
       runtime.sendPrompt({ sessionId: second.sessionId, text: 'blocked prompt' })
     ).rejects.toThrow(/already running/)
+    await expect(
+      runtime.setPermissionProfile({ sessionId: second.sessionId, profile: 'full' })
+    ).rejects.toThrow(/compacting/)
 
     const prompting = runtime.sendPrompt({ sessionId: first.sessionId, text: 'first prompt' })
     await vi.waitFor(() =>

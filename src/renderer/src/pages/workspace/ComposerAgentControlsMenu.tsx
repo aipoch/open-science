@@ -74,6 +74,8 @@ type ComposerAgentControlsMenuProps = {
   // Read-only while a session is running: the menu stays openable and the permission
   // submenu still expands on hover, but profiles, auto-review, and compute stay immutable.
   readOnly?: boolean
+  // Permission mode remains independently editable during a running prompt.
+  permissionProfileReadOnly?: boolean
   // Grant revocation remains independently available while a turn is running.
   grantActionsReadOnly?: boolean
   autoReviewDisabled?: boolean
@@ -140,6 +142,7 @@ const ComposerAgentControlsMenu = ({
   grants,
   autoReviewEnabled,
   readOnly = false,
+  permissionProfileReadOnly = readOnly,
   grantActionsReadOnly = readOnly,
   autoReviewDisabled = false,
   onProfileChange,
@@ -209,7 +212,7 @@ const ComposerAgentControlsMenu = ({
         return (
           <DropdownMenuItem
             key={candidate.id}
-            disabled={readOnly || isDisabled}
+            disabled={permissionProfileReadOnly || isDisabled}
             className="items-center gap-2 px-2 py-1.5"
             onSelect={() => selectProfile(candidate.id)}
           >
@@ -597,6 +600,7 @@ const ComposerAgentControlsMenu = ({
               <AlertDialog.Action asChild>
                 <Button
                   type="button"
+                  disabled={permissionProfileReadOnly || fullAccessUnavailable}
                   className="bg-amber-600 text-white hover:bg-amber-700"
                   onClick={() => onProfileChange('full')}
                 >

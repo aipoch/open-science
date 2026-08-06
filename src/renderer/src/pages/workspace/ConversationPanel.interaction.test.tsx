@@ -185,6 +185,7 @@ const renderPanel = (props: Partial<Parameters<typeof ConversationPanel>[0]> = {
         permissionProfileState={undefined}
         permissionGrants={[]}
         contextUsage={undefined}
+        canChangeAgentControls
         canChangePermissionProfile
         onDraftDocChange={vi.fn()}
         onSendMessage={vi.fn()}

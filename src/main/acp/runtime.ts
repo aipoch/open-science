@@ -636,6 +636,9 @@ class AcpRuntime {
     const session = this.activeSessionFor(request.sessionId)
 
     if (!session) throw new Error(`ACP session not found: ${request.sessionId}`)
+    if (this.sessionInteractions.current(request.sessionId)?.kind === 'compaction') {
+      throw new Error('Permission profile cannot be changed while the Agent is compacting.')
+    }
 
     const connection = this.connection
     if (!connection) throw new Error('ACP connection is not available.')

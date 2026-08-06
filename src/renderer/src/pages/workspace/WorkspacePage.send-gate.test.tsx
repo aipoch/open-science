@@ -30,6 +30,7 @@ let conversationProps: {
   canEditDraft: boolean
   canSendMessage: boolean
   canEditMessage: boolean
+  canChangeAgentControls: boolean
   canChangePermissionProfile: boolean
   canCompactContext: boolean
   compactContextDisabledReason?: string
@@ -259,6 +260,7 @@ describe('WorkspacePage send gate while compacting', () => {
 
       await renderPage()
 
+      expect(conversationProps.canChangeAgentControls).toBe(false)
       expect(conversationProps.canChangePermissionProfile).toBe(true)
     }
   )
