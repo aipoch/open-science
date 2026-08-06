@@ -6,6 +6,12 @@ import type {
 } from '@agentclientprotocol/sdk'
 
 import { toAcpTurnTokenUsage } from '../../shared/acp'
+import type { AgentFrameworkId } from '../../shared/settings'
+import type { AcpBackendGenerationOwner } from './backend-generation-owner'
+import { claudeCodeTurnAdapter } from './claude-turn-adapter'
+import { createCodexTurnAdapter } from './codex-turn-adapter'
+import { AcpOpenCodeTurnAdapter } from './opencode-turn-adapter'
+import { fetchOpenCodeUsageSnapshot } from './opencode-turn-usage'
 import type {
   AcpProviderTurnAdapter,
   AcpProviderTurnProbe,
@@ -18,7 +24,7 @@ type ProviderPromptExecutionInput = Readonly<{
   session: Pick<ActiveSession, 'sessionId' | 'prompt' | 'nextUpdate'>
   content: string | ContentBlock[]
   cwd: string
-  adapter: AcpProviderTurnAdapter
+  frameworkId: AgentFrameworkId
   isCurrent: () => boolean
   beforeDispatch: () => Promise<'active' | 'cancelled'>
   beforeStop?: (response: PromptResponse) => Promise<void>
@@ -26,6 +32,11 @@ type ProviderPromptExecutionInput = Readonly<{
   onAccepted: () => void
   routeNotification: (notification: SessionNotification) => void
   reportBestEffortFailure?: (stage: ProviderPromptObservationStage, error: unknown) => void
+}>
+
+type AcpProviderPromptExecutorOptions = Readonly<{
+  backendGeneration: Pick<AcpBackendGenerationOwner, 'openCodeUsageApi'>
+  opencodeUsageFetch?: typeof fetch
 }>
 
 type ProviderPromptOutcome =
@@ -72,6 +83,8 @@ const normalizeFacts = (
 class AcpProviderPromptExecutor {
   private readonly observations = new Map<string, ActiveObservation>()
 
+  constructor(private readonly options: AcpProviderPromptExecutorOptions) {}
+
   observeProviderMessage(message: unknown): void {
     if (typeof message !== 'object' || message === null || Array.isArray(message)) return
     const providerSessionId = (message as { sessionId?: unknown }).sessionId
@@ -88,9 +101,10 @@ class AcpProviderPromptExecutor {
   async execute(input: ProviderPromptExecutionInput): Promise<ProviderPromptOutcome> {
     const providerSessionId = input.session.sessionId
     const token = Symbol(providerSessionId)
+    const adapter = this.adapterFor(input.frameworkId)
     let probe = NOOP_PROBE
     try {
-      probe = await input.adapter.begin({ providerSessionId, cwd: input.cwd })
+      probe = await adapter.begin({ providerSessionId, cwd: input.cwd })
     } catch (error) {
       reportBestEffort(input.reportBestEffortFailure, 'begin', error)
     }
@@ -183,6 +197,25 @@ class AcpProviderPromptExecutor {
       await cancelProbe()
       releaseObservation()
     }
+  }
+
+  private adapterFor(frameworkId: AgentFrameworkId): AcpProviderTurnAdapter {
+    if (frameworkId === 'claude-code') return claudeCodeTurnAdapter
+    if (frameworkId === 'codex') return createCodexTurnAdapter()
+
+    // Capture one generation's immutable API before adapter.begin awaits. Re-reading the owner for
+    // the final snapshot could mix credentials or lose usage after a generation switch.
+    const usageApi = this.options.backendGeneration.openCodeUsageApi()
+    return new AcpOpenCodeTurnAdapter((providerSessionId, cwd) =>
+      usageApi
+        ? fetchOpenCodeUsageSnapshot(
+            usageApi,
+            providerSessionId,
+            cwd,
+            this.options.opencodeUsageFetch
+          )
+        : Promise.resolve(undefined)
+    )
   }
 }
 

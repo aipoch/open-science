@@ -1,10 +1,5 @@
 import * as acp from '@agentclientprotocol/sdk'
-import type {
-  ActiveSession,
-  ClientConnection,
-  PromptResponse,
-  SessionNotification
-} from '@agentclientprotocol/sdk'
+import type { ActiveSession, ClientConnection, PromptResponse } from '@agentclientprotocol/sdk'
 import type { ChildProcessWithoutNullStreams } from 'node:child_process'
 import { join, resolve } from 'node:path'
 
@@ -21,7 +16,6 @@ import type {
   AcpPromptRequest,
   AcpResumeSessionRequest,
   AcpRevokePermissionGrantRequest,
-  AcpContextUsage,
   AcpSetPermissionProfileRequest,
   AcpStateSnapshot
 } from '../../shared/acp'
@@ -38,11 +32,9 @@ import {
   type ResolvedAgentBackend
 } from '../agent-framework'
 import { createLogger, diagnosticErrorFields, errorLogFields } from '../logger'
-import { fetchOpenCodeUsageSnapshot } from './opencode-turn-usage'
 import { AcpRuntimeSnapshotOwner } from './runtime-snapshot-owner'
 import { ConversationPermissionGrantStore } from './permission-broker'
 import { AcpPermissionContext, HUMAN_PERMISSION_ACTION_ORIGIN } from './permission-context'
-import { applyCurrentModeUpdate } from './permission-profile-controller'
 import { AgentMcpHttpHost } from './mcp-http-host'
 import { ArtifactRepository } from '../artifacts/repository'
 import { ArtifactRunRegistry } from '../artifacts/run-registry'
@@ -57,8 +49,8 @@ import { getAppClaudeConfigDir } from '../settings/provider-env'
 import type { PermissionGrantRegistry } from '../permission-grants/registry'
 import { withDataRootWrite } from '../storage/migration-state'
 import { opencodeStorageDir } from '../agent-framework/opencode'
-import { ContextUsageTracker, type SessionEstimateInput } from './context-usage-tracker'
-import { contextUsageMcpSections } from './context-usage-static-context'
+import { ContextUsageTracker } from './context-usage-tracker'
+import { AcpContextUsagePolicy } from './context-usage-policy'
 import { createManagedFileReferenceResolver } from './file-reference-resolver'
 import type { UploadRepository } from '../uploads/repository'
 import { DEFAULT_UPLOAD_PROJECT_NAME, type UploadedAttachment } from '../../shared/uploads'
@@ -103,7 +95,7 @@ import {
   type AcpBackendGenerationView
 } from './backend-generation-owner'
 import { AcpSessionConfigurator } from './session-configurator'
-import { AcpSessionUpdateProjector, type AcpSessionUpdateEffect } from './session-update-projector'
+import { AcpSessionUpdateProjector } from './session-update-projector'
 import { AcpConnectionLifecycleWorkflow } from './connection-lifecycle-workflow'
 import { AcpConnectionCloseWorkflow, type CloseState } from './connection-close-workflow'
 import { AcpModelChangeWorkflow } from './model-change-workflow'
@@ -118,10 +110,6 @@ import { AcpContextCompactionWorkflow } from './context-compaction-workflow'
 import { AcpSessionPresentationPolicy } from './session-presentation-policy'
 import { AcpProviderPromptExecutor } from './provider-prompt-executor'
 import { AcpPromptOutcomeFinalizer } from './prompt-outcome-finalizer'
-import type { AcpProviderTurnAdapter } from './provider-turn-adapter'
-import { claudeCodeTurnAdapter } from './claude-turn-adapter'
-import { createCodexTurnAdapter } from './codex-turn-adapter'
-import { AcpOpenCodeTurnAdapter } from './opencode-turn-adapter'
 import { AcpTurnSkillOwner, type AcpTurnSkillHooks } from './turn-skill-owner'
 import { createProductionPlanService } from '../session-plan/production-plan-service'
 import { SessionPlanInteractionOwner } from '../session-plan/session-plan-interaction-owner'
@@ -372,6 +360,7 @@ const safeLogError = (message: string, data?: unknown): void => {
 class AcpRuntime {
   private readonly snapshotOwner: AcpRuntimeSnapshotOwner
   private readonly contextUsageTracker: ContextUsageTracker
+  private readonly contextUsagePolicy: AcpContextUsagePolicy
   private readonly connectionAdapter = new AcpAgentConnectionAdapter()
   private readonly connectionResources: AcpConnectionResourceOwner
   private readonly connectionTransitions: AcpConnectionTransitionOwner
@@ -392,8 +381,8 @@ class AcpRuntime {
   private readonly spawnAgent: (() => ChildProcessWithoutNullStreams) | undefined
   private readonly backendGeneration: AcpBackendGenerationOwner
   private readonly sessionConfigurator: AcpSessionConfigurator
-  private readonly sessionUpdateProjector = new AcpSessionUpdateProjector()
-  private readonly providerPromptExecutor = new AcpProviderPromptExecutor()
+  private readonly sessionUpdateProjector: AcpSessionUpdateProjector
+  private readonly providerPromptExecutor: AcpProviderPromptExecutor
   // Injectable lifecycle timers (defaults to real setTimeout/clearTimeout).
   private readonly setTimer: (fn: () => void, ms: number) => ReturnType<typeof setTimeout>
   private readonly clearTimer: (handle: ReturnType<typeof setTimeout>) => void
@@ -447,6 +436,10 @@ class AcpRuntime {
     })
     this.spawnAgent = options.spawnAgent
     this.backendGeneration = new AcpBackendGenerationOwner(options.framework ?? claudeCodeFramework)
+    this.providerPromptExecutor = new AcpProviderPromptExecutor({
+      backendGeneration: this.backendGeneration,
+      opencodeUsageFetch: options.opencodeUsageFetch
+    })
     this.sessionConfigurator = new AcpSessionConfigurator({
       assertCurrentConnection: (connection) => this.assertCurrentConnectedConnection(connection),
       diagnosticContext: (backend) => this.diagnosticContext(backend.framework.id)
@@ -552,6 +545,32 @@ class AcpRuntime {
       },
       removeStartupBlocker: (token) => this.generationActivity.releaseStartup(token)
     })
+    this.contextUsagePolicy = new AcpContextUsagePolicy({
+      backend: () => this.backend,
+      appliedModel: (sessionId) =>
+        this.sessionRegistry.lookup(sessionId)?.aggregate.snapshot().appliedModel,
+      systemPromptAppends: () => this.getSystemPromptAppends(),
+      tooling: () => this.currentCapabilityAvailability()
+    })
+    this.sessionUpdateProjector = new AcpSessionUpdateProjector({
+      registry: this.sessionRegistry,
+      contextUsage: this.contextUsageTracker,
+      contextPolicy: this.contextUsagePolicy,
+      hasActiveSession: (sessionId) => this.activeSessionFor(sessionId) !== undefined,
+      currentFramework: () => this.framework.id,
+      reconnectPending: () => this.pendingProviderReconnect,
+      mcpServerNamesFor: (sessionId) => this.sessionCapabilities.mcpServerNamesFor(sessionId),
+      nextEventId: () => this.nextEventId(),
+      emitState: () => this.emitState(),
+      pushEvent: (event) => this.pushEvent(event),
+      reportToolFailure: (effect) =>
+        log.warn('tool call failed', {
+          tool: effect.tool,
+          toolCallId: effect.toolCallId,
+          sessionId: effect.sessionId,
+          reason: effect.reason
+        })
+    })
     this.permissionContext = new AcpPermissionContext({
       emitPermissionRequest: (request) => {
         this.pushEvent({
@@ -631,14 +650,19 @@ class AcpRuntime {
       interactions: this.sessionInteractions,
       context: this.contextUsageTracker,
       promptContent: this.promptContentOwner,
-      contextEstimateInput: (sessionId) => this.contextUsageEstimateInput(sessionId),
-      selectedContextWindow: (sessionId) => this.selectedContextWindowFor(sessionId),
+      contextEstimateInput: (sessionId) => this.contextUsagePolicy.resolve(sessionId).estimateInput,
+      selectedContextWindow: (sessionId) =>
+        this.contextUsagePolicy.resolve(sessionId).selectedWindow,
       routeHiddenNotification: (notification, sessionId) =>
-        this.handleSessionUpdate(notification, sessionId, false, () => {
-          try {
-            this.emitState()
-          } catch (error) {
-            safeLogError('compaction state callback failed', errorLogFields(error))
+        this.sessionUpdateProjector.route(notification, {
+          appSessionId: sessionId,
+          visible: false,
+          emitState: () => {
+            try {
+              this.emitState()
+            } catch (error) {
+              safeLogError('compaction state callback failed', errorLogFields(error))
+            }
           }
         }),
       pushEvent: (event) => this.pushEvent(event),
@@ -651,6 +675,8 @@ class AcpRuntime {
       skills: this.turnSkills,
       preparation: this.promptPreparation,
       executor: this.providerPromptExecutor,
+      contextUsage: this.contextUsageTracker,
+      providerReconnectPending: () => this.pendingProviderReconnect,
       finalizer: new AcpPromptOutcomeFinalizer(),
       permission: this.permissionContext,
       environment: {
@@ -658,15 +684,16 @@ class AcpRuntime {
         tooling: () => this.currentCapabilityAvailability(),
         bridgeSkillsAvailable: () => this.connectionResources.bridgeSkillsAvailable,
         skillImportEnabled: () => this.sessionCapabilities.isSkillImportEnabled(),
-        contextEstimateInput: (sessionId) => this.contextUsageEstimateInput(sessionId),
-        selectedContextWindow: (sessionId) => this.selectedContextWindowFor(sessionId),
-        providerAdapter: (frameworkId) => this.providerTurnAdapter(frameworkId),
+        contextEstimateInput: (sessionId) =>
+          this.contextUsagePolicy.resolve(sessionId).estimateInput,
+        selectedContextWindow: (sessionId) =>
+          this.contextUsagePolicy.resolve(sessionId).selectedWindow,
         emitSkillActivities: (sessionId, turn, inputs, status) =>
           this.emitCodexSkillInputActivities(sessionId, turn, inputs, status),
         onSkillImportAttachmentEligible: this.callbacks.onSkillImportAttachmentEligible,
         onProviderPromptAccepted: this.callbacks.onProviderPromptAccepted,
         routeNotification: (notification, sessionId) =>
-          this.handleSessionUpdate(notification, sessionId),
+          this.sessionUpdateProjector.route(notification, { appSessionId: sessionId }),
         diagnosticContext: () => this.diagnosticContext(),
         pushUserMessage: ({ sessionId, promptMessageId, text }) =>
           this.pushEvent({
@@ -693,8 +720,6 @@ class AcpRuntime {
         afterRelease: (sessionId) => this.publishTerminalPlanProjection(sessionId)
       },
       finalization: {
-        recordContextUsed: (sessionId, used, promptTurn) =>
-          this.recordProviderPromptContextUsage(sessionId, used, promptTurn),
         errorMessage,
         errorKind: acpErrorKind,
         pushEvent: (event) => this.pushEvent(event),
@@ -783,7 +808,7 @@ class AcpRuntime {
       currentStatus: () => this.snapshotOwner.status,
       providerReconnectPending: () => this.pendingProviderReconnect,
       isGenerationBusy: () => this.generationActivity.blockers().retirement,
-      contextEstimateInput: (sessionId) => this.contextUsageEstimateInput(sessionId),
+      contextEstimateInput: (sessionId) => this.contextUsagePolicy.resolve(sessionId).estimateInput,
       emitState: () => this.emitState(),
       // Model-change fallback already owns its drain. Calling the close workflow here would ask the
       // same drain to await itself, so arm the authoritative transition directly.
@@ -2074,188 +2099,6 @@ class AcpRuntime {
 
   private cancelPermissionFlowForSession(sessionId: string): void {
     this.permissionContext.cancelForSession(sessionId)
-  }
-
-  private providerTurnAdapter(frameworkId: AgentFramework['id']): AcpProviderTurnAdapter {
-    if (frameworkId === 'claude-code') return claudeCodeTurnAdapter
-    if (frameworkId === 'codex') return createCodexTurnAdapter()
-
-    const usageApi = this.backendGeneration.openCodeUsageApi()
-    return new AcpOpenCodeTurnAdapter((providerSessionId, cwd) =>
-      usageApi
-        ? fetchOpenCodeUsageSnapshot(
-            usageApi,
-            providerSessionId,
-            cwd,
-            this.options.opencodeUsageFetch
-          )
-        : Promise.resolve(undefined)
-    )
-  }
-
-  // Provider adapters normalize an exact latest-request context numerator when one exists. Apply it
-  // only while the same app turn still owns the Session so a delayed old stop cannot rewrite a reset.
-  private recordProviderPromptContextUsage(
-    sessionId: string,
-    used: number,
-    promptTurn: number
-  ): void {
-    if (
-      this.pendingProviderReconnect ||
-      this.currentPromptInteraction(sessionId)?.sequence !== promptTurn
-    ) {
-      return
-    }
-    if (this.contextUsageTracker.reconcileUsed(sessionId, used)) this.emitState()
-  }
-
-  private contextUsageSelectionFor(sessionId?: string): {
-    model?: string
-    contextWindow?: number
-  } {
-    const appliedModel = sessionId
-      ? this.sessionRegistry.lookup(sessionId)?.aggregate.snapshot().appliedModel
-      : undefined
-    // OpenCode applies the requested provider model through the optional ACP model config. If the
-    // option was absent or rejected, the agent kept its own default and the requested model is unsafe
-    // for both tokenization and window sizing. Other frameworks configure their upstream model
-    // through env or an app-owned bridge, independently of the ACP transport model.
-    const selectedModelConfirmed = !(
-      this.framework.id === 'opencode' &&
-      this.backend.session.model &&
-      !appliedModel
-    )
-    if (!selectedModelConfirmed) return {}
-
-    const model = this.backend.context.model ?? appliedModel
-    return {
-      ...(model ? { model } : {}),
-      ...(this.backend.context.window ? { contextWindow: this.backend.context.window } : {})
-    }
-  }
-
-  private contextUsageEstimateInput(sessionId?: string): SessionEstimateInput {
-    const { model } = this.contextUsageSelectionFor(sessionId)
-    const sessionSetup = this.framework.buildSessionSetup({
-      systemPromptAppends: this.backend.prompt.persistentSystemPrompt
-        ? []
-        : this.getSystemPromptAppends(),
-      sessionOptions: this.backend.session.options
-    })
-    const persistentSystemPrompt =
-      this.backend.prompt.persistentSystemPrompt ?? sessionSetup.persistentSystemPrompt
-    const persistentSections = contextUsageMcpSections(this.framework.id, {
-      artifacts: this.artifactToolingAvailable(),
-      notebook: this.notebookToolingAvailable(),
-      skillImport: this.skillImportToolingAvailable(),
-      codexBridgeAliases: this.backend.adapter.bridgeMcpAliasesEnabled
-    }).map(({ sectionId, text }) => ({ sectionId, category: 'mcp' as const, text }))
-
-    return {
-      frameworkId: this.framework.id,
-      ...(model ? { model } : {}),
-      ...(persistentSystemPrompt ? { persistentSystemPrompt: [persistentSystemPrompt] } : {}),
-      ...(persistentSections.length > 0 ? { persistentSections } : {})
-    }
-  }
-
-  private selectedContextWindowFor(sessionId: string): number | undefined {
-    return this.contextUsageSelectionFor(sessionId).contextWindow
-  }
-
-  private ensureContextUsageTracking(sessionId: string): void {
-    if (!this.activeSessionFor(sessionId)) return
-    this.contextUsageTracker.beginSession(sessionId, this.contextUsageEstimateInput(sessionId))
-  }
-
-  private refreshEstimatedContextUsage(
-    sessionId: string,
-    status: NonNullable<AcpContextUsage['breakdown']>['status']
-  ): boolean {
-    const selectedSize = this.selectedContextWindowFor(sessionId)
-    const size = selectedSize ?? this.contextUsageTracker.usage(sessionId)?.size
-    return this.contextUsageTracker.refreshUsage(sessionId, status, size)
-  }
-
-  // Normalizes low-level session notifications into runtime/workspace events.
-  private handleSessionUpdate(
-    notification: SessionNotification,
-    appSessionId?: string,
-    visible = true,
-    emitState: () => void = () => this.emitState()
-  ): void {
-    const sessionId = appSessionId ?? notification.sessionId
-    this.applySessionUpdateEffects(
-      this.sessionUpdateProjector.project(notification, {
-        framework:
-          this.sessionRegistry.lookup(sessionId)?.aggregate.snapshot().frameworkId ??
-          this.framework.id,
-        appSessionId,
-        eventId: this.nextEventId(),
-        visible,
-        reconnectPending: this.pendingProviderReconnect,
-        mcpServerNames: this.sessionCapabilities.mcpServerNamesFor(sessionId)
-      }),
-      emitState
-    )
-  }
-
-  private applySessionUpdateEffects(
-    effects: readonly AcpSessionUpdateEffect[],
-    emitState: () => void = () => this.emitState()
-  ): void {
-    for (const effect of effects) {
-      switch (effect.kind) {
-        case 'context-observation':
-          this.ensureContextUsageTracking(effect.sessionId)
-          this.contextUsageTracker.observeSessionUpdate(
-            effect.sessionId,
-            effect.notification,
-            effect.observation
-          )
-          break
-        case 'current-mode': {
-          const aggregate = this.sessionRegistry.lookup(effect.sessionId)?.aggregate
-          const profileState = aggregate?.snapshot().permissionProfile
-          if (profileState) {
-            aggregate.setPermissionProfile(
-              applyCurrentModeUpdate(
-                profileState as SessionPermissionProfileState,
-                effect.currentModeId
-              )
-            )
-            emitState()
-          }
-          break
-        }
-        case 'provider-usage':
-          this.contextUsageTracker.reconcileProviderUsage(
-            effect.sessionId,
-            effect.usage,
-            this.selectedContextWindowFor(effect.sessionId)
-          )
-          emitState()
-          break
-        case 'context-refresh':
-          if (
-            this.contextUsageTracker.usage(effect.sessionId)?.breakdown?.status !== 'reconciled'
-          ) {
-            this.refreshEstimatedContextUsage(effect.sessionId, 'preflight')
-          }
-          break
-        case 'tool-failure-diagnostic':
-          log.warn('tool call failed', {
-            tool: effect.tool,
-            toolCallId: effect.toolCallId,
-            sessionId: effect.sessionId,
-            reason: effect.reason
-          })
-          break
-        case 'visible-event':
-          this.pushEvent(effect.event)
-          break
-      }
-    }
   }
 
   private processEventDisposition(

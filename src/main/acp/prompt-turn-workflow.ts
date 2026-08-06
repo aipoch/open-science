@@ -3,7 +3,6 @@ import type { ActiveSession, PromptResponse, SessionNotification } from '@agentc
 import type { AcpPromptRequest } from '../../shared/acp'
 import type { ActivePlanProjection } from '../../shared/session-plan/contract'
 import { formatPlanProtectedContext } from '../../shared/session-plan/contract'
-import type { AgentFrameworkId } from '../../shared/settings'
 import {
   DEFAULT_PERMISSION_PROFILE,
   type PermissionProfileId
@@ -12,7 +11,11 @@ import { createLogger, errorLogFields } from '../logger'
 import { PLAN_FIRST_TURN_PROMPT_REMINDER } from '../session-plan/guidance'
 import type { ArtifactTurnHandle } from './artifact-turn-owner'
 import type { AcpBackendGenerationView } from './backend-generation-owner'
-import type { ContextUsageTurnHandle, SessionEstimateInput } from './context-usage-tracker'
+import type {
+  ContextUsageTracker,
+  ContextUsageTurnHandle,
+  SessionEstimateInput
+} from './context-usage-tracker'
 import type { AcpPermissionContext } from './permission-context'
 import {
   AcpPromptOutcomeFinalizer,
@@ -21,7 +24,6 @@ import {
 } from './prompt-outcome-finalizer'
 import type { AcpPromptPreparationOwner, PreparedPromptHandle } from './prompt-preparation-owner'
 import type { AcpProviderPromptExecutor, ProviderPromptOutcome } from './provider-prompt-executor'
-import type { AcpProviderTurnAdapter } from './provider-turn-adapter'
 import type { AcpSessionInteractionOwner } from './session-interaction-owner'
 import type { AcpPromptSessionInteractionScope } from './session-interaction-owner'
 import type { AcpSessionToolingAvailability } from './session-presentation-policy'
@@ -55,7 +57,6 @@ type AcpPromptTurnEnvironment = Readonly<{
   skillImportEnabled: () => boolean
   contextEstimateInput: (sessionId: string) => SessionEstimateInput
   selectedContextWindow: (sessionId: string) => number | undefined
-  providerAdapter: (frameworkId: AgentFrameworkId) => AcpProviderTurnAdapter
   emitSkillActivities: (
     sessionId: string,
     promptTurn: number,
@@ -94,7 +95,6 @@ type AcpPromptTurnPlanLifecycle = Readonly<{
 }>
 
 type AcpPromptTurnFinalization = Readonly<{
-  recordContextUsed: (sessionId: string, used: number, promptTurn: number) => void
   errorMessage: AcpPromptFinalizationHandles['errorMessage']
   errorKind: AcpPromptFinalizationHandles['errorKind']
   pushEvent: AcpPromptFinalizationHandles['pushEvent']
@@ -122,6 +122,8 @@ type AcpPromptTurnWorkflowOptions = Readonly<{
   skills: Pick<AcpTurnSkillOwner, 'authorize'>
   preparation: Pick<AcpPromptPreparationOwner, 'prepare'>
   executor: Pick<AcpProviderPromptExecutor, 'execute'>
+  contextUsage: Pick<ContextUsageTracker, 'reconcileUsed'>
+  providerReconnectPending: () => boolean
   finalizer: Pick<AcpPromptOutcomeFinalizer, 'finalize'>
   permission: Pick<AcpPermissionContext, 'clearCorrelationsForSession'>
   environment: AcpPromptTurnEnvironment
@@ -343,7 +345,7 @@ class AcpPromptTurnWorkflow {
         session,
         content: prepared.content,
         cwd: promptSnapshot?.cwd ?? this.options.currentCwd(),
-        adapter: env.providerAdapter(promptSnapshot?.frameworkId ?? env.backend().framework.id),
+        frameworkId: promptSnapshot?.frameworkId ?? env.backend().framework.id,
         isCurrent: () => this.isCurrent(turn),
         beforeDispatch: async () => {
           if ((await this.checkpoint(interaction)) === 'cancelled') return 'cancelled'
@@ -404,7 +406,15 @@ class AcpPromptTurnWorkflow {
           env.emitSkillActivities(sessionId, promptTurn, skillInputs, 'failed')
           skillFinalized = true
         },
-        recordContextUsed: (used) => finalization.recordContextUsed(sessionId, used, promptTurn),
+        recordContextUsed: (used) => {
+          if (
+            this.options.providerReconnectPending() ||
+            interactions.current(sessionId) !== interaction
+          ) {
+            return
+          }
+          if (this.options.contextUsage.reconcileUsed(sessionId, used)) this.options.emitState()
+        },
         errorMessage: finalization.errorMessage,
         errorKind: finalization.errorKind,
         pushEvent: finalization.pushEvent,

@@ -807,9 +807,9 @@ const resolveArtifactRunClaim = (runtime: AcpRuntime, claimId: string): Artifact
 const handleSessionUpdate = (runtime: AcpRuntime, notification: SessionNotification): void =>
   (
     runtime as unknown as {
-      handleSessionUpdate: (value: SessionNotification) => void
+      sessionUpdateProjector: { route: (value: SessionNotification) => void }
     }
-  ).handleSessionUpdate(notification)
+  ).sessionUpdateProjector.route(notification)
 
 type ReviewerOwnerProbe = {
   contextFor: (sessionId: string) =>

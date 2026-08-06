@@ -1,6 +1,12 @@
 import type { ActiveSession, PromptResponse, SessionNotification } from '@agentclientprotocol/sdk'
 import { describe, expect, it, vi } from 'vitest'
 
+const { claudeBegin } = vi.hoisted(() => ({ claudeBegin: vi.fn() }))
+
+vi.mock('./claude-turn-adapter', () => ({
+  claudeCodeTurnAdapter: { begin: (...args: unknown[]) => claudeBegin(...args) }
+}))
+
 import {
   AcpProviderPromptExecutor,
   type ProviderPromptExecutionInput
@@ -83,8 +89,12 @@ const setup = (
   const captureStop = vi.fn(() => true)
   const routeNotification = vi.fn()
   const report = vi.fn()
+  const executor = new AcpProviderPromptExecutor({
+    backendGeneration: { openCodeUsageApi: () => undefined }
+  })
+  claudeBegin.mockImplementation((input) => adapter.begin(input))
   return {
-    executor: new AcpProviderPromptExecutor(),
+    executor,
     session,
     probe,
     adapter,
@@ -96,7 +106,7 @@ const setup = (
       session,
       content: 'prompt',
       cwd: '/workspace',
-      adapter,
+      frameworkId: 'claude-code',
       isCurrent: () => true,
       beforeDispatch: async () => 'active',
       captureStop,
@@ -108,6 +118,70 @@ const setup = (
 }
 
 describe('AcpProviderPromptExecutor', () => {
+  it('captures one OpenCode generation API for both usage snapshots', async () => {
+    const api = { baseUrl: 'https://usage.example/v1', authorization: 'Bearer generation-1' }
+    const openCodeUsageApi = vi.fn(() => api)
+    const fetchImpl = vi
+      .fn<typeof fetch>()
+      .mockResolvedValueOnce(new Response(JSON.stringify([]), { status: 200 }))
+      .mockResolvedValueOnce(
+        new Response(
+          JSON.stringify([
+            {
+              info: {
+                id: 'assistant-1',
+                role: 'assistant',
+                tokens: { input: 4, output: 2, cache: { read: 1, write: 0 } }
+              }
+            }
+          ]),
+          { status: 200 }
+        )
+      )
+    const response: PromptResponse = { stopReason: 'end_turn' }
+    const session = {
+      sessionId: 'provider-1',
+      prompt: vi.fn(async () => undefined),
+      nextUpdate: vi.fn(async () => stop(response))
+    } as unknown as ProviderPromptExecutionInput['session']
+    const executor = new AcpProviderPromptExecutor({
+      backendGeneration: { openCodeUsageApi },
+      opencodeUsageFetch: fetchImpl
+    })
+
+    const outcome = await executor.execute({
+      session,
+      content: 'prompt',
+      cwd: '/workspace',
+      frameworkId: 'opencode',
+      isCurrent: () => true,
+      beforeDispatch: async () => 'active',
+      captureStop: () => true,
+      onAccepted: () => undefined,
+      routeNotification: () => undefined
+    })
+
+    expect(openCodeUsageApi).toHaveBeenCalledOnce()
+    expect(fetchImpl).toHaveBeenCalledTimes(2)
+    expect(fetchImpl.mock.calls.map(([, init]) => init?.headers)).toEqual([
+      { authorization: 'Bearer generation-1' },
+      { authorization: 'Bearer generation-1' }
+    ])
+    expect(outcome).toMatchObject({
+      kind: 'stopped',
+      facts: {
+        turnUsage: {
+          inputTokens: 4,
+          cacheTokens: 1,
+          cachedReadTokens: 1,
+          cachedWriteTokens: 0,
+          outputTokens: 2
+        },
+        modelTurnCount: 1
+      }
+    })
+  })
+
   it('accepts once, routes updates in order, captures stop, and returns raw normalized facts', async () => {
     const response: PromptResponse = {
       stopReason: 'end_turn',

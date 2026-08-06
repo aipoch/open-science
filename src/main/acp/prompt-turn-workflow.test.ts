@@ -25,10 +25,10 @@ type Harness = {
   }
   authorize: Mock<AcpPromptTurnWorkflowOptions['skills']['authorize']>
   context: ContextUsageTurnHandle
+  contextUsage: { reconcileUsed: Mock<(sessionId: string, used: number) => boolean> }
   emitSkillActivities: Mock<AcpPromptTurnWorkflowOptions['environment']['emitSkillActivities']>
   executor: Mock<AcpPromptTurnWorkflowOptions['executor']['execute']>
   finalization: {
-    recordContextUsed: Mock<AcpPromptTurnWorkflowOptions['finalization']['recordContextUsed']>
     errorMessage: AcpPromptTurnWorkflowOptions['finalization']['errorMessage']
     errorKind: AcpPromptTurnWorkflowOptions['finalization']['errorKind']
     pushEvent: Mock<AcpPromptTurnWorkflowOptions['finalization']['pushEvent']>
@@ -129,6 +129,7 @@ const createHarness = (
     onPromptStarted?: () => void
     preflightPlan?: AcpPromptTurnWorkflowOptions['preflightPlan']
     prepare?: AcpPromptTurnWorkflowOptions['preparation']['prepare']
+    providerReconnectPending?: () => boolean
   } = {}
 ): Harness => {
   const journal: string[] = []
@@ -260,8 +261,8 @@ const createHarness = (
     })
   }
   const permission = { clearCorrelationsForSession: vi.fn() }
+  const contextUsage = { reconcileUsed: vi.fn(() => true) }
   const finalization: Harness['finalization'] = {
-    recordContextUsed: vi.fn(),
     errorMessage: (error) => (error instanceof Error ? error.message : String(error)),
     errorKind: (error) => (error as { data?: { errorKind?: string } } | undefined)?.data?.errorKind,
     pushEvent: vi.fn(),
@@ -289,6 +290,8 @@ const createHarness = (
     skills: { authorize },
     preparation: { prepare: preparation },
     executor: { execute: executor },
+    contextUsage,
+    providerReconnectPending: input.providerReconnectPending ?? (() => false),
     environment: {
       backend: () => backend,
       tooling: () => ({ artifacts: true, notebook: true, skillImport: true }),
@@ -296,12 +299,6 @@ const createHarness = (
       skillImportEnabled: () => true,
       contextEstimateInput: () => ({ frameworkId: 'opencode' }),
       selectedContextWindow: () => 128_000,
-      providerAdapter: vi.fn(() => ({
-        begin: vi.fn(() => ({
-          finalize: vi.fn(() => ({})),
-          cancel: vi.fn()
-        }))
-      })),
       emitSkillActivities,
       onProviderPromptAccepted,
       routeNotification: vi.fn(),
@@ -332,6 +329,7 @@ const createHarness = (
     artifacts,
     authorize,
     context,
+    contextUsage,
     emitSkillActivities,
     executor,
     finalization,
@@ -430,7 +428,7 @@ describe('AcpPromptTurnWorkflow', () => {
 
     expect(harness.artifacts.publish).toHaveBeenCalledWith('s1', expect.any(Object), onPublished)
     expect(harness.artifacts.dispose).toHaveBeenCalledWith(expect.any(Object))
-    expect(harness.finalization.recordContextUsed).toHaveBeenCalledWith('s1', 42, 1)
+    expect(harness.contextUsage.reconcileUsed).toHaveBeenCalledWith('s1', 42)
     expect(harness.finalization.onPromptEnded).toHaveBeenCalledWith(
       's1',
       handles.interaction.turnToken
@@ -445,6 +443,23 @@ describe('AcpPromptTurnWorkflow', () => {
       'in_progress',
       'completed'
     ])
+  })
+
+  it('rejects delayed context usage after a successor or provider reconnect takes ownership', async () => {
+    const successor = createHarness()
+    await successor.workflow.run(request(), { kind: 'user' })
+    const successorHandles = successor.finalizer.mock.calls[0][0]
+    successor.interactions.current.mockReturnValue({} as never)
+
+    successorHandles.recordContextUsed(41)
+
+    expect(successor.contextUsage.reconcileUsed).not.toHaveBeenCalled()
+
+    const reconnect = createHarness({ providerReconnectPending: () => true })
+    await reconnect.workflow.run(request(), { kind: 'user' })
+    reconnect.finalizer.mock.calls[0][0].recordContextUsed(42)
+
+    expect(reconnect.contextUsage.reconcileUsed).not.toHaveBeenCalled()
   })
 
   it('propagates app-continuation identity without publishing its synthetic text', async () => {

@@ -364,6 +364,20 @@ describe('runtime state ownership architecture', () => {
     expect(source).toContain('this.reviewerSessions.create(request)')
   })
 
+  it('keeps provider selection and Context routing behind their prompt owners', () => {
+    const source = readSource('src/main/acp/runtime.ts')
+
+    expect(source).not.toContain('private providerTurnAdapter')
+    expect(source).not.toContain('private recordProviderPromptContextUsage')
+    expect(source).not.toContain('private contextUsageSelectionFor')
+    expect(source).not.toContain('private contextUsageEstimateInput')
+    expect(source).not.toContain('private selectedContextWindowFor')
+    expect(source).not.toContain('private handleSessionUpdate')
+    expect(source).not.toContain('private applySessionUpdateEffects')
+    expect(source).toContain('this.contextUsagePolicy.resolve(sessionId)')
+    expect(source).toContain('this.sessionUpdateProjector.route(notification')
+  })
+
   it('accepts declared interface imports for a future orchestration module', () => {
     const source = `
       import type { AcpApplicationCommandDependencies } from '../acp/application-commands'

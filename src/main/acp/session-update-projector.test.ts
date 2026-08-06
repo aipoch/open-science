@@ -1,12 +1,173 @@
 import type { SessionNotification } from '@agentclientprotocol/sdk'
 import { join, resolve } from 'node:path'
-import { describe, expect, it } from 'vitest'
+import { describe, expect, it, vi } from 'vitest'
 
 import { AcpSessionUpdateProjector } from './session-update-projector'
 
+type TestRouting = Readonly<{
+  framework?: 'claude-code' | 'codex' | 'opencode'
+  appSessionId?: string
+  eventId: string
+  timestamp?: number
+  visible: boolean
+  reconnectPending: boolean
+  mcpServerNames: readonly string[]
+}>
+
+type RecordedEffect = Readonly<Record<string, unknown> & { kind: string }>
+
+type TestProjector = Readonly<{
+  beginGeneration: (root?: string) => void
+  clearGeneration: () => void
+  clearSession: (sessionId: string) => void
+  dispose: () => void
+  route: (notification: SessionNotification, routing: TestRouting) => readonly RecordedEffect[]
+}>
+
+const createProjector = (): TestProjector => {
+  let routing: TestRouting = {
+    eventId: 'event-route',
+    visible: true,
+    reconnectPending: false,
+    mcpServerNames: []
+  }
+  let effects: RecordedEffect[] = []
+  const record = (effect: RecordedEffect): void => {
+    effects.push(Object.freeze(effect))
+  }
+  const owner = new AcpSessionUpdateProjector({
+    registry: {
+      lookup: (sessionId) =>
+        ({
+          aggregate: {
+            snapshot: () => ({
+              frameworkId: routing.framework,
+              permissionProfile: {
+                selectedProfile: 'ask',
+                effectiveProfile: 'ask',
+                currentModeId: 'default',
+                availableModeIds: ['default', 'bypassPermissions'],
+                fullAccessAvailable: true
+              }
+            }),
+            setPermissionProfile: (profile: { currentModeId?: string }) =>
+              record({
+                kind: 'current-mode',
+                sessionId,
+                currentModeId: profile.currentModeId
+              })
+          }
+        }) as never
+    },
+    contextUsage: {
+      beginSession: () => undefined,
+      observeSessionUpdate: (sessionId, notification, observation) =>
+        record({ kind: 'context-observation', sessionId, notification, observation }),
+      reconcileProviderUsage: (sessionId, usage) =>
+        record({ kind: 'provider-usage', sessionId, usage }),
+      refreshUsage: (sessionId) => {
+        record({ kind: 'context-refresh', sessionId })
+        return true
+      },
+      usage: () => undefined
+    },
+    contextPolicy: {
+      resolve: () => ({ estimateInput: { frameworkId: 'claude-code' } })
+    },
+    hasActiveSession: () => false,
+    currentFramework: () => routing.framework ?? 'claude-code',
+    reconnectPending: () => routing.reconnectPending,
+    mcpServerNamesFor: () => routing.mcpServerNames,
+    nextEventId: () => routing.eventId,
+    emitState: () => undefined,
+    pushEvent: (event) => record({ kind: 'visible-event', event }),
+    reportToolFailure: (effect) => record(effect)
+  })
+  return {
+    beginGeneration: (root?: string) => owner.beginGeneration(root),
+    clearGeneration: () => owner.clearGeneration(),
+    clearSession: (sessionId: string) => owner.clearSession(sessionId),
+    dispose: () => owner.dispose(),
+    route: (notification: SessionNotification, nextRouting: TestRouting) => {
+      routing = nextRouting
+      effects = []
+      owner.route(notification, {
+        appSessionId: routing.appSessionId,
+        visible: routing.visible
+      })
+      return Object.freeze([...effects])
+    }
+  }
+}
+
 describe('AcpSessionUpdateProjector', () => {
+  it('routes stable Session usage through context owners in projection order', () => {
+    const journal: string[] = []
+    const beginSession = vi.fn(() => journal.push('context:begin'))
+    const observeSessionUpdate = vi.fn(() => journal.push('context:observe'))
+    const reconcileProviderUsage = vi.fn(() => journal.push('context:reconcile'))
+    const nextEventId = vi.fn(() => 'event-routed')
+    const projector = new AcpSessionUpdateProjector({
+      registry: {
+        lookup: () => ({ aggregate: { snapshot: () => ({ frameworkId: 'opencode' }) } }) as never
+      },
+      contextUsage: {
+        beginSession,
+        observeSessionUpdate,
+        reconcileProviderUsage,
+        refreshUsage: () => false,
+        usage: () => undefined
+      },
+      contextPolicy: {
+        resolve: () => {
+          journal.push('context:resolve')
+          return {
+            estimateInput: { frameworkId: 'opencode', model: 'confirmed/model' },
+            selectedWindow: 200_000
+          }
+        }
+      },
+      hasActiveSession: () => true,
+      currentFramework: () => 'claude-code',
+      reconnectPending: () => false,
+      mcpServerNamesFor: () => [],
+      nextEventId,
+      emitState: () => journal.push('state:emit'),
+      pushEvent: () => journal.push('event:push'),
+      reportToolFailure: () => journal.push('diagnostic')
+    })
+
+    projector.route(
+      {
+        sessionId: 'provider-session',
+        update: { sessionUpdate: 'usage_update', used: 42, size: 128_000 }
+      },
+      { appSessionId: 'stable-session' }
+    )
+
+    expect(nextEventId).toHaveBeenCalledOnce()
+    expect(journal).toEqual([
+      'context:resolve',
+      'context:begin',
+      'context:observe',
+      'context:resolve',
+      'context:reconcile',
+      'state:emit'
+    ])
+    expect(observeSessionUpdate).toHaveBeenCalledWith(
+      'stable-session',
+      expect.objectContaining({ sessionId: 'stable-session' }),
+      {}
+    )
+    expect(reconcileProviderUsage).toHaveBeenCalledWith(
+      'stable-session',
+      { used: 42, size: 128_000 },
+      200_000
+    )
+  })
+
   it('relabels provider updates and orders context projection before the visible event', () => {
-    const projector = new AcpSessionUpdateProjector()
+    const projector = createProjector()
     const notification: SessionNotification = {
       sessionId: 'provider-session',
       update: {
@@ -16,7 +177,7 @@ describe('AcpSessionUpdateProjector', () => {
       }
     }
 
-    const effects = projector.project(notification, {
+    const effects = projector.route(notification, {
       appSessionId: 'stable-session',
       eventId: 'event-1',
       timestamp: 1710000000000,
@@ -39,7 +200,7 @@ describe('AcpSessionUpdateProjector', () => {
       kind: 'visible-event',
       event: {
         id: 'event-1',
-        timestamp: 1710000000000,
+        timestamp: expect.any(Number),
         sessionId: 'stable-session',
         kind: 'message',
         text: 'Hello'
@@ -50,7 +211,7 @@ describe('AcpSessionUpdateProjector', () => {
   })
 
   it('projects usage to context state without a visible event and suppresses stale reconnect usage', () => {
-    const projector = new AcpSessionUpdateProjector()
+    const projector = createProjector()
     const notification: SessionNotification = {
       sessionId: 'session-1',
       update: { sessionUpdate: 'usage_update', used: 42, size: 128_000 }
@@ -62,7 +223,7 @@ describe('AcpSessionUpdateProjector', () => {
       mcpServerNames: []
     }
 
-    expect(projector.project(notification, routing)).toMatchObject([
+    expect(projector.route(notification, routing)).toMatchObject([
       { kind: 'context-observation', sessionId: 'session-1' },
       {
         kind: 'provider-usage',
@@ -70,12 +231,12 @@ describe('AcpSessionUpdateProjector', () => {
         usage: { used: 42, size: 128_000 }
       }
     ])
-    expect(projector.project(notification, { ...routing, reconnectPending: true })).toEqual([])
+    expect(projector.route(notification, { ...routing, reconnectPending: true })).toEqual([])
   })
 
   it('removes Claude Code policy attribution from visible refusal messages', () => {
-    const projector = new AcpSessionUpdateProjector()
-    const [context, refresh, visible] = projector.project(
+    const projector = createProjector()
+    const [context, refresh, visible] = projector.route(
       {
         sessionId: 'session-1',
         update: {
@@ -108,7 +269,7 @@ describe('AcpSessionUpdateProjector', () => {
   })
 
   it('projects hidden current-mode updates while a reconnect suppresses stale context effects', () => {
-    const projector = new AcpSessionUpdateProjector()
+    const projector = createProjector()
     const notification: SessionNotification = {
       sessionId: 'session-1',
       update: { sessionUpdate: 'current_mode_update', currentModeId: 'bypassPermissions' }
@@ -120,7 +281,7 @@ describe('AcpSessionUpdateProjector', () => {
       mcpServerNames: []
     }
 
-    expect(projector.project(notification, routing)).toMatchObject([
+    expect(projector.route(notification, routing)).toMatchObject([
       {
         kind: 'current-mode',
         sessionId: 'session-1',
@@ -130,7 +291,7 @@ describe('AcpSessionUpdateProjector', () => {
   })
 
   it('classifies MCP context and emits a bounded canonical failure diagnostic before the event', () => {
-    const projector = new AcpSessionUpdateProjector()
+    const projector = createProjector()
     const notification: SessionNotification = {
       sessionId: 'session-1',
       update: {
@@ -150,7 +311,7 @@ describe('AcpSessionUpdateProjector', () => {
       }
     }
 
-    const effects = projector.project(notification, {
+    const effects = projector.route(notification, {
       eventId: 'event-tool',
       visible: true,
       reconnectPending: false,
@@ -176,8 +337,8 @@ describe('AcpSessionUpdateProjector', () => {
   })
 
   it('suppresses empty message events after retaining their context refresh ordering', () => {
-    const projector = new AcpSessionUpdateProjector()
-    const effects = projector.project(
+    const projector = createProjector()
+    const effects = projector.route(
       {
         sessionId: 'session-1',
         update: {
@@ -197,7 +358,7 @@ describe('AcpSessionUpdateProjector', () => {
   })
 
   it('owns Codex Skill activity state for one generation and clears sparse lifecycle correlation', () => {
-    const projector = new AcpSessionUpdateProjector()
+    const projector = createProjector()
     const skillsRoot = resolve('/data', 'codex-home', 'skills')
     const skillPath = join(skillsRoot, 'mcp-pubmed', 'SKILL.md')
     projector.beginGeneration(skillsRoot)
@@ -208,7 +369,7 @@ describe('AcpSessionUpdateProjector', () => {
       mcpServerNames: []
     }
 
-    const loading = projector.project(
+    const loading = projector.route(
       {
         sessionId: 'session-1',
         update: {
@@ -222,7 +383,7 @@ describe('AcpSessionUpdateProjector', () => {
       },
       routing
     )
-    const completed = projector.project(
+    const completed = projector.route(
       {
         sessionId: 'session-1',
         update: {
@@ -252,7 +413,7 @@ describe('AcpSessionUpdateProjector', () => {
     expect(JSON.stringify(completed.at(-1))).not.toContain('PRIVATE SKILL BODY')
 
     projector.clearGeneration()
-    const afterClear = projector.project(
+    const afterClear = projector.route(
       {
         sessionId: 'session-1',
         update: {
@@ -272,7 +433,7 @@ describe('AcpSessionUpdateProjector', () => {
   })
 
   it('clears Codex Skill presentation state for only one Session', () => {
-    const projector = new AcpSessionUpdateProjector()
+    const projector = createProjector()
     const skillsRoot = resolve('/data', 'codex-home', 'skills')
     projector.beginGeneration(skillsRoot)
     const routing = {
@@ -286,7 +447,7 @@ describe('AcpSessionUpdateProjector', () => {
       ['session-a', 'mcp-pubmed'],
       ['session-b', 'mcp-chemistry']
     ] as const) {
-      projector.project(
+      projector.route(
         {
           sessionId,
           update: {
@@ -303,8 +464,8 @@ describe('AcpSessionUpdateProjector', () => {
     }
 
     projector.clearSession('session-a')
-    const complete = (sessionId: string): ReturnType<AcpSessionUpdateProjector['project']> =>
-      projector.project(
+    const complete = (sessionId: string): ReturnType<typeof projector.route> =>
+      projector.route(
         {
           sessionId,
           update: {
