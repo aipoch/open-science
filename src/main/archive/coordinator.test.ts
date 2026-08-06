@@ -26,12 +26,12 @@ describe('ArchiveCoordinator', () => {
   it('archives a project only after the complete idle child catalog is checked', async () => {
     const projects = {
       get: vi.fn().mockResolvedValue(project),
-      setArchived: vi.fn().mockResolvedValue({ ...project, archivedAt: 50 })
+      updateArchive: vi.fn().mockResolvedValue({ ...project, archivedAt: 50 })
     }
     const sessions = {
       assertProjectArchivable: vi.fn().mockResolvedValue([session.id]),
       assertSessionAvailable: vi.fn(),
-      setArchived: vi.fn(),
+      updateArchive: vi.fn(),
       sessionProjectId: vi.fn()
     }
     const coordinator = new ArchiveCoordinator(projects, sessions, { isSessionBusy: vi.fn() })
@@ -39,11 +39,11 @@ describe('ArchiveCoordinator', () => {
     coordinator.setMarkReadSessions(markRead)
 
     await expect(
-      coordinator.setProjectArchived({ id: project.id, archived: true, expectedArchivedAt: null })
+      coordinator.updateProjectArchive({ id: project.id, archived: true, expectedArchivedAt: null })
     ).resolves.toMatchObject({ archivedAt: 50 })
 
     expect(sessions.assertProjectArchivable).toHaveBeenCalledWith(project.id, expect.any(Function))
-    expect(projects.setArchived).toHaveBeenCalledWith(
+    expect(projects.updateArchive).toHaveBeenCalledWith(
       { id: project.id, archived: true, expectedArchivedAt: null },
       expect.any(Number)
     )
@@ -53,38 +53,38 @@ describe('ArchiveCoordinator', () => {
   it('rejects an archive request whose compare-and-set value is stale', async () => {
     const projects = {
       get: vi.fn().mockResolvedValue({ ...project, archivedAt: 40 }),
-      setArchived: vi.fn()
+      updateArchive: vi.fn()
     }
     const sessions = {
       assertProjectArchivable: vi.fn(),
       assertSessionAvailable: vi.fn(),
-      setArchived: vi.fn(),
+      updateArchive: vi.fn(),
       sessionProjectId: vi.fn()
     }
     const coordinator = new ArchiveCoordinator(projects, sessions, { isSessionBusy: vi.fn() })
 
     await expect(
-      coordinator.setProjectArchived({ id: project.id, archived: false, expectedArchivedAt: 39 })
+      coordinator.updateProjectArchive({ id: project.id, archived: false, expectedArchivedAt: 39 })
     ).rejects.toThrow('Project archive state changed elsewhere.')
 
-    expect(projects.setArchived).not.toHaveBeenCalled()
+    expect(projects.updateArchive).not.toHaveBeenCalled()
   })
 
   it('does not restore a session while its project remains archived', async () => {
     const projects = {
       get: vi.fn().mockResolvedValue({ ...project, archivedAt: 40 }),
-      setArchived: vi.fn()
+      updateArchive: vi.fn()
     }
     const sessions = {
       assertProjectArchivable: vi.fn(),
       assertSessionAvailable: vi.fn(),
-      setArchived: vi.fn(),
+      updateArchive: vi.fn(),
       sessionProjectId: vi.fn()
     }
     const coordinator = new ArchiveCoordinator(projects, sessions, { isSessionBusy: vi.fn() })
 
     await expect(
-      coordinator.setSessionArchived({
+      coordinator.updateSessionArchive({
         projectId: project.id,
         sessionId: session.id,
         archived: false,

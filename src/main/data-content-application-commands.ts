@@ -201,7 +201,7 @@ const dataContentApplicationCommands = Object.freeze({
     'searchArtifacts'
   ),
   projectCreate: projectCommand('projects:create', 'create'),
-  projectSetArchived: projectCommand('projects:set-archived', 'setArchived'),
+  projectUpdateArchive: projectCommand('projects:update-archive', 'updateArchive'),
   projectDelete: defineApplicationCommand<
     'projects:delete',
     readonly [request: Projects.DeleteProjectRequest],
@@ -217,7 +217,7 @@ const dataContentApplicationCommands = Object.freeze({
   ),
   sessionLoadAll: sessionCommand('sessions:load-all', 'loadAll'),
   sessionSaveManifest: sessionCommand('sessions:save-manifest', 'saveManifest'),
-  sessionSetArchived: sessionCommand('sessions:set-archived', 'setArchived'),
+  sessionUpdateArchive: sessionCommand('sessions:update-archive', 'updateArchive'),
   sessionSave: defineApplicationCommand<
     'sessions:save-session',
     readonly [
@@ -275,7 +275,7 @@ const dataContentApplicationCommandGroups = Object.freeze([
   ] as const),
   defineApplicationCommandGroup('projects', [
     dataContentApplicationCommands.projectCreate,
-    dataContentApplicationCommands.projectSetArchived,
+    dataContentApplicationCommands.projectUpdateArchive,
     dataContentApplicationCommands.projectDelete,
     dataContentApplicationCommands.projectGet,
     dataContentApplicationCommands.projectList,
@@ -286,7 +286,7 @@ const dataContentApplicationCommandGroups = Object.freeze([
     dataContentApplicationCommands.sessionExportConversation,
     dataContentApplicationCommands.sessionLoadAll,
     dataContentApplicationCommands.sessionSaveManifest,
-    dataContentApplicationCommands.sessionSetArchived,
+    dataContentApplicationCommands.sessionUpdateArchive,
     dataContentApplicationCommands.sessionSave
   ] as const),
   defineApplicationCommandGroup('uploads', [
@@ -421,8 +421,8 @@ const registerDataContentApplicationCommands = (
       },
       'projects:get': ({ args }) => dependencies.projects.get(args[0]),
       'projects:list': () => dependencies.projects.list(),
-      'projects:set-archived': async ({ args }) => {
-        const project = await dependencies.projects.setArchived(args[0])
+      'projects:update-archive': async ({ args }) => {
+        const project = await dependencies.projects.updateArchive(args[0])
         publishLifecycle(dependencies.events, LIFECYCLE_CHANNELS.projectUpdated, project)
         return project
       },
@@ -449,10 +449,10 @@ const registerDataContentApplicationCommands = (
         dependencies.withDataRootWrite(() => dependencies.sessions.loadAll()),
       'sessions:save-manifest': ({ args }) =>
         dependencies.withDataRootWrite(() => dependencies.sessions.saveManifest(args[0])),
-      'sessions:set-archived': (invocation) => {
+      'sessions:update-archive': (invocation) => {
         const originClientId = invocation.callerContext.lifecycleClientId
         return dependencies.withDataRootWrite(async () => {
-          const session = await dependencies.sessions.setArchived(invocation.args[0])
+          const session = await dependencies.sessions.updateArchive(invocation.args[0])
           publishLifecycle(dependencies.events, LIFECYCLE_CHANNELS.sessionUpdated, {
             session,
             originClientId

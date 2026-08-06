@@ -139,7 +139,7 @@ import type {
   CreateProjectRequest,
   DeleteProjectRequest,
   Project,
-  SetProjectArchivedRequest,
+  UpdateProjectArchiveRequest,
   UpdateProjectRequest
 } from '../shared/projects'
 import type {
@@ -159,7 +159,7 @@ import type {
   PersistedChatSession,
   SaveSessionOptions,
   SaveSessionManifestRequest,
-  SetSessionArchivedRequest
+  UpdateSessionArchiveRequest
 } from '../shared/session-persistence'
 import type {
   SessionPersistenceFlushRequest,
@@ -360,7 +360,7 @@ export interface OpenScienceAPI {
       session: PersistedChatSession,
       options?: SaveSessionOptions
     ): Promise<PersistedChatSession>
-    setArchived(request: SetSessionArchivedRequest): Promise<PersistedChatSession>
+    updateArchive(request: UpdateSessionArchiveRequest): Promise<PersistedChatSession>
     deleteSession(request: DeleteSessionRequest): Promise<void>
     saveManifest(request: SaveSessionManifestRequest): Promise<void>
     exportConversation(request: ExportConversationRequest): Promise<ExportConversationResult>
@@ -547,7 +547,7 @@ export interface OpenScienceAPI {
     get(id: string): Promise<Project | null>
     create(request: CreateProjectRequest): Promise<Project>
     update(request: UpdateProjectRequest): Promise<Project>
-    setArchived(request: SetProjectArchivedRequest): Promise<Project>
+    updateArchive(request: UpdateProjectArchiveRequest): Promise<Project>
     delete(request: DeleteProjectRequest): Promise<void>
     onCreated(listener: AcpListener<Project>): RemoveListener
     onUpdated(listener: AcpListener<Project>): RemoveListener

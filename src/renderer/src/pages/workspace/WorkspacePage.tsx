@@ -445,7 +445,7 @@ const WorkspacePage = ({
   const clearSelection = useSessionStore((state) => state.clearSelection)
   const renameSession = useSessionStore((state) => state.renameSession)
   const togglePinned = useSessionStore((state) => state.togglePinned)
-  const setSessionArchived = useSessionStore((state) => state.setSessionArchived)
+  const updateSessionArchive = useSessionStore((state) => state.updateSessionArchive)
   const enqueueSessionArchive = useArchiveUndoStore((state) => state.enqueueSession)
   const setAutoReviewEnabled = useSessionStore((state) => state.setAutoReviewEnabled)
   const setEnabledComputeHosts = useSessionStore((state) => state.setEnabledComputeHosts)
@@ -1952,7 +1952,7 @@ const WorkspacePage = ({
 
     setArchivingSessionIds((current) => new Set(current).add(session.id))
     setExportError(null)
-    void setSessionArchived({
+    void updateSessionArchive({
       projectId: session.projectId,
       sessionId: session.id,
       archived: true,

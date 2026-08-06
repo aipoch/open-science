@@ -30,7 +30,7 @@ export type DeleteProjectRequest = {
   id: string
 }
 
-export type SetProjectArchivedRequest = {
+export type UpdateProjectArchiveRequest = {
   id: string
   archived: boolean
   // The last authoritative archive value prevents a stale renderer from restoring or archiving a

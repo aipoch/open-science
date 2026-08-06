@@ -425,7 +425,7 @@ describe('SessionPersistenceCoordinator', () => {
     const coordinator = new SessionPersistenceCoordinator(repository, createFileIndex())
 
     await expect(
-      coordinator.setArchived({
+      coordinator.updateArchive({
         projectId: 'project-1',
         sessionId: 'session-1',
         archived: true,

@@ -1628,7 +1628,7 @@ export type DeleteSessionRequest = {
   sessionId: string
 }
 
-export type SetSessionArchivedRequest = {
+export type UpdateSessionArchiveRequest = {
   projectId: string
   sessionId: string
   archived: boolean

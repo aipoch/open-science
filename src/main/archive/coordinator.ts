@@ -1,12 +1,12 @@
-import type { Project, SetProjectArchivedRequest } from '../../shared/projects'
+import type { Project, UpdateProjectArchiveRequest } from '../../shared/projects'
 import type {
   PersistedChatSession,
-  SetSessionArchivedRequest
+  UpdateSessionArchiveRequest
 } from '../../shared/session-persistence'
 
 type ProjectArchiveRepository = {
   get(id: string): Promise<Project | null>
-  setArchived(request: SetProjectArchivedRequest, archivedAt: number): Promise<Project>
+  updateArchive(request: UpdateProjectArchiveRequest, archivedAt: number): Promise<Project>
 }
 
 type SessionArchivePersistence = {
@@ -16,8 +16,8 @@ type SessionArchivePersistence = {
   ): Promise<string[]>
   assertSessionAvailable(projectId: string, sessionId: string): Promise<void>
   sessionProjectId(sessionId: string): Promise<string | undefined>
-  setArchived(
-    request: SetSessionArchivedRequest,
+  updateArchive(
+    request: UpdateSessionArchiveRequest,
     isRuntimeBusy: () => boolean
   ): Promise<PersistedChatSession>
 }
@@ -57,7 +57,7 @@ class ArchiveCoordinator {
     return project
   }
 
-  setProjectArchived(request: SetProjectArchivedRequest): Promise<Project> {
+  updateProjectArchive(request: UpdateProjectArchiveRequest): Promise<Project> {
     return this.enqueue(async () => {
       const project = await this.projects.get(request.id)
       if (!project) throw new Error('Project not found.')
@@ -72,7 +72,7 @@ class ArchiveCoordinator {
             this.runtime.isSessionBusy(request.id, sessionId)
           )
         : []
-      const next = await this.projects.setArchived(request, Date.now())
+      const next = await this.projects.updateArchive(request, Date.now())
       if (request.archived) {
         // Read state is an attention projection, not archive authority. A transient badge/database
         // failure must not roll back the durable archive transition.
@@ -82,10 +82,10 @@ class ArchiveCoordinator {
     })
   }
 
-  setSessionArchived(request: SetSessionArchivedRequest): Promise<PersistedChatSession> {
+  updateSessionArchive(request: UpdateSessionArchiveRequest): Promise<PersistedChatSession> {
     return this.enqueue(async () => {
       await this.activeProject(request.projectId)
-      const session = await this.sessions.setArchived(request, () =>
+      const session = await this.sessions.updateArchive(request, () =>
         this.runtime.isSessionBusy(request.projectId, request.sessionId)
       )
       if (request.archived) await this.markReadSessions([request.sessionId]).catch(() => undefined)

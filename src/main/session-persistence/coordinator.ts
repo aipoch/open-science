@@ -12,7 +12,7 @@ import type {
   PersistedSessionStatus,
   SaveSessionOptions,
   SaveSessionManifestRequest,
-  SetSessionArchivedRequest,
+  UpdateSessionArchiveRequest,
   SessionRuntimeContext,
   SessionRuntimeContextPatch,
   SessionLoadFailure,
@@ -868,8 +868,8 @@ class SessionPersistenceCoordinator {
 
   // Dedicated main-owned archive mutation. Unlike full renderer saves it preserves updatedAt and
   // never allows a stale renderer projection to alter archive state.
-  setArchived(
-    request: SetSessionArchivedRequest,
+  updateArchive(
+    request: UpdateSessionArchiveRequest,
     isRuntimeBusy: () => boolean = () => false
   ): Promise<PersistedChatSession> {
     return this.enqueue(async () => {

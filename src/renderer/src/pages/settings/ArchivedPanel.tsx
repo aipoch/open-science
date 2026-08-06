@@ -18,10 +18,10 @@ const describeError = (error: unknown, fallback: string): string =>
 // Archive recovery stays in Settings so active workspace surfaces only need to reason about active data.
 const ArchivedPanel = (): React.JSX.Element => {
   const projects = useProjectStore((state) => state.projects)
-  const setProjectArchived = useProjectStore((state) => state.setProjectArchived)
+  const updateProjectArchive = useProjectStore((state) => state.updateProjectArchive)
   const deleteProject = useProjectStore((state) => state.deleteProject)
   const sessions = useSessionStore((state) => state.sessions)
-  const setSessionArchived = useSessionStore((state) => state.setSessionArchived)
+  const updateSessionArchive = useSessionStore((state) => state.updateSessionArchive)
   const [projectId, setProjectId] = useState<string | undefined>()
   const [projectToDelete, setProjectToDelete] = useState<Project | undefined>()
   const [sessionToDelete, setSessionToDelete] = useState<ChatSession | undefined>()
@@ -53,7 +53,7 @@ const ArchivedPanel = (): React.JSX.Element => {
     if (project.archivedAt === undefined) return
     setBusyKey(`project:${project.id}`)
     setError(undefined)
-    void setProjectArchived({
+    void updateProjectArchive({
       id: project.id,
       archived: false,
       expectedArchivedAt: project.archivedAt
@@ -68,7 +68,7 @@ const ArchivedPanel = (): React.JSX.Element => {
     if (session.archivedAt === undefined) return
     setBusyKey(`session:${session.id}`)
     setError(undefined)
-    void setSessionArchived({
+    void updateSessionArchive({
       projectId: session.projectId,
       sessionId: session.id,
       archived: false,

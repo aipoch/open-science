@@ -12,7 +12,7 @@ describe('PermissionUndoSnackbar', () => {
   let root: Root
   const restore = vi.fn()
   const extendUndo = vi.fn()
-  const setProjectArchived = vi.fn()
+  const updateProjectArchive = vi.fn()
 
   beforeEach(() => {
     vi.useFakeTimers()
@@ -31,7 +31,7 @@ describe('PermissionUndoSnackbar', () => {
         revokedCount: 1
       })
     )
-    setProjectArchived.mockReset().mockResolvedValue({
+    updateProjectArchive.mockReset().mockResolvedValue({
       id: 'project-1',
       name: 'Project',
       description: '',
@@ -41,7 +41,7 @@ describe('PermissionUndoSnackbar', () => {
     })
     window.api = {
       permissions: { extendUndo, restore },
-      projects: { setArchived: setProjectArchived }
+      projects: { updateArchive: updateProjectArchive }
     } as unknown as Window['api']
     usePermissionGrantsStore.setState({
       grants: [],
@@ -131,7 +131,7 @@ describe('PermissionUndoSnackbar', () => {
     const undo = snackbar?.querySelector<HTMLButtonElement>('button:not([aria-label])')
     await act(async () => undo?.click())
 
-    expect(setProjectArchived).toHaveBeenCalledWith({
+    expect(updateProjectArchive).toHaveBeenCalledWith({
       id: 'project-1',
       archived: false,
       expectedArchivedAt: 10

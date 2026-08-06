@@ -505,7 +505,7 @@ const createApplicationModules = async (
     }
   )
   const projectHandlers = createProjectHandlers(projectRepository, projectDeletionCoordinator, {
-    setArchived: (request) => archiveCoordinator.setProjectArchived(request)
+    updateArchive: (request) => archiveCoordinator.updateProjectArchive(request)
   })
   const projectFilesHandlers = createProjectFilesHandlers(
     projectFilesRepository,
@@ -536,9 +536,9 @@ const createApplicationModules = async (
       }
       return { created, session: durableSession }
     },
-    setArchived: async (request) => {
+    updateArchive: async (request) => {
       await projectDeletionCoordinator.recoverPendingDeletions()
-      return archiveCoordinator.setSessionArchived(request)
+      return archiveCoordinator.updateSessionArchive(request)
     },
     deleteSession: async (projectId, sessionId) => {
       await projectDeletionCoordinator.recoverPendingDeletions()

@@ -3,7 +3,7 @@ import type { PrismaClient, Project as PrismaProject } from '@prisma/client'
 import type {
   CreateProjectRequest,
   Project,
-  SetProjectArchivedRequest,
+  UpdateProjectArchiveRequest,
   UpdateProjectRequest
 } from '../../shared/projects'
 
@@ -89,7 +89,7 @@ class ProjectRepository {
   // Archive is deliberately separate from ordinary Project edits: a stale rename/update must not
   // forge or clear visibility state. The compare-and-set condition also makes Undo safe across
   // windows without changing the research activity timestamp.
-  async setArchived(request: SetProjectArchivedRequest, archivedAt: number): Promise<Project> {
+  async updateArchive(request: UpdateProjectArchiveRequest, archivedAt: number): Promise<Project> {
     if (!Number.isSafeInteger(request.expectedArchivedAt) && request.expectedArchivedAt !== null) {
       throw new Error('Project archive state is invalid.')
     }

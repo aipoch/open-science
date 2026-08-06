@@ -129,7 +129,7 @@ describe('project repository', () => {
     const repository = new ProjectRepository(() => Promise.resolve(client))
 
     await expect(
-      repository.setArchived(
+      repository.updateArchive(
         { id: 'project-1', archived: true, expectedArchivedAt: null },
         1710000000200
       )

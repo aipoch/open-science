@@ -88,7 +88,7 @@ const HomePage = ({
   const loadError = useProjectStore((state) => state.loadError)
   const createProject = useProjectStore((state) => state.createProject)
   const updateProject = useProjectStore((state) => state.updateProject)
-  const setProjectArchived = useProjectStore((state) => state.setProjectArchived)
+  const updateProjectArchive = useProjectStore((state) => state.updateProjectArchive)
   const deleteProject = useProjectStore((state) => state.deleteProject)
   const sessions = useSessionStore((state) => state.sessions)
   const enqueueProjectArchive = useArchiveUndoStore((state) => state.enqueueProject)
@@ -223,7 +223,7 @@ const HomePage = ({
 
     setArchivingProjectIds((current) => new Set(current).add(project.id))
     setArchiveProjectError(undefined)
-    void setProjectArchived({ id: project.id, archived: true, expectedArchivedAt: null })
+    void updateProjectArchive({ id: project.id, archived: true, expectedArchivedAt: null })
       .then((archived) => enqueueProjectArchive(archived))
       .catch((error: unknown) =>
         setArchiveProjectError(

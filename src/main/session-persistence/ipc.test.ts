@@ -292,7 +292,7 @@ describe('session persistence IPC handlers', () => {
         .fn()
         .mockResolvedValueOnce({ created: true, session: durableSession })
         .mockResolvedValueOnce({ created: false, session: durableSession }),
-      setArchived: vi.fn().mockResolvedValue({ ...durableSession, archivedAt: 3 }),
+      updateArchive: vi.fn().mockResolvedValue({ ...durableSession, archivedAt: 3 }),
       deleteSession: vi.fn().mockResolvedValue(undefined),
       saveManifest: vi.fn().mockResolvedValue(undefined)
     }
@@ -302,7 +302,7 @@ describe('session persistence IPC handlers', () => {
     expect([...ipcHandlers.keys()]).toEqual([
       'sessions:load-all',
       'sessions:save-session',
-      'sessions:set-archived',
+      'sessions:update-archive',
       'sessions:delete-session',
       'sessions:save-manifest'
     ])
@@ -322,12 +322,12 @@ describe('session persistence IPC handlers', () => {
     )
     const updatedSession = { ...session, title: 'Updated session', updatedAt: 1710000000001 }
     await ipcHandlers.get('sessions:save-session')?.(event, updatedSession)
-    await ipcHandlers.get('sessions:set-archived')?.(event, archiveRequest)
+    await ipcHandlers.get('sessions:update-archive')?.(event, archiveRequest)
     await ipcHandlers.get('sessions:delete-session')?.(event, deleteRequest)
     await ipcHandlers.get('sessions:save-manifest')?.(undefined, manifestRequest)
 
     expect(repository.saveSession).toHaveBeenCalledWith(session)
-    expect(repository.setArchived).toHaveBeenCalledWith(archiveRequest)
+    expect(repository.updateArchive).toHaveBeenCalledWith(archiveRequest)
     expect(repository.deleteSession).toHaveBeenCalledWith('project-a', 'session-1')
     expect(reviewRepository.deleteReviewsForSession).not.toHaveBeenCalled()
     expect(repository.saveManifest).toHaveBeenCalledWith(manifestRequest)
@@ -357,7 +357,7 @@ describe('session persistence IPC handlers', () => {
     const injected: SessionPersistenceHandlers = {
       loadAll: vi.fn().mockResolvedValue(loadResult),
       saveSession: vi.fn(),
-      setArchived: vi.fn(),
+      updateArchive: vi.fn(),
       deleteSession: vi.fn(),
       saveManifest: vi.fn()
     }
@@ -380,7 +380,7 @@ describe('session persistence IPC handlers', () => {
     const injected: SessionPersistenceHandlers = {
       loadAll: vi.fn().mockResolvedValue({ sessions: [], manifest: { version: 1 as const } }),
       saveSession: vi.fn(),
-      setArchived: vi.fn(),
+      updateArchive: vi.fn(),
       deleteSession: vi.fn(),
       saveManifest: vi.fn()
     }

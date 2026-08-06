@@ -41,7 +41,7 @@ import {
   type PersistedSessionStatus,
   type PersistedToolActivity
 } from '../../../shared/session-persistence'
-import type { SetSessionArchivedRequest } from '../../../shared/session-persistence'
+import type { UpdateSessionArchiveRequest } from '../../../shared/session-persistence'
 import { isReportableRunFailure } from '../../../shared/run-error-classification'
 import { PENDING_UPLOAD_SESSION_ID } from '../../../shared/uploads'
 import {
@@ -329,7 +329,7 @@ type SessionStore = SessionStoreData & {
   setSessionSpecialistId: (sessionId: string, specialistId: string | undefined) => void
   // Toggles whether a conversation is pinned to the top section of the sidebar.
   togglePinned: (sessionId: string) => void
-  setSessionArchived: (request: SetSessionArchivedRequest) => Promise<ChatSession>
+  updateSessionArchive: (request: UpdateSessionArchiveRequest) => Promise<ChatSession>
   // Sets or clears the per-session fix loop active flag. When true, the composer send button is
   // disabled for this session; when false (loop ended or cancelled), send is re-enabled.
   setFixLoopActive: (sessionId: string, active: boolean) => void
@@ -2803,8 +2803,8 @@ export const useSessionStore = create<SessionStore>((set, get) => ({
     }))
   },
 
-  setSessionArchived: async (request) => {
-    const persisted = await window.api.sessions.setArchived(request)
+  updateSessionArchive: async (request) => {
+    const persisted = await window.api.sessions.updateArchive(request)
     let updated: ChatSession | undefined
 
     set((state) => {

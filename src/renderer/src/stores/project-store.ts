@@ -3,7 +3,7 @@ import { create } from 'zustand'
 import type {
   CreateProjectRequest,
   Project,
-  SetProjectArchivedRequest,
+  UpdateProjectArchiveRequest,
   UpdateProjectRequest
 } from '../../../shared/projects'
 
@@ -17,7 +17,7 @@ type ProjectStore = ProjectStoreData & {
   loadProjects: () => Promise<void>
   createProject: (request: CreateProjectRequest) => Promise<Project | undefined>
   updateProject: (request: UpdateProjectRequest) => Promise<Project | undefined>
-  setProjectArchived: (request: SetProjectArchivedRequest) => Promise<Project>
+  updateProjectArchive: (request: UpdateProjectArchiveRequest) => Promise<Project>
   deleteProject: (id: string) => Promise<void>
   upsertProject: (project: Project) => void
   removeProject: (id: string) => void
@@ -84,8 +84,8 @@ export const useProjectStore = create<ProjectStore>((set) => ({
     return project
   },
 
-  setProjectArchived: async (request) => {
-    const project = await window.api.projects.setArchived(request)
+  updateProjectArchive: async (request) => {
+    const project = await window.api.projects.updateArchive(request)
 
     set((state) => ({ projects: upsertProjectList(state.projects, project) }))
     return project

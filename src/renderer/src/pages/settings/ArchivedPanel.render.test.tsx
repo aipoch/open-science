@@ -35,15 +35,15 @@ const session: ChatSession = {
 describe('ArchivedPanel', () => {
   let container: HTMLDivElement
   let root: Root
-  const setArchived = vi.fn()
+  const updateArchive = vi.fn()
 
   beforeEach(() => {
     container = document.createElement('div')
     document.body.appendChild(container)
     root = createRoot(container)
-    setArchived.mockReset().mockResolvedValue({ ...session, archivedAt: undefined })
+    updateArchive.mockReset().mockResolvedValue({ ...session, archivedAt: undefined })
     window.api = {
-      sessions: { setArchived },
+      sessions: { updateArchive },
       acp: { getState: vi.fn(), deleteSession: vi.fn() }
     } as unknown as Window['api']
     useProjectStore.setState({
@@ -67,7 +67,7 @@ describe('ArchivedPanel', () => {
     )
     await act(async () => restore?.click())
 
-    expect(setArchived).toHaveBeenCalledWith({
+    expect(updateArchive).toHaveBeenCalledWith({
       projectId: project.id,
       sessionId: session.id,
       archived: false,

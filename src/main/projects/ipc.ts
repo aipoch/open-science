@@ -10,7 +10,7 @@ import type {
   CreateProjectRequest,
   DeleteProjectRequest,
   Project,
-  SetProjectArchivedRequest,
+  UpdateProjectArchiveRequest,
   UpdateProjectRequest
 } from '../../shared/projects'
 import { LIFECYCLE_CHANNELS } from '../../shared/lifecycle-events'
@@ -26,7 +26,7 @@ type ProjectHandlers = {
   get: (id: string) => Promise<Project | null>
   create: (request: CreateProjectRequest) => Promise<Project>
   update: (request: UpdateProjectRequest) => Promise<Project>
-  setArchived: (request: SetProjectArchivedRequest) => Promise<Project>
+  updateArchive: (request: UpdateProjectArchiveRequest) => Promise<Project>
   delete: (id: string) => Promise<void>
 }
 
@@ -44,8 +44,8 @@ type ProjectDeleteHandler = Pick<
   'deleteProject' | 'recoverPendingDeletions'
 >
 type ProjectCrudRepository = Pick<ProjectRepository, 'list' | 'get' | 'create' | 'update'> &
-  Partial<Pick<ProjectRepository, 'setArchived'>>
-type ProjectArchiveHandler = Pick<ProjectHandlers, 'setArchived'>
+  Partial<Pick<ProjectRepository, 'updateArchive'>>
+type ProjectArchiveHandler = Pick<ProjectHandlers, 'updateArchive'>
 
 // Adapts repository operations into thin handlers while enforcing one shared recovery gate. CRUD
 // cannot observe or mutate projects until every durable deletion intent has finished replaying.
@@ -53,9 +53,9 @@ const createProjectHandlers = (
   repository: ProjectCrudRepository,
   deletionCoordinator: ProjectDeleteHandler,
   archiveHandler: ProjectArchiveHandler = {
-    setArchived: (request) => {
-      if (!repository.setArchived) throw new Error('Project archive is unavailable.')
-      return repository.setArchived(request, Date.now())
+    updateArchive: (request) => {
+      if (!repository.updateArchive) throw new Error('Project archive is unavailable.')
+      return repository.updateArchive(request, Date.now())
     }
   }
 ): ProjectHandlers => ({
@@ -75,9 +75,9 @@ const createProjectHandlers = (
     await deletionCoordinator.recoverPendingDeletions()
     return repository.update(request)
   },
-  setArchived: async (request) => {
+  updateArchive: async (request) => {
     await deletionCoordinator.recoverPendingDeletions()
-    return archiveHandler.setArchived(request)
+    return archiveHandler.updateArchive(request)
   },
   delete: async (id) => {
     await deletionCoordinator.recoverPendingDeletions()
@@ -104,8 +104,8 @@ const registerProjectIpcHandlers = (
     broadcastLifecycleEvent(LIFECYCLE_CHANNELS.projectUpdated, project)
     return project
   })
-  ipcMainHandle('projects:set-archived', async (_event, request: SetProjectArchivedRequest) => {
-    const project = await handlers.setArchived(request)
+  ipcMainHandle('projects:update-archive', async (_event, request: UpdateProjectArchiveRequest) => {
+    const project = await handlers.updateArchive(request)
     broadcastLifecycleEvent(LIFECYCLE_CHANNELS.projectUpdated, project)
     return project
   })
