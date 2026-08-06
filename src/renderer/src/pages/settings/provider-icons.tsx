@@ -17,6 +17,7 @@ import openaiLogo from '@/assets/provider-icons/openai.svg'
 import zhipuLogo from '@/assets/provider-icons/zhipu.svg'
 import kimiLogo from '@/assets/provider-icons/kimi.svg'
 import openrouterLogo from '@/assets/provider-icons/openrouter.svg'
+import orcarouterLogo from '@/assets/provider-icons/orcarouter.svg'
 import xiaomimimoLogo from '@/assets/provider-icons/xiaomimimo.svg'
 import sensenovaLogo from '@/assets/provider-icons/sensenova.svg'
 import volcengineLogo from '@/assets/provider-icons/volcengine.svg'
@@ -59,6 +60,7 @@ const VENDOR_LOGO: Partial<Record<OfficialVendorId, string>> = {
   kimi: kimiLogo,
   kimiforcode: kimiLogo,
   openrouter: openrouterLogo,
+  orcarouter: orcarouterLogo,
   xiaomimimo: xiaomimimoLogo,
   sensenova: sensenovaLogo,
   volcengine: volcengineLogo

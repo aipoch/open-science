@@ -1,0 +1,9 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" role="img"><title>OrcaRouter</title>
+  <g fill="#0B0B0D">
+    <ellipse cx="14.2" cy="12.6" rx="6.6" ry="3.4"/>
+    <path d="M12.7 10.3 L13.9 5.6 L15.8 9.4 Z"/>
+    <path d="M7.9 12.2 L3.5 8.6 L5.7 12.3 L3.5 16 Z"/>
+  </g>
+  <circle cx="18.9" cy="11.6" r="0.95" fill="#fff"/>
+  <ellipse cx="13.2" cy="14.9" rx="4.4" ry="1.15" fill="#fff"/>
+</svg>

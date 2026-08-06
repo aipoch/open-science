@@ -35,6 +35,7 @@ describe('provider registry', () => {
     expect(isOfficialVendorId('deepseek')).toBe(true)
     expect(isOfficialVendorId('openai')).toBe(true)
     expect(isOfficialVendorId('xai')).toBe(true)
+    expect(isOfficialVendorId('orcarouter')).toBe(true)
     expect(isOfficialVendorId(undefined)).toBe(false)
     expect(isOfficialVendorId(42)).toBe(false)
   })
@@ -229,6 +230,20 @@ describe('provider registry', () => {
     // Curated (300+ live ids would flood the picker), so refresh-from-vendor is hidden.
     expect(resolveVendorModelsUrl('openrouter')).toBeUndefined()
     expect(defaultVendorModel('openrouter')).toBe('anthropic/claude-opus-5')
+  })
+
+  it('routes OrcaRouter through OpenAI Chat Completions and Responses on one endpoint', () => {
+    expect(resolveVendorApiEndpoints('orcarouter')).toEqual(['openai', 'responses'])
+    expect(resolveVendorBaseUrl('orcarouter')).toBe('https://api.orcarouter.ai/v1')
+    expect(resolveVendorOpenAiBaseUrl('orcarouter')).toBeUndefined()
+    expect(resolveVendorApiKeyUrl('orcarouter')).toBe('https://www.orcarouter.ai')
+    // The live catalog exposes test aliases a refresh cannot filter out, so the shipped catalog is
+    // curated to the stable orcarouter/* models and refresh-from-vendor stays hidden.
+    expect(resolveVendorModelsUrl('orcarouter')).toBeUndefined()
+    expect(defaultVendorModel('orcarouter')).toBe('orcarouter/auto')
+    expect(resolveVendorModelReasoningEffort('orcarouter', 'orcarouter/fusion').supported).toBe(
+      false
+    )
   })
 
   it('routes Xiaomi MIMO through both APIs with a live model list', () => {
