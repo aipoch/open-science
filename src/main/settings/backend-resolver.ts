@@ -579,11 +579,6 @@ export class AgentBackendResolver {
     const connectorInstructions = renderConnectorInstructions(
       this.connectors.enabledConnectorIds(settings.connectors)
     )
-    const claudeSystemPromptAppends = [
-      ...(context.systemPromptAppends ?? []),
-      ...(connectorInstructions ? [connectorInstructions] : [])
-    ]
-
     if (framework.id === 'claude-code') {
       const { envOverrides, executablePath, sessionOptions, contextWindow } =
         await this.resolveClaudeSpawnConfig(settings, target, forcedSkillIds)
@@ -624,9 +619,7 @@ export class AgentBackendResolver {
           contextWindow,
           ...(target.provider.supportsImageInput ? { supportsImageInput: true } : {}),
           contextUsageModel: target.effectiveModel,
-          ...(claudeSystemPromptAppends.length > 0
-            ? { systemPromptAppends: claudeSystemPromptAppends }
-            : {}),
+          ...(connectorInstructions ? { systemPromptAppends: [connectorInstructions] } : {}),
           ...(bridgeLease ? { anthropicBridgeLease: bridgeLease } : {})
         }
       } catch (error) {

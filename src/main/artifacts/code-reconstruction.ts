@@ -19,7 +19,7 @@ const CONTEXT_MAX_BYTES = 256 * 1024
 const PRODUCER_SCRIPT_MAX_BYTES = 160 * 1024
 const OUTPUT_MAX_BYTES = 4 * 1024
 const RESPONSE_MAX_BYTES = 1024 * 1024
-const PROMPT_VERSION = 'artifact-code-reconstruction-v1'
+const PROMPT_VERSION = 'artifact-code-reconstruction-v2'
 
 type CodeReconstructionRepository = Pick<
   import('./provenance-repository').ArtifactProvenanceRepository,
@@ -309,6 +309,9 @@ const buildContext = (
   }
 }
 
+const escapePromptEvidence = (context: string): string =>
+  context.replaceAll('<', '\\u003c').replaceAll('>', '\\u003e')
+
 const buildPrompt = (context: string): string =>
   [
     'Return one standalone script in the producer kernel language.',
@@ -318,7 +321,7 @@ const buildPrompt = (context: string): string =>
     'Return code only, without Markdown or explanation. If reconstruction is not defensible, return exactly RECONSTRUCTION_UNAVAILABLE: followed by a short reason.',
     '',
     '<artifact_execution_evidence>',
-    context,
+    escapePromptEvidence(context),
     '</artifact_execution_evidence>'
   ].join('\n')
 

@@ -499,6 +499,23 @@ describe('AgentBackendResolver configured and explicit targets', () => {
     expect(JSON.stringify(modelConfig)).not.toContain('plain:key-a')
   })
 
+  it('leaves application prompt appends to the Claude session presentation owner', async () => {
+    const harness = makeHarness()
+
+    const backend = await harness.resolver.resolveExplicitTarget(
+      {
+        frameworkId: 'claude-code',
+        providerId: 'provider-a',
+        model: { kind: 'required', id: 'model-a' },
+        reasoningEffort: 'high'
+      },
+      { systemPromptAppends: ['Stable Open Science app guidance.'] }
+    )
+
+    expect(backend.systemPromptAppends).toBeUndefined()
+    await backend.anthropicBridgeLease?.release()
+  })
+
   it('omits an Anthropic bridge target when the active generation has no bridge', async () => {
     const harness = makeHarness()
     const backend = await harness.resolver.resolveActiveBackend()
