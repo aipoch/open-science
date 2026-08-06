@@ -5,6 +5,7 @@
 // only while the user is actively typing one in.
 
 import type { OfficialVendorId } from './provider-registry'
+import type { PermissionProfileId } from './permission-profiles'
 import type {
   CustomReasoningEffortTransport,
   ReasoningEffortPresetSetting
@@ -398,6 +399,9 @@ export type SettingsSnapshot = {
   closePreference?: CloseActionPreference
   // The selected built-in app-icon look for non-macOS windows and the Windows tray. Defaults to 'light'.
   appIconVariant: AppIconVariant
+  // The default permission profile for new sessions. Valid values: 'ask', 'auto', 'full'.
+  // Absent or invalid falls back to 'ask' (the most restrictive mode).
+  defaultPermissionProfile?: PermissionProfileId
 }
 
 // Request to set (or clear, via omitted fields) the package-mirror configuration.
