@@ -178,6 +178,10 @@ type WorkspaceMessageRuntime = Pick<
 
 type WorkspaceDeletionRuntime = Pick<ReturnType<typeof useAcpRuntime>, 'deleteSession'>
 type WorkspaceCancellationRuntime = Pick<ReturnType<typeof useAcpRuntime>, 'cancel'>
+type WorkspacePermissionProfileRuntime = Pick<
+  ReturnType<typeof useAcpRuntime>,
+  'state' | 'setPermissionProfile'
+>
 type PersistSessionDeletion = (request: { projectId: string; sessionId: string }) => Promise<void>
 
 type RuntimeEventApplier = (event: AcpRuntimeEvent) => Promise<boolean>
@@ -191,6 +195,24 @@ type WorkspaceRuntimeEventProcessor = {
 // run. Keep duplicate preparations closed during that idle-looking interval without exposing a
 // premature activeRun that a draining runtime's terminal event could settle.
 const sessionSendPreparationsInFlight = new Set<string>()
+
+const setWorkspacePermissionProfile = async (
+  runtime: WorkspacePermissionProfileRuntime,
+  sessionId: string,
+  profile: PermissionProfileId
+): Promise<boolean> => {
+  let persistedProfile = profile
+  if (runtime.state.sessionIds.includes(sessionId)) {
+    const snapshot = await runtime.setPermissionProfile(sessionId, profile)
+    const committedProfile = snapshot?.permissionProfiles[sessionId]?.selectedProfile
+
+    if (!committedProfile) return false
+    persistedProfile = committedProfile
+  }
+
+  useSessionStore.getState().setPermissionProfile(sessionId, persistedProfile)
+  return true
+}
 
 // Strips the Electron IPC wrapper ("Error invoking remote method '…': Error: <cause>") and any
 // leading "Error:" (or a lone "Error" type label) so the underlying agent message can be shown to the
@@ -2135,16 +2157,8 @@ const useWorkspaceAgentRuntime = (): {
   // Applies attached-session mode changes before persisting the selection. Detached sessions store
   // the preference now and reapply it during resume before their next prompt.
   const setPermissionProfile = useCallback(
-    async (sessionId: string, profile: PermissionProfileId): Promise<boolean> => {
-      if (runtime.state.sessionIds.includes(sessionId)) {
-        const snapshot = await runtime.setPermissionProfile(sessionId, profile)
-
-        if (!snapshot) return false
-      }
-
-      useSessionStore.getState().setPermissionProfile(sessionId, profile)
-      return true
-    },
+    (sessionId: string, profile: PermissionProfileId): Promise<boolean> =>
+      setWorkspacePermissionProfile(runtime, sessionId, profile),
     [runtime]
   )
 
@@ -2196,6 +2210,7 @@ export {
   resendEditedWorkspaceMessage,
   resumeInterruptedWorkspaceSession,
   sendWorkspaceMessage,
+  setWorkspacePermissionProfile,
   syncWorkspaceContextUsage,
   useWorkspaceAgentRuntime
 }

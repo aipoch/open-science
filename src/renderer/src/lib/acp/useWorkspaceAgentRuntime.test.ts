@@ -26,6 +26,7 @@ import {
   resendEditedWorkspaceMessage,
   resumeInterruptedWorkspaceSession,
   sendWorkspaceMessage,
+  setWorkspacePermissionProfile,
   syncWorkspaceContextUsage
 } from './useWorkspaceAgentRuntime'
 
@@ -79,6 +80,37 @@ const flushRuntimeTasks = async (): Promise<void> => {
   await Promise.resolve()
   await Promise.resolve()
 }
+
+describe('workspace permission profile persistence', () => {
+  it('persists the profile committed by the runtime instead of a superseded request', async () => {
+    useSessionStore.setState(createInitialSessionState())
+    useSessionStore.getState().appendUserMessage({
+      sessionId: 'session-1',
+      content: 'Test permission mode',
+      cwd: '/workspace/project',
+      projectId: 'default-project',
+      permissionProfile: 'full'
+    })
+    const committedSnapshot = createSnapshot(['session-1'])
+    committedSnapshot.permissionProfiles['session-1'] = {
+      selectedProfile: 'ask',
+      effectiveProfile: 'ask',
+      availableModeIds: [],
+      fullAccessAvailable: true
+    }
+    const runtime = {
+      state: createSnapshot(['session-1']),
+      setPermissionProfile: vi.fn().mockResolvedValue(committedSnapshot)
+    }
+
+    await expect(setWorkspacePermissionProfile(runtime, 'session-1', 'full')).resolves.toBe(true)
+
+    expect(runtime.setPermissionProfile).toHaveBeenCalledWith('session-1', 'full')
+    expect(
+      useSessionStore.getState().sessions.find(({ id }) => id === 'session-1')?.permissionProfile
+    ).toBe('ask')
+  })
+})
 
 describe('workspace agent runtime event processing', () => {
   it('does not mark failed runtime events as processed so they can retry', async () => {
