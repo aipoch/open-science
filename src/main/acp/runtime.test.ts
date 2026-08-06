@@ -6306,6 +6306,46 @@ describe('ACP runtime session management', () => {
     expect(runtime.getSnapshot().pendingPermissions).toEqual([])
   })
 
+  it('changes permission profile while a prompt is waiting and releases the eligible request', async () => {
+    const process = new FakeAgentProcess()
+    const permissionSeen = createDeferred<AcpPermissionRequest>()
+    let permissionResponse: unknown
+    startPermissionProbeAgent(process, {
+      newSessionId: 'live-permission-session',
+      toolCallId: 'live-permission-tool',
+      toolTitle: 'Run command',
+      modes: createModes(['default', 'bypassPermissions']),
+      onPermissionResponse: (response) => {
+        permissionResponse = response
+      }
+    })
+    const runtime = new AcpRuntime({
+      appVersion: '0.1.0',
+      defaultCwd: '/workspace',
+      spawnAgent: () => asAgentProcess(process),
+      callbacks: { onPermissionRequest: (request) => permissionSeen.resolve(request) }
+    })
+    const session = await runtime.createSession({ cwd: '/workspace', permissionProfile: 'ask' })
+
+    const prompting = runtime.sendPrompt({ sessionId: session.sessionId, text: 'run a command' })
+    await permissionSeen.promise
+    const snapshot = await runtime.setPermissionProfile({
+      sessionId: session.sessionId,
+      profile: 'full'
+    })
+
+    await expect(prompting).resolves.toMatchObject({ stopReason: 'end_turn' })
+    expect(permissionResponse).toEqual({
+      outcome: { outcome: 'selected', optionId: 'allow-once' }
+    })
+    expect(snapshot.pendingPermissions).toEqual([])
+    expect(snapshot.permissionProfiles[session.sessionId]).toMatchObject({
+      selectedProfile: 'full',
+      effectiveProfile: 'full',
+      currentModeId: 'bypassPermissions'
+    })
+  })
+
   it('audits OpenCode MCP calls with canonical identities without logging raw tool titles', async () => {
     infoLogSpy.mockClear()
     warnLogSpy.mockClear()

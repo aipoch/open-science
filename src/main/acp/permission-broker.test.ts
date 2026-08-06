@@ -171,6 +171,69 @@ describe('ACP permission broker', () => {
     await expect(declined).resolves.toBe(false)
   })
 
+  it('re-evaluates pending tool requests after a live profile change without approving app actions', async () => {
+    const emitted: EmittedPermissionRequest[] = []
+    const broker = new AcpPermissionBroker((request) => emitted.push(request))
+    const policy = { profile: 'ask' as const, cwd: '/workspace' }
+
+    const read = broker.requestPermission(
+      createToolPermissionRequest({
+        title: 'Read notes.md',
+        providerToolName: 'Read',
+        kind: 'read',
+        locations: [{ path: 'notes.md' }]
+      }),
+      policy
+    )
+    const shell = broker.requestPermission(
+      createToolPermissionRequest({
+        title: 'python train.py',
+        providerToolName: 'Bash',
+        kind: 'execute',
+        rawInput: { command: 'python train.py' }
+      }),
+      policy
+    )
+    const appApproval = broker.requestAppApproval({
+      sessionId: 'session-1',
+      title: 'Switch specialist?',
+      rawInput: { specialistApproval: { kind: 'switch' } }
+    })
+
+    await broker.applyPermissionProfile('session-1', {
+      selectedProfile: 'auto',
+      effectiveProfile: 'auto',
+      availableModeIds: [],
+      autoReviewStrategy: 'conservative',
+      fullAccessAvailable: true
+    })
+    await expect(read).resolves.toEqual({
+      outcome: { outcome: 'selected', optionId: 'allow-once' }
+    })
+    expect(broker.getPendingRequests().map(({ title }) => title)).toEqual([
+      'python train.py',
+      'Switch specialist?'
+    ])
+
+    await broker.applyPermissionProfile('session-1', {
+      selectedProfile: 'full',
+      effectiveProfile: 'full',
+      availableModeIds: [],
+      fullAccessAvailable: true
+    })
+    await expect(shell).resolves.toEqual({
+      outcome: { outcome: 'selected', optionId: 'allow-once' }
+    })
+    expect(broker.getPendingRequests().map(({ title }) => title)).toEqual(['Switch specialist?'])
+
+    const appRequest = emitted.find(({ title }) => title === 'Switch specialist?')!
+    await broker.respond({
+      requestId: appRequest.requestId,
+      optionId: appRequest.options.find(({ kind }) => kind === 'reject_once')?.optionId
+    })
+    await expect(appApproval).resolves.toBe(false)
+  })
+
   it('keeps session grants app-owned while the Agent receives one-shot approvals', async () => {
     const emitted: EmittedPermissionRequest[] = []
     const broker = new AcpPermissionBroker((request) => emitted.push(request))

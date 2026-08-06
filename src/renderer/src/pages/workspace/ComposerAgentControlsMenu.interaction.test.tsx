@@ -857,7 +857,7 @@ describe('ComposerAgentControlsMenu', () => {
         <ComposerAgentControlsMenu
           profile="ask"
           autoReviewEnabled={false}
-          readOnly // session running -> mutating controls frozen
+          readOnly
           showSpecialist
           specialistId="uuid-1"
           onSpecialistChange={vi.fn()}

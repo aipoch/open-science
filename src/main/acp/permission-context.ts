@@ -390,8 +390,12 @@ class AcpPermissionContext {
     return this.broker.getPendingRequests()
   }
 
-  hasPendingForSession(sessionId: string): boolean {
-    return this.broker.hasPendingForSession(sessionId)
+  async applyPermissionProfile(
+    sessionId: string,
+    profile: Readonly<SessionPermissionProfileState>
+  ): Promise<void> {
+    const resolvedRequestIds = await this.broker.applyPermissionProfile(sessionId, profile)
+    for (const requestId of resolvedRequestIds) this.humanOnlyRequestIds.delete(requestId)
   }
 
   listGrants(sessionId: string): AcpPermissionGrant[] {

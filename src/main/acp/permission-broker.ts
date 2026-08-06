@@ -6,6 +6,7 @@ import type {
   AcpPermissionRequest,
   AcpPermissionResponse
 } from '../../shared/acp'
+import type { SessionPermissionProfileState } from '../../shared/permission-profiles'
 import type {
   PermissionCapability,
   PermissionGrantRecord,
@@ -35,6 +36,8 @@ import type { PermissionGrantRegistry } from '../permission-grants/registry'
 
 type PendingPermission = {
   request: AcpPermissionRequest
+  automaticRequest?: RequestPermissionRequest
+  policyContext?: PermissionPolicyContext
   categoryKey?: string
   capability?: PermissionCapability
   projectId?: string
@@ -688,6 +691,28 @@ class AcpPermissionBroker {
     )
   }
 
+  // Re-evaluates provider tool requests after the user changes the live Session profile. App-owned
+  // approvals do not carry an automatic request and therefore always remain human decisions.
+  async applyPermissionProfile(
+    sessionId: string,
+    profile: Readonly<SessionPermissionProfileState>
+  ): Promise<string[]> {
+    const resolvedRequestIds: string[] = []
+    for (const [requestId, pending] of Array.from(this.pendingRequests)) {
+      if (pending.request.sessionId !== sessionId || !pending.automaticRequest) continue
+
+      const optionId = resolveAutomaticPermission(pending.automaticRequest, {
+        ...pending.policyContext,
+        profile: profile.selectedProfile,
+        autoReviewStrategy: profile.autoReviewStrategy
+      })
+      if (!optionId) continue
+
+      if (await this.respond({ requestId, optionId })) resolvedRequestIds.push(requestId)
+    }
+    return resolvedRequestIds
+  }
+
   // Lists the app conversation's grants so the composer can show and revoke them.
   listGrants(sessionId: string): AcpPermissionGrant[] {
     if (this.permissionGrantRegistry) {
@@ -855,6 +880,7 @@ class AcpPermissionBroker {
       { ...params, options: providerPermissionOptions },
       policyContext
     )
+    const automaticRequest = { ...params, options: providerPermissionOptions }
 
     if (automaticOptionId) {
       return Promise.resolve({
@@ -884,6 +910,8 @@ class AcpPermissionBroker {
           return this.enqueuePermissionRequest({
             requestId,
             request,
+            automaticRequest,
+            policyContext,
             categoryKey,
             capability,
             projectId: policyContext?.projectId,
@@ -907,6 +935,8 @@ class AcpPermissionBroker {
     return this.enqueuePermissionRequest({
       requestId,
       request,
+      automaticRequest,
+      policyContext,
       categoryKey,
       providerAllowOnceOptionId: providerAllowOnceOption?.optionId
     })

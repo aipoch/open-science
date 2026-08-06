@@ -507,10 +507,6 @@ class AcpRuntime {
     ].map(({ sessionId }) => sessionId)
   }
 
-  private hasSessionInteractionInFlight(sessionId: string): boolean {
-    return this.sessionInteractions.current(sessionId) !== undefined
-  }
-
   // Run ids of turns currently in flight, from live in-memory state (not the persisted current-run
   // handoff, which survives a crash). The artifact orphan scan uses this to exclude files a running
   // turn is still writing, while a crashed run — absent here — correctly surfaces as orphaned.
@@ -592,8 +588,8 @@ class AcpRuntime {
     return this.withOperationLease(() => this.contextCompactionWorkflow.compact(request))
   }
 
-  // Changes approval behavior only while the conversation is idle. Applying the ACP mode before the
-  // next prompt guarantees Full access cannot show a first-tool permission race.
+  // Applies the Agent mode first, then releases any pending provider request that the new profile can
+  // safely approve. The aggregate is committed before release so subsequent calls observe the change.
   async setPermissionProfile(request: AcpSetPermissionProfileRequest): Promise<AcpStateSnapshot> {
     return this.withOperationLease(() => this.setPermissionProfileOperation(request))
   }
@@ -604,12 +600,6 @@ class AcpRuntime {
     const session = this.activeSessionFor(request.sessionId)
 
     if (!session) throw new Error(`ACP session not found: ${request.sessionId}`)
-    if (this.hasSessionInteractionInFlight(request.sessionId)) {
-      throw new Error('Permission profile cannot be changed while the Agent is running.')
-    }
-    if (this.permissionContext.hasPendingForSession(request.sessionId)) {
-      throw new Error('Resolve the pending permission request before changing profiles.')
-    }
 
     const connection = this.connection
     if (!connection) throw new Error('ACP connection is not available.')
@@ -626,6 +616,7 @@ class AcpRuntime {
     this.sessionRegistry
       .lookup(request.sessionId)
       ?.aggregate.setPermissionProfile(structuredClone(permissionProfile))
+    await this.permissionContext.applyPermissionProfile(request.sessionId, permissionProfile)
     this.emitState()
 
     return this.getSnapshot()

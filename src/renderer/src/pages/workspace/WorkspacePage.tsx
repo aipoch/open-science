@@ -1108,12 +1108,7 @@ const WorkspacePage = ({
     useSessionStore.getState().setBranchSwitchBlocked(sessionId, !canEditMessage)
     return () => useSessionStore.getState().setBranchSwitchBlocked(sessionId, false)
   }, [activeSession?.id, canEditMessage])
-  const canChangePermissionProfile =
-    isSessionPersistenceReady &&
-    activeSession?.status !== 'running' &&
-    activeSession?.status !== 'waiting-permission' &&
-    !activeSessionHasRuntimeInteraction &&
-    !activeSession?.compacting
+  const canChangePermissionProfile = isSessionPersistenceReady
   const canCompactContext =
     isSessionPersistenceReady &&
     activeSessionSupportsNativeCompaction &&

@@ -262,7 +262,7 @@ const ComposerAgentControlsMenu = ({
       <span className="min-w-0 flex-1">
         <span className="block text-[13px] font-medium leading-5">Permission mode</span>
         <span className="block text-[11px] leading-4 text-text-300">
-          How much the agent can do without asking first.
+          Applies to future actions; completed actions are unchanged.
         </span>
       </span>
       <span
