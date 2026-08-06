@@ -28,6 +28,12 @@ import {
   type SettingsPreferencesActions
 } from './settings-preferences-slice'
 import {
+  createInitialSettingsSkillsState,
+  createSettingsSkillsSlice,
+  type SettingsSkillsActions,
+  type SettingsSkillsState
+} from './settings-skills-slice'
+import {
   createProviderAuthSlice,
   type ProviderAuthActions,
   type SaveProviderResult
@@ -53,17 +59,6 @@ import type {
   ReasoningEffort,
   SettingsSnapshot,
   AppIconVariant,
-  SkillView,
-  AgentHomeSkillRef,
-  AgentHomeSkillView,
-  ImportAgentHomeSkillsResult,
-  CreateSkillRequest,
-  UpdateSkillRequest,
-  ImportSkillResult,
-  ImportSkillZipBatchResult,
-  SkillBundlePreviewResult,
-  SkillImportPreviewContent,
-  ScanRepoResult,
   ConnectorView,
   ConnectorDetailView,
   CustomServerView,
@@ -78,7 +73,8 @@ import type {
 } from '../../../shared/settings'
 
 type SettingsStoreData = RuntimeSetupState &
-  SettingsNavigationState & {
+  SettingsNavigationState &
+  SettingsSkillsState & {
     isLoaded: boolean
     isLoading: boolean
     loadError: string | undefined
@@ -103,8 +99,6 @@ type SettingsStoreData = RuntimeSetupState &
     opencodeManaged: boolean
     codexManaged: boolean
     onboardingCompletedAt: number | undefined
-    // Bundled skills with their enabled state, loaded lazily when the Skills panel opens.
-    skills: SkillView[]
     // Bundled connectors with their enabled/auto-allow state, loaded lazily when the Connectors panel opens.
     connectors: ConnectorView[]
     // User-added custom MCP servers, reconciled alongside the connectors list.
@@ -132,47 +126,12 @@ type SettingsStoreCore = SettingsStoreData &
   ProviderAuthActions &
   SettingsPreferencesActions &
   SettingsNavigationActions &
+  SettingsSkillsActions &
   SettingsStoreActions
 
 type SettingsStoreActions = {
   load: (options?: { force?: boolean }) => Promise<boolean>
   clearSettingsWriteError: () => void
-  // Loads the bundled-skill list (enabled state included) from the main process.
-  loadSkills: () => Promise<void>
-  // Toggles one skill; optimistic, then reconciled with the authoritative list from main.
-  setSkillEnabled: (id: string, enabled: boolean) => Promise<void>
-  // Creates a personal skill, returning its refreshed list.
-  createSkill: (request: CreateSkillRequest) => Promise<void>
-  // Updates a personal skill in place.
-  updateSkill: (request: UpdateSkillRequest) => Promise<void>
-  // Deletes a personal or imported skill.
-  deleteSkill: (id: string) => Promise<void>
-  // Imports a skill from a public GitHub URL, returning the import outcome.
-  importSkill: (url: string) => Promise<ImportSkillResult>
-  // Imports a skill from an uploaded .zip / .skill bundle (base64), returning the outcome.
-  // Imports a skill from an uploaded .zip / .skill bundle (base64). With `replaceId`, the bundle
-  // overwrites that already-imported skill in place instead of creating a new one.
-  importSkillZip: (
-    dataBase64: string,
-    opts?: { subPath?: string; replaceId?: string }
-  ) => Promise<ImportSkillResult>
-  // Imports several skills from ONE uploaded bundle in a single call (decoded/unpacked once), returning
-  // a per-item outcome. Per-item failures are reported inline without aborting the rest.
-  importSkillZipBatch: (
-    dataBase64: string,
-    items: { subPath: string; replaceId?: string }[]
-  ) => Promise<ImportSkillZipBatchResult>
-  // Parses an uploaded bundle without importing it, for a confirm-before-import preview. Returns the
-  // importable skills plus any the bundle contained that were skipped and why.
-  previewSkillZip: (dataBase64: string) => Promise<SkillBundlePreviewResult>
-  previewGitHubSkill: (url: string) => Promise<SkillImportPreviewContent>
-  // Scans a GitHub repo for importable skill directories (does not mutate state).
-  scanRepoSkills: (repo: string) => Promise<ScanRepoResult>
-  // Lists the shared global skills plus the active framework's installed skills.
-  listAgentHomeSkills: () => Promise<AgentHomeSkillView[]>
-  previewAgentHomeSkill: (skill: AgentHomeSkillRef) => Promise<SkillImportPreviewContent>
-  // Copies checked installed skills into the imported-skill store in one batch.
-  importAgentHomeSkills: (skills: AgentHomeSkillRef[]) => Promise<ImportAgentHomeSkillsResult>
   // Loads the bundled-connector list (enabled/auto-allow + NCBI credential state) from main.
   loadConnectors: () => Promise<void>
   // Toggles one connector; optimistic, then reconciled with the authoritative snapshot from main.
@@ -205,6 +164,7 @@ type SettingsStore = SettingsStoreCore & RuntimeSetupActions
 export const createInitialSettingsState = (): SettingsStoreData => ({
   ...createInitialRuntimeSetupState(),
   ...createInitialSettingsNavigationState(),
+  ...createInitialSettingsSkillsState(),
   isLoaded: false,
   isLoading: false,
   loadError: undefined,
@@ -223,7 +183,6 @@ export const createInitialSettingsState = (): SettingsStoreData => ({
   opencodeManaged: false,
   codexManaged: false,
   onboardingCompletedAt: undefined,
-  skills: [],
   connectors: [],
   customServers: [],
   pendingApprovals: [],
@@ -372,6 +331,11 @@ const createSettingsStoreState = (
     writeCoordinator
   }),
   ...createSettingsNavigationSlice({ setState: (patch) => set(patch) }),
+  ...createSettingsSkillsSlice({
+    getState: get,
+    setState: (patch) => set(patch),
+    getCommands: () => window.api.settings
+  }),
 
   // Loads settings, preflight, and encryption availability in one startup pass.
   load: (options) => {
@@ -423,73 +387,6 @@ const createSettingsStoreState = (
   },
 
   clearSettingsWriteError: () => writeCoordinator.clearFailures(),
-
-  loadSkills: async () => {
-    const skills = await window.api.settings.listSkills()
-    set({ skills })
-  },
-
-  // Optimistically flips the toggle, then reconciles with the authoritative list from main.
-  setSkillEnabled: async (id, enabled) => {
-    set((state) => ({
-      skills: state.skills.map((skill) => (skill.id === id ? { ...skill, enabled } : skill))
-    }))
-    const skills = await window.api.settings.setSkillEnabled({ id, enabled })
-    set({ skills })
-  },
-
-  createSkill: async (request) => {
-    const skills = await window.api.settings.createSkill(request)
-    set({ skills })
-  },
-
-  updateSkill: async (request) => {
-    const skills = await window.api.settings.updateSkill(request)
-    set({ skills })
-  },
-
-  deleteSkill: async (id) => {
-    const skills = await window.api.settings.deleteSkill({ id })
-    set({ skills })
-  },
-
-  importSkill: async (url) => {
-    const result = await window.api.settings.importSkill({ url })
-    set({ skills: result.skills })
-    return result
-  },
-
-  importSkillZip: async (dataBase64, opts) => {
-    const result = await window.api.settings.importSkillZip({
-      dataBase64,
-      subPath: opts?.subPath,
-      replaceId: opts?.replaceId
-    })
-    set({ skills: result.skills })
-    return result
-  },
-
-  importSkillZipBatch: async (dataBase64, items) => {
-    const result = await window.api.settings.importSkillZipBatch({ dataBase64, items })
-    set({ skills: result.skills })
-    return result
-  },
-
-  previewSkillZip: async (dataBase64) => window.api.settings.previewSkillZip({ dataBase64 }),
-
-  previewGitHubSkill: async (url) => window.api.settings.previewGitHubSkill({ url }),
-
-  scanRepoSkills: async (repo) => window.api.settings.scanRepoSkills({ repo }),
-
-  // Installed-skill discovery is read-only. Batch import returns the refreshed catalog directly.
-  listAgentHomeSkills: async () => window.api.settings.listAgentHomeSkills(),
-  previewAgentHomeSkill: async (skill) => window.api.settings.previewAgentHomeSkill(skill),
-  importAgentHomeSkills: async (skills) => {
-    const result = await window.api.settings.importAgentHomeSkills({ skills })
-    set({ skills: result.skills })
-
-    return result
-  },
 
   loadConnectors: async () => {
     const { connectors, customServers, ncbi } = await window.api.settings.listConnectors()
