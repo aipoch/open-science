@@ -572,4 +572,13 @@ describe('pull request change classification', () => {
     expect(plan.roots).toContain('ci_integrity_surface')
     expect(plan.lanes).toEqual(['policy'])
   })
+
+  it('limits macOS package smoke tooling changes to static and unit validation', () => {
+    const plan = classifyChanges([{ path: 'scripts/macos-package-smoke.mjs', status: 'modified' }])
+
+    expect(plan.mode).toBe('selective')
+    expect(plan.roots).toEqual(['macos_package_smoke'])
+    expect(plan.lanes).toEqual(['policy', 'format', 'lint', 'unit_linux'])
+    expect(plan.bundles).toEqual(['policy', 'static', 'unit'])
+  })
 })

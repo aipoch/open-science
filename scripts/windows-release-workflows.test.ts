@@ -101,8 +101,12 @@ describe('post-merge Windows validation', () => {
     const packaged = findStep(job, 'Resolve packaged Electron executable')
     const p0 = findStep(job, 'Run P0 Electron certification')
     const visual = findStep(job, 'Run desktop visual regression')
+    const macos = findStep(job, 'Smoke test macOS packages')
     const linux = findStep(job, 'Smoke test Linux packages')
     const evidence = findStep(job, 'Record platform certification evidence')
+    const notarize = readWorkflow('notarize-mac.yml').jobs.notarize
+    const finalMacos = findStep(notarize, 'Smoke test final macOS packages')
+    const refreshedMacosEvidence = findStep(notarize, 'Refresh macOS certification evidence')
 
     expect(packaged.id).toBe('packaged_app')
     expect(packaged.run).toContain('Open Science.app/Contents/MacOS/Open Science')
@@ -114,19 +118,25 @@ describe('post-merge Windows validation', () => {
     )
     expect(p0.run).toContain('npm run test:e2e:p0')
     expect(visual.run).toContain('npm run test:e2e:visual')
+    expect(macos.if).toBe("${{ matrix.platform == 'mac' && !inputs.skip_verify }}")
+    expect(macos.run).toBe('node scripts/macos-package-smoke.mjs --artifact-dir dist')
     expect(linux.run).toContain('scripts/linux-package-smoke.mjs')
     expect(evidence.run).toContain('package_smoke=passed')
-    expect(
-      findStep(
-        readWorkflow('notarize-mac.yml').jobs.notarize,
-        'Refresh macOS certification evidence'
-      ).run
-    ).toContain('--package-smoke passed')
+    expect(finalMacos.run).toBe(
+      'node scripts/macos-package-smoke.mjs --artifact-dir mac --gatekeeper'
+    )
+    expect(refreshedMacosEvidence.run).toContain('--package-smoke passed')
+    expect(names.indexOf('Record platform certification evidence')).toBeGreaterThan(
+      names.indexOf('Smoke test macOS packages')
+    )
     expect(names.indexOf('Record platform certification evidence')).toBeGreaterThan(
       names.indexOf('Smoke test Linux packages')
     )
     expect(names.indexOf('Upload build artifacts')).toBeGreaterThan(
       names.indexOf('Record platform certification evidence')
+    )
+    expect(notarize.steps?.indexOf(refreshedMacosEvidence)).toBeGreaterThan(
+      notarize.steps?.indexOf(finalMacos) ?? -1
     )
   })
 

@@ -20,7 +20,7 @@ name: Notarize macOS
 # which would wrongly select the Release path and submit an unrelated published build.
 #
 # Time cap is enforced two ways: each dmg is submitted, then waited on for at most 15m
-# (`notarytool wait --timeout 15m`), and the job as a whole is bounded by `timeout-minutes: 20`.
+# (`notarytool wait --timeout 15m`), and the job as a whole is bounded by `timeout-minutes: 30`.
 # The submission id is captured before waiting, so on a timeout the log still shows it plus the
 # `notarytool info <id>` command to check the real status. A timeout is NOT a rejection — the Apple
 # submission keeps running; publish (which needs this job) is skipped, so nothing bad is published,
@@ -55,7 +55,7 @@ jobs:
     name: Notarize + staple ${{ matrix.arch }}
     runs-on: macos-14
     # Hard ceiling so a stuck notarization can never run forever (see also the wait --timeout below).
-    timeout-minutes: 20
+    timeout-minutes: 30
     strategy:
       # One arch's Apple hiccup must not cancel the other.
       fail-fast: false
@@ -78,8 +78,14 @@ jobs:
           fi
 
       - name: Checkout certification tooling
-        if: steps.gate.outputs.enabled == 'true' && inputs.from_run
+        if: steps.gate.outputs.enabled == 'true'
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+
+      - name: Setup Node
+        if: steps.gate.outputs.enabled == 'true'
+        uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7
+        with:
+          node-version: 22
 
       # Call path (from_run): pull this run's signed artifacts for the arch (uploaded by build.yml).
       - name: Download signed mac artifact (from this run)
@@ -179,6 +185,13 @@ jobs:
             xcrun stapler validate "$app"
             ditto -c -k --keepParent "$app" "$zip"   # repackage the stapled .app over the zip
           done
+
+      # Stapling/repacking changes the shipped bytes. Mount/extract and launch both final artifacts,
+      # and require Gatekeeper assessment before their refreshed hashes can be certified.
+      - name: Smoke test final macOS packages
+        if: steps.gate.outputs.enabled == 'true'
+        timeout-minutes: 10
+        run: node scripts/macos-package-smoke.mjs --artifact-dir mac --gatekeeper
 
       # Stapling repackaged the zip (new bytes), so the build-time feed — written over the PRE-staple
       # zip — now carries a stale sha512/size that would fail the updater's signature check. The build

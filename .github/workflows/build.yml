@@ -272,6 +272,13 @@ jobs:
             npm run test:e2e:visual
           fi
 
+      # Exercise both macOS distributables rather than treating the unpacked app launch above as
+      # package coverage: mount the DMG, extract the ZIP, verify each bundle, and launch each app.
+      - name: Smoke test macOS packages
+        if: ${{ matrix.platform == 'mac' && !inputs.skip_verify }}
+        timeout-minutes: 10
+        run: node scripts/macos-package-smoke.mjs --artifact-dir dist
+
       # Run the actual NSIS artifact, not the source tree: silent install into an isolated directory,
       # start the packaged app in headless web mode, verify its authenticated bootstrap and bundled
       # Windows runtime resources, request a clean shutdown, then silently uninstall it.

@@ -167,6 +167,12 @@
       "capabilities": ["artifact_provenance_e2e"]
     },
     {
+      "id": "macos_package_smoke",
+      "role": "owner",
+      "paths": ["scripts/macos-package-smoke.mjs", "scripts/macos-package-smoke.test.ts"],
+      "capabilities": ["macos_package_smoke"]
+    },
+    {
       "id": "shared_contract",
       "role": "owner",
       "fallbackOwner": true,
@@ -454,6 +460,10 @@
         "e2e_artifact_provenance_windows",
         "e2e_artifact_provenance_linux"
       ]
+    },
+    "macos_package_smoke": {
+      "consumers": [],
+      "lanes": ["format", "lint", "unit_linux"]
     }
   }
 }
