@@ -234,6 +234,54 @@ describe('ACP permission broker', () => {
     await expect(appApproval).resolves.toBe(false)
   })
 
+  it('applies a live profile to new provider requests after the pending snapshot', async () => {
+    const emitted: EmittedPermissionRequest[] = []
+    const broker = new AcpPermissionBroker((request) => emitted.push(request))
+    const policy = { profile: 'ask' as const, cwd: '/workspace' }
+    const existing = broker.requestPermission(
+      createToolPermissionRequest({
+        title: 'python existing.py',
+        providerToolName: 'Bash',
+        kind: 'execute',
+        rawInput: { command: 'python existing.py' }
+      }),
+      policy
+    )
+
+    const profileChange = broker.applyPermissionProfile('session-1', {
+      selectedProfile: 'full',
+      effectiveProfile: 'full',
+      availableModeIds: [],
+      fullAccessAvailable: true
+    })
+    const capabilityLess = broker.requestPermission(
+      createToolPermissionRequest({ title: 'Unclassified provider tool', kind: 'other' }),
+      policy
+    )
+    const legacyCategory = broker.requestPermission(
+      createToolPermissionRequest({
+        title: 'python late.py',
+        providerToolName: 'Bash',
+        kind: 'execute',
+        rawInput: { command: 'python late.py' }
+      }),
+      policy
+    )
+
+    await expect(capabilityLess).resolves.toEqual({
+      outcome: { outcome: 'selected', optionId: 'allow-once' }
+    })
+    await expect(legacyCategory).resolves.toEqual({
+      outcome: { outcome: 'selected', optionId: 'allow-once' }
+    })
+    await profileChange
+    await expect(existing).resolves.toEqual({
+      outcome: { outcome: 'selected', optionId: 'allow-once' }
+    })
+    expect(emitted.map(({ title }) => title)).toEqual(['python existing.py'])
+    expect(broker.getPendingRequests()).toEqual([])
+  })
+
   it('stops releasing pending requests when a live profile change is superseded', async () => {
     const broker = new AcpPermissionBroker(() => undefined)
     const policy = { profile: 'ask' as const, cwd: '/workspace' }

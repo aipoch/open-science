@@ -918,20 +918,7 @@ class AcpPermissionBroker {
               outcome: { outcome: 'selected' as const, optionId: providerAllowOnceOption.optionId }
             }
           }
-          const liveProfile = this.livePermissionProfiles.get(params.sessionId)
-          const liveAutomaticOptionId = liveProfile?.isCurrent()
-            ? resolveAutomaticPermission(automaticRequest, {
-                ...policyContext,
-                profile: liveProfile.profile.selectedProfile,
-                autoReviewStrategy: liveProfile.profile.autoReviewStrategy
-              })
-            : undefined
-          if (liveAutomaticOptionId) {
-            return {
-              outcome: { outcome: 'selected' as const, optionId: liveAutomaticOptionId }
-            }
-          }
-          return this.enqueuePermissionRequest({
+          return this.resolveOrEnqueuePermissionRequest({
             requestId,
             request,
             automaticRequest,
@@ -956,7 +943,7 @@ class AcpPermissionBroker {
     }
 
     // The returned promise is held open until the UI selects or cancels an option.
-    return this.enqueuePermissionRequest({
+    return this.resolveOrEnqueuePermissionRequest({
       requestId,
       request,
       automaticRequest,
@@ -964,6 +951,28 @@ class AcpPermissionBroker {
       categoryKey,
       providerAllowOnceOptionId: providerAllowOnceOption?.optionId
     })
+  }
+
+  private resolveOrEnqueuePermissionRequest(
+    pending: Omit<PendingPermission, 'resolve'> & { requestId: string }
+  ): Promise<RequestPermissionResponse> {
+    const liveProfile = this.livePermissionProfiles.get(pending.request.sessionId)
+    const liveAutomaticOptionId =
+      pending.automaticRequest && liveProfile?.isCurrent()
+        ? resolveAutomaticPermission(pending.automaticRequest, {
+            ...pending.policyContext,
+            profile: liveProfile.profile.selectedProfile,
+            autoReviewStrategy: liveProfile.profile.autoReviewStrategy
+          })
+        : undefined
+
+    if (liveAutomaticOptionId) {
+      return Promise.resolve({
+        outcome: { outcome: 'selected', optionId: liveAutomaticOptionId }
+      })
+    }
+
+    return this.enqueuePermissionRequest(pending)
   }
 
   private enqueuePermissionRequest(
