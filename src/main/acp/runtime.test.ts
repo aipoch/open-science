@@ -1713,10 +1713,8 @@ describe('ACP runtime session management', () => {
     const approved = restoredPlanProjection('approved', 5)
     const pending = restoredPlanProjection('pending', 4)
     const respond = vi.fn(async () => ({ projection: approved, changed: true }))
-    const checkTurnCompletion = vi.fn(async () => ({ allow: true }))
     installPromptPlanTestWorkflow(runtime, {
       respond,
-      checkTurnCompletion,
       getProjection: vi.fn(async () => pending)
     })
 
@@ -1744,10 +1742,6 @@ describe('ACP runtime session management', () => {
       })
     )
     expect(fakeAgent.prompts[0]?.text).toContain('artifact_version_id=version-1')
-    expect(checkTurnCompletion).toHaveBeenCalledWith({
-      projectId: 'project-1',
-      sessionId: 's1'
-    })
     expect(events).toContainEqual(
       expect.objectContaining({
         kind: 'plan',
@@ -12773,7 +12767,6 @@ describe('ACP runtime session management', () => {
       const authorizeContinuation = vi.fn(async () => active)
       installPromptPlanTestWorkflow(runtime, {
         authorizeContinuation,
-        checkTurnCompletion: vi.fn(async () => ({ allow: true })),
         getProjection: vi.fn(async () => active)
       })
 
@@ -12845,7 +12838,7 @@ describe('ACP runtime session management', () => {
     ['Codex', codexFramework],
     ['OpenCode', opencodeFramework]
   ] as const)(
-    'routes %s normal terminal stops through the Session Plan completion gate',
+    'lets %s finish a Conversation Turn while its Session Plan remains incomplete',
     async (_name, framework) => {
       const process = new FakeAgentProcess()
       startFakeAgent(process, ['s1'], {
@@ -12861,10 +12854,6 @@ describe('ACP runtime session management', () => {
         spawnAgent: () => asAgentProcess(process),
         framework
       })
-      const checkTurnCompletion = vi.fn(async () => ({
-        allow: false,
-        lifecycle: 'in_progress' as const
-      }))
       const getProjection = vi.fn(async () => null)
       const authorized = {
         artifactId: 'artifact-1',
@@ -12898,7 +12887,6 @@ describe('ACP runtime session management', () => {
       } satisfies ActivePlanProjection
       installPromptPlanTestWorkflow(runtime, {
         authorizeContinuation: vi.fn(async () => authorized),
-        checkTurnCompletion,
         getProjection
       })
 
@@ -12906,7 +12894,7 @@ describe('ACP runtime session management', () => {
       await expect(
         runtime.sendPrompt({
           sessionId: 's1',
-          text: 'finish early',
+          text: 'finish this turn',
           planContinuation: {
             projectId: 'project-1',
             artifactVersionId: 'version-1',
@@ -12917,11 +12905,7 @@ describe('ACP runtime session management', () => {
             messageAncestry: ['plan-origin', 'completion-message']
           }
         })
-      ).rejects.toThrow('The active Session Plan is not complete (in_progress).')
-      expect(checkTurnCompletion).toHaveBeenCalledWith({
-        projectId: 'project-1',
-        sessionId: 's1'
-      })
+      ).resolves.toMatchObject({ stopReason: 'end_turn' })
     }
   )
 
@@ -12934,12 +12918,7 @@ describe('ACP runtime session management', () => {
       spawnAgent: () => asAgentProcess(process),
       framework: opencodeFramework
     })
-    const checkTurnCompletion = vi.fn(async () => ({
-      allow: false,
-      lifecycle: 'approved' as const
-    }))
     installPromptPlanTestWorkflow(runtime, {
-      checkTurnCompletion,
       getProjection: vi.fn(async () => null)
     })
 
@@ -12948,11 +12927,10 @@ describe('ACP runtime session management', () => {
       runtime.sendPrompt({ sessionId: 's1', text: 'What is the weather?' })
     ).resolves.toMatchObject({ stopReason: 'end_turn' })
 
-    expect(checkTurnCompletion).not.toHaveBeenCalled()
     expect(fakeAgent.prompts[0]?.text).not.toContain('<open_science_protected_plan_context>')
   })
 
-  it('projects an abnormal provider terminal stop as interrupted instead of checking normal completion', async () => {
+  it('projects an abnormal provider terminal stop as interrupted', async () => {
     const process = new FakeAgentProcess()
     startFakeAgent(process, ['s1'], {
       modes: createModes(['read-only', 'agent', 'agent-full-access'], 'agent'),
@@ -12966,21 +12944,19 @@ describe('ACP runtime session management', () => {
       framework: codexFramework,
       callbacks: { onEvent: (event) => events.push(event) }
     })
-    const checkTurnCompletion = vi.fn(async () => ({ allow: true }))
     const getProjection = vi.fn(
       async () =>
         ({
           lifecycle: 'interrupted'
         }) as ActivePlanProjection
     )
-    installPromptPlanTestWorkflow(runtime, { checkTurnCompletion, getProjection })
+    installPromptPlanTestWorkflow(runtime, { getProjection })
 
     await runtime.createSession({ cwd: '/workspace', projectName: 'project-1' })
     await expect(
       runtime.sendPrompt({ sessionId: 's1', text: 'run the plan' })
     ).resolves.toMatchObject({ stopReason: 'max_tokens' })
 
-    expect(checkTurnCompletion).not.toHaveBeenCalled()
     expect(getProjection).toHaveBeenCalledWith('project-1', 's1', {
       interactionIsLive: false
     })

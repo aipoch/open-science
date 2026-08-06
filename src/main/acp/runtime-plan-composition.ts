@@ -1,5 +1,3 @@
-import type { PromptResponse } from '@agentclientprotocol/sdk'
-
 import type { AcpPromptRequest, AcpRuntimeEvent } from '../../shared/acp'
 import type {
   ActivePlanProjection,
@@ -348,29 +346,6 @@ const composeAcpRuntimePlanWorkflow = (
     }
     return committed()
   }
-  const beforeStop = async (
-    sessionId: string,
-    interaction: AcpPromptSessionInteractionScope,
-    response: PromptResponse
-  ): Promise<void> => {
-    const binding = interactions.executionBindingFor(sessionId)
-    if (
-      response.stopReason !== 'end_turn' ||
-      !service ||
-      binding?.interactionSequence !== interaction.sequence
-    ) {
-      return
-    }
-    const completion = await service.checkTurnCompletion({
-      projectId: session.sessionEnvironment.projectName(sessionId),
-      sessionId
-    })
-    if (!completion.allow) {
-      throw new Error(
-        `The active Session Plan is not complete (${completion.lifecycle ?? 'incomplete'}).`
-      )
-    }
-  }
   const beforeRelease = (
     sessionId: string,
     interaction: AcpPromptSessionInteractionScope
@@ -400,7 +375,6 @@ const composeAcpRuntimePlanWorkflow = (
   const prompt: AcpPromptTurnPlanWorkflow = Object.freeze({
     preflight,
     admit,
-    beforeStop,
     beforeRelease,
     afterRelease
   })

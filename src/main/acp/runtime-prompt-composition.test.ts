@@ -18,7 +18,6 @@ describe('ACP Runtime Prompt composition', () => {
         plan: {
           preflight: vi.fn(() => ({})),
           admit: vi.fn((_request, _interaction, plan) => plan),
-          beforeStop: vi.fn(async () => undefined),
           beforeRelease: vi.fn(),
           afterRelease: vi.fn(async () => undefined)
         },
@@ -31,7 +30,6 @@ describe('ACP Runtime Prompt composition', () => {
 
       expect(host.plan.preflight).not.toHaveBeenCalled()
       expect(host.plan.admit).not.toHaveBeenCalled()
-      expect(host.plan.beforeStop).not.toHaveBeenCalled()
       expect(host.plan.beforeRelease).not.toHaveBeenCalled()
       expect(host.plan.afterRelease).not.toHaveBeenCalled()
       expect(host.reload.disconnect).not.toHaveBeenCalled()

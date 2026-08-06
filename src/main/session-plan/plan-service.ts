@@ -316,20 +316,6 @@ class PlanService {
     return this.project(document, plan, context.revision, true)
   }
 
-  async checkTurnCompletion(input: {
-    projectId: string
-    sessionId: string
-  }): Promise<{ allow: boolean; lifecycle?: ActivePlanProjection['lifecycle'] }> {
-    const context = await this.dependencies.readRuntimeContext(input.projectId, input.sessionId)
-    if (!context.plan || context.plan.approval !== 'approved') return { allow: true }
-    const document = await this.readDocument(input.projectId, input.sessionId, context.plan)
-    const projection = this.project(document, context.plan, context.revision, true)
-    return {
-      allow: isPlanTerminalOutcome(document, context.plan.stepStatuses),
-      lifecycle: projection.lifecycle
-    }
-  }
-
   private async loadActive(
     input: PlanIdentityCommand,
     idempotentDecision?: 'approved' | 'rejected',
