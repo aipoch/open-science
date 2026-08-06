@@ -31,7 +31,8 @@ import type { UploadRepository } from '../uploads/repository'
 import type { SessionPersistenceCoordinator } from '../session-persistence/coordinator'
 import { AgentMcpHttpHost } from './mcp-http-host'
 import { projectRegistrySessionGrants } from './permission-broker'
-import { AcpRuntime, type AcpRuntimeCallbacks } from './runtime'
+import { AcpRuntime, type AcpRuntimeCallbacks, type AcpRuntimeOptions } from './runtime'
+import { composeAcpRuntimeBaseOwners } from './runtime-base-composition'
 import { AcpRuntimeCoordinator } from './runtime-coordinator'
 
 const log = createLogger('acp')
@@ -137,7 +138,7 @@ const createAcpRuntime = ({
   return new AcpRuntimeCoordinator(
     (runtimeCallbacks, permissionGrantStore) => {
       const selection = settingsService.captureActiveAgentBackendSelection()
-      return new AcpRuntime({
+      const runtimeOptions: AcpRuntimeOptions = {
         appVersion: app.getVersion(),
         // Packaged macOS apps often start with cwd at "/" or the app bundle; use home instead.
         defaultCwd,
@@ -249,7 +250,8 @@ const createAcpRuntime = ({
               }
             }
           : undefined
-      })
+      }
+      return new AcpRuntime(runtimeOptions, composeAcpRuntimeBaseOwners(runtimeOptions))
     },
     callbacks,
     defaultCwd,

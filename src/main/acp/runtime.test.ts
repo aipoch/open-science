@@ -15,7 +15,7 @@ import { join, resolve } from 'node:path'
 import { PassThrough, Readable, Writable } from 'node:stream'
 import { afterEach, describe, expect, it, vi } from 'vitest'
 
-import { AcpRuntime } from './runtime'
+import { AcpRuntime } from './runtime.test-utils'
 import type { AcpAgentConnectionAdapter } from './agent-connection-adapter'
 import { AcpPermissionContext } from './permission-context'
 import { ContextUsageTracker, type TokenCounter } from './context-usage-tracker'

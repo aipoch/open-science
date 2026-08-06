@@ -18,7 +18,7 @@ import { join } from 'node:path'
 import { PassThrough, Readable, Writable } from 'node:stream'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 
-import { AcpRuntime } from '../acp/runtime'
+import { AcpRuntime } from '../acp/runtime.test-utils'
 import { ReviewRepository } from './repository'
 import { createProjectDbClient, ensureProjectSchema } from '../projects/prisma-client'
 import { runReview } from './orchestrator'

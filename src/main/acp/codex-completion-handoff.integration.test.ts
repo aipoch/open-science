@@ -7,7 +7,7 @@ import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import * as acp from '@agentclientprotocol/sdk'
 
-import { AcpRuntime } from './runtime'
+import { AcpRuntime } from './runtime.test-utils'
 import { AcpRuntimeCoordinator } from './runtime-coordinator'
 import { createCodexCompletionGateRuntime } from './codex-completion-handoff'
 import {

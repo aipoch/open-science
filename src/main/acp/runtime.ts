@@ -1,7 +1,7 @@
 import * as acp from '@agentclientprotocol/sdk'
 import type { ActiveSession, ClientConnection, PromptResponse } from '@agentclientprotocol/sdk'
 import type { ChildProcessWithoutNullStreams } from 'node:child_process'
-import { join, resolve } from 'node:path'
+import { join } from 'node:path'
 
 import type {
   AcpCancelPromptRequest,
@@ -26,7 +26,6 @@ import type { EffectiveSpecialistSkills } from '../../shared/specialist'
 import type { ResolvedReasoningEffort } from '../../shared/reasoning-effort'
 import type { ApprovedSwitchReadBack, ClaudeCodeReplayInput } from '../agents/claude-code-handoff'
 import {
-  claudeCodeFramework,
   type AgentFramework,
   type AgentModelChangeTarget,
   type ResolvedAgentBackend
@@ -51,7 +50,6 @@ import { withDataRootWrite } from '../storage/migration-state'
 import { opencodeStorageDir } from '../agent-framework/opencode'
 import { ContextUsageTracker } from './context-usage-tracker'
 import { AcpContextUsagePolicy } from './context-usage-policy'
-import { createManagedFileReferenceResolver } from './file-reference-resolver'
 import type { UploadRepository } from '../uploads/repository'
 import { DEFAULT_UPLOAD_PROJECT_NAME, type UploadedAttachment } from '../../shared/uploads'
 import type { ArtifactFile, FileReference } from '../../shared/artifacts'
@@ -107,11 +105,8 @@ import { AcpSessionDeletionWorkflow } from './session-deletion-workflow'
 import { AcpPromptPreparationOwner } from './prompt-preparation-owner'
 import { AcpPromptTurnWorkflow, type AcpPromptTurnPlanContext } from './prompt-turn-workflow'
 import { AcpContextCompactionWorkflow } from './context-compaction-workflow'
-import { AcpSessionPresentationPolicy } from './session-presentation-policy'
 import { AcpProviderPromptExecutor } from './provider-prompt-executor'
-import { AcpPromptOutcomeFinalizer } from './prompt-outcome-finalizer'
 import { AcpTurnSkillOwner, type AcpTurnSkillHooks } from './turn-skill-owner'
-import { createProductionPlanService } from '../session-plan/production-plan-service'
 import { SessionPlanInteractionOwner } from '../session-plan/session-plan-interaction-owner'
 import { SESSION_PLAN_SYSTEM_PROMPT_APPEND } from '../session-plan/guidance'
 import type { PlanResponseResult, PlanService } from '../session-plan/plan-service'
@@ -123,6 +118,7 @@ import type {
 import { PlanCommandError } from '../../shared/session-plan/contract'
 import type { SessionPlanStepStatus } from '../../shared/session-persistence'
 import type { SessionPersistenceCoordinator } from '../session-persistence/coordinator'
+import type { AcpRuntimeBaseOwners } from './runtime-base-composition'
 
 export type AcpRuntimeCallbacks = {
   onStateChanged?: (state: AcpStateSnapshot) => void
@@ -361,7 +357,7 @@ class AcpRuntime {
   private readonly snapshotOwner: AcpRuntimeSnapshotOwner
   private readonly contextUsageTracker: ContextUsageTracker
   private readonly contextUsagePolicy: AcpContextUsagePolicy
-  private readonly connectionAdapter = new AcpAgentConnectionAdapter()
+  private readonly connectionAdapter: AcpAgentConnectionAdapter
   private readonly connectionResources: AcpConnectionResourceOwner
   private readonly connectionTransitions: AcpConnectionTransitionOwner
   private readonly generationActivity: AcpGenerationActivityOwner
@@ -375,7 +371,7 @@ class AcpRuntime {
   // Ephemeral Reviewer identity, isolation, permission, and resource state lives behind one owner.
   private readonly reviewerSessions: ReviewerSessionOwner
   private readonly turnSkills: AcpTurnSkillOwner
-  private readonly handoffContinuity = new AcpHandoffContinuityOwner()
+  private readonly handoffContinuity: AcpHandoffContinuityOwner
   private readonly permissionContext: AcpPermissionContext
   private readonly callbacks: AcpRuntimeCallbacks
   private readonly spawnAgent: (() => ChildProcessWithoutNullStreams) | undefined
@@ -387,10 +383,8 @@ class AcpRuntime {
   private readonly setTimer: (fn: () => void, ms: number) => ReturnType<typeof setTimeout>
   private readonly clearTimer: (handle: ReturnType<typeof setTimeout>) => void
   private readonly artifactOptions: AcpRuntimeArtifactOptions | undefined
-  private readonly artifactRepository: ArtifactRepository | undefined
-  private readonly artifactRunRegistry: ArtifactRunRegistry | undefined
   private readonly artifactTurns: ArtifactTurnOwner | undefined
-  private readonly planInteractions = new SessionPlanInteractionOwner()
+  private readonly planInteractions: SessionPlanInteractionOwner
   private readonly planService: PlanService | undefined
   private readonly planSessions: AcpRuntimePlanOptions['sessions'] | undefined
   private readonly promptContentOwner: AcpPromptContentOwner
@@ -407,14 +401,29 @@ class AcpRuntime {
   private readonly sessionDeletion: AcpSessionDeletionWorkflow
 
   // Wires runtime dependencies and forwards permission prompts into the event stream.
-  constructor(private readonly options: AcpRuntimeOptions) {
-    this.snapshotOwner = new AcpRuntimeSnapshotOwner(resolve(options.defaultCwd))
+  constructor(
+    private readonly options: AcpRuntimeOptions,
+    base: AcpRuntimeBaseOwners
+  ) {
     this.callbacks = options.callbacks ?? {}
-    this.connectionResources = new AcpConnectionResourceOwner({
-      closeMcpHost: async () => {
-        await options.mcpHttpHost?.close()
-      }
-    })
+    this.spawnAgent = options.spawnAgent
+    this.artifactOptions = options.artifacts
+    this.planSessions = options.plan?.sessions
+    this.snapshotOwner = base.snapshotOwner
+    this.connectionAdapter = base.connectionAdapter
+    this.connectionResources = base.connectionResources
+    this.backendGeneration = base.backendGeneration
+    this.providerPromptExecutor = base.providerPromptExecutor
+    this.contextUsageTracker = base.contextUsageTracker
+    this.setTimer = base.setTimer
+    this.clearTimer = base.clearTimer
+    this.sessionInteractions = base.sessionInteractions
+    this.sessionCapabilities = base.sessionCapabilities
+    this.artifactTurns = base.artifactTurns
+    this.planInteractions = base.planInteractions
+    this.planService = base.planService
+    this.promptContentOwner = base.promptContentOwner
+    this.handoffContinuity = base.handoffContinuity
     this.generationActivity = new AcpGenerationActivityOwner({
       activityChanged: () => this.generationActivityChanged(),
       hasActivePrompts: () => this.sessionInteractions.snapshot().length > 0,
@@ -434,83 +443,13 @@ class AcpRuntime {
       skills: options.skills,
       requestSkillsReload: () => this.connectionTransitions.requestSkillsReload()
     })
-    this.spawnAgent = options.spawnAgent
-    this.backendGeneration = new AcpBackendGenerationOwner(options.framework ?? claudeCodeFramework)
-    this.providerPromptExecutor = new AcpProviderPromptExecutor({
-      backendGeneration: this.backendGeneration,
-      opencodeUsageFetch: options.opencodeUsageFetch
-    })
     this.sessionConfigurator = new AcpSessionConfigurator({
       assertCurrentConnection: (connection) => this.assertCurrentConnectedConnection(connection),
       diagnosticContext: (backend) => this.diagnosticContext(backend.framework.id)
     })
-    this.contextUsageTracker = options.contextUsageTracker ?? new ContextUsageTracker()
-    this.setTimer = options.setTimer ?? ((fn, ms) => setTimeout(fn, ms))
-    this.clearTimer = options.clearTimer ?? ((handle) => clearTimeout(handle))
-    this.sessionInteractions = new AcpSessionInteractionOwner({
-      cancelTimeoutMs: options.cancelTimeoutMs,
-      setTimer: this.setTimer,
-      clearTimer: this.clearTimer
-    })
-    this.artifactOptions = options.artifacts
-    this.sessionCapabilities = new AcpSessionCapabilityOwner({
-      artifacts: options.artifacts,
-      notebook: options.notebook,
-      skillImport: options.skillImport,
-      plan: options.plan,
-      mcpHttpHost: options.mcpHttpHost
-    })
-    this.artifactRepository = options.artifacts
-      ? (options.artifacts.repository ?? new ArtifactRepository(options.artifacts.dataRoot))
-      : undefined
-    this.artifactRunRegistry = options.artifacts
-      ? (options.artifacts.runRegistry ?? new ArtifactRunRegistry())
-      : undefined
-    this.artifactTurns =
-      options.artifacts && this.artifactRepository && this.artifactRunRegistry
-        ? new ArtifactTurnOwner({
-            dataRoot: options.artifacts.dataRoot,
-            repository: this.artifactRepository,
-            runRegistry: this.artifactRunRegistry,
-            issueRpcCapability: options.artifacts.issueRpcCapability,
-            revokeRpcCapability: options.artifacts.revokeRpcCapability,
-            provenance: options.artifacts.provenance,
-            ...(options.notebook
-              ? {
-                  notebook: {
-                    setArtifactProvenanceContext: options.notebook.setArtifactProvenanceContext
-                  }
-                }
-              : {})
-          })
-        : undefined
-    this.planSessions = options.plan?.sessions
-    this.planService =
-      options.plan && this.artifactTurns && options.artifacts?.provenance?.resolveVersionContent
-        ? createProductionPlanService({
-            interactions: this.planInteractions,
-            artifactTurns: this.artifactTurns,
-            provenance: {
-              resolveVersionContent: (request) =>
-                options.artifacts!.provenance!.resolveVersionContent!(request)
-            },
-            sessions: options.plan.sessions
-          })
-        : undefined
-    const uploadRepository = options.uploads?.repository
-    const fileReferenceResolver = createManagedFileReferenceResolver({
-      uploads: uploadRepository,
-      artifacts: this.artifactRepository,
-      artifactVersions: options.artifacts?.provenance
-    })
-    this.promptContentOwner = new AcpPromptContentOwner({
-      uploadRepository,
-      fileReferenceResolver,
-      inlineImageBudgetBytes: options.inlineImageBudgetBytes
-    })
     this.promptPreparation = new AcpPromptPreparationOwner({
       promptContent: this.promptContentOwner,
-      presentation: new AcpSessionPresentationPolicy(),
+      presentation: base.sessionPresentationPolicy,
       contextUsage: this.contextUsageTracker,
       selectBridgeSkills: async (text, catalog, signal) =>
         (await this.connectionResources.selectBridgeSkills(text, catalog, signal)) ?? [],
@@ -677,7 +616,7 @@ class AcpRuntime {
       executor: this.providerPromptExecutor,
       contextUsage: this.contextUsageTracker,
       providerReconnectPending: () => this.pendingProviderReconnect,
-      finalizer: new AcpPromptOutcomeFinalizer(),
+      finalizer: base.promptOutcomeFinalizer,
       permission: this.permissionContext,
       environment: {
         backend: () => this.backend,
@@ -2273,4 +2212,5 @@ class AcpRuntime {
 }
 
 export { AcpRuntime }
+export type { AcpRuntimeOptions }
 export type { ReviewerSessionDisposition } from './reviewer-session-owner'
