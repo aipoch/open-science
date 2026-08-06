@@ -345,7 +345,9 @@ describe('runtime state ownership architecture', () => {
   })
 
   it('keeps model application and attached resume behavior behind their workflows', () => {
-    const source = readSource('src/main/acp/runtime.ts')
+    const runtime = readSource('src/main/acp/runtime.ts')
+    const providerSessions = readSource('src/main/acp/runtime-provider-session-composition.ts')
+    const source = runtime + providerSessions
 
     expect(source).not.toContain('canApplyModelChange')
     expect(source).not.toContain('modelChangeMatchesCurrent')
@@ -353,7 +355,9 @@ describe('runtime state ownership architecture', () => {
     expect(source).not.toContain('resumeSessionOperation')
     expect(source).toContain('return this.modelChanges.applyReasoningEffort(effort)')
     expect(source).toContain('this.providerSessionResumer.resume(request)')
-    expect(source).toContain('currentConnection: () => this.connection')
+    expect(providerSessions).toContain(
+      'const currentConnection = (): ClientConnection | undefined => base.connectionResources.connection'
+    )
   })
 
   it('constructs the model and connection lifecycle cycle outside Runtime', () => {
@@ -368,6 +372,24 @@ describe('runtime state ownership architecture', () => {
     expect(composition.match(/new AcpConnectionCloseWorkflow\(/g)).toHaveLength(1)
     expect(composition.match(/new AcpConnectionLifecycleWorkflow\(/g)).toHaveLength(1)
     expect(composition).not.toContain('AcpRuntime.prototype')
+  })
+
+  it('constructs Provider Session workflows outside Runtime with one shared adopter', () => {
+    const runtime = readSource('src/main/acp/runtime.ts')
+    const composition = readSource('src/main/acp/runtime-provider-session-composition.ts')
+
+    expect(runtime).not.toMatch(
+      /new (?:AcpProviderSessionCreator|AcpProviderSessionAdopter|AcpProviderSessionResumer|AcpSessionReplacementWorkflow|AcpSessionDeletionWorkflow)/
+    )
+    expect(runtime).toContain('composeAcpRuntimeProviderSessionOwners(')
+    expect(composition.match(/new AcpProviderSessionCreator\(/g)).toHaveLength(1)
+    expect(composition.match(/new AcpProviderSessionAdopter\(/g)).toHaveLength(1)
+    expect(composition.match(/new AcpProviderSessionResumer\(/g)).toHaveLength(1)
+    expect(composition.match(/new AcpSessionReplacementWorkflow\(/g)).toHaveLength(1)
+    expect(composition.match(/new AcpSessionDeletionWorkflow\(/g)).toHaveLength(1)
+    expect(composition.match(/adopter: providerSessionAdopter/g)).toHaveLength(2)
+    expect(composition).toContain('await lifecycle.connectionClose.disconnect(false)')
+    expect(composition).not.toMatch(/AcpRuntime\.prototype|from ['"]electron['"]/)
   })
 
   it('keeps provider permission routing and reviewer preparation behind their owners', () => {

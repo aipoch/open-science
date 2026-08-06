@@ -10066,9 +10066,9 @@ describe('ACP runtime session management', () => {
     const replacementConnection = createDeferred<unknown>()
     const internal = runtime as unknown as {
       connection: unknown
-      ensureConnected: (cwd: string) => Promise<unknown>
+      connectionLifecycle: { ensureConnected: (cwd: string) => Promise<unknown> }
     }
-    vi.spyOn(internal, 'ensureConnected').mockImplementationOnce(async () => {
+    vi.spyOn(internal.connectionLifecycle, 'ensureConnected').mockImplementationOnce(async () => {
       ensureConnectedStarted.resolve()
       return replacementConnection.promise
     })
@@ -14347,15 +14347,19 @@ describe('ACP runtime session management', () => {
       const connectionReady = createDeferred()
       const releaseEnsureConnected = createDeferred()
       const internal = runtime as unknown as {
-        ensureConnected: (cwd: string) => Promise<unknown>
+        connectionLifecycle: { ensureConnected: (cwd: string) => Promise<unknown> }
       }
-      const ensureConnected = internal.ensureConnected.bind(runtime)
-      vi.spyOn(internal, 'ensureConnected').mockImplementationOnce(async (cwd) => {
-        const connection = await ensureConnected(cwd)
-        connectionReady.resolve()
-        await releaseEnsureConnected.promise
-        return connection
-      })
+      const ensureConnected = internal.connectionLifecycle.ensureConnected.bind(
+        internal.connectionLifecycle
+      )
+      vi.spyOn(internal.connectionLifecycle, 'ensureConnected').mockImplementationOnce(
+        async (cwd) => {
+          const connection = await ensureConnected(cwd)
+          connectionReady.resolve()
+          await releaseEnsureConnected.promise
+          return connection
+        }
+      )
 
       const pending =
         operation === 'context reset'

@@ -47,7 +47,7 @@ import { opencodeStorageDir } from '../agent-framework/opencode'
 import type { ContextUsageTracker } from './context-usage-tracker'
 import type { AcpContextUsagePolicy } from './context-usage-policy'
 import type { UploadRepository } from '../uploads/repository'
-import { DEFAULT_UPLOAD_PROJECT_NAME, type UploadedAttachment } from '../../shared/uploads'
+import type { UploadedAttachment } from '../../shared/uploads'
 import type { ArtifactFile, FileReference } from '../../shared/artifacts'
 import type { ArtifactRpcCapabilityBinding } from '../../shared/artifact-provenance'
 import type { AcpRuntimeActivity, AcpRuntimeActivityOptions } from './runtime-activity'
@@ -64,11 +64,7 @@ import type {
   AcpSessionInteractionOwner,
   AcpPromptSessionInteractionScope
 } from './session-interaction-owner'
-import type {
-  AcpSessionRegistry,
-  AcpPrimarySessionIdentityReservation,
-  AcpPrimarySessionIdentityReservationResult
-} from './session-registry'
+import type { AcpSessionRegistry } from './session-registry'
 import type {
   AcpConnectionResourceOwner,
   AcpConnectionResourceAttempt
@@ -90,11 +86,10 @@ import type { AcpSessionUpdateProjector } from './session-update-projector'
 import type { AcpConnectionLifecycleWorkflow } from './connection-lifecycle-workflow'
 import type { AcpConnectionCloseWorkflow } from './connection-close-workflow'
 import type { AcpModelChangeWorkflow } from './model-change-workflow'
-import { AcpProviderSessionCreator } from './provider-session-creator'
-import { AcpProviderSessionAdopter } from './provider-session-adopter'
-import { AcpProviderSessionResumer } from './provider-session-resumer'
-import { AcpSessionReplacementWorkflow } from './session-replacement-workflow'
-import { AcpSessionDeletionWorkflow } from './session-deletion-workflow'
+import type { AcpProviderSessionCreator } from './provider-session-creator'
+import type { AcpProviderSessionResumer } from './provider-session-resumer'
+import type { AcpSessionReplacementWorkflow } from './session-replacement-workflow'
+import type { AcpSessionDeletionWorkflow } from './session-deletion-workflow'
 import { AcpPromptPreparationOwner } from './prompt-preparation-owner'
 import { AcpPromptTurnWorkflow, type AcpPromptTurnPlanContext } from './prompt-turn-workflow'
 import { AcpContextCompactionWorkflow } from './context-compaction-workflow'
@@ -115,6 +110,7 @@ import type { AcpRuntimePublicationOwner } from './runtime-publication-owner'
 import type { AcpRuntimeSessionOwners } from './runtime-session-composition'
 import type { AcpSessionEnvironmentPolicy } from './session-environment-policy'
 import { composeAcpRuntimeLifecycleOwners } from './runtime-lifecycle-composition'
+import { composeAcpRuntimeProviderSessionOwners } from './runtime-provider-session-composition'
 
 export type AcpRuntimeCallbacks = {
   onStateChanged?: (state: AcpStateSnapshot) => void
@@ -344,9 +340,6 @@ class AcpRuntime {
   private readonly sessionConfigurator: AcpSessionConfigurator
   private readonly sessionUpdateProjector: AcpSessionUpdateProjector
   private readonly providerPromptExecutor: AcpProviderPromptExecutor
-  // Injectable lifecycle timers (defaults to real setTimeout/clearTimeout).
-  private readonly setTimer: (fn: () => void, ms: number) => ReturnType<typeof setTimeout>
-  private readonly clearTimer: (handle: ReturnType<typeof setTimeout>) => void
   private readonly artifactOptions: AcpRuntimeArtifactOptions | undefined
   private readonly artifactTurns: ArtifactTurnOwner | undefined
   private readonly planInteractions: SessionPlanInteractionOwner
@@ -360,7 +353,6 @@ class AcpRuntime {
   private readonly connectionLifecycle: AcpConnectionLifecycleWorkflow
   private readonly modelChanges: AcpModelChangeWorkflow
   private readonly providerSessionCreator: AcpProviderSessionCreator
-  private readonly providerSessionAdopter: AcpProviderSessionAdopter
   private readonly providerSessionResumer: AcpProviderSessionResumer
   private readonly sessionReplacement: AcpSessionReplacementWorkflow
   private readonly sessionDeletion: AcpSessionDeletionWorkflow
@@ -381,8 +373,6 @@ class AcpRuntime {
     this.backendGeneration = base.backendGeneration
     this.providerPromptExecutor = base.providerPromptExecutor
     this.contextUsageTracker = base.contextUsageTracker
-    this.setTimer = base.setTimer
-    this.clearTimer = base.clearTimer
     this.sessionInteractions = base.sessionInteractions
     this.sessionCapabilities = base.sessionCapabilities
     this.artifactTurns = base.artifactTurns
@@ -526,102 +516,16 @@ class AcpRuntime {
     this.modelChanges = lifecycle.modelChanges
     this.connectionClose = lifecycle.connectionClose
     this.connectionLifecycle = lifecycle.connectionLifecycle
-    this.providerSessionCreator = new AcpProviderSessionCreator({
-      defaultCwd: options.defaultCwd,
-      defaultProjectName: options.artifacts?.projectName || DEFAULT_UPLOAD_PROJECT_NAME,
-      currentCwd: () => this.snapshotOwner.cwd,
-      ensureConnected: (cwd) => this.ensureConnected(cwd),
-      assertCurrentConnection: (connection) => this.assertCurrentConnectedConnection(connection),
-      currentBackend: () => this.backend,
-      registry: this.sessionRegistry,
-      reserveIdentity: (sessionId, startupGeneration) =>
-        this.reservePrimarySessionIds(undefined, [sessionId], undefined, startupGeneration),
-      capabilities: this.sessionCapabilities,
-      configurator: this.sessionConfigurator,
-      resolveSpecialistIdentity: options.resolveSpecialistIdentity,
-      resolveSpecialistSkills: options.resolveSpecialistSkills,
-      registerSessionSpecialist: options.notebook?.registerSessionSpecialist,
-      updateCwd: (cwd) => this.snapshotOwner.updateCwd(cwd),
-      pushEvent: (event) => this.pushEvent(event),
-      emitState: () => this.emitState(),
-      diagnosticContext: () => this.diagnosticContext()
-    })
-    this.providerSessionAdopter = new AcpProviderSessionAdopter({
-      currentBackend: () => this.backend,
-      registry: this.sessionRegistry,
-      reserveIdentity: (reservation, sessionIds) =>
-        this.reservePrimarySessionIds(reservation, sessionIds),
-      capabilities: this.sessionCapabilities,
-      configurator: this.sessionConfigurator,
-      resolveSpecialistIdentity: options.resolveSpecialistIdentity,
-      resolveSpecialistSkills: options.resolveSpecialistSkills,
-      peekClaudeReplay: (sessionId) => this.handoffContinuity.peekClaudeReplay(sessionId),
-      commitClaudeReplay: (sessionId) => this.handoffContinuity.commitClaudeReplay(sessionId),
-      updateCwd: (cwd) => this.snapshotOwner.updateCwd(cwd),
-      emitState: () => this.emitState(),
-      diagnosticContext: () => this.diagnosticContext()
-    })
-    this.sessionReplacement = new AcpSessionReplacementWorkflow({
-      defaultCwd: options.defaultCwd,
-      defaultProjectName: options.artifacts?.projectName || DEFAULT_UPLOAD_PROJECT_NAME,
-      currentCwd: () => this.snapshotOwner.cwd,
-      currentFrameworkId: () => this.framework.id,
-      ensureConnected: (cwd) => this.ensureConnected(cwd),
-      assertCurrentConnection: (connection) => this.assertCurrentConnectedConnection(connection),
-      registry: this.sessionRegistry,
-      reserveIdentity: (sessionId, publishedAppSessionId) =>
-        this.reservePrimarySessionIds(undefined, [sessionId], publishedAppSessionId),
-      adopter: this.providerSessionAdopter,
-      permission: this.permissionContext,
-      promptContent: this.promptContentOwner,
-      contextUsage: this.contextUsageTracker,
-      interactions: this.sessionInteractions,
-      resolveSpecialistIdentity: options.resolveSpecialistIdentity,
-      registerSessionSpecialist: options.notebook?.registerSessionSpecialist
-    })
-    this.sessionDeletion = new AcpSessionDeletionWorkflow({
-      registry: this.sessionRegistry,
-      withOperation: (work) => this.withOperationLease(work),
-      currentConnection: () => this.connection,
-      supportsSessionDelete: () => this.connectionResources.capabilities.delete,
-      supportsSessionClose: () => this.connectionResources.capabilities.close,
-      permission: this.permissionContext,
-      interactions: this.sessionInteractions,
-      capabilities: this.sessionCapabilities,
-      promptContent: this.promptContentOwner,
-      handoff: this.handoffContinuity,
-      contextUsage: this.contextUsageTracker,
-      projector: this.sessionUpdateProjector,
-      pushEvent: (event) => this.pushEvent(event),
-      emitState: () => this.emitState(),
-      getSnapshot: () => this.getSnapshot()
-    })
-    this.providerSessionResumer = new AcpProviderSessionResumer({
-      defaultCwd: options.defaultCwd,
-      defaultProjectName: options.artifacts?.projectName || DEFAULT_UPLOAD_PROJECT_NAME,
-      currentCwd: () => this.snapshotOwner.cwd,
-      currentConnection: () => this.connection,
-      ensureConnected: (cwd) => this.ensureConnected(cwd),
-      assertCurrentConnection: (connection) => this.assertCurrentConnectedConnection(connection),
-      disconnectTimedOutConnection: async () => {
-        await this.disconnect(false)
-      },
-      resumeCapabilityAdvertised: () => this.connectionResources.capabilities.resume,
-      currentBackend: () => this.backend,
-      registry: this.sessionRegistry,
-      reserveIdentity: (sessionId) => this.reservePrimarySessionIds(undefined, [sessionId]),
-      capabilities: this.sessionCapabilities,
-      configurator: this.sessionConfigurator,
-      adopter: this.providerSessionAdopter,
-      resolveSpecialistSkills: options.resolveSpecialistSkills,
-      updateCwd: (cwd) => this.snapshotOwner.updateCwd(cwd),
-      pushEvent: (event) => this.pushEvent(event),
-      emitState: () => this.emitState(),
-      resumeTimeoutMs: options.resumeTimeoutMs ?? 30_000,
-      setTimer: this.setTimer,
-      clearTimer: this.clearTimer,
-      diagnosticContext: () => this.diagnosticContext()
-    })
+    const providerSessions = composeAcpRuntimeProviderSessionOwners(
+      options,
+      base,
+      session,
+      lifecycle
+    )
+    this.providerSessionCreator = providerSessions.providerSessionCreator
+    this.providerSessionResumer = providerSessions.providerSessionResumer
+    this.sessionReplacement = providerSessions.sessionReplacement
+    this.sessionDeletion = providerSessions.sessionDeletion
   }
 
   private get backend(): AcpBackendGenerationView {
@@ -1797,24 +1701,6 @@ class AcpRuntime {
         ensureConnected: (cwd) => this.ensureConnected(cwd)
       })
     )
-  }
-
-  private reservePrimarySessionIds(
-    reservation: AcpPrimarySessionIdentityReservation | undefined,
-    sessionIds: string[],
-    publishedAppSessionId?: string,
-    startupGeneration = this.sessionRegistry.startupGeneration
-  ): AcpPrimarySessionIdentityReservationResult {
-    return this.sessionRegistry.reserve({
-      reservation,
-      sessionIds,
-      publishedAppSessionId,
-      startupGeneration,
-      mayRenewAfterConnectionSetup: Boolean(
-        this.reconnectBarrier || !this.connection || this.snapshotOwner.status !== 'connected'
-      ),
-      blockStartup: !this.reconnectBarrier
-    })
   }
 
   private assertCurrentConnectedConnection(connection: ClientConnection): void {
