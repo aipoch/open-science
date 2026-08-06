@@ -36,9 +36,10 @@ export type LocalRoots = {
 // provider_id, which never collides with this literal.
 export const LOCAL_BOOKMARKS_KEY = 'local'
 
-// A folder the user explicitly granted the app access to ("Grant folder access"). Stored in
-// settings.json (see StoredSettings.grantedLocalRoots); the renderer manages the list and the
-// linked-folder file-reference resolver confines reads to these roots.
+// A folder the user explicitly granted the app access to ("Grant folder access"). Stored in the
+// SQLite project DB (GrantedLocalRoot table; see src/main/local-fs/granted-roots-repository.ts);
+// the renderer manages the list and the linked-folder file-reference resolver confines reads to
+// these roots.
 export type GrantedLocalRoot = {
   id: string
   // Server-side realpath at grant time, so symlinked parents are captured canonically.

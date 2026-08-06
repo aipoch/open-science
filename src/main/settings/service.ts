@@ -919,8 +919,10 @@ class SettingsService {
     await this.repository.setComputeBookmarks(providerId, folders)
   }
 
-  // Returns the folders the user granted the app access to. Malformed entries (e.g. from a
-  // hand-edited settings.json) are dropped rather than failing the whole list.
+  // Reads the legacy settings.json granted-roots field for the one-time import into the
+  // GrantedLocalRoot table (see local-fs/granted-roots-repository.ts). Malformed entries (e.g. from
+  // a hand-edited settings.json) are dropped rather than failing the import. Production reads and
+  // writes of granted roots go through the SQLite repository, never here.
   async getGrantedLocalRoots(): Promise<GrantedLocalRoot[]> {
     const settings = await this.repository.getSettings()
     return (settings.grantedLocalRoots ?? []).filter(
@@ -932,10 +934,10 @@ class SettingsService {
     )
   }
 
-  // Replaces the full granted-roots list. The local-fs service computes the new list; this only
-  // persists it.
-  async setGrantedLocalRoots(roots: GrantedLocalRoot[]): Promise<void> {
-    await this.repository.setGrantedLocalRoots(roots)
+  // Removes the legacy settings.json granted-roots field once the import into the GrantedLocalRoot
+  // table has completed (see getGrantedLocalRoots).
+  async clearGrantedLocalRoots(): Promise<void> {
+    await this.repository.clearGrantedLocalRoots()
   }
 
   // Captures only non-secret backend identity. Runtime generations resolve credentials again at spawn,

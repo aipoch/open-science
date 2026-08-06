@@ -86,12 +86,27 @@ describe('LocalFsService granted roots', () => {
   let outside = ''
   let store: GrantedLocalRoot[] = []
   let grantService: LocalFsService
-  // Plain closures, not vi.fn: the afterEach restoreAllMocks (for the app.getPath spy) must not
-  // reset the stub's implementations between tests.
-  const settingsStub: GrantedLocalRootsStore = {
-    getGrantedLocalRoots: async () => store,
-    setGrantedLocalRoots: async (roots: GrantedLocalRoot[]) => {
-      store = roots
+  // In-memory row-level store matching the SQLite repository's contract. Plain closures, not
+  // vi.fn: the afterEach restoreAllMocks (for the app.getPath spy) must not reset the stub's
+  // implementations between tests.
+  const storeStub: GrantedLocalRootsStore = {
+    list: async () => store,
+    upsertByPath: async (root: GrantedLocalRoot) => {
+      const existing = store.find((entry) => entry.path === root.path)
+      if (existing) {
+        store = store.map((entry) =>
+          entry.id === existing.id ? { ...entry, access: root.access, name: root.name } : entry
+        )
+        return { ...existing, access: root.access, name: root.name }
+      }
+      store = [...store, root]
+      return root
+    },
+    setAccess: async (id: string, access: GrantedLocalRoot['access']) => {
+      store = store.map((entry) => (entry.id === id ? { ...entry, access } : entry))
+    },
+    remove: async (id: string) => {
+      store = store.filter((entry) => entry.id !== id)
     }
   }
 
@@ -100,10 +115,8 @@ describe('LocalFsService granted roots', () => {
     outside = await realpath(await mkdtemp(join(tmpdir(), 'local-fs-outside-')))
     await mkdir(join(home, 'Documents'))
     store = []
-    vi.spyOn(app, 'getPath').mockImplementation((name: string) =>
-      name === 'home' ? home : '/tmp'
-    )
-    grantService = new LocalFsService(settingsStub)
+    vi.spyOn(app, 'getPath').mockImplementation((name: string) => (name === 'home' ? home : '/tmp'))
+    grantService = new LocalFsService(storeStub)
   })
 
   afterEach(async () => {
@@ -167,9 +180,9 @@ describe('LocalFsService granted roots', () => {
     const updated = await grantService.setGrantedRootAccess({ id: granted.id, access: 'rw' })
     expect(updated).toEqual([{ ...granted, access: 'rw' }])
 
-    await expect(
-      grantService.setGrantedRootAccess({ id: 'nope', access: 'rw' })
-    ).rejects.toThrow(/unknown granted root/i)
+    await expect(grantService.setGrantedRootAccess({ id: 'nope', access: 'rw' })).rejects.toThrow(
+      /unknown granted root/i
+    )
   })
 
   it('rejects invalid access levels from crafted payloads', async () => {
@@ -185,7 +198,7 @@ describe('LocalFsService granted roots', () => {
     expect(store).toEqual([])
   })
 
-  it('fails loudly when no settings store is wired', async () => {
+  it('fails loudly when no granted-roots store is wired', async () => {
     await expect(new LocalFsService().listGrantedRoots()).rejects.toThrow(/not configured/i)
   })
 })

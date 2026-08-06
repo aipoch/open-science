@@ -442,3 +442,18 @@ model ComputeHost {
   createdAt        DateTime  @default(now())
   updatedAt        DateTime  @updatedAt
 }
+
+// A local folder the user explicitly granted the app access to ("Grant folder access"). Pure-additive
+// table: it references nothing and nothing references it, so adding it is safe against any
+// pre-existing DB (see prisma-client.ts runtime DDL). `path` is the realpath'd absolute folder and
+// is unique — re-granting a folder updates its access in place. `access` is 'ro' | 'rw'. Legacy
+// installs import settings.json's grantedLocalRoots on first use (see
+// src/main/local-fs/granted-roots-repository.ts); production never writes the settings field again.
+model GrantedLocalRoot {
+  id        String   @id
+  path      String   @unique
+  name      String
+  access    String
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+}

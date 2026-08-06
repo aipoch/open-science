@@ -14,7 +14,6 @@ export type AcpSettingsCapabilities = Pick<
   | 'getConversationSkillImportEnabled'
   | 'listSpecialistSkillCatalog'
   | 'provisionedConnectorSkillNames'
-  | 'getGrantedLocalRoots'
 >
 
 export type WindowSettingsCapabilities = Pick<

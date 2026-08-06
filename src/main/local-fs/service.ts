@@ -24,11 +24,15 @@ import {
 } from '../../shared/local-fs'
 import { readBoundedManagedFilePreview } from '../managed-file-preview'
 
-// The slice of the settings service the granted-roots feature persists through. Structural so
-// tests can inject an in-memory store; production wires the real SettingsService.
+// The slice of the granted-roots repository the feature persists through. Structural so tests can
+// inject an in-memory store; production wires the SQLite-backed GrantedLocalRootsRepository.
 export type GrantedLocalRootsStore = {
-  getGrantedLocalRoots: () => Promise<GrantedLocalRoot[]>
-  setGrantedLocalRoots: (roots: GrantedLocalRoot[]) => Promise<void>
+  list: () => Promise<GrantedLocalRoot[]>
+  // Insert-or-update-by-path: re-granting an already granted path updates its access while keeping
+  // the existing id. Returns the stored row.
+  upsertByPath: (root: GrantedLocalRoot) => Promise<GrantedLocalRoot>
+  setAccess: (id: string, access: GrantedLocalRootAccess) => Promise<void>
+  remove: (id: string) => Promise<void>
 }
 
 // Builds a user-facing machine name from the OS hostname (stripping a trailing ".local" that macOS
@@ -61,7 +65,7 @@ const assertValidAccess = (access: GrantedLocalRootAccess): void => {
 // "Home start, full-disk navigable". Path validation rejects only malformed input; sensitive-file
 // warnings are surfaced in the renderer (see isSensitiveLocalPath).
 export class LocalFsService {
-  // The settings store is optional so existing call sites/tests that only browse keep working;
+  // The granted-roots store is optional so existing call sites/tests that only browse keep working;
   // granted-root operations fail loudly when persistence is not wired.
   constructor(private readonly grantedRootsStore?: GrantedLocalRootsStore) {}
 
@@ -77,7 +81,7 @@ export class LocalFsService {
 
   // Returns the folders the user has granted the app access to.
   async listGrantedRoots(): Promise<GrantedLocalRoot[]> {
-    return this.requireGrantedRootsStore().getGrantedLocalRoots()
+    return this.requireGrantedRootsStore().list()
   }
 
   // Grants a folder (or updates its access when already granted) and returns the updated list.
@@ -92,7 +96,7 @@ export class LocalFsService {
     // macOS, /home mounts on some Linux setups), and comparing the realpath'd candidate against
     // the verbatim string would fail every scope check.
     const resolvedHome = await realpath(this.getRoots().home)
-    const roots = await store.getGrantedLocalRoots()
+    const roots = await store.list()
     const verdict = validateGrantCandidate(resolvedPath, resolvedHome, roots, process.platform)
     if (!verdict.ok) {
       if (verdict.reason === 'is-home')
@@ -101,21 +105,15 @@ export class LocalFsService {
         throw new Error('That folder is outside the currently browsable scope.')
       throw new Error('Local path must be absolute.')
     }
-    // De-dupe on the resolved path: re-granting an already granted folder updates its access.
-    const existing = roots.find((root) => root.path === resolvedPath)
-    const updated = existing
-      ? roots.map((root) => (root.id === existing.id ? { ...root, access: request.access } : root))
-      : [
-          ...roots,
-          {
-            id: randomUUID(),
-            path: resolvedPath,
-            name: basename(resolvedPath),
-            access: request.access
-          }
-        ]
-    await store.setGrantedLocalRoots(updated)
-    return updated
+    // De-dupe on the resolved path: re-granting an already granted folder updates its access and
+    // keeps the existing id (the store upserts by path).
+    await store.upsertByPath({
+      id: randomUUID(),
+      path: resolvedPath,
+      name: basename(resolvedPath),
+      access: request.access
+    })
+    return store.list()
   }
 
   // Changes the access level of one granted root and returns the updated list.
@@ -124,23 +122,18 @@ export class LocalFsService {
   ): Promise<GrantedLocalRoot[]> {
     const store = this.requireGrantedRootsStore()
     assertValidAccess(request.access)
-    const roots = await store.getGrantedLocalRoots()
+    const roots = await store.list()
     if (!roots.some((root) => root.id === request.id))
       throw new Error(`Unknown granted root: ${request.id}`)
-    const updated = roots.map((root) =>
-      root.id === request.id ? { ...root, access: request.access } : root
-    )
-    await store.setGrantedLocalRoots(updated)
-    return updated
+    await store.setAccess(request.id, request.access)
+    return store.list()
   }
 
   // Revokes one granted root and returns the updated list.
   async removeGrantedRoot(request: RemoveGrantedLocalRootRequest): Promise<GrantedLocalRoot[]> {
     const store = this.requireGrantedRootsStore()
-    const roots = await store.getGrantedLocalRoots()
-    const updated = roots.filter((root) => root.id !== request.id)
-    await store.setGrantedLocalRoots(updated)
-    return updated
+    await store.remove(request.id)
+    return store.list()
   }
 
   // Lists one directory. Resolves symlinks/.. via realpath, sorts dirs-first, caps entry count.

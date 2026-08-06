@@ -147,6 +147,7 @@ import { type SessionPersistenceBackend } from './session-persistence/ipc'
 import { tryDecryptKey } from './settings/crypto'
 import { SETTINGS_INSTALL_LOG_CHANNEL, registerSettingsIpcHandlers } from './settings/ipc'
 import { registerLocalFsIpcHandlers } from './local-fs/ipc'
+import { GrantedLocalRootsRepository } from './local-fs/granted-roots-repository'
 import { LocalFsService } from './local-fs/service'
 import { getAppClaudeConfigDir } from './settings/provider-env'
 import { createDefaultSettingsService } from './settings/service'
@@ -393,9 +394,15 @@ const createApplicationModules = async (
     getClient: () => getProjectDbClient(resolveStorageRoot())
   })
   // Shared local-fs service backs both the "This computer" browser IPC and the managed-preview
-  // resolver below, so path validation stays identical across both entry points. The settings
-  // service persists the granted folder roots behind the local-fs:granted-roots:* channels.
-  const localFsService = new LocalFsService(settingsService)
+  // resolver below, so path validation stays identical across both entry points. Granted folder
+  // roots persist in the SQLite project DB behind the local-fs:granted-roots:* channels; the
+  // settings service is passed as the legacy store so a pre-existing settings.json
+  // grantedLocalRoots field is imported into the DB once on first use.
+  const grantedRootsRepository = new GrantedLocalRootsRepository(
+    () => getProjectDbClient(resolveStorageRoot()),
+    settingsService
+  )
+  const localFsService = new LocalFsService(grantedRootsRepository)
   // One source-neutral resolver keeps previews and user-requested exports on identical trust checks.
   const resolveManagedFilePath = (
     source: ManagedPreviewSource,
@@ -1090,6 +1097,7 @@ const createApplicationModules = async (
       authorizeSkillImportReferencedUploads: (projectId, sessionId, paths) =>
         conversationSkillImporter.authorizeReferencedUploads(projectId, sessionId, paths),
       settingsService,
+      grantedRootsRepository,
       permissionGrantRegistry,
       taskNotifications,
       onSessionTurnStarted: (sessionId, turnToken) =>

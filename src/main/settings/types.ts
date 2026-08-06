@@ -204,8 +204,9 @@ export type StoredSettings = {
   // Pinned bookmark folders for the remote file browser, keyed by provider_id.
   // Each value is an ordered array of absolute paths the user has pinned via Go-to.
   computeBookmarks?: Record<string, string[]>
-  // Local folders the user explicitly granted the app access to ("Grant folder access").
-  // Managed via the local-fs:granted-roots:* channels; read by the linked-folder resolver.
+  // Legacy settings-persisted granted local roots ("Grant folder access"), read only for one-time
+  // migration into the GrantedLocalRoot SQLite table (see local-fs/granted-roots-repository.ts).
+  // Production never appends to this field; it is removed after a successful import.
   grantedLocalRoots?: GrantedLocalRoot[]
   // Legacy project-scope compute grants, read only for one-time migration into PermissionGrant.
   // Production authorization never appends to this field; it is removed after a successful import.
