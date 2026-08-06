@@ -4,6 +4,7 @@ import type {
   ClaudeInstallEvent,
   EnvironmentCheckResult,
   SettingsSnapshot,
+  SkillView,
   ValidateProviderResult,
   ConnectorView,
   CustomServerView
@@ -112,11 +113,11 @@ const providerView = (id: string): SettingsSnapshot['providers'][number] => ({
   needsKey: false
 })
 
-const skillView = (id: string, name: string) => ({
+const skillView = (id: string, name: string): SkillView => ({
   id,
   name,
   description: '',
-  source: 'personal' as const,
+  source: 'personal',
   updatedAt: '',
   enabled: true
 })
